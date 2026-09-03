@@ -1,0 +1,41 @@
+# MiniCPU con memorias EBR
+
+Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
+16 KiB. Es la versión FPGA `ebr` utilizada por `x.cpu-tests` y responde como
+monitor 1.2.
+
+Mapa visible desde el monitor:
+
+| Región | Dirección del monitor | Dirección local CPU |
+|---|---:|---:|
+| Programa | `0x00000000–0x00003fff` | `0x00000000–0x00003fff` |
+| Datos | `0x00100000–0x00103fff` | `0x00000000–0x00003fff` |
+
+El monitor controla ambas memorias mientras la CPU está detenida. Durante la
+ejecución, la CPU lee instrucciones y realiza `LOAD`/`STORE`; los accesos de
+memoria del monitor se rechazan.
+
+Regresiones principales:
+
+```powershell
+apio test cpu_tb.v
+apio test cpu_program_system_tb.v
+apio test cpu_memory_map_tb.v
+apio test register_file_tb.v
+apio test monitor_tb.v
+apio build
+```
+
+Uso físico:
+
+```powershell
+python monitor.py write-block 0 fpga_smoke_test.bin --port COM3
+python monitor.py reset --port COM3
+python monitor.py run --port COM3
+python monitor.py status --port COM3
+```
+
+[`instruction-status.md`](instruction-status.md) resume las instrucciones
+implementadas y [`timing.md`](timing.md) documenta la microarquitectura y el
+cierre de timing. La versión equivalente con SDRAM está en
+[`../10.fpga-cpu-ram`](../10.fpga-cpu-ram).
