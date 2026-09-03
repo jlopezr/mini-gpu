@@ -1,1 +1,6 @@
 __pycache__
+
+.sconsign.dblite
+hardware.bit
+hardware.config
+hardware.json
