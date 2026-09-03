@@ -1,0 +1,20 @@
+[*] GTKWave display configuration for 'apio sim monitor_tb.v'
+[*] THIS FILE WAS GENERATED AUTOMATICALLY BY APIO.
+[*] DO NOT EDIT IT MANUALLY!
+[*] To customize this file, run 'apio sim monitor_tb.v'
+[*] and save the file from GTKWave.
+
+[*] GTKWave Analyzer v3.4.0 (w)1999-2022 BSI
+
+[*]
+monitor_tb.busy
+monitor_tb.busy_cycles[31:0]
+monitor_tb.clk
+monitor_tb.last_command[7:0]
+monitor_tb.received_count[31:0]
+monitor_tb.reset
+monitor_tb.rx_data[7:0]
+monitor_tb.rx_strobe
+monitor_tb.tx_data[7:0]
+monitor_tb.tx_ready
+monitor_tb.tx_strobe
