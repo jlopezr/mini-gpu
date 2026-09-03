@@ -15,13 +15,13 @@ El test se detiene permanentemente al primer error y conserva internamente direc
 
 ## LEDs
 
-| LED | Significado |
-|---|---|
-| 0 | Inicialización SDRAM terminada |
-| 1 | Fase de escritura |
-| 2 | Fase de lectura/comparación |
-| 3 | PASS final |
-| 4 | FAIL; detenido en el primer error |
+| LED | Significado                       |
+|-----|-----------------------------------|
+| 0   | Inicialización SDRAM terminada    |
+| 1   | Fase de escritura                 |
+| 2   | Fase de lectura/comparación       |
+| 3   | PASS final                        |
+| 4   | FAIL; detenido en el primer error |
 | 7:5 | Progreso dentro del bloque actual |
 
 ## Temporizaciones a 25 MHz
