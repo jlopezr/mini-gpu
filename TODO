@@ -5,8 +5,4 @@
   de los 16k de programa (0x0000) y los 16k de datos (ya veremos donde lo
   ponemos) pues da un trap.
 
-- A que velocidad va ahora? lo dejamos asi? ponemos 2 relojes? que solucion hay?
-
 - que mejoras podemos hacer al controlador de SDRAM? Que supuestamente hacia el de 7-fpga-ram de claude, que no funciona?
-
-- Fallo intermitente de iverilog?
