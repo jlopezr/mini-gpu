@@ -76,8 +76,8 @@ module top (
       .busy(monitor_busy)
   );
 
-  // Temporary 16 KiB memory. It will later be shared with the CPU.
-  memory memory_i (
+  // Temporary Harvard map: separate 16 KiB program and data memories.
+  memory_map memory_map_i (
       .clk(clk),
       .reset(reset),
       .address(mem_address),

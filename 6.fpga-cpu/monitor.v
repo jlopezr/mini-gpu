@@ -285,7 +285,8 @@ module monitor (
 
             if ({block_length[15:8], rx_data} == 0 ||
                 {block_length[15:8], rx_data} > 16'd256 ||
-                mem_address[31:14] != 0 ||
+                (mem_address[31:14] != 18'h00000 &&
+                    mem_address[31:14] != 18'h00040) ||
                 ({1'b0, mem_address[13:0]} +
                     {6'd0, block_length[8], rx_data}) > 15'h4000) begin
               response_byte_0 <= RSP_ERROR;

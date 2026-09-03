@@ -46,7 +46,7 @@ module monitor_tb;
       .busy(busy)
   );
 
-  memory memory_i (
+  memory_map memory_map_i (
       .clk(clk),
       .reset(reset),
       .address(mem_address),
@@ -160,16 +160,36 @@ module monitor_tb;
     if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
     if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
 
-    // The protocol transports the full 32-bit address. The temporary memory
-    // currently rejects the future framebuffer region at 0x00100000.
+    // Write and read the physically separate data memory at 0x00100000.
+    wait (!busy && tx_ready);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h5a);
+    wait (received_count == 15);
+    if (received[14] !== 8'h90) $fatal(1, "Data-memory WRITE_BYTE mismatch");
+
     wait (!busy && tx_ready);
     send_command(8'h11);
     send_command(8'h00);
     send_command(8'h10);
     send_command(8'h00);
     send_command(8'h00);
-    wait (received_count == 15);
-    if (received[14] !== 8'hff) $fatal(1, "32-bit invalid address mismatch");
+    wait (received_count == 17);
+    if (received[15] !== 8'h91) $fatal(1, "Data-memory READ_BYTE mismatch");
+    if (received[16] !== 8'h5a) $fatal(1, "Data-memory value mismatch");
+
+    // An address in the unmapped gap must still fail.
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h01);
+    send_command(8'h00);
+    send_command(8'h00);
+    wait (received_count == 18);
+    if (received[17] !== 8'hff) $fatal(1, "Unmapped address mismatch");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

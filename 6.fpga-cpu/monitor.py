@@ -14,8 +14,11 @@ from serial.tools import list_ports
 BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0xFFFF_FFFF
-MAX_MEMORY_ADDRESS = 0x3FFF
 MAX_BLOCK_SIZE = 256
+MEMORY_REGIONS = (
+    (0x0000_0000, 0x0000_4000),
+    (0x0010_0000, 0x0010_4000),
+)
 
 CMD_PING = b"\x01"
 CMD_GET_VERSION = b"\x02"
@@ -202,15 +205,15 @@ def parse_integer(value: str, maximum: int, description: str) -> int:
 def validate_block(address: int, length: int) -> None:
     if not 1 <= length <= MAX_BLOCK_SIZE:
         raise MonitorError(f"Block length must be between 1 and {MAX_BLOCK_SIZE}")
-    if address + length > MAX_MEMORY_ADDRESS + 1:
-        raise MonitorError("Block is outside the currently implemented memory")
+    if not any(start <= address and address + length <= end for start, end in MEMORY_REGIONS):
+        raise MonitorError("Block is outside the currently implemented memory regions")
 
 
 def validate_transfer(address: int, length: int) -> None:
     if length < 1:
         raise MonitorError("Transfer must contain at least one byte")
-    if address + length > MAX_MEMORY_ADDRESS + 1:
-        raise MonitorError("Transfer is outside the currently implemented memory")
+    if not any(start <= address and address + length <= end for start, end in MEMORY_REGIONS):
+        raise MonitorError("Transfer is outside the currently implemented memory regions")
 
 
 def main() -> int:
