@@ -9,7 +9,21 @@ from pathlib import Path
 from types import ModuleType
 
 
-DATA_MONITOR_BASE = 0x0010_0000
+VERSIONS = {
+    "ebr": {
+        "monitor_path": Path("6.fpga-cpu/monitor.py"),
+        "monitor_version": (1, 2),
+        "data_monitor_base": 0x0010_0000,
+        "description": "FPGA con 16 KiB de EBR para programa y datos",
+    },
+    "sdram": {
+        "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
+        "monitor_version": (1, 3),
+        "data_monitor_base": 0x0100_0000,
+        "description": "FPGA con SDRAM dividida en 16 MiB de programa y datos",
+    },
+}
+DEFAULT_VERSION = "ebr"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -26,10 +40,26 @@ def _load_module(name: str, path: Path) -> ModuleType:
 class FpgaBackend:
     """Carga, ejecuta e inspecciona un caso en la FPGA real."""
 
-    def __init__(self, repository: Path, port: str, serial_timeout: float):
+    def __init__(
+        self,
+        repository: Path,
+        port: str,
+        serial_timeout: float,
+        version: str = DEFAULT_VERSION,
+    ):
+        try:
+            self.configuration = VERSIONS[version]
+        except KeyError as error:
+            choices = ", ".join(sorted(VERSIONS))
+            raise ValueError(
+                f"Versión del backend FPGA desconocida {version!r}; "
+                f"opciones: {choices}"
+            ) from error
+
+        self.version = version
         self.monitor = _load_module(
-            "fpga_monitor_for_tests",
-            repository / "6.fpga-cpu" / "monitor.py",
+            f"fpga_monitor_{version}_for_tests",
+            repository / self.configuration["monitor_path"],
         )
         self.port = port
         self.serial_timeout = serial_timeout
@@ -59,11 +89,23 @@ class FpgaBackend:
             dsrdtr=False,
         ) as connection:
             client = self.monitor.MonitorClient(connection)
+            actual_version = client.get_version()
+            expected_version = self.configuration["monitor_version"]
+            actual_tuple = (actual_version.major, actual_version.minor)
+            if actual_tuple != expected_version:
+                expected_text = ".".join(map(str, expected_version))
+                raise RuntimeError(
+                    f"La FPGA conectada responde con monitor {actual_version}, "
+                    f"pero --version fpga={self.version} requiere "
+                    f"{expected_text}. Carga el bitstream correspondiente."
+                )
+
             client.reset_cpu()
             client.write_memory(0, program)
 
+            data_monitor_base = self.configuration["data_monitor_base"]
             for address, data in initial_memory:
-                client.write_memory(DATA_MONITOR_BASE + address, data)
+                client.write_memory(data_monitor_base + address, data)
 
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
@@ -84,7 +126,7 @@ class FpgaBackend:
                 for number in sorted(register_numbers)
             }
             memory = {
-                (address, size): client.read_memory(DATA_MONITOR_BASE + address, size)
+                (address, size): client.read_memory(data_monitor_base + address, size)
                 for address, size in memory_ranges
             }
 

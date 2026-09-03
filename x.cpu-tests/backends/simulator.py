@@ -8,6 +8,16 @@ from pathlib import Path
 from types import ModuleType
 
 
+VERSIONS = {
+    "current": {
+        "simulator_path": Path("2.cpu-sim-func/minicpu_sim.py"),
+        "memory_size": 2 * 1024 * 1024,
+        "description": "simulador funcional MiniCPU actual",
+    },
+}
+DEFAULT_VERSION = "current"
+
+
 def _load_module(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -22,13 +32,27 @@ def _load_module(name: str, path: Path) -> ModuleType:
 class SimulatorBackend:
     """Ejecuta un caso sobre ``2.cpu-sim-func/minicpu_sim.py``."""
 
-    def __init__(self, repository: Path, memory_size: int = 2 * 1024 * 1024):
+    def __init__(
+        self,
+        repository: Path,
+        version: str = DEFAULT_VERSION,
+        memory_size: int | None = None,
+    ):
+        try:
+            configuration = VERSIONS[version]
+        except KeyError as error:
+            choices = ", ".join(sorted(VERSIONS))
+            raise ValueError(
+                f"Versión del simulador desconocida {version!r}; opciones: {choices}"
+            ) from error
+
+        self.version = version
         module = _load_module(
-            "minicpu_sim_for_tests",
-            repository / "2.cpu-sim-func" / "minicpu_sim.py",
+            f"minicpu_sim_{version}_for_tests",
+            repository / configuration["simulator_path"],
         )
         self.cpu_class = module.CPU
-        self.memory_size = memory_size
+        self.memory_size = memory_size or configuration["memory_size"]
 
     def run(
         self,

@@ -11,12 +11,60 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from backends import fpga as fpga_backend
+from backends import simulator as simulator_backend
 from backends.fpga import FpgaBackend
 from backends.simulator import SimulatorBackend
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
 FPGA_MEMORY_SIZE = 16 * 1024
+BACKEND_DEFINITIONS = {
+    "sim": {
+        "class": SimulatorBackend,
+        "versions": simulator_backend.VERSIONS,
+        "default_version": simulator_backend.DEFAULT_VERSION,
+    },
+    "fpga": {
+        "class": FpgaBackend,
+        "versions": fpga_backend.VERSIONS,
+        "default_version": fpga_backend.DEFAULT_VERSION,
+    },
+}
+
+
+def resolve_backend_versions(
+    specifications: list[str], backend_names: tuple[str, ...]
+) -> dict[str, str]:
+    """Resolve repeatable VERSION or BACKEND=VERSION command-line values."""
+    selected = {
+        name: BACKEND_DEFINITIONS[name]["default_version"]
+        for name in backend_names
+    }
+    for specification in specifications:
+        if "=" in specification:
+            backend_name, version = specification.split("=", 1)
+            if backend_name not in backend_names:
+                raise ValueError(
+                    f"--version menciona el backend no seleccionado {backend_name!r}"
+                )
+        else:
+            if len(backend_names) != 1:
+                raise ValueError(
+                    "Con varios backends usa --version BACKEND=VERSION"
+                )
+            backend_name = backend_names[0]
+            version = specification
+
+        versions = BACKEND_DEFINITIONS[backend_name]["versions"]
+        if version not in versions:
+            choices = ", ".join(sorted(versions))
+            raise ValueError(
+                f"Versión {version!r} no disponible para {backend_name}; "
+                f"opciones: {choices}"
+            )
+        selected[backend_name] = version
+    return selected
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -229,6 +277,13 @@ def main() -> int:
     )
     parser.add_argument("--port", default="COM3")
     parser.add_argument("--serial-timeout", type=float, default=1.0)
+    parser.add_argument(
+        "--version",
+        action="append",
+        default=[],
+        metavar="[BACKEND=]VERSION",
+        help="versión del backend; puede repetirse al usar varios backends",
+    )
     args = parser.parse_args()
 
     case_paths = discover_cases(args.cases)
@@ -237,14 +292,23 @@ def main() -> int:
         return 2
 
     backend_names = ("sim", "fpga") if args.backend == "both" else (args.backend,)
+    try:
+        backend_versions = resolve_backend_versions(args.version, backend_names)
+    except ValueError as error:
+        parser.error(str(error))
+
     backends = {}
     if "sim" in backend_names:
-        backends["sim"] = SimulatorBackend(REPOSITORY)
+        backends["sim"] = SimulatorBackend(
+            REPOSITORY,
+            version=backend_versions["sim"],
+        )
     if "fpga" in backend_names:
         backends["fpga"] = FpgaBackend(
             REPOSITORY,
             port=args.port,
             serial_timeout=args.serial_timeout,
+            version=backend_versions["fpga"],
         )
 
     failures = 0

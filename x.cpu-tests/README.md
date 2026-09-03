@@ -10,8 +10,9 @@ Desde `x.cpu-tests`:
 
 ```powershell
 python run_cpu_tests.py --backend sim
-python run_cpu_tests.py --backend fpga --port COM3
-python run_cpu_tests.py --backend both --port COM3
+python run_cpu_tests.py --backend fpga --version ebr --port COM3
+python run_cpu_tests.py --backend fpga --version sdram --port COM3
+python run_cpu_tests.py --backend both --version fpga=sdram --port COM3
 ```
 
 Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`.
@@ -21,9 +22,35 @@ También se puede ejecutar uno o varios casos concretos:
 python run_cpu_tests.py cases/smoke/test.json --backend sim
 ```
 
-El backend FPGA requiere que el bitstream con el protocolo de monitor 1.2 esté
-cargado. `RESET_CPU` permite ejecutar casos consecutivos sin reconfigurar la
-placa ni borrar sus memorias.
+`--version` selecciona la versión de cada backend. Con un único backend se
+puede usar directamente `--version VERSION`; con varios se usa
+`--version BACKEND=VERSION` y el parámetro puede repetirse:
+
+```powershell
+python run_cpu_tests.py --backend both `
+    --version sim=current --version fpga=sdram --port COM3
+```
+
+Cada backend declara internamente todas sus versiones y cuál es la
+predeterminada. Añadir una variante nueva solo requiere incorporarla al
+registro `VERSIONS` del módulo correspondiente; el runner no contiene una
+lista especial de versiones FPGA o del simulador.
+
+El backend FPGA comprueba además la versión física mediante `GET_VERSION`
+antes de modificar la memoria:
+
+| Valor | Proyecto | Monitor | Base física de datos |
+|---|---|---:|---:|
+| `ebr` | `6.fpga-cpu` | 1.2 | `0x00100000` |
+| `sdram` | `10.fpga-cpu-ram` | 1.3 | `0x01000000` |
+
+La versión predeterminada de FPGA es `ebr` para conservar la compatibilidad con los
+comandos anteriores. Si el monitor conectado no coincide, el test termina con
+un mensaje que indica qué bitstream debe cargarse. La comprobación ocurre
+antes de `RESET_CPU` y antes de escribir el programa o los datos.
+
+`RESET_CPU` permite ejecutar casos consecutivos sin reconfigurar la placa ni
+borrar sus memorias.
 
 ## Formato
 
@@ -76,7 +103,8 @@ Los JSON utilizan siempre direcciones locales de la CPU entre `0x00000000` y
 `0x00003fff`.
 
 - El simulador accede directamente a esa dirección en su memoria unificada.
-- El backend FPGA suma `0x00100000` al comunicarse con el monitor.
+- El backend FPGA EBR suma `0x00100000` al comunicarse con el monitor.
+- El backend FPGA SDRAM suma `0x01000000` al comunicarse con el monitor.
 
 Los programas comunes deben mantener los datos fuera de la región que ocupa el
 programa para no depender de la separación Harvard de la FPGA.

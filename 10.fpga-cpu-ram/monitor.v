@@ -79,7 +79,8 @@ module monitor (
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
-  localparam [7:0] VERSION_MINOR = 8'h02;
+  // Version 1.3 identifies the CPU monitor backed by external SDRAM.
+  localparam [7:0] VERSION_MINOR = 8'h03;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;

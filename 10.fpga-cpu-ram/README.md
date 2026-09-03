@@ -3,7 +3,9 @@
 Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 `9.fpga-ram-param`. Todo el datapath principal funciona en un único dominio de
 120 MHz. El monitor UART conserva los comandos de ejecución y depuración de la
-carpeta 6 y trabaja a 3 Mbaud.
+carpeta 6, responde como versión **1.3** y trabaja a 3 Mbaud. Esa versión
+permite que `x.cpu-tests --version sdram` distinga este bitstream SDRAM del
+bitstream EBR 1.2.
 
 ## Mapa de memoria
 
