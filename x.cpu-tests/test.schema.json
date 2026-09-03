@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mini-gpu.local/cpu-test.schema.json",
+  "title": "Caso de conformidad MiniCPU",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "program", "expect"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "program": {
+      "type": "string",
+      "pattern": "\\.(asm|bin|hex)$"
+    },
+    "max_instructions": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1000000
+    },
+    "timeout_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 5.0
+    },
+    "initial_memory": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/memoryFile"
+      },
+      "default": []
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pc"],
+      "properties": {
+        "halted": {
+          "type": "boolean",
+          "default": true
+        },
+        "error": {
+          "type": "boolean",
+          "default": false
+        },
+        "error_code": {
+          "$ref": "#/$defs/integer32"
+        },
+        "pc": {
+          "$ref": "#/$defs/integer32"
+        },
+        "registers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[Rr](?:[0-9]|[12][0-9]|3[01])$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/integer32"
+          },
+          "default": {}
+        },
+        "memory_dumps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memoryFile"
+          },
+          "default": []
+        }
+      }
+    }
+  },
+  "$defs": {
+    "integer32": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "string",
+          "pattern": "^0[xX][0-9a-fA-F]{1,8}$"
+        }
+      ]
+    },
+    "memoryFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "file"],
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/integer32"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
