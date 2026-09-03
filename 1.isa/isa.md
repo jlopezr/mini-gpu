@@ -165,7 +165,7 @@ El ensamblador calcula estos offsets al resolver labels.
 |      `0x32` | `GETWARP` | `Rd`      | Reservada para GPU                     |
 |      `0x33` | `BAR`     | —         | Reservada para GPU                     |
 | `0x34–0x3D` | —         | —         | Reservadas para GPU                    |
-|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error    |
+|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error   |
 |      `0x3F` | `HALT`    | —         | Definida e implementada                |
 
 `GETTID` escribe en `Rd` el identificador lineal del work-item. En MiniCPU vale
