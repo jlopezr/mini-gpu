@@ -13,14 +13,14 @@ Todo el diseño funciona inicialmente con `clk_25mhz`. La UART trabaja a
 El rango válido es `0x00000000`–`0x01ffffff`. Las direcciones y longitudes se
 envían primero por el byte más significativo:
 
-| Petición | Respuesta | Operación |
-|---|---|---|
-| `01` | `81` | PING |
-| `02` | `82 02 00` | Versión 2.0 |
-| `10 AA AA AA AA DD` | `90` | Escribir byte |
-| `11 AA AA AA AA` | `91 DD` | Leer byte |
-| `20 AA AA AA AA LL LL DD...` | `a0` | Escribir 1–256 bytes |
-| `21 AA AA AA AA LL LL` | `a1 DD...` | Leer 1–256 bytes |
+| Petición                     | Respuesta  | Operación            |
+|------------------------------|------------|----------------------|
+| `01`                         | `81`       | PING                 |
+| `02`                         | `82 02 00` | Versión 2.0          |
+| `10 AA AA AA AA DD`          | `90`       | Escribir byte        |
+| `11 AA AA AA AA`             | `91 DD`    | Leer byte            |
+| `20 AA AA AA AA LL LL DD...` | `a0`       | Escribir 1–256 bytes |
+| `21 AA AA AA AA LL LL`       | `a1 DD...` | Leer 1–256 bytes     |
 
 Las operaciones fuera de rango responden `ff`.
 
@@ -59,13 +59,13 @@ los argumentos.
 
 ## LEDs
 
-| LED | Significado |
-|---|---|
-| 0 | Inicialización SDRAM terminada |
-| 1 | Monitor ocupado |
-| 2 | Controlador SDRAM ocupado |
-| 3 | Error de acceso durante el pulso actual |
-| 7:4 | Cuatro bits bajos del último comando |
+| LED | Significado                             |
+|-----|-----------------------------------------|
+| 0   | Inicialización SDRAM terminada          |
+| 1   | Monitor ocupado                         |
+| 2   | Controlador SDRAM ocupado               |
+| 3   | Error de acceso durante el pulso actual |
+| 7:4 | Cuatro bits bajos del último comando    |
 
 La futura integración con la CPU añadirá un frontend 32→16. Una palabra CPU
 de 32 bits requerirá inicialmente dos transacciones BL1; los bursts quedan
