@@ -5,3 +5,5 @@ _build
 hardware.bit
 hardware.config
 hardware.json
+
+result.bin
