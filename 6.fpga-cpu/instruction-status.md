@@ -10,45 +10,45 @@ la ISA a partir de ella.
 - OK Implementada y utilizable.
 - PENDIENTE No implementada.
 - PARCIAL Existe un comportamiento parcial o provisional.
-- `RESERVADO`: opcode reservado; no forma parte de las instrucciones exigidas actualmente.
+- RESERVADO Opcode reservado; no forma parte de las instrucciones exigidas actualmente.
 
 La columna «Ensamblador» indica si `miniisa_asm.py` puede generar el encoding.
 No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 
 ## Instrucciones definidas
 
-| Opcode | Instrucción | Ensamblador | Simulador | FPGA | Observaciones                                                                    |
-|-------:|-------------|:-----------:|:---------:|:----:|----------------------------------------------------------------------------------|
-| `0x00` | `NOP`       |      OK      |     OK     |  OK   | Retira una instrucción sin modificar estado salvo el PC.                         |
-| `0x01` | `ADD`       |      OK      |     OK     |  OK   | Suma de 32 bits con wrap.                                                        |
-| `0x02` | `SUB`       |      OK      |     OK     |  OK   | Resta de 32 bits con wrap.                                                       |
-| `0x03` | `MULFX`     |      OK      |     OK     |  PENDIENTE   | Multiplicación signed Q16.16.                                                    |
-| `0x04` | `AND`       |      OK      |     OK     |  OK   | AND bit a bit.                                                                   |
-| `0x05` | `OR`        |      OK      |     OK     |  OK   | OR bit a bit.                                                                    |
-| `0x06` | `XOR`       |      OK      |     OK     |  OK   | XOR bit a bit.                                                                   |
-| `0x07` | `SHL`       |      OK      |     OK     |  OK   | Usa los cinco bits bajos de `Rb`.                                                |
-| `0x08` | `SHR`       |      OK      |     OK     |  OK   | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
-| `0x09` | `SAR`       |      OK      |     OK     |  OK   | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
-| `0x0A` | `MUL`       |      OK      |     OK     |  PENDIENTE   | Conserva los 32 bits bajos del producto.                                         |
-| `0x0C` | `DIV`       |      OK      |     OK     |  PENDIENTE   | Signed y hacia cero; división por cero debe provocar trap.                       |
-| `0x10` | `MOVI`      |      OK      |     OK     |  OK   | Extensión de signo de `imm16`.                                                   |
-| `0x11` | `ADDI`      |      OK      |     OK     |  OK   | Inmediato con extensión de signo.                                                |
-| `0x12` | `ANDI`      |      OK      |     OK     |  OK   | Inmediato con extensión de ceros.                                                |
-| `0x13` | `ORI`       |      OK      |     OK     |  OK   | Inmediato con extensión de ceros.                                                |
-| `0x14` | `XORI`      |      OK      |     OK     |  OK   | Inmediato con extensión de ceros.                                                |
-| `0x15` | `LOAD`      |      OK      |     OK     |  OK   | Palabra de 32 bits alineada.                                                     |
-| `0x16` | `STORE`     |      OK      |     OK     |  OK   | Palabra de 32 bits alineada.                                                     |
-| `0x17` | `MOVHI`     |      OK      |     OK     |  OK   | Escribe `imm16 << 16`.                                                           |
-| `0x20` | `BEQ`       |      OK      |     OK     |  OK   | Branch relativo a la instrucción siguiente.                                      |
-| `0x21` | `BNE`       |      OK      |     OK     |  OK   | Branch relativo a la instrucción siguiente.                                      |
-| `0x22` | `BLT`       |      OK      |     OK     |  OK   | Comparación signed.                                                              |
-| `0x23` | `BGE`       |      OK      |     OK     |  OK   | Comparación signed.                                                              |
-| `0x24` | `BLTU`      |      OK      |     OK     |  OK   | Comparación unsigned.                                                            |
-| `0x25` | `BGEU`      |      OK      |     OK     |  OK   | Comparación unsigned.                                                            |
-| `0x2F` | `BRA`       |      OK      |     OK     |  OK   | Offset signed de 26 bits, expresado en palabras.                                 |
-| `0x30` | `GETTID`    |      OK      |     OK     |  OK   | En MiniCPU escribe cero; en MiniGPU será el ID del thread.                       |
-| `0x3E` | `TRAP`      |      OK      |     PARCIAL     |  PARCIAL   | El encoding existe, pero aún cae en el error genérico de opcode no implementado. |
-| `0x3F` | `HALT`      |      OK      |     OK     |  OK   | Detiene la ejecución después de retirar la instrucción.                          |
+| Opcode | Instrucción | Ensamblador | Simulador |   FPGA    | Observaciones                                                                    |
+|-------:|-------------|:-----------:|:---------:|:---------:|----------------------------------------------------------------------------------|
+| `0x00` | `NOP`       |     OK      |    OK     |    OK     | Retira una instrucción sin modificar estado salvo el PC.                         |
+| `0x01` | `ADD`       |     OK      |    OK     |    OK     | Suma de 32 bits con wrap.                                                        |
+| `0x02` | `SUB`       |     OK      |    OK     |    OK     | Resta de 32 bits con wrap.                                                       |
+| `0x03` | `MULFX`     |     OK      |    OK     | PENDIENTE | Multiplicación signed Q16.16.                                                    |
+| `0x04` | `AND`       |     OK      |    OK     |    OK     | AND bit a bit.                                                                   |
+| `0x05` | `OR`        |     OK      |    OK     |    OK     | OR bit a bit.                                                                    |
+| `0x06` | `XOR`       |     OK      |    OK     |    OK     | XOR bit a bit.                                                                   |
+| `0x07` | `SHL`       |     OK      |    OK     |    OK     | Usa los cinco bits bajos de `Rb`.                                                |
+| `0x08` | `SHR`       |     OK      |    OK     |    OK     | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
+| `0x09` | `SAR`       |     OK      |    OK     |    OK     | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
+| `0x0A` | `MUL`       |     OK      |    OK     | PENDIENTE | Conserva los 32 bits bajos del producto.                                         |
+| `0x0C` | `DIV`       |     OK      |    OK     | PENDIENTE | Signed y hacia cero; división por cero debe provocar trap.                       |
+| `0x10` | `MOVI`      |     OK      |    OK     |    OK     | Extensión de signo de `imm16`.                                                   |
+| `0x11` | `ADDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de signo.                                                |
+| `0x12` | `ANDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
+| `0x13` | `ORI`       |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
+| `0x14` | `XORI`      |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
+| `0x15` | `LOAD`      |     OK      |    OK     |    OK     | Palabra de 32 bits alineada.                                                     |
+| `0x16` | `STORE`     |     OK      |    OK     |    OK     | Palabra de 32 bits alineada.                                                     |
+| `0x17` | `MOVHI`     |     OK      |    OK     |    OK     | Escribe `imm16 << 16`.                                                           |
+| `0x20` | `BEQ`       |     OK      |    OK     |    OK     | Branch relativo a la instrucción siguiente.                                      |
+| `0x21` | `BNE`       |     OK      |    OK     |    OK     | Branch relativo a la instrucción siguiente.                                      |
+| `0x22` | `BLT`       |     OK      |    OK     |    OK     | Comparación signed.                                                              |
+| `0x23` | `BGE`       |     OK      |    OK     |    OK     | Comparación signed.                                                              |
+| `0x24` | `BLTU`      |     OK      |    OK     |    OK     | Comparación unsigned.                                                            |
+| `0x25` | `BGEU`      |     OK      |    OK     |    OK     | Comparación unsigned.                                                            |
+| `0x2F` | `BRA`       |     OK      |    OK     |    OK     | Offset signed de 26 bits, expresado en palabras.                                 |
+| `0x30` | `GETTID`    |     OK      |    OK     |    OK     | En MiniCPU escribe cero; en MiniGPU será el ID del thread.                       |
+| `0x3E` | `TRAP`      |     OK      |  PARCIAL  |  PARCIAL  | El encoding existe, pero aún cae en el error genérico de opcode no implementado. |
+| `0x3F` | `HALT`      |     OK      |    OK     |    OK     | Detiene la ejecución después de retirar la instrucción.                          |
 
 ## Opcodes reservados
 
@@ -57,16 +57,16 @@ semántica exigible en MiniISA v0.1.
 
 |      Opcode | Nombre o rango | Ensamblador | Situación                                                                                      |
 |------------:|----------------|:-----------:|------------------------------------------------------------------------------------------------|
-|      `0x0B` | `MULHI`        |      OK      | Reservada. El ensamblador permite emitirla, pero ninguna CPU debe asumir todavía su semántica. |
-|      `0x0D` | `DIVU`         |      OK      | Reservada.                                                                                     |
-|      `0x0E` | `REM`          |      OK      | Reservada.                                                                                     |
-|      `0x0F` | `REMU`         |      OK      | Reservada.                                                                                     |
-| `0x18–0x1F` | RESERVADO              |      PENDIENTE      | Reservadas para inmediatos o memoria.                                                          |
-| `0x26–0x2E` | RESERVADO              |      PENDIENTE      | Reservadas para control de flujo.                                                              |
-|      `0x31` | `GETLANE`      |      PENDIENTE      | Reservada para GPU.                                                                            |
-|      `0x32` | `GETWARP`      |      PENDIENTE      | Reservada para GPU.                                                                            |
-|      `0x33` | `BAR`          |      PENDIENTE      | Reservada para GPU.                                                                            |
-| `0x34–0x3D` | RESERVADO              |      PENDIENTE      | Reservadas para GPU.                                                                           |
+|      `0x0B` | `MULHI`        |     OK      | Reservada. El ensamblador permite emitirla, pero ninguna CPU debe asumir todavía su semántica. |
+|      `0x0D` | `DIVU`         |     OK      | Reservada.                                                                                     |
+|      `0x0E` | `REM`          |     OK      | Reservada.                                                                                     |
+|      `0x0F` | `REMU`         |     OK      | Reservada.                                                                                     |
+| `0x18–0x1F` | RESERVADO      |  PENDIENTE  | Reservadas para inmediatos o memoria.                                                          |
+| `0x26–0x2E` | RESERVADO      |  PENDIENTE  | Reservadas para control de flujo.                                                              |
+|      `0x31` | `GETLANE`      |  PENDIENTE  | Reservada para GPU.                                                                            |
+|      `0x32` | `GETWARP`      |  PENDIENTE  | Reservada para GPU.                                                                            |
+|      `0x33` | `BAR`          |  PENDIENTE  | Reservada para GPU.                                                                            |
+| `0x34–0x3D` | RESERVADO      |  PENDIENTE  | Reservadas para GPU.                                                                           |
 
 Que el ensamblador acepte `MULHI`, `DIVU`, `REM` y `REMU` antes de que su
 semántica esté definida es una decisión provisional. Sería más seguro
@@ -217,5 +217,5 @@ La etapa escalar puede considerarse completa cuando:
 3. traps y encodings inválidos tienen una semántica documentada;
 4. el monitor puede reiniciar, cargar, ejecutar y diagnosticar la CPU;
 5. el diseño integrado cumple timing a 120 MHz;
-6. un programa con bucles, memoria y aritmética anterior a Mandelbrot funciona
+6. un programa con bucles, memoria y aritmética RESERVADOprevio a MandelbrotRESERVADO funciona
    tanto en simulación como en la placa.
