@@ -1,3 +1,0 @@
-read_verilog top.v sdram_controller.v memory_test.v
-hierarchy -check -top top
-synth_ecp5 -top top -json top.json
