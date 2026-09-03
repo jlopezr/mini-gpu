@@ -62,6 +62,8 @@ module monitor_tb;
   endtask
 
   initial begin
+    $dumpvars(0, monitor_tb);
+
     repeat (2) @(negedge clk);
     reset = 1'b0;
 

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import serial
 from serial.tools import list_ports
 
-
 BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
 

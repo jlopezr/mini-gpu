@@ -10,6 +10,7 @@ module pll_120 (
     output locked
 );
 
+`ifdef SYNTHESIZE
   (* FREQUENCY_PIN_CLKI="25" *)
   (* FREQUENCY_PIN_CLKOP="120" *)
   (* ICP_CURRENT="12" *)
@@ -48,6 +49,11 @@ module pll_120 (
       .ENCLKOP(1'b0),
       .LOCK(locked)
   );
+`else
+  // Behavioral fallback so logic-only testbenches do not require ECP5 primitives.
+  assign clkout0 = clkin;
+  assign locked  = 1'b1;
+`endif
 endmodule
 
 `default_nettype wire
