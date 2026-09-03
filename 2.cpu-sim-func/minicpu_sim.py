@@ -110,6 +110,13 @@ class CPU:
             rb = (instr >> 11) & 0x1F
             self.regs[rd] = u32(self.regs[ra] - self.regs[rb])
 
+        elif opcode == 0x22: # BLT
+            ra = (instr >> 21) & 0x1F
+            rb = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            if self.regs[ra] < self.regs[rb]:
+                self.pc = u32(self.pc + (imm16 << 2))
+
         elif opcode == 0x3F:  # HALT
             self.halted = True
 
