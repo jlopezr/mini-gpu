@@ -1,0 +1,10 @@
+{
+  "name": "program-shift-multiply",
+  "program": "program.asm",
+  "expect": {
+    "pc": "0x2c",
+    "registers": {
+      "R1": "0x000000d0", "R2": 0, "R3": "0x0000008f", "R4": 1
+    }
+  }
+}

@@ -24,8 +24,8 @@ Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
 | Frecuencia requerida          | 120,00 MHz |
 | Frecuencia alcanzada          | 120,95 MHz |
 | EBR `DP16KD`                  |         16 |
-| Flip-flops `TRELLIS_FF`       |       1897 |
-| Celdas lógicas `TRELLIS_COMB` |       4305 |
+| Flip-flops `TRELLIS_FF`       |       1899 |
+| Celdas lógicas `TRELLIS_COMB` |       4621 |
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -220,6 +220,41 @@ también mide el núcleo con su modelo simplificado de memoria de instrucciones:
 
 Estas cifras describen latencia, no throughput: no hay instrucciones solapadas
 porque la CPU todavía no tiene pipeline.
+
+## Parada y diagnóstico de errores
+
+La MiniCPU no implementa vectores de excepción, handlers ni reanudación. Un
+error coloca `halted = 1`, `error = 1`, guarda la causa en `error_code` y hace
+que el PC observable vuelva a la dirección de la instrucción causante. Durante
+fetch el PC ya se ha incrementado en cuatro, por lo que las rutas de error de
+`STATE_EXECUTE` y `STATE_MEMORY_WAIT` realizan `pc <= pc - 4`.
+
+Esta elección evita añadir un registro `error_pc` y evita cambiar el tamaño de
+la respuesta `GET_STATUS`: el monitor existente devuelve directamente el PC
+útil para diagnóstico. `HALT` es distinto; se retira normalmente y detiene la
+CPU con `error = 0`. `TRAP` no se retira y detiene la CPU con el código `0x03`.
+
+La comprobación de campos reservados se calcula a partir del registro de
+instrucción y se captura en `instruction_encoding_valid_registered` durante
+`STATE_DECODE`. `STATE_EXECUTE` consume únicamente ese bit registrado. La
+primera implementación conectaba la validación combinacional directamente al
+control de ejecución y el place-and-route bajó a 119,01 MHz. Registrar el
+resultado recuperó el cierre de timing, con 120,95 MHz en la ejecución
+documentada al inicio.
+
+Los errores definidos son:
+
+| Código | Causa |
+|-------:|-------|
+| `0x01` | Opcode reservado, desconocido o todavía no implementado |
+| `0x02` | Acceso de memoria inválido |
+| `0x03` | Instrucción `TRAP` explícita |
+| `0x04` | División por cero; se usará al implementar `DIV` en FPGA |
+| `0x05` | Opcode conocido con campos reservados distintos de cero |
+
+Las rutas de error terminan antes de `STATE_RETIRE`, por lo que la instrucción
+problemática no activa `instruction_retired`. El testbench comprueba además que
+`TRAP`, opcode inválido y encoding inválido conservan el PC causante.
 
 ## Cómo verificarlo
 

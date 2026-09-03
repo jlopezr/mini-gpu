@@ -1,0 +1,10 @@
+{
+  "name": "program-array-sum",
+  "program": "program.asm",
+  "initial_memory": [{"address": "0x300", "file": "input.hex"}],
+  "expect": {
+    "pc": "0x30",
+    "registers": {"R2": 0, "R3": 4, "R5": "0x00000005"},
+    "memory_dumps": [{"address": "0x340", "file": "expected.hex"}]
+  }
+}

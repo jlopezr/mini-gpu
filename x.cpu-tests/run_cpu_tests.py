@@ -72,6 +72,20 @@ def load_program(path: Path) -> bytes:
     return data
 
 
+def load_data_file(path: Path) -> bytes:
+    """Load raw bytes, or little-endian 32-bit words from a textual .hex file."""
+    if path.suffix.lower() != ".hex":
+        return path.read_bytes()
+    words = [
+        int(line.split("#", 1)[0].strip(), 16)
+        for line in path.read_text(encoding="ascii").splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+    if any(not 0 <= word <= 0xFFFF_FFFF for word in words):
+        raise ValueError(f"Palabra fuera de 32 bits en {path}")
+    return b"".join(struct.pack("<I", word) for word in words)
+
+
 def parse_register(name: str) -> int:
     if not isinstance(name, str) or not name.upper().startswith("R"):
         raise ValueError(f"Registro inválido: {name!r}")
@@ -156,7 +170,7 @@ def load_case(path: Path) -> dict:
     initial_memory = []
     for item in raw.get("initial_memory", []):
         address = parse_integer(item["address"], "dirección inicial")
-        data = (directory / item["file"]).read_bytes()
+        data = load_data_file(directory / item["file"])
         if not data:
             raise ValueError(f"El fichero inicial {item['file']} está vacío")
         if address + len(data) > FPGA_MEMORY_SIZE:
@@ -166,7 +180,7 @@ def load_case(path: Path) -> dict:
     expected_memory = {}
     for item in expected_raw.get("memory_dumps", []):
         address = parse_integer(item["address"], "dirección de dump")
-        data = (directory / item["file"]).read_bytes()
+        data = load_data_file(directory / item["file"])
         if not data:
             raise ValueError(f"El dump esperado {item['file']} está vacío")
         if address + len(data) > FPGA_MEMORY_SIZE:

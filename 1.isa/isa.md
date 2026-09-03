@@ -165,7 +165,7 @@ El ensamblador calcula estos offsets al resolver labels.
 |      `0x32` | `GETWARP` | `Rd`      | Reservada para GPU                     |
 |      `0x33` | `BAR`     | —         | Reservada para GPU                     |
 | `0x34–0x3D` | —         | —         | Reservadas para GPU                    |
-|      `0x3E` | `TRAP`    | —         | Encoding asignado; semántica pendiente |
+|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error    |
 |      `0x3F` | `HALT`    | —         | Definida e implementada                |
 
 `GETTID` escribe en `Rd` el identificador lineal del work-item. En MiniCPU vale
@@ -175,6 +175,15 @@ calcule diferentes píxeles. Su encoding es I-Type con `X = Rd`, `Y = 0` e
 
 `HALT` detiene la MiniCPU. Su uso dentro de un kernel SIMT se definirá junto con
 el modelo de finalización de threads.
+
+`TRAP` detiene la CPU con un error distinguible de `HALT`. El PC observable
+queda en la dirección de `TRAP`. No salta a un vector y no puede reanudarse sin
+reset. En la futura MiniGPU la política inicial será detener globalmente la
+ejecución; el contexto de lane o warp podrá añadirse sin cambiar el opcode.
+
+Los campos marcados como reservados deben ser cero. Un opcode conocido con
+campos reservados distintos de cero produce `ERROR_INVALID_ENCODING`; un opcode
+reservado o desconocido produce `ERROR_INVALID_OPCODE`.
 
 ## 4. Programa binario
 

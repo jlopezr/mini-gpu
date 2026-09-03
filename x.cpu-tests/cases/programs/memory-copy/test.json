@@ -1,0 +1,13 @@
+{
+  "name": "program-memory-copy",
+  "program": "program.asm",
+  "initial_memory": [{"address": "0x400", "file": "input.hex"}],
+  "expect": {
+    "pc": "0x30",
+    "registers": {
+      "R1": "0x418", "R2": "0x518", "R3": 0,
+      "R5": "0xDEADBEEF", "R6": "0xDEADBEEF"
+    },
+    "memory_dumps": [{"address": "0x500", "file": "input.hex"}]
+  }
+}

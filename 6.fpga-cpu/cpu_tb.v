@@ -356,8 +356,31 @@ module cpu_tb;
     if (retired_count !== 15) $fatal(1, "False-branch retired count mismatch");
     if (error) $fatal(1, "False-branch batch raised an unexpected error");
 
-    // An unimplemented opcode stops the CPU and records an error.
-    instruction_memory[0] = 32'hf800_0000;  // TRAP is not implemented by the minimal CPU.
+    // TRAP is a deliberate error stop and leaves PC at the offending instruction.
+    instruction_memory[0] = 32'hf800_0000;
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (!error || error_code !== 8'h03) $fatal(1, "Explicit TRAP error mismatch");
+    if (debug_pc !== 0) $fatal(1, "Explicit TRAP PC mismatch");
+    if (retired_count !== 0) $fatal(1, "TRAP was incorrectly retired");
+
+    // A known opcode with nonzero reserved fields has a distinct error code.
+    instruction_memory[0] = 32'h0000_0001;  // NOP with reserved bit 0 set.
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (!error || error_code !== 8'h05) $fatal(1, "Invalid encoding error mismatch");
+    if (debug_pc !== 0) $fatal(1, "Invalid encoding PC mismatch");
+
+    // A reserved opcode remains an invalid opcode, independently of encoding.
+    instruction_memory[0] = 32'h6c00_0000;  // Reserved opcode 0x1b.
     reset_cpu();
     pulse_run();
     wait (!halted);
@@ -365,7 +388,7 @@ module cpu_tb;
     @(posedge clk);
     #1;
     if (!error || error_code !== 8'h01) $fatal(1, "Invalid opcode error mismatch");
-    if (retired_count !== 0) $fatal(1, "Invalid opcode was incorrectly retired");
+    if (debug_pc !== 0) $fatal(1, "Invalid opcode PC mismatch");
 
     $display("PASS: minimal CPU behavior is correct");
     $finish;

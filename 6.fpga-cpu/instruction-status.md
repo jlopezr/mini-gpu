@@ -47,7 +47,7 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 | `0x25` | `BGEU`      |     OK      |    OK     |    OK     | Comparación unsigned.                                                            |
 | `0x2F` | `BRA`       |     OK      |    OK     |    OK     | Offset signed de 26 bits, expresado en palabras.                                 |
 | `0x30` | `GETTID`    |     OK      |    OK     |    OK     | En MiniCPU escribe cero; en MiniGPU será el ID del thread.                       |
-| `0x3E` | `TRAP`      |     OK      |  PARCIAL  |  PARCIAL  | El encoding existe, pero aún cae en el error genérico de opcode no implementado. |
+| `0x3E` | `TRAP`      |     OK      |    OK     |    OK     | Detiene la CPU con error explícito y conserva su PC.                             |
 | `0x3F` | `HALT`      |     OK      |    OK     |    OK     | Detiene la ejecución después de retirar la instrucción.                          |
 
 ## Opcodes reservados
@@ -81,51 +81,46 @@ asignada en la tabla principal:
 | Implementación      | Completas |  Parciales | Pendientes |
 |---------------------|----------:|-----------:|-----------:|
 | Ensamblador         |        30 |          0 |          0 |
-| Simulador funcional |        29 | 1 (`TRAP`) |          0 |
-| CPU FPGA            |        26 | 1 (`TRAP`) |          3 |
+| Simulador funcional |        30 |          0 |          0 |
+| CPU FPGA            |        27 |          0 |          3 |
 
-`TRAP` se considera parcial porque ambas implementaciones se detienen ante su
-opcode, pero no existe todavía el estado arquitectónico específico que permita
-distinguir un `TRAP` intencionado de un opcode sin implementar.
+Los errores detienen la CPU y conservan el código y PC de la instrucción que
+los produjo. No existen vector, handler ni reanudación.
 
 ## Temas pendientes
 
 ### 1. Mantener cerrado el simulador funcional
 
-El simulador implementa ya todas las instrucciones definidas salvo la semántica
-arquitectónica formal de `TRAP`. Debe conservarse como referencia ejecutable y
-ampliar sus pruebas cada vez que cambie la especificación.
+El simulador implementa todas las instrucciones definidas y su estado de error.
+Debe conservarse como referencia ejecutable y ampliar sus pruebas cada vez que
+cambie la especificación.
 
 ### 2. Ampliar la CPU FPGA por grupos
 
 Orden recomendado:
 
-1. `TRAP` formal.
-2. `MUL` y `MULFX`, comprobando el uso de los multiplicadores `MULT18X18D`.
-3. `DIV` mediante una unidad iterativa multiciclo.
+1. `MUL` y `MULFX`, comprobando el uso de los multiplicadores `MULT18X18D`.
+2. `DIV` mediante una unidad iterativa multiciclo.
 
 Después de cada grupo hay que repetir `apio build` y comprobar explícitamente
 el margen sobre 120 MHz.
 
 ### 3. Formalizar los traps
 
-Actualmente la FPGA distingue únicamente:
+El simulador y la FPGA distinguen:
 
 | Código | Error actual                |
 |-------:|-----------------------------|
 | `0x01` | Opcode no implementado.     |
 | `0x02` | Acceso de memoria inválido. |
+| `0x03` | Instrucción `TRAP` explícita. |
+| `0x04` | División por cero; reservado hasta implementar `DIV` en FPGA. |
+| `0x05` | Opcode conocido con campos reservados inválidos. |
 
-Falta definir al menos:
-
-- instrucción `TRAP` explícita;
-- encoding inválido, por ejemplo campos reservados distintos de cero;
-- división por cero;
-- fetch desalineado o fuera de memoria;
-- posibilidad de conocer el PC de la instrucción que produjo el error.
-
-También debe decidirse si un trap solo detiene la CPU o si en el futuro salta a
-un vector de excepciones.
+Ante un error, el PC vuelve a señalar la instrucción que lo produjo. `HALT`
+continúa siendo una parada normal con `error = 0`. Un fetch o acceso de datos
+inválido usa `0x02`. No hay vector de excepciones: el monitor inspecciona código
+y PC después de la parada.
 
 ### 4. Mantener documentada la diferencia de memoria
 

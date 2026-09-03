@@ -54,8 +54,8 @@ class SimulatorBackend:
 
         return {
             "halted": cpu.halted,
-            "error": False,
-            "error_code": 0,
+            "error": cpu.error,
+            "error_code": cpu.error_code,
             "pc": cpu.pc,
             "registers": {number: cpu.regs[number] for number in register_numbers},
             "memory": {

@@ -66,6 +66,10 @@ memoria a palabras little-endian sin generar artefactos intermedios.
 La longitud de cada región se deduce del tamaño del fichero binario. La
 comparación informa de la primera dirección y offset distintos.
 
+Los ficheros de memoria inicial y los dumps esperados pueden ser binarios o
+`.hex`. En un fichero `.hex`, cada línea representa una palabra de 32 bits que
+se convierte a cuatro bytes little-endian; se admiten comentarios con `#`.
+
 ## Direcciones de datos
 
 Los JSON utilizan siempre direcciones locales de la CPU entre `0x00000000` y
@@ -83,3 +87,31 @@ El modo `both` realiza primero la comparación de cada backend contra los valore
 esperados. Después comprueba que los estados observados del simulador y la FPGA
 sean idénticos. Los valores esperados siguen siendo necesarios: dos
 implementaciones podrían compartir el mismo error.
+
+## Estado de error
+
+Los errores detienen la CPU y hacen que el PC observable señale la instrucción
+causante. Los códigos comunes son:
+
+| Código | Significado |
+|-------:|-------------|
+| `0x01` | Opcode reservado, desconocido o todavía no implementado |
+| `0x02` | Acceso de memoria inválido |
+| `0x03` | Instrucción `TRAP` explícita |
+| `0x04` | División por cero |
+| `0x05` | Opcode conocido con campos reservados inválidos |
+
+Los casos de `cases/errors` verifican por separado `TRAP`, opcode inválido y
+encoding inválido sobre ambos backends.
+
+## Programas de integración
+
+`cases/programs` contiene cargas de trabajo pequeñas pero completas:
+
+- `fibonacci`: bucle, aritmética y generación secuencial de un array;
+- `array-sum`: entrada inicial, acumulación con wrap y resultado en memoria;
+- `memory-copy`: dos punteros, `LOAD`, `STORE` y offset negativo;
+- `shift-multiply`: multiplicación sin `MUL`, mediante sumas y shifts.
+
+Estos casos complementan los tests unitarios de RTL comprobando el flujo entero
+ensamblador, CPU, memoria, monitor y backend.

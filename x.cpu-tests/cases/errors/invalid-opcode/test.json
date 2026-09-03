@@ -1,0 +1,11 @@
+{
+  "name": "invalid-opcode",
+  "program": "program.hex",
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x01",
+    "pc": "0x00000000"
+  }
+}
+

@@ -55,12 +55,15 @@ module cpu (
   localparam [5:0] OPCODE_NOP = 6'h00;
   localparam [5:0] OPCODE_ADD = 6'h01;
   localparam [5:0] OPCODE_SUB = 6'h02;
+  localparam [5:0] OPCODE_MULFX = 6'h03;
   localparam [5:0] OPCODE_AND = 6'h04;
   localparam [5:0] OPCODE_OR = 6'h05;
   localparam [5:0] OPCODE_XOR = 6'h06;
   localparam [5:0] OPCODE_SHL = 6'h07;
   localparam [5:0] OPCODE_SHR = 6'h08;
   localparam [5:0] OPCODE_SAR = 6'h09;
+  localparam [5:0] OPCODE_MUL = 6'h0a;
+  localparam [5:0] OPCODE_DIV = 6'h0c;
   localparam [5:0] OPCODE_MOVI = 6'h10;
   localparam [5:0] OPCODE_ADDI = 6'h11;
   localparam [5:0] OPCODE_ANDI = 6'h12;
@@ -77,11 +80,19 @@ module cpu (
   localparam [5:0] OPCODE_BGEU = 6'h25;
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
+  localparam [5:0] OPCODE_TRAP = 6'h3e;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
+  // Errors are terminal in this teaching CPU: there is no exception vector or
+  // resume operation. On error, PC is restored to the offending instruction
+  // so GET_STATUS provides a useful diagnostic without a separate error-PC
+  // register or a wider monitor protocol.
   localparam [7:0] ERROR_NONE = 8'h00;
   localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
   localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
+  localparam [7:0] ERROR_EXPLICIT_TRAP = 8'h03;
+  localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
+  localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
 
   localparam [3:0] STATE_HALTED = 4'd0;
   localparam [3:0] STATE_FETCH_REQUEST = 4'd1;
@@ -122,6 +133,27 @@ module cpu (
   wire [4:0] rb = instruction[15:11];
   wire [31:0] immediate_signed = {{16{instruction[15]}}, instruction[15:0]};
   wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
+
+  // Validate the reserved fields combinationally, then register the result in
+  // STATE_DECODE. The register keeps validation logic out of the execute-state
+  // control path and was necessary to retain timing closure at 120 MHz.
+  reg instruction_encoding_valid;
+  reg instruction_encoding_valid_registered;
+  always @* begin
+    instruction_encoding_valid = 1'b1;
+    case (opcode)
+      OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
+        instruction_encoding_valid = instruction[25:0] == 0;
+      OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV:
+        instruction_encoding_valid = instruction[10:0] == 0;
+      OPCODE_MOVI, OPCODE_MOVHI:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_GETTID:
+        instruction_encoding_valid = instruction[20:0] == 0;
+      default: instruction_encoding_valid = 1'b1;
+    endcase
+  end
 
   wire [31:0] register_a;
   wire [31:0] register_b;
@@ -193,6 +225,7 @@ module cpu (
       register_write_enable <= 1'b0;
       register_write_address <= 5'd0;
       register_write_data <= 32'h0000_0000;
+      instruction_encoding_valid_registered <= 1'b1;
     end else begin
       if (halt_request && state != STATE_HALTED) begin
         halt_pending <= 1'b1;
@@ -249,13 +282,21 @@ module cpu (
         STATE_DECODE: begin
           operand_a <= register_a;
           operand_b <= register_b;
+          instruction_encoding_valid_registered <= instruction_encoding_valid;
           state <= STATE_EXECUTE;
         end
 
         STATE_EXECUTE: begin
           halt_after_retire <= 1'b0;
 
-          case (opcode)
+          if (!instruction_encoding_valid_registered) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_INVALID_ENCODING;
+            // Fetch has already advanced PC, so restore the faulting address.
+            pc <= pc - 3'd4;
+            state <= STATE_HALTED;
+          end else case (opcode)
             OPCODE_NOP: begin
               state <= STATE_RETIRE;
             end
@@ -451,10 +492,20 @@ module cpu (
               state <= STATE_RETIRE;
             end
 
+            OPCODE_TRAP: begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_EXPLICIT_TRAP;
+              // TRAP is a terminal diagnostic stop, not a retired HALT.
+              pc <= pc - 3'd4;
+              state <= STATE_HALTED;
+            end
+
             default: begin
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_INVALID_OPCODE;
+              pc <= pc - 3'd4;
               state <= STATE_HALTED;
             end
           endcase
@@ -469,6 +520,7 @@ module cpu (
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_MEMORY_ACCESS;
+              pc <= pc - 3'd4;
               state <= STATE_HALTED;
             end else begin
               if (load_pending) begin

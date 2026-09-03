@@ -1,0 +1,11 @@
+{
+  "name": "explicit-trap",
+  "program": "program.asm",
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x03",
+    "pc": "0x00000000"
+  }
+}
+
