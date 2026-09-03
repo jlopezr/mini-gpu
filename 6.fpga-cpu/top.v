@@ -57,6 +57,30 @@ module top (
   wire mem_ready;
   wire mem_error;
 
+  wire cpu_run_request;
+  wire cpu_halt_request;
+  wire cpu_step_request;
+  wire cpu_halted;
+  wire cpu_error;
+  wire [7:0] cpu_error_code;
+  wire cpu_instruction_retired;
+  wire [4:0] cpu_debug_register_address;
+  wire [31:0] cpu_debug_register_data;
+  wire [31:0] cpu_pc;
+
+  wire cpu_imem_valid;
+  wire [31:0] cpu_imem_address;
+  wire [31:0] cpu_imem_read_data;
+  wire cpu_imem_ready;
+
+  wire cpu_dmem_valid;
+  wire [31:0] cpu_dmem_address;
+  wire [31:0] cpu_dmem_write_data;
+  wire [3:0] cpu_dmem_write_enable;
+  wire [31:0] cpu_dmem_read_data;
+  wire cpu_dmem_ready;
+  wire cpu_dmem_error;
+
   monitor monitor_i (
       .clk(clk),
       .reset(reset),
@@ -72,11 +96,46 @@ module top (
       .mem_read_data(mem_read_data),
       .mem_ready(mem_ready),
       .mem_error(mem_error),
+      .cpu_run_request(cpu_run_request),
+      .cpu_halt_request(cpu_halt_request),
+      .cpu_step_request(cpu_step_request),
+      .cpu_halted(cpu_halted),
+      .cpu_error(cpu_error),
+      .cpu_error_code(cpu_error_code),
+      .cpu_pc(cpu_pc),
+      .cpu_debug_register_address(cpu_debug_register_address),
+      .cpu_debug_register_data(cpu_debug_register_data),
       .last_command(last_command),
       .busy(monitor_busy)
   );
 
-  // Temporary Harvard map: separate 16 KiB program and data memories.
+  cpu cpu_i (
+      .clk(clk),
+      .reset(reset),
+      .run_request(cpu_run_request),
+      .halt_request(cpu_halt_request),
+      .step_request(cpu_step_request),
+      .halted(cpu_halted),
+      .error(cpu_error),
+      .error_code(cpu_error_code),
+      .instruction_retired(cpu_instruction_retired),
+      .imem_valid(cpu_imem_valid),
+      .imem_address(cpu_imem_address),
+      .imem_read_data(cpu_imem_read_data),
+      .imem_ready(cpu_imem_ready),
+      .dmem_valid(cpu_dmem_valid),
+      .dmem_address(cpu_dmem_address),
+      .dmem_write_data(cpu_dmem_write_data),
+      .dmem_write_enable(cpu_dmem_write_enable),
+      .dmem_read_data(cpu_dmem_read_data),
+      .dmem_ready(cpu_dmem_ready),
+      .dmem_error(cpu_dmem_error),
+      .debug_register_address(cpu_debug_register_address),
+      .debug_register_data(cpu_debug_register_data),
+      .debug_pc(cpu_pc)
+  );
+
+  // Shared Harvard map: monitor when halted, CPU while running.
   memory_map memory_map_i (
       .clk(clk),
       .reset(reset),
@@ -86,11 +145,23 @@ module top (
       .read_enable(mem_read_enable),
       .read_data(mem_read_data),
       .ready(mem_ready),
-      .error(mem_error)
+      .error(mem_error),
+      .cpu_halted(cpu_halted),
+      .cpu_imem_valid(cpu_imem_valid),
+      .cpu_imem_address(cpu_imem_address),
+      .cpu_imem_read_data(cpu_imem_read_data),
+      .cpu_imem_ready(cpu_imem_ready),
+      .cpu_dmem_valid(cpu_dmem_valid),
+      .cpu_dmem_address(cpu_dmem_address),
+      .cpu_dmem_write_data(cpu_dmem_write_data),
+      .cpu_dmem_write_enable(cpu_dmem_write_enable),
+      .cpu_dmem_read_data(cpu_dmem_read_data),
+      .cpu_dmem_ready(cpu_dmem_ready),
+      .cpu_dmem_error(cpu_dmem_error)
   );
 
   // Display the last command. LED 7 lights while a response is pending.
-  assign led = {monitor_busy, last_command[6:0]};
+  assign led = {monitor_busy, cpu_error, cpu_halted, last_command[4:0]};
 endmodule
 
 `default_nettype wire

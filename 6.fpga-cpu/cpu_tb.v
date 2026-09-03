@@ -40,6 +40,13 @@ module cpu_tb;
       .imem_address(imem_address),
       .imem_read_data(imem_read_data),
       .imem_ready(imem_ready),
+      .dmem_valid(),
+      .dmem_address(),
+      .dmem_write_data(),
+      .dmem_write_enable(),
+      .dmem_read_data(32'h0000_0000),
+      .dmem_ready(1'b0),
+      .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
       .debug_pc(debug_pc)
@@ -90,6 +97,7 @@ module cpu_tb;
     input [31:0] expected;
     begin
       debug_register_address = address;
+      repeat (2) @(posedge clk);
       #1;
       if (debug_register_data !== expected) begin
         $fatal(
@@ -115,11 +123,11 @@ module cpu_tb;
     reset_cpu();
     if (!halted || debug_pc !== 0 || error) $fatal(1, "Reset state mismatch");
 
-        pulse_run();
-        wait (!halted);
-        wait (halted);
-        @(posedge clk);
-        #1;
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
     expect_register(5'd1, 32'd10);
     expect_register(5'd2, 32'd20);
     expect_register(5'd3, 32'd30);
@@ -131,11 +139,11 @@ module cpu_tb;
     instruction_memory[0] = 32'h4000_ffff;  // MOVI R0, -1
     instruction_memory[1] = 32'hfc00_0000;  // HALT
     reset_cpu();
-        pulse_step();
-        wait (!halted);
-        wait (halted);
-        @(posedge clk);
-        #1;
+    pulse_step();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
     expect_register(5'd0, 32'hffff_ffff);
     if (debug_pc !== 32'h0000_0004) $fatal(1, "STEP PC mismatch");
     if (retired_count !== 1) $fatal(1, "STEP retired more than one instruction");
@@ -149,21 +157,21 @@ module cpu_tb;
     halt_request = 1'b1;
     @(posedge clk);
     @(negedge clk);
-        halt_request = 1'b0;
-        wait (halted);
-        @(posedge clk);
-        #1;
+    halt_request = 1'b0;
+    wait (halted);
+    @(posedge clk);
+    #1;
     if (retired_count !== 1) $fatal(1, "HALT request did not stop at retirement");
     if (debug_pc !== 32'h0000_0004) $fatal(1, "HALT request PC mismatch");
 
     // An unimplemented opcode stops the CPU and records an error.
     instruction_memory[0] = 32'hf800_0000;  // TRAP is not implemented by the minimal CPU.
     reset_cpu();
-        pulse_run();
-        wait (!halted);
-        wait (halted);
-        @(posedge clk);
-        #1;
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
     if (!error || error_code !== 8'h01) $fatal(1, "Invalid opcode error mismatch");
     if (retired_count !== 0) $fatal(1, "Invalid opcode was incorrectly retired");
 

@@ -6,6 +6,8 @@
  * Implemented instructions:
  *   MOVI Rd, imm16
  *   ADD  Rd, Ra, Rb
+ *   LOAD Rd, Ra, imm16
+ *   STORE Rs, Ra, imm16
  *   HALT
  *
  * The CPU starts halted after reset. run_request starts continuous execution;
@@ -30,6 +32,14 @@ module cpu (
     input [31:0] imem_read_data,
     input imem_ready,
 
+    output reg dmem_valid,
+    output reg [31:0] dmem_address,
+    output reg [31:0] dmem_write_data,
+    output reg [3:0] dmem_write_enable,
+    input [31:0] dmem_read_data,
+    input dmem_ready,
+    input dmem_error,
+
     input [4:0] debug_register_address,
     output [31:0] debug_register_data,
     output [31:0] debug_pc
@@ -37,16 +47,21 @@ module cpu (
 
   localparam [5:0] OPCODE_ADD = 6'h01;
   localparam [5:0] OPCODE_MOVI = 6'h10;
+  localparam [5:0] OPCODE_LOAD = 6'h15;
+  localparam [5:0] OPCODE_STORE = 6'h16;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
   localparam [7:0] ERROR_NONE = 8'h00;
   localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
+  localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
 
   localparam [2:0] STATE_HALTED = 3'd0;
   localparam [2:0] STATE_FETCH_REQUEST = 3'd1;
   localparam [2:0] STATE_FETCH_WAIT = 3'd2;
   localparam [2:0] STATE_EXECUTE = 3'd3;
   localparam [2:0] STATE_RETIRE = 3'd4;
+  localparam [2:0] STATE_MEMORY_WAIT = 3'd5;
+  localparam [2:0] STATE_DECODE = 3'd6;
 
   reg [2:0] state;
   reg [31:0] pc;
@@ -54,6 +69,10 @@ module cpu (
   reg step_active;
   reg halt_pending;
   reg halt_after_retire;
+  reg load_pending;
+  reg [4:0] load_destination;
+  reg [31:0] operand_a;
+  reg [31:0] operand_b;
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
@@ -63,6 +82,14 @@ module cpu (
 
   wire [31:0] register_a;
   wire [31:0] register_b;
+
+  /*
+   * STORE takes its source from the Rd field, whereas register-register ALU
+   * instructions take their second operand from Rb. Registering this selection
+   * during fetch keeps opcode decoding out of the register-file read path.
+   * See timing.md, "Selección del segundo operando".
+   */
+  reg [4:0] register_b_address;
   reg register_write_enable;
   reg [4:0] register_write_address;
   reg [31:0] register_write_data;
@@ -74,7 +101,7 @@ module cpu (
       .reset(reset),
       .read_address_a(ra),
       .read_data_a(register_a),
-      .read_address_b(rb),
+      .read_address_b(register_b_address),
       .read_data_b(register_b),
       .write_enable(register_write_enable),
       .write_address(register_write_address),
@@ -99,6 +126,15 @@ module cpu (
       error_code <= ERROR_NONE;
       imem_valid <= 1'b0;
       imem_address <= 32'h0000_0000;
+      dmem_valid <= 1'b0;
+      dmem_address <= 32'h0000_0000;
+      dmem_write_data <= 32'h0000_0000;
+      dmem_write_enable <= 4'b0000;
+      load_pending <= 1'b0;
+      load_destination <= 5'd0;
+      operand_a <= 32'h0000_0000;
+      operand_b <= 32'h0000_0000;
+      register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
       register_write_address <= 5'd0;
       register_write_data <= 32'h0000_0000;
@@ -132,10 +168,25 @@ module cpu (
         STATE_FETCH_WAIT: begin
           if (imem_valid && imem_ready) begin
             instruction <= imem_read_data;
+            // Resolve the shared Rd/Rb field before the operand-read cycle.
+            register_b_address <=
+                imem_read_data[31:26] == OPCODE_STORE ?
+                    imem_read_data[25:21] : imem_read_data[15:11];
             imem_valid <= 1'b0;
             pc <= pc + 3'd4;
-            state <= STATE_EXECUTE;
+            state <= STATE_DECODE;
           end
+        end
+
+        /*
+         * Register the operands before the ALU. This is an extra cycle in the
+         * multicyle CPU, not instruction pipelining. It breaks the long path
+         * from the asynchronous register-file mux through the 32-bit adder.
+         */
+        STATE_DECODE: begin
+          operand_a <= register_a;
+          operand_b <= register_b;
+          state <= STATE_EXECUTE;
         end
 
         STATE_EXECUTE: begin
@@ -151,9 +202,27 @@ module cpu (
 
             OPCODE_ADD: begin
               register_write_address <= rd;
-              register_write_data <= register_a + register_b;
+              register_write_data <= operand_a + operand_b;
               register_write_enable <= 1'b1;
               state <= STATE_RETIRE;
+            end
+
+            OPCODE_LOAD: begin
+              dmem_address <= operand_a + immediate_signed;
+              dmem_write_enable <= 4'b0000;
+              dmem_valid <= 1'b1;
+              load_pending <= 1'b1;
+              load_destination <= rd;
+              state <= STATE_MEMORY_WAIT;
+            end
+
+            OPCODE_STORE: begin
+              dmem_address <= operand_a + immediate_signed;
+              dmem_write_data <= operand_b;
+              dmem_write_enable <= 4'b1111;
+              dmem_valid <= 1'b1;
+              load_pending <= 1'b0;
+              state <= STATE_MEMORY_WAIT;
             end
 
             OPCODE_HALT: begin
@@ -168,6 +237,29 @@ module cpu (
               state <= STATE_HALTED;
             end
           endcase
+        end
+
+        STATE_MEMORY_WAIT: begin
+          if (dmem_valid && dmem_ready) begin
+            dmem_valid <= 1'b0;
+            dmem_write_enable <= 4'b0000;
+
+            if (dmem_error) begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_MEMORY_ACCESS;
+              state <= STATE_HALTED;
+            end else begin
+              if (load_pending) begin
+                register_write_address <= load_destination;
+                register_write_data <= dmem_read_data;
+                register_write_enable <= 1'b1;
+              end
+
+              load_pending <= 1'b0;
+              state <= STATE_RETIRE;
+            end
+          end
         end
 
         STATE_RETIRE: begin

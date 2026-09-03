@@ -47,6 +47,21 @@ module register_file_tb;
     end
   endtask
 
+  task expect_debug_register;
+    input [4:0] address;
+    input [31:0] expected;
+    begin
+      @(negedge clk);
+      debug_address = address;
+      repeat (2) @(posedge clk);
+      #1;
+
+      if (debug_data !== expected) begin
+        $fatal(1, "Debug R%0d mismatch", address);
+      end
+    end
+  endtask
+
   initial begin
     $dumpvars(0, register_file_tb);
 
@@ -55,11 +70,7 @@ module register_file_tb;
 
     // Reset must clear every register, including R0.
     for (index = 0; index < 32; index = index + 1) begin
-      debug_address = index;
-      #1;
-      if (debug_data !== 32'h0000_0000) begin
-        $fatal(1, "R%0d was not cleared by reset", index);
-      end
+      expect_debug_register(index, 32'h0000_0000);
     end
 
     // The two CPU read ports operate independently and simultaneously.
@@ -78,9 +89,7 @@ module register_file_tb;
     if (read_data_a !== 32'hffff_ffff) $fatal(1, "R0 is not writable");
 
     // The debug port can inspect a register independently of the CPU ports.
-    debug_address = 5'd2;
-    #1;
-    if (debug_data !== 32'hdead_beef) $fatal(1, "Debug port mismatch");
+    expect_debug_register(5'd2, 32'hdead_beef);
 
     // Data and address changes must have no effect while writes are disabled.
     @(negedge clk);
@@ -88,9 +97,7 @@ module register_file_tb;
     write_address = 5'd1;
     write_data = 32'haaaa_5555;
     @(negedge clk);
-    debug_address = 5'd1;
-    #1;
-    if (debug_data !== 32'h1234_5678) $fatal(1, "Disabled write changed R1");
+    expect_debug_register(5'd1, 32'h1234_5678);
 
     $display("PASS: register file behavior is correct");
     $finish;

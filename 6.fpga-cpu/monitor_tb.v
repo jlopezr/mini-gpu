@@ -20,10 +20,22 @@ module monitor_tb;
   wire [7:0] mem_read_data;
   wire mem_ready;
   wire mem_error;
+  wire cpu_run_request;
+  wire cpu_halt_request;
+  wire cpu_step_request;
+  reg cpu_halted = 1'b1;
+  reg cpu_error = 1'b0;
+  reg [7:0] cpu_error_code = 8'h00;
+  reg [31:0] cpu_pc = 32'h1234_5678;
+  wire [4:0] cpu_debug_register_address;
+  reg [31:0] cpu_debug_register_data = 32'hdead_beef;
 
-  reg [7:0] received[0:31];
+  reg [7:0] received[0:63];
   integer received_count = 0;
   integer busy_cycles = 0;
+  reg run_request_seen = 1'b0;
+  reg halt_request_seen = 1'b0;
+  reg step_request_seen = 1'b0;
 
   always #5 clk = ~clk;
 
@@ -42,6 +54,15 @@ module monitor_tb;
       .mem_read_data(mem_read_data),
       .mem_ready(mem_ready),
       .mem_error(mem_error),
+      .cpu_run_request(cpu_run_request),
+      .cpu_halt_request(cpu_halt_request),
+      .cpu_step_request(cpu_step_request),
+      .cpu_halted(cpu_halted),
+      .cpu_error(cpu_error),
+      .cpu_error_code(cpu_error_code),
+      .cpu_pc(cpu_pc),
+      .cpu_debug_register_address(cpu_debug_register_address),
+      .cpu_debug_register_data(cpu_debug_register_data),
       .last_command(last_command),
       .busy(busy)
   );
@@ -55,7 +76,19 @@ module monitor_tb;
       .read_enable(mem_read_enable),
       .read_data(mem_read_data),
       .ready(mem_ready),
-      .error(mem_error)
+      .error(mem_error),
+      .cpu_halted(cpu_halted),
+      .cpu_imem_valid(1'b0),
+      .cpu_imem_address(32'h0000_0000),
+      .cpu_imem_read_data(),
+      .cpu_imem_ready(),
+      .cpu_dmem_valid(1'b0),
+      .cpu_dmem_address(32'h0000_0000),
+      .cpu_dmem_write_data(32'h0000_0000),
+      .cpu_dmem_write_enable(4'b0000),
+      .cpu_dmem_read_data(),
+      .cpu_dmem_ready(),
+      .cpu_dmem_error()
   );
 
   // Minimal model of the uart_tx ready/strobe handshake.
@@ -74,6 +107,10 @@ module monitor_tb;
         tx_ready <= 1'b1;
       end
     end
+
+    if (cpu_run_request) run_request_seen <= 1'b1;
+    if (cpu_halt_request) halt_request_seen <= 1'b1;
+    if (cpu_step_request) step_request_seen <= 1'b1;
   end
 
   task send_command;
@@ -103,7 +140,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h00) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h01) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -190,6 +227,50 @@ module monitor_tb;
     send_command(8'h00);
     wait (received_count == 18);
     if (received[17] !== 8'hff) $fatal(1, "Unmapped address mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h33);
+    wait (received_count == 25);
+    if (received[18] !== 8'hb3) $fatal(1, "STATUS response mismatch");
+    if (received[19] !== 8'h01) $fatal(1, "STATUS flags mismatch");
+    if (received[20] !== 8'h00) $fatal(1, "STATUS error code mismatch");
+    if ({received[21], received[22], received[23], received[24]} !== 32'h1234_5678)
+      $fatal(1, "STATUS PC mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h34);
+    send_command(8'h07);
+    wait (received_count == 30);
+    if (cpu_debug_register_address !== 5'd7) $fatal(1, "READ_REG address mismatch");
+    if (received[25] !== 8'hb4) $fatal(1, "READ_REG response mismatch");
+    if ({received[26], received[27], received[28], received[29]} !== 32'hdead_beef)
+      $fatal(1, "READ_REG data mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h30);
+    wait (received_count == 31);
+    if (received[30] !== 8'hb0 || !run_request_seen) $fatal(1, "RUN mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h32);
+    wait (received_count == 32);
+    if (received[31] !== 8'hb2 || !step_request_seen) $fatal(1, "STEP mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h31);
+    wait (received_count == 33);
+    if (received[32] !== 8'hb1 || !halt_request_seen) $fatal(1, "HALT mismatch");
+
+    // Memory commands are rejected while the CPU owns the memories.
+    cpu_halted = 1'b0;
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    wait (received_count == 34);
+    if (received[33] !== 8'hff) $fatal(1, "Running CPU memory access mismatch");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

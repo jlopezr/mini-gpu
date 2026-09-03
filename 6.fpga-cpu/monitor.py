@@ -26,6 +26,11 @@ CMD_WRITE_BYTE = 0x10
 CMD_READ_BYTE = 0x11
 CMD_WRITE_BLOCK = 0x20
 CMD_READ_BLOCK = 0x21
+CMD_RUN = 0x30
+CMD_HALT = 0x31
+CMD_STEP = 0x32
+CMD_GET_STATUS = 0x33
+CMD_READ_REGISTER = 0x34
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -33,6 +38,11 @@ RSP_WRITE_BYTE = b"\x90"
 RSP_READ_BYTE = 0x91
 RSP_WRITE_BLOCK = b"\xa0"
 RSP_READ_BLOCK = 0xA1
+RSP_RUN = b"\xb0"
+RSP_HALT = b"\xb1"
+RSP_STEP = b"\xb2"
+RSP_STATUS = 0xB3
+RSP_READ_REGISTER = 0xB4
 RSP_ERROR = 0xFF
 
 
@@ -47,6 +57,14 @@ class Version:
 
     def __str__(self) -> str:
         return f"{self.major}.{self.minor}"
+
+
+@dataclass(frozen=True)
+class CpuStatus:
+    halted: bool
+    error: bool
+    error_code: int
+    pc: int
 
 
 class MonitorClient:
@@ -149,6 +167,45 @@ class MonitorClient:
             result.extend(self.read_block(address + offset, chunk_length))
         return bytes(result)
 
+    def run_cpu(self) -> None:
+        response = self._request(bytes((CMD_RUN,)), 1)
+        if response != RSP_RUN:
+            raise MonitorError(f"Invalid RUN response: {response.hex(' ')}")
+
+    def halt_cpu(self) -> None:
+        response = self._request(bytes((CMD_HALT,)), 1)
+        if response != RSP_HALT:
+            raise MonitorError(f"Invalid HALT response: {response.hex(' ')}")
+
+    def step_cpu(self) -> None:
+        response = self._request(bytes((CMD_STEP,)), 1)
+        if response != RSP_STEP:
+            raise MonitorError(f"Invalid STEP response: {response.hex(' ')}")
+
+    def get_status(self) -> CpuStatus:
+        response = self._request(bytes((CMD_GET_STATUS,)), 7)
+        if response[0] != RSP_STATUS:
+            raise MonitorError(f"Invalid STATUS response: {response.hex(' ')}")
+
+        return CpuStatus(
+            halted=bool(response[1] & 0x01),
+            error=bool(response[1] & 0x02),
+            error_code=response[2],
+            pc=int.from_bytes(response[3:7], byteorder="big"),
+        )
+
+    def read_register(self, register: int) -> int:
+        if not 0 <= register < 32:
+            raise MonitorError("Register number must be between 0 and 31")
+
+        self._send(bytes((CMD_READ_REGISTER, register)))
+        header = self._read_exact(1)
+        if header[0] == RSP_ERROR:
+            raise MonitorError("The FPGA rejected the command")
+        if header[0] != RSP_READ_REGISTER:
+            raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
+        return int.from_bytes(self._read_exact(4), byteorder="big")
+
 
 def available_ports() -> str:
     ports = list(list_ports.comports())
@@ -172,6 +229,11 @@ def parse_args() -> argparse.Namespace:
             "write-block",
             "read-block",
             "verify",
+            "run",
+            "halt",
+            "step",
+            "status",
+            "read-register",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -228,6 +290,11 @@ def main() -> int:
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
+            "run": 0,
+            "halt": 0,
+            "step": 0,
+            "status": 0,
+            "read-register": 1,
         }
         if len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
@@ -279,7 +346,7 @@ def main() -> int:
                     f"Read {len(data)} byte(s) from address 0x{address:04x} "
                     f"into {destination}"
                 )
-            else:
+            elif args.command == "verify":
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 source = Path(args.arguments[1])
                 expected = source.read_bytes()
@@ -295,6 +362,25 @@ def main() -> int:
                         f"memory=0x{actual[mismatch]:02x}, file=0x{expected[mismatch]:02x}"
                     )
                 print(f"Verified {len(expected)} byte(s) at address 0x{address:04x}")
+            elif args.command == "run":
+                client.run_cpu()
+                print("CPU started")
+            elif args.command == "halt":
+                client.halt_cpu()
+                print("CPU halt requested")
+            elif args.command == "step":
+                client.step_cpu()
+                print("CPU step requested")
+            elif args.command == "status":
+                status = client.get_status()
+                print(
+                    f"CPU halted={status.halted} error={status.error} "
+                    f"error_code=0x{status.error_code:02x} pc=0x{status.pc:08x}"
+                )
+            else:
+                register = parse_integer(args.arguments[0], 31, "register number")
+                value = client.read_register(register)
+                print(f"R{register} = 0x{value:08x} ({value})")
 
     except (MonitorError, OSError, serial.SerialException) as error:
         print(f"Error: {error}", file=sys.stderr)

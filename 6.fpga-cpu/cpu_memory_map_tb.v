@@ -1,0 +1,175 @@
+`timescale 1ns / 1ps
+`default_nettype none
+
+module cpu_memory_map_tb;
+
+  reg clk = 1'b0;
+  reg reset = 1'b1;
+  reg run_request = 1'b0;
+  reg halt_request = 1'b0;
+  reg step_request = 1'b0;
+
+  reg [31:0] monitor_address = 32'h0000_0000;
+  reg [7:0] monitor_write_data = 8'h00;
+  reg monitor_write_enable = 1'b0;
+  reg monitor_read_enable = 1'b0;
+
+  wire [7:0] monitor_read_data;
+  wire monitor_ready;
+  wire monitor_error;
+  wire halted;
+  wire error;
+  wire [7:0] error_code;
+  wire instruction_retired;
+  wire imem_valid;
+  wire [31:0] imem_address;
+  wire [31:0] imem_read_data;
+  wire imem_ready;
+  wire dmem_valid;
+  wire [31:0] dmem_address;
+  wire [31:0] dmem_write_data;
+  wire [3:0] dmem_write_enable;
+  wire [31:0] dmem_read_data;
+  wire dmem_ready;
+  wire dmem_error;
+  reg [4:0] debug_register_address = 5'd0;
+  wire [31:0] debug_register_data;
+  wire [31:0] debug_pc;
+
+  always #5 clk = ~clk;
+
+  cpu cpu_i (
+      .clk(clk),
+      .reset(reset),
+      .run_request(run_request),
+      .halt_request(halt_request),
+      .step_request(step_request),
+      .halted(halted),
+      .error(error),
+      .error_code(error_code),
+      .instruction_retired(instruction_retired),
+      .imem_valid(imem_valid),
+      .imem_address(imem_address),
+      .imem_read_data(imem_read_data),
+      .imem_ready(imem_ready),
+      .dmem_valid(dmem_valid),
+      .dmem_address(dmem_address),
+      .dmem_write_data(dmem_write_data),
+      .dmem_write_enable(dmem_write_enable),
+      .dmem_read_data(dmem_read_data),
+      .dmem_ready(dmem_ready),
+      .dmem_error(dmem_error),
+      .debug_register_address(debug_register_address),
+      .debug_register_data(debug_register_data),
+      .debug_pc(debug_pc)
+  );
+
+  memory_map memory_map_i (
+      .clk(clk),
+      .reset(reset),
+      .address(monitor_address),
+      .write_data(monitor_write_data),
+      .write_enable(monitor_write_enable),
+      .read_enable(monitor_read_enable),
+      .read_data(monitor_read_data),
+      .ready(monitor_ready),
+      .error(monitor_error),
+      .cpu_halted(halted),
+      .cpu_imem_valid(imem_valid),
+      .cpu_imem_address(imem_address),
+      .cpu_imem_read_data(imem_read_data),
+      .cpu_imem_ready(imem_ready),
+      .cpu_dmem_valid(dmem_valid),
+      .cpu_dmem_address(dmem_address),
+      .cpu_dmem_write_data(dmem_write_data),
+      .cpu_dmem_write_enable(dmem_write_enable),
+      .cpu_dmem_read_data(dmem_read_data),
+      .cpu_dmem_ready(dmem_ready),
+      .cpu_dmem_error(dmem_error)
+  );
+
+  task monitor_write_byte;
+    input [31:0] address;
+    input [7:0] data;
+    begin
+      wait (!monitor_ready);
+      @(negedge clk);
+      monitor_address = address;
+      monitor_write_data = data;
+      monitor_write_enable = 1'b1;
+      @(negedge clk);
+      monitor_write_enable = 1'b0;
+      wait (monitor_ready);
+      if (monitor_error) $fatal(1, "Monitor write failed at %08x", address);
+    end
+  endtask
+
+  task monitor_write_word;
+    input [31:0] address;
+    input [31:0] data;
+    begin
+      monitor_write_byte(address, data[7:0]);
+      monitor_write_byte(address + 1, data[15:8]);
+      monitor_write_byte(address + 2, data[23:16]);
+      monitor_write_byte(address + 3, data[31:24]);
+    end
+  endtask
+
+  task expect_monitor_byte;
+    input [31:0] address;
+    input [7:0] expected;
+    begin
+      wait (!monitor_ready);
+      @(negedge clk);
+      monitor_address = address;
+      monitor_read_enable = 1'b1;
+      @(negedge clk);
+      monitor_read_enable = 1'b0;
+      wait (monitor_ready);
+      #1;
+      if (monitor_error || monitor_read_data !== expected) begin
+        $fatal(1, "Monitor read mismatch at %08x", address);
+      end
+    end
+  endtask
+
+  initial begin
+    $dumpvars(0, cpu_memory_map_tb);
+
+    repeat (2) @(negedge clk);
+    reset = 1'b0;
+    @(negedge clk);
+
+    // Program writes 0x1234 to data[4], loads it into R2, then halts.
+    monitor_write_word(32'h0000_0000, 32'h4020_1234);  // MOVI R1, 0x1234
+    monitor_write_word(32'h0000_0004, 32'h4080_0004);  // MOVI R4, 4
+    monitor_write_word(32'h0000_0008, 32'h5824_0000);  // STORE R1, R4, 0
+    monitor_write_word(32'h0000_000c, 32'h5444_0000);  // LOAD R2, R4, 0
+    monitor_write_word(32'h0000_0010, 32'hfc00_0000);  // HALT
+
+    @(negedge clk);
+    run_request = 1'b1;
+    @(negedge clk);
+    run_request = 1'b0;
+    wait (!halted);
+    wait (halted);
+
+    if (error || debug_pc !== 32'h0000_0014) $fatal(1, "CPU completion mismatch");
+
+    debug_register_address = 5'd2;
+    repeat (2) @(posedge clk);
+    #1;
+    if (debug_register_data !== 32'h0000_1234) $fatal(1, "R2 mismatch");
+
+    // The monitor sees CPU data address 4 at global address 0x00100004.
+    expect_monitor_byte(32'h0010_0004, 8'h34);
+    expect_monitor_byte(32'h0010_0005, 8'h12);
+    expect_monitor_byte(32'h0010_0006, 8'h00);
+    expect_monitor_byte(32'h0010_0007, 8'h00);
+
+    $display("PASS: monitor loads program, CPU runs, monitor reads result");
+    $finish;
+  end
+endmodule
+
+`default_nettype wire
