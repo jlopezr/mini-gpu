@@ -1,5 +1,5 @@
 `ifndef _uart_v_
-`define _uart_v_ 
+`define _uart_v_
 
 `default_nettype none
 
