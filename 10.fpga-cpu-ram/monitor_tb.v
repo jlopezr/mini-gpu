@@ -17,9 +17,9 @@ module monitor_tb;
   wire [7:0] mem_write_data;
   wire mem_write_enable;
   wire mem_read_enable;
-  wire [7:0] mem_read_data;
-  wire mem_ready;
-  wire mem_error;
+  reg [7:0] mem_read_data = 8'h00;
+  reg mem_ready = 1'b0;
+  reg mem_error = 1'b0;
   wire cpu_run_request;
   wire cpu_halt_request;
   wire cpu_step_request;
@@ -38,6 +38,8 @@ module monitor_tb;
   reg halt_request_seen = 1'b0;
   reg step_request_seen = 1'b0;
   reg reset_request_seen = 1'b0;
+  reg [7:0] memory_low[0:1023];
+  reg [7:0] memory_high[0:1023];
 
   always #5 clk = ~clk;
 
@@ -70,29 +72,24 @@ module monitor_tb;
       .busy(busy)
   );
 
-  memory_map memory_map_i (
-      .clk(clk),
-      .reset(reset),
-      .address(mem_address),
-      .write_data(mem_write_data),
-      .write_enable(mem_write_enable),
-      .read_enable(mem_read_enable),
-      .read_data(mem_read_data),
-      .ready(mem_ready),
-      .error(mem_error),
-      .cpu_halted(cpu_halted),
-      .cpu_imem_valid(1'b0),
-      .cpu_imem_address(32'h0000_0000),
-      .cpu_imem_read_data(),
-      .cpu_imem_ready(),
-      .cpu_dmem_valid(1'b0),
-      .cpu_dmem_address(32'h0000_0000),
-      .cpu_dmem_write_data(32'h0000_0000),
-      .cpu_dmem_write_enable(4'b0000),
-      .cpu_dmem_read_data(),
-      .cpu_dmem_ready(),
-      .cpu_dmem_error()
-  );
+  // Byte-oriented SDRAM stub. It models the unified 32 MiB address contract;
+  // two small arrays are enough for the low and 0x00100000 test locations.
+  always @(posedge clk) begin
+    mem_ready <= 1'b0;
+    mem_error <= 1'b0;
+    if (!reset && (mem_write_enable || mem_read_enable)) begin
+      mem_ready <= 1'b1;
+      if (!cpu_halted || mem_address[31:25] != 0) begin
+        mem_error <= 1'b1;
+      end else if (mem_write_enable) begin
+        if (mem_address[20]) memory_high[mem_address[9:0]] <= mem_write_data;
+        else memory_low[mem_address[9:0]] <= mem_write_data;
+      end else begin
+        mem_read_data <= mem_address[20] ? memory_high[mem_address[9:0]] :
+                                                memory_low[mem_address[9:0]];
+      end
+    end
+  end
 
   // Minimal model of the uart_tx ready/strobe handshake.
   always @(posedge clk) begin
@@ -144,7 +141,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h03) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h05) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -201,7 +198,7 @@ module monitor_tb;
     if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
     if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
 
-    // Write and read the physically separate data memory at 0x00100000.
+    // Write and read another location in the same unified address space.
     wait (!busy && tx_ready);
     send_command(8'h10);
     send_command(8'h00);
@@ -222,11 +219,11 @@ module monitor_tb;
     if (received[15] !== 8'h91) $fatal(1, "Data-memory READ_BYTE mismatch");
     if (received[16] !== 8'h5a) $fatal(1, "Data-memory value mismatch");
 
-    // An address in the unmapped gap must still fail.
+    // The first address beyond the 32 MiB SDRAM must fail.
     wait (!busy && tx_ready);
     send_command(8'h11);
+    send_command(8'h02);
     send_command(8'h00);
-    send_command(8'h01);
     send_command(8'h00);
     send_command(8'h00);
     wait (received_count == 18);

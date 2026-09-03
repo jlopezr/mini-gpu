@@ -1,6 +1,8 @@
-; Copia seis palabras de data[0x400] a data[0x500].
-    MOVI R1, 0x400
-    MOVI R2, 0x500
+; Copia seis palabras de 0x00100400 a 0x00100500.
+    MOVHI R1, 0x0010
+    ADDI  R1, R1, 0x0400
+    MOVHI R2, 0x0010
+    ADDI  R2, R2, 0x0500
     MOVI R3, 6
     MOVI R4, 1
 loop:

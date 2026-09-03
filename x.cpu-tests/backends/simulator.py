@@ -11,7 +11,7 @@ from types import ModuleType
 VERSIONS = {
     "current": {
         "simulator_path": Path("2.cpu-sim-func/minicpu_sim.py"),
-        "memory_size": 2 * 1024 * 1024,
+        "memory_size": 32 * 1024 * 1024,
         "description": "simulador funcional MiniCPU actual",
     },
 }

@@ -51,15 +51,15 @@ module cpu_sdram_system_tb;
     done<=0;
     if(req_valid && req_ready) begin
       if(req_write) begin
-        if(req_addr[23]) begin
+        if(req_addr[23:5] == 19'h04000) begin
           if(req_wmask[0]) data_words[req_addr[4:0]][7:0]<=req_wdata[7:0];
           if(req_wmask[1]) data_words[req_addr[4:0]][15:8]<=req_wdata[15:8];
         end else begin
           if(req_wmask[0]) program_words[req_addr[4:0]][7:0]<=req_wdata[7:0];
           if(req_wmask[1]) program_words[req_addr[4:0]][15:8]<=req_wdata[15:8];
         end
-      end else rdata<=req_addr[23] ? data_words[req_addr[4:0]] :
-                                    program_words[req_addr[4:0]];
+      end else rdata<=req_addr[23:5] == 19'h04000 ?
+                       data_words[req_addr[4:0]] : program_words[req_addr[4:0]];
       done<=1;
     end
   end
@@ -83,15 +83,16 @@ module cpu_sdram_system_tb;
     for(i=0;i<32;i=i+1) begin program_words[i]=0;data_words[i]=0;end
     repeat(2) @(negedge clk);reset=0;
     write_word(32'h0000_0000,32'h4020_1234); // MOVI R1,0x1234
-    write_word(32'h0000_0004,32'h4080_0004); // MOVI R4,4
-    write_word(32'h0000_0008,32'h5824_0000); // STORE R1,R4,0
-    write_word(32'h0000_000c,32'h5444_0000); // LOAD R2,R4,0
-    write_word(32'h0000_0010,32'hfc00_0000); // HALT
+    write_word(32'h0000_0004,32'h5c80_0010); // MOVHI R4,0x0010
+    write_word(32'h0000_0008,32'h4484_0004); // ADDI R4,R4,4
+    write_word(32'h0000_000c,32'h5824_0000); // STORE R1,R4,0
+    write_word(32'h0000_0010,32'h5444_0000); // LOAD R2,R4,0
+    write_word(32'h0000_0014,32'hfc00_0000); // HALT
     @(negedge clk);run_request=1;@(negedge clk);run_request=0;
     cycles=0;
     while(!halted && cycles<500) begin @(negedge clk);cycles=cycles+1;end
     if(!halted || error)$fatal(1,"CPU failed: halted=%b error=%b code=%02x",halted,error,error_code);
-    if(debug_pc!==32'h0000_0014)$fatal(1,"unexpected PC %08x",debug_pc);
+    if(debug_pc!==32'h0000_0018)$fatal(1,"unexpected PC %08x",debug_pc);
     debug_register_address=2;repeat(3)@(negedge clk);
     if(debug_register_data!==32'h0000_1234)$fatal(1,"R2 mismatch %08x",debug_register_data);
     if(data_words[2]!==16'h1234 || data_words[3]!==16'h0000)

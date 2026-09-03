@@ -2,14 +2,20 @@
 
 Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
 16 KiB. Es la versión FPGA `ebr` utilizada por `x.cpu-tests` y responde como
-monitor 1.2.
+monitor 1.4.
 
-Mapa visible desde el monitor:
+Mapa unificado visible por la CPU y el monitor:
 
-| Región | Dirección del monitor | Dirección local CPU |
-|---|---:|---:|
-| Programa | `0x00000000–0x00003fff` | `0x00000000–0x00003fff` |
-| Datos | `0x00100000–0x00103fff` | `0x00000000–0x00003fff` |
+| Banco | Dirección global |
+|---|---:|
+| EBR 0 | `0x00000000–0x00003fff` |
+| EBR 1 | `0x00100000–0x00103fff` |
+| Huecos y resto | error de bus |
+
+Los puertos `imem` y `dmem` pueden acceder a cualquiera de los dos bancos.
+Así, un `LOAD` puede leer código, un `STORE` puede modificarlo y el fetch puede
+ejecutar desde la EBR 1. Normalmente el programa se carga en la EBR 0 y los
+datos se colocan en la EBR 1.
 
 El monitor controla ambas memorias mientras la CPU está detenida. Durante la
 ejecución, la CPU lee instrucciones y realiza `LOAD`/`STORE`; los accesos de

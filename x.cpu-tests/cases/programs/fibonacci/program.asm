@@ -1,7 +1,8 @@
-; Genera los diez primeros términos de Fibonacci en data[0x200].
+; Genera los diez primeros términos de Fibonacci en 0x00100200.
     MOVI R1, 0
     MOVI R2, 1
-    MOVI R3, 0x200
+    MOVHI R3, 0x0010
+    ADDI  R3, R3, 0x0200
     MOVI R4, 10
     MOVI R5, 1
 loop:

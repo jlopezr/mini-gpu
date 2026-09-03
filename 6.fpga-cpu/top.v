@@ -137,7 +137,7 @@ module top (
       .debug_pc(cpu_pc)
   );
 
-  // Shared Harvard map: monitor when halted, CPU while running.
+  // Unified global map: monitor when halted, CPU while running.
   memory_map memory_map_i (
       .clk(clk),
       .reset(reset),

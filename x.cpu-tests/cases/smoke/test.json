@@ -7,19 +7,19 @@
     "halted": true,
     "error": false,
     "error_code": "0x00",
-    "pc": "0x00000028",
+    "pc": "0x00000030",
     "registers": {
       "R1": "0x0000000a",
       "R2": "0x00000014",
       "R3": "0x0000001e",
-      "R4": "0x00000100",
+      "R4": "0x00100100",
       "R5": "0x0000001e",
       "R6": "0x00000a41",
-      "R7": "0x00000200"
+      "R7": "0x00100200"
     },
     "memory_dumps": [
       {
-        "address": "0x00000200",
+        "address": "0x00100200",
         "file": "expected/result.bin"
       }
     ]

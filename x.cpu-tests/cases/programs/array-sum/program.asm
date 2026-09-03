@@ -1,5 +1,6 @@
-; Suma cinco palabras de data[0x300] y guarda el resultado en data[0x340].
-    MOVI R1, 0x300
+; Suma cinco palabras desde 0x00100300 y guarda en 0x00100340.
+    MOVHI R1, 0x0010
+    ADDI  R1, R1, 0x0300
     MOVI R2, 5
     MOVI R3, 0
     MOVI R4, 1
@@ -9,6 +10,7 @@ loop:
     ADDI R1, R1, 4
     SUB  R2, R2, R4
     BNE  R2, R0, loop
-    MOVI R6, 0x340
+    MOVHI R6, 0x0010
+    ADDI  R6, R6, 0x0340
     STORE R3, R6, 0
     HALT

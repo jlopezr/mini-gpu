@@ -2,8 +2,8 @@
   "name": "program-fibonacci",
   "program": "program.asm",
   "expect": {
-    "pc": "0x34",
-    "registers": {"R1": "0x37", "R2": "0x59", "R3": "0x228", "R4": 0},
-    "memory_dumps": [{"address": "0x200", "file": "expected.hex"}]
+    "pc": "0x38",
+    "registers": {"R1": "0x37", "R2": "0x59", "R3": "0x00100228", "R4": 0},
+    "memory_dumps": [{"address": "0x00100200", "file": "expected.hex"}]
   }
 }

@@ -22,10 +22,10 @@ Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
 | Magnitud                      |  Resultado |
 |-------------------------------|-----------:|
 | Frecuencia requerida          | 120,00 MHz |
-| Frecuencia alcanzada          | 120,95 MHz |
+| Frecuencia alcanzada          | 122,97 MHz |
 | EBR `DP16KD`                  |         16 |
-| Flip-flops `TRELLIS_FF`       |       1899 |
-| Celdas lógicas `TRELLIS_COMB` |       4621 |
+| Flip-flops `TRELLIS_FF`       |       1970 |
+| Celdas lógicas `TRELLIS_COMB` |       4603 |
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -35,14 +35,14 @@ margen debe revisarse después de modificaciones relevantes.
 
 `memory_map.v` contiene una única pareja de memorias físicas:
 
-| Memoria  | Dirección del monitor | Dirección local de la CPU | Tamaño |
-|----------|----------------------:|--------------------------:|-------:|
-| Programa |          `0x00000000` |              `0x00000000` | 16 KiB |
-| Datos    |          `0x00100000` |              `0x00000000` | 16 KiB |
+| Banco | Dirección global | Tamaño |
+|-------|-----------------:|-------:|
+| EBR 0 | `0x00000000–0x00003fff` | 16 KiB |
+| EBR 1 | `0x00100000–0x00103fff` | 16 KiB |
 
-La diferencia de direcciones de datos es deliberada. La CPU tiene dos espacios
-Harvard independientes que comienzan en cero; el monitor necesita un único
-espacio global y utiliza `0x00100000` para distinguir la RAM de datos.
+CPU y monitor presentan esas mismas direcciones. Un router registrado dirige
+cada petición `imem`, `dmem` o del monitor al banco seleccionado; ambos puertos
+de CPU pueden llegar a ambos bancos. Los huecos producen error de bus.
 
 La propiedad se decide con `cpu_halted`:
 
@@ -193,19 +193,21 @@ La siguiente tabla cuenta desde `STATE_FETCH_REQUEST` hasta
 de la EBR de programa usado por `memory_map.v`. Un ciclo a 120 MHz dura unos
 8,33 ns.
 
-| Familia de instrucciones                                 |  Ciclos | Tiempo aproximado |
-|----------------------------------------------------------|--------:|------------------:|
-| `NOP`, `HALT`                                            |       8 |           66,7 ns |
-| `ADD`, `SUB`, `AND`, `OR`, `XOR`                         |       8 |           66,7 ns |
-| `MOVI`, `ADDI`, `ANDI`, `ORI`, `XORI`, `MOVHI`, `GETTID` |       8 |           66,7 ns |
-| `BRA`                                                    |       9 |           75,0 ns |
-| `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |      10 |           83,3 ns |
-| `LOAD`, `STORE` con la EBR actual                        |      12 |          100,0 ns |
-| `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `9 + n` |     75,0–333,3 ns |
+| Familia de instrucciones                                 |   Ciclos | Tiempo aproximado |
+|----------------------------------------------------------|---------:|------------------:|
+| `NOP`, `HALT`                                            |        9 |           75,0 ns |
+| `ADD`, `SUB`, `AND`, `OR`, `XOR`                         |        9 |           75,0 ns |
+| `MOVI`, `ADDI`, `ANDI`, `ORI`, `XORI`, `MOVHI`, `GETTID` |        9 |           75,0 ns |
+| `BRA`                                                    |       10 |           83,3 ns |
+| `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |       11 |           91,7 ns |
+| `LOAD`, `STORE` con la EBR actual                        |       14 |          116,7 ns |
+| `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `10 + n` |     83,3–341,7 ns |
 
 En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
 `LOAD` y `STORE` son las de la memoria EBR integrada actual; la interfaz
-`valid/ready` permite sustituirla por una memoria de latencia distinta.
+`valid/ready` permite sustituirla por una memoria de latencia distinta. El
+router unificado añade un registro tras cada salida EBR: una instrucción normal
+gana un ciclo y `LOAD`/`STORE` ganan dos, uno en fetch y otro en datos.
 
 `cpu_memory_map_tb.v` mide estas latencias sobre el camino usado en la FPGA,
 las imprime como `FPGA CYCLES` y falla si cambian accidentalmente. `cpu_tb.v`
@@ -239,8 +241,7 @@ instrucción y se captura en `instruction_encoding_valid_registered` durante
 `STATE_DECODE`. `STATE_EXECUTE` consume únicamente ese bit registrado. La
 primera implementación conectaba la validación combinacional directamente al
 control de ejecución y el place-and-route bajó a 119,01 MHz. Registrar el
-resultado recuperó el cierre de timing, con 120,95 MHz en la ejecución
-documentada al inicio.
+resultado recuperó el cierre de timing. La cifra vigente figura al inicio.
 
 Los errores definidos son:
 

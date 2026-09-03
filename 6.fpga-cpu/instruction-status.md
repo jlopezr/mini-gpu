@@ -124,21 +124,11 @@ y PC después de la parada.
 
 ### 4. Mantener documentada la diferencia de memoria
 
-Existe una diferencia arquitectónica que los tests simples no muestran:
-
-- el simulador usa una memoria unificada de 2 MiB por defecto;
-- la FPGA usa Harvard, con 16 KiB de programa y 16 KiB de datos;
-- una dirección CPU de datos `0x00000004` aparece ante el monitor como
-  `0x00100004`.
-
-No se añadirá un modo Harvard al simulador: ningún programa del proyecto debe
-depender de poder solapar código y datos. Los programas destinados al hardware
-deben respetar por convención los 16 KiB disponibles en cada espacio.
-
-El futuro runner de regresión usará siempre direcciones locales de datos en sus
-casos de prueba. El backend FPGA sumará `0x00100000` únicamente al leer o
-inicializar esa memoria mediante el monitor; el backend del simulador utilizará
-la dirección local sin traducción.
+El simulador, la CPU y el monitor usan el mismo mapa global. La FPGA EBR
+respalda `0x00000000–0x00003fff` y `0x00100000–0x00103fff`; cualquier otra
+dirección produce error. La FPGA SDRAM implementa 32 MiB continuos. Los tests
+comunes usan solamente las dos ventanas presentes en ambas implementaciones y
+el backend no traduce direcciones.
 
 ### 5. Crear tests diferenciales
 

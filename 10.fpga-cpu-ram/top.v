@@ -17,16 +17,17 @@ module top (
   wire clk, pll_locked;
   pll_120 pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
 
-  reg [7:0] reset_count = 8'hff;
-  reg reset = 1'b1;
+  // Shifted reset avoids a counter terminal-count path on the high-fanout
+  // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then
+  // performs its own JEDEC power-up delay before asserting init_done.
+  reg [15:0] reset_shift = 16'hffff;
+  wire reset = reset_shift[15];
   always @(posedge clk) begin
     if (!pll_locked || !btn_pwr_n) begin
-      reset_count <= 8'hff;
-      reset <= 1'b1;
-    end else if (reset_count != 0) begin
-      reset_count <= reset_count - 1'b1;
-      reset <= 1'b1;
-    end else reset <= 1'b0;
+      reset_shift <= 16'hffff;
+    end else begin
+      reset_shift <= {reset_shift[14:0], 1'b0};
+    end
   end
   assign wifi_gpio0 = 1'b1;
 

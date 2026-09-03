@@ -41,6 +41,12 @@ module monitor_tb;
 
   always #5 clk = ~clk;
 
+  initial begin
+    #1000000;
+    $fatal(1, "timeout: state=%0d received=%0d mem_ready=%b",
+           dut.state, received_count, mem_ready);
+  end
+
   monitor dut (
       .clk(clk),
       .reset(reset),
@@ -144,7 +150,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h02) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h04) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -201,7 +207,7 @@ module monitor_tb;
     if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
     if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
 
-    // Write and read the physically separate data memory at 0x00100000.
+    // Write and read the second EBR window at 0x00100000.
     wait (!busy && tx_ready);
     send_command(8'h10);
     send_command(8'h00);

@@ -19,6 +19,7 @@ from backends.simulator import SimulatorBackend
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
 FPGA_MEMORY_SIZE = 16 * 1024
+ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
 BACKEND_DEFINITIONS = {
     "sim": {
         "class": SimulatorBackend,
@@ -221,8 +222,8 @@ def load_case(path: Path) -> dict:
         data = load_data_file(directory / item["file"])
         if not data:
             raise ValueError(f"El fichero inicial {item['file']} está vacío")
-        if address + len(data) > FPGA_MEMORY_SIZE:
-            raise ValueError(f"Inicialización fuera de la RAM de datos: {item['file']}")
+        if address + len(data) > ARCHITECTURAL_MEMORY_SIZE:
+            raise ValueError(f"Inicialización fuera del mapa de memoria: {item['file']}")
         initial_memory.append((address, data))
 
     expected_memory = {}
@@ -231,8 +232,8 @@ def load_case(path: Path) -> dict:
         data = load_data_file(directory / item["file"])
         if not data:
             raise ValueError(f"El dump esperado {item['file']} está vacío")
-        if address + len(data) > FPGA_MEMORY_SIZE:
-            raise ValueError(f"Dump fuera de la RAM de datos: {item['file']}")
+        if address + len(data) > ARCHITECTURAL_MEMORY_SIZE:
+            raise ValueError(f"Dump fuera del mapa de memoria: {item['file']}")
         expected_memory[(address, len(data))] = data
 
     max_instructions = raw.get("max_instructions", 1_000_000)

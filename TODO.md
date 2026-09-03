@@ -1,8 +1,3 @@
 # TODO
 
-- Revisar mapa de memoria. No quiero arquitectura harvard, quiero memoria
-  unificada, pero en la cpu basica quiero que si las direcciones estan fuera
-  de los 16k de programa (0x0000) y los 16k de datos (ya veremos donde lo
-  ponemos) pues da un trap.
-
 - que mejoras podemos hacer al controlador de SDRAM? Que supuestamente hacia el de 7-fpga-ram de claude, que no funciona?

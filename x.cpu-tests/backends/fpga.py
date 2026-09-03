@@ -12,15 +12,13 @@ from types import ModuleType
 VERSIONS = {
     "ebr": {
         "monitor_path": Path("6.fpga-cpu/monitor.py"),
-        "monitor_version": (1, 2),
-        "data_monitor_base": 0x0010_0000,
+        "monitor_version": (1, 4),
         "description": "FPGA con 16 KiB de EBR para programa y datos",
     },
     "sdram": {
         "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
-        "monitor_version": (1, 3),
-        "data_monitor_base": 0x0100_0000,
-        "description": "FPGA con SDRAM dividida en 16 MiB de programa y datos",
+        "monitor_version": (1, 5),
+        "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
     },
 }
 DEFAULT_VERSION = "ebr"
@@ -103,9 +101,8 @@ class FpgaBackend:
             client.reset_cpu()
             client.write_memory(0, program)
 
-            data_monitor_base = self.configuration["data_monitor_base"]
             for address, data in initial_memory:
-                client.write_memory(data_monitor_base + address, data)
+                client.write_memory(address, data)
 
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
@@ -126,7 +123,7 @@ class FpgaBackend:
                 for number in sorted(register_numbers)
             }
             memory = {
-                (address, size): client.read_memory(data_monitor_base + address, size)
+                (address, size): client.read_memory(address, size)
                 for address, size in memory_ranges
             }
 

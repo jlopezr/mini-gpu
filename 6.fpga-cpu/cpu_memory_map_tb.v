@@ -64,15 +64,15 @@ module cpu_memory_map_tb;
             measured_instruction_cycles
         );
         if (cpu_i.opcode == 6'h15 || cpu_i.opcode == 6'h16)
-          expected_instruction_cycles = 12;
+          expected_instruction_cycles = 14;
         else if (cpu_i.opcode >= 6'h07 && cpu_i.opcode <= 6'h09)
-          expected_instruction_cycles = 9 + cpu_i.operand_b[4:0];
+          expected_instruction_cycles = 10 + cpu_i.operand_b[4:0];
         else if (cpu_i.opcode >= 6'h20 && cpu_i.opcode <= 6'h25)
-          expected_instruction_cycles = 10;
+          expected_instruction_cycles = 11;
         else if (cpu_i.opcode == 6'h2f)
-          expected_instruction_cycles = 9;
+          expected_instruction_cycles = 10;
         else
-          expected_instruction_cycles = 8;
+          expected_instruction_cycles = 9;
         if (measured_instruction_cycles != expected_instruction_cycles)
           $fatal(
               1,
@@ -190,12 +190,14 @@ module cpu_memory_map_tb;
     reset = 1'b0;
     @(negedge clk);
 
-    // Program writes 0x1234 to data[4], loads it into R2, then halts.
+    // Program writes 0x1234 to global address 0x00100004, loads it, then halts.
     monitor_write_word(32'h0000_0000, 32'h4020_1234);  // MOVI R1, 0x1234
-    monitor_write_word(32'h0000_0004, 32'h4080_0004);  // MOVI R4, 4
-    monitor_write_word(32'h0000_0008, 32'h5824_0000);  // STORE R1, R4, 0
-    monitor_write_word(32'h0000_000c, 32'h5444_0000);  // LOAD R2, R4, 0
-    monitor_write_word(32'h0000_0010, 32'hfc00_0000);  // HALT
+    monitor_write_word(32'h0000_0004, 32'h5c80_0010);  // MOVHI R4, 0x0010
+    monitor_write_word(32'h0000_0008, 32'h4484_0004);  // ADDI R4, R4, 4
+    monitor_write_word(32'h0000_000c, 32'h5824_0000);  // STORE R1, R4, 0
+    monitor_write_word(32'h0000_0010, 32'h5444_0000);  // LOAD R2, R4, 0
+    monitor_write_word(32'h0000_0014, 32'h54c0_0000);  // LOAD R6, R0, 0
+    monitor_write_word(32'h0000_0018, 32'hfc00_0000);  // HALT
 
     @(negedge clk);
     run_request = 1'b1;
@@ -204,14 +206,20 @@ module cpu_memory_map_tb;
     wait (!halted);
     wait (halted);
 
-    if (error || debug_pc !== 32'h0000_0014) $fatal(1, "CPU completion mismatch");
+    if (error || debug_pc !== 32'h0000_001c) $fatal(1, "CPU completion mismatch");
 
     debug_register_address = 5'd2;
     repeat (2) @(posedge clk);
     #1;
     if (debug_register_data !== 32'h0000_1234) $fatal(1, "R2 mismatch");
 
-    // The monitor sees CPU data address 4 at global address 0x00100004.
+    // dmem can read bank 0: R6 receives the first instruction word.
+    debug_register_address = 5'd6;
+    repeat (2) @(posedge clk);
+    #1;
+    if (debug_register_data !== 32'h4020_1234) $fatal(1, "dmem bank 0 mismatch");
+
+    // No backend translation is involved: CPU and monitor use the same address.
     expect_monitor_byte(32'h0010_0004, 8'h34);
     expect_monitor_byte(32'h0010_0005, 8'h12);
     expect_monitor_byte(32'h0010_0006, 8'h00);
@@ -240,8 +248,25 @@ module cpu_memory_map_tb;
     run_request = 1'b0;
     wait (!halted);
     wait (halted);
-    if (error || debug_pc !== 32'h0000_0014)
+    if (error || debug_pc !== 32'h0000_001c)
       $fatal(1, "CPU did not rerun preserved program");
+
+    // imem can fetch bank 1: branch from bank 0 to a HALT stored in bank 1.
+    @(negedge clk);
+    cpu_reset_request = 1'b1;
+    @(negedge clk);
+    cpu_reset_request = 1'b0;
+    repeat (2) @(posedge clk);
+    monitor_write_word(32'h0000_0000, 32'hbc03_ffff);  // BRA 0x00100000
+    monitor_write_word(32'h0010_0000, 32'hfc00_0000);  // HALT
+    @(negedge clk);
+    run_request = 1'b1;
+    @(negedge clk);
+    run_request = 1'b0;
+    wait (!halted);
+    wait (halted);
+    if (error || debug_pc !== 32'h0010_0004)
+      $fatal(1, "imem could not execute from bank 1");
 
     $display("PASS: shared memory flow and CPU-only reset are correct");
     $finish;

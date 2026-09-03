@@ -13,9 +13,9 @@ place-and-route final obtiene:
 | Magnitud | Resultado |
 |---|---:|
 | Frecuencia requerida | 120,00 MHz |
-| Frecuencia alcanzada | 122,73 MHz |
-| `TRELLIS_COMB` | 5.014 |
-| `TRELLIS_FF` | 2.200 |
+| Frecuencia alcanzada | 130,67 MHz |
+| `TRELLIS_COMB` | 4.976 |
+| `TRELLIS_FF` | 2.249 |
 | `DP16KD` | 0 |
 
 Las cifras corresponden a una ejecución concreta de nextpnr y pueden variar
@@ -25,6 +25,11 @@ aviso `FAIL at 120.00 MHz` aunque se genere un bitstream.
 
 ## Frontera UART-monitor
 
+`top.v` genera el reset posterior al PLL con un registro de desplazamiento de
+16 ciclos. Esto evita que la detección combinacional del final de un contador
+alimente directamente la red de reset de alto fanout. El controlador SDRAM
+mantiene después su propio tiempo de inicialización JEDEC.
+
 `top.v` registra `uart_rx_data` y `uart_rx_strobe` antes de entregarlos al
 monitor. El byte y su strobe se retrasan juntos un ciclo, por lo que el
 protocolo no cambia.
@@ -32,6 +37,11 @@ protocolo no cambia.
 ```text
 UART RX -> monitor_rx_data / monitor_rx_strobe -> monitor
 ```
+
+El adaptador captura por separado la dirección, el dato y el tipo de petición
+del monitor. `STATE_VALIDATE_MONITOR` comprueba el rango en el ciclo siguiente
+y solo entonces prepara la solicitud SDRAM. Así la comparación de los siete
+bits altos no queda encadenada con los registros de dirección y datos SDRAM.
 
 Esta frontera evita que el desplazador de recepción UART y la máquina de
 estados completa del monitor formen una sola ruta combinacional.
@@ -116,13 +126,10 @@ el contrato `valid/ready`.
 ## Adaptador SDRAM y protocolo `valid/ready`
 
 `sdram_system_adapter.v` convierte cada acceso CPU de 32 bits en dos accesos
-SDRAM BL1 de 16 bits. La palabra se ensambla en orden little-endian. Programa y
-datos se traducen a mitades diferentes de la SDRAM:
-
-| Puerto | Dirección local CPU | Dirección física SDRAM |
-|---|---:|---:|
-| Instrucciones | `0x00000000`–`0x00ffffff` | `0x00000000`–`0x00ffffff` |
-| Datos | `0x00000000`–`0x00ffffff` | `0x01000000`–`0x01ffffff` |
+SDRAM BL1 de 16 bits. La palabra se ensambla en orden little-endian. `imem`,
+`dmem` y el monitor usan directamente el mismo rango físico
+`0x00000000–0x01ffffff`; ya no existe selección implícita de una mitad según
+el puerto que originó la petición.
 
 Después de activar `ready`, el adaptador entra en `STATE_RELEASE` y espera a
 que el propietario retire `valid`. Esto impide aceptar dos veces una misma

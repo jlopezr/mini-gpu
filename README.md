@@ -51,9 +51,10 @@ MiniCPU ── imem 32 bits ──────────┤
                          SDRAM 32 MiB, 120 MHz
 ```
 
-La CPU presenta dos puertos Harvard locales. En la SDRAM, el programa ocupa
-`0x00000000–0x00ffffff` y los datos `0x01000000–0x01ffffff`. El monitor ve las
-direcciones físicas; la CPU ve ambos espacios comenzando en cero.
+La CPU conserva puertos separados para instrucciones y datos, pero ambos usan
+el mismo mapa global que el monitor. La versión EBR implementa dos ventanas de
+16 KiB en `0x00000000` y `0x00100000`; la versión SDRAM respalda directamente
+todo `0x00000000–0x01ffffff`. No existen traslaciones ocultas de direcciones.
 
 ## Requisitos
 
@@ -94,7 +95,8 @@ python run_cpu_tests.py --backend fpga --version sdram --port COM3
 ```
 
 El backend consulta `GET_VERSION` antes de modificar la memoria. La versión
-EBR responde como monitor 1.2 y la versión SDRAM como 1.3.
+EBR responde como monitor 1.4 y la versión SDRAM como 1.5. Las revisiones
+anteriores 1.2 y 1.3 corresponden al mapa con traducción de direcciones.
 
 ## Construcción del diseño actual
 

@@ -3,14 +3,14 @@
 /*
  * Shared frontend for the MiniCPU, UART monitor and the 16-bit SDRAM port.
  *
- * Physical byte map:
- *   0x00000000..0x00ffffff  CPU instruction space (16 MiB)
- *   0x01000000..0x01ffffff  CPU data space        (16 MiB)
+ * Unified physical byte map:
+ *   0x00000000..0x01ffffff  32 MiB SDRAM
  *
- * Both CPU Harvard ports use local addresses starting at zero. CPU words are
+ * Both CPU ports and the monitor use the same addresses. The ports remain
+ * separate only as a CPU interface detail: instruction fetches are reads,
+ * while the data port can read or write any SDRAM word. CPU words are
  * little-endian and are transferred as two independent SDRAM BL1 accesses.
- * The monitor uses physical byte addresses directly and owns memory only while
- * the CPU is halted.
+ * The monitor owns memory only while the CPU is halted.
  */
 module sdram_system_adapter (
     input  wire        clk,
@@ -58,6 +58,7 @@ module sdram_system_adapter (
   localparam STATE_START_NEXT  = 3'd2;
   localparam STATE_WAIT_SECOND = 3'd3;
   localparam STATE_RELEASE     = 3'd4;
+  localparam STATE_VALIDATE_MONITOR = 3'd5;
 
   reg [2:0] state;
   reg [2:0] owner;
@@ -68,13 +69,15 @@ module sdram_system_adapter (
   reg [23:0] second_addr;
   reg [15:0] second_wdata;
   reg [1:0] second_wmask;
+  reg [31:0] saved_monitor_address;
+  reg [7:0] saved_monitor_write_data;
+  reg saved_monitor_write_enable;
 
   wire monitor_request = monitor_write_enable || monitor_read_enable;
-  wire monitor_address_valid = monitor_address[31:25] == 0;
   wire cpu_imem_address_valid =
-      cpu_imem_address[31:24] == 0 && cpu_imem_address[1:0] == 0;
+      cpu_imem_address[31:25] == 0 && cpu_imem_address[1:0] == 0;
   wire cpu_dmem_address_valid =
-      cpu_dmem_address[31:24] == 0 && cpu_dmem_address[1:0] == 0;
+      cpu_dmem_address[31:25] == 0 && cpu_dmem_address[1:0] == 0;
 
   always @(posedge clk) begin
     monitor_ready <= 1'b0;
@@ -101,6 +104,9 @@ module sdram_system_adapter (
       second_addr <= 24'h000000;
       second_wdata <= 16'h0000;
       second_wmask <= 2'b00;
+      saved_monitor_address <= 32'h0000_0000;
+      saved_monitor_write_data <= 8'h00;
+      saved_monitor_write_enable <= 1'b0;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -108,24 +114,12 @@ module sdram_system_adapter (
           owner <= OWNER_NONE;
 
           if (monitor_request) begin
-            if (!cpu_halted || !init_done || !monitor_address_valid ||
-                (monitor_write_enable && monitor_read_enable)) begin
-              owner <= OWNER_MONITOR;
-              monitor_ready <= 1'b1;
-              monitor_error <= 1'b1;
-              state <= STATE_RELEASE;
-            end else begin
-              owner <= OWNER_MONITOR;
-              saved_monitor_byte <= monitor_address[0];
-              saved_monitor_read <= monitor_read_enable;
-              req_addr <= monitor_address[24:1];
-              req_write <= monitor_write_enable;
-              req_wdata <= monitor_address[0] ?
-                  {monitor_write_data, 8'h00} : {8'h00, monitor_write_data};
-              req_wmask <= monitor_address[0] ? 2'b10 : 2'b01;
-              req_valid <= 1'b1;
-              state <= STATE_WAIT_FIRST;
-            end
+            owner <= OWNER_MONITOR;
+            saved_monitor_address <= monitor_address;
+            saved_monitor_write_data <= monitor_write_data;
+            saved_monitor_write_enable <= monitor_write_enable;
+            saved_monitor_read <= monitor_read_enable;
+            state <= STATE_VALIDATE_MONITOR;
           end else if (!cpu_halted && cpu_imem_valid) begin
             if (!init_done || !cpu_imem_address_valid) begin
               owner <= OWNER_IMEM;
@@ -135,11 +129,12 @@ module sdram_system_adapter (
             end else begin
               owner <= OWNER_IMEM;
               saved_cpu_read <= 1'b1;
-              req_addr <= {1'b0, cpu_imem_address[23:1]};
+              // imem and dmem share the same physical SDRAM address space.
+              req_addr <= cpu_imem_address[24:1];
               req_write <= 1'b0;
               req_wdata <= 16'h0000;
               req_wmask <= 2'b00;
-              second_addr <= {1'b0, cpu_imem_address[23:1]} + 1'b1;
+              second_addr <= cpu_imem_address[24:1] + 1'b1;
               second_wdata <= 16'h0000;
               second_wmask <= 2'b00;
               req_valid <= 1'b1;
@@ -154,16 +149,39 @@ module sdram_system_adapter (
             end else begin
               owner <= OWNER_DMEM;
               saved_cpu_read <= !(|cpu_dmem_write_enable);
-              req_addr <= {1'b1, cpu_dmem_address[23:1]};
+              req_addr <= cpu_dmem_address[24:1];
               req_write <= |cpu_dmem_write_enable;
               req_wdata <= cpu_dmem_write_data[15:0];
               req_wmask <= cpu_dmem_write_enable[1:0];
-              second_addr <= {1'b1, cpu_dmem_address[23:1]} + 1'b1;
+              second_addr <= cpu_dmem_address[24:1] + 1'b1;
               second_wdata <= cpu_dmem_write_data[31:16];
               second_wmask <= cpu_dmem_write_enable[3:2];
               req_valid <= 1'b1;
               state <= STATE_WAIT_FIRST;
             end
+          end
+        end
+
+        // Address checking is isolated from the SDRAM request registers. This
+        // prevents the seven-bit range comparison becoming a 120 MHz path from
+        // the registered monitor address to req_addr/req_wdata.
+        STATE_VALIDATE_MONITOR: begin
+          if (!cpu_halted || !init_done ||
+              saved_monitor_address[31:25] != 0 ||
+              (saved_monitor_write_enable && saved_monitor_read)) begin
+            monitor_ready <= 1'b1;
+            monitor_error <= 1'b1;
+            state <= STATE_RELEASE;
+          end else begin
+            saved_monitor_byte <= saved_monitor_address[0];
+            req_addr <= saved_monitor_address[24:1];
+            req_write <= saved_monitor_write_enable;
+            req_wdata <= saved_monitor_address[0] ?
+                {saved_monitor_write_data, 8'h00} :
+                {8'h00, saved_monitor_write_data};
+            req_wmask <= saved_monitor_address[0] ? 2'b10 : 2'b01;
+            req_valid <= 1'b1;
+            state <= STATE_WAIT_FIRST;
           end
         end
 

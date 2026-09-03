@@ -39,10 +39,10 @@ lista especial de versiones FPGA o del simulador.
 El backend FPGA comprueba además la versión física mediante `GET_VERSION`
 antes de modificar la memoria:
 
-| Valor | Proyecto | Monitor | Base física de datos |
-|---|---|---:|---:|
-| `ebr` | `6.fpga-cpu` | 1.2 | `0x00100000` |
-| `sdram` | `10.fpga-cpu-ram` | 1.3 | `0x01000000` |
+| Valor | Proyecto | Monitor | Memoria implementada |
+|---|---|---:|---|
+| `ebr` | `6.fpga-cpu` | 1.4 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
+| `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
 
 La versión predeterminada de FPGA es `ebr` para conservar la compatibilidad con los
 comandos anteriores. Si el monitor conectado no coincide, el test termina con
@@ -65,7 +65,7 @@ directorio que contiene cada `test.json`.
   "timeout_seconds": 2.0,
   "initial_memory": [
     {
-      "address": "0x00000300",
+      "address": "0x00100300",
       "file": "input/data.bin"
     }
   ],
@@ -79,7 +79,7 @@ directorio que contiene cada `test.json`.
     },
     "memory_dumps": [
       {
-        "address": "0x00000400",
+        "address": "0x00100400",
         "file": "expected/result.bin"
       }
     ]
@@ -99,15 +99,11 @@ se convierte a cuatro bytes little-endian; se admiten comentarios con `#`.
 
 ## Direcciones de datos
 
-Los JSON utilizan siempre direcciones locales de la CPU entre `0x00000000` y
-`0x00003fff`.
-
-- El simulador accede directamente a esa dirección en su memoria unificada.
-- El backend FPGA EBR suma `0x00100000` al comunicarse con el monitor.
-- El backend FPGA SDRAM suma `0x01000000` al comunicarse con el monitor.
-
-Los programas comunes deben mantener los datos fuera de la región que ocupa el
-programa para no depender de la separación Harvard de la FPGA.
+Los JSON, los programas, el simulador, la CPU y el monitor utilizan siempre
+direcciones globales. El backend no suma ninguna base. Los casos compatibles
+con ambas FPGA colocan el programa en `0x00000000–0x00003fff` y los datos en
+`0x00100000–0x00103fff`; los casos que requieran otras direcciones deberán
+seleccionar una versión con SDRAM.
 
 ## Resultado diferencial
 

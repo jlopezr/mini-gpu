@@ -26,7 +26,7 @@ module sdram_system_adapter_tb;
     done<=0;
     if(req_valid && req_ready) begin
       if(req_write) begin
-        if(req_addr[23]) begin
+        if(req_addr[23:5] == 19'h04000) begin
           if(req_wmask[0]) data_words[req_addr[4:0]][7:0]<=req_wdata[7:0];
           if(req_wmask[1]) data_words[req_addr[4:0]][15:8]<=req_wdata[15:8];
         end else begin
@@ -34,8 +34,8 @@ module sdram_system_adapter_tb;
           if(req_wmask[1]) program_words[req_addr[4:0]][15:8]<=req_wdata[15:8];
         end
       end else
-        rdata <= req_addr[23] ? data_words[req_addr[4:0]] :
-                                program_words[req_addr[4:0]];
+        rdata <= req_addr[23:5] == 19'h04000 ?
+                 data_words[req_addr[4:0]] : program_words[req_addr[4:0]];
       done<=1;
     end
   end
@@ -77,7 +77,9 @@ module sdram_system_adapter_tb;
       $fatal(1,"instruction word assembly failed: %08x",cpu_imem_read_data);
     @(negedge clk); cpu_imem_valid=0;
 
-    @(negedge clk); cpu_dmem_address=4; cpu_dmem_write_data=32'h1234_abcd;
+    // The CPU uses the same global data address as the monitor.
+    @(negedge clk); cpu_dmem_address=32'h0010_0004;
+    cpu_dmem_write_data=32'h1234_abcd;
     cpu_dmem_write_enable=4'b1111; cpu_dmem_valid=1;
     wait(cpu_dmem_ready); @(negedge clk); cpu_dmem_valid=0;
     cpu_dmem_write_enable=0;
@@ -87,6 +89,26 @@ module sdram_system_adapter_tb;
       $fatal(1,"data word round-trip failed: %08x",cpu_dmem_read_data);
     @(negedge clk); cpu_dmem_valid=0;
 
+    cpu_halted=1;
+    monitor_read_check(32'h0010_0004,8'hcd);
+    monitor_read_check(32'h0010_0005,8'hab);
+
+    // Both CPU ports see the same words, regardless of their usual purpose.
+    cpu_halted=0;
+    @(negedge clk); cpu_dmem_address=0; cpu_dmem_valid=1;
+    wait(cpu_dmem_ready);
+    if(cpu_dmem_error || cpu_dmem_read_data!==32'hcafe_3344)
+      $fatal(1,"dmem could not read program region");
+    @(negedge clk); cpu_dmem_valid=0;
+    repeat(2) @(negedge clk);
+    cpu_imem_address=32'h0010_0004; cpu_imem_valid=1;
+    wait(cpu_imem_ready);
+    if(cpu_imem_read_data!==32'h1234_abcd)
+      $fatal(1,"imem could not read data region");
+    @(negedge clk); cpu_imem_valid=0;
+    repeat(2) @(negedge clk);
+
+    cpu_halted=0;
     @(negedge clk); monitor_address=0; monitor_read_enable=1;
     @(negedge clk); monitor_read_enable=0; wait(monitor_ready);
     if(!monitor_error) $fatal(1,"monitor accessed SDRAM while CPU was running");
