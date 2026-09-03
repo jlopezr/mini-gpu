@@ -28,28 +28,6 @@ El test se detiene permanentemente al primer error y conserva internamente direc
 
 Un ciclo dura 40 ns. La inicialización espera más de 200 us (5001 ciclos), hace PRECHARGE ALL, ocho AUTO REFRESH y carga el modo BL1/CL2. Los espacios usados son conservadores: 40 ns para tRP y tRCD, 80 ns para tRFC y dos ciclos tras WRITE. El refresco se solicita cada 190 ciclos (7,6 us), por debajo del máximo medio de 7,8125 us para 8192 refrescos en 64 ms.
 
-## Compilar
-
-Se necesita Yosys, nextpnr-ecp5, ecppack y GNU Make. Para una ULX3S de 85K:
-
-```sh
-make
-```
-
-Para otra densidad del ECP5:
-
-```sh
-make DEVICE=45k
-make DEVICE=25k
-```
-
-El resultado es `top.bit`. Para cargarlo temporalmente o grabarlo en flash, si `ujprog` está instalado:
-
-```sh
-make prog
-make flash
-```
-
 ## Ampliar el área probada
 
 En `top.v`, cambie `TEST_ADDR_BITS(16)`. Por ejemplo, 20 prueba 1 048 576 palabras (2 MiB). El máximo es 24 para los 32 MiB completos; a costa de un tiempo de ejecución mucho mayor.
