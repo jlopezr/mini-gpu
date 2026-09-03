@@ -2,8 +2,8 @@
 
 import struct
 
-WIDTH = 640
-HEIGHT = 480
+WIDTH = 320
+HEIGHT = 240
 MAX_ITER = 256
 
 FRAC_BITS = 16
