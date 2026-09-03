@@ -1,9 +1,7 @@
 # compare_iterations.py
 
+import argparse
 import struct
-
-FILE_A = "mandelbrot.iter"
-FILE_B = "mandelbrot_fixed.iter"
 
 
 def read_iterations(filename):
@@ -30,8 +28,16 @@ def read_iterations(filename):
 
 
 def main():
-    width_a, height_a, max_iter_a, values_a = read_iterations(FILE_A)
-    width_b, height_b, max_iter_b, values_b = read_iterations(FILE_B)
+
+    parser = argparse.ArgumentParser(
+        description="Compara dos archivos .iter y muestra estadísticas de diferencias"
+    )
+    parser.add_argument("file_a", help="Primer archivo .iter")
+    parser.add_argument("file_b", help="Segundo archivo .iter")
+    args = parser.parse_args()
+
+    width_a, height_a, max_iter_a, values_a = read_iterations(args.file_a)
+    width_b, height_b, max_iter_b, values_b = read_iterations(args.file_b)
 
     if width_a != width_b or height_a != height_b:
         raise ValueError(
@@ -79,8 +85,8 @@ def main():
 
     print("Comparación ITER")
     print("================")
-    print(f"A: {FILE_A}")
-    print(f"B: {FILE_B}")
+    print(f"A: {args.file_a}")
+    print(f"B: {args.file_b}")
     print()
 
     print(f"Resolución:          {width_a}x{height_a}")

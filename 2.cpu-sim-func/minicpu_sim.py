@@ -269,6 +269,15 @@ class CPU:
                 )
             self.step()
 
+    def dump_memory(self, address: int, size: int, filename: Path) -> None:
+        """Guarda una región de memoria exactamente como una secuencia de bytes."""
+        if address < 0 or size < 0 or address + size > len(self.memory):
+            raise ValueError(
+                f"volcado fuera de memoria: dirección=0x{address:08X}, "
+                f"tamaño={size}"
+            )
+
+        filename.write_bytes(self.memory[address:address + size])
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -282,6 +291,12 @@ def main() -> None:
         default=2 * 1024 * 1024,
         help="tamaño de memoria en bytes (admite 0x...)",
     )
+    parser.add_argument(
+        "--dump",
+        nargs=3,
+        metavar=("ADDRESS", "SIZE", "FILE"),
+        help="vuelca una región de memoria después de ejecutar el programa",
+    )
     args = parser.parse_args()
 
     cpu = CPU(args.memory_size)
@@ -294,6 +309,17 @@ def main() -> None:
         if value != 0:
             print(f"R{i:02d} = 0x{value:08X} ({value})")
 
+    if args.dump is not None:
+        address_text, size_text, filename_text = args.dump
+        address = int(address_text, 0)
+        size = int(size_text, 0)
+        filename = Path(filename_text)
+
+        cpu.dump_memory(address, size, filename)
+        print(
+            f"Volcados {size} bytes desde 0x{address:08X} "
+            f"a {filename}"
+        )
 
 if __name__ == "__main__":
     main()
