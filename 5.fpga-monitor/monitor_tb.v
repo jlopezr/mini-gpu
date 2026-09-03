@@ -13,6 +13,12 @@ module monitor_tb;
   wire tx_strobe;
   wire [7:0] last_command;
   wire busy;
+  wire [15:0] mem_address;
+  wire [7:0] mem_write_data;
+  wire mem_write_enable;
+  wire mem_read_enable;
+  wire [7:0] mem_read_data;
+  wire mem_ready;
 
   reg [7:0] received[0:7];
   integer received_count = 0;
@@ -28,8 +34,25 @@ module monitor_tb;
       .tx_data(tx_data),
       .tx_strobe(tx_strobe),
       .tx_ready(tx_ready),
+      .mem_address(mem_address),
+      .mem_write_data(mem_write_data),
+      .mem_write_enable(mem_write_enable),
+      .mem_read_enable(mem_read_enable),
+      .mem_read_data(mem_read_data),
+      .mem_ready(mem_ready),
       .last_command(last_command),
       .busy(busy)
+  );
+
+  memory memory_i (
+      .clk(clk),
+      .reset(reset),
+      .address(mem_address[13:0]),
+      .write_data(mem_write_data),
+      .write_enable(mem_write_enable),
+      .read_enable(mem_read_enable),
+      .read_data(mem_read_data),
+      .ready(mem_ready)
   );
 
   // Minimal model of the uart_tx ready/strobe handshake.
@@ -82,6 +105,22 @@ module monitor_tb;
     send_command(8'h55);
     wait (received_count == 5);
     if (received[4] !== 8'hff) $fatal(1, "ERROR response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h25);
+    send_command(8'hab);
+    wait (received_count == 6);
+    if (received[5] !== 8'h90) $fatal(1, "WRITE_BYTE response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h25);
+    wait (received_count == 8);
+    if (received[6] !== 8'h91) $fatal(1, "READ_BYTE response mismatch");
+    if (received[7] !== 8'hab) $fatal(1, "READ_BYTE data mismatch");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

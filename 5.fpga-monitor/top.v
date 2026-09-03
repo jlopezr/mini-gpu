@@ -49,6 +49,12 @@ module top (
   // Command monitor
   wire [7:0] last_command;
   wire monitor_busy;
+  wire [15:0] mem_address;
+  wire [7:0] mem_write_data;
+  wire mem_write_enable;
+  wire mem_read_enable;
+  wire [7:0] mem_read_data;
+  wire mem_ready;
 
   monitor monitor_i (
       .clk(clk),
@@ -58,8 +64,26 @@ module top (
       .tx_data(uart_tx_data),
       .tx_strobe(uart_tx_strobe),
       .tx_ready(uart_tx_ready),
+      .mem_address(mem_address),
+      .mem_write_data(mem_write_data),
+      .mem_write_enable(mem_write_enable),
+      .mem_read_enable(mem_read_enable),
+      .mem_read_data(mem_read_data),
+      .mem_ready(mem_ready),
       .last_command(last_command),
       .busy(monitor_busy)
+  );
+
+  // Temporary 16 KiB memory. It will later be shared with the CPU.
+  memory memory_i (
+      .clk(clk),
+      .reset(reset),
+      .address(mem_address[13:0]),
+      .write_data(mem_write_data),
+      .write_enable(mem_write_enable),
+      .read_enable(mem_read_enable),
+      .read_data(mem_read_data),
+      .ready(mem_ready)
   );
 
   // Display the last command. LED 7 lights while a response is pending.
