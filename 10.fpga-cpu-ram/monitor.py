@@ -13,7 +13,7 @@ from serial.tools import list_ports
 
 BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
-MAX_ADDRESS = 0xFFFF_FFFF
+MAX_ADDRESS = 0x01FF_FFFF
 MAX_BLOCK_SIZE = 256
 MEMORY_REGIONS = (
     (0x0000_0000, 0x0200_0000),
@@ -235,6 +235,7 @@ def parse_args() -> argparse.Namespace:
             "write-block",
             "read-block",
             "verify",
+            "memory-test",
             "run",
             "halt",
             "step",
@@ -285,6 +286,51 @@ def validate_transfer(address: int, length: int) -> None:
         raise MonitorError("Transfer is outside the currently implemented memory regions")
 
 
+def test_pattern(number: int, address: int, length: int) -> bytes:
+    """Build one deterministic SDRAM test pattern for a physical byte range."""
+    if number == 0:
+        return bytes(length)
+    if number == 1:
+        return bytes((0xFF,)) * length
+    if number == 2:
+        return bytes(((address + offset) ^ 0xA5) & 0xFF for offset in range(length))
+    return bytes(0xAA if (address + offset) & 1 else 0x55 for offset in range(length))
+
+
+def memory_test(client: MonitorClient, address: int, length: int) -> None:
+    """Destructively write and verify four patterns over an SDRAM range."""
+    validate_transfer(address, length)
+    names = ("00", "ff", "address XOR a5", "55/aa")
+    for pattern_number, name in enumerate(names):
+        print(f"Pattern {pattern_number + 1}/4: {name} (write)", flush=True)
+        for offset in range(0, length, MAX_BLOCK_SIZE):
+            size = min(MAX_BLOCK_SIZE, length - offset)
+            client.write_block(
+                address + offset,
+                test_pattern(pattern_number, address + offset, size),
+            )
+
+        print(f"Pattern {pattern_number + 1}/4: {name} (verify)", flush=True)
+        for offset in range(0, length, MAX_BLOCK_SIZE):
+            size = min(MAX_BLOCK_SIZE, length - offset)
+            expected = test_pattern(pattern_number, address + offset, size)
+            actual = client.read_block(address + offset, size)
+            if actual != expected:
+                mismatch = next(
+                    index
+                    for index, (left, right) in enumerate(zip(actual, expected))
+                    if left != right
+                )
+                absolute = address + offset + mismatch
+                raise MonitorError(
+                    f"Memory test failed at 0x{absolute:08x}: "
+                    f"memory=0x{actual[mismatch]:02x}, "
+                    f"expected=0x{expected[mismatch]:02x}"
+                )
+
+    print(f"SDRAM test passed: {length} byte(s) from 0x{address:08x}")
+
+
 def main() -> int:
     args = parse_args()
 
@@ -297,6 +343,7 @@ def main() -> int:
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
+            "memory-test": 2,
             "run": 0,
             "halt": 0,
             "step": 0,
@@ -370,6 +417,10 @@ def main() -> int:
                         f"memory=0x{actual[mismatch]:02x}, file=0x{expected[mismatch]:02x}"
                     )
                 print(f"Verified {len(expected)} byte(s) at address 0x{address:04x}")
+            elif args.command == "memory-test":
+                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
+                memory_test(client, address, length)
             elif args.command == "run":
                 client.run_cpu()
                 print("CPU started")

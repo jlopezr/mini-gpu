@@ -34,6 +34,17 @@ python monitor.py run --port COM3
 python monitor.py status --port COM3
 ```
 
+Prueba destructiva de SDRAM, por ejemplo sobre 128 KiB:
+
+```powershell
+python monitor.py memory-test 0 0x20000 --port COM3
+```
+
+`memory-test` escribe y verifica cuatro patrones (`00`, `ff`, dirección XOR
+`a5` y `55/aa`). La CPU debe estar detenida y el contenido del intervalo se
+sobrescribe. Puede probarse la mitad de datos usando una dirección inicial a
+partir de `0x01000000`.
+
 Para inspeccionar datos escritos por la CPU se usa la base física
 `0x01000000`. Por ejemplo, la dirección local de datos `4` se lee desde
 `0x01000004` con el monitor.
@@ -43,6 +54,7 @@ Para inspeccionar datos escritos por la CPU se usa la base física
 ```powershell
 apio test sdram_system_adapter_tb.v
 apio test cpu_sdram_system_tb.v
+apio test cpu_tb.v
 apio test monitor_tb.v
 apio test sdram_controller_tb.v
 apio build
@@ -51,10 +63,18 @@ apio build
 `cpu_sdram_system_tb.v` comprueba el flujo completo: carga mediante el puerto
 del monitor, fetch desde SDRAM, `STORE`, `LOAD` y `HALT`.
 
-## Estado del timing
+La explicación detallada de registros, rutas críticas y latencias está en
+[`timing.md`](timing.md).
 
-La integración es funcional en simulación, pero el place-and-route actual no
-cierra todavía la restricción de 120 MHz. La mejor colocación medida alcanza
-118,64 MHz y la ejecución predeterminada queda alrededor de 116 MHz. `apio
-build` genera el bitstream porque usa `--timing-allow-fail`; no debe tratarse
-como bitstream validado a 120 MHz hasta eliminar ese aviso de nextpnr.
+## Timing
+
+El place-and-route actual alcanza **122,73 MHz** para una restricción de
+120 MHz. Las operaciones ALU registran primero su resultado en
+`STATE_ALU_WRITE`, por lo que `ADD`, `SUB`, `AND`, `OR`, `XOR` y sus variantes
+inmediatas tardan un ciclo adicional. Esta etapa evita que el sumador termine
+directamente en la entrada de escritura del banco de registros.
+
+La recepción de bloques del monitor también separa captura de longitud,
+cálculo de la dirección final y validación. Esos ciclos son despreciables
+frente al tiempo de transmisión UART y evitan una ruta combinacional desde el
+byte recibido hasta el siguiente estado del monitor.

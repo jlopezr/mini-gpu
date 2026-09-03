@@ -105,6 +105,8 @@ module cpu (
   localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
   localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
   localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
+  // Separate ALU calculation from register-file write-back at 120 MHz.
+  localparam [3:0] STATE_ALU_WRITE = 4'd11;
 
   reg [3:0] state;
   reg [31:0] pc;
@@ -126,6 +128,8 @@ module cpu (
   reg branch_a_sign;
   reg branch_b_sign;
   reg [2:0] branch_kind;
+  reg [4:0] alu_destination;
+  reg [31:0] alu_result;
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
@@ -220,6 +224,8 @@ module cpu (
       branch_a_sign <= 1'b0;
       branch_b_sign <= 1'b0;
       branch_kind <= 3'd0;
+      alu_destination <= 5'd0;
+      alu_result <= 32'h0000_0000;
       register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
@@ -309,38 +315,33 @@ module cpu (
             end
 
             OPCODE_ADD: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a + operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a + operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_SUB: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a - operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a - operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_AND: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a & operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a & operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_OR: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a | operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a | operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_XOR: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a ^ operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a ^ operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_SHL: begin
@@ -368,31 +369,27 @@ module cpu (
             end
 
             OPCODE_ADDI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a + immediate_signed;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a + immediate_signed;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_ANDI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a & immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a & immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_ORI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a | immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a | immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_XORI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a ^ immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a ^ immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_MOVHI: begin
@@ -551,6 +548,14 @@ module cpu (
         STATE_SHIFT_WRITE: begin
           register_write_address <= shift_destination;
           register_write_data <= shift_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        // The extra cycle breaks operand -> adder -> register-file write-back.
+        STATE_ALU_WRITE: begin
+          register_write_address <= alu_destination;
+          register_write_data <= alu_result;
           register_write_enable <= 1'b1;
           state <= STATE_RETIRE;
         end

@@ -112,13 +112,17 @@ module monitor (
   localparam [4:0] STATE_WAIT_REGISTER_1 = 5'd28;
   localparam [4:0] STATE_WAIT_REGISTER_2 = 5'd29;
   localparam [4:0] STATE_DECODE_COMMAND = 5'd30;
+  // Block range checking is pipelined to keep rx_data off the wide adder path.
+  localparam [4:0] STATE_VALIDATE_BLOCK = 5'd31;
+  localparam [5:0] STATE_CALCULATE_BLOCK_END = 6'd32;
 
-  reg [4:0] state;
-  reg [4:0] state_after_tx;
-  reg [4:0] response_done_state;
+  reg [5:0] state;
+  reg [5:0] state_after_tx;
+  reg [5:0] response_done_state;
   reg block_is_write;
   reg [15:0] block_length;
   reg [15:0] block_remaining;
+  reg [32:0] block_end_address;
   reg [7:0] mem_read_data_latched;
   reg mem_error_latched;
   reg [2:0] response_index;
@@ -162,6 +166,7 @@ module monitor (
       block_is_write <= 1'b0;
       block_length <= 16'd0;
       block_remaining <= 16'd0;
+      block_end_address <= 33'h000000000;
       mem_read_data_latched <= 8'h00;
       mem_error_latched <= 1'b0;
       response_index <= 2'd0;
@@ -420,13 +425,24 @@ module monitor (
           if (rx_strobe) begin
             block_length[7:0] <= rx_data;
             block_remaining <= {block_length[15:8], rx_data};
+            state <= STATE_CALCULATE_BLOCK_END;
+          end
+        end
 
-            if ({block_length[15:8], rx_data} == 0 ||
-                {block_length[15:8], rx_data} > 16'd256 ||
-                (mem_address[31:14] != 18'h00000 &&
-                    mem_address[31:14] != 18'h00040) ||
-                ({1'b0, mem_address[13:0]} +
-                    {6'd0, block_length[8], rx_data}) > 15'h4000) begin
+        // Keep the wide address addition in its own registered stage.
+        STATE_CALCULATE_BLOCK_END: begin
+          block_end_address <=
+              {1'b0, mem_address} + {17'd0, block_length};
+          state <= STATE_VALIDATE_BLOCK;
+        end
+
+        // Validate after registering both the length and exclusive end.
+        // The end address is exclusive, so a one-byte transfer at 0x01ffffff
+        // is valid and ends exactly at 0x02000000.
+        STATE_VALIDATE_BLOCK: begin
+            if (block_length == 0 || block_length > 16'd256 ||
+                mem_address[31:25] != 0 ||
+                block_end_address > 33'h02000000) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 2'd1;
               response_index <= 2'd0;
@@ -441,7 +457,6 @@ module monitor (
               response_done_state <= STATE_BLOCK_READ_REQUEST;
               state <= STATE_RESPOND;
             end
-          end
         end
         STATE_BLOCK_WRITE_DATA: begin
           if (rx_strobe) begin

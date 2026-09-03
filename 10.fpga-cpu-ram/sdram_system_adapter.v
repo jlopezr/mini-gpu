@@ -212,7 +212,8 @@ module sdram_system_adapter (
           end
         end
 
-        // valid is level-based and the requester observes ready one clock
+        // Handshake release stage: never accept a still-high valid twice.
+        // The requester observes ready one clock
         // after it is registered here. Do not accept the still-high request a
         // second time while its owner is deasserting valid.
         STATE_RELEASE: begin
