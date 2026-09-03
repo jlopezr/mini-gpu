@@ -1,5 +1,8 @@
 `ifndef _util_v_
 `define _util_v_ 
+
+`default_nettype none
+
 `define CLOG2(x) \
    x <= 2	 ? 1 : \
    x <= 4	 ? 2 : \
@@ -41,20 +44,31 @@ function [7:0] hexdigit;
 			"?";
   end
 endfunction
+
 module divide_by_n (
     input clk,
     input reset,
     output reg out
 );
+
   parameter N = 2;
+
   reg [`CLOG2(N)-1:0] counter;
+
   always @(posedge clk) begin
-    out <= 0;
-    if (reset) counter <= 0;
-    else if (counter == 0) begin
-      out <= 1;
+    out <= 1'b0;
+
+    if (reset) begin
+      counter <= 0;
+    end else if (counter == 0) begin
+      out <= 1'b1;
       counter <= N - 1;
-    end else counter <= counter - 1;
+    end else begin
+      counter <= counter - 1;
+    end
   end
 endmodule
+
+`default_nettype wire
+
 `endif
