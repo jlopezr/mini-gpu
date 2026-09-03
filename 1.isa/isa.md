@@ -81,16 +81,16 @@ Los dos bits altos del opcode separan cuatro familias:
 
 | Opcode | Mnemónico | Operandos    | Semántica                         | Simulador |
 |-------:|-----------|--------------|-----------------------------------|-----------|
-| `0x00` | `NOP`     | —            | Sin efecto                        | Pendiente |
+| `0x00` | `NOP`     | —            | Sin efecto                        | Sí        |
 | `0x01` | `ADD`     | `Rd, Ra, Rb` | `Rd = Ra + Rb`                    | Sí        |
 | `0x02` | `SUB`     | `Rd, Ra, Rb` | `Rd = Ra - Rb`                    | Sí        |
 | `0x03` | `MULFX`   | `Rd, Ra, Rb` | multiplicación signed Q16.16      | Sí        |
-| `0x04` | `AND`     | `Rd, Ra, Rb` | AND bit a bit                     | Pendiente |
-| `0x05` | `OR`      | `Rd, Ra, Rb` | OR bit a bit                      | Pendiente |
-| `0x06` | `XOR`     | `Rd, Ra, Rb` | XOR bit a bit                     | Pendiente |
-| `0x07` | `SHL`     | `Rd, Ra, Rb` | desplazamiento lógico izquierdo   | Pendiente |
-| `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Pendiente |
-| `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Pendiente |
+| `0x04` | `AND`     | `Rd, Ra, Rb` | AND bit a bit                     | Sí        |
+| `0x05` | `OR`      | `Rd, Ra, Rb` | OR bit a bit                      | Sí        |
+| `0x06` | `XOR`     | `Rd, Ra, Rb` | XOR bit a bit                     | Sí        |
+| `0x07` | `SHL`     | `Rd, Ra, Rb` | desplazamiento lógico izquierdo   | Sí        |
+| `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Sí        |
+| `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Sí        |
 | `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | Sí        |
 | `0x0B` | `MULHI`   | `Rd, Ra, Rb` | Reservada                         | No        |
 | `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | Sí        |
@@ -113,9 +113,9 @@ se formalice, el simulador termina con error.
 |------------:|-----------|-----------------|---------------------------------------|-----------|
 |      `0x10` | `MOVI`    | `Rd, imm16`     | `Rd = sign_extend(imm16)`             | Sí        |
 |      `0x11` | `ADDI`    | `Rd, Ra, imm16` | `Rd = Ra + sign_extend(imm16)`        | Sí        |
-|      `0x12` | `ANDI`    | `Rd, Ra, imm16` | `Rd = Ra AND zero_extend(imm16)`      | Pendiente |
+|      `0x12` | `ANDI`    | `Rd, Ra, imm16` | `Rd = Ra AND zero_extend(imm16)`      | Sí        |
 |      `0x13` | `ORI`     | `Rd, Ra, imm16` | `Rd = Ra OR zero_extend(imm16)`       | Sí        |
-|      `0x14` | `XORI`    | `Rd, Ra, imm16` | `Rd = Ra XOR zero_extend(imm16)`      | Pendiente |
+|      `0x14` | `XORI`    | `Rd, Ra, imm16` | `Rd = Ra XOR zero_extend(imm16)`      | Sí        |
 |      `0x15` | `LOAD`    | `Rd, Ra, imm16` | `Rd = mem32[Ra + sign_extend(imm16)]` | Sí        |
 |      `0x16` | `STORE`   | `Rs, Ra, imm16` | `mem32[Ra + sign_extend(imm16)] = Rs` | Sí        |
 |      `0x17` | `MOVHI`   | `Rd, imm16`     | `Rd = imm16 << 16`                    | Sí        |
@@ -160,7 +160,7 @@ El ensamblador calcula estos offsets al resolver labels.
 
 |      Opcode | Mnemónico | Operandos | Estado                                 |
 |------------:|-----------|-----------|----------------------------------------|
-|      `0x30` | `GETTID`  | `Rd`      | Definida; pendiente en el simulador    |
+|      `0x30` | `GETTID`  | `Rd`      | Definida; implementada en MiniCPU      |
 |      `0x31` | `GETLANE` | `Rd`      | Reservada para GPU                     |
 |      `0x32` | `GETWARP` | `Rd`      | Reservada para GPU                     |
 |      `0x33` | `BAR`     | —         | Reservada para GPU                     |

@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
-"""
-MiniCPU functional simulator v0.1
+"""Simulador funcional de MiniCPU para MiniISA v0.1.
 
-Implementa:
+Implementa todas las instrucciones actualmente definidas, excepto la semántica
+arquitectónica de TRAP:
 
-- PC
-- R0..R31
-- memoria byte-addressed
-- fetch/decode/execute
-- MOVI, MOVHI, ORI, ADD, ADDI, SUB
-- MUL, MULFX, DIV
-- LOAD, STORE
-- BEQ, BNE, BLT, BGE, BLTU, BGEU, BRA
-- HALT
+- Sistema: NOP, GETTID y HALT.
+- ALU: ADD, SUB, AND, OR, XOR, SHL, SHR y SAR.
+- Aritmética: MUL, MULFX y DIV.
+- Inmediatas: MOVI, MOVHI, ADDI, ANDI, ORI y XORI.
+- Memoria: LOAD y STORE.
+- Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
 
-Semántica:
+El estado consta de PC y 32 registros generales de 32 bits; R0 también es
+escribible. Las operaciones hacen wrap módulo 2**32, los binarios son
+little-endian y los branches son relativos a PC+4 con offsets expresados en
+palabras de 32 bits.
 
-- registros de 32 bits
-- wrap módulo 2^32
-- instrucciones y memoria little-endian
-- LOAD/STORE de words alineadas a 4 bytes
-- MUL devuelve los 32 bits bajos del producto
-- MULFX usa operandos signed Q16.16
-- DIV es signed y trunca hacia cero
-- branches relativos a PC+4, en unidades de instrucción
+Este modelo utiliza una memoria unificada y byte-addressed de 2 MiB por defecto.
+La implementación FPGA, en cambio, tiene espacios Harvard separados de 16 KiB
+para programa y datos. Hasta que exista un modo de memoria compatible con FPGA,
+un programa puede ser válido aquí y exceder las memorias físicas.
+
+Los accesos inválidos y la división por cero lanzan RuntimeError. Esto permite
+detener el simulador con un diagnóstico, pero aún no representa el futuro estado
+arquitectónico de traps. El opcode TRAP cae también en el error genérico de
+instrucción no implementada.
 """
 
 from __future__ import annotations
@@ -67,6 +68,8 @@ def signed_divide(a: int, b: int) -> int:
 
 
 class CPU:
+    """Estado y ejecución secuencial de una MiniCPU escalar."""
+
     def __init__(self, memory_size: int = 2 * 1024 * 1024):
         self.regs = [0] * 32
         self.pc = 0
@@ -75,12 +78,14 @@ class CPU:
         self.instructions_executed = 0
 
     def reset(self) -> None:
+        """Reinicia PC, registros y contadores sin borrar la memoria."""
         self.regs = [0] * 32
         self.pc = 0
         self.halted = False
         self.instructions_executed = 0
 
     def load_program(self, data: bytes, address: int = 0) -> None:
+        """Copia un binario alineado y coloca el PC en su dirección inicial."""
         if address & 3:
             raise ValueError("dirección de carga no alineada")
         if len(data) & 3:
@@ -95,6 +100,7 @@ class CPU:
         self.halted = False
 
     def read_u32(self, address: int) -> int:
+        """Lee una palabra little-endian alineada dentro de la memoria."""
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"lectura fuera de memoria: 0x{address:08X}")
         if address & 3:
@@ -102,6 +108,7 @@ class CPU:
         return struct.unpack_from("<I", self.memory, address)[0]
 
     def write_u32(self, address: int, value: int) -> None:
+        """Escribe los 32 bits bajos en una dirección alineada de memoria."""
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"escritura fuera de memoria: 0x{address:08X}")
         if address & 3:
@@ -109,9 +116,11 @@ class CPU:
         struct.pack_into("<I", self.memory, address, u32(value))
 
     def fetch(self) -> int:
+        """Obtiene la instrucción situada en el PC actual."""
         return self.read_u32(self.pc)
 
     def step(self) -> None:
+        """Ejecuta y contabiliza una instrucción, salvo si la CPU está parada."""
         if self.halted:
             return
 
@@ -123,7 +132,10 @@ class CPU:
         instr_pc = self.pc
         self.pc = u32(self.pc + 4)
 
-        if opcode == 0x10:  # MOVI
+        if opcode == 0x00:  # NOP
+            pass
+
+        elif opcode == 0x10:  # MOVI
             rd = (instr >> 21) & 0x1F
             imm16 = instr & 0xFFFF
             self.regs[rd] = u32(sign_extend(imm16, 16))
@@ -157,6 +169,43 @@ class CPU:
             rb = (instr >> 11) & 0x1F
             self.regs[rd] = u32(self.regs[ra] - self.regs[rb])
 
+        elif opcode == 0x04:  # AND
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.regs[rd] = self.regs[ra] & self.regs[rb]
+
+        elif opcode == 0x05:  # OR
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.regs[rd] = self.regs[ra] | self.regs[rb]
+
+        elif opcode == 0x06:  # XOR
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.regs[rd] = self.regs[ra] ^ self.regs[rb]
+
+        elif opcode == 0x07:  # SHL
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            # MiniISA usa únicamente los cinco bits bajos de la cantidad.
+            self.regs[rd] = u32(self.regs[ra] << (self.regs[rb] & 0x1F))
+
+        elif opcode == 0x08:  # SHR
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.regs[rd] = self.regs[ra] >> (self.regs[rb] & 0x1F)
+
+        elif opcode == 0x09:  # SAR
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.regs[rd] = u32(s32(self.regs[ra]) >> (self.regs[rb] & 0x1F))
+
         elif opcode == 0x0A:  # MUL
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
@@ -183,6 +232,19 @@ class CPU:
             dividend = s32(self.regs[ra])
             divisor = s32(self.regs[rb])
             self.regs[rd] = u32(signed_divide(dividend, divisor))
+
+        elif opcode == 0x12:  # ANDI
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            # Los inmediatos lógicos se extienden con ceros, no con signo.
+            imm16 = instr & 0xFFFF
+            self.regs[rd] = self.regs[ra] & imm16
+
+        elif opcode == 0x14:  # XORI
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = instr & 0xFFFF
+            self.regs[rd] = self.regs[ra] ^ imm16
 
         elif opcode == 0x15:  # LOAD
             rd = (instr >> 21) & 0x1F
@@ -249,6 +311,11 @@ class CPU:
             offset26 = sign_extend(instr & 0x03FFFFFF, 26)
             self.pc = u32(self.pc + (offset26 << 2))
 
+        elif opcode == 0x30:  # GETTID
+            rd = (instr >> 21) & 0x1F
+            # La MiniCPU es escalar; el ID solo variará en la futura MiniGPU.
+            self.regs[rd] = 0
+
         elif opcode == 0x3F:  # HALT
             self.halted = True
 
@@ -261,6 +328,7 @@ class CPU:
         self.instructions_executed += 1
 
     def run(self, max_instructions: int = 100_000_000) -> None:
+        """Ejecuta hasta HALT respetando un límite de seguridad."""
         while not self.halted:
             if self.instructions_executed >= max_instructions:
                 raise RuntimeError(
@@ -279,9 +347,10 @@ class CPU:
 
         filename.write_bytes(self.memory[address:address + size])
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="MiniCPU functional simulator v0.1"
+        description="Simulador funcional de MiniCPU para MiniISA v0.1"
     )
     parser.add_argument("program", type=Path)
     parser.add_argument("--max", type=int, default=100_000_000)
@@ -320,6 +389,7 @@ def main() -> None:
             f"Volcados {size} bytes desde 0x{address:08X} "
             f"a {filename}"
         )
+
 
 if __name__ == "__main__":
     main()

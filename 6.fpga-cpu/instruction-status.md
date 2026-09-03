@@ -19,23 +19,23 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 
 | Opcode | Instrucción | Ensamblador | Simulador | FPGA | Observaciones                                                                    |
 |-------:|-------------|:-----------:|:---------:|:----:|----------------------------------------------------------------------------------|
-| `0x00` | `NOP`       |      ✅      |     ❌     |  ❌   | Debe retirar una instrucción sin modificar estado salvo el PC.                   |
+| `0x00` | `NOP`       |      ✅      |     ✅     |  ❌   | Retira una instrucción sin modificar estado salvo el PC.                         |
 | `0x01` | `ADD`       |      ✅      |     ✅     |  ✅   | Suma de 32 bits con wrap.                                                        |
 | `0x02` | `SUB`       |      ✅      |     ✅     |  ❌   | Resta de 32 bits con wrap.                                                       |
 | `0x03` | `MULFX`     |      ✅      |     ✅     |  ❌   | Multiplicación signed Q16.16.                                                    |
-| `0x04` | `AND`       |      ✅      |     ❌     |  ❌   | AND bit a bit.                                                                   |
-| `0x05` | `OR`        |      ✅      |     ❌     |  ❌   | OR bit a bit.                                                                    |
-| `0x06` | `XOR`       |      ✅      |     ❌     |  ❌   | XOR bit a bit.                                                                   |
-| `0x07` | `SHL`       |      ✅      |     ❌     |  ❌   | Usa los cinco bits bajos de `Rb`.                                                |
-| `0x08` | `SHR`       |      ✅      |     ❌     |  ❌   | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
-| `0x09` | `SAR`       |      ✅      |     ❌     |  ❌   | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
+| `0x04` | `AND`       |      ✅      |     ✅     |  ❌   | AND bit a bit.                                                                   |
+| `0x05` | `OR`        |      ✅      |     ✅     |  ❌   | OR bit a bit.                                                                    |
+| `0x06` | `XOR`       |      ✅      |     ✅     |  ❌   | XOR bit a bit.                                                                   |
+| `0x07` | `SHL`       |      ✅      |     ✅     |  ❌   | Usa los cinco bits bajos de `Rb`.                                                |
+| `0x08` | `SHR`       |      ✅      |     ✅     |  ❌   | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
+| `0x09` | `SAR`       |      ✅      |     ✅     |  ❌   | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
 | `0x0A` | `MUL`       |      ✅      |     ✅     |  ❌   | Conserva los 32 bits bajos del producto.                                         |
 | `0x0C` | `DIV`       |      ✅      |     ✅     |  ❌   | Signed y hacia cero; división por cero debe provocar trap.                       |
 | `0x10` | `MOVI`      |      ✅      |     ✅     |  ✅   | Extensión de signo de `imm16`.                                                   |
 | `0x11` | `ADDI`      |      ✅      |     ✅     |  ❌   | Inmediato con extensión de signo.                                                |
-| `0x12` | `ANDI`      |      ✅      |     ❌     |  ❌   | Inmediato con extensión de ceros.                                                |
+| `0x12` | `ANDI`      |      ✅      |     ✅     |  ❌   | Inmediato con extensión de ceros.                                                |
 | `0x13` | `ORI`       |      ✅      |     ✅     |  ❌   | Inmediato con extensión de ceros.                                                |
-| `0x14` | `XORI`      |      ✅      |     ❌     |  ❌   | Inmediato con extensión de ceros.                                                |
+| `0x14` | `XORI`      |      ✅      |     ✅     |  ❌   | Inmediato con extensión de ceros.                                                |
 | `0x15` | `LOAD`      |      ✅      |     ✅     |  ✅   | Palabra de 32 bits alineada.                                                     |
 | `0x16` | `STORE`     |      ✅      |     ✅     |  ✅   | Palabra de 32 bits alineada.                                                     |
 | `0x17` | `MOVHI`     |      ✅      |     ✅     |  ❌   | Escribe `imm16 << 16`.                                                           |
@@ -46,7 +46,7 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 | `0x24` | `BLTU`      |      ✅      |     ✅     |  ❌   | Comparación unsigned.                                                            |
 | `0x25` | `BGEU`      |      ✅      |     ✅     |  ❌   | Comparación unsigned.                                                            |
 | `0x2F` | `BRA`       |      ✅      |     ✅     |  ❌   | Offset signed de 26 bits, expresado en palabras.                                 |
-| `0x30` | `GETTID`    |      ✅      |     ❌     |  ❌   | En MiniCPU debe escribir cero; en MiniGPU será el ID del thread.                 |
+| `0x30` | `GETTID`    |      ✅      |     ✅     |  ❌   | En MiniCPU escribe cero; en MiniGPU será el ID del thread.                       |
 | `0x3E` | `TRAP`      |      ✅      |     ⚠️     |  ⚠️   | El encoding existe, pero aún cae en el error genérico de opcode no implementado. |
 | `0x3F` | `HALT`      |      ✅      |     ✅     |  ✅   | Detiene la ejecución después de retirar la instrucción.                          |
 
@@ -81,7 +81,7 @@ asignada en la tabla principal:
 | Implementación      | Completas |  Parciales | Pendientes |
 |---------------------|----------:|-----------:|-----------:|
 | Ensamblador         |        30 |          0 |          0 |
-| Simulador funcional |        19 | 1 (`TRAP`) |         10 |
+| Simulador funcional |        29 | 1 (`TRAP`) |          0 |
 | CPU FPGA            |         5 | 1 (`TRAP`) |         24 |
 
 `TRAP` se considera parcial porque ambas implementaciones se detienen ante su
@@ -90,20 +90,11 @@ distinguir un `TRAP` intencionado de un opcode sin implementar.
 
 ## Temas pendientes
 
-### 1. Completar primero el simulador funcional
+### 1. Mantener cerrado el simulador funcional
 
-El simulador debe actuar como referencia ejecutable de la ISA. El siguiente
-grupo no introduce operaciones especialmente costosas:
-
-1. `NOP`.
-2. `AND`, `OR` y `XOR`.
-3. `SHL`, `SHR` y `SAR`.
-4. `ANDI` y `XORI`.
-5. `GETTID`, devolviendo cero en MiniCPU.
-6. Semántica explícita de `TRAP`.
-
-Después deben añadirse pruebas unitarias para valores límite, signos,
-desplazamientos mayores de 31 y wrap de 32 bits.
+El simulador implementa ya todas las instrucciones definidas salvo la semántica
+arquitectónica formal de `TRAP`. Debe conservarse como referencia ejecutable y
+ampliar sus pruebas cada vez que cambie la especificación.
 
 ### 2. Ampliar la CPU FPGA por grupos
 
