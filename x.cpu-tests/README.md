@@ -93,13 +93,13 @@ implementaciones podrían compartir el mismo error.
 Los errores detienen la CPU y hacen que el PC observable señale la instrucción
 causante. Los códigos comunes son:
 
-| Código | Significado |
-|-------:|-------------|
+| Código | Significado                                             |
+|-------:|---------------------------------------------------------|
 | `0x01` | Opcode reservado, desconocido o todavía no implementado |
-| `0x02` | Acceso de memoria inválido |
-| `0x03` | Instrucción `TRAP` explícita |
-| `0x04` | División por cero |
-| `0x05` | Opcode conocido con campos reservados inválidos |
+| `0x02` | Acceso de memoria inválido                              |
+| `0x03` | Instrucción `TRAP` explícita                            |
+| `0x04` | División por cero                                       |
+| `0x05` | Opcode conocido con campos reservados inválidos         |
 
 Los casos de `cases/errors` verifican por separado `TRAP`, opcode inválido y
 encoding inválido sobre ambos backends.
