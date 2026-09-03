@@ -36,8 +36,57 @@ module cpu_memory_map_tb;
   reg [4:0] debug_register_address = 5'd0;
   wire [31:0] debug_register_data;
   wire [31:0] debug_pc;
+  integer instruction_cycle_count = 0;
+  integer measured_instruction_cycles = 0;
+  integer expected_instruction_cycles = 0;
+  reg measuring_instruction = 1'b0;
 
   always #5 clk = ~clk;
+
+  // Measure real instruction latency through the same registered EBR path
+  // used by the FPGA top-level.
+  always @(posedge clk) begin
+    if (reset || cpu_reset_request) begin
+      instruction_cycle_count <= 0;
+      measured_instruction_cycles <= 0;
+      expected_instruction_cycles <= 0;
+      measuring_instruction <= 1'b0;
+    end else if (cpu_i.state == 4'd1) begin
+      instruction_cycle_count <= 1;
+      measuring_instruction <= 1'b1;
+    end else if (measuring_instruction) begin
+      if (cpu_i.state == 4'd4) begin
+        measured_instruction_cycles = instruction_cycle_count + 1;
+        $display(
+            "FPGA CYCLES: opcode=%02x pc=%08x cycles=%0d",
+            cpu_i.opcode,
+            cpu_i.pc - 4,
+            measured_instruction_cycles
+        );
+        if (cpu_i.opcode == 6'h15 || cpu_i.opcode == 6'h16)
+          expected_instruction_cycles = 12;
+        else if (cpu_i.opcode >= 6'h07 && cpu_i.opcode <= 6'h09)
+          expected_instruction_cycles = 9 + cpu_i.operand_b[4:0];
+        else if (cpu_i.opcode >= 6'h20 && cpu_i.opcode <= 6'h25)
+          expected_instruction_cycles = 10;
+        else if (cpu_i.opcode == 6'h2f)
+          expected_instruction_cycles = 9;
+        else
+          expected_instruction_cycles = 8;
+        if (measured_instruction_cycles != expected_instruction_cycles)
+          $fatal(
+              1,
+              "FPGA opcode %02x latency mismatch: expected %0d, got %0d",
+              cpu_i.opcode,
+              expected_instruction_cycles,
+              measured_instruction_cycles
+          );
+        measuring_instruction <= 1'b0;
+      end else begin
+        instruction_cycle_count <= instruction_cycle_count + 1;
+      end
+    end
+  end
 
   cpu cpu_i (
       .clk(clk),

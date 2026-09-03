@@ -4,10 +4,17 @@
  * Minimal multicyle MiniCPU v0.1.
  *
  * Implemented instructions:
+ *   NOP
  *   MOVI Rd, imm16
- *   ADD  Rd, Ra, Rb
+ *   ADD/SUB/AND/OR/XOR Rd, Ra, Rb
+ *   SHL/SHR/SAR Rd, Ra, Rb
+ *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
+ *   MOVHI Rd, imm16
  *   LOAD Rd, Ra, imm16
  *   STORE Rs, Ra, imm16
+ *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
+ *   BRA offset
+ *   GETTID Rd (returns zero in MiniCPU)
  *   HALT
  *
  * The CPU starts halted after reset. run_request starts continuous execution;
@@ -45,25 +52,50 @@ module cpu (
     output [31:0] debug_pc
 );
 
+  localparam [5:0] OPCODE_NOP = 6'h00;
   localparam [5:0] OPCODE_ADD = 6'h01;
+  localparam [5:0] OPCODE_SUB = 6'h02;
+  localparam [5:0] OPCODE_AND = 6'h04;
+  localparam [5:0] OPCODE_OR = 6'h05;
+  localparam [5:0] OPCODE_XOR = 6'h06;
+  localparam [5:0] OPCODE_SHL = 6'h07;
+  localparam [5:0] OPCODE_SHR = 6'h08;
+  localparam [5:0] OPCODE_SAR = 6'h09;
   localparam [5:0] OPCODE_MOVI = 6'h10;
+  localparam [5:0] OPCODE_ADDI = 6'h11;
+  localparam [5:0] OPCODE_ANDI = 6'h12;
+  localparam [5:0] OPCODE_ORI = 6'h13;
+  localparam [5:0] OPCODE_XORI = 6'h14;
   localparam [5:0] OPCODE_LOAD = 6'h15;
   localparam [5:0] OPCODE_STORE = 6'h16;
+  localparam [5:0] OPCODE_MOVHI = 6'h17;
+  localparam [5:0] OPCODE_BEQ = 6'h20;
+  localparam [5:0] OPCODE_BNE = 6'h21;
+  localparam [5:0] OPCODE_BLT = 6'h22;
+  localparam [5:0] OPCODE_BGE = 6'h23;
+  localparam [5:0] OPCODE_BLTU = 6'h24;
+  localparam [5:0] OPCODE_BGEU = 6'h25;
+  localparam [5:0] OPCODE_BRA = 6'h2f;
+  localparam [5:0] OPCODE_GETTID = 6'h30;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
   localparam [7:0] ERROR_NONE = 8'h00;
   localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
   localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
 
-  localparam [2:0] STATE_HALTED = 3'd0;
-  localparam [2:0] STATE_FETCH_REQUEST = 3'd1;
-  localparam [2:0] STATE_FETCH_WAIT = 3'd2;
-  localparam [2:0] STATE_EXECUTE = 3'd3;
-  localparam [2:0] STATE_RETIRE = 3'd4;
-  localparam [2:0] STATE_MEMORY_WAIT = 3'd5;
-  localparam [2:0] STATE_DECODE = 3'd6;
+  localparam [3:0] STATE_HALTED = 4'd0;
+  localparam [3:0] STATE_FETCH_REQUEST = 4'd1;
+  localparam [3:0] STATE_FETCH_WAIT = 4'd2;
+  localparam [3:0] STATE_EXECUTE = 4'd3;
+  localparam [3:0] STATE_RETIRE = 4'd4;
+  localparam [3:0] STATE_MEMORY_WAIT = 4'd5;
+  localparam [3:0] STATE_DECODE = 4'd6;
+  localparam [3:0] STATE_SHIFT_STEP = 4'd7;
+  localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
+  localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
+  localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
 
-  reg [2:0] state;
+  reg [3:0] state;
   reg [31:0] pc;
   reg [31:0] instruction;
   reg step_active;
@@ -73,12 +105,23 @@ module cpu (
   reg [4:0] load_destination;
   reg [31:0] operand_a;
   reg [31:0] operand_b;
+  reg [31:0] shift_result;
+  reg [4:0] shift_destination;
+  reg [4:0] shift_remaining;
+  reg [1:0] shift_kind;
+  reg branch_taken;
+  reg [31:0] branch_target;
+  reg [32:0] branch_difference;
+  reg branch_a_sign;
+  reg branch_b_sign;
+  reg [2:0] branch_kind;
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
   wire [4:0] ra = instruction[20:16];
   wire [4:0] rb = instruction[15:11];
   wire [31:0] immediate_signed = {{16{instruction[15]}}, instruction[15:0]};
+  wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
 
   wire [31:0] register_a;
   wire [31:0] register_b;
@@ -89,6 +132,7 @@ module cpu (
    * during fetch keeps opcode decoding out of the register-file read path.
    * See timing.md, "Selección del segundo operando".
    */
+  reg [4:0] register_a_address;
   reg [4:0] register_b_address;
   reg register_write_enable;
   reg [4:0] register_write_address;
@@ -99,7 +143,7 @@ module cpu (
   register_file register_file_i (
       .clk(clk),
       .reset(reset),
-      .read_address_a(ra),
+      .read_address_a(register_a_address),
       .read_data_a(register_a),
       .read_address_b(register_b_address),
       .read_data_b(register_b),
@@ -134,6 +178,17 @@ module cpu (
       load_destination <= 5'd0;
       operand_a <= 32'h0000_0000;
       operand_b <= 32'h0000_0000;
+      shift_result <= 32'h0000_0000;
+      shift_destination <= 5'd0;
+      shift_remaining <= 5'd0;
+      shift_kind <= 2'd0;
+      branch_taken <= 1'b0;
+      branch_target <= 32'h0000_0000;
+      branch_difference <= 33'h0;
+      branch_a_sign <= 1'b0;
+      branch_b_sign <= 1'b0;
+      branch_kind <= 3'd0;
+      register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
       register_write_address <= 5'd0;
@@ -168,10 +223,18 @@ module cpu (
         STATE_FETCH_WAIT: begin
           if (imem_valid && imem_ready) begin
             instruction <= imem_read_data;
-            // Resolve the shared Rd/Rb field before the operand-read cycle.
-            register_b_address <=
-                imem_read_data[31:26] == OPCODE_STORE ?
-                    imem_read_data[25:21] : imem_read_data[15:11];
+            // Conditional branches encode their operands in X/Y rather than
+            // the Ra/Rb fields used by R-type instructions.
+            if (imem_read_data[31:26] >= OPCODE_BEQ &&
+                imem_read_data[31:26] <= OPCODE_BGEU) begin
+              register_a_address <= imem_read_data[25:21];
+              register_b_address <= imem_read_data[20:16];
+            end else begin
+              register_a_address <= imem_read_data[20:16];
+              register_b_address <=
+                  imem_read_data[31:26] == OPCODE_STORE ?
+                      imem_read_data[25:21] : imem_read_data[15:11];
+            end
             imem_valid <= 1'b0;
             pc <= pc + 3'd4;
             state <= STATE_DECODE;
@@ -193,6 +256,10 @@ module cpu (
           halt_after_retire <= 1'b0;
 
           case (opcode)
+            OPCODE_NOP: begin
+              state <= STATE_RETIRE;
+            end
+
             OPCODE_MOVI: begin
               register_write_address <= rd;
               register_write_data <= immediate_signed;
@@ -205,6 +272,160 @@ module cpu (
               register_write_data <= operand_a + operand_b;
               register_write_enable <= 1'b1;
               state <= STATE_RETIRE;
+            end
+
+            OPCODE_SUB: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a - operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_AND: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a & operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_OR: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a | operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_XOR: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a ^ operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_SHL: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd0;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SHR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd1;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SAR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd2;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_ADDI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a + immediate_signed;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ANDI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a & immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ORI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a | immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_XORI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a ^ immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_MOVHI: begin
+              register_write_address <= rd;
+              register_write_data <= {instruction[15:0], 16'h0000};
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_GETTID: begin
+              register_write_address <= rd;
+              register_write_data <= 32'h0000_0000;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_BEQ: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd0;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BNE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd1;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLT: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd2;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd3;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLTU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd4;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGEU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd5;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BRA: begin
+              branch_taken <= 1'b1;
+              branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
+              state <= STATE_BRANCH_COMMIT;
             end
 
             OPCODE_LOAD: begin
@@ -260,6 +481,49 @@ module cpu (
               state <= STATE_RETIRE;
             end
           end
+        end
+
+        // Iterative one-bit shifter: it uses little logic and avoids a large
+        // barrel shifter on the 120 MHz datapath. Shifts take 1..31 extra cycles.
+        STATE_SHIFT_STEP: begin
+          case (shift_kind)
+            2'd0: shift_result <= shift_result << 1;
+            2'd1: shift_result <= shift_result >> 1;
+            default: shift_result <= $signed(shift_result) >>> 1;
+          endcase
+          shift_remaining <= shift_remaining - 1'b1;
+          if (shift_remaining == 1)
+            state <= STATE_SHIFT_WRITE;
+        end
+
+        STATE_SHIFT_WRITE: begin
+          register_write_address <= shift_destination;
+          register_write_data <= shift_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        // All comparisons reuse one registered subtraction. For signed values,
+        // differing operand signs decide directly; otherwise diff[31] does.
+        STATE_BRANCH_COMPARE: begin
+          case (branch_kind)
+            3'd0: branch_taken <= branch_difference[31:0] == 0;
+            3'd1: branch_taken <= branch_difference[31:0] != 0;
+            3'd2: branch_taken <=
+                branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31];
+            3'd3: branch_taken <=
+                !(branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31]);
+            3'd4: branch_taken <= branch_difference[32];
+            default: branch_taken <= !branch_difference[32];
+          endcase
+          state <= STATE_BRANCH_COMMIT;
+        end
+
+        // Comparison and target calculation are registered before modifying PC.
+        STATE_BRANCH_COMMIT: begin
+          if (branch_taken)
+            pc <= branch_target;
+          state <= STATE_RETIRE;
         end
 
         STATE_RETIRE: begin

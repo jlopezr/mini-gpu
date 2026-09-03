@@ -19,13 +19,13 @@ nextpnr.
 
 Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
 
-| Magnitud | Resultado |
-|---|---:|
-| Frecuencia requerida | 120,00 MHz |
-| Frecuencia alcanzada | 126,09 MHz |
-| EBR `DP16KD` | 16 |
-| Flip-flops `TRELLIS_FF` | 1767 |
-| Celdas lógicas `TRELLIS_COMB` | 3687 |
+| Magnitud                      |  Resultado |
+|-------------------------------|-----------:|
+| Frecuencia requerida          | 120,00 MHz |
+| Frecuencia alcanzada          | 120,95 MHz |
+| EBR `DP16KD`                  |         16 |
+| Flip-flops `TRELLIS_FF`       |       1897 |
+| Celdas lógicas `TRELLIS_COMB` |       4305 |
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -35,10 +35,10 @@ margen debe revisarse después de modificaciones relevantes.
 
 `memory_map.v` contiene una única pareja de memorias físicas:
 
-| Memoria | Dirección del monitor | Dirección local de la CPU | Tamaño |
-|---|---:|---:|---:|
-| Programa | `0x00000000` | `0x00000000` | 16 KiB |
-| Datos | `0x00100000` | `0x00000000` | 16 KiB |
+| Memoria  | Dirección del monitor | Dirección local de la CPU | Tamaño |
+|----------|----------------------:|--------------------------:|-------:|
+| Programa |          `0x00000000` |              `0x00000000` | 16 KiB |
+| Datos    |          `0x00100000` |              `0x00000000` | 16 KiB |
 
 La diferencia de direcciones de datos es deliberada. La CPU tiene dos espacios
 Harvard independientes que comienzan en cero; el monitor necesita un único
@@ -86,10 +86,12 @@ En MiniISA, `ADD` obtiene el segundo operando del campo `Rb`, mientras que
 `STORE` utiliza el campo `Rd` como registro fuente. Una selección combinacional
 entre ambos campos delante del mux 32:1 volvió a formar una ruta larga.
 
-`register_b_address` se calcula y registra al aceptar la instrucción de memoria.
+`register_a_address` y `register_b_address` se calculan y registran al aceptar
+la instrucción de memoria.
 Cuando llega `STATE_DECODE`, la dirección del segundo puerto ya es estable y no
-incluye decodificación de opcode en su ruta de datos. Este cambio llevó el
-resultado final a 126,09 MHz.
+incluye decodificación de opcode en su ruta de datos. En aquella versión este
+cambio elevó el resultado a 126,09 MHz; las cifras vigentes para el diseño
+completo están en la tabla inicial.
 
 ## Registro de las solicitudes a EBR
 
@@ -163,6 +165,61 @@ Los registros anteriores aumentan la latencia, pero no cambian el contrato:
 La CPU no presupone una latencia fija. Esto permite añadir registros o sustituir
 la EBR por una memoria más lenta sin modificar la semántica de `LOAD`, `STORE`
 o del fetch de instrucciones.
+
+## Desplazamientos iterativos
+
+`SHL`, `SHR` y `SAR` desplazan un bit por ciclo. Un barrel shifter combinacional
+de 32 bits elevó notablemente el uso de LUT y provocó congestión suficiente para
+perder el cierre de timing a 120 MHz. La unidad iterativa conserva el operando,
+el tipo y un contador de cinco bits; tarda entre cero y 31 ciclos internos antes
+de escribir el resultado. La instrucción se retira una sola vez y la semántica
+arquitectónica no cambia.
+
+## Branches registrados
+
+Los branches condicionales usan campos de registro distintos a las operaciones
+R-type. Sus dos direcciones de lectura se resuelven al aceptar la instrucción,
+antes de `STATE_DECODE`. En `STATE_EXECUTE` se registran por separado el
+destino relativo y una resta común de 33 bits. `STATE_BRANCH_COMPARE` deriva de
+esa resta igualdad, signo o borrow, y `STATE_BRANCH_COMMIT` modifica después el
+PC. Esta separación evita que seis comparadores independientes formen una red
+de 10 ns y también evita encadenar comparación, suma del offset y escritura del
+PC dentro de un solo periodo de reloj.
+
+## Ciclos por instrucción en la FPGA
+
+La siguiente tabla cuenta desde `STATE_FETCH_REQUEST` hasta
+`STATE_RETIRE`, ambos incluidos. Incluye la latencia real del camino registrado
+de la EBR de programa usado por `memory_map.v`. Un ciclo a 120 MHz dura unos
+8,33 ns.
+
+| Familia de instrucciones                                 |  Ciclos | Tiempo aproximado |
+|----------------------------------------------------------|--------:|------------------:|
+| `NOP`, `HALT`                                            |       8 |           66,7 ns |
+| `ADD`, `SUB`, `AND`, `OR`, `XOR`                         |       8 |           66,7 ns |
+| `MOVI`, `ADDI`, `ANDI`, `ORI`, `XORI`, `MOVHI`, `GETTID` |       8 |           66,7 ns |
+| `BRA`                                                    |       9 |           75,0 ns |
+| `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |      10 |           83,3 ns |
+| `LOAD`, `STORE` con la EBR actual                        |      12 |          100,0 ns |
+| `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `9 + n` |     75,0–333,3 ns |
+
+En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
+`LOAD` y `STORE` son las de la memoria EBR integrada actual; la interfaz
+`valid/ready` permite sustituirla por una memoria de latencia distinta.
+
+`cpu_memory_map_tb.v` mide estas latencias sobre el camino usado en la FPGA,
+las imprime como `FPGA CYCLES` y falla si cambian accidentalmente. `cpu_tb.v`
+también mide el núcleo con su modelo simplificado de memoria de instrucciones:
+
+| Familia                 | Ciclos en `cpu_tb.v` |
+|-------------------------|---------------------:|
+| Instrucción ordinaria   |                    6 |
+| `BRA`                   |                    7 |
+| Branch condicional      |                    8 |
+| Shift de `n` posiciones |              `7 + n` |
+
+Estas cifras describen latencia, no throughput: no hay instrucciones solapadas
+porque la CPU todavía no tiene pipeline.
 
 ## Cómo verificarlo
 
