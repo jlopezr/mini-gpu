@@ -8,6 +8,7 @@ module cpu_memory_map_tb;
   reg run_request = 1'b0;
   reg halt_request = 1'b0;
   reg step_request = 1'b0;
+  reg cpu_reset_request = 1'b0;
 
   reg [31:0] monitor_address = 32'h0000_0000;
   reg [7:0] monitor_write_data = 8'h00;
@@ -40,7 +41,7 @@ module cpu_memory_map_tb;
 
   cpu cpu_i (
       .clk(clk),
-      .reset(reset),
+      .reset(reset || cpu_reset_request),
       .run_request(run_request),
       .halt_request(halt_request),
       .step_request(step_request),
@@ -167,7 +168,33 @@ module cpu_memory_map_tb;
     expect_monitor_byte(32'h0010_0006, 8'h00);
     expect_monitor_byte(32'h0010_0007, 8'h00);
 
-    $display("PASS: monitor loads program, CPU runs, monitor reads result");
+    // RESET_CPU clears architectural state but preserves both EBR contents.
+    @(negedge clk);
+    cpu_reset_request = 1'b1;
+    @(negedge clk);
+    cpu_reset_request = 1'b0;
+    repeat (2) @(posedge clk);
+    #1;
+
+    if (!halted || error || debug_pc !== 32'h0000_0000)
+      $fatal(1, "CPU reset state mismatch");
+    if (debug_register_data !== 32'h0000_0000)
+      $fatal(1, "CPU reset did not clear registers");
+
+    expect_monitor_byte(32'h0010_0004, 8'h34);
+    expect_monitor_byte(32'h0010_0005, 8'h12);
+
+    // Program memory was preserved, so the CPU can run again without a reload.
+    @(negedge clk);
+    run_request = 1'b1;
+    @(negedge clk);
+    run_request = 1'b0;
+    wait (!halted);
+    wait (halted);
+    if (error || debug_pc !== 32'h0000_0014)
+      $fatal(1, "CPU did not rerun preserved program");
+
+    $display("PASS: shared memory flow and CPU-only reset are correct");
     $finish;
   end
 endmodule

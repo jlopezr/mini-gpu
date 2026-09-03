@@ -31,6 +31,7 @@ CMD_HALT = 0x31
 CMD_STEP = 0x32
 CMD_GET_STATUS = 0x33
 CMD_READ_REGISTER = 0x34
+CMD_RESET_CPU = 0x35
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -43,6 +44,7 @@ RSP_HALT = b"\xb1"
 RSP_STEP = b"\xb2"
 RSP_STATUS = 0xB3
 RSP_READ_REGISTER = 0xB4
+RSP_RESET_CPU = b"\xb5"
 RSP_ERROR = 0xFF
 
 
@@ -206,6 +208,11 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
         return int.from_bytes(self._read_exact(4), byteorder="big")
 
+    def reset_cpu(self) -> None:
+        response = self._request(bytes((CMD_RESET_CPU,)), 1)
+        if response != RSP_RESET_CPU:
+            raise MonitorError(f"Invalid RESET_CPU response: {response.hex(' ')}")
+
 
 def available_ports() -> str:
     ports = list(list_ports.comports())
@@ -234,6 +241,7 @@ def parse_args() -> argparse.Namespace:
             "step",
             "status",
             "read-register",
+            "reset",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -295,6 +303,7 @@ def main() -> int:
             "step": 0,
             "status": 0,
             "read-register": 1,
+            "reset": 0,
         }
         if len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
@@ -377,10 +386,13 @@ def main() -> int:
                     f"CPU halted={status.halted} error={status.error} "
                     f"error_code=0x{status.error_code:02x} pc=0x{status.pc:08x}"
                 )
-            else:
+            elif args.command == "read-register":
                 register = parse_integer(args.arguments[0], 31, "register number")
                 value = client.read_register(register)
                 print(f"R{register} = 0x{value:08x} ({value})")
+            else:
+                client.reset_cpu()
+                print("CPU reset: PC, registers and error state cleared")
 
     except (MonitorError, OSError, serial.SerialException) as error:
         print(f"Error: {error}", file=sys.stderr)

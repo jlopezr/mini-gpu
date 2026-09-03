@@ -55,6 +55,10 @@ Un comando de memoria recibido mientras la CPU ejecuta termina con
 `RSP_ERROR`. Así no existen dos escritores ni se cambia una instrucción a
 mitad de su ejecución.
 
+`RESET_CPU` reinicia solamente PC, registros y estado de control. No aplica
+reset a `memory_map` ni borra las EBR, de modo que un test puede volver a
+ejecutar el programa ya cargado.
+
 ## Registro de operandos
 
 El banco de registros conserva dos puertos de lectura combinacionales. En la

@@ -15,6 +15,7 @@
  *   32             (STEP)        -> b2 (or ff)
  *   33             (GET_STATUS)  -> b3 FLAGS ERROR PC3 PC2 PC1 PC0
  *   34 RR          (READ_REG)    -> b4 D3 D2 D1 D0 (or ff)
+ *   35             (RESET_CPU)   -> b5
  *   any other command            -> ff
  *
  * Addresses and lengths are transferred most-significant byte first. Block
@@ -40,6 +41,7 @@ module monitor (
     output reg cpu_run_request,
     output reg cpu_halt_request,
     output reg cpu_step_request,
+    output reg cpu_reset_request,
     input cpu_halted,
     input cpu_error,
     input [7:0] cpu_error_code,
@@ -62,6 +64,7 @@ module monitor (
   localparam [7:0] CMD_STEP = 8'h32;
   localparam [7:0] CMD_GET_STATUS = 8'h33;
   localparam [7:0] CMD_READ_REGISTER = 8'h34;
+  localparam [7:0] CMD_RESET_CPU = 8'h35;
   localparam [7:0] RSP_PONG = 8'h81;
   localparam [7:0] RSP_VERSION = 8'h82;
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
@@ -73,9 +76,10 @@ module monitor (
   localparam [7:0] RSP_STEP = 8'hb2;
   localparam [7:0] RSP_STATUS = 8'hb3;
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
+  localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
-  localparam [7:0] VERSION_MINOR = 8'h01;
+  localparam [7:0] VERSION_MINOR = 8'h02;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
@@ -135,6 +139,7 @@ module monitor (
     cpu_run_request <= 1'b0;
     cpu_halt_request <= 1'b0;
     cpu_step_request <= 1'b0;
+    cpu_reset_request <= 1'b0;
 
     if (reset) begin
       tx_data <= 8'h00;
@@ -146,6 +151,7 @@ module monitor (
       cpu_run_request <= 1'b0;
       cpu_halt_request <= 1'b0;
       cpu_step_request <= 1'b0;
+      cpu_reset_request <= 1'b0;
       cpu_debug_register_address <= 5'd0;
       last_command <= 8'h00;
       state <= STATE_IDLE;
@@ -231,6 +237,13 @@ module monitor (
                 state <= STATE_RESPOND;
               end
               CMD_READ_REGISTER: state <= STATE_READ_REGISTER_ADDRESS;
+              CMD_RESET_CPU: begin
+                response_byte_0 <= RSP_RESET_CPU;
+                response_length <= 3'd1;
+                response_done_state <= STATE_IDLE;
+                cpu_reset_request <= 1'b1;
+                state <= STATE_RESPOND;
+              end
               default: begin
                 response_byte_0 <= RSP_ERROR;
                 response_length <= 2'd1;

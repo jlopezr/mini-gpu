@@ -159,10 +159,11 @@ las palabras hexadecimales en cada testbench.
 
 ### 6. Mejorar el control desde el monitor
 
-El monitor ya permite `RUN`, `HALT`, `STEP`, `GET_STATUS` y `READ_REGISTER`,
+El monitor ya permite `RUN`, `HALT`, `STEP`, `GET_STATUS`, `READ_REGISTER` y
+`RESET_CPU`,
 pero quedan decisiones importantes:
 
-- comando para reiniciar la CPU y poner PC a cero sin reconfigurar la FPGA;
+- comprobar `RESET_CPU` dentro del futuro runner de regresión hardware;
 - comando para escribir el PC o elegir el punto de entrada;
 - posible escritura de registros para depuración;
 - hacer que `HALT` responda al solicitar la parada o solo cuando la CPU ya esté

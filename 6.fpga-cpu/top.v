@@ -60,6 +60,7 @@ module top (
   wire cpu_run_request;
   wire cpu_halt_request;
   wire cpu_step_request;
+  wire cpu_reset_request;
   wire cpu_halted;
   wire cpu_error;
   wire [7:0] cpu_error_code;
@@ -99,6 +100,7 @@ module top (
       .cpu_run_request(cpu_run_request),
       .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request),
+      .cpu_reset_request(cpu_reset_request),
       .cpu_halted(cpu_halted),
       .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code),
@@ -111,7 +113,7 @@ module top (
 
   cpu cpu_i (
       .clk(clk),
-      .reset(reset),
+      .reset(reset || cpu_reset_request),
       .run_request(cpu_run_request),
       .halt_request(cpu_halt_request),
       .step_request(cpu_step_request),

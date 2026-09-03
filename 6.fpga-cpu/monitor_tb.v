@@ -23,6 +23,7 @@ module monitor_tb;
   wire cpu_run_request;
   wire cpu_halt_request;
   wire cpu_step_request;
+  wire cpu_reset_request;
   reg cpu_halted = 1'b1;
   reg cpu_error = 1'b0;
   reg [7:0] cpu_error_code = 8'h00;
@@ -36,6 +37,7 @@ module monitor_tb;
   reg run_request_seen = 1'b0;
   reg halt_request_seen = 1'b0;
   reg step_request_seen = 1'b0;
+  reg reset_request_seen = 1'b0;
 
   always #5 clk = ~clk;
 
@@ -57,6 +59,7 @@ module monitor_tb;
       .cpu_run_request(cpu_run_request),
       .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request),
+      .cpu_reset_request(cpu_reset_request),
       .cpu_halted(cpu_halted),
       .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code),
@@ -111,6 +114,7 @@ module monitor_tb;
     if (cpu_run_request) run_request_seen <= 1'b1;
     if (cpu_halt_request) halt_request_seen <= 1'b1;
     if (cpu_step_request) step_request_seen <= 1'b1;
+    if (cpu_reset_request) reset_request_seen <= 1'b1;
   end
 
   task send_command;
@@ -140,7 +144,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h01) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h02) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -271,6 +275,12 @@ module monitor_tb;
     send_command(8'h00);
     wait (received_count == 34);
     if (received[33] !== 8'hff) $fatal(1, "Running CPU memory access mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h35);
+    wait (received_count == 35);
+    if (received[34] !== 8'hb5 || !reset_request_seen)
+      $fatal(1, "RESET_CPU mismatch");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;
