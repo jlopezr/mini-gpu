@@ -20,7 +20,7 @@ module monitor_tb;
   wire [7:0] mem_read_data;
   wire mem_ready;
 
-  reg [7:0] received[0:7];
+  reg [7:0] received[0:31];
   integer received_count = 0;
   integer busy_cycles = 0;
 
@@ -81,6 +81,7 @@ module monitor_tb;
       rx_strobe = 1'b1;
       @(negedge clk);
       rx_strobe = 1'b0;
+      repeat (4) @(negedge clk);
     end
   endtask
 
@@ -121,6 +122,32 @@ module monitor_tb;
     wait (received_count == 8);
     if (received[6] !== 8'h91) $fatal(1, "READ_BYTE response mismatch");
     if (received[7] !== 8'hab) $fatal(1, "READ_BYTE data mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h20);
+    send_command(8'h01);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h04);
+    send_command(8'hde);
+    send_command(8'had);
+    send_command(8'hbe);
+    send_command(8'hef);
+    wait (received_count == 9);
+    if (received[8] !== 8'ha0) $fatal(1, "WRITE_BLOCK response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h21);
+    send_command(8'h01);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h04);
+    wait (received_count == 14);
+    if (received[9] !== 8'ha1) $fatal(1, "READ_BLOCK response mismatch");
+    if (received[10] !== 8'hde) $fatal(1, "READ_BLOCK byte 0 mismatch");
+    if (received[11] !== 8'had) $fatal(1, "READ_BLOCK byte 1 mismatch");
+    if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
+    if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;
