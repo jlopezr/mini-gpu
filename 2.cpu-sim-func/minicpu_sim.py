@@ -16,7 +16,7 @@ escribible. Las operaciones hacen wrap módulo 2**32, los binarios son
 little-endian y los branches son relativos a PC+4 con offsets expresados en
 palabras de 32 bits.
 
-Este modelo utiliza una memoria unificada y byte-addressed de 2 MiB por defecto.
+Este modelo utiliza una memoria unificada y byte-addressed de 32 MiB por defecto.
 La implementación FPGA, en cambio, tiene espacios Harvard separados de 16 KiB
 para programa y datos. Esta diferencia es deliberada: los programas deben evitar
 que sus datos se solapen con el código y respetar los límites físicos cuando se
@@ -88,7 +88,7 @@ def signed_divide(a: int, b: int) -> int:
 class CPU:
     """Estado y ejecución secuencial de una MiniCPU escalar."""
 
-    def __init__(self, memory_size: int = 2 * 1024 * 1024):
+    def __init__(self, memory_size: int = 32 * 1024 * 1024):
         self.regs = [0] * 32
         self.pc = 0
         self.memory = bytearray(memory_size)
@@ -409,7 +409,7 @@ def main() -> None:
     parser.add_argument(
         "--memory-size",
         type=lambda value: int(value, 0),
-        default=2 * 1024 * 1024,
+        default=32 * 1024 * 1024,
         help="tamaño de memoria en bytes (admite 0x...)",
     )
     parser.add_argument(

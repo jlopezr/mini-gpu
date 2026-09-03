@@ -6,7 +6,7 @@
  * Implemented instructions:
  *   NOP
  *   MOVI Rd, imm16
- *   ADD/SUB/AND/OR/XOR Rd, Ra, Rb
+ *   ADD/SUB/MUL/AND/OR/XOR Rd, Ra, Rb
  *   SHL/SHR/SAR Rd, Ra, Rb
  *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
  *   MOVHI Rd, imm16
@@ -105,6 +105,10 @@ module cpu (
   localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
   localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
   localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
+  localparam [3:0] STATE_MUL_PRODUCTS = 4'd11;
+  localparam [3:0] STATE_MUL_CROSS = 4'd12;
+  localparam [3:0] STATE_MUL_COMBINE = 4'd13;
+  localparam [3:0] STATE_MUL_WRITE = 4'd14;
 
   reg [3:0] state;
   reg [31:0] pc;
@@ -126,6 +130,14 @@ module cpu (
   reg branch_a_sign;
   reg branch_b_sign;
   reg [2:0] branch_kind;
+  reg [31:0] multiply_low_product;
+  reg [31:0] multiply_low_high_product;
+  reg [31:0] multiply_high_low_product;
+  reg [15:0] multiply_cross_sum;
+  reg [31:0] multiply_result;
+  reg [4:0] multiply_destination;
+  reg [31:0] multiply_operand_a;
+  reg [31:0] multiply_operand_b;
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
@@ -220,6 +232,14 @@ module cpu (
       branch_a_sign <= 1'b0;
       branch_b_sign <= 1'b0;
       branch_kind <= 3'd0;
+      multiply_low_product <= 32'h0000_0000;
+      multiply_low_high_product <= 32'h0000_0000;
+      multiply_high_low_product <= 32'h0000_0000;
+      multiply_cross_sum <= 16'h0000;
+      multiply_result <= 32'h0000_0000;
+      multiply_destination <= 5'd0;
+      multiply_operand_a <= 32'h0000_0000;
+      multiply_operand_b <= 32'h0000_0000;
       register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
@@ -341,6 +361,15 @@ module cpu (
               register_write_data <= operand_a ^ operand_b;
               register_write_enable <= 1'b1;
               state <= STATE_RETIRE;
+            end
+
+            OPCODE_MUL: begin
+              // Dedicated input registers let the placer keep the operands
+              // physically close to the three ECP5 multiplier blocks.
+              multiply_operand_a <= operand_a;
+              multiply_operand_b <= operand_b;
+              multiply_destination <= rd;
+              state <= STATE_MUL_PRODUCTS;
             end
 
             OPCODE_SHL: begin
@@ -551,6 +580,38 @@ module cpu (
         STATE_SHIFT_WRITE: begin
           register_write_address <= shift_destination;
           register_write_data <= shift_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        STATE_MUL_PRODUCTS: begin
+          // low32(a*b) needs only three unsigned 16x16 partial products.
+          multiply_low_product <=
+              multiply_operand_a[15:0] * multiply_operand_b[15:0];
+          multiply_low_high_product <=
+              multiply_operand_a[15:0] * multiply_operand_b[31:16];
+          multiply_high_low_product <=
+              multiply_operand_a[31:16] * multiply_operand_b[15:0];
+          state <= STATE_MUL_CROSS;
+        end
+
+        STATE_MUL_CROSS: begin
+          // Bit 16 of this sum contributes only to product bit 32 and is
+          // intentionally discarded by MUL's modulo-2^32 semantics.
+          multiply_cross_sum <= multiply_low_high_product[15:0] +
+                                multiply_high_low_product[15:0];
+          state <= STATE_MUL_COMBINE;
+        end
+
+        STATE_MUL_COMBINE: begin
+          multiply_result <= multiply_low_product +
+                             {multiply_cross_sum, 16'h0000};
+          state <= STATE_MUL_WRITE;
+        end
+
+        STATE_MUL_WRITE: begin
+          register_write_address <= multiply_destination;
+          register_write_data <= multiply_result;
           register_write_enable <= 1'b1;
           state <= STATE_RETIRE;
         end

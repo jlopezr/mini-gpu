@@ -41,7 +41,7 @@ antes de modificar la memoria:
 
 | Valor | Proyecto | Monitor | Memoria implementada |
 |---|---|---:|---|
-| `ebr` | `6.fpga-cpu` | 1.4 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
+| `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
 | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
 
 La versión predeterminada de FPGA es `ebr` para conservar la compatibilidad con los

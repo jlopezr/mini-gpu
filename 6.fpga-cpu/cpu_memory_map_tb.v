@@ -65,6 +65,8 @@ module cpu_memory_map_tb;
         );
         if (cpu_i.opcode == 6'h15 || cpu_i.opcode == 6'h16)
           expected_instruction_cycles = 14;
+        else if (cpu_i.opcode == 6'h0a)
+          expected_instruction_cycles = 13;
         else if (cpu_i.opcode >= 6'h07 && cpu_i.opcode <= 6'h09)
           expected_instruction_cycles = 10 + cpu_i.operand_b[4:0];
         else if (cpu_i.opcode >= 6'h20 && cpu_i.opcode <= 6'h25)

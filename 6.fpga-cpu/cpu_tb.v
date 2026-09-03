@@ -93,6 +93,8 @@ module cpu_tb;
           expected_instruction_cycles = 8;
         else if (dut.opcode == 6'h2f)
           expected_instruction_cycles = 7;
+        else if (dut.opcode == 6'h0a)
+          expected_instruction_cycles = 10;
         else
           expected_instruction_cycles = 6;
 
@@ -267,6 +269,25 @@ module cpu_tb;
     if (debug_pc !== 32'h0000_0020) $fatal(1, "Immediate batch final PC mismatch");
     if (retired_count !== 8) $fatal(1, "Immediate batch retired count mismatch");
     if (error) $fatal(1, "Immediate batch raised an unexpected error");
+
+    // MUL returns the low 32 bits, including negative operands and overflow.
+    instruction_memory[0] = 32'h4020_fffe;  // MOVI R1, -2
+    instruction_memory[1] = 32'h4040_0003;  // MOVI R2, 3
+    instruction_memory[2] = 32'h2861_1000;  // MUL R3, R1, R2 -> -6
+    instruction_memory[3] = 32'h5c80_0001;  // MOVHI R4, 1 -> 0x00010000
+    instruction_memory[4] = 32'h28a4_2000;  // MUL R5, R4, R4 -> low32 = 0
+    instruction_memory[5] = 32'hfc00_0000;  // HALT
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    expect_register(5'd3, 32'hffff_fffa);
+    expect_register(5'd5, 32'h0000_0000);
+    if (debug_pc !== 32'h0000_0018) $fatal(1, "MUL batch final PC mismatch");
+    if (retired_count !== 6) $fatal(1, "MUL batch retired count mismatch");
+    if (error) $fatal(1, "MUL batch raised an unexpected error");
 
     // Shift batch. Only the low five bits of Rb select the shift amount.
     instruction_memory[0] = 32'h4020_0001;  // MOVI R1, 1

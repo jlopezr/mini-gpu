@@ -22,10 +22,11 @@ Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
 | Magnitud                      |  Resultado |
 |-------------------------------|-----------:|
 | Frecuencia requerida          | 120,00 MHz |
-| Frecuencia alcanzada          | 122,97 MHz |
+| Frecuencia alcanzada          | 120,67 MHz |
 | EBR `DP16KD`                  |         16 |
-| Flip-flops `TRELLIS_FF`       |       1970 |
-| Celdas lógicas `TRELLIS_COMB` |       4603 |
+| Multiplicadores `MULT18X18D`  |          3 |
+| Flip-flops `TRELLIS_FF`       |       2151 |
+| Celdas lógicas `TRELLIS_COMB` |       4681 |
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -201,6 +202,7 @@ de la EBR de programa usado por `memory_map.v`. Un ciclo a 120 MHz dura unos
 | `BRA`                                                    |       10 |           83,3 ns |
 | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |       11 |           91,7 ns |
 | `LOAD`, `STORE` con la EBR actual                        |       14 |          116,7 ns |
+| `MUL`                                                    |       13 |          108,3 ns |
 | `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `10 + n` |     83,3–341,7 ns |
 
 En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
@@ -208,6 +210,20 @@ En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
 `valid/ready` permite sustituirla por una memoria de latencia distinta. El
 router unificado añade un registro tras cada salida EBR: una instrucción normal
 gana un ciclo y `LOAD`/`STORE` ganan dos, uno en fetch y otro en datos.
+
+## Multiplicación
+
+`MUL` calcula el producto módulo 2^32 mediante tres productos parciales 16×16:
+
+```text
+low32(a*b) = low*low + ((low*high + high*low) << 16)
+```
+
+Cada producto se asigna a un `MULT18X18D`. Registros dedicados capturan primero
+los operandos junto a los DSP; después se registran productos, suma cruzada,
+suma final y escritura. Una expresión 32×32 monolítica usaba también tres DSP,
+pero solo alcanzaba 86,72 MHz. Separar productos y sumas permite llegar a
+120,67 MHz.
 
 `cpu_memory_map_tb.v` mide estas latencias sobre el camino usado en la FPGA,
 las imprime como `FPGA CYCLES` y falla si cambian accidentalmente. `cpu_tb.v`

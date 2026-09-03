@@ -29,7 +29,7 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 | `0x07` | `SHL`       |     OK      |    OK     |    OK     | Usa los cinco bits bajos de `Rb`.                                                |
 | `0x08` | `SHR`       |     OK      |    OK     |    OK     | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
 | `0x09` | `SAR`       |     OK      |    OK     |    OK     | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
-| `0x0A` | `MUL`       |     OK      |    OK     | PENDIENTE | Conserva los 32 bits bajos del producto.                                         |
+| `0x0A` | `MUL`       |     OK      |    OK     |    OK     | Conserva los 32 bits bajos del producto.                                         |
 | `0x0C` | `DIV`       |     OK      |    OK     | PENDIENTE | Signed y hacia cero; división por cero debe provocar trap.                       |
 | `0x10` | `MOVI`      |     OK      |    OK     |    OK     | Extensión de signo de `imm16`.                                                   |
 | `0x11` | `ADDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de signo.                                                |
@@ -82,7 +82,7 @@ asignada en la tabla principal:
 |---------------------|----------:|-----------:|-----------:|
 | Ensamblador         |        30 |          0 |          0 |
 | Simulador funcional |        30 |          0 |          0 |
-| CPU FPGA            |        27 |          0 |          3 |
+| CPU FPGA            |        28 |          0 |          2 |
 
 Los errores detienen la CPU y conservan el código y PC de la instrucción que
 los produjo. No existen vector, handler ni reanudación.
@@ -99,7 +99,7 @@ cambie la especificación.
 
 Orden recomendado:
 
-1. `MUL` y `MULFX`, comprobando el uso de los multiplicadores `MULT18X18D`.
+1. `MULFX`, reutilizando la ruta de multiplicación de `MUL`.
 2. `DIV` mediante una unidad iterativa multiciclo.
 
 Después de cada grupo hay que repetir `apio build` y comprobar explícitamente
@@ -109,13 +109,13 @@ el margen sobre 120 MHz.
 
 El simulador y la FPGA distinguen:
 
-| Código | Error actual                |
-|-------:|-----------------------------|
-| `0x01` | Opcode no implementado.     |
-| `0x02` | Acceso de memoria inválido. |
-| `0x03` | Instrucción `TRAP` explícita. |
+| Código | Error actual                                                  |
+|-------:|---------------------------------------------------------------|
+| `0x01` | Opcode no implementado.                                       |
+| `0x02` | Acceso de memoria inválido.                                   |
+| `0x03` | Instrucción `TRAP` explícita.                                 |
 | `0x04` | División por cero; reservado hasta implementar `DIV` en FPGA. |
-| `0x05` | Opcode conocido con campos reservados inválidos. |
+| `0x05` | Opcode conocido con campos reservados inválidos.              |
 
 Ante un error, el PC vuelve a señalar la instrucción que lo produjo. `HALT`
 continúa siendo una parada normal con `error = 0`. Un fetch o acceso de datos

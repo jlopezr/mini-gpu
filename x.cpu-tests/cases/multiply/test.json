@@ -1,0 +1,17 @@
+{
+  "name": "multiply",
+  "program": "multiply.asm",
+  "max_instructions": 1000,
+  "timeout_seconds": 2.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "pc": "0x00000010",
+    "registers": {
+      "R1": "10",
+      "R2": "20",
+      "R3": "200"
+    }
+  }
+}

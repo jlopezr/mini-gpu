@@ -12,7 +12,7 @@ from types import ModuleType
 VERSIONS = {
     "ebr": {
         "monitor_path": Path("6.fpga-cpu/monitor.py"),
-        "monitor_version": (1, 4),
+        "monitor_version": (1, 6),
         "description": "FPGA con 16 KiB de EBR para programa y datos",
     },
     "sdram": {

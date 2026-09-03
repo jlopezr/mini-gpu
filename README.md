@@ -95,7 +95,7 @@ python run_cpu_tests.py --backend fpga --version sdram --port COM3
 ```
 
 El backend consulta `GET_VERSION` antes de modificar la memoria. La versión
-EBR responde como monitor 1.4 y la versión SDRAM como 1.5. Las revisiones
+EBR responde como monitor 1.6 y la versión SDRAM como 1.5. Las revisiones
 anteriores 1.2 y 1.3 corresponden al mapa con traducción de direcciones.
 
 ## Construcción del diseño actual
@@ -125,4 +125,5 @@ FPGA actual es multiciclo, sin pipeline de instrucciones ni ejecución SIMT;
 la evolución hacia MiniGPU sigue siendo trabajo futuro.
 
 Las decisiones de diseño generales están recogidas en
-[`1.isa/proyecto.md`](1.isa/proyecto.md) y las tareas abiertas en [`TODO`](TODO).
+[`1.isa/proyecto.md`](1.isa/proyecto.md) y las tareas abiertas en
+[`TODO.md`](TODO.md).
