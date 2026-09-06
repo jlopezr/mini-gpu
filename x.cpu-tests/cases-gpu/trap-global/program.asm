@@ -1,0 +1,3 @@
+NOP
+TRAP
+HALT

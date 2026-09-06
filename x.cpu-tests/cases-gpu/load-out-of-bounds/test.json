@@ -1,0 +1,56 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-load-out-of-bounds",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "initial_memory": [
+    {
+      "address": 33554420,
+      "file": "sentinel.hex"
+    }
+  ],
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 2,
+    "fault": {
+      "pc": 28,
+      "warp_id": 0,
+      "core_id": 3,
+      "address": 33554432
+    },
+    "instructions_executed": 14,
+    "warps": {
+      "0": {
+        "pc": 28,
+        "instructions_executed": 7,
+        "active_mask": 255,
+        "registers": {
+          "0": {
+            "R5": 99
+          },
+          "3": {
+            "R5": 99
+          }
+        }
+      },
+      "1": {
+        "pc": 28,
+        "instructions_executed": 7,
+        "active_mask": 255,
+        "registers": {
+          "0": {
+            "R5": 99
+          }
+        }
+      }
+    },
+    "memory_dumps": [
+      {
+        "address": 33554420,
+        "file": "sentinel.hex"
+      }
+    ]
+  }
+}

@@ -81,6 +81,58 @@ class GpuRunnerTest(unittest.TestCase):
                 self.assertEqual(runner.main(), 2)
                 factory.assert_not_called()
 
+    def test_fault_diagnostics_detect_wrong_and_missing_fields(self):
+        case = load_case(ROOT / 'cases-gpu/division-by-zero/test.json')
+        result = self.run_case(case)
+        self.assertEqual(compare_result(case, result, 'gpu-simulator'), [])
+        for field, value in (('pc', 0), ('warp_id', 1), ('core_id', 2), ('address', 128)):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(result)
+                broken['observations'][f'fault.{field}'] = value
+                errors = compare_result(case, broken, 'gpu-simulator')
+                self.assertEqual(len(errors), 1)
+                self.assertIn(f'fault.{field}', errors[0])
+        del result['observations']['fault.address']
+        self.assertTrue(compare_result(case, result, 'gpu-simulator'))
+
+    def test_fault_expected_format(self):
+        from run_gpu_tests import gpu_expectations
+        for fault in ({}, {'pc': 0, 'warp_id': 8, 'core_id': None, 'address': None},
+                      {'pc': 0, 'warp_id': 0, 'core_id': 8, 'address': None},
+                      {'pc': 0, 'warp_id': 0, 'core_id': True, 'address': None}):
+            with self.subTest(fault=fault), self.assertRaises((ValueError, TypeError)):
+                gpu_expectations({'fault': fault}, 8)
+
+    def test_scheduler_skips_finished_warps(self):
+        case = load_case(ROOT / 'cases-gpu/independent-pcs/test.json')
+        gpu = self.backend.module.System(warp_size=8)
+        gpu.load_program(case['program'], launch=False)
+        gpu.configure_warps(case['warp_config'])
+        order = []
+        while not gpu.halted:
+            before = [w.instructions_executed for w in gpu.streaming_multiprocessor.warps]
+            gpu.step()
+            order.extend(i for i, warp in enumerate(gpu.streaming_multiprocessor.warps)
+                         if warp.instructions_executed != before[i])
+        self.assertEqual(order, [0, 3, 0, 3, 3])
+
+    def test_fault_is_terminal_and_does_not_overwrite_diagnostic(self):
+        case = load_case(ROOT / 'cases-gpu/store-out-of-bounds/test.json')
+        gpu = self.backend.module.System(warp_size=8)
+        gpu.load_program(case['program'], launch=False)
+        gpu.configure_warps(case['warp_config'])
+        gpu.run(case['max_instructions'])
+        first = gpu.fault
+        pcs = [w.pc for w in gpu.streaming_multiprocessor.warps]
+        count = gpu.instructions_executed
+        self.assertFalse(gpu.step())
+        for warp in gpu.streaming_multiprocessor.warps:
+            self.assertFalse(warp.step())
+        gpu.stop_with_error(self.backend.module.Fault(3, 0, 1, None))
+        self.assertIs(gpu.fault, first)
+        self.assertEqual([w.pc for w in gpu.streaming_multiprocessor.warps], pcs)
+        self.assertEqual(gpu.instructions_executed, count)
+
 
 if __name__ == '__main__':
     unittest.main()

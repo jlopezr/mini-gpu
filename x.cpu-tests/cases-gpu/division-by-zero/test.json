@@ -1,0 +1,54 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-division-by-zero",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "initial_memory": [],
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 4,
+    "fault": {
+      "pc": 20,
+      "warp_id": 0,
+      "core_id": 3,
+      "address": null
+    },
+    "instructions_executed": 10,
+    "warps": {
+      "0": {
+        "pc": 20,
+        "instructions_executed": 5,
+        "active_mask": 255,
+        "registers": {
+          "0": {
+            "R4": 99
+          },
+          "2": {
+            "R4": 99
+          },
+          "3": {
+            "R4": 99
+          },
+          "7": {
+            "R4": 99
+          }
+        }
+      },
+      "1": {
+        "pc": 20,
+        "instructions_executed": 5,
+        "active_mask": 255,
+        "registers": {
+          "0": {
+            "R4": 99
+          },
+          "7": {
+            "R4": 99
+          }
+        }
+      }
+    }
+  }
+}

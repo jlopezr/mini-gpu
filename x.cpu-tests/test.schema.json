@@ -110,6 +110,51 @@
               }
             }
           }
+        },
+        "fault": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pc",
+                "warp_id",
+                "core_id",
+                "address"
+              ],
+              "properties": {
+                "pc": {
+                  "$ref": "#/$defs/integer32"
+                },
+                "warp_id": {
+                  "$ref": "#/$defs/integer32"
+                },
+                "core_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/integer32"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "address": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/integer32"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         }
       }
     },
@@ -207,6 +252,11 @@
                 {
                   "required": [
                     "instructions_executed"
+                  ]
+                },
+                {
+                  "required": [
+                    "fault"
                   ]
                 }
               ]

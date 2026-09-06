@@ -206,7 +206,7 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
             )
 
     for field, value in expected.get("observations", {}).items():
-        actual = result.get("observations", {}).get(field)
+        actual = result.get("observations", {}).get(field, "<ausente>")
         if actual != value:
             errors.append(f"{backend_name}: {field}: esperado {value!r}, obtenido {actual!r}")
     return errors
@@ -215,6 +215,23 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
 def gpu_expectations(raw: dict, warp_size: int) -> dict:
     """Normaliza observaciones por warp/hilo sin inventar un PC global."""
     observations = {}
+    if "fault" in raw:
+        fault = raw["fault"]
+        observations["fault.present"] = fault is not None
+        if fault is not None:
+            fields = {"pc", "warp_id", "core_id", "address"}
+            if not isinstance(fault, dict) or fault.keys() != fields:
+                raise ValueError("expect.fault requiere pc, warp_id, core_id y address")
+            for field, value in fault.items():
+                if value is None and field in ("core_id", "address"):
+                    observations[f"fault.{field}"] = None
+                else:
+                    number = parse_integer(value, f"fault.{field}")
+                    if field == "warp_id" and number >= 8:
+                        raise ValueError("fault.warp_id fuera de rango")
+                    if field == "core_id" and number >= warp_size:
+                        raise ValueError("fault.core_id fuera de rango")
+                    observations[f"fault.{field}"] = number
     if "instructions_executed" in raw:
         observations["instructions_executed"] = parse_integer(
             raw["instructions_executed"], "instructions_executed")
@@ -285,7 +302,7 @@ def load_case(path: Path) -> dict:
     expected_raw = raw["expect"]
     if gpu and ("pc" in expected_raw or "registers" in expected_raw):
         raise ValueError("GPU: PC y registros deben estar dentro de expect.warps")
-    if not gpu and ("warps" in expected_raw or "instructions_executed" in expected_raw):
+    if not gpu and any(field in expected_raw for field in ("warps", "instructions_executed", "fault")):
         raise ValueError("warps e instructions_executed requieren --backend gpu-simulator")
     registers = {
         parse_register(name): parse_integer(value, name)

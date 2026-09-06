@@ -1,0 +1,44 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-memory-copy",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 20,
+  "initial_memory": [
+    {
+      "address": 256,
+      "file": "input.hex"
+    },
+    {
+      "address": 384,
+      "file": "sentinel.hex"
+    }
+  ],
+  "expect": {
+    "error": false,
+    "fault": null,
+    "instructions_executed": 20,
+    "warps": {
+      "0": {
+        "pc": 40,
+        "instructions_executed": 10,
+        "active_mask": 0
+      },
+      "1": {
+        "pc": 40,
+        "instructions_executed": 10,
+        "active_mask": 0
+      }
+    },
+    "memory_dumps": [
+      {
+        "address": 384,
+        "file": "input.hex"
+      },
+      {
+        "address": 256,
+        "file": "input.hex"
+      }
+    ]
+  }
+}

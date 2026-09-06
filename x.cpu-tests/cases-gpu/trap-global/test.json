@@ -1,0 +1,32 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-trap-global",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "initial_memory": [],
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 3,
+    "fault": {
+      "pc": 4,
+      "warp_id": 0,
+      "core_id": null,
+      "address": null
+    },
+    "instructions_executed": 2,
+    "warps": {
+      "0": {
+        "pc": 4,
+        "instructions_executed": 1,
+        "active_mask": 255
+      },
+      "1": {
+        "pc": 4,
+        "instructions_executed": 1,
+        "active_mask": 255
+      }
+    }
+  }
+}

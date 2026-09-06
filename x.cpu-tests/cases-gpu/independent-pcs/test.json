@@ -1,0 +1,43 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-independent-pcs",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 5,
+  "initial_memory": [],
+  "expect": {
+    "error": false,
+    "fault": null,
+    "instructions_executed": 5,
+    "warps": {
+      "0": {
+        "pc": 8,
+        "instructions_executed": 2,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R1": 11
+          }
+        }
+      },
+      "3": {
+        "pc": 20,
+        "instructions_executed": 3,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R1": 23
+          },
+          "7": {
+            "R1": 23
+          }
+        }
+      },
+      "1": {
+        "pc": 0,
+        "instructions_executed": 0,
+        "active_mask": 0
+      }
+    }
+  }
+}

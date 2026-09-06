@@ -37,6 +37,10 @@ class GpuBackend:
         gpu.configure_warps(warp_config)
         gpu.run(max_instructions)
         observations = {"instructions_executed": gpu.instructions_executed}
+        observations["fault.present"] = gpu.fault is not None
+        if gpu.fault is not None:
+            for field in ("pc", "warp_id", "core_id", "address"):
+                observations[f"fault.{field}"] = getattr(gpu.fault, field)
         for warp in gpu.streaming_multiprocessor.warps:
             prefix = f"warp[{warp.warp_id}]"
             observations[f"{prefix}.pc"] = warp.pc

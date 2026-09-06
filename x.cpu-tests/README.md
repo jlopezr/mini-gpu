@@ -188,6 +188,44 @@ encoding inválido sobre ambos backends.
 Estos casos complementan los tests unitarios de RTL comprobando el flujo entero
 ensamblador, CPU, memoria, monitor y backend.
 
+## Casos GPU y diagnóstico de fallos
+
+`cases-gpu` contiene:
+
+| Caso | Qué comprueba |
+|---|---|
+| `vecsum` | Dos warps suman 16 elementos; registros, PC y contador |
+| `vecsum-partial` | Máscara parcial; las salidas inactivas conservan `DEADBEEF` |
+| `independent-pcs` | W0 y W3 empiezan en PC distintos y terminan en pasos distintos |
+| `memory-copy` | Copia de 16 palabras con patrones de 32 bits; conserva la fuente |
+| `division-by-zero` | Fallo en hilo 3; no modifica los destinos de los hilos anteriores |
+| `load-out-of-bounds` | Lectura inválida del hilo 3; conserva todos los registros destino |
+| `store-out-of-bounds` | Escritura inválida del hilo 3; conserva la memoria de los hilos anteriores |
+| `trap-global` | Fallo común del warp sin hilo concreto |
+
+Los casos de fallo verifican que el siguiente warp se queda en su PC anterior:
+no ejecuta otra instrucción tras el error global. Las pruebas del runner también
+comprueban el orden round-robin `[0, 3, 0, 3, 3]` del caso de PC independientes,
+los pasos después del fallo y la conservación del primer diagnóstico.
+
+El campo opcional `expect.fault` comprueba el diagnóstico completo:
+
+```json
+"fault": {
+  "pc": "0x1C",
+  "warp_id": 0,
+  "core_id": 3,
+  "address": "0x02000000"
+}
+```
+
+Se combina con `error: true` y `error_code` (el ejemplo corresponde a código 2).
+El objeto exige los cuatro campos; `core_id: null` representa un fallo común
+del warp y `address: null` un fallo sin dirección de acceso, como DIV o TRAP.
+`fault: null` exige que no exista fallo. Si se omite `fault`, no se comprueban
+estos detalles. Solo está disponible para casos GPU. Un campo ausente en el
+resultado del backend nunca equivale a un `null` esperado.
+
 ## Arquitectura y compatibilidad
 
 Todos los casos declaran explícitamente `"architecture": "cpu"` o

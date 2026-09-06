@@ -1,0 +1,60 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-vecsum-partial",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 28,
+  "initial_memory": [
+    {
+      "address": "0x100",
+      "file": "a.hex"
+    },
+    {
+      "address": "0x140",
+      "file": "b.hex"
+    },
+    {
+      "address": "0x180",
+      "file": "sentinel.hex"
+    }
+  ],
+  "expect": {
+    "error": false,
+    "fault": null,
+    "instructions_executed": 28,
+    "warps": {
+      "0": {
+        "pc": 56,
+        "instructions_executed": 14,
+        "active_mask": 0
+      },
+      "1": {
+        "pc": 56,
+        "instructions_executed": 14,
+        "active_mask": 0,
+        "registers": {
+          "3": {
+            "R8": 111
+          },
+          "4": {
+            "R8": 0
+          },
+          "7": {
+            "R8": 0
+          }
+        }
+      },
+      "2": {
+        "pc": 0,
+        "instructions_executed": 0,
+        "active_mask": 0
+      }
+    },
+    "memory_dumps": [
+      {
+        "address": "0x180",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}
