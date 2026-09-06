@@ -1,10 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mini-gpu.local/cpu-test.schema.json",
-  "title": "Caso de conformidad MiniCPU",
+  "title": "Caso de conformidad MiniCPU / MiniGPU",
   "type": "object",
   "additionalProperties": false,
-  "required": ["name", "program", "expect"],
+  "required": [
+    "name",
+    "program",
+    "expect",
+    "architecture"
+  ],
   "properties": {
     "name": {
       "type": "string",
@@ -34,7 +39,6 @@
     "expect": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pc"],
       "properties": {
         "halted": {
           "type": "boolean",
@@ -66,8 +70,58 @@
             "$ref": "#/$defs/memoryFile"
           },
           "default": []
+        },
+        "instructions_executed": {
+          "$ref": "#/$defs/integer32"
+        },
+        "warps": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[0-7]$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pc": {
+                "$ref": "#/$defs/integer32"
+              },
+              "active_mask": {
+                "$ref": "#/$defs/integer32"
+              },
+              "instructions_executed": {
+                "$ref": "#/$defs/integer32"
+              },
+              "registers": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "propertyNames": {
+                    "pattern": "^[Rr](?:[0-9]|[12][0-9]|3[01])$"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/integer32"
+                  },
+                  "default": {}
+                }
+              }
+            }
+          }
         }
       }
+    },
+    "warp_config": {
+      "type": "string",
+      "minLength": 1
+    },
+    "architecture": {
+      "enum": [
+        "cpu",
+        "gpu"
+      ]
     }
   },
   "$defs": {
@@ -87,7 +141,10 @@
     "memoryFile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["address", "file"],
+      "required": [
+        "address",
+        "file"
+      ],
       "properties": {
         "address": {
           "$ref": "#/$defs/integer32"
@@ -98,5 +155,70 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "architecture": {
+            "const": "gpu"
+          }
+        },
+        "required": [
+          "architecture"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expect": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "pc"
+                  ]
+                },
+                {
+                  "required": [
+                    "registers"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "warp_config"
+        ]
+      },
+      "else": {
+        "properties": {
+          "expect": {
+            "required": [
+              "pc"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "warps"
+                  ]
+                },
+                {
+                  "required": [
+                    "instructions_executed"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "warp_config"
+          ]
+        }
+      }
+    }
+  ]
 }

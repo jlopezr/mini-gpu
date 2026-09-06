@@ -1,4 +1,51 @@
-# Tests comunes de MiniCPU
+# Tests de MiniCPU y MiniGPU
+
+También incluye el backend funcional MiniGPU (`--backend gpu-simulator`), con casos en
+`cases-gpu`. Los casos CPU siguen en `cases` y el modo `both` sigue comparando
+exclusivamente el simulador CPU con la FPGA.
+
+## MiniGPU: ejemplo completo de suma de vectores
+
+Desde `x.cpu-tests`:
+
+```powershell
+python run_gpu_tests.py --backend gpu-simulator
+python run_gpu_tests.py cases-gpu/vecsum/test.json --backend gpu-simulator
+python -m unittest discover -s . -p test_gpu_runner.py -v
+```
+
+El runner ensambla `vecsum.asm`, carga `a.hex` en 0x100 y `b.hex` en 0x140,
+aplica `warps.json` y compara las 16 palabras de C en 0x180 con `expected.hex`.
+No hace falta construir `memoria.bin` ni volcar resultados manualmente. El caso
+comprueba también 28 instrucciones totales, PC=0x38 y 14 instrucciones por warp,
+registros de varios hilos y que el warp 2 no haya ejecutado nada.
+
+Los casos GPU requieren `architecture: "gpu"` y `warp_config`, una ruta relativa al `test.json`, y usan
+los mismos campos `program`, `initial_memory` y `expect.memory_dumps` de CPU.
+`expect.instructions_executed` cuenta instrucciones de warp completadas.
+Para observar estado privado se usa, por ejemplo:
+
+```json
+{
+  "warps": {
+    "1": {
+      "pc": "0x38",
+      "active_mask": 0,
+      "instructions_executed": 14,
+      "registers": {
+        "7": {"R1": 15, "R8": 115}
+      }
+    }
+  }
+}
+```
+
+Este fragmento va dentro de `expect`; las claves son ID de warp e ID local de
+hilo. Solo se comparan las observaciones solicitadas. No existe un `expect.pc`
+ni un banco `expect.registers` global para GPU. Un caso CPU enviado al backend
+GPU, o uno GPU enviado a CPU/FPGA, se rechaza. Cada ejecución GPU crea memoria
+nueva y admite programas de hasta 32 MiB; usa `max_instructions` como límite,
+no `timeout_seconds`. `--version current` selecciona el simulador actual.
 
 Este directorio contiene casos que pueden ejecutarse sobre el simulador
 funcional, la FPGA o ambos. Cada backend produce el mismo estado observable:
@@ -9,17 +56,17 @@ estado de parada, error, PC, registros solicitados y regiones de memoria.
 Desde `x.cpu-tests`:
 
 ```powershell
-python run_cpu_tests.py --backend sim
-python run_cpu_tests.py --backend fpga --version ebr --port COM3
-python run_cpu_tests.py --backend fpga --version sdram --port COM3
-python run_cpu_tests.py --backend both --version fpga=sdram --port COM3
+python run_gpu_tests.py --backend sim
+python run_gpu_tests.py --backend fpga --version ebr --port COM3
+python run_gpu_tests.py --backend fpga --version sdram --port COM3
+python run_gpu_tests.py --backend both --version fpga=sdram --port COM3
 ```
 
 Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`.
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_cpu_tests.py cases/smoke/test.json --backend sim
+python run_gpu_tests.py cases/smoke/test.json --backend sim
 ```
 
 `--version` selecciona la versión de cada backend. Con un único backend se
@@ -27,7 +74,7 @@ puede usar directamente `--version VERSION`; con varios se usa
 `--version BACKEND=VERSION` y el parámetro puede repetirse:
 
 ```powershell
-python run_cpu_tests.py --backend both `
+python run_gpu_tests.py --backend both `
     --version sim=current --version fpga=sdram --port COM3
 ```
 
@@ -59,6 +106,7 @@ directorio que contiene cada `test.json`.
 
 ```json
 {
+  "architecture": "cpu",
   "name": "ejemplo",
   "program": "program.asm",
   "max_instructions": 1000,
@@ -139,3 +187,20 @@ encoding inválido sobre ambos backends.
 
 Estos casos complementan los tests unitarios de RTL comprobando el flujo entero
 ensamblador, CPU, memoria, monitor y backend.
+
+## Arquitectura y compatibilidad
+
+Todos los casos declaran explícitamente `"architecture": "cpu"` o
+`"architecture": "gpu"`. No se deduce la arquitectura del nombre del archivo
+ni de su carpeta. GPU exige `warp_config`; CPU lo rechaza.
+
+Los backends declaran `ARCHITECTURE`: `sim` y `fpga` son CPU;
+`gpu-simulator` es GPU y es el backend predeterminado de `run_gpu_tests.py`.
+`both` sigue seleccionando los dos backends CPU. Las versiones se seleccionan,
+por ejemplo, con `--version gpu-simulator=current`.
+
+El descubrimiento automático omite casos de otra arquitectura y muestra cuántos.
+Una ruta solicitada explícitamente con arquitectura incompatible produce código
+2. Se valida la selección completa antes de construir los backends, ejecutar
+programas o abrir conexiones FPGA; una selección mixta incompatible no ejecuta
+parcialmente los casos válidos.

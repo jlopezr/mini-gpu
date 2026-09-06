@@ -1,4 +1,5 @@
 {
+  "architecture": "cpu",
   "name": "smoke",
   "program": "smoke_test.asm",
   "max_instructions": 1000,

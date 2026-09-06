@@ -1,4 +1,5 @@
 {
+  "architecture": "cpu",
   "name": "multiply",
   "program": "multiply.asm",
   "max_instructions": 1000,

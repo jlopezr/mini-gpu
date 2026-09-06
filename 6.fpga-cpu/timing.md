@@ -22,11 +22,11 @@ Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
 | Magnitud                      |  Resultado |
 |-------------------------------|-----------:|
 | Frecuencia requerida          | 120,00 MHz |
-| Frecuencia alcanzada          | 120,67 MHz |
+| Frecuencia alcanzada          | 113,44 MHz |
 | EBR `DP16KD`                  |         16 |
-| Multiplicadores `MULT18X18D`  |          3 |
-| Flip-flops `TRELLIS_FF`       |       2151 |
-| Celdas lógicas `TRELLIS_COMB` |       4681 |
+| Multiplicadores `MULT18X18D`  |          4 |
+| Flip-flops `TRELLIS_FF`       |       2405 |
+| Celdas lógicas `TRELLIS_COMB` |       5462 |
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -203,6 +203,8 @@ de la EBR de programa usado por `memory_map.v`. Un ciclo a 120 MHz dura unos
 | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |       11 |           91,7 ns |
 | `LOAD`, `STORE` con la EBR actual                        |       14 |          116,7 ns |
 | `MUL`                                                    |       13 |          108,3 ns |
+| `MULFX`                                                  |       13 |          108,3 ns |
+| `DIV`                                                    |       42 |          350,0 ns |
 | `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `10 + n` |     83,3–341,7 ns |
 
 En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
@@ -225,6 +227,12 @@ suma final y escritura. Una expresión 32×32 monolítica usaba también tres DS
 pero solo alcanzaba 86,72 MHz. Separar productos y sumas permite llegar a
 120,67 MHz.
 
+`MULFX` amplía esa ruta a los cuatro productos parciales necesarios para
+conservar los 64 bits, aplica el signo y selecciona los bits 47:16. `DIV` usa
+32 iteraciones de división restauradora sobre los valores absolutos y aplica
+el signo al cociente final, truncando hacia cero. En `cpu_tb.v` sus latencias
+son 10 y 39 ciclos respectivamente.
+
 `cpu_memory_map_tb.v` mide estas latencias sobre el camino usado en la FPGA,
 las imprime como `FPGA CYCLES` y falla si cambian accidentalmente. `cpu_tb.v`
 también mide el núcleo con su modelo simplificado de memoria de instrucciones:
@@ -234,6 +242,8 @@ también mide el núcleo con su modelo simplificado de memoria de instrucciones:
 | Instrucción ordinaria   |                    6 |
 | `BRA`                   |                    7 |
 | Branch condicional      |                    8 |
+| `MUL` / `MULFX`         |              10 / 10 |
+| `DIV`                   |                   39 |
 | Shift de `n` posiciones |              `7 + n` |
 
 Estas cifras describen latencia, no throughput: no hay instrucciones solapadas
@@ -261,12 +271,12 @@ resultado recuperó el cierre de timing. La cifra vigente figura al inicio.
 
 Los errores definidos son:
 
-| Código | Causa |
-|-------:|-------|
+| Código | Causa                                                   |
+|-------:|---------------------------------------------------------|
 | `0x01` | Opcode reservado, desconocido o todavía no implementado |
-| `0x02` | Acceso de memoria inválido |
-| `0x03` | Instrucción `TRAP` explícita |
-| `0x04` | División por cero; se usará al implementar `DIV` en FPGA |
+| `0x02` | Acceso de memoria inválido                              |
+| `0x03` | Instrucción `TRAP` explícita                            |
+| `0x04` | División por cero                                       |
 | `0x05` | Opcode conocido con campos reservados distintos de cero |
 
 Las rutas de error terminan antes de `STATE_RETIRE`, por lo que la instrucción

@@ -1,4 +1,5 @@
 {
+  "architecture": "cpu",
   "name": "explicit-trap",
   "program": "program.asm",
   "expect": {
@@ -8,4 +9,3 @@
     "pc": "0x00000000"
   }
 }
-

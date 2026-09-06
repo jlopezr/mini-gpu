@@ -22,7 +22,7 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 | `0x00` | `NOP`       |     OK      |    OK     |    OK     | Retira una instrucción sin modificar estado salvo el PC.                         |
 | `0x01` | `ADD`       |     OK      |    OK     |    OK     | Suma de 32 bits con wrap.                                                        |
 | `0x02` | `SUB`       |     OK      |    OK     |    OK     | Resta de 32 bits con wrap.                                                       |
-| `0x03` | `MULFX`     |     OK      |    OK     | PENDIENTE | Multiplicación signed Q16.16.                                                    |
+| `0x03` | `MULFX`     |     OK      |    OK     |    OK     | Multiplicación signed Q16.16.                                                    |
 | `0x04` | `AND`       |     OK      |    OK     |    OK     | AND bit a bit.                                                                   |
 | `0x05` | `OR`        |     OK      |    OK     |    OK     | OR bit a bit.                                                                    |
 | `0x06` | `XOR`       |     OK      |    OK     |    OK     | XOR bit a bit.                                                                   |
@@ -30,7 +30,7 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 | `0x08` | `SHR`       |     OK      |    OK     |    OK     | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
 | `0x09` | `SAR`       |     OK      |    OK     |    OK     | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
 | `0x0A` | `MUL`       |     OK      |    OK     |    OK     | Conserva los 32 bits bajos del producto.                                         |
-| `0x0C` | `DIV`       |     OK      |    OK     | PENDIENTE | Signed y hacia cero; división por cero debe provocar trap.                       |
+| `0x0C` | `DIV`       |     OK      |    OK     |    OK     | Signed y hacia cero; división por cero provoca trap `0x04`.                      |
 | `0x10` | `MOVI`      |     OK      |    OK     |    OK     | Extensión de signo de `imm16`.                                                   |
 | `0x11` | `ADDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de signo.                                                |
 | `0x12` | `ANDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
@@ -82,7 +82,7 @@ asignada en la tabla principal:
 |---------------------|----------:|-----------:|-----------:|
 | Ensamblador         |        30 |          0 |          0 |
 | Simulador funcional |        30 |          0 |          0 |
-| CPU FPGA            |        28 |          0 |          2 |
+| CPU FPGA            |        30 |          0 |          0 |
 
 Los errores detienen la CPU y conservan el código y PC de la instrucción que
 los produjo. No existen vector, handler ni reanudación.
@@ -95,15 +95,11 @@ El simulador implementa todas las instrucciones definidas y su estado de error.
 Debe conservarse como referencia ejecutable y ampliar sus pruebas cada vez que
 cambie la especificación.
 
-### 2. Ampliar la CPU FPGA por grupos
+### 2. Cierre de timing de la CPU FPGA
 
-Orden recomendado:
-
-1. `MULFX`, reutilizando la ruta de multiplicación de `MUL`.
-2. `DIV` mediante una unidad iterativa multiciclo.
-
-Después de cada grupo hay que repetir `apio build` y comprobar explícitamente
-el margen sobre 120 MHz.
+`MULFX` y `DIV` ya están implementadas y pasan la simulación RTL. Tras añadirlas,
+el place-and-route alcanza 113,44 MHz frente al objetivo de 120 MHz, por lo que
+queda pendiente recuperar margen de timing antes de considerar cerrada la CPU.
 
 ### 3. Formalizar los traps
 
@@ -114,7 +110,7 @@ El simulador y la FPGA distinguen:
 | `0x01` | Opcode no implementado.                                       |
 | `0x02` | Acceso de memoria inválido.                                   |
 | `0x03` | Instrucción `TRAP` explícita.                                 |
-| `0x04` | División por cero; reservado hasta implementar `DIV` en FPGA. |
+| `0x04` | División por cero.                                            |
 | `0x05` | Opcode conocido con campos reservados inválidos.              |
 
 Ante un error, el PC vuelve a señalar la instrucción que lo produjo. `HALT`

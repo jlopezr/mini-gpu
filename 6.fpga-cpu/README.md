@@ -2,8 +2,9 @@
 
 Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
 16 KiB. Es la versión FPGA `ebr` utilizada por `x.cpu-tests` y responde como
-monitor 1.6. Esta revisión implementa `MUL` con tres bloques DSP y conserva
-los 32 bits bajos del producto.
+monitor 1.6. Esta revisión implementa `MUL`, `MULFX` y `DIV`. `MUL` conserva
+los 32 bits bajos; `MULFX` opera en signed Q16.16 mediante cuatro productos
+parciales de 16 bits, y `DIV` usa un divisor signed iterativo de 32 pasos.
 
 Mapa unificado visible por la CPU y el monitor:
 

@@ -13,6 +13,8 @@ from types import ModuleType
 
 from backends import fpga as fpga_backend
 from backends import simulator as simulator_backend
+from backends import gpu_simulator as gpu_backend
+from backends.gpu_simulator import GpuBackend
 from backends.fpga import FpgaBackend
 from backends.simulator import SimulatorBackend
 
@@ -21,13 +23,21 @@ REPOSITORY = ROOT.parent
 FPGA_MEMORY_SIZE = 16 * 1024
 ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
 BACKEND_DEFINITIONS = {
+    "gpu-simulator": {
+        "class": GpuBackend,
+        "architecture": GpuBackend.ARCHITECTURE,
+        "versions": gpu_backend.VERSIONS,
+        "default_version": gpu_backend.DEFAULT_VERSION,
+    },
     "sim": {
         "class": SimulatorBackend,
+        "architecture": SimulatorBackend.ARCHITECTURE,
         "versions": simulator_backend.VERSIONS,
         "default_version": simulator_backend.DEFAULT_VERSION,
     },
     "fpga": {
         "class": FpgaBackend,
+        "architecture": FpgaBackend.ARCHITECTURE,
         "versions": fpga_backend.VERSIONS,
         "default_version": fpga_backend.DEFAULT_VERSION,
     },
@@ -80,7 +90,7 @@ def load_module(name: str, path: Path) -> ModuleType:
 
 
 def parse_integer(value: int | str, description: str) -> int:
-    if isinstance(value, int):
+    if type(value) is int:
         result = value
     elif isinstance(value, str):
         try:
@@ -166,6 +176,8 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
             )
 
     for field in ("error_code", "pc"):
+        if field not in expected:
+            continue
         if result[field] != expected[field]:
             errors.append(
                 f"{backend_name}: {field}: esperado 0x{expected[field]:08x}, "
@@ -193,24 +205,88 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
                 f"(offset 0x{difference:x})"
             )
 
+    for field, value in expected.get("observations", {}).items():
+        actual = result.get("observations", {}).get(field)
+        if actual != value:
+            errors.append(f"{backend_name}: {field}: esperado {value!r}, obtenido {actual!r}")
     return errors
+
+
+def gpu_expectations(raw: dict, warp_size: int) -> dict:
+    """Normaliza observaciones por warp/hilo sin inventar un PC global."""
+    observations = {}
+    if "instructions_executed" in raw:
+        observations["instructions_executed"] = parse_integer(
+            raw["instructions_executed"], "instructions_executed")
+    warps = raw.get("warps", {})
+    if not isinstance(warps, dict):
+        raise ValueError("expect.warps debe ser un objeto indexado por ID")
+    for warp_id, state in warps.items():
+        if warp_id not in {str(i) for i in range(8)}:
+            raise ValueError(f"ID de warp esperado inválido: {warp_id}")
+        if not isinstance(state, dict) or state.keys() - {
+            "pc", "active_mask", "instructions_executed", "registers"
+        }:
+            raise ValueError(f"Estado esperado inválido del warp {warp_id}")
+        prefix = f"warp[{warp_id}]"
+        for field in ("pc", "active_mask", "instructions_executed"):
+            if field in state:
+                observations[f"{prefix}.{field}"] = parse_integer(state[field], field)
+        lanes = state.get("registers", {})
+        if not isinstance(lanes, dict):
+            raise ValueError("registers del warp debe estar indexado por hilo")
+        for lane_id, registers in lanes.items():
+            if lane_id not in {str(i) for i in range(warp_size)}:
+                raise ValueError(f"ID de hilo esperado inválido: {lane_id}")
+            if not isinstance(registers, dict):
+                raise ValueError("Los registros del hilo deben ser un objeto")
+            for name, value in registers.items():
+                number = parse_register(name)
+                observations[f"{prefix}.lane[{lane_id}].R{number}"] = parse_integer(value, name)
+    return observations
+
+
+def case_architecture(raw: object) -> str:
+    if not isinstance(raw, dict) or raw.get("architecture") not in ("cpu", "gpu"):
+        raise ValueError("El caso requiere architecture: cpu o gpu")
+    architecture = raw["architecture"]
+    if ("warp_config" in raw) != (architecture == "gpu"):
+        raise ValueError("warp_config es obligatorio para GPU y no se admite para CPU")
+    return architecture
+
+
+def validate_compatibility(architecture: str, backend_names: tuple[str, ...]) -> None:
+    for name in backend_names:
+        supported = BACKEND_DEFINITIONS[name]["architecture"]
+        if architecture != supported:
+            raise ValueError(f"Caso {architecture} incompatible con backend {name} ({supported})")
 
 
 def load_case(path: Path) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     directory = path.parent
 
+    architecture = case_architecture(raw)
+    gpu = architecture == "gpu"
+    warp_config = None
+    if gpu:
+        warp_config = json.loads((directory / raw["warp_config"]).read_text(encoding="utf-8-sig"))
+
     if not isinstance(raw.get("name"), str) or not raw["name"]:
         raise ValueError("El caso necesita un nombre")
 
     program_path = directory / raw["program"]
     program = load_program(program_path)
-    if len(program) > FPGA_MEMORY_SIZE:
+    if len(program) > (ARCHITECTURAL_MEMORY_SIZE if gpu else FPGA_MEMORY_SIZE):
         raise ValueError(
             f"El programa ocupa {len(program)} bytes; la FPGA admite "
             f"{FPGA_MEMORY_SIZE}"
         )
     expected_raw = raw["expect"]
+    if gpu and ("pc" in expected_raw or "registers" in expected_raw):
+        raise ValueError("GPU: PC y registros deben estar dentro de expect.warps")
+    if not gpu and ("warps" in expected_raw or "instructions_executed" in expected_raw):
+        raise ValueError("warps e instructions_executed requieren --backend gpu-simulator")
     registers = {
         parse_register(name): parse_integer(value, name)
         for name, value in expected_raw.get("registers", {}).items()
@@ -243,7 +319,8 @@ def load_case(path: Path) -> dict:
     if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds debe ser positivo")
 
-    return {
+    case = {
+        "architecture": architecture,
         "name": raw["name"],
         "program": program,
         "initial_memory": initial_memory,
@@ -255,17 +332,28 @@ def load_case(path: Path) -> dict:
             "error_code": parse_integer(
                 expected_raw.get("error_code", 0), "error_code"
             ),
-            "pc": parse_integer(expected_raw["pc"], "PC"),
             "registers": registers,
             "memory": expected_memory,
         },
     }
+    if gpu:
+        if not isinstance(warp_config, dict):
+            raise ValueError("warp_config debe contener un objeto JSON")
+        size = parse_integer(warp_config.get("warp_size", 8), "warp_size")
+        if size == 0:
+            raise ValueError("warp_size debe ser positivo")
+        case["warp_config"] = warp_config
+        case["expected"]["observations"] = gpu_expectations(expected_raw, size)
+    else:
+        case["expected"]["pc"] = parse_integer(expected_raw["pc"], "PC")
+    return case
 
 
 def discover_cases(arguments: list[Path]) -> list[Path]:
     if arguments:
         return [path.resolve() for path in arguments]
-    return sorted((ROOT / "cases").glob("**/test.json"))
+    return sorted(path for folder in ("cases", "cases-gpu")
+                  for path in (ROOT / folder).glob("**/test.json"))
 
 
 def main() -> int:
@@ -273,8 +361,8 @@ def main() -> int:
     parser.add_argument("cases", nargs="*", type=Path, metavar="TEST_JSON")
     parser.add_argument(
         "--backend",
-        choices=("sim", "fpga", "both"),
-        default="sim",
+        choices=("sim", "fpga", "both", "gpu-simulator"),
+        default="gpu-simulator",
     )
     parser.add_argument("--port", default="COM3")
     parser.add_argument("--serial-timeout", type=float, default=1.0)
@@ -298,7 +386,31 @@ def main() -> int:
     except ValueError as error:
         parser.error(str(error))
 
+    # Valida todos los casos antes de construir backends o contactar hardware.
+    cases = []
+    skipped = 0
+    try:
+        for path in case_paths:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            architecture = case_architecture(raw)
+            if not args.cases and any(
+                BACKEND_DEFINITIONS[name]["architecture"] != architecture
+                for name in backend_names
+            ):
+                skipped += 1
+                continue
+            validate_compatibility(architecture, backend_names)
+            cases.append((path, load_case(path)))
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        print(f"ERROR {path}: {error}", file=sys.stderr)
+        return 2
+    if not cases:
+        print("No se encontraron casos compatibles", file=sys.stderr)
+        return 2
+
     backends = {}
+    if "gpu-simulator" in backend_names:
+        backends["gpu-simulator"] = GpuBackend(REPOSITORY, version=backend_versions["gpu-simulator"])
     if "sim" in backend_names:
         backends["sim"] = SimulatorBackend(
             REPOSITORY,
@@ -313,9 +425,8 @@ def main() -> int:
         )
 
     failures = 0
-    for path in case_paths:
+    for path, case in cases:
         try:
-            case = load_case(path)
             results = {}
             for backend_name, backend in backends.items():
                 result = backend.run(
@@ -325,6 +436,7 @@ def main() -> int:
                     memory_ranges=list(case["expected"]["memory"]),
                     max_instructions=case["max_instructions"],
                     timeout_seconds=case["timeout_seconds"],
+                    **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
                 )
                 results[backend_name] = result
                 errors = compare_result(case, result, backend_name)
@@ -344,7 +456,7 @@ def main() -> int:
             failures += 1
             print(f"ERROR {path}: {error}", file=sys.stderr)
 
-    print(f"{len(case_paths)} caso(s), {failures} fallo(s)")
+    print(f"{len(cases)} caso(s), {failures} fallo(s), {skipped} omitido(s) por arquitectura")
     return 1 if failures else 0
 
 

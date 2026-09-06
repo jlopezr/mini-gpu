@@ -1,0 +1,17 @@
+{
+  "warp_size": 8,
+  "warps": [
+    {
+      "id": 0,
+      "enabled": true,
+      "pc": "0x0",
+      "active_mask": "0xFF"
+    },
+    {
+      "id": 1,
+      "enabled": true,
+      "pc": "0x0",
+      "active_mask": "0xFF"
+    }
+  ]
+}

@@ -38,6 +38,8 @@ def _load_module(name: str, path: Path) -> ModuleType:
 class FpgaBackend:
     """Carga, ejecuta e inspecciona un caso en la FPGA real."""
 
+    ARCHITECTURE = "cpu"
+
     def __init__(
         self,
         repository: Path,
