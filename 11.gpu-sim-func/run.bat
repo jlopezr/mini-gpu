@@ -1,0 +1,1 @@
+python .\minigpu_sim.py --config .\warps.json .\memoria.bin --dump 0x0180 64 resultado.bin
