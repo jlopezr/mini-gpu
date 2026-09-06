@@ -35,6 +35,8 @@ import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from contextlib import nullcontext
+from gpu_trace import TextTrace, TraceEvent
 
 MASK32 = 0xFFFFFFFF
 MAX_WARPS = 8
@@ -179,6 +181,7 @@ class System:
             raise ValueError("se admiten como máximo 8 warps")
         self.memory = bytearray(memory_size)
         self.fault: Fault | None = None
+        self.trace: TextTrace | None = None
         self.streaming_multiprocessor = StreamingMultiprocessor(
             self.memory, self, num_warps, warp_size
         )
@@ -310,10 +313,50 @@ class StreamingMultiprocessor:
             index = (self.next_warp + offset) % self.num_warps
             warp = self.warps[index]
             if not warp.halted:
-                completed = warp.step()
+                completed = self._step_warp(warp)
                 self.next_warp = (index + 1) % self.num_warps
                 return completed
         return False
+
+    def _step_warp(self, warp: Warp) -> bool:
+        trace = self.system.trace
+        if trace is None:
+            return warp.step()
+        pc, mask = warp.pc, warp.active_mask
+        word = None
+        if 0 <= pc and not pc & 3 and pc + 4 <= len(self.memory):
+            word = struct.unpack_from('<I', self.memory, pc)[0]
+        before = {}
+        if trace.detail and trace.recording:
+            before = {lane.core_id: lane.regs.copy() for lane in warp.processors
+                      if mask & (1 << lane.core_id)}
+        try:
+            completed = warp.step()
+        except SimulationError as exc:
+            trace(TraceEvent(warp.warp_id, pc, mask, word, warp.pc, f'SIMULADOR: {exc}'))
+            raise
+        details = []
+        fault = self.system.fault
+        if fault:
+            outcome = f'ERROR 0x{fault.code:02X} hilo={fault.core_id}'
+            if fault.address is not None:
+                outcome += f' direccion=0x{fault.address:08X}'
+            outcome += ' (sin commit)'
+        else:
+            outcome = 'FINISHED' if warp.halted else 'READY'
+            for lane_id, regs in before.items():
+                after = warp.processors[lane_id].regs
+                for number, (old, new) in enumerate(zip(regs, after)):
+                    if old != new:
+                        details.append(f'T{lane_id} R{number}: 0x{old:08X} -> 0x{new:08X}')
+                if word is not None and word >> 26 in (0x15, 0x16):
+                    op, rd, ra = word >> 26, (word >> 21) & 31, (word >> 16) & 31
+                    address = u32(regs[ra] + sign_extend(word & 0xFFFF, 16))
+                    value = after[rd] if op == 0x15 else regs[rd]
+                    details.append(f'T{lane_id} {"READ" if op == 0x15 else "WRITE"} '
+                                   f'[0x{address:08X}] = 0x{value:08X}')
+        trace(TraceEvent(warp.warp_id, pc, mask, word, warp.pc, outcome, tuple(details)))
+        return completed
 
 
 class Warp:
@@ -611,6 +654,10 @@ def main() -> int:
     parser.add_argument("--warp-size", type=int, default=None)
     parser.add_argument("--config", type=Path, help="JSON con PC y máscara inicial de cada warp")
     parser.add_argument("--dump", nargs=3, metavar=("ADDRESS", "SIZE", "FILE"))
+    parser.add_argument("--trace", action="store_true", help="traza del scheduler por instrucción de warp")
+    parser.add_argument("--trace-detail", action="store_true", help="incluye registros y memoria por hilo")
+    parser.add_argument("--trace-limit", type=int, help="máximo de pasos mostrados; no limita la ejecución")
+    parser.add_argument("--trace-file", type=Path, help="guarda la traza en UTF-8 en vez de stderr")
     args = parser.parse_args()
     try:
         config = None
@@ -631,7 +678,31 @@ def main() -> int:
                 system.configure_warps(config)
             except TypeError as exc:
                 raise ValueError(str(exc)) from exc
-        system.run(args.max)
+        tracing = args.trace or args.trace_detail or args.trace_file is not None or args.trace_limit is not None
+        if args.trace_limit is not None and args.trace_limit < 0:
+            raise ValueError('trace-limit no puede ser negativo')
+        if tracing:
+            if args.trace_file is not None:
+                protected = [args.program, args.config]
+                if args.dump:
+                    protected.append(Path(args.dump[2]))
+                if any(path is not None and path.resolve() == args.trace_file.resolve() for path in protected):
+                    raise ValueError('trace-file debe ser distinto del programa, configuración y dump')
+            output = args.trace_file.open('w', encoding='utf-8') if args.trace_file else nullcontext(sys.stderr)
+            with output as stream:
+                system.trace = TextTrace(stream, detail=args.trace_detail, limit=args.trace_limit)
+                try:
+                    system.run(args.max)
+                except SimulationError as exc:
+                    system.trace.finish(f'SIMULADOR: {exc}')
+                    raise
+                else:
+                    system.trace.finish(f'{system.fault or "HALT"}; '
+                                        f'{system.instructions_executed} instrucciones de warp')
+                finally:
+                    system.trace = None
+        else:
+            system.run(args.max)
         if system.fault:
             fault = system.fault
             print(f"ERROR 0x{fault.code:02X} en PC=0x{fault.pc:08X}, "

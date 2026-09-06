@@ -16,8 +16,10 @@ class GpuBackend:
     def __init__(self, repository: Path, version: str = DEFAULT_VERSION):
         if version not in VERSIONS:
             raise ValueError(f"Versión GPU desconocida: {version}")
+        simulator_path = repository / VERSIONS[version]["simulator_path"]
+        _load_module("gpu_trace", simulator_path.with_name("gpu_trace.py"))
         self.module = _load_module(
-            f"minigpu_{version}_for_tests", repository / VERSIONS[version]["simulator_path"]
+            f"minigpu_{version}_for_tests", simulator_path
         )
 
     def run(self, program: bytes, initial_memory: list[tuple[int, bytes]],

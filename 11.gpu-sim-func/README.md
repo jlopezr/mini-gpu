@@ -11,6 +11,34 @@ python -m unittest discover -s . -v
 
 Desde la raíz del repositorio puede usarse `.venv/Scripts/python.exe`.
 
+## Traza del scheduler
+
+```powershell
+python minigpu_sim.py memoria.bin --config warps.json --trace --trace-limit 100
+python minigpu_sim.py memoria.bin --config warps.json --trace-detail --trace-file ejecucion.log
+```
+
+`--trace` muestra paso, warp elegido, PC inicial, máscara, instrucción y PC final.
+El resultado indica `READY`, `FINISHED` o el fallo. Los pasos son emisiones del
+scheduler, no ciclos de hardware: un intento fallido aparece en la traza aunque
+no incremente el contador de instrucciones completadas.
+
+`--trace-detail` activa además cambios efectivos de registros y lecturas/escrituras
+de memoria por hilo activo. Los resultados de una instrucción fallida no se
+presentan como confirmados. La máscara mostrada es la anterior a ejecutar HALT.
+
+La salida va a stderr; `--trace-file` la escribe en UTF-8 (reemplaza el archivo).
+`--trace-limit N` muestra hasta N instrucciones, con sus detalles, sin detener la
+ejecución. El resumen final se escribe siempre, incluso después de alcanzar ese
+límite. Todas estas opciones activan la traza por sí mismas. Sin ellas no se
+generan eventos ni se copian registros para logging.
+
+Desde Python se puede asignar `system.trace = TextTrace(stream, detail=True)`
+(`TextTrace` está en `gpu_trace.py`). La traza observa `System.step/run` a través
+del scheduler; `Warp.step()` directo no genera eventos. `TraceEvent` separa los
+datos del paso de su representación textual. El límite y numeración pertenecen
+a la instancia de `TextTrace`; crear otra instancia inicia una nueva sesión.
+
 ## Ejecución y HALT
 
 ### Configuración inicial desde JSON
