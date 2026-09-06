@@ -29,13 +29,13 @@ BACKEND_DEFINITIONS = {
         "versions": gpu_backend.VERSIONS,
         "default_version": gpu_backend.DEFAULT_VERSION,
     },
-    "sim": {
+    "cpu-simulator": {
         "class": SimulatorBackend,
         "architecture": SimulatorBackend.ARCHITECTURE,
         "versions": simulator_backend.VERSIONS,
         "default_version": simulator_backend.DEFAULT_VERSION,
     },
-    "fpga": {
+    "cpu-fpga": {
         "class": FpgaBackend,
         "architecture": FpgaBackend.ARCHITECTURE,
         "versions": fpga_backend.VERSIONS,
@@ -361,7 +361,7 @@ def main() -> int:
     parser.add_argument("cases", nargs="*", type=Path, metavar="TEST_JSON")
     parser.add_argument(
         "--backend",
-        choices=("sim", "fpga", "both", "gpu-simulator"),
+        choices=("cpu-simulator", "cpu-fpga", "both", "gpu-simulator"),
         default="gpu-simulator",
     )
     parser.add_argument("--port", default="COM3")
@@ -380,7 +380,7 @@ def main() -> int:
         print("No se encontraron casos", file=sys.stderr)
         return 2
 
-    backend_names = ("sim", "fpga") if args.backend == "both" else (args.backend,)
+    backend_names = ("cpu-simulator", "cpu-fpga") if args.backend == "both" else (args.backend,)
     try:
         backend_versions = resolve_backend_versions(args.version, backend_names)
     except ValueError as error:
@@ -411,17 +411,17 @@ def main() -> int:
     backends = {}
     if "gpu-simulator" in backend_names:
         backends["gpu-simulator"] = GpuBackend(REPOSITORY, version=backend_versions["gpu-simulator"])
-    if "sim" in backend_names:
-        backends["sim"] = SimulatorBackend(
+    if "cpu-simulator" in backend_names:
+        backends["cpu-simulator"] = SimulatorBackend(
             REPOSITORY,
-            version=backend_versions["sim"],
+            version=backend_versions["cpu-simulator"],
         )
-    if "fpga" in backend_names:
-        backends["fpga"] = FpgaBackend(
+    if "cpu-fpga" in backend_names:
+        backends["cpu-fpga"] = FpgaBackend(
             REPOSITORY,
             port=args.port,
             serial_timeout=args.serial_timeout,
-            version=backend_versions["fpga"],
+            version=backend_versions["cpu-fpga"],
         )
 
     failures = 0
@@ -448,7 +448,7 @@ def main() -> int:
                 else:
                     print(f"PASS {case['name']} [{backend_name}]")
 
-            if len(results) == 2 and results["sim"] != results["fpga"]:
+            if len(results) == 2 and results["cpu-simulator"] != results["cpu-fpga"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
                 print("  El estado observado del simulador y la FPGA no coincide")

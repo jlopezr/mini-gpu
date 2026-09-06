@@ -57,11 +57,11 @@ class GpuRunnerTest(unittest.TestCase):
         self.assertEqual(cpu['architecture'], 'cpu')
         self.assertEqual(self.case['architecture'], 'gpu')
         validate_compatibility('gpu', ('gpu-simulator',))
-        validate_compatibility('cpu', ('sim', 'fpga'))
+        validate_compatibility('cpu', ('cpu-simulator', 'cpu-fpga'))
         with self.assertRaises(ValueError):
             validate_compatibility('cpu', ('gpu-simulator',))
         with self.assertRaises(ValueError):
-            validate_compatibility('gpu', ('sim', 'fpga'))
+            validate_compatibility('gpu', ('cpu-simulator', 'cpu-fpga'))
         for raw in ({}, {'architecture': 'other'}, {'architecture': 'gpu'},
                     {'architecture': 'cpu', 'warp_config': 'warps.json'}):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
@@ -73,7 +73,7 @@ class GpuRunnerTest(unittest.TestCase):
         import run_gpu_tests as runner
         for backend, paths, constructor in (
             ('gpu-simulator', [self.path, ROOT / 'cases/smoke/test.json'], 'GpuBackend'),
-            ('fpga', [ROOT / 'cases/smoke/test.json', self.path], 'FpgaBackend'),
+            ('cpu-fpga', [ROOT / 'cases/smoke/test.json', self.path], 'FpgaBackend'),
         ):
             with self.subTest(backend=backend), patch(
                 'sys.argv', ['run_gpu_tests.py', '--backend', backend, *map(str, paths)]

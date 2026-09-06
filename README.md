@@ -79,19 +79,19 @@ Ejecutar todos los casos sobre el simulador:
 
 ```powershell
 cd x.cpu-tests
-python run_gpu_tests.py --backend sim
+python run_gpu_tests.py --backend cpu-simulator
 ```
 
 Ejecutarlos sobre la CPU con EBR de la carpeta 6:
 
 ```powershell
-python run_gpu_tests.py --backend fpga --version ebr --port COM3
+python run_gpu_tests.py --backend cpu-fpga --version ebr --port COM3
 ```
 
 Ejecutarlos sobre la CPU con SDRAM de la carpeta 10:
 
 ```powershell
-python run_gpu_tests.py --backend fpga --version sdram --port COM3
+python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
 ```
 
 El backend consulta `GET_VERSION` antes de modificar la memoria. La versión

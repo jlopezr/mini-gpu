@@ -96,7 +96,7 @@ class FpgaBackend:
                 expected_text = ".".join(map(str, expected_version))
                 raise RuntimeError(
                     f"La FPGA conectada responde con monitor {actual_version}, "
-                    f"pero --version fpga={self.version} requiere "
+                    f"pero --version cpu-fpga={self.version} requiere "
                     f"{expected_text}. Carga el bitstream correspondiente."
                 )
 

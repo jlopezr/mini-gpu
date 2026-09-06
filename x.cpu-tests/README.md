@@ -56,17 +56,17 @@ estado de parada, error, PC, registros solicitados y regiones de memoria.
 Desde `x.cpu-tests`:
 
 ```powershell
-python run_gpu_tests.py --backend sim
-python run_gpu_tests.py --backend fpga --version ebr --port COM3
-python run_gpu_tests.py --backend fpga --version sdram --port COM3
-python run_gpu_tests.py --backend both --version fpga=sdram --port COM3
+python run_gpu_tests.py --backend cpu-simulator
+python run_gpu_tests.py --backend cpu-fpga --version ebr --port COM3
+python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
+python run_gpu_tests.py --backend both --version cpu-fpga=sdram --port COM3
 ```
 
 Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`.
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_gpu_tests.py cases/smoke/test.json --backend sim
+python run_gpu_tests.py cases/smoke/test.json --backend cpu-simulator
 ```
 
 `--version` selecciona la versión de cada backend. Con un único backend se
@@ -75,7 +75,7 @@ puede usar directamente `--version VERSION`; con varios se usa
 
 ```powershell
 python run_gpu_tests.py --backend both `
-    --version sim=current --version fpga=sdram --port COM3
+    --version cpu-simulator=current --version cpu-fpga=sdram --port COM3
 ```
 
 Cada backend declara internamente todas sus versiones y cuál es la
@@ -194,7 +194,7 @@ Todos los casos declaran explícitamente `"architecture": "cpu"` o
 `"architecture": "gpu"`. No se deduce la arquitectura del nombre del archivo
 ni de su carpeta. GPU exige `warp_config`; CPU lo rechaza.
 
-Los backends declaran `ARCHITECTURE`: `sim` y `fpga` son CPU;
+Los backends declaran `ARCHITECTURE`: `cpu-simulator` y `cpu-fpga` son CPU;
 `gpu-simulator` es GPU y es el backend predeterminado de `run_gpu_tests.py`.
 `both` sigue seleccionando los dos backends CPU. Las versiones se seleccionan,
 por ejemplo, con `--version gpu-simulator=current`.
