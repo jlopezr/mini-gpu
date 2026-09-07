@@ -79,7 +79,6 @@ OPCODES = {
     "BGE":    0x23,
     "BLTU":   0x24,
     "BGEU":   0x25,
-    "SSY":    0x2E,
     "BRA":    0x2F,
 
     # System / SIMT

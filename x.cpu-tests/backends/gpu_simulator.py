@@ -24,7 +24,9 @@ class GpuBackend:
 
     def run(self, program: bytes, initial_memory: list[tuple[int, bytes]],
             register_numbers: set[int], memory_ranges: list[tuple[int, int]],
-            max_instructions: int, timeout_seconds: float, warp_config: object) -> dict:
+            max_instructions: int, timeout_seconds: float, warp_config: object,
+            trace: bool = False, trace_detail: bool = False,
+            trace_limit: int | None = None, trace_file: Path | None = None) -> dict:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
         size = self.module.config_warp_size(warp_config)
@@ -35,7 +37,21 @@ class GpuBackend:
                 raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
             gpu.memory[address:address + len(data)] = data
         gpu.configure_warps(warp_config)
-        gpu.run(max_instructions)
+        trace_stream = None
+        try:
+            if trace or trace_detail or trace_limit is not None or trace_file is not None:
+                import sys
+                trace_stream = trace_file.open("w", encoding="utf-8") if trace_file else sys.stderr
+                gpu.trace = self.module.TextTrace(
+                    trace_stream, detail=trace_detail, limit=trace_limit
+                )
+            gpu.run(max_instructions)
+        finally:
+            if gpu.trace is not None:
+                message = gpu.fault or ("HALT" if gpu.halted else "FIN")
+                gpu.trace.finish(str(message))
+            if trace_file and trace_stream is not None:
+                trace_stream.close()
         observations = {"instructions_executed": gpu.instructions_executed}
         observations["fault.present"] = gpu.fault is not None
         if gpu.fault is not None:

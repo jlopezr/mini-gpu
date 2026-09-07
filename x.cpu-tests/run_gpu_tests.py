@@ -390,7 +390,19 @@ def main() -> int:
         metavar="[BACKEND=]VERSION",
         help="versión del backend; puede repetirse al usar varios backends",
     )
+    parser.add_argument("--trace", action="store_true",
+                        help="traza del scheduler GPU por instrucción de warp")
+    parser.add_argument("--trace-detail", action="store_true",
+                        help="incluye registros y memoria en la traza GPU")
+    parser.add_argument("--trace-limit", type=int,
+                        help="máximo de eventos mostrados; no limita la ejecución")
+    parser.add_argument("--trace-file", type=Path,
+                        help="guarda la traza GPU en este fichero")
     args = parser.parse_args()
+    if args.trace_limit is not None and args.trace_limit < 0:
+        parser.error("--trace-limit no puede ser negativo")
+    if (args.trace or args.trace_detail or args.trace_limit is not None or args.trace_file is not None) and args.backend != "gpu-simulator":
+        parser.error("las opciones --trace solo están disponibles con --backend gpu-simulator")
 
     case_paths = discover_cases(args.cases)
     if not case_paths:
@@ -454,6 +466,12 @@ def main() -> int:
                     max_instructions=case["max_instructions"],
                     timeout_seconds=case["timeout_seconds"],
                     **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
+                    **({
+                        "trace": args.trace,
+                        "trace_detail": args.trace_detail,
+                        "trace_limit": args.trace_limit,
+                        "trace_file": args.trace_file,
+                    } if backend_name == "gpu-simulator" else {}),
                 )
                 results[backend_name] = result
                 errors = compare_result(case, result, backend_name)

@@ -69,6 +69,19 @@ También se puede ejecutar uno o varios casos concretos:
 python run_gpu_tests.py cases/smoke/test.json --backend cpu-simulator
 ```
 
+Los casos GPU admiten traza del scheduler. `--trace-limit` limita los eventos
+mostrados, pero no la ejecución ni las comprobaciones del caso; `--trace-file`
+los guarda en vez de escribirlos en stderr:
+
+```powershell
+python run_gpu_tests.py cases-gpu/vecsum/test.json --backend gpu-simulator `
+    --trace --trace-limit 100 --trace-file ejecucion.log
+```
+
+`--trace-detail` añade cambios de registros y accesos a memoria. Para
+Mandelbrot conviene usar siempre un límite pequeño, porque una ejecución completa
+produce millones de eventos aunque solo se quieran inspeccionar los primeros.
+
 `--version` selecciona la versión de cada backend. Con un único backend se
 puede usar directamente `--version VERSION`; con varios se usa
 `--version BACKEND=VERSION` y el parámetro puede repetirse:
@@ -195,6 +208,7 @@ ensamblador, CPU, memoria, monitor y backend.
 | Caso | Qué comprueba |
 |---|---|
 | `vecsum` | Dos warps suman 16 elementos; registros, PC y contador |
+| [mandelbrot](cases-gpu/mandelbrot/README.md) | Imagen Q16.16 de 320×240 con ocho warps; compara todos los píxeles con referencia escalar (prueba larga) |
 | `vecsum-partial` | Máscara parcial; las salidas inactivas conservan `DEADBEEF` |
 | `independent-pcs` | W0 y W3 empiezan en PC distintos y terminan en pasos distintos |
 | `memory-copy` | Copia de 16 palabras con patrones de 32 bits; conserva la fuente |

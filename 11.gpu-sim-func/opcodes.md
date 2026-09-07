@@ -269,11 +269,11 @@ EXIT
 mientras que la divergencia de los branches existentes se gestiona mediante `active_mask`, `live_mask` y la pila SIMT.
 ## Concreción en el simulador funcional
 
-| Instrucción | Opcode (bits 31:26) | Bits 25:0 |
-|-------------|--------------------|-----------|
-| SSY         | `0x31`             | offset signed26 en palabras desde PC+4 |
-| BAR         | `0x32`             | cero |
-| EXIT        | `0x33`             | cero |
+| Instrucción | Opcode (bits 31:26) | Bits 25:0                              |
+|-------------|---------------------|----------------------------------------|
+| SSY         | `0x31`              | offset signed26 en palabras desde PC+4 |
+| BAR         | `0x32`              | cero                                   |
+| EXIT        | `0x33`              | cero                                   |
 
 Los PC son direcciones de bytes: avanzar una instrucción suma 4. El destino de
 SSY debe estar dentro de memoria. Los campos reservados no nulos producen el

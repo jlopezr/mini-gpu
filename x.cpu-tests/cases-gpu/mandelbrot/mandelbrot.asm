@@ -3,7 +3,7 @@
 ; Q16.16
 ;
 ; 8 warps x 8 lanes = 64 threads residentes
-; 1 warp ejecutando por ciclo
+; 1 instrucción de warp por paso del simulador (no modela ciclos)
 ;
 ; Cada lane:
 ;   pixel = GETTID           ; 0..63 inicialmente
@@ -152,10 +152,11 @@ pixel_loop:
     ; Punto de reconvergencia del bucle Mandelbrot
     ; ========================================================
 
-    SSY   mandel_done
-
-
 mandel_loop:
+
+    ; Cada divergencia consume su SSY. Renovarlo en cada iteración
+    ; mantiene pendientes las lanes que ya escaparon hasta mandel_done.
+    SSY   mandel_done
 
     ; iteration >= MAX_ITER
     BGE   R18, R4, mandel_done
