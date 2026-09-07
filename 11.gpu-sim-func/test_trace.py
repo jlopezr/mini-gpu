@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from minigpu_sim import System, UnsupportedDivergence
+from minigpu_sim import System, ERROR_SIMT
 from gpu_trace import TextTrace
 
 
@@ -39,9 +39,9 @@ class TraceTest(unittest.TestCase):
         gpu, stream = self.gpu(words, detail=True)
         gpu.run(10)
         log = stream.getvalue()
-        self.assertIn('H0 R2: 0x00000000 -> 0x00000007', log)
-        self.assertIn('H1 WRITE [0x00000040] = 0x00000007', log)
-        self.assertIn('H0 READ [0x00000040] = 0x00000007', log)
+        self.assertIn('T0 R2: 0x00000000 -> 0x00000007', log)
+        self.assertIn('T1 WRITE [0x00000040] = 0x00000007', log)
+        self.assertIn('T0 READ [0x00000040] = 0x00000007', log)
 
     def test_fault_does_not_log_uncommitted_changes(self):
         gpu, stream = self.gpu([(0x0C << 26) | (3 << 21) | (1 << 16) | (2 << 11)], detail=True)
@@ -49,7 +49,7 @@ class TraceTest(unittest.TestCase):
         lanes[0].regs[1], lanes[0].regs[2] = 12, 3
         gpu.run()
         self.assertIn('ERROR 0x04 hilo=1', stream.getvalue())
-        self.assertNotIn('H0 R3:', stream.getvalue())
+        self.assertNotIn('T0 R3:', stream.getvalue())
         self.assertEqual(lanes[0].regs[3], 0)
 
     def test_fetch_and_divergence(self):
@@ -60,9 +60,8 @@ class TraceTest(unittest.TestCase):
         self.assertIn('direccion=0x00000080', stream.getvalue())
         gpu, stream = self.gpu([(0x20 << 26) | (1 << 21) | 1])
         gpu.streaming_multiprocessor.warps[0].processors[1].regs[1] = 1
-        with self.assertRaises(UnsupportedDivergence):
-            gpu.step()
-        self.assertIn('SIMULADOR:', stream.getvalue())
+        gpu.step()
+        self.assertIn('ERROR 0x06', stream.getvalue())
 
     def test_cli_file_and_final_summary_after_limit(self):
         with tempfile.TemporaryDirectory() as folder:

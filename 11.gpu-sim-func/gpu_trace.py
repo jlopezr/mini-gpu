@@ -9,7 +9,7 @@ NAMES = {
     0x0A: 'MUL', 0x0C: 'DIV', 0x10: 'MOVI', 0x11: 'ADDI', 0x12: 'ANDI',
     0x13: 'ORI', 0x14: 'XORI', 0x15: 'LOAD', 0x16: 'STORE', 0x17: 'MOVHI',
     0x20: 'BEQ', 0x21: 'BNE', 0x22: 'BLT', 0x23: 'BGE', 0x24: 'BLTU',
-    0x25: 'BGEU', 0x2F: 'BRA', 0x30: 'GETTID', 0x3E: 'TRAP', 0x3F: 'HALT',
+    0x25: 'BGEU', 0x2F: 'BRA', 0x30: 'GETTID', 0x31: 'SSY', 0x32: 'BAR', 0x33: 'EXIT', 0x3E: 'TRAP', 0x3F: 'HALT',
 }
 
 
@@ -20,11 +20,11 @@ def instruction_text(word: int | None) -> str:
     name = NAMES.get(op)
     if name is None:
         return f'.word 0x{word:08X}'
-    if op in (0, 0x3E, 0x3F):
+    if op in (0, 0x32, 0x33, 0x3E, 0x3F):
         return name
     if op == 0x30:
         return f'{name} R{rd}'
-    if op == 0x2F:
+    if op in (0x2F, 0x31):
         offset = word & 0x3FFFFFF
         if offset & 0x2000000:
             offset -= 1 << 26

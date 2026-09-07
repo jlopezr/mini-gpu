@@ -83,6 +83,9 @@ OPCODES = {
 
     # System / SIMT
     "GETTID": 0x30,
+    "SSY":    0x31,
+    "BAR":    0x32,
+    "EXIT":   0x33,
     "TRAP":   0x3E,
     "HALT":   0x3F,
 }
@@ -276,7 +279,7 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     # No operands
     # -------------------------------------------------------
 
-    if mnemonic in {"NOP", "TRAP", "HALT"}:
+    if mnemonic in {"NOP", "BAR", "EXIT", "TRAP", "HALT"}:
         if ops:
             raise AsmError(f"{mnemonic} no acepta operandos")
         return encode_r(opcode)
@@ -346,9 +349,9 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     # BRA label
     # -------------------------------------------------------
 
-    if mnemonic == "BRA":
+    if mnemonic in {"BRA", "SSY"}:
         if len(ops) != 1:
-            raise AsmError("BRA requiere: label")
+            raise AsmError(f"{mnemonic} requiere: label")
         target_pc = resolve_target(ops[0], labels)
         off = branch_offset(target_pc, line.pc, 26)
         return encode_b(opcode, off)

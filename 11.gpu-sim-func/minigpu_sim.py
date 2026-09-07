@@ -24,7 +24,7 @@ destinen a la FPGA.
 
 El warp controla el PC y contabiliza instrucciones completadas, incluido HALT.
 Los errores detienen toda la GPU sin efectos parciales de la instrucción fallida.
-Los saltos divergentes aún no están soportados (véase README.md).
+Los saltos divergentes utilizan SSY y una pila de reconvergencia.
 """
 
 from __future__ import annotations
@@ -46,11 +46,13 @@ ERROR_MEMORY_ACCESS = 0x02
 ERROR_EXPLICIT_TRAP = 0x03
 ERROR_DIVISION_BY_ZERO = 0x04
 ERROR_INVALID_ENCODING = 0x05
+ERROR_SIMT = 0x06
+ERROR_BARRIER = 0x07
 
 
 def valid_encoding(instr: int, opcode: int) -> bool:
     """Comprueba los campos reservados de instrucciones conocidas."""
-    if opcode in {0x00, 0x3E, 0x3F}:  # NOP, TRAP, HALT
+    if opcode in {0x00, 0x32, 0x33, 0x3E, 0x3F}:  # NOP, TRAP, HALT
         return (instr & 0x03FFFFFF) == 0
     if opcode in {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0C}:
         return (instr & 0x7FF) == 0
@@ -117,10 +119,6 @@ class SimulationError(RuntimeError):
 
 
 class InstructionLimitExceeded(SimulationError):
-    pass
-
-
-class UnsupportedDivergence(SimulationError):
     pass
 
 
@@ -226,7 +224,7 @@ class System:
         if launch:
             for warp in self.streaming_multiprocessor.warps:
                 warp.pc = address
-                warp.active_mask = (1 << warp.num_threads) - 1
+                warp.active_mask = warp.live_mask = (1 << warp.num_threads) - 1
 
     def configure_warps(self, config: object) -> None:
         """Valida todo el lanzamiento antes de reiniciar/aplicar estado; no toca memoria."""
@@ -241,7 +239,7 @@ class System:
         states = {}
         for index, entry in enumerate(entries):
             label = f'warps[{index}]'
-            entry = config_fields(entry, {'id', 'enabled', 'pc', 'active_mask'}, label)
+            entry = config_fields(entry, {'id', 'enabled', 'pc', 'active_mask', 'workgroup_id'}, label)
             warp_id = config_integer(entry.get('id'), f'{label}.id')
             if not 0 <= warp_id < sm.num_warps:
                 raise ValueError(f"config: {label}.id fuera de rango (0..{sm.num_warps - 1})")
@@ -257,12 +255,16 @@ class System:
                                   f'{label}.active_mask')
             if mask < 0 or mask >= (1 << size) or (enabled and mask == 0):
                 raise ValueError(f"config: {label}.active_mask fuera de rango o vacío en warp habilitado")
-            states[warp_id] = (pc, mask if enabled else 0)
+            group = config_integer(entry.get('workgroup_id', 0), f'{label}.workgroup_id')
+            if group < 0:
+                raise ValueError("config: workgroup_id debe ser no negativo")
+            states[warp_id] = (pc, mask if enabled else 0, group)
         self.fault = None
         sm.reset()
-        for warp_id, (pc, mask) in states.items():
+        for warp_id, (pc, mask, group) in states.items():
             sm.warps[warp_id].pc = pc
-            sm.warps[warp_id].active_mask = mask
+            sm.warps[warp_id].active_mask = sm.warps[warp_id].live_mask = mask
+            sm.warps[warp_id].workgroup_id = group
 
     def step(self) -> bool:
         """Emite como máximo una instrucción de un warp (round-robin)."""
@@ -312,11 +314,21 @@ class StreamingMultiprocessor:
         for offset in range(self.num_warps):
             index = (self.next_warp + offset) % self.num_warps
             warp = self.warps[index]
-            if not warp.halted:
+            if not warp.halted and warp.state == 'READY':
                 completed = self._step_warp(warp)
                 self.next_warp = (index + 1) % self.num_warps
                 return completed
         return False
+
+    def release_barriers(self) -> None:
+        for group in {w.workgroup_id for w in self.warps}:
+            participants = [w for w in self.warps if w.workgroup_id == group and not w.halted]
+            if participants and all(w.state == 'WAIT_BAR' for w in participants):
+                for w in participants:
+                    w.state = 'READY'
+                    w.pc = u32(w.pc + 4)
+                    w.barrier_generation += 1
+                    w.reconverge()
 
     def _step_warp(self, warp: Warp) -> bool:
         trace = self.system.trace
@@ -343,7 +355,7 @@ class StreamingMultiprocessor:
                 outcome += f' direccion=0x{fault.address:08X}'
             outcome += ' (sin commit)'
         else:
-            outcome = 'FINISHED' if warp.halted else 'READY'
+            outcome = 'FINISHED' if warp.halted else warp.state
             for lane_id, regs in before.items():
                 after = warp.processors[lane_id].regs
                 for number, (old, new) in enumerate(zip(regs, after)):
@@ -373,17 +385,38 @@ class Warp:
 
     @property
     def halted(self) -> bool:
-        return self.active_mask == 0
+        return self.live_mask == 0
 
     def reset(self) -> None:
         self.pc = 0
         self.active_mask = 0
+        self.live_mask = 0
+        self.state = 'READY'
+        self.workgroup_id = 0
+        self.barrier_generation = 0
+        self.barrier_key = None
+        self.simt_stack = []
         self.instructions_executed = 0
         for processor in self.processors:
             processor.reset()
 
+    def reconverge(self) -> None:
+        while self.simt_stack and (not self.active_mask or self.pc == self.simt_stack[-1]['join']):
+            frame = self.simt_stack[-1]
+            if frame['pending_mask'] & self.live_mask:
+                self.pc = frame['pending_pc']
+                self.active_mask = frame['pending_mask'] & self.live_mask
+                frame['pending_mask'] = 0
+            else:
+                self.simt_stack.pop()
+                self.pc = frame['join']
+                self.active_mask = frame['mask'] & self.live_mask
+        if not self.live_mask:
+            self.simt_stack.clear()
+            self.state = 'FINISHED'
+
     def step(self) -> bool:
-        if self.sm.system.halted or self.halted:
+        if self.sm.system.halted or self.halted or self.state == 'WAIT_BAR':
             return False
         core_id = None
         try:
@@ -395,11 +428,33 @@ class Warp:
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                 0x09, 0x0A, 0x0C, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
                 0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2F,
-                0x30, 0x3E, 0x3F,
+                0x30, 0x31, 0x32, 0x33, 0x3E, 0x3F,
             }:
                 raise ExecutionFault(ERROR_INVALID_OPCODE)
             if opcode == 0x3E:
                 raise ExecutionFault(ERROR_EXPLICIT_TRAP)
+            if opcode == 0x31:  # SSY: establish a scoped reconvergence frame.
+                target = u32(self.pc + 4 + sign_extend(instr & 0x3FFFFFF, 26) * 4)
+                check_address(self.memory, target)
+                self.simt_stack.append(dict(join=target, mask=self.active_mask,
+                                            pending_pc=0, pending_mask=0, used=False))
+                self.pc = u32(self.pc + 4)
+                self.instructions_executed += 1
+                self.reconverge()
+                return True
+            if opcode == 0x32:
+                if self.active_mask != self.live_mask:
+                    raise ExecutionFault(ERROR_BARRIER)
+                key = (self.pc, self.barrier_generation)
+                if any(w.workgroup_id == self.workgroup_id and w.state == 'WAIT_BAR'
+                       and w.barrier_key != key for w in self.sm.warps):
+                    raise ExecutionFault(ERROR_BARRIER)
+                self.state = 'WAIT_BAR'
+                self.barrier_key = key
+                self.instructions_executed += 1
+                self.sm.release_barriers()
+                self.reconverge()
+                return True
             results = []
             for processor in self.processors:
                 if self.active_mask & (1 << processor.core_id):
@@ -413,9 +468,17 @@ class Warp:
 
         next_pcs = {result.next_pc for _, result in results}
         if len(next_pcs) != 1:
-            raise UnsupportedDivergence(
-                f"salto divergente no soportado en warp={self.warp_id}, PC=0x{self.pc:08X}"
-            )
+            if not self.simt_stack or self.simt_stack[-1]['used']:
+                self.sm.system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
+                return False
+            frame = self.simt_stack[-1]
+            fallthrough = u32(self.pc + 4)
+            frame['pending_pc'] = next(pc for pc in next_pcs if pc != fallthrough)
+            frame['pending_mask'] = sum(1 << lane.core_id for lane, result in results
+                                        if result.next_pc != fallthrough)
+            self.active_mask &= ~frame['pending_mask']
+            next_pcs = {fallthrough}
+            frame['used'] = True
         for processor, result in results:
             processor.regs[:] = result.regs
             if result.store is not None:
@@ -423,8 +486,11 @@ class Warp:
                 struct.pack_into("<I", self.memory, address, value)
             if result.halted:
                 self.active_mask &= ~(1 << processor.core_id)
+                self.live_mask &= ~(1 << processor.core_id)
         self.pc = next_pcs.pop()
         self.instructions_executed += 1
+        self.reconverge()
+        self.sm.release_barriers()
         return True
 
 
@@ -633,7 +699,7 @@ class CPU:
             rd = (instr >> 21) & 0x1F
             regs[rd] = self.warp.warp_id * self.warp.num_threads + self.core_id
 
-        elif opcode == 0x3F:  # HALT
+        elif opcode in (0x33, 0x3F):  # HALT
             halted = True
 
         elif opcode == 0x3E:  # TRAP

@@ -15,7 +15,7 @@ from minigpu_sim import (
     Fault,
     InstructionLimitExceeded,
     System,
-    UnsupportedDivergence,
+    ERROR_SIMT,
 )
 
 HALT = 0x3F << 26
@@ -239,15 +239,14 @@ class MiniGpuTest(unittest.TestCase):
         gpu = self.make(imm(0x20, 1, 2, 1), TRAP, HALT)
         warp = gpu.streaming_multiprocessor.warps[0]
         warp.processors[1].regs[1] = 1
-        with self.assertRaises(UnsupportedDivergence):
-            gpu.step()
+        gpu.step()
         self.assertEqual((warp.pc, gpu.instructions_executed), (0, 0))
-        self.assertFalse(gpu.error)
+        self.assertEqual(gpu.error_code, ERROR_SIMT)
 
     def test_inactive_lane_does_not_fault(self):
         gpu = self.make(reg(0x0C, 3, 1, 2), HALT)
         warp = gpu.streaming_multiprocessor.warps[0]
-        warp.active_mask = 1
+        warp.active_mask = warp.live_mask = 1
         warp.processors[0].regs[2] = 1
         gpu.run(2)
         self.assertFalse(gpu.error)
