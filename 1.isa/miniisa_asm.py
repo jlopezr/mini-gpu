@@ -79,14 +79,19 @@ OPCODES = {
     "BGE":    0x23,
     "BLTU":   0x24,
     "BGEU":   0x25,
+    "SSY":    0x2E,
     "BRA":    0x2F,
 
     # System / SIMT
     "GETTID": 0x30,
+    "GETLANE": 0x31,
+    "GETWARP": 0x32,
+    "GETGWARP": 0x33,
+    "BAR":   0x34,
+    "EXIT":  0x35,
     "TRAP":   0x3E,
     "HALT":   0x3F,
 }
-
 
 R3_OPS = {
     "ADD", "SUB", "MULFX", "AND", "OR", "XOR",
@@ -276,7 +281,7 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     # No operands
     # -------------------------------------------------------
 
-    if mnemonic in {"NOP", "TRAP", "HALT"}:
+    if mnemonic in {"NOP", "TRAP", "HALT", "EXIT"}:
         if ops:
             raise AsmError(f"{mnemonic} no acepta operandos")
         return encode_r(opcode)
@@ -363,8 +368,18 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
         rd = parse_reg(ops[0])
         return encode_i(opcode, rd, 0, 0)
 
-    raise AsmError(f"{mnemonic}: encoding todavía no implementado")
+    # -------------------------------------------------------
+    # SSY label
+    # -------------------------------------------------------
 
+    if mnemonic == "SSY":
+        if len(ops) != 1:
+            raise AsmError("SSY requiere: label")
+        target_pc = resolve_target(ops[0], labels)
+        off = branch_offset(target_pc, line.pc, 26)
+        return encode_b(opcode, off)
+
+    raise AsmError(f"{mnemonic}: encoding todavía no implementado")
 
 def assemble(source: str) -> list[int]:
     lines, labels = first_pass(source)
