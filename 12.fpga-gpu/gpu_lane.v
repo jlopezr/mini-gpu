@@ -1,0 +1,780 @@
+// Derived by derive_lane.py from 6.fpga-cpu/cpu.v.
+// One instruction per step; external warp RF, launch PC and thread ID.
+`default_nettype none
+
+/*
+ * Minimal multicyle MiniCPU v0.1.
+ *
+ * Implemented instructions:
+ *   NOP
+ *   MOVI Rd, imm16
+ *   ADD/SUB/MUL/MULFX/DIV/AND/OR/XOR Rd, Ra, Rb
+ *   SHL/SHR/SAR Rd, Ra, Rb
+ *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
+ *   MOVHI Rd, imm16
+ *   LOAD Rd, Ra, imm16
+ *   STORE Rs, Ra, imm16
+ *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
+ *   BRA offset
+ *   GETTID Rd (returns zero in MiniCPU)
+ *   HALT
+ *
+ * The CPU starts halted after reset. run_request starts continuous execution;
+ * step_request retires one instruction and stops again. halt_request is latched
+ * and honored only after the current instruction has retired.
+ */
+module gpu_lane (
+    input [31:0] launch_pc,
+    input [31:0] thread_id,
+    input [31:0] register_a,
+    input [31:0] register_b,
+    output reg register_write_enable,
+    output reg [4:0] register_write_address,
+    output reg [31:0] register_write_data,
+    input clk,
+    input reset,
+
+    input run_request,
+    input halt_request,
+    input step_request,
+
+    output reg halted,
+    output reg error,
+    output reg [7:0] error_code,
+    output reg instruction_retired,
+
+    output reg imem_valid,
+    output reg [31:0] imem_address,
+    input [31:0] imem_read_data,
+    input imem_ready,
+
+    output reg dmem_valid,
+    output reg [31:0] dmem_address,
+    output reg [31:0] dmem_write_data,
+    output reg [3:0] dmem_write_enable,
+    input [31:0] dmem_read_data,
+    input dmem_ready,
+    input dmem_error,
+
+    input [4:0] debug_register_address,
+    output [31:0] debug_register_data,
+    output [31:0] debug_pc
+);
+
+  localparam [5:0] OPCODE_NOP = 6'h00;
+  localparam [5:0] OPCODE_ADD = 6'h01;
+  localparam [5:0] OPCODE_SUB = 6'h02;
+  localparam [5:0] OPCODE_MULFX = 6'h03;
+  localparam [5:0] OPCODE_AND = 6'h04;
+  localparam [5:0] OPCODE_OR = 6'h05;
+  localparam [5:0] OPCODE_XOR = 6'h06;
+  localparam [5:0] OPCODE_SHL = 6'h07;
+  localparam [5:0] OPCODE_SHR = 6'h08;
+  localparam [5:0] OPCODE_SAR = 6'h09;
+  localparam [5:0] OPCODE_MUL = 6'h0a;
+  localparam [5:0] OPCODE_DIV = 6'h0c;
+  localparam [5:0] OPCODE_MOVI = 6'h10;
+  localparam [5:0] OPCODE_ADDI = 6'h11;
+  localparam [5:0] OPCODE_ANDI = 6'h12;
+  localparam [5:0] OPCODE_ORI = 6'h13;
+  localparam [5:0] OPCODE_XORI = 6'h14;
+  localparam [5:0] OPCODE_LOAD = 6'h15;
+  localparam [5:0] OPCODE_STORE = 6'h16;
+  localparam [5:0] OPCODE_MOVHI = 6'h17;
+  localparam [5:0] OPCODE_BEQ = 6'h20;
+  localparam [5:0] OPCODE_BNE = 6'h21;
+  localparam [5:0] OPCODE_BLT = 6'h22;
+  localparam [5:0] OPCODE_BGE = 6'h23;
+  localparam [5:0] OPCODE_BLTU = 6'h24;
+  localparam [5:0] OPCODE_BGEU = 6'h25;
+  localparam [5:0] OPCODE_BRA = 6'h2f;
+  localparam [5:0] OPCODE_GETTID = 6'h30;
+  localparam [5:0] OPCODE_TRAP = 6'h3e;
+  localparam [5:0] OPCODE_HALT = 6'h3f;
+
+  // Errors are terminal in this teaching CPU: there is no exception vector or
+  // resume operation. On error, PC is restored to the offending instruction
+  // so GET_STATUS provides a useful diagnostic without a separate error-PC
+  // register or a wider monitor protocol.
+  localparam [7:0] ERROR_NONE = 8'h00;
+  localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
+  localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
+  localparam [7:0] ERROR_EXPLICIT_TRAP = 8'h03;
+  localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
+  localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
+
+  localparam [3:0] STATE_HALTED = 4'd0;
+  localparam [3:0] STATE_FETCH_REQUEST = 4'd1;
+  localparam [3:0] STATE_FETCH_WAIT = 4'd2;
+  localparam [3:0] STATE_EXECUTE = 4'd3;
+  localparam [3:0] STATE_RETIRE = 4'd4;
+  localparam [3:0] STATE_MEMORY_WAIT = 4'd5;
+  localparam [3:0] STATE_DECODE = 4'd6;
+  localparam [3:0] STATE_SHIFT_STEP = 4'd7;
+  localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
+  localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
+  localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
+  localparam [3:0] STATE_MUL_PRODUCTS = 4'd11;
+  localparam [3:0] STATE_MUL_CROSS = 4'd12;
+  localparam [3:0] STATE_MUL_COMBINE = 4'd13;
+  localparam [3:0] STATE_MUL_WRITE = 4'd14;
+  localparam [3:0] STATE_DIV_STEP = 4'd15;
+
+  reg [3:0] state;
+  reg [31:0] pc;
+  reg [31:0] instruction;
+  reg step_active;
+  reg halt_pending;
+  reg halt_after_retire;
+  reg load_pending;
+  reg [4:0] load_destination;
+  reg [31:0] operand_a;
+  reg [31:0] operand_b;
+  reg [31:0] shift_result;
+  reg [4:0] shift_destination;
+  reg [4:0] shift_remaining;
+  reg [1:0] shift_kind;
+  reg branch_taken;
+  reg [31:0] branch_target;
+  reg [32:0] branch_difference;
+  reg branch_a_sign;
+  reg branch_b_sign;
+  reg [2:0] branch_kind;
+  reg [31:0] multiply_low_product;
+  reg [31:0] multiply_low_high_product;
+  reg [31:0] multiply_high_low_product;
+  reg [31:0] multiply_high_high_product;
+  reg [32:0] multiply_cross_sum;
+  reg [31:0] multiply_result;
+  reg [4:0] multiply_destination;
+  reg [31:0] multiply_operand_a;
+  reg [31:0] multiply_operand_b;
+  reg multiply_fixed;
+  reg multiply_negative;
+  reg [63:0] multiply_unsigned_product;
+  reg [31:0] divide_dividend;
+  reg [31:0] divide_divisor;
+  reg [31:0] divide_quotient;
+  reg [31:0] divide_remainder;
+  reg [5:0] divide_count;
+  reg divide_negative;
+  reg [4:0] divide_destination;
+  reg divide_write_pending;
+
+  wire [31:0] divide_shifted_remainder =
+      {divide_remainder[30:0], divide_dividend[31]};
+  wire [31:0] divide_remainder_difference =
+      divide_shifted_remainder - divide_divisor;
+  wire [31:0] divide_next_quotient =
+      {divide_quotient[30:0], divide_shifted_remainder >= divide_divisor};
+
+  wire [5:0] opcode = instruction[31:26];
+  wire [4:0] rd = instruction[25:21];
+  wire [4:0] ra = instruction[20:16];
+  wire [4:0] rb = instruction[15:11];
+  wire [31:0] immediate_signed = {{16{instruction[15]}}, instruction[15:0]};
+  wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
+
+  // Validate the reserved fields combinationally, then register the result in
+  // STATE_DECODE. The register keeps validation logic out of the execute-state
+  // control path and was necessary to retain timing closure at 120 MHz.
+  reg instruction_encoding_valid;
+  reg instruction_encoding_valid_registered;
+  always @* begin
+    instruction_encoding_valid = 1'b1;
+    case (opcode)
+      OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
+        instruction_encoding_valid = instruction[25:0] == 0;
+      OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV:
+        instruction_encoding_valid = instruction[10:0] == 0;
+      OPCODE_MOVI, OPCODE_MOVHI:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_GETTID:
+        instruction_encoding_valid = instruction[20:0] == 0;
+      default: instruction_encoding_valid = 1'b1;
+    endcase
+  end
+
+
+
+  /*
+   * STORE takes its source from the Rd field, whereas register-register ALU
+   * instructions take their second operand from Rb. Registering this selection
+   * during fetch keeps opcode decoding out of the register-file read path.
+   * See timing.md, "Selección del segundo operando".
+   */
+  reg [4:0] register_a_address;
+  reg [4:0] register_b_address;
+
+  assign debug_pc = pc;
+
+  assign debug_register_data = 32'b0; // RF lives in gpu_sm.
+
+
+  always @(posedge clk) begin
+    register_write_enable <= 1'b0;
+    instruction_retired <= 1'b0;
+
+    if (reset) begin
+      state <= STATE_HALTED;
+      pc <= 32'h0000_0000;
+      instruction <= 32'h0000_0000;
+      step_active <= 1'b0;
+      halt_pending <= 1'b0;
+      halt_after_retire <= 1'b0;
+      halted <= 1'b1;
+      error <= 1'b0;
+      error_code <= ERROR_NONE;
+      imem_valid <= 1'b0;
+      imem_address <= 32'h0000_0000;
+      dmem_valid <= 1'b0;
+      dmem_address <= 32'h0000_0000;
+      dmem_write_data <= 32'h0000_0000;
+      dmem_write_enable <= 4'b0000;
+      load_pending <= 1'b0;
+      load_destination <= 5'd0;
+      operand_a <= 32'h0000_0000;
+      operand_b <= 32'h0000_0000;
+      shift_result <= 32'h0000_0000;
+      shift_destination <= 5'd0;
+      shift_remaining <= 5'd0;
+      shift_kind <= 2'd0;
+      branch_taken <= 1'b0;
+      branch_target <= 32'h0000_0000;
+      branch_difference <= 33'h0;
+      branch_a_sign <= 1'b0;
+      branch_b_sign <= 1'b0;
+      branch_kind <= 3'd0;
+      multiply_low_product <= 32'h0000_0000;
+      multiply_low_high_product <= 32'h0000_0000;
+      multiply_high_low_product <= 32'h0000_0000;
+      multiply_high_high_product <= 32'h0000_0000;
+      multiply_cross_sum <= 33'h0;
+      multiply_result <= 32'h0000_0000;
+      multiply_destination <= 5'd0;
+      multiply_operand_a <= 32'h0000_0000;
+      multiply_operand_b <= 32'h0000_0000;
+      multiply_fixed <= 1'b0;
+      multiply_negative <= 1'b0;
+      multiply_unsigned_product <= 64'h0000_0000_0000_0000;
+      divide_dividend <= 32'h0000_0000;
+      divide_divisor <= 32'h0000_0000;
+      divide_quotient <= 32'h0000_0000;
+      divide_remainder <= 32'h0000_0000;
+      divide_count <= 6'd0;
+      divide_negative <= 1'b0;
+      divide_destination <= 5'd0;
+      divide_write_pending <= 1'b0;
+      register_a_address <= 5'd0;
+      register_b_address <= 5'd0;
+      register_write_enable <= 1'b0;
+      register_write_address <= 5'd0;
+      register_write_data <= 32'h0000_0000;
+      instruction_encoding_valid_registered <= 1'b1;
+    end else begin
+      if (halt_request && state != STATE_HALTED) begin
+        halt_pending <= 1'b1;
+      end
+
+      case (state)
+        STATE_HALTED: begin
+          imem_valid <= 1'b0;
+          halt_pending <= 1'b0;
+
+          if (run_request) begin
+            pc <= launch_pc;
+            halted <= 1'b0;
+            step_active <= 1'b0;
+            state <= STATE_FETCH_REQUEST;
+          end else if (step_request) begin
+            pc <= launch_pc;
+            halted <= 1'b0;
+            step_active <= 1'b1;
+            state <= STATE_FETCH_REQUEST;
+          end
+        end
+
+        STATE_FETCH_REQUEST: begin
+          imem_address <= pc;
+          imem_valid <= 1'b1;
+          state <= STATE_FETCH_WAIT;
+        end
+
+        STATE_FETCH_WAIT: begin
+          if (imem_valid && imem_ready) begin
+            instruction <= imem_read_data;
+            // Conditional branches encode their operands in X/Y rather than
+            // the Ra/Rb fields used by R-type instructions.
+            if (imem_read_data[31:26] >= OPCODE_BEQ &&
+                imem_read_data[31:26] <= OPCODE_BGEU) begin
+              register_a_address <= imem_read_data[25:21];
+              register_b_address <= imem_read_data[20:16];
+            end else begin
+              register_a_address <= imem_read_data[20:16];
+              register_b_address <=
+                  imem_read_data[31:26] == OPCODE_STORE ?
+                      imem_read_data[25:21] : imem_read_data[15:11];
+            end
+            imem_valid <= 1'b0;
+            pc <= pc + 32'd4;
+            state <= STATE_DECODE;
+          end
+        end
+
+        /*
+         * Register the operands before the ALU. This is an extra cycle in the
+         * multicyle CPU, not instruction pipelining. It breaks the long path
+         * from the asynchronous register-file mux through the 32-bit adder.
+         */
+        STATE_DECODE: begin
+          operand_a <= register_a;
+          operand_b <= register_b;
+          instruction_encoding_valid_registered <= instruction_encoding_valid;
+          state <= STATE_EXECUTE;
+        end
+
+        STATE_EXECUTE: begin
+          halt_after_retire <= 1'b0;
+
+          if (!instruction_encoding_valid_registered) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_INVALID_ENCODING;
+            // Fetch has already advanced PC, so restore the faulting address.
+            pc <= pc - 32'd4;
+            state <= STATE_HALTED;
+          end else case (opcode)
+            OPCODE_NOP: begin
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_MOVI: begin
+              register_write_address <= rd;
+              register_write_data <= immediate_signed;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ADD: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a + operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_SUB: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a - operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_AND: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a & operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_OR: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a | operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_XOR: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a ^ operand_b;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_MUL: begin
+              // Dedicated input registers let the placer keep the operands
+              // physically close to the three ECP5 multiplier blocks.
+              multiply_operand_a <= operand_a;
+              multiply_operand_b <= operand_b;
+              multiply_destination <= rd;
+              multiply_fixed <= 1'b0;
+              divide_write_pending <= 1'b0;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            OPCODE_MULFX: begin
+              // Multiply magnitudes with 16x16 blocks, then restore the sign.
+              multiply_operand_a <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              multiply_operand_b <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              multiply_destination <= rd;
+              multiply_fixed <= 1'b1;
+              multiply_negative <= operand_a[31] ^ operand_b[31];
+              divide_write_pending <= 1'b0;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            OPCODE_DIV: begin
+              if (operand_b == 0) begin
+                halted <= 1'b1;
+                error <= 1'b1;
+                error_code <= ERROR_DIVISION_BY_ZERO;
+                pc <= pc - 32'd4;
+                state <= STATE_HALTED;
+              end else begin
+                divide_dividend <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+                divide_divisor <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+                divide_quotient <= 32'h0000_0000;
+                divide_remainder <= 32'h0000_0000;
+                divide_count <= 6'd0;
+                divide_negative <= operand_a[31] ^ operand_b[31];
+                divide_destination <= rd;
+                divide_write_pending <= 1'b1;
+                state <= STATE_DIV_STEP;
+              end
+            end
+
+            OPCODE_SHL: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd0;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SHR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd1;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SAR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= operand_b[4:0];
+              shift_kind <= 2'd2;
+              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_ADDI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a + immediate_signed;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ANDI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a & immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ORI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a | immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_XORI: begin
+              register_write_address <= rd;
+              register_write_data <= operand_a ^ immediate_unsigned;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_MOVHI: begin
+              register_write_address <= rd;
+              register_write_data <= {instruction[15:0], 16'h0000};
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_GETTID: begin
+              register_write_address <= rd;
+              register_write_data <= thread_id;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_BEQ: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd0;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BNE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd1;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLT: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd2;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd3;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLTU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd4;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGEU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd5;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BRA: begin
+              branch_taken <= 1'b1;
+              branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_LOAD: begin
+              dmem_address <= operand_a + immediate_signed;
+              dmem_write_enable <= 4'b0000;
+              dmem_valid <= 1'b1;
+              load_pending <= 1'b1;
+              load_destination <= rd;
+              state <= STATE_MEMORY_WAIT;
+            end
+
+            OPCODE_STORE: begin
+              dmem_address <= operand_a + immediate_signed;
+              dmem_write_data <= operand_b;
+              dmem_write_enable <= 4'b1111;
+              dmem_valid <= 1'b1;
+              load_pending <= 1'b0;
+              state <= STATE_MEMORY_WAIT;
+            end
+
+            OPCODE_HALT: begin
+              halt_after_retire <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_TRAP: begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_EXPLICIT_TRAP;
+              // TRAP is a terminal diagnostic stop, not a retired HALT.
+              pc <= pc - 32'd4;
+              state <= STATE_HALTED;
+            end
+
+            default: begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_INVALID_OPCODE;
+              pc <= pc - 32'd4;
+              state <= STATE_HALTED;
+            end
+          endcase
+        end
+
+        STATE_MEMORY_WAIT: begin
+          if (dmem_valid && dmem_ready) begin
+            dmem_valid <= 1'b0;
+            dmem_write_enable <= 4'b0000;
+
+            if (dmem_error) begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_MEMORY_ACCESS;
+              pc <= pc - 32'd4;
+              state <= STATE_HALTED;
+            end else begin
+              if (load_pending) begin
+                register_write_address <= load_destination;
+                register_write_data <= dmem_read_data;
+                register_write_enable <= 1'b1;
+              end
+
+              load_pending <= 1'b0;
+              state <= STATE_RETIRE;
+            end
+          end
+        end
+
+        // Iterative one-bit shifter: it uses little logic and avoids a large
+        // barrel shifter on the 120 MHz datapath. Shifts take 1..31 extra cycles.
+        STATE_SHIFT_STEP: begin
+          case (shift_kind)
+            2'd0: shift_result <= shift_result << 1;
+            2'd1: shift_result <= shift_result >> 1;
+            default: shift_result <= $signed(shift_result) >>> 1;
+          endcase
+          shift_remaining <= shift_remaining - 1'b1;
+          if (shift_remaining == 1)
+            state <= STATE_SHIFT_WRITE;
+        end
+
+        STATE_SHIFT_WRITE: begin
+          register_write_address <= shift_destination;
+          register_write_data <= shift_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        STATE_MUL_PRODUCTS: begin
+          if (multiply_fixed) begin
+            // Four independent 16x16 products map cleanly to ECP5 DSPs.
+            multiply_low_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[15:0];
+            multiply_low_high_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[31:16];
+            multiply_high_low_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[15:0];
+            multiply_high_high_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[31:16];
+            state <= STATE_MUL_CROSS;
+          end else begin
+            // low32(a*b) needs only three unsigned 16x16 partial products.
+            multiply_low_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[15:0];
+            multiply_low_high_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[31:16];
+            multiply_high_low_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[15:0];
+            state <= STATE_MUL_CROSS;
+          end
+        end
+
+        STATE_MUL_CROSS: begin
+          if (multiply_fixed)
+            multiply_cross_sum <= {1'b0, multiply_low_high_product} +
+                                  {1'b0, multiply_high_low_product};
+          else
+            // Only the low half contributes to MUL modulo 2^32.
+            multiply_cross_sum <= {17'h0, multiply_low_high_product[15:0]} +
+                                  {17'h0, multiply_high_low_product[15:0]};
+          state <= STATE_MUL_COMBINE;
+        end
+
+        STATE_MUL_COMBINE: begin
+          if (multiply_fixed) begin
+            multiply_unsigned_product <=
+                {multiply_high_high_product, 32'h0000_0000} +
+                {15'h0000, multiply_cross_sum, 16'h0000} +
+                {32'h0000_0000, multiply_low_product};
+            state <= STATE_MUL_WRITE;
+          end else begin
+            multiply_result <= multiply_low_product +
+                               {multiply_cross_sum[15:0], 16'h0000};
+            state <= STATE_MUL_WRITE;
+          end
+        end
+
+        STATE_MUL_WRITE: begin
+          register_write_address <= divide_write_pending ?
+              divide_destination : multiply_destination;
+          if (divide_write_pending)
+            register_write_data <= divide_negative ?
+                (~divide_quotient + 1'b1) : divide_quotient;
+          else
+            register_write_data <= multiply_fixed ?
+                (multiply_negative ?
+                    (~multiply_unsigned_product[47:16] +
+                     (multiply_unsigned_product[15:0] == 0)) :
+                    multiply_unsigned_product[47:16]) : multiply_result;
+          register_write_enable <= 1'b1;
+          divide_write_pending <= 1'b0;
+          state <= STATE_RETIRE;
+        end
+
+        // Restoring unsigned division over operand magnitudes. Applying the
+        // sign only to the completed quotient implements truncation to zero.
+        STATE_DIV_STEP: begin
+          divide_dividend <= {divide_dividend[30:0], 1'b0};
+          if (divide_shifted_remainder >= divide_divisor) begin
+            divide_remainder <= divide_remainder_difference;
+            divide_quotient <= {divide_quotient[30:0], 1'b1};
+          end else begin
+            divide_remainder <= divide_shifted_remainder;
+            divide_quotient <= {divide_quotient[30:0], 1'b0};
+          end
+          divide_count <= divide_count + 1'b1;
+          if (divide_count == 6'd31) begin
+            divide_quotient <= divide_next_quotient;
+            state <= STATE_MUL_WRITE;
+          end
+        end
+
+        // All comparisons reuse one registered subtraction. For signed values,
+        // differing operand signs decide directly; otherwise diff[31] does.
+        STATE_BRANCH_COMPARE: begin
+          case (branch_kind)
+            3'd0: branch_taken <= branch_difference[31:0] == 0;
+            3'd1: branch_taken <= branch_difference[31:0] != 0;
+            3'd2: branch_taken <=
+                branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31];
+            3'd3: branch_taken <=
+                !(branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31]);
+            3'd4: branch_taken <= branch_difference[32];
+            default: branch_taken <= !branch_difference[32];
+          endcase
+          state <= STATE_BRANCH_COMMIT;
+        end
+
+        // Comparison and target calculation are registered before modifying PC.
+        STATE_BRANCH_COMMIT: begin
+          if (branch_taken)
+            pc <= branch_target;
+          state <= STATE_RETIRE;
+        end
+
+        STATE_RETIRE: begin
+          instruction_retired <= 1'b1;
+
+          if (halt_after_retire || step_active || halt_pending || halt_request) begin
+            halted <= 1'b1;
+            step_active <= 1'b0;
+            halt_pending <= 1'b0;
+            state <= STATE_HALTED;
+          end else begin
+            state <= STATE_FETCH_REQUEST;
+          end
+        end
+
+        default: begin
+          halted <= 1'b1;
+          error <= 1'b1;
+          error_code <= ERROR_INVALID_OPCODE;
+          imem_valid <= 1'b0;
+          state <= STATE_HALTED;
+        end
+      endcase
+    end
+  end
+endmodule
+
+`default_nettype wire

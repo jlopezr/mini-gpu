@@ -1,0 +1,102 @@
+[
+  {
+    "id": 0,
+    "name": "vector",
+    "instructions": 72
+  },
+  {
+    "id": 1,
+    "name": "nested",
+    "instructions": 136
+  },
+  {
+    "id": 2,
+    "name": "loop",
+    "instructions": 328
+  },
+  {
+    "id": 3,
+    "name": "exit_first",
+    "instructions": 80
+  },
+  {
+    "id": 4,
+    "name": "exit_second",
+    "instructions": 88
+  },
+  {
+    "id": 5,
+    "name": "exit_both",
+    "instructions": 56
+  },
+  {
+    "id": 6,
+    "name": "groups",
+    "instructions": 32
+  },
+  {
+    "id": 7,
+    "name": "finished_participant",
+    "instructions": 4
+  },
+  {
+    "id": 8,
+    "name": "bank_conflicts",
+    "instructions": 72
+  },
+  {
+    "id": 9,
+    "name": "barrier_visibility",
+    "instructions": 96
+  },
+  {
+    "id": 10,
+    "name": "arithmetic",
+    "instructions": 392
+  },
+  {
+    "id": 11,
+    "name": "branch_beq",
+    "instructions": 72
+  },
+  {
+    "id": 12,
+    "name": "branch_bne",
+    "instructions": 72
+  },
+  {
+    "id": 13,
+    "name": "branch_blt",
+    "instructions": 72
+  },
+  {
+    "id": 14,
+    "name": "branch_bge",
+    "instructions": 72
+  },
+  {
+    "id": 15,
+    "name": "branch_bltu",
+    "instructions": 64
+  },
+  {
+    "id": 16,
+    "name": "branch_bgeu",
+    "instructions": 56
+  },
+  {
+    "id": 17,
+    "name": "unified_code",
+    "instructions": 64
+  },
+  {
+    "id": 18,
+    "name": "last_word",
+    "instructions": 56
+  },
+  {
+    "id": 19,
+    "name": "early_halt_unwind",
+    "instructions": 24
+  }
+]
