@@ -17,38 +17,38 @@ No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 
 ## Instrucciones definidas
 
-| Opcode | Instrucción | Ensamblador | Simulador |   FPGA    | Observaciones                                                                    |
-|-------:|-------------|:-----------:|:---------:|:---------:|----------------------------------------------------------------------------------|
-| `0x00` | `NOP`       |     OK      |    OK     |    OK     | Retira una instrucción sin modificar estado salvo el PC.                         |
-| `0x01` | `ADD`       |     OK      |    OK     |    OK     | Suma de 32 bits con wrap.                                                        |
-| `0x02` | `SUB`       |     OK      |    OK     |    OK     | Resta de 32 bits con wrap.                                                       |
-| `0x03` | `MULFX`     |     OK      |    OK     |    OK     | Multiplicación signed Q16.16.                                                    |
-| `0x04` | `AND`       |     OK      |    OK     |    OK     | AND bit a bit.                                                                   |
-| `0x05` | `OR`        |     OK      |    OK     |    OK     | OR bit a bit.                                                                    |
-| `0x06` | `XOR`       |     OK      |    OK     |    OK     | XOR bit a bit.                                                                   |
-| `0x07` | `SHL`       |     OK      |    OK     |    OK     | Usa los cinco bits bajos de `Rb`.                                                |
-| `0x08` | `SHR`       |     OK      |    OK     |    OK     | Desplazamiento lógico; usa `Rb[4:0]`.                                            |
-| `0x09` | `SAR`       |     OK      |    OK     |    OK     | Desplazamiento aritmético; usa `Rb[4:0]`.                                        |
-| `0x0A` | `MUL`       |     OK      |    OK     |    OK     | Conserva los 32 bits bajos del producto.                                         |
-| `0x0C` | `DIV`       |     OK      |    OK     |    OK     | Signed y hacia cero; división por cero provoca trap `0x04`.                      |
-| `0x10` | `MOVI`      |     OK      |    OK     |    OK     | Extensión de signo de `imm16`.                                                   |
-| `0x11` | `ADDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de signo.                                                |
-| `0x12` | `ANDI`      |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
-| `0x13` | `ORI`       |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
-| `0x14` | `XORI`      |     OK      |    OK     |    OK     | Inmediato con extensión de ceros.                                                |
-| `0x15` | `LOAD`      |     OK      |    OK     |    OK     | Palabra de 32 bits alineada.                                                     |
-| `0x16` | `STORE`     |     OK      |    OK     |    OK     | Palabra de 32 bits alineada.                                                     |
-| `0x17` | `MOVHI`     |     OK      |    OK     |    OK     | Escribe `imm16 << 16`.                                                           |
-| `0x20` | `BEQ`       |     OK      |    OK     |    OK     | Branch relativo a la instrucción siguiente.                                      |
-| `0x21` | `BNE`       |     OK      |    OK     |    OK     | Branch relativo a la instrucción siguiente.                                      |
-| `0x22` | `BLT`       |     OK      |    OK     |    OK     | Comparación signed.                                                              |
-| `0x23` | `BGE`       |     OK      |    OK     |    OK     | Comparación signed.                                                              |
-| `0x24` | `BLTU`      |     OK      |    OK     |    OK     | Comparación unsigned.                                                            |
-| `0x25` | `BGEU`      |     OK      |    OK     |    OK     | Comparación unsigned.                                                            |
-| `0x2F` | `BRA`       |     OK      |    OK     |    OK     | Offset signed de 26 bits, expresado en palabras.                                 |
-| `0x30` | `GETTID`    |     OK      |    OK     |    OK     | En MiniCPU escribe cero; en MiniGPU será el ID del thread.                       |
-| `0x3E` | `TRAP`      |     OK      |    OK     |    OK     | Detiene la CPU con error explícito y conserva su PC.                             |
-| `0x3F` | `HALT`      |     OK      |    OK     |    OK     | Detiene la ejecución después de retirar la instrucción.                          |
+| Opcode | Instrucción | Ensamblador | Simulador | FPGA | Observaciones                                               |
+|-------:|-------------|:-----------:|:---------:|:----:|-------------------------------------------------------------|
+| `0x00` | `NOP`       |     OK      |    OK     |  OK  | Retira una instrucción sin modificar estado salvo el PC.    |
+| `0x01` | `ADD`       |     OK      |    OK     |  OK  | Suma de 32 bits con wrap.                                   |
+| `0x02` | `SUB`       |     OK      |    OK     |  OK  | Resta de 32 bits con wrap.                                  |
+| `0x03` | `MULFX`     |     OK      |    OK     |  OK  | Multiplicación signed Q16.16.                               |
+| `0x04` | `AND`       |     OK      |    OK     |  OK  | AND bit a bit.                                              |
+| `0x05` | `OR`        |     OK      |    OK     |  OK  | OR bit a bit.                                               |
+| `0x06` | `XOR`       |     OK      |    OK     |  OK  | XOR bit a bit.                                              |
+| `0x07` | `SHL`       |     OK      |    OK     |  OK  | Usa los cinco bits bajos de `Rb`.                           |
+| `0x08` | `SHR`       |     OK      |    OK     |  OK  | Desplazamiento lógico; usa `Rb[4:0]`.                       |
+| `0x09` | `SAR`       |     OK      |    OK     |  OK  | Desplazamiento aritmético; usa `Rb[4:0]`.                   |
+| `0x0A` | `MUL`       |     OK      |    OK     |  OK  | Conserva los 32 bits bajos del producto.                    |
+| `0x0C` | `DIV`       |     OK      |    OK     |  OK  | Signed y hacia cero; división por cero provoca trap `0x04`. |
+| `0x10` | `MOVI`      |     OK      |    OK     |  OK  | Extensión de signo de `imm16`.                              |
+| `0x11` | `ADDI`      |     OK      |    OK     |  OK  | Inmediato con extensión de signo.                           |
+| `0x12` | `ANDI`      |     OK      |    OK     |  OK  | Inmediato con extensión de ceros.                           |
+| `0x13` | `ORI`       |     OK      |    OK     |  OK  | Inmediato con extensión de ceros.                           |
+| `0x14` | `XORI`      |     OK      |    OK     |  OK  | Inmediato con extensión de ceros.                           |
+| `0x15` | `LOAD`      |     OK      |    OK     |  OK  | Palabra de 32 bits alineada.                                |
+| `0x16` | `STORE`     |     OK      |    OK     |  OK  | Palabra de 32 bits alineada.                                |
+| `0x17` | `MOVHI`     |     OK      |    OK     |  OK  | Escribe `imm16 << 16`.                                      |
+| `0x20` | `BEQ`       |     OK      |    OK     |  OK  | Branch relativo a la instrucción siguiente.                 |
+| `0x21` | `BNE`       |     OK      |    OK     |  OK  | Branch relativo a la instrucción siguiente.                 |
+| `0x22` | `BLT`       |     OK      |    OK     |  OK  | Comparación signed.                                         |
+| `0x23` | `BGE`       |     OK      |    OK     |  OK  | Comparación signed.                                         |
+| `0x24` | `BLTU`      |     OK      |    OK     |  OK  | Comparación unsigned.                                       |
+| `0x25` | `BGEU`      |     OK      |    OK     |  OK  | Comparación unsigned.                                       |
+| `0x2F` | `BRA`       |     OK      |    OK     |  OK  | Offset signed de 26 bits, expresado en palabras.            |
+| `0x30` | `GETTID`    |     OK      |    OK     |  OK  | En MiniCPU escribe cero; en MiniGPU será el ID del thread.  |
+| `0x3E` | `TRAP`      |     OK      |    OK     |  OK  | Detiene la CPU con error explícito y conserva su PC.        |
+| `0x3F` | `HALT`      |     OK      |    OK     |  OK  | Detiene la ejecución después de retirar la instrucción.     |
 
 ## Opcodes reservados
 
@@ -78,11 +78,11 @@ experimentales.
 Contando las 30 instrucciones con nombre y semántica definida o parcialmente
 asignada en la tabla principal:
 
-| Implementación      | Completas |  Parciales | Pendientes |
-|---------------------|----------:|-----------:|-----------:|
-| Ensamblador         |        30 |          0 |          0 |
-| Simulador funcional |        30 |          0 |          0 |
-| CPU FPGA            |        30 |          0 |          0 |
+| Implementación      | Completas | Parciales | Pendientes |
+|---------------------|----------:|----------:|-----------:|
+| Ensamblador         |        30 |         0 |          0 |
+| Simulador funcional |        30 |         0 |          0 |
+| CPU FPGA            |        30 |         0 |          0 |
 
 Los errores detienen la CPU y conservan el código y PC de la instrucción que
 los produjo. No existen vector, handler ni reanudación.

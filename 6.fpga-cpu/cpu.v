@@ -142,7 +142,9 @@ module cpu (
   reg [31:0] multiply_operand_b;
   reg multiply_fixed;
   reg multiply_negative;
+  reg multiply_roundup;
   reg [63:0] multiply_unsigned_product;
+  reg divide_by_zero;
   reg [31:0] divide_dividend;
   reg [31:0] divide_divisor;
   reg [31:0] divide_quotient;
@@ -262,8 +264,10 @@ module cpu (
       multiply_operand_a <= 32'h0000_0000;
       multiply_operand_b <= 32'h0000_0000;
       multiply_fixed <= 1'b0;
+      multiply_roundup <= 1'b0;
       multiply_negative <= 1'b0;
       multiply_unsigned_product <= 64'h0000_0000_0000_0000;
+      divide_by_zero <= 1'b0;
       divide_dividend <= 32'h0000_0000;
       divide_divisor <= 32'h0000_0000;
       divide_quotient <= 32'h0000_0000;
@@ -418,23 +422,17 @@ module cpu (
             end
 
             OPCODE_DIV: begin
-              if (operand_b == 0) begin
-                halted <= 1'b1;
-                error <= 1'b1;
-                error_code <= ERROR_DIVISION_BY_ZERO;
-                pc <= pc - 3'd4;
-                state <= STATE_HALTED;
-              end else begin
-                divide_dividend <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
-                divide_divisor <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
-                divide_quotient <= 32'h0000_0000;
-                divide_remainder <= 32'h0000_0000;
-                divide_count <= 6'd0;
-                divide_negative <= operand_a[31] ^ operand_b[31];
-                divide_destination <= rd;
-                divide_write_pending <= 1'b1;
-                state <= STATE_DIV_STEP;
-              end
+              divide_by_zero <= (operand_b == 0);
+              divide_dividend <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              divide_divisor <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              divide_quotient <= 32'h0000_0000;
+              divide_remainder <= 32'h0000_0000;
+              divide_count <= 6'd0;
+              divide_negative <= operand_a[31] ^ operand_b[31];
+              divide_destination <= rd;
+              divide_write_pending <= 1'b1;
+              state <= STATE_DIV_STEP;
+            
             end
 
             OPCODE_SHL: begin
@@ -690,6 +688,7 @@ module cpu (
                 {multiply_high_high_product, 32'h0000_0000} +
                 {15'h0000, multiply_cross_sum, 16'h0000} +
                 {32'h0000_0000, multiply_low_product};
+            multiply_roundup <= (multiply_low_product[15:0] == 0);
             state <= STATE_MUL_WRITE;
           end else begin
             multiply_result <= multiply_low_product +
@@ -707,8 +706,7 @@ module cpu (
           else
             register_write_data <= multiply_fixed ?
                 (multiply_negative ?
-                    (~multiply_unsigned_product[47:16] +
-                     (multiply_unsigned_product[15:0] == 0)) :
+                    (~multiply_unsigned_product[47:16] + multiply_roundup) :
                     multiply_unsigned_product[47:16]) : multiply_result;
           register_write_enable <= 1'b1;
           divide_write_pending <= 1'b0;
@@ -718,18 +716,26 @@ module cpu (
         // Restoring unsigned division over operand magnitudes. Applying the
         // sign only to the completed quotient implements truncation to zero.
         STATE_DIV_STEP: begin
-          divide_dividend <= {divide_dividend[30:0], 1'b0};
-          if (divide_shifted_remainder >= divide_divisor) begin
-            divide_remainder <= divide_remainder_difference;
-            divide_quotient <= {divide_quotient[30:0], 1'b1};
+          if(divide_count == 0 && divide_by_zero) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_DIVISION_BY_ZERO;
+            pc <= pc - 3'd4;
+            state <= STATE_HALTED;
           end else begin
-            divide_remainder <= divide_shifted_remainder;
-            divide_quotient <= {divide_quotient[30:0], 1'b0};
-          end
-          divide_count <= divide_count + 1'b1;
-          if (divide_count == 6'd31) begin
-            divide_quotient <= divide_next_quotient;
-            state <= STATE_MUL_WRITE;
+            divide_dividend <= {divide_dividend[30:0], 1'b0};
+            if (divide_shifted_remainder >= divide_divisor) begin
+              divide_remainder <= divide_remainder_difference;
+              divide_quotient <= {divide_quotient[30:0], 1'b1};
+            end else begin
+              divide_remainder <= divide_shifted_remainder;
+              divide_quotient <= {divide_quotient[30:0], 1'b0};
+            end
+            divide_count <= divide_count + 1'b1;
+            if (divide_count == 6'd31) begin
+              divide_quotient <= divide_next_quotient;
+              state <= STATE_MUL_WRITE;
+            end
           end
         end
 
