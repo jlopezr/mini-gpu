@@ -44,6 +44,7 @@ class TraceEvent:
     warp_id: int
     pc: int
     mask: int
+    live_mask: int
     instruction: int | None
     next_pc: int
     outcome: str
@@ -58,7 +59,7 @@ class TextTrace:
         self.detail = detail
         self.limit = limit
         self.steps = 0
-        print('PASO    WARP PC          MASK INSTRUCCION                  RESULTADO', file=stream)
+        print('PASO    WARP PC          MASK LANES    INSTRUCCION                  RESULTADO', file=stream)
 
     @property
     def recording(self) -> bool:
@@ -70,7 +71,12 @@ class TextTrace:
             if self.steps == self.limit + 1:
                 print(f'... traza limitada a {self.limit} pasos; la ejecucion continua', file=self.stream)
             return
-        print(f'{self.steps:06d}  W{event.warp_id:<3} 0x{event.pc:08X}  {event.mask:02X}   '
+        lanes = ''.join(
+            'A' if event.mask & (1 << lane) and event.live_mask & (1 << lane)
+            else 'F' if not event.live_mask & (1 << lane) else '.'
+            for lane in range(8)
+        )
+        print(f'{self.steps:06d}  W{event.warp_id:<3} 0x{event.pc:08X}  {event.mask:02X}  {lanes} '
               f'{instruction_text(event.instruction):<28} '
               f'-> 0x{event.next_pc:08X} {event.outcome}', file=self.stream)
         if self.detail:

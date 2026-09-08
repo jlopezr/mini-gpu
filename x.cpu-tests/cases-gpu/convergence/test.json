@@ -1,0 +1,33 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-convergence",
+  "program": "convergence.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "instructions_executed": 14,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 14,
+        "registers": {
+          "0": {"R1": 0, "R3": 11, "R4": 4, "R5": "0x0200", "R6": "0x0200"},
+          "1": {"R1": 1, "R3": 11, "R4": 4, "R5": "0x0204", "R6": "0x0200"},
+          "2": {"R1": 2, "R3": 11, "R4": 4, "R5": "0x0208", "R6": "0x0200"},
+          "3": {"R1": 3, "R3": 11, "R4": 4, "R5": "0x020c", "R6": "0x0200"},
+          "4": {"R1": 4, "R3": 21, "R4": 4, "R5": "0x0210", "R6": "0x0200"},
+          "5": {"R1": 5, "R3": 21, "R4": 4, "R5": "0x0214", "R6": "0x0200"},
+          "6": {"R1": 6, "R3": 21, "R4": 4, "R5": "0x0218", "R6": "0x0200"},
+          "7": {"R1": 7, "R3": 21, "R4": 4, "R5": "0x021c", "R6": "0x0200"}
+        }
+      }
+    },
+    "memory_dumps": [
+      {"address": "0x0200", "file": "expected.hex"}
+    ]
+  }
+}

@@ -62,6 +62,11 @@ límite. Todas estas opciones activan la traza por sí mismas. Sin ellas no se
 
 generan eventos ni se copian registros para logging.
 
+La columna `LANES` resume las dos máscaras SIMT por lane, con lane 0 a la
+izquierda: `A` está activa en la instrucción, `.` sigue viva pero espera por
+divergencia y `F` ya ha terminado mediante `EXIT`. La columna hexadecimal `MASK`
+se conserva como representación de `active_mask`.
+
 
 
 Desde Python se puede asignar `system.trace = TextTrace(stream, detail=True)`

@@ -345,7 +345,7 @@ class StreamingMultiprocessor:
         try:
             completed = warp.step()
         except SimulationError as exc:
-            trace(TraceEvent(warp.warp_id, pc, mask, word, warp.pc, f'SIMULADOR: {exc}'))
+            trace(TraceEvent(warp.warp_id, pc, mask, warp.live_mask, word, warp.pc, f'SIMULADOR: {exc}'))
             raise
         details = []
         fault = self.system.fault
@@ -367,7 +367,7 @@ class StreamingMultiprocessor:
                     value = after[rd] if op == 0x15 else regs[rd]
                     details.append(f'T{lane_id} {"READ" if op == 0x15 else "WRITE"} '
                                    f'[0x{address:08X}] = 0x{value:08X}')
-        trace(TraceEvent(warp.warp_id, pc, mask, word, warp.pc, outcome, tuple(details)))
+        trace(TraceEvent(warp.warp_id, pc, mask, warp.live_mask, word, warp.pc, outcome, tuple(details)))
         return completed
 
 
