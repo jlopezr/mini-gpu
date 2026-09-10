@@ -85,6 +85,21 @@ class SimtTest(unittest.TestCase):
         self.assertFalse(gpu.error)
         self.assertEqual([p.regs[3] for p in gpu.streaming_multiprocessor.warps[0].processors], [1]+[10]*7)
 
+    def test_simt_stack_accepts_eight_frames_and_rejects_the_ninth_atomically(self):
+        gpu = self.make('\n'.join(['SSY done'] * 9) + '\ndone: EXIT')
+        gpu.run(20)
+        warp = gpu.streaming_multiprocessor.warps[0]
+
+        self.assertTrue(gpu.error)
+        self.assertEqual(gpu.error_code, ERROR_SIMT)
+        self.assertEqual(gpu.fault.pc, 8 * 4)
+        self.assertEqual(gpu.fault.warp_id, 0)
+        self.assertIsNone(gpu.fault.core_id)
+        self.assertEqual(warp.pc, 8 * 4)
+        self.assertEqual(len(warp.simt_stack), 8)
+        self.assertEqual(warp.instructions_executed, 8)
+        self.assertEqual(gpu.instructions_executed, 8)
+
     def test_divergent_loop(self):
         gpu = self.make('''
             GETTID R1

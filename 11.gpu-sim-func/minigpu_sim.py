@@ -33,13 +33,15 @@ import argparse
 import json
 import struct
 import sys
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from contextlib import nullcontext
+
 from gpu_trace import TextTrace, TraceEvent
 
 MASK32 = 0xFFFFFFFF
 MAX_WARPS = 8
+MAX_SIMT_STACK = 8
 ERROR_NONE = 0x00
 ERROR_INVALID_OPCODE = 0x01
 ERROR_MEMORY_ACCESS = 0x02
@@ -436,8 +438,10 @@ class Warp:
             if opcode == 0x31:  # SSY: establish a scoped reconvergence frame.
                 target = u32(self.pc + 4 + sign_extend(instr & 0x3FFFFFF, 26) * 4)
                 check_address(self.memory, target)
-                self.simt_stack.append(dict(join=target, mask=self.active_mask,
-                                            pending_pc=0, pending_mask=0, used=False))
+                if len(self.simt_stack) >= MAX_SIMT_STACK:
+                    raise ExecutionFault(ERROR_SIMT)
+                self.simt_stack.append({"join": target, "mask": self.active_mask,
+                                        "pending_pc": 0, "pending_mask": 0, "used": False})
                 self.pc = u32(self.pc + 4)
                 self.instructions_executed += 1
                 self.reconverge()
