@@ -17,7 +17,7 @@ python -m unittest discover -s . -p test_gpu_runner.py -v
 El runner ensambla `vecsum.asm`, carga `a.hex` en 0x100 y `b.hex` en 0x140,
 aplica `warps.json` y compara las 16 palabras de C en 0x180 con `expected.hex`.
 No hace falta construir `memoria.bin` ni volcar resultados manualmente. El caso
-comprueba también 28 instrucciones totales, PC=0x38 y 14 instrucciones por warp,
+comprueba también 16 instrucciones totales, PC=0x20 y 8 instrucciones por warp,
 registros de varios hilos y que el warp 2 no haya ejecutado nada.
 
 Los casos GPU requieren `architecture: "gpu"` y `warp_config`, una ruta relativa al `test.json`, y usan
@@ -83,14 +83,52 @@ Qué necesita y qué ejecuta cada una:
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | los 12 de `cases/` |
 | 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | los 12 de `cases/` |
 | 4 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
-| 5 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.0 | los de `cases-gpu/` salvo los que usan `simulator_options` |
+| 5 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.1 | 26 compatibles; 8 omitidos con motivo |
 
 `ebr` y `sdram` son versiones del backend **CPU**; `bram` lo es del backend
 **GPU**. No hay ninguna versión `ebr` de GPU.
 
-Los cuatro casos de [simt/capacity](cases-gpu/simt/capacity/) que reducen la
-profundidad de las pilas con `simulator_options` se omiten en la combinación 5:
-son parámetros del simulador y la FPGA los tiene fijados en el hardware.
+La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
+`SKIP` los casos que requieren capacidades no implementadas:
+
+- Cuatro casos de `simt/capacity` fijan profundidades mediante `simulator_options`.
+- Mandelbrot original y los dos casos de memoria fuera de rango usan direcciones
+  o dumps fuera de los 128 KiB de BRAM. Mandelbrot packed sí es compatible.
+- División por cero exige ausencia de efectos parciales en todas las lanes
+  (`requires: ["atomic_warp_faults"]`); el RTL no garantiza ese comportamiento.
+
+Si se pide explícitamente uno de esos casos, el runner falla antes de abrir
+el puerto o cargar un bitstream. También valida el lanzamiento (8 lanes, PC,
+máscaras y workgroup) y rechaza expectativas de dirección efectiva de fallo,
+que este monitor no conserva. El simulador sigue ejecutando los 34 casos con
+sus expectativas completas.
+
+El backend FPGA lee PC, máscara activa y contador por warp, el contador total,
+y PC/warp/lane del primer fallo. Solo lee los registros citados en las
+expectativas para evitar 2048 transacciones UART por caso. Las observaciones
+no disponibles nunca se sustituyen por valores esperados.
+
+Desde la raíz del repositorio, para actualizar una placa con monitor 2.0 y
+probar todos los casos compatibles:
+
+```powershell
+.\.venv\Scripts\python.exe .\x.cpu-tests\run_gpu_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
+```
+
+El backend exige monitor **2.1** y ofrece cargar `12.fpga-gpu` si responde otra
+versión o si el monitor no responde. `--yes` autoriza esa carga. No fuerza una
+recarga si ya responde 2.1; para cargar otra compilación de la misma revisión:
+
+```powershell
+.\.venv\Scripts\apio.exe upload -p .\12.fpga-gpu
+if ($LASTEXITCODE -ne 0) { throw "Falló la carga" }
+.\.venv\Scripts\python.exe .\x.cpu-tests\run_gpu_tests.py --backend gpu-fpga --version bram --port COM3 --no-upload --durations
+```
+
+`apio` se busca junto al ejecutable de Python y, si no está allí, en PATH.
+La carga recibe salida en vivo. Para comparar también con el simulador, usa
+`--backend gpu-both --version gpu-fpga=bram`; se comparan estados, memoria y
+observaciones exigidas por el caso, excluyendo la duración de ejecución.
 
 Los tres backends de FPGA comprueban la placa al arrancar y, si hace falta,
 ofrecen cargar su bitstream; ver [Placa y bitstream](#placa-y-bitstream).
@@ -165,7 +203,7 @@ Los backends de FPGA comprueban la versión física mediante `GET_VERSION`:
 |---|---|---|---:|---|
 | `cpu-fpga` | `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
 | `cpu-fpga` | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
-| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.0 | 128 KiB de BRAM, 8 warps × 8 lanes |
+| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.1 | 128 KiB de BRAM, 8 warps × 8 lanes |
 
 La versión predeterminada de `cpu-fpga` es `ebr`, para conservar la
 compatibilidad con los comandos anteriores. La comprobación ocurre **una sola

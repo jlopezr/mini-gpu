@@ -17,16 +17,16 @@
   "expect": {
     "error": false,
     "fault": null,
-    "instructions_executed": 20,
+    "instructions_executed": 12,
     "warps": {
       "0": {
-        "pc": 40,
-        "instructions_executed": 10,
+        "pc": 24,
+        "instructions_executed": 6,
         "active_mask": 0
       },
       "1": {
-        "pc": 40,
-        "instructions_executed": 10,
+        "pc": 24,
+        "instructions_executed": 6,
         "active_mask": 0
       }
     },

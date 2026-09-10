@@ -45,7 +45,7 @@ class GpuRunnerTest(unittest.TestCase):
 
     def test_budget_failure_and_fresh_memory_per_case(self):
         case = copy.deepcopy(self.case)
-        case['max_instructions'] = 27
+        case['max_instructions'] = case['expected']['observations']['instructions_executed'] - 1
         with self.assertRaises(self.backend.module.InstructionLimitExceeded):
             self.run_case(case)
         result = self.run_case(self.case)

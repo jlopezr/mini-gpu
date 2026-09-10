@@ -368,7 +368,13 @@ def load_case(path: Path) -> dict:
     if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds debe ser positivo")
 
+    requires = raw.get('requires', [])
+    if not isinstance(requires, list) or any(item != 'atomic_warp_faults' for item in requires):
+        raise ValueError('requires solo admite atomic_warp_faults')
+    if requires and not gpu:
+        raise ValueError('requires solo esta disponible para casos GPU')
     case = {
+        "requires": requires,
         "architecture": architecture,
         "name": raw["name"],
         "program": program,
@@ -487,10 +493,20 @@ def main() -> int:
             # tiene fijadas en el hardware y no puede reproducir el caso.
             if simulator_options(raw, architecture) and backend_names != ("gpu-simulator",):
                 if not args.cases:
+                    print(f"SKIP {raw.get('name', path)}: simulator_options requiere gpu-simulator")
                     skipped += 1
                     continue
                 raise ValueError("simulator_options requiere --backend gpu-simulator")
-            cases.append((path, load_case(path)))
+            case = load_case(path)
+            if 'gpu-fpga' in backend_names:
+                reason = gpu_fpga_backend.incompatibility(case, backend_versions['gpu-fpga'])
+                if reason:
+                    if args.cases:
+                        raise ValueError(reason)
+                    print(f"SKIP {case['name']} [gpu-fpga]: {reason}")
+                    skipped += 1
+                    continue
+            cases.append((path, case))
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"ERROR {path}: {error}", file=sys.stderr)
         return 2
@@ -550,6 +566,8 @@ def main() -> int:
                     max_instructions=case["max_instructions"],
                     timeout_seconds=case["timeout_seconds"],
                     **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
+                    **({"observation_fields": set(case["expected"]["observations"])}
+                       if backend_name == "gpu-fpga" else {}),
                     **({
                         "trace": args.trace,
                         "trace_detail": args.trace_detail,
@@ -573,7 +591,15 @@ def main() -> int:
                 else:
                     print(f"PASS {case['name']} [{backend_name}]{slow}")
 
-            if len(results) == 2 and results["cpu-simulator"] != results["cpu-fpga"]:
+            if args.backend == 'gpu-both':
+                left, right = results['gpu-simulator'], results['gpu-fpga']
+                fields = case['expected']['observations']
+                mismatch = any(left[field] != right[field] for field in ('halted', 'error', 'error_code', 'memory'))
+                mismatch |= any(left['observations'].get(key, '<ausente>') != right['observations'].get(key, '<ausente>') for key in fields)
+                if mismatch:
+                    failures += 1
+                    print(f"FAIL {case['name']} [diferencial GPU]: los estados observados no coinciden")
+            if args.backend == 'both' and results["cpu-simulator"] != results["cpu-fpga"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
                 print("  El estado observado del simulador y la FPGA no coincide")
@@ -588,7 +614,7 @@ def main() -> int:
 
     total = time.monotonic() - started
     print(f"{len(cases)} caso(s), {failures} fallo(s), "
-          f"{skipped} omitido(s) por arquitectura, {total:.1f}s")
+          f"{skipped} omitido(s) por arquitectura o capacidades, {total:.1f}s")
     return 1 if failures else 0
 
 

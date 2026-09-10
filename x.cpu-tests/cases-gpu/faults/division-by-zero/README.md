@@ -21,3 +21,7 @@ y que el fallo es atómico: ninguna lane del warp llega a escribir el resultado.
 ## Notas
 
 Dos warps activos, ambos con las ocho lanes.
+
+Este caso exige atomicidad de todas las lanes ante el fallo, declarada mediante
+`requires: ["atomic_warp_faults"]`. Se mantiene para el simulador; el backend
+FPGA lo omite porque el RTL puede haber escrito resultados de otras lanes.

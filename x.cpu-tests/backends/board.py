@@ -99,7 +99,8 @@ def upload(project: Path) -> None:
     print(f"--- `apio upload` en {project} "
           f"(puede tardar varios minutos) ---", flush=True)
     try:
-        completed = subprocess.run(["apio", "upload"], cwd=project)
+        apio = Path(sys.executable).with_name("apio.exe" if sys.platform == "win32" else "apio")
+        completed = subprocess.run([str(apio) if apio.is_file() else "apio", "upload"], cwd=project)
     except FileNotFoundError as error:
         raise BitstreamMismatch(
             "No se encuentra `apio` en el PATH; instálalo o carga el bitstream "

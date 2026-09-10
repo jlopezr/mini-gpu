@@ -1,4 +1,4 @@
-"""Backend de MiniGPU en FPGA, sobre el cliente del monitor UART 2.0.
+"""Backend de MiniGPU en FPGA, sobre el cliente del monitor UART 2.1.
 
 Es un backend propio y no una versión de `fpga.py` porque el runner lee
 `ARCHITECTURE` del atributo de clase al construir `BACKEND_DEFINITIONS`, antes
@@ -11,6 +11,7 @@ misma arquitectura (`ebr` y `sdram` son ambas CPU), igual que `simulator.py` y
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import time
 from pathlib import Path
@@ -22,7 +23,8 @@ from . import board
 VERSIONS = {
     "bram": {
         "monitor_path": Path("12.fpga-gpu/monitor.py"),
-        "monitor_version": (2, 0),
+        "monitor_version": (2, 1),
+        "memory_size": 128 * 1024,
         "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes",
     },
 }
@@ -38,6 +40,78 @@ def _load_module(name: str, path: Path) -> ModuleType:
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
+    """Reject unavailable capabilities before opening a port or uploading."""
+    config = VERSIONS[version]
+    limit = config['memory_size']
+    if case.get('simulator_options'):
+        return 'las profundidades SIMT del caso requieren el simulador'
+    if 'atomic_warp_faults' in case.get('requires', []):
+        return 'el caso exige fallos atómicos por warp; el RTL permite efectos parciales'
+    ranges = [('programa', 0, len(case['program']))]
+    ranges += [('memoria inicial', address, len(data)) for address, data in case['initial_memory']]
+    ranges += [('dump esperado', address, size) for address, size in case['expected']['memory']]
+    for name, address, size in ranges:
+        if address < 0 or address + size > limit:
+            return f'{name} fuera de los {limit // 1024} KiB de BRAM: 0x{address:x} + {size}'
+    observations = case['expected'].get('observations', {})
+    if observations.get('fault.address') is not None or (
+        'fault.address' in observations and case['expected']['error_code'] == 2
+    ):
+        return 'el monitor no expone la dirección efectiva de un fallo'
+    # Use the same launch validator as the monitor, without touching hardware.
+    model_path = Path(__file__).resolve().parents[2] / '11.gpu-sim-func/minigpu_sim.py'
+    if 'gpu_trace' not in sys.modules:
+        _load_module('gpu_trace', model_path.with_name('gpu_trace.py'))
+    model_module = _load_module('gpu_fpga_launch_validation', model_path)
+    try:
+        model = model_module.System(limit, 8, 8)
+        model.configure_warps(case['warp_config'])
+        if any(w.workgroup_id > 0xffffffff for w in model.streaming_multiprocessor.warps):
+            return 'workgroup_id no cabe en 32 bits'
+    except (ValueError, TypeError) as error:
+        return f'lanzamiento incompatible con FPGA: {error}'
+    return None
+
+
+def read_observations(client, status, requested: set[str]) -> dict:
+    """Read actual hardware state; register traffic is limited to assertions."""
+    def word(address):
+        return int.from_bytes(client.read_memory(address, 4), 'little')
+
+    result = {'fault.present': status.error, 'instructions_executed': word(0x80000108)}
+    if status.error:
+        diagnostic = word(0x8000010c)
+        result.update({
+            'fault.pc': word(0x80000110),
+            'fault.warp_id': (diagnostic >> 3) & 7,
+            'fault.core_id': diagnostic & 7 if diagnostic & 0x40 else None,
+        })
+        # Only non-address faults have an architectural null address. Never
+        # invent an effective memory address that this RTL does not retain.
+        if status.error_code != 2:
+            result['fault.address'] = None
+    for warp in range(8):
+        prefix = f'warp[{warp}]'
+        data = client.read_memory(0x80000000 + warp * 16, 16)
+        result[f'{prefix}.pc'] = int.from_bytes(data[:4], 'little')
+        result[f'{prefix}.active_mask'] = data[4]
+        client.select_context(warp, 0)
+        result[f'{prefix}.instructions_executed'] = word(0x80000114)
+    registers = []
+    for key in requested:
+        match = re.fullmatch(r'warp\[(\d+)\]\.lane\[(\d+)\]\.R(\d+)', key)
+        if match:
+            registers.append((*map(int, match.groups()), key))
+    selected = None
+    for warp, lane, register, key in sorted(registers):
+        if selected != (warp, lane):
+            client.select_context(warp, lane)
+            selected = (warp, lane)
+        result[key] = client.read_register(register)
+    return result
 
 
 class GpuFpgaBackend:
@@ -86,6 +160,7 @@ class GpuFpgaBackend:
         max_instructions: int,
         timeout_seconds: float,
         warp_config: object,
+        observation_fields: set[str] | None = None,
     ) -> dict:
         # La FPGA se limita por timeout de pared, no por instrucciones.
         del max_instructions, register_numbers
@@ -142,6 +217,8 @@ class GpuFpgaBackend:
                 time.sleep(0.01)
 
             elapsed = time.monotonic() - started
+            observations = read_observations(client, status, observation_fields or set())
+            observations["duration_seconds"] = elapsed
 
             memory = {
                 (address, size): client.read_memory(address, size)
@@ -153,13 +230,7 @@ class GpuFpgaBackend:
             "error": status.error,
             "error_code": status.error_code,
             "pc": status.pc,
-            # Los registros por warp y lane exigirían 2048 lecturas UART y una
-            # conmutación de contexto por lane. Este backend no publica esas
-            # observaciones: los casos que fijen `expect.warps` no son
-            # ejecutables aquí todavía.
             "registers": {},
-            "observations": {
-                "duration_seconds": elapsed,
-            },
+            "observations": observations,
             "memory": memory,
         }

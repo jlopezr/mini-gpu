@@ -50,5 +50,8 @@
         }
       }
     }
-  }
+  },
+  "requires": [
+    "atomic_warp_faults"
+  ]
 }
