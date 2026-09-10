@@ -1,0 +1,12 @@
+{
+  "architecture": "gpu",
+  "name": "simt-reached-join-pops-stack",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 50,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0
+  }
+}

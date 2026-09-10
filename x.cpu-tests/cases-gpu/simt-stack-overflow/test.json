@@ -1,0 +1,12 @@
+{
+  "architecture": "gpu",
+  "name": "simt-stack-overflow-conformance",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 20,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 6
+  }
+}
