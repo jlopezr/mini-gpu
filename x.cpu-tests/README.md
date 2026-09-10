@@ -216,6 +216,9 @@ ensamblador, CPU, memoria, monitor y backend.
 | `load-out-of-bounds` | Lectura inválida del hilo 3; conserva todos los registros destino |
 | `store-out-of-bounds` | Escritura inválida del hilo 3; conserva la memoria de los hilos anteriores |
 | `trap-global` | Fallo común del warp sin hilo concreto |
+| `simt-stack-overflow` | Nueve contextos pendientes deben producir `ERROR_SIMT`; actualmente descubre la pila ilimitada del simulador |
+| `simt-unused-ssy-loop` | Un `SSY` uniforme no consumido se repite en un bucle; actualmente descubre la acumulación redundante del RTL |
+| `simt-reached-join` | Alcanzar el join en cada vuelta debe desapilar correctamente |
 
 Los casos de fallo verifican que el siguiente warp se queda en su PC anterior:
 no ejecuta otra instrucción tras el error global. Las pruebas del runner también

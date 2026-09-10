@@ -40,6 +40,14 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
 );
     localparam INIT=0, PICK=1, RECON=2, FETCH=3, FETCH_WAIT=4,
         RF_WAIT=5, DECODE=6, START=7, EXEC=8, FINISH=9, MEMORY=10;
+    localparam [7:0] ERROR_NONE = 8'h00;
+    localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
+    localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
+    localparam [7:0] ERROR_EXPLICIT_TRAP = 8'h03;
+    localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
+    localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
+    localparam [7:0] ERROR_SIMT = 8'h06;
+    localparam [7:0] ERROR_BARRIER = 8'h07;
     reg [3:0] state;
     reg [7:0] init_address;
     reg running, pause_pending, stepping;
@@ -150,7 +158,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     reg [2:0] fault_lane;
     reg [7:0] fault_code;
     always @* begin
-        taken=0; alu_fault=0; fault_lane=0; fault_code=0;
+            taken=0; alu_fault=0; fault_lane=0; fault_code=ERROR_NONE;
         for(t=0;t<8;t=t+1) begin
             taken[t]=active[current][t] && lane_pc[t*32 +: 32] != pc[current]+4;
             if (!alu_fault && active[current][t] && lane_error[t]) begin
@@ -192,7 +200,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
         if (reset) begin
             state<=INIT; init_address<=0; running<=0; pause_pending<=0; stepping<=0;
             current<=0; cursor<=0; wait_mem<=0; wait_bar<=0; load_is_write<=0;
-            error<=0; error_code<=0; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
+            error<=0; error_code<=ERROR_NONE; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
             retired_count<=0; instruction<=0; done<=0;
             for(w=0;w<8;w=w+1) begin
                 pc[w]<=0; active[w]<=8'hff; live[w]<=8'hff; groups[w]<=0;
@@ -220,7 +228,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         wait_mem[lsu_rsp_tag]<=0;
                         if(|lsu_rsp_error) begin
                             // Lowest failing lane within this response; first observed global fault.
-                            for(w=7;w>=0;w=w-1) if(lsu_rsp_error[w]) fault(8'h02,lsu_rsp_tag,w[2:0],1'b1);
+                            for(w=7;w>=0;w=w-1) if(lsu_rsp_error[w]) fault(ERROR_MEMORY_ACCESS,lsu_rsp_tag,w[2:0],1'b1);
                         end else begin
                             pc[lsu_rsp_tag]<=pc[lsu_rsp_tag]+4;
                             instruction_retired<=1; retired_count<=retired_count+1'b1;
@@ -253,24 +261,24 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         end
                     end else if (active[current]==0) begin
                         if(live[current]==0) state<=PICK;
-                        else fault(8'h06,current,0,0);
+                        else fault(ERROR_SIMT,current,0,0);
                     end else state<=FETCH;
                 end
                 FETCH: if(imem_valid && imem_ready) state<=FETCH_WAIT;
                 FETCH_WAIT: if(imem_rsp_valid) begin
-                    if(imem_error) fault(8'h02,current,0,0);
+                    if(imem_error) fault(ERROR_MEMORY_ACCESS,current,0,0);
                     else begin instruction<=imem_data; state<=RF_WAIT; end
                 end
                 RF_WAIT: state<=DECODE;
                 DECODE: begin
                     if(stepping) begin pause_pending<=1; stepping<=0; end
                     if ((opcode==6'h32 || opcode==6'h33 || opcode==6'h3f) && instruction[25:0]!=0)
-                        fault(8'h05,current,0,0);
+                        fault(ERROR_INVALID_ENCODING,current,0,0);
                     else case(opcode)
                         6'h15,6'h16: state<=MEMORY;
                         6'h31: begin
-                            if(|target[31:17] || |target[1:0]) fault(8'h02,current,0,0);
-                            else if(stack_count==SIMT_DEPTH) fault(8'h06,current,0,0);
+                            if(|target[31:17] || |target[1:0]) fault(ERROR_MEMORY_ACCESS,current,0,0);
+                            else if(stack_count==SIMT_DEPTH) fault(ERROR_SIMT,current,0,0);
                             else begin
                                 join_pc[push_index]<=target; entry_mask[push_index]<=active[current];
                                 pending_mask[push_index]<=0; pending_pc[push_index]<=0; used[push_index]<=0;
@@ -278,7 +286,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                             end
                         end
                         6'h32: begin
-                            if(active[current]!=live[current] || bar_mismatch) fault(8'h07,current,0,0);
+                            if(active[current]!=live[current] || bar_mismatch) fault(ERROR_BARRIER,current,0,0);
                             else begin wait_bar[current]<=1; retire; end
                         end
                         6'h33,6'h3f: begin
@@ -298,12 +306,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                 START: state<=EXEC;
                 EXEC: begin
                     done<=done | lane_retired;
-                    if(alu_fault) fault(fault_code,current,fault_lane,fault_code==8'h04);
+                    if(alu_fault) fault(fault_code,current,fault_lane,fault_code==ERROR_DIVISION_BY_ZERO);
                     else if (&done) state<=FINISH;
                 end
                 FINISH: begin
                     if(branch && taken!=0 && taken!=active[current]) begin
-                        if(sp[current]==0 || used[top_index]) fault(8'h06,current,0,0);
+                        if(sp[current]==0 || used[top_index]) fault(ERROR_SIMT,current,0,0);
                         else begin
                             pending_pc[top_index]<=branch_target; pending_mask[top_index]<=taken;
                             used[top_index]<=1; active[current]<=active[current] & ~taken;
@@ -321,7 +329,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                     load_mask[current]<=active[current]; load_is_write[current]<=lsu_write;
                     state<=PICK;
                 end
-                default: fault(8'h01,current,0,0);
+                default: fault(ERROR_INVALID_OPCODE,current,0,0);
             endcase
         end
     end
