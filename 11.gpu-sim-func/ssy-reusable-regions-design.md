@@ -47,32 +47,32 @@ en cada una. Esto no equivale a ocho posiciones compartidas.
 
 ### Estado activo
 
-| Campo | Bits | Significado |
-|---|---:|---|
-| `pc` | 32 | PC compartido actual |
-| `active_mask` | 8 | Lanes que ejecutan la instrucción actual |
-| `live_mask` | 8 | Lanes que todavía no han terminado |
-| `region_count` | 4 | Número de regiones, de 0 a 8 |
-| `path_count` | 4 | Número de caminos pendientes, de 0 a 8 |
+| Campo          | Bits | Significado                              |
+|----------------|-----:|------------------------------------------|
+| `pc`           |   32 | PC compartido actual                     |
+| `active_mask`  |    8 | Lanes que ejecutan la instrucción actual |
+| `live_mask`    |    8 | Lanes que todavía no han terminado       |
+| `region_count` |    4 | Número de regiones, de 0 a 8             |
+| `path_count`   |    4 | Número de caminos pendientes, de 0 a 8   |
 
 ### Pila de regiones
 
-| Campo de REGION | Bits | Significado |
-|---|---:|---|
-| `ssy_pc` | 32 | Dirección del SSY que abrió la región |
-| `join_pc` | 32 | Dirección donde reunir sus lanes |
-| `entry_mask` | 8 | Máscara activa original al abrirla |
-| `path_base` | 4 | Profundidad de caminos en el momento de apertura |
+| Campo de REGION | Bits | Significado                                      |
+|-----------------|-----:|--------------------------------------------------|
+| `ssy_pc`        |   32 | Dirección del SSY que abrió la región            |
+| `join_pc`       |   32 | Dirección donde reunir sus lanes                 |
+| `entry_mask`    |    8 | Máscara activa original al abrirla               |
+| `path_base`     |    4 | Profundidad de caminos en el momento de apertura |
 
 Son **76 bits por región**. No hay campo `used`: la región admite múltiples
 divergencias. Reutilizarla no cambia ninguno de sus cuatro campos.
 
 ### Pila de caminos
 
-| Campo de PATH | Bits | Significado |
-|---|---:|---|
-| `pending_pc` | 32 | PC por el que empezar el camino pendiente |
-| `pending_mask` | 8 | Lanes que deben ejecutarlo |
+| Campo de PATH  | Bits | Significado                               |
+|----------------|-----:|-------------------------------------------|
+| `pending_pc`   |   32 | PC por el que empezar el camino pendiente |
+| `pending_mask` |    8 | Lanes que deben ejecutarlo                |
 
 Son **40 bits por camino**. No guarda un join ni un identificador de región:
 el anidamiento y `path_base` proporcionan esa asociación.
@@ -151,11 +151,11 @@ Debe existir una región abierta; de lo contrario se produce error SIMT.
 Se usa el join `J` de la región superior. Sean `T` la máscara tomada y `F`
 la máscara fall-through, ambas no vacías:
 
-| Destinos | Acción |
-|---|---|
-| Destino tomado = J | Aparcar T; continuar en PC+4 con F; no añadir PATH |
-| PC+4 = J | Aparcar F; continuar en destino tomado con T; no añadir PATH |
-| Ningún destino = J | Añadir PATH con destino tomado y T; continuar en PC+4 con F |
+| Destinos           | Acción                                                       |
+|--------------------|--------------------------------------------------------------|
+| Destino tomado = J | Aparcar T; continuar en PC+4 con F; no añadir PATH           |
+| PC+4 = J           | Aparcar F; continuar en destino tomado con T; no añadir PATH |
+| Ningún destino = J | Añadir PATH con destino tomado y T; continuar en PC+4 con F  |
 
 El caso en que ambos destinos son J ya es uniforme y se resuelve antes.
 
@@ -170,26 +170,26 @@ incluida la capacidad observable. No es una optimización opcional del RTL.
 
 ### Regiones
 
-| Evento | Acción sobre la pila de regiones |
-|---|---|
-| SSY distinto del SSY superior, o pila vacía | Push REGION |
-| Repetición del SSY superior | Ninguna; reutilizar sin reiniciar |
-| Branch uniforme o divergente | Ninguna reserva REGION |
-| Llegada al join con PATH propios pendientes | Conservar REGION |
-| Llegada al join sin PATH propios pendientes | Pop REGION; restaurar su máscara viva |
-| Camino activo agotado por EXIT, con PATH propios pendientes | Conservar REGION y activar pendiente |
+| Evento                                                      | Acción sobre la pila de regiones                 |
+|-------------------------------------------------------------|--------------------------------------------------|
+| SSY distinto del SSY superior, o pila vacía                 | Push REGION                                      |
+| Repetición del SSY superior                                 | Ninguna; reutilizar sin reiniciar                |
+| Branch uniforme o divergente                                | Ninguna reserva REGION                           |
+| Llegada al join con PATH propios pendientes                 | Conservar REGION                                 |
+| Llegada al join sin PATH propios pendientes                 | Pop REGION; restaurar su máscara viva            |
+| Camino activo agotado por EXIT, con PATH propios pendientes | Conservar REGION y activar pendiente             |
 | Camino activo agotado por EXIT, sin PATH propios pendientes | Pop REGION; restaurar su máscara viva en el join |
-| Todas las lanes terminadas | Vaciar ambas pilas |
+| Todas las lanes terminadas                                  | Vaciar ambas pilas                               |
 
 ### Caminos
 
-| Evento | Acción sobre la pila de caminos |
-|---|---|
-| Branch uniforme | Ninguna |
-| Divergencia con uno de sus destinos directamente en el join | Ninguna; aparcar esas lanes |
-| Divergencia con trabajo en ambos caminos | Push PATH para el tomado |
-| Camino activo alcanza el join y queda PATH de esa región | Pop PATH; empezar a ejecutarlo |
-| Camino activo termina mediante EXIT y queda PATH de esa región | Pop PATH; empezar a ejecutarlo |
+| Evento                                                         | Acción sobre la pila de caminos |
+|----------------------------------------------------------------|---------------------------------|
+| Branch uniforme                                                | Ninguna                         |
+| Divergencia con uno de sus destinos directamente en el join    | Ninguna; aparcar esas lanes     |
+| Divergencia con trabajo en ambos caminos                       | Push PATH para el tomado        |
+| Camino activo alcanza el join y queda PATH de esa región       | Pop PATH; empezar a ejecutarlo  |
+| Camino activo termina mediante EXIT y queda PATH de esa región | Pop PATH; empezar a ejecutarlo  |
 
 **Eliminar un PATH significa seleccionarlo para ejecutarlo**, no haber terminado
 su trabajo. Su PC y su máscara pasan al estado activo del warp.
@@ -355,14 +355,14 @@ done:
 
 Un warp con solo lanes 0 y 1 activas comienza con máscara `11`:
 
-| Momento | Máscara activa | Regiones | Caminos | Acción |
-|---|---|---:|---:|---|
-| Primer SSY | 11 | 1 | 0 | Capturar `entry_mask=11`, `path_base=0` |
-| Vueltas uniformes | 11 | 1 | 0 | Reutilizar el mismo SSY |
-| R2=100: sale lane 0 | 10 | 1 | 0 | Destino directo a done; aparcar lane 0 |
-| SSY de la siguiente vuelta | 10 | 1 | 0 | Conservar `entry_mask=11`, no sustituirla por 10 |
-| R2 de lane 1=101: sale lane 1 | 10 | 1 | 0 | Branch uniforme hacia done |
-| Normalización en done | 11 | 0 | 0 | Pop REGION y reunión |
+| Momento                       | Máscara activa | Regiones | Caminos | Acción                                           |
+|-------------------------------|----------------|---------:|--------:|--------------------------------------------------|
+| Primer SSY                    | 11             |        1 |       0 | Capturar `entry_mask=11`, `path_base=0`          |
+| Vueltas uniformes             | 11             |        1 |       0 | Reutilizar el mismo SSY                          |
+| R2=100: sale lane 0           | 10             |        1 |       0 | Destino directo a done; aparcar lane 0           |
+| SSY de la siguiente vuelta    | 10             |        1 |       0 | Conservar `entry_mask=11`, no sustituirla por 10 |
+| R2 de lane 1=101: sale lane 1 | 10             |        1 |       0 | Branch uniforme hacia done                       |
+| Normalización en done         | 11             |        0 |       0 | Pop REGION y reunión                             |
 
 La copia a R3 produce `[100, 101]`. El ejemplo del Mandelbrot original se
 beneficia de las mismas reglas: sus salidas apuntan directamente al join y
@@ -392,20 +392,20 @@ B solo se selecciona cuando la ejecución exterior alcanza su propio join.
 
 ## 10. Casos límite y restricciones
 
-| Caso | Regla |
-|---|---|
-| Pila REGION llena y SSY reutilizable | Permitido; no hay push |
-| Pila REGION llena y apertura nueva | Error SIMT antes de modificar estado |
-| Pila PATH llena y branch uniforme | Permitido |
-| Pila PATH llena y salida directa al join | Permitido; no necesita PATH |
-| Pila PATH llena y dos caminos con trabajo | Error SIMT antes de cambiar PC, máscaras o pila |
-| Divergencia sin región | Error SIMT |
-| Dos SSY distintos con el mismo join | Dos regiones; no se fusionan |
-| Joins interiores y exteriores iguales | Normalización repetida, en orden LIFO |
-| SSY con join en PC+4 | Abrir y cerrar antes del siguiente fetch; una apertura nueva exige capacidad igualmente |
-| Región uniforme que nunca alcanza el join | Permanece abierta; repetir su SSY no la cierra |
-| Todas las lanes hacen EXIT | Vaciar pilas y terminar sin reactivar lanes |
-| Destino SSY inválido y pila llena | Validar destino primero, para una prioridad de fallo determinista |
+| Caso                                      | Regla                                                                                   |
+|-------------------------------------------|-----------------------------------------------------------------------------------------|
+| Pila REGION llena y SSY reutilizable      | Permitido; no hay push                                                                  |
+| Pila REGION llena y apertura nueva        | Error SIMT antes de modificar estado                                                    |
+| Pila PATH llena y branch uniforme         | Permitido                                                                               |
+| Pila PATH llena y salida directa al join  | Permitido; no necesita PATH                                                             |
+| Pila PATH llena y dos caminos con trabajo | Error SIMT antes de cambiar PC, máscaras o pila                                         |
+| Divergencia sin región                    | Error SIMT                                                                              |
+| Dos SSY distintos con el mismo join       | Dos regiones; no se fusionan                                                            |
+| Joins interiores y exteriores iguales     | Normalización repetida, en orden LIFO                                                   |
+| SSY con join en PC+4                      | Abrir y cerrar antes del siguiente fetch; una apertura nueva exige capacidad igualmente |
+| Región uniforme que nunca alcanza el join | Permanece abierta; repetir su SSY no la cierra                                          |
+| Todas las lanes hacen EXIT                | Vaciar pilas y terminar sin reactivar lanes                                             |
+| Destino SSY inválido y pila llena         | Validar destino primero, para una prioridad de fallo determinista                       |
 
 Los caminos deben llegar al join de su región o finalizar sus lanes, respetando
 las regiones interiores. Un salto al join exterior no descarta automáticamente
