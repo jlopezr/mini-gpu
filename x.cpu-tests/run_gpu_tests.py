@@ -12,10 +12,12 @@ from pathlib import Path
 from types import ModuleType
 
 from backends import fpga as fpga_backend
+from backends import gpu_fpga as gpu_fpga_backend
 from backends import simulator as simulator_backend
 from backends import gpu_simulator as gpu_backend
 from backends.gpu_simulator import GpuBackend
 from backends.fpga import FpgaBackend
+from backends.gpu_fpga import GpuFpgaBackend
 from backends.simulator import SimulatorBackend
 
 ROOT = Path(__file__).resolve().parent
@@ -40,6 +42,12 @@ BACKEND_DEFINITIONS = {
         "architecture": FpgaBackend.ARCHITECTURE,
         "versions": fpga_backend.VERSIONS,
         "default_version": fpga_backend.DEFAULT_VERSION,
+    },
+    "gpu-fpga": {
+        "class": GpuFpgaBackend,
+        "architecture": GpuFpgaBackend.ARCHITECTURE,
+        "versions": gpu_fpga_backend.VERSIONS,
+        "default_version": gpu_fpga_backend.DEFAULT_VERSION,
     },
 }
 
@@ -378,7 +386,10 @@ def main() -> int:
     parser.add_argument("cases", nargs="*", type=Path, metavar="TEST_JSON")
     parser.add_argument(
         "--backend",
-        choices=("cpu-simulator", "cpu-fpga", "both", "gpu-simulator"),
+        choices=(
+            "cpu-simulator", "cpu-fpga", "both",
+            "gpu-simulator", "gpu-fpga", "gpu-both",
+        ),
         default="gpu-simulator",
     )
     parser.add_argument("--port", default="COM3")
@@ -409,7 +420,11 @@ def main() -> int:
         print("No se encontraron casos", file=sys.stderr)
         return 2
 
-    backend_names = ("cpu-simulator", "cpu-fpga") if args.backend == "both" else (args.backend,)
+    backend_groups = {
+        "both": ("cpu-simulator", "cpu-fpga"),
+        "gpu-both": ("gpu-simulator", "gpu-fpga"),
+    }
+    backend_names = backend_groups.get(args.backend, (args.backend,))
     try:
         backend_versions = resolve_backend_versions(args.version, backend_names)
     except ValueError as error:
@@ -451,6 +466,13 @@ def main() -> int:
             port=args.port,
             serial_timeout=args.serial_timeout,
             version=backend_versions["cpu-fpga"],
+        )
+    if "gpu-fpga" in backend_names:
+        backends["gpu-fpga"] = GpuFpgaBackend(
+            REPOSITORY,
+            port=args.port,
+            serial_timeout=args.serial_timeout,
+            version=backend_versions["gpu-fpga"],
         )
 
     failures = 0

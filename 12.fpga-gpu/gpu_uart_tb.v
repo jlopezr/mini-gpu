@@ -51,6 +51,31 @@ module gpu_uart_tb;
         request[7]=0; request[8]=0; request[9]=8'h20; request[10]=8'hc0;
         request[11]=0; request[12]=0; request[13]=0; request[14]=8'hfc;
         exchange(15,1); if(response[0]!==8'ha0) $fatal(1,"program load");
+        // Block commands must cover all 128 KiB, not only the first 16 KiB.
+        request[0]=8'h20; request[1]=0; request[2]=1; request[3]=8'hff; request[4]=8'hfc;
+        request[5]=0; request[6]=4;
+        request[7]=8'hde; request[8]=8'had; request[9]=8'hbe; request[10]=8'hef;
+        exchange(11,1); if(response[0]!==8'ha0) $fatal(1,"high RAM block write");
+        request[0]=8'h21; request[1]=0; request[2]=1; request[3]=8'hff; request[4]=8'hfc;
+        request[5]=0; request[6]=4;
+        exchange(7,5);
+        if(response[0]!==8'ha1 || {response[1],response[2],response[3],response[4]}!==32'hdeadbeef)
+            $fatal(1,"high RAM block read");
+        // This is the path used by monitor.py configure: write one warp's PC,
+        // masks and workgroup as little-endian words through MMIO.
+        request[0]=8'h20; request[1]=8'h80; request[2]=0; request[3]=0; request[4]=8'h30;
+        request[5]=0; request[6]=12;
+        request[7]=0; request[8]=0; request[9]=0; request[10]=0;
+        request[11]=8'h20; request[12]=0; request[13]=0; request[14]=0;
+        request[15]=7; request[16]=0; request[17]=0; request[18]=0;
+        exchange(19,1); if(response[0]!==8'ha0) $fatal(1,"warp configuration block write");
+        // This is the path used by warp-status: read the complete 16-byte slot.
+        request[0]=8'h21; request[1]=8'h80; request[2]=0; request[3]=0; request[4]=8'h30;
+        request[5]=0; request[6]=16;
+        exchange(7,17);
+        if(response[0]!==8'ha1 || response[5]!==8'h20 || response[9]!==7 ||
+           response[13]!==0 || response[14]!==0 || response[15]!==0 || response[16]!==0)
+            $fatal(1,"warp status block read");
         request[0]=8'h30; exchange(1,1); if(response[0]!==8'hb0) $fatal(1,"run");
         request[0]=8'h33; exchange(1,7);
         if(response[0]!==8'hb3 || response[1]!==1 || response[2]!==0 || response[6]!==8) $fatal(1,"GPU status");

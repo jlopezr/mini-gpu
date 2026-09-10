@@ -1,5 +1,5 @@
 import unittest
-from monitor import MonitorClient, MonitorError, CpuStatus, validate_transfer
+from monitor import MonitorClient, MonitorError, CpuStatus, format_registers, validate_transfer
 
 
 class RecordingClient(MonitorClient):
@@ -19,6 +19,10 @@ class RecordingClient(MonitorClient):
 
     def write_byte(self, address, value):
         self.calls.append(('byte', address, value))
+
+    def read_register(self, register):
+        self.calls.append(('register', register))
+        return 0x10000000 + register
 
 
 class LaunchTest(unittest.TestCase):
@@ -65,6 +69,22 @@ class LaunchTest(unittest.TestCase):
         validate_transfer(0x80000100,20)
         for address,size in [(131071,2),(0x100000,4),(0x8000007f,2),(0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
+
+    def test_read_complete_lane_register_file(self):
+        client = RecordingClient()
+        registers = client.read_registers(3, 5)
+        self.assertEqual(registers, [0x10000000 + register for register in range(32)])
+        self.assertEqual(client.calls[0], ('byte', 0x80000100, 29))
+        self.assertEqual(client.calls[1:], [('register', register) for register in range(32)])
+
+    def test_register_display_is_compact_and_complete(self):
+        rendered = format_registers(3, 5, list(range(32)))
+        self.assertEqual(len(rendered.splitlines()), 5)
+        self.assertTrue(rendered.startswith('warp=3 lane=5\n'))
+        self.assertIn('R00=0x00000000', rendered)
+        self.assertIn('R31=0x0000001f', rendered)
+        with self.assertRaises(ValueError):
+            format_registers(0, 0, [0] * 31)
 
 
 if __name__ == '__main__':

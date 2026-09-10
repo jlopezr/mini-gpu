@@ -241,6 +241,11 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
         return int.from_bytes(self._read_exact(4), byteorder="big")
 
+    def read_registers(self, warp: int, lane: int) -> list[int]:
+        """Read the complete register file for one halted GPU lane."""
+        self.select_context(warp, lane)
+        return [self.read_register(register) for register in range(32)]
+
     def reset_cpu(self) -> None:
         response = self._request(bytes((CMD_RESET_CPU,)), 1)
         if response != RSP_RESET_CPU:
@@ -274,6 +279,7 @@ def parse_args() -> argparse.Namespace:
             "step",
             "status",
             "read-register",
+            "registers",
             "reset",
             "configure",
             "warp-status",
@@ -282,6 +288,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("arguments", nargs="*", metavar="ARG")
     parser.add_argument("--warp", type=int, choices=range(8), default=0)
     parser.add_argument("--lane", type=int, choices=range(8), default=0)
+    parser.add_argument(
+        "--all",
+        dest="all_contexts",
+        action="store_true",
+        help="With registers, show every warp/lane context",
+    )
     parser.add_argument("--baudrate", type=int, default=BAUDRATE)
     parser.add_argument(
         "--port",
@@ -324,10 +336,27 @@ def validate_transfer(address: int, length: int) -> None:
         raise MonitorError("Transfer is outside the currently implemented memory regions")
 
 
+def format_registers(warp: int, lane: int, registers: list[int]) -> str:
+    """Format one lane compactly as four rows of eight hexadecimal registers."""
+    if len(registers) != 32:
+        raise ValueError("A GPU lane must have exactly 32 registers")
+    lines = [f"warp={warp} lane={lane}"]
+    for first in range(0, 32, 8):
+        lines.append(
+            "  " + "  ".join(
+                f"R{register:02d}=0x{registers[register]:08x}"
+                for register in range(first, first + 8)
+            )
+        )
+    return "\n".join(lines)
+
+
 def main() -> int:
     args = parse_args()
 
     try:
+        if args.all_contexts and args.command != "registers":
+            raise MonitorError("--all is only valid with the registers command")
         expected_arguments = {
             "ping": 0,
             "get-version": 0,
@@ -341,6 +370,7 @@ def main() -> int:
             "step": 0,
             "status": 0,
             "read-register": 1,
+            "registers": 0,
             "reset": 0,
             "configure": 1,
             "warp-status": 0,
@@ -445,6 +475,18 @@ def main() -> int:
                 client.select_context(args.warp, args.lane)
                 value = client.read_register(register)
                 print(f"warp={args.warp} lane={args.lane} R{register} = 0x{value:08x} ({value})")
+            elif args.command == "registers":
+                if not client.get_status().halted:
+                    raise MonitorError("Halt the GPU before reading registers")
+                contexts = (
+                    ((warp, lane) for warp in range(8) for lane in range(8))
+                    if args.all_contexts
+                    else ((args.warp, args.lane),)
+                )
+                print("\n\n".join(
+                    format_registers(warp, lane, client.read_registers(warp, lane))
+                    for warp, lane in contexts
+                ))
             else:
                 client.reset_cpu()
                 print("GPU reset: eight full warps at PC=0; memory preserved")

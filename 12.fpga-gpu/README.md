@@ -122,6 +122,8 @@ Desde esta carpeta, con el bitstream de esta versión cargado:
 ../.venv/Scripts/python.exe monitor.py run --port COM3
 ../.venv/Scripts/python.exe monitor.py status --port COM3
 ../.venv/Scripts/python.exe monitor.py read-register 5 --warp 3 --lane 5 --port COM3
+../.venv/Scripts/python.exe monitor.py registers --warp 3 --lane 5 --port COM3
+../.venv/Scripts/python.exe monitor.py registers --all --port COM3
 ../.venv/Scripts/python.exe monitor.py read-block 0x1000 256 output.bin --port COM3
 ```
 
@@ -142,6 +144,8 @@ Para un lanzamiento específico, cargar primero el programa y después:
 los ocho slots; los omitidos se deshabilitan. No modifica la RAM ni ejecuta RUN.
 Admite PC, active_mask, enabled y workgroup_id por warp. El hardware tiene ocho
 lanes fijas; workgroup_id debe caber en 32 bits. `warp-status` requiere parada.
+`registers` muestra los 32 registros del lane elegido en una tabla compacta;
+con `--all` recorre los 8 warps y sus 8 lanes. La GPU debe estar parada.
 
 ## Ventana de control del monitor
 

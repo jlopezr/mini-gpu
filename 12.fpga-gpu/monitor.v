@@ -130,6 +130,28 @@ module monitor (
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
 
+  /*
+   * Validate the complete byte interval, not just its first address.  The GPU
+   * exposes 128 KiB of RAM plus two disjoint monitor-only MMIO windows.
+   * Keeping this check here makes WRITE_BLOCK and READ_BLOCK agree with the
+   * byte commands and with the address map implemented by gpu_system.
+   */
+  function block_range_valid;
+    input [31:0] start_address;
+    input [15:0] length;
+    reg [32:0] end_address;
+    begin
+      end_address = {1'b0, start_address} + {17'b0, length};
+      block_range_valid =
+          ({1'b0, start_address} < 33'h0_0002_0000 &&
+           end_address <= 33'h0_0002_0000) ||
+          ({1'b0, start_address} >= 33'h0_8000_0000 &&
+           end_address <= 33'h0_8000_0080) ||
+          ({1'b0, start_address} >= 33'h0_8000_0100 &&
+           end_address <= 33'h0_8000_0114);
+    end
+  endfunction
+
   assign busy = (state != STATE_IDLE);
 
   always @(posedge clk) begin
@@ -407,10 +429,8 @@ module monitor (
 
             if ({block_length[15:8], rx_data} == 0 ||
                 {block_length[15:8], rx_data} > 16'd256 ||
-                (mem_address[31:14] != 18'h00000 &&
-                    mem_address[31:14] != 18'h00040) ||
-                ({1'b0, mem_address[13:0]} +
-                    {6'd0, block_length[8], rx_data}) > 15'h4000) begin
+                !block_range_valid(mem_address,
+                    {block_length[15:8], rx_data})) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 3'd1;
               response_index <= 3'd0;
