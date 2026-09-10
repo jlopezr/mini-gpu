@@ -8,9 +8,11 @@ import importlib.util
 import json
 import struct
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
+from backends import board
 from backends import fpga as fpga_backend
 from backends import gpu_fpga as gpu_fpga_backend
 from backends import simulator as simulator_backend
@@ -26,6 +28,8 @@ FPGA_MEMORY_SIZE = 16 * 1024
 ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
 # Opciones de construcción que un caso GPU puede fijar sobre el simulador.
 SIMULATOR_OPTIONS = ("simt_region_depth", "simt_path_depth")
+# A partir de aquí se anota el tiempo junto al resultado del caso.
+SLOW_CASE_SECONDS = 1.0
 BACKEND_DEFINITIONS = {
     "gpu-simulator": {
         "class": GpuBackend,
@@ -430,11 +434,25 @@ def main() -> int:
                         help="máximo de eventos mostrados; no limita la ejecución")
     parser.add_argument("--trace-file", type=Path,
                         help="guarda la traza GPU en este fichero")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="autoriza sin preguntar la carga del bitstream "
+                             "si la placa tiene otra versión")
+    parser.add_argument("--no-upload", action="store_true",
+                        help="nunca cargar el bitstream: si la placa no tiene "
+                             "la versión correcta, falla")
+    parser.add_argument("--durations", type=int, nargs="?", const=10, default=0,
+                        metavar="N",
+                        help="lista las N ejecuciones más lentas al terminar "
+                             "(10 si se omite el valor)")
     args = parser.parse_args()
     if args.trace_limit is not None and args.trace_limit < 0:
         parser.error("--trace-limit no puede ser negativo")
     if (args.trace or args.trace_detail or args.trace_limit is not None or args.trace_file is not None) and args.backend != "gpu-simulator":
         parser.error("las opciones --trace solo están disponibles con --backend gpu-simulator")
+    if args.yes and args.no_upload:
+        parser.error("--yes y --no-upload se contradicen")
+    if args.durations < 0:
+        parser.error("--durations no puede ser negativo")
 
     case_paths = discover_cases(args.cases)
     if not case_paths:
@@ -488,26 +506,42 @@ def main() -> int:
             REPOSITORY,
             version=backend_versions["cpu-simulator"],
         )
-    if "cpu-fpga" in backend_names:
-        backends["cpu-fpga"] = FpgaBackend(
-            REPOSITORY,
-            port=args.port,
-            serial_timeout=args.serial_timeout,
-            version=backend_versions["cpu-fpga"],
-        )
-    if "gpu-fpga" in backend_names:
-        backends["gpu-fpga"] = GpuFpgaBackend(
-            REPOSITORY,
-            port=args.port,
-            serial_timeout=args.serial_timeout,
-            version=backend_versions["gpu-fpga"],
-        )
+    upload_policy = board.UploadPolicy(
+        allowed=not args.no_upload, assume_yes=args.yes
+    )
+    # Construir un backend FPGA comprueba la placa y, si hace falta y se
+    # autoriza, carga el bitstream. Es el fallo más habitual del flujo con
+    # hardware, así que merece un mensaje y no un volcado de pila.
+    try:
+        if "cpu-fpga" in backend_names:
+            backends["cpu-fpga"] = FpgaBackend(
+                REPOSITORY,
+                port=args.port,
+                serial_timeout=args.serial_timeout,
+                version=backend_versions["cpu-fpga"],
+                upload_policy=upload_policy,
+            )
+        if "gpu-fpga" in backend_names:
+            backends["gpu-fpga"] = GpuFpgaBackend(
+                REPOSITORY,
+                port=args.port,
+                serial_timeout=args.serial_timeout,
+                version=backend_versions["gpu-fpga"],
+                upload_policy=upload_policy,
+            )
+    except (board.BoardNotConnected, board.MonitorSilent,
+            board.BitstreamMismatch) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
 
     failures = 0
+    durations: list[tuple[float, str, str]] = []
+    started = time.monotonic()
     for path, case in cases:
         try:
             results = {}
             for backend_name, backend in backends.items():
+                begun = time.monotonic()
                 result = backend.run(
                     program=case["program"],
                     initial_memory=case["initial_memory"],
@@ -524,15 +558,20 @@ def main() -> int:
                         "simulator_options": case["simulator_options"],
                     } if backend_name == "gpu-simulator" else {}),
                 )
+                elapsed = time.monotonic() - begun
+                durations.append((elapsed, case["name"], backend_name))
                 results[backend_name] = result
                 errors = compare_result(case, result, backend_name)
+                # El tiempo solo se anota junto al caso cuando es alto, para no
+                # ensuciar la salida de los casos rápidos.
+                slow = f" ({elapsed:.1f}s)" if elapsed >= SLOW_CASE_SECONDS else ""
                 if errors:
                     failures += 1
-                    print(f"FAIL {case['name']} [{backend_name}]")
+                    print(f"FAIL {case['name']} [{backend_name}]{slow}")
                     for error in errors:
                         print(f"  {error}")
                 else:
-                    print(f"PASS {case['name']} [{backend_name}]")
+                    print(f"PASS {case['name']} [{backend_name}]{slow}")
 
             if len(results) == 2 and results["cpu-simulator"] != results["cpu-fpga"]:
                 failures += 1
@@ -542,7 +581,14 @@ def main() -> int:
             failures += 1
             print(f"ERROR {path}: {error}", file=sys.stderr)
 
-    print(f"{len(cases)} caso(s), {failures} fallo(s), {skipped} omitido(s) por arquitectura")
+    if args.durations and durations:
+        print(f"\n{min(args.durations, len(durations))} ejecución(es) más lentas:")
+        for elapsed, name, backend_name in sorted(durations, reverse=True)[:args.durations]:
+            print(f"  {elapsed:7.2f}s  {name} [{backend_name}]")
+
+    total = time.monotonic() - started
+    print(f"{len(cases)} caso(s), {failures} fallo(s), "
+          f"{skipped} omitido(s) por arquitectura, {total:.1f}s")
     return 1 if failures else 0
 
 

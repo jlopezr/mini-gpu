@@ -91,6 +91,18 @@ python run_gpu_tests.py cases-gpu/memory/vecsum/test.json --backend gpu-simulato
 Mandelbrot conviene usar siempre un límite pequeño, porque una ejecución completa
 produce millones de eventos aunque solo se quieran inspeccionar los primeros.
 
+La salida indica siempre el tiempo total, y anota el de cada caso que pase de un
+segundo. `--durations N` lista además las N ejecuciones más lentas al terminar
+(10 si se omite el número):
+
+```powershell
+python run_gpu_tests.py --backend gpu-simulator --durations 5
+```
+
+Es la forma de decidir un `timeout_seconds` con criterio en vez de a ojo. Los
+tiempos son solo informativos: no forman parte de las expectativas de ningún
+caso, porque volverían la suite intermitente.
+
 `--version` selecciona la versión de cada backend. Con un único backend se
 puede usar directamente `--version VERSION`; con varios se usa
 `--version BACKEND=VERSION` y el parámetro puede repetirse:
@@ -114,9 +126,24 @@ antes de modificar la memoria:
 | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
 
 La versión predeterminada de FPGA es `ebr` para conservar la compatibilidad con los
-comandos anteriores. Si el monitor conectado no coincide, el test termina con
-un mensaje que indica qué bitstream debe cargarse. La comprobación ocurre
-antes de `RESET_CPU` y antes de escribir el programa o los datos.
+comandos anteriores. La comprobación ocurre una sola vez al construir el backend,
+antes de ejecutar ningún caso, y distingue dos situaciones:
+
+- **La placa no responde** en el puerto indicado: error, sin más. No hay nada que
+  cargar.
+- **La placa responde con otro monitor**: se ofrece cargar el bitstream del
+  proyecto correspondiente con `apio upload`, previa confirmación.
+
+```powershell
+python run_gpu_tests.py --backend cpu-fpga --port COM3            # pregunta
+python run_gpu_tests.py --backend cpu-fpga --port COM3 --yes      # carga sin preguntar
+python run_gpu_tests.py --backend cpu-fpga --port COM3 --no-upload  # nunca carga
+```
+
+Sin terminal interactiva y sin `--yes` el runner falla en vez de quedarse
+esperando una respuesta que nadie va a dar. Después de cargar vuelve a preguntar
+la versión: que `apio upload` termine con éxito no garantiza que la placa quedara
+programada.
 
 `RESET_CPU` permite ejecutar casos consecutivos sin reconfigurar la placa ni
 borrar sus memorias.

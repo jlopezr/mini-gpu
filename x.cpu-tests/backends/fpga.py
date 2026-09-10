@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from types import ModuleType
 
+from . import board
+
 
 VERSIONS = {
     "ebr": {
@@ -46,6 +48,7 @@ class FpgaBackend:
         port: str,
         serial_timeout: float,
         version: str = DEFAULT_VERSION,
+        upload_policy: board.UploadPolicy | None = None,
     ):
         try:
             self.configuration = VERSIONS[version]
@@ -63,6 +66,13 @@ class FpgaBackend:
         )
         self.port = port
         self.serial_timeout = serial_timeout
+        # Una sola comprobación por ejecución, antes de correr ningún caso.
+        board.ensure_bitstream(
+            self.monitor, port, serial_timeout,
+            self.configuration["monitor_version"],
+            repository / self.configuration["monitor_path"].parent,
+            "cpu-fpga", version, upload_policy or board.UploadPolicy(),
+        )
 
     def run(
         self,
