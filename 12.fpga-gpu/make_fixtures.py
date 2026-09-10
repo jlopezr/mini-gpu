@@ -177,6 +177,182 @@ MOVI R3, 99
 HALT
 ''')
 
+
+# Reusable-region semantics, independently evaluated by the functional simulator.
+case('regions_pending_loop', '''
+GETTID R1
+ANDI R1, R1, 7
+loop:
+SSY done
+BEQ R1, R0, handler
+ADDI R1, R1, -1
+BRA loop
+handler:
+ADDI R3, R3, 10
+BRA done
+done:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_nested_region_cannot_run_outer_pending_path_early', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY outer
+BLT R1, R2, low
+MOVI R2, 6
+SSY inner
+BLT R1, R2, middle
+MOVI R3, 30
+BRA inner
+middle:
+MOVI R3, 20
+inner:
+ADDI R3, R3, 1
+BRA outer
+low:
+MOVI R3, 10
+outer:
+ADDI R3, R3, 1
+BAR
+EXIT
+''')
+
+case('regions_multiple_different_pending_destinations_in_one_region', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 2
+SSY done
+BLT R1, R2, low
+MOVI R2, 5
+BLT R1, R2, middle
+MOVI R3, 30
+BRA done
+low:
+MOVI R3, 10
+BRA done
+middle:
+MOVI R3, 20
+done:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_fallthrough_join_parks_without_path', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY join
+BGE R1, R2, work
+join:
+ADDI R3, R3, 1
+BAR
+EXIT
+work:
+MOVI R3, 9
+BRA join
+''')
+
+case('regions_direct_join_with_pending_path', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 2
+SSY join
+BLT R1, R2, low
+MOVI R2, 5
+BLT R1, R2, join
+MOVI R3, 20
+BRA join
+low:
+MOVI R3, 10
+join:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_identical_next_pcs_do_not_diverge_without_ssy', '''
+GETTID R1
+ANDI R1, R1, 7
+BEQ R1, R0, next
+next: ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_sequential_regions_release_capacity_before_next_if', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY first
+BLT R1, R2, first
+ADDI R3, R3, 10
+first:
+SSY second
+BGE R1, R2, second
+ADDI R3, R3, 20
+second:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_exit_unwinds_inner_before_outer_pending_path', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY outer
+BLT R1, R2, low
+SSY inner
+EXIT
+inner:
+MOVI R3, 99
+BRA outer
+low:
+MOVI R3, 10
+outer:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_same_join_distinct_ssy_sites_open_distinct_regions', '''
+SSY done
+SSY done
+SSY done
+done: ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_exit_inside_region_preserves_parked_lanes', '''
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY join
+BLT R1, R2, join
+EXIT
+join:
+ADDI R3, R3, 1
+EXIT
+''')
+
+case('regions_last_exit_clears_both_stacks_and_keeps_next_pc', '''
+SSY done
+EXIT
+done: MOVI R3, 99
+''')
+
+case('regions_long_escape_loop', '''
+GETTID R1
+ANDI R1, R1, 7
+ADDI R1, R1, 20
+loop: SSY done
+BGE R2, R1, done
+ADDI R2, R2, 1
+BRA loop
+done: ADDI R3, R2, 0
+BAR
+EXIT
+''')
+
+
 out=ROOT/'fixtures'
 out.mkdir(exist_ok=True)
 metadata=[]
@@ -198,6 +374,7 @@ for index,(name,source,config) in enumerate(cases):
     hexfile('.regs.hex',[r for w in gpu.streaming_multiprocessor.warps for lane in w.processors for r in lane.regs])
     hexfile('.memory.hex',struct.unpack('<512I',gpu.memory[4096:6144]))
     hexfile('.config.hex',[v for row in initial for v in row])
+    hexfile('.counts.hex',[w.instructions_executed for w in gpu.streaming_multiprocessor.warps])
     hexfile('.state.hex',[v for w in gpu.streaming_multiprocessor.warps for v in (w.pc,w.active_mask,w.live_mask)])
     metadata.append(dict(id=index,name=name,instructions=gpu.instructions_executed))
 (out/'manifest.json').write_text(json.dumps(metadata,indent=2)+'\n')

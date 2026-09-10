@@ -7,7 +7,7 @@ monitor UART y pruebas contra `11.gpu-sim-func`.
 El primer objetivo es una implementación multiciclo funcional a **25 MHz**.
 No emite una instrucción en cada ciclo. La UART de esta versión usa **250000
 baudios**, con divisor exacto para transmisión y recepción. El monitor se
-identifica como **2.0** para distinguirlo del monitor escalar a 3 Mbaud.
+identifica como **2.1** para distinguirlo del monitor escalar a 3 Mbaud.
 
 ## Organización
 
@@ -85,13 +85,29 @@ AND/OR/XOR, SHL/SHR/SAR, ADDI/ANDI/ORI/XORI, LOAD, STORE, los seis saltos
 condicionales, BRA, GETTID, SSY, BAR, EXIT, TRAP y HALT.
 GETTID devuelve `warp_id * 8 + lane_id`.
 
-Cada warp tiene PC, `active_mask`, `live_mask`, workgroup de 32 bits y una pila
-SIMT de **8 entradas**. `SIMT_DEPTH` es parámetro de `gpu_sm` y `gpu_system`.
-SSY abre una entrada; una divergencia ejecuta primero el fall-through y guarda
-el camino tomado. Al llegar a la reconvergencia se atiende el camino pendiente
-y después se restaura la máscara, filtrada por `live_mask`. EXIT y HALT retiran
-las lanes activas y nunca las reactivan. Una divergencia necesita una entrada
-SSY sin usar; la pila tiene límite físico, a diferencia de la lista del simulador.
+Cada warp tiene PC, `active_mask`, `live_mask`, workgroup de 32 bits y dos
+pilas SIMT independientes: **8 regiones y 8 caminos** por defecto.
+`SIMT_REGION_DEPTH` y `SIMT_PATH_DEPTH` son parámetros de `gpu_sm` y
+`gpu_system`; `SIMT_DEPTH` se conserva como valor por defecto de la profundidad
+de regiones para compatibilidad.
+
+SSY abre una región con su PC de apertura, join, máscara original y base de
+caminos. Repetir el SSY de la región más interna la reutiliza sin perder lanes
+aparcadas ni caminos pendientes, incluso con la pila de regiones llena.
+Un SSY distinto abre otra región aunque comparta join. Cambiar el destino de
+un SSY reutilizado produce error SIMT.
+
+Una región admite varias divergencias. Si ninguno de los destinos es el join,
+se ejecuta primero el fall-through y se apila el camino tomado. Si un destino
+es el join, sus lanes se aparcan sin ocupar un camino y continúa el otro destino.
+La reconvergencia consume los caminos de la región en orden LIFO antes de
+restaurar su máscara original filtrada por `live_mask`.
+
+EXIT y HALT retiran las lanes activas y nunca las reactivan. Al terminar las
+últimas lanes se vacían ambas pilas y se conserva el PC siguiente a EXIT/HALT.
+La normalización también termina antes de una pausa STEP/HALT y no incrementa
+el contador de instrucciones retiradas. Véase la
+[semántica compartida](../11.gpu-sim-func/ssy-reusable-regions-design.md).
 
 BAR exige que estén activas todas las lanes vivas del warp. Participan los warps
 vivos de su workgroup y deben coincidir en PC y generación de barrera. Un warp
@@ -159,14 +175,20 @@ del monitor anterior. `READ_REG` lee el contexto seleccionado.
 | `0x80000000 + 16*w` | PC del warp, lectura/escritura |
 | `0x80000004 + 16*w` | Lectura: active[7:0], live[15:8]. Escribir el byte bajo fija ambas máscaras |
 | `0x80000008 + 16*w` | workgroup_id, lectura/escritura |
-| `0x8000000c + 16*w` | Solo lectura: profundidad [7:0], WAIT_MEM bit 16, WAIT_BAR bit 17 |
+| `0x8000000c + 16*w` | Solo lectura: regiones [7:0], caminos [15:8], WAIT_MEM bit 16, WAIT_BAR bit 17 |
 | `0x80000100` | Selección: lane[2:0], warp[5:3] |
 | `0x80000104` | Slots LSU ocupados [7:0], solo lectura |
 | `0x80000108` | Instrucciones de warp retiradas, contador de 32 bits |
 | `0x8000010c` | lane[2:0], warp[5:3], lane_valid bit 6, error_code[15:8] |
 | `0x80000110` | PC del primer error |
+| `0x80000114` | Instrucciones retiradas del warp seleccionado en `0x80000100` |
 
-Modificar la configuración de un warp borra su pila y estado de barrera. Para
+El monitor 2.1 distingue las regiones reutilizables y añade el contador por warp.
+RESET borra todos los contadores; reconfigurar un warp borra su contador local,
+sin modificar el contador global. Reconvergencia y liberación de BAR no cuentan
+como instrucciones adicionales.
+
+Modificar la configuración de un warp borra ambas pilas y estado de barrera. Para
 reanudar un programa pausado sin alterar SIMT, usar RUN sin reconfiguración.
 El acceso directo por bytes no valida de forma transaccional un lanzamiento;
 para ello usar `configure`, que valida el JSON antes de escribir.
@@ -182,13 +204,15 @@ para ello usar `configure`, que valida el JSON antes de escribir.
 `Tests` regenera las referencias con el simulador funcional y ejecuta Apio.
 Los testbenches tienen watchdog y `$fatal` ante discrepancias:
 
-- `gpu_system_tb.v`: 19 programas diferenciales, todos los 2048 registros,
+- `gpu_system_tb.v`: 32 programas diferenciales, todos los 2048 registros,
   PC finales y 512 palabras de datos por caso. Incluye memoria unificada y código
   modificado tras BAR, límites de RAM, conflictos, aritmética y SIMT.
 - `gpu_lsu_tb.v`: ocho slots llenos, colisiones, errores de dirección, ocho
   bancos aceptando simultáneamente, backend lento y backpressure en ambos sentidos.
 - `gpu_scheduler_tb.v`: ocho LOAD pendientes; progreso de un warp aritmético
   mientras los otros siete esperan; escritura de respuestas en el contexto correcto.
+- `gpu_regions_tb.v`: capacidades independientes, overflow, reutilización con la
+  pila llena, prioridad de errores y normalización durante STEP.
 - `gpu_control_tb.v`: errores de ISA, memoria, división, pila y barreras;
   STEP, HALT/RUN, rechazo de memoria del monitor en ejecución y reset sin borrar RAM.
 - `gpu_uart_tb.v`: ruta serie completa desde los pines de `top`, incluyendo
@@ -197,3 +221,15 @@ Los testbenches tienen watchdog y `$fatal` ante discrepancias:
 [`validation.md`](validation.md) registra el resultado de simulación y de la
 implementación física. Generar un bitstream no sustituye comprobar timing;
 Apio puede permitir un fallo de timing durante place-and-route.
+
+## Suite en placa
+
+Desde la raíz del repositorio:
+
+```powershell
+.\.venv\Scripts\python.exe .\x.cpu-tests\run_gpu_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
+```
+
+El runner requiere monitor 2.1 y carga el proyecto cuando la placa responde con
+otra versión. Ejecuta 26 casos GPU compatibles y explica los 8 omitidos por
+capacidades; véase [el runner](../x.cpu-tests/README.md).

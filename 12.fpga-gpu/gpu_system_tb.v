@@ -15,6 +15,7 @@ module gpu_system_tb;
     gpu_system dut(.*,.instruction_retired(retired));
     `include "fixtures/count.vh"
     reg [31:0] program_words[0:255],expected[0:2047],expected_memory[0:511],config_words[0:23],expected_state[0:23];
+    reg [31:0] expected_counts[0:7];
     reg [1023:0] path;
     reg [7:0] byte_result;
     reg [31:0] word_result;
@@ -53,6 +54,7 @@ module gpu_system_tb;
             $sformat(path,"fixtures/%02d.regs.hex",test_id); $readmemh(path,expected);
             $sformat(path,"fixtures/%02d.memory.hex",test_id); $readmemh(path,expected_memory);
             $sformat(path,"fixtures/%02d.config.hex",test_id); $readmemh(path,config_words);
+            $sformat(path,"fixtures/%02d.counts.hex",test_id); $readmemh(path,expected_counts);
             $sformat(path,"fixtures/%02d.state.hex",test_id); $readmemh(path,expected_state);
             for(i=0;i<256;i=i+1) write_word(i*4,program_words[i]);
             for(i=0;i<512;i=i+1) write_word(4096+i*4,0);
@@ -76,6 +78,13 @@ module gpu_system_tb;
                             $fatal(1,"case %0d w%0d lane%0d R%0d got %h expected %h",test_id,w,l,r,debug_data,expected[w*256+l*32+r]);
                     end
                 end
+                read_word(32'h80000114);
+                if(word_result!==expected_counts[w]) $fatal(1,"case %0d warp %0d retired count %0d expected %0d",test_id,w,word_result,expected_counts[w]);
+                read_word(32'h80000004+w*16);
+                if(word_result!=={16'b0,expected_state[w*3+2][7:0],expected_state[w*3+1][7:0]})
+                    $fatal(1,"case %0d warp %0d masks mismatch",test_id,w);
+                read_word(32'h8000000c+w*16);
+                if(word_result!==0) $fatal(1,"case %0d warp %0d control not cleared: %h",test_id,w,word_result);
                 read_word(32'h80000000+w*16);
                 if(word_result!==expected_state[w*3]) $fatal(1,"case %d warp %d PC got %h expected %h",test_id,w,word_result,expected_state[w*3]);
             end

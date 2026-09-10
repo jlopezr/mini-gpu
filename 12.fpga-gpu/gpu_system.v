@@ -1,5 +1,5 @@
 `default_nettype none
-module gpu_system #(parameter SIMT_DEPTH=8) (
+module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_DEPTH=8) (
     input clk, reset, gpu_reset,
     input run_request, halt_request, step_request,
     output halted, error,
@@ -17,7 +17,7 @@ module gpu_system #(parameter SIMT_DEPTH=8) (
     reg [2:0] debug_warp, debug_lane;
     wire [2:0] error_warp,error_lane;
     wire error_lane_valid;
-    wire [31:0] error_pc,retired_count;
+    wire [31:0] error_pc,retired_count,debug_warp_retired_count;
     wire [31:0] cfg_read_data;
     wire cfg_write;
     wire fetch_valid,fetch_ready,fetch_rsp_valid,fetch_rsp_ready,fetch_error;
@@ -55,7 +55,7 @@ module gpu_system #(parameter SIMT_DEPTH=8) (
     assign fetch_error=aux_error;
     // Do not launch while a host transaction owns the auxiliary port.
     wire host_idle=host_state==0 && !host_write_enable && !host_read_enable;
-    gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH)) sm (
+    gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH), .SIMT_REGION_DEPTH(SIMT_REGION_DEPTH), .SIMT_PATH_DEPTH(SIMT_PATH_DEPTH)) sm (
         .clk(clk),.reset(core_reset),.run_request(run_request && host_idle),
         .halt_request(halt_request),.step_request(step_request && host_idle),
         .halted(halted),.error(error),.error_code(error_code),
@@ -63,6 +63,7 @@ module gpu_system #(parameter SIMT_DEPTH=8) (
         .error_pc(error_pc),.instruction_retired(instruction_retired),.retired_count(retired_count),
         .debug_warp(debug_warp),.debug_lane(debug_lane),.debug_register(debug_register),
         .debug_data(debug_data),.debug_pc(debug_pc),
+        .debug_warp_retired_count(debug_warp_retired_count),
         .cfg_write(cfg_write),.cfg_word(address[6:2]),.cfg_data(expanded_data),
         .cfg_strobe(byte_strobe),.cfg_read_data(cfg_read_data),
         .imem_valid(fetch_valid),.imem_ready(fetch_ready),.imem_address(fetch_address),
@@ -104,6 +105,7 @@ module gpu_system #(parameter SIMT_DEPTH=8) (
             10'h042: begin mmio_data=retired_count; mmio_bad=writing; end
             10'h043: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
             10'h044: begin mmio_data=error_pc; mmio_bad=writing; end
+            10'h045: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
             default: mmio_bad=1;
         endcase
     end

@@ -98,5 +98,65 @@
     "id": 19,
     "name": "early_halt_unwind",
     "instructions": 24
+  },
+  {
+    "id": 20,
+    "name": "regions_pending_loop",
+    "instructions": 400
+  },
+  {
+    "id": 21,
+    "name": "regions_nested_region_cannot_run_outer_pending_path_early",
+    "instructions": 136
+  },
+  {
+    "id": 22,
+    "name": "regions_multiple_different_pending_destinations_in_one_region",
+    "instructions": 112
+  },
+  {
+    "id": 23,
+    "name": "regions_fallthrough_join_parks_without_path",
+    "instructions": 80
+  },
+  {
+    "id": 24,
+    "name": "regions_direct_join_with_pending_path",
+    "instructions": 96
+  },
+  {
+    "id": 25,
+    "name": "regions_identical_next_pcs_do_not_diverge_without_ssy",
+    "instructions": 40
+  },
+  {
+    "id": 26,
+    "name": "regions_sequential_regions_release_capacity_before_next_if",
+    "instructions": 88
+  },
+  {
+    "id": 27,
+    "name": "regions_exit_unwinds_inner_before_outer_pending_path",
+    "instructions": 80
+  },
+  {
+    "id": 28,
+    "name": "regions_same_join_distinct_ssy_sites_open_distinct_regions",
+    "instructions": 40
+  },
+  {
+    "id": 29,
+    "name": "regions_exit_inside_region_preserves_parked_lanes",
+    "instructions": 64
+  },
+  {
+    "id": 30,
+    "name": "regions_last_exit_clears_both_stacks_and_keeps_next_pc",
+    "instructions": 16
+  },
+  {
+    "id": 31,
+    "name": "regions_long_escape_loop",
+    "instructions": 928
   }
 ]

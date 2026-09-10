@@ -1,1 +1,1 @@
-localparam CASES=20;
+localparam CASES=32;

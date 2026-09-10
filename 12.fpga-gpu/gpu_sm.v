@@ -1,5 +1,5 @@
 `default_nettype none
-module gpu_sm #(parameter SIMT_DEPTH=8) (
+module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_DEPTH=8) (
     input clk, reset,
     input run_request, halt_request, step_request,
     output halted,
@@ -10,6 +10,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     output reg [31:0] error_pc,
     output reg instruction_retired,
     output reg [31:0] retired_count,
+    output [31:0] debug_warp_retired_count,
     input [2:0] debug_warp, debug_lane,
     input [4:0] debug_register,
     output [31:0] debug_data, debug_pc,
@@ -39,7 +40,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     input [7:0] lsu_occupied
 );
     localparam INIT=0, PICK=1, RECON=2, FETCH=3, FETCH_WAIT=4,
-        RF_WAIT=5, DECODE=6, START=7, EXEC=8, FINISH=9, MEMORY=10;
+        RF_WAIT=5, DECODE=6, START=7, EXEC=8, FINISH=9, MEMORY=10, NORMALIZE=11;
     localparam [7:0] ERROR_NONE = 8'h00;
     localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
     localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
@@ -59,11 +60,17 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     reg [7:0] load_mask[0:7];
     reg [7:0] load_is_write;
     reg [31:0] instruction;
-    localparam SP_BITS=$clog2(SIMT_DEPTH+1);
+    reg [31:0] warp_retired_count[0:7];
+    assign debug_warp_retired_count=warp_retired_count[debug_warp];
+    localparam SP_BITS=$clog2(SIMT_REGION_DEPTH+1);
+    localparam PP_BITS=$clog2(SIMT_PATH_DEPTH+1);
     reg [SP_BITS-1:0] sp[0:7];
-    reg [31:0] join_pc[0:8*SIMT_DEPTH-1], pending_pc[0:8*SIMT_DEPTH-1];
-    reg [7:0] entry_mask[0:8*SIMT_DEPTH-1], pending_mask[0:8*SIMT_DEPTH-1];
-    reg used[0:8*SIMT_DEPTH-1];
+    reg [PP_BITS-1:0] pp[0:7];
+    reg [31:0] ssy_pc[0:8*SIMT_REGION_DEPTH-1], join_pc[0:8*SIMT_REGION_DEPTH-1];
+    reg [7:0] entry_mask[0:8*SIMT_REGION_DEPTH-1];
+    reg [PP_BITS-1:0] path_base[0:8*SIMT_REGION_DEPTH-1];
+    reg [31:0] pending_pc[0:8*SIMT_PATH_DEPTH-1];
+    reg [7:0] pending_mask[0:8*SIMT_PATH_DEPTH-1];
     wire [5:0] opcode=instruction[31:26];
     wire branch=opcode>=6'h20 && opcode<=6'h25;
     wire [4:0] ra=branch ? instruction[25:21] : instruction[20:16];
@@ -73,8 +80,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     wire [31:0] target=pc[current]+4+{{4{instruction[25]}},instruction[25:0],2'b00};
     wire [31:0] branch_target=pc[current]+4+{{14{instruction[15]}},instruction[15:0],2'b00};
     wire [31:0] stack_count={{(32-SP_BITS){1'b0}},sp[current]};
-    wire [31:0] top_index={29'b0,current}*SIMT_DEPTH+(stack_count==0 ? 0 : stack_count-1);
-    wire [31:0] push_index={29'b0,current}*SIMT_DEPTH+stack_count;
+    wire [31:0] top_index={29'b0,current}*SIMT_REGION_DEPTH+(stack_count==0 ? 0 : stack_count-1);
+    wire [31:0] push_index={29'b0,current}*SIMT_REGION_DEPTH+stack_count;
+    wire [31:0] path_count={{(32-PP_BITS){1'b0}},pp[current]};
+    wire [31:0] path_top={29'b0,current}*SIMT_PATH_DEPTH+(path_count==0 ? 0 : path_count-1);
+    wire [31:0] path_push={29'b0,current}*SIMT_PATH_DEPTH+path_count;
     assign halted=!running && state==PICK && wait_mem==0 && lsu_occupied==0;
     assign debug_pc=error ? error_pc : pc[debug_warp];
     assign imem_valid=state==FETCH;
@@ -130,16 +140,23 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
     end endgenerate
     assign debug_data=rf_a[debug_lane*32 +: 32];
 
+    reg normalize_found;
+    reg [2:0] normalize_warp;
     reg pick_found, any_live, all_bar, bar_mismatch;
     reg [2:0] pick_warp;
     reg [7:0] release_bar;
     integer a,b,t;
     reg [2:0] candidate;
     always @* begin
+        normalize_found=0; normalize_warp=0;
         pick_found=0; pick_warp=cursor; any_live=0; release_bar=0;
         all_bar=0; bar_mismatch=0; candidate=0;
         for(a=0;a<8;a=a+1) begin
             if (live[a]!=0) any_live=1;
+            if (!normalize_found && live[a]!=0 && !wait_mem[a] && !wait_bar[a] &&
+                (active[a]==0 || (sp[a]!=0 && pc[a]==join_pc[a*SIMT_REGION_DEPTH+{{(32-SP_BITS){1'b0}},sp[a]}-1]))) begin
+                normalize_found=1; normalize_warp=a[2:0];
+            end
             candidate=cursor+a[2:0];
             if (!pick_found && live[candidate]!=0 && !wait_mem[candidate] && !wait_bar[candidate]) begin
                 pick_found=1; pick_warp=candidate;
@@ -174,6 +191,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
             3: begin
                 cfg_read_data=0;
                 cfg_read_data[SP_BITS-1:0]=sp[cfg_word[4:2]];
+                cfg_read_data[8 +: PP_BITS]=pp[cfg_word[4:2]];
                 cfg_read_data[16]=wait_mem[cfg_word[4:2]];
                 cfg_read_data[17]=wait_bar[cfg_word[4:2]];
             end
@@ -192,7 +210,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
         end
     endtask
     task retire;
-        begin instruction_retired<=1; retired_count<=retired_count+1'b1; state<=PICK; end
+        begin
+            instruction_retired<=1; retired_count<=retired_count+1'b1;
+            warp_retired_count[current]<=warp_retired_count[current]+1'b1;
+            state<=PICK;
+        end
     endtask
     integer w,c;
     always @(posedge clk) begin
@@ -204,7 +226,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
             retired_count<=0; instruction<=0; done<=0;
             for(w=0;w<8;w=w+1) begin
                 pc[w]<=0; active[w]<=8'hff; live[w]<=8'hff; groups[w]<=0;
-                generation[w]<=0; sp[w]<=0; load_rd[w]<=0; load_mask[w]<=0;
+                warp_retired_count[w]<=0; generation[w]<=0; sp[w]<=0; pp[w]<=0; load_rd[w]<=0; load_mask[w]<=0;
             end
         end else begin
             if (halt_request && running) pause_pending<=1;
@@ -216,7 +238,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                 if(cfg_word[1:0]==1 && cfg_strobe[0]) begin
                     active[cfg_word[4:2]]<=cfg_data[7:0]; live[cfg_word[4:2]]<=cfg_data[7:0];
                 end
-                sp[cfg_word[4:2]]<=0; wait_bar[cfg_word[4:2]]<=0; generation[cfg_word[4:2]]<=0;
+                warp_retired_count[cfg_word[4:2]]<=0; sp[cfg_word[4:2]]<=0; pp[cfg_word[4:2]]<=0; wait_bar[cfg_word[4:2]]<=0; generation[cfg_word[4:2]]<=0;
             end
             case(state)
                 INIT: begin
@@ -232,6 +254,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         end else begin
                             pc[lsu_rsp_tag]<=pc[lsu_rsp_tag]+4;
                             instruction_retired<=1; retired_count<=retired_count+1'b1;
+                            warp_retired_count[lsu_rsp_tag]<=warp_retired_count[lsu_rsp_tag]+1'b1;
                         end
                     end else if (|release_bar && !error) begin
                         // Barrier release is a control transition, not another
@@ -239,6 +262,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         for(w=0;w<8;w=w+1) if(release_bar[w]) begin
                             wait_bar[w]<=0; pc[w]<=pc[w]+4; generation[w]<=generation[w]+1'b1;
                         end
+                    end else if (normalize_found && !error) begin
+                        current<=normalize_warp; state<=NORMALIZE;
                     end else if (pause_pending || (running && !any_live)) begin
                         running<=0; pause_pending<=0;
                     end else if (halted && (run_request || step_request) && !error) begin
@@ -249,12 +274,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         end
                     end
                 end
-                RECON: begin
+                RECON, NORMALIZE: begin
                     if (sp[current]!=0 && (active[current]==0 || pc[current]==join_pc[top_index])) begin
-                        if ((pending_mask[top_index] & live[current])!=0) begin
-                            pc[current]<=pending_pc[top_index];
-                            active[current]<=pending_mask[top_index] & live[current];
-                            pending_mask[top_index]<=0;
+                        if (pp[current]>path_base[top_index]) begin
+                            pc[current]<=pending_pc[path_top];
+                            active[current]<=pending_mask[path_top] & live[current];
+                            pp[current]<=pp[current]-1'b1;
                         end else begin
                             pc[current]<=join_pc[top_index];
                             active[current]<=entry_mask[top_index] & live[current]; sp[current]<=sp[current]-1'b1;
@@ -262,7 +287,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                     end else if (active[current]==0) begin
                         if(live[current]==0) state<=PICK;
                         else fault(ERROR_SIMT,current,0,0);
-                    end else state<=FETCH;
+                    end else state<=state==NORMALIZE ? PICK : FETCH;
                 end
                 FETCH: if(imem_valid && imem_ready) state<=FETCH_WAIT;
                 FETCH_WAIT: if(imem_rsp_valid) begin
@@ -278,10 +303,14 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                         6'h15,6'h16: state<=MEMORY;
                         6'h31: begin
                             if(|target[31:17] || |target[1:0]) fault(ERROR_MEMORY_ACCESS,current,0,0);
-                            else if(stack_count==SIMT_DEPTH) fault(ERROR_SIMT,current,0,0);
+                            else if(sp[current]!=0 && ssy_pc[top_index]==pc[current]) begin
+                                if(join_pc[top_index]!=target) fault(ERROR_SIMT,current,0,0);
+                                else begin pc[current]<=pc[current]+4; retire; end
+                            end
+                            else if(stack_count==SIMT_REGION_DEPTH) fault(ERROR_SIMT,current,0,0);
                             else begin
                                 join_pc[push_index]<=target; entry_mask[push_index]<=active[current];
-                                pending_mask[push_index]<=0; pending_pc[push_index]<=0; used[push_index]<=0;
+                                ssy_pc[push_index]<=pc[current]; path_base[push_index]<=pp[current];
                                 sp[current]<=sp[current]+1'b1; pc[current]<=pc[current]+4; retire;
                             end
                         end
@@ -293,10 +322,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                             live[current]<=live[current] & ~active[current]; active[current]<=0;
                             pc[current]<=pc[current]+4;
                             if ((live[current] & ~active[current])==0) begin
-                                sp[current]<=0;
-                                // The simulator unwinds all frames when the
-                                // last lanes exit, leaving the outer join PC.
-                                if(sp[current]!=0) pc[current]<=join_pc[{29'b0,current}*SIMT_DEPTH];
+                                sp[current]<=0; pp[current]<=0;
                             end
                             retire;
                         end
@@ -311,10 +337,16 @@ module gpu_sm #(parameter SIMT_DEPTH=8) (
                 end
                 FINISH: begin
                     if(branch && taken!=0 && taken!=active[current]) begin
-                        if(sp[current]==0 || used[top_index]) fault(ERROR_SIMT,current,0,0);
+                        if(sp[current]==0) fault(ERROR_SIMT,current,0,0);
+                        else if(branch_target==join_pc[top_index]) begin
+                            active[current]<=active[current] & ~taken;
+                            pc[current]<=pc[current]+4; retire;
+                        end else if(pc[current]+4==join_pc[top_index]) begin
+                            active[current]<=taken; pc[current]<=branch_target; retire;
+                        end else if(path_count==SIMT_PATH_DEPTH) fault(ERROR_SIMT,current,0,0);
                         else begin
-                            pending_pc[top_index]<=branch_target; pending_mask[top_index]<=taken;
-                            used[top_index]<=1; active[current]<=active[current] & ~taken;
+                            pending_pc[path_push]<=branch_target; pending_mask[path_push]<=taken;
+                            pp[current]<=pp[current]+1'b1; active[current]<=active[current] & ~taken;
                             pc[current]<=pc[current]+4; retire;
                         end
                     end else begin

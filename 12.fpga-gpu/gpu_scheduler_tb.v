@@ -5,7 +5,7 @@ module gpu_scheduler_tb;
     wire halted,error,instruction_retired,error_lane_valid;
     wire [7:0] error_code;
     wire [2:0] error_warp,error_lane;
-    wire [31:0] error_pc,retired_count,debug_data,debug_pc,cfg_read_data;
+    wire [31:0] error_pc,retired_count,debug_warp_retired_count,debug_data,debug_pc,cfg_read_data;
     reg [2:0] debug_warp=0,debug_lane=0;
     reg [4:0] debug_register=3,cfg_word=0;
     reg cfg_write=0;

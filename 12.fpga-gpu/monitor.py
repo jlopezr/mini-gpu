@@ -20,7 +20,7 @@ MAX_BLOCK_SIZE = 256
 MEMORY_REGIONS = (
     (0x0000_0000, 0x0002_0000),
     (0x8000_0000, 0x8000_0080),
-    (0x8000_0100, 0x8000_0114),
+    (0x8000_0100, 0x8000_0118),
 )
 
 CMD_PING = b"\x01"
@@ -404,7 +404,7 @@ def main() -> int:
                     pc, masks, group, state = (int.from_bytes(data[i:i+4], 'little') for i in range(0,16,4))
                     print(f"warp={warp} pc=0x{pc:08x} active=0x{masks & 255:02x} "
                           f"live=0x{masks >> 8 & 255:02x} group={group} "
-                          f"stack={state & 255} wait_mem={bool(state & 0x10000)} wait_bar={bool(state & 0x20000)}")
+                          f"regions={state & 255} paths={state >> 8 & 255} wait_mem={bool(state & 0x10000)} wait_bar={bool(state & 0x20000)}")
             elif args.command == "ping":
                 client.ping()
                 print("PONG: FPGA monitor is responding")

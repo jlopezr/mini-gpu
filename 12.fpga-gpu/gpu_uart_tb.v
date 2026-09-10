@@ -44,7 +44,7 @@ module gpu_uart_tb;
     initial begin
         repeat(1000) @(negedge clk_25mhz);
         request[0]=2; exchange(1,3);
-        if(response[0]!==8'h82 || response[1]!==2 || response[2]!==0) $fatal(1,"GPU monitor version");
+        if(response[0]!==8'h82 || response[1]!==2 || response[2]!==1) $fatal(1,"GPU monitor version");
         // WRITE_BLOCK 0, 8 bytes: GETTID R1; HALT.
         request[0]=8'h20; request[1]=0; request[2]=0; request[3]=0; request[4]=0;
         request[5]=0; request[6]=8;
