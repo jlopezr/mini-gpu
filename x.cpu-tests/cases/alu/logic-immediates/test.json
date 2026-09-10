@@ -1,0 +1,22 @@
+{
+  "architecture": "cpu",
+  "name": "logic-immediates",
+  "program": "program.asm",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000028",
+    "registers": {
+      "R1": "0xFFFFFFFF",
+      "R2": "0x0000FFFF",
+      "R3": "0xFFFF0000",
+      "R4": "0x12345678",
+      "R5": "0xEDCBA987",
+      "R6": 0,
+      "R7": "0x12345678",
+      "R8": "0x78"
+    }
+  }
+}

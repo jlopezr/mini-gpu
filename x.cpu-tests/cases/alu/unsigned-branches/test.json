@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "unsigned-branches",
+  "program": "program.asm",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000034",
+    "registers": {
+      "R3": 1,
+      "R4": 1
+    }
+  }
+}

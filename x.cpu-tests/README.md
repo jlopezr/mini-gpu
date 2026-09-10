@@ -62,11 +62,20 @@ python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
 python run_gpu_tests.py --backend both --version cpu-fpga=sdram --port COM3
 ```
 
-Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`.
+Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`. Los
+casos CPU se agrupan igual que los GPU:
+
+| Grupo | Qué valida |
+|---|---|
+| [alu](cases/alu/) | Reglas de la ALU que la ISA fija explícitamente |
+| [basics](cases/basics/) | Camino mínimo de ejecución y de memoria |
+| [errors](cases/errors/) | Códigos de error y PC de la instrucción causante |
+| [programs](cases/programs/) | Programas con bucles, como prueba de integración |
+
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_gpu_tests.py cases/smoke/test.json --backend cpu-simulator
+python run_gpu_tests.py cases/basics/smoke/test.json --backend cpu-simulator
 ```
 
 Los casos GPU admiten traza del scheduler. `--trace-limit` limita los eventos

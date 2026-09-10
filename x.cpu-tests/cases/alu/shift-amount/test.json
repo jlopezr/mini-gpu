@@ -1,0 +1,22 @@
+{
+  "architecture": "cpu",
+  "name": "shift-amount",
+  "program": "program.asm",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x0000003C",
+    "registers": {
+      "R3": "0xF8000000",
+      "R4": "0x08000000",
+      "R6": "0x80000000",
+      "R7": "0x80000000",
+      "R10": 2,
+      "R11": "0x40000000",
+      "R13": "0xFFFFFFFF",
+      "R14": 1
+    }
+  }
+}

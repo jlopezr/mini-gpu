@@ -53,7 +53,7 @@ class GpuRunnerTest(unittest.TestCase):
 
     def test_backend_selection_and_discovery(self):
         from run_gpu_tests import validate_compatibility, case_architecture
-        cpu = load_case(ROOT / 'cases/smoke/test.json')
+        cpu = load_case(ROOT / 'cases/basics/smoke/test.json')
         self.assertEqual(cpu['architecture'], 'cpu')
         self.assertEqual(self.case['architecture'], 'gpu')
         validate_compatibility('gpu', ('gpu-simulator',))
@@ -67,13 +67,13 @@ class GpuRunnerTest(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 case_architecture(raw)
         self.assertIn(self.path, discover_cases([]))
-        self.assertIn(ROOT / 'cases/smoke/test.json', discover_cases([]))
+        self.assertIn(ROOT / 'cases/basics/smoke/test.json', discover_cases([]))
 
     def test_mixed_explicit_selection_rejected_before_backend_construction(self):
         import run_gpu_tests as runner
         for backend, paths, constructor in (
-            ('gpu-simulator', [self.path, ROOT / 'cases/smoke/test.json'], 'GpuBackend'),
-            ('cpu-fpga', [ROOT / 'cases/smoke/test.json', self.path], 'FpgaBackend'),
+            ('gpu-simulator', [self.path, ROOT / 'cases/basics/smoke/test.json'], 'GpuBackend'),
+            ('cpu-fpga', [ROOT / 'cases/basics/smoke/test.json', self.path], 'FpgaBackend'),
         ):
             with self.subTest(backend=backend), patch(
                 'sys.argv', ['run_gpu_tests.py', '--backend', backend, *map(str, paths)]
