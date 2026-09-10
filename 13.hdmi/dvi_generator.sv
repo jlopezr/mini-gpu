@@ -60,9 +60,20 @@ module dvi_generator (
         tmds_ch2_shift <= shift5[4] ? tmds_ch2 : tmds_ch2_shift >> 2;
     end
 
-    ODDRX1F serialize_ch0 (.D0(tmds_ch0_shift[0]), .D1(tmds_ch0_shift[1]), .Q(tmds_ch0_serial), .SCLK(clk_pix_5x), .RST(1'b0));
-    ODDRX1F serialize_ch1 (.D0(tmds_ch1_shift[0]), .D1(tmds_ch1_shift[1]), .Q(tmds_ch1_serial), .SCLK(clk_pix_5x), .RST(1'b0));
-    ODDRX1F serialize_ch2 (.D0(tmds_ch2_shift[0]), .D1(tmds_ch2_shift[1]), .Q(tmds_ch2_serial), .SCLK(clk_pix_5x), .RST(1'b0));
+    // Register stage feeding the output DDR registers. Its only load is the
+    // ODDRX1F, so the placer can put it right next to the pad instead of
+    // routing the wide shift register across the die. Same trick as
+    // daveshah1/prjtrellis-dvi ("register stage to improve timing").
+    logic [1:0] tmds_ch0_out, tmds_ch1_out, tmds_ch2_out;
+    always_ff @(posedge clk_pix_5x) begin
+        tmds_ch0_out <= tmds_ch0_shift[1:0];
+        tmds_ch1_out <= tmds_ch1_shift[1:0];
+        tmds_ch2_out <= tmds_ch2_shift[1:0];
+    end
+
+    ODDRX1F serialize_ch0 (.D0(tmds_ch0_out[0]), .D1(tmds_ch0_out[1]), .Q(tmds_ch0_serial), .SCLK(clk_pix_5x), .RST(1'b0));
+    ODDRX1F serialize_ch1 (.D0(tmds_ch1_out[0]), .D1(tmds_ch1_out[1]), .Q(tmds_ch1_serial), .SCLK(clk_pix_5x), .RST(1'b0));
+    ODDRX1F serialize_ch2 (.D0(tmds_ch2_out[0]), .D1(tmds_ch2_out[1]), .Q(tmds_ch2_serial), .SCLK(clk_pix_5x), .RST(1'b0));
 
     always_comb tmds_clk_serial = clk_pix;  // clock isn't following same path as other channels
 endmodule

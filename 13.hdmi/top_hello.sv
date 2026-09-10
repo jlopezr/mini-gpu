@@ -6,8 +6,8 @@
 `timescale 1ns / 1ps
 
 module top_hello (
-    input  wire logic clk_25m,       // 25 MHz clock
-    input  wire logic btn_rst_n,     // reset button
+    input  wire logic clk_25mhz,     // 25 MHz clock
+    input  wire logic [6:0] btn,     // buttons (btn[1] = FIRE1, active high)
     output      logic [3:0] gpdi_dp  // DVI out
     );
 
@@ -23,11 +23,20 @@ module top_hello (
         .CLKOS_DIV(10),
         .CLKOS_CPHASE(5)
     ) clock2_gen_inst (
-       .clk_in(clk_25m),
+       .clk_in(clk_25mhz),
        .clk_5x_out(clk_pix_5x),
        .clk_out(clk_pix),
        .clk_locked(clk_pix_locked)
     );
+
+    // reset: on PLL lock loss, or FIRE1 pressed (synced into pixel domain)
+    logic btn_rst_sync_0, btn_rst_sync_1;
+    always_ff @(posedge clk_pix) begin
+        btn_rst_sync_0 <= btn[1];
+        btn_rst_sync_1 <= btn_rst_sync_0;
+    end
+    logic rst_pix;
+    always_comb rst_pix = !clk_pix_locked || btn_rst_sync_1;
 
     // display sync signals and coordinates
     localparam CORDW = 12;  // screen coordinate width in bits
@@ -37,7 +46,7 @@ module top_hello (
     logic hsync, vsync, de;
     simple_720p display_inst (
         .clk_pix,
-        .rst_pix(!clk_pix_locked),  // wait for clock lock
+        .rst_pix(rst_pix),
         .sx,
         .sy,
         .hsync,
@@ -107,7 +116,7 @@ module top_hello (
     dvi_generator dvi_out (
         .clk_pix,
         .clk_pix_5x,
-        .rst_pix(!clk_pix_locked),
+        .rst_pix(rst_pix),
         .de(dvi_de),
         .data_in_ch0(dvi_b),
         .data_in_ch1(dvi_g),
