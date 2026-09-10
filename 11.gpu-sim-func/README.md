@@ -227,7 +227,7 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
 
 - `GETTID` devuelve `warp_id * warp_size + core_id`.
 
-- Los saltos divergentes usan `SSY` y una pila SIMT; véase [opcodes.md](opcodes.md).
+- Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](opcodes.md).
 
   `EXIT` retira lanes permanentemente y `BAR` sincroniza un workgroup.
 
@@ -283,3 +283,31 @@ python minigpu_sim.py simt_demo.bin --num-warps 2 --trace-detail
 
 En cada warp, las lanes 0–3 terminan con R3=11 y las lanes 4–7 con R3=21.
 
+
+### Regiones SIMT reutilizables
+
+El simulador implementa la [semántica de regiones reutilizables](ssy-reusable-regions-design.md).
+Repetir el SSY de la región más interna conserva su máscara y sus caminos,
+sin reservar otra región. Las salidas directas al join no reservan caminos.
+Los dos Mandelbrot pueden conservar el SSY dentro de su bucle.
+
+Las capacidades se configuran mediante la API Python:
+`System(simt_region_depth=4, simt_path_depth=8)`. Por defecto son ocho y ocho.
+También se pueden indicar por línea de comandos:
+
+```powershell
+python minigpu_sim.py simt_demo.bin --simt-region-depth 4 --simt-path-depth 8
+```
+
+Ambos argumentos aceptan enteros positivos y valen 8 cuando se omiten.
+El RTL de `12.fpga-gpu` aún usa la semántica anterior; ejecutar allí estos
+patrones no tiene todavía las mismas garantías.
+
+Ejecutar pruebas desde la raíz del repositorio:
+
+```powershell
+./.venv/Scripts/python.exe -m unittest discover -s 11.gpu-sim-func -v
+```
+
+`test_simt_regions.py` incluye regresiones de ambos Mandelbrot. Activar
+`RUN_SLOW_SIMT=1` añade la comparación de los framebuffers completos.

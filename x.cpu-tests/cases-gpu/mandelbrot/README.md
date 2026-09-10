@@ -48,9 +48,10 @@ depende de este lanzamiento. Los 76 800 píxeles son múltiplo de 64, de modo qu
 la salida de `pixel_loop` es uniforme y no necesita SSY. Si se cambian dimensiones
 o máscaras, hay que revisar tanto ese salto como la salida del bucle exterior.
 
-El SSY del bucle Mandelbrot se renueva en cada iteración: el simulador exige una
-entrada nueva para cada divergencia. Las lanes que escapan quedan pendientes
-hasta `mandel_done`, conservando su contador individual. No hace falta BAR:
+El SSY se ejecuta una vez por píxel, antes de `mandel_loop`, y abre una región
+que admite todas las divergencias del cálculo hasta `mandel_done`.
+Las lanes que escapan esperan en `mandel_done` sin reservar caminos, conservando
+su contador individual. El RTL todavía usa la semántica anterior. No hace falta BAR:
 cada píxel tiene un único escritor y el host lee después de terminar todos.
 El simulador cuenta instrucciones emitidas por warp, no ciclos de hardware.
 

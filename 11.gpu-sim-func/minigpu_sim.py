@@ -24,7 +24,7 @@ destinen a la FPGA.
 
 El warp controla el PC y contabiliza instrucciones completadas, incluido HALT.
 Los errores detienen toda la GPU sin efectos parciales de la instrucción fallida.
-Los saltos divergentes utilizan SSY y una pila de reconvergencia.
+Los saltos divergentes utilizan SSY y pilas separadas de regiones y caminos.
 """
 
 from __future__ import annotations
@@ -41,7 +41,8 @@ from gpu_trace import TextTrace, TraceEvent
 
 MASK32 = 0xFFFFFFFF
 MAX_WARPS = 8
-MAX_SIMT_STACK = 8
+MAX_SIMT_REGIONS = 8
+MAX_SIMT_PATHS = 8
 ERROR_NONE = 0x00
 ERROR_INVALID_OPCODE = 0x01
 ERROR_MEMORY_ACCESS = 0x02
@@ -170,15 +171,36 @@ def config_warp_size(config: object) -> int:
     return size
 
 
+@dataclass(frozen=True)
+class SimtRegion:
+    ssy_pc: int
+    join_pc: int
+    entry_mask: int
+    path_base: int
+
+
+@dataclass(frozen=True)
+class SimtPath:
+    pending_pc: int
+    pending_mask: int
+
+
 class System:
     """Memoria compartida y único registro de fallo de la GPU."""
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
-                 num_warps: int = 8, warp_size: int = 8):
+                 num_warps: int = 8, warp_size: int = 8, *,
+                 simt_region_depth: int = MAX_SIMT_REGIONS,
+                 simt_path_depth: int = MAX_SIMT_PATHS):
         if memory_size <= 0 or num_warps <= 0 or warp_size <= 0:
             raise ValueError("memoria, número de warps y tamaño de warp deben ser positivos")
         if num_warps > MAX_WARPS:
             raise ValueError("se admiten como máximo 8 warps")
+        for depth in (simt_region_depth, simt_path_depth):
+            if type(depth) is not int or depth <= 0:
+                raise ValueError("las profundidades SIMT deben ser enteros positivos")
+        self.simt_region_depth = simt_region_depth
+        self.simt_path_depth = simt_path_depth
         self.memory = bytearray(memory_size)
         self.fault: Fault | None = None
         self.trace: TextTrace | None = None
@@ -397,25 +419,35 @@ class Warp:
         self.workgroup_id = 0
         self.barrier_generation = 0
         self.barrier_key = None
-        self.simt_stack = []
+        self.region_stack: list[SimtRegion] = []
+        self.path_stack: list[SimtPath] = []
         self.instructions_executed = 0
         for processor in self.processors:
             processor.reset()
 
     def reconverge(self) -> None:
-        while self.simt_stack and (not self.active_mask or self.pc == self.simt_stack[-1]['join']):
-            frame = self.simt_stack[-1]
-            if frame['pending_mask'] & self.live_mask:
-                self.pc = frame['pending_pc']
-                self.active_mask = frame['pending_mask'] & self.live_mask
-                frame['pending_mask'] = 0
-            else:
-                self.simt_stack.pop()
-                self.pc = frame['join']
-                self.active_mask = frame['mask'] & self.live_mask
         if not self.live_mask:
-            self.simt_stack.clear()
+            self.region_stack.clear()
+            self.path_stack.clear()
+            self.active_mask = 0
             self.state = 'FINISHED'
+            return
+        while self.region_stack:
+            region = self.region_stack[-1]
+            if self.active_mask and self.pc != region.join_pc:
+                return
+            assert len(self.path_stack) >= region.path_base
+            if len(self.path_stack) > region.path_base:
+                path = self.path_stack.pop()
+                self.pc = path.pending_pc
+                self.active_mask = path.pending_mask & self.live_mask
+            else:
+                self.region_stack.pop()
+                self.pc = region.join_pc
+                self.active_mask = region.entry_mask & self.live_mask
+        assert not self.path_stack
+        if not self.active_mask:
+            self.sm.system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
 
     def step(self) -> bool:
         if self.sm.system.halted or self.halted or self.state == 'WAIT_BAR':
@@ -435,13 +467,17 @@ class Warp:
                 raise ExecutionFault(ERROR_INVALID_OPCODE)
             if opcode == 0x3E:
                 raise ExecutionFault(ERROR_EXPLICIT_TRAP)
-            if opcode == 0x31:  # SSY: establish a scoped reconvergence frame.
+            if opcode == 0x31:  # Reaffirm the innermost region or open a new one.
                 target = u32(self.pc + 4 + sign_extend(instr & 0x3FFFFFF, 26) * 4)
                 check_address(self.memory, target)
-                if len(self.simt_stack) >= MAX_SIMT_STACK:
-                    raise ExecutionFault(ERROR_SIMT)
-                self.simt_stack.append({"join": target, "mask": self.active_mask,
-                                        "pending_pc": 0, "pending_mask": 0, "used": False})
+                if self.region_stack and self.region_stack[-1].ssy_pc == self.pc:
+                    if self.region_stack[-1].join_pc != target:
+                        raise ExecutionFault(ERROR_SIMT)
+                else:
+                    if len(self.region_stack) >= self.sm.system.simt_region_depth:
+                        raise ExecutionFault(ERROR_SIMT)
+                    self.region_stack.append(SimtRegion(
+                        self.pc, target, self.active_mask, len(self.path_stack)))
                 self.pc = u32(self.pc + 4)
                 self.instructions_executed += 1
                 self.reconverge()
@@ -472,17 +508,27 @@ class Warp:
 
         next_pcs = {result.next_pc for _, result in results}
         if len(next_pcs) != 1:
-            if not self.simt_stack or self.simt_stack[-1]['used']:
+            if not self.region_stack:
                 self.sm.system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
                 return False
-            frame = self.simt_stack[-1]
+            region = self.region_stack[-1]
             fallthrough = u32(self.pc + 4)
-            frame['pending_pc'] = next(pc for pc in next_pcs if pc != fallthrough)
-            frame['pending_mask'] = sum(1 << lane.core_id for lane, result in results
-                                        if result.next_pc != fallthrough)
-            self.active_mask &= ~frame['pending_mask']
-            next_pcs = {fallthrough}
-            frame['used'] = True
+            target = next(pc for pc in next_pcs if pc != fallthrough)
+            taken = sum(1 << lane.core_id for lane, result in results
+                        if result.next_pc != fallthrough)
+            if target == region.join_pc:
+                self.active_mask &= ~taken
+                next_pcs = {fallthrough}
+            elif fallthrough == region.join_pc:
+                self.active_mask = taken
+                next_pcs = {target}
+            else:
+                if len(self.path_stack) >= self.sm.system.simt_path_depth:
+                    self.sm.system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
+                    return False
+                self.path_stack.append(SimtPath(target, taken))
+                self.active_mask &= ~taken
+                next_pcs = {fallthrough}
         for processor, result in results:
             processor.regs[:] = result.regs
             if result.store is not None:
@@ -722,6 +768,10 @@ def main() -> int:
     parser.add_argument("--memory-size", type=lambda x: int(x, 0), default=32 * 1024 * 1024)
     parser.add_argument("--num-warps", type=int, default=8)
     parser.add_argument("--warp-size", type=int, default=None)
+    parser.add_argument("--simt-region-depth", type=int, default=MAX_SIMT_REGIONS,
+                        help="capacidad de la pila de regiones por warp (por defecto: 8)")
+    parser.add_argument("--simt-path-depth", type=int, default=MAX_SIMT_PATHS,
+                        help="capacidad de la pila de caminos por warp (por defecto: 8)")
     parser.add_argument("--config", type=Path, help="JSON con PC y máscara inicial de cada warp")
     parser.add_argument("--dump", nargs=3, metavar=("ADDRESS", "SIZE", "FILE"))
     parser.add_argument("--trace", action="store_true", help="traza del scheduler por instrucción de warp")
@@ -741,7 +791,9 @@ def main() -> int:
                 raise ValueError("--warp-size no coincide con warp_size de --config")
         else:
             size = args.warp_size if args.warp_size is not None else 8
-        system = System(args.memory_size, args.num_warps, size)
+        system = System(args.memory_size, args.num_warps, size,
+                        simt_region_depth=args.simt_region_depth,
+                        simt_path_depth=args.simt_path_depth)
         system.load_program(args.program.read_bytes(), launch=args.config is None)
         if args.config is not None:
             try:

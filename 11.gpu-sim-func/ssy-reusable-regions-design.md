@@ -2,14 +2,14 @@
 
 ## Estado y alcance
 
-Propuesta de semántica e implementación para MiniGPU, basada en lo acordado
-durante el análisis de Mandelbrot. **Este documento no modifica el simulador
-ni el RTL.** Describe una variante de la semántica 3: regiones reutilizables,
+Semántica implementada en `minigpu_sim.py`, basada en lo acordado durante el
+análisis de Mandelbrot. **El RTL todavía conserva la semántica anterior.**
+Describe una variante de la semántica 3: regiones reutilizables,
 cierre automático y almacenamiento separado de regiones y caminos pendientes.
 
 No añade instrucciones a la ISA. En particular, no necesita SYNC. Sí cambia
 el significado de SSY y el tratamiento de las divergencias respecto al código
-actual, que reserva una entrada en cada SSY y permite una divergencia por entrada.
+anterior, que reserva una entrada en cada SSY y permite una divergencia por entrada.
 
 La regla central es:
 
@@ -446,6 +446,48 @@ Casos mínimos de validación:
 10. BAR en join, máscara parcial y terminación completa del warp.
 11. Comparación de simulador y RTL con ambos Mandelbrot y sus framebuffers esperados.
 
-Estos son criterios de aceptación propuestos, **no pruebas ya ejecutadas de
-esta semántica**. La implementación requerirá actualizar simulador, RTL,
-documentación ISA, diagnóstico de pilas y tests de conformidad conjuntamente.
+Estos criterios guían las pruebas del simulador descritas a continuación.
+La validación e implementación del RTL quedan pendientes; no se afirma
+conformidad entre simulador y FPGA con esta revisión.
+
+## Implementación del simulador y pruebas
+
+`System` acepta `simt_region_depth` y `simt_path_depth` como argumentos keyword,
+ambos ocho por defecto. `Warp.region_stack` contiene objetos `SimtRegion`
+inmutables y `Warp.path_stack` objetos `SimtPath` inmutables. Sustituyen a la
+antigua lista `simt_stack`; las trazas existentes de PC y máscara siguen siendo
+válidas. Las capacidades se conservan al reiniciar o relanzar el sistema.
+
+La CLI expone las mismas capacidades mediante `--simt-region-depth` y
+`--simt-path-depth`, ambos con valor por defecto 8. Por ejemplo:
+`python minigpu_sim.py programa.bin --simt-region-depth 4 --simt-path-depth 8`.
+Se rechazan valores cero o negativos antes de ejecutar el programa.
+
+Las pruebas ejecutables están en `test_simt_regions.py`, junto con las pruebas
+anteriores de `test_simt.py`. Cubren los invariantes tras cada instrucción,
+reutilización con máscara reducida, múltiples destinos pendientes, frontera
+interior/exterior, EXIT, fallos atómicos y muestras de ambos Mandelbrot con
+una sola región disponible. La comprobación de framebuffer completo es opcional
+por su duración:
+
+```powershell
+./.venv/Scripts/python.exe -m unittest discover -s 11.gpu-sim-func -v
+$env:RUN_SLOW_SIMT = '1'
+./.venv/Scripts/python.exe -m unittest discover -s 11.gpu-sim-func -p test_simt_regions.py -v
+Remove-Item Env:RUN_SLOW_SIMT
+```
+
+El esquema RTL anterior sigue siendo una propuesta de trabajo posterior.
+
+Validación de esta implementación: 53 pruebas rápidas del simulador aprobadas,
+9 pruebas del runner aprobadas y 12 casos GPU pequeños de conformidad aprobados.
+Se ejecutaron además ambos programas completos con ocho warps y capacidades
+por defecto, comparando byte a byte sus framebuffers:
+
+| Programa | Bytes comprobados | Instrucciones de warp |
+|---|---:|---:|
+| Mandelbrot original | 307200 | 10255708 |
+| Mandelbrot-packed | 76800 | 12062200 |
+
+Ambos terminaron sin error y con el resultado esperado. Las muestras rápidas
+de ambos programas se comprueban además con capacidad de una sola REGION.

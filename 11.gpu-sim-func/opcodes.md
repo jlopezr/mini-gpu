@@ -42,21 +42,20 @@ pending_mask
 
 ## Objetivo
 
-`SSY` indica el punto en el que deben reconverger los caminos de un branch potencialmente divergente.
+`SSY join` abre una región de reconvergencia, guardando el PC del SSY,
+el join, la máscara activa de entrada y la profundidad de caminos pendientes.
+Si el PC del SSY coincide con el de la región más interna, la reutiliza sin
+reiniciar su máscara ni sus pendientes. Un destino distinto al guardado en
+esa reutilización produce error SIMT.
 
-```asm
-SSY join
-```
+Los branches uniformes no consumen la región. Varias divergencias pueden
+compartirla. Una salida directa al join aparca sus lanes sin guardar PATH;
+si ambos caminos tienen trabajo anterior al join, se guarda un PATH y se
+ejecuta primero el fall-through.
 
-Por sí misma no realiza ningún salto ni modifica las máscaras.
-
-Conceptualmente:
-
-```text
-reconv_pc = join
-```
-
-El siguiente branch divergente puede utilizar este valor para crear una entrada en la pila SIMT.
+El simulador implementa esta semántica con dos pilas independientes. El RTL
+actual de `12.fpga-gpu` conserva la semántica anterior y todavía no es
+conforme con esta revisión. Véase [el diseño](ssy-reusable-regions-design.md).
 
 ## Ejemplo
 
@@ -84,11 +83,10 @@ taken_mask       = 00001111
 fallthrough_mask = 11110000
 ```
 
-Al detectar divergencia, el hardware puede ejecutar un camino y guardar el otro:
+En este ejemplo ambos caminos tienen trabajo. El simulador guarda el tomado:
 
 ```text
-SIMT_stack.push {
-    reconv_pc   = join
+path_stack.push {
     pending_pc  = then
     pending_mask= 00001111
 }
@@ -97,14 +95,14 @@ SIMT_stack.push {
 mientras continúa, por ejemplo, por el fall-through:
 
 ```text
-PC          = PC + 1
+PC          = PC + 4
 active_mask = 11110000
 ```
 
-Cuando el PC alcanza `join`, el hardware detecta:
+Cuando el PC alcanza `join`, el simulador detecta:
 
 ```text
-PC == SIMT_stack.top.reconv_pc
+PC == region_stack.top.join_pc
 ```
 
 y ejecuta el camino pendiente antes de continuar desde `join` con las lanes reconvergidas.
@@ -127,7 +125,7 @@ taken_mask == active_mask
 
 no existe divergencia y no hace falta ninguna operación SIMT especial.
 
-La política inicial propuesta es que un branch que resulte divergente sin un `SSY` válido produzca un error/trap GPU, salvo que posteriormente se defina otra semántica.
+Un branch divergente sin región abierta produce el error GPU `0x06`, sin commit.
 
 ---
 
@@ -279,19 +277,27 @@ Los PC son direcciones de bytes: avanzar una instrucción suma 4. El destino de
 SSY debe estar dentro de memoria. Los campos reservados no nulos producen el
 error de codificación existente (`0x05`).
 
-SSY abre una entrada de pila que guarda también la máscara de entrada y si ya
-se utilizó para una divergencia. Los saltos uniformes no consumen esta entrada.
-La siguiente divergencia utiliza esa entrada y ejecuta primero el fall-through.
-Cada divergencia adicional necesita su propio SSY, incluso dentro de un bucle.
-Se admiten entradas anidadas. Al alcanzar el destino, antes de ejecutar su
-instrucción, se ejecuta el camino pendiente y después se restaura la máscara
-inicial filtrada por live_mask. Si EXIT vacía el camino activo, se hace la misma
-transición sin esperar a alcanzar el destino. Las reconvergencias no cuentan
-como instrucciones. Los programas deben usar regiones estructuradas: no saltar
-fuera de una región sin pasar por su reconvergencia, salvo para finalizar lanes.
+SSY abre o reutiliza la región más interna según su PC de apertura. Compartir
+join con otro SSY no implica reutilización. Cada región admite varias
+divergencias; no existe un indicador `used`.
 
-Una divergencia sin entrada disponible produce el fallo GPU `0x06`, sin commit.
-HALT conserva la finalización de las lanes activas y se comporta como EXIT.
+El simulador mantiene `region_stack` y `path_stack`, con ocho posiciones cada
+una por defecto. La API `System(..., simt_region_depth=8, simt_path_depth=8)`
+permite dimensionarlas independientemente. Una REGION guarda `ssy_pc`,
+`join_pc`, `entry_mask` y `path_base`; un PATH, `pending_pc` y `pending_mask`.
+
+Antes de ejecutar el join, si quedan PATH por encima de `path_base`, se retira
+el superior y se ejecuta. Si no quedan, se retira la REGION y se restaura
+`entry_mask & live_mask`. Se repite para cierres coincidentes o máscaras vacías.
+EXIT también activa esta normalización al vaciar el camino actual. Si no quedan
+lanes vivas, se vacían ambas pilas y se conserva el PC siguiente de EXIT/HALT.
+Las reconvergencias no cuentan como instrucciones.
+
+Una reserva que exceda su capacidad produce `0x06` sin commit. Reutilizar una
+región llena o salir directamente al join con la pila de caminos llena no
+requiere reserva y sigue siendo válido. Los programas deben respetar cierres
+estructurados: no saltarse una región interior para salir de una exterior,
+salvo al finalizar las lanes. HALT de la ISA se comporta como EXIT.
 
 BAR identifica una barrera por `(PC, generación)` dentro de `workgroup_id`.
 Cuenta una instrucción al llegar, conserva el PC mientras espera y avanza al

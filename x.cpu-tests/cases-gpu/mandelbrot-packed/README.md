@@ -12,12 +12,15 @@ Diferencias con `cases-gpu/mandelbrot`:
 | Framebuffer | 300 KiB en `0x00100000` | **75 KiB en `0x00004000`** |
 | ¿Cabe en la BRAM de 128 KiB? | No | **Sí** |
 | Rango de valores | 1..256 | 1..255 (saturado) |
-| Instrucciones de warp | 10.255.708 | 12.062.200 |
+| Instrucciones de warp | 9.588.644 | 11.275.220 |
 
 El caso original no puede ejecutarse en `12.fpga-gpu`: su framebuffer es 2.3× la
 BRAM entera y su base está fuera del espacio de direcciones válido
 (`0x00000`–`0x1FFFF`). Este existe para poder correr el mismo kernel en el
 simulador funcional y en la FPGA, y comparar.
+
+La semántica SIMT requerida es la de regiones reutilizables del simulador.
+El RTL todavía necesita adaptarse a ella para ejecutar este kernel correctamente.
 
 ## Detalles del kernel
 
@@ -27,6 +30,8 @@ simulador funcional y en la FPGA, y comparar.
   sirve en una sola oleada sin conflicto de bancos.
 - **19200 grupos / 64 hilos = 300 iteraciones exactas** por lane, sin cola
   divergente.
+- **SSY fuera de `mandel_loop`**: una apertura por píxel, dentro de `pack_loop`.
+  Todas sus salidas reconvergen en `mandel_done` antes de saturar y empaquetar.
 - **Saturación sin ramificar**: `iter - (iter>>8)` convierte 256 en 255 y no toca
   ningún otro valor. Una rama aquí divergiría el warp.
 - **Orden de bytes**: el bucle recorre `k` de 3 a 0 con

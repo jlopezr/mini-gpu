@@ -44,7 +44,7 @@ class SimtTest(unittest.TestCase):
         warp = gpu.streaming_multiprocessor.warps[0]
         self.assertFalse(gpu.error)
         self.assertEqual([p.regs[3] for p in warp.processors], [12, 12, 22, 22, 31, 31, 31, 31])
-        self.assertEqual(warp.simt_stack, [])
+        self.assertEqual(warp.region_stack, [])
         self.assertEqual(warp.live_mask, 0)
 
     def test_exit_in_either_path_never_reactivates(self):
@@ -85,7 +85,7 @@ class SimtTest(unittest.TestCase):
         self.assertFalse(gpu.error)
         self.assertEqual([p.regs[3] for p in gpu.streaming_multiprocessor.warps[0].processors], [1]+[10]*7)
 
-    def test_simt_stack_accepts_eight_frames_and_rejects_the_ninth_atomically(self):
+    def test_region_stack_accepts_eight_sites_and_rejects_the_ninth_atomically(self):
         gpu = self.make('\n'.join(['SSY done'] * 9) + '\ndone: EXIT')
         gpu.run(20)
         warp = gpu.streaming_multiprocessor.warps[0]
@@ -96,7 +96,7 @@ class SimtTest(unittest.TestCase):
         self.assertEqual(gpu.fault.warp_id, 0)
         self.assertIsNone(gpu.fault.core_id)
         self.assertEqual(warp.pc, 8 * 4)
-        self.assertEqual(len(warp.simt_stack), 8)
+        self.assertEqual(len(warp.region_stack), 8)
         self.assertEqual(warp.instructions_executed, 8)
         self.assertEqual(gpu.instructions_executed, 8)
 
@@ -178,3 +178,4 @@ class SimtTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

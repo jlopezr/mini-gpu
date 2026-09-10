@@ -178,11 +178,11 @@ pack_loop:
     ; Punto de reconvergencia del bucle Mandelbrot
     ; ========================================================
 
-mandel_loop:
-
-    ; Cada divergencia consume su SSY. Renovarlo en cada iteracion
-    ; mantiene pendientes las lanes que ya escaparon hasta mandel_done.
+    ; Una region por pixel, abierta antes de entrar al bucle.
+    ; Las lanes que escapan esperan en mandel_done sin reservar PATH.
     SSY   mandel_done
+
+mandel_loop:
 
     ; iteration >= MAX_ITER
     BGE   R18, R4, mandel_done
