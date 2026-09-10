@@ -29,10 +29,11 @@ module top_bounce (
        .clk_locked(clk_pix_locked)
     );
 
-    // reset: on PLL lock loss, or FIRE1 pressed (synced into pixel domain)
+    // reset: on PLL lock loss, or FIRE2 pressed (synced into pixel domain)
+    // (FIRE1 / btn[1] drives the colour cycling further down)
     logic btn_rst_sync_0, btn_rst_sync_1;
     always_ff @(posedge clk_pix) begin
-        btn_rst_sync_0 <= btn[1];
+        btn_rst_sync_0 <= btn[2];
         btn_rst_sync_1 <= btn_rst_sync_0;
     end
     logic rst_pix;
@@ -109,12 +110,51 @@ module top_bounce (
         square = (sx >= qx) && (sx < qx + Q_SIZE) && (sy >= qy) && (sy < qy + Q_SIZE);
     end
 
-    // paint colour: white inside square, blue outside
+    // FIRE1 (btn[1]) cycles the square colour: white -> red -> green -> blue
+    localparam BTN_DEBOUNCE = 21'd1_500_000;  // ~20 ms at 74 MHz
+    logic btn1_sync_0, btn1_sync_1;  // synchronise the async button into clk_pix
+    logic btn1_stable, btn1_prev;    // debounced level, and it delayed one tick
+    logic [20:0] btn1_cnt;           // how long the raw level has disagreed
+    logic [1:0] colr_sel;            // wraps 0-3 on its own
+
+    always_ff @(posedge clk_pix) begin
+        btn1_sync_0 <= btn[1];
+        btn1_sync_1 <= btn1_sync_0;
+
+        // adopt a new level only once it has held steady long enough
+        if (btn1_sync_1 != btn1_stable) begin
+            btn1_cnt <= btn1_cnt + 1;
+            if (btn1_cnt == BTN_DEBOUNCE) begin
+                btn1_stable <= btn1_sync_1;
+                btn1_cnt <= 0;
+            end
+        end else btn1_cnt <= 0;
+
+        btn1_prev <= btn1_stable;
+        if (btn1_stable && !btn1_prev) colr_sel <= colr_sel + 1;  // press
+
+        if (rst_pix) begin
+            colr_sel <= 0;
+            btn1_cnt <= 0;
+        end
+    end
+
+    logic [3:0] colr_r, colr_g, colr_b;
+    always_comb begin
+        case (colr_sel)
+            2'd1:    {colr_r, colr_g, colr_b} = {4'hF, 4'h0, 4'h0};  // red
+            2'd2:    {colr_r, colr_g, colr_b} = {4'h0, 4'hF, 4'h0};  // green
+            2'd3:    {colr_r, colr_g, colr_b} = {4'h0, 4'h0, 4'hF};  // blue
+            default: {colr_r, colr_g, colr_b} = {4'hF, 4'hF, 4'hF};  // white
+        endcase
+    end
+
+    // paint colour: selected colour inside square, blue outside
     logic [3:0] paint_r, paint_g, paint_b;
     always_comb begin
-        paint_r = (square) ? 4'hF : 4'h1;
-        paint_g = (square) ? 4'hF : 4'h3;
-        paint_b = (square) ? 4'hF : 4'h7;
+        paint_r = (square) ? colr_r : 4'h1;
+        paint_g = (square) ? colr_g : 4'h3;
+        paint_b = (square) ? colr_b : 4'h7;
     end
 
     // display colour: paint colour but black in blanking interval
