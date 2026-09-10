@@ -1,0 +1,29 @@
+{
+  "architecture": "gpu",
+  "name": "simt-unused-ssy-loop-conformance",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 40,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "instructions_executed": 30,
+    "warps": {
+      "0": {
+        "pc": 24,
+        "active_mask": 0,
+        "instructions_executed": 30,
+        "registers": {
+          "0": {
+            "R1": 9
+          },
+          "7": {
+            "R1": 0
+          }
+        }
+      }
+    }
+  }
+}

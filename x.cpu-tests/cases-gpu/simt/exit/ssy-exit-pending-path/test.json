@@ -1,0 +1,52 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-exit-pending-path",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R1": 0,
+            "R3": 11
+          },
+          "1": {
+            "R1": 1,
+            "R3": 11
+          },
+          "2": {
+            "R1": 2,
+            "R3": 11
+          },
+          "3": {
+            "R1": 3,
+            "R3": 11
+          },
+          "4": {
+            "R1": 4,
+            "R3": 22
+          },
+          "5": {
+            "R1": 5,
+            "R3": 22
+          },
+          "6": {
+            "R1": 6,
+            "R3": 22
+          },
+          "7": {
+            "R1": 7,
+            "R3": 22
+          }
+        }
+      }
+    }
+  }
+}

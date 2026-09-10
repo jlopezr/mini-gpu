@@ -167,6 +167,21 @@
         "cpu",
         "gpu"
       ]
+    },
+    "simulator_options": {
+      "description": "Parámetros de construcción del simulador GPU. Requiere --backend gpu-simulator.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "simt_region_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "simt_path_depth": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     }
   },
   "$defs": {
@@ -264,8 +279,17 @@
           }
         },
         "not": {
-          "required": [
-            "warp_config"
+          "anyOf": [
+            {
+              "required": [
+                "warp_config"
+              ]
+            },
+            {
+              "required": [
+                "simulator_options"
+              ]
+            }
           ]
         }
       }

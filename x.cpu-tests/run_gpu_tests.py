@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
 FPGA_MEMORY_SIZE = 16 * 1024
 ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
+# Opciones de construcción que un caso GPU puede fijar sobre el simulador.
+SIMULATOR_OPTIONS = ("simt_region_depth", "simt_path_depth")
 BACKEND_DEFINITIONS = {
     "gpu-simulator": {
         "class": GpuBackend,
@@ -271,6 +273,24 @@ def gpu_expectations(raw: dict, warp_size: int) -> dict:
     return observations
 
 
+def simulator_options(raw: dict, architecture: str) -> dict:
+    """Opciones de construcción del simulador declaradas por el caso."""
+    options = raw.get("simulator_options", {})
+    if not options:
+        return {}
+    if architecture != "gpu":
+        raise ValueError("simulator_options solo se admite en casos GPU")
+    if not isinstance(options, dict):
+        raise ValueError("simulator_options debe contener un objeto JSON")
+    unknown = set(options) - set(SIMULATOR_OPTIONS)
+    if unknown:
+        raise ValueError(f"simulator_options desconocidas: {', '.join(sorted(unknown))}")
+    for name, value in options.items():
+        if type(value) is not int or value < 1:
+            raise ValueError(f"simulator_options.{name} debe ser un entero positivo")
+    return dict(options)
+
+
 def case_architecture(raw: object) -> str:
     if not isinstance(raw, dict) or raw.get("architecture") not in ("cpu", "gpu"):
         raise ValueError("El caso requiere architecture: cpu o gpu")
@@ -351,6 +371,7 @@ def load_case(path: Path) -> dict:
         "initial_memory": initial_memory,
         "max_instructions": max_instructions,
         "timeout_seconds": float(timeout_seconds),
+        "simulator_options": simulator_options(raw, architecture),
         "expected": {
             "halted": expected_raw.get("halted", True),
             "error": expected_raw.get("error", False),
@@ -444,6 +465,13 @@ def main() -> int:
                 skipped += 1
                 continue
             validate_compatibility(architecture, backend_names)
+            # Las profundidades SIMT son parámetros del simulador: la FPGA las
+            # tiene fijadas en el hardware y no puede reproducir el caso.
+            if simulator_options(raw, architecture) and backend_names != ("gpu-simulator",):
+                if not args.cases:
+                    skipped += 1
+                    continue
+                raise ValueError("simulator_options requiere --backend gpu-simulator")
             cases.append((path, load_case(path)))
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"ERROR {path}: {error}", file=sys.stderr)
@@ -493,6 +521,7 @@ def main() -> int:
                         "trace_detail": args.trace_detail,
                         "trace_limit": args.trace_limit,
                         "trace_file": args.trace_file,
+                        "simulator_options": case["simulator_options"],
                     } if backend_name == "gpu-simulator" else {}),
                 )
                 results[backend_name] = result

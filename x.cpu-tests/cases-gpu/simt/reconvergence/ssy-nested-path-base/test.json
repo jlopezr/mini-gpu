@@ -1,0 +1,54 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-nested-path-base",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 150,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 16,
+        "registers": {
+          "0": {
+            "R4": 10,
+            "R5": 30
+          },
+          "1": {
+            "R4": 10,
+            "R5": 30
+          },
+          "2": {
+            "R4": 20,
+            "R5": 30
+          },
+          "3": {
+            "R4": 20,
+            "R5": 30
+          },
+          "4": {
+            "R4": 0,
+            "R5": 40
+          },
+          "5": {
+            "R4": 0,
+            "R5": 40
+          },
+          "6": {
+            "R4": 0,
+            "R5": 40
+          },
+          "7": {
+            "R4": 0,
+            "R5": 40
+          }
+        }
+      }
+    },
+    "instructions_executed": 16
+  }
+}

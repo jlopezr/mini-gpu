@@ -1,0 +1,44 @@
+{
+  "architecture": "gpu",
+  "name": "branch-target-next-pc",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R3": 55
+          },
+          "1": {
+            "R3": 55
+          },
+          "2": {
+            "R3": 55
+          },
+          "3": {
+            "R3": 55
+          },
+          "4": {
+            "R3": 55
+          },
+          "5": {
+            "R3": 55
+          },
+          "6": {
+            "R3": 55
+          },
+          "7": {
+            "R3": 55
+          }
+        }
+      }
+    }
+  }
+}

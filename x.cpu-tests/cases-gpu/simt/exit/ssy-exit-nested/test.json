@@ -1,0 +1,46 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-exit-nested",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 150,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 14,
+        "registers": {
+          "0": {
+            "R4": 0
+          },
+          "1": {
+            "R4": 0
+          },
+          "2": {
+            "R4": 44
+          },
+          "3": {
+            "R4": 44
+          },
+          "4": {
+            "R4": 88
+          },
+          "5": {
+            "R4": 88
+          },
+          "6": {
+            "R4": 88
+          },
+          "7": {
+            "R4": 88
+          }
+        }
+      }
+    },
+    "instructions_executed": 14
+  }
+}

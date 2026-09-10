@@ -1,0 +1,26 @@
+{
+  "architecture": "gpu",
+  "name": "simt-stack-overflow-conformance",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 20,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 6,
+    "fault": {
+      "pc": 32,
+      "warp_id": 0,
+      "core_id": null,
+      "address": null
+    },
+    "instructions_executed": 8,
+    "warps": {
+      "0": {
+        "pc": 32,
+        "active_mask": 1,
+        "instructions_executed": 8
+      }
+    }
+  }
+}

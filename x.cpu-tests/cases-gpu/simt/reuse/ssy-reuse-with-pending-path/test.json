@@ -1,0 +1,54 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-reuse-with-pending-path",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 200,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 24,
+        "registers": {
+          "0": {
+            "R3": 4,
+            "R4": 0
+          },
+          "1": {
+            "R3": 4,
+            "R4": 0
+          },
+          "2": {
+            "R3": 4,
+            "R4": 0
+          },
+          "3": {
+            "R3": 4,
+            "R4": 0
+          },
+          "4": {
+            "R3": 0,
+            "R4": 99
+          },
+          "5": {
+            "R3": 0,
+            "R4": 99
+          },
+          "6": {
+            "R3": 0,
+            "R4": 99
+          },
+          "7": {
+            "R3": 0,
+            "R4": 99
+          }
+        }
+      }
+    },
+    "instructions_executed": 24
+  }
+}

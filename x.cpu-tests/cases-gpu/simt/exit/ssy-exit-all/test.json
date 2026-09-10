@@ -1,0 +1,21 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-exit-all",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "instructions_executed": 6,
+    "warps": {
+      "0": {
+        "pc": 24,
+        "active_mask": 0,
+        "instructions_executed": 6
+      }
+    }
+  }
+}

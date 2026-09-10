@@ -1,0 +1,46 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-bar-at-join",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R3": 11
+          },
+          "1": {
+            "R3": 11
+          },
+          "2": {
+            "R3": 11
+          },
+          "3": {
+            "R3": 11
+          },
+          "4": {
+            "R3": 22
+          },
+          "5": {
+            "R3": 22
+          },
+          "6": {
+            "R3": 22
+          },
+          "7": {
+            "R3": 22
+          }
+        },
+        "instructions_executed": 10
+      }
+    },
+    "instructions_executed": 10
+  }
+}

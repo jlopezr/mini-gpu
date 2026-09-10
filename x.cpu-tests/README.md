@@ -10,7 +10,7 @@ Desde `x.cpu-tests`:
 
 ```powershell
 python run_gpu_tests.py --backend gpu-simulator
-python run_gpu_tests.py cases-gpu/vecsum/test.json --backend gpu-simulator
+python run_gpu_tests.py cases-gpu/memory/vecsum/test.json --backend gpu-simulator
 python -m unittest discover -s . -p test_gpu_runner.py -v
 ```
 
@@ -74,7 +74,7 @@ mostrados, pero no la ejecución ni las comprobaciones del caso; `--trace-file`
 los guarda en vez de escribirlos en stderr:
 
 ```powershell
-python run_gpu_tests.py cases-gpu/vecsum/test.json --backend gpu-simulator `
+python run_gpu_tests.py cases-gpu/memory/vecsum/test.json --backend gpu-simulator `
     --trace --trace-limit 100 --trace-file ejecucion.log
 ```
 
@@ -158,6 +158,31 @@ Los ficheros de memoria inicial y los dumps esperados pueden ser binarios o
 `.hex`. En un fichero `.hex`, cada línea representa una palabra de 32 bits que
 se convierte a cuatro bytes little-endian; se admiten comentarios con `#`.
 
+## Opciones del simulador
+
+Un caso GPU puede fijar parámetros de construcción del simulador con la clave
+opcional `simulator_options`:
+
+```json
+{
+  "architecture": "gpu",
+  "name": "ssy-path-overflow-depth4",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "simulator_options": {
+    "simt_region_depth": 8,
+    "simt_path_depth": 4
+  },
+  "expect": {}
+}
+```
+
+Equivalen a `--simt-region-depth` y `--simt-path-depth` de `minigpu_sim.py` y
+permiten provocar overflow de las pilas SIMT sin programas enormes. Como son
+parámetros del simulador, la FPGA no puede reproducirlos: un caso que las use se
+omite en el descubrimiento automático si el backend no es `gpu-simulator`, y se
+rechaza si se pide explícitamente. Los casos CPU no las admiten.
+
 ## Direcciones de datos
 
 Los JSON, los programas, el simulador, la CPU y el monitor utilizan siempre
@@ -203,22 +228,23 @@ ensamblador, CPU, memoria, monitor y backend.
 
 ## Casos GPU y diagnóstico de fallos
 
-`cases-gpu` contiene:
+`cases-gpu` agrupa los casos por la propiedad que validan. Cada grupo y cada
+caso tienen su propio `README.md`:
 
-| Caso | Qué comprueba |
+| Grupo | Qué valida |
 |---|---|
-| `vecsum` | Dos warps suman 16 elementos; registros, PC y contador |
-| [mandelbrot](cases-gpu/mandelbrot/README.md) | Imagen Q16.16 de 320×240 con ocho warps; compara todos los píxeles con referencia escalar (prueba larga) |
-| `vecsum-partial` | Máscara parcial; las salidas inactivas conservan `DEADBEEF` |
-| `independent-pcs` | W0 y W3 empiezan en PC distintos y terminan en pasos distintos |
-| `memory-copy` | Copia de 16 palabras con patrones de 32 bits; conserva la fuente |
-| `division-by-zero` | Fallo en hilo 3; no modifica los destinos de los hilos anteriores |
-| `load-out-of-bounds` | Lectura inválida del hilo 3; conserva todos los registros destino |
-| `store-out-of-bounds` | Escritura inválida del hilo 3; conserva la memoria de los hilos anteriores |
-| `trap-global` | Fallo común del warp sin hilo concreto |
-| `simt-stack-overflow` | Nueve contextos pendientes deben producir `ERROR_SIMT`; actualmente descubre la pila ilimitada del simulador |
-| `simt-unused-ssy-loop` | Un `SSY` uniforme no consumido se repite en un bucle; actualmente descubre la acumulación redundante del RTL |
-| `simt-reached-join` | Alcanzar el join en cada vuelta debe desapilar correctamente |
+| [simt/reconvergence](cases-gpu/simt/reconvergence/) | Divergir y volver a juntarse en el join |
+| [simt/reuse](cases-gpu/simt/reuse/) | Reejecutar un `SSY` que ya está en el top |
+| [simt/exit](cases-gpu/simt/exit/) | Lanes que mueren con estado SIMT abierto |
+| [simt/capacity](cases-gpu/simt/capacity/) | Límites de las pilas REGION y PATH |
+| [simt/barriers](cases-gpu/simt/barriers/) | Interacción de `BAR` con la divergencia |
+| [faults](cases-gpu/faults/) | Diagnóstico y atomicidad de los fallos de ejecución |
+| [memory](cases-gpu/memory/) | `LOAD`/`STORE` con varios warps y máscaras parciales |
+| [scheduling](cases-gpu/scheduling/) | PC y contadores independientes por warp |
+| [programs](cases-gpu/programs/) | Programas completos de integración |
+
+El descubrimiento automático es recursivo, así que añadir un caso solo requiere
+crear su carpeta dentro del grupo que le corresponda.
 
 Los casos de fallo verifican que el siguiente warp se queda en su PC anterior:
 no ejecuta otra instrucción tras el error global. Las pruebas del runner también

@@ -1,0 +1,52 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-loop-reuse",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R1": 100,
+            "R3": 100
+          },
+          "1": {
+            "R1": 101,
+            "R3": 101
+          },
+          "2": {
+            "R1": 102,
+            "R3": 102
+          },
+          "3": {
+            "R1": 103,
+            "R3": 103
+          },
+          "4": {
+            "R1": 104,
+            "R3": 104
+          },
+          "5": {
+            "R1": 105,
+            "R3": 105
+          },
+          "6": {
+            "R1": 106,
+            "R3": 106
+          },
+          "7": {
+            "R1": 107,
+            "R3": 107
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-path-overflow-depth4",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "simulator_options": {
+    "simt_path_depth": 4
+  },
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 6,
+    "fault": {
+      "pc": 44,
+      "warp_id": 0,
+      "core_id": null,
+      "address": null
+    },
+    "warps": {
+      "0": {
+        "pc": 44,
+        "active_mask": 15
+      }
+    }
+  }
+}

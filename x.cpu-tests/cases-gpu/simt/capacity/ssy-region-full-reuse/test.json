@@ -1,0 +1,57 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-region-full-reuse",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "simulator_options": {
+    "simt_region_depth": 1
+  },
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 18,
+        "registers": {
+          "0": {
+            "R2": 3,
+            "R3": 3
+          },
+          "1": {
+            "R2": 3,
+            "R3": 3
+          },
+          "2": {
+            "R2": 3,
+            "R3": 3
+          },
+          "3": {
+            "R2": 3,
+            "R3": 3
+          },
+          "4": {
+            "R2": 3,
+            "R3": 3
+          },
+          "5": {
+            "R2": 3,
+            "R3": 3
+          },
+          "6": {
+            "R2": 3,
+            "R3": 3
+          },
+          "7": {
+            "R2": 3,
+            "R3": 3
+          }
+        }
+      }
+    },
+    "instructions_executed": 18
+  }
+}

@@ -26,11 +26,12 @@ class GpuBackend:
             register_numbers: set[int], memory_ranges: list[tuple[int, int]],
             max_instructions: int, timeout_seconds: float, warp_config: object,
             trace: bool = False, trace_detail: bool = False,
-            trace_limit: int | None = None, trace_file: Path | None = None) -> dict:
+            trace_limit: int | None = None, trace_file: Path | None = None,
+            simulator_options: dict | None = None) -> dict:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
         size = self.module.config_warp_size(warp_config)
-        gpu = self.module.System(warp_size=size)
+        gpu = self.module.System(warp_size=size, **(simulator_options or {}))
         gpu.load_program(program, launch=False)
         for address, data in initial_memory:
             if address < 0 or address + len(data) > len(gpu.memory):

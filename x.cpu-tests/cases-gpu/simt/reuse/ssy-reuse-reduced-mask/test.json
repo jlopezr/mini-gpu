@@ -1,0 +1,46 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-reuse-reduced-mask",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 200,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "fault": null,
+    "warps": {
+      "0": {
+        "active_mask": 0,
+        "instructions_executed": 22,
+        "registers": {
+          "0": {
+            "R4": 0
+          },
+          "1": {
+            "R4": 1
+          },
+          "2": {
+            "R4": 2
+          },
+          "3": {
+            "R4": 3
+          },
+          "4": {
+            "R4": 3
+          },
+          "5": {
+            "R4": 3
+          },
+          "6": {
+            "R4": 3
+          },
+          "7": {
+            "R4": 3
+          }
+        }
+      }
+    },
+    "instructions_executed": 22
+  }
+}

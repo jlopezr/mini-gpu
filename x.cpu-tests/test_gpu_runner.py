@@ -10,7 +10,7 @@ from run_gpu_tests import ROOT, REPOSITORY, load_case, compare_result, discover_
 
 class GpuRunnerTest(unittest.TestCase):
     def setUp(self):
-        self.path = ROOT / 'cases-gpu/vecsum/test.json'
+        self.path = ROOT / 'cases-gpu/memory/vecsum/test.json'
         self.case = load_case(self.path)
         self.backend = GpuBackend(REPOSITORY)
 
@@ -82,7 +82,7 @@ class GpuRunnerTest(unittest.TestCase):
                 factory.assert_not_called()
 
     def test_fault_diagnostics_detect_wrong_and_missing_fields(self):
-        case = load_case(ROOT / 'cases-gpu/division-by-zero/test.json')
+        case = load_case(ROOT / 'cases-gpu/faults/division-by-zero/test.json')
         result = self.run_case(case)
         self.assertEqual(compare_result(case, result, 'gpu-simulator'), [])
         for field, value in (('pc', 0), ('warp_id', 1), ('core_id', 2), ('address', 128)):
@@ -104,7 +104,7 @@ class GpuRunnerTest(unittest.TestCase):
                 gpu_expectations({'fault': fault}, 8)
 
     def test_scheduler_skips_finished_warps(self):
-        case = load_case(ROOT / 'cases-gpu/independent-pcs/test.json')
+        case = load_case(ROOT / 'cases-gpu/scheduling/independent-pcs/test.json')
         gpu = self.backend.module.System(warp_size=8)
         gpu.load_program(case['program'], launch=False)
         gpu.configure_warps(case['warp_config'])
@@ -117,7 +117,7 @@ class GpuRunnerTest(unittest.TestCase):
         self.assertEqual(order, [0, 3, 0, 3, 3])
 
     def test_fault_is_terminal_and_does_not_overwrite_diagnostic(self):
-        case = load_case(ROOT / 'cases-gpu/store-out-of-bounds/test.json')
+        case = load_case(ROOT / 'cases-gpu/faults/store-out-of-bounds/test.json')
         gpu = self.backend.module.System(warp_size=8)
         gpu.load_program(case['program'], launch=False)
         gpu.configure_warps(case['warp_config'])

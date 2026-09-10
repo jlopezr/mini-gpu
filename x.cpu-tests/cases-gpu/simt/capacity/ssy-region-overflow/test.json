@@ -1,0 +1,27 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-region-overflow",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 100,
+  "simulator_options": {
+    "simt_region_depth": 1
+  },
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 6,
+    "fault": {
+      "pc": 8,
+      "warp_id": 0,
+      "core_id": null,
+      "address": null
+    },
+    "warps": {
+      "0": {
+        "pc": 8,
+        "active_mask": 255
+      }
+    }
+  }
+}

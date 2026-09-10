@@ -1,0 +1,9 @@
+{
+  "warp_size": 8,
+  "warps": [
+    {
+      "id": 0,
+      "active_mask": 255
+    }
+  ]
+}
