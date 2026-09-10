@@ -83,28 +83,33 @@ def read_monitor_version(monitor: ModuleType, port: str,
             version = monitor.MonitorClient(connection).get_version()
         except Exception as error:
             raise MonitorSilent(
-                f"La placa en {port} no responde a GET_VERSION: {error}. "
+                f"La placa en {port} no responde a GET_VERSION: {error}.\n"
                 "Probablemente la FPGA no tiene ningún bitstream con monitor."
             ) from error
     return (version.major, version.minor)
 
 
 def upload(project: Path) -> None:
-    """Ejecuta `apio upload` en el directorio del proyecto."""
-    print(f"Cargando el bitstream de {project.name} con `apio upload`...")
+    """Ejecuta `apio upload` en el directorio del proyecto.
+
+    No captura la salida: sintetizar y cargar puede tardar minutos y sin verla
+    parece que el runner se ha colgado. `apio` hereda la consola y escribe su
+    progreso en vivo.
+    """
+    print(f"--- `apio upload` en {project} "
+          f"(puede tardar varios minutos) ---", flush=True)
     try:
-        completed = subprocess.run(
-            ["apio", "upload"], cwd=project, text=True, capture_output=True,
-        )
+        completed = subprocess.run(["apio", "upload"], cwd=project)
     except FileNotFoundError as error:
         raise BitstreamMismatch(
             "No se encuentra `apio` en el PATH; instálalo o carga el bitstream "
             f"a mano desde {project}."
         ) from error
+    print("--- fin de `apio upload` ---", flush=True)
     if completed.returncode != 0:
         raise BitstreamMismatch(
             f"`apio upload` falló en {project} con código "
-            f"{completed.returncode}:\n{completed.stderr.strip()}"
+            f"{completed.returncode}; revisa su salida más arriba."
         )
 
 
@@ -124,7 +129,8 @@ def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
     except MonitorSilent as error:
         # Placa presente pero sin programar: se arregla cargando el bitstream.
         problem = (
-            f"{error} --backend {backend} --version {version_name} requiere "
+            f"{error}\n"
+            f"--backend {backend} --version {version_name} requiere "
             f"monitor {expected_text}."
         )
     else:
@@ -138,10 +144,10 @@ def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
         )
     if not policy.allowed:
         raise BitstreamMismatch(
-            f"{problem} Carga el bitstream de {project} o quita --no-upload."
+            f"{problem}\nCarga el bitstream de {project} o quita --no-upload."
         )
     if not policy.confirm(f"{problem}\n¿Cargar el bitstream de {project}?"):
-        raise BitstreamMismatch(f"{problem} Carga cancelada.")
+        raise BitstreamMismatch(f"{problem}\nCarga cancelada.")
 
     upload(project)
 

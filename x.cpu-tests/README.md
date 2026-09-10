@@ -53,12 +53,52 @@ estado de parada, error, PC, registros solicitados y regiones de memoria.
 
 ## Ejecución
 
+Hay cinco combinaciones de backend y versión. Cada una ejecuta la suite entera
+de su arquitectura; el runner omite por su cuenta los casos de la otra.
+
 Desde `x.cpu-tests`:
 
 ```powershell
+# 1. CPU sobre el simulador funcional
 python run_gpu_tests.py --backend cpu-simulator
+
+# 2. CPU sobre FPGA, versión EBR
 python run_gpu_tests.py --backend cpu-fpga --version ebr --port COM3
+
+# 3. CPU sobre FPGA, versión SDRAM
 python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
+
+# 4. GPU sobre el simulador funcional
+python run_gpu_tests.py --backend gpu-simulator
+
+# 5. GPU sobre FPGA, versión BRAM
+python run_gpu_tests.py --backend gpu-fpga --version bram --port COM3
+```
+
+Qué necesita y qué ejecuta cada una:
+
+| # | Backend y versión | Bitstream | Monitor | Casos |
+|---:|---|---|---:|---|
+| 1 | `cpu-simulator` | ninguno | — | los 12 de `cases/` |
+| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | los 12 de `cases/` |
+| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | los 12 de `cases/` |
+| 4 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
+| 5 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.0 | los de `cases-gpu/` salvo los que usan `simulator_options` |
+
+`ebr` y `sdram` son versiones del backend **CPU**; `bram` lo es del backend
+**GPU**. No hay ninguna versión `ebr` de GPU.
+
+Los cuatro casos de [simt/capacity](cases-gpu/simt/capacity/) que reducen la
+profundidad de las pilas con `simulator_options` se omiten en la combinación 5:
+son parámetros del simulador y la FPGA los tiene fijados en el hardware.
+
+Los tres backends de FPGA comprueban la placa al arrancar y, si hace falta,
+ofrecen cargar su bitstream; ver [Placa y bitstream](#placa-y-bitstream).
+
+Además, `--backend both` ejecuta cada caso CPU en el simulador **y** en la FPGA
+y compara los dos estados observados entre sí:
+
+```powershell
 python run_gpu_tests.py --backend both --version cpu-fpga=sdram --port COM3
 ```
 
@@ -117,33 +157,43 @@ predeterminada. Añadir una variante nueva solo requiere incorporarla al
 registro `VERSIONS` del módulo correspondiente; el runner no contiene una
 lista especial de versiones FPGA o del simulador.
 
-El backend FPGA comprueba además la versión física mediante `GET_VERSION`
-antes de modificar la memoria:
+## Placa y bitstream
 
-| Valor | Proyecto | Monitor | Memoria implementada |
-|---|---|---:|---|
-| `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
-| `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
+Los backends de FPGA comprueban la versión física mediante `GET_VERSION`:
 
-La versión predeterminada de FPGA es `ebr` para conservar la compatibilidad con los
-comandos anteriores. La comprobación ocurre una sola vez al construir el backend,
-antes de ejecutar ningún caso, y distingue dos situaciones:
+| Backend | Valor | Proyecto | Monitor | Memoria implementada |
+|---|---|---|---:|---|
+| `cpu-fpga` | `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
+| `cpu-fpga` | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
+| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.0 | 128 KiB de BRAM, 8 warps × 8 lanes |
 
-- **La placa no responde** en el puerto indicado: error, sin más. No hay nada que
-  cargar.
-- **La placa responde con otro monitor**: se ofrece cargar el bitstream del
-  proyecto correspondiente con `apio upload`, previa confirmación.
+La versión predeterminada de `cpu-fpga` es `ebr`, para conservar la
+compatibilidad con los comandos anteriores. La comprobación ocurre **una sola
+vez al construir el backend**, antes de ejecutar ningún caso, y distingue tres
+situaciones:
+
+| Situación | Qué significa | Qué hace el runner |
+|---|---|---|
+| No se abre el puerto | No hay placa, o la tiene abierta otro programa | Error, sin más. No hay nada que cargar |
+| El puerto abre pero el monitor no contesta | La FPGA no tiene bitstream con monitor. El chip USB-serie de la placa enumera igual, tenga o no bitstream | Ofrece cargarlo |
+| Contesta con otra versión | Está cargado el bitstream de otro proyecto | Ofrece cargar el que toca |
 
 ```powershell
-python run_gpu_tests.py --backend cpu-fpga --port COM3            # pregunta
-python run_gpu_tests.py --backend cpu-fpga --port COM3 --yes      # carga sin preguntar
+python run_gpu_tests.py --backend cpu-fpga --port COM3              # pregunta
+python run_gpu_tests.py --backend cpu-fpga --port COM3 --yes        # carga sin preguntar
 python run_gpu_tests.py --backend cpu-fpga --port COM3 --no-upload  # nunca carga
 ```
 
+La carga se hace con `apio upload` en el directorio del proyecto, y su salida se
+ve en vivo, porque sintetizar puede tardar varios minutos y sin verla parece que
+el runner se ha colgado.
+
 Sin terminal interactiva y sin `--yes` el runner falla en vez de quedarse
-esperando una respuesta que nadie va a dar. Después de cargar vuelve a preguntar
-la versión: que `apio upload` termine con éxito no garantiza que la placa quedara
-programada.
+esperando una respuesta que nadie va a dar; es el caso de CI o de una tubería.
+`--yes` y `--no-upload` se excluyen entre sí.
+
+Después de cargar vuelve a preguntar la versión: que `apio upload` termine con
+éxito no garantiza que la placa quedara programada.
 
 `RESET_CPU` permite ejecutar casos consecutivos sin reconfigurar la placa ni
 borrar sus memorias.

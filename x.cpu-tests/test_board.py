@@ -157,12 +157,20 @@ class BoardTest(unittest.TestCase):
                 board.upload(PROJECT)
         self.assertIn("apio", str(caught.exception))
 
-    def test_apio_con_error_propaga_stderr(self):
-        completed = SimpleNamespace(returncode=2, stderr="placa ocupada")
+    def test_apio_con_error_informa_del_codigo(self):
+        completed = SimpleNamespace(returncode=2)
         with mock.patch("subprocess.run", return_value=completed):
             with self.assertRaises(board.BitstreamMismatch) as caught:
                 board.upload(PROJECT)
-        self.assertIn("placa ocupada", str(caught.exception))
+        self.assertIn("código 2", str(caught.exception))
+
+    def test_apio_no_captura_su_salida(self):
+        # Si se capturara, una carga de varios minutos pareceria un cuelgue.
+        completed = SimpleNamespace(returncode=0)
+        with mock.patch("subprocess.run", return_value=completed) as run:
+            board.upload(PROJECT)
+        self.assertNotIn("capture_output", run.call_args.kwargs)
+        self.assertNotIn("stdout", run.call_args.kwargs)
 
 
 if __name__ == "__main__":
