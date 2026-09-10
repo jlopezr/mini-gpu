@@ -1,11 +1,11 @@
-// Project F: Racing the Beam - Colour Cycle (ULX3S)
+// Project F: Racing the Beam - Bounce (ULX3S)
 // Copyright Will Green, open source hardware released under the MIT License
 // Learn more at https://projectf.io/posts/racing-the-beam/
 
 `default_nettype none
 `timescale 1ns / 1ps
 
-module top_colour_cycle (
+module top_bounce (
     input  wire logic clk_25mhz,     // 25 MHz clock
     input  wire logic [6:0] btn,     // buttons (btn[1] = FIRE1, active high)
     output      logic [3:0] gpdi_dp  // DVI out
@@ -40,9 +40,7 @@ module top_colour_cycle (
 
     // display sync signals and coordinates
     localparam CORDW = 12;  // screen coordinate width in bits
-    /* verilator lint_off UNUSED */
     logic [CORDW-1:0] sx, sy;
-    /* verilator lint_on UNUSED */
     logic hsync, vsync, de;
     simple_720p display_inst (
         .clk_pix,
@@ -55,31 +53,68 @@ module top_colour_cycle (
     );
 
     // screen dimensions (must match display_inst)
-    localparam V_RES = 720;  // vertical screen resolution
+    localparam H_RES = 1280;  // horizontal screen resolution
+    localparam V_RES =  720;  // vertical screen resolution
 
     logic frame;  // high for one clock tick at the start of vertical blanking
     always_comb frame = (sy == V_RES && sx == 0);
 
-    // update the colour level every N frames
-    localparam FRAME_NUM = 30;  // frames between colour level change
+    // frame counter lets us to slow down the action
+    localparam FRAME_NUM = 1;  // slow-mo: animate every N frames
     logic [$clog2(FRAME_NUM):0] cnt_frame;  // frame counter
-    logic [3:0] colr_level;  // level of colour being cycled
-
     always_ff @(posedge clk_pix) begin
-        if (frame) begin
-            if (cnt_frame == FRAME_NUM-1) begin  // every FRAME_NUM frames
-                cnt_frame <= 0;
-                colr_level <= colr_level + 1;
-            end else cnt_frame <= cnt_frame + 1;
+        if (frame) cnt_frame <= (cnt_frame == FRAME_NUM-1) ? 0 : cnt_frame + 1;
+    end
+
+    // square parameters
+    localparam Q_SIZE = 200;   // size in pixels
+    logic [CORDW-1:0] qx, qy;  // position (origin at top left)
+    logic qdx, qdy;            // direction: 0 is right/down
+    logic [CORDW-1:0] qs = 2;  // speed in pixels/frame
+
+    // update square position once per frame
+    always_ff @(posedge clk_pix) begin
+        if (frame && cnt_frame == 0) begin
+            // horizontal position
+            if (qdx == 0) begin  // moving right
+                if (qx + Q_SIZE + qs >= H_RES-1) begin  // hitting right of screen?
+                    qx <= H_RES - Q_SIZE - 1;  // move right as far as we can
+                    qdx <= 1;  // move left next frame
+                end else qx <= qx + qs;  // continue moving right
+            end else begin  // moving left
+                if (qx < qs) begin  // hitting left of screen?
+                    qx <= 0;  // move left as far as we can
+                    qdx <= 0;  // move right next frame
+                end else qx <= qx - qs;  // continue moving left
+            end
+
+            // vertical position
+            if (qdy == 0) begin  // moving down
+                if (qy + Q_SIZE + qs >= V_RES-1) begin  // hitting bottom of screen?
+                    qy <= V_RES - Q_SIZE - 1;  // move down as far as we can
+                    qdy <= 1;  // move up next frame
+                end else qy <= qy + qs;  // continue moving down
+            end else begin  // moving up
+                if (qy < qs) begin  // hitting top of screen?
+                    qy <= 0;  // move up as far as we can
+                    qdy <= 0;  // move down next frame
+                end else qy <= qy - qs;  // continue moving up
+            end
         end
     end
 
-    // paint colour: based on screen position
+    // define a square with screen coordinates
+    logic square;
+    always_comb begin
+        square = (sx >= qx) && (sx < qx + Q_SIZE) && (sy >= qy) && (sy < qy + Q_SIZE);
+    end
+
+    // paint colour: white inside square, blue outside
     logic [3:0] paint_r, paint_g, paint_b;
     always_comb begin
-        paint_r = sx[8:5];  // 32 horizontal pixels of each red level
-        paint_g = sy[8:5];  // 32 vertical pixels of each green level
-        paint_b = colr_level;  // blue level changes over time
+        paint_r = (square) ? 4'hF : 4'h1;
+        paint_g = (square) ? 4'hF : 4'h3;
+        paint_b = (square) ? 4'hF : 4'h7;
     end
 
     // display colour: paint colour but black in blanking interval

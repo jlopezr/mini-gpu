@@ -1,13 +1,13 @@
-// Project F: Racing the Beam - Colour Cycle (ULX3S)
+// Project F: Racing the Beam - Hello (ULX3S)
 // Copyright Will Green, open source hardware released under the MIT License
 // Learn more at https://projectf.io/posts/racing-the-beam/
 
 `default_nettype none
 `timescale 1ns / 1ps
 
-module top_colour_cycle (
-    input  wire logic clk_25mhz,     // 25 MHz clock
-    input  wire logic [6:0] btn,     // buttons (btn[1] = FIRE1, active high)
+module top_hello (
+    input  wire logic clk_25m,       // 25 MHz clock
+    input  wire logic btn_rst_n,     // reset button
     output      logic [3:0] gpdi_dp  // DVI out
     );
 
@@ -23,20 +23,11 @@ module top_colour_cycle (
         .CLKOS_DIV(10),
         .CLKOS_CPHASE(5)
     ) clock2_gen_inst (
-       .clk_in(clk_25mhz),
+       .clk_in(clk_25m),
        .clk_5x_out(clk_pix_5x),
        .clk_out(clk_pix),
        .clk_locked(clk_pix_locked)
     );
-
-    // reset: on PLL lock loss, or FIRE1 pressed (synced into pixel domain)
-    logic btn_rst_sync_0, btn_rst_sync_1;
-    always_ff @(posedge clk_pix) begin
-        btn_rst_sync_0 <= btn[1];
-        btn_rst_sync_1 <= btn_rst_sync_0;
-    end
-    logic rst_pix;
-    always_comb rst_pix = !clk_pix_locked || btn_rst_sync_1;
 
     // display sync signals and coordinates
     localparam CORDW = 12;  // screen coordinate width in bits
@@ -46,7 +37,7 @@ module top_colour_cycle (
     logic hsync, vsync, de;
     simple_720p display_inst (
         .clk_pix,
-        .rst_pix(rst_pix),
+        .rst_pix(!clk_pix_locked),  // wait for clock lock
         .sx,
         .sy,
         .hsync,
@@ -54,32 +45,41 @@ module top_colour_cycle (
         .de
     );
 
-    // screen dimensions (must match display_inst)
-    localparam V_RES = 720;  // vertical screen resolution
+    // bitmap: MSB first, so we can write pixels left to right
+    /* verilator lint_off LITENDIAN */
+    logic [0:19] bmap [11];  // 20 pixels by 11 lines
+    /* verilator lint_on LITENDIAN */
 
-    logic frame;  // high for one clock tick at the start of vertical blanking
-    always_comb frame = (sy == V_RES && sx == 0);
-
-    // update the colour level every N frames
-    localparam FRAME_NUM = 30;  // frames between colour level change
-    logic [$clog2(FRAME_NUM):0] cnt_frame;  // frame counter
-    logic [3:0] colr_level;  // level of colour being cycled
-
-    always_ff @(posedge clk_pix) begin
-        if (frame) begin
-            if (cnt_frame == FRAME_NUM-1) begin  // every FRAME_NUM frames
-                cnt_frame <= 0;
-                colr_level <= colr_level + 1;
-            end else cnt_frame <= cnt_frame + 1;
-        end
+    initial begin
+        bmap[0]  = 20'b1010_1110_1000_1000_0110;
+        bmap[1]  = 20'b1010_1000_1000_1000_1010;
+        bmap[2]  = 20'b1110_1100_1000_1000_1010;
+        bmap[3]  = 20'b1010_1000_1000_1000_1010;
+        bmap[4]  = 20'b1010_1110_1110_1110_1100;
+        bmap[5]  = 20'b0000_0000_0000_0000_0000;
+        bmap[6]  = 20'b1010_0110_1110_1000_1100;
+        bmap[7]  = 20'b1010_1010_1010_1000_1010;
+        bmap[8]  = 20'b1010_1010_1100_1000_1010;
+        bmap[9]  = 20'b1110_1010_1010_1000_1010;
+        bmap[10] = 20'b1110_1100_1010_1110_1110;
     end
 
-    // paint colour: based on screen position
+    // paint at 64x scale in active screen area
+    logic picture;
+    logic [4:0] x;  // 20 columns need five bits
+    logic [3:0] y;  // 11 rows need four bits
+    always_comb begin
+        x = sx[10:6];  // every 64 horizontal pixels
+        y = sy[9:6];   // every 64 vertical pixels
+        picture = de ? bmap[y][x] : 0;  // look up pixel (unless we're in blanking)
+    end
+
+    // paint colour: yellow lines, blue background
     logic [3:0] paint_r, paint_g, paint_b;
     always_comb begin
-        paint_r = sx[8:5];  // 32 horizontal pixels of each red level
-        paint_g = sy[8:5];  // 32 vertical pixels of each green level
-        paint_b = colr_level;  // blue level changes over time
+        paint_r = (picture) ? 4'hF : 4'h1;
+        paint_g = (picture) ? 4'hC : 4'h3;
+        paint_b = (picture) ? 4'h0 : 4'h7;
     end
 
     // display colour: paint colour but black in blanking interval
@@ -107,7 +107,7 @@ module top_colour_cycle (
     dvi_generator dvi_out (
         .clk_pix,
         .clk_pix_5x,
-        .rst_pix(rst_pix),
+        .rst_pix(!clk_pix_locked),
         .de(dvi_de),
         .data_in_ch0(dvi_b),
         .data_in_ch1(dvi_g),
