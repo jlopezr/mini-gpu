@@ -1,7 +1,6 @@
 # MiniISA v0.1
 
-Este documento es la especificación de la ISA usada por MiniCPU y la futura
-MiniGPU. Cuando el código y este texto discrepen, la discrepancia debe tratarse
+Este documento es la especificación de la ISA usada por MiniCPU y MiniGPU. Cuando el código y este texto discrepen, la discrepancia debe tratarse
 como un error; no se debe deducir la ISA exclusivamente del simulador.
 
 ## 1. Estado arquitectónico
@@ -64,7 +63,7 @@ El significado de `X`, `Y` e `imm16` depende de la instrucción:
       6                         26
 ```
 
-En v0.1 sólo `BRA` usa este formato.
+`BRA` y la instrucción SIMT `SSY` usan este formato.
 
 ## 3. Mapa de opcodes
 
@@ -160,21 +159,47 @@ El ensamblador calcula estos offsets al resolver labels.
 
 |      Opcode | Mnemónico | Operandos | Estado                                 |
 |------------:|-----------|-----------|----------------------------------------|
-|      `0x30` | `GETTID`  | `Rd`      | Definida; implementada en MiniCPU      |
-|      `0x31` | `GETLANE` | `Rd`      | Reservada para GPU                     |
-|      `0x32` | `GETWARP` | `Rd`      | Reservada para GPU                     |
-|      `0x33` | `BAR`     | —         | Reservada para GPU                     |
+|      `0x30` | `GETTID`  | `Rd`      | Implementada en MiniCPU y MiniGPU       |
+|      `0x31` | `SSY`     | `label`   | Implementada en MiniGPU; B-Type         |
+|      `0x32` | `BAR`     | —         | Implementada en MiniGPU                 |
+|      `0x33` | `EXIT`    | —         | Implementada en MiniGPU                 |
 | `0x34–0x3D` | —         | —         | Reservadas para GPU                    |
-|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error   |
-|      `0x3F` | `HALT`    | —         | Definida e implementada                |
+|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error    |
+|      `0x3F` | `HALT`    | —         | Definida e implementada                 |
 
-`GETTID` escribe en `Rd` el identificador lineal del work-item. En MiniCPU vale
-cero. En MiniGPU será distinto para cada thread y permitirá que un único kernel
-calcule diferentes píxeles. Su encoding es I-Type con `X = Rd`, `Y = 0` e
-`imm16 = 0`.
+`GETTID` escribe en `Rd` el identificador lineal del thread residente. En
+MiniCPU vale cero. En la MiniGPU actual vale `warp_id * warp_size + lane_id`
+(0…63 con ocho warps de ocho lanes). Su encoding es I-Type con `X = Rd`,
+`Y = 0` e `imm16 = 0`.
 
-`HALT` detiene la MiniCPU. Su uso dentro de un kernel SIMT se definirá junto con
-el modelo de finalización de threads.
+`SSY label` establece el punto de reconvergencia de una región SIMT. Usa
+B-Type, con desplazamiento con signo en palabras relativo a la instrucción
+siguiente, igual que `BRA`:
+
+```text
+join = PC + 4 + sign_extend(offset26) * 4
+```
+
+`SSY` no salta al punto de reconvergencia: registra la región y continúa en
+`PC + 4`. Si se vuelve a ejecutar el `SSY` que abrió la región más interna,
+se reutiliza esa región con el mismo destino.
+
+`BAR` sincroniza los warps participantes del mismo `workgroup_id`. Exige que
+participen todas las lanes vivas del warp: `active_mask != live_mask` produce
+`ERROR_BARRIER`. Las operaciones de memoria anteriores deben completarse antes
+de continuar tras la barrera.
+
+`EXIT` retira permanentemente las lanes activas de `live_mask`. Cuando no
+quedan lanes vivas, el warp termina y se vacían sus pilas REGION y PATH.
+`BAR` y `EXIT` no tienen operandos: sus 26 bits bajos deben ser cero
+(`X = 0`, `Y = 0`, `imm16 = 0`). Son instrucciones de MiniGPU; no se añaden
+al repertorio implementado por la MiniCPU escalar.
+
+`GETLANE` y `GETWARP` no están implementadas ni tienen opcode asignado en esta
+versión. Su posible incorporación se describe en `propuesta-v0.2.md`.
+
+`HALT` detiene la MiniCPU. En la MiniGPU actual retira las lanes activas con
+la misma semántica que `EXIT`.
 
 `TRAP` detiene la CPU con un error distinguible de `HALT`. El PC observable
 queda en la dirección de `TRAP`. No salta a un vector y no puede reanudarse sin

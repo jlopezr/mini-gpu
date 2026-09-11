@@ -1,41 +1,43 @@
 # Propuesta de MiniISA v0.2
 
-Borrador para discusión. Cubre cinco bloques:
+Borrador para discusión. Cubre ocho bloques:
 
-1. Corregir el bloque SIMT, que hoy **no coincide con la implementación**.
+1. Corrección documental del bloque SIMT (**aplicada**; ver §0).
 2. Branches con inmediato.
 3. Llamadas y saltos indirectos: `JAL`, `JALR`, `JR`.
 4. Desplazamientos con inmediato y rotaciones.
-5. El mapa de opcodes resultante y lo que queda libre.
+5. Escrituras de 8 y 16 bits: `STOREB` y `STOREH`.
+6. ID lógico de warp asignado por el lanzador.
+7. Operaciones candidatas para 2D y 3D.
+8. El mapa de opcodes resultante y lo que queda libre.
 
 Nada de esto rompe programas existentes: todo son opcodes hoy reservados, salvo
 la corrección del bloque SIMT, que alinea el documento con lo que ya se ejecuta.
 
 ---
 
-## 0. Punto de partida: `isa.md` miente en el bloque SIMT
+## 0. Corrección documental del bloque SIMT — aplicada
 
-`isa.md` dice, en §3, que debe tratarse como error cualquier discrepancia entre
-el documento y el código. Hay tres:
+**Aplicado:** `isa.md` ya refleja los opcodes y formatos usados por el
+ensamblador, el simulador GPU y el RTL. Se conservan aquí las discrepancias
+originales como contexto de la propuesta:
 
-| Opcode | `isa.md` documenta | Ensamblador y simuladores usan |
+| Opcode | `isa.md` documentaba | Ensamblador y simuladores usan |
 |--------|--------------------|--------------------------------|
 | `0x31` | `GETLANE`          | **`SSY`**                      |
 | `0x32` | `GETWARP`          | **`BAR`**                      |
 | `0x33` | `BAR`              | **`EXIT`**                     |
 
-`GETLANE` y `GETWARP` no existen en ninguna parte del repositorio. `BAR` está
-documentada en el opcode equivocado. Quien implemente hardware leyendo `isa.md`
-lo hará mal, y ya hay tests que dependen del comportamiento real: `BAR` en
-`0x32` es lo que valida `simt/barriers/ssy-bar-partial-mask`.
-
-**Esto hay que arreglarlo aunque se rechace todo lo demás de esta propuesta.**
+`GETLANE` y `GETWARP` siguen sin implementarse; su incorporación en §1.2 es
+una propuesta independiente. La corrección aplicada documenta `SSY` en `0x31`
+con formato B-Type, `BAR` en `0x32` y `EXIT` en `0x33`, junto con sus operandos
+y semántica actual. No modifica ensamblador, simuladores ni RTL.
 
 ---
 
 ## 1. Bloque SIMT
 
-### 1.1 Documentar lo que ya existe
+### 1.1 Documentar lo que ya existe — aplicado en §0
 
 | Opcode | Mnemónico | Formato    | Operandos | Semántica                                              |
 |--------|-----------|------------|-----------|--------------------------------------------------------|
@@ -44,9 +46,7 @@ lo hará mal, y ya hay tests que dependen del comportamiento real: `BAR` en
 | `0x32` | `BAR`     | I-Type     | —         | Barrera; exige que participen todas las lanes vivas    |
 | `0x33` | `EXIT`    | I-Type     | —         | Retira la lane permanentemente                         |
 
-`SSY` usa B-Type con `offset26` en palabras, exactamente igual que `BRA`. Es un
-detalle que hoy no está escrito en ningún sitio y que sí está en el
-ensamblador.
+`SSY` usa B-Type con `offset26` en palabras, exactamente igual que `BRA`. Este formato ya está recogido en `isa.md` tras la corrección de §0.
 
 `BAR` con `active_mask != live_mask` produce `ERROR_BARRIER`. `EXIT` retira la
 lane de `live_mask`; cuando `live_mask` llega a cero el warp termina y las pilas
@@ -68,10 +68,48 @@ lane, por warp o por work-item sin tener que derivar unos de otros con
 divisiones, que es justo lo que la ISA no tiene barato.
 
 **Candidatas que NO propongo ahora**, pero que conviene tener anotadas antes de
-repartir `0x36–0x3D`: operaciones de voto entre lanes (`BALLOT`, `ANY`, `ALL`)
+repartir `0x37–0x3D`: operaciones de voto entre lanes (`BALLOT`, `ANY`, `ALL`)
 y de intercambio (`SHFL`). Son el siguiente escalón natural de una ISA SIMT y
 consumirán varios opcodes; reservar espacio ahora es más barato que buscarlo
 después.
+
+### 1.3 ID lógico del warp: `GETWID`
+
+`GETTID` identifica actualmente al thread residente (`warp_id * warp_size +
+lane_id`), y `GETWARP` propuesto en §1.2 identifica el slot de warp dentro del
+SM. Hace falta un valor independiente de esa ubicación física, asignado por
+la CPU o por el monitor al preparar el lanzamiento.
+
+| Opcode propuesto | Mnemónico | Formato | Operandos | Semántica |
+|---|---|---|---|---|
+| `0x36` | `GETWID` | I-Type | `Rd` | `Rd = warp_user_id` del warp actual |
+
+Encoding: `X = Rd`, `Y = 0`, `imm16 = 0`. Devuelve los 32 bits sin extensión
+ni interpretación de signo, iguales para todas las lanes del warp. Solo las
+lanes activas escriben su registro destino.
+
+Cada slot guarda un `warp_user_id` configurable de 32 bits: 256 bits para los
+ocho warps actuales, además de la lógica de acceso. El lanzador lo escribe con
+la GPU detenida, se conserva durante halt/resume y vale cero tras reset de GPU.
+La dirección MMIO se decidirá al implementar; no se debe reutilizar sin más el
+cuarto word del descriptor actual, que ya expone estado de solo lectura.
+
+Es un dato del trabajo, distinto de `workgroup_id` (agrupación para barreras).
+No afecta al scheduler, los tags de LSU ni a `BAR`. El hardware no exige IDs
+únicos: el programa puede usarlo como número de tile, bloque, objeto o base.
+Mover el trabajo a otro slot o SM debe conservar este valor al cargar su contexto.
+
+```asm
+GETWID  R1          ; ejemplo: base de elementos asignada por la CPU
+GETLANE R2          ; 0..7, cuando se implemente §1.2
+ADD     R3, R1, R2  ; índice del elemento de esta lane
+```
+
+Si el programa interpreta el ID como número de bloque de ocho elementos,
+calcula `warp_user_id * 8 + lane_id`; si lo interpreta como base, lo suma
+directamente. `GETWID` no impone ninguna de las dos fórmulas, no asigna trabajo
+por sí solo ni equivale a un `GETGID` automático. No se cambia la semántica de
+`GETTID`. En MiniCPU se propone devolver cero, como `GETTID`, al no haber warp.
 
 ---
 
@@ -185,8 +223,10 @@ funciones sean interoperables:
 | `R31` | Dirección de retorno (`link`) |
 | `R30` | Puntero de pila, cuando exista |
 
-La pila necesitará además `LOADB`/`STOREB` y probablemente accesos de media
-palabra; eso ya está en el TODO y es independiente de esta propuesta.
+Los accesos por byte y media palabra también sirven para datos empaquetados.
+Las escrituras `STOREB` y `STOREH` se proponen en §4.4; las cargas de esos
+tamaños quedan para una ampliación posterior. Una pila de palabras puede usar
+los `LOAD`/`STORE` actuales.
 
 ### 3.4 Aviso serio: saltos indirectos y divergencia
 
@@ -239,9 +279,9 @@ Limpio y obvio. Pero la familia `0x10–0x1F` solo tiene 8 libres y ya hay cola:
 
 | Pendiente | Opcodes |
 |---|---:|
-| `LOADB`, `LOADUB`, `STOREB` (ya en el TODO) | 3 |
+| `LOADB`, `LOADUB` (futuras), `STOREB` (§4.4) | 3 |
 | `SHLI`, `SHRI`, `SARI` | 3 |
-| Media palabra (`LOADH`, `LOADUH`, `STOREH`), si llega | 3 |
+| `LOADH`, `LOADUH` (futuras), `STOREH` (§4.4) | 3 |
 | **Total** | **9 sobre 8 disponibles** |
 
 O sea que la opción A **no cabe** si además se quieren accesos de media palabra.
@@ -284,12 +324,168 @@ SHR  Rd, Ra, Rn
 OR   Rd, Rd, Rt        ; Rd = ROR(Ra, n)
 ```
 
-Si algún día hacen falta, el mismo bit de `extra` de la opción B da sitio a
-`ROR`/`ROL` sin gastar opcodes, o quedan `0x1E`/`0x1F`. Anotarlo y seguir.
+Si algún día hacen falta rotaciones, necesitarán una suboperación adicional:
+el bit de inmediato distingue registro/inmediato, no desplazamiento/rotación.
+Podrían incorporarse a la extensión de §5.2. No se asignan ahora.
+
+### 4.4 Escrituras de 8 y 16 bits
+
+Añadir dos instrucciones para escribir elementos individuales de un framebuffer:
+índices de paleta de 8 bits y píxeles RGB565 de 16 bits. También sirven para
+texto y otros datos empaquetados; no tienen semántica específica de gráficos.
+
+| Opcode propuesto | Mnemónico | Formato | Operandos | Operación |
+|---|---|---|---|---|
+| `0x1A` | `STOREB` | I-Type | `Rs, Ra, imm16` | Escribe `Rs[7:0]` |
+| `0x1D` | `STOREH` | I-Type | `Rs, Ra, imm16` | Escribe `Rs[15:0]` |
+
+Se mantiene el formato de `STORE`: `X = Rs`, `Y = Ra`, `imm16` es un
+desplazamiento **en bytes**, con signo, de `-32768` a `32767`. La dirección
+efectiva es `R[Ra] + sign_extend(imm16)`, con aritmética de 32 bits.
+Los registros siguen siendo de 32 bits y los bits altos de `Rs` se ignoran.
+
+- **`STOREB`** admite cualquier dirección de byte válida y modifica solo ese byte.
+- **`STOREH`** exige dirección par. Escribe en little-endian: `Rs[7:0]` en
+  `address` y `Rs[15:8]` en `address + 1`.
+- Los bytes vecinos se conservan. Debe validarse el intervalo completo antes de
+  emitir la escritura; un acceso fuera de rango o desalineado produce
+  `ERROR_MEMORY_ACCESS`, igual que `STORE`.
+- `STORE` (`0x16`) conserva su escritura de 32 bits y alineación de cuatro bytes.
+
+```asm
+STOREB R1, R2, 0     ; índice de paleta: un byte
+STOREH R3, R4, 0     ; píxel RGB565: dos bytes, dirección par
+```
+
+En la GPU solo escriben las lanes activas. Se conservan los tags, los errores
+por lane y la respuesta de finalización: aceptar la petición no equivale a
+terminar el STORE. `BAR` debe esperar también estas escrituras. No se añaden
+operaciones atómicas ni garantías de orden entre warps con escrituras solapadas.
+
+La frontera SM↔LSU debe transportar el tamaño (8, 16 o 32 bits), común a la
+instrucción del warp. En SDRAM, `STOREB` usa una transferencia de 16 bits con
+una sola máscara de byte habilitada; `STOREH` usa una transferencia con ambas
+habilitadas. Así se preservan los vecinos sin una lectura-modificación-escritura.
+El backend EBR necesitará habilitaciones de escritura por byte equivalentes.
+
+Las cargas de tamaño reducido se incluyen como candidatas en §5.1 y su espacio
+se contabiliza en el mapa ampliado de §6. `PACK565` también se estudia allí como
+operación separada: los stores escriben el valor ya empaquetado.
 
 ---
 
-## 5. Mapa de opcodes resultante
+## 5. Operaciones candidatas para 2D y 3D
+
+Estas operaciones son propuestas de evolución, no instrucciones implementadas.
+El mapa siguiente contempla todas para comprobar capacidad de codificación;
+no implica construir todas las unidades funcionales a la vez. Caber en la ISA
+no garantiza caber en FPGA ni mejorar ciclos: se medirán kernels y timing.
+
+### 5.1 Operaciones y utilidad
+
+| Instrucción | Operación propuesta | Aplicación |
+|---|---|---|
+| `LOADB`, `LOADUB` | Leer 8 bits y extender con signo/ceros a 32 bits | Datos empaquetados, índices de textura y paleta |
+| `LOADH`, `LOADUH` | Leer 16 bits y extender con signo/ceros a 32 bits | RGB565, coordenadas o profundidad empaquetada |
+| `MIN`, `MAX` | Mínimo/máximo signed32 de dos registros | Recorte de coordenadas, cajas de triángulos, límites |
+| `MINU`, `MAXU` | Mínimo/máximo unsigned32 | Colores, índices y profundidad sin signo |
+| `SEL` | Elegir entre dos registros según un tercer registro | Selección sin bifurcación SIMT |
+| `MACFX` | Acumular el producto Q16.16 de dos registros | Transformaciones, productos escalares e interpolación |
+| `RCPFX` | Aproximación de `1/x` en Q16.16 | Perspectiva y reutilización de un divisor |
+| `RSQRTFX` | Aproximación de `1/sqrt(x)` en Q16.16 | Normalización de vectores e iluminación |
+| `PACK565` | Convertir `0x00RRGGBB` a RGB565 | Escritura de un color calculado en RGB888 |
+
+Las cargas mantienen I-Type: `X = Rd`, `Y = Ra`, offset16 con signo en bytes.
+`LOADB`/`LOADUB` admiten cualquier byte; `LOADH`/`LOADUH` exigen dirección par.
+Debe validarse el intervalo completo; rango y alineación producen
+`ERROR_MEMORY_ACCESS`, igual que las escrituras. `LOAD` de 32 bits no cambia.
+
+Para `MACFX Rd, Ra, Rb`, la semántica propuesta es equivalente a multiplicar
+con el `MULFX` actual y sumar al valor anterior de `Rd`, con wrap de 32 bits:
+
+```text
+product = signed64(signed32(Ra) * signed32(Rb))
+Rd = u32(old_Rd + u32(product >> 16))   ; desplazamiento aritmético
+```
+
+No se introduce un acumulador oculto de 64 bits ni redondeo fusionado. Se leen
+los valores anteriores de todos los operandos, también si coinciden registros.
+El banco actual tiene dos puertos de lectura: `MACFX` y `SEL` requieren leer un
+tercer valor mediante otro ciclo o una ampliación del banco. No se promete
+latencia de un ciclo ni un multiplicador nuevo por lane.
+
+`PACK565 Rd, Ra` produce los 16 bits bajos RGB565 y pone a cero los 16 altos:
+
+```text
+Rd = ((Ra >> 8) & 0xF800) | ((Ra >> 5) & 0x07E0) | ((Ra >> 3) & 0x001F)
+```
+
+`RCPFX` y `RSQRTFX` requieren todavía fijar rango, error máximo, redondeo,
+saturación/desbordamiento y errores de dominio (cero y, para raíz, negativos).
+Hasta cerrar esos contratos y sus referencias de prueba, se reserva su encoding
+pero no se consideran listas para implementar. `DIV` entero no sustituye por sí
+solo estas operaciones Q16.16. Una tabla más refinamiento es una posibilidad a medir.
+
+Prioridad recomendada: cargas pequeñas y `MIN/MAX`, después `SEL`/`MACFX`;
+recíproco, raíz inversa y empaquetado según perfiles de las demos. No se añaden
+por ahora instrucciones de muestreo/filtrado de texturas, seno/coseno, productos
+vectoriales completos ni mezcla de color empaquetado. Las tablas y las
+instrucciones existentes permiten evaluar primero esas necesidades.
+
+### 5.2 Codificación extendida propuesta: `EXT` en `0x1E`
+
+Para evitar consumir un opcode principal por cada operación gráfica, se propone
+un opcode de extensión `0x1E`, con formato de registros y suboperación. Es una
+excepción explícita a la clasificación por los dos bits altos: el decodificador
+no debe tratar toda la familia `01xxxx` como I-Type.
+
+```text
+31       26 25   21 20   16 15   11 10    6 5          0
++----------+-------+-------+-------+-------+------------+
+| EXT=0x1E |  Rd   |  Ra   |  Rb   |  Rc   |   func6    |
++----------+-------+-------+-------+-------+------------+
+```
+
+Son 32 bits: 6 de opcode, cuatro campos de registro de 5 bits y 6 de función.
+En el R-Type habitual, los once bits bajos se llaman `extra`; solo para `EXT`
+se interpretan como `Rc + func6`. Las instrucciones existentes no cambian.
+`EXT` es la familia de encoding; el ensamblador expone los mnemónicos siguientes:
+
+| `func6` | Mnemónico | Operandos | Campos reservados / condición |
+|---|---|---|---|
+| `0x00` | `MIN` | `Rd, Ra, Rb` | `Rc = 0` |
+| `0x01` | `MAX` | `Rd, Ra, Rb` | `Rc = 0` |
+| `0x02` | `MINU` | `Rd, Ra, Rb` | `Rc = 0` |
+| `0x03` | `MAXU` | `Rd, Ra, Rb` | `Rc = 0` |
+| `0x04` | `SEL` | `Rd, Ra, Rb, Rc` | `Rd = (Rc != 0) ? Ra : Rb` |
+| `0x05` | `MACFX` | `Rd, Ra, Rb` | `Rc = 0`; acumulador es el valor anterior de `Rd` |
+| `0x06` | `RCPFX` | `Rd, Ra` | `Rb = Rc = 0`; contrato numérico pendiente |
+| `0x07` | `RSQRTFX` | `Rd, Ra` | `Rb = Rc = 0`; contrato numérico pendiente |
+| `0x08` | `PACK565` | `Rd, Ra` | `Rb = Rc = 0` |
+| `0x09–0x3F` | Reservadas | — | 55 suboperaciones disponibles |
+
+En la tabla, `Rc != 0` comprueba el contenido del registro, no su número.
+El campo reservado `Rc = 0` no implica que el registro R0 esté cableado a cero:
+simplemente no se lee ese operando. Los campos reservados no nulos producen
+`ERROR_INVALID_ENCODING`; una función no implementada o reservada produce
+`ERROR_INVALID_OPCODE`. Todas las operaciones respetan la máscara activa y no
+alteran las máscaras SIMT. `SEL` selecciona datos, sin ejecutar un salto.
+
+### 5.3 ¿Cabrían con opcodes independientes?
+
+Sí, este conjunto concreto cabe, pero agotaría el espacio principal. Partiendo
+del mapa con `STOREB`/`STOREH` había 14 libres: `GETWID` consume 1, las cuatro
+cargas consumen 4 y las nueve operaciones de la tabla EXT consumen 9 si cada
+una usa opcode propio. Resultado: **0 libres**, contando como ocupados los
+opcodes ya reservados para aritmética, y sin espacio para voto/intercambio SIMT.
+
+Con `EXT`, esas nueve operaciones consumen un solo opcode principal. Quedan
+**8 opcodes principales y 55 suboperaciones EXT libres**. Este es el mapa
+recomendado a continuación; no mezcla ambas alternativas de codificación.
+
+---
+
+## 6. Mapa de opcodes resultante
 
 ### ALU y aritmética `0x00–0x0F`
 
@@ -297,9 +493,20 @@ Sin cambios. Sigue llena, con `MULHI`, `DIVU`, `REM` y `REMU` reservadas.
 
 ### Inmediatos y memoria `0x10–0x1F`
 
-Sin cambios en esta propuesta. Quedan **8 libres** (`0x18–0x1F`) para los
-accesos por byte y media palabra del TODO, gracias a resolver los
-desplazamientos con la opción B.
+| Opcode | Propuesta |
+|---|---|
+| `0x10–0x17` | Sin cambios, incluidos `LOAD` y `STORE` de 32 bits |
+| `0x18` | `LOADB`, carga signed de 8 bits |
+| `0x19` | `LOADUB`, carga unsigned de 8 bits |
+| `0x1A` | **`STOREB`**, escritura de 8 bits |
+| `0x1B` | `LOADH`, carga signed de 16 bits |
+| `0x1C` | `LOADUH`, carga unsigned de 16 bits |
+| `0x1D` | **`STOREH`**, escritura de 16 bits |
+| `0x1E` | `EXT`, nueve suboperaciones propuestas en §5.2 |
+| `0x1F` | Libre |
+
+Queda **1 libre** (`0x1F`) al incluir todas las candidatas de §5. El mapa usa la opción B para los desplazamientos inmediatos; la
+opción A entra en conflicto con `STOREB` en `0x1A`.
 
 ### Control de flujo `0x20–0x2F`
 
@@ -322,7 +529,7 @@ libre a cambio de un cambio incompatible más adelante.
 
 ### Sistema y SIMT `0x30–0x3F`
 
-| Opcode      | Antes (documentado) | Ahora (real y propuesto)                            |
+| Opcode      | Antes de corregir §0 | Ahora (real y propuesto)                            |
 |-------------|---------------------|-----------------------------------------------------|
 | `0x30`      | `GETTID`            | `GETTID`                                            |
 | `0x31`      | `GETLANE` ❌         | **`SSY`**                                           |
@@ -330,27 +537,28 @@ libre a cambio de un cambio incompatible más adelante.
 | `0x33`      | `BAR` ❌             | **`EXIT`**                                          |
 | `0x34`      | libre               | `GETLANE`                                           |
 | `0x35`      | libre               | `GETWARP`                                           |
-| `0x36–0x3D` | libres              | libres, candidatas a voto e intercambio entre lanes |
+| `0x36` | libre | `GETWID`, ID lógico configurable del warp |
+| `0x37–0x3D` | libres | libres, candidatas a voto e intercambio entre lanes |
 | `0x3E`      | `TRAP`              | `TRAP`                                              |
 | `0x3F`      | `HALT`              | `HALT`                                              |
 
-Quedan **8 libres**.
+Quedan **7 libres** (`0x37–0x3D`).
 
 ### Recuento
 
 | Familia                | Libres antes | Libres después |
 |------------------------|-------------:|---------------:|
 | ALU `0x00–0x0F`        |            0 |              0 |
-| Inmediatos `0x10–0x1F` |            8 |              8 |
+| Inmediatos/extensión `0x10–0x1F` |     8 |              1 |
 | Control `0x20–0x2F`    |            9 |          **0** |
-| Sistema `0x30–0x3F`    |           10 |              8 |
-| **Total**              |       **27** |         **16** |
+| Sistema `0x30–0x3F`    |           10 |              7 |
+| **Total**              |       **27** |          **8** |
 
 ---
 
-## 6. Decisiones que hay que tomar
+## 7. Decisiones que hay que tomar
 
-Ninguna de estas la puedo decidir yo:
+Decisiones de diseño pendientes de aprobación antes de implementar:
 
 1. **¿Se cablea `R0` a cero?** Afecta a `JR` y a toda la ISA. Decidirlo ahora
    evita arrastrar un opcode que luego sobra.
@@ -359,24 +567,49 @@ Ninguna de estas la puedo decidir yo:
 3. **Semántica de `JALR` divergente.** Recomiendo exigir destino uniforme, pero
    hay que escribirlo.
 4. **¿Se reserva ya espacio para voto e intercambio entre lanes** en
-   `0x36–0x3D`, o se reparte según haga falta?
+   `0x37–0x3D`, o se reparte según haga falta?
 5. **¿El desplazamiento de `JAL`/`JALR` va en palabras o en bytes?** Propongo
    palabras por coherencia interna.
+6. **Aprobar `EXT` y los contratos de §5.** En particular precisión y casos
+   excepcionales de `RCPFX`/`RSQRTFX`, y coste del tercer operando.
+7. **Asignar la ventana MMIO de `warp_user_id`.** Mantener los descriptores
+   existentes compatibles y configurar el valor antes del lanzamiento.
 
 ---
 
-## 7. Qué habría que tocar
+## 8. Qué habría que tocar
 
 | Componente                       | Trabajo                                                          |
 |----------------------------------|------------------------------------------------------------------|
-| `1.isa/isa.md`                   | Corregir el bloque SIMT y documentar lo nuevo                    |
+| `1.isa/isa.md`                   | Documentar lo nuevo; corrección SIMT ya aplicada                    |
 | `1.isa/miniisa_asm.py`           | Mnemónicos, encodings, alias `RET`, validación de `imm5`         |
 | `2.cpu-sim-func/minicpu_sim.py`  | Branches con inmediato, `JAL`/`JALR`/`JR`, shifts inmediatos     |
 | `11.gpu-sim-func/minigpu_sim.py` | Lo mismo, más `GETLANE`/`GETWARP` y la regla de destino uniforme |
 | `6.fpga-cpu`, `10.fpga-cpu-ram`  | Decodificador y control                                          |
 | `12.fpga-gpu`                    | Decodificador, control y la comprobación de uniformidad          |
+| `14.fpga-gpu-ram`                | Decodificar `STOREB`/`STOREH`, transportar tamaño SM↔LSU y emitir máscaras SDRAM |
 | `x.cpu-tests`                    | Un caso por instrucción nueva, con los valores frontera          |
 
-La corrección del bloque SIMT (§0) es independiente del resto y **se puede hacer
-hoy**: no cambia ni una línea de código, solo alinea el documento con lo que ya
-se ejecuta y está cubierto por tests.
+Para `STOREB`/`STOREH`, el ensamblador y ambos simuladores deben incorporar los
+dos opcodes y su semántica. Los backends FPGA que los implementen deben adaptar
+también las máscaras y la validación de direcciones. Las pruebas deben cubrir
+bytes pares/impares, las dos mitades de una palabra, conservación de vecinos,
+truncado de los bits altos, offsets negativos, límites de memoria, desalineación
+de `STOREH`, máscaras de lanes y finalización antes de `BAR`.
+
+Para `GETWID`: añadir configuración por warp en monitor/CPU y simulador,
+almacenamiento en el SM, lectura por la instrucción y pruebas de reset,
+halt/resume, valores de 32 bits, uniformidad entre lanes y cambio de slot
+conservando el ID lógico. `GETTID` y las barreras deben mantener su comportamiento.
+
+Para las operaciones de §5: extender ensamblador, validación de encoding,
+simuladores y datapaths; adaptar LSU para tamaño y extensión de cargas. Probar
+funciones EXT no implementadas, campos reservados, alias de registros, valores
+con/sin signo, equivalencia de `MACFX` a `MULFX`+`ADD`, colores RGB565 y casos
+numéricos límite. Medir ciclos y recursos antes/después: reducir instrucciones
+no garantiza acelerar un kernel. Ninguna de estas ampliaciones se implementa
+como parte de esta edición documental.
+
+La corrección documental del bloque SIMT (§0) **ya está aplicada**. El resto
+de las ampliaciones sigue siendo una propuesta; no se ha modificado código
+para implementarlas.
