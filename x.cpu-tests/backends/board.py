@@ -70,7 +70,7 @@ def _open(monitor: ModuleType, port: str, serial_timeout: float):
         )
     except Exception as error:  # serial.SerialException y afines
         raise BoardNotConnected(
-            f"No se puede abrir {port}: {error}. Comprueba que la placa está "
+            f"No se puede abrir {port}: {error}.\nComprueba que la placa está "
             "conectada y que ningún otro programa tiene el puerto abierto."
         ) from error
 
