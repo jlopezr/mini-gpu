@@ -3,7 +3,7 @@
 Documento transversal: compara qué direcciones existen, quién las valida y con
 qué límites, en cada backend que `x.cpu-tests/run_gpu_tests.py` sabe ejecutar.
 
-Las cuatro combinaciones de `--backend` / `--version`:
+Las seis combinaciones de `--backend` / `--version`:
 
 | Backend         | Versión   | Implementación                                                   |   Memoria arquitectónica | MMIO                        |
 |-----------------|-----------|------------------------------------------------------------------|-------------------------:|-----------------------------|
@@ -12,6 +12,7 @@ Las cuatro combinaciones de `--backend` / `--version`:
 | `cpu-fpga`      | `sdram`   | [10.fpga-cpu-ram/](10.fpga-cpu-ram/)                             |         32 MiB continuos | —                           |
 | `gpu-simulator` | `current` | [11.gpu-sim-func/minigpu_sim.py](11.gpu-sim-func/minigpu_sim.py) |         32 MiB continuos | —                           |
 | `gpu-fpga`      | `bram`    | [12.fpga-gpu/](12.fpga-gpu/)                                     |        128 KiB continuos | 2 ventanas en `0x8000_xxxx` |
+| `gpu-fpga`      | `sdram`   | [14.fpga-gpu-ram/](14.fpga-gpu-ram/)                             |         32 MiB continuos | 2 ventanas en `0x8000_xxxx` |
 
 ---
 
@@ -93,24 +94,41 @@ Es el único mapa **no contiguo** del repositorio. Detalles que importan:
 - Esa es la diferencia estructural con `gpu-fpga`: en la FPGA ese mismo estado
   solo es alcanzable a través de direcciones MMIO.
 
-## 5. `gpu-fpga --version bram` — 128 KiB + dos ventanas MMIO
+## 5. `gpu-fpga` — memoria + dos ventanas MMIO
 
-El único mapa con espacio no arquitectónico.
+Los únicos mapas con espacio no arquitectónico. Las dos versiones comparten
+comandos y ventanas MMIO; solo cambia el tamaño y la tecnología de la memoria:
+
+| Versión | Memoria         | Monitor |
+|---------|----------------:|---------|
+| `bram`  | 128 KiB de BRAM | 2.1     |
+| `sdram` | 32 MiB de SDRAM | 2.2     |
+
+La versión del monitor es lo único que distingue los dos bitstreams por UART, y
+por eso 14 responde **2.2** aunque no añada ningún comando: sin esa diferencia
+`ensure_bitstream()` aceptaría uno creyendo que es el otro. Es la misma
+convención que separa 1.5 de 1.6 en las dos revisiones de CPU.
 
 ### 5.1 Memoria arquitectónica
 
 ```
-0x00000000 ┌──────────────────────────────┐
-           │  BRAM  (128 KiB)             │  programa y datos, todos los warps
-0x0001FFFF └──────────────────────────────┘
-0x00020000    fuera de rango → ERROR_MEMORY_ACCESS
+           bram                              sdram
+0x00000000 ┌──────────────────┐   0x00000000 ┌──────────────────┐
+           │  BRAM  (128 KiB) │              │  SDRAM  (32 MiB) │
+0x0001FFFF └──────────────────┘   0x01FFFFFF └──────────────────┘
+0x00020000   → ERROR_MEMORY_ACCESS 0x02000000   → ERROR_MEMORY_ACCESS
 ```
+
+Compartida por los ocho warps, para código y datos. En `sdram` cada palabra son
+dos accesos BL1 de 16 bits, sin caché ni coalescencia, así que el mismo caso
+tarda más que en BRAM pero observa exactamente el mismo estado.
 
 ### 5.2 Ventana MMIO — solo monitor, solo con la GPU parada
 
-No forma parte de la memoria de la ISA: un `LOAD`/`STORE` del programa no la
-ve. Palabras little-endian en el bus, pero la dirección del comando UART va en
-big-endian ([monitor.py:132](12.fpga-gpu/monitor.py#L132)).
+Idéntica en las dos versiones. No forma parte de la memoria de la ISA: un
+`LOAD`/`STORE` del programa no la ve. Palabras little-endian en el bus, pero la
+dirección del comando UART va en big-endian
+([monitor.py:132](12.fpga-gpu/monitor.py#L132)).
 
 **Bloque A — configuración por warp, `0x80000000`–`0x8000007F`**
 (16 bytes × 8 warps; `cfg_region` en [gpu_system.v:40](12.fpga-gpu/gpu_system.v#L40))
@@ -145,13 +163,17 @@ palabra dentro de `0x80000` activa `mmio_bad`.
 
 ## Comparativa rápida
 
-|                       | cpu-sim |        ebr |  sdram | gpu-sim |      gpu-fpga |
-|-----------------------|--------:|-----------:|-------:|--------:|--------------:|
-| Tamaño arquitectónico |  32 MiB | 2 × 16 KiB | 32 MiB |  32 MiB |       128 KiB |
-| Contiguo              |      sí |     **no** |     sí |      sí |            sí |
-| MMIO                  |       — |          — |      — |       — | `0x8000_0000` |
-| Alineación a 4 bytes  |      sí |         sí |     sí |      sí |            sí |
-| Límite de bloque UART |       — |      256 B |  256 B |       — |         256 B |
+Las columnas `ebr`/`sdram` son versiones de `cpu-fpga`; `bram`/`sdram` de
+`gpu-fpga`.
+
+|                       | cpu-sim |        ebr |  sdram | gpu-sim |          bram |     gpu sdram |
+|-----------------------|--------:|-----------:|-------:|--------:|--------------:|--------------:|
+| Tamaño arquitectónico |  32 MiB | 2 × 16 KiB | 32 MiB |  32 MiB |       128 KiB |        32 MiB |
+| Contiguo              |      sí |     **no** |     sí |      sí |            sí |            sí |
+| MMIO                  |       — |          — |      — |       — | `0x8000_0000` | `0x8000_0000` |
+| Alineación a 4 bytes  |      sí |         sí |     sí |      sí |            sí |            sí |
+| Límite de bloque UART |       — |      256 B |  256 B |       — |         256 B |         256 B |
+| Monitor               |       — |        1.6 |    1.5 |       — |           2.1 |           2.2 |
 
 ---
 

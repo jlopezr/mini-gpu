@@ -26,6 +26,11 @@ VERSIONS = {
         "monitor_version": (2, 1),
         "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes",
     },
+    "sdram": {
+        "monitor_path": Path("14.fpga-gpu-ram/monitor.py"),
+        "monitor_version": (2, 2),
+        "description": "MiniGPU con 32 MiB de SDRAM, 8 warps x 8 lanes",
+    },
 }
 DEFAULT_VERSION = "bram"
 
