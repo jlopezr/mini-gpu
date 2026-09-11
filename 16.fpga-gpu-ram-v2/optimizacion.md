@@ -6,26 +6,42 @@ en cada paso es el `achieved` del informe de `nextpnr`, no un cambio de reloj.
 
 Método: **un cambio por iteración**, con `check.ps1 Tests`, `check.ps1 Lint` y
 `check.ps1 Build` después de cada uno, anotando fmax, camino crítico y recursos.
-`timing.ps1` resume el informe para que las medidas sean comparables.
 
 ```powershell
 ./16.fpga-gpu-ram-v2/check.ps1 Tests
 ./16.fpga-gpu-ram-v2/check.ps1 Lint
 ./16.fpga-gpu-ram-v2/check.ps1 Build
-./16.fpga-gpu-ram-v2/timing.ps1
+./16.fpga-gpu-ram-v2/timing.ps1   # camino crítico y recursos de esta pasada
+./16.fpga-gpu-ram-v2/sweep.ps1    # fmax sobre varias semillas
 ```
+
+> **El fmax de una sola semilla no sirve para comparar.** Medido sobre el mismo
+> netlist, `nextpnr` da 31,18 / 35,02 / 36,60 MHz según la semilla de
+> emplazamiento: **17 % de dispersión**. Cualquier diferencia por debajo de eso
+> es ruido. Por eso el fmax se anota como mediana de varias semillas, y el
+> recuento de LUT —que sale de Yosys y es determinista— vale como señal
+> secundaria libre de ruido.
+>
+> Los pasos 1 y 2 se midieron con una sola semilla antes de descubrirlo, así que
+> sus cifras están marcadas como no comparables.
 
 ## Medidas
 
 | Paso | fmax | camino crítico | LUT | FF |
 | --- | --- | --- | --- | --- |
-| Base (RTL de 14) | 33,57 MHz | `gpu.lsu.pending` → `gpu.lsu.pick` (29,79 ns) | 30744 | 9016 |
-| 1. Arbitraje y direccionamiento en ciclos distintos | 34,48 MHz | `gpu.sm.push_index` → `gpu.sm.top_index` (29,01 ns) | 30749 | 9020 |
-| 2. `has_pending` fuera de la cadena de prioridad | 35,96 MHz | `gpu.sm.push_index` → `gpu.sm.top_index` (27,81 ns) | 30467 | 9025 |
+| Base (RTL de 14) | 33,57 MHz ¹ | `gpu.lsu.pending` → `gpu.lsu.pick` (29,79 ns) | 30744 | 9016 |
+| 1. Arbitraje y direccionamiento en ciclos distintos | 34,48 MHz ¹ | `gpu.sm.push_index` → `gpu.sm.top_index` (29,01 ns) | 30749 | 9020 |
+| 2. `has_pending` fuera de la cadena de prioridad | 35,96 MHz ¹ | `gpu.sm.push_index` → `gpu.sm.top_index` (27,81 ns) | 30467 | 9025 |
+| 3. Liberación de barrera de uno en uno | 31,18 / 35,02 / 36,60 MHz ² | `gpu.sm.stack_count` → `top_index` → `pc$wrmux` (32,07 ns) | **29422** | 9033 |
 
-La base reproduce exactamente la cifra de `14/salida-sintesis.json`, así que las
-comparaciones posteriores son contra una medida equivalente y no contra otra
-síntesis distinta.
+¹ Una sola semilla: no comparable entre sí (véase el aviso de arriba).
+² Semillas 1/2/3; mediana 35,02 MHz.
+
+La base reproduce exactamente la cifra de `14/salida-sintesis.json`, así que al
+menos la comparación base↔14 es entre medidas equivalentes.
+
+El único indicador limpio en toda la tabla es el área: **30744 → 29422 LUT**,
+un 4,3 % menos, sin ruido de emplazamiento.
 
 ## Paso 1: separar el arbitraje del direccionamiento
 
@@ -85,17 +101,61 @@ se consume su respuesta, así que `req_tag` nunca coincide con `selected`.
 30467 LUT, porque los ocho comparadores de 8 bits desaparecen. Solo +5 FF. El
 camino crítico sigue en el SM, ahora con 27,81 ns.
 
-## Lectura del primer paso
+## Lectura de los tres primeros pasos
 
-La ganancia en frecuencia es pequeña (+2,7 %) porque el segundo camino estaba a
-menos de un nanosegundo del primero: 29,01 ns frente a 29,79 ns. No hay un único
-cuello de botella que quitar, sino un conjunto de caminos largos parecidos.
+Las ganancias que parecían darse en los pasos 1 y 2 (+2,7 % y +4,3 %) están por
+debajo del ruido de emplazamiento, así que no demuestran nada por sí solas. Lo
+que sí es sólido:
 
-Llegar a 100 MHz exige bajar de 29 ns a 10 ns, un factor de tres, sobre **todos**
-ellos. No se consigue con un retoque; hace falta seguir troceando en etapas
-registradas cada bloque que aparezca arriba, LSU y SM incluidos. El método de un
-cambio por iteración sigue siendo el adecuado, pero conviene contar con varias
-iteraciones y con que la mejora por paso sea modesta hasta que se nivelen.
+- Los tres cambios son correctos y **reducen área**: 30744 → 29422 LUT.
+- El camino crítico **se ha desplazado** de la LSU al SM y se ha ido concretando
+  a cada paso, hasta señalar una estructura precisa. Eso es señal real: el
+  análisis estático de qué encadena cada camino no depende de la semilla.
+- Las estructuras que se han quitado —cadena de prioridad con `pending` ancho,
+  ocho puertos de escritura sobre `pc`— eran caras por construcción.
+
+Para el resto del recorrido conviene medir el fmax como mediana de varias
+semillas y apoyarse en el área y en la lectura del camino crítico, que son las
+señales que no fluctúan.
+
+## Paso 3: liberar la barrera de uno en uno
+
+**Problema.** `pc[0:7]` acumulaba **más de trece puertos de escritura**
+inferidos: cuatro del acceso por bytes de configuración, uno de
+`pc[lsu_rsp_tag]`, los de `pc[current]` en `RECON`/`DECODE`/`FINISH`, y sobre
+todo **ocho** de un único sitio:
+
+```verilog
+for(w=0;w<8;w=w+1) if(release_bar[w]) begin
+    wait_bar[w]<=0; pc[w]<=pc[w]+4; generation[w]<=generation[w]+1'b1;
+end
+```
+
+Escribir los ocho warps en el mismo ciclo obliga a Yosys a construir ocho
+puertos sobre `pc`, `generation` y `wait_bar`. De ahí los árboles
+`memory\gpu.sm.pc$wrmux[...]` que dominaban toda la cola por encima de 20 ns.
+
+**Cambio.** El conjunto de warps con la barrera ya satisfecha se captura entero
+en el registro `releasing`, y se drena **un warp por ciclo**. Hay que capturarlo
+de golpe porque `release_bar` deja de ser válido en cuanto se libera el primero:
+la condición exige que *todos* los warps vivos del grupo estén esperando, así
+que liberar uno la anula para el resto y los demás no saldrían nunca.
+
+`fault` descarta `releasing`, porque antes un error simplemente impedía que la
+liberación atómica llegara a ocurrir; y la escritura de configuración limpia el
+bit junto con `wait_bar`. La liberación tarda ahora hasta ocho ciclos en lugar
+de uno, sin efecto sobre `retired_count`: liberar una barrera es una transición
+de control, no una instrucción retirada.
+
+**Resultado.** **30467 → 29422 LUT**, mil LUT menos, y desaparecen los ocho
+puertos. En fmax no se puede concluir nada: 31,18 / 35,02 / 36,60 MHz según
+semilla. Fue precisamente la semilla mala de este paso la que destapó que las
+medidas anteriores no eran comparables.
+
+El camino crítico se mantiene en la misma zona y ahora se lee más claro:
+`sp[current]` → `top_index` → mux sobre `join_pc[0:8*DEPTH-1]` → comparación de
+32 bits → valor de escritura de `pc`, todo en un ciclo. Ese es el objetivo
+siguiente.
 
 ## ¿Cuántos caminos hay que arreglar?
 
@@ -153,8 +213,16 @@ esencialmente una sola estructura. El controlador SDRAM y la UART no aparecen.
 
 ## Pendiente
 
-En cabeza, y siguiente paso: reducir los caminos de escritura de `pc[0:7]` y
-`warp_retired_count[0:7]` en el SM, que poseen toda la cola por encima de 20 ns.
+En cabeza, y siguiente paso: **guardar la cima de la pila SIMT en registros por
+warp**. Hoy `RECON` calcula `top_index` desde `sp[current]`, indexa con él
+`join_pc[0:8*DEPTH-1]`, compara 32 bits contra `pc[current]` y de ahí sale el
+valor y el permiso de escritura de `pc`, todo encadenado en un ciclo. Con copias
+`join_pc_top[0:7]`, `ssy_pc_top[0:7]`, `entry_mask_top[0:7]` y
+`path_base_top[0:7]` mantenidas en push y pop, la comparación pasa a ser un mux
+de ocho entradas sin aritmética de índice delante.
+
+Quedan además los puertos de escritura de `pc` que no ha tocado el paso 3: los
+cuatro del acceso por bytes de configuración podrían unificarse en uno solo.
 
 Sobre la LSU, del plan inicial quedan:
 

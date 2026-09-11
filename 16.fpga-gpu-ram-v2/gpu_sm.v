@@ -145,6 +145,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg pick_found, any_live, all_bar, bar_mismatch;
     reg [2:0] pick_warp;
     reg [7:0] release_bar;
+    // Warps con barrera ya satisfecha pendientes de liberar. Se libera uno por
+    // ciclo: escribir los ocho a la vez obligaba a inferir ocho puertos de
+    // escritura sobre pc, generation y wait_bar.
+    reg [7:0] releasing;
+    reg release_found;
+    reg [2:0] release_warp;
     integer a,b,t;
     reg [2:0] candidate;
     always @* begin
@@ -169,6 +175,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             end
             release_bar[a]=all_bar;
         end
+        release_found=0; release_warp=0;
+        for(a=0;a<8;a=a+1)
+            if(!release_found && releasing[a]) begin release_found=1; release_warp=a[2:0]; end
     end
     reg [7:0] taken;
     reg alu_fault;
@@ -207,6 +216,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 error_lane<=lane_id; error_lane_valid<=lane_valid; error_pc<=pc[warp_id];
             end
             running<=0; pause_pending<=0; state<=PICK;
+            // Con el conjunto latcheado hay que descartarlo: antes un error
+            // simplemente impedía que la liberación atómica llegara a ocurrir.
+            releasing<=0;
         end
     endtask
     task retire;
@@ -221,7 +233,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         instruction_retired<=0;
         if (reset) begin
             state<=INIT; init_address<=0; running<=0; pause_pending<=0; stepping<=0;
-            current<=0; cursor<=0; wait_mem<=0; wait_bar<=0; load_is_write<=0;
+            current<=0; cursor<=0; wait_mem<=0; wait_bar<=0; releasing<=0; load_is_write<=0;
             error<=0; error_code<=ERROR_NONE; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
             retired_count<=0; instruction<=0; done<=0;
             for(w=0;w<8;w=w+1) begin
@@ -238,7 +250,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 if(cfg_word[1:0]==1 && cfg_strobe[0]) begin
                     active[cfg_word[4:2]]<=cfg_data[7:0]; live[cfg_word[4:2]]<=cfg_data[7:0];
                 end
-                warp_retired_count[cfg_word[4:2]]<=0; sp[cfg_word[4:2]]<=0; pp[cfg_word[4:2]]<=0; wait_bar[cfg_word[4:2]]<=0; generation[cfg_word[4:2]]<=0;
+                warp_retired_count[cfg_word[4:2]]<=0; sp[cfg_word[4:2]]<=0; pp[cfg_word[4:2]]<=0;
+                wait_bar[cfg_word[4:2]]<=0; releasing[cfg_word[4:2]]<=0; generation[cfg_word[4:2]]<=0;
             end
             case(state)
                 INIT: begin
@@ -256,12 +269,18 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                             instruction_retired<=1; retired_count<=retired_count+1'b1;
                             warp_retired_count[lsu_rsp_tag]<=warp_retired_count[lsu_rsp_tag]+1'b1;
                         end
-                    end else if (|release_bar && !error) begin
+                    end else if (release_found && !error) begin
                         // Barrier release is a control transition, not another
                         // instruction. Complete it even when STEP/HALT pauses.
-                        for(w=0;w<8;w=w+1) if(release_bar[w]) begin
-                            wait_bar[w]<=0; pc[w]<=pc[w]+4; generation[w]<=generation[w]+1'b1;
-                        end
+                        // El conjunto queda latcheado en releasing, así que basta
+                        // con un puerto: se drena un warp por ciclo.
+                        wait_bar[release_warp]<=0; releasing[release_warp]<=0;
+                        pc[release_warp]<=pc[release_warp]+4;
+                        generation[release_warp]<=generation[release_warp]+1'b1;
+                    end else if (|release_bar && !error) begin
+                        // release_bar deja de valer en cuanto se libera el primer
+                        // warp del grupo, por eso se captura entero de una vez.
+                        releasing<=release_bar;
                     end else if (normalize_found && !error) begin
                         current<=normalize_warp; state<=NORMALIZE;
                     end else if (pause_pending || (running && !any_live)) begin

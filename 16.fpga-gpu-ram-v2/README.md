@@ -3,7 +3,9 @@
 Copia de `14.fpga-gpu-ram` dedicada a subir la frecuencia máxima sin cambiar la
 funcionalidad. El registro de cambios, medidas y caminos críticos está en
 `optimizacion.md`; `timing.ps1` resume el informe de temporización tras cada
-`check.ps1 Build`. Todo lo demás de este documento describe el diseño heredado.
+`check.ps1 Build` y `sweep.ps1` mide el fmax sobre varias semillas, porque una
+sola tiene aquí un 17 % de dispersión. Todo lo demás de este documento describe
+el diseño heredado.
 
 A su vez copia del RTL de `12.fpga-gpu` con memoria unificada de **32 MiB de SDRAM**
 en lugar de los ocho bancos EBR de 128 KiB. Destino: ULX3S-85F,
