@@ -4,6 +4,7 @@
   "program": "mandelbrot.asm",
   "warp_config": "warps.json",
   "max_instructions": 50000000,
+  "timeout_seconds": 900,
   "expect": {
     "halted": true,
     "error": false,
