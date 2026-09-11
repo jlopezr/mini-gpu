@@ -1,0 +1,1370 @@
+{
+    "critical_paths": [
+        {
+            "from": "posedge $glbnet$sdram_clk$TRELLIS_IO_OUT",
+            "path": [
+                {
+                    "delay": 0.52499997615814209,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$162964",
+                        "loc": [
+                            76,
+                            72
+                        ],
+                        "port": "Q"
+                    },
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$162964",
+                        "loc": [
+                            76,
+                            72
+                        ],
+                        "port": "Q"
+                    },
+                    "type": "clk-to-q"
+                },
+                {
+                    "delay": 0.90499997138977051,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$162964",
+                        "loc": [
+                            76,
+                            72
+                        ],
+                        "port": "Q"
+                    },
+                    "net": "gpu.lsu.pending[7][0]",
+                    "sources": [],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$25871",
+                        "loc": [
+                            76,
+                            71
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$25871",
+                        "loc": [
+                            76,
+                            71
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$25871",
+                        "loc": [
+                            76,
+                            71
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 1.2130000591278076,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$25871",
+                        "loc": [
+                            76,
+                            71
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$25878.A[4]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$25921",
+                        "loc": [
+                            75,
+                            68
+                        ],
+                        "port": "A"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$25921",
+                        "loc": [
+                            75,
+                            68
+                        ],
+                        "port": "A"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$25921",
+                        "loc": [
+                            75,
+                            68
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.6589999794960022,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$25921",
+                        "loc": [
+                            75,
+                            68
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$25951.A[4]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.g1",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:141.38-141.40"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "FXB"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.24199999868869781,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "FXB"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 1.2979999780654907,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26050.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            74,
+                            68
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26100.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26100.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            69,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26100.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            69,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26100.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            69,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.62900000810623169,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26100.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            69,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26202.A[2]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut2",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.g1",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:157.54-157.56"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "FXB"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.24199999868869781,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "FXB"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut3",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.h0",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:157.66-157.68"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "FXA"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23899999260902405,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "FXA"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.66500002145767212,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26273.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26287.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26287.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            63
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26287.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            63
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26287.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            63
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.61900001764297485,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26287.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            70,
+                            63
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26309.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26309.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            73,
+                            63
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26309.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            73,
+                            63
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26309.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            73,
+                            63
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 3.0729999542236328,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26309.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            73,
+                            63
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26389.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut\\gpu.lsu.pick[2]",
+                        "loc": [
+                            92,
+                            38
+                        ],
+                        "port": "C"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut\\gpu.lsu.pick[2]",
+                        "loc": [
+                            92,
+                            38
+                        ],
+                        "port": "C"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut\\gpu.lsu.pick[2]",
+                        "loc": [
+                            92,
+                            38
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 3.1119999885559082,
+                    "from": {
+                        "cell": "$abc$521085$lut\\gpu.lsu.pick[2]",
+                        "loc": [
+                            92,
+                            38
+                        ],
+                        "port": "F"
+                    },
+                    "net": "gpu.lsu.pick[2]",
+                    "sources": [
+                        "gpu_lsu.v:31.15-31.19"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26380.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            77,
+                            62
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26380.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            77,
+                            62
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26380.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            77,
+                            62
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.83099997043609619,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26380.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            77,
+                            62
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26414.A[3]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26517",
+                        "loc": [
+                            77,
+                            63
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26517",
+                        "loc": [
+                            77,
+                            63
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26517",
+                        "loc": [
+                            77,
+                            63
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.75599998235702515,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26517",
+                        "loc": [
+                            77,
+                            63
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26523.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26523.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            78,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26523.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            78,
+                            64
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26523.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            78,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 3.2850000858306885,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26523.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            78,
+                            64
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26633.A[3]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut1",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut1",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut1",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut1",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.f1",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:133.22-133.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "F1"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.16500000655651093,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "F1"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.94999998807907104,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26633.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            95,
+                            38
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26655.A[6]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26739.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            94,
+                            41
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.25600001215934753,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26739.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            94,
+                            41
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26739.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            94,
+                            41
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 1.9450000524520874,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26739.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.lut5",
+                        "loc": [
+                            94,
+                            41
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$lut$aiger521084$26767.A[2]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26870",
+                        "loc": [
+                            83,
+                            52
+                        ],
+                        "port": "C"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26870",
+                        "loc": [
+                            83,
+                            52
+                        ],
+                        "port": "C"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$26870",
+                        "loc": [
+                            83,
+                            52
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 2.2760000228881836,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$26870",
+                        "loc": [
+                            83,
+                            52
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$auto$abc9_ops.cc:1613:reintegrate$522800.A[3]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$auto$opt_dff.cc:251:make_patterns_logic$36529.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            103,
+                            38
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.40099999308586121,
+                    "from": {
+                        "cell": "$abc$521085$lut$auto$opt_dff.cc:251:make_patterns_logic$36529.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            103,
+                            38
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$auto$opt_dff.cc:251:make_patterns_logic$36529.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            103,
+                            38
+                        ],
+                        "port": "OFX"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 2.2939999103546143,
+                    "from": {
+                        "cell": "$abc$521085$lut$auto$opt_dff.cc:251:make_patterns_logic$36529.genblk1.genblk1.genblk1.genblk1.genblk1.lut0",
+                        "loc": [
+                            103,
+                            38
+                        ],
+                        "port": "OFX"
+                    },
+                    "net": "$abc$521085$auto$opt_dff.cc:251:make_patterns_logic$36529",
+                    "sources": [],
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$64097",
+                        "loc": [
+                            83,
+                            53
+                        ],
+                        "port": "CE"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$64097",
+                        "loc": [
+                            83,
+                            53
+                        ],
+                        "port": "CE"
+                    },
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$64097",
+                        "loc": [
+                            83,
+                            53
+                        ],
+                        "port": "CE"
+                    },
+                    "type": "setup"
+                }
+            ],
+            "to": "posedge $glbnet$sdram_clk$TRELLIS_IO_OUT"
+        },
+        {
+            "from": "<async>",
+            "path": [
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "clk_25mhz$tr_io",
+                        "loc": [
+                            0,
+                            47
+                        ],
+                        "port": "O"
+                    },
+                    "to": {
+                        "cell": "clk_25mhz$tr_io",
+                        "loc": [
+                            0,
+                            47
+                        ],
+                        "port": "O"
+                    },
+                    "type": "source"
+                },
+                {
+                    "delay": 0.25,
+                    "from": {
+                        "cell": "clk_25mhz$tr_io",
+                        "loc": [
+                            0,
+                            47
+                        ],
+                        "port": "O"
+                    },
+                    "net": "sdram_clk$TRELLIS_IO_OUT",
+                    "sources": [
+                        "uart.v:33.11-33.14"
+                    ],
+                    "to": {
+                        "cell": "$gbuf$sdram_clk$TRELLIS_IO_OUT",
+                        "loc": [
+                            3,
+                            46
+                        ],
+                        "port": "CLKI"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$gbuf$sdram_clk$TRELLIS_IO_OUT",
+                        "loc": [
+                            3,
+                            46
+                        ],
+                        "port": "CLKI"
+                    },
+                    "to": {
+                        "cell": "$gbuf$sdram_clk$TRELLIS_IO_OUT",
+                        "loc": [
+                            3,
+                            46
+                        ],
+                        "port": "CLKO"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$gbuf$sdram_clk$TRELLIS_IO_OUT",
+                        "loc": [
+                            3,
+                            46
+                        ],
+                        "port": "CLKO"
+                    },
+                    "net": "$glbnet$sdram_clk$TRELLIS_IO_OUT",
+                    "sources": [],
+                    "to": {
+                        "cell": "sdram_clk$tr_io",
+                        "loc": [
+                            126,
+                            38
+                        ],
+                        "port": "I"
+                    },
+                    "type": "routing"
+                }
+            ],
+            "to": "<async>"
+        },
+        {
+            "from": "<async>",
+            "path": [
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "ftdi_txd$tr_io",
+                        "loc": [
+                            0,
+                            89
+                        ],
+                        "port": "O"
+                    },
+                    "to": {
+                        "cell": "ftdi_txd$tr_io",
+                        "loc": [
+                            0,
+                            89
+                        ],
+                        "port": "O"
+                    },
+                    "type": "source"
+                },
+                {
+                    "delay": 3.7379999160766602,
+                    "from": {
+                        "cell": "ftdi_txd$tr_io",
+                        "loc": [
+                            0,
+                            89
+                        ],
+                        "port": "O"
+                    },
+                    "net": "ftdi_txd$TRELLIS_IO_IN",
+                    "sources": [
+                        "uart.v:159.11-159.21"
+                    ],
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$67539",
+                        "loc": [
+                            36,
+                            72
+                        ],
+                        "port": "M"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$67539",
+                        "loc": [
+                            36,
+                            72
+                        ],
+                        "port": "M"
+                    },
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$67539",
+                        "loc": [
+                            36,
+                            72
+                        ],
+                        "port": "M"
+                    },
+                    "type": "setup"
+                }
+            ],
+            "to": "posedge $glbnet$sdram_clk$TRELLIS_IO_OUT"
+        },
+        {
+            "from": "posedge $glbnet$sdram_clk$TRELLIS_IO_OUT",
+            "path": [
+                {
+                    "delay": 0.52499997615814209,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$63372",
+                        "loc": [
+                            54,
+                            62
+                        ],
+                        "port": "Q"
+                    },
+                    "to": {
+                        "cell": "$auto$ff.cc:337:slice$63372",
+                        "loc": [
+                            54,
+                            62
+                        ],
+                        "port": "Q"
+                    },
+                    "type": "clk-to-q"
+                },
+                {
+                    "delay": 1.6749999523162842,
+                    "from": {
+                        "cell": "$auto$ff.cc:337:slice$63372",
+                        "loc": [
+                            54,
+                            62
+                        ],
+                        "port": "Q"
+                    },
+                    "net": "gpu.sm.running",
+                    "sources": [
+                        "gpu_sm.v:54.9-54.16"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$22401",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "C"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$22401",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "C"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$22401",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.41999998688697815,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$22401",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$techmap527177$abc$521085$lut$aiger521084$22403.A[2]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$22403",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$22403",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut$aiger521084$22403",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 0.63499999046325684,
+                    "from": {
+                        "cell": "$abc$521085$lut$aiger521084$22403",
+                        "loc": [
+                            59,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "net": "$techmap527178$abc$521085$lut\\led[5].A[3]",
+                    "sources": [
+                        "C:\\Users\\j_lop\\APIO~1\\packages\\OSS-CA~1\\bin\\../share/yosys/lattice/cells_map_trellis.v:108.23-108.24"
+                    ],
+                    "to": {
+                        "cell": "$abc$521085$lut\\led[5]",
+                        "loc": [
+                            60,
+                            60
+                        ],
+                        "port": "D"
+                    },
+                    "type": "routing"
+                },
+                {
+                    "delay": 0.23600000143051147,
+                    "from": {
+                        "cell": "$abc$521085$lut\\led[5]",
+                        "loc": [
+                            60,
+                            60
+                        ],
+                        "port": "D"
+                    },
+                    "to": {
+                        "cell": "$abc$521085$lut\\led[5]",
+                        "loc": [
+                            60,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "type": "logic"
+                },
+                {
+                    "delay": 4.7569999694824219,
+                    "from": {
+                        "cell": "$abc$521085$lut\\led[5]",
+                        "loc": [
+                            60,
+                            60
+                        ],
+                        "port": "F"
+                    },
+                    "net": "halted",
+                    "sources": [
+                        "monitor.v:45.11-45.21"
+                    ],
+                    "to": {
+                        "cell": "led[5]$tr_io",
+                        "loc": [
+                            0,
+                            44
+                        ],
+                        "port": "I"
+                    },
+                    "type": "routing"
+                }
+            ],
+            "to": "<async>"
+        }
+    ],
+    "fmax": {
+        "$glbnet$sdram_clk$TRELLIS_IO_OUT": {
+            "achieved": 33.570564270019531,
+            "constraint": 25
+        }
+    },
+    "utilization": {
+        "ALU54B": {
+            "available": 78,
+            "used": 0
+        },
+        "CLKDIVF": {
+            "available": 4,
+            "used": 0
+        },
+        "DCCA": {
+            "available": 56,
+            "used": 1
+        },
+        "DCSC": {
+            "available": 2,
+            "used": 0
+        },
+        "DCUA": {
+            "available": 2,
+            "used": 0
+        },
+        "DDRDLL": {
+            "available": 4,
+            "used": 0
+        },
+        "DLLDELD": {
+            "available": 8,
+            "used": 0
+        },
+        "DP16KD": {
+            "available": 208,
+            "used": 16
+        },
+        "DQSBUFM": {
+            "available": 14,
+            "used": 0
+        },
+        "DTR": {
+            "available": 1,
+            "used": 0
+        },
+        "ECLKBRIDGECS": {
+            "available": 2,
+            "used": 0
+        },
+        "ECLKSYNCB": {
+            "available": 10,
+            "used": 0
+        },
+        "EHXPLLL": {
+            "available": 4,
+            "used": 0
+        },
+        "EXTREFB": {
+            "available": 2,
+            "used": 0
+        },
+        "GSR": {
+            "available": 1,
+            "used": 0
+        },
+        "IOLOGIC": {
+            "available": 224,
+            "used": 0
+        },
+        "JTAGG": {
+            "available": 1,
+            "used": 0
+        },
+        "MULT18X18D": {
+            "available": 156,
+            "used": 32
+        },
+        "OSCG": {
+            "available": 1,
+            "used": 0
+        },
+        "PCSCLKDIV": {
+            "available": 2,
+            "used": 0
+        },
+        "SEDGA": {
+            "available": 1,
+            "used": 0
+        },
+        "SIOLOGIC": {
+            "available": 141,
+            "used": 0
+        },
+        "TRELLIS_COMB": {
+            "available": 83640,
+            "used": 30744
+        },
+        "TRELLIS_ECLKBUF": {
+            "available": 8,
+            "used": 0
+        },
+        "TRELLIS_FF": {
+            "available": 83640,
+            "used": 9016
+        },
+        "TRELLIS_IO": {
+            "available": 365,
+            "used": 51
+        },
+        "TRELLIS_RAMW": {
+            "available": 10455,
+            "used": 405
+        },
+        "USRMCLK": {
+            "available": 1,
+            "used": 0
+        }
+    }
+}
