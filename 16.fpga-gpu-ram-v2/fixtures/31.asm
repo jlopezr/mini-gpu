@@ -1,0 +1,10 @@
+GETTID R1
+ANDI R1, R1, 7
+ADDI R1, R1, 20
+loop: SSY done
+BGE R2, R1, done
+ADDI R2, R2, 1
+BRA loop
+done: ADDI R3, R2, 0
+BAR
+EXIT

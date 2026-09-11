@@ -1,0 +1,7 @@
+{
+  "warp_size": 8,
+  "warps": [
+    {"id": 0, "pc": 0, "active_mask": "0xff", "workgroup_id": 0},
+    {"id": 1, "pc": 0, "active_mask": "0x0f", "workgroup_id": 0}
+  ]
+}
