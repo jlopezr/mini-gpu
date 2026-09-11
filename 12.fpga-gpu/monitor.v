@@ -148,7 +148,7 @@ module monitor (
           ({1'b0, start_address} >= 33'h0_8000_0000 &&
            end_address <= 33'h0_8000_0080) ||
           ({1'b0, start_address} >= 33'h0_8000_0100 &&
-           end_address <= 33'h0_8000_0114);
+           end_address <= 33'h0_8000_0118);
     end
   endfunction
 

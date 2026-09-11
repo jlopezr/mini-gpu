@@ -24,7 +24,6 @@ VERSIONS = {
     "bram": {
         "monitor_path": Path("12.fpga-gpu/monitor.py"),
         "monitor_version": (2, 1),
-        "memory_size": 128 * 1024,
         "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes",
     },
 }
@@ -42,20 +41,26 @@ def _load_module(name: str, path: Path) -> ModuleType:
     return module
 
 
+def architectural_size(monitor: ModuleType) -> int:
+    """Tamaño del espacio arquitectónico que declara un monitor."""
+    return max(end for _, end in monitor.ARCHITECTURAL_REGIONS)
+
+
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Reject unavailable capabilities before opening a port or uploading."""
     config = VERSIONS[version]
-    limit = config['memory_size']
     if case.get('simulator_options'):
         return 'las profundidades SIMT del caso requieren el simulador'
     if 'atomic_warp_faults' in case.get('requires', []):
         return 'el caso exige fallos atómicos por warp; el RTL permite efectos parciales'
-    ranges = [('programa', 0, len(case['program']))]
-    ranges += [('memoria inicial', address, len(data)) for address, data in case['initial_memory']]
-    ranges += [('dump esperado', address, size) for address, size in case['expected']['memory']]
-    for name, address, size in ranges:
-        if address < 0 or address + size > limit:
-            return f'{name} fuera de los {limit // 1024} KiB de BRAM: 0x{address:x} + {size}'
+    # El mapa lo declara el monitor de esta versión, que es quien lo implementa.
+    monitor = _load_module(
+        f'gpu_fpga_monitor_{version}_for_regions',
+        Path(__file__).resolve().parents[2] / config['monitor_path'],
+    )
+    reason = board.region_incompatibility(case, monitor.ARCHITECTURAL_REGIONS)
+    if reason:
+        return reason
     observations = case['expected'].get('observations', {})
     if observations.get('fault.address') is not None or (
         'fault.address' in observations and case['expected']['error_code'] == 2
@@ -67,7 +72,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
         _load_module('gpu_trace', model_path.with_name('gpu_trace.py'))
     model_module = _load_module('gpu_fpga_launch_validation', model_path)
     try:
-        model = model_module.System(limit, 8, 8)
+        model = model_module.System(architectural_size(monitor), 8, 8)
         model.configure_warps(case['warp_config'])
         if any(w.workgroup_id > 0xffffffff for w in model.streaming_multiprocessor.warps):
             return 'workgroup_id no cabe en 32 bits'

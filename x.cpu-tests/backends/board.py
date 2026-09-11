@@ -15,6 +15,28 @@ from pathlib import Path
 from types import ModuleType
 
 
+def region_incompatibility(case: dict, regions: tuple) -> str | None:
+    """Comprueba los rangos de un caso contra el mapa real de una versión.
+
+    Una lista de regiones, y no un tamaño, porque `ebr` tiene dos bancos
+    separados por un hueco que el bus rechaza: un límite escalar no puede
+    expresarlo. Cada rango debe caber entero dentro de una sola región.
+    """
+    ranges = [("programa", 0, len(case["program"]))]
+    ranges += [("memoria inicial", address, len(data))
+               for address, data in case["initial_memory"]]
+    ranges += [("dump esperado", address, size)
+               for address, size in case["expected"]["memory"]]
+    for name, address, size in ranges:
+        if not any(start <= address and address + size <= end
+                   for start, end in regions):
+            available = ", ".join(f"0x{start:x}-0x{end - 1:x}"
+                                  for start, end in regions)
+            return (f"{name} fuera del mapa de memoria: 0x{address:x} + {size} "
+                    f"bytes; disponible: {available}")
+    return None
+
+
 class BoardNotConnected(RuntimeError):
     """No se puede ni abrir el puerto: no hay placa con la que hablar."""
 

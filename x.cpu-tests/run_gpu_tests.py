@@ -24,7 +24,8 @@ from backends.simulator import SimulatorBackend
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
-FPGA_MEMORY_SIZE = 16 * 1024
+# Límite común a todos los casos: que quepan en un espacio de 32 bits. Si el
+# caso cabe en el mapa concreto de un backend lo decide `incompatibility()`.
 ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
 # Opciones de construcción que un caso GPU puede fijar sobre el simulador.
 SIMULATOR_OPTIONS = ("simt_region_depth", "simt_path_depth")
@@ -33,24 +34,28 @@ SLOW_CASE_SECONDS = 1.0
 BACKEND_DEFINITIONS = {
     "gpu-simulator": {
         "class": GpuBackend,
+        "module": gpu_backend,
         "architecture": GpuBackend.ARCHITECTURE,
         "versions": gpu_backend.VERSIONS,
         "default_version": gpu_backend.DEFAULT_VERSION,
     },
     "cpu-simulator": {
         "class": SimulatorBackend,
+        "module": simulator_backend,
         "architecture": SimulatorBackend.ARCHITECTURE,
         "versions": simulator_backend.VERSIONS,
         "default_version": simulator_backend.DEFAULT_VERSION,
     },
     "cpu-fpga": {
         "class": FpgaBackend,
+        "module": fpga_backend,
         "architecture": FpgaBackend.ARCHITECTURE,
         "versions": fpga_backend.VERSIONS,
         "default_version": fpga_backend.DEFAULT_VERSION,
     },
     "gpu-fpga": {
         "class": GpuFpgaBackend,
+        "module": gpu_fpga_backend,
         "architecture": GpuFpgaBackend.ARCHITECTURE,
         "versions": gpu_fpga_backend.VERSIONS,
         "default_version": gpu_fpga_backend.DEFAULT_VERSION,
@@ -326,10 +331,10 @@ def load_case(path: Path) -> dict:
 
     program_path = directory / raw["program"]
     program = load_program(program_path)
-    if len(program) > (ARCHITECTURAL_MEMORY_SIZE if gpu else FPGA_MEMORY_SIZE):
+    if len(program) > ARCHITECTURAL_MEMORY_SIZE:
         raise ValueError(
-            f"El programa ocupa {len(program)} bytes; la FPGA admite "
-            f"{FPGA_MEMORY_SIZE}"
+            f"El programa ocupa {len(program)} bytes; el máximo es "
+            f"{ARCHITECTURAL_MEMORY_SIZE}"
         )
     expected_raw = raw["expect"]
     if gpu and ("pc" in expected_raw or "registers" in expected_raw):
@@ -498,14 +503,22 @@ def main() -> int:
                     continue
                 raise ValueError("simulator_options requiere --backend gpu-simulator")
             case = load_case(path)
-            if 'gpu-fpga' in backend_names:
-                reason = gpu_fpga_backend.incompatibility(case, backend_versions['gpu-fpga'])
+            # Cada backend decide si el caso cabe en su mapa; los que no
+            # publican `incompatibility` aceptan todo lo que valide load_case.
+            reason = None
+            for name in backend_names:
+                check = getattr(BACKEND_DEFINITIONS[name]["module"],
+                                "incompatibility", None)
+                reason = check(case, backend_versions[name]) if check else None
                 if reason:
-                    if args.cases:
-                        raise ValueError(reason)
-                    print(f"SKIP {case['name']} [gpu-fpga]: {reason}")
-                    skipped += 1
-                    continue
+                    reason = f"[{name}]: {reason}"
+                    break
+            if reason:
+                if args.cases:
+                    raise ValueError(reason)
+                print(f"SKIP {case['name']} {reason}")
+                skipped += 1
+                continue
             cases.append((path, case))
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"ERROR {path}: {error}", file=sys.stderr)

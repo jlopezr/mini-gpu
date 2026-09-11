@@ -37,6 +37,19 @@ def _load_module(name: str, path: Path) -> ModuleType:
     return module
 
 
+def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
+    """Rechaza un caso que no cabe en el mapa, antes de tocar la placa.
+
+    El mapa lo declara el `monitor.py` de cada versión, que es quien lo
+    implementa; aquí solo se lee su constante, sin abrir el puerto.
+    """
+    monitor = _load_module(
+        f"fpga_monitor_{version}_for_regions",
+        Path(__file__).resolve().parents[2] / VERSIONS[version]["monitor_path"],
+    )
+    return board.region_incompatibility(case, monitor.ARCHITECTURAL_REGIONS)
+
+
 class FpgaBackend:
     """Carga, ejecuta e inspecciona un caso en la FPGA real."""
 

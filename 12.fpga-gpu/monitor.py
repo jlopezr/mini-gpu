@@ -17,11 +17,16 @@ BAUDRATE = 250_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0xFFFF_FFFF
 MAX_BLOCK_SIZE = 256
-MEMORY_REGIONS = (
+# Memoria que ve el programa: la única contra la que se valida un caso de test.
+ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0002_0000),
+)
+# Ventanas de configuración y depuración, accesibles solo desde el monitor.
+MONITOR_REGIONS = (
     (0x8000_0000, 0x8000_0080),
     (0x8000_0100, 0x8000_0118),
 )
+MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
 CMD_PING = b"\x01"
 CMD_GET_VERSION = b"\x02"
