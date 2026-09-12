@@ -107,7 +107,12 @@ module video_line_source_burst #(
   // la memoria siempre tarda mas que el vaciado.
   assign rsp_ready = (unload_left == 4'd0);
 
-  assign urgent = running && (late_count >= URGENT_AFTER[15:0]);
+  // `urgent` va REGISTRADO. Combinacional era un comparador de 16 bits
+  // colgando de la concesion del arbitro, y de la concesion cuelga el resto
+  // del sistema: la sintesis se quedaba en 78 MHz con ese camino. Un ciclo de
+  // retraso en «voy con retraso» no cambia nada, porque el umbral son miles.
+  reg urgent_r;
+  assign urgent = urgent_r;
 
   // Palabras que entrega la rafaga recien llegada: lo que reste de sus ocho
   // desde `word_sel`, o lo que falte de la linea, lo que sea menor. Se declara
@@ -134,11 +139,13 @@ module video_line_source_burst #(
       words_left <= {(ADDR_BITS+1){1'b0}};
       late_count <= 16'd0;
       running <= 1'b0;
+      urgent_r <= 1'b0;
     end else begin
       fill_we <= 1'b0;
       fill_done <= 1'b0;
 
       if (running && late_count != 16'hffff) late_count <= late_count + 1'b1;
+      urgent_r <= running && (late_count >= URGENT_AFTER[15:0]);
 
       // -- Vaciado de la rafaga al line buffer, un pixel por ciclo ----------
       // Va fuera del `case` porque corre en paralelo con la peticion siguiente.

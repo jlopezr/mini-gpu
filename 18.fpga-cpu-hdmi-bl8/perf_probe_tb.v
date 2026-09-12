@@ -52,10 +52,6 @@ module perf_system #(
     // se responden en un ciclo desde el mismo array. Modela un bufer de
     // instrucciones que nunca falla.
     parameter integer IDEAL_IMEM = 0,
-    // Con WITH_IBUF se intercala el instruction_buffer real entre la CPU y el
-    // adaptador. Es la medida que dice cuanto del techo de IDEAL_IMEM se cobra
-    // de verdad.
-    parameter integer WITH_IBUF = 0,
     // Con WITH_VIDEO el scanout compite por la SDRAM con su ciclo de trabajo
     // real: SRC_W accesos de 16 bits por cada par de lineas de pantalla.
     parameter integer WITH_VIDEO = 0,
@@ -102,30 +98,12 @@ module perf_system #(
   wire adapter_imem_ready;
   reg [31:0] ideal_imem_read_data;
   reg ideal_imem_ready;
-  wire [31:0] ibuf_imem_read_data;
-  wire ibuf_imem_ready;
-  wire buf_mem_valid;
-  wire [31:0] buf_mem_address;
-  wire [31:0] ibuf_hits, ibuf_misses;
 
   wire [31:0] imem_read_data =
-      IDEAL_IMEM ? ideal_imem_read_data :
-      WITH_IBUF  ? ibuf_imem_read_data : adapter_imem_read_data;
+      IDEAL_IMEM ? ideal_imem_read_data : adapter_imem_read_data;
   wire imem_ready =
-      IDEAL_IMEM ? ideal_imem_ready :
-      WITH_IBUF  ? ibuf_imem_ready : adapter_imem_ready;
+      IDEAL_IMEM ? ideal_imem_ready : adapter_imem_ready;
 
-  // El bufer se instancia siempre; solo se interpone cuando WITH_IBUF vale 1.
-  instruction_buffer #(.LINES(4), .INDEX_BITS(2)) ibuf_i (
-      .clk(clk), .reset(reset), .init_done(1'b1), .cpu_halted(halted),
-      .cpu_imem_valid(WITH_IBUF ? imem_valid : 1'b0),
-      .cpu_imem_address(imem_address),
-      .cpu_imem_read_data(ibuf_imem_read_data),
-      .cpu_imem_ready(ibuf_imem_ready),
-      .mem_imem_valid(buf_mem_valid), .mem_imem_address(buf_mem_address),
-      .mem_imem_read_data(adapter_imem_read_data),
-      .mem_imem_ready(adapter_imem_ready),
-      .hit_count(ibuf_hits), .miss_count(ibuf_misses));
 
   always @(posedge clk) begin
     ideal_imem_ready <= 1'b0;
@@ -215,9 +193,8 @@ module perf_system #(
       .monitor_write_enable(1'b0), .monitor_read_enable(1'b0),
       .monitor_read_data(), .monitor_ready(), .monitor_error(),
       .cpu_halted(halted),
-      .cpu_imem_valid(IDEAL_IMEM ? 1'b0 :
-                      WITH_IBUF  ? buf_mem_valid : imem_valid),
-      .cpu_imem_address(WITH_IBUF ? buf_mem_address : imem_address),
+      .cpu_imem_valid(IDEAL_IMEM ? 1'b0 : imem_valid),
+      .cpu_imem_address(imem_address),
       .cpu_imem_read_data(adapter_imem_read_data),
       .cpu_imem_ready(adapter_imem_ready), .cpu_dmem_valid(dmem_valid),
       .cpu_dmem_address(dmem_address), .cpu_dmem_write_data(dmem_write_data),
@@ -417,8 +394,11 @@ module perf_probe_tb;
       .adapter_cycles(adapter_busy[5]), .cpu_only_cycles(cpu_only[5]),
       .imem_trans(imem_trans[5]), .dmem_trans(dmem_trans[5]),
       .video_overrun_count(video_overruns[5]));
-  // Y lo que cobra de verdad el bufer real, con y sin el scanout compitiendo.
-  perf_system #(.LATENCY(8), .WITH_IBUF(1)) sys6 (
+  // Los dos huecos que quedan libres se atan a sistemas inertes: este banco
+  // mide el camino de 16 bits de la 16, que es la LINEA BASE contra la que se
+  // compara el de rafagas. Lo que cobra el bufer real sobre el camino nuevo lo
+  // mide cpu_burst_system_tb.v, porque el bufer ya solo habla de 128 bits.
+  perf_system #(.LATENCY(8)) sys6 (
       .clk(clk), .reset(reset), .run_request(run_request),
       .halted(halted[6]), .finished(finished[6]), .error(error[6]),
       .cycles(cycles[6]), .instructions(instructions[6]),
@@ -426,7 +406,7 @@ module perf_probe_tb;
       .adapter_cycles(adapter_busy[6]), .cpu_only_cycles(cpu_only[6]),
       .imem_trans(imem_trans[6]), .dmem_trans(dmem_trans[6]),
       .video_overrun_count(video_overruns[6]));
-  perf_system #(.LATENCY(8), .WITH_IBUF(1), .WITH_VIDEO(1)) sys7 (
+  perf_system #(.LATENCY(8), .WITH_VIDEO(1)) sys7 (
       .clk(clk), .reset(reset), .run_request(run_request),
       .halted(halted[7]), .finished(finished[7]), .error(error[7]),
       .cycles(cycles[7]), .instructions(instructions[7]),
@@ -506,15 +486,9 @@ module perf_probe_tb;
     $display("de %.1f a %.1f ciclos por palabra, sin tocar el camino de datos.",
              cycles[2] * 1.0 / ITERATIONS, cycles[4] * 1.0 / ITERATIONS);
     $display("");
-    $display("Lo que cobra el bufer real, de cuatro lineas de 16 bytes:");
-    $display("  sin video  %.1f -> %.1f ciclos/palabra  %.2fx  (techo %.2fx)",
-             cycles[2] * 1.0 / ITERATIONS, cycles[6] * 1.0 / ITERATIONS,
-             cycles[2] * 1.0 / cycles[6], cycles[2] * 1.0 / cycles[4]);
-    $display("  con video  %.1f -> %.1f ciclos/palabra  %.2fx",
-             cycles[5] * 1.0 / ITERATIONS, cycles[7] * 1.0 / ITERATIONS,
-             cycles[5] * 1.0 / cycles[7]);
-    $display("  accesos de 16 bits a la SDRAM: %0d -> %0d",
-             accesses[2], accesses[6]);
+    $display("Lo que cobra el bufer real sobre el camino de rafagas lo mide");
+    $display("cpu_burst_system_tb.v: aqui el bufer ya no encaja, porque solo");
+    $display("habla de 128 bits. Este banco es la linea base.");
 
     // Comprobaciones que hacen de esto un banco y no solo un informe.
     if (accesses[0] != accesses[3])
@@ -554,16 +528,11 @@ module perf_probe_tb;
       $fatal(1, "con video salen %.1f ciclos por palabra, fuera de [180, 258]",
              cycles[5] * 1.0 / ITERATIONS);
 
-    // El bufer real tiene que quedarse cerca del techo, no solo por debajo:
-    // si se aleja, es que esta fallando mas de lo que deberia.
-    if (cycles[6] > (cycles[4] * 11) / 10)
-      $fatal(1, "el bufer real (%0d ciclos) se aleja mas del 10 %% del techo (%0d)",
-             cycles[6], cycles[4]);
-    // 320 accesos de datos mas tres rellenos de linea de ocho accesos: el
-    // programa entero ocupa tres lineas de 16 bytes y no se relee ninguna.
-    if (accesses[6] != 2 * ITERATIONS + 24)
-      $fatal(1, "con bufer deberian quedar %0d accesos, hay %0d",
-             2 * ITERATIONS + 24, accesses[6]);
+    // Los dos sistemas gemelos tienen que dar exactamente lo mismo que sus
+    // pares: si no, es que algo depende del orden de instanciacion.
+    if (cycles[6] != cycles[2] || cycles[7] != cycles[5])
+      $fatal(1, "sistemas identicos con resultados distintos: %0d/%0d y %0d/%0d",
+             cycles[6], cycles[2], cycles[7], cycles[5]);
 
     $display("");
     $display("PASS: perf_probe");

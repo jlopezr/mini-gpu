@@ -6,12 +6,6 @@ module cpu_sdram_system_tb;
   reg run_request=0,halt_request=0,step_request=0;
   wire halted,error; wire [7:0] error_code; wire instruction_retired;
   wire imem_valid; wire [31:0] imem_address,imem_read_data; wire imem_ready;
-  // El bufer de instrucciones va entre la CPU y el adaptador. Este banco es el
-  // que mejor lo ejercita de punta a punta: carga el programa por el monitor
-  // con la CPU parada y luego la arranca, que es exactamente el caso que
-  // obliga a vaciarlo.
-  wire buf_imem_valid; wire [31:0] buf_imem_address,buf_imem_read_data;
-  wire buf_imem_ready; wire [31:0] ibuf_hits,ibuf_misses;
   wire dmem_valid; wire [31:0] dmem_address,dmem_write_data,dmem_read_data;
   wire [3:0] dmem_write_enable; wire dmem_ready,dmem_error;
   reg [4:0] debug_register_address=0;
@@ -37,24 +31,15 @@ module cpu_sdram_system_tb;
       .dmem_error(dmem_error),.debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),.debug_pc(debug_pc));
 
-  instruction_buffer #(.LINES(4),.INDEX_BITS(2)) ibuf_i(
-      .clk(clk),.reset(reset),.init_done(init_done),.cpu_halted(halted),
-      .cpu_imem_valid(imem_valid),.cpu_imem_address(imem_address),
-      .cpu_imem_read_data(imem_read_data),.cpu_imem_ready(imem_ready),
-      .mem_imem_valid(buf_imem_valid),.mem_imem_address(buf_imem_address),
-      .mem_imem_read_data(buf_imem_read_data),.mem_imem_ready(buf_imem_ready),
-      .hit_count(ibuf_hits),.miss_count(ibuf_misses));
-
   sdram_system_adapter adapter_i(
       .clk(clk),.reset(reset),.init_done(init_done),
       .monitor_address(monitor_address),.monitor_write_data(monitor_write_data),
       .monitor_write_enable(monitor_write_enable),
       .monitor_read_enable(monitor_read_enable),.monitor_read_data(monitor_read_data),
       .monitor_ready(monitor_ready),.monitor_error(monitor_error),
-      .cpu_halted(halted),.cpu_imem_valid(buf_imem_valid),
-      .cpu_imem_address(buf_imem_address),
-      .cpu_imem_read_data(buf_imem_read_data),
-      .cpu_imem_ready(buf_imem_ready),.cpu_dmem_valid(dmem_valid),
+      .cpu_halted(halted),.cpu_imem_valid(imem_valid),
+      .cpu_imem_address(imem_address),.cpu_imem_read_data(imem_read_data),
+      .cpu_imem_ready(imem_ready),.cpu_dmem_valid(dmem_valid),
       .cpu_dmem_address(dmem_address),.cpu_dmem_write_data(dmem_write_data),
       .cpu_dmem_write_enable(dmem_write_enable),.cpu_dmem_read_data(dmem_read_data),
       .cpu_dmem_ready(dmem_ready),.cpu_dmem_error(dmem_error),
@@ -117,12 +102,6 @@ module cpu_sdram_system_tb;
     if(debug_register_data!==32'h0000_1234)$fatal(1,"R2 mismatch %08x",debug_register_data);
     if(data_words[2]!==16'h1234 || data_words[3]!==16'h0000)
       $fatal(1,"STORE did not reach data SDRAM bank");
-    // Seis instrucciones repartidas en dos lineas de 16 bytes: dos fallos y
-    // cuatro aciertos. Sin esta comprobacion, un bufer que no guardara nada
-    // pasaria este banco igual de bien.
-    if(ibuf_misses!==32'd2 || ibuf_hits!==32'd4)
-      $fatal(1,"bufer de instrucciones: %0d fallos y %0d aciertos, esperados 2 y 4",
-             ibuf_misses,ibuf_hits);
     $display("PASS: monitor load -> SDRAM fetch -> STORE/LOAD -> HALT");$finish;
   end
 endmodule

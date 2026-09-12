@@ -3,9 +3,15 @@
 /*
  * Bufer de instrucciones: LINES lineas de 16 bytes, mapeo directo.
  *
- * Se intercala entre el puerto `imem` de la CPU y el `sdram_system_adapter`,
- * con el mismo contrato en los dos lados, asi que en `top.v` es un modulo en
- * medio de un cable y nada mas.
+ * Se intercala entre el puerto `imem` de la CPU y el bus de memoria. Del lado
+ * de la CPU el contrato es el de `imem` tal cual; del lado de la memoria es un
+ * puerto de 128 bits contra memory_fabric_4.
+ *
+ * Y ahi esta la razon de que una linea sean 16 bytes y no otra cosa: **una
+ * linea es exactamente una rafaga BL8**. Un fallo se resuelve con UNA peticion,
+ * no con cuatro transacciones de 32 bits como en la version anterior de este
+ * modulo, ni con los ocho accesos de 16 bits que costaban las cuatro busquedas
+ * sueltas de la 16.
  *
  * Por que un bufer y no una cache: la medida de docs/medida-inicial.md dice
  * que las busquedas son 645 de las 805 transacciones del bucle interior de
@@ -26,31 +32,39 @@
  * cubre el unico caso de incoherencia que existe aqui, porque esta CPU no
  * escribe su propio codigo: `dmem` no pasa por aqui.
  *
- * Lo que NO se guarda. Las direcciones fuera de la SDRAM y las busquedas
- * anteriores a `init_done` las responde el adaptador con 0xf8000000, que es un
- * opcode invalido a proposito. Guardar esa respuesta la haria permanente, asi
- * que esos casos pasan de largo sin tocar el bufer.
+ * Lo que NO se guarda: las direcciones fuera de la SDRAM y las busquedas
+ * anteriores a `init_done`. Se responden con 0xf8000000, que es un opcode
+ * invalido a proposito, igual que hacia el adaptador de la 16; guardarlo lo
+ * haria permanente.
  */
 module instruction_buffer #(
     parameter integer LINES = 4,          // potencia de dos
-    parameter integer INDEX_BITS = 2      // $clog2(LINES)
+    parameter integer INDEX_BITS = 2,     // $clog2(LINES)
+    parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000
 ) (
     input  wire        clk,
     input  wire        reset,
     input  wire        init_done,
     input  wire        cpu_halted,
 
-    // Lado CPU: identico al puerto imem del adaptador.
+    // Lado CPU: identico al puerto imem de cpu.v.
     input  wire        cpu_imem_valid,
     input  wire [31:0] cpu_imem_address,
     output reg  [31:0] cpu_imem_read_data,
     output reg         cpu_imem_ready,
 
-    // Lado memoria: identico al puerto imem de la CPU.
-    output reg         mem_imem_valid,
-    output reg  [31:0] mem_imem_address,
-    input  wire [31:0] mem_imem_read_data,
-    input  wire        mem_imem_ready,
+    // Puerto de 128 bits hacia el arbitro, con direccion de BYTE alineada a 16.
+    output wire         req_valid,
+    input  wire         req_ready,
+    output wire         req_write,
+    output reg  [31:0]  req_addr,
+    output wire [127:0] req_wdata,
+    output wire [15:0]  req_wmask,
+
+    input  wire         rsp_valid,
+    output wire         rsp_ready,
+    input  wire [127:0] rsp_rdata,
+    input  wire         rsp_error,
 
     // Solo para los bancos de prueba. Un bufer que no acierta nunca funciona
     // igual de bien y no sirve de nada, y sin contadores no hay forma de
@@ -59,30 +73,63 @@ module instruction_buffer #(
     output reg  [31:0] miss_count
 );
   localparam integer TAG_LSB = 4 + INDEX_BITS;
-  localparam integer TAG_BITS = 25 - TAG_LSB;
+  localparam integer TAG_BITS = 32 - TAG_LSB;
 
-  localparam [1:0] ST_IDLE = 2'd0, ST_WAIT = 2'd1, ST_NEXT = 2'd2,
-                   ST_SERVE = 2'd3;
+  localparam [2:0] ST_IDLE = 3'd0, ST_ISSUE = 3'd2,
+                   ST_WAIT = 3'd3, ST_SERVE = 3'd4;
 
-  reg [31:0] line_data[0:LINES*4-1];
+  // Una linea son cuatro palabras de 32 bits, o sea los 128 bits de una rafaga.
+  reg [127:0] line_data[0:LINES-1];
   reg [TAG_BITS-1:0] line_tag[0:LINES-1];
   reg line_valid[0:LINES-1];
 
-  reg [1:0] state;
-  reg bypass;
+  reg [2:0] state;
   reg [INDEX_BITS-1:0] fill_index;
   reg [TAG_BITS-1:0] fill_tag;
-  reg [1:0] fill_word;
   reg [1:0] want_word;
+  reg fill_cacheable;
+
+  // El bufer nunca escribe.
+  assign req_write = 1'b0;
+  assign req_wdata = 128'd0;
+  assign req_wmask = 16'd0;
+  // `req_valid` se mantiene hasta ver `req_ready`: en memory_fabric_4 la
+  // concesion mira el `valid` del puerto, asi que bajarlo antes cuelga.
+  assign req_valid = (state == ST_ISSUE);
+  assign rsp_ready = (state == ST_WAIT);
 
   wire [1:0] word_sel = cpu_imem_address[3:2];
   wire [INDEX_BITS-1:0] index = cpu_imem_address[TAG_LSB-1:4];
-  wire [TAG_BITS-1:0] tag = cpu_imem_address[24:TAG_LSB];
-  // Misma condicion que aplica el adaptador, para no guardar nunca una
-  // respuesta de error.
-  wire cacheable = init_done && cpu_imem_address[31:25] == 0 &&
-                   cpu_imem_address[1:0] == 2'b00;
-  wire hit = line_valid[index] && line_tag[index] == tag;
+  wire [TAG_BITS-1:0] tag = cpu_imem_address[31:TAG_LSB];
+  // Comparar el rango con `<` cuesta un comparador de magnitud de 32 bits, y
+  // este cono llega hasta el `imem_valid` de la CPU: con la resta completa, la
+  // sintesis se quedaba en 84 MHz. Con el tamano siendo potencia de dos basta
+  // con mirar los bits altos, que son siete NOR. Es la misma forma que usaba
+  // sdram_system_adapter en la 16 (`address[31:25] == 0`), escrita para no
+  // atarse a los 32 MiB.
+  localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
+  wire cacheable = init_done &&
+                   ((cpu_imem_address & ADDR_RANGE_MASK) == 32'd0) &&
+                   (cpu_imem_address[1:0] == 2'b00);
+  // Las cuatro etiquetas se comparan EN PARALELO y luego se multiplexa un bit.
+  // Escrito como `line_valid[index] && line_tag[index] == tag` sale al reves
+  // —multiplexar 19 bits por cuatro y despues comparar—, y ese cono acaba en el
+  // `imem_valid` de la CPU. El area es la misma de cuatro comparadores en vez
+  // de uno, que aqui no se nota, y el camino baja varios niveles de LUT.
+  //
+  // Se probo ademas a partir la busqueda en dos ciclos, con la comparacion
+  // arrancando de un registro local en vez de la direccion de la CPU. NO
+  // compro margen —seguian cerrando la misma semilla de ocho, porque el camino
+  // critico esta en otro sitio y es de routing— y costaba un 8 % de
+  // rendimiento, asi que se deshizo. Queda anotado para no repetirlo.
+  wire [LINES-1:0] line_match;
+  genvar g;
+  generate
+    for (g = 0; g < LINES; g = g + 1) begin : tag_compare
+      assign line_match[g] = line_valid[g] && (line_tag[g] == tag);
+    end
+  endgenerate
+  wire hit_now = line_match[index];
 
   integer i;
 
@@ -91,14 +138,12 @@ module instruction_buffer #(
 
     if (reset) begin
       state <= ST_IDLE;
-      mem_imem_valid <= 1'b0;
-      mem_imem_address <= 32'h0000_0000;
+      req_addr <= 32'h0000_0000;
       cpu_imem_read_data <= 32'h0000_0000;
-      bypass <= 1'b0;
       fill_index <= 0;
       fill_tag <= 0;
-      fill_word <= 2'd0;
       want_word <= 2'd0;
+      fill_cacheable <= 1'b0;
       hit_count <= 32'd0;
       miss_count <= 32'd0;
     end else begin
@@ -107,73 +152,56 @@ module instruction_buffer #(
         // mantiene `valid` un ciclo mas antes de bajarlo, y sin esta guarda la
         // misma busqueda se serviria dos veces.
         ST_IDLE: begin
-          // `bypass` se calcula aqui fuera, sin mirar si hay acierto. Solo lo
-          // usa ST_WAIT, y meter la comparacion de etiquetas en su cono lo
-          // ponia en el camino critico: `line_tag` -> acierto -> ... ->
-          // `bypass`, casi 10 ns y tres cuartas partes de routing.
-          bypass <= !cacheable;
           if (cpu_imem_valid && !cpu_imem_ready) begin
+            fill_index <= index;
+            fill_tag <= tag;
+            want_word <= word_sel;
+            fill_cacheable <= cacheable;
+            req_addr <= {cpu_imem_address[31:4], 4'b0000};
             if (!cacheable) begin
-              mem_imem_address <= cpu_imem_address;
-              mem_imem_valid <= 1'b1;
-              state <= ST_WAIT;
-            end else if (hit) begin
-              cpu_imem_read_data <= line_data[{index, word_sel}];
+              // Igual que respondia el adaptador de la 16: opcode invalido,
+              // sin guardar nada.
+              cpu_imem_read_data <= 32'hf800_0000;
+              cpu_imem_ready <= 1'b1;
+            end else if (hit_now) begin
+              cpu_imem_read_data <=
+                  line_data[index][{word_sel, 5'b00000} +: 32];
               cpu_imem_ready <= 1'b1;
               hit_count <= hit_count + 1'b1;
             end else begin
-              fill_index <= index;
-              fill_tag <= tag;
-              fill_word <= 2'd0;
-              want_word <= word_sel;
-              // La linea se trae entera desde su base, en cuatro
-              // transacciones de 32 bits. Son los mismos ocho accesos de 16
-              // bits que costarian las cuatro busquedas sueltas, asi que el
-              // codigo en linea recta no pierde nada; lo que gana es todo lo
-              // que se vuelva a leer.
-              mem_imem_address <= {cpu_imem_address[31:4], 4'b0000};
-              mem_imem_valid <= 1'b1;
               miss_count <= miss_count + 1'b1;
-              state <= ST_WAIT;
+              state <= ST_ISSUE;
             end
           end
         end
 
-        ST_WAIT: begin
-          if (mem_imem_ready) begin
-            // Hay que bajar `valid` entre transacciones: STATE_RELEASE del
-            // adaptador no vuelve a IDLE mientras siga alto. Es el mismo
-            // patron que usa la propia CPU entre FETCH_WAIT y FETCH_REQUEST.
-            mem_imem_valid <= 1'b0;
-            if (bypass) begin
-              cpu_imem_read_data <= mem_imem_read_data;
+        ST_ISSUE:
+          if (req_ready) state <= ST_WAIT;
+
+        ST_WAIT:
+          if (rsp_valid) begin
+            if (rsp_error) begin
+              // No deberia pasar: `cacheable` ya filtro el rango. Si pasa, se
+              // responde con opcode invalido y no se guarda la linea.
+              cpu_imem_read_data <= 32'hf800_0000;
               cpu_imem_ready <= 1'b1;
               state <= ST_IDLE;
             end else begin
-              line_data[{fill_index, fill_word}] <= mem_imem_read_data;
-              if (fill_word == 2'd3) begin
-                line_tag[fill_index] <= fill_tag;
-                line_valid[fill_index] <= 1'b1;
-                state <= ST_SERVE;
-              end else begin
-                fill_word <= fill_word + 1'b1;
-                mem_imem_address <= mem_imem_address + 3'd4;
-                state <= ST_NEXT;
-              end
+              line_data[fill_index] <= rsp_rdata;
+              line_tag[fill_index] <= fill_tag;
+              line_valid[fill_index] <= 1'b1;
+              state <= ST_SERVE;
             end
           end
-        end
-
-        ST_NEXT: begin
-          mem_imem_valid <= 1'b1;
-          state <= ST_WAIT;
-        end
 
         ST_SERVE: begin
-          cpu_imem_read_data <= line_data[{fill_index, want_word}];
+          cpu_imem_read_data <=
+              line_data[fill_index][{want_word, 5'b00000} +: 32];
           cpu_imem_ready <= 1'b1;
           state <= ST_IDLE;
         end
+
+        default: state <= ST_IDLE;
       endcase
 
       // El vaciado va al final del bloque a proposito: mientras la CPU esta
@@ -190,8 +218,8 @@ module instruction_buffer #(
     for (i = 0; i < LINES; i = i + 1) begin
       line_valid[i] = 1'b0;
       line_tag[i] = 0;
+      line_data[i] = 128'd0;
     end
-    for (i = 0; i < LINES * 4; i = i + 1) line_data[i] = 32'h0000_0000;
   end
 endmodule
 

@@ -11,7 +11,8 @@ esperando a la SDRAM. Es el punto 0 del [`../TODO.md`](../TODO.md).
 | 0 | Medir en qué se van los ciclos, antes de escribir RTL | **hecho** |
 | 1 | Búfer de instrucciones, cuatro líneas de 16 bytes | **hecho, en simulación** |
 | 2 | Banco de pruebas del controlador BL8 | **hecho, dos fallos encontrados** |
-| 3 | Lector de vídeo sobre ráfagas | **hecho, sin integrar en `top.v`** |
+| 3 | Lector de vídeo sobre ráfagas | **hecho** |
+| — | Integración del camino entero en `top.v` | **hecho, 2,94× medido** |
 | 4 | Combinación de escrituras | pendiente |
 
 El paso 0 reordenó el plan y está contado entero en
@@ -30,9 +31,30 @@ El paso 3 sustituye el lector de líneas por
 [`video_line_source_burst.v`](video_line_source_burst.v), con el mismo contrato
 `fill_*` hacia el scanout. Una línea pasa de **320 accesos sueltos a 40 ráfagas**,
 y de ~3 520 ciclos de bus a **852**, de los 6 400 de presupuesto por par de
-líneas de pantalla. Todavía **no está conectado en `top.v`**: eso exige cambiar
-el camino de memoria entero al controlador de 128 bits, con el árbitro y los
-adaptadores de CPU y monitor, y es lo que queda por hacer.
+líneas de pantalla.
+
+Y con eso **el camino de memoria entero está integrado en `top.v`**: controlador
+de 128 bits, árbitro de cuatro puertos y un adaptador por cliente. El bucle
+interior de `swap_demo_fast` pasa de los **146 ciclos por palabra de la 16 a
+49,7: 2,94×**, medido por
+[`cpu_burst_system_tb.v`](cpu_burst_system_tb.v) sobre el sistema completo.
+Cómo está montado y qué costó cerrar temporización está en
+[`docs/camino-de-memoria.md`](docs/camino-de-memoria.md).
+
+Mejora sobre el techo que daba el búfer con el bus de 16 bits (53,2 ciclos por
+palabra) porque ahora **una línea de 16 bytes es exactamente una ráfaga BL8**: un
+fallo se resuelve con una petición en lugar de cuatro transacciones, y una
+escritura de 32 bits es una ráfaga enmascarada en lugar de dos accesos.
+
+**El reloj baja de 100 a 80 MHz**, y no es opcional: con la restricción en 100,
+el camino de 128 bits **no cumple ninguna semilla** (83,9 a 91,8 MHz). A 80
+cumplen las ocho, entre 88,8 y 98,1, así que la semilla vuelve a no decidir si el
+diseño funciona, que es el mismo criterio con el que la 16 bajó de 120 a 100.
+**El baudio no cambia**: el divisor 80 sigue dando 1 Mbaud exacto, y por eso se
+eligió 80 MHz y no otra frecuencia. La versión del monitor sube a **1.11**.
+
+Así que la mejora neta en tiempo real, con el reloj más lento incluido, es de
+**2,35×**.
 
 No da por hecha la alineación. `video_registers` solo obliga a alinear
 `FB_FRONT` y `FB_BACK` a cuatro bytes, así que una base como `0x01000004` es
@@ -113,12 +135,13 @@ código en línea recta no pierde nada, y gana todo lo que se relea.
 
 ### Lo que costó en la FPGA
 
-5 477 → 7 194 LUT y 2 523 → 3 342 FF. La primera versión metía la comparación de
-etiquetas en el cono de `bypass` y eso ponía el camino crítico dentro del búfer
-—`line_tag` → acierto → … → `bypass`, 9,99 ns con tres cuartas partes de
-routing—. Calcular `bypass` fuera de esa decisión, que es gratis porque solo lo
-usa el relleno, devuelve el camino crítico a donde estaba en la 16: dentro de la
-CPU, `branch_taken` → `pc`.
+El camino entero, no solo el búfer: 5 477 → **8 624 LUT** y 2 523 → **4 713 FF**,
+que sigue siendo el 10 % del ECP5-85F. La mitad larga de ese crecimiento es el
+bus de 128 bits, que ensancha el árbitro, el controlador y los tres adaptadores.
+
+Lo que costó cerrar temporización —de 84 a 100 MHz, con una parada en 78 por
+arreglar el camino crítico equivocado— está en
+[`docs/camino-de-memoria.md`](docs/camino-de-memoria.md).
 
 ---
 
@@ -658,6 +681,7 @@ concreto y hay 156 DSP sin usar.
 Desde esta carpeta:
 
 ```powershell
+..\.venv\Scripts\apio.exe test cpu_burst_system_tb.v
 ..\.venv\Scripts\apio.exe test video_burst_tb.v
 ..\.venv\Scripts\apio.exe test sdram_controller_128_tb.v
 ..\.venv\Scripts\apio.exe test instruction_buffer_tb.v
@@ -674,8 +698,12 @@ Desde esta carpeta:
 ..\.venv\Scripts\apio.exe build
 ```
 
-Los cuatro primeros son de esta carpeta: `video_burst_tb.v` monta el lector de
-rafagas contra el arbitro, el controlador BL8 y el modelo de SDRAM; `sdram_controller_128_tb.v` verifica el
+Los cinco primeros son de esta carpeta. `cpu_burst_system_tb.v` es el de
+sistema del camino nuevo: carga un programa por el monitor con la CPU parada, la
+arranca, mide el bucle interior, la para y vuelve a leer lo que escribió —el
+camino que rompe una incoherencia de búfer, y el que se queda mudo si se pierde
+el pulso del monitor—. `video_burst_tb.v` monta el lector de ráfagas contra el
+árbitro, el controlador BL8 y el modelo de SDRAM; `sdram_controller_128_tb.v` verifica el
 controlador BL8 contra un modelo de SDRAM, con su propio control negativo; `instruction_buffer_tb.v` verifica el
 búfer contra un control negativo, y `perf_probe_tb.v` es el instrumento de
 medida del paso 0, que además sirve de banco de no-regresión —comprueba que el

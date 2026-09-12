@@ -96,6 +96,8 @@ module memory_fabric_4 #(
     output wire         busy
 );
 
+    localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
+
     localparam [1:0]
         MASTER_0 = 2'd0,
         MASTER_1 = 2'd1,
@@ -245,25 +247,29 @@ module memory_fabric_4 #(
     // Solo un master puede ser aceptado en cada ciclo.
     // ============================================================
 
-    assign p0_req_ready =
-        (state == ST_IDLE) &&
-        grant_valid &&
-        (grant_master == MASTER_0);
+    /*
+     * `req_ready` va REGISTRADO, y eso cambia dos cosas.
+     *
+     * Temporizacion. Combinacional, la cadena era: `p2_urgent` -> concesion ->
+     * `req_ready` de cada puerto -> maquina de estados del cliente -> peticion
+     * al controlador. Con los cuatro adaptadores, el arbitro y el controlador
+     * repartidos por el dado, eso son 11 ns de los que 9,5 son routing, y la
+     * sintesis se quedaba por debajo de los 100 MHz. Registrar la concesion la
+     * corta en seco. Cuesta un ciclo por transaccion, o sea un 2 % del bucle
+     * interior.
+     *
+     * Contrato. Antes `ready` dependia COMBINACIONALMENTE de `valid` —la
+     * concesion miraba el valid del propio puerto—, asi que un cliente que
+     * esperase `ready` antes de levantar `valid` se colgaba para siempre. Con
+     * la concesion registrada sigue haciendo falta levantar `valid` primero,
+     * pero ya no hay lazo combinacional entre los dos.
+     */
+    reg [3:0] ready_pulse;
 
-    assign p1_req_ready =
-        (state == ST_IDLE) &&
-        grant_valid &&
-        (grant_master == MASTER_1);
-
-    assign p2_req_ready =
-        (state == ST_IDLE) &&
-        grant_valid &&
-        (grant_master == MASTER_2);
-
-    assign p3_req_ready =
-        (state == ST_IDLE) &&
-        grant_valid &&
-        (grant_master == MASTER_3);
+    assign p0_req_ready = ready_pulse[0];
+    assign p1_req_ready = ready_pulse[1];
+    assign p2_req_ready = ready_pulse[2];
+    assign p3_req_ready = ready_pulse[3];
 
     // ============================================================
     // Response routing
@@ -347,8 +353,12 @@ module memory_fabric_4 #(
     // Validation
     // ============================================================
 
+    // Mirar los bits altos en vez de restar 32 bits. Las cuatro comparaciones
+    // de rango estan en el cono de decision de ST_IDLE, y con el comparador de
+    // magnitud completo la sintesis se quedaba en 84 MHz. Vale porque el tamano
+    // es potencia de dos.
     wire active_address_valid =
-        (active_addr < SDRAM_SIZE_BYTES) &&
+        ((active_addr & ADDR_RANGE_MASK) == 32'd0) &&
         (active_addr[3:0] == 4'b0000);
 
     // ============================================================
@@ -372,7 +382,13 @@ module memory_fabric_4 #(
             response_data <= 128'd0;
             response_error <= 1'b0;
 
+            ready_pulse <= 4'b0000;
+
         end else begin
+
+            // Pulso de un ciclo: el cliente lo ve, baja su `valid` y la
+            // peticion ya esta capturada aqui.
+            ready_pulse <= 4'b0000;
 
             case (state)
 
@@ -385,6 +401,11 @@ module memory_fabric_4 #(
                     response_error <= 1'b0;
 
                     if (grant_valid) begin
+
+                        // La peticion se captura AHORA y el `ready` sale el
+                        // ciclo que viene. El cliente sigue manteniendo su
+                        // `valid` hasta verlo, asi que los datos son validos.
+                        ready_pulse <= 4'b0001 << grant_master;
 
                         active_master <= grant_master;
 
@@ -428,7 +449,7 @@ module memory_fabric_4 #(
                         case (grant_master)
 
                             MASTER_0:
-                                if ((p0_req_addr >= SDRAM_SIZE_BYTES) ||
+                                if (((p0_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p0_req_addr[3:0] != 4'b0000)) begin
                                     response_data <= 128'd0;
                                     response_error <= 1'b1;
@@ -438,7 +459,7 @@ module memory_fabric_4 #(
                                 end
 
                             MASTER_1:
-                                if ((p1_req_addr >= SDRAM_SIZE_BYTES) ||
+                                if (((p1_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p1_req_addr[3:0] != 4'b0000)) begin
                                     response_data <= 128'd0;
                                     response_error <= 1'b1;
@@ -448,7 +469,7 @@ module memory_fabric_4 #(
                                 end
 
                             MASTER_2:
-                                if ((p2_req_addr >= SDRAM_SIZE_BYTES) ||
+                                if (((p2_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p2_req_addr[3:0] != 4'b0000)) begin
                                     response_data <= 128'd0;
                                     response_error <= 1'b1;
@@ -458,7 +479,7 @@ module memory_fabric_4 #(
                                 end
 
                             default:
-                                if ((p3_req_addr >= SDRAM_SIZE_BYTES) ||
+                                if (((p3_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p3_req_addr[3:0] != 4'b0000)) begin
                                     response_data <= 128'd0;
                                     response_error <= 1'b1;

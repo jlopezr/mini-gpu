@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 01 0a
+ *   02             (GET_VERSION) -> 82 01 0b
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
@@ -87,7 +87,11 @@ module monitor (
   //        multiplo de 4 y la recepcion fallaba la mitad de las veces)
   //   1.10 el arbitro engancha el pulso del monitor; hasta 1.9 se perdia si
   //        coincidia con el video y la placa se quedaba muda hasta el reset
-  localparam [7:0] VERSION_MINOR = 8'h0a;
+  //   1.11 camino de memoria de rafagas BL8: controlador de 128 bits, arbitro
+  //        de cuatro puertos y un adaptador por cliente. El reloj baja a
+  //        80 MHz porque a 100 no cumple ninguna semilla. El baudio NO cambia:
+  //        divisor 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
+  localparam [7:0] VERSION_MINOR = 8'h0b;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;

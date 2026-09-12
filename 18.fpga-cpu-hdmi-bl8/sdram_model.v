@@ -1,6 +1,14 @@
 `timescale 1ns/1ps
 `default_nettype none
 
+// Solo simulacion. `iverilog` compila todas las fuentes del proyecto para cada
+// banco, y `yosys` tambien las lee para sintetizar: sin esta guarda, `time` y
+// las comprobaciones temporales de aqui abajo hacen que la sintesis pare en
+// seco. Apio define SYNTHESIZE al sintetizar y al lintar, pero no al simular,
+// que es el mismo mecanismo con el que pll_cpu.v y clock2_gen.v envuelven sus
+// primitivas.
+`ifndef SYNTHESIZE
+
 /*
  * Modelo conductual de la SDRAM W9825G6KH, para simulacion.
  *
@@ -333,5 +341,6 @@ module sdram_model #(
     end
   end
 endmodule
+`endif
 
 `default_nettype wire

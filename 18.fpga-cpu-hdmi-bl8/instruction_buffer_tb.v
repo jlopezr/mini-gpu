@@ -28,7 +28,7 @@ module fake_imem #(
     input  wire [31:0] bias,
     input  wire        req_valid,
     input  wire [31:0] req_addr,
-    output reg  [31:0] read_data,
+    output reg  [127:0] read_data,
     output reg         ready,
     output reg  [31:0] transactions
 );
@@ -37,7 +37,7 @@ module fake_imem #(
   reg [31:0] held;
 
   initial begin
-    read_data = 32'h0000_0000;
+    read_data = 128'd0;
     ready = 1'b0;
     transactions = 32'd0;
     count = 0;
@@ -58,9 +58,11 @@ module fake_imem #(
         count <= 0;
       end
     end else if (count >= LATENCY) begin
-      // Misma respuesta que da el adaptador fuera de la SDRAM: un opcode
-      // invalido a proposito.
-      read_data <= (held[31:25] != 0) ? 32'hf800_0000 : held + bias;
+      // Una rafaga son cuatro palabras de 32 bits consecutivas, y cada una
+      // vale su propia direccion mas el sesgo. Asi cada instruccion dice de
+      // donde vino y un desplazamiento dentro de la linea se lee en el numero.
+      read_data <= {held + bias + 32'd12, held + bias + 32'd8,
+                    held + bias + 32'd4, held + bias};
       ready <= 1'b1;
       busy <= 1'b0;
       transactions <= transactions + 1'b1;
@@ -88,7 +90,8 @@ module instruction_buffer_tb;
   wire ready4, ready2;
 
   wire mv4, mv2;
-  wire [31:0] maddr4, maddr2, mdata4, mdata2;
+  wire [31:0] maddr4, maddr2;
+  wire [127:0] mdata4, mdata2;
   wire mready4, mready2;
   wire [31:0] hits4, misses4, hits2, misses2;
   wire [31:0] trans4, trans2;
@@ -97,16 +100,20 @@ module instruction_buffer_tb;
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(cpu_halted),
       .cpu_imem_valid(v4), .cpu_imem_address(addr4),
       .cpu_imem_read_data(rdata4), .cpu_imem_ready(ready4),
-      .mem_imem_valid(mv4), .mem_imem_address(maddr4),
-      .mem_imem_read_data(mdata4), .mem_imem_ready(mready4),
+      .req_valid(mv4), .req_ready(mv4), .req_write(), .req_addr(maddr4),
+      .req_wdata(), .req_wmask(),
+      .rsp_valid(mready4), .rsp_ready(), .rsp_rdata(mdata4),
+      .rsp_error(1'b0),
       .hit_count(hits4), .miss_count(misses4));
 
   instruction_buffer #(.LINES(2), .INDEX_BITS(1)) buf2 (
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(cpu_halted),
       .cpu_imem_valid(v2), .cpu_imem_address(addr2),
       .cpu_imem_read_data(rdata2), .cpu_imem_ready(ready2),
-      .mem_imem_valid(mv2), .mem_imem_address(maddr2),
-      .mem_imem_read_data(mdata2), .mem_imem_ready(mready2),
+      .req_valid(mv2), .req_ready(mv2), .req_write(), .req_addr(maddr2),
+      .req_wdata(), .req_wmask(),
+      .rsp_valid(mready2), .rsp_ready(), .rsp_rdata(mdata2),
+      .rsp_error(1'b0),
       .hit_count(hits2), .miss_count(misses2));
 
   fake_imem mem4 (.clk(clk), .reset(reset), .bias(bias), .req_valid(mv4),
@@ -205,9 +212,10 @@ module instruction_buffer_tb;
     check_count("fallos de 4 lineas, bucle alineado", misses4 - m4, 1);
     check_count("aciertos de 4 lineas, bucle alineado", hits4 - h4, 19);
     check_count("fallos de 2 lineas, bucle alineado", misses2 - m2, 1);
-    // Un fallo trae la linea entera: cuatro transacciones de 32 bits, los
-    // mismos ocho accesos de 16 que costarian las cuatro busquedas sueltas.
-    check_count("transacciones a memoria", trans4, 4);
+    // Y aqui esta el punto de las rafagas: un fallo trae la linea entera en
+    // UNA peticion. Antes eran cuatro transacciones de 32 bits, y en la 16
+    // ocho accesos de 16 bits.
+    check_count("transacciones a memoria", trans4, 1);
 
     // ---------------------------------------------------------------------
     // 2. Bucle de 16 bytes a caballo entre dos lineas. Es el punto debil que
