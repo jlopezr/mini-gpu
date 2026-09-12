@@ -126,9 +126,27 @@ module sdram_system_adapter #(
   reg [31:0] saved_monitor_address;
   reg [7:0] saved_monitor_write_data;
   reg saved_monitor_write_enable;
+  reg [31:0] pending_monitor_address;
+  reg [7:0] pending_monitor_write_data;
+  reg pending_monitor_write_enable;
+  reg pending_monitor_read_enable;
 
   reg [7:0] video_run;
-  wire monitor_request = monitor_write_enable || monitor_read_enable;
+
+  /*
+   * El monitor pide memoria con un PULSO de un ciclo, no con un nivel
+   * mantenido hasta `ready` como hacen la CPU y el video. Mientras el arbitro
+   * atendia al monitor en la primera rama de STATE_IDLE eso daba igual, pero
+   * desde que el video tiene prioridad un pulso que cae en un ciclo ocupado se
+   * pierde, y el monitor se queda esperando para siempre un `ready` que no
+   * llega: la placa deja de responder hasta el siguiente reset.
+   *
+   * Se engancha aqui. El monitor no puede emitir otra peticion hasta recibir
+   * respuesta, asi que una sola posicion basta.
+   */
+  reg monitor_pending;
+  wire monitor_strobe = monitor_write_enable || monitor_read_enable;
+  wire monitor_request = monitor_pending;
   wire other_request = monitor_request ||
       (!cpu_halted && (cpu_imem_valid || cpu_dmem_valid));
   // El video cede un turno cuando ya ha encadenado VIDEO_RUN accesos y hay
@@ -182,7 +200,22 @@ module sdram_system_adapter #(
       saved_monitor_address <= 32'h0000_0000;
       saved_monitor_write_data <= 8'h00;
       saved_monitor_write_enable <= 1'b0;
+      monitor_pending <= 1'b0;
+      pending_monitor_address <= 32'h0000_0000;
+      pending_monitor_write_data <= 8'h00;
+      pending_monitor_write_enable <= 1'b0;
+      pending_monitor_read_enable <= 1'b0;
     end else begin
+      // Enganchar el pulso del monitor. Va fuera del `case` para que no se
+      // pierda sea cual sea el estado del arbitro.
+      if (monitor_strobe) begin
+        monitor_pending <= 1'b1;
+        pending_monitor_address <= monitor_address;
+        pending_monitor_write_data <= monitor_write_data;
+        pending_monitor_write_enable <= monitor_write_enable;
+        pending_monitor_read_enable <= monitor_read_enable;
+      end
+
       case (state)
         STATE_IDLE: begin
           req_valid <= 1'b0;
@@ -202,13 +235,14 @@ module sdram_system_adapter #(
             req_wmask <= 2'b00;
             req_valid <= 1'b1;
             state <= STATE_WAIT_VIDEO;
-          end else if (monitor_request) begin
+          end else if (monitor_pending) begin
             video_run <= 8'd0;
             owner <= OWNER_MONITOR;
-            saved_monitor_address <= monitor_address;
-            saved_monitor_write_data <= monitor_write_data;
-            saved_monitor_write_enable <= monitor_write_enable;
-            saved_monitor_read <= monitor_read_enable;
+            monitor_pending <= 1'b0;
+            saved_monitor_address <= pending_monitor_address;
+            saved_monitor_write_data <= pending_monitor_write_data;
+            saved_monitor_write_enable <= pending_monitor_write_enable;
+            saved_monitor_read <= pending_monitor_read_enable;
             state <= STATE_VALIDATE_MONITOR;
           end else if (!cpu_halted && cpu_imem_valid) begin
             video_run <= 8'd0;
@@ -382,7 +416,11 @@ module sdram_system_adapter #(
         // second time while its owner is deasserting valid.
         STATE_RELEASE: begin
           req_valid <= 1'b0;
-          if ((owner == OWNER_MONITOR && !monitor_request) ||
+          // El monitor no espera a que baje nada: su peticion se engancho y se
+          // consumio al aceptarla, asi que no puede aceptarse dos veces. Los
+          // demas clientes mantienen el nivel hasta su `ready` y si tienen que
+          // bajarlo antes de volver a IDLE.
+          if ((owner == OWNER_MONITOR) ||
               (owner == OWNER_IMEM && !cpu_imem_valid) ||
               (owner == OWNER_DMEM && !cpu_dmem_valid) ||
               (owner == OWNER_VIDEO && !video_req))

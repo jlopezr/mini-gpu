@@ -204,6 +204,7 @@ module video_sdram_tb;
   reg cpu_active = 1'b0;
   integer cpu_reads_done = 0;
   integer baseline_cycles = 0;
+  integer monitor_wait = 0;
 
   initial begin
     forever begin
@@ -248,6 +249,44 @@ module video_sdram_tb;
     fetch_line(2);
     cpu_active = 1'b0;
     repeat (20) @(negedge clk);
+
+    // --- el monitor pide justo mientras el video ocupa el bus --------------
+    //
+    // El monitor pide con un PULSO de un ciclo, no con un nivel mantenido. Si
+    // el arbitro no lo engancha, un pulso que cae en un ciclo ocupado por el
+    // video se pierde y el monitor espera para siempre un `ready` que no
+    // llega: la placa deja de responder hasta el reset. Paso de verdad.
+    //
+    // Se lanza un fill y se mete el pulso en medio, sin mirar si el arbitro
+    // esta libre, que es exactamente lo que hace el monitor real.
+    cpu_active = 1'b0;
+    cpu_halted = 1'b1;   // el monitor posee la SDRAM con la CPU parada
+    @(negedge clk);
+    captured_count = 0;  // este fill se lanza a mano, fuera de `fetch_line`
+    fill_line = 6'd3;
+    fill_start = 1'b1;
+    @(negedge clk);
+    fill_start = 1'b0;
+    repeat (5) @(negedge clk);
+
+    monitor_address = 32'h0000_0010;
+    monitor_read_enable = 1'b1;
+    @(negedge clk);
+    monitor_read_enable = 1'b0;
+
+    monitor_wait = 0;
+    while (!monitor_ready && monitor_wait < 2000) begin
+      @(negedge clk);
+      monitor_wait = monitor_wait + 1;
+    end
+    if (!monitor_ready)
+      $fatal(1, "el arbitro perdio la peticion del monitor emitida durante un fill de video");
+    if (monitor_error)
+      $fatal(1, "la lectura del monitor durante un fill devolvio error");
+    @(negedge clk);
+    wait (fill_done);
+    @(posedge clk);
+    @(negedge clk);
 
     if (cpu_reads_done == 0)
       $fatal(1, "la CPU no completo ninguna lectura durante el fill: la prioridad de video se ha convertido en monopolio");

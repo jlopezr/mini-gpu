@@ -13,13 +13,27 @@ module top (
   // 100 MHz, no 120: con el subsistema de video dentro ninguna semilla de
   // nextpnr alcanza los 120. El razonamiento esta en `pll_cpu.v` y en README.md.
   //
-  // El baudio baja de 3 a 2 Mbaud como consecuencia. No es solo 100/50: el
-  // generador de baudios del FTDI produce 3 MHz partido por 1, 1.125, 1.25...,
-  // asi que 2,5 Mbaud (que seria 100/40) no es alcanzable desde el PC, mientras
-  // que 2 Mbaud es 3 MHz / 1,5 y si lo es.
+  // El baudio baja de 3 a 1 Mbaud como consecuencia, y el divisor tiene que
+  // cumplir DOS condiciones a la vez:
+  //
+  //   1. Multiplo de 4. `uart.v` alimenta la recepcion con DIVISOR/4 porque
+  //      sobremuestrea 4 veces, y la division es entera. Un divisor de 50 da
+  //      12 en vez de 12,5: la recepcion queda un 4,2 % rapida, casi medio bit
+  //      de deriva en una trama de 10, y el enlace falla la mitad de las veces.
+  //      Esto paso de verdad entre los hitos C y D.
+  //   2. Un baudio que el FTDI sepa generar exacto, o sea 3 MHz partido por 1,
+  //      1,5, o multiplos de 0,125 a partir de 2.
+  //
+  // Entre 40 y 200, el unico divisor que cumple las dos es 100:
+  //
+  //   divisor  40 -> 2,5   Mbaud   mult. de 4, pero 3/1,2  no existe en el FTDI
+  //   divisor  48 -> 2,083 Mbaud   mult. de 4, pero 3/1,44 no existe
+  //   divisor  50 -> 2     Mbaud   3/1,5 existe, pero NO es multiplo de 4
+  //   divisor  64 -> 1,563 Mbaud   mult. de 4, pero 3/1,92 no existe
+  //   divisor 100 -> 1     Mbaud   multiplo de 4 y 3/3 exacto
   localparam integer CLK_FREQ_HZ = 100_000_000;
-  localparam integer UART_CLOCKS_PER_BIT = 50;
-  localparam integer UART_MAX_BAUD = 2_000_000;
+  localparam integer UART_CLOCKS_PER_BIT = 100;
+  localparam integer UART_MAX_BAUD = 1_000_000;
   localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
 
   wire clk, pll_locked;

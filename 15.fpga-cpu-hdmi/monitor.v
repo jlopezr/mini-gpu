@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 01 08
+ *   02             (GET_VERSION) -> 82 01 0a
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
@@ -79,8 +79,15 @@ module monitor (
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
-  // Version 1.5 identifies unified addressing backed by external SDRAM.
-  localparam [7:0] VERSION_MINOR = 8'h08;
+  // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
+  // la version cada vez que cambia algo que el PC no puede negociar:
+  //   1.7  se anade el subsistema de video
+  //   1.8  el reloj baja a 100 MHz y el monitor a 2 Mbaud
+  //   1.9  el baudio se corrige a 1 Mbaud (2 Mbaud daba un divisor no
+  //        multiplo de 4 y la recepcion fallaba la mitad de las veces)
+  //   1.10 el arbitro engancha el pulso del monitor; hasta 1.9 se perdia si
+  //        coincidia con el video y la placa se quedaba muda hasta el reset
+  localparam [7:0] VERSION_MINOR = 8'h0a;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;

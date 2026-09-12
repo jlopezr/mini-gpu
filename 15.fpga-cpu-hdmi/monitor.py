@@ -11,9 +11,11 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 
-# 2 Mbaud: el dominio de CPU corre a 100 MHz y el divisor es 50. Es ademas un
-# baudio que el generador del FTDI sabe producir exactamente (3 MHz / 1,5).
-BAUDRATE = 2_000_000
+# 1 Mbaud: el dominio de CPU corre a 100 MHz y el divisor es 100. Ese divisor
+# es múltiplo de 4, que es lo que necesita la recepción de `uart.v` (muestrea
+# a 4x con DIVISOR/4, y la división es entera), y 1 Mbaud es además 3 MHz / 3,
+# que el generador del FTDI produce exacto. Ver el comentario de `top.v`.
+BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
 # Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.

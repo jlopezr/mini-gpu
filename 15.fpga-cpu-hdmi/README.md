@@ -10,8 +10,13 @@ sincronizado, gobernado desde una ventana de registros en `0x80000000` que
 manejan tanto la CPU como el monitor. Con esto termina la fase 2 del plan.
 
 **El dominio de CPU corre a 100 MHz desde el hito C**, y con él el monitor a
-2 Mbaud. No fue una decisión de gusto: a 120 MHz no cumplía ninguna semilla.
+1 Mbaud. No fue una decisión de gusto: a 120 MHz no cumplía ninguna semilla.
 Está razonado abajo.
+
+**Verificado en placa**: versión 1.10, `underflow` a cero, 63 frames/s medidos
+por el contador de `STATUS`, los dos framebuffers cargados y verificados, y el
+swap intercambiando `FB_FRONT` con `FB_BACK`. De la suite de CPU pasan 11 de 12
+casos; el que falla, `multiply`, no tiene que ver con el vídeo (más abajo).
 
 ## Escalera de hitos
 
@@ -41,10 +46,11 @@ clk_25mhz ─┬─ pll_cpu ──── 100 MHz ── CPU + monitor UART + SDR
 
 La mitad de CPU es byte a byte la de 10: mismo mapa de memoria unificado de
 32 MiB, mismos comandos de monitor, mismos cinco bancos de prueba. Lo único que
-cambia es la **versión del monitor**, hoy **1.8**, para que
+cambia es la **versión del monitor**, hoy **1.10**, para que
 `run_gpu_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
 1.5 de 10 y del 1.6 de 6. (Fue 1.7 durante los hitos A y B; el cambio de reloj
-y baudio del hito C la subió a 1.8.)
+y baudio del hito C la subió a 1.8, y dos correcciones posteriores a 1.9 y
+1.10; el propio `monitor.v` lleva la lista.)
 
 ### Modo de vídeo
 
@@ -162,7 +168,7 @@ Pero **prioridad absoluta resultó ser monopolio**. El lector vuelve a subir
 `video_req` un ciclo después de cada concesión, así que cuando el árbitro
 regresa a reposo el vídeo ya está pidiendo otra vez y nadie más entra nunca. La
 CPU y el monitor se congelaban los ~27 µs que dura una línea. Con el monitor a
-2 Mbaud eso son ocho bytes de UART perdidos.
+1 Mbaud eso son cuatro bytes de UART perdidos.
 
 La solución es un tope: tras `VIDEO_RUN` concesiones seguidas, el vídeo cede un
 turno si hay alguien esperando. El dimensionado, por par de líneas de pantalla
@@ -294,12 +300,57 @@ La lotería de semillas desaparece: ya no decide si el diseño funciona.
 Lo que cuesta:
 
 - La CPU va un **17 % más lenta**.
-- El monitor baja de 3 a **2 Mbaud**. No es solo `100/50`: el generador de
-  baudios del FTDI produce 3 MHz partido por 1, 1,125, 1,25… así que 2,5 Mbaud
-  (que sería `100/40`) **no es alcanzable desde el PC**, mientras que 2 Mbaud es
-  3 MHz / 1,5 y sí lo es. Cargar el framebuffer entero tarda 0,77 s.
-- La versión del monitor pasa a **1.8**, porque un bitstream con otro baudio es
-  otro bitstream a todos los efectos.
+- El monitor baja de 3 a **1 Mbaud**. Cargar el framebuffer entero tarda 1,5 s.
+- La versión del monitor sube, porque un bitstream con otro baudio es otro
+  bitstream a todos los efectos.
+
+### El baudio: dos condiciones, no una
+
+Elegir el divisor de UART parece aritmética simple y no lo es. Tiene que
+cumplir **las dos** a la vez:
+
+1. **Múltiplo de cuatro.** `uart.v` alimenta la recepción con `DIVISOR/4`
+   porque sobremuestrea cuatro veces, y la división es entera. El aviso está en
+   el propio código —`must be divisible by 4 for rx clock`— y aun así se coló
+   un divisor de 50: la recepción quedó a 12 en vez de 12,5, un **4,2 % rápida**,
+   casi medio bit de deriva en una trama de diez. En la placa eso se veía como
+   un enlace que funcionaba **la mitad de las veces**.
+2. **Un baudio que el FTDI sepa generar exacto**, o sea 3 MHz partido por 1,
+   1,5, o múltiplos de 0,125 a partir de 2.
+
+Entre 40 y 200, el único divisor que cumple ambas es **100 → 1 Mbaud**:
+
+| Divisor | Baudio | ¿Múltiplo de 4? | ¿FTDI exacto? |
+|---:|---:|:---:|:---:|
+| 40 | 2,5 Mbaud | sí | no (3/1,2) |
+| 48 | 2,083 Mbaud | sí | no (3/1,44) |
+| 50 | 2 Mbaud | **no** | sí (3/1,5) |
+| 64 | 1,563 Mbaud | sí | no (3/1,92) |
+| **100** | **1 Mbaud** | **sí** | **sí (3/3)** |
+
+Como el requisito era solo un comentario, ahora `uart.v` lo comprueba al
+elaborar: si `DIVISOR` no es múltiplo de cuatro instancia un módulo inexistente
+llamado `DIVISOR_must_be_divisible_by_4` y la síntesis para en seco. Ningún
+banco de pruebas instancia esta UART, así que no había otra forma de cazarlo.
+
+### El pulso del monitor, y por qué el vídeo lo hacía desaparecer
+
+Más grave que el baudio, y encontrado el mismo día. **El monitor pide memoria
+con un pulso de un ciclo**, no con un nivel mantenido hasta `ready` como hacen
+la CPU y el vídeo. Mientras el árbitro lo atendía en la primera rama de
+`STATE_IDLE` eso daba igual. Desde el hito C el vídeo tiene prioridad, así que
+un pulso que caía en un ciclo ocupado **se perdía**, y el monitor se quedaba
+esperando para siempre un `ready` que no llegaba: la placa dejaba de responder
+hasta el siguiente reset.
+
+El síntoma era desconcertante y vale la pena recordarlo: `ping` y `get-version`
+funcionaban 20 de 20 veces, pero **cualquier lectura de memoria colgaba la placa
+de forma permanente**. La explicación es que `ping` no toca el adaptador.
+
+El arreglo es engancharlo en el árbitro. `video_sdram_tb.v` lo cubre ahora
+emitiendo el pulso en mitad de un fill de vídeo, sin mirar si el árbitro está
+libre, que es justo lo que hace el monitor real; sin el enganche, esa prueba
+falla.
 
 La alternativa era atacar el camino crítico de la CPU (`instruction` →
 decodificación → `branch_taken` → `pc`, 8,34 ns con 4,9 de routing), que es el
@@ -405,6 +456,18 @@ La suite completa de CPU contra esta placa:
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
+Pasan **11 de 12** casos.
+
+El que falla es `multiply`, y **no tiene nada que ver con el vídeo**: esta CPU
+nunca implementó `MUL`. El opcode está declarado y supera la validación de
+codificación, pero no existe rama de ejecución, así que cae en el `default` y
+responde `ERROR_INVALID_OPCODE`. El `cpu.v` de `10.fpga-cpu-ram` es idéntico en
+esto, y el simulador sí lo implementa —por eso el mismo caso pasa con
+`--backend cpu-simulator`—. Lo mismo vale para `MULFX` y `DIV`.
+
+Conviene anotarlo porque el `TODO.md` del repositorio dice que `MULHI`, `DIVU`,
+`REM` y `REMU` son «los únicos mnemónicos de la ISA sin ningún test»: para la
+FPGA eso no es exacto, `MUL`, `MULFX` y `DIV` tienen test y lo suspenden.
 
 ## Notas de integración
 
