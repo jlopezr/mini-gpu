@@ -24,6 +24,30 @@ Desde la raíz del repositorio puede usarse `.venv/Scripts/python.exe`.
 
 
 
+## Los programas de `examples/`
+
+- **`vecsum.asm`** es el más sencillo que ejercita SIMT de verdad: cada lane
+  suma un elemento de dos vectores de 16 palabras y guarda el resultado. La
+  dirección sale de `GETTID` y un desplazamiento, así que las 16 lanes escriben
+  en sitios distintos sin coordinarse. Los vectores viven en `0x0100` y
+  `0x0140`, y el resultado en `0x0180`.
+- **`simt_demo.asm`** ejercita divergencia anidada y `BAR`. Es el que usa la
+  sección de extensiones SIMT, más abajo.
+- **`divzero.asm`** está **vacío**, 0 bytes. El nombre sugiere que iba a probar
+  la división por cero y nunca se escribió.
+
+### De dónde sale `memoria.bin`
+
+`run.bat` ejecuta `memoria.bin`, que no es un programa distinto sino **la imagen
+de memoria completa de `vecsum`**: sus 56 bytes de código en `0x0000`, el vector
+A en `0x0100` con los valores 0, 1, 2… y el vector B en `0x0140` con 100 en cada
+posición. Por eso `run.bat` vuelca precisamente `0x0180`, que es donde `vecsum`
+deja la suma.
+
+No hay un fuente que lo genere: se armó a mano y se versionó ya ensamblado. Se
+puede reconstruir con `vecsum.asm` más las dos tablas de datos, si algún día
+hace falta cambiarlo.
+
 ## Traza del scheduler
 
 

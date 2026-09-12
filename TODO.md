@@ -40,6 +40,28 @@ Son los únicos mnemónicos de la ISA sin ningún test, y así debe seguir siend
 hasta que se implementen: un test que fijara hoy su comportamiento
 (`ERROR_OPCODE`) habría que borrarlo justo al implementarlos.
 
+Dos de ellos son más baratos de lo que parece, porque el hardware que necesitan
+ya existe en el `cpu.v` de `6.fpga-cpu` y `15.fpga-cpu-hdmi`:
+
+- `MULHI` son los 32 bits altos del producto que `STATE_MUL_COMBINE` **ya
+  calcula entero** en el camino de `MULFX`, con sus cuatro productos parciales.
+  Lo que no vale es negar el producto de 64 bits para arreglar el signo: esa
+  cadena de acarreo es el doble de la que ya costó cerrar los 120 MHz. La forma
+  buena opera sobre los operandos crudos y corrige después,
+  `alto = alto_unsigned - (a<0 ? b : 0) - (b<0 ? a : 0)`, que son dos restas de
+  32 bits. De ahí sale `MULHIU` de regalo.
+- `REM` es el resto que el divisor deja en `divide_remainder` al terminar sus 32
+  pasos, y hoy **se tira**. Ojo con el signo: con truncamiento hacia cero el
+  resto lleva el del dividendo, no el XOR que guarda `divide_negative`, que es
+  el del cociente.
+- `DIVU` y `REMU` son saltarse la conversión a magnitud y el arreglo de signo.
+
+El coste real no está en el Verilog, sino en que hay que decidir la semántica
+—`isa.md` los da por «Reservada», y en `REM` C99 y Python no coinciden—,
+implementarlos en `minicpu_sim.py`, que es la referencia contra la que compara
+`x.cpu-tests`, añadirlos a la validación de codificación, y volver a cerrar
+temporización en las dos FPGA.
+
 Aquí van también los opcodes aún sin asignar que se tengan pensados.
 
 ## 5. Mejoras al controlador de SDRAM
