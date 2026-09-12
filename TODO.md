@@ -2,6 +2,10 @@
 
 Por orden de prioridad.
 
+## 0. Que la CPU no este tanto esperando a la SDRAM
+
+Usar BL8...
+
 ## 1. Optimizar LSU
 
 El codigo es muy inocente y es lo que hace que hayamos bajado de 120Mhz a 32Mhz.
@@ -43,7 +47,7 @@ Aquí van también los opcodes aún sin asignar que se tengan pensados.
 ¿Qué mejoras podemos hacer? ¿Qué hacía supuestamente el de `7.fpga-ram`, que no
 funciona?
 
-## 6. Ejecución paso a paso
+## 6. Ejecución paso a paso o N pasos
 
 Avanzar una instrucción de warp, inspeccionar registros y memoria, y detenerse
 en un PC o un warp concreto. `TextTrace` ya hace el trabajo sucio.
@@ -69,3 +73,25 @@ no solo al final.
 `region_stack` y `path_stack`, que es justo lo que está en diseño activo. Congelar
 ese formato ahora obliga a migrar snapshots cada vez que se toque la semántica
 de `SSY`. Hacerlo cuando `SSY` esté cerrado.
+
+----------------------------------------------------------
+
+1. Buscar inexactitudes entre doc y codigo
+2. Que todos los RTL compartan el mismo estilo de documentacion:
+    - ISA.md
+    - Ciclos.md
+    - Optimizacion.md
+3. Resumen de RTL
+    - GPU/CPU
+    - Numero de Version
+    - Ciclos
+    - Fmax
+    - ISA implementado
+4. Revisar que no haya cosas divergentes innecesariamente. una optimizacion en una version si y en otra no. MULX no esta en CPU pero si en GPU...
+    - Que ciclos hay para cada version de la CPU y GPU, y que sean consistentes.
+5. Si hay algun test individual de una version que tiene sentido en tescases.
+6. Tools compartidas en carpeta tools.
+    - Para hacer sweep
+    - Para hacer test
+    - Para ensamblar, lanzar un programa
+    - build que se guarde el detalle del build (Fmax, caminos críticos, histograma) y que se pueda tener historico. Que sea facil de usar para humanos y IA :)

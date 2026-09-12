@@ -271,12 +271,17 @@ buffer visible) y **cuánto** repintan (las 240 líneas o solo las 32 que
 cambian). Esa rejilla de dos por dos es la demostración del hito D: el eje
 vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
-| Programa                                   | Escribe en | Repinta    | Medido en placa              |
-|--------------------------------------------|------------|------------|------------------------------|
-| [`swap_demo.asm`](swap_demo.asm)           | `FB_BACK`  | 240 líneas | 9,2 fps, limpio              |
-| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 50 fps, limpio               |
-| [`tear_demo.asm`](tear_demo.asm)           | `FB_FRONT` | 240 líneas | 9,2 fps, frente de repintado |
-| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 51,5 fps, costura            |
+| Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
+|--------------------------------------------|------------|------------|---------|---------------------------------|
+| [`swap_demo.asm`](swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+
+Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
+es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
+cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
+redondea cada frame a un número entero de frames de vídeo.
 
 Y aparte, [`swap_smoke.asm`](swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
@@ -306,23 +311,32 @@ intercambio con su espera—, a propósito, para que lo que se vea distinto solo
 pueda venir del doble buffer.
 
 Lo que no esperaba, y salió al medirlo: **los dos `tear_` rompen la imagen de
-forma muy distinta**. `tear_demo` tarda 109 ms en repintar, seis frames y medio
-de vídeo, así que no se ve una costura sino un frente de repintado bajando
-despacio. `tear_demo_fast` tarda 19,4 ms contra los 16,7 ms que dura un frame:
+forma muy distinta**. `tear_demo` tarda 96,6 ms en repintar, casi seis frames de
+vídeo, así que no se ve una costura sino un frente de repintado bajando
+despacio. `tear_demo_fast` tarda 13,2 ms contra los 16,7 ms que dura un frame:
 la CPU y el barrido van casi a la misma velocidad pero no exactamente, así que
 el punto donde se cruzan se desplaza poco a poco y sale **una costura
-horizontal recorriendo la pantalla cada 120 ms**. Esa es la que se reconoce de
+horizontal recorriendo la pantalla cada 63 ms**. Esa es la que se reconoce de
 un juego sin vsync, y el ritmo no está ajustado a mano: sale de lo que tarda
 esta CPU en escribir 5 120 palabras compitiendo con el vídeo por la SDRAM.
 
-#### Por qué la versión rápida es 5,4× y no 7,5×
+#### El umbral de los 16,7 ms
 
-Pintar 32 líneas en vez de 240 es **7,5 veces menos trabajo**, pero el salto
-medido es de 9,2 a 50 fps, o sea 5,4×. La diferencia es el techo: al esperar al
-intercambio, un frame dibujado dura 16,7 ms o 33,3 ms, nunca algo intermedio.
-50 fps es la mezcla de unos cuantos de cada. La prueba está en `tear_demo_fast`,
-que hace exactamente el mismo dibujo sin esperar a nadie y sale a 51,5 fps:
-el trabajo de CPU es el mismo, lo que desaparece es la cuantización.
+Pintar 32 líneas en vez de 240 es **7,5 veces menos trabajo**, y el tiempo de
+dibujo baja 7,3× —de 96,6 a 13,2 ms—, así que ahí no hay sorpresa. Lo que sí
+cambia de naturaleza es lo que se ve, porque entre esos dos números está el
+umbral que importa: **los 16,7 ms de un frame de vídeo**.
+
+Con la espera al intercambio, un frame dibujado dura un número entero de frames
+de vídeo, nunca algo intermedio. Por eso `swap_demo` sale a 9,8 fps —uno de cada
+seis— y `swap_demo_fast` se engancha a 59,3, o sea a los 60 del monitor. Cruzar
+el umbral no acelera un 7,3 %: cambia quién manda.
+
+Y a partir de ahí manda la pantalla. `tear_demo_fast` hace exactamente el mismo
+dibujo sin esperar a nadie y sale a **75,7 fps**: la CPU tiene 3,5 ms libres de
+cada 16,7 que el doble buffer sincronizado no puede aprovechar. Eso no es
+tiempo perdido —no hay dónde enseñar esos frames de más en un monitor de
+60 Hz—, pero sí es el margen que un triple buffer convertiría en menos latencia.
 
 #### La contabilidad que exige el doble buffer
 
@@ -344,10 +358,27 @@ pasando 600 frames contra el contenido esperado del buffer; y se comprobó que
 **la versión ingenua de un solo registro falla en el frame 2**, para que la
 prueba no fuera una que aprueba cualquier cosa.
 
-Las cifras de arriba se midieron leyendo `R21` —la posición de la banda— dos
-veces con `halt` / `read-register 21` / `run` y dividiendo por el tiempo
-transcurrido. Conviene una ventana corta: la banda da la vuelta cada 112
-frames dibujados y con ventanas largas el número queda ambiguo.
+#### Cómo se miden, y cómo se midieron mal
+
+Las cifras de arriba salen de [`measure-demo.ps1`](measure-demo.ps1), que lee
+`R21` —la posición de la banda— antes y después de dejar correr la CPU un
+segundo. La banda avanza de dos en dos, así que el ritmo es directo.
+
+Hay dos trampas, y la primera se cayó en ella:
+
+- **El cronómetro tiene que pararse en el `halt`**, no después de leer el
+  registro. Leerlo cuesta unos 250 ms por el puerto serie, y contarlos como
+  tiempo de ejecución rebajaba la medida un 20 %: los 59,3 fps reales se leían
+  como 50, y de ahí salió una explicación entera sobre una «mezcla de frames de
+  16,7 y 33,3 ms» que describía un fenómeno que no estaba ocurriendo. El error
+  era coherente consigo mismo, que es lo que lo hacía creíble.
+- **La ventana tiene que ser corta.** A 60 fps la banda da la vuelta en 1,9 s, y
+  con ventanas más largas el número queda ambiguo.
+
+Lo que delató el fallo fue una comprobación cruzada: los 13,2 ms de las 32
+líneas y los 96,6 ms de las 240 dan 258 y 252 ciclos por palabra
+respectivamente. Dos medidas independientes que coinciden al 2 % son mucho más
+difíciles de falsear que una sola.
 
 ## Temporización: de 120 a 100 MHz
 
@@ -420,9 +451,9 @@ libre, que es justo lo que hace el monitor real; sin el enganche, esa prueba
 falla.
 
 La alternativa era atacar el camino crítico de la CPU (`instruction` →
-decodificación → `branch_taken` → `pc`, 8,34 ns con 4,9 de routing), que es el
-punto 1 del `TODO.md` del repositorio. Eso sigue disponible y devolvería el
-margen; bajar el reloj solo compra tiempo para llegar al hito D.
+decodificación → `branch_taken` → `pc`, 8,34 ns con 4,9 de routing). Eso sigue
+disponible y devolvería el margen; bajar el reloj solo compra tiempo para
+llegar al hito D. No está en el `TODO.md` del repositorio.
 
 ### Por qué se degradó, y por qué no es lo que parece
 
@@ -523,18 +554,36 @@ La suite completa de CPU contra esta placa:
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
-Pasan **11 de 12** casos.
+Pasan **12 de 12** casos.
 
-El que falla es `multiply`, y **no tiene nada que ver con el vídeo**: esta CPU
-nunca implementó `MUL`. El opcode está declarado y supera la validación de
-codificación, pero no existe rama de ejecución, así que cae en el `default` y
-responde `ERROR_INVALID_OPCODE`. El `cpu.v` de `10.fpga-cpu-ram` es idéntico en
-esto, y el simulador sí lo implementa —por eso el mismo caso pasa con
-`--backend cpu-simulator`—. Lo mismo vale para `MULFX` y `DIV`.
+### `MUL`, `MULFX` y `DIV`
 
-Conviene anotarlo porque el `TODO.md` del repositorio dice que `MULHI`, `DIVU`,
-`REM` y `REMU` son «los únicos mnemónicos de la ISA sin ningún test»: para la
-FPGA eso no es exacto, `MUL`, `MULFX` y `DIV` tienen test y lo suspenden.
+Hasta hace poco pasaban 11 de 12: fallaba `multiply`, porque esta CPU declaraba
+`MUL` y lo validaba, pero no tenía rama de ejecución. Caía en el `default` y
+respondía `ERROR_INVALID_OPCODE`. El simulador sí lo implementaba, así que el
+mismo caso pasaba con `--backend cpu-simulator` y fallaba en la FPGA.
+
+Las tres instrucciones vienen de [`../6.fpga-cpu`](../6.fpga-cpu), que las tenía
+desde antes: `MUL` conserva los 32 bits bajos, `MULFX` es signed Q16.16 con
+cuatro productos parciales de 16×16 sobre DSP, y `DIV` es un divisor iterativo
+de 32 pasos con truncamiento hacia cero. Ocupan 4 `MULT18X18D` de 156; el vídeo
+ya usaba uno.
+
+El detalle que importa para esta carpeta es que **el 6 no cumplía su reloj**: se
+quedaba en 116,39 MHz contra 120, porque el arreglo de signo del multiplicador
+—una negación condicional de 32 bits— desembocaba en el multiplexor de
+`register_write_data`. Se arregló allí partiéndolo en `STATE_MUL_SIGN` y
+`STATE_MUL_WRITE`, exactamente como `STATE_ALU_WRITE` hace con la suma de la
+ALU, y es **esa** versión la que se trajo aquí. El coste es un ciclo en las tres
+instrucciones, que `cpu_tb.v` comprueba. Con ellas la CPU tiene 18 estados y
+`state` pasó de `[3:0]` a `[4:0]`.
+
+El efecto en temporización fue nulo dentro del ruido de colocación: siguen
+cerrando siete de ocho semillas a 100 MHz, ahora entre 95,37 y 112,88 MHz. La
+semilla fijada pasó de la 3 a la 5. En área, 5 888 → 6 785 LUT.
+
+Y el caso `multiply` deja de ser una discrepancia entre backends: aprueba en las
+dos FPGA y en el simulador.
 
 ## Notas de integración
 
@@ -573,9 +622,10 @@ buffer, así que el hito D hace lo que dice. Lo que las demos abren es otra cosa
 
 ### El número incómodo
 
-`swap_demo_fast` escribe 5 120 palabras en 19,4 ms. A 100 MHz eso son **1,94
-millones de ciclos, unos 380 por palabra**. El bucle interior son cuatro
-instrucciones (`STORE`, dos `ADDI`, `BLT`), así que sale a **unos 95 ciclos por
+`swap_demo_fast` escribe 5 120 palabras en 13,2 ms. A 100 MHz eso son **1,32
+millones de ciclos, unos 258 por palabra**; `swap_demo`, con 38 400 palabras en
+96,6 ms, da 252, así que el número está bien sujeto. El bucle interior son
+cuatro instrucciones (`STORE`, dos `ADDI`, `BLT`), o sea **unos 64 ciclos por
 instrucción**.
 
 Eso no es el vídeo robando ancho de banda: el vídeo consume 9,2 MB/s de los
@@ -592,9 +642,9 @@ De ahí salen tres caminos, de menos a más ambicioso:
    relación resultado/esfuerzo, y de largo.
 2. **Escrituras en ráfaga.** El adaptador hace un acceso por palabra y paga la
    activación de fila cada vez. Rellenar una línea son 160 palabras
-   consecutivas: exactamente el caso para el que existe el modo ráfaga. Esto es
-   el punto 1 del `TODO.md` del repositorio («Optimizar LSU»), planteado allí
-   para la GPU de `16.fpga-gpu-ram-v2`, y aquí se ve por qué importa.
+   consecutivas: exactamente el caso para el que existe el modo ráfaga. Son los
+   puntos 0 («Usar BL8») y 1 («Optimizar LSU») del `TODO.md` del repositorio, y
+   aquí se ve por qué encabezan la lista.
 3. **Que no sea la CPU quien rellene.** Un bloque que rellene rectángulos por
    sí solo, mandado desde los registros MMIO, es el siguiente escalón natural
    después del scanout: el vídeo ya lee de la SDRAM sin la CPU, y esto sería
@@ -603,15 +653,15 @@ De ahí salen tres caminos, de menos a más ambicioso:
 
 ### Lo que falta en la CPU
 
-`MUL`, `MULFX` y `DIV` están declarados y superan la validación de codificación
-pero **no tienen rama de ejecución**, así que responden `ERROR_INVALID_OPCODE`.
-Por eso las demos calculan `y*640` como `(y<<9) + (y<<7)`. Implementarlos es
-barato: quedan 156 DSP sin usar y el multiplicador de la línea de vídeo ya
-demuestra que nextpnr los coloca sin estropear la temporización. Cerraría el
-caso `multiply` de la suite, que hoy es el único que falla.
+`MUL`, `MULFX` y `DIV` ya están, traídos de `../6.fpga-cpu`. Las demos siguen
+calculando `y*640` como `(y<<9) + (y<<7)` porque se escribieron antes; no hay
+motivo para no usar `MUL` ahora, más allá de que un desplazamiento cuesta menos
+ciclos que las once de una multiplicación.
 
-### Anotado y no hecho
+De la ISA siguen sin implementar `MULHI`, `DIVU`, `REM` y `REMU`. Los tres
+primeros salen casi gratis del hardware que ya hay: `MULHI` son los 32 bits
+altos del producto que `STATE_MUL_COMBINE` ya calcula entero para `MULFX`, y
+`REM` es el resto que el divisor deja en `divide_remainder` y hoy se tira.
 
-El `TODO.md` del repositorio dice que `MULHI`, `DIVU`, `REM` y `REMU` son «los
-únicos mnemónicos de la ISA sin ningún test». Para la FPGA no es exacto: `MUL`,
-`MULFX` y `DIV` tienen test y lo suspenden. Está sin corregir allí a propósito.
+Y `MULHI`, `DIVU`, `REM` y `REMU` siguen siendo los únicos cuatro mnemónicos de
+la ISA sin ningún test, como dice el punto 4 del `TODO.md` del repositorio.

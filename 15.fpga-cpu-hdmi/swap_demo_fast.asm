@@ -5,11 +5,16 @@
 ; swap_demo.asm repinta las 240 lineas enteras cada frame: 38 400 escrituras
 ; mas cuatro instrucciones de bucle por cada una. Esta version pinta 32 lineas
 ; en lugar de 240 (borrar la banda vieja, dibujar la nueva), asi que hace
-; 5 120 escrituras: 7,5 veces menos trabajo. Medido en la placa, la banda pasa
-; de 9,2 a 50 frames dibujados por segundo. La mejora real es 5,4x y no 7,5x
-; porque el tope son los 60 Hz del video: al esperar al intercambio, un frame
-; dibujado dura 16,7 ms o 33,3 ms, nunca algo intermedio, y 50 fps es la mezcla
-; de unos cuantos de cada.
+; 5 120 escrituras: 7,5 veces menos trabajo. Medido en la placa, el dibujo pasa
+; de 96,6 ms a 13,2 ms por frame, una mejora de 7,3x que casa con el trabajo
+; ahorrado.
+;
+; Lo que se ve en pantalla no es eso, sino el efecto de cruzar ese umbral:
+; 13,2 ms caben en los 16,7 ms de un frame de video y 96,6 ms no. Con la espera
+; al intercambio, un frame dibujado dura un numero entero de frames de video,
+; asi que swap_demo.asm sale a 9,8 fps (uno de cada seis) y este se engancha a
+; 59,3, o sea a los 60 del monitor. Sobran 3,5 ms por frame: a partir de aqui
+; manda la pantalla, no la CPU.
 ;
 ; El detalle que lo hace interesante, y que no existe con un solo buffer:
 ; el buffer trasero NO contiene lo que se dibujo el frame pasado, sino lo del

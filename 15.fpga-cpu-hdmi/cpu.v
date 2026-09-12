@@ -6,7 +6,7 @@
  * Implemented instructions:
  *   NOP
  *   MOVI Rd, imm16
- *   ADD/SUB/AND/OR/XOR Rd, Ra, Rb
+ *   ADD/SUB/MUL/MULFX/DIV/AND/OR/XOR Rd, Ra, Rb
  *   SHL/SHR/SAR Rd, Ra, Rb
  *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
  *   MOVHI Rd, imm16
@@ -94,21 +94,30 @@ module cpu (
   localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
   localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
 
-  localparam [3:0] STATE_HALTED = 4'd0;
-  localparam [3:0] STATE_FETCH_REQUEST = 4'd1;
-  localparam [3:0] STATE_FETCH_WAIT = 4'd2;
-  localparam [3:0] STATE_EXECUTE = 4'd3;
-  localparam [3:0] STATE_RETIRE = 4'd4;
-  localparam [3:0] STATE_MEMORY_WAIT = 4'd5;
-  localparam [3:0] STATE_DECODE = 4'd6;
-  localparam [3:0] STATE_SHIFT_STEP = 4'd7;
-  localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
-  localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
-  localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
+  localparam [4:0] STATE_HALTED = 5'd0;
+  localparam [4:0] STATE_FETCH_REQUEST = 5'd1;
+  localparam [4:0] STATE_FETCH_WAIT = 5'd2;
+  localparam [4:0] STATE_EXECUTE = 5'd3;
+  localparam [4:0] STATE_RETIRE = 5'd4;
+  localparam [4:0] STATE_MEMORY_WAIT = 5'd5;
+  localparam [4:0] STATE_DECODE = 5'd6;
+  localparam [4:0] STATE_SHIFT_STEP = 5'd7;
+  localparam [4:0] STATE_SHIFT_WRITE = 5'd8;
+  localparam [4:0] STATE_BRANCH_COMMIT = 5'd9;
+  localparam [4:0] STATE_BRANCH_COMPARE = 5'd10;
   // Separate ALU calculation from register-file write-back at 120 MHz.
-  localparam [3:0] STATE_ALU_WRITE = 4'd11;
+  localparam [4:0] STATE_ALU_WRITE = 5'd11;
+  localparam [4:0] STATE_MUL_PRODUCTS = 5'd12;
+  localparam [4:0] STATE_MUL_CROSS = 5'd13;
+  localparam [4:0] STATE_MUL_COMBINE = 5'd14;
+  // Igual que STATE_ALU_WRITE, pero en el otro extremo: separa el arreglo de
+  // signo de la escritura del banco. Ver 6.fpga-cpu/timing.md.
+  localparam [4:0] STATE_MUL_SIGN = 5'd15;
+  localparam [4:0] STATE_MUL_WRITE = 5'd16;
+  localparam [4:0] STATE_DIV_STEP = 5'd17;
 
-  reg [3:0] state;
+  // Dieciocho estados: cuatro bits ya no llegan.
+  reg [4:0] state;
   reg [31:0] pc;
   reg [31:0] instruction;
   reg step_active;
@@ -146,6 +155,38 @@ module cpu (
   reg [2:0] branch_kind;
   reg [4:0] alu_destination;
   reg [31:0] alu_result;
+  reg [31:0] multiply_low_product;
+  reg [31:0] multiply_low_high_product;
+  reg [31:0] multiply_high_low_product;
+  reg [31:0] multiply_high_high_product;
+  reg [32:0] multiply_cross_sum;
+  reg [31:0] multiply_result;
+  reg [4:0] multiply_destination;
+  reg [31:0] multiply_operand_a;
+  reg [31:0] multiply_operand_b;
+  reg multiply_fixed;
+  reg multiply_negative;
+  reg multiply_roundup;
+  reg [63:0] multiply_unsigned_product;
+  reg divide_by_zero;
+  reg [31:0] divide_dividend;
+  reg [31:0] divide_divisor;
+  reg [31:0] divide_quotient;
+  reg [31:0] divide_remainder;
+  reg [5:0] divide_count;
+  reg divide_negative;
+  reg [4:0] divide_destination;
+  reg divide_write_pending;
+  // Resultado ya con su signo, a la espera de escribirse. Ver STATE_MUL_SIGN.
+  reg [31:0] multiply_writeback;
+  reg [4:0] multiply_writeback_destination;
+
+  wire [31:0] divide_shifted_remainder =
+      {divide_remainder[30:0], divide_dividend[31]};
+  wire [31:0] divide_remainder_difference =
+      divide_shifted_remainder - divide_divisor;
+  wire [31:0] divide_next_quotient =
+      {divide_quotient[30:0], divide_shifted_remainder >= divide_divisor};
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
@@ -243,6 +284,30 @@ module cpu (
       branch_kind <= 3'd0;
       alu_destination <= 5'd0;
       alu_result <= 32'h0000_0000;
+      multiply_low_product <= 32'h0000_0000;
+      multiply_low_high_product <= 32'h0000_0000;
+      multiply_high_low_product <= 32'h0000_0000;
+      multiply_high_high_product <= 32'h0000_0000;
+      multiply_cross_sum <= 33'h0;
+      multiply_result <= 32'h0000_0000;
+      multiply_destination <= 5'd0;
+      multiply_operand_a <= 32'h0000_0000;
+      multiply_operand_b <= 32'h0000_0000;
+      multiply_fixed <= 1'b0;
+      multiply_roundup <= 1'b0;
+      multiply_negative <= 1'b0;
+      multiply_unsigned_product <= 64'h0000_0000_0000_0000;
+      divide_by_zero <= 1'b0;
+      divide_dividend <= 32'h0000_0000;
+      divide_divisor <= 32'h0000_0000;
+      divide_quotient <= 32'h0000_0000;
+      divide_remainder <= 32'h0000_0000;
+      divide_count <= 6'd0;
+      divide_negative <= 1'b0;
+      divide_destination <= 5'd0;
+      divide_write_pending <= 1'b0;
+      multiply_writeback <= 32'h0000_0000;
+      multiply_writeback_destination <= 5'd0;
       register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
@@ -367,6 +432,41 @@ module cpu (
               alu_destination <= rd;
               alu_result <= operand_a ^ operand_b;
               state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_MUL: begin
+              // Dedicated input registers let the placer keep the operands
+              // physically close to the three ECP5 multiplier blocks.
+              multiply_operand_a <= operand_a;
+              multiply_operand_b <= operand_b;
+              multiply_destination <= rd;
+              multiply_fixed <= 1'b0;
+              divide_write_pending <= 1'b0;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            OPCODE_MULFX: begin
+              // Multiply magnitudes with 16x16 blocks, then restore the sign.
+              multiply_operand_a <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              multiply_operand_b <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              multiply_destination <= rd;
+              multiply_fixed <= 1'b1;
+              multiply_negative <= operand_a[31] ^ operand_b[31];
+              divide_write_pending <= 1'b0;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            OPCODE_DIV: begin
+              divide_by_zero <= (operand_b == 0);
+              divide_dividend <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              divide_divisor <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              divide_quotient <= 32'h0000_0000;
+              divide_remainder <= 32'h0000_0000;
+              divide_count <= 6'd0;
+              divide_negative <= operand_a[31] ^ operand_b[31];
+              divide_destination <= rd;
+              divide_write_pending <= 1'b1;
+              state <= STATE_DIV_STEP;
             end
 
             OPCODE_SHL: begin
@@ -583,6 +683,112 @@ module cpu (
           register_write_data <= alu_result;
           register_write_enable <= 1'b1;
           state <= STATE_RETIRE;
+        end
+
+        STATE_MUL_PRODUCTS: begin
+          if (multiply_fixed) begin
+            // Four independent 16x16 products map cleanly to ECP5 DSPs.
+            multiply_low_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[15:0];
+            multiply_low_high_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[31:16];
+            multiply_high_low_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[15:0];
+            multiply_high_high_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[31:16];
+            state <= STATE_MUL_CROSS;
+          end else begin
+            // low32(a*b) needs only three unsigned 16x16 partial products.
+            multiply_low_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[15:0];
+            multiply_low_high_product <=
+                multiply_operand_a[15:0] * multiply_operand_b[31:16];
+            multiply_high_low_product <=
+                multiply_operand_a[31:16] * multiply_operand_b[15:0];
+            state <= STATE_MUL_CROSS;
+          end
+        end
+
+        STATE_MUL_CROSS: begin
+          if (multiply_fixed)
+            multiply_cross_sum <= {1'b0, multiply_low_high_product} +
+                                  {1'b0, multiply_high_low_product};
+          else
+            // Only the low half contributes to MUL modulo 2^32.
+            multiply_cross_sum <= {17'h0, multiply_low_high_product[15:0]} +
+                                  {17'h0, multiply_high_low_product[15:0]};
+          state <= STATE_MUL_COMBINE;
+        end
+
+        STATE_MUL_COMBINE: begin
+          if (multiply_fixed) begin
+            multiply_unsigned_product <=
+                {multiply_high_high_product, 32'h0000_0000} +
+                {15'h0000, multiply_cross_sum, 16'h0000} +
+                {32'h0000_0000, multiply_low_product};
+            multiply_roundup <= (multiply_low_product[15:0] == 0);
+            state <= STATE_MUL_SIGN;
+          end else begin
+            multiply_result <= multiply_low_product +
+                               {multiply_cross_sum[15:0], 16'h0000};
+            state <= STATE_MUL_SIGN;
+          end
+        end
+
+        // El arreglo de signo y la escritura del banco van en ciclos distintos
+        // por la misma razon que STATE_ALU_WRITE existe: la negacion
+        // condicional es una cadena de acarreo de 32 bits y desemboca en el
+        // multiplexor de `register_write_data`, que sirve ademas a la ALU, a
+        // los saltos, a los desplazamientos y a los LOAD. Juntos eran el
+        // camino critico de 6.fpga-cpu y lo dejaban en 116,39 MHz.
+        STATE_MUL_SIGN: begin
+          multiply_writeback_destination <= divide_write_pending ?
+              divide_destination : multiply_destination;
+          if (divide_write_pending)
+            multiply_writeback <= divide_negative ?
+                (~divide_quotient + 1'b1) : divide_quotient;
+          else
+            multiply_writeback <= multiply_fixed ?
+                (multiply_negative ?
+                    (~multiply_unsigned_product[47:16] + multiply_roundup) :
+                    multiply_unsigned_product[47:16]) : multiply_result;
+          state <= STATE_MUL_WRITE;
+        end
+
+        STATE_MUL_WRITE: begin
+          register_write_address <= multiply_writeback_destination;
+          register_write_data <= multiply_writeback;
+          register_write_enable <= 1'b1;
+          divide_write_pending <= 1'b0;
+          state <= STATE_RETIRE;
+        end
+
+        // Restoring unsigned division over operand magnitudes. Applying the
+        // sign only to the completed quotient implements truncation to zero.
+        STATE_DIV_STEP: begin
+          if (divide_count == 0 && divide_by_zero) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_DIVISION_BY_ZERO;
+            // Como las otras rutas de error: la resta se aplaza a STATE_HALTED
+            // para no meter la decodificacion en el cono de datos del PC.
+            pc_restore <= 1'b1;
+            state <= STATE_HALTED;
+          end else begin
+            divide_dividend <= {divide_dividend[30:0], 1'b0};
+            if (divide_shifted_remainder >= divide_divisor) begin
+              divide_remainder <= divide_remainder_difference;
+              divide_quotient <= {divide_quotient[30:0], 1'b1};
+            end else begin
+              divide_remainder <= divide_shifted_remainder;
+              divide_quotient <= {divide_quotient[30:0], 1'b0};
+            end
+            divide_count <= divide_count + 1'b1;
+            if (divide_count == 6'd31) begin
+              divide_quotient <= divide_next_quotient;
+              state <= STATE_MUL_SIGN;
+            end
+          end
         end
 
         // All comparisons reuse one registered subtraction. For signed values,

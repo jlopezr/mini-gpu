@@ -90,9 +90,18 @@ module cpu_tb;
         measured_instruction_cycles = instruction_cycle_count + 1;
         if (dut.opcode >= 6'h07 && dut.opcode <= 6'h09)
           expected_instruction_cycles = 7 + dut.operand_b[4:0];
-        else if ((dut.opcode >= 6'h01 && dut.opcode <= 6'h06) ||
+        // MULFX (0x03) cae dentro del rango de opcodes de ALU pero no es ALU:
+        // se excluye a mano.
+        else if ((dut.opcode >= 6'h01 && dut.opcode <= 6'h06 &&
+                  dut.opcode != 6'h03) ||
                  (dut.opcode >= 6'h11 && dut.opcode <= 6'h14))
           expected_instruction_cycles = 7;
+        // MUL, MULFX y DIV pagan un ciclo extra por STATE_MUL_SIGN, que separa
+        // el arreglo de signo de la escritura del banco. Ver cpu.v.
+        else if (dut.opcode == 6'h0a || dut.opcode == 6'h03)
+          expected_instruction_cycles = 11;
+        else if (dut.opcode == 6'h0c)
+          expected_instruction_cycles = 40;
         else if (dut.opcode >= 6'h20 && dut.opcode <= 6'h25)
           expected_instruction_cycles = 8;
         else if (dut.opcode == 6'h2f)
@@ -393,6 +402,66 @@ module cpu_tb;
     #1;
     if (!error || error_code !== 8'h01) $fatal(1, "Invalid opcode error mismatch");
     if (debug_pc !== 0) $fatal(1, "Invalid opcode PC mismatch");
+
+    // MUL returns the low 32 bits, including negative operands and overflow.
+    instruction_memory[0] = 32'h4020_fffe;  // MOVI R1, -2
+    instruction_memory[1] = 32'h4040_0003;  // MOVI R2, 3
+    instruction_memory[2] = 32'h2861_1000;  // MUL R3, R1, R2 -> -6
+    instruction_memory[3] = 32'h5c80_0001;  // MOVHI R4, 1 -> 0x00010000
+    instruction_memory[4] = 32'h28a4_2000;  // MUL R5, R4, R4 -> low32 = 0
+    instruction_memory[5] = 32'hfc00_0000;  // HALT
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    expect_register(5'd3, 32'hffff_fffa);
+    expect_register(5'd5, 32'h0000_0000);
+    if (debug_pc !== 32'h0000_0018) $fatal(1, "MUL batch final PC mismatch");
+    if (retired_count !== 6) $fatal(1, "MUL batch retired count mismatch");
+    if (error) $fatal(1, "MUL batch raised an unexpected error");
+
+    // MULFX is signed Q16.16 and DIV is signed with truncation toward zero.
+    instruction_memory[0] = 32'h5c20_0001;  // MOVHI R1, 1 -> 1.0
+    instruction_memory[1] = 32'h5c40_0001;  // MOVHI R2, 1
+    instruction_memory[2] = 32'h4c42_8000;  // ORI R2, R2, 0x8000 -> 1.5
+    instruction_memory[3] = 32'h5c60_fffe;  // MOVHI R3, fffe -> -2.0
+    instruction_memory[4] = 32'h0c63_0800;  // MULFX R3, R3, R1 -> -2.0
+    instruction_memory[5] = 32'h0c82_1000;  // MULFX R4, R2, R2 -> 2.25
+    instruction_memory[6] = 32'h40a0_fff9;  // MOVI R5, -7
+    instruction_memory[7] = 32'h40c0_0003;  // MOVI R6, 3
+    instruction_memory[8] = 32'h30e5_3000;  // DIV R7, R5, R6 -> -2
+    instruction_memory[9] = 32'h3105_2800;  // DIV R8, R5, R5 -> 1
+    instruction_memory[10] = 32'hfc00_0000;  // HALT
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    expect_register(5'd3, 32'hfffe_0000);
+    expect_register(5'd4, 32'h0002_4000);
+    expect_register(5'd7, 32'hffff_fffe);
+    expect_register(5'd8, 32'h0000_0001);
+    if (retired_count !== 11) $fatal(1, "MULFX/DIV retired count mismatch");
+    if (error) $fatal(1, "MULFX/DIV raised an unexpected error");
+
+    // Division by zero is terminal, is not retired and preserves faulting PC.
+    // Aqui el PC lo restaura `pc_restore` desde STATE_HALTED, igual que las
+    // otras cuatro rutas de error de esta version.
+    instruction_memory[0] = 32'h4020_0007;  // MOVI R1, 7
+    instruction_memory[1] = 32'h4040_0000;  // MOVI R2, 0
+    instruction_memory[2] = 32'h3061_1000;  // DIV R3, R1, R2
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (!error || error_code !== 8'h04) $fatal(1, "DIV-by-zero error mismatch");
+    if (debug_pc !== 32'h0000_0008) $fatal(1, "DIV-by-zero PC mismatch");
+    if (retired_count !== 2) $fatal(1, "DIV-by-zero was incorrectly retired");
 
     $display("PASS: minimal CPU behavior is correct");
     $finish;

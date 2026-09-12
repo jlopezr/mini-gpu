@@ -14,9 +14,9 @@
 ; Todo lo demas es identico, a proposito: si algo se ve distinto tiene que
 ; ser por el doble buffer y por nada mas.
 ;
-; Que esperar. Medido en la placa, esta version tarda 109 ms en repintar las
-; 240 lineas, o sea 6,5 frames de video. El barrido da seis vueltas y media
-; por cada pasada de la CPU, asi que no se ve una costura sino un frente de
+; Que esperar. Medido en la placa, esta version tarda 96,6 ms en repintar las
+; 240 lineas, o sea casi seis frames de video. El barrido da seis vueltas por
+; cada pasada de la CPU, asi que no se ve una costura sino un frente de
 ; repintado bajando despacio por la pantalla: por encima la banda nueva, por
 ; debajo la vieja. Es tearing llevado al extremo, pero no se parece a lo que
 ; se ve en un juego; para eso esta tear_demo_fast.asm.

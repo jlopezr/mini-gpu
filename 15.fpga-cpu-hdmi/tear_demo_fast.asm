@@ -1,20 +1,23 @@
 ; ============================================================
 ; tear_demo_fast.asm - la costura limpia, en un solo buffer
 ;
-; tear_demo.asm tarda 109 ms en repintar las 240 lineas, seis frames y medio
-; de video, asi que lo que se ve es un frente de repintado bajando despacio,
-; no una costura. Esta version pinta solo las 32 lineas que cambian, como
-; swap_demo_fast.asm, y tarda 19,4 ms medidos en la placa.
+; tear_demo.asm tarda 96,6 ms en repintar las 240 lineas, casi seis frames de
+; video, asi que lo que se ve es un frente de repintado bajando despacio, no
+; una costura. Esta version pinta solo las 32 lineas que cambian, como
+; swap_demo_fast.asm, y tarda 13,2 ms medidos en la placa.
 ;
-; Y ahi esta la gracia: 19,4 ms contra los 16,7 ms que dura un frame de video.
+; Y ahi esta la gracia: 13,2 ms contra los 16,7 ms que dura un frame de video.
 ; La CPU y el barrido van casi a la misma velocidad, pero no exactamente, asi
 ; que el punto donde se cruzan se desplaza poco a poco. En pantalla eso es una
-; costura horizontal que recorre la imagen cada 120 ms mas o menos: por encima
+; costura horizontal que recorre la imagen cada 63 ms mas o menos: por encima
 ; del corte la banda ya se ha movido, por debajo todavia no. Esa es la costura
 ; que se reconoce de un juego sin vsync.
 ;
 ; El ritmo NO esta ajustado a mano para que salga asi; sale de lo que tarda
 ; esta CPU en escribir 5 120 palabras compitiendo con el video por la SDRAM.
+; Este programa es ademas la unica medida limpia de ese tiempo: como no espera
+; a nadie, sus 75,7 frames por segundo son CPU pura, sin el redondeo a los
+; 60 Hz del video que impone swap_demo_fast.asm.
 ;
 ; Diferencias con swap_demo_fast.asm:
 ;
