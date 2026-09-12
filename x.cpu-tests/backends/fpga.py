@@ -168,6 +168,7 @@ class FpgaBackend:
         video: dict | None = None,
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
+        tiene_captura = "frame_capture" in capabilities(self.version)
 
         serial = self.monitor.serial
         with serial.Serial(
@@ -204,12 +205,17 @@ class FpgaBackend:
                 # Borrar el underflow de la ejecucion anterior ANTES de
                 # arrancar. Es pegajoso, asi que sin esto el primer caso que lo
                 # provoque hace fallar a todos los demas de la sesion y no se
-                # sabe cual fue.
+                # sabe cual fue. En las versiones sin `frame_capture` STATUS es
+                # de solo lectura y la escritura se ignora, que es inofensivo.
                 _write_register(client, VIDEO_STATUS, 1)
-                swap = video.get("run_until_swap")
-                # Cero desarma la parada. Se escribe siempre, tambien cuando el
-                # caso no la usa, para no heredarla del caso anterior.
-                _write_register(client, VIDEO_HALT_AT, swap or 0)
+                # HALT_AT y SWAP_COUNT solo existen donde hay `frame_capture`:
+                # en la 16 la ventana de registros es de 16 bytes y escribir en
+                # 0x80000014 seria un acceso fuera de ella.
+                if tiene_captura:
+                    swap = video.get("run_until_swap")
+                    # Cero desarma la parada. Se escribe siempre, tambien cuando
+                    # el caso no la usa, para no heredarla del caso anterior.
+                    _write_register(client, VIDEO_HALT_AT, swap or 0)
 
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
@@ -243,7 +249,8 @@ class FpgaBackend:
                 video_result = {
                     "underflow": bool(estado & 1),
                     "frames": estado >> 16,
-                    "swaps": _read_register(client, VIDEO_SWAP_COUNT),
+                    "swaps": (_read_register(client, VIDEO_SWAP_COUNT)
+                              if tiene_captura else None),
                     "fb_front": _read_register(client, VIDEO_FB_FRONT),
                     "frame": None,
                 }

@@ -1,0 +1,15 @@
+{
+  "architecture": "cpu",
+  "name": "video-bounce",
+  "program": "bounce.asm",
+  "requires": ["frame_capture"],
+  "run_until": { "swap": 80 },
+  "timeout_seconds": 30.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "video": { "underflow": false },
+    "frame": { "file": "expected/frame.bin" }
+  }
+}
