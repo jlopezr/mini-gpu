@@ -20,12 +20,12 @@ casos; el que falla, `multiply`, no tiene que ver con el vídeo (más abajo).
 
 ## Escalera de hitos
 
-| Hito | Contenido | Estado |
-|---|---|---|
-| A | Fusión: CPU de 10 intacta + 640×480p60 con patrón generado por lógica | **hecho** |
-| B | Doble line buffer, cruce de dominios y escalado 2×, con productor falso | **hecho** |
-| C | Scanout real: la CPU escribe el framebuffer en SDRAM y se ve | **hecho** |
-| D | Registros en `0x80000000` y doble framebuffer con swap sincronizado | **hecho** |
+| Hito | Contenido                                                               | Estado    |
+|------|-------------------------------------------------------------------------|-----------|
+| A    | Fusión: CPU de 10 intacta + 640×480p60 con patrón generado por lógica   | **hecho** |
+| B    | Doble line buffer, cruce de dominios y escalado 2×, con productor falso | **hecho** |
+| C    | Scanout real: la CPU escribe el framebuffer en SDRAM y se ve            | **hecho** |
+| D    | Registros en `0x80000000` y doble framebuffer con swap sincronizado     | **hecho** |
 
 La separación ha pagado: los tres fallos que aparecieron en C —aritmética de
 línea, arbitraje y temporización— se pudieron mirar de uno en uno porque el
@@ -145,12 +145,12 @@ es una línea de `top.v`.
 
 ### El framebuffer
 
-| | |
-|---|---|
-| Dirección | `0x01000000`, la región que el mapa de memoria reserva a gráficos |
-| Formato | RGB565, 320×240, lineal y sin relleno |
-| Tamaño | 153 600 bytes, hasta `0x01025800` |
-| Ancho de banda | 9,2 MB/s |
+|                |                                                                   |
+|----------------|-------------------------------------------------------------------|
+| Dirección      | `0x01000000`, la región que el mapa de memoria reserva a gráficos |
+| Formato        | RGB565, 320×240, lineal y sin relleno                             |
+| Tamaño         | 153 600 bytes, hasta `0x01025800`                                 |
+| Ancho de banda | 9,2 MB/s                                                          |
 
 Un píxel RGB565 son 16 bits y el bus físico de la SDRAM también, así que **cada
 píxel es exactamente un acceso**: no hay que componer palabras ni preocuparse
@@ -208,12 +208,12 @@ con el botón se ve bien, el problema está del line buffer hacia dentro.
 
 Una ventana de registros y el doble framebuffer que gobiernan.
 
-| Dirección | Registro | | Contenido |
-|---|---|---|---|
-| `0x80000000` | `FB_FRONT` | RW | dirección de byte del buffer que se muestra |
-| `0x80000004` | `FB_BACK` | RW | dirección de byte del buffer que se dibuja |
-| `0x80000008` | `SWAP` | RW | escribir: pide intercambio. leer bit 0: pendiente |
-| `0x8000000c` | `STATUS` | R | bit 0 underflow, bit 1 pendiente, 31:16 frames |
+| Dirección    | Registro   |    | Contenido                                         |
+|--------------|------------|----|---------------------------------------------------|
+| `0x80000000` | `FB_FRONT` | RW | dirección de byte del buffer que se muestra       |
+| `0x80000004` | `FB_BACK`  | RW | dirección de byte del buffer que se dibuja        |
+| `0x80000008` | `SWAP`     | RW | escribir: pide intercambio. leer bit 0: pendiente |
+| `0x8000000c` | `STATUS`   | R  | bit 0 underflow, bit 1 pendiente, 31:16 frames    |
 
 Las direcciones se alinean a cuatro bytes: los dos bits bajos se ignoran al
 escribir y se leen como cero.
@@ -271,12 +271,12 @@ buffer visible) y **cuánto** repintan (las 240 líneas o solo las 32 que
 cambian). Esa rejilla de dos por dos es la demostración del hito D: el eje
 vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
-| Programa | Escribe en | Repinta | Medido en placa |
-|---|---|---|---|
-| [`swap_demo.asm`](swap_demo.asm) | `FB_BACK` | 240 líneas | 9,2 fps, limpio |
-| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK` | 32 líneas | 50 fps, limpio |
-| [`tear_demo.asm`](tear_demo.asm) | `FB_FRONT` | 240 líneas | 9,2 fps, frente de repintado |
-| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas | 51,5 fps, costura |
+| Programa                                   | Escribe en | Repinta    | Medido en placa              |
+|--------------------------------------------|------------|------------|------------------------------|
+| [`swap_demo.asm`](swap_demo.asm)           | `FB_BACK`  | 240 líneas | 9,2 fps, limpio              |
+| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 50 fps, limpio               |
+| [`tear_demo.asm`](tear_demo.asm)           | `FB_FRONT` | 240 líneas | 9,2 fps, frente de repintado |
+| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 51,5 fps, costura            |
 
 Y aparte, [`swap_smoke.asm`](swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
@@ -354,10 +354,10 @@ frames dibujados y con ventanas largas el número queda ambiguo.
 Cada hito ha ido comiendo margen en el dominio de CPU, siempre por el mismo
 mecanismo y nunca por un camino crítico nuevo:
 
-| | 10.fpga-cpu-ram | hito A | hito B | hito C |
-|---|---:|---:|---:|---:|
-| Mejor semilla | 130,67 | 123,32 | 119,85 | 111,35 |
-| ¿Cumple 120 MHz? | sí | sí, 1 de 8 | **ninguna** | **ninguna** |
+|                  | 10.fpga-cpu-ram |     hito A |      hito B |      hito C |
+|------------------|----------------:|-----------:|------------:|------------:|
+| Mejor semilla    |          130,67 |     123,32 |      119,85 |      111,35 |
+| ¿Cumple 120 MHz? |              sí | sí, 1 de 8 | **ninguna** | **ninguna** |
 
 Con ocho semillas tras el hito C, el máximo fue 111,35 MHz y la mediana 109,5.
 Los 120 MHz dejaron de ser alcanzables, así que se baja la restricción a
@@ -387,13 +387,13 @@ cumplir **las dos** a la vez:
 
 Entre 40 y 200, el único divisor que cumple ambas es **100 → 1 Mbaud**:
 
-| Divisor | Baudio | ¿Múltiplo de 4? | ¿FTDI exacto? |
-|---:|---:|:---:|:---:|
-| 40 | 2,5 Mbaud | sí | no (3/1,2) |
-| 48 | 2,083 Mbaud | sí | no (3/1,44) |
-| 50 | 2 Mbaud | **no** | sí (3/1,5) |
-| 64 | 1,563 Mbaud | sí | no (3/1,92) |
-| **100** | **1 Mbaud** | **sí** | **sí (3/3)** |
+| Divisor |      Baudio | ¿Múltiplo de 4? | ¿FTDI exacto? |
+|--------:|------------:|:---------------:|:-------------:|
+|      40 |   2,5 Mbaud |       sí        |  no (3/1,2)   |
+|      48 | 2,083 Mbaud |       sí        |  no (3/1,44)  |
+|      50 |     2 Mbaud |     **no**      |  sí (3/1,5)   |
+|      64 | 1,563 Mbaud |       sí        |  no (3/1,92)  |
+| **100** | **1 Mbaud** |     **sí**      | **sí (3/3)**  |
 
 Como el requisito era solo un comentario, ahora `uart.v` lo comprueba al
 elaborar: si `DIVISOR` no es múltiplo de cuatro instancia un módulo inexistente

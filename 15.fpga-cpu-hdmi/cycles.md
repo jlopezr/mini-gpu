@@ -24,19 +24,19 @@ adaptador.
 
 ## Tabla por instrucción
 
-| Instrucción                   | Opcode            | Estados extra                    | Total     |
-|-------------------------------|-------------------|----------------------------------|-----------|
-| NOP, HALT                     | 00, 3f            | —                                | 27        |
-| MOVI MOVHI GETTID             | 10, 17, 30        | —                                | 27        |
-| ADD SUB AND OR XOR            | 01,02,04,05,06    | ALU_WRITE                        | 28        |
-| ADDI ANDI ORI XORI            | 11,12,13,14       | ALU_WRITE                        | 28        |
-| BRA                           | 2f                | BRANCH_COMMIT                    | 28        |
-| SHL SHR SAR                   | 07,08,09          | SHIFT_STEP ×n + SHIFT_WRITE      | 28 + n    |
-| BEQ BNE BLT BGE BLTU BGEU     | 20–25             | BRANCH_COMPARE + BRANCH_COMMIT   | 29        |
-| STORE                         | 16                | MEMORY_WAIT (21)                 | 48        |
-| LOAD                          | 15                | MEMORY_WAIT (23)                 | 50        |
-| MUL, MULFX, DIV               | 0a, 03, 0c        | **no implementados** → HALTED    | 26 y para |
-| TRAP, opcode inválido         | 3e                | va directo a HALTED, sin RETIRE  | 26 y para |
+| Instrucción               | Opcode         | Estados extra                   | Total     |
+|---------------------------|----------------|---------------------------------|-----------|
+| NOP, HALT                 | 00, 3f         | —                               | 27        |
+| MOVI MOVHI GETTID         | 10, 17, 30     | —                               | 27        |
+| ADD SUB AND OR XOR        | 01,02,04,05,06 | ALU_WRITE                       | 28        |
+| ADDI ANDI ORI XORI        | 11,12,13,14    | ALU_WRITE                       | 28        |
+| BRA                       | 2f             | BRANCH_COMMIT                   | 28        |
+| SHL SHR SAR               | 07,08,09       | SHIFT_STEP ×n + SHIFT_WRITE     | 28 + n    |
+| BEQ BNE BLT BGE BLTU BGEU | 20–25          | BRANCH_COMPARE + BRANCH_COMMIT  | 29        |
+| STORE                     | 16             | MEMORY_WAIT (21)                | 48        |
+| LOAD                      | 15             | MEMORY_WAIT (23)                | 50        |
+| MUL, MULFX, DIV           | 0a, 03, 0c     | **no implementados** → HALTED   | 26 y para |
+| TRAP, opcode inválido     | 3e             | va directo a HALTED, sin RETIRE | 26 y para |
 
 Medido en simulación (cpu + sdram_system_adapter + un modelo de SDRAM con la latencia
 exacta del controlador). n en los shifts es `operand_b[4:0]`, de 0 a 31 → SHL va de 28 a
