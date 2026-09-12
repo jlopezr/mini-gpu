@@ -243,16 +243,46 @@ al 6,6 % de ocupación la palabra «congestión» sobra: lo que pasa es que el
 netlist tiene ahora dos dominios con restricción y el emplazador reparte
 distinto.
 
+### Se intentó recuperar los 120 MHz, y no salió
+
+Las cuatro paradas por error hacían `pc <= pc - 4` dentro del `case` gigante
+sobre el opcode, lo que metía el decodificador entero en el cono de datos del
+PC: ocho niveles de LUT desde `instruction` hasta `pc`. Ahora marcan
+`pc_restore` y la resta se hace al entrar en `STATE_HALTED`, que es adonde van
+las cuatro sin excepción. El PC sigue apuntando a la instrucción culpable y las
+tres pruebas de error de `cpu_tb.v` que lo comprueban siguen pasando.
+
+**El camino desapareció, pero los 120 MHz no volvieron.** Con la misma
+restricción de 120, antes y después:
+
+```text
+antes    min 102,03   mediana 109,46   max 111,35
+después  min 103,57   mediana 110,13   max 116,97
+```
+
+La mediana se mueve menos que el ruido entre semillas. Lo que sí cambió es
+dónde está el problema: el camino crítico ya no está en la CPU sino en el
+monitor (`block_end_address` → `response_byte_0`), y **de sus 9,13 ns hay
+6,92 de routing y solo 1,69 de lógica en siete niveles**.
+
+Eso es un techo de otra naturaleza. Una ruta dominada por routing con tan poca
+lógica no se arregla acortando lógica: las celdas están físicamente lejos.
+Seguir puliendo RTL solo asciende el siguiente camino de la lista. El cambio se
+conserva porque es simple, está cubierto por pruebas y sube el peor caso a
+100 MHz de 103,89 a 106,53 MHz —margen real para el hito D—, pero **no es el
+camino de vuelta a los 120**. Eso pediría floorplanning, o menos lógica
+compitiendo en el mismo dominio.
+
 ### Resultado a 100 MHz
 
 | Dominio | Restricción | Alcanzado |
 |---|---:|---:|
-| CPU + SDRAM | 100 MHz | 115,55 MHz |
-| Pixel | 25 MHz | 106,37 MHz |
-| TMDS 5× | 125 MHz | 413,05 MHz |
+| CPU + SDRAM | 100 MHz | 114,57 MHz |
+| Pixel | 25 MHz | ~103 MHz |
+| TMDS 5× | 125 MHz | ~400 MHz |
 
-Ocho semillas, todas cumpliendo: 103,89 / 104,78 / 106,96 / 107,82 / 109,46 /
-109,83 / 112,97 / 115,55 MHz. `apio.ini` fija la mejor por margen, no por
+Ocho semillas, todas cumpliendo: 106,53 / 108,33 / 108,41 / 110,62 / 111,89 /
+112,73 / 113,19 / 114,57 MHz. `apio.ini` fija la mejor por margen, no por
 necesidad.
 
 Recursos: 5477 LUT y 2523 FF (6,6 % del ECP5-85F), **1 EBR** para los dos bancos

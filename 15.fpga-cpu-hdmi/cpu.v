@@ -123,6 +123,22 @@ module cpu (
   reg [4:0] shift_remaining;
   reg [1:0] shift_kind;
   reg branch_taken;
+
+  /*
+   * Las paradas por error tienen que dejar el PC apuntando a la instruccion
+   * culpable, no a la siguiente, porque el fetch ya lo habia avanzado. Hacer
+   * ahi mismo `pc <= pc - 4` metia el decodificador de opcode entero dentro
+   * del cono de datos del PC: el camino critico del diseno pasaba de
+   * `instruction`, por la decodificacion, hasta `pc`, con ocho niveles de LUT.
+   *
+   * En lugar de eso se marca la intencion y la resta se hace al entrar en
+   * STATE_HALTED, que es adonde van las cuatro rutas de error sin excepcion.
+   * El PC queda igual de correcto: `halted` se levanta en el mismo ciclo que
+   * la marca, y el monitor no puede leer el PC hasta muchos ciclos despues.
+   * Y si llega un `run_request` en ese mismo ciclo, la correccion y la salida
+   * ocurren en el mismo flanco, asi que el fetch siguiente ya ve el PC bueno.
+   */
+  reg pc_restore;
   reg [31:0] branch_target;
   reg [32:0] branch_difference;
   reg branch_a_sign;
@@ -219,6 +235,7 @@ module cpu (
       shift_remaining <= 5'd0;
       shift_kind <= 2'd0;
       branch_taken <= 1'b0;
+      pc_restore <= 1'b0;
       branch_target <= 32'h0000_0000;
       branch_difference <= 33'h0;
       branch_a_sign <= 1'b0;
@@ -241,6 +258,14 @@ module cpu (
         STATE_HALTED: begin
           imem_valid <= 1'b0;
           halt_pending <= 1'b0;
+
+          // Resta aplazada desde la ruta de error que trajo aqui. Va antes de
+          // atender run/step para que un arranque en este mismo ciclo salga
+          // ya con el PC de la instruccion culpable.
+          if (pc_restore) begin
+            pc <= pc - 3'd4;
+            pc_restore <= 1'b0;
+          end
 
           if (run_request) begin
             halted <= 1'b0;
@@ -300,7 +325,7 @@ module cpu (
             error <= 1'b1;
             error_code <= ERROR_INVALID_ENCODING;
             // Fetch has already advanced PC, so restore the faulting address.
-            pc <= pc - 3'd4;
+            pc_restore <= 1'b1;
             state <= STATE_HALTED;
           end else case (opcode)
             OPCODE_NOP: begin
@@ -494,7 +519,7 @@ module cpu (
               error <= 1'b1;
               error_code <= ERROR_EXPLICIT_TRAP;
               // TRAP is a terminal diagnostic stop, not a retired HALT.
-              pc <= pc - 3'd4;
+              pc_restore <= 1'b1;
               state <= STATE_HALTED;
             end
 
@@ -502,7 +527,7 @@ module cpu (
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_INVALID_OPCODE;
-              pc <= pc - 3'd4;
+              pc_restore <= 1'b1;
               state <= STATE_HALTED;
             end
           endcase
@@ -517,7 +542,7 @@ module cpu (
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_MEMORY_ACCESS;
-              pc <= pc - 3'd4;
+              pc_restore <= 1'b1;
               state <= STATE_HALTED;
             end else begin
               if (load_pending) begin
