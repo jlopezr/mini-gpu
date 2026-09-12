@@ -265,22 +265,89 @@ alterna entre los dos.
 
 ### Los programas
 
-- [`swap_smoke.asm`](swap_smoke.asm) no dibuja: lee los dos registros, pide un
-  intercambio, espera a que ocurra y comprueba que se intercambiaron. Es el que
-  ejecuta `cpu_video_tb.v`, así que su comportamiento **está verificado en
-  simulación RTL con instrucciones reales**.
-- [`swap_demo.asm`](swap_demo.asm) es la demostración: una banda horizontal que
-  baja, redibujando el buffer trasero entero cada frame. Ensambla, pero **no
-  está verificado**: 38 400 escrituras por frame no terminan en simulación en
-  un tiempo razonable. La prueba que importa es comparativa —quitar la espera
-  de `wait_swap` o dibujar sobre `FB_FRONT` debe hacer aparecer tearing— y esa
-  solo se puede hacer en la placa.
+Todos dibujan lo mismo —una banda verde de 16 píxeles que baja sobre fondo
+azul— y se diferencian solo en dos ejes: **dónde** escriben (buffer trasero o
+buffer visible) y **cuánto** repintan (las 240 líneas o solo las 32 que
+cambian). Esa rejilla de dos por dos es la demostración del hito D: el eje
+vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
+
+| Programa | Escribe en | Repinta | Medido en placa |
+|---|---|---|---|
+| [`swap_demo.asm`](swap_demo.asm) | `FB_BACK` | 240 líneas | 9,2 fps, limpio |
+| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK` | 32 líneas | 50 fps, limpio |
+| [`tear_demo.asm`](tear_demo.asm) | `FB_FRONT` | 240 líneas | 9,2 fps, frente de repintado |
+| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas | 51,5 fps, costura |
+
+Y aparte, [`swap_smoke.asm`](swap_smoke.asm), que no dibuja: lee los dos
+registros, pide un intercambio, espera a que ocurra y comprueba que se
+intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
+comportamiento **está verificado en simulación RTL con instrucciones reales**.
+
+Lanzarlos, con el script que hace los cuatro pasos —ensamblar, parar la CPU,
+cargar y arrancar— y comprueba el estado al terminar:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\1.isa\miniisa_asm.py swap_demo.asm -o swap_demo.bin
-..\.venv\Scripts\python.exe monitor.py write-block 0 swap_demo.bin --port COM3
-..\.venv\Scripts\python.exe monitor.py run --port COM3
+.\run-demo.ps1 swap_demo_fast
+.\run-demo.ps1 tear_demo_fast
+.\run-demo.ps1 swap_demo -NoRun     # cargar sin arrancar
+.\run-demo.ps1 tear_demo -Port COM4
 ```
+
+El orden no es cosmético: **hay que resetear la CPU antes de escribir**, porque
+el monitor rechaza cualquier acceso a memoria mientras la CPU corre. Olvidarlo
+da un error de acceso que parece un fallo de la placa y no lo es.
+
+#### Qué se ve, y por qué
+
+**Los dos `swap_`** bajan la banda sin partir la imagen nunca, uno a tirones y
+otro fluido. Los `tear_` son el control negativo: la única diferencia con su
+pareja son dos líneas —`LOAD` desde `+0` en vez de `+4`, y fuera la petición de
+intercambio con su espera—, a propósito, para que lo que se vea distinto solo
+pueda venir del doble buffer.
+
+Lo que no esperaba, y salió al medirlo: **los dos `tear_` rompen la imagen de
+forma muy distinta**. `tear_demo` tarda 109 ms en repintar, seis frames y medio
+de vídeo, así que no se ve una costura sino un frente de repintado bajando
+despacio. `tear_demo_fast` tarda 19,4 ms contra los 16,7 ms que dura un frame:
+la CPU y el barrido van casi a la misma velocidad pero no exactamente, así que
+el punto donde se cruzan se desplaza poco a poco y sale **una costura
+horizontal recorriendo la pantalla cada 120 ms**. Esa es la que se reconoce de
+un juego sin vsync, y el ritmo no está ajustado a mano: sale de lo que tarda
+esta CPU en escribir 5 120 palabras compitiendo con el vídeo por la SDRAM.
+
+#### Por qué la versión rápida es 5,4× y no 7,5×
+
+Pintar 32 líneas en vez de 240 es **7,5 veces menos trabajo**, pero el salto
+medido es de 9,2 a 50 fps, o sea 5,4×. La diferencia es el techo: al esperar al
+intercambio, un frame dibujado dura 16,7 ms o 33,3 ms, nunca algo intermedio.
+50 fps es la mezcla de unos cuantos de cada. La prueba está en `tear_demo_fast`,
+que hace exactamente el mismo dibujo sin esperar a nadie y sale a 51,5 fps:
+el trabajo de CPU es el mismo, lo que desaparece es la cuantización.
+
+#### La contabilidad que exige el doble buffer
+
+Lo más instructivo de la versión rápida no es la velocidad, sino un detalle que
+no existe con un solo buffer: **el buffer trasero no contiene lo que se dibujó
+el frame pasado, sino lo del anterior a ese**, porque los dos se alternan. Para
+borrar la banda vieja hay que recordar dónde quedó **en cada buffer por
+separado** —`R10` y `R11`, que rotan en cada intercambio—. Con un solo registro,
+como basta en `tear_demo_fast`, queda un rastro de bandas verdes que no se
+borra nunca.
+
+Es decir: la ausencia de costura se paga llevando esa contabilidad. El hito D
+no la regala.
+
+Ninguno de los cuatro está verificado en RTL —ni 38 400 ni 5 120 escrituras por
+frame terminan en simulación en un tiempo razonable—. Lo que sí se comprobó
+antes de subirlos es la lógica de borrado, modelando el algoritmo en Python y
+pasando 600 frames contra el contenido esperado del buffer; y se comprobó que
+**la versión ingenua de un solo registro falla en el frame 2**, para que la
+prueba no fuera una que aprueba cualquier cosa.
+
+Las cifras de arriba se midieron leyendo `R21` —la posición de la banda— dos
+veces con `halt` / `read-register 21` / `run` y dividiendo por el tiempo
+transcurrido. Conviene una ventana corta: la banda da la vuelta cada 112
+frames dibujados y con ventanas largas el número queda ambiguo.
 
 ## Temporización: de 120 a 100 MHz
 
@@ -497,3 +564,54 @@ FPGA eso no es exacto, `MUL`, `MULFX` y `DIV` tienen test y lo suspenden.
 - El vídeo no se atiende antes de `init_done`. Durante los 200 µs de arranque de
   la SDRAM la petición queda pendiente y el scanout se queda en el prellenado,
   sin marcar underflow, que es justo lo que hace falta.
+
+## Pasos siguientes
+
+La escalera A → D está terminada y verificada en la placa, y las demos cierran
+la última pregunta que quedaba abierta: el tearing aparece al quitar el doble
+buffer, así que el hito D hace lo que dice. Lo que las demos abren es otra cosa.
+
+### El número incómodo
+
+`swap_demo_fast` escribe 5 120 palabras en 19,4 ms. A 100 MHz eso son **1,94
+millones de ciclos, unos 380 por palabra**. El bucle interior son cuatro
+instrucciones (`STORE`, dos `ADDI`, `BLT`), así que sale a **unos 95 ciclos por
+instrucción**.
+
+Eso no es el vídeo robando ancho de banda: el vídeo consume 9,2 MB/s de los
+~200 MB/s que da la SDRAM, y `VIDEO_RUN = 4` le impide pasar de ahí. Son la CPU
+multiciclo y, sobre todo, que **cada instrucción se busca en SDRAM**, con su
+activación de fila y su latencia, igual que cada dato. Un bucle de cuatro
+instrucciones hace cinco accesos a memoria por píxel doble.
+
+De ahí salen tres caminos, de menos a más ambicioso:
+
+1. **Memoria de instrucciones en EBR.** El bucle interior son 68 bytes. Una
+   caché de instrucciones mínima, o simplemente ejecutar desde EBR, quita cuatro
+   de cada cinco accesos a SDRAM sin tocar la CPU. Es el cambio con mejor
+   relación resultado/esfuerzo, y de largo.
+2. **Escrituras en ráfaga.** El adaptador hace un acceso por palabra y paga la
+   activación de fila cada vez. Rellenar una línea son 160 palabras
+   consecutivas: exactamente el caso para el que existe el modo ráfaga. Esto es
+   el punto 1 del `TODO.md` del repositorio («Optimizar LSU»), planteado allí
+   para la GPU de `16.fpga-gpu-ram-v2`, y aquí se ve por qué importa.
+3. **Que no sea la CPU quien rellene.** Un bloque que rellene rectángulos por
+   sí solo, mandado desde los registros MMIO, es el siguiente escalón natural
+   después del scanout: el vídeo ya lee de la SDRAM sin la CPU, y esto sería
+   escribir igual. Es también la frontera donde esto deja de ser una CPU con
+   salida de vídeo y empieza a ser una GPU.
+
+### Lo que falta en la CPU
+
+`MUL`, `MULFX` y `DIV` están declarados y superan la validación de codificación
+pero **no tienen rama de ejecución**, así que responden `ERROR_INVALID_OPCODE`.
+Por eso las demos calculan `y*640` como `(y<<9) + (y<<7)`. Implementarlos es
+barato: quedan 156 DSP sin usar y el multiplicador de la línea de vídeo ya
+demuestra que nextpnr los coloca sin estropear la temporización. Cerraría el
+caso `multiply` de la suite, que hoy es el único que falla.
+
+### Anotado y no hecho
+
+El `TODO.md` del repositorio dice que `MULHI`, `DIVU`, `REM` y `REMU` son «los
+únicos mnemónicos de la ISA sin ningún test». Para la FPGA no es exacto: `MUL`,
+`MULFX` y `DIV` tienen test y lo suspenden. Está sin corregir allí a propósito.
