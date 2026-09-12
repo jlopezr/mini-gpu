@@ -41,6 +41,19 @@ ráfaga alineada que contiene la primera palabra y descarta lo que sobra por
 delante; cuesta una ráfaga más por línea, y el banco lo comprueba con los dos
 casos.
 
+## Una trampa nueva de `memory_fabric_4`, para la lista
+
+En el árbitro, **`req_ready` depende combinacionalmente de `req_valid`**: la
+concesión mira el `valid` del propio puerto, así que `ready` no se levanta hasta
+que el cliente pide. Un cliente escrito de la forma que parece razonable
+—esperar a `ready` y entonces levantar `valid`— **se cuelga para siempre**. Hay
+que levantar `valid` primero y esperar `ready` después.
+
+Es la primera piedra con la que tropieza cualquiera que escriba un cliente para
+este árbitro, y costó una simulación colgada. Va en la misma familia que el pulso
+de un ciclo del monitor: el árbitro tampoco engancha pulsos, así que el adaptador
+del monitor tendrá que mantener el nivel él.
+
 Todo lo de abajo, desde «Escalera de hitos», es la documentación heredada de la
 16 y sigue describiendo lo que hay, salvo donde esta sección diga otra cosa.
 
