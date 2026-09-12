@@ -21,6 +21,16 @@
 
 .EXAMPLE
   .\run-demo.ps1 swap_demo -NoRun    # cargar sin arrancar, para inspeccionar
+
+.EXAMPLE
+  .\run-demo.ps1 ..\otra-carpeta\programa.asm -NoRun
+
+.DESCRIPTION
+  Acepta rutas relativas al directorio actual o absolutas, con o sin .asm.
+  Para nombres sueltos busca primero en el directorio actual, despues en
+  examples de esta version y finalmente en el repositorio. Si hay varias
+  coincidencias en el repositorio, exige una ruta explicita. El .bin se genera
+  junto al fuente. No cambia el directorio actual.
 #>
 [CmdletBinding()]
 param(
@@ -36,27 +46,49 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
 
-$name = [System.IO.Path]::GetFileNameWithoutExtension($Program)
-$source = "examples\$name.asm"
-$binary = "examples\$name.bin"
-
-if (-not (Test-Path $source)) {
-    $disponibles = (Get-ChildItem examples\*.asm | ForEach-Object BaseName) -join ', '
-    throw "No existe $source. Programas disponibles: $disponibles"
+$candidate = $Program
+if (-not [System.IO.Path]::GetExtension($candidate)) { $candidate += '.asm' }
+if ([System.IO.Path]::GetExtension($candidate) -ine '.asm') {
+    throw 'El programa debe ser un fuente .asm (puedes omitir la extension).'
 }
+
+if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+    $source = (Get-Item -LiteralPath $candidate).FullName
+} elseif ($Program -match '[/\\]' -or [System.IO.Path]::IsPathRooted($Program)) {
+    throw "No existe el fuente: $candidate (rutas relativas a $PWD)."
+} else {
+    $localExample = Join-Path $PSScriptRoot "examples\$candidate"
+    if (Test-Path -LiteralPath $localExample -PathType Leaf) {
+        $source = (Get-Item -LiteralPath $localExample).FullName
+    } else {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $matches = @(Get-ChildItem -LiteralPath $repoRoot -Recurse -File -Filter '*.asm' |
+            Where-Object {
+                $_.Name -ieq $candidate -and
+                $_.FullName -notmatch '[\\/](\.git|\.venv|_build|node_modules)[\\/]'
+            })
+        if ($matches.Count -eq 0) {
+            throw "No se encontro '$candidate' en $repoRoot. Puedes indicar una ruta externa."
+        }
+        if ($matches.Count -gt 1) {
+            throw "Hay varios programas llamados '$candidate'. Indica una ruta:`n$($matches.FullName -join "`n")"
+        }
+        $source = $matches[0].FullName
+    }
+}
+$binary = [System.IO.Path]::ChangeExtension($source, '.bin')
 
 $python = Join-Path $PSScriptRoot '..\.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { $python = 'python' }
 
 function Invoke-Monitor {
-    & $python 'monitor.py' @args --port $Port
+    & $python (Join-Path $PSScriptRoot 'monitor.py') @args --port $Port
     if ($LASTEXITCODE -ne 0) { throw "monitor.py $($args -join ' ') fallo" }
 }
 
 Write-Host "== ensamblando $source" -ForegroundColor Cyan
-& $python '..\1.isa\miniisa_asm.py' $source -o $binary
+& $python (Join-Path $PSScriptRoot '..\1.isa\miniisa_asm.py') $source -o $binary
 if ($LASTEXITCODE -ne 0) { throw "el ensamblador fallo" }
 
 # Reset antes de escribir: con la CPU corriendo, el monitor rechaza la memoria.

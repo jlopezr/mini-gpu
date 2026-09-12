@@ -1,116 +1,95 @@
 # Ciclos por instrucción
 
-Igual que en `6.fpga-cpu`, pero aquí la memoria ya no es una EBR interna: es la SDRAM
-externa de 16 bits a través de `sdram_controller.v` + `sdram_system_adapter.v`. Y sí,
-va bastante peor.
+La versión 18 corre a **80 MHz** y usa un búfer de instrucciones de cuatro
+líneas de 16 bytes, un bus SDRAM BL8 de 128 bits y combinación de escrituras.
+El coste de una instrucción depende de si su búsqueda acierta en el búfer y de
+las esperas de datos. Un ciclo son **12,5 ns**.
 
-La parte común: **27 ciclos**.
-
-| Estado        | Ciclos | Qué hace                                                 |
-|---------------|--------|----------------------------------------------------------|
-| FETCH_REQUEST | 1      | Pone imem_address <= pc, levanta imem_valid              |
-| FETCH_WAIT    | 23     | Espera imem_ready                                        |
-| DECODE        | 1      | Registra operand_a/operand_b desde el banco de registros |
-| EXECUTE       | 1      | Despacha según opcode                                    |
-| (específico)  | 0..n   | Estados específicos de cada instrucción                  |
-| RETIRE        | 1      | Marca instruction_retired, vuelve a fetch                |
-
-*Base = 27 ciclos.* Los 23 de FETCH_WAIT son la jerarquía de memoria completa: la palabra
-de 32 bits se parte en **dos accesos SDRAM de 16 bits** (`sdram_system_adapter.v:133-141`
-y `:208-215`), y cada lectura cuesta 9 ciclos en el controlador a 120 MHz
-(IDLE→ACTIVE 1, tRCD 3, READ 1, CL 2+1, CAPTURE 1, más 1 de muestreo de `done`). Los
-otros 5 son la secuencia IDLE / WAIT_FIRST / START_NEXT / WAIT_SECOND / RELEASE del
-adaptador.
+Esta tabla sustituye a la heredada del camino BL1 de la versión 10: los valores
+27/28/48/50 ciclos y la afirmación de que MUL y DIV no estaban implementados
+ya no describen esta versión.
 
 ## Tabla por instrucción
 
-| Instrucción               | Opcode         | Estados extra                   | Total     |
-|---------------------------|----------------|---------------------------------|-----------|
-| NOP, HALT                 | 00, 3f         | —                               | 27        |
-| MOVI MOVHI GETTID         | 10, 17, 30     | —                               | 27        |
-| ADD SUB AND OR XOR        | 01,02,04,05,06 | ALU_WRITE                       | 28        |
-| ADDI ANDI ORI XORI        | 11,12,13,14    | ALU_WRITE                       | 28        |
-| BRA                       | 2f             | BRANCH_COMMIT                   | 28        |
-| SHL SHR SAR               | 07,08,09       | SHIFT_STEP ×n + SHIFT_WRITE     | 28 + n    |
-| BEQ BNE BLT BGE BLTU BGEU | 20–25          | BRANCH_COMPARE + BRANCH_COMMIT  | 29        |
-| STORE                     | 16             | MEMORY_WAIT (21)                | 48        |
-| LOAD                      | 15             | MEMORY_WAIT (23)                | 50        |
-| MUL, MULFX, DIV           | 0a, 03, 0c     | **no implementados** → HALTED   | 26 y para |
-| TRAP, opcode inválido     | 3e             | va directo a HALTED, sin RETIRE | 26 y para |
+Se cuenta desde `STATE_FETCH_REQUEST` hasta `STATE_RETIRE`, ambos incluidos.
+Los valores siguientes son el caso de **acierto en el búfer de instrucciones**,
+sin una transacción anterior pendiente. Se deducen de
+[`cpu.v`](../cpu.v) y [`instruction_buffer.v`](../instruction_buffer.v).
+Coinciden con los valores que comprueba [`cpu_tb.v`](../cpu_tb.v) usando su
+modelo de memoria de instrucciones de un ciclo; ese banco no mide los fallos
+BL8 ni fija la latencia de LOAD/STORE.
 
-Medido en simulación (cpu + sdram_system_adapter + un modelo de SDRAM con la latencia
-exacta del controlador). n en los shifts es `operand_b[4:0]`, de 0 a 31 → SHL va de 28 a
-59 ciclos.
+| Instrucción                             | Ciclos con acierto de instrucciones | Estados específicos                       |
+|-----------------------------------------|------------------------------------:|-------------------------------------------|
+| NOP, HALT                               |                                   6 | Ninguno                                   |
+| MOVI, MOVHI, GETTID                     |                                   6 | Ninguno                                   |
+| ADD, SUB, AND, OR, XOR                  |                                   7 | ALU_WRITE                                 |
+| ADDI, ANDI, ORI, XORI                   |                                   7 | ALU_WRITE                                 |
+| BRA                                     |                                   7 | BRANCH_COMMIT                             |
+| BEQ, BNE, BLT, BGE, BLTU, BGEU          |                                   8 | BRANCH_COMPARE + BRANCH_COMMIT            |
+| SHL, SHR, SAR                           |                               7 + n | SHIFT_STEP × n + SHIFT_WRITE              |
+| MUL, MULFX                              |                                  11 | PRODUCTS + CROSS + COMBINE + SIGN + WRITE |
+| DIV                                     |                                  40 | DIV_STEP × 32 + SIGN + WRITE              |
+| STORE, aceptado en el búfer sin vaciado |                                   8 | MEMORY_WAIT × 2                           |
+| STORE que requiere vaciado              |                               6 + W | MEMORY_WAIT × W                           |
+| LOAD                                    |                               6 + W | MEMORY_WAIT × W                           |
 
-STORE cuesta 2 ciclos menos que LOAD porque la escritura SDRAM termina en tWR (2) en vez
-de esperar CL (2) + el ciclo de captura: 8 ciclos por acceso en vez de 9.
+`n = operand_b[4:0]`, entre 0 y 31: los desplazamientos cuestan entre 7 y
+38 ciclos. DIV supone divisor distinto de cero. TRAP y las instrucciones
+inválidas paran sin retirarse; no son una instrucción completada para el CPI.
 
-### MUL / DIV: aquí no existen
+La base de seis ciclos es FETCH_REQUEST (1), FETCH_WAIT (2), DECODE (1),
+EXECUTE (1) y RETIRE (1). Los dos ciclos de FETCH_WAIT incluyen la respuesta
+registrada del búfer y su consumo por la CPU.
 
-Tenías razón. `cpu.v:58,65,66` definen `OPCODE_MULFX`, `OPCODE_MUL` y `OPCODE_DIV`, y el
-validador de encoding de `cpu.v:151-153` los acepta como R-type bien formados — pero el
-`case` de STATE_EXECUTE no tiene rama para ellos, así que caen en el `default` de
-`cpu.v:501` y paran la CPU con `ERROR_INVALID_OPCODE` (0x01). Verificado: 26 ciclos y
-halt con code=01. No hay multiplicador ni divisor iterativo que complique nada.
+`W` es el número de ciclos que la CPU permanece en MEMORY_WAIT hasta consumir
+la respuesta. En una escritura aceptada sin vaciado vale 2, aunque el adaptador
+la acepte en un solo ciclo. Las escrituras MMIO tienen su propio handshake y
+pueden requerir primero un vaciado; no usan la fila de STORE de ocho ciclos.
 
-### Refresco
+## Qué añade la memoria
 
-Falta un detalle que no existía en la versión con EBR: cada `REFRESH_PERIOD_CYCLES` =
-120 MHz / 128 kHz ≈ **937 ciclos**, el controlador se va a ST_REFRESH y consume 9 ciclos
-(1 + 1 + tRFC 7). Además `req_ready` se baja durante los últimos `MAX_ACCESS_CYCLES` = 15
-ciclos del periodo (`sdram_controller.v:75-76`), así que una petición que llegue en esa
-ventana espera hasta 15 ciclos extra. En total, entre un 1% y un 2,5% de sobrecoste medio
-sobre los números de la tabla.
+Un **fallo de instrucciones** añade a cualquier fila el tiempo extra respecto
+al acierto: solicitud al árbitro, lectura de una ráfaga de 16 bytes y entrega
+desde el búfer. La latencia depende de la competencia con vídeo y otros
+clientes, del refresco y del estado del controlador. No hay un único CPI fijo
+por opcode para el sistema completo.
 
-## Comparación con 6.fpga-cpu
+En datos, [`cpu_dmem_adapter.v`](../cpu_dmem_adapter.v) permite:
 
-|                           | 6.fpga-cpu (EBR) | 10.fpga-cpu-ram (SDRAM) |
-|---------------------------|------------------|-------------------------|
-| Base                      | 9                | 27                      |
-| ADD                       | 9                | 28                      |
-| LOAD                      | 14               | 50                      |
-| MIPS (instrucción simple) | ~11 @ 100 MHz    | ~4,4 @ 120 MHz          |
+- Aceptar STORE en una línea nueva o combinarlo en la misma línea sin esperar
+  a SDRAM. La respuesta confirma su aceptación en el búfer, no su escritura
+  física en SDRAM.
+- Volcar la línea anterior antes de aceptar un STORE en otra línea.
+- Leer mediante una ráfaga. Si LOAD apunta a la línea pendiente, primero la
+  vuelca; las lecturas a otras líneas no fuerzan ese vaciado.
+- Vaciar antes de cualquier MMIO y al parar la CPU. El monitor espera a que
+  termine el vaciado antes de acceder a SDRAM.
 
-**3 veces más lento por instrucción**, y eso subiendo el reloj de 100 a 120 MHz. LOAD es
-lo peor: 3,5×. A 120 MHz una ADD tarda 233 ns.
+## Mejora frente a la 16
 
-De dónde viene el destrozo, midiendo con un modelo de memoria de latencia cero para
-aislarlo:
+Comparación documentada en **simulación** para el bucle de dibujo de cuatro
+instrucciones por palabra (`STORE`, dos `ADDI` y `BLT`):
 
-| Fuente                         | Ciclos base |
-|--------------------------------|-------------|
-| 6.fpga-cpu, EBR                | 9           |
-| 10, memoria ideal (latencia 0) | 13          |
-| 10, SDRAM real                 | 27          |
+| Camino de memoria                            | Ciclos por palabra | CPI aproximado (ciclos/palabra ÷ 4) |
+|----------------------------------------------|-------------------:|------------------------------------:|
+| Versión 16                                   |              145,9 |                                36,5 |
+| Versión 18, BL8 antes de combinar escrituras |               49,7 |                                12,4 |
+| Versión 18, BL8 y combinación de escrituras  |           **35,2** |                             **8,8** |
 
-Es decir: **+4 ciclos** por el troceo 32→16 bits y el handshake del adaptador, y **+14**
-por la latencia física de la SDRAM (2 × 7 ciclos). El coste no está en la CPU — está en
-que cada fetch son dos transacciones cerradas de página con tRCD y CAS completos.
+Son **4,15× menos ciclos** y **3,32× de mejora en tiempo**, contando la bajada
+de 100 a 80 MHz. No es una aceleración universal: depende del programa.
+El detalle está en [combinación de escrituras](combinacion-escrituras.md) y
+el banco de integración es [`cpu_burst_system_tb.v`](../cpu_burst_system_tb.v).
+Estas cifras no deben mezclarse con las medidas antiguas en placa de las demos,
+que corresponden a otras condiciones de ejecución.
 
-## Qué haría falta para arreglarlo
+## Contadores de rendimiento
 
-Por orden de impacto, y todo ataca al mismo sitio (los 23 ciclos de FETCH_WAIT):
-
-1. **Ancho de ráfaga 2 en vez de BL1.** Las dos mitades de la instrucción son palabras
-   consecutivas de la misma fila: con BL2 se paga ACTIVE + tRCD + CAS una sola vez.
-   Ahorraría del orden de 8 ciclos por fetch de golpe. Es el cambio más rentable con
-   diferencia.
-2. **No cerrar la página.** El controlador usa auto-precharge en todos los accesos
-   (`sdram_controller.v:103`). Con política de página abierta, los fetches secuenciales
-   (que son casi todos) se saltarían ACTIVE + tRCD: otros 4 ciclos.
-3. **Una caché de instrucciones**, aunque sea de una línea. El código secuencial haría
-   que el 2 y el 3 se amorticen entre varias instrucciones.
-4. Solapar fetch con retire — pero eso ya es pipelining de verdad, como decía la nota
-   de 6.fpga-cpu.
-
-Optimizar instrucciones concretas aquí no tiene ningún sentido: el 85% del tiempo de una
-ADD es esperar a la SDRAM.
-
-## Y ahora se puede medir, no estimar
-
-Todo lo anterior es aritmética sobre la máquina de estados: cuenta ciclos leyendo
-el RTL. La 18 añade dos contadores en `top.v` y los saca por el monitor, así que
-el CPI de un programa se puede leer de la placa.
+La 18 añade dos contadores en [`top.v`](../top.v), accesibles desde el monitor,
+para medir el CPI de programas completos con las esperas de memoria incluidas.
+Las medidas en placa de abajo son las registradas en el proyecto; esta
+actualización documental no supone una nueva ejecución en hardware.
 
 `instruction_retired` salía de la CPU desde la 6 y no iba a ninguna parte. Ahora
 alimenta `cpu_instructions`; junto a `cpu_cycles` da el CPI real, esperas de
@@ -159,9 +138,9 @@ en 77 instrucciones. Los 15 a 20 de los programas cortos son casi todo fallos
 de búfer, porque no hay bucle donde amortizarlos: con doce instrucciones
 seguidas, cada línea nueva se paga entera.
 
-O sea que el búfer de instrucciones no baja el CPI de una instrucción; baja el
-de un **bucle**. Que es lo que hace un caché, y por eso la comparación honesta
-entre versiones son los programas, no los casos sueltos.
+El búfer reduce la espera de búsqueda cuando hay acierto. Los bucles pequeños
+amortizan los fallos iniciales y aprovechan mejor esa reducción; por eso conviene
+comparar los mismos programas entre versiones, además del coste por opcode.
 
 El contador de instrucciones se contrasta con el del simulador en la tabla de
 `--measure`: coinciden exactamente en los nueve. Ese contraste ya encontró un
