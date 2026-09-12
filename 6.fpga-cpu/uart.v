@@ -170,7 +170,7 @@ module uart (
   parameter DIVISOR = 40;  // must be divisible by 4 for rx clock
 
   // El requisito de arriba vivia solo en este comentario, y en
-  // 15.fpga-cpu-hdmi costo un enlace que funcionaba la mitad de las veces: un
+  // 16.fpga-cpu-hdmi costo un enlace que funcionaba la mitad de las veces: un
   // divisor de 50 dejaba la recepcion un 4,2 % rapida. Ningun banco instancia
   // esta UART, asi que la unica forma de cazarlo es fallar la elaboracion.
   generate

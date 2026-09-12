@@ -53,10 +53,10 @@ no recoge una finalización antigua. El reset global sí inicializa el controlad
 Desde la raíz del repositorio:
 
 ```powershell
-./16.fpga-gpu-ram-v2/check.ps1 Tests
-./16.fpga-gpu-ram-v2/check.ps1 Lint
-./16.fpga-gpu-ram-v2/build.ps1 -Label context-pc
-.venv/Scripts/python.exe 16.fpga-gpu-ram-v2/monitor.py --help
+./17.fpga-gpu-ram-v2/check.ps1 Tests
+./17.fpga-gpu-ram-v2/check.ps1 Lint
+./17.fpga-gpu-ram-v2/build.ps1 -Label context-pc
+.venv/Scripts/python.exe 17.fpga-gpu-ram-v2/monitor.py --help
 ```
 
 Se conservan los ejemplos, el generador de fixtures y las 32 pruebas diferenciales
@@ -97,7 +97,7 @@ normal sirve para medir una nueva pasada y ver su progreso. Para aprovechar la
 caché sin pedir progreso ni histogramas en el log, utiliza:
 
 ```powershell
-./16.fpga-gpu-ram-v2/build.ps1 -Label comprobacion -Incremental
+./17.fpga-gpu-ram-v2/build.ps1 -Label comprobacion -Incremental
 ```
 
 El JSON detallado sigue habilitado en ambos modos. Cambiar entre modo normal e
@@ -109,6 +109,6 @@ La comparación con el informe anterior es de una pasada; no sustituye un barrid
 de semillas. El script devuelve error si falla Apio, falta el informe/reloj, o
 algún dominio no alcanza su constraint (mínimo 25 MHz).
 
-`./16.fpga-gpu-ram-v2/build.ps1 -Label anterior -ArchiveOnly` conserva resultados
+`./17.fpga-gpu-ram-v2/build.ps1 -Label anterior -ArchiveOnly` conserva resultados
 existentes sin sintetizar. En este modo la copia de fuentes es la actual y no
 demuestra qué fuentes produjeron el informe antiguo.

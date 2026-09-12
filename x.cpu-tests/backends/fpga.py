@@ -23,7 +23,7 @@ VERSIONS = {
         "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
     },
     "hdmi": {
-        "monitor_path": Path("15.fpga-cpu-hdmi/monitor.py"),
+        "monitor_path": Path("16.fpga-cpu-hdmi/monitor.py"),
         "monitor_version": (1, 10),
         "description": "Como sdram, mas video HDMI; 100 MHz y 1 Mbaud",
     },

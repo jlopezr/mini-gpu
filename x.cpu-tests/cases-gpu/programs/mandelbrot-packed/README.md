@@ -2,7 +2,7 @@
 
 Mandelbrot 320×240 con framebuffer de **1 byte por píxel**, empaquetando cuatro
 píxeles por palabra en software. Es la versión A del plan descrito en
-[`12.fpga-gpu/byte-framebuffer.md`](../../../12.fpga-gpu/byte-framebuffer.md).
+[`12.fpga-gpu/byte-framebuffer.md`](../../../../12.fpga-gpu/docs/byte-framebuffer.md).
 
 Diferencias con `cases-gpu/programs/mandelbrot`:
 

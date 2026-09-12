@@ -41,7 +41,7 @@ hasta que se implementen: un test que fijara hoy su comportamiento
 (`ERROR_OPCODE`) habría que borrarlo justo al implementarlos.
 
 Dos de ellos son más baratos de lo que parece, porque el hardware que necesitan
-ya existe en el `cpu.v` de `6.fpga-cpu` y `15.fpga-cpu-hdmi`:
+ya existe en el `cpu.v` de `6.fpga-cpu` y `16.fpga-cpu-hdmi`:
 
 - `MULHI` son los 32 bits altos del producto que `STATE_MUL_COMBINE` **ya
   calcula entero** en el camino de `MULFX`, con sus cuatro productos parciales.

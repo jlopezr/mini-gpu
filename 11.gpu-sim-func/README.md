@@ -145,7 +145,7 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
 
 - `GETTID` devuelve `warp_id * warp_size + core_id`.
 
-- Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](opcodes.md).
+- Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](docs/opcodes.md).
   `EXIT` retira lanes permanentemente y `BAR` sincroniza un workgroup.
 
 - La memoria es unificada. Los resultados de una instrucción se confirman en
@@ -178,7 +178,7 @@ En cada warp, las lanes 0–3 terminan con R3=11 y las lanes 4–7 con R3=21.
 
 ### Regiones SIMT reutilizables
 
-El simulador implementa la [semántica de regiones reutilizables](ssy-reusable-regions-design.md).
+El simulador implementa la [semántica de regiones reutilizables](docs/ssy-reusable-regions-design.md).
 Repetir el SSY de la región más interna conserva su máscara y sus caminos,
 sin reservar otra región. Las salidas directas al join no reservan caminos.
 Los dos Mandelbrot pueden conservar el SSY dentro de su bucle.

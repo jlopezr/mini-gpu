@@ -74,7 +74,7 @@ python monitor.py run --port COM3
 python monitor.py status --port COM3
 ```
 
-[`instruction-status.md`](instruction-status.md) resume las instrucciones
-implementadas y [`timing.md`](timing.md) documenta la microarquitectura y el
+[`instruction-status.md`](docs/instruction-status.md) resume las instrucciones
+implementadas y [`timing.md`](docs/timing.md) documenta la microarquitectura y el
 cierre de timing. La versión equivalente con SDRAM está en
 [`../10.fpga-cpu-ram`](../10.fpga-cpu-ram).

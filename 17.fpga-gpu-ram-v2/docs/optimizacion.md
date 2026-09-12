@@ -8,11 +8,11 @@ Método: **un cambio por iteración**, con `check.ps1 Tests`, `check.ps1 Lint` y
 `check.ps1 Build` después de cada uno, anotando fmax, camino crítico y recursos.
 
 ```powershell
-./16.fpga-gpu-ram-v2/check.ps1 Tests
-./16.fpga-gpu-ram-v2/check.ps1 Lint
-./16.fpga-gpu-ram-v2/check.ps1 Build
-./16.fpga-gpu-ram-v2/timing.ps1   # camino crítico y recursos de esta pasada
-./16.fpga-gpu-ram-v2/sweep.ps1    # fmax sobre varias semillas
+./17.fpga-gpu-ram-v2/check.ps1 Tests
+./17.fpga-gpu-ram-v2/check.ps1 Lint
+./17.fpga-gpu-ram-v2/check.ps1 Build
+./17.fpga-gpu-ram-v2/timing.ps1   # camino crítico y recursos de esta pasada
+./17.fpga-gpu-ram-v2/sweep.ps1    # fmax sobre varias semillas
 ```
 
 > **El fmax de una sola semilla no sirve para comparar.** Medido sobre el mismo
@@ -267,7 +267,7 @@ JSON el tiempo de llegada de cada net:
 ```powershell
 $root = "$env:USERPROFILE\.apio\packages\oss-cad-suite"
 $env:PATH = "$root\bin;$root\lib;$root\py3bin;" + $env:PATH
-cd 16.fpga-gpu-ram-v2
+cd 17.fpga-gpu-ram-v2
 nextpnr-ecp5 --85k --package CABGA381 --speed 6 --json _build/default/hardware.json `
   --report detallado.pnr --lpf ulx3s_v20.lpf --timing-allow-fail `
   --detailed-timing-report --force

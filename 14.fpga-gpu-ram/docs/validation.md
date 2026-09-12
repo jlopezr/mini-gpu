@@ -54,7 +54,7 @@ Los 16 bloques DP16KD se destinan a los registros de la GPU; código/datos
 se almacenan en SDRAM. Yosys emite su aviso habitual sobre soporte limitado de
 triestados para `sdram_d`; nextpnr y ecppack completan la generación.
 
-Bitstream: [`_build/default/hardware.bit`](_build/default/hardware.bit)
+Bitstream: [`_build/default/hardware.bit`](../_build/default/hardware.bit)
 (807884 bytes). SHA-256:
 `61685eaf2a2bc18d90d23181abbdee3b28d748588e0aec511e2155dec8996f23`.
 

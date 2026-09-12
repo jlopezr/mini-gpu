@@ -63,7 +63,7 @@ RESET conserva RAM y reinicializa registros y control; aborta las transacciones
 pendientes, sin revertir escrituras que ya hayan ocurrido.
 
 La frontera preparada para SDRAM es **SM ↔ LSU**, documentada en
-[`memory-interface.md`](memory-interface.md): petición vectorial y respuesta
+[`memory-interface.md`](docs/memory-interface.md): petición vectorial y respuesta
 independientes con `valid/ready`, tag de warp y error por lane, sin latencia fija.
 Un backend SDRAM podrá sustituir `gpu_lsu`/`gpu_bram` conservando esos puertos del
 SM. No se ha conectado aún el controlador SDRAM de `10.fpga-cpu-ram`.
@@ -107,7 +107,7 @@ EXIT y HALT retiran las lanes activas y nunca las reactivan. Al terminar las
 últimas lanes se vacían ambas pilas y se conserva el PC siguiente a EXIT/HALT.
 La normalización también termina antes de una pausa STEP/HALT y no incrementa
 el contador de instrucciones retiradas. Véase la
-[semántica compartida](../11.gpu-sim-func/ssy-reusable-regions-design.md).
+[semántica compartida](../11.gpu-sim-func/docs/ssy-reusable-regions-design.md).
 
 BAR exige que estén activas todas las lanes vivas del warp. Participan los warps
 vivos de su workgroup y deben coincidir en PC y generación de barrera. Un warp
@@ -218,7 +218,7 @@ Los testbenches tienen watchdog y `$fatal` ante discrepancias:
 - `gpu_uart_tb.v`: ruta serie completa desde los pines de `top`, incluyendo
   carga del programa, lanzamiento por defecto y lectura por warp/lane.
 
-[`validation.md`](validation.md) registra el resultado de simulación y de la
+[`validation.md`](docs/validation.md) registra el resultado de simulación y de la
 implementación física. Generar un bitstream no sustituye comprobar timing;
 Apio puede permitir un fallo de timing durante place-and-route.
 

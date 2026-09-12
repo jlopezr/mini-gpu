@@ -1,9 +1,10 @@
 # MiniCPU con SDRAM y salida HDMI
 
 Fusión de la CPU con SDRAM de `10.fpga-cpu-ram` y la cadena DVI de `13.hdmi`,
-sobre ULX3S-85F. El plan por fases está en [`docs/planning.md`](docs/planning.md)
-y la arquitectura de destino en
-[`docs/gpu_educativa_arquitectura.md`](docs/gpu_educativa_arquitectura.md).
+sobre ULX3S-85F. El plan por fases está en
+[`../15.isa-v2/planning.md`](../15.isa-v2/planning.md) y la arquitectura de
+destino en
+[`../15.isa-v2/gpu_educativa_arquitectura.md`](../15.isa-v2/gpu_educativa_arquitectura.md).
 
 Estado: **hito D completado**. Hay doble framebuffer con intercambio
 sincronizado, gobernado desde una ventana de registros en `0x80000000` que

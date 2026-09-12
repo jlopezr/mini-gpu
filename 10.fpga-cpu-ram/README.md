@@ -67,7 +67,7 @@ apio build
 del monitor, fetch desde SDRAM, `STORE`, `LOAD` y `HALT`.
 
 La explicación detallada de registros, rutas críticas y latencias está en
-[`timing.md`](timing.md).
+[`timing.md`](docs/timing.md).
 
 ## Timing
 

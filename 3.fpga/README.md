@@ -9,7 +9,7 @@ apio build
 apio upload
 ```
 
-[`fpga.md`](fpga.md) recoge la arquitectura prevista y
-[`documentacion.md`](documentacion.md) contiene notas del flujo inicial. Esta
+[`fpga.md`](docs/fpga.md) recoge la arquitectura prevista y
+[`documentacion.md`](docs/documentacion.md) contiene notas del flujo inicial. Esta
 carpeta es un hito mínimo; los diseños funcionales posteriores se encuentran
 en las carpetas 4–10.

@@ -25,6 +25,13 @@ monitor UART y a los 32 MiB de SDRAM de la ULX3S, con cierre de timing a
 | [`8.fpga-ram`](8.fpga-ram)                         | SDRAM accesible mediante el monitor UART a 25 MHz.                       |
 | [`9.fpga-ram-param`](9.fpga-ram-param)             | Controlador SDRAM parametrizado y monitor a 120 MHz.                     |
 | [`10.fpga-cpu-ram`](10.fpga-cpu-ram)               | Integración de CPU, monitor UART y SDRAM a 120 MHz.                      |
+| [`11.gpu-sim-func`](11.gpu-sim-func)               | Simulador funcional de la MiniGPU: un SM, varios warps y SIMT.           |
+| [`12.fpga-gpu`](12.fpga-gpu)                       | Un SM sobre FPGA, con 64 threads residentes y 8 lanes en EBR.            |
+| [`13.hdmi`](13.hdmi)                               | Salida DVI/TMDS sobre los pares GPDI, de donde sale la cadena de vídeo.  |
+| [`14.fpga-gpu-ram`](14.fpga-gpu-ram)               | El SM de 12 con memoria unificada sobre 32 MiB de SDRAM.                 |
+| [`15.isa-v2`](15.isa-v2)                           | Solo documentación: arquitectura de la GPU, plan por fases y 3D.         |
+| [`16.fpga-cpu-hdmi`](16.fpga-cpu-hdmi)             | CPU con SDRAM más salida HDMI y doble framebuffer con swap en vblank.    |
+| [`17.fpga-gpu-ram-v2`](17.fpga-gpu-ram-v2)         | Copia de 14 dedicada a subir la frecuencia sin cambiar funcionalidad.    |
 | [`x.cpu-tests`](x.cpu-tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
 | [`pruebas`](pruebas)                               | Artefactos históricos conservados como referencia.                       |
 
@@ -32,6 +39,20 @@ Las carpetas numeradas representan hitos de aprendizaje y se conservan aunque
 una etapa posterior sustituya parte de su implementación. No debe asumirse que
 la carpeta con el número más alto reemplaza la documentación técnica de las
 anteriores.
+
+Dentro de cada una, la documentación de apoyo vive en `docs/` y los programas en
+`examples/`, de forma que en la raíz de la carpeta solo queda el `README.md`
+junto al código. Las dos carpetas de ISA —[`1.isa`](1.isa) y
+[`15.isa-v2`](15.isa-v2)— son la excepción: ahí los `.md` no acompañan a un
+código, son el contenido.
+
+`tools/check-links.py` comprueba que los enlaces relativos de todos los `.md`
+apuntan a algo que existe, que es lo que evita que mover un fichero deje
+referencias colgando:
+
+```powershell
+.venv/Scripts/python.exe tools/check-links.py
+```
 
 ## Arquitectura actual
 
@@ -114,13 +135,13 @@ apio build
 Aunque APIO puede generar un bitstream con `--timing-allow-fail`, hay que
 comprobar siempre que nextpnr no muestre `FAIL at 120.00 MHz`. Los detalles de
 latencia y rutas registradas están en
-[`10.fpga-cpu-ram/timing.md`](10.fpga-cpu-ram/timing.md).
+[`10.fpga-cpu-ram/timing.md`](10.fpga-cpu-ram/docs/timing.md).
 
 ## Estado y alcance
 
 MiniISA, el ensamblador y el simulador implementan más operaciones que la CPU
 RTL. La tabla vigente de instrucciones está en
-[`6.fpga-cpu/instruction-status.md`](6.fpga-cpu/instruction-status.md). La CPU
+[`6.fpga-cpu/instruction-status.md`](6.fpga-cpu/docs/instruction-status.md). La CPU
 FPGA actual es multiciclo, sin pipeline de instrucciones ni ejecución SIMT;
 la evolución hacia MiniGPU sigue siendo trabajo futuro.
 
