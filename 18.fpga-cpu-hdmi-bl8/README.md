@@ -9,18 +9,22 @@ esperando a la SDRAM. Es el punto 0 del [`../TODO.md`](../TODO.md).
 | Paso | Contenido | Estado |
 |---|---|---|
 | 0 | Medir en qué se van los ciclos, antes de escribir RTL | **hecho** |
-| 1 | Búfer de instrucciones, cuatro líneas de 16 bytes | **hecho, en simulación** |
+| 1 | Búfer de instrucciones, cuatro líneas de 16 bytes | **hecho** |
 | 2 | Banco de pruebas del controlador BL8 | **hecho, dos fallos encontrados** |
 | 3 | Lector de vídeo sobre ráfagas | **hecho** |
 | — | Integración del camino entero en `top.v` | **hecho, 2,94× medido** |
+| — | Banco de pruebas del árbitro | **hecho, dos suposiciones corregidas** |
 | 4 | Combinación de escrituras | pendiente |
+
+Nada de esto está verificado **en placa**: la ULX3S no estaba conectada a esta
+máquina. Todo lo de abajo es simulación, síntesis y barrido de semillas.
 
 El paso 0 reordenó el plan y está contado entero en
 [`docs/medida-inicial.md`](docs/medida-inicial.md). El resumen: de los ~26 ciclos
 por acceso de 16 bits, **8 son comandos de SDRAM y 6,5 son suelo de handshake y
 de CPU**; y **el scanout se lleva otro 35 %** del tiempo de la CPU. Por eso el
-búfer de instrucciones va primero: es lo más grande, **2,65× medido**, y no
-necesita BL8 para nada.
+búfer de instrucciones se hizo primero: es lo más grande, y no necesita BL8 para
+nada —sobre el bus de 16 bits ya daba 2,65×—.
 
 El paso 2 encontró **dos fallos** en el controlador BL8 que llegó de
 `pruebas/sdram`, uno de ellos grave: la ráfaga de lectura salía corrida un beat
@@ -56,25 +60,54 @@ eligió 80 MHz y no otra frecuencia. La versión del monitor sube a **1.11**.
 Así que la mejora neta en tiempo real, con el reloj más lento incluido, es de
 **2,35×**.
 
-No da por hecha la alineación. `video_registers` solo obliga a alinear
-`FB_FRONT` y `FB_BACK` a cuatro bytes, así que una base como `0x01000004` es
-legal y dejaría todas las líneas a caballo entre ráfagas. El lector arranca en la
-ráfaga alineada que contiene la primera palabra y descarta lo que sobra por
-delante; cuesta una ráfaga más por línea, y el banco lo comprueba con los dos
-casos.
+El lector de vídeo no da por hecha la alineación. `video_registers` solo obliga a
+alinear `FB_FRONT` y `FB_BACK` a cuatro bytes, así que una base como `0x01000004`
+es legal y dejaría todas las líneas a caballo entre ráfagas. Arranca en la ráfaga
+alineada que contiene la primera palabra y descarta lo que sobra por delante;
+cuesta una ráfaga más por línea, y el banco lo comprueba con los dos casos.
 
-## Una trampa nueva de `memory_fabric_4`, para la lista
+## El árbitro, y dos cosas que su banco corrigió
 
-En el árbitro, **`req_ready` depende combinacionalmente de `req_valid`**: la
-concesión mira el `valid` del propio puerto, así que `ready` no se levanta hasta
-que el cliente pide. Un cliente escrito de la forma que parece razonable
-—esperar a `ready` y entonces levantar `valid`— **se cuelga para siempre**. Hay
-que levantar `valid` primero y esperar `ready` después.
+[`memory_fabric_tb.v`](memory_fabric_tb.v) es el banco propio de
+`memory_fabric_4`, que llegó de `pruebas/sdram` sin ninguno. Encontró dos
+suposiciones falsas, una mía y otra del diseño:
+
+**El caso de round-robin que escribí primero no probaba nada.** Con cuatro
+clientes que piden una vez y callan, el orden sale 0,1,2,3 *aunque el puntero no
+avance jamás*: cada uno baja su `valid` al ser servido y el `else if` en cascada
+hace el resto. Lo comprobé sustituyendo el avance del puntero por
+`rr_ptr <= MASTER_0`, y **el banco seguía en verde**. De ahí sale el caso que sí
+lo distingue: los cuatro pidiendo sin parar. Con el árbitro bueno, 12/12/12/12;
+con el puntero clavado, 21/21/3/3 y falla.
+
+**`urgent` mantenido no es monopolio**, que es lo que yo había supuesto por
+analogía con la prioridad absoluta que se le dio al vídeo en la 16 —y que allí
+resultó ser monopolio de verdad—. El árbitro solo mira `p2_urgent` cuando
+`p2_req_valid` está alto, así que en cuanto el lector de vídeo deja un hueco
+entre peticiones, el round-robin reparte. Lo que sí se cumple es el invariante
+«mientras el puerto 2 pide con `urgent`, no se concede a nadie más», y el banco
+lo vigila en todos los ciclos, no solo donde se espera que se cumpla.
+
+De paso se quitaron cuatro `$error` del árbitro que saltaban con direcciones no
+alineadas a 16 bytes. No es un fallo: el árbitro **ya responde `rsp_error`** a
+ese caso, que es comportamiento definido. Un assert que se dispara por una
+entrada que el módulo maneja bien solo convierte una prueba legítima en ruido.
+
+## Una trampa de `memory_fabric_4`, para la lista
+
+**`req_ready` no llega hasta que el cliente ha levantado `req_valid`**: la
+concesión mira el `valid` del propio puerto. Un cliente escrito de la forma que
+parece razonable —esperar a `ready` y entonces levantar `valid`— **se cuelga para
+siempre**. Hay que levantar `valid` primero y esperar `ready` después.
 
 Es la primera piedra con la que tropieza cualquiera que escriba un cliente para
 este árbitro, y costó una simulación colgada. Va en la misma familia que el pulso
-de un ciclo del monitor: el árbitro tampoco engancha pulsos, así que el adaptador
-del monitor tendrá que mantener el nivel él.
+de un ciclo del monitor: el árbitro tampoco engancha pulsos, y por eso el
+`monitor_mem_adapter_128` es quien lo mantiene.
+
+La concesión pasó a ir **registrada** al cerrar temporización, así que ya no hay
+lazo combinacional entre `valid` y `ready` —eso costaba 11 ns de camino—, pero el
+orden sigue siendo el mismo: primero `valid`.
 
 Todo lo de abajo, desde «Escalera de hitos», es la documentación heredada de la
 16 y sigue describiendo lo que hay, salvo donde esta sección diga otra cosa.
@@ -82,9 +115,8 @@ Todo lo de abajo, desde «Escalera de hitos», es la documentación heredada de 
 ## El búfer de instrucciones
 
 [`instruction_buffer.v`](instruction_buffer.v) se intercala entre el puerto
-`imem` de la CPU y el `sdram_system_adapter`, con el mismo contrato en sus dos
-lados: en [`top.v`](top.v) es un módulo en medio de un cable y el adaptador no se
-entera de que existe.
+`imem` de la CPU y el puerto 1 del árbitro. Del lado de la CPU el contrato es el
+de `imem` tal cual; del lado de la memoria es un puerto de 128 bits.
 
 Son **cuatro líneas de 16 bytes**, mapeo directo, 512 biestables de datos. El
 tamaño no es arbitrario: 16 bytes son exactamente las cuatro instrucciones del
@@ -116,22 +148,22 @@ inválido a propósito—. Guardar esa respuesta la haría permanente.
 
 ### Lo que cobra
 
-Medido con [`perf_probe_tb.v`](perf_probe_tb.v) sobre el bucle interior real:
+Sobre el bucle interior real, 160 iteraciones:
 
-| | ciclos por palabra | |
+| | ciclos por palabra | medido por |
 |---|---:|---|
-| Sin búfer, sin vídeo | 145,9 | |
-| Con búfer, sin vídeo | **55,1** | **2,65×**, contra un techo de 2,74× |
-| Sin búfer, con vídeo | 225,4 | |
-| Con búfer, con vídeo | **71,0** | **3,18×** |
+| La 16, sin vídeo | 145,9 | [`perf_probe_tb.v`](perf_probe_tb.v) |
+| Con búfer, sobre el bus de 16 bits | 55,1 | (versión intermedia, 2,65×) |
+| Con búfer, sobre ráfagas | **49,7** | [`cpu_burst_system_tb.v`](cpu_burst_system_tb.v), **2,94×** |
 
-Los accesos de 16 bits a la SDRAM pasan de **1 610 a 344**: 320 de datos más
-tres rellenos de línea. Sale mejor con vídeo que sin él porque el búfer no solo
-ahorra esperas, también devuelve ancho de banda al scanout.
+Del bucle entero quedan **163 ráfagas**: 160 escrituras y tres rellenos de línea,
+porque el programa ocupa tres líneas de 16 bytes y ninguna se relee. En la 16 eso
+mismo eran 1 610 accesos de 16 bits.
 
-Un fallo trae la línea entera en cuatro transacciones de 32 bits, o sea los
-mismos ocho accesos de 16 bits que costarían las cuatro búsquedas sueltas: el
-código en línea recta no pierde nada, y gana todo lo que se relea.
+Un fallo trae la línea entera en **una sola ráfaga**, que es la razón de que una
+línea sean 16 bytes y no otra cosa: 16 bytes son exactamente una BL8. Así que el
+código en línea recta no pierde nada —traer cuatro instrucciones cuesta una
+petición en lugar de cuatro— y gana todo lo que se relea.
 
 ### Lo que costó en la FPGA
 
@@ -682,6 +714,7 @@ Desde esta carpeta:
 
 ```powershell
 ..\.venv\Scripts\apio.exe test cpu_burst_system_tb.v
+..\.venv\Scripts\apio.exe test memory_fabric_tb.v
 ..\.venv\Scripts\apio.exe test video_burst_tb.v
 ..\.venv\Scripts\apio.exe test sdram_controller_128_tb.v
 ..\.venv\Scripts\apio.exe test instruction_buffer_tb.v
@@ -698,7 +731,8 @@ Desde esta carpeta:
 ..\.venv\Scripts\apio.exe build
 ```
 
-Los cinco primeros son de esta carpeta. `cpu_burst_system_tb.v` es el de
+Los seis primeros son de esta carpeta. `memory_fabric_tb.v` es el banco propio
+del arbitro, contado mas arriba. `cpu_burst_system_tb.v` es el de
 sistema del camino nuevo: carga un programa por el monitor con la CPU parada, la
 arranca, mide el bucle interior, la para y vuelve a leer lo que escribió —el
 camino que rompe una incoherencia de búfer, y el que se queda mudo si se pierde

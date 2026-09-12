@@ -546,35 +546,22 @@ module memory_fabric_4 #(
         end
     end
 
-    // ============================================================
-    // Simulation assertions
-    // ============================================================
-
-`ifndef SYNTHESIS
-
-    always @(posedge clk) begin
-        if (!reset) begin
-
-            if (p0_req_valid && p0_req_ready &&
-                p0_req_addr[3:0] != 4'b0000)
-                $error("memory_fabric_4: port 0 address not 16-byte aligned");
-
-            if (p1_req_valid && p1_req_ready &&
-                p1_req_addr[3:0] != 4'b0000)
-                $error("memory_fabric_4: port 1 address not 16-byte aligned");
-
-            if (p2_req_valid && p2_req_ready &&
-                p2_req_addr[3:0] != 4'b0000)
-                $error("memory_fabric_4: port 2 address not 16-byte aligned");
-
-            if (p3_req_valid && p3_req_ready &&
-                p3_req_addr[3:0] != 4'b0000)
-                $error("memory_fabric_4: port 3 address not 16-byte aligned");
-
-        end
-    end
-
-`endif
+    /*
+     * Aqui habia cuatro asserts que disparaban un $error cuando la direccion
+     * de un puerto no estaba alineada a 16 bytes. Se han quitado, y conviene
+     * decir por que para que nadie los reponga:
+     *
+     * el arbitro YA responde `rsp_error` a una direccion no alineada, y eso es
+     * comportamiento definido, no un fallo. Un assert tiene que dispararse por
+     * algo que no deberia ocurrir nunca; este se disparaba por un caso que el
+     * propio modulo maneja bien, asi que convertia una entrada legitima en
+     * ruido de simulacion y hacia imposible que un banco probara el rechazo sin
+     * ensuciar la salida.
+     *
+     * Quien quiera cazar clientes que generan direcciones mal alineadas tiene
+     * el `rsp_error`, que es observable y se puede comprobar. memory_fabric_tb.v
+     * lo hace.
+     */
 
 endmodule
 
