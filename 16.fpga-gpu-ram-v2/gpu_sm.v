@@ -40,7 +40,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     input [7:0] lsu_occupied
 );
     localparam INIT=0, PICK=1, RECON=2, FETCH=3, FETCH_WAIT=4,
-        RF_WAIT=5, DECODE=6, START=7, EXEC=8, FINISH=9, MEMORY=10, NORMALIZE=11, CONTEXT=12;
+        RF_WAIT=5, DECODE=6, START=7, EXEC=8, FINISH=9, MEMORY=10, NORMALIZE=11, CONTEXT=12, RETIRE=13;
     localparam [7:0] ERROR_NONE = 8'h00;
     localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
     localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
@@ -235,9 +235,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     endtask
     task retire;
         begin
-            instruction_retired<=1; retired_count<=retired_count+1'b1;
-            warp_retired_count[current]<=warp_retired_count[current]+1'b1;
-            state<=PICK;
+            // Commit counters in a separate cycle after the control decision.
+            // current remains stable; LSU responses are accepted only in PICK.
+            state<=RETIRE;
         end
     endtask
     integer w,c;
@@ -415,6 +415,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                         else pc[current]<=sequential_pc;
                         retire;
                     end
+                end
+                RETIRE: begin
+                    instruction_retired<=1; retired_count<=retired_count+1'b1;
+                    warp_retired_count[current]<=warp_retired_count[current]+1'b1;
+                    state<=PICK;
                 end
                 MEMORY: if(lsu_valid && lsu_ready) begin
                     wait_mem[current]<=1; load_rd[current]<=instruction[25:21];

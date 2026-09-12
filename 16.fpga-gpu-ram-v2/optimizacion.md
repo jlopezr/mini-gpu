@@ -352,16 +352,16 @@ siguen escribiendo el array arquitectónico.
 
 ### Primera medida, no mediana
 
-| Magnitud | Paso 4, informe guardado | Paso 6 |
-| --- | ---: | ---: |
-| fmax | 37,22 MHz | 47,14 MHz |
-| Camino crítico | 26,870 ns | 21,215 ns |
-| Segmentos | 39 | 31 |
-| Routing en el camino | 22,127 ns | 17,391 ns |
-| Lógica en el camino | 4,218 ns | 3,299 ns |
-| TRELLIS_COMB | 29103 | 29245 |
-| TRELLIS_FF | 9961 | 10089 |
-| EBR / DSP | 16 / 32 | 16 / 32 |
+| Magnitud             | Paso 4, informe guardado |    Paso 6 |
+|----------------------|-------------------------:|----------:|
+| fmax                 |                37,22 MHz | 47,14 MHz |
+| Camino crítico       |                26,870 ns | 21,215 ns |
+| Segmentos            |                       39 |        31 |
+| Routing en el camino |                22,127 ns | 17,391 ns |
+| Lógica en el camino  |                 4,218 ns |  3,299 ns |
+| TRELLIS_COMB         |                    29103 |     29245 |
+| TRELLIS_FF           |                     9961 |     10089 |
+| EBR / DSP            |                  16 / 32 |   16 / 32 |
 
 La primera construcción completa tardó 422,3 s, incluidos 227,6 s de routing.
 El nuevo peor camino pasa por `gpu.lsu_mask[5]` (alias de la selección de máscara
