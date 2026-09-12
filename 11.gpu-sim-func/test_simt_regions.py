@@ -381,7 +381,10 @@ class RegionTest(unittest.TestCase):
 
 class MandelbrotRegionTest(unittest.TestCase):
     def check_image(self, name, base, group=None):
-        folder = ROOT / 'x.cpu-tests/cases-gpu' / name
+        # Los casos de programa se agruparon bajo `programs/` y esta ruta se
+        # quedo apuntando al sitio antiguo, asi que los siete subtests de
+        # Mandelbrot llevaban tiempo fallando con FileNotFoundError.
+        folder = ROOT / 'x.cpu-tests/cases-gpu/programs' / name
         source = (folder / 'mandelbrot.asm').read_text(encoding='utf-8')
         if group is not None:
             if name == 'mandelbrot':
