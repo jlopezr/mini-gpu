@@ -90,6 +90,36 @@ module top (
   wire [4:0] cpu_debug_register_address;
   wire [31:0] cpu_debug_register_data, cpu_pc;
 
+  // ---------------------------------------------------------------------------
+  // Contadores de rendimiento
+  //
+  // `instruction_retired` salia de la CPU desde siempre y no iba a ninguna
+  // parte. Con estos dos contadores y los comandos 0x36/0x37 del monitor, el
+  // CPI de un programa se puede medir en la placa en vez de estimarlo.
+  //
+  // Miden UNA ejecucion: se ponen a cero al arrancar la CPU, no al resetearla.
+  // Asi `run` / `halt` / `run` da tres medidas independientes, que es lo que
+  // uno quiere al comparar versiones, y no una suma que crece sin sentido.
+  //
+  // Cuentan mientras la CPU NO esta parada. Eso incluye lo que espera a la
+  // memoria, que es justo lo que interesa: la diferencia entre 9 ciclos por
+  // instruccion ejecutando desde EBR y los 35 de aqui es toda espera.
+  // ---------------------------------------------------------------------------
+  reg [31:0] cpu_cycles;
+  reg [31:0] cpu_instructions;
+  always @(posedge clk) begin
+    if (reset || cpu_run_request) begin
+      cpu_cycles <= 32'd0;
+      cpu_instructions <= 32'd0;
+    end else if (!cpu_halted) begin
+      // Saturan en vez de dar la vuelta: un contador que ha dado la vuelta
+      // miente en silencio, y a 80 MHz son 53 segundos.
+      if (cpu_cycles != 32'hffff_ffff) cpu_cycles <= cpu_cycles + 1'b1;
+      if (cpu_instruction_retired && cpu_instructions != 32'hffff_ffff)
+        cpu_instructions <= cpu_instructions + 1'b1;
+    end
+  end
+
   monitor monitor_i(
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -102,6 +132,7 @@ module top (
       .cpu_halted(cpu_halted), .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code), .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
+      .cpu_cycles(cpu_cycles), .cpu_instructions(cpu_instructions),
       .cpu_debug_register_data(cpu_debug_register_data),
       .last_command(last_command), .busy(monitor_busy));
 
@@ -239,10 +270,12 @@ module top (
 
   // Los dos clientes de la ventana de registros de video.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
-  wire [3:0] mon_mmio_mask, mon_mmio_addr;
+  wire [3:0] mon_mmio_mask;
+  wire [4:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
-  wire [3:0] cpu_mmio_mask, cpu_mmio_addr;
+  wire [3:0] cpu_mmio_mask;
+  wire [4:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
   cpu_dmem_adapter dmem_adapter_i(

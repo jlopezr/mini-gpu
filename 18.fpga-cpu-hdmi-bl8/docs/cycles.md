@@ -105,3 +105,38 @@ Por orden de impacto, y todo ataca al mismo sitio (los 23 ciclos de FETCH_WAIT):
 
 Optimizar instrucciones concretas aquí no tiene ningún sentido: el 85% del tiempo de una
 ADD es esperar a la SDRAM.
+
+## Y ahora se puede medir, no estimar
+
+Todo lo anterior es aritmética sobre la máquina de estados: cuenta ciclos leyendo
+el RTL. La 18 añade dos contadores en `top.v` y los saca por el monitor, así que
+el CPI de un programa se puede leer de la placa.
+
+`instruction_retired` salía de la CPU desde la 6 y no iba a ninguna parte. Ahora
+alimenta `cpu_instructions`; junto a `cpu_cycles` da el CPI real, esperas de
+memoria incluidas, que es justo lo que este documento estimaba a mano.
+
+| Registro           | Qué cuenta                      |
+|--------------------|---------------------------------|
+| `cpu_cycles`       | Ciclos con la CPU no parada     |
+| `cpu_instructions` | Pulsos de `instruction_retired` |
+
+Dos decisiones que importan al leer los números:
+
+- **Se ponen a cero al arrancar la CPU**, no al resetearla. Así `run` / `halt` /
+  `run` da tres medidas independientes en vez de una suma que crece sin sentido.
+- **Saturan en vez de dar la vuelta.** Un contador que ha dado la vuelta miente
+  en silencio, y a 80 MHz son 53 segundos de programa.
+
+Son dos comandos del monitor y no uno (`0x36` ciclos, `0x37` instrucciones)
+porque el búfer de respuesta tiene 7 bytes y los dos contadores juntos necesitan
+9. Se leen con la CPU ya parada, así que ninguno se mueve entre una lectura y la
+otra.
+
+```bash
+python monitor.py perf --port COM3   # cycles=... instructions=... CPI=...
+```
+
+Para comparar versiones enteras, [`x.cpu-tests`](../../x.cpu-tests/README.md)
+tiene `--measure`, que ejecuta cada caso en cada versión aplicable y saca la
+tabla en Markdown.

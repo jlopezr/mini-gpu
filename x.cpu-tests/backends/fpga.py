@@ -31,15 +31,21 @@ VERSIONS = {
         "monitor_path": Path("16.fpga-cpu-hdmi/monitor.py"),
         "monitor_version": (1, 10),
         "description": "Como sdram, mas video HDMI; 100 MHz y 1 Mbaud",
+        "clock_hz": 100_000_000,
         # Tiene scanout y ventana de registros, pero no HALT_AT ni SWAP_COUNT,
         # asi que no puede parar en un intercambio concreto.
         "capabilities": ("video",),
     },
     "bl8": {
         "monitor_path": Path("18.fpga-cpu-hdmi-bl8/monitor.py"),
-        "monitor_version": (1, 11),
+        "monitor_version": (1, 12),
         "description": "Como hdmi, con memoria en rafagas BL8; 80 MHz y 1 Mbaud",
         "capabilities": ("frame_capture",),
+        # Unica version con los contadores 0x36/0x37. Las anteriores son hitos
+        # cerrados y no se tocan, asi que su CPI no se puede medir: se estima
+        # desde el numero de instrucciones y el tiempo de pared.
+        "perf_counters": True,
+        "clock_hz": 80_000_000,
     },
 }
 DEFAULT_VERSION = "ebr"
@@ -240,6 +246,14 @@ class FpgaBackend:
                 for address, size in memory_ranges
             }
 
+            # Los contadores, antes que nada lo demas que toque la memoria: la
+            # CPU ya esta parada, asi que no se mueven, pero leerlos aqui deja
+            # claro que miden el programa y no lo que haga el monitor despues.
+            cycles = instructions = None
+            if self.configuration.get("perf_counters"):
+                cycles = client.get_cycles()
+                instructions = client.get_instructions()
+
             video_result = None
             if video:
                 # Se lee DESPUES de que la CPU haya parado. Los registros
@@ -268,4 +282,7 @@ class FpgaBackend:
             "registers": registers,
             "memory": memory,
             "video": video_result,
+            "cycles": cycles,
+            "instructions": instructions,
+            "clock_hz": self.configuration.get("clock_hz"),
         }

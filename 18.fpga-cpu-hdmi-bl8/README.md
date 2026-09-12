@@ -52,11 +52,11 @@ escritura de 32 bits es una ráfaga enmascarada en lugar de dos accesos.
 
 **El reloj baja de 100 a 80 MHz**, y no es opcional: con la restricción en 100,
 el camino de 128 bits **no cumple ninguna semilla** (83,9 a 91,8 MHz). A 80
-cumplen las ocho —hoy, con todo dentro, entre 83,1 y 93,2 MHz—, así que la
-semilla vuelve a no decidir si el diseño funciona, que es el mismo criterio con
-el que la 16 bajó de 120 a 100. **El baudio no cambia**: el divisor 80 sigue
-dando 1 Mbaud exacto, y por eso se eligió 80 MHz y no otra frecuencia. La versión
-del monitor sube a **1.11**.
+cumplen las ocho —hoy, con los contadores de rendimiento dentro, siete de ocho
+entre 80,9 y 94,0 MHz—, así que la semilla vuelve a no decidir si el diseño
+funciona, que es el mismo criterio con el que la 16 bajó de 120 a 100. **El
+baudio no cambia**: el divisor 80 sigue dando 1 Mbaud exacto, y por eso se
+eligió 80 MHz y no otra frecuencia. La versión del monitor sube a **1.12**.
 
 Eso se come parte de la mejora: **4,15× en ciclos son 3,32× en tiempo real**.
 
@@ -828,11 +828,31 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga --version hdmi --port COM3
+..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga --version bl8 --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
 Pasan **12 de 12** casos.
+
+### Medir el CPI
+
+`top.v` cuenta ciclos e instrucciones mientras la CPU corre, y el monitor los
+saca con los comandos `0x36` y `0x37`:
+
+```powershell
+..\.venv\Scripts\python.exe monitor.py perf --port COM3
+```
+
+Para comparar esta versión con las anteriores en los mismos programas, el runner
+tiene `--measure`, que saca una tabla en Markdown:
+
+```powershell
+..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga `
+    --measure medidas.md --port COM3 ..\x.cpu-tests\cases
+```
+
+El porqué de los dos contadores, y qué miden exactamente, está en
+[`docs/cycles.md`](docs/cycles.md).
 
 ### `MUL`, `MULFX` y `DIV`
 

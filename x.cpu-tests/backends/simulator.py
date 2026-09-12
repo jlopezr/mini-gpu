@@ -131,6 +131,14 @@ class SimulatorBackend:
                     cpu.memory[base:base + FRAME_BYTES])
 
         return {
+            # El simulador cuenta instrucciones pero no ciclos: no modela el
+            # tiempo, asi que `cycles` es None a proposito y el CPI de una fila
+            # de simulador no existe. Lo que si aporta es el numero de
+            # instrucciones, que es arquitectonico y por tanto sirve de
+            # contraste contra el contador de la placa.
+            "cycles": None,
+            "instructions": cpu.instructions_executed,
+            "clock_hz": None,
             "halted": cpu.halted,
             "error": cpu.error,
             "error_code": cpu.error_code,

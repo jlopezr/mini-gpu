@@ -322,6 +322,45 @@ esperados. Después comprueba que los estados observados del simulador y la FPGA
 sean idénticos. Los valores esperados siguen siendo necesarios: dos
 implementaciones podrían compartir el mismo error.
 
+## Medir: `--measure`
+
+Los casos dicen si una versión está *bien*. `--measure` dice lo que *cuesta*:
+ejecuta cada caso en cada versión aplicable y escribe una tabla en Markdown con
+instrucciones, tiempo y CPI.
+
+```bash
+# Todas las versiones de placa, más el simulador
+python run_gpu_tests.py --backend cpu-fpga --measure medidas.md --port COM3 cases
+
+# Solo dos versiones, y sin nombre de fichero (sale en medidas.md)
+python run_gpu_tests.py --backend cpu-fpga --version hdmi --version bl8 \
+    --measure --port COM3 cases/programs
+
+# Sin placa: solo cuenta instrucciones, que es la mitad de la tabla
+python run_gpu_tests.py --backend cpu-simulator --version sim --measure cases
+```
+
+Cambiar de versión recarga el bitstream, así que el bucle exterior es la versión
+y no el caso; con cuatro versiones son cuatro cargas, no cuatro por caso.
+
+**El tiempo no es el reloj de pared.** Entre arrancar y parar la CPU hay decenas
+de vueltas de UART a 1 Mbaud, y eso enmascara por completo un programa de
+milisegundos. Lo que se mide es el contador de ciclos de la placa, y el tiempo
+sale de él y de la frecuencia del reloj.
+
+**El CPI solo existe donde hay contadores.** Los añade la 18 con los comandos
+`0x36` / `0x37` del monitor; la 6, la 10 y la 16 son hitos cerrados y no se
+tocan, así que sus celdas dicen `sin contadores`. El simulador tampoco lo tiene,
+porque no modela el tiempo: cuenta instrucciones y nada más.
+
+**Las instrucciones sí salen de todas partes**, y ahí está el valor de mezclar
+backends en la misma tabla: el número de instrucciones es arquitectónico y tiene
+que coincidir. Cuando no coincide, la tabla lo marca con `¡discrepan!` y añade un
+aviso, porque eso no es una versión lenta sino una CPU haciendo otra cosa.
+
+Una medida solo cuenta si el programa terminó como el caso esperaba; los casos
+de trampa se miden igual que los demás, porque terminar en error es lo suyo.
+
 ## Estado de error
 
 Los errores detienen la CPU y hacen que el PC observable señale la instrucción

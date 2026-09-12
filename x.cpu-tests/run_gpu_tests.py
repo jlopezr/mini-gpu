@@ -568,9 +568,208 @@ def load_case(path: Path) -> dict:
 
 def discover_cases(arguments: list[Path]) -> list[Path]:
     if arguments:
-        return [path.resolve() for path in arguments]
+        # Un directorio vale por todos los casos que cuelgan de el, que es como
+        # lo documenta el README (`cases/video`).
+        encontrados = []
+        for path in arguments:
+            path = path.resolve()
+            if path.is_dir():
+                encontrados.extend(sorted(path.glob("**/test.json")))
+            else:
+                encontrados.append(path)
+        return encontrados
     return sorted(path for folder in ("cases", "cases-gpu")
                   for path in (ROOT / folder).glob("**/test.json"))
+
+
+# ---------------------------------------------------------------------------
+# Modo medida
+#
+# Ejecuta los mismos casos en varias versiones y saca una tabla. Lo que se mide
+# NO es el tiempo de pared: entre `run` y `halt` hay decenas de vueltas de USB a
+# 1 Mbaud, y eso enmascara por completo un programa de milisegundos. Se mide el
+# contador de ciclos de la placa, y el tiempo se deriva de el y del reloj.
+#
+# El numero de instrucciones es arquitectonico: tiene que salir igual en todas
+# las versiones y en el simulador. Cuando no sale igual, la tabla lo dice en vez
+# de elegir uno, porque una discrepancia ahi es un fallo de CPU, no una medida.
+# ---------------------------------------------------------------------------
+
+def _format_cpi(medida: dict | None) -> str:
+    if medida is None:
+        return "—"
+    if medida.get("skipped"):
+        return "n/a"
+    cycles, instructions = medida.get("cycles"), medida.get("instructions")
+    if not cycles or not instructions:
+        # Sin contadores en el bitstream (o sin ciclos, como el simulador).
+        return "sin contadores"
+    return f"{cycles / instructions:.2f}"
+
+
+def _format_ms(medida: dict | None) -> str:
+    if medida is None:
+        return "—"
+    if medida.get("skipped"):
+        return "n/a"
+    cycles, clock_hz = medida.get("cycles"), medida.get("clock_hz")
+    if not cycles or not clock_hz:
+        return "sin contadores"
+    return f"{1000.0 * cycles / clock_hz:.3f}"
+
+
+def _markdown_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def measurement_table(medidas: dict, casos: list[str], versiones: list[str]) -> str:
+    """Tabla en Markdown a partir de `medidas[(caso, version)] -> dict`.
+
+    Cada `dict` lleva `instructions`, `cycles`, `clock_hz`, o `skipped`. Es
+    funcion pura a proposito: la parte que da forma a la tabla se puede probar
+    entera sin placa, que es la mitad del codigo y la que mas se toca.
+    """
+    lineas = ["## Ciclos por instruccion", ""]
+    lineas.append(_markdown_row(["Caso", "Instr."] + versiones))
+    lineas.append(_markdown_row(["---", "---:"] + ["---:"] * len(versiones)))
+
+    discrepancias = []
+    for caso in casos:
+        fila = [medidas.get((caso, v)) for v in versiones]
+        # `is not None` y no verdad logica: cero instrucciones es una medida
+        # real (el programa trampea en la primera), y un hueco no lo es.
+        contadas = {
+            m["instructions"] for m in fila
+            if m and not m.get("skipped") and m.get("instructions") is not None
+        }
+        if len(contadas) > 1:
+            instr = "¡discrepan!"
+            discrepancias.append((caso, sorted(contadas)))
+        elif contadas:
+            instr = f"{contadas.pop():,}".replace(",", " ")
+        else:
+            instr = "—"
+        lineas.append(_markdown_row(
+            [caso, instr] + [_format_cpi(m) for m in fila]))
+
+    lineas += ["", "## Tiempo de CPU (ms)", ""]
+    lineas.append(_markdown_row(["Caso"] + versiones))
+    lineas.append(_markdown_row(["---"] + ["---:"] * len(versiones)))
+    for caso in casos:
+        lineas.append(_markdown_row(
+            [caso] + [_format_ms(medidas.get((caso, v))) for v in versiones]))
+
+    lineas += [
+        "",
+        "`n/a`: la version no admite el caso (mapa de memoria o capacidades).",
+        "`sin contadores`: el bitstream no tiene los comandos 0x36/0x37, o es",
+        "el simulador, que cuenta instrucciones pero no modela el tiempo.",
+        "",
+        "El tiempo sale de los ciclos y del reloj, no del reloj de pared: entre",
+        "arrancar y parar la CPU hay decenas de vueltas de UART que no son parte",
+        "del programa.",
+    ]
+    if discrepancias:
+        lineas += ["", "> **Aviso**: el numero de instrucciones no coincide entre",
+                   "> versiones. Eso no es una medida lenta, es una CPU que hace",
+                   "> cosas distintas:"]
+        for caso, valores in discrepancias:
+            lineas.append(f"> - `{caso}`: {valores}")
+    return "\n".join(lineas) + "\n"
+
+
+def run_measurements(case_paths, versiones, args, upload_policy) -> int:
+    """Ejecuta cada caso en cada version y escribe la tabla.
+
+    Cambiar de version recarga el bitstream, asi que el bucle exterior es la
+    version y no el caso: al reves seria una carga por caso y por version.
+    """
+    casos = []
+    for path in case_paths:
+        try:
+            case = load_case(path)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            print(f"ERROR {path}: {error}", file=sys.stderr)
+            return 2
+        if case["architecture"] != "cpu":
+            continue
+        casos.append(case)
+    if not casos:
+        print("No hay casos de CPU que medir", file=sys.stderr)
+        return 2
+
+    medidas = {}
+    for version in versiones:
+        simulador = version == "sim"
+        if simulador:
+            backend = SimulatorBackend(REPOSITORY)
+        else:
+            try:
+                backend = FpgaBackend(
+                    REPOSITORY, port=args.port,
+                    serial_timeout=args.serial_timeout, version=version,
+                    upload_policy=upload_policy,
+                )
+            except (board.BoardNotConnected, board.MonitorSilent,
+                    board.BitstreamMismatch) as error:
+                print(f"ERROR [{version}]: {error}", file=sys.stderr)
+                return 2
+
+        for case in casos:
+            clave = (case["name"], version)
+            modulo = BACKEND_DEFINITIONS[
+                "cpu-simulator" if simulador else "cpu-fpga"]["module"]
+            comprueba = getattr(modulo, "incompatibility", None)
+            motivo = None
+            if comprueba:
+                motivo = (comprueba(case) if simulador
+                          else comprueba(case, version))
+            if motivo:
+                medidas[clave] = {"skipped": True, "reason": motivo}
+                print(f"SKIP {case['name']} [{version}]: {motivo}")
+                continue
+            try:
+                result = backend.run(
+                    program=case["program"],
+                    initial_memory=case["initial_memory"],
+                    register_numbers=set(case["expected"]["registers"]),
+                    memory_ranges=list(case["expected"]["memory"]),
+                    max_instructions=case["max_instructions"],
+                    timeout_seconds=case["timeout_seconds"],
+                    **({"video": {
+                        "run_until_swap": (case["run_until"] or {}).get("swap"),
+                        "capture_frame": case["expected"]["frame"] is not None,
+                    }} if (case["run_until"] or case["expected"]["video"]
+                           or case["expected"]["frame"] is not None) else {}),
+                )
+            except Exception as error:
+                medidas[clave] = {"skipped": True, "reason": str(error)}
+                print(f"ERROR {case['name']} [{version}]: {error}",
+                      file=sys.stderr)
+                continue
+            # Se compara con lo que el caso ESPERA, no con "sin error": los
+            # casos de trampa terminan en error a proposito y su CPI es tan
+            # valido como el de los demas. Lo que no mide nada es un programa
+            # que hizo algo distinto de lo previsto.
+            if (result["halted"] != case["expected"]["halted"]
+                    or result["error"] != case["expected"]["error"]):
+                medidas[clave] = {"skipped": True, "reason": "resultado inesperado"}
+                print(f"ERROR {case['name']} [{version}]: resultado inesperado")
+                continue
+            medidas[clave] = {
+                "instructions": result.get("instructions"),
+                "cycles": result.get("cycles"),
+                "clock_hz": result.get("clock_hz"),
+            }
+            print(f"MEDIDO {case['name']} [{version}]: "
+                  f"CPI {_format_cpi(medidas[clave])}")
+
+    tabla = measurement_table(
+        medidas, [case["name"] for case in casos], list(versiones))
+    args.measure.write_text(tabla, encoding="utf-8")
+    print(f"\nTabla escrita en {args.measure}")
+    print(tabla)
+    return 0
 
 
 def main() -> int:
@@ -607,6 +806,12 @@ def main() -> int:
     parser.add_argument("--no-upload", action="store_true",
                         help="nunca cargar el bitstream: si la placa no tiene "
                              "la versión correcta, falla")
+    parser.add_argument("--measure", type=Path, nargs="?",
+                        const=Path("medidas.md"), default=None, metavar="FICHERO",
+                        help="ejecuta cada caso en todas las versiones "
+                             "aplicables y escribe una tabla Markdown con "
+                             "instrucciones, tiempo y CPI "
+                             "(medidas.md si se omite el nombre)")
     parser.add_argument("--durations", type=int, nargs="?", const=10, default=0,
                         metavar="N",
                         help="lista las N ejecuciones más lentas al terminar "
@@ -625,6 +830,25 @@ def main() -> int:
     if not case_paths:
         print("No se encontraron casos", file=sys.stderr)
         return 2
+
+    if args.measure is not None:
+        if args.backend.startswith("gpu"):
+            parser.error("--measure es de los backends de CPU")
+        # Las versiones a medir: las que se pidan con --version, o todas las
+        # del backend FPGA mas el simulador, que aporta las instrucciones de
+        # los casos que ninguna placa puede contar.
+        pedidas = [v.split("=", 1)[-1] for v in args.version]
+        if not pedidas:
+            pedidas = list(fpga_backend.VERSIONS) + ["sim"]
+        desconocidas = [v for v in pedidas
+                        if v != "sim" and v not in fpga_backend.VERSIONS]
+        if desconocidas:
+            parser.error(f"versiones desconocidas: {', '.join(desconocidas)}")
+        return run_measurements(
+            case_paths, pedidas, args,
+            board.UploadPolicy(allowed=not args.no_upload,
+                               assume_yes=args.yes),
+        )
 
     backend_groups = {
         "both": ("cpu-simulator", "cpu-fpga"),
@@ -777,7 +1001,15 @@ def main() -> int:
                 if mismatch:
                     failures += 1
                     print(f"FAIL {case['name']} [diferencial GPU]: los estados observados no coinciden")
-            if args.backend == 'both' and results["cpu-simulator"] != results["cpu-fpga"]:
+            # Los campos de rendimiento se excluyen del diferencial: el
+            # simulador no tiene ciclos ni reloj, y el numero de instrucciones
+            # no se contrasta aqui sino en el modo `--measure`.
+            perf = ("cycles", "instructions", "clock_hz")
+            observado = {
+                nombre: {k: v for k, v in resultado.items() if k not in perf}
+                for nombre, resultado in results.items()
+            }
+            if args.backend == 'both' and observado["cpu-simulator"] != observado["cpu-fpga"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
                 print("  El estado observado del simulador y la FPGA no coincide")

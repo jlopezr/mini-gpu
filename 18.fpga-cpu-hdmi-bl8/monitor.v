@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 01 0b
+ *   02             (GET_VERSION) -> 82 01 0c
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
@@ -16,6 +16,8 @@
  *   33             (GET_STATUS)  -> b3 FLAGS ERROR PC3 PC2 PC1 PC0
  *   34 RR          (READ_REG)    -> b4 D3 D2 D1 D0 (or ff)
  *   35             (RESET_CPU)   -> b5
+ *   36             (GET_CYCLES)  -> b6 C3 C2 C1 C0
+ *   37             (GET_INSTR)   -> b7 I3 I2 I1 I0
  *   any other command            -> ff
  *
  * Addresses and lengths are transferred most-significant byte first. Block
@@ -46,6 +48,10 @@ module monitor (
     input cpu_error,
     input [7:0] cpu_error_code,
     input [31:0] cpu_pc,
+    // Contadores de rendimiento de UNA ejecucion. Los lleva top.v, que es
+    // quien ve `instruction_retired` y el reloj.
+    input [31:0] cpu_cycles,
+    input [31:0] cpu_instructions,
     output reg [4:0] cpu_debug_register_address,
     input [31:0] cpu_debug_register_data,
 
@@ -65,6 +71,12 @@ module monitor (
   localparam [7:0] CMD_GET_STATUS = 8'h33;
   localparam [7:0] CMD_READ_REGISTER = 8'h34;
   localparam [7:0] CMD_RESET_CPU = 8'h35;
+  // Contadores de rendimiento. Son DOS comandos y no uno porque la respuesta
+  // maxima de este monitor son siete bytes: dos contadores de 32 bits mas la
+  // cabecera serian nueve. Leerlos por separado no es problema, porque solo
+  // tienen sentido con la CPU parada, y entonces no cambian.
+  localparam [7:0] CMD_GET_CYCLES = 8'h36;
+  localparam [7:0] CMD_GET_INSTRUCTIONS = 8'h37;
   localparam [7:0] RSP_PONG = 8'h81;
   localparam [7:0] RSP_VERSION = 8'h82;
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
@@ -77,6 +89,8 @@ module monitor (
   localparam [7:0] RSP_STATUS = 8'hb3;
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
+  localparam [7:0] RSP_CYCLES = 8'hb6;
+  localparam [7:0] RSP_INSTRUCTIONS = 8'hb7;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
   // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
@@ -91,7 +105,11 @@ module monitor (
   //        de cuatro puertos y un adaptador por cliente. El reloj baja a
   //        80 MHz porque a 100 no cumple ninguna semilla. El baudio NO cambia:
   //        divisor 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
-  localparam [7:0] VERSION_MINOR = 8'h0b;
+  //   1.12 contadores de ciclos e instrucciones, con GET_CYCLES (0x36) y
+  //        GET_INSTRUCTIONS (0x37). Sin ellos no hay forma de medir CPI en la
+  //        placa: `instruction_retired` estaba cableado en top.v y no iba a
+  //        ninguna parte.
+  localparam [7:0] VERSION_MINOR = 8'h0c;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
@@ -146,7 +164,7 @@ module monitor (
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [11:0] command_decoded;
+  (* keep = "true" *) reg [13:0] command_decoded;
 
   assign busy = (state != STATE_IDLE);
 
@@ -190,7 +208,7 @@ module monitor (
       response_byte_4 <= 8'h00;
       response_byte_5 <= 8'h00;
       response_byte_6 <= 8'h00;
-      command_decoded <= 12'h000;
+      command_decoded <= 14'h0000;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -198,6 +216,7 @@ module monitor (
             last_command <= rx_data;
             response_index <= 2'd0;
             command_decoded <= {
+              rx_data == CMD_GET_INSTRUCTIONS, rx_data == CMD_GET_CYCLES,
               rx_data == CMD_RESET_CPU, rx_data == CMD_READ_REGISTER,
               rx_data == CMD_GET_STATUS, rx_data == CMD_STEP,
               rx_data == CMD_HALT, rx_data == CMD_RUN,
@@ -276,6 +295,29 @@ module monitor (
                 response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
                 cpu_reset_request <= 1'b1;
+                state <= STATE_RESPOND;
+              end
+              // Los dos contadores. Miden UNA ejecucion: se ponen a cero al
+              // arrancar la CPU, no al resetearla, para que `run` / `halt` /
+              // `run` den tres medidas y no una acumulada.
+              command_decoded[12]: begin
+                response_byte_0 <= RSP_CYCLES;
+                response_byte_1 <= cpu_cycles[31:24];
+                response_byte_2 <= cpu_cycles[23:16];
+                response_byte_3 <= cpu_cycles[15:8];
+                response_byte_4 <= cpu_cycles[7:0];
+                response_length <= 3'd5;
+                response_done_state <= STATE_IDLE;
+                state <= STATE_RESPOND;
+              end
+              command_decoded[13]: begin
+                response_byte_0 <= RSP_INSTRUCTIONS;
+                response_byte_1 <= cpu_instructions[31:24];
+                response_byte_2 <= cpu_instructions[23:16];
+                response_byte_3 <= cpu_instructions[15:8];
+                response_byte_4 <= cpu_instructions[7:0];
+                response_length <= 3'd5;
+                response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
               default: begin

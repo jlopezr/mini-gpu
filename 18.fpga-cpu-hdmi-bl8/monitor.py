@@ -41,6 +41,8 @@ CMD_STEP = 0x32
 CMD_GET_STATUS = 0x33
 CMD_READ_REGISTER = 0x34
 CMD_RESET_CPU = 0x35
+CMD_GET_CYCLES = 0x36
+CMD_GET_INSTRUCTIONS = 0x37
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -54,6 +56,8 @@ RSP_STEP = b"\xb2"
 RSP_STATUS = 0xB3
 RSP_READ_REGISTER = 0xB4
 RSP_RESET_CPU = b"\xb5"
+RSP_CYCLES = 0xB6
+RSP_INSTRUCTIONS = 0xB7
 RSP_ERROR = 0xFF
 
 
@@ -217,6 +221,26 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
         return int.from_bytes(self._read_exact(4), byteorder="big")
 
+    def _read_counter(self, command: int, expected: int, name: str) -> int:
+        response = self._request(bytes((command,)), 5)
+        if response[0] != expected:
+            raise MonitorError(f"Invalid {name} response: {response.hex(' ')}")
+        return int.from_bytes(response[1:5], byteorder="big")
+
+    def get_cycles(self) -> int:
+        """Ciclos que la CPU ha estado corriendo desde el ultimo RUN.
+
+        Son dos comandos y no uno porque la respuesta del monitor cabe en 7
+        bytes y los dos contadores juntos necesitan 9. Leerlos por separado
+        significa que no son del mismo instante, pero se leen con la CPU ya
+        parada, asi que ninguno de los dos se mueve entre una lectura y otra.
+        """
+        return self._read_counter(CMD_GET_CYCLES, RSP_CYCLES, "GET_CYCLES")
+
+    def get_instructions(self) -> int:
+        return self._read_counter(
+            CMD_GET_INSTRUCTIONS, RSP_INSTRUCTIONS, "GET_INSTRUCTIONS")
+
     def reset_cpu(self) -> None:
         response = self._request(bytes((CMD_RESET_CPU,)), 1)
         if response != RSP_RESET_CPU:
@@ -252,6 +276,7 @@ def parse_args() -> argparse.Namespace:
             "status",
             "read-register",
             "reset",
+            "perf",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -384,6 +409,7 @@ def main() -> int:
             "status": 0,
             "read-register": 1,
             "reset": 0,
+            "perf": 0,
         }
         if len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
@@ -470,6 +496,17 @@ def main() -> int:
                     f"CPU halted={status.halted} error={status.error} "
                     f"error_code=0x{status.error_code:02x} pc=0x{status.pc:08x}"
                 )
+            elif args.command == "perf":
+                cycles = client.get_cycles()
+                instructions = client.get_instructions()
+                if instructions == 0:
+                    print(f"cycles={cycles} instructions=0 (CPI: sin datos)")
+                else:
+                    cpi = cycles / instructions
+                    print(
+                        f"cycles={cycles} instructions={instructions} "
+                        f"CPI={cpi:.2f}"
+                    )
             elif args.command == "read-register":
                 register = parse_integer(args.arguments[0], 31, "register number")
                 value = client.read_register(register)
