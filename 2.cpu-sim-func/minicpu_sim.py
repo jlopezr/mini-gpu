@@ -85,10 +85,129 @@ def signed_divide(a: int, b: int) -> int:
     return quotient
 
 
+class VideoDevice:
+    """La ventana de registros de vídeo de `16.fpga-cpu-hdmi` y `18`.
+
+    ===================================================================
+    Qué modela y qué NO modela, que es lo que hay que tener claro
+    ===================================================================
+
+    Modela la SEMÁNTICA: qué valen los registros, cuándo se aplica un
+    intercambio respecto a las escrituras del programa, y qué framebuffer queda
+    visible. Con eso, un programa que dibuja y sincroniza produce aquí
+    exactamente el mismo framebuffer que en la FPGA.
+
+    No modela el TIEMPO, y no es una carencia que se vaya a llenar: aquí no hay
+    barrido leyendo la SDRAM por su cuenta, ni ancho de banda, ni contienda por
+    el bus. En consecuencia:
+
+      - **`underflow` es siempre cero.** No puede ocurrir porque no hay nada que
+        pueda llegar tarde. Una expectativa `underflow: false` pasa aquí sin
+        comprobar nada; solo significa algo en hardware.
+      - **El desgarro no existe.** Un programa que dibuje sobre el buffer
+        visible sin esperar al intercambio --los `tear_demo`-- aquí sale limpio
+        y en la placa sale partido. Eso es un fallo del programa que este
+        simulador NO puede encontrar.
+      - **El «frame» es sintético.** En la placa un frame son 16,7 ms de
+        barrido; aquí son `frame_instructions` instrucciones ejecutadas. Se
+        eligió así porque es lo único que hay: no hay reloj de píxel.
+
+    Y hay una consecuencia buena que no es obvia: para un programa que ESPERA a
+    que su intercambio se aplique --que es lo que hacen todos los casos de
+    `cases/video`-- el periodo sintético da igual. El programa nunca dibuja
+    mientras hay un intercambio pendiente, así que la secuencia de frames es la
+    misma sea cual sea el periodo. El periodo solo cambia cuántas vueltas da el
+    bucle de espera.
+
+    Por eso el simulador puede declarar `frame_capture` honestamente para esos
+    casos: lo que se captura es idéntico. Lo que cambia es lo que el simulador
+    no vería si estuviera mal.
+    """
+
+    BASE = 0x8000_0000
+    SIZE = 32                       # seis registros, ventana de 32 bytes
+
+    FB_FRONT = 0x00
+    FB_BACK = 0x04
+    SWAP = 0x08
+    STATUS = 0x0C
+    SWAP_COUNT = 0x10
+    HALT_AT = 0x14
+
+    def __init__(self, fb_front: int = 0x0100_0000, fb_back: int = 0x0102_5800,
+                 frame_instructions: int = 1000):
+        self.fb_front = fb_front
+        self.fb_back = fb_back
+        self.swap_pending = False
+        self.frame_count = 0
+        self.swap_count = 0
+        self.halt_at = 0
+        # Alto durante un solo `tick`, cuando SWAP_COUNT alcanza HALT_AT.
+        self.halt_request = False
+        self.frame_instructions = frame_instructions
+        self._since_frame = 0
+
+    def contains(self, address: int) -> bool:
+        return self.BASE <= address < self.BASE + self.SIZE
+
+    def tick(self) -> None:
+        """Avanza el reloj de frames sintético. Lo llama la CPU por instrucción.
+
+        El intercambio se aplica en la frontera de frame, igual que en el
+        hardware: allí es la primera petición de línea de un frame, que es el
+        único instante en el que no queda nada del frame anterior por leer ni se
+        ha leído nada del siguiente.
+        """
+        self._since_frame += 1
+        if self._since_frame < self.frame_instructions:
+            return
+
+        self._since_frame = 0
+        self.frame_count = (self.frame_count + 1) & 0xFFFF
+        if self.swap_pending:
+            self.fb_front, self.fb_back = self.fb_back, self.fb_front
+            self.swap_pending = False
+            self.swap_count = u32(self.swap_count + 1)
+            if self.halt_at and self.swap_count == self.halt_at:
+                self.halt_request = True
+
+    def read(self, offset: int) -> int:
+        if offset == self.FB_FRONT:
+            return self.fb_front
+        if offset == self.FB_BACK:
+            return self.fb_back
+        if offset == self.SWAP:
+            return 1 if self.swap_pending else 0
+        if offset == self.STATUS:
+            # bit 0 underflow (siempre cero aquí), bit 1 pendiente, 31:16 frames
+            return (self.frame_count << 16) | (2 if self.swap_pending else 0)
+        if offset == self.SWAP_COUNT:
+            return self.swap_count
+        if offset == self.HALT_AT:
+            return self.halt_at
+        return 0
+
+    def write(self, offset: int, value: int) -> None:
+        if offset == self.FB_FRONT:
+            self.fb_front = value & 0xFFFF_FFFC     # se alinea a cuatro bytes
+        elif offset == self.FB_BACK:
+            self.fb_back = value & 0xFFFF_FFFC
+        elif offset == self.SWAP:
+            # Cualquier escritura pide intercambio.
+            self.swap_pending = True
+        elif offset == self.STATUS:
+            pass            # escribir el bit 0 borra el underflow, que aquí
+                            # nunca está puesto: no hay nada que borrar
+        elif offset == self.HALT_AT:
+            self.halt_at = value
+        # SWAP_COUNT es de solo lectura.
+
+
 class CPU:
     """Estado y ejecución secuencial de una MiniCPU escalar."""
 
-    def __init__(self, memory_size: int = 32 * 1024 * 1024):
+    def __init__(self, memory_size: int = 32 * 1024 * 1024,
+                 video: "VideoDevice | None" = None):
         self.regs = [0] * 32
         self.pc = 0
         self.memory = bytearray(memory_size)
@@ -97,6 +216,9 @@ class CPU:
         self.error_code = ERROR_NONE
         self.error_pc = 0
         self.instructions_executed = 0
+        # Sin dispositivo de vídeo, 0x80000000 sigue siendo memoria fuera de
+        # rango y da error, que es lo que hacían los casos de siempre.
+        self.video = video
 
     def reset(self) -> None:
         """Reinicia PC, registros y contadores sin borrar la memoria."""
@@ -125,6 +247,10 @@ class CPU:
 
     def read_u32(self, address: int) -> int:
         """Lee una palabra little-endian alineada dentro de la memoria."""
+        if self.video is not None and self.video.contains(address):
+            if address & 3:
+                raise RuntimeError(f"lectura no alineada: 0x{address:08X}")
+            return self.video.read(address - self.video.BASE)
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"lectura fuera de memoria: 0x{address:08X}")
         if address & 3:
@@ -133,6 +259,11 @@ class CPU:
 
     def write_u32(self, address: int, value: int) -> None:
         """Escribe los 32 bits bajos en una dirección alineada de memoria."""
+        if self.video is not None and self.video.contains(address):
+            if address & 3:
+                raise RuntimeError(f"escritura no alineada: 0x{address:08X}")
+            self.video.write(address - self.video.BASE, u32(value))
+            return
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"escritura fuera de memoria: 0x{address:08X}")
         if address & 3:
@@ -154,6 +285,16 @@ class CPU:
         """Ejecuta y contabiliza una instrucción, salvo si la CPU está parada."""
         if self.halted:
             return
+
+        if self.video is not None:
+            # El reloj de frames avanza ANTES de ejecutar, para que la parada
+            # por HALT_AT ocurra en el mismo sitio que en el hardware: al
+            # completarse el intercambio, no una instruccion despues.
+            self.video.tick()
+            if self.video.halt_request:
+                self.video.halt_request = False
+                self.halted = True
+                return
 
         try:
             instr = self.fetch()

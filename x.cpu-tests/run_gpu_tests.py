@@ -743,7 +743,7 @@ def main() -> int:
                     **({"video": {
                         "run_until_swap": (case["run_until"] or {}).get("swap"),
                         "capture_frame": case["expected"]["frame"] is not None,
-                    }} if backend_name == "cpu-fpga" and (
+                    }} if backend_name in ("cpu-fpga", "cpu-simulator") and (
                         case["run_until"] or case["expected"]["video"]
                         or case["expected"]["frame"] is not None) else {}),
                     **({

@@ -83,5 +83,16 @@ python run_gpu_tests.py --backend cpu-fpga --version hdmi --port COM3 \
     cases/video/registers/test.json
 ```
 
-Con `--backend cpu-simulator` los tres se omiten, porque el simulador no tiene
-vídeo y no es una carencia que vaya a llenarse: es un simulador de la ISA.
+Los tres corren también en el simulador, sin placa:
+
+```bash
+python run_gpu_tests.py --backend cpu-simulator cases/video/bounce/test.json
+```
+
+Pero el simulador **no modela el tiempo**: allí `underflow` es siempre cero y el
+desgarro no existe. Lo que un verde suyo prueba, y lo que no, está en
+[el README de `x.cpu-tests`](../../README.md#el-simulador-tiene-vídeo-pero-no-tiene-tiempo).
+
+`bounce` necesita `max_instructions: 20000000` por eso mismo: repinta el fondo
+entero 80 veces, que son 12,5 millones de instrucciones y unos 11 segundos de
+simulación. En la placa esas mismas 80 frames son 2,6 segundos.

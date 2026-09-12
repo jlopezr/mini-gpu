@@ -424,8 +424,47 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Scanout leyendo un framebuffer de memoria y registros en `0x80000000` | `hdmi`, `bl8` |
-| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | solo `bl8` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8` |
+| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8` |
+
+### El simulador tiene vídeo, pero no tiene tiempo
+
+`cpu-simulator` declara las dos capacidades desde que `minicpu_sim.py` tiene un
+`VideoDevice`, así que los casos de vídeo corren sin placa. **Conviene entender
+qué significa un verde suyo y qué no.**
+
+Lo que sí valida: **qué** dibuja un programa. La semántica de los registros,
+cuándo se aplica un intercambio respecto a las escrituras, qué framebuffer queda
+visible. Un programa que dibuja y sincroniza produce en el simulador exactamente
+el mismo framebuffer que en la FPGA, byte a byte.
+
+Lo que no valida, y no va a validar nunca: **cuándo**. Aquí no hay barrido
+leyendo la memoria por su cuenta, ni ancho de banda, ni contienda por el bus.
+De ahí salen tres huecos concretos:
+
+- **`underflow` es siempre cero**, porque no hay nada que pueda llegar tarde.
+  Una expectativa `underflow: false` pasa en el simulador **sin comprobar
+  nada**. Sigue mereciendo la pena tenerla en el caso, porque en hardware sí
+  significa algo, pero un verde de aquí no es haberla probado.
+- **El desgarro no existe.** Un programa que dibuje sobre el buffer visible sin
+  esperar al intercambio —los `tear_demo`— sale limpio aquí y partido en la
+  placa. Es un fallo de programa que el simulador no puede encontrar.
+- **El «frame» es sintético**: en la placa son 16,7 ms de barrido, aquí son N
+  instrucciones ejecutadas.
+
+Ese último punto parece que invalidaría la comparación, y no lo hace, por una
+razón que merece explicarse: **para un programa que espera a que su intercambio
+se aplique, el periodo da igual**. El programa nunca dibuja mientras hay un
+intercambio pendiente, así que la secuencia de frames es idéntica sea cual sea
+el periodo; lo único que cambia es cuántas vueltas da su bucle de espera. Los
+tres casos de `cases/video` sincronizan, y por eso el simulador puede declarar
+`frame_capture` honestamente. `test_capabilities.py` lo comprueba con tres
+periodos distintos.
+
+Y lo que esto habilita, que es lo importante: **`--backend both`**. Un caso de
+vídeo ejecutado en los dos sitios y comparado es la herramienta que encontró
+que `MUL` estaba declarado pero no implementado —pasaba en el simulador y
+fallaba en la FPGA—.
 
 `frame_capture` implica `video`, así que un backend solo declara lo que de
 verdad implementa.

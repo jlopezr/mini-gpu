@@ -33,6 +33,18 @@ from run_gpu_tests import (
 )
 
 
+def _cargar_simulador():
+    """El simulador se carga por ruta, como hace el backend."""
+    import importlib.util
+    from run_gpu_tests import REPOSITORY
+
+    ruta = REPOSITORY / "2.cpu-sim-func" / "minicpu_sim.py"
+    spec = importlib.util.spec_from_file_location("minicpu_sim_for_caps", ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
 class CapabilitiesTest(unittest.TestCase):
 
     def test_capacidad_desconocida_se_rechaza_al_cargar(self):
@@ -106,13 +118,65 @@ class CapabilitiesTest(unittest.TestCase):
         # saber al leer el SKIP.
         self.assertIn("bl8", motivo)
 
-    def test_el_simulador_rechaza_las_graficas(self):
+    def test_el_simulador_acepta_video(self):
+        """Desde que `minicpu_sim.py` tiene `VideoDevice`, los acepta.
+
+        Antes los rechazaba, y este test comprobaba el rechazo. Ahora comprueba
+        lo contrario, que es lo que permite correr los casos de video sin placa.
+        """
         for capacidad in ("video", "frame_capture"):
-            motivo = simulator.incompatibility({"requires": [capacidad]})
-            self.assertIsNotNone(motivo)
-            self.assertIn(capacidad, motivo)
-        # Y no estorba a los casos normales.
+            self.assertIsNone(
+                simulator.incompatibility({"requires": [capacidad]}))
         self.assertIsNone(simulator.incompatibility({"requires": []}))
+
+    def test_el_simulador_no_modela_el_tiempo(self):
+        """Y esto es la letra pequena de lo anterior.
+
+        El simulador valida QUE dibuja un programa, no CUANDO. No hay barrido
+        leyendo la memoria por su cuenta, asi que `underflow` no puede ocurrir:
+        es siempre cero, pase lo que pase.
+
+        Se comprueba explicitamente para que quede constancia de que un verde
+        del simulador en `expect.video.underflow` no significa que eso se haya
+        probado. Solo significa algo en hardware.
+        """
+        modulo = _cargar_simulador()
+        video = modulo.VideoDevice()
+        # Ni siquiera pidiendo intercambios sin parar.
+        for _ in range(10):
+            video.write(video.SWAP, 1)
+            for _ in range(video.frame_instructions):
+                video.tick()
+        self.assertEqual(video.swap_count, 10)
+        self.assertEqual(video.read(video.STATUS) & 1, 0)
+
+    def test_el_reloj_de_frames_es_sintetico_pero_coherente(self):
+        """El periodo no cambia lo que ve un programa que SINCRONIZA.
+
+        Es la propiedad que hace legitimo que el simulador declare
+        `frame_capture`: un programa que espera a que su intercambio se aplique
+        --todos los de cases/video-- nunca dibuja con uno pendiente, asi que la
+        secuencia de frames es la misma sea cual sea el periodo. Lo unico que
+        cambia es cuantas vueltas da el bucle de espera.
+        """
+        modulo = _cargar_simulador()
+        for periodo in (1, 7, 1000):
+            video = modulo.VideoDevice(frame_instructions=periodo)
+            frentes = []
+            for _ in range(4):
+                video.write(video.SWAP, 1)
+                # Como haria el programa: esperar a que se aplique.
+                guarda = 0
+                while video.read(video.SWAP) and guarda < 10000:
+                    video.tick()
+                    guarda += 1
+                frentes.append(video.fb_front)
+            self.assertEqual(video.swap_count, 4, f"periodo {periodo}")
+            # La secuencia de buffers visibles es la misma con cualquier periodo.
+            self.assertEqual(
+                frentes,
+                [0x0102_5800, 0x0100_0000, 0x0102_5800, 0x0100_0000],
+                f"periodo {periodo}")
 
     def test_run_until_exige_frame_capture(self):
         with self.assertRaises(ValueError) as error:
