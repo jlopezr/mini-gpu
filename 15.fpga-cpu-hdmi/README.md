@@ -15,8 +15,8 @@ Está razonado abajo.
 
 **Verificado en placa**: versión 1.10, `underflow` a cero, 63 frames/s medidos
 por el contador de `STATUS`, los dos framebuffers cargados y verificados, y el
-swap intercambiando `FB_FRONT` con `FB_BACK`. De la suite de CPU pasan 11 de 12
-casos; el que falla, `multiply`, no tiene que ver con el vídeo (más abajo).
+swap intercambiando `FB_FRONT` con `FB_BACK`. De la suite de CPU pasan **12 de
+12** casos desde que `MUL`, `MULFX` y `DIV` llegaron de `6.fpga-cpu`.
 
 ## Escalera de hitos
 
@@ -273,17 +273,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](examples/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](examples/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](examples/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](examples/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](examples/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.

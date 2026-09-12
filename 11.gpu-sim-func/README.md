@@ -273,9 +273,9 @@ Prueba de divergencia, reconvergencia y barrera entre dos warps:
 
 ```powershell
 
-python ../1.isa/miniisa_asm.py simt_demo.asm -o simt_demo.bin
+python ../1.isa/miniisa_asm.py examples/simt_demo.asm -o examples/simt_demo.bin
 
-python minigpu_sim.py simt_demo.bin --num-warps 2 --trace-detail
+python minigpu_sim.py examples/simt_demo.bin --num-warps 2 --trace-detail
 
 ```
 
@@ -296,7 +296,7 @@ Las capacidades se configuran mediante la API Python:
 También se pueden indicar por línea de comandos:
 
 ```powershell
-python minigpu_sim.py simt_demo.bin --simt-region-depth 4 --simt-path-depth 8
+python minigpu_sim.py examples/simt_demo.bin --simt-region-depth 4 --simt-path-depth 8
 ```
 
 Ambos argumentos aceptan enteros positivos y valen 8 cuando se omiten.

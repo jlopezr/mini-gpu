@@ -39,11 +39,11 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
 $name = [System.IO.Path]::GetFileNameWithoutExtension($Program)
-$source = "$name.asm"
-$binary = "$name.bin"
+$source = "examples\$name.asm"
+$binary = "examples\$name.bin"
 
 if (-not (Test-Path $source)) {
-    $disponibles = (Get-ChildItem *.asm | ForEach-Object BaseName) -join ', '
+    $disponibles = (Get-ChildItem examples\*.asm | ForEach-Object BaseName) -join ', '
     throw "No existe $source. Programas disponibles: $disponibles"
 }
 

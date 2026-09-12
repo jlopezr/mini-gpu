@@ -1,5 +1,17 @@
 _build/
 __pycache__/
+
+# Los programas viven en examples/ y sus binarios se regeneran con el ensamblador,
+# asi que no se versionan. Se ignoran por extension y no por nombre: la version
+# anterior listaba `swap_*.bin` y `fb_*.bin`, y cuando aparecieron tear_demo.bin
+# y tear_demo_fast.bin se colaron en el repositorio sin que nadie se enterara.
+examples/*.bin
+examples/*.hex
+
+# Excepcion deliberada: 6.fpga-cpu y 10.fpga-cpu-ram versionan este binario para
+# poder grabar la placa sin pasar por el ensamblador. Se mantiene el criterio.
+!examples/fpga_smoke_test.bin
+
+# Imagenes de framebuffer generadas con make_framebuffer.py. Son 150 KB cada
+# una y se rehacen en un segundo.
 fb_*.bin
-swap_*.bin
-swap_*.hex

@@ -1,0 +1,10 @@
+__pycache__/
+
+# Los programas viven en examples/ y sus binarios se regeneran con el ensamblador.
+examples/*.bin
+examples/*.hex
+
+# Volcado que produce run.bat. Estaba versionado, que es como tener commiteada
+# la salida de un programa.
+resultado.bin
+ejecucion.log

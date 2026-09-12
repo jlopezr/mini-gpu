@@ -61,6 +61,16 @@ foreach ($i in 1..$Samples) {
 
 $mean = ($rates | Measure-Object -Average).Average
 "media: {0:N1} fps, {1:N1} ms por frame dibujado" -f $mean, (1000 / $mean)
-if ($mean -gt 57) {
+
+# Un programa que espera al intercambio no puede pasar de los 60 Hz del video,
+# asi que por encima de eso es que no espera a nadie y la cifra es CPU pura.
+# Entre 57 y 63 esta enganchado, y por debajo dice cuantos frames de video
+# consume cada frame dibujado.
+if ($mean -gt 63) {
+    "  -> por encima de los 60 Hz del video: no espera al intercambio, asi que"
+    "     este es el tiempo de dibujo de la CPU sin redondear"
+} elseif ($mean -ge 57) {
     "  -> enganchado a los 60 Hz del video: el dibujo cabe en un frame"
+} else {
+    "  -> {0:N1} frames de video por cada frame dibujado" -f (60 / $mean)
 }
