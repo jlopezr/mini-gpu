@@ -32,6 +32,10 @@ module monitor_mem_adapter_128 #(
     input  wire        reset,
     input  wire        init_done,
     input  wire        cpu_halted,
+    // Alto mientras el bufer de combinacion de escrituras del camino de datos
+    // tenga algo sin volcar. Hay que esperarlo: la CPU para, el PC lee
+    // inmediatamente y sin esto veria la memoria de antes del ultimo frame.
+    input  wire        wb_dirty,
 
     // Lado monitor: identico al que ya usaba monitor.v.
     input  wire [31:0] mem_address,
@@ -64,10 +68,10 @@ module monitor_mem_adapter_128 #(
     input  wire [127:0] rsp_rdata,
     input  wire         rsp_error
 );
-  localparam [1:0] ST_IDLE = 2'd0, ST_ISSUE = 2'd1, ST_WAIT = 2'd2,
-                   ST_MMIO = 2'd3;
+  localparam [2:0] ST_IDLE = 3'd0, ST_ISSUE = 3'd1, ST_WAIT = 3'd2,
+                   ST_MMIO = 3'd3, ST_WAIT_FLUSH = 3'd4;
 
-  reg [1:0] state;
+  reg [2:0] state;
   reg [3:0] byte_offset;
   reg [1:0] mmio_byte;
   reg saved_write;
@@ -131,10 +135,16 @@ module monitor_mem_adapter_128 #(
               // quince. Sin esto habria que leer la linea antes de escribir.
               req_wdata <= {120'd0, mem_write_data} << {mem_address[3:0], 3'b000};
               req_wmask <= 16'h0001 << mem_address[3:0];
-              state <= ST_ISSUE;
+              // La peticion ya esta capturada; si el bufer de escrituras
+              // todavia tiene algo, se espera a que lo vuelque antes de tocar
+              // la SDRAM.
+              state <= wb_dirty ? ST_WAIT_FLUSH : ST_ISSUE;
             end
           end
         end
+
+        ST_WAIT_FLUSH:
+          if (!wb_dirty) state <= ST_ISSUE;
 
         ST_ISSUE:
           if (req_ready) state <= ST_WAIT;

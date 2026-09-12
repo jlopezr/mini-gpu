@@ -191,6 +191,8 @@ module top (
   // compara este camino, y los bancos que los miden siguen pasando.
   // ===========================================================================
   wire init_done, sdram_busy;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
+  wire wb_dirty;
 
   // Puerto comun del arbitro hacia el controlador.
   wire fab_req_valid, fab_req_ready, fab_req_write;
@@ -237,7 +239,9 @@ module top (
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
       .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_error(cpu_dmem_error),
+      .dmem_error(cpu_dmem_error), .cpu_halted(cpu_halted),
+      // Los contadores son para los bancos; la sintesis los quita.
+      .wb_dirty(wb_dirty), .merge_count(), .flush_count(),
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
       .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
       .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
@@ -267,7 +271,7 @@ module top (
 
   monitor_mem_adapter_128 monitor_adapter_i(
       .clk(clk), .reset(reset), .init_done(init_done),
-      .cpu_halted(cpu_halted),
+      .cpu_halted(cpu_halted), .wb_dirty(wb_dirty),
       .mem_address(adapter_monitor_address),
       .mem_write_data(adapter_monitor_write_data),
       .mem_write_enable(adapter_monitor_write_enable),

@@ -14,7 +14,7 @@ esperando a la SDRAM. Es el punto 0 del [`../TODO.md`](../TODO.md).
 | 3 | Lector de vídeo sobre ráfagas | **hecho** |
 | — | Integración del camino entero en `top.v` | **hecho, 2,94× medido** |
 | — | Banco de pruebas del árbitro | **hecho, dos suposiciones corregidas** |
-| 4 | Combinación de escrituras | pendiente |
+| 4 | Combinación de escrituras | **hecho, 4,15× medido** |
 
 Nada de esto está verificado **en placa**: la ULX3S no estaba conectada a esta
 máquina. Todo lo de abajo es simulación, síntesis y barrido de semillas.
@@ -52,19 +52,41 @@ escritura de 32 bits es una ráfaga enmascarada en lugar de dos accesos.
 
 **El reloj baja de 100 a 80 MHz**, y no es opcional: con la restricción en 100,
 el camino de 128 bits **no cumple ninguna semilla** (83,9 a 91,8 MHz). A 80
-cumplen las ocho, entre 88,8 y 98,1, así que la semilla vuelve a no decidir si el
-diseño funciona, que es el mismo criterio con el que la 16 bajó de 120 a 100.
-**El baudio no cambia**: el divisor 80 sigue dando 1 Mbaud exacto, y por eso se
-eligió 80 MHz y no otra frecuencia. La versión del monitor sube a **1.11**.
+cumplen las ocho —hoy, con todo dentro, entre 83,1 y 93,2 MHz—, así que la
+semilla vuelve a no decidir si el diseño funciona, que es el mismo criterio con
+el que la 16 bajó de 120 a 100. **El baudio no cambia**: el divisor 80 sigue
+dando 1 Mbaud exacto, y por eso se eligió 80 MHz y no otra frecuencia. La versión
+del monitor sube a **1.11**.
 
-Así que la mejora neta en tiempo real, con el reloj más lento incluido, es de
-**2,35×**.
+Eso se come parte de la mejora: **4,15× en ciclos son 3,32× en tiempo real**.
 
 El lector de vídeo no da por hecha la alineación. `video_registers` solo obliga a
 alinear `FB_FRONT` y `FB_BACK` a cuatro bytes, así que una base como `0x01000004`
 es legal y dejaría todas las líneas a caballo entre ráfagas. Arranca en la ráfaga
 alineada que contiene la primera palabra y descarta lo que sobra por delante;
 cuesta una ráfaga más por línea, y el banco lo comprueba con los dos casos.
+
+## La combinación de escrituras
+
+El paso 4 guarda **una línea de 16 bytes** en `cpu_dmem_adapter`: mientras la CPU
+siga escribiendo dentro de esa línea, las escrituras se funden y se contestan en
+un ciclo, sin tocar la memoria. Cuatro `STORE` con `+4` caben en una línea, que
+es exactamente el bucle interior.
+
+| | ciclos por palabra | ráfagas |
+|---|---:|---:|
+| La 16 | 145,9 | (1 610 accesos de 16 bits) |
+| Camino de ráfagas | 49,7 | 163 |
+| **Con combinación** | **35,2** | **42** |
+
+**4,15×** sobre la 16, o **3,32× netos** contando el reloj más lento.
+
+Lo delicado no es la combinación sino los tres vaciados forzados —MMIO, parada de
+la CPU, y lectura que caiga en la línea guardada—, y cada uno tiene control
+negativo comprobado: se quitó del RTL y se verificó que el banco falla. Ahí
+apareció un fallo real, que `wb_dirty` bajaba al *empezar* el volcado y no al
+terminarlo, con lo que la carrera con el monitor seguía abierta. Está contado en
+[`docs/combinacion-escrituras.md`](docs/combinacion-escrituras.md).
 
 ## El árbitro, y dos cosas que su banco corrigió
 
@@ -714,6 +736,7 @@ Desde esta carpeta:
 
 ```powershell
 ..\.venv\Scripts\apio.exe test cpu_burst_system_tb.v
+..\.venv\Scripts\apio.exe test write_combine_tb.v
 ..\.venv\Scripts\apio.exe test memory_fabric_tb.v
 ..\.venv\Scripts\apio.exe test video_burst_tb.v
 ..\.venv\Scripts\apio.exe test sdram_controller_128_tb.v
@@ -731,7 +754,8 @@ Desde esta carpeta:
 ..\.venv\Scripts\apio.exe build
 ```
 
-Los seis primeros son de esta carpeta. `memory_fabric_tb.v` es el banco propio
+Los siete primeros son de esta carpeta. `write_combine_tb.v` cubre los tres
+vaciados forzados del bufer de escrituras, cada uno con control negativo. `memory_fabric_tb.v` es el banco propio
 del arbitro, contado mas arriba. `cpu_burst_system_tb.v` es el de
 sistema del camino nuevo: carga un programa por el monitor con la CPU parada, la
 arranca, mide el bucle interior, la para y vuelve a leer lo que escribió —el

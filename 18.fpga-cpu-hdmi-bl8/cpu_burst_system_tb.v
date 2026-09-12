@@ -97,6 +97,8 @@ module cpu_burst_system_tb;
   wire [3:0] mmio_write_mask, mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
+  wire wb_dirty;
+  wire [31:0] wb_merges, wb_flushes;
 
   // Registros de video reducidos a lo imprescindible: este banco solo necesita
   // que la ventana responda, no el swap sincronizado, que ya cubre
@@ -133,7 +135,8 @@ module cpu_burst_system_tb;
       .dmem_write_data(dmem_write_data),
       .dmem_write_enable(dmem_write_enable),
       .dmem_read_data(dmem_read_data), .dmem_ready(dmem_ready),
-      .dmem_error(dmem_error),
+      .dmem_error(dmem_error), .cpu_halted(halted),
+      .wb_dirty(wb_dirty), .merge_count(wb_merges), .flush_count(wb_flushes),
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
       .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
       .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
@@ -154,7 +157,7 @@ module cpu_burst_system_tb;
       .hit_count(ibuf_hits), .miss_count(ibuf_misses));
 
   monitor_mem_adapter_128 monitor_adapter_i (
-      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted),
+      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted), .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_ready(mon_ready),
