@@ -22,8 +22,18 @@
  *     ST_READ (T) -> ST_READ_WAIT0 -> ST_READ_WAIT1 -> ST_READ_CAPTURE (T+3)
  *
  * El modelo reproduce eso con READ_DELAY_CYCLES: 0 es JEDEC puro sobre el papel
- * y 1 es esta placa. El banco corre los dos, y el que manda es el de 1, porque
- * es el que coincide con hardware que ya funciona.
+ * y 1 es un bus que se sale de un ciclo.
+ *
+ * ESTE BANCO NO PUEDE DECIDIR CUAL ES EL DE ESTA PLACA, y es importante no
+ * creerse que si. Controlador y modelo comparten el parametro: emparejados
+ * leen bien con cualquier valor. Por eso corre los dos emparejamientos y un
+ * control negativo cruzado; lo que prueba es que el controlador es correcto
+ * para el retardo que sea y que un desajuste se nota, no cuanto vale.
+ *
+ * Cuanto vale lo dijo la placa, y dijo 0: a 80 MHz el ciclo es de 12,5 ns y el
+ * viaje de ida y vuelta cabe dentro. La 16, a 100 MHz y 10 ns, necesitaba 1.
+ * Fijarlo aqui por analogia con la 16 fue el error: con 1, una vuelta completa
+ * de escribir y leer devolvia la rafaga corrida un beat.
  */
 module sdram_controller_128_tb;
   localparam integer CLK_HZ = 100_000_000;

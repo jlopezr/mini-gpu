@@ -142,6 +142,7 @@ class VideoDevice:
         self.frame_count = 0
         self.swap_count = 0
         self.halt_at = 0
+        self.halt_armed = False
         # Alto durante un solo `tick`, cuando SWAP_COUNT alcanza HALT_AT.
         self.halt_request = False
         self.frame_instructions = frame_instructions
@@ -168,8 +169,10 @@ class VideoDevice:
             self.fb_front, self.fb_back = self.fb_back, self.fb_front
             self.swap_pending = False
             self.swap_count = u32(self.swap_count + 1)
-            if self.halt_at and self.swap_count == self.halt_at:
+            # Alarma de un disparo y `>=`, igual que el hardware: ver `write`.
+            if self.halt_armed and self.swap_count >= self.halt_at:
                 self.halt_request = True
+                self.halt_armed = False
 
     def read(self, offset: int) -> int:
         if offset == self.FB_FRONT:
@@ -199,7 +202,15 @@ class VideoDevice:
             pass            # escribir el bit 0 borra el underflow, que aquí
                             # nunca está puesto: no hay nada que borrar
         elif offset == self.HALT_AT:
+            # Armar la alarma pone el origen de la cuenta aquí: HALT_AT es
+            # «para dentro de N intercambios», no «para en el intercambio
+            # número N desde el encendido». Aquí daría igual —cada ejecución
+            # construye un dispositivo nuevo— pero en la placa no: con la
+            # cuenta libre, un programa solo podría usarla una vez por arranque.
+            # Se copia la regla para que el simulador siga siendo comparable.
             self.halt_at = value
+            self.swap_count = 0
+            self.halt_armed = value != 0
         # SWAP_COUNT es de solo lectura.
 
 

@@ -21,12 +21,21 @@ module sdram_controller_128 #(
     // ve el dato de vuelta estan el camino de salida, el pin, la pista, el pin
     // de vuelta y el camino de entrada, y a 100 MHz eso pasa de un ciclo.
     //
-    // Este parametro nacio valiendo cero, que es lo que dice el papel, y
-    // sdram_controller_128_tb.v lo caza contra el modelo de SDRAM: la rafaga
-    // salia corrida un beat y el beat 0 capturaba alta impedancia. El valor
-    // correcto es 1, que es el punto de muestreo del sdram_controller BL1 de la
-    // 16 —ST_READ, dos esperas y ST_READ_CAPTURE—, que es el que lleva
-    // funcionando en esta placa.
+    // ESTE PARAMETRO ES CALIBRACION DE PLACA. Un banco de pruebas no puede
+    // fijarlo: el modelo tiene el mismo parametro, asi que controlador y modelo
+    // se ponen de acuerdo en el valor que sea y la simulacion pasa igual. Lo
+    // unico que decide es el hardware.
+    //
+    // Nacio valiendo 1 por analogia con el sdram_controller BL1 de la 16, que
+    // muestrea en ST_READ + dos esperas + ST_READ_CAPTURE. La analogia era
+    // mala: la 16 corre a 100 MHz y esta a 80. El retardo de ida y vuelta es
+    // fisico y no cambia con el reloj, asi que a 10 ns se sale del ciclo y a
+    // 12,5 ns cabe dentro.
+    //
+    // Cuenta flancos de SUBIDA, pero DQ se muestrea en la BAJADA anterior
+    // (ver `dq_negedge` mas abajo), asi que el instante real de captura es
+    // medio ciclo antes de lo que sugiere este numero. Con la captura
+    // centrada en el ojo, el valor correcto para esta placa vuelve a ser 1.
     parameter integer READ_DELAY_CYCLES = 1
 ) (
     input wire clk,
@@ -238,6 +247,34 @@ module sdram_controller_128 #(
 
     assign sdram_clk =
         clk;
+
+    // ------------------------------------------------------------
+    // Captura de DQ en el flanco de BAJADA
+    // ------------------------------------------------------------
+    //
+    // La SDRAM recibe nuestro mismo reloj, asi que sus datos de lectura salen
+    // alineados con el flanco de subida, viajan por el pin, la pista y el pin
+    // de vuelta, y llegan CERCA del flanco siguiente. Muestrear ahi es
+    // muestrear en el borde del ojo.
+    //
+    // Lo enseno la placa y no la simulacion. Con captura en subida:
+    //
+    //   - un ciclo antes (READ_DELAY_CYCLES=0) la rafaga sale casi bien, con
+    //     unos pocos bits sueltos mal: fallaban los beats 3 y 7 en DQ4 y DQ5, y
+    //     al recompilar con otra semilla los bits malos CAMBIABAN a DQ4 y DQ6.
+    //     Un fallo que se mueve con la colocacion es margen, no logica;
+    //   - un ciclo despues (=1) la rafaga sale entera corrida un beat.
+    //
+    // O sea que el limite del beat cae entre los dos flancos, y el centro del
+    // ojo esta a mitad de camino. Este registro muestrea justo ahi: medio
+    // ciclo, 6,25 ns a 80 MHz, de margen por los dos lados en vez de cero.
+    //
+    // Con esto, READ_DELAY_CYCLES vuelve a ser 1: el beat 0 se captura en la
+    // bajada de T+2 y se guarda en la subida de T+3.
+    reg [15:0] dq_negedge;
+    always @(negedge clk) begin
+        dq_negedge <= sdram_d;
+    end
 
     // SDRAM DQ is only driven during WRITE burst.
     assign sdram_d =
@@ -722,9 +759,11 @@ module sdram_controller_128 #(
 
                 ST_READ_BURST: begin
 
+                    // Del registro de flanco de bajada, no de DQ directamente.
+                    // Ver `dq_negedge` arriba.
                     rdata[
                         beat_count * 16 +: 16
-                    ] <= sdram_d;
+                    ] <= dq_negedge;
 
                     if (
                         beat_count == 3'd7

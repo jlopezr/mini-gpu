@@ -10,9 +10,10 @@
 //                              bit 1    intercambio pendiente
 //                              31:16    contador de frames de VIDEO
 //                              escribir bit 0 a 1: borra el underflow
-//   0x80000010  SWAP_COUNT R   intercambios completados desde el reset
-//   0x80000014  HALT_AT    RW  parar la CPU al completar este intercambio
-//                              (0 = desactivado)
+//   0x80000010  SWAP_COUNT R   intercambios completados desde que se armo
+//                              HALT_AT (o desde el reset, si no se ha armado)
+//   0x80000014  HALT_AT    RW  parar la CPU dentro de N intercambios; armarlo
+//                              pone SWAP_COUNT a cero (0 = desactivado)
 //
 // ---------------------------------------------------------------------------
 // Para que sirven los tres ultimos, que son de prueba y no de dibujo
@@ -40,6 +41,12 @@
 // Parando en el N-esimo intercambio COMPLETADO, en cambio, el frame esta
 // entero por construccion y en el buffer frontal. Determinista y repetible, y
 // ademas funciona con programas que no colaboren.
+//
+// Es una alarma de UN disparo y RELATIVA al momento de armarla. Las dos cosas
+// las enseno la placa: con `==` contra un contador que solo el reset pone a
+// cero, el caso `bounce` pasaba la primera vez y despues no paraba nunca, para
+// siempre, porque SWAP_COUNT ya iba por 3 655 y la igualdad no volvia a darse.
+// En simulacion no se veia, porque alli cada ejecucion empieza de cero.
 //
 // Las direcciones de framebuffer se alinean a cuatro bytes: los dos bits bajos
 // se ignoran al escribir y se leen como cero. El scanout necesita direcciones
@@ -110,6 +117,7 @@ module video_registers #(
   reg [15:0] frame_count;
   reg [31:0] swap_count;
   reg [31:0] halt_at;
+  reg        halt_armed;
 
   // El underflow nace en el dominio de pixel. Es un nivel pegajoso, asi que
   // basta con sincronizarlo; no hay pulso que perder.
@@ -158,6 +166,7 @@ module video_registers #(
       frame_count <= 16'd0;
       swap_count <= 32'd0;
       halt_at <= 32'd0;
+      halt_armed <= 1'b0;
     end else begin
       // El intercambio va primero para que una escritura del bus en el mismo
       // ciclo gane: si el software fija una base justo ahora, esa es la que
@@ -169,8 +178,18 @@ module video_registers #(
         swap_count <= swap_count + 1'b1;
         // Parar la CPU justo aqui es lo que hace la captura determinista: el
         // frame acaba de completarse y esta entero en el buffer frontal.
-        if (halt_at != 32'd0 && (swap_count + 1'b1) == halt_at)
+        //
+        // El bit de armado se consume al disparar: es una alarma de un
+        // disparo, no una coincidencia permanente.
+        //
+        // Lo que arregla el fallo de la placa es que armar reinicie la cuenta
+        // (ver REG_HALT_AT abajo); el `>=` en lugar de `==` es defensa barata
+        // por si un intercambio pasara de largo, y el banco NO lo distingue:
+        // con la cuenta reiniciada, la igualdad tampoco se pierde.
+        if (halt_armed && (swap_count + 1'b1) >= halt_at) begin
           halt_request <= 1'b1;
+          halt_armed <= 1'b0;
+        end
       end
 
       if (fill_start && fill_first) frame_count <= frame_count + 1'b1;
@@ -188,7 +207,17 @@ module video_registers #(
           // deba poder falsear.
           REG_STATUS:   if (write_mask[0] && write_data[0])
                           underflow_clear <= 1'b1;
-          REG_HALT_AT:  halt_at <= merge(halt_at, write_data, write_mask);
+          // Armar la alarma pone el origen de la cuenta AQUI. `HALT_AT` es
+          // "para dentro de N intercambios", no "para en el intercambio
+          // numero N desde el encendido": sin esto, un programa solo puede
+          // usarla una vez por arranque de la placa, porque la segunda vez el
+          // contador ya ha pasado de largo. El simulador construye el
+          // dispositivo de cero en cada ejecucion, asi que alli no se nota.
+          REG_HALT_AT:  begin
+            halt_at <= merge(halt_at, write_data, write_mask);
+            swap_count <= 32'd0;
+            halt_armed <= merge(halt_at, write_data, write_mask) != 32'd0;
+          end
           default: ;  // SWAP_COUNT es de solo lectura
         endcase
       end

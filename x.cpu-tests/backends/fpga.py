@@ -54,6 +54,11 @@ DEFAULT_VERSION = "ebr"
 # declaran `video`; estan aqui y no en el monitor porque son del sistema, no
 # del protocolo.
 VIDEO_FB_FRONT = 0x8000_0000
+VIDEO_FB_BACK = 0x8000_0004
+# Los valores que `video_registers.v` pone al resetear la placa. El backend los
+# restaura antes de cada caso para que las ejecuciones sean independientes.
+FB_FRONT_RESET = 0x0100_0000
+FB_BACK_RESET = 0x0102_5800
 VIDEO_STATUS = 0x8000_000C
 VIDEO_SWAP_COUNT = 0x8000_0010
 VIDEO_HALT_AT = 0x8000_0014
@@ -76,11 +81,20 @@ def _load_module(name: str, path: Path) -> ModuleType:
 # una palabra son cuatro comandos. Se usa `write_memory`/`read_memory` porque
 # son los mismos que ya atraviesan el adaptador y la ventana MMIO.
 def _write_register(client, address: int, value: int) -> None:
-    client.write_memory(address, value.to_bytes(4, "little"))
+    """Byte a byte, no por bloque.
+
+    Los registros de video no son memoria: viven fuera de las regiones que
+    `write_memory` valida, y el monitor solo los atiende con WRITE_BYTE. Por
+    bloque el cliente lo rechaza antes de enviar nada.
+    """
+    for offset, byte in enumerate(value.to_bytes(4, "little")):
+        client.write_byte(address + offset, byte)
 
 
 def _read_register(client, address: int) -> int:
-    return int.from_bytes(client.read_memory(address, 4), "little")
+    return int.from_bytes(
+        bytes(client.read_byte(address + offset) for offset in range(4)),
+        "little")
 
 
 def expand_for(names) -> frozenset:
@@ -214,6 +228,14 @@ class FpgaBackend:
                 # sabe cual fue. En las versiones sin `frame_capture` STATUS es
                 # de solo lectura y la escritura se ignora, que es inofensivo.
                 _write_register(client, VIDEO_STATUS, 1)
+                # Y devolver las bases a su sitio, por el mismo motivo: solo el
+                # reset de la placa las reinicia, asi que un caso que deje un
+                # numero IMPAR de intercambios se las pasa cruzadas al
+                # siguiente. Sin esto, `video-registers` falla una de cada dos
+                # veces segun lo que corriera antes, y qué buffer es el frontal
+                # depende del caso anterior en vez del propio.
+                _write_register(client, VIDEO_FB_FRONT, FB_FRONT_RESET)
+                _write_register(client, VIDEO_FB_BACK, FB_BACK_RESET)
                 # HALT_AT y SWAP_COUNT solo existen donde hay `frame_capture`:
                 # en la 16 la ventana de registros es de 16 bytes y escribir en
                 # 0x80000014 seria un acceso fuera de ella.

@@ -4,7 +4,12 @@
 ; No dibuja nada. Comprueba lo unico que un programa necesita saber de los
 ; registros para usar el doble buffer:
 ;
-;   - FB_FRONT y FB_BACK arrancan donde dice el hardware;
+;   - FB_FRONT y FB_BACK valen lo que el runner acaba de dejarles;
+;     OJO: esto NO comprueba el valor de encendido. Solo el reset de la placa
+;     reinicia esas bases, asi que un caso anterior que dejara un numero impar
+;     de intercambios se las pasaba cruzadas a este, y fallaba una de cada dos
+;     veces. Desde que el backend las normaliza antes de cada ejecucion, lo que
+;     queda probado aqui es que se leen, no de donde parten;
 ;   - escribir FB_BACK lo cambia, y se alinea a cuatro bytes;
 ;   - escribir SWAP pide un intercambio, y al aplicarse las dos bases se
 ;     INTERCAMBIAN, no se copia una sobre la otra;

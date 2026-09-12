@@ -111,10 +111,18 @@ module top (
     if (reset || cpu_run_request) begin
       cpu_cycles <= 32'd0;
       cpu_instructions <= 32'd0;
-    end else if (!cpu_halted) begin
-      // Saturan en vez de dar la vuelta: un contador que ha dado la vuelta
-      // miente en silencio, y a 80 MHz son 53 segundos.
-      if (cpu_cycles != 32'hffff_ffff) cpu_cycles <= cpu_cycles + 1'b1;
+    end else begin
+      // Los ciclos solo cuentan con la CPU en marcha. Saturan en vez de dar la
+      // vuelta: un contador que ha dado la vuelta miente en silencio, y a
+      // 80 MHz son 53 segundos.
+      if (!cpu_halted && cpu_cycles != 32'hffff_ffff)
+        cpu_cycles <= cpu_cycles + 1'b1;
+      // Las instrucciones NO se condicionan a `!cpu_halted`, y esa es la
+      // diferencia entre contar bien y contar una de menos siempre: el `HALT`
+      // retira en el mismo ciclo en que `cpu_halted` sube, asi que con el
+      // filtro puesto se perdia justo esa. El contraste con el simulador en
+      // `--measure` lo delato: 11 contra 12 en todos los programas a la vez,
+      // que es un off-by-one de definicion y no dos CPUs distintas.
       if (cpu_instruction_retired && cpu_instructions != 32'hffff_ffff)
         cpu_instructions <= cpu_instructions + 1'b1;
     end

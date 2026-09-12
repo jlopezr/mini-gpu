@@ -288,9 +288,16 @@ module video_registers_tb;
     repeat (2) @(negedge clk);
     if (halt_count != mark) $fatal(1, "HALT_AT a cero paro la CPU");
 
-    // Armar para el intercambio siguiente.
+    // Armar: la cuenta es RELATIVA a este momento, asi que se pide 2 y no
+    // «el que haga dos mas». Armar tambien pone SWAP_COUNT a cero.
     bus_read(5'h10, swaps_before);
-    bus_write_word(5'h14, swaps_before + 2);
+    if (swaps_before == 32'd0)
+      $fatal(1, "el banco no sirve: hacen falta intercambios previos");
+    bus_write_word(5'h14, 32'd2);
+    bus_read(5'h10, value);
+    if (value !== 32'd0)
+      $fatal(1, "armar HALT_AT no puso SWAP_COUNT a cero: %0d", value);
+
     // El intercambio de en medio no debe parar nada.
     mark = halt_count;
     bus_write_word(5'h08, 32'h1);
@@ -303,7 +310,31 @@ module video_registers_tb;
     line_request(1'b1, base_seen);
     repeat (2) @(negedge clk);
     if (halt_count == mark)
-      $fatal(1, "HALT_AT no paro en el intercambio %0d", swaps_before + 2);
+      $fatal(1, "HALT_AT no paro a los dos intercambios");
+
+    // --- Y se puede volver a armar -----------------------------------------
+    // Este es el fallo que encontro la placa y que la simulacion no veia: con
+    // `==` contra un contador que solo el reset pone a cero, la segunda vez
+    // que un programa arma la alarma no para NUNCA, porque SWAP_COUNT ya paso
+    // de largo. El caso `bounce` pasaba la primera vez y fallaba siempre
+    // despues.
+    //
+    // Control negativo: sin el arreglo, este bloque se queda en «no paro».
+    bus_write_word(5'h14, 32'd1);
+    mark = halt_count;
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    repeat (2) @(negedge clk);
+    if (halt_count == mark)
+      $fatal(1, "HALT_AT no volvio a armarse");
+
+    // Y es de UN disparo: consumida, los intercambios siguientes no paran.
+    mark = halt_count;
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    repeat (2) @(negedge clk);
+    if (halt_count != mark)
+      $fatal(1, "HALT_AT siguio disparando despues de consumirse");
 
     $display("OK: swap, contadores, borrado de underflow y parada en el swap N");
     $finish;

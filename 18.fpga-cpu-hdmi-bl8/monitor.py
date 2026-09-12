@@ -20,7 +20,9 @@ DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
 # Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.
 MMIO_BASE = 0x8000_0000
-MMIO_LIMIT = 0x8000_000F
+# 32 bytes, no 16: la 18 anade SWAP_COUNT (0x10) y HALT_AT (0x14) a los cuatro
+# registros que venian de la 16.
+MMIO_LIMIT = 0x8000_001F
 MAX_BLOCK_SIZE = 256
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
