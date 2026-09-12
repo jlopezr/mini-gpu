@@ -19,4 +19,6 @@ fb_*.bin
 # Frames volcados por video_frame_tb.v y capturados por capture-frames.ps1.
 # Se regeneran en segundos y son la salida de una prueba, no su entrada.
 frame_*.ppm
+frame_full.hex
+frame_full.bin
 capture_*.bin

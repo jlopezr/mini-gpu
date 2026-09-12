@@ -66,6 +66,46 @@ es legal y dejaría todas las líneas a caballo entre ráfagas. Arranca en la r�
 alineada que contiene la primera palabra y descarta lo que sobra por delante;
 cuesta una ráfaga más por línea, y el banco lo comprueba con los dos casos.
 
+## Un framebuffer de verdad, sin placa
+
+[`video_fullframe_tb.v`](video_fullframe_tb.v) es la prueba más cercana a la
+placa que se puede hacer sin ella: **320×240 de verdad**, dibujado por la CPU
+real ejecutando un programa real desde la SDRAM, sobre el camino de memoria
+completo. Tarda **35 segundos** y simula 2,5 millones de ciclos de CPU.
+
+Ejercita lo que un simulador funcional no puede: el búfer de instrucciones, la
+combinación de escrituras con su vaciado forzado al escribir `SWAP`, el
+controlador BL8, el árbitro con dos clientes compitiendo, y `HALT_AT` dentro del
+sistema completo en vez de aislado.
+
+```powershell
+..\.venv\Scripts\apio.exe test video_fullframe_tb.v
+..\.venv\Scripts\python.exe ..\tools\frame-to-image.py frame_full.bin mirar.jpg
+..\.venv\Scripts\python.exe ..\tools\frame-to-image.py frame_full.hex mirar.png --escala 2
+```
+
+Vuelca el framebuffer en dos formatos a la vez: `.bin` en RGB565 crudo, que es
+**exactamente lo que devuelve `monitor.py read-block` desde la placa** —así el
+mismo fichero esperado sirve para los dos sitios—, y `.hex` de medias palabras
+una por línea, para mirar un píxel concreto con un editor de texto.
+
+Dos cosas difieren de la placa y conviene saberlas:
+
+- **Los framebuffers están en `0x00010000` y `0x00035800`**, no en `0x01000000`.
+  El modelo de SDRAM saca la fila de los bits `[23:11]` de la dirección de
+  palabra, y `0x01000000` pediría la fila 4096. Con las bases bajas los dos
+  buffers caben en 128 filas. No toca ningún camino lógico.
+- **No se comprueba la salida del scanout píxel a píxel.** Renderizar 640×480
+  son 420 000 ciclos de píxel y aquí ya cuesta. El scanout corre igualmente
+  —hace falta para que ocurran los intercambios y para vigilar el underflow— y
+  la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
+  resolución reducida, donde es barata.
+
+El programa es [`examples/fullframe.asm`](examples/fullframe.asm), que pinta una
+«L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un marco
+completo se ve igual si alguien intercambia los ejes; una línea arriba y una
+columna a la izquierda, no.
+
 ## La combinación de escrituras
 
 El paso 4 guarda **una línea de 16 bytes** en `cpu_dmem_adapter`: mientras la CPU
@@ -735,6 +775,8 @@ concreto y hay 156 DSP sin usar.
 Desde esta carpeta:
 
 ```powershell
+..\.venv\Scripts\apio.exe test video_fullframe_tb.v
+..\.venv\Scripts\apio.exe test video_frame_tb.v
 ..\.venv\Scripts\apio.exe test cpu_burst_system_tb.v
 ..\.venv\Scripts\apio.exe test write_combine_tb.v
 ..\.venv\Scripts\apio.exe test memory_fabric_tb.v
