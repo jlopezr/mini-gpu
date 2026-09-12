@@ -112,8 +112,39 @@ de `SSY`. Hacerlo cuando `SSY` esté cerrado.
 4. Revisar que no haya cosas divergentes innecesariamente. una optimizacion en una version si y en otra no. MULX no esta en CPU pero si en GPU...
     - Que ciclos hay para cada version de la CPU y GPU, y que sean consistentes.
 5. Si hay algun test individual de una version que tiene sentido en tescases.
+
+    **En marcha.** El primero que se ha subido es el de video: `cases/video/band`
+    comprueba que la cadena grafica entera produce el framebuffer correcto,
+    y para eso `x.cpu-tests` gana un mecanismo de **capacidades**.
+
+    El mecanismo ya existia para GPU (`requires: ["atomic_warp_faults"]`); lo
+    que se ha hecho es extenderlo a CPU y anadir `video` y `frame_capture`.
+    Cada backend publica lo que tiene y el runner omite lo que no cabe, sin
+    contarlo como fallo.
+
+    Lo que queda por subir, por orden de lo que mas cubriria:
+
+    - Los cuatro `swap_demo` / `tear_demo` de la 16 y la 18, que hoy solo se
+      miran a ojo. Necesitan que el modelo de referencia sepa mover la banda,
+      o un `run_until` que pare siempre en el mismo punto del ciclo.
+    - `examples/fpga_smoke_test.asm`, que esta duplicado en 6, 10, 16 y 18.
+    - Los bancos de `memory-test` del monitor, que son un caso de conformidad
+      disfrazado de comando.
+
 6. Tools compartidas en carpeta tools.
     - Para hacer sweep
     - Para hacer test
     - Para ensamblar, lanzar un programa
     - build que se guarde el detalle del build (Fmax, caminos críticos, histograma) y que se pueda tener historico. Que sea facil de usar para humanos y IA :)
+
+    **Empezado.** `tools/compare-frames.py` compara frames --PPM de simulacion
+    o volcados RGB565 de la placa-- y dice DONDE difieren, no solo cuantos
+    pixeles. Es la primera herramienta compartida de prueba.
+
+    Sigue habiendo duplicacion que cabria aqui: `run-demo.ps1` esta en 16 y 18,
+    `capture-frames.ps1` y `measure-demo.ps1` van por el mismo camino, y
+    `make_framebuffer.py` esta copiado en las dos. Son candidatas naturales a
+    `tools/`, pero ojo: la convencion del repositorio es que cada carpeta sea
+    **autonoma**, y compartir scripts la rompe. La linea que parece razonable
+    es compartir lo que no depende de una version concreta (comparar frames,
+    barrer semillas) y dejar en cada carpeta lo que habla con SU bitstream.

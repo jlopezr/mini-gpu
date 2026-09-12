@@ -409,3 +409,72 @@ Una ruta solicitada explícitamente con arquitectura incompatible produce códig
 2. Se valida la selección completa antes de construir los backends, ejecutar
 programas o abrir conexiones FPGA; una selección mixta incompatible no ejecuta
 parcialmente los casos válidos.
+
+## Capacidades
+
+La arquitectura no basta: dentro de «CPU» hay bitstreams muy distintos. El de
+`6.fpga-cpu` no tiene vídeo; el de `16.fpga-cpu-hdmi` sí, pero no puede pararse
+en un frame concreto; el de `18.fpga-cpu-hdmi-bl8` puede las dos cosas. Un caso
+declara lo que necesita:
+
+```json
+"requires": ["frame_capture"]
+```
+
+| Capacidad | Qué significa | Quién la tiene |
+|---|---|---|
+| `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
+| `video` | Scanout leyendo un framebuffer de memoria y registros en `0x80000000` | `hdmi`, `bl8` |
+| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | solo `bl8` |
+
+`frame_capture` implica `video`, así que un backend solo declara lo que de
+verdad implementa.
+
+Cada backend publica `incompatibility(case, version)`. Cuando falta algo, el
+runner imprime `SKIP` y lo cuenta **aparte de los fallos**: un caso omitido por
+no haber hardware no es un caso roto, y mezclarlos haría inútil el recuento.
+El motivo dice dónde sí está:
+
+```text
+SKIP video-band [cpu-simulator]: el simulador no tiene frame_capture:
+    no hay barrido ni framebuffer, use --backend cpu-fpga --version bl8
+```
+
+Si el caso se pide **por ruta explícita**, en cambio, no se omite: se considera
+un error. Pedir un caso concreto y que se salte en silencio sería peor.
+
+### Casos de vídeo
+
+Tres piezas más, y las tres solo se admiten con la capacidad declarada:
+
+```json
+{
+  "requires": ["frame_capture"],
+  "run_until": { "swap": 4 },
+  "expect": {
+    "video": { "underflow": false },
+    "frame": { "file": "expected/frame.bin" }
+  }
+}
+```
+
+**`run_until.swap` se ancla al intercambio, no al contador de frames de vídeo.**
+Parar cuando el contador de frames llega a N deja la CPU en un punto cualquiera
+de su dibujo, con el buffer trasero a medias, y lo que se capture depende de la
+velocidad relativa entre CPU y barrido: el caso saldría distinto cada vez. En el
+N-ésimo intercambio completado el frame está entero por construcción.
+
+**Con `run_until` no se puede declarar `expect.pc`**, y el runner lo rechaza al
+cargar. La parada es asíncrona, así que el PC queda donde pille a la CPU;
+aceptarlo daría un caso que pasa o falla según lo rápido que vaya ese día.
+
+**`expect.frame` no lleva dirección** a propósito. Tras el intercambio N,
+`FB_FRONT` alterna entre los dos buffers según la paridad: si el caso tuviera
+que decir la dirección, la mitad apuntarían al buffer que no es. El backend lee
+`FB_FRONT` y vuelca desde ahí.
+
+Y el fichero de `frame` tiene que salir de un **modelo**, no de una captura de
+la propia placa. Si el esperado se genera capturando, el caso solo comprueba que
+la placa sigue haciendo lo que hacía, incluido lo que haga mal.
+[`cases/video/band/reference.py`](cases/video/band/reference.py) es el ejemplo.
+Para ver dónde difieren dos frames, [`../tools/compare-frames.py`](../tools/compare-frames.py).

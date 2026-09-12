@@ -203,6 +203,33 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
                 f"obtenido 0x{result[field]:08x}"
             )
 
+    if expected.get("video") is not None:
+        observado = result.get("video", {})
+        esperado_under = expected["video"]["underflow"]
+        if observado.get("underflow") != esperado_under:
+            errors.append(
+                f"{backend_name}: video.underflow: esperado {esperado_under!r}, "
+                f"obtenido {observado.get('underflow')!r}"
+            )
+
+    if expected.get("frame") is not None:
+        obtenido = result.get("video", {}).get("frame")
+        if obtenido is None:
+            errors.append(f"{backend_name}: el backend no devolvio ningun frame")
+        elif obtenido != expected["frame"]:
+            # Un recuento de pixeles distintos no orienta; DONDE estan si. El
+            # detalle fino lo da tools/compare-frames.py sobre los volcados.
+            distintos = sum(
+                1 for a, b in zip(expected["frame"][::2], obtenido[::2])
+            )
+            offset = first_memory_difference(expected["frame"], obtenido)
+            pixel = offset // 2 if offset is not None else 0
+            errors.append(
+                f"{backend_name}: frame distinto del esperado; primera "
+                f"diferencia en el pixel {pixel} "
+                f"(x={pixel % 320}, y={pixel // 320}) de {distintos}"
+            )
+
     for register, expected_value in expected["registers"].items():
         actual = result["registers"][register]
         if actual != expected_value:
@@ -300,6 +327,92 @@ def simulator_options(raw: dict, architecture: str) -> dict:
     return dict(options)
 
 
+# ---------------------------------------------------------------------------
+# Capacidades
+#
+# Un caso declara en `requires` lo que necesita del sistema, y cada backend
+# publica `incompatibility(case, version)` diciendo si lo tiene. El runner
+# imprime SKIP y lo cuenta aparte de los fallos: un caso omitido por no haber
+# hardware no es un caso roto, y mezclarlos haria inutil el recuento.
+#
+# El mecanismo ya existia para `atomic_warp_faults`. Lo que se anade aqui es
+# video, y con el la posibilidad de usar `requires` tambien en casos de CPU:
+# hasta ahora estaba restringido a GPU porque no habia ninguna otra capacidad.
+#
+# Dos capacidades y no una, porque la diferencia es real:
+#
+#   video          hay scanout leyendo un framebuffer de memoria y ventana de
+#                  registros en 0x80000000. La tienen 16 y 18.
+#   frame_capture  ademas hay HALT_AT, SWAP_COUNT y borrado de underflow, o
+#                  sea se puede parar en un intercambio concreto y leer el
+#                  frame de forma repetible. Solo la 18.
+#
+# Con una sola capacidad, un caso de captura se omitiria en la 16 por el motivo
+# equivocado: alli hay video, lo que no hay es con que capturar.
+CAPABILITIES = {
+    "atomic_warp_faults": "gpu",
+    "video": "cpu",
+    "frame_capture": "cpu",
+}
+# `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
+# video. Se expande al cargar para que un backend solo tenga que declarar lo
+# que de verdad implementa.
+CAPABILITY_IMPLIES = {"frame_capture": ("video",)}
+
+
+def expand_capabilities(names) -> frozenset:
+    """Anade las capacidades implicadas por las declaradas."""
+    resultado = set(names)
+    for name in list(resultado):
+        resultado.update(CAPABILITY_IMPLIES.get(name, ()))
+    return frozenset(resultado)
+
+
+def parse_requires(raw: dict, architecture: str) -> list:
+    requires = raw.get("requires", [])
+    if not isinstance(requires, list):
+        raise ValueError("requires debe ser una lista")
+    for item in requires:
+        if item not in CAPABILITIES:
+            opciones = ", ".join(sorted(CAPABILITIES))
+            raise ValueError(f"capacidad desconocida {item!r}; opciones: {opciones}")
+        if CAPABILITIES[item] != architecture:
+            raise ValueError(
+                f"la capacidad {item!r} es de arquitectura "
+                f"{CAPABILITIES[item]}, y el caso es {architecture}"
+            )
+    if len(set(requires)) != len(requires):
+        raise ValueError("requires tiene capacidades repetidas")
+    return sorted(requires)
+
+
+def parse_run_until(raw: dict, requires: list) -> dict | None:
+    """Condicion de parada distinta de «hasta que el programa haga HALT».
+
+    Hoy solo `swap`: parar al completar el intercambio numero N. Se ancla al
+    intercambio y no al contador de frames de video a proposito. Parar cuando
+    el contador de frames llega a N para la CPU en un punto cualquiera de su
+    dibujo, con el buffer trasero a medias, y lo que se capture depende de la
+    velocidad relativa entre la CPU y el barrido: el caso saldria distinto cada
+    vez. En el N-esimo intercambio completado el frame esta entero por
+    construccion.
+    """
+    run_until = raw.get("run_until")
+    if run_until is None:
+        return None
+    if not isinstance(run_until, dict) or set(run_until) != {"swap"}:
+        raise ValueError("run_until solo admite {\"swap\": N}")
+    swap = run_until["swap"]
+    if not isinstance(swap, int) or swap < 1:
+        raise ValueError("run_until.swap debe ser un entero positivo")
+    if "frame_capture" not in requires:
+        raise ValueError(
+            "run_until.swap necesita requires: [\"frame_capture\"], que es "
+            "quien declara que el sistema tiene el registro HALT_AT"
+        )
+    return {"swap": swap}
+
+
 def case_architecture(raw: object) -> str:
     if not isinstance(raw, dict) or raw.get("architecture") not in ("cpu", "gpu"):
         raise ValueError("El caso requiere architecture: cpu o gpu")
@@ -366,6 +479,42 @@ def load_case(path: Path) -> dict:
             raise ValueError(f"Dump fuera del mapa de memoria: {item['file']}")
         expected_memory[(address, len(data))] = data
 
+    requires = parse_requires(raw, architecture)
+    run_until = parse_run_until(raw, requires)
+    # `frame_capture` implica `video`, asi que un caso que declare la captura
+    # no tiene que declarar las dos.
+    capacidades = expand_capabilities(requires)
+
+    # --- expectativas de video -------------------------------------------
+    #
+    # `frame` no lleva direccion a proposito. Tras el intercambio N, FB_FRONT
+    # alterna entre los dos buffers segun la paridad, asi que si el caso tuviera
+    # que decir la direccion, la mitad de los casos apuntarian al buffer que no
+    # es. El backend lee FB_FRONT y vuelca desde ahi.
+    expected_video = None
+    if "video" in expected_raw:
+        video_raw = expected_raw["video"]
+        if not isinstance(video_raw, dict) or set(video_raw) - {"underflow"}:
+            raise ValueError("expect.video solo admite underflow")
+        if not isinstance(video_raw.get("underflow", False), bool):
+            raise ValueError("expect.video.underflow debe ser booleano")
+        expected_video = {"underflow": video_raw.get("underflow", False)}
+
+    expected_frame = None
+    if "frame" in expected_raw:
+        frame_raw = expected_raw["frame"]
+        if not isinstance(frame_raw, dict) or set(frame_raw) != {"file"}:
+            raise ValueError("expect.frame solo admite file")
+        expected_frame = load_data_file(directory / frame_raw["file"])
+        if not expected_frame:
+            raise ValueError(f"El frame esperado {frame_raw['file']} esta vacio")
+
+    if (expected_video or expected_frame is not None) and "video" not in capacidades:
+        raise ValueError(
+            "las expectativas de video necesitan requires: [\"video\"] o "
+            "[\"frame_capture\"]"
+        )
+
     max_instructions = raw.get("max_instructions", 1_000_000)
     timeout_seconds = raw.get("timeout_seconds", 5.0)
     if not isinstance(max_instructions, int) or max_instructions < 1:
@@ -373,13 +522,9 @@ def load_case(path: Path) -> dict:
     if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds debe ser positivo")
 
-    requires = raw.get('requires', [])
-    if not isinstance(requires, list) or any(item != 'atomic_warp_faults' for item in requires):
-        raise ValueError('requires solo admite atomic_warp_faults')
-    if requires and not gpu:
-        raise ValueError('requires solo esta disponible para casos GPU')
     case = {
         "requires": requires,
+        "run_until": run_until,
         "architecture": architecture,
         "name": raw["name"],
         "program": program,
@@ -395,6 +540,8 @@ def load_case(path: Path) -> dict:
             ),
             "registers": registers,
             "memory": expected_memory,
+            "video": expected_video,
+            "frame": expected_frame,
         },
     }
     if gpu:
@@ -405,6 +552,15 @@ def load_case(path: Path) -> dict:
             raise ValueError("warp_size debe ser positivo")
         case["warp_config"] = warp_config
         case["expected"]["observations"] = gpu_expectations(expected_raw, size)
+    elif run_until is not None:
+        # Con `run_until` la parada es ASINCRONA: llega cuando se completa el
+        # intercambio, y el PC queda donde pillara a la CPU. Exigirlo aqui haria
+        # el caso intermitente, asi que se admite no declararlo. Lo que si
+        # sigue comprobandose es que paro y que no fue por error.
+        if "pc" in expected_raw:
+            raise ValueError(
+                "con run_until el PC no es determinista: la parada es asincrona"
+            )
     else:
         case["expected"]["pc"] = parse_integer(expected_raw["pc"], "PC")
     return case
@@ -581,6 +737,15 @@ def main() -> int:
                     **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
                     **({"observation_fields": set(case["expected"]["observations"])}
                        if backend_name == "gpu-fpga" else {}),
+                    # Solo la FPGA de CPU tiene subsistema de video, y solo se
+                    # le pasa cuando el caso lo pide: asi un caso normal no
+                    # paga las lecturas de registros ni el volcado del frame.
+                    **({"video": {
+                        "run_until_swap": (case["run_until"] or {}).get("swap"),
+                        "capture_frame": case["expected"]["frame"] is not None,
+                    }} if backend_name == "cpu-fpga" and (
+                        case["run_until"] or case["expected"]["video"]
+                        or case["expected"]["frame"] is not None) else {}),
                     **({
                         "trace": args.trace,
                         "trace_detail": args.trace_detail,

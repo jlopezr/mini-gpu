@@ -1,0 +1,15 @@
+{
+  "architecture": "cpu",
+  "name": "video-band",
+  "program": "band.asm",
+  "requires": ["frame_capture"],
+  "run_until": { "swap": 4 },
+  "timeout_seconds": 20.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "video": { "underflow": false },
+    "frame": { "file": "expected/frame.bin" }
+  }
+}

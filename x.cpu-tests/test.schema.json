@@ -183,12 +183,28 @@
         }
       }
     },
+    "run_until": {
+      "description": "Condicion de parada distinta de HALT. Se ancla al intercambio de buffers, no al contador de frames: parar en un frame de video cualquiera deja el buffer trasero a medias y el caso sale distinto cada vez.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "swap"
+      ],
+      "properties": {
+        "swap": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "requires": {
       "type": "array",
       "uniqueItems": true,
       "items": {
         "enum": [
-          "atomic_warp_faults"
+          "atomic_warp_faults",
+          "video",
+          "frame_capture"
         ]
       }
     }

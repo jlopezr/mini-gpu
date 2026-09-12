@@ -11,24 +11,48 @@ from types import ModuleType
 from . import board
 
 
+# `capabilities` dice que tiene cada bitstream, y es lo que el runner contrasta
+# con el `requires` de cada caso. Declarar solo lo que de verdad se implementa:
+# `frame_capture` ya implica `video`, y el runner lo expande.
 VERSIONS = {
     "ebr": {
         "monitor_path": Path("6.fpga-cpu/monitor.py"),
         "monitor_version": (1, 6),
         "description": "FPGA con 16 KiB de EBR para programa y datos",
+        "capabilities": (),
     },
     "sdram": {
         "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
         "monitor_version": (1, 5),
         "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
+        "capabilities": (),
     },
     "hdmi": {
         "monitor_path": Path("16.fpga-cpu-hdmi/monitor.py"),
         "monitor_version": (1, 10),
         "description": "Como sdram, mas video HDMI; 100 MHz y 1 Mbaud",
+        # Tiene scanout y ventana de registros, pero no HALT_AT ni SWAP_COUNT,
+        # asi que no puede parar en un intercambio concreto.
+        "capabilities": ("video",),
+    },
+    "bl8": {
+        "monitor_path": Path("18.fpga-cpu-hdmi-bl8/monitor.py"),
+        "monitor_version": (1, 11),
+        "description": "Como hdmi, con memoria en rafagas BL8; 80 MHz y 1 Mbaud",
+        "capabilities": ("frame_capture",),
     },
 }
 DEFAULT_VERSION = "ebr"
+
+# Registros de video, en direcciones de byte. Solo los usan las versiones que
+# declaran `video`; estan aqui y no en el monitor porque son del sistema, no
+# del protocolo.
+VIDEO_FB_FRONT = 0x8000_0000
+VIDEO_STATUS = 0x8000_000C
+VIDEO_SWAP_COUNT = 0x8000_0010
+VIDEO_HALT_AT = 0x8000_0014
+# RGB565 de 320x240.
+FRAME_BYTES = 320 * 240 * 2
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -42,12 +66,53 @@ def _load_module(name: str, path: Path) -> ModuleType:
     return module
 
 
+# Los registros de video son de 32 bits, pero el monitor accede byte a byte:
+# una palabra son cuatro comandos. Se usa `write_memory`/`read_memory` porque
+# son los mismos que ya atraviesan el adaptador y la ventana MMIO.
+def _write_register(client, address: int, value: int) -> None:
+    client.write_memory(address, value.to_bytes(4, "little"))
+
+
+def _read_register(client, address: int) -> int:
+    return int.from_bytes(client.read_memory(address, 4), "little")
+
+
+def expand_for(names) -> frozenset:
+    """Expande las capacidades implicadas.
+
+    El import va dentro para no crear una dependencia circular: `run_gpu_tests`
+    importa los backends al arrancar.
+    """
+    from run_gpu_tests import expand_capabilities
+
+    return expand_capabilities(names)
+
+
+def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
+    """Lo que tiene este bitstream, con las implicaciones ya expandidas."""
+    return expand_for(VERSIONS[version]["capabilities"])
+
+
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Rechaza un caso que no cabe en el mapa, antes de tocar la placa.
 
     El mapa lo declara el `monitor.py` de cada versión, que es quien lo
     implementa; aquí solo se lee su constante, sin abrir el puerto.
     """
+    disponibles = capabilities(version)
+    faltan = [name for name in case.get("requires", []) if name not in disponibles]
+    if faltan:
+        # El motivo dice qué versión sí lo tiene, que es lo que uno quiere
+        # saber cuando ve el SKIP.
+        con_ello = sorted(
+            name for name, config in VERSIONS.items()
+            if set(faltan) <= expand_for(config["capabilities"])
+        )
+        sugerencia = f"; la tienen: {', '.join(con_ello)}" if con_ello else ""
+        return (
+            f"el bitstream {version!r} no tiene {', '.join(faltan)}{sugerencia}"
+        )
+
     monitor = _load_module(
         f"fpga_monitor_{version}_for_regions",
         Path(__file__).resolve().parents[2] / VERSIONS[version]["monitor_path"],
@@ -100,6 +165,7 @@ class FpgaBackend:
         memory_ranges: list[tuple[int, int]],
         max_instructions: int,
         timeout_seconds: float,
+        video: dict | None = None,
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
 
@@ -134,6 +200,17 @@ class FpgaBackend:
             for address, data in initial_memory:
                 client.write_memory(address, data)
 
+            if video:
+                # Borrar el underflow de la ejecucion anterior ANTES de
+                # arrancar. Es pegajoso, asi que sin esto el primer caso que lo
+                # provoque hace fallar a todos los demas de la sesion y no se
+                # sabe cual fue.
+                _write_register(client, VIDEO_STATUS, 1)
+                swap = video.get("run_until_swap")
+                # Cero desarma la parada. Se escribe siempre, tambien cuando el
+                # caso no la usa, para no heredarla del caso anterior.
+                _write_register(client, VIDEO_HALT_AT, swap or 0)
+
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
 
@@ -157,6 +234,25 @@ class FpgaBackend:
                 for address, size in memory_ranges
             }
 
+            video_result = None
+            if video:
+                # Se lee DESPUES de que la CPU haya parado. Los registros
+                # responden tambien con la CPU en marcha, pero el frame no: el
+                # monitor solo posee la memoria con la CPU parada.
+                estado = _read_register(client, VIDEO_STATUS)
+                video_result = {
+                    "underflow": bool(estado & 1),
+                    "frames": estado >> 16,
+                    "swaps": _read_register(client, VIDEO_SWAP_COUNT),
+                    "fb_front": _read_register(client, VIDEO_FB_FRONT),
+                    "frame": None,
+                }
+                if video.get("capture_frame"):
+                    # Desde FB_FRONT, no desde una direccion fija: tras el
+                    # intercambio N el buffer visible alterna segun la paridad.
+                    video_result["frame"] = client.read_memory(
+                        video_result["fb_front"], FRAME_BYTES)
+
         return {
             "halted": status.halted,
             "error": status.error,
@@ -164,4 +260,5 @@ class FpgaBackend:
             "pc": status.pc,
             "registers": registers,
             "memory": memory,
+            "video": video_result,
         }

@@ -18,6 +18,27 @@ VERSIONS = {
 DEFAULT_VERSION = "current"
 
 
+def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
+    """El simulador no tiene vídeo, y no es una carencia que vaya a llenarse.
+
+    Es un simulador de la ISA: no hay barrido, ni framebuffer que nadie lea por
+    su cuenta, ni registros en 0x80000000. Un caso que declare `video` o
+    `frame_capture` se omite aquí y se ejecuta en la FPGA, que es donde esas
+    cosas existen.
+    """
+    del version
+    graficas = [
+        name for name in case.get("requires", [])
+        if name in ("video", "frame_capture")
+    ]
+    if graficas:
+        return (
+            f"el simulador no tiene {', '.join(graficas)}: no hay barrido ni "
+            "framebuffer, use --backend cpu-fpga --version bl8"
+        )
+    return None
+
+
 def _load_module(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
