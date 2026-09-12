@@ -4,13 +4,16 @@
 # El fmax de una sola semilla tiene una dispersion de en torno al 15% en este
 # diseno, asi que una diferencia menor que eso no demuestra nada. Ejecutar
 # despues de ./check.ps1 Build, que es quien genera _build/default/hardware.json.
-param([int[]]$Seeds = @(1, 2, 3, 4, 5))
+# -ProjectDir permite medir otro proyecto ya construido, por ejemplo el RTL
+# original de 14.fpga-gpu-ram para comparar contra la base con el mismo método.
+param([int[]]$Seeds = @(1, 2, 3, 4, 5), [string]$ProjectDir = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 
+$ProjectDir = (Resolve-Path $ProjectDir).Path
 $suite = Join-Path $env:USERPROFILE '.apio\packages\oss-cad-suite'
 $env:PATH = "$suite\bin;$suite\lib;$suite\py3bin;" + $env:PATH
-$netlist = Join-Path $PSScriptRoot '_build/default/hardware.json'
-if (-not (Test-Path $netlist)) { throw "Falta $netlist: ejecuta ./check.ps1 Build antes" }
+$netlist = Join-Path $ProjectDir '_build/default/hardware.json'
+if (-not (Test-Path $netlist)) { throw "Falta ${netlist}: ejecuta ./check.ps1 Build antes" }
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ('sweep-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null
 
@@ -18,7 +21,7 @@ $results = @()
 foreach ($seed in $Seeds) {
     $report = Join-Path $work "seed$seed.json"
     $log = Join-Path $work "seed$seed.log"
-    Push-Location $PSScriptRoot
+    Push-Location $ProjectDir
     cmd /c "nextpnr-ecp5.exe --85k --package CABGA381 --speed 6 --seed $seed --json `"$netlist`" --report `"$report`" --lpf ulx3s_v20.lpf --timing-allow-fail --force -q > `"$log`" 2>&1"
     Pop-Location
     if (-not (Test-Path $report)) { Write-Warning "semilla $seed sin informe, ver $log"; continue }

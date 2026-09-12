@@ -29,19 +29,34 @@ Método: **un cambio por iteración**, con `check.ps1 Tests`, `check.ps1 Lint` y
 
 | Paso | fmax | camino crítico | LUT | FF |
 | --- | --- | --- | --- | --- |
-| Base (RTL de 14) | 33,57 MHz ¹ | `gpu.lsu.pending` → `gpu.lsu.pick` (29,79 ns) | 30744 | 9016 |
+| Base (RTL de 14) | **30,85 MHz** ⁵ | `gpu.lsu.pending` → `gpu.lsu.pick` (29,79 ns) | 30744 | 9016 |
 | 1. Arbitraje y direccionamiento en ciclos distintos | 34,48 MHz ¹ | `gpu.sm.push_index` → `gpu.sm.top_index` (29,01 ns) | 30749 | 9020 |
 | 2. `has_pending` fuera de la cadena de prioridad | 35,96 MHz ¹ | `gpu.sm.push_index` → `gpu.sm.top_index` (27,81 ns) | 30467 | 9025 |
-| 3. Liberación de barrera de uno en uno | 31,18 / 35,02 / 36,60 MHz ² | `gpu.sm.stack_count` → `top_index` → `pc$wrmux` (32,07 ns) | **29422** | 9033 |
+| 3. Liberación de barrera de uno en uno | 35,02 MHz ² | `gpu.sm.stack_count` → `top_index` → `pc$wrmux` (32,07 ns, 59 seg.) | **29422** | 9033 |
+| 4. Cima de la pila SIMT en registros | **37,78 MHz** ³ | `gpu.sm.pc` → `gpu.fetch_address` → `pc$wrmux` (26,87 ns, **39 seg.**) | **29103** | 9961 |
 
 ¹ Una sola semilla: no comparable entre sí (véase el aviso de arriba).
-² Semillas 1/2/3; mediana 35,02 MHz.
+² Mediana de las semillas 1/2/3: 31,18 / 35,02 / 36,60 MHz.
+| ~~5. Puerto único de escritura de `pc`~~ | ~~35,22 MHz~~ ⁴ | ~~91 seg.~~ | ~~27220~~ | ~~9961~~ |
 
-La base reproduce exactamente la cifra de `14/salida-sintesis.json`, así que al
-menos la comparación base↔14 es entre medidas equivalentes.
+⁴ **Descartado y revertido**: ganaba 1883 LUT pero perdía 6,8 % de fmax.
+El paso 5 se revirtió al paso 4; la nueva iteración vigente es el paso 6,
+documentado al final (todavía sin barrido de semillas).
+⁵ Medido a posteriori sobre el RTL intacto de `14.fpga-gpu-ram`, con el mismo
+barrido de cinco semillas: 35,31 / 27,21 / 30,85 / 34,87 / 30,70 MHz.
 
-El único indicador limpio en toda la tabla es el área: **30744 → 29422 LUT**,
-un 4,3 % menos, sin ruido de emplazamiento.
+**Balance: 30,85 → 37,78 MHz de mediana, un 22 % más**, con 30744 → 29103 LUT.
+Ambos extremos medidos con el mismo método, así que la cifra se sostiene.
+
+Un detalle revelador: la dispersión entre semillas cae del **30 % al 9 %**. La
+base no solo era más lenta de mediana, era mucho más impredecible: según la
+semilla daba entre 27,21 y 35,31 MHz. Un diseño con caminos largos y congestión
+depende del azar del emplazador; a medida que se acortan, el resultado se
+vuelve repetible. Esa caída de varianza es, por sí sola, una mejora práctica:
+una síntesis cualquiera ya no se va a 27 MHz.
+
+También explica por qué la primera medida de la base (33,57 MHz, una semilla)
+resultó optimista: estaba en la parte alta de una distribución muy ancha.
 
 ## Paso 1: separar el arbitraje del direccionamiento
 
@@ -104,8 +119,9 @@ camino crítico sigue en el SM, ahora con 27,81 ns.
 ## Lectura de los tres primeros pasos
 
 Las ganancias que parecían darse en los pasos 1 y 2 (+2,7 % y +4,3 %) están por
-debajo del ruido de emplazamiento, así que no demuestran nada por sí solas. Lo
-que sí es sólido:
+debajo del ruido de emplazamiento, así que no demuestran nada **individualmente**
+—aunque el balance global medido después, 30,85 → 37,78 MHz, sí recoge su
+efecto acumulado. Lo que es sólido:
 
 - Los tres cambios son correctos y **reducen área**: 30744 → 29422 LUT.
 - El camino crítico **se ha desplazado** de la LSU al SM y se ha ido concretando
@@ -156,6 +172,90 @@ El camino crítico se mantiene en la misma zona y ahora se lee más claro:
 `sp[current]` → `top_index` → mux sobre `join_pc[0:8*DEPTH-1]` → comparación de
 32 bits → valor de escritura de `pc`, todo en un ciclo. Ese es el objetivo
 siguiente.
+
+## Paso 4: guardar la cima de la pila SIMT en registros
+
+**Problema.** El camino que quedó en cabeza tras el paso 3 era, dentro de un
+solo ciclo de `RECON`: leer `sp[current]` (mux de ocho), calcular
+`top_index = current*SIMT_REGION_DEPTH + sp-1` (multiplicación y suma de 32
+bits), indexar con él `join_pc[0:8*SIMT_REGION_DEPTH-1]`, comparar 32 bits
+contra `pc[current]` y, del resultado, sacar el valor **y** el permiso de
+escritura de `pc`. Cinco niveles anchos encadenados.
+
+Peor aún, la condición de normalización lo hacía **ocho veces en paralelo**, una
+por warp, cada una con su propio índice `a*DEPTH+sp[a]-1`:
+
+```verilog
+(sp[a]!=0 && pc[a]==join_pc[a*SIMT_REGION_DEPTH+{{(32-SP_BITS){1'b0}},sp[a]}-1])
+```
+
+**Cambio.** Se añade una copia de la cima de cada pila, una entrada por warp:
+`join_pc_top`, `ssy_pc_top`, `entry_mask_top`, `path_base_top` para la pila de
+regiones, y `pending_pc_top`, `pending_mask_top` para la de caminos. Todas las
+lecturas pasan a ser `..._top[current]` (o `..._top[a]`): un mux de ocho
+entradas, sin aritmética de índice delante.
+
+Mantenerlas es asimétrico. En un **push** la nueva cima es el valor que se está
+escribiendo, así que basta con copiarlo. En un **pop** la nueva cima es el nivel
+de debajo, que sí hay que releer del array con `pop_index`. Esa lectura sigue
+siendo un mux grande, pero ahora alimenta **solo un registro**, no la cadena de
+comparación y escritura de `pc`: el camino queda partido en dos.
+
+Las copias solo son válidas mientras `sp`/`pp` no sean cero, que es exactamente
+la condición bajo la que se leen. Los sitios que ponen las pilas a cero
+(reset, configuración, y la muerte de todas las lanes en `6'h33`/`6'h3f`) las
+dejan obsoletas sin consecuencia. `top_index` y `path_top` desaparecen.
+
+**Resultado.** El camino crítico pasa de **59 a 39 segmentos** y de 32,07 a
+26,87 ns, y cambia de forma: ya no nace en la pila sino en `pc` → `fetch_address`.
+Área 29422 → 29103 LUT; a cambio +928 biestables, que son justo las copias
+(8 warps × 116 bits).
+
+El recuento de segmentos es, junto al área, otro indicador poco sensible a la
+semilla: mide cuántos niveles de lógica encadena el peor camino.
+
+En fmax, mediana de cinco semillas **35,02 → 37,78 MHz**, con las cinco por
+encima de la mediana del paso 3. Es el primer paso cuya mejora sobrevive al
+ruido. La dispersión además baja del 17 % al 9 %, lo que encaja con un diseño
+menos congestionado.
+
+## Paso 5: puerto único de escritura de `pc` — **descartado**
+
+**Hipótesis.** Tras el paso 3 quedaban todavía varios puertos de escritura sobre
+`pc`: los cuatro por bytes de la ventana de configuración y los de `pc[current]`
+repartidos por `RECON`, `DECODE` y `FINISH`. Unificarlos en un solo puerto con
+máscara de bytes debería reducir el árbol `pc$wrmux` que seguía cerrando el
+camino crítico.
+
+**Implementación.** Cada rama declaraba su intención con asignaciones
+bloqueantes (`pc_write`, `pc_index`, `pc_value`, `pc_strobe`) y la escritura se
+resolvía una sola vez al final del ciclo. Un `pc_increment` calculaba
+`pc[pc_index]+4` después del índice, para no repetir el mux de lectura y el
+sumador en las tres ramas que solo avanzan una instrucción. La escritura de
+configuración se resolvía **detrás** del `case`, porque el orden original la
+ponía antes y con asignaciones no bloqueantes ganaba el `case`.
+
+Funcionó: pruebas, lint y síntesis correctas, y **1883 LUT menos**
+(29103 → 27220, −6,5 %).
+
+**Pero el fmax empeoró.** Mediana de cinco semillas **37,78 → 35,22 MHz**
+(rango 33,78–35,85), con todas las semillas por debajo de la mediana del paso 4.
+El camino crítico pasó de 39 a **91 segmentos**.
+
+**Por qué.** Es el intercambio clásico de compartir un recurso. Al forzar todas
+las fuentes por un único puerto, dejan de calcularse en paralelo y pasan a
+compartir una cadena de prioridad; y `pc_increment` agrava el efecto poniendo la
+lectura de `pc` y el sumador *detrás* de la resolución del índice, que a su vez
+depende de toda la decodificación del `case`.
+
+**Decisión: revertido.** El diseño ocupa un 33 % del dispositivo, así que el
+área no es el recurso escaso; el objetivo es el fmax. Cambiar 6,5 % de LUT por
+6,8 % de frecuencia va en la dirección contraria. El comentario en `gpu_sm.v`
+deja constancia para que nadie vuelva a intentarlo sin saberlo.
+
+Queda una variante sin probar: puerto único **sin** `pc_increment`, calculando
+el valor en cada rama en paralelo. Recuperaría parte del área sin serializar la
+lectura detrás del índice, aunque la cadena de prioridad seguiría ahí.
 
 ## ¿Cuántos caminos hay que arreglar?
 
@@ -213,21 +313,22 @@ esencialmente una sola estructura. El controlador SDRAM y la UART no aparecen.
 
 ## Pendiente
 
-En cabeza, y siguiente paso: **guardar la cima de la pila SIMT en registros por
-warp**. Hoy `RECON` calcula `top_index` desde `sp[current]`, indexa con él
-`join_pc[0:8*DEPTH-1]`, compara 32 bits contra `pc[current]` y de ahí sale el
-valor y el permiso de escritura de `pc`, todo encadenado en un ciclo. Con copias
-`join_pc_top[0:7]`, `ssy_pc_top[0:7]`, `entry_mask_top[0:7]` y
-`path_base_top[0:7]` mantenidas en push y pop, la comparación pasa a ser un mux
-de ocho entradas sin aritmética de índice delante.
+El camino crítico sigue terminando en el árbol de escritura de `pc`, pero ahora
+nace en el propio `pc` y pasa por `gpu.fetch_address`. Dos frentes:
 
-Quedan además los puertos de escritura de `pc` que no ha tocado el paso 3: los
-cuatro del acceso por bytes de configuración podrían unificarse en uno solo.
+- **Reducir todavía más los puertos de escritura de `pc`.** Quedan los cuatro
+  del acceso por bytes de configuración, que podrían unificarse en uno solo, y
+  los varios de `pc[current]` en `RECON`/`DECODE`/`FINISH`, que podrían
+  colapsarse calculando un único `pc_next` con su permiso de escritura.
+- **`gpu.fetch_address`**, que sale de `pc[current]` hacia la LSU y vuelve a
+  entrar en la decisión de escritura.
+
+Después habría que repetir el histograma de slack: la cola por encima de 20 ns
+era propiedad de los `wrmux` del SM, y conviene ver cómo ha quedado el reparto.
 
 Sobre la LSU, del plan inicial quedan:
 
-- Sacar `pending` de la cadena de prioridad con un bit `has_pending` por slot,
-  en vez de comparar `pending[candidate]!=0` sobre 64 bits.
+- `has_pending` por slot ya está implementado en el paso 2.
 - Rotar una máscara one-hot por `cursor` en lugar de ocho sumadores `cursor+k`
   con ocho comparadores encadenados.
 - Mover `addresses`/`values` a memoria distribuida leída por índice registrado,
@@ -235,3 +336,70 @@ Sobre la LSU, del plan inicial quedan:
 
 Todo lo que se consolide aquí es candidato a backport a `12.fpga-gpu`, cuya
 lógica de `found`/`pick`/`cursor` es casi idéntica.
+
+## Paso 6: PC del contexto y destinos registrados (12 septiembre 2026)
+
+Se conserva la ejecución multiciclo. `PICK` selecciona el warp y el nuevo estado
+`CONTEXT` captura `pc[current]` antes de evaluar `RECON`/`NORMALIZE`. Cada pop
+vuelve a `CONTEXT` para capturar el PC que acaba de escribirse, antes de evaluar
+la siguiente región. Así no se utiliza una copia obsoleta en pops consecutivos.
+
+El fetch y las lanes reciben `context_pc`. `FETCH` registra `sequential_pc=PC+4`
+y `RF_WAIT` registra los dos destinos de salto; estos cálculos aprovechan ciclos
+ya existentes. Las comparaciones y escrituras de `DECODE`/`FINISH` usan esos
+registros. Las actualizaciones de otros warps por LSU, barrera o configuración
+siguen escribiendo el array arquitectónico.
+
+### Primera medida, no mediana
+
+| Magnitud | Paso 4, informe guardado | Paso 6 |
+| --- | ---: | ---: |
+| fmax | 37,22 MHz | 47,14 MHz |
+| Camino crítico | 26,870 ns | 21,215 ns |
+| Segmentos | 39 | 31 |
+| Routing en el camino | 22,127 ns | 17,391 ns |
+| Lógica en el camino | 4,218 ns | 3,299 ns |
+| TRELLIS_COMB | 29103 | 29245 |
+| TRELLIS_FF | 9961 | 10089 |
+| EBR / DSP | 16 / 32 | 16 / 32 |
+
+La primera construcción completa tardó 422,3 s, incluidos 227,6 s de routing.
+El nuevo peor camino pasa por `gpu.lsu_mask[5]` (alias de la selección de máscara
+activa) y termina en **CE de `warp_retired_count[6][12]`**, identificado enlazando
+la celda final del informe con el netlist. Que aparezca `lsu_mask` no demuestra
+un recorrido dentro de la LSU: la misma máscara se utiliza en el control del SM.
+El siguiente candidato es separar las decisiones de máscara/divergencia de los
+permisos de retirada y escritura del estado. No se ha implementado ese paso aún.
+
+El incremento de frecuencia de esta pareja de informes es 26,66 %, pero no se
+presenta como ganancia de mediana: falta el barrido de semillas del nuevo RTL.
+El reloj físico y las constraints siguen en 25 MHz; no se ha programado la placa.
+
+### Corrección y coste en ciclos
+
+Pasan los 8 tests Python del monitor, los 6 testbenches RTL (incluidos los 32
+casos diferenciales) y lint. Los tests del script verifican extracción de tablas,
+conservación de extremos/retardos, rechazo de timing insuficiente, archivos ZIP
+sin interferir con Apio y rechazo de informes antiguos tras un build fallido.
+
+Se simularon además los mismos 32 programas sobre las fuentes anteriores y las
+actuales, en directorios aislados. El contador se imprime inmediatamente después
+de acabar la ejecución, antes de que las lecturas de comprobación del monitor lo
+reutilicen. Suma de ciclos: **131196 → 135933 (+3,61 %)**; coste por caso entre
+0,70 % y 8,23 %. Este coste exige ganar frecuencia, no basta con añadir etapas.
+No es una medida de rendimiento físico a 47 MHz: el modelo SDRAM y sus parámetros
+siguen correspondiendo a 25 MHz.
+
+Informes y logs de la primera medida:
+`reports/20260912-092103-728457-context-pc/`.
+Incluye `before.log`, `after.log` y `cycles.json` con las medidas por programa.
+El informe antiguo está en `reports/20260912-091931-835060-before-context/`;
+se archivó desde los outputs existentes, no se reconstruyó esa versión.
+
+### Herramienta de build
+
+`build.ps1 -Label <nombre>` ejecuta Apio con progreso PNR, captura el log en vivo,
+extrae histogramas de slack y tabla de routing y conserva JSON detallado, fuentes
+en ZIP, hashes y bitstream en `reports/`. No realiza una segunda pasada para
+obtener el detalle. Véase el README para `-Incremental` y `-ArchiveOnly`: en Apio
+1.5.1 pedir `--verbose-pnr` fuerza una pasada de routing aunque no cambie el RTL.

@@ -23,7 +23,8 @@ Los registros de la GPU siguen usando EBR; se sustituye la RAM de código/datos.
 
 ## Integración
 
-- `gpu_sm.v`, `gpu_lane.v` y `gpu_register_file.v` conservan el RTL de 12.
+- `gpu_lane.v` y `gpu_register_file.v` proceden de 12; las etapas de control
+  añadidas en `gpu_sm.v` se documentan en `optimizacion.md`.
 - `gpu_lsu.v` conserva el contrato vectorial SM↔LSU y los ocho slots de warp.
   Atiende una lane cada vez y rota entre warps después de cada palabra.
   Alterna con el puerto auxiliar de fetch/monitor cuando ambos tienen trabajo.
@@ -52,10 +53,10 @@ no recoge una finalización antigua. El reset global sí inicializa el controlad
 Desde la raíz del repositorio:
 
 ```powershell
-./14.fpga-gpu-ram/check.ps1 Tests
-./14.fpga-gpu-ram/check.ps1 Lint
-./14.fpga-gpu-ram/check.ps1 Build
-.venv/Scripts/python.exe 14.fpga-gpu-ram/monitor.py --help
+./16.fpga-gpu-ram-v2/check.ps1 Tests
+./16.fpga-gpu-ram-v2/check.ps1 Lint
+./16.fpga-gpu-ram-v2/build.ps1 -Label context-pc
+.venv/Scripts/python.exe 16.fpga-gpu-ram-v2/monitor.py --help
 ```
 
 Se conservan los ejemplos, el generador de fixtures y las 32 pruebas diferenciales
@@ -64,3 +65,50 @@ con un modelo funcional del bus SDRAM (`sim/sdram_model.vh`). La inicialización
 se acorta solo en las pruebas de sistema; el top conserva los 200 µs del controlador.
 El modelo verifica datos/direcciones/máscaras, pero no sustituye una prueba física
 ni un modelo de temporización del fabricante. Véase `validation.md`.
+
+## Builds con historial de timing
+
+`build.ps1` ejecuta **una sola vez** `apio build --verbose-pnr`. La opción
+`--detailed-timing-report` está en `apio.ini`, así que no hace falta volver a
+enrutar para obtener el detalle. `check.ps1 Build` utiliza también este script.
+
+La consola muestra el progreso nativo de nextpnr: iteraciones de colocación y
+tabla de arcos enrutados, reintentados y pendientes. Los pendientes pueden subir
+durante los reintentos; no representan un porcentaje ni una ETA lineales.
+La frecuencia tras la colocación es provisional: interesa la final, tras routing.
+
+Cada ejecución conserva `reports/<fecha>-<etiqueta>/` (ignorado por Git):
+
+- `build.log`: salida completa, progreso e histogramas de slack de nextpnr.
+- `routing_progress.csv` y `slack_histograms.txt`: esas tablas extraídas del log.
+  El histograma usa picosegundos y conserva las cuentas aproximadas del original.
+- `hardware.pnr`: JSON con timing detallado por net y caminos críticos.
+- `summary.json` y `summary.txt`: frecuencias, recursos, extremos y segmentos
+  de los caminos críticos, con retardos de lógica y routing separados.
+- `sources.zip` y `metadata.json`: copia de fuentes, hashes, comando y duración.
+  Las fuentes se comprimen para que Apio no descubra los LPF archivados como
+  constraints adicionales del proyecto.
+- Netlist, configuración y bitstream, para conservar la implementación medida.
+
+El historial sobrevive a `apio clean`. No se elimina automáticamente: cada build
+conserva también el netlist y puede ocupar decenas de MB o más con timing detallado.
+En Apio 1.5.1, **`--verbose-pnr` fuerza el routing incluso sin cambios**; el modo
+normal sirve para medir una nueva pasada y ver su progreso. Para aprovechar la
+caché sin pedir progreso ni histogramas en el log, utiliza:
+
+```powershell
+./16.fpga-gpu-ram-v2/build.ps1 -Label comprobacion -Incremental
+```
+
+El JSON detallado sigue habilitado en ambos modos. Cambiar entre modo normal e
+incremental también puede invalidar la acción de routing en SCons una vez,
+porque cambia la línea de comando. Para archivar sin ejecutar nada, usa
+`-ArchiveOnly`.
+
+La comparación con el informe anterior es de una pasada; no sustituye un barrido
+de semillas. El script devuelve error si falla Apio, falta el informe/reloj, o
+algún dominio no alcanza su constraint (mínimo 25 MHz).
+
+`./16.fpga-gpu-ram-v2/build.ps1 -Label anterior -ArchiveOnly` conserva resultados
+existentes sin sintetizar. En este modo la copia de fuentes es la actual y no
+demuestra qué fuentes produjeron el informe antiguo.

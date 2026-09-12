@@ -68,6 +68,7 @@ module gpu_system_tb;
             @(negedge clk); run_request=0;
             cycles=0;
             while(!halted && cycles<200000) begin @(negedge clk); cycles=cycles+1; end
+            $display("EXEC differential case %0d cycles=%0d",test_id,cycles);
             if(!halted || error) $fatal(1,"case %0d stopped: halted=%b code=%h pc=%h warp=%d state=%d",test_id,halted,error_code,debug_pc,dut.sm.error_warp,dut.sm.state);
             for(w=0;w<8;w=w+1) begin
                 for(l=0;l<8;l=l+1) begin
