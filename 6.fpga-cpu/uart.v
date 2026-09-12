@@ -169,6 +169,16 @@ module uart (
   // TODO: RX and TX could share a single baud-rate divider.
   parameter DIVISOR = 40;  // must be divisible by 4 for rx clock
 
+  // El requisito de arriba vivia solo en este comentario, y en
+  // 15.fpga-cpu-hdmi costo un enlace que funcionaba la mitad de las veces: un
+  // divisor de 50 dejaba la recepcion un 4,2 % rapida. Ningun banco instancia
+  // esta UART, asi que la unica forma de cazarlo es fallar la elaboracion.
+  generate
+    if (DIVISOR % 4 != 0) begin : g_divisor_check
+      DIVISOR_must_be_divisible_by_4 guard ();
+    end
+  endgenerate
+
   uart_rx #(
       .DIVISOR(DIVISOR / 4)
   ) rx (

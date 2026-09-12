@@ -89,16 +89,26 @@ module cpu_tb;
         measured_instruction_cycles = instruction_cycle_count + 1;
         if (dut.opcode >= 6'h07 && dut.opcode <= 6'h09)
           expected_instruction_cycles = 7 + dut.operand_b[4:0];
+        // La ALU tambien gano un ciclo, por STATE_ALU_WRITE. MULFX (0x03) cae
+        // dentro del rango de opcodes pero no es ALU: se excluye a mano.
+        else if ((dut.opcode >= 6'h01 && dut.opcode <= 6'h06 &&
+                  dut.opcode != 6'h03) ||
+                 (dut.opcode >= 6'h11 && dut.opcode <= 6'h14))
+          expected_instruction_cycles = 7;
         else if (dut.opcode >= 6'h20 && dut.opcode <= 6'h25)
           expected_instruction_cycles = 8;
         else if (dut.opcode == 6'h2f)
           expected_instruction_cycles = 7;
+        // MUL, MULFX y DIV ganaron un ciclo al separar STATE_MUL_SIGN de
+        // STATE_MUL_WRITE: el arreglo de signo y la escritura del banco no
+        // cabian juntos en un ciclo de 120 MHz. Es el precio explicito del
+        // cierre temporal, y por eso se comprueba aqui.
         else if (dut.opcode == 6'h0a)
-          expected_instruction_cycles = 10;
+          expected_instruction_cycles = 11;
         else if (dut.opcode == 6'h03)
-          expected_instruction_cycles = 10;
+          expected_instruction_cycles = 11;
         else if (dut.opcode == 6'h0c)
-          expected_instruction_cycles = 39;
+          expected_instruction_cycles = 40;
         else
           expected_instruction_cycles = 6;
 

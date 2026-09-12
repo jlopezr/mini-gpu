@@ -23,6 +23,37 @@ El monitor controla ambas memorias mientras la CPU está detenida. Durante la
 ejecución, la CPU lee instrucciones y realiza `LOAD`/`STORE`; los accesos de
 memoria del monitor se rechazan.
 
+## Temporización: 120 MHz, con el margen justo
+
+El diseño corre a 120 MHz y **la semilla de nextpnr decide si cumple**: de ocho,
+cierran cuatro, entre 109,90 y 124,39 MHz. Por eso `apio.ini` fija `--seed 3`,
+que da 124,39 (+3,7 %). Esto es distinto del 15, donde la semilla sólo elige
+margen porque todas cumplen.
+
+Llegar ahí costó partir en dos los dos caminos que terminan escribiendo el banco
+de registros. Los dos eran la misma forma de fallo —mucha lógica combinacional
+desembocando en el multiplexor de `register_write_data`, que sirve a la ALU, a
+los saltos, a los desplazamientos y a los `LOAD`— y los dos se arreglan igual,
+metiendo un ciclo por medio:
+
+| Estado | Qué separa | Coste |
+|---|---|---|
+| `STATE_MUL_SIGN` | el arreglo de signo (negación de 32 bits) de la escritura | +1 ciclo en `MUL`, `MULFX`, `DIV` |
+| `STATE_ALU_WRITE` | la suma `operand_a + operand_b` de la escritura | +1 ciclo en las ALU |
+
+El segundo no es nuevo: es el mismo estado que ya tenía
+[`../10.fpga-cpu-ram`](../10.fpga-cpu-ram), que se añadió allí por este mismo
+motivo. Esta carpeta no lo tenía porque `MUL`/`MULFX`/`DIV` se añadieron sobre
+una base anterior, y los cinco estados que traen llenaban los 16 de un registro
+de 4 bits. Con los dos arreglos son 18 estados y `state` pasa a `[4:0]`.
+
+Las latencias exactas las comprueban `cpu_tb.v` (memoria de un ciclo) y
+`cpu_memory_map_tb.v` (memoria real, tres ciclos más), así que un cambio que
+añada o quite ciclos no pasa desapercibido.
+
+Coste en área: 5 467 → 5 650 LUT y 2 391 → 2 466 biestables. `MUL` y `MULFX`
+usan 4 `MULT18X18D` de los 156 disponibles.
+
 Regresiones principales:
 
 ```powershell

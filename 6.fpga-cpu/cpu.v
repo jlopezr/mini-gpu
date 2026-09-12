@@ -94,24 +94,31 @@ module cpu (
   localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
   localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
 
-  localparam [3:0] STATE_HALTED = 4'd0;
-  localparam [3:0] STATE_FETCH_REQUEST = 4'd1;
-  localparam [3:0] STATE_FETCH_WAIT = 4'd2;
-  localparam [3:0] STATE_EXECUTE = 4'd3;
-  localparam [3:0] STATE_RETIRE = 4'd4;
-  localparam [3:0] STATE_MEMORY_WAIT = 4'd5;
-  localparam [3:0] STATE_DECODE = 4'd6;
-  localparam [3:0] STATE_SHIFT_STEP = 4'd7;
-  localparam [3:0] STATE_SHIFT_WRITE = 4'd8;
-  localparam [3:0] STATE_BRANCH_COMMIT = 4'd9;
-  localparam [3:0] STATE_BRANCH_COMPARE = 4'd10;
-  localparam [3:0] STATE_MUL_PRODUCTS = 4'd11;
-  localparam [3:0] STATE_MUL_CROSS = 4'd12;
-  localparam [3:0] STATE_MUL_COMBINE = 4'd13;
-  localparam [3:0] STATE_MUL_WRITE = 4'd14;
-  localparam [3:0] STATE_DIV_STEP = 4'd15;
+  localparam [4:0] STATE_HALTED = 5'd0;
+  localparam [4:0] STATE_FETCH_REQUEST = 5'd1;
+  localparam [4:0] STATE_FETCH_WAIT = 5'd2;
+  localparam [4:0] STATE_EXECUTE = 5'd3;
+  localparam [4:0] STATE_RETIRE = 5'd4;
+  localparam [4:0] STATE_MEMORY_WAIT = 5'd5;
+  localparam [4:0] STATE_DECODE = 5'd6;
+  localparam [4:0] STATE_SHIFT_STEP = 5'd7;
+  localparam [4:0] STATE_SHIFT_WRITE = 5'd8;
+  localparam [4:0] STATE_BRANCH_COMMIT = 5'd9;
+  localparam [4:0] STATE_BRANCH_COMPARE = 5'd10;
+  localparam [4:0] STATE_MUL_PRODUCTS = 5'd11;
+  localparam [4:0] STATE_MUL_CROSS = 5'd12;
+  localparam [4:0] STATE_MUL_COMBINE = 5'd13;
+  // Separate the sign fix-up from the register-file write-back at 120 MHz.
+  localparam [4:0] STATE_MUL_SIGN = 5'd14;
+  localparam [4:0] STATE_MUL_WRITE = 5'd15;
+  localparam [4:0] STATE_DIV_STEP = 5'd16;
+  // Separate ALU calculation from register-file write-back at 120 MHz.
+  localparam [4:0] STATE_ALU_WRITE = 5'd17;
 
-  reg [3:0] state;
+  // Seventeen states no longer fit in four bits. The multiplier and the
+  // divider used to fit exactly because this branch lacks the STATE_ALU_WRITE
+  // of 10.fpga-cpu-ram; splitting the write-back costs the extra bit.
+  reg [4:0] state;
   reg [31:0] pc;
   reg [31:0] instruction;
   reg step_active;
@@ -153,6 +160,11 @@ module cpu (
   reg divide_negative;
   reg [4:0] divide_destination;
   reg divide_write_pending;
+  // Resultado ya con su signo, a la espera de escribirse. Ver STATE_MUL_SIGN.
+  reg [31:0] multiply_writeback;
+  reg [4:0] multiply_writeback_destination;
+  reg [4:0] alu_destination;
+  reg [31:0] alu_result;
 
   wire [31:0] divide_shifted_remainder =
       {divide_remainder[30:0], divide_dividend[31]};
@@ -276,6 +288,10 @@ module cpu (
       divide_negative <= 1'b0;
       divide_destination <= 5'd0;
       divide_write_pending <= 1'b0;
+      multiply_writeback <= 32'h0000_0000;
+      multiply_writeback_destination <= 5'd0;
+      alu_destination <= 5'd0;
+      alu_result <= 32'h0000_0000;
       register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
@@ -365,38 +381,33 @@ module cpu (
             end
 
             OPCODE_ADD: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a + operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a + operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_SUB: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a - operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a - operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_AND: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a & operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a & operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_OR: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a | operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a | operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_XOR: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a ^ operand_b;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a ^ operand_b;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_MUL: begin
@@ -460,31 +471,27 @@ module cpu (
             end
 
             OPCODE_ADDI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a + immediate_signed;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a + immediate_signed;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_ANDI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a & immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a & immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_ORI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a | immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a | immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_XORI: begin
-              register_write_address <= rd;
-              register_write_data <= operand_a ^ immediate_unsigned;
-              register_write_enable <= 1'b1;
-              state <= STATE_RETIRE;
+              alu_destination <= rd;
+              alu_result <= operand_a ^ immediate_unsigned;
+              state <= STATE_ALU_WRITE;
             end
 
             OPCODE_MOVHI: begin
@@ -689,25 +696,46 @@ module cpu (
                 {15'h0000, multiply_cross_sum, 16'h0000} +
                 {32'h0000_0000, multiply_low_product};
             multiply_roundup <= (multiply_low_product[15:0] == 0);
-            state <= STATE_MUL_WRITE;
+            state <= STATE_MUL_SIGN;
           end else begin
             multiply_result <= multiply_low_product +
                                {multiply_cross_sum[15:0], 16'h0000};
-            state <= STATE_MUL_WRITE;
+            state <= STATE_MUL_SIGN;
           end
         end
 
-        STATE_MUL_WRITE: begin
-          register_write_address <= divide_write_pending ?
+        // El arreglo de signo y la escritura del banco van en ciclos
+        // distintos. Juntos eran el camino critico del diseno: la negacion
+        // condicional es una cadena de acarreo de 32 bits y desembocaba en el
+        // multiplexor de `register_write_data`, que sirve ademas a la ALU, a
+        // los saltos, a los desplazamientos y a los LOAD. Sumados no cabian en
+        // un ciclo de 120 MHz. Es el mismo reparto que STATE_ALU_WRITE hace en
+        // 10.fpga-cpu-ram, aplicado al otro extremo de la instruccion.
+        STATE_MUL_SIGN: begin
+          multiply_writeback_destination <= divide_write_pending ?
               divide_destination : multiply_destination;
           if (divide_write_pending)
-            register_write_data <= divide_negative ?
+            multiply_writeback <= divide_negative ?
                 (~divide_quotient + 1'b1) : divide_quotient;
           else
-            register_write_data <= multiply_fixed ?
+            multiply_writeback <= multiply_fixed ?
                 (multiply_negative ?
                     (~multiply_unsigned_product[47:16] + multiply_roundup) :
                     multiply_unsigned_product[47:16]) : multiply_result;
+          state <= STATE_MUL_WRITE;
+        end
+
+        // The extra cycle breaks operand -> adder -> register-file write-back.
+        STATE_ALU_WRITE: begin
+          register_write_address <= alu_destination;
+          register_write_data <= alu_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        STATE_MUL_WRITE: begin
+          register_write_address <= multiply_writeback_destination;
+          register_write_data <= multiply_writeback;
           register_write_enable <= 1'b1;
           divide_write_pending <= 1'b0;
           state <= STATE_RETIRE;
@@ -734,7 +762,7 @@ module cpu (
             divide_count <= divide_count + 1'b1;
             if (divide_count == 6'd31) begin
               divide_quotient <= divide_next_quotient;
-              state <= STATE_MUL_WRITE;
+              state <= STATE_MUL_SIGN;
             end
           end
         end

@@ -63,10 +63,18 @@ module cpu_memory_map_tb;
             cpu_i.pc - 4,
             measured_instruction_cycles
         );
+        // Tres ciclos mas que en cpu_tb.v: aqui la memoria es la real y no el
+        // modelo de un ciclo. Los multiplicadores y la ALU ganaron uno cada
+        // uno al partir STATE_MUL_SIGN y STATE_ALU_WRITE de sus escrituras.
         if (cpu_i.opcode == 6'h15 || cpu_i.opcode == 6'h16)
           expected_instruction_cycles = 14;
-        else if (cpu_i.opcode == 6'h0a)
-          expected_instruction_cycles = 13;
+        else if (cpu_i.opcode == 6'h0a || cpu_i.opcode == 6'h03)
+          expected_instruction_cycles = 14;
+        else if (cpu_i.opcode == 6'h0c)
+          expected_instruction_cycles = 43;
+        else if ((cpu_i.opcode >= 6'h01 && cpu_i.opcode <= 6'h06) ||
+                 (cpu_i.opcode >= 6'h11 && cpu_i.opcode <= 6'h14))
+          expected_instruction_cycles = 10;
         else if (cpu_i.opcode >= 6'h07 && cpu_i.opcode <= 6'h09)
           expected_instruction_cycles = 10 + cpu_i.operand_b[4:0];
         else if (cpu_i.opcode >= 6'h20 && cpu_i.opcode <= 6'h25)

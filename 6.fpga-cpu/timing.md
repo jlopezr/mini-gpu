@@ -17,16 +17,51 @@ los retardos físicos del FPGA. Además, `apio build` utiliza
 muestre `FAIL at 120.00 MHz`. Hay que leer siempre la frecuencia indicada por
 nextpnr.
 
-Después de registrar las rutas descritas aquí, el place-and-route obtuvo:
+Eso es exactamente lo que pasó al añadir `MUL`, `MULFX` y `DIV`: el diseño se
+quedó en **116,39 MHz**, incumpliendo, y siguió generando bitstream y pasando
+los tests durante un tiempo. Funcionaba en la placa, pero sin garantía: otra
+temperatura, otra unidad de ECP5 o un rutado distinto podían romperlo.
+
+Se arregló partiendo en dos los caminos que terminan escribiendo el banco de
+registros, y ahora el place-and-route obtiene:
 
 | Magnitud                      |  Resultado |
 |-------------------------------|-----------:|
 | Frecuencia requerida          | 120,00 MHz |
-| Frecuencia alcanzada          | 113,44 MHz |
+| Frecuencia alcanzada          | 124,39 MHz |
+| Semilla de nextpnr            |          3 |
 | EBR `DP16KD`                  |         16 |
 | Multiplicadores `MULT18X18D`  |          4 |
-| Flip-flops `TRELLIS_FF`       |       2405 |
-| Celdas lógicas `TRELLIS_COMB` |       5462 |
+| Flip-flops `TRELLIS_FF`       |       2466 |
+| Celdas lógicas `TRELLIS_COMB` |       5650 |
+
+La semilla está fijada en `apio.ini` porque **aquí sí decide**: de ocho semillas
+cierran cuatro, entre 109,90 y 124,39 MHz. Conviene rebarrerlas tras cualquier
+cambio de RTL:
+
+```powershell
+..\tools\seed-sweep.ps1 -ProjectDir 6.fpga-cpu -Seeds (1..8)
+```
+
+### Los dos repartos de escritura
+
+Las dos veces el problema fue el mismo: lógica combinacional larga
+desembocando en el multiplexor de `register_write_data`, que sirve además a la
+ALU, a los saltos, a los desplazamientos y a los `LOAD`.
+
+- **`STATE_MUL_SIGN`** separa el arreglo de signo —una negación condicional de
+  32 bits, con su cadena de acarreo— de la escritura. Era el camino crítico
+  cuando el diseño se quedaba en 116,39 MHz. Cuesta un ciclo en `MUL`, `MULFX`
+  y `DIV`.
+- **`STATE_ALU_WRITE`** separa la suma `operand_a + operand_b` de la escritura.
+  Pasó a ser el crítico en cuanto se arregló el anterior, y con él el diseño se
+  quedaba en 119,33: ninguna semilla cerraba, la mejor daba 119,92. Cuesta un
+  ciclo en las instrucciones de ALU. No es nuevo: es el mismo estado que ya
+  tenía `../10.fpga-cpu-ram`, que lo añadió por esta misma razón.
+
+Con los dos, la CPU tiene 18 estados y `state` pasó de `[3:0]` a `[4:0]`. Los
+cinco estados del multiplicador y el divisor cabían justo en 16 porque esta
+rama no tenía `STATE_ALU_WRITE`.
 
 Estas cifras pertenecen a una ejecución concreta de nextpnr. El resultado
 puede variar ligeramente con cambios de lógica o colocación, por lo que el
@@ -197,15 +232,27 @@ de la EBR de programa usado por `memory_map.v`. Un ciclo a 120 MHz dura unos
 | Familia de instrucciones                                 |   Ciclos | Tiempo aproximado |
 |----------------------------------------------------------|---------:|------------------:|
 | `NOP`, `HALT`                                            |        9 |           75,0 ns |
-| `ADD`, `SUB`, `AND`, `OR`, `XOR`                         |        9 |           75,0 ns |
-| `MOVI`, `ADDI`, `ANDI`, `ORI`, `XORI`, `MOVHI`, `GETTID` |        9 |           75,0 ns |
+| `MOVI`, `MOVHI`, `GETTID`                                |        9 |           75,0 ns |
+| `ADD`, `SUB`, `AND`, `OR`, `XOR`                         |       10 |           83,3 ns |
+| `ADDI`, `ANDI`, `ORI`, `XORI`                            |       10 |           83,3 ns |
 | `BRA`                                                    |       10 |           83,3 ns |
 | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`               |       11 |           91,7 ns |
 | `LOAD`, `STORE` con la EBR actual                        |       14 |          116,7 ns |
-| `MUL`                                                    |       13 |          108,3 ns |
-| `MULFX`                                                  |       13 |          108,3 ns |
-| `DIV`                                                    |       42 |          350,0 ns |
+| `MUL`                                                    |       14 |          116,7 ns |
+| `MULFX`                                                  |       14 |          116,7 ns |
+| `DIV`                                                    |       43 |          358,3 ns |
 | `SHL`, `SHR`, `SAR` con desplazamiento `n`               | `10 + n` |     83,3–341,7 ns |
+
+Las instrucciones de ALU cuestan un ciclo más que `MOVI` por `STATE_ALU_WRITE`,
+y `MUL`/`MULFX`/`DIV` uno más por `STATE_MUL_SIGN`.
+
+Sobre la procedencia de estos números: `cpu_tb.v` mide todas las familias con un
+modelo de memoria de un ciclo, y `cpu_memory_map_tb.v` las vuelve a medir contra
+la EBR real, que añade tres. Las filas de esta tabla que `cpu_memory_map_tb.v`
+ejecuta de verdad —`NOP`, `MOVI`, `MOVHI`, `ADDI`, `BRA`, `LOAD`, `STORE`,
+`HALT`— están medidas; las demás son las de `cpu_tb.v` más tres. Ambos bancos
+comprueban la latencia instrucción a instrucción y fallan si cambia, así que un
+estado añadido no pasa desapercibido.
 
 En los shifts, `n = Rb[4:0]`, por lo que varía entre 0 y 31. Las latencias de
 `LOAD` y `STORE` son las de la memoria EBR integrada actual; la interfaz
