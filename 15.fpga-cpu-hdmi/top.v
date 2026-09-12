@@ -1,7 +1,7 @@
 `default_nettype none
 
 module top (
-    input wire clk_25mhz, input wire btn_pwr_n,
+    input wire clk_25mhz, input wire btn_pwr_n, input wire btn_fire1,
     output wire [7:0] led, output wire wifi_gpio0,
     input wire ftdi_txd, output wire ftdi_rxd,
     output wire sdram_clk, output wire sdram_cke, output wire sdram_csn,
@@ -163,16 +163,17 @@ module top (
       .sdram_casn(sdram_casn), .sdram_wen(sdram_wen), .sdram_a(sdram_a),
       .sdram_ba(sdram_ba), .sdram_dqm(sdram_dqm), .sdram_d(sdram_d));
 
-  assign led = {cpu_error, cpu_halted, init_done, sdram_busy,
-                monitor_busy, last_command[2:0]};
-
   // ---------------------------------------------------------------------------
-  // Subsistema de video (hito A)
+  // Subsistema de video (hitos A y B)
   //
-  // Dominio de reloj propio, sin ninguna conexion con la CPU ni con la SDRAM:
-  // el objetivo de este hito es demostrar que ambos subsistemas conviven en la
-  // misma FPGA sin romperse, no que se comuniquen. El unico recurso compartido
-  // es `clk_25mhz`, que alimenta los dos PLL.
+  // Dominio de reloj propio. En el hito B tampoco hay conexion con la CPU ni
+  // con la SDRAM: las lineas las genera `video_line_source_pattern`, y lo que
+  // se valida es el cruce de dominios y el doble line buffer. En el hito C ese
+  // productor se sustituye por un lector de SDRAM con el mismo contrato, y esta
+  // es la unica linea de `top` que cambiara.
+  //
+  // El unico recurso compartido con la CPU es `clk_25mhz`, que alimenta los dos
+  // PLL.
   //
   //   625 MHz VCO / 5  = 125,0 MHz  -> reloj serie TMDS
   //   625 MHz VCO / 25 =  25,0 MHz  -> reloj de pixel
@@ -213,20 +214,67 @@ module top (
 
   wire frame = (sy == V_RES && sx == 0);
 
+  // Scanout con doble line buffer. Los sincronismos que salen de aqui llevan un
+  // ciclo de retraso, el que cuesta leer el line buffer, y son la referencia de
+  // tiempo de los dos modos.
+  wire [7:0] scan_r, scan_g, scan_b;
+  wire scan_de, scan_hsync, scan_vsync, video_underflow;
+  wire fill_start, fill_we, fill_done;
+  wire [7:0] fill_line;
+  wire [8:0] fill_addr;
+  wire [15:0] fill_data;
+
+  video_scanout scanout_i(
+      .clk_pix(clk_pix), .rst_pix(rst_pix), .sx(sx), .sy(sy),
+      .de_in(de), .hsync_in(hsync), .vsync_in(vsync),
+      .r(scan_r), .g(scan_g), .b(scan_b),
+      .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
+      .underflow(video_underflow),
+      .clk_sys(clk), .rst_sys(reset),
+      .fill_start(fill_start), .fill_line(fill_line), .fill_we(fill_we),
+      .fill_addr(fill_addr), .fill_data(fill_data), .fill_done(fill_done));
+
+  // Productor del hito B. En el hito C se sustituye por el lector de SDRAM.
+  video_line_source_pattern source_i(
+      .clk(clk), .reset(reset), .fill_start(fill_start), .fill_line(fill_line),
+      .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
+      .fill_done(fill_done));
+
+  // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
+  // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el
+  // instrumento de depuracion que separa "falla la cadena HDMI" de "falla el
+  // camino de datos": si con FIRE1 se ve bien y sin FIRE1 no, el problema esta
+  // del line buffer hacia dentro.
+  reg btn_fire1_sync_0, btn_fire1_sync_1;
+  always @(posedge clk_pix) begin
+    btn_fire1_sync_0 <= btn_fire1;
+    btn_fire1_sync_1 <= btn_fire1_sync_0;
+  end
+  wire show_pattern = btn_fire1_sync_1;
+
   wire [7:0] paint_r, paint_g, paint_b;
   video_pattern pattern_i(
       .clk_pix(clk_pix), .rst_pix(rst_pix), .sx(sx), .sy(sy), .de(de),
       .frame(frame), .r(paint_r), .g(paint_g), .b(paint_b));
 
+  // El patron es combinacional desde `sx`, mientras que el scanout llega un
+  // ciclo mas tarde. Se retrasa para que los dos modos compartan sincronismos.
+  reg [7:0] paint_r_d, paint_g_d, paint_b_d;
+  always @(posedge clk_pix) begin
+    paint_r_d <= paint_r;
+    paint_g_d <= paint_g;
+    paint_b_d <= paint_b;
+  end
+
   reg [7:0] dvi_r, dvi_g, dvi_b;
   reg dvi_hsync, dvi_vsync, dvi_de;
   always @(posedge clk_pix) begin
-    dvi_hsync <= hsync;
-    dvi_vsync <= vsync;
-    dvi_de <= de;
-    dvi_r <= paint_r;
-    dvi_g <= paint_g;
-    dvi_b <= paint_b;
+    dvi_hsync <= scan_hsync;
+    dvi_vsync <= scan_vsync;
+    dvi_de <= scan_de;
+    dvi_r <= show_pattern ? paint_r_d : scan_r;
+    dvi_g <= show_pattern ? paint_g_d : scan_g;
+    dvi_b <= show_pattern ? paint_b_d : scan_b;
   end
 
   dvi_generator dvi_i(
@@ -237,6 +285,12 @@ module top (
       .ctrl_in_ch2(2'b00),
       .tmds_ch0_serial(gpdi_dp[0]), .tmds_ch1_serial(gpdi_dp[1]),
       .tmds_ch2_serial(gpdi_dp[2]), .tmds_clk_serial(gpdi_dp[3]));
+
+  // led[0] deja de mostrar `last_command[0]` para vigilar el subsistema de
+  // video: un underflow del line buffer es pegajoso y en pantalla solo se ve
+  // como una imagen rota, que puede confundirse con muchas otras cosas.
+  assign led = {cpu_error, cpu_halted, init_done, sdram_busy,
+                monitor_busy, last_command[1:0], video_underflow};
 endmodule
 
 `default_nettype wire

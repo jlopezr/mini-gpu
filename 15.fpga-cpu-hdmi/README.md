@@ -5,18 +5,18 @@ sobre ULX3S-85F. El plan por fases está en [`docs/planning.md`](docs/planning.m
 y la arquitectura de destino en
 [`docs/gpu_educativa_arquitectura.md`](docs/gpu_educativa_arquitectura.md).
 
-Estado: **hito A completado**. Hay imagen por HDMI y la CPU sigue funcionando,
-pero **todavía no se comunican**: el patrón de vídeo lo genera lógica, no se lee
-ni un byte de SDRAM.
+Estado: **hito B completado**. Hay imagen por HDMI generada a través del doble
+line buffer, con el escalado 2× ya funcionando, pero **la CPU y el vídeo todavía
+no se comunican**: las líneas las calcula lógica, no se lee ni un byte de SDRAM.
 
 ## Escalera de hitos
 
 | Hito | Contenido | Estado |
 |---|---|---|
 | A | Fusión: CPU de 10 intacta + 640×480p60 con patrón generado por lógica | **hecho** |
-| B | Line buffer / FIFO asíncrona alimentada por un generador falso | pendiente |
+| B | Doble line buffer, cruce de dominios y escalado 2×, con productor falso | **hecho** |
 | C | Scanout real: la CPU escribe el framebuffer en SDRAM y se ve | pendiente |
-| D | Escalado 2× desde 320×240 y registro `FB_BASE` | pendiente |
+| D | Registro `FB_BASE` y doble framebuffer con swap en VBlank | pendiente |
 
 La separación importa: si en el hito C la pantalla sale negra, A y B ya han
 descartado el pinout, los PLL, la codificación TMDS y el cruce de dominios.
@@ -57,41 +57,123 @@ Ocho barras verticales de 80 px, una banda blanca que baja cuatro líneas por
 frame y una rejilla de puntos cada 64 px. La banda distingue una imagen viva de
 una congelada; la rejilla revela recortes o sobreescaneo del monitor.
 
-## Temporización: el dato incómodo del hito A
+Sigue disponible: **con FIRE1 pulsado la salida vuelve a este patrón**, saltándose
+el line buffer por completo. Es el instrumento que separa «falla la cadena HDMI»
+de «falla el camino de datos».
 
-| Dominio | Restricción | 10.fpga-cpu-ram | 15 (este) |
-|---|---:|---:|---:|
-| CPU + SDRAM | 120 MHz | 130,67 MHz | 123,32 MHz |
-| Pixel | 25 MHz | — | 160,28 MHz |
-| TMDS 5× | 125 MHz | — | 395,10 MHz |
+## Qué hay en el hito B
 
-**El dominio de CPU pierde en torno a un 6 % de fmax solo por convivir con el
-vídeo**, aunque no haya ninguna conexión lógica entre ambos: es presión de
-colocación y congestión de routing, no un camino crítico nuevo. Y la dispersión
-entre semillas es del mismo orden que el margen. Medido sobre cinco semillas:
+El doble line buffer y el cruce de dominios, con el escalado 2× ya montado. El
+productor de líneas sigue siendo falso: calcula el contenido en lugar de leerlo
+de SDRAM.
 
 ```text
-114,55   118,37   118,68   120,66   123,32 MHz
+   dominio de sistema, 120 MHz          dominio de pixel, 25 MHz
+   ───────────────────────────          ────────────────────────
+
+   video_line_source_pattern
+        │  (hito C: lector SDRAM)
+        ▼
+   escritura ─────► line_buffer ──────► lectura, cada pixel y
+                     2 bancos            cada linea por duplicado
+                                              │
+                     handshake                ▼
+        fill_start ◄──────────────── peticion de linea
+        fill_done  ────────────────► banco listo
 ```
 
-Dos de las cinco **no cumplen** los 120 MHz. Por eso `apio.ini` fija
-`--seed 4`, igual que hacía 13. Hay que rebarrer semillas tras cualquier cambio
-de RTL:
+### Por qué doble banco y no una FIFO asíncrona
 
-```powershell
-(Get-Content _build/default/hardware.pnr -Raw | ConvertFrom-Json).fmax
+Por el escalado vertical. Con una FIFO de flujo, mostrar cada línea fuente dos
+veces obliga al productor a **leerla dos veces de SDRAM**: 18,4 MB/s en lugar de
+9,2. Con dos bancos el lector relee el banco que ya tiene y la SDRAM se queda en
+9,2 MB/s. Dado lo justo que va la temporización (más abajo), ese margen no está
+para regalarlo.
+
+De paso el cruce de dominios sale más simple: un handshake petición/respuesta de
+dos fases con **una sola petición viva**, en vez de punteros Gray y contadores
+libres. Manda el lector: decide qué línea toca y en qué banco, así que el
+productor no lleva contador propio y no puede desincronizarse del barrido.
+
+Los buses `fill_line` y `fill_bank` no se sincronizan: cambian en el mismo flanco
+de píxel que el toggle y no vuelven a cambiar hasta dos líneas de pantalla
+después, así que llevan estables más de un ciclo de 120 MHz cuando el pulso
+sincronizado llega al otro lado. Es el patrón habitual de dato acompañando a un
+toggle.
+
+### Underflow
+
+Si al cambiar de banco el productor no ha terminado, se activa `underflow`, que
+es pegajoso hasta el reset y sale por **`led[0]`** (que deja de mostrar
+`last_command[0]`). En pantalla un underflow solo se ve como una imagen rota, que
+puede confundirse con muchas otras cosas.
+
+`video_scanout_tb.v` instancia **dos** sistemas: uno con productor rápido, que
+debe dar imagen correcta y nunca marcar underflow, y otro con productor
+deliberadamente lento, que **debe** marcarlo. Un detector que no se dispara nunca
+no sirve de nada en el hito C.
+
+El banco usa una pantalla de 32×16 con fuente de 16×8 en lugar de 640×480: la
+lógica ejercitada es la misma y un frame baja de 420 000 ciclos de píxel a 960.
+
+### El primer frame tras reset es basura
+
+Al arrancar, el barrido ya está en marcha y no ha habido blanking vertical en el
+que prellenar los bancos. La máquina se resincroniza en el siguiente
+`frame_start` y a partir de ahí la imagen es correcta. No se marca underflow por
+esto: solo se vigila el estado activo.
+
+## Temporización: el dominio de CPU ya no cumple
+
+| Dominio | Restricción | 10.fpga-cpu-ram | 15 tras hito A | 15 tras hito B |
+|---|---:|---:|---:|---:|
+| CPU + SDRAM | 120 MHz | 130,67 MHz | 123,32 MHz | **119,85 MHz** |
+| Pixel | 25 MHz | — | 160,28 MHz | 102,91 MHz |
+| TMDS 5× | 125 MHz | — | 395,10 MHz | 355,24 MHz |
+
+Barrido de ocho semillas tras el hito B:
+
+```text
+106,73  107,85  107,98  109,72  112,71  113,08  113,78  119,85 MHz
 ```
 
-Esto es una advertencia para el hito C: el scanout añadirá un tercer cliente
-dentro del dominio de 120 MHz, y el margen actual no da para regalarlo. Si se
-estrecha más, la salida razonable es bajar la restricción de la CPU en lugar de
-perseguir semillas.
+**Ninguna llega a 120.** La mejor se queda a 0,15 MHz, y eso es suerte, no
+diseño. Ya no es dispersión de semillas: la mediana ha caído de ~123 a ~111.
+
+Lo importante es que **no hay ningún camino crítico nuevo**. El camino es
+enteramente interno a la CPU:
+
+```text
+instruction → decodificación de shift_kind → step_active → branch_taken → pc
+8,34 ns totales: 1,9 de lógica y 4,9 de routing
+```
+
+Ni un bloque de vídeo aparece en él. Lo que ha empeorado es el *routing*, porque
+el emplazador tiene menos libertad. Con el dado un 6,6 % ocupado, la palabra
+«congestión» sobra: es que el netlist tiene ahora dos dominios con restricción y
+el reparto cambia.
+
+Quedan tres salidas, por orden de lo que costaría:
+
+1. **Seguir a 120 MHz con semilla fijada.** Es lo que hay ahora (`--seed 6`).
+   Funciona, pero cada cambio de RTL vuelve a ser una lotería.
+2. **Bajar la CPU a 100 MHz.** `CLK_FREQ_HZ` y el controlador SDRAM ya están
+   parametrizados, así que el cambio real es el divisor de UART: con `DIVISOR=40`
+   la velocidad pasaría de 3 a 2,5 Mbaud, y habría que ajustar `BAUDRATE` en
+   `monitor.py`. Como esta carpeta tiene su propio `monitor.py`, el cambio queda
+   contenido. Cuesta un 17 % de velocidad de CPU.
+3. **Atacar el camino de la CPU**, que es el punto 1 del `TODO.md` del
+   repositorio. Es trabajo de verdad y no pertenece a esta fase.
+
+La decisión conviene tomarla en el hito C, no antes: el lector de SDRAM añadirá
+más lógica a ese mismo dominio y entonces habrá el dato que falta.
 
 ## Uso y comprobaciones
 
 Desde esta carpeta:
 
 ```powershell
+..\.venv\Scripts\apio.exe test video_scanout_tb.v
 ..\.venv\Scripts\apio.exe test cpu_sdram_system_tb.v
 ..\.venv\Scripts\apio.exe test cpu_tb.v
 ..\.venv\Scripts\apio.exe test monitor_tb.v
@@ -100,9 +182,10 @@ Desde esta carpeta:
 ..\.venv\Scripts\apio.exe build
 ```
 
-Los cinco bancos son los de 10 y pasan sin cambios; el único ajuste es la
-versión esperada en `monitor_tb.v`. Ninguno simula el subsistema de vídeo: el
-hito A se verifica enchufando un monitor.
+Los cinco bancos de CPU son los de 10 y pasan sin cambios; el único ajuste es la
+versión esperada en `monitor_tb.v`. `video_scanout_tb.v` es el del hito B y sí
+simula el cruce de dominios; lo que ningún banco simula es la cadena TMDS ni los
+PLL, que se verifican enchufando un monitor.
 
 La suite completa de CPU contra esta placa:
 
@@ -128,4 +211,11 @@ roto la CPU.
 - El reset del dominio de píxel no cruza desde los 120 MHz: se sincroniza
   `btn_pwr_n` dentro del dominio de píxel y se combina con `clk_pix_locked`.
 - `video_pattern.sv` expone el mismo interfaz (`sx`, `sy`, `de` → `r`, `g`, `b`)
-  que tendrá el scanout del hito C, para que sustituirlo sea un cambio local.
+  que el scanout, y en `top` se elige entre los dos con FIRE1. El patrón es
+  combinacional desde `sx` mientras que el scanout llega un ciclo más tarde, así
+  que en `top` se retrasa un ciclo para que ambos compartan sincronismos.
+- Los dos bancos de línea caben en **un solo EBR**: 320 píxeles RGB565 son
+  5120 bits por banco, y un DP16KD tiene 18 kbit.
+- El hito C solo tiene que sustituir `video_line_source_pattern` por un lector de
+  SDRAM con el mismo contrato (`fill_start` / `fill_line` → `fill_we`,
+  `fill_addr`, `fill_data` → `fill_done`). Es una línea de `top`.

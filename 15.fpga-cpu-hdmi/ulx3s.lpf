@@ -8,6 +8,11 @@ FREQUENCY PORT "clk_25mhz" 25 MHZ;
 LOCATE COMP "btn_pwr_n" SITE "D6";
 IOBUF PORT "btn_pwr_n" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
 
+# FIRE1: conmuta la salida HDMI al patron generado por logica del hito A.
+# Activo a nivel alto, con pull-down, igual que en ulx3s_v20.lpf.
+LOCATE COMP "btn_fire1" SITE "R1";
+IOBUF PORT "btn_fire1" PULLMODE=DOWN IO_TYPE=LVCMOS33 DRIVE=4;
+
 LOCATE COMP "led[7]" SITE "H3";
 LOCATE COMP "led[6]" SITE "E1";
 LOCATE COMP "led[5]" SITE "E2";
