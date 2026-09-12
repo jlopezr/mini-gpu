@@ -8,11 +8,11 @@ parciales de 16 bits, y `DIV` usa un divisor signed iterativo de 32 pasos.
 
 Mapa unificado visible por la CPU y el monitor:
 
-| Banco | Dirección global |
-|---|---:|
-| EBR 0 | `0x00000000–0x00003fff` |
-| EBR 1 | `0x00100000–0x00103fff` |
-| Huecos y resto | error de bus |
+| Banco          |        Dirección global |
+|----------------|------------------------:|
+| EBR 0          | `0x00000000–0x00003fff` |
+| EBR 1          | `0x00100000–0x00103fff` |
+| Huecos y resto |            error de bus |
 
 Los puertos `imem` y `dmem` pueden acceder a cualquiera de los dos bancos.
 Así, un `LOAD` puede leer código, un `STORE` puede modificarlo y el fetch puede
@@ -36,10 +36,10 @@ desembocando en el multiplexor de `register_write_data`, que sirve a la ALU, a
 los saltos, a los desplazamientos y a los `LOAD`— y los dos se arreglan igual,
 metiendo un ciclo por medio:
 
-| Estado | Qué separa | Coste |
-|---|---|---|
-| `STATE_MUL_SIGN` | el arreglo de signo (negación de 32 bits) de la escritura | +1 ciclo en `MUL`, `MULFX`, `DIV` |
-| `STATE_ALU_WRITE` | la suma `operand_a + operand_b` de la escritura | +1 ciclo en las ALU |
+| Estado            | Qué separa                                                | Coste                             |
+|-------------------|-----------------------------------------------------------|-----------------------------------|
+| `STATE_MUL_SIGN`  | el arreglo de signo (negación de 32 bits) de la escritura | +1 ciclo en `MUL`, `MULFX`, `DIV` |
+| `STATE_ALU_WRITE` | la suma `operand_a + operand_b` de la escritura           | +1 ciclo en las ALU               |
 
 El segundo no es nuevo: es el mismo estado que ya tenía
 [`../10.fpga-cpu-ram`](../10.fpga-cpu-ram), que se añadió allí por este mismo
