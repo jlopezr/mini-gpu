@@ -44,6 +44,8 @@ module cpu_sdram_system_tb;
       .cpu_dmem_write_enable(dmem_write_enable),.cpu_dmem_read_data(dmem_read_data),
       .cpu_dmem_ready(dmem_ready),.cpu_dmem_error(dmem_error),
       // Puerto de video en reposo: este banco comprueba el flujo de CPU.
+      .mmio_select(),.mmio_write(),.mmio_write_mask(),.mmio_address(),
+      .mmio_write_data(),.mmio_read_data(32'h0000_0000),
       .video_req(1'b0),.video_addr(24'h000000),
       .video_read_data(),.video_ready(),
       .req_valid(req_valid),.req_write(req_write),.req_addr(req_addr),

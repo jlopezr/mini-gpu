@@ -1,3 +1,5 @@
 _build/
 __pycache__/
 fb_*.bin
+swap_*.bin
+swap_*.hex

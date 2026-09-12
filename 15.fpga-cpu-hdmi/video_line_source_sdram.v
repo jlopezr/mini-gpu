@@ -15,8 +15,8 @@
 //
 // El framebuffer es lineal, sin pitch propio:
 //
-//   direccion de byte    = FB_BASE + linea * SRC_W * 2 + x * 2
-//   direccion de palabra = FB_BASE/2 + linea * SRC_W + x
+//   direccion de byte    = fb_base*2 + linea * SRC_W * 2 + x * 2
+//   direccion de palabra = fb_base   + linea * SRC_W + x
 //
 // El adaptador trabaja en direcciones de palabra de 16 bits, asi que se usa la
 // segunda forma. `line_base` se calcula una vez al recibir la peticion, no por
@@ -35,13 +35,16 @@
 module video_line_source_sdram #(
     parameter integer SRC_W     = 320,
     parameter integer ADDR_BITS = 9,
-    parameter integer LINE_BITS = 8,
-    // Direccion de palabra de 16 bits del framebuffer. 24'h800000 son los
-    // bytes 0x01000000, la region que el mapa de memoria reserva a graficos.
-    parameter [23:0] FB_BASE_HALFWORD = 24'h800000
+    parameter integer LINE_BITS = 8
 ) (
     input wire clk,
     input wire reset,
+
+    // Direccion de palabra de 16 bits del buffer que toca mostrar. La decide
+    // `video_registers`, y en la primera peticion de cada frame puede cambiar
+    // en el mismo flanco por un swap. Se captura aqui junto con la linea, asi
+    // que el frame entero se lee de un solo buffer.
+    input wire [23:0] fb_base,
 
     input wire fill_start,
     input wire [LINE_BITS-1:0] fill_line,
@@ -73,7 +76,7 @@ module video_line_source_sdram #(
       fill_done <= 1'b0;
       fill_addr <= {ADDR_BITS{1'b0}};
       fill_data <= 16'h0000;
-      line_base <= FB_BASE_HALFWORD;
+      line_base <= 24'h000000;
       x <= {ADDR_BITS{1'b0}};
     end else begin
       fill_we <= 1'b0;
@@ -82,7 +85,7 @@ module video_line_source_sdram #(
       case (state)
         S_IDLE:
           if (fill_start) begin
-            line_base <= FB_BASE_HALFWORD + fill_line * SRC_W;
+            line_base <= fb_base + fill_line * SRC_W;
             x <= {ADDR_BITS{1'b0}};
             state <= S_REQUEST;
           end

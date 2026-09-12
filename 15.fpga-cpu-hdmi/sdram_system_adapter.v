@@ -67,6 +67,17 @@ module sdram_system_adapter #(
     output reg         cpu_dmem_ready,
     output reg         cpu_dmem_error,
 
+    // Ventana de registros de video en 0x80000000. No toca la SDRAM: se
+    // resuelve en un ciclo. La atienden tanto la CPU (palabra completa) como
+    // el monitor (byte a byte), porque poder mover el framebuffer desde el PC
+    // sin escribir un programa es la forma rapida de probar el swap.
+    output reg mmio_select,
+    output reg mmio_write,
+    output reg [3:0] mmio_write_mask,
+    output reg [3:0] mmio_address,
+    output reg [31:0] mmio_write_data,
+    input wire [31:0] mmio_read_data,
+
     // Video scanout: single 16-bit read, halfword address, no range check
     // because the line source can only generate addresses inside the frame
     // buffer. `video_req` stays high until `video_ready` pulses.
@@ -97,6 +108,11 @@ module sdram_system_adapter #(
   localparam STATE_RELEASE     = 3'd4;
   localparam STATE_VALIDATE_MONITOR = 3'd5;
   localparam STATE_WAIT_VIDEO  = 3'd6;
+  localparam STATE_MMIO_WAIT   = 3'd7;
+
+  // Ventana de registros de video: 0x80000000..0x8000000f. Se decodifica
+  // estricta; cualquier otra direccion alta sigue siendo un error, como antes.
+  localparam [27:0] MMIO_PREFIX = 28'h800_0000;
 
   reg [2:0] state;
   reg [2:0] owner;
@@ -124,6 +140,10 @@ module sdram_system_adapter #(
       cpu_imem_address[31:25] == 0 && cpu_imem_address[1:0] == 0;
   wire cpu_dmem_address_valid =
       cpu_dmem_address[31:25] == 0 && cpu_dmem_address[1:0] == 0;
+  wire cpu_dmem_mmio =
+      cpu_dmem_address[31:4] == MMIO_PREFIX && cpu_dmem_address[1:0] == 0;
+  // El monitor accede byte a byte, asi que no exige alineamiento.
+  wire monitor_mmio = saved_monitor_address[31:4] == MMIO_PREFIX;
 
   always @(posedge clk) begin
     monitor_ready <= 1'b0;
@@ -133,9 +153,15 @@ module sdram_system_adapter #(
     cpu_dmem_error <= 1'b0;
     video_ready <= 1'b0;
 
+    mmio_select <= 1'b0;
+    mmio_write <= 1'b0;
+
     if (reset) begin
       video_read_data <= 16'h0000;
       video_run <= 8'd0;
+      mmio_write_mask <= 4'b0000;
+      mmio_address <= 4'h0;
+      mmio_write_data <= 32'h0000_0000;
       state <= STATE_IDLE;
       owner <= OWNER_NONE;
       monitor_read_data <= 8'h00;
@@ -207,7 +233,17 @@ module sdram_system_adapter #(
             end
           end else if (!cpu_halted && cpu_dmem_valid) begin
             video_run <= 8'd0;
-            if (!init_done || !cpu_dmem_address_valid) begin
+            if (cpu_dmem_mmio) begin
+              // Registros de video: un ciclo, sin tocar la SDRAM.
+              owner <= OWNER_DMEM;
+              saved_cpu_read <= !(|cpu_dmem_write_enable);
+              mmio_select <= 1'b1;
+              mmio_write <= |cpu_dmem_write_enable;
+              mmio_write_mask <= cpu_dmem_write_enable;
+              mmio_address <= cpu_dmem_address[3:0];
+              mmio_write_data <= cpu_dmem_write_data;
+              state <= STATE_MMIO_WAIT;
+            end else if (!init_done || !cpu_dmem_address_valid) begin
               owner <= OWNER_DMEM;
               cpu_dmem_ready <= 1'b1;
               cpu_dmem_error <= 1'b1;
@@ -232,9 +268,24 @@ module sdram_system_adapter #(
         // prevents the seven-bit range comparison becoming a 120 MHz path from
         // the registered monitor address to req_addr/req_wdata.
         STATE_VALIDATE_MONITOR: begin
-          if (!cpu_halted || !init_done ||
-              saved_monitor_address[31:25] != 0 ||
-              (saved_monitor_write_enable && saved_monitor_read)) begin
+          if (saved_monitor_write_enable && saved_monitor_read) begin
+            monitor_ready <= 1'b1;
+            monitor_error <= 1'b1;
+            state <= STATE_RELEASE;
+          end else if (monitor_mmio) begin
+            // Los registros de video se atienden aunque la CPU este corriendo:
+            // no hay coherencia que romper y poder leer el contador de frames
+            // mientras la CPU anima es justo para lo que sirve. La regla de
+            // "el monitor posee la memoria solo con la CPU parada" sigue
+            // aplicandose sin cambios a la SDRAM.
+            mmio_select <= 1'b1;
+            mmio_write <= saved_monitor_write_enable;
+            mmio_write_mask <= 4'b0001 << saved_monitor_address[1:0];
+            mmio_address <= saved_monitor_address[3:0];
+            mmio_write_data <= {4{saved_monitor_write_data}};
+            state <= STATE_MMIO_WAIT;
+          end else if (!cpu_halted || !init_done ||
+                       saved_monitor_address[31:25] != 0) begin
             monitor_ready <= 1'b1;
             monitor_error <= 1'b1;
             state <= STATE_RELEASE;
@@ -269,6 +320,23 @@ module sdram_system_adapter #(
               state <= STATE_START_NEXT;
             end
           end
+        end
+
+        // `mmio_address` se registro al salir de IDLE, asi que la lectura
+        // combinacional del bloque de registros ya es valida en este ciclo. La
+        // escritura, si la hay, ocurre en el flanco que cierra este estado:
+        // `mmio_select` esta alto exactamente un ciclo.
+        STATE_MMIO_WAIT: begin
+          if (owner == OWNER_MONITOR) begin
+            if (saved_monitor_read)
+              monitor_read_data <=
+                  mmio_read_data[{saved_monitor_address[1:0], 3'b000} +: 8];
+            monitor_ready <= 1'b1;
+          end else begin
+            if (saved_cpu_read) cpu_dmem_read_data <= mmio_read_data;
+            cpu_dmem_ready <= 1'b1;
+          end
+          state <= STATE_RELEASE;
         end
 
         // Un pixel RGB565 es exactamente un acceso de 16 bits: no hay segunda

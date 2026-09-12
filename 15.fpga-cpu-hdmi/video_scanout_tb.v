@@ -66,7 +66,7 @@ module video_scanout_tb;
       .de_out(fast_de), .hsync_out(), .vsync_out(),
       .underflow(fast_underflow),
       .clk_sys(clk_sys), .rst_sys(reset),
-      .fill_start(fast_start), .fill_line(fast_line),
+      .fill_start(fast_start), .fill_line(fast_line), .fill_first(),
       .fill_we(fast_we), .fill_addr(fast_addr), .fill_data(fast_data),
       .fill_done(fast_done));
 
@@ -94,7 +94,7 @@ module video_scanout_tb;
       .de_out(), .hsync_out(), .vsync_out(),
       .underflow(slow_underflow),
       .clk_sys(clk_sys), .rst_sys(reset),
-      .fill_start(slow_start), .fill_line(slow_line),
+      .fill_start(slow_start), .fill_line(slow_line), .fill_first(),
       .fill_we(slow_we), .fill_addr(slow_addr), .fill_data(slow_data),
       .fill_done(slow_done));
 

@@ -18,6 +18,12 @@ module sdram_system_adapter_tb;
   // Puerto de video en reposo: este banco cubre monitor y CPU. El camino de
   // video tiene el suyo en video_sdram_tb.v.
   reg video_req=0; reg [23:0] video_addr=0;
+  wire mmio_select,mmio_write; wire [3:0] mmio_write_mask,mmio_address;
+  wire [31:0] mmio_write_data; reg [31:0] mmio_read_data;
+  // Cuatro registros de mentira en la ventana 0x80000000, suficientes para
+  // comprobar el pegamento: decodificacion, mascara de byte y seleccion del
+  // byte de vuelta. La semantica real vive en video_registers_tb.v.
+  reg [31:0] mmio_regs[0:3];
   wire [15:0] video_read_data; wire video_ready;
   reg [15:0] program_words[0:31];
   reg [15:0] data_words[0:31];
@@ -25,6 +31,16 @@ module sdram_system_adapter_tb;
   always #5 clk=~clk;
 
   sdram_system_adapter dut(.*);
+
+  always @(*) mmio_read_data = mmio_regs[mmio_address[3:2]];
+  always @(posedge clk) begin
+    if(mmio_select && mmio_write) begin
+      if(mmio_write_mask[0]) mmio_regs[mmio_address[3:2]][7:0]   <= mmio_write_data[7:0];
+      if(mmio_write_mask[1]) mmio_regs[mmio_address[3:2]][15:8]  <= mmio_write_data[15:8];
+      if(mmio_write_mask[2]) mmio_regs[mmio_address[3:2]][23:16] <= mmio_write_data[23:16];
+      if(mmio_write_mask[3]) mmio_regs[mmio_address[3:2]][31:24] <= mmio_write_data[31:24];
+    end
+  end
 
   always @(posedge clk) begin
     done<=0;
@@ -68,6 +84,7 @@ module sdram_system_adapter_tb;
 
   initial begin
     for(i=0;i<32;i=i+1) begin program_words[i]=16'hcafe; data_words[i]=0; end
+    for(i=0;i<4;i=i+1) mmio_regs[i]=0;
     repeat(2) @(negedge clk); reset=0;
     monitor_write(32'h0000_0000,8'h44);
     monitor_write(32'h0000_0001,8'h33);
@@ -112,11 +129,41 @@ module sdram_system_adapter_tb;
     @(negedge clk); cpu_imem_valid=0;
     repeat(2) @(negedge clk);
 
+    // --- ventana de registros de video en 0x80000000 ----------------------
+    // La CPU la usa con palabras completas.
     cpu_halted=0;
+    @(negedge clk); cpu_dmem_address=32'h8000_0004;
+    cpu_dmem_write_data=32'hdead_beef; cpu_dmem_write_enable=4'b1111;
+    cpu_dmem_valid=1;
+    wait(cpu_dmem_ready); @(negedge clk); cpu_dmem_valid=0;
+    cpu_dmem_write_enable=0;
+    if(mmio_regs[1]!==32'hdead_beef)
+      $fatal(1,"CPU write to MMIO stored %08x",mmio_regs[1]);
+    @(negedge clk); cpu_dmem_valid=1;
+    wait(cpu_dmem_ready);
+    if(cpu_dmem_error || cpu_dmem_read_data!==32'hdead_beef)
+      $fatal(1,"CPU read from MMIO got %08x",cpu_dmem_read_data);
+    @(negedge clk); cpu_dmem_valid=0;
+
+    // El monitor accede byte a byte, y a estos registros tambien con la CPU
+    // corriendo: no hay coherencia que romper y el contador de frames solo
+    // sirve si se puede leer en marcha.
+    monitor_read_check(32'h8000_0006,8'had);
+    monitor_write(32'h8000_0007,8'h55);
+    if(mmio_regs[1]!==32'h55ad_beef)
+      $fatal(1,"monitor byte write clobbered the register: %08x",mmio_regs[1]);
+
+    // Fuera de la ventana, una direccion alta sigue siendo un error.
+    @(negedge clk); monitor_address=32'h9000_0000; monitor_read_enable=1;
+    @(negedge clk); monitor_read_enable=0; wait(monitor_ready);
+    if(!monitor_error) $fatal(1,"monitor accepted an address outside the MMIO window");
+    @(negedge clk);
+
     @(negedge clk); monitor_address=0; monitor_read_enable=1;
     @(negedge clk); monitor_read_enable=0; wait(monitor_ready);
     if(!monitor_error) $fatal(1,"monitor accessed SDRAM while CPU was running");
-    $display("PASS: monitor and CPU SDRAM frontend"); $finish;
+    $display("PASS: monitor and CPU SDRAM frontend, plus the video MMIO window");
+    $finish;
   end
 endmodule
 

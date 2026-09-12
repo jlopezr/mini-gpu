@@ -83,6 +83,12 @@ module video_scanout #(
     input wire rst_sys,
     output reg fill_start,                  // pulso de un ciclo
     output wire [LINE_BITS-1:0] fill_line,  // linea fuente pedida
+    // Alto cuando la peticion es la PRIMERA del frame. Es el unico instante
+    // del dominio de sistema en el que se puede cambiar de framebuffer sin
+    // partir la imagen: nada del frame anterior queda por leer y nada del
+    // siguiente se ha leido todavia. El bloque de registros lo usa para el
+    // swap en VBlank.
+    output wire fill_first,
     input wire fill_we,                     // escritura de palabra
     input wire [ADDR_BITS-1:0] fill_addr,
     input wire [15:0] fill_data,
@@ -104,6 +110,7 @@ module video_scanout #(
   reg [1:0] bank_valid;
   reg req_toggle;
   reg req_bank;
+  reg req_first;
   reg [LINE_BITS-1:0] req_line;
   reg [LINE_BITS-1:0] next_line;
   reg pending;
@@ -133,6 +140,7 @@ module video_scanout #(
       bank_valid <= 2'b00;
       req_toggle <= 1'b0;
       req_bank <= 1'b0;
+      req_first <= 1'b0;
       req_line <= 0;
       next_line <= 0;
       pending <= 1'b0;
@@ -155,6 +163,7 @@ module video_scanout #(
           S_IDLE:
             if (!busy) begin
               req_bank <= 1'b0;
+              req_first <= 1'b1;  // primera peticion del frame
               req_line <= 0;
               req_toggle <= ~req_toggle;
               pending <= 1'b1;
@@ -164,6 +173,7 @@ module video_scanout #(
           S_PRE0:
             if (!busy) begin
               req_bank <= 1'b1;
+              req_first <= 1'b0;
               req_line <= 1;
               req_toggle <= ~req_toggle;
               pending <= 1'b1;
@@ -185,6 +195,7 @@ module video_scanout #(
                   bank_valid[bank_rd] <= 1'b0;  // el banco que se abandona
                   if (next_line < SRC_H_W) begin
                     req_bank <= bank_rd;
+                    req_first <= 1'b0;
                     req_line <= next_line;
                     req_toggle <= ~req_toggle;
                     pending <= 1'b1;
@@ -226,6 +237,7 @@ module video_scanout #(
   end
 
   assign fill_line = req_line;
+  assign fill_first = req_first;
 
   // El productor no sabe en que banco escribe: lo decide el lector y se
   // concatena aqui. Asi el productor del hito C solo tiene que preocuparse de

@@ -109,6 +109,8 @@ module video_sdram_tb;
       .cpu_dmem_write_enable(cpu_dmem_write_enable),
       .cpu_dmem_read_data(cpu_dmem_read_data), .cpu_dmem_ready(cpu_dmem_ready),
       .cpu_dmem_error(cpu_dmem_error),
+      .mmio_select(), .mmio_write(), .mmio_write_mask(), .mmio_address(),
+      .mmio_write_data(), .mmio_read_data(32'h0000_0000),
       .video_req(video_req), .video_addr(video_addr),
       .video_read_data(video_read_data), .video_ready(video_ready),
       .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),
@@ -123,10 +125,9 @@ module video_sdram_tb;
   wire [15:0] fill_data;
 
   video_line_source_sdram #(
-      .SRC_W(SRC_W), .ADDR_BITS(ADDR_BITS), .LINE_BITS(LINE_BITS),
-      .FB_BASE_HALFWORD(FB_BASE)
+      .SRC_W(SRC_W), .ADDR_BITS(ADDR_BITS), .LINE_BITS(LINE_BITS)
   ) source_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset), .fb_base(FB_BASE),
       .fill_start(fill_start), .fill_line(fill_line),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
       .fill_done(fill_done),

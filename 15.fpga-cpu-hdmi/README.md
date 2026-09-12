@@ -5,13 +5,12 @@ sobre ULX3S-85F. El plan por fases está en [`docs/planning.md`](docs/planning.m
 y la arquitectura de destino en
 [`docs/gpu_educativa_arquitectura.md`](docs/gpu_educativa_arquitectura.md).
 
-Estado: **hito C completado**. El scanout lee un framebuffer RGB565 de 320×240
-en SDRAM y lo saca escalado 2× a 640×480 por HDMI, mientras la CPU y el monitor
-comparten la misma memoria. Es la fase 1 del plan: *SDRAM → scanout → escalador
-→ HDMI* validado de extremo a extremo.
+Estado: **hito D completado**. Hay doble framebuffer con intercambio
+sincronizado, gobernado desde una ventana de registros en `0x80000000` que
+manejan tanto la CPU como el monitor. Con esto termina la fase 2 del plan.
 
-**El dominio de CPU baja de 120 a 100 MHz en este hito**, y con él el monitor de
-3 a 2 Mbaud. No es una decisión de gusto: a 120 MHz no cumplía ninguna semilla.
+**El dominio de CPU corre a 100 MHz desde el hito C**, y con él el monitor a
+2 Mbaud. No fue una decisión de gusto: a 120 MHz no cumplía ninguna semilla.
 Está razonado abajo.
 
 ## Escalera de hitos
@@ -21,7 +20,7 @@ Está razonado abajo.
 | A | Fusión: CPU de 10 intacta + 640×480p60 con patrón generado por lógica | **hecho** |
 | B | Doble line buffer, cruce de dominios y escalado 2×, con productor falso | **hecho** |
 | C | Scanout real: la CPU escribe el framebuffer en SDRAM y se ve | **hecho** |
-| D | Registro `FB_BASE` y doble framebuffer con swap en VBlank | pendiente |
+| D | Registros en `0x80000000` y doble framebuffer con swap sincronizado | **hecho** |
 
 La separación ha pagado: los tres fallos que aparecieron en C —aritmética de
 línea, arbitraje y temporización— se pudieron mirar de uno en uno porque el
@@ -79,8 +78,8 @@ de SDRAM.
    dominio de sistema, 100 MHz          dominio de pixel, 25 MHz
    ───────────────────────────          ────────────────────────
 
-   video_line_source_sdram
-        │  (hito B: generador de patron)
+   video_line_source_pattern
+        │  (en el hito C pasa a ser el lector de SDRAM)
         ▼
    escritura ─────► line_buffer ──────► lectura, cada pixel y
                      2 bancos            cada linea por duplicado
@@ -121,8 +120,9 @@ debe dar imagen correcta y nunca marcar underflow, y otro con productor
 deliberadamente lento, que **debe** marcarlo. Un detector que no se dispara nunca
 no sirve de nada en el hito C.
 
-El banco usa una pantalla de 32×16 con fuente de 16×8 en lugar de 640×480: la
-lógica ejercitada es la misma y un frame baja de 420 000 ciclos de píxel a 960.
+El banco usa una pantalla de 32×16 con imagen fuente de 16×8 en lugar de
+640×480: la lógica ejercitada es la misma y un frame baja de 420 000 ciclos de
+píxel a 960.
 
 ### El primer frame tras reset es basura
 
@@ -197,6 +197,84 @@ píxel y problemas de escalado.
 Si algo sale mal, **FIRE1** vuelve al patrón del hito A sin tocar memoria: si
 con el botón se ve bien, el problema está del line buffer hacia dentro.
 `led[0]` sigue marcando underflow.
+
+## Qué hay en el hito D
+
+Una ventana de registros y el doble framebuffer que gobiernan.
+
+| Dirección | Registro | | Contenido |
+|---|---|---|---|
+| `0x80000000` | `FB_FRONT` | RW | dirección de byte del buffer que se muestra |
+| `0x80000004` | `FB_BACK` | RW | dirección de byte del buffer que se dibuja |
+| `0x80000008` | `SWAP` | RW | escribir: pide intercambio. leer bit 0: pendiente |
+| `0x8000000c` | `STATUS` | R | bit 0 underflow, bit 1 pendiente, 31:16 frames |
+
+Las direcciones se alinean a cuatro bytes: los dos bits bajos se ignoran al
+escribir y se leen como cero.
+
+### El instante del intercambio
+
+Intercambiar los buffers a mitad de frame parte la imagen. Hay que hacerlo
+cuando no queda nada del frame anterior por leer y no se ha leído nada del
+siguiente, y **ese instante existe y es exacto: la primera petición de línea
+del frame**. El scanout la marca con `fill_first`.
+
+No hace falta cruzar una señal de VBlank desde el dominio de píxel, ni razonar
+sobre cuál de dos cruces llega antes: el swap viaja dentro de la propia
+petición, que ya cruza. Un cruce menos y una carrera menos.
+
+Hay un detalle que parece un descuido y no lo es: **`fb_base` es combinacional**
+respecto a esa decisión. El lector de líneas registra su dirección base en el
+mismo flanco en que se actualizan `fb_front` y `fb_back`; si `fb_base` fuera un
+registro, la línea 0 saldría del buffer viejo y las 239 restantes del nuevo —un
+desgarro de una línea, justo el fallo que este mecanismo existe para evitar—.
+`video_registers_tb.v` lo comprueba muestreando `fb_base` en el mismo momento
+en que lo ve el lector.
+
+Una petición de swap que cae en el mismo ciclo que otro en curso queda
+pendiente para el frame siguiente en lugar de perderse: un programa que dibuja
+a toda velocidad puede pedirlo justo en ese flanco, y perderlo lo dejaría
+esperando un intercambio que no llega. También tiene prueba.
+
+### Acceso desde la CPU y desde el monitor
+
+La CPU usa palabras completas; el monitor, bytes. Los registros **responden
+también con la CPU en marcha**, al contrario que la SDRAM: no hay coherencia
+que romper, y el contador de frames solo sirve si se puede leer mientras un
+programa dibuja. La regla de «el monitor posee la memoria solo con la CPU
+parada» sigue aplicándose sin cambios a la SDRAM.
+
+Eso permite probar el swap **sin escribir ni una línea de programa**:
+
+```powershell
+..\.venv\Scripts\python.exe make_framebuffer.py bars fb0.bin
+..\.venv\Scripts\python.exe make_framebuffer.py checker fb1.bin
+..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb0.bin --port COM3
+..\.venv\Scripts\python.exe monitor.py write-block 0x01025800 fb1.bin --port COM3
+..\.venv\Scripts\python.exe monitor.py write-byte 0x80000008 1 --port COM3
+```
+
+La pantalla debe saltar de las barras al tablero. Repetir el último comando
+alterna entre los dos.
+
+### Los programas
+
+- [`swap_smoke.asm`](swap_smoke.asm) no dibuja: lee los dos registros, pide un
+  intercambio, espera a que ocurra y comprueba que se intercambiaron. Es el que
+  ejecuta `cpu_video_tb.v`, así que su comportamiento **está verificado en
+  simulación RTL con instrucciones reales**.
+- [`swap_demo.asm`](swap_demo.asm) es la demostración: una banda horizontal que
+  baja, redibujando el buffer trasero entero cada frame. Ensambla, pero **no
+  está verificado**: 38 400 escrituras por frame no terminan en simulación en
+  un tiempo razonable. La prueba que importa es comparativa —quitar la espera
+  de `wait_swap` o dibujar sobre `FB_FRONT` debe hacer aparecer tearing— y esa
+  solo se puede hacer en la placa.
+
+```powershell
+..\.venv\Scripts\python.exe ..\1.isa\miniisa_asm.py swap_demo.asm -o swap_demo.bin
+..\.venv\Scripts\python.exe monitor.py write-block 0 swap_demo.bin --port COM3
+..\.venv\Scripts\python.exe monitor.py run --port COM3
+```
 
 ## Temporización: de 120 a 100 MHz
 
@@ -295,6 +373,8 @@ concreto y hay 156 DSP sin usar.
 Desde esta carpeta:
 
 ```powershell
+..\.venv\Scripts\apio.exe test cpu_video_tb.v
+..\.venv\Scripts\apio.exe test video_registers_tb.v
 ..\.venv\Scripts\apio.exe test video_sdram_tb.v
 ..\.venv\Scripts\apio.exe test video_scanout_tb.v
 ..\.venv\Scripts\apio.exe test cpu_sdram_system_tb.v

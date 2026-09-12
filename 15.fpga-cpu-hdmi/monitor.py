@@ -16,6 +16,9 @@ from serial.tools import list_ports
 BAUDRATE = 2_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
+# Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.
+MMIO_BASE = 0x8000_0000
+MMIO_LIMIT = 0x8000_000F
 MAX_BLOCK_SIZE = 256
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
@@ -277,6 +280,30 @@ def parse_integer(value: str, maximum: int, description: str) -> int:
     return result
 
 
+def parse_byte_address(value: str) -> int:
+    """Dirección para acceso por bytes: SDRAM o la ventana de registros.
+
+    Los registros de vídeo viven en `MMIO_BASE` y no son memoria, así que solo
+    tienen sentido byte a byte: `write-block` y compañía siguen limitados a la
+    SDRAM. Al contrario que la memoria, estos registros responden también con
+    la CPU en marcha, que es lo que permite leer el contador de frames o mover
+    el framebuffer mientras un programa dibuja.
+    """
+    try:
+        result = int(value, 0)
+    except ValueError as error:
+        raise MonitorError(f"Invalid address: {value}") from error
+
+    if 0 <= result <= MAX_ADDRESS or MMIO_BASE <= result <= MMIO_LIMIT:
+        return result
+
+    raise MonitorError(
+        f"Address must be between 0 and 0x{MAX_ADDRESS:x}, "
+        f"or inside the video register window "
+        f"0x{MMIO_BASE:08x}-0x{MMIO_LIMIT:08x}"
+    )
+
+
 def validate_block(address: int, length: int) -> None:
     if not 1 <= length <= MAX_BLOCK_SIZE:
         raise MonitorError(f"Block length must be between 1 and {MAX_BLOCK_SIZE}")
@@ -382,12 +409,12 @@ def main() -> int:
                 version = client.get_version()
                 print(f"FPGA monitor version: {version}")
             elif args.command == "write-byte":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_byte_address(args.arguments[0])
                 value = parse_integer(args.arguments[1], 0xFF, "byte value")
                 client.write_byte(address, value)
                 print(f"Written 0x{value:02x} at address 0x{address:04x}")
             elif args.command == "read-byte":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_byte_address(args.arguments[0])
                 value = client.read_byte(address)
                 print(f"Address 0x{address:04x}: 0x{value:02x}")
             elif args.command == "write-block":

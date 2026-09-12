@@ -137,11 +137,14 @@ module top (
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc));
 
-  // Puerto de video del adaptador. Se declara aqui porque el adaptador se
+  // Puertos de video del adaptador. Se declaran aqui porque el adaptador se
   // instancia antes que el subsistema de video.
   wire video_req, video_ready;
   wire [23:0] video_addr;
   wire [15:0] video_read_data;
+  wire mmio_select, mmio_write;
+  wire [3:0] mmio_write_mask, mmio_address;
+  wire [31:0] mmio_write_data, mmio_read_data;
 
   wire req_valid, req_write, req_ready, sdram_done, init_done, sdram_busy;
   wire [23:0] req_addr;
@@ -163,6 +166,9 @@ module top (
       .cpu_dmem_write_enable(cpu_dmem_write_enable),
       .cpu_dmem_read_data(cpu_dmem_read_data), .cpu_dmem_ready(cpu_dmem_ready),
       .cpu_dmem_error(cpu_dmem_error),
+      .mmio_select(mmio_select), .mmio_write(mmio_write),
+      .mmio_write_mask(mmio_write_mask), .mmio_address(mmio_address),
+      .mmio_write_data(mmio_write_data), .mmio_read_data(mmio_read_data),
       .video_req(video_req), .video_addr(video_addr),
       .video_read_data(video_read_data), .video_ready(video_ready),
       .req_valid(req_valid),
@@ -235,8 +241,9 @@ module top (
   // tiempo de los dos modos.
   wire [7:0] scan_r, scan_g, scan_b;
   wire scan_de, scan_hsync, scan_vsync, video_underflow;
-  wire fill_start, fill_we, fill_done;
+  wire fill_start, fill_first, fill_we, fill_done;
   wire [7:0] fill_line;
+  wire [23:0] fb_base;
   wire [8:0] fill_addr;
   wire [15:0] fill_data;
 
@@ -247,19 +254,31 @@ module top (
       .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
       .underflow(video_underflow),
       .clk_sys(clk), .rst_sys(reset),
-      .fill_start(fill_start), .fill_line(fill_line), .fill_we(fill_we),
-      .fill_addr(fill_addr), .fill_data(fill_data), .fill_done(fill_done));
+      .fill_start(fill_start), .fill_line(fill_line), .fill_first(fill_first),
+      .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
+      .fill_done(fill_done));
 
   // Productor del hito C: lee el framebuffer de la SDRAM. El generador de
   // patron del hito B (`video_line_source_pattern`) ya no se instancia, pero se
   // conserva en el arbol porque su banco de pruebas sigue siendo el que valida
   // el cruce de dominios sin meter memoria de por medio.
   video_line_source_sdram source_i(
-      .clk(clk), .reset(reset), .fill_start(fill_start), .fill_line(fill_line),
+      .clk(clk), .reset(reset), .fb_base(fb_base),
+      .fill_start(fill_start), .fill_line(fill_line),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
       .fill_done(fill_done),
       .video_req(video_req), .video_addr(video_addr),
       .video_read_data(video_read_data), .video_ready(video_ready));
+
+  // Registros de video en 0x80000000, y con ellos el doble framebuffer.
+  video_registers registers_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address), .write_data(mmio_write_data),
+      .read_data(mmio_read_data),
+      .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
+      .underflow_pix(video_underflow),
+      .debug_front(), .debug_back());
 
   // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
   // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el
