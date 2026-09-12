@@ -137,6 +137,36 @@ otra.
 python monitor.py perf --port COM3   # cycles=... instructions=... CPI=...
 ```
 
+### Medido en placa
+
+Nueve programas de `x.cpu-tests`, con el vídeo corriendo:
+
+| Programa                 | Instr. | CPI   |
+|--------------------------|-------:|------:|
+| `program-fibonacci`      |     77 |  8,82 |
+| `program-shift-multiply` |     28 |  9,64 |
+| `multiply`               |      4 | 12,50 |
+| `program-array-sum`      |     34 | 12,56 |
+| `program-memory-copy`    |     44 | 13,27 |
+| `logic-immediates`       |     10 | 13,40 |
+| `unsigned-branches`      |     11 | 14,55 |
+| `smoke`                  |     12 | 15,25 |
+| `shift-amount`           |     15 | 19,80 |
+
+El rango es lo interesante, y no la media. Los 8,8 de `fibonacci` son un bucle
+que cabe en el búfer de instrucciones: se paga el fallo una vez y se amortiza
+en 77 instrucciones. Los 15 a 20 de los programas cortos son casi todo fallos
+de búfer, porque no hay bucle donde amortizarlos: con doce instrucciones
+seguidas, cada línea nueva se paga entera.
+
+O sea que el búfer de instrucciones no baja el CPI de una instrucción; baja el
+de un **bucle**. Que es lo que hace un caché, y por eso la comparación honesta
+entre versiones son los programas, no los casos sueltos.
+
+El contador de instrucciones se contrasta con el del simulador en la tabla de
+`--measure`: coinciden exactamente en los nueve. Ese contraste ya encontró un
+fallo —ver el README—, así que no es decorativo.
+
 Para comparar versiones enteras, [`x.cpu-tests`](../../x.cpu-tests/README.md)
 tiene `--measure`, que ejecuta cada caso en cada versión aplicable y saca la
 tabla en Markdown.

@@ -99,7 +99,11 @@ class SimulatorBackend:
             dispositivo = self.video_class()
             swap = video.get("run_until_swap")
             if swap:
-                dispositivo.halt_at = swap
+                # Por `write`, no asignando el atributo: armar la alarma tiene
+                # efectos —pone SWAP_COUNT a cero y levanta el bit de armado—
+                # igual que en el hardware. Asignando `halt_at` a pelo se
+                # queda desarmada y el programa no para nunca.
+                dispositivo.write(dispositivo.HALT_AT, swap)
 
         cpu = self.cpu_class(self.memory_size, video=dispositivo)
         cpu.load_program(program)

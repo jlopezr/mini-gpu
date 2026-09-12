@@ -51,6 +51,25 @@ cuadrado deja de estar en la diagonal, así que el caso distingue un eje del
 otro. Antes del paso 52, `x` e `y` valen lo mismo y un intercambio de ejes
 pasaría desapercibido.
 
+## Aislamiento: la placa no arranca de cero entre casos
+
+El simulador construye un `VideoDevice` nuevo en cada ejecución. La placa no:
+`FB_FRONT`, `FB_BACK` y `SWAP_COUNT` sólo los reinicia el reset del bitstream,
+así que un caso le pasa su estado al siguiente. Eso dio dos fallos de verdad, y
+ninguno era del hardware:
+
+- **`registers` fallaba una de cada dos veces.** Comprueba valores absolutos de
+  las bases, y `band` o `bounce` dejaban un número impar de intercambios, con lo
+  que llegaban cruzadas. Ahora el backend las devuelve a sus valores de reset
+  antes de cada ejecución. A cambio, este caso ya **no** verifica el valor de
+  encendido: verifica que se leen y que un `SWAP` las intercambia.
+- **`bounce` sólo pasaba la primera vez por encendido.** Era un fallo de
+  hardware en `HALT_AT`, no de aislamiento, pero salió por lo mismo: el caso
+  suponía un contador a cero. Está contado en el README de la 18.
+
+La regla que queda: **un caso de vídeo no puede suponer nada del estado
+inicial** más allá de lo que el backend normaliza explícitamente.
+
 ## Las referencias no se capturan, se calculan
 
 Cada caso con `expect.frame` lleva un `reference.py` que genera el fichero

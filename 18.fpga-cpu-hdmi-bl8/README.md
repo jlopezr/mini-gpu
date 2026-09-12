@@ -770,6 +770,83 @@ de línea, 2 PLL y 1 DSP. El DSP sale del producto `línea × 320` del lector: s
 podría forzar a sumas de desplazamientos, pero eso ataría el módulo a un ancho
 concreto y hay 156 DSP sin usar.
 
+## Lo que sólo dijo la placa
+
+Tres cosas pasaron los 18 bancos en verde y fallaron en hardware. Vale la pena
+mirarlas juntas, porque las tres fallan por el mismo motivo de fondo: **el
+banco y el diseño compartían la suposición equivocada**.
+
+### La captura de DQ no tenía margen
+
+El síntoma inicial fue una vuelta completa de escribir y leer que devolvía la
+ráfaga corrida un beat. `READ_DELAY_CYCLES` estaba en 1 por analogía con el
+controlador BL1 de la 16, que muestrea en `ST_READ` + dos esperas + captura. La
+analogía era mala: **la 16 corre a 100 MHz y ésta a 80**. El viaje de ida y
+vuelta —camino de salida, pin, pista, pin de vuelta, camino de entrada— es
+físico y no cambia con el reloj, así que a 10 ns se sale del ciclo y a 12,5 ns
+cabe dentro.
+
+Con el parámetro a 0 la vuelta salía exacta y la suite pasaba 12 de 12… la
+primera vez. Después empezó a fallar de forma intermitente. Una matriz de las
+128 casillas (8 beats × 16 DQ), escribiendo un único 1 aislado en cada una,
+dio el diagnóstico:
+
+```
+semilla 7 ->  (3,4) (3,5) (7,4) (7,5)
+semilla 1 ->  (0,6) (3,4) (3,6) (4,6) (6,6) (7,4) (7,6)
+```
+
+**Los bits malos cambian al recompilar.** Un fallo que se mueve con la
+colocación es margen, no lógica. Y el `Fmax` de nextpnr no lo veía: daba
++14,5 % de holgura, porque el camino que falla entra por un pin y nextpnr no
+modela lo que pasa fuera del chip.
+
+Las dos medidas acotan el instante bueno: en T+2 la captura es marginal, en T+3
+llega un beat entera tarde. O sea que el límite del beat cae entre los dos
+flancos de subida. La solución es muestrear en medio, en el flanco de **bajada**:
+
+```verilog
+reg [15:0] dq_negedge;
+always @(negedge clk) dq_negedge <= sdram_d;
+```
+
+Medio ciclo —6,25 ns a 80 MHz— de margen por los dos lados en vez de cero.
+Después: las 128 casillas limpias en cuatro direcciones distintas, y cinco
+suites completas seguidas a 15 de 15.
+
+La matriz queda como herramienta, porque es lo único que distingue este fallo:
+
+```powershell
+..\.venv\Scripts\python.exe sdram_dq_matrix.py --port COM3
+```
+
+**Por qué ningún banco pudo cazarlo.** El modelo de SDRAM tiene el mismo
+parámetro `READ_DELAY_CYCLES` que el controlador. Emparejados, leen bien con
+cualquier valor: la simulación comprueba que son coherentes entre sí, no que
+coincidan con la placa. Es una calibración, y una calibración sólo la fija el
+hardware. `sdram_controller_128_tb.v` lo dice ahora en su cabecera, donde antes
+afirmaba lo contrario.
+
+### `HALT_AT` sólo servía una vez por encendido
+
+Comparaba con `==` contra un `SWAP_COUNT` que sólo el reset de la placa ponía a
+cero. El caso `bounce` pasaba la primera vez y después **no paraba nunca más**:
+el contador iba ya por 3 655 y la igualdad no volvía a darse. Ahora armar la
+alarma fija el origen de la cuenta, y es de un disparo.
+
+El simulador no podía verlo: construye un `VideoDevice` nuevo en cada
+ejecución, así que siempre empieza de cero. Es la diferencia entre un modelo
+que arranca limpio y una placa que acumula estado.
+
+### El contador de instrucciones contaba una de menos
+
+Y esto lo cazó la propia tabla de `--measure`, que es para lo que sirve tener
+el número de instrucciones de varios backends en la misma fila: salió
+`¡discrepan!` en los nueve programas a la vez, siempre por uno. El `HALT` retira
+en el mismo ciclo en que `cpu_halted` sube, y el contador estaba condicionado a
+`!cpu_halted`. Nueve discrepancias idénticas no son nueve CPU distintas: son una
+definición mal puesta.
+
 ## Uso y comprobaciones
 
 Desde esta carpeta:
