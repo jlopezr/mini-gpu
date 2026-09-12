@@ -15,3 +15,8 @@ examples/*.hex
 # Imagenes de framebuffer generadas con make_framebuffer.py. Son 150 KB cada
 # una y se rehacen en un segundo.
 fb_*.bin
+
+# Frames volcados por video_frame_tb.v y capturados por capture-frames.ps1.
+# Se regeneran en segundos y son la salida de una prueba, no su entrada.
+frame_*.ppm
+capture_*.bin

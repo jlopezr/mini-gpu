@@ -30,7 +30,7 @@ module mmio_mux (
     output reg         a_ack,
     input  wire        a_write,
     input  wire [3:0]  a_write_mask,
-    input  wire [3:0]  a_address,
+    input  wire [4:0]  a_address,
     input  wire [31:0] a_write_data,
 
     // Cliente B: la CPU.
@@ -38,14 +38,14 @@ module mmio_mux (
     output reg         b_ack,
     input  wire        b_write,
     input  wire [3:0]  b_write_mask,
-    input  wire [3:0]  b_address,
+    input  wire [4:0]  b_address,
     input  wire [31:0] b_write_data,
 
     // Hacia video_registers.
     output reg         select,
     output reg         write,
     output reg  [3:0]  write_mask,
-    output reg  [3:0]  address,
+    output reg  [4:0]  address,
     output reg  [31:0] write_data
 );
   // `select` dura exactamente un ciclo, que es lo que espera video_registers:
@@ -65,7 +65,7 @@ module mmio_mux (
       busy <= 1'b0;
       granted_a <= 1'b0;
       write_mask <= 4'b0000;
-      address <= 4'h0;
+      address <= 5'h00;
       write_data <= 32'h0000_0000;
     end else if (!busy) begin
       if (a_req) begin

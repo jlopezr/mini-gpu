@@ -88,13 +88,16 @@ module cpu_burst_system_tb;
 
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
-  wire [3:0] mon_mmio_mask, mon_mmio_addr;
+  wire [3:0] mon_mmio_mask;
+  wire [4:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
-  wire [3:0] cpu_mmio_mask, cpu_mmio_addr;
+  wire [3:0] cpu_mmio_mask;
+  wire [4:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
-  wire [3:0] mmio_write_mask, mmio_address;
+  wire [3:0] mmio_write_mask;
+  wire [4:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
@@ -114,7 +117,7 @@ module cpu_burst_system_tb;
     end else if (mmio_select && mmio_write) begin
       for (i = 0; i < 4; i = i + 1)
         if (mmio_write_mask[i])
-          mmio_regs[mmio_address[3:2]][i*8 +: 8] <= mmio_write_data[i*8 +: 8];
+          mmio_regs[mmio_address[4:2]][i*8 +: 8] <= mmio_write_data[i*8 +: 8];
     end
   end
 

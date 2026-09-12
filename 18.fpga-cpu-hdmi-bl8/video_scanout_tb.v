@@ -65,7 +65,7 @@ module video_scanout_tb;
       .r(fast_r), .g(fast_g), .b(fast_b),
       .de_out(fast_de), .hsync_out(), .vsync_out(),
       .underflow(fast_underflow),
-      .clk_sys(clk_sys), .rst_sys(reset),
+      .clk_sys(clk_sys), .rst_sys(reset), .underflow_clear(1'b0),
       .fill_start(fast_start), .fill_line(fast_line), .fill_first(),
       .fill_we(fast_we), .fill_addr(fast_addr), .fill_data(fast_data),
       .fill_done(fast_done));
@@ -77,6 +77,12 @@ module video_scanout_tb;
       .clk(clk_sys), .reset(reset), .fill_start(fast_start),
       .fill_line(fast_line), .fill_we(fast_we), .fill_addr(fast_addr),
       .fill_data(fast_data), .fill_done(fast_done));
+
+  // Pulso de borrado del underflow, en el dominio de SISTEMA. El latch vive en
+  // el de pixel, asi que este banco es el unico sitio donde se puede comprobar
+  // que el cruce funciona: el de registros solo ve salir el pulso.
+  reg clear_slow = 1'b0;
+  integer guard;
 
   wire slow_underflow;
   wire slow_start, slow_we, slow_done;
@@ -93,7 +99,7 @@ module video_scanout_tb;
       .r(), .g(), .b(),
       .de_out(), .hsync_out(), .vsync_out(),
       .underflow(slow_underflow),
-      .clk_sys(clk_sys), .rst_sys(reset),
+      .clk_sys(clk_sys), .rst_sys(reset), .underflow_clear(clear_slow),
       .fill_start(slow_start), .fill_line(slow_line), .fill_first(),
       .fill_we(slow_we), .fill_addr(slow_addr), .fill_data(slow_data),
       .fill_done(slow_done));
@@ -186,7 +192,29 @@ module video_scanout_tb;
     if (slow_underflow !== 1'b1)
       $fatal(1, "el productor lento no ha provocado underflow: el detector no sirve");
 
-    $display("OK: %0d pixeles correctos; underflow detectado solo en el lento",
+    // --- el borrado cruza de sistema a pixel -------------------------------
+    // Sin esto el bit solo se iba recargando el bitstream, y una suite de
+    // pruebas graficas no puede pasar del primer caso que falle.
+    @(negedge clk_sys);
+    clear_slow = 1'b1;
+    @(negedge clk_sys);
+    clear_slow = 1'b0;
+    // El cruce son tres flancos de pixel; con margen de sobra.
+    repeat (10) @(negedge clk_pix);
+    if (slow_underflow !== 1'b0)
+      $fatal(1, "el borrado no llego al dominio de pixel: underflow sigue alto");
+
+    // Y vuelve a dispararse: borrarlo lo pone a cero, no inhabilita el
+    // detector. Un borrado que ademas lo apagara seria peor que no tenerlo.
+    guard = 0;
+    while (slow_underflow !== 1'b1 && guard < 20000) begin
+      @(negedge clk_pix);
+      guard = guard + 1;
+    end
+    if (slow_underflow !== 1'b1)
+      $fatal(1, "tras borrarlo, el underflow ya no vuelve a detectarse");
+
+    $display("OK: %0d pixeles correctos; underflow solo en el lento, y se borra",
              checked);
     $finish;
   end

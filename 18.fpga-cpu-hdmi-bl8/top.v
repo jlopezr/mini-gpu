@@ -138,6 +138,11 @@ module top (
   assign mem_ready = registered_mem_ready;
   assign mem_error = registered_mem_error;
 
+  // Borrado del underflow y parada por HALT_AT. Los dos nacen en el bloque de
+  // registros de video, que se instancia mucho mas abajo, y cruzan a otro
+  // sitio: el primero al dominio de pixel y el segundo a la CPU.
+  wire video_underflow_clear, video_halt_request;
+
   wire cpu_imem_valid, cpu_imem_ready;
   wire [31:0] cpu_imem_address, cpu_imem_read_data;
   wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_error;
@@ -145,7 +150,11 @@ module top (
   wire [3:0] cpu_dmem_write_enable;
   cpu cpu_i(
       .clk(clk), .reset(reset || cpu_reset_request),
-      .run_request(cpu_run_request), .halt_request(cpu_halt_request),
+      .run_request(cpu_run_request),
+      // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
+      // video, que la para al completar el intercambio numero N. Lo segundo es
+      // lo que hace repetible una captura de frame.
+      .halt_request(cpu_halt_request || video_halt_request),
       .step_request(cpu_step_request), .halted(cpu_halted), .error(cpu_error),
       .error_code(cpu_error_code), .instruction_retired(cpu_instruction_retired),
       .imem_valid(cpu_imem_valid), .imem_address(cpu_imem_address),
@@ -164,7 +173,10 @@ module top (
   // buffer, asi que su `rsp_ready` sale de el y no es constante.
   wire video_rsp_ready;
   wire mmio_select, mmio_write;
-  wire [3:0] mmio_write_mask, mmio_address;
+  wire [3:0] mmio_write_mask;
+  // Cinco bits: la ventana de registros pasa de 16 a 32 bytes al anadir
+  // SWAP_COUNT y HALT_AT.
+  wire [4:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
 
   // ===========================================================================
@@ -414,6 +426,7 @@ module top (
       .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
       .underflow(video_underflow),
       .clk_sys(clk), .rst_sys(reset),
+      .underflow_clear(video_underflow_clear),
       .fill_start(fill_start), .fill_line(fill_line), .fill_first(fill_first),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
       .fill_done(fill_done));
@@ -441,6 +454,8 @@ module top (
       .read_data(mmio_read_data),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(video_underflow),
+      .underflow_clear(video_underflow_clear),
+      .halt_request(video_halt_request),
       .debug_front(), .debug_back());
 
   // Modo de reserva: el patron del hito A, generado por logica pura sin tocar

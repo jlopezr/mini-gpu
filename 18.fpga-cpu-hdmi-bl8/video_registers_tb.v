@@ -28,7 +28,8 @@ module video_registers_tb;
   reg select = 1'b0;
   reg write = 1'b0;
   reg [3:0] write_mask = 4'b0000;
-  reg [3:0] address = 4'h0;
+  reg [4:0] address = 5'h00;
+  wire underflow_clear, halt_request;
   reg [31:0] write_data = 32'h0;
   wire [31:0] read_data;
 
@@ -45,10 +46,11 @@ module video_registers_tb;
       .select(select), .write(write), .write_mask(write_mask),
       .address(address), .write_data(write_data), .read_data(read_data),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
-      .underflow_pix(underflow_pix),
+      .underflow_pix(underflow_pix), .underflow_clear(underflow_clear),
+      .halt_request(halt_request),
       .debug_front(debug_front), .debug_back(debug_back));
 
-  task bus_write_word(input [3:0] offset, input [31:0] value);
+  task bus_write_word(input [4:0] offset, input [31:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b1; write_mask = 4'b1111;
@@ -58,7 +60,7 @@ module video_registers_tb;
     end
   endtask
 
-  task bus_write_byte(input [3:0] offset, input [7:0] value);
+  task bus_write_byte(input [4:0] offset, input [7:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b1;
@@ -69,7 +71,7 @@ module video_registers_tb;
     end
   endtask
 
-  task bus_read(input [3:0] offset, output [31:0] value);
+  task bus_read(input [4:0] offset, output [31:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b0; address = offset;
@@ -99,7 +101,26 @@ module video_registers_tb;
 
   reg [23:0] base_seen;
   reg [31:0] value;
+  reg [31:0] swaps_before;
   integer frames_before, frames_after;
+
+  // `underflow_clear` y `halt_request` son pulsos de un ciclo, asi que hay que
+  // engancharlos: comprobarlos con un `if` suelto no los veria.
+  //
+  // Se cuentan en vez de marcarse con un booleano que la secuencia de prueba
+  // pusiera a cero: eso serian DOS procesos escribiendo el mismo registro, y
+  // el orden entre ellos no esta definido. Aqui solo escribe el `always`, y la
+  // prueba compara antes y despues.
+  integer clear_count, halt_count, mark;
+  initial begin
+    clear_count = 0;
+    halt_count = 0;
+    mark = 0;
+  end
+  always @(posedge clk) begin
+    if (underflow_clear) clear_count = clear_count + 1;
+    if (halt_request) halt_count = halt_count + 1;
+  end
 
   initial begin
     $dumpvars(0, video_registers_tb);
@@ -208,13 +229,83 @@ module video_registers_tb;
 
     underflow_pix = 1'b1;
     repeat (3) @(negedge clk);
-    bus_read(4'hc, value);
+    bus_read(5'h0c, value);
     if (value[0] !== 1'b1) $fatal(1, "STATUS no refleja el underflow");
-    bus_write_word(4'hc, 32'hffff_ffff);
-    bus_read(4'hc, value);
+
+    // --- borrado del underflow --------------------------------------------
+    // El latch vive en el dominio de pixel, asi que desde aqui solo se puede
+    // comprobar que sale el pulso; que el latch se entera lo cubre
+    // video_scanout_tb.v, que tiene los dos dominios.
+    //
+    // Escribir CUALQUIER cosa no vale: solo un uno en el bit 0. Asi una
+    // escritura descuidada de STATUS no borra un underflow que alguien estaba
+    // a punto de leer.
+    mark = clear_count;
+    bus_write_word(5'h0c, 32'hffff_fffe);      // bit 0 a cero
+    repeat (2) @(negedge clk);
+    if (clear_count != mark)
+      $fatal(1, "STATUS borro el underflow sin el bit 0");
+
+    mark = clear_count;
+    bus_write_word(5'h0c, 32'h0000_0001);
+    repeat (2) @(negedge clk);
+    if (clear_count == mark)
+      $fatal(1, "escribir 1 en STATUS bit 0 no borro el underflow");
+
+    // Y el resto de STATUS sigue siendo de solo lectura.
+    bus_read(5'h0c, value);
     if (value[15:2] !== 0) $fatal(1, "STATUS acepto una escritura: %08x", value);
 
-    $display("OK: swap en la primera linea del frame, contador y acceso por bytes");
+    // --- SWAP_COUNT cuenta intercambios, no frames de video ----------------
+    bus_read(5'h10, swaps_before);
+    // Un frame SIN intercambio pedido: el contador no debe moverse.
+    line_request(1'b1, base_seen);
+    bus_read(5'h10, value);
+    if (value !== swaps_before)
+      $fatal(1, "SWAP_COUNT avanzo sin intercambio: %0d -> %0d",
+             swaps_before, value);
+    // Y ahora uno con intercambio.
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    bus_read(5'h10, value);
+    if (value !== swaps_before + 1)
+      $fatal(1, "SWAP_COUNT no conto el intercambio: %0d -> %0d",
+             swaps_before, value);
+
+    // --- HALT_AT para la CPU en el intercambio N ---------------------------
+    // A cero esta desactivado, que es lo que tiene que ser tras un reset: un
+    // registro de prueba no puede parar la CPU de nadie por descuido.
+    bus_read(5'h14, value);
+    if (value !== 32'd0) $fatal(1, "HALT_AT no arranca a cero: %08x", value);
+
+    // El pulso lo engancha el muestreador en el flanco SIGUIENTE al del
+    // intercambio, asi que hay que dejar pasar un par de ciclos antes de mirar
+    // el contador. Comprobar nada mas volver de `line_request` daria «no paro»
+    // siempre, incluso con el hardware correcto.
+    mark = halt_count;
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    repeat (2) @(negedge clk);
+    if (halt_count != mark) $fatal(1, "HALT_AT a cero paro la CPU");
+
+    // Armar para el intercambio siguiente.
+    bus_read(5'h10, swaps_before);
+    bus_write_word(5'h14, swaps_before + 2);
+    // El intercambio de en medio no debe parar nada.
+    mark = halt_count;
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    repeat (2) @(negedge clk);
+    if (halt_count != mark)
+      $fatal(1, "HALT_AT paro en el intercambio equivocado");
+    // Y el siguiente si.
+    bus_write_word(5'h08, 32'h1);
+    line_request(1'b1, base_seen);
+    repeat (2) @(negedge clk);
+    if (halt_count == mark)
+      $fatal(1, "HALT_AT no paro en el intercambio %0d", swaps_before + 2);
+
+    $display("OK: swap, contadores, borrado de underflow y parada en el swap N");
     $finish;
   end
 
