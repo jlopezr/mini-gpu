@@ -22,6 +22,11 @@ VERSIONS = {
         "monitor_version": (1, 5),
         "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
     },
+    "hdmi": {
+        "monitor_path": Path("15.fpga-cpu-hdmi/monitor.py"),
+        "monitor_version": (1, 8),
+        "description": "Como sdram, mas video HDMI; 100 MHz y 2 Mbaud",
+    },
 }
 DEFAULT_VERSION = "ebr"
 

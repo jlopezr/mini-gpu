@@ -15,6 +15,10 @@ module sdram_system_adapter_tb;
   wire req_valid,req_write; wire [23:0] req_addr;
   wire [15:0] req_wdata; wire [1:0] req_wmask;
   reg req_ready=1,done=0; reg [15:0] rdata=0;
+  // Puerto de video en reposo: este banco cubre monitor y CPU. El camino de
+  // video tiene el suyo en video_sdram_tb.v.
+  reg video_req=0; reg [23:0] video_addr=0;
+  wire [15:0] video_read_data; wire video_ready;
   reg [15:0] program_words[0:31];
   reg [15:0] data_words[0:31];
   integer i;

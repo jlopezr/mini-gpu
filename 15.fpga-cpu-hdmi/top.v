@@ -10,13 +10,20 @@ module top (
     output wire [1:0] sdram_dqm, inout wire [15:0] sdram_d,
     output wire [3:0] gpdi_dp
 );
-  localparam integer CLK_FREQ_HZ = 120_000_000;
-  localparam integer UART_CLOCKS_PER_BIT = 40;
-  localparam integer UART_MAX_BAUD = 3_000_000;
+  // 100 MHz, no 120: con el subsistema de video dentro ninguna semilla de
+  // nextpnr alcanza los 120. El razonamiento esta en `pll_cpu.v` y en README.md.
+  //
+  // El baudio baja de 3 a 2 Mbaud como consecuencia. No es solo 100/50: el
+  // generador de baudios del FTDI produce 3 MHz partido por 1, 1.125, 1.25...,
+  // asi que 2,5 Mbaud (que seria 100/40) no es alcanzable desde el PC, mientras
+  // que 2 Mbaud es 3 MHz / 1,5 y si lo es.
+  localparam integer CLK_FREQ_HZ = 100_000_000;
+  localparam integer UART_CLOCKS_PER_BIT = 50;
+  localparam integer UART_MAX_BAUD = 2_000_000;
   localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
 
   wire clk, pll_locked;
-  pll_120 pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
+  pll_cpu pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
 
   // Shifted reset avoids a counter terminal-count path on the high-fanout
   // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then
@@ -130,6 +137,12 @@ module top (
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc));
 
+  // Puerto de video del adaptador. Se declara aqui porque el adaptador se
+  // instancia antes que el subsistema de video.
+  wire video_req, video_ready;
+  wire [23:0] video_addr;
+  wire [15:0] video_read_data;
+
   wire req_valid, req_write, req_ready, sdram_done, init_done, sdram_busy;
   wire [23:0] req_addr;
   wire [15:0] req_wdata, sdram_rdata;
@@ -149,7 +162,10 @@ module top (
       .cpu_dmem_write_data(cpu_dmem_write_data),
       .cpu_dmem_write_enable(cpu_dmem_write_enable),
       .cpu_dmem_read_data(cpu_dmem_read_data), .cpu_dmem_ready(cpu_dmem_ready),
-      .cpu_dmem_error(cpu_dmem_error), .req_valid(req_valid),
+      .cpu_dmem_error(cpu_dmem_error),
+      .video_req(video_req), .video_addr(video_addr),
+      .video_read_data(video_read_data), .video_ready(video_ready),
+      .req_valid(req_valid),
       .req_write(req_write), .req_addr(req_addr), .req_wdata(req_wdata),
       .req_wmask(req_wmask), .req_ready(req_ready), .done(sdram_done),
       .rdata(sdram_rdata));
@@ -234,11 +250,16 @@ module top (
       .fill_start(fill_start), .fill_line(fill_line), .fill_we(fill_we),
       .fill_addr(fill_addr), .fill_data(fill_data), .fill_done(fill_done));
 
-  // Productor del hito B. En el hito C se sustituye por el lector de SDRAM.
-  video_line_source_pattern source_i(
+  // Productor del hito C: lee el framebuffer de la SDRAM. El generador de
+  // patron del hito B (`video_line_source_pattern`) ya no se instancia, pero se
+  // conserva en el arbol porque su banco de pruebas sigue siendo el que valida
+  // el cruce de dominios sin meter memoria de por medio.
+  video_line_source_sdram source_i(
       .clk(clk), .reset(reset), .fill_start(fill_start), .fill_line(fill_line),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
-      .fill_done(fill_done));
+      .fill_done(fill_done),
+      .video_req(video_req), .video_addr(video_addr),
+      .video_read_data(video_read_data), .video_ready(video_ready));
 
   // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
   // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el

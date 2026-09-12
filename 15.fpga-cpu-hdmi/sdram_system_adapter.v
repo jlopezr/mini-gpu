@@ -11,8 +11,36 @@
  * while the data port can read or write any SDRAM word. CPU words are
  * little-endian and are transferred as two independent SDRAM BL1 accesses.
  * The monitor owns memory only while the CPU is halted.
+ *
+ * The video port is the third client and has priority over both the monitor
+ * and the CPU: if the line buffer runs dry the picture breaks, while a stalled
+ * CPU merely runs slower. It is also the cheapest client, because one RGB565
+ * pixel is exactly one 16-bit SDRAM access, so a video read needs a single BL1
+ * transfer instead of the two a 32-bit CPU word takes.
+ *
+ * Priority is bounded, not absolute. The line source re-asserts video_req one
+ * cycle after each grant, so plain priority would hand video the bus for the
+ * whole fill and freeze the CPU and monitor for tens of microseconds at a
+ * time. After VIDEO_RUN consecutive grants video yields one turn whenever
+ * anyone else is waiting.
+ *
+ * Sizing, per pair of display lines (the time available to fetch one source
+ * line), at 120 MHz and 25 MHz pixel clock:
+ *
+ *   presupuesto        2 * 800 pixeles / 25 MHz = 64 us = 7680 ciclos
+ *   video              SRC_W accesos de 16 bits
+ *   coste por turno    VIDEO_RUN accesos de video + uno de CPU (dos mitades)
+ *
+ *   total = SRC_W * V + (SRC_W / VIDEO_RUN) * C
+ *
+ * With SRC_W=320, V=10 and C=20 cycles: VIDEO_RUN=1 needs 9600 cycles and does
+ * not fit; VIDEO_RUN=4 needs 4800 and leaves 37 % of margin while giving the
+ * CPU a slot roughly every half microsecond. That margin absorbs a video
+ * access costing up to 19 cycles instead of 10.
  */
-module sdram_system_adapter (
+module sdram_system_adapter #(
+    parameter integer VIDEO_RUN = 4
+) (
     input  wire        clk,
     input  wire        reset,
     input  wire        init_done,
@@ -39,6 +67,14 @@ module sdram_system_adapter (
     output reg         cpu_dmem_ready,
     output reg         cpu_dmem_error,
 
+    // Video scanout: single 16-bit read, halfword address, no range check
+    // because the line source can only generate addresses inside the frame
+    // buffer. `video_req` stays high until `video_ready` pulses.
+    input  wire        video_req,
+    input  wire [23:0] video_addr,
+    output reg  [15:0] video_read_data,
+    output reg         video_ready,
+
     output reg         req_valid,
     output reg         req_write,
     output reg  [23:0] req_addr,
@@ -52,6 +88,7 @@ module sdram_system_adapter (
   localparam [2:0] OWNER_MONITOR = 3'd1;
   localparam [2:0] OWNER_IMEM    = 3'd2;
   localparam [2:0] OWNER_DMEM    = 3'd3;
+  localparam [2:0] OWNER_VIDEO   = 3'd4;
 
   localparam STATE_IDLE        = 3'd0;
   localparam STATE_WAIT_FIRST  = 3'd1;
@@ -59,6 +96,7 @@ module sdram_system_adapter (
   localparam STATE_WAIT_SECOND = 3'd3;
   localparam STATE_RELEASE     = 3'd4;
   localparam STATE_VALIDATE_MONITOR = 3'd5;
+  localparam STATE_WAIT_VIDEO  = 3'd6;
 
   reg [2:0] state;
   reg [2:0] owner;
@@ -73,7 +111,15 @@ module sdram_system_adapter (
   reg [7:0] saved_monitor_write_data;
   reg saved_monitor_write_enable;
 
+  reg [7:0] video_run;
   wire monitor_request = monitor_write_enable || monitor_read_enable;
+  wire other_request = monitor_request ||
+      (!cpu_halted && (cpu_imem_valid || cpu_dmem_valid));
+  // El video cede un turno cuando ya ha encadenado VIDEO_RUN accesos y hay
+  // alguien esperando. Sin esto, `video_req` vuelve a subir antes de que el
+  // arbitro mire a los demas y la prioridad se convierte en monopolio.
+  wire video_must_yield = (video_run >= VIDEO_RUN[7:0]) && other_request;
+  wire video_grant = video_req && init_done && !video_must_yield;
   wire cpu_imem_address_valid =
       cpu_imem_address[31:25] == 0 && cpu_imem_address[1:0] == 0;
   wire cpu_dmem_address_valid =
@@ -85,8 +131,11 @@ module sdram_system_adapter (
     cpu_imem_ready <= 1'b0;
     cpu_dmem_ready <= 1'b0;
     cpu_dmem_error <= 1'b0;
+    video_ready <= 1'b0;
 
     if (reset) begin
+      video_read_data <= 16'h0000;
+      video_run <= 8'd0;
       state <= STATE_IDLE;
       owner <= OWNER_NONE;
       monitor_read_data <= 8'h00;
@@ -113,7 +162,22 @@ module sdram_system_adapter (
           req_valid <= 1'b0;
           owner <= OWNER_NONE;
 
-          if (monitor_request) begin
+          if (video_grant) begin
+            // Prioridad acotada: el scanout va primero, pero cede un turno
+            // cada VIDEO_RUN accesos si hay alguien esperando. Antes de
+            // `init_done` no se atiende y la peticion queda pendiente, que es
+            // justo lo que hace falta durante los 200 us de arranque de la
+            // SDRAM: el scanout se queda en el prellenado, sin marcar underflow.
+            if (video_run < VIDEO_RUN[7:0]) video_run <= video_run + 1'b1;
+            owner <= OWNER_VIDEO;
+            req_addr <= video_addr;
+            req_write <= 1'b0;
+            req_wdata <= 16'h0000;
+            req_wmask <= 2'b00;
+            req_valid <= 1'b1;
+            state <= STATE_WAIT_VIDEO;
+          end else if (monitor_request) begin
+            video_run <= 8'd0;
             owner <= OWNER_MONITOR;
             saved_monitor_address <= monitor_address;
             saved_monitor_write_data <= monitor_write_data;
@@ -121,6 +185,7 @@ module sdram_system_adapter (
             saved_monitor_read <= monitor_read_enable;
             state <= STATE_VALIDATE_MONITOR;
           end else if (!cpu_halted && cpu_imem_valid) begin
+            video_run <= 8'd0;
             if (!init_done || !cpu_imem_address_valid) begin
               owner <= OWNER_IMEM;
               cpu_imem_read_data <= 32'hf800_0000;
@@ -141,6 +206,7 @@ module sdram_system_adapter (
               state <= STATE_WAIT_FIRST;
             end
           end else if (!cpu_halted && cpu_dmem_valid) begin
+            video_run <= 8'd0;
             if (!init_done || !cpu_dmem_address_valid) begin
               owner <= OWNER_DMEM;
               cpu_dmem_ready <= 1'b1;
@@ -205,6 +271,18 @@ module sdram_system_adapter (
           end
         end
 
+        // Un pixel RGB565 es exactamente un acceso de 16 bits: no hay segunda
+        // mitad que buscar, a diferencia de una palabra de CPU.
+        STATE_WAIT_VIDEO: begin
+          if (req_valid && req_ready)
+            req_valid <= 1'b0;
+          if (done) begin
+            video_read_data <= rdata;
+            video_ready <= 1'b1;
+            state <= STATE_RELEASE;
+          end
+        end
+
         STATE_START_NEXT: begin
           req_addr <= second_addr;
           req_write <= !saved_cpu_read;
@@ -238,7 +316,8 @@ module sdram_system_adapter (
           req_valid <= 1'b0;
           if ((owner == OWNER_MONITOR && !monitor_request) ||
               (owner == OWNER_IMEM && !cpu_imem_valid) ||
-              (owner == OWNER_DMEM && !cpu_dmem_valid))
+              (owner == OWNER_DMEM && !cpu_dmem_valid) ||
+              (owner == OWNER_VIDEO && !video_req))
             state <= STATE_IDLE;
         end
       endcase

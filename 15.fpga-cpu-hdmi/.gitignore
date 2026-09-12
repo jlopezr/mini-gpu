@@ -1,2 +1,3 @@
 _build/
 __pycache__/
+fb_*.bin

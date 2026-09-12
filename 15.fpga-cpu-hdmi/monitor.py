@@ -11,7 +11,9 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 
-BAUDRATE = 3_000_000
+# 2 Mbaud: el dominio de CPU corre a 100 MHz y el divisor es 50. Es ademas un
+# baudio que el generador del FTDI sabe producir exactamente (3 MHz / 1,5).
+BAUDRATE = 2_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
 MAX_BLOCK_SIZE = 256
