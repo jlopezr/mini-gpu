@@ -5,10 +5,17 @@ una ISA y una CPU escalar verificable. El repositorio avanza mediante etapas
 independientes: modelos de Mandelbrot, ensamblador, simulador funcional,
 bring-up de la ULX3S, monitor UART, CPU en FPGA y memoria SDRAM externa.
 
-El diseño más completo está actualmente en
-[`10.fpga-cpu-ram`](10.fpga-cpu-ram): una MiniCPU multiciclo conectada al
-monitor UART y a los 32 MiB de SDRAM de la ULX3S, con cierre de timing a
-120 MHz.
+El diseño de CPU más completo está actualmente en
+[`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls): una MiniCPU multiciclo con salida
+HDMI, memoria en ráfagas BL8 sobre los 32 MiB de SDRAM de la ULX3S, accesos de 8
+y 16 bits y llamadas, con cierre de timing a 80 MHz. El más rápido sigue siendo
+[`10.fpga-cpu-ram`](10.fpga-cpu-ram), a 120 MHz, porque no tiene vídeo
+compitiendo por la memoria.
+
+**[`COMPARATIVA.md`](COMPARATIVA.md) pone en una tabla qué sabe hacer cada
+implementación, cuánta memoria ve y a qué frecuencia cierra.** Es lo que evita
+tener que abrir cinco `README.md` para saber si una instrucción está en un
+bitstream concreto.
 
 ## Recorrido del repositorio
 
@@ -32,6 +39,9 @@ monitor UART y a los 32 MiB de SDRAM de la ULX3S, con cierre de timing a
 | [`15.isa-v2`](15.isa-v2)                           | Solo documentación: arquitectura de la GPU, plan por fases y 3D.         |
 | [`16.fpga-cpu-hdmi`](16.fpga-cpu-hdmi)             | CPU con SDRAM más salida HDMI y doble framebuffer con swap en vblank.    |
 | [`17.fpga-gpu-ram-v2`](17.fpga-gpu-ram-v2)         | Copia de 14 dedicada a subir la frecuencia sin cambiar funcionalidad.    |
+| [`18.fpga-cpu-hdmi-bl8`](18.fpga-cpu-hdmi-bl8)     | La 16 con el camino de memoria en ráfagas BL8 y contadores de ciclos.    |
+| [`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls)       | La 18 más accesos de 8 y 16 bits, llamadas y puerto serie MMIO.         |
+| [`20.forth`](20.forth)                             | Un Forth con intérprete y compilador, sobre la consola serie de la 19.   |
 | [`x.cpu-tests`](x.cpu-tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
 | [`pruebas`](pruebas)                               | Artefactos históricos conservados como referencia.                       |
 
