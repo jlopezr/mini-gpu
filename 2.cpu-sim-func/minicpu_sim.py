@@ -8,7 +8,8 @@ arquitectónico de error:
 - ALU: ADD, SUB, AND, OR, XOR, SHL, SHR y SAR.
 - Aritmética: MUL, MULFX y DIV.
 - Inmediatas: MOVI, MOVHI, ADDI, ANDI, ORI y XORI.
-- Memoria: LOAD y STORE.
+- Memoria: LOAD y STORE, y los accesos de 8 y 16 bits LOADB, LOADUB,
+  STOREB, LOADH, LOADUH y STOREH.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
 
 El estado consta de PC y 32 registros generales de 32 bits; R0 también es
@@ -281,6 +282,29 @@ class CPU:
             raise RuntimeError(f"escritura no alineada: 0x{address:08X}")
         struct.pack_into("<I", self.memory, address, u32(value))
 
+    def read_sub(self, address: int, size: int) -> int:
+        """Lee 1 o 2 bytes little-endian. Las medias palabras exigen par."""
+        if size == 2 and address & 1:
+            raise RuntimeError(f"lectura no alineada: 0x{address:08X}")
+        if self.video is not None and self.video.contains(address):
+            # El espacio de vídeo son registros de 32 bits: no admite accesos
+            # parciales, igual que el mmio_mux del hardware.
+            raise RuntimeError(f"acceso sub-palabra a vídeo: 0x{address:08X}")
+        if address < 0 or address + size > len(self.memory):
+            raise RuntimeError(f"lectura fuera de memoria: 0x{address:08X}")
+        return int.from_bytes(self.memory[address:address + size], "little")
+
+    def write_sub(self, address: int, size: int, value: int) -> None:
+        """Escribe los 8 o 16 bits bajos de 'value' sin tocar el resto."""
+        if size == 2 and address & 1:
+            raise RuntimeError(f"escritura no alineada: 0x{address:08X}")
+        if self.video is not None and self.video.contains(address):
+            raise RuntimeError(f"acceso sub-palabra a vídeo: 0x{address:08X}")
+        if address < 0 or address + size > len(self.memory):
+            raise RuntimeError(f"escritura fuera de memoria: 0x{address:08X}")
+        masked = value & ((1 << (8 * size)) - 1)
+        self.memory[address:address + size] = masked.to_bytes(size, "little")
+
     def fetch(self) -> int:
         """Obtiene la instrucción situada en el PC actual."""
         return self.read_u32(self.pc)
@@ -461,6 +485,35 @@ class CPU:
             address = u32(self.regs[ra] + imm16)
             try:
                 self.write_u32(address, self.regs[source])
+            except RuntimeError:
+                self.stop_with_error(ERROR_MEMORY_ACCESS, instr_pc)
+                return
+
+        elif opcode in (0x18, 0x19, 0x1B, 0x1C):  # LOADB/LOADUB/LOADH/LOADUH
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            size = 1 if opcode in (0x18, 0x19) else 2
+            is_signed = opcode in (0x18, 0x1B)
+
+            address = u32(self.regs[ra] + imm16)
+            try:
+                raw = self.read_sub(address, size)
+            except RuntimeError:
+                self.stop_with_error(ERROR_MEMORY_ACCESS, instr_pc)
+                return
+            self.regs[rd] = u32(sign_extend(raw, 8 * size)) if is_signed else raw
+
+        elif opcode in (0x1A, 0x1D):  # STOREB / STOREH
+            # Como en STORE, el campo Rd contiene el registro fuente.
+            source = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            size = 1 if opcode == 0x1A else 2
+
+            address = u32(self.regs[ra] + imm16)
+            try:
+                self.write_sub(address, size, self.regs[source])
             except RuntimeError:
                 self.stop_with_error(ERROR_MEMORY_ACCESS, instr_pc)
                 return

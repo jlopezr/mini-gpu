@@ -1,0 +1,20 @@
+// Bucle interior de examples/perf_loop.asm, ensamblado con ../1.isa/miniisa_asm.py.
+// Medias palabras de 16 bits en el orden en que las lee la SDRAM.
+0001
+5cc0
+1234
+41a0
+0000
+4060
+00a0
+4320
+0000
+59a6
+0004
+44c6
+0001
+4463
+fffc
+8879
+0000
+fc00

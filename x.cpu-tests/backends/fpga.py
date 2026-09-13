@@ -47,6 +47,16 @@ VERSIONS = {
         "perf_counters": True,
         "clock_hz": 80_000_000,
     },
+    "subword": {
+        "monitor_path": Path("19.fpga-cpu-hdmi-ls/monitor.py"),
+        "monitor_version": (1, 12),
+        "description": "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned",
+        "capabilities": ("frame_capture",),
+        "perf_counters": True,
+        # El protocolo del monitor no cambia respecto a la 18: las
+        # instrucciones nuevas viven enteras dentro de la CPU.
+        "clock_hz": 80_000_000,
+    },
 }
 DEFAULT_VERSION = "ebr"
 

@@ -72,6 +72,15 @@ OPCODES = {
     "STORE":  0x16,
     "MOVHI":  0x17,
 
+    # Accesos sub-palabra. Mapa de propuesta-v0.2.md §7; v0.3 reordena
+    # 0x1A..0x1D, asi que estos valores cambiaran al migrar.
+    "LOADB":  0x18,
+    "LOADUB": 0x19,
+    "STOREB": 0x1A,
+    "LOADH":  0x1B,
+    "LOADUH": 0x1C,
+    "STOREH": 0x1D,
+
     # Control
     "BEQ":    0x20,
     "BNE":    0x21,
@@ -98,6 +107,7 @@ R3_OPS = {
 
 I3_SIGNED_OPS = {
     "ADDI", "LOAD", "STORE",
+    "LOADB", "LOADUB", "STOREB", "LOADH", "LOADUH", "STOREH",
 }
 
 I3_UNSIGNED_OPS = {
