@@ -55,7 +55,12 @@ class ComparableTest(unittest.TestCase):
         self.assertEqual(comparable(sim, {}), comparable(fpga, {}))
 
     def test_el_resto_del_video_si_se_compara(self):
-        """Y es lo que de verdad dice si las dos hacen lo mismo."""
+        """Y es lo que de verdad dice si las dos hacen lo mismo.
+
+        `swaps` va con `requires: ["frame_capture"]` porque sale de SWAP_COUNT,
+        que es parte de esa capacidad. Ver el test siguiente.
+        """
+        con_captura = {"requires": ["frame_capture"]}
         sim = _resultado(video={"underflow": False, "frames": 1, "swaps": 4,
                                 "fb_front": 0x0100_0000, "frame": b"ab"})
         for campo, otro in (("swaps", 5),
@@ -64,7 +69,38 @@ class ComparableTest(unittest.TestCase):
                             ("underflow", True)):
             with self.subTest(campo=campo):
                 fpga = _resultado(video=dict(sim["video"], **{campo: otro}))
-                self.assertNotEqual(comparable(sim, {}), comparable(fpga, {}))
+                self.assertNotEqual(comparable(sim, con_captura),
+                                    comparable(fpga, con_captura))
+
+    def test_swaps_no_se_compara_sin_frame_capture(self):
+        """Un bitstream con video pero sin SWAP_COUNT devuelve None ahi.
+
+        `hdmi` es ese caso: tiene scanout y ventana de registros, pero no
+        HALT_AT ni SWAP_COUNT. El simulador devuelve el numero real, asi que
+        comparar hacia fallar `video-registers` contra `hdmi` en el diferencial
+        mientras los dos backends pasaban por separado.
+        """
+        sim = _resultado(video={"underflow": False, "frames": 1, "swaps": 1,
+                                "fb_front": 0x0100_0000, "frame": None})
+        fpga = _resultado(video={"underflow": False, "frames": 7068, "swaps": None,
+                                 "fb_front": 0x0100_0000, "frame": None})
+        self.assertEqual(comparable(sim, {}), comparable(fpga, {}))
+
+    def test_stdout_no_se_compara_sin_serial(self):
+        """El mismo fallo, en el otro campo que un backend puede no tener.
+
+        El simulador declara `serial` siempre y devuelve b'' para cualquier
+        caso; un bitstream sin puerto serie devuelve None. Los dos quieren decir
+        «aqui no hubo salida», pero no son iguales, asi que el diferencial
+        fallaba en TODOS los casos contra `ebr`, `sdram`, `hdmi` y `bl8`.
+        """
+        sim = _resultado(stdout=b"")
+        fpga = _resultado(stdout=None)
+        self.assertEqual(comparable(sim, {}), comparable(fpga, {}))
+        # Y con `serial` declarado si se compara, que es lo que tiene que ser.
+        con_serie = {"requires": ["serial"]}
+        self.assertNotEqual(comparable(_resultado(stdout=b"hola"), con_serie),
+                            comparable(_resultado(stdout=b"adios"), con_serie))
 
     def test_el_pc_se_compara_cuando_la_parada_es_determinista(self):
         """Sin `run_until` el programa para en su HALT: el PC tiene que cuadrar."""

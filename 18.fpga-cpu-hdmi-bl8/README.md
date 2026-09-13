@@ -1,5 +1,20 @@
 # MiniCPU con SDRAM, salida HDMI y memoria en ráfagas
 
+> **Backport de `R0` cableado a cero.** Esta carpeta recibio el cambio despues
+> de cerrarse: `R0` vale siempre cero y descarta las escrituras, que es una
+> regla de la MiniISA y no una extension opcional. Ver
+> [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
+>
+> **Este monitor responde ahora 1.19.** Subio por el backport, sin cambiar
+> ni un byte del protocolo: es lo unico que el PC puede preguntar para saber que
+> bitstream tiene delante, y un programa que use `R0` como registro general no
+> para con error en el bitstream viejo, da otro resultado en silencio.
+>
+> El texto que sigue es anterior al backport. Los numeros de version que
+> menciona mas abajo son historicos; los de hoy estan en
+> [`COMPARATIVA.md`](../COMPARATIVA.md).
+
+
 Copia de [`../16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) cuyo camino de memoria se
 va sustituyendo por uno de ráfagas BL8, para que la CPU no pase la vida
 esperando a la SDRAM. Es el punto 0 del [`../TODO.md`](../TODO.md).

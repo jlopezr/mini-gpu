@@ -64,25 +64,25 @@ ok> 10 fact
 3628800
 ```
 
-| Palabra | Efecto |
-|---|---|
-| `:` `;` | Definen una palabra nueva |
-| `IF` `ELSE` `THEN` | Condicional |
-| `BEGIN` `UNTIL` | Bucle que sale cuando la condición es cierta |
-| `BEGIN` `WHILE` `REPEAT` | Bucle con salida por el medio |
-| `BEGIN` `AGAIN` | Bucle sin salida |
-| `CREATE` `DOES>` | Definen palabras que definen palabras |
-| `,` `ALLOT` `CELLS` | Reservan y rellenan la zona de datos |
-| `WORDS` | Lista el diccionario, de lo más nuevo a lo más viejo |
-| `+` `-` `*` `/` | Aritmética sobre los dos de arriba |
-| `DUP` `DROP` `SWAP` `OVER` | Manipulación de pila |
-| `NEG` | Cambia el signo del de arriba |
-| `.` | Saca el de arriba y lo imprime |
-| `.S` | Enseña la pila entera sin tocarla |
-| `=` `<` `>` | Comparan y dejan −1 (cierto) o 0 (falso) |
-| `@` `!` | `dir @` lee memoria; `valor dir !` escribe |
-| `CR` | Salto de línea |
-| `BYE` | Para la CPU |
+| Palabra                    | Efecto                                               |
+|----------------------------|------------------------------------------------------|
+| `:` `;`                    | Definen una palabra nueva                            |
+| `IF` `ELSE` `THEN`         | Condicional                                          |
+| `BEGIN` `UNTIL`            | Bucle que sale cuando la condición es cierta         |
+| `BEGIN` `WHILE` `REPEAT`   | Bucle con salida por el medio                        |
+| `BEGIN` `AGAIN`            | Bucle sin salida                                     |
+| `CREATE` `DOES>`           | Definen palabras que definen palabras                |
+| `,` `ALLOT` `CELLS`        | Reservan y rellenan la zona de datos                 |
+| `WORDS`                    | Lista el diccionario, de lo más nuevo a lo más viejo |
+| `+` `-` `*` `/`            | Aritmética sobre los dos de arriba                   |
+| `DUP` `DROP` `SWAP` `OVER` | Manipulación de pila                                 |
+| `NEG`                      | Cambia el signo del de arriba                        |
+| `.`                        | Saca el de arriba y lo imprime                       |
+| `.S`                       | Enseña la pila entera sin tocarla                    |
+| `=` `<` `>`                | Comparan y dejan −1 (cierto) o 0 (falso)             |
+| `@` `!`                    | `dir @` lee memoria; `valor dir !` escribe           |
+| `CR`                       | Salto de línea                                       |
+| `BYE`                      | Para la CPU                                          |
 
 Mayúsculas y minúsculas dan igual: `dup` y `DUP` son la misma palabra.
 

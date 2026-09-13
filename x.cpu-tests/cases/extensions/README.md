@@ -11,7 +11,6 @@ eso todos sus casos llevan `requires`:
 | [serial](serial/) | `serial` | Puerto serie en `0x80000200` | 19 |
 | [shift-immediate](shift-immediate/) | `shift_immediate` | `SHLI`, `SHRI`, `SARI` | 21 |
 | [alu-extended](alu-extended/) | `alu_extended` | `MULHI`, `DIVU`, `REM`, `REMU` (`0x0B`, `0x0D–0x0F`) | 21 |
-| [zero-register](zero-register/) | `zero_register` | `R0` cableado a cero | 21 |
 
 Todas siguen el mapa de [`propuesta-v0.2.md`](../../../1.isa/propuesta-v0.2.md),
 no el de la v0.3. Las tiene el simulador funcional; los bitstreams son

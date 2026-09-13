@@ -3,18 +3,60 @@
 Este documento es la especificación de la ISA usada por MiniCPU y MiniGPU. Cuando el código y este texto discrepen, la discrepancia debe tratarse
 como un error; no se debe deducir la ISA exclusivamente del simulador.
 
-El documento describe el estado **actual**, que ya no es exactamente la v0.1:
-las carpetas posteriores han ido incorporando extensiones del mapa de
-`propuesta-v0.2.md`. Cada una dice en qué carpeta apareció, y hay una sola
-incompatible con la v0.1 —`R0` cableado a cero, §1—; el resto son aditivas.
+Este documento describe **MiniISA v0.1 vigente**. La implementación escalar más
+completa, y referencia para su repertorio y encoding, es
+[`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu/README.md). También se documenta
+el repertorio SIMT de MiniGPU, que la CPU escalar no ejecuta.
+[`propuesta-v0.2.md`](propuesta-v0.2.md) y
+[`propuesta-v0.3.md`](propuesta-v0.3.md) son propuestas de evolución: sus mapas
+no sustituyen al definido aquí.
 
-| Extensión | Desde | Compatible con v0.1 |
-| --- | --- | --- |
-| `LOADB`…`STOREH`, accesos de 8 y 16 bits | `19.fpga-cpu-hdmi-ls` | sí |
-| `JAL`, `JALR`, `JR` | `19.fpga-cpu-hdmi-ls` | sí |
-| `MULHI`, `DIVU`, `REM`, `REMU` | `21.fpga-cpu-hdmi-alu` | sí |
-| Desplazamientos con cantidad inmediata | `21.fpga-cpu-hdmi-alu` | sí |
-| **`R0` cableado a cero** | `21.fpga-cpu-hdmi-alu` | **no** |
+### Capabilities de instrucciones
+
+Una capability identifica una extensión que una implementación puede ofrecer.
+La ISA fija su encoding y comportamiento; cada backend declara cuáles tiene.
+Las extensiones son independientes y pueden incorporarse a otras versiones.
+
+| Capability        | Opcodes o variantes     | Instrucciones                                            |
+|-------------------|-------------------------|----------------------------------------------------------|
+| `subword_memory`  | `0x18–0x1D`             | `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH`, `STOREH` |
+| `calls`           | `0x2C–0x2E`             | `JAL`, `JALR`, `JR`                                      |
+| `alu_extended`    | `0x0B`, `0x0D–0x0F`     | `MULHI`, `DIVU`, `REM`, `REMU`                           |
+| `shift_immediate` | `0x07–0x09`, bit 10 = 1 | `SHLI`, `SHRI`, `SARI`                                   |
+
+En las tablas de opcodes, **Base** significa que no se requiere una capability
+adicional; no es el nombre de una capability del runner. Los desplazamientos
+por registro pertenecen a la base, aunque sus variantes inmediatas sean opcionales.
+
+Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
+
+| Implementación                     | `subword_memory` | `calls` | `alu_extended` | `shift_immediate` |
+|------------------------------------|------------------|---------|----------------|-------------------|
+| `6.fpga-cpu` / `ebr`               | —                | —       | —              | —                 |
+| `10.fpga-cpu-ram` / `sdram`        | —                | —       | —              | —                 |
+| `16.fpga-cpu-hdmi` / `hdmi`        | —                | —       | —              | —                 |
+| `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                 |
+| `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                 |
+| `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                |
+| `2.cpu-sim-func` / `cpu-simulator` | Sí               | Sí      | Sí             | Sí                |
+
+Las declaraciones del runner están en
+[`backends/fpga.py`](../x.cpu-tests/backends/fpga.py) y
+[`backends/simulator.py`](../x.cpu-tests/backends/simulator.py); los casos usan
+`requires` para indicar las capabilities necesarias y se omiten si faltan.
+La versión de monitor identifica el bitstream y permite comprobarlo contra la
+configuración del backend; no existe aquí una instrucción para consultar capabilities.
+
+Sin una extensión de opcodes, ejecutarlos produce `ERROR_INVALID_OPCODE`.
+Sin `shift_immediate`, el bit 10 sigue reservado y usarlo produce
+`ERROR_INVALID_ENCODING`. Son extensiones aditivas, pero no fallan con el mismo error.
+
+`R0=0` es obligatorio en todas las implementaciones y **no es una capability**:
+`zero_register` dejó de existir tras el backport. `video`, `frame_capture` y
+`serial` describen funciones de plataforma, sin opcodes propios. La reutilización
+de resultados MUL/DIV solo afecta a los ciclos y tampoco tiene capability.
+El repertorio SIMT se identifica por la arquitectura GPU; el runner no define
+una capability llamada `simt`.
 
 ## 1. Estado arquitectónico
 
@@ -33,26 +75,18 @@ No existen FLAGS, `CMP` ni delay slots.
 
 ### `R0` está cableado a cero
 
-**Desde `21.fpga-cpu-hdmi-alu`**, las escrituras a `R0` se descartan y las
-lecturas valen siempre cero. En v0.1 `R0` era un registro general, y las
-implementaciones hasta `19.fpga-cpu-hdmi-ls` inclusive se quedan así: es un
-cambio **incompatible**, no aditivo. Un programa que use `R0` como registro
-general no para con error en una implementación anterior; da otro resultado, en
-silencio.
+Las escrituras a `R0` se descartan y las lecturas valen siempre cero. Es una
+regla de la ISA y **la cumplen todas las implementaciones**, MiniCPU y MiniGPU,
+desde la 6 hasta la 21.
 
-No se hace por área. Ahorra unos 32 flops de los 1024 del banco, que en un
-ECP5-85F es ruido. Las dos razones que sí valen:
+Hay 31 registros generales, `R1`–`R31`, y un registro cero, `R0`. Descartar una
+escritura a `R0` no elimina los demás efectos de la instrucción: una carga debe
+realizar el acceso y detectar sus errores, y `JALR R0, Ra, 0` debe saltar.
 
-- **El presupuesto de opcodes.** `JR Ra` pasa a ser exactamente
-  `JALR R0, Ra, 0`, con lo que `0x2E` vuelve al bote. La familia de control
-  `0x20–0x2F` estaba a cero libres en el mapa de `propuesta-v0.2.md` §6, que ya
-  anota esta palanca como la más barata.
-- **Los idiomas.** Cero sin gastar un `MOVI` ni un registro, y un destino de
-  descarte para cuando solo interesan los efectos de una operación.
-
-`JR` (`0x2E`) **sigue implementado y sigue siendo válido**: quitarlo hoy rompe
-programas sin ganar nada. Queda marcado como obsoleto y su hueco como
-reclamable, no como libre.
+Las revisiones históricas permitían escribir `R0`. El backport corrigió esa
+semántica en CPU y GPU y actualizó las versiones de monitor afectadas. Los
+binarios que dependían de almacenar valores en `R0` requieren adaptación;
+aquellos bitstreams antiguos no cumplen esta especificación vigente.
 
 ## 2. Formatos de instrucción
 
@@ -82,13 +116,22 @@ significa «la cantidad es inmediata» y solo `extra[9:0]` está reservado. Ver
 
 El significado de `X`, `Y` e `imm16` depende de la instrucción:
 
-| Familia            | X    | Y    | `imm16`                 |
-|--------------------|------|------|-------------------------|
-| ALU inmediata      | `Rd` | `Ra` | operando inmediato      |
-| `LOAD`             | `Rd` | `Ra` | desplazamiento          |
-| `STORE`            | `Rs` | `Ra` | desplazamiento          |
-| Branch condicional | `Ra` | `Rb` | desplazamiento relativo |
-| `GETTID`           | `Rd` | 0    | 0                       |
+| Familia             | X    | Y    | `imm16`                     |
+|---------------------|------|------|-----------------------------|
+| ALU inmediata       | `Rd` | `Ra` | operando inmediato          |
+| `LOAD`              | `Rd` | `Ra` | desplazamiento              |
+| `STORE`             | `Rs` | `Ra` | desplazamiento              |
+| Branch condicional  | `Ra` | `Rb` | desplazamiento relativo     |
+| `GETTID`            | `Rd` | 0    | 0                           |
+| `MOVI`, `MOVHI`     | `Rd` | 0    | constante                   |
+| Cargas de 8/16 bits | `Rd` | `Ra` | desplazamiento en bytes     |
+| Stores de 8/16 bits | `Rs` | `Ra` | desplazamiento en bytes     |
+| `JAL`               | `Rd` | 0    | offset relativo en palabras |
+| `JALR`              | `Rd` | `Ra` | desplazamiento en palabras  |
+| `JR`                | 0    | `Ra` | 0                           |
+
+Los ceros de esta tabla son campos reservados, no lecturas de `R0`.
+`MOVI` y `MOVHI` son las excepciones a la fila genérica de ALU inmediata.
 
 ### B-Type
 
@@ -115,24 +158,24 @@ Los dos bits altos del opcode separan cuatro familias:
 
 ### ALU y aritmética
 
-| Opcode | Mnemónico | Operandos    | Semántica                         | Simulador |
-|-------:|-----------|--------------|-----------------------------------|-----------|
-| `0x00` | `NOP`     | —            | Sin efecto                        | Sí        |
-| `0x01` | `ADD`     | `Rd, Ra, Rb` | `Rd = Ra + Rb`                    | Sí        |
-| `0x02` | `SUB`     | `Rd, Ra, Rb` | `Rd = Ra - Rb`                    | Sí        |
-| `0x03` | `MULFX`   | `Rd, Ra, Rb` | multiplicación signed Q16.16      | Sí        |
-| `0x04` | `AND`     | `Rd, Ra, Rb` | AND bit a bit                     | Sí        |
-| `0x05` | `OR`      | `Rd, Ra, Rb` | OR bit a bit                      | Sí        |
-| `0x06` | `XOR`     | `Rd, Ra, Rb` | XOR bit a bit                     | Sí        |
-| `0x07` | `SHL`     | `Rd, Ra, Rb` | desplazamiento lógico izquierdo   | Sí        |
-| `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Sí        |
-| `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Sí        |
-| `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | Sí        |
-| `0x0B` | `MULHI`   | `Rd, Ra, Rb` | 32 bits altos, **signed**         | Sí        |
-| `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | Sí        |
-| `0x0D` | `DIVU`    | `Rd, Ra, Rb` | división unsigned                 | Sí        |
-| `0x0E` | `REM`     | `Rd, Ra, Rb` | resto signed, signo del dividendo | Sí        |
-| `0x0F` | `REMU`    | `Rd, Ra, Rb` | resto unsigned                    | Sí        |
+| Opcode | Mnemónico | Operandos    | Semántica                         | Capability     |
+|-------:|-----------|--------------|-----------------------------------|----------------|
+| `0x00` | `NOP`     | —            | Sin efecto                        | Base           |
+| `0x01` | `ADD`     | `Rd, Ra, Rb` | `Rd = Ra + Rb`                    | Base           |
+| `0x02` | `SUB`     | `Rd, Ra, Rb` | `Rd = Ra - Rb`                    | Base           |
+| `0x03` | `MULFX`   | `Rd, Ra, Rb` | multiplicación signed Q16.16      | Base           |
+| `0x04` | `AND`     | `Rd, Ra, Rb` | AND bit a bit                     | Base           |
+| `0x05` | `OR`      | `Rd, Ra, Rb` | OR bit a bit                      | Base           |
+| `0x06` | `XOR`     | `Rd, Ra, Rb` | XOR bit a bit                     | Base           |
+| `0x07` | `SHL`     | `Rd, Ra, Rb` | desplazamiento lógico izquierdo   | Base           |
+| `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Base           |
+| `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Base           |
+| `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | Base           |
+| `0x0B` | `MULHI`   | `Rd, Ra, Rb` | 32 bits altos, **signed**         | `alu_extended` |
+| `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | Base           |
+| `0x0D` | `DIVU`    | `Rd, Ra, Rb` | división unsigned                 | `alu_extended` |
+| `0x0E` | `REM`     | `Rd, Ra, Rb` | resto signed, signo del dividendo | `alu_extended` |
+| `0x0F` | `REMU`    | `Rd, Ra, Rb` | resto unsigned                    | `alu_extended` |
 
 **La familia ALU queda completa.** No hay ningún opcode libre entre `0x00` y
 `0x0F`, y cualquier operación aritmética nueva tendrá que buscar hueco en otra
@@ -140,7 +183,8 @@ familia o entrar por una codificación extendida.
 
 #### Desplazamientos con cantidad inmediata
 
-Para `SHL`, `SHR` y `SAR` la cantidad son los cinco bits bajos de `Rb`. Desde
+Para `SHL`, `SHR` y `SAR` por registro, la cantidad son los cinco bits bajos
+del contenido de `Rb`. Desde
 `21.fpga-cpu-hdmi-alu`, el **bit 10** del campo `extra` indica que la cantidad
 es inmediata y viaja en los cinco bits del propio campo `Rb`:
 
@@ -152,15 +196,10 @@ es inmediata y viaja en los cinco bits del propio campo `Rb`:
                                             ↑ 1 = cantidad inmediata
 ```
 
-Es la **opción B** de `propuesta-v0.2.md` §4.2, y cuesta cero opcodes: la
-familia `0x10–0x1F` es la única con presión real y los accesos por bytes valen
-más que la elegancia del decodificador. Los mnemónicos del ensamblador son
-`SHLI`, `SHRI` y `SARI`; no son opcodes, son azúcar sobre los mismos tres.
-
-La contrapartida está en el decodificador de encoding, y es la única
-irregularidad de la ISA: **para estos tres opcodes el campo reservado es
-`extra[9:0]`, no `extra` entero**. Un `SHL` con `extra = 0x400` es válido; con
-cualquier bit de `extra[9:0]` puesto sigue dando `ERROR_INVALID_ENCODING`.
+Esta variante requiere `shift_immediate` y no consume opcodes nuevos. Los
+mnemónicos del ensamblador son `SHLI`, `SHRI` y `SARI`. Con la capability,
+`extra = 0x400` es válido; cualquier bit de `extra[9:0]` puesto produce
+`ERROR_INVALID_ENCODING`. Sin ella, los once bits de `extra` deben ser cero.
 
 #### Multiplicación y división
 
@@ -174,18 +213,9 @@ operandos interpretados como signed32. Los bits bajos no dependen del signo, as�
 que `MUL` sirve igual para operandos unsigned; los altos sí, y ahí la ISA toma
 partido.
 
-> **`MULHI` es con signo.** La v0.1 dejaba el opcode reservado sin decir cuál de
-> las dos era, y hay que elegir. Se elige signed por tres razones: es la
-> convención de `MULH` en RISC-V, es coherente con `MULFX`, que es la otra
-> multiplicación de esta ISA y también es signed, y con un solo opcode la mitad
-> alta signed es la que no se puede reconstruir barata a partir de la otra. No
-> hay `MULHU`; quien necesite el alto unsigned lo obtiene sumando la corrección
-> `(Ra[31] ? Rb : 0) + (Rb[31] ? Ra : 0)` al resultado de `MULHI`.
->
-> No es gratis en el hardware, y por eso está escrito aquí: el producto de 64
-> bits que construye el RTL es el **unsigned**, así que la mitad alta signed
-> necesita restarle esa misma corrección. Cablear los bits de arriba no basta,
-> y un test que solo use operandos positivos no lo nota.
+No hay `MULHU`. La mitad alta unsigned se obtiene sumando, módulo 2^32,
+`(Ra[31] ? Rb : 0) + (Rb[31] ? Ra : 0)` al resultado de `MULHI`.
+La conversión inversa resta esa misma corrección.
 
 `DIV` y `REM` interpretan ambos operandos como signed32; `DIVU` y `REMU`, como
 unsigned32. El cociente signed se trunca hacia cero, y el resto acompaña a esa
@@ -201,39 +231,48 @@ REM(a, b) = a - DIV(a, b) * b
 El caso `-2^31 / -1` no cabe en signed32: el cociente hace wrap a `0x80000000`
 y el resto es cero.
 
-La división por cero provoca un trap arquitectónico en las cuatro
-instrucciones —también en `REM` y `REMU`, que no tienen más definición que la
-división que las acompaña—; hasta que el trap se formalice, el simulador
-termina con error y el RTL para con `ERROR_DIVISION_BY_ZERO`.
+La división por cero detiene la ejecución con `ERROR_DIVISION_BY_ZERO` en las
+cuatro instrucciones, incluidas `REM` y `REMU`. No hay vector de excepción ni
+recuperación arquitectónica.
 
 ### Inmediatos y memoria
 
-|      Opcode | Mnemónico | Operandos       | Semántica                             | Simulador |
-|------------:|-----------|-----------------|---------------------------------------|-----------|
-|      `0x10` | `MOVI`    | `Rd, imm16`     | `Rd = sign_extend(imm16)`             | Sí        |
-|      `0x11` | `ADDI`    | `Rd, Ra, imm16` | `Rd = Ra + sign_extend(imm16)`        | Sí        |
-|      `0x12` | `ANDI`    | `Rd, Ra, imm16` | `Rd = Ra AND zero_extend(imm16)`      | Sí        |
-|      `0x13` | `ORI`     | `Rd, Ra, imm16` | `Rd = Ra OR zero_extend(imm16)`       | Sí        |
-|      `0x14` | `XORI`    | `Rd, Ra, imm16` | `Rd = Ra XOR zero_extend(imm16)`      | Sí        |
-|      `0x15` | `LOAD`    | `Rd, Ra, imm16` | `Rd = mem32[Ra + sign_extend(imm16)]` | Sí        |
-|      `0x16` | `STORE`   | `Rs, Ra, imm16` | `mem32[Ra + sign_extend(imm16)] = Rs` | Sí        |
-|      `0x17` | `MOVHI`   | `Rd, imm16`     | `Rd = imm16 << 16`                    | Sí        |
-|      `0x18` | `LOADB`   | `Rd, Ra, imm16` | 8 bits, extensión con signo           | Sí        |
-|      `0x19` | `LOADUB`  | `Rd, Ra, imm16` | 8 bits, extensión con ceros           | Sí        |
-|      `0x1A` | `STOREB`  | `Rs, Ra, imm16` | escribe `Rs[7:0]`                     | Sí        |
-|      `0x1B` | `LOADH`   | `Rd, Ra, imm16` | 16 bits, extensión con signo          | Sí        |
-|      `0x1C` | `LOADUH`  | `Rd, Ra, imm16` | 16 bits, extensión con ceros          | Sí        |
-|      `0x1D` | `STOREH`  | `Rs, Ra, imm16` | escribe `Rs[15:0]`                    | Sí        |
-| `0x1E–0x1F` | —         | —               | Reservadas                            | —         |
+|      Opcode | Mnemónico | Operandos       | Semántica                             | Capability       |
+|------------:|-----------|-----------------|---------------------------------------|------------------|
+|      `0x10` | `MOVI`    | `Rd, imm16`     | `Rd = sign_extend(imm16)`             | Base             |
+|      `0x11` | `ADDI`    | `Rd, Ra, imm16` | `Rd = Ra + sign_extend(imm16)`        | Base             |
+|      `0x12` | `ANDI`    | `Rd, Ra, imm16` | `Rd = Ra AND zero_extend(imm16)`      | Base             |
+|      `0x13` | `ORI`     | `Rd, Ra, imm16` | `Rd = Ra OR zero_extend(imm16)`       | Base             |
+|      `0x14` | `XORI`    | `Rd, Ra, imm16` | `Rd = Ra XOR zero_extend(imm16)`      | Base             |
+|      `0x15` | `LOAD`    | `Rd, Ra, imm16` | `Rd = mem32[Ra + sign_extend(imm16)]` | Base             |
+|      `0x16` | `STORE`   | `Rs, Ra, imm16` | `mem32[Ra + sign_extend(imm16)] = Rs` | Base             |
+|      `0x17` | `MOVHI`   | `Rd, imm16`     | `Rd = imm16 << 16`                    | Base             |
+|      `0x18` | `LOADB`   | `Rd, Ra, imm16` | 8 bits, extensión con signo           | `subword_memory` |
+|      `0x19` | `LOADUB`  | `Rd, Ra, imm16` | 8 bits, extensión con ceros           | `subword_memory` |
+|      `0x1A` | `STOREB`  | `Rs, Ra, imm16` | escribe `Rs[7:0]`                     | `subword_memory` |
+|      `0x1B` | `LOADH`   | `Rd, Ra, imm16` | 16 bits, extensión con signo          | `subword_memory` |
+|      `0x1C` | `LOADUH`  | `Rd, Ra, imm16` | 16 bits, extensión con ceros          | `subword_memory` |
+|      `0x1D` | `STOREH`  | `Rs, Ra, imm16` | escribe `Rs[15:0]`                    | `subword_memory` |
+| `0x1E–0x1F` | —         | —               | Reservadas                            | —                |
 
-Los seis accesos sub-palabra siguen el mapa de `propuesta-v0.2.md` §7 y
+Los seis accesos sub-palabra siguen el mapa de `propuesta-v0.2.md` §6 y
 aparecieron en `19.fpga-cpu-hdmi-ls`. Quedan **dos opcodes libres** en esta
 familia.
 
-`LOAD` y `STORE` transfieren exactamente cuatro bytes. La dirección efectiva
-hace wrap a 32 bits y debe estar alineada a cuatro bytes. Una dirección no
-alineada o fuera de la memoria disponible provoca un trap arquitectónico; por
-ahora el simulador termina con error.
+Todas las cargas y stores calculan `address = low32(Ra + sign_extend(imm16))`.
+El desplazamiento está en bytes y admite `-32768..32767`.
+
+| Tamaño  | Instrucciones               | Alineación                  |
+|---------|-----------------------------|-----------------------------|
+| 32 bits | `LOAD`, `STORE`             | Múltiplo de 4               |
+| 16 bits | `LOADH`, `LOADUH`, `STOREH` | Múltiplo de 2               |
+| 8 bits  | `LOADB`, `LOADUB`, `STOREB` | Cualquier dirección de byte |
+
+Los accesos son little-endian. Las cargas signed extienden el signo hasta
+32 bits y las unsigned extienden con ceros. Los stores escriben solo los bits
+bajos correspondientes al tamaño y conservan los bytes vecinos.
+Se valida el intervalo completo del acceso; una dirección desalineada o fuera
+de la memoria disponible produce `ERROR_MEMORY_ACCESS`.
 
 Para formar una constante arbitraria de 32 bits:
 
@@ -244,26 +283,40 @@ ORI   R1, R1, 0x5678    ; R1 = 0x12345678
 
 ### Control de flujo
 
-|      Opcode | Mnemónico | Operandos        | Condición                  | Simulador |
-|------------:|-----------|------------------|----------------------------|-----------|
-|      `0x20` | `BEQ`     | `Ra, Rb, target` | `Ra == Rb`                 | Sí        |
-|      `0x21` | `BNE`     | `Ra, Rb, target` | `Ra != Rb`                 | Sí        |
-|      `0x22` | `BLT`     | `Ra, Rb, target` | `signed(Ra) < signed(Rb)`  | Sí        |
-|      `0x23` | `BGE`     | `Ra, Rb, target` | `signed(Ra) >= signed(Rb)` | Sí        |
-|      `0x24` | `BLTU`    | `Ra, Rb, target` | `Ra < Rb`, unsigned        | Sí        |
-|      `0x25` | `BGEU`    | `Ra, Rb, target` | `Ra >= Rb`, unsigned       | Sí        |
-| `0x26–0x2B` | —         | —                | Reservadas                 | —         |
-|      `0x2C` | `JAL`     | `Rd, target`     | `Rd = PC+4`, relativo      | Sí        |
-|      `0x2D` | `JALR`    | `Rd, Ra, imm16`  | `Rd = PC+4`, a `Ra+imm*4`  | Sí        |
-|      `0x2E` | `JR`      | `Ra`             | a `Ra`; **obsoleta**       | Sí        |
-|      `0x2F` | `BRA`     | `target`         | Siempre                    | Sí        |
+|      Opcode | Mnemónico | Operandos        | Condición                  | Capability |
+|------------:|-----------|------------------|----------------------------|------------|
+|      `0x20` | `BEQ`     | `Ra, Rb, target` | `Ra == Rb`                 | Base       |
+|      `0x21` | `BNE`     | `Ra, Rb, target` | `Ra != Rb`                 | Base       |
+|      `0x22` | `BLT`     | `Ra, Rb, target` | `signed(Ra) < signed(Rb)`  | Base       |
+|      `0x23` | `BGE`     | `Ra, Rb, target` | `signed(Ra) >= signed(Rb)` | Base       |
+|      `0x24` | `BLTU`    | `Ra, Rb, target` | `Ra < Rb`, unsigned        | Base       |
+|      `0x25` | `BGEU`    | `Ra, Rb, target` | `Ra >= Rb`, unsigned       | Base       |
+| `0x26–0x2B` | —         | —                | Reservadas                 | —          |
+|      `0x2C` | `JAL`     | `Rd, target`     | `Rd = PC+4`, relativo      | `calls`    |
+|      `0x2D` | `JALR`    | `Rd, Ra, imm16`  | `Rd = PC+4`, a `Ra+imm*4`  | `calls`    |
+|      `0x2E` | `JR`      | `Ra`             | a `Ra`, sin enlace         | `calls`    |
+|      `0x2F` | `BRA`     | `target`         | Siempre                    | Base       |
 
-`JAL`, `JALR` y `JR` aparecieron en `19.fpga-cpu-hdmi-ls`, con el mapa de
-`propuesta-v0.2.md` §3.2, cuando `R0` todavía era un registro general. Desde que
-`R0` está cableado a cero, **`JR Ra` es exactamente `JALR R0, Ra, 0`** y `0x2E`
-queda obsoleto: sigue implementado y sigue siendo válido, pero es redundante y
-su hueco es reclamable por una instrucción futura. Los programas nuevos deberían
-usar `JALR R0`. `RET` es un alias del ensamblador, no un opcode.
+`JAL`, `JALR` y `JR` requieren `calls` y usan I-Type, con los campos de §2.
+Los desplazamientos de `JAL` y `JALR` son signed de 16 bits en palabras.
+Tomando `PC` como la dirección de la instrucción y leyendo los operandos antes
+de escribir el enlace, incluso cuando `Rd = Ra`:
+
+```text
+JAL:  target = low32(PC + 4 + sign_extend(imm16) * 4)
+      Rd = low32(PC + 4); PC = target
+JALR: target = low32(Ra + sign_extend(imm16) * 4) & 0xFFFFFFFC
+      Rd = low32(PC + 4); PC = target
+JR:   PC = Ra & 0xFFFFFFFC
+```
+
+`JR` conserva su opcode `0x2E` y es válido. Su efecto equivale a
+`JALR R0, Ra, 0`. El ensamblador actual traduce `RET` a `JR R31`.
+Por convención de software, `R31` es el registro de enlace y `R30` el puntero
+de pila; el hardware no les da un tratamiento especial.
+Estas instrucciones están implementadas en MiniCPU. Su incorporación a
+MiniGPU requiere fijar el comportamiento de los destinos indirectos divergentes;
+esta especificación no les atribuye soporte SIMT.
 
 En los saltos indirectos el destino sale de un registro y puede venir
 desalineado: se descartan los dos bits bajos en lugar de añadir una ruta de
@@ -281,15 +334,18 @@ El ensamblador calcula estos offsets al resolver labels.
 
 ### Sistema y SIMT
 
-|      Opcode | Mnemónico | Operandos | Estado                                 |
-|------------:|-----------|-----------|----------------------------------------|
-|      `0x30` | `GETTID`  | `Rd`      | Implementada en MiniCPU y MiniGPU       |
-|      `0x31` | `SSY`     | `label`   | Implementada en MiniGPU; B-Type         |
-|      `0x32` | `BAR`     | —         | Implementada en MiniGPU                 |
-|      `0x33` | `EXIT`    | —         | Implementada en MiniGPU                 |
-| `0x34–0x3D` | —         | —         | Reservadas para GPU                    |
-|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error    |
-|      `0x3F` | `HALT`    | —         | Definida e implementada                 |
+`GETTID`, `TRAP` y `HALT` pertenecen a la base. `SSY`, `BAR` y `EXIT`
+son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
+
+|      Opcode | Mnemónico | Operandos | Estado                               |
+|------------:|-----------|-----------|--------------------------------------|
+|      `0x30` | `GETTID`  | `Rd`      | Implementada en MiniCPU y MiniGPU    |
+|      `0x31` | `SSY`     | `label`   | Implementada en MiniGPU; B-Type      |
+|      `0x32` | `BAR`     | —         | Implementada en MiniGPU              |
+|      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
+| `0x34–0x3D` | —         | —         | Reservadas para GPU                  |
+|      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error |
+|      `0x3F` | `HALT`    | —         | Definida e implementada              |
 
 `GETTID` escribe en `Rd` el identificador lineal del thread residente. En
 MiniCPU vale cero. En la MiniGPU actual vale `warp_id * warp_size + lane_id`
@@ -327,10 +383,10 @@ la misma semántica que `EXIT`.
 
 `TRAP` detiene la CPU con un error distinguible de `HALT`. El PC observable
 queda en la dirección de `TRAP`. No salta a un vector y no puede reanudarse sin
-reset. En la futura MiniGPU la política inicial será detener globalmente la
-ejecución; el contexto de lane o warp podrá añadirse sin cambiar el opcode.
+reset. En MiniGPU provoca una parada global con error.
 
-Los campos marcados como reservados deben ser cero. Un opcode conocido con
+`NOP`, `TRAP` y `HALT` exigen sus 26 bits bajos a cero. Los campos marcados
+como reservados deben ser cero. Un opcode soportado con
 campos reservados distintos de cero produce `ERROR_INVALID_ENCODING`; un opcode
 reservado o desconocido produce `ERROR_INVALID_OPCODE`. La única excepción es la
 descrita arriba: en `SHL`, `SHR` y `SAR` el campo reservado es `extra[9:0]`
@@ -343,7 +399,7 @@ en little-endian. La dirección inicial actual es `0x00000000`; no hay cabecera 
 tabla de símbolos en el fichero `.bin`.
 
 El fichero `.hex` auxiliar contiene una palabra hexadecimal por línea en el
-mismo orden de ejecución y está destinado a inspección y carga en herramientas
+orden de direcciones del binario y está destinado a inspección y carga en herramientas
 de hardware.
 
 ## 5. Sintaxis del ensamblador
@@ -385,11 +441,34 @@ SHL  R3, R2, R4     ; la misma operacion con la cantidad en un registro
 
 ## 6. Conformidad y evolución
 
-Una implementación conforme debe producir el comportamiento descrito para toda
-instrucción marcada como definida. Encontrar un opcode reservado o un encoding
-inválido debe provocar un trap; mientras no exista el mecanismo de traps, el
-simulador puede detenerse con un error diagnóstico.
+Una implementación conforme debe cumplir las reglas comunes, incluido `R0=0`,
+el repertorio base de su arquitectura y todas las variantes de las capabilities
+que declara. No necesita implementar las capabilities ausentes. Un opcode
+definido pero no soportado no se convierte por ello en un hueco libre del mapa.
+
+Un opcode reservado o no soportado produce `ERROR_INVALID_OPCODE`; un encoding
+inválido de una instrucción soportada produce `ERROR_INVALID_ENCODING`.
+En particular, sin `shift_immediate` el bit 10 de los shifts es reservado.
+Estos errores detienen la ejecución; no existe un mecanismo de excepción con
+vector y retorno.
 
 Los opcodes `0x30–0x3F` permiten añadir SIMT sin romper programas MiniCPU. Los
 detalles físicos —número de lanes, ancho de warp, register file, latencias,
 pipeline y scheduler— no forman parte de la ISA.
+
+### Nota de evolución: posible eliminación del opcode `JR`
+
+Con `R0=0`, una revisión futura puede eliminar el opcode independiente de `JR`
+y conservar el mnemónico como pseudoinstrucción del ensamblador:
+
+```asm
+JR Ra  -> JALR R0, Ra, 0
+RET    -> JALR R0, R31, 0
+```
+
+La propuesta v0.2 conserva `JR` en `0x2E` y plantea esta alternativa como
+evolución; la v0.3 sí elimina su opcode y adopta la pseudoinstrucción.
+**MiniISA v0.1 vigente conserva `JR` y `0x2E` sigue ocupado.** Eliminarlo o
+reasignarlo rompería los binarios que lo utilizan y requeriría una revisión
+explícita de la codificación y del ensamblador.
+ 

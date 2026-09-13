@@ -141,7 +141,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h05) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h11) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);

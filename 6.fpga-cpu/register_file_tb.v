@@ -82,11 +82,24 @@ module register_file_tb;
     if (read_data_a !== 32'h1234_5678) $fatal(1, "Read port A mismatch");
     if (read_data_b !== 32'hdead_beef) $fatal(1, "Read port B mismatch");
 
-    // R0 is writable in MiniISA v0.1.
+    /*
+     * R0 esta cableado a cero: la escritura se descarta y la lectura sigue
+     * valiendo cero. Ver 1.isa/isa.md seccion 1.
+     *
+     * El banco no tiene ninguna logica de lectura para R0, a proposito: como
+     * el reset lo puso a cero y nadie lo escribe, vale cero por construccion.
+     * Por eso este caso tiene que ir DESPUES de una escritura de verdad --las
+     * de R1 y R2, arriba--: si el puerto de escritura estuviera roto del todo,
+     * un R0 a cero no demostraria nada por si solo.
+     */
     write_register(5'd0, 32'hffff_ffff);
     read_address_a = 5'd0;
     #1;
-    if (read_data_a !== 32'hffff_ffff) $fatal(1, "R0 is not writable");
+    if (read_data_a !== 32'h0000_0000) $fatal(1, "R0 acepto una escritura");
+    // Y la escritura descartada no se cuela en el vecino.
+    read_address_a = 5'd1;
+    #1;
+    if (read_data_a !== 32'h1234_5678) $fatal(1, "la escritura a R0 toco R1");
 
     // The debug port can inspect a register independently of the CPU ports.
     expect_debug_register(5'd2, 32'hdead_beef);

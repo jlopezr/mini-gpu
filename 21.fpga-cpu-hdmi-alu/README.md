@@ -185,7 +185,13 @@ comprobó expresamente.
 Detalles en [`docs/registro-cero.md`](docs/registro-cero.md). Verificación:
 [`zero_register_tb.v`](zero_register_tb.v), que recorre los seis caminos por los
 que la CPU escribe el banco, y el caso
-[`zero-register/discarded-writes`](../x.cpu-tests/cases/extensions/zero-register/discarded-writes/).
+[`basics/zero-register`](../x.cpu-tests/cases/basics/zero-register/).
+
+> **Esto ya no es exclusivo de la 21.** El cambio se llevó después a las otras
+> ocho implementaciones —cinco de CPU, tres de GPU— y `R0` a cero pasó a ser una
+> regla de la MiniISA en vez de una capacidad del runner. La capacidad
+> `zero_register` ya no existe, y por eso su caso vive en `basics/` y no en
+> `extensions/`. Lo que sigue describe cómo se hizo aquí primero.
 
 ### Qué se rompió con `R0` a cero, y cómo quedó
 

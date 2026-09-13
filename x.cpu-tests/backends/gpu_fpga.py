@@ -20,15 +20,20 @@ from types import ModuleType
 from . import board
 
 
+# El backport de R0 cableado a cero subio las tres versiones de GPU: 12 a 2.3,
+# y 14 y 17 a 2.4. No cambia ni un byte del protocolo; sube porque el cambio es
+# INCOMPATIBLE y un bitstream viejo no para con error, da otro resultado en
+# silencio. 14 y 17 siguen compartiendo numero, como antes: son funcionalmente
+# identicas y solo se diferencian en el camino critico.
 VERSIONS = {
     "bram": {
         "monitor_path": Path("12.fpga-gpu/monitor.py"),
-        "monitor_version": (2, 1),
+        "monitor_version": (2, 3),
         "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes",
     },
     "sdram": {
         "monitor_path": Path("14.fpga-gpu-ram/monitor.py"),
-        "monitor_version": (2, 2),
+        "monitor_version": (2, 4),
         "description": "MiniGPU con 32 MiB de SDRAM, 8 warps x 8 lanes",
     },
 }

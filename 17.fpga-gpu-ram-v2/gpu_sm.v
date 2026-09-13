@@ -116,9 +116,20 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire response_commit=lsu_rsp_valid && lsu_rsp_ready;
     genvar l;
     generate for(l=0;l<8;l=l+1) begin: lanes
+        // R0 cableado a cero: se descarta cualquier escritura cuyo numero de
+        // registro sea 0. Ver 1.isa/isa.md seccion 1.
+        //
+        // El barrido de INIT queda FUERA del guardian a proposito: es quien
+        // pone el banco a cero, porque esta BRAM no tiene reset. Si tambien se
+        // bloqueara, R0 no se inicializaria nunca y en simulacion se quedaria a
+        // X. Asi el barrido lo escribe una vez y ninguna instruccion vuelve a
+        // tocarlo, que es la misma invariante que en la MiniCPU.
+        wire [4:0] write_register=state==INIT ? 5'd0 :
+            (response_commit ? load_rd[lsu_rsp_tag] : lane_write_address[l*5 +: 5]);
         wire rf_write=state==INIT ||
-            (response_commit && load_mask[lsu_rsp_tag][l] && !load_is_write[lsu_rsp_tag] && !lsu_rsp_error[l]) ||
-            (state==EXEC && active[current][l] && lane_we[l]);
+            ((write_register!=5'd0) &&
+             ((response_commit && load_mask[lsu_rsp_tag][l] && !load_is_write[lsu_rsp_tag] && !lsu_rsp_error[l]) ||
+              (state==EXEC && active[current][l] && lane_we[l])));
         wire [7:0] wa=state==INIT ? init_address :
             (response_commit ? {lsu_rsp_tag,load_rd[lsu_rsp_tag]} : {current,lane_write_address[l*5 +: 5]});
         wire [31:0] wd=state==INIT ? 32'b0 :

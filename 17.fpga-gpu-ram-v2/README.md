@@ -1,5 +1,21 @@
 # MiniGPU con SDRAM v2: 8 warps × 8 lanes
 
+> **Backport de `R0` cableado a cero.** Esta carpeta recibio el cambio despues
+> de cerrarse: `R0` vale siempre cero y descarta las escrituras, que es una
+> regla de la MiniISA y no una extension opcional. Ver
+> [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
+>
+> El guardian NO esta en `gpu_register_file.v` sino en `gpu_sm.v`, que es la
+> diferencia con la MiniCPU y conviene no perderla: aqui el banco es BRAM y no
+> tiene reset, lo pone a cero un barrido de 256 ciclos en el estado `INIT`. Si
+> el guardian estuviera dentro del banco bloquearia tambien ese barrido, `R0` no
+> se inicializaria nunca y en simulacion se quedaria a `X`. Dejando el barrido
+> fuera, lo escribe una vez y ninguna instruccion vuelve a tocarlo.
+>
+> **Este monitor responde ahora 2.4.** Subio por el backport, sin cambiar ni
+> un byte del protocolo. Los numeros de version que se mencionan mas abajo son
+> historicos; los de hoy estan en [`COMPARATIVA.md`](../COMPARATIVA.md).
+
 Copia de `14.fpga-gpu-ram` dedicada a subir la frecuencia máxima sin cambiar la
 funcionalidad. El registro de cambios, medidas y caminos críticos está en
 `optimizacion.md`; `timing.ps1` resume el informe de temporización tras cada

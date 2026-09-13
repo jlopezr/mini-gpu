@@ -31,21 +31,15 @@
 ;   R1  FB_FRONT antes            R2  FB_BACK antes
 ;   R3  FB_FRONT despues          R4  FB_BACK despues
 ;   R5  FB_BACK tras escribirlo   R6  underflow
-;   R8  temporal de espera         R9  constante 0
+;   R8  temporal de espera         R0  cero, cableado por la ISA
 ; ============================================================
 
 start:
     MOVHI R20, 0x8000
-    ; El cero se pone a mano, y esto tiene que seguir asi mientras este caso
-    ; corra en mas de un backend. En la 21 R0 esta cableado a cero y valdria
-    ; directamente; en la 19 y anteriores es un registro general y solo vale
-    ; cero por casualidad --los registros arrancan a cero-- hasta el dia que
-    ; alguien lo escriba. Un caso compartido no puede apoyarse en la
-    ; casualidad de la mayoria de sus backends.
-    ;
-    ; El dia que R0 se cablee en todas las versiones, este MOVI sobra y el
-    ; cambio va junto con el backport, no antes.
-    MOVI  R9, 0
+    ; El cero sale de R0, que la ISA cablea. Hasta el backport aqui habia un
+    ; `MOVI R9, 0`: mientras R0 fue un registro general en cinco de los seis
+    ; backends, usarlo habria funcionado por casualidad --los registros
+    ; arrancan a cero-- hasta el dia que alguien lo escribiera.
 
     ; ---- valores iniciales ----
     LOAD  R1, R20, 0           ; FB_FRONT
@@ -66,7 +60,7 @@ start:
 
 wait_swap:
     LOAD  R8, R20, 8
-    BNE   R8, R9, wait_swap    ; esperar a que el hardware lo aplique
+    BNE   R8, R0, wait_swap    ; esperar a que el hardware lo aplique
 
     ; ---- tras el intercambio, las bases estan cruzadas ----
     LOAD  R3, R20, 0           ; FB_FRONT, deberia valer el FB_BACK de antes

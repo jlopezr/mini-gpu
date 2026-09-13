@@ -22,7 +22,7 @@
 ;   R3  contador de palabras        R4  direccion de la linea
 ;   R5  temporal                    R6  puntero de escritura
 ;   R7  constante 1                 R8  lectura de SWAP
-;   R9  constante 0                 R13 color de la linea actual
+;   R0  cero, cableado por la ISA    R13 color de la linea actual
 ;   R14 constante 9                 R15 constante 7
 ;   R20 base de los registros       R22 lineas totales (240)
 ;   R23 color de fondo              R24 color de la banda
@@ -45,8 +45,6 @@ start:
     MOVI  R14, 9               ; desplazamientos para *640
     MOVI  R15, 7
     MOVI  R7, 1
-    MOVI  R9, 0
-
 frame:
     LOAD  R1, R20, 4           ; R1 = FB_BACK, cambia en cada intercambio
     ADDI  R4, R1, 0            ; direccion de la linea 0
@@ -76,6 +74,6 @@ draw_word:
     STORE R7, R20, 8           ; SWAP = 1
 wait_swap:
     LOAD  R8, R20, 8
-    BNE   R8, R9, wait_swap
+    BNE   R8, R0, wait_swap
 
     BRA   frame

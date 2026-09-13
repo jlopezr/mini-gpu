@@ -87,7 +87,13 @@ module monitor (
   //        multiplo de 4 y la recepcion fallaba la mitad de las veces)
   //   1.10 el arbitro engancha el pulso del monitor; hasta 1.9 se perdia si
   //        coincidia con el video y la placa se quedaba muda hasta el reset
-  localparam [7:0] VERSION_MINOR = 8'h0a;
+  // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
+  // descartar las escrituras, que es un cambio INCOMPATIBLE con lo que hacia
+  // esta carpeta antes: un programa que use `R0` como registro general no para
+  // con error, da otro resultado en silencio. Por eso sube la version aunque el
+  // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
+  // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
+  localparam [7:0] VERSION_MINOR = 8'h12;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;

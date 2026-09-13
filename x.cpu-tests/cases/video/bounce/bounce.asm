@@ -40,7 +40,7 @@
 ;   R3  contador de palabras       R4  direccion de escritura
 ;   R5  temporal                   R6  puntero de escritura
 ;   R7  constante 1                R8  lectura de SWAP
-;   R9  constante 0
+;   R0  cero, cableado por la ISA
 ;   R14 constante 9   R15 constante 7      (para *640)
 ;   R16 x del cuadrado, en pixeles         R17 y del cuadrado
 ;   R18 dx                                 R19 dy
@@ -61,7 +61,6 @@ start:
     ORI   R24, R24, 0xFFFF     ; blanco
 
     MOVI  R7, 1
-    MOVI  R9, 0
     MOVI  R14, 9               ; desplazamientos para *640
     MOVI  R15, 7
     MOVI  R22, 240
@@ -125,35 +124,35 @@ sq_word:
     STORE R7, R20, 8           ; SWAP = 1
 wait_swap:
     LOAD  R8, R20, 8
-    BNE   R8, R9, wait_swap
+    BNE   R8, R0, wait_swap
 
     ; ---- mover, y rebotar en los bordes ----
     ; El movimiento va DESPUES del intercambio, asi que lo que se ve tras el
     ; intercambio N es la posicion del paso N-1. reference.py cuenta igual.
     ADD   R16, R16, R18
-    BLT   R16, R9, x_low       ; x < 0, con signo
+    BLT   R16, R0, x_low       ; x < 0, con signo
     BLT   R28, R16, x_high     ; x > maximo
     BRA   x_done
 x_low:
     MOVI  R16, 0
-    SUB   R18, R9, R18         ; dx = -dx
+    SUB   R18, R0, R18         ; dx = -dx
     BRA   x_done
 x_high:
     ADDI  R16, R28, 0
-    SUB   R18, R9, R18
+    SUB   R18, R0, R18
 x_done:
 
     ADD   R17, R17, R19
-    BLT   R17, R9, y_low
+    BLT   R17, R0, y_low
     BLT   R29, R17, y_high
     BRA   y_done
 y_low:
     MOVI  R17, 0
-    SUB   R19, R9, R19         ; dy = -dy
+    SUB   R19, R0, R19         ; dy = -dy
     BRA   y_done
 y_high:
     ADDI  R17, R29, 0
-    SUB   R19, R9, R19
+    SUB   R19, R0, R19
 y_done:
 
     BRA   frame

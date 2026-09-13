@@ -203,7 +203,9 @@ module cpu_tb;
     if (retired_count !== 4) $fatal(1, "Retired instruction count mismatch");
     if (error) $fatal(1, "Unexpected CPU error");
 
-    // STEP executes exactly one instruction; R0 remains a normal register.
+    // STEP executes exactly one instruction. La instruccion elegida escribe R0,
+    // que esta cableado a cero: la escritura se descarta y lo que demuestra el
+    // caso es que STEP retiro UNA instruccion, no cual. Ver 1.isa/isa.md §1.
     instruction_memory[0] = 32'h4000_ffff;  // MOVI R0, -1
     instruction_memory[1] = 32'hfc00_0000;  // HALT
     reset_cpu();
@@ -212,7 +214,7 @@ module cpu_tb;
     wait (halted);
     @(posedge clk);
     #1;
-    expect_register(5'd0, 32'hffff_ffff);
+    expect_register(5'd0, 32'h0000_0000);
     if (debug_pc !== 32'h0000_0004) $fatal(1, "STEP PC mismatch");
     if (retired_count !== 1) $fatal(1, "STEP retired more than one instruction");
 

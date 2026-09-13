@@ -8,14 +8,14 @@ los resultados.
 
 Cada línea está por algo, y conviene no recortarla sin mirar:
 
-| Línea | Qué prueba |
-|---|---|
-| `2 3 + .` | Camino corto: leer números, aritmética, imprimir |
-| `: sq dup * ;` | El compilador: `:` anota la definición en vez de ejecutarla |
-| `5 sq .` | El intérprete interno, que recorre el cuerpo compilado |
-| `255 HEX .` | **`BASE` al imprimir**: se lee en decimal y se imprime en hexadecimal |
-| `FF DECIMAL .` | **`BASE` al leer**: `FF` solo parsea con la base ya cambiada |
-| `bye` | Parada limpia, con `HALT` y no por límite de instrucciones |
+| Línea          | Qué prueba                                                            |
+|----------------|-----------------------------------------------------------------------|
+| `2 3 + .`      | Camino corto: leer números, aritmética, imprimir                      |
+| `: sq dup * ;` | El compilador: `:` anota la definición en vez de ejecutarla           |
+| `5 sq .`       | El intérprete interno, que recorre el cuerpo compilado                |
+| `255 HEX .`    | **`BASE` al imprimir**: se lee en decimal y se imprime en hexadecimal |
+| `FF DECIMAL .` | **`BASE` al leer**: `FF` solo parsea con la base ya cambiada          |
+| `bye`          | Parada limpia, con `HALT` y no por límite de instrucciones            |
 
 Las dos de `BASE` se añadieron al portar el programa a `R0` cableado a cero.
 `BASE` vivía en `R0` y pasó a `R3` —ver el

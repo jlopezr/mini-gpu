@@ -1,13 +1,24 @@
 `default_nettype none
 
 /*
- * MiniISA v0.1 register file.
+ * MiniISA register file.
  *
- * - 32 general-purpose registers of 32 bits.
+ * - 32 registers of 32 bits, of which R0 is hardwired to zero.
  * - Two combinational read ports for Ra and Rb.
  * - One synchronous write port for Rd.
  * - One registered read-only debug port.
- * - R0 is a normal writable register in MiniISA v0.1.
+ *
+ * R0 IS HARDWIRED TO ZERO: writes are dropped, reads always return zero. It is
+ * a rule of the ISA, not of this implementation, so this file is byte for byte
+ * the same in every MiniCPU folder. See 1.isa/isa.md section 1.
+ *
+ * The write port is the only place that knows about R0. The read path is
+ * deliberately untouched: reset clears all 32 entries and nothing ever writes
+ * entry 0, so `registers[0]` is zero by construction and yosys propagates it as
+ * a constant, removing the flops and the mux input on its own. An explicit
+ * `(addr == 0) ? 0 : ...` would add a mux to the combinational read path, which
+ * is the critical path this design has spent effort keeping short: it is what
+ * forced STATE_DECODE to exist. See timing.md.
  */
 module register_file (
     input clk,
@@ -51,7 +62,7 @@ module register_file (
       debug_address_registered <= debug_address;
       debug_data <= registers[debug_address_registered];
 
-      if (write_enable) begin
+      if (write_enable && write_address != 5'd0) begin
         registers[write_address] <= write_data;
       end
     end

@@ -1,5 +1,20 @@
 # MiniCPU con memorias EBR
 
+> **Backport de `R0` cableado a cero.** Esta carpeta recibio el cambio despues
+> de cerrarse: `R0` vale siempre cero y descarta las escrituras, que es una
+> regla de la MiniISA y no una extension opcional. Ver
+> [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
+>
+> **Este monitor responde ahora 1.16.** Subio por el backport, sin cambiar
+> ni un byte del protocolo: es lo unico que el PC puede preguntar para saber que
+> bitstream tiene delante, y un programa que use `R0` como registro general no
+> para con error en el bitstream viejo, da otro resultado en silencio.
+>
+> El texto que sigue es anterior al backport. Los numeros de version que
+> menciona mas abajo son historicos; los de hoy estan en
+> [`COMPARATIVA.md`](../COMPARATIVA.md).
+
+
 Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
 16 KiB. Es la versión FPGA `ebr` utilizada por `x.cpu-tests` y responde como
 monitor 1.6. Esta revisión implementa `MUL`, `MULFX` y `DIV`. `MUL` conserva

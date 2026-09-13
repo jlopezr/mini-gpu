@@ -11,8 +11,10 @@ arquitectónico de error:
 - Memoria: LOAD y STORE.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
 
-El estado consta de PC y 32 registros generales de 32 bits; R0 también es
-escribible. Las operaciones hacen wrap módulo 2**32, los binarios son
+El estado consta de PC y 32 registros de 32 bits, de los que **R0 está cableado
+a cero**: las escrituras se descartan y las lecturas valen siempre cero, igual
+que en la MiniCPU y en el RTL de la GPU. Las operaciones hacen wrap módulo
+2**32, los binarios son
 little-endian y los branches son relativos a PC+4 con offsets expresados en
 palabras de 32 bits.
 
@@ -757,6 +759,17 @@ class CPU:
 
         else:
             raise ExecutionFault(ERROR_INVALID_OPCODE)
+
+        # R0 esta cableado a cero: las escrituras se descartan y las lecturas
+        # valen siempre cero. Ver 1.isa/isa.md seccion 1.
+        #
+        # El descarte va aqui, en el commit, y no repartido por las treinta
+        # ramas del `case`: `regs` es una copia privada de la lane que solo se
+        # publica al devolver el LaneResult, asi que borrar la entrada 0 justo
+        # antes equivale exactamente a no haberla escrito. Las lecturas de esta
+        # misma instruccion ya ocurrieron sobre el valor de entrada, que era
+        # cero por la misma razon.
+        regs[0] = 0
 
         return LaneResult(regs, next_pc, halted, store)
 

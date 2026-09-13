@@ -16,7 +16,7 @@ VERSIONS = {
         # entera, incluidas las extensiones que solo tiene el bitstream de la
         # 19. Ver el comentario de CAPABILITIES en run_gpu_tests.py.
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "shift_immediate", "alu_extended", "zero_register"),
+                         "shift_immediate", "alu_extended"),
         "description": "simulador funcional MiniCPU actual",
     },
 }

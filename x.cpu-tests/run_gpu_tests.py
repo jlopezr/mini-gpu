@@ -390,17 +390,23 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 #                    parada con un bug del ensamblador.
 #   alu_extended     MULHI (0x0B), DIVU (0x0D), REM (0x0E) y REMU (0x0F). En un
 #                    bitstream sin ellas, ERROR_INVALID_OPCODE.
-#   zero_register    R0 cableado a cero. Esta es distinta de las otras dos y
-#                    conviene saberlo: no es aditiva, es INCOMPATIBLE. Un
-#                    programa que use R0 como registro general no para con
-#                    error en un backend sin la capacidad; da otro resultado, en
-#                    silencio. Por eso un caso que la requiera se omite en los
-#                    backends anteriores en vez de fallar alli.
 #
-# El camino rapido de MULHI/REM/REMU NO tiene capacidad, y no es un olvido: es
-# invisible para la arquitectura. Acierto y fallo dan el mismo numero y solo
-# cambian los ciclos, que el diferencial ya excluye. Un caso no puede depender
-# de el, asi que no hay nada que declarar.
+# `R0` CABLEADO A CERO NO ESTA EN ESTA LISTA, y estuvo. Fue la capacidad
+# `zero_register` mientras solo la tenia la 21. Con el backport aplicado la
+# tienen todas las implementaciones, asi que dejo de ser algo que un backend
+# pueda o no tener y paso a ser una regla de la MiniISA: 1.isa/isa.md seccion 1.
+#
+# Fue ademas la unica capacidad NO ADITIVA que ha tenido este runner, y por eso
+# no podia quedarse a medias mucho tiempo: las demas se detectan porque un
+# bitstream que no las tiene para con ERROR_INVALID_OPCODE, mientras que un
+# backend con R0 general no para, da otro resultado en silencio. Una capacidad
+# sirve para omitir un caso con criterio; no sirve para proteger de una
+# divergencia muda entre dos backends que el diferencial compararia.
+#
+# El camino rapido de MULHI/REM/REMU tampoco tiene capacidad, por el motivo
+# contrario: es invisible para la arquitectura. Acierto y fallo dan el mismo
+# numero y solo cambian los ciclos, que el diferencial ya excluye. Un caso no
+# puede depender de el, asi que no hay nada que declarar.
 CAPABILITIES = {
     "atomic_warp_faults": "gpu",
     "video": "cpu",
@@ -410,7 +416,6 @@ CAPABILITIES = {
     "calls": "cpu",
     "shift_immediate": "cpu",
     "alu_extended": "cpu",
-    "zero_register": "cpu",
 }
 # `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
 # video. Se expande al cargar para que un backend solo tenga que declarar lo
@@ -448,15 +453,41 @@ VIDEO_FIELDS_EXCLUDED = ("frames",)
 
 
 def comparable(resultado: dict, case: dict) -> dict:
-    """El estado observado sin lo que no puede coincidir entre backends."""
+    """El estado observado sin lo que no puede coincidir entre backends.
+
+    `stdout` se excluye en los casos que no piden `serial`, y esto arregla un
+    fallo que estaba escondido: el simulador declara `serial` siempre, asi que
+    devuelve `b''` para cualquier caso, mientras que un bitstream sin puerto
+    serie devuelve `None`. Los dos quieren decir «aqui no hubo salida», pero no
+    son iguales, asi que el diferencial fallaba en TODOS los casos contra los
+    bitstreams `ebr`, `sdram`, `hdmi` y `bl8` --los cuatro sin serie-- mientras
+    cada backend pasaba por separado. No se habia visto porque el README solo
+    documentaba el diferencial contra `sdram`, que tampoco lo tiene, y nadie lo
+    habia corrido.
+
+    Para un caso que SI pide `serial`, los dos backends lo declaran y los dos
+    devuelven bytes, asi que se compara y es lo que tiene que ser.
+    """
     excluidos = set(PERF_FIELDS)
+    if "serial" not in case.get("requires", ()):
+        excluidos.add("stdout")
     if case.get("run_until"):
         excluidos.add("pc")
     recortado = {k: v for k, v in resultado.items() if k not in excluidos}
     if recortado.get("video"):
+        video_excluidos = set(VIDEO_FIELDS_EXCLUDED)
+        # `swaps` sale de SWAP_COUNT, que es parte de `frame_capture`. Un
+        # bitstream con video pero sin esa capacidad --`hdmi`-- devuelve None
+        # mientras el simulador devuelve el numero real, asi que comparar ahi
+        # hacia fallar el diferencial de `video-registers` contra `hdmi`
+        # pasando los dos backends por separado. Es el mismo fallo que tenia
+        # `stdout`, y estaba escondido por el mismo motivo: nadie habia corrido
+        # esa combinacion.
+        if "frame_capture" not in case.get("requires", ()):
+            video_excluidos.add("swaps")
         recortado["video"] = {
             k: v for k, v in recortado["video"].items()
-            if k not in VIDEO_FIELDS_EXCLUDED
+            if k not in video_excluidos
         }
     return recortado
 
@@ -1151,7 +1182,15 @@ def main() -> int:
             if args.backend == 'both' and observado["cpu-simulator"] != observado["cpu-fpga"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
-                print("  El estado observado del simulador y la FPGA no coincide")
+                # Decir QUE campo difiere, y no solo que algo difiere. Sin esto
+                # el fallo obligaba a reproducir el caso a mano en los dos
+                # backends para averiguar por donde iba la diferencia.
+                simulador, fpga = observado["cpu-simulator"], observado["cpu-fpga"]
+                for clave in sorted(set(simulador) | set(fpga)):
+                    izquierda = simulador.get(clave, "<ausente>")
+                    derecha = fpga.get(clave, "<ausente>")
+                    if izquierda != derecha:
+                        print(f"  {clave}: simulador={izquierda!r} fpga={derecha!r}")
         except Exception as error:
             failures += 1
             print(f"ERROR {path}: {error}", file=sys.stderr)

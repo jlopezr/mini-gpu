@@ -86,18 +86,27 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpu-simulator` | ninguno | — | los 33 de `cases/` |
-| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | 12; 10 omitidos por capacidades |
-| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | 12; 10 omitidos por capacidades |
-| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.14 | 25; 8 omitidos por capacidades |
-| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 33 de `cases/` |
+| 1 | `cpu-simulator` | ninguno | — | los 34 de `cases/` |
+| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
+| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 13; 21 omitidos. **`multiply` falla**: ver abajo |
+| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 27; 7 omitidos por capacidades |
+| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 34 de `cases/` |
 | 5 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
-| 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.1 | 26 compatibles; 8 omitidos con motivo |
+| 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
-Solo `cpu-simulator` y `cpu-fpga --version alu` ejecutan los 33 casos: son los
-dos únicos que tienen las nueve capacidades.
+Solo `cpu-simulator` y `cpu-fpga --version alu` ejecutan los 34 casos: son los
+dos únicos que tienen las siete capacidades.
+
+**`multiply` falla en `sdram`, y es un fallo de verdad.** `10.fpga-cpu-ram` no
+implementa `MUL`, `MULFX` ni `DIV`: declara los tres opcodes y valida su
+encoding, pero no tiene rama en el `case` del estado EXECUTE, así que caen al
+`default` y dan `ERROR_INVALID_OPCODE`. Es el único core al que le pasa —la 6,
+que es anterior, sí las implementa— y salió al correr el diferencial contra esa
+placa por primera vez. No es una capacidad que falte: son instrucciones base de
+la ISA, así que el caso **debe** fallar ahí hasta que se implementen o se decida
+otra cosa.
 
 La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
@@ -126,9 +135,9 @@ probar todos los casos compatibles:
 .\.venv\Scripts\python.exe .\x.cpu-tests\run_gpu_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
 ```
 
-El backend exige monitor **2.1** y ofrece cargar `12.fpga-gpu` si responde otra
+El backend exige monitor **2.3** y ofrece cargar `12.fpga-gpu` si responde otra
 versión o si el monitor no responde. `--yes` autoriza esa carga. No fuerza una
-recarga si ya responde 2.1; para cargar otra compilación de la misma revisión:
+recarga si ya responde 2.3; para cargar otra compilación de la misma revisión:
 
 ```powershell
 .\.venv\Scripts\apio.exe upload -p .\12.fpga-gpu
@@ -157,9 +166,9 @@ casos CPU se agrupan igual que los GPU:
 | Grupo | Qué valida |
 |---|---|
 | [alu](cases/alu/) | Reglas de la ALU que la ISA fija explícitamente |
-| [basics](cases/basics/) | Camino mínimo de ejecución y de memoria |
+| [basics](cases/basics/) | Camino mínimo de ejecución y de memoria, y `R0` cableado a cero |
 | [errors](cases/errors/) | Códigos de error y PC de la instrucción causante |
-| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra, consola serie, desplazamientos inmediatos, ALU extendida y `R0` a cero |
+| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra, consola serie, desplazamientos inmediatos y ALU extendida |
 | [programs](cases/programs/) | Programas con bucles, como prueba de integración |
 | [video](cases/video/) | Registros de vídeo, intercambio y frame capturado |
 
@@ -222,7 +231,7 @@ Los backends de FPGA comprueban la versión física mediante `GET_VERSION`:
 | `cpu-fpga` | `hdmi` | `16.fpga-cpu-hdmi` | 1.10 | `0x00000000–0x01ffffff` |
 | `cpu-fpga` | `bl8` | `18.fpga-cpu-hdmi-bl8` | 1.12 | `0x00000000–0x01ffffff` |
 | `cpu-fpga` | `subword` | `19.fpga-cpu-hdmi-ls` | 1.13 | `0x00000000–0x01ffffff` |
-| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.1 | 128 KiB de BRAM, 8 warps × 8 lanes |
+| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.3 | 128 KiB de BRAM, 8 warps × 8 lanes |
 
 **La 19 responde 1.13 aunque su protocolo sea idéntico al 1.12 de la 18.** No
 añade ni un comando: las instrucciones nuevas viven enteras dentro de la CPU.
@@ -535,40 +544,48 @@ declara lo que necesita:
 | `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpu-simulator`, `subword`, `alu` |
 | `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpu-simulator`, `alu` |
 | `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpu-simulator`, `alu` |
-| `zero_register` | `R0` cableado a cero | `cpu-simulator`, `alu` |
 
-Las cinco de ISA existen por la misma razón que las de vídeo: sin ellas, un caso
-ejecutado en un bitstream anterior no fallaría con un diagnóstico útil, sino con
-**error `0x01`, opcode inválido**, que es lo mismo que produce un ensamblador
-roto o un salto a datos. Un `SKIP` dice dónde está el problema; un `0x01` a
-media suite, no.
+Las cuatro de ISA existen por la misma razón que las de vídeo: sin ellas, un
+caso ejecutado en un bitstream anterior no fallaría con un diagnóstico útil,
+sino con **error `0x01`, opcode inválido**, que es lo mismo que produce un
+ensamblador roto o un salto a datos. Un `SKIP` dice dónde está el problema; un
+`0x01` a media suite, no.
 
 Están separadas porque son extensiones independientes. `subword_memory`, `calls`
-y `serial` llegaron juntas en la 19 y `shift_immediate`, `alu_extended` y
-`zero_register` juntas en la 21, pero ocupan bloques distintos del mapa de
-opcodes y un backport no tiene por qué traerlas todas a la vez. Ninguna implica
-a otra.
+y `serial` llegaron juntas en la 19 y `shift_immediate` y `alu_extended` juntas
+en la 21, pero ocupan bloques distintos del mapa de opcodes y un backport no
+tiene por qué traerlas todas a la vez. Ninguna implica a otra.
 
 El simulador funcional las tiene todas, y eso es lo normal: va por delante del
 RTL, que es donde se prueba primero una instrucción nueva.
 
-**Dos de la 21 no encajan en el párrafo de arriba**, y hay que saberlo antes de
-escribir un caso:
+**`shift_immediate` no se detecta por `0x01`**, y hay que saberlo antes de
+escribir un caso: no añade opcodes, es el bit 10 de tres que ya existían. En un
+bitstream sin ella ese bit sigue siendo reservado y el programa para con
+**`0x05`, encoding inválido** —justo lo que produce un ensamblador roto—. El
+`SKIP` ahorra exactamente esa confusión.
 
-- **`shift_immediate` no se detecta por `0x01`.** No añade opcodes: es el bit 10
-  de tres que ya existían. En un bitstream sin ella ese bit sigue siendo
-  reservado y el programa para con **`0x05`, encoding inválido** —justo lo que
-  produce un ensamblador roto—. El `SKIP` ahorra exactamente esa confusión.
-- **`zero_register` no es aditiva, es incompatible.** Un programa que use `R0`
-  como registro general **no para con error**: da otro resultado, en silencio.
-  Es la única capacidad de la lista de la que eso se puede decir.
+### Dos cosas que NO son capacidades, por motivos opuestos
 
-Y una cosa que **no** es capacidad: el camino rápido de `MULHI`/`REM`/`REMU` de
-la 21. Es invisible para la arquitectura —acierto y fallo dan el mismo número, y
-solo cambian los ciclos, que el diferencial ya excluye—, así que no hay nada que
-declarar y ningún caso puede depender de él. Lo que sí hay es un caso que fija
-el resultado de las secuencias en las que **no** debe acertar, y ése vale igual
-contra el simulador, que no lo modela.
+**`R0` cableado a cero** lo fue —se llamaba `zero_register`— mientras solo lo
+tenía la 21. Ya no: con el backport aplicado lo cumplen las nueve
+implementaciones, así que es una regla de la MiniISA y no algo que un backend
+pueda tener o no. Su caso vive en `cases/basics/zero-register` y corre en todas
+partes, sin `requires`.
+
+Fue además la **única capacidad no aditiva** que ha tenido este runner, y eso es
+lo que no podía quedarse así. Las demás se detectan solas: un bitstream que no
+las tenga para con opcode inválido y se nota. Con `R0` general no hay parada,
+hay otro resultado en silencio. Una capacidad sirve para omitir un caso con
+criterio; no sirve para tapar una divergencia muda entre dos backends que el
+diferencial compararía.
+
+**El camino rápido de `MULHI`/`REM`/`REMU`** no lo fue nunca, por el motivo
+contrario: es invisible para la arquitectura. Acierto y fallo dan el mismo
+número y solo cambian los ciclos, que el diferencial ya excluye, así que ningún
+caso puede depender de él. Lo que sí hay es un caso que fija el resultado de las
+secuencias en las que **no** debe acertar, y ése vale igual contra el simulador,
+que no lo modela.
 
 ### El simulador tiene vídeo, pero no tiene tiempo
 

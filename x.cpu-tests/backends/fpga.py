@@ -14,22 +14,33 @@ from . import board
 # `capabilities` dice que tiene cada bitstream, y es lo que el runner contrasta
 # con el `requires` de cada caso. Declarar solo lo que de verdad se implementa:
 # `frame_capture` ya implica `video`, y el runner lo expande.
+#
+# `R0` CABLEADO A CERO NO ES UNA CAPACIDAD. Lo fue mientras solo lo tenia la 21;
+# con el backport hecho lo tienen las seis versiones, asi que paso a ser una
+# regla de la MiniISA --1.isa/isa.md seccion 1-- y dejo de ser algo que un
+# backend pueda o no tener. La capacidad `zero_register` ya no existe.
+#
+# El backport subio la version de monitor de los cinco cores anteriores, a
+# 1.16-1.20. No cambia ni un byte del protocolo: sube porque el cambio es
+# INCOMPATIBLE y un bitstream viejo no para con error, da otro resultado en
+# silencio. Cada uno tiene numero propio para que el runner pueda seguir
+# distinguiendolos entre si.
 VERSIONS = {
     "ebr": {
         "monitor_path": Path("6.fpga-cpu/monitor.py"),
-        "monitor_version": (1, 6),
+        "monitor_version": (1, 16),
         "description": "FPGA con 16 KiB de EBR para programa y datos",
         "capabilities": (),
     },
     "sdram": {
         "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
-        "monitor_version": (1, 5),
+        "monitor_version": (1, 17),
         "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
         "capabilities": (),
     },
     "hdmi": {
         "monitor_path": Path("16.fpga-cpu-hdmi/monitor.py"),
-        "monitor_version": (1, 10),
+        "monitor_version": (1, 18),
         "description": "Como sdram, mas video HDMI; 100 MHz y 1 Mbaud",
         "clock_hz": 100_000_000,
         # Tiene scanout y ventana de registros, pero no HALT_AT ni SWAP_COUNT,
@@ -38,7 +49,7 @@ VERSIONS = {
     },
     "bl8": {
         "monitor_path": Path("18.fpga-cpu-hdmi-bl8/monitor.py"),
-        "monitor_version": (1, 12),
+        "monitor_version": (1, 19),
         "description": "Como hdmi, con memoria en rafagas BL8; 80 MHz y 1 Mbaud",
         "capabilities": ("frame_capture",),
         # Unica version con los contadores 0x36/0x37. Las anteriores son hitos
@@ -49,11 +60,11 @@ VERSIONS = {
     },
     "subword": {
         "monitor_path": Path("19.fpga-cpu-hdmi-ls/monitor.py"),
-        # 1.13 y no 1.12 aunque el protocolo sea identico al de la 18: es lo
-        # unico que el runner puede preguntar para saber que bitstream tiene
-        # delante, y un caso de `extensions` en la 18 pararia con opcode
-        # invalido en vez de cargar el bitstream que toca. 1.14 anade ademas los`r`n        # paquetes SEND_BYTES/RECV_BYTES del puerto serie.
-        "monitor_version": (1, 14),
+        # Historia: 1.13 y no 1.12 aunque el protocolo fuera identico al de la
+        # 18, porque la version es lo unico que el runner puede preguntar para
+        # saber que bitstream tiene delante; 1.14 anadio los paquetes
+        # SEND_BYTES/RECV_BYTES del puerto serie; 1.20 es el backport de R0.
+        "monitor_version": (1, 20),
         "description": (
             "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned, "
             "mas JAL/JALR/JR"
@@ -64,19 +75,16 @@ VERSIONS = {
     },
     "alu": {
         "monitor_path": Path("21.fpga-cpu-hdmi-alu/monitor.py"),
-        # 1.15. Sube por lo mismo que 1.13 --el PC no puede negociar el juego
-        # de instrucciones-- mas un motivo que las anteriores no tenian: R0
-        # cableado a cero es un cambio INCOMPATIBLE, no aditivo. Un programa
-        # que use R0 como registro general no para con error en la 19; da otro
-        # resultado. Sin este numero, el runner cargaria el bitstream que no es
-        # y el caso fallaria culpando al programa.
+        # 1.15. Fue la primera con R0 cableado, y por eso subio antes que las
+        # demas; el backport les dio a las otras 1.16-1.20, que son numeros mas
+        # altos pero no versiones posteriores de nada. La secuencia nunca
+        # significo cronologia: 10 ya respondia 1.5 siendo posterior al 1.6 de 6.
         "monitor_version": (1, 15),
         "description": (
-            "Como subword, mas MULHI/DIVU/REM/REMU, SHLI/SHRI/SARI "
-            "y R0 cableado a cero"
+            "Como subword, mas MULHI/DIVU/REM/REMU y SHLI/SHRI/SARI"
         ),
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "shift_immediate", "alu_extended", "zero_register"),
+                         "shift_immediate", "alu_extended"),
         "perf_counters": True,
         "clock_hz": 80_000_000,
     },

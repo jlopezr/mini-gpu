@@ -80,7 +80,13 @@ module monitor (
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
   // Version 1.5 identifies unified addressing backed by external SDRAM.
-  localparam [7:0] VERSION_MINOR = 8'h05;
+  // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
+  // descartar las escrituras, que es un cambio INCOMPATIBLE con lo que hacia
+  // esta carpeta antes: un programa que use `R0` como registro general no para
+  // con error, da otro resultado en silencio. Por eso sube la version aunque el
+  // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
+  // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
+  localparam [7:0] VERSION_MINOR = 8'h11;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;

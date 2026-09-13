@@ -1,5 +1,27 @@
 # MiniCPU con SDRAM y monitor UART
 
+> **Backport de `R0` cableado a cero.** Esta carpeta recibio el cambio despues
+> de cerrarse: `R0` vale siempre cero y descarta las escrituras, que es una
+> regla de la MiniISA y no una extension opcional. Ver
+> [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
+>
+> **Este monitor responde ahora 1.17.** Subio por el backport, sin cambiar
+> ni un byte del protocolo: es lo unico que el PC puede preguntar para saber que
+> bitstream tiene delante, y un programa que use `R0` como registro general no
+> para con error en el bitstream viejo, da otro resultado en silencio.
+>
+> El texto que sigue es anterior al backport. Los numeros de version que
+> menciona mas abajo son historicos; los de hoy estan en
+> [`COMPARATIVA.md`](../COMPARATIVA.md).
+>
+> Y un aviso que salio al probar esta carpeta con el backport: **la 10 no
+> implementa `MUL`, `MULFX` ni `DIV`.** Declara los tres opcodes y valida su
+> encoding, pero no tiene rama en el `case` del estado EXECUTE, asi que caen al
+> `default` y dan `ERROR_INVALID_OPCODE`. Es anterior a todo esto y el unico
+> core al que le pasa --la 6, que es previa, si las implementa--. El caso
+> `cases/alu/multiply` de `x.cpu-tests` falla aqui por eso.
+
+
 Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 `9.fpga-ram-param`. Todo el datapath principal funciona en un único dominio de
 120 MHz. El monitor UART conserva los comandos de ejecución y depuración de la

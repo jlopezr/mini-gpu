@@ -1,5 +1,21 @@
 # MiniGPU FPGA: 8 warps × 8 lanes
 
+> **Backport de `R0` cableado a cero.** Esta carpeta recibio el cambio despues
+> de cerrarse: `R0` vale siempre cero y descarta las escrituras, que es una
+> regla de la MiniISA y no una extension opcional. Ver
+> [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
+>
+> El guardian NO esta en `gpu_register_file.v` sino en `gpu_sm.v`, que es la
+> diferencia con la MiniCPU y conviene no perderla: aqui el banco es BRAM y no
+> tiene reset, lo pone a cero un barrido de 256 ciclos en el estado `INIT`. Si
+> el guardian estuviera dentro del banco bloquearia tambien ese barrido, `R0` no
+> se inicializaria nunca y en simulacion se quedaria a `X`. Dejando el barrido
+> fuera, lo escribe una vez y ninguna instruccion vuelve a tocarlo.
+>
+> **Este monitor responde ahora 2.3.** Subio por el backport, sin cambiar ni
+> un byte del protocolo. Los numeros de version que se mencionan mas abajo son
+> historicos; los de hoy estan en [`COMPARATIVA.md`](../COMPARATIVA.md).
+
 Un SM para ULX3S-85F, con 64 threads residentes, 8 lanes físicas y memoria
 unificada de 128 KiB. Incluye SIMT, LSU con ocho operaciones de warp pendientes,
 monitor UART y pruebas contra `11.gpu-sim-func`.
@@ -18,7 +34,8 @@ identifica como **2.1** para distinguirlo del monitor escalar a 3 Mbaud.
   Se conservan el multiplicador por productos parciales, divisor iterativo,
   shifter iterativo, decodificación y comparaciones del core.
 - `gpu_register_file.v`: 256 registros de 32 bits por lane; 32 registros por
-  warp, con dos lecturas síncronas. R0 es escribible. Un barrido de 256 ciclos
+  warp, con dos lecturas síncronas. R0 está cableado a cero: las escrituras se
+descartan en `gpu_sm.v`, ver el aviso del principio. Un barrido de 256 ciclos
   inicializa los registros sin implementar el almacenamiento como flip-flops.
 - `gpu_lsu.v`: ocho slots de warp, arbitraje de bancos y ensamblado de respuestas.
 - `gpu_bram.v`: ocho bancos físicos de 4096 × 32 bits, con dos puertos.

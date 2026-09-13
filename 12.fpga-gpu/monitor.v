@@ -79,7 +79,12 @@ module monitor (
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h02;
-  localparam [7:0] VERSION_MINOR = 8'h01;
+  // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
+  // descartar las escrituras, que es un cambio INCOMPATIBLE: un programa que lo
+  // use como registro general no para con error, da otro resultado en silencio.
+  // Sube la version aunque el protocolo no cambie ni un byte, por lo mismo que
+  // subieron las cinco de MiniCPU. Ver 1.isa/isa.md seccion 1.
+  localparam [7:0] VERSION_MINOR = 8'h03;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
