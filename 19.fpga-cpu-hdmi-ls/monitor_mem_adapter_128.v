@@ -26,7 +26,7 @@
  */
 module monitor_mem_adapter_128 #(
     parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000,
-    parameter [26:0] MMIO_PREFIX = 27'h400_0000
+    parameter [19:0] MMIO_PREFIX = 20'h80000
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -51,7 +51,7 @@ module monitor_mem_adapter_128 #(
     input  wire        mmio_ack,
     output reg         mmio_write,
     output reg  [3:0]  mmio_write_mask,
-    output reg  [4:0]  mmio_address,
+    output reg  [11:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
 
@@ -86,7 +86,7 @@ module monitor_mem_adapter_128 #(
 
   wire strobe = mem_write_enable || mem_read_enable;
   // El monitor accede byte a byte, asi que no exige alineamiento.
-  wire is_mmio = (mem_address[31:5] == MMIO_PREFIX);
+  wire is_mmio = (mem_address[31:12] == MMIO_PREFIX);
 
   always @(posedge clk) begin
     mem_ready <= 1'b0;
@@ -105,7 +105,7 @@ module monitor_mem_adapter_128 #(
       mmio_req <= 1'b0;
       mmio_write <= 1'b0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 5'h00;
+      mmio_address <= 12'h000;
       mmio_write_data <= 32'h0000_0000;
     end else begin
       case (state)
@@ -121,7 +121,7 @@ module monitor_mem_adapter_128 #(
               mmio_req <= 1'b1;
               mmio_write <= mem_write_enable;
               mmio_write_mask <= 4'b0001 << mem_address[1:0];
-              mmio_address <= mem_address[4:0];
+              mmio_address <= mem_address[11:0];
               mmio_write_data <= {4{mem_write_data}};
               state <= ST_MMIO;
             end else if (!cpu_halted || !init_done || !address_in_sdram) begin

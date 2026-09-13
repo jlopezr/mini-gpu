@@ -43,6 +43,9 @@ module monitor_tb;
   reg [7:0] memory_low[0:1023];
   reg [7:0] memory_high[0:1023];
 
+  wire serial_push, serial_pop;
+  wire [7:0] serial_push_data, serial_rx_free, serial_tx_data, serial_tx_count;
+
   always #5 clk = ~clk;
 
   monitor dut (
@@ -72,9 +75,41 @@ module monitor_tb;
       .cpu_instructions(cpu_instructions),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
+      .serial_push(serial_push), .serial_push_data(serial_push_data),
+      .serial_rx_free(serial_rx_free),
+      .serial_pop(serial_pop), .serial_tx_data(serial_tx_data),
+      .serial_tx_count(serial_tx_count),
       .last_command(last_command),
       .busy(busy)
   );
+
+  /*
+   * El puerto serie de VERDAD, no un doble.
+   *
+   * Es lo que hace util este banco para los dos paquetes: lo que se prueba no
+   * es que el monitor mande los bytes correctos segun un modelo, sino que el
+   * monitor y la cola se entienden. El control de flujo --cuantos acepta
+   * SEND_BYTES cuando la cola esta casi llena-- solo tiene sentido con la cola
+   * real detras.
+   *
+   * El lado del bus lo maneja el banco haciendo de CPU: asi se puede precargar
+   * la cola de salida para probar RECV_BYTES, y leer la de entrada para
+   * comprobar que SEND_BYTES metio lo que decia.
+   */
+  reg cpu_select = 0, cpu_write = 0;
+  reg [7:0] cpu_address = 0;
+  reg [31:0] cpu_write_data = 0;
+  wire [31:0] cpu_read_data;
+
+  serial_port serial_i (
+      .clk(clk), .reset(reset),
+      .select(cpu_select), .write(cpu_write), .write_mask(4'b1111),
+      .address(cpu_address), .write_data(cpu_write_data),
+      .read_data(cpu_read_data),
+      .host_push(serial_push), .host_push_data(serial_push_data),
+      .host_rx_free(serial_rx_free),
+      .host_pop(serial_pop), .host_tx_data(serial_tx_data),
+      .host_tx_count(serial_tx_count));
 
   // Byte-oriented SDRAM stub. It models the unified 32 MiB address contract;
   // two small arrays are enough for the low and 0x00100000 test locations.
@@ -130,6 +165,34 @@ module monitor_tb;
     end
   endtask
 
+  // El banco haciendo de CPU sobre la ventana del puerto serie.
+  integer base;
+  integer i;
+  reg [31:0] leido;
+
+  task cpu_read;
+    input [7:0] offset;
+    begin
+      @(negedge clk);
+      cpu_address = offset; cpu_select = 1'b1; cpu_write = 1'b0;
+      #1 leido = cpu_read_data;
+      @(negedge clk);
+      cpu_select = 1'b0;
+    end
+  endtask
+
+  task cpu_write_byte;
+    input [7:0] offset;
+    input [7:0] value;
+    begin
+      @(negedge clk);
+      cpu_address = offset; cpu_select = 1'b1; cpu_write = 1'b1;
+      cpu_write_data = {24'd0, value};
+      @(negedge clk);
+      cpu_select = 1'b0; cpu_write = 1'b0;
+    end
+  endtask
+
   initial begin
     $dumpvars(0, monitor_tb);
 
@@ -145,7 +208,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h0c) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h0e) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -298,6 +361,108 @@ module monitor_tb;
     if (received[40] !== 8'hb7) $fatal(1, "GET_INSTRUCTIONS response mismatch");
     if ({received[41], received[42], received[43], received[44]} !== 32'h0000_0101)
       $fatal(1, "GET_INSTRUCTIONS data mismatch");
+
+    // =====================================================================
+    // Puerto serie: SEND_BYTES (0x38) y RECV_BYTES (0x39)
+    //
+    // La CPU esta EN MARCHA durante todo esto --`cpu_halted` sigue a cero
+    // desde la prueba de arriba-- y es deliberado: es la diferencia de estos
+    // dos comandos con todos los demas que mueven datos. No tocan la SDRAM,
+    // asi que no pasan por la condicion `cpu_halted` del adaptador. Si algun
+    // dia alguien los mete por ahi, este banco lo caza.
+    // =====================================================================
+    base = received_count;
+
+    // -- 1. Un paquete corto entra entero -----------------------------------
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd3);
+    send_command(8'h48);  // 'H'
+    send_command(8'h69);  // 'i'
+    send_command(8'h21);  // '!'
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8) $fatal(1, "SEND_BYTES respuesta");
+    if (received[base+1] !== 8'd3) $fatal(1, "SEND_BYTES acepto %0d, esperado 3",
+                                          received[base+1]);
+
+    // Y la CPU los ve, en orden.
+    cpu_read(8'h00); if (leido !== 32'h48) $fatal(1, "la CPU no vio la H");
+    cpu_read(8'h00); if (leido !== 32'h69) $fatal(1, "la CPU no vio la i");
+    cpu_read(8'h00); if (leido !== 32'h21) $fatal(1, "la CPU no vio el !");
+
+    // -- 2. Longitud cero es legal: sondeo sin escribir ---------------------
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd0);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8 || received[base+1] !== 8'd0)
+      $fatal(1, "SEND_BYTES de longitud cero");
+
+    // -- 3. Aceptacion PARCIAL, que es el control de flujo ------------------
+    // Se llena la cola hasta dejar tres huecos y se mandan cinco. Tienen que
+    // entrar tres, consumirse los cinco del cable, y el enlace seguir en
+    // sincronia: el comando siguiente se responde bien.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd61);
+    for (i = 0; i < 61; i = i + 1) send_command(i[7:0]);
+    wait (received_count == base + 2);
+    if (received[base+1] !== 8'd61) $fatal(1, "no cupieron los 61 primeros");
+
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd5);
+    for (i = 0; i < 5; i = i + 1) send_command(8'hA0 + i[7:0]);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8) $fatal(1, "SEND_BYTES parcial: respuesta");
+    if (received[base+1] !== 8'd3)
+      $fatal(1, "SEND_BYTES parcial acepto %0d, esperado 3", received[base+1]);
+
+    // El enlace sigue en sincronia: si el monitor hubiera dejado de consumir
+    // el paquete a medias, los dos bytes que sobran se leerian como comandos.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h01);
+    wait (received_count == base + 1);
+    if (received[base] !== 8'h81)
+      $fatal(1, "el enlace se desincronizo tras un paquete parcial");
+
+    // -- 4. RECV_BYTES con la cola de salida vacia --------------------------
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd10);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb9) $fatal(1, "RECV_BYTES respuesta");
+    if (received[base+1] !== 8'd0) $fatal(1, "RECV_BYTES de una cola vacia");
+
+    // -- 5. RECV_BYTES con datos, y con MM menor que la cuenta --------------
+    cpu_write_byte(8'h00, 8'h4F);  // 'O'
+    cpu_write_byte(8'h00, 8'h4B);  // 'K'
+    cpu_write_byte(8'h00, 8'h0A);  // '\n'
+
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd2);            // se piden dos de los tres
+    wait (received_count == base + 4);
+    if (received[base] !== 8'hb9) $fatal(1, "RECV_BYTES respuesta con datos");
+    if (received[base+1] !== 8'd2)
+      $fatal(1, "RECV_BYTES devolvio %0d, esperado 2", received[base+1]);
+    if (received[base+2] !== 8'h4F || received[base+3] !== 8'h4B)
+      $fatal(1, "RECV_BYTES datos: %02x %02x", received[base+2], received[base+3]);
+
+    // El tercero sigue en la cola.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd10);
+    wait (received_count == base + 3);
+    if (received[base+1] !== 8'd1 || received[base+2] !== 8'h0A)
+      $fatal(1, "el byte que quedaba en la cola de salida");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

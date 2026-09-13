@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 01 0c
+ *   02             (GET_VERSION) -> 82 01 0e
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
@@ -18,7 +18,13 @@
  *   35             (RESET_CPU)   -> b5
  *   36             (GET_CYCLES)  -> b6 C3 C2 C1 C0
  *   37             (GET_INSTR)   -> b7 I3 I2 I1 I0
+ *   38 LL DD...    (SEND_BYTES)  -> b8 NN     NN aceptados, puede ser < LL
+ *   39 MM          (RECV_BYTES)  -> b9 NN DD... NN <= MM, puede ser 0
  *   any other command            -> ff
+ *
+ * SEND_BYTES y RECV_BYTES son el puerto serie de la CPU. Funcionan con la CPU
+ * EN MARCHA, porque no tocan la SDRAM. `NN` es el control de flujo: el que
+ * devuelve SEND_BYTES dice cuantos cupieron en la cola, y el resto se reenvia.
  *
  * Addresses and lengths are transferred most-significant byte first. Block
  * lengths must be between 1 and 256 bytes. The memory reports invalid ranges.
@@ -55,6 +61,16 @@ module monitor (
     output reg [4:0] cpu_debug_register_address,
     input [31:0] cpu_debug_register_data,
 
+    // Puerto serie de la CPU. El monitor solo desencapsula: mete en la cola de
+    // entrada lo que trae SEND_BYTES y saca de la de salida lo que pide
+    // RECV_BYTES. Ni un pin ni un baudio propio; ver serial_port.v.
+    output reg serial_push,
+    output reg [7:0] serial_push_data,
+    input [7:0] serial_rx_free,
+    output reg serial_pop,
+    input [7:0] serial_tx_data,
+    input [7:0] serial_tx_count,
+
     output reg [7:0] last_command,
     output busy
 );
@@ -77,6 +93,8 @@ module monitor (
   // tienen sentido con la CPU parada, y entonces no cambian.
   localparam [7:0] CMD_GET_CYCLES = 8'h36;
   localparam [7:0] CMD_GET_INSTRUCTIONS = 8'h37;
+  localparam [7:0] CMD_SEND_BYTES = 8'h38;
+  localparam [7:0] CMD_RECV_BYTES = 8'h39;
   localparam [7:0] RSP_PONG = 8'h81;
   localparam [7:0] RSP_VERSION = 8'h82;
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
@@ -91,6 +109,8 @@ module monitor (
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_CYCLES = 8'hb6;
   localparam [7:0] RSP_INSTRUCTIONS = 8'hb7;
+  localparam [7:0] RSP_SEND_BYTES = 8'hb8;
+  localparam [7:0] RSP_RECV_BYTES = 8'hb9;
   localparam [7:0] RSP_ERROR = 8'hff;
   localparam [7:0] VERSION_MAJOR = 8'h01;
   // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
@@ -109,7 +129,19 @@ module monitor (
   //        GET_INSTRUCTIONS (0x37). Sin ellos no hay forma de medir CPI en la
   //        placa: `instruction_retired` estaba cableado en top.v y no iba a
   //        ninguna parte.
-  localparam [7:0] VERSION_MINOR = 8'h0c;
+  //   1.13 la CPU gana los accesos de 8 y 16 bits (0x18..0x1D) y las llamadas
+  //        JAL/JALR/JR (0x2C..0x2E). El PROTOCOLO no cambia: ni un comando
+  //        nuevo, ni un campo distinto. Sube igual porque la version es lo
+  //        unico que el PC puede preguntar antes de cargar un programa, y un
+  //        programa que use esas instrucciones no corre en un bitstream 1.12:
+  //        para con ERROR_INVALID_OPCODE a la primera. Sin este numero,
+  //        x.cpu-tests no puede distinguir la 18 de la 19 y cargaria la que no
+  //        es, o peor, no cargaria nada y culparia al programa.
+  //   1.14 puerto serie: SEND_BYTES (0x38) y RECV_BYTES (0x39). Aqui si cambia
+  //        el protocolo, y ademas son los dos primeros comandos que mueven
+  //        datos con la CPU EN MARCHA: no tocan la SDRAM, asi que no pasan por
+  //        la condicion `cpu_halted` del adaptador.
+  localparam [7:0] VERSION_MINOR = 8'h0e;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
@@ -145,6 +177,15 @@ module monitor (
   // Block range checking is pipelined to keep rx_data off the wide adder path.
   localparam [4:0] STATE_VALIDATE_BLOCK = 5'd31;
   localparam [5:0] STATE_CALCULATE_BLOCK_END = 6'd32;
+  // Puerto serie. SEND_BYTES consume SIEMPRE los LL bytes del paquete aunque la
+  // cola se llene: si se cortara a medias, los que quedan en el cable se leerian
+  // como comandos y el enlace se desincroniza. Lo que se devuelve es cuantos
+  // entraron, y con eso el PC reenvia el resto.
+  localparam [5:0] STATE_SERIAL_SEND_LENGTH = 6'd33;
+  localparam [5:0] STATE_SERIAL_SEND_DATA = 6'd34;
+  localparam [5:0] STATE_SERIAL_RECV_MAX = 6'd35;
+  localparam [5:0] STATE_SERIAL_RECV_COUNT = 6'd36;
+  localparam [5:0] STATE_SERIAL_RECV_DATA = 6'd37;
 
   reg [5:0] state;
   reg [5:0] state_after_tx;
@@ -164,7 +205,11 @@ module monitor (
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [13:0] command_decoded;
+  (* keep = "true" *) reg [15:0] command_decoded;
+
+  // Bytes que faltan del paquete serie en curso, y cuantos entraron en la cola.
+  reg [7:0] serial_remaining;
+  reg [7:0] serial_accepted;
 
   assign busy = (state != STATE_IDLE);
 
@@ -176,6 +221,9 @@ module monitor (
     cpu_halt_request <= 1'b0;
     cpu_step_request <= 1'b0;
     cpu_reset_request <= 1'b0;
+    // Pulsos de un ciclo hacia serial_port, igual que tx_strobe.
+    serial_push <= 1'b0;
+    serial_pop <= 1'b0;
 
     if (reset) begin
       tx_data <= 8'h00;
@@ -208,7 +256,12 @@ module monitor (
       response_byte_4 <= 8'h00;
       response_byte_5 <= 8'h00;
       response_byte_6 <= 8'h00;
-      command_decoded <= 14'h0000;
+      command_decoded <= 16'h0000;
+      serial_push <= 1'b0;
+      serial_push_data <= 8'h00;
+      serial_pop <= 1'b0;
+      serial_remaining <= 8'd0;
+      serial_accepted <= 8'd0;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -216,6 +269,7 @@ module monitor (
             last_command <= rx_data;
             response_index <= 2'd0;
             command_decoded <= {
+              rx_data == CMD_RECV_BYTES, rx_data == CMD_SEND_BYTES,
               rx_data == CMD_GET_INSTRUCTIONS, rx_data == CMD_GET_CYCLES,
               rx_data == CMD_RESET_CPU, rx_data == CMD_READ_REGISTER,
               rx_data == CMD_GET_STATUS, rx_data == CMD_STEP,
@@ -320,6 +374,8 @@ module monitor (
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
+              command_decoded[14]: state <= STATE_SERIAL_SEND_LENGTH;
+              command_decoded[15]: state <= STATE_SERIAL_RECV_MAX;
               default: begin
                 response_byte_0 <= RSP_ERROR;
                 response_length <= 2'd1;
@@ -595,6 +651,97 @@ module monitor (
             state <= state_after_tx;
           end
         end
+
+        // -------------------------------------------------------------------
+        // SEND_BYTES: 38 LL <LL bytes> -> b8 NN
+        //
+        // NN puede ser menor que LL, y eso NO es un error: es el control de
+        // flujo. Si la cola tiene veinte huecos y llegan sesenta, entran veinte
+        // y el PC reenvia el resto. La alternativa --rechazar el paquete entero
+        // o tragarselo y perder lo que no cabe-- deja al usuario perdiendo
+        // pulsaciones solo cuando escribe rapido, que es el fallo mas caro de
+        // diagnosticar que existe.
+        // -------------------------------------------------------------------
+        STATE_SERIAL_SEND_LENGTH: begin
+          if (rx_strobe) begin
+            serial_remaining <= rx_data;
+            serial_accepted <= 8'd0;
+            if (rx_data == 8'd0) begin
+              // Longitud cero es legal y util: sirve de sondeo sin escribir.
+              response_byte_0 <= RSP_SEND_BYTES;
+              response_byte_1 <= 8'd0;
+              response_length <= 3'd2;
+              response_index <= 3'd0;
+              response_done_state <= STATE_IDLE;
+              state <= STATE_RESPOND;
+            end else begin
+              state <= STATE_SERIAL_SEND_DATA;
+            end
+          end
+        end
+
+        STATE_SERIAL_SEND_DATA: begin
+          if (rx_strobe) begin
+            // Se consume el byte pase lo que pase; solo se mete si cabe.
+            if (serial_rx_free != 8'd0) begin
+              serial_push <= 1'b1;
+              serial_push_data <= rx_data;
+              serial_accepted <= serial_accepted + 1'b1;
+            end
+            serial_remaining <= serial_remaining - 1'b1;
+            if (serial_remaining == 8'd1) begin
+              response_byte_0 <= RSP_SEND_BYTES;
+              // `serial_accepted` todavia no se ha actualizado en este ciclo.
+              response_byte_1 <= (serial_rx_free != 8'd0) ?
+                                 serial_accepted + 8'd1 : serial_accepted;
+              response_length <= 3'd2;
+              response_index <= 3'd0;
+              response_done_state <= STATE_IDLE;
+              state <= STATE_RESPOND;
+            end
+          end
+        end
+
+        // -------------------------------------------------------------------
+        // RECV_BYTES: 39 MM -> b9 NN <NN bytes>
+        //
+        // NN = min(MM, bytes en la cola de salida), y puede ser cero: sondear
+        // una cola vacia es lo normal en un terminal.
+        // -------------------------------------------------------------------
+        STATE_SERIAL_RECV_MAX: begin
+          if (rx_strobe) begin
+            serial_remaining <= (rx_data < serial_tx_count) ? rx_data
+                                                            : serial_tx_count;
+            response_byte_0 <= RSP_RECV_BYTES;
+            response_length <= 3'd1;
+            response_index <= 3'd0;
+            response_done_state <= STATE_SERIAL_RECV_COUNT;
+            state <= STATE_RESPOND;
+          end
+        end
+
+        STATE_SERIAL_RECV_COUNT: begin
+          response_byte_0 <= serial_remaining;
+          response_length <= 3'd1;
+          response_index <= 3'd0;
+          response_done_state <= (serial_remaining == 8'd0) ?
+                                 STATE_IDLE : STATE_SERIAL_RECV_DATA;
+          state <= STATE_RESPOND;
+        end
+
+        STATE_SERIAL_RECV_DATA: begin
+          // La cabeza de la cola es combinacional, asi que ya esta aqui; sacar
+          // y transmitir van juntos.
+          response_byte_0 <= serial_tx_data;
+          response_length <= 3'd1;
+          response_index <= 3'd0;
+          serial_pop <= 1'b1;
+          serial_remaining <= serial_remaining - 1'b1;
+          response_done_state <= (serial_remaining == 8'd1) ?
+                                 STATE_IDLE : STATE_SERIAL_RECV_DATA;
+          state <= STATE_RESPOND;
+        end
+
         default: state <= STATE_IDLE;
       endcase
     end

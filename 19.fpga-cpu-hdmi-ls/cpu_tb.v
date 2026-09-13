@@ -104,7 +104,8 @@ module cpu_tb;
           expected_instruction_cycles = 40;
         else if (dut.opcode >= 6'h20 && dut.opcode <= 6'h25)
           expected_instruction_cycles = 8;
-        else if (dut.opcode == 6'h2f)
+        // BRA, JAL, JALR y JR comparten STATE_BRANCH_COMMIT: siete ciclos.
+        else if (dut.opcode >= 6'h2c && dut.opcode <= 6'h2f)
           expected_instruction_cycles = 7;
         else
           expected_instruction_cycles = 6;
@@ -372,6 +373,72 @@ module cpu_tb;
     if (retired_count !== 15) $fatal(1, "False-branch retired count mismatch");
     if (error) $fatal(1, "False-branch batch raised an unexpected error");
 
+    // Llamadas y retornos: JAL guarda el enlace y salta relativo, JALR salta a
+    // un registro mas un desplazamiento en palabras, y JR vuelve por el enlace.
+    // Las tres funciones retornan a la instruccion siguiente a su llamada, asi
+    // que cada MOVI del cuerpo principal se ejecuta exactamente una vez.
+    instruction_memory[0]  = 32'h4060_0028;  // MOVI R3, 0x28 (direccion de func2)
+    instruction_memory[1]  = 32'hb3e0_0006;  // JAL  R31, func
+    instruction_memory[2]  = 32'h4040_1111;  // MOVI R2, 0x1111
+    instruction_memory[3]  = 32'hb7c3_0000;  // JALR R30, R3, 0  -> func2
+    instruction_memory[4]  = 32'h4080_2222;  // MOVI R4, 0x2222
+    instruction_memory[5]  = 32'hb7a3_0002;  // JALR R29, R3, 2  -> func3 (R3 + 8)
+    instruction_memory[6]  = 32'h40e0_5555;  // MOVI R7, 0x5555
+    instruction_memory[7]  = 32'hfc00_0000;  // HALT
+    instruction_memory[8]  = 32'h40a0_3333;  // func:  MOVI R5, 0x3333
+    instruction_memory[9]  = 32'hb81f_0000;  // JR R31
+    instruction_memory[10] = 32'h40c0_4444;  // func2: MOVI R6, 0x4444
+    instruction_memory[11] = 32'hb81e_0000;  // JR R30
+    instruction_memory[12] = 32'h4100_6666;  // func3: MOVI R8, 0x6666
+    instruction_memory[13] = 32'hb81d_0000;  // JR R29
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    expect_register(5'd2, 32'h0000_1111);
+    expect_register(5'd4, 32'h0000_2222);
+    expect_register(5'd5, 32'h0000_3333);
+    expect_register(5'd6, 32'h0000_4444);
+    expect_register(5'd7, 32'h0000_5555);
+    expect_register(5'd8, 32'h0000_6666);
+    // Los enlaces apuntan a la instruccion siguiente a cada llamada.
+    expect_register(5'd31, 32'h0000_0008);
+    expect_register(5'd30, 32'h0000_0010);
+    expect_register(5'd29, 32'h0000_0018);
+    if (debug_pc !== 32'h0000_0020) $fatal(1, "Call batch final PC mismatch");
+    if (retired_count !== 14) $fatal(1, "Call batch retired count mismatch");
+    if (error) $fatal(1, "Call batch raised an unexpected error");
+
+    // Un destino indirecto desalineado no es un error: se descartan los dos
+    // bits bajos, asi que 0x0a salta a la palabra de 0x08.
+    instruction_memory[0] = 32'h4020_000a;  // MOVI R1, 0x0a
+    instruction_memory[1] = 32'hb801_0000;  // JR R1
+    instruction_memory[2] = 32'h4040_7777;  // MOVI R2, 0x7777
+    instruction_memory[3] = 32'hfc00_0000;  // HALT
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    expect_register(5'd2, 32'h0000_7777);
+    if (debug_pc !== 32'h0000_0010) $fatal(1, "Unaligned JR final PC mismatch");
+    if (retired_count !== 4) $fatal(1, "Unaligned JR retired count mismatch");
+    if (error) $fatal(1, "Unaligned JR raised an unexpected error");
+
+    // JR no tiene campo de destino: usarlo es un encoding invalido.
+    instruction_memory[0] = 32'hb821_0000;  // JR con X = 1
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (!error || error_code !== 8'h05) $fatal(1, "JR encoding error mismatch");
+    if (debug_pc !== 0) $fatal(1, "JR encoding PC mismatch");
+
     // TRAP is a deliberate error stop and leaves PC at the offending instruction.
     instruction_memory[0] = 32'hf800_0000;
     reset_cpu();
@@ -396,7 +463,8 @@ module cpu_tb;
     if (debug_pc !== 0) $fatal(1, "Invalid encoding PC mismatch");
 
     // A reserved opcode remains an invalid opcode, independently of encoding.
-    instruction_memory[0] = 32'h6c00_0000;  // Reserved opcode 0x1b.
+    // 0x1b dejo de estar libre al llegar LOADH; 0x1e sigue sin asignar.
+    instruction_memory[0] = 32'h7800_0000;  // Reserved opcode 0x1e.
     reset_cpu();
     pulse_run();
     wait (!halted);

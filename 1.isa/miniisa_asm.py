@@ -7,12 +7,19 @@ Sintaxis inicial:
     ADDI  R1, R2, -4
     MOVI  R1, 123
     MOVHI R1, 0x1234
+    SHLI  R1, R2, 5     ; tambien SHRI y SARI; cantidad inmediata 0..31
+    MULHI R1, R2, R3    ; parte alta signed; DIVU, REM y REMU tambien
     LOAD  R1, R2, 16
     STORE R1, R2, 16
 
     BEQ   R1, R2, label
     BLT   R1, R2, label
     BRA   label
+
+    JAL   R31, funcion
+    JALR  R31, R5, 0
+    JR    R5
+    RET               ; alias de JR R31
 
     GETTID R1
     NOP
@@ -88,6 +95,13 @@ OPCODES = {
     "BGE":    0x23,
     "BLTU":   0x24,
     "BGEU":   0x25,
+
+    # Llamadas y saltos indirectos. Mapa de propuesta-v0.2.md §3.2: R0 sigue
+    # siendo un registro general, asi que JR gasta opcode propio.
+    "JAL":    0x2C,
+    "JALR":   0x2D,
+    "JR":     0x2E,
+
     "BRA":    0x2F,
 
     # System / SIMT
@@ -103,6 +117,23 @@ R3_OPS = {
     "ADD", "SUB", "MULFX", "AND", "OR", "XOR",
     "SHL", "SHR", "SAR",
     "MUL", "MULHI", "DIV", "DIVU", "REM", "REMU",
+}
+
+# Desplazamientos con cantidad inmediata: opcion B de propuesta-v0.2.md §4.2.
+# No gastan opcode. Reusan el de su version con registro y encienden el bit 10
+# del campo `extra`; la cantidad viaja en los cinco bits del campo Rb.
+#
+#   31       26 25   21 20   16 15   11 10  9         0
+#   [ opcode ][  Rd  ][  Ra  ][ imm5 ][ 1 ][    0     ]
+#
+# Consecuencia: para 0x07..0x09 el campo reservado ya no es `extra` entero sino
+# `extra[9:0]`, e `instruction[10]` pasa a ser significativo.
+SHIFT_IMMEDIATE_BIT = 1 << 10
+
+SHIFT_IMM_OPS = {
+    "SHLI": "SHL",
+    "SHRI": "SHR",
+    "SARI": "SAR",
 }
 
 I3_SIGNED_OPS = {
@@ -139,12 +170,113 @@ class SourceLine:
 
 
 def strip_comment(line: str) -> str:
-    cut = len(line)
-    for marker in (";", "#"):
-        pos = line.find(marker)
-        if pos != -1:
-            cut = min(cut, pos)
-    return line[:cut].strip()
+    """Quita el comentario, respetando lo que haya entre comillas.
+
+    Las comillas importan desde que existe `.string`: un `;` o un `#` dentro
+    de un mensaje son parte del mensaje, no el principio de un comentario.
+    """
+    dentro = False
+    escapado = False
+    for index, char in enumerate(line):
+        if escapado:
+            escapado = False
+            continue
+        if char == "\\" and dentro:
+            escapado = True
+            continue
+        if char == '"':
+            dentro = not dentro
+            continue
+        if not dentro and char in (";", "#"):
+            return line[:index].strip()
+    return line.strip()
+
+
+# ---------------------------------------------------------------------------
+# Directivas de datos
+#
+# El ensamblador solo sabia emitir instrucciones, asi que un programa que
+# necesitara una tabla o un mensaje tenia que construirlo en tiempo de
+# ejecucion a base de MOVI y STORE. Con `.word` y `.string` los datos van en la
+# imagen, que es donde deben estar.
+#
+# La salida sigue siendo una lista de palabras de 32 bits: `.string` rellena con
+# ceros hasta el multiplo de cuatro. Asi el resto de la cadena de herramientas
+# --el .bin, el .hex, el cargador del monitor-- no se entera de nada.
+# ---------------------------------------------------------------------------
+
+ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "\\": "\\", '"': '"'}
+
+
+def parse_string_literal(text: str) -> bytes:
+    text = text.strip()
+    if len(text) < 2 or not text.startswith('"') or not text.endswith('"'):
+        raise AsmError('.string requiere un literal entre comillas dobles')
+
+    out = bytearray()
+    index = 1
+    end = len(text) - 1
+    while index < end:
+        char = text[index]
+        if char == "\\":
+            index += 1
+            if index >= end:
+                raise AsmError("escape incompleto al final de la cadena")
+            if text[index] not in ESCAPES:
+                raise AsmError(f"escape desconocido: \\{text[index]}")
+            out += ESCAPES[text[index]].encode("latin-1")
+        else:
+            out += char.encode("latin-1")
+        index += 1
+    # NUL final: las rutinas de impresion recorren hasta el cero.
+    out += b"\x00"
+    while len(out) % 4:
+        out += b"\x00"
+    return bytes(out)
+
+
+def directive_size(mnemonic: str, operand_text: str) -> int:
+    """Cuantas palabras ocupa, sin resolver etiquetas.
+
+    Hace falta en la pasada 1, donde todavia no se sabe donde esta cada
+    etiqueta pero si CUANTAS palabras emite la directiva. Sin esto, toda
+    etiqueta posterior a una tabla apuntaria mal.
+    """
+    if mnemonic == ".WORD":
+        valores = split_operands(operand_text)
+        if not valores:
+            raise AsmError(".word requiere al menos un valor")
+        return len(valores)
+    if mnemonic == ".STRING":
+        return len(parse_string_literal(operand_text)) // 4
+    raise AsmError(f"directiva desconocida: {mnemonic}")
+
+
+def directive_words(mnemonic: str, operand_text: str,
+                    labels: dict[str, int]) -> list[int]:
+    """Convierte una directiva en las palabras de 32 bits que emite.
+
+    `.word` acepta etiquetas, que es lo que permite escribir una tabla de
+    direcciones --un diccionario de Forth, por ejemplo-- sin calcularlas a
+    mano.
+    """
+    if mnemonic == ".WORD":
+        palabras = []
+        for token in split_operands(operand_text):
+            value = resolve_target(token, labels)
+            if not -(1 << 31) <= value <= (1 << 32) - 1:
+                raise AsmError(f".word fuera de rango de 32 bits: {value}")
+            palabras.append(value & 0xFFFFFFFF)
+        return palabras
+    if mnemonic == ".STRING":
+        data = parse_string_literal(operand_text)
+        return [int.from_bytes(data[i:i + 4], "little")
+                for i in range(0, len(data), 4)]
+    raise AsmError(f"directiva desconocida: {mnemonic}")
+
+
+def is_directive(text: str) -> bool:
+    return text.split(None, 1)[0].upper() in (".WORD", ".STRING")
 
 
 def split_operands(s: str) -> list[str]:
@@ -245,7 +377,18 @@ def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int]]:
             continue
 
         lines.append(SourceLine(number, text, pc))
-        pc += 4
+        # Una directiva ocupa lo que ocupen sus datos, no cuatro bytes. Si el
+        # tamano no se calculara aqui, todas las etiquetas posteriores a una
+        # tabla apuntarian mal.
+        if is_directive(text):
+            partes = text.split(None, 1)
+            try:
+                pc += 4 * directive_size(
+                    partes[0].upper(), partes[1] if len(partes) > 1 else "")
+            except AsmError as error:
+                raise AsmError(f"línea {number}: {error}") from None
+        else:
+            pc += 4
 
     return lines, labels
 
@@ -279,6 +422,27 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     operand_text = parts[1] if len(parts) > 1 else ""
     ops = split_operands(operand_text)
 
+    # RET no es un opcode: el enlace vive en R31 por convencion de llamada.
+    if mnemonic == "RET":
+        if ops:
+            raise AsmError("RET no acepta operandos")
+        mnemonic = "JR"
+        ops = ["R31"]
+
+    # SHLI/SHRI/SARI no tienen entrada propia en OPCODES: son el mismo opcode
+    # que SHL/SHR/SAR con el bit de inmediato puesto.
+    if mnemonic in SHIFT_IMM_OPS:
+        if len(ops) != 3:
+            raise AsmError(f"{mnemonic} requiere: Rd, Ra, imm5")
+        rd = parse_reg(ops[0])
+        ra = parse_reg(ops[1])
+        amount = parse_int(ops[2])
+        if not 0 <= amount <= 31:
+            raise AsmError(
+                f"cantidad de {mnemonic} fuera de rango 0..31: {amount}")
+        return encode_r(OPCODES[SHIFT_IMM_OPS[mnemonic]], rd, ra, amount,
+                        SHIFT_IMMEDIATE_BIT)
+
     if mnemonic not in OPCODES:
         raise AsmError(f"instrucción desconocida: {mnemonic}")
 
@@ -311,7 +475,11 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
         if len(ops) != 2:
             raise AsmError("MOVI requiere: Rd, imm16")
         rd = parse_reg(ops[0])
-        imm = check_signed(parse_int(ops[1]), 16, "inmediato MOVI")
+        # Admite una etiqueta, y entonces el inmediato es su DIRECCION. Es como
+        # un programa carga el puntero de una tabla o de un mensaje. Solo vale
+        # mientras el programa quepa en los 32 KiB que alcanza un signed16; mas
+        # alla, MOVHI + ORI.
+        imm = check_signed(resolve_target(ops[1], labels), 16, "inmediato MOVI")
         return encode_i(opcode, rd, 0, imm)
 
     if mnemonic == "MOVHI":
@@ -366,6 +534,38 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
         return encode_b(opcode, off)
 
     # -------------------------------------------------------
+    # Llamadas y saltos indirectos
+    #
+    #   JAL  Rd, label      X = Rd, Y = 0,  imm16 = offset en palabras
+    #   JALR Rd, Ra, imm16  X = Rd, Y = Ra, imm16 en palabras
+    #   JR   Ra             X = 0,  Y = Ra, imm16 = 0
+    #
+    # RET es un alias de JR R31, no un opcode.
+    # -------------------------------------------------------
+
+    if mnemonic == "JAL":
+        if len(ops) != 2:
+            raise AsmError("JAL requiere: Rd, label")
+        rd = parse_reg(ops[0])
+        target_pc = resolve_target(ops[1], labels)
+        off = branch_offset(target_pc, line.pc, 16)
+        return encode_i(opcode, rd, 0, off)
+
+    if mnemonic == "JALR":
+        if len(ops) != 3:
+            raise AsmError("JALR requiere: Rd, Ra, imm16")
+        rd = parse_reg(ops[0])
+        ra = parse_reg(ops[1])
+        imm = check_signed(parse_int(ops[2]), 16, "inmediato JALR")
+        return encode_i(opcode, rd, ra, imm)
+
+    if mnemonic == "JR":
+        if len(ops) != 1:
+            raise AsmError("JR requiere: Ra")
+        ra = parse_reg(ops[0])
+        return encode_i(opcode, 0, ra, 0)
+
+    # -------------------------------------------------------
     # GETTID Rd
     # -------------------------------------------------------
 
@@ -394,7 +594,13 @@ def assemble(source: str) -> list[int]:
 
     for line in lines:
         try:
-            words.append(assemble_instruction(line, labels))
+            if is_directive(line.text):
+                partes = line.text.split(None, 1)
+                words.extend(directive_words(
+                    partes[0].upper(),
+                    partes[1] if len(partes) > 1 else "", labels))
+            else:
+                words.append(assemble_instruction(line, labels))
         except AsmError as e:
             raise AsmError(f"línea {line.number}: {e}\n    {line.text}") from None
 

@@ -90,6 +90,12 @@ module top (
   wire [4:0] cpu_debug_register_address;
   wire [31:0] cpu_debug_register_data, cpu_pc;
 
+  // Lado del monitor del puerto serie: lo que desencapsulan SEND_BYTES y
+  // RECV_BYTES. No hay pin ni baudio propio, es el mismo enlace del monitor.
+  wire serial_host_push, serial_host_pop;
+  wire [7:0] serial_host_push_data;
+  wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
+
   // ---------------------------------------------------------------------------
   // Contadores de rendimiento
   //
@@ -142,6 +148,10 @@ module top (
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_cycles(cpu_cycles), .cpu_instructions(cpu_instructions),
       .cpu_debug_register_data(cpu_debug_register_data),
+      .serial_push(serial_host_push), .serial_push_data(serial_host_push_data),
+      .serial_rx_free(serial_host_rx_free),
+      .serial_pop(serial_host_pop), .serial_tx_data(serial_host_tx_data),
+      .serial_tx_count(serial_host_tx_count),
       .last_command(last_command), .busy(monitor_busy));
 
   // Register both directions of the monitor memory port. Besides making the
@@ -213,10 +223,13 @@ module top (
   wire video_rsp_ready;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  // Cinco bits: la ventana de registros pasa de 16 a 32 bytes al anadir
-  // SWAP_COUNT y HALT_AT.
-  wire [4:0] mmio_address;
+  // Doce bits: la ventana pasa de 32 bytes a 4 KiB, repartidos en dieciseis
+  // dispositivos de 256. Ver mmio_decoder.v para el mapa y su coste.
+  wire [11:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
+  wire mmio_video_select, mmio_serial_select;
+  wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+
 
   // ===========================================================================
   // Camino de memoria en rafagas BL8
@@ -279,11 +292,11 @@ module top (
   // Los dos clientes de la ventana de registros de video.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  wire [11:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [11:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
   cpu_dmem_adapter dmem_adapter_i(
@@ -487,17 +500,39 @@ module top (
       .rsp_valid(p2_rsp_valid), .rsp_ready(video_rsp_ready),
       .rsp_rdata(p2_rsp_rdata), .rsp_error(p2_rsp_error));
 
+  // Reparto de la ventana MMIO entre dispositivos. El mapa esta en
+  // mmio_decoder.v; el video no se mueve de 0x80000000.
+  mmio_decoder mmio_decoder_i(
+      .select(mmio_select), .address(mmio_address),
+      .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
+      .read_data(mmio_read_data));
+
   // Registros de video en 0x80000000, y con ellos el doble framebuffer.
   video_registers registers_i(
       .clk(clk), .reset(reset),
-      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask),
-      .address(mmio_address), .write_data(mmio_write_data),
-      .read_data(mmio_read_data),
+      .select(mmio_video_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
+      .read_data(mmio_video_read_data),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(video_underflow),
       .underflow_clear(video_underflow_clear),
       .halt_request(video_halt_request),
       .debug_front(), .debug_back());
+
+  // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del
+  // monitor, no por esta ventana: ver serial_port.v.
+  serial_port serial_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_serial_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
+      .read_data(mmio_serial_read_data),
+      .host_push(serial_host_push), .host_push_data(serial_host_push_data),
+      .host_rx_free(serial_host_rx_free),
+      .host_pop(serial_host_pop), .host_tx_data(serial_host_tx_data),
+      .host_tx_count(serial_host_tx_count));
 
   // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
   // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el

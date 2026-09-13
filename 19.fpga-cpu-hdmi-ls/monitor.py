@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,11 +19,17 @@ from serial.tools import list_ports
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
-# Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.
+# Ventana MMIO: 4 KiB repartidos en dieciseis dispositivos de 256 bytes.
+#
+#   0x80000000  dispositivo 0, video
+#   0x80000100  dispositivo 1, reservado a depuracion (lo usa la MiniGPU)
+#   0x80000200  dispositivo 2, puerto serie
+#
+# Era de 32 bytes --solo el video-- hasta que entro el serie. El mapa completo
+# esta en mmio_decoder.v.
 MMIO_BASE = 0x8000_0000
-# 32 bytes, no 16: la 18 anade SWAP_COUNT (0x10) y HALT_AT (0x14) a los cuatro
-# registros que venian de la 16.
-MMIO_LIMIT = 0x8000_001F
+MMIO_LIMIT = 0x8000_0FFF
+SERIAL_BASE = 0x8000_0200
 MAX_BLOCK_SIZE = 256
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
@@ -45,6 +52,8 @@ CMD_READ_REGISTER = 0x34
 CMD_RESET_CPU = 0x35
 CMD_GET_CYCLES = 0x36
 CMD_GET_INSTRUCTIONS = 0x37
+CMD_SEND_BYTES = 0x38
+CMD_RECV_BYTES = 0x39
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -60,6 +69,8 @@ RSP_READ_REGISTER = 0xB4
 RSP_RESET_CPU = b"\xb5"
 RSP_CYCLES = 0xB6
 RSP_INSTRUCTIONS = 0xB7
+RSP_SEND_BYTES = 0xB8
+RSP_RECV_BYTES = 0xB9
 RSP_ERROR = 0xFF
 
 
@@ -141,6 +152,66 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_BYTE response: {header.hex(' ')}")
 
         return self._read_exact(1)[0]
+
+    # ----------------------------------------------------------------- serie
+    #
+    # El puerto serie de la CPU viaja encapsulado en este mismo enlace, no por
+    # un cable aparte. Estos dos metodos son el CODEC: convierten bytes en
+    # paquetes y nada mas. El terminal interactivo vive fuera, en
+    # `interactive_console()`, y esa separacion es lo que permite probar el
+    # codec sin consola y sin placa.
+
+    def send_bytes(self, data: bytes) -> int:
+        """Mete lo que quepa en la cola de entrada y dice cuantos entraron.
+
+        El valor devuelto puede ser MENOR que `len(data)`, y no es un error: es
+        el control de flujo. La cola de la FPGA tiene 64 bytes y quien decide
+        cuantos caben es ella. Ver `send_all()` para el bucle de reenvio.
+        """
+        if not 0 <= len(data) <= 255:
+            raise ValueError("un paquete SEND_BYTES son entre 0 y 255 bytes")
+        request = bytes((CMD_SEND_BYTES, len(data))) + data
+        response = self._request(request, 2)
+        if response[0] != RSP_SEND_BYTES:
+            raise MonitorError(f"Invalid SEND_BYTES response: {response.hex(' ')}")
+        accepted = response[1]
+        if accepted > len(data):
+            raise MonitorError(
+                f"SEND_BYTES acepto {accepted} de {len(data)} bytes")
+        return accepted
+
+    def send_all(self, data: bytes, timeout: float = 5.0) -> None:
+        """Reenvia hasta colocarlo todo, respetando el control de flujo."""
+        pending = memoryview(data)
+        deadline = time.monotonic() + timeout
+        while pending:
+            accepted = self.send_bytes(bytes(pending[:255]))
+            pending = pending[accepted:]
+            if accepted == 0:
+                # La CPU no esta consumiendo. Sin este limite, un programa
+                # parado deja al PC girando para siempre.
+                if time.monotonic() >= deadline:
+                    raise MonitorError(
+                        f"la cola de entrada sigue llena tras {timeout:g} s; "
+                        f"quedan {len(pending)} bytes. ¿Esta corriendo la CPU?")
+                time.sleep(0.005)
+            else:
+                deadline = time.monotonic() + timeout
+
+    def recv_bytes(self, maximum: int = 255) -> bytes:
+        """Saca hasta `maximum` bytes de la cola de salida; puede devolver b''."""
+        if not 1 <= maximum <= 255:
+            raise ValueError("RECV_BYTES admite entre 1 y 255 bytes")
+        self._send(bytes((CMD_RECV_BYTES, maximum)))
+        header = self._read_exact(2)
+        if header[0] == RSP_ERROR:
+            raise MonitorError("The FPGA rejected the command")
+        if header[0] != RSP_RECV_BYTES:
+            raise MonitorError(f"Invalid RECV_BYTES response: {header.hex(' ')}")
+        count = header[1]
+        if count > maximum:
+            raise MonitorError(f"RECV_BYTES devolvio {count} de {maximum}")
+        return self._read_exact(count) if count else b""
 
     def write_block(self, address: int, data: bytes) -> None:
         validate_block(address, len(data))
@@ -249,6 +320,56 @@ class MonitorClient:
             raise MonitorError(f"Invalid RESET_CPU response: {response.hex(' ')}")
 
 
+def interactive_console(client: MonitorClient, poll: float = 0.005) -> None:
+    """Terminal sobre el puerto serie de la CPU. Se sale con Ctrl+].
+
+    Esto NO es el codec: es la parte que no se puede probar sin una persona
+    delante. Todo lo que sí se puede probar --empaquetar, control de flujo,
+    reensamblar-- vive en `send_bytes`/`recv_bytes`/`send_all`, que no saben
+    nada de teclados. Por eso estan separados.
+
+    La lectura de teclado usa `msvcrt`, no `select()`: esto es Windows. En otros
+    sistemas cae a una lectura por lineas, que sirve para probar aunque no de
+    caracter a caracter.
+    """
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
+
+    print("Consola sobre el puerto serie de la CPU. Ctrl+] para salir.")
+    if msvcrt is None:
+        print("  (sin msvcrt: se envia por lineas, no caracter a caracter)")
+
+    salida = sys.stdout
+    while True:
+        # Primero lo que venga de la placa, para que el eco se vea antes de
+        # que el usuario escriba lo siguiente.
+        datos = client.recv_bytes(255)
+        if datos:
+            salida.write(datos.decode("latin-1"))
+            salida.flush()
+
+        if msvcrt is not None:
+            enviados = bytearray()
+            while msvcrt.kbhit():
+                tecla = msvcrt.getwch()
+                if tecla == "\x1d":       # Ctrl+]
+                    print()
+                    return
+                # Enter llega como \r y casi todo programa espera \n.
+                enviados += ("\n" if tecla == "\r" else tecla).encode("latin-1")
+            if enviados:
+                client.send_all(bytes(enviados))
+            elif not datos:
+                time.sleep(poll)
+        else:
+            linea = sys.stdin.readline()
+            if not linea:
+                return
+            client.send_all(linea.encode("latin-1"))
+
+
 def available_ports() -> str:
     ports = list(list_ports.comports())
     if not ports:
@@ -279,6 +400,8 @@ def parse_args() -> argparse.Namespace:
             "read-register",
             "reset",
             "perf",
+            "console",
+            "send",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -412,6 +535,8 @@ def main() -> int:
             "read-register": 1,
             "reset": 0,
             "perf": 0,
+            "console": 0,
+            "send": 1,
         }
         if len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
@@ -509,6 +634,15 @@ def main() -> int:
                         f"cycles={cycles} instructions={instructions} "
                         f"CPI={cpi:.2f}"
                     )
+            elif args.command == "console":
+                interactive_console(client)
+            elif args.command == "send":
+                # Manda una cadena y ensena lo que conteste, sin terminal. Es
+                # la forma de probar un programa interactivo desde un script.
+                client.send_all(args.arguments[0].encode("latin-1"))
+                time.sleep(0.2)
+                respuesta = client.recv_bytes(255)
+                print(respuesta.decode("latin-1"), end="")
             elif args.command == "read-register":
                 register = parse_integer(args.arguments[0], 31, "register number")
                 value = client.read_register(register)

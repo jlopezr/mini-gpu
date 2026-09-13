@@ -4,6 +4,14 @@
 /*
  * Paso 0 del plan de BL8: medir antes de escribir RTL.
  *
+ * Monta `sdram_system_adapter`, el bloque de la 16, Y ESO ES DELIBERADO: la
+ * cifra que produce --145,9 ciclos por palabra-- es la linea base contra la
+ * que se mide la mejora del camino de rafagas. Migrarlo al adaptador nuevo
+ * destruiria la comparacion, que es lo unico que hace util este banco.
+ *
+ * O sea: es el unico de los bancos en el adaptador antiguo que NO deberia
+ * migrarse nunca. No prueba el diseno actual, mide el anterior.
+ *
  * La medida en placa dice ~258 ciclos por palabra de framebuffer en el bucle
  * interior de swap_demo_fast, o sea ~26 ciclos por acceso fisico de 16 bits.
  * La pregunta que decide si la rafaga merece la pena es en que se van esos

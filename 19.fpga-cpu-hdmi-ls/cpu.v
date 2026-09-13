@@ -17,6 +17,9 @@
  *   STOREB/STOREH Rs, Ra, imm16  (escribe Rs[7:0] / Rs[15:0])
  *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
  *   BRA offset
+ *   JAL Rd, offset16       (Rd = PC + 4; salto relativo en palabras)
+ *   JALR Rd, Ra, imm16     (Rd = PC + 4; salto a Ra + imm*4)
+ *   JR Ra                  (salto a Ra, sin enlace)
  *   GETTID Rd (returns zero in MiniCPU)
  *   HALT
  *
@@ -89,6 +92,12 @@ module cpu (
   localparam [5:0] OPCODE_BGE = 6'h23;
   localparam [5:0] OPCODE_BLTU = 6'h24;
   localparam [5:0] OPCODE_BGEU = 6'h25;
+  // Llamadas y saltos indirectos. Mapa de 1.isa/propuesta-v0.2.md §3.2: se
+  // mantiene `R0` como registro general, asi que `JR` gasta un opcode propio en
+  // lugar de ser el alias `JALR R0, Ra, 0` que propone v0.3.
+  localparam [5:0] OPCODE_JAL = 6'h2c;
+  localparam [5:0] OPCODE_JALR = 6'h2d;
+  localparam [5:0] OPCODE_JR = 6'h2e;
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
@@ -231,6 +240,14 @@ module cpu (
 
   wire [31:0] effective_address = operand_a + immediate_signed;
 
+  /*
+   * Desplazamiento de salto: el inmediato de 16 bits cuenta palabras, como todo
+   * el control de flujo de esta ISA, asi que se extiende con signo y se
+   * multiplica por cuatro. Es el mismo campo que usan los branches
+   * condicionales, con lo que `JAL` alcanza +-32768 palabras (+-128 KiB).
+   */
+  wire [31:0] jump_offset = {{14{instruction[15]}}, instruction[15:0], 2'b00};
+
   // Las tres escrituras toman el dato del campo Rd, no de Rb. Ver el comentario
   // de STATE_FETCH_WAIT sobre la seleccion del segundo operando.
   wire [5:0] fetch_opcode = imem_read_data[31:26];
@@ -324,6 +341,12 @@ module cpu (
         instruction_encoding_valid = instruction[20:16] == 0;
       OPCODE_GETTID:
         instruction_encoding_valid = instruction[20:0] == 0;
+      // JAL no tiene registro fuente y JR no tiene ni destino ni inmediato.
+      OPCODE_JAL:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_JR:
+        instruction_encoding_valid = instruction[25:21] == 0 &&
+                                     instruction[15:0] == 0;
       default: instruction_encoding_valid = 1'b1;
     endcase
   end
@@ -701,6 +724,47 @@ module cpu (
             OPCODE_BRA: begin
               branch_taken <= 1'b1;
               branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            /*
+             * Las tres instrucciones de llamada reutilizan STATE_BRANCH_COMMIT:
+             * el destino ya va registrado en `branch_target` y `branch_taken`
+             * queda fijo a uno porque son saltos incondicionales. El enlace se
+             * escribe aqui mismo, como hace MOVI, asi que cuestan lo mismo que
+             * BRA: siete ciclos.
+             *
+             * `pc` vale ya la direccion de la instruccion siguiente --el fetch
+             * lo adelanto--, que es exactamente el enlace que pide la ISA.
+             */
+            OPCODE_JAL: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= pc + jump_offset;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            /*
+             * En los saltos indirectos el destino sale de un registro, que el
+             * programa puede haber dejado desalineado. Se descartan los dos
+             * bits bajos en lugar de anadir una quinta ruta de error: mantiene
+             * el fetch siempre alineado sin ensanchar la maquina de estados ni
+             * el mapa de codigos de error.
+             */
+            OPCODE_JALR: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= (operand_a + jump_offset) & ~32'd3;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_JR: begin
+              branch_taken <= 1'b1;
+              branch_target <= operand_a & ~32'd3;
               state <= STATE_BRANCH_COMMIT;
             end
 

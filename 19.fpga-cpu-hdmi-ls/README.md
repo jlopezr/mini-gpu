@@ -1,17 +1,19 @@
-# MiniCPU con SDRAM, salida HDMI, memoria en ráfagas y accesos de 8 y 16 bits
+# MiniCPU con SDRAM, salida HDMI, memoria en ráfagas, accesos de 8 y 16 bits y llamadas
 
-Copia de [`../18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) con seis
-instrucciones nuevas: `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH` y
-`STOREH`. Todo lo demás —camino de ráfagas BL8, vídeo, monitor— es la 18 tal
-cual, y el resto de este documento la describe sin cambios.
+Copia de [`../18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) con nueve
+instrucciones nuevas: `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH`, `STOREH`
+y las llamadas `JAL`, `JALR` y `JR`. Todo lo demás —camino de ráfagas BL8,
+vídeo, monitor— es la 18 tal cual, y el resto de este documento la describe sin
+cambios.
 
 ## Lo nuevo respecto a la 18
 
 **No es la ISA v0.1.** La v0.1 solo define `LOAD`/`STORE` de cuatro bytes
-alineados y deja `0x18–0x1F` reservadas; los accesos sub-palabra aparecen en las
-propuestas v0.2 y v0.3, con codificaciones que no coinciden entre sí. Aquí se
-adopta **el mapa de la v0.2**, y migrar a v0.3 exigirá recodificar `0x1A`–`0x1C`
-y renombrar dos mnemónicos.
+alineados, no tiene llamadas y deja `0x18–0x1F` y `0x2C–0x2E` reservadas; los
+accesos sub-palabra y las llamadas aparecen en las propuestas v0.2 y v0.3, con
+codificaciones que no coinciden entre sí. Aquí se adopta **el mapa de la v0.2**,
+y migrar a v0.3 exigirá recodificar `0x1A`–`0x1C`, renombrar dos mnemónicos,
+mover `JAL`/`JALR` a `0x23`/`0x24` y hacer desaparecer `JR` como opcode.
 
 El hardware apenas cambia porque el camino de datos de la 18 ya transportaba
 máscaras de byte de punta a punta: las escrituras replican el dato en los cuatro
@@ -31,10 +33,61 @@ sobre el simulador funcional. El demo que las justifica es
 pixel a pixel, que con solo `STORE` de 32 bits costaría una lectura y una mezcla
 por pixel.
 
-**Pendiente:** esta carpeta no se ha sintetizado todavía, así que no hay barrido
-de semillas propio. La extracción del byte leído cae en el camino de escritura
-del banco de registros, que es justo uno de los que esta familia vigila: conviene
-rebarrer antes de dar por buena la frecuencia que hereda de la 18.
+Las llamadas cuestan aún menos hardware: reutilizan `STATE_BRANCH_COMMIT` entero
+y solo añaden un sumador de desplazamiento y el enlace escrito desde `pc`. El
+diseño y por qué `JR` sigue teniendo opcode propio están en
+[`docs/llamadas.md`](docs/llamadas.md); la verificación es el lote de llamadas de
+[`cpu_tb.v`](cpu_tb.v).
+
+**El monitor sube a 1.13 sin añadir ni un comando.** Las nueve instrucciones
+nuevas viven enteras dentro de la CPU y el protocolo es idéntico al 1.12 de la
+18. Sube igual porque `GET_VERSION` es lo único que el PC puede preguntar antes
+de cargar un programa: con las dos respondiendo 1.12,
+[`x.cpu-tests`](../x.cpu-tests) daría por bueno un bitstream de la 18 y los casos
+que usan estas instrucciones pararían con opcode inválido en vez de cargar el
+que toca. Es el mismo criterio que separa 2.1 de 2.2 en las dos MiniGPU.
+
+### Frecuencia
+
+Sintetizada y barrida con las nueve instrucciones y el monitor 1.13 dentro:
+**las ocho semillas cumplen los 80 MHz**, entre 80,35 y 87,18. Se fija la 3, la
+de más margen, con +9,0 %.
+
+| Semilla | Fmax | Margen |
+|---:|---:|---:|
+| 3 | 87,18 MHz | +9,0 % |
+| 1 | 86,24 MHz | +7,8 % |
+| 7 | 85,60 MHz | +7,0 % |
+| 4 | 85,46 MHz | +6,8 % |
+| 5 | 84,47 MHz | +5,6 % |
+| 8 | 83,61 MHz | +4,5 % |
+| 2 | 83,47 MHz | +4,3 % |
+| 6 | 80,35 MHz | +0,4 % |
+
+El camino crítico es el `sdram_clk`, o sea el handshake de memoria —adaptador,
+árbitro y controlador—, el mismo sitio que en la 18. Ni los accesos sub-palabra
+ni las llamadas lo tocan. La ocupación queda en 9 370 LUTs y 4 630 FF de 83 640,
+y 5 de los 156 multiplicadores.
+
+**Un barrido vale para un netlist, no para un diseño.** Con las llamadas dentro
+pero el monitor todavía en 1.12, este barrido daba siete de ocho entre 79,38 y
+89,17, y la mejor era la semilla 8. Subir `VERSION_MINOR` de `0x0c` a `0x0d`
+—una constante de ocho bits— bastó para que la 8 cayera a 83,61 y la 3 pasara a
+ser la mejor. El diseño no cambió; cambió lo justo el netlist para que el placer
+tome otras decisiones. Conviene rebarrer después de **cualquier** cambio de RTL,
+por tonto que parezca, y no leer un «ocho de ocho» como que el diseño ha
+mejorado: significa que este netlist concreto se coloca bien.
+
+**Lo que este número no dice.** Mide caminos dentro del chip. El fallo que tuvo
+esta carpeta en placa estaba en la captura de DQ, que entra por un pin, y con el
+diseño roto el barrido daba +14,5 % de holgura igual. Que una semilla cumpla no
+dice que la SDRAM se lea bien; eso lo dice la matriz de beats × DQ.
+
+Para repetirlo:
+
+```powershell
+..\tools\seed-sweep.ps1 -ProjectDir 19.fpga-cpu-hdmi-ls -Seeds @(1,2,3,4,5,6,7,8)
+```
 
 ---
 
@@ -566,12 +619,46 @@ registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
 
+### Los dos demos de Bresenham
+
+Los cuatro de arriba pintan rectángulos: dibujan bandas de color plano porque
+son de la 18, donde escribir un píxel suelto costaba una lectura y una mezcla.
+Con `STOREH` y con las llamadas eso deja de ser cierto, y estos dos dibujan
+figuras de verdad, píxel a píxel:
+
+| Programa | Qué dibuja | Qué enseña |
+|---|---|---|
+| [`bresenham_lines.asm`](examples/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
+| [`bresenham_circles.asm`](examples/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
+
+Son también los primeros ejemplos que usan `JAL`/`JR`. Un `putpixel` como
+subrutina es lo mínimo para que un programa así se pueda escribir: sin
+llamadas habría que repetir su cuerpo en cada sitio que pinta, o volver con un
+`BRA` a una etiqueta fija, que solo funciona si se llama desde un único sitio.
+
+Los dos reparten el enlace entre varios registros —`R31` y `R30` en las rectas,
+más `R29` en las circunferencias— en lugar de salvarlo en memoria. Funciona
+porque `JAL` nombra su registro de enlace explícitamente, y es barato con dos o
+tres niveles, pero **no escala**: con recursión no vale de ninguna manera. Los
+propios ficheros lo explican y apuntan a [`docs/llamadas.md`](docs/llamadas.md);
+el caso `calls-link-and-return` de [`x.cpu-tests`](../x.cpu-tests) hace la
+versión con pila.
+
+**Verificados píxel a píxel contra un modelo independiente**: el mismo
+algoritmo escrito otra vez en Python, comparado contra el framebuffer que sale
+del simulador funcional en tres frames distintos de cada demo —o sea también
+con la animación avanzada—. El modelo comprueba además que ningún píxel se sale
+de la pantalla, que es lo que permite que `putpixel` no gaste instrucciones en
+comprobar límites.
+
 Lanzarlos, con el script que hace los cuatro pasos —ensamblar, parar la CPU,
 cargar y arrancar— y comprueba el estado al terminar:
 
 ```powershell
 .\run-demo.ps1 swap_demo_fast
 .\run-demo.ps1 tear_demo_fast
+.\run-demo.ps1 bresenham_lines
+.\run-demo.ps1 bresenham_circles
 .\run-demo.ps1 swap_demo -NoRun     # cargar sin arrancar
 .\run-demo.ps1 tear_demo -Port COM4
 ```
@@ -931,8 +1018,41 @@ propósito:
 
 - `video_scanout_tb.v` (hito B) simula el cruce de dominios **sin memoria**.
 - `video_sdram_tb.v` (hito C) simula la aritmética del framebuffer y el
-  arbitraje **sin dominio de píxel**, contra el adaptador real y un modelo
+  arbitraje **sin dominio de píxel**, contra el adaptador de la 16 y un modelo
   funcional de memoria con tres ciclos de latencia.
+
+### Qué mapa de direcciones prueba cada banco
+
+Hay **dos** decodificadores MMIO en esta carpeta, y hasta ahora no estaba dicho
+en ninguna parte:
+
+| | Ventana | Decode |
+|---|---|---|
+| Lo que se sintetiza (`top.v`): `cpu_dmem_adapter` + `monitor_mem_adapter_128` | **32 B** | `address[31:5]` |
+| Heredado de la 16: `sdram_system_adapter.v`, fuera de `top.v` | **16 B** | `address[31:4]` |
+
+Eso tenía una consecuencia que no se veía: con la ventana de 16 bytes,
+**`SWAP_COUNT` (`+0x10`) y `HALT_AT` (`+0x14`) quedan fuera**. Los dos
+registros que sostienen la captura determinista de frames —y con ellos la
+capacidad `frame_capture` de `x.cpu-tests`— no los podía tocar ningún banco de
+RTL: solo estaban probados en placa y en el simulador funcional.
+
+`cpu_video_tb.v` está ahora sobre el camino real y los cubre: arma `HALT_AT`,
+deja pasar tres intercambios y comprueba que la CPU **se para sola** en el que
+toca, que `SWAP_COUNT` cuenta, que armar reinicia la cuenta y que la alarma es
+de un disparo. `cpu_burst_system_tb.v` monta el `video_registers` de verdad en
+lugar de los cuatro registros de mentira que tenía, que además leían con dos
+bits de índice y escribían con tres.
+
+Los tres bancos que siguen en el adaptador de la 16 lo dicen ahora en su
+cabecera. `perf_probe_tb.v` **no debe migrarse nunca**: su cifra de 145,9
+ciclos por palabra es la línea base contra la que se mide la ganancia del
+camino de ráfagas, y cambiarle el adaptador destruiría la comparación. Los
+otros dos son referencia histórica.
+
+El `default-testbench` de `apio.ini` apuntaba a `cpu_sdram_system_tb.v`, o sea
+que `apio sim` sin argumentos enseñaba el diseño anterior. Ahora apunta a
+`cpu_burst_system_tb.v`.
 
 Ninguno simula la cadena TMDS ni los PLL: eso se verifica enchufando un monitor.
 Tampoco sustituyen al banco del controlador de SDRAM, que es el que cubre la

@@ -26,6 +26,7 @@ BL8 ni fija la latencia de LOAD/STORE.
 | ADD, SUB, AND, OR, XOR                  |                                   7 | ALU_WRITE                                 |
 | ADDI, ANDI, ORI, XORI                   |                                   7 | ALU_WRITE                                 |
 | BRA                                     |                                   7 | BRANCH_COMMIT                             |
+| JAL, JALR, JR                           |                                   7 | BRANCH_COMMIT                             |
 | BEQ, BNE, BLT, BGE, BLTU, BGEU          |                                   8 | BRANCH_COMPARE + BRANCH_COMMIT            |
 | SHL, SHR, SAR                           |                               7 + n | SHIFT_STEP × n + SHIFT_WRITE              |
 | MUL, MULFX                              |                                  11 | PRODUCTS + CROSS + COMBINE + SIGN + WRITE |
@@ -141,6 +142,38 @@ seguidas, cada línea nueva se paga entera.
 El búfer reduce la espera de búsqueda cuando hay acierto. Los bucles pequeños
 amortizan los fallos iniciales y aprovechan mejor esa reducción; por eso conviene
 comparar los mismos programas entre versiones, además del coste por opcode.
+
+### Los casos de las extensiones, medidos igual
+
+Los siete de [`cases/extensions`](../../x.cpu-tests/cases/extensions), en la
+misma placa y con el vídeo corriendo:
+
+| Programa                      | Instr. | CPI   |
+|-------------------------------|-------:|------:|
+| `calls-jump-table`            |     12 | 12,00 |
+| `calls-link-and-return`       |     13 | 16,15 |
+| `calls-unaligned-target`      |      4 | 21,00 |
+| `subword-stores`              |     11 | 12,73 |
+| `subword-misaligned-halfword` |      2 | 19,50 |
+| `subword-loads`               |     13 | 43,31 |
+
+(`calls-reserved-fields` para en la primera instrucción sin retirarla, así que
+no tiene CPI.)
+
+Dos cosas que merece la pena leer aquí:
+
+- **Las llamadas no son caras.** `calls-jump-table` sale a 12,00 con tres
+  `JALR` y tres `JR` entre doce instrucciones, o sea por debajo de la media de
+  los programas cortos. Es lo esperable: siete ciclos, los mismos que `BRA`.
+  Lo que encarece `calls-unaligned-target` hasta 21,00 no son los saltos sino
+  que son cuatro instrucciones en total, y el fallo de búfer inicial no se
+  amortiza en nada.
+- **`subword-loads` a 43,31 es el precio de la memoria, no del opcode.** Son
+  diez cargas seguidas sin bucle: cada una espera su respuesta de la SDRAM
+  compitiendo con el barrido de vídeo, y no hay nada donde amortizar. Es el
+  mismo `6 + W` de un `LOAD` de palabra; la extensión del byte leído no cuesta
+  ciclos, se hace dentro de la CPU. `subword-stores`, que no espera respuesta
+  porque el búfer de escritura las acepta, se queda en 12,73.
 
 El contador de instrucciones se contrasta con el del simulador en la tabla de
 `--measure`: coinciden exactamente en los nueve. Ese contraste ya encontró un

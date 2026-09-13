@@ -89,37 +89,67 @@ module cpu_burst_system_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  wire [11:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [11:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [11:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
   wire [31:0] wb_merges, wb_flushes;
 
-  // Registros de video reducidos a lo imprescindible: este banco solo necesita
-  // que la ventana responda, no el swap sincronizado, que ya cubre
-  // video_registers_tb.v.
-  reg [31:0] mmio_regs[0:3];
-  wire [31:0] mmio_read_data = mmio_regs[mmio_address[3:2]];
-  always @(posedge clk) begin
-    if (reset) begin
-      mmio_regs[0] <= 32'h0100_0000;
-      mmio_regs[1] <= 32'h0102_5800;
-      mmio_regs[2] <= 32'd0;
-      mmio_regs[3] <= 32'd0;
-    end else if (mmio_select && mmio_write) begin
-      for (i = 0; i < 4; i = i + 1)
-        if (mmio_write_mask[i])
-          mmio_regs[mmio_address[4:2]][i*8 +: 8] <= mmio_write_data[i*8 +: 8];
-    end
-  end
+  /*
+   * El `video_registers` de verdad, no un sustituto.
+   *
+   * Aqui habia cuatro registros de mentira, y tenian el fallo que tiene
+   * siempre un sustituto que nadie prueba: leian con `mmio_address[3:2]` y
+   * escribian con `mmio_address[4:2]`. Con dos bits de indice sobre un array
+   * de cuatro, media ventana quedaba aliasada al leer y las escrituras a
+   * `0x10` y `0x14` se perdian sin ruido. Ese decodificador no se parecia al
+   * del hardware, que es justo lo que un banco de sistema tiene que ejercitar.
+   *
+   * No hay subsistema de video en este banco --lo cubre video_burst_tb.v-- asi
+   * que `fill_start`/`fill_first` se quedan a cero: ningun intercambio llega a
+   * aplicarse, y `swap_pending` se queda levantado despues de pedirlo. Es lo
+   * que comprueba el paso 5.
+   */
+  wire [23:0] fb_base_unused;
+  wire [31:0] debug_front, debug_back;
+  wire underflow_clear_unused, video_halt_request;
+  wire [31:0] mmio_read_data;
+  wire mmio_video_select, mmio_serial_select;
+  wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+
+  // El mismo reparto de ventana que top.v.
+  mmio_decoder mmio_decoder_i (
+      .select(mmio_select), .address(mmio_address),
+      .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .serial_select(mmio_serial_select),
+      .serial_read_data(mmio_serial_read_data),
+      .read_data(mmio_read_data));
+
+  video_registers registers_i (
+      .clk(clk), .reset(reset),
+      .select(mmio_video_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
+      .write_data(mmio_write_data), .read_data(mmio_video_read_data),
+      .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base_unused),
+      .underflow_pix(1'b0), .underflow_clear(underflow_clear_unused),
+      .halt_request(video_halt_request),
+      .debug_front(debug_front), .debug_back(debug_back));
+
+  serial_port serial_i (
+      .clk(clk), .reset(reset),
+      .select(mmio_serial_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
+      .write_data(mmio_write_data), .read_data(mmio_serial_read_data),
+      .host_push(1'b0), .host_push_data(8'h00), .host_rx_free(),
+      .host_pop(1'b0), .host_tx_data(), .host_tx_count());
 
   // -- SDRAM ----------------------------------------------------------------
   wire s_req_valid, s_req_ready, s_req_write, s_done;

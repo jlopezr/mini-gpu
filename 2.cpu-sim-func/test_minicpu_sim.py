@@ -140,5 +140,91 @@ class SubwordAccessTest(unittest.TestCase):
         self.assertEqual(cpu.regs[3], 0x12)
 
 
+class CallTest(unittest.TestCase):
+    """Llamadas y saltos indirectos: opcodes 0x2C..0x2E."""
+
+    def run_one(self, instruction: int, at: int = 0, registers=None) -> CPU:
+        cpu = CPU(memory_size=256)
+        struct.pack_into("<I", cpu.memory, at, instruction)
+        for register, value in (registers or {}).items():
+            cpu.regs[register] = value
+        cpu.pc = at
+        cpu.step()
+        return cpu
+
+    def test_jal_saves_link_and_jumps_in_words(self) -> None:
+        # Desde 0x10, offset +4 palabras: destino 0x10+4+16 = 0x24.
+        cpu = self.run_one(encode_i(0x2C, 31, 0, 4), at=0x10)
+        self.assertEqual(cpu.pc, 0x24)
+        self.assertEqual(cpu.regs[31], 0x14)
+
+    def test_jal_offset_is_signed(self) -> None:
+        cpu = self.run_one(encode_i(0x2C, 31, 0, -4), at=0x40)
+        self.assertEqual(cpu.pc, 0x34)
+        self.assertEqual(cpu.regs[31], 0x44)
+
+    def test_jalr_adds_a_word_displacement_to_the_register(self) -> None:
+        cpu = self.run_one(encode_i(0x2D, 30, 5, 2), at=0x10, registers={5: 0x40})
+        self.assertEqual(cpu.pc, 0x48)
+        self.assertEqual(cpu.regs[30], 0x14)
+
+    def test_jalr_can_reuse_the_source_as_link(self) -> None:
+        # Rd == Ra: el destino se calcula antes de escribir el enlace.
+        cpu = self.run_one(encode_i(0x2D, 5, 5, 0), at=0x10, registers={5: 0x40})
+        self.assertEqual(cpu.pc, 0x40)
+        self.assertEqual(cpu.regs[5], 0x14)
+
+    def test_jr_does_not_write_any_link(self) -> None:
+        cpu = self.run_one(encode_i(0x2E, 0, 7, 0), at=0x10, registers={7: 0x20})
+        self.assertEqual(cpu.pc, 0x20)
+        self.assertEqual(cpu.regs[0], 0)
+
+    def test_indirect_targets_drop_the_low_two_bits(self) -> None:
+        # No es un error: el RTL enmascara en vez de abrir una ruta de trap.
+        for opcode, registers in ((0x2E, {7: 0x22}), (0x2D, {7: 0x22})):
+            with self.subTest(opcode=opcode):
+                cpu = self.run_one(
+                    encode_i(opcode, 0 if opcode == 0x2E else 30, 7, 0),
+                    at=0x10,
+                    registers=registers,
+                )
+                self.assertFalse(cpu.error)
+                self.assertEqual(cpu.pc, 0x20)
+
+    def test_reserved_fields_are_validated(self) -> None:
+        # JAL con campo fuente puesto y JR con destino o inmediato puestos.
+        for instruction in (
+            encode_i(0x2C, 31, 1, 0),
+            encode_i(0x2E, 1, 7, 0),
+            encode_i(0x2E, 0, 7, 4),
+        ):
+            with self.subTest(instruction=instruction):
+                cpu = self.run_one(instruction, at=0x10, registers={7: 0x20})
+                self.assertTrue(cpu.error)
+                self.assertEqual(cpu.error_code, 0x05)
+                self.assertEqual(cpu.pc, 0x10)
+
+    def test_call_and_return_round_trip(self) -> None:
+        cpu = CPU(memory_size=256)
+        program = (
+            encode_i(0x2C, 31, 0, 3),       # 0x00 JAL R31, 0x10
+            encode_i(0x10, 2, 0, 0x1111),   # 0x04 MOVI R2, 0x1111
+            encode_i(0x3F, 0, 0, 0),        # 0x08 HALT
+            0x00000000,                     # 0x0C NOP
+            encode_i(0x10, 3, 0, 0x2222),   # 0x10 MOVI R3, 0x2222
+            encode_i(0x2E, 0, 31, 0),       # 0x14 JR R31
+        )
+        for index, word in enumerate(program):
+            struct.pack_into("<I", cpu.memory, 4 * index, word)
+
+        cpu.run(max_instructions=100)
+        self.assertTrue(cpu.halted)
+        self.assertFalse(cpu.error)
+        self.assertEqual(cpu.regs[2], 0x1111)
+        self.assertEqual(cpu.regs[3], 0x2222)
+        self.assertEqual(cpu.regs[31], 0x04)
+        self.assertEqual(cpu.instructions_executed, 5)
+
+
 if __name__ == "__main__":
     unittest.main()

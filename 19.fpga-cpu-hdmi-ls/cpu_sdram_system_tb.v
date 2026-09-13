@@ -1,6 +1,20 @@
 `timescale 1ns/1ps
 `default_nettype none
 
+/*
+ * ATENCION: este banco monta `sdram_system_adapter`, que es el bloque unico de
+ * la 16 y YA NO ESTA EN `top.v`. Se conserva como linea base historica, no
+ * como prueba del diseno actual.
+ *
+ * La diferencia que mas engana es la ventana MMIO: aqui son 16 bytes
+ * (`address[31:4]`) y en el hardware son 32 (`address[31:5]`). `SWAP_COUNT`
+ * (+0x10) y `HALT_AT` (+0x14) no existen en este mapa.
+ *
+ * El camino que se sintetiza --bufer de instrucciones, `cpu_dmem_adapter`,
+ * `monitor_mem_adapter_128`, `mmio_mux` y `memory_fabric_4`-- lo prueban
+ * `cpu_burst_system_tb.v` y `cpu_video_tb.v`. Si estas anadiendo algo al
+ * diseno, es ahi donde va.
+ */
 module cpu_sdram_system_tb;
   reg clk=0, reset=1, init_done=1;
   reg run_request=0,halt_request=0,step_request=0;

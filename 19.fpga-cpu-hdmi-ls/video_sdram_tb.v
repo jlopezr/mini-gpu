@@ -3,8 +3,15 @@
 
 // Banco de pruebas del hito C: el camino SDRAM -> line buffer.
 //
-// Monta el lector de lineas contra el adaptador real y un modelo funcional de
-// memoria. No se usa el controlador de SDRAM fisico: lo que se comprueba aqui
+// ATENCION: «el adaptador real» de la frase siguiente era cierto en la 16. Hoy
+// monta `sdram_system_adapter`, que ya no esta en `top.v`; el camino que se
+// sintetiza es `video_line_source_burst` contra el puerto p2 de
+// `memory_fabric_4`, y lo prueba `video_burst_tb.v`. Este banco se conserva
+// como linea base del arbitraje de la 16. Su ventana MMIO es de 16 bytes, no
+// de 32.
+//
+// Monta el lector de lineas contra el adaptador de la 16 y un modelo funcional
+// de memoria. No se usa el controlador de SDRAM fisico: lo que se comprueba aqui
 // es la aritmetica de direcciones del framebuffer y el arbitraje entre video y
 // CPU, no la temporizacion JEDEC, que ya tiene su propio banco.
 //

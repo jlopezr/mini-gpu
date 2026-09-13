@@ -28,7 +28,7 @@ module video_registers_tb;
   reg select = 1'b0;
   reg write = 1'b0;
   reg [3:0] write_mask = 4'b0000;
-  reg [4:0] address = 5'h00;
+  reg [7:0] address = 8'h00;
   wire underflow_clear, halt_request;
   reg [31:0] write_data = 32'h0;
   wire [31:0] read_data;
@@ -50,7 +50,7 @@ module video_registers_tb;
       .halt_request(halt_request),
       .debug_front(debug_front), .debug_back(debug_back));
 
-  task bus_write_word(input [4:0] offset, input [31:0] value);
+  task bus_write_word(input [7:0] offset, input [31:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b1; write_mask = 4'b1111;
@@ -60,7 +60,7 @@ module video_registers_tb;
     end
   endtask
 
-  task bus_write_byte(input [4:0] offset, input [7:0] value);
+  task bus_write_byte(input [7:0] offset, input [7:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b1;
@@ -71,7 +71,7 @@ module video_registers_tb;
     end
   endtask
 
-  task bus_read(input [4:0] offset, output [31:0] value);
+  task bus_read(input [7:0] offset, output [31:0] value);
     begin
       @(negedge clk);
       select = 1'b1; write = 1'b0; address = offset;
@@ -183,7 +183,7 @@ module video_registers_tb;
     @(negedge clk);
     fill_start = 1'b1; fill_first = 1'b1;
     select = 1'b1; write = 1'b1; write_mask = 4'b1111;
-    address = 4'h8; write_data = 32'h1;
+    address = 8'h08; write_data = 32'h1;
     @(negedge clk);
     fill_start = 1'b0; fill_first = 1'b0;
     select = 1'b0; write = 1'b0; write_mask = 4'b0000;

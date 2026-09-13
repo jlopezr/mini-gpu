@@ -60,7 +60,7 @@
  */
 module cpu_dmem_adapter #(
     parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000,
-    parameter [26:0] MMIO_PREFIX = 27'h400_0000
+    parameter [19:0] MMIO_PREFIX = 20'h80000
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -85,7 +85,7 @@ module cpu_dmem_adapter #(
     input  wire        mmio_ack,
     output reg         mmio_write,
     output reg  [3:0]  mmio_write_mask,
-    output reg  [4:0]  mmio_address,
+    output reg  [11:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
 
@@ -147,7 +147,7 @@ module cpu_dmem_adapter #(
   // comprueba `address_misaligned` en cpu.v, antes de llegar al bus.
   wire address_in_sdram = ((dmem_address & ADDR_RANGE_MASK) == 32'd0);
   wire address_is_mmio =
-      (dmem_address[31:5] == MMIO_PREFIX) && (dmem_address[1:0] == 2'b00);
+      (dmem_address[31:12] == MMIO_PREFIX) && (dmem_address[1:0] == 2'b00);
   wire is_write = |dmem_write_enable;
   wire same_line = wb_valid && (dmem_address[31:4] == wb_line);
 
@@ -187,7 +187,7 @@ module cpu_dmem_adapter #(
       mmio_req <= 1'b0;
       mmio_write <= 1'b0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 5'h00;
+      mmio_address <= 12'h000;
       mmio_write_data <= 32'h0000_0000;
       wb_valid <= 1'b0;
       wb_flushing <= 1'b0;
@@ -225,7 +225,7 @@ module cpu_dmem_adapter #(
                 mmio_req <= 1'b1;
                 mmio_write <= is_write;
                 mmio_write_mask <= dmem_write_enable;
-                mmio_address <= dmem_address[4:0];
+                mmio_address <= dmem_address[11:0];
                 mmio_write_data <= dmem_write_data;
                 state <= ST_MMIO;
               end
@@ -288,7 +288,7 @@ module cpu_dmem_adapter #(
                 mmio_req <= 1'b1;
                 mmio_write <= |held_wen;
                 mmio_write_mask <= held_wen;
-                mmio_address <= held_address[4:0];
+                mmio_address <= held_address[11:0];
                 mmio_write_data <= held_wdata;
                 pending <= PEND_NONE;
                 state <= ST_MMIO;

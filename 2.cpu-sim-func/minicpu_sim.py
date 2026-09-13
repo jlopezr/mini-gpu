@@ -5,15 +5,19 @@ Implementa todas las instrucciones actualmente definidas y el estado
 arquitectónico de error:
 
 - Sistema: NOP, GETTID y HALT.
-- ALU: ADD, SUB, AND, OR, XOR, SHL, SHR y SAR.
-- Aritmética: MUL, MULFX y DIV.
+- ALU: ADD, SUB, AND, OR, XOR, SHL, SHR y SAR, estas tres con cantidad en
+  registro o inmediata (SHLI/SHRI/SARI, bit 10 del encoding).
+- Aritmética: MUL, MULHI, MULFX, DIV, DIVU, REM y REMU.
 - Inmediatas: MOVI, MOVHI, ADDI, ANDI, ORI y XORI.
 - Memoria: LOAD y STORE, y los accesos de 8 y 16 bits LOADB, LOADUB,
   STOREB, LOADH, LOADUH y STOREH.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
+- Llamadas: JAL, JALR y JR.
 
-El estado consta de PC y 32 registros generales de 32 bits; R0 también es
-escribible. Las operaciones hacen wrap módulo 2**32, los binarios son
+El estado consta de PC y 32 registros de 32 bits. **R0 está cableado a cero**:
+las escrituras se descartan y las lecturas valen siempre cero. Eso convierte
+`JR Ra` en `JALR R0, Ra, 0` y deja `0x2E` reclamable; `JR` sigue implementado
+por compatibilidad. Las operaciones hacen wrap módulo 2**32, los binarios son
 little-endian y los branches son relativos a PC+4 con offsets expresados en
 palabras de 32 bits.
 
@@ -46,12 +50,22 @@ def valid_encoding(instr: int, opcode: int) -> bool:
     """Comprueba los campos reservados de instrucciones conocidas."""
     if opcode in {0x00, 0x3E, 0x3F}:  # NOP, TRAP, HALT
         return (instr & 0x03FFFFFF) == 0
-    if opcode in {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0C}:
+    if opcode in {0x07, 0x08, 0x09}:  # SHL/SHR/SAR
+        # El bit 10 es significativo: dice que la cantidad es inmediata
+        # (propuesta-v0.2.md §4.2, opcion B). El campo reservado de estos tres
+        # opcodes es por tanto `extra[9:0]`, no `extra` entero.
+        return (instr & 0x3FF) == 0
+    if opcode in {0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+                  0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F}:
         return (instr & 0x7FF) == 0
     if opcode in {0x10, 0x17}:  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
     if opcode == 0x30:  # GETTID requires Y=0 and imm16=0
         return (instr & 0x1FFFFF) == 0
+    if opcode == 0x2C:  # JAL no tiene registro fuente
+        return ((instr >> 16) & 0x1F) == 0
+    if opcode == 0x2E:  # JR no tiene ni destino ni inmediato
+        return ((instr >> 21) & 0x1F) == 0 and (instr & 0xFFFF) == 0
     return True
 
 
@@ -215,11 +229,91 @@ class VideoDevice:
         # SWAP_COUNT es de solo lectura.
 
 
+class SerialDevice:
+    """Puerto serie de la CPU, en 0x80000200. Dos colas y nada mas.
+
+    Modela `19.fpga-cpu-hdmi-ls/serial_port.v`, incluidas las dos cosas que
+    tienen truco:
+
+      - **Leer DATA saca de la cola.** Es el unico registro del repositorio con
+        efecto secundario, y por eso existe `PEEK`, que devuelve lo mismo sin
+        sacarlo.
+      - **Nada bloquea.** Leer DATA con la cola vacia devuelve cero, y escribir
+        con la de salida llena pierde el byte. En la FPGA no puede ser de otra
+        forma: un acceso MMIO se resuelve en un ciclo, asi que un dispositivo
+        que esperase colgaria el bus. Un programa que no mire `STATUS` antes se
+        comporta igual aqui que en la placa, que es justo lo que se quiere de
+        un simulador.
+
+    Lo que aqui NO hay es tiempo: en la placa los bytes llegan cuando el PC
+    manda un paquete, y aqui estan desde el principio. Para un programa de
+    peticion-respuesta da igual --lee lo que hay, contesta, vuelve a esperar--
+    y por eso el flujo de bytes se puede comparar con el de la placa. Para un
+    programa que dependa de CUANDO llega cada byte, no.
+    """
+
+    BASE = 0x8000_0200
+    SIZE = 256
+
+    DATA = 0x00
+    STATUS = 0x04
+    PEEK = 0x08
+
+    def __init__(self, depth: int = 64, stdin: bytes = b""):
+        self.depth = depth
+        self.rx = bytearray(stdin[:depth * 1000])   # lo que el PC ha mandado
+        self.tx = bytearray()                       # lo que la CPU ha escrito
+        self.overrun = False
+
+    def contains(self, address: int) -> bool:
+        return self.BASE <= address < self.BASE + self.SIZE
+
+    def push(self, data: bytes) -> int:
+        """Mete lo que quepa, como hace SEND_BYTES; devuelve cuantos entraron."""
+        free = self.depth - len(self.rx)
+        accepted = min(free, len(data))
+        self.rx += data[:accepted]
+        if accepted < len(data):
+            self.overrun = True
+        return accepted
+
+    def pop(self, maximum: int = 255) -> bytes:
+        """Saca de la cola de salida, como hace RECV_BYTES."""
+        count = min(maximum, len(self.tx))
+        out = bytes(self.tx[:count])
+        del self.tx[:count]
+        return out
+
+    def read(self, offset: int) -> int:
+        if offset == self.DATA:
+            if not self.rx:
+                return 0
+            value = self.rx[0]
+            del self.rx[:1]
+            return value
+        if offset == self.PEEK:
+            return self.rx[0] if self.rx else 0
+        if offset == self.STATUS:
+            rx_count = min(len(self.rx), 0xFF)
+            tx_free = max(0, self.depth - len(self.tx))
+            return (int(self.overrun) << 16) | (tx_free << 8) | rx_count
+        return 0
+
+    def write(self, offset: int, value: int) -> None:
+        if offset == self.DATA:
+            if len(self.tx) < self.depth:
+                self.tx.append(value & 0xFF)
+            return
+        if offset == self.STATUS and (value >> 16) & 1:
+            self.overrun = False
+
+
 class CPU:
     """Estado y ejecución secuencial de una MiniCPU escalar."""
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
-                 video: "VideoDevice | None" = None):
+                 video: "VideoDevice | None" = None,
+                 serial: "SerialDevice | None" = None):
         self.regs = [0] * 32
         self.pc = 0
         self.memory = bytearray(memory_size)
@@ -231,6 +325,20 @@ class CPU:
         # Sin dispositivo de vídeo, 0x80000000 sigue siendo memoria fuera de
         # rango y da error, que es lo que hacían los casos de siempre.
         self.video = video
+        # Igual que el video: sin dispositivo, 0x80000200 sigue siendo memoria
+        # fuera de rango y da error.
+        self.serial = serial
+
+    def _device(self, address: int):
+        """Que dispositivo MMIO, si alguno, responde a esta direccion.
+
+        El reparto por ventanas es el de `mmio_decoder.v`: cada dispositivo
+        ocupa 256 bytes dentro de 0x80000000-0x80000FFF.
+        """
+        for device in (self.video, self.serial):
+            if device is not None and device.contains(address):
+                return device
+        return None
 
     def reset(self) -> None:
         """Reinicia PC, registros y contadores sin borrar la memoria."""
@@ -241,6 +349,18 @@ class CPU:
         self.error_code = ERROR_NONE
         self.error_pc = 0
         self.instructions_executed = 0
+
+    def set_register(self, index: int, value: int) -> None:
+        """Escribe un registro. R0 está cableado a cero y descarta la escritura.
+
+        Es el único sitio del simulador que escribe el banco, igual que en el
+        RTL la condición vive dentro de `register_file.v`. Las lecturas no se
+        tocan: como nadie escribe la entrada 0 y el reset la deja a cero, leer
+        R0 devuelve cero por construcción.
+        """
+        if index == 0:
+            return
+        self.regs[index] = value
 
     def load_program(self, data: bytes, address: int = 0) -> None:
         """Copia un binario alineado y coloca el PC en su dirección inicial."""
@@ -259,10 +379,11 @@ class CPU:
 
     def read_u32(self, address: int) -> int:
         """Lee una palabra little-endian alineada dentro de la memoria."""
-        if self.video is not None and self.video.contains(address):
+        device = self._device(address)
+        if device is not None:
             if address & 3:
                 raise RuntimeError(f"lectura no alineada: 0x{address:08X}")
-            return self.video.read(address - self.video.BASE)
+            return device.read(address - device.BASE)
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"lectura fuera de memoria: 0x{address:08X}")
         if address & 3:
@@ -271,10 +392,11 @@ class CPU:
 
     def write_u32(self, address: int, value: int) -> None:
         """Escribe los 32 bits bajos en una dirección alineada de memoria."""
-        if self.video is not None and self.video.contains(address):
+        device = self._device(address)
+        if device is not None:
             if address & 3:
                 raise RuntimeError(f"escritura no alineada: 0x{address:08X}")
-            self.video.write(address - self.video.BASE, u32(value))
+            device.write(address - device.BASE, u32(value))
             return
         if address < 0 or address + 4 > len(self.memory):
             raise RuntimeError(f"escritura fuera de memoria: 0x{address:08X}")
@@ -286,10 +408,10 @@ class CPU:
         """Lee 1 o 2 bytes little-endian. Las medias palabras exigen par."""
         if size == 2 and address & 1:
             raise RuntimeError(f"lectura no alineada: 0x{address:08X}")
-        if self.video is not None and self.video.contains(address):
-            # El espacio de vídeo son registros de 32 bits: no admite accesos
+        if self._device(address) is not None:
+            # El espacio MMIO son registros de 32 bits: no admite accesos
             # parciales, igual que el mmio_mux del hardware.
-            raise RuntimeError(f"acceso sub-palabra a vídeo: 0x{address:08X}")
+            raise RuntimeError(f"acceso sub-palabra a MMIO: 0x{address:08X}")
         if address < 0 or address + size > len(self.memory):
             raise RuntimeError(f"lectura fuera de memoria: 0x{address:08X}")
         return int.from_bytes(self.memory[address:address + size], "little")
@@ -298,8 +420,8 @@ class CPU:
         """Escribe los 8 o 16 bits bajos de 'value' sin tocar el resto."""
         if size == 2 and address & 1:
             raise RuntimeError(f"escritura no alineada: 0x{address:08X}")
-        if self.video is not None and self.video.contains(address):
-            raise RuntimeError(f"acceso sub-palabra a vídeo: 0x{address:08X}")
+        if self._device(address) is not None:
+            raise RuntimeError(f"acceso sub-palabra a MMIO: 0x{address:08X}")
         if address < 0 or address + size > len(self.memory):
             raise RuntimeError(f"escritura fuera de memoria: 0x{address:08X}")
         masked = value & ((1 << (8 * size)) - 1)
@@ -353,73 +475,70 @@ class CPU:
         elif opcode == 0x10:  # MOVI
             rd = (instr >> 21) & 0x1F
             imm16 = instr & 0xFFFF
-            self.regs[rd] = u32(sign_extend(imm16, 16))
+            self.set_register(rd, u32(sign_extend(imm16, 16)))
 
         elif opcode == 0x17:  # MOVHI
             rd = (instr >> 21) & 0x1F
             imm16 = instr & 0xFFFF
-            self.regs[rd] = u32(imm16 << 16)
+            self.set_register(rd, u32(imm16 << 16))
 
         elif opcode == 0x13:  # ORI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = instr & 0xFFFF
-            self.regs[rd] = u32(self.regs[ra] | imm16)
+            self.set_register(rd, u32(self.regs[ra] | imm16))
 
         elif opcode == 0x01:  # ADD
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            self.regs[rd] = u32(self.regs[ra] + self.regs[rb])
+            self.set_register(rd, u32(self.regs[ra] + self.regs[rb]))
 
         elif opcode == 0x11:  # ADDI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = sign_extend(instr & 0xFFFF, 16)
-            self.regs[rd] = u32(self.regs[ra] + imm16)
+            self.set_register(rd, u32(self.regs[ra] + imm16))
 
         elif opcode == 0x02:  # SUB
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            self.regs[rd] = u32(self.regs[ra] - self.regs[rb])
+            self.set_register(rd, u32(self.regs[ra] - self.regs[rb]))
 
         elif opcode == 0x04:  # AND
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            self.regs[rd] = self.regs[ra] & self.regs[rb]
+            self.set_register(rd, self.regs[ra] & self.regs[rb])
 
         elif opcode == 0x05:  # OR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            self.regs[rd] = self.regs[ra] | self.regs[rb]
+            self.set_register(rd, self.regs[ra] | self.regs[rb])
 
         elif opcode == 0x06:  # XOR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            self.regs[rd] = self.regs[ra] ^ self.regs[rb]
+            self.set_register(rd, self.regs[ra] ^ self.regs[rb])
 
-        elif opcode == 0x07:  # SHL
+        elif opcode in (0x07, 0x08, 0x09):  # SHL / SHR / SAR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            # MiniISA usa únicamente los cinco bits bajos de la cantidad.
-            self.regs[rd] = u32(self.regs[ra] << (self.regs[rb] & 0x1F))
-
-        elif opcode == 0x08:  # SHR
-            rd = (instr >> 21) & 0x1F
-            ra = (instr >> 16) & 0x1F
-            rb = (instr >> 11) & 0x1F
-            self.regs[rd] = self.regs[ra] >> (self.regs[rb] & 0x1F)
-
-        elif opcode == 0x09:  # SAR
-            rd = (instr >> 21) & 0x1F
-            ra = (instr >> 16) & 0x1F
-            rb = (instr >> 11) & 0x1F
-            self.regs[rd] = u32(s32(self.regs[ra]) >> (self.regs[rb] & 0x1F))
+            # Opción B de propuesta-v0.2.md §4.2: el bit 10 dice que la cantidad
+            # es inmediata y viaja en el propio campo Rb. MiniISA usa siempre
+            # cinco bits de cantidad, así que con inmediato el campo entra tal
+            # cual y con registro se enmascara.
+            amount = rb if (instr >> 10) & 1 else self.regs[rb] & 0x1F
+            if opcode == 0x07:
+                self.set_register(rd, u32(self.regs[ra] << amount))
+            elif opcode == 0x08:
+                self.set_register(rd, self.regs[ra] >> amount)
+            else:
+                self.set_register(rd, u32(s32(self.regs[ra]) >> amount))
 
         elif opcode == 0x0A:  # MUL
             rd = (instr >> 21) & 0x1F
@@ -427,7 +546,7 @@ class CPU:
             rb = (instr >> 11) & 0x1F
 
             # Producto 32 x 32; conservamos los 32 bits bajos.
-            self.regs[rd] = u32(self.regs[ra] * self.regs[rb])
+            self.set_register(rd, u32(self.regs[ra] * self.regs[rb]))
 
         elif opcode == 0x03:  # MULFX signed Q16.16
             rd = (instr >> 21) & 0x1F
@@ -437,32 +556,56 @@ class CPU:
             # Q16.16 x Q16.16 produce Q32.32. El desplazamiento aritmético
             # restaura la escala Q16.16 antes del wrap final a 32 bits.
             product = s32(self.regs[ra]) * s32(self.regs[rb])
-            self.regs[rd] = u32(product >> 16)
+            self.set_register(rd, u32(product >> 16))
 
-        elif opcode == 0x0C:  # DIV signed
+        elif opcode == 0x0B:  # MULHI, parte alta SIGNED
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
 
-            dividend = s32(self.regs[ra])
-            divisor = s32(self.regs[rb])
+            # Decisión documentada en 1.isa/isa.md §3: MULHI es con signo, como
+            # MULH de RISC-V. `MUL` da los 32 bits bajos y `MULHI` los altos del
+            # MISMO producto signed de 64 bits.
+            product = s32(self.regs[ra]) * s32(self.regs[rb])
+            self.set_register(rd, u32(product >> 32))
+
+        elif opcode in (0x0C, 0x0D, 0x0E, 0x0F):  # DIV / DIVU / REM / REMU
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+
+            is_signed = opcode in (0x0C, 0x0E)
+            dividend = s32(self.regs[ra]) if is_signed else self.regs[ra]
+            divisor = s32(self.regs[rb]) if is_signed else self.regs[rb]
             if divisor == 0:
                 self.stop_with_error(ERROR_DIVISION_BY_ZERO, instr_pc)
                 return
-            self.regs[rd] = u32(signed_divide(dividend, divisor))
+
+            if opcode in (0x0C, 0x0D):
+                quotient = (signed_divide(dividend, divisor) if is_signed
+                            else dividend // divisor)
+                self.set_register(rd, u32(quotient))
+            else:
+                # El resto acompaña a una división truncada hacia cero, así que
+                # toma el signo del DIVIDENDO: rem = a - (a/b)*b.
+                if is_signed:
+                    remainder = dividend - signed_divide(dividend, divisor) * divisor
+                else:
+                    remainder = dividend % divisor
+                self.set_register(rd, u32(remainder))
 
         elif opcode == 0x12:  # ANDI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             # Los inmediatos lógicos se extienden con ceros, no con signo.
             imm16 = instr & 0xFFFF
-            self.regs[rd] = self.regs[ra] & imm16
+            self.set_register(rd, self.regs[ra] & imm16)
 
         elif opcode == 0x14:  # XORI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = instr & 0xFFFF
-            self.regs[rd] = self.regs[ra] ^ imm16
+            self.set_register(rd, self.regs[ra] ^ imm16)
 
         elif opcode == 0x15:  # LOAD
             rd = (instr >> 21) & 0x1F
@@ -471,7 +614,7 @@ class CPU:
 
             address = u32(self.regs[ra] + imm16)
             try:
-                self.regs[rd] = self.read_u32(address)
+                self.set_register(rd, self.read_u32(address))
             except RuntimeError:
                 self.stop_with_error(ERROR_MEMORY_ACCESS, instr_pc)
                 return
@@ -502,7 +645,7 @@ class CPU:
             except RuntimeError:
                 self.stop_with_error(ERROR_MEMORY_ACCESS, instr_pc)
                 return
-            self.regs[rd] = u32(sign_extend(raw, 8 * size)) if is_signed else raw
+            self.set_register(rd, u32(sign_extend(raw, 8 * size)) if is_signed else raw)
 
         elif opcode in (0x1A, 0x1D):  # STOREB / STOREH
             # Como en STORE, el campo Rd contiene el registro fuente.
@@ -560,6 +703,32 @@ class CPU:
             if self.regs[ra] >= self.regs[rb]:
                 self.pc = u32(self.pc + (imm16 << 2))
 
+        elif opcode == 0x2C:  # JAL
+            # El enlace es PC+4, que ya está en self.pc: el fetch lo adelantó.
+            # El offset, como el de los branches, cuenta palabras.
+            rd = (instr >> 21) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            link = self.pc
+            self.pc = u32(self.pc + (imm16 << 2))
+            self.set_register(rd, link)
+
+        elif opcode == 0x2D:  # JALR
+            # El destino sale de un registro, así que puede venir desalineado.
+            # Se descartan los dos bits bajos, igual que hace el RTL: no hay
+            # ruta de error para esto.
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            link = self.pc
+            self.pc = u32(self.regs[ra] + (imm16 << 2)) & ~3
+            self.set_register(rd, link)
+
+        elif opcode == 0x2E:  # JR
+            # Sin enlace. R0 sigue siendo un registro general en esta ISA, así
+            # que JR no puede ser el alias `JALR R0, Ra, 0` que propone v0.3.
+            ra = (instr >> 16) & 0x1F
+            self.pc = u32(self.regs[ra]) & ~3
+
         elif opcode == 0x2F:  # BRA
             # BRA dispone de un offset signed de 26 bits porque no usa
             # registros. El offset también está expresado en instrucciones.
@@ -569,7 +738,7 @@ class CPU:
         elif opcode == 0x30:  # GETTID
             rd = (instr >> 21) & 0x1F
             # La MiniCPU es escalar; el ID solo variará en la futura MiniGPU.
-            self.regs[rd] = 0
+            self.set_register(rd, 0)
 
         elif opcode == 0x3F:  # HALT
             self.halted = True
