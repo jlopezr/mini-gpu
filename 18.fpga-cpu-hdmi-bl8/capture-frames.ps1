@@ -134,7 +134,11 @@ for ($n = 0; $n -lt $Frames; $n++) {
                 $swap, $front, $swaps, $under, $fichero)
 
     if ($status -band 1) {
-        Write-Warning "underflow en el frame $swap: la imagen capturada puede estar rota"
+        # ${swap} y no $swap: los dos puntos que siguen los tomaria PowerShell
+        # como el separador de ambito de una variable ("$global:x") y el script
+        # entero deja de compilar, asi que este script NUNCA ha llegado a
+        # ejecutarse desde que se anadio esta linea.
+        Write-Warning "underflow en el frame ${swap}: la imagen capturada puede estar rota"
     }
 }
 

@@ -103,23 +103,37 @@ module cpu_burst_system_tb;
   wire wb_dirty;
   wire [31:0] wb_merges, wb_flushes;
 
-  // Registros de video reducidos a lo imprescindible: este banco solo necesita
-  // que la ventana responda, no el swap sincronizado, que ya cubre
-  // video_registers_tb.v.
-  reg [31:0] mmio_regs[0:3];
-  wire [31:0] mmio_read_data = mmio_regs[mmio_address[3:2]];
-  always @(posedge clk) begin
-    if (reset) begin
-      mmio_regs[0] <= 32'h0100_0000;
-      mmio_regs[1] <= 32'h0102_5800;
-      mmio_regs[2] <= 32'd0;
-      mmio_regs[3] <= 32'd0;
-    end else if (mmio_select && mmio_write) begin
-      for (i = 0; i < 4; i = i + 1)
-        if (mmio_write_mask[i])
-          mmio_regs[mmio_address[4:2]][i*8 +: 8] <= mmio_write_data[i*8 +: 8];
-    end
-  end
+  /*
+   * El `video_registers` de verdad, no un sustituto.
+   *
+   * Aqui habia ocho registros de mentira, y tenian el fallo que tiene siempre
+   * un sustituto que nadie prueba: leian con `mmio_address[3:2]` --dos bits--
+   * y escribian con `mmio_address[4:2]` --tres-- sobre un array de CUATRO.
+   * Resultado: la mitad alta de la ventana quedaba aliasada al leer, y las
+   * escrituras a `0x10` (SWAP_COUNT) y `0x14` (HALT_AT) se perdian sin ruido.
+   *
+   * Un banco de SISTEMA tiene que ejercitar el decodificador del hardware; si
+   * no, prueba un mapa que no existe.
+   *
+   * No hay subsistema de video aqui --lo cubre video_burst_tb.v-- asi que
+   * `fill_start`/`fill_first` se quedan a cero: ningun intercambio se aplica y
+   * `swap_pending` sigue levantado despues de pedirlo, que es lo que comprueba
+   * el paso 5.
+   */
+  wire [23:0] fb_base_unused;
+  wire [31:0] debug_front, debug_back;
+  wire underflow_clear_unused, video_halt_request;
+  wire [31:0] mmio_read_data;
+
+  video_registers registers_i (
+      .clk(clk), .reset(reset),
+      .select(mmio_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address),
+      .write_data(mmio_write_data), .read_data(mmio_read_data),
+      .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base_unused),
+      .underflow_pix(1'b0), .underflow_clear(underflow_clear_unused),
+      .halt_request(video_halt_request),
+      .debug_front(debug_front), .debug_back(debug_back));
 
   // -- SDRAM ----------------------------------------------------------------
   wire s_req_valid, s_req_ready, s_req_write, s_done;

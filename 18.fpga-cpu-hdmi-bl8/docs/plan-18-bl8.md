@@ -8,11 +8,11 @@ buscarlo.
 
 ## El encargo en una frase
 
-Crear `18.fpga-cpu-hdmi-bl8` como copia de [`16.fpga-cpu-hdmi`](16.fpga-cpu-hdmi)
+Crear `18.fpga-cpu-hdmi-bl8` como copia de [`16.fpga-cpu-hdmi`](../../16.fpga-cpu-hdmi)
 y sustituir su camino de memoria por uno de ráfagas BL8, de modo que la CPU
 dibuje bastante más rápido sin que el vídeo se rompa.
 
-Es el punto 0 del [`TODO.md`](TODO.md) del repositorio: «Que la CPU no esté tanto
+Es el punto 0 del [`TODO.md`](../../TODO.md) del repositorio: «Que la CPU no esté tanto
 esperando a la SDRAM. Usar BL8».
 
 ## Cómo funciona este repositorio
@@ -55,7 +55,7 @@ sincronizado con el vblank.
 | Bancos de prueba | 9, todos en verde |
 | Suite de CPU en placa | 12 de 12 |
 
-Lee su [`README.md`](16.fpga-cpu-hdmi/README.md) entero antes de tocar nada, y en
+Lee su [`README.md`](../../16.fpga-cpu-hdmi/README.md) entero antes de tocar nada, y en
 particular `docs/timing.md`.
 
 ## El problema, medido
@@ -86,7 +86,7 @@ Resultados: 5 120 palabras en 13,2 ms, y 38 400 en 96,6 ms. Eso da **258 y 252
 ciclos por palabra** respectivamente —dos medidas independientes que coinciden al
 2 %—, o sea **~26 ciclos por acceso de 16 bits**.
 
-La comparación que señala al culpable: en [`6.fpga-cpu`](6.fpga-cpu), que ejecuta
+La comparación que señala al culpable: en [`6.fpga-cpu`](../../6.fpga-cpu), que ejecuta
 desde EBR, una instrucción ordinaria cuesta **9 ciclos**. En la 16 cuesta **~64**.
 Los 55 de diferencia son memoria.
 
@@ -104,7 +104,7 @@ la palabra contigua.
 
 ## Lo que ya existe y no hay que escribir
 
-En [`pruebas/sdram`](pruebas/sdram) hay tres ficheros, unos 48 KB de Verilog, que
+En [`pruebas/sdram`](../../pruebas/sdram) hay tres ficheros, unos 48 KB de Verilog, que
 el README de esa carpeta no menciona. **Están sin verificar: no hay ni un banco
 de pruebas en toda la carpeta.** Trátalos como un borrador serio, no como código
 de producción.

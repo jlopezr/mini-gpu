@@ -68,7 +68,27 @@ module mmio_mux (
       address <= 5'h00;
       write_data <= 32'h0000_0000;
     end else if (!busy) begin
-      if (a_req) begin
+      /*
+       * `&& !a_ack` / `&& !b_ack` NO es defensa por si acaso: sin eso, cada
+       * acceso MMIO se ejecuta DOS VECES.
+       *
+       * El contrato con el cliente es de nivel: mantiene `req` hasta ver su
+       * `ack`. El `ack` se levanta al final del ciclo de concesion, o sea que
+       * el cliente lo ve un ciclo despues y baja `req` al siguiente. En ese
+       * ciclo intermedio `busy` ya ha vuelto a cero y `req` sigue alto, asi que
+       * el arbitro concedia otra vez la misma peticion.
+       *
+       * Aqui NO SE NOTA, y por eso estuvo tanto tiempo sin verse: los seis
+       * registros de video son idempotentes. Escribir FB_BACK dos veces deja lo
+       * mismo, y pedir SWAP dos veces es un solo intercambio pendiente. Lo
+       * delato el puerto serie de la 19, cuyo registro DATA saca un byte de una
+       * cola al leerlo: un LOAD se comia dos caracteres.
+       *
+       * Se arregla aqui tambien porque el fallo es de este modulo, no de aquel
+       * dispositivo, y porque cualquier registro MMIO con efecto secundario que
+       * se anada a esta carpeta se lo encontraria.
+       */
+      if (a_req && !a_ack) begin
         select <= 1'b1;
         write <= a_write;
         write_mask <= a_write_mask;
@@ -76,7 +96,7 @@ module mmio_mux (
         write_data <= a_write_data;
         granted_a <= 1'b1;
         busy <= 1'b1;
-      end else if (b_req) begin
+      end else if (b_req && !b_ack) begin
         select <= 1'b1;
         write <= b_write;
         write_mask <= b_write_mask;
