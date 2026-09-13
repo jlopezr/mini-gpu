@@ -1,0 +1,1268 @@
+`default_nettype none
+
+/*
+ * Minimal multicyle MiniCPU v0.1.
+ *
+ * Implemented instructions:
+ *   NOP
+ *   MOVI Rd, imm16
+ *   ADD/SUB/AND/OR/XOR Rd, Ra, Rb
+ *   MUL/MULHI/MULFX Rd, Ra, Rb   (MULHI es la parte alta SIGNED)
+ *   DIV/DIVU/REM/REMU Rd, Ra, Rb (el resto lleva el signo del dividendo)
+ *   SHL/SHR/SAR Rd, Ra, Rb       (cantidad en Rb, o inmediata si extra[10])
+ *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
+ *   MOVHI Rd, imm16
+ *   LOAD Rd, Ra, imm16
+ *   STORE Rs, Ra, imm16
+ *   LOADB/LOADUB Rd, Ra, imm16   (8 bits, extension con signo / con ceros)
+ *   LOADH/LOADUH Rd, Ra, imm16   (16 bits, extension con signo / con ceros)
+ *   STOREB/STOREH Rs, Ra, imm16  (escribe Rs[7:0] / Rs[15:0])
+ *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
+ *   BRA offset
+ *   JAL Rd, offset16       (Rd = PC + 4; salto relativo en palabras)
+ *   JALR Rd, Ra, imm16     (Rd = PC + 4; salto a Ra + imm*4)
+ *   JR Ra                  (salto a Ra, sin enlace)
+ *   GETTID Rd (returns zero in MiniCPU)
+ *   HALT
+ *
+ * The CPU starts halted after reset. run_request starts continuous execution;
+ * step_request retires one instruction and stops again. halt_request is latched
+ * and honored only after the current instruction has retired.
+ */
+module cpu (
+    input clk,
+    input reset,
+
+    input run_request,
+    input halt_request,
+    input step_request,
+
+    output reg halted,
+    output reg error,
+    output reg [7:0] error_code,
+    output reg instruction_retired,
+
+    output reg imem_valid,
+    output reg [31:0] imem_address,
+    input [31:0] imem_read_data,
+    input imem_ready,
+
+    output reg dmem_valid,
+    output reg [31:0] dmem_address,
+    output reg [31:0] dmem_write_data,
+    output reg [3:0] dmem_write_enable,
+    input [31:0] dmem_read_data,
+    input dmem_ready,
+    input dmem_error,
+
+    input [4:0] debug_register_address,
+    output [31:0] debug_register_data,
+    output [31:0] debug_pc
+);
+
+  localparam [5:0] OPCODE_NOP = 6'h00;
+  localparam [5:0] OPCODE_ADD = 6'h01;
+  localparam [5:0] OPCODE_SUB = 6'h02;
+  localparam [5:0] OPCODE_MULFX = 6'h03;
+  localparam [5:0] OPCODE_AND = 6'h04;
+  localparam [5:0] OPCODE_OR = 6'h05;
+  localparam [5:0] OPCODE_XOR = 6'h06;
+  localparam [5:0] OPCODE_SHL = 6'h07;
+  localparam [5:0] OPCODE_SHR = 6'h08;
+  localparam [5:0] OPCODE_SAR = 6'h09;
+  localparam [5:0] OPCODE_MUL = 6'h0a;
+  // Las cuatro reservadas de la familia ALU, ya implementadas. MULHI es SIGNED:
+  // MUL da los 32 bits bajos y MULHI los altos del mismo producto signed de 64
+  // bits, como MULH de RISC-V. Ver 1.isa/isa.md §3 y docs/alu-extendida.md.
+  localparam [5:0] OPCODE_MULHI = 6'h0b;
+  localparam [5:0] OPCODE_DIV = 6'h0c;
+  localparam [5:0] OPCODE_DIVU = 6'h0d;
+  localparam [5:0] OPCODE_REM = 6'h0e;
+  localparam [5:0] OPCODE_REMU = 6'h0f;
+  localparam [5:0] OPCODE_MOVI = 6'h10;
+  localparam [5:0] OPCODE_ADDI = 6'h11;
+  localparam [5:0] OPCODE_ANDI = 6'h12;
+  localparam [5:0] OPCODE_ORI = 6'h13;
+  localparam [5:0] OPCODE_XORI = 6'h14;
+  localparam [5:0] OPCODE_LOAD = 6'h15;
+  localparam [5:0] OPCODE_STORE = 6'h16;
+  localparam [5:0] OPCODE_MOVHI = 6'h17;
+  // Accesos sub-palabra. El mapa de opcodes es el de 1.isa/propuesta-v0.2.md
+  // §7; v0.3 reordena 0x1A..0x1D, asi que al migrar habra que recodificar.
+  localparam [5:0] OPCODE_LOADB = 6'h18;
+  localparam [5:0] OPCODE_LOADUB = 6'h19;
+  localparam [5:0] OPCODE_STOREB = 6'h1a;
+  localparam [5:0] OPCODE_LOADH = 6'h1b;
+  localparam [5:0] OPCODE_LOADUH = 6'h1c;
+  localparam [5:0] OPCODE_STOREH = 6'h1d;
+  localparam [5:0] OPCODE_BEQ = 6'h20;
+  localparam [5:0] OPCODE_BNE = 6'h21;
+  localparam [5:0] OPCODE_BLT = 6'h22;
+  localparam [5:0] OPCODE_BGE = 6'h23;
+  localparam [5:0] OPCODE_BLTU = 6'h24;
+  localparam [5:0] OPCODE_BGEU = 6'h25;
+  // Llamadas y saltos indirectos. Mapa de 1.isa/propuesta-v0.2.md §3.2.
+  //
+  // `JR` (0x2E) queda OBSOLETO en esta version: con `R0` cableado a cero,
+  // `JR Ra` es exactamente `JALR R0, Ra, 0`. Se deja implementado porque
+  // quitarlo hoy rompe todo lo que usa `RET` sin ganar nada; su hueco es
+  // reclamable, no libre. Ver docs/registro-cero.md.
+  localparam [5:0] OPCODE_JAL = 6'h2c;
+  localparam [5:0] OPCODE_JALR = 6'h2d;
+  localparam [5:0] OPCODE_JR = 6'h2e;
+  localparam [5:0] OPCODE_BRA = 6'h2f;
+  localparam [5:0] OPCODE_GETTID = 6'h30;
+  localparam [5:0] OPCODE_TRAP = 6'h3e;
+  localparam [5:0] OPCODE_HALT = 6'h3f;
+
+  // Errors are terminal in this teaching CPU: there is no exception vector or
+  // resume operation. On error, PC is restored to the offending instruction
+  // so GET_STATUS provides a useful diagnostic without a separate error-PC
+  // register or a wider monitor protocol.
+  localparam [7:0] ERROR_NONE = 8'h00;
+  localparam [7:0] ERROR_INVALID_OPCODE = 8'h01;
+  localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
+  localparam [7:0] ERROR_EXPLICIT_TRAP = 8'h03;
+  localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
+  localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
+
+  localparam [4:0] STATE_HALTED = 5'd0;
+  localparam [4:0] STATE_FETCH_REQUEST = 5'd1;
+  localparam [4:0] STATE_FETCH_WAIT = 5'd2;
+  localparam [4:0] STATE_EXECUTE = 5'd3;
+  localparam [4:0] STATE_RETIRE = 5'd4;
+  localparam [4:0] STATE_MEMORY_WAIT = 5'd5;
+  localparam [4:0] STATE_DECODE = 5'd6;
+  localparam [4:0] STATE_SHIFT_STEP = 5'd7;
+  localparam [4:0] STATE_SHIFT_WRITE = 5'd8;
+  localparam [4:0] STATE_BRANCH_COMMIT = 5'd9;
+  localparam [4:0] STATE_BRANCH_COMPARE = 5'd10;
+  // Separate ALU calculation from register-file write-back at 120 MHz.
+  localparam [4:0] STATE_ALU_WRITE = 5'd11;
+  localparam [4:0] STATE_MUL_PRODUCTS = 5'd12;
+  localparam [4:0] STATE_MUL_CROSS = 5'd13;
+  localparam [4:0] STATE_MUL_COMBINE = 5'd14;
+  // Igual que STATE_ALU_WRITE, pero en el otro extremo: separa el arreglo de
+  // signo de la escritura del banco. Ver 6.fpga-cpu/timing.md.
+  localparam [4:0] STATE_MUL_SIGN = 5'd15;
+  localparam [4:0] STATE_MUL_WRITE = 5'd16;
+  localparam [4:0] STATE_DIV_STEP = 5'd17;
+  // Correccion de signo de MULHI. Existe como estado propio por la misma razon
+  // que STATE_MUL_SIGN: es una suma de 32 bits y no debe compartir ciclo con la
+  // resta que la consume. Ver docs/alu-extendida.md.
+  localparam [4:0] STATE_MULHI_FIX = 5'd18;
+
+  /*
+   * Que resultado se escribe al final del camino compartido multiplicador /
+   * divisor. Sustituye a los antiguos `multiply_fixed` y `divide_write_pending`,
+   * que solo distinguian tres casos y ahora son siete.
+   */
+  localparam [2:0] RESULT_MUL = 3'd0;
+  localparam [2:0] RESULT_MULFX = 3'd1;
+  localparam [2:0] RESULT_MULHI = 3'd2;
+  localparam [2:0] RESULT_DIV = 3'd3;
+  localparam [2:0] RESULT_DIVU = 3'd4;
+  localparam [2:0] RESULT_REM = 3'd5;
+  localparam [2:0] RESULT_REMU = 3'd6;
+
+  /*
+   * ==========================================================================
+   * Etiqueta del medio resultado (camino rapido de MULHI, REM y REMU)
+   * ==========================================================================
+   *
+   * El multiplicador construye el producto unsigned de 64 bits entero y el
+   * divisor mantiene el resto; de cada operacion se tira la mitad que no se
+   * pide. Un `MULHI` inmediatamente detras de su `MUL`, o un `REM` detras de su
+   * `DIV`, pueden leer esa mitad en vez de rehacer el trabajo --32 ciclos en el
+   * caso del divisor--.
+   *
+   * La condicion de acierto es ESTRICTAMENTE «la instruccion inmediatamente
+   * anterior». Es lo que hace barata la idea: sin instruccion intermedia nada
+   * puede haber cambiado los operandos, asi que basta comparar NUMEROS de
+   * registro de 5 bits en vez de valores de 32. Son trece flops --2 x 5 de
+   * registro, 2 de tipo y 1 de valido-- y comparadores de 5 bits, que es lo que
+   * importa para el Fmax.
+   *
+   * Reglas:
+   *   - Se arma al COMPLETAR un MUL, un DIV o un DIVU (en STATE_MUL_WRITE), no
+   *     al empezarlo: una division por cero aborta antes y no deja etiqueta.
+   *   - No se arma si `rd == ra` o `rd == rb`: la propia operacion pisaria una
+   *     de sus fuentes y la etiqueta mentiria.
+   *   - Se etiqueta con los registros DE LA INSTRUCCION, no con lo que entra al
+   *     operador: MULFX y DIV pasan el valor absoluto y guardan el signo aparte.
+   *   - Se invalida en cualquier otra instruccion, en reset y en RESET_CPU.
+   *   - Al fallar se recalcula. Nunca se devuelve un valor rancio.
+   *
+   * Es INVISIBLE para la arquitectura: acierto y fallo dan exactamente el mismo
+   * numero y solo cambia el numero de ciclos. Poner ALU_FAST_PATH a cero
+   * desarma el camino rapido y no debe cambiar ni un resultado, solo los
+   * ciclos; los testbenches lo usan para comprobarlo.
+   */
+  parameter ALU_FAST_PATH = 1'b1;
+
+  localparam [1:0] TAG_NONE = 2'd0;
+  localparam [1:0] TAG_MUL = 2'd1;
+  localparam [1:0] TAG_DIV = 2'd2;
+  localparam [1:0] TAG_DIVU = 2'd3;
+
+  reg alu_tag_valid;
+  reg [1:0] alu_tag_kind;
+  reg [4:0] alu_tag_ra;
+  reg [4:0] alu_tag_rb;
+
+  // Diecinueve estados: cuatro bits ya no llegan.
+  reg [4:0] state;
+  reg [31:0] pc;
+  reg [31:0] instruction;
+  reg step_active;
+  reg halt_pending;
+  reg halt_after_retire;
+  reg load_pending;
+  reg [4:0] load_destination;
+  // Tamano del acceso en vuelo: 0 = byte, 1 = media palabra, 2 = palabra.
+  reg [1:0] load_size;
+  reg load_signed;
+  reg [31:0] operand_a;
+  reg [31:0] operand_b;
+  reg [31:0] shift_result;
+  reg [4:0] shift_destination;
+  reg [4:0] shift_remaining;
+  reg [1:0] shift_kind;
+  reg branch_taken;
+
+  /*
+   * Las paradas por error tienen que dejar el PC apuntando a la instruccion
+   * culpable, no a la siguiente, porque el fetch ya lo habia avanzado. Hacer
+   * ahi mismo `pc <= pc - 4` metia el decodificador de opcode entero dentro
+   * del cono de datos del PC: el camino critico del diseno pasaba de
+   * `instruction`, por la decodificacion, hasta `pc`, con ocho niveles de LUT.
+   *
+   * En lugar de eso se marca la intencion y la resta se hace al entrar en
+   * STATE_HALTED, que es adonde van las cuatro rutas de error sin excepcion.
+   * El PC queda igual de correcto: `halted` se levanta en el mismo ciclo que
+   * la marca, y el monitor no puede leer el PC hasta muchos ciclos despues.
+   * Y si llega un `run_request` en ese mismo ciclo, la correccion y la salida
+   * ocurren en el mismo flanco, asi que el fetch siguiente ya ve el PC bueno.
+   */
+  reg pc_restore;
+  reg [31:0] branch_target;
+  reg [32:0] branch_difference;
+  reg branch_a_sign;
+  reg branch_b_sign;
+  reg [2:0] branch_kind;
+  reg [4:0] alu_destination;
+  reg [31:0] alu_result;
+  reg [31:0] multiply_low_product;
+  reg [31:0] multiply_low_high_product;
+  reg [31:0] multiply_high_low_product;
+  reg [31:0] multiply_high_high_product;
+  reg [32:0] multiply_cross_sum;
+  reg [31:0] multiply_operand_a;
+  reg [31:0] multiply_operand_b;
+  reg multiply_negative;
+  reg multiply_roundup;
+  reg [63:0] multiply_unsigned_product;
+  /*
+   * Correccion de signo de MULHI. El multiplicador da el producto UNSIGNED de
+   * 64 bits; el alto signed es
+   *
+   *     high_signed = high_unsigned - (a[31] ? b : 0) - (b[31] ? a : 0)
+   *
+   * con `a` y `b` los operandos originales. Aqui se acumulan los dos terminos
+   * en una suma y en STATE_MUL_SIGN se resta una sola vez.
+   */
+  reg [31:0] mulhi_correction;
+  // Que operacion esta en vuelo por el camino multiplicador/divisor, y donde
+  // escribe. Sustituyen a `multiply_destination`, `divide_destination`,
+  // `multiply_fixed` y `divide_write_pending`.
+  reg [2:0] result_kind;
+  reg [4:0] result_destination;
+  reg divide_by_zero;
+  reg [31:0] divide_dividend;
+  reg [31:0] divide_divisor;
+  reg [31:0] divide_quotient;
+  reg [31:0] divide_remainder;
+  reg [5:0] divide_count;
+  // Signo del COCIENTE (a[31] ^ b[31]) y signo del DIVIDENDO (a[31]). El resto
+  // de una division truncada hacia cero lleva el signo del dividendo, no el del
+  // cociente, asi que REM necesita el segundo y no le vale el primero.
+  reg divide_negative;
+  reg divide_dividend_negative;
+  // Resultado ya con su signo, a la espera de escribirse. Ver STATE_MUL_SIGN.
+  reg [31:0] multiply_writeback;
+  reg [4:0] multiply_writeback_destination;
+
+  wire [31:0] divide_shifted_remainder =
+      {divide_remainder[30:0], divide_dividend[31]};
+  wire [31:0] divide_remainder_difference =
+      divide_shifted_remainder - divide_divisor;
+  wire [31:0] divide_next_quotient =
+      {divide_quotient[30:0], divide_shifted_remainder >= divide_divisor};
+
+  wire [5:0] opcode = instruction[31:26];
+  wire [4:0] rd = instruction[25:21];
+  wire [4:0] ra = instruction[20:16];
+  wire [4:0] rb = instruction[15:11];
+  wire [31:0] immediate_signed = {{16{instruction[15]}}, instruction[15:0]};
+  wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
+
+  /*
+   * Cantidad de desplazamiento. Opcion B de 1.isa/propuesta-v0.2.md §4.2: sin
+   * opcodes nuevos, el bit 10 de `extra` dice «la cantidad es inmediata» y la
+   * cantidad viaja en los cinco bits del campo Rb, que ya era el sitio donde
+   * estaba con registro.
+   *
+   *   31       26 25   21 20   16 15   11 10  9         0
+   *   [ opcode ][  Rd  ][  Ra  ][Rb/imm][ I ][    0     ]
+   *
+   * `operand_b` vale lo que el banco devolvio leyendo el registro numero `rb`,
+   * que con modo inmediato no significa nada; por eso el mux esta aqui y no en
+   * la seleccion de puertos de lectura del banco, que se decide en el fetch y
+   * es camino critico.
+   */
+  wire shift_immediate = instruction[10];
+  wire [4:0] shift_amount = shift_immediate ? rb : operand_b[4:0];
+
+  /*
+   * Acierto de la etiqueta del medio resultado. Comparadores de 5 bits.
+   *
+   * `ra` y `rb` son los campos de la instruccion EN CURSO --la que pregunta--,
+   * y `alu_tag_*` los de la anterior. Los cruces de tipo (REM detras de un MUL,
+   * REMU detras de un DIV signed, MULHI detras de un DIV) fallan por
+   * construccion, que es lo que se quiere: la mitad guardada no es la que hace
+   * falta.
+   */
+  wire alu_tag_match = ALU_FAST_PATH && alu_tag_valid &&
+                       (alu_tag_ra == ra) && (alu_tag_rb == rb);
+  wire mulhi_fast = alu_tag_match && (alu_tag_kind == TAG_MUL);
+  wire rem_fast = alu_tag_match && (alu_tag_kind == TAG_DIV);
+  wire remu_fast = alu_tag_match && (alu_tag_kind == TAG_DIVU);
+
+  // Que etiqueta deja esta operacion al retirarse, si es que deja alguna.
+  reg [1:0] result_tag_kind;
+  always @* begin
+    case (result_kind)
+      RESULT_MUL:  result_tag_kind = TAG_MUL;
+      RESULT_DIV:  result_tag_kind = TAG_DIV;
+      RESULT_DIVU: result_tag_kind = TAG_DIVU;
+      default:     result_tag_kind = TAG_NONE;
+    endcase
+  end
+
+  /*
+   * Tamano y signo del acceso a memoria, derivados del opcode. Las seis
+   * instrucciones sub-palabra comparten el camino de LOAD/STORE: lo unico que
+   * cambia es cuantos bytes se tocan, donde caen dentro de la palabra y como se
+   * extiende el resultado. Ver docs/accesos-sub-palabra.md.
+   */
+  reg [1:0] access_size;
+  reg access_signed;
+  always @* begin
+    case (opcode)
+      OPCODE_LOADB:  begin access_size = 2'd0; access_signed = 1'b1; end
+      OPCODE_LOADUB: begin access_size = 2'd0; access_signed = 1'b0; end
+      OPCODE_STOREB: begin access_size = 2'd0; access_signed = 1'b0; end
+      OPCODE_LOADH:  begin access_size = 2'd1; access_signed = 1'b1; end
+      OPCODE_LOADUH: begin access_size = 2'd1; access_signed = 1'b0; end
+      OPCODE_STOREH: begin access_size = 2'd1; access_signed = 1'b0; end
+      default:       begin access_size = 2'd2; access_signed = 1'b0; end
+    endcase
+  end
+
+  wire [31:0] effective_address = operand_a + immediate_signed;
+
+  /*
+   * Desplazamiento de salto: el inmediato de 16 bits cuenta palabras, como todo
+   * el control de flujo de esta ISA, asi que se extiende con signo y se
+   * multiplica por cuatro. Es el mismo campo que usan los branches
+   * condicionales, con lo que `JAL` alcanza +-32768 palabras (+-128 KiB).
+   */
+  wire [31:0] jump_offset = {{14{instruction[15]}}, instruction[15:0], 2'b00};
+
+  // Las tres escrituras toman el dato del campo Rd, no de Rb. Ver el comentario
+  // de STATE_FETCH_WAIT sobre la seleccion del segundo operando.
+  wire [5:0] fetch_opcode = imem_read_data[31:26];
+  wire fetch_is_store = (fetch_opcode == OPCODE_STORE) ||
+                        (fetch_opcode == OPCODE_STOREB) ||
+                        (fetch_opcode == OPCODE_STOREH);
+
+  /*
+   * La alineacion se comprueba aqui y no en el adaptador porque solo la CPU
+   * conoce el tamano del acceso. El adaptador exigia direccion multiplo de
+   * cuatro para cualquier peticion; ahora acepta cualquier byte del rango SDRAM
+   * y es este trap el que impide que llegue una palabra desalineada.
+   */
+  wire address_misaligned =
+      (access_size == 2'd2) ? (effective_address[1:0] != 2'b00) :
+      (access_size == 2'd1) ? (effective_address[0] != 1'b0) : 1'b0;
+
+  /*
+   * El dato de escritura se replica en las cuatro posiciones de la palabra y es
+   * la mascara de byte la que elige cual vale. Asi el adaptador, el fabric y el
+   * controlador SDRAM siguen viendo una escritura de palabra con `wmask`, que ya
+   * sabian manejar, y no hay que ensanchar ninguna interfaz.
+   */
+  reg [31:0] store_data;
+  reg [3:0] store_mask;
+  always @* begin
+    case (access_size)
+      2'd0: begin
+        store_data = {4{operand_b[7:0]}};
+        store_mask = 4'b0001 << effective_address[1:0];
+      end
+      2'd1: begin
+        store_data = {2{operand_b[15:0]}};
+        store_mask = effective_address[1] ? 4'b1100 : 4'b0011;
+      end
+      default: begin
+        store_data = operand_b;
+        store_mask = 4'b1111;
+      end
+    endcase
+  end
+
+  /*
+   * Extraccion del dato leido. La memoria devuelve la palabra que contiene el
+   * byte pedido; el desplazamiento sale de los dos bits bajos de la direccion,
+   * que siguen en `dmem_address` mientras dura STATE_MEMORY_WAIT.
+   *
+   * El mux va escrito como un case de cuatro ramas y no como el part-select
+   * variable `dmem_read_data[{dmem_address[1:0],3'b000}+:8]`, que es lo mismo
+   * pero que yosys expande a un mux de 32:1 --el indice tiene cinco bits
+   * aunque solo varien dos-- y sale mas caro y mas profundo.
+   */
+  reg [7:0] load_byte;
+  always @* begin
+    case (dmem_address[1:0])
+      2'd0: load_byte = dmem_read_data[7:0];
+      2'd1: load_byte = dmem_read_data[15:8];
+      2'd2: load_byte = dmem_read_data[23:16];
+      default: load_byte = dmem_read_data[31:24];
+    endcase
+  end
+  wire [15:0] load_half =
+      dmem_address[1] ? dmem_read_data[31:16] : dmem_read_data[15:0];
+  reg [31:0] load_extended;
+  always @* begin
+    case (load_size)
+      2'd0:
+        load_extended =
+            load_signed ? {{24{load_byte[7]}}, load_byte} : {24'd0, load_byte};
+      2'd1:
+        load_extended =
+            load_signed ? {{16{load_half[15]}}, load_half} : {16'd0, load_half};
+      default: load_extended = dmem_read_data;
+    endcase
+  end
+
+  // Validate the reserved fields combinationally, then register the result in
+  // STATE_DECODE. The register keeps validation logic out of the execute-state
+  // control path and was necessary to retain timing closure at 120 MHz.
+  reg instruction_encoding_valid;
+  reg instruction_encoding_valid_registered;
+  always @* begin
+    instruction_encoding_valid = 1'b1;
+    case (opcode)
+      OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
+        instruction_encoding_valid = instruction[25:0] == 0;
+      OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
+      OPCODE_MUL, OPCODE_MULHI, OPCODE_DIV, OPCODE_DIVU, OPCODE_REM,
+      OPCODE_REMU:
+        instruction_encoding_valid = instruction[10:0] == 0;
+      /*
+       * Para los tres desplazamientos el bit 10 ya NO es reservado: dice que la
+       * cantidad es inmediata. El campo que debe valer cero es `extra[9:0]`.
+       * Es la contrapartida de la opcion B de propuesta-v0.2.md §4.2, y la
+       * unica irregularidad del decodificador de encoding.
+       */
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:
+        instruction_encoding_valid = instruction[9:0] == 0;
+      OPCODE_MOVI, OPCODE_MOVHI:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_GETTID:
+        instruction_encoding_valid = instruction[20:0] == 0;
+      // JAL no tiene registro fuente y JR no tiene ni destino ni inmediato.
+      OPCODE_JAL:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_JR:
+        instruction_encoding_valid = instruction[25:21] == 0 &&
+                                     instruction[15:0] == 0;
+      default: instruction_encoding_valid = 1'b1;
+    endcase
+  end
+
+  wire [31:0] register_a;
+  wire [31:0] register_b;
+
+  /*
+   * STORE takes its source from the Rd field, whereas register-register ALU
+   * instructions take their second operand from Rb. Registering this selection
+   * during fetch keeps opcode decoding out of the register-file read path.
+   * See timing.md, "Selección del segundo operando".
+   */
+  reg [4:0] register_a_address;
+  reg [4:0] register_b_address;
+  reg register_write_enable;
+  reg [4:0] register_write_address;
+  reg [31:0] register_write_data;
+
+  assign debug_pc = pc;
+
+  register_file register_file_i (
+      .clk(clk),
+      .reset(reset),
+      .read_address_a(register_a_address),
+      .read_data_a(register_a),
+      .read_address_b(register_b_address),
+      .read_data_b(register_b),
+      .write_enable(register_write_enable),
+      .write_address(register_write_address),
+      .write_data(register_write_data),
+      .debug_address(debug_register_address),
+      .debug_data(debug_register_data)
+  );
+
+  always @(posedge clk) begin
+    register_write_enable <= 1'b0;
+    instruction_retired <= 1'b0;
+
+    if (reset) begin
+      state <= STATE_HALTED;
+      pc <= 32'h0000_0000;
+      instruction <= 32'h0000_0000;
+      step_active <= 1'b0;
+      halt_pending <= 1'b0;
+      halt_after_retire <= 1'b0;
+      halted <= 1'b1;
+      error <= 1'b0;
+      error_code <= ERROR_NONE;
+      imem_valid <= 1'b0;
+      imem_address <= 32'h0000_0000;
+      dmem_valid <= 1'b0;
+      dmem_address <= 32'h0000_0000;
+      dmem_write_data <= 32'h0000_0000;
+      dmem_write_enable <= 4'b0000;
+      load_pending <= 1'b0;
+      load_destination <= 5'd0;
+      load_size <= 2'd2;
+      load_signed <= 1'b0;
+      operand_a <= 32'h0000_0000;
+      operand_b <= 32'h0000_0000;
+      shift_result <= 32'h0000_0000;
+      shift_destination <= 5'd0;
+      shift_remaining <= 5'd0;
+      shift_kind <= 2'd0;
+      branch_taken <= 1'b0;
+      pc_restore <= 1'b0;
+      branch_target <= 32'h0000_0000;
+      branch_difference <= 33'h0;
+      branch_a_sign <= 1'b0;
+      branch_b_sign <= 1'b0;
+      branch_kind <= 3'd0;
+      alu_destination <= 5'd0;
+      alu_result <= 32'h0000_0000;
+      multiply_low_product <= 32'h0000_0000;
+      multiply_low_high_product <= 32'h0000_0000;
+      multiply_high_low_product <= 32'h0000_0000;
+      multiply_high_high_product <= 32'h0000_0000;
+      multiply_cross_sum <= 33'h0;
+      multiply_operand_a <= 32'h0000_0000;
+      multiply_operand_b <= 32'h0000_0000;
+      multiply_roundup <= 1'b0;
+      multiply_negative <= 1'b0;
+      multiply_unsigned_product <= 64'h0000_0000_0000_0000;
+      mulhi_correction <= 32'h0000_0000;
+      result_kind <= RESULT_MUL;
+      result_destination <= 5'd0;
+      // El reset invalida la etiqueta, y con el la orden RESET_CPU del monitor,
+      // que es quien pulsa este reset.
+      alu_tag_valid <= 1'b0;
+      alu_tag_kind <= TAG_NONE;
+      alu_tag_ra <= 5'd0;
+      alu_tag_rb <= 5'd0;
+      divide_by_zero <= 1'b0;
+      divide_dividend <= 32'h0000_0000;
+      divide_divisor <= 32'h0000_0000;
+      divide_quotient <= 32'h0000_0000;
+      divide_remainder <= 32'h0000_0000;
+      divide_count <= 6'd0;
+      divide_negative <= 1'b0;
+      divide_dividend_negative <= 1'b0;
+      multiply_writeback <= 32'h0000_0000;
+      multiply_writeback_destination <= 5'd0;
+      register_a_address <= 5'd0;
+      register_b_address <= 5'd0;
+      register_write_enable <= 1'b0;
+      register_write_address <= 5'd0;
+      register_write_data <= 32'h0000_0000;
+      instruction_encoding_valid_registered <= 1'b1;
+    end else begin
+      if (halt_request && state != STATE_HALTED) begin
+        halt_pending <= 1'b1;
+      end
+
+      case (state)
+        STATE_HALTED: begin
+          imem_valid <= 1'b0;
+          halt_pending <= 1'b0;
+
+          // Resta aplazada desde la ruta de error que trajo aqui. Va antes de
+          // atender run/step para que un arranque en este mismo ciclo salga
+          // ya con el PC de la instruccion culpable.
+          if (pc_restore) begin
+            pc <= pc - 3'd4;
+            pc_restore <= 1'b0;
+          end
+
+          if (run_request) begin
+            halted <= 1'b0;
+            step_active <= 1'b0;
+            state <= STATE_FETCH_REQUEST;
+          end else if (step_request) begin
+            halted <= 1'b0;
+            step_active <= 1'b1;
+            state <= STATE_FETCH_REQUEST;
+          end
+        end
+
+        STATE_FETCH_REQUEST: begin
+          imem_address <= pc;
+          imem_valid <= 1'b1;
+          state <= STATE_FETCH_WAIT;
+        end
+
+        STATE_FETCH_WAIT: begin
+          if (imem_valid && imem_ready) begin
+            instruction <= imem_read_data;
+            // Conditional branches encode their operands in X/Y rather than
+            // the Ra/Rb fields used by R-type instructions.
+            if (imem_read_data[31:26] >= OPCODE_BEQ &&
+                imem_read_data[31:26] <= OPCODE_BGEU) begin
+              register_a_address <= imem_read_data[25:21];
+              register_b_address <= imem_read_data[20:16];
+            end else begin
+              register_a_address <= imem_read_data[20:16];
+              register_b_address <=
+                  fetch_is_store ? imem_read_data[25:21] : imem_read_data[15:11];
+            end
+            imem_valid <= 1'b0;
+            pc <= pc + 3'd4;
+            state <= STATE_DECODE;
+          end
+        end
+
+        /*
+         * Register the operands before the ALU. This is an extra cycle in the
+         * multicyle CPU, not instruction pipelining. It breaks the long path
+         * from the asynchronous register-file mux through the 32-bit adder.
+         */
+        STATE_DECODE: begin
+          operand_a <= register_a;
+          operand_b <= register_b;
+          instruction_encoding_valid_registered <= instruction_encoding_valid;
+          state <= STATE_EXECUTE;
+        end
+
+        STATE_EXECUTE: begin
+          halt_after_retire <= 1'b0;
+
+          /*
+           * La etiqueta caduca en cuanto empieza otra instruccion. Las tres que
+           * la arman la vuelven a poner mas tarde, en STATE_MUL_WRITE, asi que
+           * este borrado incondicional no les quita nada: ocurre ciclos antes.
+           * Escrito asi no hay que enumerar «cualquier otra instruccion», que es
+           * justo la lista que se olvida de actualizar cuando se anade un
+           * opcode y produce un acierto indebido.
+           */
+          alu_tag_valid <= 1'b0;
+
+          if (!instruction_encoding_valid_registered) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_INVALID_ENCODING;
+            // Fetch has already advanced PC, so restore the faulting address.
+            pc_restore <= 1'b1;
+            state <= STATE_HALTED;
+          end else case (opcode)
+            OPCODE_NOP: begin
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_MOVI: begin
+              register_write_address <= rd;
+              register_write_data <= immediate_signed;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_ADD: begin
+              alu_destination <= rd;
+              alu_result <= operand_a + operand_b;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_SUB: begin
+              alu_destination <= rd;
+              alu_result <= operand_a - operand_b;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_AND: begin
+              alu_destination <= rd;
+              alu_result <= operand_a & operand_b;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_OR: begin
+              alu_destination <= rd;
+              alu_result <= operand_a | operand_b;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_XOR: begin
+              alu_destination <= rd;
+              alu_result <= operand_a ^ operand_b;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_MUL: begin
+              // Dedicated input registers let the placer keep the operands
+              // physically close to the ECP5 multiplier blocks.
+              multiply_operand_a <= operand_a;
+              multiply_operand_b <= operand_b;
+              result_destination <= rd;
+              result_kind <= RESULT_MUL;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            OPCODE_MULFX: begin
+              // Multiply magnitudes with 16x16 blocks, then restore the sign.
+              multiply_operand_a <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              multiply_operand_b <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              result_destination <= rd;
+              result_kind <= RESULT_MULFX;
+              multiply_negative <= operand_a[31] ^ operand_b[31];
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            /*
+             * MULHI trabaja sobre el producto UNSIGNED, como MUL: los operandos
+             * entran crudos y la correccion de signo se aplica al final sobre
+             * la mitad alta. Por eso puede reutilizar el producto que dejo un
+             * MUL --y NO el que deja un MULFX, que es de magnitudes--.
+             */
+            OPCODE_MULHI: begin
+              multiply_operand_a <= operand_a;
+              multiply_operand_b <= operand_b;
+              result_destination <= rd;
+              result_kind <= RESULT_MULHI;
+              state <= mulhi_fast ? STATE_MULHI_FIX : STATE_MUL_PRODUCTS;
+            end
+
+            /*
+             * Las cuatro instrucciones del divisor comparten camino. Lo unico
+             * que cambia es si los operandos entran en magnitud o crudos, y
+             * cual de las dos mitades se escribe al final.
+             *
+             * REM y REMU pueden saltarse las 32 iteraciones si la instruccion
+             * inmediatamente anterior fue su DIV o su DIVU con los mismos
+             * registros: el resto sigue en `divide_remainder`. En ese caso NO
+             * se toca nada del divisor, solo se anota el signo del dividendo.
+             */
+            OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
+              result_destination <= rd;
+              case (opcode)
+                OPCODE_DIV:  result_kind <= RESULT_DIV;
+                OPCODE_DIVU: result_kind <= RESULT_DIVU;
+                OPCODE_REM:  result_kind <= RESULT_REM;
+                default:     result_kind <= RESULT_REMU;
+              endcase
+
+              if ((opcode == OPCODE_REM && rem_fast) ||
+                  (opcode == OPCODE_REMU && remu_fast)) begin
+                divide_dividend_negative <=
+                    (opcode == OPCODE_REM) ? operand_a[31] : 1'b0;
+                state <= STATE_MUL_SIGN;
+              end else begin
+                // DIV y REM operan en magnitudes; DIVU y REMU, crudos.
+                if (opcode == OPCODE_DIV || opcode == OPCODE_REM) begin
+                  divide_dividend <=
+                      operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+                  divide_divisor <=
+                      operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+                  divide_negative <= operand_a[31] ^ operand_b[31];
+                  divide_dividend_negative <= operand_a[31];
+                end else begin
+                  divide_dividend <= operand_a;
+                  divide_divisor <= operand_b;
+                  divide_negative <= 1'b0;
+                  divide_dividend_negative <= 1'b0;
+                end
+                divide_by_zero <= (operand_b == 0);
+                divide_quotient <= 32'h0000_0000;
+                divide_remainder <= 32'h0000_0000;
+                divide_count <= 6'd0;
+                state <= STATE_DIV_STEP;
+              end
+            end
+
+            OPCODE_SHL: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= shift_amount;
+              shift_kind <= 2'd0;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SHR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= shift_amount;
+              shift_kind <= 2'd1;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_SAR: begin
+              shift_destination <= rd;
+              shift_result <= operand_a;
+              shift_remaining <= shift_amount;
+              shift_kind <= 2'd2;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+            end
+
+            OPCODE_ADDI: begin
+              alu_destination <= rd;
+              alu_result <= operand_a + immediate_signed;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_ANDI: begin
+              alu_destination <= rd;
+              alu_result <= operand_a & immediate_unsigned;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_ORI: begin
+              alu_destination <= rd;
+              alu_result <= operand_a | immediate_unsigned;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_XORI: begin
+              alu_destination <= rd;
+              alu_result <= operand_a ^ immediate_unsigned;
+              state <= STATE_ALU_WRITE;
+            end
+
+            OPCODE_MOVHI: begin
+              register_write_address <= rd;
+              register_write_data <= {instruction[15:0], 16'h0000};
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_GETTID: begin
+              register_write_address <= rd;
+              register_write_data <= 32'h0000_0000;
+              register_write_enable <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_BEQ: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd0;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BNE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd1;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLT: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd2;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGE: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd3;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BLTU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd4;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BGEU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd5;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_BRA: begin
+              branch_taken <= 1'b1;
+              branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            /*
+             * Las tres instrucciones de llamada reutilizan STATE_BRANCH_COMMIT:
+             * el destino ya va registrado en `branch_target` y `branch_taken`
+             * queda fijo a uno porque son saltos incondicionales. El enlace se
+             * escribe aqui mismo, como hace MOVI, asi que cuestan lo mismo que
+             * BRA: siete ciclos.
+             *
+             * `pc` vale ya la direccion de la instruccion siguiente --el fetch
+             * lo adelanto--, que es exactamente el enlace que pide la ISA.
+             */
+            OPCODE_JAL: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= pc + jump_offset;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            /*
+             * En los saltos indirectos el destino sale de un registro, que el
+             * programa puede haber dejado desalineado. Se descartan los dos
+             * bits bajos en lugar de anadir una quinta ruta de error: mantiene
+             * el fetch siempre alineado sin ensanchar la maquina de estados ni
+             * el mapa de codigos de error.
+             */
+            OPCODE_JALR: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= (operand_a + jump_offset) & ~32'd3;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_JR: begin
+              branch_taken <= 1'b1;
+              branch_target <= operand_a & ~32'd3;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_LOAD, OPCODE_LOADB, OPCODE_LOADUB,
+            OPCODE_LOADH, OPCODE_LOADUH: begin
+              if (address_misaligned) begin
+                halted <= 1'b1;
+                error <= 1'b1;
+                error_code <= ERROR_MEMORY_ACCESS;
+                pc_restore <= 1'b1;
+                state <= STATE_HALTED;
+              end else begin
+                dmem_address <= effective_address;
+                dmem_write_enable <= 4'b0000;
+                dmem_valid <= 1'b1;
+                load_pending <= 1'b1;
+                load_destination <= rd;
+                load_size <= access_size;
+                load_signed <= access_signed;
+                state <= STATE_MEMORY_WAIT;
+              end
+            end
+
+            OPCODE_STORE, OPCODE_STOREB, OPCODE_STOREH: begin
+              if (address_misaligned) begin
+                halted <= 1'b1;
+                error <= 1'b1;
+                error_code <= ERROR_MEMORY_ACCESS;
+                pc_restore <= 1'b1;
+                state <= STATE_HALTED;
+              end else begin
+                dmem_address <= effective_address;
+                dmem_write_data <= store_data;
+                dmem_write_enable <= store_mask;
+                dmem_valid <= 1'b1;
+                load_pending <= 1'b0;
+                state <= STATE_MEMORY_WAIT;
+              end
+            end
+
+            OPCODE_HALT: begin
+              halt_after_retire <= 1'b1;
+              state <= STATE_RETIRE;
+            end
+
+            OPCODE_TRAP: begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_EXPLICIT_TRAP;
+              // TRAP is a terminal diagnostic stop, not a retired HALT.
+              pc_restore <= 1'b1;
+              state <= STATE_HALTED;
+            end
+
+            default: begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_INVALID_OPCODE;
+              pc_restore <= 1'b1;
+              state <= STATE_HALTED;
+            end
+          endcase
+        end
+
+        STATE_MEMORY_WAIT: begin
+          if (dmem_valid && dmem_ready) begin
+            dmem_valid <= 1'b0;
+            dmem_write_enable <= 4'b0000;
+
+            if (dmem_error) begin
+              halted <= 1'b1;
+              error <= 1'b1;
+              error_code <= ERROR_MEMORY_ACCESS;
+              pc_restore <= 1'b1;
+              state <= STATE_HALTED;
+            end else begin
+              if (load_pending) begin
+                register_write_address <= load_destination;
+                register_write_data <= load_extended;
+                register_write_enable <= 1'b1;
+              end
+
+              load_pending <= 1'b0;
+              load_size <= 2'd2;
+              load_signed <= 1'b0;
+              state <= STATE_RETIRE;
+            end
+          end
+        end
+
+        // Iterative one-bit shifter: it uses little logic and avoids a large
+        // barrel shifter on the 120 MHz datapath. Shifts take 1..31 extra cycles.
+        STATE_SHIFT_STEP: begin
+          case (shift_kind)
+            2'd0: shift_result <= shift_result << 1;
+            2'd1: shift_result <= shift_result >> 1;
+            default: shift_result <= $signed(shift_result) >>> 1;
+          endcase
+          shift_remaining <= shift_remaining - 1'b1;
+          if (shift_remaining == 1)
+            state <= STATE_SHIFT_WRITE;
+        end
+
+        STATE_SHIFT_WRITE: begin
+          register_write_address <= shift_destination;
+          register_write_data <= shift_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        // The extra cycle breaks operand -> adder -> register-file write-back.
+        STATE_ALU_WRITE: begin
+          register_write_address <= alu_destination;
+          register_write_data <= alu_result;
+          register_write_enable <= 1'b1;
+          state <= STATE_RETIRE;
+        end
+
+        /*
+         * El multiplicador construye SIEMPRE el producto unsigned de 64 bits
+         * entero, ya no solo cuando la instruccion es MULFX. Antes MUL se
+         * ahorraba el parcial alto porque modulo 2^32 no aporta, pero MULHI
+         * necesita esa mitad y el camino rapido necesita ademas que la deje
+         * escrita un MUL corriente. Es la unica forma de que la etiqueta valga
+         * para algo, y el coste es un bloque 16x16 mas y un sumador mas ancho,
+         * no un ciclo mas: los tres parciales ya iban en paralelo.
+         */
+        STATE_MUL_PRODUCTS: begin
+          // Four independent 16x16 products map cleanly to ECP5 DSPs.
+          multiply_low_product <=
+              multiply_operand_a[15:0] * multiply_operand_b[15:0];
+          multiply_low_high_product <=
+              multiply_operand_a[15:0] * multiply_operand_b[31:16];
+          multiply_high_low_product <=
+              multiply_operand_a[31:16] * multiply_operand_b[15:0];
+          multiply_high_high_product <=
+              multiply_operand_a[31:16] * multiply_operand_b[31:16];
+          state <= STATE_MUL_CROSS;
+        end
+
+        STATE_MUL_CROSS: begin
+          multiply_cross_sum <= {1'b0, multiply_low_high_product} +
+                                {1'b0, multiply_high_low_product};
+          state <= STATE_MUL_COMBINE;
+        end
+
+        STATE_MUL_COMBINE: begin
+          multiply_unsigned_product <=
+              {multiply_high_high_product, 32'h0000_0000} +
+              {15'h0000, multiply_cross_sum, 16'h0000} +
+              {32'h0000_0000, multiply_low_product};
+          multiply_roundup <= (multiply_low_product[15:0] == 0);
+          state <= (result_kind == RESULT_MULHI) ? STATE_MULHI_FIX
+                                                 : STATE_MUL_SIGN;
+        end
+
+        /*
+         * Correccion de signo de MULHI, en su propio ciclo. Los dos terminos se
+         * suman aqui y STATE_MUL_SIGN hace una sola resta; juntarlo todo ahi
+         * encadenaba dos sumadores de 32 bits antes del mux de escritura.
+         *
+         * Es el punto donde acierto y fallo del camino rapido vuelven a
+         * juntarse: por aqui pasan los dos, con los mismos `multiply_operand_*`
+         * --el acierto los reescribe con los operandos de la propia MULHI, que
+         * son los mismos por la condicion de la etiqueta--.
+         */
+        STATE_MULHI_FIX: begin
+          mulhi_correction <=
+              (multiply_operand_a[31] ? multiply_operand_b : 32'h0000_0000) +
+              (multiply_operand_b[31] ? multiply_operand_a : 32'h0000_0000);
+          state <= STATE_MUL_SIGN;
+        end
+
+        // El arreglo de signo y la escritura del banco van en ciclos distintos
+        // por la misma razon que STATE_ALU_WRITE existe: la negacion
+        // condicional es una cadena de acarreo de 32 bits y desemboca en el
+        // multiplexor de `register_write_data`, que sirve ademas a la ALU, a
+        // los saltos, a los desplazamientos y a los LOAD. Juntos eran el
+        // camino critico de 6.fpga-cpu y lo dejaban en 116,39 MHz.
+        STATE_MUL_SIGN: begin
+          multiply_writeback_destination <= result_destination;
+          case (result_kind)
+            RESULT_MUL: multiply_writeback <= multiply_unsigned_product[31:0];
+            RESULT_MULFX: multiply_writeback <= multiply_negative ?
+                (~multiply_unsigned_product[47:16] + multiply_roundup) :
+                multiply_unsigned_product[47:16];
+            // MULHI es signed: ver el comentario de `mulhi_correction`.
+            RESULT_MULHI: multiply_writeback <=
+                multiply_unsigned_product[63:32] - mulhi_correction;
+            RESULT_DIV: multiply_writeback <= divide_negative ?
+                (~divide_quotient + 1'b1) : divide_quotient;
+            RESULT_DIVU: multiply_writeback <= divide_quotient;
+            // El resto lleva el signo del DIVIDENDO, no el del cociente.
+            RESULT_REM: multiply_writeback <= divide_dividend_negative ?
+                (~divide_remainder + 1'b1) : divide_remainder;
+            default: multiply_writeback <= divide_remainder;
+          endcase
+          state <= STATE_MUL_WRITE;
+        end
+
+        STATE_MUL_WRITE: begin
+          register_write_address <= multiply_writeback_destination;
+          register_write_data <= multiply_writeback;
+          register_write_enable <= 1'b1;
+
+          /*
+           * Aqui, y no en STATE_EXECUTE, se arma la etiqueta: solo llega hasta
+           * aqui una operacion que se ha COMPLETADO, asi que una division por
+           * cero --que se va a STATE_HALTED desde STATE_DIV_STEP-- no deja
+           * etiqueta que un REM posterior pudiera creerse.
+           *
+           * `ra`, `rb` y `rd` siguen siendo los campos de esta instruccion:
+           * `instruction` no cambia hasta el siguiente fetch.
+           */
+          alu_tag_valid <= (result_tag_kind != TAG_NONE) &&
+                           (rd != ra) && (rd != rb);
+          alu_tag_kind <= result_tag_kind;
+          alu_tag_ra <= ra;
+          alu_tag_rb <= rb;
+
+          state <= STATE_RETIRE;
+        end
+
+        // Restoring unsigned division over operand magnitudes. Applying the
+        // sign only to the completed quotient implements truncation to zero.
+        STATE_DIV_STEP: begin
+          if (divide_count == 0 && divide_by_zero) begin
+            halted <= 1'b1;
+            error <= 1'b1;
+            error_code <= ERROR_DIVISION_BY_ZERO;
+            // Como las otras rutas de error: la resta se aplaza a STATE_HALTED
+            // para no meter la decodificacion en el cono de datos del PC.
+            pc_restore <= 1'b1;
+            state <= STATE_HALTED;
+          end else begin
+            divide_dividend <= {divide_dividend[30:0], 1'b0};
+            if (divide_shifted_remainder >= divide_divisor) begin
+              divide_remainder <= divide_remainder_difference;
+              divide_quotient <= {divide_quotient[30:0], 1'b1};
+            end else begin
+              divide_remainder <= divide_shifted_remainder;
+              divide_quotient <= {divide_quotient[30:0], 1'b0};
+            end
+            divide_count <= divide_count + 1'b1;
+            if (divide_count == 6'd31) begin
+              divide_quotient <= divide_next_quotient;
+              state <= STATE_MUL_SIGN;
+            end
+          end
+        end
+
+        // All comparisons reuse one registered subtraction. For signed values,
+        // differing operand signs decide directly; otherwise diff[31] does.
+        STATE_BRANCH_COMPARE: begin
+          case (branch_kind)
+            3'd0: branch_taken <= branch_difference[31:0] == 0;
+            3'd1: branch_taken <= branch_difference[31:0] != 0;
+            3'd2: branch_taken <=
+                branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31];
+            3'd3: branch_taken <=
+                !(branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31]);
+            3'd4: branch_taken <= branch_difference[32];
+            default: branch_taken <= !branch_difference[32];
+          endcase
+          state <= STATE_BRANCH_COMMIT;
+        end
+
+        // Comparison and target calculation are registered before modifying PC.
+        STATE_BRANCH_COMMIT: begin
+          if (branch_taken)
+            pc <= branch_target;
+          state <= STATE_RETIRE;
+        end
+
+        STATE_RETIRE: begin
+          instruction_retired <= 1'b1;
+
+          if (halt_after_retire || step_active || halt_pending || halt_request) begin
+            halted <= 1'b1;
+            step_active <= 1'b0;
+            halt_pending <= 1'b0;
+            state <= STATE_HALTED;
+          end else begin
+            state <= STATE_FETCH_REQUEST;
+          end
+        end
+
+        default: begin
+          halted <= 1'b1;
+          error <= 1'b1;
+          error_code <= ERROR_INVALID_OPCODE;
+          imem_valid <= 1'b0;
+          state <= STATE_HALTED;
+        end
+      endcase
+    end
+  end
+endmodule
+
+`default_nettype wire

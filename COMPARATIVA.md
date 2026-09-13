@@ -32,33 +32,59 @@ semillas daba +14,5 % de holgura con el diseño roto.
 
 ## CPU
 
-| | [2.sim](2.cpu-sim-func) | [6.ebr](6.fpga-cpu) | [10.sdram](10.fpga-cpu-ram) | [16.hdmi](16.fpga-cpu-hdmi) | [18.bl8](18.fpga-cpu-hdmi-bl8) | [19.ls](19.fpga-cpu-hdmi-ls) |
-|---|---|---|---|---|---|---|
-| **Fmax / objetivo** | — | 124,4 / 120 | 130,7 / 120 | 112,9 / 100 | 94,8 / 80 | 87,2 / 80 |
-| **Memoria** | 32 MiB unificada | 2 × 16 KiB EBR | 32 MiB SDRAM | 32 MiB SDRAM | 32 MiB SDRAM | 32 MiB SDRAM |
-| **LUT / FF** | — | 5 650 / 2 466 | 4 976 / 2 249 | 6 785 / 3 164 | 9 101 / 4 617 | 9 370 / 4 630 |
-| **Monitor / baudios** | — | 1.6 / 3 M | 1.5 / 3 M | 1.10 / 1 M | 1.12 / 1 M | 1.13 / 1 M |
-| ALU, saltos, `LOAD`/`STORE` | sí | sí | sí | sí | sí | sí |
-| `MUL`, `MULFX`, `DIV` | sí | sí | sí | sí | sí | sí |
-| `video` | sí | no | no | sí | sí | sí |
-| `frame_capture` | sí | no | no | no | sí | sí |
-| `subword_memory` | sí | no | no | no | no | **sí** |
-| `calls` | sí | no | no | no | no | **sí** |
-| Contadores de ciclos | no | no | no | no | sí | sí |
-| Ráfagas BL8 | — | — | no | no | sí | sí |
+|                             | [2.sim](2.cpu-sim-func) | [6.ebr](6.fpga-cpu) | [10.sdram](10.fpga-cpu-ram) | [16.hdmi](16.fpga-cpu-hdmi) | [18.bl8](18.fpga-cpu-hdmi-bl8) | [19.ls](19.fpga-cpu-hdmi-ls) | [21.alu](21.fpga-cpu-hdmi-alu) |
+|-----------------------------|-------------------------|---------------------|-----------------------------|-----------------------------|--------------------------------|------------------------------|--------------------------------|
+| **Fmax / objetivo**         | —                       | 124,4 / 120         | 130,7 / 120                 | 112,9 / 100                 | 94,8 / 80                      | 87,9 / 80                    | **91,8** / 80                  |
+| **Memoria**                 | 32 MiB unificada        | 2 × 16 KiB EBR      | 32 MiB SDRAM                | 32 MiB SDRAM                | 32 MiB SDRAM                   | 32 MiB SDRAM                 | 32 MiB SDRAM                   |
+| **LUT / FF**                | —                       | 5 650 / 2 466       | 4 976 / 2 249               | 6 785 / 3 164               | 9 101 / 4 617                  | 9 887 / 4 735                | 10 221 / 4 799                 |
+| **Monitor / baudios**       | —                       | 1.6 / 3 M           | 1.5 / 3 M                   | 1.10 / 1 M                  | 1.12 / 1 M                     | 1.14 / 1 M                   | **1.15** / 1 M                 |
+| ALU, saltos, `LOAD`/`STORE` | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
+| `MUL`, `MULFX`, `DIV`       | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
+| `video`                     | sí                      | no                  | no                          | sí                          | sí                             | sí                           | sí                             |
+| `frame_capture`             | sí                      | no                  | no                          | no                          | sí                             | sí                           | sí                             |
+| `subword_memory`            | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
+| `calls`                     | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
+| `serial`                    | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
+| `shift_immediate`           | sí                      | no                  | no                          | no                          | no                             | no                           | **sí**                         |
+| `alu_extended`              | sí                      | no                  | no                          | no                          | no                             | no                           | **sí**                         |
+| `zero_register`             | sí                      | no                  | no                          | no                          | no                             | no                           | **sí**                         |
+| Contadores de ciclos        | no                      | no                  | no                          | no                          | sí                             | sí                           | sí                             |
+| Ráfagas BL8                 | —                       | —                   | no                          | no                          | sí                             | sí                           | sí                             |
 
 `2.sim` no tiene Fmax ni LUTs porque no es hardware, y tampoco tiene contadores
 de ciclos: no modela el tiempo. Lo que sí da es el número de instrucciones, que
 es arquitectónico y por eso sirve de contraste contra el contador de la placa.
 
 **El simulador va por delante del RTL, y eso es lo normal:** es donde se prueba
-primero una instrucción nueva. Hoy tiene las cinco capacidades; la 19 es el
-único bitstream que también.
+primero una instrucción nueva. Hoy tiene las ocho capacidades; la 21 es el único
+bitstream que también.
 
-**La 19 responde 1.13 aunque no añada ni un comando al protocolo de la 18.** Las
-instrucciones nuevas viven enteras dentro de la CPU. Sube la versión igual
-porque `GET_VERSION` es lo único que el PC puede preguntar antes de cargar un
-programa, y un programa que use `JAL` o `LOADB` no corre en un bitstream 1.12:
+**La 21 está sintetizada pero no probada en placa.** Simulador, testbenches y
+`x.cpu-tests` con el backend de simulador están en verde, y el bitstream existe:
+**las ocho semillas cumplen**, entre 84,04 y 91,80 MHz, y se fija la 6 con
++14,8 %. Es el mejor margen que ha tenido esta familia. Lo que falta es la
+placa: la ULX3S no estaba disponible, así que nada de esto se ha visto correr en
+hardware.
+
+Y **el margen sube pese a los ~330 LUTs de más** respecto a la 19. No es que el
+diseño sea más rápido: el camino crítico sigue siendo `sdram_clk` —adaptador,
+árbitro y controlador—, el mismo sitio desde la 18, y ninguno de los cuatro
+cambios lo toca. Lo que ha pasado es que este netlist se coloca mejor, que es
+exactamente la lección del aviso de arriba leída en la dirección agradable.
+
+**`zero_register` es la primera capacidad incompatible de la tabla.** Las otras
+siete son aditivas: un bitstream que no las tenga para con opcode inválido y se
+nota. Con `R0` a cero no hay parada; hay otro resultado, en silencio. Por eso el
+salto de monitor a 1.15 importa más que los anteriores, y por eso la 19 sigue
+siendo válida tal cual en vez de quedar obsoleta: allí `R0` es un registro
+general y los programas de esa carpeta cuentan con ello.
+
+**La 19 saltó a 1.13 sin añadir ni un comando al protocolo de la 18**, y la 21
+hace lo mismo al saltar a 1.15 desde el 1.14 de la 19 (1.14 sí añadió los dos
+comandos del puerto serie). Las instrucciones nuevas viven enteras dentro de la
+CPU. Suben la versión igual porque `GET_VERSION` es lo único que el PC puede
+preguntar antes de cargar un programa, y un programa que use `JAL` o `LOADB` no
+corre en un bitstream 1.12:
 para con opcode inválido a la primera. Con las dos respondiendo 1.12,
 `x.cpu-tests` daría por bueno el bitstream equivocado. Es el mismo criterio por
 el que 14 responde 2.2 compartiendo todos los comandos con 12.
@@ -78,6 +104,12 @@ No es que la CPU empeore. El camino crítico se mudó:
   memoria —adaptador, árbitro y controlador—, el mismo sitio que en la 18. La
   semilla 6, que era la fijada antes de añadir `JAL`/`JALR`/`JR`, da el mismo
   margen con ellas que sin ellas.
+- La **21 rompe la tendencia**: sube a 91,8 MHz creciendo ~330 LUTs sobre la
+  19, y con el multiplicador construyendo ahora siempre los 64 bits. Como en
+  los casos anteriores, el camino crítico no se movió de `sdram_clk`; lo que
+  cambió fue la colocación. Sirve de contraejemplo a la lectura fácil de esta
+  lista: la frecuencia de un netlist no es una función monótona del tamaño del
+  diseño.
 
 ## GPU
 
@@ -139,10 +171,11 @@ Y las capacidades de CPU, sin abrir nada:
 ```
 
 ```text
-sim     ['calls', 'frame_capture', 'subword_memory', 'video']
+sim     ['alu_extended', 'calls', 'frame_capture', 'serial', 'shift_immediate', 'subword_memory', 'video', 'zero_register']
 ebr     []
 sdram   []
 hdmi    ['video']
 bl8     ['frame_capture', 'video']
-subword ['calls', 'frame_capture', 'subword_memory', 'video']
+subword ['calls', 'frame_capture', 'serial', 'subword_memory', 'video']
+alu     ['alu_extended', 'calls', 'frame_capture', 'serial', 'shift_immediate', 'subword_memory', 'video', 'zero_register']
 ```

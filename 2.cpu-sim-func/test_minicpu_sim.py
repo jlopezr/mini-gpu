@@ -226,5 +226,201 @@ class CallTest(unittest.TestCase):
         self.assertEqual(cpu.instructions_executed, 5)
 
 
+class ShiftImmediateTest(unittest.TestCase):
+    """Opcion B de propuesta-v0.2.md §4.2: el bit 10 y la cantidad en `Rb`."""
+
+    IMMEDIATE = 1 << 10
+
+    def execute(self, instruction: int, registers=None) -> CPU:
+        cpu = CPU(memory_size=64)
+        struct.pack_into("<I", cpu.memory, 0, instruction)
+        for register, value in (registers or {}).items():
+            cpu.regs[register] = value
+        cpu.step()
+        return cpu
+
+    def test_la_cantidad_sale_del_campo_y_no_del_registro(self) -> None:
+        """El caso que un test descuidado no ve.
+
+        Con `R4 = 4` un multiplexor al reves daria el mismo resultado. Aqui R4
+        vale 17, asi que leer el registro en lugar del campo se nota.
+        """
+        cpu = self.execute(
+            encode_r(0x07, 1, 2, 4) | self.IMMEDIATE, {2: 1, 4: 17})
+        self.assertEqual(cpu.regs[1], 1 << 4)
+
+    def test_bordes_cero_y_treinta_y_uno(self) -> None:
+        casos = (
+            (0x07, 0, 0x89ABCDEF), (0x07, 31, 0x80000000),
+            (0x08, 0, 0x89ABCDEF), (0x08, 31, 0x00000001),
+            (0x09, 0, 0x89ABCDEF), (0x09, 31, 0xFFFFFFFF),
+        )
+        for opcode, cantidad, esperado in casos:
+            with self.subTest(opcode=opcode, cantidad=cantidad):
+                cpu = self.execute(
+                    encode_r(opcode, 1, 2, cantidad) | self.IMMEDIATE,
+                    {2: 0x89ABCDEF})
+                self.assertEqual(cpu.regs[1], esperado)
+
+    def test_coincide_con_la_forma_con_registro(self) -> None:
+        for opcode in (0x07, 0x08, 0x09):
+            for cantidad in range(32):
+                inmediata = self.execute(
+                    encode_r(opcode, 1, 2, cantidad) | self.IMMEDIATE,
+                    {2: 0x89ABCDEF})
+                registro = self.execute(
+                    encode_r(opcode, 1, 2, 3), {2: 0x89ABCDEF, 3: cantidad})
+                self.assertEqual(inmediata.regs[1], registro.regs[1],
+                                 (opcode, cantidad))
+
+    def test_el_campo_reservado_pasa_a_ser_extra_9_0(self) -> None:
+        # `extra[10]` solo es valido: es el modo inmediato.
+        cpu = self.execute(encode_r(0x07, 1, 2, 3) | self.IMMEDIATE, {2: 1})
+        self.assertFalse(cpu.error)
+        # Cualquier bit de `extra[9:0]` sigue siendo reservado.
+        for extra in (1, 1 << 9, self.IMMEDIATE | 8):
+            with self.subTest(extra=extra):
+                cpu = self.execute(encode_r(0x07, 1, 2, 3) | extra, {2: 1})
+                self.assertTrue(cpu.error)
+                self.assertEqual(cpu.error_code, 0x05)
+
+
+class ExtendedAluTest(unittest.TestCase):
+    """MULHI, DIVU, REM y REMU. MULHI es SIGNED; ver 1.isa/isa.md §3."""
+
+    def execute(self, opcode: int, a: int, b: int) -> CPU:
+        cpu = CPU(memory_size=64)
+        struct.pack_into("<I", cpu.memory, 0, encode_r(opcode, 3, 1, 2))
+        cpu.regs[1] = a
+        cpu.regs[2] = b
+        cpu.step()
+        return cpu
+
+    def test_mulhi_es_con_signo(self) -> None:
+        """-1 x -1 = 1, o sea parte alta 0. Unsigned daria 0xFFFFFFFE."""
+        cpu = self.execute(0x0B, 0xFFFFFFFF, 0xFFFFFFFF)
+        self.assertEqual(cpu.regs[3], 0x00000000)
+
+    def test_mulhi_y_mul_son_las_dos_mitades_del_mismo_producto(self) -> None:
+        casos = (
+            (0x00010000, 0x00010000, 0x00000001, 0x00000000),
+            (0xFFFFFFFF, 0x00000001, 0xFFFFFFFF, 0xFFFFFFFF),
+            (0x7FFFFFFF, 0x7FFFFFFF, 0x3FFFFFFF, 0x00000001),
+            (0x80000000, 0x80000000, 0x40000000, 0x00000000),
+            (0x80000000, 0x00000002, 0xFFFFFFFF, 0x00000000),
+            (0x12345678, 0x9ABCDEF0, 0xF8CC93D6, 0x242D2080),
+        )
+        for a, b, alto, bajo in casos:
+            with self.subTest(a=a, b=b):
+                self.assertEqual(self.execute(0x0B, a, b).regs[3], alto)
+                self.assertEqual(self.execute(0x0A, a, b).regs[3], bajo)
+
+    def test_el_resto_lleva_el_signo_del_dividendo(self) -> None:
+        """Los dos casos que separan esta regla del modulo matematico."""
+        casos = (
+            (7, 2, 3, 1),
+            (0xFFFFFFF9, 2, 0xFFFFFFFD, 0xFFFFFFFF),        # -7 / 2
+            (7, 0xFFFFFFFE, 0xFFFFFFFD, 1),                 #  7 / -2
+            (0xFFFFFFF9, 0xFFFFFFFE, 3, 0xFFFFFFFF),        # -7 / -2
+        )
+        for a, b, cociente, resto in casos:
+            with self.subTest(a=a, b=b):
+                self.assertEqual(self.execute(0x0C, a, b).regs[3], cociente)
+                self.assertEqual(self.execute(0x0E, a, b).regs[3], resto)
+
+    def test_unsigned_sobre_los_mismos_bits(self) -> None:
+        self.assertEqual(self.execute(0x0D, 0xFFFFFFF9, 2).regs[3], 0x7FFFFFFC)
+        self.assertEqual(self.execute(0x0F, 0xFFFFFFF9, 2).regs[3], 1)
+        # 4294967289 / 4294967294 = 0; signed, -7 / -2 seria 3.
+        self.assertEqual(self.execute(0x0D, 0xFFFFFFF9, 0xFFFFFFFE).regs[3], 0)
+        self.assertEqual(self.execute(0x0F, 0xFFFFFFF9, 0xFFFFFFFE).regs[3],
+                         0xFFFFFFF9)
+
+    def test_el_desbordamiento_de_menos_dos_a_la_31_entre_menos_uno(self) -> None:
+        self.assertEqual(self.execute(0x0C, 0x80000000, 0xFFFFFFFF).regs[3],
+                         0x80000000)
+        self.assertEqual(self.execute(0x0E, 0x80000000, 0xFFFFFFFF).regs[3], 0)
+
+    def test_las_cuatro_paran_con_divisor_cero(self) -> None:
+        for opcode in (0x0C, 0x0D, 0x0E, 0x0F):
+            with self.subTest(opcode=opcode):
+                cpu = self.execute(opcode, 7, 0)
+                self.assertTrue(cpu.error)
+                self.assertEqual(cpu.error_code, 0x04)
+                self.assertEqual(cpu.error_pc, 0)
+
+    def test_exigen_extra_a_cero(self) -> None:
+        for opcode in (0x0B, 0x0D, 0x0E, 0x0F):
+            with self.subTest(opcode=opcode):
+                cpu = CPU(memory_size=64)
+                struct.pack_into("<I", cpu.memory, 0,
+                                 encode_r(opcode, 3, 1, 2) | 1)
+                cpu.step()
+                self.assertTrue(cpu.error)
+                self.assertEqual(cpu.error_code, 0x05)
+
+
+class ZeroRegisterTest(unittest.TestCase):
+    """R0 cableado a cero: escrituras descartadas, lecturas siempre cero."""
+
+    def run_words(self, words: list[int], registers=None) -> CPU:
+        cpu = CPU(memory_size=256)
+        data = b"".join(w.to_bytes(4, "little") for w in words)
+        cpu.load_program(data)
+        for register, value in (registers or {}).items():
+            cpu.regs[register] = value
+        cpu.run(max_instructions=100)
+        return cpu
+
+    def test_todos_los_caminos_de_escritura_descartan_r0(self) -> None:
+        """Un solo test por camino no sirve: el simulador escribe R0 desde
+        veintidos sitios distintos de `step`, y cada opcode usa el suyo."""
+        escrituras = (
+            encode_i(0x10, 0, 0, 0xFFFF),       # MOVI R0, -1
+            encode_i(0x17, 0, 0, 0xDEAD),       # MOVHI R0, 0xDEAD
+            encode_r(0x01, 0, 1, 1),            # ADD R0, R1, R1
+            encode_i(0x11, 0, 1, 100),          # ADDI R0, R1, 100
+            encode_r(0x07, 0, 1, 2),            # SHL R0, R1, R2
+            encode_r(0x0A, 0, 1, 1),            # MUL R0, R1, R1
+            encode_r(0x0C, 0, 1, 2),            # DIV R0, R1, R2
+            encode_r(0x0B, 0, 1, 1),            # MULHI R0, R1, R1
+            encode_i(0x30, 0, 0, 0),            # GETTID R0
+            encode_i(0x2C, 0, 0, 0),            # JAL R0, siguiente
+        )
+        for instruccion in escrituras:
+            with self.subTest(opcode=instruccion >> 26):
+                cpu = self.run_words([instruccion, 0xFC000000], {1: 7, 2: 4})
+                self.assertEqual(cpu.regs[0], 0)
+
+    def test_r0_leido_vale_cero_en_los_dos_operandos(self) -> None:
+        cpu = self.run_words([
+            encode_r(0x02, 3, 1, 0),            # SUB R3, R1, R0
+            encode_r(0x02, 4, 0, 1),            # SUB R4, R0, R1
+            0xFC000000,
+        ], {1: 7})
+        self.assertEqual(cpu.regs[3], 7)
+        self.assertEqual(cpu.regs[4], 0xFFFFFFF9)
+
+    def test_una_escritura_descartada_no_deja_rastro(self) -> None:
+        cpu = self.run_words([
+            encode_i(0x10, 0, 0, 99),           # MOVI R0, 99
+            encode_r(0x01, 2, 0, 1),            # ADD R2, R0, R1
+            0xFC000000,
+        ], {1: 7})
+        self.assertEqual(cpu.regs[2], 7)
+
+    def test_jalr_r0_es_un_jr_completo(self) -> None:
+        """La razon del cambio: con esto, 0x2E queda reclamable."""
+        cpu = self.run_words([
+            encode_i(0x10, 1, 0, 0x0C),         # MOVI R1, 0x0C
+            encode_i(0x2D, 0, 1, 0),            # JALR R0, R1, 0
+            encode_i(0x10, 2, 0, 99),           # saltada
+            encode_i(0x10, 2, 0, 42),           # 0x0C
+            0xFC000000,
+        ])
+        self.assertEqual(cpu.regs[2], 42)
+        self.assertEqual(cpu.regs[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

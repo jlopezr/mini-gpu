@@ -1,0 +1,29 @@
+{
+  "architecture": "cpu",
+  "name": "shift-immediate-bounds",
+  "program": "program.asm",
+  "requires": ["shift_immediate"],
+  "max_instructions": 50,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000058",
+    "registers": {
+      "R2": "0x89ABCDEF",
+      "R3": "0x89ABCDEF",
+      "R5": "0x89ABCDEF",
+      "R6": "0x80000000",
+      "R7": "0x00000001",
+      "R8": "0xFFFFFFFF",
+      "R9": "0x9ABCDEF0",
+      "R10": "0x089ABCDE",
+      "R11": "0xF89ABCDE",
+      "R13": "0x01234567",
+      "R14": "0x01234567",
+      "R16": "0x9ABCDEF0",
+      "R17": "0xF89ABCDE",
+      "R19": "0x0000001C"
+    }
+  }
+}

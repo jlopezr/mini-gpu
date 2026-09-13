@@ -62,6 +62,24 @@ VERSIONS = {
         "perf_counters": True,
         "clock_hz": 80_000_000,
     },
+    "alu": {
+        "monitor_path": Path("21.fpga-cpu-hdmi-alu/monitor.py"),
+        # 1.15. Sube por lo mismo que 1.13 --el PC no puede negociar el juego
+        # de instrucciones-- mas un motivo que las anteriores no tenian: R0
+        # cableado a cero es un cambio INCOMPATIBLE, no aditivo. Un programa
+        # que use R0 como registro general no para con error en la 19; da otro
+        # resultado. Sin este numero, el runner cargaria el bitstream que no es
+        # y el caso fallaria culpando al programa.
+        "monitor_version": (1, 15),
+        "description": (
+            "Como subword, mas MULHI/DIVU/REM/REMU, SHLI/SHRI/SARI "
+            "y R0 cableado a cero"
+        ),
+        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
+                         "shift_immediate", "alu_extended", "zero_register"),
+        "perf_counters": True,
+        "clock_hz": 80_000_000,
+    },
 }
 DEFAULT_VERSION = "ebr"
 

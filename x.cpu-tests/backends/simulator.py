@@ -15,7 +15,8 @@ VERSIONS = {
         # El simulador va siempre por delante del RTL: implementa la ISA
         # entera, incluidas las extensiones que solo tiene el bitstream de la
         # 19. Ver el comentario de CAPABILITIES en run_gpu_tests.py.
-        "capabilities": ("frame_capture", "subword_memory", "calls", "serial"),
+        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
+                         "shift_immediate", "alu_extended", "zero_register"),
         "description": "simulador funcional MiniCPU actual",
     },
 }

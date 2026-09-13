@@ -1,0 +1,472 @@
+`timescale 1ns / 1ps
+`default_nettype none
+
+module monitor_tb;
+
+  reg clk = 1'b0;
+  reg reset = 1'b1;
+  reg [7:0] rx_data = 8'h00;
+  reg rx_strobe = 1'b0;
+  reg tx_ready = 1'b1;
+
+  wire [7:0] tx_data;
+  wire tx_strobe;
+  wire [7:0] last_command;
+  wire busy;
+  wire [31:0] mem_address;
+  wire [7:0] mem_write_data;
+  wire mem_write_enable;
+  wire mem_read_enable;
+  reg [7:0] mem_read_data = 8'h00;
+  reg mem_ready = 1'b0;
+  reg mem_error = 1'b0;
+  wire cpu_run_request;
+  wire cpu_halt_request;
+  wire cpu_step_request;
+  wire cpu_reset_request;
+  reg cpu_halted = 1'b1;
+  reg cpu_error = 1'b0;
+  reg [7:0] cpu_error_code = 8'h00;
+  reg [31:0] cpu_pc = 32'h1234_5678;
+  reg [31:0] cpu_cycles = 32'h0001_0002;
+  reg [31:0] cpu_instructions = 32'h0000_0101;
+  wire [4:0] cpu_debug_register_address;
+  reg [31:0] cpu_debug_register_data = 32'hdead_beef;
+
+  reg [7:0] received[0:63];
+  integer received_count = 0;
+  integer busy_cycles = 0;
+  reg run_request_seen = 1'b0;
+  reg halt_request_seen = 1'b0;
+  reg step_request_seen = 1'b0;
+  reg reset_request_seen = 1'b0;
+  reg [7:0] memory_low[0:1023];
+  reg [7:0] memory_high[0:1023];
+
+  wire serial_push, serial_pop;
+  wire [7:0] serial_push_data, serial_rx_free, serial_tx_data, serial_tx_count;
+
+  always #5 clk = ~clk;
+
+  monitor dut (
+      .clk(clk),
+      .reset(reset),
+      .rx_data(rx_data),
+      .rx_strobe(rx_strobe),
+      .tx_data(tx_data),
+      .tx_strobe(tx_strobe),
+      .tx_ready(tx_ready),
+      .mem_address(mem_address),
+      .mem_write_data(mem_write_data),
+      .mem_write_enable(mem_write_enable),
+      .mem_read_enable(mem_read_enable),
+      .mem_read_data(mem_read_data),
+      .mem_ready(mem_ready),
+      .mem_error(mem_error),
+      .cpu_run_request(cpu_run_request),
+      .cpu_halt_request(cpu_halt_request),
+      .cpu_step_request(cpu_step_request),
+      .cpu_reset_request(cpu_reset_request),
+      .cpu_halted(cpu_halted),
+      .cpu_error(cpu_error),
+      .cpu_error_code(cpu_error_code),
+      .cpu_pc(cpu_pc),
+      .cpu_cycles(cpu_cycles),
+      .cpu_instructions(cpu_instructions),
+      .cpu_debug_register_address(cpu_debug_register_address),
+      .cpu_debug_register_data(cpu_debug_register_data),
+      .serial_push(serial_push), .serial_push_data(serial_push_data),
+      .serial_rx_free(serial_rx_free),
+      .serial_pop(serial_pop), .serial_tx_data(serial_tx_data),
+      .serial_tx_count(serial_tx_count),
+      .last_command(last_command),
+      .busy(busy)
+  );
+
+  /*
+   * El puerto serie de VERDAD, no un doble.
+   *
+   * Es lo que hace util este banco para los dos paquetes: lo que se prueba no
+   * es que el monitor mande los bytes correctos segun un modelo, sino que el
+   * monitor y la cola se entienden. El control de flujo --cuantos acepta
+   * SEND_BYTES cuando la cola esta casi llena-- solo tiene sentido con la cola
+   * real detras.
+   *
+   * El lado del bus lo maneja el banco haciendo de CPU: asi se puede precargar
+   * la cola de salida para probar RECV_BYTES, y leer la de entrada para
+   * comprobar que SEND_BYTES metio lo que decia.
+   */
+  reg cpu_select = 0, cpu_write = 0;
+  reg [7:0] cpu_address = 0;
+  reg [31:0] cpu_write_data = 0;
+  wire [31:0] cpu_read_data;
+
+  serial_port serial_i (
+      .clk(clk), .reset(reset),
+      .select(cpu_select), .write(cpu_write), .write_mask(4'b1111),
+      .address(cpu_address), .write_data(cpu_write_data),
+      .read_data(cpu_read_data),
+      .host_push(serial_push), .host_push_data(serial_push_data),
+      .host_rx_free(serial_rx_free),
+      .host_pop(serial_pop), .host_tx_data(serial_tx_data),
+      .host_tx_count(serial_tx_count));
+
+  // Byte-oriented SDRAM stub. It models the unified 32 MiB address contract;
+  // two small arrays are enough for the low and 0x00100000 test locations.
+  always @(posedge clk) begin
+    mem_ready <= 1'b0;
+    mem_error <= 1'b0;
+    if (!reset && (mem_write_enable || mem_read_enable)) begin
+      mem_ready <= 1'b1;
+      if (!cpu_halted || mem_address[31:25] != 0) begin
+        mem_error <= 1'b1;
+      end else if (mem_write_enable) begin
+        if (mem_address[20]) memory_high[mem_address[9:0]] <= mem_write_data;
+        else memory_low[mem_address[9:0]] <= mem_write_data;
+      end else begin
+        mem_read_data <= mem_address[20] ? memory_high[mem_address[9:0]] :
+                                                memory_low[mem_address[9:0]];
+      end
+    end
+  end
+
+  // Minimal model of the uart_tx ready/strobe handshake.
+  always @(posedge clk) begin
+    if (reset) begin
+      tx_ready <= 1'b1;
+      busy_cycles <= 0;
+    end else if (tx_strobe && tx_ready) begin
+      received[received_count] <= tx_data;
+      received_count <= received_count + 1;
+      tx_ready <= 1'b0;
+      busy_cycles <= 2;
+    end else if (busy_cycles > 0) begin
+      busy_cycles <= busy_cycles - 1;
+      if (busy_cycles == 1) begin
+        tx_ready <= 1'b1;
+      end
+    end
+
+    if (cpu_run_request) run_request_seen <= 1'b1;
+    if (cpu_halt_request) halt_request_seen <= 1'b1;
+    if (cpu_step_request) step_request_seen <= 1'b1;
+    if (cpu_reset_request) reset_request_seen <= 1'b1;
+  end
+
+  task send_command;
+    input [7:0] command;
+    begin
+      @(negedge clk);
+      rx_data = command;
+      rx_strobe = 1'b1;
+      @(negedge clk);
+      rx_strobe = 1'b0;
+      repeat (4) @(negedge clk);
+    end
+  endtask
+
+  // El banco haciendo de CPU sobre la ventana del puerto serie.
+  integer base;
+  integer i;
+  reg [31:0] leido;
+
+  task cpu_read;
+    input [7:0] offset;
+    begin
+      @(negedge clk);
+      cpu_address = offset; cpu_select = 1'b1; cpu_write = 1'b0;
+      #1 leido = cpu_read_data;
+      @(negedge clk);
+      cpu_select = 1'b0;
+    end
+  endtask
+
+  task cpu_write_byte;
+    input [7:0] offset;
+    input [7:0] value;
+    begin
+      @(negedge clk);
+      cpu_address = offset; cpu_select = 1'b1; cpu_write = 1'b1;
+      cpu_write_data = {24'd0, value};
+      @(negedge clk);
+      cpu_select = 1'b0; cpu_write = 1'b0;
+    end
+  endtask
+
+  initial begin
+    $dumpvars(0, monitor_tb);
+
+    repeat (2) @(negedge clk);
+    reset = 1'b0;
+
+    send_command(8'h01);
+    wait (received_count == 1);
+    if (received[0] !== 8'h81) $fatal(1, "PING response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h02);
+    wait (received_count == 4);
+    if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
+    if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
+    if (received[3] !== 8'h0f) $fatal(1, "VERSION minor mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h55);
+    wait (received_count == 5);
+    if (received[4] !== 8'hff) $fatal(1, "ERROR response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h25);
+    send_command(8'hab);
+    wait (received_count == 6);
+    if (received[5] !== 8'h90) $fatal(1, "WRITE_BYTE response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h25);
+    wait (received_count == 8);
+    if (received[6] !== 8'h91) $fatal(1, "READ_BYTE response mismatch");
+    if (received[7] !== 8'hab) $fatal(1, "READ_BYTE data mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h20);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h01);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h04);
+    send_command(8'hde);
+    send_command(8'had);
+    send_command(8'hbe);
+    send_command(8'hef);
+    wait (received_count == 9);
+    if (received[8] !== 8'ha0) $fatal(1, "WRITE_BLOCK response mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h21);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h01);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h04);
+    wait (received_count == 14);
+    if (received[9] !== 8'ha1) $fatal(1, "READ_BLOCK response mismatch");
+    if (received[10] !== 8'hde) $fatal(1, "READ_BLOCK byte 0 mismatch");
+    if (received[11] !== 8'had) $fatal(1, "READ_BLOCK byte 1 mismatch");
+    if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
+    if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
+
+    // Write and read another location in the same unified address space.
+    wait (!busy && tx_ready);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h5a);
+    wait (received_count == 15);
+    if (received[14] !== 8'h90) $fatal(1, "Data-memory WRITE_BYTE mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h10);
+    send_command(8'h00);
+    send_command(8'h00);
+    wait (received_count == 17);
+    if (received[15] !== 8'h91) $fatal(1, "Data-memory READ_BYTE mismatch");
+    if (received[16] !== 8'h5a) $fatal(1, "Data-memory value mismatch");
+
+    // The first address beyond the 32 MiB SDRAM must fail.
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h02);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    wait (received_count == 18);
+    if (received[17] !== 8'hff) $fatal(1, "Unmapped address mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h33);
+    wait (received_count == 25);
+    if (received[18] !== 8'hb3) $fatal(1, "STATUS response mismatch");
+    if (received[19] !== 8'h01) $fatal(1, "STATUS flags mismatch");
+    if (received[20] !== 8'h00) $fatal(1, "STATUS error code mismatch");
+    if ({received[21], received[22], received[23], received[24]} !== 32'h1234_5678)
+      $fatal(1, "STATUS PC mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h34);
+    send_command(8'h07);
+    wait (received_count == 30);
+    if (cpu_debug_register_address !== 5'd7) $fatal(1, "READ_REG address mismatch");
+    if (received[25] !== 8'hb4) $fatal(1, "READ_REG response mismatch");
+    if ({received[26], received[27], received[28], received[29]} !== 32'hdead_beef)
+      $fatal(1, "READ_REG data mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h30);
+    wait (received_count == 31);
+    if (received[30] !== 8'hb0 || !run_request_seen) $fatal(1, "RUN mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h32);
+    wait (received_count == 32);
+    if (received[31] !== 8'hb2 || !step_request_seen) $fatal(1, "STEP mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h31);
+    wait (received_count == 33);
+    if (received[32] !== 8'hb1 || !halt_request_seen) $fatal(1, "HALT mismatch");
+
+    // Memory commands are rejected while the CPU owns the memories.
+    cpu_halted = 1'b0;
+    wait (!busy && tx_ready);
+    send_command(8'h11);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    wait (received_count == 34);
+    if (received[33] !== 8'hff) $fatal(1, "Running CPU memory access mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h35);
+    wait (received_count == 35);
+    if (received[34] !== 8'hb5 || !reset_request_seen)
+      $fatal(1, "RESET_CPU mismatch");
+
+    // Los contadores de rendimiento. Son dos comandos y no uno porque el bufer
+    // de respuesta tiene 7 bytes y los dos contadores juntos necesitan 9.
+    wait (!busy && tx_ready);
+    send_command(8'h36);
+    wait (received_count == 40);
+    if (received[35] !== 8'hb6) $fatal(1, "GET_CYCLES response mismatch");
+    if ({received[36], received[37], received[38], received[39]} !== 32'h0001_0002)
+      $fatal(1, "GET_CYCLES data mismatch");
+
+    wait (!busy && tx_ready);
+    send_command(8'h37);
+    wait (received_count == 45);
+    if (received[40] !== 8'hb7) $fatal(1, "GET_INSTRUCTIONS response mismatch");
+    if ({received[41], received[42], received[43], received[44]} !== 32'h0000_0101)
+      $fatal(1, "GET_INSTRUCTIONS data mismatch");
+
+    // =====================================================================
+    // Puerto serie: SEND_BYTES (0x38) y RECV_BYTES (0x39)
+    //
+    // La CPU esta EN MARCHA durante todo esto --`cpu_halted` sigue a cero
+    // desde la prueba de arriba-- y es deliberado: es la diferencia de estos
+    // dos comandos con todos los demas que mueven datos. No tocan la SDRAM,
+    // asi que no pasan por la condicion `cpu_halted` del adaptador. Si algun
+    // dia alguien los mete por ahi, este banco lo caza.
+    // =====================================================================
+    base = received_count;
+
+    // -- 1. Un paquete corto entra entero -----------------------------------
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd3);
+    send_command(8'h48);  // 'H'
+    send_command(8'h69);  // 'i'
+    send_command(8'h21);  // '!'
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8) $fatal(1, "SEND_BYTES respuesta");
+    if (received[base+1] !== 8'd3) $fatal(1, "SEND_BYTES acepto %0d, esperado 3",
+                                          received[base+1]);
+
+    // Y la CPU los ve, en orden.
+    cpu_read(8'h00); if (leido !== 32'h48) $fatal(1, "la CPU no vio la H");
+    cpu_read(8'h00); if (leido !== 32'h69) $fatal(1, "la CPU no vio la i");
+    cpu_read(8'h00); if (leido !== 32'h21) $fatal(1, "la CPU no vio el !");
+
+    // -- 2. Longitud cero es legal: sondeo sin escribir ---------------------
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd0);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8 || received[base+1] !== 8'd0)
+      $fatal(1, "SEND_BYTES de longitud cero");
+
+    // -- 3. Aceptacion PARCIAL, que es el control de flujo ------------------
+    // Se llena la cola hasta dejar tres huecos y se mandan cinco. Tienen que
+    // entrar tres, consumirse los cinco del cable, y el enlace seguir en
+    // sincronia: el comando siguiente se responde bien.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd61);
+    for (i = 0; i < 61; i = i + 1) send_command(i[7:0]);
+    wait (received_count == base + 2);
+    if (received[base+1] !== 8'd61) $fatal(1, "no cupieron los 61 primeros");
+
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h38);
+    send_command(8'd5);
+    for (i = 0; i < 5; i = i + 1) send_command(8'hA0 + i[7:0]);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb8) $fatal(1, "SEND_BYTES parcial: respuesta");
+    if (received[base+1] !== 8'd3)
+      $fatal(1, "SEND_BYTES parcial acepto %0d, esperado 3", received[base+1]);
+
+    // El enlace sigue en sincronia: si el monitor hubiera dejado de consumir
+    // el paquete a medias, los dos bytes que sobran se leerian como comandos.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h01);
+    wait (received_count == base + 1);
+    if (received[base] !== 8'h81)
+      $fatal(1, "el enlace se desincronizo tras un paquete parcial");
+
+    // -- 4. RECV_BYTES con la cola de salida vacia --------------------------
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd10);
+    wait (received_count == base + 2);
+    if (received[base] !== 8'hb9) $fatal(1, "RECV_BYTES respuesta");
+    if (received[base+1] !== 8'd0) $fatal(1, "RECV_BYTES de una cola vacia");
+
+    // -- 5. RECV_BYTES con datos, y con MM menor que la cuenta --------------
+    cpu_write_byte(8'h00, 8'h4F);  // 'O'
+    cpu_write_byte(8'h00, 8'h4B);  // 'K'
+    cpu_write_byte(8'h00, 8'h0A);  // '\n'
+
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd2);            // se piden dos de los tres
+    wait (received_count == base + 4);
+    if (received[base] !== 8'hb9) $fatal(1, "RECV_BYTES respuesta con datos");
+    if (received[base+1] !== 8'd2)
+      $fatal(1, "RECV_BYTES devolvio %0d, esperado 2", received[base+1]);
+    if (received[base+2] !== 8'h4F || received[base+3] !== 8'h4B)
+      $fatal(1, "RECV_BYTES datos: %02x %02x", received[base+2], received[base+3]);
+
+    // El tercero sigue en la cola.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h39);
+    send_command(8'd10);
+    wait (received_count == base + 3);
+    if (received[base+1] !== 8'd1 || received[base+2] !== 8'h0A)
+      $fatal(1, "el byte que quedaba en la cola de salida");
+
+    $display("PASS: monitor protocol responses are correct");
+    $finish;
+  end
+endmodule
+
+`default_nettype wire

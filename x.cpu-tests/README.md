@@ -53,7 +53,7 @@ estado de parada, error, PC, registros solicitados y regiones de memoria.
 
 ## Ejecución
 
-Hay seis combinaciones principales de backend y versión. Cada una ejecuta la
+Hay siete combinaciones principales de backend y versión. Cada una ejecuta la
 suite entera de su arquitectura; el runner omite por su cuenta los casos de la
 otra, y los que piden capacidades que ese backend no tiene.
 
@@ -72,6 +72,9 @@ python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
 # 4. CPU sobre FPGA, versión con vídeo, sub-palabra y llamadas
 python run_gpu_tests.py --backend cpu-fpga --version subword --port COM3
 
+# 4b. CPU sobre FPGA, además con la ALU completa, shifts inmediatos y R0 a cero
+python run_gpu_tests.py --backend cpu-fpga --version alu --port COM3
+
 # 5. GPU sobre el simulador funcional
 python run_gpu_tests.py --backend gpu-simulator
 
@@ -83,17 +86,18 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpu-simulator` | ninguno | — | los 25 de `cases/` |
+| 1 | `cpu-simulator` | ninguno | — | los 33 de `cases/` |
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | 12; 10 omitidos por capacidades |
 | 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | 12; 10 omitidos por capacidades |
-| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.14 | los 25 de `cases/` |
+| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.14 | 25; 8 omitidos por capacidades |
+| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 33 de `cases/` |
 | 5 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.1 | 26 compatibles; 8 omitidos con motivo |
 
-`ebr`, `sdram`, `hdmi`, `bl8` y `subword` son versiones del backend **CPU**;
-`bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU. Solo
-`cpu-simulator` y `cpu-fpga --version subword` ejecutan los 25 casos: son los
-dos únicos que tienen las seis capacidades.
+`ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
+**CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
+Solo `cpu-simulator` y `cpu-fpga --version alu` ejecutan los 33 casos: son los
+dos únicos que tienen las nueve capacidades.
 
 La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
@@ -155,7 +159,7 @@ casos CPU se agrupan igual que los GPU:
 | [alu](cases/alu/) | Reglas de la ALU que la ISA fija explícitamente |
 | [basics](cases/basics/) | Camino mínimo de ejecución y de memoria |
 | [errors](cases/errors/) | Códigos de error y PC de la instrucción causante |
-| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra y consola serie |
+| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra, consola serie, desplazamientos inmediatos, ALU extendida y `R0` a cero |
 | [programs](cases/programs/) | Programas con bucles, como prueba de integración |
 | [video](cases/video/) | Registros de vídeo, intercambio y frame capturado |
 
@@ -524,28 +528,51 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8`, `subword` |
-| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8`, `subword` |
-| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpu-simulator`, `subword` |
-| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpu-simulator`, `subword` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8`, `subword`, `alu` |
+| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8`, `subword`, `alu` |
+| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpu-simulator`, `subword`, `alu` |
+| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpu-simulator`, `subword`, `alu` |
+| `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpu-simulator`, `subword`, `alu` |
+| `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpu-simulator`, `alu` |
+| `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpu-simulator`, `alu` |
+| `zero_register` | `R0` cableado a cero | `cpu-simulator`, `alu` |
 
-Las dos últimas son de **ISA**, no de periférico, y existen por la misma razón
-que las de vídeo: sin ellas, un caso de estos ejecutado en un bitstream anterior
-no fallaría con un diagnóstico útil, sino con **error `0x01`, opcode inválido**,
-que es lo mismo que produce un ensamblador roto o un salto a datos. Un `SKIP`
-dice dónde está el problema; un `0x01` a media suite, no.
+Las cinco de ISA existen por la misma razón que las de vídeo: sin ellas, un caso
+ejecutado en un bitstream anterior no fallaría con un diagnóstico útil, sino con
+**error `0x01`, opcode inválido**, que es lo mismo que produce un ensamblador
+roto o un salto a datos. Un `SKIP` dice dónde está el problema; un `0x01` a
+media suite, no.
 
-Están separadas porque son extensiones independientes: llegaron juntas en la 19,
-pero ocupan bloques distintos del mapa de opcodes, y un backport a las versiones
-anteriores no tiene por qué traer las dos a la vez. `calls` no implica
-`subword_memory` ni al revés.
+Están separadas porque son extensiones independientes. `subword_memory`, `calls`
+y `serial` llegaron juntas en la 19 y `shift_immediate`, `alu_extended` y
+`zero_register` juntas en la 21, pero ocupan bloques distintos del mapa de
+opcodes y un backport no tiene por qué traerlas todas a la vez. Ninguna implica
+a otra.
 
-El simulador funcional las tiene las dos, y eso es lo normal: va por delante del
+El simulador funcional las tiene todas, y eso es lo normal: va por delante del
 RTL, que es donde se prueba primero una instrucción nueva.
+
+**Dos de la 21 no encajan en el párrafo de arriba**, y hay que saberlo antes de
+escribir un caso:
+
+- **`shift_immediate` no se detecta por `0x01`.** No añade opcodes: es el bit 10
+  de tres que ya existían. En un bitstream sin ella ese bit sigue siendo
+  reservado y el programa para con **`0x05`, encoding inválido** —justo lo que
+  produce un ensamblador roto—. El `SKIP` ahorra exactamente esa confusión.
+- **`zero_register` no es aditiva, es incompatible.** Un programa que use `R0`
+  como registro general **no para con error**: da otro resultado, en silencio.
+  Es la única capacidad de la lista de la que eso se puede decir.
+
+Y una cosa que **no** es capacidad: el camino rápido de `MULHI`/`REM`/`REMU` de
+la 21. Es invisible para la arquitectura —acierto y fallo dan el mismo número, y
+solo cambian los ciclos, que el diferencial ya excluye—, así que no hay nada que
+declarar y ningún caso puede depender de él. Lo que sí hay es un caso que fija
+el resultado de las secuencias en las que **no** debe acertar, y ése vale igual
+contra el simulador, que no lo modela.
 
 ### El simulador tiene vídeo, pero no tiene tiempo
 
-`cpu-simulator` declara las dos capacidades desde que `minicpu_sim.py` tiene un
+`cpu-simulator` declara las dos capacidades de video desde que `minicpu_sim.py` tiene un
 `VideoDevice`, así que los casos de vídeo corren sin placa. **Conviene entender
 qué significa un verde suyo y qué no.**
 

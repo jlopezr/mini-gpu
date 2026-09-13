@@ -1,0 +1,30 @@
+{
+  "architecture": "cpu",
+  "name": "alu-extended-fast-path-sequences",
+  "program": "program.asm",
+  "requires": ["alu_extended"],
+  "max_instructions": 60,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000098",
+    "registers": {
+      "R6": "0xFFFFFFFF",
+      "R8": "0xFFFFFFFD",
+      "R10": "0xFFFFFFFF",
+      "R12": "0xFFFFFFFF",
+      "R14": "0xFFFFFFFF",
+      "R16": "0x00000001",
+      "R18": "0x00000000",
+      "R20": "0x00000000",
+      "R22": "0xFFFFFFFF",
+      "R23": "0xFFFFFFFF",
+      "R24": "0xFFFFFFFF",
+      "R25": "0x8091A2B8",
+      "R26": "0xFFFFFFFF",
+      "R28": "0xFFFFFFFF",
+      "R30": "0x00000001"
+    }
+  }
+}

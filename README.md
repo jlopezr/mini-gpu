@@ -6,11 +6,21 @@ independientes: modelos de Mandelbrot, ensamblador, simulador funcional,
 bring-up de la ULX3S, monitor UART, CPU en FPGA y memoria SDRAM externa.
 
 El diseño de CPU más completo está actualmente en
+[`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu): la 19 con la familia ALU
+completa (`MULHI`, `DIVU`, `REM`, `REMU`), desplazamientos con cantidad
+inmediata y `R0` cableado a cero, cerrando a 91,8 MHz sobre un objetivo de 80
+—las ocho semillas cumplen—. **Todavía no se ha probado en placa**, así que el
+más completo *verificado en hardware* sigue siendo
 [`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls): una MiniCPU multiciclo con salida
 HDMI, memoria en ráfagas BL8 sobre los 32 MiB de SDRAM de la ULX3S, accesos de 8
-y 16 bits y llamadas, con cierre de timing a 80 MHz. El más rápido sigue siendo
-[`10.fpga-cpu-ram`](10.fpga-cpu-ram), a 120 MHz, porque no tiene vídeo
-compitiendo por la memoria.
+y 16 bits, llamadas y puerto serie, con cierre de timing a 80 MHz. El más rápido
+sigue siendo [`10.fpga-cpu-ram`](10.fpga-cpu-ram), a 120 MHz, porque no tiene
+vídeo compitiendo por la memoria.
+
+`R0` a cero es el **primer cambio incompatible** con la MiniISA v0.1: las
+carpetas hasta la 19 tratan `R0` como un registro general y siguen siendo
+válidas tal cual. Lo que se rompe al pasar a la 21 está listado en su
+[`README.md`](21.fpga-cpu-hdmi-alu/README.md#qué-se-rompe-con-r0-a-cero).
 
 **[`COMPARATIVA.md`](COMPARATIVA.md) pone en una tabla qué sabe hacer cada
 implementación, cuánta memoria ve y a qué frecuencia cierra.** Es lo que evita
@@ -42,6 +52,7 @@ bitstream concreto.
 | [`18.fpga-cpu-hdmi-bl8`](18.fpga-cpu-hdmi-bl8)     | La 16 con el camino de memoria en ráfagas BL8 y contadores de ciclos.    |
 | [`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls)       | La 18 más accesos de 8 y 16 bits, llamadas y puerto serie MMIO.         |
 | [`20.forth`](20.forth)                             | Un Forth con intérprete y compilador, sobre la consola serie de la 19.   |
+| [`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu)     | La 19 más `MULHI`/`DIVU`/`REM`/`REMU`, shifts inmediatos y `R0` a cero.  |
 | [`x.cpu-tests`](x.cpu-tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
 | [`pruebas`](pruebas)                               | Artefactos históricos conservados como referencia.                       |
 

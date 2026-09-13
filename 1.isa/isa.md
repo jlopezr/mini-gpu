@@ -3,6 +3,19 @@
 Este documento es la especificación de la ISA usada por MiniCPU y MiniGPU. Cuando el código y este texto discrepen, la discrepancia debe tratarse
 como un error; no se debe deducir la ISA exclusivamente del simulador.
 
+El documento describe el estado **actual**, que ya no es exactamente la v0.1:
+las carpetas posteriores han ido incorporando extensiones del mapa de
+`propuesta-v0.2.md`. Cada una dice en qué carpeta apareció, y hay una sola
+incompatible con la v0.1 —`R0` cableado a cero, §1—; el resto son aditivas.
+
+| Extensión | Desde | Compatible con v0.1 |
+| --- | --- | --- |
+| `LOADB`…`STOREH`, accesos de 8 y 16 bits | `19.fpga-cpu-hdmi-ls` | sí |
+| `JAL`, `JALR`, `JR` | `19.fpga-cpu-hdmi-ls` | sí |
+| `MULHI`, `DIVU`, `REM`, `REMU` | `21.fpga-cpu-hdmi-alu` | sí |
+| Desplazamientos con cantidad inmediata | `21.fpga-cpu-hdmi-alu` | sí |
+| **`R0` cableado a cero** | `21.fpga-cpu-hdmi-alu` | **no** |
+
 ## 1. Estado arquitectónico
 
 | Elemento         | Definición                          |
@@ -15,9 +28,31 @@ como un error; no se debe deducir la ISA exclusivamente del simulador.
 | Orden de bytes   | little-endian                       |
 | Opcode           | 6 bits                              |
 
-En v0.1 todos los registros, incluido `R0`, son registros generales. Las
-escrituras conservan los 32 bits bajos; el overflow hace wrap módulo 2^32. No
-existen FLAGS, `CMP` ni delay slots.
+Las escrituras conservan los 32 bits bajos; el overflow hace wrap módulo 2^32.
+No existen FLAGS, `CMP` ni delay slots.
+
+### `R0` está cableado a cero
+
+**Desde `21.fpga-cpu-hdmi-alu`**, las escrituras a `R0` se descartan y las
+lecturas valen siempre cero. En v0.1 `R0` era un registro general, y las
+implementaciones hasta `19.fpga-cpu-hdmi-ls` inclusive se quedan así: es un
+cambio **incompatible**, no aditivo. Un programa que use `R0` como registro
+general no para con error en una implementación anterior; da otro resultado, en
+silencio.
+
+No se hace por área. Ahorra unos 32 flops de los 1024 del banco, que en un
+ECP5-85F es ruido. Las dos razones que sí valen:
+
+- **El presupuesto de opcodes.** `JR Ra` pasa a ser exactamente
+  `JALR R0, Ra, 0`, con lo que `0x2E` vuelve al bote. La familia de control
+  `0x20–0x2F` estaba a cero libres en el mapa de `propuesta-v0.2.md` §6, que ya
+  anota esta palanca como la más barata.
+- **Los idiomas.** Cero sin gastar un `MOVI` ni un registro, y un destino de
+  descarte para cuando solo interesan los efectos de una operación.
+
+`JR` (`0x2E`) **sigue implementado y sigue siendo válido**: quitarlo hoy rompe
+programas sin ganar nada. Queda marcado como obsoleto y su hueco como
+reclamable, no como libre.
 
 ## 2. Formatos de instrucción
 
@@ -31,7 +66,9 @@ existen FLAGS, `CMP` ni delay slots.
       6           5         5         5            11
 ```
 
-`extra` debe ser cero en v0.1 y queda reservado para extensiones.
+`extra` debe ser cero, con **una excepción**: en `SHL`, `SHR` y `SAR` el bit 10
+significa «la cantidad es inmediata» y solo `extra[9:0]` está reservado. Ver
+[§3, desplazamientos](#desplazamientos-con-cantidad-inmediata).
 
 ### I-Type
 
@@ -91,20 +128,83 @@ Los dos bits altos del opcode separan cuatro familias:
 | `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Sí        |
 | `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Sí        |
 | `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | Sí        |
-| `0x0B` | `MULHI`   | `Rd, Ra, Rb` | Reservada                         | No        |
+| `0x0B` | `MULHI`   | `Rd, Ra, Rb` | 32 bits altos, **signed**         | Sí        |
 | `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | Sí        |
-| `0x0D` | `DIVU`    | `Rd, Ra, Rb` | Reservada                         | No        |
-| `0x0E` | `REM`     | `Rd, Ra, Rb` | Reservada                         | No        |
-| `0x0F` | `REMU`    | `Rd, Ra, Rb` | Reservada                         | No        |
+| `0x0D` | `DIVU`    | `Rd, Ra, Rb` | división unsigned                 | Sí        |
+| `0x0E` | `REM`     | `Rd, Ra, Rb` | resto signed, signo del dividendo | Sí        |
+| `0x0F` | `REMU`    | `Rd, Ra, Rb` | resto unsigned                    | Sí        |
 
-Para `SHL`, `SHR` y `SAR`, la cantidad de desplazamiento serán los cinco bits
-bajos de `Rb`. Esta semántica debe incorporarse al simulador.
+**La familia ALU queda completa.** No hay ningún opcode libre entre `0x00` y
+`0x0F`, y cualquier operación aritmética nueva tendrá que buscar hueco en otra
+familia o entrar por una codificación extendida.
+
+#### Desplazamientos con cantidad inmediata
+
+Para `SHL`, `SHR` y `SAR` la cantidad son los cinco bits bajos de `Rb`. Desde
+`21.fpga-cpu-hdmi-alu`, el **bit 10** del campo `extra` indica que la cantidad
+es inmediata y viaja en los cinco bits del propio campo `Rb`:
+
+```text
+31          26 25    21 20    16 15    11 10   9              0
+┌─────────────┬────────┬────────┬────────┬───┬────────────────┐
+│   opcode    │   Rd   │   Ra   │ Rb/imm │ I │       0        │
+└─────────────┴────────┴────────┴────────┴───┴────────────────┘
+                                            ↑ 1 = cantidad inmediata
+```
+
+Es la **opción B** de `propuesta-v0.2.md` §4.2, y cuesta cero opcodes: la
+familia `0x10–0x1F` es la única con presión real y los accesos por bytes valen
+más que la elegancia del decodificador. Los mnemónicos del ensamblador son
+`SHLI`, `SHRI` y `SARI`; no son opcodes, son azúcar sobre los mismos tres.
+
+La contrapartida está en el decodificador de encoding, y es la única
+irregularidad de la ISA: **para estos tres opcodes el campo reservado es
+`extra[9:0]`, no `extra` entero**. Un `SHL` con `extra = 0x400` es válido; con
+cualquier bit de `extra[9:0]` puesto sigue dando `ERROR_INVALID_ENCODING`.
+
+#### Multiplicación y división
 
 `MULFX` interpreta ambos operandos como signed Q16.16, forma un producto signed
 de 64 bits, lo desplaza aritméticamente 16 bits a la derecha y escribe los 32
-bits bajos. `DIV` interpreta ambos operandos como signed32 y trunca el cociente
-hacia cero. La división por cero provoca un trap arquitectónico; hasta que éste
-se formalice, el simulador termina con error.
+bits bajos.
+
+`MUL` y `MULHI` son las dos mitades del **mismo producto signed de 64 bits**:
+`MUL` escribe `(Ra × Rb)[31:0]` y `MULHI` escribe `(Ra × Rb)[63:32]`, con ambos
+operandos interpretados como signed32. Los bits bajos no dependen del signo, así
+que `MUL` sirve igual para operandos unsigned; los altos sí, y ahí la ISA toma
+partido.
+
+> **`MULHI` es con signo.** La v0.1 dejaba el opcode reservado sin decir cuál de
+> las dos era, y hay que elegir. Se elige signed por tres razones: es la
+> convención de `MULH` en RISC-V, es coherente con `MULFX`, que es la otra
+> multiplicación de esta ISA y también es signed, y con un solo opcode la mitad
+> alta signed es la que no se puede reconstruir barata a partir de la otra. No
+> hay `MULHU`; quien necesite el alto unsigned lo obtiene sumando la corrección
+> `(Ra[31] ? Rb : 0) + (Rb[31] ? Ra : 0)` al resultado de `MULHI`.
+>
+> No es gratis en el hardware, y por eso está escrito aquí: el producto de 64
+> bits que construye el RTL es el **unsigned**, así que la mitad alta signed
+> necesita restarle esa misma corrección. Cablear los bits de arriba no basta,
+> y un test que solo use operandos positivos no lo nota.
+
+`DIV` y `REM` interpretan ambos operandos como signed32; `DIVU` y `REMU`, como
+unsigned32. El cociente signed se trunca hacia cero, y el resto acompaña a esa
+división, de modo que lleva el **signo del dividendo**:
+
+```text
+REM(a, b) = a - DIV(a, b) * b
+
+ 7 rem  2 =  1        -7 rem  2 = -1
+ 7 rem -2 =  1        -7 rem -2 = -1
+```
+
+El caso `-2^31 / -1` no cabe en signed32: el cociente hace wrap a `0x80000000`
+y el resto es cero.
+
+La división por cero provoca un trap arquitectónico en las cuatro
+instrucciones —también en `REM` y `REMU`, que no tienen más definición que la
+división que las acompaña—; hasta que el trap se formalice, el simulador
+termina con error y el RTL para con `ERROR_DIVISION_BY_ZERO`.
 
 ### Inmediatos y memoria
 
@@ -118,7 +218,17 @@ se formalice, el simulador termina con error.
 |      `0x15` | `LOAD`    | `Rd, Ra, imm16` | `Rd = mem32[Ra + sign_extend(imm16)]` | Sí        |
 |      `0x16` | `STORE`   | `Rs, Ra, imm16` | `mem32[Ra + sign_extend(imm16)] = Rs` | Sí        |
 |      `0x17` | `MOVHI`   | `Rd, imm16`     | `Rd = imm16 << 16`                    | Sí        |
-| `0x18–0x1F` | —         | —               | Reservadas                            | —         |
+|      `0x18` | `LOADB`   | `Rd, Ra, imm16` | 8 bits, extensión con signo           | Sí        |
+|      `0x19` | `LOADUB`  | `Rd, Ra, imm16` | 8 bits, extensión con ceros           | Sí        |
+|      `0x1A` | `STOREB`  | `Rs, Ra, imm16` | escribe `Rs[7:0]`                     | Sí        |
+|      `0x1B` | `LOADH`   | `Rd, Ra, imm16` | 16 bits, extensión con signo          | Sí        |
+|      `0x1C` | `LOADUH`  | `Rd, Ra, imm16` | 16 bits, extensión con ceros          | Sí        |
+|      `0x1D` | `STOREH`  | `Rs, Ra, imm16` | escribe `Rs[15:0]`                    | Sí        |
+| `0x1E–0x1F` | —         | —               | Reservadas                            | —         |
+
+Los seis accesos sub-palabra siguen el mapa de `propuesta-v0.2.md` §7 y
+aparecieron en `19.fpga-cpu-hdmi-ls`. Quedan **dos opcodes libres** en esta
+familia.
 
 `LOAD` y `STORE` transfieren exactamente cuatro bytes. La dirección efectiva
 hace wrap a 32 bits y debe estar alineada a cuatro bytes. Una dirección no
@@ -142,8 +252,22 @@ ORI   R1, R1, 0x5678    ; R1 = 0x12345678
 |      `0x23` | `BGE`     | `Ra, Rb, target` | `signed(Ra) >= signed(Rb)` | Sí        |
 |      `0x24` | `BLTU`    | `Ra, Rb, target` | `Ra < Rb`, unsigned        | Sí        |
 |      `0x25` | `BGEU`    | `Ra, Rb, target` | `Ra >= Rb`, unsigned       | Sí        |
-| `0x26–0x2E` | —         | —                | Reservadas                 | —         |
+| `0x26–0x2B` | —         | —                | Reservadas                 | —         |
+|      `0x2C` | `JAL`     | `Rd, target`     | `Rd = PC+4`, relativo      | Sí        |
+|      `0x2D` | `JALR`    | `Rd, Ra, imm16`  | `Rd = PC+4`, a `Ra+imm*4`  | Sí        |
+|      `0x2E` | `JR`      | `Ra`             | a `Ra`; **obsoleta**       | Sí        |
 |      `0x2F` | `BRA`     | `target`         | Siempre                    | Sí        |
+
+`JAL`, `JALR` y `JR` aparecieron en `19.fpga-cpu-hdmi-ls`, con el mapa de
+`propuesta-v0.2.md` §3.2, cuando `R0` todavía era un registro general. Desde que
+`R0` está cableado a cero, **`JR Ra` es exactamente `JALR R0, Ra, 0`** y `0x2E`
+queda obsoleto: sigue implementado y sigue siendo válido, pero es redundante y
+su hueco es reclamable por una instrucción futura. Los programas nuevos deberían
+usar `JALR R0`. `RET` es un alias del ensamblador, no un opcode.
+
+En los saltos indirectos el destino sale de un registro y puede venir
+desalineado: se descartan los dos bits bajos en lugar de añadir una ruta de
+error.
 
 Los branches son relativos a la instrucción siguiente y expresan el offset en
 palabras de 32 bits, no en bytes:
@@ -208,7 +332,9 @@ ejecución; el contexto de lane o warp podrá añadirse sin cambiar el opcode.
 
 Los campos marcados como reservados deben ser cero. Un opcode conocido con
 campos reservados distintos de cero produce `ERROR_INVALID_ENCODING`; un opcode
-reservado o desconocido produce `ERROR_INVALID_OPCODE`.
+reservado o desconocido produce `ERROR_INVALID_OPCODE`. La única excepción es la
+descrita arriba: en `SHL`, `SHR` y `SAR` el campo reservado es `extra[9:0]`
+porque el bit 10 selecciona la cantidad inmediata.
 
 ## 4. Programa binario
 
@@ -246,6 +372,15 @@ La sintaxis de memoria actual expone los tres campos del encoding:
 ```asm
 LOAD  Rd, Ra, offset
 STORE Rs, Ra, offset
+```
+
+`SHLI`, `SHRI` y `SARI` **no son opcodes**: son la forma de escribir `SHL`,
+`SHR` y `SAR` con el bit de cantidad inmediata puesto. La cantidad va de 0 a 31
+y el ensamblador rechaza cualquier otra en vez de truncarla:
+
+```asm
+SHLI R3, R2, 2      ; indice -> desplazamiento en bytes, sin gastar un MOVI
+SHL  R3, R2, R4     ; la misma operacion con la cantidad en un registro
 ```
 
 ## 6. Conformidad y evolución

@@ -1,0 +1,31 @@
+{
+  "architecture": "cpu",
+  "name": "alu-extended-mulhi-signed",
+  "program": "program.asm",
+  "requires": ["alu_extended"],
+  "max_instructions": 60,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000070",
+    "registers": {
+      "R3": "0x242D2080",
+      "R4": "0xF8CC93D6",
+      "R5": "0xF8CC93D6",
+      "R6": "0xF8CC93D6",
+      "R8": "0x00000000",
+      "R9": "0x00000001",
+      "R11": "0xFFFFFFFF",
+      "R12": "0xFFFFFFFF",
+      "R14": "0x40000000",
+      "R15": "0x00000000",
+      "R16": "0xFFFFFFFF",
+      "R17": "0x80000000",
+      "R19": "0x00000001",
+      "R20": "0x00000000",
+      "R23": "0x00000000",
+      "R24": "0x0000000F"
+    }
+  }
+}

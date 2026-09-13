@@ -1,0 +1,36 @@
+{
+  "architecture": "cpu",
+  "name": "alu-extended-remainder-signs",
+  "program": "program.asm",
+  "requires": ["alu_extended"],
+  "max_instructions": 60,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000084",
+    "registers": {
+      "R5": "0x00000003",
+      "R6": "0x00000001",
+      "R7": "0xFFFFFFFD",
+      "R8": "0xFFFFFFFF",
+      "R9": "0xFFFFFFFD",
+      "R10": "0x00000001",
+      "R11": "0x00000003",
+      "R12": "0xFFFFFFFF",
+      "R13": "0x7FFFFFFC",
+      "R14": "0x00000001",
+      "R15": "0x00000000",
+      "R16": "0xFFFFFFF9",
+      "R17": "0x00000003",
+      "R18": "0xFFFFFFF9",
+      "R21": "0x80000000",
+      "R22": "0x00000000",
+      "R25": "0x00000000",
+      "R26": "0x00000005",
+      "R28": "0x00000000",
+      "R29": "0x00000000",
+      "R27": "0x00000000"
+    }
+  }
+}

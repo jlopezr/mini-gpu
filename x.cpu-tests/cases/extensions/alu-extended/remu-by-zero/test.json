@@ -1,0 +1,13 @@
+{
+  "architecture": "cpu",
+  "name": "alu-extended-remu-by-zero",
+  "program": "program.asm",
+  "requires": ["alu_extended"],
+  "max_instructions": 10,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x04",
+    "pc": "0x00000008"
+  }
+}
