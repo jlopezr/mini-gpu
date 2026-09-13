@@ -204,7 +204,10 @@
         "enum": [
           "atomic_warp_faults",
           "video",
-          "frame_capture"
+          "frame_capture",
+          "subword_memory",
+          "calls",
+          "serial"
         ]
       }
     }

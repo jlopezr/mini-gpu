@@ -1,0 +1,26 @@
+{
+  "architecture": "cpu",
+  "name": "calls-link-and-return",
+  "program": "program.asm",
+  "requires": ["calls"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000014",
+    "registers": {
+      "R11": "0x00002222",
+      "R12": "0x00003333",
+      "R13": "0x00004444",
+      "R20": "0x00001111",
+      "R31": "0x0000000C"
+    },
+    "memory_dumps": [
+      {
+        "address": "0x00100400",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}

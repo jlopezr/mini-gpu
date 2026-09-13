@@ -1,0 +1,29 @@
+{
+  "architecture": "cpu",
+  "name": "subword-stores",
+  "program": "program.asm",
+  "requires": ["subword_memory"],
+  "max_instructions": 100,
+  "initial_memory": [
+    {
+      "address": "0x00100400",
+      "file": "input.hex"
+    }
+  ],
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x0000002C",
+    "registers": {
+      "R2": "0xAAAAAAAA",
+      "R3": "0x12345678"
+    },
+    "memory_dumps": [
+      {
+        "address": "0x00100400",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}

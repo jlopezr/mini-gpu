@@ -1,0 +1,6 @@
+# Tres palabras de partida. Las dos de unos son las que dicen si una escritura
+# de media palabra se ha comido bytes que no eran suyos: sobre ceros, escribir
+# de mas no se notaria en la mitad de los casos.
+00000000
+FFFFFFFF
+FFFFFFFF

@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "subword-misaligned-halfword",
+  "program": "program.asm",
+  "requires": ["subword_memory"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "pc": "0x00000008",
+    "registers": {
+      "R2": 0
+    }
+  }
+}

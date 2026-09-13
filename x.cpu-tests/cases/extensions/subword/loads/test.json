@@ -1,0 +1,31 @@
+{
+  "architecture": "cpu",
+  "name": "subword-loads",
+  "program": "program.asm",
+  "requires": ["subword_memory"],
+  "max_instructions": 100,
+  "initial_memory": [
+    {
+      "address": "0x00100400",
+      "file": "input.hex"
+    }
+  ],
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000034",
+    "registers": {
+      "R2": "0x000000AA",
+      "R3": "0xFFFFFFAA",
+      "R4": "0x00000078",
+      "R5": "0x00000078",
+      "R6": "0x0000BEEF",
+      "R7": "0xFFFFBEEF",
+      "R8": "0x0000AA78",
+      "R9": "0xFFFFAA78",
+      "R10": "0xBEEFAA78",
+      "R11": "0x000000BE"
+    }
+  }
+}

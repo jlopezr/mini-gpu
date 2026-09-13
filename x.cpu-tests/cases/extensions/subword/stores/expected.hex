@@ -1,0 +1,6 @@
+# Palabra 0: los bytes 1 y 2 a 0xAA, los otros dos intactos.
+00AAAA00
+# Palabra 1: mitad baja escrita, mitad alta intacta.
+FFFF5678
+# Palabra 2: al reves.
+5678FFFF

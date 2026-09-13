@@ -84,6 +84,108 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(fpga.capabilities("hdmi"), {"video"})
         # La 18 tiene las dos.
         self.assertEqual(fpga.capabilities("bl8"), {"video", "frame_capture"})
+        # Y la 19 anade las extensiones de ISA y el puerto serie.
+        self.assertEqual(
+            fpga.capabilities("subword"),
+            {"video", "frame_capture", "subword_memory", "calls", "serial"})
+
+    def test_las_extensiones_de_isa_no_se_implican(self):
+        """`calls` y `subword_memory` son independientes a proposito.
+
+        Llegaron juntas en la 19, pero son extensiones separadas del mapa de
+        opcodes: `0x18..0x1D` una y `0x2C..0x2E` la otra. Un backport a las
+        versiones anteriores no tiene por que traer las dos, y encadenarlas
+        aqui obligaria a mentir al bitstream que solo tuviera una.
+        """
+        self.assertEqual(expand_capabilities(["calls"]), {"calls"})
+        self.assertEqual(
+            expand_capabilities(["subword_memory"]), {"subword_memory"})
+
+    def test_las_extensiones_se_omiten_en_los_bitstreams_anteriores(self):
+        """Y el motivo tiene que decir donde SI estan.
+
+        Sin el SKIP, estos casos no fallarian con un diagnostico util en un
+        bitstream anterior: pararian con error 0x01, opcode invalido, que es lo
+        mismo que produce un ensamblador roto o un salto a datos.
+        """
+        for capacidad in ("calls", "subword_memory"):
+            caso = self._caso([capacidad])
+            for version in ("ebr", "sdram", "hdmi", "bl8"):
+                motivo = fpga.incompatibility(caso, version)
+                self.assertIsNotNone(motivo, f"{capacidad} en {version}")
+                self.assertIn(capacidad, motivo)
+                self.assertIn("subword", motivo)
+            self.assertIsNone(fpga.incompatibility(caso, "subword"))
+
+    def test_el_serie_se_omite_en_los_bitstreams_anteriores(self):
+        caso = self._caso(["serial"])
+        for version in ("ebr", "sdram", "hdmi", "bl8"):
+            motivo = fpga.incompatibility(caso, version)
+            self.assertIsNotNone(motivo, f"serial en {version}")
+            self.assertIn("serial", motivo)
+        self.assertIsNone(fpga.incompatibility(caso, "subword"))
+
+    def test_stdin_y_stdout_exigen_la_capacidad(self):
+        """Sin `requires: ["serial"]` el caso se rechaza al CARGAR.
+
+        Si no, un caso de consola pasaria en un backend sin puerto serie
+        "comprobando" que no salio nada, que es lo mismo que no comprobar.
+        """
+        for extra in ({"stdin": "hola"}, {"expect": {"stdout": "hola"}}):
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as tmp:
+                    directorio = Path(tmp)
+                    (directorio / "p.bin").write_bytes(b"\x00\x00\x00\xfc")
+                    caso = {
+                        "architecture": "cpu",
+                        "name": "consola",
+                        "program": "p.bin",
+                        "expect": {"pc": "0x00000004"},
+                    }
+                    caso.update(extra)
+                    if "expect" in extra:
+                        caso["expect"]["pc"] = "0x00000004"
+                    (directorio / "test.json").write_text(
+                        json.dumps(caso), encoding="utf-8")
+                    with self.assertRaises(ValueError) as error:
+                        load_case(directorio / "test.json")
+                self.assertIn("serial", str(error.exception))
+
+    def test_stdin_no_puede_pasar_de_la_cola(self):
+        """Mas de 64 bytes exigiria alimentar la cola con la CPU corriendo, y
+        entonces lo que se capture depende de lo rapido que vaya."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directorio = Path(tmp)
+            (directorio / "p.bin").write_bytes(b"\x00\x00\x00\xfc")
+            (directorio / "test.json").write_text(json.dumps({
+                "architecture": "cpu",
+                "name": "consola-larga",
+                "program": "p.bin",
+                "requires": ["serial"],
+                "stdin": "x" * 65,
+                "expect": {"pc": "0x00000004"},
+            }), encoding="utf-8")
+            with self.assertRaises(ValueError) as error:
+                load_case(directorio / "test.json")
+        self.assertIn("determinista", str(error.exception))
+
+    def test_el_simulador_tiene_las_extensiones(self):
+        """Va por delante del RTL, como debe: es donde se prueban primero."""
+        for capacidad in ("calls", "subword_memory"):
+            self.assertIsNone(
+                simulator.incompatibility({"requires": [capacidad]}))
+
+    def test_el_simulador_tambien_puede_omitir(self):
+        """La comprobacion es real, no un `return None`.
+
+        Hoy el simulador tiene todas las capacidades declaradas, asi que este
+        camino no se ejercita con ninguna de ellas. Se comprueba con una
+        inventada para que el dia que se anada una capacidad que el simulador
+        no tenga, el SKIP funcione en vez de dejar correr el caso a medias.
+        """
+        motivo = simulator.incompatibility({"requires": ["inventada"]})
+        self.assertIsNotNone(motivo)
+        self.assertIn("inventada", motivo)
 
     # `incompatibility` mira tambien si el caso cabe en el mapa de memoria, asi
     # que necesita un caso con forma, no solo el `requires`.

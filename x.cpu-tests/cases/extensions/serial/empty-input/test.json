@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "serial-empty-input",
+  "program": "program.asm",
+  "requires": ["serial"],
+  "max_instructions": 1000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x0000002C",
+    "registers": {
+      "R7": "0x00004000",
+      "R8": "0x00003D00"
+    },
+    "stdout": "OK\n"
+  }
+}

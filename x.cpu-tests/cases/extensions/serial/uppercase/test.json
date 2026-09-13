@@ -1,0 +1,15 @@
+{
+  "architecture": "cpu",
+  "name": "serial-uppercase",
+  "program": "program.asm",
+  "requires": ["serial"],
+  "max_instructions": 10000,
+  "stdin": "the quick brown fox 123!\n",
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000040",
+    "stdout": "THE QUICK BROWN FOX 123!\n"
+  }
+}

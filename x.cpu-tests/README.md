@@ -53,8 +53,9 @@ estado de parada, error, PC, registros solicitados y regiones de memoria.
 
 ## Ejecución
 
-Hay cinco combinaciones de backend y versión. Cada una ejecuta la suite entera
-de su arquitectura; el runner omite por su cuenta los casos de la otra.
+Hay seis combinaciones principales de backend y versión. Cada una ejecuta la
+suite entera de su arquitectura; el runner omite por su cuenta los casos de la
+otra, y los que piden capacidades que ese backend no tiene.
 
 Desde `x.cpu-tests`:
 
@@ -68,10 +69,13 @@ python run_gpu_tests.py --backend cpu-fpga --version ebr --port COM3
 # 3. CPU sobre FPGA, versión SDRAM
 python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
 
-# 4. GPU sobre el simulador funcional
+# 4. CPU sobre FPGA, versión con vídeo, sub-palabra y llamadas
+python run_gpu_tests.py --backend cpu-fpga --version subword --port COM3
+
+# 5. GPU sobre el simulador funcional
 python run_gpu_tests.py --backend gpu-simulator
 
-# 5. GPU sobre FPGA, versión BRAM
+# 6. GPU sobre FPGA, versión BRAM
 python run_gpu_tests.py --backend gpu-fpga --version bram --port COM3
 ```
 
@@ -79,14 +83,17 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpu-simulator` | ninguno | — | los 12 de `cases/` |
-| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | los 12 de `cases/` |
-| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | los 12 de `cases/` |
-| 4 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
-| 5 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.1 | 26 compatibles; 8 omitidos con motivo |
+| 1 | `cpu-simulator` | ninguno | — | los 25 de `cases/` |
+| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.6 | 12; 10 omitidos por capacidades |
+| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.5 | 12; 10 omitidos por capacidades |
+| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.14 | los 25 de `cases/` |
+| 5 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
+| 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.1 | 26 compatibles; 8 omitidos con motivo |
 
-`ebr` y `sdram` son versiones del backend **CPU**; `bram` lo es del backend
-**GPU**. No hay ninguna versión `ebr` de GPU.
+`ebr`, `sdram`, `hdmi`, `bl8` y `subword` son versiones del backend **CPU**;
+`bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU. Solo
+`cpu-simulator` y `cpu-fpga --version subword` ejecutan los 25 casos: son los
+dos únicos que tienen las seis capacidades.
 
 La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
@@ -148,7 +155,12 @@ casos CPU se agrupan igual que los GPU:
 | [alu](cases/alu/) | Reglas de la ALU que la ISA fija explícitamente |
 | [basics](cases/basics/) | Camino mínimo de ejecución y de memoria |
 | [errors](cases/errors/) | Códigos de error y PC de la instrucción causante |
+| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra y consola serie |
 | [programs](cases/programs/) | Programas con bucles, como prueba de integración |
+| [video](cases/video/) | Registros de vídeo, intercambio y frame capturado |
+
+Los de `extensions` y `video` llevan `requires`, así que no corren en todos los
+backends; ver [Capacidades](#capacidades).
 
 También se puede ejecutar uno o varios casos concretos:
 
@@ -203,7 +215,20 @@ Los backends de FPGA comprueban la versión física mediante `GET_VERSION`:
 |---|---|---|---:|---|
 | `cpu-fpga` | `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
 | `cpu-fpga` | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
+| `cpu-fpga` | `hdmi` | `16.fpga-cpu-hdmi` | 1.10 | `0x00000000–0x01ffffff` |
+| `cpu-fpga` | `bl8` | `18.fpga-cpu-hdmi-bl8` | 1.12 | `0x00000000–0x01ffffff` |
+| `cpu-fpga` | `subword` | `19.fpga-cpu-hdmi-ls` | 1.13 | `0x00000000–0x01ffffff` |
 | `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.1 | 128 KiB de BRAM, 8 warps × 8 lanes |
+
+**La 19 responde 1.13 aunque su protocolo sea idéntico al 1.12 de la 18.** No
+añade ni un comando: las instrucciones nuevas viven enteras dentro de la CPU.
+Sube igual porque `GET_VERSION` es lo único que el runner puede preguntar antes
+de cargar un programa, y con las dos respondiendo 1.12 daría por bueno un
+bitstream de la 18 para los casos de `extensions`, que pararían con error `0x01`.
+Es el mismo motivo por el que 14 responde 2.2 compartiendo comandos con 12.
+
+Para la tabla completa de qué tiene cada uno, ver
+[Comparativa de versiones](../COMPARATIVA.md).
 
 La versión predeterminada de `cpu-fpga` es `ebr`, para conservar la
 compatibilidad con los comandos anteriores. La comprobación ocurre **una sola
@@ -322,6 +347,26 @@ esperados. Después comprueba que los estados observados del simulador y la FPGA
 sean idénticos. Los valores esperados siguen siendo necesarios: dos
 implementaciones podrían compartir el mismo error.
 
+**Qué queda fuera de esa comparación, y por qué.** Un campo que es distinto por
+construcción convierte el diferencial en un fallo fijo, y un fallo fijo se acaba
+ignorando, que es la peor forma de perder una comprobación:
+
+| Campo | Motivo |
+|---|---|
+| `cycles`, `clock_hz` | El simulador no modela el tiempo |
+| `instructions` | Es arquitectónico y sí debe coincidir, pero se contrasta en `--measure`, que además sabe avisar con `¡discrepan!` |
+| `video.frames` | Aquí un frame son N instrucciones; en la placa, 16,7 ms de barrido. Medido en `video-registers`: 1 contra 7068 |
+| `pc`, **solo con `run_until`** | Esa parada es asíncrona y deja el PC donde pille a la CPU. Es el mismo motivo por el que `expect.pc` está prohibido junto a `run_until`. Medido en `video-bounce`: 196 contra 192, dos instrucciones del bucle de espera |
+
+Del vídeo se sigue comparando todo lo demás, que es lo que de verdad dice si las
+dos implementaciones hacen lo mismo: el frame capturado byte a byte, `swaps`
+—anclado al intercambio, no al tiempo— y `fb_front`. Y `pc` sí se compara en los
+casos sin `run_until`, donde la parada es determinista.
+
+[`test_differential.py`](test_differential.py) fija este recorte. Hasta que se
+aplicó, **los tres casos de vídeo fallaban siempre el diferencial** aunque
+pasaran en los dos backends por separado.
+
 ## Medir: `--measure`
 
 Los casos dicen si una versión está *bien*. `--measure` dice lo que *cuesta*:
@@ -388,6 +433,22 @@ encoding inválido sobre ambos backends.
 
 Estos casos complementan los tests unitarios de RTL comprobando el flujo entero
 ensamblador, CPU, memoria, monitor y backend.
+
+El más grande de todos no está ahí sino en
+[`cases/extensions/serial/forth`](cases/extensions/serial/forth/), porque
+necesita `serial`: ejecuta el [Forth de la carpeta 20](../20.forth/) entero
+—1107 instrucciones, 26 opcodes— y le da una sesión que interpreta, compila una
+palabra nueva con `:` y la llama. Es el único caso en el que el programa bajo
+prueba es lo bastante grande como para que un fallo de una instrucción rara
+salga a la luz, y el único cuyo veredicto es una transcripción de consola
+comparada byte a byte entre simulador y placa.
+
+Un detalle que condiciona su forma: **la cola de salida son 64 bytes y la
+sesión escribe 74**, así que los dos backends la vacían mientras el programa
+corre, no al parar. Si se deja llenar, `emit` se queda esperando hueco para
+siempre y el caso muere por límite de instrucciones en vez de por lo que
+estuviera probando. La entrada, en cambio, sí cabe entera en la cola antes de
+arrancar, que es lo que mantiene el caso determinista.
 
 ## Casos GPU y diagnóstico de fallos
 
@@ -463,8 +524,24 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8` |
-| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8`, `subword` |
+| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8`, `subword` |
+| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpu-simulator`, `subword` |
+| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpu-simulator`, `subword` |
+
+Las dos últimas son de **ISA**, no de periférico, y existen por la misma razón
+que las de vídeo: sin ellas, un caso de estos ejecutado en un bitstream anterior
+no fallaría con un diagnóstico útil, sino con **error `0x01`, opcode inválido**,
+que es lo mismo que produce un ensamblador roto o un salto a datos. Un `SKIP`
+dice dónde está el problema; un `0x01` a media suite, no.
+
+Están separadas porque son extensiones independientes: llegaron juntas en la 19,
+pero ocupan bloques distintos del mapa de opcodes, y un backport a las versiones
+anteriores no tiene por qué traer las dos a la vez. `calls` no implica
+`subword_memory` ni al revés.
+
+El simulador funcional las tiene las dos, y eso es lo normal: va por delante del
+RTL, que es donde se prueba primero una instrucción nueva.
 
 ### El simulador tiene vídeo, pero no tiene tiempo
 

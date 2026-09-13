@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "calls-jump-table",
+  "program": "program.asm",
+  "requires": ["calls"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000018",
+    "registers": {
+      "R5": "0x00000018",
+      "R6": "0x00000111",
+      "R31": "0x00000014"
+    }
+  }
+}

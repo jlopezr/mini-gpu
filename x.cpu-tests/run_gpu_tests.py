@@ -230,6 +230,19 @@ def compare_result(case: dict, result: dict, backend_name: str) -> list[str]:
                 f"(x={pixel % 320}, y={pixel // 320}) de {distintos}"
             )
 
+    if expected.get("stdout") is not None:
+        obtenido = result.get("stdout")
+        if obtenido is None:
+            errors.append(f"{backend_name}: el backend no devolvio stdout")
+        elif obtenido != expected["stdout"]:
+            # El flujo de bytes es corto y legible, asi que se ensena entero:
+            # es mas util que decir en que posicion difiere.
+            errors.append(
+                f"{backend_name}: stdout: esperado "
+                f"{expected['stdout'].decode('latin-1')!r}, obtenido "
+                f"{obtenido.decode('latin-1')!r}"
+            )
+
     for register, expected_value in expected["registers"].items():
         actual = result["registers"][register]
         if actual != expected_value:
@@ -349,15 +362,74 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 #
 # Con una sola capacidad, un caso de captura se omitiria en la 16 por el motivo
 # equivocado: alli hay video, lo que no hay es con que capturar.
+#
+# Las otras dos son de ISA, no de periferico, y aparecen porque la 19 extiende
+# el juego de instrucciones y las anteriores no:
+#
+#   subword_memory  LOADB/LOADUB/STOREB/LOADH/LOADUH/STOREH, opcodes 0x18..0x1D
+#                   del mapa de propuesta-v0.2. En un bitstream sin ellas el
+#                   programa no da un resultado distinto: para con error 0x01,
+#                   que es justamente lo que un SKIP evita confundir con un bug.
+#   calls           JAL/JALR/JR, opcodes 0x2C..0x2E del mismo mapa.
+#
+# Separadas porque son extensiones independientes: un backend futuro puede
+# tener una sin la otra, y de hecho el backport a las versiones anteriores
+# --si llega-- no tiene por que traer las dos a la vez.
 CAPABILITIES = {
     "atomic_warp_faults": "gpu",
     "video": "cpu",
     "frame_capture": "cpu",
+    "subword_memory": "cpu",
+    "serial": "cpu",
+    "calls": "cpu",
 }
 # `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
 # video. Se expande al cargar para que un backend solo tenga que declarar lo
 # que de verdad implementa.
 CAPABILITY_IMPLIES = {"frame_capture": ("video",)}
+
+
+# Campos que el diferencial `--backend both` NO compara.
+#
+# `cycles`, `instructions` y `clock_hz` son de rendimiento: el simulador no
+# tiene ciclos ni reloj, y el numero de instrucciones se contrasta en
+# `--measure`, no aqui.
+#
+# `video.frames` es el caso interesante, y se excluye por la misma razon por la
+# que el simulador puede declarar `frame_capture` honestamente: aqui un frame
+# son N instrucciones ejecutadas y en la placa son 16,7 ms de barrido. Los dos
+# numeros son correctos y no pueden coincidir --medido: 1 contra 7068 en
+# `video-registers`--, asi que compararlos hacia que los tres casos de video
+# fallaran SIEMPRE el diferencial, pasando los dos backends por separado.
+#
+# Lo que si se compara de `video` es todo lo demas, que es lo que de verdad
+# dice si las dos implementaciones hacen lo mismo: `swaps` esta anclado al
+# intercambio y no al tiempo, `fb_front` y `frame` son el resultado visible, y
+# `underflow` es la excepcion consciente --el simulador siempre da False, asi
+# que coincidir ahi no demuestra nada; ver backends/simulator.py--.
+#
+# Y `pc` se excluye, pero solo en los casos con `run_until`: esa parada es
+# asincrona y deja el PC donde pille a la CPU. Es exactamente el motivo por el
+# que `parse_run_until` prohibe declarar `expect.pc` junto a `run_until`;
+# compararlo entre backends tiene el mismo problema y no lo veia nadie --medido:
+# 196 contra 192 en `video-bounce`, dos instrucciones del bucle de espera--.
+# Sin `run_until` el PC si se compara, porque entonces es determinista.
+PERF_FIELDS = ("cycles", "instructions", "clock_hz")
+VIDEO_FIELDS_EXCLUDED = ("frames",)
+
+
+def comparable(resultado: dict, case: dict) -> dict:
+    """El estado observado sin lo que no puede coincidir entre backends."""
+    excluidos = set(PERF_FIELDS)
+    if case.get("run_until"):
+        excluidos.add("pc")
+    recortado = {k: v for k, v in resultado.items() if k not in excluidos}
+    if recortado.get("video"):
+        recortado["video"] = {
+            k: v for k, v in recortado["video"].items()
+            if k not in VIDEO_FIELDS_EXCLUDED
+        }
+    return recortado
 
 
 def expand_capabilities(names) -> frozenset:
@@ -515,6 +587,42 @@ def load_case(path: Path) -> dict:
             "[\"frame_capture\"]"
         )
 
+    # ------------------------------------------------------------------ serie
+    #
+    # `stdin` son los bytes que el PC mete en la cola de entrada ANTES de
+    # arrancar, y `expect.stdout` lo que tiene que haber en la de salida al
+    # parar. Se escriben como texto en el JSON, que es lo que hace legible un
+    # caso de consola; para bytes que no son texto, `\xNN`.
+    #
+    # El limite de 64 bytes es la profundidad de la cola del hardware. Meter
+    # mas exigiria ir alimentandola mientras el programa corre, y entonces el
+    # caso dejaria de ser determinista: lo que se capture dependeria de lo
+    # rapido que vaya la CPU. Un caso de consola tiene que ser
+    # peticion-respuesta.
+    SERIAL_FIFO_DEPTH = 64
+    stdin_raw = raw.get("stdin", "")
+    if not isinstance(stdin_raw, str):
+        raise ValueError("stdin debe ser una cadena")
+    stdin_bytes = stdin_raw.encode("latin-1", "backslashreplace").decode(
+        "unicode_escape").encode("latin-1")
+    if len(stdin_bytes) > SERIAL_FIFO_DEPTH:
+        raise ValueError(
+            f"stdin son {len(stdin_bytes)} bytes y la cola tiene "
+            f"{SERIAL_FIFO_DEPTH}: un caso mas largo no seria determinista")
+
+    expected_stdout = None
+    if "stdout" in expected_raw:
+        salida_raw = expected_raw["stdout"]
+        if not isinstance(salida_raw, str):
+            raise ValueError("expect.stdout debe ser una cadena")
+        expected_stdout = salida_raw.encode(
+            "latin-1", "backslashreplace").decode(
+            "unicode_escape").encode("latin-1")
+
+    if (stdin_bytes or expected_stdout is not None) and "serial" not in capacidades:
+        raise ValueError(
+            "stdin y expect.stdout necesitan requires: [\"serial\"]")
+
     max_instructions = raw.get("max_instructions", 1_000_000)
     timeout_seconds = raw.get("timeout_seconds", 5.0)
     if not isinstance(max_instructions, int) or max_instructions < 1:
@@ -532,7 +640,9 @@ def load_case(path: Path) -> dict:
         "max_instructions": max_instructions,
         "timeout_seconds": float(timeout_seconds),
         "simulator_options": simulator_options(raw, architecture),
+        "stdin": stdin_bytes,
         "expected": {
+            "stdout": expected_stdout,
             "halted": expected_raw.get("halted", True),
             "error": expected_raw.get("error", False),
             "error_code": parse_integer(
@@ -736,6 +846,7 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                     memory_ranges=list(case["expected"]["memory"]),
                     max_instructions=case["max_instructions"],
                     timeout_seconds=case["timeout_seconds"],
+                    stdin=case["stdin"],
                     **({"video": {
                         "run_until_swap": (case["run_until"] or {}).get("swap"),
                         "capture_frame": case["expected"]["frame"] is not None,
@@ -958,6 +1069,11 @@ def main() -> int:
                     memory_ranges=list(case["expected"]["memory"]),
                     max_instructions=case["max_instructions"],
                     timeout_seconds=case["timeout_seconds"],
+                    # Solo los backends de CPU tienen puerto serie. La MiniGPU
+                    # no lo ha recibido todavia, y pasarselo seria un
+                    # TypeError.
+                    **({"stdin": case["stdin"]}
+                       if case["architecture"] == "cpu" else {}),
                     **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
                     **({"observation_fields": set(case["expected"]["observations"])}
                        if backend_name == "gpu-fpga" else {}),
@@ -1001,14 +1117,8 @@ def main() -> int:
                 if mismatch:
                     failures += 1
                     print(f"FAIL {case['name']} [diferencial GPU]: los estados observados no coinciden")
-            # Los campos de rendimiento se excluyen del diferencial: el
-            # simulador no tiene ciclos ni reloj, y el numero de instrucciones
-            # no se contrasta aqui sino en el modo `--measure`.
-            perf = ("cycles", "instructions", "clock_hz")
-            observado = {
-                nombre: {k: v for k, v in resultado.items() if k not in perf}
-                for nombre, resultado in results.items()
-            }
+            observado = {nombre: comparable(resultado, case)
+                         for nombre, resultado in results.items()}
             if args.backend == 'both' and observado["cpu-simulator"] != observado["cpu-fpga"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")

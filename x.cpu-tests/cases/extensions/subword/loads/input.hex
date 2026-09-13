@@ -1,0 +1,5 @@
+# 0xBEEFAA78: el byte 1, el byte 3 y las dos mitades tienen el bit alto a uno,
+# asi que extender con signo y extender con ceros dan resultados distintos en
+# todos los casos. Con un valor "bonito" la mitad de las comprobaciones no
+# distinguirian una variante de la otra.
+BEEFAA78

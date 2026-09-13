@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "calls-unaligned-target",
+  "program": "program.asm",
+  "requires": ["calls"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000014",
+    "registers": {
+      "R1": "0x0000000E",
+      "R2": 0,
+      "R3": "0x000000C0"
+    }
+  }
+}

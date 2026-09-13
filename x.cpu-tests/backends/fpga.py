@@ -49,12 +49,17 @@ VERSIONS = {
     },
     "subword": {
         "monitor_path": Path("19.fpga-cpu-hdmi-ls/monitor.py"),
-        "monitor_version": (1, 12),
-        "description": "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned",
-        "capabilities": ("frame_capture",),
+        # 1.13 y no 1.12 aunque el protocolo sea identico al de la 18: es lo
+        # unico que el runner puede preguntar para saber que bitstream tiene
+        # delante, y un caso de `extensions` en la 18 pararia con opcode
+        # invalido en vez de cargar el bitstream que toca. 1.14 anade ademas los`r`n        # paquetes SEND_BYTES/RECV_BYTES del puerto serie.
+        "monitor_version": (1, 14),
+        "description": (
+            "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned, "
+            "mas JAL/JALR/JR"
+        ),
+        "capabilities": ("frame_capture", "subword_memory", "calls", "serial"),
         "perf_counters": True,
-        # El protocolo del monitor no cambia respecto a la 18: las
-        # instrucciones nuevas viven enteras dentro de la CPU.
         "clock_hz": 80_000_000,
     },
 }
@@ -196,6 +201,7 @@ class FpgaBackend:
         max_instructions: int,
         timeout_seconds: float,
         video: dict | None = None,
+        stdin: bytes = b"",
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
         tiene_captura = "frame_capture" in capabilities(self.version)
@@ -255,6 +261,24 @@ class FpgaBackend:
                     # el caso no la usa, para no heredarla del caso anterior.
                     _write_register(client, VIDEO_HALT_AT, swap or 0)
 
+            # El puerto serie se llena ANTES de arrancar, no mientras corre.
+            # Asi el caso es determinista: la CPU encuentra su entrada entera
+            # desde el primer ciclo, igual que el simulador, y lo que salga no
+            # depende de cuando haya sondeado el PC. Por eso `load_case` limita
+            # `stdin` a la profundidad de la cola.
+            #
+            # Vaciar antes es necesario: las colas sobreviven a RESET_CPU --son
+            # del sistema, no de la CPU-- y un caso heredaria lo que dejara el
+            # anterior.
+            if hasattr(client, "recv_bytes"):
+                while client.recv_bytes(255):
+                    pass
+                if stdin:
+                    client.send_all(stdin)
+
+            hay_serie = hasattr(client, "recv_bytes")
+            salida_serie = b"" if hay_serie else None
+
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
 
@@ -267,7 +291,25 @@ class FpgaBackend:
                     raise TimeoutError(
                         f"La CPU no terminó en {timeout_seconds:g} segundos"
                     )
-                time.sleep(0.01)
+                # Hay que vaciar MIENTRAS corre. La cola de salida son 64
+                # bytes y un programa interactivo escribe mucho mas que eso;
+                # si se deja llenar, el programa se queda esperando hueco y el
+                # caso muere por timeout en vez de por lo que estuviera
+                # probando. Esto no cambia el flujo de bytes, solo cuando se
+                # recogen, asi que sigue siendo comparable con el simulador.
+                if hay_serie:
+                    salida_serie += client.recv_bytes(255)
+                else:
+                    time.sleep(0.01)
+
+            # Se vacia lo que quede: lo que la CPU escribiera al final esta ahi
+            # desde que paro, y un solo RECV_BYTES se queda en 255.
+            if hay_serie:
+                while True:
+                    trozo = client.recv_bytes(255)
+                    if not trozo:
+                        break
+                    salida_serie += trozo
 
             registers = {
                 number: client.read_register(number)
@@ -314,6 +356,7 @@ class FpgaBackend:
             "registers": registers,
             "memory": memory,
             "video": video_result,
+            "stdout": salida_serie,
             "cycles": cycles,
             "instructions": instructions,
             "clock_hz": self.configuration.get("clock_hz"),

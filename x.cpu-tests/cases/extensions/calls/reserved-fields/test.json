@@ -1,0 +1,13 @@
+{
+  "architecture": "cpu",
+  "name": "calls-reserved-fields",
+  "program": "program.hex",
+  "requires": ["calls"],
+  "max_instructions": 10,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x05",
+    "pc": "0x00000000"
+  }
+}
