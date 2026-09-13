@@ -187,28 +187,41 @@ Detalles en [`docs/registro-cero.md`](docs/registro-cero.md). Verificación:
 que la CPU escribe el banco, y el caso
 [`zero-register/discarded-writes`](../x.cpu-tests/cases/extensions/zero-register/discarded-writes/).
 
-### Qué se rompe con `R0` a cero
+### Qué se rompió con `R0` a cero, y cómo quedó
 
-Hay **dos programas** rotos, y uno solo de ellos afecta a la suite de tests.
-**Ninguno se ha portado**: es una decisión aparte.
+Dos programas usaban `R0` como registro general. **Los dos están portados** y la
+suite entera está en verde.
 
-| Programa | Usos | Qué hace | Consecuencia |
-|---|---:|---|---|
-| [`../20.forth/forth.asm`](../20.forth/forth.asm) | 6 reales | `R0` guarda `BASE`, la base numérica del intérprete | **Rompe `serial-forth`.** `BASE` queda a cero: `MUL R4, R4, R0` anula el acumulador y todo número entra como `? N` |
-| [`examples/bresenham_lines.asm`](examples/bresenham_lines.asm) | 2 reales | `MOVI R0, 5` y `SHL R28, R28, R0` | El desplazamiento pasa a ser de 0: el verde cae al bit 0 y el degradado sale mal |
+Los dos tenían la misma forma, y el arreglo también: guardaban una constante en
+`R0` y reservaban **otro** registro para tener un cero con el que comparar. Con
+`R0` cableado, el cero es gratis y ese otro registro queda libre, así que el
+port es un intercambio, no un parche:
+
+| Programa | Antes | Ahora |
+|---|---|---|
+| [`../20.forth/forth.asm`](../20.forth/forth.asm) | `R0` = `BASE`, `R3` = cero (59 usos) | `R0` = cero, `R3` = `BASE`; sobra el `MOVI R3, 0` |
+| [`examples/bresenham_lines.asm`](examples/bresenham_lines.asm) | `R0` = 5, `R3` = cero, `R25` = 11 | `R0` = cero; `R3` y `R25` libres, y los dos `SHL` pasan a `SHLI` |
+
+De propina, [`examples/bresenham_circles.asm`](examples/bresenham_circles.asm)
+—que no estaba roto, solo desperdiciaba `R3`— va igual, y los tres programas
+salen **más cortos**: `forth.asm` pierde una instrucción y `bresenham_lines`
+tres.
+
+**El `forth.asm` portado sigue corriendo en la 19**, que es lo que hace seguro
+el cambio: el programa ya no *escribe* `R0`, así que su lectura vale cero tanto
+donde está cableado como donde el reset lo deja a cero y nadie lo toca. «No usar
+`R0` como registro general» es una disciplina compatible hacia atrás; depender
+de que las escrituras se descarten, no.
 
 El resto de apariciones de `R0` en el repositorio son **lecturas esperando
-cero** o comentarios, y no solo siguen funcionando: pasan a funcionar por
-construcción en vez de por casualidad. En concreto,
-[`examples/bresenham_circles.asm`](examples/bresenham_circles.asm) solo lo
-menciona en comentarios y en `x.cpu-tests` hay cinco casos
-—`shift-multiply`, `memory-copy`, `fibonacci`, `array-sum` y `video/registers`—
-que comparan contra `R0` y pasan igual.
+cero**: cinco casos de `x.cpu-tests` —`shift-multiply`, `memory-copy`,
+`fibonacci`, `array-sum` y `video/registers`— que comparan contra `R0` y pasan
+igual, ahora por construcción en vez de por casualidad.
 
-`serial-forth` **está en rojo ahora mismo** por esto, y es el único caso de la
-suite que lo está. El arreglo son seis líneas de `forth.asm` —mover `BASE` a un
-registro libre— pero cambia un programa de otra carpeta, así que no se toca sin
-decidirlo.
+Lo que **no** se ha tocado son los `MOVI Rn, 0` de los casos compartidos, que
+materializan un cero a mano pudiendo usar `R0`. Es deliberado: esos casos corren
+también en la 19 y anteriores, donde `R0` solo vale cero por accidente. Ese
+cambio va junto con el backport, no antes.
 
 La 19 se queda como está y sigue siendo válida: allí `R0` es un registro
 general.
@@ -225,13 +238,30 @@ Las dos mitades que faltan ya están calculadas. El divisor mantiene
 producto de 64 bits entero. Un `REM` que venga detrás de su `DIV` puede leer el
 resto en vez de rehacer una división de 32 ciclos.
 
-**Medido** en [`alu_fast_path_tb.v`](alu_fast_path_tb.v):
+**Medido en simulación**, con [`alu_fast_path_tb.v`](alu_fast_path_tb.v):
 
 | Secuencia | Con atajo | Sin atajo |
 |---|---:|---:|
 | `DIV` + `REM` | 87 ciclos | 119 |
 | `DIVU` + `REMU` | 87 | 119 |
 | `MUL` + `MULHI` | 59 | 62 |
+
+**Y medido en la placa**, con los contadores de rendimiento y dos programas que
+son el mismo fichero con un carácter distinto —el `REM` lee `R2` o `R3`, que
+valen lo mismo—, así que ejecutan el mismo trabajo aritmético y las mismas
+instrucciones y lo único que cambia es si la etiqueta acierta:
+
+| Programa | Instrucciones | Ciclos | CPI |
+|---|---:|---:|---:|
+| [`examples/fastpath_hit.asm`](examples/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`examples/fastpath_miss.asm`](examples/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+
+**31 985 ciclos de diferencia en 1 000 vueltas: 31,99 por acierto**, que son
+exactamente las 32 iteraciones del divisor. El CPI baja un 33 %.
+
+Montarlo con dos registros del mismo valor, y no con un `NOP` intercalado,
+evita tener que descontar el coste del `NOP`: así la resta **es** el ahorro, sin
+correcciones.
 
 La condición de acierto es **estrictamente la instrucción inmediatamente
 anterior**. Eso es lo que hace barata la idea: sin instrucción intermedia nada

@@ -28,16 +28,58 @@ BL8 ni fija la latencia de LOAD/STORE.
 | BRA                                     |                                   7 | BRANCH_COMMIT                             |
 | JAL, JALR, JR                           |                                   7 | BRANCH_COMMIT                             |
 | BEQ, BNE, BLT, BGE, BLTU, BGEU          |                                   8 | BRANCH_COMPARE + BRANCH_COMMIT            |
-| SHL, SHR, SAR                           |                               7 + n | SHIFT_STEP × n + SHIFT_WRITE              |
+| SHL, SHR, SAR, SHLI, SHRI, SARI         |                               7 + n | SHIFT_STEP × n + SHIFT_WRITE              |
 | MUL, MULFX                              |                                  11 | PRODUCTS + CROSS + COMBINE + SIGN + WRITE |
-| DIV                                     |                                  40 | DIV_STEP × 32 + SIGN + WRITE              |
+| MULHI, con fallo de etiqueta            |                                  12 | …+ MULHI_FIX                              |
+| MULHI, con acierto                      |                                   9 | MULHI_FIX + SIGN + WRITE                  |
+| DIV, DIVU                               |                                  40 | DIV_STEP × 32 + SIGN + WRITE              |
+| REM, REMU, con fallo de etiqueta        |                                  40 | igual que DIV: se rehace entera           |
+| REM, REMU, con acierto                  |                                   8 | SIGN + WRITE                              |
 | STORE, aceptado en el búfer sin vaciado |                                   8 | MEMORY_WAIT × 2                           |
 | STORE que requiere vaciado              |                               6 + W | MEMORY_WAIT × W                           |
 | LOAD                                    |                               6 + W | MEMORY_WAIT × W                           |
 
-`n = operand_b[4:0]`, entre 0 y 31: los desplazamientos cuestan entre 7 y
-38 ciclos. DIV supone divisor distinto de cero. TRAP y las instrucciones
-inválidas paran sin retirarse; no son una instrucción completada para el CPI.
+`n` es la cantidad de desplazamiento, entre 0 y 31: los desplazamientos cuestan
+entre 7 y 38 ciclos. Sale de `Rb[4:0]` o del campo `Rb` del encoding según el
+bit 10, y el coste es el mismo en los dos casos: `SHLI` no es más rápida que
+`SHL`, solo se ahorra el `MOVI` que cargaba la cantidad. Ahí está su ganancia,
+y es de **una instrucción entera**, no de ciclos dentro del desplazamiento.
+
+`DIV` supone divisor distinto de cero. TRAP y las instrucciones inválidas paran
+sin retirarse; no son una instrucción completada para el CPI.
+
+### Las dos filas de `MULHI`, `REM` y `REMU`
+
+Tienen dos costes porque pueden reutilizar el medio resultado que dejó su `MUL`
+o su `DIV` inmediatamente anterior. **El resultado es el mismo en los dos
+casos**; lo único que cambia es esta tabla. Las reglas del acierto están en
+[`alu-extendida.md`](alu-extendida.md) §3.
+
+El ahorro de `REM` es el grande —32 ciclos, las iteraciones del divisor
+completas— y **está medido en placa**, no deducido de los estados:
+
+| Programa | Instrucciones | Ciclos | CPI |
+|---|---:|---:|---:|
+| [`examples/fastpath_hit.asm`](../examples/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`examples/fastpath_miss.asm`](../examples/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+
+Los dos programas son el mismo fichero con un carácter distinto: el `REM` lee
+`R2` o `R3`, que valen lo mismo. Mismo trabajo aritmético, mismas 4 005
+instrucciones, y **31 985 ciclos de diferencia en 1 000 vueltas: 31,99 por
+acierto**. El CPI baja un 33 %.
+
+Montarlo con dos registros del mismo valor —y no con un `NOP` intercalado—
+evita tener que descontar el coste del `NOP`, que en la placa no son seis
+ciclos limpios sino lo que tarde el fetch. Así la resta **es** el ahorro.
+
+Para repetirlo:
+
+```powershell
+python monitor.py --port COM3 reset
+python monitor.py --port COM3 write-block 0x00000000 examples\fastpath_hit.bin
+python monitor.py --port COM3 run
+python monitor.py --port COM3 perf
+```
 
 La base de seis ciclos es FETCH_REQUEST (1), FETCH_WAIT (2), DECODE (1),
 EXECUTE (1) y RETIRE (1). Los dos ciclos de FETCH_WAIT incluyen la respuesta

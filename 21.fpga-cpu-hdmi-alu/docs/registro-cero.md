@@ -58,12 +58,29 @@ libre. Quitarlo hoy rompe todos los programas que usan `RET` —que es un alias 
 `JR R31`— sin ganar absolutamente nada: el opcode no hace falta todavía. Cuando
 haga falta, se recupera cambiando el alias del ensamblador y reensamblando.
 
-## Qué se rompe
+## Qué se rompió, y la regla que lo hace reversible
 
-Los programas que usan `R0` como registro general. Están listados en el
-[README de esta carpeta](../README.md#qué-se-rompe-con-r0-a-cero), con lo que
-hace cada uno y por qué. **No se han portado**: esa decisión es aparte.
+Los programas que usan `R0` como registro general. Eran dos, `20.forth/forth.asm`
+y `examples/bresenham_lines.asm`, y están **portados**; el detalle está en el
+[README de esta carpeta](../README.md#qué-se-rompió-con-r0-a-cero-y-cómo-quedó).
 
-Los que solo *leen* `R0` esperando cero —que son la mayoría, incluidos cinco
-casos de `x.cpu-tests`— siguen funcionando igual, y de hecho pasan a funcionar
-por construcción en vez de por casualidad.
+La regla que conviene retener, porque decide qué se puede cambiar antes del
+backport y qué no:
+
+> **No escribir `R0` es compatible hacia atrás. Depender de que la escritura se
+> descarte, no.**
+
+Un programa que nunca escribe `R0` lee cero en cualquier versión: donde está
+cableado por construcción, y donde no porque el reset deja el banco a cero y
+nadie lo toca. Por eso los dos programas portados siguen corriendo en la 19, y
+por eso los cinco casos de `x.cpu-tests` que comparan contra `R0` pasan en
+todos los backends.
+
+Lo que **solo** vale aquí es lo contrario: comprobar que una escritura a `R0` se
+descarta. Eso es el caso `zero-register/discarded-writes`, y es el único que
+lleva `requires: ["zero_register"]`.
+
+De ahí sale la frontera práctica: los `MOVI Rn, 0` de los casos compartidos
+podrían usar `R0` y ahorrarse una instrucción, pero en la 19 y anteriores eso
+sería volver a apoyarse en la casualidad. Se cambian cuando `R0` esté cableado
+en todas las versiones, no antes.

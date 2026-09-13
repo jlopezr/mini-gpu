@@ -68,7 +68,8 @@
 ;   R20 base del puerto serie        R21 puntero de pila (primer hueco)
 ;   R22 base de la pila              R23 base del buffer de entrada
 ;   R24 puntero de lectura del buffer
-;   R3  constante 0
+;   R0  cero, cableado: ni se inicializa ni se puede pisar
+;   R3  BASE, la base numerica que cambian HEX y DECIMAL
 ;   R4  argumento y valor devuelto de las rutinas
 ;   R5, R6, R7  temporales de las rutinas
 ;   R8..R12 temporales del interprete
@@ -83,7 +84,6 @@ start:
     ADDI  R21, R22, 0           ; pila vacia
     MOVHI R23, 0x0010
     ORI   R23, R23, 0x1000      ; buffer de entrada
-    MOVI  R3, 0
     ; SHL y SHR toman el desplazamiento de un REGISTRO, no de un inmediato, asi
     ; que los dos que usa el programa se dejan puestos aqui.
     MOVI  R26, 2
@@ -104,7 +104,7 @@ start:
     MOVI  R17, d_last           ; HEAD: la ultima entrada de la imagen
 
     MOVI  R2, 0                 ; STATE: 0 interpretando, 1 compilando
-    MOVI  R0, 10                ; BASE. R0 es un registro general en esta ISA
+    MOVI  R3, 10                ; BASE, decimal al arrancar
 
     MOVI  R4, msg_banner
     JAL   R31, print_str
@@ -121,7 +121,7 @@ main_loop:
 interpret:
     JAL   R29, skip_spaces
     LOADUB R8, R24, 0
-    BEQ   R8, R3, main_loop     ; fin de la linea
+    BEQ   R8, R0, main_loop     ; fin de la linea
 
     JAL   R29, read_token       ; R4 = nombre empaquetado, R5 = longitud
     ADDI  R9, R4, 0             ; R9 = nombre
@@ -140,7 +140,7 @@ interpret:
     ; partir del quinto caracter: `dropit` y `dropzz` son la misma palabra.
     ADDI  R11, R17, 0
 find:
-    BEQ   R11, R3, not_a_word   ; se acabo la lista
+    BEQ   R11, R0, not_a_word   ; se acabo la lista
     LOAD  R12, R11, 4           ; nombre de la entrada
     BNE   R12, R9, find_next
     LOAD  R14, R11, 12          ; flags: la longitud va en los bits 15:8
@@ -161,8 +161,8 @@ find_next:
 found:
     LOAD  R14, R11, 12          ; flags
     ANDI  R15, R14, 1           ; bit 0: inmediata
-    BNE   R15, R3, execute_it
-    BEQ   R2, R3, execute_it    ; STATE = 0: ejecutar
+    BNE   R15, R0, execute_it
+    BEQ   R2, R0, execute_it    ; STATE = 0: ejecutar
     STORE R11, R16, 0           ; compilar: anotar la entrada
     ADDI  R16, R16, 4
     BRA   interpret
@@ -175,8 +175,8 @@ execute_it:
 ; No esta en el diccionario: puede ser un numero.
 not_a_word:
     JAL   R29, parse_number     ; R4 = valor, R5 = 1 si era un numero
-    BEQ   R5, R3, unknown
-    BEQ   R2, R3, push_number
+    BEQ   R5, R0, unknown
+    BEQ   R2, R0, push_number
 
     ; Compilando, un numero no se apila ahora: se anota un LIT y el valor
     ; detras, y ya lo apilara el interprete interno cuando toque.
@@ -211,7 +211,7 @@ unknown:
 abort:
     MOVHI R19, 0x0010
     ORI   R19, R19, 0x3000      ; pila de retorno vacia
-    BEQ   R2, R3, abort_done
+    BEQ   R2, R0, abort_done
     ADDI  R16, R17, 0           ; HERE vuelve al principio de la entrada
     LOAD  R17, R17, 0           ; HEAD vuelve a la anterior
     MOVI  R2, 0
@@ -229,9 +229,9 @@ abort_done:
 run_word:
     LOAD  R15, R13, 12
     ANDI  R14, R15, 4           ; bit 2: hecha con CREATE
-    BNE   R14, R3, run_created
+    BNE   R14, R0, run_created
     ANDI  R15, R15, 2
-    BNE   R15, R3, run_colon
+    BNE   R15, R0, run_colon
     LOAD  R14, R13, 8
     JALR  R28, R14, 0
     JR    R31
@@ -245,7 +245,7 @@ run_created:
     STORE R6, R21, 0
     ADDI  R21, R21, 4
     LOAD  R14, R13, 8           ; cuerpo del DOES>, o cero
-    BEQ   R14, R3, run_created_done
+    BEQ   R14, R0, run_created_done
     ADDI  R18, R14, 0
     ADDI  R1, R19, 0
     BRA   inner
@@ -259,12 +259,12 @@ run_colon:
 inner:
     LOAD  R13, R18, 0           ; siguiente palabra de la definicion
     ADDI  R18, R18, 4
-    BEQ   R13, R3, inner_exit   ; cero = fin de la definicion
+    BEQ   R13, R0, inner_exit   ; cero = fin de la definicion
     LOAD  R15, R13, 12
     ANDI  R14, R15, 4
-    BNE   R14, R3, inner_created
+    BNE   R14, R0, inner_created
     ANDI  R15, R15, 2
-    BNE   R15, R3, inner_call
+    BNE   R15, R0, inner_call
     LOAD  R14, R13, 8
     JALR  R28, R14, 0           ; primitiva
     BRA   inner
@@ -275,7 +275,7 @@ inner_created:
     STORE R6, R21, 0
     ADDI  R21, R21, 4
     LOAD  R14, R13, 8
-    BEQ   R14, R3, inner        ; CREATE pelado: solo la direccion
+    BEQ   R14, R0, inner        ; CREATE pelado: solo la direccion
     STORE R18, R19, 0
     ADDI  R19, R19, 4
     ADDI  R18, R14, 0
@@ -345,7 +345,7 @@ w_slash:
     LOAD  R6, R21, -4
     ; Dividir por cero para la CPU con un codigo de error terminal, y eso
     ; mataria el interprete entero. Se comprueba antes.
-    BEQ   R6, R3, divzero_error
+    BEQ   R6, R0, divzero_error
     LOAD  R7, R21, -8
     DIV   R7, R7, R6
     STORE R7, R21, -8
@@ -387,7 +387,7 @@ w_neg:
     ADDI  R5, R22, 4
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
-    SUB   R6, R3, R6
+    SUB   R6, R0, R6
     STORE R6, R21, -4
     JR    R28
 
@@ -541,7 +541,7 @@ w_colon:
 ; se compilara como las demas, se anotaria dentro de la definicion y el modo
 ; compilacion no se apagaria nunca.
 w_semi:
-    STORE R3, R16, 0            ; cero = fin del cuerpo
+    STORE R0, R16, 0            ; cero = fin del cuerpo
     ADDI  R16, R16, 4
     MOVI  R2, 0
     JR    R28
@@ -641,7 +641,7 @@ w_mod:
     ADDI  R5, R22, 8
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
-    BEQ   R6, R3, divzero_error
+    BEQ   R6, R0, divzero_error
     LOAD  R7, R21, -8
     DIV   R5, R7, R6
     MUL   R5, R5, R6
@@ -654,8 +654,8 @@ w_abs:
     ADDI  R5, R22, 4
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
-    BGE   R6, R3, abs_done
-    SUB   R6, R3, R6
+    BGE   R6, R0, abs_done
+    SUB   R6, R0, R6
     STORE R6, R21, -4
 abs_done:
     JR    R28
@@ -744,7 +744,7 @@ w_zeroeq:
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
     MOVI  R7, 0
-    BNE   R6, R3, zeq_store
+    BNE   R6, R0, zeq_store
     MOVI  R7, -1
 zeq_store:
     STORE R7, R21, -4
@@ -755,7 +755,7 @@ w_zeroless:
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
     MOVI  R7, 0
-    BGE   R6, R3, zlt_store
+    BGE   R6, R0, zlt_store
     MOVI  R7, -1
 zlt_store:
     STORE R7, R21, -4
@@ -778,13 +778,17 @@ w_space:
     JAL   R30, emit
     JR    R28
 
-; La base vive en R0, que en esta ISA es un registro general como los demas.
+; La base vive en R3. Vivio en R0 hasta que la 21 lo cableo a cero: entonces R0
+; paso a ser el cero del programa --que antes habia que materializar en R3 con
+; un MOVI-- y R3 quedo libre para BASE. El intercambio no ata este programa a la
+; 21: nunca se escribe R0, asi que su lectura vale cero igual donde esta
+; cableado que donde el reset lo deja a cero y nadie lo toca.
 w_hex:
-    MOVI  R0, 16
+    MOVI  R3, 16
     JR    R28
 
 w_decimal:
-    MOVI  R0, 10
+    MOVI  R3, 10
     JR    R28
 
 ; ." texto"  imprime el texto. Interpretando lo suelta ya; compilando lo mete
@@ -795,7 +799,7 @@ w_dotquote:
     BNE   R6, R7, dq_start
     ADDI  R24, R24, 1
 dq_start:
-    BEQ   R2, R3, dq_now
+    BEQ   R2, R0, dq_now
 
     ; --- compilando ---
     MOVI  R6, d_dotstr
@@ -803,7 +807,7 @@ dq_start:
     ADDI  R16, R16, 4
 dq_copy:
     LOADUB R6, R24, 0
-    BEQ   R6, R3, dq_end        ; se acabo la linea sin cerrar comillas
+    BEQ   R6, R0, dq_end        ; se acabo la linea sin cerrar comillas
     MOVI  R7, 0x22
     BEQ   R6, R7, dq_close
     STOREB R6, R16, 0
@@ -813,7 +817,7 @@ dq_copy:
 dq_close:
     ADDI  R24, R24, 1           ; consumir la comilla
 dq_end:
-    STOREB R3, R16, 0           ; NUL
+    STOREB R0, R16, 0           ; NUL
     ADDI  R16, R16, 4
     MOVI  R7, -4
     AND   R16, R16, R7          ; y alinear a palabra
@@ -822,7 +826,7 @@ dq_end:
     ; --- interpretando: se imprime directamente ---
 dq_now:
     LOADUB R4, R24, 0
-    BEQ   R4, R3, dq_now_done
+    BEQ   R4, R0, dq_now_done
     MOVI  R7, 0x22
     BEQ   R4, R7, dq_now_close
     JAL   R30, emit
@@ -839,7 +843,7 @@ w_dotstr:
     ADDI  R7, R18, 0
 ds_loop:
     LOADUB R4, R7, 0
-    BEQ   R4, R3, ds_done
+    BEQ   R4, R0, ds_done
     JAL   R30, emit
     ADDI  R7, R7, 1
     BRA   ds_loop
@@ -864,7 +868,7 @@ w_exit:
 ; falta porque su nombre todavia no se puede buscar de forma fiable: si se
 ; redefine una palabra existente, buscarla por nombre encontraria la VIEJA.
 w_recurse:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     STORE R17, R16, 0
     ADDI  R16, R16, 4
     JR    R28
@@ -900,7 +904,7 @@ w_create:
     ORI   R6, R6, 4             ; bit 2: hecha con CREATE
     STORE R17, R16, 0
     STORE R4,  R16, 4
-    STORE R3,  R16, 8           ; sin cuerpo de DOES> todavia
+    STORE R0,  R16, 8           ; sin cuerpo de DOES> todavia
     STORE R6,  R16, 12
     ADDI  R17, R16, 0           ; HEAD = esta
     ADDI  R16, R16, 16          ; y su zona de datos empieza aqui
@@ -966,7 +970,7 @@ w_zbranch:
     BLT   R21, R5, stack_error
     LOAD  R6, R21, -4
     ADDI  R21, R21, -4
-    BEQ   R6, R3, zb_take
+    BEQ   R6, R0, zb_take
     ADDI  R18, R18, 4           ; falso: saltarse la celda del destino
     JR    R28
 zb_take:
@@ -987,7 +991,7 @@ zb_take:
 
 ; IF: compila 0BRANCH y deja el hueco del salto.
 w_if:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     MOVI  R6, d_zbranch
     STORE R6, R16, 0
     ADDI  R16, R16, 4
@@ -998,7 +1002,7 @@ w_if:
 
 ; THEN: rellena el hueco con donde estamos.
 w_then:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     ADDI  R5, R22, 4
     BLT   R21, R5, ctrl_error
     LOAD  R6, R21, -4
@@ -1008,7 +1012,7 @@ w_then:
 
 ; ELSE: cierra la rama verdadera con un salto y abre un hueco nuevo.
 w_else:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     ADDI  R5, R22, 4
     BLT   R21, R5, ctrl_error
     MOVI  R6, d_branch
@@ -1022,14 +1026,14 @@ w_else:
 
 ; BEGIN: no compila nada, solo se acuerda de donde empieza el bucle.
 w_begin:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     STORE R16, R21, 0
     ADDI  R21, R21, 4
     JR    R28
 
 ; UNTIL: vuelve al BEGIN mientras la condicion sea falsa.
 w_until:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     ADDI  R5, R22, 4
     BLT   R21, R5, ctrl_error
     MOVI  R6, d_zbranch
@@ -1043,7 +1047,7 @@ w_until:
 
 ; AGAIN: bucle sin condicion. Solo se sale con BYE o con un error.
 w_again:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     ADDI  R5, R22, 4
     BLT   R21, R5, ctrl_error
     MOVI  R6, d_branch
@@ -1058,7 +1062,7 @@ w_again:
 ; WHILE: salida del bucle por el medio. Deja su hueco ENCIMA del destino que
 ; apunto BEGIN, y REPEAT los saca en ese orden.
 w_while:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     MOVI  R6, d_zbranch
     STORE R6, R16, 0
     ADDI  R16, R16, 4
@@ -1069,7 +1073,7 @@ w_while:
 
 ; REPEAT: salta al BEGIN y rellena el hueco del WHILE con la salida.
 w_repeat:
-    BEQ   R2, R3, compile_only
+    BEQ   R2, R0, compile_only
     ADDI  R5, R22, 8
     BLT   R21, R5, ctrl_error
     LOAD  R6, R21, -4           ; hueco del WHILE
@@ -1098,7 +1102,7 @@ ctrl_error:
 w_words:
     ADDI  R7, R17, 0
 words_loop:
-    BEQ   R7, R3, words_done
+    BEQ   R7, R0, words_done
     LOAD  R4, R7, 4
     JAL   R29, print_name
     MOVI  R4, 0x20
@@ -1116,9 +1120,9 @@ print_name:
     ADDI  R8, R4, 0
     MOVI  R9, 4
 pn_name_loop:
-    BEQ   R9, R3, pn_name_done
+    BEQ   R9, R0, pn_name_done
     ANDI  R4, R8, 0x00FF
-    BEQ   R4, R3, pn_name_done
+    BEQ   R4, R0, pn_name_done
     JAL   R30, emit
     SHR   R8, R8, R27
     ADDI  R9, R9, -1
@@ -1145,7 +1149,7 @@ divzero_error:
 ; Avanza R24 sobre espacios y tabuladores.
 skip_spaces:
     LOADUB R8, R24, 0
-    BEQ   R8, R3, skip_done
+    BEQ   R8, R0, skip_done
     MOVI  R9, 0x20
     BEQ   R8, R9, skip_next
     MOVI  R9, 0x09
@@ -1167,7 +1171,7 @@ read_token:
     MOVI  R12, 0                ; desplazamiento dentro de la palabra
 token_loop:
     LOADUB R8, R24, 0
-    BEQ   R8, R3, token_done
+    BEQ   R8, R0, token_done
     MOVI  R9, 0x20
     BEQ   R8, R9, token_done
     MOVI  R9, 0x09
@@ -1242,16 +1246,16 @@ nm_letter:
     ADDI  R9, R9, -55
 nm_digit:
     ; Un digito tiene que caber en la base: en decimal, `1A` no es un numero.
-    BGE   R9, R0, num_fail
-    MUL   R4, R4, R0
+    BGE   R9, R3, num_fail
+    MUL   R4, R4, R3
     ADD   R4, R4, R9
     ADDI  R11, R11, 1
     MOVI  R5, 1
     BRA   num_loop
 num_done:
-    BEQ   R5, R3, num_fail
-    BEQ   R8, R3, num_ok
-    SUB   R4, R3, R4
+    BEQ   R5, R0, num_fail
+    BEQ   R8, R0, num_ok
+    SUB   R4, R0, R4
 num_ok:
     JR    R29
 num_fail:
@@ -1299,7 +1303,7 @@ rl_back:
     BRA   rl_loop
 
 rl_end:
-    STOREB R3, R11, 0           ; NUL final
+    STOREB R0, R11, 0           ; NUL final
     MOVI  R4, 0x0A
     JAL   R30, emit
     JR    R31
@@ -1312,7 +1316,7 @@ rl_end:
 key:
     LOAD  R5, R20, 4
     ANDI  R6, R5, 0x00FF
-    BEQ   R6, R3, key
+    BEQ   R6, R0, key
     LOAD  R4, R20, 0
     JR    R30
 
@@ -1325,7 +1329,7 @@ emit:
     LOAD  R5, R20, 4
     SHR   R6, R5, R27
     ANDI  R6, R6, 0x00FF
-    BEQ   R6, R3, emit
+    BEQ   R6, R0, emit
     STORE R4, R20, 0
     JR    R30
 
@@ -1339,7 +1343,7 @@ print_str:
     ADDI  R7, R4, 0
 ps_loop:
     LOADUB R4, R7, 0
-    BEQ   R4, R3, ps_done
+    BEQ   R4, R0, ps_done
     JAL   R30, emit
     ADDI  R7, R7, 1
     BRA   ps_loop
@@ -1351,7 +1355,7 @@ print_str_inner:
     ADDI  R7, R4, 0
 psi_loop:
     LOADUB R4, R7, 0
-    BEQ   R4, R3, psi_done
+    BEQ   R4, R0, psi_done
     JAL   R30, emit
     ADDI  R7, R7, 1
     BRA   psi_loop
@@ -1367,19 +1371,19 @@ print_num:
     MOVI  R11, digit_buffer
     MOVI  R12, 0                ; cuantos digitos
     MOVI  R8, 0                 ; negativo?
-    BGE   R4, R3, pn_positive
+    BGE   R4, R0, pn_positive
     MOVI  R8, 1
-    SUB   R4, R3, R4
+    SUB   R4, R0, R4
 pn_positive:
-    BNE   R4, R3, pn_loop
+    BNE   R4, R0, pn_loop
     ; El cero no entra en el bucle: no tiene digitos que extraer.
     MOVI  R5, 0x30
     STOREB R5, R11, 0
     MOVI  R12, 1
     BRA   pn_print
 pn_loop:
-    BEQ   R4, R3, pn_sign
-    ADDI  R9, R0, 0             ; la base, que HEX y DECIMAL cambian
+    BEQ   R4, R0, pn_sign
+    ADDI  R9, R3, 0             ; la base, que HEX y DECIMAL cambian
     DIV   R10, R4, R9           ; cociente
     MUL   R5, R10, R9
     SUB   R5, R4, R5            ; resto = n - (n/base)*base
@@ -1395,12 +1399,12 @@ pn_digit:
     ADDI  R4, R10, 0
     BRA   pn_loop
 pn_sign:
-    BEQ   R8, R3, pn_print
+    BEQ   R8, R0, pn_print
     MOVI  R4, 0x2D
     JAL   R30, emit
 pn_print:
     ADDI  R12, R12, -1
-    BLT   R12, R3, pn_done
+    BLT   R12, R0, pn_done
     ADD   R6, R11, R12
     LOADUB R4, R6, 0
     JAL   R30, emit

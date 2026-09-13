@@ -36,9 +36,15 @@
 
 start:
     MOVHI R20, 0x8000
-    ; En esta ISA R0 es un registro general, no un cero cableado: hay que
-    ; ponerlo a mano. Usar R0 como cero aqui habria funcionado por casualidad
-    ; --los registros arrancan a cero-- hasta el dia que alguien lo escribiera.
+    ; El cero se pone a mano, y esto tiene que seguir asi mientras este caso
+    ; corra en mas de un backend. En la 21 R0 esta cableado a cero y valdria
+    ; directamente; en la 19 y anteriores es un registro general y solo vale
+    ; cero por casualidad --los registros arrancan a cero-- hasta el dia que
+    ; alguien lo escriba. Un caso compartido no puede apoyarse en la
+    ; casualidad de la mayoria de sus backends.
+    ;
+    ; El dia que R0 se cablee en todas las versiones, este MOVI sobra y el
+    ; cambio va junto con el backport, no antes.
     MOVI  R9, 0
 
     ; ---- valores iniciales ----

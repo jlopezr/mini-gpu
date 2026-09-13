@@ -32,9 +32,10 @@
 ;
 ; ---- Detalles de esta maquina ----
 ;
-; R0 ES UN REGISTRO GENERAL, no un cero cableado, asi que R3 guarda el cero con
-; el que se compara. Es la razon de que JR tenga opcode propio en vez de ser
-; `JALR R0, Ra, 0`.
+; R0 ESTA CABLEADO A CERO, asi que el cero con el que se compara sale gratis.
+; Hasta la 19 hacia falta reservar R3 y materializarlo con un MOVI; R3 esta
+; ahora libre. Con esto `JR Ra` es `JALR R0, Ra, 0` y el opcode 0x2E queda
+; obsoleto. Ver docs/registro-cero.md.
 ;
 ; Los radios llegan como mucho a 111 y el centro es (160,120), asi que los
 ; ocho puntos simetricos caen siempre dentro de la pantalla: x entre 49 y 271,
@@ -49,7 +50,7 @@
 ;
 ; Convencion de registros:
 ;   R1  base del buffer trasero         R2  base de los registros de video
-;   R3  constante 0
+;   R0  cero, cableado                  R3  libre (era el cero)
 ;   R4  x de putpixel    R5  y de putpixel    R6  color
 ;   R7, R8  temporales de putpixel
 ;   R9  centro x    R10 centro y
@@ -63,7 +64,6 @@
 
 start:
     MOVHI R2, 0x8000           ; registros de video en 0x80000000
-    MOVI  R3, 0                ; el cero con el que se compara; R0 no lo es
     MOVI  R23, 1
     MOVI  R24, 640
     MOVI  R25, 11
@@ -78,7 +78,7 @@ frame:
     ORI   R27, R27, 0x5800     ; 320*240*2 = 153600 bytes
     ADD   R27, R27, R1
 clear:
-    STORE R3, R26, 0           ; fondo negro
+    STORE R0, R26, 0           ; fondo negro
     ADDI  R26, R26, 4
     BLTU  R26, R27, clear
 
@@ -111,7 +111,7 @@ next_circle:
     STORE R23, R2, 8           ; SWAP = 1
 wait_swap:
     LOAD  R28, R2, 8
-    BNE   R28, R3, wait_swap
+    BNE   R28, R0, wait_swap
 
     ; Crecer un pixel por frame y volver a empezar. El ciclo son 18 frames,
     ; que es la separacion entre circunferencias: al reiniciarse, cada una cae
@@ -151,11 +151,11 @@ circle_step:
     SUB   R17, R13, R11
     ADD   R17, R17, R17
     ADDI  R17, R17, 1
-    BGE   R3, R17, circle_step ; si no es positivo, x se queda donde esta
+    BGE   R0, R17, circle_step ; si no es positivo, x se queda donde esta
 
     ADDI  R11, R11, -1
     ADD   R17, R11, R11
-    SUB   R17, R3, R17
+    SUB   R17, R0, R17
     ADDI  R17, R17, 1          ; 1 - 2x
     ADD   R13, R13, R17        ; err += 1 - 2x
     BRA   circle_step

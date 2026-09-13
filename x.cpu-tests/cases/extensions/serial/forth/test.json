@@ -4,12 +4,12 @@
   "program": "../../../../../20.forth/forth.asm",
   "requires": ["serial"],
   "max_instructions": 50000,
-  "stdin": "2 3 + .\n: sq dup * ;\n5 sq .\nbye\n",
+  "stdin": "2 3 + .\n: sq dup * ;\n5 sq .\n255 HEX .\nFF DECIMAL .\nbye\n",
   "expect": {
     "halted": true,
     "error": false,
     "error_code": 0,
-    "pc": "0x00000418",
-    "stdout": "MiniForth\nok> 2 3 + .\n5\nok> : sq dup * ;\nok> 5 sq .\n25\nok> bye\nadios\n"
+    "pc": "0x00000414",
+    "stdout": "MiniForth\nok> 2 3 + .\n5\nok> : sq dup * ;\nok> 5 sq .\n25\nok> 255 HEX .\nFF\nok> FF DECIMAL .\n255\nok> bye\nadios\n"
   }
 }

@@ -34,10 +34,16 @@
 ;
 ; ---- Detalles de esta maquina ----
 ;
-; R0 ES UN REGISTRO GENERAL. No esta cableado a cero, asi que aqui se usa como
-; cualquier otro --guarda la constante 5-- y hace falta reservar otro registro
-; (R3) para tener un cero con el que comparar. Esa es la razon de que JR tenga
-; opcode propio en vez de ser `JALR R0, Ra, 0` como en RISC-V.
+; R0 ESTA CABLEADO A CERO. Hasta la 19 era un registro general y este programa
+; lo usaba para guardar la constante 5, con lo que hacia falta reservar OTRO
+; registro (R3) solo para tener un cero con el que comparar. Ahora el cero es
+; gratis, R3 esta libre y `JR Ra` es `JALR R0, Ra, 0`, con lo que el opcode
+; 0x2E queda obsoleto. Ver docs/registro-cero.md.
+;
+; Las dos constantes que guardaban el sitio del rojo y del verde tampoco hacen
+; falta: `SHLI` toma la cantidad del propio encoding, asi que `SHL R6, R6, R25`
+; con R25 = 11 pasa a ser `SHLI R6, R6, 11` y se ahorra el registro y el MOVI.
+; Ver docs/alu-extendida.md y la §1 del README.
 ;
 ; El framebuffer es RGB565: 320x240 pixeles de dos bytes, 640 bytes por linea.
 ; Un pixel es un STOREH, sin leer nada antes; con solo STORE de 32 bits cada
@@ -49,8 +55,8 @@
 ;   +0  FB_FRONT   +4  FB_BACK   +8  SWAP   +12  STATUS
 ;
 ; Convencion de registros:
-;   R0  constante 5 (sitio del verde)   R1  base del buffer trasero
-;   R2  base de los registros de video  R3  constante 0
+;   R0  cero, cableado                  R1  base del buffer trasero
+;   R2  base de los registros de video  R3  libre (era el cero)
 ;   R4  x de putpixel    R5  y de putpixel    R6  color
 ;   R7, R8  temporales de putpixel
 ;   R9  x0    R10 y0    R11 x1    R12 y1
@@ -58,7 +64,7 @@
 ;   R19 parametro de borde (entrada de `edge`)
 ;   R20 parametro del extremo actual   R21 numero de recta
 ;   R22 giro acumulado del frame       R23 constante 1
-;   R24 constante 640                  R25 constante 11 (sitio del rojo)
+;   R24 constante 640                  R25 libre (era el sitio del rojo)
 ;   R26 puntero de borrado             R27 fin de borrado
 ;   R28 temporal                       R29 temporal de `edge`
 ;   R30 enlace de putpixel             R31 enlace de drawline y de edge
@@ -66,11 +72,8 @@
 
 start:
     MOVHI R2, 0x8000           ; registros de video en 0x80000000
-    MOVI  R3, 0                ; el cero con el que se compara; R0 no lo es
-    MOVI  R0, 5
     MOVI  R23, 1
     MOVI  R24, 640
-    MOVI  R25, 11
     MOVI  R22, 0               ; sin giro en el primer frame
 
 frame:
@@ -84,7 +87,7 @@ frame:
     ORI   R27, R27, 0x5800     ; 320*240*2 = 153600 bytes
     ADD   R27, R27, R1
 clear:
-    STORE R3, R26, 0           ; fondo negro: cero sirve en las dos mitades
+    STORE R0, R26, 0           ; fondo negro: cero sirve en las dos mitades
     ADDI  R26, R26, 4
     BLTU  R26, R27, clear
 
@@ -97,10 +100,10 @@ next_line:
     ; el abanico va de verde a rojo. Se calcula una vez por recta, de modo que
     ; los SHL iterativos de esta CPU no se notan.
     SHR   R6, R21, R23         ; rojo5 = n/2, de 0 a 17
-    SHL   R6, R6, R25
+    SHLI  R6, R6, 11        ; el rojo empieza en el bit 11
     MOVI  R28, 63
     SUB   R28, R28, R21        ; verde6 = 63 - n, de 63 a 28
-    SHL   R28, R28, R0
+    SHLI  R28, R28, 5       ; el verde empieza en el bit 5
     OR    R6, R6, R28
     ORI   R6, R6, 15           ; un fondo de azul para que el verde no se apague
 
@@ -125,7 +128,7 @@ no_wrap:
     STORE R23, R2, 8           ; SWAP = 1
 wait_swap:
     LOAD  R28, R2, 8
-    BNE   R28, R3, wait_swap
+    BNE   R28, R0, wait_swap
 
     ; Girar el abanico. Siete no divide a 1116, asi que el dibujo no se repite
     ; hasta dar la vuelta entera.
@@ -192,18 +195,18 @@ edge_bottom:
 drawline:
     SUB   R13, R11, R9         ; dx = x1 - x0
     MOVI  R15, 1               ; sx = +1
-    BGE   R13, R3, dx_ready
-    SUB   R13, R3, R13         ; dx = |dx|
+    BGE   R13, R0, dx_ready
+    SUB   R13, R0, R13         ; dx = |dx|
     MOVI  R15, -1
 
 dx_ready:
     SUB   R14, R12, R10        ; dy = y1 - y0
     MOVI  R16, 1               ; sy = +1
-    BGE   R14, R3, dy_positive
+    BGE   R14, R0, dy_positive
     MOVI  R16, -1              ; si ya es negativo, ya vale -|dy|
     BRA   dy_ready
 dy_positive:
-    SUB   R14, R3, R14         ; dy = -|dy|
+    SUB   R14, R0, R14         ; dy = -|dy|
 
 dy_ready:
     ADD   R17, R13, R14        ; err = dx + dy

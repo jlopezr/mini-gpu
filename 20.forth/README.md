@@ -30,8 +30,8 @@ interesante es que **son el mismo bucle**: la única diferencia es una variable,
 found:
     LOAD  R14, R11, 12          ; flags
     ANDI  R15, R14, 1           ; ¿inmediata?
-    BNE   R15, R3, execute_it
-    BEQ   R2, R3, execute_it    ; STATE = 0: ejecutar
+    BNE   R15, R0, execute_it
+    BEQ   R2, R0, execute_it    ; STATE = 0: ejecutar
     STORE R11, R16, 0           ; compilar: anotar la entrada
 ```
 
@@ -136,6 +136,21 @@ fallo: `.S` llevaba su cursor en R11, que es un temporal de `print_num`, así qu
 la primera cifra impresa lo destruía y el bucle se quedaba recorriendo memoria
 para siempre. Ver
 [`docs/llamadas.md`](../19.fpga-cpu-hdmi-ls/docs/llamadas.md) de la 19.
+
+### `R0` es el cero, y `R3` es `BASE`
+
+Era al revés: `R0` guardaba `BASE` y había que reservar `R3` y un `MOVI` para
+tener un cero con el que comparar, porque en la MiniISA v0.1 `R0` es un registro
+general. Desde que
+[`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) lo cablea a cero, el cero sale
+gratis y los dos registros se intercambian. Son 58 usos de `R0` como cero y 8 de
+`R3` como `BASE`, y el `MOVI` sobra.
+
+**El programa sigue corriendo en la 19**, que es donde está el bitstream con
+puerto serie. No depende de que las escrituras a `R0` se descarten: depende de
+no escribirlo nunca, y eso vale en cualquier versión, porque el reset deja el
+banco a cero. Es la diferencia entre una disciplina compatible hacia atrás y una
+dependencia de la ISA nueva.
 
 ## Qué pasa cuando algo falla dentro de un `:`
 

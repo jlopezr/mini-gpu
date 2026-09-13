@@ -83,8 +83,16 @@ function Read-Reg([string] $address) {
     $base = [Convert]::ToUInt32($address, 16)
     $value = [uint32] 0
     for ($i = 0; $i -lt 4; $i++) {
-        $texto = Invoke-Monitor 'read-byte' ('0x{0:x8}' -f ($base + $i))
-        $byte = [Convert]::ToUInt32(($texto | Select-Object -Last 1).Trim(), 16)
+        # `read-byte` imprime «Address 0x80000000: 0x00», no el numero suelto.
+        # La version anterior pasaba la linea entera a ToUInt32 y el script
+        # moria en el primer Read-Reg; se quedo asi porque la unica ruta que
+        # llega hasta aqui es la captura, y esta necesita placa.
+        $texto = (Invoke-Monitor 'read-byte' ('0x{0:x8}' -f ($base + $i)) |
+                  Select-Object -Last 1)
+        if ($texto -notmatch '0x([0-9a-fA-F]{1,2})\s*$') {
+            throw "respuesta inesperada de read-byte: '$texto'"
+        }
+        $byte = [Convert]::ToUInt32($Matches[1], 16)
         $value = $value -bor ($byte -shl ($i * 8))
     }
     return $value
