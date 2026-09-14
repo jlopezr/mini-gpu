@@ -57,7 +57,9 @@ Hay siete combinaciones principales de backend y versión. Cada una ejecuta la
 suite entera de su arquitectura; el runner omite por su cuenta los casos de la
 otra, y los que piden capacidades que ese backend no tiene.
 
-Desde `x.tests`:
+Desde `x.tests`. `--port` es opcional: sin él, detecta el primer adaptador
+FTDI conectado; solo hace falta si hay varios o para forzar uno en concreto
+(por ejemplo, en Windows con "COM3"):
 
 ```powershell
 # 1. CPU sobre el simulador funcional
@@ -248,10 +250,9 @@ Es el mismo motivo por el que 14 responde 2.2 compartiendo comandos con 12.
 Para la tabla completa de qué tiene cada uno, ver
 [Comparativa de versiones](../docs/resumen-prototipos.md).
 
-La versión predeterminada de `cpu-fpga` es `ebr`, para conservar la
-compatibilidad con los comandos anteriores. La comprobación ocurre **una sola
-vez al construir el backend**, antes de ejecutar ningún caso, y distingue tres
-situaciones:
+La versión predeterminada de `cpu-fpga` es `alu` (21, la más completa; antes
+era `ebr`). La comprobación ocurre **una sola vez al construir el backend**,
+antes de ejecutar ningún caso, y distingue tres situaciones:
 
 | Situación | Qué significa | Qué hace el runner |
 |---|---|---|

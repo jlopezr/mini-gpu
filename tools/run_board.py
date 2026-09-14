@@ -25,33 +25,11 @@ sys.path.insert(0, str(ROOT / "x.tests"))
 from backends import board  # noqa: E402
 
 
-# VID de FTDI; el chip USB-serie de la ULX3S (y de casi cualquier placa de
-# desarrollo FPGA) es un FT2232/FT232 de FTDI, así que detectarlo por VID es
-# fiable sin tener que mantener una lista de descripciones por SO.
-FTDI_VENDOR_ID = 0x0403
-
-
-def detect_port() -> str:
-    """Busca el primer FTDI conectado. En Mac/Linux no hay "COM3" que valga
-    por defecto, así que sin --port explícito hay que adivinar el puerto."""
-    from serial.tools import list_ports
-
-    candidates = [port for port in list_ports.comports() if port.vid == FTDI_VENDOR_ID]
-    if not candidates:
-        all_ports = ", ".join(p.device for p in list_ports.comports()) or "ninguno"
-        raise SystemExit(
-            "error: no se encontró ningún adaptador FTDI conectado. "
-            f"Puertos serie disponibles: {all_ports}. Indica --port a mano."
-        )
-    if len(candidates) > 1:
-        listed = ", ".join(f"{p.device} ({p.description})" for p in candidates)
-        raise SystemExit(
-            f"error: hay varios adaptadores FTDI conectados: {listed}. "
-            "Indica --port a mano."
-        )
-    port = candidates[0]
-    print(f"Puerto detectado: {port.device} ({port.description})")
-    return port.device
+# Reexportados desde backends.board, que es donde vive la lógica compartida
+# con run_tests.py (x.tests no depende de tools/, así que la dirección de la
+# dependencia solo puede ir de aquí hacia allá).
+FTDI_VENDOR_ID = board.FTDI_VENDOR_ID
+detect_port = board.detect_port
 
 
 def load_monitor(prototype_dir: Path) -> ModuleType:
@@ -347,6 +325,40 @@ def main_load(argv: list[str] | None = None) -> int:
     port = _resolve_port(args)
     target = resolve_target(args.prototype)
     return load_and_run(target, args.program, port, args.no_run, args.verbose)
+
+
+def main_test(argv: list[str] | None = None) -> int:
+    """Resuelve backend y versión de x.tests/run_tests.py a partir del RTL
+    (igual que board-info/board-upload) y reenvía el resto de argumentos.
+    Evita tener que saber a mano si un prototipo es cpu-fpga o gpu-fpga."""
+    parser = argparse.ArgumentParser(
+        description="Ejecuta x.tests/run_tests.py contra placa real, "
+                    "infiriendo --backend/--version del prototipo.",
+        epilog="El resto de opciones (TEST_JSON, --trace, -y, --measure...) "
+              "se reenvían tal cual a run_tests.py.",
+    )
+    parser.add_argument("-p", "--prototype", required=True)
+    parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
+    args, extra = parser.parse_known_args(argv)
+
+    port = args.port if args.port is not None else detect_port()
+    target = resolve_target(args.prototype)
+    if not target.capability:
+        raise SystemExit(
+            f"error: {target.prototype_dir.name} no tiene cpu.v/gpu_sm.v/"
+            "gpu_system.v + monitor.v con versión; no se puede inferir "
+            "--backend/--version. Usa x.tests/run_tests.py directamente."
+        )
+
+    backend = f"{target.capability['backend']}-fpga"
+    version = target.capability["version_name"]
+    command = [
+        sys.executable, str(target.root / "x.tests" / "run_tests.py"),
+        "--backend", backend, "--version", version, "--port", port,
+        *extra,
+    ]
+    print(f"$ {' '.join(command)}")
+    return subprocess.run(command).returncode
 
 
 if __name__ == "__main__":

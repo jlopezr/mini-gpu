@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Lanzador global de `run_board.main_test`; re-ejecuta bajo el python de
+.venv si está disponible, porque necesita pyserial."""
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+VENV_PY = ROOT / ".venv" / "bin" / "python3"
+if VENV_PY.exists() and Path(sys.executable).resolve() != VENV_PY.resolve():
+    os.execv(str(VENV_PY), [str(VENV_PY), __file__, *sys.argv[1:]])
+
+sys.path.insert(0, str(ROOT))
+from tools.run_board import main_test
+
+if __name__ == "__main__":
+    raise SystemExit(main_test())

@@ -96,7 +96,7 @@ VERSIONS = {
         "clock_hz": 80_000_000,
     },
 }
-DEFAULT_VERSION = "ebr"
+DEFAULT_VERSION = "alu"
 
 # Registros de video, en direcciones de byte. Solo los usan las versiones que
 # declaran `video`; estan aqui y no en el monitor porque son del sistema, no

@@ -10,9 +10,40 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+
+
+# VID de FTDI; el chip USB-serie de la ULX3S (y de casi cualquier placa de
+# desarrollo FPGA) es un FT2232/FT232 de FTDI, así que detectarlo por VID es
+# fiable sin tener que mantener una lista de descripciones por SO.
+FTDI_VENDOR_ID = 0x0403
+
+
+def detect_port() -> str:
+    """Busca el primer FTDI conectado. En Mac/Linux no hay "COM3" que valga
+    por defecto, así que sin --port explícito hay que adivinar el puerto.
+    Comparte esta lógica run_tests.py y tools/run_board.py."""
+    from serial.tools import list_ports
+
+    candidates = [port for port in list_ports.comports() if port.vid == FTDI_VENDOR_ID]
+    if not candidates:
+        all_ports = ", ".join(p.device for p in list_ports.comports()) or "ninguno"
+        raise SystemExit(
+            "error: no se encontró ningún adaptador FTDI conectado. "
+            f"Puertos serie disponibles: {all_ports}. Indica --port a mano."
+        )
+    if len(candidates) > 1:
+        listed = ", ".join(f"{p.device} ({p.description})" for p in candidates)
+        raise SystemExit(
+            f"error: hay varios adaptadores FTDI conectados: {listed}. "
+            "Indica --port a mano."
+        )
+    port = candidates[0]
+    print(f"Puerto detectado: {port.device} ({port.description})")
+    return port.device
 
 
 def region_incompatibility(case: dict, regions: tuple) -> str | None:
@@ -111,13 +142,71 @@ def read_monitor_version(monitor: ModuleType, port: str,
     return (version.major, version.minor)
 
 
+def _find_fujprog() -> str:
+    """Localiza `fujprog` (el programador de la ULX3S) en la instalación de
+    oss-cad-suite que gestiona apio, sin pasar por `apio upload`/SCons."""
+    filename = "fujprog.exe" if sys.platform == "win32" else "fujprog"
+    candidate = Path.home() / ".apio" / "packages" / "oss-cad-suite" / "bin" / filename
+    return str(candidate) if candidate.exists() else filename
+
+
+def _is_ulx3s(project: Path) -> bool:
+    apio_ini = project / "apio.ini"
+    return apio_ini.exists() and "ulx3s" in apio_ini.read_text(encoding="utf-8", errors="replace")
+
+
+def _fresh_bitstream(project: Path) -> Path | None:
+    """`_build/default/hardware.bit` si es más reciente que todo el RTL,
+    constraints y `apio.ini` del proyecto; si no, None.
+
+    Evita relanzar `apio upload` (y con él todo `nextpnr`) cuando `build` ya
+    dejó un bitstream válido para las fuentes actuales: `apio build` añade
+    `--verbose-pnr` para su propio informe, lo que cambia la firma del
+    comando que ve SCons frente a la que usa `apio upload`, así que este
+    último siempre repite síntesis+PNR enteros aunque nada haya cambiado.
+    """
+    if not _is_ulx3s(project):
+        return None
+    bitstream = project / "_build" / "default" / "hardware.bit"
+    if not bitstream.exists():
+        return None
+    bitstream_mtime = bitstream.stat().st_mtime
+    sources = [*project.glob("*.v"), *project.glob("*.sv"), *project.glob("*.lpf"),
+              project / "apio.ini"]
+    if any(source.exists() and source.stat().st_mtime > bitstream_mtime for source in sources):
+        return None
+    return bitstream
+
+
 def upload(project: Path) -> None:
-    """Ejecuta `apio upload` en el directorio del proyecto.
+    """Programa la placa con el bitstream del proyecto.
+
+    Si `_build/default/hardware.bit` ya está actualizado (típicamente porque
+    `build` acaba de dejarlo así), lo programa directamente con `fujprog` en
+    vez de pasar por `apio upload` (ver `_fresh_bitstream`). Si no hay
+    bitstream fresco, cae al camino normal, que sintetiza desde cero.
 
     No captura la salida: sintetizar y cargar puede tardar minutos y sin verla
-    parece que el runner se ha colgado. `apio` hereda la consola y escribe su
-    progreso en vivo.
+    parece que el runner se ha colgado. `apio`/`fujprog` heredan la consola y
+    escriben su progreso en vivo.
     """
+    bitstream = _fresh_bitstream(project)
+    if bitstream is not None:
+        print(f"--- `fujprog` directo con {bitstream} "
+              "(bitstream ya actualizado, sin pasar por `apio upload`) ---", flush=True)
+        completed = subprocess.run([_find_fujprog(), "-l", "2", str(bitstream)], cwd=project)
+        print("--- fin de `fujprog` ---", flush=True)
+        if completed.returncode != 0:
+            raise BitstreamMismatch(
+                f"`fujprog` falló en {project} con código "
+                f"{completed.returncode}; revisa su salida más arriba."
+            )
+        # `apio upload` deja este mismo margen gratis por su propio overhead
+        # de proceso; sin él, la FPGA todavía se está reconfigurando (y el
+        # puente USB-serie reestabilizando) cuando el monitor la interroga.
+        time.sleep(1.5)
+        return
+
     print(f"--- `apio upload` en {project} "
           f"(puede tardar varios minutos) ---", flush=True)
     try:

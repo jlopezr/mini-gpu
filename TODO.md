@@ -67,7 +67,27 @@ Una optimización en una versión sí y en otra no. `MULX` no está en CPU pero
 sí en GPU... Y que los ciclos de cada versión de CPU/GPU sean consistentes
 entre sí (ligado al punto 7).
 
-## 9. Tests de capacidad pendientes en `x.tests`
+## 9. `apio lint` falla en prototipos con `sdram_model.v`
+
+En `21.fpga-cpu-hdmi-alu` (y probablemente cualquier otro con SDRAM + testbenches
+de simulación), `apio lint` pasa `-DSYNTHESIZE`, pero `sdram_model.v` envuelve
+`module sdram_model` en `` `ifndef SYNTHESIZE ``. Como `apio lint` también barre
+los `*_tb.v` (p.ej. `cpu_burst_system_tb.v`, que instancia `sdram_model`), el
+módulo queda excluido y Verilator falla con `Can't resolve module reference:
+'sdram_model'`. No es una regresión de RTL: es que `apio lint` mezcla ficheros
+de síntesis y de simulación en el mismo comando con `-DSYNTHESIZE` puesto.
+Revisar si hay que excluir `*_tb.v` del lint, o separar `sdram_model.v` del
+guard de síntesis.
+
+## 10. Revisar `MONITOR_REGIONS`
+
+En `21.fpga-cpu-hdmi-alu/monitor.py`, `MONITOR_REGIONS = ()` (vacío). Comprobar
+si eso es correcto para toda la familia HDMI (16/18/19/21) o si debería haber
+algo ahí (p.ej. registros de framebuffer fuera del espacio arquitectónico), y
+si el resto de prototipos que sí lo rellenan (`10`, `12`, `14`, `17`, `6`) lo
+hacen de forma consistente entre sí.
+
+## 11. Tests de capacidad pendientes en `x.tests`
 
 **En marcha.** El mecanismo de capacidades ya existía para GPU
 (`requires: ["atomic_warp_faults"]`); se extendió a CPU con `video` y

@@ -34,7 +34,9 @@ Implementado: resolución de prototipos, gestor de builds, lanzadores de simulad
 con `--background`, seguibles con `build-status`/`build-log`), `check` (los encadena y para en el
 primer fallo), `list-prototypes`, `prototype-report`, `generate-docs`,
 `run-board`/`board-info`/`board-upload`/`board-load` (reutilizan `x.tests/backends/board.py`;
-`run-board` es la composición de los otros tres). Todos los lanzadores tienen `.ps1` para Windows,
+`run-board` es la composición de los otros tres), `test-board` (llama a `x.tests/run_tests.py`
+contra placa real infiriendo `--backend`/`--version` del prototipo, en vez de tener que saber
+a mano si es `cpu-fpga` o `gpu-fpga`). Todos los lanzadores tienen `.ps1` para Windows,
 y ninguno tiene lógica propia salvo `interface-diagram.ps1` (experimental, fuera de este sistema).
 `seed-sweep.ps1` se retiró: lo sustituye `build-sweep`. `check.ps1` en 12/14/17 delega en
 `test`/`lint`/`build` en vez de duplicar su lógica.

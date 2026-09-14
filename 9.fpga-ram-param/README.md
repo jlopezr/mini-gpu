@@ -1,4 +1,4 @@
-# Monitor UART para la SDRAM de ULX3S
+# Monitor UART para controlador SDRAM parametrizado de ULX3S
 
 Este proyecto expone los 32 MiB de SDR SDRAM W9825G6KH como un espacio de
 memoria direccionado por bytes mediante el monitor UART. Es la unión del

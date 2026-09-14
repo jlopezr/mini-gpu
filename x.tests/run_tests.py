@@ -889,6 +889,11 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
         print("No hay casos de CPU que medir", file=sys.stderr)
         return 2
 
+    # Se detecta una sola vez, no en cada versión FPGA del bucle.
+    port = args.port
+    if port is None and any(version != "sim" for version in versiones):
+        port = board.detect_port()
+
     medidas = {}
     for version in versiones:
         simulador = version == "sim"
@@ -897,7 +902,7 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
         else:
             try:
                 backend = FpgaBackend(
-                    REPOSITORY, port=args.port,
+                    REPOSITORY, port=port,
                     serial_timeout=args.serial_timeout, version=version,
                     upload_policy=upload_policy,
                 )
@@ -975,7 +980,8 @@ def main() -> int:
         ),
         default="gpu-simulator",
     )
-    parser.add_argument("--port", default="COM3")
+    parser.add_argument("--port", default=None,
+                        help="por defecto, detecta el primer adaptador FTDI conectado")
     parser.add_argument("--serial-timeout", type=float, default=1.0)
     parser.add_argument(
         "--version",
@@ -1110,6 +1116,9 @@ def main() -> int:
     upload_policy = board.UploadPolicy(
         allowed=not args.no_upload, assume_yes=args.yes
     )
+    port = args.port
+    if port is None and ("cpu-fpga" in backend_names or "gpu-fpga" in backend_names):
+        port = board.detect_port()
     # Construir un backend FPGA comprueba la placa y, si hace falta y se
     # autoriza, carga el bitstream. Es el fallo más habitual del flujo con
     # hardware, así que merece un mensaje y no un volcado de pila.
@@ -1117,7 +1126,7 @@ def main() -> int:
         if "cpu-fpga" in backend_names:
             backends["cpu-fpga"] = FpgaBackend(
                 REPOSITORY,
-                port=args.port,
+                port=port,
                 serial_timeout=args.serial_timeout,
                 version=backend_versions["cpu-fpga"],
                 upload_policy=upload_policy,
@@ -1125,7 +1134,7 @@ def main() -> int:
         if "gpu-fpga" in backend_names:
             backends["gpu-fpga"] = GpuFpgaBackend(
                 REPOSITORY,
-                port=args.port,
+                port=port,
                 serial_timeout=args.serial_timeout,
                 version=backend_versions["gpu-fpga"],
                 upload_policy=upload_policy,

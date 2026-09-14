@@ -80,7 +80,7 @@ $ run-tests
 
 $ run-tests --quick              # solo los test_*.py, sin simular casos (rápido)
 $ run-tests --hardware           # casos contra placa real, backend gpu-fpga
-$ run-tests -- --backend cpu-fpga --port COM3   # passthrough directo a run_tests.py
+$ run-tests -- --backend cpu-fpga               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
 ```
 
 ## Build con historial de timing, en segundo plano, estado, logs
@@ -357,6 +357,30 @@ monitor). `board-upload` es el mismo chequeo que hace `run-board` por
 defecto, con `--rebuild`/`--no-upload`/`-y`. `board-load` **no comprueba la
 identidad del bitstream** — asume que ya es el correcto y va directo a
 ensamblar/cargar/ejecutar; combínalo con `board-upload` si no estás seguro.
+
+### Suite de casos contra placa real (`test-board`)
+
+`x.tests/run_tests.py` necesita `--backend cpu-fpga`/`gpu-fpga` y `--version`
+(el nombre corto de `x.tests/backends/{fpga,gpu_fpga}.py`), que hay que saber
+a mano. `test-board` los infiere del mismo sitio que `board-info`/`run-board`
+(el RTL, vía `_capabilities()`), detecta el puerto igual que el resto de
+comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
+`--measure`...) a `run_tests.py` sin tocarlo:
+
+```bash
+$ test-board --prototype 21 -y cases/basics
+Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
+Using prototype: 21.fpga-cpu-hdmi-alu
+$ .../run_tests.py --backend cpu-fpga --version alu --port /dev/... -y cases/basics
+PASS smoke [cpu-fpga]
+PASS zero-register [cpu-fpga]
+2 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1.7s
+```
+
+Si el prototipo no tiene identidad inferible (sin `cpu.v`/`gpu_sm.v`/
+`gpu_system.v` + `monitor.v` con versión), falla con un mensaje claro en vez
+de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
+`--backend`/`--version` a mano.
 
 ## Herramientas de vídeo/HDMI (16, 18, 19, 21)
 

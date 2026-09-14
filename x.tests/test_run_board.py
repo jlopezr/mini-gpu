@@ -319,5 +319,58 @@ class SeparateCommandsTest(unittest.TestCase):
         self.assertEqual(calls, [("reset",), ("write-block", "0", str(binary.resolve()))])
 
 
+class MainTestTest(unittest.TestCase):
+    """test-board: infiere --backend/--version del RTL y reenvía el resto a
+    x.tests/run_tests.py, en vez de tener que saber a mano cpu-fpga/gpu-fpga."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.prototype_dir = self.root / "21.fpga-cpu-hdmi-alu"
+        self.prototype_dir.mkdir()
+        (self.prototype_dir / "monitor.py").write_text("", encoding="utf-8")
+
+        patcher_repo = mock.patch.object(run_board, "find_repo_root", return_value=self.root)
+        patcher_resolve = mock.patch.object(run_board, "resolve_prototype", return_value=self.prototype_dir)
+        patcher_monitor = mock.patch.object(run_board, "load_monitor", return_value=SimpleNamespace())
+        self.addCleanup(patcher_repo.stop)
+        self.addCleanup(patcher_resolve.stop)
+        self.addCleanup(patcher_monitor.stop)
+        patcher_repo.start()
+        patcher_resolve.start()
+        patcher_monitor.start()
+
+    def test_infers_backend_and_version_and_forwards_extra_args(self):
+        capability = {
+            "monitor_version": (1, 15), "version_name": "alu", "backend": "cpu",
+            "capabilities": ("mul_div",),
+        }
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.return_value = SimpleNamespace(returncode=0)
+            code = run_board.main_test([
+                "--prototype", "21", "--port", "COM3", "-y", "cases/basics",
+            ])
+        self.assertEqual(code, 0)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertIn("--backend", command)
+        self.assertEqual(command[command.index("--backend") + 1], "cpu-fpga")
+        self.assertIn("--version", command)
+        self.assertEqual(command[command.index("--version") + 1], "alu")
+        self.assertIn("--port", command)
+        self.assertEqual(command[command.index("--port") + 1], "COM3")
+        self.assertIn("-y", command)
+        self.assertIn("cases/basics", command)
+
+    def test_without_inferable_identity_fails_without_running_anything(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            with self.assertRaises(SystemExit):
+                run_board.main_test(["--prototype", "21", "--port", "COM3"])
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
