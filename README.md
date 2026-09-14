@@ -28,7 +28,7 @@ bitstream que no las tenga para con opcode inválido. Con `R0` general no hay
 parada, hay otro resultado en silencio, y por eso no podía convivir con su
 ausencia en el resto del repositorio.
 
-**[`COMPARATIVA.md`](COMPARATIVA.md) pone en una tabla qué sabe hacer cada
+**[`docs/resumen-prototipos.md`](docs/resumen-prototipos.md) pone en una tabla qué sabe hacer cada
 implementación, cuánta memoria ve y a qué frecuencia cierra.** Es lo que evita
 tener que abrir cinco `README.md` para saber si una instrucción está en un
 bitstream concreto.
@@ -59,7 +59,7 @@ bitstream concreto.
 | [`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls)       | La 18 más accesos de 8 y 16 bits, llamadas y puerto serie MMIO.         |
 | [`20.forth`](20.forth)                             | Un Forth con intérprete y compilador, sobre la consola serie de la 19.   |
 | [`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu)     | La 19 más `MULHI`/`DIVU`/`REM`/`REMU`, shifts inmediatos y `R0` a cero.  |
-| [`x.cpu-tests`](x.cpu-tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
+| [`x.tests`](x.tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
 | [`pruebas`](pruebas)                               | Artefactos históricos conservados como referencia.                       |
 
 Las carpetas numeradas representan hitos de aprendizaje y se conservan aunque
@@ -126,20 +126,20 @@ apio install
 Ejecutar todos los casos sobre el simulador:
 
 ```powershell
-cd x.cpu-tests
-python run_gpu_tests.py --backend cpu-simulator
+cd x.tests
+python run_tests.py --backend cpu-simulator
 ```
 
 Ejecutarlos sobre la CPU con EBR de la carpeta 6:
 
 ```powershell
-python run_gpu_tests.py --backend cpu-fpga --version ebr --port COM3
+python run_tests.py --backend cpu-fpga --version ebr --port COM3
 ```
 
 Ejecutarlos sobre la CPU con SDRAM de la carpeta 10:
 
 ```powershell
-python run_gpu_tests.py --backend cpu-fpga --version sdram --port COM3
+python run_tests.py --backend cpu-fpga --version sdram --port COM3
 ```
 
 El backend consulta `GET_VERSION` antes de modificar la memoria. La versión

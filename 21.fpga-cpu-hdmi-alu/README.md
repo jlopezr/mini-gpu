@@ -13,7 +13,7 @@ la describe sin cambios.
 | 4 | Camino rápido | `MULHI`/`REM` reutilizan el medio resultado | [§4](#4-el-medio-resultado-que-la-cpu-tiraba) |
 
 Se pueden leer, romper y probar por separado, y sus suites de test están
-separadas a propósito: `x.cpu-tests` declara tres capacidades distintas
+separadas a propósito: `x.tests` declara tres capacidades distintas
 —`shift_immediate`, `alu_extended` y `zero_register`— en vez de una.
 
 **El 3 es incompatible con la v0.1**; los otros tres son aditivos. Un programa
@@ -28,7 +28,7 @@ de cargar un programa— y con un motivo más que las anteriores no tenían: con
 la única defensa.
 
 **Sintetizada, pero sin placa.** Simulador, testbenches y
-`x.cpu-tests --backend cpu-simulator` están en verde, y el bitstream existe:
+`x.tests --backend cpu-simulator` están en verde, y el bitstream existe:
 **las ocho semillas cumplen los 80 MHz**, entre 84,04 y 91,80, y se fija la 6
 con **+14,8 %**. Lo que falta es la ULX3S, que no estaba disponible: nada de
 esto se ha visto correr en hardware.
@@ -66,7 +66,7 @@ decir.
 Para repetirlo:
 
 ```powershell
-..\tools\seed-sweep.ps1 -ProjectDir 21.fpga-cpu-hdmi-alu -Seeds @(1,2,3,4,5,6,7,8)
+..\tools\build-sweep.ps1 --prototype 21.fpga-cpu-hdmi-alu --seeds 1 2 3 4 5 6 7 8
 ```
 
 **Lo que este número no dice.** Mide caminos dentro del chip. El fallo que tuvo
@@ -107,14 +107,14 @@ válido; con cualquier bit de `extra[9:0]` puesto sigue dando
 
 Eso deja un agujero fácil de abrir sin enterarse: si alguien quita la
 comprobación entera, nada se queja. Lo tapa
-[`cases/extensions/shift-immediate/reserved-fields`](../x.cpu-tests/cases/extensions/shift-immediate/reserved-fields/),
+[`cases/extensions/shift-immediate/reserved-fields`](../x.tests/cases/extensions/shift-immediate/reserved-fields/),
 que es la mitad negativa del cambio. El caso `errors/invalid-encoding` de
 siempre no servía: usa un `NOP`, cuya regla no ha cambiado.
 
 Verificación: [`shift_immediate_tb.v`](shift_immediate_tb.v), la clase
 `ShiftInmediatoTest` de
 [`../1.isa/test_miniisa_asm.py`](../1.isa/test_miniisa_asm.py), y el caso
-[`shift-immediate/bounds`](../x.cpu-tests/cases/extensions/shift-immediate/bounds/).
+[`shift-immediate/bounds`](../x.tests/cases/extensions/shift-immediate/bounds/).
 
 El testbench tiene un detalle que merece copiarse: en cada caso, el registro
 **cuyo número coincide con la cantidad** recibe un valor distinto de la
@@ -156,8 +156,8 @@ El razonamiento completo, y el del signo del resto, están en
 Verificación: [`alu_extended_tb.v`](alu_extended_tb.v), con veintidós vectores
 —la mitad con operandos negativos— y las cuatro divisiones por cero, más los
 casos
-[`alu-extended/`](../x.cpu-tests/cases/extensions/alu-extended/) de
-`x.cpu-tests`.
+[`alu-extended/`](../x.tests/cases/extensions/alu-extended/) de
+`x.tests`.
 
 ---
 
@@ -185,7 +185,7 @@ comprobó expresamente.
 Detalles en [`docs/registro-cero.md`](docs/registro-cero.md). Verificación:
 [`zero_register_tb.v`](zero_register_tb.v), que recorre los seis caminos por los
 que la CPU escribe el banco, y el caso
-[`basics/zero-register`](../x.cpu-tests/cases/basics/zero-register/).
+[`basics/zero-register`](../x.tests/cases/basics/zero-register/).
 
 > **Esto ya no es exclusivo de la 21.** El cambio se llevó después a las otras
 > ocho implementaciones —cinco de CPU, tres de GPU— y `R0` a cero pasó a ser una
@@ -220,7 +220,7 @@ donde está cableado como donde el reset lo deja a cero y nadie lo toca. «No us
 de que las escrituras se descarten, no.
 
 El resto de apariciones de `R0` en el repositorio son **lecturas esperando
-cero**: cinco casos de `x.cpu-tests` —`shift-multiply`, `memory-copy`,
+cero**: cinco casos de `x.tests` —`shift-multiply`, `memory-copy`,
 `fibonacci`, `array-sum` y `video/registers`— que comparan contra `R0` y pasan
 igual, ahora por construcción en vez de por casualidad.
 
@@ -276,7 +276,7 @@ de 5 bits** en vez de valores de 32. Son trece flops y comparadores de 5 bits.
 
 Es **invisible para la arquitectura, sin excepciones**: acierto y fallo dan
 exactamente el mismo número. No hay error por usar `MULHI` sin `MUL` previo, ni
-instrucción para leer la etiqueta, ni capacidad que declarar en `x.cpu-tests`.
+instrucción para leer la etiqueta, ni capacidad que declarar en `x.tests`.
 El simulador funcional no modela nada de esto y no debe.
 
 El riesgo que justifica tanto cuidado: un acierto indebido no da un fallo
@@ -356,7 +356,7 @@ diseño y por qué `JR` sigue teniendo opcode propio están en
 nuevas viven enteras dentro de la CPU y el protocolo es idéntico al 1.12 de la
 18. Sube igual porque `GET_VERSION` es lo único que el PC puede preguntar antes
 de cargar un programa: con las dos respondiendo 1.12,
-[`x.cpu-tests`](../x.cpu-tests) daría por bueno un bitstream de la 18 y los casos
+[`x.tests`](../x.tests) daría por bueno un bitstream de la 18 y los casos
 que usan estas instrucciones pararían con opcode inválido en vez de cargar el
 que toca. Es el mismo criterio que separa 2.1 de 2.2 en las dos MiniGPU.
 
@@ -399,7 +399,7 @@ dice que la SDRAM se lea bien; eso lo dice la matriz de beats × DQ.
 Para repetirlo:
 
 ```powershell
-..\tools\seed-sweep.ps1 -ProjectDir 19.fpga-cpu-hdmi-ls -Seeds @(1,2,3,4,5,6,7,8)
+..\tools\build-sweep.ps1 --prototype 19.fpga-cpu-hdmi-ls --seeds 1 2 3 4 5 6 7 8
 ```
 
 ---
@@ -691,7 +691,7 @@ clk_25mhz ─┬─ pll_cpu ──── 100 MHz ── CPU + monitor UART + SDR
 La mitad de CPU es byte a byte la de 10: mismo mapa de memoria unificado de
 32 MiB, mismos comandos de monitor, mismos cinco bancos de prueba. Lo único que
 cambia es la **versión del monitor**, hoy **1.10**, para que
-`run_gpu_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
+`run_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
 1.5 de 10 y del 1.6 de 6. (Fue 1.7 durante los hitos A y B; el cambio de reloj
 y baudio del hito C la subió a 1.8, y dos correcciones posteriores a 1.9 y
 1.10; el propio `monitor.v` lleva la lista.)
@@ -835,11 +835,11 @@ durante un fill, y que las cesiones no alargan el fill más de un 60 %.
 ### Cómo probarlo en la placa
 
 ```powershell
-..\.venv\Scripts\python.exe make_framebuffer.py diagonal fb.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer diagonal fb.bin
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb.bin --port COM3
 ```
 
-`make_framebuffer.py` genera patrones pensados para diagnosticar, no para
+`tools/make-framebuffer` genera patrones pensados para diagnosticar, no para
 lucir: `diagonal` delata errores de pitch o de línea, `bars` delata bytes
 intercambiados dentro del píxel, `checker` delata desplazamientos de medio
 píxel y problemas de escalado.
@@ -897,8 +897,8 @@ parada» sigue aplicándose sin cambios a la SDRAM.
 Eso permite probar el swap **sin escribir ni una línea de programa**:
 
 ```powershell
-..\.venv\Scripts\python.exe make_framebuffer.py bars fb0.bin
-..\.venv\Scripts\python.exe make_framebuffer.py checker fb1.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer bars fb0.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer checker fb1.bin
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb0.bin --port COM3
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01025800 fb1.bin --port COM3
 ..\.venv\Scripts\python.exe monitor.py write-byte 0x80000008 1 --port COM3
@@ -954,7 +954,7 @@ más `R29` en las circunferencias— en lugar de salvarlo en memoria. Funciona
 porque `JAL` nombra su registro de enlace explícitamente, y es barato con dos o
 tres niveles, pero **no escala**: con recursión no vale de ninguna manera. Los
 propios ficheros lo explican y apuntan a [`docs/llamadas.md`](docs/llamadas.md);
-el caso `calls-link-and-return` de [`x.cpu-tests`](../x.cpu-tests) hace la
+el caso `calls-link-and-return` de [`x.tests`](../x.tests) hace la
 versión con pila.
 
 **Verificados píxel a píxel contra un modelo independiente**: el mismo
@@ -968,12 +968,12 @@ Lanzarlos, con el script que hace los cuatro pasos —ensamblar, parar la CPU,
 cargar y arrancar— y comprueba el estado al terminar:
 
 ```powershell
-.\run-demo.ps1 swap_demo_fast
-.\run-demo.ps1 tear_demo_fast
-.\run-demo.ps1 bresenham_lines
-.\run-demo.ps1 bresenham_circles
-.\run-demo.ps1 swap_demo -NoRun     # cargar sin arrancar
-.\run-demo.ps1 tear_demo -Port COM4
+..\tools\run-board.ps1 --prototype 21 --program swap_demo_fast
+..\tools\run-board.ps1 --prototype 21 --program tear_demo_fast
+..\tools\run-board.ps1 --prototype 21 --program bresenham_lines
+..\tools\run-board.ps1 --prototype 21 --program bresenham_circles
+..\tools\run-board.ps1 --prototype 21 --program swap_demo --no-run     # cargar sin arrancar
+..\tools\run-board.ps1 --prototype 21 --program tear_demo --port COM4
 ```
 
 El orden no es cosmético: **hay que resetear la CPU antes de escribir**, porque
@@ -1049,7 +1049,7 @@ prueba no fuera una que aprueba cualquier cosa.
 
 #### Cómo se miden, y cómo se midieron mal
 
-Las cifras de arriba salen de [`measure-demo.ps1`](measure-demo.ps1), que lee
+Las cifras de arriba salen de [`tools/measure-demo.ps1`](../tools/measure-demo.ps1), que lee
 `R21` —la posición de la banda— antes y después de dejar correr la CPU un
 segundo. La banda avanza de dos en dos, así que el ritmo es directo.
 
@@ -1347,7 +1347,7 @@ en ninguna parte:
 Eso tenía una consecuencia que no se veía: con la ventana de 16 bytes,
 **`SWAP_COUNT` (`+0x10`) y `HALT_AT` (`+0x14`) quedan fuera**. Los dos
 registros que sostienen la captura determinista de frames —y con ellos la
-capacidad `frame_capture` de `x.cpu-tests`— no los podía tocar ningún banco de
+capacidad `frame_capture` de `x.tests`— no los podía tocar ningún banco de
 RTL: solo estaban probados en placa y en el simulador funcional.
 
 `cpu_video_tb.v` está ahora sobre el camino real y los cubre: arma `HALT_AT`,
@@ -1374,7 +1374,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga --version bl8 --port COM3
+..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga --version bl8 --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
@@ -1393,8 +1393,8 @@ Para comparar esta versión con las anteriores en los mismos programas, el runne
 tiene `--measure`, que saca una tabla en Markdown:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga `
-    --measure medidas.md --port COM3 ..\x.cpu-tests\cases
+..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga `
+    --measure medidas.md --port COM3 ..\x.tests\cases
 ```
 
 El porqué de los dos contadores, y qué miden exactamente, está en

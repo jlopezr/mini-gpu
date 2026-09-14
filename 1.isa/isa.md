@@ -41,8 +41,8 @@ Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 | `2.cpu-sim-func` / `cpu-simulator` | Sí               | Sí      | Sí             | Sí                |
 
 Las declaraciones del runner están en
-[`backends/fpga.py`](../x.cpu-tests/backends/fpga.py) y
-[`backends/simulator.py`](../x.cpu-tests/backends/simulator.py); los casos usan
+[`backends/fpga.py`](../x.tests/backends/fpga.py) y
+[`backends/simulator.py`](../x.tests/backends/simulator.py); los casos usan
 `requires` para indicar las capabilities necesarias y se omiten si faltan.
 La versión de monitor identifica el bitstream y permite comprobarlo contra la
 configuración del backend; no existe aquí una instrucción para consultar capabilities.

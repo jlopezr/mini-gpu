@@ -62,7 +62,7 @@ def leer_rgb565(ruta, ancho, alto):
     """Lee un volcado crudo de framebuffer RGB565, little-endian.
 
     Es el formato que devuelve `monitor.py read-block`, y el mismo que genera
-    `make_framebuffer.py`. Se expande a 8 bits por componente replicando los
+    `make-framebuffer`. Se expande a 8 bits por componente replicando los
     bits altos, exactamente como hace el scanout en RTL: sin eso, 5'b11111
     saldria 0xf8 en vez de 0xff y TODOS los pixeles claros pareceran distintos.
     """

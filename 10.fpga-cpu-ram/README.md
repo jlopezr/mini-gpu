@@ -12,7 +12,7 @@
 >
 > El texto que sigue es anterior al backport. Los numeros de version que
 > menciona mas abajo son historicos; los de hoy estan en
-> [`COMPARATIVA.md`](../COMPARATIVA.md).
+> [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 >
 > Y un aviso que salio al probar esta carpeta con el backport: **la 10 no
 > implementa `MUL`, `MULFX` ni `DIV`.** Es un hueco anterior a todo esto y el
@@ -28,7 +28,7 @@
 >
 > Lo que si se hizo fue **quitar los tres `localparam`**: el `cpu.v` los
 > declaraba y validaba su encoding sin implementarlos, o sea que aparentaba
-> soportarlos. `x.cpu-tests` lo declara ahora como la capacidad `mul_div`, que
+> soportarlos. `x.tests` lo declara ahora como la capacidad `mul_div`, que
 > esta es la unica version en no tener, y `cases/alu/multiply` se omite aqui con
 > un SKIP en vez de fallar.
 
@@ -37,7 +37,7 @@ Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 `9.fpga-ram-param`. Todo el datapath principal funciona en un único dominio de
 120 MHz. El monitor UART conserva los comandos de ejecución y depuración de la
 carpeta 6, responde como versión **1.5** y trabaja a 3 Mbaud. Esa versión
-permite que `x.cpu-tests --version sdram` distinga este bitstream SDRAM del
+permite que `x.tests --version sdram` distinga este bitstream SDRAM del
 bitstream EBR 1.4.
 
 ## Mapa de memoria

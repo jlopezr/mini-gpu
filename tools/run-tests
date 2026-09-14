@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Lanzador global de la suite de x.tests (funciona desde cualquier directorio)."""
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+if __name__ == "__main__":
+    script = ROOT / "x.tests" / "test"
+    if not script.exists():
+        print(f"error: no existe {script}", file=sys.stderr)
+        raise SystemExit(2)
+    raise SystemExit(subprocess.call([str(script), *sys.argv[1:]], cwd=str(ROOT / "x.tests")))

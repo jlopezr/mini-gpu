@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Captura N frames consecutivos de la placa, de forma determinista.
+
+Común a los prototipos con video + HDMI que comparten la ventana de
+registros de burst (16, 18, 19, 21): resuelve el prototipo, ensambla el
+programa, lo carga y lo deja correr hasta un intercambio CONCRETO usando el
+registro HALT_AT. Entonces la CPU está parada, el frame acaba de completarse
+y está entero en el buffer frontal: se lee y se guarda.
+
+Por qué se para en el intercambio y no tras N frames de vídeo
+---------------------------------------------------------------
+
+Parar cuando el contador de frames llega a N para la CPU en un punto
+cualquiera de su dibujo. El buffer trasero queda a medias, y lo que se
+capture depende de la velocidad relativa entre la CPU y el barrido — que es
+justo lo que hace que tear_demo_fast tenga una costura viajando cada 63 ms.
+La captura saldría distinta cada vez y el test sería intermitente.
+
+Parando en el N-ésimo intercambio COMPLETADO, el frame está entero por
+construcción. Determinista y repetible.
+
+Cada frame necesita una ejecución desde el principio, porque la única forma
+de leer memoria es con la CPU parada. Son ~1,5 s de lectura por frame a
+1 Mbaud, pero los programas son deterministas desde el reset, así que el
+frame N sale igual siempre.
+
+Los ficheros salen como <prefijo>_NNN.bin, en RGB565 crudo de 320x240, en el
+directorio actual: es lo que comen make-framebuffer y compare-frames.py.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.run_board import assemble, detect_port, resolve_program, resolve_target, run_monitor_cli
+
+FB_FRONT = 0x80000000
+STATUS = 0x8000000C
+SWAP_COUNT = 0x80000010
+HALT_AT = 0x80000014
+
+
+def write_reg(prototype_dir: Path, port: str, address: int, value: int) -> None:
+    # El monitor accede byte a byte, así que una palabra son cuatro comandos.
+    for i in range(4):
+        byte = (value >> (i * 8)) & 0xFF
+        run_monitor_cli(prototype_dir, port, "write-byte", f"0x{address + i:08x}", str(byte))
+
+
+def read_reg(prototype_dir: Path, port: str, address: int) -> int:
+    value = 0
+    for i in range(4):
+        # `read-byte` imprime «Address 0x80000000: 0x00», no el número suelto.
+        text = run_monitor_cli(prototype_dir, port, "read-byte", f"0x{address + i:08x}")
+        line = text.strip().splitlines()[-1]
+        if ":" not in line:
+            raise SystemExit(f"error: respuesta inesperada de read-byte: '{line}'")
+        byte = int(line.rsplit(":", 1)[1].strip(), 16)
+        value |= byte << (i * 8)
+    return value
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-p", "--prototype", required=True)
+    parser.add_argument("program")
+    parser.add_argument("--frames", type=int, default=3, help="Cuántos frames consecutivos capturar")
+    parser.add_argument("--desde", type=int, default=3,
+                        help="Número del primer intercambio a capturar (los primeros frames de las "
+                             "demos son de arranque, a veces interesa empezar más tarde)")
+    parser.add_argument("--prefijo", default="capture")
+    parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
+    args = parser.parse_args(argv)
+    port = args.port if args.port is not None else detect_port()
+
+    target = resolve_target(args.prototype)
+    source = resolve_program(target.prototype_dir, args.program, target.root)
+    binary = assemble(target.root, source, verbose=False) if source.suffix == ".asm" else source
+
+    print(f"Capturando {args.frames} frames de {args.program}, desde el intercambio {args.desde}")
+
+    for n in range(args.frames):
+        swap = args.desde + n
+
+        # El orden importa: resetear ANTES de escribir, porque el monitor
+        # rechaza cualquier acceso a memoria mientras la CPU corre.
+        run_monitor_cli(target.prototype_dir, port, "reset")
+        run_monitor_cli(target.prototype_dir, port, "write-block", "0x00000000", str(binary))
+
+        # Borrar el underflow de la pasada anterior. Sin esto, el primer
+        # frame que lo provoque contamina todos los demás.
+        write_reg(target.prototype_dir, port, STATUS, 1)
+        write_reg(target.prototype_dir, port, HALT_AT, swap)
+
+        run_monitor_cli(target.prototype_dir, port, "run")
+
+        # Esperar a que HALT_AT pare la CPU.
+        deadline = time.monotonic() + 20.0
+        halted = False
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            status_text = run_monitor_cli(target.prototype_dir, port, "status")
+            if "halted=True" in status_text:
+                halted = True
+                break
+        if not halted:
+            raise SystemExit(f"error: la CPU no paró en el intercambio {swap}; ¿el programa hace swaps?")
+
+        front = read_reg(target.prototype_dir, port, FB_FRONT)
+        status = read_reg(target.prototype_dir, port, STATUS)
+        swaps = read_reg(target.prototype_dir, port, SWAP_COUNT)
+
+        fichero = f"{args.prefijo}_{swap:03d}.bin"
+        # Ruta absoluta: run_monitor_cli ejecuta monitor.py con cwd en la
+        # carpeta del prototipo, y el fichero debe salir en el directorio
+        # actual del usuario, no ahí.
+        fichero_path = Path.cwd() / fichero
+        run_monitor_cli(target.prototype_dir, port, "read-block", f"0x{front:08x}", "153600", str(fichero_path))
+
+        under = "SI" if status & 1 else "no"
+        print(f"  intercambio {swap:3d}: front=0x{front:08x}  swaps={swaps}  underflow={under}  -> {fichero}")
+
+        if status & 1:
+            print(f"!! underflow en el frame {swap}: la imagen capturada puede estar rota", file=sys.stderr)
+
+    print()
+    print("Comparar dos capturas:")
+    print(f"  python3 tools/compare-frames.py --rgb565 320x240 \\")
+    print(f"      {args.prefijo}_{args.desde:03d}.bin {args.prefijo}_{args.desde + 1:03d}.bin")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

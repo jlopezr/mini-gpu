@@ -12,7 +12,7 @@
 >
 > El texto que sigue es anterior al backport. Los numeros de version que
 > menciona mas abajo son historicos; los de hoy estan en
-> [`COMPARATIVA.md`](../COMPARATIVA.md).
+> [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 
 Fusión de la CPU con SDRAM de `10.fpga-cpu-ram` y la cadena DVI de `13.hdmi`,
@@ -63,7 +63,7 @@ clk_25mhz ─┬─ pll_cpu ──── 100 MHz ── CPU + monitor UART + SDR
 La mitad de CPU es byte a byte la de 10: mismo mapa de memoria unificado de
 32 MiB, mismos comandos de monitor, mismos cinco bancos de prueba. Lo único que
 cambia es la **versión del monitor**, hoy **1.10**, para que
-`run_gpu_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
+`run_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
 1.5 de 10 y del 1.6 de 6. (Fue 1.7 durante los hitos A y B; el cambio de reloj
 y baudio del hito C la subió a 1.8, y dos correcciones posteriores a 1.9 y
 1.10; el propio `monitor.v` lleva la lista.)
@@ -207,11 +207,11 @@ durante un fill, y que las cesiones no alargan el fill más de un 60 %.
 ### Cómo probarlo en la placa
 
 ```powershell
-..\.venv\Scripts\python.exe make_framebuffer.py diagonal fb.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer diagonal fb.bin
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb.bin --port COM3
 ```
 
-`make_framebuffer.py` genera patrones pensados para diagnosticar, no para
+`tools/make-framebuffer` genera patrones pensados para diagnosticar, no para
 lucir: `diagonal` delata errores de pitch o de línea, `bars` delata bytes
 intercambiados dentro del píxel, `checker` delata desplazamientos de medio
 píxel y problemas de escalado.
@@ -269,8 +269,8 @@ parada» sigue aplicándose sin cambios a la SDRAM.
 Eso permite probar el swap **sin escribir ni una línea de programa**:
 
 ```powershell
-..\.venv\Scripts\python.exe make_framebuffer.py bars fb0.bin
-..\.venv\Scripts\python.exe make_framebuffer.py checker fb1.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer bars fb0.bin
+..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer checker fb1.bin
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb0.bin --port COM3
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01025800 fb1.bin --port COM3
 ..\.venv\Scripts\python.exe monitor.py write-byte 0x80000008 1 --port COM3
@@ -308,10 +308,10 @@ Lanzarlos, con el script que hace los cuatro pasos —ensamblar, parar la CPU,
 cargar y arrancar— y comprueba el estado al terminar:
 
 ```powershell
-.\run-demo.ps1 swap_demo_fast
-.\run-demo.ps1 tear_demo_fast
-.\run-demo.ps1 swap_demo -NoRun     # cargar sin arrancar
-.\run-demo.ps1 tear_demo -Port COM4
+..\tools\run-board.ps1 --prototype 16 --program swap_demo_fast
+..\tools\run-board.ps1 --prototype 16 --program tear_demo_fast
+..\tools\run-board.ps1 --prototype 16 --program swap_demo --no-run     # cargar sin arrancar
+..\tools\run-board.ps1 --prototype 16 --program tear_demo --port COM4
 ```
 
 El orden no es cosmético: **hay que resetear la CPU antes de escribir**, porque
@@ -387,7 +387,7 @@ prueba no fuera una que aprueba cualquier cosa.
 
 #### Cómo se miden, y cómo se midieron mal
 
-Las cifras de arriba salen de [`measure-demo.ps1`](measure-demo.ps1), que lee
+Las cifras de arriba salen de [`tools/measure-demo.ps1`](../tools/measure-demo.ps1), que lee
 `R21` —la posición de la banda— antes y después de dejar correr la CPU un
 segundo. La banda avanza de dos en dos, así que el ritmo es directo.
 
@@ -577,7 +577,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.cpu-tests\run_gpu_tests.py --backend cpu-fpga --version hdmi --port COM3
+..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga --version hdmi --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.

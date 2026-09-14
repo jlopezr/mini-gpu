@@ -61,7 +61,7 @@ particular `docs/timing.md`.
 ## El problema, medido
 
 Estas cifras son medidas en la placa, no estimaciones. La herramienta es
-`16.fpga-cpu-hdmi/measure-demo.ps1`.
+`tools/measure-demo.ps1`.
 
 El bucle interior de `examples/swap_demo_fast.asm` rellena el framebuffer:
 
@@ -189,14 +189,14 @@ corromper el programa en silencio.
 ## Criterios de aceptación
 
 - Los 9 bancos de la 18 en verde, más el nuevo del controlador BL8.
-- `run_gpu_tests.py --backend cpu-fpga --version <nueva> --port COM3` a 12 de 12.
+- `run_tests.py --backend cpu-fpga --version <nueva> --port COM3` a 12 de 12.
 - `STATUS` bit 0 (`underflow`) a cero tras varios minutos, y `led[0]` apagado.
 - `measure-demo.ps1` sobre `tear_demo_fast`, que es la medida limpia porque no
   espera al vídeo: hoy da **75,7 fps / 13,2 ms**. Ése es el número a batir.
 - La carpeta 16 intacta y sus 9 bancos aún en verde.
 - `tools/check-links.py` sin enlaces rotos.
 - Temporización: barrer semillas con
-  `.\tools\seed-sweep.ps1 -ProjectDir 18.fpga-cpu-hdmi-bl8 -Seeds (1..8)` y fijar
+  `.\tools\build-sweep.ps1 --prototype 18.fpga-cpu-hdmi-bl8 --seeds 1 2 3 4 5 6 7 8` y fijar
   la mejor en `apio.ini`, documentando cuántas cierran.
 
 ## Trampas conocidas, todas pagadas ya una vez

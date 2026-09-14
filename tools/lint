@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Lanzador global de `apio lint` para un prototipo (tools/test --lint-only).
+# Solo lint: sin fixtures, tests Python ni regresión RTL.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$ROOT/tools/test" --lint-only "$@"

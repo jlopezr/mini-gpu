@@ -2,7 +2,7 @@
 
 Fecha: 2026-09-10.
 
-- `python -m unittest discover -s x.cpu-tests -p 'test_*.py'`: 29 pruebas PASS.
+- `python -m unittest discover -s x.tests -p 'test_*.py'`: 29 pruebas PASS.
   Cubren decodificación de estado real, lectura selectiva de registros,
   diagnóstico de fallos, actualización 2.0 a 2.1, selección por capacidades,
   rechazo antes de contactar hardware y comparación `gpu-both`.

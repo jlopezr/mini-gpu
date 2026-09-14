@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Encadena test + lint + build para un prototipo, en ese orden, parando en
+# el primer fallo. Equivalente a `check.ps1 -Action All`.
+#
+# Solo reenvía --prototype: test/lint/build tienen opciones propias
+# incompatibles entre sí (--quick, --archive-only...), así que check no
+# intenta adivinar cuáles tienen sentido para los tres a la vez. Para eso,
+# usa cada comando por separado.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+PROTOTYPE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p|--prototype) PROTOTYPE="$2"; shift 2 ;;
+    --help|-h)
+      echo "Uso: check --prototype N"
+      echo "Ejecuta test, lint y build en secuencia; para en el primer fallo."
+      exit 0 ;;
+    *) echo "error: opción desconocida: $1 (check solo acepta --prototype)" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$PROTOTYPE" ]]; then
+  echo "error: falta --prototype" >&2
+  exit 2
+fi
+
+"$ROOT/tools/test" --prototype "$PROTOTYPE"
+"$ROOT/tools/lint" --prototype "$PROTOTYPE"
+"$ROOT/tools/build" --prototype "$PROTOTYPE" --label check

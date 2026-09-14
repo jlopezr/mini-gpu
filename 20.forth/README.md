@@ -264,10 +264,11 @@ Necesita el bitstream de la [19](../19.fpga-cpu-hdmi-ls), que es el único con
 puerto serie:
 
 ```powershell
-cd ..\19.fpga-cpu-hdmi-ls
-.\run-demo.ps1 ..\20.forth\forth.asm
-..\.venv\Scripts\python.exe monitor.py console --port COM3
+tools\run-board.ps1 --prototype 19 --program forth.asm --interactive
 ```
+
+(`run-board` resuelve el prototipo y busca `forth.asm` en todo el repo, así que
+funciona desde cualquier directorio.)
 
 Se sale de la consola con Ctrl+]. Sin terminal, desde un script:
 

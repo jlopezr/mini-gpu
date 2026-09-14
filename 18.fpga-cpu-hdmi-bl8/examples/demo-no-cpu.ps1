@@ -29,8 +29,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# El script vive en examples/ pero make_framebuffer.py y monitor.py estan en la
-# raiz del proyecto, que es desde donde tiene que ejecutarse.
+# El script vive en examples/; monitor.py esta en la raiz del proyecto (de
+# donde tiene que ejecutarse), y make-framebuffer ahora es una herramienta
+# comun en tools/, compartida por 16/18/19/21.
 Set-Location (Join-Path $PSScriptRoot '..')
 
 $python = Join-Path $PSScriptRoot '..\..\.venv\Scripts\python.exe'
@@ -38,6 +39,6 @@ if (-not (Test-Path $python)) { $python = 'python' }
 
 $image = "fb_$Pattern.bin"
 
-& $python make_framebuffer.py $Pattern $image
+& $python (Join-Path $PSScriptRoot '..\..\tools\make-framebuffer') $Pattern $image
 & $python monitor.py write-block 0x01025800 $image --port $Port
 & $python monitor.py write-byte 0x80000008 1 --port $Port

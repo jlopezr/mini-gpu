@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Mide cuántos frames por segundo dibuja una demo, leyendo R21.
+
+Común a los prototipos con video + HDMI (16, 18, 19, 21). Solo tiene sentido
+con las demos swap_demo/tear_demo, que son las que guardan en R21 la
+posición de la banda: avanza de dos en dos y da la vuelta cada 112 frames
+dibujados. No es una medida de FPS general para cualquier programa.
+
+La CPU tiene que estar parada para poder leer un registro, así que se para,
+se lee, se arranca, se deja correr un rato y se vuelve a parar.
+
+Dos cosas importan y las dos se hicieron mal la primera vez:
+
+- El cronómetro tiene que pararse en el halt, NO después de leer el
+  registro. La lectura tarda unos 250 ms y contarlos como tiempo de
+  ejecución rebajaba la medida un 20 %: 60 fps reales se leían como 50.
+- La ventana tiene que ser corta. A 60 fps la banda da la vuelta en 1,9 s, y
+  con ventanas más largas el número es ambiguo.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import statistics
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.run_board import detect_port, resolve_target, run_monitor_cli
+
+WRAP = 224  # R21 avanza de dos en dos y da la vuelta cada 112 frames dibujados.
+
+
+def read_band(prototype_dir: Path, port: str) -> int:
+    text = run_monitor_cli(prototype_dir, port, "read-register", "21")
+    match = re.search(r"\((\d+)\)", text)
+    if not match:
+        raise SystemExit(f"error: respuesta inesperada de read-register: '{text.strip()}'")
+    return int(match.group(1))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-p", "--prototype", required=True)
+    parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
+    parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument("--window", type=float, default=1.0)
+    args = parser.parse_args(argv)
+    port = args.port if args.port is not None else detect_port()
+
+    target = resolve_target(args.prototype)
+    prototype_dir = target.prototype_dir
+
+    rates = []
+    for i in range(1, args.samples + 1):
+        run_monitor_cli(prototype_dir, port, "halt")
+        before = read_band(prototype_dir, port)
+        run_monitor_cli(prototype_dir, port, "run")
+        start = time.monotonic()
+
+        time.sleep(args.window)
+
+        run_monitor_cli(prototype_dir, port, "halt")
+        elapsed = time.monotonic() - start  # se para aquí, no después
+        after = read_band(prototype_dir, port)
+        run_monitor_cli(prototype_dir, port, "run")
+
+        advance = after - before
+        if advance < 0:
+            advance += WRAP
+        rate = (advance / 2) / elapsed
+        rates.append(rate)
+        print(f"  muestra {i}: {rate:5.1f} fps  ({1000 / rate:5.1f} ms/frame)")
+
+    mean = statistics.mean(rates)
+    print(f"media: {mean:.1f} fps, {1000 / mean:.1f} ms por frame dibujado")
+
+    # Un programa que espera al intercambio no puede pasar de los 60 Hz del
+    # vídeo, así que por encima de eso es que no espera a nadie y la cifra es
+    # CPU pura. Entre 57 y 63 está enganchado, y por debajo dice cuántos
+    # frames de vídeo consume cada frame dibujado.
+    if mean > 63:
+        print("  -> por encima de los 60 Hz del vídeo: no espera al intercambio, así que")
+        print("     este es el tiempo de dibujo de la CPU sin redondear")
+    elif mean >= 57:
+        print("  -> enganchado a los 60 Hz del vídeo: el dibujo cabe en un frame")
+    else:
+        print(f"  -> {60 / mean:.1f} frames de vídeo por cada frame dibujado")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

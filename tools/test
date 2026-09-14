@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Lanzador global de `tools/build_runner.py test` (fixtures + tests Python +
+# regresión RTL de apio, con seguimiento de estado/log/segundo plano).
+# Funciona con cualquier prototipo, sin copiar nada a su carpeta.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PY="$ROOT/.venv/bin/python3"
+
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+elif [[ -x "$VENV_PY" ]]; then
+  PY="$VENV_PY"
+else
+  PY="python3"
+fi
+
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m tools.build_runner test "$@"

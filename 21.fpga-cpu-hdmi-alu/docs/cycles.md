@@ -161,7 +161,7 @@ python monitor.py perf --port COM3   # cycles=... instructions=... CPI=...
 
 ### Medido en placa
 
-Nueve programas de `x.cpu-tests`, con el vídeo corriendo:
+Nueve programas de `x.tests`, con el vídeo corriendo:
 
 | Programa                 | Instr. | CPI   |
 |--------------------------|-------:|------:|
@@ -187,7 +187,7 @@ comparar los mismos programas entre versiones, además del coste por opcode.
 
 ### Los casos de las extensiones, medidos igual
 
-Los siete de [`cases/extensions`](../../x.cpu-tests/cases/extensions), en la
+Los siete de [`cases/extensions`](../../x.tests/cases/extensions), en la
 misma placa y con el vídeo corriendo:
 
 | Programa                      | Instr. | CPI   |
@@ -221,6 +221,6 @@ El contador de instrucciones se contrasta con el del simulador en la tabla de
 `--measure`: coinciden exactamente en los nueve. Ese contraste ya encontró un
 fallo —ver el README—, así que no es decorativo.
 
-Para comparar versiones enteras, [`x.cpu-tests`](../../x.cpu-tests/README.md)
+Para comparar versiones enteras, [`x.tests`](../../x.tests/README.md)
 tiene `--measure`, que ejecuta cada caso en cada versión aplicable y saca la
 tabla en Markdown.

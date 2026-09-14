@@ -14,14 +14,14 @@
 >
 > **Este monitor responde ahora 2.4.** Subio por el backport, sin cambiar ni
 > un byte del protocolo. Los numeros de version que se mencionan mas abajo son
-> historicos; los de hoy estan en [`COMPARATIVA.md`](../COMPARATIVA.md).
+> historicos; los de hoy estan en [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 Copia del RTL de `12.fpga-gpu` con memoria unificada de **32 MiB de SDRAM**
 en lugar de los ocho bancos EBR de 128 KiB. Destino: ULX3S-85F,
 **25 MHz**, UART **250000 baudios**, monitor **2.2**.
 
 Responde 2.2 y no 2.1 porque comparte todos los comandos con 12: es la versión
-la que permite a `x.cpu-tests --version sdram` distinguir este bitstream del de
+la que permite a `x.tests --version sdram` distinguir este bitstream del de
 BRAM, igual que 1.5 y 1.6 separan las dos revisiones de CPU.
 
 Código, LOAD/STORE y monitor comparten `0x00000000–0x01ffffff`.

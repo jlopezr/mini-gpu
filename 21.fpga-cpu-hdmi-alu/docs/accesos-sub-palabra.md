@@ -89,7 +89,7 @@ el de escritura. Ambos son pequeños, pero el primero cae en un camino que esta
 familia de proyectos ya vigila: conviene rebarrer semillas tras sintetizar.
 
 ```
-..\tools\seed-sweep.ps1 -ProjectDir 19.fpga-cpu-hdmi-ls -Seeds (1..8)
+..\tools\build-sweep.ps1 --prototype 19.fpga-cpu-hdmi-ls --seeds 1 2 3 4 5 6 7 8
 ```
 
 ## Verificación

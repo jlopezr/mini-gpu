@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Lanzador global de `tools/build_runner.py sweep` (barrido de semillas de
+# placement, con seguimiento de estado/log/segundo plano). Funciona con
+# cualquier prototipo que tenga un build archivado (tools/build primero).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PY="$ROOT/.venv/bin/python3"
+
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+elif [[ -x "$VENV_PY" ]]; then
+  PY="$VENV_PY"
+else
+  PY="python3"
+fi
+
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m tools.build_runner sweep "$@"

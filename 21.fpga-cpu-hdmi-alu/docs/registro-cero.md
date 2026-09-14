@@ -73,7 +73,7 @@ backport y qué no:
 Un programa que nunca escribe `R0` lee cero en cualquier versión: donde está
 cableado por construcción, y donde no porque el reset deja el banco a cero y
 nadie lo toca. Por eso los dos programas portados siguen corriendo en la 19, y
-por eso los cinco casos de `x.cpu-tests` que comparan contra `R0` pasan en
+por eso los cinco casos de `x.tests` que comparan contra `R0` pasan en
 todos los backends.
 
 Lo que **solo** vale aquí es lo contrario: comprobar que una escritura a `R0` se

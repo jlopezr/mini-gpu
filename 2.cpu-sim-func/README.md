@@ -18,7 +18,7 @@ todas las extensiones posteriores a la v0.1:
 
 Aquí es donde se prueba primero una instrucción nueva; por eso el backend
 declara las ocho capacidades y los casos de
-[`../x.cpu-tests/cases/extensions`](../x.cpu-tests/cases/extensions) corren aquí
+[`../x.tests/cases/extensions`](../x.tests/cases/extensions) corren aquí
 sin placa.
 
 **`R0` está cableado a cero** desde que lo está la 21, y es el único cambio de
@@ -30,7 +30,7 @@ escribe el banco, igual que en el RTL la condición vive dentro de
 
 **Lo que NO modela, deliberadamente**, es el camino rápido de `MULHI`/`REM` de
 la 21: es invisible para la arquitectura —solo cambia ciclos— y el simulador no
-tiene ciclos. Por eso `--backend both` sigue valiendo: `x.cpu-tests` ya excluye
+tiene ciclos. Por eso `--backend both` sigue valiendo: `x.tests` ya excluye
 `cycles` de la comparación diferencial.
 
 Ejecutar sus pruebas:
@@ -47,4 +47,4 @@ python minicpu_sim.py --help
 
 `raw_to_iter.py` convierte un framebuffer de palabras de 32 bits en el formato
 `.iter` usado por los modelos de Mandelbrot. Para las pruebas compartidas entre
-simulador y FPGA se recomienda usar [`../x.cpu-tests`](../x.cpu-tests).
+simulador y FPGA se recomienda usar [`../x.tests`](../x.tests).

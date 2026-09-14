@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Punto de entrada local de x.tests: tests unitarios de la infraestructura
+# más la suite de casos (run_tests.py).
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$DIR")"
+VENV_PY="$ROOT/.venv/bin/python3"
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+elif [[ -x "$VENV_PY" ]]; then
+  PY="$VENV_PY"
+else
+  PY="python3"
+fi
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+QUICK=0
+VERBOSE=0
+HARDWARE=0
+EXTRA=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick) QUICK=1; shift ;;
+    --verbose) VERBOSE=1; shift ;;
+    --hardware) HARDWARE=1; shift ;;
+    --help|-h)
+      cat <<'EOF'
+Uso: ./test [--quick] [--verbose] [--hardware] [-- <args para run_tests.py>]
+
+  --quick      solo ejecuta los tests unitarios de la infraestructura (sin simular casos)
+  --verbose    salida detallada
+  --hardware   ejecuta la suite de casos contra placa real (backend gpu-fpga por defecto)
+  --           pasa el resto de argumentos directamente a run_tests.py
+EOF
+      exit 0 ;;
+    --) shift; EXTRA=("$@"); break ;;
+    *) EXTRA+=("$1"); shift ;;
+  esac
+done
+
+UNIT_ARGS=()
+if [[ $VERBOSE -eq 1 ]]; then
+  UNIT_ARGS+=(-v)
+fi
+
+echo "== Tests unitarios de infraestructura =="
+"$PY" -m unittest discover -s "$DIR" -p 'test_*.py' "${UNIT_ARGS[@]}"
+
+if [[ $QUICK -eq 1 ]]; then
+  exit 0
+fi
+
+RUN_ARGS=("${EXTRA[@]}")
+if [[ $HARDWARE -eq 1 && ${#EXTRA[@]} -eq 0 ]]; then
+  RUN_ARGS=(--backend gpu-fpga)
+fi
+
+echo "== Suite de casos (run_tests.py) =="
+exec "$PY" "$DIR/run_tests.py" "${RUN_ARGS[@]}"

@@ -1,0 +1,235 @@
+"""Backend del simulador funcional para los tests comunes de CPU."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+
+VERSIONS = {
+    "current": {
+        "simulator_path": Path("2.cpu-sim-func/minicpu_sim.py"),
+        "memory_size": 32 * 1024 * 1024,
+        # El simulador va siempre por delante del RTL: implementa la ISA
+        # entera, incluidas las extensiones que solo tiene el bitstream de la
+        # 19. Ver el comentario de CAPABILITIES en run_tests.py.
+        # `mul_div` llega implicada por `alu_extended`, pero se declara aparte
+        # igualmente: aqui no es una extension sino la base de la ISA, y el
+        # simulador la tiene desde siempre.
+        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
+                         "shift_immediate", "alu_extended", "mul_div"),
+        "description": "simulador funcional MiniCPU actual",
+    },
+}
+DEFAULT_VERSION = "current"
+
+# RGB565 de 320x240, el mismo framebuffer que la placa.
+FRAME_BYTES = 320 * 240 * 2
+
+# Cada cuantas instrucciones se vacia la cola de salida del puerto serie.
+# Cualquier valor bastante menor que la profundidad de la cola vale: lo unico
+# que importa es no dejar que se llene, porque un programa que consulte STATUS
+# antes de escribir se quedaria esperando hueco para siempre.
+DRAIN_EVERY = 32
+
+
+def expand_for(names) -> frozenset:
+    """Expande las capacidades implicadas.
+
+    El import va dentro para no crear una dependencia circular: `run_tests`
+    importa los backends al arrancar.
+    """
+    from run_tests import expand_capabilities
+
+    return expand_capabilities(names)
+
+
+def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
+    """Lo que tiene este simulador, con las implicaciones ya expandidas."""
+    return expand_for(VERSIONS[version]["capabilities"])
+
+
+def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
+    """Qué casos no caben aquí.
+
+    El simulador tiene la ventana de registros de vídeo y un reloj de frames
+    sintético, así que acepta `video` y `frame_capture`. Lo que sigue sin tener
+    es TIEMPO: no hay barrido leyendo la memoria por su cuenta, ni ancho de
+    banda, ni contienda. `VideoDevice` en `minicpu_sim.py` lo explica entero; el
+    resumen es que aquí se valida QUÉ dibuja un programa, nunca CUÁNDO.
+
+    En concreto, `underflow` es siempre cero y no puede ser otra cosa: una
+    expectativa `underflow: false` pasa aquí sin comprobar nada. Sigue mereciendo
+    la pena tenerla en el caso, porque en hardware sí significa algo, pero
+    conviene no confundir un verde de aquí con haber probado eso.
+
+    La comprobación se hace igual que en la FPGA aunque hoy el simulador tenga
+    todas las capacidades declaradas: el día que se añada una capacidad nueva a
+    la ISA, el simulador la tendrá antes que el RTL y un `requires` sin
+    respaldo tiene que dar SKIP, no un error de opcode inválido a medio caso.
+    """
+    disponibles = capabilities(version)
+    faltan = [name for name in case.get("requires", []) if name not in disponibles]
+    if faltan:
+        return f"el simulador {version!r} no tiene {', '.join(faltan)}"
+    return None
+
+
+def _load_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"No se puede cargar el módulo {path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class SimulatorBackend:
+    """Ejecuta un caso sobre ``2.cpu-sim-func/minicpu_sim.py``."""
+
+    ARCHITECTURE = "cpu"
+
+    def __init__(
+        self,
+        repository: Path,
+        version: str = DEFAULT_VERSION,
+        memory_size: int | None = None,
+    ):
+        try:
+            configuration = VERSIONS[version]
+        except KeyError as error:
+            choices = ", ".join(sorted(VERSIONS))
+            raise ValueError(
+                f"Versión del simulador desconocida {version!r}; opciones: {choices}"
+            ) from error
+
+        self.version = version
+        module = _load_module(
+            f"minicpu_sim_{version}_for_tests",
+            repository / configuration["simulator_path"],
+        )
+        self.cpu_class = module.CPU
+        self.video_class = getattr(module, "VideoDevice", None)
+        self.serial_class = getattr(module, "SerialDevice", None)
+        self.memory_size = memory_size or configuration["memory_size"]
+
+    def run(
+        self,
+        program: bytes,
+        initial_memory: list[tuple[int, bytes]],
+        register_numbers: set[int],
+        memory_ranges: list[tuple[int, int]],
+        max_instructions: int,
+        timeout_seconds: float,
+        video: dict | None = None,
+        stdin: bytes = b"",
+    ) -> dict:
+        del timeout_seconds  # El simulador usa un límite de instrucciones.
+
+        dispositivo = None
+        if video is not None:
+            if self.video_class is None:
+                raise RuntimeError(
+                    f"el simulador {self.version!r} no tiene VideoDevice")
+            dispositivo = self.video_class()
+            swap = video.get("run_until_swap")
+            if swap:
+                # Por `write`, no asignando el atributo: armar la alarma tiene
+                # efectos —pone SWAP_COUNT a cero y levanta el bit de armado—
+                # igual que en el hardware. Asignando `halt_at` a pelo se
+                # queda desarmada y el programa no para nunca.
+                dispositivo.write(dispositivo.HALT_AT, swap)
+
+        # El puerto serie se construye SIEMPRE que el caso lo pida, aunque
+        # `stdin` este vacio: un programa puede escribir sin haber leido nada.
+        serie = None
+        if stdin or self.serial_class is not None:
+            if self.serial_class is None:
+                raise RuntimeError(
+                    f"el simulador {self.version!r} no tiene SerialDevice")
+            serie = self.serial_class(stdin=stdin)
+
+        cpu = self.cpu_class(self.memory_size, video=dispositivo, serial=serie)
+        cpu.load_program(program)
+
+        for address, data in initial_memory:
+            end = address + len(data)
+            if address < 0 or end > len(cpu.memory):
+                raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
+            cpu.memory[address:end] = data
+
+        salida_serie = b""
+        if serie is None:
+            cpu.run(max_instructions)
+        else:
+            # La cola de salida son 64 bytes, como en el hardware, y un
+            # programa interactivo escribe mucho mas que eso. Hay que vaciarla
+            # MIENTRAS corre, que es lo que hace el PC con la placa.
+            #
+            # Sin esto los dos backends divergen de la peor forma posible: en
+            # la placa `emit` se queda esperando hueco y el caso da timeout,
+            # y aqui `SerialDevice` descarta lo que no cabe y el caso pasa con
+            # la salida truncada.
+            #
+            # Vaciar no cambia QUE escribe el programa, solo cuando, asi que el
+            # flujo de bytes sigue siendo el mismo y el diferencial vale.
+            # El limite se cuenta igual que en `CPU.run`: por instrucciones
+            # ejecutadas, no por vueltas del bucle.
+            desde_el_ultimo = 0
+            while not cpu.halted:
+                if cpu.instructions_executed >= max_instructions:
+                    raise RuntimeError(
+                        f"límite de instrucciones alcanzado "
+                        f"en PC=0x{cpu.pc:08X}")
+                cpu.step()
+                desde_el_ultimo += 1
+                if desde_el_ultimo >= DRAIN_EVERY:
+                    desde_el_ultimo = 0
+                    salida_serie += serie.pop(255)
+
+        resultado_video = None
+        if dispositivo is not None:
+            resultado_video = {
+                # Siempre False, y a propósito: aquí no hay nada que pueda
+                # llegar tarde. Ver VideoDevice en minicpu_sim.py.
+                "underflow": False,
+                "frames": dispositivo.frame_count,
+                "swaps": dispositivo.swap_count,
+                "fb_front": dispositivo.fb_front,
+                "frame": None,
+            }
+            if video.get("capture_frame"):
+                # Desde FB_FRONT, igual que en la placa: tras el intercambio N
+                # el buffer visible alterna según la paridad.
+                base = dispositivo.fb_front
+                resultado_video["frame"] = bytes(
+                    cpu.memory[base:base + FRAME_BYTES])
+
+        return {
+            # El simulador cuenta instrucciones pero no ciclos: no modela el
+            # tiempo, asi que `cycles` es None a proposito y el CPI de una fila
+            # de simulador no existe. Lo que si aporta es el numero de
+            # instrucciones, que es arquitectonico y por tanto sirve de
+            # contraste contra el contador de la placa.
+            "cycles": None,
+            "instructions": cpu.instructions_executed,
+            "clock_hz": None,
+            "halted": cpu.halted,
+            "error": cpu.error,
+            "error_code": cpu.error_code,
+            "pc": cpu.pc,
+            "registers": {number: cpu.regs[number] for number in register_numbers},
+            "memory": {
+                (address, size): bytes(cpu.memory[address:address + size])
+                for address, size in memory_ranges
+            },
+            "video": resultado_video,
+            # Lo que el programa dejo en la cola de salida. Es el campo que el
+            # diferencial puede comparar contra la placa byte a byte: a
+            # diferencia del video, un flujo de bytes no depende del tiempo.
+            "stdout": (salida_serie + serie.pop(255)) if serie is not None else None,
+        }

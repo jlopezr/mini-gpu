@@ -40,7 +40,7 @@ cierran cuatro, entre 109,90 y 124,39 MHz. Conviene rebarrerlas tras cualquier
 cambio de RTL:
 
 ```powershell
-..\tools\seed-sweep.ps1 -ProjectDir 6.fpga-cpu -Seeds (1..8)
+..\tools\build-sweep.ps1 --prototype 6.fpga-cpu --seeds 1 2 3 4 5 6 7 8
 ```
 
 ### Los dos repartos de escritura

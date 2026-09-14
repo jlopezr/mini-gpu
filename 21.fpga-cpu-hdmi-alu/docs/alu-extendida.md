@@ -172,10 +172,10 @@ programador emiten siempre `MULHI` pegado a su `MUL`.
 `MULHI`, `REM` y `REMU` dan exactamente el mismo número haya acierto o no. Lo
 único que cambia es el número de ciclos. No existe ningún «error por usar
 `MULHI` sin `MUL` previo», ni ninguna instrucción para leer ese registro, ni
-ninguna capacidad que declarar en `x.cpu-tests`: un caso no puede depender de
+ninguna capacidad que declarar en `x.tests`: un caso no puede depender de
 algo que no puede observar.
 
-El simulador funcional no modela nada de esto, y no debe. `x.cpu-tests` ya
+El simulador funcional no modela nada de esto, y no debe. `x.tests` ya
 excluye `cycles` de la comparación diferencial, así que `--backend both` sigue
 valiendo tal cual.
 

@@ -14,12 +14,12 @@
 >
 > **Este monitor responde ahora 2.4.** Subio por el backport, sin cambiar ni
 > un byte del protocolo. Los numeros de version que se mencionan mas abajo son
-> historicos; los de hoy estan en [`COMPARATIVA.md`](../COMPARATIVA.md).
+> historicos; los de hoy estan en [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 Copia de `14.fpga-gpu-ram` dedicada a subir la frecuencia máxima sin cambiar la
 funcionalidad. El registro de cambios, medidas y caminos críticos está en
 `optimizacion.md`; `timing.ps1` resume el informe de temporización tras cada
-`check.ps1 Build` y `sweep.ps1` mide el fmax sobre varias semillas, porque una
+`check.ps1 Build` y `tools/build-sweep` mide el fmax sobre varias semillas, porque una
 sola tiene aquí un 17 % de dispersión. Todo lo demás de este documento describe
 el diseño heredado.
 
@@ -28,7 +28,7 @@ en lugar de los ocho bancos EBR de 128 KiB. Destino: ULX3S-85F,
 **25 MHz**, UART **250000 baudios**, monitor **2.2**.
 
 Responde 2.2 y no 2.1 porque comparte todos los comandos con 12: es la versión
-la que permite a `x.cpu-tests --version sdram` distinguir este bitstream del de
+la que permite a `x.tests --version sdram` distinguir este bitstream del de
 BRAM, igual que 1.5 y 1.6 separan las dos revisiones de CPU.
 
 Código, LOAD/STORE y monitor comparten `0x00000000–0x01ffffff`.
@@ -71,7 +71,7 @@ Desde la raíz del repositorio:
 ```powershell
 ./17.fpga-gpu-ram-v2/check.ps1 Tests
 ./17.fpga-gpu-ram-v2/check.ps1 Lint
-./17.fpga-gpu-ram-v2/build.ps1 -Label context-pc
+tools\build.ps1 --prototype 17 --label context-pc
 .venv/Scripts/python.exe 17.fpga-gpu-ram-v2/monitor.py --help
 ```
 
@@ -84,7 +84,7 @@ ni un modelo de temporización del fabricante. Véase `validation.md`.
 
 ## Builds con historial de timing
 
-`build.ps1` ejecuta **una sola vez** `apio build --verbose-pnr`. La opción
+`tools/build` ejecuta **una sola vez** `apio build --verbose-pnr`. La opción
 `--detailed-timing-report` está en `apio.ini`, así que no hace falta volver a
 enrutar para obtener el detalle. `check.ps1 Build` utiliza también este script.
 
@@ -113,7 +113,7 @@ normal sirve para medir una nueva pasada y ver su progreso. Para aprovechar la
 caché sin pedir progreso ni histogramas en el log, utiliza:
 
 ```powershell
-./17.fpga-gpu-ram-v2/build.ps1 -Label comprobacion -Incremental
+tools\build.ps1 --prototype 17 --label comprobacion --incremental
 ```
 
 El JSON detallado sigue habilitado en ambos modos. Cambiar entre modo normal e
@@ -125,6 +125,6 @@ La comparación con el informe anterior es de una pasada; no sustituye un barrid
 de semillas. El script devuelve error si falla Apio, falta el informe/reloj, o
 algún dominio no alcanza su constraint (mínimo 25 MHz).
 
-`./17.fpga-gpu-ram-v2/build.ps1 -Label anterior -ArchiveOnly` conserva resultados
+`tools\build.ps1 --prototype 17 --label anterior --archive-only` conserva resultados
 existentes sin sintetizar. En este modo la copia de fuentes es la actual y no
 demuestra qué fuentes produjeron el informe antiguo.

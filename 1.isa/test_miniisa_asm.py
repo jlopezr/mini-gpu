@@ -1,6 +1,6 @@
 """Pruebas del ensamblador: directivas de datos y etiquetas como inmediato.
 
-El resto del ensamblador se prueba de hecho en cada caso de `x.cpu-tests`, que
+El resto del ensamblador se prueba de hecho en cada caso de `x.tests`, que
 ensambla programas reales. Lo que se fija aqui es lo que ese camino NO ejercita:
 las directivas `.word` y `.string`, y la aritmetica de etiquetas alrededor de
 ellas, que es donde un error deja todas las etiquetas posteriores mal sin que

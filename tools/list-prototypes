@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Lista los prototipos del repositorio y sus características básicas."""
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.prototype import find_repo_root, list_prototypes
+from tools.prototype_report import _backend_from_rtl
+
+
+def readme_title(prototype_dir: Path) -> str:
+    readme = prototype_dir / "README.md"
+    if not readme.exists():
+        return ""
+    for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"^#\s+(.*)", line)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def describe(prototype_dir: Path) -> dict:
+    return {
+        "name": prototype_dir.name,
+        "title": readme_title(prototype_dir),
+        "backend": _backend_from_rtl(prototype_dir) or "—",
+        # apio.ini es lo único que decide si build/test/lint/build-sweep
+        # (genéricos para cualquier prototipo) tienen algo que hacer aquí.
+        "apio": "sí" if (prototype_dir / "apio.ini").exists() else "no",
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=None)
+    parser.add_argument("--json", action="store_true", help="salida en JSON")
+    args = parser.parse_args()
+
+    root = args.root.resolve() if args.root else find_repo_root(Path.cwd())
+    prototypes = [describe(p) for p in list_prototypes(root)]
+
+    if args.json:
+        import json
+        print(json.dumps(prototypes, indent=2, ensure_ascii=False))
+        return 0
+
+    name_width = max((len(p["name"]) for p in prototypes), default=4)
+    title_width = max((len(p["title"]) for p in prototypes), default=5)
+    header = f"{'PROTOTYPE':<{name_width}}  {'TITLE':<{title_width}}  BACKEND  APIO.INI"
+    print(header)
+    for p in prototypes:
+        print(
+            f"{p['name']:<{name_width}}  {p['title']:<{title_width}}  "
+            f"{p['backend']:<7}  {p['apio']}"
+        )
+    print()
+    print(f"{len(prototypes)} prototipos. Ver docs/resumen-prototipos.md para Fmax, LUT/FF, capacidades y mapa de memoria.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

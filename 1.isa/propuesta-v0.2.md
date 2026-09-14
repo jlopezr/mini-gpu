@@ -385,7 +385,7 @@ La idea de carga de datos relativa al PC se conserva en v0.3 como extensión fut
 | CPU RTL basada en la 21 | Decodificación y datapaths de las capabilities elegidas                   |
 | GPU RTL                 | Portar capabilities existentes y añadir las nuevas elegidas, incluida LSU |
 | Monitor/lanzador        | Configuración de `warp_user_id` e identificación de backends              |
-| `x.cpu-tests`           | Declaración de capabilities, `requires` y pruebas diferenciales           |
+| `x.tests`           | Declaración de capabilities, `requires` y pruebas diferenciales           |
 | `1.isa/isa.md`          | Incorporar contratos adoptados y disponibilidad verificada                |
 
 No es necesario modificar todas las carpetas históricas para añadir una

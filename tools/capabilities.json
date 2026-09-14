@@ -1,0 +1,34 @@
+{
+  "_comment": "Capacidad -> qué buscar en el RTL de cada prototipo para saber si la tiene. 'file' es relativo a la carpeta del prototipo; sin 'pattern', basta con que el fichero exista. Con 'pattern', tiene que aparecer una coincidencia además de existir el fichero. Añadir una capacidad nueva es añadir una entrada aquí -- no hace falta tocar prototipos ni código.",
+
+  "mul_div": {
+    "file": "cpu.v",
+    "pattern": "OPCODE_MUL:"
+  },
+  "subword_memory": {
+    "file": "cpu.v",
+    "pattern": "OPCODE_LOADB:"
+  },
+  "calls": {
+    "file": "cpu.v",
+    "pattern": "OPCODE_JAL:"
+  },
+  "shift_immediate": {
+    "file": "cpu.v",
+    "pattern": "shift_immediate"
+  },
+  "alu_extended": {
+    "file": "cpu.v",
+    "pattern": "OPCODE_MULHI:"
+  },
+  "video": {
+    "file": "video_registers.v"
+  },
+  "frame_capture": {
+    "file": "video_registers.v",
+    "pattern": "HALT_AT"
+  },
+  "serial": {
+    "file": "serial_port.v"
+  }
+}

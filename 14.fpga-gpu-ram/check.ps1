@@ -1,32 +1,17 @@
 param([ValidateSet('Tests','Lint','Build','All')][string]$Action='Tests')
 $ErrorActionPreference='Stop'
 $projectRoot=$PSScriptRoot
-$pythonExe=Join-Path $projectRoot '../.venv/Scripts/python.exe'
-$apioExe=Join-Path $projectRoot '../.venv/Scripts/apio.exe'
 if($Action -in @('Tests','All')) {
-    & $pythonExe (Join-Path $projectRoot 'make_fixtures.py')
-    if($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
-    & $pythonExe -m unittest discover -s $projectRoot -p 'test_*.py' -v
-    if($LASTEXITCODE -ne 0) { throw 'Monitor client tests failed' }
-    & $apioExe test -p $projectRoot
-    if($LASTEXITCODE -ne 0) { throw 'RTL regression failed' }
+    & (Join-Path $projectRoot '../tools/test.ps1') --prototype 14
+    if($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 }
 if($Action -in @('Lint','All')) {
-    & $apioExe lint -p $projectRoot
+    & (Join-Path $projectRoot '../tools/test.ps1') --prototype 14 --quick --lint
     if($LASTEXITCODE -ne 0) { throw 'Lint failed' }
 }
 if($Action -in @('Build','All')) {
-    & $apioExe build -p $projectRoot
-    if($LASTEXITCODE -ne 0) { throw 'Build failed' }
-    # Apio passes --timing-allow-fail: explicitly enforce the clock target.
-    $timingReport=Get-Content (Join-Path $projectRoot '_build/default/hardware.pnr') -Raw | ConvertFrom-Json
-    $clockResults=@($timingReport.fmax.PSObject.Properties)
-    if($clockResults.Count -eq 0) { throw 'No constrained clocks in timing report' }
-    foreach($clockResult in $clockResults) {
-        $result=$clockResult.Value
-        if($result.constraint -lt 25 -or $result.achieved -lt $result.constraint) {
-            throw "Timing failed: $($clockResult.Name) achieved $($result.achieved) MHz, target $($result.constraint) MHz"
-        }
-        Write-Host "Timing OK: $($result.achieved) MHz >= $($result.constraint) MHz"
-    }
+    # build_report.py ya exige --timing-allow-fail: su código de salida es 1
+    # si algún dominio no alcanza su constraint, así que basta con mirarlo.
+    & (Join-Path $projectRoot '../tools/build.ps1') --prototype 14 --label check
+    if($LASTEXITCODE -ne 0) { throw 'Build failed (o no alcanzó el timing objetivo)' }
 }

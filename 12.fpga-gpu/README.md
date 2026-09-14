@@ -14,7 +14,7 @@
 >
 > **Este monitor responde ahora 2.3.** Subio por el backport, sin cambiar ni
 > un byte del protocolo. Los numeros de version que se mencionan mas abajo son
-> historicos; los de hoy estan en [`COMPARATIVA.md`](../COMPARATIVA.md).
+> historicos; los de hoy estan en [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 Un SM para ULX3S-85F, con 64 threads residentes, 8 lanes físicas y memoria
 unificada de 128 KiB. Incluye SIMT, LSU con ocho operaciones de warp pendientes,
@@ -244,9 +244,9 @@ Apio puede permitir un fallo de timing durante place-and-route.
 Desde la raíz del repositorio:
 
 ```powershell
-.\.venv\Scripts\python.exe .\x.cpu-tests\run_gpu_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
+.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
 ```
 
 El runner requiere monitor 2.1 y carga el proyecto cuando la placa responde con
 otra versión. Ejecuta 26 casos GPU compatibles y explica los 8 omitidos por
-capacidades; véase [el runner](../x.cpu-tests/README.md).
+capacidades; véase [el runner](../x.tests/README.md).

@@ -384,7 +384,7 @@ class MandelbrotRegionTest(unittest.TestCase):
         # Los casos de programa se agruparon bajo `programs/` y esta ruta se
         # quedo apuntando al sitio antiguo, asi que los siete subtests de
         # Mandelbrot llevaban tiempo fallando con FileNotFoundError.
-        folder = ROOT / 'x.cpu-tests/cases-gpu/programs' / name
+        folder = ROOT / 'x.tests/cases-gpu/programs' / name
         source = (folder / 'mandelbrot.asm').read_text(encoding='utf-8')
         if group is not None:
             if name == 'mandelbrot':

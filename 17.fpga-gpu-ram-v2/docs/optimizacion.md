@@ -12,7 +12,7 @@ Método: **un cambio por iteración**, con `check.ps1 Tests`, `check.ps1 Lint` y
 ./17.fpga-gpu-ram-v2/check.ps1 Lint
 ./17.fpga-gpu-ram-v2/check.ps1 Build
 ./17.fpga-gpu-ram-v2/timing.ps1   # camino crítico y recursos de esta pasada
-./17.fpga-gpu-ram-v2/sweep.ps1    # fmax sobre varias semillas
+tools\build-sweep.ps1 --prototype 17    # fmax sobre varias semillas
 ```
 
 > **El fmax de una sola semilla no sirve para comparar.** Medido sobre el mismo
@@ -398,7 +398,7 @@ se archivó desde los outputs existentes, no se reconstruyó esa versión.
 
 ### Herramienta de build
 
-`build.ps1 -Label <nombre>` ejecuta Apio con progreso PNR, captura el log en vivo,
+`tools/build.ps1 --label <nombre>` ejecuta Apio con progreso PNR, captura el log en vivo,
 extrae histogramas de slack y tabla de routing y conserva JSON detallado, fuentes
 en ZIP, hashes y bitstream en `reports/`. No realiza una segunda pasada para
 obtener el detalle. Véase el README para `-Incremental` y `-ArchiveOnly`: en Apio

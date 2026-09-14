@@ -177,7 +177,7 @@ registros condicionan la microarquitectura.
 - Hay variantes con accesos de 8 y 16 bits, llamadas, SDRAM, UART y vídeo.
   El repertorio de extensiones disponible depende de la implementación.
 - El framebuffer puede convertirse al formato `.iter` común.
-- `x.cpu-tests` reúne pruebas comunes para contrastar simuladores y backends FPGA.
+- `x.tests` reúne pruebas comunes para contrastar simuladores y backends FPGA.
 
 ## 8. Decisiones abiertas
 

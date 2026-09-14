@@ -6,7 +6,7 @@ repositorio, sin tener que convertir entre ellos:
 
   - `.bin`  RGB565 crudo, little-endian. Es lo que vuelca
             `video_fullframe_tb.v`, lo que devuelve `monitor.py read-block`
-            desde la placa y lo que genera `make_framebuffer.py`.
+            desde la placa y lo que genera `make-framebuffer`.
   - `.hex`  medias palabras de 16 bits, una por linea, con comentarios `//`.
             Es lo que vuelca `video_fullframe_tb.v` en paralelo, para poder
             mirar un pixel concreto con un editor de texto.
