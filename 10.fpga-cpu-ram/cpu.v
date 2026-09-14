@@ -55,15 +55,50 @@ module cpu (
   localparam [5:0] OPCODE_NOP = 6'h00;
   localparam [5:0] OPCODE_ADD = 6'h01;
   localparam [5:0] OPCODE_SUB = 6'h02;
-  localparam [5:0] OPCODE_MULFX = 6'h03;
+  // 0x03 MULFX: NO implementada aqui. Ver la nota de OPCODE_MUL.
   localparam [5:0] OPCODE_AND = 6'h04;
   localparam [5:0] OPCODE_OR = 6'h05;
   localparam [5:0] OPCODE_XOR = 6'h06;
   localparam [5:0] OPCODE_SHL = 6'h07;
   localparam [5:0] OPCODE_SHR = 6'h08;
   localparam [5:0] OPCODE_SAR = 6'h09;
-  localparam [5:0] OPCODE_MUL = 6'h0a;
-  localparam [5:0] OPCODE_DIV = 6'h0c;
+  /*
+   * ==========================================================================
+   * MUL (0x0A), MULFX (0x03) y DIV (0x0C) NO estan implementadas en esta
+   * carpeta, y eso es un HUECO, no una decision de diseno
+   * ==========================================================================
+   *
+   * Las tres son instrucciones BASE de la MiniISA, no extensiones. La 6, que es
+   * anterior, las tiene; la 16, que es posterior, tambien. Esta carpeta se
+   * quedo en medio sin ellas: `6.fpga-cpu/cpu.v` es un superconjunto estricto
+   * de este fichero --la diferencia son los seis estados MUL/DIV y un bit mas
+   * de `state`-- y sus comentarios citan a esta carpeta, o sea que se escribio
+   * despues.
+   *
+   * POR QUE SIGUE SIN ELLAS. Se probo el port, que es literalmente copiar el
+   * `cpu.v` de la 6: las cinco suites pasan a la primera. Lo que no pasa es la
+   * temporizacion. Medido:
+   *
+   *   sin MUL/DIV   4962 LUTs   SEIS de ocho semillas cumplen 120 MHz
+   *   con MUL/DIV   5896 LUTs   UNA de ocho, y la mejor al +2,4%
+   *
+   * Un uno de ocho al +2,4% es una loteria, no un diseno, y es justo el
+   * criterio con el que la 16 bajo de 120 a 100 y la 18 de 100 a 80. Pero aqui
+   * bajar el reloj arrastra el puerto serie: 120 MHz / 40 = 3 Mbaud EXACTO, y
+   * a 100 MHz el divisor saldria 33,33. Cambiaria el baudio, el monitor y su
+   * version. Es mucho mas que copiar un fichero.
+   *
+   * POR QUE NO SE DECLARAN LOS OPCODES. Estaban declarados y validados en el
+   * `case` de encoding de abajo, pero sin rama en el EXECUTE, asi que caian al
+   * `default` y daban ERROR_INVALID_OPCODE igualmente. El resultado era
+   * correcto y el codigo mentia: aparentaba soportarlas. Quitandolos, el
+   * fichero dice la verdad y ademas el error deja de depender de si los bits
+   * reservados venian sucios --antes un MUL con `extra` distinto de cero daba
+   * 0x05 en vez de 0x01--.
+   *
+   * `x.cpu-tests` lo declara como la capacidad `mul_div`, que esta carpeta es
+   * la unica en no tener.
+   */
   localparam [5:0] OPCODE_MOVI = 6'h10;
   localparam [5:0] OPCODE_ADDI = 6'h11;
   localparam [5:0] OPCODE_ANDI = 6'h12;
@@ -148,8 +183,10 @@ module cpu (
     case (opcode)
       OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
         instruction_encoding_valid = instruction[25:0] == 0;
-      OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
-      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV:
+      // Sin MULFX, MUL ni DIV: no estan implementadas, asi que su encoding no
+      // se valida y caen enteras al ERROR_INVALID_OPCODE del EXECUTE.
+      OPCODE_ADD, OPCODE_SUB, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:
         instruction_encoding_valid = instruction[10:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;

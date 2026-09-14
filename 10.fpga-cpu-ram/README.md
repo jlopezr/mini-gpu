@@ -15,11 +15,22 @@
 > [`COMPARATIVA.md`](../COMPARATIVA.md).
 >
 > Y un aviso que salio al probar esta carpeta con el backport: **la 10 no
-> implementa `MUL`, `MULFX` ni `DIV`.** Declara los tres opcodes y valida su
-> encoding, pero no tiene rama en el `case` del estado EXECUTE, asi que caen al
-> `default` y dan `ERROR_INVALID_OPCODE`. Es anterior a todo esto y el unico
-> core al que le pasa --la 6, que es previa, si las implementa--. El caso
-> `cases/alu/multiply` de `x.cpu-tests` falla aqui por eso.
+> implementa `MUL`, `MULFX` ni `DIV`.** Es un hueco anterior a todo esto y el
+> unico core al que le pasa: son instrucciones BASE de la ISA, la 6 --que es
+> previa-- las tiene y la 16 --posterior-- tambien.
+>
+> Se probo el port, que es literalmente copiar el `cpu.v` de la 6 porque
+> resulto ser un superconjunto estricto de este. Funciona: las cinco suites
+> pasan a la primera. Lo que no pasa es la temporizacion --de SEIS de ocho
+> semillas cumpliendo 120 MHz a UNA, al +2,4%-- y bajar el reloj arrastraria el
+> baudio, porque 120 MHz / 40 = 3 Mbaud exacto y a 100 MHz el divisor saldria
+> 33,33. El razonamiento completo esta en [`cpu.v`](cpu.v).
+>
+> Lo que si se hizo fue **quitar los tres `localparam`**: el `cpu.v` los
+> declaraba y validaba su encoding sin implementarlos, o sea que aparentaba
+> soportarlos. `x.cpu-tests` lo declara ahora como la capacidad `mul_div`, que
+> esta es la unica version en no tener, y `cases/alu/multiply` se omite aqui con
+> un SKIP en vez de fallar.
 
 
 Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de

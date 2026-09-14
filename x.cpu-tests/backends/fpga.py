@@ -30,12 +30,18 @@ VERSIONS = {
         "monitor_path": Path("6.fpga-cpu/monitor.py"),
         "monitor_version": (1, 16),
         "description": "FPGA con 16 KiB de EBR para programa y datos",
-        "capabilities": (),
+        "capabilities": ("mul_div",),
     },
     "sdram": {
         "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
         "monitor_version": (1, 17),
-        "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM",
+        "description": (
+            "FPGA con mapa unificado sobre 32 MiB de SDRAM; sin MUL/MULFX/DIV"
+        ),
+        # La UNICA sin `mul_div`, y la unica entrada de esta tabla cuya lista
+        # vacia significa «le falta algo de la base» en vez de «no tiene
+        # extensiones». No implementa MUL, MULFX ni DIV; el porque --se probo el
+        # port y cuesta la temporizacion-- esta en 10.fpga-cpu-ram/cpu.v.
         "capabilities": (),
     },
     "hdmi": {
@@ -45,13 +51,13 @@ VERSIONS = {
         "clock_hz": 100_000_000,
         # Tiene scanout y ventana de registros, pero no HALT_AT ni SWAP_COUNT,
         # asi que no puede parar en un intercambio concreto.
-        "capabilities": ("video",),
+        "capabilities": ("video", "mul_div"),
     },
     "bl8": {
         "monitor_path": Path("18.fpga-cpu-hdmi-bl8/monitor.py"),
         "monitor_version": (1, 19),
         "description": "Como hdmi, con memoria en rafagas BL8; 80 MHz y 1 Mbaud",
-        "capabilities": ("frame_capture",),
+        "capabilities": ("frame_capture", "mul_div"),
         # Unica version con los contadores 0x36/0x37. Las anteriores son hitos
         # cerrados y no se tocan, asi que su CPI no se puede medir: se estima
         # desde el numero de instrucciones y el tiempo de pared.
@@ -69,7 +75,8 @@ VERSIONS = {
             "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned, "
             "mas JAL/JALR/JR"
         ),
-        "capabilities": ("frame_capture", "subword_memory", "calls", "serial"),
+        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
+                         "mul_div"),
         "perf_counters": True,
         "clock_hz": 80_000_000,
     },

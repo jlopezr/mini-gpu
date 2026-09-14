@@ -88,7 +88,7 @@ Qué necesita y qué ejecuta cada una:
 |---:|---|---|---:|---|
 | 1 | `cpu-simulator` | ninguno | — | los 34 de `cases/` |
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
-| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 13; 21 omitidos. **`multiply` falla**: ver abajo |
+| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
 | 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 27; 7 omitidos por capacidades |
 | 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 34 de `cases/` |
 | 5 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
@@ -97,16 +97,21 @@ Qué necesita y qué ejecuta cada una:
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
 Solo `cpu-simulator` y `cpu-fpga --version alu` ejecutan los 34 casos: son los
-dos únicos que tienen las siete capacidades.
+dos únicos que tienen las ocho capacidades.
 
-**`multiply` falla en `sdram`, y es un fallo de verdad.** `10.fpga-cpu-ram` no
-implementa `MUL`, `MULFX` ni `DIV`: declara los tres opcodes y valida su
-encoding, pero no tiene rama en el `case` del estado EXECUTE, así que caen al
-`default` y dan `ERROR_INVALID_OPCODE`. Es el único core al que le pasa —la 6,
-que es anterior, sí las implementa— y salió al correr el diferencial contra esa
-placa por primera vez. No es una capacidad que falte: son instrucciones base de
-la ISA, así que el caso **debe** fallar ahí hasta que se implementen o se decida
-otra cosa.
+**`sdram` no tiene `mul_div`, y esa capacidad es distinta de las demás.**
+`10.fpga-cpu-ram` no implementa `MUL`, `MULFX` ni `DIV`, que son instrucciones
+**base** de la MiniISA, no extensiones. Salió al correr el diferencial contra esa
+placa por primera vez. Se probó el port —copiar el `cpu.v` de la 6, que resultó
+ser un superconjunto estricto— y funciona, pero deja el diseño en una de ocho
+semillas al +2,4 %; el detalle está en
+[`10.fpga-cpu-ram/cpu.v`](../10.fpga-cpu-ram/cpu.v).
+
+`mul_div` es por tanto la única capacidad que significa «a este backend le
+**falta** algo de la base» en vez de «tiene algo **de más**». Conviene no leer su
+`SKIP` como «aquí no hace falta»: ahí falta algo que la ISA exige. El día que la
+10 implemente las tres, la capacidad desaparece entera en lugar de extenderse a
+más backends.
 
 La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
@@ -544,6 +549,7 @@ declara lo que necesita:
 | `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpu-simulator`, `subword`, `alu` |
 | `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpu-simulator`, `alu` |
 | `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpu-simulator`, `alu` |
+| `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |
 
 Las cuatro de ISA existen por la misma razón que las de vídeo: sin ellas, un
 caso ejecutado en un bitstream anterior no fallaría con un diagnóstico útil,
@@ -564,6 +570,17 @@ escribir un caso: no añade opcodes, es el bit 10 de tres que ya existían. En u
 bitstream sin ella ese bit sigue siendo reservado y el programa para con
 **`0x05`, encoding inválido** —justo lo que produce un ensamblador roto—. El
 `SKIP` ahorra exactamente esa confusión.
+
+### `mul_div` va al revés que todas las demás
+
+`alu_extended` **implica** `mul_div`, y es una implicación física: `MULHI` sale
+del mismo multiplicador que `MUL`, y `REM` del mismo divisor que `DIV`. Un
+backend con `MULHI` pero sin `MUL` no puede existir, así que `alu` no la declara
+—le llega sola—.
+
+Y es la única capacidad que **encogerá** en vez de crecer. Las demás se extienden
+según los bitstreams las van implementando; ésta desaparece entera el día que la
+10 tenga multiplicador, porque ese día ya no habrá nada que distinguir.
 
 ### Dos cosas que NO son capacidades, por motivos opuestos
 

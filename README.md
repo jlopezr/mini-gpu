@@ -17,10 +17,16 @@ y 16 bits, llamadas y puerto serie, con cierre de timing a 80 MHz. El más rápi
 sigue siendo [`10.fpga-cpu-ram`](10.fpga-cpu-ram), a 120 MHz, porque no tiene
 vídeo compitiendo por la memoria.
 
-`R0` a cero es el **primer cambio incompatible** con la MiniISA v0.1: las
-carpetas hasta la 19 tratan `R0` como un registro general y siguen siendo
-válidas tal cual. Lo que se rompe al pasar a la 21 está listado en su
-[`README.md`](21.fpga-cpu-hdmi-alu/README.md#qué-se-rompe-con-r0-a-cero).
+**`R0` cableado a cero es la única corrección que ha tenido la MiniISA**, frente
+a un puñado de extensiones que son aditivas. No es opcional ni depende de la
+carpeta: lo cumplen las **nueve implementaciones** —seis de CPU, tres de GPU— y
+sus simuladores, después de un backport que subió la versión del monitor en
+todas ellas. Está en [`1.isa/isa.md`](1.isa/isa.md) §1.
+
+La diferencia con una extensión importa: las demás se detectan solas, porque un
+bitstream que no las tenga para con opcode inválido. Con `R0` general no hay
+parada, hay otro resultado en silencio, y por eso no podía convivir con su
+ausencia en el resto del repositorio.
 
 **[`COMPARATIVA.md`](COMPARATIVA.md) pone en una tabla qué sabe hacer cada
 implementación, cuánta memoria ve y a qué frecuencia cierra.** Es lo que evita

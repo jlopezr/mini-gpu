@@ -2,6 +2,7 @@
   "architecture": "cpu",
   "name": "multiply",
   "program": "multiply.asm",
+  "requires": ["mul_div"],
   "max_instructions": 1000,
   "timeout_seconds": 2.0,
   "expect": {

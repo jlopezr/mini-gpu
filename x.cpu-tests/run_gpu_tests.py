@@ -407,6 +407,19 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # contrario: es invisible para la arquitectura. Acierto y fallo dan el mismo
 # numero y solo cambian los ciclos, que el diferencial ya excluye. Un caso no
 # puede depender de el, asi que no hay nada que declarar.
+#
+# `mul_div` es la rara de la lista, y conviene leerla aparte de las demas:
+# **no es una extension, es un hueco**. MUL, MULFX y DIV son instrucciones BASE
+# de la MiniISA; todas las implementaciones las tienen menos `sdram`
+# (10.fpga-cpu-ram), que se quedo sin ellas por temporizacion --el detalle esta
+# en su `cpu.v`--. Las demas capacidades dicen «este backend tiene algo de mas»;
+# esta dice «a este le falta algo de la base».
+#
+# Existe por la misma razon practica que el resto: sin ella, `cases/alu/multiply`
+# falla en esa placa con ERROR_INVALID_OPCODE, que es lo mismo que produce un
+# ensamblador roto. Con ella, el SKIP dice donde esta el problema. Pero conviene
+# NO leer el SKIP como «aqui no hace falta»: ahi falta algo que la ISA exige, y
+# el dia que la 10 implemente las tres, esta entrada desaparece.
 CAPABILITIES = {
     "atomic_warp_faults": "gpu",
     "video": "cpu",
@@ -416,11 +429,19 @@ CAPABILITIES = {
     "calls": "cpu",
     "shift_immediate": "cpu",
     "alu_extended": "cpu",
+    "mul_div": "cpu",
 }
 # `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
 # video. Se expande al cargar para que un backend solo tenga que declarar lo
 # que de verdad implementa.
-CAPABILITY_IMPLIES = {"frame_capture": ("video",)}
+#
+# `alu_extended` implica `mul_div` por la misma clase de razon, y ademas es
+# fisica: MULHI sale del mismo multiplicador que MUL, y REM del mismo divisor
+# que DIV. Un backend con MULHI pero sin MUL no puede existir.
+CAPABILITY_IMPLIES = {
+    "frame_capture": ("video",),
+    "alu_extended": ("mul_div",),
+}
 
 
 # Campos que el diferencial `--backend both` NO compara.

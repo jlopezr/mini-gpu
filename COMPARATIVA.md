@@ -34,13 +34,13 @@ semillas daba +14,5 % de holgura con el diseño roto.
 
 |                             | [2.sim](2.cpu-sim-func) | [6.ebr](6.fpga-cpu) | [10.sdram](10.fpga-cpu-ram) | [16.hdmi](16.fpga-cpu-hdmi) | [18.bl8](18.fpga-cpu-hdmi-bl8) | [19.ls](19.fpga-cpu-hdmi-ls) | [21.alu](21.fpga-cpu-hdmi-alu) |
 |-----------------------------|-------------------------|---------------------|-----------------------------|-----------------------------|--------------------------------|------------------------------|--------------------------------|
-| **Fmax / objetivo**         | —                       | 127,3 / 120         | 126,2 / 120                 | 113,0 / 100                 | 94,5 / 80                      | 89,2 / 80                    | 91,8 / 80                      |
+| **Fmax / objetivo**         | —                       | 127,3 / 120         | 129,6 / 120                 | 113,0 / 100                 | 94,5 / 80                      | 89,2 / 80                    | 91,8 / 80                      |
 | **Memoria**                 | 32 MiB unificada        | 2 × 16 KiB EBR      | 32 MiB SDRAM                | 32 MiB SDRAM                | 32 MiB SDRAM                   | 32 MiB SDRAM                 | 32 MiB SDRAM                   |
-| **LUT / FF**                | —                       | 5 664 / 2 466       | 4 962 / 2 249               | 6 782 / 3 164               | 9 128 / 4 617                  | 9 888 / 4 735                | 10 221 / 4 799                 |
+| **LUT / FF**                | —                       | 5 664 / 2 466       | 4 991 / 2 249               | 6 782 / 3 164               | 9 128 / 4 617                  | 9 888 / 4 735                | 10 221 / 4 799                 |
 | **Monitor / baudios**       | —                       | **1.16** / 3 M      | **1.17** / 3 M              | **1.18** / 1 M              | **1.19** / 1 M                 | **1.20** / 1 M               | 1.15 / 1 M                     |
 | **`R0` cableado a cero**    | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
 | ALU, saltos, `LOAD`/`STORE` | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
-| `MUL`, `MULFX`, `DIV`       | sí                      | sí                  | **no**                      | sí                          | sí                             | sí                           | sí                             |
+| `mul_div` (`MUL`/`MULFX`/`DIV`) | sí                  | sí                  | **no**                      | sí                          | sí                             | sí                           | sí                             |
 | `video`                     | sí                      | no                  | no                          | sí                          | sí                             | sí                           | sí                             |
 | `frame_capture`             | sí                      | no                  | no                          | no                          | sí                             | sí                           | sí                             |
 | `subword_memory`            | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
@@ -80,15 +80,39 @@ equivocado y no enterarse.
 
 ### `10.sdram` no implementa `MUL`, `MULFX` ni `DIV`
 
-Esa fila decía «sí» para las siete columnas y **era falsa**. La 10 declara los
-tres opcodes y valida su encoding, pero no tiene rama en el `case` del estado
-EXECUTE, así que caen al `default` y dan `ERROR_INVALID_OPCODE`. Es el único
-core al que le pasa; la 6, que es anterior, sí las implementa.
+Esa fila decía «sí» para las siete columnas y **era falsa**. Se descubrió al
+correr el diferencial contra esa placa por primera vez, porque el backport
+obligó a probar las seis.
 
-Se descubrió al correr el diferencial contra esa placa por primera vez —el
-backport obligó a probar las seis— y **no se ha arreglado**: implementarlas es
-añadir funcionalidad a un hito cerrado, que es otra decisión. El caso
-`cases/alu/multiply` falla ahí, y es un fallo honesto que apunta a algo real.
+No es una versión reducida a propósito: es un **hueco**. Son instrucciones base
+de la ISA, la 6 —anterior— las tiene y la 16 —posterior— también. Y
+`6.fpga-cpu/cpu.v` resultó ser un **superconjunto estricto** del de la 10: la
+diferencia son los seis estados `MUL_*`/`DIV_STEP` y un bit más de `state`.
+Copiar el fichero es el port entero, y sus cinco suites pasan a la primera.
+
+**Lo que no pasa es la temporización.** Medido:
+
+| | LUT | Semillas que cumplen 120 MHz |
+|---|---:|---|
+| 10 tal como está | 4 991 | **8 de 8**, 121,7 – 129,6 |
+| 10 con `MUL`/`MULFX`/`DIV` | 5 896 + 4 DSP | **1 de 8**, la mejor al +2,4 % |
+
+Un uno de ocho al +2,4 % es una lotería, y es el mismo criterio con el que la 16
+bajó de 120 a 100 y la 18 de 100 a 80. Pero aquí bajar el reloj arrastra el
+puerto serie: **120 MHz / 40 = 3 Mbaud exacto**, y a 100 MHz el divisor saldría
+33,33. Cambiaría el baudio, el monitor y su versión. Es mucho más que copiar un
+fichero, así que se deja como está.
+
+Lo que sí se hizo: **quitar de su `cpu.v` los tres `localparam`**. Estaban
+declarados y validados en el `case` de encoding pero sin rama en el EXECUTE, así
+que el resultado era correcto —`ERROR_INVALID_OPCODE`— y el código mentía:
+aparentaba soportarlas. Ahora el fichero dice la verdad. `x.cpu-tests` lo declara
+como la capacidad **`mul_div`**, y `cases/alu/multiply` se omite ahí con un
+`SKIP` en vez de fallar.
+
+`mul_div` es la única capacidad del runner que significa «a este le **falta**
+algo de la base» en lugar de «este tiene algo **de más**». El día que la 10
+implemente las tres, la capacidad desaparece entera.
 
 **La versión del monitor sube sin que cambie el protocolo, y es lo normal aquí.**
 La 19 saltó a 1.13 sin añadir ni un comando a los de la 18, la 21 a 1.15, y el
@@ -147,9 +171,9 @@ cobró de verdad.
 
 | | [11.sim](11.gpu-sim-func) | [12.bram](12.fpga-gpu) | [14.sdram](14.fpga-gpu-ram) | [17.sdram-v2](17.fpga-gpu-ram-v2) |
 |---|---|---|---|---|
-| **Fmax / objetivo** | — | 36,4 / 25 | 33,6 / 25 | 50,6 / 25 |
+| **Fmax / objetivo** | — | 34,1 / 25 | 33,9 / 25 | 45,6 / 25 |
 | **Memoria** | unificada, hasta 32 MiB | 128 KiB BRAM | 32 MiB SDRAM | 32 MiB SDRAM |
-| **LUT / FF** | — | 35 791 / 9 137 | 30 744 / 9 016 | 29 171 / 10 090 |
+| **LUT / FF** | — | 36 617 / 9 137 | 31 140 / 9 016 | 30 418 / 10 090 |
 | **Monitor / baudios** | — | **2.3** / 250 k | **2.4** / 250 k | **2.4** / 250 k |
 | **`R0` cableado a cero** | sí | sí | sí | sí |
 | Warps × lanes | 8 × 8 configurable | 8 × 8 | 8 × 8 | 8 × 8 |
@@ -162,6 +186,15 @@ cobró de verdad.
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:
 sigue ganándole unos 12 MHz con menos LUTs. Está restringida a 25 porque ese era
 el objetivo; el margen es la ganancia.
+
+**Las tres GPU no llevan semilla fija, a diferencia de las de CPU.** Rebarridas
+tras el backport, **las ocho semillas cumplen en las tres**, con márgenes del
++18,8 % de la peor de la 14 al +111 % de la mejor de la 17. Aquí la semilla no
+decide si el diseño funciona —ni la peor se acerca al objetivo— así que fijarla
+solo serviría para que estos números fueran reproducibles, a cambio de tener que
+rebarrer con cada cambio de RTL. En las carpetas de CPU sí se fija, porque allí
+el margen se mide en unidades y no en decenas: la 10 llegó a **no cumplir** con
+la semilla por defecto después de una sola línea de cambio.
 
 **El guardián de `R0` va en otro sitio en la GPU**, y por una razón que conviene
 no perder. En la MiniCPU vive dentro de `register_file.v`, porque allí el banco

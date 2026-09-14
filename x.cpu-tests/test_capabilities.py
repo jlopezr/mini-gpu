@@ -77,17 +77,44 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(expand_capabilities(["video"]), {"video"})
 
     def test_capacidades_por_bitstream(self):
-        # La 6 y la 10 no tienen video en absoluto.
-        self.assertEqual(fpga.capabilities("ebr"), frozenset())
+        # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
+        self.assertEqual(fpga.capabilities("ebr"), {"mul_div"})
         self.assertEqual(fpga.capabilities("sdram"), frozenset())
         # La 16 tiene video pero no con que capturar.
-        self.assertEqual(fpga.capabilities("hdmi"), {"video"})
+        self.assertEqual(fpga.capabilities("hdmi"), {"video", "mul_div"})
         # La 18 tiene las dos.
-        self.assertEqual(fpga.capabilities("bl8"), {"video", "frame_capture"})
+        self.assertEqual(
+            fpga.capabilities("bl8"), {"video", "frame_capture", "mul_div"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
             fpga.capabilities("subword"),
-            {"video", "frame_capture", "subword_memory", "calls", "serial"})
+            {"video", "frame_capture", "subword_memory", "calls", "serial",
+             "mul_div"})
+
+    def test_solo_la_10_no_tiene_mul_div(self):
+        """`mul_div` es un HUECO, no una extension, y es el unico de la tabla.
+
+        MUL, MULFX y DIV son instrucciones base de la MiniISA. La 10 se quedo
+        sin ellas por temporizacion --ver 10.fpga-cpu-ram/cpu.v-- y es la unica.
+        Si algun dia las implementa, esta capacidad desaparece entera en vez de
+        extenderse a mas backends, que es lo contrario de lo que le pasa a una
+        extension.
+        """
+        sin_ella = [nombre for nombre in fpga.VERSIONS
+                    if "mul_div" not in fpga.capabilities(nombre)]
+        self.assertEqual(sin_ella, ["sdram"])
+        self.assertIn("mul_div", simulator.capabilities())
+
+    def test_alu_extended_implica_mul_div(self):
+        """MULHI sale del mismo multiplicador que MUL, y REM del divisor de DIV.
+
+        Un backend con MULHI pero sin MUL no puede existir, asi que declarar
+        `alu_extended` basta.
+        """
+        self.assertEqual(expand_capabilities(["alu_extended"]),
+                         {"alu_extended", "mul_div"})
+        # Y no al reves: tener MUL no da MULHI.
+        self.assertEqual(expand_capabilities(["mul_div"]), {"mul_div"})
 
     def test_las_extensiones_de_isa_no_se_implican(self):
         """`calls` y `subword_memory` son independientes a proposito.
