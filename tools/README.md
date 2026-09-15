@@ -399,6 +399,24 @@ placa real por el protocolo de vídeo compartido, reutilizando
 `measure-demo` en particular solo tiene sentido con las demos
 `swap_demo`/`tear_demo`, no como medición de FPS general.
 
+### Capturar un frame sin placa (`capture-frame-sim`)
+
+Igual que `capture-frames`, pero contra el simulador funcional
+(`2.cpu-sim-func/minicpu_sim.py`) en vez de hardware — no hace falta placa ni
+`--prototype`, y es casi instantáneo. Dos formas de decidir cuándo capturar,
+y el formato de salida lo decide la extensión (`.bin`, `.hex`, o cualquier
+cosa que entienda Pillow vía `frame-to-image.py`):
+
+```bash
+$ capture-frame-sim cases/video/bounce/bounce.asm --swap 20 frame.png
+$ capture-frame-sim cases/video/band/band.asm --instrucciones 500000 frame.bin
+```
+
+`--swap N` para en el N-ésimo intercambio completado desde el arranque.
+`--instrucciones N` ejecuta N instrucciones sin condición de parada y captura
+en el intercambio que ocurra después — útil para mirar el framebuffer en un
+punto cualquiera del programa sin saber a qué intercambio corresponde.
+
 ## Qué no hay todavía
 
 Nada pendiente en la infraestructura común. `prototype-report`/`run-board`

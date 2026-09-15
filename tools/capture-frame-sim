@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Captura un frame de vídeo en el simulador funcional de CPU, sin placa.
+
+Dos formas de decidir cuándo capturar:
+
+  --swap N            para en el N-ésimo intercambio completado desde el
+                       arranque (como `run_until: {"swap": N}` en un caso).
+  --instrucciones N    ejecuta N instrucciones SIN condición de parada, y
+                       entonces captura en el intercambio que ocurra
+                       después de esas N — útil para mirar el framebuffer
+                       en un punto cualquiera del programa, sin tener que
+                       saber a qué número de intercambio corresponde.
+
+Siempre usa 2.cpu-sim-func/minicpu_sim.py: es el único modelo de CPU
+funcional que hay (implementa la ISA entera, por delante del RTL de
+cualquier prototipo concreto — ver VERSIONS en x.tests/backends/simulator.py).
+
+El formato de salida lo decide la extensión de SALIDA:
+
+  .bin   RGB565 crudo, little-endian (lo que lee `frame-to-image.py`,
+         `compare-frames.py` y `monitor.py read-block`).
+  .hex   una media palabra de 16 bits en hex por línea, como
+         `video_fullframe_tb.v`.
+  otra   cualquier formato que entienda Pillow (.png, .jpg, .ppm...),
+         vía `frame-to-image.py`.
+
+Uso:
+    capture-frame-sim cases/video/bounce/bounce.asm --swap 20 frame.png
+    capture-frame-sim cases/video/band/band.asm --instrucciones 500000 frame.bin
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.prototype import find_repo_root
+from tools.run_board import assemble, resolve_program
+
+WIDTH, HEIGHT = 320, 240
+FRAME_BYTES = WIDTH * HEIGHT * 2
+
+
+def _load_simulator_module(root: Path):
+    path = root / "2.cpu-sim-func" / "minicpu_sim.py"
+    spec = importlib.util.spec_from_file_location("minicpu_sim_for_capture", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"error: no se pudo cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_hex(path: Path, frame: bytes) -> None:
+    words = struct.unpack(f"<{len(frame) // 2}H", frame)
+    with path.open("w", encoding="ascii") as handle:
+        handle.write(f"// Framebuffer de {WIDTH}x{HEIGHT} en RGB565, una media palabra por linea.\n")
+        handle.write("// Volcado por capture-frame-sim desde el simulador funcional.\n")
+        for word in words:
+            handle.write(f"{word:04x}\n")
+
+
+def _write_via_frame_to_image(salida: Path, frame: bytes) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+        tmp.write(frame)
+        tmp_path = Path(tmp.name)
+    try:
+        subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "frame-to-image.py"),
+             str(tmp_path), str(salida), "--tamano", f"{WIDTH}x{HEIGHT}"],
+            check=True,
+        )
+    finally:
+        tmp_path.unlink()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("program", help="ruta o nombre de un .asm/.bin")
+    parser.add_argument("salida", type=Path,
+                        help="fichero de salida; el formato lo decide la extensión")
+    modo = parser.add_mutually_exclusive_group(required=True)
+    modo.add_argument("--swap", type=int, metavar="N",
+                      help="capturar tras el N-esimo intercambio completado")
+    modo.add_argument("--instrucciones", type=int, metavar="N",
+                      help="ejecutar N instrucciones y capturar en el intercambio siguiente")
+    parser.add_argument("--max-instrucciones", type=int, default=50_000_000)
+    args = parser.parse_args(argv)
+
+    root = find_repo_root(Path.cwd())
+    module = _load_simulator_module(root)
+
+    source = resolve_program(root / "2.cpu-sim-func", args.program, root)
+    if source.suffix == ".asm":
+        binary_path = assemble(root, source, verbose=False)
+        program = binary_path.read_bytes()
+    else:
+        program = source.read_bytes()
+
+    video = module.VideoDevice()
+    cpu = module.CPU(32 * 1024 * 1024, video=video)
+    cpu.load_program(program)
+
+    if args.swap is not None:
+        video.write(video.HALT_AT, args.swap)
+        cpu.run(args.max_instrucciones)
+        if not cpu.halted:
+            raise SystemExit(
+                f"error: no se completó el intercambio {args.swap} en "
+                f"{args.max_instrucciones} instrucciones")
+    else:
+        if args.instrucciones < 0:
+            parser.error("--instrucciones no puede ser negativo")
+        for _ in range(args.instrucciones):
+            if cpu.halted:
+                raise SystemExit(
+                    f"error: el programa paró (HALT) antes de las "
+                    f"{args.instrucciones} instrucciones pedidas")
+            cpu.step()
+        # Escribir HALT_AT arma la alarma «dentro de N intercambios desde
+        # AHORA» (ver VideoDevice.write en minicpu_sim.py) y de paso pone
+        # swap_count a cero, así que el total absoluto hay que guardarlo
+        # antes de armar. Con N=1 para en el próximo, sin importar cuántos
+        # hubiera antes.
+        swaps_antes = video.swap_count
+        video.write(video.HALT_AT, 1)
+        restantes = args.max_instrucciones - args.instrucciones
+        pasos = 0
+        while not cpu.halted:
+            if pasos >= restantes:
+                raise SystemExit(
+                    f"error: no hubo ningún intercambio en las {restantes} "
+                    "instrucciones siguientes a --instrucciones")
+            cpu.step()
+            pasos += 1
+        video.swap_count += swaps_antes
+
+    frame = bytes(cpu.memory[video.fb_front:video.fb_front + FRAME_BYTES])
+
+    sufijo = args.salida.suffix.lower()
+    if sufijo == ".bin":
+        args.salida.write_bytes(frame)
+    elif sufijo == ".hex":
+        _write_hex(args.salida, frame)
+    else:
+        _write_via_frame_to_image(args.salida, frame)
+
+    print(f"intercambio {video.swap_count}, {cpu.instructions_executed} "
+         f"instrucciones -> {args.salida}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

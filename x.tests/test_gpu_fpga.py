@@ -96,7 +96,7 @@ class GpuFpgaTest(unittest.TestCase):
                 if broken:
                     result['observations']['warp[3].lane[7].R1'] = 0
                 return result
-            with self.subTest(broken=broken), patch('sys.argv', ['runner', '--backend', 'gpu-both', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, redirect_stdout(io.StringIO()) as output:
+            with self.subTest(broken=broken), patch('sys.argv', ['runner', '--backend', 'gpu-both', '--port', 'COM3', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, redirect_stdout(io.StringIO()) as output:
                 factory.return_value.run.side_effect = execute_variant
                 self.assertEqual(runner.main(), 1 if broken else 0)
                 self.assertNotIn('ERROR', output.getvalue())
