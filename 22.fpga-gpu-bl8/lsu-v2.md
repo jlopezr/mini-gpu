@@ -502,6 +502,38 @@ el cuello de botella. Y cambia la conclusión de la sección anterior: partir
 `GROUP` en dos estados ya **no** es optimización prematura, es ahora mismo lo
 único que hay entre este diseño y recuperar el Fmax de la base.
 
+### Con una carga memory-bound: aquí sí se ve la LSU
+
+Los 32 casos diferenciales son pruebas de ISA: programas cortos, casi sin
+tráfico de datos. Por eso su medida estaba dominada por el fetch y la
+coalescencia no se notaba. `examples/bench.asm` es lo contrario — un bucle de
+`LOAD`/`ADD`/`STORE` con direcciones `base + lane*4` (o sea, el caso
+coalescido) y 2000 iteraciones:
+
+| | Ciclos | |
+| --- | --- | --- |
+| Base (LSU v1, BL1) | 5 929 432 | |
+| BL8 + LSU v2 + buffer | 2 313 343 | **x2,56** |
+
+Los dos paran limpiamente en `pc=0x38` sin error. Bancos:
+`gpu_bench_tb.v` y `gpu_bench_base_tb.v`, mismo programa en los dos.
+
+Y esto es lo que hay que comparar con el x1,73 de los casos diferenciales: la
+ganancia depende mucho de cuánto tráfico de datos tenga el programa. Con
+tráfico real, la coalescencia deja de ser el 0,2% y empieza a pagar.
+
+### El Fmax no cuesta nada en la placa
+
+La cuenta de "x1,44 de rendimiento neto" de más arriba supone correr cada
+diseño a SU Fmax. **En la placa no es así:** los dos prototipos van a 25 MHz
+nativos (`clk_25mhz`, sin PLL), muy por debajo de los 36,57 MHz que aguanta
+este y de los 44,14 del base. Es decir, en hardware la penalización de Fmax
+no se paga, y la ventaja en ciclos se traduce 1:1 a tiempo real.
+
+Lo que sí significa es que **hay margen de reloj sin usar en los dos**, y que
+el día que se meta un PLL, el Fmax vuelve a importar — y ahí el camino crítico
+de `gpu_lsu2` (`grp_line` → `n_lanes`) sería lo primero que limitaría.
+
 ### Qué hay que leer de todo esto
 
 El −42,3% **no es mérito de la LSU v2**. Es casi todo del buffer de

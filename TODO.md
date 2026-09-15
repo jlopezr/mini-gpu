@@ -105,4 +105,4 @@ Lo que queda por subir, por orden de lo que más cubriría:
 ## 13. Herramienta para testear solo un component a nivel de RTL, p.e la LSU
 
 ## 13. Herramienta similar para generar diagrama de bloques. como se conecta LSU con el resto de componentes, y como se conecta el resto de componentes entre si.
-
+## 14. VVP que ejecuta? El RTL?

@@ -178,6 +178,54 @@ def _fresh_bitstream(project: Path) -> Path | None:
     return bitstream
 
 
+def _upload_stamp(project: Path) -> Path:
+    """Fichero donde se anota qué bitstream se programó la última vez."""
+    return project / "_build" / "default" / ".uploaded"
+
+
+def _mark_uploaded(project: Path) -> None:
+    """Anota la fecha del bitstream recién programado.
+
+    La versión del monitor dice QUÉ DISEÑO hay en la placa, pero no si es el
+    último build de ese diseño: cambiar la LSU, el camino de memoria o la lane
+    no mueve esa versión, así que la comprobación de identidad da por bueno un
+    bitstream viejo. Ese fallo costó una sesión entera de depuración contra una
+    placa que llevaba el bitstream anterior.
+
+    La fecha no puede preguntarse a la FPGA —no sabe cuándo la programaron—,
+    así que se anota aquí, del lado del anfitrión.
+    """
+    bitstream = project / "_build" / "default" / "hardware.bit"
+    if not bitstream.exists():
+        return
+    stamp = _upload_stamp(project)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(str(bitstream.stat().st_mtime_ns), encoding="utf-8")
+
+
+def bitstream_newer_than_upload(project: Path) -> bool:
+    """El bitstream del proyecto es más nuevo que el último que se programó.
+
+    Estado LOCAL, con dos límites que conviene conocer: si se graba desde otro
+    ordenador el sello de éste miente, y si se programa a SRAM y se apaga la
+    placa el bitstream se pierde pero el sello se queda. Lo segundo sí lo caza
+    la comprobación de versión del monitor, que dejaría de responder; por eso
+    hacen falta las dos y no uno sola.
+    """
+    bitstream = project / "_build" / "default" / "hardware.bit"
+    if not bitstream.exists():
+        return False
+    stamp = _upload_stamp(project)
+    if not stamp.exists():
+        # Nunca se subió desde aquí: no se puede afirmar que la placa lo tenga.
+        return True
+    try:
+        uploaded_at = int(stamp.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return True
+    return bitstream.stat().st_mtime_ns > uploaded_at
+
+
 def upload(project: Path) -> None:
     """Programa la placa con el bitstream del proyecto.
 
@@ -205,6 +253,7 @@ def upload(project: Path) -> None:
         # de proceso; sin él, la FPGA todavía se está reconfigurando (y el
         # puente USB-serie reestabilizando) cuando el monitor la interroga.
         time.sleep(1.5)
+        _mark_uploaded(project)
         return
 
     print(f"--- `apio upload` en {project} "
@@ -223,6 +272,7 @@ def upload(project: Path) -> None:
             f"`apio upload` falló en {project} con código "
             f"{completed.returncode}; revisa su salida más arriba."
         )
+    _mark_uploaded(project)
 
 
 def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,

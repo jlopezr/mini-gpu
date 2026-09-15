@@ -13,7 +13,20 @@ module gpu_system_bl8_tb;
     reg [4:0] debug_register=0;
     wire [31:0] debug_data,debug_pc;
     `include "sim/system_memory_bl8.vh"
-    gpu_system_bl8 dut(.*,.instruction_retired(retired));
+    // p2 (video) sin cliente en este banco: mide solo GPU + fetch + host.
+    wire [1:0] video_mode_unused;
+    wire [23:0] video_fb_base_unused;
+    wire video_underflow_clear_unused;
+    wire p2_rsp_valid_u,p2_rsp_error_u,p2_req_ready_u;
+    wire [127:0] p2_rsp_rdata_u;
+    gpu_system_bl8 dut(.*,.instruction_retired(retired),
+        .p2_req_valid(1'b0),.p2_req_ready(p2_req_ready_u),.p2_req_write(1'b0),
+        .p2_req_addr(32'd0),.p2_req_wdata(128'd0),.p2_req_wmask(16'd0),
+        .p2_urgent(1'b0),.p2_rsp_valid(p2_rsp_valid_u),.p2_rsp_ready(1'b1),
+        .p2_rsp_rdata(p2_rsp_rdata_u),.p2_rsp_error(p2_rsp_error_u),
+        .video_mode(video_mode_unused),.video_fb_base(video_fb_base_unused),
+        .video_underflow_clear(video_underflow_clear_unused),
+        .video_underflow(1'b0),.video_frame_pulse(1'b0));
     `include "fixtures/count.vh"
     reg [31:0] program_words[0:255],expected[0:2047],expected_memory[0:511],config_words[0:23],expected_state[0:23];
     reg [31:0] expected_counts[0:7];

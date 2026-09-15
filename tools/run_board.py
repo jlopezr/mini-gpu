@@ -178,8 +178,19 @@ def ensure_uploaded(target: Target, port: str, serial_timeout: float,
     expected = target.capability["monitor_version"]
     version_name = target.capability["version_name"]
     backend_name = target.capability["backend"]
-    if rebuild:
-        print(f"--rebuild: forzando `apio upload` en {target.prototype_dir}")
+    # La version del monitor dice QUE DISEÑO hay en la placa, pero no si es el
+    # ULTIMO BUILD de ese diseño: cambiar la LSU, el camino de memoria o la
+    # lane no la mueve, asi que la identidad daba por bueno un bitstream viejo.
+    # El sello de `board.upload` cierra ese hueco comparando fechas del lado
+    # del anfitrion, que es el unico que puede saberlas.
+    stale = board.bitstream_newer_than_upload(target.prototype_dir)
+    if stale and not rebuild:
+        print(f"el bitstream de {target.prototype_dir.name} es mas nuevo que el "
+              "ultimo programado: subiendolo")
+
+    if rebuild or stale:
+        if rebuild:
+            print(f"--rebuild: forzando `apio upload` en {target.prototype_dir}")
         try:
             board.upload(target.prototype_dir)
         except board.BitstreamMismatch as exc:

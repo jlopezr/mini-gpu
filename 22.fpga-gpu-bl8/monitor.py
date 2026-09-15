@@ -23,8 +23,10 @@ ARCHITECTURAL_REGIONS = (
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_0080),
-    (0x8000_0100, 0x8000_0118),
+    (0x8000_0000, 0x8000_0080),   # configuración de warps
+    (0x8000_0100, 0x8000_0118),   # depuración y contadores de retiro
+    (0x8000_0200, 0x8000_0218),   # vídeo: VIDEO_CTRL, FB_FRONT/BACK, SWAP...
+    (0x8000_0300, 0x8000_0320),   # contadores de rendimiento (ver mmio.md)
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

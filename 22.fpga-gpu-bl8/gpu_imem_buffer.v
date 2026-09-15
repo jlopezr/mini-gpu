@@ -7,9 +7,36 @@
 //   gpu_sm.v       : imem_valid/imem_ready para aceptar, y DESPUES
 //                    imem_rsp_valid/imem_rsp_ready para la respuesta
 //
-// Este modulo es solo ese pegamento: acepta la peticion de gpu_sm, la sostiene
-// contra el bufer hasta que pulsa ready, y devuelve la respuesta con el
-// handshake que gpu_sm espera.
+// La primera version de este modulo traducia con una maquina de tres estados
+// (S_IDLE -> S_FETCH -> S_RESP). Funcionaba, pero costaba DOS CICLOS DE MAS en
+// cada busqueda, incluso acertando:
+//
+//   antes:  C0 handshake y latch de la direccion
+//           C1 presentar al bufer, que registra el dato
+//           C2 registrar el dato otra vez aqui
+//           C3 devolverlo al SM                      -> 4 ciclos
+//
+//   ahora:  C0 handshake, el bufer registra el dato
+//           C1 el pulso del bufer ES la respuesta    -> 2 ciclos
+//
+// Medido sobre un frame de plasma: 170 486 busquedas x 2 ciclos = 340 972 de
+// 3 334 230, o sea un 10,2% del tiempo de frame (ver profiling.md).
+//
+// Las dos etapas sobraban por dos razones concretas:
+//
+//   - `imem_address` es `context_pc`, un REGISTRO del SM que no cambia durante
+//     toda la busqueda: el SM se queda en FETCH_WAIT hasta la respuesta. No hay
+//     nada que copiar, ni siquiera en un fallo, que tarda decenas de ciclos.
+//   - `instruction_buffer` ya latchea en su ST_IDLE todo lo que necesita
+//     (fill_index, fill_tag, want_word), asi que le basta un pulso de un ciclo
+//     en `cpu_imem_valid`. Y su `cpu_imem_read_data` ya sale registrado:
+//     volver a registrarlo aqui era redundante.
+//
+// INVARIANTE del que depende esto: el SM no puede tener dos busquedas en
+// vuelo. `imem_valid` es `state==FETCH` y solo se sale de FETCH_WAIT con la
+// respuesta, asi que nunca llega una peticion con el bufer ocupado, y por eso
+// `imem_ready` puede ser constante. El dia que el SM segmente su cauce (la
+// optimizacion grande de profiling.md) hay que revisar justo esto.
 //
 // El bufer se vacia mientras `halted` esta alto, que es cuando el monitor
 // escribe la memoria de programa. Es el unico caso de incoherencia que hay:
@@ -44,44 +71,29 @@ module gpu_imem_buffer #(
 
     output wire [31:0] hit_count, miss_count
 );
-    localparam S_IDLE=2'd0, S_FETCH=2'd1, S_RESP=2'd2;
-    reg [1:0] st;
-    reg [31:0] addr_q, data_q;
-    reg err_q;
-
     wire buf_ready;
     wire [31:0] buf_data;
 
-    assign imem_ready=!reset && st==S_IDLE;
-    assign imem_rsp_valid=st==S_RESP;
-    assign imem_data=data_q;
-    assign imem_error=err_q;
+    assign imem_ready=!reset;
+    assign imem_rsp_valid=buf_ready;
+    assign imem_data=buf_data;
 
     // Mismo criterio de fault que tenia el camino auxiliar de la v1, para que
     // gpu_sm siga viendo el mismo error ante una direccion imposible; el bufer
     // por su cuenta responderia con opcode invalido, que no es lo mismo.
-    wire bad=|addr_q[31:25] || |addr_q[1:0];
+    // Se calcula de `imem_address` directamente porque, por el invariante de
+    // arriba, sigue siendo la de esta busqueda cuando llega la respuesta.
+    assign imem_error=|imem_address[31:25] || |imem_address[1:0];
 
     instruction_buffer #(.LINES(LINES),.INDEX_BITS(INDEX_BITS),
                          .SDRAM_SIZE_BYTES(SDRAM_SIZE_BYTES)) ib (
         .clk(clk),.reset(reset),.init_done(init_done),.cpu_halted(halted),
-        .cpu_imem_valid(st==S_FETCH),.cpu_imem_address(addr_q),
+        .cpu_imem_valid(imem_valid),.cpu_imem_address(imem_address),
         .cpu_imem_read_data(buf_data),.cpu_imem_ready(buf_ready),
         .req_valid(req_valid),.req_ready(req_ready),.req_write(req_write),
         .req_addr(req_addr),.req_wdata(req_wdata),.req_wmask(req_wmask),
         .rsp_valid(rsp_valid),.rsp_ready(rsp_ready),
         .rsp_rdata(rsp_rdata),.rsp_error(rsp_error),
         .hit_count(hit_count),.miss_count(miss_count));
-
-    always @(posedge clk) begin
-        if(reset) begin
-            st<=S_IDLE; addr_q<=0; data_q<=0; err_q<=0;
-        end else case(st)
-            S_IDLE: if(imem_valid) begin addr_q<=imem_address; st<=S_FETCH; end
-            S_FETCH: if(buf_ready) begin data_q<=buf_data; err_q<=bad; st<=S_RESP; end
-            S_RESP: if(imem_rsp_ready) begin err_q<=0; st<=S_IDLE; end
-            default: st<=S_IDLE;
-        endcase
-    end
 endmodule
 `default_nettype wire

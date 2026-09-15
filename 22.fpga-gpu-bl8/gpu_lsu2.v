@@ -15,7 +15,23 @@ module gpu_lsu2 (
     output mem_req_write, output [31:0] mem_req_addr,
     output [127:0] mem_req_wdata, output [15:0] mem_req_wmask,
     input mem_rsp_valid, output mem_rsp_ready,
-    input [127:0] mem_rsp_rdata, input mem_rsp_error
+    input [127:0] mem_rsp_rdata, input mem_rsp_error,
+
+    // Ventana MMIO (0x80000xxx). Antes era fault y solo la alcanzaba el host
+    // con la GPU parada; ahora la GPU puede leerla y escribirla mientras corre,
+    // que es lo que hace falta para que sincronice con el video y para que se
+    // mida a si misma.
+    //
+    // Es un camino ESCALAR a proposito: un acceso a MMIO se sirve de una lane
+    // cada vez, la de menor indice pendiente, sin coalescer. Un registro de 32
+    // bits no es una linea de 16 bytes, y ocho lanes escribiendo registros
+    // distintos a la vez no tiene semantica util. Como los accesos a MMIO son
+    // contados (unos pocos por frame), que sean lentos da igual.
+    output mmio_req_valid, input mmio_req_ready,
+    output mmio_req_write, output [31:0] mmio_req_addr,
+    output [31:0] mmio_req_wdata,
+    input mmio_rsp_valid, output mmio_rsp_ready,
+    input [31:0] mmio_rsp_rdata, input mmio_rsp_error
 );
     localparam IDLE=0, GROUP=1, ISSUE=2, WAIT=3, RETIRE=4, VECTOR_RESPONSE=5;
     reg [2:0] state, cursor, selected;
@@ -28,7 +44,7 @@ module gpu_lsu2 (
     reg [31:0] grp_addr;
     reg [127:0] grp_wdata, rsp_line;
     reg [15:0] grp_wmask;
-    reg grp_write, line_error;
+    reg grp_write, line_error, grp_mmio;
     integer i;
 
     // Arbitraje de warp: identico al paso 7 de v1 (mascara plana rotada por
@@ -59,11 +75,15 @@ module gpu_lsu2 (
     wire [255:0] sel_addr=addresses[selected], sel_value=values[selected];
     wire [7:0] sel_pending=pending[selected];
     wire sel_write=stores[selected];
-    reg [7:0] fault_lanes, cand_lanes;
+    reg [7:0] fault_lanes, cand_lanes, mmio_lanes;
     always @* begin
         for(i=0;i<8;i=i+1) begin
+            // La ventana MMIO deja de ser fault: es un destino legitimo, solo
+            // que por otro camino.
+            mmio_lanes[i]=sel_pending[i] && (sel_addr[i*32+12 +: 20]==20'h80000);
             fault_lanes[i]=sel_pending[i] &&
-                (|sel_addr[i*32+25 +: 7] || |sel_addr[i*32 +: 2]);
+                ((|sel_addr[i*32+25 +: 7] && !mmio_lanes[i]) ||
+                 |sel_addr[i*32 +: 2]);
             cand_lanes[i]=sel_pending[i] && !fault_lanes[i];
         end
     end
@@ -122,7 +142,13 @@ module gpu_lsu2 (
                 ({32{slot_win[s][7]}} & sel_value[7*32 +: 32]);
         end
     endgenerate
-    wire [7:0] n_lanes=sel_write ? (slot_win[0]|slot_win[1]|slot_win[2]|slot_win[3])
+    // Si la lane lider apunta a MMIO, el grupo es ELLA SOLA: acceso escalar.
+    wire leader_is_mmio=mmio_lanes[leader_idx];
+    wire [7:0] leader_onehot=8'b1<<leader_idx;
+    wire [31:0] leader_addr=sel_addr[{leader_idx,5'b0} +: 32];
+    wire [31:0] leader_value=sel_value[{leader_idx,5'b0} +: 32];
+    wire [7:0] n_lanes=leader_is_mmio ? leader_onehot
+                     : sel_write ? (slot_win[0]|slot_win[1]|slot_win[2]|slot_win[3])
                                  : match;
     // Cada lane lee la palabra que le toca por su propia direccion: esto no
     // necesita ni lazo ni logica, es una concatenacion.
@@ -139,12 +165,18 @@ module gpu_lsu2 (
 
     assign occupied=busy;
     assign req_ready=!reset && !busy[req_tag];
-    assign mem_req_valid=!reset && state==ISSUE;
+    assign mem_req_valid=!reset && state==ISSUE && !grp_mmio;
     assign mem_req_write=grp_write;
     assign mem_req_addr=grp_addr;
     assign mem_req_wdata=grp_wdata;
     assign mem_req_wmask=grp_wmask;
-    assign mem_rsp_ready=state==WAIT;
+    assign mem_rsp_ready=state==WAIT && !grp_mmio;
+
+    assign mmio_req_valid=!reset && state==ISSUE && grp_mmio;
+    assign mmio_req_write=grp_write;
+    assign mmio_req_addr=grp_addr;
+    assign mmio_req_wdata=grp_wdata[31:0];
+    assign mmio_rsp_ready=state==WAIT && grp_mmio;
 
     wire [255:0] completed_data;
     genvar lane;
@@ -162,7 +194,7 @@ module gpu_lsu2 (
             state<=IDLE; cursor<=0; selected<=0; busy<=0; has_pending<=0;
             rsp_valid<=0; rsp_tag<=0; rsp_data<=0; rsp_error<=0;
             grp_lanes<=0; grp_sel<=0; grp_addr<=0; grp_wdata<=0; grp_wmask<=0;
-            grp_write<=0; rsp_line<=0; line_error<=0;
+            grp_write<=0; rsp_line<=0; line_error<=0; grp_mmio<=0;
             for(i=0;i<8;i=i+1) begin pending[i]<=0; errors[i]<=0; end
         end else begin
             if(rsp_valid && rsp_ready) begin rsp_valid<=0; busy[rsp_tag]<=0; end
@@ -182,8 +214,13 @@ module gpu_lsu2 (
                 GROUP: begin
                     if(|fault_lanes) errors[selected]<=errors[selected] | fault_lanes;
                     if(|n_lanes) begin
-                        grp_lanes<=n_lanes; grp_sel<=n_sel; grp_addr<={grp_line,4'b0};
-                        grp_wdata<=n_wdata; grp_wmask<=sel_write ? n_wmask : 16'd0;
+                        grp_lanes<=n_lanes; grp_sel<=n_sel;
+                        grp_mmio<=leader_is_mmio;
+                        // El MMIO usa la direccion EXACTA de la lane, no la
+                        // linea alineada: son registros de 32 bits.
+                        grp_addr<=leader_is_mmio ? leader_addr : {grp_line,4'b0};
+                        grp_wdata<=leader_is_mmio ? {4{leader_value}} : n_wdata;
+                        grp_wmask<=sel_write ? n_wmask : 16'd0;
                         grp_write<=sel_write;
                         pending[selected]<=pending_after_fault;
                         state<=ISSUE;
@@ -194,8 +231,16 @@ module gpu_lsu2 (
                         cursor<=selected+1'b1; state<=IDLE;
                     end
                 end
-                ISSUE: if(mem_req_ready) state<=WAIT;
-                WAIT: if(mem_rsp_valid) begin
+                ISSUE: if(grp_mmio ? mmio_req_ready : mem_req_ready) state<=WAIT;
+                WAIT: if(grp_mmio) begin
+                    if(mmio_rsp_valid) begin
+                        // Se replica el dato en las cuatro palabras de la linea
+                        // para que RETIRE lo reparta sin saber que era MMIO:
+                        // elija el `sel` que elija, saca el valor correcto.
+                        rsp_line<={4{mmio_rsp_rdata}};
+                        line_error<=mmio_rsp_error; state<=RETIRE;
+                    end
+                end else if(mem_rsp_valid) begin
                     rsp_line<=mem_rsp_rdata; line_error<=mem_rsp_error; state<=RETIRE;
                 end
                 // El reparto de las 4 palabras a sus lanes vive en su propio

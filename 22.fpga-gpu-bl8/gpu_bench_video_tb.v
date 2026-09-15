@@ -6,7 +6,7 @@
 // justo lo que hace la placa.
 //
 // Existe para separar "el programa esta mal" de "solo falla en placa".
-module gpu_bench_tb;
+module gpu_bench_video_tb;
     reg clk=0;
     always #20 clk=~clk;
     reg reset=1,gpu_reset=0,run_request=0,halt_request=0,step_request=0;
@@ -20,18 +20,23 @@ module gpu_bench_tb;
     reg [4:0] debug_register=0;
     wire [31:0] debug_data,debug_pc;
     `include "sim/system_memory_bl8.vh"
-    // p2 (video) sin cliente: este banco mide solo GPU + fetch + host, igual
-    // que la base BL1 con la que se compara.
-    wire [1:0] vm_u; wire [23:0] fb_u; wire vuc_u;
-    wire p2r_u, p2rv_u, p2re_u;
-    wire [127:0] p2rd_u;
+    wire v_valid,v_ready,v_write,v_urgent,v_rsp_valid,v_rsp_error;
+    wire [31:0] v_addr;
+    wire [127:0] v_wdata,v_rsp_rdata;
+    wire [15:0] v_wmask;
+    wire [31:0] v_tx;
+    // VIDEO=1 enciende el trafico sintetico de scanout.
+    reg video_on=0;
     gpu_system_bl8 dut(.*,.instruction_retired(retired),
-        .p2_req_valid(1'b0),.p2_req_ready(p2r_u),.p2_req_write(1'b0),
-        .p2_req_addr(32'd0),.p2_req_wdata(128'd0),.p2_req_wmask(16'd0),
-        .p2_urgent(1'b0),.p2_rsp_valid(p2rv_u),.p2_rsp_ready(1'b1),
-        .p2_rsp_rdata(p2rd_u),.p2_rsp_error(p2re_u),
-        .video_mode(vm_u),.video_fb_base(fb_u),.video_underflow_clear(vuc_u),
-        .video_underflow(1'b0),.video_frame_pulse(1'b0));
+        .p2_req_valid(v_valid),.p2_req_ready(v_ready),.p2_req_write(v_write),
+        .p2_req_addr(v_addr),.p2_req_wdata(v_wdata),.p2_req_wmask(v_wmask),
+        .p2_urgent(v_urgent),.p2_rsp_valid(v_rsp_valid),.p2_rsp_ready(1'b1),
+        .p2_rsp_rdata(v_rsp_rdata),.p2_rsp_error(v_rsp_error));
+    video_traffic_gen video(.clk(clk),.reset(reset),.enable(video_on),
+        .req_valid(v_valid),.req_ready(v_ready),.req_write(v_write),
+        .req_addr(v_addr),.req_wdata(v_wdata),.req_wmask(v_wmask),.urgent(v_urgent),
+        .rsp_valid(v_rsp_valid),.rsp_ready(),.rsp_rdata(v_rsp_rdata),
+        .rsp_error(v_rsp_error),.transactions(v_tx));
 
     reg [31:0] program_words[0:255];
     reg [7:0] byte_result;
@@ -75,6 +80,7 @@ module gpu_bench_tb;
 
         for(i=0;i<16;i=i+1) write_word(i*4,program_words[i]);
 
+        video_on=1;
         counting=1;
         @(negedge clk); run_request=1;
         @(negedge clk); run_request=0;
@@ -90,7 +96,7 @@ module gpu_bench_tb;
         repeat(3) @(negedge clk);
         $display("R1 = %h", debug_data);
         $display("BENCH: R1(tid)=%h", debug_data);
-        $display("BENCH: transacciones=%0d  ciclos/tx=%0d", tx_done, run_cycles/tx_done);
+        $display("BENCH+VIDEO: tx_totales=%0d de_video=%0d ciclos/tx=%0d", tx_done, v_tx, run_cycles/tx_done);
         $finish;
     end
     initial begin #5000000000; $display("BENCH: timeout"); $finish; end

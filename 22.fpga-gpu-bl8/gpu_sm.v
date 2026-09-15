@@ -9,6 +9,10 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     output reg error_lane_valid,
     output reg [31:0] error_pc,
     output reg instruction_retired,
+    // Mascara de lanes que retiran con esa instruccion. Sirve para medir
+    // divergencia: `retired_count` cuenta instrucciones de WARP, y con esto se
+    // sabe cuanto trabajo de hilo hubo de verdad detras de cada una.
+    output reg [7:0] retired_lanes,
     output reg [31:0] retired_count,
     output [31:0] debug_warp_retired_count,
     input [2:0] debug_warp, debug_lane,
@@ -143,7 +147,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         assign lsu_address[l*32 +: 32]=rf_a[l*32 +: 32]+immediate;
         assign lsu_data[l*32 +: 32]=rf_b[l*32 +: 32];
         wire fetch_valid;
-        gpu_lane alu (
+        // EXTERNAL_FETCH: el SM ya trae la instruccion, la lane no la busca.
+        gpu_lane #(.EXTERNAL_FETCH(1)) alu (
             .clk(clk), .reset(reset), .launch_pc(context_pc),
             .thread_id({26'b0,current,l[2:0]}),
             .register_a(rf_a[l*32 +: 32]), .register_b(rf_b[l*32 +: 32]),
@@ -257,7 +262,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // las fuentes pasan a compartir una cadena de prioridad y el incremento se
     // calcula detrás del índice. Véase optimizacion.md, paso 5.
     always @(posedge clk) begin
-        instruction_retired<=0;
+        instruction_retired<=0; retired_lanes<=8'd0;
         if (reset) begin
             state<=INIT; init_address<=0; running<=0; pause_pending<=0; stepping<=0;
             current<=0; cursor<=0; wait_mem<=0; wait_bar<=0; releasing<=0; load_is_write<=0;
@@ -296,7 +301,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                             for(w=7;w>=0;w=w-1) if(lsu_rsp_error[w]) fault(ERROR_MEMORY_ACCESS,lsu_rsp_tag,w[2:0],1'b1);
                         end else begin
                             pc[lsu_rsp_tag]<=pc[lsu_rsp_tag]+4;
-                            instruction_retired<=1; retired_count<=retired_count+1'b1;
+                            instruction_retired<=1; retired_lanes<=load_mask[lsu_rsp_tag]; retired_count<=retired_count+1'b1;
                             warp_retired_count[lsu_rsp_tag]<=warp_retired_count[lsu_rsp_tag]+1'b1;
                         end
                     end else if (release_found && !error) begin
@@ -428,7 +433,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                     end
                 end
                 RETIRE: begin
-                    instruction_retired<=1; retired_count<=retired_count+1'b1;
+                    instruction_retired<=1; retired_lanes<=active[current]; retired_count<=retired_count+1'b1;
                     warp_retired_count[current]<=warp_retired_count[current]+1'b1;
                     state<=PICK;
                 end

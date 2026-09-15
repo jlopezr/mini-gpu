@@ -4,7 +4,15 @@ Prototipo en construcción. Parte de `17.fpga-gpu-ram-v2` (la GPU) y de
 `21.fpga-cpu-hdmi-alu` (el camino de memoria de 128 bits), con una LSU nueva
 que coalesce por línea de 16 bytes en vez de servir una lane por acceso.
 
-El diseño y su justificación están en [`lsu-v2.md`](lsu-v2.md).
+| Documento | De qué va |
+| --- | --- |
+| [`lsu-v2.md`](lsu-v2.md) | La LSU con coalescencia: diseño, medidas, y los pasos que **no** funcionaron |
+| [`video-scanout.md`](video-scanout.md) | Lo que cuesta el scanout, medido, y `VIDEO_CTRL` |
+| [`mmio.md`](mmio.md) | Por qué se abrió la ventana MMIO a la GPU y cómo está hecha |
+| [`profiling.md`](profiling.md) | **Dónde se va el tiempo**, con los contadores de `0x80000300` |
+| [`sm-pipeline.md`](sm-pipeline.md) | Propuesta para segmentar el cauce del SM (diseño, sin implementar) |
+
+Para medir en placa sin simular: `python profile.py --port COM3 --program examples/plasma.asm`.
 
 ## Estado
 

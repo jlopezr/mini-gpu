@@ -3,7 +3,8 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     input ftdi_txd, output ftdi_rxd,
     output sdram_clk, sdram_cke, sdram_csn, sdram_rasn, sdram_casn, sdram_wen,
     output [12:0] sdram_a, output [1:0] sdram_ba, sdram_dqm,
-    inout [15:0] sdram_d);
+    inout [15:0] sdram_d,
+    output [3:0] gpdi_dp);
     // Conservative first implementation: native 25 MHz, UART 250 kbaud.
     reg [7:0] power_on=0;
     wire reset=!(&power_on);
@@ -30,6 +31,15 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     wire [23:0] mem_req_addr;
     wire [127:0] mem_req_wdata,mem_rdata;
     wire [15:0] mem_req_wmask;
+    wire [1:0] video_mode;
+    wire [23:0] video_fb_base;
+    wire video_underflow_clear, video_underflow;
+    wire video_frame_pulse;
+    wire p2_valid,p2_ready,p2_write,p2_urgent,p2_rsp_valid,p2_rsp_ready,p2_rsp_error;
+    wire [31:0] p2_addr;
+    wire [127:0] p2_wdata,p2_rsp_rdata;
+    wire [15:0] p2_wmask;
+
     // READ_DELAY_CYCLES NO se pasa: el controlador lo deriva de CLK_FREQ_HZ.
     // A 25 MHz sale 0, que es lo correcto aqui; el 1 fijo que traia por
     // defecto es el de 21, que corre a 80 MHz.
@@ -47,9 +57,144 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
         .host_address(address),.host_write_data(write_data),.host_write_enable(we),.host_read_enable(re),
         .host_read_data(read_data),.host_ready(ready),.host_error(mem_error),
         .debug_register(debug_register),.debug_data(debug_data),.debug_pc(pc),.init_done(init_done),
+        .p2_req_valid(p2_valid),.p2_req_ready(p2_ready),.p2_req_write(p2_write),
+        .p2_req_addr(p2_addr),.p2_req_wdata(p2_wdata),.p2_req_wmask(p2_wmask),
+        .p2_urgent(p2_urgent),
+        .p2_rsp_valid(p2_rsp_valid),.p2_rsp_ready(p2_rsp_ready),
+        .p2_rsp_rdata(p2_rsp_rdata),.p2_rsp_error(p2_rsp_error),
+        .video_mode(video_mode),.video_fb_base(video_fb_base),
+        .video_underflow_clear(video_underflow_clear),
+        .video_underflow(video_underflow),.video_frame_pulse(video_frame_pulse),
         .mem_req_valid(mem_req_valid),.mem_req_ready(mem_req_ready),.mem_req_write(mem_req_write),
         .mem_req_addr(mem_req_addr),.mem_req_wdata(mem_req_wdata),.mem_req_wmask(mem_req_wmask),
         .mem_done(mem_done),.mem_rdata(mem_rdata));
-    assign led={busy,error,halted,last_command[4:0]};
+    // =======================================================================
+    // Subsistema de video
+    //
+    // Estructura calcada de 21, con UNA diferencia de fondo: alli el patron se
+    // elige con un boton y el scanout sigue leyendo SDRAM igualmente, asi que
+    // tapar la imagen no ahorra ancho de banda. Aqui el modo lo manda
+    // VIDEO_CTRL (0x80000200) y el mux es entre las dos FUENTES DE LINEA, de
+    // forma que en BLANK y PATTERN no se emite ni una peticion al fabric.
+    // Ese es el punto entero: el scanout cuesta un 37% del rendimiento de la
+    // GPU (ver video-scanout.md) y se quiere poder recuperarlo desde software.
+    //
+    //   625 MHz VCO / 5  = 125,0 MHz  -> reloj serie TMDS
+    //   625 MHz VCO / 25 =  25,0 MHz  -> reloj de pixel
+    // =======================================================================
+    localparam [1:0] MODE_PATTERN=2'd1, MODE_SCANOUT=2'd2;
+
+    wire clk_pix, clk_pix_5x, clk_pix_locked;
+    clock2_gen #(.CLKI_DIV(1),.CLKFB_DIV(5),.CLKOP_DIV(5),.CLKOP_CPHASE(2),
+                 .CLKOS_DIV(25),.CLKOS_CPHASE(12)) clock_pix_i(
+        .clk_in(clk_25mhz),.clk_5x_out(clk_pix_5x),.clk_out(clk_pix),
+        .clk_locked(clk_pix_locked));
+    wire rst_pix=!clk_pix_locked;
+
+    wire [11:0] sx, sy;
+    wire hsync, vsync, de;
+    simple_480p display_i(.clk_pix(clk_pix),.rst_pix(rst_pix),.sx(sx),.sy(sy),
+        .hsync(hsync),.vsync(vsync),.de(de));
+    wire frame=(sy==12'd480 && sx==12'd0);
+
+    wire [7:0] scan_r,scan_g,scan_b;
+    wire scan_de,scan_hsync,scan_vsync;
+    wire fill_start,fill_first;
+    wire [7:0] fill_line;
+    wire fill_we,fill_done;
+    wire [8:0] fill_addr;
+    wire [15:0] fill_data;
+
+    video_scanout scanout_i(
+        .clk_pix(clk_pix),.rst_pix(rst_pix),.sx(sx),.sy(sy),
+        .de_in(de),.hsync_in(hsync),.vsync_in(vsync),
+        .r(scan_r),.g(scan_g),.b(scan_b),
+        .de_out(scan_de),.hsync_out(scan_hsync),.vsync_out(scan_vsync),
+        .underflow(video_underflow),
+        .clk_sys(clk_25mhz),.rst_sys(reset),
+        .underflow_clear(video_underflow_clear),
+        .fill_start(fill_start),.fill_line(fill_line),.fill_first(fill_first),
+        .fill_we(fill_we),.fill_addr(fill_addr),.fill_data(fill_data),
+        .fill_done(fill_done));
+
+    // Las dos fuentes comparten contrato de relleno, asi que el mux es directo.
+    // Solo arranca la del modo activo: la otra nunca ve `fill_start` y por
+    // tanto no pide nada. Eso es lo que hace que BLANK y PATTERN salgan gratis.
+    wire scanout_on=(video_mode==MODE_SCANOUT);
+    wire burst_we,burst_done,pat_we,pat_done;
+    wire [8:0] burst_addr,pat_addr;
+    wire [15:0] burst_data,pat_data;
+
+    video_line_source_burst source_sdram_i(
+        .clk(clk_25mhz),.reset(reset),.fb_base(video_fb_base),
+        .fill_start(fill_start && scanout_on),.fill_line(fill_line),
+        .fill_we(burst_we),.fill_addr(burst_addr),.fill_data(burst_data),
+        .fill_done(burst_done),
+        .req_valid(p2_valid),.req_ready(p2_ready),.req_write(p2_write),
+        .req_addr(p2_addr),.req_wdata(p2_wdata),.req_wmask(p2_wmask),
+        .urgent(p2_urgent),
+        .rsp_valid(p2_rsp_valid),.rsp_ready(p2_rsp_ready),
+        .rsp_rdata(p2_rsp_rdata),.rsp_error(p2_rsp_error));
+
+    video_line_source_pattern source_pat_i(
+        .clk(clk_25mhz),.reset(reset),
+        .fill_start(fill_start && !scanout_on),.fill_line(fill_line),
+        .fill_we(pat_we),.fill_addr(pat_addr),.fill_data(pat_data),
+        .fill_done(pat_done));
+
+    assign fill_we   = scanout_on ? burst_we   : pat_we;
+    assign fill_addr = scanout_on ? burst_addr : pat_addr;
+    assign fill_data = scanout_on ? burst_data : pat_data;
+    assign fill_done = scanout_on ? burst_done : pat_done;
+
+    // video_mode vive en el dominio de sistema y aqui se usa en el de pixel.
+    reg [1:0] mode_pix_0, mode_pix_1;
+    always @(posedge clk_pix) begin
+        mode_pix_0<=video_mode;
+        mode_pix_1<=mode_pix_0;
+    end
+
+    wire [7:0] paint_r,paint_g,paint_b;
+    video_pattern pattern_i(.clk_pix(clk_pix),.rst_pix(rst_pix),.sx(sx),.sy(sy),
+        .de(de),.frame(frame),.r(paint_r),.g(paint_g),.b(paint_b));
+    // El patron es combinacional desde sx; el scanout llega un ciclo mas tarde.
+    reg [7:0] paint_r_d,paint_g_d,paint_b_d;
+    always @(posedge clk_pix) begin
+        paint_r_d<=paint_r; paint_g_d<=paint_g; paint_b_d<=paint_b;
+    end
+
+    reg [7:0] dvi_r,dvi_g,dvi_b;
+    reg dvi_hsync,dvi_vsync,dvi_de;
+    always @(posedge clk_pix) begin
+        dvi_hsync<=scan_hsync; dvi_vsync<=scan_vsync; dvi_de<=scan_de;
+        case(mode_pix_1)
+            MODE_SCANOUT: begin dvi_r<=scan_r; dvi_g<=scan_g; dvi_b<=scan_b; end
+            MODE_PATTERN: begin dvi_r<=paint_r_d; dvi_g<=paint_g_d; dvi_b<=paint_b_d; end
+            // BLANK y el reservado: negro, pero CON sincronismos validos.
+            // Apagar el reloj de pixel ahorraria mas y haria que el monitor
+            // perdiera el enganche durante segundos; no compensa.
+            default: begin dvi_r<=8'd0; dvi_g<=8'd0; dvi_b<=8'd0; end
+        endcase
+    end
+
+    dvi_generator dvi_i(
+        .clk_pix(clk_pix),.clk_pix_5x(clk_pix_5x),.rst_pix(rst_pix),
+        .de(dvi_de),
+        .data_in_ch0(dvi_b),.data_in_ch1(dvi_g),.data_in_ch2(dvi_r),
+        .ctrl_in_ch0({dvi_vsync,dvi_hsync}),.ctrl_in_ch1(2'b00),.ctrl_in_ch2(2'b00),
+        .tmds_ch0_serial(gpdi_dp[0]),.tmds_ch1_serial(gpdi_dp[1]),
+        .tmds_ch2_serial(gpdi_dp[2]),.tmds_clk_serial(gpdi_dp[3]));
+
+    // Un pulso por vsync, cruzado al dominio de sistema para el contador de
+    // frames de VIDEO_STATUS.
+    reg vsync_sys_0,vsync_sys_1,vsync_sys_2;
+    always @(posedge clk_25mhz) begin
+        vsync_sys_0<=dvi_vsync; vsync_sys_1<=vsync_sys_0; vsync_sys_2<=vsync_sys_1;
+    end
+    assign video_frame_pulse=vsync_sys_1 && !vsync_sys_2;
+
+    // led[0] vigila el underflow del line buffer: en pantalla solo se ve como
+    // una imagen rota, que se confunde con muchas otras cosas.
+    assign led={busy,error,halted,last_command[3:0],video_underflow};
 endmodule
 `default_nettype wire

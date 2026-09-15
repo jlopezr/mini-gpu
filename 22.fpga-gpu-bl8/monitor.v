@@ -139,9 +139,15 @@ module monitor (
 
   /*
    * Validate the complete byte interval, not just its first address.  The GPU
-   * exposes 32 MiB of SDRAM plus two disjoint monitor-only MMIO windows.
+   * exposes 32 MiB of SDRAM plus four disjoint monitor-only MMIO windows.
    * Keeping this check here makes WRITE_BLOCK and READ_BLOCK agree with the
    * byte commands and with the address map implemented by gpu_system.
+   *
+   * Esta lista es la GEMELA de MONITOR_REGIONS en monitor.py, y las dos tienen
+   * que decir lo mismo.  Anadir una ventana en gpu_system_bl8 no basta: si no
+   * se anade tambien aqui, el monitor rechaza el comando antes de que llegue al
+   * decodificador, y el sintoma es un NACK que parece un bitstream viejo o un
+   * mapa de memoria mal escrito.  Asi se perdio un buen rato con 0x200/0x300.
    */
   function block_range_valid;
     input [31:0] start_address;
@@ -155,7 +161,13 @@ module monitor (
           ({1'b0, start_address} >= 33'h0_8000_0000 &&
            end_address <= 33'h0_8000_0080) ||
           ({1'b0, start_address} >= 33'h0_8000_0100 &&
-           end_address <= 33'h0_8000_0118);
+           end_address <= 33'h0_8000_0118) ||
+          // video: VIDEO_CTRL, FB_FRONT/BACK, SWAP, VIDEO_STATUS, SWAP_COUNT
+          ({1'b0, start_address} >= 33'h0_8000_0200 &&
+           end_address <= 33'h0_8000_0218) ||
+          // contadores de rendimiento (ver mmio.md)
+          ({1'b0, start_address} >= 33'h0_8000_0300 &&
+           end_address <= 33'h0_8000_0320);
     end
   endfunction
 

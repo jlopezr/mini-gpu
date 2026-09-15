@@ -23,7 +23,22 @@
  * step_request retires one instruction and stops again. halt_request is latched
  * and honored only after the current instruction has retired.
  */
-module gpu_lane (
+module gpu_lane #(
+    // 0 = la lane busca sus propias instrucciones (comportamiento historico,
+    //     el de la CPU de la que sale este modulo).
+    // 1 = alguien se las da ya buscadas en `imem_read_data`, asi que se saltan
+    //     STATE_FETCH_REQUEST y STATE_FETCH_WAIT.
+    //
+    // En la GPU lo cierto es lo segundo: gpu_sm.v busca la instruccion y se la
+    // presenta a las ocho lanes a la vez. Recorrer los dos estados de busqueda
+    // eran DOS CICLOS POR INSTRUCCION tirados, y con el cauce segmentado son el
+    // cuello entero (ver 24.gpu-sim-pipeline/README.md).
+    //
+    // Es un parametro y no un borrado para que el camino original siga
+    // existiendo y probado: este modulo viene de una CPU completa y puede
+    // volver a usarse como tal.
+    parameter integer EXTERNAL_FETCH = 0
+) (
     input [31:0] launch_pc,
     input [31:0] thread_id,
     input [31:0] register_a,
@@ -87,10 +102,22 @@ module gpu_lane (
   localparam [5:0] OPCODE_BGE = 6'h23;
   localparam [5:0] OPCODE_BLTU = 6'h24;
   localparam [5:0] OPCODE_BGEU = 6'h25;
+
+
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
   localparam [5:0] OPCODE_HALT = 6'h3f;
+  // Seleccion de los registros fuente, comun a los dos caminos de busqueda.
+  // Los saltos condicionales codifican sus operandos en X/Y y no en los campos
+  // Ra/Rb de las instrucciones de tipo R; STORE saca el dato de Rs.
+  wire [5:0] fetch_opcode = imem_read_data[31:26];
+  wire fetch_is_branch = fetch_opcode >= OPCODE_BEQ && fetch_opcode <= OPCODE_BGEU;
+  wire [4:0] fetch_ra = fetch_is_branch ? imem_read_data[25:21]
+                                        : imem_read_data[20:16];
+  wire [4:0] fetch_rb = fetch_is_branch ? imem_read_data[20:16]
+                      : (fetch_opcode == OPCODE_STORE ? imem_read_data[25:21]
+                                                      : imem_read_data[15:11]);
 
   // Errors are terminal in this teaching CPU: there is no exception vector or
   // resume operation. On error, PC is restored to the offending instruction
@@ -283,15 +310,29 @@ module gpu_lane (
           halt_pending <= 1'b0;
 
           if (run_request) begin
+            // Camino de CPU libre: la lane busca sus propias instrucciones.
+            // EXTERNAL_FETCH no aplica aqui, porque en ese modo nadie se las
+            // esta dando.
             pc <= launch_pc;
             halted <= 1'b0;
             step_active <= 1'b0;
             state <= STATE_FETCH_REQUEST;
           end else if (step_request) begin
-            pc <= launch_pc;
             halted <= 1'b0;
             step_active <= 1'b1;
-            state <= STATE_FETCH_REQUEST;
+            if (EXTERNAL_FETCH) begin
+              // El SM ya busco la instruccion y la esta presentando en
+              // `imem_read_data`: pedirla otra vez son dos ciclos tirados.
+              // Se hace aqui lo mismo que harian FETCH_REQUEST y FETCH_WAIT.
+              instruction <= imem_read_data;
+              register_a_address <= fetch_ra;
+              register_b_address <= fetch_rb;
+              pc <= launch_pc + 32'd4;
+              state <= STATE_DECODE;
+            end else begin
+              pc <= launch_pc;
+              state <= STATE_FETCH_REQUEST;
+            end
           end
         end
 
@@ -304,18 +345,8 @@ module gpu_lane (
         STATE_FETCH_WAIT: begin
           if (imem_valid && imem_ready) begin
             instruction <= imem_read_data;
-            // Conditional branches encode their operands in X/Y rather than
-            // the Ra/Rb fields used by R-type instructions.
-            if (imem_read_data[31:26] >= OPCODE_BEQ &&
-                imem_read_data[31:26] <= OPCODE_BGEU) begin
-              register_a_address <= imem_read_data[25:21];
-              register_b_address <= imem_read_data[20:16];
-            end else begin
-              register_a_address <= imem_read_data[20:16];
-              register_b_address <=
-                  imem_read_data[31:26] == OPCODE_STORE ?
-                      imem_read_data[25:21] : imem_read_data[15:11];
-            end
+            register_a_address <= fetch_ra;
+            register_b_address <= fetch_rb;
             imem_valid <= 1'b0;
             pc <= pc + 32'd4;
             state <= STATE_DECODE;
