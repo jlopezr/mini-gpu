@@ -1,0 +1,22 @@
+{
+  "architecture": "cpu",
+  "name": "program-mandelbrot",
+  "program": "program.asm",
+  "requires": ["mul_div"],
+  "max_instructions": 5000000,
+  "timeout_seconds": 30.0,
+  "expect": {
+    "pc": "0xc4",
+    "registers": {
+      "R1": "0x40",
+      "R2": "0x30",
+      "R13": "0x00103000"
+    },
+    "memory_dumps": [
+      {
+        "address": "0x00100000",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}
