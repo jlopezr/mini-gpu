@@ -1,0 +1,95 @@
+# MiniGPU sobre fabric de 4 puertos y SDRAM BL8
+
+Prototipo en construcción. Parte de `17.fpga-gpu-ram-v2` (la GPU) y de
+`21.fpga-cpu-hdmi-alu` (el camino de memoria de 128 bits), con una LSU nueva
+que coalesce por línea de 16 bytes en vez de servir una lane por acceso.
+
+El diseño y su justificación están en [`lsu-v2.md`](lsu-v2.md).
+
+## Estado
+
+| Pieza | Estado |
+| --- | --- |
+| `gpu_lsu2.v` — LSU v2.0, coalescencia por línea de 16 bytes | `gpu_lsu2_tb.v` pasa |
+| `gpu_aux_adapter_128.v` — host/monitor → fabric | `gpu_aux_adapter_128_tb.v` pasa |
+| `gpu_imem_buffer.v` — `instruction_buffer` de 21 tras el `imem` de `gpu_sm` | Integrado |
+| `gpu_system_bl8.v` + `top_bl8.v` — sistema completo | 32 casos diferenciales pasan, sintetiza |
+| Segmentación (v2.1: `pending_spec`, preparación en la sombra) | Diseñada, sin escribir |
+
+### Resultados
+
+| | Ciclos (32 casos) | Fmax | COMB |
+| --- | --- | --- | --- |
+| `default` — base heredada de 17 (LSU v1, BL1) | 139 533 | 44,14 MHz | 31 076 |
+| `bl8` — LSU v2 + buffer de instrucciones + fabric | **80 491** | 36,57 MHz | 31 012 |
+
+**x1,44 de rendimiento neto** (−42% de ciclos, −17% de Fmax, misma área). El
+detalle de cómo se llegó ahí, incluidos los pasos que NO funcionaron, está en
+[`lsu-v2.md`](lsu-v2.md). Resumen: la ganancia es casi toda del buffer de
+instrucciones, no de la LSU — el fetch mueve ~1600× más tráfico que los
+accesos vectoriales.
+
+El camino crítico del chip está ahora dentro de `gpu_lsu2` (`grp_line` →
+`n_lanes`), así que es ahí donde toca seguir si se quiere recuperar Fmax.
+
+`gpu_system.v`, `top.v` y `gpu_lsu.v` son la copia sin tocar de 17: son la
+línea base contra la que se compara, no se usan en el diseño nuevo.
+
+## Cómo reproducir las medidas de ciclos
+
+```powershell
+$env:PATH="C:\Users\j_lop\.apio\packages\oss-cad-suite\bin;C:\Users\j_lop\.apio\packages\oss-cad-suite\lib;$env:PATH"
+cd 22.fpga-gpu-bl8
+# Base (BL1)
+iverilog -g2005-sv -o base.out gpu_system_tb.v gpu_system.v gpu_lsu.v `
+    sdram_controller.v gpu_sm.v gpu_lane.v gpu_register_file.v util.v
+vvp base.out
+# Sistema BL8
+iverilog -g2005-sv -o bl8.out gpu_system_bl8_tb.v gpu_system_bl8.v gpu_lsu2.v `
+    gpu_aux_adapter_128.v gpu_imem_buffer.v instruction_buffer.v `
+    memory_fabric_4.v sdram_controller_128.v sdram_model.v `
+    gpu_sm.v gpu_lane.v gpu_register_file.v util.v
+vvp bl8.out
+```
+
+Se suman los `cycles=` de las líneas `EXEC differential case`. El banco BL8
+imprime además el reparto de tráfico por puerto del fabric al terminar.
+
+**Cuidado con el modelo de SDRAM:** el camino BL8 necesita `sdram_model.v` (el
+de 21, con ráfagas y puerto `dq`), no el `sim/sdram_model.vh` de 17, que es
+funcional BL1 y devuelve basura ante una ráfaga. Y `READ_DELAY_CYCLES` del
+modelo tiene que coincidir con el del controlador (1), o el dato vuelve
+desplazado 16 bits.
+
+## Cómo medir la LSU sola
+
+Los envs `lsu2-timing` y `lsu1-timing` sintetizan cada LSU sola en un chip
+vacío, con envoltorios gemelos (`lsu_timing_top.v` / `lsu1_timing_top.v`) que
+alimentan las entradas anchas con un LFSR y reducen las salidas a los LED.
+
+```powershell
+cd 22.fpga-gpu-bl8
+..\.venv\Scripts\apio.exe build -e lsu2-timing
+..\.venv\Scripts\apio.exe build -e lsu1-timing
+```
+
+Y el número sale de `_build/<env>/hardware.pnr`:
+
+```powershell
+(Get-Content _build\lsu2-timing\hardware.pnr -Raw | ConvertFrom-Json).fmax
+```
+
+**El Fmax de estos envs no es comparable con el del sistema completo**: sin el
+SM alrededor no hay competencia por rutado ni fanout, así que es optimista por
+construcción. Sirve para comparar v1 contra v2 entre sí, y para descartar que
+una lógica sea catastróficamente lenta. El Fmax de verdad sale del build del
+sistema y de la lectura de su camino crítico, como en
+`17.fpga-gpu-ram-v2/docs/optimizacion.md`.
+
+## Simular la LSU sin apio
+
+```powershell
+$env:PATH="C:\Users\j_lop\.apio\packages\oss-cad-suite\bin;C:\Users\j_lop\.apio\packages\oss-cad-suite\lib;$env:PATH"
+iverilog -g2005-sv -o lsu2.out gpu_lsu2.v gpu_lsu2_tb.v
+vvp lsu2.out
+```

@@ -1,0 +1,14 @@
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 2
+SSY join
+BLT R1, R2, low
+MOVI R2, 5
+BLT R1, R2, join
+MOVI R3, 20
+BRA join
+low:
+MOVI R3, 10
+join:
+ADDI R3, R3, 1
+EXIT

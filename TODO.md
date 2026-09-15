@@ -101,3 +101,8 @@ Lo que queda por subir, por orden de lo que más cubriría:
 - `examples/fpga_smoke_test.asm`, que está duplicado en 6, 10, 16 y 18.
 - Los bancos de `memory-test` del monitor, que son un caso de conformidad
   disfrazado de comando.
+
+## 13. Herramienta para testear solo un component a nivel de RTL, p.e la LSU
+
+## 13. Herramienta similar para generar diagrama de bloques. como se conecta LSU con el resto de componentes, y como se conecta el resto de componentes entre si.
+

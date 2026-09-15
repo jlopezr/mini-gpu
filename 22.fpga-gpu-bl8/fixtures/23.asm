@@ -1,0 +1,12 @@
+GETTID R1
+ANDI R1, R1, 7
+MOVI R2, 4
+SSY join
+BGE R1, R2, work
+join:
+ADDI R3, R3, 1
+BAR
+EXIT
+work:
+MOVI R3, 9
+BRA join

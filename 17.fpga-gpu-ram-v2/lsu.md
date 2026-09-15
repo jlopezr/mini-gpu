@@ -1,10 +1,5 @@
 # La LSU de `17.fpga-gpu-ram-v2`
 
-Documento de referencia: qué es, a qué está conectada, qué algoritmo implementa,
-sus estados actuales, y una propuesta de segmentación con solapamiento real
-(no solo repartir un camino combinacional en dos ciclos, como los pasos 1 y 7
-de `docs/optimizacion.md`, sino permitir que la siguiente transacción se
-prepare mientras la actual sigue en curso).
 
 ## Estado de este documento
 
@@ -26,8 +21,7 @@ La sección **"Propuesta: segmentación con solapamiento"**, al final, es
 la idea, no implementación en curso. Todo lo que hay bajo ese título es
 hipotético hasta que se decida construirlo.
 
-## Visión general: a qué está conectada
-
+## Visión general
 La LSU (`gpu_lsu.v`) es el único punto de acceso a la SDRAM. Todo lo que toca
 memoria pasa por ella, por tres puertos distintos, arbitrados internamente:
 
