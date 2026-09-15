@@ -30,6 +30,9 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     wire [23:0] mem_req_addr;
     wire [127:0] mem_req_wdata,mem_rdata;
     wire [15:0] mem_req_wmask;
+    // READ_DELAY_CYCLES NO se pasa: el controlador lo deriva de CLK_FREQ_HZ.
+    // A 25 MHz sale 0, que es lo correcto aqui; el 1 fijo que traia por
+    // defecto es el de 21, que corre a 80 MHz.
     sdram_controller_128 #(.CLK_FREQ_HZ(25_000_000)) controller (
         .clk(clk_25mhz),.reset(reset),.req_valid(mem_req_valid),.req_ready(mem_req_ready),
         .req_write(mem_req_write),.req_addr(mem_req_addr),.req_wdata(mem_req_wdata),

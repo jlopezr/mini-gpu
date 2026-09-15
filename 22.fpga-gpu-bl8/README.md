@@ -57,9 +57,33 @@ imprime además el reparto de tráfico por puerto del fabric al terminar.
 
 **Cuidado con el modelo de SDRAM:** el camino BL8 necesita `sdram_model.v` (el
 de 21, con ráfagas y puerto `dq`), no el `sim/sdram_model.vh` de 17, que es
-funcional BL1 y devuelve basura ante una ráfaga. Y `READ_DELAY_CYCLES` del
-modelo tiene que coincidir con el del controlador (1), o el dato vuelve
-desplazado 16 bits.
+funcional BL1 y devuelve basura ante una ráfaga.
+
+## `READ_DELAY_CYCLES`: calibración de placa, derivada del reloj
+
+El parámetro que dice cuántos ciclos esperar de más antes de muestrear DQ
+**ya no es un número fijo**: `sdram_controller_128.v` lo deriva de
+`CLK_FREQ_HZ`. El retardo de ida y vuelta al chip es físico y constante
+(~18 ps×10³ según la única calibración que hay: 1 ciclo a 80 MHz en 21), pero
+los *ciclos* que ocupa dependen del reloj — 0 a 25 MHz, 1 hasta 111 MHz, 2
+hasta 166 MHz.
+
+Esto importa porque es lo que hizo que la primera prueba en placa fallara con
+`ERROR_INVALID_ENCODING` en PC=0: el valor por defecto de 1, heredado de 21 (que
+corre a 80 MHz), hacía muestrear un ciclo tarde a 25 MHz y las instrucciones
+volvían desplazadas una palabra de 16 bits.
+
+**Una simulación no puede detectar esto.** El modelo tiene el mismo parámetro,
+así que controlador y modelo se ponen de acuerdo en el valor que sea y el banco
+pasa igual. Por eso `sim/system_memory_bl8.vh` calcula `BOARD_READ_DELAY` con la
+misma fórmula: el modelo representa la *placa*, no lo que le convenga al
+controlador. Lo aviso porque es fácil "arreglar" un fallo de placa tocando el
+modelo y creer que está resuelto.
+
+Hay **dos puntos medidos en placa**: 80 MHz → 1 (en 21, en producción) y
+25 MHz → 0 (aquí; con 1 la primera instrucción daba `ERROR_INVALID_ENCODING`,
+con 0 el programa corre y para en el `HALT` con el mismo PC que la simulación).
+Lo que la fórmula predice para otros relojes sigue siendo inferencia.
 
 ## Cómo medir la LSU sola
 

@@ -36,7 +36,28 @@ module sdram_controller_128 #(
     // (ver `dq_negedge` mas abajo), asi que el instante real de captura es
     // medio ciclo antes de lo que sugiere este numero. Con la captura
     // centrada en el ojo, el valor correcto para esta placa vuelve a ser 1.
-    parameter integer READ_DELAY_CYCLES = 1
+    //
+    // POR ESO SE DERIVA DEL RELOJ Y NO SE FIJA A UN NUMERO. Si el retardo es
+    // fisico y constante, los ciclos que hay que esperar NO lo son: dependen de
+    // cuanto dure un ciclo. Dejarlo en 1 fijo es correcto a 80 MHz (21) y
+    // ROMPE a 25 MHz (22), donde hace muestrear un ciclo tarde y el dato
+    // vuelve desplazado una palabra de 16 bits.
+    //
+    // ROUND_TRIP_PS esta calibrado con DOS puntos medidos en placa:
+    //
+    //   80 MHz -> 1   (21.fpga-cpu-hdmi-alu, en produccion)
+    //   25 MHz -> 0   (22, confirmado: con 1 la primera instruccion daba
+    //                  ERROR_INVALID_ENCODING y con 0 el programa corre)
+    //
+    // Los dos juntos acotan el retardo real entre 12,5 y 25 ns; se toma 18 ns,
+    // a mitad del intervalo. Lo que la formula predice para OTROS relojes
+    // (1 hasta 111 MHz, 2 hasta 166 MHz) sigue siendo inferencia: cada reloj
+    // nuevo hay que confirmarlo en placa.
+    parameter integer ROUND_TRIP_PS = 18_000,
+    // Division entera = suelo. Se calcula en MHz x ps para no desbordar el
+    // entero de 32 bits, que CLK_FREQ_HZ * ROUND_TRIP_PS si haria.
+    parameter integer READ_DELAY_CYCLES =
+        (CLK_FREQ_HZ / 1_000_000) * ROUND_TRIP_PS / 1_000_000
 ) (
     input wire clk,
     input wire reset,

@@ -606,3 +606,25 @@ Una vez estable el pipeline básico pueden estudiarse blending, clipping más co
 ```
 
 La idea central es mantener el núcleo de cálculo **general y programable**, y añadir hardware fijo alrededor de él para transformar triángulos y memoria gráfica en trabajo que encaje naturalmente con los **8 lanes**. El rasterizador no sustituye al núcleo SIMT: su función principal es alimentarlo eficientemente con grupos de fragmentos.
+Presupuesto de frame
+Modo 640×480@60 (el que emite el scanout, con el framebuffer a 320×240 escalado ×2). Timing total 800×525 y reloj de píxel = reloj de sistema = 25 MHz:
+
+píxeles	tiempo	ciclos a 25 MHz
+Frame completo	800×525 = 420 000	16,8 ms (59,5 Hz)	420 000
+Solo vblank (45 líneas)	36 000	1,44 ms	36 000
+Área activa	640×480	12,29 ms	307 200
+Con doble buffer (FB_FRONT/FB_BACK + SWAP) tienes los 420 000 ciclos enteros para rellenar el back buffer. Sin doble buffer, para no ver tearing solo tienes los 36 000 del vblank, que es prácticamente nada.
+
+De esos 420 000 hay que descontar lo que el scanout le roba a la SDRAM: 320×240×2 = 153 600 B por frame, en accesos BL8 de 16 B ≈ 9 600 transacciones. Contando overhead de activación/refresh, cuenta con ~10-15 % menos, o sea ~360 000–380 000 ciclos útiles para la GPU.
+
+## Cuántas instrucciones son en la GPU BL8
+
+a gpu_sm no está segmentada: cada instrucción de warp recorre la FSM PICK → FETCH → FETCH_WAIT → RF_WAIT → DECODE → START → EXEC → FINISH → NORMALIZE → RETIRE (gpu_sm.v:42-43). Con el buffer de instrucciones acertando, eso son ~8 ciclos por instrucción de warp (más si hay MEMORY/RECON).
+
+Así que, orden de magnitud por frame:
+
+~45 000–52 000 instrucciones de warp (8 lanes cada una)
+= ~360 000–420 000 operaciones de lane
+El framebuffer tiene 76 800 píxeles → si mapeas una lane a un píxel, son ~9 600 grupos de 8 píxeles, es decir ~5 instrucciones de warp por píxel. Muy justo: te da para un gradiente o un blit, no para nada por píxel con divisiones o acceso a textura.
+El número de 8 ciclos/instrucción es una lectura de la FSM, no una medida. Para el valor real de tu carga: los 32 casos diferenciales gastan 80 491 ciclos (README.md:24) y la SM expone retired_count — dividir uno entre otro te da el CPI efectivo exacto.
+a

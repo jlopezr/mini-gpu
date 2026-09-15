@@ -1,3 +1,7 @@
+    // El modelo representa la PLACA, asi que su retardo de lectura tiene que
+    // ser el real, no el que le venga bien al controlador. Se calcula con la
+    // misma formula que sdram_controller_128 deriva de CLK_FREQ_HZ (25 MHz -> 0).
+    localparam integer BOARD_READ_DELAY = (25_000_000/1_000_000)*18_000/1_000_000;
     wire init_done,mem_req_valid,mem_req_ready,mem_req_write,mem_done;
     wire [23:0] mem_req_addr;
     wire [127:0] mem_req_wdata,mem_rdata;
@@ -18,6 +22,6 @@
     // El de 17 es funcional BL1 y NO implementa rafagas, asi que contra el
     // controlador BL8 devuelve basura -- que es exactamente como se manifesto
     // este fallo la primera vez: opcode invalido en la primera instruccion.
-    sdram_model #(.ROWS(512),.POWERUP_DELAY_NS(0),.READ_DELAY_CYCLES(1)) ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
+    sdram_model #(.ROWS(512),.POWERUP_DELAY_NS(0),.READ_DELAY_CYCLES(BOARD_READ_DELAY)) ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
         .rasn(sdram_rasn),.casn(sdram_casn),.wen(sdram_wen),
         .a(sdram_a),.ba(sdram_ba),.dqm(sdram_dqm),.dq(sdram_d));
