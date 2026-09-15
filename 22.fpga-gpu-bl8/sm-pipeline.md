@@ -69,10 +69,49 @@ ejecución. Después quedan libres para que otro warp lea los suyos.
 Seis etapas en vez de once estados, y **solapadas**: mientras el warp A está en
 X, el B puede estar en D, el C en I, el D en F y el E en S.
 
+### Cómo mapea cada estado de hoy
+
+| Hoy (14 estados) | Mañana | Qué pasa con él |
+| --- | --- | --- |
+| `INIT` | — | Bucle de 256 ciclos al reset. Fuera del cauce, no cambia |
+| `PICK` *(elegir warp)* | **S** | Se queda, más `in_flight[w]` |
+| `PICK` *(retirar LSU, liberar barreras)* | — | **Sale del cauce**: unidad de cierre |
+| `NORMALIZE` (+ su `CONTEXT`) | — | **Sale del cauce**: mantenimiento de reconvergencia |
+| `CONTEXT` | **S** | Leer `pc[w]` es parte de elegir |
+| `RECON` | — | A la unidad de cierre |
+| `FETCH` | **F** | 1:1 |
+| `FETCH_WAIT` | **I** | 1:1 |
+| `RF_WAIT` | **I** + **D** | `target`/`branch_target` a I; la latencia del banco la cubre D→X |
+| `DECODE` | **D** | 1:1 |
+| `MEMORY` | **D** | El desvío a la LSU se decide en el decode |
+| `START` | **D→X** | Deja de ser estado: es la frontera entre etapas |
+| `EXEC` | **X** | 1:1, sigue multiciclo |
+| `FINISH` | **W** | 1:1 |
+| `RETIRE` | **W** | Se fusiona con `FINISH` |
+
+Tres avisos para no leer mal la tabla:
+
+- **No es una mejora de latencia.** Una instrucción suelta tarda casi lo mismo.
+  Lo que cambia es que hoy esos ciclos son *exclusivos* —el SM no vuelve a
+  `PICK` hasta retirar— y mañana se solapan entre warps.
+- **Lo que más gana no es lo que se fusiona, es lo que se va.** Ver abajo.
+- **La longitud de `X` no la fija el SM**, la fija la lane: cuatro ciclos
+  (`HALTED→DECODE→EXECUTE→RETIRE`) para una ALU simple. Por eso el modelo de
+  `24.gpu-sim-pipeline` tiene `exec_base` separado de `pipe_front`.
+
 `PICK` hoy mezcla planificación con cierre de operaciones de memoria y barreras.
 En la propuesta eso se separa: la **retirada de respuestas de la LSU y la
 liberación de barreras pasan a una unidad de cierre independiente** que corre en
 paralelo y solo toca `wait_mem`/`wait_bar`/`pc`. No compite por el cauce.
+
+Lo que hace esto medible es el ORDEN de esas tareas. En `gpu_sm.v` la cadena de
+`else if` de `PICK` pone primero retirar la respuesta de la LSU, luego liberar
+barreras, luego `normalize_found`, y **elegir warp es la última**: cada ciclo
+que hay algo que cerrar, no se elige a nadie. `NORMALIZE` es el caso extremo —
+se lleva además un `CONTEXT` de ida y vuelve a `PICK` sin haber ejecutado nada.
+
+Ahí es donde hay que mirar primero para explicar los ~1,3 ciclos por
+instrucción que el modelo de costes de `23.gpu-sim-uarch` no reproduce.
 
 ## La decisión que lo simplifica todo: una instrucción en vuelo por warp
 
@@ -112,17 +151,155 @@ de `X`.
 Aquí estimé a ojo "2-4 ciclos, o sea 5-6×", y **el modelo de ciclos de
 `23.gpu-sim-uarch` dice que son 2,5×**, no 5-6. La razón es concreta y no la vi:
 con el front-end segmentado, `X` queda ocupada el **83%** del tiempo, porque
-dura 6 ciclos — la lane recorre `HALTED → FETCH_REQUEST → FETCH_WAIT → DECODE
-→ EXECUTE → RETIRE` **haciendo su propio fetch**, aunque el SM ya le entregue
-la instrucción.
+duraba 6 ciclos — la lane recorría `HALTED → FETCH_REQUEST → FETCH_WAIT →
+DECODE → EXECUTE → RETIRE` **haciendo su propio fetch**, aunque el SM ya le
+entregara la instrucción.
 
-O sea que hay **dos ciclos por instrucción tirados** en un fetch redundante
-dentro de `gpu_lane.v`. Quitarlos llevaría `X` de 6 a 4 ciclos y el CPI de 6,5
-a ~4,5: otro **1,4× encima del 2,5×**. Y es un cambio local, del mismo tipo que
-acortar el handshake de `gpu_imem_buffer`.
+Eran **dos ciclos por instrucción tirados**, y ya están quitados
+(`gpu_lane #(.EXTERNAL_FETCH(1))`). Con `X` en 4 ciclos el modelo da ahora
+**CPI 4,75 y X ocupada el 77,0%**, con 38 ciclos de burbuja en todo el frame.
 
-Quitarlo de verdad exigiría replicar las lanes, que es multiplicar el área del
-cálculo. No merece la pena mientras estén al 6% de uso.
+#### ¿Y las instrucciones largas paran a las demás etapas?
+
+Sí: `X` es recurso único, así que un `MUL` de 4 ciclos deja quietas a S/F/I/D.
+La pregunta útil es cuánto cuesta. Mismo frame, variando **solo** el coste de
+las operaciones largas:
+
+| variante | ciclos | CPI | X ocupada |
+| --- | --- | --- | --- |
+| tal cual (MUL 4, shift 1 bit/ciclo) | 721 750 | **4,75** | 77,0% |
+| MUL de 1 ciclo | 672 761 | 4,43 | 75,3% |
+| shift de 1 ciclo | 698 695 | 4,60 | 76,2% |
+| los dos de 1 ciclo | 649 710 | **4,28** | 74,4% |
+
+**El multiciclo cuesta un 10%.** Lo que domina no es que `MUL` tarde 4 de vez
+en cuando, sino que `X` tarda 4 en **toda** instrucción, incluido un `ADD`: eso
+solo ya fija CPI ≈ 4. Las etapas de un ciclo no son el cuello — solo tienen que
+mantener `X` alimentada, y con 8 warps lo consiguen de sobra.
+
+El bloqueo además es **barato de implementar**: con una instrucción en vuelo
+por warp no hay riesgos de datos ni de control, así que `X` ocupada se resuelve
+con contrapresión pura, sin vaciados ni repeticiones. Y como `X` no está
+segmentada, dentro solo hay una instrucción: no pueden acabar desordenadas.
+
+Para pasar de ~3,4× hay que tocar `X`, no el front-end: acortar más la lane,
+segmentar `X`, o replicar lanes — y esto último multiplica el área del cálculo
+para unas unidades que hoy están al 6% de uso.
+
+#### Coste en `X` de cada instrucción
+
+Contado en estados de `gpu_lane.v`. La columna es lo que ocupa el recurso
+único, que es lo que fija el caudal.
+
+| Instrucción | Op | Ciclos `X` | Camino en la lane |
+| --- | --- | --- | --- |
+| `NOP` `ADD` `SUB` `AND` `OR` `XOR` | 00-06 | **4** | HALTED→DECODE→EXECUTE→RETIRE |
+| `MOVI` `ADDI` `ANDI` `ORI` `XORI` `MOVHI` | 10-17 | **4** | ídem |
+| `GETTID` | 30 | **4** | ídem |
+| `BRA` | 2F | **5** | + BRANCH_COMMIT |
+| `SHL` `SHR` `SAR` | 07-09 | **n+5** (5…36) | + SHIFT_STEP×n + SHIFT_WRITE, `n = rb[4:0]` |
+| `BEQ` `BNE` `BLT` `BGE` `BLTU` `BGEU` | 20-25 | **6** | + BRANCH_COMPARE + BRANCH_COMMIT |
+| `MUL` `MULFX` | 0A, 03 | **8** | + PRODUCTS + CROSS + COMBINE + WRITE |
+| `DIV` | 0C | **37** | + DIV_STEP×32 + MUL_WRITE |
+| `TRAP` | 3E | 3, no retira | para con error |
+
+Y las que **no pisan las lanes**, resueltas en el `DECODE` del SM, que por tanto
+cuestan **0 ciclos de `X`**:
+
+| Instrucción | Op | Coste hoy |
+| --- | --- | --- |
+| `SSY` `BAR` `EXIT` `HALT` | 31-33, 3F | 7 ciclos, retira en `DECODE` |
+| `LOAD` `STORE` | 15, 16 | 8 ciclos de SM + latencia de memoria (solapable) |
+
+Que un `LOAD` no bloquee `X` **en absoluto** es importante: la respuesta de la
+LSU escribe el banco de registros directamente (`response_commit` en
+`gpu_sm.v`), sin pasar por la lane. Por eso los programas con mucha memoria no
+sufren el cuello de `X`.
+
+Hoy el total por instrucción es `X + 10` (ocho estados de `PICK`…`START` más
+`FINISH` y `RETIRE`): un `ADD` son 14 ciclos, un `MUL` 18, una división 47.
+Segmentado, esos 10 se solapan y en serie solo queda la columna `X`.
+
+Aviso: el ensamblador acepta `MULHI`, `DIVU`, `REM`, `REMU`, los accesos de byte
+y media palabra, `SLT`/`SLTU` y `JAL`/`JALR`/`JR`, que **este core no
+implementa** — caen en el `default` de `gpu_lane.v` y dan
+`ERROR_INVALID_OPCODE`. Es el conjunto que traerá el core nuevo.
+
+#### Reparto real: ¿de qué sirve acortar `X`?
+
+Un frame de `plasma_nommio.asm`, contando instrucciones ejecutadas:
+
+| instr | veces | % instr | ciclos `X` | % de `X` | `X` c/u |
+| --- | --- | --- | --- | --- | --- |
+| `ADD` | 72 016 | 47,4% | 288 064 | 41,0% | 4,0 |
+| `ADDI` | 21 136 | 13,9% | 84 544 | 12,0% | 4,0 |
+| `MUL` | 16 328 | 10,8% | 130 624 | 18,6% | 8,0 |
+| `XOR` | 9 600 | 6,3% | 38 400 | 5,5% | 4,0 |
+| `ANDI` | 9 600 | 6,3% | 38 400 | 5,5% | 4,0 |
+| `SHR` | 6 728 | 4,4% | 56 696 | 8,1% | 8,4 |
+| `BNE` | 4 808 | 3,2% | 28 848 | 4,1% | 6,0 |
+| `STORE` | 4 800 | 3,2% | 0 | 0,0% | 0,0 |
+| `BLT` | 4 800 | 3,2% | 28 800 | 4,1% | 6,0 |
+| `SUB` | 1 920 | 1,3% | 7 680 | 1,1% | 4,0 |
+| resto | 144 | 0,1% | 416 | 0,1% | — |
+| **TOTAL** | **151 880** | 100% | **702 472** | 100% | **4,6** |
+
+**El 75% de las instrucciones cuestan 4 ciclos**, y son el 65% de todo el
+tiempo de `X`. Así que sí: el caso común manda.
+
+#### Colapsar antes que segmentar
+
+La conclusión tentadora es partir `X` en `X1 X2 X3 X4` y emitir una por ciclo.
+Pero esos cuatro ciclos **no son cuatro etapas de un cálculo**:
+
+| Ciclo | Qué hace | ¿Cómputo? |
+| --- | --- | --- |
+| `HALTED` | Espera `step_request` | No — handshake |
+| `DECODE` | `operand_a <= register_a` | Sí, y **por timing**: rompe el camino del mux del banco al sumador de 32 bits |
+| `EXECUTE` | La ALU | Sí |
+| `RETIRE` | Escribe el resultado y señala retirado | Sí, pero `W` ya lo hace |
+
+`HALTED` y `RETIRE` son **la misma redundancia que el fetch que ya quitamos**:
+el SM haciendo una cosa y la lane repitiéndola. Y los saltos añaden
+`BRANCH_COMPARE`+`BRANCH_COMMIT` cuando `W` ya resuelve saltos y divergencia:
+otros dos ciclos duplicados, en el 6,4% de las instrucciones.
+
+Así que el orden sensato es **colapsar primero**:
+
+- `HALTED` desaparece — el paso `D`→`X` sustituye al handshake.
+- `RETIRE` se funde en `W`, y el camino de salto también.
+- Queda `DECODE`+`EXECUTE`: **`X` de 2 ciclos**.
+
+`DECODE` es justo el que **no** hay que colapsar: existe para cortar el camino
+crítico, y el Fmax está en 36,5 MHz corriendo a 25. En un cauce deja de ser "un
+ciclo extra de una máquina multiciclo" —como dice el comentario del RTL— y pasa
+a ser una etapa legítima de búsqueda de operandos.
+
+Barrido del modelo variando la longitud del camino corto:
+
+| `X` | ciclos | CPI | `X` ocupada |
+| --- | --- | --- | --- |
+| 4 (hoy) | 721 750 | 4,75 | 77,0% |
+| 3 | 574 730 | 3,78 | 71,1% |
+| 2 | 427 713 | 2,82 | 61,1% |
+| 1 | 280 755 | **1,85** | 40,7% |
+
+Y sólo **después** tiene sentido segmentar los dos restantes (operandos / ALU),
+que sí es pipelining de verdad. Ahí aparece el problema nuevo: **la latencia
+variable**. `MUL` son 8, los desplazamientos `n+5`, `DIV` 37 — y es el **35% de
+los ciclos de `X`**. Con `X` segmentada acaban fuera de orden y chocan en la
+escritura, así que hace falta arbitraje de writeback y bloquear la emisión
+detrás de las largas.
+
+| Paso | CPI | Ganancia | Coste |
+| --- | --- | --- | --- |
+| Hoy (medido en placa) | 15,6 | — | — |
+| Segmentar el front-end | 4,75 | 3,3× | S/F/I/D/X/W + registros de etapa |
+| Colapsar la lane (`X` 4→2) | 2,82 | 1,7× | quitar `HALTED`, `RETIRE` y el camino de salto |
+| Segmentar `X` (2→1) | 1,85 | 1,5× | arbitraje de writeback para latencia variable |
+
+Los dos primeros son del mismo tipo que lo ya hecho y validado. El tercero es el
+único que introduce una clase de problema nueva.
 
 ### 2. No hay warp elegible — burbuja
 

@@ -84,20 +84,15 @@ class Pipeline:
         instr = struct.unpack_from("<I", self.system.memory, pc)[0]
         return instr, instr >> 26
 
+    # El coste de ejecucion NO se duplica aqui: sale de `uarch.exec_cycles`.
+    #
+    # Habia una copia, y arrastraba los mismos cuatro errores de cuenta que la
+    # original (saltos, `BRA`, desplazamientos, `DIV`). Duplicar la tabla de
+    # costes garantiza que los dos modelos se contradigan en cuanto alguien
+    # toque uno -- que es justo lo que no puede pasar, porque el sentido de
+    # tener dos es que se contrasten.
     def exec_cycles(self, instr: int, opcode: int, warp) -> int:
-        cfg = self.cfg
-        if opcode in uarch.MUL_OPCODES:
-            return cfg.exec_base + cfg.mul_cycles
-        if opcode in uarch.DIV_OPCODES:
-            return cfg.exec_base + cfg.div_cycles
-        if opcode in uarch.SHIFT_OPCODES:
-            rb = (instr >> 11) & 0x1F
-            worst = 0
-            for lane in warp.processors:
-                if warp.active_mask & (1 << lane.core_id):
-                    worst = max(worst, lane.regs[rb] & 0x1F)
-            return cfg.exec_base + worst * cfg.shift_per_bit
-        return cfg.exec_base
+        return uarch.exec_cycles(self.cfg, instr, opcode, warp)
 
     def pick(self):
         """Warp elegible: vivo, no esperando, y SIN instruccion en el cauce.

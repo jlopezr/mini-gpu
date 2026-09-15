@@ -5,6 +5,8 @@ una ISA y una CPU escalar verificable. El repositorio avanza mediante etapas
 independientes: modelos de Mandelbrot, ensamblador, simulador funcional,
 bring-up de la ULX3S, monitor UART, CPU en FPGA y memoria SDRAM externa.
 
+![MiniGPU](./1.isa/minigpu.png)
+
 El diseño de CPU más completo está actualmente en
 [`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu): la 19 con la familia ALU
 completa (`MULHI`, `DIVU`, `REM`, `REMU`), desplazamientos con cantidad

@@ -212,6 +212,55 @@ puede tener dos búsquedas en vuelo, y por eso `imem_ready` puede ser constante.
 El día que se segmente el cauce del SM —la optimización 1— hay que revisar
 exactamente esto.
 
+## Medido en placa (y un contador que mentía)
+
+Todo lo anterior salió de `gpu_profile_tb.v`. Esta es la primera medida sobre
+la ULX3S real, con `profile.py` y el fetch redundante de la lane ya quitado
+(`EXTERNAL_FETCH`):
+
+```text
+                    placa        banco        modelo de ciclos
+CYCLES          2 702 006    2 905 633    2 378 037
+RETIRED           172 889      166 046      151 880
+LSU_TX              9 600        9 600        9 600
+LANE_OPS        1 236 090    1 229 247    1 214 976
+CPI                  15,6         17,6         15,66
+```
+
+**Las cantidades de trabajo cuadran**: `LSU_TX` sale exacto y `LANE_OPS` queda
+a un 0,6% del banco. Y el CPI de placa (15,6) coincide con el que predijo el
+modelo de `23.gpu-sim-uarch` tras quitar el fetch de la lane (15,66) — un 0,2%
+de diferencia. Es la primera vez que el modelo se contrasta contra hardware, y
+sobrevive: la predicción de segmentar el cauce (15,66 → 4,75) parte de una
+línea base que ahora está medida, no simulada.
+
+`plasma.asm` entero (4 frames) da **100 ms por frame, 10 fps**, con el mismo
+CPI de 15,6.
+
+**Antes de eso hubo que arreglar el contador.** `CYCLES` era libre:
+
+```verilog
+end else begin
+    cycles<=cycles+1'b1;      // sin condicion
+```
+
+Leído desde el host eso no mide el programa, mide el reloj de pared: entre las
+dos lecturas caben las órdenes por serie y la granularidad de 50 ms del bucle
+que pregunta si ha parado. La primera medida en placa salió con **CPI 43,2 y
+2,1% de utilización** por esto, no porque el cauce fuera lento. Las cantidades
+de trabajo no se veían afectadas —por eso esas sí cuadraban con el banco—, y
+esa discrepancia fue justo lo que delató el fallo.
+
+Ahora todos los contadores avanzan solo con `running`. `VIDEO_TX` también: el
+scanout sigue leyendo SDRAM con la GPU parada, y contar ese tráfico ensuciaba
+el reparto, que es justo para lo que sirve.
+
+**La lección se generaliza mal si se cuenta como "un bug".** Un contador de
+ciclos libre es correcto para que un programa se mida a sí mismo en la placa
+—que era el caso de uso original, y ahí las dos lecturas las hace la GPU— y es
+incorrecto para que lo mida el host. El mismo registro, dos usos, y solo uno
+funcionaba.
+
 ## Lo que este perfil deja claro para el futuro
 
 Las tres optimizaciones grandes de esta sesión —camino de 128 bits,

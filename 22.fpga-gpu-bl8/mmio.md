@@ -35,7 +35,7 @@ lectura, y un intento de escritura es fault.
 ### Contadores (`gpu_perf_counters.v`)
 
 ```text
-0x80000300  CYCLES       ciclos desde el reset (libre, da la vuelta)
+0x80000300  CYCLES       ciclos CON LA GPU CORRIENDO (da la vuelta)
 0x80000304  RETIRED      instrucciones retiradas
 0x80000308  IMEM_HITS    aciertos del bufer de instrucciones
 0x8000030c  IMEM_MISSES  fallos del bufer de instrucciones
@@ -47,6 +47,16 @@ lectura, y un intento de escritura es fault.
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria de fetch
 sin instrumentar nada más. Y lo importante: **un programa se mide a sí mismo en
 la placa**, leyendo `CYCLES` antes y después, sin simular y sin cronómetro.
+
+Todos avanzan **solo con la GPU corriendo**, y eso no es un detalle. Un contador
+libre vale para que un programa se mida a sí mismo (las dos lecturas las hace la
+GPU, y entre ellas solo pasa lo que ella hace), pero **no** para que lo mida el
+host: ahí, entre las dos lecturas caben las órdenes por serie y el bucle que
+sondea si ha parado. Con `CYCLES` libre, `profile.py` daba un CPI de 43 en vez
+de 15,6 — medía el reloj de pared. Ver `profiling.md`.
+
+`VIDEO_TX` se cuenta igual, porque el scanout sigue leyendo SDRAM con la GPU
+parada y ese tráfico no es del programa.
 
 ## Cómo está hecho
 

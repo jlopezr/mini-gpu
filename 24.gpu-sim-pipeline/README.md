@@ -67,12 +67,22 @@ relación es exactamente lineal:
 
 | Ciclos de la lane | Ciclos/frame | CPI | vs. el diseño de hoy |
 | --- | --- | --- | --- |
-| 6 (hoy) | 975 693 | 6,42 | 2,7× |
-| 5 | 828 621 | 5,46 | 3,2× |
-| 4 (sin su fetch) | 681 549 | 4,49 | **3,9×** |
-| 3 | 534 481 | 3,52 | 5,0× |
+| 6 (antes de quitar su fetch) | 1 001 463 | 6,59 | 2,4× |
+| 5 | 854 429 | 5,63 | 2,8× |
+| **4 (hoy, `EXTERNAL_FETCH`)** | **707 404** | **4,66** | **3,3×** |
+| 3 | 560 433 | 3,69 | 4,2× |
+| 2 (colapsando `HALTED` y `RETIRE`) | 413 373 | 2,72 | **5,7×** |
 
-Referencia: 2 678 274 ciclos medidos en RTL para el mismo frame.
+Referencia: **15,6 ciclos por instrucción medidos en placa** (`profile.py`, ver
+`22.fpga-gpu-bl8/profiling.md`); 2 378 037 ciclos en RTL para este frame.
+
+Los 6 ciclos ya no son "hoy": el fetch redundante de la lane está quitado y hoy
+son 4. La fila de 2 es la siguiente parada, y está razonada en
+`sm-pipeline.md` — `HALTED` es un handshake y `RETIRE` lo duplica `W`.
+
+El modelo de coste de 23 da 4,75 para la misma configuración; éste, 4,66. Un
+1,9% de diferencia entre dos modelos construidos por separado, que es
+exactamente para lo que sirve tener dos.
 
 ### El hallazgo: la lane hace un fetch que no necesita
 
@@ -87,23 +97,32 @@ instrucción, y su `imem_ready` está atado a su propio `imem_valid`, así que n
 espera a nadie — simplemente gasta los estados. Son un resto de cuando la lane
 era una CPU completa.
 
-Quitarlos vale:
+**Hecho, y esto es lo que salió.** El cambio fue local a un módulo
+(`gpu_lane #(.EXTERNAL_FETCH(1))`), del mismo tipo que acortar el handshake de
+`gpu_imem_buffer`, y no dependía de segmentar el SM:
 
-- **1,43× sobre el cauce segmentado** (6,42 → 4,49 ciclos por instrucción);
-- **y un 18% HOY, sin segmentar nada**: el modelo de coste da 2 185 888 ciclos
-  contra los 2 678 274 medidos, o sea 17,63 → 14,39 ciclos por instrucción.
+| | Predicho por el modelo | Medido en RTL |
+| --- | --- | --- |
+| Ganancia sin segmentar nada | −11,9% | **−11,2%** |
 
-Ese segundo número es el interesante: es un cambio **local a un módulo**, del
-mismo tipo que acortar el handshake de `gpu_imem_buffer` (que dio −12,5%), y no
-depende de segmentar el SM. Se puede hacer ya, medir en placa con `profile.py`,
-y seguir.
+Es la razón de ser de esta carpeta: la predicción se hizo antes de tocar el
+Verilog y acertó dentro de un punto porcentual.
 
 ## Cómo leer estos números
 
-Los dos modelos coinciden entre sí (975 693 contra 990 086, 1,5%), lo cual está
-bien pero no demuestra nada sobre el RTL: comparten calibración. Lo que sí
-respalda al conjunto es que 23 reproduce el diseño actual con `retired` y
-`lsu_tx` exactos y los ciclos a −7,4%.
+Los dos modelos coinciden entre sí (707 404 contra 721 750, un 2,0%), lo cual
+está bien pero **no demuestra nada sobre el RTL**: comparten calibración.
+
+Lo que sí respalda al conjunto son dos contrastes externos:
+
+- 23 reproduce el diseño actual con `retired`, `lane_ops` y `lsu_tx` exactos y
+  los ciclos a −7,0%;
+- y sobre todo, **el CPI medido en la placa es 15,6 y el modelo predijo 15,66**
+  (ver `22.fpga-gpu-bl8/profiling.md`). Esa es la única validación que no es
+  circular, porque el hardware no comparte nada con el modelo.
+
+La parte segmentada sigue siendo **predicción**. El modelo reproduce lo que
+existe, que es la única razón para creerle sobre lo que no existe.
 
 **Ese −7,4% es un sesgo optimista**, así que los 3,9× hay que leerlos como
 "algo menos de 3,9×". Y el modelo no sabe nada de Fmax: si el cauce segmentado

@@ -90,9 +90,17 @@ class Config:
 
 
 MEM_OPCODES = {0x15, 0x16}           # LOAD, STORE
+# 0x0B/0x0D/0x0E/0x0F (MULHI, DIVU, REM, REMU) NO los implementa gpu_lane.v:
+# caen en su `default` y dan ERROR_INVALID_OPCODE. Se dejan aqui porque el
+# ensamblador si los emite y el core nuevo los traera.
 MUL_OPCODES = {0x03, 0x0A, 0x0B}
 DIV_OPCODES = {0x0C, 0x0D, 0x0E, 0x0F}
 SHIFT_OPCODES = {0x07, 0x08, 0x09}
+BRANCH_OPCODES = {0x20, 0x21, 0x22, 0x23, 0x24, 0x25}
+BRA_OPCODE = 0x2F
+# Resueltas en el DECODE del SM: no llegan a pisar las lanes, asi que no
+# ocupan la etapa de ejecucion. SSY, BAR, EXIT, HALT.
+SM_ONLY_OPCODES = {0x31, 0x32, 0x33, 0x3F}
 BAR_OPCODE = 0x32
 
 
@@ -159,6 +167,54 @@ class MemChannel:
         return self.busy_until
 
 
+def exec_cycles(cfg: Config, instr: int, opcode: int, warp) -> int:
+    """Ciclos que una instruccion ocupa la etapa de ejecucion.
+
+    Contando estados de `gpu_lane.v`. `exec_base` son los cuatro del camino
+    corto (HALTED, DECODE, EXECUTE, RETIRE) y lo que se suma encima son los
+    estados INTERMEDIOS de cada familia.
+
+    Vive aqui, y no como metodo, porque `24.gpu-sim-pipeline` necesita
+    exactamente lo mismo: tenia su propia copia, con los mismos cuatro errores
+    de cuenta que se detectaron al hacer la tabla instruccion a instruccion de
+    `sm-pipeline.md`:
+
+      - saltos: faltaban BRANCH_COMPARE y BRANCH_COMMIT (+2). El peor de los
+        cuatro, porque son el 6,4% de las instrucciones del frame.
+      - `BRA`: faltaba BRANCH_COMMIT (+1).
+      - desplazamientos: faltaba SHIFT_WRITE (+1), ademas de los n pasos.
+      - `DIV`: faltaba MUL_WRITE, donde se escribe el cociente (+1).
+
+    Corregirlo llevo el modelo de -8,1% a -7,0% frente al RTL.
+    """
+    if opcode in SM_ONLY_OPCODES:
+        # SSY, BAR, EXIT y HALT se resuelven en el DECODE del SM: no llegan a
+        # las lanes, asi que no ocupan la etapa de ejecucion.
+        return 0
+    if opcode in MUL_OPCODES:
+        # PRODUCTS, CROSS, COMBINE, WRITE.
+        return cfg.exec_base + cfg.mul_cycles
+    if opcode in DIV_OPCODES:
+        # 32 x DIV_STEP, y luego MUL_WRITE para el cociente.
+        return cfg.exec_base + cfg.div_cycles + 1
+    if opcode in SHIFT_OPCODES:
+        # Un bit por ciclo, y el numero de bits sale de un registro: se toma el
+        # peor de las lanes activas, que es lo que ve el SM al esperar a
+        # `&done`. Un desplazamiento de 0 se salta los pasos pero sigue pagando
+        # SHIFT_WRITE.
+        rb = (instr >> 11) & 0x1F
+        worst = 0
+        for lane in warp.processors:
+            if warp.active_mask & (1 << lane.core_id):
+                worst = max(worst, lane.regs[rb] & 0x1F)
+        return cfg.exec_base + worst * cfg.shift_per_bit + 1
+    if opcode in BRANCH_OPCODES:
+        return cfg.exec_base + 2
+    if opcode == BRA_OPCODE:
+        return cfg.exec_base + 1
+    return cfg.exec_base
+
+
 def popcount(x: int) -> int:
     return bin(x).count("1")
 
@@ -187,24 +243,8 @@ class Model:
         self.busy_until: dict[int, int] = {w.warp_id: 0 for w in self.warps}
         self.cursor = 0
 
-    # -- coste de ejecucion de una instruccion, de gpu_lane.v --
     def exec_cycles(self, instr: int, opcode: int, warp) -> int:
-        cfg = self.cfg
-        if opcode in MUL_OPCODES:
-            return cfg.exec_base + cfg.mul_cycles
-        if opcode in DIV_OPCODES:
-            return cfg.exec_base + cfg.div_cycles
-        if opcode in SHIFT_OPCODES:
-            # El desplazamiento es de un bit por ciclo, y el numero de bits sale
-            # de un registro: se toma el peor de las lanes activas, que es lo
-            # que ve el SM al esperar a `&done`.
-            rb = (instr >> 11) & 0x1F
-            worst = 0
-            for lane in warp.processors:
-                if warp.active_mask & (1 << lane.core_id):
-                    worst = max(worst, lane.regs[rb] & 0x1F)
-            return cfg.exec_base + worst * cfg.shift_per_bit
-        return cfg.exec_base
+        return exec_cycles(self.cfg, instr, opcode, warp)
 
     def mem_addresses(self, instr: int, warp) -> list[int]:
         ra = (instr >> 16) & 0x1F

@@ -70,20 +70,25 @@ respuesta de la LSU, y el coste del `BAR`.
 
 | | Actual | Segmentado | |
 | --- | --- | --- | --- |
-| Ciclos/frame | 2 480 048 | 990 086 | **2,5×** |
-| Ciclos por instrucción | 16,33 | 6,52 | |
-| Utilización de las ALU | 6,12% | 15,34% | |
-| Burbujas sin warp | 0 | 43 ciclos | |
-| Ocupación de `EXEC` | — | **83,2%** | |
+| Ciclos/frame | 2 211 672 | 721 750 | **3,1×** |
+| Ciclos por instrucción | 14,56 | 4,75 | |
+| Utilización de las ALU | 6,87% | 21,04% | |
+| Burbujas sin warp | 0 | 38 ciclos | |
+| Ocupación de `X` | — | **77,0%** | |
 
 Dos conclusiones que no se veían sin medir:
 
-- **Son 2,5×, no el 5-6× que se estimó a ojo.** Con el front-end segmentado el
-  cuello pasa a `EXEC`, ocupada el 83%. Y `EXEC` dura 6 ciclos porque **la lane
-  hace su propio fetch** aunque el SM ya le dé la instrucción. Quitar esos dos
-  estados llevaría `EXEC` de 6 a 4 y el CPI de 6,5 a ~4,5: otro 1,4× encima.
-- **Ocho warps sobran.** 43 ciclos de burbuja en todo un frame. No hace falta
+- **Son ~3×, no el 5-6× que se estimó a ojo.** Con el front-end segmentado el
+  cuello pasa a `X`, ocupada el 77%, porque dura 4 ciclos: los de la lane. El
+  fetch redundante que tenía dentro **ya está quitado** (predicho −11,9%,
+  medido en RTL −11,2%), y el siguiente paso —colapsar `HALTED` y `RETIRE`,
+  que duplican etapas del propio cauce— llevaría `X` a 2 y el CPI a 2,82.
+  Razonado instrucción a instrucción en `22.fpga-gpu-bl8/sm-pipeline.md`.
+- **Ocho warps sobran.** 38 ciclos de burbuja en todo un frame. No hace falta
   subir el número de warps, que era una de las preguntas abiertas.
+
+La columna "Actual" está **validada contra la placa**: `profile.py` mide 15,6
+ciclos por instrucción y el modelo predijo 15,66.
 
 ## Limitación conocida
 
