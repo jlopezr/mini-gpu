@@ -83,6 +83,40 @@ $ run-tests --hardware           # casos contra placa real, backend gpu-fpga
 $ run-tests -- --backend cpu-fpga               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
 ```
 
+## Compilador C experimental (`mini-lcc`)
+
+El fork de lcc con backend MiniISA se integra como submodulo en
+`y.lcc`, no dentro de `tools/`: `tools/` conserva solo los lanzadores y la
+infraestructura propia del repo. Para inicializarlo:
+
+```bash
+$ git submodule update --init --recursive y.lcc
+```
+
+La validacion propia del compilador se puede lanzar directamente:
+
+```bash
+$ mkdir -p y.lcc/build
+$ python3 y.lcc/run-mini-tst.py --simulate
+```
+
+O mediante el wrapper global:
+
+```bash
+$ mini-lcc-test
+```
+
+Para compilar un programa C a ensamblador MiniISA:
+
+```bash
+$ mini-lcc programa.c -o programa.s
+```
+
+Por ahora esta validacion comprueba compilacion y simulacion dentro de
+`mini-lcc`. El siguiente paso sera usarlo para producir `.asm`, `.bin` o
+manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
+las suites de `x.tests`.
+
 ## Build con historial de timing, en segundo plano, estado, logs
 
 `tools/build` (con `tools/build_report.py`) es común a cualquier prototipo con

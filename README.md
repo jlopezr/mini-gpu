@@ -60,6 +60,7 @@ bitstream concreto.
 | [`20.forth`](20.forth)                             | Un Forth con intérprete y compilador, sobre la consola serie de la 19.   |
 | [`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu)     | La 19 más `MULHI`/`DIVU`/`REM`/`REMU`, shifts inmediatos y `R0` a cero.  |
 | [`x.tests`](x.tests)                       | Casos comunes para simulador y distintas versiones FPGA.                 |
+| [`y.lcc`](y.lcc)                                   | Submodulo del compilador C experimental lcc con backend MiniISA.         |
 | [`pruebas`](pruebas)                               | Artefactos históricos conservados como referencia.                       |
 
 Las carpetas numeradas representan hitos de aprendizaje y se conservan aunque
@@ -128,6 +129,31 @@ Ejecutar todos los casos sobre el simulador:
 ```powershell
 cd x.tests
 python run_tests.py --backend cpu-simulator
+```
+
+Inicializar el compilador C experimental MiniISA/lcc:
+
+```bash
+git submodule update --init --recursive y.lcc
+```
+
+Ejecutar su validacion compilando y simulando los tests de `mini-lcc`:
+
+```bash
+mkdir -p y.lcc/build
+python3 y.lcc/run-mini-tst.py --simulate
+# o, con tools/ en PATH:
+mini-lcc-test
+```
+
+La idea es usar ese submodulo para generar programas `.asm`, `.bin` o `.json`
+desde C y reutilizarlos despues en la validacion de simuladores y RTL.
+La ABI canonica de Mini-GPU esta en [`1.isa/abi.md`](1.isa/abi.md).
+
+Para ejecutar esos casos desde la infraestructura de `x.tests`:
+
+```bash
+python3 x.tests/run-mini-lcc-tests.py --backend cpu-simulator
 ```
 
 Ejecutarlos sobre la CPU con EBR de la carpeta 6:

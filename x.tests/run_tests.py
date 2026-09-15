@@ -752,7 +752,8 @@ def load_case(path: Path) -> dict:
                 "con run_until el PC no es determinista: la parada es asincrona"
             )
     else:
-        case["expected"]["pc"] = parse_integer(expected_raw["pc"], "PC")
+        if "pc" in expected_raw:
+            case["expected"]["pc"] = parse_integer(expected_raw["pc"], "PC")
     return case
 
 

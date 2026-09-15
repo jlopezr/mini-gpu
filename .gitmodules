@@ -1,0 +1,3 @@
+[submodule "y.lcc"]
+	path = y.lcc
+	url = git@github.com:jlopezr/mini-lcc.git

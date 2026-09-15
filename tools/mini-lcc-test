@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Ejecuta la suite MiniISA del submodulo mini-lcc."""
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MINI_LCC = ROOT / "y.lcc"
+
+if __name__ == "__main__":
+    script = MINI_LCC / "run-mini-tst.py"
+    if not script.exists():
+        print(f"error: no existe {script}", file=sys.stderr)
+        print("Inicializa el submodulo con:", file=sys.stderr)
+        print("  git submodule update --init --recursive y.lcc", file=sys.stderr)
+        raise SystemExit(2)
+    (MINI_LCC / "build").mkdir(exist_ok=True)
+    raise SystemExit(subprocess.call([sys.executable, str(script), "--simulate", *sys.argv[1:]], cwd=str(MINI_LCC)))

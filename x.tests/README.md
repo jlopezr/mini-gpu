@@ -57,6 +57,29 @@ Hay siete combinaciones principales de backend y versión. Cada una ejecuta la
 suite entera de su arquitectura; el runner omite por su cuenta los casos de la
 otra, y los que piden capacidades que ese backend no tiene.
 
+### Casos C generados por mini-lcc
+
+El submodulo [`../y.lcc`](../y.lcc) contiene tests C del backend MiniISA de
+lcc. Para aprovecharlos desde esta infraestructura sin duplicar manifiestos
+derivados en git:
+
+```powershell
+python run-mini-lcc-tests.py --backend cpu-simulator
+```
+
+El adaptador ejecuta `y.lcc/run-mini-tst.py`, reutiliza los `.bin`, `.json` y
+dumps esperados generados en `y.lcc/mini-tst-out/`, y crea casos temporales en
+`x.tests/generated/mini-lcc/`. Esa carpeta esta ignorada porque se regenera a
+partir de los `.c`.
+
+Por defecto se omiten los `xfail` conocidos de `mini-lcc` que generan
+manifiesto, ya que `x.tests` no tiene semantica de fallo esperado. Para
+investigarlos como fallos normales:
+
+```powershell
+python run-mini-lcc-tests.py --backend cpu-simulator --include-xfail
+```
+
 Desde `x.tests`. `--port` es opcional: sin él, detecta el primer adaptador
 FTDI conectado; solo hace falta si hay varios o para forzar uno en concreto
 (por ejemplo, en Windows con "COM3"):

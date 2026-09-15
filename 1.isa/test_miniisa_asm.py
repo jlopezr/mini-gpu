@@ -98,7 +98,7 @@ class LabelArithmeticTest(unittest.TestCase):
             "despues:",
             "    NOP",
         ])
-        _, labels = first_pass(fuente)
+        _, labels, _ = first_pass(fuente)
         self.assertEqual(labels["tabla"], 4)
         self.assertEqual(labels["despues"], 16)
 
@@ -109,7 +109,7 @@ class LabelArithmeticTest(unittest.TestCase):
             "despues:",
             "    NOP",
         ])
-        _, labels = first_pass(fuente)
+        _, labels, _ = first_pass(fuente)
         self.assertEqual(labels["despues"], 8)
 
     def test_movi_con_etiqueta_carga_su_direccion(self):

@@ -163,6 +163,7 @@ BRANCH_OPS = {
 
 REGISTER_RE = re.compile(r"^[Rr](\d+)$")
 LABEL_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
+MEMORY_RE = re.compile(r"^(.+)\(([Rr]\d+)\)$")
 
 
 class AsmError(Exception):
@@ -174,6 +175,7 @@ class SourceLine:
     number: int
     text: str
     pc: int
+    section: str = ".text"
 
 
 def strip_comment(line: str) -> str:
@@ -200,19 +202,37 @@ def strip_comment(line: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Directivas de datos
+# Directivas y secciones
 #
 # El ensamblador solo sabia emitir instrucciones, asi que un programa que
 # necesitara una tabla o un mensaje tenia que construirlo en tiempo de
 # ejecucion a base de MOVI y STORE. Con `.word` y `.string` los datos van en la
 # imagen, que es donde deben estar.
 #
-# La salida sigue siendo una lista de palabras de 32 bits: `.string` rellena con
-# ceros hasta el multiplo de cuatro. Asi el resto de la cadena de herramientas
-# --el .bin, el .hex, el cargador del monitor-- no se entera de nada.
+# La salida sigue siendo una imagen plana. Las secciones solo sirven para
+# aceptar salida de compiladores y reordenarla internamente:
+#
+#   .text -> .rodata -> .data -> .bss
+#
+# No hay formato objeto, relocations ni linker: los simbolos se resuelven a
+# direcciones absolutas dentro de esa imagen plana.
 # ---------------------------------------------------------------------------
 
 ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "\\": "\\", '"': '"'}
+SECTION_ORDER = [".text", ".rodata", ".data", ".bss"]
+SECTION_ALIASES = {
+    ".text": ".text",
+    ".code": ".text",
+    ".rodata": ".rodata",
+    ".rdata": ".rodata",
+    ".data": ".data",
+    ".bss": ".bss",
+}
+SECTION_DIRECTIVES = set(SECTION_ALIASES)
+IGNORED_DIRECTIVES = {
+    ".GLOBL", ".GLOBAL", ".EXTERN", ".ENT", ".END",
+    ".TYPE", ".SIZE", ".FILE", ".LOC", ".IDENT",
+}
 
 
 def parse_string_literal(text: str) -> bytes:
@@ -242,48 +262,119 @@ def parse_string_literal(text: str) -> bytes:
     return bytes(out)
 
 
-def directive_size(mnemonic: str, operand_text: str) -> int:
-    """Cuantas palabras ocupa, sin resolver etiquetas.
+def align_to(value: int, alignment: int) -> int:
+    if alignment <= 1:
+        return value
+    return (value + alignment - 1) & ~(alignment - 1)
+
+
+def parse_alignment(operand_text: str) -> int:
+    ops = split_operands(operand_text)
+    if len(ops) != 1:
+        raise AsmError(".align requiere exactamente un operando")
+    alignment = parse_int(ops[0])
+    if alignment < 0:
+        raise AsmError(".align no puede ser negativo")
+    return 1 if alignment == 0 else alignment
+
+
+def normalize_section(name: str) -> str:
+    key = name.strip().split(",", 1)[0].lower()
+    if key not in SECTION_ALIASES:
+        raise AsmError(f"seccion desconocida: {name}")
+    return SECTION_ALIASES[key]
+
+
+def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
+    """Cuantos bytes ocupa, sin resolver etiquetas.
 
     Hace falta en la pasada 1, donde todavia no se sabe donde esta cada
-    etiqueta pero si CUANTAS palabras emite la directiva. Sin esto, toda
+    etiqueta pero si CUANTOS bytes emite la directiva. Sin esto, toda
     etiqueta posterior a una tabla apuntaria mal.
     """
     if mnemonic == ".WORD":
         valores = split_operands(operand_text)
         if not valores:
             raise AsmError(".word requiere al menos un valor")
+        return 4 * len(valores)
+    if mnemonic == ".HALF":
+        valores = split_operands(operand_text)
+        if not valores:
+            raise AsmError(".half requiere al menos un valor")
+        return 2 * len(valores)
+    if mnemonic == ".BYTE":
+        valores = split_operands(operand_text)
+        if not valores:
+            raise AsmError(".byte requiere al menos un valor")
         return len(valores)
     if mnemonic == ".STRING":
-        return len(parse_string_literal(operand_text)) // 4
+        return len(parse_string_literal(operand_text))
+    if mnemonic in {".SPACE", ".ZERO"}:
+        valores = split_operands(operand_text)
+        if len(valores) != 1:
+            raise AsmError(f"{mnemonic.lower()} requiere exactamente un valor")
+        size = parse_int(valores[0])
+        if size < 0:
+            raise AsmError(f"{mnemonic.lower()} no puede ser negativo")
+        return size
+    if mnemonic == ".ALIGN":
+        return align_to(pc, parse_alignment(operand_text)) - pc
+    if mnemonic in IGNORED_DIRECTIVES:
+        return 0
     raise AsmError(f"directiva desconocida: {mnemonic}")
 
 
-def directive_words(mnemonic: str, operand_text: str,
-                    labels: dict[str, int]) -> list[int]:
-    """Convierte una directiva en las palabras de 32 bits que emite.
+def instruction_size_bytes(text: str) -> int:
+    parts = text.split(None, 1)
+    mnemonic = parts[0].upper()
+    if mnemonic == "LI":
+        return 8
+    return 4
+
+
+def directive_bytes(mnemonic: str, operand_text: str,
+                    labels: dict[str, int]) -> bytes:
+    """Convierte una directiva en los bytes que emite.
 
     `.word` acepta etiquetas, que es lo que permite escribir una tabla de
     direcciones --un diccionario de Forth, por ejemplo-- sin calcularlas a
     mano.
     """
     if mnemonic == ".WORD":
-        palabras = []
+        out = bytearray()
         for token in split_operands(operand_text):
             value = resolve_target(token, labels)
             if not -(1 << 31) <= value <= (1 << 32) - 1:
                 raise AsmError(f".word fuera de rango de 32 bits: {value}")
-            palabras.append(value & 0xFFFFFFFF)
-        return palabras
+            out += int(value & 0xFFFFFFFF).to_bytes(4, "little")
+        return bytes(out)
+    if mnemonic == ".HALF":
+        out = bytearray()
+        for token in split_operands(operand_text):
+            value = resolve_target(token, labels)
+            if not -(1 << 15) <= value <= (1 << 16) - 1:
+                raise AsmError(f".half fuera de rango de 16 bits: {value}")
+            out += int(value & 0xFFFF).to_bytes(2, "little")
+        return bytes(out)
+    if mnemonic == ".BYTE":
+        out = bytearray()
+        for token in split_operands(operand_text):
+            value = resolve_target(token, labels)
+            if not -(1 << 7) <= value <= (1 << 8) - 1:
+                raise AsmError(f".byte fuera de rango de 8 bits: {value}")
+            out += int(value & 0xFF).to_bytes(1, "little")
+        return bytes(out)
     if mnemonic == ".STRING":
-        data = parse_string_literal(operand_text)
-        return [int.from_bytes(data[i:i + 4], "little")
-                for i in range(0, len(data), 4)]
+        return parse_string_literal(operand_text)
+    if mnemonic in {".SPACE", ".ZERO"}:
+        return b"\x00" * directive_size_bytes(mnemonic, operand_text, 0)
+    if mnemonic == ".ALIGN" or mnemonic in IGNORED_DIRECTIVES:
+        return b""
     raise AsmError(f"directiva desconocida: {mnemonic}")
 
 
 def is_directive(text: str) -> bool:
-    return text.split(None, 1)[0].upper() in (".WORD", ".STRING")
+    return text.split(None, 1)[0].startswith(".")
 
 
 def split_operands(s: str) -> list[str]:
@@ -303,6 +394,11 @@ def parse_reg(token: str) -> int:
 
 
 def parse_int(token: str) -> int:
+    token = token.strip()
+    if "+" in token[1:] or "-" in token[1:]:
+        parts = re.findall(r"[+-]?[^+-]+", token)
+        if len(parts) > 1 and "".join(parts) == token:
+            return sum(parse_int(part) for part in parts)
     try:
         return int(token, 0)
     except ValueError:
@@ -351,10 +447,11 @@ def encode_b(opcode: int, offset26: int = 0) -> int:
 # Pass 1
 # ---------------------------------------------------------------------------
 
-def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int]]:
-    labels: dict[str, int] = {}
+def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int], int]:
+    label_offsets: dict[str, tuple[str, int]] = {}
     lines: list[SourceLine] = []
-    pc = 0
+    offsets = {name: 0 for name in SECTION_ORDER}
+    section = ".text"
 
     for number, raw in enumerate(source.splitlines(), 1):
         text = strip_comment(raw)
@@ -371,10 +468,10 @@ def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int]]:
             if not LABEL_RE.match(label):
                 break
 
-            if label in labels:
+            if label in label_offsets:
                 raise AsmError(f"línea {number}: label duplicado: {label}")
 
-            labels[label] = pc
+            label_offsets[label] = (section, offsets[section])
             text = rhs.strip()
 
             if not text:
@@ -383,21 +480,68 @@ def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int]]:
         if not text:
             continue
 
-        lines.append(SourceLine(number, text, pc))
-        # Una directiva ocupa lo que ocupen sus datos, no cuatro bytes. Si el
-        # tamano no se calculara aqui, todas las etiquetas posteriores a una
-        # tabla apuntarian mal.
+        partes = text.split(None, 1)
+        mnemonic = partes[0].upper()
+        operand_text = partes[1] if len(partes) > 1 else ""
+
         if is_directive(text):
-            partes = text.split(None, 1)
             try:
-                pc += 4 * directive_size(
-                    partes[0].upper(), partes[1] if len(partes) > 1 else "")
+                if mnemonic in {".SECTION", ".SEGMENT"}:
+                    if not operand_text:
+                        raise AsmError(f"{mnemonic.lower()} requiere nombre")
+                    section = normalize_section(operand_text)
+                    continue
+                if mnemonic.lower() in SECTION_DIRECTIVES:
+                    section = normalize_section(mnemonic)
+                    continue
+                if mnemonic == ".COMM":
+                    ops = split_operands(operand_text)
+                    if len(ops) not in (2, 3):
+                        raise AsmError(".comm requiere: simbolo, tamano[, alineacion]")
+                    name = ops[0]
+                    if not LABEL_RE.match(name):
+                        raise AsmError(f"simbolo .comm invalido: {name}")
+                    if name in label_offsets:
+                        raise AsmError(f"label duplicado: {name}")
+                    size = parse_int(ops[1])
+                    alignment = parse_int(ops[2]) if len(ops) == 3 else 4
+                    if size < 0:
+                        raise AsmError(".comm no puede tener tamano negativo")
+                    offsets[".bss"] = align_to(offsets[".bss"], alignment)
+                    label_offsets[name] = (".bss", offsets[".bss"])
+                    offsets[".bss"] += size
+                    continue
+
+                size = directive_size_bytes(mnemonic, operand_text, offsets[section])
             except AsmError as error:
                 raise AsmError(f"línea {number}: {error}") from None
+            if size:
+                lines.append(SourceLine(number, text, offsets[section], section))
+                offsets[section] += size
         else:
-            pc += 4
+            lines.append(SourceLine(number, text, offsets[section], section))
+            offsets[section] += instruction_size_bytes(text)
 
-    return lines, labels
+    bases: dict[str, int] = {}
+    pc = 0
+    for name in SECTION_ORDER:
+        pc = align_to(pc, 4)
+        bases[name] = pc
+        pc += offsets[name]
+    image_size = align_to(pc, 4)
+
+    labels = {
+        name: bases[section_name] + offset
+        for name, (section_name, offset) in label_offsets.items()
+    }
+    laid_out_lines = [
+        SourceLine(line.number, line.text,
+                   bases[line.section] + line.pc, line.section)
+        for line in lines
+    ]
+    laid_out_lines.sort(key=lambda line: line.pc)
+
+    return laid_out_lines, labels, image_size
 
 
 # ---------------------------------------------------------------------------
@@ -418,8 +562,21 @@ def branch_offset(target_pc: int, current_pc: int, bits: int) -> int:
 
 
 def resolve_target(token: str, labels: dict[str, int]) -> int:
+    token = token.strip()
     if token in labels:
         return labels[token]
+    if "+" in token[1:] or "-" in token[1:]:
+        parts = re.findall(r"[+-]?[^+-]+", token)
+        if len(parts) > 1 and "".join(parts) == token:
+            total = 0
+            for part in parts:
+                sign = 1
+                if part[0] in "+-":
+                    if part[0] == "-":
+                        sign = -1
+                    part = part[1:]
+                total += sign * resolve_target(part, labels)
+            return total
     return parse_int(token)
 
 
@@ -428,6 +585,9 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     mnemonic = parts[0].upper()
     operand_text = parts[1] if len(parts) > 1 else ""
     ops = split_operands(operand_text)
+
+    if mnemonic == "LI":
+        raise AsmError("LI solo se puede usar como pseudoinstrucción completa")
 
     # RET no es un opcode: el enlace vive en R31 por convencion de llamada.
     if mnemonic == "RET":
@@ -501,11 +661,24 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     # -------------------------------------------------------
 
     if mnemonic in I3_SIGNED_OPS:
-        if len(ops) != 3:
-            raise AsmError(f"{mnemonic} requiere: X, Y, imm16")
-        x = parse_reg(ops[0])
-        y = parse_reg(ops[1])
-        imm = check_signed(parse_int(ops[2]), 16, f"inmediato {mnemonic}")
+        if len(ops) == 2 and mnemonic in {
+            "LOAD", "STORE",
+            "LOADB", "LOADUB", "STOREB", "LOADH", "LOADUH", "STOREH",
+        }:
+            match = MEMORY_RE.match(ops[1])
+            if not match:
+                raise AsmError(f"{mnemonic} requiere: X, Y, imm16")
+            x = parse_reg(ops[0])
+            y = parse_reg(match.group(2))
+            imm = check_signed(resolve_target(match.group(1), labels), 16,
+                               f"inmediato {mnemonic}")
+        else:
+            if len(ops) != 3:
+                raise AsmError(f"{mnemonic} requiere: X, Y, imm16")
+            x = parse_reg(ops[0])
+            y = parse_reg(ops[1])
+            imm = check_signed(resolve_target(ops[2], labels), 16,
+                               f"inmediato {mnemonic}")
         return encode_i(opcode, x, y, imm)
 
     if mnemonic in I3_UNSIGNED_OPS:
@@ -595,38 +768,79 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
 
     raise AsmError(f"{mnemonic}: encoding todavía no implementado")
 
-def assemble(source: str) -> list[int]:
-    lines, labels = first_pass(source)
-    words: list[int] = []
+
+def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
+    parts = line.text.split(None, 1)
+    mnemonic = parts[0].upper()
+    operand_text = parts[1] if len(parts) > 1 else ""
+    ops = split_operands(operand_text)
+
+    if mnemonic == "LI":
+        if len(ops) != 2:
+            raise AsmError("LI requiere: Rd, expr32")
+        rd = parse_reg(ops[0])
+        value = resolve_target(ops[1], labels) & 0xFFFFFFFF
+        hi = (value >> 16) & 0xFFFF
+        lo = value & 0xFFFF
+        words = [
+            encode_i(OPCODES["MOVHI"], rd, 0, hi),
+            encode_i(OPCODES["ORI"], rd, rd, lo),
+        ]
+        return b"".join(word.to_bytes(4, "little") for word in words)
+
+    word = assemble_instruction(line, labels)
+    return word.to_bytes(4, "little")
+
+def assemble_bytes(source: str) -> bytes:
+    lines, labels, image_size = first_pass(source)
+    image = bytearray()
 
     for line in lines:
         try:
+            if line.pc < len(image):
+                raise AsmError("solapamiento interno de secciones")
+            if line.pc > len(image):
+                image += b"\x00" * (line.pc - len(image))
+
             if is_directive(line.text):
                 partes = line.text.split(None, 1)
-                words.extend(directive_words(
+                image += directive_bytes(
                     partes[0].upper(),
-                    partes[1] if len(partes) > 1 else "", labels))
+                    partes[1] if len(partes) > 1 else "", labels)
             else:
-                words.append(assemble_instruction(line, labels))
+                image += assemble_text(line, labels)
         except AsmError as e:
             raise AsmError(f"línea {line.number}: {e}\n    {line.text}") from None
 
-    return words
+    if len(image) < image_size:
+        image += b"\x00" * (image_size - len(image))
+    while len(image) % 4:
+        image += b"\x00"
+
+    return bytes(image)
+
+
+def assemble(source: str) -> list[int]:
+    image = assemble_bytes(source)
+    return [
+        int.from_bytes(image[index:index + 4], "little")
+        for index in range(0, len(image), 4)
+    ]
 
 
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
-def write_binary(words: list[int], path: Path) -> None:
+def write_binary(image: bytes, path: Path) -> None:
     with path.open("wb") as f:
-        for word in words:
-            f.write(struct.pack("<I", word))
+        f.write(image)
 
 
-def write_hex(words: list[int], path: Path) -> None:
+def write_hex(image: bytes, path: Path) -> None:
     with path.open("w", encoding="ascii") as f:
-        for word in words:
+        for index in range(0, len(image), 4):
+            word = int.from_bytes(image[index:index + 4], "little")
             f.write(f"{word:08X}\n")
 
 
@@ -640,17 +854,17 @@ def main() -> None:
     source = args.input.read_text(encoding="utf-8")
 
     try:
-        words = assemble(source)
+        image = assemble_bytes(source)
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 
     output = args.output or args.input.with_suffix(".bin")
-    write_binary(words, output)
+    write_binary(image, output)
 
     if args.hex_output:
-        write_hex(words, args.hex_output)
+        write_hex(image, args.hex_output)
 
-    print(f"{len(words)} instrucciones -> {output}")
+    print(f"{len(image) // 4} palabras -> {output}")
 
 
 if __name__ == "__main__":

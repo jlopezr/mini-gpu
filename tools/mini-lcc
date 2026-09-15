@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Compila C a ensamblador MiniISA usando el submodulo y.lcc."""
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MINI_LCC = ROOT / "y.lcc"
+RCC = MINI_LCC / "build" / "rcc"
+
+
+def run(command: list[str], cwd: Path = MINI_LCC) -> int:
+    return subprocess.call(command, cwd=str(cwd))
+
+
+def ensure_rcc() -> int:
+    if RCC.exists():
+        return 0
+    (MINI_LCC / "build").mkdir(exist_ok=True)
+    return run([
+        "make",
+        f"BUILDDIR={MINI_LCC / 'build'}",
+        "HOSTFILE=etc/linux.c",
+        "CFLAGS=-g -std=gnu89 -Wno-implicit-function-declaration",
+        "rcc",
+    ])
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source", type=Path, help="fuente .c o .i")
+    parser.add_argument("-o", "--output", type=Path, help="ensamblador de salida")
+    parser.add_argument("--keep-i", type=Path, metavar="PATH",
+                        help="guarda tambien el C preprocesado")
+    args = parser.parse_args(argv)
+
+    script = MINI_LCC / "run-mini-tst.py"
+    if not script.exists():
+        print("error: falta el submodulo y.lcc", file=sys.stderr)
+        print("Inicializalo con: git submodule update --init --recursive y.lcc", file=sys.stderr)
+        return 2
+    if not args.source.exists():
+        print(f"error: no existe {args.source}", file=sys.stderr)
+        return 2
+    if ensure_rcc() != 0:
+        return 1
+
+    output = args.output or args.source.with_suffix(".s")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.source.suffix == ".i":
+        return run([str(RCC), "-target=mini/none", str(args.source), str(output)])
+
+    with tempfile.TemporaryDirectory(prefix="mini-lcc-") as tmp:
+        preprocessed = Path(tmp) / f"{args.source.stem}.i"
+        code = subprocess.call([
+            "cc", "-E", "-P", str(args.source), "-o", str(preprocessed)
+        ])
+        if code != 0:
+            return code
+        if args.keep_i:
+            args.keep_i.parent.mkdir(parents=True, exist_ok=True)
+            args.keep_i.write_text(preprocessed.read_text(encoding="utf-8"), encoding="utf-8")
+        return run([str(RCC), "-target=mini/none", str(preprocessed), str(output)])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
