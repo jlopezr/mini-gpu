@@ -24,6 +24,11 @@ from backends.simulator import SimulatorBackend
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
+if str(REPOSITORY) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY))
+
+from tools.rtl_facts import load_capability_signals  # noqa: E402
+
 # Límite común a todos los casos: que quepan en un espacio de 32 bits. Si el
 # caso cabe en el mapa concreto de un backend lo decide `incompatibility()`.
 ARCHITECTURAL_MEMORY_SIZE = 32 * 1024 * 1024
@@ -420,28 +425,21 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # ensamblador roto. Con ella, el SKIP dice donde esta el problema. Pero conviene
 # NO leer el SKIP como «aqui no hace falta»: ahi falta algo que la ISA exige, y
 # el dia que la 10 implemente las tres, esta entrada desaparece.
+# `CAPABILITIES` (arquitectura de cada una) y `CAPABILITY_IMPLIES` ya no se
+# escriben aqui: se derivan de tools/capabilities.json, que es el mismo
+# fichero de donde `backends/fpga.py` y `tools/prototype_report.py` leen que
+# buscar en el RTL. Una tabla, no tres. `implies` alli documenta lo mismo que
+# el parrafo anterior --`frame_capture` implica `video`, `alu_extended`
+# implica `mul_div`-- pero como metadato, para que un caso pueda declarar solo
+# la mas especifica sin repetir la base.
+_CAPABILITY_SIGNALS = load_capability_signals(REPOSITORY)
 CAPABILITIES = {
-    "atomic_warp_faults": "gpu",
-    "video": "cpu",
-    "frame_capture": "cpu",
-    "subword_memory": "cpu",
-    "serial": "cpu",
-    "calls": "cpu",
-    "shift_immediate": "cpu",
-    "alu_extended": "cpu",
-    "mul_div": "cpu",
-    "compare": "cpu",
+    name: spec["architecture"] for name, spec in _CAPABILITY_SIGNALS.items()
 }
-# `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
-# video. Se expande al cargar para que un backend solo tenga que declarar lo
-# que de verdad implementa.
-#
-# `alu_extended` implica `mul_div` por la misma clase de razon, y ademas es
-# fisica: MULHI sale del mismo multiplicador que MUL, y REM del mismo divisor
-# que DIV. Un backend con MULHI pero sin MUL no puede existir.
 CAPABILITY_IMPLIES = {
-    "frame_capture": ("video",),
-    "alu_extended": ("mul_div",),
+    name: tuple(spec["implies"])
+    for name, spec in _CAPABILITY_SIGNALS.items()
+    if "implies" in spec
 }
 
 

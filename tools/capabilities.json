@@ -1,34 +1,52 @@
 {
-  "_comment": "Capacidad -> qué buscar en el RTL de cada prototipo para saber si la tiene. 'file' es relativo a la carpeta del prototipo; sin 'pattern', basta con que el fichero exista. Con 'pattern', tiene que aparecer una coincidencia además de existir el fichero. Añadir una capacidad nueva es añadir una entrada aquí -- no hace falta tocar prototipos ni código.",
+  "_comment": "Capacidad -> qué buscar en el RTL de cada prototipo para saber si la tiene, y de qué arquitectura es. 'file' es relativo a la carpeta del prototipo; sin 'pattern', basta con que el fichero exista. Con 'pattern', tiene que aparecer una coincidencia además de existir el fichero. 'implies' son las capacidades que declarar esta ya cubre en un `requires` de un test.json -no en la deteccion RTL, que ya las encuentra solas cuando comparten 'file'-. Sin 'file' la capacidad nunca se detecta por RTL: es el caso de 'atomic_warp_faults', que ningun hardware real implementa -solo el simulador la permite implicitamente-, asi que su unico dato es la arquitectura. Añadir una capacidad nueva es añadir una entrada aquí -- no hace falta tocar prototipos ni código.",
 
   "mul_div": {
+    "architecture": "cpu",
     "file": "cpu.v",
     "pattern": "OPCODE_MUL:"
   },
   "subword_memory": {
+    "architecture": "cpu",
     "file": "cpu.v",
     "pattern": "OPCODE_LOADB:"
   },
   "calls": {
+    "architecture": "cpu",
     "file": "cpu.v",
     "pattern": "OPCODE_JAL:"
   },
   "shift_immediate": {
+    "architecture": "cpu",
     "file": "cpu.v",
     "pattern": "shift_immediate"
   },
   "alu_extended": {
+    "architecture": "cpu",
     "file": "cpu.v",
-    "pattern": "OPCODE_MULHI:"
+    "pattern": "OPCODE_MULHI:",
+    "implies": ["mul_div"]
+  },
+  "compare": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "OPCODE_SLT:"
   },
   "video": {
+    "architecture": "cpu",
     "file": "video_registers.v"
   },
   "frame_capture": {
+    "architecture": "cpu",
     "file": "video_registers.v",
-    "pattern": "HALT_AT"
+    "pattern": "HALT_AT",
+    "implies": ["video"]
   },
   "serial": {
+    "architecture": "cpu",
     "file": "serial_port.v"
+  },
+  "atomic_warp_faults": {
+    "architecture": "gpu"
   }
 }

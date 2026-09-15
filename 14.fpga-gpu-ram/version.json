@@ -1,0 +1,4 @@
+{
+  "alias": "sdram",
+  "description": "MiniGPU con 32 MiB de SDRAM, 8 warps x 8 lanes"
+}

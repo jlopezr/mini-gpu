@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,17 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
-
-
-def _readme_title(prototype_dir: Path) -> str:
-    readme = prototype_dir / "README.md"
-    if not readme.exists():
-        return ""
-    for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
-        match = re.match(r"^#\s+(.*)", line)
-        if match:
-            return match.group(1).strip()
-    return ""
+from tools.rtl_facts import (
+    backend_from_rtl as _backend_from_rtl,
+    capabilities_from_rtl as _capabilities_from_rtl,
+    clock_hz_from_rtl as _clock_hz_from_rtl,
+    load_capability_signals as _load_capability_signals,
+    monitor_version_from_rtl as _monitor_version_from_rtl,
+    readme_title as _readme_title,
+)
 
 
 def _git_info(prototype_dir: Path, root: Path) -> dict:
@@ -85,8 +81,8 @@ def _memory_regions(prototype_dir: Path) -> dict:
 
 
 def _safe_eval(node: ast.AST):
-    """Como ast.literal_eval, pero también acepta `Path("...")` como si fuera
-    el literal de su argumento (VERSIONS declara monitor_path con Path(...))."""
+    """Como ast.literal_eval, para leer ARCHITECTURAL_REGIONS/MONITOR_REGIONS
+    de monitor.py sin importarlo."""
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Tuple):
@@ -95,100 +91,40 @@ def _safe_eval(node: ast.AST):
         return [_safe_eval(elt) for elt in node.elts]
     if isinstance(node, ast.Dict):
         return {_safe_eval(k): _safe_eval(v) for k, v in zip(node.keys, node.values)}
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Path" and len(node.args) == 1:
-        return _safe_eval(node.args[0])
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return -_safe_eval(node.operand)
     raise ValueError(f"nodo no soportado: {ast.dump(node)}")
 
 
 def _version_label(prototype_dir: Path, root: Path) -> dict:
-    """Busca en x.tests/backends/{fpga,gpu_fpga}.py el nombre corto de versión
-    (el que usa `run_tests.py --version`) y la descripción, si están
-    registrados ahí. Es lo único que de verdad no se puede sacar del RTL: es
-    una etiqueta elegida a mano, no un hecho verificable en el código."""
-    backends_dir = root / "x.tests" / "backends"
-    for module_name in ("fpga", "gpu_fpga"):
-        module_path = backends_dir / f"{module_name}.py"
-        if not module_path.exists():
-            continue
-        source = module_path.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(module_path))
-        for node in tree.body:
-            if not (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "VERSIONS"):
-                continue
-            try:
-                versions = _safe_eval(node.value)
-            except ValueError:
-                continue
-            for version_name, config in versions.items():
-                monitor_path = config.get("monitor_path")
-                if monitor_path and Path(monitor_path).parts[0] == prototype_dir.name:
-                    return {"version_name": version_name, "description": config.get("description", "")}
-    return {}
+    """El alias corto (el que usa `run_tests.py --version`) vive en
+    `version.json`, dentro de la propia carpeta del prototipo. Es lo único que
+    de verdad no se puede sacar de ningún sitio: es una etiqueta elegida a
+    mano, no un hecho verificable -- y su ausencia también es información: un
+    prototipo con RTL pero sin `version.json` no es un target de test
+    soportado (ver `17.fpga-gpu-ram-v2`).
 
-
-def _backend_from_rtl(prototype_dir: Path) -> str | None:
-    """CPU o GPU no es una etiqueta: es qué módulo de núcleo hay en la
-    carpeta. Nada que registrar en ningún sitio."""
-    if (prototype_dir / "cpu.v").exists():
-        return "cpu"
-    if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
-        return "gpu"
-    return None
-
-
-def _monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
-    """VERSION_MAJOR/VERSION_MINOR son localparams reales en monitor.v: es lo
-    que la placa responde de verdad a GET_VERSION, no una copia a mano."""
-    monitor_v = prototype_dir / "monitor.v"
-    if not monitor_v.exists():
-        return None
-    text = monitor_v.read_text(encoding="utf-8", errors="replace")
-    major = re.search(r"VERSION_MAJOR\s*=\s*8'h([0-9a-fA-F]+)", text)
-    minor = re.search(r"VERSION_MINOR\s*=\s*8'h([0-9a-fA-F]+)", text)
-    if not major or not minor:
-        return None
-    return (int(major.group(1), 16), int(minor.group(1), 16))
-
-
-def _clock_hz_from_rtl(prototype_dir: Path) -> int | None:
-    """FREQUENCY_PIN_CLKOP es el atributo que nextpnr usa de verdad para
-    timing, en el fichero del PLL (su nombre varía: pll_120.v, pll_cpu.v...)."""
-    for pll_file in sorted(prototype_dir.glob("pll*.v")):
-        text = pll_file.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r'FREQUENCY_PIN_CLKOP\s*=\s*"(\d+(?:\.\d+)?)"', text)
-        if match:
-            return int(float(match.group(1)) * 1_000_000)
-    return None
-
-
-def _load_capability_signals(root: Path) -> dict:
-    signals_path = root / "tools" / "capabilities.json"
-    if not signals_path.exists():
+    La descripción, en cambio, por defecto es el título del README --
+    `version.json` solo hace falta cuando ese título no basta y hay que
+    sobreescribirlo con algo más técnico (ver `10.fpga-cpu-ram/version.json`).
+    """
+    del root  # Ya no hace falta: no se busca fuera de la carpeta del prototipo.
+    manifest = prototype_dir / "version.json"
+    if not manifest.exists():
         return {}
-    data = json.loads(signals_path.read_text(encoding="utf-8"))
-    return {name: spec for name, spec in data.items() if not name.startswith("_")}
-
-
-def _capabilities_from_rtl(prototype_dir: Path, signals: dict) -> tuple[str, ...]:
-    found = []
-    for name, spec in signals.items():
-        target = prototype_dir / spec["file"]
-        if not target.exists():
-            continue
-        pattern = spec.get("pattern")
-        if pattern is None or re.search(pattern, target.read_text(encoding="utf-8", errors="replace")):
-            found.append(name)
-    return tuple(found)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    description = data.get("description") or _readme_title(prototype_dir)
+    result = {"version_name": data["alias"]}
+    if description:
+        result["description"] = description
+    return result
 
 
 def _capabilities(prototype_dir: Path, root: Path) -> dict:
     """Identidad de un prototipo: backend/versión/clock/capacidades, leídos
     del RTL directamente en vez de copiados a mano en ningún sitio. Solo
     `version_name`/`description` (etiquetas humanas, no hechos verificables)
-    se buscan en x.tests/backends/, y son opcionales."""
+    se buscan en `version.json`, y son opcionales."""
     backend = _backend_from_rtl(prototype_dir)
     if backend is None:
         return {}

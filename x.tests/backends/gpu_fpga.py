@@ -11,6 +11,7 @@ misma arquitectura (`ebr` y `sdram` son ambas CPU), igual que `simulator.py` y
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 import time
@@ -19,24 +20,57 @@ from types import ModuleType
 
 from . import board
 
+_REPOSITORY = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY))
 
-# El backport de R0 cableado a cero subio las tres versiones de GPU: 12 a 2.3,
-# y 14 y 17 a 2.4. No cambia ni un byte del protocolo; sube porque el cambio es
+from tools.rtl_facts import (  # noqa: E402
+    backend_from_rtl,
+    monitor_version_from_rtl,
+    readme_title,
+)
+
+
+# Igual que en fpga.py: cada versión es una carpeta de prototipo con
+# `version.json` (`{"alias": ...}`, y opcionalmente `"description"` si el
+# título del README no basta); eso es lo único a mano. `monitor_version` se
+# lee del RTL --ver tools/rtl_facts.py--. El backport de R0 cableado a cero
+# subio las tres versiones de GPU: 12 a 2.3, y
+# 14 y 17 a 2.4. No cambia ni un byte del protocolo; sube porque el cambio es
 # INCOMPATIBLE y un bitstream viejo no para con error, da otro resultado en
 # silencio. 14 y 17 siguen compartiendo numero, como antes: son funcionalmente
-# identicas y solo se diferencian en el camino critico.
-VERSIONS = {
-    "bram": {
-        "monitor_path": Path("12.fpga-gpu/monitor.py"),
-        "monitor_version": (2, 3),
-        "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes",
-    },
-    "sdram": {
-        "monitor_path": Path("14.fpga-gpu-ram/monitor.py"),
-        "monitor_version": (2, 4),
-        "description": "MiniGPU con 32 MiB de SDRAM, 8 warps x 8 lanes",
-    },
-}
+# identicas y solo se diferencian en el camino critico -y por eso 17 no tiene
+# `version.json`: no es un target de test soportado, aunque tenga RTL-.
+def _prototype_number(directory: Path) -> int:
+    match = re.match(r"(\d+)", directory.name)
+    return int(match.group(1)) if match else 0
+
+
+def _build_versions() -> dict:
+    manifests = sorted(
+        _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
+    )
+    versions = {}
+    for manifest_path in manifests:
+        directory = manifest_path.parent
+        if backend_from_rtl(directory) != "gpu":
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        monitor_version = monitor_version_from_rtl(directory)
+        if monitor_version is None:
+            raise RuntimeError(
+                f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
+                f"{directory / 'monitor.v'}"
+            )
+        versions[manifest["alias"]] = {
+            "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
+            "monitor_version": monitor_version,
+            "description": manifest.get("description") or readme_title(directory),
+        }
+    return versions
+
+
+VERSIONS = _build_versions()
 DEFAULT_VERSION = "bram"
 
 

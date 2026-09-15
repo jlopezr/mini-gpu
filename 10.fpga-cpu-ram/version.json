@@ -1,0 +1,4 @@
+{
+  "alias": "sdram",
+  "description": "FPGA con mapa unificado sobre 32 MiB de SDRAM; sin MUL/MULFX/DIV"
+}

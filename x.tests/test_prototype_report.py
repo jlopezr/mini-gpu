@@ -28,7 +28,6 @@ CAPABILITIES_JSON = textwrap.dedent("""
 class PrototypeReportTest(unittest.TestCase):
     def _make_repo(self, tmp: Path, with_rtl: bool = True) -> Path:
         root = tmp
-        (root / "x.tests" / "backends").mkdir(parents=True)
         (root / "tools").mkdir(exist_ok=True)
         (root / "tools" / "capabilities.json").write_text(CAPABILITIES_JSON, encoding="utf-8")
         (root / "6.fpga-cpu").mkdir()
@@ -40,17 +39,10 @@ class PrototypeReportTest(unittest.TestCase):
             )
             MONITOR_REGIONS = ()
         """), encoding="utf-8")
-        (root / "x.tests" / "backends" / "fpga.py").write_text(textwrap.dedent("""
-            from pathlib import Path
-            VERSIONS = {
-                "ebr": {
-                    "monitor_path": Path("6.fpga-cpu/monitor.py"),
-                    "monitor_version": (1, 16),
-                    "description": "FPGA con 16 KiB de EBR",
-                    "capabilities": ("mul_div",),
-                },
-            }
-        """), encoding="utf-8")
+        (root / "6.fpga-cpu" / "version.json").write_text(json.dumps({
+            "alias": "ebr",
+            "description": "FPGA con 16 KiB de EBR",
+        }), encoding="utf-8")
         if with_rtl:
             (root / "6.fpga-cpu" / "cpu.v").write_text(textwrap.dedent("""
                 localparam [5:0] OPCODE_MUL = 6'h0a;
@@ -173,12 +165,22 @@ class PrototypeReportTest(unittest.TestCase):
             (root / "99.other").mkdir()
             self.assertEqual(_capabilities(root / "99.other", root), {})
 
-    def test_version_label_matches_by_monitor_path_despite_path_call(self):
+    def test_version_label_reads_alias_and_description_from_version_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._make_repo(Path(tmp))
             label = _version_label(root / "6.fpga-cpu", root)
             self.assertEqual(label["version_name"], "ebr")
             self.assertEqual(label["description"], "FPGA con 16 KiB de EBR")
+
+    def test_version_label_falls_back_to_readme_title_without_description(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp))
+            # Sin "description": solo el alias es obligatorio en version.json.
+            (root / "6.fpga-cpu" / "version.json").write_text(
+                json.dumps({"alias": "ebr"}), encoding="utf-8")
+            label = _version_label(root / "6.fpga-cpu", root)
+            self.assertEqual(label["version_name"], "ebr")
+            self.assertEqual(label["description"], "MiniCPU con memorias EBR")
 
     def test_latest_summary_picks_newest_report(self):
         with tempfile.TemporaryDirectory() as tmp:

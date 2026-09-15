@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -10,92 +12,77 @@ from types import ModuleType
 
 from . import board
 
+_REPOSITORY = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY))
 
-# `capabilities` dice que tiene cada versión, y es lo que el runner contrasta
-# con el `requires` de cada caso. Declarar solo lo que de verdad se implementa:
-# `frame_capture` ya implica `video`, y el runner lo expande.
+from tools.rtl_facts import (  # noqa: E402 (necesita _REPOSITORY en sys.path)
+    backend_from_rtl,
+    capabilities_from_rtl,
+    clock_hz_from_rtl,
+    load_capability_signals,
+    monitor_version_from_rtl,
+    perf_counters_from_rtl,
+    readme_title,
+)
+
+
+# Ni siquiera la lista de versiones se declara aquí: cada versión es una
+# carpeta de prototipo con un `version.json` (`{"alias": ...}`, y opcionalmente
+# `"description"` si el título del README no basta). Eso es lo único que se
+# elige a mano; todo lo demás --`monitor_version`, `capabilities`, `clock_hz`,
+# `perf_counters`, y la descripción por defecto-- se lee de esa misma carpeta
+# al importar este módulo, con las mismas funciones que usa
+# `tools/prototype_report.py` (`tools/rtl_facts.py`).
+#
+# Registrar una versión nueva es soltar `version.json` en su carpeta: no hace
+# falta tocar este fichero. Un `cpu.v`/`monitor.v` sin `version.json` NO
+# cuenta -es la señal de "esto es un target de test soportado", no solo "hay
+# RTL sintetizable ahí": `17.fpga-gpu-ram-v2` tiene ambos y no es un target,
+# es un camino crítico alternativo de la 14.
 #
 # `R0` CABLEADO A CERO NO ES UNA CAPACIDAD. Lo fue mientras solo lo tenia la 21;
 # con el backport hecho lo tienen las seis versiones, asi que paso a ser una
 # regla de la MiniISA --1.isa/isa.md seccion 1-- y dejo de ser algo que un
 # backend pueda o no tener. La capacidad `zero_register` ya no existe.
-#
-# El backport subio la version de monitor de los cinco cores anteriores, a
-# 1.16-1.20. No cambia ni un byte del protocolo: sube porque el cambio es
-# INCOMPATIBLE y un bitstream viejo no para con error, da otro resultado en
-# silencio. Cada uno tiene numero propio para que el runner pueda seguir
-# distinguiendolos entre si.
-VERSIONS = {
-    "ebr": {
-        "monitor_path": Path("6.fpga-cpu/monitor.py"),
-        "monitor_version": (1, 16),
-        "description": "FPGA con 16 KiB de EBR para programa y datos",
-        "capabilities": ("mul_div",),
-    },
-    "sdram": {
-        "monitor_path": Path("10.fpga-cpu-ram/monitor.py"),
-        "monitor_version": (1, 17),
-        "description": (
-            "FPGA con mapa unificado sobre 32 MiB de SDRAM; sin MUL/MULFX/DIV"
-        ),
-        # La UNICA sin `mul_div`, y la unica entrada de esta tabla cuya lista
-        # vacia significa «le falta algo de la base» en vez de «no tiene
-        # extensiones». No implementa MUL, MULFX ni DIV; el porque --se probo el
-        # port y cuesta la temporizacion-- esta en 10.fpga-cpu-ram/cpu.v.
-        "capabilities": (),
-    },
-    "hdmi": {
-        "monitor_path": Path("16.fpga-cpu-hdmi/monitor.py"),
-        "monitor_version": (1, 18),
-        "description": "Como sdram, mas video HDMI; 100 MHz y 1 Mbaud",
-        "clock_hz": 100_000_000,
-        # Tiene scanout y ventana de registros, pero no HALT_AT ni SWAP_COUNT,
-        # asi que no puede parar en un intercambio concreto.
-        "capabilities": ("video", "mul_div"),
-    },
-    "bl8": {
-        "monitor_path": Path("18.fpga-cpu-hdmi-bl8/monitor.py"),
-        "monitor_version": (1, 19),
-        "description": "Como hdmi, con memoria en rafagas BL8; 80 MHz y 1 Mbaud",
-        "capabilities": ("frame_capture", "mul_div"),
-        # Unica version con los contadores 0x36/0x37. Las anteriores son hitos
-        # cerrados y no se tocan, asi que su CPI no se puede medir: se estima
-        # desde el numero de instrucciones y el tiempo de pared.
-        "perf_counters": True,
-        "clock_hz": 80_000_000,
-    },
-    "subword": {
-        "monitor_path": Path("19.fpga-cpu-hdmi-ls/monitor.py"),
-        # Historia: 1.13 y no 1.12 aunque el protocolo fuera identico al de la
-        # 18, porque la version es lo unico que el runner puede preguntar para
-        # saber que bitstream tiene delante; 1.14 anadio los paquetes
-        # SEND_BYTES/RECV_BYTES del puerto serie; 1.20 es el backport de R0.
-        "monitor_version": (1, 20),
-        "description": (
-            "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned, "
-            "mas JAL/JALR/JR"
-        ),
-        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "mul_div"),
-        "perf_counters": True,
-        "clock_hz": 80_000_000,
-    },
-    "alu": {
-        "monitor_path": Path("21.fpga-cpu-hdmi-alu/monitor.py"),
-        # 1.15. Fue la primera con R0 cableado, y por eso subio antes que las
-        # demas; el backport les dio a las otras 1.16-1.20, que son numeros mas
-        # altos pero no versiones posteriores de nada. La secuencia nunca
-        # significo cronologia: 10 ya respondia 1.5 siendo posterior al 1.6 de 6.
-        "monitor_version": (1, 15),
-        "description": (
-            "Como subword, mas MULHI/DIVU/REM/REMU, SHLI/SHRI/SARI y SLT/SLTU"
-        ),
-        "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "shift_immediate", "alu_extended", "compare"),
-        "perf_counters": True,
-        "clock_hz": 80_000_000,
-    },
-}
+def _prototype_number(directory: Path) -> int:
+    match = re.match(r"(\d+)", directory.name)
+    return int(match.group(1)) if match else 0
+
+
+def _build_versions() -> dict:
+    signals = load_capability_signals(_REPOSITORY)
+    manifests = sorted(
+        _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
+    )
+    versions = {}
+    for manifest_path in manifests:
+        directory = manifest_path.parent
+        if backend_from_rtl(directory) != "cpu":
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        monitor_version = monitor_version_from_rtl(directory)
+        if monitor_version is None:
+            raise RuntimeError(
+                f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
+                f"{directory / 'monitor.v'}"
+            )
+        entry = {
+            "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
+            "monitor_version": monitor_version,
+            "description": manifest.get("description") or readme_title(directory),
+            "capabilities": capabilities_from_rtl(directory, signals),
+        }
+        clock_hz = clock_hz_from_rtl(directory)
+        if clock_hz is not None:
+            entry["clock_hz"] = clock_hz
+        if perf_counters_from_rtl(directory):
+            entry["perf_counters"] = True
+        versions[manifest["alias"]] = entry
+    return versions
+
+
+VERSIONS = _build_versions()
 DEFAULT_VERSION = "alu"
 
 # Registros de video, en direcciones de byte. Solo los usan las versiones que

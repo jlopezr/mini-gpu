@@ -1,0 +1,4 @@
+{
+  "alias": "alu",
+  "description": "Como subword, mas MULHI/DIVU/REM/REMU, SHLI/SHRI/SARI y SLT/SLTU"
+}

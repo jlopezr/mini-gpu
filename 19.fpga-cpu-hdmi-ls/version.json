@@ -1,0 +1,4 @@
+{
+  "alias": "subword",
+  "description": "Como bl8, mas LOADB/LOADH/STOREB/STOREH y sus unsigned, mas JAL/JALR/JR"
+}

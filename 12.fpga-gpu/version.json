@@ -1,0 +1,4 @@
+{
+  "alias": "bram",
+  "description": "MiniGPU con 128 KiB de BRAM, 8 warps x 8 lanes"
+}

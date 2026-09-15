@@ -1,0 +1,4 @@
+{
+  "alias": "ebr",
+  "description": "FPGA con 16 KiB de EBR para programa y datos"
+}
