@@ -792,9 +792,13 @@ def _format_cpi(medida: dict | None) -> str:
     if medida.get("skipped"):
         return "n/a"
     cycles, instructions = medida.get("cycles"), medida.get("instructions")
-    if not cycles or not instructions:
-        # Sin contadores en el bitstream (o sin ciclos, como el simulador).
+    # `is None` y no verdad logica: 0 instrucciones es una medida real (el
+    # caso trampea antes de retirar ninguna), y ahi el CPI esta indefinido,
+    # no es que falte el contador.
+    if cycles is None or instructions is None:
         return "sin contadores"
+    if instructions == 0:
+        return "n/d"
     return f"{cycles / instructions:.2f}"
 
 
@@ -804,7 +808,7 @@ def _format_ms(medida: dict | None) -> str:
     if medida.get("skipped"):
         return "n/a"
     cycles, clock_hz = medida.get("cycles"), medida.get("clock_hz")
-    if not cycles or not clock_hz:
+    if cycles is None or clock_hz is None:
         return "sin contadores"
     return f"{1000.0 * cycles / clock_hz:.3f}"
 
@@ -813,18 +817,27 @@ def _markdown_row(cells: list[str]) -> str:
     return "| " + " | ".join(cells) + " |"
 
 
-def measurement_table(medidas: dict, casos: list[str], versiones: list[str]) -> str:
+def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
+                      video_realtime: frozenset = frozenset(),
+                      serial_realtime: frozenset = frozenset()) -> str:
     """Tabla en Markdown a partir de `medidas[(caso, version)] -> dict`.
 
     Cada `dict` lleva `instructions`, `cycles`, `clock_hz`, o `skipped`. Es
     funcion pura a proposito: la parte que da forma a la tabla se puede probar
     entera sin placa, que es la mitad del codigo y la que mas se toca.
+
+    `video_realtime`/`serial_realtime`: nombres de casos que sincronizan con
+    algo real (vsync o bytes de UART) en vez de con un numero fijo de
+    instrucciones. Su numero de instrucciones VARIA por diseno segun el reloj
+    o el baudrate de cada version — no es una discrepancia de CPU, así que se
+    marcan con `*1`/`*2` en vez de disparar el aviso de "¡discrepan!".
     """
     lineas = ["## Ciclos por instruccion", ""]
     lineas.append(_markdown_row(["Caso", "Instr."] + versiones))
     lineas.append(_markdown_row(["---", "---:"] + ["---:"] * len(versiones)))
 
     discrepancias = []
+    notas_usadas = set()
     for caso in casos:
         fila = [medidas.get((caso, v)) for v in versiones]
         # `is not None` y no verdad logica: cero instrucciones es una medida
@@ -833,13 +846,19 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str]) -> 
             m["instructions"] for m in fila
             if m and not m.get("skipped") and m.get("instructions") is not None
         }
-        if len(contadas) > 1:
-            instr = "¡discrepan!"
+        if len(contadas) > 1 and caso in video_realtime:
+            instr, nota = "¡varía! *1", 1
+        elif len(contadas) > 1 and caso in serial_realtime:
+            instr, nota = "¡varía! *2", 2
+        elif len(contadas) > 1:
+            instr, nota = "¡discrepan!", None
             discrepancias.append((caso, sorted(contadas)))
         elif contadas:
-            instr = f"{contadas.pop():,}".replace(",", " ")
+            instr, nota = f"{contadas.pop():,}".replace(",", " "), None
         else:
-            instr = "—"
+            instr, nota = "—", None
+        if nota is not None:
+            notas_usadas.add(nota)
         lineas.append(_markdown_row(
             [caso, instr] + [_format_cpi(m) for m in fila]))
 
@@ -853,8 +872,10 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str]) -> 
     lineas += [
         "",
         "`n/a`: la version no admite el caso (mapa de memoria o capacidades).",
-        "`sin contadores`: el bitstream no tiene los comandos 0x36/0x37, o es",
+        "`sin contadores`: la version no tiene los comandos 0x36/0x37, o es",
         "el simulador, que cuenta instrucciones pero no modela el tiempo.",
+        "`n/d`: 0 instrucciones retiradas (el caso trampea desde el arranque);",
+        "el CPI esta indefinido, no es que falte el contador.",
         "",
         "El tiempo sale de los ciclos y del reloj, no del reloj de pared: entre",
         "arrancar y parar la CPU hay decenas de vueltas de UART que no son parte",
@@ -866,6 +887,17 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str]) -> 
                    "> cosas distintas:"]
         for caso, valores in discrepancias:
             lineas.append(f"> - `{caso}`: {valores}")
+    if 1 in notas_usadas:
+        lineas += ["",
+                  "*1: el numero de instrucciones varia por diseno, no es un fallo de",
+                  "CPU: el caso espera un intercambio de framebuffer real (vsync), que",
+                  "ocurre a un ritmo fijo en el tiempo; una version con reloj mas rapido",
+                  "ejecuta mas vueltas de espera en el mismo tiempo real."]
+    if 2 in notas_usadas:
+        lineas += ["",
+                  "*2: el numero de instrucciones varia por diseno, no es un fallo de",
+                  "CPU: el caso espera bytes reales por UART, y el numero de vueltas de",
+                  "espera depende del baudrate de cada version, no de su arquitectura."]
     return "\n".join(lineas) + "\n"
 
 
@@ -958,11 +990,20 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                 "cycles": result.get("cycles"),
                 "clock_hz": result.get("clock_hz"),
             }
-            print(f"MEDIDO {case['name']} [{version}]: "
+            print(f"PROFILED {case['name']} [{version}]: "
                   f"CPI {_format_cpi(medidas[clave])}")
 
+    # Casos que sincronizan con algo real (vsync o UART) en vez de con un
+    # numero fijo de instrucciones: su recuento varia por diseno entre
+    # versiones con reloj o baudrate distintos, no es un fallo de CPU.
+    video_realtime = frozenset(
+        case["name"] for case in casos
+        if {"video", "frame_capture"} & set(case["requires"]))
+    serial_realtime = frozenset(case["name"] for case in casos if case["stdin"])
+
     tabla = measurement_table(
-        medidas, [case["name"] for case in casos], list(versiones))
+        medidas, [case["name"] for case in casos], list(versiones),
+        video_realtime=video_realtime, serial_realtime=serial_realtime)
     args.measure.write_text(tabla, encoding="utf-8")
     print(f"\nTabla escrita en {args.measure}")
     print(tabla)

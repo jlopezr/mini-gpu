@@ -87,7 +87,7 @@ algo ahí (p.ej. registros de framebuffer fuera del espacio arquitectónico), y
 si el resto de prototipos que sí lo rellenan (`10`, `12`, `14`, `17`, `6`) lo
 hacen de forma consistente entre sí.
 
-## 11. Tests de capacidad pendientes en `x.tests`
+## 12. Tests de capacidad pendientes en `x.tests`
 
 **En marcha.** El mecanismo de capacidades ya existía para GPU
 (`requires: ["atomic_warp_faults"]`); se extendió a CPU con `video` y

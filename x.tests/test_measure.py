@@ -48,6 +48,17 @@ class MeasurementTableTest(unittest.TestCase):
         self.assertIn("9.00", fila)
         self.assertIn("sin contadores", fila)
 
+    def test_cero_instrucciones_no_es_sin_contadores(self):
+        """Una trampa que para sin retirar instrucciones SI tiene contador
+        (perf_counters=True): el CPI esta indefinido (n/d), no ausente."""
+        tabla = measurement_table(
+            {("explicit-trap", "bl8"): medida(0, 0, 80_000_000)},
+            ["explicit-trap"], ["bl8"])
+        fila = [l for l in tabla.splitlines()
+               if l.startswith("| explicit-trap |")][0]
+        self.assertIn("n/d", fila)
+        self.assertNotIn("sin contadores", fila)
+
     def test_instrucciones_compartidas(self):
         """Coinciden, asi que hay UNA columna y no una por version."""
         tabla = measurement_table(
@@ -75,6 +86,36 @@ class MeasurementTableTest(unittest.TestCase):
         self.assertIn("¡discrepan!", tabla)
         self.assertIn("Aviso", tabla)
         self.assertIn("[1000, 1001]", tabla)
+
+    def test_discrepancia_de_video_no_dispara_el_aviso_de_cpu(self):
+        """video-band espera un swap real (vsync): varia por diseno entre
+        versiones con reloj distinto, no es una CPU haciendo algo distinto."""
+        tabla = measurement_table(
+            {
+                ("video-band", "hdmi"): medida(1077191, 90, 100_000_000),
+                ("video-band", "bl8"): medida(1137814, 90, 80_000_000),
+            },
+            ["video-band"], ["hdmi", "bl8"],
+            video_realtime=frozenset({"video-band"}))
+        self.assertIn("¡varía! *1", tabla)
+        self.assertNotIn("¡discrepan!", tabla)
+        self.assertNotIn("Aviso", tabla)
+        self.assertIn("*1:", tabla)
+
+    def test_discrepancia_de_serie_no_dispara_el_aviso_de_cpu(self):
+        """serial-forth espera bytes reales por UART: varia por diseno entre
+        versiones con baudrate distinto, no es una CPU haciendo algo distinto."""
+        tabla = measurement_table(
+            {
+                ("serial-forth", "subword"): medida(307488, 90, 80_000_000),
+                ("serial-forth", "alu"): medida(318160, 90, 80_000_000),
+            },
+            ["serial-forth"], ["subword", "alu"],
+            serial_realtime=frozenset({"serial-forth"}))
+        self.assertIn("¡varía! *2", tabla)
+        self.assertNotIn("¡discrepan!", tabla)
+        self.assertNotIn("Aviso", tabla)
+        self.assertIn("*2:", tabla)
 
     def test_cero_instrucciones_no_es_un_hueco(self):
         """Un programa que trampea en la primera instruccion ejecuto cero.

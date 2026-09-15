@@ -236,7 +236,7 @@ class CapabilitiesTest(unittest.TestCase):
         for version in ("hdmi", "bl8"):
             motivo = fpga.incompatibility(caso, version)
             if motivo is not None:
-                self.assertNotIn("no tiene", motivo)
+                self.assertNotIn("sin video", motivo)
 
     def test_captura_solo_en_la_18(self):
         caso = self._caso(["frame_capture"])

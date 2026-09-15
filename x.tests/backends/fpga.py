@@ -11,7 +11,7 @@ from types import ModuleType
 from . import board
 
 
-# `capabilities` dice que tiene cada bitstream, y es lo que el runner contrasta
+# `capabilities` dice que tiene cada versión, y es lo que el runner contrasta
 # con el `requires` de cada caso. Declarar solo lo que de verdad se implementa:
 # `frame_capture` ya implica `video`, y el runner lo expande.
 #
@@ -157,7 +157,7 @@ def expand_for(names) -> frozenset:
 
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
-    """Lo que tiene este bitstream, con las implicaciones ya expandidas."""
+    """Lo que tiene esta versión, con las implicaciones ya expandidas."""
     return expand_for(VERSIONS[version]["capabilities"])
 
 
@@ -171,15 +171,14 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     faltan = [name for name in case.get("requires", []) if name not in disponibles]
     if faltan:
         # El motivo dice qué versión sí lo tiene, que es lo que uno quiere
-        # saber cuando ve el SKIP.
+        # saber cuando ve el SKIP. La versión que falla ya sale en el
+        # prefijo "[version]" del SKIP, así que no se repite aquí.
         con_ello = sorted(
             name for name, config in VERSIONS.items()
             if set(faltan) <= expand_for(config["capabilities"])
         )
-        sugerencia = f"; la tienen: {', '.join(con_ello)}" if con_ello else ""
-        return (
-            f"el bitstream {version!r} no tiene {', '.join(faltan)}{sugerencia}"
-        )
+        sugerencia = f" (la tienen: {', '.join(con_ello)})" if con_ello else ""
+        return f"sin {', '.join(faltan)}{sugerencia}"
 
     monitor = _load_module(
         f"fpga_monitor_{version}_for_regions",
