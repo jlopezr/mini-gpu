@@ -275,6 +275,20 @@ def _get_latest_build(root: Path, prototype: str | None = None) -> dict | None:
     return max(entries, key=lambda item: item.get("started_at", ""))
 
 
+def _find_archived_report(log_file: Path) -> str | None:
+    # build_report.py prints "Reports: <folder>" as its first line, pointing at
+    # the per-prototype archive (hardware.pnr/sources.zip/metadata.json). That
+    # folder's timestamp has microsecond precision and is unrelated to this
+    # wrapper's own id, so without this there is no way to get from
+    # `build-list`'s id to the archive path other than guessing it.
+    if not log_file.exists():
+        return None
+    for line in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("Reports: "):
+            return line[len("Reports: "):].strip()
+    return None
+
+
 def _print_status_summary(record: dict) -> None:
     log_path = Path(record.get("log_path", ""))
     root = Path(record.get("root", "."))
@@ -285,6 +299,9 @@ def _print_status_summary(record: dict) -> None:
     print(f"Label: {record.get('label', 'build')}")
     print(f"State: {record.get('state', 'unknown')}")
     print(f"PID: {record.get('pid', 'n/a')}")
+    archived_report = _find_archived_report(log_file)
+    if archived_report:
+        print(f"Archived report: {archived_report}")
     start = record.get("started_at")
     if start:
         try:
