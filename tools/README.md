@@ -201,7 +201,7 @@ sale en `OK` en vez de fingir que probó algo.
 
 `test --lint` añade `apio lint` a la suite completa, pero sigue ejecutando
 fixtures/tests Python si el prototipo los tiene. Para *solo* lint, sin nada
-más (equivalente exacto a `check.ps1 -Action Lint`):
+más:
 
 ```bash
 $ lint --prototype 12
@@ -235,7 +235,7 @@ timing y queda constancia de qué fuentes se barrieron.
 
 ## Encadenar todo (`check`)
 
-Equivalente a `check.ps1 -Action All`: `test` → `lint` → `build`, en ese
+`test` → `lint` → `build`, en ese
 orden, parando en el primer fallo. Solo reenvía `--prototype` — cada paso
 tiene opciones propias incompatibles entre sí (`--quick`, `--archive-only`...),
 así que para combinaciones concretas usa cada comando por separado:

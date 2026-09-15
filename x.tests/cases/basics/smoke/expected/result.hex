@@ -1,0 +1,3 @@
+# data[512] tras el STORE de R6: la palabra 0x00000a41, o sea los bytes
+# 41 0a 00 00 en little-endian ("A" y salto de linea, y el resto a cero).
+00000a41

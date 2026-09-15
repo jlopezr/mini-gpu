@@ -18,8 +18,8 @@
 
 Copia de `14.fpga-gpu-ram` dedicada a subir la frecuencia máxima sin cambiar la
 funcionalidad. El registro de cambios, medidas y caminos críticos está en
-`optimizacion.md`; `timing.ps1` resume el informe de temporización tras cada
-`check.ps1 Build` y `tools/build-sweep` mide el fmax sobre varias semillas, porque una
+`optimizacion.md`; `tools/build` resume el informe de temporización al final de
+cada pasada y `tools/build-sweep` mide el fmax sobre varias semillas, porque una
 sola tiene aquí un 17 % de dispersión. Todo lo demás de este documento describe
 el diseño heredado.
 
@@ -69,8 +69,8 @@ no recoge una finalización antigua. El reset global sí inicializa el controlad
 Desde la raíz del repositorio:
 
 ```powershell
-./17.fpga-gpu-ram-v2/check.ps1 Tests
-./17.fpga-gpu-ram-v2/check.ps1 Lint
+tools\test.ps1 --prototype 17
+tools\lint.ps1 --prototype 17
 tools\build.ps1 --prototype 17 --label context-pc
 .venv/Scripts/python.exe 17.fpga-gpu-ram-v2/monitor.py --help
 ```
@@ -86,7 +86,8 @@ ni un modelo de temporización del fabricante. Véase `validation.md`.
 
 `tools/build` ejecuta **una sola vez** `apio build --verbose-pnr`. La opción
 `--detailed-timing-report` está en `apio.ini`, así que no hace falta volver a
-enrutar para obtener el detalle. `check.ps1 Build` utiliza también este script.
+enrutar para obtener el detalle. Al terminar imprime fmax por reloj, los nets del
+camino crítico y la utilización, y los archiva en `reports/<fecha>-<etiqueta>/`.
 
 La consola muestra el progreso nativo de nextpnr: iteraciones de colocación y
 tabla de arcos enrutados, reintentados y pendientes. Los pendientes pueden subir

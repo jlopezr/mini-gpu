@@ -213,9 +213,9 @@ para ello usar `configure`, que valida el JSON antes de escribir.
 ## Verificación
 
 ```powershell
-./check.ps1 -Action Tests
-./check.ps1 -Action Lint
-./check.ps1 -Action Build
+../tools/test.ps1 --prototype 12
+../tools/lint.ps1 --prototype 12
+../tools/build.ps1 --prototype 12 --label check
 ```
 
 `Tests` regenera las referencias con el simulador funcional y ejecuta Apio.

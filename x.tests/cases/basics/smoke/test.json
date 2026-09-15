@@ -21,7 +21,7 @@
     "memory_dumps": [
       {
         "address": "0x00100200",
-        "file": "expected/result.bin"
+        "file": "expected/result.hex"
       }
     ]
   }

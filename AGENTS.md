@@ -38,8 +38,14 @@ primer fallo), `list-prototypes`, `prototype-report`, `generate-docs`,
 contra placa real infiriendo `--backend`/`--version` del prototipo, en vez de tener que saber
 a mano si es `cpu-fpga` o `gpu-fpga`). Todos los lanzadores tienen `.ps1` para Windows,
 y ninguno tiene lógica propia salvo `interface-diagram.ps1` (experimental, fuera de este sistema).
-`seed-sweep.ps1` se retiró: lo sustituye `build-sweep`. `check.ps1` en 12/14/17 delega en
-`test`/`lint`/`build` en vez de duplicar su lógica.
+
+Retirados por redundantes con `tools/`: `seed-sweep.ps1` (lo sustituye `build-sweep`),
+los `check.ps1` de 12/14/17 (eran `test`/`lint`/`build` con el número fijado) y
+`17/timing.ps1` (fmax, camino crítico y utilización ya los imprime `build` al final
+de cada pasada y los archiva en `reports/<fecha>-<etiqueta>/summary.txt`). No hay
+scripts de build/check propios en ningún prototipo; la excepción deliberada es
+`13.hdmi/check_timing.ps1`, que se queda: 13 es una prueba independiente multi-env,
+no un prototipo, y ese script barre semillas y las fija en su `apio.ini`.
 
 No queda ningún hueco de infraestructura pendiente en `tools/`. Detalle en
 [`tools/README.md`](tools/README.md).

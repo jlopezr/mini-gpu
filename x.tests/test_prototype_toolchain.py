@@ -1,6 +1,7 @@
 """tools/prototype.py: localización de apio y parseo de scons.params, sin
 depender de que oss-cad-suite ni apio estén instalados de verdad."""
 
+import os
 import tempfile
 import textwrap
 import unittest
@@ -8,15 +9,44 @@ from pathlib import Path
 
 from tools.prototype import ToolchainError, find_apio_binary, read_ecp5_params
 
+# El layout de un venv depende del SO: `Scripts/apio.exe` en Windows,
+# `bin/apio` en Linux/macOS. Las pruebas montan el del intérprete que las
+# ejecuta, no uno fijo, porque find_apio_binary hace la misma distinción.
+VENV_DIR = "Scripts" if os.name == "nt" else "bin"
+APIO = "apio.exe" if os.name == "nt" else "apio"
+
+
+def make_apio(root: Path, subdirectory: str, filename: str = APIO) -> Path:
+    path = root / ".venv" / subdirectory / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    return path
+
 
 class FindApioBinaryTest(unittest.TestCase):
-    def test_prefers_venv_bin_when_present(self):
+    def test_prefers_venv_over_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            apio = root / ".venv" / "bin" / "apio"
-            apio.parent.mkdir(parents=True)
-            apio.write_text("", encoding="utf-8")
+            apio = make_apio(root, VENV_DIR)
             self.assertEqual(find_apio_binary(root), str(apio))
+
+    def test_scripts_wins_over_bin_when_both_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scripts = make_apio(root, "Scripts")
+            make_apio(root, "bin")
+            self.assertEqual(find_apio_binary(root), str(scripts))
+
+    def test_ignores_the_other_platform_layout(self):
+        # Un `bin/apio` de POSIX no es ejecutable en Windows, ni un
+        # `Scripts/apio.exe` en Linux: en ambos casos hay que caer al PATH.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if os.name == "nt":
+                make_apio(root, "bin", "apio")
+            else:
+                make_apio(root, "Scripts", "apio.exe")
+            self.assertEqual(find_apio_binary(root), "apio")
 
     def test_falls_back_to_path_when_no_venv(self):
         with tempfile.TemporaryDirectory() as tmp:

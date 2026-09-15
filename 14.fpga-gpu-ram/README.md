@@ -61,9 +61,9 @@ no recoge una finalización antigua. El reset global sí inicializa el controlad
 Desde la raíz del repositorio:
 
 ```powershell
-./14.fpga-gpu-ram/check.ps1 Tests
-./14.fpga-gpu-ram/check.ps1 Lint
-./14.fpga-gpu-ram/check.ps1 Build
+./tools/test.ps1 --prototype 14
+./tools/lint.ps1 --prototype 14
+./tools/build.ps1 --prototype 14 --label check
 .venv/Scripts/python.exe 14.fpga-gpu-ram/monitor.py --help
 ```
 

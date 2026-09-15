@@ -36,12 +36,16 @@ class PrototypeResolutionTest(unittest.TestCase):
                 resolve_prototype("17", root)
 
     def test_root_resolution_uses_repo_layout(self):
+        # Hay que volver al cwd original ANTES de salir del with: Windows no
+        # deja borrar un directorio que es el cwd de un proceso vivo, así que
+        # un addCleanup (que corre después) rompería el borrado del tempdir.
         original_cwd = os.getcwd()
-        self.addCleanup(os.chdir, original_cwd)
         with tempfile.TemporaryDirectory() as tmp:
-            cwd = Path(tmp)
-            os.chdir(cwd)
-            self.assertEqual(resolve_prototype("17", REPO).name, "17.fpga-gpu-ram-v2")
+            try:
+                os.chdir(tmp)
+                self.assertEqual(resolve_prototype("17", REPO).name, "17.fpga-gpu-ram-v2")
+            finally:
+                os.chdir(original_cwd)
 
 
 if __name__ == "__main__":

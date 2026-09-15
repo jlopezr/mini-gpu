@@ -4,14 +4,15 @@ Copia de `14.fpga-gpu-ram` para subir la frecuencia máxima. Objetivo declarado:
 acercarse a 100 MHz. La constraint del proyecto sigue en 25 MHz; lo que se mide
 en cada paso es el `achieved` del informe de `nextpnr`, no un cambio de reloj.
 
-Método: **un cambio por iteración**, con `check.ps1 Tests`, `check.ps1 Lint` y
-`check.ps1 Build` después de cada uno, anotando fmax, camino crítico y recursos.
+Método: **un cambio por iteración**, con `test`, `lint` y `build` después de cada
+uno, anotando fmax, camino crítico y recursos.
 
 ```powershell
-./17.fpga-gpu-ram-v2/check.ps1 Tests
-./17.fpga-gpu-ram-v2/check.ps1 Lint
-./17.fpga-gpu-ram-v2/check.ps1 Build
-./17.fpga-gpu-ram-v2/timing.ps1   # camino crítico y recursos de esta pasada
+tools\test.ps1  --prototype 17
+tools\lint.ps1  --prototype 17
+tools\build.ps1 --prototype 17 --label check
+#   `build` ya imprime al final fmax por reloj, los nets del camino crítico y
+#   la utilización, y los deja en reports/<fecha>-check/summary.txt.
 tools\build-sweep.ps1 --prototype 17    # fmax sobre varias semillas
 ```
 

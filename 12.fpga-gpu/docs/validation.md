@@ -9,13 +9,13 @@ Fecha: 2026-09-10.
 - Suite funcional GPU sin los dos Mandelbrot: 32 casos PASS. Conserva las
   expectativas completas del simulador, incluidos los casos no compatibles
   con la FPGA.
-- `./12.fpga-gpu/check.ps1 -Action Tests`: PASS. Siete pruebas Python del monitor
+- `./tools/test.ps1 --prototype 12`: PASS. Siete pruebas Python del monitor
   y seis testbenches RTL (control, LSU, regiones, scheduler, sistema y UART).
 - `gpu_system_tb.v`: 32 casos diferenciales PASS, comparando los 2048 registros,
   PC, máscaras, pilas vacías, 512 palabras de datos y los nuevos contadores
   por warp. Incluye memoria, BAR, EXIT y reconvergencia.
 - `gpu_uart_tb.v`: PASS, comprueba la versión 2.1 por los pines UART.
-- `./12.fpga-gpu/check.ps1 -Action Lint`: PASS, sin avisos de Verilator.
+- `./tools/lint.ps1 --prototype 12`: PASS, sin avisos de Verilator.
 
 La selección automática actual contiene 26 casos compatibles con BRAM y
 8 omisiones explícitas: 4 configuraciones SIMT distintas, 3 casos fuera de

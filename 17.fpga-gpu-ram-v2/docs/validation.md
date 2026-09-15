@@ -39,7 +39,7 @@ tras la regresión completa. Los logs locales son `tests.log`, `uart-tests.log`,
 
 ## Síntesis y timing
 
-Bitstream final generado correctamente para ULX3S-85F. `check.ps1 Build`
+Bitstream final generado correctamente para ULX3S-85F. `tools/build --prototype 17`
 verifica el informe de nextpnr y confirma **33.49 MHz ≥ 25 MHz**.
 El diseño funciona a 25 MHz; la frecuencia alcanzada es la estimación del informe.
 

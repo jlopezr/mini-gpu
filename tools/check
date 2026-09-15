@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Encadena test + lint + build para un prototipo, en ese orden, parando en
-# el primer fallo. Equivalente a `check.ps1 -Action All`.
+# el primer fallo.
 #
 # Solo reenvía --prototype: test/lint/build tienen opciones propias
 # incompatibles entre sí (--quick, --archive-only...), así que check no
