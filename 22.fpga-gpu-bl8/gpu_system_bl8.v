@@ -268,6 +268,9 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
 
     gpu_perf_counters perf (
         .clk(clk),.reset(reset),
+        // Solo se cuenta mientras la GPU corre: si no, la medida desde el host
+        // incluye el ir y venir por serie y el sondeo de "¿ha parado ya?".
+        .running(!halted),
         .sel(perf_region),.word(mmio_addr_mux[5:2]),
         .read_data(perf_read_data),.bad(perf_bad),
         .retired(instruction_retired),.retired_lanes(sm_retired_lanes),

@@ -6,7 +6,7 @@
 // mide A SI MISMO en la placa, en tiempo real: lee CYCLES antes y despues de
 // dibujar y ya sabe lo que costo, sin cronometro ni UART de por medio.
 //
-//   0x80000300  CYCLES       ciclos desde el reset (libre, da la vuelta)
+//   0x80000300  CYCLES       ciclos CON LA GPU CORRIENDO (da la vuelta)
 //   0x80000304  RETIRED      instrucciones retiradas
 //   0x80000308  IMEM_HITS    aciertos del bufer de instrucciones
 //   0x8000030c  IMEM_MISSES  fallos del bufer de instrucciones
@@ -35,6 +35,19 @@ module gpu_perf_counters (
     input wire [3:0]  word,
     output reg [31:0] read_data,
     output reg        bad,
+
+    // Todos los contadores solo avanzan con la GPU CORRIENDO.
+    //
+    // CYCLES era libre, y eso hacia que la medida desde el host no midiera el
+    // programa sino el reloj de pared: entre las dos lecturas caben las ordenes
+    // por serie y, sobre todo, la granularidad del bucle que sondea si ha
+    // parado. La primera medida en placa salio con un CPI de 43 por esto, no
+    // porque el cauce fuera lento.
+    //
+    // VIDEO_TX tambien se cuenta gated: el scanout sigue leyendo SDRAM con la
+    // GPU parada, y contar ese trafico ensuciaba el reparto entre datos, video
+    // y fetch, que es justo para lo que sirve.
+    input wire running,
 
     input wire retired,
     input wire [7:0] retired_lanes,
@@ -70,7 +83,7 @@ module gpu_perf_counters (
         if(reset) begin
             cycles<=0; retired_count<=0; lsu_tx_count<=0;
             video_tx_count<=0; stall_count<=0; lane_ops<=0;
-        end else begin
+        end else if(running) begin
             cycles<=cycles+1'b1;
             if(retired) begin
                 retired_count<=retired_count+1'b1;
