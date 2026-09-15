@@ -88,10 +88,10 @@ VERSIONS = {
         # significo cronologia: 10 ya respondia 1.5 siendo posterior al 1.6 de 6.
         "monitor_version": (1, 15),
         "description": (
-            "Como subword, mas MULHI/DIVU/REM/REMU y SHLI/SHRI/SARI"
+            "Como subword, mas MULHI/DIVU/REM/REMU, SHLI/SHRI/SARI y SLT/SLTU"
         ),
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "shift_immediate", "alu_extended"),
+                         "shift_immediate", "alu_extended", "compare"),
         "perf_counters": True,
         "clock_hz": 80_000_000,
     },

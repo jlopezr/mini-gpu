@@ -19,7 +19,8 @@ VERSIONS = {
         # igualmente: aqui no es una extension sino la base de la ISA, y el
         # simulador la tiene desde siempre.
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
-                         "shift_immediate", "alu_extended", "mul_div"),
+                         "shift_immediate", "alu_extended", "mul_div",
+                         "compare"),
         "description": "simulador funcional MiniCPU actual",
     },
 }

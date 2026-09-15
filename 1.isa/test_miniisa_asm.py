@@ -192,5 +192,24 @@ class AluExtendidaTest(unittest.TestCase):
             assemble("MULHI R1, R2")
 
 
+class CompareTest(unittest.TestCase):
+    """SLT y SLTU: comparaciones materializadas, capability `compare`."""
+
+    def test_opcodes(self):
+        esperados = {"SLT": 0x26, "SLTU": 0x27}
+        for mnemonico, opcode in esperados.items():
+            palabra = assemble(f"{mnemonico} R1, R2, R3")[0]
+            self.assertEqual(palabra >> 26, opcode, mnemonico)
+            # R-Type con `extra` a cero, igual que ADD.
+            self.assertEqual(palabra & 0x7FF, 0, mnemonico)
+            self.assertEqual((palabra >> 21) & 0x1F, 1)
+            self.assertEqual((palabra >> 16) & 0x1F, 2)
+            self.assertEqual((palabra >> 11) & 0x1F, 3)
+
+    def test_exigen_tres_operandos(self):
+        with self.assertRaises(AsmError):
+            assemble("SLT R1, R2")
+
+
 if __name__ == "__main__":
     unittest.main()

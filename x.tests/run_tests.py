@@ -430,6 +430,7 @@ CAPABILITIES = {
     "shift_immediate": "cpu",
     "alu_extended": "cpu",
     "mul_div": "cpu",
+    "compare": "cpu",
 }
 # `frame_capture` implica `video`: quien puede capturar, evidentemente, tiene
 # video. Se expande al cargar para que un backend solo tenga que declarar lo

@@ -697,14 +697,19 @@ The comparison/control region contains:
 0x23 BGE
 0x24 BLTU
 0x25 BGEU
-0x26 SLT
-0x27 SLTU
+0x26 SLT   (compare)
+0x27 SLTU  (compare)
 0x28-0x2B reserved
 0x2C JAL
 0x2D JALR
 0x2E JR
 0x2F BRA
 ```
+
+`SLT` and `SLTU` require the `compare` capability. See
+[`isa.md`](isa.md#capabilities-de-instrucciones) for capability availability
+per implementation; `21.fpga-cpu-hdmi-alu` and the functional simulator both
+declare it.
 
 `SLT` and `SLTU` use the normal R-Type format:
 
@@ -1007,8 +1012,8 @@ subtraction.
 For MiniISA v0.1:
 
 ```text
-0x26 SLT
-0x27 SLTU
+0x26 SLT   (compare)
+0x27 SLTU  (compare)
 ```
 
 For MiniISA v0.3, both operations belong to the `COMPARE` family at opcode

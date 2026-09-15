@@ -16,6 +16,8 @@ Sintaxis inicial:
     BLT   R1, R2, label
     BRA   label
 
+    SLT   R1, R2, R3   ; comparaciones materializadas; SLTU tambien
+
     JAL   R31, funcion
     JALR  R31, R5, 0
     JR    R5
@@ -96,6 +98,10 @@ OPCODES = {
     "BLTU":   0x24,
     "BGEU":   0x25,
 
+    # Comparaciones materializadas. R-Type, capability `compare`.
+    "SLT":    0x26,
+    "SLTU":   0x27,
+
     # Llamadas y saltos indirectos. Mapa de propuesta-v0.2.md §3.2: R0 sigue
     # siendo un registro general, asi que JR gasta opcode propio.
     "JAL":    0x2C,
@@ -117,6 +123,7 @@ R3_OPS = {
     "ADD", "SUB", "MULFX", "AND", "OR", "XOR",
     "SHL", "SHR", "SAR",
     "MUL", "MULHI", "DIV", "DIVU", "REM", "REMU",
+    "SLT", "SLTU",
 }
 
 # Desplazamientos con cantidad inmediata: opcion B de propuesta-v0.2.md §4.2.

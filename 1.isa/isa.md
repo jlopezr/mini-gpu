@@ -23,6 +23,7 @@ Las extensiones son independientes y pueden incorporarse a otras versiones.
 | `calls`           | `0x2C–0x2E`             | `JAL`, `JALR`, `JR`                                      |
 | `alu_extended`    | `0x0B`, `0x0D–0x0F`     | `MULHI`, `DIVU`, `REM`, `REMU`                           |
 | `shift_immediate` | `0x07–0x09`, bit 10 = 1 | `SHLI`, `SHRI`, `SARI`                                   |
+| `compare`         | `0x26–0x27`             | `SLT`, `SLTU`                                            |
 
 En las tablas de opcodes, **Base** significa que no se requiere una capability
 adicional; no es el nombre de una capability del runner. Los desplazamientos
@@ -30,15 +31,15 @@ por registro pertenecen a la base, aunque sus variantes inmediatas sean opcional
 
 Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 
-| Implementación                     | `subword_memory` | `calls` | `alu_extended` | `shift_immediate` |
-|------------------------------------|------------------|---------|----------------|-------------------|
-| `6.fpga-cpu` / `ebr`               | —                | —       | —              | —                 |
-| `10.fpga-cpu-ram` / `sdram`        | —                | —       | —              | —                 |
-| `16.fpga-cpu-hdmi` / `hdmi`        | —                | —       | —              | —                 |
-| `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                 |
-| `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                 |
-| `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                |
-| `2.cpu-sim-func` / `cpu-simulator` | Sí               | Sí      | Sí             | Sí                |
+| Implementación                     | `subword_memory` | `calls` | `alu_extended` | `shift_immediate` | `compare` |
+|------------------------------------|------------------|---------|----------------|--------------------|-----------|
+| `6.fpga-cpu` / `ebr`               | —                | —       | —              | —                  | —         |
+| `10.fpga-cpu-ram` / `sdram`        | —                | —       | —              | —                  | —         |
+| `16.fpga-cpu-hdmi` / `hdmi`        | —                | —       | —              | —                  | —         |
+| `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                  | —         |
+| `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                  | —         |
+| `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                 | Sí        |
+| `2.cpu-sim-func` / `cpu-simulator` | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 Las declaraciones del runner están en
 [`backends/fpga.py`](../x.tests/backends/fpga.py) y
@@ -291,11 +292,21 @@ ORI   R1, R1, 0x5678    ; R1 = 0x12345678
 |      `0x23` | `BGE`     | `Ra, Rb, target` | `signed(Ra) >= signed(Rb)` | Base       |
 |      `0x24` | `BLTU`    | `Ra, Rb, target` | `Ra < Rb`, unsigned        | Base       |
 |      `0x25` | `BGEU`    | `Ra, Rb, target` | `Ra >= Rb`, unsigned       | Base       |
-| `0x26–0x2B` | —         | —                | Reservadas                 | —          |
+|      `0x26` | `SLT`     | `Rd, Ra, Rb`     | `Rd = (signed(Ra) < signed(Rb)) ? 1 : 0` | `compare` |
+|      `0x27` | `SLTU`    | `Rd, Ra, Rb`     | `Rd = (Ra < Rb) ? 1 : 0`, unsigned       | `compare` |
+| `0x28–0x2B` | —         | —                | Reservadas                 | —          |
 |      `0x2C` | `JAL`     | `Rd, target`     | `Rd = PC+4`, relativo      | `calls`    |
 |      `0x2D` | `JALR`    | `Rd, Ra, imm16`  | `Rd = PC+4`, a `Ra+imm*4`  | `calls`    |
 |      `0x2E` | `JR`      | `Ra`             | a `Ra`, sin enlace         | `calls`    |
 |      `0x2F` | `BRA`     | `target`         | Siempre                    | Base       |
+
+`SLT` y `SLTU` requieren `compare` y usan R-Type, con los campos de §2; el
+campo reservado es `extra[10:0]`, igual que `ADD`. Materializan la comparación
+como `0` o `1` en `Rd`, sin efectos de control de flujo: no tocan `PC` ni
+consumen `target`. `SLTU` con `Ra = R0` materializa `Rb != 0`, y `SLT` con
+`Rb = R0` materializa el signo de `Ra`, ambos sin instrucción dedicada. Ver
+[`abi.md`](abi.md#12-materialized-comparisons) para el uso que les
+da la ABI en aritmética de 64 bits sin `FLAGS`.
 
 `JAL`, `JALR` y `JR` requieren `calls` y usan I-Type, con los campos de §2.
 Los desplazamientos de `JAL` y `JALR` son signed de 16 bits en palabras.

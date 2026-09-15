@@ -19,6 +19,7 @@
  *   STOREB/STOREH Rs, Ra, imm16  (escribe Rs[7:0] / Rs[15:0])
  *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
  *   BRA offset
+ *   SLT/SLTU Rd, Ra, Rb    (comparacion materializada, 0 o 1)
  *   JAL Rd, offset16       (Rd = PC + 4; salto relativo en palabras)
  *   JALR Rd, Ra, imm16     (Rd = PC + 4; salto a Ra + imm*4)
  *   JR Ra                  (salto a Ra, sin enlace)
@@ -101,6 +102,12 @@ module cpu (
   localparam [5:0] OPCODE_BGE = 6'h23;
   localparam [5:0] OPCODE_BLTU = 6'h24;
   localparam [5:0] OPCODE_BGEU = 6'h25;
+  // Comparaciones materializadas. Capability `compare`, 1.isa/isa.md §3
+  // "Control de flujo". R-Type como ADD, pero sin efecto sobre PC: reusan la
+  // resta registrada de los branches (branch_difference/branch_a_sign/
+  // branch_b_sign) para no abrir un segundo comparador de 33 bits.
+  localparam [5:0] OPCODE_SLT = 6'h26;
+  localparam [5:0] OPCODE_SLTU = 6'h27;
   // Llamadas y saltos indirectos. Mapa de 1.isa/propuesta-v0.2.md §3.2.
   //
   // `JR` (0x2E) queda OBSOLETO en esta version: con `R0` cableado a cero,
@@ -151,6 +158,10 @@ module cpu (
   // que STATE_MUL_SIGN: es una suma de 32 bits y no debe compartir ciclo con la
   // resta que la consume. Ver docs/alu-extendida.md.
   localparam [4:0] STATE_MULHI_FIX = 5'd18;
+  // SLT/SLTU: convierte la resta registrada de STATE_EXECUTE en 0/1 y deja el
+  // resultado en `alu_result`, para reusar STATE_ALU_WRITE tal cual. Es el
+  // mismo reparto de ciclos que un branch: EXECUTE -> comparar -> escribir.
+  localparam [4:0] STATE_SLT_WRITE = 5'd19;
 
   /*
    * Que resultado se escribe al final del camino compartido multiplicador /
@@ -467,7 +478,7 @@ module cpu (
         instruction_encoding_valid = instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
       OPCODE_MUL, OPCODE_MULHI, OPCODE_DIV, OPCODE_DIVU, OPCODE_REM,
-      OPCODE_REMU:
+      OPCODE_REMU, OPCODE_SLT, OPCODE_SLTU:
         instruction_encoding_valid = instruction[10:0] == 0;
       /*
        * Para los tres desplazamientos el bit 10 ya NO es reservado: dice que la
@@ -922,6 +933,31 @@ module cpu (
               state <= STATE_BRANCH_COMPARE;
             end
 
+            /*
+             * SLT/SLTU comparten la resta registrada de 33 bits con los
+             * branches --misma `branch_difference`, mismos signos--, pero no
+             * fijan `branch_target` ni tocan PC: van a STATE_SLT_WRITE, no a
+             * STATE_BRANCH_COMPARE. `branch_kind` 3'd6/3'd7 son exclusivos de
+             * este camino.
+             */
+            OPCODE_SLT: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd6;
+              alu_destination <= rd;
+              state <= STATE_SLT_WRITE;
+            end
+
+            OPCODE_SLTU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd7;
+              alu_destination <= rd;
+              state <= STATE_SLT_WRITE;
+            end
+
             OPCODE_BRA: begin
               branch_taken <= 1'b1;
               branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
@@ -1215,6 +1251,21 @@ module cpu (
               state <= STATE_MUL_SIGN;
             end
           end
+        end
+
+        /*
+         * Mismo par de decisiones que STATE_BRANCH_COMPARE (3'd2 signed y
+         * 3'd4 unsigned), pero el resultado se materializa en `alu_result`
+         * como 0/1 en vez de decidir `branch_taken`. Un ciclo mas y cae en
+         * STATE_ALU_WRITE, el mismo camino de escritura que ADD/SUB/AND/OR/XOR.
+         */
+        STATE_SLT_WRITE: begin
+          case (branch_kind)
+            3'd6: alu_result <= {31'd0,
+                branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31]};
+            default: alu_result <= {31'd0, branch_difference[32]};
+          endcase
+          state <= STATE_ALU_WRITE;
         end
 
         // All comparisons reuse one registered subtraction. For signed values,

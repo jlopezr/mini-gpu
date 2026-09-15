@@ -12,6 +12,7 @@ arquitectónico de error:
 - Memoria: LOAD y STORE, y los accesos de 8 y 16 bits LOADB, LOADUB,
   STOREB, LOADH, LOADUH y STOREH.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
+- Comparaciones materializadas: SLT y SLTU.
 - Llamadas: JAL, JALR y JR.
 
 El estado consta de PC y 32 registros de 32 bits. **R0 está cableado a cero**:
@@ -56,7 +57,8 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         # opcodes es por tanto `extra[9:0]`, no `extra` entero.
         return (instr & 0x3FF) == 0
     if opcode in {0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
-                  0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F}:
+                  0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                  0x26, 0x27}:
         return (instr & 0x7FF) == 0
     if opcode in {0x10, 0x17}:  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
@@ -702,6 +704,18 @@ class CPU:
             imm16 = sign_extend(instr & 0xFFFF, 16)
             if self.regs[ra] >= self.regs[rb]:
                 self.pc = u32(self.pc + (imm16 << 2))
+
+        elif opcode == 0x26:  # SLT, comparacion materializada con signo
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.set_register(rd, 1 if s32(self.regs[ra]) < s32(self.regs[rb]) else 0)
+
+        elif opcode == 0x27:  # SLTU, comparacion materializada sin signo
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.set_register(rd, 1 if self.regs[ra] < self.regs[rb] else 0)
 
         elif opcode == 0x2C:  # JAL
             # El enlace es PC+4, que ya está en self.pc: el fetch lo adelantó.

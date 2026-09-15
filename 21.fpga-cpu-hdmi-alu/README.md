@@ -316,6 +316,61 @@ fallar: es el contrato, y es lo que `alu_fast_path_tb` comprueba en cada caso.
 
 ---
 
+## 5. Comparaciones materializadas: `SLT` y `SLTU`
+
+Dos opcodes que en `1.isa/isa.md` §3 estaban reservados —`0x26` y
+`0x27`, justo detrás de `BGEU`— pasan a `SLT` y `SLTU`, capability `compare`:
+
+```text
+0x26 SLT  Rd, Ra, Rb   Rd = (signed(Ra)  < signed(Rb)) ? 1 : 0
+0x27 SLTU Rd, Ra, Rb   Rd = (Ra           < Rb)         ? 1 : 0
+```
+
+Son R-Type, como `ADD`, y no tocan `PC`: a diferencia de `BLT`/`BLTU`, con los
+que comparten toda la aritmética, el resultado es un **valor**, no un salto.
+
+**El RTL no añade un comparador nuevo.** `STATE_EXECUTE` ya arma, para cada
+branch, una resta registrada de 33 bits —`branch_difference`— junto con el
+signo de cada operando por separado —`branch_a_sign`/`branch_b_sign`—; la
+decisión signed frente a unsigned de `BLT` contra `BLTU` es exactamente la que
+necesita `SLT` contra `SLTU`. `SLT`/`SLTU` reusan esos mismos tres registros y
+solo cambian el estado siguiente: en vez de `STATE_BRANCH_COMPARE` —que decide
+`branch_taken` y mueve `PC`— van a `STATE_SLT_WRITE`, que aplica la misma
+decisión y la dejan en `alu_result` como `0`/`1`, para desembocar en
+`STATE_ALU_WRITE`, el mismo camino de escritura que `ADD`/`SUB`/`AND`/`OR`/`XOR`.
+Mismo reparto de ciclos que un branch: `EXECUTE` → comparar → escribir.
+
+El campo reservado sigue siendo `extra[10:0]` entero, igual que el resto de la
+familia R-Type sin cantidad inmediata: no hereda la irregularidad de
+`shift_immediate` porque no usa el bit 10 para nada.
+
+`SLT`/`SLTU` no necesitan una instrucción dedicada para dos idiomas que
+`1.isa/abi.md` §12 ya documentaba como derivables:
+
+```asm
+SLT  Rd, Ra, R0      ; Rd = signo de Ra
+SLTU Rd, R0, Ra      ; Rd = (Ra != 0)
+```
+
+y los dos están entre los vectores de
+[`compare_tb.v`](compare_tb.v).
+
+Verificación: [`compare_tb.v`](compare_tb.v), con el discriminante que separa
+las dos instrucciones —mismo par de bits, respuesta distinta según se lea con
+signo o sin él, comprobado en los dos órdenes— y el caso
+[`compare/signed-unsigned`](../x.tests/cases/extensions/compare/signed-unsigned/)
+de `x.tests`. La mitad negativa del encoding, que quitar la comprobación de
+`extra[10:0]` no rompería nada, la cubre
+[`compare/reserved-fields`](../x.tests/cases/extensions/compare/reserved-fields/).
+
+| Mutación | La detecta |
+|---|---|
+| `SLT` usa solo `diff[31]`, sin mirar los signos por separado | `compare_tb` |
+| `SLT`/`SLTU` intercambiados | `compare_tb` |
+| El encoding deja de exigir `extra[10:0] == 0` | `compare_tb` |
+
+---
+
 Lo que sigue es el README de la 19, que describe los accesos sub-palabra y las
 llamadas.
 
