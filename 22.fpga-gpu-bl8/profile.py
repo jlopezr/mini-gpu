@@ -109,7 +109,9 @@ def main() -> int:
                         help="segundos de espera a que el programa termine")
     args = parser.parse_args()
 
-    port = args.port or monitor.available_ports().split(",")[0].strip()
+    # NO vale `available_ports().split(",")[0]`: eso devolvia el primer puerto
+    # del sistema, que con la placa desenchufada es COM1 o un enlace Bluetooth.
+    port = args.port or monitor.detect_port()
 
     with serial.Serial(port=port, baudrate=monitor.BAUDRATE,
                        bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,

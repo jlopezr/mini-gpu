@@ -365,6 +365,30 @@ En macOS/Linux no hay "COM3" que valga por defecto, así que esto evita tener
 que buscarlo a mano cada vez; si hay varios o ninguno, lo dice explícitamente
 en vez de adivinar.
 
+### Detección de puerto compartida (`tools/serial_ports.py`)
+
+Lo mismo vale ahora para los `monitor.py` de los prototipos y para
+`22.fpga-gpu-bl8/profile.py`: todos importan `tools/serial_ports.py`, que es
+el único sitio donde vive `detect_port()`/`available_ports()`.
+
+Antes esa función estaba **copiada palabra por palabra en los trece
+monitores** y devolvía el primer puerto del sistema. Con la placa
+desenchufada eso cogía el puerto serie de la placa base o un enlace
+Bluetooth, y el fallo salía mucho más tarde disfrazado de *write timeout* —
+un síntoma que se parece a "la FPGA no tiene monitor" y no a "no has
+enchufado la placa". Ahora `--port` sin valor detecta, y `available_ports()`
+marca cuál es la placa:
+
+```text
+Available ports: COM3 (FTDI), COM1, COM6, COM8
+```
+
+`x.tests/backends/board.py` mantiene su propia copia a propósito: `x.tests`
+no depende de `tools/` (la dependencia va en el otro sentido) y `board.py`
+recibe el `monitor.py` del prototipo como módulo, así que importar desde el
+monitor haría un ciclo. Son dos copias en vez de trece, y
+`x.tests/test_monitor_port.py` comprueba que no divergen.
+
 ### Las tres operaciones por separado
 
 `run-board` es la composición de tres pasos; cada uno también existe como

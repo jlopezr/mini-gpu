@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import serial
-from serial.tools import list_ports
 
 BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
@@ -138,12 +137,20 @@ class MonitorClient:
         return bytes(result)
 
 
-def available_ports() -> str:
-    ports = list(list_ports.comports())
-    if not ports:
-        return "No serial ports detected"
-
-    return "Available ports: " + ", ".join(port.device for port in ports)
+# Deteccion del puerto y listado: en tools/serial_ports.py.
+#
+# Estaba COPIADA palabra por palabra en los trece monitores, y coger el primer
+# puerto del sistema no vale: con la placa desenchufada ese primero puede ser
+# el puerto serie de la placa base o un enlace Bluetooth, y entonces el fallo
+# aparece tarde y disfrazado de timeout. Se filtra por fabricante (FTDI).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.serial_ports import (  # noqa: E402
+    FTDI_VENDOR_ID,
+    PortError,
+    available_ports,
+    detect_port,
+    ftdi_ports,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -165,8 +172,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("arguments", nargs="*", metavar="ARG")
     parser.add_argument(
         "--port",
-        default="COM3",
-        help="Serial port connected to the ULX3S (default: COM3)",
+        default=None,
+        help="Puerto serie de la ULX3S (por defecto: el unico FTDI conectado)",
     )
     parser.add_argument(
         "--timeout",
@@ -223,7 +230,7 @@ def main() -> int:
             )
 
         with serial.Serial(
-            port=args.port,
+            port=args.port if args.port is not None else detect_port(),
             baudrate=BAUDRATE,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
@@ -284,7 +291,7 @@ def main() -> int:
                     )
                 print(f"Verified {len(expected)} byte(s) at address 0x{address:04x}")
 
-    except (MonitorError, OSError, serial.SerialException) as error:
+    except (MonitorError, PortError, OSError, serial.SerialException) as error:
         print(f"Error: {error}", file=sys.stderr)
         print(available_ports(), file=sys.stderr)
         return 1
