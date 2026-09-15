@@ -30,15 +30,34 @@ module gpu_lsu (
     reg [31:0] word_address, word_data;
     reg [3:0] word_strobe;
     reg [15:0] low_data;
-    reg found, lane_found;
-    reg [2:0] pick, candidate, lane_pick;
-    integer k,l,i;
+    reg lane_found;
+    reg [2:0] lane_pick;
+    reg [2:0] rot_idx;
+    integer l,i;
+    // Round-robin warp pick without a variable cursor+k adder feeding eight
+    // chained comparisons. eligible is a flat 8-bit mask, independent of
+    // cursor; rotating it so bit 0 lands on the cursor candidate turns the
+    // priority search into a fixed (non-indexed) encoder, which is a
+    // shallower tree than the original serial chain.
+    wire [7:0] eligible=busy & (has_pending | {8{!rsp_valid}});
+    wire [15:0] eligible_rot2={eligible,eligible};
+    wire [7:0] rotated=eligible_rot2[{1'b0,cursor} +: 8];
+    wire found=|rotated;
     always @* begin
-        found=0; pick=cursor; candidate=0;
-        for(k=0;k<8;k=k+1) begin
-            candidate=cursor+k[2:0];
-            if(!found && busy[candidate] && (has_pending[candidate] || !rsp_valid)) begin found=1; pick=candidate; end
-        end
+        casez (rotated)
+            8'b???????1: rot_idx=3'd0;
+            8'b??????10: rot_idx=3'd1;
+            8'b?????100: rot_idx=3'd2;
+            8'b????1000: rot_idx=3'd3;
+            8'b???10000: rot_idx=3'd4;
+            8'b??100000: rot_idx=3'd5;
+            8'b?1000000: rot_idx=3'd6;
+            8'b10000000: rot_idx=3'd7;
+            default:     rot_idx=3'd0;
+        endcase
+    end
+    wire [2:0] pick=cursor+rot_idx;
+    always @* begin
         lane_found=0; lane_pick=0;
         for(l=0;l<8;l=l+1)
             if(!lane_found && pending[pick][l]) begin lane_found=1; lane_pick=l[2:0]; end

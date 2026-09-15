@@ -403,3 +403,123 @@ extrae histogramas de slack y tabla de routing y conserva JSON detallado, fuente
 en ZIP, hashes y bitstream en `reports/`. No realiza una segunda pasada para
 obtener el detalle. Véase el README para `-Incremental` y `-ArchiveOnly`: en Apio
 1.5.1 pedir `--verbose-pnr` fuerza una pasada de routing aunque no cambie el RTL.
+
+## Paso 7: máscara one-hot rotada en el arbitraje de warps de la LSU (15 septiembre 2026)
+
+Retomado desde fuera de esta sesión de optimización, apuntando a la lista de
+candidatos pendientes sobre la LSU del final de la sección anterior. Esta vez
+la herramienta de síntesis no estaba disponible como `apio build`/PowerShell,
+así que se invocó `yosys` y `nextpnr-ecp5` directamente (mismas opciones que
+lee `apio.ini`: `synth_ecp5 -run begin:check` seguido de `hierarchy -check;
+stat; check -noinit; blackbox =A:whitebox; write_json`, y luego `nextpnr-ecp5
+--85k --package CABGA381 --speed 6 --detailed-timing-report`). El resultado
+debería ser equivalente al de Apio, pero no se ha verificado bit a bit contra
+un build hecho con Apio.
+
+**Problema.** El arbitraje rotatorio de 8 warps en `gpu_lsu.v` (IDLE) seguía
+usando la cadena original: `candidate=cursor+k` con un sumador de 3 bits por
+iteración, y ocho comparaciones encadenadas sobre `found`. Es una cadena cuya
+profundidad depende de `cursor` en tiempo de ejecución, lo que dificulta que
+ABC9 la reduzca a un árbol de log2(8).
+
+**Cambio.** Se sustituye por una máscara plana `eligible = busy &
+(has_pending | {8{!rsp_valid}})`, sin índice dinámico, rotada con un barrel
+shifter de 8 bits (`eligible_rot2[{1'b0,cursor} +: 8]`, sobre una copia
+duplicada `{eligible,eligible}`) y un priority encoder fijo de 8 entradas
+(`casez` de 8 casos) sobre el resultado rotado. `pick = cursor + rot_idx`. La
+prioridad de lane (`lane_pick`, indexando `pending[pick]`) no se toca: sigue
+siendo el mismo bucle que ya existía, dependiente del `pick` ya calculado.
+
+No cambia la interfaz del módulo ni el número de ciclos: sigue siendo
+combinacional dentro de `IDLE`, solo cambia cómo se calcula `pick`.
+
+**Corrección.** `gpu_lsu_tb.v` (individual), y con el resto de fuentes
+enlazadas: `gpu_control_tb.v`, `gpu_regions_tb.v`, `gpu_scheduler_tb.v`,
+`gpu_system_tb.v` (32 casos diferenciales) y `gpu_uart_tb.v`. Los seis pasan.
+`verilator --lint-only -Wall` sobre `gpu_lsu.v` señaló un
+`WIDTHEXPAND` nuevo en la selección indexada (`cursor +: 8` sobre un vector de
+16 bits con un índice de 3 bits): se corrigió anteponiendo un `1'b0` al índice
+(`{1'b0,cursor} +: 8`). El único aviso que queda (`word_address` con bits sin
+usar) ya existía antes del cambio.
+
+**Medida.** Una sola semilla (1), sin barrido todavía — no comparable de
+forma aislada con el resto de esta tabla, que ya no está vigente para el
+estado actual del RTL de todas formas (`apio.ini` documenta un barrido más
+reciente, tras un backport no recogido aquí, entre 42,78 y 52,77 MHz según
+semilla). Por eso esta medida se compara contra una base sintetizada en el
+mismo momento y con el mismo método, no contra la tabla de arriba:
+
+| | fmax (semilla 1) | Camino crítico |
+| --- | --- | --- |
+| Base (antes del paso 7) | 45,38 MHz | 22,04 ns, 29 seg. — nace en `gpu.lsu_mask[4]`, cruza a `gpu.sm.taken[4]` y cierra en `gpu.sm.pc$wrmux` |
+| Con el paso 7 | 46,85 MHz | 21,34 ns, 49 seg. — domina el fanout de `reset` hacia `gpu.sm.warp_retired_count$wrmux` |
+
++3,2% en una semilla no prueba nada por sí solo (la dispersión ya medida
+entre semillas ronda el 17%). El dato que sí es información, no ruido: **en
+la base, el camino crítico nace dentro de la LSU** (`lsu_mask`) y cruza hacia
+el SM (`taken` → `pc$wrmux`). Confirma lo que ya apuntaba el paso 6: la
+máscara de la LSU y la lógica de divergencia del SM comparten camino, así que
+tocar la LSU puede aliviar al SM sin tocar `gpu_sm.v`. Tras el cambio, ese
+cruce desaparece del peor camino y lo que queda es el árbol de distribución
+de `reset` — ya no es profundidad de lógica combinacional, es fanout de una
+señal global, un problema de naturaleza distinta.
+
+**Confirmado con barrido de semillas** (`tools/build-sweep -p 17.fpga-gpu-ram-v2`,
+5 semillas, mismo build archivado para ambos lados):
+
+| | Semillas | Mediana | TRELLIS_COMB |
+| --- | --- | --- | --- |
+| Base | 49,42 / 47,40 / 49,80 / 45,39 / 46,49 | **47,40 MHz** | 30410 |
+| Paso 7 | 47,07 / 52,03 / 49,98 / 47,51 / 48,93 | **48,93 MHz** | 31457 |
+
+**+3,2% de Fmax, confirmado por mediana** (coincide casi exactamente con la
+estimación de una sola semilla de arriba, así que esta vez no era ruido). Pero
+no es gratis: **+3,4% de LUT** (+1047). El rotador de barril
+(`eligible_rot2[{1'b0,cursor} +: 8]`) cuesta más área que la cadena original
+`cursor+k`, que ABC9 ya optimizaba razonablemente bien a partir de sumandos
+constantes pequeños — la hipótesis de que un priority encoder fijo saldría
+más barato en área **no se cumplió**, aunque sí ganó en Fmax. A diferencia de
+los pasos 1 y 2 (que mejoraban Fmax y área a la vez), este es un cambio en un
+solo eje. Con el chip en torno a un tercio de ocupación el coste de área es
+asumible, pero queda anotado: no es una mejora limpia en ambos frentes.
+
+**Pendiente (más allá de v1):** con el camino crítico ya fuera de la LSU en
+la mayoría de configuraciones (ver más abajo el detalle de `lsu_mask` cruzando
+al SM), y con rendimientos decrecientes en este tipo de cambio, se decidió no
+seguir invirtiendo en esta línea. Ver `lsu-v2.md` en la raíz del repositorio
+para la propuesta de pivote hacia el fabric de 4 puertos y el controlador BL8
+ya validados con la CPU (`21.fpga-cpu-hdmi-alu`), que separa limpiamente
+arbitraje (fabric) de coalescencia (LSU) en vez de seguir puliendo la LSU
+fundida de hoy. Quedan sin implementar los candidatos 2 (mover `addresses`/`values`
+a EBR) y 3 (partir la prioridad de warp y de lane en ciclos distintos, mismo
+patrón que el paso 1 un nivel más adentro) de la lista de la sección anterior.
+
+### Dudas abiertas y conclusiones de esta sesión
+
+Preguntas que surgieron retomando este trabajo, y la lectura que se hizo con
+los datos disponibles hasta ahora:
+
+- **¿Perseguir mejoras puntuales (one-hot, memoria distribuida) o diseñar ya
+  una segmentación real?** Mirando la tabla de arriba: los pasos 1-3 (trucos
+  de lógica combinacional) dieron mejoras que no sobrevivieron al ruido de
+  semilla por separado; el único paso que sí sobrevivió fue el 4, que es
+  segmentación real (un registro que parte la cadena en dos etapas). Lectura:
+  las mejoras "tecnológicas" puntuales valen como limpieza y para acortar
+  cadenas ya identificadas, pero el salto medible en fmax lo ha dado siempre
+  insertar un registro que rompe la cadena, no reescribir la lógica que queda
+  a un lado de ese registro. Conviene diseñar la segmentación primero y dejar
+  el pulido técnico para después, sobre esa base.
+- **¿LSU primero o "a saco" con el SM?** La LSU primero. Dos razones: (a) el
+  protocolo entre `gpu_sm.v` y `gpu_lsu.v` es un handshake `valid/ready` con
+  tag (8 slots), tolerante a latencia variable — añadir un ciclo dentro de la
+  LSU no exige tocar el SM ni renegociar nada, por eso los pasos 1-2 (solo
+  LSU) y el 4 (solo SM) se hicieron de forma independiente en esta misma
+  serie; (b) la medida de este paso muestra que la LSU influye directamente
+  en el camino crítico del SM (`lsu_mask` → `taken`), así que mejorarla
+  primero puede rendir en el SM sin haberlo tocado todavía. "A saco" con el
+  SM ya se probó una vez, en el paso 5, y se revirtió: una reescritura
+  agresiva (puerto único de `pc`) serializó cadenas que iban en paralelo y
+  perdió un 6,8% de fmax. Los pasos que sí funcionaron en el SM (3 y 4) fueron
+  quirúrgicos, una estructura concreta cada vez. La recomendación es seguir
+  ese estilo cuando le toque al SM, no repetir el intento de rediseño
+  completo.
