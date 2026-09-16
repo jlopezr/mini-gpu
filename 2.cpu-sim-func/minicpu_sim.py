@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import struct
+import sys
 from pathlib import Path
 
 MASK32 = 0xFFFFFFFF
@@ -788,11 +789,22 @@ class CPU:
         filename.write_bytes(self.memory[address:address + size])
 
 
+def load_program_file(path: Path) -> bytes:
+    """Acepta .asm, .bin o .hex. Misma funcion que usan minigpu_sim.py y
+    minigpu_cycle.py: vive en 1.isa/miniisa_asm.py para que los tres carguen
+    igual y `cpusim programa.asm` signifique lo mismo que `gpusim programa.asm`.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "1.isa"))
+    from miniisa_asm import load_program_bytes
+
+    return load_program_bytes(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Simulador funcional de MiniCPU para MiniISA v0.1"
     )
-    parser.add_argument("program", type=Path)
+    parser.add_argument("program", type=Path, help=".asm, .bin o .hex")
     parser.add_argument("--max", type=int, default=100_000_000)
     parser.add_argument(
         "--memory-size",
@@ -809,7 +821,14 @@ def main() -> None:
     args = parser.parse_args()
 
     cpu = CPU(args.memory_size)
-    cpu.load_program(args.program.read_bytes())
+    try:
+        program = load_program_file(args.program)
+    except (ValueError, OSError) as exc:
+        # Una entrada mala no es un fallo del simulador, asi que no sale como
+        # traceback. AsmError hereda de ValueError y cae aqui con linea y motivo.
+        print(f"Simulador: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    cpu.load_program(program)
     cpu.run(args.max)
 
     if cpu.error:
