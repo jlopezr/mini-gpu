@@ -17,6 +17,28 @@ sys.path.insert(0, str(ROOT))
 from tools.prototype import PrototypeResolutionError, find_apio_binary, find_repo_root, resolve_prototype
 
 
+SLOW_MARKER = "TEST-LENTO"
+
+
+def slow_testbenches(prototype_dir: Path) -> list[Path]:
+    """Bancos marcados como lentos, para dejarlos fuera de la pasada normal.
+
+    La marca vive DENTRO del banco (un comentario con TEST-LENTO y el motivo) y
+    no en una lista aparte a proposito: una lista se desincroniza en cuanto
+    alguien renombra o borra un banco, y nadie se entera hasta que el filtro
+    deja de filtrar en silencio.
+    """
+    found = []
+    for path in sorted(prototype_dir.glob("*_tb.v")) + sorted(prototype_dir.glob("*_tb.sv")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if SLOW_MARKER in text:
+            found.append(path)
+    return found
+
+
 def run_step(name: str, command: list[str], cwd: Path) -> int:
     print(f"== {name}", flush=True)
     print(f"$ {' '.join(command)}", flush=True)
@@ -30,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--prototype", required=True)
     parser.add_argument("--quick", action="store_true", help="solo fixtures + tests Python, sin apio test")
+    parser.add_argument("--full", "--slow", dest="full", action="store_true",
+                        help="incluye los bancos marcados TEST-LENTO (por defecto se omiten)")
     parser.add_argument("--lint", action="store_true", help="añade apio lint")
     parser.add_argument("--lint-only", action="store_true",
                         help="solo apio lint: sin fixtures, tests Python ni regresión RTL")
@@ -72,8 +96,26 @@ def main(argv: list[str] | None = None) -> int:
             skipped_rtl_test = True
         else:
             ran_something = True
-            if run_step("regresión RTL (apio test)", [apio, "test", "-p", str(prototype_dir)], prototype_dir) != 0:
-                failures.append("apio test")
+            slow = slow_testbenches(prototype_dir)
+            if not slow or args.full:
+                # Sin bancos lentos (o con --full) se deja hacer a apio, que es
+                # una sola invocacion y la salida de siempre.
+                if run_step("regresión RTL (apio test)",
+                            [apio, "test", "-p", str(prototype_dir)], prototype_dir) != 0:
+                    failures.append("apio test")
+            else:
+                slow_names = {path.name for path in slow}
+                todos = sorted(prototype_dir.glob("*_tb.v")) + sorted(prototype_dir.glob("*_tb.sv"))
+                rapidos = [path for path in todos if path.name not in slow_names]
+                print(f"== regresión RTL (apio test), {len(rapidos)} bancos", flush=True)
+                print("   omitidos por lentos (usa --full para incluirlos): "
+                      + ", ".join(sorted(slow_names)), flush=True)
+                for path in rapidos:
+                    if run_step(f"apio test {path.name}",
+                                [apio, "test", "-p", str(prototype_dir), path.name],
+                                prototype_dir) != 0:
+                        failures.append(f"apio test {path.name}")
+                        break
         if args.lint:
             ran_something = True
             if run_step("lint (apio lint)", [apio, "lint", "-p", str(prototype_dir)], prototype_dir) != 0:

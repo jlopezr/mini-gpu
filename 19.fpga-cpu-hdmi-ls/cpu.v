@@ -465,7 +465,7 @@ module cpu (
           // atender run/step para que un arranque en este mismo ciclo salga
           // ya con el PC de la instruccion culpable.
           if (pc_restore) begin
-            pc <= pc - 3'd4;
+            pc <= pc - 32'd4;
             pc_restore <= 1'b0;
           end
 
@@ -501,7 +501,7 @@ module cpu (
                   fetch_is_store ? imem_read_data[25:21] : imem_read_data[15:11];
             end
             imem_valid <= 1'b0;
-            pc <= pc + 3'd4;
+            pc <= pc + 32'd4;
             state <= STATE_DECODE;
           end
         end

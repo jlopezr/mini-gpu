@@ -312,7 +312,7 @@ module cpu (
                       imem_read_data[25:21] : imem_read_data[15:11];
             end
             imem_valid <= 1'b0;
-            pc <= pc + 3'd4;
+            pc <= pc + 32'd4;
             state <= STATE_DECODE;
           end
         end
@@ -337,7 +337,7 @@ module cpu (
             error <= 1'b1;
             error_code <= ERROR_INVALID_ENCODING;
             // Fetch has already advanced PC, so restore the faulting address.
-            pc <= pc - 3'd4;
+            pc <= pc - 32'd4;
             state <= STATE_HALTED;
           end else case (opcode)
             OPCODE_NOP: begin
@@ -531,7 +531,7 @@ module cpu (
               error <= 1'b1;
               error_code <= ERROR_EXPLICIT_TRAP;
               // TRAP is a terminal diagnostic stop, not a retired HALT.
-              pc <= pc - 3'd4;
+              pc <= pc - 32'd4;
               state <= STATE_HALTED;
             end
 
@@ -539,7 +539,7 @@ module cpu (
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_INVALID_OPCODE;
-              pc <= pc - 3'd4;
+              pc <= pc - 32'd4;
               state <= STATE_HALTED;
             end
           endcase
@@ -554,7 +554,7 @@ module cpu (
               halted <= 1'b1;
               error <= 1'b1;
               error_code <= ERROR_MEMORY_ACCESS;
-              pc <= pc - 3'd4;
+              pc <= pc - 32'd4;
               state <= STATE_HALTED;
             end else begin
               if (load_pending) begin

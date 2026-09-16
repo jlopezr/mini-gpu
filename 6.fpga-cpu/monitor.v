@@ -168,8 +168,8 @@ module monitor (
       block_remaining <= 16'd0;
       mem_read_data_latched <= 8'h00;
       mem_error_latched <= 1'b0;
-      response_index <= 2'd0;
-      response_length <= 2'd0;
+      response_index <= 3'd0;
+      response_length <= 3'd0;
       response_byte_0 <= 8'h00;
       response_byte_1 <= 8'h00;
       response_byte_2 <= 8'h00;
@@ -182,12 +182,12 @@ module monitor (
         STATE_IDLE: begin
           if (rx_strobe) begin
             last_command <= rx_data;
-            response_index <= 2'd0;
+            response_index <= 3'd0;
 
             case (rx_data)
               CMD_PING: begin
                 response_byte_0 <= RSP_PONG;
-                response_length <= 2'd1;
+                response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -195,7 +195,7 @@ module monitor (
                 response_byte_0 <= RSP_VERSION;
                 response_byte_1 <= VERSION_MAJOR;
                 response_byte_2 <= VERSION_MINOR;
-                response_length <= 2'd3;
+                response_length <= 3'd3;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -252,7 +252,7 @@ module monitor (
               end
               default: begin
                 response_byte_0 <= RSP_ERROR;
-                response_length <= 2'd1;
+                response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -324,8 +324,8 @@ module monitor (
         STATE_WAIT_WRITE: begin
           if (mem_ready) begin
             response_byte_0 <= mem_error ? RSP_ERROR : RSP_WRITE_BYTE;
-            response_length <= 2'd1;
-            response_index <= 2'd0;
+            response_length <= 3'd1;
+            response_index <= 3'd0;
             response_done_state <= STATE_IDLE;
             state <= STATE_RESPOND;
           end
@@ -370,8 +370,8 @@ module monitor (
         STATE_PREPARE_READ: begin
           response_byte_0 <= mem_error_latched ? RSP_ERROR : RSP_READ_BYTE;
           response_byte_1 <= mem_read_data_latched;
-          response_length <= mem_error_latched ? 2'd1 : 2'd2;
-          response_index <= 2'd0;
+          response_length <= mem_error_latched ? 3'd1 : 3'd2;
+          response_index <= 3'd0;
           response_done_state <= STATE_IDLE;
           state <= STATE_RESPOND;
         end
@@ -418,16 +418,16 @@ module monitor (
                 ({1'b0, mem_address[13:0]} +
                     {6'd0, block_length[8], rx_data}) > 15'h4000) begin
               response_byte_0 <= RSP_ERROR;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else if (block_is_write) begin
               state <= STATE_BLOCK_WRITE_DATA;
             end else begin
               response_byte_0 <= RSP_READ_BLOCK;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_BLOCK_READ_REQUEST;
               state <= STATE_RESPOND;
             end
@@ -444,14 +444,14 @@ module monitor (
           if (mem_ready) begin
             if (mem_error) begin
               response_byte_0 <= RSP_ERROR;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else if (block_remaining == 1) begin
               response_byte_0 <= RSP_WRITE_BLOCK;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else begin
@@ -476,8 +476,8 @@ module monitor (
         end
         STATE_BLOCK_PREPARE_READ: begin
           response_byte_0 <= mem_error_latched ? RSP_ERROR : mem_read_data_latched;
-          response_length <= 2'd1;
-          response_index <= 2'd0;
+          response_length <= 3'd1;
+          response_index <= 3'd0;
 
           if (mem_error_latched || block_remaining == 1) begin
             response_done_state <= STATE_IDLE;
@@ -492,9 +492,9 @@ module monitor (
         STATE_RESPOND: begin
           if (tx_ready) begin
             case (response_index)
-              2'd0: tx_data <= response_byte_0;
-              2'd1: tx_data <= response_byte_1;
-              2'd2: tx_data <= response_byte_2;
+              3'd0: tx_data <= response_byte_0;
+              3'd1: tx_data <= response_byte_1;
+              3'd2: tx_data <= response_byte_2;
               3'd3: tx_data <= response_byte_3;
               3'd4: tx_data <= response_byte_4;
               3'd5: tx_data <= response_byte_5;

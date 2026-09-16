@@ -371,6 +371,8 @@ def _main() -> int:
     test_cmd.add_argument("--label", default="test")
     test_cmd.add_argument("--root", type=Path, default=None)
     test_cmd.add_argument("--quick", action="store_true", help="solo fixtures + tests Python, sin apio test")
+    test_cmd.add_argument("--full", "--slow", dest="full", action="store_true",
+                          help="incluye los bancos marcados TEST-LENTO (por defecto se omiten)")
     test_cmd.add_argument("--lint", action="store_true", help="añade apio lint")
     test_cmd.add_argument("--lint-only", action="store_true", help="solo apio lint, sin fixtures/tests/regresión RTL")
     test_cmd.add_argument("--verbose", action="store_true")
@@ -483,6 +485,8 @@ def _main() -> int:
         command = [sys.executable, str(test_script), "--prototype", args.prototype]
         if args.quick:
             command.append("--quick")
+        if args.full:
+            command.append("--full")
         if args.lint:
             command.append("--lint")
         if args.lint_only:

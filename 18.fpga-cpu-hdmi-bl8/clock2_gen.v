@@ -25,6 +25,12 @@ module clock2_gen #(
     (* MFG_ENABLE_FILTEROPAMP="1" *)
     (* MFG_GMCREF_SEL="2" *)
 
+    // El EHXPLLL tiene mas salidas de las que usamos (ENCLKOS, los CLKOS que no
+    // se sacan...). No conectarlas es lo normal en una primitiva de Lattice, asi
+    // que se silencia aqui y solo aqui: avisos fijos tapan los que si importan.
+
+    // verilator lint_off PINMISSING
+
     EHXPLLL #(
         .PLLRST_ENA("DISABLED"),
         .INTFB_WAKE("DISABLED"),
@@ -62,6 +68,7 @@ module clock2_gen #(
         .ENCLKOP(1'b0),
         .LOCK(locked)
     );
+    // verilator lint_on PINMISSING
 
     // ensure clock lock is synced with output clock
     reg locked_sync;

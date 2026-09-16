@@ -241,6 +241,9 @@ module sdram_system_adapter (
               (owner == OWNER_DMEM && !cpu_dmem_valid))
             state <= STATE_IDLE;
         end
+        // Los estados no usados no hacen nada, y decirlo es mas claro que dejarlo
+        // a la inferencia.
+        default: ;
       endcase
     end
   end

@@ -27,6 +27,13 @@ module gpu_bench_video_tb;
     wire [31:0] v_tx;
     // VIDEO=1 enciende el trafico sintetico de scanout.
     reg video_on=0;
+    // Puertos de video que llegaron con la ventana MMIO. Este banco no los usa,
+    // pero .* exige que existan en el ambito.
+    wire [1:0] video_mode;
+    wire [23:0] video_fb_base;
+    wire video_underflow_clear;
+    wire video_underflow = 1'b0;
+    wire video_frame_pulse = 1'b0;
     gpu_system_bl8 dut(.*,.instruction_retired(retired),
         .p2_req_valid(v_valid),.p2_req_ready(v_ready),.p2_req_write(v_write),
         .p2_req_addr(v_addr),.p2_req_wdata(v_wdata),.p2_req_wmask(v_wmask),
@@ -99,6 +106,6 @@ module gpu_bench_video_tb;
         $display("BENCH+VIDEO: tx_totales=%0d de_video=%0d ciclos/tx=%0d", tx_done, v_tx, run_cycles/tx_done);
         $finish;
     end
-    initial begin #5000000000; $display("BENCH: timeout"); $finish; end
+    initial begin #5000000000; $fatal(1,"BENCH: timeout"); end
 endmodule
 `default_nettype wire

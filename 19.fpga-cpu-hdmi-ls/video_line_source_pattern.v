@@ -39,9 +39,11 @@ module video_line_source_pattern #(
     output reg [15:0] fill_data,
     output reg fill_done
 );
-  localparam [ADDR_BITS-1:0] LAST_X = SRC_W - 1;
-  localparam [LINE_BITS-1:0] LAST_LINE = SRC_H - 1;
-  localparam [15:0] GAP_W = GAP;
+  // Part-select explicito: el estrechamiento es deliberado y asi verilator no
+  // avisa de WIDTHTRUNC.
+  localparam [ADDR_BITS-1:0] LAST_X = SRC_W[ADDR_BITS-1:0] - 1'b1;
+  localparam [LINE_BITS-1:0] LAST_LINE = SRC_H[LINE_BITS-1:0] - 1'b1;
+  localparam [15:0] GAP_W = GAP[15:0];
 
   reg busy;
   reg [LINE_BITS-1:0] line;

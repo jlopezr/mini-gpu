@@ -169,6 +169,22 @@ module uart (
   // TODO: RX and TX could share a single baud-rate divider.
   parameter DIVISOR = 40;  // must be divisible by 4 for rx clock
 
+  /*
+   * El requisito de arriba era solo un comentario, y eso costo un enlace que
+   * fallaba la mitad de las veces: con DIVISOR=50 la recepcion se alimenta con
+   * 50/4 = 12 en lugar de 12,5 y queda un 4,2 % rapida. No lo detecta ningun
+   * banco de pruebas, porque ninguno instancia esta UART.
+   *
+   * Instanciar un modulo inexistente convierte el descuido en un error de
+   * elaboracion, tanto en iverilog como en yosys. El nombre del modulo es el
+   * mensaje de error.
+   */
+  generate
+    if (DIVISOR % 4 != 0) begin : g_divisor_check
+      DIVISOR_must_be_divisible_by_4 guard ();
+    end
+  endgenerate
+
   uart_rx #(
       .DIVISOR(DIVISOR / 4)
   ) rx (

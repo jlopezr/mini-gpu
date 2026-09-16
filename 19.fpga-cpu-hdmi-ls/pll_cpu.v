@@ -41,6 +41,10 @@ module pll_cpu (
   (* LPF_RESISTOR="8" *)
   (* MFG_ENABLE_FILTEROPAMP="1" *)
   (* MFG_GMCREF_SEL="2" *)
+    // El EHXPLLL tiene mas salidas de las que usamos (CLKOS, ENCLKOS...). No
+    // conectarlas es lo normal en una primitiva de Lattice, asi que se silencia
+    // aqui y solo aqui: avisos fijos tapan los que si importan.
+  // verilator lint_off PINMISSING
   EHXPLLL #(
       .PLLRST_ENA("DISABLED"), .INTFB_WAKE("DISABLED"),
       .STDBY_ENABLE("DISABLED"), .DPHASE_SOURCE("DISABLED"),
@@ -56,6 +60,7 @@ module pll_cpu (
       .PHASELOADREG(1'b1), .PLLWAKESYNC(1'b0), .ENCLKOP(1'b0),
       .LOCK(locked)
   );
+      // verilator lint_on PINMISSING
 `else
   assign clkout0 = clkin;
   assign locked = 1'b1;

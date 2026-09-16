@@ -43,19 +43,19 @@ module gpu_aux_adapter_128_tb;
     memory_fabric_4 fabric(
         .clk(clk),.reset(reset),
         .p0_req_valid(1'b0),.p0_req_write(1'b0),.p0_req_addr(32'd0),
-        .p0_req_wdata(128'd0),.p0_req_wmask(16'd0),.p0_rsp_ready(1'b1),
+        .p0_req_wdata(128'd0),.p0_req_wmask(16'd0),.p0_rsp_ready(1'b1),.p0_req_ready(),.p0_rsp_valid(),.p0_rsp_rdata(),.p0_rsp_error(),
         .p1_req_valid(p_valid),.p1_req_ready(p_ready),.p1_req_write(p_write),
         .p1_req_addr(p_addr),.p1_req_wdata(p_wdata),.p1_req_wmask(p_wmask),
         .p1_rsp_valid(p_rsp_valid),.p1_rsp_ready(p_rsp_ready),
         .p1_rsp_rdata(p_rsp_rdata),.p1_rsp_error(p_rsp_error),
         .p2_req_valid(1'b0),.p2_req_write(1'b0),.p2_req_addr(32'd0),
-        .p2_req_wdata(128'd0),.p2_req_wmask(16'd0),.p2_urgent(1'b0),.p2_rsp_ready(1'b1),
+        .p2_req_wdata(128'd0),.p2_req_wmask(16'd0),.p2_urgent(1'b0),.p2_rsp_ready(1'b1),.p2_req_ready(),.p2_rsp_valid(),.p2_rsp_rdata(),.p2_rsp_error(),
         .p3_req_valid(1'b0),.p3_req_write(1'b0),.p3_req_addr(32'd0),
-        .p3_req_wdata(128'd0),.p3_req_wmask(16'd0),.p3_rsp_ready(1'b1),
+        .p3_req_wdata(128'd0),.p3_req_wmask(16'd0),.p3_rsp_ready(1'b1),.p3_req_ready(),.p3_rsp_valid(),.p3_rsp_rdata(),.p3_rsp_error(),
         .sdram_req_valid(mem_req_valid),.sdram_req_ready(mem_req_ready),
         .sdram_req_write(mem_req_write),.sdram_req_addr(mem_req_addr),
         .sdram_req_wdata(mem_req_wdata),.sdram_req_wmask(mem_req_wmask),
-        .sdram_done(mem_done),.sdram_rdata(mem_rdata));
+        .busy(),.sdram_done(mem_done),.sdram_rdata(mem_rdata));
 
     sdram_controller_128 #(.CLK_FREQ_HZ(25_000_000),.POWERUP_DELAY_US(0)) controller(
         .clk(clk),.reset(reset),.req_valid(mem_req_valid),.req_ready(mem_req_ready),
@@ -66,7 +66,13 @@ module gpu_aux_adapter_128_tb;
         .sdram_wen(sdram_wen),.sdram_a(sdram_a),.sdram_ba(sdram_ba),
         .sdram_dqm(sdram_dqm),.sdram_d(sdram_d));
 
-    sdram_model #(.ROWS(512),.POWERUP_DELAY_NS(0),.READ_DELAY_CYCLES(1)) ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
+    // MISMA formula que sdram_controller_128.v: el modelo representa la PLACA,
+    // asi que el retardo de ida y vuelta se deriva del reloj, no se fija a mano.
+    // Fijarlo a 1 (heredado de 21, que corre a 80 MHz) contra un controlador que
+    // a 25 MHz deriva 0 descuadra la rafaga un beat, y la lectura vuelve
+    // desplazada una palabra de 16 bits. Ver README, "READ_DELAY_CYCLES".
+    localparam integer BOARD_READ_DELAY = (25_000_000/1_000_000)*18_000/1_000_000;
+    sdram_model #(.ROWS(512),.POWERUP_DELAY_NS(0),.READ_DELAY_CYCLES(BOARD_READ_DELAY)) ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
         .rasn(sdram_rasn),.casn(sdram_casn),.wen(sdram_wen),
         .a(sdram_a),.ba(sdram_ba),.dqm(sdram_dqm),.dq(sdram_d));
 
@@ -105,9 +111,10 @@ module gpu_aux_adapter_128_tb;
         end
     endtask
 
+    // Sin $dumpfile/$dumpvars a proposito: apio los rechaza porque el VCD lo
+    // genera el -- `apio sim` lo vuelca solo. Ponerlos aqui dejaba el
+    // prototipo entero sin `lint`, y ningun otro banco del repo los lleva.
     initial begin
-        $dumpfile("gpu_aux_adapter_128_tb.vcd");
-        $dumpvars(0, gpu_aux_adapter_128_tb);
         repeat(4) @(posedge clk);
         reset=0;
         while(!init_done) @(posedge clk);
@@ -132,12 +139,12 @@ module gpu_aux_adapter_128_tb;
         end
 
         if(errors==0) $display("gpu_aux_adapter_128_tb: TODAS LAS PRUEBAS PASAN");
-        else $display("gpu_aux_adapter_128_tb: %0d FALLOS", errors);
+        else $fatal(1,"gpu_aux_adapter_128_tb: %0d FALLOS", errors);
         $finish;
     end
 
     initial begin
-        #2000000; $display("FAIL: timeout"); $finish;
+        #2000000; $fatal(1,"FAIL: timeout");
     end
 endmodule
 `default_nettype wire

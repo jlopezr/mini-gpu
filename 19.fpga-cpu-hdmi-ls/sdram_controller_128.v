@@ -540,8 +540,8 @@ module sdram_controller_128 #(
                 ST_INIT_PRE_WAIT: begin
 
                     if (
-                        timing_count + 1 >=
-                        TRP_CYCLES
+                        timing_count + 16'd1 >=
+                        TRP_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -569,8 +569,8 @@ module sdram_controller_128 #(
                 ST_INIT_REF_WAIT: begin
 
                     if (
-                        timing_count + 1 >=
-                        TRFC_CYCLES
+                        timing_count + 16'd1 >=
+                        TRFC_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -615,8 +615,8 @@ module sdram_controller_128 #(
                 ST_INIT_MRS_WAIT: begin
 
                     if (
-                        timing_count + 1 >=
-                        TMRD_CYCLES
+                        timing_count + 16'd1 >=
+                        TMRD_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -684,8 +684,8 @@ module sdram_controller_128 #(
                 ST_TRCD_WAIT: begin
 
                     if (
-                        timing_count + 1 >=
-                        TRCD_CYCLES
+                        timing_count + 16'd1 >=
+                        TRCD_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -738,8 +738,8 @@ module sdram_controller_128 #(
                     // Después los 8 beats son consecutivos.
 
                     if (
-                        timing_count + 1 >=
-                        CAS_LATENCY_CYCLES - 1 + READ_DELAY_CYCLES
+                        timing_count + 16'd1 >=
+                        CAS_LATENCY_CYCLES[15:0] - 16'd1 + READ_DELAY_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -790,8 +790,8 @@ module sdram_controller_128 #(
                     // de permitir otra operación.
 
                     if (
-                        timing_count + 1 >=
-                        TRP_CYCLES
+                        timing_count + 16'd1 >=
+                        TRP_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -852,8 +852,8 @@ module sdram_controller_128 #(
                 ST_WRITE_RECOVERY: begin
 
                     if (
-                        timing_count + 1 >=
-                        TWR_CYCLES
+                        timing_count + 16'd1 >=
+                        TWR_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -873,8 +873,8 @@ module sdram_controller_128 #(
                 ST_WRITE_TRP: begin
 
                     if (
-                        timing_count + 1 >=
-                        TRP_CYCLES
+                        timing_count + 16'd1 >=
+                        TRP_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;
@@ -907,8 +907,8 @@ module sdram_controller_128 #(
                 ST_REFRESH_WAIT: begin
 
                     if (
-                        timing_count + 1 >=
-                        TRFC_CYCLES
+                        timing_count + 16'd1 >=
+                        TRFC_CYCLES[15:0]
                     ) begin
 
                         timing_count <= 0;

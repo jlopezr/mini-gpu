@@ -26,6 +26,10 @@ module gpu_scheduler_tb;
     reg [2:0] lsu_rsp_tag=0;
     reg [255:0] lsu_rsp_data={8{32'd40}};
     reg [7:0] lsu_rsp_error=0;
+    // retired_lanes llego con los contadores de rendimiento. Este banco no lo
+    // mira, pero la conexion por comodin exige que exista en el ambito.
+    wire [7:0] retired_lanes;
+
     gpu_sm dut(.*);
     integer l;
     always @(posedge clk) begin

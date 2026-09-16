@@ -3,6 +3,14 @@
 // Corre examples/plasma.asm con el scanout encendido, comprueba que el
 // framebuffer queda bien y mide cuanto cuesta un frame.
 //
+// TEST-LENTO: 463 s, cuatro frames completos de 320x240. Es la mitad del
+// tiempo de la suite del prototipo, asi que `test` lo omite por defecto y hay
+// que pedirlo con `test -p 22 --full`. No se encoge a proposito: de aqui salen
+// los ciclos/frame y los fps que cita video-scanout.md, y es la unica
+// cobertura de extremo a extremo sobre la carga real. La version barata, con
+// 24 filas y el bufer de instrucciones al limite, es gpu_plasma4_tb (~50 s),
+// que si entra en la pasada normal.
+//
 // Como en gpu_video_bench_tb, el dominio de pixel se deja fuera (lleva
 // primitivas del ECP5) y `fill_start` lo genera aqui un temporizador con el
 // mismo ritmo que video_scanout.
@@ -181,9 +189,9 @@ module gpu_plasma_tb;
             end
         end
         if(errors==0) $display("gpu_plasma_tb: el framebuffer es correcto");
-        else $display("gpu_plasma_tb: %0d FALLOS",errors);
+        else $fatal(1,"gpu_plasma_tb: %0d FALLOS",errors);
         $finish;
     end
-    initial begin #40000000000; $display("timeout"); $finish; end
+    initial begin #40000000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire

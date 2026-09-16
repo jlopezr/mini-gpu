@@ -7,7 +7,7 @@ module gpu_uart_tb;
     wire sdram_clk,sdram_cke,sdram_csn,sdram_rasn,sdram_casn,sdram_wen;
     wire [12:0] sdram_a; wire [1:0] sdram_ba,sdram_dqm; wire [15:0] sdram_d;
     top dut(.*);
-    sdram_model ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
+    sdram_model_bl1 ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
         .rasn(sdram_rasn),.casn(sdram_casn),.wen(sdram_wen),
         .a(sdram_a),.ba(sdram_ba),.dqm(sdram_dqm),.d(sdram_d));
     reg [7:0] request[0:31],response[0:31];

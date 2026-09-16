@@ -149,39 +149,39 @@ module monitor (
   // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
   localparam [7:0] VERSION_MINOR = 8'h14;
 
-  localparam [4:0] STATE_IDLE = 5'd0;
-  localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
-  localparam [4:0] STATE_WRITE_ADDRESS_LOW = 5'd2;
-  localparam [4:0] STATE_WRITE_DATA = 5'd3;
-  localparam [4:0] STATE_WAIT_WRITE = 5'd4;
-  localparam [4:0] STATE_READ_ADDRESS_HIGH = 5'd5;
-  localparam [4:0] STATE_READ_ADDRESS_LOW = 5'd6;
-  localparam [4:0] STATE_WAIT_READ = 5'd7;
-  localparam [4:0] STATE_RESPOND = 5'd8;
-  localparam [4:0] STATE_WAIT_TX_ACCEPT = 5'd9;
-  localparam [4:0] STATE_BLOCK_ADDRESS_HIGH = 5'd10;
-  localparam [4:0] STATE_BLOCK_ADDRESS_LOW = 5'd11;
-  localparam [4:0] STATE_BLOCK_LENGTH_HIGH = 5'd12;
-  localparam [4:0] STATE_BLOCK_LENGTH_LOW = 5'd13;
-  localparam [4:0] STATE_BLOCK_WRITE_DATA = 5'd14;
-  localparam [4:0] STATE_BLOCK_WAIT_WRITE = 5'd15;
-  localparam [4:0] STATE_BLOCK_READ_REQUEST = 5'd16;
-  localparam [4:0] STATE_BLOCK_WAIT_READ = 5'd17;
-  localparam [4:0] STATE_PREPARE_READ = 5'd18;
-  localparam [4:0] STATE_BLOCK_PREPARE_READ = 5'd19;
-  localparam [4:0] STATE_WRITE_ADDRESS_2 = 5'd20;
-  localparam [4:0] STATE_WRITE_ADDRESS_1 = 5'd21;
-  localparam [4:0] STATE_READ_ADDRESS_2 = 5'd22;
-  localparam [4:0] STATE_READ_ADDRESS_1 = 5'd23;
-  localparam [4:0] STATE_BLOCK_ADDRESS_2 = 5'd24;
-  localparam [4:0] STATE_BLOCK_ADDRESS_1 = 5'd25;
-  localparam [4:0] STATE_READ_REGISTER_ADDRESS = 5'd26;
-  localparam [4:0] STATE_PREPARE_REGISTER = 5'd27;
-  localparam [4:0] STATE_WAIT_REGISTER_1 = 5'd28;
-  localparam [4:0] STATE_WAIT_REGISTER_2 = 5'd29;
-  localparam [4:0] STATE_DECODE_COMMAND = 5'd30;
+  localparam [5:0] STATE_IDLE = 6'd0;
+  localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;
+  localparam [5:0] STATE_WRITE_ADDRESS_LOW = 6'd2;
+  localparam [5:0] STATE_WRITE_DATA = 6'd3;
+  localparam [5:0] STATE_WAIT_WRITE = 6'd4;
+  localparam [5:0] STATE_READ_ADDRESS_HIGH = 6'd5;
+  localparam [5:0] STATE_READ_ADDRESS_LOW = 6'd6;
+  localparam [5:0] STATE_WAIT_READ = 6'd7;
+  localparam [5:0] STATE_RESPOND = 6'd8;
+  localparam [5:0] STATE_WAIT_TX_ACCEPT = 6'd9;
+  localparam [5:0] STATE_BLOCK_ADDRESS_HIGH = 6'd10;
+  localparam [5:0] STATE_BLOCK_ADDRESS_LOW = 6'd11;
+  localparam [5:0] STATE_BLOCK_LENGTH_HIGH = 6'd12;
+  localparam [5:0] STATE_BLOCK_LENGTH_LOW = 6'd13;
+  localparam [5:0] STATE_BLOCK_WRITE_DATA = 6'd14;
+  localparam [5:0] STATE_BLOCK_WAIT_WRITE = 6'd15;
+  localparam [5:0] STATE_BLOCK_READ_REQUEST = 6'd16;
+  localparam [5:0] STATE_BLOCK_WAIT_READ = 6'd17;
+  localparam [5:0] STATE_PREPARE_READ = 6'd18;
+  localparam [5:0] STATE_BLOCK_PREPARE_READ = 6'd19;
+  localparam [5:0] STATE_WRITE_ADDRESS_2 = 6'd20;
+  localparam [5:0] STATE_WRITE_ADDRESS_1 = 6'd21;
+  localparam [5:0] STATE_READ_ADDRESS_2 = 6'd22;
+  localparam [5:0] STATE_READ_ADDRESS_1 = 6'd23;
+  localparam [5:0] STATE_BLOCK_ADDRESS_2 = 6'd24;
+  localparam [5:0] STATE_BLOCK_ADDRESS_1 = 6'd25;
+  localparam [5:0] STATE_READ_REGISTER_ADDRESS = 6'd26;
+  localparam [5:0] STATE_PREPARE_REGISTER = 6'd27;
+  localparam [5:0] STATE_WAIT_REGISTER_1 = 6'd28;
+  localparam [5:0] STATE_WAIT_REGISTER_2 = 6'd29;
+  localparam [5:0] STATE_DECODE_COMMAND = 6'd30;
   // Block range checking is pipelined to keep rx_data off the wide adder path.
-  localparam [4:0] STATE_VALIDATE_BLOCK = 5'd31;
+  localparam [5:0] STATE_VALIDATE_BLOCK = 6'd31;
   localparam [5:0] STATE_CALCULATE_BLOCK_END = 6'd32;
   // Puerto serie. SEND_BYTES consume SIEMPRE los LL bytes del paquete aunque la
   // cola se llene: si se cortara a medias, los que quedan en el cable se leerian
@@ -253,8 +253,8 @@ module monitor (
       block_end_address <= 33'h000000000;
       mem_read_data_latched <= 8'h00;
       mem_error_latched <= 1'b0;
-      response_index <= 2'd0;
-      response_length <= 2'd0;
+      response_index <= 3'd0;
+      response_length <= 3'd0;
       response_byte_0 <= 8'h00;
       response_byte_1 <= 8'h00;
       response_byte_2 <= 8'h00;
@@ -273,7 +273,7 @@ module monitor (
         STATE_IDLE: begin
           if (rx_strobe) begin
             last_command <= rx_data;
-            response_index <= 2'd0;
+            response_index <= 3'd0;
             command_decoded <= {
               rx_data == CMD_RECV_BYTES, rx_data == CMD_SEND_BYTES,
               rx_data == CMD_GET_INSTRUCTIONS, rx_data == CMD_GET_CYCLES,
@@ -294,7 +294,7 @@ module monitor (
             case (1'b1)
               command_decoded[0]: begin
                 response_byte_0 <= RSP_PONG;
-                response_length <= 2'd1;
+                response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -302,7 +302,7 @@ module monitor (
                 response_byte_0 <= RSP_VERSION;
                 response_byte_1 <= VERSION_MAJOR;
                 response_byte_2 <= VERSION_MINOR;
-                response_length <= 2'd3;
+                response_length <= 3'd3;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -384,7 +384,7 @@ module monitor (
               command_decoded[15]: state <= STATE_SERIAL_RECV_MAX;
               default: begin
                 response_byte_0 <= RSP_ERROR;
-                response_length <= 2'd1;
+                response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
@@ -455,8 +455,8 @@ module monitor (
         STATE_WAIT_WRITE: begin
           if (mem_ready) begin
             response_byte_0 <= mem_error ? RSP_ERROR : RSP_WRITE_BYTE;
-            response_length <= 2'd1;
-            response_index <= 2'd0;
+            response_length <= 3'd1;
+            response_index <= 3'd0;
             response_done_state <= STATE_IDLE;
             state <= STATE_RESPOND;
           end
@@ -501,8 +501,8 @@ module monitor (
         STATE_PREPARE_READ: begin
           response_byte_0 <= mem_error_latched ? RSP_ERROR : RSP_READ_BYTE;
           response_byte_1 <= mem_read_data_latched;
-          response_length <= mem_error_latched ? 2'd1 : 2'd2;
-          response_index <= 2'd0;
+          response_length <= mem_error_latched ? 3'd1 : 3'd2;
+          response_index <= 3'd0;
           response_done_state <= STATE_IDLE;
           state <= STATE_RESPOND;
         end
@@ -560,16 +560,16 @@ module monitor (
                 mem_address[31:25] != 0 ||
                 block_end_address > 33'h02000000) begin
               response_byte_0 <= RSP_ERROR;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else if (block_is_write) begin
               state <= STATE_BLOCK_WRITE_DATA;
             end else begin
               response_byte_0 <= RSP_READ_BLOCK;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_BLOCK_READ_REQUEST;
               state <= STATE_RESPOND;
             end
@@ -585,14 +585,14 @@ module monitor (
           if (mem_ready) begin
             if (mem_error) begin
               response_byte_0 <= RSP_ERROR;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else if (block_remaining == 1) begin
               response_byte_0 <= RSP_WRITE_BLOCK;
-              response_length <= 2'd1;
-              response_index <= 2'd0;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               state <= STATE_RESPOND;
             end else begin
@@ -617,8 +617,8 @@ module monitor (
         end
         STATE_BLOCK_PREPARE_READ: begin
           response_byte_0 <= mem_error_latched ? RSP_ERROR : mem_read_data_latched;
-          response_length <= 2'd1;
-          response_index <= 2'd0;
+          response_length <= 3'd1;
+          response_index <= 3'd0;
 
           if (mem_error_latched || block_remaining == 1) begin
             response_done_state <= STATE_IDLE;
@@ -633,9 +633,9 @@ module monitor (
         STATE_RESPOND: begin
           if (tx_ready) begin
             case (response_index)
-              2'd0: tx_data <= response_byte_0;
-              2'd1: tx_data <= response_byte_1;
-              2'd2: tx_data <= response_byte_2;
+              3'd0: tx_data <= response_byte_0;
+              3'd1: tx_data <= response_byte_1;
+              3'd2: tx_data <= response_byte_2;
               3'd3: tx_data <= response_byte_3;
               3'd4: tx_data <= response_byte_4;
               3'd5: tx_data <= response_byte_5;

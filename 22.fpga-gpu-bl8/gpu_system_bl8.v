@@ -193,7 +193,8 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     );
 
     memory_fabric_4 fabric (
-        .clk(clk),.reset(core_reset),
+        .clk(clk),.reset(core_reset),// busy no se observa desde aqui.
+        .busy(),
         .p0_req_valid(p0_valid),.p0_req_ready(p0_ready),.p0_req_write(p0_write),
         .p0_req_addr(p0_addr),.p0_req_wdata(p0_wdata),.p0_req_wmask(p0_wmask),
         .p0_rsp_valid(p0_rsp_valid),.p0_rsp_ready(p0_rsp_ready),

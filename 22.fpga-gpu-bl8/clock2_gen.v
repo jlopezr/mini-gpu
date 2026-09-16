@@ -16,6 +16,7 @@ module clock2_gen #(
     output reg  clk_locked   // clock locked?
     );
 
+`ifdef SYNTHESIZE
     wire locked;  // unsynced lock signal
 
     // HDL attributes (values are from Project Trellis)
@@ -23,6 +24,12 @@ module clock2_gen #(
     (* LPF_RESISTOR="8" *)
     (* MFG_ENABLE_FILTEROPAMP="1" *)
     (* MFG_GMCREF_SEL="2" *)
+
+    // El EHXPLLL tiene mas salidas de las que usamos (ENCLKOS, los CLKOS que no
+    // se sacan...). No conectarlas es lo normal en una primitiva de Lattice, asi
+    // que se silencia aqui y solo aqui: avisos fijos tapan los que si importan.
+
+    // verilator lint_off PINMISSING
 
     EHXPLLL #(
         .PLLRST_ENA("DISABLED"),
@@ -61,6 +68,7 @@ module clock2_gen #(
         .ENCLKOP(1'b0),
         .LOCK(locked)
     );
+    // verilator lint_on PINMISSING
 
     // ensure clock lock is synced with output clock
     reg locked_sync;
@@ -68,4 +76,12 @@ module clock2_gen #(
         locked_sync <= locked;
         clk_locked <= locked_sync;
     end
+`else
+    // Sin primitivas de PLL en simulacion, igual que `pll_120`. Los dos relojes
+    // pasan a ser el de entrada, asi que una simulacion de `top` no reproduce
+    // la relacion 5x ni el cruce de dominios: eso se comprueba en banco aparte.
+    assign clk_5x_out = clk_in;
+    assign clk_out = clk_in;
+    initial clk_locked = 1'b1;
+`endif
 endmodule

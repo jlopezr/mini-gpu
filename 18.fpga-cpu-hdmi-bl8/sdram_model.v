@@ -341,6 +341,41 @@ module sdram_model #(
     end
   end
 endmodule
+
+`else
+
+// Stub con la MISMA interfaz y sin logica. Sin el, bajo SYNTHESIZE el modulo
+// no existe y los bancos que lo instancian no elaboran: como `apio lint`
+// tambien define SYNTHESIZE, el prototipo entero se quedaba sin lint y habia
+// que envolver cada banco en su propia guarda, perdiendo su cobertura.
+// Con el stub el lint elabora y la sintesis lo poda por vacio -- la misma
+// solucion que pll_cpu.v y clock2_gen.v usan con sus primitivas.
+module sdram_model #(
+    parameter integer ROWS = 32,
+    parameter integer POWERUP_DELAY_NS = 200_000,
+    parameter integer TRP_NS = 20,
+    parameter integer TRCD_NS = 20,
+    parameter integer TRAS_NS = 42,
+    parameter integer TRC_NS = 63,
+    parameter integer TRFC_NS = 66,
+    parameter integer TMRD_CYCLES = 2,
+    parameter integer TWR_CYCLES = 2,
+    parameter integer CLK_PERIOD_NS = 10,
+    parameter integer READ_DELAY_CYCLES = 0
+) (
+    input  wire        clk,
+    input  wire        cke,
+    input  wire        csn,
+    input  wire        rasn,
+    input  wire        casn,
+    input  wire        wen,
+    input  wire [12:0] a,
+    input  wire [1:0]  ba,
+    input  wire [1:0]  dqm,
+    inout  wire [15:0] dq
+);
+endmodule
+
 `endif
 
 `default_nettype wire

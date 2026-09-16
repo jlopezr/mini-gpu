@@ -14,6 +14,6 @@
         .sdram_csn(sdram_csn),.sdram_rasn(sdram_rasn),.sdram_casn(sdram_casn),
         .sdram_wen(sdram_wen),.sdram_a(sdram_a),.sdram_ba(sdram_ba),
         .sdram_dqm(sdram_dqm),.sdram_d(sdram_d));
-    sdram_model ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
+    sdram_model_bl1 ram(.clk(sdram_clk),.cke(sdram_cke),.csn(sdram_csn),
         .rasn(sdram_rasn),.casn(sdram_casn),.wen(sdram_wen),
         .a(sdram_a),.ba(sdram_ba),.dqm(sdram_dqm),.d(sdram_d));

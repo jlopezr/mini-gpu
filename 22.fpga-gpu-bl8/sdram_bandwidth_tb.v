@@ -31,15 +31,15 @@ module sdram_bandwidth_tb;
         .p0_rsp_valid(p_rsp_valid),.p0_rsp_ready(1'b1),
         .p0_rsp_rdata(p_rsp_rdata),.p0_rsp_error(p_rsp_error),
         .p1_req_valid(1'b0),.p1_req_write(1'b0),.p1_req_addr(32'd0),
-        .p1_req_wdata(128'd0),.p1_req_wmask(16'd0),.p1_rsp_ready(1'b1),
+        .p1_req_wdata(128'd0),.p1_req_wmask(16'd0),.p1_rsp_ready(1'b1),.p1_req_ready(),.p1_rsp_valid(),.p1_rsp_rdata(),.p1_rsp_error(),
         .p2_req_valid(1'b0),.p2_req_write(1'b0),.p2_req_addr(32'd0),
-        .p2_req_wdata(128'd0),.p2_req_wmask(16'd0),.p2_urgent(1'b0),.p2_rsp_ready(1'b1),
+        .p2_req_wdata(128'd0),.p2_req_wmask(16'd0),.p2_urgent(1'b0),.p2_rsp_ready(1'b1),.p2_req_ready(),.p2_rsp_valid(),.p2_rsp_rdata(),.p2_rsp_error(),
         .p3_req_valid(1'b0),.p3_req_write(1'b0),.p3_req_addr(32'd0),
-        .p3_req_wdata(128'd0),.p3_req_wmask(16'd0),.p3_rsp_ready(1'b1),
+        .p3_req_wdata(128'd0),.p3_req_wmask(16'd0),.p3_rsp_ready(1'b1),.p3_req_ready(),.p3_rsp_valid(),.p3_rsp_rdata(),.p3_rsp_error(),
         .sdram_req_valid(mem_req_valid),.sdram_req_ready(mem_req_ready),
         .sdram_req_write(mem_req_write),.sdram_req_addr(mem_req_addr),
         .sdram_req_wdata(mem_req_wdata),.sdram_req_wmask(mem_req_wmask),
-        .sdram_done(mem_done),.sdram_rdata(mem_rdata));
+        .busy(),.sdram_done(mem_done),.sdram_rdata(mem_rdata));
 
     localparam integer BOARD_READ_DELAY = (25_000_000/1_000_000)*18_000/1_000_000;
     sdram_controller_128 #(.CLK_FREQ_HZ(25_000_000),.POWERUP_DELAY_US(0)) controller(
@@ -87,6 +87,6 @@ module sdram_bandwidth_tb;
         $display("Video 320x240 RGB565 a 60 Hz necesita 9216 KB/s");
         $finish;
     end
-    initial begin #500000000; $display("timeout"); $finish; end
+    initial begin #500000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire

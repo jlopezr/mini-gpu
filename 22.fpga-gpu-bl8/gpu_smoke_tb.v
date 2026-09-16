@@ -20,6 +20,23 @@ module gpu_smoke_tb;
     reg [4:0] debug_register=0;
     wire [31:0] debug_data,debug_pc;
     `include "sim/system_memory_bl8.vh"
+    // Puertos de video que llegaron con la ventana MMIO. Este banco no los usa,
+    // pero .* exige que existan en el ambito.
+    wire [1:0] video_mode;
+    wire [23:0] video_fb_base;
+    wire video_underflow_clear;
+    wire video_underflow = 1'b0;
+    wire video_frame_pulse = 1'b0;
+    // Puerto 2 del fabric, el del scanout. Este banco no lo ejercita, pero la
+    // conexion por comodin exige que los identificadores existan en el ambito.
+    wire p2_req_valid = 1'b0, p2_req_write = 1'b0, p2_urgent = 1'b0;
+    wire p2_rsp_ready = 1'b1;
+    wire [31:0] p2_req_addr = 32'd0;
+    wire [127:0] p2_req_wdata = 128'd0;
+    wire [15:0] p2_req_wmask = 16'd0;
+    wire p2_req_ready, p2_rsp_valid, p2_rsp_error;
+    wire [127:0] p2_rsp_rdata;
+
     gpu_system_bl8 dut(.*,.instruction_retired(retired));
 
     reg [31:0] program_words[0:255];
@@ -72,11 +89,11 @@ module gpu_smoke_tb;
         @(negedge clk); debug_register=1;
         repeat(3) @(negedge clk);
         $display("R1 = %h", debug_data);
-        if(error) $display("SMOKE: FALLO, error_code=%h", error_code);
+        if(error) $fatal(1,"SMOKE: FALLO, error_code=%h", error_code);
         else if(debug_data===32'd7) $display("SMOKE: OK, R1=7");
-        else $display("SMOKE: FALLO, R1=%h y esperaba 7", debug_data);
+        else $fatal(1,"SMOKE: FALLO, R1=%h y esperaba 7", debug_data);
         $finish;
     end
-    initial begin #50000000; $display("SMOKE: timeout"); $finish; end
+    initial begin #50000000; $fatal(1,"SMOKE: timeout"); end
 endmodule
 `default_nettype wire

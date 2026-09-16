@@ -120,9 +120,9 @@ module gpu_mmio_tb;
         end else $display("OK: los contadores son coherentes (%0d ciclos/instr)",r11/r12);
 
         if(errors==0) $display("gpu_mmio_tb: TODAS LAS PRUEBAS PASAN");
-        else $display("gpu_mmio_tb: %0d FALLOS",errors);
+        else $fatal(1,"gpu_mmio_tb: %0d FALLOS",errors);
         $finish;
     end
-    initial begin #200000000; $display("timeout"); $finish; end
+    initial begin #200000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire

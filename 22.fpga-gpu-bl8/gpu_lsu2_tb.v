@@ -24,6 +24,15 @@ module gpu_lsu2_tb;
     reg mem_req_ready=1, mem_rsp_valid=0, mem_rsp_error=0;
     reg [127:0] mem_rsp_rdata=0;
 
+    // El camino escalar de MMIO (ver mmio.md). Estaba sin conectar, asi que
+    // este banco no lo probaba: la cobertura del MMIO vivia entera en
+    // gpu_mmio_tb, que va por el sistema completo y no distingue si el fallo
+    // es de la LSU o del decodificador.
+    wire mmio_req_valid, mmio_req_write, mmio_rsp_ready;
+    wire [31:0] mmio_req_addr, mmio_req_wdata;
+    reg mmio_req_ready=1, mmio_rsp_valid=0, mmio_rsp_error=0;
+    reg [31:0] mmio_rsp_rdata=0;
+
     gpu_lsu2 dut(
         .clk(clk), .reset(reset),
         .req_valid(req_valid), .req_ready(req_ready), .req_tag(req_tag),
@@ -35,7 +44,31 @@ module gpu_lsu2_tb;
         .mem_req_write(mem_req_write), .mem_req_addr(mem_req_addr),
         .mem_req_wdata(mem_req_wdata), .mem_req_wmask(mem_req_wmask),
         .mem_rsp_valid(mem_rsp_valid), .mem_rsp_ready(mem_rsp_ready),
-        .mem_rsp_rdata(mem_rsp_rdata), .mem_rsp_error(mem_rsp_error));
+        .mem_rsp_rdata(mem_rsp_rdata), .mem_rsp_error(mem_rsp_error),
+        .mmio_req_valid(mmio_req_valid), .mmio_req_ready(mmio_req_ready),
+        .mmio_req_write(mmio_req_write), .mmio_req_addr(mmio_req_addr),
+        .mmio_req_wdata(mmio_req_wdata),
+        .mmio_rsp_valid(mmio_rsp_valid), .mmio_rsp_ready(mmio_rsp_ready),
+        .mmio_rsp_rdata(mmio_rsp_rdata), .mmio_rsp_error(mmio_rsp_error));
+
+    // ---- Modelo de esclavo MMIO: un registro de 32 bits por palabra ----
+    // Responde en un ciclo, que es lo que hace el de verdad: la lectura de
+    // gpu_video_regs es combinacional.
+    reg [31:0] mmio_regs[0:15];
+    integer mmio_transactions=0;
+    reg [3:0] mmio_word;
+    always @(posedge clk) begin
+        if(!reset && mmio_req_valid && mmio_req_ready && !mmio_rsp_valid) begin
+            mmio_transactions=mmio_transactions+1;
+            mmio_word=mmio_req_addr[5:2];
+            if(mmio_req_write) begin
+                mmio_regs[mmio_word]<=mmio_req_wdata;
+                mmio_rsp_rdata<=32'd0;
+            end else mmio_rsp_rdata<=mmio_regs[mmio_word];
+            mmio_rsp_error<=1'b0;
+            mmio_rsp_valid<=1'b1;
+        end else if(mmio_rsp_valid && mmio_rsp_ready) mmio_rsp_valid<=1'b0;
+    end
 
     // ---- Modelo de memoria de 128 bits, mapeado por linea de 16 bytes ----
     reg [127:0] mem[0:1023];
@@ -113,10 +146,13 @@ module gpu_lsu2_tb;
     reg [2:0] tag;
     integer base_tx;
 
+    // Sin $dumpfile/$dumpvars a proposito: apio los rechaza porque el VCD lo
+    // genera el -- `apio sim` lo vuelca solo. Ponerlos aqui dejaba el
+    // prototipo entero sin `lint`, y ningun otro banco del repo los lleva.
     initial begin
-        $dumpfile("gpu_lsu2_tb.vcd");
-        $dumpvars(0, gpu_lsu2_tb);
         for(j=0;j<1024;j=j+1) mem[j]=128'd0;
+        for(j=0;j<16;j=j+1) mmio_regs[j]=32'd0;
+        mmio_regs[1]=32'hCAFE_0001;   // el que esta en 0x80000204
         // Dos lineas contiguas con un patron reconocible por palabra.
         mem[16]={32'h0000_0003,32'h0000_0002,32'h0000_0001,32'h0000_0000};
         mem[17]={32'h0000_0007,32'h0000_0006,32'h0000_0005,32'h0000_0004};
@@ -202,16 +238,53 @@ module gpu_lsu2_tb;
         if(tag===3'd6) check_eq(got[0 +: 32], 32'hC000_0000, "warp 6 (2)");
         else check_eq(got[0 +: 32], 32'hD000_0000, "warp 7 (2)");
 
+        // ---- 7. MMIO: una lane, sin coalescer, y sin fault por rango ----
+        // Una direccion >= 0x02000000 es fault salvo si cae en 0x80000xxx.
+        addr=0; addr[0 +: 32]=32'h8000_0204;
+        base_tx=mmio_transactions;
+        issue(3'd1, 1'b0, 8'h01, addr, 256'd0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "mmio load sin fault");
+        check_eq(got[0 +: 32], 32'hCAFE_0001, "mmio load");
+        check_eq(mmio_transactions-base_tx, 1, "mmio load: una transaccion");
+
+        // ---- 8. MMIO: escritura y relectura ----
+        addr=0; addr[0 +: 32]=32'h8000_0208;
+        data=0; data[0 +: 32]=32'hDEAD_BEEF;
+        issue(3'd2, 1'b1, 8'h01, addr, data);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "mmio store sin fault");
+        issue(3'd3, 1'b0, 8'h01, addr, 256'd0);
+        await_rsp(got, err, tag);
+        check_eq(got[0 +: 32], 32'hDEAD_BEEF, "mmio relectura");
+
+        // ---- 9. MMIO: dos lanes NO se coalescen ----
+        // Un registro de 32 bits no es una linea de 16 bytes: cada lane sale
+        // por su cuenta, la de menor indice primero.
+        addr=0;
+        addr[0 +: 32]=32'h8000_0204;
+        addr[32 +: 32]=32'h8000_0208;
+        base_tx=mmio_transactions;
+        issue(3'd4, 1'b0, 8'h03, addr, 256'd0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "mmio dos lanes sin fault");
+        check_eq(mmio_transactions-base_tx, 2, "mmio dos lanes: dos transacciones");
+        // Cada lane recibe SU valor aunque cada transaccion traiga un unico
+        // registro de 32 bits. Eso es lo que compra replicar la respuesta en
+        // las cuatro palabras de `rsp_line`: RETIRE reparte sin saber que
+        // venia de MMIO, y elija el `sel` que elija saca el valor bueno.
+        check_eq(got[0 +: 32], 32'hCAFE_0001, "mmio lane 0");
+        check_eq(got[32 +: 32], 32'hDEAD_BEEF, "mmio lane 1");
+
         repeat(20) @(posedge clk);
         if(errors==0) $display("gpu_lsu2_tb: TODAS LAS PRUEBAS PASAN");
-        else $display("gpu_lsu2_tb: %0d FALLOS", errors);
+        else $fatal(1,"gpu_lsu2_tb: %0d FALLOS", errors);
         $finish;
     end
 
     initial begin
         #500000;
-        $display("FAIL: timeout");
-        $finish;
+        $fatal(1,"FAIL: timeout");
     end
 endmodule
 `default_nettype wire

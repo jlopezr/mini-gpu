@@ -58,7 +58,7 @@ module video_line_source_sdram #(
     input wire [15:0] video_read_data,
     input wire video_ready
 );
-  localparam [ADDR_BITS-1:0] LAST_X = SRC_W - 1;
+  localparam [ADDR_BITS-1:0] LAST_X = SRC_W[ADDR_BITS-1:0] - 1'b1;
 
   localparam [1:0] S_IDLE = 2'd0, S_REQUEST = 2'd1, S_WAIT = 2'd2;
 
@@ -85,7 +85,7 @@ module video_line_source_sdram #(
       case (state)
         S_IDLE:
           if (fill_start) begin
-            line_base <= fb_base + fill_line * SRC_W;
+            line_base <= fb_base + {{(24-LINE_BITS){1'b0}}, fill_line} * SRC_W[23:0];
             x <= {ADDR_BITS{1'b0}};
             state <= S_REQUEST;
           end

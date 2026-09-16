@@ -1,14 +1,28 @@
 `default_nettype none
 module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     input ftdi_txd, output ftdi_rxd);
-    // Conservative first implementation: native 25 MHz, UART 250 kbaud.
+    // 25 MHz nativos: no hay PLL de sistema, y todo -- GPU, monitor, UART y
+    // SDRAM -- va en clk_25mhz. (La 22 tiene un PLL, pero es solo para los
+    // relojes de pixel de HDMI.)
+    //
+    // El divisor de la UART cumple las mismas DOS condiciones que en los cores
+    // de CPU -- ver 21.fpga-cpu-hdmi-alu/top.v, donde estan razonadas --, y
+    // conviene que quede escrito en vez de heredado:
+    //
+    //   1. Multiplo de 4, porque uart.v alimenta la recepcion con DIVISOR/4 y
+    //      la division es entera. `uart.v` lo comprueba en elaboracion.
+    //   2. Un baudio que el FTDI sepa generar exacto: 250 k = 3 MHz / 12.
+    localparam integer CLK_FREQ_HZ = 25_000_000;
+    localparam integer UART_CLOCKS_PER_BIT = 100;
+    localparam integer UART_MAX_BAUD = 250_000;
+    localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
     reg [7:0] power_on=0;
     wire reset=!(&power_on);
     always @(posedge clk_25mhz) if(reset) power_on<=power_on+1'b1;
     assign wifi_gpio0=1;
     wire [7:0] rx_data,tx_data,last_command;
     wire rx_strobe,tx_strobe,tx_ready,busy;
-    uart #(.DIVISOR(100)) uart_i (.clk(clk_25mhz),.reset(reset),
+    uart #(.DIVISOR(UART_DIVISOR)) uart_i (.clk(clk_25mhz),.reset(reset),
         .serial_txd(ftdi_rxd),.serial_rxd(ftdi_txd),.rxd(rx_data),.rxd_strobe(rx_strobe),
         .txd(tx_data),.txd_strobe(tx_strobe),.txd_ready(tx_ready));
     wire [31:0] address,debug_data,pc;

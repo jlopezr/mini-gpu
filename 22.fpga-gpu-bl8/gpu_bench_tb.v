@@ -93,6 +93,6 @@ module gpu_bench_tb;
         $display("BENCH: transacciones=%0d  ciclos/tx=%0d", tx_done, run_cycles/tx_done);
         $finish;
     end
-    initial begin #5000000000; $display("BENCH: timeout"); $finish; end
+    initial begin #5000000000; $fatal(1,"BENCH: timeout"); end
 endmodule
 `default_nettype wire

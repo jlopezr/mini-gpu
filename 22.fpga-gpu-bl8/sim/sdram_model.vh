@@ -2,7 +2,10 @@
 `define GPU_SDRAM_MODEL_VH
 // Functional BL1 SDRAM bus model: command/address decoding and byte masks.
 // Not a replacement for a vendor timing model or a physical board test.
-module sdram_model(input clk, cke, csn, rasn, casn, wen,
+// Renombrado desde sdram_model: la 22 arrastra ESTE modelo BL1 heredado de 17
+// y ademas el parametrizado de 21 en sdram_model.v, y apio compila los dos en
+// cada banco. Con el mismo nombre, iverilog aborta la suite entera.
+module sdram_model_bl1(input clk, cke, csn, rasn, casn, wen,
     input [12:0] a, input [1:0] ba,dqm, inout [15:0] d);
     reg [15:0] words[0:16777215];
     reg [12:0] rows[0:3];

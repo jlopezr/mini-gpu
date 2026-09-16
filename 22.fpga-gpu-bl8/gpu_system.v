@@ -59,6 +59,9 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire host_idle=host_state==0 && !host_write_enable && !host_read_enable;
     gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH), .SIMT_REGION_DEPTH(SIMT_REGION_DEPTH), .SIMT_PATH_DEPTH(SIMT_PATH_DEPTH)) sm (
         .clk(clk),.reset(core_reset),.run_request(run_request && host_idle),
+        // retired_lanes solo lo consume gpu_system_bl8, para los contadores de
+        // rendimiento. Se deja conectado en vacio a proposito, no sin poner.
+        .retired_lanes(),
         .halt_request(halt_request),.step_request(step_request && host_idle),
         .halted(halted),.error(error),.error_code(error_code),
         .error_warp(error_warp),.error_lane(error_lane),.error_lane_valid(error_lane_valid),

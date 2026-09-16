@@ -1,23 +1,33 @@
-; Variante de plasma SIN accesos a MMIO, para validar 23.gpu-sim-uarch.
+; plasma.asm con la BANDA DE ARRIBA nada mas: 320x24 en vez de 320x240.
 ;
-; El simulador funcional de 11.gpu-sim-func no tiene ventana MMIO -- y no debe
-; tenerla, no es su trabajo. Asi que un programa con LOAD/STORE a 0x80000xxx
-; revienta ahi con ERROR_MEMORY_ACCESS y el modelo de ciclos acaba midiendo un
-; recorrido distinto al del RTL.
+; Es byte por byte el mismo programa salvo el `MOVI R6` del frame_loop (60
+; palabras por hilo en vez de 600). Misma geometria, mismo bucle, mismo MMIO,
+; mismo doble buffer -- una decima parte del trabajo. Existe para que exista una
+; version BARATA de la prueba de extremo a extremo: gpu_plasma_tb tarda 463 s y
+; eso es demasiado para ejecutarlo a menudo.
 ;
-; Esta version usa una base de framebuffer fija y no pide intercambio, asi que
-; RTL y modelo ejecutan EXACTAMENTE la misma secuencia. Es la referencia de
-; calibracion, no un programa util.
+; Como R21 (palabras por fila) NO cambia, `expected_word` de los bancos sirve
+; igual: las palabras 0..3839 son las 24 primeras filas del mismo dibujo.
+;
+; Si tocas plasma.asm, toca esto tambien o dejan de medir lo mismo.
+;
 ; Efecto a pantalla completa con los 64 hilos colaborando.
 ;
-; SIN DOBLE BUFFER, a proposito. Dibuja siempre sobre la base fija 0x00100000
-; (el MOVHI R19 del frame_loop) y NUNCA escribe SWAP, asi que el frente se queda
-; donde lo dejo el host. La imagen tiembla -- es el precio de no tocar MMIO, y
-; aqui no importa porque esto no se mira en pantalla, se compara contra el
-; modelo palabra por palabra.
+; Con DOBLE BUFFER: dibuja en FB_BACK y pide el intercambio al terminar cada
+; frame. Sin el, el scanout lee a 60 Hz la misma memoria que estos hilos
+; reescriben a ~8 fps y la imagen tiembla, porque cada frame mostrado mezcla
+; contenido viejo y nuevo.
 ;
-; Quien ejercita el doble buffer y el intercambio es plasma.asm. Si buscas como
-; se pide un SWAP desde la GPU, mira alli, no aqui.
+; El host prepara los dos buffers y enciende el scanout antes de arrancar:
+;     FB_FRONT (0x80000204) = 0x00100000
+;     FB_BACK  (0x80000208) = 0x00140000
+;     VIDEO_CTRL (0x80000200) = 2
+;
+; El intercambio SI lo pide la GPU, escribiendo SWAP (0x8000020c). Eso solo es
+; posible desde que la ventana MMIO esta abierta a la LSU (ver mmio.md): antes
+; la LSU marcaba fault todo lo que pasara de 0x02000000 y ademas el MMIO exigia
+; `halted`. El host no podria hacerlo, tendria que pedir un intercambio ocho
+; veces por segundo por UART.
 ;
 ; Reparto del trabajo
 ; -------------------
@@ -57,22 +67,22 @@
 ; constante, que son 4 estados fijos, y los pocos SHR que quedan son de 2 y 4.
 
         GETTID R1               ; R1 = id global 0..63
-        NOP
+        MOVHI R30, 0x8000       ; R30 = 0x80000000, base del MMIO
         MOVI  R21, 160          ; palabras por fila
         MOVI  R22, 2048         ; rojo  -> bits 15:11, con MUL en vez de SHL 11
         MOVI  R23, 32           ; verde -> bits 10:5
         MOVHI R24, 0x0001       ; 65536: pixel derecho a la mitad alta
         MOVI  R25, 4            ; x2 >> 4
         MOVI  R26, 2            ; y  >> 2
-        MOVI  R28, 1            ; UN frame: version para perfilar
+        MOVI  R28, 4            ; frames a dibujar (subir para dejarlo animando)
         MOVI  R2, 0             ; R2 = t, contador de frames
 
 frame_loop:
-        MOVHI R19, 0x0010       ; base fija: sin MMIO, para validar el modelo
+        LOAD  R19, R30, 520     ; R19 = FB_BACK (0x80000208): donde toca dibujar
         ADD   R3, R1, R0        ; x2 = tid
         MOVI  R4, 0             ; y  = 0
         ADD   R5, R1, R0        ; w  = tid
-        MOVI  R6, 600           ; palabras por hilo
+        MOVI  R6, 60            ; palabras por hilo: 24 filas en vez de 240
         SHR   R16, R4, R26      ; gy = y >> 2
         MUL   R18, R16, R23     ; gy ya colocado en bits 10:5
 
@@ -119,6 +129,17 @@ no_wrap:
 
         BAR                     ; frame dibujado: todos los hilos han terminado
 
+        ; Pedir el intercambio y esperar a que ocurra. Lo hace UN solo hilo:
+        ; un salto divergente necesita SSY delante o el SM para con ERROR_SIMT.
+        SSY   swapped
+        BNE   R1, R0, swapped
+        MOVI  R15, 1
+        STORE R15, R30, 524     ; SWAP = 1 (0x8000020c)
+poll_swap:
+        LOAD  R15, R30, 524
+        ANDI  R15, R15, 1
+        BNE   R15, R0, poll_swap
+swapped:
         BAR                     ; ya se puede dibujar en el nuevo trasero
 
         ADDI  R2, R2, 1         ; siguiente frame

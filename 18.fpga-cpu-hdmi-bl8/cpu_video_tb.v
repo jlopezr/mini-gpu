@@ -88,6 +88,8 @@ module cpu_video_tb;
       .FB_FRONT_RESET(FRONT_RESET),.FB_BACK_RESET(BACK_RESET)
   ) registers_i(
       .clk(clk),.reset(reset),
+      // El banco no observa estas dos salidas; conectadas en vacio a proposito.
+      .underflow_clear(),.halt_request(),
       .select(mmio_select),.write(mmio_write),.write_mask(mmio_write_mask),
       .address(mmio_address),.write_data(mmio_write_data),
       .read_data(mmio_read_data),

@@ -62,7 +62,7 @@ module divide_by_n (
       counter <= 0;
     end else if (counter == 0) begin
       out <= 1'b1;
-      counter <= N - 1;
+      counter <= N[`CLOG2(N)-1:0] - 1'b1;
     end else begin
       counter <= counter - 1;
     end

@@ -199,9 +199,9 @@ module gpu_video_bench_tb;
                  t_scanout, ((t_scanout-t_pattern)*100)/t_pattern);
         $display("");
         if(errors==0) $display("gpu_video_bench_tb: TODAS LAS PRUEBAS PASAN");
-        else $display("gpu_video_bench_tb: %0d FALLOS",errors);
+        else $fatal(1,"gpu_video_bench_tb: %0d FALLOS",errors);
         $finish;
     end
-    initial begin #10000000000; $display("timeout"); $finish; end
+    initial begin #10000000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire

@@ -85,7 +85,9 @@ module video_line_source_burst #(
     input  wire [127:0] rsp_rdata,
     input  wire         rsp_error
 );
-  localparam [ADDR_BITS-1:0] LAST_X = SRC_W - 1;
+  // Part-select explicito: el estrechamiento es deliberado y asi verilator no
+  // avisa de WIDTHTRUNC.
+  localparam [ADDR_BITS-1:0] LAST_X = SRC_W[ADDR_BITS-1:0] - 1'b1;
 
   localparam [1:0] S_IDLE = 2'd0, S_REQUEST = 2'd1, S_WAIT = 2'd2;
 
@@ -169,7 +171,7 @@ module video_line_source_burst #(
           if (fill_start) begin
             // El producto es una vez por linea y queda fuera de todo camino
             // critico, igual que en el lector sin rafagas.
-            line_word = fb_base + fill_line * SRC_W;
+            line_word = fb_base + {{(24-LINE_BITS){1'b0}}, fill_line} * SRC_W[23:0];
             // Direccion de BYTE de la rafaga alineada que contiene esa palabra:
             // (palabra & ~7) * 2, que son los mismos bits recolocados.
             req_addr <= {7'b000_0000, line_word[23:3], 4'b0000};
@@ -195,7 +197,7 @@ module video_line_source_burst #(
             hold <= rsp_rdata;
             // De las ocho palabras de esta rafaga se entregan las que van desde
             // `word_sel` hasta el final, sin pasarse de la linea.
-            chunk = 4'd8 - {1'b0, word_sel};
+            chunk = {{(ADDR_BITS-3){1'b0}}, 4'd8} - {{(ADDR_BITS-2){1'b0}}, word_sel};
             take = (chunk > words_left) ? words_left : chunk;
             unload_left <= take[3:0];
             words_left <= words_left - take;

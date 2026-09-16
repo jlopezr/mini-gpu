@@ -170,11 +170,18 @@ module gpu_calib_tb;
         read_word(32'h8000031c); $display("LANE_OPS    %0d", word_result);
         read_word(32'h80000214); $display("SWAP_COUNT  %0d", word_result);
 
+        // OJO: este banco corre plasma_nommio, que dibuja sobre una base FIJA
+        // (MOVHI R19, 0x0010) y NO toca MMIO -- no pide el intercambio. Por eso
+        // el frente tiene que seguir donde lo dejo el host. Quien ejercita el
+        // SWAP es gpu_plasma_tb, con plasma.hex.
+        // Comprobarlo igualmente vale la pena: verifica que ni el scanout ni la
+        // GPU mueven el frente por su cuenta mientras se dibuja.
         read_word(32'h80000204);
-        if(word_result!==32'h0014_0000) begin
-            $display("FAIL: FB_FRONT=%h, esperaba 00140000",word_result);
+        if(word_result!==32'h0010_0000) begin
+            $display("FAIL: FB_FRONT=%h, esperaba 00100000 (nommio no intercambia)",
+                     word_result);
             errors=errors+1;
-        end else $display("OK: el frente acabo en 0x00140000");
+        end else $display("OK: el frente sigue en 0x00100000, sin intercambios");
 
         // Comprobar unas cuantas palabras del framebuffer contra el modelo.
         for(i=0;i<4;i=i+1) begin
@@ -186,9 +193,9 @@ module gpu_calib_tb;
             end
         end
         if(errors==0) $display("gpu_calib_tb: el framebuffer es correcto");
-        else $display("gpu_calib_tb: %0d FALLOS",errors);
+        else $fatal(1,"gpu_calib_tb: %0d FALLOS",errors);
         $finish;
     end
-    initial begin #40000000000; $display("timeout"); $finish; end
+    initial begin #40000000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire

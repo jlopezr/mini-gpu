@@ -15,8 +15,9 @@ buffer, que es lo que hace falta para que la imagen deje de temblar, no se
 puede implementar como en 21 —allí lo dispara la CPU escribiendo `SWAP`— porque
 aquí nadie podía escribir nada.
 
-Y de paso dejaba toda la instrumentación en simulación, que para un frame
-entero tarda diez minutos.
+Y de paso dejaba toda la instrumentación en simulación, que es lenta: los
+cuatro frames de `plasma.asm` tardan unos ocho minutos (`gpu_plasma_tb`, 463 s
+medidos), casi la mitad del tiempo de la suite entera del prototipo.
 
 ## Mapa
 
@@ -105,3 +106,16 @@ memoria que la GPU reescribe a 8 fps.
 
 Y después, sincronizar con vsync: la GPU puede leer el contador de frames y
 esperar, en vez de dibujar a ciegas.
+
+## Dónde está el contrato
+
+Este documento cuenta **por qué** la 22 abrió el MMIO y **cómo** está construido.
+No es la referencia de direcciones: el mapa completo del repositorio, el contrato
+de registros de cada dispositivo, las discrepancias entre prototipos y el reparto
+al que se quiere converger están en
+[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md).
+
+Dos direcciones de las de arriba **van a moverse** al aplicar ese contrato: la
+configuración de warps sale de `0x80000000` a la página GPU `0x80001000`, y el
+vídeo vuelve de `0x80000200` a `0x80000000`, que es donde lo tienen los cores de
+CPU. Depuración y contadores ya están en su sitio definitivo.

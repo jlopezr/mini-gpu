@@ -110,10 +110,12 @@ module video_scanout #(
   localparam [1:0] S_IDLE = 2'd0, S_PRE0 = 2'd1, S_PRE1 = 2'd2, S_ACTIVE = 2'd3;
 
   // Los parametros son enteros; se truncan una vez aqui para no repartir
-  // part-selects sobre parametros por todo el codigo.
-  localparam [11:0] V_ACTIVE_W = V_ACTIVE;
-  localparam [11:0] LINE_END_W = LINE_END;
-  localparam [LINE_BITS-1:0] SRC_H_W = SRC_H;
+  // part-selects sobre parametros por todo el codigo. El part-select es
+  // explicito para que verilator vea que el estrechamiento es deliberado: sin
+  // el avisa WIDTHTRUNC y el ruido tapaba avisos de verdad.
+  localparam [11:0] V_ACTIVE_W = V_ACTIVE[11:0];
+  localparam [11:0] LINE_END_W = LINE_END[11:0];
+  localparam [LINE_BITS-1:0] SRC_H_W = SRC_H[LINE_BITS-1:0];
 
   reg [1:0] state;
   reg bank_rd;
@@ -153,7 +155,7 @@ module video_scanout #(
   // linea fuente: toca cambiar de banco.
   wire line_consumed = (sx == LINE_END_W) && sy[0] && (sy < V_ACTIVE_W);
   wire busy = pending && !done_pulse_pix;
-  wire need_next = (next_line <= SRC_H);
+  wire need_next = (next_line <= SRC_H_W);
 
   always @(posedge clk_pix) begin
     if (rst_pix) begin

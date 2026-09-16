@@ -61,8 +61,8 @@ module gpu_perf_counters (
     reg [31:0] cycles, retired_count, lsu_tx_count, video_tx_count, stall_count;
     reg [31:0] lane_ops;
     // popcount de la mascara: cuantas lanes retiran con esta instruccion.
-    wire [3:0] lanes_now = retired_lanes[0]+retired_lanes[1]+retired_lanes[2]+retired_lanes[3]
-                         + retired_lanes[4]+retired_lanes[5]+retired_lanes[6]+retired_lanes[7];
+    wire [3:0] lanes_now = {3'b000,retired_lanes[0]}+{3'b000,retired_lanes[1]}+{3'b000,retired_lanes[2]}+{3'b000,retired_lanes[3]}
+                         + {3'b000,retired_lanes[4]}+{3'b000,retired_lanes[5]}+{3'b000,retired_lanes[6]}+{3'b000,retired_lanes[7]};
 
     always @* begin
         read_data=32'd0; bad=1'b0;

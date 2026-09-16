@@ -248,7 +248,7 @@ module top (
       .clk_pix(clk_pix), .rst_pix(rst_pix), .sx(sx), .sy(sy),
       .hsync(hsync), .vsync(vsync), .de(de));
 
-  wire frame = (sy == V_RES && sx == 0);
+  wire frame = (sy == V_RES[11:0] && sx == 12'd0);
 
   // Scanout con doble line buffer. Los sincronismos que salen de aqui llevan un
   // ciclo de retraso, el que cuesta leer el line buffer, y son la referencia de

@@ -71,9 +71,22 @@ module dvi_generator (
         tmds_ch2_out <= tmds_ch2_shift[1:0];
     end
 
+    // Los `cells_sim.v` de ECP5 que Apio pasa a iverilog no traen ODDRX1F, y
+    // iverilog compila todas las fuentes del proyecto para cada testbench. Sin
+    // esta guarda ningun banco de la CPU podria elaborar. Misma convencion que
+    // `pll_120` y `clock2_gen`: fuera de sintesis se emite solo D0, que no
+    // reproduce la serializacion DDR pero deja la jerarquia elaborable.
+`ifdef SYNTHESIZE
     ODDRX1F serialize_ch0 (.D0(tmds_ch0_out[0]), .D1(tmds_ch0_out[1]), .Q(tmds_ch0_serial), .SCLK(clk_pix_5x), .RST(1'b0));
     ODDRX1F serialize_ch1 (.D0(tmds_ch1_out[0]), .D1(tmds_ch1_out[1]), .Q(tmds_ch1_serial), .SCLK(clk_pix_5x), .RST(1'b0));
     ODDRX1F serialize_ch2 (.D0(tmds_ch2_out[0]), .D1(tmds_ch2_out[1]), .Q(tmds_ch2_serial), .SCLK(clk_pix_5x), .RST(1'b0));
+`else
+    always_comb begin
+        tmds_ch0_serial = tmds_ch0_out[0];
+        tmds_ch1_serial = tmds_ch1_out[0];
+        tmds_ch2_serial = tmds_ch2_out[0];
+    end
+`endif
 
     always_comb tmds_clk_serial = clk_pix;  // clock isn't following same path as other channels
 endmodule

@@ -16,6 +16,10 @@ module pll_120 (
   (* LPF_RESISTOR="8" *)
   (* MFG_ENABLE_FILTEROPAMP="1" *)
   (* MFG_GMCREF_SEL="2" *)
+    // El EHXPLLL tiene mas salidas de las que usamos (CLKOS, ENCLKOS...). No
+    // conectarlas es lo normal en una primitiva de Lattice, asi que se silencia
+    // aqui y solo aqui: avisos fijos tapan los que si importan.
+  // verilator lint_off PINMISSING
   EHXPLLL #(
       .PLLRST_ENA("DISABLED"),
       .INTFB_WAKE("DISABLED"),
@@ -48,6 +52,7 @@ module pll_120 (
       .ENCLKOP(1'b0),
       .LOCK(locked)
   );
+      // verilator lint_on PINMISSING
 endmodule
 
 `default_nettype wire

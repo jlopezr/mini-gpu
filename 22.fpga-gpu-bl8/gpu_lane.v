@@ -320,7 +320,7 @@ module gpu_lane #(
           end else if (step_request) begin
             halted <= 1'b0;
             step_active <= 1'b1;
-            if (EXTERNAL_FETCH) begin
+            if (EXTERNAL_FETCH != 0) begin
               // El SM ya busco la instruccion y la esta presentando en
               // `imem_read_data`: pedirla otra vez son dos ciclos tirados.
               // Se hace aqui lo mismo que harian FETCH_REQUEST y FETCH_WAIT.

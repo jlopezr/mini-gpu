@@ -127,12 +127,12 @@ module sdram_controller #(
                       else init_count<=init_count+1'b1;
         ST_INIT_PRE: begin timing_count<=0; state<=ST_INIT_PRE_WAIT; end
         ST_INIT_PRE_WAIT:
-          if (timing_count+1>=TRP_CYCLES) begin timing_count<=0; state<=ST_INIT_REF; end
+          if (timing_count+16'd1>=TRP_CYCLES[15:0]) begin timing_count<=0; state<=ST_INIT_REF; end
           else timing_count<=timing_count+1'b1;
         ST_INIT_REF: begin timing_count<=0; state<=ST_INIT_REF_WAIT0; end
         ST_INIT_REF_WAIT0: begin timing_count<=1; state<=ST_INIT_REF_WAIT1; end
         ST_INIT_REF_WAIT1:
-          if (timing_count>=TRFC_CYCLES-1) begin
+          if (timing_count>=TRFC_CYCLES[15:0]-16'd1) begin
             timing_count<=0;
             if (init_refreshes==4'd7) begin init_refreshes<=0; state<=ST_INIT_MRS; end
             else begin init_refreshes<=init_refreshes+1'b1; state<=ST_INIT_REF; end
@@ -140,7 +140,7 @@ module sdram_controller #(
         ST_INIT_MRS: begin timing_count<=0; state<=ST_INIT_MRS_WAIT0; end
         ST_INIT_MRS_WAIT0: begin timing_count<=1; state<=ST_INIT_MRS_WAIT1; end
         ST_INIT_MRS_WAIT1:
-          if (timing_count>=TMRD_CYCLES-1) begin
+          if (timing_count>=TMRD_CYCLES[15:0]-16'd1) begin
             timing_count<=0; init_done<=1; refresh_count<=0; state<=ST_IDLE;
           end else timing_count<=timing_count+1'b1;
         ST_IDLE: if (refresh_count>=REFRESH_TRIGGER_CYCLES) begin refresh_count<=0; state<=ST_REFRESH; end
@@ -150,24 +150,24 @@ module sdram_controller #(
                  end
         ST_ACTIVE: begin timing_count<=0; state<=ST_TRCD; end
         ST_TRCD:
-          if (timing_count+1>=TRCD_CYCLES) begin
+          if (timing_count+16'd1>=TRCD_CYCLES[15:0]) begin
             timing_count<=0; state<=saved_write ? ST_WRITE : ST_READ;
           end else timing_count<=timing_count+1'b1;
         ST_READ: begin timing_count<=0; state<=ST_READ_WAIT0; end
         ST_READ_WAIT0: begin timing_count<=1; state<=ST_READ_WAIT1; end
         ST_READ_WAIT1:
-          if (timing_count>=CAS_LATENCY_CYCLES-1) begin timing_count<=0; state<=ST_READ_CAPTURE; end
+          if (timing_count>=CAS_LATENCY_CYCLES[15:0]-16'd1) begin timing_count<=0; state<=ST_READ_CAPTURE; end
           else timing_count<=timing_count+1'b1;
         ST_READ_CAPTURE: begin rdata<=sdram_d; done<=1; state<=ST_IDLE; end
         ST_WRITE: begin timing_count<=0; state<=ST_WRITE_WAIT0; end
         ST_WRITE_WAIT0: begin timing_count<=1; state<=ST_WRITE_WAIT1; end
         ST_WRITE_WAIT1:
-          if (timing_count>=TWR_CYCLES-1) begin timing_count<=0; done<=1; state<=ST_IDLE; end
+          if (timing_count>=TWR_CYCLES[15:0]-16'd1) begin timing_count<=0; done<=1; state<=ST_IDLE; end
           else timing_count<=timing_count+1'b1;
         ST_REFRESH: begin timing_count<=0; state<=ST_REFRESH_WAIT0; end
         ST_REFRESH_WAIT0: begin timing_count<=1; state<=ST_REFRESH_WAIT1; end
         ST_REFRESH_WAIT1:
-          if (timing_count>=TRFC_CYCLES-1) begin timing_count<=0; state<=ST_IDLE; end
+          if (timing_count>=TRFC_CYCLES[15:0]-16'd1) begin timing_count<=0; state<=ST_IDLE; end
           else timing_count<=timing_count+1'b1;
         default: state<=ST_INIT_WAIT;
       endcase

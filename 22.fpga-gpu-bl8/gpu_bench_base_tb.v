@@ -73,7 +73,7 @@ module gpu_bench_base_tb;
         $display("BENCH: R1(tid)=%h", debug_data);
         $finish;
     end
-    initial begin #5000000000; $display("BENCH: timeout"); $finish; end
+    initial begin #5000000000; $fatal(1,"BENCH: timeout"); end
 endmodule
 `default_nettype wire
 

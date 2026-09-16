@@ -229,6 +229,7 @@ module memory_map (
       if (bank0_response_valid) begin
         transaction_active <= 0;
         release_wait <= 1;
+        // OWNER_NONE no llega aqui: solo se entra con una transaccion viva.
         case (bank0_response_owner)
           OWNER_MONITOR: begin
             monitor_read_word <= bank0_response_data;
@@ -242,6 +243,8 @@ module memory_map (
             dmem_read_data_r <= bank0_response_data;
             dmem_ready_r <= 1;
           end
+        // OWNER_NONE no llega aqui: solo se entra con una transaccion viva.
+          default: ;
         endcase
       end
       if (bank1_response_valid) begin
@@ -260,6 +263,8 @@ module memory_map (
             dmem_read_data_r <= bank1_response_data;
             dmem_ready_r <= 1;
           end
+        // OWNER_NONE no llega aqui: solo se entra con una transaccion viva.
+          default: ;
         endcase
       end
     end

@@ -38,6 +38,12 @@ module lsu_timing_top(
     wire [31:0] mem_req_addr;
     wire [127:0] mem_req_wdata;
     wire [15:0] mem_req_wmask;
+    // El camino escalar de MMIO (ver mmio.md) tambien va al LFSR. Dejarlo sin
+    // conectar no era solo un aviso de verilator: yosys poda logica muerta,
+    // asi que el Fmax salia de una LSU SIN ese camino -- justo lo que este
+    // prototipo anadio. Con esto se mide la LSU que se sintetiza de verdad.
+    wire mmio_req_valid, mmio_req_write, mmio_rsp_ready;
+    wire [31:0] mmio_req_addr, mmio_req_wdata;
 
     gpu_lsu2 dut(
         .clk(clk_25mhz), .reset(reset),
@@ -50,15 +56,22 @@ module lsu_timing_top(
         .mem_req_write(mem_req_write), .mem_req_addr(mem_req_addr),
         .mem_req_wdata(mem_req_wdata), .mem_req_wmask(mem_req_wmask),
         .mem_rsp_valid(lfsr[15]), .mem_rsp_ready(mem_rsp_ready),
-        .mem_rsp_rdata(wide[127:0]), .mem_rsp_error(lfsr[16]));
+        .mem_rsp_rdata(wide[127:0]), .mem_rsp_error(lfsr[16]),
+        .mmio_req_valid(mmio_req_valid), .mmio_req_ready(lfsr[17]),
+        .mmio_req_write(mmio_req_write), .mmio_req_addr(mmio_req_addr),
+        .mmio_req_wdata(mmio_req_wdata),
+        .mmio_rsp_valid(lfsr[18]), .mmio_rsp_ready(mmio_rsp_ready),
+        .mmio_rsp_rdata(wide[159:128]), .mmio_rsp_error(lfsr[19]));
 
     // Reduccion a 8 bits: registrada, para que el camino critico medido sea el
     // interno de la LSU y no el arbol de XOR hacia los pines.
     reg [7:0] squeeze;
     always @(posedge clk_25mhz)
         squeeze<={^rsp_data[255:128], ^rsp_data[127:0], ^mem_req_wdata,
-                  ^mem_req_addr, ^{mem_req_wmask,rsp_error,occupied,rsp_tag},
-                  req_ready^rsp_valid, mem_req_valid^mem_req_write, mem_rsp_ready};
+                  ^{mem_req_addr,mmio_req_addr,mmio_req_wdata},
+                  ^{mem_req_wmask,rsp_error,occupied,rsp_tag},
+                  req_ready^rsp_valid, mem_req_valid^mem_req_write,
+                  mem_rsp_ready^mmio_req_valid^mmio_req_write^mmio_rsp_ready};
     assign led=squeeze;
 endmodule
 `default_nettype wire

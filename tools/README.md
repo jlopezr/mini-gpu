@@ -188,6 +188,7 @@ OK
 
 $ test --prototype 6 --quick          # solo fixtures + tests Python, sin apio test
 $ test --prototype 21 --lint          # añade apio lint
+$ test --prototype 22 --full          # incluye los bancos lentos (alias: --slow)
 $ test --prototype 17 --background    # se sigue con build-status/build-log, igual que build
 ```
 
@@ -196,6 +197,26 @@ Orden de pasos: `make_fixtures.py` (si existe) → `test_*.py` propios por
 testbenches del `apio.ini`, salvo `--quick`) → `apio lint` (solo con
 `--lint`). Un prototipo sin nada de eso —`test_*.py` ni `apio.ini`— avisa y
 sale en `OK` en vez de fingir que probó algo.
+
+### Bancos lentos (`TEST-LENTO`)
+
+Un banco que lleve `TEST-LENTO` en un comentario queda **fuera de la pasada
+normal**; `--full` (o `--slow`) lo mete de vuelta. Sirve para los bancos que
+simulan una carga realista entera y cuestan minutos: hoy solo
+`22.fpga-gpu-bl8/gpu_plasma_tb.v`, con 463 s, la mitad de la suite del
+prototipo.
+
+La marca va **dentro del banco, con el motivo al lado**, no en una lista
+aparte: una lista se desincroniza en cuanto alguien renombra o borra un banco y
+el filtro deja de filtrar sin que nadie se entere. Al omitir alguno, `test`
+dice cuál y cómo pedirlo.
+
+Un prototipo sin ningún banco marcado se comporta exactamente como antes: una
+sola llamada a `apio test`. El recorrido por bancos sueltos solo se usa cuando
+hay algo que excluir.
+
+Al marcar uno, deja cubierto lo mismo por otro lado. `gpu_plasma_tb` tiene a
+`gpu_plasma4_tb`, que corre el mismo camino con 24 filas en vez de 240 (~50 s).
 
 ### Solo lint (`lint`)
 

@@ -186,9 +186,9 @@ module gpu_profile_tb;
             end
         end
         if(errors==0) $display("gpu_profile_tb: el framebuffer es correcto");
-        else $display("gpu_profile_tb: %0d FALLOS",errors);
+        else $fatal(1,"gpu_profile_tb: %0d FALLOS",errors);
         $finish;
     end
-    initial begin #40000000000; $display("timeout"); $finish; end
+    initial begin #40000000000; $fatal(1,"timeout"); end
 endmodule
 `default_nettype wire
