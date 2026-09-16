@@ -25,17 +25,49 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def normalize_prototype(value: str | None) -> str | None:
+    """Nombre canonico de carpeta para un prototipo, o el valor tal cual.
+
+    El registro guardaba lo que hubieras escrito en -p, asi que el MISMO
+    prototipo aparecia como '22' y como '22.fpga-gpu-bl8' segun quien lanzara el
+    build, y filtrar por -p se dejaba fuera la mitad de su historial. Se
+    normalizan los dos lados de la comparacion, no solo lo que se escribe nuevo:
+    asi los registros viejos siguen encontrandose sin reescribirlos.
+    """
+    if not value:
+        return value
+    try:
+        return resolve_prototype(value, root=BUILD_ROOT).name
+    except (PrototypeResolutionError, OSError):
+        return value
+
+
 def create_build_record(root: Path, prototype: str, label: str, command: list[str]) -> dict:
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Microsegundos y no segundos, y `exist_ok=False`: con segundos, dos builds
+    # lanzados en paralelo en el MISMO segundo generaban el mismo id, y como la
+    # carpeta se creaba con exist_ok=True acababan compartiendo status.json y
+    # build.log sin que nada se quejara. Se pisaban el fichero de estado a medio
+    # escribir y el segundo moria con un JSONDecodeError antes de sintetizar
+    # nada. La carpeta archivada ya usaba microsegundos; esta se habia quedado
+    # atras. Si aun asi colisionan, se desempata con el PID en vez de compartir.
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     rid = f"{timestamp}-{label}"
     folder = root / rid
-    folder.mkdir(parents=True, exist_ok=True)
+    intento = 0
+    while True:
+        try:
+            folder.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:
+            intento += 1
+            rid = f"{timestamp}-{os.getpid()}-{intento}-{label}"
+            folder = root / rid
     status_path = folder / "status.json"
     payload = {
         "id": rid,
-        "prototype": prototype,
+        "prototype": normalize_prototype(prototype),
         "label": label,
         "pid": None,
         "state": "running",
@@ -118,7 +150,9 @@ def clean_logs(root: Path | str, keep: int = 10, older_than_days: int | None = N
     base = Path(root).resolve()
     entries = list_builds(base)
     if prototype:
-        entries = [entry for entry in entries if entry.get("prototype") == prototype]
+        wanted = normalize_prototype(prototype)
+        entries = [entry for entry in entries
+                   if normalize_prototype(entry.get("prototype")) == wanted]
     entries = sorted(entries, key=lambda entry: entry.get("started_at", "1970-01-01T00:00:00Z"), reverse=True)
     keep_active = [entry for entry in entries if entry.get("state") == "running"]
     last_success = next((entry for entry in entries if entry.get("state") == "success"), None)
@@ -269,7 +303,9 @@ class BuildRunner:
 def _get_latest_build(root: Path, prototype: str | None = None) -> dict | None:
     entries = list_builds(root)
     if prototype:
-        entries = [entry for entry in entries if entry.get("prototype") == prototype]
+        wanted = normalize_prototype(prototype)
+        entries = [entry for entry in entries
+                   if normalize_prototype(entry.get("prototype")) == wanted]
     if not entries:
         return None
     return max(entries, key=lambda item: item.get("started_at", ""))

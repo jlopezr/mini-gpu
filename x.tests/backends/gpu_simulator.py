@@ -5,6 +5,13 @@ from pathlib import Path
 from .simulator import _load_module
 
 VERSIONS = {
+    "cycle": {
+        "simulator_path": Path("25.gpu-sim-cycle-uarch/minigpu_cycle.py"),
+        "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
+        "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
+                         "shift_immediate", "subword_memory"),
+        "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
+    },
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
         # Igual que en `simulator.py`, pero la lista es mucho mas corta: el
@@ -26,7 +33,8 @@ class GpuBackend:
         if version not in VERSIONS:
             raise ValueError(f"Versión GPU desconocida: {version}")
         simulator_path = repository / VERSIONS[version]["simulator_path"]
-        _load_module("gpu_trace", simulator_path.with_name("gpu_trace.py"))
+        trace_path = VERSIONS[version].get("trace_path")
+        _load_module("gpu_trace", repository / trace_path if trace_path else simulator_path.with_name("gpu_trace.py"))
         self.module = _load_module(
             f"minigpu_{version}_for_tests", simulator_path
         )

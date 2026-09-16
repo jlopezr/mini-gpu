@@ -4,6 +4,7 @@ Genérico: no depende de qué prototipo es, solo de en qué carpeta corre. Cada
 prototipo con apio.ini puede usarlo con --prototype, sin copiarlo."""
 import argparse
 from collections import defaultdict
+import configparser
 import csv
 from datetime import datetime
 import hashlib
@@ -54,6 +55,22 @@ def extract_log_details(folder):
                              'delta_with_ripup', 'delta_without_ripup',
                              'remaining_arcs', 'batch_seconds', 'total_seconds'])
             writer.writerows(rows)
+
+
+def default_env(prototype_dir):
+    """Env que usa `apio build` sin -e, que es donde deja _build/<env>/.
+
+    No siempre se llama 'default': 13.hdmi arranca en 'colour-cycle'. Tenerlo
+    escrito a mano hacia que el informe de timing se buscara en una carpeta que
+    no existe, y el build acababa en 'Missing timing report' pese a haber
+    sintetizado y cerrado el timing sin problemas.
+    """
+    config = configparser.ConfigParser()
+    try:
+        config.read(prototype_dir / 'apio.ini', encoding='utf-8')
+        return config.get('apio', 'default-env', fallback='default')
+    except (configparser.Error, OSError):
+        return 'default'
 
 
 def timing_passes(clocks):
@@ -145,7 +162,7 @@ def main():
     (folder / 'metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     # Preserve outputs even on failure, but never present stale timing as success.
     for name in ('hardware.pnr', 'hardware.json', 'hardware.config', 'hardware.bit', 'scons.params'):
-        src = ROOT / '_build/default' / name
+        src = ROOT / '_build' / default_env(ROOT) / name
         if src.exists():
             shutil.copy2(src, folder / name)
     if result:

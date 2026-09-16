@@ -61,10 +61,17 @@ una reimplementación.
 $ miniisa examples/vector.asm            # -> 1.isa/miniisa_asm.py
 $ cpusim examples/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
 $ gpusim examples/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+$ gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
+
+El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
+`--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
+`--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
+Los casos existentes también se ejecutan con
+`python x.tests/run_tests.py --backend gpu-simulator --version cycle x.tests/cases-gpu`.
 
 ## Ejecutar la suite de tests
 

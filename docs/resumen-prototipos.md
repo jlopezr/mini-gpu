@@ -36,9 +36,9 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | 120 MHz | 120 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
-| **Fmax / objetivo** | — | 127.3 / 120 | 129.6 / 120 | 113.0 / 100 | 94.5 / 80 | 89.2 / 80 | 91.8 / 80 |
+| **Fmax / objetivo** | — | 127.3 / 120 | 122.6 / 120 | 104.0 / 100 | 90.2 / 80 | 88.0 / 80 | 86.1 / 80 |
 | **Memoria** | — | 2 × 16 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 5 664 / 2 466 | 4 991 / 2 249 | 6 782 / 3 164 | 9 128 / 4 617 | 9 888 / 4 735 | 10 221 / 4 799 |
+| **LUT / FF** | — | 5 664 / 2 466 | 4 956 / 2 249 | 6 815 / 3 164 | 9 128 / 4 617 | 9 857 / 4 735 | 10 227 / 4 800 |
 | **Monitor** | — | 1.16 | 1.17 | 1.18 | 1.19 | 1.20 | 1.15 |
 | **Baudios** | — | 3 M | 3 M | 1 M | 1 M | 1 M | 1 M |
 | `mul_div` | sí | sí | no | sí | sí | sí | sí |
@@ -152,15 +152,15 @@ cobró de verdad.
 ## GPU
 
 <!-- BEGIN GENERATED: gpu-matrix -->
-| | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
-|---|---|---|---|---|---|
-| **Reloj** | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | 34.1 / 25 | 33.9 / 25 | 50.6 / 25 | 40.8 / 25 |
-| **Memoria** | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 36 617 / 9 137 | 31 140 / 9 016 | 29 171 / 10 090 | 34 778 / 12 307 |
-| **Monitor** | — | 2.3 | 2.4 | 2.4 | 2.4 |
-| **Baudios** | — | 250 k | 250 k | 250 k | 250 k |
-| `atomic_warp_faults` | sí | no | no | no | no |
+| | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
+|---|---|---|---|---|---|---|
+| **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
+| **Fmax / objetivo** | — | — | 34.1 / 25 | 33.9 / 25 | 44.1 / 25 | 37.0 / 25 |
+| **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | — | 36 617 / 9 137 | 31 140 / 9 016 | 31 076 / 10 090 | 35 017 / 12 307 |
+| **Monitor** | — | — | 2.3 | 2.4 | 2.4 | 2.4 |
+| **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k |
+| `atomic_warp_faults` | sí | sí | no | no | no | no |
 <!-- END GENERATED: gpu-matrix -->
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:
 sigue ganándole unos 12 MHz con menos LUTs. Está restringida a 25 porque ese era

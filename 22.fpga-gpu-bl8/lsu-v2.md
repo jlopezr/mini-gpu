@@ -303,6 +303,21 @@ E/S y la placa no tiene tantos pines.
 | LSU v1 (`gpu_lsu.v`) | 75,92 MHz | 2682 | 632 | — |
 | LSU v2.0, lazo serie | 37,52 MHz | 4260 | 792 | 57 |
 | LSU v2.0, grupo en paralelo | **38,84 MHz** | 5178 | 776 | 45 |
+| LSU v2.0, con el MMIO conectado | **39,78 MHz** | 5815 | 750 | — |
+
+La última fila corrige a las anteriores. `lsu_timing_top.v` dejaba los nueve
+puertos MMIO sin conectar, así que yosys podaba ese camino entero y las tres
+primeras filas midieron una LSU **sin ventana MMIO**. Al cablearlos al LFSR:
+
+- el **área sube un 12%** (5178 → 5815 LUT), que es la lógica que antes
+  desaparecía sin avisar. El número publicado la infravaloraba;
+- el **Fmax no se mueve** (38,84 → 39,78 MHz, por debajo del ruido de semilla).
+  El MMIO no está en el camino crítico, así que la conclusión de este capítulo
+  se sostiene — pero se sostenía por suerte, no porque estuviera medida.
+
+La fila de la v1 sale idéntica a la publicada (75,92 MHz, 2682, 632), lo cual
+es la comprobación de que el método es el mismo: la v1 no tiene puertos MMIO,
+así que nunca hubo nada que podar.
 
 **Estos números son de una sola semilla y no son comparables con el Fmax del
 sistema completo** — la LSU está aquí sola en un chip vacío, sin competir por

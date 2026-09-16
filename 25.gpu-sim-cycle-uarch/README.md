@@ -1,4 +1,42 @@
-## Dirección del nuevo pipeline MiniCPU / MiniGPU
+# MiniGPU: simulador microarquitectónico por ciclos
+
+Implementación en Python del pipeline S/F/I/D/X/W, con una instrucción en
+vuelo por warp y finalización en orden **por recurso**. LSU y X progresan
+independientemente. W tiene prioridad fija ante colisiones de escritura RF;
+un load mantiene su respuesta e `in_flight` hasta escribir el banco.
+
+```powershell
+# Desde la raíz del repositorio:
+.\tools\test.ps1 --prototype 25 --quick
+.\tools\gpusim-cycle.ps1 25.gpu-sim-cycle-uarch/examples/load_store.asm `
+  --report 25.gpu-sim-cycle-uarch/reports/load_store.json `
+  --trace 25.gpu-sim-cycle-uarch/reports/load_store.jsonl --trace-cycles 100
+.\.venv\Scripts\python.exe x.tests/run_tests.py --backend gpu-simulator --version cycle x.tests/cases-gpu/memory
+```
+
+En Linux/macOS: `python tools/gpusim-cycle programa.asm`; el lanzador admite
+`.asm`, `.bin`, `.hex`, configuración JSON de warps, límites de ciclos e
+instrucciones, volcado de memoria y estado arquitectónico. `--help` muestra
+las latencias configurables. `--imem-lines 0` activa fetch ideal.
+
+Las pruebas normales incluyen 32 casos GPU existentes, diferencial de ALU
+contra MiniCPU, regresiones temporales, colisiones RF, Plasma reducido y
+Mandelbrot 16×8. Para repetir un frame **completo** de Plasma:
+
+```powershell
+$env:MINIGPU_FULL_PLASMA='1'
+$env:MINIGPU_REPORT_DIR='25.gpu-sim-cycle-uarch/reports'
+.\tools\test.ps1 --prototype 25 --quick
+```
+
+Los dos Mandelbrot completos de la suite original son pruebas largas opcionales
+(`MINIGPU_FULL_CONFORMANCE=1`); no se ejecutan en la pasada normal. Los informes
+temporales van en `reports/`, ignorado por Git en este repositorio.
+
+Contrato de reloj, semántica de contadores, decisiones y discrepancias:
+[DESIGN.md](DESIGN.md). Resultados medidos: [VALIDATION.md](VALIDATION.md).
+
+## Dirección acordada del nuevo pipeline MiniCPU / MiniGPU
 
 La idea es diseñar la nueva microarquitectura de MiniGPU de forma que el **datapath de ejecución de MiniISA pueda reutilizarse posteriormente en MiniCPU**, sin intentar compartir necesariamente toda la lógica de control.
 
