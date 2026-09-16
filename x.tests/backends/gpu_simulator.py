@@ -5,7 +5,16 @@ from pathlib import Path
 from .simulator import _load_module
 
 VERSIONS = {
-    "current": {"simulator_path": Path("11.gpu-sim-func/minigpu_sim.py")},
+    "current": {
+        "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
+        # Igual que en `simulator.py`, pero la lista es mucho mas corta: el
+        # modelo de GPU no tiene video, ni accesos sub-palabra, ni llamadas --
+        # esas dos ultimas estan pendientes de backport desde la MiniCPU.
+        # `atomic_warp_faults` solo la tiene el simulador: en `capabilities.json`
+        # es la unica entrada sin `file`, porque no hay RTL que la implemente.
+        "capabilities": ("atomic_warp_faults",),
+        "description": "simulador funcional MiniGPU actual",
+    },
 }
 DEFAULT_VERSION = "current"
 

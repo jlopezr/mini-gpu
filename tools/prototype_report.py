@@ -20,6 +20,7 @@ from tools.rtl_facts import (
     load_capability_signals as _load_capability_signals,
     monitor_version_from_rtl as _monitor_version_from_rtl,
     readme_title as _readme_title,
+    uart_baud_from_rtl as _uart_baud_from_rtl,
 )
 
 
@@ -53,7 +54,33 @@ def _latest_summary(prototype_dir: Path) -> dict:
         return {}
     data = json.loads((candidates[0] / "summary.json").read_text(encoding="utf-8"))
     data["_report_dir"] = str(candidates[0])
+    data["_source"] = "reports"
     return data
+
+
+def _build_snapshot(prototype_dir: Path) -> dict:
+    """La última síntesis que hay en `_build/`, cuando no se archivó informe.
+
+    `hardware.pnr` es lo que deja nextpnr y tiene la misma forma que el
+    `summary.json` archivado, solo que llama `fmax` a lo que allí es `clocks`.
+    Es dato local y no versionado -- `_build/` está en `.gitignore` --, así que
+    solo se usa como respaldo: un informe archivado siempre gana.
+    """
+    builds = sorted(
+        prototype_dir.glob("_build/*/hardware.pnr"),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+    if not builds:
+        return {}
+    data = json.loads(builds[0].read_text(encoding="utf-8"))
+    return {
+        "clocks": data.get("fmax", {}),
+        "utilization": data.get("utilization", {}),
+        "paths": data.get("critical_paths", []),
+        "label": builds[0].parent.name,
+        "_report_dir": str(builds[0].parent),
+        "_source": "_build",
+    }
 
 
 def _memory_regions(prototype_dir: Path) -> dict:
@@ -139,13 +166,79 @@ def _capabilities(prototype_dir: Path, root: Path) -> dict:
     clock_hz = _clock_hz_from_rtl(prototype_dir)
     if clock_hz is not None:
         result["clock_hz"] = clock_hz
+    baud = _uart_baud_from_rtl(prototype_dir)
+    if baud is not None:
+        result["uart_baud"] = baud
     result.update(_version_label(prototype_dir, root))
     result.setdefault("version_name", prototype_dir.name)
     return result
 
 
+_SIMULATOR_BACKENDS = (("cpu", "simulator.py"), ("gpu", "gpu_simulator.py"))
+
+
+def _simulator_entry(node: ast.Dict, architecture: str) -> dict:
+    """Una entrada del `VERSIONS` de un backend de simulador."""
+    entry = {}
+    for key, value in zip(node.keys, node.values):
+        if not isinstance(key, ast.Constant):
+            continue
+        if key.value == "simulator_path":
+            # `Path("2.cpu-sim-func/minicpu_sim.py")`: la carpeta es el nombre
+            # con el que el prototipo aparece en el resto de informes.
+            if isinstance(value, ast.Call) and value.args:
+                argument = value.args[0]
+                if isinstance(argument, ast.Constant):
+                    entry["name"] = str(argument.value).split("/")[0]
+        elif key.value in ("capabilities", "description"):
+            try:
+                entry[key.value] = _safe_eval(value)
+            except ValueError:
+                continue
+    if "name" not in entry:
+        return {}
+    entry.setdefault("capabilities", ())
+    entry["architecture"] = architecture
+    return entry
+
+
+def simulator_capabilities(root: Path) -> list[dict]:
+    """Capacidades que declaran los backends de simulador.
+
+    No se leen del fuente del simulador como se hace con el RTL, y no es un
+    descuido: `minicpu_sim.py` despacha por opcode numérico (`if opcode ==
+    0x2C:  # JAL`) y los mnemónicos solo viven en comentarios -- justo lo que
+    `capabilities_from_rtl` se cuida de no dar por bueno. Aquí la declaración
+    del backend es la fuente, y no puede pudrirse en silencio porque
+    `incompatibility()` la usa para decidir qué casos corren.
+
+    Se parsea con `ast` en vez de importar, por lo mismo que `_memory_regions`:
+    para no arrastrar dependencias del runner solo para escribir un informe.
+    """
+    results = []
+    for architecture, filename in _SIMULATOR_BACKENDS:
+        path = root / "x.tests" / "backends" / filename
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name) or target.id != "VERSIONS":
+                continue
+            if not isinstance(node.value, ast.Dict):
+                continue
+            for value in node.value.values:
+                if isinstance(value, ast.Dict):
+                    entry = _simulator_entry(value, architecture)
+                    if entry:
+                        results.append(entry)
+    return results
+
+
 def collect(prototype_dir: Path, root: Path) -> dict:
-    summary = _latest_summary(prototype_dir)
+    summary = _latest_summary(prototype_dir) or _build_snapshot(prototype_dir)
     return {
         "name": prototype_dir.name,
         "title": _readme_title(prototype_dir),

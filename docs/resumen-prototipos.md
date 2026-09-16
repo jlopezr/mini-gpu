@@ -32,24 +32,25 @@ semillas daba +14,5 % de holgura con el diseño roto.
 
 ## CPU
 
-|                             | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.ls](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
-|-----------------------------|-------------------------|---------------------|-----------------------------|-----------------------------|--------------------------------|------------------------------|--------------------------------|
-| **Fmax / objetivo**         | —                       | 127,3 / 120         | 129,6 / 120                 | 113,0 / 100                 | 94,5 / 80                      | 89,2 / 80                    | 91,8 / 80                      |
-| **Memoria**                 | 32 MiB unificada        | 2 × 16 KiB EBR      | 32 MiB SDRAM                | 32 MiB SDRAM                | 32 MiB SDRAM                   | 32 MiB SDRAM                 | 32 MiB SDRAM                   |
-| **LUT / FF**                | —                       | 5 664 / 2 466       | 4 991 / 2 249               | 6 782 / 3 164               | 9 128 / 4 617                  | 9 888 / 4 735                | 10 221 / 4 799                 |
-| **Monitor / baudios**       | —                       | **1.16** / 3 M      | **1.17** / 3 M              | **1.18** / 1 M              | **1.19** / 1 M                 | **1.20** / 1 M               | 1.15 / 1 M                     |
-| **`R0` cableado a cero**    | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
-| ALU, saltos, `LOAD`/`STORE` | sí                      | sí                  | sí                          | sí                          | sí                             | sí                           | sí                             |
-| `mul_div` (`MUL`/`MULFX`/`DIV`) | sí                  | sí                  | **no**                      | sí                          | sí                             | sí                           | sí                             |
-| `video`                     | sí                      | no                  | no                          | sí                          | sí                             | sí                           | sí                             |
-| `frame_capture`             | sí                      | no                  | no                          | no                          | sí                             | sí                           | sí                             |
-| `subword_memory`            | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
-| `calls`                     | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
-| `serial`                    | sí                      | no                  | no                          | no                          | no                             | sí                           | sí                             |
-| `shift_immediate`           | sí                      | no                  | no                          | no                          | no                             | no                           | sí                             |
-| `alu_extended`              | sí                      | no                  | no                          | no                          | no                             | no                           | sí                             |
-| Contadores de ciclos        | no                      | no                  | no                          | no                          | sí                             | sí                           | sí                             |
-| Ráfagas BL8                 | —                       | —                   | no                          | no                          | sí                             | sí                           | sí                             |
+<!-- BEGIN GENERATED: cpu-matrix -->
+| | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
+|---|---|---|---|---|---|---|---|
+| **Reloj** | — | 120 MHz | 120 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
+| **Fmax / objetivo** | — | 127.3 / 120 | 129.6 / 120 | 113.0 / 100 | 94.5 / 80 | 89.2 / 80 | 91.8 / 80 |
+| **Memoria** | — | 2 × 16 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | 5 664 / 2 466 | 4 991 / 2 249 | 6 782 / 3 164 | 9 128 / 4 617 | 9 888 / 4 735 | 10 221 / 4 799 |
+| **Monitor** | — | 1.16 | 1.17 | 1.18 | 1.19 | 1.20 | 1.15 |
+| **Baudios** | — | 3 M | 3 M | 1 M | 1 M | 1 M | 1 M |
+| `mul_div` | sí | sí | no | sí | sí | sí | sí |
+| `subword_memory` | sí | no | no | no | no | sí | sí |
+| `calls` | sí | no | no | no | no | sí | sí |
+| `shift_immediate` | sí | no | no | no | no | no | sí |
+| `alu_extended` | sí | no | no | no | no | no | sí |
+| `compare` | sí | no | no | no | no | no | sí |
+| `video` | sí | no | no | sí | sí | sí | sí |
+| `frame_capture` | sí | no | no | no | sí | sí | sí |
+| `serial` | sí | no | no | no | no | sí | sí |
+<!-- END GENERATED: cpu-matrix -->
 
 `2.sim` no tiene Fmax ni LUTs porque no es hardware, y tampoco tiene contadores
 de ciclos: no modela el tiempo. Lo que sí da es el número de instrucciones, que
@@ -58,25 +59,6 @@ es arquitectónico y por eso sirve de contraste contra el contador de la placa.
 **El simulador va por delante del RTL, y eso es lo normal:** es donde se prueba
 primero una instrucción nueva. Hoy tiene las siete capacidades; la 21 es el
 único bitstream que también.
-
-### `R0` a cero no es una capacidad, y por eso está en negrita
-
-Es la **única fila de esta tabla que vale «sí» en todas las columnas**, y no por
-casualidad: es una regla de la MiniISA, no algo que un bitstream pueda tener o
-no. Ver [`1.isa/isa.md`](../1.isa/isa.md) §1.
-
-Lo fue durante un tiempo —la capacidad se llamaba `zero_register` y solo la
-tenía la 21— y fue la **única capacidad no aditiva** que ha tenido este
-repositorio. Las demás se detectan solas: un bitstream que no las tenga para con
-`ERROR_INVALID_OPCODE` y se nota. Con `R0` general no hay parada; hay otro
-resultado, en silencio. Una capacidad sirve para omitir un caso con criterio, no
-para tapar una divergencia muda entre dos backends que el diferencial compararía.
-
-Por eso se aplicó a las **nueve implementaciones a la vez** —seis de CPU, tres
-de GPU, más el simulador de cada una— y por eso las nueve subieron la versión de
-su monitor: 1.16–1.20 en CPU y 2.3–2.4 en GPU, sin tocar ni un byte del
-protocolo. El número de versión es la única defensa contra grabar el bitstream
-equivocado y no enterarse.
 
 ### `10.sdram` no implementa `MUL`, `MULFX` ni `DIV`
 
@@ -169,20 +151,17 @@ cobró de verdad.
 
 ## GPU
 
-| | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.sdram-v2](../17.fpga-gpu-ram-v2) |
-|---|---|---|---|---|
-| **Fmax / objetivo** | — | 34,1 / 25 | 33,9 / 25 | 45,6 / 25 |
-| **Memoria** | unificada, hasta 32 MiB | 128 KiB BRAM | 32 MiB SDRAM | 32 MiB SDRAM |
-| **LUT / FF** | — | 36 617 / 9 137 | 31 140 / 9 016 | 30 418 / 10 090 |
-| **Monitor / baudios** | — | **2.3** / 250 k | **2.4** / 250 k | **2.4** / 250 k |
-| **`R0` cableado a cero** | sí | sí | sí | sí |
-| Warps × lanes | 8 × 8 configurable | 8 × 8 | 8 × 8 | 8 × 8 |
-| SIMT (`SSY`, `BAR`, `EXIT`) | sí | sí | sí | sí |
-| `atomic_warp_faults` | sí | no | no | no |
-| `video` | no | no | no | no |
-| `subword_memory` | no | no | no | no |
-| `calls` | no | no | no | no |
-
+<!-- BEGIN GENERATED: gpu-matrix -->
+| | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
+|---|---|---|---|---|---|
+| **Reloj** | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
+| **Fmax / objetivo** | — | 34.1 / 25 | 33.9 / 25 | 50.6 / 25 | 40.8 / 25 |
+| **Memoria** | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | 36 617 / 9 137 | 31 140 / 9 016 | 29 171 / 10 090 | 34 778 / 12 307 |
+| **Monitor** | — | 2.3 | 2.4 | 2.4 | 2.4 |
+| **Baudios** | — | 250 k | 250 k | 250 k | 250 k |
+| `atomic_warp_faults` | sí | no | no | no | no |
+<!-- END GENERATED: gpu-matrix -->
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:
 sigue ganándole unos 12 MHz con menos LUTs. Está restringida a 25 porque ese era
 el objetivo; el margen es la ganancia.
@@ -196,23 +175,6 @@ rebarrer con cada cambio de RTL. En las carpetas de CPU sí se fija, porque all�
 el margen se mide en unidades y no en decenas: la 10 llegó a **no cumplir** con
 la semilla por defecto después de una sola línea de cambio.
 
-**El guardián de `R0` va en otro sitio en la GPU**, y por una razón que conviene
-no perder. En la MiniCPU vive dentro de `register_file.v`, porque allí el banco
-son flops con reset y basta con no escribir la entrada 0: queda a cero por
-construcción y yosys hasta elimina los flops. En la GPU el banco es **BRAM y no
-tiene reset**; lo pone a cero un barrido de 256 ciclos que el propio SM hace en
-su estado `INIT`, por ese mismo puerto de escritura.
-
-Si el guardián estuviera dentro del banco bloquearía también ese barrido, `R0`
-no se inicializaría nunca, y en la placa saldría cero —el EBR arranca a cero—
-mientras que en simulación se quedaría a `X` para siempre. Así que va en
-`gpu_sm.v`, dejando el barrido fuera: lo escribe una vez y ninguna instrucción
-vuelve a tocarlo. Misma invariante, distinto sitio, y ningún coste en el camino
-de lectura, que en la GPU ya está registrado.
-
-Ahí el argumento de área que en la CPU descartamos por irrelevante tampoco
-aplica al revés: son 8 lanes × 8 warps × 32 registros, o sea 2 048 palabras, pero
-al ser BRAM no se ahorra nada por no escribir una de ellas.
 
 Ninguna implementación de GPU tiene todavía los accesos sub-palabra ni las
 llamadas. El backport de las dos extensiones a la MiniGPU está pendiente, y
@@ -238,49 +200,3 @@ Las carpetas anteriores a la CPU, para tener el cuadro entero:
 [13.hdmi](../13.hdmi) no aparece porque es la cadena DVI/TMDS suelta, sin monitor
 ni memoria que comparar; de ahí sale el vídeo de la 16 en adelante.
 
-## Cómo mantener esta tabla
-
-Los números salen de los `_build/`, así que se quedan viejos en cuanto alguien
-sintetiza. Para regenerar los de una carpeta:
-
-```powershell
-.\.venv\Scripts\apio.exe build -p .\19.fpga-cpu-hdmi-ls
-.\tools\build-sweep.ps1 --prototype 19.fpga-cpu-hdmi-ls --seeds 1 2 3 4 5 6 7 8
-```
-
-Y las capacidades de CPU, sin abrir nada:
-
-```powershell
-.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'x.tests'); from backends import fpga, simulator; print('sim', sorted(simulator.capabilities())); [print(v, sorted(fpga.capabilities(v))) for v in fpga.VERSIONS]"
-```
-
-```text
-sim     ['alu_extended', 'calls', 'frame_capture', 'serial', 'shift_immediate', 'subword_memory', 'video', 'zero_register']
-ebr     []
-sdram   []
-hdmi    ['video']
-bl8     ['frame_capture', 'video']
-subword ['calls', 'frame_capture', 'serial', 'subword_memory', 'video']
-alu     ['alu_extended', 'calls', 'frame_capture', 'serial', 'shift_immediate', 'subword_memory', 'video', 'zero_register']
-```
-
-### Comprobación automática
-
-Para no tener que repetir el comando de arriba a mano, `tools/generate-docs`
-mantiene esta tabla cruzando directamente
-`x.tests/backends/{fpga,gpu_fpga}.py` (`tools/prototype-report` hace el mismo
-cruce para un solo prototipo):
-
-<!-- BEGIN GENERATED: prototype-summary -->
-| Prototype | Version | Monitor | Clock | Capabilities |
-|---|---|---|---|---|
-| [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 1.16 | 120.0 MHz | mul_div |
-| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 1.17 | 120.0 MHz | — |
-| [`12.fpga-gpu`](../12.fpga-gpu) | bram | 2.3 | — | — |
-| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 2.4 | — | — |
-| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 1.18 | 100.0 MHz | mul_div, video |
-| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 2.4 | — | — |
-| [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 1.19 | 80.0 MHz | mul_div, video, frame_capture |
-| [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 1.20 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 1.15 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, video, frame_capture, serial |
-<!-- END GENERATED: prototype-summary -->

@@ -295,26 +295,33 @@ de dejar todo en blanco.
 
 ```bash
 $ generate-docs
-escrito: docs/capabilities.md
 escrito: docs/synthesis-report.md
-skip: docs/resumen-prototipos.md no tiene <!-- BEGIN GENERATED: prototype-summary --> ...
+actualizado: resumen-prototipos.md
+skip: docs/mapa-de-memoria.md no tiene <!-- BEGIN GENERATED: prototype-summary --> ...
 
 $ generate-docs --check     # no escribe nada; exit code 1 si algo cambiaría (para CI)
 ```
 
-`docs/capabilities.md` y `docs/synthesis-report.md` se regeneran por completo
-en cada ejecución (no los edites a mano). `docs/resumen-prototipos.md` y
-`docs/mapa-de-memoria.md` están escritos a mano con mucho cuidado, así que
-`generate-docs` **solo** toca lo que haya entre:
+`docs/synthesis-report.md` se regenera por completo en cada ejecución (no lo
+edites a mano). `docs/resumen-prototipos.md` y `docs/mapa-de-memoria.md` están
+escritos a mano, así que `generate-docs` **solo** toca lo que haya entre
+marcadores. Hay tres bloques, cada uno con su nombre:
 
 ```markdown
-<!-- BEGIN GENERATED: prototype-summary -->
-...
-<!-- END GENERATED: prototype-summary -->
+<!-- BEGIN GENERATED: cpu-matrix -->      matriz CPU, en resumen-prototipos.md
+<!-- BEGIN GENERATED: gpu-matrix -->      matriz GPU, en resumen-prototipos.md
+<!-- BEGIN GENERATED: prototype-summary --> tabla plana, en mapa-de-memoria.md
 ```
 
 Si esos marcadores no existen en el archivo, no lo toca — hay que añadirlos a
 mano una vez, donde tenga sentido insertar la tabla generada.
+
+Las matrices llevan una columna por simulador además de las de bitstream. Las
+capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
+del `VERSIONS` de `x.tests/backends/{simulator,gpu_simulator}.py`, que es donde
+están declaradas y lo que usa `incompatibility()` para decidir qué casos corren.
+Fmax y LUT/FF salen del `summary.json` archivado en `reports/` y, si esa carpeta
+no tiene ninguno, del `_build/*/hardware.pnr` local.
 
 ## Dependencias externas
 

@@ -20,32 +20,16 @@ export PATH="$PWD/tools:$PATH"
 - `x.tests` (antes `x.cpu-tests`) tiene los backends de placa/simulador y el runner de casos
   (`run_tests.py`, antes `run_gpu_tests.py`); no dupliques esa lógica en `tools/`, solo añade
   lanzadores finos que la invoquen.
-- `docs/resumen-prototipos.md` y `docs/mapa-de-memoria.md` están escritos a mano con mucho cuidado — no los
-  regeneres ni los edites en bloque; `generate-docs` solo toca contenido entre marcadores
-  `<!-- BEGIN/END GENERATED -->` que ya existan.
+- `docs/resumen-prototipos.md` y `docs/mapa-de-memoria.md` están escritos a mano: edítalos como
+  cualquier otro texto del repo, pero **respeta los marcadores `<!-- BEGIN/END GENERATED -->`**.
+  `generate-docs` sobrescribe lo que haya entre ellos —lo que escribas ahí dentro se pierde— y no
+  toca nada fuera. Lo que no hay que hacer es regenerarlos enteros, no editarlos.
 - La identidad de un prototipo (CPU/GPU, versión de monitor, reloj, capacidades) se lee del RTL
   directamente (`cpu.v`/`gpu_sm.v`, `monitor.v`, el PLL, `tools/capabilities.json`) — no hay
   ningún fichero central que registrar al añadir un prototipo. Ver `tools/prototype_report.py`.
-
-## Estado y huecos conocidos
-
-Implementado: resolución de prototipos, gestor de builds, lanzadores de simuladores, `run-tests`,
-`build`/`test`/`lint`/`build-sweep` genéricos para cualquier prototipo con `apio.ini` (los cuatro
-con `--background`, seguibles con `build-status`/`build-log`), `check` (los encadena y para en el
-primer fallo), `list-prototypes`, `prototype-report`, `generate-docs`,
-`run-board`/`board-info`/`board-upload`/`board-load` (reutilizan `x.tests/backends/board.py`;
-`run-board` es la composición de los otros tres), `test-board` (llama a `x.tests/run_tests.py`
-contra placa real infiriendo `--backend`/`--version` del prototipo, en vez de tener que saber
-a mano si es `cpu-fpga` o `gpu-fpga`). Todos los lanzadores tienen `.ps1` para Windows,
-y ninguno tiene lógica propia salvo `interface-diagram.ps1` (experimental, fuera de este sistema).
-
-Retirados por redundantes con `tools/`: `seed-sweep.ps1` (lo sustituye `build-sweep`),
-los `check.ps1` de 12/14/17 (eran `test`/`lint`/`build` con el número fijado) y
-`17/timing.ps1` (fmax, camino crítico y utilización ya los imprime `build` al final
-de cada pasada y los archiva en `reports/<fecha>-<etiqueta>/summary.txt`). No hay
-scripts de build/check propios en ningún prototipo; la excepción deliberada es
-`13.hdmi/check_timing.ps1`, que se queda: 13 es una prueba independiente multi-env,
-no un prototipo, y ese script barre semillas y las fija en su `apio.ini`.
-
-No queda ningún hueco de infraestructura pendiente en `tools/`. Detalle en
-[`tools/README.md`](tools/README.md).
+- No añadas scripts de build o check dentro de un prototipo: `build`/`test`/`lint`/`check` ya son
+  genéricos para cualquier carpeta con `apio.ini`, y los que había se retiraron por redundantes.
+  La única excepción, deliberada, es `13.hdmi/check_timing.ps1`: 13 no es un prototipo sino una
+  prueba independiente multi-env, y ese script barre semillas y las fija en su `apio.ini`.
+- Cada lanzador tiene su `.ps1` para Windows y ninguno lleva lógica propia, salvo
+  `interface-diagram.ps1` (experimental, fuera de este sistema).

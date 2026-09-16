@@ -15,6 +15,9 @@ from tools.prototype_report import (
     _readme_title,
     _version_label,
     _latest_summary,
+    collect as _collect,
+    simulator_capabilities as _simulator_capabilities,
+    _uart_baud_from_rtl,
 )
 
 CAPABILITIES_JSON = textwrap.dedent("""
@@ -58,6 +61,62 @@ class PrototypeReportTest(unittest.TestCase):
                 '(* FREQUENCY_PIN_CLKOP="120" *)\n', encoding="utf-8",
             )
         return root
+
+    def test_simulator_capabilities_parses_backends_without_import(self):
+        # `x.tests` no es importable (el punto del nombre lo impide) y el
+        # runner arrastra dependencias que un informe no necesita, así que se
+        # lee con ast igual que ARCHITECTURAL_REGIONS.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backends = root / "x.tests" / "backends"
+            backends.mkdir(parents=True)
+            (backends / "simulator.py").write_text(textwrap.dedent("""
+                from pathlib import Path
+                VERSIONS = {
+                    "current": {
+                        "simulator_path": Path("2.cpu-sim-func/minicpu_sim.py"),
+                        "memory_size": 32 * 1024 * 1024,
+                        "capabilities": ("frame_capture", "mul_div"),
+                        "description": "simulador funcional MiniCPU actual",
+                    },
+                }
+            """), encoding="utf-8")
+            (backends / "gpu_simulator.py").write_text(textwrap.dedent("""
+                from pathlib import Path
+                VERSIONS = {
+                    "current": {
+                        "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
+                        "capabilities": ("atomic_warp_faults",),
+                    },
+                }
+            """), encoding="utf-8")
+            entries = {e["name"]: e for e in _simulator_capabilities(root)}
+            self.assertEqual(set(entries), {"2.cpu-sim-func", "11.gpu-sim-func"})
+            cpu = entries["2.cpu-sim-func"]
+            self.assertEqual(cpu["architecture"], "cpu")
+            self.assertEqual(cpu["capabilities"], ("frame_capture", "mul_div"))
+            # `memory_size` es un BinOp y no se puede leer como literal; que no
+            # rompa el resto de la entrada es justo lo que se comprueba aquí.
+            self.assertNotIn("memory_size", cpu)
+            self.assertEqual(entries["11.gpu-sim-func"]["architecture"], "gpu")
+
+    def test_build_snapshot_used_when_no_report_is_archived(self):
+        # Los prototipos de CPU no tienen `reports/`: sus números de síntesis
+        # solo existen en `_build/`, que es de donde salían a mano.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp))
+            build = root / "6.fpga-cpu" / "_build" / "default"
+            build.mkdir(parents=True)
+            (build / "hardware.pnr").write_text(json.dumps({
+                "fmax": {"$glbnet$clk": {"achieved": 127.3, "constraint": 120}},
+                "utilization": {"TRELLIS_COMB": {"used": 5664},
+                                "TRELLIS_FF": {"used": 2466}},
+                "critical_paths": [],
+            }), encoding="utf-8")
+            report = _collect(root / "6.fpga-cpu", root)
+            self.assertEqual(report["synthesis"]["_source"], "_build")
+            self.assertEqual(report["synthesis"]["clocks"]["$glbnet$clk"]["achieved"], 127.3)
+            self.assertEqual(report["synthesis"]["utilization"]["TRELLIS_COMB"]["used"], 5664)
 
     def test_readme_title_reads_first_heading(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,6 +162,57 @@ class PrototypeReportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._make_repo(Path(tmp))
             self.assertEqual(_clock_hz_from_rtl(root / "6.fpga-cpu"), 120_000_000)
+
+    def test_uart_baud_divides_the_system_clock(self):
+        # El divisor es una constante elegida -- multiplo de 4 y con baudio que
+        # el FTDI genere exacto --, no una division: se lee, no se calcula.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp))
+            (root / "6.fpga-cpu" / "top.v").write_text(textwrap.dedent("""
+                module top(input clk_25mhz);
+                  localparam integer UART_CLOCKS_PER_BIT = 40;
+                  localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
+                endmodule
+            """), encoding="utf-8")
+            # Gana el PLL sobre el oscilador: 120 MHz / 40 = 3 Mbaud.
+            self.assertEqual(_uart_baud_from_rtl(root / "6.fpga-cpu"), 3_000_000)
+
+    def test_uart_baud_is_none_without_divisor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp))
+            (root / "6.fpga-cpu" / "top.v").write_text(
+                "module top(input clk_25mhz);\nendmodule\n", encoding="utf-8")
+            self.assertIsNone(_uart_baud_from_rtl(root / "6.fpga-cpu"))
+
+    def test_clock_hz_from_rtl_falls_back_to_board_oscillator(self):
+        # Como las GPU: sin PLL, el reloj del núcleo es el de la placa y se lee
+        # del puerto de entrada del top. Devolver None diría "no se sabe"
+        # cuando el valor está bien definido.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp), with_rtl=False)
+            proto = root / "99.gpu-sin-pll"
+            proto.mkdir()
+            (proto / "top.v").write_text(
+                "module top(input clk_25mhz, output [7:0] led);\nendmodule\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_clock_hz_from_rtl(proto), 25_000_000)
+
+    def test_clock_hz_from_rtl_prefers_pll_over_board_oscillator(self):
+        # La 22 tiene las dos cosas: `clk_25mhz` de entrada y un PLL, pero ese
+        # PLL es solo para los relojes de pixel. Si algún día un prototipo trae
+        # un PLL de sistema, ese es el que manda.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp), with_rtl=False)
+            proto = root / "99.con-pll"
+            proto.mkdir()
+            (proto / "top.v").write_text(
+                "module top(input clk_25mhz);\nendmodule\n", encoding="utf-8"
+            )
+            (proto / "pll_cpu.v").write_text(
+                'FREQUENCY_PIN_CLKOP = "80.000000"\n', encoding="utf-8"
+            )
+            self.assertEqual(_clock_hz_from_rtl(proto), 80_000_000)
 
     def test_capabilities_from_rtl_matches_case_label_not_comment(self):
         with tempfile.TemporaryDirectory() as tmp:

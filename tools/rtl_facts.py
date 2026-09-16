@@ -56,13 +56,54 @@ def monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
 
 
 def clock_hz_from_rtl(prototype_dir: Path) -> int | None:
-    """FREQUENCY_PIN_CLKOP es el atributo que nextpnr usa de verdad para
-    timing, en el fichero del PLL (su nombre varía: pll_120.v, pll_cpu.v...)."""
+    """Reloj al que corre el núcleo del prototipo.
+
+    Primero, `FREQUENCY_PIN_CLKOP` en el fichero del PLL (su nombre varía:
+    pll_120.v, pll_cpu.v...): es el atributo que nextpnr usa de verdad para
+    timing. Los cores de CPU lo tienen porque suben el reloj a 80/100/120 MHz.
+
+    Si no hay PLL, el reloj es el oscilador de la placa, y se lee del nombre
+    del puerto de entrada del top (`input clk_25mhz`). Las GPU están en ese
+    caso: 12, 14 y 17 no tienen PLL, y el de la 22 es solo para los relojes de
+    pixel de HDMI -- la GPU, el monitor, la UART y la SDRAM van en `clk_25mhz`.
+    Devolver None ahí diría "no se sabe" cuando el valor está bien definido.
+    Los dominios de pixel no salen aquí: están desglosados, con su fmax, en
+    `docs/synthesis-report.md`.
+    """
     for pll_file in sorted(prototype_dir.glob("pll*.v")):
         text = pll_file.read_text(encoding="utf-8", errors="replace")
         match = re.search(r'FREQUENCY_PIN_CLKOP\s*=\s*"(\d+(?:\.\d+)?)"', text)
         if match:
             return int(float(match.group(1)) * 1_000_000)
+    for top_file in sorted(prototype_dir.glob("top*.v")):
+        text = top_file.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"input\s+(?:wire\s+)?clk_(\d+)mhz\b", text)
+        if match:
+            return int(match.group(1)) * 1_000_000
+    return None
+
+
+def uart_baud_from_rtl(prototype_dir: Path) -> int | None:
+    """Baudio de la UART del monitor: reloj del sistema entre el divisor.
+
+    El divisor es un `localparam UART_DIVISOR`/`UART_CLOCKS_PER_BIT` del top,
+    y es una constante elegida, no una división: tiene que ser múltiplo de 4
+    --`uart.v` lo comprueba en elaboración-- y dar un baudio que el FTDI genere
+    exacto. Por eso se lee en vez de calcularse desde un baudio objetivo.
+    """
+    clock_hz = clock_hz_from_rtl(prototype_dir)
+    if clock_hz is None:
+        return None
+    for top_file in sorted(prototype_dir.glob("top*.v")):
+        text = top_file.read_text(encoding="utf-8", errors="replace")
+        match = re.search(
+            r"localparam\s+(?:integer\s+)?UART_(?:DIVISOR|CLOCKS_PER_BIT)\s*=\s*([0-9_]+)\s*;",
+            text,
+        )
+        if match:
+            divisor = int(match.group(1).replace("_", ""))
+            if divisor:
+                return clock_hz // divisor
     return None
 
 
