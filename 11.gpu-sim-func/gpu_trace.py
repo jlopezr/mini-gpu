@@ -84,5 +84,21 @@ class TextTrace:
                 print(f'        {line}', file=self.stream)
         self.stream.flush()
 
+    def fault(self, event: TraceEvent) -> None:
+        lanes = ''.join(
+            'A' if event.mask & (1 << lane) and event.live_mask & (1 << lane)
+            else 'F' if not event.live_mask & (1 << lane) else '.'
+            for lane in range(8)
+        )
+
+        print(
+            f'FAULT   W{event.warp_id:<3} 0x{event.pc:08X}  '
+            f'{event.mask:02X}  {lanes} '
+            f'{instruction_text(event.instruction):<28} '
+            f'{event.outcome}',
+            file=self.stream,
+            flush=True,
+        )
+
     def finish(self, message: str) -> None:
         print(f'FIN: {message}', file=self.stream, flush=True)

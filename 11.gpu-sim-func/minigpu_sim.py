@@ -773,9 +773,21 @@ class CPU:
 
         return LaneResult(regs, next_pc, halted, store)
 
+def load_program_file(path: Path) -> bytes:
+    """Acepta .asm, .bin o .hex. La logica vive en 1.isa/miniisa_asm.py para
+    que los tres simuladores carguen igual; antes aqui se hacia `read_bytes()`
+    a secas y un .asm moria con "el programa debe contener instrucciones
+    completas", que es el sintoma (el texto no mide multiplo de 4), no la causa.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "1.isa"))
+    from miniisa_asm import load_program_bytes
+
+    return load_program_bytes(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Simulador funcional de MiniGPU")
-    parser.add_argument("program", type=Path)
+    parser.add_argument("program", type=Path, help=".asm, .bin o .hex")
     parser.add_argument("--max", type=int, default=100_000_000,
                         help="límite total de instrucciones de warp completadas")
     parser.add_argument("--memory-size", type=lambda x: int(x, 0), default=32 * 1024 * 1024)
@@ -807,7 +819,7 @@ def main() -> int:
         system = System(args.memory_size, args.num_warps, size,
                         simt_region_depth=args.simt_region_depth,
                         simt_path_depth=args.simt_path_depth)
-        system.load_program(args.program.read_bytes(), launch=args.config is None)
+        system.load_program(load_program_file(args.program), launch=args.config is None)
         if args.config is not None:
             try:
                 system.configure_warps(config)

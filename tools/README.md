@@ -67,6 +67,22 @@ $ gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cyc
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
 
+Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
+hace falta. La carga es `load_program_bytes()` de `1.isa/miniisa_asm.py`, una
+sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
+`.asm` solo funcionaban en `gpusim-cycle` — los otros dos leían el fichero como
+binario y morían con «el programa debe contener instrucciones completas», que
+es el síntoma (el texto fuente no mide un múltiplo de 4) y no la causa.
+
+Ojo con los casos de `x.tests`: muchos traen un `warps.json` que hay que pasar
+con `--config`, o el simulador lanza los 8 warps por defecto en vez de los que
+el caso espera.
+
+```bash
+$ gpusim x.tests/cases-gpu/memory/memory-copy/program.asm \
+         --config x.tests/cases-gpu/memory/memory-copy/warps.json --trace
+```
+
 El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.

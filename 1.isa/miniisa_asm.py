@@ -166,8 +166,15 @@ LABEL_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
 MEMORY_RE = re.compile(r"^(.+)\(([Rr]\d+)\)$")
 
 
-class AsmError(Exception):
-    pass
+class AsmError(ValueError):
+    """Error de ensamblado, con linea y motivo.
+
+    Hereda de ValueError, y no de Exception, para que los simuladores lo
+    presenten como lo que es: una entrada mala, no un fallo del simulador. Los
+    tres ya envuelven la carga en `except ValueError` y la imprimen con su
+    prefijo; sin esto, un .asm con una errata salia como traceback pelado desde
+    que los lanzadores ensamblan. Quien capturaba AsmError lo sigue capturando.
+    """
 
 
 @dataclass
@@ -826,6 +833,42 @@ def assemble(source: str) -> list[int]:
         int.from_bytes(image[index:index + 4], "little")
         for index in range(0, len(image), 4)
     ]
+
+
+def load_program_bytes(path) -> bytes:
+    """Carga un programa venga como venga: .asm, .hex o .bin.
+
+    Vive aqui, y no en cada simulador, porque los tres la necesitan igual y
+    tenerla repetida ya costo caro: `tools/README.md` documentaba
+    `gpusim examples/vector.asm`, pero minigpu_sim.py hacia `read_bytes()` a
+    secas y con un .asm delante fallaba con "el programa debe contener
+    instrucciones completas" -- que describe el sintoma (el texto fuente no mide
+    un multiplo de 4) y no la causa. minigpu_cycle.py si sabia ensamblar, asi
+    que el mismo comando funcionaba o no segun el simulador.
+
+    El mensaje de error nombra lo que se recibio: con un .asm que no compila,
+    el AsmError sube tal cual y dice linea y motivo.
+    """
+    from pathlib import Path
+
+    path = Path(path)
+    suffix = path.suffix.lower()
+
+    if suffix == ".asm":
+        return assemble_bytes(path.read_text(encoding="utf-8"))
+
+    if suffix == ".hex":
+        return b"".join(
+            int(line, 16).to_bytes(4, "little")
+            for line in path.read_text().splitlines()
+            if line.strip()
+        )
+
+    if suffix == ".bin":
+        return path.read_bytes()
+
+    raise ValueError(
+        f"no se que hacer con '{path.name}': se esperaba .asm, .bin o .hex")
 
 
 # ---------------------------------------------------------------------------
