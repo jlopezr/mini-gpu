@@ -191,8 +191,10 @@ python minigpu_sim.py examples/simt_demo.bin --simt-region-depth 4 --simt-path-d
 ```
 
 Ambos argumentos aceptan enteros positivos y valen 8 cuando se omiten.
-El RTL de `12.fpga-gpu` aún usa la semántica anterior; ejecutar allí estos
-patrones no tiene todavía las mismas garantías.
+Los RTL de `12.fpga-gpu`, `14.fpga-gpu-ram`, `17.fpga-gpu-ram-v2` y
+`22.fpga-gpu-bl8` también implementan regiones reutilizables y pilas REGION/PATH
+independientes. Los modelos 23/24 usan este evaluador funcional y el modelo 25
+implementa la misma semántica con reconvergencia temporizada por ciclos.
 Ejecutar pruebas desde la raíz del repositorio:
 
 ```powershell

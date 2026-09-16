@@ -17,7 +17,8 @@ PC
 active_mask
 live_mask
 state
-SIMT_stack
+region_stack
+path_stack
 ```
 
 Donde:
@@ -26,15 +27,19 @@ Donde:
 - `active_mask`: lanes que están ejecutando actualmente.
 - `live_mask`: lanes que todavía no han ejecutado `EXIT`.
 - `state`: estado actual del warp (`READY`, `WAIT_MEM`, `WAIT_MUL`, `WAIT_DIV`, `WAIT_BAR`, etc.).
-- `SIMT_stack`: pila utilizada para gestionar divergencia y reconvergencia.
+- `region_stack` (REGION): regiones de reconvergencia abiertas.
+- `path_stack` (PATH): caminos pendientes dentro de esas regiones.
 
-Una entrada de la pila SIMT contiene:
+Las dos pilas tienen capacidades independientes. Sus entradas contienen:
 
 ```text
-reconv_pc
-pending_pc
-pending_mask
+REGION: ssy_pc, join_pc, entry_mask, path_base
+PATH:   pending_pc, pending_mask
 ```
+
+`path_base` delimita los caminos de la región; `entry_mask` conserva las lanes
+que deben reunirse al cerrarla, filtradas por `live_mask` para no reactivar
+lanes que hayan ejecutado EXIT.
 
 ---
 
@@ -53,9 +58,10 @@ compartirla. Una salida directa al join aparca sus lanes sin guardar PATH;
 si ambos caminos tienen trabajo anterior al join, se guarda un PATH y se
 ejecuta primero el fall-through.
 
-El simulador implementa esta semántica con dos pilas independientes. El RTL
-actual de `12.fpga-gpu` conserva la semántica anterior y todavía no es
-conforme con esta revisión. Véase [el diseño](ssy-reusable-regions-design.md).
+Esta semántica con dos pilas independientes está implementada en el simulador
+funcional de 11, los RTL de 12/14/17/22 y el modelo por ciclos de 25. Los modelos
+23/24 delegan la ejecución arquitectónica en 11. Véase
+[el contrato de regiones reutilizables](ssy-reusable-regions-design.md).
 
 ## Ejemplo
 
@@ -264,7 +270,8 @@ BAR
 EXIT
 ```
 
-mientras que la divergencia de los branches existentes se gestiona mediante `active_mask`, `live_mask` y la pila SIMT.
+mientras que la divergencia de los branches existentes se gestiona mediante
+`active_mask`, `live_mask` y las pilas REGION/PATH.
 ## Concreción en el simulador funcional
 
 | Instrucción | Opcode (bits 31:26) | Bits 25:0                              |

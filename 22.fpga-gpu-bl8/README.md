@@ -26,13 +26,37 @@ Para medir en placa sin simular: `python profile.py --port COM3 --program exampl
 
 ### Resultados
 
+Medido cuando los dos envs eran comparables, o sea antes de que el diseño real
+ganara vídeo, MMIO y contadores. Los nombres son los de entonces: hoy la línea
+base es `base-bl1` y el diseño real es `default` (ver el aviso del `apio.ini`).
+
 | | Ciclos (32 casos) | Fmax | COMB |
 | --- | --- | --- | --- |
-| `default` — base heredada de 17 (LSU v1, BL1) | 139 533 | 44,14 MHz | 31 076 |
-| `bl8` — LSU v2 + buffer de instrucciones + fabric | **80 491** | 36,57 MHz | 31 012 |
+| línea base heredada de 17 (LSU v1, BL1) | 139 533 | 44,14 MHz | 31 076 |
+| LSU v2 + buffer de instrucciones + fabric | **80 491** | 36,57 MHz | 31 012 |
 
-**x1,44 de rendimiento neto** (−42% de ciclos, −17% de Fmax, misma área). El
-detalle de cómo se llegó ahí, incluidos los pasos que NO funcionaron, está en
+**x1,44 de rendimiento neto** (−42% de ciclos, −17% de Fmax, misma área).
+
+#### Y cómo están hoy los dos envs
+
+| env | Fmax `sdram_clk` | COMB | FF |
+| --- | --- | --- | --- |
+| `base-bl1` — línea base | 49,36 MHz | 31 507 | 10 090 |
+| `default` — el que se sube a la placa | 36,95 MHz | 35 017 | 12 307 |
+
+**Esta segunda tabla NO es un A/B del cambio a BL8**, aunque lo parezca. El
+`default` de hoy lleva además el scanout de vídeo (tiene dos relojes más,
+`clk_pix` y `clk_pix_5x`), la ventana MMIO y los contadores, y `base-bl1` no
+lleva nada de eso. Los +3510 LUT y +2217 FF son de todo junto, no del BL8.
+Sirve para saber qué hay en el chip ahora; no para atribuir el coste.
+
+Y un aviso sobre el `−17% de Fmax` de arriba: la MISMA línea base da 44,14 MHz
+en aquella medición y 49,36 hoy. Estos envs no fijan semilla —lo explica
+`docs/resumen-prototipos.md`— y ese ±12% es del orden del efecto que se está
+midiendo. La parte de ciclos del x1,44 es sólida; la de Fmax, con una sola
+semilla por fila, no distingue el cambio del ruido.
+
+El detalle de cómo se llegó ahí, incluidos los pasos que NO funcionaron, está en
 [`lsu-v2.md`](lsu-v2.md). Resumen: la ganancia es casi toda del buffer de
 instrucciones, no de la LSU — el fetch mueve ~1600× más tráfico que los
 accesos vectoriales.

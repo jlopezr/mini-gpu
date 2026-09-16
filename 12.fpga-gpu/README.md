@@ -27,7 +27,7 @@ identifica como **2.1** para distinguirlo del monitor escalar a 3 Mbaud.
 
 ## Organización
 
-- `gpu_sm.v`: scheduler round-robin, PC y máscaras por warp, pila SIMT,
+- `gpu_sm.v`: scheduler round-robin, PC y máscaras por warp, pilas REGION/PATH,
   workgroups, barreras, carga de contextos y arbitraje de escritura de registros.
 - `gpu_lane.v`: máquina de estados de `6.fpga-cpu/cpu.v`, con PC de lanzamiento,
   thread ID y banco de registros externos. `derive_lane.py` reproduce la adaptación.

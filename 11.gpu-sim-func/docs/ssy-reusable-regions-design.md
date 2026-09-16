@@ -2,14 +2,18 @@
 
 ## Estado y alcance
 
-Semántica implementada en `minigpu_sim.py`, basada en lo acordado durante el
-análisis de Mandelbrot. **El RTL todavía conserva la semántica anterior.**
-Describe una variante de la semántica 3: regiones reutilizables,
+Semántica vigente de [MiniISA v0.1](../../1.isa/isa.md): regiones reutilizables,
 cierre automático y almacenamiento separado de regiones y caminos pendientes.
+Está implementada en el simulador funcional de 11 y en los RTL `gpu_sm.v` de
+[12](../../12.fpga-gpu/gpu_sm.v), [14](../../14.fpga-gpu-ram/gpu_sm.v),
+[17](../../17.fpga-gpu-ram-v2/gpu_sm.v) y [22](../../22.fpga-gpu-bl8/gpu_sm.v).
+Los modelos 23 y 24 delegan la semántica en el funcional de 11; el modelo
+[25](../../25.gpu-sim-cycle-uarch/simt.py) implementa el mismo control SIMT
+con mantenimiento de reconvergencia temporizado.
 
-No añade instrucciones a la ISA. En particular, no necesita SYNC. Sí cambia
-el significado de SSY y el tratamiento de las divergencias respecto al código
-anterior, que reserva una entrada en cada SSY y permite una divergencia por entrada.
+Ninguna implementación SIMT actual del repositorio conserva el esquema
+histórico de una entrada nueva por cada SSY y una sola divergencia por entrada.
+No hace falta una instrucción SYNC: la reconvergencia es automática.
 
 La regla central es:
 
@@ -313,7 +317,8 @@ Por warp se necesitan los arrays REGION y PATH y dos contadores. No hace falta
 un registro de preparación SSY ni una búsqueda asociativa por toda la pila.
 La comparación de reutilización consulta solo `R[region_count-1].ssy_pc`.
 
-Una división sencilla del controlador sería:
+El siguiente reparto describe las responsabilidades del controlador, no una
+implementación pendiente ni una secuencia de estados idéntica en todos los RTL:
 
 1. **RECON:** comprobar terminación, máscara vacía y join del top. Hacer como
    máximo un pop por ciclo y permanecer aquí mientras haya que normalizar.
@@ -477,9 +482,14 @@ $env:RUN_SLOW_SIMT = '1'
 Remove-Item Env:RUN_SLOW_SIMT
 ```
 
-El esquema RTL anterior sigue siendo una propuesta de trabajo posterior.
+Los RTL citados al principio ya implementan REGION/PATH y reutilización de SSY.
+La temporización depende del modelo: el funcional normaliza en un bucle dentro
+del paso arquitectónico; los RTL lo hacen mediante estados RECON/NORMALIZE
+(con estados CONTEXT adicionales en 17 y 22); el modelo 25 realiza una operación
+de pila por ciclo fuera del pipeline. Estas diferencias de ciclos no constituyen
+versiones distintas de la semántica de reconvergencia.
 
-Validación de esta implementación: 53 pruebas rápidas del simulador aprobadas,
+Registro histórico de validación de la implementación funcional: 53 pruebas rápidas del simulador aprobadas,
 9 pruebas del runner aprobadas y 12 casos GPU pequeños de conformidad aprobados.
 Se ejecutaron además ambos programas completos con ocho warps y capacidades
 por defecto, comparando byte a byte sus framebuffers:

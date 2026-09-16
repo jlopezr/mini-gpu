@@ -55,8 +55,10 @@ Cada hito añade pruebas al lanzador común `tools/test --prototype 25 --quick`.
 3. El funcional GPU solo soporta el repertorio antiguo. Aquí se añaden
    `alu_extended`, `compare`, `shift_immediate` y `subword_memory`, contrastados
    con CPU. `calls` queda fuera: la ISA no define soporte SIMT para llamadas.
-4. El documento de regiones dice que RTL aún usa semántica antigua, pero
-   `gpu_sm.v` ya contiene REGION/PATH separados y reutilización por `ssy_pc`.
+4. Las referencias documentales a un RTL con semántica antigua estaban
+   desactualizadas y se han corregido: los RTL de 12/14/17/22 contienen
+   REGION/PATH separados y reutilización por `ssy_pc`, igual que los modelos
+   actuales. La diferencia de 25 es la temporización, no otra semántica SIMT.
 5. El comentario de JR en MiniCPU todavía dice que R0 es general; la ISA y el
    código que descarta escrituras establecen R0=0. Aquí R0 siempre es cero.
 6. El RTL comprueba SSY con `target[31:17]` (128 KiB), mientras su memoria de
