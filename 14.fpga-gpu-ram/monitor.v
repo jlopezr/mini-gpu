@@ -270,6 +270,20 @@ module monitor #(
   // del payload es un dato legitimo, no un marcador de error. Sin reset del
   // array para permitir inferir RAM; solo se leen los bytes ya capturados.
   reg [7:0] block_read_buffer [0:255];
+  // La salida de esa BRAM NO entra en el mux de `response_byte_0`.
+  //
+  // `response_byte_0` lo escriben una veintena de sitios del FSM, asi que su
+  // entrada D es un mux de cuatro niveles de LUT. Colgar ahi la BRAM sumaba
+  // sus 5,83 ns de clk-to-q a esos cuatro niveles y salia EL camino critico de
+  // las diez carpetas: 9,05 ns en la 6 y 9,69 en la 10, o sea 110,45 y 103,15
+  // MHz con 120 exigidos. Con un registro propio la BRAM va a una D limpia, y
+  // el byte de bloque se elige en el mux de `tx_data`, que es registro a
+  // registro y poco profundo. No cambia ni un ciclo del protocolo.
+  reg [7:0] block_read_byte;
+  // 1 mientras se emiten los bytes de un READ_BLOCK. Se pone a cero al empezar
+  // CUALQUIER comando (STATE_DECODE_COMMAND es el paso obligado de todos), asi
+  // que no hace falta apagarlo en las veinte ramas que responden.
+  reg response_from_block;
   reg [7:0] block_index;
 
   reg [5:0] state;
@@ -390,6 +404,8 @@ module monitor #(
       response_byte_4 <= 8'h00;
       response_byte_5 <= 8'h00;
       response_byte_6 <= 8'h00;
+      block_read_byte <= 8'h00;
+      response_from_block <= 1'b0;
       command_decoded <= 16'h0;
       serial_push <= 1'b0;
       serial_push_data <= 8'h00;
@@ -420,6 +436,7 @@ module monitor #(
         // Decode registered one-hot flags instead of putting the UART byte,
         // twelve comparisons and the complete command FSM in one 120 MHz path.
         STATE_DECODE_COMMAND: begin
+            response_from_block <= 1'b0;
             case (1'b1)
               command_decoded[0]: begin
                 response_byte_0 <= RSP_PONG;
@@ -833,7 +850,8 @@ module monitor #(
           end
         end
         STATE_BLOCK_SEND_DATA: begin
-          response_byte_0 <= block_read_buffer[block_index];
+          block_read_byte <= block_read_buffer[block_index];
+          response_from_block <= 1'b1;
           response_length <= 3'd1;
           response_index <= 3'd0;
           response_done_state <= (block_remaining == 1) ? STATE_IDLE : STATE_BLOCK_SEND_DATA;
@@ -845,7 +863,8 @@ module monitor #(
         STATE_RESPOND: begin
           if (tx_ready) begin
             case (response_index)
-              3'd0: tx_data <= response_byte_0;
+              3'd0: tx_data <= response_from_block ? block_read_byte
+                                                  : response_byte_0;
               3'd1: tx_data <= response_byte_1;
               3'd2: tx_data <= response_byte_2;
               3'd3: tx_data <= response_byte_3;

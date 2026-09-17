@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "video-bresenham-lines",
+  "program": "../../../../21.fpga-cpu-hdmi-alu/examples/bresenham_lines.asm",
+  "requires": ["frame_capture", "subword_memory", "calls", "shift_immediate", "mul_div"],
+  "run_until": {"swap": 1},
+  "max_instructions": 1000000,
+  "timeout_seconds": 20.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "video": {"underflow": false},
+    "frame": {"file": "expected/frame.bin"}
+  }
+}

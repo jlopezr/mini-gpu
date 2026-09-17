@@ -1,6 +1,6 @@
 # Casos de vídeo
 
-Tres casos, y cada uno cubre algo que los otros no. Todos declaran una
+Cinco casos, y cada uno cubre algo que los otros no. Todos declaran una
 [capacidad](../../README.md#capacidades), así que se omiten solos donde no hay
 con qué ejecutarlos.
 
@@ -9,8 +9,10 @@ con qué ejecutarlos.
 | [`registers`](registers) | `video` | La ventana de registros desde un programa. **Corre también en la 16.** |
 | [`band`](band) | `frame_capture` | La cadena completa hasta el framebuffer, con la imagen más simple posible |
 | [`bounce`](bounce) | `frame_capture` | Pitch, bordes y escrituras parciales de línea |
+| [`bresenham-lines`](bresenham-lines) | `frame_capture` | Ocho octantes, llamadas y píxeles RGB565 individuales |
+| [`bresenham-circles`](bresenham-circles) | `frame_capture` | Punto medio, simetría de ocho y tres niveles de llamadas |
 
-## Por qué tres y no uno
+## Por qué cinco y no uno
 
 **`registers`** no dibuja nada. Comprueba lo único que un programa necesita
 saber de los registros: que las bases arrancan donde dice el hardware, que
@@ -50,6 +52,16 @@ ejes —la `y` en el paso 52 y la `x` en el 72—, y después del primer rebote 
 cuadrado deja de estar en la diagonal, así que el caso distingue un eje del
 otro. Antes del paso 52, `x` e `y` valen lo mismo y un intercambio de ejes
 pasaría desapercibido.
+
+**`bresenham-lines`** ejecuta directamente la demo de la 21 y compara el
+primer abanico completo. Sus 36 extremos recorren los ocho octantes, y de paso
+el caso integra llamadas, `MUL`, `STOREH`, RGB565 y doble buffer. El modelo de
+referencia calcula las rectas por separado; no captura la salida del programa.
+
+**`bresenham-circles`** hace lo mismo con las seis circunferencias del ejemplo.
+Cubre el algoritmo del punto medio, los ocho puntos simétricos y tres niveles
+de llamadas. Los dos Bresenham tienen además casos `*-core` en `cases/programs`:
+esos dejan la secuencia exacta de puntos en RAM, sin depender del vídeo.
 
 ## Aislamiento: la placa no arranca de cero entre casos
 
@@ -94,18 +106,21 @@ python ../../tools/compare-frames.py --rgb565 320x240 \
 ## Ejecución
 
 ```bash
-# Los tres, en la 18
+# Los tres casos base, en la 18
 python run_tests.py --backend cpu-fpga --version bl8 --port COM3 cases/video
+
+# Los cinco, incluida la ISA que necesitan los Bresenham, en la 21
+python run_tests.py --backend cpu-fpga --version alu --port COM3 cases/video
 
 # Solo el que corre en la 16
 python run_tests.py --backend cpu-fpga --version hdmi --port COM3 \
     cases/video/registers/test.json
 ```
 
-Los tres corren también en el simulador, sin placa:
+Los cinco corren también en el simulador, sin placa:
 
 ```bash
-python run_tests.py --backend cpusim cases/video/bounce/test.json
+python run_tests.py --backend cpusim cases/video
 ```
 
 Pero el simulador **no modela el tiempo**: allí `underflow` es siempre cero y el

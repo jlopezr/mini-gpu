@@ -111,17 +111,17 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpusim` | ninguno | — | los 34 de `cases/` |
+| 1 | `cpusim` | ninguno | — | los 38 de `cases/` |
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
 | 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
-| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 27; 7 omitidos por capacidades |
-| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 34 de `cases/` |
+| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 28; 10 omitidos por capacidades |
+| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 38 de `cases/` |
 | 5 | `gpusim` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
-Solo `cpusim` y `cpu-fpga --version alu` ejecutan los 34 casos: son los
+Solo `cpusim` y `cpu-fpga --version alu` ejecutan los 38 casos: son los
 dos únicos que tienen las ocho capacidades.
 
 **`sdram` no tiene `mul_div`, y esa capacidad es distinta de las demás.**
@@ -406,7 +406,7 @@ dos implementaciones hacen lo mismo: el frame capturado byte a byte, `swaps`
 casos sin `run_until`, donde la parada es determinista.
 
 [`test_differential.py`](test_differential.py) fija este recorte. Hasta que se
-aplicó, **los tres casos de vídeo fallaban siempre el diferencial** aunque
+aplicó, **los casos de vídeo fallaban siempre el diferencial** aunque
 pasaran en los dos backends por separado.
 
 ## Medir: `--measure`
@@ -658,7 +658,7 @@ razón que merece explicarse: **para un programa que espera a que su intercambio
 se aplique, el periodo da igual**. El programa nunca dibuja mientras hay un
 intercambio pendiente, así que la secuencia de frames es idéntica sea cual sea
 el periodo; lo único que cambia es cuántas vueltas da su bucle de espera. Los
-tres casos de `cases/video` sincronizan, y por eso el simulador puede declarar
+cinco casos de `cases/video` sincronizan, y por eso el simulador puede declarar
 `frame_capture` honestamente. `test_capabilities.py` lo comprueba con tres
 periodos distintos.
 

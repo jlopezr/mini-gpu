@@ -26,6 +26,8 @@ if str(_REPOSITORY) not in sys.path:
 
 from tools.rtl_facts import (  # noqa: E402
     backend_from_rtl,
+    capabilities_from_rtl,
+    load_capability_signals,
     monitor_version_from_rtl,
     readme_title,
 )
@@ -74,6 +76,7 @@ def _prototype_number(directory: Path) -> int:
 
 
 def _build_versions() -> dict:
+    signals = load_capability_signals(_REPOSITORY)
     manifests = sorted(
         _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
     )
@@ -93,6 +96,7 @@ def _build_versions() -> dict:
             "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
             "monitor_version": monitor_version,
             "description": manifest.get("description") or readme_title(directory),
+            "capabilities": capabilities_from_rtl(directory, signals),
         }
     return versions
 
@@ -117,13 +121,46 @@ def architectural_size(monitor: ModuleType) -> int:
     return max(end for _, end in monitor.ARCHITECTURAL_REGIONS)
 
 
+def expand_for(names) -> frozenset:
+    """Expande las capacidades implicadas.
+
+    El import va dentro para no crear una dependencia circular: `run_tests`
+    importa los backends al arrancar.
+    """
+    from run_tests import expand_capabilities
+
+    return expand_capabilities(names)
+
+
+def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
+    """Lo que tiene esta version, con las implicaciones ya expandidas."""
+    return expand_for(VERSIONS[version]["capabilities"])
+
+
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Reject unavailable capabilities before opening a port or uploading."""
     config = VERSIONS[version]
     if case.get('simulator_options'):
         return 'las profundidades SIMT del caso requieren el simulador'
+    # Antes de la comprobacion general: `atomic_warp_faults` no le falta a una
+    # version, le falta a TODO el RTL, y su motivo lo explica. Dejarlo caer en
+    # el caso general diria "sin atomic_warp_faults" sin decir por que.
     if 'atomic_warp_faults' in case.get('requires', []):
         return 'el caso exige fallos atómicos por warp; el RTL permite efectos parciales'
+    # Igual que en `fpga.py`. Faltaba aqui: mientras `cases-gpu` fue el unico
+    # origen de casos para placa, ninguno pedia una capacidad opcional y el
+    # hueco no daba la cara. Con `cases-shared` si: `shared-double-buffer`
+    # pide `video`, y la 12 --que no lo tiene-- lo ejecutaba hasta que la
+    # placa contestaba `ff`, o sea un ERROR donde tocaba un SKIP.
+    disponibles = capabilities(version)
+    faltan = [name for name in case.get('requires', []) if name not in disponibles]
+    if faltan:
+        con_ello = sorted(
+            name for name, other in VERSIONS.items()
+            if set(faltan) <= expand_for(other['capabilities'])
+        )
+        sugerencia = f" (la tienen: {', '.join(con_ello)})" if con_ello else ""
+        return f"sin {', '.join(faltan)}{sugerencia}"
     # El mapa lo declara el monitor de esta versión, que es quien lo implementa.
     monitor = _load_module(
         f'gpu_fpga_monitor_{version}_for_regions',

@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "program-bresenham-lines-core",
+  "program": "program.asm",
+  "requires": ["calls", "shift_immediate"],
+  "max_instructions": 10000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x000001A8",
+    "memory_dumps": [
+      {"address": "0x00100000", "file": "expected.hex"}
+    ]
+  }
+}

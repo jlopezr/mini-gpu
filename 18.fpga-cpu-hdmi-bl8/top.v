@@ -281,13 +281,22 @@ module top (
   wire [15:0] p3_wmask;
 
   // Los dos clientes de la ventana de registros de video.
+  //
+  // Doce bits, la pagina MMIO entera, igual que los puertos de los dos
+  // adaptadores, del mux y del decodificador. Se quedaron en cinco --los 32 B
+  // de registros de video que habia antes de la fase 3.5-- y Verilog trunca en
+  // silencio al conectar el puerto: los siete bits altos se perdian, asi que
+  // los dieciseis dispositivos de la pagina caian todos sobre el de video.
+  // En placa eso era leer FB_FRONT al pedir SYS_ID o PERF_CYCLES, y escribir
+  // FB_FRONT al escribir cualquier otro sitio. No lo ve ningun banco porque
+  // ninguno instancia `top`.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  wire [11:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [11:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
   cpu_dmem_adapter dmem_adapter_i(

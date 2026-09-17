@@ -417,6 +417,27 @@ no tiene ninguno, del `_build/*/hardware.pnr` local.
   prototipo; los lanzadores de `tools/` que no tocan placa, como
   `prototype-report`, no lo necesitan)
 
+## Diagnosticar desconexiones USB del FTDI (Windows)
+
+`usb-power-monitor` registra los cambios de presencia y estado del FTDI y de
+toda su cadena de hubs. Tambien guarda los indicadores de suspension selectiva
+y de reposo de cada dispositivo. Es una herramienta de solo lectura: no cambia
+la configuracion de energia. Comprueba el estado cada segundo, pero solo escribe
+una nueva linea cuando detecta algun cambio, por lo que el registro permanece
+pequeno. Cada evento se escribe, se fuerza a disco y se cierra inmediatamente;
+el fichero queda util aunque el proceso o el dispositivo se interrumpan despues.
+
+```powershell
+.\tools\usb-power-monitor.ps1
+# o una prueba limitada a 20 minutos:
+.\tools\usb-power-monitor.ps1 --duration 20 --output ftdi-prueba.jsonl
+```
+
+Deja que la pantalla se apague y, despues de reproducir el fallo, pulsa
+`Ctrl+C`. El fichero JSONL solo contiene una instantanea inicial, los cambios
+detectados y posibles errores; se puede compartir directamente para comparar
+que elemento de la cadena desaparecio primero.
+
 ## Ejecutar un programa en una placa real (`run-board`)
 
 Resuelve el prototipo, comprueba (y si hace falta sube) el bitstream
