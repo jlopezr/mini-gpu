@@ -57,20 +57,39 @@ que son dos consumidores de la misma tabla.
 - [ ] Revisar de paso el punto 10 del `TODO.md` (`MONITOR_REGIONS = ()` en la
       familia HDMI): la fase 4 va a necesitar que esa lista sea coherente.
 
-Dos cosas quedaron abiertas y conviene decidirlas antes de la fase 4:
+- [x] **Resuelta la ambigüedad del nombre `perf_counters`.** Era peor que una
+      molestia de lectura: `perf_counters_from_rtl` en `rtl_facts.py` detecta el
+      comando de monitor `CMD_GET_CYCLES` (`0x36`) y ponía
+      `entry["perf_counters"] = True`, mientras que la capacidad homónima detecta
+      el bloque MMIO `gpu_perf_counters.v`. **En la 22 daban valores opuestos
+      para la misma carpeta**: su monitor tiene los 12 comandos base, así que el
+      campo era `False` y la capacidad estaba presente.
 
-- [ ] **Ambigüedad del nombre `perf_counters`.** Ya existía
-      `perf_counters_from_rtl` en `rtl_facts.py`, que detecta algo **distinto**:
-      el comando de monitor `CMD_GET_CYCLES` (`0x36`) de la 18, y pone
-      `entry["perf_counters"] = True` en las VERSIONS de `backends/fpga.py`. No
-      chocan funcionalmente —son claves distintas del mismo dict— pero ahora hay
-      dos `perf_counters` que significan cosas diferentes en el mismo informe.
-      Decidir si se renombra uno de los dos.
-- [ ] **Un `test.json` sigue declarando una sola `architecture`.** Que `video`
-      valga para las dos familias permite a un caso GPU *requerirlo*, pero no
-      hace que un mismo caso corra en 21 y 22: GPU exige `warp_config` y CPU lo
-      rechaza. Compartir el caso, y no solo la capacidad, es trabajo aparte — se
-      decidirá con el criterio de salida de la fase 3 delante.
+      El mal nombre era el del backend —no describe un dispositivo, describe si
+      el monitor entiende dos comandos, que es lo que §6.5 llama «+contadores»—,
+      así que pasa a **`monitor_cycle_counters`** y la capacidad conserva el
+      nombre del dispositivo que usa el contrato.
+
+Una cosa sigue abierta, y se movió fuera de la fase 0 porque no es un ajuste
+del runner sino un caso de prueba que escribir:
+
+- [ ] **Un caso de prueba de vídeo compartido entre familias.** Que `video` valga
+      para las dos permite a un caso GPU *requerirlo*, pero no hace que un mismo
+      `test.json` corra en 21 y 22: [`run_tests.py:576`](../x.tests/run_tests.py#L576)
+      exige `warp_config` en los casos GPU y lo prohíbe en los de CPU, y
+      `validate_compatibility` pide que la arquitectura del caso sea exactamente
+      la del backend.
+
+      Pero el obstáculo de fondo no es ese código: **un caso CPU y uno GPU no son
+      el mismo programa**, porque el de GPU reparte trabajo con `GETTID` entre 64
+      hilos y usa `SSY`/`BAR`. Compartir el caso solo tiene sentido para un
+      programa de **un solo hilo** — escribir `FB_FRONT`/`FB_BACK`, pedir `SWAP`,
+      sondear el bit 1 de `STATUS`, comprobar `SWAP_COUNT`. Eso es literalmente
+      idéntico en las dos familias desde la fase 3, y sería la prueba de que el
+      contrato funciona.
+
+      Va **después de verificar en placa**: escribir un test de conformidad sobre
+      un mapa que todavía no ha corrido en hardware es construir sobre arena.
 
 ## Fase 1 — Ensayo del movimiento de warps en la 12
 
@@ -198,11 +217,22 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
       128 KiB de EBR, esa dirección está fuera. Además [`mapa-de-memoria.md`](mapa-de-memoria.md)
       §2 ya dice que esas bases «no son reservas impuestas a todos los
       programas», cosa que cableadas en el reset sí son.
-- [ ] Decidir **BLANK o PATTERN** como estado de reset común. No es lo mismo:
-      `video-scanout.md` argumenta PATTERN para la 22 porque ver el patrón
-      demuestra que HDMI, PLL, cable y monitor funcionan y no verlo señala aguas
-      arriba — los dos fallos dejan de parecerse. BLANK da «sin salida» literal
-      pero pierde ese diagnóstico.
+- [x] **Estado de reset: `PATTERN`.** No hacía falta decidirlo: ya está resuelto
+      en [`22.fpga-gpu-bl8/video-scanout.md`](../22.fpga-gpu-bl8/video-scanout.md),
+      sección «Valor de reset: `PATTERN`, en todos los cores, sin parámetro»,
+      que además cuenta que se planteó como parámetro con `SCANOUT` por defecto
+      y se descartó por «escaquearse de la decisión».
+
+      El criterio: *elegir el valor por defecto cuyo modo de fallo se explica
+      solo*. Con `SCANOUT`, ver basura no dice si falla HDMI, el PLL, el cable,
+      `fb_base` o el programa. Con `PATTERN`, verlo demuestra que la cadena hasta
+      el monitor funciona y no verlo señala aguas arriba. `PATTERN` no es
+      scanout: no lee SDRAM y no muestra basura, así que cumple «sin salida hasta
+      que alguien la active» sin perder el diagnóstico.
+
+      Ese documento ya evaluó el coste de migrar: las demos de 21 **ya** cargan
+      la base del MMIO en un registro (`MOVHI R20, 0x8000`), así que encender el
+      scanout es *un `STORE` más* en cada inicialización.
 - [ ] Actualizar los programas de vídeo de CPU, que hoy dan por hechas las bases
       cableadas y el scanout siempre encendido: `swap_demo`, `tear_demo`,
       `bounce`, `band` y `examples/` de 16, 18, 19 y 21.

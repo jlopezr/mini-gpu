@@ -22,7 +22,7 @@ from tools.rtl_facts import (  # noqa: E402 (necesita _REPOSITORY en sys.path)
     clock_hz_from_rtl,
     load_capability_signals,
     monitor_version_from_rtl,
-    perf_counters_from_rtl,
+    monitor_cycle_counters_from_rtl,
     readme_title,
 )
 
@@ -31,7 +31,7 @@ from tools.rtl_facts import (  # noqa: E402 (necesita _REPOSITORY en sys.path)
 # carpeta de prototipo con un `version.json` (`{"alias": ...}`, y opcionalmente
 # `"description"` si el título del README no basta). Eso es lo único que se
 # elige a mano; todo lo demás --`monitor_version`, `capabilities`, `clock_hz`,
-# `perf_counters`, y la descripción por defecto-- se lee de esa misma carpeta
+# `monitor_cycle_counters`, y la descripción por defecto-- se lee de esa carpeta
 # al importar este módulo, con las mismas funciones que usa
 # `tools/prototype_report.py` (`tools/rtl_facts.py`).
 #
@@ -76,8 +76,8 @@ def _build_versions() -> dict:
         clock_hz = clock_hz_from_rtl(directory)
         if clock_hz is not None:
             entry["clock_hz"] = clock_hz
-        if perf_counters_from_rtl(directory):
-            entry["perf_counters"] = True
+        if monitor_cycle_counters_from_rtl(directory):
+            entry["monitor_cycle_counters"] = True
         versions[manifest["alias"]] = entry
     return versions
 
@@ -343,7 +343,7 @@ class FpgaBackend:
             # CPU ya esta parada, asi que no se mueven, pero leerlos aqui deja
             # claro que miden el programa y no lo que haga el monitor despues.
             cycles = instructions = None
-            if self.configuration.get("perf_counters"):
+            if self.configuration.get("monitor_cycle_counters"):
                 cycles = client.get_cycles()
                 instructions = client.get_instructions()
 

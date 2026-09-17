@@ -107,9 +107,20 @@ def uart_baud_from_rtl(prototype_dir: Path) -> int | None:
     return None
 
 
-def perf_counters_from_rtl(prototype_dir: Path) -> bool:
+def monitor_cycle_counters_from_rtl(prototype_dir: Path) -> bool:
     """CMD_GET_CYCLES (0x36) es el comando de monitor.v que da los contadores
-    de ciclos/instrucciones; sin él no hay CPI que medir en esa placa."""
+    de ciclos/instrucciones; sin él no hay CPI que medir en esa placa.
+
+    Se llamaba `perf_counters_from_rtl`, y el nombre colisionaba con la
+    capacidad `perf_counters` de `capabilities.json`, que es otra cosa: el
+    bloque MMIO de contadores de la 22 (`gpu_perf_counters.v`). No son
+    sinónimos ni se solapan -- en la 22 esta función da False, porque su
+    monitor tiene los 12 comandos base y no el 0x36, mientras que la capacidad
+    sí está. Mismo nombre y valores opuestos para la misma carpeta.
+
+    Esto mira el JUEGO DE COMANDOS DEL MONITOR; la capacidad mira el
+    dispositivo. Ver docs/mapa-de-memoria.md §6.5.
+    """
     monitor_v = prototype_dir / "monitor.v"
     if not monitor_v.exists():
         return False
