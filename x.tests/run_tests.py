@@ -1079,6 +1079,133 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     return 0
 
 
+def backend_arguments(case: dict, backend_name: str, args) -> dict:
+    """Los argumentos de `backend.run` para un caso.
+
+    Estaba embebido en el bucle principal. Sale aquí porque ahora hay dos
+    caminos que lo necesitan --el secuencial y el de los procesos-- y tener dos
+    copias de esta lista sería la manera de que un backend recibiera cosas
+    distintas según cómo se lanzara.
+    """
+    return dict(
+        program=case["program"],
+        initial_memory=case["initial_memory"],
+        register_numbers=set(case["expected"]["registers"]),
+        memory_ranges=list(case["expected"]["memory"]),
+        max_instructions=case["max_instructions"],
+        timeout_seconds=case["timeout_seconds"],
+        # Solo los backends de CPU tienen puerto serie. La MiniGPU no lo ha
+        # recibido todavia, y pasarselo seria un TypeError.
+        **({"stdin": case["stdin"]} if case["architecture"] == "cpu" else {}),
+        **({"warp_config": case["warp_config"]}
+           if case["architecture"] == "gpu" else {}),
+        **({"observation_fields": set(case["expected"]["observations"])}
+           if backend_name == "gpu-fpga" else {}),
+        # Solo se pasa cuando el caso lo pide: asi un caso normal no paga las
+        # lecturas de registros ni el volcado del frame. `run_until_swap` solo
+        # significa algo donde hay HALT_AT, y la GPU no lo tiene -- ver
+        # VideoDevice en minigpu_sim.py-, pero llega igual y el backend de GPU
+        # lo rechaza, en vez de aceptarlo y no pararse.
+        **({"video": {
+            "run_until_swap": (case["run_until"] or {}).get("swap"),
+            "capture_frame": case["expected"]["frame"] is not None,
+        }} if backend_name in ("cpu-fpga", "cpu-simulator",
+                               "gpu-simulator", "gpu-fpga") and (
+            case["run_until"] or case["expected"]["video"]
+            or case["expected"]["frame"] is not None) else {}),
+        **({
+            "trace": args.trace,
+            "trace_detail": args.trace_detail,
+            "trace_limit": args.trace_limit,
+            "trace_file": args.trace_file,
+            "simulator_options": case["simulator_options"],
+        } if backend_name == "gpu-simulator" else {}),
+    )
+
+
+def resolve_jobs(pedidos: int, simuladores: int, casos: int, args) -> int:
+    """Cuántos procesos usar, y cuándo no usar ninguno.
+
+    `--jobs 0` es automático. El reparto solo tiene sentido si hay backends de
+    simulador y más de un caso; con `--trace` se fuerza a uno, porque las
+    trazas de varios procesos a la vez se entrelazarían en el mismo fichero y
+    el resultado no sería la traza de nada.
+    """
+    if simuladores == 0 or casos < 2:
+        return 1
+    if args.trace or args.trace_detail or args.trace_file is not None:
+        return 1
+    if pedidos > 0:
+        return pedidos
+    import os
+
+    return max(1, min(os.cpu_count() or 1, casos))
+
+
+# Un backend por proceso, construido la primera vez que hace falta. No viaja
+# por `pickle` --lleva módulos cargados con importlib-- así que cada worker se
+# construye el suyo a partir del nombre y la versión, que sí viajan.
+_WORKER_BACKENDS: dict[str, object] = {}
+
+
+def _run_in_worker(trabajo):
+    """Ejecuta un (caso, backend) en un proceso aparte.
+
+    Devuelve el error como TEXTO en vez de dejar volar la excepción: una
+    excepción de un backend puede no ser picklable, y entonces el fallo que se
+    vería sería el del transporte y no el del caso.
+    """
+    nombre_caso, backend_name, version, case, args = trabajo
+    backend = _WORKER_BACKENDS.get(backend_name)
+    if backend is None:
+        backend = BACKEND_DEFINITIONS[backend_name]["class"](
+            REPOSITORY, version=version)
+        _WORKER_BACKENDS[backend_name] = backend
+    begun = time.monotonic()
+    try:
+        result = backend.run(**backend_arguments(case, backend_name, args))
+    except Exception as error:                      # noqa: BLE001
+        return nombre_caso, backend_name, time.monotonic() - begun, None, f"{error}"
+    return nombre_caso, backend_name, time.monotonic() - begun, result, None
+
+
+def run_cases_in_parallel(cases, simulator_names, backend_versions, args, jobs):
+    """Reparte los casos de simulador entre procesos, y devuelve lo ejecutado.
+
+    Tres decisiones que no son obvias:
+
+    **Procesos y no hilos.** El simulador ejecuta el modelo dentro del proceso:
+    es Python ligado a CPU, así que con hilos el GIL lo serializa y no se gana
+    nada.
+
+    **La placa no entra aquí, y además no comparte máquina.** Hay una sola
+    placa y un solo puerto, así que sus casos van en serie de todas formas.
+    Pero es que además sus timeouts son de reloj de pared: con los procesos
+    saturando la máquina, una lectura del serie podría agotarlos por contienda
+    y no por un fallo real, que es la peor clase de fallo intermitente. Por eso
+    esto termina ANTES de que se toque la placa, en vez de solaparse. Se pierde
+    el solape --la placa es I/O y podría correr mientras tanto-- y se gana que
+    un rojo en placa siga significando lo que dice.
+
+    **La salida no se imprime aquí.** Los resultados vuelven a `main`, que los
+    imprime en orden de caso. Hoy dos ejecuciones se pueden comparar con un
+    `diff`, y eso se perdería imprimiendo según acaba cada worker.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    trabajos = [
+        (case["name"], name, backend_versions[name], case, args)
+        for path, case in cases
+        for name in simulator_names
+    ]
+    hechos = {}
+    with ProcessPoolExecutor(max_workers=jobs) as pool:
+        for nombre_caso, backend_name, elapsed, result, error in pool.map(
+                _run_in_worker, trabajos):
+            hechos[(nombre_caso, backend_name)] = (elapsed, result, error)
+    return hechos
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cases", nargs="*", type=Path, metavar="TEST_JSON")
@@ -1120,6 +1247,10 @@ def main() -> int:
                              "aplicables y escribe una tabla Markdown con "
                              "instrucciones, tiempo y CPI "
                              "(medidas.md si se omite el nombre)")
+    parser.add_argument("--jobs", "-j", type=int, default=0, metavar="N",
+                        help="procesos para los casos de simulador (0 = tantos "
+                             "como hilos tenga la máquina; 1 = secuencial de "
+                             "verdad, sin pool, para depurar)")
     parser.add_argument("--durations", type=int, nargs="?", const=10, default=0,
                         metavar="N",
                         help="lista las N ejecuciones más lentas al terminar "
@@ -1133,6 +1264,8 @@ def main() -> int:
         parser.error("--yes y --no-upload se contradicen")
     if args.durations < 0:
         parser.error("--durations no puede ser negativo")
+    if args.jobs < 0:
+        parser.error("--jobs no puede ser negativo")
 
     case_paths = discover_cases(args.cases)
     if not case_paths:
@@ -1260,48 +1393,29 @@ def main() -> int:
     failures = 0
     durations: list[tuple[float, str, str]] = []
     started = time.monotonic()
+
+    # Los backends de simulador pueden repartirse entre procesos; los de placa
+    # no, porque hay una sola placa. Ver `run_cases_in_parallel`.
+    simulator_names = [n for n in backends if n.endswith("simulator")]
+    jobs = resolve_jobs(args.jobs, len(simulator_names), len(cases), args)
+    parallel_results = (
+        run_cases_in_parallel(cases, simulator_names, backend_versions, args, jobs)
+        if jobs > 1 else {}
+    )
+
     for path, case in cases:
         try:
             results = {}
             for backend_name, backend in backends.items():
-                begun = time.monotonic()
-                result = backend.run(
-                    program=case["program"],
-                    initial_memory=case["initial_memory"],
-                    register_numbers=set(case["expected"]["registers"]),
-                    memory_ranges=list(case["expected"]["memory"]),
-                    max_instructions=case["max_instructions"],
-                    timeout_seconds=case["timeout_seconds"],
-                    # Solo los backends de CPU tienen puerto serie. La MiniGPU
-                    # no lo ha recibido todavia, y pasarselo seria un
-                    # TypeError.
-                    **({"stdin": case["stdin"]}
-                       if case["architecture"] == "cpu" else {}),
-                    **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
-                    **({"observation_fields": set(case["expected"]["observations"])}
-                       if backend_name == "gpu-fpga" else {}),
-                    # Solo se pasa cuando el caso lo pide: asi un caso normal no
-                    # paga las lecturas de registros ni el volcado del frame.
-                    # `run_until_swap` solo significa algo donde hay HALT_AT, y
-                    # la GPU no lo tiene -- ver VideoDevice en minigpu_sim.py-,
-                    # pero llega igual y el backend de GPU lo rechaza, en vez de
-                    # aceptarlo y no pararse.
-                    **({"video": {
-                        "run_until_swap": (case["run_until"] or {}).get("swap"),
-                        "capture_frame": case["expected"]["frame"] is not None,
-                    }} if backend_name in ("cpu-fpga", "cpu-simulator",
-                                           "gpu-simulator", "gpu-fpga") and (
-                        case["run_until"] or case["expected"]["video"]
-                        or case["expected"]["frame"] is not None) else {}),
-                    **({
-                        "trace": args.trace,
-                        "trace_detail": args.trace_detail,
-                        "trace_limit": args.trace_limit,
-                        "trace_file": args.trace_file,
-                        "simulator_options": case["simulator_options"],
-                    } if backend_name == "gpu-simulator" else {}),
-                )
-                elapsed = time.monotonic() - begun
+                precalculado = parallel_results.get((case["name"], backend_name))
+                if precalculado is not None:
+                    elapsed, result, error_text = precalculado
+                    if error_text is not None:
+                        raise RuntimeError(error_text)
+                else:
+                    begun = time.monotonic()
+                    result = backend.run(**backend_arguments(case, backend_name, args))
+                    elapsed = time.monotonic() - begun
                 durations.append((elapsed, case["name"], backend_name))
                 results[backend_name] = result
                 errors = compare_result(case, result, backend_name)
