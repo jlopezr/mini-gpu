@@ -102,7 +102,28 @@ module top (
   // 0x80000300, igual que en la MiniGPU, y el programa se mide a si mismo sin
   // parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
-  monitor monitor_i(
+  // MAYOR = 2: juego base MAS puerto serie (SEND_BYTES 0x38, RECV_BYTES 0x39),
+  // quince comandos. MENOR = numero de carpeta. Ver unificacion-mmio.md fase 5.
+  //
+  // Lo que trajo cada escalon de esta rama, por si hace falta leer un bitstream
+  // viejo:
+  //   1.13 la CPU gana los accesos de 8 y 16 bits (0x18..0x1D) y las llamadas
+  //        JAL/JALR/JR (0x2C..0x2E). El PROTOCOLO no cambia: ni un comando
+  //        nuevo, ni un campo distinto. Subio igual porque la version es lo
+  //        unico que el PC puede preguntar antes de cargar un programa, y un
+  //        programa que use esas instrucciones no corre en un bitstream 1.12:
+  //        para con ERROR_INVALID_OPCODE a la primera.
+  //   1.14 puerto serie. Aqui SI cambia el protocolo, y ademas son los dos
+  //        primeros comandos que mueven datos con la CPU EN MARCHA: no tocan la
+  //        SDRAM, asi que no pasan por la condicion `cpu_halted` del adaptador.
+  // BACKPORT DE R0 CABLEADO A CERO: ver 1.isa/isa.md seccion 1.
+  //
+  // La ventana es la pagina entera de MMIO, gemela de MONITOR_REGIONS.
+  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd19),
+      .HAS_SERIAL(1),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+    monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),

@@ -47,7 +47,11 @@ module monitor_tb;
 
   always #5 clk = ~clk;
 
-  monitor dut (
+  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd19),
+      .HAS_SERIAL(1),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+    dut (
       .clk(clk),
       .reset(reset),
       .rx_data(rx_data),

@@ -133,7 +133,22 @@ module top (
   wire cpu_dmem_ready;
   wire cpu_dmem_error;
 
-  monitor monitor_i (
+  // La version: MAYOR = juego de comandos (1 = base, 13 comandos), MENOR =
+  // numero de carpeta. Ver docs/unificacion-mmio.md fase 5.
+  //
+  // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
+  // descartar las escrituras, que es un cambio INCOMPATIBLE con lo que hacia
+  // esta carpeta antes: un programa que use `R0` como registro general no para
+  // con error, da otro resultado en silencio. Ver 1.isa/isa.md seccion 1.
+  //
+  // La unica ventana es la de identificacion. Esta carpeta no tiene MMIO de
+  // verdad --ni video, ni contadores-- pero si `sysid`, y sin declararlo aqui
+  // un READ_BLOCK sobre 0x80000f00 se rechazaria antes de llegar al
+  // decodificador. Gemela de MONITOR_REGIONS en monitor.py.
+  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd6),
+      .RAM_END(33'h0_0000_8000),
+      .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
+    monitor_i (
       .clk(clk),
       .reset(reset),
       .rx_data(uart_rx_data),
@@ -158,6 +173,10 @@ module top (
       .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
+      // Sin puerto serie: HAS_SERIAL = 0 y las entradas a cero. Las
+      // salidas se quedan al aire y la sintesis se las lleva.
+      .serial_rx_free(8'd0), .serial_tx_data(8'd0),
+      .serial_tx_count(8'd0),
       .last_command(last_command),
       .busy(monitor_busy)
   );

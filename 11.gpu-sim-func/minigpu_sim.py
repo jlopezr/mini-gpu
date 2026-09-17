@@ -198,127 +198,7 @@ class SimtPath:
     pending_mask: int
 
 
-class VideoDevice:
-    """La ventana de registros de vídeo de la MiniGPU, en 0x80000000.
-
-    Es el equivalente de `VideoDevice` en `2.cpu-sim-func/minicpu_sim.py`, y
-    los offsets son los MISMOS a propósito: ese es el contrato compartido que
-    persigue `docs/unificacion-mmio.md`. No es una copia, porque el hardware no
-    es el mismo, y las tres diferencias son las de `gpu_video_regs.v`:
-
-      - las bases se alinean a **16 bytes**, no a 4, porque el scanout lee la
-        SDRAM en ráfagas;
-      - **HALT_AT no existe**: lee cero y la escritura se ignora. La GPU no se
-        para sola --la paran las órdenes del monitor-- así que no hay captura
-        que armar;
-      - **VIDEO_CTRL** (0x18) sí existe, y sólo aquí. Tras el reset el modo es
-        PATTERN y no SCANOUT: la SDRAM recién encendida contiene basura, así
-        que arrancar en SCANOUT sería elegir un valor por defecto cuya salida
-        es indefinida.
-
-    Qué NO modela, igual que en la CPU y por el mismo motivo: el TIEMPO. No hay
-    barrido leyendo la memoria por su cuenta, ni ancho de banda, ni contienda.
-    En consecuencia `underflow` es siempre cero y no puede ser otra cosa, y el
-    desgarro no existe: un kernel que dibuje sobre el buffer visible sin
-    esperar al intercambio sale limpio aquí y partido en la placa. El «frame»
-    es sintético: en la placa son 16,7 ms de barrido, aquí son
-    `frame_instructions` instrucciones de warp emitidas.
-
-    Para un programa que ESPERA a que su intercambio se aplique --que es lo que
-    hace todo kernel serio-- el periodo sintético da igual: nunca dibuja con un
-    intercambio pendiente, así que la secuencia de frames es la misma sea cual
-    sea. El periodo sólo cambia cuántas vueltas da el bucle de espera.
-    """
-
-    BASE = 0x8000_0000
-    SIZE = 32                       # siete registros dentro de 32 bytes
-
-    FB_FRONT = 0x00
-    FB_BACK = 0x04
-    SWAP = 0x08
-    STATUS = 0x0C
-    SWAP_COUNT = 0x10
-    HALT_AT = 0x14                  # sólo CPU: aquí lee cero
-    VIDEO_CTRL = 0x18               # sólo GPU
-
-    MODE_BLANK = 0
-    MODE_PATTERN = 1
-    MODE_SCANOUT = 2
-
-    # Las bases se alinean a 16 bytes, que es la ráfaga del scanout.
-    BASE_ALIGN = 0xFFFF_FFF0
-
-    # Las dos bases arrancan a cero, igual que en la MiniCPU y por la misma
-    # razón: el framebuffer es una decisión del programa, no algo que herede del
-    # encendido. Los kernels de la 22 ya escriben FB_FRONT, FB_BACK y
-    # VIDEO_CTRL ellos mismos, así que aquí no cambia nada en la práctica.
-    def __init__(self, fb_front: int = 0, fb_back: int = 0,
-                 frame_instructions: int = 1000):
-        self.fb_front = fb_front & self.BASE_ALIGN
-        self.fb_back = fb_back & self.BASE_ALIGN
-        self.swap_pending = False
-        self.frame_count = 0
-        self.swap_count = 0
-        self.video_mode = self.MODE_PATTERN
-        self.frame_instructions = frame_instructions
-        self._since_frame = 0
-
-    def contains(self, address: int) -> bool:
-        return self.BASE <= address < self.BASE + self.SIZE
-
-    def tick(self) -> None:
-        """Avanza el reloj de frames sintético.
-
-        Lo llama el warp por instrucción EMITIDA, no por lane: una instrucción
-        de warp es un paso del planificador, y contar lanes haría que el
-        periodo dependiera de cuántos hilos estén activos --el mismo kernel
-        avanzaría los frames a distinta velocidad según su máscara, que en el
-        hardware no pasa--.
-        """
-        self._since_frame += 1
-        if self._since_frame < self.frame_instructions:
-            return
-
-        self._since_frame = 0
-        self.frame_count = (self.frame_count + 1) & 0xFFFF
-        if self.swap_pending:
-            # En el pulso de vsync, igual que el hardware: cambiar la base a
-            # mitad de un frame mostrado partiría la imagen en dos.
-            self.fb_front, self.fb_back = self.fb_back, self.fb_front
-            self.swap_pending = False
-            self.swap_count = u32(self.swap_count + 1)
-
-    def read(self, offset: int) -> int:
-        if offset == self.FB_FRONT:
-            return self.fb_front
-        if offset == self.FB_BACK:
-            return self.fb_back
-        if offset == self.SWAP:
-            return 1 if self.swap_pending else 0
-        if offset == self.STATUS:
-            # bit 0 underflow (siempre cero aquí), bit 1 pendiente, 31:16 frames
-            return (self.frame_count << 16) | (2 if self.swap_pending else 0)
-        if offset == self.SWAP_COUNT:
-            return self.swap_count
-        if offset == self.VIDEO_CTRL:
-            return self.video_mode
-        return 0                    # HALT_AT y cualquier hueco leen cero
-
-    def write(self, offset: int, value: int) -> None:
-        if offset == self.FB_FRONT:
-            self.fb_front = value & self.BASE_ALIGN
-        elif offset == self.FB_BACK:
-            self.fb_back = value & self.BASE_ALIGN
-        elif offset == self.SWAP:
-            # Sólo el bit 0 a uno pide intercambio, igual que REG_SWAP en el RTL.
-            if value & 1:
-                self.swap_pending = True
-        elif offset == self.STATUS:
-            pass                    # escribir el bit 0 borra el underflow, que
-                                    # aquí nunca está puesto
-        elif offset == self.VIDEO_CTRL:
-            self.video_mode = value & 0b11
-        # SWAP_COUNT es de sólo lectura y HALT_AT no existe: se ignoran.
+from tools.sim_devices import VideoDevice, SerialDevice
 
 
 class System:
@@ -328,7 +208,8 @@ class System:
                  num_warps: int = 8, warp_size: int = 8, *,
                  simt_region_depth: int = MAX_SIMT_REGIONS,
                  simt_path_depth: int = MAX_SIMT_PATHS,
-                 video: "VideoDevice | None" = None):
+                 video: "VideoDevice | None" = None,
+                 serial: "SerialDevice | None" = None):
         if memory_size <= 0 or num_warps <= 0 or warp_size <= 0:
             raise ValueError("memoria, número de warps y tamaño de warp deben ser positivos")
         if num_warps > MAX_WARPS:
@@ -345,6 +226,8 @@ class System:
         # rango y da ERROR_MEMORY_ACCESS, que es lo que hacían los casos de
         # siempre.
         self.video = video
+        self.serial = serial
+        self.peripheral_halted = False
         # El bloque de identificacion existe SIEMPRE, a diferencia del video:
         # es el unico dispositivo que toda carpeta con juego de comandos tiene,
         # asi que un kernel que se identifique tiene que poder probarse aqui.
@@ -355,20 +238,25 @@ class System:
 
     def device_for(self, address: int):
         """Qué dispositivo MMIO, si alguno, responde a esta dirección."""
-        if self.video is not None and self.video.contains(address):
-            return self.video
+        for device in (self.video, self.serial):
+            if device is not None and device.contains(address):
+                return device
         if self.sysid.contains(address):
             return self.sysid
         return None
 
     def tick_devices(self) -> None:
         """Un paso del reloj sintético de los dispositivos."""
+        if self.serial is not None:
+            self.serial.tick()
         if self.video is not None:
             self.video.tick()
+            if self.video.halt_request:
+                self.peripheral_halted = True
 
     @property
     def halted(self) -> bool:
-        return self.error or all(w.halted for w in self.streaming_multiprocessor.warps)
+        return self.peripheral_halted or self.error or all(w.halted for w in self.streaming_multiprocessor.warps)
 
     @property
     def error(self) -> bool:
@@ -388,6 +276,7 @@ class System:
 
     def reset(self) -> None:
         """Borra memoria in situ y deja todos los warps sin lanzar."""
+        self.peripheral_halted = False
         self.memory[:] = bytes(len(self.memory))
         self.fault = None
         self.streaming_multiprocessor.reset()
@@ -442,6 +331,7 @@ class System:
                 raise ValueError("config: workgroup_id debe ser no negativo")
             states[warp_id] = (pc, mask if enabled else 0, group)
         self.fault = None
+        self.peripheral_halted = False
         sm.reset()
         for warp_id, (pc, mask, group) in states.items():
             sm.warps[warp_id].pc = pc
@@ -450,7 +340,10 @@ class System:
 
     def step(self) -> bool:
         """Emite como máximo una instrucción de un warp (round-robin)."""
-        return self.streaming_multiprocessor.step()
+        retired = self.streaming_multiprocessor.step()
+        if retired:
+            self.tick_devices()
+        return retired
 
     def run(self, max_instructions: int = 100_000_000) -> None:
         """Límite absoluto de instrucciones de warp completadas desde la carga."""
@@ -653,6 +546,13 @@ class Warp:
                 self.sm.release_barriers()
                 self.reconverge()
                 return True
+            if opcode == 0x15:  # LOAD: validar el warp antes de efectos MMIO.
+                for processor in self.processors:
+                    if self.active_mask & (1 << processor.core_id):
+                        core_id = processor.core_id
+                        address = u32(processor.regs[(instr >> 16) & 31]
+                                      + sign_extend(instr & 0xFFFF, 16))
+                        processor.check_store(address)
             results = []
             for processor in self.processors:
                 if self.active_mask & (1 << processor.core_id):
@@ -706,8 +606,6 @@ class Warp:
                 self.live_mask &= ~(1 << processor.core_id)
         self.pc = next_pcs.pop()
         self.instructions_executed += 1
-        # Un paso del planificador es un tic del reloj sintetico de frames.
-        self.sm.system.tick_devices()
         self.reconverge()
         self.sm.release_barriers()
         return True
@@ -992,6 +890,8 @@ def main() -> int:
     parser.add_argument("--trace-detail", action="store_true", help="incluye registros y memoria por hilo")
     parser.add_argument("--trace-limit", type=int, help="máximo de pasos mostrados; no limita la ejecución")
     parser.add_argument("--trace-file", type=Path, help="guarda la traza en UTF-8 en vez de stderr")
+    from tools import sim_peripherals
+    sim_peripherals.add_arguments(parser)
     args = parser.parse_args()
     try:
         config = None
@@ -1007,7 +907,8 @@ def main() -> int:
             size = args.warp_size if args.warp_size is not None else 8
         system = System(args.memory_size, args.num_warps, size,
                         simt_region_depth=args.simt_region_depth,
-                        simt_path_depth=args.simt_path_depth)
+                        simt_path_depth=args.simt_path_depth,
+                        **sim_peripherals.from_arguments(args))
         system.load_program(load_program_file(args.program), launch=args.config is None)
         if args.config is not None:
             try:
@@ -1039,6 +940,7 @@ def main() -> int:
                     system.trace = None
         else:
             system.run(args.max)
+        sim_peripherals.write_outputs(args, system)
         if system.fault:
             fault = system.fault
             print(f"ERROR 0x{fault.code:02X} en PC=0x{fault.pc:08X}, "

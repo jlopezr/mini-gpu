@@ -102,7 +102,22 @@ module top (
   // 0x80000300, igual que en la MiniGPU, y el programa se mide a si mismo sin
   // parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
-  monitor monitor_i(
+  // MAYOR = 2: juego base MAS puerto serie, quince comandos. MENOR = numero de
+  // carpeta. Ver docs/unificacion-mmio.md fase 5.
+  //
+  // 1.15 fue la ALU completa: MULHI, DIVU, REM y REMU (0x0B, 0x0D..0x0F), los
+  // desplazamientos con cantidad inmediata (bit 10 de SHL/SHR/SAR) y R0 cableado
+  // a cero. El PROTOCOLO no cambia, igual que en 1.13, y subio por la misma
+  // razon con un motivo mas: R0 no es un cambio aditivo sino INCOMPATIBLE --un
+  // programa que lo use como registro general da resultados distintos sin parar
+  // con error-- asi que el runner tiene que poder distinguir los dos bitstreams.
+  //
+  // La ventana es la pagina entera de MMIO, gemela de MONITOR_REGIONS.
+  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd21),
+      .HAS_SERIAL(1),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+    monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),

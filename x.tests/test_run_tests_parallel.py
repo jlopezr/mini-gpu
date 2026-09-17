@@ -140,13 +140,16 @@ class BackendArgumentsTest(unittest.TestCase):
         base.update(cambios)
         return base
 
-    def test_el_serie_solo_va_a_los_backends_de_cpu(self):
+    def test_el_serie_va_a_cpu_y_simuladores_gpu(self):
         cpu = run_tests.backend_arguments(self.caso(), "cpusim", opciones())
         self.assertIn("stdin", cpu)
         gpu = run_tests.backend_arguments(
             self.caso(architecture="gpu"), "gpusim", opciones())
-        self.assertNotIn("stdin", gpu)
+        self.assertIn("stdin", gpu)
         self.assertIn("warp_config", gpu)
+        hardware = run_tests.backend_arguments(
+            self.caso(architecture="gpu"), "gpu-fpga", opciones())
+        self.assertNotIn("stdin", hardware)
 
     def test_el_video_solo_se_pasa_si_el_caso_lo_pide(self):
         """Un caso normal no paga las lecturas de registros ni el frame."""

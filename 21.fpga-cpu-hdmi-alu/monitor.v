@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 01 0e
+ *   02             (GET_VERSION) -> 82 MAJOR MINOR
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   12 A3 A2 A1 A0             (READ_WORD)   -> 92 D0 D1 D2 D3 (or ff)
@@ -21,9 +21,26 @@
  *   39 MM          (RECV_BYTES)  -> b9 NN DD... NN <= MM, puede ser 0
  *   any other command            -> ff
  *
- * SEND_BYTES y RECV_BYTES son el puerto serie de la CPU. Funcionan con la CPU
- * EN MARCHA, porque no tocan la SDRAM. `NN` es el control de flujo: el que
- * devuelve SEND_BYTES dice cuantos cupieron en la cola, y el resto se reenvia.
+ * SEND_BYTES y RECV_BYTES son el puerto serie de la CPU, y SOLO existen con
+ * HAS_SERIAL = 1. Funcionan con la CPU EN MARCHA, porque no tocan la SDRAM.
+ * `NN` es el control de flujo: el que devuelve SEND_BYTES dice cuantos cupieron
+ * en la cola, y el resto se reenvia.
+ *
+ * ---------------------------------------------------------------------------
+ * FICHERO UNICO. Este monitor es COPIA IDENTICA en las diez carpetas que hablan
+ * el protocolo: 6, 10, 12, 14, 16, 17, 18, 19, 21 y 22. Todo lo que distingue a
+ * un prototipo de otro --version, tamano de RAM, ventanas MMIO, si tiene puerto
+ * serie-- entra por parametro desde su `top.v`, que es donde vive el
+ * razonamiento de ese prototipo. Antes habia diez ficheros parecidos, y
+ * "parecidos" es justo lo que hace que un arreglo se aplique en nueve.
+ *
+ * Lo comprueba `x.tests/test_monitor_port.py`: si dos copias dejan de ser
+ * identicas, falla.
+ *
+ * DOS JUEGOS DE COMANDOS, y el mayor de la version dice cual: 1 es el juego
+ * base (13 comandos) y 2 es base + serie (15). El menor es el numero de
+ * carpeta. Ver docs/unificacion-mmio.md fase 5.
+ * ---------------------------------------------------------------------------
  *
  * Addresses and lengths are transferred most-significant byte first. Block
  * lengths must be between 1 and 256 bytes. The memory reports invalid ranges.
@@ -37,7 +54,52 @@
  * palabra entera, asi que READ_WORD es atomico POR CONSTRUCCION.
  * Ver docs/unificacion-mmio.md fase 3.4.
  */
-module monitor (
+module monitor #(
+    // Version que contesta GET_VERSION. MAYOR = juego de comandos, MENOR =
+    // numero de carpeta. El porque de cada valor se explica donde se instancia:
+    // es razonamiento de cada prototipo, no de este fichero.
+    //
+    // Los defaults son CENTINELAS, no valores plausibles: menor 0 no es ninguna
+    // carpeta, asi que una placa que conteste `x.0` esta diciendo que su `top`
+    // se olvido del parametro. Un default plausible convertiria ese olvido en
+    // una placa que miente sobre quien es.
+    parameter [7:0] VERSION_MAJOR = 8'd1,
+    parameter [7:0] VERSION_MINOR = 8'd0,
+
+    // 1 si este prototipo tiene puerto serie de CPU (SEND_BYTES/RECV_BYTES).
+    // Con 0 los dos comandos contestan `ff` como cualquier otro desconocido, y
+    // la sintesis se lleva por delante sus estados y sus puertos.
+    parameter HAS_SERIAL = 0,
+
+    // Primer byte que ya NO es RAM. 32 KiB en la 6, 128 KiB de BRAM en la 12,
+    // 32 MiB de SDRAM en las demas.
+    //
+    // El default es CERO --ninguna RAM-- por la misma razon que el de la
+    // version: un `top` que se olvide del parametro rechaza todos los bloques
+    // en el primer comando, en vez de aceptar callado un mapa que no es el suyo.
+    parameter [32:0] RAM_END = 33'h0_0000_0000,
+
+    // Ventanas MMIO que el monitor acepta ademas de la RAM. Una ranura sin usar
+    // se deja en su default: base 33'h1_ffff_ffff es inalcanzable para una
+    // direccion de 32 bits, asi que no casa nunca.
+    //
+    // Esta lista es la GEMELA de MONITOR_REGIONS en el monitor.py de la misma
+    // carpeta, y las dos tienen que decir lo mismo. Anadir una ventana en el
+    // decodificador no basta: si no se anade tambien aqui, el monitor rechaza
+    // el comando antes de que llegue al decodificador, y el sintoma es un NACK
+    // que parece un bitstream viejo o un mapa mal escrito. Asi se perdio un
+    // buen rato con 0x200/0x300.
+    parameter [32:0] WINDOW0_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW0_END  = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW1_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW1_END  = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW2_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW2_END  = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW3_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW3_END  = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW4_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW4_END  = 33'h1_ffff_ffff
+) (
     input clk,
     input reset,
     input [7:0] rx_data,
@@ -71,6 +133,13 @@ module monitor (
     // Puerto serie de la CPU. El monitor solo desencapsula: mete en la cola de
     // entrada lo que trae SEND_BYTES y saca de la de salida lo que pide
     // RECV_BYTES. Ni un pin ni un baudio propio; ver serial_port.v.
+    //
+    // Los puertos existen SIEMPRE, tambien con HAS_SERIAL = 0. Ponerlos dentro
+    // de un `generate` haria que la lista de puertos dependiera de un
+    // parametro, y entonces el fichero ya no seria uno: cada `top` tendria que
+    // saber cual de las dos formas esta instanciando. Un `top` sin serie ata
+    // las entradas a cero y deja las salidas al aire, y la sintesis se lo lleva
+    // todo por delante.
     output reg serial_push,
     output reg [7:0] serial_push_data,
     input [7:0] serial_rx_free,
@@ -95,10 +164,6 @@ module monitor (
   localparam [7:0] CMD_GET_STATUS = 8'h33;
   localparam [7:0] CMD_READ_REGISTER = 8'h34;
   localparam [7:0] CMD_RESET_CPU = 8'h35;
-  // Contadores de rendimiento. Son DOS comandos y no uno porque la respuesta
-  // maxima de este monitor son siete bytes: dos contadores de 32 bits mas la
-  // cabecera serian nueve. Leerlos por separado no es problema, porque solo
-  // tienen sentido con la CPU parada, y entonces no cambian.
   localparam [7:0] CMD_SEND_BYTES = 8'h38;
   localparam [7:0] CMD_RECV_BYTES = 8'h39;
   localparam [7:0] RSP_PONG = 8'h81;
@@ -117,39 +182,6 @@ module monitor (
   localparam [7:0] RSP_SEND_BYTES = 8'hb8;
   localparam [7:0] RSP_RECV_BYTES = 8'hb9;
   localparam [7:0] RSP_ERROR = 8'hff;
-  localparam [7:0] VERSION_MAJOR = 8'd2;
-  // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
-  // la version cada vez que cambia algo que el PC no puede negociar:
-  //   1.7  se anade el subsistema de video
-  //   1.8  el reloj baja a 100 MHz y el monitor a 2 Mbaud
-  //   1.9  el baudio se corrige a 1 Mbaud (2 Mbaud daba un divisor no
-  //        multiplo de 4 y la recepcion fallaba la mitad de las veces)
-  //   1.10 el arbitro engancha el pulso del monitor; hasta 1.9 se perdia si
-  //        coincidia con el video y la placa se quedaba muda hasta el reset
-  //   1.11 camino de memoria de rafagas BL8: controlador de 128 bits, arbitro
-  //        de cuatro puertos y un adaptador por cliente. El reloj baja a
-  //        80 MHz porque a 100 no cumple ninguna semilla. El baudio NO cambia:
-  //        divisor 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
-  //   1.13 la CPU gana los accesos de 8 y 16 bits (0x18..0x1D) y las llamadas
-  //        JAL/JALR/JR (0x2C..0x2E). El PROTOCOLO no cambia: ni un comando
-  //        nuevo, ni un campo distinto. Sube igual porque la version es lo
-  //        unico que el PC puede preguntar antes de cargar un programa, y un
-  //        programa que use esas instrucciones no corre en un bitstream 1.12:
-  //        para con ERROR_INVALID_OPCODE a la primera. Sin este numero,
-  //        x.cpu-tests no puede distinguir la 18 de la 19 y cargaria la que no
-  //        es, o peor, no cargaria nada y culparia al programa.
-  //   1.14 puerto serie: SEND_BYTES (0x38) y RECV_BYTES (0x39). Aqui si cambia
-  //        el protocolo, y ademas son los dos primeros comandos que mueven
-  //        datos con la CPU EN MARCHA: no tocan la SDRAM, asi que no pasan por
-  //        la condicion `cpu_halted` del adaptador.
-  //   1.15 la CPU gana MULHI, DIVU, REM y REMU (0x0B, 0x0D..0x0F), los
-  //        desplazamientos con cantidad inmediata (bit 10 de SHL/SHR/SAR) y R0
-  //        cableado a cero. El PROTOCOLO no cambia, igual que en 1.13, y sube
-  //        por la misma razon con un motivo mas: R0 no es un cambio aditivo
-  //        sino INCOMPATIBLE --un programa que use R0 como registro general da
-  //        resultados distintos en 1.14 y en 1.15 sin parar con error--, asi
-  //        que el runner tiene que poder distinguir los dos bitstreams.
-  localparam [7:0] VERSION_MINOR = 8'd21;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;
@@ -222,6 +254,42 @@ module monitor (
   // Bytes que faltan del paquete serie en curso, y cuantos entraron en la cola.
   reg [7:0] serial_remaining;
   reg [7:0] serial_accepted;
+
+  /*
+   * Valida el intervalo COMPLETO, no solo su primera direccion: asi
+   * WRITE_BLOCK y READ_BLOCK dicen lo mismo que el mapa que implementa el
+   * decodificador, y un bloque que se sale se rechaza entero en vez de
+   * escribirse a medias.
+   *
+   * Las dos funciones son combinacionales, pero sus entradas estan
+   * REGISTRADAS: `mem_address`, `block_length` y `block_end_address` llevan un
+   * ciclo puestas cuando se evaluan (ver STATE_CALCULATE_BLOCK_END). Eso es lo
+   * que mantiene el sumador ancho fuera del camino del byte de UART, que es lo
+   * que no cumplia a 120 MHz.
+   */
+  function in_window;
+    input [32:0] start_address;
+    input [32:0] end_address;
+    input [32:0] window_base;
+    input [32:0] window_end;
+    begin
+      in_window = (start_address >= window_base) && (end_address <= window_end);
+    end
+  endfunction
+
+  function block_range_valid;
+    input [32:0] start_address;
+    input [32:0] end_address;
+    begin
+      block_range_valid =
+          (start_address < RAM_END && end_address <= RAM_END) ||
+          in_window(start_address, end_address, WINDOW0_BASE, WINDOW0_END) ||
+          in_window(start_address, end_address, WINDOW1_BASE, WINDOW1_END) ||
+          in_window(start_address, end_address, WINDOW2_BASE, WINDOW2_END) ||
+          in_window(start_address, end_address, WINDOW3_BASE, WINDOW3_END) ||
+          in_window(start_address, end_address, WINDOW4_BASE, WINDOW4_END);
+    end
+  endfunction
 
   assign busy = (state != STATE_IDLE);
 
@@ -331,11 +399,16 @@ module monitor (
                 block_is_write <= 1'b0;
                 state <= STATE_BLOCK_ADDRESS_HIGH;
               end
+              // RUN y STEP exigen parado Y SIN ERROR. La familia GPU ya lo
+              // hacia asi y la CPU no: arrancar sobre un error latcheado
+              // contestaba `b0` y volvia a parar en el acto, asi que el host
+              // veia un arranque que no arranco. Con `ff` el host sabe que
+              // tiene que resetear primero, que es lo unico que lo despeja.
               command_decoded[6]: begin
-                response_byte_0 <= cpu_halted ? RSP_RUN : RSP_ERROR;
+                response_byte_0 <= (cpu_halted && !cpu_error) ? RSP_RUN : RSP_ERROR;
                 response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
-                if (cpu_halted) cpu_run_request <= 1'b1;
+                if (cpu_halted && !cpu_error) cpu_run_request <= 1'b1;
                 state <= STATE_RESPOND;
               end
               command_decoded[7]: begin
@@ -346,10 +419,10 @@ module monitor (
                 state <= STATE_RESPOND;
               end
               command_decoded[8]: begin
-                response_byte_0 <= cpu_halted ? RSP_STEP : RSP_ERROR;
+                response_byte_0 <= (cpu_halted && !cpu_error) ? RSP_STEP : RSP_ERROR;
                 response_length <= 3'd1;
                 response_done_state <= STATE_IDLE;
-                if (cpu_halted) cpu_step_request <= 1'b1;
+                if (cpu_halted && !cpu_error) cpu_step_request <= 1'b1;
                 state <= STATE_RESPOND;
               end
               command_decoded[9]: begin
@@ -372,11 +445,14 @@ module monitor (
                 cpu_reset_request <= 1'b1;
                 state <= STATE_RESPOND;
               end
-              // Los dos contadores. Miden UNA ejecucion: se ponen a cero al
-              // arrancar la CPU, no al resetearla, para que `run` / `halt` /
-              // `run` den tres medidas y no una acumulada.
-              command_decoded[12]: state <= STATE_SERIAL_SEND_LENGTH;
-              command_decoded[13]: state <= STATE_SERIAL_RECV_MAX;
+              // Los dos del puerto serie. Con HAS_SERIAL = 0 la condicion es
+              // constante-falsa, cae al `default` --contesta `ff`, como
+              // cualquier comando desconocido-- y la sintesis se lleva por
+              // delante los cinco estados de abajo.
+              (HAS_SERIAL != 0) && command_decoded[12]:
+                  state <= STATE_SERIAL_SEND_LENGTH;
+              (HAS_SERIAL != 0) && command_decoded[13]:
+                  state <= STATE_SERIAL_RECV_MAX;
               default: begin
                 response_byte_0 <= RSP_ERROR;
                 response_length <= 3'd1;
@@ -578,8 +654,7 @@ module monitor (
         // is valid and ends exactly at 0x02000000.
         STATE_VALIDATE_BLOCK: begin
             if (block_length == 0 || block_length > 16'd256 ||
-                mem_address[31:25] != 0 ||
-                block_end_address > 33'h02000000) begin
+                !block_range_valid({1'b0, mem_address}, block_end_address)) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 3'd1;
               response_index <= 3'd0;

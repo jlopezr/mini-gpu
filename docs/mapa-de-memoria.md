@@ -459,12 +459,9 @@ Que el slot coincida no basta si los offsets dentro del slot no coinciden. Hecho
    `+0x00`. Así ningún programa de CPU cambió y solo se tocó la 22, que es la más
    nueva.
 
-   Sobre «los cores sin `VIDEO_CTRL` leen cero ahí»: es cierto en **19 y 21**,
-   que decodifican `address[31:12]` y dan un slot de 256 B, y en **18**, cuyos
-   32 B (`address[31:5]`) llegan justo a `+0x18`. **No lo es en la 16**, que
-   decodifica `address[31:4]`: su ventana son 16 bytes, así que `+0x14` y `+0x18`
-   caen fuera del MMIO y van a SDRAM — no leen cero, leen memoria. Un binario que
-   sondee `VIDEO_CTRL` para saber si hay control de modo obtiene basura en la 16.
+   La fase 3.5 añadió `VIDEO_CTRL` también a **16, 18, 19 y 21**. Las cuatro
+   decodifican ahora la página MMIO completa y dedican un slot de 256 B al vídeo;
+   `+0x18` ya no cae en SDRAM en la 16. La validación en placa está pendiente.
 2. **La 22 implementa el bit 1 de `STATUS`** (`swap_pending`).
 3. **El alineamiento no se tocó.** 4 bytes en CPU y 16 en GPU conviven si los
    programas escriben bases alineadas a 16, que es lo que hay que documentar.
@@ -483,7 +480,7 @@ Offsets resultantes, iguales en todos los prototipos que tengan vídeo:
 | `+0x0C` | `STATUS` | todos |
 | `+0x10` | `SWAP_COUNT` | desde 18 |
 | `+0x14` | `HALT_AT` | implementado solo en CPU; en GPU lee cero |
-| `+0x18` | `VIDEO_CTRL` | solo GPU, por ahora; en CPU lee cero |
+| `+0x18` | `VIDEO_CTRL` | 16, 18, 19, 21 y 22 |
 
 ### Descubrimiento en tiempo de ejecución
 
@@ -527,12 +524,22 @@ Qué le falta a cada prototipo para cumplir el contrato:
 
 | Prototipo | Estado | Qué le falta |
 |---|---|---|
-| 16 | vídeo conforme | Ventana de 16 B en vez de slot de 256 B; sin `SWAP_COUNT` |
-| 18 | vídeo conforme | Ventana de 32 B en vez de slot de 256 B |
-| 19, 21 | **conformes** | Solo el bloque de identificación |
-| 12, 14, 17 | **conformes** | Migradas: warps en `0x80001000`. Solo el bloque de identificación |
-| 22 | **conforme** | Migrada: warps en `0x80001000`, vídeo en `0x80000000`, `VIDEO_CTRL` en `+0x18`, bit 1 de `STATUS`. Solo el bloque de identificación |
-| 2, 11 | fuera de contrato | Los simuladores no implementan la ventana |
+| 6, 10 | identificación implementada | `SYS_ID` por el monitor; sin ventana de periféricos por diseño |
+| 16 | mapa e identificación implementados | `VIDEO_CTRL` en `+0x18`; sin captura ni `SWAP_COUNT` por capacidad |
+| 18, 19, 21 | mapa e identificación implementados | Pendiente validación en placa de la fase 3.5 |
+| 12, 14, 17 | mapa e identificación implementados | Warps en `0x80001000`; pendiente ronda de placa |
+| 22 | mapa e identificación implementados | Warps en `0x80001000`, vídeo en `0x80000000`; pendiente ronda de placa |
+| 2, 11, 25 | periféricos funcionales compartidos | `SYS_ID`, vídeo con `HALT_AT` y serie; MMIO integrado en los tres motores. Vídeo/serie opcionales en la API y CLI |
+
+Los simuladores comparten `tools/sim_devices.py`: no declaran conformidad temporal
+con la placa. Sus bases de vídeo se alinean a 4 bytes y cualquier escritura a
+`SWAP` solicita intercambio; para portabilidad al RTL GPU usar alineación de 16
+bytes y escribir 1. `HALT_AT` y serie siguen sin existir en el RTL GPU. Las
+opciones comunes de consola están en [`tools/README.md`](../tools/README.md).
+
+La política de direcciones inexistentes sigue pendiente de unificación. La
+convergencia de los monitores requiere resíntesis y verificación en placa antes
+de dar por cerrado el contrato; véase `unificacion-mmio.md`.
 
 Los cores de CPU con slots de 256 B ya cumplen el reparto sin tocar nada, que es
 la razón de tomar su troceado como base en vez de inventar uno.

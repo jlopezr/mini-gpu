@@ -120,235 +120,7 @@ def signed_divide(a: int, b: int) -> int:
     return quotient
 
 
-class VideoDevice:
-    """La ventana de registros de vídeo de `16.fpga-cpu-hdmi` y `18`.
-
-    ===================================================================
-    Qué modela y qué NO modela, que es lo que hay que tener claro
-    ===================================================================
-
-    Modela la SEMÁNTICA: qué valen los registros, cuándo se aplica un
-    intercambio respecto a las escrituras del programa, y qué framebuffer queda
-    visible. Con eso, un programa que dibuja y sincroniza produce aquí
-    exactamente el mismo framebuffer que en la FPGA.
-
-    No modela el TIEMPO, y no es una carencia que se vaya a llenar: aquí no hay
-    barrido leyendo la SDRAM por su cuenta, ni ancho de banda, ni contienda por
-    el bus. En consecuencia:
-
-      - **`underflow` es siempre cero.** No puede ocurrir porque no hay nada que
-        pueda llegar tarde. Una expectativa `underflow: false` pasa aquí sin
-        comprobar nada; solo significa algo en hardware.
-      - **El desgarro no existe.** Un programa que dibuje sobre el buffer
-        visible sin esperar al intercambio --los `tear_demo`-- aquí sale limpio
-        y en la placa sale partido. Eso es un fallo del programa que este
-        simulador NO puede encontrar.
-      - **El «frame» es sintético.** En la placa un frame son 16,7 ms de
-        barrido; aquí son `frame_instructions` instrucciones ejecutadas. Se
-        eligió así porque es lo único que hay: no hay reloj de píxel.
-
-    Y hay una consecuencia buena que no es obvia: para un programa que ESPERA a
-    que su intercambio se aplique --que es lo que hacen todos los casos de
-    `cases/video`-- el periodo sintético da igual. El programa nunca dibuja
-    mientras hay un intercambio pendiente, así que la secuencia de frames es la
-    misma sea cual sea el periodo. El periodo solo cambia cuántas vueltas da el
-    bucle de espera.
-
-    Por eso el simulador puede declarar `frame_capture` honestamente para esos
-    casos: lo que se captura es idéntico. Lo que cambia es lo que el simulador
-    no vería si estuviera mal.
-    """
-
-    BASE = 0x8000_0000
-    SIZE = 32                       # seis registros, ventana de 32 bytes
-
-    FB_FRONT = 0x00
-    FB_BACK = 0x04
-    SWAP = 0x08
-    STATUS = 0x0C
-    SWAP_COUNT = 0x10
-    HALT_AT = 0x14
-    VIDEO_CTRL = 0x18
-
-    MODE_BLANK = 0
-    MODE_PATTERN = 1
-    MODE_SCANOUT = 2
-
-    # Las dos bases arrancan a cero, igual que `video_registers.v` desde la fase
-    # 3.5. Cero no es una dirección útil --es el principio de la memoria, donde
-    # está el propio programa-- y eso es justamente lo que se quiere modelar:
-    # el framebuffer es una decisión del programa, no algo que herede del
-    # encendido. Quien quiera dibujar escribe FB_FRONT y FB_BACK.
-    #
-    # Poner aquí la dirección cómoda sería peor que no modelarlo: un programa
-    # que la heredase pasaría en el simulador y fallaría en la placa.
-    def __init__(self, fb_front: int = 0, fb_back: int = 0,
-                 frame_instructions: int = 1000):
-        self.fb_front = fb_front
-        self.fb_back = fb_back
-        self.swap_pending = False
-        self.frame_count = 0
-        self.swap_count = 0
-        self.halt_at = 0
-        self.halt_armed = False
-        # Alto durante un solo `tick`, cuando SWAP_COUNT alcanza HALT_AT.
-        self.halt_request = False
-        # PATTERN tras el reset, igual que el RTL. Aquí no gobierna nada --no
-        # hay barrido que leer la memoria-- pero el REGISTRO tiene que existir y
-        # comportarse igual: un programa que lo escriba y lo relea debe obtener
-        # lo mismo en las dos partes, o el simulador deja de servir para
-        # desarrollar el programa antes de subirlo.
-        self.video_mode = self.MODE_PATTERN
-        self.frame_instructions = frame_instructions
-        self._since_frame = 0
-
-    def contains(self, address: int) -> bool:
-        return self.BASE <= address < self.BASE + self.SIZE
-
-    def tick(self) -> None:
-        """Avanza el reloj de frames sintético. Lo llama la CPU por instrucción.
-
-        El intercambio se aplica en la frontera de frame, igual que en el
-        hardware: allí es la primera petición de línea de un frame, que es el
-        único instante en el que no queda nada del frame anterior por leer ni se
-        ha leído nada del siguiente.
-        """
-        self._since_frame += 1
-        if self._since_frame < self.frame_instructions:
-            return
-
-        self._since_frame = 0
-        self.frame_count = (self.frame_count + 1) & 0xFFFF
-        if self.swap_pending:
-            self.fb_front, self.fb_back = self.fb_back, self.fb_front
-            self.swap_pending = False
-            self.swap_count = u32(self.swap_count + 1)
-            # Alarma de un disparo y `>=`, igual que el hardware: ver `write`.
-            if self.halt_armed and self.swap_count >= self.halt_at:
-                self.halt_request = True
-                self.halt_armed = False
-
-    def read(self, offset: int) -> int:
-        if offset == self.FB_FRONT:
-            return self.fb_front
-        if offset == self.FB_BACK:
-            return self.fb_back
-        if offset == self.SWAP:
-            return 1 if self.swap_pending else 0
-        if offset == self.STATUS:
-            # bit 0 underflow (siempre cero aquí), bit 1 pendiente, 31:16 frames
-            return (self.frame_count << 16) | (2 if self.swap_pending else 0)
-        if offset == self.SWAP_COUNT:
-            return self.swap_count
-        if offset == self.HALT_AT:
-            return self.halt_at
-        if offset == self.VIDEO_CTRL:
-            return self.video_mode
-        return 0
-
-    def write(self, offset: int, value: int) -> None:
-        if offset == self.FB_FRONT:
-            self.fb_front = value & 0xFFFF_FFFC     # se alinea a cuatro bytes
-        elif offset == self.FB_BACK:
-            self.fb_back = value & 0xFFFF_FFFC
-        elif offset == self.SWAP:
-            # Cualquier escritura pide intercambio.
-            self.swap_pending = True
-        elif offset == self.STATUS:
-            pass            # escribir el bit 0 borra el underflow, que aquí
-                            # nunca está puesto: no hay nada que borrar
-        elif offset == self.HALT_AT:
-            # Armar la alarma pone el origen de la cuenta aquí: HALT_AT es
-            # «para dentro de N intercambios», no «para en el intercambio
-            # número N desde el encendido». Aquí daría igual —cada ejecución
-            # construye un dispositivo nuevo— pero en la placa no: con la
-            # cuenta libre, un programa solo podría usarla una vez por arranque.
-            # Se copia la regla para que el simulador siga siendo comparable.
-            self.halt_at = value
-            self.swap_count = 0
-            self.halt_armed = value != 0
-        elif offset == self.VIDEO_CTRL:
-            self.video_mode = value & 0b11
-        # SWAP_COUNT es de solo lectura.
-
-
-class SerialDevice:
-    """Puerto serie de la CPU, en 0x80000200. Dos colas y nada mas.
-
-    Modela `19.fpga-cpu-hdmi-ls/serial_port.v`, incluidas las dos cosas que
-    tienen truco:
-
-      - **Leer DATA saca de la cola.** Es el unico registro del repositorio con
-        efecto secundario, y por eso existe `PEEK`, que devuelve lo mismo sin
-        sacarlo.
-      - **Nada bloquea.** Leer DATA con la cola vacia devuelve cero, y escribir
-        con la de salida llena pierde el byte. En la FPGA no puede ser de otra
-        forma: un acceso MMIO se resuelve en un ciclo, asi que un dispositivo
-        que esperase colgaria el bus. Un programa que no mire `STATUS` antes se
-        comporta igual aqui que en la placa, que es justo lo que se quiere de
-        un simulador.
-
-    Lo que aqui NO hay es tiempo: en la placa los bytes llegan cuando el PC
-    manda un paquete, y aqui estan desde el principio. Para un programa de
-    peticion-respuesta da igual --lee lo que hay, contesta, vuelve a esperar--
-    y por eso el flujo de bytes se puede comparar con el de la placa. Para un
-    programa que dependa de CUANDO llega cada byte, no.
-    """
-
-    BASE = 0x8000_0200
-    SIZE = 256
-
-    DATA = 0x00
-    STATUS = 0x04
-    PEEK = 0x08
-
-    def __init__(self, depth: int = 64, stdin: bytes = b""):
-        self.depth = depth
-        self.rx = bytearray(stdin[:depth * 1000])   # lo que el PC ha mandado
-        self.tx = bytearray()                       # lo que la CPU ha escrito
-        self.overrun = False
-
-    def contains(self, address: int) -> bool:
-        return self.BASE <= address < self.BASE + self.SIZE
-
-    def push(self, data: bytes) -> int:
-        """Mete lo que quepa, como hace SEND_BYTES; devuelve cuantos entraron."""
-        free = self.depth - len(self.rx)
-        accepted = min(free, len(data))
-        self.rx += data[:accepted]
-        if accepted < len(data):
-            self.overrun = True
-        return accepted
-
-    def pop(self, maximum: int = 255) -> bytes:
-        """Saca de la cola de salida, como hace RECV_BYTES."""
-        count = min(maximum, len(self.tx))
-        out = bytes(self.tx[:count])
-        del self.tx[:count]
-        return out
-
-    def read(self, offset: int) -> int:
-        if offset == self.DATA:
-            if not self.rx:
-                return 0
-            value = self.rx[0]
-            del self.rx[:1]
-            return value
-        if offset == self.PEEK:
-            return self.rx[0] if self.rx else 0
-        if offset == self.STATUS:
-            rx_count = min(len(self.rx), 0xFF)
-            tx_free = max(0, self.depth - len(self.tx))
-            return (int(self.overrun) << 16) | (tx_free << 8) | rx_count
-        return 0
-
-    def write(self, offset: int, value: int) -> None:
-        if offset == self.DATA:
-            if len(self.tx) < self.depth:
-                self.tx.append(value & 0xFF)
-            return
-        if offset == self.STATUS and (value >> 16) & 1:
-            self.overrun = False
+from tools.sim_devices import VideoDevice, SerialDevice
 
 
 class CPU:
@@ -822,6 +594,8 @@ class CPU:
             return
 
         self.instructions_executed += 1
+        if self.serial is not None:
+            self.serial.tick()
 
     def run(self, max_instructions: int = 100_000_000) -> None:
         """Ejecuta hasta HALT respetando un límite de seguridad."""
@@ -873,10 +647,12 @@ def main() -> None:
         metavar=("ADDRESS", "SIZE", "FILE"),
         help="vuelca una región de memoria después de ejecutar el programa",
     )
+    from tools import sim_peripherals
+    sim_peripherals.add_arguments(parser)
     args = parser.parse_args()
 
-    cpu = CPU(args.memory_size)
     try:
+        cpu = CPU(args.memory_size, **sim_peripherals.from_arguments(args))
         program = load_program_file(args.program)
     except (ValueError, OSError) as exc:
         # Una entrada mala no es un fallo del simulador, asi que no sale como
@@ -885,6 +661,7 @@ def main() -> None:
         raise SystemExit(2) from None
     cpu.load_program(program)
     cpu.run(args.max)
+    sim_peripherals.write_outputs(args, cpu)
 
     if cpu.error:
         print(

@@ -224,6 +224,25 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(p.counters.writeback_collisions, 0)
             self.assertGreaterEqual(p.counters.simultaneous_completions, 1)
 
+    def test_uart_response_no_consume_hasta_commit(self):
+        p = make('LOAD R1,R3,0\nHALT\nMOVI R2,9\nHALT',
+                 warps=2, lanes=1, memory_cycles=3)
+        p.system.serial = functional.SerialDevice(stdin=b'AB')
+        p.warps[0].processors[0].regs[3] = p.system.serial.BASE
+        p.warps[1].pc = 8
+        for _ in range(30):
+            if p.counters.writeback_collisions:
+                break
+            p.cycle()
+        self.assertEqual(p.counters.writeback_collisions, 1)
+        self.assertTrue(p.lsu[0].response_ready)
+        self.assertEqual(p.system.serial.rx, b'AB')
+        p.cycle()
+        self.assertEqual(p.warps[0].processors[0].regs[1], ord('A'))
+        self.assertEqual(p.system.serial.rx, b'B')
+        p.run()
+        self.assertEqual(p.system.serial.rx, b'B')
+
     def test_memory_progresses_while_x_is_busy(self):
         p = make('LOAD R1,R0,4096\nHALT\nDIV R3,R1,R2\nHALT',
                  warps=2, lanes=1, memory_cycles=6)

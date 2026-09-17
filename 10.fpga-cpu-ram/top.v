@@ -62,7 +62,20 @@ module top (
   wire [4:0] cpu_debug_register_address;
   wire [31:0] cpu_debug_register_data, cpu_pc;
 
-  monitor monitor_i(
+  // MAYOR = juego de comandos (1 = base), MENOR = numero de carpeta.
+  // Ver docs/unificacion-mmio.md fase 5.
+  //
+  // BACKPORT DE R0 CABLEADO A CERO: `R0` vale siempre cero y descarta las
+  // escrituras. Es INCOMPATIBLE --un programa que lo use como registro general
+  // da otro resultado en silencio-- asi que sube la version aunque el protocolo
+  // no cambie ni un byte. Ver 1.isa/isa.md seccion 1.
+  //
+  // La unica ventana es la de identificacion: esta carpeta tiene `sysid` pero
+  // ningun otro MMIO. Gemela de MONITOR_REGIONS en monitor.py.
+  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd10),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
+    monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
@@ -75,6 +88,10 @@ module top (
       .cpu_error_code(cpu_error_code), .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
+      // Sin puerto serie: HAS_SERIAL = 0 y las entradas a cero. Las
+      // salidas se quedan al aire y la sintesis se las lleva.
+      .serial_rx_free(8'd0), .serial_tx_data(8'd0),
+      .serial_tx_count(8'd0),
       .last_command(last_command), .busy(monitor_busy));
 
   // Register both directions of the monitor memory port. Besides making the

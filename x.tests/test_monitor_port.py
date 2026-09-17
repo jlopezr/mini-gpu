@@ -134,9 +134,9 @@ CPU_CON_MMIO = (
     "21.fpga-cpu-hdmi-alu",
 )
 
-# Una ranura de ventana sin usar. La base es inalcanzable para una direccion de
-# 32 bits, asi que la comparacion nunca se cumple.
-UNUSED_WINDOW = (0x1_FFFF_FFFF, 0x0)
+COMMAND_PROTOTYPES = GPU_PROTOTYPES + CPU_CON_MMIO + (
+    "6.fpga-cpu", "10.fpga-cpu-ram",
+)
 
 PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
 # La version tambien: divergio entre top_bl8.v y el banco de regiones sin que
@@ -172,16 +172,26 @@ def monitor_instantiations(prototype: Path):
 
 
 def rtl_windows(values: dict) -> set:
+    # Resolver los parametros omitidos desde el RTL: las CPU solo declaran
+    # las ventanas activas, mientras las GPU explicitan tambien las vacias.
+    source = (ROOT / COMMAND_PROTOTYPES[0] / "monitor.v").read_text(encoding="utf8")
+    defaults = {
+        name: int(digits.replace("_", ""), 16)
+        for name, digits in re.findall(
+            r"parameter\s*\[32:0\]\s*(WINDOW\d+_(?:BASE|END))\s*=\s*33'h([0-9a-fA-F_]+)",
+            source)
+    }
+    values = defaults | values
     windows = set()
     for slot in range(5):
         window = (values[f"WINDOW{slot}_BASE"], values[f"WINDOW{slot}_END"])
-        if window != UNUSED_WINDOW:
+        if window[0] < window[1] and window[0] < 0x1_0000_0000:
             windows.add(window)
     return windows
 
 
 class SharedMonitorTest(unittest.TestCase):
-    """Los cuatro monitor.v de la familia GPU son COPIA IDENTICA.
+    """Los diez monitor.v con juego de comandos son COPIA IDENTICA.
 
     Se decidio copia y no fichero compartido para que cada carpeta siga siendo
     autocontenida. Lo que antes los diferenciaba --version, tamano de RAM y la
@@ -190,9 +200,9 @@ class SharedMonitorTest(unittest.TestCase):
     salta aqui.
     """
 
-    def test_las_cuatro_copias_son_identicas(self):
+    def test_las_diez_copias_son_identicas(self):
         canonical = (ROOT / "22.fpga-gpu-bl8" / "monitor.v").read_bytes()
-        for name in GPU_PROTOTYPES:
+        for name in COMMAND_PROTOTYPES:
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
 
@@ -418,14 +428,18 @@ class MonitorRegionsTest(unittest.TestCase):
     """
 
     def test_python_and_rtl_agree(self):
-        for name in GPU_PROTOTYPES:
+        for name in COMMAND_PROTOTYPES:
             prototype = ROOT / name
             esperadas = set(load_monitor(prototype).MONITOR_REGIONS)
-            instancias = list(monitor_instantiations(prototype))
+            instancias = [(path, values) for path, values in monitor_instantiations(prototype)
+                          if not path.name.endswith("_tb.v")]
             self.assertTrue(instancias, f"{name} no instancia monitor con parametros")
             for path, values in instancias:
                 with self.subTest(prototype=name, fichero=path.name):
                     self.assertEqual(rtl_windows(values), esperadas)
+                    self.assertEqual(
+                        ((0, values["RAM_END"]),),
+                        load_monitor(prototype).ARCHITECTURAL_REGIONS)
 
     def test_todas_las_instancias_de_un_prototipo_coinciden(self):
         """La 22 tiene dos tops y un banco de pruebas; los tres han de decir lo

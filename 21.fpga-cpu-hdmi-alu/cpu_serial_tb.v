@@ -88,7 +88,11 @@ module cpu_serial_tb;
   wire [7:0] serial_host_push_data;
   wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
 
-  monitor monitor_i (
+  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd21),
+      .HAS_SERIAL(1),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+    monitor_i (
       .clk(clk), .reset(reset),
       .rx_data(rx_data), .rx_strobe(rx_strobe),
       .tx_data(tx_data), .tx_strobe(tx_strobe), .tx_ready(tx_ready),

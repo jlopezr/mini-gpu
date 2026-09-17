@@ -3,35 +3,24 @@
 from pathlib import Path
 
 from . import video_layout
-from .simulator import _load_module
+from .simulator import _load_module, video_result
 
 VERSIONS = {
     "cycle": {
         "simulator_path": Path("25.gpu-sim-cycle-uarch/minigpu_cycle.py"),
         "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
         "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
-                         "shift_immediate", "subword_memory"),
+                         "shift_immediate", "subword_memory", "frame_capture", "serial"),
         "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
     },
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
-        # Igual que en `simulator.py`, pero la lista es mas corta: al modelo de
-        # GPU le siguen faltando los accesos sub-palabra y las llamadas,
-        # pendientes de backport desde la MiniCPU.
-        #
-        # `video` SI esta, desde que `minigpu_sim.py` tiene `VideoDevice`. No
-        # `frame_capture`: eso es HALT_AT, que la GPU no tiene ni en el RTL
-        # --sus kernels terminan con HALT-- asi que declararlo seria mentir.
-        # `atomic_warp_faults` solo la tiene el simulador: en `capabilities.json`
-        # es la unica entrada sin `file`, porque no hay RTL que la implemente.
-        "capabilities": ("atomic_warp_faults", "video"),
+        # Perifericos funcionales compartidos; no implica soporte en la FPGA.
+        "capabilities": ("atomic_warp_faults", "frame_capture", "serial"),
         "description": "simulador funcional MiniGPU actual",
     },
 }
 DEFAULT_VERSION = "current"
-
-# RGB565 de 320x240, el mismo framebuffer que la placa.
-FRAME_BYTES = 320 * 240 * 2
 
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
@@ -83,7 +72,7 @@ class GpuBackend:
             trace: bool = False, trace_detail: bool = False,
             trace_limit: int | None = None, trace_file: Path | None = None,
             simulator_options: dict | None = None,
-            video: dict | None = None) -> dict:
+            video: dict | None = None, stdin: bytes = b"") -> dict:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
         dispositivo = None
@@ -92,21 +81,18 @@ class GpuBackend:
             if video_class is None:
                 raise RuntimeError(
                     f"el simulador de GPU {self.version!r} no tiene VideoDevice")
-            if video.get("run_until_swap"):
-                # HALT_AT no existe en la GPU: no se puede armar una parada por
-                # intercambios. Se dice aqui en vez de aceptarlo y no pararse,
-                # que acabaria en un limite de instrucciones sin explicacion.
-                raise RuntimeError(
-                    "run_until.swap necesita HALT_AT, que la GPU no tiene: "
-                    "sus kernels terminan con HALT")
             dispositivo = video_class()
+            if video.get("run_until_swap"):
+                dispositivo.write(dispositivo.HALT_AT, video["run_until_swap"])
             # Igual que en los otros dos backends: el dispositivo arranca con
             # las bases a cero, como el hardware, y es el arnes quien elige
             # donde vive el framebuffer. Ver backends/video_layout.py.
             dispositivo.write(dispositivo.FB_FRONT, video_layout.FB_FRONT)
             dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
         size = self.module.config_warp_size(warp_config)
-        gpu = self.module.System(warp_size=size, video=dispositivo,
+        serie = self.module.SerialDevice(stdin=stdin)
+        serie.attach_host()
+        gpu = self.module.System(warp_size=size, video=dispositivo, serial=serie,
                                  **(simulator_options or {}))
         gpu.load_program(program, launch=False)
         for address, data in initial_memory:
@@ -142,29 +128,14 @@ class GpuBackend:
             for lane in warp.processors:
                 for number, value in enumerate(lane.regs):
                     observations[f"{prefix}.lane[{lane.core_id}].R{number}"] = value
-        resultado_video = None
-        if dispositivo is not None:
-            resultado_video = {
-                # Siempre False, y a proposito: aqui no hay barrido que pueda
-                # llegar tarde. Ver VideoDevice en minigpu_sim.py.
-                "underflow": False,
-                "frames": dispositivo.frame_count,
-                "swaps": dispositivo.swap_count,
-                "fb_front": dispositivo.fb_front,
-                "frame": None,
-            }
-            if video.get("capture_frame"):
-                # Desde FB_FRONT, igual que en la placa: tras el intercambio N
-                # el buffer visible alterna segun la paridad.
-                base = dispositivo.fb_front
-                resultado_video["frame"] = bytes(
-                    gpu.memory[base:base + FRAME_BYTES])
+        resultado_video = video_result(gpu, bool(video and video.get("capture_frame")))
         return {
             "halted": gpu.halted,
             "error": gpu.error,
             "error_code": gpu.error_code,
             "registers": {},
             "video": resultado_video,
+            "stdout": serie.output(),
             "observations": observations,
             "memory": {(address, size): bytes(gpu.memory[address:address + size])
                        for address, size in memory_ranges},

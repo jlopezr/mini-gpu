@@ -19,8 +19,18 @@ MAX_ADDRESS = 0xFFFF_FFFF
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0000_8000),
 )
-# La 6 no tiene ventana MMIO: es la unica sin periféricos mapeados.
-MONITOR_REGIONS = ()
+# La 6 no tiene periféricos mapeados, pero sí `sysid`: cuatro palabras de solo
+# lectura en el camino del monitor, que es lo que le permite decir quién es sin
+# tener ventana MMIO de verdad. Ver docs/unificacion-mmio.md fase 4a.
+#
+# Hay que declararlo aquí aunque `read_word` no valide: `read_memory` y
+# `read_block` sí, así que sin esta línea leer la identificación por bloque se
+# rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
+# top.v pasa al monitor.
+SYSID_BASE = 0x8000_0f00
+MONITOR_REGIONS = (
+    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
+)
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
 # `tools` en el camino ANTES de importar de ahi. El insert ya existia

@@ -39,6 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.sysid_device import SysIdDevice  # noqa: E402
 
 
+VideoDevice = functional.VideoDevice
+SerialDevice = functional.SerialDevice
 config_warp_size = functional.config_warp_size
 TextTrace = functional.TextTrace
 InstructionLimitExceeded = functional.InstructionLimitExceeded
@@ -507,6 +509,8 @@ def main():
             default=default,
         )
 
+    from tools import sim_peripherals
+    sim_peripherals.add_arguments(parser)
     args = parser.parse_args()
 
     try:
@@ -542,6 +546,7 @@ def main():
             args.warp_size,
             config=cfg,
             max_cycles=args.max_cycles,
+            **sim_peripherals.from_arguments(args),
         )
 
         gpu.load_program(program)
@@ -750,6 +755,7 @@ def main():
                     Path(filename),
                 )
 
+            sim_peripherals.write_outputs(args, gpu)
             print_report(report, gpu)
 
             return 2 if limited else 1 if gpu.error else 0

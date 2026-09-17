@@ -314,22 +314,16 @@ class VideoDeviceTest(unittest.TestCase):
         gpu.run(8)
         self.assertEqual(gpu.error_code, ERROR_MEMORY_ACCESS)
 
-    def test_las_bases_se_alinean_a_dieciseis_no_a_cuatro(self):
-        """La CPU alinea a 4 y la GPU a 16: el scanout lee en rafagas."""
-        video = VideoDevice()
-        video.write(VideoDevice.FB_BACK, 0x0102_580F)
-        self.assertEqual(video.read(VideoDevice.FB_BACK), 0x0102_5800)
-
-    def test_halt_at_no_existe(self):
-        """Lee cero y la escritura se ignora, igual que el RTL.
-
-        Es lo que impide declarar `frame_capture` en este backend: la GPU no se
-        para sola --la paran las ordenes del monitor-- asi que no hay captura
-        que armar.
-        """
-        video = VideoDevice()
-        video.write(VideoDevice.HALT_AT, 3)
-        self.assertEqual(video.read(VideoDevice.HALT_AT), 0)
+    def test_alineamiento_compartido_y_halt_at(self):
+        """Los simuladores comparten contrato funcional, no el scanout GPU RTL."""
+        video = VideoDevice(frame_instructions=1)
+        video.write(video.FB_BACK, 0x0102580F)
+        self.assertEqual(video.fb_back, 0x0102580C)
+        video.write(video.HALT_AT, 1)
+        video.write(video.SWAP, 1)
+        video.tick()
+        self.assertEqual(video.swap_count, 1)
+        self.assertTrue(video.halt_request)
 
     def test_video_ctrl_existe_y_arranca_en_pattern(self):
         """No en SCANOUT, y no es un descuido.

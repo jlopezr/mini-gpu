@@ -66,7 +66,11 @@ class Pipeline:
                                  packet.warp * len(self.warps[packet.warp].processors) + lane)
                 if result.access:
                     address, size, _, _ = result.access
-                    check_access(len(self.system.memory), address, size)
+                    device = self.system.device_for(address)
+                    if device is None:
+                        check_access(len(self.system.memory), address, size)
+                    elif size != 4 or address & 3:
+                        raise ISAError(2, address)
                 results.append((lane, result))
             except ISAError as exc:
                 return replace(packet, fault=self.fault(exc, packet, lane))
@@ -135,7 +139,14 @@ class Pipeline:
             if result.access:
                 address, size, value, sign = result.access
                 if value is None:
-                    raise AssertionError('load committed before capturing response')
+                    # Los registros con efectos (UART DATA) se leen solo al
+                    # commit, nunca al llegar una respuesta especulativa.
+                    device = self.system.device_for(address)
+                    if device is None:
+                        raise AssertionError('load committed before capturing response')
+                    value = device.read(address - device.BASE) & MASK
+                    result = Result(result.next_pc,
+                                    (packet.decoded.rd, value) if packet.decoded.rd else None)
                 else:
                     stores.append((address, (value & ((1 << (size * 8)) - 1)).to_bytes(size, 'little')))
             results.append((lane, result))
@@ -156,7 +167,11 @@ class Pipeline:
                 w.processors[lane].regs[register] = value
                 writes.append([lane, register, value])
         for address, data in stores:
-            self.system.memory[address:address + len(data)] = data
+            device = self.system.device_for(address)
+            if device is not None:
+                device.write(address - device.BASE, int.from_bytes(data, 'little'))
+            else:
+                self.system.memory[address:address + len(data)] = data
         w.instructions_executed += 1
         self.in_flight.remove(packet.warp)
         c = self.counters
@@ -166,6 +181,7 @@ class Pipeline:
         self.event('retire', packet, source=source, next_pc=w.pc,
                    active_mask=w.active_mask, live_mask=w.live_mask,
                    writes=writes, stores=[[a, b.hex()] for a, b in stores])
+        self.system.tick_devices()
 
     def check_invariants(self):
         packets = [p for p in self.stages.values() if p is not None] + list(self.lsu)
@@ -219,7 +235,7 @@ class Pipeline:
                 results = []
                 for lane, result in response.results:
                     address, size, value, sign = result.access
-                    if value is None:
+                    if value is None and self.system.device_for(address) is None:
                         value = int.from_bytes(self.system.memory[address:address + size], 'little')
                         value = (signed(value, size * 8) if sign else value) & MASK
                         result = Result(result.next_pc,
@@ -320,9 +336,10 @@ class Pipeline:
             self.event('issue', selected)
         retired_before = c.retired
         for completion, source in completions:
-            if not self.system.error: self.complete(completion, source)
+            if not self.system.error and not self.system.peripheral_halted:
+                self.complete(completion, source)
         if c.retired - retired_before == 2: c.simultaneous_completions += 1
-        if not self.system.error:
+        if not self.system.error and not self.system.peripheral_halted:
             for wid, state in changes.items():
                 old_state = self.warps[wid].state
                 publish_control(self.warps[wid], state)
@@ -351,7 +368,9 @@ class Pipeline:
         w = self.stages['W']
         completions = [(w, 'W')] if w else []
         w_writes = bool(w and not w.fault and any(r.write for _, r in w.results))
-        mem_writes = bool(memory and not memory.fault and any(r.write for _, r in memory.results))
+        mem_writes = bool(memory and not memory.fault and any(
+            r.write or (r.access and r.access[2] is None and memory.decoded.rd)
+            for _, r in memory.results))
         if w_writes and mem_writes:
             self.counters.writeback_collisions += 1
             if not self.lsu[0].response_ready:

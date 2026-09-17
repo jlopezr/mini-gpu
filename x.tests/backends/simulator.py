@@ -8,6 +8,8 @@ from pathlib import Path
 from types import ModuleType
 
 from . import video_layout
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.sim_peripherals import video_result
 
 
 VERSIONS = {
@@ -28,14 +30,6 @@ VERSIONS = {
 }
 DEFAULT_VERSION = "current"
 
-# RGB565 de 320x240, el mismo framebuffer que la placa.
-FRAME_BYTES = 320 * 240 * 2
-
-# Cada cuantas instrucciones se vacia la cola de salida del puerto serie.
-# Cualquier valor bastante menor que la profundidad de la cola vale: lo unico
-# que importa es no dejar que se llene, porque un programa que consulte STATUS
-# antes de escribir se quedaria esperando hueco para siempre.
-DRAIN_EVERY = 32
 
 
 def expand_for(names) -> frozenset:
@@ -161,6 +155,7 @@ class SimulatorBackend:
                 raise RuntimeError(
                     f"el simulador {self.version!r} no tiene SerialDevice")
             serie = self.serial_class(stdin=stdin)
+            serie.attach_host()
 
         cpu = self.cpu_class(self.memory_size, video=dispositivo, serial=serie)
         cpu.load_program(program)
@@ -171,53 +166,9 @@ class SimulatorBackend:
                 raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
             cpu.memory[address:end] = data
 
-        salida_serie = b""
-        if serie is None:
-            cpu.run(max_instructions)
-        else:
-            # La cola de salida son 64 bytes, como en el hardware, y un
-            # programa interactivo escribe mucho mas que eso. Hay que vaciarla
-            # MIENTRAS corre, que es lo que hace el PC con la placa.
-            #
-            # Sin esto los dos backends divergen de la peor forma posible: en
-            # la placa `emit` se queda esperando hueco y el caso da timeout,
-            # y aqui `SerialDevice` descarta lo que no cabe y el caso pasa con
-            # la salida truncada.
-            #
-            # Vaciar no cambia QUE escribe el programa, solo cuando, asi que el
-            # flujo de bytes sigue siendo el mismo y el diferencial vale.
-            # El limite se cuenta igual que en `CPU.run`: por instrucciones
-            # ejecutadas, no por vueltas del bucle.
-            desde_el_ultimo = 0
-            while not cpu.halted:
-                if cpu.instructions_executed >= max_instructions:
-                    raise RuntimeError(
-                        f"límite de instrucciones alcanzado "
-                        f"en PC=0x{cpu.pc:08X}")
-                cpu.step()
-                desde_el_ultimo += 1
-                if desde_el_ultimo >= DRAIN_EVERY:
-                    desde_el_ultimo = 0
-                    salida_serie += serie.pop(255)
+        cpu.run(max_instructions)
 
-        resultado_video = None
-        if dispositivo is not None:
-            resultado_video = {
-                # Siempre False, y a propósito: aquí no hay nada que pueda
-                # llegar tarde. Ver VideoDevice en minicpu_sim.py.
-                "underflow": False,
-                "frames": dispositivo.frame_count,
-                "swaps": dispositivo.swap_count,
-                "fb_front": dispositivo.fb_front,
-                "frame": None,
-            }
-            if video.get("capture_frame"):
-                # Desde FB_FRONT, igual que en la placa: tras el intercambio N
-                # el buffer visible alterna según la paridad.
-                base = dispositivo.fb_front
-                resultado_video["frame"] = bytes(
-                    cpu.memory[base:base + FRAME_BYTES])
-
+        resultado_video = video_result(cpu, bool(video and video.get("capture_frame")))
         return {
             # El simulador cuenta instrucciones pero no ciclos: no modela el
             # tiempo, asi que `cycles` es None a proposito y el CPI de una fila
@@ -240,5 +191,5 @@ class SimulatorBackend:
             # Lo que el programa dejo en la cola de salida. Es el campo que el
             # diferencial puede comparar contra la placa byte a byte: a
             # diferencia del video, un flujo de bytes no depende del tiempo.
-            "stdout": (salida_serie + serie.pop(255)) if serie is not None else None,
+            "stdout": serie.output() if serie is not None else None,
         }

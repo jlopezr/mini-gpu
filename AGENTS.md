@@ -27,6 +27,9 @@ export PATH="$PWD/tools:$PATH"
 - La identidad de un prototipo (CPU/GPU, versión de monitor, reloj, capacidades) se lee del RTL
   directamente (`cpu.v`/`gpu_sm.v`, `monitor.v`, el PLL, `tools/capabilities.json`) — no hay
   ningún fichero central que registrar al añadir un prototipo. Ver `tools/prototype_report.py`.
+- Identidad en toda carpeta con juego de comandos; dispositivos donde haya algo que mapear.
+  `SYS_ID` también existe en 6 y 10, por el camino del monitor: no necesitan una ventana
+  MMIO de periféricos para identificarse.
 - No añadas scripts de build o check dentro de un prototipo: `build`/`test`/`lint`/`check` ya son
   genéricos para cualquier carpeta con `apio.ini`, y los que había se retiraron por redundantes.
   La única excepción, deliberada, es `13.hdmi/check_timing.ps1`: 13 no es un prototipo sino una

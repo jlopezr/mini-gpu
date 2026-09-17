@@ -74,7 +74,9 @@ class FakeBoard:
     def _procesar(self) -> None:
         while self._pendiente:
             comando = self._pendiente[0]
-            if comando == monitor.CMD_SEND_BYTES:
+            # Valores del protocolo en el cable, independientes del cliente:
+            # asi un cambio accidental de opcode no cambia tambien el oraculo.
+            if comando == 0x38:  # SEND_BYTES
                 if len(self._pendiente) < 2:
                     return
                 largo = self._pendiente[1]
@@ -88,8 +90,8 @@ class FakeBoard:
                 self.enviados += carga[:aceptados]
                 # La CPU va consumiendo.
                 del self.rx[:self.consume]
-                self.salida += bytes((monitor.RSP_SEND_BYTES, aceptados))
-            elif comando == monitor.CMD_RECV_BYTES:
+                self.salida += bytes((0xB8, aceptados))
+            elif comando == 0x39:  # RECV_BYTES
                 if len(self._pendiente) < 2:
                     return
                 maximo = self._pendiente[1]
@@ -97,7 +99,7 @@ class FakeBoard:
                 cuantos = min(maximo, len(self.tx))
                 datos = bytes(self.tx[:cuantos])
                 del self.tx[:cuantos]
-                self.salida += bytes((monitor.RSP_RECV_BYTES, cuantos)) + datos
+                self.salida += bytes((0xB9, cuantos)) + datos
             else:
                 raise AssertionError(f"comando inesperado 0x{comando:02x}")
 

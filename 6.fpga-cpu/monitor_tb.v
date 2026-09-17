@@ -48,7 +48,10 @@ module monitor_tb;
            dut.state, received_count, mem_ready);
   end
 
-  monitor dut (
+  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd6),
+      .RAM_END(33'h0_0000_8000),
+      .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
+    dut (
       .clk(clk),
       .reset(reset),
       .rx_data(rx_data),
@@ -73,6 +76,10 @@ module monitor_tb;
       .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
+      // Sin puerto serie: HAS_SERIAL = 0 y las entradas a cero. Las
+      // salidas se quedan al aire y la sintesis se las lleva.
+      .serial_rx_free(8'd0), .serial_tx_data(8'd0),
+      .serial_tx_count(8'd0),
       .last_command(last_command),
       .busy(busy)
   );
@@ -288,6 +295,24 @@ module monitor_tb;
     wait (received_count == 35);
     if (received[34] !== 8'hb5 || !reset_request_seen)
       $fatal(1, "RESET_CPU mismatch");
+
+    // La convergencia adopta la misma precondicion en CPU y GPU: no basta
+    // con estar parado si hay un error latcheado. No debe salir ningun pulso.
+    wait (!busy && tx_ready);
+    @(negedge clk);
+    cpu_halted = 1'b1;
+    cpu_error = 1'b1;
+    run_request_seen = 1'b0;
+    step_request_seen = 1'b0;
+    send_command(8'h30);
+    wait (received_count == 36);
+    if (received[35] !== 8'hff || run_request_seen)
+      $fatal(1, "RUN with latched error must reject without request");
+    wait (!busy && tx_ready);
+    send_command(8'h32);
+    wait (received_count == 37);
+    if (received[36] !== 8'hff || step_request_seen)
+      $fatal(1, "STEP with latched error must reject without request");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

@@ -96,7 +96,20 @@ module top (
   // 0x80000300, igual que en la MiniGPU, y el programa se mide a si mismo sin
   // parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
-  monitor monitor_i(
+  // MAYOR = juego de comandos (1 = base), MENOR = numero de carpeta.
+  // Ver docs/unificacion-mmio.md fase 5.
+  //
+  // 1.11 fue el camino de memoria de rafagas BL8: controlador de 128 bits,
+  // arbitro de cuatro puertos y un adaptador por cliente. El reloj baja a
+  // 80 MHz porque a 100 no cumple ninguna semilla. El baudio NO cambia: divisor
+  // 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
+  // BACKPORT DE R0 CABLEADO A CERO: ver 1.isa/isa.md seccion 1.
+  //
+  // La ventana es la pagina entera de MMIO, gemela de MONITOR_REGIONS.
+  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd18),
+      .RAM_END(33'h0_0200_0000),
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+    monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
@@ -109,6 +122,10 @@ module top (
       .cpu_error_code(cpu_error_code), .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
+      // Sin puerto serie: HAS_SERIAL = 0 y las entradas a cero. Las
+      // salidas se quedan al aire y la sintesis se las lleva.
+      .serial_rx_free(8'd0), .serial_tx_data(8'd0),
+      .serial_tx_count(8'd0),
       .last_command(last_command), .busy(monitor_busy));
 
   // Register both directions of the monitor memory port. Besides making the

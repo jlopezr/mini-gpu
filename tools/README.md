@@ -89,6 +89,45 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 Los casos existentes también se ejecutan con
 `python x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu`.
 
+### Periféricos comunes de los tres simuladores
+
+`cpusim`, `gpusim` y `gpusim-cycle` comparten `tools/sim_devices.py` y las
+opciones de `tools/sim_peripherals.py`:
+
+| Opción | Efecto |
+|---|---|
+| `--video` | Activa registros de vídeo en `0x80000000` |
+| `--frame-instructions N` | Periodo sintético del frame, 1000 por defecto; debe ser positivo |
+| `--halt-after-swaps N` | Activa vídeo y arma `HALT_AT` para parar tras N swaps |
+| `--frame-output frame.bin` | Activa vídeo y guarda el framebuffer frontal RGB565 de 320×240 |
+| `--serial` | Activa serie en `0x80000200` |
+| `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
+| `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |
+
+Por ejemplo, las mismas opciones sirven con cualquiera de los tres lanzadores:
+
+```powershell
+.\tools\cpusim.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
+.\tools\gpusim-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
+```
+
+`SYS_ID` siempre está disponible, también mediante LOAD en la 25. Vídeo y serie
+son opcionales en la API (`video=VideoDevice()`, `serial=SerialDevice()`). El
+runner `x.tests` conecta serie en los tres modelos y vídeo cuando lo pide el
+caso; los tres declaran `video`, `frame_capture` y `serial`.
+
+El contrato funcional de vídeo incluye `SWAP_COUNT`, `HALT_AT` y `VIDEO_CTRL`.
+Las bases arrancan a cero y las configura el programa; se alinean a 4 bytes en
+los tres modelos. Una escritura a `SWAP` pide intercambio, incluso con valor
+cero. Para portabilidad al RTL GPU, alinear bases a 16 y escribir 1 a `SWAP`.
+El RTL GPU no gana serie ni `HALT_AT` por esta unificación de simuladores.
+
+El frame se mide en instrucciones CPU o de warp, no en ciclos del pipeline.
+Los puntos de avance y el orden entre warps dependen del motor: no se promete
+el mismo PC al capturar. No se simulan desgarro, underflow ni tiempo físico de
+UART/HDMI. `--frame-output` vuelca RAM desde `FB_FRONT`, no renderiza PATTERN ni
+BLANK. Los accesos MMIO requieren palabras alineadas de 32 bits.
+
 ## Ejecutar la suite de tests
 
 `x.tests` (backends de placa/simulador, casos, runner) tiene su propio

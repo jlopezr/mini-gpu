@@ -1119,18 +1119,16 @@ def backend_arguments(case: dict, backend_name: str, args) -> dict:
         memory_ranges=list(case["expected"]["memory"]),
         max_instructions=case["max_instructions"],
         timeout_seconds=case["timeout_seconds"],
-        # Solo los backends de CPU tienen puerto serie. La MiniGPU no lo ha
-        # recibido todavia, y pasarselo seria un TypeError.
-        **({"stdin": case["stdin"]} if case["architecture"] == "cpu" else {}),
+        # Los simuladores GPU comparten serie; el backend GPU FPGA no.
+        **({"stdin": case["stdin"]} if case["architecture"] == "cpu"
+           or backend_name in SIMULADORES_GPU else {}),
         **({"warp_config": case["warp_config"]}
            if case["architecture"] == "gpu" else {}),
         **({"observation_fields": set(case["expected"]["observations"])}
            if backend_name == "gpu-fpga" else {}),
         # Solo se pasa cuando el caso lo pide: asi un caso normal no paga las
-        # lecturas de registros ni el volcado del frame. `run_until_swap` solo
-        # significa algo donde hay HALT_AT, y la GPU no lo tiene -- ver
-        # VideoDevice en minigpu_sim.py-, pero llega igual y el backend de GPU
-        # lo rechaza, en vez de aceptarlo y no pararse.
+        # lecturas de registros ni el volcado del frame. HALT_AT existe en los
+        # tres simuladores; el backend GPU FPGA sigue sin implementarlo.
         **({"video": {
             "run_until_swap": (case["run_until"] or {}).get("swap"),
             "capture_frame": case["expected"]["frame"] is not None,
