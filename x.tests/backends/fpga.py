@@ -11,6 +11,7 @@ from pathlib import Path
 from types import ModuleType
 
 from . import board
+from .video_layout import FB_BACK, FB_FRONT
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -90,10 +91,10 @@ DEFAULT_VERSION = "alu"
 # del protocolo.
 VIDEO_FB_FRONT = 0x8000_0000
 VIDEO_FB_BACK = 0x8000_0004
-# Los valores que `video_registers.v` pone al resetear la placa. El backend los
-# restaura antes de cada caso para que las ejecuciones sean independientes.
-FB_FRONT_RESET = 0x0100_0000
-FB_BACK_RESET = 0x0102_5800
+# Dónde pone el arnés el framebuffer: `FB_FRONT`/`FB_BACK`, importados arriba.
+# Ya NO es el valor de reset de la placa --que desde la fase 3.5 es cero en los
+# dos-- sino una dirección que elige el arnés, la misma que usan los dos
+# simuladores. Ver backends/video_layout.py.
 VIDEO_STATUS = 0x8000_000C
 VIDEO_SWAP_COUNT = 0x8000_0010
 VIDEO_HALT_AT = 0x8000_0014
@@ -291,14 +292,18 @@ class FpgaBackend:
                 # sabe cual fue. En las versiones sin `frame_capture` STATUS es
                 # de solo lectura y la escritura se ignora, que es inofensivo.
                 _write_register(client, VIDEO_STATUS, 1)
-                # Y devolver las bases a su sitio, por el mismo motivo: solo el
-                # reset de la placa las reinicia, asi que un caso que deje un
-                # numero IMPAR de intercambios se las pasa cruzadas al
-                # siguiente. Sin esto, `video-registers` falla una de cada dos
-                # veces segun lo que corriera antes, y qué buffer es el frontal
-                # depende del caso anterior en vez del propio.
-                _write_register(client, VIDEO_FB_FRONT, FB_FRONT_RESET)
-                _write_register(client, VIDEO_FB_BACK, FB_BACK_RESET)
+                # Y poner las bases donde el arnes las quiere. Hacen falta dos
+                # cosas a la vez. Una, que exista un framebuffer: desde la fase
+                # 3.5 el reset deja las dos bases a cero, asi que un caso que
+                # dibuje donde le digan --`band` y `bounce` leen FB_BACK--
+                # dibujaria sobre el propio programa. Y dos, que sea el MISMO
+                # sitio en cada ejecucion: solo el reset de la placa las
+                # reinicia, asi que un caso que deje un numero IMPAR de
+                # intercambios se las pasaria cruzadas al siguiente, y
+                # `video-registers` fallaria una de cada dos veces segun lo que
+                # corriera antes.
+                _write_register(client, VIDEO_FB_FRONT, FB_FRONT)
+                _write_register(client, VIDEO_FB_BACK, FB_BACK)
                 # Y encender el scanout, porque tras el reset el modo es
                 # PATTERN. No es cosmetica: en PATTERN el barrido NO lee la
                 # memoria, asi que no puede haber underflow y un

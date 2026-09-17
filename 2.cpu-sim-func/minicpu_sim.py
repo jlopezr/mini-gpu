@@ -157,7 +157,15 @@ class VideoDevice:
     MODE_PATTERN = 1
     MODE_SCANOUT = 2
 
-    def __init__(self, fb_front: int = 0x0100_0000, fb_back: int = 0x0102_5800,
+    # Las dos bases arrancan a cero, igual que `video_registers.v` desde la fase
+    # 3.5. Cero no es una dirección útil --es el principio de la memoria, donde
+    # está el propio programa-- y eso es justamente lo que se quiere modelar:
+    # el framebuffer es una decisión del programa, no algo que herede del
+    # encendido. Quien quiera dibujar escribe FB_FRONT y FB_BACK.
+    #
+    # Poner aquí la dirección cómoda sería peor que no modelarlo: un programa
+    # que la heredase pasaría en el simulador y fallaría en la placa.
+    def __init__(self, fb_front: int = 0, fb_back: int = 0,
                  frame_instructions: int = 1000):
         self.fb_front = fb_front
         self.fb_back = fb_back

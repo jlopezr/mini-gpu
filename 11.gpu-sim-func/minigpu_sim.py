@@ -237,7 +237,11 @@ class VideoDevice:
     # Las bases se alinean a 16 bytes, que es la ráfaga del scanout.
     BASE_ALIGN = 0xFFFF_FFF0
 
-    def __init__(self, fb_front: int = 0x0100_0000, fb_back: int = 0x0102_5800,
+    # Las dos bases arrancan a cero, igual que en la MiniCPU y por la misma
+    # razón: el framebuffer es una decisión del programa, no algo que herede del
+    # encendido. Los kernels de la 22 ya escriben FB_FRONT, FB_BACK y
+    # VIDEO_CTRL ellos mismos, así que aquí no cambia nada en la práctica.
+    def __init__(self, fb_front: int = 0, fb_back: int = 0,
                  frame_instructions: int = 1000):
         self.fb_front = fb_front & self.BASE_ALIGN
         self.fb_back = fb_back & self.BASE_ALIGN

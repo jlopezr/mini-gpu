@@ -85,9 +85,32 @@
 // en el dominio de sistema, sin cruces adicionales. Sirve para esperar a un
 // frame sin sondear un nivel, y para detectar frames perdidos.
 
+// ---------------------------------------------------------------------------
+// Por que las bases arrancan en cero
+// ---------------------------------------------------------------------------
+//
+// Hasta la unificacion valian 0x01000000 y 0x01025800, y la razon era que un
+// programa que dibujara ahi funcionaba sin configurar nada. Esa ventaja ya no
+// existe: desde que el modo de reset es PATTERN, un programa que quiera que se
+// vea lo que dibuja tiene que escribir VIDEO_CTRL de todas formas, y quien
+// escribe un registro puede escribir tres.
+//
+// A cambio, cablearlas tenia dos costes. Uno es que 0x01000000 no es una
+// direccion valida en todos los mapas --en la 12, con 128 KiB de EBR, cae
+// fuera--, asi que el valor por defecto era correcto solo por coincidencia. El
+// otro es que mapa-de-memoria.md dice que esas bases "no son reservas
+// impuestas a todos los programas", y cableadas en el reset si lo eran.
+//
+// Cero no es una direccion util --es el principio de la memoria, donde esta el
+// propio programa--, y eso es deliberado: no pretende funcionar sin que nadie
+// la escriba. El programa elige donde quiere su framebuffer y lo dice.
+//
+// Los parametros se quedan: los bancos de pruebas los usan para poner los
+// buffers donde les conviene sin depender del valor de encendido.
+
 module video_registers #(
-    parameter [31:0] FB_FRONT_RESET = 32'h0100_0000,
-    parameter [31:0] FB_BACK_RESET  = 32'h0102_5800  // 320*240*2 bytes despues
+    parameter [31:0] FB_FRONT_RESET = 32'h0000_0000,
+    parameter [31:0] FB_BACK_RESET  = 32'h0000_0000
 ) (
     input wire clk,
     input wire reset,

@@ -366,8 +366,14 @@ class CapabilitiesTest(unittest.TestCase):
         cambia es cuantas vueltas da el bucle de espera.
         """
         modulo = _cargar_simulador()
+        # Las bases se dan aqui, y no se heredan del encendido: desde la fase
+        # 3.5 el dispositivo arranca con las dos a cero --igual que el RTL-- y
+        # con ceros esta prueba no distinguiria un intercambio de no hacer
+        # nada. Los valores son los que usa el arnes, ver video_layout.py.
+        FRENTE, FONDO = 0x0100_0000, 0x0102_5800
         for periodo in (1, 7, 1000):
-            video = modulo.VideoDevice(frame_instructions=periodo)
+            video = modulo.VideoDevice(fb_front=FRENTE, fb_back=FONDO,
+                                       frame_instructions=periodo)
             frentes = []
             for _ in range(4):
                 video.write(video.SWAP, 1)
@@ -381,7 +387,7 @@ class CapabilitiesTest(unittest.TestCase):
             # La secuencia de buffers visibles es la misma con cualquier periodo.
             self.assertEqual(
                 frentes,
-                [0x0102_5800, 0x0100_0000, 0x0102_5800, 0x0100_0000],
+                [FONDO, FRENTE, FONDO, FRENTE],
                 f"periodo {periodo}")
 
     def test_run_until_exige_frame_capture(self):

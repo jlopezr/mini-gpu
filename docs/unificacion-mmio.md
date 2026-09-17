@@ -491,14 +491,14 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
       y en la 21 además drena el búfer de escrituras, así que el programa
       perturba su propia medida. Se mide por deltas y se asume el sesgo; la GPU
       ya vive con eso.
-- [ ] **Retirar `GET_CYCLES` (`0x36`) y `GET_INSTRUCTIONS` (`0x37`).** Con los
+- [x] **Retirar `GET_CYCLES` (`0x36`) y `GET_INSTRUCTIONS` (`0x37`).** Con los
       contadores en MMIO se quedan sin razón de ser, y con ellos desaparece el
       juego «+contadores» entero: de tres juegos de comandos (12, 14 y 16) se
       pasa a dos, y ninguno es ya «el que tiene contadores», porque los contadores
       pasan a ser un dispositivo como los demás. Es el objetivo de la fase 5
       alcanzado por el camino de simplificar el bus en vez de por el de renumerar
       versiones.
-- [ ] **Unificar las bases de reset en `0` / `0`.** Arrancar sin scanout elimina
+- [x] **Unificar las bases de reset en `0` / `0`.** Arrancar sin scanout elimina
       la única ventaja del valor cableado —que un programa funcionase sin
       configurar nada—, porque ahora tiene que escribir `VIDEO_CTRL` de todas
       formas. Y `0x01000000` no es válido en todos los mapas: en la 12, con
@@ -525,6 +525,40 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
       El simulador ya usa los offsets del contrato (`FB_FRONT=0x00` …
       `HALT_AT=0x14`), así que ahí solo hay que tocar los valores por defecto y
       añadir `VIDEO_CTRL`.
+
+      **Cómo quedó, que no fue exactamente así.** El reparto en dos grupos era
+      correcto, pero la frontera cayó en otro sitio:
+
+      - El **valor de reset** es `0`/`0` en los cuatro `video_registers.v` y en
+        los **dos** `VideoDevice` —el de CPU y el de GPU, que no estaba en la
+        lista porque cuando se escribió no existía—. Los testbenches **no**
+        cambian: ya pasaban las bases por parámetro, que es justamente para lo
+        que están.
+      - La constante de `x.tests/backends/fpga.py` **no era un valor de reset**
+        aunque se llamara así. Es la dirección que el arnés *elige* para los
+        casos, y hace falta: `band` y `bounce` leen `FB_BACK` y dibujan donde
+        les digan, así que con cero dibujarían sobre el propio programa. Vive
+        ahora en [`x.tests/backends/video_layout.py`](../x.tests/backends/video_layout.py),
+        una vez, y la usan los tres backends que corren vídeo. Tenía que salir
+        de `fpga.py` porque `test_differential` compara el framebuffer del
+        simulador contra el de la placa byte a byte: si las copias se
+        separasen, fallaría por una diferencia que no está en lo que se prueba.
+      - Las **29 demos** escriben ahora sus dos bases, además del `VIDEO_CTRL`
+        que ya escribían desde el punto anterior.
+
+      Dos cosas que saltaron solas, y son la razón de hacerlo con pruebas
+      delante: `cpu_serial_tb` de la 19 y la 21 leía `FB_FRONT` esperando
+      `0x01` en el byte alto —heredaba el reset—, y con cero la comprobación no
+      habría distinguido «el decodificador me manda al vídeo» de «nadie
+      responde». Ahora escribe la base antes de releerla, que prueba el camino
+      en los dos sentidos. Y `test_el_reloj_de_frames_es_sintetico_pero_coherente`
+      comprobaba la secuencia de buffers visibles contra las direcciones
+      cableadas: con ceros habría pasado sin distinguir un intercambio de no
+      hacer nada.
+
+      Lo que impide que las copias se separen otra vez es
+      `BasesDeFramebufferTest` en `x.tests/test_monitor_port.py`, que lee el
+      parámetro de los cuatro RTL y construye los dos `VideoDevice`.
 - [x] **Estado de reset: `PATTERN`.** No hacía falta decidirlo: ya está resuelto
       en [`22.fpga-gpu-bl8/video-scanout.md`](../22.fpga-gpu-bl8/video-scanout.md),
       sección «Valor de reset: `PATTERN`, en todos los cores, sin parámetro»,

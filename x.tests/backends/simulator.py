@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from . import video_layout
+
 
 VERSIONS = {
     "current": {
@@ -137,6 +139,12 @@ class SimulatorBackend:
                 raise RuntimeError(
                     f"el simulador {self.version!r} no tiene VideoDevice")
             dispositivo = self.video_class()
+            # Poner el framebuffer donde el arnés lo quiere, igual que hace el
+            # backend de placa. El dispositivo arranca con las bases a cero
+            # --como el hardware-- y hay casos que dibujan donde les digan.
+            # Ver backends/video_layout.py.
+            dispositivo.write(dispositivo.FB_FRONT, video_layout.FB_FRONT)
+            dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
             swap = video.get("run_until_swap")
             if swap:
                 # Por `write`, no asignando el atributo: armar la alarma tiene

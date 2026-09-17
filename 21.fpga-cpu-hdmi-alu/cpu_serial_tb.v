@@ -467,6 +467,12 @@ module cpu_serial_tb;
     // monitor lee FB_FRONT por la misma ventana que usa la CPU para el serie,
     // y el decodificador tiene que mandar cada uno a su sitio.
     // -----------------------------------------------------------------------
+    // La base se ESCRIBE antes de leerla. Antes se leia el valor de reset, que
+    // valia 0x01000000; desde que el reset deja las dos bases a cero, leer cero
+    // no distinguiria "el decodificador me manda al video" de "nadie responde y
+    // el bus lee cero". Escribir y releer prueba el camino en los dos sentidos.
+    load_word(32'h8000_0000, 32'h0100_0000);
+
     base = received_count;
     wait (!monitor_busy && tx_ready);
     send_byte(8'h11);                          // READ_BYTE

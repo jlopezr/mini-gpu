@@ -64,6 +64,17 @@
 start:
     MOVHI R2, 0x8000           ; registros de video en 0x80000000
 
+    ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
+    ; cero --el framebuffer es una decision del programa, no una reserva
+    ; que el hardware impone-- asi que heredarlas seria dibujar sobre el
+    ; propio programa. La direccion es la de siempre; lo que cambia es que
+    ; ahora hay que escribirla.
+    MOVHI R30, 0x0100
+    STORE R30, R2, 0          ; FB_FRONT
+    MOVHI R30, 0x0102
+    ORI   R30, R30, 0x5800
+    STORE R30, R2, 4          ; FB_BACK, un frame mas arriba
+
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir

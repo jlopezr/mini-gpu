@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from . import video_layout
 from .simulator import _load_module
 
 VERSIONS = {
@@ -99,6 +100,11 @@ class GpuBackend:
                     "run_until.swap necesita HALT_AT, que la GPU no tiene: "
                     "sus kernels terminan con HALT")
             dispositivo = video_class()
+            # Igual que en los otros dos backends: el dispositivo arranca con
+            # las bases a cero, como el hardware, y es el arnes quien elige
+            # donde vive el framebuffer. Ver backends/video_layout.py.
+            dispositivo.write(dispositivo.FB_FRONT, video_layout.FB_FRONT)
+            dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
         size = self.module.config_warp_size(warp_config)
         gpu = self.module.System(warp_size=size, video=dispositivo,
                                  **(simulator_options or {}))

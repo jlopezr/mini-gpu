@@ -401,5 +401,72 @@ class MonitorRegionsTest(unittest.TestCase):
                     self.assertEqual(otros, valores[0])
 
 
+class BasesDeFramebufferTest(unittest.TestCase):
+    """Las bases de framebuffer arrancan a cero, en las TRES copias del dato.
+
+    Hasta la fase 3.5 el reset dejaba `0x01000000` y `0x01025800` cableados. Se
+    quitaron porque la unica ventaja --que un programa dibujara sin configurar
+    nada-- desaparecio al arrancar en PATTERN: quien quiera que se vea lo que
+    dibuja tiene que escribir VIDEO_CTRL de todas formas. Y `0x01000000` no es
+    valida en todos los mapas: en la 12, con 128 KiB de EBR, cae fuera.
+
+    El dato vive en tres sitios independientes --el RTL, el simulador funcional
+    de CPU y el de GPU-- y el riesgo es moverlos por separado: si un simulador
+    regalase una base que el hardware no da, un programa que la heredase
+    pasaria en simulacion y fallaria en la placa. El fallo apareceria como un
+    framebuffer en la direccion cero, o sea el programa dibujandose encima.
+    Esto es lo que impide que se separen.
+
+    La direccion que elige el ARNES para los casos es otra cosa y sigue viva,
+    en `backends/video_layout.py`: ahi es una decision de las pruebas, no un
+    valor de encendido del hardware.
+    """
+
+    PARAMETRO = re.compile(
+        r"parameter\s*\[31:0\]\s*(FB_(?:FRONT|BACK)_RESET)\s*=\s*32'h([0-9a-fA-F_]+)")
+
+    def test_el_rtl_resetea_las_bases_a_cero(self):
+        for name in CPU_CON_MMIO:
+            ruta = ROOT / name / "video_registers.v"
+            encontrados = self.PARAMETRO.findall(ruta.read_text(encoding="utf8"))
+            with self.subTest(prototype=name):
+                self.assertEqual(len(encontrados), 2, f"{name}: no veo los dos parametros")
+                for parametro, digits in encontrados:
+                    self.assertEqual(int(digits.replace("_", ""), 16), 0,
+                                     f"{name}: {parametro} no es cero")
+
+    def test_los_simuladores_arrancan_igual_que_el_rtl(self):
+        import inspect
+
+        for carpeta, modulo in (("2.cpu-sim-func", "minicpu_sim"),
+                                ("11.gpu-sim-func", "minigpu_sim")):
+            cargado = load_simulator(ROOT / carpeta / f"{modulo}.py", modulo)
+            firma = inspect.signature(cargado.VideoDevice.__init__)
+            with self.subTest(simulador=carpeta):
+                self.assertEqual(firma.parameters["fb_front"].default, 0)
+                self.assertEqual(firma.parameters["fb_back"].default, 0)
+                # Y comprobado construyendolo, no solo leyendo la firma: un
+                # `__init__` que ignorase el argumento pasaria lo de arriba.
+                dispositivo = cargado.VideoDevice()
+                self.assertEqual(dispositivo.fb_front, 0)
+                self.assertEqual(dispositivo.fb_back, 0)
+
+
+def load_simulator(path: Path, name: str):
+    # `minigpu_sim` importa `gpu_trace` por nombre, asi que su carpeta tiene que
+    # estar en el camino antes de cargarlo.
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    interno = f"{name}_para_bases"
+    spec = importlib.util.spec_from_file_location(interno, path)
+    module = importlib.util.module_from_spec(spec)
+    # Registrarlo ANTES de ejecutarlo. `@dataclass` busca el modulo de la clase
+    # en `sys.modules` mientras la procesa, y si no esta revienta con un
+    # AttributeError sobre None que no dice nada del problema real.
+    sys.modules[interno] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 if __name__ == "__main__":
     unittest.main()
