@@ -476,6 +476,34 @@ module cpu_tb;
     if (!error || error_code !== 8'h01) $fatal(1, "Invalid opcode error mismatch");
     if (debug_pc !== 0) $fatal(1, "Invalid opcode PC mismatch");
 
+    // SSY y BAR se retiran sin hacer nada, para que el MISMO binario corra en
+    // CPU y en GPU. En una maquina de un hilo no hay divergencia que reconverger
+    // ni nadie con quien sincronizar; en la GPU si cuentan, y un salto
+    // divergente sin SSY delante para el SM con ERROR_SIMT.
+    instruction_memory[0] = 32'hc400_0002;  // SSY fin
+    instruction_memory[1] = 32'hc800_0000;  // BAR
+    instruction_memory[2] = 32'h4020_0007;  // MOVI R1, 7
+    instruction_memory[3] = 32'hfc00_0000;  // fin: HALT
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (error) $fatal(1, "SSY/BAR no deberian dar error en MiniCPU");
+    expect_register(5'd1, 32'h0000_0007);
+    if (debug_pc !== 32'h0000_0010) $fatal(1, "SSY/BAR final PC mismatch");
+
+    // Y el no-op es ESTRECHO: EXIT (0x33) sigue siendo opcode invalido.
+    instruction_memory[0] = 32'hcc00_0000;  // EXIT, opcode 0x33
+    reset_cpu();
+    pulse_run();
+    wait (!halted);
+    wait (halted);
+    @(posedge clk);
+    #1;
+    if (!error || error_code !== 8'h01) $fatal(1, "EXIT deberia seguir siendo opcode invalido");
+
     // MUL returns the low 32 bits, including negative operands and overflow.
     instruction_memory[0] = 32'h4020_fffe;  // MOVI R1, -2
     instruction_memory[1] = 32'h4040_0003;  // MOVI R2, 3

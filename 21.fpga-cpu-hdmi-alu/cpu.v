@@ -119,6 +119,14 @@ module cpu (
   localparam [5:0] OPCODE_JR = 6'h2e;
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
+  // SSY y BAR existen aqui para que el MISMO binario corra en CPU y en GPU.
+  // En una maquina de un solo hilo no significan nada --no hay divergencia que
+  // reconverger ni nadie con quien sincronizar-- asi que se retiran como NOP.
+  // No se pueden quitar del fuente compartido: en la GPU un salto divergente
+  // sin SSY delante para el SM con ERROR_SIMT. GETTID sigue el mismo criterio,
+  // devolviendo cero. Ver 1.isa/isa.md.
+  localparam [5:0] OPCODE_SSY = 6'h31;
+  localparam [5:0] OPCODE_BAR = 6'h32;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
@@ -474,7 +482,7 @@ module cpu (
   always @* begin
     instruction_encoding_valid = 1'b1;
     case (opcode)
-      OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
+      OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT, OPCODE_BAR:
         instruction_encoding_valid = instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
       OPCODE_MUL, OPCODE_MULHI, OPCODE_DIV, OPCODE_DIVU, OPCODE_REM,
@@ -696,6 +704,11 @@ module cpu (
             state <= STATE_HALTED;
           end else case (opcode)
             OPCODE_NOP: begin
+              state <= STATE_RETIRE;
+            end
+
+            // No-op en una maquina de un hilo; ver OPCODE_SSY arriba.
+            OPCODE_SSY, OPCODE_BAR: begin
               state <= STATE_RETIRE;
             end
 

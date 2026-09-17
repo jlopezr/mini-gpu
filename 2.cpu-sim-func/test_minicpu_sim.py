@@ -77,6 +77,33 @@ class MiniCpuNewInstructionsTest(unittest.TestCase):
         cpu = self.execute(instruction, {7: 0xFFFFFFFF})
         self.assertEqual(cpu.regs[7], 0)
 
+    def test_ssy_y_bar_son_no_op(self) -> None:
+        """Para que el MISMO binario corra en MiniCPU y en MiniGPU.
+
+        En una maquina de un solo hilo no hay divergencia que reconverger ni
+        nadie con quien sincronizar. En la GPU si cuentan --un salto divergente
+        sin SSY delante para el SM con ERROR_SIMT-- asi que no se pueden quitar
+        del fuente compartido.
+        """
+        for nombre, instruccion in (("SSY", 0x31 << 26 | 2), ("BAR", 0x32 << 26)):
+            with self.subTest(instruccion=nombre):
+                cpu = self.execute(instruccion, {7: 0x1234})
+                self.assertFalse(cpu.error, f"{nombre} no deberia dar error")
+                self.assertEqual(cpu.regs[7], 0x1234, "no toca registros")
+                self.assertEqual(cpu.pc, 4, "avanza una instruccion, no salta")
+
+    def test_el_no_op_es_estrecho(self) -> None:
+        """EXIT y el resto de opcodes de GPU siguen siendo invalidos.
+
+        Aceptar SSY y BAR no es abrir la mano: son los dos unicos con traduccion
+        trivial a una maquina de un hilo.
+        """
+        for opcode in (0x33, 0x34, 0x3D):
+            with self.subTest(opcode=hex(opcode)):
+                cpu = self.execute(opcode << 26)
+                self.assertTrue(cpu.error, f"{opcode:#x} deberia ser invalido")
+                self.assertEqual(cpu.error_code, 0x01)
+
 
 class SubwordAccessTest(unittest.TestCase):
     """Accesos de 8 y 16 bits: opcodes 0x18..0x1D."""

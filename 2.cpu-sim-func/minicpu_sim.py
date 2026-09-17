@@ -50,7 +50,7 @@ ERROR_INVALID_ENCODING = 0x05
 
 def valid_encoding(instr: int, opcode: int) -> bool:
     """Comprueba los campos reservados de instrucciones conocidas."""
-    if opcode in {0x00, 0x3E, 0x3F}:  # NOP, TRAP, HALT
+    if opcode in {0x00, 0x32, 0x3E, 0x3F}:  # NOP, BAR, TRAP, HALT
         return (instr & 0x03FFFFFF) == 0
     if opcode in {0x07, 0x08, 0x09}:  # SHL/SHR/SAR
         # El bit 10 es significativo: dice que la cantidad es inmediata
@@ -754,6 +754,14 @@ class CPU:
             rd = (instr >> 21) & 0x1F
             # La MiniCPU es escalar; el ID solo variará en la futura MiniGPU.
             self.set_register(rd, 0)
+
+        elif opcode in (0x31, 0x32):  # SSY, BAR
+            # Existen para que el MISMO binario corra en CPU y en GPU. En una
+            # máquina de un solo hilo no significan nada: no hay divergencia que
+            # reconverger ni nadie con quien sincronizar. No se pueden quitar del
+            # fuente compartido porque en la GPU un salto divergente sin SSY
+            # delante para el SM con ERROR_SIMT. Mismo criterio que GETTID.
+            pass
 
         elif opcode == 0x3F:  # HALT
             self.halted = True

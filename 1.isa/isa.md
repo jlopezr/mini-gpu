@@ -350,9 +350,9 @@ son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
 
 |      Opcode | Mnemónico | Operandos | Estado                               |
 |------------:|-----------|-----------|--------------------------------------|
-|      `0x30` | `GETTID`  | `Rd`      | Implementada en MiniCPU y MiniGPU    |
-|      `0x31` | `SSY`     | `label`   | Implementada en MiniGPU; B-Type      |
-|      `0x32` | `BAR`     | —         | Implementada en MiniGPU              |
+|      `0x30` | `GETTID`  | `Rd`      | MiniGPU; en MiniCPU devuelve cero    |
+|      `0x31` | `SSY`     | `label`   | MiniGPU; en MiniCPU no-op. B-Type    |
+|      `0x32` | `BAR`     | —         | MiniGPU; en MiniCPU no-op            |
 |      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
 | `0x34–0x3D` | —         | —         | Reservadas para GPU                  |
 |      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error |
