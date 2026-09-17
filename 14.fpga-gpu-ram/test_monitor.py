@@ -1,5 +1,8 @@
 import unittest
-from monitor import MonitorClient, MonitorError, CpuStatus, format_registers, validate_transfer
+from monitor import (
+    MonitorClient, MonitorError, CpuStatus, format_registers, validate_transfer,
+    WARP_CONFIG_BASE,
+)
 
 
 class RecordingClient(MonitorClient):
@@ -32,7 +35,7 @@ class LaunchTest(unittest.TestCase):
         writes = {entry[1]: int.from_bytes(entry[2], 'little') for entry in client.calls if entry[0] == 'write'}
         self.assertEqual(len(writes), 24)
         for w in range(8):
-            base = 0x80000000 + w * 16
+            base = WARP_CONFIG_BASE + w * 16
             self.assertEqual(writes[base], 64 if w == 3 else 0)
             self.assertEqual(writes[base + 4], 0x55 if w == 3 else 0)
             self.assertEqual(writes[base + 8], 7 if w == 3 else 0)
@@ -41,7 +44,7 @@ class LaunchTest(unittest.TestCase):
     def test_launch_at_final_sdram_word(self):
         client = RecordingClient()
         client.configure_warps({'warps': [dict(id=0, pc=0x01fffffc)]})
-        self.assertIn(('write', 0x80000000, bytes.fromhex('fcffff01')), client.calls)
+        self.assertIn(('write', WARP_CONFIG_BASE, bytes.fromhex('fcffff01')), client.calls)
 
     def test_invalid_launch_never_touches_hardware(self):
         for config in [
@@ -70,9 +73,9 @@ class LaunchTest(unittest.TestCase):
 
     def test_transfer_boundaries(self):
         validate_transfer(0,33554432)
-        validate_transfer(0x80000000,128)
+        validate_transfer(0x80001000,128)
         validate_transfer(0x80000100,20)
-        for address,size in [(33554431,2),(0x02000000,4),(0x8000007f,2),(0,0)]:
+        for address,size in [(33554431,2),(0x02000000,4),(0x8000107f,2),(0x80000000,4),(0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 
     def test_read_complete_lane_register_file(self):

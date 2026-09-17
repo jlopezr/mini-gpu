@@ -27,7 +27,9 @@ BRAM, igual que 1.5 y 1.6 separan las dos revisiones de CPU.
 Código, LOAD/STORE y monitor comparten `0x00000000–0x01ffffff`.
 Las palabras son de 32 bits little-endian, alineadas a cuatro bytes;
 la última comienza en `0x01fffffc`. El monitor conserva sus accesos por byte
-y las ventanas de configuración/depuración de 12 en `0x80000000` y `0x80000100`.
+y las ventanas de 12: depuración SIMT en `0x80000100` y configuración de warps
+en `0x80001000`, la segunda página, exclusiva de la GPU (ver
+[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6).
 Los registros de la GPU siguen usando EBR; se sustituye la RAM de código/datos.
 
 ## Integración

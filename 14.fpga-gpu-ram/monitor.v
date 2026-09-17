@@ -152,8 +152,8 @@ module monitor (
       block_range_valid =
           ({1'b0, start_address} < 33'h0_0200_0000 &&
            end_address <= 33'h0_0200_0000) ||
-          ({1'b0, start_address} >= 33'h0_8000_0000 &&
-           end_address <= 33'h0_8000_0080) ||
+          ({1'b0, start_address} >= 33'h0_8000_1000 &&
+           end_address <= 33'h0_8000_1080) ||
           ({1'b0, start_address} >= 33'h0_8000_0100 &&
            end_address <= 33'h0_8000_0118);
     end

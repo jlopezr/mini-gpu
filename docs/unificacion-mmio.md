@@ -112,13 +112,17 @@ constante**, no hay que volver a tocar el backend.
 12, 14, 17 y 22 comparten decodificador, y los `monitor.v` de 14 y 17 son byte a
 byte idénticos entre sí. El parche de la fase 1 se replica casi literal.
 
-- [ ] Aplicar el mismo movimiento en
+- [x] Aplicar el mismo movimiento en
       [`14.fpga-gpu-ram/gpu_system.v`](../14.fpga-gpu-ram/gpu_system.v) y
       [`17.fpga-gpu-ram-v2/gpu_system.v`](../17.fpga-gpu-ram-v2/gpu_system.v),
-      con sus `monitor.v` y `monitor.py`.
-- [ ] Sintetizar **las tres en paralelo** (`Start-Job` en una sola llamada;
-      yosys y nextpnr son monohilo).
-- [ ] Comprobar que 14 y 17 siguen respondiendo idénticas.
+      con sus `monitor.v`, `monitor.py`, testbenches, `test_monitor.py` y README.
+      El parche de la 12 valió literal: los cuatro sitios eran los mismos, en las
+      mismas cuatro formas.
+- [x] Regresión RTL de **las tres en paralelo** (`Start-Job` en una sola
+      llamada). Las tres en verde a la primera, y 176 tests Python.
+- [x] Comprobar que 14 y 17 siguen respondiendo idénticas: sus `gpu_system.v`
+      eran byte a byte iguales antes del parche y lo siguen siendo después.
+- [ ] Sintetizar y verificar en placa (pendiente junto con el de la fase 1).
 
 ## Fase 3 — La 22, donde está el retorno
 

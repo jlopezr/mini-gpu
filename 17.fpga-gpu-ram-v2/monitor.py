@@ -21,11 +21,11 @@ ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
-# Todavia en 0x80000000: esta carpeta no ha migrado aun a la segunda pagina.
-# Ver docs/unificacion-mmio.md.
-WARP_CONFIG_BASE = 0x8000_0000
+# Segunda pagina, exclusiva de la GPU: la primera queda para perifericos
+# compartidos con la CPU. Ver docs/mapa-de-memoria.md $6.
+WARP_CONFIG_BASE = 0x8000_1000
 MONITOR_REGIONS = (
-    (WARP_CONFIG_BASE, 0x8000_0080),
+    (WARP_CONFIG_BASE, 0x8000_1080),
     (0x8000_0100, 0x8000_0118),
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS

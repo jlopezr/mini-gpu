@@ -60,9 +60,9 @@ module gpu_system_tb;
             for(i=0;i<256;i=i+1) write_word(i*4,program_words[i]);
             for(i=0;i<512;i=i+1) write_word(4096+i*4,0);
             for(w=0;w<8;w=w+1) begin
-                write_word(32'h80000000+w*16,config_words[w*3]);
-                write_word(32'h80000004+w*16,config_words[w*3+1]);
-                write_word(32'h80000008+w*16,config_words[w*3+2]);
+                write_word(32'h80001000+w*16,config_words[w*3]);
+                write_word(32'h80001004+w*16,config_words[w*3+1]);
+                write_word(32'h80001008+w*16,config_words[w*3+2]);
             end
             @(negedge clk); run_request=1;
             @(negedge clk); run_request=0;
@@ -81,12 +81,12 @@ module gpu_system_tb;
                 end
                 read_word(32'h80000114);
                 if(word_result!==expected_counts[w]) $fatal(1,"case %0d warp %0d retired count %0d expected %0d",test_id,w,word_result,expected_counts[w]);
-                read_word(32'h80000004+w*16);
+                read_word(32'h80001004+w*16);
                 if(word_result!=={16'b0,expected_state[w*3+2][7:0],expected_state[w*3+1][7:0]})
                     $fatal(1,"case %0d warp %0d masks mismatch",test_id,w);
-                read_word(32'h8000000c+w*16);
+                read_word(32'h8000100c+w*16);
                 if(word_result!==0) $fatal(1,"case %0d warp %0d control not cleared: %h",test_id,w,word_result);
-                read_word(32'h80000000+w*16);
+                read_word(32'h80001000+w*16);
                 if(word_result!==expected_state[w*3]) $fatal(1,"case %d warp %d PC got %h expected %h",test_id,w,word_result,expected_state[w*3]);
             end
             for(i=0;i<512;i=i+1) begin
