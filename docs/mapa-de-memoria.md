@@ -474,8 +474,27 @@ bloque fijo de identificación en `0x80000F00`, elegido porque en el
 comportamiento actual de CPU **leer cero ahí ya significa "prototipo antiguo"**,
 sin necesidad de que los bitstreams existentes cambien.
 
-Quedan por definir sus campos: identificador de sistema, perfil de ISA, bitmap de
-dispositivos presentes y versión del contrato. No se asignan bits todavía.
+Son cuatro palabras:
+
+| Offset | Registro | Contenido |
+|---|---|---|
+| `+0x00` | `SYS_ID` | Magic `0x4D47` en 31:16, byte libre, **número de carpeta** en 7:0 |
+| `+0x04` | `CONTRACT` | Versión de este contrato de mapa de memoria |
+| `+0x08` | `DEV_BITMAP` | Un bit por dispositivo presente |
+| `+0x0C` | `ISA_PROFILE` | Perfil de ISA |
+
+`SYS_ID` es el número de la carpeta —`0x4D470016` en `22.fpga-gpu-bl8`— de modo
+que no hay ningún identificador que asignar ni registrar al añadir un prototipo,
+y no se puede duplicar porque lo impone el nombre del directorio. El magic evita
+que el valor 0 sea ambiguo entre «prototipo antiguo» y «prototipo 0». El byte
+libre se deja sin usar: CPU-vs-GPU ya se deriva del RTL y las capacidades son
+trabajo de `DEV_BITMAP` e `ISA_PROFILE`.
+
+La regla es **un prototipo con ventana MMIO expone el bloque**. Quedan fuera 6 y
+10, que hoy no tienen ninguna; darles el bloque es una decisión abierta. Los bits
+de `DEV_BITMAP` no están asignados todavía: van generados desde
+`tools/capabilities.json`, no escritos a mano. El orden y el coste por carpeta
+están en [`unificacion-mmio.md`](unificacion-mmio.md), fase 4.
 
 ### Unificar la política de dirección inexistente
 

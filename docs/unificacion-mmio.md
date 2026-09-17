@@ -215,35 +215,99 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
 ## Fase 4 — Descubrimiento en tiempo de ejecución
 
 Va **después** de fijar los slots: hasta aquí el bitmap describiría un mapa a
-punto de cambiar. Y arrastra una decisión previa que conviene tomar antes de
-escribir un registro.
+punto de cambiar. Se parte en dos porque el coste de las dos mitades no se
+parece: 4a son constantes escritas a mano y 4b necesita maquinaria nueva.
+
+El bloque vive en `0x80000F00` y son cuatro palabras:
+
+| Offset | Registro | Contenido | Fase |
+|---|---|---|---|
+| `+0x00` | `SYS_ID` | Magic + número de carpeta. Cero = prototipo antiguo | 4a |
+| `+0x04` | `CONTRACT` | Versión del contrato de mapa de memoria | 4a |
+| `+0x08` | `DEV_BITMAP` | Un bit por dispositivo presente | 4b |
+| `+0x0C` | `ISA_PROFILE` | Perfil de ISA | 4a |
+
+`CONTRACT` es **distinto** de la versión de monitor: el contrato de direcciones
+cambia por otras razones y a otro ritmo, y mezclarlos reproduce el lío de los
+diez números para cuatro juegos de comandos (§6.5).
+
+### Fase 4a — `SYS_ID`, `CONTRACT` e `ISA_PROFILE`
+
+Son constantes de solo lectura. Sin generador y sin registro central.
+
+**Formato de `SYS_ID`: el número de la carpeta, con magic en la parte alta.**
+
+```verilog
+SYS_ID = {16'h4D47, 8'd0, 8'd22};  // 0x4D470016 en 22.fpga-gpu-bl8
+//        magic      libre  carpeta
+```
+
+El número de carpeta ya existe, ya es único y ya lo resuelve
+`resolve_prototype`, así que no hay nada que registrar al añadir un prototipo
+—que es justo lo que `AGENTS.md` presume del repo— y no se puede olvidar ni
+duplicar porque lo impone el nombre del directorio.
+
+El magic no es adorno: sin él, el valor 0 sería ambiguo entre «prototipo
+antiguo» y «prototipo 0», y `0.mandelbrot` existe. Y el byte libre se queda
+**sin usar** a propósito: CPU-vs-GPU ya lo deriva `backend_from_rtl`, y las
+capacidades son trabajo de `DEV_BITMAP` e `ISA_PROFILE`. `SYS_ID` es identidad
+pura y así no se solapa con nadie.
+
+Límite conocido: identifica **el prototipo**, no **el bitstream**. Dos síntesis
+de la misma carpeta con parámetros distintos responden lo mismo, y `13.hdmi` no
+encaja (no es un prototipo, es una prueba multi-entorno). Para el caso que duele
+hoy —14, 17 y 22 respondiendo todas monitor 2.4 siendo hardware distinto— basta.
 
 - [ ] **Decidir la política de dirección inexistente.** Hoy CPU lee cero y GPU
-      levanta `bad`. El truco de compatibilidad de §6 —"leer cero en
-      `0x80000F00` ya significa prototipo antiguo"— solo funciona en CPU: en GPU
-      un binario que sondee el bloque no lee cero, revienta la transacción.
-      Recomendación: **unificar solo dentro del slot de identificación**
-      (`0x80000F00–0x80000FFF` lee cero en GPU) y mantener `bad` en el resto de
-      la página. Pasar la página entera a "lee cero" apagaría el diagnóstico que
-      hoy convierte un error de programa GPU en un error visible del host.
-- [ ] **Definir los campos** del bloque `0x80000F00`:
-
-      | Offset | Registro | Contenido |
-      |---|---|---|
-      | `+0x00` | `SYS_ID` | Magic + identificador de sistema. Cero = prototipo antiguo |
-      | `+0x04` | `CONTRACT` | Versión del contrato de mapa de memoria |
-      | `+0x08` | `DEV_BITMAP` | Un bit por dispositivo presente |
-      | `+0x0C` | `ISA_PROFILE` | Perfil de ISA |
-
-      Dos decisiones que importan: `SYS_ID` lleva **magic, no un contador**, o el
-      valor 0 queda ambiguo entre "prototipo antiguo" y "prototipo 0". Y
-      `CONTRACT` es **distinto** de la versión de monitor: el contrato de
-      direcciones cambia por otras razones y a otro ritmo, y mezclarlos
-      reproduce el lío de los diez números para cuatro juegos de comandos.
-- [ ] **Generar `DEV_BITMAP` desde `capabilities.json`** (fase 0), no a mano.
-- [ ] Implementarlo, empezando por 19/21 (que solo les falta esto para ser
-      conformes) y siguiendo por las cuatro GPU.
+      levanta `bad`. El truco de compatibilidad —"leer cero en `0x80000F00` ya
+      significa prototipo antiguo"— solo funciona donde una dirección vacía lee
+      cero. Recomendación: **unificar solo dentro del slot de identificación** y
+      mantener `bad` en el resto de la página, para no apagar el diagnóstico que
+      convierte un error de programa GPU en un error visible del host. Es lo
+      mismo que ya se hizo con `HALT_AT` en la 22 (fase 3).
+- [ ] Escribir `sysid.v`: cuatro constantes, ~25 líneas, igual para todos.
+- [ ] Engancharlo a cada decodificador:
+      - 19, 21: un `DEV_SYSID = 4'd15` en `mmio_decoder.v`, ~3 líneas.
+      - 12, 14, 17: una rama `sysid_region` en `gpu_system.v`, ~6 líneas.
+      - 22: lo mismo en **dos** decodificadores (`gpu_system.v` y
+        `gpu_system_bl8.v`).
+      - 16, 18: portar `mmio_decoder.v` y ensanchar el comparador del adaptador.
+        **Ensanchar la ventana abarata el prefijo** (de `address[31:5]`, 27 bits,
+        a `address[31:12]`, 20) y un dispositivo inexistente ya lee cero — el
+        propio `mmio_decoder.v` lo documenta. Sin esto, 16 y 18 no llegan a
+        `0x80000F00`: sus ventanas son de 16 y 32 bytes.
+      - 2, 11: un `SysIdDevice` en Python al lado de `VideoDevice`/`SerialDevice`.
+        Vale la pena: deja que un programa sepa que corre en simulador.
+- [ ] **Un test que recorra las carpetas con MMIO** y falle si a alguna le falta
+      el bloque o si su `SYS_ID` no coincide con el número de carpeta. Es lo que
+      hace que «obligatorio» signifique algo dentro de seis meses, y con el ID
+      derivado del nombre son cuatro líneas de Python.
+- [ ] Añadir a `AGENTS.md` que un prototipo con ventana MMIO expone el bloque.
 - [ ] Actualizar la tabla de conformidad de `mapa-de-memoria.md` §6.
+
+**Decisión abierta: 6 y 10.** No tienen ventana MMIO en absoluto, así que darles
+`SYS_ID` significa inventarles una entera para meter dentro cuatro constantes. A
+favor: son justo los que más falta hace distinguir, porque a la 10 le faltan
+`MUL`/`DIV` y eso no se detecta de ninguna otra forma en ejecución — un
+`ISA_PROFILE` ahí vale más que en la 21. En contra: son carpetas históricas y
+estables, y tocarlas por algo que nada consume todavía se arrepiente uno. Por eso
+la regla se escribe como **«un prototipo con ventana MMIO expone el bloque»**: no
+bloquea a los otros ocho.
+
+### Fase 4b — `DEV_BITMAP`
+
+- [ ] **Generarlo desde `capabilities.json`** (fase 0), no a mano: escrito a mano
+      en cada `monitor.v` sería una tercera gemela que mantener junto a la lista
+      blanca y `MONITOR_REGIONS`, justo lo que §6.5 quiere quitar.
+- [ ] Hace falta maquinaria que **no existe**: hay `.vh` generados, pero solo de
+      fixtures de simulación, y `generate-docs` solo toca Markdown. No hay
+      precedente de Verilog **sintetizable** generado ni de un test que compruebe
+      que lo generado está al día.
+- [ ] `capabilities.json` no tiene números de bit. Hay que añadirlos y
+      comprometerse a no reutilizarlos nunca.
+- [ ] Hacerlo **a la vez que la fase 5**: la unificación de los `monitor.v`
+      quiere derivar la lista blanca de la misma tabla. Por separado se construye
+      el generador dos veces.
 
 ## Fase 5 — Consecuencias sobre el monitor
 
