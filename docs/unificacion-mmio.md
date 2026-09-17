@@ -19,7 +19,7 @@ El último punto de la fase 0 —un caso de vídeo que corra en las dos familias
 el mismo binario— **también está cerrado**, y resultó arrastrar cuatro cosas que
 no estaban previstas: `architecture` como lista, la carpeta `cases-shared`, un
 `VideoDevice` para el simulador funcional de GPU (no lo tenía) y un
-`incompatibility` en el backend `gpu-simulator` (faltaba, y era un fallo: no
+`incompatibility` en el backend `gpusim` (faltaba, y era un fallo: no
 miraba el `requires` de los casos).
 
 **La fase 3.5 está cerrada en RTL, simuladores y pruebas**, en el orden que se
@@ -123,7 +123,7 @@ que son dos consumidores de la misma tabla.
 
 - [x] **Un caso de prueba de vídeo compartido entre familias.** Cerrado:
       [`x.tests/cases-shared/video/double-buffer`](../x.tests/cases-shared/video/double-buffer).
-      Pasa en `cpu-simulator` y en `gpu-simulator` con **el mismo binario**.
+      Pasa en `cpusim` y en `gpusim` con **el mismo binario**.
 
       Lo que hizo falta, que fue más de lo previsto:
 
@@ -145,7 +145,7 @@ que son dos consumidores de la misma tabla.
          del de la CPU, porque el hardware no es el mismo —alineación a 16
          bytes, `HALT_AT` que lee cero, `VIDEO_CTRL` que sólo tiene la GPU—.
          Los offsets sí coinciden, que es justamente lo que el caso comprueba.
-      5. **`incompatibility` en el backend `gpu-simulator`.** Faltaba, y era un
+      5. **`incompatibility` en el backend `gpusim`.** Faltaba, y era un
          fallo: era el único de los cuatro backends que no miraba el `requires`
          del caso, así que uno que pidiera un dispositivo ausente se ejecutaba
          igual y fallaba como si el programa estuviese mal, en vez de omitirse.
@@ -947,7 +947,7 @@ No es parte de la unificación, pero salió de ella: la suite se corre una vez p
 cada punto y el tiempo se nota. Queda aquí escrito para decidirlo con datos.
 
 **El techo es mucho más bajo que el número de cores.** Medido en
-`gpu-simulator`, 24 hilos disponibles:
+`gpusim`, 24 hilos disponibles:
 
     PASS gpu-mandelbrot          (89.1s)
     PASS gpu-mandelbrot-packed   (95.5s)

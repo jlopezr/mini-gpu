@@ -10,7 +10,7 @@ Para ejecutar únicamente este caso con el runner, pasa su `test.json` como
 argumento desde `x.tests`:
 
 ```powershell
-python run_tests.py cases-gpu/programs/mandelbrot/test.json --backend gpu-simulator
+python run_tests.py cases-gpu/programs/mandelbrot/test.json --backend gpusim
 ```
 
 Ensambla el programa en memoria, lanza los ocho warps, comprueba los 76 800
@@ -30,7 +30,7 @@ minutos: es un intérprete funcional Python, no una ejecución sobre hardware GP
 Para ejecutar solo la prueba de conformidad, sin exportar imagen ni usar Pillow:
 
 ```powershell
-.venv/Scripts/python.exe x.tests/run_tests.py x.tests/cases-gpu/programs/mandelbrot/test.json --backend gpu-simulator
+.venv/Scripts/python.exe x.tests/run_tests.py x.tests/cases-gpu/programs/mandelbrot/test.json --backend gpusim
 ```
 
 `test.json` se incluye también en el descubrimiento automático de casos GPU;

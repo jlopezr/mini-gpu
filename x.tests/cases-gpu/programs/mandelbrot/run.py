@@ -49,7 +49,7 @@ def main():
         max_instructions=case["max_instructions"], timeout_seconds=case["timeout_seconds"],
         warp_config=case["warp_config"],
     )
-    errors = compare_result(case, result, "gpu-simulator")
+    errors = compare_result(case, result, "gpusim")
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

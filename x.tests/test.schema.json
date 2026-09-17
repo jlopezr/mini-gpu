@@ -169,7 +169,7 @@
       ]
     },
     "simulator_options": {
-      "description": "Parámetros de construcción del simulador GPU. Requiere --backend gpu-simulator.",
+      "description": "Parámetros de construcción del simulador GPU. Requiere --backend gpusim.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

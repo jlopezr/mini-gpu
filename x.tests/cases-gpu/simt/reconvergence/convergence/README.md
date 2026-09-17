@@ -7,7 +7,7 @@ caminos se reúnen en `join`, incrementan su valor y escriben en `0x200`.
 Desde `x.tests`:
 
 ```powershell
-python run_tests.py cases-gpu/simt/reconvergence/convergence/test.json --backend gpu-simulator --trace --trace-detail --trace-file convergence.log
+python run_tests.py cases-gpu/simt/reconvergence/convergence/test.json --backend gpusim --trace --trace-detail --trace-file convergence.log
 ```
 
 El caso comprueba los ocho resultados de memoria, el valor final de `R1` y `R3`

@@ -56,12 +56,12 @@ class GpuRunnerTest(unittest.TestCase):
         cpu = load_case(ROOT / 'cases/basics/smoke/test.json')
         self.assertEqual(cpu['architecture'], 'cpu')
         self.assertEqual(self.case['architecture'], 'gpu')
-        validate_compatibility('gpu', ('gpu-simulator',))
-        validate_compatibility('cpu', ('cpu-simulator', 'cpu-fpga'))
+        validate_compatibility('gpu', ('gpusim',))
+        validate_compatibility('cpu', ('cpusim', 'cpu-fpga'))
         with self.assertRaises(ValueError):
-            validate_compatibility('cpu', ('gpu-simulator',))
+            validate_compatibility('cpu', ('gpusim',))
         with self.assertRaises(ValueError):
-            validate_compatibility('gpu', ('cpu-simulator', 'cpu-fpga'))
+            validate_compatibility('gpu', ('cpusim', 'cpu-fpga'))
         for raw in ({}, {'architecture': 'other'}, {'architecture': 'gpu'},
                     {'architecture': 'cpu', 'warp_config': 'warps.json'}):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
@@ -72,7 +72,7 @@ class GpuRunnerTest(unittest.TestCase):
     def test_mixed_explicit_selection_rejected_before_backend_construction(self):
         import run_tests as runner
         for backend, paths, constructor in (
-            ('gpu-simulator', [self.path, ROOT / 'cases/basics/smoke/test.json'], 'GpuBackend'),
+            ('gpusim', [self.path, ROOT / 'cases/basics/smoke/test.json'], 'GpuBackend'),
             ('cpu-fpga', [ROOT / 'cases/basics/smoke/test.json', self.path], 'FpgaBackend'),
         ):
             with self.subTest(backend=backend), patch(
@@ -84,16 +84,16 @@ class GpuRunnerTest(unittest.TestCase):
     def test_fault_diagnostics_detect_wrong_and_missing_fields(self):
         case = load_case(ROOT / 'cases-gpu/faults/division-by-zero/test.json')
         result = self.run_case(case)
-        self.assertEqual(compare_result(case, result, 'gpu-simulator'), [])
+        self.assertEqual(compare_result(case, result, 'gpusim'), [])
         for field, value in (('pc', 0), ('warp_id', 1), ('core_id', 2), ('address', 128)):
             with self.subTest(field=field):
                 broken = copy.deepcopy(result)
                 broken['observations'][f'fault.{field}'] = value
-                errors = compare_result(case, broken, 'gpu-simulator')
+                errors = compare_result(case, broken, 'gpusim')
                 self.assertEqual(len(errors), 1)
                 self.assertIn(f'fault.{field}', errors[0])
         del result['observations']['fault.address']
-        self.assertTrue(compare_result(case, result, 'gpu-simulator'))
+        self.assertTrue(compare_result(case, result, 'gpusim'))
 
     def test_fault_expected_format(self):
         from run_tests import gpu_expectations

@@ -1,6 +1,6 @@
 """El reparto de casos entre procesos, y las cuatro cosas que lo limitan.
 
-Paralelizar los casos de simulador baja `gpu-simulator` de 184,8 s a 96,2 s.
+Paralelizar los casos de simulador baja `gpusim` de 184,8 s a 96,2 s.
 El techo es bajo y conviene saberlo: dos casos --`gpu-mandelbrot` y
 `gpu-mandelbrot-packed`, 89 y 95 s-- son el 99,9 % del tiempo, así que ningún
 reparto baja del más lento. Es un 1,9x, no un 24x.
@@ -76,6 +76,49 @@ class ResolveJobsTest(unittest.TestCase):
             run_tests.resolve_jobs(6, simuladores=1, casos=50, args=opciones()), 6)
 
 
+class NombresDeBackendTest(unittest.TestCase):
+    """Los nombres se declaran, no se deducen del sufijo.
+
+    Los backends de simulador se llamaban `cpu-simulator` y `gpu-simulator`, y
+    había código que los reconocía por terminar en «simulator». Al renombrarlos
+    a `cpusim`/`gpusim` --para que coincidan con `tools/cpusim` y
+    `tools/gpusim`, que ya existían-- ese código dejó de encontrarlos **sin
+    decir nada**: el reparto en procesos se apagó, y un backend que no se
+    construye no ejecuta nada y la suite informa «N caso(s), 0 fallo(s)».
+
+    Un verde que no ha probado nada es peor que un rojo, así que esto fija que
+    el conjunto declarado y las definiciones no se separen.
+    """
+
+    def test_todo_simulador_declarado_existe_como_backend(self):
+        self.assertTrue(
+            run_tests.SIMULADORES <= set(run_tests.BACKEND_DEFINITIONS))
+
+    def test_los_tres_simuladores_estan(self):
+        """Los mismos tres que tienen lanzador en tools/."""
+        self.assertEqual(run_tests.SIMULADORES,
+                         {"cpusim", "gpusim", "gpusim-cycle"})
+        for nombre in ("cpusim", "gpusim", "gpusim-cycle"):
+            with self.subTest(backend=nombre):
+                self.assertTrue((ROOT.parent / "tools" / nombre).exists(),
+                                f"tools/{nombre} no existe")
+
+    def test_ningun_backend_se_queda_sin_construir(self):
+        """El fallo concreto: `gpusim-cycle` se añadió a las definiciones y su
+        `if` de construcción se olvidó, así que corría con cero backends."""
+        for nombre in run_tests.SIMULADORES:
+            with self.subTest(backend=nombre):
+                definicion = run_tests.BACKEND_DEFINITIONS[nombre]
+                self.assertIn(definicion["default_version"],
+                              definicion["versions"],
+                              f"{nombre}: su versión por defecto no existe")
+
+    def test_el_modelo_de_ciclos_es_un_backend_y_no_una_version(self):
+        ciclos = run_tests.BACKEND_DEFINITIONS["gpusim-cycle"]
+        self.assertEqual(ciclos["default_version"], "cycle")
+        self.assertIn("gpusim-cycle", run_tests.SIMULADORES_GPU)
+
+
 class BackendArgumentsTest(unittest.TestCase):
     """Una sola lista de argumentos para los dos caminos.
 
@@ -98,19 +141,19 @@ class BackendArgumentsTest(unittest.TestCase):
         return base
 
     def test_el_serie_solo_va_a_los_backends_de_cpu(self):
-        cpu = run_tests.backend_arguments(self.caso(), "cpu-simulator", opciones())
+        cpu = run_tests.backend_arguments(self.caso(), "cpusim", opciones())
         self.assertIn("stdin", cpu)
         gpu = run_tests.backend_arguments(
-            self.caso(architecture="gpu"), "gpu-simulator", opciones())
+            self.caso(architecture="gpu"), "gpusim", opciones())
         self.assertNotIn("stdin", gpu)
         self.assertIn("warp_config", gpu)
 
     def test_el_video_solo_se_pasa_si_el_caso_lo_pide(self):
         """Un caso normal no paga las lecturas de registros ni el frame."""
-        sin = run_tests.backend_arguments(self.caso(), "cpu-simulator", opciones())
+        sin = run_tests.backend_arguments(self.caso(), "cpusim", opciones())
         self.assertNotIn("video", sin)
         con = run_tests.backend_arguments(
-            self.caso(run_until={"swap": 2}), "cpu-simulator", opciones())
+            self.caso(run_until={"swap": 2}), "cpusim", opciones())
         self.assertEqual(con["video"]["run_until_swap"], 2)
 
 

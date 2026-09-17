@@ -11,7 +11,7 @@ un load mantiene su respuesta e `in_flight` hasta escribir el banco.
 .\tools\gpusim-cycle.ps1 25.gpu-sim-cycle-uarch/examples/load_store.asm `
   --report 25.gpu-sim-cycle-uarch/reports/load_store.json `
   --trace 25.gpu-sim-cycle-uarch/reports/load_store.jsonl --trace-cycles 100
-.\.venv\Scripts\python.exe x.tests/run_tests.py --backend gpu-simulator --version cycle x.tests/cases-gpu/memory
+.\.venv\Scripts\python.exe x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu/memory
 ```
 
 En Linux/macOS: `python tools/gpusim-cycle programa.asm`; el lanzador admite

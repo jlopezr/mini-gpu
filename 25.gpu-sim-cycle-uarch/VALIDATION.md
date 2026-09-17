@@ -21,7 +21,7 @@ comparaciones de programas; el tamaño no altera sus latencias.
   liberación de barrera durante división y retención de respuesta tras colisión.
 - Infraestructura existente: 9 tests de integración del runner GPU y 26 de
   capabilities pasan; el runner CLI también pasa los tres casos de memoria con
-  `--backend gpu-simulator --version cycle`.
+  `--backend gpusim --version cycle`.
 - CLI ejecutada con salida JSON y traza JSONL limitada sobre `simt_demo.asm`.
 
 ## Programas completos y reducidos

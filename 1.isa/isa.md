@@ -39,7 +39,7 @@ Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 | `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                  | —         |
 | `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                  | —         |
 | `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                 | Sí        |
-| `2.cpu-sim-func` / `cpu-simulator` | Sí               | Sí      | Sí             | Sí                 | Sí        |
+| `2.cpu-sim-func` / `cpusim` | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 Las declaraciones del runner están en
 [`backends/fpga.py`](../x.tests/backends/fpga.py) y

@@ -105,7 +105,7 @@ python run_tests.py --backend cpu-fpga --version hdmi --port COM3 \
 Los tres corren también en el simulador, sin placa:
 
 ```bash
-python run_tests.py --backend cpu-simulator cases/video/bounce/test.json
+python run_tests.py --backend cpusim cases/video/bounce/test.json
 ```
 
 Pero el simulador **no modela el tiempo**: allí `underflow` es siempre cero y el

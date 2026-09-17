@@ -22,4 +22,4 @@ PATH llena + destino == join       => permitido    (ssy-path-full-direct-join)
 | [ssy-path-full-direct-join](ssy-path-full-direct-join/) | `PATH` llena pero sin necesidad de push |
 
 Los cuatro últimos usan `simulator_options` para reducir la profundidad de las
-pilas, así que solo pueden ejecutarse con `--backend gpu-simulator`.
+pilas, así que solo pueden ejecutarse con `--backend gpusim`.

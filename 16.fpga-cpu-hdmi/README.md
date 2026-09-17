@@ -588,7 +588,7 @@ Pasan **12 de 12** casos.
 Hasta hace poco pasaban 11 de 12: fallaba `multiply`, porque esta CPU declaraba
 `MUL` y lo validaba, pero no tenía rama de ejecución. Caía en el `default` y
 respondía `ERROR_INVALID_OPCODE`. El simulador sí lo implementaba, así que el
-mismo caso pasaba con `--backend cpu-simulator` y fallaba en la FPGA.
+mismo caso pasaba con `--backend cpusim` y fallaba en la FPGA.
 
 Las tres instrucciones vienen de [`../6.fpga-cpu`](../6.fpga-cpu), que las tenía
 desde antes: `MUL` conserva los 32 bits bajos, `MULFX` es signed Q16.16 con

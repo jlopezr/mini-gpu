@@ -34,14 +34,14 @@ acuerdo sobre dónde va cada cosa.
 
 | Backend / versión | Carpeta | Memoria de programa y datos | MMIO | Monitor |
 |---|---|---|---|---|
-| `cpu-simulator / current` | `2.cpu-sim-func` | 32 MiB en el runner | Vídeo y serie opcionales según el caso | — |
+| `cpusim / current` | `2.cpu-sim-func` | 32 MiB en el runner | Vídeo y serie opcionales según el caso | — |
 | `cpu-fpga / ebr` | `6.fpga-cpu` | 32 KiB EBR continuos (dos bancos) | — | 1.16 |
 | `cpu-fpga / sdram` | `10.fpga-cpu-ram` | 32 MiB SDRAM | — | 1.17 |
 | `cpu-fpga / hdmi` | `16.fpga-cpu-hdmi` | 32 MiB SDRAM | Vídeo | 1.18 |
 | `cpu-fpga / bl8` | `18.fpga-cpu-hdmi-bl8` | 32 MiB SDRAM | Vídeo y captura de frames | 1.19 |
 | `cpu-fpga / subword` | `19.fpga-cpu-hdmi-ls` | 32 MiB SDRAM | Vídeo, captura y serie | 1.20 |
 | `cpu-fpga / alu` | `21.fpga-cpu-hdmi-alu` | 32 MiB SDRAM | Mismo mapa que la 19 | 1.15 |
-| `gpu-simulator / current` | `11.gpu-sim-func` | 32 MiB por defecto | Configuración por API Python, sin MMIO | — |
+| `gpusim / current` | `11.gpu-sim-func` | 32 MiB por defecto | Configuración por API Python, sin MMIO | — |
 | `gpu-fpga / bram` | `12.fpga-gpu` | 128 KiB EBR continuos | Warps y depuración, solo host | 2.3 |
 | `gpu-fpga / sdram` | `14.fpga-gpu-ram` | 32 MiB SDRAM | Warps y depuración, solo host | 2.4 |
 | GPU SDRAM optimizada | `17.fpga-gpu-ram-v2` | 32 MiB SDRAM | Mismo mapa que la 14 | 2.4 |

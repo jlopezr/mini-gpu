@@ -87,7 +87,7 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
 Los casos existentes también se ejecutan con
-`python x.tests/run_tests.py --backend gpu-simulator --version cycle x.tests/cases-gpu`.
+`python x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu`.
 
 ## Ejecutar la suite de tests
 

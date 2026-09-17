@@ -1,6 +1,6 @@
 # Tests de MiniCPU y MiniGPU
 
-También incluye el backend funcional MiniGPU (`--backend gpu-simulator`), con casos en
+También incluye el backend funcional MiniGPU (`--backend gpusim`), con casos en
 `cases-gpu`. Los casos CPU siguen en `cases` y el modo `both` sigue comparando
 exclusivamente el simulador CPU con la FPGA.
 
@@ -9,8 +9,8 @@ exclusivamente el simulador CPU con la FPGA.
 Desde `x.tests`:
 
 ```powershell
-python run_tests.py --backend gpu-simulator
-python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpu-simulator
+python run_tests.py --backend gpusim
+python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpusim
 python -m unittest discover -s . -p test_gpu_runner.py -v
 ```
 
@@ -64,7 +64,7 @@ lcc. Para aprovecharlos desde esta infraestructura sin duplicar manifiestos
 derivados en git:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpu-simulator
+python run-mini-lcc-tests.py --backend cpusim
 ```
 
 El adaptador ejecuta `y.lcc/run-mini-tst.py`, reutiliza los `.bin`, `.json` y
@@ -77,7 +77,7 @@ manifiesto, ya que `x.tests` no tiene semantica de fallo esperado. Para
 investigarlos como fallos normales:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpu-simulator --include-xfail
+python run-mini-lcc-tests.py --backend cpusim --include-xfail
 ```
 
 Desde `x.tests`. `--port` es opcional: sin él, detecta el primer adaptador
@@ -86,7 +86,7 @@ FTDI conectado; solo hace falta si hay varios o para forzar uno en concreto
 
 ```powershell
 # 1. CPU sobre el simulador funcional
-python run_tests.py --backend cpu-simulator
+python run_tests.py --backend cpusim
 
 # 2. CPU sobre FPGA, versión EBR
 python run_tests.py --backend cpu-fpga --version ebr --port COM3
@@ -101,7 +101,7 @@ python run_tests.py --backend cpu-fpga --version subword --port COM3
 python run_tests.py --backend cpu-fpga --version alu --port COM3
 
 # 5. GPU sobre el simulador funcional
-python run_tests.py --backend gpu-simulator
+python run_tests.py --backend gpusim
 
 # 6. GPU sobre FPGA, versión BRAM
 python run_tests.py --backend gpu-fpga --version bram --port COM3
@@ -111,17 +111,17 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpu-simulator` | ninguno | — | los 34 de `cases/` |
+| 1 | `cpusim` | ninguno | — | los 34 de `cases/` |
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
 | 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
 | 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 27; 7 omitidos por capacidades |
 | 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 34 de `cases/` |
-| 5 | `gpu-simulator` | ninguno | — | los 34 de `cases-gpu/` |
+| 5 | `gpusim` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
-Solo `cpu-simulator` y `cpu-fpga --version alu` ejecutan los 34 casos: son los
+Solo `cpusim` y `cpu-fpga --version alu` ejecutan los 34 casos: son los
 dos únicos que tienen las ocho capacidades.
 
 **`sdram` no tiene `mul_div`, y esa capacidad es distinta de las demás.**
@@ -208,7 +208,7 @@ backends; ver [Capacidades](#capacidades).
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_tests.py cases/basics/smoke/test.json --backend cpu-simulator
+python run_tests.py cases/basics/smoke/test.json --backend cpusim
 ```
 
 Los casos GPU admiten traza del scheduler. `--trace-limit` limita los eventos
@@ -216,7 +216,7 @@ mostrados, pero no la ejecución ni las comprobaciones del caso; `--trace-file`
 los guarda en vez de escribirlos en stderr:
 
 ```powershell
-python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpu-simulator `
+python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpusim `
     --trace --trace-limit 100 --trace-file ejecucion.log
 ```
 
@@ -229,7 +229,7 @@ segundo. `--durations N` lista además las N ejecuciones más lentas al terminar
 (10 si se omite el número):
 
 ```powershell
-python run_tests.py --backend gpu-simulator --durations 5
+python run_tests.py --backend gpusim --durations 5
 ```
 
 Es la forma de decidir un `timeout_seconds` con criterio en vez de a ojo. Los
@@ -242,7 +242,7 @@ puede usar directamente `--version VERSION`; con varios se usa
 
 ```powershell
 python run_tests.py --backend both `
-    --version cpu-simulator=current --version cpu-fpga=sdram --port COM3
+    --version cpusim=current --version cpu-fpga=sdram --port COM3
 ```
 
 Cada backend declara internamente todas sus versiones y cuál es la
@@ -371,7 +371,7 @@ opcional `simulator_options`:
 Equivalen a `--simt-region-depth` y `--simt-path-depth` de `minigpu_sim.py` y
 permiten provocar overflow de las pilas SIMT sin programas enormes. Como son
 parámetros del simulador, la FPGA no puede reproducirlos: un caso que las use se
-omite en el descubrimiento automático si el backend no es `gpu-simulator`, y se
+omite en el descubrimiento automático si el backend no es `gpusim`, y se
 rechaza si se pide explícitamente. Los casos CPU no las admiten.
 
 ## Direcciones de datos
@@ -424,7 +424,7 @@ python run_tests.py --backend cpu-fpga --version hdmi --version bl8 \
     --measure --port COM3 cases/programs
 
 # Sin placa: solo cuenta instrucciones, que es la mitad de la tabla
-python run_tests.py --backend cpu-simulator --version sim --measure cases
+python run_tests.py --backend cpusim --version sim --measure cases
 ```
 
 Cambiar de versión recarga el bitstream, así que el bucle exterior es la versión
@@ -541,10 +541,10 @@ Todos los casos declaran explícitamente `"architecture": "cpu"` o
 `"architecture": "gpu"`. No se deduce la arquitectura del nombre del archivo
 ni de su carpeta. GPU exige `warp_config`; CPU lo rechaza.
 
-Los backends declaran `ARCHITECTURE`: `cpu-simulator` y `cpu-fpga` son CPU;
-`gpu-simulator` es GPU y es el backend predeterminado de `run_tests.py`.
+Los backends declaran `ARCHITECTURE`: `cpusim` y `cpu-fpga` son CPU;
+`gpusim` es GPU y es el backend predeterminado de `run_tests.py`.
 `both` sigue seleccionando los dos backends CPU. Las versiones se seleccionan,
-por ejemplo, con `--version gpu-simulator=current`.
+por ejemplo, con `--version gpusim=current`.
 
 El descubrimiento automático omite casos de otra arquitectura y muestra cuántos.
 Una ruta solicitada explícitamente con arquitectura incompatible produce código
@@ -566,13 +566,13 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpu-simulator`, `hdmi`, `bl8`, `subword`, `alu` |
-| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpu-simulator`, `bl8`, `subword`, `alu` |
-| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpu-simulator`, `subword`, `alu` |
-| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpu-simulator`, `subword`, `alu` |
-| `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpu-simulator`, `subword`, `alu` |
-| `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpu-simulator`, `alu` |
-| `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpu-simulator`, `alu` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpusim`, `hdmi`, `bl8`, `subword`, `alu` |
+| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpusim`, `bl8`, `subword`, `alu` |
+| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpusim`, `subword`, `alu` |
+| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpusim`, `subword`, `alu` |
+| `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpusim`, `subword`, `alu` |
+| `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpusim`, `alu` |
+| `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpusim`, `alu` |
 | `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |
 
 Las cuatro de ISA existen por la misma razón que las de vídeo: sin ellas, un
@@ -630,7 +630,7 @@ que no lo modela.
 
 ### El simulador tiene vídeo, pero no tiene tiempo
 
-`cpu-simulator` declara las dos capacidades de video desde que `minicpu_sim.py` tiene un
+`cpusim` declara las dos capacidades de video desde que `minicpu_sim.py` tiene un
 `VideoDevice`, así que los casos de vídeo corren sin placa. **Conviene entender
 qué significa un verde suyo y qué no.**
 
@@ -676,7 +676,7 @@ no haber hardware no es un caso roto, y mezclarlos haría inútil el recuento.
 El motivo dice dónde sí está:
 
 ```text
-SKIP video-band [cpu-simulator]: el simulador no tiene frame_capture:
+SKIP video-band [cpusim]: el simulador no tiene frame_capture:
     no hay barrido ni framebuffer, use --backend cpu-fpga --version bl8
 ```
 

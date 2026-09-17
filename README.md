@@ -130,7 +130,7 @@ Ejecutar todos los casos sobre el simulador:
 
 ```powershell
 cd x.tests
-python run_tests.py --backend cpu-simulator
+python run_tests.py --backend cpusim
 ```
 
 Inicializar el compilador C experimental MiniISA/lcc:
@@ -155,7 +155,7 @@ La ABI canonica de Mini-GPU esta en [`1.isa/abi.md`](1.isa/abi.md).
 Para ejecutar esos casos desde la infraestructura de `x.tests`:
 
 ```bash
-python3 x.tests/run-mini-lcc-tests.py --backend cpu-simulator
+python3 x.tests/run-mini-lcc-tests.py --backend cpusim
 ```
 
 Ejecutarlos sobre la CPU con EBR de la carpeta 6:

@@ -21,4 +21,4 @@ Comprueba la regla especial: una pila REGION llena no impide reutilizar el
 ## Notas
 
 Usa `simulator_options.simt_region_depth = 1`, así que solo puede ejecutarse
-con `--backend gpu-simulator`. Pareja de `ssy-region-overflow`.
+con `--backend gpusim`. Pareja de `ssy-region-overflow`.
