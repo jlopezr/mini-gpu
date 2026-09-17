@@ -171,8 +171,13 @@ def _fresh_bitstream(project: Path) -> Path | None:
     if not bitstream.exists():
         return None
     bitstream_mtime = bitstream.stat().st_mtime
+    # Los bancos de prueba NO entran: no se sintetizan, asi que tocar uno no
+    # puede cambiar el bitstream. Contarlos costaba una sintesis entera --unos
+    # diez minutos de nextpnr-- cada vez que alguien arreglaba un `*_tb.v`, que
+    # es justo lo que mas se toca. `tools/rtl_facts.py` los salta por lo mismo.
     sources = [*project.glob("*.v"), *project.glob("*.sv"), *project.glob("*.lpf"),
-              project / "apio.ini"]
+               project / "apio.ini"]
+    sources = [source for source in sources if not source.name.endswith("_tb.v")]
     if any(source.exists() and source.stat().st_mtime > bitstream_mtime for source in sources):
         return None
     return bitstream

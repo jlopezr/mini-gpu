@@ -1,14 +1,101 @@
 #!/usr/bin/env python3
-"""Lanzador global de la suite de x.tests (funciona desde cualquier directorio)."""
+"""Lanzador global de la suite de x.tests (funciona desde cualquier directorio).
+
+Antes esto llamaba a `x.tests/test`, que es un script de bash, y en Windows
+fallaba con un CreateProcess: `tools/run-tests.ps1` existia pero no podia
+funcionar. La logica vive ahora AQUI, en Python, que es lo unico que las tres
+plataformas ejecutan igual, y `x.tests/test` pasa a ser un envoltorio de dos
+lineas. Una sola implementacion y dos puertas de entrada, en vez de dos
+implementaciones que se separan en cuanto alguien toca una.
+"""
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+TESTS = ROOT / "x.tests"
+
+AYUDA = """\
+Uso: run-tests [--quick] [--verbose] [--hardware] [-- <args para run_tests.py>]
+
+  --quick      solo los tests unitarios de la infraestructura (sin simular casos)
+  --verbose    salida detallada
+  --hardware   la suite de casos contra placa real (backend gpu-fpga por defecto)
+  --           pasa el resto de argumentos directamente a run_tests.py
+"""
+
+
+def interprete() -> str:
+    """El python del entorno del repo si lo hay, y si no el que nos ejecuta.
+
+    `Scripts` es la ruta de Windows y `bin` la de POSIX; se prueban las dos en
+    vez de mirar `sys.platform` porque un .venv copiado entre maquinas puede
+    tener cualquiera de las dos y el coste de mirar es un `exists()`.
+    """
+    for relativa in ("Scripts/python.exe", "bin/python3", "bin/python"):
+        candidato = ROOT / ".venv" / relativa
+        if candidato.exists():
+            return str(candidato)
+    return sys.executable
+
+
+def entorno() -> dict:
+    """La raiz del repo en PYTHONPATH: los tests importan `tools`."""
+    variables = dict(os.environ)
+    previo = variables.get("PYTHONPATH")
+    variables["PYTHONPATH"] = (f"{ROOT}{os.pathsep}{previo}" if previo
+                               else str(ROOT))
+    return variables
+
+
+def main(argv: list[str]) -> int:
+    rapido = False
+    detallado = False
+    hardware = False
+    extra: list[str] = []
+
+    while argv:
+        argumento = argv.pop(0)
+        if argumento == "--quick":
+            rapido = True
+        elif argumento == "--verbose":
+            detallado = True
+        elif argumento == "--hardware":
+            hardware = True
+        elif argumento in ("--help", "-h"):
+            print(AYUDA, end="")
+            return 0
+        elif argumento == "--":
+            extra.extend(argv)
+            break
+        else:
+            extra.append(argumento)
+
+    if not TESTS.is_dir():
+        print(f"error: no existe {TESTS}", file=sys.stderr)
+        return 2
+
+    python = interprete()
+    variables = entorno()
+
+    print("== Tests unitarios de infraestructura ==")
+    orden = [python, "-m", "unittest", "discover", "-s", ".", "-p", "test_*.py"]
+    if detallado:
+        orden.append("-v")
+    codigo = subprocess.call(orden, cwd=str(TESTS), env=variables)
+    if codigo or rapido:
+        return codigo
+
+    # Sin argumentos, --hardware elige el backend de placa; con ellos manda lo
+    # que haya pedido quien llama.
+    if hardware and not extra:
+        extra = ["--backend", "gpu-fpga"]
+
+    print("== Suite de casos (run_tests.py) ==")
+    return subprocess.call([python, str(TESTS / "run_tests.py"), *extra],
+                           cwd=str(TESTS), env=variables)
+
 
 if __name__ == "__main__":
-    script = ROOT / "x.tests" / "test"
-    if not script.exists():
-        print(f"error: no existe {script}", file=sys.stderr)
-        raise SystemExit(2)
-    raise SystemExit(subprocess.call([str(script), *sys.argv[1:]], cwd=str(ROOT / "x.tests")))
+    raise SystemExit(main(sys.argv[1:]))

@@ -173,5 +173,54 @@ class BoardTest(unittest.TestCase):
         self.assertNotIn("stdout", run.call_args.kwargs)
 
 
+class FreshBitstreamTest(unittest.TestCase):
+    """Cuando se puede reutilizar el bitstream y saltarse `apio upload`.
+
+    El atajo vale unos diez minutos de nextpnr por carga, asi que los dos
+    errores cuestan caro en direcciones opuestas: perderlo sin motivo hace
+    esperar, y usarlo cuando el RTL ha cambiado programa la placa con un
+    bitstream viejo y el fallo aparece mucho despues.
+    """
+
+    def _proyecto(self, carpeta: Path) -> Path:
+        (carpeta / "apio.ini").write_text("[env]\nboard = ulx3s-85f\n",
+                                          encoding="utf-8")
+        (carpeta / "top.v").write_text("module top; endmodule\n", encoding="utf-8")
+        destino = carpeta / "_build" / "default"
+        destino.mkdir(parents=True)
+        (destino / "hardware.bit").write_bytes(b"\x00")
+        return carpeta
+
+    def test_un_banco_de_pruebas_nuevo_no_invalida_el_bitstream(self):
+        """Un `*_tb.v` no se sintetiza: no puede cambiar el bitstream.
+
+        Contarlos costaba una sintesis entera cada vez que alguien arreglaba un
+        banco, que es justo el fichero que mas se toca.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as carpeta:
+            proyecto = self._proyecto(Path(carpeta))
+            bitstream = proyecto / "_build" / "default" / "hardware.bit"
+            reciente = bitstream.stat().st_mtime + 100
+            banco = proyecto / "gpu_uart_tb.v"
+            banco.write_text("// banco\n", encoding="utf-8")
+            import os
+            os.utime(banco, (reciente, reciente))
+            self.assertEqual(board._fresh_bitstream(proyecto), bitstream)
+
+    def test_un_fuente_sintetizable_nuevo_si_lo_invalida(self):
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as carpeta:
+            proyecto = self._proyecto(Path(carpeta))
+            bitstream = proyecto / "_build" / "default" / "hardware.bit"
+            reciente = bitstream.stat().st_mtime + 100
+            fuente = proyecto / "top.v"
+            os.utime(fuente, (reciente, reciente))
+            self.assertIsNone(board._fresh_bitstream(proyecto))
+
+
 if __name__ == "__main__":
     unittest.main()
