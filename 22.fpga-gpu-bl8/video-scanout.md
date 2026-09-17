@@ -156,30 +156,48 @@ las demos no pintan y parece que el cambio las rompió.
   cambie el modo de salida por su cuenta es justo el tipo de acoplamiento que
   luego nadie entiende.
 
-## La dirección no puede ser la misma en 22
+## La dirección no podía ser la misma en 22 — y ya lo es
 
-En 21 los registros de vídeo viven en `0x80000000`. **En 22 esa dirección ya
-está ocupada**: es la región de configuración de warps.
+**Esta sección describía un problema que se resolvió.** Se conserva porque
+explica de dónde viene el `0x80000200` que aparece en commits y capturas
+antiguas.
+
+Lo que había: en 21 los registros de vídeo viven en `0x80000000`, y en 22 esa
+dirección estaba ocupada por la configuración de warps.
 
 ```text
-22:  mmio        = address[31:12] == 0x80000
-     cfg_region  = address[11:7]  == 0        -> 0x80000000-0x8000007F  warps
-     0x80000100-0x80000114                    -> depuración y contadores
+22, antes:  mmio        = address[31:12] == 0x80000
+            cfg_region  = address[11:7]  == 0     -> 0x80000000-0x8000007F  warps
+            0x80000100-0x80000114                 -> depuración y contadores
 ```
 
-Así que en 22 el bloque de vídeo tiene que ir a otra base — `0x80000200`
-encaja limpio, porque `address[11:2]` = 0x080..0x085 cae hoy en el `default`
-del decodificador y da fault.
+Así que el bloque de vídeo se puso en `0x80000200`, y de ahí salía la conclusión
+—razonable entonces— de que *lo portable entre cores es la semántica del
+registro, no su dirección*.
 
-Conviene decirlo sin adornos: **lo que es portable entre cores es la semántica
-del registro, no su dirección.** Un programa que quiera valer para los dos
-tiene que tomar la base del bloque de vídeo como un dato, no como una
-constante compilada.
+**Ya no.** El decodificador usa dos páginas: la configuración de warps se fue a
+`0x80001000`, exclusiva de la GPU, y el vídeo volvió a `0x80000000` con los
+mismos offsets que en CPU. `VIDEO_CTRL`, que solo tiene la GPU, está al final del
+bloque (`+0x18`) para que `FB_FRONT` quede en `+0x00` en todas partes.
+
+```text
+22, ahora:  mmio        = address[31:13] == 0x40000   (dos páginas de 4 KiB)
+            gpu_page    = address[12]                 (0 compartida, 1 GPU)
+            0x80000000-0x8000001C                  -> vídeo
+            0x80000100-0x80000114                  -> depuración
+            0x80000300-0x8000031C                  -> contadores
+            0x80001000-0x8000107F                  -> warps
+```
+
+Un programa de vídeo **sí** puede llevar la base como constante compilada. El
+contrato y el porqué están en
+[`../docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
 
 ## Implementado: pasos 1 y 2
 
-Hecho en 22. `VIDEO_CTRL` en `0x80000200`, mux entre `video_line_source_burst`
-(SDRAM) y `video_line_source_pattern`, salida HDMI con el stack de 21 y 13.
+Hecho en 22. `VIDEO_CTRL` en `0x80000018` (era `0x80000200` cuando se escribió
+esto), mux entre `video_line_source_burst` (SDRAM) y
+`video_line_source_pattern`, salida HDMI con el stack de 21 y 13.
 
 **El riesgo del reloj TMDS que anticipé no se materializó.** Los tres relojes
 cierran con margen:

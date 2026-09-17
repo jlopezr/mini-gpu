@@ -295,6 +295,26 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
       128 KiB de EBR, esa dirección está fuera. Además [`mapa-de-memoria.md`](mapa-de-memoria.md)
       §2 ya dice que esas bases «no son reservas impuestas a todos los
       programas», cosa que cableadas en el reset sí son.
+
+      **Es el punto de mayor alcance de todo el plan.** `0x01000000`/`0x01025800`
+      aparecen en **34 ficheros** de diez carpetas. Se dividen en dos grupos y
+      conviene no confundirlos:
+
+      - **El valor de reset**, que tiene que cambiar: el parámetro
+        `FB_FRONT_RESET`/`FB_BACK_RESET` en los cuatro `video_registers.v`, sus
+        testbenches (`video_registers_tb`, `cpu_video_tb`, `subword_ls_tb`…), las
+        constantes `FB_FRONT_RESET`/`FB_BACK_RESET` de
+        `x.tests/backends/fpga.py`, y los valores por defecto de `VideoDevice` en
+        `2.cpu-sim-func/minicpu_sim.py`. Son **tres copias independientes** del
+        mismo dato —RTL, arnés de pruebas y simulador— y hay que moverlas juntas.
+      - **La dirección elegida por un programa**, que puede quedarse: los
+        `examples/`, `tools/make-framebuffer`, `20.forth` y los README siguen
+        pudiendo poner su framebuffer en `0x01000000`. Lo que cambia es que ahora
+        tienen que **escribirlo**, en vez de heredarlo del reset.
+
+      El simulador ya usa los offsets del contrato (`FB_FRONT=0x00` …
+      `HALT_AT=0x14`), así que ahí solo hay que tocar los valores por defecto y
+      añadir `VIDEO_CTRL`.
 - [x] **Estado de reset: `PATTERN`.** No hacía falta decidirlo: ya está resuelto
       en [`22.fpga-gpu-bl8/video-scanout.md`](../22.fpga-gpu-bl8/video-scanout.md),
       sección «Valor de reset: `PATTERN`, en todos los cores, sin parámetro»,
