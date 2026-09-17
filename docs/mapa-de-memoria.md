@@ -176,15 +176,18 @@ mecanismo de descubrimiento propuesto.
 
 El framebuffer con doble buffer. En 16, 18, 19, 21 y 22.
 
+Los offsets son **los mismos en todos los prototipos que tienen vídeo**, y están
+en el orden en que aparecen en el bloque:
+
 | Registro | Acceso | Función |
 |---|---|---|
-| `VIDEO_CTRL` | RW | Modo: 0 BLANK, 1 PATTERN, 2 SCANOUT, 3 reservado. **Solo en 22** |
 | `FB_FRONT` | RW | Dirección de byte del buffer que se muestra |
 | `FB_BACK` | RW | Dirección de byte del buffer que se dibuja |
 | `SWAP` | RW | Escribir pide intercambio; leer bit 0 indica pendiente |
 | `STATUS` | RW | Bit 0 underflow pegajoso, bit 1 swap pendiente, bits 31:16 contador de frames; escribir bit 0 a 1 borra el underflow |
 | `SWAP_COUNT` | R | Intercambios completados. **Desde 18** |
-| `HALT_AT` | RW | Parar la CPU tras N intercambios. **Solo CPU, desde 18** |
+| `HALT_AT` | RW | Parar la CPU tras N intercambios. **Solo CPU, desde 18.** En 22 la dirección existe pero lee cero y la escritura se ignora |
+| `VIDEO_CTRL` | RW | Modo: 0 BLANK, 1 PATTERN, 2 SCANOUT, 3 reservado. **Solo 22** |
 
 El mecanismo es el mismo en todas partes: escribir `SWAP` no intercambia nada,
 solo levanta `swap_pending`. El intercambio ocurre **en el vsync**, porque
@@ -201,21 +204,26 @@ primero y deja el segundo quieto.
 
 #### Discrepancias
 
-**La dirección base.** En CPU el bloque empieza en `0x80000000`; en 22 empieza en
-`0x80000200`. Y como `VIDEO_CTRL` se cuela en el offset 0 de la 22, **tampoco
-coinciden los offsets relativos**: `FB_FRONT` está en `+0x00` en CPU y en `+0x04`
-en 22. Un programa de vídeo no es portable entre familias sin tocar constantes.
+**Resueltas.** La dirección base y los offsets ya coinciden: el bloque empieza en
+`0x80000000` en las dos familias y `VIDEO_CTRL` —que solo tiene la 22— está al
+final, en `+0x18`, para que `FB_FRONT` quede en `+0x00` en todas partes. Y la 22
+implementa el bit 1 de `STATUS` (`swap_pending`), que antes era cero fijo: código
+que sondease ese bit esperando al swap funcionaba en CPU y se colgaba en 22.
 
-**El bit 1 de `STATUS`.** En 16, 18, 19 y 21 vale `swap_pending`
-(`{frame_count, 14'd0, swap_pending, underflow}`). En 22 es cero fijo
-(`{frame_count, 15'd0, underflow_sticky}`), y hay que leer `SWAP` para saberlo.
-Código que sondee el bit 1 de `STATUS` esperando al swap funciona en CPU y se
-cuelga en 22.
+**`HALT_AT` (`+0x14`) solo existe en CPU**, pero la dirección es legible en las
+dos: en 22 lee cero y la escritura se ignora, igual que hace la CPU con cualquier
+registro ausente del bloque. No se implementa el mecanismo porque pararía el SM
+desde un registro de un periférico, y los kernels de la 22 ya terminan con `HALT`.
+Lo que sí diverge es la consecuencia: `SWAP_COUNT` cuenta en 22 desde el reset y
+nada más, mientras que en 18, 19 y 21 cuenta desde el reset **o desde el último
+armado de `HALT_AT`**.
 
 **El alineamiento de las bases.** CPU alinea a 4 bytes
 (`{merged_front[31:2], 2'b00}`); la 22 alinea a **16 bytes**
 (`{fb_front[31:4], 4'b0000}`), porque el scanout lee en ráfagas. Escribir una base
-no alineada a 16 no da error: se truncan los bits bajos en silencio.
+no alineada a 16 no da error: se truncan los bits bajos en silencio. **No se
+unifica a propósito**: las dos conviven si los programas alinean a 16, que es lo
+que hay que respetar para que un binario de vídeo valga en las dos familias.
 
 **Quién pide el intercambio.** En CPU, la CPU. En 22, la GPU — y solo es posible
 desde que la ventana MMIO está abierta a la LSU: a ~8 fps el host va por serie y
@@ -228,7 +236,8 @@ por defecto una salida indefinida. Con PATTERN, ver el patrón demuestra que HDM
 PLL, cable y monitor funcionan, y no verlo señala aguas arriba.
 
 **El tamaño de la ventana.** 16 B en 16, 32 B en 18, un slot de 256 B en 19 y 21,
-un bloque de 64 B en 22.
+un bloque de 64 B en 22. Solo importa para saber qué direcciones responden más
+allá del contrato; los siete registros del contrato están en todas.
 
 ### Captura de frames
 
@@ -247,8 +256,13 @@ tiene nada que ver con las señales run/halt/step que el monitor manda a la GPU.
 
 #### Discrepancias
 
-**La 22 no tiene `HALT_AT`**, solo `SWAP_COUNT`. La GPU no se detiene sola al
-llegar a N frames: se para con las órdenes del monitor. En consecuencia,
+**La 22 no implementa `HALT_AT`**, solo `SWAP_COUNT`. La dirección responde —lee
+cero, escribir no hace nada— para que el bloque de vídeo se pueda leer entero de
+una vez y para que sondearla no se comporte distinto en cada familia, pero el
+mecanismo no está: la GPU no se detiene sola al llegar a N frames, se para con
+las órdenes del monitor, y sus kernels terminan con `HALT`. Implementarlo
+obligaría a que un registro de un periférico alcanzase el control de ejecución
+del SM, que es justo lo que el reparto de señales separa. En consecuencia,
 `SWAP_COUNT` cuenta en 22 desde el reset y nada más, mientras que en 18, 19 y 21
 cuenta desde el reset **o desde el último armado de `HALT_AT`**.
 
@@ -358,26 +372,31 @@ las órdenes por serie y el bucle que sondea si ha parado. Con `CYCLES` libre,
 `VIDEO_TX` se cuenta igual, porque el scanout sigue leyendo SDRAM con la GPU
 parada y ese tráfico no es del programa.
 
-## 5. La colisión entre familias
+## 5. El reparto entre familias
 
-Las dos familias ocupan la misma página con asignaciones distintas. Vista por
-slots de 256 B (`address[11:8]`, el troceado de la 19/21):
+**Ya no chocan.** Vista por slots de 256 B (`address[11:8]`, el troceado de la
+19/21, que es el que se tomó como base):
 
-| Slot | Dirección | CPU 19/21 | GPU 22 | ¿Coincide? |
+| Slot | Dirección | CPU 19/21 | GPU 12/14/17/22 | ¿Coincide? |
 |---|---|---|---|---|
-| 0 | `0x80000000` | Vídeo | Configuración de warps | **choca** |
-| 1 | `0x80000100` | Reservado depuración | Depuración SIMT | ✓ ya coincide |
-| 2 | `0x80000200` | Puerto serie | **Vídeo** | **choca** |
-| 3 | `0x80000300` | Libre | Contadores perf | ✓ compatible |
+| 0 | `0x80000000` | Vídeo | Vídeo (22) | ✓ |
+| 1 | `0x80000100` | Reservado depuración | Depuración SIMT | ✓ |
+| 2 | `0x80000200` | Puerto serie | Libre | ✓ |
+| 3 | `0x80000300` | Libre | Contadores perf (22) | ✓ |
 | 4–15 | `0x80000400+` | Libres | Libres | ✓ |
+| — | `0x80001000` | — | Configuración de warps | solo GPU |
 
-Hay **tres** significados repartidos entre dos direcciones: `0x80000000` es vídeo
-o warps según la familia, y `0x80000200` es serie o vídeo. Que la depuración y los
-contadores ya estén donde deben es suerte, pero suerte aprovechable: solo hay dos
-piezas que mover.
+Los dos choques que había —`0x80000000` era vídeo o warps según la familia, y
+`0x80000200` era serie o vídeo— se resolvieron con los dos únicos movimientos que
+hacían falta: los warps a la segunda página y el vídeo de la 22 de vuelta a
+`0x80000000`. Depuración y contadores nunca se movieron.
 
-Son mapas de sistemas separados y hoy no conviven en ningún bitstream. No se
-pueden conectar a un bus global sin seleccionar o trasladar uno de los bloques.
+Siguen siendo mapas de sistemas separados y hoy no conviven en ningún bitstream,
+pero ya **no hay que trasladar ningún bloque** para conectarlos a un bus común: lo
+compartido está en la primera página con la misma dirección y los mismos offsets,
+y lo exclusivo de la GPU en la segunda. Lo que falta para que convivan de verdad
+—arbitraje, dominios de reloj, orden de escrituras— está en §6, y no es de
+direcciones.
 
 ## 6. Contrato objetivo
 
@@ -402,10 +421,11 @@ por dispositivo, y la GPU se lleva su control exclusivo a una **segunda página*
 | `0x80001080–0x80001FFF` | Control de lanzamiento y estado GPU, reservado | GPU |
 | Desde `0x80002000` | Futuras páginas de sistema | — |
 
-Los cambios respecto a hoy son **dos movimientos**: la configuración de warps sale
-de `0x80000000` a `0x80001000`, y el vídeo de la 22 vuelve de `0x80000200` a
-`0x80000000`. Depuración y contadores se quedan donde están, y ningún core de CPU
-cambia de dirección.
+Eran **dos movimientos**, y los dos están **aplicados** (§5): la configuración de
+warps salió de `0x80000000` a `0x80001000` en 12, 14, 17 y 22, y el vídeo de la 22
+volvió de `0x80000200` a `0x80000000`. Depuración y contadores se quedaron donde
+estaban, y ningún core de CPU cambió de dirección. Lo único de esta sección que
+sigue sin implementar es el bloque de identificación de `0x80000F00`.
 
 Mandar los warps a una segunda página, en vez de a un slot libre de la primera, es
 lo que hace que el reparto siga valiendo el día que CPU y GPU compartan bitstream:
@@ -414,15 +434,18 @@ coste es un bit más en el comparador de prefijo del decodificador GPU.
 
 ### Uniformar los registros de vídeo
 
-Que el slot coincida no basta si los offsets dentro del slot no coinciden:
+Que el slot coincida no basta si los offsets dentro del slot no coinciden. Hecho:
 
-1. **`VIDEO_CTRL` se va al final del bloque**, a `+0x18`, y `FB_FRONT` vuelve a
-   `+0x00`. Así ningún programa de CPU cambia y solo se toca la 22, que es la más
-   nueva. Los cores sin `VIDEO_CTRL` leen cero ahí, que ya es su comportamiento.
-2. **La 22 implementa el bit 1 de `STATUS`** (`swap_pending`). Tiene la señal; es
-   casi gratis y elimina un cuelgue silencioso.
-3. **El alineamiento no se toca.** 4 bytes en CPU y 16 en GPU conviven si los
+1. **`VIDEO_CTRL` se fue al final del bloque**, a `+0x18`, y `FB_FRONT` volvió a
+   `+0x00`. Así ningún programa de CPU cambió y solo se tocó la 22, que es la más
+   nueva. Los cores sin `VIDEO_CTRL` leen cero ahí, que ya era su comportamiento.
+2. **La 22 implementa el bit 1 de `STATUS`** (`swap_pending`).
+3. **El alineamiento no se tocó.** 4 bytes en CPU y 16 en GPU conviven si los
    programas escriben bases alineadas a 16, que es lo que hay que documentar.
+4. **`HALT_AT` (`+0x14`) no se implementó en la GPU**, pero la dirección lee cero
+   y la escritura se ignora, como hace la CPU con un registro ausente del bloque.
+   Así el bloque se puede leer entero de una vez y sondear el registro no da
+   resultados distintos según la familia.
 
 Offsets resultantes, iguales en todos los prototipos que tengan vídeo:
 
@@ -433,8 +456,8 @@ Offsets resultantes, iguales en todos los prototipos que tengan vídeo:
 | `+0x08` | `SWAP` | todos |
 | `+0x0C` | `STATUS` | todos |
 | `+0x10` | `SWAP_COUNT` | desde 18 |
-| `+0x14` | `HALT_AT` | solo CPU |
-| `+0x18` | `VIDEO_CTRL` | solo GPU, por ahora |
+| `+0x14` | `HALT_AT` | implementado solo en CPU; en GPU lee cero |
+| `+0x18` | `VIDEO_CTRL` | solo GPU, por ahora; en CPU lee cero |
 
 ### Descubrimiento en tiempo de ejecución
 
@@ -463,7 +486,7 @@ Qué le falta a cada prototipo para cumplir el contrato:
 | 18 | vídeo conforme | Ventana de 32 B en vez de slot de 256 B |
 | 19, 21 | **conformes** | Solo el bloque de identificación |
 | 12, 14, 17 | **conformes** | Migradas: warps en `0x80001000`. Solo el bloque de identificación |
-| 22 | no conforme | Mover warps a `0x80001000`; vídeo a `0x80000000`; `VIDEO_CTRL` a `+0x18`; bit 1 de `STATUS` |
+| 22 | **conforme** | Migrada: warps en `0x80001000`, vídeo en `0x80000000`, `VIDEO_CTRL` en `+0x18`, bit 1 de `STATUS`. Solo el bloque de identificación |
 | 2, 11 | fuera de contrato | Los simuladores no implementan la ventana |
 
 Los cores de CPU con slots de 256 B ya cumplen el reparto sin tocar nada, que es

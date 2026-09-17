@@ -48,7 +48,7 @@ module gpu_control_tb;
             @(negedge clk); gpu_reset=1;
             @(negedge clk); gpu_reset=0;
             wait(halted); @(negedge clk);
-            for(w=1;w<8;w=w+1) write_word(32'h80000004+w*16,0);
+            for(w=1;w<8;w=w+1) write_word(32'h80001004+w*16,0);
         end
     endtask
     task launch;
@@ -80,7 +80,7 @@ module gpu_control_tb;
         fresh; write_word(0,32'h30200000); launch; stopped(4,0); // DIV R1,R0,R0
         fresh; write_word(0,32'h54200001); launch; stopped(2,0); // LOAD R1,R0,1
         fresh; write_word(0,32'h58200003); launch; stopped(2,0); // STORE R1,R0,3
-        fresh; write_word(32'h80000000,32'h02000000); launch; stopped(2,32'h02000000);
+        fresh; write_word(32'h80001000,32'h02000000); launch; stopped(2,32'h02000000);
         fresh;
         for(i=0;i<9;i=i+1) write_word(i*4,32'hc4000010); // nine nested SSY frames
         launch; stopped(6,32);
@@ -99,7 +99,7 @@ module gpu_control_tb;
         fresh;
         write_word(0,32'hc8000000); write_word(4,32'hfc000000);
         write_word(8,32'hc8000000); write_word(12,32'hfc000000);
-        write_word(32'h80000014,255); write_word(32'h80000010,8);
+        write_word(32'h80001014,255); write_word(32'h80001010,8);
         launch; stopped(7,8);
         $display("PASS fault diagnostics: ISA, memory, division, stack and barriers");
 
@@ -152,7 +152,7 @@ module gpu_control_tb;
         write_word(32'h0010000c,32'h58240000); // STORE R1,R4,0
         write_word(32'h00100010,32'h54440000); // LOAD R2,R4,0
         write_word(32'h00100014,32'hfc000000); // HALT
-        write_word(32'h80000000,32'h00100000);
+        write_word(32'h80001000,32'h00100000);
         launch; stopped(0,32'h00100018);
         debug_register=2; repeat(3) @(negedge clk);
         if(debug_data!==32'h1234) $fatal(1,"high SDRAM LOAD failure");

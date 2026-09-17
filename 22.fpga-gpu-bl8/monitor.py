@@ -21,14 +21,16 @@ ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
-# Todavia en 0x80000000: esta carpeta no ha migrado aun a la segunda pagina.
-# Ver docs/unificacion-mmio.md.
-WARP_CONFIG_BASE = 0x8000_0000
+# Gemela de `block_range_valid` en monitor.v: las dos tienen que decir lo mismo.
+# La primera página es de periféricos compartidos con la CPU y la segunda, de
+# control exclusivo de la GPU. Ver docs/mapa-de-memoria.md §6.
+WARP_CONFIG_BASE = 0x8000_1000
+VIDEO_BASE = 0x8000_0000
 MONITOR_REGIONS = (
-    (WARP_CONFIG_BASE, 0x8000_0080),   # configuración de warps
+    (VIDEO_BASE, 0x8000_001c),    # vídeo: FB_FRONT/BACK, SWAP, STATUS... CTRL
     (0x8000_0100, 0x8000_0118),   # depuración y contadores de retiro
-    (0x8000_0200, 0x8000_0218),   # vídeo: VIDEO_CTRL, FB_FRONT/BACK, SWAP...
     (0x8000_0300, 0x8000_0320),   # contadores de rendimiento (ver mmio.md)
+    (WARP_CONFIG_BASE, 0x8000_1080),   # configuración de warps
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

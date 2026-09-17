@@ -158,16 +158,18 @@ module monitor (
       block_range_valid =
           ({1'b0, start_address} < 33'h0_0200_0000 &&
            end_address <= 33'h0_0200_0000) ||
+          // video: FB_FRONT/BACK, SWAP, VIDEO_STATUS, SWAP_COUNT, VIDEO_CTRL.
+          // Misma direccion que en los cores de CPU desde la migracion.
           ({1'b0, start_address} >= 33'h0_8000_0000 &&
-           end_address <= 33'h0_8000_0080) ||
+           end_address <= 33'h0_8000_001c) ||
           ({1'b0, start_address} >= 33'h0_8000_0100 &&
            end_address <= 33'h0_8000_0118) ||
-          // video: VIDEO_CTRL, FB_FRONT/BACK, SWAP, VIDEO_STATUS, SWAP_COUNT
-          ({1'b0, start_address} >= 33'h0_8000_0200 &&
-           end_address <= 33'h0_8000_0218) ||
           // contadores de rendimiento (ver mmio.md)
           ({1'b0, start_address} >= 33'h0_8000_0300 &&
-           end_address <= 33'h0_8000_0320);
+           end_address <= 33'h0_8000_0320) ||
+          // configuracion de warps, ya en la segunda pagina
+          ({1'b0, start_address} >= 33'h0_8000_1000 &&
+           end_address <= 33'h0_8000_1080);
     end
   endfunction
 

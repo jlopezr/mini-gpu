@@ -1,23 +1,35 @@
 `default_nettype none
-// Registros de video de la MiniGPU, en 0x80000200.
+// Registros de video de la MiniGPU, en 0x80000000.
 //
-// NO estan en 0x80000000 como en 21: ahi la GPU ya tiene la configuracion de
-// warps (`cfg_region`, 0x80000000-0x8000007F). Lo que se comparte con los cores
-// de CPU es la SEMANTICA de los registros, no su direccion.
+// Misma direccion y MISMOS OFFSETS que en los cores de CPU (16, 18, 19, 21).
+// Antes este bloque estaba en 0x80000200, porque 0x80000000 lo ocupaba la
+// configuracion de warps; ahora los warps viven en 0x80001000 (segunda pagina,
+// exclusiva de la GPU) y la primera pagina queda para lo compartido. Ver
+// docs/mapa-de-memoria.md §6.
 //
-//   0x80000200  VIDEO_CTRL   RW  bits 1:0  modo de salida
+// Que coincida el bloque no basta si no coinciden los offsets dentro de el, asi
+// que VIDEO_CTRL -que solo tiene la GPU- se va al FINAL en vez de ocupar el
+// offset 0: asi ningun programa de CPU cambia y solo se toca esta carpeta.
+//
+//   0x80000000  FB_FRONT     RW  direccion de byte del buffer que se MUESTRA
+//   0x80000004  FB_BACK      RW  direccion de byte del buffer que se DIBUJA
+//   0x80000008  SWAP         RW  escribir 1: pedir intercambio en el proximo
+//                                vsync; leer bit 0: intercambio pendiente
+//   0x8000000c  VIDEO_STATUS RW  bit 0     underflow del line buffer (pegajoso)
+//                                bit 1     intercambio pendiente
+//                                31:16     contador de frames de video
+//                                escribir bit 0 a 1: borra el underflow
+//   0x80000010  SWAP_COUNT   R   intercambios completados desde el reset
+//   0x80000014  (HALT_AT)    R0  solo CPU. Aqui lee cero y la escritura se
+//                                ignora, igual que la CPU con un registro que no
+//                                tiene. La GPU no se para sola: la paran las
+//                                ordenes del monitor, y sus kernels terminan con
+//                                HALT, asi que no hace falta armar una captura.
+//   0x80000018  VIDEO_CTRL   RW  bits 1:0  modo de salida
 //                                    0  BLANK    negro, sin leer SDRAM
 //                                    1  PATTERN  patron de prueba, sin leer SDRAM
 //                                    2  SCANOUT  framebuffer desde SDRAM
 //                                    3  reservado (se trata como BLANK)
-//   0x80000204  FB_FRONT     RW  direccion de byte del buffer que se MUESTRA
-//   0x80000208  FB_BACK      RW  direccion de byte del buffer que se DIBUJA
-//   0x8000020c  SWAP         RW  escribir 1: pedir intercambio en el proximo
-//                                vsync; leer bit 0: intercambio pendiente
-//   0x80000210  VIDEO_STATUS RW  bit 0     underflow del line buffer (pegajoso)
-//                                31:16     contador de frames de video
-//                                escribir bit 0 a 1: borra el underflow
-//   0x80000214  SWAP_COUNT   R   intercambios completados desde el reset
 //
 // Doble buffer
 // ------------
@@ -57,8 +69,10 @@ module gpu_video_regs (
     output wire       underflow_clear
 );
     localparam [1:0] MODE_PATTERN=2'd1;
-    localparam [3:0] REG_CTRL=4'd0, REG_FB_FRONT=4'd1, REG_FB_BACK=4'd2,
-                     REG_SWAP=4'd3, REG_STATUS=4'd4, REG_SWAP_COUNT=4'd5;
+    // Los offsets son los del contrato compartido con la CPU.
+    localparam [3:0] REG_FB_FRONT=4'd0, REG_FB_BACK=4'd1, REG_SWAP=4'd2,
+                     REG_STATUS=4'd3, REG_SWAP_COUNT=4'd4, REG_HALT_AT=4'd5,
+                     REG_CTRL=4'd6;
 
     reg underflow_sticky;
     reg [15:0] frame_count;
@@ -82,8 +96,20 @@ module gpu_video_regs (
             REG_FB_FRONT:   read_data={fb_front[31:4],4'b0000};
             REG_FB_BACK:    read_data={fb_back[31:4],4'b0000};
             REG_SWAP:       read_data={31'd0,swap_pending};
-            REG_STATUS:     read_data={frame_count,15'd0,underflow_sticky};
+            // El bit 1 es `swap_pending`, igual que en 16/18/19/21. Antes era
+            // cero fijo aqui, y un programa que sondease ese bit esperando al
+            // intercambio funcionaba en CPU y se colgaba en esta placa.
+            REG_STATUS:     read_data={frame_count,14'd0,swap_pending,underflow_sticky};
             REG_SWAP_COUNT: read_data=swap_count;
+            // HALT_AT no existe aqui: la GPU no se para sola, la paran las
+            // ordenes del monitor. Lee CERO en vez de levantar `bad`, que es lo
+            // que hace la CPU con un registro ausente del bloque
+            // (video_registers.v, `default: read_data = 32'd0`). Si fallara, una
+            // lectura en bloque de los 28 bytes del bloque de video -que la
+            // lista blanca de monitor.v permite entera- daria NACK a mitad, y un
+            // programa que sondee el registro se comportaria distinto en cada
+            // familia. Escribirlo se ignora, igual que en CPU.
+            REG_HALT_AT:    read_data=32'd0;
             default:        bad=1'b1;
         endcase
     end

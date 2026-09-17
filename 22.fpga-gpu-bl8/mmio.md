@@ -21,17 +21,28 @@ medidos), casi la mitad del tiempo de la suite entera del prototipo.
 
 ## Mapa
 
+Dos páginas de 4 KiB. La primera es de **periféricos compartidos con la CPU** y
+la segunda, de **control exclusivo de la GPU**:
+
 ```text
-0x80000000-0x8000007F  configuracion de warps    host
+0x80000000-0x8000003F  video: FB_FRONT/BACK,     host y GPU, lectura y escritura
+                       SWAP, STATUS, SWAP_COUNT,
+                       VIDEO_CTRL
 0x80000100-0x80000114  depuracion y contadores   host
-0x80000200-0x8000023F  VIDEO_CTRL / FB_BASE      host y GPU, lectura y escritura
 0x80000300-0x8000033F  contadores de rendimiento host y GPU, solo lectura
+0x80001000-0x8000107F  configuracion de warps    host
 ```
 
-**La GPU no llega a la configuración de warps.** Que un warp reconfigure los
-warps es justo el tipo de cosa que no se quiere poder hacer por accidente, y no
-hay ningún caso de uso que lo pida. Escribir un contador tampoco: son de
-lectura, y un intento de escritura es fault.
+**La GPU no llega a la configuración de warps**, y desde la migración eso ya no
+hay que razonarlo región a región: `gpu_lsu2` solo deja pasar la primera página
+(`sel_addr[31:12]==20'h80000`), y los warps están en la segunda. Que un warp
+reconfigure los warps es justo el tipo de cosa que no se quiere poder hacer por
+accidente, y no hay ningún caso de uso que lo pida. Escribir un contador tampoco:
+son de lectura, y un intento de escritura es fault.
+
+El vídeo está en `0x80000000` **con los mismos offsets que en los cores de CPU**,
+así que un programa de vídeo ya no cambia de constantes entre familias. El
+detalle del reparto está en [`../docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
 
 ### Contadores (`gpu_perf_counters.v`)
 
@@ -115,7 +126,9 @@ de registros de cada dispositivo, las discrepancias entre prototipos y el repart
 al que se quiere converger están en
 [`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md).
 
-Dos direcciones de las de arriba **van a moverse** al aplicar ese contrato: la
-configuración de warps sale de `0x80000000` a la página GPU `0x80001000`, y el
-vídeo vuelve de `0x80000200` a `0x80000000`, que es donde lo tienen los cores de
-CPU. Depuración y contadores ya están en su sitio definitivo.
+Ese contrato **ya está aplicado**: la configuración de warps salió de
+`0x80000000` a la página GPU `0x80001000`, y el vídeo volvió de `0x80000200` a
+`0x80000000`, que es donde lo tienen los cores de CPU. `VIDEO_CTRL`, que solo
+tiene la GPU, se fue al final del bloque (`+0x18`) para que `FB_FRONT` quedase en
+`+0x00` como en CPU y ningún programa de CPU tuviera que cambiar. Depuración y
+contadores nunca se movieron: ya estaban en su sitio definitivo.

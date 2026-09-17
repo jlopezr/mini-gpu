@@ -46,7 +46,7 @@ module gpu_regions_tb;
             @(negedge clk); gpu_reset=1;
             @(negedge clk); gpu_reset=0;
             wait(halted); @(negedge clk);
-            for(w=1;w<8;w=w+1) write_word(32'h80000004+w*16,0);
+            for(w=1;w<8;w=w+1) write_word(32'h80001004+w*16,0);
         end
     endtask
     task launch;
@@ -111,9 +111,9 @@ module gpu_regions_tb;
         launch; stopped(6,8);
         if(dut.sm.sp[0]!==1 || dut.sm.pp[0]!==2 || dut.sm.active[0]!==8'hfc)
             $fatal(1,"path overflow changed SIMT state");
-        read_word(32'h8000000c);
+        read_word(32'h8000100c);
         if(word_result!==32'h201) $fatal(1,"independent stack status %h",word_result);
-        write_word(32'h80000008,0);
+        write_word(32'h80001008,0);
         if(dut.sm.sp[0]!==0 || dut.sm.pp[0]!==0) $fatal(1,"configuration did not clear stacks");
         // Direct join remains legal with both path slots occupied.
         fresh;

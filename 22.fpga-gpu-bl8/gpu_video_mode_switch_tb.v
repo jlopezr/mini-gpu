@@ -230,7 +230,7 @@ module gpu_video_mode_switch_tb;
             errors=errors+1;
         end
 
-        write_word(32'h80000204,32'h0010_0000);   // FB_BASE, para la fuente SDRAM
+        write_word(32'h80000000,32'h0010_0000);   // FB_BASE, para la fuente SDRAM
 
         // ---- 1. Referencia: en PATTERN las lineas fluyen ----
         expect_lines_flowing("PATTERN en reposo", 8000);
@@ -240,17 +240,17 @@ module gpu_video_mode_switch_tb;
         // problema no seria la ventana del llenado sino algo mas gordo.
         @(posedge clk);
         while(fill_busy) @(posedge clk);
-        access(1,32'h80000200,8'd2);
+        access(1,32'h80000018,8'd2);
         expect_lines_flowing("cambio de modo ENTRE lineas (control)", 20000);
 
         // ---- 3. PATTERN -> SCANOUT con una linea A MEDIAS ----
         // Es exactamente lo que hace ahora el prologo de plasma.asm: la GPU
         // escribe VIDEO_CTRL mientras el video esta a lo suyo.
         recover;
-        access(1,32'h80000200,8'd1);
+        access(1,32'h80000018,8'd1);
         expect_lines_flowing("vuelta a PATTERN tras recuperar", 8000);
         wait_mid_fill;
-        access(1,32'h80000200,8'd2);
+        access(1,32'h80000018,8'd2);
         if(video_mode!==2'd2) begin
             $display("FAIL: VIDEO_CTRL no cambio a SCANOUT (modo=%0d)",video_mode);
             errors=errors+1;
@@ -261,7 +261,7 @@ module gpu_video_mode_switch_tb;
         recover;
         expect_lines_flowing("SCANOUT tras recuperar", 20000);
         wait_mid_fill;
-        access(1,32'h80000200,8'd1);
+        access(1,32'h80000018,8'd1);
         expect_lines_flowing("tras SCANOUT->PATTERN a mitad de linea", 20000);
 
         $display("");

@@ -9,15 +9,15 @@
 ; nuevo son identicos. Entonces:
 ;
 ;   imagen estable  -> lo que se veia era tearing por falta de doble buffer
-;   sigue inestable -> hay otra cosa; mira VIDEO_STATUS (0x80000210) bit 0,
+;   sigue inestable -> hay otra cosa; mira VIDEO_STATUS (0x8000000c) bit 0,
 ;                      que es el underflow pegajoso del line buffer, y led[0]
 ;
 ; Efecto a pantalla completa con los 64 hilos colaborando.
 ;
 ; SE CONFIGURA SOLO: el prologo enciende el scanout. El host solo carga y
 ; arranca; `run-board --program` basta.
-;     FB_FRONT (0x80000204) = 0x00100000
-;     VIDEO_CTRL (0x80000200) = 2
+;     FB_FRONT (0x80000000) = 0x00100000
+;     VIDEO_CTRL (0x80000018) = 2
 ;
 ; Aqui NO se toca FB_BACK: la gracia de este programa es que hay UN SOLO buffer,
 ; y se dibuja encima del que se esta mostrando. Por eso la base va a FB_FRONT.
@@ -25,7 +25,8 @@
 ; (Esta cabecera decia antes que el programa no podia encender el scanout,
 ; porque la LSU marcaba fault todo lo que pasara de 0x02000000 y el MMIO exigia
 ; `halted`. Las dos cosas dejaron de ser ciertas al abrir la ventana MMIO a la
-; LSU, ver mmio.md. Tambien situaba VIDEO_STATUS en 0x80000208, que es FB_BACK.)
+; LSU, ver mmio.md. Tambien situaba VIDEO_STATUS en el offset +0x04, que es
+; FB_BACK.)
 ;
 ; Reparto del trabajo
 ; -------------------
@@ -82,9 +83,9 @@
         MOVHI R30, 0x8000       ; R30 = 0x80000000, base del MMIO
         SSY   video_ready
         BNE   R1, R0, video_ready
-        STORE R20, R30, 516     ; FB_FRONT = 0x00100000, el mismo que dibujamos
+        STORE R20, R30, 0     ; FB_FRONT = 0x00100000, el mismo que dibujamos
         MOVI  R27, 2
-        STORE R27, R30, 512     ; VIDEO_CTRL = SCANOUT
+        STORE R27, R30, 24     ; VIDEO_CTRL = SCANOUT
 video_ready:
         BAR
 

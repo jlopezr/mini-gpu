@@ -26,8 +26,8 @@
         SSY   after_mmio
         BNE   R1, R0, after_mmio   ; los que no son el hilo 0 se saltan esto
         MOVI  R2, 2                ; VIDEO_CTRL = SCANOUT
-        STORE R2, R20, 512         ; 0x80000200
-        LOAD  R10, R20, 512        ; releer: deberia dar 2
+        STORE R2, R20, 24         ; 0x80000018
+        LOAD  R10, R20, 24        ; releer: deberia dar 2
         LOAD  R3, R20, 768         ; 0x80000300 CYCLES
         LOAD  R4, R20, 772         ; 0x80000304 RETIRED
 after_mmio:

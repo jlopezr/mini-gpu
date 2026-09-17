@@ -86,8 +86,20 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     reg [31:0] address;
     reg [7:0] write_data;
     reg writing;
-    wire mmio=address[31:12]==20'h80000;
-    wire cfg_region=address[11:7]==0;
+    // Dos paginas de 4 KiB, no una. La primera (0x80000000) es de perifericos
+    // compartidos con la CPU -aqui video y contadores-; la segunda
+    // (0x80001000) es control exclusivo de la GPU. Cuesta un bit mas en este
+    // comparador de prefijo, y es lo que permite que el reparto siga valiendo
+    // el dia que CPU y GPU compartan bitstream. Ver docs/mapa-de-memoria.md §6.
+    //
+    // La LSU solo deja pasar la primera pagina (`sel_addr[31:12]==20'h80000` en
+    // gpu_lsu2.v), asi que la GPU alcanza el video y NO alcanza la
+    // configuracion de warps. Antes eso habia que razonarlo mirando regiones;
+    // ahora sale del reparto de paginas.
+    wire mmio=address[31:13]==19'h40000;
+    wire gpu_page=address[12];
+    // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
+    wire cfg_region=gpu_page && address[11:7]==0;
     wire [3:0] byte_strobe=4'b0001 << address[1:0];
     wire [31:0] expanded_data={4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
@@ -219,9 +231,9 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .sdram_done(mem_done),.sdram_rdata(mem_rdata)
     );
 
-    // Bloque de video en 0x80000200-0x8000023F. En 21 estos registros viven en
-    // 0x80000000, pero ahi la GPU tiene la configuracion de warps: lo portable
-    // entre cores es la semantica, no la direccion.
+    // Bloque de video en 0x80000000-0x8000003F: la MISMA direccion y los mismos
+    // offsets que en 16, 18, 19 y 21. Lo portable entre cores ya no es solo la
+    // semantica, tambien la direccion.
     // ===================================================================
     // Ventana MMIO, compartida entre el host y la GPU
     //
@@ -231,7 +243,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     //
     // La GPU NO llega a la region de configuracion de warps: que un warp
     // reconfigure los warps es justo el tipo de cosa que no se quiere poder
-    // hacer por accidente. Solo ve video (0x200) y contadores (0x300), y los
+    // hacer por accidente. Solo ve video (0x000) y contadores (0x300), y los
     // contadores solo de lectura.
     // ===================================================================
     reg gm_busy;
@@ -247,8 +259,12 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     wire [31:0] mmio_wdata_mux = gm_accept ? gm_wdata : expanded_data;
     wire [3:0]  mmio_strobe_mux= gm_accept ? 4'hf     : byte_strobe;
 
-    wire video_region=mmio_addr_mux[11:6]==6'b001000;
-    wire perf_region =mmio_addr_mux[11:6]==6'b001100;
+    // Ambas en la PRIMERA pagina. El mux sirve al host (que puede direccionar
+    // las dos paginas) y a la GPU (que solo llega a la primera), asi que la
+    // condicion de pagina se comprueba sobre la direccion ya multiplexada.
+    wire mux_gpu_page=mmio_addr_mux[12];
+    wire video_region=!mux_gpu_page && mmio_addr_mux[11:6]==6'b000000;
+    wire perf_region =!mux_gpu_page && mmio_addr_mux[11:6]==6'b001100;
     wire [31:0] video_read_data, perf_read_data;
     wire video_bad, perf_bad;
     wire video_write=gm_accept ? (gm_write && video_region)
@@ -300,7 +316,8 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         if(cfg_region) begin
             mmio_data=cfg_read_data;
             if(writing && address[3:2]==3) mmio_bad=1;
-        end else if(video_region) begin
+        end else if(gpu_page) mmio_bad=1;  // resto de la pagina GPU: reservado
+        else if(video_region) begin
             mmio_data=video_read_data; mmio_bad=video_bad;
         end else if(perf_region) begin
             mmio_data=perf_read_data; mmio_bad=perf_bad || writing;
@@ -332,7 +349,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
                 if(mmio) begin
                     host_read_data<=mmio_data[address[1:0]*8 +: 8];
                     host_error<=mmio_bad; host_ready<=1; host_state<=0;
-                    if(writing && address[11:0]==12'h100) begin
+                    if(writing && !gpu_page && address[11:0]==12'h100) begin
                         debug_lane<=write_data[2:0]; debug_warp<=write_data[5:3];
                     end
                 end else if(aux_ready) host_state<=2;

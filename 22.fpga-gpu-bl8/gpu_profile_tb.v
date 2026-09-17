@@ -167,9 +167,9 @@ module gpu_profile_tb;
         read_word(32'h80000314); $display("VIDEO_TX    %0d", word_result);
         read_word(32'h80000318); $display("STALL_MEM   %0d", word_result);
         read_word(32'h8000031c); $display("LANE_OPS    %0d", word_result);
-        read_word(32'h80000214); $display("SWAP_COUNT  %0d", word_result);
+        read_word(32'h80000010); $display("SWAP_COUNT  %0d", word_result);
 
-        read_word(32'h80000204);
+        read_word(32'h80000000);
         if(word_result!==32'h0014_0000) begin
             $display("FAIL: FB_FRONT=%h, esperaba 00140000",word_result);
             errors=errors+1;

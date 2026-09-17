@@ -88,7 +88,7 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     // Estructura calcada de 21, con UNA diferencia de fondo: alli el patron se
     // elige con un boton y el scanout sigue leyendo SDRAM igualmente, asi que
     // tapar la imagen no ahorra ancho de banda. Aqui el modo lo manda
-    // VIDEO_CTRL (0x80000200) y el mux es entre las dos FUENTES DE LINEA, de
+    // VIDEO_CTRL (0x80000018) y el mux es entre las dos FUENTES DE LINEA, de
     // forma que en BLANK y PATTERN no se emite ni una peticion al fabric.
     // Ese es el punto entero: el scanout cuesta un 37% del rendimiento de la
     // GPU (ver video-scanout.md) y se quiere poder recuperarlo desde software.

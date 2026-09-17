@@ -152,7 +152,7 @@ module gpu_lsu2_tb;
     initial begin
         for(j=0;j<1024;j=j+1) mem[j]=128'd0;
         for(j=0;j<16;j=j+1) mmio_regs[j]=32'd0;
-        mmio_regs[1]=32'hCAFE_0001;   // el que esta en 0x80000204
+        mmio_regs[1]=32'hCAFE_0001;   // el que esta en 0x80000004 (FB_BACK)
         // Dos lineas contiguas con un patron reconocible por palabra.
         mem[16]={32'h0000_0003,32'h0000_0002,32'h0000_0001,32'h0000_0000};
         mem[17]={32'h0000_0007,32'h0000_0006,32'h0000_0005,32'h0000_0004};
@@ -240,7 +240,7 @@ module gpu_lsu2_tb;
 
         // ---- 7. MMIO: una lane, sin coalescer, y sin fault por rango ----
         // Una direccion >= 0x02000000 es fault salvo si cae en 0x80000xxx.
-        addr=0; addr[0 +: 32]=32'h8000_0204;
+        addr=0; addr[0 +: 32]=32'h8000_0004;
         base_tx=mmio_transactions;
         issue(3'd1, 1'b0, 8'h01, addr, 256'd0);
         await_rsp(got, err, tag);
@@ -249,7 +249,7 @@ module gpu_lsu2_tb;
         check_eq(mmio_transactions-base_tx, 1, "mmio load: una transaccion");
 
         // ---- 8. MMIO: escritura y relectura ----
-        addr=0; addr[0 +: 32]=32'h8000_0208;
+        addr=0; addr[0 +: 32]=32'h8000_0008;
         data=0; data[0 +: 32]=32'hDEAD_BEEF;
         issue(3'd2, 1'b1, 8'h01, addr, data);
         await_rsp(got, err, tag);
@@ -262,8 +262,8 @@ module gpu_lsu2_tb;
         // Un registro de 32 bits no es una linea de 16 bytes: cada lane sale
         // por su cuenta, la de menor indice primero.
         addr=0;
-        addr[0 +: 32]=32'h8000_0204;
-        addr[32 +: 32]=32'h8000_0208;
+        addr[0 +: 32]=32'h8000_0004;
+        addr[32 +: 32]=32'h8000_0008;
         base_tx=mmio_transactions;
         issue(3'd4, 1'b0, 8'h03, addr, 256'd0);
         await_rsp(got, err, tag);

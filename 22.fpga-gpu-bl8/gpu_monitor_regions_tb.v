@@ -105,23 +105,31 @@ module gpu_monitor_regions_tb;
         // reves) el fallo aparece solo en placa.
         read_block(32'h0000_0000, 16'd4, 1, "SDRAM baja");
         read_block(32'h01ff_fffc, 16'd4, 1, "SDRAM alta, ultima palabra");
-        read_block(32'h8000_0000, 16'd4, 1, "configuracion de warps");
+        read_block(32'h8000_0000, 16'd4, 1, "FB_FRONT");
+        read_block(32'h8000_0018, 16'd4, 1, "VIDEO_CTRL");
+        // El bloque de video ENTERO de una vez. Con 4 bytes no basta: el hueco
+        // de HALT_AT (+0x14) queda en medio, y si fallara en vez de leer cero
+        // este bloque daria NACK justo ahi.
+        read_block(32'h8000_0000, 16'd28, 1, "bloque de video completo");
         read_block(32'h8000_0100, 16'd4, 1, "depuracion");
-        read_block(32'h8000_0200, 16'd4, 1, "VIDEO_CTRL");
-        read_block(32'h8000_0214, 16'd4, 1, "SWAP_COUNT");
         read_block(32'h8000_0300, 16'd4, 1, "CYCLES");
         read_block(32'h8000_031c, 16'd4, 1, "LANE_OPS");
+        read_block(32'h8000_1000, 16'd4, 1, "configuracion de warps");
+        read_block(32'h8000_107c, 16'd4, 1, "ultimo descriptor de warp");
 
         // Y los bordes: una ventana que acepta de mas es tan mala como una que
         // rechaza de menos, porque el acceso acaba en un decodificador que no
         // sabe que contestar.
         read_block(32'h0200_0000, 16'd4, 0, "por encima de la SDRAM");
-        read_block(32'h8000_0218, 16'd4, 0, "justo despues del bloque de video");
+        read_block(32'h8000_001c, 16'd4, 0, "justo despues del bloque de video");
         read_block(32'h8000_0320, 16'd4, 0, "justo despues de los contadores");
-        read_block(32'h8000_0280, 16'd4, 0, "hueco entre video y contadores");
-        read_block(32'h8000_0210, 16'd16, 0, "bloque que desborda el video");
+        read_block(32'h8000_0280, 16'd4, 0, "hueco donde estaba el video antes");
+        read_block(32'h8000_0014, 16'd16, 0, "bloque que desborda el video");
+        // La primera pagina ya no tiene los warps, y la segunda solo los tiene
+        // a ellos: pedir el resto de la pagina GPU tiene que fallar.
+        read_block(32'h8000_1080, 16'd4, 0, "justo despues de los warps");
 
-        $display("PASS lista blanca de monitor.v: 4 ventanas validas, 5 bordes rechazados");
+        $display("PASS lista blanca de monitor.v: 8 ventanas validas, 6 bordes rechazados");
         $finish;
     end
     initial begin #5000000; $fatal(1,"watchdog"); end

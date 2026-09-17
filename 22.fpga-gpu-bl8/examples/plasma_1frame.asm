@@ -14,9 +14,9 @@
 ;
 ; SE CONFIGURA SOLO: el prologo pone los dos buffers y enciende el scanout.
 ; El host solo carga y arranca; `run-board --program` basta.
-;     FB_FRONT (0x80000204) = 0x00100000
-;     FB_BACK  (0x80000208) = 0x00140000
-;     VIDEO_CTRL (0x80000200) = 2
+;     FB_FRONT (0x80000000) = 0x00100000
+;     FB_BACK  (0x80000004) = 0x00140000
+;     VIDEO_CTRL (0x80000018) = 2
 ;
 ; OJO: esta cabecera decia 0x00200000 y era MENTIRA. gpu_profile_tb, que es
 ; quien carga este programa, ponia 0x00140000 y comprueba que FB_FRONT acabe
@@ -84,16 +84,16 @@
         SSY   video_ready
         BNE   R1, R0, video_ready
         MOVHI R27, 0x0010
-        STORE R27, R30, 516     ; FB_FRONT = 0x00100000
+        STORE R27, R30, 0     ; FB_FRONT = 0x00100000
         MOVHI R27, 0x0014
-        STORE R27, R30, 520     ; FB_BACK  = 0x00140000
+        STORE R27, R30, 4     ; FB_BACK  = 0x00140000
         MOVI  R27, 2
-        STORE R27, R30, 512     ; VIDEO_CTRL = SCANOUT, ya con los buffers puestos
+        STORE R27, R30, 24     ; VIDEO_CTRL = SCANOUT, ya con los buffers puestos
 video_ready:
         BAR                     ; nadie lee FB_BACK antes de que este escrito
 
 frame_loop:
-        LOAD  R19, R30, 520     ; R19 = FB_BACK (0x80000208): donde toca dibujar
+        LOAD  R19, R30, 4     ; R19 = FB_BACK (0x80000004): donde toca dibujar
         ADD   R3, R1, R0        ; x2 = tid
         MOVI  R4, 0             ; y  = 0
         ADD   R5, R1, R0        ; w  = tid
@@ -149,9 +149,9 @@ no_wrap:
         SSY   swapped
         BNE   R1, R0, swapped
         MOVI  R15, 1
-        STORE R15, R30, 524     ; SWAP = 1 (0x8000020c)
+        STORE R15, R30, 8     ; SWAP = 1 (0x80000008)
 poll_swap:
-        LOAD  R15, R30, 524
+        LOAD  R15, R30, 8
         ANDI  R15, R15, 1
         BNE   R15, R0, poll_swap
 swapped:

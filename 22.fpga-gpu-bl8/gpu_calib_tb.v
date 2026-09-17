@@ -133,9 +133,9 @@ module gpu_calib_tb;
 
         // El host prepara los dos buffers y enciende el scanout. El
         // intercambio ya lo pide la GPU sola.
-        write_word(32'h80000204,32'h0010_0000);   // FB_FRONT
-        write_word(32'h80000208,32'h0014_0000);   // FB_BACK
-        access(1,32'h80000200,8'd2);              // VIDEO_CTRL = SCANOUT
+        write_word(32'h80000000,32'h0010_0000);   // FB_FRONT
+        write_word(32'h80000004,32'h0014_0000);   // FB_BACK
+        access(1,32'h80000018,8'd2);              // VIDEO_CTRL = SCANOUT
 
         for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 66 del programa
 
@@ -168,7 +168,7 @@ module gpu_calib_tb;
         read_word(32'h80000314); $display("VIDEO_TX    %0d", word_result);
         read_word(32'h80000318); $display("STALL_MEM   %0d", word_result);
         read_word(32'h8000031c); $display("LANE_OPS    %0d", word_result);
-        read_word(32'h80000214); $display("SWAP_COUNT  %0d", word_result);
+        read_word(32'h80000010); $display("SWAP_COUNT  %0d", word_result);
 
         // OJO: este banco corre plasma_nommio, que dibuja sobre una base FIJA
         // (MOVHI R19, 0x0010) y NO toca MMIO -- no pide el intercambio. Por eso
@@ -176,7 +176,7 @@ module gpu_calib_tb;
         // SWAP es gpu_plasma_tb, con plasma.hex.
         // Comprobarlo igualmente vale la pena: verifica que ni el scanout ni la
         // GPU mueven el frente por su cuenta mientras se dibuja.
-        read_word(32'h80000204);
+        read_word(32'h80000000);
         if(word_result!==32'h0010_0000) begin
             $display("FAIL: FB_FRONT=%h, esperaba 00100000 (nommio no intercambia)",
                      word_result);

@@ -130,29 +130,38 @@ Es la única fase con trabajo no mecánico, y la primera que produce un programa
 realmente portable entre familias. Los dos movimientos están acoplados: el vídeo
 no puede ir a `0x80000000` mientras los warps estén ahí.
 
-- [ ] Mover warps a `0x80001000` en
-      [`gpu_system_bl8.v`](../22.fpga-gpu-bl8/gpu_system_bl8.v).
-- [ ] Mover el bloque de vídeo de `0x80000200` a `0x80000000`.
-- [ ] **`VIDEO_CTRL` de `+0x00` a `+0x18`**, dejando `FB_FRONT` en `+0x00`. Así
-      ningún programa de CPU cambia y solo se toca la 22. Los cores sin
-      `VIDEO_CTRL` leen cero en `+0x18`, que ya es su comportamiento.
-- [ ] **Implementar el bit 1 de `STATUS` (`swap_pending`)** en
-      [`gpu_video_regs.v`](../22.fpga-gpu-bl8/gpu_video_regs.v). La señal ya
-      existe. Hoy código que sondee ese bit esperando al swap funciona en CPU y
-      **se cuelga** en la 22.
-- [ ] Actualizar lista blanca de `monitor.v` (+14 líneas son toda la diferencia
-      con la 14) y `MONITOR_REGIONS` de `monitor.py`.
-- [ ] Revisar **`plasma.asm` y `plasma_nommio.asm`**: los kernels se
-      autoconfiguran escribiendo `FB_BACK`/`SWAP`, así que llevan las constantes
-      dentro. Los dos tienen que moverse a la vez para que la comparación
-      RTL/modelo siga siendo válida.
-- [ ] Actualizar los testbenches afectados: `gpu_mmio_tb.v`,
-      `gpu_regions_tb.v`, `gpu_monitor_regions_tb.v`, y los de vídeo
-      (`gpu_video_mode_switch_tb.v`, `gpu_video_bench_tb.v`, `gpu_plasma*_tb.v`).
+- [x] Mover warps a `0x80001000` en
+      [`gpu_system_bl8.v`](../22.fpga-gpu-bl8/gpu_system_bl8.v) **y también en
+      [`gpu_system.v`](../22.fpga-gpu-bl8/gpu_system.v)**. Ojo aquí: el `top_bl8`
+      instancia `gpu_system_bl8`, pero `gpu_system` (la variante BL1) **no es
+      código muerto** — lo usan `gpu_control_tb`, `gpu_system_tb`,
+      `gpu_regions_tb` y `gpu_bench_base_tb`. Son dos decodificadores, no uno.
+- [x] Mover el bloque de vídeo de `0x80000200` a `0x80000000`.
+- [x] **`VIDEO_CTRL` de `+0x00` a `+0x18`**, dejando `FB_FRONT` en `+0x00`.
+- [x] **Implementar el bit 1 de `STATUS` (`swap_pending`)** en
+      [`gpu_video_regs.v`](../22.fpga-gpu-bl8/gpu_video_regs.v).
+- [x] **`HALT_AT` (`+0x14`) lee cero** en vez de levantar `bad`. No estaba
+      previsto y hacía falta: al ensanchar la lista blanca a `0x80000000–
+      0x8000001C` para cubrir el bloque entero, una lectura en bloque de los 28
+      bytes habría dado NACK en el byte 20. Leer cero es además lo que hace la
+      CPU con un registro ausente del bloque. El **mecanismo** no se implementa:
+      pararía el SM desde un registro de un periférico, y los kernels de la 22 ya
+      terminan con `HALT`.
+- [x] Actualizar lista blanca de `monitor.v` y `MONITOR_REGIONS` de `monitor.py`.
+- [x] Revisar los kernels: `plasma.asm`, `plasma_small.asm`, `plasma_1frame.asm`,
+      `plasma_static.asm`, `mmio_selftest.asm` y `plasma_nommio.asm` llevan las
+      constantes dentro. **Y hay que reensamblar los `examples/*.hex`**, que están
+      versionados y son los que leen los testbenches con `$readmemh`; conservar
+      la convención de cada fichero (los `plasma*.hex` están en mayúsculas y el
+      resto en minúsculas) para no ensuciar el diff.
+- [x] Actualizar los testbenches afectados, incluido `gpu_lsu2_tb.v`, que usaba
+      `0x80000204`/`0x80000208` como direcciones MMIO de ejemplo.
+- [x] Añadir al `gpu_monitor_regions_tb.v` la lectura del **bloque de vídeo
+      entero** (28 bytes). Con 4 bytes no se veía el hueco de `HALT_AT`.
 - [ ] Verificar en placa que el arranque sigue en **PATTERN, no SCANOUT** — la
       SDRAM recién encendida contiene basura y arrancar en SCANOUT elegiría una
       salida indefinida por defecto.
-- [ ] Documentar que **los programas alinean las bases de framebuffer a 16
+- [x] Documentar que **los programas alinean las bases de framebuffer a 16
       bytes**. El alineamiento no se unifica: 4 B en CPU y 16 B en GPU conviven
       si los programas respetan el más estricto. Escribir una base no alineada a
       16 no da error en la 22, se truncan los bits bajos en silencio.
