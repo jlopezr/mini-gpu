@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 import serial
@@ -13,7 +12,6 @@ import serial
 BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0xFFFF_FFFF
-MAX_BLOCK_SIZE = 256
 # Los dos bancos EBR, vistos como 32 KiB seguidos. Estuvieron en 0x00000000 y
 # 0x00100000, con un hueco de 1 MiB en medio; ahora el banco 1 empieza donde
 # acaba el 0 y el bit 14 de la direccion elige. Fuera de aqui, el bus da error.
@@ -25,219 +23,42 @@ ARCHITECTURAL_REGIONS = (
 MONITOR_REGIONS = ()
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
-CMD_PING = b"\x01"
-CMD_GET_VERSION = b"\x02"
-CMD_WRITE_BYTE = 0x10
-CMD_READ_BYTE = 0x11
-CMD_READ_WORD = 0x12
-CMD_WRITE_BLOCK = 0x20
-CMD_READ_BLOCK = 0x21
-CMD_RUN = 0x30
-CMD_HALT = 0x31
-CMD_STEP = 0x32
-CMD_GET_STATUS = 0x33
-CMD_READ_REGISTER = 0x34
-CMD_RESET_CPU = 0x35
+# `tools` en el camino ANTES de importar de ahi. El insert ya existia
+# mas abajo, para tools/serial_ports.py, pero ahora hace falta aqui
+# arriba; es idempotente.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# El protocolo del monitor vive UNA vez, en tools/monitor_protocol.py:
+# veinte de los veintiun metodos de este cliente eran identicos en las
+# diez carpetas con juego de comandos. Lo que se queda aqui es lo que
+# describe a ESTE prototipo: su baudrate, su mapa y los comandos que su
+# hardware tiene de verdad -- por eso los mixins se componen y no se
+# heredan todos.
+from tools import monitor_protocol as protocolo  # noqa: E402
+from tools.monitor_protocol import (  # noqa: E402,F401
+    MAX_BLOCK_SIZE,
+    CpuStatus,
+    MonitorError,
+    Version,
+    parse_integer,
+)
 
-RSP_PONG = b"\x81"
-RSP_VERSION = 0x82
-RSP_WRITE_BYTE = b"\x90"
-RSP_READ_BYTE = 0x91
-RSP_READ_WORD = 0x92
-RSP_WRITE_BLOCK = b"\xa0"
-RSP_READ_BLOCK = 0xA1
-RSP_RUN = b"\xb0"
-RSP_HALT = b"\xb1"
-RSP_STEP = b"\xb2"
-RSP_STATUS = 0xB3
-RSP_READ_REGISTER = 0xB4
-RSP_RESET_CPU = b"\xb5"
-RSP_ERROR = 0xFF
+# El cuerpo de una clase no puede LEER un global que ademas asigna, asi
+# que estos alias son lo que permite que el atributo de clase y la
+# constante del modulo -que es la que se lee desde fuera- se llamen
+# igual.
+_REGIONES = MEMORY_REGIONS
 
 
-class MonitorError(Exception):
-    """Raised when communication with the FPGA monitor fails."""
+class MonitorClient(protocolo.MonitorClient):
+    MEMORY_REGIONS = _REGIONES
 
 
-@dataclass(frozen=True)
-class Version:
-    major: int
-    minor: int
-
-    def __str__(self) -> str:
-        return f"{self.major}.{self.minor}"
+def validate_block(address: int, length: int) -> None:
+    protocolo.validate_block(address, length, MEMORY_REGIONS)
 
 
-@dataclass(frozen=True)
-class CpuStatus:
-    halted: bool
-    error: bool
-    error_code: int
-    pc: int
-
-
-class MonitorClient:
-    def __init__(self, connection: serial.Serial) -> None:
-        self.connection = connection
-
-    def _send(self, command: bytes) -> None:
-        self.connection.reset_input_buffer()
-        self.connection.write(command)
-        self.connection.flush()
-
-    def _read_exact(self, response_size: int) -> bytes:
-        response = self.connection.read(response_size)
-        if len(response) != response_size:
-            raise MonitorError(
-                f"Timeout: expected {response_size} response byte(s), "
-                f"received {len(response)}"
-            )
-        return response
-
-    def _request(self, command: bytes, response_size: int) -> bytes:
-        self._send(command)
-        response = self._read_exact(response_size)
-        if response[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
-        return response
-
-    @staticmethod
-    def _address_bytes(address: int) -> bytes:
-        return address.to_bytes(4, byteorder="big")
-
-    def ping(self) -> None:
-        response = self._request(CMD_PING, len(RSP_PONG))
-        if response != RSP_PONG:
-            raise MonitorError(f"Invalid PING response: {response.hex(' ')}")
-
-    def get_version(self) -> Version:
-        response = self._request(CMD_GET_VERSION, 3)
-        if response[0] != RSP_VERSION:
-            raise MonitorError(f"Invalid GET_VERSION response: {response.hex(' ')}")
-
-        return Version(major=response[1], minor=response[2])
-
-    def write_byte(self, address: int, value: int) -> None:
-        request = bytes((CMD_WRITE_BYTE,)) + self._address_bytes(address) + bytes((value,))
-        response = self._request(request, len(RSP_WRITE_BYTE))
-        if response != RSP_WRITE_BYTE:
-            raise MonitorError(f"Invalid WRITE_BYTE response: {response.hex(' ')}")
-
-    def read_byte(self, address: int) -> int:
-        request = bytes((CMD_READ_BYTE,)) + self._address_bytes(address)
-        self._send(request)
-        header = self._read_exact(1)
-        if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
-        if header[0] != RSP_READ_BYTE:
-            raise MonitorError(f"Invalid READ_BYTE response: {header.hex(' ')}")
-
-        return self._read_exact(1)[0]
-
-    def read_word(self, address: int) -> int:
-        """Lee 32 bits en UNA transaccion de bus, y por tanto sin desgarro.
-
-        Cuatro read_byte tardan cerca de un milisegundo entre el primero y el
-        cuarto, y hay registros que siguen vivos con el nucleo parado. Leido a
-        trozos puede salir un valor que nunca existio.
-        """
-        if address % 4:
-            raise MonitorError(f"READ_WORD requiere direccion alineada a 4: {address:#x}")
-        request = bytes((CMD_READ_WORD,)) + self._address_bytes(address)
-        self._send(request)
-        header = self._read_exact(1)
-        if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
-        if header[0] != RSP_READ_WORD:
-            raise MonitorError(f"Invalid READ_WORD response: {header.hex(' ')}")
-
-        return int.from_bytes(self._read_exact(4), byteorder="little")
-
-    def write_block(self, address: int, data: bytes) -> None:
-        validate_block(address, len(data))
-        request = (
-            bytes((CMD_WRITE_BLOCK,))
-            + self._address_bytes(address)
-            + len(data).to_bytes(2, byteorder="big")
-            + data
-        )
-        response = self._request(request, len(RSP_WRITE_BLOCK))
-        if response != RSP_WRITE_BLOCK:
-            raise MonitorError(f"Invalid WRITE_BLOCK response: {response.hex(' ')}")
-
-    def read_block(self, address: int, length: int) -> bytes:
-        validate_block(address, length)
-        request = (
-            bytes((CMD_READ_BLOCK,))
-            + self._address_bytes(address)
-            + length.to_bytes(2, byteorder="big")
-        )
-        self._send(request)
-        header = self._read_exact(1)
-        if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
-        if header[0] != RSP_READ_BLOCK:
-            raise MonitorError(f"Invalid READ_BLOCK response: {header.hex(' ')}")
-
-        return self._read_exact(length)
-
-    def write_memory(self, address: int, data: bytes) -> None:
-        validate_transfer(address, len(data))
-        for offset in range(0, len(data), MAX_BLOCK_SIZE):
-            chunk = data[offset : offset + MAX_BLOCK_SIZE]
-            self.write_block(address + offset, chunk)
-
-    def read_memory(self, address: int, length: int) -> bytes:
-        validate_transfer(address, length)
-        result = bytearray()
-        for offset in range(0, length, MAX_BLOCK_SIZE):
-            chunk_length = min(MAX_BLOCK_SIZE, length - offset)
-            result.extend(self.read_block(address + offset, chunk_length))
-        return bytes(result)
-
-    def run_cpu(self) -> None:
-        response = self._request(bytes((CMD_RUN,)), 1)
-        if response != RSP_RUN:
-            raise MonitorError(f"Invalid RUN response: {response.hex(' ')}")
-
-    def halt_cpu(self) -> None:
-        response = self._request(bytes((CMD_HALT,)), 1)
-        if response != RSP_HALT:
-            raise MonitorError(f"Invalid HALT response: {response.hex(' ')}")
-
-    def step_cpu(self) -> None:
-        response = self._request(bytes((CMD_STEP,)), 1)
-        if response != RSP_STEP:
-            raise MonitorError(f"Invalid STEP response: {response.hex(' ')}")
-
-    def get_status(self) -> CpuStatus:
-        response = self._request(bytes((CMD_GET_STATUS,)), 7)
-        if response[0] != RSP_STATUS:
-            raise MonitorError(f"Invalid STATUS response: {response.hex(' ')}")
-
-        return CpuStatus(
-            halted=bool(response[1] & 0x01),
-            error=bool(response[1] & 0x02),
-            error_code=response[2],
-            pc=int.from_bytes(response[3:7], byteorder="big"),
-        )
-
-    def read_register(self, register: int) -> int:
-        if not 0 <= register < 32:
-            raise MonitorError("Register number must be between 0 and 31")
-
-        self._send(bytes((CMD_READ_REGISTER, register)))
-        header = self._read_exact(1)
-        if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
-        if header[0] != RSP_READ_REGISTER:
-            raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
-        return int.from_bytes(self._read_exact(4), byteorder="big")
-
-    def reset_cpu(self) -> None:
-        response = self._request(bytes((CMD_RESET_CPU,)), 1)
-        if response != RSP_RESET_CPU:
-            raise MonitorError(f"Invalid RESET_CPU response: {response.hex(' ')}")
+def validate_transfer(address: int, length: int) -> None:
+    protocolo.validate_transfer(address, length, MEMORY_REGIONS)
 
 
 # Deteccion del puerto y listado: en tools/serial_ports.py.
@@ -292,33 +113,6 @@ def parse_args() -> argparse.Namespace:
         help=f"Response timeout in seconds (default: {DEFAULT_TIMEOUT})",
     )
     return parser.parse_args()
-
-
-def parse_integer(value: str, maximum: int, description: str) -> int:
-    try:
-        result = int(value, 0)
-    except ValueError as error:
-        raise MonitorError(f"Invalid {description}: {value}") from error
-
-    if not 0 <= result <= maximum:
-        raise MonitorError(
-            f"{description.capitalize()} must be between 0 and 0x{maximum:x}"
-        )
-    return result
-
-
-def validate_block(address: int, length: int) -> None:
-    if not 1 <= length <= MAX_BLOCK_SIZE:
-        raise MonitorError(f"Block length must be between 1 and {MAX_BLOCK_SIZE}")
-    if not any(start <= address and address + length <= end for start, end in MEMORY_REGIONS):
-        raise MonitorError("Block is outside the currently implemented memory regions")
-
-
-def validate_transfer(address: int, length: int) -> None:
-    if length < 1:
-        raise MonitorError("Transfer must contain at least one byte")
-    if not any(start <= address and address + length <= end for start, end in MEMORY_REGIONS):
-        raise MonitorError("Transfer is outside the currently implemented memory regions")
 
 
 def main() -> int:
