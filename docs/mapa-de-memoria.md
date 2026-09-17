@@ -438,7 +438,14 @@ Que el slot coincida no basta si los offsets dentro del slot no coinciden. Hecho
 
 1. **`VIDEO_CTRL` se fue al final del bloque**, a `+0x18`, y `FB_FRONT` volvió a
    `+0x00`. Así ningún programa de CPU cambió y solo se tocó la 22, que es la más
-   nueva. Los cores sin `VIDEO_CTRL` leen cero ahí, que ya era su comportamiento.
+   nueva.
+
+   Sobre «los cores sin `VIDEO_CTRL` leen cero ahí»: es cierto en **19 y 21**,
+   que decodifican `address[31:12]` y dan un slot de 256 B, y en **18**, cuyos
+   32 B (`address[31:5]`) llegan justo a `+0x18`. **No lo es en la 16**, que
+   decodifica `address[31:4]`: su ventana son 16 bytes, así que `+0x14` y `+0x18`
+   caen fuera del MMIO y van a SDRAM — no leen cero, leen memoria. Un binario que
+   sondee `VIDEO_CTRL` para saber si hay control de modo obtiene basura en la 16.
 2. **La 22 implementa el bit 1 de `STATUS`** (`swap_pending`).
 3. **El alineamiento no se tocó.** 4 bytes en CPU y 16 en GPU conviven si los
    programas escriben bases alineadas a 16, que es lo que hay que documentar.

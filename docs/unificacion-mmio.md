@@ -171,6 +171,47 @@ no puede ir a `0x80000000` mientras los warps estén ahí.
 El mismo `.asm` de vídeo, con las mismas constantes, corre en 21 y en 22. Si eso
 no se cumple, la fase no está terminada aunque todo sintetice.
 
+## Fase 3.5 — Alinear la CPU con el mismo contrato
+
+Hasta aquí el contrato se aplicó moviendo **solo** la GPU, a propósito: así
+ningún programa de CPU cambiaba. Esta fase va en la otra dirección y por eso
+rompe binarios de CPU existentes; va después de que la 22 esté verificada en
+placa.
+
+Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
+
+| | Contrato (§6) | CPU real (16/18/19/21) |
+|---|---|---|
+| `VIDEO_CTRL` `+0x18` | «solo GPU, por ahora» | **no existe**; el scanout está siempre encendido |
+| Bases tras reset | no lo fija | `0x01000000`/`0x01025800` cableadas, iguales en los cuatro |
+| Alineamiento de bases | 4 B en CPU, 16 B en GPU | 4 B, coincide |
+| Contadores de rendimiento | slot `0x80000300` | no existe |
+| Bloque de identificación | `0x80000F00` | no existe (fase 4) |
+
+- [ ] **Añadir `VIDEO_CTRL` a la CPU** con el modo tras reset acordado. Es el
+      cambio que habilita todo lo demás: sin control de modo no se puede arrancar
+      sin scanout.
+- [ ] **Unificar las bases de reset en `0` / `0`.** Arrancar sin scanout elimina
+      la única ventaja del valor cableado —que un programa funcionase sin
+      configurar nada—, porque ahora tiene que escribir `VIDEO_CTRL` de todas
+      formas. Y `0x01000000` no es válido en todos los mapas: en la 12, con
+      128 KiB de EBR, esa dirección está fuera. Además [`mapa-de-memoria.md`](mapa-de-memoria.md)
+      §2 ya dice que esas bases «no son reservas impuestas a todos los
+      programas», cosa que cableadas en el reset sí son.
+- [ ] Decidir **BLANK o PATTERN** como estado de reset común. No es lo mismo:
+      `video-scanout.md` argumenta PATTERN para la 22 porque ver el patrón
+      demuestra que HDMI, PLL, cable y monitor funcionan y no verlo señala aguas
+      arriba — los dos fallos dejan de parecerse. BLANK da «sin salida» literal
+      pero pierde ese diagnóstico.
+- [ ] Actualizar los programas de vídeo de CPU, que hoy dan por hechas las bases
+      cableadas y el scanout siempre encendido: `swap_demo`, `tear_demo`,
+      `bounce`, `band` y `examples/` de 16, 18, 19 y 21.
+- [ ] **Ensanchar la ventana de la 16**, o aceptar que queda fuera del contrato.
+      Decodifica `address[31:4]`, o sea 16 bytes: `+0x14` y `+0x18` caen fuera
+      del MMIO y van a SDRAM. No leen cero, leen memoria. La 18 (`address[31:5]`,
+      32 B) llega justo a `+0x18`; 19 y 21 tienen el slot de 256 B y no necesitan
+      nada.
+
 ## Fase 4 — Descubrimiento en tiempo de ejecución
 
 Va **después** de fijar los slots: hasta aquí el bitmap describiría un mapa a
