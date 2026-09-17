@@ -188,6 +188,7 @@ HALT/EXIT y memoria al completar; nunca errores ni mantenimiento.
 | `lane_ops` | Suma de popcount de la máscara original en cada retiro. |
 | `occupancy` / `stage_utilization` | Ciclos con registro válido al principio del ciclo / fracción de ciclos. |
 | `x_utilization`, `multicycle` | Ocupación X / ciclos X de operaciones cuya latencia es mayor que 1, por mnemónico. |
+| `x_cycles_by_opcode`, `x_cycles_by_unit` | Todos los ciclos con X ocupada, por mnemónico y por tipo: ALU, MUL (incluye MULFX/MULHI), SHIFT, DIV (incluye restos), CONTROL (saltos), FAULT (sin decodificación). Su suma coincide con `occupancy.X`, incluso al parar por límite. Incluye retención en X por bloqueo de salida; no cuenta ciclos de LSU ni instrucciones especiales que evitan X. El informe de texto muestra porcentajes sobre X ocupada. Son categorías estadísticas, no unidades físicas independientes. |
 | `stall_x` | D no puede avanzar por X ocupada o por orden del camino especial→W. |
 | `stall_no_warp` | S tiene hueco, pero ningún warp es elegible en el estado anterior. |
 | `stall_lsu_full` | D tiene memoria, pero no hay slot en el estado anterior. |

@@ -187,7 +187,49 @@ class MapaTest(unittest.TestCase):
         for offset in (0x00, 0x04, 0x08):
             direccion = monitor.SERIAL_BASE + offset
             self.assertEqual(
-                monitor.parse_byte_address(hex(direccion)), direccion)
+                monitor.parse_address(hex(direccion)), direccion)
+
+    def test_la_ventana_mmio_vale_para_palabras_y_bloques(self):
+        """El contador de ciclos no se lee byte a byte: para eso esta read-word.
+
+        Mientras esto solo lo usaban `read-byte`/`write-byte`, `read-word` iba
+        por un tope de 32 MiB y rechazaba el MMIO en el cliente.
+        """
+        for comando in ("read-word", "write-block", "read-block", "memory-test"):
+            with self.subTest(comando=comando):
+                self.assertIn(comando, monitor.MEMORY_COMMANDS)
+        self.assertEqual(monitor.parse_address("0x80000300"), 0x80000300)
+        self.assertIsNone(monitor.validate_transfer(0x80000300, 4))
+
+
+class TextoLibreTest(unittest.TestCase):
+    """`send` manda texto, y el texto puede empezar por guion."""
+
+    def test_send_admite_texto_que_empieza_por_guion(self):
+        args = monitor.parse_args(["send", "-y"])
+        self.assertEqual(args.command, "send")
+        self.assertEqual(args.arguments, ["-y"])
+
+    def test_el_puerto_sigue_funcionando_con_texto_raro(self):
+        """El `--` de argparse es global y se comeria tambien el `--port`."""
+        for argv in (["send", "-y", "--port", "COM6"],
+                     ["--port", "COM6", "send", "-y"]):
+            with self.subTest(argv=argv):
+                args = monitor.parse_args(argv)
+                self.assertEqual(args.arguments, ["-y"])
+                self.assertEqual(args.port, "COM6")
+
+    def test_el_escape_explicito_se_respeta(self):
+        args = monitor.parse_args(["send", "--", "-y"])
+        self.assertEqual(args.arguments, ["-y"])
+
+    def test_no_toca_el_texto_normal_ni_los_demas_comandos(self):
+        args = monitor.parse_args(["send", "hola", "--port", "COM6"])
+        self.assertEqual(args.arguments, ["hola"])
+        self.assertEqual(args.port, "COM6")
+        args = monitor.parse_args(["read-word", "0x80000300", "--port", "COM6"])
+        self.assertEqual(args.command, "read-word")
+        self.assertEqual(args.arguments, ["0x80000300"])
 
 
 if __name__ == "__main__":

@@ -165,7 +165,7 @@ module video_fullframe_tb;
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
       .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
       .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
-      .mmio_read_data(mmio_read_data),
+      .mmio_read_data(mmio_read_data), .mmio_error(1'b0),
       .req_valid(p0_valid), .req_ready(p0_ready), .req_write(p0_write),
       .req_addr(p0_addr), .req_wdata(p0_wdata), .req_wmask(p0_wmask),
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),

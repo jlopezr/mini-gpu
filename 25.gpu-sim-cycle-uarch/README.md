@@ -19,6 +19,18 @@ En Linux/macOS: `python tools/gpusim-cycle programa.asm`; el lanzador admite
 instrucciones, volcado de memoria y estado arquitectónico. `--help` muestra
 las latencias configurables. `--imem-lines 0` activa fetch ideal.
 
+Para ejecuciones largas sin comprobaciones internas de depuración, usa el
+modo optimizado de Python con el mismo lanzador y los mismos argumentos:
+
+```powershell
+.\.venv\Scripts\python.exe -O tools/gpusim-cycle programa.asm
+```
+
+`-O` omite los asserts y los recorridos de validación de invariantes de cada
+ciclo; conserva el modelo de pipeline, sus latencias y sus contadores. Para
+depurar y ejecutar las pruebas habituales, mantén el modo normal. Evita las
+trazas de instrucciones o ciclos durante renders largos si no las necesitas.
+
 Las pruebas normales incluyen 32 casos GPU existentes, diferencial de ALU
 contra MiniCPU, regresiones temporales, colisiones RF, Plasma reducido y
 Mandelbrot 16×8. Para repetir un frame **completo** de Plasma:

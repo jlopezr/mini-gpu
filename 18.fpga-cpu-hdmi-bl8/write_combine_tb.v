@@ -66,7 +66,7 @@ module write_combine_tb;
       .dmem_error(dmem_error), .wb_dirty(wb_dirty),
       .mmio_req(mmio_req), .mmio_ack(mmio_ack), .mmio_write(mmio_write),
       .mmio_write_mask(mmio_mask), .mmio_address(mmio_addr),
-      .mmio_write_data(mmio_wdata), .mmio_read_data(mmio_rdata),
+      .mmio_write_data(mmio_wdata), .mmio_read_data(mmio_rdata), .mmio_error(1'b0),
       .req_valid(req_valid), .req_ready(req_ready), .req_write(req_write),
       .req_addr(req_addr), .req_wdata(req_wdata), .req_wmask(req_wmask),
       .rsp_valid(rsp_valid), .rsp_ready(rsp_ready), .rsp_rdata(rsp_rdata),

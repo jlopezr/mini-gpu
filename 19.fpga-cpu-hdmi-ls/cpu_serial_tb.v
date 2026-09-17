@@ -82,13 +82,15 @@ module cpu_serial_tb;
   wire mon_write_enable, mon_read_enable;
   wire [7:0] mon_read_data;
   wire [31:0] mon_read_word;   // la misma lectura sin trocear
+  wire [31:0] mon_write_word;  // la palabra entera, para WRITE_WORD
+  wire mon_write_word_enable;
   wire mon_ready, mon_error;
 
   wire serial_host_push, serial_host_pop;
   wire [7:0] serial_host_push_data;
   wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
 
-  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd19),
+  monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd19),
       .HAS_SERIAL(1),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
@@ -97,7 +99,10 @@ module cpu_serial_tb;
       .rx_data(rx_data), .rx_strobe(rx_strobe),
       .tx_data(tx_data), .tx_strobe(tx_strobe), .tx_ready(tx_ready),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
-      .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
+      .mem_write_enable(mon_write_enable),
+      .mem_write_word(mon_write_word),
+      .mem_write_word_enable(mon_write_word_enable),
+      .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
@@ -141,6 +146,7 @@ module cpu_serial_tb;
   wire [3:0] mmio_write_mask;
   wire [11:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
+  wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
   wire [31:0] ibuf_hits, ibuf_misses;
@@ -169,7 +175,7 @@ module cpu_serial_tb;
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
       .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
       .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
-      .mmio_read_data(mmio_read_data),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
       .req_valid(p0_valid), .req_ready(p0_ready), .req_write(p0_write),
       .req_addr(p0_addr), .req_wdata(p0_wdata), .req_wmask(p0_wmask),
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
@@ -189,13 +195,16 @@ module cpu_serial_tb;
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted),
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
-      .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
+      .mem_write_enable(mon_write_enable),
+      .mem_write_word(mon_write_word),
+      .mem_write_word_enable(mon_write_word_enable),
+      .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
       .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),
       .mmio_address(mon_mmio_addr), .mmio_write_data(mon_mmio_wdata),
-      .mmio_read_data(mmio_read_data),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
       .req_valid(p3_valid), .req_ready(p3_ready), .req_write(p3_write),
       .req_addr(p3_addr), .req_wdata(p3_wdata), .req_wmask(p3_wmask),
       .rsp_valid(p3_rsp_valid), .rsp_ready(p3_rsp_ready),
@@ -214,11 +223,11 @@ module cpu_serial_tb;
       .write_data(mmio_write_data));
 
   mmio_decoder mmio_decoder_i (
-      .select(mmio_select), .address(mmio_address),
+      .select(mmio_select), .write(mmio_write), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
       .serial_select(mmio_serial_select),
       .serial_read_data(mmio_serial_read_data),
-      .read_data(mmio_read_data));
+      .read_data(mmio_read_data), .error(mmio_error));
 
   video_registers registers_i (
       .clk(clk), .reset(reset),

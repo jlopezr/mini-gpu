@@ -35,6 +35,7 @@ module cpu_sdram_system_tb;
       .clk(clk),.reset(reset),.init_done(init_done),
       .monitor_address(monitor_address),.monitor_write_data(monitor_write_data),
       .monitor_write_enable(monitor_write_enable),
+      .monitor_write_word(32'd0), .monitor_write_word_enable(1'b0),
       .monitor_read_enable(monitor_read_enable),.monitor_read_data(monitor_read_data),
       .monitor_ready(monitor_ready),.monitor_error(monitor_error),
       .cpu_halted(halted),.cpu_imem_valid(imem_valid),

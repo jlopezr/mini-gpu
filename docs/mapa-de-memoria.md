@@ -35,17 +35,17 @@ acuerdo sobre dónde va cada cosa.
 | Backend / versión | Carpeta | Memoria de programa y datos | MMIO | Monitor |
 |---|---|---|---|---|
 | `cpusim / current` | `2.cpu-sim-func` | 32 MiB en el runner | Vídeo y serie opcionales según el caso | — |
-| `cpu-fpga / ebr` | `6.fpga-cpu` | 32 KiB EBR continuos (dos bancos) | — | 1.16 |
-| `cpu-fpga / sdram` | `10.fpga-cpu-ram` | 32 MiB SDRAM | — | 1.17 |
-| `cpu-fpga / hdmi` | `16.fpga-cpu-hdmi` | 32 MiB SDRAM | Vídeo | 1.18 |
-| `cpu-fpga / bl8` | `18.fpga-cpu-hdmi-bl8` | 32 MiB SDRAM | Vídeo y captura de frames | 1.19 |
-| `cpu-fpga / subword` | `19.fpga-cpu-hdmi-ls` | 32 MiB SDRAM | Vídeo, captura y serie | 1.20 |
-| `cpu-fpga / alu` | `21.fpga-cpu-hdmi-alu` | 32 MiB SDRAM | Mismo mapa que la 19 | 1.15 |
+| `cpu-fpga / ebr` | `6.fpga-cpu` | 32 KiB EBR continuos (dos bancos) | — | 3.6 |
+| `cpu-fpga / sdram` | `10.fpga-cpu-ram` | 32 MiB SDRAM | — | 3.10 |
+| `cpu-fpga / hdmi` | `16.fpga-cpu-hdmi` | 32 MiB SDRAM | Vídeo | 3.16 |
+| `cpu-fpga / bl8` | `18.fpga-cpu-hdmi-bl8` | 32 MiB SDRAM | Vídeo y captura de frames | 3.18 |
+| `cpu-fpga / subword` | `19.fpga-cpu-hdmi-ls` | 32 MiB SDRAM | Vídeo, captura y serie | 4.19 |
+| `cpu-fpga / alu` | `21.fpga-cpu-hdmi-alu` | 32 MiB SDRAM | Mismo mapa que la 19 | 4.21 |
 | `gpusim / current` | `11.gpu-sim-func` | 32 MiB por defecto | Configuración por API Python, sin MMIO | — |
-| `gpu-fpga / bram` | `12.fpga-gpu` | 128 KiB EBR continuos | Warps y depuración, solo host | 2.3 |
-| `gpu-fpga / sdram` | `14.fpga-gpu-ram` | 32 MiB SDRAM | Warps y depuración, solo host | 2.4 |
-| GPU SDRAM optimizada | `17.fpga-gpu-ram-v2` | 32 MiB SDRAM | Mismo mapa que la 14 | 2.4 |
-| GPU BL8 | `22.fpga-gpu-bl8` | 32 MiB SDRAM | Warps, depuración, vídeo y contadores | 2.4 |
+| `gpu-fpga / bram` | `12.fpga-gpu` | 128 KiB EBR continuos | Warps y depuración, solo host | 3.12 |
+| `gpu-fpga / sdram` | `14.fpga-gpu-ram` | 32 MiB SDRAM | Warps y depuración, solo host | 3.14 |
+| GPU SDRAM optimizada | `17.fpga-gpu-ram-v2` | 32 MiB SDRAM | Mismo mapa que la 14 | 3.17 |
+| GPU BL8 | `22.fpga-gpu-bl8` | 32 MiB SDRAM | Warps, depuración, vídeo y contadores | 3.22 |
 
 La 17 comparte perfil funcional con la 14. Los números de monitor identifican
 contratos de bitstream y no ordenan capacidades: la 21 conserva 1.15 aunque
@@ -168,17 +168,10 @@ la 21, CPU y monitor se arbitran sobre el mismo bus MMIO.
 
 ### Qué pasa en una dirección sin registro
 
-Aquí las dos familias no se parecen, y es lo primero que rompe un programa
-portable:
-
-- **CPU**: lee cero e ignora la escritura
-  ([mmio_decoder.v](../21.fpga-cpu-hdmi-alu/mmio_decoder.v)).
-- **GPU**: levanta `bad`, que el host traduce a error de transacción.
-
-Los 36 B libres del bloque de contadores de la 22 no son espacio inerte: son
-direcciones que fallan. En consecuencia, **sondear una dirección para descubrir
-si el dispositivo existe funciona en CPU y falla en GPU**. Ver §6 para el
-mecanismo de descubrimiento propuesto.
+Una dirección sin registro es un error de acceso en ambas familias. En CPU el
+decodificador propaga el error al núcleo o al monitor; en GPU se propaga como
+`bad`. Los slots y offsets reservados no se usan para descubrir hardware: un
+programa consulta `SYS_ID` y los registros definidos por el contrato.
 
 ## 4. Contrato de cada dispositivo
 
@@ -484,11 +477,12 @@ Offsets resultantes, iguales en todos los prototipos que tengan vídeo:
 
 ### Descubrimiento en tiempo de ejecución
 
-Para que un binario se adapte al prototipo hace falta preguntar, y **sondear no
-vale**: en CPU una dirección vacía lee cero y en GPU falla. La propuesta es un
-bloque fijo de identificación en `0x80000F00`, elegido porque en el
-comportamiento actual de CPU **leer cero ahí ya significa "prototipo antiguo"**,
-sin necesidad de que los bitstreams existentes cambien.
+Para que un binario se adapte al prototipo hace falta identificación explícita:
+sondear direcciones vacías no distingue un dispositivo ausente de un registro
+cuyo valor legítimo es cero. El bloque fijo de identificación está en
+`0x80000F00`. En bitstreams CPU antiguos, una lectura cero en esa dirección
+permite reconocer la ausencia del bloque; es compatibilidad histórica del host,
+no una regla para los nuevos diseños.
 
 Son cuatro palabras:
 
@@ -506,17 +500,44 @@ que el valor 0 sea ambiguo entre «prototipo antiguo» y «prototipo 0». El byt
 libre se deja sin usar: CPU-vs-GPU ya se deriva del RTL y las capacidades son
 trabajo de `DEV_BITMAP` e `ISA_PROFILE`.
 
-La regla es **un prototipo con ventana MMIO expone el bloque**. Quedan fuera 6 y
-10, que hoy no tienen ninguna; darles el bloque es una decisión abierta. Los bits
+La regla es **un prototipo con ventana MMIO expone el bloque**. Los prototipos 6 y
+10 lo exponen por el monitor, sin ventana de periféricos para el núcleo. Los bits
 de `DEV_BITMAP` no están asignados todavía: van generados desde
 `tools/capabilities.json`, no escritos a mano. El orden y el coste por carpeta
 están en [`unificacion-mmio.md`](unificacion-mmio.md), fase 4.
 
-### Unificar la política de dirección inexistente
+### Política de dirección inexistente — decisión del 17/09/2026
 
-Hoy CPU lee cero y GPU falla. Mientras siga así, el mismo programa defensivo se
-comporta de dos maneras. Hay que elegir una — leer cero es la compatible con el
-descubrimiento de arriba — y aplicarla a las dos familias.
+**Un acceso a un dispositivo inexistente debe dar error, tanto en lectura como
+en escritura, en CPU y GPU.** La regla alcanza los accesos del programa y los
+del monitor, sueltos y por bloques; filtrar únicamente comandos del monitor no
+la implementa para el núcleo. El núcleo debe señalar el error de acceso a
+memoria y el monitor debe rechazar la transacción, sin presentar el cero del bus
+como una lectura válida ni confirmar una escritura descartada.
+
+Dentro de un dispositivo, un offset reservado también da error por defecto.
+Una lectura cero solo es válida si el contrato de ese registro la define
+expresamente. Los registros implementados conservan sus efectos y permisos
+documentados; esta regla no convierte un valor cero legítimo en un error.
+
+**El slot de identificación no tiene una excepción general.** Las cuatro
+palabras de `0x80000F00–0x80000F0F` son de solo lectura; escribirlas da error.
+El resto del slot está reservado y da error: no devuelve cero ni repite las
+cuatro palabras por alias. `DEV_BITMAP` sí existe y sigue leyendo cero con
+`CONTRACT = 1`, con el significado de «sin declarar».
+
+La compatibilidad con bitstreams antiguos corresponde al host: debe distinguir
+identificación válida, lectura cero histórica y rechazo explícito del acceso.
+Un rechazo no demuestra por sí solo que el bitstream sea antiguo, y un timeout
+o un fallo de comunicación no debe convertirse en «sin identificación».
+Cambiar el contrato nuevo no modifica el comportamiento de un bitstream antiguo
+que sigue flasheado; no se necesita una excepción en el RTL nuevo para conservar
+esa compatibilidad.
+
+La decisión preserva el diagnóstico de direcciones equivocadas y periféricos
+ausentes. **Su aplicación sigue pendiente**: incluye propagar el error por la
+ruta MMIO de CPU, eliminar alias y contrastar RTL, simuladores y monitor. El
+plan de trabajo está en `unificacion-mmio.md`.
 
 ### Conformidad
 
@@ -537,7 +558,8 @@ con la placa. Sus bases de vídeo se alinean a 4 bytes y cualquier escritura a
 bytes y escribir 1. `HALT_AT` y serie siguen sin existir en el RTL GPU. Las
 opciones comunes de consola están en [`tools/README.md`](../tools/README.md).
 
-La política de direcciones inexistentes sigue pendiente de unificación. La
+La política de direcciones inexistentes está decidida; su implementación sigue
+pendiente de unificación. La
 convergencia de los monitores requiere resíntesis y verificación en placa antes
 de dar por cerrado el contrato; véase `unificacion-mmio.md`.
 
@@ -715,14 +737,14 @@ Referencias principales:
 <!-- BEGIN GENERATED: prototype-summary -->
 | Prototype | Version | Monitor | Clock | Capabilities |
 |---|---|---|---|---|
-| [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 1.16 | 120.0 MHz | mul_div |
-| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 1.17 | 120.0 MHz | — |
-| [`12.fpga-gpu`](../12.fpga-gpu) | bram | 2.3 | 25.0 MHz | warp_config, simt_debug |
-| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 2.4 | 25.0 MHz | warp_config, simt_debug |
-| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 1.18 | 100.0 MHz | mul_div, video |
-| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 2.4 | 25.0 MHz | warp_config, simt_debug |
-| [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 1.19 | 80.0 MHz | mul_div, video, frame_capture |
-| [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 1.20 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 1.15 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, serial |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 2.4 | 25.0 MHz | video, warp_config, simt_debug, perf_counters |
+| [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 120.0 MHz | mul_div, read_word, write_word |
+| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 120.0 MHz | read_word, write_word |
+| [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
+| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
+| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, read_word, write_word, perf_counters |
+| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
+| [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 3.18 | 80.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
+| [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial, read_word, write_word, perf_counters |
+| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, serial, read_word, write_word, perf_counters |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | video, read_word, write_word, warp_config, simt_debug, perf_counters |
 <!-- END GENERATED: prototype-summary -->

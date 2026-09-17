@@ -58,6 +58,28 @@ def cargar(prototipo: str):
         sys.path.pop(0)
 
 
+class IdentificacionHostTest(unittest.TestCase):
+    def test_cero_rechazo_y_magic_son_distintos(self):
+        from tools.monitor_protocol import MonitorClient
+        from unittest.mock import Mock
+        def client(response):
+            connection = Mock()
+            data = bytearray(response)
+            def read(count):
+                out = bytes(data[:count])
+                del data[:count]
+                return out
+            connection.read.side_effect = read
+            return MonitorClient(connection)
+        self.assertEqual(client(b"\x92\x16\x00\x47\x4d").probe_sys_id(), 0x4D470016)
+        self.assertEqual(client(b"\x92\x00\x00\x00\x00").probe_sys_id(), 0)
+        self.assertIsNone(client(b"\xff").probe_sys_id())
+        from tools.monitor_protocol import MonitorError
+        for response in (b"", b"\x92\x00", b"\x91", b"\x92\x01\x00\x00\x00"):
+            with self.subTest(response=response), self.assertRaises(MonitorError):
+                client(response).probe_sys_id()
+
+
 class ProtocoloCompartidoTest(unittest.TestCase):
     def test_ningun_monitor_reimplementa_el_protocolo(self):
         """Si alguien vuelve a pegar el cliente entero en una carpeta, aquí

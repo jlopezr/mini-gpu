@@ -54,6 +54,8 @@ module top (
 
   wire [31:0] mem_address;
   wire [7:0] mem_write_data, mem_read_data, last_command;
+  wire [31:0] mem_write_word;  // la palabra entera, para WRITE_WORD
+  wire mem_write_word_enable;
   wire [31:0] mem_read_word;   // la misma lectura sin trocear
   wire mem_write_enable, mem_read_enable, mem_ready, mem_error, monitor_busy;
   wire cpu_run_request, cpu_halt_request, cpu_step_request, cpu_reset_request;
@@ -72,7 +74,7 @@ module top (
   //
   // La unica ventana es la de identificacion: esta carpeta tiene `sysid` pero
   // ningun otro MMIO. Gemela de MONITOR_REGIONS en monitor.py.
-  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd10),
+  monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd10),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
     monitor_i (
@@ -80,7 +82,10 @@ module top (
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
       .mem_address(mem_address), .mem_write_data(mem_write_data),
-      .mem_write_enable(mem_write_enable), .mem_read_enable(mem_read_enable),
+      .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
+      .mem_read_enable(mem_read_enable),
       .mem_read_data(mem_read_data), .mem_read_word(mem_read_word), .mem_ready(mem_ready), .mem_error(mem_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
@@ -99,7 +104,9 @@ module top (
   // and response handling from becoming one long combinational path.
   reg [31:0] adapter_monitor_address;
   reg [7:0] adapter_monitor_write_data;
-  reg adapter_monitor_write_enable, adapter_monitor_read_enable;
+  reg [31:0] adapter_monitor_write_word;
+  reg adapter_monitor_write_enable, adapter_monitor_write_word_enable;
+  reg adapter_monitor_read_enable;
   wire [7:0] adapter_monitor_read_data;
   // La misma lectura sin trocear, para READ_WORD. El adaptador ya la producia;
   // este top la declaraba, se la pasaba al monitor y no la conducia NADIE, asi
@@ -121,7 +128,7 @@ module top (
   // mismo, asi que sin esto `--version sdram` daria por buena una 6 flasheada
   // y se mediria el hardware equivocado, que es exactamente el fallo que
   // SYS_ID existe para cerrar. Ver docs/mapa-de-memoria.md §6.5.
-  wire sysid_selected = adapter_monitor_address[31:8] == 24'h80_000f;
+  wire sysid_selected = adapter_monitor_address[31:4] == 28'h800_00f0;
   wire [31:0] sysid_word;
   sysid #(
       .FOLDER(8'd10),
@@ -142,7 +149,9 @@ module top (
     if (reset) begin
       adapter_monitor_address <= 32'h0000_0000;
       adapter_monitor_write_data <= 8'h00;
+      adapter_monitor_write_word <= 32'h0000_0000;
       adapter_monitor_write_enable <= 1'b0;
+      adapter_monitor_write_word_enable <= 1'b0;
       adapter_monitor_read_enable <= 1'b0;
       registered_mem_read_data <= 8'h00;
       registered_mem_read_word <= 32'h0000_0000;
@@ -151,7 +160,9 @@ module top (
     end else begin
       adapter_monitor_address <= mem_address;
       adapter_monitor_write_data <= mem_write_data;
+      adapter_monitor_write_word <= mem_write_word;
       adapter_monitor_write_enable <= mem_write_enable;
+      adapter_monitor_write_word_enable <= mem_write_word_enable;
       adapter_monitor_read_enable <= mem_read_enable;
       // El bloque de identificacion contesta en lugar de la memoria. Se elige
       // con la direccion YA REGISTRADA, que es la que el adaptador esta
@@ -165,7 +176,7 @@ module top (
       registered_mem_ready <= sysid_selected
           ? (adapter_monitor_read_enable || adapter_monitor_write_enable)
           : adapter_monitor_ready;
-      registered_mem_error <= sysid_selected ? 1'b0 : adapter_monitor_error;
+      registered_mem_error <= sysid_selected ? adapter_monitor_write_enable : adapter_monitor_error;
     end
   end
   assign mem_read_data = registered_mem_read_data;
@@ -204,6 +215,8 @@ module top (
       // El acceso al bloque de identificacion no llega a la SDRAM: alli
       // 0x80000f00 esta fuera del mapa y levantaria `error`.
       .monitor_write_enable(adapter_monitor_write_enable && !sysid_selected),
+      .monitor_write_word(adapter_monitor_write_word),
+      .monitor_write_word_enable(adapter_monitor_write_word_enable && !sysid_selected),
       .monitor_read_enable(adapter_monitor_read_enable && !sysid_selected),
       .monitor_read_data(adapter_monitor_read_data),
       .monitor_read_word(adapter_monitor_read_word),

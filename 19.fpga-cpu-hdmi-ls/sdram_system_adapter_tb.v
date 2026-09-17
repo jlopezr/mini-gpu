@@ -2,6 +2,7 @@
 `default_nettype none
 
 module sdram_system_adapter_tb;
+  wire mmio_error = 1'b0;
   reg clk=0, reset=1, init_done=1;
   reg [31:0] monitor_address=0; reg [7:0] monitor_write_data=0;
   reg monitor_write_enable=0, monitor_read_enable=0;

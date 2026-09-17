@@ -77,7 +77,9 @@ module top (
   wire [31:0] mem_address;
   wire [7:0] mem_write_data, mem_read_data, last_command;
   wire [31:0] mem_read_word;   // la misma lectura sin trocear
-  wire mem_write_enable, mem_read_enable, mem_ready, mem_error, monitor_busy;
+  wire [31:0] mem_write_word;  // la palabra entera, para WRITE_WORD
+  wire mem_write_enable, mem_write_word_enable;
+  wire mem_read_enable, mem_ready, mem_error, monitor_busy;
   wire cpu_run_request, cpu_halt_request, cpu_step_request, cpu_reset_request;
   wire cpu_halted, cpu_error, cpu_instruction_retired;
   wire [7:0] cpu_error_code;
@@ -95,7 +97,7 @@ module top (
   // 256 B). Declarar la pagina y no cada dispositivo es deliberado: el
   // decodificador ya sabe cuales existen, y una lista por dispositivo seria una
   // tercera gemela que mantener. Gemela de MONITOR_REGIONS en monitor.py.
-  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd16),
+  monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd16),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
     monitor_i (
@@ -103,7 +105,10 @@ module top (
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
       .mem_address(mem_address), .mem_write_data(mem_write_data),
-      .mem_write_enable(mem_write_enable), .mem_read_enable(mem_read_enable),
+      .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
+      .mem_read_enable(mem_read_enable),
       .mem_read_data(mem_read_data), .mem_read_word(mem_read_word), .mem_ready(mem_ready), .mem_error(mem_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
@@ -122,7 +127,9 @@ module top (
   // and response handling from becoming one long combinational path.
   reg [31:0] adapter_monitor_address;
   reg [7:0] adapter_monitor_write_data;
-  reg adapter_monitor_write_enable, adapter_monitor_read_enable;
+  reg [31:0] adapter_monitor_write_word;
+  reg adapter_monitor_write_enable, adapter_monitor_write_word_enable;
+  reg adapter_monitor_read_enable;
   wire [7:0] adapter_monitor_read_data;
   // La misma lectura sin trocear, para READ_WORD. El adaptador ya la producia;
   // este top la declaraba, se la pasaba al monitor y no la conducia NADIE, asi
@@ -137,7 +144,9 @@ module top (
     if (reset) begin
       adapter_monitor_address <= 32'h0000_0000;
       adapter_monitor_write_data <= 8'h00;
+      adapter_monitor_write_word <= 32'h0000_0000;
       adapter_monitor_write_enable <= 1'b0;
+      adapter_monitor_write_word_enable <= 1'b0;
       adapter_monitor_read_enable <= 1'b0;
       registered_mem_read_data <= 8'h00;
       registered_mem_read_word <= 32'h0000_0000;
@@ -146,7 +155,9 @@ module top (
     end else begin
       adapter_monitor_address <= mem_address;
       adapter_monitor_write_data <= mem_write_data;
+      adapter_monitor_write_word <= mem_write_word;
       adapter_monitor_write_enable <= mem_write_enable;
+      adapter_monitor_write_word_enable <= mem_write_word_enable;
       adapter_monitor_read_enable <= mem_read_enable;
       registered_mem_read_data <= adapter_monitor_read_data;
       registered_mem_read_word <= adapter_monitor_read_word;
@@ -191,6 +202,7 @@ module top (
   // comparar 20-- y lo que se paga es un nivel de LUT en el mux de lectura.
   wire [11:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
+  wire mmio_error;
 
   wire req_valid, req_write, req_ready, sdram_done, init_done, sdram_busy;
   wire [23:0] req_addr;
@@ -201,6 +213,8 @@ module top (
       .monitor_address(adapter_monitor_address),
       .monitor_write_data(adapter_monitor_write_data),
       .monitor_write_enable(adapter_monitor_write_enable),
+      .monitor_write_word(adapter_monitor_write_word),
+      .monitor_write_word_enable(adapter_monitor_write_word_enable),
       .monitor_read_enable(adapter_monitor_read_enable),
       .monitor_read_data(adapter_monitor_read_data),
       .monitor_read_word(adapter_monitor_read_word),
@@ -215,7 +229,7 @@ module top (
       .cpu_dmem_error(cpu_dmem_error),
       .mmio_select(mmio_select), .mmio_write(mmio_write),
       .mmio_write_mask(mmio_write_mask), .mmio_address(mmio_address),
-      .mmio_write_data(mmio_write_data), .mmio_read_data(mmio_read_data),
+      .mmio_write_data(mmio_write_data), .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
       .video_req(video_req), .video_addr(video_addr),
       .video_read_data(video_read_data), .video_ready(video_ready),
       .req_valid(req_valid),
@@ -362,12 +376,12 @@ module top (
   wire mmio_video_select;
   wire [31:0] mmio_video_read_data;
   wire [31:0] mmio_perf_read_data;
-  mmio_decoder #(.FOLDER(8'd16), .ISA_PROFILE(32'h0000_0003)) mmio_decoder_i(
-      .select(mmio_select), .address(mmio_address),
+  mmio_decoder #(.FOLDER(8'd16), .HAS_SERIAL(0), .VIDEO_REGISTERS(64'h4f), .ISA_PROFILE(32'h0000_0003)) mmio_decoder_i(
+      .select(mmio_select), .write(mmio_write), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
       .serial_select(), .serial_read_data(32'd0),
       .perf_read_data(mmio_perf_read_data),
-      .read_data(mmio_read_data));
+      .read_data(mmio_read_data), .error(mmio_error));
 
   // Contadores de rendimiento en 0x80000300. `restart` es `cpu_run_request`:
   // cada `run` empieza una medida nueva, que es lo que estos contadores hacian

@@ -44,7 +44,7 @@ module monitor_tb;
 
   always #5 clk = ~clk;
 
-  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd18),
+  monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd18),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
     dut (
@@ -158,7 +158,7 @@ module monitor_tb;
     send_command(8'h02);
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
-    if (received[2] !== 8'd1) $fatal(1, "VERSION major mismatch");
+    if (received[2] !== 8'd3) $fatal(1, "VERSION major mismatch");
     if (received[3] !== 8'd18) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);

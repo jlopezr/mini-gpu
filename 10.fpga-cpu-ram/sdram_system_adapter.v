@@ -20,6 +20,12 @@ module sdram_system_adapter (
     input  wire [31:0] monitor_address,
     input  wire [7:0]  monitor_write_data,
     input  wire        monitor_write_enable,
+    // WRITE_WORD: 32 bits sobre un bus de 16, o sea DOS rafagas seguidas. Las
+    // dos salen sin soltar el turno del arbitro, que es lo que la hace
+    // indivisible frente a los otros clientes. Espeja a la lectura, que ya
+    // hacia dos desde READ_WORD.
+    input  wire [31:0] monitor_write_word,
+    input  wire        monitor_write_word_enable,
     input  wire        monitor_read_enable,
     output reg  [7:0]  monitor_read_data,
     // La misma lectura sin trocear, para READ_WORD del monitor.
@@ -67,6 +73,9 @@ module sdram_system_adapter (
   // 250 kbaud, asi que no hace falta que el monitor avise.
   localparam STATE_MON_SECOND  = 4'd8;
   localparam STATE_MON_WAIT2   = 4'd9;
+  // Las dos mitades de la ESCRITURA de palabra, simetricas a las de arriba.
+  localparam STATE_MON_WRITE2  = 4'd10;
+  localparam STATE_MON_WWAIT2  = 4'd11;
 
   reg [3:0] state;
   reg [2:0] owner;
@@ -83,8 +92,11 @@ module sdram_system_adapter (
   reg [31:0] saved_monitor_address;
   reg [7:0] saved_monitor_write_data;
   reg saved_monitor_write_enable;
+  reg [31:0] saved_monitor_write_word;
+  reg saved_monitor_write_word_enable;
 
-  wire monitor_request = monitor_write_enable || monitor_read_enable;
+  wire monitor_request = monitor_write_enable || monitor_write_word_enable ||
+                         monitor_read_enable;
   wire cpu_imem_address_valid =
       cpu_imem_address[31:25] == 0 && cpu_imem_address[1:0] == 0;
   wire cpu_dmem_address_valid =
@@ -119,6 +131,8 @@ module sdram_system_adapter (
       saved_monitor_address <= 32'h0000_0000;
       saved_monitor_write_data <= 8'h00;
       saved_monitor_write_enable <= 1'b0;
+      saved_monitor_write_word <= 32'h0000_0000;
+      saved_monitor_write_word_enable <= 1'b0;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -130,6 +144,8 @@ module sdram_system_adapter (
             saved_monitor_address <= monitor_address;
             saved_monitor_write_data <= monitor_write_data;
             saved_monitor_write_enable <= monitor_write_enable;
+            saved_monitor_write_word <= monitor_write_word;
+            saved_monitor_write_word_enable <= monitor_write_word_enable;
             saved_monitor_read <= monitor_read_enable;
             state <= STATE_VALIDATE_MONITOR;
           end else if (!cpu_halted && cpu_imem_valid) begin
@@ -180,7 +196,8 @@ module sdram_system_adapter (
         STATE_VALIDATE_MONITOR: begin
           if (!cpu_halted || !init_done ||
               saved_monitor_address[31:25] != 0 ||
-              (saved_monitor_write_enable && saved_monitor_read)) begin
+              ((saved_monitor_write_enable || saved_monitor_write_word_enable)
+               && saved_monitor_read)) begin
             monitor_ready <= 1'b1;
             monitor_error <= 1'b1;
             state <= STATE_RELEASE;
@@ -189,14 +206,19 @@ module sdram_system_adapter (
             // Una lectura empieza SIEMPRE por la mitad baja de la
             // palabra alineada, para que la segunda complete los 32
             // bits. La escritura toca solo su propia mitad.
-            req_addr <= saved_monitor_write_enable
+            req_addr <= (saved_monitor_write_enable &&
+                         !saved_monitor_write_word_enable)
                 ? saved_monitor_address[24:1]
                 : {saved_monitor_address[24:2], 1'b0};
-            req_write <= saved_monitor_write_enable;
-            req_wdata <= saved_monitor_address[0] ?
-                {saved_monitor_write_data, 8'h00} :
-                {8'h00, saved_monitor_write_data};
-            req_wmask <= saved_monitor_address[0] ? 2'b10 : 2'b01;
+            req_write <= saved_monitor_write_enable ||
+                         saved_monitor_write_word_enable;
+            req_wdata <= saved_monitor_write_word_enable
+                ? saved_monitor_write_word[15:0]
+                : (saved_monitor_address[0] ?
+                   {saved_monitor_write_data, 8'h00} :
+                   {8'h00, saved_monitor_write_data});
+            req_wmask <= saved_monitor_write_word_enable ? 2'b11
+                       : (saved_monitor_address[0] ? 2'b10 : 2'b01);
             req_valid <= 1'b1;
             state <= STATE_WAIT_FIRST;
           end
@@ -211,6 +233,9 @@ module sdram_system_adapter (
                 // Falta la mitad alta para completar la palabra.
                 first_read_data <= rdata;
                 state <= STATE_MON_SECOND;
+              end else if (saved_monitor_write_word_enable) begin
+                // Igual que la lectura, pero escribiendo: falta la mitad alta.
+                state <= STATE_MON_WRITE2;
               end else begin
                 monitor_ready <= 1'b1;
                 state <= STATE_RELEASE;
@@ -223,6 +248,24 @@ module sdram_system_adapter (
               // which currently writes all four bytes.
               state <= STATE_START_NEXT;
             end
+          end
+        end
+
+        STATE_MON_WRITE2: begin
+          req_addr <= {saved_monitor_address[24:2], 1'b1};
+          req_write <= 1'b1;
+          req_wdata <= saved_monitor_write_word[31:16];
+          req_wmask <= 2'b11;
+          req_valid <= 1'b1;
+          state <= STATE_MON_WWAIT2;
+        end
+
+        STATE_MON_WWAIT2: begin
+          if (req_valid && req_ready)
+            req_valid <= 1'b0;
+          if (done) begin
+            monitor_ready <= 1'b1;
+            state <= STATE_RELEASE;
           end
         end
 

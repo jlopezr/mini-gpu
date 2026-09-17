@@ -23,7 +23,13 @@
 module memory_map (
     input clk, input reset,
     input [31:0] address, input [7:0] write_data,
-    input write_enable, input read_enable,
+    input write_enable,
+    // WRITE_WORD. Aqui sale casi gratis, igual que salio READ_WORD: el banco
+    // ya es de 32 bits con habilitacion por byte, asi que una palabra es UN
+    // acceso con las cuatro habilitaciones puestas. No hay segunda rafaga que
+    // secuenciar como en los prototipos con SDRAM de 16 o 128 bits.
+    input [31:0] write_word, input write_word_enable,
+    input read_enable,
     output [7:0] read_data,
     // La misma lectura sin trocear, para READ_WORD. Aqui salia gratis:
     // la palabra ya existia entera y solo se elegia un byte de ella.
@@ -44,15 +50,18 @@ module memory_map (
   wire monitor_in_ram = address[31:15] == 17'h00000;
   wire monitor_bank0 = monitor_in_ram && !address[14];
   wire monitor_bank1 = monitor_in_ram && address[14];
-  wire monitor_request = write_enable || read_enable;
+  wire monitor_request = write_enable || write_word_enable || read_enable;
+  wire monitor_any_write = write_enable || write_word_enable;
   wire imem_in_ram = cpu_imem_address[31:15] == 17'h00000;
   wire imem_bank0 = imem_in_ram && !cpu_imem_address[14];
   wire imem_address_valid = imem_in_ram && cpu_imem_address[1:0] == 2'b00;
   wire dmem_in_ram = cpu_dmem_address[31:15] == 17'h00000;
   wire dmem_bank0 = dmem_in_ram && !cpu_dmem_address[14];
   wire dmem_address_valid = dmem_in_ram && cpu_dmem_address[1:0] == 2'b00;
-  wire [3:0] monitor_byte_enable = 4'b0001 << address[1:0];
-  wire [31:0] monitor_word_data = {4{write_data}};
+  wire [3:0] monitor_byte_enable = write_word_enable
+                                 ? 4'b1111 : (4'b0001 << address[1:0]);
+  wire [31:0] monitor_word_data = write_word_enable ? write_word
+                                                    : {4{write_data}};
 
   reg [11:0] bank0_request_address;
   reg [31:0] bank0_request_write_data;
@@ -169,14 +178,14 @@ module memory_map (
         end else if (monitor_bank0) begin
           bank0_request_address <= address[13:2];
           bank0_request_write_data <= monitor_word_data;
-          bank0_request_write_enable <= write_enable ? monitor_byte_enable : 0;
+          bank0_request_write_enable <= monitor_any_write ? monitor_byte_enable : 0;
           bank0_request_read_enable <= read_enable;
           bank0_request_owner <= OWNER_MONITOR;
           monitor_byte_offset <= address[1:0];
         end else if (monitor_bank1) begin
           bank1_request_address <= address[13:2];
           bank1_request_write_data <= monitor_word_data;
-          bank1_request_write_enable <= write_enable ? monitor_byte_enable : 0;
+          bank1_request_write_enable <= monitor_any_write ? monitor_byte_enable : 0;
           bank1_request_read_enable <= read_enable;
           bank1_request_owner <= OWNER_MONITOR;
           monitor_byte_offset <= address[1:0];

@@ -108,6 +108,7 @@ def parse_args() -> argparse.Namespace:
             "write-byte",
             "read-byte",
             "read-word",
+            "write-word",
             "write-block",
             "read-block",
             "verify",
@@ -173,6 +174,7 @@ def main() -> int:
             "write-byte": 2,
             "read-byte": 1,
             "read-word": 1,
+            "write-word": 2,
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
@@ -235,6 +237,11 @@ def main() -> int:
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 value = client.read_word(address)
                 print(f"Address 0x{address:08x}: 0x{value:08x}")
+            elif args.command == "write-word":
+                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                value = parse_integer(args.arguments[1], 0xFFFF_FFFF, "word value")
+                client.write_word(address, value)
+                print(f"Written 0x{value:08x} at address 0x{address:08x}")
             elif args.command == "write-block":
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 source = Path(args.arguments[1])

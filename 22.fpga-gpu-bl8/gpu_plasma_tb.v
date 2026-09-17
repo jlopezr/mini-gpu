@@ -22,6 +22,9 @@ module gpu_plasma_tb;
     wire [7:0] error_code;
     reg [31:0] host_address=0;
     reg [7:0] host_write_data=0;
+  // WRITE_WORD. La instanciacion es .*, asi que estas dos tienen que
+  // existir con el nombre exacto del puerto o el banco no elabora.
+  reg [31:0] host_write_word=0; reg host_write_word_enable=0;
     reg host_write_enable=0,host_read_enable=0;
     wire [7:0] host_read_data;
     wire [31:0] host_read_word;   // la misma lectura sin trocear

@@ -16,6 +16,8 @@ module monitor_tb;
   wire [31:0] mem_address;
   wire [7:0] mem_write_data;
   wire mem_write_enable;
+  wire [31:0] mem_write_word;   // la palabra entera, para WRITE_WORD
+  wire mem_write_word_enable;
   wire mem_read_enable;
   wire [7:0] mem_read_data;
   wire [31:0] mem_read_word;   // la misma lectura sin trocear
@@ -48,7 +50,7 @@ module monitor_tb;
            dut.state, received_count, mem_ready);
   end
 
-  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd6),
+  monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd6),
       .RAM_END(33'h0_0000_8000),
       .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
     dut (
@@ -62,6 +64,8 @@ module monitor_tb;
       .mem_address(mem_address),
       .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
       .mem_read_enable(mem_read_enable),
       .mem_read_data(mem_read_data), .mem_read_word(mem_read_word),
       .mem_ready(mem_ready),
@@ -90,6 +94,7 @@ module monitor_tb;
       .address(mem_address),
       .write_data(mem_write_data),
       .write_enable(mem_write_enable),
+      .write_word(mem_write_word), .write_word_enable(mem_write_word_enable),
       .read_enable(mem_read_enable),
       .read_data(mem_read_data), .read_word(mem_read_word),
       .ready(mem_ready),
@@ -157,7 +162,7 @@ module monitor_tb;
     send_command(8'h02);
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
-    if (received[2] !== 8'd1) $fatal(1, "VERSION major mismatch");
+    if (received[2] !== 8'd3) $fatal(1, "VERSION major mismatch");
     if (received[3] !== 8'd6) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);

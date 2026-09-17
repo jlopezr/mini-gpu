@@ -79,6 +79,27 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(p.warps[0].processors[2].regs[3], 128)
         self.assertEqual(p.warps[0].processors[3].regs[3], 0)
 
+    def test_x_occupancy_breakdown_and_partial_execution(self):
+        p = make('MOVI R1,8\nMOVI R2,2\nMUL R3,R1,R2\n'
+                 'SHL R4,R1,R2\nDIV R5,R1,R2\nBRA done\ndone: HALT')
+        while not (p.stages['X'] and p.stages['X'].decoded.op == 0xc):
+            p.cycle()
+        p.cycle()
+        partial = p.counters.report()
+        self.assertEqual(partial['x_cycles_by_opcode']['DIV'], 1)
+        self.assertEqual(sum(partial['x_cycles_by_unit'].values()), partial['occupancy']['X'])
+        p.run()
+        report = p.counters.report()
+        self.assertEqual(report['x_cycles_by_unit'],
+                         dict(ALU=2, MUL=4, SHIFT=2, DIV=32, CONTROL=1, FAULT=0))
+        self.assertEqual(sum(report['x_cycles_by_opcode'].values()), report['occupancy']['X'])
+        import io
+        from minigpu_cycle import print_report
+        output = io.StringIO()
+        print_report(report, p.system, output)
+        self.assertIn('OCUPACIÓN X POR TIPO', output.getvalue())
+        self.assertIn('78.0 %', output.getvalue())
+
     def test_divergence_reuse_and_partial_exit(self):
         self.differential('''
             GETTID R1

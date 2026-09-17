@@ -22,30 +22,41 @@ criterio para ordenar es ese, no la dificultad.
 
 ## Estado al 17/09/2026
 
-Queda **una** cosa grande, **una** decisión y
+Quedan **dos** cosas con dueño, una política aplicada pendiente de placa y
 **una** fase entera que hoy no tiene quien la pida.
 
 | Qué | Dónde | Bloquea a |
 |---|---|---|
-| Ronda de placa (incluye la verificación pendiente de la 3.5) | abajo | cerrar 3.5 y 5 |
-| Política de dirección inexistente | fase 4b / 5 | la lista blanca de accesos sueltos |
+| **Timing de la 6 y la 10 a 120 MHz** | fase 5 | resintetizarlas, y con ello su parte de la ronda de placa |
+| Ronda de placa en las nueve que no son la 19 | abajo | cerrar 3.5 y 5 |
+| Verificar en placa el error en direcciones inexistentes | fase 5 | cerrar la paridad entre núcleos, simuladores y monitor |
 | `DEV_BITMAP` | fase 4b | nada: no tiene consumidor |
 
 ---
 
 ## Lo primero: la ronda de placa
 
-Es lo que desbloquea cerrar dos fases, y **acumula tres cambios sin verificar en
-hardware**. Va primero porque cuanto más se acumula, menos dice un fallo sobre
-cuál de ellos lo causó.
+Es lo que desbloquea cerrar dos fases, y **acumula cinco cambios sin verificar
+en hardware**. Va primero porque cuanto más se acumula, menos dice un fallo
+sobre cuál de ellos lo causó.
+
+**La 19 ya está hecha** (17/09/2026): programada con su bitstream nuevo,
+contesta `4.19`, y sobre ella se comprobaron `SYS_ID` (`0x4d470013`), los
+contadores en MMIO con `read-word 0x80000300` mientras la CPU corría,
+`WRITE_WORD` sobre SDRAM y sobre `FB_BACK`, el rechazo de dirección no alineada
+en el RTL y el mensaje de «hay que parar la CPU». Lo que sigue son **las otras
+nueve**.
 
 Lo que hay que validar, y por qué cada cosa puede fallar sólo en placa:
 
 - **Fase 3.5 entera.** Contadores en MMIO, `VIDEO_CTRL`, bases de framebuffer a
-  cero. Cerrada en RTL, simuladores y pruebas; sin placa. Se dejó agrupada al
-  final a propósito, para no pagar un `nextpnr` por cada punto.
-- **El renumerado de versiones.** Un `top.v` que se olvide del parámetro
-  contesta `x.0`, y eso sólo se ve preguntándoselo a la placa.
+  cero. Cerrada en RTL, simuladores y pruebas. Verificada en la 19; falta en las
+  demás. Se dejó agrupada al final a propósito, para no pagar un `nextpnr` por
+  cada punto.
+- **El renumerado de versiones, ahora a 3/4.** Un `top.v` que se olvide del
+  parámetro contesta `x.0`, y eso sólo se ve preguntándoselo a la placa. Toda
+  placa sin reprogramar dará MISMATCH en `board-info`, que es el aviso correcto
+  y no un fallo.
 - **`SYS_ID` en 6 y 10.** Llegan por el camino del monitor, no por una ventana
   MMIO; en simulación no hay nada que lo distinga de estar bien.
 - **`READ_WORD` en la 10 y la 16.** `mem_read_word` estaba **sin conectar** en
@@ -53,14 +64,24 @@ Lo que hay que validar, y por qué cada cosa puede fallar sólo en placa:
   esa señal él mismo y ningún banco instancia `top`. Hay ya un
   `test_top_wiring.py` que lo fija, pero quien tiene la última palabra es la
   placa.
-- **La convergencia de los `monitor.v`** (ver abajo), que cambia el netlist de
-  las diez carpetas.
+- **La convergencia de los `monitor.v` y `WRITE_WORD`**, que cambian el netlist
+  de las diez carpetas. De `WRITE_WORD` sólo está visto en placa el camino de
+  128 bits (la 19). **El de 16 bits —10 y 16, que hacen la escritura en DOS
+  ráfagas— y el de la GPU están probados en simulación y nada más**, y son
+  justamente los dos caminos que más código nuevo llevan.
 
-Hace falta **resintetizar las diez**. Recordatorio que ya costó una vez: la
-semilla de `nextpnr` es propiedad de un *netlist*, no de un diseño, así que
-cualquier cambio de RTL invalida un barrido anterior. La 19 lleva `--seed 4`
-fijada con una nota honesta en su `apio.ini` (3 de 8 semillas pasan); ese pin
-hay que volver a ganárselo.
+Hace falta **resintetizar las diez**, y eso ya se hizo: **ocho cierran**
+(12, 14, 16, 17, 18, 19, 21, 22) y **la 6 y la 10 no**. Recordatorio que ya
+costó una vez y que aquí se volvió a cumplir: la semilla de `nextpnr` es
+propiedad de un *netlist*, no de un diseño, así que cualquier cambio de RTL
+invalida un barrido anterior.
+
+- La 19 mantiene su `--seed 4` y sigue cumpliendo.
+- La 16 **perdió** su semilla: la 4, que estaba fijada, cayó a 96,58 MHz con
+  100 exigidos. Rebarrido: cumplen siete de ocho; se fijó la 1 (+5,0 %) y ya
+  cierra a 105,03 MHz.
+- **La 6 y la 10 no se arreglan con semilla**, y eso es lo que queda abierto;
+  ver el apartado de `WRITE_WORD`.
 
 `yosys` y `nextpnr` son monohilo: se sintetiza en paralelo con `Start-Job`, una
 carpeta por trabajo.
@@ -69,17 +90,14 @@ carpeta por trabajo.
 
 ## Convergencia de los `monitor.v` (fase 5)
 
-**Estado: validación en curso.** `x.tests` pasa: 223 tests unitarios y 35 casos
-GPU (37 omitidos por arquitectura o capacidades). Los bancos RTL de 6, 10, 12,
-14, 16, 17, 18, 19 y 21 pasan. En 19 y 21 hubo que actualizar los modelos de
-los tests serie, que aún buscaban constantes retiradas de `monitor.py`; sus
-12 tests Python por carpeta pasan tras la corrección. La 6 cubre además el
-rechazo de `RUN` y `STEP` con error latcheado, sin emitir peticiones al núcleo.
+**Estado: simulación cerrada, síntesis a medias, placa pendiente.** `x.tests`
+pasa (235 tests) y **los bancos RTL de las diez carpetas pasan**, incluida la 22.
+En 19 y 21 hubo que actualizar los modelos de los tests serie, que aún buscaban
+constantes retiradas de `monitor.py`. La 6 cubre además el rechazo de `RUN` y
+`STEP` con error latcheado, sin emitir peticiones al núcleo.
 
-La suite normal de la 22 sigue en segundo plano, registro
-`reports/20260917-161544-861325-test/`: consultar con `build-status --prototype 22`
-y `build-log --prototype 22`. No incluye el banco marcado lento `gpu_plasma_tb`.
-Síntesis y placa siguen pendientes.
+De la síntesis de las diez, **ocho cierran timing y dos no** (la 6 y la 10); ver
+el apartado de `WRITE_WORD` más abajo, que es lo que las movió.
 
 Lo que se hizo: un `monitor.v` único, **copia idéntica en las diez carpetas** con
 juego de comandos (6, 10, 12, 14, 16, 17, 18, 19, 21, 22). Todo lo que distingue
@@ -106,7 +124,7 @@ cambian comportamiento:
   el cambio que el plan temía; resultó **acotado**, porque la comprobación sólo
   gobierna bloques: los accesos byte a byte y `READ_WORD` no pasan por ella en
   ninguna de las dos familias, y siguen filtrándose aguas abajo. Eso es también
-  lo que deja viva la decisión de la sección siguiente.
+  lo que deja pendiente aplicar la política de la sección siguiente.
 
 - **`RUN` y `STEP` ahora exigen parado Y sin error, en las dos familias.** La
   GPU ya lo hacía; la CPU no. Arrancar sobre un error latcheado contestaba `b0`
@@ -120,34 +138,116 @@ De paso se cerró un cabo suelto: 6 y 10 tenían `MONITOR_REGIONS = ()` en su
 valida, pero `read_memory` y `read_block` sí, así que leer la identificación por
 bloque se habría rechazado en el host antes de llegar al cable.
 
+### `WRITE_WORD` (17/09/2026)
+
+Este comando estaba **descartado con motivo** en «Fuera de esta ronda». Se
+reabrió, se implementó y se propagó a las diez. Lo que sigue es por qué el
+argumento de descarte no valía, que es justo lo que aquel apartado pide de
+quien lo reabra.
+
+El descarte decía dos cosas y las dos eran falsas:
+
+1. «Obliga a llevar máscara de bytes hasta el puerto aux y hasta la RAM, en las
+   dos familias.» **No hizo falta.** El puerto aux de la GPU ya era de 32 bits
+   con strobe de 4 (`aux_write_data` / `aux_strobe` en `gpu_system.v`), y el
+   `memory_map` de la 6 ya tenía habilitación por byte. Ahí el cambio es poner
+   el strobe a `4'b1111` y el dato entero: dos líneas. El coste real estaba
+   donde el descarte no miró, en los adaptadores de SDRAM de **16 bits** (10 y
+   16), donde una palabra son DOS ráfagas y hubo que añadir dos estados
+   (`STATE_MON_WRITE2` / `STATE_MON_WWAIT2`), simétricos a los que la lectura ya
+   tenía desde `READ_WORD`.
+
+2. «Sólo evita el desgarro de escritura, que ya se evita escribiendo con el
+   núcleo parado.» **El contraargumento estaba dos líneas más abajo, en el mismo
+   párrafo**: `READ_WORD` entró porque `frame_count` avanza con el núcleo
+   parado. Pues `FB_FRONT` lo lee ese mismo scanout, que cuelga de `reset` y no
+   de `core_reset`. Y `HALT_AT` es peor: en `video_registers.v` CUALQUIER
+   escritura reinicia `swap_count` y rearma la alarma con el valor ya mezclado,
+   así que byte a byte eso ocurre cuatro veces y con valores intermedios; un
+   intercambio que caiga entre dos bytes para la CPU en una cuenta que nadie
+   pidió. El argumento que justificó `READ_WORD` vale igual dado la vuelta.
+
+Lo que el descarte **no** decía y sí importa, medido en placa: una ida y vuelta
+por el UART cuesta **16 ms fijos** por el latency timer del FTDI —un `PING` de
+dos bytes tarda lo mismo que un bloque de 256—, así que escribir un registro de
+32 bits pasa de cuatro viajes (64 ms) a uno (16 ms). Lo que NO mejora es
+`WRITE_BLOCK`, que ya mandaba sus 256 bytes en un solo viaje: quien quiera que
+eso vuele tiene que bajar el latency timer del FTDI y subir `MAX_BLOCK_SIZE`, y
+no es trabajo de RTL.
+
+**El coste que sí apareció es de timing.** `WRITE_WORD` cuesta entre 15 y 19 MHz
+en la familia CPU. Las de 80 MHz (18, 19, 21) tienen margen de sobra; 6, 10 y 16
+no cerraron a la primera (110,45 contra 120; 103,15 contra 120; 96,58 contra
+100, viniendo de 127,26, 122,58 y 112,03).
+
+La 16 era cosa de la semilla y ya está resuelta (siete de ocho cumplen, fijada
+la 1, cierra a 105,03). **La 6 y la 10 no.** Barrido de ocho semillas en cada
+una, ninguna cumple:
+
+| | rango del barrido | mediana | exigidos |
+|---|---|---|---|
+| 6 | 104,00 – 110,58 MHz | 108,51 | 120 |
+| 10 | 95,07 – 103,56 MHz | 99,41 | 120 |
+
+La mediana cae un 10 % y un 17 % por debajo de la restricción, así que aquí el
+problema no es cómo se coloca el diseño: es el diseño. Son las dos carpetas que
+corren a 120 MHz, las dos únicas sin margen, y las dos que menos falta les hace
+`WRITE_WORD` —no tienen registros de vídeo ni `HALT_AT`, que es lo que el
+comando existe para arreglar; en ellas sólo ahorra tres viajes de UART.
+
+Tres salidas, y la elección es de quien lleve esto:
+
+1. **Bajar su reloj** a 100 MHz. Es lo que ya se hizo en la 16 (120 → 100) y en
+   la 18 (100 → 80) cuando pasó lo mismo, y hay precedente escrito en sus
+   `apio.ini`. Cuesta prestaciones en dos prototipos didácticos.
+2. **Registrar el mux de `req_wdata`/`req_wmask`** del camino nuevo, a costa de
+   un ciclo por acceso del monitor. Sobre los 16 ms de una ida y vuelta por UART
+   no se mide, y es el primer sitio donde mirar.
+3. **Dejar `WRITE_WORD` fuera de la 6 y la 10** con un parámetro `HAS_WRITE_WORD`
+   en `monitor.v`, como ya se hace con `HAS_SERIAL`. Mantiene el fichero único y
+   el coste desaparece donde estorba; a cambio vuelve a haber dos juegos de
+   comandos que numerar.
+
 ### Lo que falta de este punto
 
-- [ ] Correr los bancos de las diez carpetas y `x.tests`.
-- [ ] Síntesis de las diez y ronda de placa.
+- [x] Correr los bancos de las diez carpetas y `x.tests` (235 tests).
+- [x] Síntesis de las diez: ocho cierran; la 16 tras rebarrer semilla.
+- [ ] **Cerrar timing en la 6 y la 10**, con una de las tres salidas de arriba.
+- [ ] Ronda de placa de las nueve que no son la 19.
 
 ---
 
-## La decisión abierta: dirección inexistente
+## Aplicar la política decidida: dirección inexistente
 
-Hoy una dirección sin dispositivo **lee cero en CPU** y **levanta `bad` en GPU**.
+**Decidido el 17/09/2026:** dispositivo ausente u offset reservado da error en
+lectura y escritura, salvo comportamiento definido expresamente para el
+registro. No hay excepción general para el slot de identificación. El contrato
+y su justificación están en [`mapa-de-memoria.md`](mapa-de-memoria.md) §6.
 
-Esto ya no es lo que era cuando se escribió. El truco de compatibilidad que lo
-sostenía —«leer cero en `0x80000F00` significa prototipo antiguo»— **ya no hace
-falta dentro del repo**: las diez carpetas con juego de comandos y los tres
-simuladores tienen `SYS_ID`. Sigue sirviendo para un **bitstream viejo ya
-flasheado**, y sólo ahí. Y ni siquiera en las dos familias: en la GPU nunca
-funcionó, porque una dirección fuera de las ventanas declaradas levanta `bad` en
-vez de leer cero.
+La implementación está hecha. El decodificador CPU ahora devuelve error y lo
+propaga a los adaptadores del núcleo y del monitor; los select de periférico se
+anulan antes de cualquier efecto lateral. Solo las cuatro palabras de `SYS_ID`
+son legibles y `DEV_BITMAP = 0` sigue siendo un valor válido. Los simuladores
+validan el offset antes de ejecutar el acceso, y el cliente del host distingue
+magic, cero histórico, rechazo explícito y fallo de transporte.
 
-**Recomendación:** unificar **sólo dentro del slot de identificación** —cero
-ahí— y mantener `bad` en el resto de la página. Razón: es lo que preserva el
-diagnóstico que convierte un error de programa GPU en un error visible del host,
-y es lo mismo que ya se hizo con `HALT_AT` en la 22. Unificar hacia «error en
-toda la página» rompería el truco justo donde hoy funciona.
+El monitor acumula primero un `READ_BLOCK` y solo emite `a1` tras leer todos sus
+bytes; así un `ff` de datos no se confunde con NACK. Si un bloque falla, consume
+el payload pendiente antes de volver a interpretar comandos, para conservar la
+sincronía de UART.
 
-- [ ] Decidirlo y escribirlo en `mapa-de-memoria.md` §6.
-- [ ] Aplicarlo. Afecta a los accesos **sueltos**, que es lo que la lista blanca
-      de bloques dejó sin tocar.
+- [x] Propagar el error MMIO a CPU, monitor y simuladores, sin efectos en el
+      periférico rechazado.
+- [x] Eliminar alias de identificación y rechazar escrituras a sus cuatro
+      palabras; conservar `DEV_BITMAP = 0` con `CONTRACT = 1`.
+- [x] Probar accesos inválidos de programa, host y bloques, además de valores
+      válidos cero, en simuladores y bancos RTL.
+- [x] Verificar estas rutas **en la 19** (17/09/2026, bitstream 4.19). Los
+      offsets que existen contestan (`FB_FRONT`, `PERF_CYCLES`, `SYS_ID` con su
+      magic `0x4d470013`); los dispositivos 4 y 5, `SYS_ID +0x10` y `video +0xf0`
+      se rechazan; y escribir `SYS_ID` se rechaza. O sea que el decodificador se
+      comporta en placa como dice el contrato.
+- [ ] Verificar estas mismas rutas en las **otras nueve**, tras resintetizarlas.
 
 ---
 
@@ -174,9 +274,10 @@ declarar» y no «ningún dispositivo»), no porque haga falta ya.
       compruebe que lo generado está al día.
 - [ ] `capabilities.json` no tiene números de bit. Hay que añadirlos y
       comprometerse a no reutilizarlos nunca.
-- [ ] Si se hace, **hacerlo a la vez que lo que quede de la fase 5**: las dos
-      quieren derivar su lista de la misma tabla, y por separado se construye el
-      generador dos veces.
+- [ ] ~~Hacerlo a la vez que lo que quede de la fase 5~~. **Esa ventana se
+      cerró**: de la fase 5 sólo quedan timing en la 6 y la 10 y la ronda de
+      placa, y ninguna de las dos cosas construye un generador. Si `DEV_BITMAP`
+      se hace algún día, se paga el generador entero él solo.
 
 ---
 
@@ -185,13 +286,12 @@ declarar» y no «ningún dispositivo»), no porque haga falta ya.
 Esto no está pendiente: está **descartado con motivo**. Se deja escrito para no
 volver a proponerlo sin argumento nuevo.
 
-- **`WRITE_WORD`.** El puerto host escribe con `expanded_data={4{write_data}}`
-  más un strobe de byte, así que una escritura real de 32 bits obliga a llevar
-  máscara de bytes hasta el puerto aux y hasta la RAM, en las dos familias. Y
-  sólo evita el desgarro de *escritura*, que ya se evita escribiendo con el
-  núcleo parado. El de *lectura* no tenía esa salida —`frame_count` avanza con
-  el núcleo parado— y por eso `READ_WORD` sí entró. Se añadirá cuando haya un
-  motivo concreto.
+> Esta lista se equivocó una vez. `WRITE_WORD` estuvo aquí con dos argumentos, y
+> los dos eran falsos: ver su apartado en la fase 5. La regla de «no reabrir sin
+> argumento nuevo» sigue valiendo, pero conviene leer estas entradas como lo que
+> son —un razonamiento de su día, no una verdad— y comprobar sus premisas antes
+> de darlas por buenas.
+
 - **Control de lanzamiento GPU por registros** (`0x80001080–0x80001FFF`). Hoy
   run/halt/step/reset llegan por señales del monitor. Convertirlos en registros
   choca de frente con que la interfaz host es byte a byte y sólo funciona con la

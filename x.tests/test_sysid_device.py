@@ -133,18 +133,17 @@ class SysIdDeviceTest(unittest.TestCase):
         self.assertEqual(sistema.sysid.read(SysIdDevice.ISA_PROFILE),
                          funcional.sysid.read(SysIdDevice.ISA_PROFILE))
 
-    def test_es_de_solo_lectura_y_no_falla(self):
-        """El RTL se traga la escritura; fallar aquí haría que un programa con
-        ese error se comportara distinto en simulación que en la placa."""
+    def test_identificacion_rechaza_escrituras_y_offsets_reservados(self):
         dispositivo = SysIdDevice(folder=2, isa_profile=BIT_MUL)
         antes = dispositivo.read(SysIdDevice.SYS_ID)
-        dispositivo.write(SysIdDevice.SYS_ID, 0xDEAD_BEEF)
+        for offset in range(0, 256, 4):
+            with self.subTest(offset=offset):
+                with self.assertRaises(RuntimeError):
+                    dispositivo.write(offset, 0xDEAD_BEEF)
+                if offset >= 16:
+                    with self.assertRaises(RuntimeError):
+                        dispositivo.read(offset)
         self.assertEqual(dispositivo.read(SysIdDevice.SYS_ID), antes)
-
-    def test_un_registro_que_no_existe_lee_cero(self):
-        dispositivo = SysIdDevice(folder=2, isa_profile=BIT_MUL)
-        self.assertEqual(dispositivo.read(0x40), 0)
-        # DEV_BITMAP es de la fase 4b: cero significa «sin declarar».
         self.assertEqual(dispositivo.read(SysIdDevice.DEV_BITMAP), 0)
 
     def test_se_lee_por_la_memoria_como_cualquier_mmio(self):

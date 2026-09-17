@@ -130,6 +130,8 @@ module cpu_memory_map_tb;
       .address(monitor_address),
       .write_data(monitor_write_data),
       .write_enable(monitor_write_enable),
+      // Este banco no ejercita WRITE_WORD: atadas, que al aire valen x.
+      .write_word(32'd0), .write_word_enable(1'b0),
       .read_enable(monitor_read_enable),
       .read_data(monitor_read_data),
       .ready(monitor_ready),

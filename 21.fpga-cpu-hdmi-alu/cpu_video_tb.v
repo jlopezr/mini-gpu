@@ -122,6 +122,7 @@ module cpu_video_tb;
   wire [3:0] mmio_write_mask;
   wire [11:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
+  wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
   wire [31:0] ibuf_hits, ibuf_misses;
@@ -155,7 +156,7 @@ module cpu_video_tb;
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
       .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
       .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
-      .mmio_read_data(mmio_read_data),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
       .req_valid(p0_valid), .req_ready(p0_ready), .req_write(p0_write),
       .req_addr(p0_addr), .req_wdata(p0_wdata), .req_wmask(p0_wmask),
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
@@ -175,13 +176,14 @@ module cpu_video_tb;
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted),
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
-      .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
+      .mem_write_enable(mon_write_enable),
+      .mem_write_word(32'd0), .mem_write_word_enable(1'b0), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_bus_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
       .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),
       .mmio_address(mon_mmio_addr), .mmio_write_data(mon_mmio_wdata),
-      .mmio_read_data(mmio_read_data),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
       .req_valid(p3_valid), .req_ready(p3_ready), .req_write(p3_write),
       .req_addr(p3_addr), .req_wdata(p3_wdata), .req_wmask(p3_wmask),
       .rsp_valid(p3_rsp_valid), .rsp_ready(p3_rsp_ready),
@@ -203,11 +205,11 @@ module cpu_video_tb;
   // aunque este banco no lo use: lo que se prueba aqui es el mapa que se
   // sintetiza, y eso incluye que anadir un dispositivo no mueva el video.
   mmio_decoder mmio_decoder_i (
-      .select(mmio_select), .address(mmio_address),
+      .select(mmio_select), .write(mmio_write), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
       .serial_select(mmio_serial_select),
       .serial_read_data(mmio_serial_read_data),
-      .read_data(mmio_read_data));
+      .read_data(mmio_read_data), .error(mmio_error));
 
   video_registers #(
       .FB_FRONT_RESET(FRONT_RESET), .FB_BACK_RESET(BACK_RESET)

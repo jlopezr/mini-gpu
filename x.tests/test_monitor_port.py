@@ -206,6 +206,23 @@ class SharedMonitorTest(unittest.TestCase):
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
 
+    def test_write_word_esta_en_las_diez(self):
+        """WRITE_WORD entro por una sola carpeta y volvio a converger.
+
+        Estuvo un tiempo solo en la 19, con una excepcion en el test de arriba
+        y un diff guardado que acotaba la divergencia. Esto es lo que queda de
+        aquello: la comprobacion de que el experimento se cerro y no se quedo a
+        medias en una carpeta. Si alguien vuelve a meter un comando en una sola
+        copia, el test de igualdad lo caza; este dice ademas que el comando
+        sigue existiendo, para que no desaparezca de las diez a la vez sin que
+        nadie se entere.
+        """
+        for name in COMMAND_PROTOTYPES:
+            with self.subTest(prototype=name):
+                texto = (ROOT / name / "monitor.v").read_text(encoding="utf8")
+                self.assertIn("CMD_WRITE_WORD", texto)
+                self.assertIn("RSP_WRITE_WORD", texto)
+
 
 class MonitorVersionTest(unittest.TestCase):
     """rtl_facts tiene que leer la version que se SINTETIZA.
@@ -446,7 +463,10 @@ class MonitorRegionsTest(unittest.TestCase):
         mismo, o se depura un mapa que no es el que esta sintetizado."""
         for name in GPU_PROTOTYPES:
             with self.subTest(prototype=name):
-                valores = [v for _, v in monitor_instantiations(ROOT / name)]
+                # El banco de errores usa deliberadamente una ventana con
+                # huecos y un bus simulado; no representa el mapa de la placa.
+                valores = [v for path, v in monitor_instantiations(ROOT / name)
+                           if path.name != "mmio_monitor_tb.v"]
                 for otros in valores[1:]:
                     self.assertEqual(otros, valores[0])
 

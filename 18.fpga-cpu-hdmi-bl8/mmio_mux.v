@@ -59,9 +59,12 @@ module mmio_mux (
     a_ack <= 1'b0;
     b_ack <= 1'b0;
     select <= 1'b0;
-    write <= 1'b0;
 
+    // Mantener direccion Y tipo de acceso hasta que el cliente consume ack.
+    // Si write bajase con select, un STORE a solo lectura perderia su error
+    // combinacional un ciclo antes de que lo muestree el adaptador.
     if (reset) begin
+      write <= 1'b0;
       busy <= 1'b0;
       granted_a <= 1'b0;
       write_mask <= 4'b0000;

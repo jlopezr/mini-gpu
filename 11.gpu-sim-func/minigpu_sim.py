@@ -552,7 +552,7 @@ class Warp:
                         core_id = processor.core_id
                         address = u32(processor.regs[(instr >> 16) & 31]
                                       + sign_extend(instr & 0xFFFF, 16))
-                        processor.check_store(address)
+                        processor.check_store(address, writing=False)
             results = []
             for processor in self.processors:
                 if self.active_mask & (1 << processor.core_id):
@@ -635,15 +635,23 @@ class CPU:
             return read_u32(self.memory, address)
         if address & 3:
             raise ExecutionFault(ERROR_MEMORY_ACCESS, address)
-        return device.read(address - device.BASE)
+        try:
+            return device.read(address - device.BASE)
+        except RuntimeError as exc:
+            raise ExecutionFault(ERROR_MEMORY_ACCESS, address) from exc
 
-    def check_store(self, address: int) -> None:
+    def check_store(self, address: int, writing: bool = True) -> None:
         """Valida el destino de un STORE antes de diferirlo."""
         device = self.warp.sm.system.device_for(address)
         if device is None:
             check_address(self.memory, address)
         elif address & 3:
             raise ExecutionFault(ERROR_MEMORY_ACCESS, address)
+        else:
+            try:
+                device.validate(address - device.BASE, writing=writing)
+            except RuntimeError as exc:
+                raise ExecutionFault(ERROR_MEMORY_ACCESS, address) from exc
 
     def evaluate(self, instr: int, pc: int) -> LaneResult:
         regs = self.regs.copy()

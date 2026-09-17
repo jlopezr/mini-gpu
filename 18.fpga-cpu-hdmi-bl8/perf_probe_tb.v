@@ -202,7 +202,7 @@ module perf_system #(
       .cpu_dmem_read_data(dmem_read_data), .cpu_dmem_ready(dmem_ready),
       .cpu_dmem_error(dmem_error),
       .mmio_select(), .mmio_write(), .mmio_write_mask(), .mmio_address(),
-      .mmio_write_data(), .mmio_read_data(32'h0000_0000),
+      .mmio_write_data(), .mmio_read_data(32'h0000_0000), .mmio_error(1'b0),
       .video_req(video_req), .video_addr(video_addr),
       .video_read_data(), .video_ready(video_ready),
       .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),

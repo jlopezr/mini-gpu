@@ -65,12 +65,17 @@ class Pipeline:
                 result = execute(packet.decoded, regs,
                                  packet.warp * len(self.warps[packet.warp].processors) + lane)
                 if result.access:
-                    address, size, _, _ = result.access
+                    address, size, value, _ = result.access
                     device = self.system.device_for(address)
                     if device is None:
                         check_access(len(self.system.memory), address, size)
                     elif size != 4 or address & 3:
                         raise ISAError(2, address)
+                    else:
+                        try:
+                            device.validate(address - device.BASE, writing=value is not None)
+                        except RuntimeError as exc:
+                            raise ISAError(2, address) from exc
                 results.append((lane, result))
             except ISAError as exc:
                 return replace(packet, fault=self.fault(exc, packet, lane))
@@ -184,6 +189,9 @@ class Pipeline:
         self.system.tick_devices()
 
     def check_invariants(self):
+        # Python -O disables assertions; skip their supporting scans as well.
+        if not __debug__:
+            return
         packets = [p for p in self.stages.values() if p is not None] + list(self.lsu)
         owners = [p.warp for p in packets]
         assert len(owners) == len(set(owners)), 'more than one instruction per warp'
@@ -223,8 +231,11 @@ class Pipeline:
             if packet is not None: c.occupancy[s] += 1
         c.lsu_occupancy += len(self.lsu)
         c.wait_mem_cycles += bool(self.lsu)
-        if old['X'] and old['X'].latency > 1:
-            c.multicycle[NAMES[old['X'].decoded.op]] += 1
+        if old['X']:
+            opcode = NAMES[old['X'].decoded.op] if old['X'].decoded else 'FAULT'
+            c.x_cycles_by_opcode[opcode] += 1
+            if old['X'].latency > 1:
+                c.multicycle[opcode] += 1
 
         nxt = old.copy()
         queue = list(self.lsu)

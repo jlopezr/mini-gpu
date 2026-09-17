@@ -48,6 +48,7 @@ CMD_GET_VERSION = b"\x02"
 CMD_WRITE_BYTE = 0x10
 CMD_READ_BYTE = 0x11
 CMD_READ_WORD = 0x12
+CMD_WRITE_WORD = 0x13
 CMD_WRITE_BLOCK = 0x20
 CMD_READ_BLOCK = 0x21
 CMD_RUN = 0x30
@@ -67,6 +68,7 @@ RSP_VERSION = 0x82
 RSP_WRITE_BYTE = b"\x90"
 RSP_READ_BYTE = 0x91
 RSP_READ_WORD = 0x92
+RSP_WRITE_WORD = 0x93
 RSP_WRITE_BLOCK = b"\xa0"
 RSP_READ_BLOCK = 0xA1
 RSP_RUN = b"\xb0"
@@ -88,6 +90,10 @@ PERF_RETIRED = 0x8000_0304
 
 class MonitorError(Exception):
     """Raised when communication with the FPGA monitor fails."""
+
+
+class CommandRejected(MonitorError):
+    """Rechazo explicito ff; distinto de timeout o respuesta malformada."""
 
 
 @dataclass(frozen=True)
@@ -170,7 +176,7 @@ class MonitorClient:
         self._send(command)
         response = self._read_exact(response_size)
         if response[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         return response
 
     @staticmethod
@@ -201,7 +207,7 @@ class MonitorClient:
         self._send(request)
         header = self._read_exact(1)
         if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         if header[0] != RSP_READ_BYTE:
             raise MonitorError(f"Invalid READ_BYTE response: {header.hex(' ')}")
 
@@ -222,11 +228,59 @@ class MonitorClient:
         self._send(request)
         header = self._read_exact(1)
         if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         if header[0] != RSP_READ_WORD:
             raise MonitorError(f"Invalid READ_WORD response: {header.hex(' ')}")
 
         return int.from_bytes(self._read_exact(4), byteorder="little")
+
+    def write_word(self, address: int, value: int) -> None:
+        """Escribe 32 bits en UNA transaccion de bus, y por tanto sin desgarro.
+
+        Simetrico de `read_word`, y por la misma razon dada la vuelta: un
+        registro MMIO de 32 bits escrito con cuatro WRITE_BYTE pasa por TRES
+        valores intermedios que el hardware si ve, y entre el primero y el
+        cuarto hay cerca de un milisegundo de serie.
+
+          - `FB_FRONT` lo lee el scanout, que cuelga de `reset` y no de
+            `core_reset`, asi que sigue vivo con el nucleo parado: durante esa
+            ventana el puntero es mitad viejo y mitad nuevo.
+          - `HALT_AT` es peor: CUALQUIER escritura reinicia `swap_count` y
+            rearma la alarma con el valor ya mezclado, asi que byte a byte eso
+            pasa cuatro veces y con valores intermedios.
+
+        Vive en la clase base y no en un mixin --donde nacio, cuando solo la 19
+        lo tenia-- porque ya es parte del PROTOCOLO: las diez copias de
+        `monitor.v` lo implementan. Un mixin aqui diria que hay hardware que no,
+        y eso dejo de ser verdad.
+        """
+        if address % 4:
+            raise MonitorError(
+                f"WRITE_WORD requiere direccion alineada a 4: {address:#x}")
+        if not 0 <= value <= 0xFFFF_FFFF:
+            raise MonitorError(f"WRITE_WORD admite 32 bits: {value:#x}")
+        request = (bytes((CMD_WRITE_WORD,))
+                   + self._address_bytes(address)
+                   + value.to_bytes(4, byteorder="little"))
+        response = self._request(request, 1)
+        if response[0] != RSP_WRITE_WORD:
+            raise MonitorError(f"Invalid WRITE_WORD response: {response.hex(' ')}")
+
+    def probe_sys_id(self) -> int | None:
+        """Identificacion del host, sin confundir ausencia y transporte.
+
+        Devuelve el SYS_ID con magic valido, 0 para el cero historico de CPU,
+        o None si el acceso fue rechazado explicitamente (no prueba antiguedad).
+        Un timeout, respuesta incompleta o magic invalido sigue siendo error.
+        No se usa para inferir dispositivos: DEV_BITMAP=0 aun es sin declarar.
+        """
+        try:
+            value = self.read_word(0x80000F00)
+        except CommandRejected:
+            return None
+        if value != 0 and value >> 16 != 0x4D47:
+            raise MonitorError(f"Invalid SYS_ID magic: {value:#010x}")
+        return value
 
     def write_block(self, address: int, data: bytes) -> None:
         validate_block(address, len(data), self.MEMORY_REGIONS)
@@ -250,7 +304,7 @@ class MonitorClient:
         self._send(request)
         header = self._read_exact(1)
         if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         if header[0] != RSP_READ_BLOCK:
             raise MonitorError(f"Invalid READ_BLOCK response: {header.hex(' ')}")
 
@@ -304,7 +358,7 @@ class MonitorClient:
         self._send(bytes((CMD_READ_REGISTER, register)))
         header = self._read_exact(1)
         if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         if header[0] != RSP_READ_REGISTER:
             raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
         return int.from_bytes(self._read_exact(4), byteorder="big")
@@ -450,7 +504,7 @@ class SerialMixin:
         self._send(bytes((CMD_RECV_BYTES, maximum)))
         header = self._read_exact(2)
         if header[0] == RSP_ERROR:
-            raise MonitorError("The FPGA rejected the command")
+            raise CommandRejected("The FPGA rejected the command")
         if header[0] != RSP_RECV_BYTES:
             raise MonitorError(f"Invalid RECV_BYTES response: {header.hex(' ')}")
         count = header[1]

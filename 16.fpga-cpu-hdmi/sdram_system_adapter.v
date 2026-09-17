@@ -48,6 +48,14 @@ module sdram_system_adapter #(
     input  wire [31:0] monitor_address,
     input  wire [7:0]  monitor_write_data,
     input  wire        monitor_write_enable,
+    // WRITE_WORD. En MMIO cabe en un acceso; en SDRAM son DOS rafagas de 16
+    // bits, igual que ya hacia la lectura del monitor y que hace un STORE de
+    // la CPU. Lo que se gana no es velocidad de bus --son dos rafagas igual
+    // que cuatro WRITE_BYTE serian cuatro-- sino que las dos salen seguidas,
+    // sin un milisegundo de UART entre medias y sin que nadie mas se cuele:
+    // el arbitro no suelta el turno hasta STATE_RELEASE.
+    input  wire [31:0] monitor_write_word,
+    input  wire        monitor_write_word_enable,
     input  wire        monitor_read_enable,
     output reg  [7:0]  monitor_read_data,
     // La misma lectura sin trocear, para READ_WORD del monitor.
@@ -79,6 +87,7 @@ module sdram_system_adapter #(
     output reg [11:0] mmio_address,
     output reg [31:0] mmio_write_data,
     input wire [31:0] mmio_read_data,
+    input wire mmio_error,
 
     // Video scanout: single 16-bit read, halfword address, no range check
     // because the line source can only generate addresses inside the frame
@@ -117,6 +126,12 @@ module sdram_system_adapter #(
   // 250 kbaud, asi que no hace falta que el monitor avise.
   localparam STATE_MON_SECOND  = 4'd8;
   localparam STATE_MON_WAIT2   = 4'd9;
+  // Y las dos mitades de la ESCRITURA de palabra, por lo mismo: WRITE_WORD
+  // trae 32 bits y el bus mueve 16. Las dos rafagas salen seguidas, sin
+  // soltar el turno del arbitro, que es lo que la hace indivisible frente a
+  // los otros clientes.
+  localparam STATE_MON_WRITE2  = 4'd10;
+  localparam STATE_MON_WWAIT2  = 4'd11;
 
   // Ventana de registros de video: 0x80000000..0x8000000f. Se decodifica
   // estricta; cualquier otra direccion alta sigue siendo un error, como antes.
@@ -141,6 +156,8 @@ module sdram_system_adapter #(
   reg [7:0] pending_monitor_write_data;
   reg pending_monitor_write_enable;
   reg pending_monitor_read_enable;
+  reg [31:0] saved_monitor_write_word, pending_monitor_write_word;
+  reg saved_monitor_write_word_enable, pending_monitor_write_word_enable;
 
   reg [7:0] video_run;
 
@@ -156,7 +173,8 @@ module sdram_system_adapter #(
    * respuesta, asi que una sola posicion basta.
    */
   reg monitor_pending;
-  wire monitor_strobe = monitor_write_enable || monitor_read_enable;
+  wire monitor_strobe = monitor_write_enable || monitor_write_word_enable ||
+                        monitor_read_enable;
   wire monitor_request = monitor_pending;
   wire other_request = monitor_request ||
       (!cpu_halted && (cpu_imem_valid || cpu_dmem_valid));
@@ -212,10 +230,14 @@ module sdram_system_adapter #(
       saved_monitor_address <= 32'h0000_0000;
       saved_monitor_write_data <= 8'h00;
       saved_monitor_write_enable <= 1'b0;
+      saved_monitor_write_word <= 32'h0000_0000;
+      saved_monitor_write_word_enable <= 1'b0;
       monitor_pending <= 1'b0;
       pending_monitor_address <= 32'h0000_0000;
       pending_monitor_write_data <= 8'h00;
       pending_monitor_write_enable <= 1'b0;
+      pending_monitor_write_word <= 32'h0000_0000;
+      pending_monitor_write_word_enable <= 1'b0;
       pending_monitor_read_enable <= 1'b0;
     end else begin
       // Enganchar el pulso del monitor. Va fuera del `case` para que no se
@@ -225,6 +247,8 @@ module sdram_system_adapter #(
         pending_monitor_address <= monitor_address;
         pending_monitor_write_data <= monitor_write_data;
         pending_monitor_write_enable <= monitor_write_enable;
+        pending_monitor_write_word <= monitor_write_word;
+        pending_monitor_write_word_enable <= monitor_write_word_enable;
         pending_monitor_read_enable <= monitor_read_enable;
       end
 
@@ -254,6 +278,8 @@ module sdram_system_adapter #(
             saved_monitor_address <= pending_monitor_address;
             saved_monitor_write_data <= pending_monitor_write_data;
             saved_monitor_write_enable <= pending_monitor_write_enable;
+            saved_monitor_write_word <= pending_monitor_write_word;
+            saved_monitor_write_word_enable <= pending_monitor_write_word_enable;
             saved_monitor_read <= pending_monitor_read_enable;
             state <= STATE_VALIDATE_MONITOR;
           end else if (!cpu_halted && cpu_imem_valid) begin
@@ -314,7 +340,8 @@ module sdram_system_adapter #(
         // prevents the seven-bit range comparison becoming a 120 MHz path from
         // the registered monitor address to req_addr/req_wdata.
         STATE_VALIDATE_MONITOR: begin
-          if (saved_monitor_write_enable && saved_monitor_read) begin
+          if ((saved_monitor_write_enable || saved_monitor_write_word_enable)
+              && saved_monitor_read) begin
             monitor_ready <= 1'b1;
             monitor_error <= 1'b1;
             state <= STATE_RELEASE;
@@ -325,10 +352,16 @@ module sdram_system_adapter #(
             // "el monitor posee la memoria solo con la CPU parada" sigue
             // aplicandose sin cambios a la SDRAM.
             mmio_select <= 1'b1;
-            mmio_write <= saved_monitor_write_enable;
-            mmio_write_mask <= 4'b0001 << saved_monitor_address[1:0];
+            mmio_write <= saved_monitor_write_enable ||
+                          saved_monitor_write_word_enable;
+            // En MMIO la palabra cabe en un acceso: los cuatro carriles a la
+            // vez y el registro nunca pasa por un valor intermedio.
+            mmio_write_mask <= saved_monitor_write_word_enable
+                             ? 4'b1111 : (4'b0001 << saved_monitor_address[1:0]);
             mmio_address <= saved_monitor_address[11:0];
-            mmio_write_data <= {4{saved_monitor_write_data}};
+            mmio_write_data <= saved_monitor_write_word_enable
+                             ? saved_monitor_write_word
+                             : {4{saved_monitor_write_data}};
             state <= STATE_MMIO_WAIT;
           end else if (!cpu_halted || !init_done ||
                        saved_monitor_address[31:25] != 0) begin
@@ -339,15 +372,22 @@ module sdram_system_adapter #(
             saved_monitor_byte <= saved_monitor_address[0];
             // Una lectura empieza SIEMPRE por la mitad baja de la
             // palabra alineada, para que la segunda complete los 32
-            // bits. La escritura toca solo su propia mitad.
-            req_addr <= saved_monitor_write_enable
+            // bits. La escritura de BYTE toca solo su propia mitad; la de
+            // PALABRA empieza tambien por la baja y sigue en STATE_MON_WRITE2,
+            // porque el bus es de 16 bits y 32 no caben en una rafaga.
+            req_addr <= (saved_monitor_write_enable &&
+                         !saved_monitor_write_word_enable)
                 ? saved_monitor_address[24:1]
                 : {saved_monitor_address[24:2], 1'b0};
-            req_write <= saved_monitor_write_enable;
-            req_wdata <= saved_monitor_address[0] ?
-                {saved_monitor_write_data, 8'h00} :
-                {8'h00, saved_monitor_write_data};
-            req_wmask <= saved_monitor_address[0] ? 2'b10 : 2'b01;
+            req_write <= saved_monitor_write_enable ||
+                         saved_monitor_write_word_enable;
+            req_wdata <= saved_monitor_write_word_enable
+                ? saved_monitor_write_word[15:0]
+                : (saved_monitor_address[0] ?
+                   {saved_monitor_write_data, 8'h00} :
+                   {8'h00, saved_monitor_write_data});
+            req_wmask <= saved_monitor_write_word_enable ? 2'b11
+                       : (saved_monitor_address[0] ? 2'b10 : 2'b01);
             req_valid <= 1'b1;
             state <= STATE_WAIT_FIRST;
           end
@@ -362,6 +402,9 @@ module sdram_system_adapter #(
                 // Falta la mitad alta para completar la palabra.
                 first_read_data <= rdata;
                 state <= STATE_MON_SECOND;
+              end else if (saved_monitor_write_word_enable) begin
+                // Igual que la lectura, pero escribiendo: falta la mitad alta.
+                state <= STATE_MON_WRITE2;
               end else begin
                 monitor_ready <= 1'b1;
                 state <= STATE_RELEASE;
@@ -389,9 +432,11 @@ module sdram_system_adapter #(
               // En MMIO la palabra ya viene entera: un solo acceso.
               monitor_read_word <= mmio_read_data;
             monitor_ready <= 1'b1;
+            monitor_error <= mmio_error;
           end else begin
             if (saved_cpu_read) cpu_dmem_read_data <= mmio_read_data;
             cpu_dmem_ready <= 1'b1;
+            cpu_dmem_error <= mmio_error;
           end
           state <= STATE_RELEASE;
         end
@@ -404,6 +449,29 @@ module sdram_system_adapter #(
           if (done) begin
             video_read_data <= rdata;
             video_ready <= 1'b1;
+            state <= STATE_RELEASE;
+          end
+        end
+
+        // Segunda mitad de WRITE_WORD. Espeja a STATE_MON_SECOND/MON_WAIT2,
+        // que son las dos mitades de la LECTURA. No se reutilizan aquellos
+        // porque alli `req_write` va a cero y la mascara a 2'b00, y mezclar
+        // los dos sentidos en un estado con banderas sale peor que dos pares
+        // simetricos que se leen enteros.
+        STATE_MON_WRITE2: begin
+          req_addr <= {saved_monitor_address[24:2], 1'b1};
+          req_write <= 1'b1;
+          req_wdata <= saved_monitor_write_word[31:16];
+          req_wmask <= 2'b11;
+          req_valid <= 1'b1;
+          state <= STATE_MON_WWAIT2;
+        end
+
+        STATE_MON_WWAIT2: begin
+          if (req_valid && req_ready)
+            req_valid <= 1'b0;
+          if (done) begin
+            monitor_ready <= 1'b1;
             state <= STATE_RELEASE;
           end
         end

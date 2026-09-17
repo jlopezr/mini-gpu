@@ -7,6 +7,11 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     output instruction_retired,
     input [31:0] host_address,
     input [7:0] host_write_data,
+    // WRITE_WORD del monitor. El puerto auxiliar ya era de 32 bits con strobe
+    // por byte, asi que una palabra es el mismo acceso con las cuatro
+    // habilitaciones puestas: ni una rafaga extra ni un estado nuevo.
+    input [31:0] host_write_word,
+    input host_write_word_enable,
     input host_write_enable, host_read_enable,
     output reg [7:0] host_read_data,
     // La MISMA palabra sin trocear, para READ_WORD. Ya se calculaba entera y
@@ -42,6 +47,8 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     reg [31:0] address;
     reg [7:0] write_data;
     reg writing;
+    reg [31:0] write_word;
+    reg writing_word;
     // Dos paginas de 4 KiB, no una. La primera (0x80000000) es de perifericos
     // compartidos con la CPU; la segunda (0x80001000) es control exclusivo de
     // la GPU. La separacion cuesta un bit mas en este comparador de prefijo, y
@@ -64,8 +71,8 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire host_permitted=halted || (host_read_enable && !host_write_enable && host_mmio);
     // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
     wire cfg_region=gpu_page && address[11:7]==0;
-    wire [3:0] byte_strobe=4'b0001 << address[1:0];
-    wire [31:0] expanded_data={4{write_data}};
+    wire [3:0] byte_strobe=writing_word ? 4'b1111 : (4'b0001 << address[1:0]);
+    wire [31:0] expanded_data=writing_word ? write_word : {4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
     wire aux_valid,aux_ready,aux_rsp_valid,aux_rsp_ready,aux_error;
     wire [31:0] aux_address,aux_write_data,aux_read_data;
@@ -146,14 +153,16 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         host_ready<=0;
         if(core_reset) begin
             host_state<=0; address<=0; write_data<=0; writing<=0;
+            write_word<=0; writing_word<=0;
             host_ready<=0; host_error<=0; host_read_data<=0; host_read_word<=0;
             debug_warp<=0; debug_lane<=0;
         end else case(host_state)
-            0: if(host_write_enable || host_read_enable) begin
+            0: if(host_write_enable || host_write_word_enable || host_read_enable) begin
                 if(!host_permitted) begin host_ready<=1; host_error<=1; end
                 else begin
                     address<=host_address; write_data<=host_write_data;
-                    writing<=host_write_enable; host_state<=1;
+                    write_word<=host_write_word; writing_word<=host_write_word_enable;
+                    writing<=host_write_enable || host_write_word_enable; host_state<=1;
                 end
             end
             1: begin
@@ -161,7 +170,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
                     host_read_data<=mmio_data[address[1:0]*8 +: 8]; host_read_word<=mmio_data;
                     host_error<=mmio_bad; host_ready<=1; host_state<=0;
                     if(writing && !gpu_page && address[11:0]==12'h100) begin
-                        debug_lane<=write_data[2:0]; debug_warp<=write_data[5:3];
+                        debug_lane<=expanded_data[2:0]; debug_warp<=expanded_data[5:3];
                     end
                 end else if(aux_ready) host_state<=2;
             end

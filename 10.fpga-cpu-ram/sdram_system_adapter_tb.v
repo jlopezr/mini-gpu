@@ -5,6 +5,9 @@ module sdram_system_adapter_tb;
   reg clk=0, reset=1, init_done=1;
   reg [31:0] monitor_address=0; reg [7:0] monitor_write_data=0;
   reg monitor_write_enable=0, monitor_read_enable=0;
+  // WRITE_WORD. La instanciacion es `.*`, asi que estas dos tienen que existir
+  // con el nombre exacto del puerto o el banco deja de elaborar.
+  reg [31:0] monitor_write_word=0; reg monitor_write_word_enable=0;
   wire [7:0] monitor_read_data; wire monitor_ready, monitor_error;
   wire [31:0] monitor_read_word;   // la misma lectura sin trocear
   reg cpu_halted=1;
@@ -51,6 +54,20 @@ module sdram_system_adapter_tb;
     end
   endtask
 
+  // WRITE_WORD. Aqui el bus es de 16 bits, asi que una palabra son DOS
+  // rafagas; el adaptador las encadena sin soltar el turno. Lo que este banco
+  // comprueba es justo eso: que las dos salen, que la alta va a la direccion
+  // siguiente y que el resultado son los cuatro bytes puestos.
+  task escribe_palabra(input [31:0] address,input [31:0] value);
+    begin
+      @(negedge clk); monitor_address=address; monitor_write_word=value;
+      monitor_write_word_enable=1;
+      @(negedge clk); monitor_write_word_enable=0;
+      wait(monitor_ready); @(negedge clk);
+      if(monitor_error) $fatal(1,"monitor write-word failed at %08x",address);
+    end
+  endtask
+
   task monitor_read_check(input [31:0] address,input [7:0] expected);
     begin
       @(negedge clk); monitor_address=address; monitor_read_enable=1;
@@ -70,6 +87,19 @@ module sdram_system_adapter_tb;
     monitor_write(32'h0000_0001,8'h33);
     monitor_read_check(32'h0000_0000,8'h44);
     monitor_read_check(32'h0000_0001,8'h33);
+
+    // Una palabra entera: dos rafagas de 16 bits encadenadas. Se lee byte a
+    // byte para el orden, y las dos palabras de 16 para saber DONDE cayo cada
+    // mitad si algo va mal.
+    escribe_palabra(32'h0000_0004,32'h8bad_f00d);
+    monitor_read_check(32'h0000_0004,8'h0d);
+    monitor_read_check(32'h0000_0005,8'hf0);
+    monitor_read_check(32'h0000_0006,8'had);
+    monitor_read_check(32'h0000_0007,8'h8b);
+    if(program_words[2]!==16'hf00d || program_words[3]!==16'h8bad)
+      $fatal(1,"write-word dejo %04x %04x, esperado f00d 8bad",
+             program_words[2],program_words[3]);
+
 
     cpu_halted=0;
     @(negedge clk); cpu_imem_address=0; cpu_imem_valid=1;

@@ -96,13 +96,23 @@ class Counters:
     occupancy: Counter = field(default_factory=Counter)
     instructions: Counter = field(default_factory=Counter)
     multicycle: Counter = field(default_factory=Counter)
+    x_cycles_by_opcode: Counter = field(default_factory=Counter)
 
     def report(self):
         from dataclasses import asdict
         result = asdict(self)
         # dataclasses reconstructs Counter from pairs; explicitly serialize mappings.
-        for name in ('occupancy', 'instructions', 'multicycle'):
+        for name in ('occupancy', 'instructions', 'multicycle', 'x_cycles_by_opcode'):
             result[name] = dict(getattr(self, name))
+        groups = dict.fromkeys(('ALU', 'MUL', 'SHIFT', 'DIV', 'CONTROL', 'FAULT'), 0)
+        for opcode, cycles in self.x_cycles_by_opcode.items():
+            group = ('MUL' if opcode in ('MULFX', 'MUL', 'MULHI') else
+                     'SHIFT' if opcode in ('SHL', 'SHR', 'SAR') else
+                     'DIV' if opcode in ('DIV', 'DIVU', 'REM', 'REMU') else
+                     'CONTROL' if opcode in ('BEQ', 'BNE', 'BLT', 'BGE', 'BLTU', 'BGEU', 'BRA') else
+                     'FAULT' if opcode == 'FAULT' else 'ALU')
+            groups[group] += cycles
+        result['x_cycles_by_unit'] = groups
         result['cpi'] = self.cycles / self.retired if self.retired else None
         result['x_utilization'] = self.occupancy['X'] / self.cycles if self.cycles else 0
         result['stage_utilization'] = {s: self.occupancy[s] / self.cycles if self.cycles else 0 for s in 'SFIDXW'}

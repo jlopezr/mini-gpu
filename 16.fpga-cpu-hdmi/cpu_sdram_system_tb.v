@@ -35,6 +35,7 @@ module cpu_sdram_system_tb;
       .clk(clk),.reset(reset),.init_done(init_done),
       .monitor_address(monitor_address),.monitor_write_data(monitor_write_data),
       .monitor_write_enable(monitor_write_enable),
+      .monitor_write_word(32'd0), .monitor_write_word_enable(1'b0),
       .monitor_read_enable(monitor_read_enable),.monitor_read_data(monitor_read_data),
       .monitor_ready(monitor_ready),.monitor_error(monitor_error),
       .cpu_halted(halted),.cpu_imem_valid(imem_valid),
@@ -45,7 +46,7 @@ module cpu_sdram_system_tb;
       .cpu_dmem_ready(dmem_ready),.cpu_dmem_error(dmem_error),
       // Puerto de video en reposo: este banco comprueba el flujo de CPU.
       .mmio_select(),.mmio_write(),.mmio_write_mask(),.mmio_address(),
-      .mmio_write_data(),.mmio_read_data(32'h0000_0000),
+      .mmio_write_data(),.mmio_read_data(32'h0000_0000), .mmio_error(1'b0),
       .video_req(1'b0),.video_addr(24'h000000),
       .video_read_data(),.video_ready(),
       .req_valid(req_valid),.req_write(req_write),.req_addr(req_addr),

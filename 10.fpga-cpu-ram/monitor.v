@@ -9,6 +9,7 @@
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   12 A3 A2 A1 A0             (READ_WORD)   -> 92 D0 D1 D2 D3 (or ff)
+ *   13 A3 A2 A1 A0 D0 D1 D2 D3 (WRITE_WORD)  -> 93 (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
  *   21 A3 A2 A1 A0 LL LL       (READ_BLOCK)  -> a1 DD... (or ff)
  *   30             (RUN)         -> b0 (or ff)
@@ -53,6 +54,25 @@
  * --frame_count avanza con el scanout. Una transaccion de bus ya produce la
  * palabra entera, asi que READ_WORD es atomico POR CONSTRUCCION.
  * Ver docs/unificacion-mmio.md fase 3.4.
+ *
+ * WRITE_WORD es su simetrico y llegó despues, con los mismos cuatro bytes en
+ * little-endian y la misma exigencia de alineamiento. El desgarro que evita no
+ * es hipotetico:
+ *
+ *   - FB_FRONT lo lee el scanout, que cuelga de `reset` y no de `core_reset`,
+ *     asi que sigue vivo con el nucleo parado. Escrito con cuatro WRITE_BYTE,
+ *     durante casi un milisegundo el puntero es mitad viejo y mitad nuevo, y
+ *     el frame sale de una direccion que nadie pidio.
+ *   - HALT_AT es peor: en video_registers.v CUALQUIER escritura reinicia
+ *     swap_count y rearma la alarma con el valor ya mezclado. Byte a byte eso
+ *     pasa cuatro veces y con valores intermedios, asi que un intercambio que
+ *     caiga entre dos bytes puede parar la CPU en una cuenta que no se pidio.
+ *
+ * Lo que WRITE_WORD NO arregla es la velocidad de WRITE_BLOCK. Medido en placa:
+ * una ida y vuelta cuesta 16 ms fijos por el latency timer del FTDI --un PING
+ * de dos bytes tarda lo mismo que un bloque de 256-- y WRITE_BLOCK ya manda sus
+ * 256 bytes en UN viaje. Lo que si baja es escribir un registro suelto: de
+ * cuatro viajes a uno.
  */
 module monitor #(
     // Version que contesta GET_VERSION. MAYOR = juego de comandos, MENOR =
@@ -110,6 +130,13 @@ module monitor #(
     output reg [31:0] mem_address,
     output reg [7:0] mem_write_data,
     output reg mem_write_enable,
+    // La escritura de 32 bits, al LADO de la de byte y no en su lugar, por la
+    // misma razon que `mem_read_word`: ensanchar `mem_write_data` truncaria en
+    // silencio en los bancos que lo declaran de 8 bits. `mem_write_word_enable`
+    // es un pulso de un ciclo como los otros dos enables, y nunca coincide con
+    // ellos.
+    output reg [31:0] mem_write_word,
+    output reg mem_write_word_enable,
     output reg mem_read_enable,
     input [7:0] mem_read_data,
     // La MISMA lectura sin trocear, para READ_WORD. Va al lado y no en lugar de
@@ -156,6 +183,7 @@ module monitor #(
   localparam [7:0] CMD_WRITE_BYTE = 8'h10;
   localparam [7:0] CMD_READ_BYTE = 8'h11;
   localparam [7:0] CMD_READ_WORD = 8'h12;
+  localparam [7:0] CMD_WRITE_WORD = 8'h13;
   localparam [7:0] CMD_WRITE_BLOCK = 8'h20;
   localparam [7:0] CMD_READ_BLOCK = 8'h21;
   localparam [7:0] CMD_RUN = 8'h30;
@@ -171,6 +199,7 @@ module monitor #(
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
   localparam [7:0] RSP_READ_BYTE = 8'h91;
   localparam [7:0] RSP_READ_WORD = 8'h92;
+  localparam [7:0] RSP_WRITE_WORD = 8'h93;
   localparam [7:0] RSP_WRITE_BLOCK = 8'ha0;
   localparam [7:0] RSP_READ_BLOCK = 8'ha1;
   localparam [7:0] RSP_RUN = 8'hb0;
@@ -227,6 +256,22 @@ module monitor #(
   localparam [5:0] STATE_SERIAL_RECV_COUNT = 6'd36;
   localparam [5:0] STATE_SERIAL_RECV_DATA = 6'd37;
 
+  localparam [5:0] STATE_BLOCK_SEND_DATA = 6'd38;
+  localparam [5:0] STATE_BLOCK_DISCARD = 6'd39;
+  // WRITE_WORD comparte los cuatro estados de direccion con WRITE_BYTE --lo
+  // unico que los separa es `word_access`, igual que en el lado de lectura-- y
+  // solo necesita propios los cuatro bytes de dato. El de ISSUE existe porque
+  // las asignaciones son no bloqueantes: en el ciclo en que entra el cuarto
+  // byte, `mem_write_word` todavia no lo tiene, asi que levantar ahi el enable
+  // escribiria una palabra con el byte alto sin actualizar.
+  localparam [5:0] STATE_WRITE_WORD_DATA = 6'd40;
+  localparam [5:0] STATE_WRITE_WORD_ISSUE = 6'd41;
+  // No se emite a1 hasta saber que TODOS los bytes son validos: ff dentro
+  // del payload es un dato legitimo, no un marcador de error. Sin reset del
+  // array para permitir inferir RAM; solo se leen los bytes ya capturados.
+  reg [7:0] block_read_buffer [0:255];
+  reg [7:0] block_index;
+
   reg [5:0] state;
   reg [5:0] state_after_tx;
   reg [5:0] response_done_state;
@@ -236,9 +281,11 @@ module monitor #(
   reg [32:0] block_end_address;
   reg [7:0] mem_read_data_latched;
   reg [31:0] mem_read_word_latched;
-  // READ_WORD comparte los estados de direccion y de espera con
-  // READ_BYTE; esto es lo unico que los distingue.
+  // READ_WORD y WRITE_WORD comparten los estados de direccion y de espera con
+  // READ_BYTE y WRITE_BYTE; esto es lo unico que los distingue.
   reg word_access;
+  // Byte que toca de los cuatro de WRITE_WORD.
+  reg [1:0] word_byte_index;
   reg mem_error_latched;
   reg [2:0] response_index;
   reg [2:0] response_length;
@@ -249,7 +296,7 @@ module monitor #(
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [14:0] command_decoded;
+  (* keep = "true" *) reg [15:0] command_decoded;
 
   // Bytes que faltan del paquete serie en curso, y cuantos entraron en la cola.
   reg [7:0] serial_remaining;
@@ -296,6 +343,7 @@ module monitor #(
   always @(posedge clk) begin
     tx_strobe <= 1'b0;
     mem_write_enable <= 1'b0;
+    mem_write_word_enable <= 1'b0;
     mem_read_enable <= 1'b0;
     cpu_run_request <= 1'b0;
     cpu_halt_request <= 1'b0;
@@ -311,6 +359,8 @@ module monitor #(
       mem_address <= 32'h0000_0000;
       mem_write_data <= 8'h00;
       mem_write_enable <= 1'b0;
+      mem_write_word <= 32'h0000_0000;
+      mem_write_word_enable <= 1'b0;
       mem_read_enable <= 1'b0;
       cpu_run_request <= 1'b0;
       cpu_halt_request <= 1'b0;
@@ -322,12 +372,14 @@ module monitor #(
       state_after_tx <= STATE_IDLE;
       response_done_state <= STATE_IDLE;
       block_is_write <= 1'b0;
+      block_index <= 8'd0;
       block_length <= 16'd0;
       block_remaining <= 16'd0;
       block_end_address <= 33'h000000000;
       mem_read_data_latched <= 8'h00;
       mem_read_word_latched <= 32'h0000_0000;
       word_access <= 1'b0;
+      word_byte_index <= 2'd0;
       mem_error_latched <= 1'b0;
       response_index <= 3'd0;
       response_length <= 3'd0;
@@ -338,7 +390,7 @@ module monitor #(
       response_byte_4 <= 8'h00;
       response_byte_5 <= 8'h00;
       response_byte_6 <= 8'h00;
-      command_decoded <= 15'h0;
+      command_decoded <= 16'h0;
       serial_push <= 1'b0;
       serial_push_data <= 8'h00;
       serial_pop <= 1'b0;
@@ -351,6 +403,7 @@ module monitor #(
             last_command <= rx_data;
             response_index <= 3'd0;
             command_decoded <= {
+              rx_data == CMD_WRITE_WORD,
               rx_data == CMD_READ_WORD,
               rx_data == CMD_RECV_BYTES, rx_data == CMD_SEND_BYTES,
               rx_data == CMD_RESET_CPU, rx_data == CMD_READ_REGISTER,
@@ -382,7 +435,15 @@ module monitor #(
                 response_done_state <= STATE_IDLE;
                 state <= STATE_RESPOND;
               end
-              command_decoded[2]: state <= STATE_WRITE_ADDRESS_HIGH;
+              command_decoded[2]: begin
+                word_access <= 1'b0;
+                state <= STATE_WRITE_ADDRESS_HIGH;
+              end
+              command_decoded[15]: begin
+                word_access <= 1'b1;
+                word_byte_index <= 2'd0;
+                state <= STATE_WRITE_ADDRESS_HIGH;
+              end
               command_decoded[3]: begin
                 word_access <= 1'b0;
                 state <= STATE_READ_ADDRESS_HIGH;
@@ -397,6 +458,7 @@ module monitor #(
               end
               command_decoded[5]: begin
                 block_is_write <= 1'b0;
+      block_index <= 8'd0;
                 state <= STATE_BLOCK_ADDRESS_HIGH;
               end
               // RUN y STEP exigen parado Y SIN ERROR. La familia GPU ya lo
@@ -513,7 +575,21 @@ module monitor #(
         STATE_WRITE_ADDRESS_LOW: begin
           if (rx_strobe) begin
             mem_address[7:0] <= rx_data;
-            state <= STATE_WRITE_DATA;
+            // Mismo criterio que READ_WORD: la memoria escribe la palabra que
+            // CONTIENE la direccion, asi que una no alineada tocaria bytes que
+            // no son los pedidos. Se rechaza ANTES de consumir los cuatro
+            // bytes de dato, asi que el host tiene que resincronizar; es lo
+            // mismo que hace la rama de lectura y lo que evita que un `ff`
+            // tardio se confunda con un dato.
+            if (word_access && rx_data[1:0] != 2'b00) begin
+              response_byte_0 <= RSP_ERROR;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
+              response_done_state <= STATE_IDLE;
+              state <= STATE_RESPOND;
+            end else begin
+              state <= word_access ? STATE_WRITE_WORD_DATA : STATE_WRITE_DATA;
+            end
           end
         end
         STATE_WRITE_DATA: begin
@@ -523,9 +599,25 @@ module monitor #(
             state <= STATE_WAIT_WRITE;
           end
         end
+        // Little-endian, igual que lo que devuelve READ_WORD: el primer byte
+        // del cable es el menos significativo. Entra por arriba y el registro
+        // desplaza, asi que tras los cuatro la palabra esta derecha sin
+        // necesidad de un mux por indice.
+        STATE_WRITE_WORD_DATA: begin
+          if (rx_strobe) begin
+            mem_write_word <= {rx_data, mem_write_word[31:8]};
+            word_byte_index <= word_byte_index + 2'd1;
+            if (word_byte_index == 2'd3) state <= STATE_WRITE_WORD_ISSUE;
+          end
+        end
+        STATE_WRITE_WORD_ISSUE: begin
+          mem_write_word_enable <= 1'b1;
+          state <= STATE_WAIT_WRITE;
+        end
         STATE_WAIT_WRITE: begin
           if (mem_ready) begin
-            response_byte_0 <= mem_error ? RSP_ERROR : RSP_WRITE_BYTE;
+            response_byte_0 <= mem_error ? RSP_ERROR
+                             : (word_access ? RSP_WRITE_WORD : RSP_WRITE_BYTE);
             response_length <= 3'd1;
             response_index <= 3'd0;
             response_done_state <= STATE_IDLE;
@@ -653,22 +745,27 @@ module monitor #(
         // The end address is exclusive, so a one-byte transfer at 0x01ffffff
         // is valid and ends exactly at 0x02000000.
         STATE_VALIDATE_BLOCK: begin
+            block_index <= 8'd0;
             if (block_length == 0 || block_length > 16'd256 ||
                 !block_range_valid({1'b0, mem_address}, block_end_address)) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 3'd1;
               response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
-              state <= STATE_RESPOND;
+              // WRITE_BLOCK incluye el payload aunque el rango no sea valido.
+              state <= (block_is_write && block_length != 0)
+                  ? STATE_BLOCK_DISCARD : STATE_RESPOND;
             end else if (block_is_write) begin
               state <= STATE_BLOCK_WRITE_DATA;
             end else begin
-              response_byte_0 <= RSP_READ_BLOCK;
-              response_length <= 3'd1;
-              response_index <= 3'd0;
-              response_done_state <= STATE_BLOCK_READ_REQUEST;
-              state <= STATE_RESPOND;
+              state <= STATE_BLOCK_READ_REQUEST;
             end
+        end
+        STATE_BLOCK_DISCARD: begin
+          if (rx_strobe) begin
+            block_remaining <= block_remaining - 1'b1;
+            if (block_remaining == 1) state <= STATE_RESPOND;
+          end
         end
         STATE_BLOCK_WRITE_DATA: begin
           if (rx_strobe) begin
@@ -684,7 +781,8 @@ module monitor #(
               response_length <= 3'd1;
               response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
-              state <= STATE_RESPOND;
+              block_remaining <= block_remaining - 1'b1;
+              state <= (block_remaining == 1) ? STATE_RESPOND : STATE_BLOCK_DISCARD;
             end else if (block_remaining == 1) begin
               response_byte_0 <= RSP_WRITE_BLOCK;
               response_length <= 3'd1;
@@ -712,17 +810,35 @@ module monitor #(
           end
         end
         STATE_BLOCK_PREPARE_READ: begin
-          response_byte_0 <= mem_error_latched ? RSP_ERROR : mem_read_data_latched;
           response_length <= 3'd1;
           response_index <= 3'd0;
-
-          if (mem_error_latched || block_remaining == 1) begin
+          if (mem_error_latched) begin
+            response_byte_0 <= RSP_ERROR;
             response_done_state <= STATE_IDLE;
+            state <= STATE_RESPOND;
           end else begin
-            mem_address <= mem_address + 1'b1;
-            block_remaining <= block_remaining - 1'b1;
-            response_done_state <= STATE_BLOCK_READ_REQUEST;
+            block_read_buffer[block_index] <= mem_read_data_latched;
+            if (block_remaining == 1) begin
+              response_byte_0 <= RSP_READ_BLOCK;
+              response_done_state <= STATE_BLOCK_SEND_DATA;
+              block_index <= 8'd0;
+              block_remaining <= block_length;
+              state <= STATE_RESPOND;
+            end else begin
+              block_index <= block_index + 1'b1;
+              mem_address <= mem_address + 1'b1;
+              block_remaining <= block_remaining - 1'b1;
+              state <= STATE_BLOCK_READ_REQUEST;
+            end
           end
+        end
+        STATE_BLOCK_SEND_DATA: begin
+          response_byte_0 <= block_read_buffer[block_index];
+          response_length <= 3'd1;
+          response_index <= 3'd0;
+          response_done_state <= (block_remaining == 1) ? STATE_IDLE : STATE_BLOCK_SEND_DATA;
+          block_index <= block_index + 1'b1;
+          block_remaining <= block_remaining - 1'b1;
           state <= STATE_RESPOND;
         end
 

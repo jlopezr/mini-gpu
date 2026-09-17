@@ -77,7 +77,7 @@ module cpu_video_tb;
       .cpu_dmem_error(dmem_error),
       .mmio_select(mmio_select),.mmio_write(mmio_write),
       .mmio_write_mask(mmio_write_mask),.mmio_address(mmio_address),
-      .mmio_write_data(mmio_write_data),.mmio_read_data(mmio_read_data),
+      .mmio_write_data(mmio_write_data),.mmio_read_data(mmio_read_data), .mmio_error(1'b0),
       .video_req(1'b0),.video_addr(24'h000000),
       .video_read_data(),.video_ready(),
       .req_valid(req_valid),.req_write(req_write),.req_addr(req_addr),

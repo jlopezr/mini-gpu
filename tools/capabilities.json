@@ -56,6 +56,13 @@
     "pattern": "CMD_READ_WORD"
   },
 
+  "_comment_write_word": "Nacio para saber quien tenia WRITE_WORD cuando solo lo tenia la 19 y la version del monitor no lo reflejaba. Ya esta en las diez y la version SI lo dice (mayor 3 o 4), asi que hoy no distingue prototipos: se queda porque un caso de x.tests puede pedirlo en 'requires', igual que read_word, y porque sigue siendo la respuesta correcta a 'que sabe hacer este RTL' sin encender la placa.",
+  "write_word": {
+    "architecture": ["cpu", "gpu"],
+    "file": "monitor.v",
+    "pattern": "CMD_WRITE_WORD"
+  },
+
   "warp_config": {
     "architecture": "gpu",
     "file": ["gpu_system_bl8.v", "gpu_system.v"],

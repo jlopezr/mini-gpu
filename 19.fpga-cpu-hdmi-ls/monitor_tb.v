@@ -16,6 +16,8 @@ module monitor_tb;
   wire [31:0] mem_address;
   wire [7:0] mem_write_data;
   wire mem_write_enable;
+  wire [31:0] mem_write_word;
+  wire mem_write_word_enable;
   wire mem_read_enable;
   reg [7:0] mem_read_data = 8'h00;
   reg [31:0] mem_read_word = 32'h0000_0000;
@@ -42,12 +44,24 @@ module monitor_tb;
   reg [7:0] memory_low[0:1023];
   reg [7:0] memory_high[0:1023];
 
+  // Contar los pulsos es lo que distingue "el dato acabo bien" de "el dato
+  // llego en UNA transaccion". Sin esto, una implementacion que descompusiera
+  // WRITE_WORD en cuatro escrituras de byte pasaria el test y no arreglaria
+  // nada de lo que WRITE_WORD existe para arreglar.
+  integer write_word_pulses = 0;
+  integer byte_write_pulses = 0;
+  integer byte_writes_before = 0;
+  always @(posedge clk) if (!reset) begin
+    if (mem_write_word_enable) write_word_pulses = write_word_pulses + 1;
+    if (mem_write_enable) byte_write_pulses = byte_write_pulses + 1;
+  end
+
   wire serial_push, serial_pop;
   wire [7:0] serial_push_data, serial_rx_free, serial_tx_data, serial_tx_count;
 
   always #5 clk = ~clk;
 
-  monitor #(.VERSION_MAJOR(8'd2),.VERSION_MINOR(8'd19),
+  monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd19),
       .HAS_SERIAL(1),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
@@ -62,6 +76,8 @@ module monitor_tb;
       .mem_address(mem_address),
       .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
       .mem_read_enable(mem_read_enable),
       .mem_read_data(mem_read_data),
       .mem_ready(mem_ready),
@@ -117,13 +133,29 @@ module monitor_tb;
   always @(posedge clk) begin
     mem_ready <= 1'b0;
     mem_error <= 1'b0;
-    if (!reset && (mem_write_enable || mem_read_enable)) begin
+    if (!reset && (mem_write_enable || mem_write_word_enable || mem_read_enable)) begin
       mem_ready <= 1'b1;
       if (!cpu_halted || mem_address[31:25] != 0) begin
         mem_error <= 1'b1;
       end else if (mem_write_enable) begin
         if (mem_address[20]) memory_high[mem_address[9:0]] <= mem_write_data;
         else memory_low[mem_address[9:0]] <= mem_write_data;
+      end else if (mem_write_word_enable) begin
+        // Los cuatro bytes en el MISMO flanco: eso es lo que hace atomica la
+        // escritura, y es justo lo que el banco tiene que comprobar. El
+        // monitor ya garantiza el alineamiento, asi que los dos bits bajos de
+        // la direccion son cero y la palabra no cruza de linea.
+        if (mem_address[20]) begin
+          memory_high[{mem_address[9:2], 2'd0}] <= mem_write_word[7:0];
+          memory_high[{mem_address[9:2], 2'd1}] <= mem_write_word[15:8];
+          memory_high[{mem_address[9:2], 2'd2}] <= mem_write_word[23:16];
+          memory_high[{mem_address[9:2], 2'd3}] <= mem_write_word[31:24];
+        end else begin
+          memory_low[{mem_address[9:2], 2'd0}] <= mem_write_word[7:0];
+          memory_low[{mem_address[9:2], 2'd1}] <= mem_write_word[15:8];
+          memory_low[{mem_address[9:2], 2'd2}] <= mem_write_word[23:16];
+          memory_low[{mem_address[9:2], 2'd3}] <= mem_write_word[31:24];
+        end
       end else begin
         mem_read_data <= mem_address[20] ? memory_high[mem_address[9:0]] :
                                                 memory_low[mem_address[9:0]];
@@ -218,7 +250,7 @@ module monitor_tb;
     send_command(8'h02);
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
-    if (received[2] !== 8'd2) $fatal(1, "VERSION major mismatch");
+    if (received[2] !== 8'd4) $fatal(1, "VERSION major mismatch");
     if (received[3] !== 8'd19) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
@@ -474,6 +506,58 @@ module monitor_tb;
     wait (received_count == base + 3);
     if (received[base+1] !== 8'd1 || received[base+2] !== 8'h0A)
       $fatal(1, "el byte que quedaba en la cola de salida");
+
+    // -- 6. WRITE_WORD -------------------------------------------------------
+    //
+    // Lo que se comprueba no es solo que el byte acabe en su sitio: eso ya lo
+    // hace WRITE_BYTE cuatro veces. Es que el monitor emite UNA transaccion de
+    // bus, `mem_write_word_enable`, y que los cuatro bytes caen en el mismo
+    // flanco. Sin eso, WRITE_WORD seria WRITE_BYTE con otro nombre y no
+    // arreglaria el desgarro de FB_FRONT ni el rearme repetido de HALT_AT.
+    // El caso 4 dejo la CPU en marcha a proposito para comprobar el rechazo, y
+    // no la repuso. Sin esto, el `ff` de aqui abajo saldria por eso y no por lo
+    // que se quiere probar.
+    cpu_halted = 1'b1;
+    byte_writes_before = byte_write_pulses;
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h13);
+    send_command(8'h00);           // direccion 0x00000030, alineada
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h30);
+    send_command(8'h0d);           // little-endian: primero el menos pesado
+    send_command(8'hf0);
+    send_command(8'had);
+    send_command(8'h8b);
+    wait (received_count == base + 1);
+    if (received[base] !== 8'h93)
+      $fatal(1, "WRITE_WORD respuesta: %02x", received[base]);
+    if (memory_low[10'h30] !== 8'h0d || memory_low[10'h31] !== 8'hf0 ||
+        memory_low[10'h32] !== 8'had || memory_low[10'h33] !== 8'h8b)
+      $fatal(1, "WRITE_WORD dejo %02x %02x %02x %02x, esperado 0d f0 ad 8b",
+             memory_low[10'h30], memory_low[10'h31],
+             memory_low[10'h32], memory_low[10'h33]);
+    if (write_word_pulses !== 1)
+      $fatal(1, "WRITE_WORD emitio %0d pulsos de palabra, esperado 1",
+             write_word_pulses);
+    if (byte_write_pulses !== byte_writes_before)
+      $fatal(1, "WRITE_WORD uso el camino de byte: %0d escrituras de byte",
+             byte_write_pulses - byte_writes_before);
+
+    // Una direccion NO alineada se rechaza, y ademas se rechaza ANTES de
+    // tragarse los cuatro bytes de dato: si los consumiera, el `ff` llegaria
+    // tarde y el enlace quedaria desincronizado.
+    base = received_count;
+    wait (!busy && tx_ready);
+    send_command(8'h13);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h00);
+    send_command(8'h32);           // 0x32: los dos bits bajos no son cero
+    wait (received_count == base + 1);
+    if (received[base] !== 8'hff)
+      $fatal(1, "WRITE_WORD no alineado: %02x, esperado ff", received[base]);
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

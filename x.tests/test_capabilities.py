@@ -87,24 +87,30 @@ class CapabilitiesTest(unittest.TestCase):
 
     def test_capacidades_por_bitstream(self):
         # `read_word` esta en las seis desde la fase 3.4 -- ver
-        # test_read_word_en_todas.
-        self.assertEqual(fpga.capabilities("ebr"), {"mul_div", "read_word"})
+        # test_read_word_en_todas. `write_word` esta en las seis desde que
+        # WRITE_WORD convergio en las diez copias de monitor.v; empezo solo en
+        # la 19, como prueba, y ver aqui que ya no falta en ninguna es lo que
+        # dice que el experimento se cerro.
+        self.assertEqual(fpga.capabilities("ebr"),
+                         {"mul_div", "read_word", "write_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
-        self.assertEqual(fpga.capabilities("sdram"), {"read_word"})
+        self.assertEqual(fpga.capabilities("sdram"), {"read_word", "write_word"})
         # La 16 tiene video pero no con que capturar. `perf_counters` lo tienen
         # las cuatro con ventana MMIO desde la fase 3.5, cuando los contadores
         # dejaron de ser comandos de monitor y pasaron a ser un dispositivo.
         self.assertEqual(fpga.capabilities("hdmi"),
-                         {"video", "mul_div", "read_word", "perf_counters"})
+                         {"video", "mul_div", "read_word", "write_word",
+                          "perf_counters"})
         # La 18 tiene las dos.
         self.assertEqual(
             fpga.capabilities("bl8"),
-            {"video", "frame_capture", "mul_div", "read_word", "perf_counters"})
+            {"video", "frame_capture", "mul_div", "read_word", "write_word",
+             "perf_counters"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
             fpga.capabilities("subword"),
             {"video", "frame_capture", "subword_memory", "calls", "serial",
-             "mul_div", "read_word", "perf_counters"})
+             "mul_div", "read_word", "write_word", "perf_counters"})
 
     def test_los_contadores_ya_no_son_comandos_de_monitor(self):
         """El juego "+contadores" de mapa-de-memoria.md §6.5 ya no existe.

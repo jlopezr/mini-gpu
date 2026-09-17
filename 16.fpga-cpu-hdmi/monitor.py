@@ -110,6 +110,7 @@ def parse_args() -> argparse.Namespace:
             "write-byte",
             "read-byte",
             "read-word",
+            "write-word",
             "write-block",
             "read-block",
             "verify",
@@ -138,14 +139,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_byte_address(value: str) -> int:
-    """Dirección para acceso por bytes: SDRAM o la ventana de registros.
+def parse_address(value: str) -> int:
+    """Dirección para CUALQUIER comando: SDRAM o la ventana de registros.
 
-    Los registros de vídeo viven en `MMIO_BASE` y no son memoria, así que solo
-    tienen sentido byte a byte: `write-block` y compañía siguen limitados a la
-    SDRAM. Al contrario que la memoria, estos registros responden también con
-    la CPU en marcha, que es lo que permite leer el contador de frames o mover
-    el framebuffer mientras un programa dibuja.
+    Los registros de vídeo viven en `MMIO_BASE` y no son memoria, pero eso no
+    los hace exclusivos del acceso byte a byte, que es lo que esto daba por
+    supuesto mientras se llamaba `parse_byte_address` y sólo lo usaban
+    `read-byte`/`write-byte`. El RTL atiende una palabra y un bloque sobre el
+    MMIO igual que sobre la SDRAM --en el adaptador la rama `is_mmio` va antes
+    de la comprobación de `cpu_halted`-- y `MONITOR_REGIONS` abre la página
+    entera justamente para que `validate_block` los deje pasar. El resto de
+    comandos usaba un tope de 32 MiB que sólo describe la SDRAM, así que
+    `read-word 0x80000300` --el contador de ciclos que `perf` sí lee-- se
+    rechazaba en el cliente y la única forma de verlo a mano era juntar cuatro
+    `read-byte`: exactamente la lectura desgarrada que `read_word` existe para
+    evitar.
+
+    Al contrario que la memoria, estos registros responden también con la CPU
+    en marcha, que es lo que permite leer el contador de frames o mover el
+    framebuffer mientras un programa dibuja.
     """
     try:
         result = int(value, 0)
@@ -157,7 +169,7 @@ def parse_byte_address(value: str) -> int:
 
     raise MonitorError(
         f"Address must be between 0 and 0x{MAX_ADDRESS:x}, "
-        f"or inside the video register window "
+        f"or inside the MMIO register window "
         f"0x{MMIO_BASE:08x}-0x{MMIO_LIMIT:08x}"
     )
 
@@ -171,6 +183,51 @@ def test_pattern(number: int, address: int, length: int) -> bytes:
     if number == 2:
         return bytes(((address + offset) ^ 0xA5) & 0xFF for offset in range(length))
     return bytes(0xAA if (address + offset) & 1 else 0x55 for offset in range(length))
+
+
+# Los comandos que tocan la memoria del sistema. Todos empiezan por una
+# dirección y ninguno de los demás la tiene, que es lo que permite hacer la
+# comprobación de `require_halted` en UN sitio (ver `main`) en vez de
+# repetirla en las siete ramas del despacho.
+MEMORY_COMMANDS = frozenset({
+    "write-byte",
+    "read-byte",
+    "read-word",
+    "write-word",
+    "write-block",
+    "read-block",
+    "verify",
+    "memory-test",
+})
+
+
+def require_halted(client: MonitorClient, command: str, address: int) -> None:
+    """La SDRAM sólo se deja tocar por el monitor con el núcleo parado.
+
+    No es sólo cosa de las escrituras: en el adaptador, la rama de SDRAM
+    contesta `mem_error` si `!cpu_halted` sin mirar si la petición era de
+    lectura (`sdram_system_adapter.v`, el `else if (!cpu_halted ||
+    !init_done || ...)`). Así que `read-block` y `verify` fallaban igual de
+    mal que `write-block`, y el cliente traducía el `ff` a "The FPGA rejected
+    the command": verdad, pero no dice lo único que hay que hacer.
+
+    Se PREGUNTA en vez de parar por las bravas. Un `halt` automático mataría
+    la demo que estuviera corriendo, y quien lanza un test destructivo quiere
+    enterarse de eso antes y no después.
+
+    El MMIO queda fuera a propósito, y sale antes de hablar con la placa: esos
+    registros responden en marcha --es justo cuando tiene gracia mirarlos-- y
+    así `capture-frames`, que lee los registros de vídeo de cuatro en cuatro
+    bytes, no paga una consulta de estado por cada byte.
+    """
+    if MMIO_BASE <= address <= MMIO_LIMIT:
+        return
+    if not client.get_status().halted:
+        raise MonitorError(
+            f"{command} necesita la CPU parada: el monitor no puede leer ni "
+            f"escribir memoria con el núcleo en marcha. Ejecuta "
+            f"`monitor.py halt` (o `reset`) antes."
+        )
 
 
 def memory_test(client: MonitorClient, address: int, length: int) -> None:
@@ -217,6 +274,7 @@ def main() -> int:
             "write-byte": 2,
             "read-byte": 1,
             "read-word": 1,
+            "write-word": 2,
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
@@ -248,6 +306,13 @@ def main() -> int:
         ) as connection:
             client = MonitorClient(connection)
 
+            # Antes de nada, y una sola vez: si el comando toca memoria y la
+            # CPU sigue corriendo, decirlo con esas palabras en vez de dejar
+            # que la placa conteste `ff` mas abajo.
+            if args.command in MEMORY_COMMANDS:
+                require_halted(
+                    client, args.command, parse_address(args.arguments[0]))
+
             if args.command == "ping":
                 client.ping()
                 print("PONG: FPGA monitor is responding")
@@ -255,26 +320,31 @@ def main() -> int:
                 version = client.get_version()
                 print(f"FPGA monitor version: {version}")
             elif args.command == "write-byte":
-                address = parse_byte_address(args.arguments[0])
+                address = parse_address(args.arguments[0])
                 value = parse_integer(args.arguments[1], 0xFF, "byte value")
                 client.write_byte(address, value)
                 print(f"Written 0x{value:02x} at address 0x{address:04x}")
             elif args.command == "read-byte":
-                address = parse_byte_address(args.arguments[0])
+                address = parse_address(args.arguments[0])
                 value = client.read_byte(address)
                 print(f"Address 0x{address:04x}: 0x{value:02x}")
             elif args.command == "read-word":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 value = client.read_word(address)
                 print(f"Address 0x{address:08x}: 0x{value:08x}")
+            elif args.command == "write-word":
+                address = parse_address(args.arguments[0])
+                value = parse_integer(args.arguments[1], 0xFFFF_FFFF, "word value")
+                client.write_word(address, value)
+                print(f"Written 0x{value:08x} at address 0x{address:08x}")
             elif args.command == "write-block":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 source = Path(args.arguments[1])
                 data = source.read_bytes()
                 client.write_memory(address, data)
                 print(f"Written {len(data)} byte(s) at address 0x{address:04x}")
             elif args.command == "read-block":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 destination = Path(args.arguments[2])
                 data = client.read_memory(address, length)
@@ -284,7 +354,7 @@ def main() -> int:
                     f"into {destination}"
                 )
             elif args.command == "verify":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 source = Path(args.arguments[1])
                 expected = source.read_bytes()
                 actual = client.read_memory(address, len(expected))
@@ -300,7 +370,7 @@ def main() -> int:
                     )
                 print(f"Verified {len(expected)} byte(s) at address 0x{address:04x}")
             elif args.command == "memory-test":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 memory_test(client, address, length)
             elif args.command == "run":

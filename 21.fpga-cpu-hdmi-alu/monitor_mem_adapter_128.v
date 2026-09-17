@@ -41,6 +41,12 @@ module monitor_mem_adapter_128 #(
     input  wire [31:0] mem_address,
     input  wire [7:0]  mem_write_data,
     input  wire        mem_write_enable,
+    // WRITE_WORD: la palabra entera en UNA transaccion de bus, que es lo que
+    // la hace atomica igual que `mem_read_word` hace atomica la lectura. Va al
+    // lado del dato de byte y no en su lugar, porque el puerto de byte lo
+    // siguen usando WRITE_BYTE y WRITE_BLOCK.
+    input  wire [31:0] mem_write_word,
+    input  wire        mem_write_word_enable,
     input  wire        mem_read_enable,
     output reg  [7:0]  mem_read_data,
     // La MISMA lectura sin trocear, para READ_WORD del monitor. En MMIO es
@@ -59,6 +65,7 @@ module monitor_mem_adapter_128 #(
     output reg  [11:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
+    input wire mmio_error,
 
     // Puerto de 128 bits hacia el arbitro.
     output wire         req_valid,
@@ -89,8 +96,10 @@ module monitor_mem_adapter_128 #(
   localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
   wire address_in_sdram = ((mem_address & ADDR_RANGE_MASK) == 32'd0);
 
-  wire strobe = mem_write_enable || mem_read_enable;
-  // El monitor accede byte a byte, asi que no exige alineamiento.
+  wire strobe = mem_write_enable || mem_write_word_enable || mem_read_enable;
+  wire any_write = mem_write_enable || mem_write_word_enable;
+  // Los accesos de byte no exigen alineamiento; WRITE_WORD si, y eso ya lo
+  // comprueba el monitor antes de emitir el pulso.
   wire is_mmio = (mem_address[31:12] == MMIO_PREFIX);
 
   always @(posedge clk) begin
@@ -117,18 +126,24 @@ module monitor_mem_adapter_128 #(
       case (state)
         ST_IDLE: begin
           if (strobe) begin
-            saved_write <= mem_write_enable;
-            if (mem_write_enable && mem_read_enable) begin
+            saved_write <= any_write;
+            if (any_write && mem_read_enable) begin
               // Peticion contradictoria: se rechaza, como antes.
               mem_ready <= 1'b1;
               mem_error <= 1'b1;
             end else if (is_mmio) begin
               mmio_byte <= mem_address[1:0];
               mmio_req <= 1'b1;
-              mmio_write <= mem_write_enable;
-              mmio_write_mask <= 4'b0001 << mem_address[1:0];
+              mmio_write <= any_write;
+              // Los cuatro carriles a la vez en WRITE_WORD. El dispositivo ya
+              // sabe mezclar por mascara (`merge` en video_registers.v), asi
+              // que la palabra entra de una y el registro nunca pasa por un
+              // valor intermedio: eso es toda la atomicidad que hacia falta.
+              mmio_write_mask <= mem_write_word_enable
+                               ? 4'b1111 : (4'b0001 << mem_address[1:0]);
               mmio_address <= mem_address[11:0];
-              mmio_write_data <= {4{mem_write_data}};
+              mmio_write_data <= mem_write_word_enable
+                               ? mem_write_word : {4{mem_write_data}};
               state <= ST_MMIO;
             end else if (!cpu_halted || !init_done || !address_in_sdram) begin
               mem_ready <= 1'b1;
@@ -136,11 +151,17 @@ module monitor_mem_adapter_128 #(
             end else begin
               byte_offset <= mem_address[3:0];
               req_addr <= {mem_address[31:4], 4'b0000};
-              req_write <= mem_write_enable;
+              req_write <= any_write;
               // Un byte en su carril, y la mascara deja intactos los otros
               // quince. Sin esto habria que leer la linea antes de escribir.
-              req_wdata <= {120'd0, mem_write_data} << {mem_address[3:0], 3'b000};
-              req_wmask <= 16'h0001 << mem_address[3:0];
+              // Con WRITE_WORD son cuatro carriles contiguos, y el alineamiento
+              // que exige el monitor garantiza que no cruzan la linea de 16 B.
+              req_wdata <= mem_write_word_enable
+                         ? ({96'd0, mem_write_word} << {mem_address[3:0], 3'b000})
+                         : ({120'd0, mem_write_data} << {mem_address[3:0], 3'b000});
+              req_wmask <= mem_write_word_enable
+                         ? (16'h000F << mem_address[3:0])
+                         : (16'h0001 << mem_address[3:0]);
               // La peticion ya esta capturada; si el bufer de escrituras
               // todavia tiene algo, se espera a que lo vuelque antes de tocar
               // la SDRAM.
@@ -168,6 +189,7 @@ module monitor_mem_adapter_128 #(
 
         ST_MMIO:
           if (mmio_ack) begin
+            mem_error <= mmio_error;
             mmio_req <= 1'b0;
             if (!saved_write) begin
               mem_read_data <= mmio_read_data[{mmio_byte, 3'b000} +: 8];

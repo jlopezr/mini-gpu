@@ -51,6 +51,8 @@ module top (
   wire monitor_busy;
   wire [31:0] mem_address;
   wire [7:0] mem_write_data;
+  wire [31:0] mem_write_word;  // la palabra entera, para WRITE_WORD
+  wire mem_write_word_enable;
   wire mem_write_enable;
   wire mem_read_enable;
   wire [7:0] mem_read_data;
@@ -72,7 +74,7 @@ module top (
   // mismo, asi que sin esto `--version ebr` daria por buena una 10 flasheada y
   // se mediria el hardware equivocado, que es exactamente el fallo que SYS_ID
   // existe para cerrar. Ver docs/mapa-de-memoria.md §6.5.
-  wire sysid_selected = mem_address[31:8] == 24'h80_000f;
+  wire sysid_selected = mem_address[31:4] == 28'h800_00f0;
   wire [31:0] sysid_word;
   sysid #(
       .FOLDER(8'd6),
@@ -86,16 +88,19 @@ module top (
 
   // La respuesta se registra igual que la de la memoria, para que el monitor
   // vea el mismo protocolo venga de donde venga: pide, y un ciclo despues hay
-  // `ready`. Escribir se acepta y se ignora, como cualquier registro de solo
-  // lectura.
+  // `ready`. Las escrituras fallan; el resto del slot va a memory_map y
+  // recibe error de direccion, sin alias de las cuatro palabras.
   reg sysid_ready;
+  reg sysid_error;
   reg [7:0] sysid_byte;
   always @(posedge clk) begin
     if (reset) begin
       sysid_ready <= 1'b0;
+      sysid_error <= 1'b0;
       sysid_byte <= 8'h00;
     end else begin
       sysid_ready <= sysid_selected && (mem_read_enable || mem_write_enable);
+      sysid_error <= mem_write_enable;
       sysid_byte <= sysid_word[8*mem_address[1:0] +: 8];
     end
   end
@@ -106,7 +111,7 @@ module top (
   assign mem_read_data = sysid_ready ? sysid_byte : map_read_data;
   assign mem_read_word = sysid_ready ? sysid_word : map_read_word;
   assign mem_ready = sysid_ready || map_ready;
-  assign mem_error = sysid_ready ? 1'b0 : map_error;
+  assign mem_error = sysid_ready ? sysid_error : map_error;
 
   wire cpu_run_request;
   wire cpu_halt_request;
@@ -145,7 +150,7 @@ module top (
   // verdad --ni video, ni contadores-- pero si `sysid`, y sin declararlo aqui
   // un READ_BLOCK sobre 0x80000f00 se rechazaria antes de llegar al
   // decodificador. Gemela de MONITOR_REGIONS en monitor.py.
-  monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd6),
+  monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd6),
       .RAM_END(33'h0_0000_8000),
       .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
     monitor_i (
@@ -159,6 +164,8 @@ module top (
       .mem_address(mem_address),
       .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
       .mem_read_enable(mem_read_enable),
       .mem_read_data(mem_read_data), .mem_read_word(mem_read_word),
       .mem_ready(mem_ready),
@@ -213,6 +220,8 @@ module top (
       .reset(reset),
       .address(mem_address),
       .write_data(mem_write_data),
+      .write_word(mem_write_word),
+      .write_word_enable(mem_write_word_enable && !sysid_selected),
       // El acceso al bloque de identificacion no llega a la memoria: alli
       // 0x80000f00 esta fuera del mapa y levantaria `error`.
       .write_enable(mem_write_enable && !sysid_selected),

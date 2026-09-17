@@ -91,6 +91,48 @@ HALT"""
                 self.assertEqual(result["memory"][(256, 16)][:4], b"\0\x3d\0\0")
                 self.assertEqual(result["stdout"], b"AAA")
 
+    def test_accesos_invalidos_son_errores_de_memoria(self):
+        # Slot ausente, offsets reservados y alias de SYS_ID; comprobar tambien
+        # que el STORE fallido no alcanza la siguiente instruccion.
+        for backend in self.backends:
+            for offset in (0x400, 0x20C, 0xF10, 0xFFC):
+                for op in ("LOAD", "STORE"):
+                    with self.subTest(backend=backend.version, offset=offset, op=op):
+                        source = f"MOVHI R1, 0x8000\n{op} R2, R1, {offset}\nHALT"
+                        result = self.run_program(backend, source)
+                        self.assertTrue(result["error"])
+                        self.assertEqual(result["error_code"], 2)
+            for offset in (0xF00, 0xF04, 0xF08, 0xF0C):
+                result = self.run_program(backend, f"MOVHI R1, 0x8000\nSTORE R0, R1, {offset}\nHALT")
+                self.assertTrue(result["error"])
+                self.assertEqual(result["error_code"], 2)
+            result = self.run_program(backend, "MOVHI R1, 0x8000\nLOAD R2, R1, 0xF08\nHALT")
+            self.assertFalse(result["error"])
+
+    def test_offset_uart_reservado_no_consume_otro_lane(self):
+        for backend in self.backends[1:]:
+            for op in ("LOAD", "STORE"):
+                serial = SerialDevice(stdin=b"AB")
+                gpu = backend.module.System(1024, 1, 2, serial=serial)
+                gpu.load_program(assemble_bytes(f"{op} R2, R1, 0\nHALT"))
+                lanes = gpu.streaming_multiprocessor.warps[0].processors
+                lanes[0].regs[1] = serial.BASE
+                lanes[1].regs[1] = serial.BASE + 12
+                lanes[0].regs[2] = 65
+                gpu.run(10)
+                self.assertTrue(gpu.error)
+                self.assertEqual(serial.rx, b"AB")
+                self.assertEqual(serial.tx, b"")
+                self.assertEqual(lanes[0].regs[2], 65)
+
+    def test_video_reservado_y_dispositivo_ausente(self):
+        for backend in self.backends:
+            for op in ("LOAD", "STORE"):
+                for video, offset in ((None, 0), ({"capture_frame": True}, 0x1C)):
+                    result = self.run_program(backend, f"MOVHI R1, 0x8000\n{op} R2, R1, {offset}\nHALT", video=video)
+                    self.assertTrue(result["error"])
+                    self.assertEqual(result["error_code"], 2)
+
     def test_clases_y_capacidades_compartidas(self):
         for backend in self.backends[1:]:
             self.assertIs(backend.module.VideoDevice, VideoDevice)

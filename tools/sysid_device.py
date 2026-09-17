@@ -50,7 +50,7 @@ BIT_SIMT = 1 << 3
 
 
 class SysIdDevice:
-    """Cuatro palabras de sólo lectura. Escribir se ignora, como en el RTL."""
+    """Cuatro palabras de solo lectura; el resto del slot no esta implementado."""
 
     BASE = BASE
     SIZE = SIZE
@@ -70,7 +70,12 @@ class SysIdDevice:
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
 
+    def validate(self, offset: int, writing: bool = False) -> None:
+        if writing or offset not in (self.SYS_ID, self.CONTRACT, self.DEV_BITMAP, self.ISA_PROFILE):
+            raise RuntimeError(f"acceso invalido a identificacion: {self.BASE + offset:#010x}")
+
     def read(self, offset: int) -> int:
+        self.validate(offset)
         if offset == self.SYS_ID:
             return (MAGIC << 16) | self.folder
         if offset == self.CONTRACT:
@@ -81,18 +86,9 @@ class SysIdDevice:
             return 0
         if offset == self.ISA_PROFILE:
             return self.isa_profile
-        # Un registro que no existe lee cero, igual que en el bloque de vídeo.
-        return 0
 
     def write(self, offset: int, value: int) -> None:
-        """Sólo lectura: la escritura se traga, no se falla.
-
-        Es lo que hace el RTL --`sysid.v` no tiene puerto de escritura y el
-        decodificador ignora la escritura sobre su slot-- y la diferencia
-        importa: un programa que escribiera aquí por error se comportaría
-        distinto en simulación que en la placa.
-        """
-        del offset, value
+        self.validate(offset, writing=True)
 
     def tick(self) -> None:
         """No tiene estado que avanzar; existe para encajar con los demás."""

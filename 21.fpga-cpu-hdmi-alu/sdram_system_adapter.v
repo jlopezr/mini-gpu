@@ -77,6 +77,7 @@ module sdram_system_adapter #(
     output reg [3:0] mmio_address,
     output reg [31:0] mmio_write_data,
     input wire [31:0] mmio_read_data,
+    input wire mmio_error,
 
     // Video scanout: single 16-bit read, halfword address, no range check
     // because the line source can only generate addresses inside the frame
@@ -366,9 +367,11 @@ module sdram_system_adapter #(
               monitor_read_data <=
                   mmio_read_data[{saved_monitor_address[1:0], 3'b000} +: 8];
             monitor_ready <= 1'b1;
+            monitor_error <= mmio_error;
           end else begin
             if (saved_cpu_read) cpu_dmem_read_data <= mmio_read_data;
             cpu_dmem_ready <= 1'b1;
+            cpu_dmem_error <= mmio_error;
           end
           state <= STATE_RELEASE;
         end

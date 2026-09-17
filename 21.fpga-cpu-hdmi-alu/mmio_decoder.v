@@ -36,11 +36,9 @@
  * pasa por aqui: es el handshake de SDRAM, `scanout_i.req_line` ->
  * `source_i.req_addr`, 29 etapas.
  *
- * Un dispositivo que no existe lee cero y se traga las escrituras, que es lo
- * que ya hacian los dos registros libres de la ventana del video. La
- * alternativa --levantar un error de bus como hace `gpu_system.v` con
- * `mmio_bad`-- obliga a cablear una ruta de ERROR_MEMORY_ACCESS nueva, y se
- * deja para cuando haya dispositivos suficientes como para perderlos de vista.
+ * Un dispositivo ausente o un offset reservado da error. El select se
+ * filtra antes del periferico para que un acceso rechazado no tenga efectos.
+ * El error acompana al dato hasta el ack del nucleo o del monitor.
  */
 module mmio_decoder #(
     // Identidad de esta carpeta, para el bloque de 0x80000F00. Va por
@@ -49,10 +47,13 @@ module mmio_decoder #(
     // junto a los demas parametros. Un test comprueba que el numero coincide
     // con el del directorio.
     parameter [7:0] FOLDER = 8'd0,
-    parameter [31:0] ISA_PROFILE = 32'd0
+    parameter [31:0] ISA_PROFILE = 32'd0,
+    parameter HAS_SERIAL = 1,
+    parameter [63:0] VIDEO_REGISTERS = 64'h7f
 ) (
     // Desde mmio_mux.
     input  wire        select,
+    input  wire        write,
     input  wire [11:0] address,
 
     // Hacia cada dispositivo: el `select` ya filtrado.
@@ -65,7 +66,8 @@ module mmio_decoder #(
     // Los contadores son de solo lectura, asi que no necesitan `select`.
     input  wire [31:0] perf_read_data,
 
-    output reg  [31:0] read_data
+    output reg  [31:0] read_data,
+    output reg         error
 );
   localparam [3:0] DEV_VIDEO  = 4'd0;
   localparam [3:0] DEV_SERIAL = 4'd2;
@@ -77,8 +79,8 @@ module mmio_decoder #(
 
   wire [3:0] device = address[11:8];
 
-  assign video_select  = select && (device == DEV_VIDEO);
-  assign serial_select = select && (device == DEV_SERIAL);
+  assign video_select  = select && !error && (device == DEV_VIDEO);
+  assign serial_select = select && !error && (device == DEV_SERIAL);
 
   // Constantes de solo lectura: no necesita `select` ni reloj, asi que se
   // instancia aqui en vez de sacar otro par de puertos al top.
@@ -89,6 +91,14 @@ module mmio_decoder #(
   // `read_data` no depende de `select`: el cliente solo lo mira en el ciclo de
   // su `ack`, y dejarlo fuera del mux ahorra un nivel.
   always @* begin
+    error = 1'b0;
+    case (device)
+      DEV_VIDEO:  error = !VIDEO_REGISTERS[address[7:2]];
+      DEV_SERIAL: error = !HAS_SERIAL || address[7:2] > 6'd2;
+      DEV_PERF:   error = address[7:2] > 6'd1 || write;
+      DEV_SYSID:  error = address[7:4] != 0 || write;
+      default:    error = 1'b1;
+    endcase
     case (device)
       DEV_VIDEO:  read_data = video_read_data;
       DEV_SERIAL: read_data = serial_read_data;

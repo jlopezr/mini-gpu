@@ -63,6 +63,10 @@ class VideoDevice:
         self.frame_instructions = frame_instructions
         self._since_frame = 0
 
+    def validate(self, offset: int, writing: bool = False) -> None:
+        if offset not in (self.FB_FRONT, self.FB_BACK, self.SWAP, self.STATUS, self.SWAP_COUNT, self.HALT_AT, self.VIDEO_CTRL):
+            raise RuntimeError(f"registro MMIO inexistente: {self.BASE + offset:#010x}")
+
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
 
@@ -91,6 +95,7 @@ class VideoDevice:
                 self.halt_armed = False
 
     def read(self, offset: int) -> int:
+        self.validate(offset)
         if offset == self.FB_FRONT:
             return self.fb_front
         if offset == self.FB_BACK:
@@ -109,6 +114,7 @@ class VideoDevice:
         return 0
 
     def write(self, offset: int, value: int) -> None:
+        self.validate(offset, writing=True)
         if offset == self.FB_FRONT:
             self.fb_front = value & 0xFFFF_FFFC     # se alinea a cuatro bytes
         elif offset == self.FB_BACK:
@@ -189,6 +195,10 @@ class SerialDevice:
     def output(self):
         return bytes(self.host_output or b"") + bytes(self.tx)
 
+    def validate(self, offset: int, writing: bool = False) -> None:
+        if offset not in (self.DATA, self.STATUS, self.PEEK):
+            raise RuntimeError(f"registro MMIO inexistente: {self.BASE + offset:#010x}")
+
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
 
@@ -209,6 +219,7 @@ class SerialDevice:
         return out
 
     def read(self, offset: int) -> int:
+        self.validate(offset)
         if offset == self.DATA:
             if not self.rx:
                 return 0
@@ -224,6 +235,7 @@ class SerialDevice:
         return 0
 
     def write(self, offset: int, value: int) -> None:
+        self.validate(offset, writing=True)
         if offset == self.DATA:
             if len(self.tx) < self.depth:
                 self.tx.append(value & 0xFF)

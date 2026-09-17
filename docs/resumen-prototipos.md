@@ -36,10 +36,10 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | 120 MHz | 120 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
-| **Fmax / objetivo** | — | 127.3 / 120 | 122.6 / 120 | 104.0 / 100 | 90.2 / 80 | 88.0 / 80 | 86.1 / 80 |
-| **Memoria** | — | 2 × 16 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 5 664 / 2 466 | 4 956 / 2 249 | 6 815 / 3 164 | 9 128 / 4 617 | 9 857 / 4 735 | 10 227 / 4 800 |
-| **Monitor** | — | 1.16 | 1.17 | 1.18 | 1.19 | 1.20 | 1.15 |
+| **Fmax / objetivo** | — | 127.3 / 120 | 122.6 / 120 | 112.0 / 100 | 92.5 / 80 | 87.9 / 80 | 84.9 / 80 |
+| **Memoria** | — | 32 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | 5 664 / 2 466 | 4 956 / 2 249 | 7 155 / 3 302 | 9 198 / 4 708 | 10 512 / 5 001 | 10 468 / 4 956 |
+| **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 |
 | **Baudios** | — | 3 M | 3 M | 1 M | 1 M | 1 M | 1 M |
 | `mul_div` | sí | sí | no | sí | sí | sí | sí |
 | `subword_memory` | sí | no | no | no | no | sí | sí |
@@ -154,14 +154,13 @@ cobró de verdad.
 | | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
 |---|---|---|---|---|---|---|
 | **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | — | 34.1 / 25 | 33.9 / 25 | 44.1 / 25 | 37.7 / 25 |
+| **Fmax / objetivo** | — | — | 35.8 / 25 | 35.3 / 25 | 46.5 / 25 | 38.0 / 25 |
 | **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | — | 36 617 / 9 137 | 31 140 / 9 016 | 31 076 / 10 090 | 34 177 / 12 308 |
-| **Monitor** | — | — | 2.3 | 2.4 | 2.4 | 2.4 |
+| **LUT / FF** | — | — | 35 709 / 9 202 | 31 512 / 9 081 | 29 590 / 10 155 | 35 269 / 12 467 |
+| **Monitor** | — | — | 3.12 | 3.14 | 3.17 | 3.22 |
 | **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k |
 | `warp_config` | no | no | sí | sí | sí | sí |
 | `simt_debug` | no | no | sí | sí | sí | sí |
-| `perf_counters` | no | no | no | no | no | sí |
 | `atomic_warp_faults` | sí | sí | no | no | no | no |
 <!-- END GENERATED: gpu-matrix -->
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:

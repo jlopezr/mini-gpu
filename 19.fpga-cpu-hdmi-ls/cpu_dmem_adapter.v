@@ -88,6 +88,7 @@ module cpu_dmem_adapter #(
     output reg  [11:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
+    input wire mmio_error,
 
     // Puerto de 128 bits hacia el arbitro, con direccion de BYTE alineada a 16.
     output wire         req_valid,
@@ -333,6 +334,7 @@ module cpu_dmem_adapter #(
 
         ST_MMIO:
           if (mmio_ack) begin
+            dmem_error <= mmio_error;
             mmio_req <= 1'b0;
             if (saved_read) dmem_read_data <= mmio_read_data;
             dmem_ready <= 1'b1;

@@ -69,6 +69,14 @@ def print_report(report, gpu, stream=sys.stdout):
     print(f"  Sin warp elegible      {report['stall_no_warp']:>10}", file=stream)
     print(f"  Stalls fetch           {report['stall_fetch']:>10}", file=stream)
 
+    x_cycles = report['occupancy'].get('X', 0)
+    if x_cycles:
+        print("", file=stream)
+        print("OCUPACIÓN X POR TIPO (ciclos y % de X ocupada)", file=stream)
+        for unit, count in report['x_cycles_by_unit'].items():
+            if count:
+                print(f"  {unit:<22} {count:>10}  {100 * count / x_cycles:>6.1f} %", file=stream)
+
     if report["stall_lsu_full"]:
         print(f"  Stalls LSU llena       {report['stall_lsu_full']:>10}", file=stream)
 

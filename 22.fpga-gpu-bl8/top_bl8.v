@@ -34,10 +34,12 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     // La misma lectura sin trocear, para READ_WORD.
     wire [31:0] read_word;
     wire we,re,ready,mem_error,run_req,halt_req,step_req,reset_req,halted,error,retired;
+      // WRITE_WORD: la palabra entera y su pulso, del monitor al puerto host.
+      wire [31:0] write_word_w; wire we_word;
     wire [4:0] debug_register;
     // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py, y las cuatro
     // estan pobladas: esta es la unica de la familia con video y contadores.
-    monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd22),
+    monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd22),
         .RAM_END(33'h0_0200_0000),
         .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
         .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
@@ -48,6 +50,7 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),
+          .mem_write_word(write_word_w),.mem_write_word_enable(we_word),
         .mem_read_enable(re),.mem_read_data(read_data),.mem_read_word(read_word),.mem_ready(ready),.mem_error(mem_error),
         .cpu_run_request(run_req),.cpu_halt_request(halt_req),.cpu_step_request(step_req),
         .cpu_reset_request(reset_req),.cpu_halted(halted),.cpu_error(error),.cpu_error_code(error_code),
@@ -80,7 +83,8 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     gpu_system_bl8 gpu (.clk(clk_25mhz),.reset(reset),.gpu_reset(reset_req),
         .run_request(run_req),.halt_request(halt_req),.step_request(step_req),
         .halted(halted),.error(error),.error_code(error_code),.instruction_retired(retired),
-        .host_address(address),.host_write_data(write_data),.host_write_enable(we),.host_read_enable(re),
+        .host_address(address),.host_write_data(write_data),.host_write_enable(we),
+          .host_write_word(write_word_w),.host_write_word_enable(we_word),.host_read_enable(re),
         .host_read_data(read_data),.host_read_word(read_word),.host_ready(ready),.host_error(mem_error),
         .debug_register(debug_register),.debug_data(debug_data),.debug_pc(pc),.init_done(init_done),
         .p2_req_valid(p2_valid),.p2_req_ready(p2_ready),.p2_req_write(p2_write),
