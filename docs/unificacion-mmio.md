@@ -190,6 +190,54 @@ no puede ir a `0x80000000` mientras los warps estén ahí.
 El mismo `.asm` de vídeo, con las mismas constantes, corre en 21 y en 22. Si eso
 no se cumple, la fase no está terminada aunque todo sintetice.
 
+## Fase 3.4 — Acceso de 32 bits del monitor al MMIO
+
+Prerrequisito de los contadores de la fase 3.5, y arregla por el camino una
+clase de fallo latente que hoy existe en las dos familias.
+
+**El problema.** El host llega a los registros MMIO **byte a byte**: en CPU solo
+con `READ_BYTE`/`WRITE_BYTE` —los bloques a MMIO los rechaza el monitor—, y
+`x.tests/backends/fpga.py` tiene `_read_register`/`_write_register`, que son
+cuatro idas y vueltas por serie. Entre la primera y la cuarta pasa del orden de
+un milisegundo, así que **un registro que siga vivo puede leerse partido**.
+
+No es hipotético. `fpga.py` lee `VIDEO_STATUS` (`0x8000000C`) así y saca
+`frames = estado >> 16`, que es `frame_count` — y `frame_count` incrementa con
+`fill_start && fill_first` **sin condicionar a `cpu_halted`**; el propio
+`video_registers.v` dice que «avanza aunque la CPU esté parada». A 60 Hz el
+acarreo del byte bajo al alto cae cada ~4,3 s y la ventana vulnerable es ~1 ms:
+del orden de una lectura de cada cuatro mil, con síntoma de 256 frames de más.
+No está observado, es un razonamiento sobre el código. El simétrico existe en
+escritura: el host actualiza `FB_FRONT` byte a byte y el scanout de la 22 sigue
+vivo durante la escritura (usa `reset`, no `core_reset`), así que puede leer una
+base mezclada durante un frame.
+
+**Por qué sale barato.** La palabra de 32 bits **ya existe** donde hace falta, en
+las dos familias: `monitor_mem_adapter_128.v` recibe `input wire [31:0]
+mmio_read_data` y tira tres bytes, y `gpu_system_bl8` calcula `mmio_data` entera
+y selecciona un byte. Una transacción de bus ya produce la palabra completa, así
+que `READ_WORD` sería **atómico de verdad**, no solo cómodo — el valor no puede
+salir partido por construcción, sin depender de ninguna invariante.
+
+- [ ] Añadir `READ_WORD` y `WRITE_WORD` a `monitor.v`. El armazón de respuesta ya
+      sirve hasta 7 bytes (`GET_STATUS` los usa), así que devolver 5 no necesita
+      máquina de estados nueva.
+- [ ] Ensanchar el camino de lectura del adaptador al monitor: hoy
+      `mem_read_data` es `[7:0]`. O se ensancha, o se añade una salida de 32 bits
+      al lado.
+- [ ] Cambiar `_read_register`/`_write_register` de `fpga.py` a usar los comandos
+      nuevos. Desaparece el riesgo de `frame_count` **sin tocar el RTL del
+      contador**, que es la razón de hacer esto antes que nada.
+- [ ] **Al juego base y en todos los prototipos a la vez.** Añadirlo solo a
+      algunos crearía un cuarto juego de comandos, que es exactamente la
+      proliferación que la fase 5 quiere colapsar. O entra en todos, o no entra.
+
+**La regla que queda escrita**, valga o no `READ_WORD`: *todo registro de 32 bits
+que el host lea byte a byte tiene que estar congelado mientras el núcleo está
+parado, o su valor puede salir partido.* Los contadores de rendimiento la cumplen
+por diseño —avanzan solo con el núcleo corriendo, y §4 explica que eso es el
+punto—; `frame_count` es la excepción conocida.
+
 ## Fase 3.5 — Alinear la CPU con el mismo contrato
 
 Hasta aquí el contrato se aplicó moviendo **solo** la GPU, a propósito: así
@@ -204,12 +252,42 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
 | `VIDEO_CTRL` `+0x18` | «solo GPU, por ahora» | **no existe**; el scanout está siempre encendido |
 | Bases tras reset | no lo fija | `0x01000000`/`0x01025800` cableadas, iguales en los cuatro |
 | Alineamiento de bases | 4 B en CPU, 16 B en GPU | 4 B, coincide |
-| Contadores de rendimiento | slot `0x80000300` | no existe |
+| Contadores de rendimiento | slot `0x80000300` | **fuera del MMIO**: `cpu_cycles`/`cpu_instructions` en `top.v`, servidos por comandos `0x36`/`0x37` |
 | Bloque de identificación | `0x80000F00` | no existe (fase 4) |
 
 - [ ] **Añadir `VIDEO_CTRL` a la CPU** con el modo tras reset acordado. Es el
       cambio que habilita todo lo demás: sin control de modo no se puede arrancar
       sin scanout.
+- [ ] **Mover los contadores de CPU al MMIO `0x80000300`.** Hoy `cpu_cycles` y
+      `cpu_instructions` son dos registros en [`top.v`](../21.fpga-cpu-hdmi-alu/top.v)
+      cableados a `monitor.v`, y **solo los lee el host**: para saber cuántos
+      ciclos tardó un bucle hay que parar la CPU y preguntar por serie. En MMIO,
+      el programa se mide a sí mismo, que es el argumento que §4 ya hace para la
+      GPU.
+
+      Encaja sin inventar nada: en la GPU `+0x00` es `CYCLES` y `+0x04` es
+      `RETIRED`, justo los dos que tiene la CPU, así que el bloque de CPU es un
+      **prefijo** del de GPU. §6 ya reserva el slot como «GPU, ampliable a CPU»,
+      y `mmio_decoder.v` reserva los slots 3..15, así que añadir
+      `DEV_PERF = 4'd3` son tres líneas.
+
+      Dos cosas a reconciliar: la CPU **satura** (`cpu_cycles != 32'hffff_ffff`)
+      y la GPU **da la vuelta** — y a 80 MHz, 2³² ciclos son **53 segundos**, así
+      que un programa de un minuto satura el contador de CPU y deja de medir
+      nada; unificar en dar la vuelta, que hace correctas las diferencias. Y
+      escribir es fault en GPU e ignorado en CPU, misma decisión que la fase 4a.
+
+      Aviso: leer `CYCLES` con un `LOAD` cuesta ciclos y retira una instrucción,
+      y en la 21 además drena el búfer de escrituras, así que el programa
+      perturba su propia medida. Se mide por deltas y se asume el sesgo; la GPU
+      ya vive con eso.
+- [ ] **Retirar `GET_CYCLES` (`0x36`) y `GET_INSTRUCTIONS` (`0x37`).** Con los
+      contadores en MMIO se quedan sin razón de ser, y con ellos desaparece el
+      juego «+contadores» entero: de tres juegos de comandos (12, 14 y 16) se
+      pasa a dos, y ninguno es ya «el que tiene contadores», porque los contadores
+      pasan a ser un dispositivo como los demás. Es el objetivo de la fase 5
+      alcanzado por el camino de simplificar el bus en vez de por el de renumerar
+      versiones.
 - [ ] **Unificar las bases de reset en `0` / `0`.** Arrancar sin scanout elimina
       la única ventaja del valor cableado —que un programa funcionase sin
       configurar nada—, porque ahora tiene que escribir `VIDEO_CTRL` de todas
@@ -343,12 +421,19 @@ bloquea a los otros ocho.
 
 Orden tomado de §6.5. Hacerlo antes obliga a tocar el monitor dos veces.
 
+Las fases 3.4 y 3.5 **ya hacen la mitad del trabajo de esta**, y por el camino
+bueno: 3.4 mete `READ_WORD`/`WRITE_WORD` en el juego base, y 3.5 retira
+`GET_CYCLES`/`GET_INSTRUCTIONS` al pasar los contadores a MMIO. Resultado: los
+tres juegos de comandos de hoy (12, 14 y 16) quedan en **dos** —base y
+base+serie—, y ninguno es ya «el que tiene contadores». Lo que aquí queda es
+renumerar y unificar, no rediseñar.
+
 - [ ] **Renumerar las versiones de monitor por juego de comandos**: de diez
-      valores (1.15–1.20, 2.3–2.4) a cuatro. Hoy 6, 10 y 16 tienen el mismo juego
-      y llevan 1.16/1.17/1.18; 19 y 21 tienen el mismo juego y llevan 1.20 y
-      1.15. Y 14, 17 y 22 responden todos 2.4 siendo hardware distinto, con la
-      consecuencia de que `--version sdram` pasa contra una 22 flasheada y se
-      miden prestaciones del hardware equivocado.
+      valores (1.15–1.20, 2.3–2.4) a los que queden tras 3.4 y 3.5. Hoy 6, 10 y
+      16 tienen el mismo juego y llevan 1.16/1.17/1.18; 19 y 21 tienen el mismo
+      juego y llevan 1.20 y 1.15. Y 14, 17 y 22 responden todos 2.4 siendo
+      hardware distinto, con la consecuencia de que `--version sdram` pasa contra
+      una 22 flasheada y se miden prestaciones del hardware equivocado.
 - [ ] Conservar el número como **contrato de protocolo**, no como identidad. El
       caso que lo justifica es el backport de R0: mismos comandos, mismos
       dispositivos, misma lista de rangos, y un bitstream viejo no da error — da

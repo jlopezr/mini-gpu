@@ -351,6 +351,15 @@ Ninguna: mismo decodificador en 12, 14, 17 y 22. En 22 la GPU tampoco llega aqu�
 Solo en 22. Siete contadores de 32 bits, legibles por host y GPU; **escribir es
 fault**.
 
+La CPU tiene los dos primeros —ciclos e instrucciones retiradas— pero **fuera del
+MMIO**: son registros de `top.v` que solo alcanza el host, con los comandos de
+monitor `GET_CYCLES` (`0x36`) y `GET_INSTRUCTIONS` (`0x37`). Un programa de CPU
+no puede medirse a sí mismo. Pasarlos a este slot está en
+[`unificacion-mmio.md`](unificacion-mmio.md), fase 3.5; el bloque de CPU sería un
+prefijo del de GPU, porque `+0x00` y `+0x04` ya son `CYCLES` y `RETIRED`. Ojo a
+que la CPU **satura** a `0xFFFFFFFF` y la GPU **da la vuelta**: a 80 MHz son 53
+segundos hasta saturar.
+
 | Dirección | Contador |
 |---|---|
 | `+0x00` | `CYCLES`, ciclos con la GPU corriendo (da la vuelta) |
