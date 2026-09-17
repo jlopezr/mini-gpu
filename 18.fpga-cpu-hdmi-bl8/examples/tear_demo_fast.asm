@@ -49,6 +49,13 @@
 start:
     MOVHI R20, 0x8000          ; registros de video en 0x80000000
 
+    ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
+    ; recien encendida contiene basura, asi que arrancar leyendola daria
+    ; una salida indefinida-- y un programa que dibuja tiene que pedir
+    ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
+    MOVI  R30, 2               ; SCANOUT
+    STORE R30, R20, 24         ; VIDEO_CTRL
+
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; fondo azul, en las dos mitades de la palabra
     MOVHI R24, 0x07E0

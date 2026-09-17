@@ -14,6 +14,16 @@
 //                              HALT_AT (o desde el reset, si no se ha armado)
 //   0x80000014  HALT_AT    RW  parar la CPU dentro de N intercambios; armarlo
 //                              pone SWAP_COUNT a cero (0 = desactivado)
+//   0x80000018  VIDEO_CTRL RW  bits 1:0  modo de salida
+//                                  0  BLANK    negro, sin leer la memoria
+//                                  1  PATTERN  patron de prueba, sin leerla
+//                                  2  SCANOUT  framebuffer desde la memoria
+//                                  3  reservado (se trata como BLANK)
+//
+// Con VIDEO_CTRL el bloque es el MISMO que el de la MiniGPU, offset a offset.
+// Era la ultima diferencia: HALT_AT no existe alli --lee cero-- pero ocupa su
+// hueco, y por eso VIDEO_CTRL fue al final en las dos familias en vez de al
+// principio, que es donde lo pondria uno si no tuviera que encajar con nada.
 //
 // ---------------------------------------------------------------------------
 // Para que sirven los tres ultimos, que son de prueba y no de dibujo
@@ -101,6 +111,15 @@ module video_registers #(
     // Pulso que para la CPU al completar el intercambio numero HALT_AT.
     output reg halt_request,
 
+    // Modo de salida (VIDEO_CTRL). Tras el reset vale PATTERN y no SCANOUT, y
+    // no es un descuido: la memoria recien encendida contiene basura, asi que
+    // arrancar en SCANOUT seria elegir un valor por defecto cuya salida es
+    // indefinida --y entonces ver basura no dice si falla HDMI, el PLL, el
+    // cable, `fb_base` o el programa--. Con PATTERN, ver el patron demuestra
+    // que la cadena hasta el monitor funciona y no verlo senala aguas arriba.
+    // El razonamiento entero esta en 22.fpga-gpu-bl8/video-scanout.md.
+    output reg [1:0] video_mode,
+
     output wire [31:0] debug_front,
     output wire [31:0] debug_back
 );
@@ -111,6 +130,17 @@ module video_registers #(
   localparam [5:0] REG_STATUS    = 6'd3;
   localparam [5:0] REG_SWAP_COUNT = 6'd4;
   localparam [5:0] REG_HALT_AT   = 6'd5;
+  // VIDEO_CTRL va en +0x18, el MISMO offset que en la MiniGPU. Alli se puso al
+  // final --y no en +0x00, que habria sido lo natural para un registro de
+  // control-- precisamente para no desplazar ninguno de los que la CPU ya
+  // tenia. Ahora se cobra esa decision: el bloque coincide entero.
+  localparam [5:0] REG_CTRL      = 6'd6;
+
+  // Modos de salida. Los mismos numeros que gpu_video_regs.v.
+  localparam [1:0] MODE_BLANK   = 2'd0;   // negro, sin leer la memoria
+  localparam [1:0] MODE_PATTERN = 2'd1;   // patron de prueba, sin leer memoria
+  localparam [1:0] MODE_SCANOUT = 2'd2;   // framebuffer desde memoria
+                                          // 3 reservado, se trata como BLANK
 
   reg [31:0] fb_front;
   reg [31:0] fb_back;
@@ -167,6 +197,7 @@ module video_registers #(
       frame_count <= 16'd0;
       swap_count <= 32'd0;
       halt_at <= 32'd0;
+      video_mode <= MODE_PATTERN;
       halt_armed <= 1'b0;
     end else begin
       // El intercambio va primero para que una escritura del bus en el mismo
@@ -219,6 +250,7 @@ module video_registers #(
             swap_count <= 32'd0;
             halt_armed <= merge(halt_at, write_data, write_mask) != 32'd0;
           end
+          REG_CTRL:     if (write_mask[0]) video_mode <= write_data[1:0];
           default: ;  // SWAP_COUNT es de solo lectura
         endcase
       end
@@ -234,6 +266,7 @@ module video_registers #(
                                    underflow_sync_1};
       REG_SWAP_COUNT: read_data = swap_count;
       REG_HALT_AT:    read_data = halt_at;
+      REG_CTRL:       read_data = {30'd0, video_mode};
       default:        read_data = 32'd0;
     endcase
   end

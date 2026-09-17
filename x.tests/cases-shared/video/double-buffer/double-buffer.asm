@@ -42,6 +42,8 @@
 ;   R4  FB_BACK despues                  R5  FB_BACK releido
 ;   R6  underflow                        R11 valor sucio
 ;   R12 comparacion                      R8  temporal de espera
+;   R13 VIDEO_CTRL antes                 R14 modo de prueba (SCANOUT)
+;   R15 VIDEO_CTRL releido
 ;   R0  cero, cableado por la ISA
 ; ============================================================
 
@@ -93,8 +95,27 @@ comprobar_underflow:
     ; ---- bit 3: el barrido no se quedo sin datos ----
     LOAD  R6, R20, 12
     ANDI  R6, R6, 1
-    BNE   R6, R0, terminar
+    BNE   R6, R0, comprobar_ctrl
     ORI   R10, R10, 0x0008
+
+comprobar_ctrl:
+    ; ---- bit 4: VIDEO_CTRL acepta el modo que se le escribe ----
+    ; Es la pieza que IGUALA los dos bloques: hasta la fase 3.5 solo existia en
+    ; la GPU, y por eso esta en +0x18 y no en +0x00 --el hueco de HALT_AT, que
+    ; solo tiene la CPU, hay que respetarlo en las dos--.
+    ;
+    ; El modo se restaura al valor que tenia. No es cortesia: solo el reset de
+    ; la placa lo reinicia, asi que un caso que lo dejara cambiado se lo pasaria
+    ; al siguiente, y el resultado dependeria del orden de ejecucion. Es el
+    ; mismo error que ya se pago una vez con las bases de framebuffer.
+    LOAD  R13, R20, 24         ; modo actual
+    MOVI  R14, 2               ; SCANOUT
+    STORE R14, R20, 24
+    LOAD  R15, R20, 24
+    XOR   R12, R15, R14
+    STORE R13, R20, 24         ; dejarlo como estaba, pase lo que pase
+    BNE   R12, R0, terminar
+    ORI   R10, R10, 0x0010
 
 terminar:
     STORE R10, R19, 0

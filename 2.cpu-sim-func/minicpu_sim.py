@@ -151,6 +151,11 @@ class VideoDevice:
     STATUS = 0x0C
     SWAP_COUNT = 0x10
     HALT_AT = 0x14
+    VIDEO_CTRL = 0x18
+
+    MODE_BLANK = 0
+    MODE_PATTERN = 1
+    MODE_SCANOUT = 2
 
     def __init__(self, fb_front: int = 0x0100_0000, fb_back: int = 0x0102_5800,
                  frame_instructions: int = 1000):
@@ -163,6 +168,12 @@ class VideoDevice:
         self.halt_armed = False
         # Alto durante un solo `tick`, cuando SWAP_COUNT alcanza HALT_AT.
         self.halt_request = False
+        # PATTERN tras el reset, igual que el RTL. Aquí no gobierna nada --no
+        # hay barrido que leer la memoria-- pero el REGISTRO tiene que existir y
+        # comportarse igual: un programa que lo escriba y lo relea debe obtener
+        # lo mismo en las dos partes, o el simulador deja de servir para
+        # desarrollar el programa antes de subirlo.
+        self.video_mode = self.MODE_PATTERN
         self.frame_instructions = frame_instructions
         self._since_frame = 0
 
@@ -206,6 +217,8 @@ class VideoDevice:
             return self.swap_count
         if offset == self.HALT_AT:
             return self.halt_at
+        if offset == self.VIDEO_CTRL:
+            return self.video_mode
         return 0
 
     def write(self, offset: int, value: int) -> None:
@@ -229,6 +242,8 @@ class VideoDevice:
             self.halt_at = value
             self.swap_count = 0
             self.halt_armed = value != 0
+        elif offset == self.VIDEO_CTRL:
+            self.video_mode = value & 0b11
         # SWAP_COUNT es de solo lectura.
 
 

@@ -38,10 +38,12 @@
     "architecture": ["cpu", "gpu"],
     "file": ["video_registers.v", "gpu_video_regs.v"]
   },
+  "_comment_patrones": "Un 'pattern' se busca en el TEXTO del fichero, comentarios incluidos. Por eso apuntan a la IMPLEMENTACION y no al nombre a secas: 'HALT_AT' casaba con un comentario de la 16 que decia que ese registro NO existe alli, y la 16 pasaba a declarar 'frame_capture' -- con lo que habria aceptado casos con run_until.swap que no puede detener. 'REG_HALT_AT =' solo casa con el localparam que lo define.",
+
   "frame_capture": {
     "architecture": "cpu",
     "file": "video_registers.v",
-    "pattern": "HALT_AT",
+    "pattern": "REG_HALT_AT\\s*=",
     "implies": ["video"]
   },
   "serial": {

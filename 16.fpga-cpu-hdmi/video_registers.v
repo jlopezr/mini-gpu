@@ -9,6 +9,16 @@
 //   0x8000000c  STATUS     R   bit 0    underflow del line buffer (pegajoso)
 //                              bit 1    intercambio pendiente
 //                              31:16    contador de frames
+//   0x80000018  VIDEO_CTRL RW  bits 1:0  modo de salida
+//                                  0  BLANK    negro, sin leer la memoria
+//                                  1  PATTERN  patron de prueba, sin leerla
+//                                  2  SCANOUT  framebuffer desde la memoria
+//                                  3  reservado (se trata como BLANK)
+//
+// Los dos registros de `frame_capture` (+0x10 y +0x14) no existen aqui: esa
+// capacidad llego en la 18. Leen cero, igual que cualquier registro que no
+// existe. VIDEO_CTRL conserva su offset pese al hueco, porque el contrato es de
+// DIRECCIONES y no de orden de aparicion.
 //
 // Las direcciones de framebuffer se alinean a cuatro bytes: los dos bits bajos
 // se ignoran al escribir y se leen como cero. El scanout necesita direcciones
@@ -59,6 +69,14 @@ module video_registers #(
     output wire [23:0] fb_base,    // direccion de palabra de 16 bits
     input wire underflow_pix,      // nivel pegajoso del dominio de pixel
 
+    // Modo de salida (VIDEO_CTRL). Tras el reset vale PATTERN y no SCANOUT, y
+    // no es un descuido: la memoria recien encendida contiene basura, asi que
+    // arrancar en SCANOUT seria elegir un valor por defecto cuya salida es
+    // indefinida. Con PATTERN, ver el patron demuestra que la cadena hasta el
+    // monitor funciona y no verlo senala aguas arriba. El razonamiento entero
+    // esta en 22.fpga-gpu-bl8/video-scanout.md.
+    output reg [1:0] video_mode,
+
     output wire [31:0] debug_front,
     output wire [31:0] debug_back
 );
@@ -66,6 +84,19 @@ module video_registers #(
   localparam [5:0] REG_FB_BACK  = 6'd1;
   localparam [5:0] REG_SWAP     = 6'd2;
   localparam [5:0] REG_STATUS   = 6'd3;
+  // Los indices 4 y 5 se saltan: son los dos registros de `frame_capture`, que
+  // esta carpeta no tiene. El hueco se respeta para que VIDEO_CTRL caiga en la
+  // misma direccion que en el resto de la familia y en la MiniGPU.
+  //
+  // Los nombres no se escriben ni en comentario: `capabilities.json` detecta
+  // las capacidades buscando texto en este fichero, asi que nombrar aqui un
+  // registro que no existe hacia que la 16 declarase tenerlo.
+  localparam [5:0] REG_CTRL     = 6'd6;
+
+  // Modos de salida. Los mismos numeros que gpu_video_regs.v.
+  localparam [1:0] MODE_BLANK   = 2'd0;
+  localparam [1:0] MODE_PATTERN = 2'd1;
+  localparam [1:0] MODE_SCANOUT = 2'd2;
 
   reg [31:0] fb_front;
   reg [31:0] fb_back;
@@ -117,6 +148,7 @@ module video_registers #(
       fb_back <= FB_BACK_RESET;
       swap_pending <= 1'b0;
       frame_count <= 16'd0;
+      video_mode <= MODE_PATTERN;
     end else begin
       // El intercambio va primero para que una escritura del bus en el mismo
       // ciclo gane: si el software fija una base justo ahora, esa es la que
@@ -137,6 +169,7 @@ module video_registers #(
           // uno en curso, queda pendiente para el frame siguiente y no se
           // pierde, que es lo que pasaria si el `swap_now` de arriba ganara.
           REG_SWAP:     swap_pending <= 1'b1;
+          REG_CTRL:     if (write_mask[0]) video_mode <= write_data[1:0];
           default: ;  // STATUS es de solo lectura
         endcase
       end
@@ -150,6 +183,7 @@ module video_registers #(
       REG_SWAP:     read_data = {31'd0, swap_pending};
       REG_STATUS:   read_data = {frame_count, 14'd0, swap_pending,
                                  underflow_sync_1};
+      REG_CTRL:     read_data = {30'd0, video_mode};
       // STATUS pasa a ser explicito: con la ventana de 16 bytes, `default` era
       // STATUS y nada mas, porque no habia mas direcciones. Ahora la ventana
       // son 256 bytes y dejarlo en `default` haria que los 60 registros que no

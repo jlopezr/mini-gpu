@@ -440,6 +440,9 @@ module top (
   wire [7:0] scan_r, scan_g, scan_b;
   wire scan_de, scan_hsync, scan_vsync, video_underflow;
   wire fill_start, fill_first, fill_we, fill_done;
+  // Modo de salida, de video_registers al mux de fuentes de linea. Se declara
+  // aqui porque el bloque de registros se instancia mas abajo que el mux.
+  wire [1:0] video_mode;
   wire [7:0] fill_line;
   wire [23:0] fb_base;
   wire [8:0] fill_addr;
@@ -457,20 +460,52 @@ module top (
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
       .fill_done(fill_done));
 
-  // Productor del hito C: lee el framebuffer de la SDRAM. El generador de
-  // patron del hito B (`video_line_source_pattern`) ya no se instancia, pero se
-  // conserva en el arbol porque su banco de pruebas sigue siendo el que valida
-  // el cruce de dominios sin meter memoria de por medio.
+  // Dos productores de linea, y un mux que elige entre ellos segun VIDEO_CTRL.
+  //
+  // El generador de patron llevaba desde el hito C sin instanciarse: existia en
+  // el arbol solo por su banco de pruebas. Vuelve porque ahora hace falta un
+  // modo que NO lea memoria -- que es la razon de ser de VIDEO_CTRL: arrancar
+  // sin scanout, para que las bases de framebuffer puedan dejar de venir
+  // cableadas en el reset.
+  //
+  // El mux NO se puentea con `video_mode` directamente. Ver la cabecera de
+  // video_line_source_mux.v: `video_mode` cambia cuando el software escribe
+  // VIDEO_CTRL, sin relacion con el llenado en curso, y hacerlo a media linea
+  // dejaba a la fuente entrante sin `fill_start` y a la saliente sin poder
+  // entregar su `fill_done` -- el video se quedaba ENCALLADO para siempre, y en
+  // placa solo se recuperaba reprogramando la FPGA.
+  wire start_sdram, start_pattern;
+  wire burst_we, pat_we, burst_done, pat_done;
+  wire [8:0] burst_addr, pat_addr;
+  wire [15:0] burst_data, pat_data;
+
   video_line_source_burst source_i(
       .clk(clk), .reset(reset), .fb_base(fb_base),
-      .fill_start(fill_start), .fill_line(fill_line),
-      .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
-      .fill_done(fill_done),
+      .fill_start(start_sdram), .fill_line(fill_line),
+      .fill_we(burst_we), .fill_addr(burst_addr), .fill_data(burst_data),
+      .fill_done(burst_done),
       .req_valid(p2_valid), .req_ready(p2_ready), .req_write(p2_write),
       .req_addr(p2_addr), .req_wdata(p2_wdata), .req_wmask(p2_wmask),
       .urgent(p2_urgent),
       .rsp_valid(p2_rsp_valid), .rsp_ready(video_rsp_ready),
       .rsp_rdata(p2_rsp_rdata), .rsp_error(p2_rsp_error));
+
+  video_line_source_pattern pattern_source_i(
+      .clk(clk), .reset(reset),
+      .fill_start(start_pattern), .fill_line(fill_line),
+      .fill_we(pat_we), .fill_addr(pat_addr), .fill_data(pat_data),
+      .fill_done(pat_done));
+
+  video_line_source_mux source_mux_i(
+      .clk(clk), .reset(reset), .video_mode(video_mode),
+      .fill_start(fill_start),
+      .start_sdram(start_sdram), .start_pattern(start_pattern),
+      .burst_we(burst_we), .burst_addr(burst_addr),
+      .burst_data(burst_data), .burst_done(burst_done),
+      .pat_we(pat_we), .pat_addr(pat_addr),
+      .pat_data(pat_data), .pat_done(pat_done),
+      .fill_we(fill_we), .fill_addr(fill_addr),
+      .fill_data(fill_data), .fill_done(fill_done));
 
   // Reparto de la ventana MMIO entre dispositivos. El mapa esta en
   // mmio_decoder.v; el video no se mueve de 0x80000000.
@@ -506,6 +541,7 @@ module top (
       .underflow_pix(video_underflow),
       .underflow_clear(video_underflow_clear),
       .halt_request(video_halt_request),
+      .video_mode(video_mode),
       .debug_front(), .debug_back());
 
   // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del

@@ -297,6 +297,33 @@ class CapabilitiesTest(unittest.TestCase):
         # saber al leer el SKIP.
         self.assertIn("bl8", motivo)
 
+    def test_una_capacidad_no_se_declara_por_nombrarla_en_un_comentario(self):
+        """Los patrones se buscan en el TEXTO, comentarios incluidos.
+
+        Paso de verdad: un comentario en 16/video_registers.v que decia que
+        HALT_AT *no* existe alli hacia que el patron `HALT_AT` casara, y la 16
+        declaraba `frame_capture`. La consecuencia no era cosmetica -- habria
+        aceptado casos con `run_until.swap`, que necesitan ese registro para
+        parar la CPU, y se habrian colgado esperando una parada que nadie iba a
+        provocar.
+
+        Por eso los patrones apuntan a la IMPLEMENTACION. Esto lo fija sobre el
+        caso concreto que lo enseno, para que reescribir el patron a la ligera
+        vuelva a fallar aqui.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import capabilities_from_rtl, load_capability_signals
+
+        senales = load_capability_signals(REPOSITORY)
+        carpeta = REPOSITORY / "16.fpga-cpu-hdmi"
+        self.assertNotIn("frame_capture", capabilities_from_rtl(carpeta, senales))
+        # Y el comentario que explica el hueco sigue ahi: si el patron se
+        # relajara otra vez, este fichero volveria a declarar la capacidad y el
+        # `assertNotIn` de arriba fallaria.
+        texto = (carpeta / "video_registers.v").read_text(encoding="utf-8")
+        self.assertIn("frame_capture", texto,
+                      "el comentario que explica el hueco deberia seguir ahi")
+
     def test_el_simulador_acepta_video(self):
         """Desde que `minicpu_sim.py` tiene `VideoDevice`, los acepta.
 

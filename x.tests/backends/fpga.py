@@ -97,6 +97,12 @@ FB_BACK_RESET = 0x0102_5800
 VIDEO_STATUS = 0x8000_000C
 VIDEO_SWAP_COUNT = 0x8000_0010
 VIDEO_HALT_AT = 0x8000_0014
+VIDEO_CTRL = 0x8000_0018
+# Modos de salida. Tras el reset la placa arranca en PATTERN --ver
+# video_registers.v-- y el arnes enciende SCANOUT antes de cada caso de video.
+MODE_BLANK = 0
+MODE_PATTERN = 1
+MODE_SCANOUT = 2
 # Contadores de rendimiento. Los MISMOS offsets que en la MiniGPU: el bloque de
 # CPU es un prefijo del de GPU, con CYCLES en +0x00 y RETIRED en +0x04.
 PERF_CYCLES = 0x8000_0300
@@ -293,9 +299,23 @@ class FpgaBackend:
                 # depende del caso anterior en vez del propio.
                 _write_register(client, VIDEO_FB_FRONT, FB_FRONT_RESET)
                 _write_register(client, VIDEO_FB_BACK, FB_BACK_RESET)
-                # HALT_AT y SWAP_COUNT solo existen donde hay `frame_capture`:
-                # en la 16 la ventana de registros es de 16 bytes y escribir en
-                # 0x80000014 seria un acceso fuera de ella.
+                # Y encender el scanout, porque tras el reset el modo es
+                # PATTERN. No es cosmetica: en PATTERN el barrido NO lee la
+                # memoria, asi que no puede haber underflow y un
+                # `expect.video.underflow: false` pasaria sin comprobar nada.
+                # Lo que este arnes mide --si el camino de datos alimenta al
+                # barrido a tiempo-- solo existe en SCANOUT.
+                #
+                # Se escribe aqui y no se le pide al programa porque es
+                # propiedad del ARNES: el caso declara lo que espera, no como
+                # dejar la placa preparada. Un programa puede cambiarlo despues
+                # si lo que prueba es el propio cambio de modo.
+                _write_register(client, VIDEO_CTRL, MODE_SCANOUT)
+                # HALT_AT y SWAP_COUNT solo existen donde hay `frame_capture`.
+                # Ya no es un problema de ALCANCE --desde la fase 3.5 las cuatro
+                # decodifican la pagina MMIO entera y un registro que no existe
+                # lee cero y se traga la escritura-- pero armar una parada que
+                # nadie va a atender seria mentirle al caso.
                 if tiene_captura:
                     swap = video.get("run_until_swap")
                     # Cero desarma la parada. Se escribe siempre, tambien cuando
