@@ -35,6 +35,9 @@ sys.path.insert(0, str(HERE))
 
 from cycle_sim import Pipeline, Config, functional, CycleLimitExceeded
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.sysid_device import SysIdDevice  # noqa: E402
+
 
 config_warp_size = functional.config_warp_size
 TextTrace = functional.TextTrace
@@ -152,6 +155,16 @@ class System(functional.System):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        # El bloque de identificacion se HEREDA del modelo funcional, y por eso
+        # hay que corregir la carpeta: sin esto contesta "soy la 11", que es
+        # peor que no tenerlo. Son dos modelos distintos de la misma ISA --uno
+        # funcional y otro con pipeline-- y lo que los distingue es justo lo que
+        # SYS_ID tiene que decir.
+        #
+        # El perfil de ISA si es el mismo: este modelo ejecuta el mismo juego,
+        # lo que cambia es CUANDO, no QUE. Un test lo contrasta.
+        self.sysid = SysIdDevice(
+            folder=25, isa_profile=functional.SIMULATOR_ISA_PROFILE)
         self.config = config or Config()
         self.max_cycles = max_cycles
         self.pipeline = None

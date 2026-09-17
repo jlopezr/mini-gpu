@@ -39,6 +39,23 @@ import struct
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.sysid_device import (  # noqa: E402
+    BIT_DIV, BIT_MUL, BIT_SUBWORD, SysIdDevice,
+)
+
+# Qué sabe ejecutar ESTE modelo, no la placa que modela.
+#
+# El bit SIMT queda a CERO, y no por descuido: `SSY` y `BAR` se decodifican aquí
+# --tienen que hacerlo, para que el mismo binario corra en CPU y en GPU-- pero
+# son `pass`. En una máquina de un solo hilo no hay divergencia que reconverger
+# ni nadie con quien sincronizar. Declararlo sería prometer semántica SIMT que
+# este modelo no tiene, que es justo lo que `ISA_PROFILE` existe para evitar.
+#
+# Un test contrasta este valor contra los opcodes que el modelo ejecuta de
+# verdad, igual que se hace con el RTL.
+SIMULATOR_ISA_PROFILE = BIT_MUL | BIT_DIV | BIT_SUBWORD
+
 MASK32 = 0xFFFFFFFF
 ERROR_NONE = 0x00
 ERROR_INVALID_OPCODE = 0x01
@@ -339,7 +356,8 @@ class CPU:
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  video: "VideoDevice | None" = None,
-                 serial: "SerialDevice | None" = None):
+                 serial: "SerialDevice | None" = None,
+                 sysid: "SysIdDevice | None" = None):
         self.regs = [0] * 32
         self.pc = 0
         self.memory = bytearray(memory_size)
@@ -354,6 +372,12 @@ class CPU:
         # Igual que el video: sin dispositivo, 0x80000200 sigue siendo memoria
         # fuera de rango y da error.
         self.serial = serial
+        # El bloque de identificacion. A diferencia de los otros dos, este se
+        # construye SIEMPRE si no se pasa: es el unico dispositivo que toda
+        # carpeta con juego de comandos tiene, asi que un programa que se
+        # identifique tiene que poder probarse aqui sin montar nada.
+        self.sysid = sysid if sysid is not None else SysIdDevice(
+            folder=2, isa_profile=SIMULATOR_ISA_PROFILE)
 
     def _device(self, address: int):
         """Que dispositivo MMIO, si alguno, responde a esta direccion.
@@ -361,7 +385,7 @@ class CPU:
         El reparto por ventanas es el de `mmio_decoder.v`: cada dispositivo
         ocupa 256 bytes dentro de 0x80000000-0x80000FFF.
         """
-        for device in (self.video, self.serial):
+        for device in (self.video, self.serial, self.sysid):
             if device is not None and device.contains(address):
                 return device
         return None

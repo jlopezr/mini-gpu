@@ -41,6 +41,17 @@ from pathlib import Path
 
 from gpu_trace import TextTrace, TraceEvent
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.sysid_device import (  # noqa: E402
+    BIT_DIV, BIT_MUL, BIT_SIMT, SysIdDevice,
+)
+
+# Qué sabe ejecutar ESTE modelo. Sin `BIT_SUBWORD`: los accesos de 8 y 16 bits
+# están en la MiniCPU y a la MiniGPU le siguen faltando, pendientes de backport.
+# Coincide con el `0x0b` que declaran las cuatro GPU en RTL, y un test lo
+# contrasta contra los opcodes que el modelo ejecuta.
+SIMULATOR_ISA_PROFILE = BIT_MUL | BIT_DIV | BIT_SIMT
+
 MASK32 = 0xFFFFFFFF
 MAX_WARPS = 8
 MAX_SIMT_REGIONS = 8
@@ -334,6 +345,10 @@ class System:
         # rango y da ERROR_MEMORY_ACCESS, que es lo que hacían los casos de
         # siempre.
         self.video = video
+        # El bloque de identificacion existe SIEMPRE, a diferencia del video:
+        # es el unico dispositivo que toda carpeta con juego de comandos tiene,
+        # asi que un kernel que se identifique tiene que poder probarse aqui.
+        self.sysid = SysIdDevice(folder=11, isa_profile=SIMULATOR_ISA_PROFILE)
         self.streaming_multiprocessor = StreamingMultiprocessor(
             self.memory, self, num_warps, warp_size
         )
@@ -342,6 +357,8 @@ class System:
         """Qué dispositivo MMIO, si alguno, responde a esta dirección."""
         if self.video is not None and self.video.contains(address):
             return self.video
+        if self.sysid.contains(address):
+            return self.sysid
         return None
 
     def tick_devices(self) -> None:
