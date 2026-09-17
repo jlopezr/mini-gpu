@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Convierte una imagen corriente (JPG, PNG, BMP...) en un framebuffer RGB565.
+
+Es el sentido contrario de `frame-to-image.py`: aquí entra algo que se puede
+mirar y sale el `.bin` crudo que comen el monitor, `compare-frames.py` y el
+scanout. El formato es el mismo que genera `make-framebuffer`: 320x240
+píxeles de 16 bits, little-endian, lineal y sin relleno, **153600 bytes**.
+
+Sobre el tamaño
+---------------
+
+El monitor recibe 640x480, pero el framebuffer es de 320x240: el scanout
+duplica cada píxel. Así que una imagen con relación de aspecto 4:3 —640x480,
+1024x768, 1600x1200— entra sin deformarse; cualquier otra hay que decidir qué
+hacer con ella, y eso es `--ajuste`:
+
+  recortar   (por defecto) llena los 320x240 y recorta lo que sobra por el
+             lado largo. Es lo que se quiere para mirar una foto.
+  encajar    mete la imagen entera y rellena con `--fondo`. No recorta nada,
+             pero deja bandas.
+  estirar    deforma hasta 320x240. Solo sirve si la imagen ya venía
+             preparada para este tamaño.
+
+El `--upload`
+-------------
+
+Con `--upload --prototype N` la imagen no se queda en un fichero: se para el
+núcleo, se escribe el framebuffer en SDRAM, se apuntan `FB_FRONT` y `FB_BACK`
+a esa dirección y se pone `VIDEO_CTRL` en SCANOUT. No hace falta ningún
+programa cargado — el scanout lee SDRAM por su cuenta, así que la imagen se
+queda fija en el monitor hasta que alguien escriba otra cosa.
+
+`VIDEO_CTRL` solo existe en la 22; en 16/18/19/21 el scanout está siempre
+encendido y la herramienta lo dice en vez de fallar.
+
+Uso:
+
+    image-to-framebuffer foto.jpg foto_fb.bin
+    image-to-framebuffer foto.jpg foto_fb.bin --ajuste encajar --fondo 0,0,64
+    image-to-framebuffer foto.jpg foto_fb.bin --upload --prototype 22
+"""
+from __future__ import annotations
+
+import argparse
+import struct
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+WIDTH = 320
+HEIGHT = 240
+FB_BASE = 0x01000000
+
+FB_FRONT = 0x80000000
+FB_BACK = 0x80000004
+VIDEO_CTRL = 0x80000018
+MODE_SCANOUT = 2
+
+
+def rgb565(r: int, g: int, b: int) -> int:
+    """Empaqueta tres componentes de 8 bits en un píxel RGB565.
+
+    Gemela de la de `make-framebuffer`, y la inversa de `expandir()` en
+    `frame-to-image.py` salvo por los bits que 565 no puede guardar.
+    """
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
+
+def parse_color(texto: str) -> tuple[int, int, int]:
+    partes = texto.split(",")
+    if len(partes) != 3:
+        raise argparse.ArgumentTypeError(f"color '{texto}': se esperaba R,G,B")
+    try:
+        valores = tuple(int(p) for p in partes)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"color '{texto}': componentes no numéricas")
+    if any(v < 0 or v > 255 for v in valores):
+        raise argparse.ArgumentTypeError(f"color '{texto}': componentes fuera de 0..255")
+    return valores
+
+
+def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
+              fondo: tuple[int, int, int]) -> bytes:
+    from PIL import Image
+
+    imagen = Image.open(entrada)
+    # Un PNG con alfa sobre el color de fondo, no sobre negro por sorpresa.
+    if imagen.mode in ("RGBA", "LA", "P"):
+        imagen = imagen.convert("RGBA")
+        plano = Image.new("RGBA", imagen.size, (*fondo, 255))
+        imagen = Image.alpha_composite(plano, imagen)
+    imagen = imagen.convert("RGB")
+
+    if ajuste == "estirar":
+        # LANCZOS y no NEAREST: aquí se reduce una foto, no se mira un
+        # framebuffer de prueba pixel a pixel. Es lo contrario que en
+        # frame-to-image.py y por la misma razón.
+        imagen = imagen.resize((ancho, alto), Image.LANCZOS)
+    elif ajuste == "recortar":
+        escala = max(ancho / imagen.width, alto / imagen.height)
+        intermedia = (max(1, round(imagen.width * escala)),
+                      max(1, round(imagen.height * escala)))
+        imagen = imagen.resize(intermedia, Image.LANCZOS)
+        izquierda = (imagen.width - ancho) // 2
+        arriba = (imagen.height - alto) // 2
+        imagen = imagen.crop((izquierda, arriba, izquierda + ancho, arriba + alto))
+    else:  # encajar
+        escala = min(ancho / imagen.width, alto / imagen.height)
+        intermedia = (max(1, round(imagen.width * escala)),
+                      max(1, round(imagen.height * escala)))
+        imagen = imagen.resize(intermedia, Image.LANCZOS)
+        lienzo = Image.new("RGB", (ancho, alto), fondo)
+        lienzo.paste(imagen, ((ancho - imagen.width) // 2,
+                              (alto - imagen.height) // 2))
+        imagen = lienzo
+
+    # `tobytes()` y no `getdata()`: son 76800 píxeles y la versión por objetos
+    # tarda un segundo largo, además de estar deprecada desde Pillow 11.
+    crudo = imagen.tobytes()
+    datos = bytearray()
+    for i in range(0, len(crudo), 3):
+        datos += struct.pack("<H", rgb565(crudo[i], crudo[i + 1], crudo[i + 2]))
+    return bytes(datos)
+
+
+def escribir_registro(prototype_dir: Path, port: str, address: int, value: int) -> None:
+    """El monitor escribe byte a byte, así que una palabra son cuatro comandos.
+
+    Igual que en `capture-frames`; se repite porque es la única forma que hay.
+    """
+    from tools.run_board import run_monitor_cli
+
+    for i in range(4):
+        run_monitor_cli(prototype_dir, port, "write-byte",
+                        f"0x{address + i:08x}", str((value >> (i * 8)) & 0xFF))
+
+
+def leer_palabra(prototype_dir: Path, port: str, address: int) -> int | None:
+    """Lee una palabra con `read-word`; None si el prototipo no tiene ese comando."""
+    from tools.run_board import run_monitor_cli
+
+    try:
+        texto = run_monitor_cli(prototype_dir, port, "read-word", f"0x{address:08x}")
+    except SystemExit:
+        return None
+    linea = texto.strip().splitlines()[-1]
+    if ":" not in linea:
+        return None
+    try:
+        return int(linea.rsplit(":", 1)[1].strip(), 16)
+    except ValueError:
+        return None
+
+
+def subir(prototipo: str, port: str | None, fichero: Path, direccion: int) -> int:
+    from tools.run_board import detect_port, resolve_target, run_monitor_cli
+
+    target = resolve_target(prototipo)
+    puerto = port if port is not None else detect_port()
+    prototype_dir = target.prototype_dir
+
+    if not target.capability.get("video"):
+        raise SystemExit(f"error: {prototype_dir.name} no tiene vídeo; "
+                         "nada que mostrar en el monitor")
+
+    # El monitor rechaza cualquier acceso a memoria con el núcleo corriendo, y
+    # además no queremos que un programa previo siga pintando encima.
+    run_monitor_cli(prototype_dir, puerto, "reset")
+
+    print(f"Escribiendo {fichero.stat().st_size} bytes en 0x{direccion:08x} "
+          "(~2 min a 250 kbaud)...")
+    run_monitor_cli(prototype_dir, puerto, "write-block",
+                    f"0x{direccion:08x}", str(fichero.resolve()))
+
+    # Las dos bases a la misma imagen: sin programa no hay swaps, y si alguien
+    # pide uno después se ve lo mismo en vez de basura.
+    escribir_registro(prototype_dir, puerto, FB_FRONT, direccion)
+    escribir_registro(prototype_dir, puerto, FB_BACK, direccion)
+    escribir_registro(prototype_dir, puerto, VIDEO_CTRL, MODE_SCANOUT)
+
+    modo = leer_palabra(prototype_dir, puerto, VIDEO_CTRL)
+    if modo is None:
+        print("VIDEO_CTRL: no se pudo leer de vuelta; si el prototipo no lo "
+              "tiene, su scanout está siempre encendido y la imagen ya se ve")
+    elif modo & 3 != MODE_SCANOUT:
+        print(f"VIDEO_CTRL lee {modo & 3}, no SCANOUT: este prototipo no tiene "
+              "control de modo (solo la 22). Su scanout está siempre encendido, "
+              "así que la imagen se ve igualmente")
+    else:
+        print("VIDEO_CTRL = 2 (SCANOUT); la imagen debería estar en el monitor")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("entrada", help="imagen de partida (cualquier cosa que lea Pillow)")
+    parser.add_argument("salida", help="framebuffer RGB565 crudo a escribir")
+    parser.add_argument("--tamano", default=f"{WIDTH}x{HEIGHT}",
+                        help="ANCHOxALTO del framebuffer (por defecto 320x240, "
+                             "que el scanout duplica a 640x480)")
+    parser.add_argument("--ajuste", choices=("recortar", "encajar", "estirar"),
+                        default="recortar",
+                        help="qué hacer si la imagen no es 4:3 (por defecto: recortar)")
+    parser.add_argument("--fondo", type=parse_color, default=(0, 0, 0),
+                        help="R,G,B de las bandas de --ajuste encajar y del alfa")
+    parser.add_argument("--upload", action="store_true",
+                        help="además, cargarlo en la placa y activar el scanout")
+    parser.add_argument("-p", "--prototype", default=None,
+                        help="prototipo de destino; obligatorio con --upload")
+    parser.add_argument("--direccion", default=f"0x{FB_BASE:08x}",
+                        help="dirección del framebuffer en SDRAM (alinéala a 16: "
+                             "la 22 trunca los bits bajos en silencio)")
+    parser.add_argument("--port", default=None,
+                        help="por defecto, detecta el primer adaptador FTDI conectado")
+    args = parser.parse_args(argv)
+
+    if args.upload and args.prototype is None:
+        parser.error("--upload necesita --prototype")
+
+    try:
+        ancho, alto = (int(v) for v in args.tamano.lower().split("x"))
+    except ValueError:
+        print(f"ERROR: --tamano '{args.tamano}': se esperaba ANCHOxALTO", file=sys.stderr)
+        return 2
+
+    direccion = int(args.direccion, 0)
+
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        print("ERROR: falta Pillow. Esta en requirements.txt:", file=sys.stderr)
+        print("    .venv\\Scripts\\pip install -r requirements.txt", file=sys.stderr)
+        return 2
+
+    entrada = Path(args.entrada)
+    try:
+        datos = convertir(entrada, ancho, alto, args.ajuste, args.fondo)
+    except OSError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+
+    salida = Path(args.salida)
+    salida.write_bytes(datos)
+    print(f"{entrada} -> {salida}: {len(datos)} bytes "
+          f"({ancho}x{alto} RGB565, {args.ajuste})")
+
+    if not args.upload:
+        print(f"Cargar a mano: monitor.py write-block 0x{direccion:08x} {salida}")
+        return 0
+
+    return subir(args.prototype, args.port, salida, direccion)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

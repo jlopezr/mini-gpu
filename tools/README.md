@@ -508,6 +508,30 @@ placa real por el protocolo de vídeo compartido, reutilizando
 `measure-demo` en particular solo tiene sentido con las demos
 `swap_demo`/`tear_demo`, no como medición de FPS general.
 
+### Poner una imagen en la pantalla (`image-to-framebuffer`)
+
+El camino contrario a `frame-to-image.py`: entra un JPG/PNG/BMP y sale el
+`.bin` RGB565 de 320x240 —**153600 bytes**, el mismo formato que
+`make-framebuffer`—, listo para `write-block`.
+
+```bash
+$ image-to-framebuffer foto.jpg foto_fb.bin                       # 153600 bytes en 0x01000000
+$ image-to-framebuffer foto.jpg foto_fb.bin --ajuste encajar --fondo 0,0,64
+$ image-to-framebuffer foto.jpg foto_fb.bin --upload --prototype 22
+```
+
+El framebuffer es de 320x240 y el scanout duplica cada píxel, así que lo que
+entra sin deformarse es **4:3** (640x480, 1024x768...). Para el resto está
+`--ajuste`: `recortar` (por defecto, llena y recorta el lado largo),
+`encajar` (imagen entera con bandas de `--fondo`) y `estirar`.
+
+Con `--upload --prototype N` no se queda en un fichero: resetea el núcleo,
+escribe el framebuffer en SDRAM (~2 min a 250 kbaud), apunta `FB_FRONT` y
+`FB_BACK` a esa dirección y pone `VIDEO_CTRL` en SCANOUT. No hace falta
+programa cargado — el scanout lee SDRAM por su cuenta. `VIDEO_CTRL` solo
+existe en la 22; en 16/18/19/21 el scanout está siempre encendido y la
+herramienta lo dice al leerlo de vuelta en vez de fallar.
+
 ### Capturar un frame sin placa (`capture-frame-sim`)
 
 Igual que `capture-frames`, pero contra el simulador funcional
