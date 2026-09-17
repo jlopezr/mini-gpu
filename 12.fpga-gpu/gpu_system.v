@@ -36,8 +36,16 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     reg [31:0] address;
     reg [7:0] write_data;
     reg writing;
-    wire mmio=address[31:12]==20'h80000;
-    wire cfg_region=address[11:7]==0;
+    // Dos paginas de 4 KiB, no una. La primera (0x80000000) es de perifericos
+    // compartidos con la CPU; la segunda (0x80001000) es control exclusivo de
+    // la GPU. La separacion cuesta un bit mas en este comparador de prefijo, y
+    // es lo que permite que el reparto siga valiendo el dia que CPU y GPU
+    // compartan bitstream: lo exclusivo queda aparte, no intercalado entre lo
+    // compartido. Ver docs/mapa-de-memoria.md §6.
+    wire mmio=address[31:13]==19'h40000;
+    wire gpu_page=address[12];
+    // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
+    wire cfg_region=gpu_page && address[11:7]==0;
     wire [3:0] byte_strobe=4'b0001 << address[1:0];
     wire [31:0] expanded_data={4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
@@ -99,7 +107,8 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         if(cfg_region) begin
             mmio_data=cfg_read_data;
             if(writing && address[3:2]==3) mmio_bad=1;
-        end else case(address[11:2])
+        end else if(gpu_page) mmio_bad=1;  // resto de la pagina GPU: reservado
+        else case(address[11:2])
             10'h040: mmio_data={24'b0,2'b0,debug_warp,debug_lane};
             10'h041: begin mmio_data={24'b0,occupied}; mmio_bad=writing; end
             10'h042: begin mmio_data=retired_count; mmio_bad=writing; end
@@ -127,7 +136,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
                 if(mmio) begin
                     host_read_data<=mmio_data[address[1:0]*8 +: 8];
                     host_error<=mmio_bad; host_ready<=1; host_state<=0;
-                    if(writing && address[11:0]==12'h100) begin
+                    if(writing && !gpu_page && address[11:0]==12'h100) begin
                         debug_lane<=write_data[2:0]; debug_warp<=write_data[5:3];
                     end
                 end else if(aux_ready) host_state<=2;

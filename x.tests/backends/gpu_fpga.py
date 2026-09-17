@@ -125,7 +125,19 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     return None
 
 
-def read_observations(client, status, requested: set[str]) -> dict:
+def warp_config_base(monitor: ModuleType) -> int:
+    """Dónde están los descriptores de warp en esta versión.
+
+    La dirección no es la misma en todos los prototipos mientras dure la
+    migración de `docs/unificacion-mmio.md`: la ventana se mueve de
+    `0x80000000` a `0x80001000`, una carpeta cada vez. Se lee del `monitor.py`
+    del prototipo, que es quien declara `MONITOR_REGIONS` y por tanto la única
+    fuente que no puede quedarse desfasada sin que falle antes el cliente.
+    """
+    return getattr(monitor, 'WARP_CONFIG_BASE', 0x8000_0000)
+
+
+def read_observations(client, status, requested: set[str], config_base: int) -> dict:
     """Read actual hardware state; register traffic is limited to assertions."""
     def word(address):
         return int.from_bytes(client.read_memory(address, 4), 'little')
@@ -144,7 +156,7 @@ def read_observations(client, status, requested: set[str]) -> dict:
             result['fault.address'] = None
     for warp in range(8):
         prefix = f'warp[{warp}]'
-        data = client.read_memory(0x80000000 + warp * 16, 16)
+        data = client.read_memory(config_base + warp * 16, 16)
         result[f'{prefix}.pc'] = int.from_bytes(data[:4], 'little')
         result[f'{prefix}.active_mask'] = data[4]
         client.select_context(warp, 0)
@@ -266,7 +278,10 @@ class GpuFpgaBackend:
                 time.sleep(0.01)
 
             elapsed = time.monotonic() - started
-            observations = read_observations(client, status, observation_fields or set())
+            observations = read_observations(
+                client, status, observation_fields or set(),
+                warp_config_base(self.monitor),
+            )
             observations["duration_seconds"] = elapsed
 
             memory = {

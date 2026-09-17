@@ -21,8 +21,11 @@ ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
+# Todavia en 0x80000000: esta carpeta no ha migrado aun a la segunda pagina.
+# Ver docs/unificacion-mmio.md.
+WARP_CONFIG_BASE = 0x8000_0000
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_0080),
+    (WARP_CONFIG_BASE, 0x8000_0080),
     (0x8000_0100, 0x8000_0118),
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
@@ -105,7 +108,7 @@ class MonitorClient:
             if time.monotonic() > deadline:
                 raise MonitorError("GPU did not finish register initialization")
         for w in warps:
-            base = 0x80000000 + w.warp_id * 16
+            base = WARP_CONFIG_BASE + w.warp_id * 16
             self.write_memory(base, w.pc.to_bytes(4, 'little'))
             self.write_memory(base + 4, w.active_mask.to_bytes(4, 'little'))
             self.write_memory(base + 8, w.workgroup_id.to_bytes(4, 'little'))
@@ -412,7 +415,7 @@ def main() -> int:
                 print("Warps configured, registers reset; use run to launch")
             elif args.command == "warp-status":
                 for warp in range(8):
-                    data = client.read_memory(0x80000000 + warp * 16, 16)
+                    data = client.read_memory(WARP_CONFIG_BASE + warp * 16, 16)
                     pc, masks, group, state = (int.from_bytes(data[i:i+4], 'little') for i in range(0,16,4))
                     print(f"warp={warp} pc=0x{pc:08x} active=0x{masks & 255:02x} "
                           f"live=0x{masks >> 8 & 255:02x} group={group} "

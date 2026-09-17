@@ -140,6 +140,15 @@ module monitor (
    * exposes 128 KiB of RAM plus two disjoint monitor-only MMIO windows.
    * Keeping this check here makes WRITE_BLOCK and READ_BLOCK agree with the
    * byte commands and with the address map implemented by gpu_system.
+   *
+   * Esta lista es la GEMELA de MONITOR_REGIONS en monitor.py, y las dos tienen
+   * que decir lo mismo: si se anade una ventana en gpu_system y no aqui, el
+   * monitor rechaza el comando antes de que llegue al decodificador, y el
+   * sintoma es un NACK que parece un bitstream viejo.
+   *
+   * La configuracion de warps esta en 0x80001000, no en 0x80000000: la primera
+   * pagina queda para perifericos compartidos con la CPU. Ver
+   * docs/mapa-de-memoria.md §6 y docs/unificacion-mmio.md.
    */
   function block_range_valid;
     input [31:0] start_address;
@@ -150,10 +159,10 @@ module monitor (
       block_range_valid =
           ({1'b0, start_address} < 33'h0_0002_0000 &&
            end_address <= 33'h0_0002_0000) ||
-          ({1'b0, start_address} >= 33'h0_8000_0000 &&
-           end_address <= 33'h0_8000_0080) ||
           ({1'b0, start_address} >= 33'h0_8000_0100 &&
-           end_address <= 33'h0_8000_0118);
+           end_address <= 33'h0_8000_0118) ||
+          ({1'b0, start_address} >= 33'h0_8000_1000 &&
+           end_address <= 33'h0_8000_1080);
     end
   endfunction
 

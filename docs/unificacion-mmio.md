@@ -78,18 +78,34 @@ La 12 es la más barata para rodar la cadena completa: EBR en vez de SDRAM, sin
 vídeo, sin contadores, ciclo de síntesis corto. El parche recorre las cuatro
 capas que van a doler igual en la 22.
 
-- [ ] Mover la ventana de configuración de warps a `0x80001000–0x8000107F` en
-      [`12.fpga-gpu/gpu_system.v`](../12.fpga-gpu/gpu_system.v). Cuesta un bit
-      más en el comparador de prefijo del decodificador.
-- [ ] Actualizar la **lista blanca dentro de**
-      [`12.fpga-gpu/monitor.v`](../12.fpga-gpu/monitor.v). Si se olvida, el
-      monitor rechaza el comando antes del decodificador y el síntoma es un NACK
-      que parece un bitstream viejo.
-- [ ] Actualizar `MONITOR_REGIONS` en
+- [x] Mover la ventana de configuración de warps a `0x80001000–0x8000107F` en
+      [`12.fpga-gpu/gpu_system.v`](../12.fpga-gpu/gpu_system.v). El prefijo pasa
+      de `address[31:12]==20'h80000` a `address[31:13]==19'h40000`, y
+      `address[12]` distingue la página compartida de la exclusiva. El resto de
+      la página GPU responde `bad`, como cualquier hueco.
+- [x] Actualizar la **lista blanca dentro de**
+      [`12.fpga-gpu/monitor.v`](../12.fpga-gpu/monitor.v).
+- [x] Actualizar `MONITOR_REGIONS` en
       [`12.fpga-gpu/monitor.py`](../12.fpga-gpu/monitor.py), la gemela a mano de
-      la anterior.
-- [ ] Pasar los tests de `x.tests` y los `*_tb.v` de regiones.
+      la anterior. Se introdujo `WARP_CONFIG_BASE` para que la dirección deje de
+      estar repetida por el fichero.
+- [x] Pasar los tests de `x.tests` y los `*_tb.v`. **176 tests Python** y la
+      regresión RTL completa de la 12 en verde.
 - [ ] Sintetizar y verificar en placa que el lanzamiento de warps sigue vivo.
+
+Cuatro testbenches daban por hecha la dirección vieja, y ninguno de forma
+evidente: `gpu_control_tb.v` la tenía en la tarea `fresh` y en un caso suelto,
+`gpu_regions_tb.v` en tres sitios, `gpu_system_tb.v` en el bucle de
+configuración, y `gpu_uart_tb.v` **como bytes big-endian dentro de la trama
+UART** (`80 00 00 30` → `80 00 10 30`), que es el único sitio donde la dirección
+no se parece a una dirección. Conviene buscarla en esas cuatro formas al migrar
+14, 17 y 22.
+
+El backend compartido `x.tests/backends/gpu_fpga.py` también la tenía cableada,
+y lo comparten las cuatro GPU. Ahora la lee del `monitor.py` del prototipo con
+`warp_config_base()`, y las tres carpetas sin migrar declaran
+`WARP_CONFIG_BASE = 0x8000_0000`: **en las fases 2 y 3 basta con cambiar esa
+constante**, no hay que volver a tocar el backend.
 
 ## Fase 2 — Replicar en 14 y 17
 

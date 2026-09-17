@@ -12,8 +12,13 @@ from backends.gpu_simulator import GpuBackend
 
 
 class SnapshotClient:
-    def __init__(self, fault=0):
+    # `config_base` es parametro porque durante la migracion de
+    # docs/unificacion-mmio.md conviven las dos direcciones: la 12 ya tiene los
+    # descriptores en 0x80001000 y el resto sigue en 0x80000000. La ventana de
+    # depuracion (0x80000100) no se mueve en ninguna de las dos.
+    def __init__(self, fault=0, config_base=0x80000000):
         self.fault = fault
+        self.config_base = config_base
         self.selected = (0, 0)
         self.reads = []
 
@@ -25,8 +30,8 @@ class SnapshotClient:
         return self.selected[0] * 10000 + self.selected[1] * 100 + register
 
     def read_memory(self, address, size):
-        if 0x80000000 <= address < 0x80000080:
-            warp = (address - 0x80000000) // 16
+        if self.config_base <= address < self.config_base + 0x80:
+            warp = (address - self.config_base) // 16
             return struct.pack('<4I', warp * 4, 0xff00 | warp, 0, 0)
         value = {0x80000108: 123, 0x8000010c: self.fault,
                  0x80000110: 44, 0x80000114: self.selected[0] + 10}[address]
@@ -37,7 +42,8 @@ class GpuFpgaTest(unittest.TestCase):
     def test_read_actual_warp_state_and_only_requested_registers(self):
         client = SnapshotClient()
         fields = {'warp[3].lane[5].R7', 'warp[0].lane[2].R1', 'warp[3].lane[5].R9'}
-        got = gpu_fpga.read_observations(client, SimpleNamespace(error=False), fields)
+        got = gpu_fpga.read_observations(
+            client, SimpleNamespace(error=False), fields, 0x80000000)
         self.assertEqual(got['instructions_executed'], 123)
         self.assertFalse(got['fault.present'])
         self.assertEqual(got['warp[3].pc'], 12)
@@ -46,11 +52,28 @@ class GpuFpgaTest(unittest.TestCase):
         self.assertEqual(got['warp[3].lane[5].R7'], 30507)
         self.assertEqual(client.reads, [(0, 2, 1), (3, 5, 7), (3, 5, 9)])
 
+    def test_warp_state_se_lee_de_la_pagina_migrada(self):
+        """La 12 ya tiene los descriptores en 0x80001000. Leerlos de la base
+        vieja no daria un error: daria observaciones de otra ventana, que es
+        peor. Por eso la base viaja como argumento y no cableada."""
+        client = SnapshotClient(config_base=0x80001000)
+        got = gpu_fpga.read_observations(
+            client, SimpleNamespace(error=False), set(), 0x80001000)
+        self.assertEqual(got['warp[3].pc'], 12)
+        self.assertEqual(got['warp[3].active_mask'], 3)
+
+    def test_warp_config_base_sale_del_monitor_del_prototipo(self):
+        migrado = SimpleNamespace(WARP_CONFIG_BASE=0x80001000)
+        self.assertEqual(gpu_fpga.warp_config_base(migrado), 0x80001000)
+        # Un monitor que aun no declare la constante mantiene la base vieja.
+        self.assertEqual(gpu_fpga.warp_config_base(SimpleNamespace()), 0x80000000)
+
     def test_fault_lane_valid_and_unavailable_memory_address(self):
         for code, valid in [(4, True), (6, False), (2, True)]:
             with self.subTest(code=code):
                 client = SnapshotClient((0x40 if valid else 0) | (3 << 3) | 5)
-                got = gpu_fpga.read_observations(client, SimpleNamespace(error=True, error_code=code), set())
+                got = gpu_fpga.read_observations(
+                    client, SimpleNamespace(error=True, error_code=code), set(), 0x80000000)
                 self.assertEqual(got['fault.pc'], 44)
                 self.assertEqual(got['fault.warp_id'], 3)
                 self.assertEqual(got['fault.core_id'], 5 if valid else None)

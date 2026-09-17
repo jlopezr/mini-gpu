@@ -63,14 +63,15 @@ module gpu_uart_tb;
             $fatal(1,"high RAM block read");
         // This is the path used by monitor.py configure: write one warp's PC,
         // masks and workgroup as little-endian words through MMIO.
-        request[0]=8'h20; request[1]=8'h80; request[2]=0; request[3]=0; request[4]=8'h30;
+        // 0x80001030: warp 3 en la pagina de control exclusivo de la GPU.
+        request[0]=8'h20; request[1]=8'h80; request[2]=0; request[3]=8'h10; request[4]=8'h30;
         request[5]=0; request[6]=12;
         request[7]=0; request[8]=0; request[9]=0; request[10]=0;
         request[11]=8'h20; request[12]=0; request[13]=0; request[14]=0;
         request[15]=7; request[16]=0; request[17]=0; request[18]=0;
         exchange(19,1); if(response[0]!==8'ha0) $fatal(1,"warp configuration block write");
         // This is the path used by warp-status: read the complete 16-byte slot.
-        request[0]=8'h21; request[1]=8'h80; request[2]=0; request[3]=0; request[4]=8'h30;
+        request[0]=8'h21; request[1]=8'h80; request[2]=0; request[3]=8'h10; request[4]=8'h30;
         request[5]=0; request[6]=16;
         exchange(7,17);
         if(response[0]!==8'ha1 || response[5]!==8'h20 || response[9]!==7 ||

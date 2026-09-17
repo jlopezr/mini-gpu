@@ -187,12 +187,20 @@ Las palabras de control se transfieren little-endian mediante READ/WRITE_BYTE
 o READ/WRITE_BLOCK. La dirección del comando UART conserva el formato big-endian
 del monitor anterior. `READ_REG` lee el contexto seleccionado.
 
+Hay **dos páginas** de 4 KiB. La primera, `0x80000000`, es la de periféricos
+compartidos con la CPU —la 12 solo tiene ahí la depuración SIMT—; la segunda,
+`0x80001000`, es control exclusivo de la GPU. La configuración de warps vive en
+la segunda, y no en `0x80000000` como en las primeras versiones de esta carpeta:
+así lo exclusivo de la GPU queda separado de lo compartido en vez de
+intercalado. El contrato completo está en
+[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
+
 | Dirección | Contenido |
 |---|---|
-| `0x80000000 + 16*w` | PC del warp, lectura/escritura |
-| `0x80000004 + 16*w` | Lectura: active[7:0], live[15:8]. Escribir el byte bajo fija ambas máscaras |
-| `0x80000008 + 16*w` | workgroup_id, lectura/escritura |
-| `0x8000000c + 16*w` | Solo lectura: regiones [7:0], caminos [15:8], WAIT_MEM bit 16, WAIT_BAR bit 17 |
+| `0x80001000 + 16*w` | PC del warp, lectura/escritura |
+| `0x80001004 + 16*w` | Lectura: active[7:0], live[15:8]. Escribir el byte bajo fija ambas máscaras |
+| `0x80001008 + 16*w` | workgroup_id, lectura/escritura |
+| `0x8000100c + 16*w` | Solo lectura: regiones [7:0], caminos [15:8], WAIT_MEM bit 16, WAIT_BAR bit 17 |
 | `0x80000100` | Selección: lane[2:0], warp[5:3] |
 | `0x80000104` | Slots LSU ocupados [7:0], solo lectura |
 | `0x80000108` | Instrucciones de warp retiradas, contador de 32 bits |

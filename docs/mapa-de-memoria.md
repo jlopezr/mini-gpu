@@ -146,7 +146,13 @@ decodificador. Y la configuración de warps es la única ventana llena al 100 %:
 | 16 | `0x80000000–0x8000000F` | `address[31:4]`, cuatro registros de vídeo |
 | 18 | `0x80000000–0x8000001F` | `address[31:5]`, añade `SWAP_COUNT` y `HALT_AT` |
 | 19, 21 | `0x80000000–0x80000FFF` | `address[31:12]`, 16 slots de 256 B por `address[11:8]` |
-| 12, 14, 17, 22 | `0x80000000–0x80000FFF` | `address[31:12]`, regiones por `address[11:6]` y palabras sueltas |
+| 14, 17, 22 | `0x80000000–0x80000FFF` | `address[31:12]`, regiones por `address[11:6]` y palabras sueltas |
+| 12 | `0x80000000–0x80001FFF` | `address[31:13]`, **dos páginas**: `address[12]` separa lo compartido del control exclusivo de la GPU |
+
+La 12 es la primera carpeta migrada al contrato de §6: su configuración de warps
+está en `0x80001000` y no en `0x80000000`. El resto de GPU sigue con el mapa
+antiguo; el orden y el estado de la migración están en
+[`unificacion-mmio.md`](unificacion-mmio.md).
 
 La ventana publicada no significa que cada dirección tenga un registro útil. En
 la 21, CPU y monitor se arbitran sobre el mismo bus MMIO.
@@ -294,8 +300,10 @@ monitor, no por registros de lanzamiento.
 
 #### Discrepancias
 
-Ninguna en el mapa: 12, 14, 17 y 22 comparten decodificador. La única diferencia
-es de acceso, y es de 22: **la GPU no llega a esta ventana**. Que un warp
+En el mapa, una: la 12 ya migró la ventana a `0x80001000` y 14, 17 y 22 siguen
+en `0x80000000`. El contenido y el decodificador son los mismos; lo que cambia
+es el prefijo. La otra diferencia es de acceso, y es de 22: **la GPU no llega a
+esta ventana**. Que un warp
 reconfigure los warps no tiene caso de uso y sí modos de fallo.
 
 ### Depuración SIMT
@@ -455,7 +463,8 @@ Qué le falta a cada prototipo para cumplir el contrato:
 | 16 | vídeo conforme | Ventana de 16 B en vez de slot de 256 B; sin `SWAP_COUNT` |
 | 18 | vídeo conforme | Ventana de 32 B en vez de slot de 256 B |
 | 19, 21 | **conformes** | Solo el bloque de identificación |
-| 12, 14, 17 | no conforme | Mover warps a `0x80001000` |
+| 12 | **conforme** | Migrada: warps en `0x80001000`. Solo el bloque de identificación |
+| 14, 17 | no conforme | Mover warps a `0x80001000` |
 | 22 | no conforme | Mover warps a `0x80001000`; vídeo a `0x80000000`; `VIDEO_CTRL` a `+0x18`; bit 1 de `STATUS` |
 | 2, 11 | fuera de contrato | Los simuladores no implementan la ventana |
 
@@ -531,7 +540,7 @@ gemela a mano de `MONITOR_REGIONS` en `monitor.py`:
 
 | Prototipo | Rangos que acepta el monitor |
 |---|---|
-| 12 | `< 0x00020000`, `0x80000000–0x80000080`, `0x80000100–0x80000118` |
+| 12 | `< 0x00020000`, `0x80000100–0x80000118`, `0x80001000–0x80001080` |
 | 14, 17 | `< 0x02000000`, `0x80000000–0x80000080`, `0x80000100–0x80000118` |
 | 22 | lo de 14 más `0x80000200–0x80000218` y `0x80000300–0x80000320` |
 
