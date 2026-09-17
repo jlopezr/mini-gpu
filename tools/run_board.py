@@ -230,9 +230,24 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
     if "error=True" in status:
         print("!! la CPU se ha detenido con error", file=sys.stderr)
     if target.capability and "video" in target.capability.get("capabilities", ()):
-        video_status = run_monitor_cli(prototype_dir, port, "read-byte", "0x8000000c")
-        if ":" in video_status and int(video_status.rsplit(":", 1)[1].strip(), 16) & 1:
-            print("!! underflow de video marcado (pegajoso: puede venir de antes)", file=sys.stderr)
+        # El puerto host de la GPU rechaza TODA transaccion mientras corre
+        # (`if(!halted) begin host_ready<=1; host_error<=1; end` en
+        # gpu_system_bl8.v), asi que preguntar aqui aborta el comando con un
+        # NACK que parece un bitstream malo. En CPU no pasa: el monitor y la CPU
+        # se arbitran sobre el mismo bus MMIO y la lectura vale en marcha, que
+        # es justo cuando interesa mirar el underflow de una demo que no para.
+        #
+        # Esto no se veia hasta que la 22 empezo a declarar `video`: la
+        # deteccion buscaba `video_registers.v` y la GPU tiene
+        # `gpu_video_regs.v`. Ver docs/unificacion-mmio.md, fase 0.
+        corriendo = "halted=False" in status
+        if target.capability.get("backend") == "gpu" and corriendo:
+            print("   (underflow de video no comprobado: la GPU esta en marcha "
+                  "y su puerto host solo responde parada)")
+        else:
+            video_status = run_monitor_cli(prototype_dir, port, "read-byte", "0x8000000c")
+            if ":" in video_status and int(video_status.rsplit(":", 1)[1].strip(), 16) & 1:
+                print("!! underflow de video marcado (pegajoso: puede venir de antes)", file=sys.stderr)
     return 0
 
 

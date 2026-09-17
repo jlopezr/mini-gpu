@@ -110,7 +110,10 @@ capas que van a doler igual en la 22.
       estar repetida por el fichero.
 - [x] Pasar los tests de `x.tests` y los `*_tb.v`. **176 tests Python** y la
       regresión RTL completa de la 12 en verde.
-- [ ] Sintetizar y verificar en placa que el lanzamiento de warps sigue vivo.
+- [x] Sintetizar y verificar en placa. Síntesis: 34,93 MHz contra 25 de
+      restricción, +136 LUTs. Placa (ULX3S 85F, COM3): monitor 2.3 y **26 casos,
+      0 fallos**. Cada caso configura warps, así que valida de una vez la lista
+      blanca, `MONITOR_REGIONS`, la ventana en `0x80001000` y la depuración.
 
 Cuatro testbenches daban por hecha la dirección vieja, y ninguno de forma
 evidente: `gpu_control_tb.v` la tenía en la tarea `fresh` y en un caso suelto,
@@ -141,7 +144,14 @@ byte idénticos entre sí. El parche de la fase 1 se replica casi literal.
       llamada). Las tres en verde a la primera, y 176 tests Python.
 - [x] Comprobar que 14 y 17 siguen respondiendo idénticas: sus `gpu_system.v`
       eran byte a byte iguales antes del parche y lo siguen siendo después.
-- [ ] Sintetizar y verificar en placa (pendiente junto con el de la fase 1).
+- [x] Sintetizar y verificar en placa. 14: 32,65 MHz contra 25, +47 LUTs, y
+      **27 casos, 0 fallos**. 17: 38,18 MHz, sintetiza y responde, pero
+      `test-board` no la acepta porque **no tiene `version.json`** y por tanto no
+      es un target de test soportado — es preexistente y deliberado, está
+      documentado en `prototype_report.py`. Verificada a mano: `warp-status` lee
+      los ocho descriptores desde `0x80001000`, y `0x80000000` **se rechaza**,
+      que es lo correcto porque la 17 no tiene vídeo y el slot compartido está
+      vacío.
 
 ## Fase 3 — La 22, donde está el retorno
 
@@ -177,9 +187,28 @@ no puede ir a `0x80000000` mientras los warps estén ahí.
       `0x80000204`/`0x80000208` como direcciones MMIO de ejemplo.
 - [x] Añadir al `gpu_monitor_regions_tb.v` la lectura del **bloque de vídeo
       entero** (28 bytes). Con 4 bytes no se veía el hueco de `HALT_AT`.
-- [ ] Verificar en placa que el arranque sigue en **PATTERN, no SCANOUT** — la
-      SDRAM recién encendida contiene basura y arrancar en SCANOUT elegiría una
-      salida indefinida por defecto.
+- [x] **Verificado en placa** (ULX3S 85F, COM3). Síntesis: 35,67 MHz de SDRAM
+      contra 25 de restricción, `clk_pix` 71,92 y `clk_pix_5x` 227,01, todos con
+      holgura; **+452 LUTs (+1,3 %)**, bastante más que los +47 de la 14 — la 22
+      lleva además el vídeo movido, el bit 1 de `STATUS`, `HALT_AT` y el término
+      `mux_gpu_page` en el camino que comparten host y GPU. No está desglosado.
+
+      Suite: **27 casos, 0 fallos**. Pero la suite **no prueba el vídeo**, porque
+      los casos de vídeo son de arquitectura CPU y se omiten. La prueba de verdad
+      fue correr los kernels y leer el bloque:
+
+      | Registro | Tras `plasma.asm` | |
+      |---|---|---|
+      | `FB_FRONT` `+0x00` | `0x00100000` | lo escribe el kernel |
+      | `FB_BACK` `+0x04` | `0x00140000` | lo escribe el kernel |
+      | `STATUS` `+0x0C` | `0x329a0000` | 12954 frames, underflow 0 |
+      | `SWAP_COUNT` `+0x10` | `4` | **cuatro intercambios completados** |
+      | `HALT_AT` `+0x14` | `0` | lee cero, no levanta `bad` |
+      | `VIDEO_CTRL` `+0x18` | `2` = SCANOUT | lo escribe el kernel |
+
+      Es la validación completa: el kernel configuró los dos buffers en los
+      offsets del contrato, pidió intercambios por `SWAP` en `+0x08` y el
+      hardware completó cuatro, sin underflow.
 - [x] Documentar que **los programas alinean las bases de framebuffer a 16
       bytes**. El alineamiento no se unifica: 4 B en CPU y 16 B en GPU conviven
       si los programas respetan el más estricto. Escribir una base no alineada a
@@ -189,6 +218,40 @@ no puede ir a `0x80000000` mientras los warps estén ahí.
 
 El mismo `.asm` de vídeo, con las mismas constantes, corre en 21 y en 22. Si eso
 no se cumple, la fase no está terminada aunque todo sintetice.
+
+**Cumplido en hardware**, ver arriba.
+
+### El caso de `SYS_ID`, reproducido en vivo
+
+Con la 17 flasheada, **`board-upload -p 22` no sube nada** y da el bitstream por
+bueno: comprueba la identidad por versión de monitor, y 14, 17 y 22 responden las
+tres **2.4**. `mmio_selftest.asm` fallaba entonces con `error_code=0x02` al
+escribir `VIDEO_CTRL`, porque corría sobre la 17, que no tiene vídeo. Con
+`--rebuild` pasa.
+
+Es exactamente lo que [`mapa-de-memoria.md`](mapa-de-memoria.md) §6.5 predice
+—«con `--version sdram` contra una placa con la 22 flasheada, la comprobación de
+bitstream pasa y se miden prestaciones del hardware equivocado»— y el argumento
+práctico para la fase 4a. Hasta que exista `SYS_ID`, **conviene usar
+`--rebuild`** al cambiar entre 14, 17 y 22.
+
+### Otros dos fallos que destapó la fase 0, y que no eran suyos
+
+**Los `examples/*.bin` están versionados** y en la fase 3 se regeneraron los
+`.hex` pero no los `.bin`: `mmio_selftest`, `plasma_1frame` y `plasma_small` se
+quedaron desfasados respecto a su `.asm`. Al migrar kernels hay que regenerar
+**los dos** formatos.
+
+`run-board` abortaba en la 22 con «The FPGA rejected the command» al leer
+`VIDEO_STATUS`. `run_board.py` hace esa comprobación de underflow **si el
+prototipo declara `video`**, y hasta la fase 0 la 22 no lo declaraba, así que la
+rama nunca se ejecutaba en GPU. Al activarse salió a la luz que da por hecho el
+modelo de CPU: allí monitor y CPU se arbitran sobre el mismo bus MMIO y la
+lectura vale en marcha —que es justo cuando interesa mirar el underflow de una
+demo que no para—, mientras que **el puerto host de la GPU rechaza toda
+transacción mientras corre** (`if(!halted) begin host_ready<=1; host_error<=1;
+end` en `gpu_system_bl8.v`). Comprobado en placa: con `halted=False` se rechaza,
+parada funciona. Arreglado saltando la comprobación solo en ese caso.
 
 ## Fase 3.4 — Acceso de 32 bits del monitor al MMIO
 

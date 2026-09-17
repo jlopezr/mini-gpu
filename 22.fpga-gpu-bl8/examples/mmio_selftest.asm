@@ -10,7 +10,7 @@
 ;   - un salto DIVERGENTE necesita `SSY etiqueta` delante, marcando donde
 ;     reconvergen los caminos. Sin el, el SM para con ERROR_SIMT (0x06).
 ;   - el inmediato de LOAD/STORE es un desplazamiento en BYTES, no en palabras:
-;     `mem32[Ra + imm]`. De ahi el 512 para 0x200 y no 128.
+;     `mem32[Ra + imm]`. De ahi el 768 para 0x300 y no 192.
 ;
 ; Deja en registros del hilo 0, para que el banco y el monitor los lean:
 ;   R10 = VIDEO_CTRL leido de vuelta
