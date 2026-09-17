@@ -94,8 +94,9 @@ module cpu_program_system (
 
   /*
    * The CPU sees data memory as a local Harvard address space starting at zero.
-   * The complete top-level system exposes its data EBR at monitor address
-   * 0x00100000; this isolated test module has no UART monitor.
+   * The complete top-level system exposes its second EBR at monitor address
+   * 0x00004000, contiguous with the first; this isolated test module has no
+   * UART monitor and keeps its own local space starting at zero.
    */
   wire data_address_valid =
       (dmem_address[31:14] == 18'h00000) &&

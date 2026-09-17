@@ -74,7 +74,7 @@ margen debe revisarse después de modificaciones relevantes.
 | Banco | Dirección global | Tamaño |
 |-------|-----------------:|-------:|
 | EBR 0 | `0x00000000–0x00003fff` | 16 KiB |
-| EBR 1 | `0x00100000–0x00103fff` | 16 KiB |
+| EBR 1 | `0x00004000–0x00007fff` | 16 KiB |
 
 CPU y monitor presentan esas mismas direcciones. Un router registrado dirige
 cada petición `imem`, `dmem` o del monitor al banco seleccionado; ambos puertos

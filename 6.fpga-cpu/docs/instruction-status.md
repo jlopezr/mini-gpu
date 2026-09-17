@@ -121,7 +121,7 @@ y PC después de la parada.
 ### 4. Mantener documentada la diferencia de memoria
 
 El simulador, la CPU y el monitor usan el mismo mapa global. La FPGA EBR
-respalda `0x00000000–0x00003fff` y `0x00100000–0x00103fff`; cualquier otra
+respalda `0x00000000–0x00007fff` (32 KiB seguidos, dos EBR); cualquier otra
 dirección produce error. La FPGA SDRAM implementa 32 MiB continuos. Los tests
 comunes usan solamente las dos ventanas presentes en ambas implementaciones y
 el backend no traduce direcciones.

@@ -26,7 +26,7 @@ Mapa unificado visible por la CPU y el monitor:
 | Banco          |        Dirección global |
 |----------------|------------------------:|
 | EBR 0          | `0x00000000–0x00003fff` |
-| EBR 1          | `0x00100000–0x00103fff` |
+| EBR 1          | `0x00004000–0x00007fff` |
 | Huecos y resto |            error de bus |
 
 Los puertos `imem` y `dmem` pueden acceder a cualquiera de los dos bancos.

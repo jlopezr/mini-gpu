@@ -207,12 +207,12 @@ module monitor_tb;
     if (received[12] !== 8'hbe) $fatal(1, "READ_BLOCK byte 2 mismatch");
     if (received[13] !== 8'hef) $fatal(1, "READ_BLOCK byte 3 mismatch");
 
-    // Write and read the second EBR window at 0x00100000.
+    // Write and read the second EBR bank, ahora contiguo en 0x00004000.
     wait (!busy && tx_ready);
     send_command(8'h10);
     send_command(8'h00);
-    send_command(8'h10);
     send_command(8'h00);
+    send_command(8'h40);
     send_command(8'h00);
     send_command(8'h5a);
     wait (received_count == 15);
@@ -221,8 +221,8 @@ module monitor_tb;
     wait (!busy && tx_ready);
     send_command(8'h11);
     send_command(8'h00);
-    send_command(8'h10);
     send_command(8'h00);
+    send_command(8'h40);
     send_command(8'h00);
     wait (received_count == 17);
     if (received[15] !== 8'h91) $fatal(1, "Data-memory READ_BYTE mismatch");

@@ -14,11 +14,14 @@ BAUDRATE = 3_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0xFFFF_FFFF
 MAX_BLOCK_SIZE = 256
-# Los dos bancos EBR, no contiguos: entre ellos el bus da error.
+# Los dos bancos EBR, vistos como 32 KiB seguidos. Estuvieron en 0x00000000 y
+# 0x00100000, con un hueco de 1 MiB en medio; ahora el banco 1 empieza donde
+# acaba el 0 y el bit 14 de la direccion elige. Fuera de aqui, el bus da error.
+# Gemela del filtro de bloques de monitor.v.
 ARCHITECTURAL_REGIONS = (
-    (0x0000_0000, 0x0000_4000),
-    (0x0010_0000, 0x0010_4000),
+    (0x0000_0000, 0x0000_8000),
 )
+# La 6 no tiene ventana MMIO: es la unica sin periféricos mapeados.
 MONITOR_REGIONS = ()
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

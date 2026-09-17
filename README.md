@@ -103,8 +103,8 @@ MiniCPU ── imem 32 bits ──────────┤
 ```
 
 La CPU conserva puertos separados para instrucciones y datos, pero ambos usan
-el mismo mapa global que el monitor. La versión EBR implementa dos ventanas de
-16 KiB en `0x00000000` y `0x00100000`; la versión SDRAM respalda directamente
+el mismo mapa global que el monitor. La versión EBR implementa dos bancos de
+16 KiB contiguos, `0x00000000–0x00007fff`; la versión SDRAM respalda directamente
 todo `0x00000000–0x01ffffff`. No existen traslaciones ocultas de direcciones.
 
 ## Requisitos

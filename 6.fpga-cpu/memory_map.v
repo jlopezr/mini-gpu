@@ -1,11 +1,19 @@
 `default_nettype none
 
 /*
- * Unified architectural map backed by two independent 16 KiB EBR banks:
+ * Unified architectural map backed by two independent 16 KiB EBR banks, seen as
+ * ONE contiguous 32 KiB space:
  *
  *   0x00000000 - 0x00003fff: bank 0
- *   0x00100000 - 0x00103fff: bank 1
+ *   0x00004000 - 0x00007fff: bank 1
  *   all other addresses:       bus error
+ *
+ * Los bancos estuvieron en 0x00000000 y 0x00100000, con un hueco de 1 MiB en
+ * medio. Juntarlos sale a favor por tres lados: un programa puede pasar de
+ * 16 KiB sin cruzar un agujero que el compilador tendria que conocer; el
+ * selector de banco es address[14] en vez de dos comparadores de 18 bits por
+ * puerto (y hay tres puertos, monitor, imem y dmem); y deja a la 6 con el mismo
+ * aspecto que el resto, que son todos un bloque de RAM seguido.
  *
  * The monitor and both CPU ports use these exact global addresses. imem is a
  * read-only interface, but it can fetch from either bank; dmem can read or
@@ -29,17 +37,17 @@ module memory_map (
   localparam [1:0] OWNER_NONE=2'd0, OWNER_MONITOR=2'd1,
                    OWNER_IMEM=2'd2, OWNER_DMEM=2'd3;
 
-  wire monitor_bank0 = address[31:14] == 18'h00000;
-  wire monitor_bank1 = address[31:14] == 18'h00040;
+  // Un solo comparador por puerto decide "esto es RAM"; el bit 14 elige banco.
+  wire monitor_in_ram = address[31:15] == 17'h00000;
+  wire monitor_bank0 = monitor_in_ram && !address[14];
+  wire monitor_bank1 = monitor_in_ram && address[14];
   wire monitor_request = write_enable || read_enable;
-  wire imem_bank0 = cpu_imem_address[31:14] == 18'h00000;
-  wire imem_bank1 = cpu_imem_address[31:14] == 18'h00040;
-  wire imem_address_valid = (imem_bank0 || imem_bank1) &&
-                            cpu_imem_address[1:0] == 2'b00;
-  wire dmem_bank0 = cpu_dmem_address[31:14] == 18'h00000;
-  wire dmem_bank1 = cpu_dmem_address[31:14] == 18'h00040;
-  wire dmem_address_valid = (dmem_bank0 || dmem_bank1) &&
-                            cpu_dmem_address[1:0] == 2'b00;
+  wire imem_in_ram = cpu_imem_address[31:15] == 17'h00000;
+  wire imem_bank0 = imem_in_ram && !cpu_imem_address[14];
+  wire imem_address_valid = imem_in_ram && cpu_imem_address[1:0] == 2'b00;
+  wire dmem_in_ram = cpu_dmem_address[31:15] == 17'h00000;
+  wire dmem_bank0 = dmem_in_ram && !cpu_dmem_address[14];
+  wire dmem_address_valid = dmem_in_ram && cpu_dmem_address[1:0] == 2'b00;
   wire [3:0] monitor_byte_enable = 4'b0001 << address[1:0];
   wire [31:0] monitor_word_data = {4{write_data}};
 

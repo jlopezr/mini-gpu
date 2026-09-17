@@ -200,9 +200,11 @@ module cpu_memory_map_tb;
     reset = 1'b0;
     @(negedge clk);
 
-    // Program writes 0x1234 to global address 0x00100004, loads it, then halts.
+    // Program writes 0x1234 to global address 0x00004004, loads it, then halts.
+    // Es el banco 1, que desde que la memoria es contigua empieza en 0x4000 y
+    // cabe en el inmediato de MOVI, sin necesidad de MOVHI.
     monitor_write_word(32'h0000_0000, 32'h4020_1234);  // MOVI R1, 0x1234
-    monitor_write_word(32'h0000_0004, 32'h5c80_0010);  // MOVHI R4, 0x0010
+    monitor_write_word(32'h0000_0004, 32'h4080_4000);  // MOVI R4, 0x4000
     monitor_write_word(32'h0000_0008, 32'h4484_0004);  // ADDI R4, R4, 4
     monitor_write_word(32'h0000_000c, 32'h5824_0000);  // STORE R1, R4, 0
     monitor_write_word(32'h0000_0010, 32'h5444_0000);  // LOAD R2, R4, 0
@@ -230,10 +232,10 @@ module cpu_memory_map_tb;
     if (debug_register_data !== 32'h4020_1234) $fatal(1, "dmem bank 0 mismatch");
 
     // No backend translation is involved: CPU and monitor use the same address.
-    expect_monitor_byte(32'h0010_0004, 8'h34);
-    expect_monitor_byte(32'h0010_0005, 8'h12);
-    expect_monitor_byte(32'h0010_0006, 8'h00);
-    expect_monitor_byte(32'h0010_0007, 8'h00);
+    expect_monitor_byte(32'h0000_4004, 8'h34);
+    expect_monitor_byte(32'h0000_4005, 8'h12);
+    expect_monitor_byte(32'h0000_4006, 8'h00);
+    expect_monitor_byte(32'h0000_4007, 8'h00);
 
     // RESET_CPU clears architectural state but preserves both EBR contents.
     @(negedge clk);
@@ -248,8 +250,8 @@ module cpu_memory_map_tb;
     if (debug_register_data !== 32'h0000_0000)
       $fatal(1, "CPU reset did not clear registers");
 
-    expect_monitor_byte(32'h0010_0004, 8'h34);
-    expect_monitor_byte(32'h0010_0005, 8'h12);
+    expect_monitor_byte(32'h0000_4004, 8'h34);
+    expect_monitor_byte(32'h0000_4005, 8'h12);
 
     // Program memory was preserved, so the CPU can run again without a reload.
     @(negedge clk);
@@ -262,20 +264,21 @@ module cpu_memory_map_tb;
       $fatal(1, "CPU did not rerun preserved program");
 
     // imem can fetch bank 1: branch from bank 0 to a HALT stored in bank 1.
+    // Los bancos son contiguos, asi que el salto cruza 0x4000 sin hueco.
     @(negedge clk);
     cpu_reset_request = 1'b1;
     @(negedge clk);
     cpu_reset_request = 1'b0;
     repeat (2) @(posedge clk);
-    monitor_write_word(32'h0000_0000, 32'hbc03_ffff);  // BRA 0x00100000
-    monitor_write_word(32'h0010_0000, 32'hfc00_0000);  // HALT
+    monitor_write_word(32'h0000_0000, 32'hbc00_0fff);  // BRA 0x00004000
+    monitor_write_word(32'h0000_4000, 32'hfc00_0000);  // HALT
     @(negedge clk);
     run_request = 1'b1;
     @(negedge clk);
     run_request = 1'b0;
     wait (!halted);
     wait (halted);
-    if (error || debug_pc !== 32'h0010_0004)
+    if (error || debug_pc !== 32'h0000_4004)
       $fatal(1, "imem could not execute from bank 1");
 
     $display("PASS: shared memory flow and CPU-only reset are correct");

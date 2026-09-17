@@ -35,7 +35,7 @@ acuerdo sobre dónde va cada cosa.
 | Backend / versión | Carpeta | Memoria de programa y datos | MMIO | Monitor |
 |---|---|---|---|---|
 | `cpu-simulator / current` | `2.cpu-sim-func` | 32 MiB en el runner | Vídeo y serie opcionales según el caso | — |
-| `cpu-fpga / ebr` | `6.fpga-cpu` | Dos bancos EBR de 16 KiB | — | 1.16 |
+| `cpu-fpga / ebr` | `6.fpga-cpu` | 32 KiB EBR continuos (dos bancos) | — | 1.16 |
 | `cpu-fpga / sdram` | `10.fpga-cpu-ram` | 32 MiB SDRAM | — | 1.17 |
 | `cpu-fpga / hdmi` | `16.fpga-cpu-hdmi` | 32 MiB SDRAM | Vídeo | 1.18 |
 | `cpu-fpga / bl8` | `18.fpga-cpu-hdmi-bl8` | 32 MiB SDRAM | Vídeo y captura de frames | 1.19 |
@@ -62,14 +62,24 @@ ejecutable.
 
 | Rango | Tamaño | Uso convencional |
 |---|---:|---|
-| `0x00000000–0x00003FFF` | 16 KiB | Programa |
-| `0x00100000–0x00103FFF` | 16 KiB | Datos |
+| `0x00000000–0x00003FFF` | 16 KiB | Programa (banco EBR 0) |
+| `0x00004000–0x00007FFF` | 16 KiB | Datos (banco EBR 1) |
 
-El espacio no es contiguo. Los puertos de instrucciones y datos alcanzan ambos
-bancos: la separación de usos es una convención. Los huecos no son memoria
-válida. El cliente declara ambos intervalos en
-[monitor.py](../6.fpga-cpu/monitor.py); el validador de bloques y la respuesta del
-bus comprueban aspectos distintos, por lo que no basta con validar un tamaño total.
+**El espacio es contiguo**: 32 KiB seguidos, y el bit 14 de la dirección elige
+banco. Los puertos de instrucciones y datos alcanzan ambos, así que la separación
+de usos es solo una convención — un programa puede pasar de 16 KiB sin cruzar
+ningún hueco. Fuera de `0x00008000` el bus da error.
+
+Los bancos estuvieron en `0x00000000` y `0x00100000`, con 1 MiB de hueco entre
+ellos. Juntarlos abarató el decodificador —un comparador por puerto en vez de
+dos, y hay tres puertos— y dejó a la 6 con el mismo aspecto que el resto de
+prototipos, que son todos un bloque de RAM seguido.
+
+El cliente declara el intervalo en [monitor.py](../6.fpga-cpu/monitor.py); el
+validador de bloques y la respuesta del bus comprueban aspectos distintos, por lo
+que no basta con validar un tamaño total. Desde que los bancos son contiguos un
+bloque **sí** puede cruzar `0x4000`: se transfiere byte a byte y cada uno se
+encamina por su cuenta.
 
 ### CPU y GPU con SDRAM
 

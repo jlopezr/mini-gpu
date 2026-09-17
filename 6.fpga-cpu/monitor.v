@@ -411,12 +411,16 @@ module monitor (
             block_length[7:0] <= rx_data;
             block_remaining <= {block_length[15:8], rx_data};
 
+            // La RAM son 32 KiB seguidos: un comparador para "es RAM" y otro
+            // para que el bloque entero quepa. Un bloque SI puede cruzar el
+            // limite de banco en 0x4000, cosa que antes se rechazaba: el bloque
+            // se transfiere byte a byte y memory_map encamina cada uno por su
+            // cuenta segun address[14], asi que el cruce no tiene nada especial.
             if ({block_length[15:8], rx_data} == 0 ||
                 {block_length[15:8], rx_data} > 16'd256 ||
-                (mem_address[31:14] != 18'h00000 &&
-                    mem_address[31:14] != 18'h00040) ||
-                ({1'b0, mem_address[13:0]} +
-                    {6'd0, block_length[8], rx_data}) > 15'h4000) begin
+                mem_address[31:15] != 17'h00000 ||
+                ({1'b0, mem_address[14:0]} +
+                    {7'd0, block_length[8], rx_data}) > 16'h8000) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 3'd1;
               response_index <= 3'd0;
