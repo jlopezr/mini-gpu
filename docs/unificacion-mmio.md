@@ -9,6 +9,24 @@ Objetivo declarado: **que el mismo programa valga en varios prototipos**. El
 criterio para ordenar la lista es ese, no la dificultad. Por eso la 22 va pronto
 pese a ser la más difícil, y los contadores en CPU quedan fuera de la ronda.
 
+## Estado al 17/09/2026
+
+**Cerradas y verificadas en placa:** fases 0, 1, 2, 3, **3.4** (`READ_WORD` en
+los diez prototipos con juego de comandos) y **4a parcial** (`SYS_ID` en las
+cuatro GPU). La 22 responde monitor 2.6 y pasa 28 casos contra hardware.
+
+El último punto de la fase 0 —un caso de vídeo que corra en las dos familias con
+el mismo binario— **también está cerrado**, y resultó arrastrar cuatro cosas que
+no estaban previstas: `architecture` como lista, la carpeta `cases-shared`, un
+`VideoDevice` para el simulador funcional de GPU (no lo tenía) y un
+`incompatibility` en el backend `gpu-simulator` (faltaba, y era un fallo: no
+miraba el `requires` de los casos).
+
+**Lo siguiente es la fase 3.5**, y conviene entrar en ella sabiendo que no toda
+pesa lo mismo: `VIDEO_CTRL` en CPU desbloquea trabajo, y unificar las bases de FB
+—34 ficheros en tres copias independientes— sólo iguala. La **4b** y la **fase 5**
+no tienen hoy un consumidor que las pida.
+
 ## Lo que ya está hecho
 
 No hay que tocar nada de esto, y conviene saberlo antes de empezar:
@@ -342,22 +360,50 @@ salir partido por construcción, sin depender de ninguna invariante.
       leían el byte 0 en vez del byte pedido. Con `host_read_word` aparte,
       `READ_BYTE` y los bloques no se tocan y ningún banco cambia.
 
-- [ ] Cambiar `_read_register`/`_write_register` de `fpga.py` a usar los comandos
-      nuevos, **condicionado a la versión de monitor**: `fpga.py` ya lee
-      `monitor_version` de cada carpeta, así que `READ_WORD` si la versión llega y
-      byte a byte si no. Cuesta cuatro líneas y permite que el RTL entre por
-      tandas sin que importe el orden.
-- [ ] **Al juego base y en todos los prototipos.** Añadirlo solo a algunos crearía
-      un cuarto juego de comandos, que es la proliferación que la fase 5 quiere
-      colapsar. Hecho en 12, 14, 17 y 22; **pendiente en 5, 6, 10, 16, 18, 19 y
-      21**. En los que son RAM sin MMIO (5, 8, 9) `READ_WORD` ahorra tres idas y
-      vueltas pero **no es atómico**: la garantía solo existe donde hay un camino
-      de 32 bits detrás.
+- [x] `_read_register` de `fpga.py` usa `READ_WORD` donde lo hay.
+      **Condicionado a la capacidad, no a la versión de monitor**, que es un
+      cambio respecto a lo que decía este plan: la numeración **no es comparable
+      entre familias** —la 6 va por 1.x y la 22 por 2.x— así que «versión ≥ N»
+      no significa nada fuera de una carpeta. La capacidad `read_word` se
+      detecta del RTL (patrón `CMD_READ_WORD` sobre `monitor.v`), igual que las
+      demás. El camino de bytes se queda como respaldo, y un test comprueba que
+      hoy ningún prototipo lo necesita.
 
-- [ ] **Abrir el MMIO al monitor con el núcleo en marcha, igual en las dos
-      familias.** `READ_WORD` arregla que el valor salga entero; esto arregla que
-      se pueda pedir siquiera. Hacen falta las dos: de poco sirve una lectura
-      atómica de `VIDEO_STATUS` si para hacerla hay que parar la demo.
+      `_write_register` **no cambia**: `WRITE_WORD` sigue fuera de la fase.
+
+- [x] **Al juego base y en todos los prototipos con MMIO.** Hecho en los diez
+      que tienen juego de comandos: 6, 10, 16, 18, 19, 21, 12, 14, 17 y 22.
+
+      **5, 8 y 9 quedan fuera, y no por pereza:** no son CPU ni GPU, son RAM sin
+      MMIO. Allí `READ_WORD` ahorraría tres idas y vueltas pero **no sería
+      atómico** —la garantía sólo existe donde hay un camino de 32 bits detrás—,
+      así que daría un comando con el mismo nombre y otra promesa, que es peor
+      que no tenerlo.
+
+- [x] **`SYS_ID` en las cuatro GPU** (adelantado desde la fase 4a, ver allí).
+
+**Verificado en placa** el 17/09/2026, sobre la 22 (`lsu2`, monitor 2.6):
+
+- `SYS_ID` responde `0x4D47_0016` —`"MG"` y 22 en decimal—, `CONTRACT = 1`,
+  `DEV_BITMAP = 0`, `ISA_PROFILE = 0x0b`. Leído con `READ_WORD`, así que las dos
+  piezas se prueban a la vez.
+- La suite completa de casos contra la placa: **28 casos, 0 fallos**.
+- La síntesis de las cuatro GPU y las seis CPU pasa; la 12 queda en 35709
+  TRELLIS_COMB / 9202 FF.
+
+**Abrir el MMIO al monitor con el núcleo en marcha, igual en las dos familias.**
+`READ_WORD` arregla que el valor salga entero; esto arregla que se pueda pedir
+siquiera. Hacen falta las dos: de poco sirve una lectura atómica de
+`VIDEO_STATUS` si para hacerla hay que parar la demo.
+
+Va en dos casillas porque **las dos familias no están en el mismo punto**, y con
+una sola se leía como pendiente en ambas:
+
+- [x] **CPU: ya lo hace**, desde antes de este plan. No es un cambio a aplicar,
+      es una propiedad que hay que *no romper* al unificar.
+- [ ] **GPU: falta.** [`gpu_system_bl8.v`](../22.fpga-gpu-bl8/gpu_system_bl8.v)
+      sigue rechazando en el puerto host con `if(!halted) begin host_ready<=1;
+      host_error<=1; end`, antes de mirar a dónde iba la transacción.
 
       La regla que la CPU implementa hoy **no** es «el monitor solo puede con el
       núcleo parado», es **«MMIO siempre, RAM solo parada»**. En
@@ -368,9 +414,8 @@ salir partido por construcción, sin depender de ninguna invariante.
       controlador de ráfagas que la CPU está usando; los registros MMIO son
       registros y leerlos no molesta a nadie.
 
-      La GPU rechaza a lo bruto en el puerto host (`if(!halted) begin
-      host_ready<=1; host_error<=1; end`), que corta antes de mirar a dónde iba la
-      transacción. Pero el bloque MMIO de la 22 **ya sirve a dos amos**: el mux
+      Y el corte de la GPU es más bruto de lo necesario, porque el bloque MMIO
+      de la 22 **ya sirve a dos amos**: el mux
       `gm_accept ? gm_addr : address` de `gpu_system_bl8.v` arbitra entre la GPU y
       el host, y existe porque `mmio_selftest.asm` necesita que la GPU lea sus
       propios contadores. La maquinaria de arbitrar ya está puesta; lo que falta
@@ -579,6 +624,9 @@ hoy —14, 17 y 22 respondiendo todas monitor 2.4 siendo hardware distinto— ba
       decodificadores (`gpu_system.v` y `gpu_system_bl8.v`). Hizo falta además una
       **quinta ranura de ventana** en `monitor.v`: la 22 ya usaba las cuatro.
       Es host-only, como los registros de depuración: un kernel no lo alcanza.
+
+      **Comprobado en placa** el 17/09/2026 sobre la 22: `0x80000F00` responde
+      `0x4D47_0016`, y los otros tres `1`, `0` y `0x0b`. Leído con `READ_WORD`.
 - [ ] Engancharlo en la familia CPU:
       - 19, 21: un `DEV_SYSID = 4'd15` en `mmio_decoder.v`, ~3 líneas.
       - 16, 18: portar `mmio_decoder.v` y ensanchar el comparador del adaptador.
