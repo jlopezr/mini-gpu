@@ -126,15 +126,21 @@ def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
 
 
 def escribir_registro(prototype_dir: Path, port: str, address: int, value: int) -> None:
-    """El monitor escribe byte a byte, así que una palabra son cuatro comandos.
+    """Una palabra, UN comando. Antes eran cuatro `write-byte`.
 
-    Igual que en `capture-frames`; se repite porque es la única forma que hay.
+    Esto ya no es sólo por comodidad. `FB_FRONT` lo lee el scanout, que cuelga
+    de `reset` y no de `core_reset`, así que sigue vivo con el núcleo parado:
+    escrito byte a byte, durante casi un milisegundo el puntero era mitad viejo
+    y mitad nuevo y el barrido podía leer de una dirección que nadie pidió. Con
+    `write-word` el registro nunca pasa por un valor intermedio.
+
+    De paso son tres viajes menos por registro, y cada ida y vuelta cuesta
+    16 ms fijos por el latency timer del FTDI.
     """
     from tools.run_board import run_monitor_cli
 
-    for i in range(4):
-        run_monitor_cli(prototype_dir, port, "write-byte",
-                        f"0x{address + i:08x}", str((value >> (i * 8)) & 0xFF))
+    run_monitor_cli(prototype_dir, port, "write-word",
+                    f"0x{address:08x}", f"0x{value:08x}")
 
 
 def leer_palabra(prototype_dir: Path, port: str, address: int) -> int | None:
@@ -161,7 +167,12 @@ def subir(prototipo: str, port: str | None, fichero: Path, direccion: int) -> in
     puerto = port if port is not None else detect_port()
     prototype_dir = target.prototype_dir
 
-    if not target.capability.get("video"):
+    # Las capacidades cuelgan de `capability["capabilities"]`, no de la raíz.
+    # Esto miraba `capability.get("video")`, que es SIEMPRE None: `--upload`
+    # abortaba con «no tiene vídeo» en los cuatro prototipos que sí lo tienen,
+    # o sea que nunca funcionó. Lo mismo hace `run_board.load_and_run`, que es
+    # de donde había que copiarlo.
+    if "video" not in target.capability.get("capabilities", ()):
         raise SystemExit(f"error: {prototype_dir.name} no tiene vídeo; "
                          "nada que mostrar en el monitor")
 
