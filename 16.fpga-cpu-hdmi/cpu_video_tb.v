@@ -36,7 +36,8 @@ module cpu_video_tb;
   reg [15:0] program_words[0:63];
 
   wire mmio_select, mmio_write;
-  wire [3:0] mmio_write_mask, mmio_address;
+  wire [3:0] mmio_write_mask;
+  wire [11:0] mmio_address;   // la pagina MMIO entera
   wire [31:0] mmio_write_data, mmio_read_data;
 
   reg fill_start=0, fill_first=0;
@@ -89,7 +90,7 @@ module cpu_video_tb;
   ) registers_i(
       .clk(clk),.reset(reset),
       .select(mmio_select),.write(mmio_write),.write_mask(mmio_write_mask),
-      .address(mmio_address),.write_data(mmio_write_data),
+      .address(mmio_address[7:0]),.write_data(mmio_write_data),
       .read_data(mmio_read_data),
       .fill_start(fill_start),.fill_first(fill_first),.fb_base(fb_base),
       .underflow_pix(1'b0),

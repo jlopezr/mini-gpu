@@ -50,6 +50,18 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     // compartido. Ver docs/mapa-de-memoria.md §6.
     wire mmio=address[31:13]==19'h40000;
     wire gpu_page=address[12];
+    // Con el nucleo EN MARCHA el host puede LEER el MMIO, no la RAM ni escribir
+    // nada. Los registros son registros y leerlos no molesta a nadie; la RAM
+    // esta detras del camino que la GPU esta usando, y escribir VIDEO_CTRL o
+    // FB_FRONT mientras el kernel los toca seria una carrera con el programa.
+    //
+    // Hace falta de verdad y no por comodidad: parar la GPU NO congela
+    // `frame_count`, porque el scanout cuelga de `reset` y no de `core_reset`.
+    //
+    // Se decide sobre `host_address`, la direccion SIN latear: en este punto
+    // `address` es todavia la de la transaccion anterior.
+    wire host_mmio=host_address[31:13]==19'h40000;
+    wire host_permitted=halted || (host_read_enable && !host_write_enable && host_mmio);
     // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
     wire cfg_region=gpu_page && address[11:7]==0;
     wire [3:0] byte_strobe=4'b0001 << address[1:0];
@@ -138,7 +150,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             debug_warp<=0; debug_lane<=0;
         end else case(host_state)
             0: if(host_write_enable || host_read_enable) begin
-                if(!halted) begin host_ready<=1; host_error<=1; end
+                if(!host_permitted) begin host_ready<=1; host_error<=1; end
                 else begin
                     address<=host_address; write_data<=host_write_data;
                     writing<=host_write_enable; host_state<=1;

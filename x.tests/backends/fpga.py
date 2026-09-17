@@ -97,6 +97,10 @@ FB_BACK_RESET = 0x0102_5800
 VIDEO_STATUS = 0x8000_000C
 VIDEO_SWAP_COUNT = 0x8000_0010
 VIDEO_HALT_AT = 0x8000_0014
+# Contadores de rendimiento. Los MISMOS offsets que en la MiniGPU: el bloque de
+# CPU es un prefijo del de GPU, con CYCLES en +0x00 y RETIRED en +0x04.
+PERF_CYCLES = 0x8000_0300
+PERF_RETIRED = 0x8000_0304
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
 
@@ -237,10 +241,11 @@ class FpgaBackend:
         stdin: bytes = b"",
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
-        tiene_captura = "frame_capture" in capabilities(self.version)
+        capacidades = capabilities(self.version)
+        tiene_captura = "frame_capture" in capacidades
         # Los registros de video se leen de una pieza donde se pueda: STATUS
         # lleva el contador de frames, que avanza aunque el nucleo este parado.
-        tiene_palabra = "read_word" in capabilities(self.version)
+        tiene_palabra = "read_word" in capacidades
 
         serial = self.monitor.serial
         with serial.Serial(
@@ -359,10 +364,14 @@ class FpgaBackend:
             # Los contadores, antes que nada lo demas que toque la memoria: la
             # CPU ya esta parada, asi que no se mueven, pero leerlos aqui deja
             # claro que miden el programa y no lo que haga el monitor despues.
+            #
+            # Salen del MMIO, no de los comandos 0x36/0x37, que ya no existen:
+            # son un dispositivo como los demas --ver cpu_perf_counters.v-- y la
+            # capacidad se detecta del RTL igual que el resto.
             cycles = instructions = None
-            if self.configuration.get("monitor_cycle_counters"):
-                cycles = client.get_cycles()
-                instructions = client.get_instructions()
+            if "perf_counters" in capacidades:
+                cycles = _read_register(client, PERF_CYCLES, tiene_palabra)
+                instructions = _read_register(client, PERF_RETIRED, tiene_palabra)
 
             video_result = None
             if video:

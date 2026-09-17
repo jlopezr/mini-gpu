@@ -30,7 +30,7 @@ module mmio_mux (
     output reg         a_ack,
     input  wire        a_write,
     input  wire [3:0]  a_write_mask,
-    input  wire [4:0]  a_address,
+    input  wire [11:0] a_address,
     input  wire [31:0] a_write_data,
 
     // Cliente B: la CPU.
@@ -38,14 +38,14 @@ module mmio_mux (
     output reg         b_ack,
     input  wire        b_write,
     input  wire [3:0]  b_write_mask,
-    input  wire [4:0]  b_address,
+    input  wire [11:0] b_address,
     input  wire [31:0] b_write_data,
 
     // Hacia video_registers.
     output reg         select,
     output reg         write,
     output reg  [3:0]  write_mask,
-    output reg  [4:0]  address,
+    output reg  [11:0] address,
     output reg  [31:0] write_data
 );
   // `select` dura exactamente un ciclo, que es lo que espera video_registers:
@@ -65,12 +65,12 @@ module mmio_mux (
       busy <= 1'b0;
       granted_a <= 1'b0;
       write_mask <= 4'b0000;
-      address <= 5'h00;
+      address <= 12'h000;
       write_data <= 32'h0000_0000;
     end else if (!busy) begin
       /*
        * `&& !a_ack` / `&& !b_ack` NO es defensa por si acaso: sin eso, cada
-       * acceso MMIO se ejecuta DOS VECES.
+       * acceso se ejecutaba DOS VECES.
        *
        * El contrato con el cliente es de nivel: mantiene `req` hasta ver su
        * `ack`. El `ack` se levanta al final del ciclo de concesion, o sea que
@@ -78,15 +78,14 @@ module mmio_mux (
        * ciclo intermedio `busy` ya ha vuelto a cero y `req` sigue alto, asi que
        * el arbitro concedia otra vez la misma peticion.
        *
-       * Aqui NO SE NOTA, y por eso estuvo tanto tiempo sin verse: los seis
-       * registros de video son idempotentes. Escribir FB_BACK dos veces deja lo
-       * mismo, y pedir SWAP dos veces es un solo intercambio pendiente. Lo
-       * delato el puerto serie de la 19, cuyo registro DATA saca un byte de una
-       * cola al leerlo: un LOAD se comia dos caracteres.
+       * Estuvo asi desde que existe este modulo y no lo noto nadie, porque
+       * todos los registros de video son IDEMPOTENTES: escribir FB_BACK dos
+       * veces deja lo mismo, y pedir SWAP dos veces es un solo intercambio
+       * pendiente. El primer registro con efecto secundario --DATA del puerto
+       * serie, que saca un byte de la cola al leerlo-- lo enseno a la primera:
+       * un LOAD se comia dos caracteres y un STORE mandaba el byte dos veces.
        *
-       * Se arregla aqui tambien porque el fallo es de este modulo, no de aquel
-       * dispositivo, y porque cualquier registro MMIO con efecto secundario que
-       * se anada a esta carpeta se lo encontraria.
+       * Lo caza `cpu_serial_tb.v`.
        */
       if (a_req && !a_ack) begin
         select <= 1'b1;

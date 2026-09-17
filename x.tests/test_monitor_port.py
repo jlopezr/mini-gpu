@@ -124,6 +124,16 @@ GPU_PROTOTYPES = (
     "22.fpga-gpu-bl8",
 )
 
+# Las CPU que tienen ventana MMIO, y por tanto bloque de identificacion. La 6 y
+# la 10 no estan porque no la tienen -- no es que les falte un dispositivo, es
+# que el concepto no existe en su RTL. Ver docs/unificacion-mmio.md, fase 4a.
+CPU_CON_MMIO = (
+    "16.fpga-cpu-hdmi",
+    "18.fpga-cpu-hdmi-bl8",
+    "19.fpga-cpu-hdmi-ls",
+    "21.fpga-cpu-hdmi-alu",
+)
+
 # Una ranura de ventana sin usar. La base es inalcanzable para una direccion de
 # 32 bits, asi que la comparacion nunca se cumple.
 UNUSED_WINDOW = (0x1_FFFF_FFFF, 0x0)
@@ -218,6 +228,9 @@ class SysIdTest(unittest.TestCase):
     """
 
     FOLDER = re.compile(r"sysid\s*#\(\s*\.FOLDER\(8'd(\d+)\)")
+    # En CPU el `sysid` vive DENTRO de `mmio_decoder`, asi que el numero de
+    # carpeta viaja por el parametro del decodificador y no por el del bloque.
+    FOLDER_CPU = re.compile(r"mmio_decoder\s*#\(\s*\.FOLDER\(8'd(\d+)\)")
 
     def test_el_id_es_el_numero_de_carpeta(self):
         for name in GPU_PROTOTYPES:
@@ -270,9 +283,93 @@ class SysIdTest(unittest.TestCase):
 
     def test_sysid_es_copia_identica(self):
         canonical = (ROOT / "22.fpga-gpu-bl8" / "sysid.v").read_bytes()
-        for name in GPU_PROTOTYPES:
+        for name in GPU_PROTOTYPES + CPU_CON_MMIO:
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "sysid.v").read_bytes(), canonical)
+
+    def test_el_id_es_el_numero_de_carpeta_en_cpu(self):
+        for name in CPU_CON_MMIO:
+            esperado = int(name.split(".")[0])
+            encontrados = []
+            for path in sorted((ROOT / name).glob("*.v")):
+                if path.name == "sysid.v":
+                    continue
+                encontrados += [
+                    int(d) for d in self.FOLDER_CPU.findall(
+                        path.read_text(encoding="utf8"))
+                ]
+            with self.subTest(prototype=name):
+                self.assertTrue(encontrados, f"{name} no instancia mmio_decoder con FOLDER")
+                self.assertEqual(set(encontrados), {esperado})
+
+    # En CPU los rasgos viven en `cpu.v`, y el bit 3 NO se deriva: ver abajo.
+    RASGOS_CPU = (
+        (0, re.compile(r"OPCODE_MUL\b")),
+        (1, re.compile(r"OPCODE_DIV\b")),
+        (2, re.compile(r"OPCODE_LOADB|OPCODE_STOREB")),
+    )
+
+    def test_el_perfil_de_isa_de_cpu_sale_del_rtl_menos_el_bit_simt(self):
+        """El bit 3 es CERO en CPU, y no por descuido.
+
+        `OPCODE_SSY` casa hoy en las seis CPU, pero como NO-OP: se anadieron
+        para poder compartir binarios con la GPU y no hay pila de reconvergencia
+        detras. Derivar el bit con la misma regla que en GPU encenderia el bit y
+        el bloque de identificacion diria al host que este nucleo diverge y
+        reconverge, que es falso. De ahi que la regla de CPU sea otra, y que
+        este test lo diga en vez de dejarlo al criterio de quien lo lea.
+        """
+        for name in CPU_CON_MMIO:
+            prototype = ROOT / name
+            cpu = (prototype / "cpu.v").read_text(encoding="utf8")
+            esperado = 0
+            for bit, patron in self.RASGOS_CPU:
+                if patron.search(cpu):
+                    esperado |= 1 << bit
+            self.assertTrue(re.search(r"OPCODE_SSY\b", cpu),
+                            f"{name}: si SSY desaparece, revisar este test")
+
+            declarados = set()
+            for path in sorted(prototype.glob("*.v")):
+                if path.name == "sysid.v":
+                    continue
+                declarados |= {
+                    int(d.replace("_", ""), 16)
+                    for d in self.PROFILE.findall(path.read_text(encoding="utf8"))
+                }
+            with self.subTest(prototype=name):
+                self.assertEqual(declarados, {esperado},
+                                 f"{name}: el RTL dice {esperado:#06x}")
+                self.assertFalse(esperado & 0b1000,
+                                 f"{name}: el bit SIMT no va en CPU")
+
+
+class SysIdObligatorioTest(unittest.TestCase):
+    """Donde hay ventana MMIO, tiene que haber bloque de identificacion.
+
+    Es la regla que hace que "obligatorio" signifique algo dentro de seis meses,
+    y el criterio es comprobable en vez de ser una lista a mano: si una carpeta
+    decodifica `0x8000_0000`, tiene que contestar en `0x8000_0F00`.
+
+    6 y 10 NO aparecen porque no tienen ventana MMIO: en su RTL no existe el
+    concepto, no es que les falte un dispositivo. Ver la discusion en
+    docs/unificacion-mmio.md, fase 4a -- es una decision provisional.
+    """
+
+    PREFIJO_MMIO = re.compile(r"MMIO_PREFIX|mmio\s*=\s*address\[31:13\]")
+
+    def test_toda_carpeta_con_mmio_tiene_sysid(self):
+        for name in GPU_PROTOTYPES + CPU_CON_MMIO + ("6.fpga-cpu", "10.fpga-cpu-ram"):
+            prototype = ROOT / name
+            tiene_ventana = any(
+                self.PREFIJO_MMIO.search(path.read_text(encoding="utf8"))
+                for path in prototype.glob("*.v")
+                if not path.name.endswith("_tb.v"))
+            with self.subTest(prototype=name):
+                self.assertEqual(
+                    (prototype / "sysid.v").exists(), tiene_ventana,
+                    f"{name}: ventana MMIO={tiene_ventana} pero sysid.v="
+                    f"{(prototype / 'sysid.v').exists()}")
 
 
 class MonitorRegionsTest(unittest.TestCase):

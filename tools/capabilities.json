@@ -65,8 +65,8 @@
     "pattern": "debug_warp"
   },
   "perf_counters": {
-    "architecture": "gpu",
-    "file": "gpu_perf_counters.v"
+    "architecture": ["cpu", "gpu"],
+    "file": ["gpu_perf_counters.v", "cpu_perf_counters.v"]
   },
   "atomic_warp_faults": {
     "architecture": "gpu"

@@ -91,18 +91,41 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(fpga.capabilities("ebr"), {"mul_div", "read_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
         self.assertEqual(fpga.capabilities("sdram"), {"read_word"})
-        # La 16 tiene video pero no con que capturar.
+        # La 16 tiene video pero no con que capturar. `perf_counters` lo tienen
+        # las cuatro con ventana MMIO desde la fase 3.5, cuando los contadores
+        # dejaron de ser comandos de monitor y pasaron a ser un dispositivo.
         self.assertEqual(fpga.capabilities("hdmi"),
-                         {"video", "mul_div", "read_word"})
+                         {"video", "mul_div", "read_word", "perf_counters"})
         # La 18 tiene las dos.
         self.assertEqual(
             fpga.capabilities("bl8"),
-            {"video", "frame_capture", "mul_div", "read_word"})
+            {"video", "frame_capture", "mul_div", "read_word", "perf_counters"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
             fpga.capabilities("subword"),
             {"video", "frame_capture", "subword_memory", "calls", "serial",
-             "mul_div", "read_word"})
+             "mul_div", "read_word", "perf_counters"})
+
+    def test_los_contadores_ya_no_son_comandos_de_monitor(self):
+        """El juego "+contadores" de mapa-de-memoria.md §6.5 ya no existe.
+
+        `monitor_cycle_counters_from_rtl` detecta el comando 0x36, que se
+        retiro en la fase 3.5. Que no quede NINGUNO es el objetivo, no un
+        efecto secundario: de tres juegos de comandos se pasa a dos, y ninguno
+        es ya "el que tiene contadores", porque los contadores son un
+        dispositivo MMIO como los demas.
+
+        Si alguien reintrodujera el comando en una carpeta, volveria a haber un
+        tercer juego y esto lo dice.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import monitor_cycle_counters_from_rtl
+
+        con_comando = [
+            nombre for nombre in fpga.VERSIONS
+            if monitor_cycle_counters_from_rtl(
+                REPOSITORY / fpga.VERSIONS[nombre]["monitor_path"].parent)]
+        self.assertEqual(con_comando, [])
 
     def test_read_word_en_todas(self):
         """READ_WORD no es una extension: es parte del contrato del monitor.

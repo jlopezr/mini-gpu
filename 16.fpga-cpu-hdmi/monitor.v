@@ -108,7 +108,7 @@ module monitor (
   // con error, da otro resultado en silencio. Por eso sube la version aunque el
   // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
   // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
-  localparam [7:0] VERSION_MINOR = 8'h13;
+  localparam [7:0] VERSION_MINOR = 8'h16;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;

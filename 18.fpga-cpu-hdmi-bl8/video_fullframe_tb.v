@@ -124,11 +124,11 @@ module video_fullframe_tb;
   // ---- MMIO ---------------------------------------------------------------
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [11:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [11:0] mmio_address;   // la pagina MMIO entera
   wire [31:0] mmio_write_data, mmio_read_data;
   wire wb_dirty;
 
@@ -191,7 +191,7 @@ module video_fullframe_tb;
       .b_write_mask(cpu_mmio_mask), .b_address(cpu_mmio_addr),
       .b_write_data(cpu_mmio_wdata),
       .select(mmio_select), .write(mmio_write),
-      .write_mask(mmio_write_mask), .address(mmio_address),
+      .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data));
 
   video_registers #(.FB_FRONT_RESET(FB0), .FB_BACK_RESET(FB1)) registers_i (

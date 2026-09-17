@@ -76,7 +76,7 @@ module sdram_system_adapter #(
     output reg mmio_select,
     output reg mmio_write,
     output reg [3:0] mmio_write_mask,
-    output reg [3:0] mmio_address,
+    output reg [11:0] mmio_address,
     output reg [31:0] mmio_write_data,
     input wire [31:0] mmio_read_data,
 
@@ -120,7 +120,7 @@ module sdram_system_adapter #(
 
   // Ventana de registros de video: 0x80000000..0x8000000f. Se decodifica
   // estricta; cualquier otra direccion alta sigue siendo un error, como antes.
-  localparam [27:0] MMIO_PREFIX = 28'h800_0000;
+  localparam [19:0] MMIO_PREFIX = 20'h80000;
 
   reg [3:0] state;
   reg [2:0] owner;
@@ -170,9 +170,9 @@ module sdram_system_adapter #(
   wire cpu_dmem_address_valid =
       cpu_dmem_address[31:25] == 0 && cpu_dmem_address[1:0] == 0;
   wire cpu_dmem_mmio =
-      cpu_dmem_address[31:4] == MMIO_PREFIX && cpu_dmem_address[1:0] == 0;
+      cpu_dmem_address[31:12] == MMIO_PREFIX && cpu_dmem_address[1:0] == 0;
   // El monitor accede byte a byte, asi que no exige alineamiento.
-  wire monitor_mmio = saved_monitor_address[31:4] == MMIO_PREFIX;
+  wire monitor_mmio = saved_monitor_address[31:12] == MMIO_PREFIX;
 
   always @(posedge clk) begin
     monitor_ready <= 1'b0;
@@ -189,7 +189,7 @@ module sdram_system_adapter #(
       video_read_data <= 16'h0000;
       video_run <= 8'd0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 4'h0;
+      mmio_address <= 12'h000;
       mmio_write_data <= 32'h0000_0000;
       state <= STATE_IDLE;
       owner <= OWNER_NONE;
@@ -286,7 +286,7 @@ module sdram_system_adapter #(
               mmio_select <= 1'b1;
               mmio_write <= |cpu_dmem_write_enable;
               mmio_write_mask <= cpu_dmem_write_enable;
-              mmio_address <= cpu_dmem_address[3:0];
+              mmio_address <= cpu_dmem_address[11:0];
               mmio_write_data <= cpu_dmem_write_data;
               state <= STATE_MMIO_WAIT;
             end else if (!init_done || !cpu_dmem_address_valid) begin
@@ -327,7 +327,7 @@ module sdram_system_adapter #(
             mmio_select <= 1'b1;
             mmio_write <= saved_monitor_write_enable;
             mmio_write_mask <= 4'b0001 << saved_monitor_address[1:0];
-            mmio_address <= saved_monitor_address[3:0];
+            mmio_address <= saved_monitor_address[11:0];
             mmio_write_data <= {4{saved_monitor_write_data}};
             state <= STATE_MMIO_WAIT;
           end else if (!cpu_halted || !init_done ||

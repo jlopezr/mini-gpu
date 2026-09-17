@@ -90,15 +90,15 @@ module cpu_burst_system_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  wire [11:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [11:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [11:0] mmio_address;   // la pagina MMIO entera
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
@@ -129,7 +129,7 @@ module cpu_burst_system_tb;
   video_registers registers_i (
       .clk(clk), .reset(reset),
       .select(mmio_select), .write(mmio_write),
-      .write_mask(mmio_write_mask), .address(mmio_address),
+      .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data), .read_data(mmio_read_data),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base_unused),
       .underflow_pix(1'b0), .underflow_clear(underflow_clear_unused),

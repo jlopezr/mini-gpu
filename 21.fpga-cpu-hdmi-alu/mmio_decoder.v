@@ -13,7 +13,14 @@
  *   0x80000000 - 0x800000FF   dispositivo 0   video
  *   0x80000100 - 0x800001FF   dispositivo 1   RESERVADO: depuracion
  *   0x80000200 - 0x800002FF   dispositivo 2   serie
- *   0x80000300 - 0x80000FFF   dispositivos 3..15, libres
+ *   0x80000300 - 0x800003FF   dispositivo 3   contadores de rendimiento
+ *   0x80000400 - 0x80000EFF   dispositivos 4..14, libres
+ *   0x80000F00 - 0x80000FFF   dispositivo 15  identificacion (sysid)
+ *
+ * El slot 3 no se elige: es el que `mapa-de-memoria.md` §6 ya reservaba para
+ * los contadores, y el que la MiniGPU ocupa desde antes. El bloque de CPU es un
+ * PREFIJO del de GPU --CYCLES en +0x00 y RETIRED en +0x04 en las dos-- asi que
+ * un programa que lea esos dos registros vale en las dos familias.
  *
  * El hueco del 1 no es casualidad ni desorden: en la familia MiniGPU
  * (12/14/17) `0x80000100` ya es la ventana de depuracion global --contadores,
@@ -35,7 +42,15 @@
  * `mmio_bad`-- obliga a cablear una ruta de ERROR_MEMORY_ACCESS nueva, y se
  * deja para cuando haya dispositivos suficientes como para perderlos de vista.
  */
-module mmio_decoder (
+module mmio_decoder #(
+    // Identidad de esta carpeta, para el bloque de 0x80000F00. Va por
+    // parametro y no cableada aqui para que `mmio_decoder.v` siga siendo copia
+    // identica entre prototipos: lo que cambia de uno a otro vive en su top.v,
+    // junto a los demas parametros. Un test comprueba que el numero coincide
+    // con el del directorio.
+    parameter [7:0] FOLDER = 8'd0,
+    parameter [31:0] ISA_PROFILE = 32'd0
+) (
     // Desde mmio_mux.
     input  wire        select,
     input  wire [11:0] address,
@@ -47,15 +62,29 @@ module mmio_decoder (
     output wire        serial_select,
     input  wire [31:0] serial_read_data,
 
+    // Los contadores son de solo lectura, asi que no necesitan `select`.
+    input  wire [31:0] perf_read_data,
+
     output reg  [31:0] read_data
 );
   localparam [3:0] DEV_VIDEO  = 4'd0;
   localparam [3:0] DEV_SERIAL = 4'd2;
+  localparam [3:0] DEV_PERF   = 4'd3;
+  // El ULTIMO, no el primero libre: asi los dispositivos de verdad pueden
+  // crecer hacia arriba sin tropezarse con el, y la direccion de identificacion
+  // es la misma en las dos familias --0x80000F00-- que es todo el objetivo.
+  localparam [3:0] DEV_SYSID  = 4'd15;
 
   wire [3:0] device = address[11:8];
 
   assign video_select  = select && (device == DEV_VIDEO);
   assign serial_select = select && (device == DEV_SERIAL);
+
+  // Constantes de solo lectura: no necesita `select` ni reloj, asi que se
+  // instancia aqui en vez de sacar otro par de puertos al top.
+  wire [31:0] sysid_read_data;
+  sysid #(.FOLDER(FOLDER), .ISA_PROFILE(ISA_PROFILE))
+      sysid_i (.word(address[3:2]), .read_data(sysid_read_data));
 
   // `read_data` no depende de `select`: el cliente solo lo mira en el ciclo de
   // su `ack`, y dejarlo fuera del mux ahorra un nivel.
@@ -63,6 +92,8 @@ module mmio_decoder (
     case (device)
       DEV_VIDEO:  read_data = video_read_data;
       DEV_SERIAL: read_data = serial_read_data;
+      DEV_PERF:   read_data = perf_read_data;
+      DEV_SYSID:  read_data = sysid_read_data;
       default:    read_data = 32'd0;
     endcase
   end

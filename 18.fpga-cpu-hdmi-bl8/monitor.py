@@ -51,8 +51,6 @@ CMD_STEP = 0x32
 CMD_GET_STATUS = 0x33
 CMD_READ_REGISTER = 0x34
 CMD_RESET_CPU = 0x35
-CMD_GET_CYCLES = 0x36
-CMD_GET_INSTRUCTIONS = 0x37
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -67,9 +65,12 @@ RSP_STEP = b"\xb2"
 RSP_STATUS = 0xB3
 RSP_READ_REGISTER = 0xB4
 RSP_RESET_CPU = b"\xb5"
-RSP_CYCLES = 0xB6
-RSP_INSTRUCTIONS = 0xB7
 RSP_ERROR = 0xFF
+
+# Contadores de rendimiento, en el MMIO. Los MISMOS offsets que en la MiniGPU:
+# el bloque de CPU es un prefijo del de GPU.
+PERF_CYCLES = 0x8000_0300
+PERF_RETIRED = 0x8000_0304
 
 
 class MonitorError(Exception):
@@ -251,25 +252,23 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_REG response: {header.hex(' ')}")
         return int.from_bytes(self._read_exact(4), byteorder="big")
 
-    def _read_counter(self, command: int, expected: int, name: str) -> int:
-        response = self._request(bytes((command,)), 5)
-        if response[0] != expected:
-            raise MonitorError(f"Invalid {name} response: {response.hex(' ')}")
-        return int.from_bytes(response[1:5], byteorder="big")
-
     def get_cycles(self) -> int:
         """Ciclos que la CPU ha estado corriendo desde el ultimo RUN.
 
-        Son dos comandos y no uno porque la respuesta del monitor cabe en 7
-        bytes y los dos contadores juntos necesitan 9. Leerlos por separado
-        significa que no son del mismo instante, pero se leen con la CPU ya
-        parada, asi que ninguno de los dos se mueve entre una lectura y otra.
+        Sale del MMIO, no de un comando propio: los contadores son un
+        dispositivo en 0x80000300, los mismos offsets que en la MiniGPU. Con
+        eso, un PROGRAMA puede medirse a si mismo en marcha, que es lo que
+        nunca pudo hacer mientras la unica via era preguntar por serie con la
+        CPU parada.
+
+        Se leen por separado, asi que no son del mismo instante; se leen con la
+        CPU ya parada, asi que ninguno de los dos se mueve entre una lectura y
+        otra.
         """
-        return self._read_counter(CMD_GET_CYCLES, RSP_CYCLES, "GET_CYCLES")
+        return self.read_word(PERF_CYCLES)
 
     def get_instructions(self) -> int:
-        return self._read_counter(
-            CMD_GET_INSTRUCTIONS, RSP_INSTRUCTIONS, "GET_INSTRUCTIONS")
+        return self.read_word(PERF_RETIRED)
 
     def reset_cpu(self) -> None:
         response = self._request(bytes((CMD_RESET_CPU,)), 1)

@@ -87,7 +87,7 @@ module video_registers #(
     input wire select,
     input wire write,
     input wire [3:0] write_mask,
-    input wire [4:0] address,      // byte dentro de la ventana; [4:2] elige registro
+    input wire [7:0] address,     // byte dentro de la ventana del dispositivo; [7:2] elige registro
     input wire [31:0] write_data,
     output reg [31:0] read_data,
 
@@ -104,12 +104,13 @@ module video_registers #(
     output wire [31:0] debug_front,
     output wire [31:0] debug_back
 );
-  localparam [2:0] REG_FB_FRONT  = 3'd0;
-  localparam [2:0] REG_FB_BACK   = 3'd1;
-  localparam [2:0] REG_SWAP      = 3'd2;
-  localparam [2:0] REG_STATUS    = 3'd3;
-  localparam [2:0] REG_SWAP_COUNT = 3'd4;
-  localparam [2:0] REG_HALT_AT   = 3'd5;
+
+  localparam [5:0] REG_FB_FRONT  = 6'd0;
+  localparam [5:0] REG_FB_BACK   = 6'd1;
+  localparam [5:0] REG_SWAP      = 6'd2;
+  localparam [5:0] REG_STATUS    = 6'd3;
+  localparam [5:0] REG_SWAP_COUNT = 6'd4;
+  localparam [5:0] REG_HALT_AT   = 6'd5;
 
   reg [31:0] fb_front;
   reg [31:0] fb_back;
@@ -127,7 +128,7 @@ module video_registers #(
     underflow_sync_1 <= underflow_sync_0;
   end
 
-  wire [2:0] selected = address[4:2];
+  wire [5:0] selected = address[7:2];
 
   // El instante del intercambio. Ver la explicacion de arriba.
   wire swap_now = fill_start && fill_first && swap_pending;

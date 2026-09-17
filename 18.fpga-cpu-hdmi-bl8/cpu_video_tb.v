@@ -91,7 +91,7 @@ module cpu_video_tb;
       // El banco no observa estas dos salidas; conectadas en vacio a proposito.
       .underflow_clear(),.halt_request(),
       .select(mmio_select),.write(mmio_write),.write_mask(mmio_write_mask),
-      .address(mmio_address),.write_data(mmio_write_data),
+      .address({4'b0000, mmio_address}),.write_data(mmio_write_data),
       .read_data(mmio_read_data),
       .fill_start(fill_start),.fill_first(fill_first),.fb_base(fb_base),
       .underflow_pix(1'b0),

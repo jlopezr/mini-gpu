@@ -29,8 +29,6 @@ module monitor_tb;
   reg cpu_error = 1'b0;
   reg [7:0] cpu_error_code = 8'h00;
   reg [31:0] cpu_pc = 32'h1234_5678;
-  reg [31:0] cpu_cycles = 32'h0001_0002;
-  reg [31:0] cpu_instructions = 32'h0000_0101;
   wire [4:0] cpu_debug_register_address;
   reg [31:0] cpu_debug_register_data = 32'hdead_beef;
 
@@ -69,8 +67,6 @@ module monitor_tb;
       .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code),
       .cpu_pc(cpu_pc),
-      .cpu_cycles(cpu_cycles),
-      .cpu_instructions(cpu_instructions),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(cpu_debug_register_data),
       .last_command(last_command),
@@ -156,7 +152,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h14) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h17) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);
@@ -294,21 +290,21 @@ module monitor_tb;
     if (received[34] !== 8'hb5 || !reset_request_seen)
       $fatal(1, "RESET_CPU mismatch");
 
-    // Los contadores de rendimiento. Son dos comandos y no uno porque el bufer
-    // de respuesta tiene 7 bytes y los dos contadores juntos necesitan 9.
+    // Los contadores de rendimiento YA NO son comandos del monitor: son un
+    // dispositivo MMIO en 0x80000300, como en la MiniGPU. Lo que se comprueba
+    // aqui es que los dos codigos viejos se RECHAZAN, que es lo que hace la
+    // retirada segura: un cliente antiguo recibe un NO, no una respuesta
+    // silenciosamente distinta.
     wait (!busy && tx_ready);
     send_command(8'h36);
-    wait (received_count == 40);
-    if (received[35] !== 8'hb6) $fatal(1, "GET_CYCLES response mismatch");
-    if ({received[36], received[37], received[38], received[39]} !== 32'h0001_0002)
-      $fatal(1, "GET_CYCLES data mismatch");
+    wait (received_count == 36);
+    if (received[35] !== 8'hff) $fatal(1, "GET_CYCLES deberia estar retirado");
 
     wait (!busy && tx_ready);
     send_command(8'h37);
-    wait (received_count == 45);
-    if (received[40] !== 8'hb7) $fatal(1, "GET_INSTRUCTIONS response mismatch");
-    if ({received[41], received[42], received[43], received[44]} !== 32'h0000_0101)
-      $fatal(1, "GET_INSTRUCTIONS data mismatch");
+    wait (received_count == 37);
+    if (received[36] !== 8'hff)
+      $fatal(1, "GET_INSTRUCTIONS deberia estar retirado");
 
     $display("PASS: monitor protocol responses are correct");
     $finish;

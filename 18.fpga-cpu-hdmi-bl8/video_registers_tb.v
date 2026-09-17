@@ -28,7 +28,7 @@ module video_registers_tb;
   reg select = 1'b0;
   reg write = 1'b0;
   reg [3:0] write_mask = 4'b0000;
-  reg [4:0] address = 5'h00;
+  reg [7:0] address = 8'h00;   // byte dentro de la ventana del dispositivo
   wire underflow_clear, halt_request;
   reg [31:0] write_data = 32'h0;
   wire [31:0] read_data;

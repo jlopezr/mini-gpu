@@ -627,15 +627,70 @@ hoy —14, 17 y 22 respondiendo todas monitor 2.4 siendo hardware distinto— ba
 
       **Comprobado en placa** el 17/09/2026 sobre la 22: `0x80000F00` responde
       `0x4D47_0016`, y los otros tres `1`, `0` y `0x0b`. Leído con `READ_WORD`.
-- [ ] Engancharlo en la familia CPU:
-      - 19, 21: un `DEV_SYSID = 4'd15` en `mmio_decoder.v`, ~3 líneas.
-      - 16, 18: portar `mmio_decoder.v` y ensanchar el comparador del adaptador.
-        **Ensanchar la ventana abarata el prefijo** (de `address[31:5]`, 27 bits,
-        a `address[31:12]`, 20) y un dispositivo inexistente ya lee cero — el
-        propio `mmio_decoder.v` lo documenta. Sin esto, 16 y 18 no llegan a
-        `0x80000F00`: sus ventanas son de 16 y 32 bytes.
-      - 2, 11: un `SysIdDevice` en Python al lado de `VideoDevice`/`SerialDevice`.
-        Vale la pena: deja que un programa sepa que corre en simulador.
+- [x] Enganchado en 16, 18, 19 y 21, con `DEV_SYSID = 4'd15` en `mmio_decoder.v`
+      —el **último** slot, no el primero libre, para que los dispositivos de
+      verdad crezcan hacia arriba sin tropezárselo—. `FOLDER` e `ISA_PROFILE`
+      van por parámetro desde cada `top.v`, así que `mmio_decoder.v` sigue
+      siendo copia idéntica en las cuatro.
+
+      En 16 y 18 hubo que **ensanchar la ventana** primero: eran de 16 y 32
+      bytes y no llegaban a `0x80000F00` ni de lejos. Ensanchar **abarata** el
+      prefijo (16 pasa de comparar 28 bits a 20; 18, de 27 a 20) y lo que se
+      paga es un nivel de LUT en el mux de lectura, que crece con los
+      dispositivos que *existen* y no con el tamaño del mapa.
+
+      **`ISA_PROFILE` en CPU no se puede derivar con la regla de la GPU.** El
+      patrón `OPCODE_SSY` ahora casa en las seis CPU, pero **como no-op**: se
+      añadieron para compartir binarios con la GPU y no hay pila de
+      reconvergencia detrás. Encender el bit 3 diría al host que el núcleo
+      diverge y reconverge, que es falso. En CPU el bit 3 es cero siempre.
+      Valores: 16 y 18 `0x03`; 19 y 21 `0x07`.
+
+- [ ] 2 y 11: un `SysIdDevice` en Python al lado de `VideoDevice`/`SerialDevice`.
+      Vale la pena: deja que un programa sepa que corre en simulador.
+
+#### Por qué 6 y 10 se quedan fuera — **decisión provisional, a revisar**
+
+No es un olvido, pero tampoco es una decisión firme: se toma para no abrir otro
+frente a mitad de esta ronda, y **conviene volver a ella cuando lo demás esté
+cerrado**.
+
+Los tres datos que la sostienen hoy:
+
+1. **Ninguno de los dos tiene ventana MMIO.** No es que les falte un
+   dispositivo: es que no existe el concepto en su RTL. En el 6,
+   [`memory_map.v`](../6.fpga-cpu/memory_map.v) tiene un solo eje —qué banco y
+   qué peticionario— y todo lo que cae fuera de `address[31:15]==0` es error;
+   añadir MMIO mete un segundo eje, *«¿esto es memoria siquiera?»*, en los tres
+   caminos. En el 10 es más caro todavía: su `sdram_system_adapter.v` son 293
+   líneas y el de la 16, que sí lo tiene, 477 — buena parte de esas 184 de
+   diferencia **es justo el camino MMIO**.
+
+2. **En la familia CPU la versión de monitor ya identifica la carpeta.** Son
+   1.17, 1.18, 1.19, 1.20, 1.21 y 1.16: todas distintas. La ambigüedad que hizo
+   nacer `SYS_ID` —14, 17 y 22 contestando las tres 2.4— es un problema de la
+   GPU. En 6 y 10, `SYS_ID` aportaría **uniformidad, no capacidad**.
+
+3. **El coste didáctico apunta en contra.** El 6 es el prototipo por el que se
+   entra. Meterle MMIO allí presenta la entrada/salida mapeada en memoria **sin
+   nada que mapear**, porque `SYS_ID` son cuatro constantes de sólo lectura. El
+   concepto llega solo en la 16, empujado por el vídeo, que es cuando de verdad
+   hace falta.
+
+El argumento **en contra** de esta decisión, que es real y por eso queda
+escrito: con `SYS_ID` en todas, ninguna herramienta necesita un caso especial.
+Lo que lo debilita hoy es que el caso especial no desaparecería igualmente —5, 8
+y 9 seguirían fuera—, así que se pagaría un concepto en el prototipo didáctico a
+cambio de *reducir* la excepción, no de eliminarla.
+
+**La regla que se escribe, para que la omisión sea defendible y comprobable:**
+*`SYS_ID` es obligatorio en toda carpeta que tenga ventana MMIO.* Así el test de
+abajo tiene un criterio que exigir, y el 6 no queda como un descuido sino como
+un prototipo que aún no tiene dispositivos. El día que tenga uno de verdad,
+`SYS_ID` entra con él y el concepto llega motivado.
+
+#### Vuelta a la lista
+
 - [x] **Test de que `SYS_ID` coincide con el número de carpeta**, hecho para la
       familia GPU. Falta extenderlo para que *exija* el bloque en toda carpeta con
       ventana MMIO, que es lo que hace que «obligatorio» signifique algo dentro de

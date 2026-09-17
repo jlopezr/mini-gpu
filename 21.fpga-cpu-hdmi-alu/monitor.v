@@ -17,8 +17,6 @@
  *   33             (GET_STATUS)  -> b3 FLAGS ERROR PC3 PC2 PC1 PC0
  *   34 RR          (READ_REG)    -> b4 D3 D2 D1 D0 (or ff)
  *   35             (RESET_CPU)   -> b5
- *   36             (GET_CYCLES)  -> b6 C3 C2 C1 C0
- *   37             (GET_INSTR)   -> b7 I3 I2 I1 I0
  *   38 LL DD...    (SEND_BYTES)  -> b8 NN     NN aceptados, puede ser < LL
  *   39 MM          (RECV_BYTES)  -> b9 NN DD... NN <= MM, puede ser 0
  *   any other command            -> ff
@@ -67,10 +65,6 @@ module monitor (
     input cpu_error,
     input [7:0] cpu_error_code,
     input [31:0] cpu_pc,
-    // Contadores de rendimiento de UNA ejecucion. Los lleva top.v, que es
-    // quien ve `instruction_retired` y el reloj.
-    input [31:0] cpu_cycles,
-    input [31:0] cpu_instructions,
     output reg [4:0] cpu_debug_register_address,
     input [31:0] cpu_debug_register_data,
 
@@ -105,8 +99,6 @@ module monitor (
   // maxima de este monitor son siete bytes: dos contadores de 32 bits mas la
   // cabecera serian nueve. Leerlos por separado no es problema, porque solo
   // tienen sentido con la CPU parada, y entonces no cambian.
-  localparam [7:0] CMD_GET_CYCLES = 8'h36;
-  localparam [7:0] CMD_GET_INSTRUCTIONS = 8'h37;
   localparam [7:0] CMD_SEND_BYTES = 8'h38;
   localparam [7:0] CMD_RECV_BYTES = 8'h39;
   localparam [7:0] RSP_PONG = 8'h81;
@@ -122,8 +114,6 @@ module monitor (
   localparam [7:0] RSP_STATUS = 8'hb3;
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
-  localparam [7:0] RSP_CYCLES = 8'hb6;
-  localparam [7:0] RSP_INSTRUCTIONS = 8'hb7;
   localparam [7:0] RSP_SEND_BYTES = 8'hb8;
   localparam [7:0] RSP_RECV_BYTES = 8'hb9;
   localparam [7:0] RSP_ERROR = 8'hff;
@@ -140,10 +130,6 @@ module monitor (
   //        de cuatro puertos y un adaptador por cliente. El reloj baja a
   //        80 MHz porque a 100 no cumple ninguna semilla. El baudio NO cambia:
   //        divisor 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
-  //   1.12 contadores de ciclos e instrucciones, con GET_CYCLES (0x36) y
-  //        GET_INSTRUCTIONS (0x37). Sin ellos no hay forma de medir CPI en la
-  //        placa: `instruction_retired` estaba cableado en top.v y no iba a
-  //        ninguna parte.
   //   1.13 la CPU gana los accesos de 8 y 16 bits (0x18..0x1D) y las llamadas
   //        JAL/JALR/JR (0x2C..0x2E). El PROTOCOLO no cambia: ni un comando
   //        nuevo, ni un campo distinto. Sube igual porque la version es lo
@@ -163,7 +149,7 @@ module monitor (
   //        sino INCOMPATIBLE --un programa que use R0 como registro general da
   //        resultados distintos en 1.14 y en 1.15 sin parar con error--, asi
   //        que el runner tiene que poder distinguir los dos bitstreams.
-  localparam [7:0] VERSION_MINOR = 8'h10;
+  localparam [7:0] VERSION_MINOR = 8'h19;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;
@@ -231,7 +217,7 @@ module monitor (
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [16:0] command_decoded;
+  (* keep = "true" *) reg [14:0] command_decoded;
 
   // Bytes que faltan del paquete serie en curso, y cuantos entraron en la cola.
   reg [7:0] serial_remaining;
@@ -284,7 +270,7 @@ module monitor (
       response_byte_4 <= 8'h00;
       response_byte_5 <= 8'h00;
       response_byte_6 <= 8'h00;
-      command_decoded <= 16'h0000;
+      command_decoded <= 15'h0;
       serial_push <= 1'b0;
       serial_push_data <= 8'h00;
       serial_pop <= 1'b0;
@@ -299,7 +285,6 @@ module monitor (
             command_decoded <= {
               rx_data == CMD_READ_WORD,
               rx_data == CMD_RECV_BYTES, rx_data == CMD_SEND_BYTES,
-              rx_data == CMD_GET_INSTRUCTIONS, rx_data == CMD_GET_CYCLES,
               rx_data == CMD_RESET_CPU, rx_data == CMD_READ_REGISTER,
               rx_data == CMD_GET_STATUS, rx_data == CMD_STEP,
               rx_data == CMD_HALT, rx_data == CMD_RUN,
@@ -334,7 +319,7 @@ module monitor (
                 word_access <= 1'b0;
                 state <= STATE_READ_ADDRESS_HIGH;
               end
-              command_decoded[16]: begin
+              command_decoded[14]: begin
                 word_access <= 1'b1;
                 state <= STATE_READ_ADDRESS_HIGH;
               end
@@ -390,28 +375,8 @@ module monitor (
               // Los dos contadores. Miden UNA ejecucion: se ponen a cero al
               // arrancar la CPU, no al resetearla, para que `run` / `halt` /
               // `run` den tres medidas y no una acumulada.
-              command_decoded[12]: begin
-                response_byte_0 <= RSP_CYCLES;
-                response_byte_1 <= cpu_cycles[31:24];
-                response_byte_2 <= cpu_cycles[23:16];
-                response_byte_3 <= cpu_cycles[15:8];
-                response_byte_4 <= cpu_cycles[7:0];
-                response_length <= 3'd5;
-                response_done_state <= STATE_IDLE;
-                state <= STATE_RESPOND;
-              end
-              command_decoded[13]: begin
-                response_byte_0 <= RSP_INSTRUCTIONS;
-                response_byte_1 <= cpu_instructions[31:24];
-                response_byte_2 <= cpu_instructions[23:16];
-                response_byte_3 <= cpu_instructions[15:8];
-                response_byte_4 <= cpu_instructions[7:0];
-                response_length <= 3'd5;
-                response_done_state <= STATE_IDLE;
-                state <= STATE_RESPOND;
-              end
-              command_decoded[14]: state <= STATE_SERIAL_SEND_LENGTH;
-              command_decoded[15]: state <= STATE_SERIAL_RECV_MAX;
+              command_decoded[12]: state <= STATE_SERIAL_SEND_LENGTH;
+              command_decoded[13]: state <= STATE_SERIAL_RECV_MAX;
               default: begin
                 response_byte_0 <= RSP_ERROR;
                 response_length <= 3'd1;

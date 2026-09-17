@@ -19,7 +19,8 @@ module sdram_system_adapter_tb;
   // Puerto de video en reposo: este banco cubre monitor y CPU. El camino de
   // video tiene el suyo en video_sdram_tb.v.
   reg video_req=0; reg [23:0] video_addr=0;
-  wire mmio_select,mmio_write; wire [3:0] mmio_write_mask,mmio_address;
+  wire mmio_select,mmio_write; wire [3:0] mmio_write_mask;
+  wire [11:0] mmio_address;   // la pagina MMIO entera
   wire [31:0] mmio_write_data; reg [31:0] mmio_read_data;
   // Cuatro registros de mentira en la ventana 0x80000000, suficientes para
   // comprobar el pegamento: decodificacion, mascara de byte y seleccion del

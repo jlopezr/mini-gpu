@@ -100,7 +100,6 @@ module cpu_serial_tb;
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
       .cpu_halted(halted), .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code), .cpu_pc(debug_pc),
-      .cpu_cycles(32'd0), .cpu_instructions(32'd0),
       .cpu_debug_register_address(cpu_debug_register_address),
       .cpu_debug_register_data(debug_register_data),
       .serial_push(serial_host_push), .serial_push_data(serial_host_push_data),

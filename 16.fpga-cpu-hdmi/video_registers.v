@@ -49,7 +49,7 @@ module video_registers #(
     input wire select,
     input wire write,
     input wire [3:0] write_mask,
-    input wire [3:0] address,      // byte dentro de la ventana; [3:2] elige registro
+    input wire [7:0] address,     // byte dentro de la ventana del dispositivo; [7:2] elige registro
     input wire [31:0] write_data,
     output reg [31:0] read_data,
 
@@ -62,10 +62,10 @@ module video_registers #(
     output wire [31:0] debug_front,
     output wire [31:0] debug_back
 );
-  localparam [1:0] REG_FB_FRONT = 2'd0;
-  localparam [1:0] REG_FB_BACK  = 2'd1;
-  localparam [1:0] REG_SWAP     = 2'd2;
-  localparam [1:0] REG_STATUS   = 2'd3;
+  localparam [5:0] REG_FB_FRONT = 6'd0;
+  localparam [5:0] REG_FB_BACK  = 6'd1;
+  localparam [5:0] REG_SWAP     = 6'd2;
+  localparam [5:0] REG_STATUS   = 6'd3;
 
   reg [31:0] fb_front;
   reg [31:0] fb_back;
@@ -80,7 +80,10 @@ module video_registers #(
     underflow_sync_1 <= underflow_sync_0;
   end
 
-  wire [1:0] selected = address[3:2];
+  // Seis bits, no dos: la ventana del dispositivo son 256 bytes aunque esta
+  // carpeta solo tenga cuatro registros. Un registro que no existe lee cero,
+  // que es lo que ya hacia antes el resto de la ventana.
+  wire [5:0] selected = address[7:2];
 
   // El instante del intercambio. Ver la explicacion de arriba.
   wire swap_now = fill_start && fill_first && swap_pending;
@@ -145,8 +148,13 @@ module video_registers #(
       REG_FB_FRONT: read_data = fb_front;
       REG_FB_BACK:  read_data = fb_back;
       REG_SWAP:     read_data = {31'd0, swap_pending};
-      default:      read_data = {frame_count, 14'd0, swap_pending,
+      REG_STATUS:   read_data = {frame_count, 14'd0, swap_pending,
                                  underflow_sync_1};
+      // STATUS pasa a ser explicito: con la ventana de 16 bytes, `default` era
+      // STATUS y nada mas, porque no habia mas direcciones. Ahora la ventana
+      // son 256 bytes y dejarlo en `default` haria que los 60 registros que no
+      // existen devolvieran el contador de frames en vez de cero.
+      default:      read_data = 32'd0;
     endcase
   end
 endmodule

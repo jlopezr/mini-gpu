@@ -97,43 +97,10 @@ module top (
   wire [7:0] serial_host_push_data;
   wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
 
-  // ---------------------------------------------------------------------------
-  // Contadores de rendimiento
-  //
-  // `instruction_retired` salia de la CPU desde siempre y no iba a ninguna
-  // parte. Con estos dos contadores y los comandos 0x36/0x37 del monitor, el
-  // CPI de un programa se puede medir en la placa en vez de estimarlo.
-  //
-  // Miden UNA ejecucion: se ponen a cero al arrancar la CPU, no al resetearla.
-  // Asi `run` / `halt` / `run` da tres medidas independientes, que es lo que
-  // uno quiere al comparar versiones, y no una suma que crece sin sentido.
-  //
-  // Cuentan mientras la CPU NO esta parada. Eso incluye lo que espera a la
-  // memoria, que es justo lo que interesa: la diferencia entre 9 ciclos por
-  // instruccion ejecutando desde EBR y los 35 de aqui es toda espera.
-  // ---------------------------------------------------------------------------
-  reg [31:0] cpu_cycles;
-  reg [31:0] cpu_instructions;
-  always @(posedge clk) begin
-    if (reset || cpu_run_request) begin
-      cpu_cycles <= 32'd0;
-      cpu_instructions <= 32'd0;
-    end else begin
-      // Los ciclos solo cuentan con la CPU en marcha. Saturan en vez de dar la
-      // vuelta: un contador que ha dado la vuelta miente en silencio, y a
-      // 80 MHz son 53 segundos.
-      if (!cpu_halted && cpu_cycles != 32'hffff_ffff)
-        cpu_cycles <= cpu_cycles + 1'b1;
-      // Las instrucciones NO se condicionan a `!cpu_halted`, y esa es la
-      // diferencia entre contar bien y contar una de menos siempre: el `HALT`
-      // retira en el mismo ciclo en que `cpu_halted` sube, asi que con el
-      // filtro puesto se perdia justo esa. El contraste con el simulador en
-      // `--measure` lo delato: 11 contra 12 en todos los programas a la vez,
-      // que es un off-by-one de definicion y no dos CPUs distintas.
-      if (cpu_instruction_retired && cpu_instructions != 32'hffff_ffff)
-        cpu_instructions <= cpu_instructions + 1'b1;
-    end
-  end
+  // Los contadores de rendimiento vivian AQUI, como dos registros que solo
+  // leia el host con los comandos 0x36/0x37. Ahora son un dispositivo MMIO en
+  // 0x80000300, igual que en la MiniGPU, y el programa se mide a si mismo sin
+  // parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
   monitor monitor_i(
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
@@ -147,7 +114,6 @@ module top (
       .cpu_halted(cpu_halted), .cpu_error(cpu_error),
       .cpu_error_code(cpu_error_code), .cpu_pc(cpu_pc),
       .cpu_debug_register_address(cpu_debug_register_address),
-      .cpu_cycles(cpu_cycles), .cpu_instructions(cpu_instructions),
       .cpu_debug_register_data(cpu_debug_register_data),
       .serial_push(serial_host_push), .serial_push_data(serial_host_push_data),
       .serial_rx_free(serial_host_rx_free),
@@ -508,11 +474,27 @@ module top (
 
   // Reparto de la ventana MMIO entre dispositivos. El mapa esta en
   // mmio_decoder.v; el video no se mueve de 0x80000000.
-  mmio_decoder mmio_decoder_i(
+  // ISA_PROFILE: MUL, DIV y accesos de subpalabra. El bit 3 (SIMT) va a CERO
+  // aunque `cpu.v` decodifique SSY y BAR: aqui son NO-OP, puestos para poder
+  // compartir binarios con la GPU. Encenderlo diria al host que este nucleo
+  // diverge y reconverge, que es falso.
+  wire [31:0] mmio_perf_read_data;
+  mmio_decoder #(.FOLDER(8'd19), .ISA_PROFILE(32'h0000_0007)) mmio_decoder_i(
       .select(mmio_select), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
       .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
+      .perf_read_data(mmio_perf_read_data),
       .read_data(mmio_read_data));
+
+  // Contadores de rendimiento en 0x80000300. `restart` es `cpu_run_request`:
+  // cada `run` empieza una medida nueva, que es lo que estos contadores hacian
+  // ya cuando vivian en este fichero.
+  cpu_perf_counters perf_i(
+      .clk(clk), .reset(reset),
+      .address(mmio_address[7:0]), .read_data(mmio_perf_read_data),
+      .running(!cpu_halted), .retired(cpu_instruction_retired),
+      .restart(cpu_run_request));
+
 
   // Registros de video en 0x80000000, y con ellos el doble framebuffer.
   video_registers registers_i(

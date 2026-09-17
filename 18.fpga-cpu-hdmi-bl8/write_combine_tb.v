@@ -43,7 +43,8 @@ module write_combine_tb;
 
   // -- MMIO -----------------------------------------------------------------
   wire mmio_req, mmio_write;
-  wire [3:0] mmio_mask, mmio_addr;
+  wire [3:0] mmio_mask;
+  wire [11:0] mmio_addr;   // la pagina MMIO entera
   wire [31:0] mmio_wdata;
   reg mmio_ack = 0;
   reg [31:0] mmio_rdata = 32'hcafe_0000;
