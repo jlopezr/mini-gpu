@@ -79,13 +79,27 @@ de síntesis y de simulación en el mismo comando con `-DSYNTHESIZE` puesto.
 Revisar si hay que excluir `*_tb.v` del lint, o separar `sdram_model.v` del
 guard de síntesis.
 
-## 10. Revisar `MONITOR_REGIONS`
+## 10. Revisar `MONITOR_REGIONS` — HECHO
 
-En `21.fpga-cpu-hdmi-alu/monitor.py`, `MONITOR_REGIONS = ()` (vacío). Comprobar
-si eso es correcto para toda la familia HDMI (16/18/19/21) o si debería haber
-algo ahí (p.ej. registros de framebuffer fuera del espacio arquitectónico), y
-si el resto de prototipos que sí lo rellenan (`10`, `12`, `14`, `17`, `6`) lo
-hacen de forma consistente entre sí.
+El vacío de la familia HDMI (16/18/19/21) no era correcto, pero tampoco era un
+fallo visible. `MEMORY_REGIONS` solo filtra **bloques y transferencias**
+(`validate_block`/`validate_transfer`); los accesos byte a byte no pasan por ahí,
+y todo el acceso a vídeo de esa familia va byte a byte por `_read_register` de
+`x.tests/backends/fpga.py`. Por eso la lista podía estar vacía sin que se notara.
+Además `21/monitor.v` no tiene lista blanca propia —el filtrado lo hace
+`monitor_mem_adapter_128.v`—, así que no había gemela que la contradijera.
+
+La incoherencia era contra la 22, donde un bloque de 28 bytes sobre el bloque de
+vídeo sí funciona. Relleno con `(0x8000_0000, 0x8000_0018)` en las cuatro; llega
+a `0x1c` cuando se añada `VIDEO_CTRL` a la CPU (fase 3.5 de
+`docs/unificacion-mmio.md`).
+
+Comprobado en simulación: `cpu_video_tb.v` recorre ahora los 24 bytes del bloque
+de vídeo seguidos contra el adaptador real y verifica que se recomponen en los
+mismos valores que las lecturas por palabra. Es lo que hace un `READ_BLOCK` a
+nivel de bus —el monitor transfiere el bloque como lecturas de byte consecutivas
+sobre ese puerto—, y `mon_read` aborta en cuanto una devuelve error, así que
+valida el rango entero y no solo su primera dirección.
 
 ## 12. Tests de capacidad pendientes en `x.tests`
 

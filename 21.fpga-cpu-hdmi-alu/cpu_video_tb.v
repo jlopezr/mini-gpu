@@ -336,6 +336,8 @@ module cpu_video_tb;
   endtask
 
   reg [31:0] palabra;
+  reg [7:0] bloque[0:23];
+  integer b;
   task mon_read_word;
     input [31:0] address;
     begin
@@ -487,6 +489,30 @@ module cpu_video_tb;
       errors = errors + 1;
     end
 
+    // Un READ_BLOCK sobre el bloque de video: el monitor transfiere un bloque
+    // como lecturas de byte consecutivas sobre este mismo puerto, asi que
+    // recorrer los 24 bytes es lo que hace el comando a nivel de bus. Lo que se
+    // comprueba es que el rango ENTERO lo acepta el adaptador --mon_read aborta
+    // en cuanto uno devuelve error-- y que los bytes se recomponen.
+    //
+    // Hasta hoy MONITOR_REGIONS estaba vacio en 16/18/19/21, asi que el cliente
+    // rechazaba estos bloques antes de mandarlos y nadie habia comprobado que el
+    // RTL los aceptara. Ver TODO.md punto 10.
+    for (b = 0; b < 24; b = b + 1) begin
+      mon_read(32'h8000_0000 + b);
+      bloque[b] = leido;
+    end
+    if ({bloque[3], bloque[2], bloque[1], bloque[0]} !== debug_front) begin
+      $display("FALLO: FB_FRONT por bloque = %08x, por palabra = %08x",
+               {bloque[3], bloque[2], bloque[1], bloque[0]}, debug_front);
+      errors = errors + 1;
+    end
+    if ({bloque[19], bloque[18], bloque[17], bloque[16]} !== PARAR_EN) begin
+      $display("FALLO: SWAP_COUNT por bloque = %08x, esperado %0d",
+               {bloque[19], bloque[18], bloque[17], bloque[16]}, PARAR_EN);
+      errors = errors + 1;
+    end
+
     if (mem.errors != 0) begin
       $display("FALLO: el modelo de SDRAM conto %0d violaciones JEDEC", mem.errors);
       errors = errors + 1;
@@ -494,7 +520,8 @@ module cpu_video_tb;
 
     if (errors != 0) $fatal(1, "%0d comprobaciones fallaron", errors);
     $display("OK: la CPU pidio el swap sobre el MMIO real, vio los buffers");
-    $display("    intercambiados, y HALT_AT la paro en el intercambio %0d", PARAR_EN);
+    $display("    intercambiados, HALT_AT la paro en el intercambio %0d,", PARAR_EN);
+    $display("    y los 24 bytes del bloque de video se leen seguidos");
     $finish;
   end
 

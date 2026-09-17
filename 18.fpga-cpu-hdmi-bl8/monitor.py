@@ -27,7 +27,15 @@ MAX_BLOCK_SIZE = 256
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
-MONITOR_REGIONS = ()
+# Bloque de video en MMIO: FB_FRONT, FB_BACK, SWAP, STATUS, SWAP_COUNT, HALT_AT.
+# Solo filtra bloques y transferencias (validate_block / validate_transfer); los
+# accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo estar
+# vacia sin que se notara. El RTL si acepta un bloque sobre el MMIO: en el
+# adaptador la rama is_mmio va antes de la comprobacion de cpu_halted.
+# Llegara a 0x8000_001c cuando la fase 3.5 anada VIDEO_CTRL.
+MONITOR_REGIONS = (
+    (0x8000_0000, 0x8000_0018),
+)
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
 CMD_PING = b"\x01"
