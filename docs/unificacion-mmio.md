@@ -22,10 +22,21 @@ no estaban previstas: `architecture` como lista, la carpeta `cases-shared`, un
 `incompatibility` en el backend `gpu-simulator` (faltaba, y era un fallo: no
 miraba el `requires` de los casos).
 
-**Lo siguiente es la fase 3.5**, y conviene entrar en ella sabiendo que no toda
-pesa lo mismo: `VIDEO_CTRL` en CPU desbloquea trabajo, y unificar las bases de FB
-—34 ficheros en tres copias independientes— sólo iguala. La **4b** y la **fase 5**
-no tienen hoy un consumidor que las pida.
+**La fase 3.5 está cerrada en RTL, simuladores y pruebas**, en el orden que se
+acordó: contadores a MMIO → retirar `GET_CYCLES`/`GET_INSTRUCTIONS` →
+`VIDEO_CTRL` → bases de FB → programas. Lo que falta de ella es sólo la
+**verificación en placa**, que necesita las cuatro síntesis y se dejó agrupada
+al final a propósito, para no pagar un `nextpnr` por cada punto.
+
+La predicción de que unificar las bases de FB «sólo iguala» resultó ser falsa, y
+conviene dejarlo escrito: destapó dos comprobaciones que heredaban el valor de
+reset sin decirlo —`cpu_serial_tb` de la 19 y la 21, y el test del reloj
+sintético de frames— que con cero habrían seguido en verde **sin comprobar
+nada**. El detalle está en el punto correspondiente de la fase 3.5.
+
+La **4b** y la **fase 5** no tienen hoy un consumidor que las pida. Queda además
+pendiente de decidir la **paralelización de `run_tests.py`** (ver el final de
+este documento) y la unificación de `monitor.py`.
 
 ## Lo que ya está hecho
 
@@ -807,8 +818,12 @@ renumerar y unificar, no rediseñar.
   run/halt/step/reset llegan por señales del monitor. Convertirlos en registros
   choca de frente con que la interfaz host es byte a byte y solo funciona con la
   GPU parada. Es rediseño, no reubicación.
-- **Contadores de rendimiento en CPU.** Función nueva, no condición para
-  compartir programas.
+- ~~**Contadores de rendimiento en CPU.** Función nueva, no condición para
+  compartir programas.~~ **Se hizo igualmente**, en la fase 3.5: lo que la metió
+  dentro no fue el valor de la función, sino que retirar `GET_CYCLES` y
+  `GET_INSTRUCTIONS` del juego de comandos exigía tener antes dónde ponerlos.
+  Entraron como el dispositivo 3 del contrato, con los mismos offsets que la
+  GPU.
 - **Convivencia CPU+GPU en el mismo bitstream.** El contrato se diseña para no
   cerrarle la puerta —por eso lo exclusivo de la GPU se va a una segunda página
   en vez de a un slot libre de la primera— pero los siete puntos de "lo que falta
@@ -818,3 +833,41 @@ renumerar y unificar, no rediseñar.
   propósito. Añadir una ventana MMIO al simulador funcional para que un programa
   no falle sería la peor manera de resolverlo; el patrón bueno ya existe y es
   `plasma_nommio.asm`.
+
+---
+
+## Paralelizar `run_tests.py`, y cuánto se puede esperar de ello
+
+No es parte de la unificación, pero salió de ella: la suite se corre una vez por
+cada punto y el tiempo se nota. Queda aquí escrito para decidirlo con datos.
+
+**El techo es mucho más bajo que el número de cores.** Medido en
+`gpu-simulator`, 24 hilos disponibles:
+
+    PASS gpu-mandelbrot          (89.1s)
+    PASS gpu-mandelbrot-packed   (95.5s)
+    ...los otros 33 casos         ~0.2s en total
+    35 caso(s), 184.8s
+
+Dos casos son el 99,9 % del tiempo, así que repartir lleva de 184,8 s a **~95,5
+s**: un 1,9x, y ningún reparto baja de ahí. Merece la pena —es la diferencia
+entre tres minutos y minuto y medio por vuelta— pero el 2x es el máximo, y
+conviene saberlo antes de escribirlo y no después.
+
+Cuatro cosas que no son obvias:
+
+- **Procesos, no hilos.** El backend de simulador ejecuta el modelo *en
+  proceso*: es Python ligado a CPU y el GIL lo serializa. Hace falta
+  `ProcessPoolExecutor`, y cada worker construye su propio backend, porque el
+  objeto lleva módulos cargados con `importlib` que no viajan por pickle.
+- **La placa va en serie, y además pide sitio.** Es un recurso único —un
+  puerto, un bitstream—. Pero sus *timeouts* son de reloj de pared, así que 24
+  workers saturando la máquina mientras la placa corre pueden hacerlos saltar
+  por contención y no por un fallo real: un fallo intermitente en placa
+  imposible de reproducir. Dejar un core libre mientras el backend de FPGA esté
+  activo.
+- **Salida en orden fijo.** Hoy los `PASS` salen en orden de caso, lo que
+  permite comparar dos ejecuciones con un `diff`. Hay que bufferar y emitir en
+  ese orden, no según acaba cada worker.
+- **`--jobs 1` de verdad.** Cuando un caso se cuelga, el pool estorba: hace
+  falta una ruta secuencial, no un pool de tamaño uno.
