@@ -31,6 +31,33 @@ from tools.rtl_facts import (  # noqa: E402
 )
 
 
+# Registros de video, en direcciones de byte. LOS MISMOS OFFSETS que en
+# `fpga.py`: ese es el contrato compartido de docs/unificacion-mmio.md, y si
+# algun dia dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no
+# aparecen ni HALT_AT --que la GPU no tiene-- ni las bases de reset: el backend
+# de CPU las restaura antes de cada caso, y un kernel de GPU se configura solo.
+VIDEO_FB_FRONT = 0x8000_0000
+VIDEO_FB_BACK = 0x8000_0004
+VIDEO_STATUS = 0x8000_000C
+VIDEO_SWAP_COUNT = 0x8000_0010
+VIDEO_CTRL = 0x8000_0018
+# RGB565 de 320x240.
+FRAME_BYTES = 320 * 240 * 2
+
+
+def _read_register(client, address: int) -> int:
+    """Una palabra de 32 bits, en una sola transaccion.
+
+    Aqui no hay camino de bytes de repuesto --a diferencia de `fpga.py`, que
+    cubre seis versiones de CPU y alguna podria no tener READ_WORD-- porque las
+    cuatro GPU lo tienen desde la fase 3.4. Y hace falta: STATUS lleva el
+    contador de frames en los bits altos, y el barrido cuelga de `reset`, no de
+    `core_reset`, asi que sigue avanzando con el nucleo parado. Leido en cuatro
+    trozos podria salir un valor que nunca existio.
+    """
+    return client.read_word(address)
+
+
 # Igual que en fpga.py: cada versión es una carpeta de prototipo con
 # `version.json` (`{"alias": ...}`, y opcionalmente `"description"` si el
 # título del README no basta); eso es lo único a mano. `monitor_version` se
@@ -222,6 +249,7 @@ class GpuFpgaBackend:
         timeout_seconds: float,
         warp_config: object,
         observation_fields: set[str] | None = None,
+        video: dict | None = None,
     ) -> dict:
         # La FPGA se limita por timeout de pared, no por instrucciones.
         del max_instructions, register_numbers
@@ -289,12 +317,35 @@ class GpuFpgaBackend:
                 for address, size in memory_ranges
             }
 
+            video_result = None
+            if video is not None:
+                # Se lee DESPUES de que la GPU haya parado, igual que en la
+                # familia CPU: los registros responden tambien en marcha, pero
+                # la memoria no, porque el monitor solo la posee con el nucleo
+                # detenido.
+                estado = _read_register(client, VIDEO_STATUS)
+                video_result = {
+                    "underflow": bool(estado & 1),
+                    "frames": estado >> 16,
+                    # HALT_AT no existe aqui, pero SWAP_COUNT si: esta dentro de
+                    # la ventana en las cuatro GPU.
+                    "swaps": _read_register(client, VIDEO_SWAP_COUNT),
+                    "fb_front": _read_register(client, VIDEO_FB_FRONT),
+                    "frame": None,
+                }
+                if video.get("capture_frame"):
+                    # Desde FB_FRONT, no desde una direccion fija: tras el
+                    # intercambio N el buffer visible alterna segun la paridad.
+                    video_result["frame"] = client.read_memory(
+                        video_result["fb_front"], FRAME_BYTES)
+
         return {
             "halted": status.halted,
             "error": status.error,
             "error_code": status.error_code,
             "pc": status.pc,
             "registers": {},
+            "video": video_result,
             "observations": observations,
             "memory": memory,
         }

@@ -1,0 +1,20 @@
+{
+  "architecture": ["cpu", "gpu"],
+  "name": "shared-double-buffer",
+  "program": "double-buffer.asm",
+  "warp_config": "warps.json",
+  "requires": ["video"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "memory_dumps": [
+      {
+        "address": "0x0200",
+        "file": "expected.hex"
+      }
+    ],
+    "video": { "underflow": false }
+  }
+}

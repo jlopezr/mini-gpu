@@ -15,6 +15,7 @@ from minigpu_sim import (
     Fault,
     InstructionLimitExceeded,
     System,
+    VideoDevice,
     ERROR_SIMT,
 )
 
@@ -291,6 +292,98 @@ class MiniGpuTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertIn(message, result.stdout + result.stderr)
+
+
+class VideoDeviceTest(unittest.TestCase):
+    """La ventana de video, y sobre todo en que se aparta de la de la CPU.
+
+    Los offsets son los mismos a proposito --es el contrato compartido de
+    docs/unificacion-mmio.md-- asi que lo que hay que fijar aqui es donde el
+    hardware NO coincide: si algun dia alguien "unifica" tambien estas tres
+    cosas, el simulador dejaria de parecerse a `gpu_video_regs.v`.
+    """
+
+    def test_sin_dispositivo_el_mmio_sigue_siendo_memoria_fuera_de_rango(self):
+        gpu = System(64, 1, 1)
+        self.assertIsNone(gpu.device_for(VideoDevice.BASE))
+        # LOAD de 0x80000000: sin dispositivo es un acceso fuera de memoria, que
+        # es lo que hacian los casos de siempre.
+        gpu.load_program(program(imm(0x17, 1, value=0x8000),     # MOVHI R1,0x8000
+                                 imm(0x15, 2, 1, 0),             # LOAD R2,(R1)
+                                 HALT), launch=True)
+        gpu.run(8)
+        self.assertEqual(gpu.error_code, ERROR_MEMORY_ACCESS)
+
+    def test_las_bases_se_alinean_a_dieciseis_no_a_cuatro(self):
+        """La CPU alinea a 4 y la GPU a 16: el scanout lee en rafagas."""
+        video = VideoDevice()
+        video.write(VideoDevice.FB_BACK, 0x0102_580F)
+        self.assertEqual(video.read(VideoDevice.FB_BACK), 0x0102_5800)
+
+    def test_halt_at_no_existe(self):
+        """Lee cero y la escritura se ignora, igual que el RTL.
+
+        Es lo que impide declarar `frame_capture` en este backend: la GPU no se
+        para sola --la paran las ordenes del monitor-- asi que no hay captura
+        que armar.
+        """
+        video = VideoDevice()
+        video.write(VideoDevice.HALT_AT, 3)
+        self.assertEqual(video.read(VideoDevice.HALT_AT), 0)
+
+    def test_video_ctrl_existe_y_arranca_en_pattern(self):
+        """No en SCANOUT, y no es un descuido.
+
+        La SDRAM recien encendida contiene basura: arrancar en SCANOUT seria
+        elegir un valor por defecto cuya salida es indefinida. Con PATTERN, ver
+        el patron demuestra que HDMI, PLL, cable y monitor funcionan, y no verlo
+        senala aguas arriba.
+        """
+        video = VideoDevice()
+        self.assertEqual(video.read(VideoDevice.VIDEO_CTRL),
+                         VideoDevice.MODE_PATTERN)
+        video.write(VideoDevice.VIDEO_CTRL, VideoDevice.MODE_SCANOUT)
+        self.assertEqual(video.read(VideoDevice.VIDEO_CTRL),
+                         VideoDevice.MODE_SCANOUT)
+
+    def test_el_intercambio_espera_al_frame(self):
+        video = VideoDevice(fb_front=0x10, fb_back=0x20, frame_instructions=3)
+        video.write(VideoDevice.SWAP, 1)
+        self.assertEqual(video.read(VideoDevice.SWAP), 1)
+        video.tick()
+        video.tick()
+        # Todavia no: el intercambio se aplica en la frontera de frame, igual
+        # que en el hardware lo hace el vsync.
+        self.assertEqual(video.read(VideoDevice.FB_FRONT), 0x10)
+        video.tick()
+        self.assertEqual(video.read(VideoDevice.FB_FRONT), 0x20)
+        self.assertEqual(video.read(VideoDevice.FB_BACK), 0x10)
+        self.assertEqual(video.read(VideoDevice.SWAP_COUNT), 1)
+        self.assertEqual(video.read(VideoDevice.SWAP), 0)
+
+    def test_status_lleva_los_frames_arriba_y_el_pendiente_en_el_bit_uno(self):
+        video = VideoDevice(frame_instructions=1)
+        video.tick()
+        video.tick()
+        video.write(VideoDevice.SWAP, 1)
+        estado = video.read(VideoDevice.STATUS)
+        self.assertEqual(estado >> 16, 2)
+        self.assertEqual(estado & 0b11, 0b10)   # pendiente si, underflow no
+
+    def test_un_kernel_escribe_y_lee_los_registros(self):
+        """El camino completo: LOAD y STORE de un lane contra el dispositivo."""
+        gpu = System(256, 1, 1, video=VideoDevice(fb_front=0x10, fb_back=0x20))
+        gpu.load_program(program(
+            imm(0x17, 20, value=0x8000),      # MOVHI R20, 0x8000
+            imm(0x10, 21, value=0x40),        # MOVI  R21, 0x40
+            imm(0x16, 21, 20, 4),             # STORE R21, R20, 4  (FB_BACK)
+            imm(0x15, 1, 20, 4),              # LOAD  R1,  R20, 4
+            HALT), launch=True)
+        gpu.run(16)
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual(gpu.video.fb_back, 0x40)
+        self.assertEqual(gpu.streaming_multiprocessor.warps[0].processors[0].regs[1],
+                         0x40)
 
 
 if __name__ == '__main__':

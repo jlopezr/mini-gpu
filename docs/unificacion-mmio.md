@@ -84,26 +84,47 @@ que son dos consumidores de la misma tabla.
       así que pasa a **`monitor_cycle_counters`** y la capacidad conserva el
       nombre del dispositivo que usa el contrato.
 
-Una cosa sigue abierta, y se movió fuera de la fase 0 porque no es un ajuste
-del runner sino un caso de prueba que escribir:
+- [x] **Un caso de prueba de vídeo compartido entre familias.** Cerrado:
+      [`x.tests/cases-shared/video/double-buffer`](../x.tests/cases-shared/video/double-buffer).
+      Pasa en `cpu-simulator` y en `gpu-simulator` con **el mismo binario**.
 
-- [ ] **Un caso de prueba de vídeo compartido entre familias.** Que `video` valga
-      para las dos permite a un caso GPU *requerirlo*, pero no hace que un mismo
-      `test.json` corra en 21 y 22: [`run_tests.py:576`](../x.tests/run_tests.py#L576)
-      exige `warp_config` en los casos GPU y lo prohíbe en los de CPU, y
-      `validate_compatibility` pide que la arquitectura del caso sea exactamente
-      la del backend.
+      Lo que hizo falta, que fue más de lo previsto:
 
-      Pero el obstáculo de fondo no es ese código: **un caso CPU y uno GPU no son
-      el mismo programa**, porque el de GPU reparte trabajo con `GETTID` entre 64
-      hilos y usa `SSY`/`BAR`. Compartir el caso solo tiene sentido para un
-      programa de **un solo hilo** — escribir `FB_FRONT`/`FB_BACK`, pedir `SWAP`,
-      sondear el bit 1 de `STATUS`, comprobar `SWAP_COUNT`. Eso es literalmente
-      idéntico en las dos familias desde la fase 3, y sería la prueba de que el
-      contrato funciona.
+      1. **`architecture` admite una lista.** `case_architectures` sustituye a
+         `case_architecture`, y `resolve_architecture` decide con cuál cargar el
+         caso según el backend. La familia la elige el backend, no el caso.
+      2. **Carpeta `cases-shared`.** Los casos de las dos familias viven
+         aparte a propósito: mezclados con los de CPU, el día que uno dejara de
+         correr como GPU no lo notaría nadie.
+      3. **El programa no afirma ninguna dirección absoluta.** Las bases de
+         encendido difieren entre familias —y la fase 3.5 planea cambiarlas—,
+         así que comprueba *relaciones*: que escribir FB_BACK ignora los bits
+         bajos, que tras SWAP las dos bases se intercambian, y que no hay
+         underflow. El resultado va a memoria con la marca `0x5A5A` delante,
+         porque un mapa de bits a secas confundiría «fallaron las cuatro» con
+         «el programa no llegó a ejecutarse».
+      4. **`VideoDevice` en el simulador funcional de GPU.** No existía: el
+         modelo de GPU no tenía vídeo. Es un dispositivo propio, no una copia
+         del de la CPU, porque el hardware no es el mismo —alineación a 16
+         bytes, `HALT_AT` que lee cero, `VIDEO_CTRL` que sólo tiene la GPU—.
+         Los offsets sí coinciden, que es justamente lo que el caso comprueba.
+      5. **`incompatibility` en el backend `gpu-simulator`.** Faltaba, y era un
+         fallo: era el único de los cuatro backends que no miraba el `requires`
+         del caso, así que uno que pidiera un dispositivo ausente se ejecutaba
+         igual y fallaba como si el programa estuviese mal, en vez de omitirse.
+         No se había notado porque hasta ahora ningún caso de GPU declaraba una
+         capacidad que al simulador le faltase.
 
-      Va **después de verificar en placa**: escribir un test de conformidad sobre
-      un mapa que todavía no ha corrido en hardware es construir sobre arena.
+      **Queda sin verificar en placa.** `gpu_fpga.run` ya lee los registros de
+      vídeo con `READ_WORD`, pero eso no ha corrido contra la 22 todavía.
+
+El obstáculo de fondo que tenía apuntado, y cómo se resolvió: **un caso CPU y
+uno GPU no son el mismo programa**, porque el de GPU reparte trabajo con
+`GETTID` entre 64 hilos. La salida no fue meter una guarda en el programa sino
+quitarle el reparto **desde fuera**: el `warps.json` del caso deja
+`active_mask: 1`, un único hilo activo, así que no hace falta ninguna guarda y
+el código puede ser literalmente el mismo. `SSY`/`BAR` ya no estorban desde que
+son no-op en la MiniCPU.
 
 ## Fase 1 — Ensayo del movimiento de warps en la 12
 
@@ -296,18 +317,42 @@ y selecciona un byte. Una transacción de bus ya produce la palabra completa, as
 que `READ_WORD` sería **atómico de verdad**, no solo cómodo — el valor no puede
 salir partido por construcción, sin depender de ninguna invariante.
 
-- [ ] Añadir `READ_WORD` y `WRITE_WORD` a `monitor.v`. El armazón de respuesta ya
-      sirve hasta 7 bytes (`GET_STATUS` los usa), así que devolver 5 no necesita
-      máquina de estados nueva.
-- [ ] Ensanchar el camino de lectura del adaptador al monitor: hoy
-      `mem_read_data` es `[7:0]`. O se ensancha, o se añade una salida de 32 bits
-      al lado.
+- [x] **`READ_WORD` (`0x12` → `0x92`) en la familia GPU.** Comparte los estados de
+      dirección y de espera con `READ_BYTE` mediante un flag `word_access`, igual
+      que `block_is_write` para los bloques, así que no hace falta máquina nueva
+      —quedaban además solo dos huecos en el `state` de 5 bits. El armazón de
+      respuesta ya servía hasta 7 bytes y devolver 5 cabe.
+
+      **Exige dirección alineada a 4.** La memoria entrega la palabra que
+      *contiene* la dirección, así que una no alineada devolvería una palabra
+      distinta de la pedida: mejor rechazarla que mentir.
+
+- [ ] **`WRITE_WORD` queda FUERA de esta fase.** El puerto host escribe con
+      `expanded_data={4{write_data}}` más un strobe de byte, así que una escritura
+      de 32 bits real obliga a llevar máscara de bytes hasta el puerto aux y hasta
+      la RAM, en las dos familias. Y solo evita el desgarro de *escritura*, que ya
+      se evita escribiendo con el núcleo parado. El de *lectura* no tiene esa
+      salida, porque `frame_count` avanza con el núcleo parado. Se añadirá cuando
+      haya un motivo concreto.
+
+- [x] **Salida de 32 bits AL LADO, no ensanchada.** Se empezó ensanchando
+      `host_read_data` a `[31:0]`, que es más limpio sobre el papel. Al propagarlo
+      apareció que **dieciocho bancos** lo declaran `wire [7:0]`: Verilog habría
+      truncado **sin un aviso**, y esos bancos habrían seguido pasando mientras
+      leían el byte 0 en vez del byte pedido. Con `host_read_word` aparte,
+      `READ_BYTE` y los bloques no se tocan y ningún banco cambia.
+
 - [ ] Cambiar `_read_register`/`_write_register` de `fpga.py` a usar los comandos
-      nuevos. Desaparece el riesgo de `frame_count` **sin tocar el RTL del
-      contador**, que es la razón de hacer esto antes que nada.
-- [ ] **Al juego base y en todos los prototipos a la vez.** Añadirlo solo a
-      algunos crearía un cuarto juego de comandos, que es exactamente la
-      proliferación que la fase 5 quiere colapsar. O entra en todos, o no entra.
+      nuevos, **condicionado a la versión de monitor**: `fpga.py` ya lee
+      `monitor_version` de cada carpeta, así que `READ_WORD` si la versión llega y
+      byte a byte si no. Cuesta cuatro líneas y permite que el RTL entre por
+      tandas sin que importe el orden.
+- [ ] **Al juego base y en todos los prototipos.** Añadirlo solo a algunos crearía
+      un cuarto juego de comandos, que es la proliferación que la fase 5 quiere
+      colapsar. Hecho en 12, 14, 17 y 22; **pendiente en 5, 6, 10, 16, 18, 19 y
+      21**. En los que son RAM sin MMIO (5, 8, 9) `READ_WORD` ahorra tres idas y
+      vueltas pero **no es atómico**: la garantía solo existe donde hay un camino
+      de 32 bits detrás.
 
 - [ ] **Abrir el MMIO al monitor con el núcleo en marcha, igual en las dos
       familias.** `READ_WORD` arregla que el valor salga entero; esto arregla que
@@ -513,12 +558,29 @@ hoy —14, 17 y 22 respondiendo todas monitor 2.4 siendo hardware distinto— ba
       mantener `bad` en el resto de la página, para no apagar el diagnóstico que
       convierte un error de programa GPU en un error visible del host. Es lo
       mismo que ya se hizo con `HALT_AT` en la 22 (fase 3).
-- [ ] Escribir `sysid.v`: cuatro constantes, ~25 líneas, igual para todos.
-- [ ] Engancharlo a cada decodificador:
+- [x] **`sysid.v` escrito**, copia idéntica en las cuatro GPU, con `FOLDER`,
+      `CONTRACT` e `ISA_PROFILE` por parámetro. `CONTRACT` = 1. `DEV_BITMAP` lee
+      cero, que con `CONTRACT` = 1 significa «sin declarar» y no «ningún
+      dispositivo».
+
+      **`ISA_PROFILE`**: bit 0 `MUL`, bit 1 `DIV`, bit 2 subword, bit 3 SIMT. Las
+      cuatro GPU dan `0x0b`. Lo que de verdad discrimina está en la familia CPU
+      —a la 10 le faltan `MUL` y `DIV`— así que dentro de la GPU el campo no
+      distingue nada; se declara para que el bloque signifique lo mismo en las dos
+      familias.
+
+      **Escrito a mano pero contrastado, no generado.** Un fichero generado se
+      desincroniza en silencio si alguien toca el RTL y no regenera; un test que
+      compara falla a gritos. Hay tres: `FOLDER` contra el nombre del directorio,
+      `ISA_PROFILE` derivado del RTL, y `sysid.v` copia idéntica. Ojo con dónde
+      vive cada rasgo: `SSY`/`BAR`/`EXIT` se decodifican en `gpu_sm.v` y **no** en
+      `gpu_lane.v`.
+- [x] Enganchado en 12, 14, 17 (una rama en `gpu_system.v`) y en la 22 en **dos**
+      decodificadores (`gpu_system.v` y `gpu_system_bl8.v`). Hizo falta además una
+      **quinta ranura de ventana** en `monitor.v`: la 22 ya usaba las cuatro.
+      Es host-only, como los registros de depuración: un kernel no lo alcanza.
+- [ ] Engancharlo en la familia CPU:
       - 19, 21: un `DEV_SYSID = 4'd15` en `mmio_decoder.v`, ~3 líneas.
-      - 12, 14, 17: una rama `sysid_region` en `gpu_system.v`, ~6 líneas.
-      - 22: lo mismo en **dos** decodificadores (`gpu_system.v` y
-        `gpu_system_bl8.v`).
       - 16, 18: portar `mmio_decoder.v` y ensanchar el comparador del adaptador.
         **Ensanchar la ventana abarata el prefijo** (de `address[31:5]`, 27 bits,
         a `address[31:12]`, 20) y un dispositivo inexistente ya lee cero — el
@@ -526,10 +588,25 @@ hoy —14, 17 y 22 respondiendo todas monitor 2.4 siendo hardware distinto— ba
         `0x80000F00`: sus ventanas son de 16 y 32 bytes.
       - 2, 11: un `SysIdDevice` en Python al lado de `VideoDevice`/`SerialDevice`.
         Vale la pena: deja que un programa sepa que corre en simulador.
-- [ ] **Un test que recorra las carpetas con MMIO** y falle si a alguna le falta
-      el bloque o si su `SYS_ID` no coincide con el número de carpeta. Es lo que
-      hace que «obligatorio» signifique algo dentro de seis meses, y con el ID
-      derivado del nombre son cuatro líneas de Python.
+- [x] **Test de que `SYS_ID` coincide con el número de carpeta**, hecho para la
+      familia GPU. Falta extenderlo para que *exija* el bloque en toda carpeta con
+      ventana MMIO, que es lo que hace que «obligatorio» signifique algo dentro de
+      seis meses.
+
+- [x] **Arreglado un fallo que salió por el camino**, y que conviene no repetir.
+      Al parametrizar `monitor.v` (fase 3 bis), `VERSION_MAJOR`/`MINOR` pasaron de
+      ser *el valor* a ser el valor **por defecto**: el real lo pone el `top.v`.
+      `monitor_version_from_rtl` seguía leyendo el localparam, así que las cuatro
+      GPU reportaban 2.4 cuando eran 2.5, 2.6, 2.6 y 2.6, y ninguna suite lo
+      detectó porque nada contrastaba ese dato. Al arreglarlo apareció un segundo:
+      leyendo la instanciación cogía la del **banco de pruebas**, que va antes que
+      `top.v` por orden alfabético y no es lo que se sintetiza. Ahora se excluyen
+      los `*_tb.v` y el test de coherencia entre instancias cubre también los
+      parámetros de versión.
+
+      La lección general: **al mover un dato de sitio hay que mirar quién lo
+      leía**. `AGENTS.md` dice que la identidad se lee del RTL, y eso convierte
+      cualquier refactor de `monitor.v` en un cambio de interfaz para `rtl_facts`.
 - [ ] Añadir a `AGENTS.md` que un prototipo con ventana MMIO expone el bloque.
 - [ ] Actualizar la tabla de conformidad de `mapa-de-memoria.md` §6.
 

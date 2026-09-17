@@ -569,27 +569,83 @@ def parse_run_until(raw: dict, requires: list) -> dict | None:
     return {"swap": swap}
 
 
-def case_architecture(raw: object) -> str:
-    if not isinstance(raw, dict) or raw.get("architecture") not in ("cpu", "gpu"):
+ARCHITECTURES = ("cpu", "gpu")
+
+
+def case_architectures(raw: object) -> tuple[str, ...]:
+    """Las arquitecturas en las que el caso puede correr.
+
+    Casi siempre una. Un caso declara las DOS cuando su programa es el mismo
+    binario en las dos familias, que exige un solo hilo: sin `GETTID` ni
+    reparto de trabajo, porque un programa de GPU reparte entre 64 hilos y uno
+    de CPU no. Desde que `SSY` y `BAR` son no-op en la MiniCPU, ese binario
+    unico incluye los programas de video —escribir `FB_FRONT`/`FB_BACK`, pedir
+    `SWAP`, sondear `STATUS`—, que es justo donde interesa: un caso que pase
+    igual en la 21 y en la 22 es la prueba de que el contrato MMIO es uno solo,
+    y no dos parecidos.
+
+    `warp_config` se mira contra el conjunto, no contra una: un caso que pueda
+    correr como GPU lo necesita aunque tambien pueda correr como CPU, y
+    `load_case` lo ignora cuando se resuelve a CPU.
+    """
+    if not isinstance(raw, dict):
         raise ValueError("El caso requiere architecture: cpu o gpu")
-    architecture = raw["architecture"]
-    if ("warp_config" in raw) != (architecture == "gpu"):
+    declared = raw.get("architecture")
+    values = tuple(declared) if isinstance(declared, list) else (declared,)
+    if not values or any(value not in ARCHITECTURES for value in values):
+        raise ValueError("El caso requiere architecture: cpu o gpu")
+    if len(set(values)) != len(values):
+        raise ValueError("architecture repite una arquitectura")
+    if ("warp_config" in raw) != ("gpu" in values):
         raise ValueError("warp_config es obligatorio para GPU y no se admite para CPU")
-    return architecture
+    return values
 
 
-def validate_compatibility(architecture: str, backend_names: tuple[str, ...]) -> None:
+def case_architecture(raw: object) -> str:
+    """La primera arquitectura declarada, para quien no elige backend."""
+    return case_architectures(raw)[0]
+
+
+def validate_compatibility(architecture, backend_names: tuple[str, ...]) -> None:
+    supported_by_case = ((architecture,) if isinstance(architecture, str)
+                         else tuple(architecture))
     for name in backend_names:
         supported = BACKEND_DEFINITIONS[name]["architecture"]
-        if architecture != supported:
-            raise ValueError(f"Caso {architecture} incompatible con backend {name} ({supported})")
+        if supported not in supported_by_case:
+            raise ValueError(
+                f"Caso {'/'.join(supported_by_case)} incompatible con backend "
+                f"{name} ({supported})")
 
 
-def load_case(path: Path) -> dict:
+def resolve_architecture(architectures: tuple[str, ...],
+                         backend_names: tuple[str, ...]) -> str:
+    """Con que arquitectura cargar un caso para estos backends.
+
+    Un caso de las dos familias no es ambiguo en el momento de ejecutarlo: lo
+    decide el backend. Lo que no puede es correr en una sola pasada contra
+    backends de familias distintas, porque el resultado esperado se valida
+    contra una (`expect.warps` existe en GPU y no en CPU).
+    """
+    validate_compatibility(architectures, backend_names)
+    supported = {BACKEND_DEFINITIONS[name]["architecture"]
+                 for name in backend_names}
+    if len(supported) != 1:
+        raise ValueError(
+            "los backends de una misma ejecucion han de compartir arquitectura, "
+            f"y estos son {'/'.join(sorted(supported))}")
+    return supported.pop()
+
+
+def load_case(path: Path, architecture: str | None = None) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     directory = path.parent
 
-    architecture = case_architecture(raw)
+    architectures = case_architectures(raw)
+    if architecture is None:
+        architecture = architectures[0]
+    elif architecture not in architectures:
+        raise ValueError(
+            f"El caso es {'/'.join(architectures)}, no {architecture}")
     gpu = architecture == "gpu"
     warp_config = None
     if gpu:
@@ -718,6 +774,8 @@ def load_case(path: Path) -> dict:
         "requires": requires,
         "run_until": run_until,
         "architecture": architecture,
+        # Con cual se ha cargado (arriba) y en cuales podria correr (aqui).
+        "architectures": architectures,
         "name": raw["name"],
         "program": program,
         "initial_memory": initial_memory,
@@ -773,7 +831,11 @@ def discover_cases(arguments: list[Path]) -> list[Path]:
             else:
                 encontrados.append(path)
         return encontrados
-    return sorted(path for folder in ("cases", "cases-gpu")
+    # `cases-shared` son los casos que declaran las DOS arquitecturas: el mismo
+    # binario y las mismas expectativas en las dos familias. Tienen carpeta
+    # propia porque ahi esta su valor -- si viven mezclados con los de CPU, el
+    # dia que uno deje de correr como GPU nadie lo nota.
+    return sorted(path for folder in ("cases", "cases-gpu", "cases-shared")
                   for path in (ROOT / folder).glob("**/test.json"))
 
 
@@ -914,12 +976,15 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     casos = []
     for path in case_paths:
         try:
-            case = load_case(path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if "cpu" not in case_architectures(raw):
+                continue
+            # Explicito: un caso de las dos familias se mide como CPU, que es
+            # lo unico que esta tabla compara.
+            case = load_case(path, "cpu")
         except (OSError, ValueError, TypeError, KeyError) as error:
             print(f"ERROR {path}: {error}", file=sys.stderr)
             return 2
-        if case["architecture"] != "cpu":
-            continue
         casos.append(case)
     if not casos:
         print("No hay casos de CPU que medir", file=sys.stderr)
@@ -1109,14 +1174,17 @@ def main() -> int:
     try:
         for path in case_paths:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            architecture = case_architecture(raw)
+            architectures = case_architectures(raw)
             if not args.cases and any(
-                BACKEND_DEFINITIONS[name]["architecture"] != architecture
+                BACKEND_DEFINITIONS[name]["architecture"] not in architectures
                 for name in backend_names
             ):
                 skipped += 1
                 continue
-            validate_compatibility(architecture, backend_names)
+            # La familia la elige el backend, no el caso: uno que declare las
+            # dos se carga como CPU contra un backend de CPU y como GPU contra
+            # uno de GPU, con el mismo binario.
+            architecture = resolve_architecture(architectures, backend_names)
             # Las profundidades SIMT son parámetros del simulador: la FPGA las
             # tiene fijadas en el hardware y no puede reproducir el caso.
             if simulator_options(raw, architecture) and backend_names != ("gpu-simulator",):
@@ -1125,7 +1193,7 @@ def main() -> int:
                     skipped += 1
                     continue
                 raise ValueError("simulator_options requiere --backend gpu-simulator")
-            case = load_case(path)
+            case = load_case(path, architecture)
             # Cada backend decide si el caso cabe en su mapa; los que no
             # publican `incompatibility` aceptan todo lo que valide load_case.
             reason = None
@@ -1212,13 +1280,17 @@ def main() -> int:
                     **({"warp_config": case["warp_config"]} if case["architecture"] == "gpu" else {}),
                     **({"observation_fields": set(case["expected"]["observations"])}
                        if backend_name == "gpu-fpga" else {}),
-                    # Solo la FPGA de CPU tiene subsistema de video, y solo se
-                    # le pasa cuando el caso lo pide: asi un caso normal no
+                    # Solo se pasa cuando el caso lo pide: asi un caso normal no
                     # paga las lecturas de registros ni el volcado del frame.
+                    # `run_until_swap` solo significa algo donde hay HALT_AT, y
+                    # la GPU no lo tiene -- ver VideoDevice en minigpu_sim.py-,
+                    # pero llega igual y el backend de GPU lo rechaza, en vez de
+                    # aceptarlo y no pararse.
                     **({"video": {
                         "run_until_swap": (case["run_until"] or {}).get("swap"),
                         "capture_frame": case["expected"]["frame"] is not None,
-                    }} if backend_name in ("cpu-fpga", "cpu-simulator") and (
+                    }} if backend_name in ("cpu-fpga", "cpu-simulator",
+                                           "gpu-simulator", "gpu-fpga") and (
                         case["run_until"] or case["expected"]["video"]
                         or case["expected"]["frame"] is not None) else {}),
                     **({

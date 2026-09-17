@@ -187,13 +187,133 @@ class SimtPath:
     pending_mask: int
 
 
+class VideoDevice:
+    """La ventana de registros de vídeo de la MiniGPU, en 0x80000000.
+
+    Es el equivalente de `VideoDevice` en `2.cpu-sim-func/minicpu_sim.py`, y
+    los offsets son los MISMOS a propósito: ese es el contrato compartido que
+    persigue `docs/unificacion-mmio.md`. No es una copia, porque el hardware no
+    es el mismo, y las tres diferencias son las de `gpu_video_regs.v`:
+
+      - las bases se alinean a **16 bytes**, no a 4, porque el scanout lee la
+        SDRAM en ráfagas;
+      - **HALT_AT no existe**: lee cero y la escritura se ignora. La GPU no se
+        para sola --la paran las órdenes del monitor-- así que no hay captura
+        que armar;
+      - **VIDEO_CTRL** (0x18) sí existe, y sólo aquí. Tras el reset el modo es
+        PATTERN y no SCANOUT: la SDRAM recién encendida contiene basura, así
+        que arrancar en SCANOUT sería elegir un valor por defecto cuya salida
+        es indefinida.
+
+    Qué NO modela, igual que en la CPU y por el mismo motivo: el TIEMPO. No hay
+    barrido leyendo la memoria por su cuenta, ni ancho de banda, ni contienda.
+    En consecuencia `underflow` es siempre cero y no puede ser otra cosa, y el
+    desgarro no existe: un kernel que dibuje sobre el buffer visible sin
+    esperar al intercambio sale limpio aquí y partido en la placa. El «frame»
+    es sintético: en la placa son 16,7 ms de barrido, aquí son
+    `frame_instructions` instrucciones de warp emitidas.
+
+    Para un programa que ESPERA a que su intercambio se aplique --que es lo que
+    hace todo kernel serio-- el periodo sintético da igual: nunca dibuja con un
+    intercambio pendiente, así que la secuencia de frames es la misma sea cual
+    sea. El periodo sólo cambia cuántas vueltas da el bucle de espera.
+    """
+
+    BASE = 0x8000_0000
+    SIZE = 32                       # siete registros dentro de 32 bytes
+
+    FB_FRONT = 0x00
+    FB_BACK = 0x04
+    SWAP = 0x08
+    STATUS = 0x0C
+    SWAP_COUNT = 0x10
+    HALT_AT = 0x14                  # sólo CPU: aquí lee cero
+    VIDEO_CTRL = 0x18               # sólo GPU
+
+    MODE_BLANK = 0
+    MODE_PATTERN = 1
+    MODE_SCANOUT = 2
+
+    # Las bases se alinean a 16 bytes, que es la ráfaga del scanout.
+    BASE_ALIGN = 0xFFFF_FFF0
+
+    def __init__(self, fb_front: int = 0x0100_0000, fb_back: int = 0x0102_5800,
+                 frame_instructions: int = 1000):
+        self.fb_front = fb_front & self.BASE_ALIGN
+        self.fb_back = fb_back & self.BASE_ALIGN
+        self.swap_pending = False
+        self.frame_count = 0
+        self.swap_count = 0
+        self.video_mode = self.MODE_PATTERN
+        self.frame_instructions = frame_instructions
+        self._since_frame = 0
+
+    def contains(self, address: int) -> bool:
+        return self.BASE <= address < self.BASE + self.SIZE
+
+    def tick(self) -> None:
+        """Avanza el reloj de frames sintético.
+
+        Lo llama el warp por instrucción EMITIDA, no por lane: una instrucción
+        de warp es un paso del planificador, y contar lanes haría que el
+        periodo dependiera de cuántos hilos estén activos --el mismo kernel
+        avanzaría los frames a distinta velocidad según su máscara, que en el
+        hardware no pasa--.
+        """
+        self._since_frame += 1
+        if self._since_frame < self.frame_instructions:
+            return
+
+        self._since_frame = 0
+        self.frame_count = (self.frame_count + 1) & 0xFFFF
+        if self.swap_pending:
+            # En el pulso de vsync, igual que el hardware: cambiar la base a
+            # mitad de un frame mostrado partiría la imagen en dos.
+            self.fb_front, self.fb_back = self.fb_back, self.fb_front
+            self.swap_pending = False
+            self.swap_count = u32(self.swap_count + 1)
+
+    def read(self, offset: int) -> int:
+        if offset == self.FB_FRONT:
+            return self.fb_front
+        if offset == self.FB_BACK:
+            return self.fb_back
+        if offset == self.SWAP:
+            return 1 if self.swap_pending else 0
+        if offset == self.STATUS:
+            # bit 0 underflow (siempre cero aquí), bit 1 pendiente, 31:16 frames
+            return (self.frame_count << 16) | (2 if self.swap_pending else 0)
+        if offset == self.SWAP_COUNT:
+            return self.swap_count
+        if offset == self.VIDEO_CTRL:
+            return self.video_mode
+        return 0                    # HALT_AT y cualquier hueco leen cero
+
+    def write(self, offset: int, value: int) -> None:
+        if offset == self.FB_FRONT:
+            self.fb_front = value & self.BASE_ALIGN
+        elif offset == self.FB_BACK:
+            self.fb_back = value & self.BASE_ALIGN
+        elif offset == self.SWAP:
+            # Sólo el bit 0 a uno pide intercambio, igual que REG_SWAP en el RTL.
+            if value & 1:
+                self.swap_pending = True
+        elif offset == self.STATUS:
+            pass                    # escribir el bit 0 borra el underflow, que
+                                    # aquí nunca está puesto
+        elif offset == self.VIDEO_CTRL:
+            self.video_mode = value & 0b11
+        # SWAP_COUNT es de sólo lectura y HALT_AT no existe: se ignoran.
+
+
 class System:
     """Memoria compartida y único registro de fallo de la GPU."""
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  num_warps: int = 8, warp_size: int = 8, *,
                  simt_region_depth: int = MAX_SIMT_REGIONS,
-                 simt_path_depth: int = MAX_SIMT_PATHS):
+                 simt_path_depth: int = MAX_SIMT_PATHS,
+                 video: "VideoDevice | None" = None):
         if memory_size <= 0 or num_warps <= 0 or warp_size <= 0:
             raise ValueError("memoria, número de warps y tamaño de warp deben ser positivos")
         if num_warps > MAX_WARPS:
@@ -206,9 +326,24 @@ class System:
         self.memory = bytearray(memory_size)
         self.fault: Fault | None = None
         self.trace: TextTrace | None = None
+        # Sin dispositivo de vídeo, 0x80000000 sigue siendo memoria fuera de
+        # rango y da ERROR_MEMORY_ACCESS, que es lo que hacían los casos de
+        # siempre.
+        self.video = video
         self.streaming_multiprocessor = StreamingMultiprocessor(
             self.memory, self, num_warps, warp_size
         )
+
+    def device_for(self, address: int):
+        """Qué dispositivo MMIO, si alguno, responde a esta dirección."""
+        if self.video is not None and self.video.contains(address):
+            return self.video
+        return None
+
+    def tick_devices(self) -> None:
+        """Un paso del reloj sintético de los dispositivos."""
+        if self.video is not None:
+            self.video.tick()
 
     @property
     def halted(self) -> bool:
@@ -535,12 +670,23 @@ class Warp:
             processor.regs[:] = result.regs
             if result.store is not None:
                 address, value = result.store
-                struct.pack_into("<I", self.memory, address, value)
+                # Las escrituras se aplican en orden de lane. Si varios lanes
+                # escriben el MISMO registro MMIO en la misma instruccion, gana
+                # el ultimo, que es una de las ordenes posibles: el hardware las
+                # serializa por el bus y tampoco promete cual. Un kernel que
+                # dependa de eso esta mal escrito en las dos partes.
+                device = self.sm.system.device_for(address)
+                if device is not None:
+                    device.write(address - device.BASE, value)
+                else:
+                    struct.pack_into("<I", self.memory, address, value)
             if result.halted:
                 self.active_mask &= ~(1 << processor.core_id)
                 self.live_mask &= ~(1 << processor.core_id)
         self.pc = next_pcs.pop()
         self.instructions_executed += 1
+        # Un paso del planificador es un tic del reloj sintetico de frames.
+        self.sm.system.tick_devices()
         self.reconverge()
         self.sm.release_barriers()
         return True
@@ -557,6 +703,28 @@ class CPU:
 
     def reset(self) -> None:
         self.regs = [0] * 32
+
+    def read_word(self, address: int) -> int:
+        """LOAD de 32 bits, por memoria o por un dispositivo MMIO.
+
+        El MMIO no admite accesos parciales ni desalineados, igual que el mux
+        del hardware, asi que la comprobacion de alineacion es la misma que la
+        de memoria y el fallo tambien.
+        """
+        device = self.warp.sm.system.device_for(address)
+        if device is None:
+            return read_u32(self.memory, address)
+        if address & 3:
+            raise ExecutionFault(ERROR_MEMORY_ACCESS, address)
+        return device.read(address - device.BASE)
+
+    def check_store(self, address: int) -> None:
+        """Valida el destino de un STORE antes de diferirlo."""
+        device = self.warp.sm.system.device_for(address)
+        if device is None:
+            check_address(self.memory, address)
+        elif address & 3:
+            raise ExecutionFault(ERROR_MEMORY_ACCESS, address)
 
     def evaluate(self, instr: int, pc: int) -> LaneResult:
         regs = self.regs.copy()
@@ -687,7 +855,7 @@ class CPU:
             imm16 = sign_extend(instr & 0xFFFF, 16)
 
             address = u32(regs[ra] + imm16)
-            regs[rd] = read_u32(self.memory, address)
+            regs[rd] = self.read_word(address)
 
         elif opcode == 0x16:  # STORE
             # En STORE, el campo Rd contiene el registro fuente.
@@ -696,7 +864,7 @@ class CPU:
             imm16 = sign_extend(instr & 0xFFFF, 16)
 
             address = u32(regs[ra] + imm16)
-            check_address(self.memory, address)
+            self.check_store(address)
             store = (address, u32(regs[source]))
 
         elif opcode == 0x20:  # BEQ
