@@ -283,9 +283,28 @@ class SysIdTest(unittest.TestCase):
 
     def test_sysid_es_copia_identica(self):
         canonical = (ROOT / "22.fpga-gpu-bl8" / "sysid.v").read_bytes()
-        for name in GPU_PROTOTYPES + CPU_CON_MMIO:
+        for name in GPU_PROTOTYPES + CPU_CON_MMIO + ("6.fpga-cpu",
+                                                     "10.fpga-cpu-ram"):
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "sysid.v").read_bytes(), canonical)
+
+    def test_el_id_es_el_numero_de_carpeta_sin_mmio(self):
+        """6 y 10 instancian `sysid` DIRECTAMENTE en el top, no dentro de un
+        decodificador que no tienen, asi que se comprueban con el mismo patron
+        que la familia GPU."""
+        for name in ("6.fpga-cpu", "10.fpga-cpu-ram"):
+            esperado = int(name.split(".")[0])
+            encontrados = []
+            for path in sorted((ROOT / name).glob("*.v")):
+                if path.name == "sysid.v":
+                    continue        # ahi el `#(` es la DECLARACION
+                encontrados += [
+                    int(d) for d in self.FOLDER.findall(
+                        path.read_text(encoding="utf8"))
+                ]
+            with self.subTest(prototype=name):
+                self.assertTrue(encontrados, f"{name} no instancia sysid")
+                self.assertEqual(set(encontrados), {esperado})
 
     def test_el_id_es_el_numero_de_carpeta_en_cpu(self):
         for name in CPU_CON_MMIO:
@@ -345,31 +364,45 @@ class SysIdTest(unittest.TestCase):
 
 
 class SysIdObligatorioTest(unittest.TestCase):
-    """Donde hay ventana MMIO, tiene que haber bloque de identificacion.
+    """Toda carpeta con juego de comandos tiene bloque de identificacion.
 
-    Es la regla que hace que "obligatorio" signifique algo dentro de seis meses,
-    y el criterio es comprobable en vez de ser una lista a mano: si una carpeta
-    decodifica `0x8000_0000`, tiene que contestar en `0x8000_0F00`.
+    La regla ERA "donde hay ventana MMIO", y 6 y 10 quedaban fuera porque en su
+    RTL no existe el concepto. Dejo de valer al renumerar las versiones de
+    monitor por JUEGO DE COMANDOS: con eso 6 y 10 contestan lo mismo, y la
+    version --que era lo unico que las distinguia, 1.17 contra 1.18-- deja de
+    identificar la placa. Sin SYS_ID, `--version ebr` daria por buena una 10
+    flasheada y se medirian las prestaciones del hardware equivocado, que es
+    literalmente el fallo que SYS_ID existe para cerrar.
 
-    6 y 10 NO aparecen porque no tienen ventana MMIO: en su RTL no existe el
-    concepto, no es que les falte un dispositivo. Ver la discusion en
-    docs/unificacion-mmio.md, fase 4a -- es una decision provisional.
+    Lo que 6 y 10 NO ganan es MMIO. Su `sysid` cuelga del camino del MONITOR:
+    la CPU no lo ve, no hay pagina de dispositivos y un programa no puede
+    leerlo, asi que la leccion de esas carpetas --memoria plana, sin
+    perifericos-- se queda intacta. Identidad si, dispositivos no.
     """
 
     PREFIJO_MMIO = re.compile(r"MMIO_PREFIX|mmio\s*=\s*address\[31:13\]")
+    SIN_MMIO = ("6.fpga-cpu", "10.fpga-cpu-ram")
 
-    def test_toda_carpeta_con_mmio_tiene_sysid(self):
-        for name in GPU_PROTOTYPES + CPU_CON_MMIO + ("6.fpga-cpu", "10.fpga-cpu-ram"):
+    def test_toda_carpeta_con_juego_de_comandos_tiene_sysid(self):
+        for name in GPU_PROTOTYPES + CPU_CON_MMIO + self.SIN_MMIO:
+            prototype = ROOT / name
+            with self.subTest(prototype=name):
+                self.assertTrue((prototype / "sysid.v").exists(),
+                                f"{name} no tiene sysid.v")
+
+    def test_la_identificacion_no_le_da_mmio_a_la_6_ni_a_la_10(self):
+        """Que el bloque entre por la puerta pequena y no arrastre una pagina
+        de dispositivos detras."""
+        for name in self.SIN_MMIO:
             prototype = ROOT / name
             tiene_ventana = any(
                 self.PREFIJO_MMIO.search(path.read_text(encoding="utf8"))
                 for path in prototype.glob("*.v")
                 if not path.name.endswith("_tb.v"))
             with self.subTest(prototype=name):
-                self.assertEqual(
-                    (prototype / "sysid.v").exists(), tiene_ventana,
-                    f"{name}: ventana MMIO={tiene_ventana} pero sysid.v="
-                    f"{(prototype / 'sysid.v').exists()}")
+                self.assertFalse(tiene_ventana,
+                                 f"{name} ha ganado una ventana MMIO")
+                self.assertFalse((prototype / "mmio_decoder.v").exists())
 
 
 class MonitorRegionsTest(unittest.TestCase):

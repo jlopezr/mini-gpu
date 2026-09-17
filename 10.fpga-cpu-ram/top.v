@@ -84,8 +84,42 @@ module top (
   reg [7:0] adapter_monitor_write_data;
   reg adapter_monitor_write_enable, adapter_monitor_read_enable;
   wire [7:0] adapter_monitor_read_data;
+  // La misma lectura sin trocear, para READ_WORD. El adaptador ya la producia;
+  // este top la declaraba, se la pasaba al monitor y no la conducia NADIE, asi
+  // que READ_WORD latia una X. No saltaba porque monitor_tb conduce esa senal
+  // el mismo, siendo un reg del propio banco.
+  wire [31:0] adapter_monitor_read_word;
   wire adapter_monitor_ready, adapter_monitor_error;
+  // ---------------------------------------------------------------------
+  // Identificacion del prototipo
+  // ---------------------------------------------------------------------
+  //
+  // Esta carpeta NO tiene MMIO, y no lo gana aqui. `sysid` cuelga del camino
+  // del MONITOR y nada mas: la CPU no lo ve, no hay pagina de dispositivos y
+  // un programa no puede leerlo. La leccion de esta carpeta --mapa plano sobre
+  // SDRAM, sin perifericos-- se queda como estaba.
+  //
+  // Existe porque la version de monitor dejo de servir para identificar la
+  // placa. Al renumerarla por JUEGO DE COMANDOS, la 6 y la 10 contestan lo
+  // mismo, asi que sin esto `--version sdram` daria por buena una 6 flasheada
+  // y se mediria el hardware equivocado, que es exactamente el fallo que
+  // SYS_ID existe para cerrar. Ver docs/mapa-de-memoria.md §6.5.
+  wire sysid_selected = adapter_monitor_address[31:8] == 24'h80_000f;
+  wire [31:0] sysid_word;
+  sysid #(
+      .FOLDER(8'd10),
+      .CONTRACT(32'd1),
+      // A esta CPU le faltan MUL y DIV, y eso no se detecta de ninguna otra
+      // forma en ejecucion: es justo el caso que ISA_PROFILE existe para
+      // declarar.
+      .ISA_PROFILE(32'h0000_0000)
+  ) sysid_i (
+      .word(adapter_monitor_address[3:2]),
+      .read_data(sysid_word)
+  );
+
   reg [7:0] registered_mem_read_data;
+  reg [31:0] registered_mem_read_word;
   reg registered_mem_ready, registered_mem_error;
   always @(posedge clk) begin
     if (reset) begin
@@ -94,6 +128,7 @@ module top (
       adapter_monitor_write_enable <= 1'b0;
       adapter_monitor_read_enable <= 1'b0;
       registered_mem_read_data <= 8'h00;
+      registered_mem_read_word <= 32'h0000_0000;
       registered_mem_ready <= 1'b0;
       registered_mem_error <= 1'b0;
     end else begin
@@ -101,12 +136,23 @@ module top (
       adapter_monitor_write_data <= mem_write_data;
       adapter_monitor_write_enable <= mem_write_enable;
       adapter_monitor_read_enable <= mem_read_enable;
-      registered_mem_read_data <= adapter_monitor_read_data;
-      registered_mem_ready <= adapter_monitor_ready;
-      registered_mem_error <= adapter_monitor_error;
+      // El bloque de identificacion contesta en lugar de la memoria. Se elige
+      // con la direccion YA REGISTRADA, que es la que el adaptador esta
+      // atendiendo, para que la respuesta llegue en el mismo ciclo que
+      // llegaria la suya.
+      registered_mem_read_data <= sysid_selected
+          ? sysid_word[8*adapter_monitor_address[1:0] +: 8]
+          : adapter_monitor_read_data;
+      registered_mem_read_word <= sysid_selected ? sysid_word
+                                                 : adapter_monitor_read_word;
+      registered_mem_ready <= sysid_selected
+          ? (adapter_monitor_read_enable || adapter_monitor_write_enable)
+          : adapter_monitor_ready;
+      registered_mem_error <= sysid_selected ? 1'b0 : adapter_monitor_error;
     end
   end
   assign mem_read_data = registered_mem_read_data;
+  assign mem_read_word = registered_mem_read_word;
   assign mem_ready = registered_mem_ready;
   assign mem_error = registered_mem_error;
 
@@ -138,9 +184,12 @@ module top (
       .clk(clk), .reset(reset), .init_done(init_done),
       .monitor_address(adapter_monitor_address),
       .monitor_write_data(adapter_monitor_write_data),
-      .monitor_write_enable(adapter_monitor_write_enable),
-      .monitor_read_enable(adapter_monitor_read_enable),
+      // El acceso al bloque de identificacion no llega a la SDRAM: alli
+      // 0x80000f00 esta fuera del mapa y levantaria `error`.
+      .monitor_write_enable(adapter_monitor_write_enable && !sysid_selected),
+      .monitor_read_enable(adapter_monitor_read_enable && !sysid_selected),
       .monitor_read_data(adapter_monitor_read_data),
+      .monitor_read_word(adapter_monitor_read_word),
       .monitor_ready(adapter_monitor_ready),
       .monitor_error(adapter_monitor_error), .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),

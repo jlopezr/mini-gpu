@@ -58,6 +58,56 @@ module top (
   wire mem_ready;
   wire mem_error;
 
+  // ---------------------------------------------------------------------
+  // Identificacion del prototipo
+  // ---------------------------------------------------------------------
+  //
+  // Esta carpeta NO tiene MMIO, y no lo gana aqui. `sysid` cuelga del camino
+  // del MONITOR y nada mas: la CPU no lo ve, no hay pagina de dispositivos y
+  // un programa no puede leerlo. La leccion de esta carpeta --memoria plana,
+  // sin perifericos-- se queda como estaba.
+  //
+  // Existe porque la version de monitor dejo de servir para identificar la
+  // placa. Al renumerarla por JUEGO DE COMANDOS, la 6 y la 10 contestan lo
+  // mismo, asi que sin esto `--version ebr` daria por buena una 10 flasheada y
+  // se mediria el hardware equivocado, que es exactamente el fallo que SYS_ID
+  // existe para cerrar. Ver docs/mapa-de-memoria.md §6.5.
+  wire sysid_selected = mem_address[31:8] == 24'h80_000f;
+  wire [31:0] sysid_word;
+  sysid #(
+      .FOLDER(8'd6),
+      .CONTRACT(32'd1),
+      // bit 0 MUL, bit 1 DIV. Esta CPU los tiene; no tiene sub-palabra ni SIMT.
+      .ISA_PROFILE(32'h0000_0003)
+  ) sysid_i (
+      .word(mem_address[3:2]),
+      .read_data(sysid_word)
+  );
+
+  // La respuesta se registra igual que la de la memoria, para que el monitor
+  // vea el mismo protocolo venga de donde venga: pide, y un ciclo despues hay
+  // `ready`. Escribir se acepta y se ignora, como cualquier registro de solo
+  // lectura.
+  reg sysid_ready;
+  reg [7:0] sysid_byte;
+  always @(posedge clk) begin
+    if (reset) begin
+      sysid_ready <= 1'b0;
+      sysid_byte <= 8'h00;
+    end else begin
+      sysid_ready <= sysid_selected && (mem_read_enable || mem_write_enable);
+      sysid_byte <= sysid_word[8*mem_address[1:0] +: 8];
+    end
+  end
+
+  wire [7:0] map_read_data;
+  wire [31:0] map_read_word;
+  wire map_ready, map_error;
+  assign mem_read_data = sysid_ready ? sysid_byte : map_read_data;
+  assign mem_read_word = sysid_ready ? sysid_word : map_read_word;
+  assign mem_ready = sysid_ready || map_ready;
+  assign mem_error = sysid_ready ? 1'b0 : map_error;
+
   wire cpu_run_request;
   wire cpu_halt_request;
   wire cpu_step_request;
@@ -144,11 +194,13 @@ module top (
       .reset(reset),
       .address(mem_address),
       .write_data(mem_write_data),
-      .write_enable(mem_write_enable),
-      .read_enable(mem_read_enable),
-      .read_data(mem_read_data), .read_word(mem_read_word),
-      .ready(mem_ready),
-      .error(mem_error),
+      // El acceso al bloque de identificacion no llega a la memoria: alli
+      // 0x80000f00 esta fuera del mapa y levantaria `error`.
+      .write_enable(mem_write_enable && !sysid_selected),
+      .read_enable(mem_read_enable && !sysid_selected),
+      .read_data(map_read_data), .read_word(map_read_word),
+      .ready(map_ready),
+      .error(map_error),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid),
       .cpu_imem_address(cpu_imem_address),
