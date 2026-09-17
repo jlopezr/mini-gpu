@@ -36,8 +36,8 @@ module monitor #(
     // Version del protocolo que contesta GET_VERSION.  El porque de cada valor
     // se explica donde se instancia: es razonamiento de cada prototipo, no de
     // este fichero, que es COPIA IDENTICA en 12, 14, 17 y 22.
-    parameter [7:0] VERSION_MAJOR = 8'h02,
-    parameter [7:0] VERSION_MINOR = 8'h04,
+    parameter [7:0] VERSION_MAJOR = 8'd1,
+    parameter [7:0] VERSION_MINOR = 8'd0,
 
     // Primer byte que ya NO es RAM.  128 KiB de BRAM en la 12, 32 MiB de SDRAM
     // en las demas.

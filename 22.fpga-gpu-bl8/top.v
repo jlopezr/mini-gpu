@@ -36,7 +36,7 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     wire [4:0] debug_register;
     // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py, y las cuatro
     // estan pobladas: esta es la unica de la familia con video y contadores.
-    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h06),
+    monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd22),
         .RAM_END(33'h0_0200_0000),
         .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
         .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),

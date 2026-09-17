@@ -141,7 +141,10 @@ UNUSED_WINDOW = (0x1_FFFF_FFFF, 0x0)
 PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
 # La version tambien: divergio entre top_bl8.v y el banco de regiones sin que
 # nada saltara, y rtl_facts leia la del banco por ir antes alfabeticamente.
-VERSION_PARAMETER = re.compile(r"\.(VERSION_\w+)\(8'h([0-9a-fA-F]+)\)")
+# Se admiten las dos bases: desde el renumerado el menor es el NUMERO DE
+# CARPETA y se escribe en decimal, para que el valor se lea solo en vez de
+# tener que traducir 8'h10 a "16".
+VERSION_PARAMETER = re.compile(r"\.(VERSION_\w+)\(\s*8'([hd])([0-9a-fA-F]+)\s*\)")
 
 
 def monitor_instantiations(prototype: Path):
@@ -162,8 +165,8 @@ def monitor_instantiations(prototype: Path):
                 for name, digits in PARAMETER.findall(lista)
             }
             values.update({
-                name: int(digits, 16)
-                for name, digits in VERSION_PARAMETER.findall(lista)
+                name: int(digits, 16 if base == "h" else 10)
+                for name, base, digits in VERSION_PARAMETER.findall(lista)
             })
             yield path, values
 

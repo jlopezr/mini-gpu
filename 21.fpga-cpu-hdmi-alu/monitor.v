@@ -117,7 +117,7 @@ module monitor (
   localparam [7:0] RSP_SEND_BYTES = 8'hb8;
   localparam [7:0] RSP_RECV_BYTES = 8'hb9;
   localparam [7:0] RSP_ERROR = 8'hff;
-  localparam [7:0] VERSION_MAJOR = 8'h01;
+  localparam [7:0] VERSION_MAJOR = 8'd2;
   // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
   // la version cada vez que cambia algo que el PC no puede negociar:
   //   1.7  se anade el subsistema de video
@@ -149,7 +149,7 @@ module monitor (
   //        sino INCOMPATIBLE --un programa que use R0 como registro general da
   //        resultados distintos en 1.14 y en 1.15 sin parar con error--, asi
   //        que el runner tiene que poder distinguir los dos bitstreams.
-  localparam [7:0] VERSION_MINOR = 8'h19;
+  localparam [7:0] VERSION_MINOR = 8'd21;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;

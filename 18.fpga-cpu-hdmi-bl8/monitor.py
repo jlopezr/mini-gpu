@@ -20,7 +20,7 @@ MAX_ADDRESS = 0x01FF_FFFF
 MMIO_BASE = 0x8000_0000
 # 32 bytes, no 16: la 18 anade SWAP_COUNT (0x10) y HALT_AT (0x14) a los cuatro
 # registros que venian de la 16.
-MMIO_LIMIT = 0x8000_001F
+MMIO_LIMIT = 0x8000_0FFF
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
@@ -30,9 +30,14 @@ ARCHITECTURAL_REGIONS = (
 # accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo estar
 # vacia sin que se notara. El RTL si acepta un bloque sobre el MMIO: en el
 # adaptador la rama is_mmio va antes de la comprobacion de cpu_halted.
-# Llegara a 0x8000_001c cuando la fase 3.5 anada VIDEO_CTRL.
+# La ventana es la PAGINA ENTERA, los mismos 4 KiB que decodifica el RTL
+# (`address[31:12] == 20'h80000`, dieciseis dispositivos de 256 B). Estuvo en
+# 0x8000_0018 con un comentario que decia "llegara a 0x8000_001c cuando la fase
+# 3.5 anada VIDEO_CTRL": la fase lo anadio y la constante se quedo, asi que el
+# host rechazaba un bloque sobre el registro que acababa de existir. Un
+# subconjunto seria una tercera gemela que mantener, y ya se quedo atras una vez.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_0018),
+    (0x8000_0000, 0x8000_1000),
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

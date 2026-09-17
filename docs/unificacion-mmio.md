@@ -34,9 +34,17 @@ reset sin decirlo —`cpu_serial_tb` de la 19 y la 21, y el test del reloj
 sintético de frames— que con cero habrían seguido en verde **sin comprobar
 nada**. El detalle está en el punto correspondiente de la fase 3.5.
 
-La **4b** y la **fase 5** no tienen hoy un consumidor que las pida. Queda además
-pendiente de decidir la **paralelización de `run_tests.py`** (ver el final de
-este documento) y la unificación de `monitor.py`.
+De la **fase 5** está hecho el renumerado de versiones —mayor = juego de
+comandos, menor = número de carpeta— y con él cayó la decisión provisional sobre
+6 y 10, que reciben `SYS_ID` por la puerta pequeña. Queda la convergencia de los
+`monitor.v`, que resultó más grande de lo previsto: el monitor de CPU **no tiene
+lista blanca**, así que unificarlo es darle filtrado de direcciones, no
+parametrizar el que hay. La **4b** no tiene hoy un consumidor que la pida.
+
+`monitor.py` ya está unificado: el protocolo vive una vez en
+[`tools/monitor_protocol.py`](../tools/monitor_protocol.py) y cada carpeta
+compone su cliente con los mixins que su hardware justifica. La paralelización
+de `run_tests.py` también está hecha (ver el final de este documento).
 
 ## Lo que ya está hecho
 
@@ -412,9 +420,18 @@ una sola se leía como pendiente en ambas:
 
 - [x] **CPU: ya lo hace**, desde antes de este plan. No es un cambio a aplicar,
       es una propiedad que hay que *no romper* al unificar.
-- [ ] **GPU: falta.** [`gpu_system_bl8.v`](../22.fpga-gpu-bl8/gpu_system_bl8.v)
-      sigue rechazando en el puerto host con `if(!halted) begin host_ready<=1;
-      host_error<=1; end`, antes de mirar a dónde iba la transacción.
+- [x] **GPU: hecho.** [`gpu_system_bl8.v`](../22.fpga-gpu-bl8/gpu_system_bl8.v)
+      tiene ahora `host_permitted = halted || (host_read_enable &&
+      !host_write_enable && host_mmio)`, así que una **lectura** de MMIO pasa con
+      el núcleo en marcha y todo lo demás sigue exigiendo parada. Es la misma
+      regla que la CPU: *MMIO siempre, RAM sólo parada* — y sólo lecturas, porque
+      escribir `VIDEO_CTRL` mientras el kernel lo toca es una carrera con el
+      programa. Esta casilla se quedó sin marcar cuando se hizo; el texto de
+      abajo describe el estado anterior.
+
+      El estado que describía: `gpu_system_bl8.v` rechazaba en el puerto host con
+      `if(!halted) begin host_ready<=1; host_error<=1; end`, antes de mirar a
+      dónde iba la transacción.
 
       La regla que la CPU implementa hoy **no** es «el monitor solo puede con el
       núcleo parado», es **«MMIO siempre, RAM solo parada»**. En
@@ -476,10 +493,10 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
 | Contadores de rendimiento | slot `0x80000300` | **fuera del MMIO**: `cpu_cycles`/`cpu_instructions` en `top.v`, servidos por comandos `0x36`/`0x37` |
 | Bloque de identificación | `0x80000F00` | no existe (fase 4) |
 
-- [ ] **Añadir `VIDEO_CTRL` a la CPU** con el modo tras reset acordado. Es el
+- [x] **Añadir `VIDEO_CTRL` a la CPU** con el modo tras reset acordado. Es el
       cambio que habilita todo lo demás: sin control de modo no se puede arrancar
       sin scanout.
-- [ ] **Mover los contadores de CPU al MMIO `0x80000300`.** Hoy `cpu_cycles` y
+- [x] **Mover los contadores de CPU al MMIO `0x80000300`.** Hoy `cpu_cycles` y
       `cpu_instructions` son dos registros en [`top.v`](../21.fpga-cpu-hdmi-alu/top.v)
       cableados a `monitor.v`, y **solo los lee el host**: para saber cuántos
       ciclos tardó un bucle hay que parar la CPU y preguntar por serie. En MMIO,
@@ -586,14 +603,31 @@ Diferencias entre la implementación de CPU y el contrato, medidas en el RTL:
       Ese documento ya evaluó el coste de migrar: las demos de 21 **ya** cargan
       la base del MMIO en un registro (`MOVHI R20, 0x8000`), así que encender el
       scanout es *un `STORE` más* en cada inicialización.
-- [ ] Actualizar los programas de vídeo de CPU, que hoy dan por hechas las bases
+- [x] Actualizar los programas de vídeo de CPU, que hoy dan por hechas las bases
       cableadas y el scanout siempre encendido: `swap_demo`, `tear_demo`,
       `bounce`, `band` y `examples/` de 16, 18, 19 y 21.
-- [ ] **Ensanchar la ventana de la 16**, o aceptar que queda fuera del contrato.
-      Decodifica `address[31:4]`, o sea 16 bytes: `+0x14` y `+0x18` caen fuera
-      del MMIO y van a SDRAM. No leen cero, leen memoria. La 18 (`address[31:5]`,
-      32 B) llega justo a `+0x18`; 19 y 21 tienen el slot de 256 B y no necesitan
-      nada.
+- [x] **Ensanchar la ventana de la 16.** Se ensanchó, y resultó ser dos cosas y
+      no una.
+
+      **En el RTL ya estaba hecho** sin que esta casilla se enterase: al entrar
+      `mmio_decoder.v` en la 16, su camino activo pasó a decodificar
+      `address[31:12] == 20'h80000` —la página entera, dieciséis dispositivos de
+      256 B— así que `+0x14` y `+0x18` dejaron de caer en SDRAM. Las cuatro
+      carpetas de CPU decodifican hoy lo mismo.
+
+      **En el host no.** `MONITOR_REGIONS` terminaba en `0x8000_0018` en las
+      cuatro, con un comentario que decía «*llegará a `0x8000_001c` cuando la
+      fase 3.5 añada `VIDEO_CTRL`*». La fase lo añadió y la constante se quedó,
+      así que `validate_block` rechazaba un bloque sobre el registro que acababa
+      de existir: pide `address + length <= end`, y `0x1c > 0x18`. En la 16 y la
+      18 el `MMIO_LIMIT` de los accesos byte a byte también se había quedado
+      corto (`0x0F` y `0x1F`).
+
+      Ahora los cuatro declaran la página entera, que es exactamente lo que el
+      RTL decodifica. Se eligió la página y no un subconjunto por lo que acaba
+      de pasar: un subconjunto es una tercera gemela que mantener, y ésta ya se
+      quedó atrás una vez. `test_la_ventana_del_host_llega_a_donde_llega_el_rtl`
+      la ata contra `MMIO_PREFIX`.
 
 ## Fase 4 — Descubrimiento en tiempo de ejecución
 
@@ -734,6 +768,28 @@ abajo tiene un criterio que exigir, y el 6 no queda como un descuido sino como
 un prototipo que aún no tiene dispositivos. El día que tenga uno de verdad,
 `SYS_ID` entra con él y el concepto llega motivado.
 
+#### Resuelto: 6 y 10 sí lo llevan, y por la puerta pequeña
+
+Lo de arriba se escribió como provisional y duró hasta la fase 5, que es cuando
+el argumento 2 —«en la familia CPU la versión de monitor ya identifica la
+carpeta»— **dejó de ser cierto por construcción**. Al renumerar las versiones
+por juego de comandos, 6 y 10 pasan a contestar lo mismo, así que lo único que
+las distinguía desaparece. Sin `SYS_ID`, `--version ebr` daría por buena una 10
+flasheada y se medirían las prestaciones del hardware equivocado: exactamente el
+fallo que `SYS_ID` existe para cerrar, reproducido en la otra familia.
+
+Lo que **no** ganan es MMIO, y ahí sigue valiendo entero el argumento 3. El
+bloque cuelga del camino del **monitor**: la CPU no lo ve, no hay página de
+dispositivos, y un programa no puede leerlo. En el 6 son ~25 líneas en `top.v`
+—un comparador, el `sysid`, y un multiplexor sobre la respuesta— y `memory_map.v`
+no se toca, que era el coste que asustaba. La entrada/salida mapeada en memoria
+sigue llegando en la 16, empujada por el vídeo.
+
+O sea que la regla se afina en vez de romperse: **identidad en toda carpeta con
+juego de comandos; dispositivos donde haya algo que mapear.** Hay un test para
+cada mitad, y el segundo comprueba que 6 y 10 *no* han ganado una ventana MMIO
+por el camino.
+
 #### Vuelta a la lista
 
 - [x] **Test de que `SYS_ID` coincide con el número de carpeta**, hecho para la
@@ -793,22 +849,71 @@ tres juegos de comandos de hoy (12, 14 y 16) quedan en **dos** —base y
 base+serie—, y ninguno es ya «el que tiene contadores». Lo que aquí queda es
 renumerar y unificar, no rediseñar.
 
-- [ ] **Renumerar las versiones de monitor por juego de comandos**: de diez
-      valores (1.15–1.20, 2.3–2.4) a los que queden tras 3.4 y 3.5. Hoy 6, 10 y
-      16 tienen el mismo juego y llevan 1.16/1.17/1.18; 19 y 21 tienen el mismo
-      juego y llevan 1.20 y 1.15. Y 14, 17 y 22 responden todos 2.4 siendo
-      hardware distinto, con la consecuencia de que `--version sdram` pasa contra
-      una 22 flasheada y se miden prestaciones del hardware equivocado.
-- [ ] Conservar el número como **contrato de protocolo**, no como identidad. El
+- [x] **Renumerar las versiones de monitor.** Había **nueve** números para
+      **dos** juegos de comandos, y además colisionaban: 14, 17 y 22 respondían
+      las tres 2.6 siendo hardware distinto, con la consecuencia de que
+      `--version sdram` pasa contra una 22 flasheada y se miden prestaciones del
+      hardware equivocado.
+
+      El esquema es **mayor = juego de comandos, menor = número de carpeta**:
+
+      | Juego | Comandos | Carpetas | Versión |
+      |---|---|---|---|
+      | 1 | base, 13 | 6, 10, 12, 14, 16, 17, 18, 22 | `1.6` … `1.22` |
+      | 2 | base + serie, 15 | 19, 21 | `2.19`, `2.21` |
+
+      El mayor dice **qué protocolo** habla la placa y el menor **cuál es**, y
+      con el número de carpeta el menor no se puede duplicar ni hay que
+      registrarlo en ningún sitio: lo impone el nombre del directorio, igual que
+      en `SYS_ID`. La colisión de 14/17/22 no puede repetirse por construcción.
+
+      Dos detalles que importan más de lo que parecen:
+
+      - **El menor se escribe en decimal** (`8'd16` en la 16). En hexadecimal
+        habría que poner `8'h10` para que la placa contestara «16», que es justo
+        la clase de traducción mental que acaba en un número mal tecleado.
+        `rtl_facts` y el parser del test admiten ahora las dos bases.
+      - **En la familia GPU el valor va en el `top`, no en `monitor.v`.** Ahí
+        son parámetros, y el fichero es copia idéntica en las cuatro carpetas;
+        renumerar tocando el fichero les puso defaults distintos y las dejó de
+        ser. El default común es `1.0`: juego base, carpeta **sin declarar**. El
+        cero de menor es un centinela, como el cero de `SYS_ID` — si una placa
+        contesta `x.0`, es que su `top` se olvidó del parámetro.
+
+      Esto **no** convierte la versión en la identidad. Sigue siendo el contrato
+      de protocolo; lo que pasa es que ahora, además, no colisiona. La identidad
+      la da `SYS_ID`, y por eso 6 y 10 tuvieron que recibirlo (ver fase 4a).
+- [x] Conservar el número como **contrato de protocolo**, no como identidad. El
       caso que lo justifica es el backport de R0: mismos comandos, mismos
       dispositivos, misma lista de rangos, y un bitstream viejo no da error — da
       otro resultado. Un bitmap de dispositivos no detecta eso.
 - [ ] **Unificar los `monitor.v` en uno parametrizado**, con los comandos
       opcionales por parámetro y la lista blanca **derivada** de qué dispositivos
       hay en vez de copiada. Con los slots fijos la derivación es directa.
-- [ ] La única diferencia estructural que no se resuelve con parámetros es el
+
+      **Es más grande de lo que este plan suponía, y conviene saberlo antes de
+      empezar.** El `monitor.v` de la familia GPU **ya es** el parametrizado:
+      versión y cinco ventanas MMIO como parámetros, copia idéntica en las
+      cuatro carpetas. El de la familia CPU **no tiene lista blanca en
+      absoluto** — filtra aguas abajo, en el adaptador de memoria. Así que esto
+      no es un merge mecánico: es **darle filtrado de direcciones al monitor de
+      CPU**, y eso cambia comportamiento. Hay que decidir primero qué debe pasar
+      hoy con una dirección fuera de rango en una placa de CPU, y arrastra la
+      gemela `MONITOR_REGIONS` de cada `monitor.py`.
+
+      Medido, para dimensionarlo: 10↔16 son +10/−3 líneas, 16↔18 +14/−3 y
+      19↔21 +8/−7 — o sea que dentro de la familia ya casi convergen. Lo gordo
+      son 18↔19 (+152/−5, el puerto serie) y 21↔22 (+143/−281, que es
+      justamente la lista blanca en un sentido y el serie en el otro).
+- [x] ~~La única diferencia estructural que no se resuelve con parámetros es el
       cableado de `READ_REGISTER` y `RESET_CPU`, que van a sitios distintos en
-      CPU y GPU. Tratarla explícitamente.
+      CPU y GPU.~~ **No existe.** Los puertos del monitor
+      —`cpu_debug_register_address`, `cpu_debug_register_data`,
+      `cpu_reset_request`— son **idénticos** en las dos familias; lo que difiere
+      es a qué los conecta cada `top`: el fichero de registros de la CPU en una,
+      y el carril seleccionado por `select_context` en la otra. Eso es asunto
+      del `top`, no del monitor, así que este punto se disuelve y la
+      unificación no tiene que tratarlo.
 
 ---
 

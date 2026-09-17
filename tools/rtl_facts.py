@@ -65,10 +65,16 @@ def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:
             depth += {"(": 1, ")": -1}.get(text[cursor], 0)
             cursor += 1
         lista = text[match.end():cursor]
-        valores = dict(re.findall(r"\.(\w+)\(8'h([0-9a-fA-F]+)\)", lista))
+        valores = dict(re.findall(r"\.(\w+)\(\s*8'([hd][0-9a-fA-F]+)\s*\)",
+                                  lista))
         if "VERSION_MAJOR" in valores and "VERSION_MINOR" in valores:
             return valores
     return None
+
+
+def _as_int(literal: str) -> int:
+    """Un literal de 8 bits de Verilog, en la base que traiga."""
+    return int(literal[1:], 16 if literal[0] == "h" else 10)
 
 
 def monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
@@ -77,21 +83,28 @@ def monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
     Se mira primero la instanciación, porque es la que manda cuando monitor.v
     está parametrizado, y se cae al localparam para los prototipos que todavía
     lo llevan dentro (la familia CPU).
+
+    Se admiten las dos bases de Verilog. Desde el renumerado el menor es el
+    NÚMERO DE CARPETA, y escribirlo en decimal --`8'd16` en la 16-- es lo que
+    hace que el valor se lea solo; en hexadecimal habría que poner `8'h10` para
+    que la placa contestara «16», que es justo la clase de traducción mental que
+    acaba en un número mal tecleado.
     """
     instancia = _parameters_at_instantiation(prototype_dir)
     if instancia is not None:
-        return (int(instancia["VERSION_MAJOR"], 16),
-                int(instancia["VERSION_MINOR"], 16))
+        return (_as_int(instancia["VERSION_MAJOR"]),
+                _as_int(instancia["VERSION_MINOR"]))
 
     monitor_v = prototype_dir / "monitor.v"
     if not monitor_v.exists():
         return None
     text = monitor_v.read_text(encoding="utf-8", errors="replace")
-    major = re.search(r"VERSION_MAJOR\s*=\s*8'h([0-9a-fA-F]+)", text)
-    minor = re.search(r"VERSION_MINOR\s*=\s*8'h([0-9a-fA-F]+)", text)
+    major = re.search(r"VERSION_MAJOR\s*=\s*8'([hd])([0-9a-fA-F]+)", text)
+    minor = re.search(r"VERSION_MINOR\s*=\s*8'([hd])([0-9a-fA-F]+)", text)
     if not major or not minor:
         return None
-    return (int(major.group(1), 16), int(minor.group(1), 16))
+    return (int(major.group(2), 16 if major.group(1) == "h" else 10),
+            int(minor.group(2), 16 if minor.group(1) == "h" else 10))
 
 
 def clock_hz_from_rtl(prototype_dir: Path) -> int | None:

@@ -97,7 +97,7 @@ module monitor (
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
-  localparam [7:0] VERSION_MAJOR = 8'h01;
+  localparam [7:0] VERSION_MAJOR = 8'd1;
   // 1.5 fue el mapa unificado sobre SDRAM de 10.fpga-cpu-ram. Esta rama sube
   // la version cada vez que cambia algo que el PC no puede negociar:
   //   1.7  se anade el subsistema de video
@@ -116,7 +116,7 @@ module monitor (
   // con error, da otro resultado en silencio. Por eso sube la version aunque el
   // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
   // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
-  localparam [7:0] VERSION_MINOR = 8'h17;
+  localparam [7:0] VERSION_MINOR = 8'd18;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;

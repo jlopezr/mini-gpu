@@ -93,7 +93,7 @@ module monitor (
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
-  localparam [7:0] VERSION_MAJOR = 8'h01;
+  localparam [7:0] VERSION_MAJOR = 8'd1;
   // Version 1.5 identifies unified addressing backed by external SDRAM.
   // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
   // descartar las escrituras, que es un cambio INCOMPATIBLE con lo que hacia
@@ -101,7 +101,7 @@ module monitor (
   // con error, da otro resultado en silencio. Por eso sube la version aunque el
   // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
   // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
-  localparam [7:0] VERSION_MINOR = 8'h12;
+  localparam [7:0] VERSION_MINOR = 8'd10;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;

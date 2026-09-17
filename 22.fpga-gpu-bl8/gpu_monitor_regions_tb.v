@@ -48,7 +48,7 @@ module gpu_monitor_regions_tb;
         else if(tx_busy!=0) tx_busy<=tx_busy-1'b1;
 
     // Mismos parametros que top_bl8: este banco comprueba justo la lista blanca.
-    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h06),
+    monitor #(.VERSION_MAJOR(8'd1),.VERSION_MINOR(8'd22),
         .RAM_END(33'h0_0200_0000),
         .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
         .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),

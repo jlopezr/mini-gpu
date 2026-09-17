@@ -23,6 +23,7 @@ compartido hacía pasar un `pc` de 0x20000 que en esa placa no existe. Lo cazó
 
 import ast
 import importlib
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -108,6 +109,39 @@ class ProtocoloCompartidoTest(unittest.TestCase):
                 texto = (ROOT / prototipo / "monitor.py").read_text(encoding="utf8")
                 self.assertIn("ARCHITECTURAL_REGIONS = (", texto)
                 self.assertIn("MONITOR_REGIONS = (", texto)
+
+    def test_la_ventana_del_host_llega_a_donde_llega_el_rtl(self):
+        """La gemela que ya se quedó atrás una vez.
+
+        `MONITOR_REGIONS` terminaba en `0x8000_0018` con un comentario que
+        decía «llegará a `0x8000_001c` cuando la fase 3.5 añada `VIDEO_CTRL`».
+        La fase lo añadió, la constante se quedó, y el host pasó a rechazar un
+        bloque sobre el registro que acababa de existir -- `validate_block`
+        exige `address + length <= end`, y `0x1c > 0x18`.
+
+        El RTL de las cuatro decodifica la página entera
+        (`address[31:12] == 20'h80000`), así que eso es lo que se exige aquí.
+        """
+        prefijo = re.compile(r"MMIO_PREFIX\s*=\s*\d+'h([0-9a-fA-F_]+)")
+        for prototipo in ("16.fpga-cpu-hdmi", "18.fpga-cpu-hdmi-bl8",
+                          "19.fpga-cpu-hdmi-ls", "21.fpga-cpu-hdmi-alu"):
+            monitor = cargar(prototipo)
+            # El camino ACTIVO es el del adaptador que usa el top; se busca el
+            # prefijo de 20 bits, que es el de la página de 4 KiB.
+            paginas = set()
+            for ruta in sorted((ROOT / prototipo).glob("*.v")):
+                if ruta.name.endswith("_tb.v"):
+                    continue
+                for digits in prefijo.findall(ruta.read_text(encoding="utf8")):
+                    valor = int(digits.replace("_", ""), 16)
+                    if valor == 0x80000:        # los 20 bits altos
+                        paginas.add((0x8000_0000, 0x8000_1000))
+            with self.subTest(prototipo=prototipo):
+                self.assertTrue(paginas, f"{prototipo}: no encuentro MMIO_PREFIX")
+                self.assertIn((0x8000_0000, 0x8000_1000),
+                              set(monitor.MONITOR_REGIONS),
+                              f"{prototipo}: el host no cubre la página que el "
+                              f"RTL decodifica")
 
     def test_el_modelo_de_warps_es_el_de_cada_placa(self):
         """El caso que se escapó: la 12 valida contra 128 KiB de EBR y las
