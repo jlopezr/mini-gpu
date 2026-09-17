@@ -102,6 +102,19 @@ Lo que queda por subir, por orden de lo que más cubriría:
 - Los bancos de `memory-test` del monitor, que son un caso de conformidad
   disfrazado de comando.
 
+## 12.5. Unificar el mapa de memoria y MMIO entre prototipos
+
+Aplicar al RTL el contrato objetivo de `docs/mapa-de-memoria.md` §6, para que el
+mismo programa valga en varias versiones. Plan por fases con la lista completa
+de ficheros a tocar: **[`docs/unificacion-mmio.md`](docs/unificacion-mmio.md)**.
+
+Los movimientos reales son solo dos —warps de `0x80000000` a `0x80001000`, y el
+vídeo de la 22 de `0x80000200` a `0x80000000`— pero arrastran el bloque de
+identificación, la política de dirección inexistente y la renumeración de las
+versiones de monitor.
+
+Numerado 12.5 provisionalmente; probablemente merece subir en la lista.
+
 ## 13. Herramienta para testear solo un component a nivel de RTL, p.e la LSU
 
 ## 13. Herramienta similar para generar diagrama de bloques. como se conecta LSU con el resto de componentes, y como se conecta el resto de componentes entre si.

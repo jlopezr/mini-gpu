@@ -125,18 +125,43 @@ def load_capability_signals(root: Path) -> dict:
     return {name: spec for name, spec in data.items() if not name.startswith("_")}
 
 
+def capability_files(spec: dict) -> tuple[str, ...]:
+    """Los ficheros donde puede estar la señal de una capacidad.
+
+    `file` admite un nombre o una lista de alternativas, y la lista no es un
+    lujo: un mismo dispositivo se llama distinto en cada familia --el vídeo es
+    `video_registers.v` en CPU y `gpu_video_regs.v` en GPU-- y sin alternativas
+    haría falta una capacidad por familia, que es justo lo que impide compartir
+    un caso de prueba entre prototipos.
+    """
+    file = spec.get("file")
+    if file is None:
+        return ()
+    if isinstance(file, str):
+        return (file,)
+    return tuple(file)
+
+
+def capability_architectures(spec: dict) -> tuple[str, ...]:
+    """`architecture` admite un valor o una lista, por lo mismo que `file`: hay
+    dispositivos que tienen las dos familias."""
+    architecture = spec["architecture"]
+    if isinstance(architecture, str):
+        return (architecture,)
+    return tuple(architecture)
+
+
 def capabilities_from_rtl(prototype_dir: Path, signals: dict) -> tuple[str, ...]:
     found = []
     for name, spec in signals.items():
         # Sin `file` no hay nada que buscar en el RTL: es el caso de
         # `atomic_warp_faults`, que ningún hardware real implementa.
-        file = spec.get("file")
-        if file is None:
-            continue
-        target = prototype_dir / file
-        if not target.exists():
-            continue
-        pattern = spec.get("pattern")
-        if pattern is None or re.search(pattern, target.read_text(encoding="utf-8", errors="replace")):
-            found.append(name)
+        for file in capability_files(spec):
+            target = prototype_dir / file
+            if not target.exists():
+                continue
+            pattern = spec.get("pattern")
+            if pattern is None or re.search(pattern, target.read_text(encoding="utf-8", errors="replace")):
+                found.append(name)
+                break
     return tuple(found)

@@ -47,7 +47,6 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | `shift_immediate` | sí | no | no | no | no | no | sí |
 | `alu_extended` | sí | no | no | no | no | no | sí |
 | `compare` | sí | no | no | no | no | no | sí |
-| `video` | sí | no | no | sí | sí | sí | sí |
 | `frame_capture` | sí | no | no | no | sí | sí | sí |
 | `serial` | sí | no | no | no | no | sí | sí |
 <!-- END GENERATED: cpu-matrix -->
@@ -155,11 +154,14 @@ cobró de verdad.
 | | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
 |---|---|---|---|---|---|---|
 | **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | — | 34.1 / 25 | 33.9 / 25 | 44.1 / 25 | 37.0 / 25 |
+| **Fmax / objetivo** | — | — | 34.1 / 25 | 33.9 / 25 | 44.1 / 25 | 37.7 / 25 |
 | **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | — | 36 617 / 9 137 | 31 140 / 9 016 | 31 076 / 10 090 | 35 017 / 12 307 |
+| **LUT / FF** | — | — | 36 617 / 9 137 | 31 140 / 9 016 | 31 076 / 10 090 | 34 177 / 12 308 |
 | **Monitor** | — | — | 2.3 | 2.4 | 2.4 | 2.4 |
 | **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k |
+| `warp_config` | no | no | sí | sí | sí | sí |
+| `simt_debug` | no | no | sí | sí | sí | sí |
+| `perf_counters` | no | no | no | no | no | sí |
 | `atomic_warp_faults` | sí | sí | no | no | no | no |
 <!-- END GENERATED: gpu-matrix -->
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:

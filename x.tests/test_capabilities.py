@@ -60,8 +60,17 @@ class CapabilitiesTest(unittest.TestCase):
         # falte, es que no tiene sentido.
         with self.assertRaises(ValueError):
             parse_requires({"requires": ["atomic_warp_faults"]}, "cpu")
+        # `serial` solo lo tiene la CPU (19 y 21); en un caso GPU no es que
+        # falte, es que no existe el dispositivo en esa familia.
         with self.assertRaises(ValueError):
-            parse_requires({"requires": ["video"]}, "gpu")
+            parse_requires({"requires": ["serial"]}, "gpu")
+
+    def test_capacidad_de_las_dos_arquitecturas(self):
+        # `video` lo tienen las dos familias, y por eso un caso GPU puede
+        # declararlo. Es la condicion para que el mismo programa de video valga
+        # en la 21 y en la 22 -- ver docs/unificacion-mmio.md.
+        self.assertEqual(parse_requires({"requires": ["video"]}, "cpu"), ["video"])
+        self.assertEqual(parse_requires({"requires": ["video"]}, "gpu"), ["video"])
 
     def test_repetidas(self):
         with self.assertRaises(ValueError):
@@ -381,8 +390,13 @@ class CapabilitiesTest(unittest.TestCase):
     def test_todas_las_capacidades_tienen_arquitectura(self):
         # Una capacidad nueva sin arquitectura declarada se colaria en casos de
         # las dos, que es justo lo que este diccionario existe para impedir.
-        for nombre, arquitectura in CAPABILITIES.items():
-            self.assertIn(arquitectura, ("cpu", "gpu"), nombre)
+        # Ahora el valor es una tupla -- declarar las dos es legitimo (`video`),
+        # pero declarar ninguna o una desconocida sigue sin serlo.
+        for nombre, arquitecturas in CAPABILITIES.items():
+            self.assertIsInstance(arquitecturas, tuple, nombre)
+            self.assertTrue(arquitecturas, nombre)
+            for arquitectura in arquitecturas:
+                self.assertIn(arquitectura, ("cpu", "gpu"), nombre)
 
 
 if __name__ == "__main__":

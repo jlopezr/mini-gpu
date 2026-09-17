@@ -27,7 +27,7 @@ REPOSITORY = ROOT.parent
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
-from tools.rtl_facts import load_capability_signals  # noqa: E402
+from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 
 # Límite común a todos los casos: que quepan en un espacio de 32 bits. Si el
 # caso cabe en el mapa concreto de un backend lo decide `incompatibility()`.
@@ -433,8 +433,12 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # implica `mul_div`-- pero como metadato, para que un caso pueda declarar solo
 # la mas especifica sin repetir la base.
 _CAPABILITY_SIGNALS = load_capability_signals(REPOSITORY)
+# El valor es la TUPLA de arquitecturas que pueden declarar la capacidad, no
+# una sola: `video` lo tienen CPU y GPU, y mientras fuese un unico valor un caso
+# GPU no podia declarar `requires: ["video"]` aunque la placa tuviese el
+# dispositivo -- que es justo lo que impide compartir un programa entre familias.
 CAPABILITIES = {
-    name: spec["architecture"] for name, spec in _CAPABILITY_SIGNALS.items()
+    name: capability_architectures(spec) for name, spec in _CAPABILITY_SIGNALS.items()
 }
 CAPABILITY_IMPLIES = {
     name: tuple(spec["implies"])
@@ -528,10 +532,10 @@ def parse_requires(raw: dict, architecture: str) -> list:
         if item not in CAPABILITIES:
             opciones = ", ".join(sorted(CAPABILITIES))
             raise ValueError(f"capacidad desconocida {item!r}; opciones: {opciones}")
-        if CAPABILITIES[item] != architecture:
+        if architecture not in CAPABILITIES[item]:
             raise ValueError(
                 f"la capacidad {item!r} es de arquitectura "
-                f"{CAPABILITIES[item]}, y el caso es {architecture}"
+                f"{'/'.join(CAPABILITIES[item])}, y el caso es {architecture}"
             )
     if len(set(requires)) != len(requires):
         raise ValueError("requires tiene capacidades repetidas")

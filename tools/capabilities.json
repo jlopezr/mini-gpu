@@ -1,6 +1,8 @@
 {
   "_comment": "Capacidad -> qué buscar en el RTL de cada prototipo para saber si la tiene, y de qué arquitectura es. 'file' es relativo a la carpeta del prototipo; sin 'pattern', basta con que el fichero exista. Con 'pattern', tiene que aparecer una coincidencia además de existir el fichero. 'implies' son las capacidades que declarar esta ya cubre en un `requires` de un test.json -no en la deteccion RTL, que ya las encuentra solas cuando comparten 'file'-. Sin 'file' la capacidad nunca se detecta por RTL: es el caso de 'atomic_warp_faults', que ningun hardware real implementa -solo el simulador la permite implicitamente-, asi que su unico dato es la arquitectura. Añadir una capacidad nueva es añadir una entrada aquí -- no hace falta tocar prototipos ni código.",
 
+  "_comment_listas": "'file' y 'architecture' admiten un valor o una lista. Con lista, 'file' son ALTERNATIVAS: vale la primera que exista y case el patrón. Las dos listas existen por la misma razón, que es un mismo dispositivo en las dos familias: el vídeo se llama 'video_registers.v' en CPU y 'gpu_video_regs.v' en GPU, y si 'video' fuese solo de arquitectura 'cpu' un caso GPU no podría declararlo en 'requires' -- ver run_tests.py:parse_requires. Ese era el bloqueo para compartir un programa de vídeo entre la 21 y la 22.",
+
   "mul_div": {
     "architecture": "cpu",
     "file": "cpu.v",
@@ -33,8 +35,8 @@
     "pattern": "OPCODE_SLT:"
   },
   "video": {
-    "architecture": "cpu",
-    "file": "video_registers.v"
+    "architecture": ["cpu", "gpu"],
+    "file": ["video_registers.v", "gpu_video_regs.v"]
   },
   "frame_capture": {
     "architecture": "cpu",
@@ -45,6 +47,21 @@
   "serial": {
     "architecture": "cpu",
     "file": "serial_port.v"
+  },
+
+  "warp_config": {
+    "architecture": "gpu",
+    "file": ["gpu_system_bl8.v", "gpu_system.v"],
+    "pattern": "cfg_region"
+  },
+  "simt_debug": {
+    "architecture": "gpu",
+    "file": ["gpu_system_bl8.v", "gpu_system.v"],
+    "pattern": "debug_warp"
+  },
+  "perf_counters": {
+    "architecture": "gpu",
+    "file": "gpu_perf_counters.v"
   },
   "atomic_warp_faults": {
     "architecture": "gpu"
