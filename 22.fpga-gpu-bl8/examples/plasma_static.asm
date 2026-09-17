@@ -9,18 +9,23 @@
 ; nuevo son identicos. Entonces:
 ;
 ;   imagen estable  -> lo que se veia era tearing por falta de doble buffer
-;   sigue inestable -> hay otra cosa; mira VIDEO_STATUS (0x80000208) bit 0,
+;   sigue inestable -> hay otra cosa; mira VIDEO_STATUS (0x80000210) bit 0,
 ;                      que es el underflow pegajoso del line buffer, y led[0]
 ;
 ; Efecto a pantalla completa con los 64 hilos colaborando.
 ;
-; OJO: este programa NO enciende el scanout, y no puede. Dos barreras:
-;   - la LSU marca fault toda direccion >= 0x02000000, asi que un STORE a
-;     VIDEO_CTRL (0x80000200) no llega al MMIO;
-;   - y aunque llegase, la escritura del MMIO exige `halted`: es cosa del host.
-; El scanout se enciende desde el monitor ANTES de arrancar:
-;     escribir 0x10 en 0x80000206  (FB_BASE = 0x00100000)
-;     escribir 2    en 0x80000200  (VIDEO_CTRL = SCANOUT)
+; SE CONFIGURA SOLO: el prologo enciende el scanout. El host solo carga y
+; arranca; `run-board --program` basta.
+;     FB_FRONT (0x80000204) = 0x00100000
+;     VIDEO_CTRL (0x80000200) = 2
+;
+; Aqui NO se toca FB_BACK: la gracia de este programa es que hay UN SOLO buffer,
+; y se dibuja encima del que se esta mostrando. Por eso la base va a FB_FRONT.
+;
+; (Esta cabecera decia antes que el programa no podia encender el scanout,
+; porque la LSU marcaba fault todo lo que pasara de 0x02000000 y el MMIO exigia
+; `halted`. Las dos cosas dejaron de ser ciertas al abrir la ventana MMIO a la
+; LSU, ver mmio.md. Tambien situaba VIDEO_STATUS en 0x80000208, que es FB_BACK.)
 ;
 ; Reparto del trabajo
 ; -------------------
@@ -69,6 +74,19 @@
         MOVI  R26, 2            ; y  >> 2
         MOVI  R28, 30           ; redibuja 30 veces la MISMA imagen
         MOVI  R2, 0             ; R2 = t, contador de frames
+
+        ; Configuracion del video. Solo el hilo 0: los accesos a MMIO son
+        ; ESCALARES (una lane cada vez), asi que dejar que los 64 escriban el
+        ; mismo registro seria correcto pero absurdo. Un salto divergente
+        ; necesita SSY delante o el SM para con ERROR_SIMT.
+        MOVHI R30, 0x8000       ; R30 = 0x80000000, base del MMIO
+        SSY   video_ready
+        BNE   R1, R0, video_ready
+        STORE R20, R30, 516     ; FB_FRONT = 0x00100000, el mismo que dibujamos
+        MOVI  R27, 2
+        STORE R27, R30, 512     ; VIDEO_CTRL = SCANOUT
+video_ready:
+        BAR
 
 frame_loop:
         ADD   R3, R1, R0        ; x2 = tid

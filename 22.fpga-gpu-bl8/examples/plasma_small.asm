@@ -18,16 +18,16 @@
 ; reescriben a ~8 fps y la imagen tiembla, porque cada frame mostrado mezcla
 ; contenido viejo y nuevo.
 ;
-; El host prepara los dos buffers y enciende el scanout antes de arrancar:
+; SE CONFIGURA SOLO: el prologo pone los dos buffers y enciende el scanout.
+; El host solo carga y arranca; `run-board --program` basta.
 ;     FB_FRONT (0x80000204) = 0x00100000
 ;     FB_BACK  (0x80000208) = 0x00140000
 ;     VIDEO_CTRL (0x80000200) = 2
 ;
-; El intercambio SI lo pide la GPU, escribiendo SWAP (0x8000020c). Eso solo es
-; posible desde que la ventana MMIO esta abierta a la LSU (ver mmio.md): antes
-; la LSU marcaba fault todo lo que pasara de 0x02000000 y ademas el MMIO exigia
-; `halted`. El host no podria hacerlo, tendria que pedir un intercambio ocho
-; veces por segundo por UART.
+; El intercambio y esta configuracion los hace la GPU, escribiendo el MMIO
+; (ver mmio.md). Eso solo es posible desde que la ventana esta abierta a la LSU:
+; antes la LSU marcaba fault todo lo que pasara de 0x02000000 y ademas el MMIO
+; exigia `halted`.
 ;
 ; Reparto del trabajo
 ; -------------------
@@ -76,6 +76,21 @@
         MOVI  R26, 2            ; y  >> 2
         MOVI  R28, 4            ; frames a dibujar (subir para dejarlo animando)
         MOVI  R2, 0             ; R2 = t, contador de frames
+
+        ; Configuracion del video. Solo el hilo 0: los accesos a MMIO son
+        ; ESCALARES (una lane cada vez), asi que dejar que los 64 escriban el
+        ; mismo registro seria correcto pero absurdo. Un salto divergente
+        ; necesita SSY delante o el SM para con ERROR_SIMT.
+        SSY   video_ready
+        BNE   R1, R0, video_ready
+        MOVHI R27, 0x0010
+        STORE R27, R30, 516     ; FB_FRONT = 0x00100000
+        MOVHI R27, 0x0014
+        STORE R27, R30, 520     ; FB_BACK  = 0x00140000
+        MOVI  R27, 2
+        STORE R27, R30, 512     ; VIDEO_CTRL = SCANOUT, ya con los buffers puestos
+video_ready:
+        BAR                     ; nadie lee FB_BACK antes de que este escrito
 
 frame_loop:
         LOAD  R19, R30, 520     ; R19 = FB_BACK (0x80000208): donde toca dibujar

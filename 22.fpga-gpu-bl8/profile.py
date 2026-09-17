@@ -11,6 +11,14 @@ Uso tipico -- medir un programa de punta a punta:
 
 Eso carga el programa, toma los contadores, lo ejecuta, los vuelve a tomar, y
 presenta la diferencia. Sin --program, solo muestra el estado actual.
+
+Los programas de examples/ se configuran el video ellos mismos, asi que aqui no
+se toca ningun registro de video: solo se carga y se arranca. La excepcion es
+plasma_nommio.asm, que no puede tocar el MMIO sin dejar de correr en el
+simulador funcional; si lo perfilas, el scanout se queda como estuviera. Eso
+importa al comparar: VIDEO_TX cuenta el trafico del scanout, asi que un perfil
+con la pantalla encendida y otro con ella apagada no son comparables. Enciendela
+a mano antes si quieres medir en las mismas condiciones (ver su cabecera).
 """
 from __future__ import annotations
 
@@ -25,14 +33,6 @@ import serial
 import monitor
 
 BASE = 0x80000300
-
-# Registros de video (ver mmio.md). Los mismos valores que pone
-# gpu_profile_tb.v: si placa y banco no preparan lo mismo, no estan midiendo lo
-# mismo y comparar sus numeros no significa nada.
-VIDEO_CTRL = 0x80000200
-FB_FRONT = 0x80000204
-FB_BACK = 0x80000208
-MODE_SCANOUT = 2
 
 COUNTERS = [
     ("CYCLES", 0x00, "ciclos"),
@@ -53,25 +53,6 @@ def read_word(client: monitor.MonitorClient, address: int) -> int:
 
 def snapshot(client: monitor.MonitorClient) -> dict[str, int]:
     return {name: read_word(client, BASE + offset) for name, offset, _ in COUNTERS}
-
-
-def write_word(client: monitor.MonitorClient, address: int, value: int) -> None:
-    client.write_memory(address, value.to_bytes(4, "little"))
-
-
-def setup_video(client: monitor.MonitorClient, front: int, back: int) -> None:
-    """Prepara los dos buffers y enciende el scanout.
-
-    Hace falta de verdad: tras el reset FB_FRONT y FB_BACK valen CERO, y
-    plasma.asm se trae FB_BACK con un LOAD para saber donde dibujar. Sin esto
-    el programa escribe los pixeles en la direccion 0 -- es decir, ENCIMA DE SI
-    MISMO -- y unas instrucciones despues ejecuta basura y para con
-    ERROR_MEMORY_ACCESS. El banco de pruebas si lo preparaba, y por eso el
-    fallo solo salia en placa.
-    """
-    write_word(client, FB_FRONT, front)
-    write_word(client, FB_BACK, back)
-    write_word(client, VIDEO_CTRL, MODE_SCANOUT)
 
 
 def report(before: dict[str, int], after: dict[str, int]) -> None:
@@ -134,13 +115,6 @@ def main() -> int:
                         help="ensambla, carga y ejecuta este .asm antes de medir")
     parser.add_argument("--timeout", type=float, default=30.0,
                         help="segundos de espera a que el programa termine")
-    parser.add_argument("--fb-front", type=lambda s: int(s, 0), default=0x0010_0000,
-                        help="buffer que se muestra (por defecto 0x100000)")
-    parser.add_argument("--fb-back", type=lambda s: int(s, 0), default=0x0014_0000,
-                        help="buffer que se dibuja (por defecto 0x140000)")
-    parser.add_argument("--no-video", action="store_true",
-                        help="no tocar los registros de video (para programas"
-                             " que no dibujan, o que se configuran solos)")
     args = parser.parse_args()
 
     # NO vale `available_ports().split(",")[0]`: eso devolvia el primer puerto
@@ -161,11 +135,6 @@ def main() -> int:
                             str(source)], check=True)
             client.reset_cpu()
             client.write_memory(0, binary.read_bytes())
-            # Despues del reset, y antes de arrancar: el reset del nucleo no
-            # toca los registros de video, pero el programa lee FB_BACK nada
-            # mas empezar.
-            if not args.no_video:
-                setup_video(client, args.fb_front, args.fb_back)
 
         before = snapshot(client)
 

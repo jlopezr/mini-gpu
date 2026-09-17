@@ -139,13 +139,16 @@ module gpu_plasma_tb;
         repeat(4) @(negedge clk); reset=0;
         wait(halted); @(negedge clk);
 
-        // El host prepara los dos buffers y enciende el scanout. El
-        // intercambio ya lo pide la GPU sola.
-        write_word(32'h80000204,32'h0010_0000);   // FB_FRONT
-        write_word(32'h80000208,32'h0014_0000);   // FB_BACK
-        access(1,32'h80000200,8'd2);              // VIDEO_CTRL = SCANOUT
+        // El host NO prepara nada de video: plasma.asm pone FB_FRONT, FB_BACK y
+        // VIDEO_CTRL en su prologo, y pide los intercambios el solo. Antes se
+        // preparaban aqui, y esa era justo la trampa: el banco pasaba mientras
+        // `run-board --program` fallaba en placa, porque tras el reset FB_BACK
+        // vale CERO y el programa acababa pintando sobre su propio codigo.
+        // Con la direccion viviendo solo en el kernel no hay dos sitios que
+        // puedan discrepar -- y de hecho ya discrepaban: plasma_1frame.asm
+        // documentaba 0x00200000 mientras gpu_profile_tb usaba 0x00140000.
 
-        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 66 del programa
+        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 75 del programa
 
         h0=dut.imem_hits; m0=dut.imem_misses;
         @(negedge clk); run_request=1;

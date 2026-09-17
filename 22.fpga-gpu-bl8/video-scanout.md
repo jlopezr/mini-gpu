@@ -228,17 +228,28 @@ Los 64 hilos (`GETTID` da el id global `{warp,lane}`) se reparten las 38 400
 palabras del framebuffer con paso 64, elegido para que los 8 hilos de un warp
 escriban palabras **consecutivas** y la LSU v2 las coalesca en 2 transacciones.
 
-### Lo que la GPU no puede hacer
+### Lo que la GPU no podía hacer, y ya hace
 
-**Ningún hilo puede encender el scanout.** Dos barreras independientes:
+> **Desactualizado.** Esta sección decía que ningún hilo podía encender el
+> scanout, por dos barreras independientes: la LSU marcaba fault toda dirección
+> ≥ `0x02000000`, y `video_write` exigía `halted`. Concluía que *«el MMIO es
+> territorio exclusivo del host»* y que una GPU capaz de cambiar de buffer por
+> su cuenta necesitaría abrir la ventana MMIO a la LSU, «que hoy no existe».
+>
+> Ya existe (ver `mmio.md`). Hoy `plasma.asm` **se configura solo**: escribe
+> `FB_FRONT`, `FB_BACK` y `VIDEO_CTRL` en su prólogo y pide cada intercambio con
+> `SWAP`. El host solo carga y arranca.
 
-- la LSU marca fault toda dirección ≥ `0x02000000`, así que un `STORE` a
-  `0x80000200` nunca llega al MMIO;
-- y aunque llegara, `video_write` exige `halted`.
+Que el host tuviera que prepararlo fallaba en silencio y de la peor manera: tras
+el reset `FB_BACK` vale **cero**, así que el `LOAD FB_BACK` del `frame_loop` se
+traía un 0 y los 64 hilos pintaban el framebuffer sobre la dirección 0 — encima
+del propio programa. Unas instrucciones después el fetch traía píxeles en vez de
+código y el SM paraba con `ERROR_INVALID_ENCODING` en un PC que no tenía nada
+que ver. Los bancos sí lo preparaban, así que **el fallo solo salía en placa**.
 
-El MMIO es territorio exclusivo del host. Si algún día se quiere una GPU que
-cambie de buffer por su cuenta, hace falta abrirle un camino a la ventana MMIO
-desde la LSU — hoy no existe.
+Con la dirección viviendo únicamente en el kernel, no hay dos sitios que puedan
+discrepar. Y discrepaban: `plasma_1frame.asm` documentaba `0x00200000` mientras
+`gpu_profile_tb` usaba `0x00140000`.
 
 ### Cuánto tarda, y por qué
 
@@ -250,6 +261,15 @@ desde la LSU — hoy no existe.
 
 En total **−34%** desde el punto de partida, sin tocar el hardware más que el
 tamaño del bufer: el resto salió de dejar de pelearse con la ISA.
+
+> **Estas cifras son anteriores al prólogo de autoconfiguración.** El prólogo
+> añade 9 instrucciones (36 bytes), que **no** es múltiplo de 16, así que el
+> bucle cambia de fase respecto a las líneas del bufer de instrucciones y los
+> fallos de fetch se mueven. Medido ahora, `gpu_profile_tb` (16 líneas) da
+> 2 492 351 ciclos/frame y 19 fallos (0%); `gpu_plasma4_tb` (4 líneas, 24 filas)
+> da 414 762 ciclos/frame y 17% de fallos. No son comparables fila a fila con la
+> tabla — no miden el mismo programa ni el mismo número de filas — así que la
+> tabla habría que rehacerla entera antes de citarla como vigente.
 
 El bucle ocupa ~160 bytes y no cabía en 64. Con 16 líneas el fetch desaparece
 como problema, por 2 048 biestables en vez de 512 — el 2,4% del presupuesto de

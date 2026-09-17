@@ -131,17 +131,34 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
         .fill_we(fill_we),.fill_addr(fill_addr),.fill_data(fill_data),
         .fill_done(fill_done));
 
-    // Las dos fuentes comparten contrato de relleno, asi que el mux es directo.
-    // Solo arranca la del modo activo: la otra nunca ve `fill_start` y por
-    // tanto no pide nada. Eso es lo que hace que BLANK y PATTERN salgan gratis.
-    wire scanout_on=(video_mode==MODE_SCANOUT);
+    // Las dos fuentes comparten contrato de relleno. Solo arranca la del modo
+    // activo: la otra nunca ve `fill_start` y por tanto no pide nada. Eso es lo
+    // que hace que BLANK y PATTERN salgan gratis.
+    //
+    // El mux NO se puentea con `video_mode` directamente. Va en
+    // video_line_source_mux, que muestrea el modo en el `fill_start` y lo
+    // sostiene hasta el final de la linea. Puentearlo en vivo colgaba el video
+    // si el software cambiaba VIDEO_CTRL a media linea; el porque esta en la
+    // cabecera de ese modulo y lo comprueba gpu_video_mode_switch_tb.
     wire burst_we,burst_done,pat_we,pat_done;
     wire [8:0] burst_addr,pat_addr;
     wire [15:0] burst_data,pat_data;
+    wire start_sdram,start_pattern;
+
+    video_line_source_mux source_mux_i(
+        .clk(clk_25mhz),.reset(reset),
+        .video_mode(video_mode),.fill_start(fill_start),
+        .start_sdram(start_sdram),.start_pattern(start_pattern),
+        .burst_we(burst_we),.burst_addr(burst_addr),
+        .burst_data(burst_data),.burst_done(burst_done),
+        .pat_we(pat_we),.pat_addr(pat_addr),
+        .pat_data(pat_data),.pat_done(pat_done),
+        .fill_we(fill_we),.fill_addr(fill_addr),
+        .fill_data(fill_data),.fill_done(fill_done));
 
     video_line_source_burst source_sdram_i(
         .clk(clk_25mhz),.reset(reset),.fb_base(video_fb_base),
-        .fill_start(fill_start && scanout_on),.fill_line(fill_line),
+        .fill_start(start_sdram),.fill_line(fill_line),
         .fill_we(burst_we),.fill_addr(burst_addr),.fill_data(burst_data),
         .fill_done(burst_done),
         .req_valid(p2_valid),.req_ready(p2_ready),.req_write(p2_write),
@@ -152,14 +169,9 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
 
     video_line_source_pattern source_pat_i(
         .clk(clk_25mhz),.reset(reset),
-        .fill_start(fill_start && !scanout_on),.fill_line(fill_line),
+        .fill_start(start_pattern),.fill_line(fill_line),
         .fill_we(pat_we),.fill_addr(pat_addr),.fill_data(pat_data),
         .fill_done(pat_done));
-
-    assign fill_we   = scanout_on ? burst_we   : pat_we;
-    assign fill_addr = scanout_on ? burst_addr : pat_addr;
-    assign fill_data = scanout_on ? burst_data : pat_data;
-    assign fill_done = scanout_on ? burst_done : pat_done;
 
     // video_mode vive en el dominio de sistema y aqui se usa en el de pixel.
     reg [1:0] mode_pix_0, mode_pix_1;

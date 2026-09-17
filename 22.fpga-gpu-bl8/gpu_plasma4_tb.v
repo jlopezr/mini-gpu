@@ -142,14 +142,14 @@ module gpu_plasma4_tb;
         repeat(4) @(negedge clk); reset=0;
         wait(halted); @(negedge clk);
 
-        // El host prepara los DOS buffers y enciende el scanout. Sin FB_BACK,
-        // plasma_small.asm (que lo lee con LOAD R19,R30,520) dibuja sobre la base que
-        // haya por defecto y se come su propio programa.
-        write_word(32'h80000204,32'h0010_0000);   // FB_FRONT
-        write_word(32'h80000208,32'h0014_0000);   // FB_BACK
-        access(1,32'h80000200,8'd2);              // VIDEO_CTRL = SCANOUT
+        // El host NO prepara nada de video: plasma_small.asm pone FB_FRONT,
+        // FB_BACK y VIDEO_CTRL en su prologo. El aviso que habia aqui -- que sin
+        // FB_BACK el programa se come su propio codigo -- sigue siendo cierto,
+        // pero ahora quien lo garantiza es el kernel, no el banco. Que solo lo
+        // garantizara el banco es lo que hacia que el fallo apareciera unicamente
+        // en placa, con `run-board --program`.
 
-        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 66 del programa
+        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 75 del programa
 
         h0=dut.imem_hits; m0=dut.imem_misses;
         @(negedge clk); run_request=1;

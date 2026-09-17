@@ -131,13 +131,12 @@ module gpu_profile_tb;
         repeat(4) @(negedge clk); reset=0;
         wait(halted); @(negedge clk);
 
-        // El host prepara los dos buffers y enciende el scanout. El
-        // intercambio ya lo pide la GPU sola.
-        write_word(32'h80000204,32'h0010_0000);   // FB_FRONT
-        write_word(32'h80000208,32'h0014_0000);   // FB_BACK
-        access(1,32'h80000200,8'd2);              // VIDEO_CTRL = SCANOUT
+        // El host NO prepara nada de video: plasma_1frame.asm pone FB_FRONT,
+        // FB_BACK y VIDEO_CTRL en su prologo, con los mismos valores que ponia
+        // este banco. La comprobacion de mas abajo -- que FB_FRONT acabe en
+        // 0x00140000 tras el unico intercambio -- sigue valiendo igual.
 
-        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 66 del programa
+        for(i=0;i<96;i=i+1) write_word(i*4,program_words[i]);   // holgura sobre las 75 del programa
 
         h0=dut.imem_hits; m0=dut.imem_misses;
         @(negedge clk); run_request=1;

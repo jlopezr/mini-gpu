@@ -8,6 +8,18 @@
 ; Esta version usa una base de framebuffer fija y no pide intercambio, asi que
 ; RTL y modelo ejecutan EXACTAMENTE la misma secuencia. Es la referencia de
 ; calibracion, no un programa util.
+;
+; ES LA EXCEPCION A LA REGLA. Los demas ejemplos de esta carpeta se configuran
+; el video ellos mismos, para que `run-board --program` baste. Este NO PUEDE:
+; en el momento en que escriba un registro MMIO deja de correr en el simulador
+; funcional y se acaba su unica razon de existir. Si quieres verlo en pantalla,
+; enciende el scanout a mano desde el monitor:
+;     python monitor.py write-byte 0x80000206 0x10   ; FB_FRONT = 0x00100000
+;     python monitor.py write-byte 0x80000200 2      ; VIDEO_CTRL = SCANOUT
+;
+; Ademas hay un numero de oro colgando de este fichero: test_programs.py de
+; 25.gpu-sim-cycle-uarch comprueba que un frame retire 151 880 instrucciones.
+; Cualquier instruccion que le anadas lo rompe.
 ; Efecto a pantalla completa con los 64 hilos colaborando.
 ;
 ; SIN DOBLE BUFFER, a proposito. Dibuja siempre sobre la base fija 0x00100000
