@@ -21,7 +21,10 @@ ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0002_0000),
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
-# Gemela de `block_range_valid` en monitor.v: las dos tienen que decir lo mismo.
+# Gemela de las ventanas que top.v pasa al monitor: las dos tienen que decir lo
+# mismo. Desde que monitor.v es copia identica en 12, 14, 17 y 22, la lista ya no
+# esta cableada en `block_range_valid`, sino en los parametros de la instancia.
+# Lo comprueba x.tests/test_monitor_port.py.
 # La configuración de warps está en 0x80001000 (segunda página, exclusiva de la
 # GPU) y no en 0x80000000, que queda para periféricos compartidos con la CPU.
 # Ver docs/mapa-de-memoria.md §6.

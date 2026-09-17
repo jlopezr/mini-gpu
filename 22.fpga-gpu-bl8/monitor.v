@@ -5,7 +5,7 @@
  *
  * Requests and responses:
  *   01             (PING)        -> 81
- *   02             (GET_VERSION) -> 82 02 01
+ *   02             (GET_VERSION) -> 82 MAJOR MINOR
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
@@ -22,7 +22,29 @@
  * lengths must be between 1 and 256 bytes. The memory reports invalid ranges.
  * The host must wait for the complete response before sending another command.
  */
-module monitor (
+module monitor #(
+    // Version del protocolo que contesta GET_VERSION.  El porque de cada valor
+    // se explica donde se instancia: es razonamiento de cada prototipo, no de
+    // este fichero, que es COPIA IDENTICA en 12, 14, 17 y 22.
+    parameter [7:0] VERSION_MAJOR = 8'h02,
+    parameter [7:0] VERSION_MINOR = 8'h04,
+
+    // Primer byte que ya NO es RAM.  128 KiB de BRAM en la 12, 32 MiB de SDRAM
+    // en las demas.
+    parameter [32:0] RAM_END = 33'h0_0200_0000,
+
+    // Ventanas MMIO que el monitor acepta, ademas de la RAM.  Una ranura sin
+    // usar se deja en el valor por defecto: base 33'h1_ffff_ffff es inalcanzable
+    // para una direccion de 32 bits, asi que no casa nunca.
+    parameter [32:0] WINDOW0_BASE = 33'h0_8000_0000,  // video
+    parameter [32:0] WINDOW0_END  = 33'h0_8000_001c,
+    parameter [32:0] WINDOW1_BASE = 33'h0_8000_0100,  // depuracion SIMT
+    parameter [32:0] WINDOW1_END  = 33'h0_8000_0118,
+    parameter [32:0] WINDOW2_BASE = 33'h0_8000_0300,  // contadores
+    parameter [32:0] WINDOW2_END  = 33'h0_8000_0320,
+    parameter [32:0] WINDOW3_BASE = 33'h0_8000_1000,  // configuracion de warps
+    parameter [32:0] WINDOW3_END  = 33'h0_8000_1080
+) (
     input clk,
     input reset,
     input [7:0] rx_data,
@@ -78,15 +100,6 @@ module monitor (
   localparam [7:0] RSP_READ_REGISTER = 8'hb4;
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_ERROR = 8'hff;
-  localparam [7:0] VERSION_MAJOR = 8'h02;
-  // 2.2 y no 2.1: mismos comandos que 12, pero 32 MiB de SDRAM en vez de
-  // 128 KiB de BRAM. `x.cpu-tests` necesita distinguir los dos bitstreams.
-  // BACKPORT DE R0 CABLEADO A CERO. `R0` paso a valer siempre cero y a
-  // descartar las escrituras, que es un cambio INCOMPATIBLE: un programa que lo
-  // use como registro general no para con error, da otro resultado en silencio.
-  // Sube la version aunque el protocolo no cambie ni un byte, por lo mismo que
-  // subieron las cinco de MiniCPU. Ver 1.isa/isa.md seccion 1.
-  localparam [7:0] VERSION_MINOR = 8'h04;
 
   localparam [4:0] STATE_IDLE = 5'd0;
   localparam [4:0] STATE_WRITE_ADDRESS_HIGH = 5'd1;
@@ -139,7 +152,7 @@ module monitor (
 
   /*
    * Validate the complete byte interval, not just its first address.  The GPU
-   * exposes 32 MiB of SDRAM plus four disjoint monitor-only MMIO windows.
+   * exposes RAM plus up to four disjoint monitor-only MMIO windows.
    * Keeping this check here makes WRITE_BLOCK and READ_BLOCK agree with the
    * byte commands and with the address map implemented by gpu_system.
    *
@@ -148,28 +161,34 @@ module monitor (
    * se anade tambien aqui, el monitor rechaza el comando antes de que llegue al
    * decodificador, y el sintoma es un NACK que parece un bitstream viejo o un
    * mapa de memoria mal escrito.  Asi se perdio un buen rato con 0x200/0x300.
+   *
+   * Desde que el fichero es unico las ventanas llegan por parametro, asi que la
+   * gemela de monitor.py esta ahora en el top de cada prototipo.
    */
+  function in_window;
+    input [32:0] start_address;
+    input [32:0] end_address;
+    input [32:0] window_base;
+    input [32:0] window_end;
+    begin
+      in_window = (start_address >= window_base) && (end_address <= window_end);
+    end
+  endfunction
+
   function block_range_valid;
     input [31:0] start_address;
     input [15:0] length;
+    reg [32:0] start_extended;
     reg [32:0] end_address;
     begin
-      end_address = {1'b0, start_address} + {17'b0, length};
+      start_extended = {1'b0, start_address};
+      end_address = start_extended + {17'b0, length};
       block_range_valid =
-          ({1'b0, start_address} < 33'h0_0200_0000 &&
-           end_address <= 33'h0_0200_0000) ||
-          // video: FB_FRONT/BACK, SWAP, VIDEO_STATUS, SWAP_COUNT, VIDEO_CTRL.
-          // Misma direccion que en los cores de CPU desde la migracion.
-          ({1'b0, start_address} >= 33'h0_8000_0000 &&
-           end_address <= 33'h0_8000_001c) ||
-          ({1'b0, start_address} >= 33'h0_8000_0100 &&
-           end_address <= 33'h0_8000_0118) ||
-          // contadores de rendimiento (ver mmio.md)
-          ({1'b0, start_address} >= 33'h0_8000_0300 &&
-           end_address <= 33'h0_8000_0320) ||
-          // configuracion de warps, ya en la segunda pagina
-          ({1'b0, start_address} >= 33'h0_8000_1000 &&
-           end_address <= 33'h0_8000_1080);
+          (start_extended < RAM_END && end_address <= RAM_END) ||
+          in_window(start_extended, end_address, WINDOW0_BASE, WINDOW0_END) ||
+          in_window(start_extended, end_address, WINDOW1_BASE, WINDOW1_END) ||
+          in_window(start_extended, end_address, WINDOW2_BASE, WINDOW2_END) ||
+          in_window(start_extended, end_address, WINDOW3_BASE, WINDOW3_END);
     end
   endfunction
 

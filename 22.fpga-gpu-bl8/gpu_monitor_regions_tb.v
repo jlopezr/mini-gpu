@@ -3,9 +3,12 @@
 //
 // Por que existe este banco
 // -------------------------
-// monitor.v mantiene su propia tabla de ventanas validas, SEPARADA del mapa que
-// implementa gpu_system_bl8. Todos los demas bancos atacan el puerto del host
-// directamente, asi que se saltan esa tabla: ninguno la ejercitaba.
+// El monitor filtra por su propia tabla de ventanas validas, SEPARADA del mapa
+// que implementa gpu_system_bl8. Todos los demas bancos atacan el puerto del
+// host directamente, asi que se saltan esa tabla: ninguno la ejercitaba.
+//
+// Desde que monitor.v es copia identica en 12, 14, 17 y 22, la tabla llega por
+// parametro: los de aqui abajo tienen que ser los mismos que pone top_bl8.v.
 //
 // El agujero se cobro una pieza. Al anadir los registros de video (0x200) y los
 // contadores (0x300) se actualizo el mapa del sistema y la lista del cliente en
@@ -44,7 +47,14 @@ module gpu_monitor_regions_tb;
         if(tx_strobe) tx_busy<=4'd8;
         else if(tx_busy!=0) tx_busy<=tx_busy-1'b1;
 
-    monitor dut(.clk(clk),.reset(reset),
+    // Mismos parametros que top_bl8: este banco comprueba justo la lista blanca.
+    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h04),
+        .RAM_END(33'h0_0200_0000),
+        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
+        .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
+        .WINDOW2_BASE(33'h0_8000_0300),.WINDOW2_END(33'h0_8000_0320),
+        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080))
+      dut(.clk(clk),.reset(reset),
         .rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(mem_address),.mem_write_data(mem_write_data),
@@ -129,7 +139,7 @@ module gpu_monitor_regions_tb;
         // a ellos: pedir el resto de la pagina GPU tiene que fallar.
         read_block(32'h8000_1080, 16'd4, 0, "justo despues de los warps");
 
-        $display("PASS lista blanca de monitor.v: 8 ventanas validas, 6 bordes rechazados");
+        $display("PASS lista blanca del monitor (por parametro): 8 ventanas validas, 6 bordes rechazados");
         $finish;
     end
     initial begin #5000000; $fatal(1,"watchdog"); end

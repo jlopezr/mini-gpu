@@ -54,8 +54,22 @@ que son dos consumidores de la misma tabla.
       `_build_snapshot` cae a lo último que haya en `_build/`. Es dato local no
       versionado; se revirtió. Revisar ese fichero antes de dar por bueno un
       `generate-docs`.
-- [ ] Revisar de paso el punto 10 del `TODO.md` (`MONITOR_REGIONS = ()` en la
-      familia HDMI): la fase 4 va a necesitar que esa lista sea coherente.
+- [x] **Resuelto el punto 10 del `TODO.md`** (`MONITOR_REGIONS = ()` en la familia
+      HDMI). El vacío no era correcto, pero tampoco era un fallo visible, y las
+      dos mitades importan:
+
+      `MEMORY_REGIONS` solo filtra **bloques y transferencias**
+      (`validate_block`/`validate_transfer`); los accesos byte a byte no pasan por
+      ahí. Como todo el acceso a vídeo de la familia HDMI va byte a byte por
+      `_read_register`, la lista podía estar vacía sin que nadie lo notara. Y
+      `21/monitor.v` no tiene lista blanca en absoluto —el filtrado lo hace el
+      adaptador—, así que tampoco había gemela que contradijera.
+
+      Lo incoherente era contra la 22: allí un bloque de 28 bytes sobre el bloque
+      de vídeo funciona (lo comprueba `gpu_monitor_regions_tb` desde la fase 3),
+      y en 16/18/19/21 el cliente lo rechazaba antes de mandarlo aunque el RTL lo
+      habría aceptado. Relleno con `(0x8000_0000, 0x8000_0018)` en las cuatro;
+      llegará a `0x1c` cuando la fase 3.5 añada `VIDEO_CTRL`.
 
 - [x] **Resuelta la ambigüedad del nombre `perf_counters`.** Era peor que una
       molestia de lectura: `perf_counters_from_rtl` en `rtl_facts.py` detecta el
@@ -294,6 +308,49 @@ salir partido por construcción, sin depender de ninguna invariante.
 - [ ] **Al juego base y en todos los prototipos a la vez.** Añadirlo solo a
       algunos crearía un cuarto juego de comandos, que es exactamente la
       proliferación que la fase 5 quiere colapsar. O entra en todos, o no entra.
+
+- [ ] **Abrir el MMIO al monitor con el núcleo en marcha, igual en las dos
+      familias.** `READ_WORD` arregla que el valor salga entero; esto arregla que
+      se pueda pedir siquiera. Hacen falta las dos: de poco sirve una lectura
+      atómica de `VIDEO_STATUS` si para hacerla hay que parar la demo.
+
+      La regla que la CPU implementa hoy **no** es «el monitor solo puede con el
+      núcleo parado», es **«MMIO siempre, RAM solo parada»**. En
+      [`monitor_mem_adapter_128.v`](../21.fpga-cpu-hdmi-alu/monitor_mem_adapter_128.v)
+      la rama `is_mmio` va *antes* de la comprobación de `cpu_halted`, y el
+      rechazo por `!cpu_halted` cuelga solo del camino de SDRAM. Es deliberado y
+      correcto: la RAM está detrás del búfer de combinación de escrituras y del
+      controlador de ráfagas que la CPU está usando; los registros MMIO son
+      registros y leerlos no molesta a nadie.
+
+      La GPU rechaza a lo bruto en el puerto host (`if(!halted) begin
+      host_ready<=1; host_error<=1; end`), que corta antes de mirar a dónde iba la
+      transacción. Pero el bloque MMIO de la 22 **ya sirve a dos amos**: el mux
+      `gm_accept ? gm_addr : address` de `gpu_system_bl8.v` arbitra entre la GPU y
+      el host, y existe porque `mmio_selftest.asm` necesita que la GPU lea sus
+      propios contadores. La maquinaria de arbitrar ya está puesta; lo que falta
+      es dejar de cortar en la puerta.
+
+      Y hace falta de verdad, no solo por comodidad: **parar la GPU no congela
+      `frame_count`**, porque el scanout cuelga de `reset` y no de `core_reset`.
+      O sea que en la 22 hoy se juntan lo peor de las dos cosas —solo puedes leer
+      parada, y estar parada no detiene el contador.
+
+      Con esto el parche de `run_board.py` —saltarse la comprobación de underflow
+      si el backend es GPU y está en marcha— **desaparece** en vez de quedarse
+      como excepción permanente.
+
+      Dos cosas que no conviene dar por sentadas:
+
+      - **Solo lecturas.** Leer en marcha es inocuo; escribir `VIDEO_CTRL` o
+        `FB_FRONT` mientras el kernel los toca es una carrera con el programa.
+        Abrir lecturas y dejar las escrituras como están hasta tener un motivo.
+      - **Prioridad, que hoy es asimétrica.** En la GPU `gm_accept` gana siempre:
+        el núcleo tiene preferencia y el host espera. En la CPU se decidió lo
+        contrario, y el comentario de [`top.v`](../19.fpga-cpu-hdmi-ls/top.v) de la
+        19 lo razona: el monitor va primero para que un `SWAP` escrito desde el PC
+        no se quede detrás de un programa que dibuja a toda velocidad. Al unificar
+        hay que resolver esa diferencia a conciencia, no por omisión.
 
 **La regla que queda escrita**, valga o no `READ_WORD`: *todo registro de 32 bits
 que el host lea byte a byte tiene que estar congelado mientras el núcleo está

@@ -32,7 +32,19 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     wire [7:0] write_data,read_data,error_code;
     wire we,re,ready,mem_error,run_req,halt_req,step_req,reset_req,halted,error,retired;
     wire [4:0] debug_register;
-    monitor monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
+    // 2.4 y no 2.3: mismos comandos que 12, pero 32 MiB de SDRAM en vez de
+    // 128 KiB de BRAM. `x.cpu-tests` necesita distinguir los dos bitstreams.
+    // (Ver tambien el backport de R0 comentado en la 12.)
+    //
+    // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py. Esta no
+    // tiene video ni contadores, asi que esas dos ranuras van al centinela.
+    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h04),
+        .RAM_END(33'h0_0200_0000),
+        .WINDOW0_BASE(33'h1_ffff_ffff),.WINDOW0_END(33'h0_0000_0000),
+        .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
+        .WINDOW2_BASE(33'h1_ffff_ffff),.WINDOW2_END(33'h0_0000_0000),
+        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080))
+      monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),
         .mem_read_enable(re),.mem_read_data(read_data),.mem_ready(ready),.mem_error(mem_error),

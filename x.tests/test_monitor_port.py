@@ -12,6 +12,7 @@ importan.
 """
 
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -116,26 +117,92 @@ class EveryMonitorTest(unittest.TestCase):
                 self.assertNotIn('default="COM3"', path.read_text(encoding="utf8"))
 
 
+GPU_PROTOTYPES = (
+    "12.fpga-gpu",
+    "14.fpga-gpu-ram",
+    "17.fpga-gpu-ram-v2",
+    "22.fpga-gpu-bl8",
+)
+
+# Una ranura de ventana sin usar. La base es inalcanzable para una direccion de
+# 32 bits, asi que la comparacion nunca se cumple.
+UNUSED_WINDOW = (0x1_FFFF_FFFF, 0x0)
+
+PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
+
+
+def monitor_instantiations(prototype: Path):
+    """Los parametros de cada `monitor #(...)` del prototipo, por fichero."""
+    for path in sorted(prototype.glob("*.v")):
+        if path.name == "monitor.v":
+            continue        # ahi el `#(` es la DECLARACION, no una instancia
+        source = path.read_text(encoding="utf8")
+        for match in re.finditer(r"\bmonitor\s*#\(", source):
+            # emparejar parentesis: la lista lleva unos cuantos dentro
+            depth, cursor = 1, match.end()
+            while depth and cursor < len(source):
+                depth += {"(": 1, ")": -1}.get(source[cursor], 0)
+                cursor += 1
+            values = {
+                name: int(digits.replace("_", ""), 16)
+                for name, digits in PARAMETER.findall(source[match.end():cursor])
+            }
+            yield path, values
+
+
+def rtl_windows(values: dict) -> set:
+    windows = set()
+    for slot in range(4):
+        window = (values[f"WINDOW{slot}_BASE"], values[f"WINDOW{slot}_END"])
+        if window != UNUSED_WINDOW:
+            windows.add(window)
+    return windows
+
+
+class SharedMonitorTest(unittest.TestCase):
+    """Los cuatro monitor.v de la familia GPU son COPIA IDENTICA.
+
+    Se decidio copia y no fichero compartido para que cada carpeta siga siendo
+    autocontenida. Lo que antes los diferenciaba --version, tamano de RAM y la
+    lista de ventanas MMIO-- son ahora parametros que pone el top, asi que no
+    queda ninguna razon legitima para que el texto difiera. Si diverge otra vez,
+    salta aqui.
+    """
+
+    def test_las_cuatro_copias_son_identicas(self):
+        canonical = (ROOT / "22.fpga-gpu-bl8" / "monitor.v").read_bytes()
+        for name in GPU_PROTOTYPES:
+            with self.subTest(prototype=name):
+                self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
+
+
 class MonitorRegionsTest(unittest.TestCase):
     """Las ventanas del cliente tienen que ser las mismas que las del RTL.
 
-    La lista vive DOS veces: en Python (MONITOR_REGIONS) y en la funcion
-    `block_range_valid` de monitor.v. Anadir una ventana en un sitio y no en el
-    otro es exactamente lo que dejo 0x200 y 0x300 rechazados en placa mientras
-    en simulacion todo pasaba.
+    La lista vive DOS veces: en Python (MONITOR_REGIONS) y en los parametros que
+    el top pasa al monitor. Anadir una ventana en un sitio y no en el otro es
+    exactamente lo que dejo 0x200 y 0x300 rechazados en placa mientras en
+    simulacion todo pasaba.
     """
 
     def test_python_and_rtl_agree(self):
-        prototype = ROOT / "22.fpga-gpu-bl8"
-        monitor = load_monitor(prototype)
-        source = (prototype / "monitor.v").read_text(encoding="utf8")
-        for start, end in monitor.MONITOR_REGIONS:
-            if start < 0x8000_0000:
-                continue        # la SDRAM se escribe con otro formato en el RTL
-            for label, value in (("inicio", start), ("final", end)):
-                needle = f"33'h0_{value >> 16:04x}_{value & 0xFFFF:04x}"
-                self.assertIn(needle, source,
-                              f"el {label} {value:#x} no esta en monitor.v")
+        for name in GPU_PROTOTYPES:
+            prototype = ROOT / name
+            esperadas = set(load_monitor(prototype).MONITOR_REGIONS)
+            instancias = list(monitor_instantiations(prototype))
+            self.assertTrue(instancias, f"{name} no instancia monitor con parametros")
+            for path, values in instancias:
+                with self.subTest(prototype=name, fichero=path.name):
+                    self.assertEqual(rtl_windows(values), esperadas)
+
+    def test_todas_las_instancias_de_un_prototipo_coinciden(self):
+        """La 22 tiene dos tops y un banco de pruebas; los tres han de decir lo
+        mismo, o se depura un mapa que no es el que esta sintetizado."""
+        for name in GPU_PROTOTYPES:
+            with self.subTest(prototype=name):
+                valores = [v for _, v in monitor_instantiations(ROOT / name)]
+                for otros in valores[1:]:
+                    self.assertEqual(otros, valores[0])
 
 
 if __name__ == "__main__":

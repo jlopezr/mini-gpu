@@ -21,7 +21,10 @@ ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
-# Gemela de `block_range_valid` en monitor.v: las dos tienen que decir lo mismo.
+# Gemela de las ventanas que top.v y top_bl8.v pasan al monitor: las tres tienen
+# que decir lo mismo. Desde que monitor.v es copia identica en 12, 14, 17 y 22,
+# la lista ya no esta cableada en `block_range_valid`, sino en los parametros de
+# cada instancia. Lo comprueba x.tests/test_monitor_port.py.
 # La primera página es de periféricos compartidos con la CPU y la segunda, de
 # control exclusivo de la GPU. Ver docs/mapa-de-memoria.md §6.
 WARP_CONFIG_BASE = 0x8000_1000
