@@ -48,6 +48,11 @@
     "architecture": "cpu",
     "file": "serial_port.v"
   },
+  "read_word": {
+    "architecture": ["cpu", "gpu"],
+    "file": "monitor.v",
+    "pattern": "CMD_READ_WORD"
+  },
 
   "warp_config": {
     "architecture": "gpu",

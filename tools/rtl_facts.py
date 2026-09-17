@@ -41,9 +41,48 @@ def backend_from_rtl(prototype_dir: Path) -> str | None:
     return None
 
 
+def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:
+    """Los parámetros con los que un top instancia `monitor`, si los pone.
+
+    Desde que monitor.v es copia idéntica en la familia GPU, lo que hay DENTRO
+    del fichero es el valor por DEFECTO, no el que se sintetiza: el de verdad lo
+    pone quien lo instancia. Leer el localparam devolvía 2.4 para las cuatro
+    cuando eran 2.5, 2.6, 2.6 y 2.6.
+    """
+    for path in sorted(prototype_dir.glob("*.v")):
+        if path.name == "monitor.v":
+            continue        # ahí el `#(` es la DECLARACIÓN, no una instancia
+        if path.name.endswith("_tb.v"):
+            # Un banco de pruebas instancia el monitor pero no es lo que se
+            # sintetiza, y va antes que top.v por orden alfabético.
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"\bmonitor\s*#\(", text)
+        if not match:
+            continue
+        depth, cursor = 1, match.end()
+        while depth and cursor < len(text):
+            depth += {"(": 1, ")": -1}.get(text[cursor], 0)
+            cursor += 1
+        lista = text[match.end():cursor]
+        valores = dict(re.findall(r"\.(\w+)\(8'h([0-9a-fA-F]+)\)", lista))
+        if "VERSION_MAJOR" in valores and "VERSION_MINOR" in valores:
+            return valores
+    return None
+
+
 def monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
-    """VERSION_MAJOR/VERSION_MINOR son localparams reales en monitor.v: es lo
-    que la placa responde de verdad a GET_VERSION, no una copia a mano."""
+    """La versión que la placa responde de verdad a GET_VERSION.
+
+    Se mira primero la instanciación, porque es la que manda cuando monitor.v
+    está parametrizado, y se cae al localparam para los prototipos que todavía
+    lo llevan dentro (la familia CPU).
+    """
+    instancia = _parameters_at_instantiation(prototype_dir)
+    if instancia is not None:
+        return (int(instancia["VERSION_MAJOR"], 16),
+                int(instancia["VERSION_MINOR"], 16))
+
     monitor_v = prototype_dir / "monitor.v"
     if not monitor_v.exists():
         return None

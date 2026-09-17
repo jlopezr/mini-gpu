@@ -9,6 +9,10 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     input [7:0] host_write_data,
     input host_write_enable, host_read_enable,
     output reg [7:0] host_read_data,
+    // La MISMA palabra sin trocear, para READ_WORD. Ya se calculaba entera y
+    // se tiraban tres bytes; sacarla aparte la hace atomica por construccion
+    // sin tocar el camino de byte, que usan dieciocho bancos.
+    output reg [31:0] host_read_word,
     output reg host_ready, host_error,
     input [4:0] debug_register,
     output [31:0] debug_data, debug_pc
@@ -100,6 +104,9 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         .aux_write_data(aux_write_data),.aux_strobe(aux_strobe),.aux_rsp_valid(aux_rsp_valid),
         .aux_rsp_ready(aux_rsp_ready),.aux_read_data(aux_read_data),.aux_error(aux_error)
     );
+    wire [31:0] sysid_data;
+    sysid #(.FOLDER(8'd12),.ISA_PROFILE(32'h0000_000b))
+        sysid_i(.word(address[3:2]),.read_data(sysid_data));
     reg [31:0] mmio_data;
     reg mmio_bad;
     always @* begin
@@ -115,6 +122,12 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             10'h043: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
             10'h044: begin mmio_data=error_pc; mmio_bad=writing; end
             10'h045: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
+            // Bloque de identificacion en 0x80000F00. Solo lectura: escribir
+            // es `bad`, como en el resto de registros de estado. Es host-only,
+            // igual que los de depuracion; un kernel no lo alcanza.
+            10'h3c0,10'h3c1,10'h3c2,10'h3c3: begin
+                mmio_data=sysid_data; mmio_bad=writing;
+            end
             default: mmio_bad=1;
         endcase
     end
@@ -122,7 +135,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         host_ready<=0;
         if(core_reset) begin
             host_state<=0; address<=0; write_data<=0; writing<=0;
-            host_ready<=0; host_error<=0; host_read_data<=0;
+            host_ready<=0; host_error<=0; host_read_data<=0; host_read_word<=0;
             debug_warp<=0; debug_lane<=0;
         end else case(host_state)
             0: if(host_write_enable || host_read_enable) begin
@@ -134,7 +147,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             end
             1: begin
                 if(mmio) begin
-                    host_read_data<=mmio_data[address[1:0]*8 +: 8];
+                    host_read_data<=mmio_data[address[1:0]*8 +: 8]; host_read_word<=mmio_data;
                     host_error<=mmio_bad; host_ready<=1; host_state<=0;
                     if(writing && !gpu_page && address[11:0]==12'h100) begin
                         debug_lane<=write_data[2:0]; debug_warp<=write_data[5:3];
@@ -142,7 +155,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
                 end else if(aux_ready) host_state<=2;
             end
             2: if(aux_rsp_valid) begin
-                host_read_data<=aux_read_data[address[1:0]*8 +: 8];
+                host_read_data<=aux_read_data[address[1:0]*8 +: 8]; host_read_word<=aux_read_data;
                 host_error<=aux_error; host_ready<=1; host_state<=0;
             end
         endcase

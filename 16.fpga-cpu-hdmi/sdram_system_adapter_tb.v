@@ -6,6 +6,7 @@ module sdram_system_adapter_tb;
   reg [31:0] monitor_address=0; reg [7:0] monitor_write_data=0;
   reg monitor_write_enable=0, monitor_read_enable=0;
   wire [7:0] monitor_read_data; wire monitor_ready, monitor_error;
+  wire [31:0] monitor_read_word;   // la misma lectura sin trocear
   reg cpu_halted=1;
   reg cpu_imem_valid=0; reg [31:0] cpu_imem_address=0;
   wire [31:0] cpu_imem_read_data; wire cpu_imem_ready;

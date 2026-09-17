@@ -49,6 +49,7 @@ CMD_PING = b"\x01"
 CMD_GET_VERSION = b"\x02"
 CMD_WRITE_BYTE = 0x10
 CMD_READ_BYTE = 0x11
+CMD_READ_WORD = 0x12
 CMD_WRITE_BLOCK = 0x20
 CMD_READ_BLOCK = 0x21
 CMD_RUN = 0x30
@@ -66,6 +67,7 @@ RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
 RSP_WRITE_BYTE = b"\x90"
 RSP_READ_BYTE = 0x91
+RSP_READ_WORD = 0x92
 RSP_WRITE_BLOCK = b"\xa0"
 RSP_READ_BLOCK = 0xA1
 RSP_RUN = b"\xb0"
@@ -159,6 +161,25 @@ class MonitorClient:
             raise MonitorError(f"Invalid READ_BYTE response: {header.hex(' ')}")
 
         return self._read_exact(1)[0]
+
+    def read_word(self, address: int) -> int:
+        """Lee 32 bits en UNA transaccion de bus, y por tanto sin desgarro.
+
+        Cuatro read_byte tardan cerca de un milisegundo entre el primero y el
+        cuarto, y hay registros que siguen vivos con el nucleo parado. Leido a
+        trozos puede salir un valor que nunca existio.
+        """
+        if address % 4:
+            raise MonitorError(f"READ_WORD requiere direccion alineada a 4: {address:#x}")
+        request = bytes((CMD_READ_WORD,)) + self._address_bytes(address)
+        self._send(request)
+        header = self._read_exact(1)
+        if header[0] == RSP_ERROR:
+            raise MonitorError("The FPGA rejected the command")
+        if header[0] != RSP_READ_WORD:
+            raise MonitorError(f"Invalid READ_WORD response: {header.hex(' ')}")
+
+        return int.from_bytes(self._read_exact(4), byteorder="little")
 
     # ----------------------------------------------------------------- serie
     #
@@ -404,6 +425,7 @@ def parse_args() -> argparse.Namespace:
             "get-version",
             "write-byte",
             "read-byte",
+            "read-word",
             "write-block",
             "read-block",
             "verify",
@@ -539,6 +561,7 @@ def main() -> int:
             "get-version": 0,
             "write-byte": 2,
             "read-byte": 1,
+            "read-word": 1,
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
@@ -587,6 +610,10 @@ def main() -> int:
                 address = parse_byte_address(args.arguments[0])
                 value = client.read_byte(address)
                 print(f"Address 0x{address:04x}: 0x{value:02x}")
+            elif args.command == "read-word":
+                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                value = client.read_word(address)
+                print(f"Address 0x{address:08x}: 0x{value:08x}")
             elif args.command == "write-block":
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 source = Path(args.arguments[1])

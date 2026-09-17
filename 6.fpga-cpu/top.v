@@ -54,6 +54,7 @@ module top (
   wire mem_write_enable;
   wire mem_read_enable;
   wire [7:0] mem_read_data;
+  wire [31:0] mem_read_word;   // la misma lectura sin trocear
   wire mem_ready;
   wire mem_error;
 
@@ -94,7 +95,7 @@ module top (
       .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable),
       .mem_read_enable(mem_read_enable),
-      .mem_read_data(mem_read_data),
+      .mem_read_data(mem_read_data), .mem_read_word(mem_read_word),
       .mem_ready(mem_ready),
       .mem_error(mem_error),
       .cpu_run_request(cpu_run_request),
@@ -145,7 +146,7 @@ module top (
       .write_data(mem_write_data),
       .write_enable(mem_write_enable),
       .read_enable(mem_read_enable),
-      .read_data(mem_read_data),
+      .read_data(mem_read_data), .read_word(mem_read_word),
       .ready(mem_ready),
       .error(mem_error),
       .cpu_halted(cpu_halted),

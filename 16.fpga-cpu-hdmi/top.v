@@ -76,6 +76,7 @@ module top (
 
   wire [31:0] mem_address;
   wire [7:0] mem_write_data, mem_read_data, last_command;
+  wire [31:0] mem_read_word;   // la misma lectura sin trocear
   wire mem_write_enable, mem_read_enable, mem_ready, mem_error, monitor_busy;
   wire cpu_run_request, cpu_halt_request, cpu_step_request, cpu_reset_request;
   wire cpu_halted, cpu_error, cpu_instruction_retired;
@@ -89,7 +90,7 @@ module top (
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
       .mem_address(mem_address), .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable), .mem_read_enable(mem_read_enable),
-      .mem_read_data(mem_read_data), .mem_ready(mem_ready), .mem_error(mem_error),
+      .mem_read_data(mem_read_data), .mem_read_word(mem_read_word), .mem_ready(mem_ready), .mem_error(mem_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
       .cpu_halted(cpu_halted), .cpu_error(cpu_error),

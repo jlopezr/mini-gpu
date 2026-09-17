@@ -16,6 +16,7 @@ module gpu_profile_tb;
     reg [7:0] host_write_data=0;
     reg host_write_enable=0,host_read_enable=0;
     wire [7:0] host_read_data;
+    wire [31:0] host_read_word;   // la misma lectura sin trocear
     wire host_ready,host_error;
     reg [4:0] debug_register=0;
     wire [31:0] debug_data,debug_pc;

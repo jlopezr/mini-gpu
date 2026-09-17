@@ -129,6 +129,9 @@ GPU_PROTOTYPES = (
 UNUSED_WINDOW = (0x1_FFFF_FFFF, 0x0)
 
 PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
+# La version tambien: divergio entre top_bl8.v y el banco de regiones sin que
+# nada saltara, y rtl_facts leia la del banco por ir antes alfabeticamente.
+VERSION_PARAMETER = re.compile(r"\.(VERSION_\w+)\(8'h([0-9a-fA-F]+)\)")
 
 
 def monitor_instantiations(prototype: Path):
@@ -143,16 +146,21 @@ def monitor_instantiations(prototype: Path):
             while depth and cursor < len(source):
                 depth += {"(": 1, ")": -1}.get(source[cursor], 0)
                 cursor += 1
+            lista = source[match.end():cursor]
             values = {
                 name: int(digits.replace("_", ""), 16)
-                for name, digits in PARAMETER.findall(source[match.end():cursor])
+                for name, digits in PARAMETER.findall(lista)
             }
+            values.update({
+                name: int(digits, 16)
+                for name, digits in VERSION_PARAMETER.findall(lista)
+            })
             yield path, values
 
 
 def rtl_windows(values: dict) -> set:
     windows = set()
-    for slot in range(4):
+    for slot in range(5):
         window = (values[f"WINDOW{slot}_BASE"], values[f"WINDOW{slot}_END"])
         if window != UNUSED_WINDOW:
             windows.add(window)
@@ -174,6 +182,97 @@ class SharedMonitorTest(unittest.TestCase):
         for name in GPU_PROTOTYPES:
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
+
+
+class MonitorVersionTest(unittest.TestCase):
+    """rtl_facts tiene que leer la version que se SINTETIZA.
+
+    Al parametrizar monitor.v, lo que hay dentro del fichero paso a ser el valor
+    por DEFECTO y el de verdad lo pone el top. rtl_facts seguia leyendo el
+    localparam y devolvia 2.4 para las cuatro GPU cuando eran 2.5, 2.6, 2.6 y
+    2.6. Despues, al mirar la instanciacion, cogia la del banco de pruebas por
+    ir antes alfabeticamente que top.v.
+    """
+
+    def test_la_version_sale_del_top_y_no_del_defecto(self):
+        from tools.rtl_facts import monitor_version_from_rtl
+
+        for name in GPU_PROTOTYPES:
+            prototype = ROOT / name
+            tops = [
+                values for path, values in monitor_instantiations(prototype)
+                if not path.name.endswith("_tb.v")
+            ]
+            self.assertTrue(tops, f"{name} no tiene top que instancie monitor")
+            esperado = (tops[0]["VERSION_MAJOR"], tops[0]["VERSION_MINOR"])
+            with self.subTest(prototype=name):
+                self.assertEqual(monitor_version_from_rtl(prototype), esperado)
+
+
+class SysIdTest(unittest.TestCase):
+    """SYS_ID tiene que ser el numero de la carpeta.
+
+    Es lo que hace que "obligatorio" signifique algo dentro de seis meses. El ID
+    sale del nombre del directorio, asi que no hay registro central que
+    mantener, pero tampoco hay nada que impida teclearlo mal: esto lo impide.
+    """
+
+    FOLDER = re.compile(r"sysid\s*#\(\s*\.FOLDER\(8'd(\d+)\)")
+
+    def test_el_id_es_el_numero_de_carpeta(self):
+        for name in GPU_PROTOTYPES:
+            esperado = int(name.split(".")[0])
+            encontrados = []
+            for path in sorted((ROOT / name).glob("*.v")):
+                if path.name == "sysid.v":
+                    continue        # ahi el `#(` es la DECLARACION
+                encontrados += [
+                    int(d) for d in self.FOLDER.findall(
+                        path.read_text(encoding="utf8"))
+                ]
+            with self.subTest(prototype=name):
+                self.assertTrue(encontrados, f"{name} no instancia sysid")
+                self.assertEqual(set(encontrados), {esperado})
+
+    # bit 0 MUL, bit 1 DIV, bit 2 subword, bit 3 SIMT. El fichero donde vive
+    # cada uno importa: SSY/BAR/EXIT se decodifican en gpu_sm.v y NO en
+    # gpu_lane.v, cosa que ya se presto a mirar el fichero equivocado.
+    RASGOS = (
+        (0, "gpu_lane.v", re.compile(r"OPCODE_MUL\b")),
+        (1, "gpu_lane.v", re.compile(r"OPCODE_DIV\b")),
+        (2, "gpu_lane.v", re.compile(r"OPCODE_LOADB|OPCODE_STOREB")),
+        (3, "gpu_sm.v", re.compile(r"6'h31")),
+    )
+    PROFILE = re.compile(r"\.ISA_PROFILE\(32'h([0-9a-fA-F_]+)\)")
+
+    def test_el_perfil_de_isa_sale_del_rtl(self):
+        """Escrito a mano pero CONTRASTADO. Si alguien anade subword a un lane y
+        no toca el perfil, el bloque de identificacion mentiria en silencio."""
+        for name in GPU_PROTOTYPES:
+            prototype = ROOT / name
+            esperado = 0
+            for bit, fichero, patron in self.RASGOS:
+                ruta = prototype / fichero
+                if ruta.exists() and patron.search(ruta.read_text(encoding="utf8")):
+                    esperado |= 1 << bit
+
+            declarados = set()
+            for path in sorted(prototype.glob("*.v")):
+                if path.name == "sysid.v":
+                    continue
+                declarados |= {
+                    int(d.replace("_", ""), 16)
+                    for d in self.PROFILE.findall(path.read_text(encoding="utf8"))
+                }
+            with self.subTest(prototype=name):
+                self.assertEqual(declarados, {esperado},
+                                 f"{name}: el RTL dice {esperado:#06x}")
+
+    def test_sysid_es_copia_identica(self):
+        canonical = (ROOT / "22.fpga-gpu-bl8" / "sysid.v").read_bytes()
+        for name in GPU_PROTOTYPES:
+            with self.subTest(prototype=name):
+                self.assertEqual((ROOT / name / "sysid.v").read_bytes(), canonical)
 
 
 class MonitorRegionsTest(unittest.TestCase):

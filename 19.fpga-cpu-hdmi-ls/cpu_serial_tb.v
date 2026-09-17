@@ -81,6 +81,7 @@ module cpu_serial_tb;
   wire [7:0] mon_write_data;
   wire mon_write_enable, mon_read_enable;
   wire [7:0] mon_read_data;
+  wire [31:0] mon_read_word;   // la misma lectura sin trocear
   wire mon_ready, mon_error;
 
   wire serial_host_push, serial_host_pop;
@@ -93,7 +94,7 @@ module cpu_serial_tb;
       .tx_data(tx_data), .tx_strobe(tx_strobe), .tx_ready(tx_ready),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
-      .mem_read_data(mon_read_data), .mem_ready(mon_ready),
+      .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
@@ -186,7 +187,7 @@ module cpu_serial_tb;
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
-      .mem_read_data(mon_read_data), .mem_ready(mon_ready),
+      .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
       .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),

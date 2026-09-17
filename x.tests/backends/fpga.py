@@ -126,7 +126,21 @@ def _write_register(client, address: int, value: int) -> None:
         client.write_byte(address + offset, byte)
 
 
-def _read_register(client, address: int) -> int:
+def _read_register(client, address: int, palabra: bool = False) -> int:
+    """Con READ_WORD cuando el monitor lo tiene; si no, cuatro READ_BYTE.
+
+    La diferencia no es de velocidad sino de coherencia: hay registros que
+    siguen vivos con el nucleo parado -STATUS lleva el contador de frames en
+    los bits altos, y el scanout cuelga de `reset`, no de `core_reset`-, asi
+    que entre el primer byte y el cuarto pasa cerca de un milisegundo y el
+    valor montado puede no haber existido nunca. READ_WORD es una sola
+    transaccion de bus, y por tanto atomico por construccion.
+
+    El camino de bytes se queda porque no todos los prototipos tienen el
+    comando: la capacidad se detecta del RTL, no se supone.
+    """
+    if palabra:
+        return client.read_word(address)
     return int.from_bytes(
         bytes(client.read_byte(address + offset) for offset in range(4)),
         "little")
@@ -224,6 +238,9 @@ class FpgaBackend:
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
         tiene_captura = "frame_capture" in capabilities(self.version)
+        # Los registros de video se leen de una pieza donde se pueda: STATUS
+        # lleva el contador de frames, que avanza aunque el nucleo este parado.
+        tiene_palabra = "read_word" in capabilities(self.version)
 
         serial = self.monitor.serial
         with serial.Serial(
@@ -352,13 +369,13 @@ class FpgaBackend:
                 # Se lee DESPUES de que la CPU haya parado. Los registros
                 # responden tambien con la CPU en marcha, pero el frame no: el
                 # monitor solo posee la memoria con la CPU parada.
-                estado = _read_register(client, VIDEO_STATUS)
+                estado = _read_register(client, VIDEO_STATUS, tiene_palabra)
                 video_result = {
                     "underflow": bool(estado & 1),
                     "frames": estado >> 16,
-                    "swaps": (_read_register(client, VIDEO_SWAP_COUNT)
+                    "swaps": (_read_register(client, VIDEO_SWAP_COUNT, tiene_palabra)
                               if tiene_captura else None),
-                    "fb_front": _read_register(client, VIDEO_FB_FRONT),
+                    "fb_front": _read_register(client, VIDEO_FB_FRONT, tiene_palabra),
                     "frame": None,
                 }
                 if video.get("capture_frame"):

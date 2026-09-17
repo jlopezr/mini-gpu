@@ -8,6 +8,7 @@
  *   02             (GET_VERSION) -> 82 01 05
  *   10 A3 A2 A1 A0 DD          (WRITE_BYTE)  -> 90 (or ff)
  *   11 A3 A2 A1 A0             (READ_BYTE)   -> 91 DD (or ff)
+ *   12 A3 A2 A1 A0             (READ_WORD)   -> 92 D0 D1 D2 D3 (or ff)
  *   20 A3 A2 A1 A0 LL LL DD... (WRITE_BLOCK) -> a0 (or ff)
  *   21 A3 A2 A1 A0 LL LL       (READ_BLOCK)  -> a1 DD... (or ff)
  *   30             (RUN)         -> b0 (or ff)
@@ -21,6 +22,14 @@
  * Addresses and lengths are transferred most-significant byte first. Block
  * lengths must be between 1 and 256 bytes. The memory reports invalid ranges.
  * The host must wait for the complete response before sending another command.
+ *
+ * READ_WORD devuelve los cuatro bytes en little-endian y EXIGE la direccion
+ * alineada a 4. Existe porque un registro MMIO de 32 bits leido con cuatro
+ * READ_BYTE puede salir PARTIDO: entre el primero y el cuarto pasa cerca de un
+ * milisegundo de serie, y hay registros que siguen vivos con el nucleo parado
+ * --frame_count avanza con el scanout. Una transaccion de bus ya produce la
+ * palabra entera, asi que READ_WORD es atomico POR CONSTRUCCION.
+ * Ver docs/unificacion-mmio.md fase 3.4.
  */
 module monitor (
     input clk,
@@ -35,6 +44,10 @@ module monitor (
     output reg mem_write_enable,
     output reg mem_read_enable,
     input [7:0] mem_read_data,
+    // La MISMA lectura sin trocear, para READ_WORD. Va al lado y no en lugar de
+    // mem_read_data: ensanchar el puerto de byte truncaria en silencio en los
+    // bancos que lo declaran de 8 bits.
+    input [31:0] mem_read_word,
     input mem_ready,
     input mem_error,
 
@@ -57,6 +70,7 @@ module monitor (
   localparam [7:0] CMD_GET_VERSION = 8'h02;
   localparam [7:0] CMD_WRITE_BYTE = 8'h10;
   localparam [7:0] CMD_READ_BYTE = 8'h11;
+  localparam [7:0] CMD_READ_WORD = 8'h12;
   localparam [7:0] CMD_WRITE_BLOCK = 8'h20;
   localparam [7:0] CMD_READ_BLOCK = 8'h21;
   localparam [7:0] CMD_RUN = 8'h30;
@@ -69,6 +83,7 @@ module monitor (
   localparam [7:0] RSP_VERSION = 8'h82;
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
   localparam [7:0] RSP_READ_BYTE = 8'h91;
+  localparam [7:0] RSP_READ_WORD = 8'h92;
   localparam [7:0] RSP_WRITE_BLOCK = 8'ha0;
   localparam [7:0] RSP_READ_BLOCK = 8'ha1;
   localparam [7:0] RSP_RUN = 8'hb0;
@@ -86,7 +101,7 @@ module monitor (
   // con error, da otro resultado en silencio. Por eso sube la version aunque el
   // protocolo no cambie ni un byte, y por eso cada core tiene un numero propio
   // en vez de compartirlo. Ver 1.isa/isa.md seccion 1.
-  localparam [7:0] VERSION_MINOR = 8'h11;
+  localparam [7:0] VERSION_MINOR = 8'h12;
 
   localparam [5:0] STATE_IDLE = 6'd0;
   localparam [5:0] STATE_WRITE_ADDRESS_HIGH = 6'd1;
@@ -131,6 +146,10 @@ module monitor (
   reg [15:0] block_remaining;
   reg [32:0] block_end_address;
   reg [7:0] mem_read_data_latched;
+  reg [31:0] mem_read_word_latched;
+  // READ_WORD comparte los estados de direccion y de espera con
+  // READ_BYTE; esto es lo unico que los distingue.
+  reg word_access;
   reg mem_error_latched;
   reg [2:0] response_index;
   reg [2:0] response_length;
@@ -141,7 +160,7 @@ module monitor (
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [11:0] command_decoded;
+  (* keep = "true" *) reg [12:0] command_decoded;
 
   assign busy = (state != STATE_IDLE);
 
@@ -175,6 +194,8 @@ module monitor (
       block_remaining <= 16'd0;
       block_end_address <= 33'h000000000;
       mem_read_data_latched <= 8'h00;
+      mem_read_word_latched <= 32'h0000_0000;
+      word_access <= 1'b0;
       mem_error_latched <= 1'b0;
       response_index <= 3'd0;
       response_length <= 3'd0;
@@ -193,6 +214,7 @@ module monitor (
             last_command <= rx_data;
             response_index <= 3'd0;
             command_decoded <= {
+              rx_data == CMD_READ_WORD,
               rx_data == CMD_RESET_CPU, rx_data == CMD_READ_REGISTER,
               rx_data == CMD_GET_STATUS, rx_data == CMD_STEP,
               rx_data == CMD_HALT, rx_data == CMD_RUN,
@@ -223,7 +245,14 @@ module monitor (
                 state <= STATE_RESPOND;
               end
               command_decoded[2]: state <= STATE_WRITE_ADDRESS_HIGH;
-              command_decoded[3]: state <= STATE_READ_ADDRESS_HIGH;
+              command_decoded[3]: begin
+                word_access <= 1'b0;
+                state <= STATE_READ_ADDRESS_HIGH;
+              end
+              command_decoded[12]: begin
+                word_access <= 1'b1;
+                state <= STATE_READ_ADDRESS_HIGH;
+              end
               command_decoded[4]: begin
                 block_is_write <= 1'b1;
                 state <= STATE_BLOCK_ADDRESS_HIGH;
@@ -374,8 +403,19 @@ module monitor (
         STATE_READ_ADDRESS_LOW: begin
           if (rx_strobe) begin
             mem_address[7:0] <= rx_data;
-            mem_read_enable <= 1'b1;
-            state <= STATE_WAIT_READ;
+            // READ_WORD exige alineamiento a 4: la memoria entrega la palabra
+            // que CONTIENE la direccion, asi que una no alineada devolveria una
+            // palabra distinta de la pedida. Mejor rechazarla que mentir.
+            if (word_access && rx_data[1:0] != 2'b00) begin
+              response_byte_0 <= RSP_ERROR;
+              response_length <= 3'd1;
+              response_index <= 3'd0;
+              response_done_state <= STATE_IDLE;
+              state <= STATE_RESPOND;
+            end else begin
+              mem_read_enable <= 1'b1;
+              state <= STATE_WAIT_READ;
+            end
           end
         end
         STATE_WAIT_READ: begin
@@ -385,14 +425,29 @@ module monitor (
             // block RAM through the response-selection logic failed timing at
             // 120 MHz. Review STATE_PREPARE_READ to understand this boundary.
             mem_read_data_latched <= mem_read_data;
+            mem_read_word_latched <= mem_read_word;
             mem_error_latched <= mem_error;
             state <= STATE_PREPARE_READ;
           end
         end
         STATE_PREPARE_READ: begin
-          response_byte_0 <= mem_error_latched ? RSP_ERROR : RSP_READ_BYTE;
-          response_byte_1 <= mem_read_data_latched;
-          response_length <= mem_error_latched ? 3'd1 : 3'd2;
+          if (mem_error_latched) begin
+            response_byte_0 <= RSP_ERROR;
+            response_length <= 3'd1;
+          end else if (word_access) begin
+            // Little-endian, el mismo orden que la memoria. Los cuatro bytes
+            // salen de UNA transaccion de bus: eso es lo que la hace atomica.
+            response_byte_0 <= RSP_READ_WORD;
+            response_byte_1 <= mem_read_word_latched[7:0];
+            response_byte_2 <= mem_read_word_latched[15:8];
+            response_byte_3 <= mem_read_word_latched[23:16];
+            response_byte_4 <= mem_read_word_latched[31:24];
+            response_length <= 3'd5;
+          end else begin
+            response_byte_0 <= RSP_READ_BYTE;
+            response_byte_1 <= mem_read_data_latched;
+            response_length <= 3'd2;
+          end
           response_index <= 3'd0;
           response_done_state <= STATE_IDLE;
           state <= STATE_RESPOND;

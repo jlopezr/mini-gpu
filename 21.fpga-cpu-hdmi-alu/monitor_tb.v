@@ -18,6 +18,7 @@ module monitor_tb;
   wire mem_write_enable;
   wire mem_read_enable;
   reg [7:0] mem_read_data = 8'h00;
+  reg [31:0] mem_read_word = 32'h0000_0000;
   reg mem_ready = 1'b0;
   reg mem_error = 1'b0;
   wire cpu_run_request;
@@ -126,6 +127,16 @@ module monitor_tb;
       end else begin
         mem_read_data <= mem_address[20] ? memory_high[mem_address[9:0]] :
                                                 memory_low[mem_address[9:0]];
+        // La palabra alineada que contiene esa direccion, para READ_WORD.
+        mem_read_word <= mem_address[20]
+            ? {memory_high[{mem_address[9:2], 2'd3}],
+               memory_high[{mem_address[9:2], 2'd2}],
+               memory_high[{mem_address[9:2], 2'd1}],
+               memory_high[{mem_address[9:2], 2'd0}]}
+            : {memory_low[{mem_address[9:2], 2'd3}],
+               memory_low[{mem_address[9:2], 2'd2}],
+               memory_low[{mem_address[9:2], 2'd1}],
+               memory_low[{mem_address[9:2], 2'd0}]};
       end
     end
   end
@@ -208,7 +219,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h0f) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h10) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);

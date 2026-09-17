@@ -18,6 +18,7 @@ module monitor_tb;
   wire mem_write_enable;
   wire mem_read_enable;
   wire [7:0] mem_read_data;
+  wire [31:0] mem_read_word;   // la misma lectura sin trocear
   wire mem_ready;
   wire mem_error;
   wire cpu_run_request;
@@ -59,7 +60,7 @@ module monitor_tb;
       .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable),
       .mem_read_enable(mem_read_enable),
-      .mem_read_data(mem_read_data),
+      .mem_read_data(mem_read_data), .mem_read_word(mem_read_word),
       .mem_ready(mem_ready),
       .mem_error(mem_error),
       .cpu_run_request(cpu_run_request),
@@ -83,7 +84,7 @@ module monitor_tb;
       .write_data(mem_write_data),
       .write_enable(mem_write_enable),
       .read_enable(mem_read_enable),
-      .read_data(mem_read_data),
+      .read_data(mem_read_data), .read_word(mem_read_word),
       .ready(mem_ready),
       .error(mem_error),
       .cpu_halted(cpu_halted),
@@ -150,7 +151,7 @@ module monitor_tb;
     wait (received_count == 4);
     if (received[1] !== 8'h82) $fatal(1, "VERSION response mismatch");
     if (received[2] !== 8'h01) $fatal(1, "VERSION major mismatch");
-    if (received[3] !== 8'h10) $fatal(1, "VERSION minor mismatch");
+    if (received[3] !== 8'h11) $fatal(1, "VERSION minor mismatch");
 
     wait (!busy && tx_ready);
     send_command(8'h55);

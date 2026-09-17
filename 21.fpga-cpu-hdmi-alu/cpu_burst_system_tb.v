@@ -68,6 +68,7 @@ module cpu_burst_system_tb;
   reg [7:0] mon_write_data = 0;
   reg mon_write_enable = 0, mon_read_enable = 0;
   wire [7:0] mon_read_data;
+  wire [31:0] mon_read_word;   // la misma lectura sin trocear
   wire mon_ready, mon_error;
 
   // -- Puertos del arbitro --------------------------------------------------
@@ -193,7 +194,7 @@ module cpu_burst_system_tb;
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted), .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable), .mem_read_enable(mon_read_enable),
-      .mem_read_data(mon_read_data), .mem_ready(mon_ready),
+      .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
       .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),

@@ -30,20 +30,24 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
         .txd(tx_data),.txd_strobe(tx_strobe),.txd_ready(tx_ready));
     wire [31:0] address,debug_data,pc;
     wire [7:0] write_data,read_data,error_code;
+    // La misma lectura sin trocear, para READ_WORD.
+    wire [31:0] read_word;
     wire we,re,ready,mem_error,run_req,halt_req,step_req,reset_req,halted,error,retired;
     wire [4:0] debug_register;
     // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py, y las cuatro
     // estan pobladas: esta es la unica de la familia con video y contadores.
-    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h04),
+    monitor #(.VERSION_MAJOR(8'h02),.VERSION_MINOR(8'h06),
         .RAM_END(33'h0_0200_0000),
         .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
         .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
         .WINDOW2_BASE(33'h0_8000_0300),.WINDOW2_END(33'h0_8000_0320),
-        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080))
+        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080),
+        // Identificacion: SYS_ID, CONTRACT, DEV_BITMAP e ISA_PROFILE.
+        .WINDOW4_BASE(33'h0_8000_0f00),.WINDOW4_END(33'h0_8000_0f10))
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),
-        .mem_read_enable(re),.mem_read_data(read_data),.mem_ready(ready),.mem_error(mem_error),
+        .mem_read_enable(re),.mem_read_data(read_data),.mem_read_word(read_word),.mem_ready(ready),.mem_error(mem_error),
         .cpu_run_request(run_req),.cpu_halt_request(halt_req),.cpu_step_request(step_req),
         .cpu_reset_request(reset_req),.cpu_halted(halted),.cpu_error(error),.cpu_error_code(error_code),
         .cpu_pc(pc),.cpu_debug_register_address(debug_register),.cpu_debug_register_data(debug_data),
@@ -64,7 +68,7 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
         .run_request(run_req),.halt_request(halt_req),.step_request(step_req),
         .halted(halted),.error(error),.error_code(error_code),.instruction_retired(retired),
         .host_address(address),.host_write_data(write_data),.host_write_enable(we),.host_read_enable(re),
-        .host_read_data(read_data),.host_ready(ready),.host_error(mem_error),
+        .host_read_data(read_data),.host_read_word(read_word),.host_ready(ready),.host_error(mem_error),
         .debug_register(debug_register),.debug_data(debug_data),.debug_pc(pc),.init_done(init_done),
         .mem_req_valid(mem_req_valid),.mem_req_ready(mem_req_ready),.mem_req_write(mem_req_write),
         .mem_req_addr(mem_req_addr),.mem_req_wdata(mem_req_wdata),.mem_req_wmask(mem_req_wmask),

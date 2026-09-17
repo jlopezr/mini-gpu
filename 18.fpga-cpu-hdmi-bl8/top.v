@@ -83,6 +83,7 @@ module top (
 
   wire [31:0] mem_address;
   wire [7:0] mem_write_data, mem_read_data, last_command;
+  wire [31:0] mem_read_word;   // la misma lectura sin trocear, para READ_WORD
   wire mem_write_enable, mem_read_enable, mem_ready, mem_error, monitor_busy;
   wire cpu_run_request, cpu_halt_request, cpu_step_request, cpu_reset_request;
   wire cpu_halted, cpu_error, cpu_instruction_retired;
@@ -134,7 +135,7 @@ module top (
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
       .mem_address(mem_address), .mem_write_data(mem_write_data),
       .mem_write_enable(mem_write_enable), .mem_read_enable(mem_read_enable),
-      .mem_read_data(mem_read_data), .mem_ready(mem_ready), .mem_error(mem_error),
+      .mem_read_data(mem_read_data), .mem_read_word(mem_read_word), .mem_ready(mem_ready), .mem_error(mem_error),
       .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
       .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
       .cpu_halted(cpu_halted), .cpu_error(cpu_error),
@@ -151,8 +152,10 @@ module top (
   reg [7:0] adapter_monitor_write_data;
   reg adapter_monitor_write_enable, adapter_monitor_read_enable;
   wire [7:0] adapter_monitor_read_data;
+  wire [31:0] adapter_monitor_read_word;   // la misma lectura sin trocear
   wire adapter_monitor_ready, adapter_monitor_error;
   reg [7:0] registered_mem_read_data;
+  reg [31:0] registered_mem_read_word;
   reg registered_mem_ready, registered_mem_error;
   always @(posedge clk) begin
     if (reset) begin
@@ -161,6 +164,7 @@ module top (
       adapter_monitor_write_enable <= 1'b0;
       adapter_monitor_read_enable <= 1'b0;
       registered_mem_read_data <= 8'h00;
+      registered_mem_read_word <= 32'h0000_0000;
       registered_mem_ready <= 1'b0;
       registered_mem_error <= 1'b0;
     end else begin
@@ -169,11 +173,13 @@ module top (
       adapter_monitor_write_enable <= mem_write_enable;
       adapter_monitor_read_enable <= mem_read_enable;
       registered_mem_read_data <= adapter_monitor_read_data;
+      registered_mem_read_word <= adapter_monitor_read_word;
       registered_mem_ready <= adapter_monitor_ready;
       registered_mem_error <= adapter_monitor_error;
     end
   end
   assign mem_read_data = registered_mem_read_data;
+  assign mem_read_word = registered_mem_read_word;
   assign mem_ready = registered_mem_ready;
   assign mem_error = registered_mem_error;
 
@@ -329,7 +335,7 @@ module top (
       .mem_write_data(adapter_monitor_write_data),
       .mem_write_enable(adapter_monitor_write_enable),
       .mem_read_enable(adapter_monitor_read_enable),
-      .mem_read_data(adapter_monitor_read_data),
+      .mem_read_data(adapter_monitor_read_data),.mem_read_word(adapter_monitor_read_word),
       .mem_ready(adapter_monitor_ready), .mem_error(adapter_monitor_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
       .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),

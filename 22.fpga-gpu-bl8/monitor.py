@@ -29,11 +29,13 @@ ARCHITECTURAL_REGIONS = (
 # control exclusivo de la GPU. Ver docs/mapa-de-memoria.md §6.
 WARP_CONFIG_BASE = 0x8000_1000
 VIDEO_BASE = 0x8000_0000
+SYSID_BASE = 0x8000_0f00
 MONITOR_REGIONS = (
     (VIDEO_BASE, 0x8000_001c),    # vídeo: FB_FRONT/BACK, SWAP, STATUS... CTRL
     (0x8000_0100, 0x8000_0118),   # depuración y contadores de retiro
     (0x8000_0300, 0x8000_0320),   # contadores de rendimiento (ver mmio.md)
     (WARP_CONFIG_BASE, 0x8000_1080),   # configuración de warps
+    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
@@ -41,6 +43,7 @@ CMD_PING = b"\x01"
 CMD_GET_VERSION = b"\x02"
 CMD_WRITE_BYTE = 0x10
 CMD_READ_BYTE = 0x11
+CMD_READ_WORD = 0x12
 CMD_WRITE_BLOCK = 0x20
 CMD_READ_BLOCK = 0x21
 CMD_RUN = 0x30
@@ -54,6 +57,7 @@ RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
 RSP_WRITE_BYTE = b"\x90"
 RSP_READ_BYTE = 0x91
+RSP_READ_WORD = 0x92
 RSP_WRITE_BLOCK = b"\xa0"
 RSP_READ_BLOCK = 0xA1
 RSP_RUN = b"\xb0"
@@ -174,6 +178,26 @@ class MonitorClient:
 
         return self._read_exact(1)[0]
 
+    def read_word(self, address: int) -> int:
+        """Lee 32 bits en UNA transaccion de bus, y por tanto sin desgarro.
+
+        Cuatro read_byte tardan cerca de un milisegundo entre el primero y el
+        cuarto, y hay registros que siguen vivos con el nucleo parado: en la 22,
+        frame_count avanza con el scanout, que cuelga de reset y no de
+        core_reset. Leido a trozos puede salir un valor que nunca existio.
+        """
+        if address % 4:
+            raise MonitorError(f"READ_WORD requiere direccion alineada a 4: {address:#x}")
+        request = bytes((CMD_READ_WORD,)) + self._address_bytes(address)
+        self._send(request)
+        header = self._read_exact(1)
+        if header[0] == RSP_ERROR:
+            raise MonitorError("The FPGA rejected the command")
+        if header[0] != RSP_READ_WORD:
+            raise MonitorError(f"Invalid READ_WORD response: {header.hex(' ')}")
+
+        return int.from_bytes(self._read_exact(4), byteorder="little")
+
     def write_block(self, address: int, data: bytes) -> None:
         validate_block(address, len(data))
         request = (
@@ -293,6 +317,7 @@ def parse_args() -> argparse.Namespace:
             "get-version",
             "write-byte",
             "read-byte",
+            "read-word",
             "write-block",
             "read-block",
             "verify",
@@ -384,6 +409,7 @@ def main() -> int:
             "get-version": 0,
             "write-byte": 2,
             "read-byte": 1,
+            "read-word": 1,
             "write-block": 2,
             "read-block": 3,
             "verify": 2,
@@ -442,6 +468,10 @@ def main() -> int:
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 value = client.read_byte(address)
                 print(f"Address 0x{address:04x}: 0x{value:02x}")
+            elif args.command == "read-word":
+                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                value = client.read_word(address)
+                print(f"Address 0x{address:08x}: 0x{value:08x}")
             elif args.command == "write-block":
                 address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
                 source = Path(args.arguments[1])

@@ -86,19 +86,37 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(expand_capabilities(["video"]), {"video"})
 
     def test_capacidades_por_bitstream(self):
+        # `read_word` esta en las seis desde la fase 3.4 -- ver
+        # test_read_word_en_todas.
+        self.assertEqual(fpga.capabilities("ebr"), {"mul_div", "read_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
-        self.assertEqual(fpga.capabilities("ebr"), {"mul_div"})
-        self.assertEqual(fpga.capabilities("sdram"), frozenset())
+        self.assertEqual(fpga.capabilities("sdram"), {"read_word"})
         # La 16 tiene video pero no con que capturar.
-        self.assertEqual(fpga.capabilities("hdmi"), {"video", "mul_div"})
+        self.assertEqual(fpga.capabilities("hdmi"),
+                         {"video", "mul_div", "read_word"})
         # La 18 tiene las dos.
         self.assertEqual(
-            fpga.capabilities("bl8"), {"video", "frame_capture", "mul_div"})
+            fpga.capabilities("bl8"),
+            {"video", "frame_capture", "mul_div", "read_word"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
             fpga.capabilities("subword"),
             {"video", "frame_capture", "subword_memory", "calls", "serial",
-             "mul_div"})
+             "mul_div", "read_word"})
+
+    def test_read_word_en_todas(self):
+        """READ_WORD no es una extension: es parte del contrato del monitor.
+
+        Se detecta del RTL y no se supone por version porque la numeracion no
+        es comparable entre familias -la 6 va por 1.x y la 22 por 2.x-, asi que
+        "version >= N" no significa nada fuera de una carpeta. Si alguna se
+        quedara sin el, `fpga._read_register` volveria a los cuatro READ_BYTE y
+        el contador de frames podria salir desgarrado, en silencio; aqui sale
+        con nombre.
+        """
+        sin_ella = [nombre for nombre in fpga.VERSIONS
+                    if "read_word" not in fpga.capabilities(nombre)]
+        self.assertEqual(sin_ella, [])
 
     def test_solo_la_10_no_tiene_mul_div(self):
         """`mul_div` es un HUECO, no una extension, y es el unico de la tabla.

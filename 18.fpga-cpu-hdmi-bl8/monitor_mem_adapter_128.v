@@ -43,6 +43,11 @@ module monitor_mem_adapter_128 #(
     input  wire        mem_write_enable,
     input  wire        mem_read_enable,
     output reg  [7:0]  mem_read_data,
+    // La MISMA lectura sin trocear, para READ_WORD del monitor. En MMIO es
+    // la palabra tal cual; en SDRAM, las cuatro bytes alineadas de la linea
+    // de 128 bits que ya se trajo. En los dos casos sale de UNA transaccion,
+    // que es lo que hace atomica la lectura.
+    output reg  [31:0] mem_read_word,
     output reg         mem_ready,
     output reg         mem_error,
 
@@ -95,6 +100,7 @@ module monitor_mem_adapter_128 #(
     if (reset) begin
       state <= ST_IDLE;
       mem_read_data <= 8'h00;
+      mem_read_word <= 32'h0000_0000;
       req_write <= 1'b0;
       req_addr <= 32'h0000_0000;
       req_wdata <= 128'd0;
@@ -151,8 +157,10 @@ module monitor_mem_adapter_128 #(
 
         ST_WAIT:
           if (rsp_valid) begin
-            if (!saved_write && !rsp_error)
+            if (!saved_write && !rsp_error) begin
               mem_read_data <= rsp_rdata[{byte_offset, 3'b000} +: 8];
+              mem_read_word <= rsp_rdata[{byte_offset[3:2], 5'b00000} +: 32];
+            end
             mem_ready <= 1'b1;
             mem_error <= rsp_error;
             state <= ST_IDLE;
@@ -161,8 +169,10 @@ module monitor_mem_adapter_128 #(
         ST_MMIO:
           if (mmio_ack) begin
             mmio_req <= 1'b0;
-            if (!saved_write)
+            if (!saved_write) begin
               mem_read_data <= mmio_read_data[{mmio_byte, 3'b000} +: 8];
+              mem_read_word <= mmio_read_data;
+            end
             mem_ready <= 1'b1;
             state <= ST_IDLE;
           end

@@ -50,6 +50,8 @@ module sdram_system_adapter #(
     input  wire        monitor_write_enable,
     input  wire        monitor_read_enable,
     output reg  [7:0]  monitor_read_data,
+    // La misma lectura sin trocear, para READ_WORD del monitor.
+    output reg  [31:0] monitor_read_word,
     output reg         monitor_ready,
     output reg         monitor_error,
 
@@ -109,17 +111,26 @@ module sdram_system_adapter #(
   localparam STATE_VALIDATE_MONITOR = 3'd5;
   localparam STATE_WAIT_VIDEO  = 3'd6;
   localparam STATE_MMIO_WAIT   = 3'd7;
+  // Segunda mitad de una lectura del monitor: el bus es de 16 bits y
+  // READ_WORD necesita 32. Las hacen TODAS las lecturas del monitor, no
+  // solo READ_WORD: el acceso extra es el 0,2 %% del tiempo de un byte a
+  // 250 kbaud, asi que no hace falta que el monitor avise.
+  localparam STATE_MON_SECOND  = 4'd8;
+  localparam STATE_MON_WAIT2   = 4'd9;
 
   // Ventana de registros de video: 0x80000000..0x8000000f. Se decodifica
   // estricta; cualquier otra direccion alta sigue siendo un error, como antes.
   localparam [27:0] MMIO_PREFIX = 28'h800_0000;
 
-  reg [2:0] state;
+  reg [3:0] state;
   reg [2:0] owner;
   reg saved_monitor_byte;
   reg saved_monitor_read;
   reg saved_cpu_read;
   reg [15:0] first_read_data;
+  // Verilog no deja trocear una concatenacion, y la palabra se forma con la
+  // mitad recien llegada y la que se guardo en el primer acceso.
+  wire [31:0] monitor_word_now = {rdata, first_read_data};
   reg [23:0] second_addr;
   reg [15:0] second_wdata;
   reg [1:0] second_wmask;
@@ -183,6 +194,7 @@ module sdram_system_adapter #(
       state <= STATE_IDLE;
       owner <= OWNER_NONE;
       monitor_read_data <= 8'h00;
+      monitor_read_word <= 32'h0000_0000;
       cpu_imem_read_data <= 32'h0000_0000;
       cpu_dmem_read_data <= 32'h0000_0000;
       req_valid <= 1'b0;
@@ -325,7 +337,12 @@ module sdram_system_adapter #(
             state <= STATE_RELEASE;
           end else begin
             saved_monitor_byte <= saved_monitor_address[0];
-            req_addr <= saved_monitor_address[24:1];
+            // Una lectura empieza SIEMPRE por la mitad baja de la
+            // palabra alineada, para que la segunda complete los 32
+            // bits. La escritura toca solo su propia mitad.
+            req_addr <= saved_monitor_write_enable
+                ? saved_monitor_address[24:1]
+                : {saved_monitor_address[24:2], 1'b0};
             req_write <= saved_monitor_write_enable;
             req_wdata <= saved_monitor_address[0] ?
                 {saved_monitor_write_data, 8'h00} :
@@ -341,10 +358,14 @@ module sdram_system_adapter #(
             req_valid <= 1'b0;
           if (done) begin
             if (owner == OWNER_MONITOR) begin
-              if (saved_monitor_read)
-                monitor_read_data <= saved_monitor_byte ? rdata[15:8] : rdata[7:0];
-              monitor_ready <= 1'b1;
-              state <= STATE_RELEASE;
+              if (saved_monitor_read) begin
+                // Falta la mitad alta para completar la palabra.
+                first_read_data <= rdata;
+                state <= STATE_MON_SECOND;
+              end else begin
+                monitor_ready <= 1'b1;
+                state <= STATE_RELEASE;
+              end
             end else begin
               if (saved_cpu_read)
                 first_read_data <= rdata;
@@ -365,6 +386,8 @@ module sdram_system_adapter #(
             if (saved_monitor_read)
               monitor_read_data <=
                   mmio_read_data[{saved_monitor_address[1:0], 3'b000} +: 8];
+              // En MMIO la palabra ya viene entera: un solo acceso.
+              monitor_read_word <= mmio_read_data;
             monitor_ready <= 1'b1;
           end else begin
             if (saved_cpu_read) cpu_dmem_read_data <= mmio_read_data;
@@ -381,6 +404,26 @@ module sdram_system_adapter #(
           if (done) begin
             video_read_data <= rdata;
             video_ready <= 1'b1;
+            state <= STATE_RELEASE;
+          end
+        end
+
+        STATE_MON_SECOND: begin
+          req_addr <= {saved_monitor_address[24:2], 1'b1};
+          req_write <= 1'b0;
+          req_wmask <= 2'b00;
+          req_valid <= 1'b1;
+          state <= STATE_MON_WAIT2;
+        end
+
+        STATE_MON_WAIT2: begin
+          if (req_valid && req_ready)
+            req_valid <= 1'b0;
+          if (done) begin
+            monitor_read_word <= monitor_word_now;
+            monitor_read_data <=
+                monitor_word_now[{saved_monitor_address[1:0], 3'b000} +: 8];
+            monitor_ready <= 1'b1;
             state <= STATE_RELEASE;
           end
         end

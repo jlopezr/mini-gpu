@@ -24,7 +24,10 @@ module memory_map (
     input clk, input reset,
     input [31:0] address, input [7:0] write_data,
     input write_enable, input read_enable,
-    output [7:0] read_data, output ready, output error,
+    output [7:0] read_data,
+    // La misma lectura sin trocear, para READ_WORD. Aqui salia gratis:
+    // la palabra ya existia entera y solo se elegia un byte de ella.
+    output [31:0] read_word, output ready, output error,
     input cpu_halted,
     input cpu_imem_valid, input [31:0] cpu_imem_address,
     output [31:0] cpu_imem_read_data, output cpu_imem_ready,
@@ -282,6 +285,7 @@ module memory_map (
                      monitor_byte_offset == 1 ? monitor_read_word[15:8] :
                      monitor_byte_offset == 2 ? monitor_read_word[23:16] :
                                                 monitor_read_word[31:24];
+  assign read_word = monitor_read_word;
   assign ready = monitor_ready_r;
   assign error = monitor_error_r;
   assign cpu_imem_read_data = imem_read_data_r;
