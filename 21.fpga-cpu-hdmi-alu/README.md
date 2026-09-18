@@ -998,6 +998,12 @@ figuras de verdad, píxel a píxel:
 |---|---|---|
 | [`bresenham_lines.asm`](examples/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
 | [`bresenham_circles.asm`](examples/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
+| [`cube.asm`](examples/cube.asm) | Cubo en alambre con perspectiva | Rotaciones Q16.16, `MULFX`, `DIV` y tabla de senos |
+| [`cube_solid.asm`](examples/cube_solid.asm) | Cubo de caras sólidas | Back-face culling y triángulos con funciones de borde incrementales, sin z-buffer |
+
+Las operaciones que este último deja como candidatas para evolucionar la ISA
+—y las optimizaciones que no necesitan tocarla— se analizan en
+[`docs/cubo-solido-isa.md`](docs/cubo-solido-isa.md).
 
 Son también los primeros ejemplos que usan `JAL`/`JR`. Un `putpixel` como
 subrutina es lo mínimo para que un programa así se pueda escribir: sin
