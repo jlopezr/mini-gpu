@@ -14,6 +14,15 @@ que coalesce por línea de 16 bytes en vez de servir una lane por acceso.
 
 Para medir en placa sin simular: `python profile.py --port COM3 --program examples/plasma.asm`.
 
+[`examples/cube_solid.asm`](examples/cube_solid.asm) hace que los
+64 hilos rastericen un cubo sólido animado, empaquetando dos píxeles RGB565 por
+`STORE`. La versión actual calcula en la GPU la rotación Q2.14 de los ocho
+vértices, la perspectiva entera, el culling y los descriptores; conserva solo
+una tabla seno de 1 KiB. Las versiones anteriores con geometría precalculada
+siguen disponibles para aislar el coste del rasterizador. La evolución y las
+medidas de cada estrategia están en
+[`cube-solid.md`](cube-solid.md).
+
 ## Estado
 
 | Pieza | Estado |
