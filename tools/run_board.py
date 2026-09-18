@@ -60,7 +60,11 @@ def run_monitor_cli(prototype_dir: Path, port: str, *args: str) -> str:
 
 def assemble(root: Path, source: Path, verbose: bool) -> Path:
     binary = source.with_suffix(".bin")
-    command = [sys.executable, str(root / "1.isa" / "miniisa_asm.py"), str(source), "-o", str(binary)]
+    # `-I x.tests/inc` da acceso a la biblioteca de `.include` compartida. La
+    # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
+    # un trozo local con el mismo nombre sigue ganando.
+    command = [sys.executable, str(root / "1.isa" / "miniisa_asm.py"), str(source),
+               "-o", str(binary), "-I", str(root / "x.tests" / "inc")]
     if verbose:
         print(f"$ {' '.join(command)}")
     completed = subprocess.run(command)

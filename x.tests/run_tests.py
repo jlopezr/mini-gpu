@@ -170,7 +170,14 @@ def load_program(path: Path) -> bytes:
             "miniisa_asm_for_tests",
             REPOSITORY / "1.isa" / "miniisa_asm.py",
         )
-        words = assembler.assemble(path.read_text(encoding="utf-8"))
+        # La carpeta del .asm y su nombre: la primera para que `.include`
+        # resuelva sus rutas relativas al programa y no al directorio desde el
+        # que se lance el runner, y el segundo para que un error de ensamblado
+        # diga de que fichero viene.
+        words = assembler.assemble(
+            path.read_text(encoding="utf-8"), path.parent, path.name,
+            (REPOSITORY / "x.tests" / "inc",),
+        )
         data = b"".join(struct.pack("<I", word) for word in words)
     else:
         raise ValueError(f"Formato de programa no soportado: {path}")

@@ -36,6 +36,15 @@ Labels:
         ...
         BRA loop
 
+Inclusion de otros ficheros:
+    .include "drawline.inc"
+
+    Se busca primero en la carpeta del fichero que incluye, y despues en las
+    carpetas pasadas con `-I` (repetible). La biblioteca compartida del repo
+    esta en `x.tests/inc`, y los lanzadores ya la pasan. No hay espacios de
+    nombres: las etiquetas de lo incluido son globales, y un choque se
+    denuncia diciendo los dos sitios.
+
 Salida:
     binario little-endian, una palabra de 32 bits por instrucción.
 """
@@ -166,6 +175,18 @@ LABEL_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
 MEMORY_RE = re.compile(r"^(.+)\(([Rr]\d+)\)$")
 
 
+# Nombre del origen cuando el fuente llega como cadena y no como fichero: los
+# simuladores ensamblan programas incrustados en sus tests, y ahi no hay ruta
+# que citar. Con este centinela los mensajes siguen diciendo "linea N" como
+# siempre; en cuanto hay fichero, pasan a decir "fichero:N".
+ENTRADA = "<entrada>"
+
+# Tope de anidamiento de `.include`. La deteccion de ciclos ya corta el caso
+# patologico; esto ataja la cadena larga pero finita, que produciria un
+# RecursionError de Python en vez de un error de ensamblado legible.
+INCLUDE_MAX_DEPTH = 16
+
+
 class AsmError(ValueError):
     """Error de ensamblado, con linea y motivo.
 
@@ -183,6 +204,7 @@ class SourceLine:
     text: str
     pc: int
     section: str = ".text"
+    origin: str = ENTRADA
 
 
 def strip_comment(line: str) -> str:
@@ -384,6 +406,143 @@ def is_directive(text: str) -> bool:
     return text.split(None, 1)[0].startswith(".")
 
 
+def ubicacion(origin: str, number: int) -> str:
+    """Como se cita una linea en un mensaje de error.
+
+    Sin fichero se sigue diciendo "linea N", que es lo que decia el
+    ensamblador antes de que existieran los `.include` y lo que esperan los
+    tests que ensamblan cadenas.
+    """
+    return f"línea {number}" if origin == ENTRADA else f"{origin}:{number}"
+
+
+def parse_include_path(operand_text: str) -> str:
+    """La ruta de un `.include`, entre comillas dobles.
+
+    No reutiliza `parse_string_literal` porque aquella sirve a `.string`: le
+    añade un NUL final y rellena hasta multiplo de 4, que en una ruta serian
+    basura. Tampoco interpreta escapes: una ruta se escribe con barras hacia
+    delante y asi vale igual en Windows que en Linux.
+    """
+    text = operand_text.strip()
+    if len(text) < 2 or not text.startswith('"') or not text.endswith('"'):
+        raise AsmError('.include requiere una ruta entre comillas dobles')
+    ruta = text[1:-1]
+    if not ruta:
+        raise AsmError(".include con ruta vacia")
+    return ruta
+
+
+def buscar_include(ruta: str, base_dir: Path | None,
+                   include_dirs: tuple[Path, ...]) -> Path | None:
+    """Resuelve la ruta de un `.include`, o None si no aparece en ningun sitio.
+
+    Orden: primero la carpeta del fichero que incluye, y despues las carpetas
+    de `-I` en el orden en que se dieron. La carpeta del fuente va primero a
+    proposito: un `.include "trozo.inc"` al lado del programa tiene que ganar
+    a uno del mismo nombre en la biblioteca compartida, o cambiar la
+    biblioteca romperia programas ajenos en silencio.
+    """
+    destino = Path(ruta)
+    if destino.is_absolute():
+        return destino if destino.is_file() else None
+
+    candidatas = []
+    if base_dir is not None:
+        candidatas.append(base_dir / destino)
+    candidatas.extend(carpeta / destino for carpeta in include_dirs)
+
+    for candidata in candidatas:
+        if candidata.is_file():
+            return candidata
+    return None
+
+
+def expand_includes(source: str, base_dir: Path | None = None,
+                    origin: str = ENTRADA,
+                    include_dirs: tuple[Path, ...] = (),
+                    _stack: tuple[Path, ...] = ()) -> list[tuple[str, int, str]]:
+    """Resuelve los `.include` y devuelve (origen, numero, linea) en orden.
+
+    Se hace ANTES de la pasada 1, de modo que el resto del ensamblador sigue
+    viendo una secuencia plana de lineas y no se entera de que hubo ficheros.
+    Lo unico que cambia es que cada linea recuerda de donde vino, que es lo
+    que permite que un label duplicado diga los DOS sitios.
+
+    Las rutas son relativas al fichero que incluye, no al directorio actual.
+    Si fueran relativas al directorio actual, `cube.asm` solo ensamblaria
+    ejecutando desde su propia carpeta, y los lanzadores del repo llaman al
+    ensamblador desde la raiz.
+    """
+    filas: list[tuple[str, int, str]] = []
+
+    for number, raw in enumerate(source.splitlines(), 1):
+        text = strip_comment(raw)
+        if not text or not is_directive(text):
+            filas.append((origin, number, raw))
+            continue
+
+        partes = text.split(None, 1)
+        if partes[0].upper() != ".INCLUDE":
+            filas.append((origin, number, raw))
+            continue
+
+        try:
+            ruta = parse_include_path(partes[1] if len(partes) > 1 else "")
+        except AsmError as error:
+            raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
+
+        if base_dir is None and not include_dirs and not Path(ruta).is_absolute():
+            raise AsmError(
+                f"{ubicacion(origin, number)}: .include con ruta relativa "
+                f"({ruta}) pero el fuente no viene de un fichero ni se dio "
+                "ninguna carpeta de busqueda (-I), asi que no hay desde donde "
+                "resolverla"
+            )
+
+        destino = buscar_include(ruta, base_dir, include_dirs)
+        if destino is None:
+            miradas = []
+            if base_dir is not None:
+                miradas.append(str(base_dir))
+            miradas.extend(str(c) for c in include_dirs)
+            raise AsmError(
+                f"{ubicacion(origin, number)}: no encuentro {ruta}; "
+                f"mirado en: {', '.join(miradas)}"
+            )
+
+        try:
+            resuelto = destino.resolve()
+        except OSError as error:
+            raise AsmError(f"{ubicacion(origin, number)}: {ruta}: {error}") from None
+
+        if resuelto in _stack:
+            cadena = " -> ".join(p.name for p in _stack) + f" -> {resuelto.name}"
+            raise AsmError(
+                f"{ubicacion(origin, number)}: .include circular: {cadena}"
+            )
+        if len(_stack) >= INCLUDE_MAX_DEPTH:
+            raise AsmError(
+                f"{ubicacion(origin, number)}: .include anidado mas de "
+                f"{INCLUDE_MAX_DEPTH} niveles"
+            )
+
+        try:
+            incluido = resuelto.read_text(encoding="utf-8")
+        except OSError as error:
+            raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
+
+        # El fichero incluido resuelve SUS `.include` desde su propia carpeta,
+        # no desde la del programa que lo incluyo. Asi un .inc que se apoya en
+        # otro sigue funcionando desde donde sea que lo incluyan.
+        filas.extend(expand_includes(
+            incluido, resuelto.parent, resuelto.name,
+            include_dirs, _stack + (resuelto,)
+        ))
+
+    return filas
+
+
 def split_operands(s: str) -> list[str]:
     if not s.strip():
         return []
@@ -454,13 +613,18 @@ def encode_b(opcode: int, offset26: int = 0) -> int:
 # Pass 1
 # ---------------------------------------------------------------------------
 
-def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int], int]:
+def first_pass(source: str,
+               base_dir: Path | None = None,
+               origin: str = ENTRADA,
+               include_dirs: tuple[Path, ...] = (),
+               ) -> tuple[list[SourceLine], dict[str, int], int]:
     label_offsets: dict[str, tuple[str, int]] = {}
+    label_origins: dict[str, str] = {}
     lines: list[SourceLine] = []
     offsets = {name: 0 for name in SECTION_ORDER}
     section = ".text"
 
-    for number, raw in enumerate(source.splitlines(), 1):
+    for origin, number, raw in expand_includes(source, base_dir, origin, include_dirs):
         text = strip_comment(raw)
         if not text:
             continue
@@ -476,9 +640,17 @@ def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int], int]:
                 break
 
             if label in label_offsets:
-                raise AsmError(f"línea {number}: label duplicado: {label}")
+                # Con `.include`, el duplicado suele estar en OTRO fichero, y
+                # decir solo "label duplicado" obliga a buscarlo a mano. Es el
+                # riesgo principal de incluir ensamblador: no hay espacios de
+                # nombres, asi que el mensaje tiene que hacer de indice.
+                raise AsmError(
+                    f"{ubicacion(origin, number)}: label duplicado: {label} "
+                    f"(ya definido en {label_origins[label]})"
+                )
 
             label_offsets[label] = (section, offsets[section])
+            label_origins[label] = ubicacion(origin, number)
             text = rhs.strip()
 
             if not text:
@@ -509,24 +681,28 @@ def first_pass(source: str) -> tuple[list[SourceLine], dict[str, int], int]:
                     if not LABEL_RE.match(name):
                         raise AsmError(f"simbolo .comm invalido: {name}")
                     if name in label_offsets:
-                        raise AsmError(f"label duplicado: {name}")
+                        raise AsmError(
+                            f"label duplicado: {name} "
+                            f"(ya definido en {label_origins[name]})"
+                        )
                     size = parse_int(ops[1])
                     alignment = parse_int(ops[2]) if len(ops) == 3 else 4
                     if size < 0:
                         raise AsmError(".comm no puede tener tamano negativo")
                     offsets[".bss"] = align_to(offsets[".bss"], alignment)
                     label_offsets[name] = (".bss", offsets[".bss"])
+                    label_origins[name] = ubicacion(origin, number)
                     offsets[".bss"] += size
                     continue
 
                 size = directive_size_bytes(mnemonic, operand_text, offsets[section])
             except AsmError as error:
-                raise AsmError(f"línea {number}: {error}") from None
+                raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
             if size:
-                lines.append(SourceLine(number, text, offsets[section], section))
+                lines.append(SourceLine(number, text, offsets[section], section, origin))
                 offsets[section] += size
         else:
-            lines.append(SourceLine(number, text, offsets[section], section))
+            lines.append(SourceLine(number, text, offsets[section], section, origin))
             offsets[section] += instruction_size_bytes(text)
 
     bases: dict[str, int] = {}
@@ -798,8 +974,14 @@ def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
     word = assemble_instruction(line, labels)
     return word.to_bytes(4, "little")
 
-def assemble_bytes(source: str) -> bytes:
-    lines, labels, image_size = first_pass(source)
+def assemble_bytes(source: str, base_dir: Path | None = None,
+                   origin: str = ENTRADA,
+                   include_dirs: tuple[Path, ...] = ()) -> bytes:
+    """`base_dir`, `origin` e `include_dirs` solo importan si el fuente usa
+    `.include`: la carpeta del propio fichero, el nombre con el que citarlo en
+    los errores, y las carpetas extra de busqueda. Ensamblar una cadena suelta
+    sigue funcionando igual que antes de que existiera la directiva."""
+    lines, labels, image_size = first_pass(source, base_dir, origin, include_dirs)
     image = bytearray()
 
     for line in lines:
@@ -827,8 +1009,10 @@ def assemble_bytes(source: str) -> bytes:
     return bytes(image)
 
 
-def assemble(source: str) -> list[int]:
-    image = assemble_bytes(source)
+def assemble(source: str, base_dir: Path | None = None,
+             origin: str = ENTRADA,
+             include_dirs: tuple[Path, ...] = ()) -> list[int]:
+    image = assemble_bytes(source, base_dir, origin, include_dirs)
     return [
         int.from_bytes(image[index:index + 4], "little")
         for index in range(0, len(image), 4)
@@ -855,7 +1039,8 @@ def load_program_bytes(path) -> bytes:
     suffix = path.suffix.lower()
 
     if suffix == ".asm":
-        return assemble_bytes(path.read_text(encoding="utf-8"))
+        return assemble_bytes(path.read_text(encoding="utf-8"),
+                              path.parent, path.name)
 
     if suffix == ".hex":
         return b"".join(
@@ -892,12 +1077,18 @@ def main() -> None:
     parser.add_argument("input", type=Path, help="fichero .asm")
     parser.add_argument("-o", "--output", type=Path, help="salida .bin")
     parser.add_argument("--hex", dest="hex_output", type=Path, help="salida hexadecimal textual")
+    parser.add_argument("-I", "--include-dir", type=Path, action="append", default=[],
+                        metavar="CARPETA",
+                        help="donde buscar los .include, ademas de la carpeta "
+                             "del propio fuente (que se mira siempre primero). "
+                             "Se puede repetir; se prueban en orden")
     args = parser.parse_args()
 
     source = args.input.read_text(encoding="utf-8")
 
     try:
-        image = assemble_bytes(source)
+        image = assemble_bytes(source, args.input.parent, args.input.name,
+                               tuple(args.include_dir))
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 

@@ -9,7 +9,9 @@ nada se queje.
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from miniisa_asm import AsmError, assemble, first_pass, strip_comment
 
@@ -209,6 +211,111 @@ class CompareTest(unittest.TestCase):
     def test_exigen_tres_operandos(self):
         with self.assertRaises(AsmError):
             assemble("SLT R1, R2")
+
+
+class IncludeTest(unittest.TestCase):
+    """`.include`, que existe porque `drawline` estaba copiado en tres sitios.
+
+    Sin espacios de nombres, lo que hay que vigilar no es que la inclusion
+    funcione --eso es pegar texto-- sino que los fallos se expliquen: quien
+    define un label dos veces, que fichero falta, y donde esta el ciclo.
+    """
+
+    def escribir(self, carpeta, nombre, texto):
+        ruta = Path(carpeta) / nombre
+        ruta.write_text(texto, encoding="utf-8")
+        return ruta
+
+    def test_incluye_desde_la_carpeta_del_fuente(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "trozo.inc", "sumar:\n    ADD R1, R2, R3\n    RET\n")
+            programa = 'JAL R31, sumar\nHALT\n.include "trozo.inc"\n'
+            palabras = assemble(programa, Path(tmp), "prog.asm")
+        # JAL, HALT, ADD, RET
+        self.assertEqual(len(palabras), 4)
+
+    def test_carpeta_de_busqueda_adicional(self):
+        """El `-I`: el fichero no esta junto al fuente sino en la biblioteca."""
+        with tempfile.TemporaryDirectory() as fuente, \
+                tempfile.TemporaryDirectory() as lib:
+            self.escribir(lib, "trozo.inc", "    NOP\n")
+            palabras = assemble('HALT\n.include "trozo.inc"\n',
+                                Path(fuente), "prog.asm", (Path(lib),))
+        self.assertEqual(len(palabras), 2)
+
+    def test_la_carpeta_del_fuente_gana_al_include_dir(self):
+        """Un trozo local con el mismo nombre tiene que ganar al compartido.
+
+        Si no, cambiar la biblioteca romperia programas ajenos en silencio.
+        """
+        with tempfile.TemporaryDirectory() as fuente, \
+                tempfile.TemporaryDirectory() as lib:
+            self.escribir(fuente, "trozo.inc", "    NOP\n    NOP\n")
+            self.escribir(lib, "trozo.inc", "    NOP\n")
+            palabras = assemble('.include "trozo.inc"\n',
+                                Path(fuente), "prog.asm", (Path(lib),))
+        self.assertEqual(len(palabras), 2)
+
+    def test_include_anidado_resuelve_desde_su_propia_carpeta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = Path(tmp) / "sub"
+            sub.mkdir()
+            self.escribir(sub, "hoja.inc", "    NOP\n")
+            self.escribir(sub, "rama.inc", '    NOP\n.include "hoja.inc"\n')
+            palabras = assemble('.include "sub/rama.inc"\n', Path(tmp), "prog.asm")
+        self.assertEqual(len(palabras), 2)
+
+    def test_label_duplicado_dice_los_dos_sitios(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "trozo.inc", "sumar:\n    RET\n")
+            with self.assertRaises(AsmError) as caja:
+                assemble('sumar:\n    RET\n.include "trozo.inc"\n',
+                         Path(tmp), "prog.asm")
+        mensaje = str(caja.exception)
+        self.assertIn("sumar", mensaje)
+        self.assertIn("trozo.inc", mensaje)      # donde se choca
+        self.assertIn("prog.asm", mensaje)       # donde estaba ya definido
+
+    def test_ciclo_detectado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "a.inc", '.include "b.inc"\n')
+            self.escribir(tmp, "b.inc", '.include "a.inc"\n')
+            with self.assertRaises(AsmError) as caja:
+                assemble('.include "a.inc"\n', Path(tmp), "prog.asm")
+        self.assertIn("circular", str(caja.exception))
+
+    def test_fichero_que_falta_dice_donde_se_ha_mirado(self):
+        with tempfile.TemporaryDirectory() as fuente, \
+                tempfile.TemporaryDirectory() as lib:
+            with self.assertRaises(AsmError) as caja:
+                assemble('.include "no_existe.inc"\n',
+                         Path(fuente), "prog.asm", (Path(lib),))
+        mensaje = str(caja.exception)
+        self.assertIn("no_existe.inc", mensaje)
+        self.assertIn(lib, mensaje)
+
+    def test_sin_carpeta_base_el_error_lo_explica(self):
+        """Los simuladores ensamblan cadenas sueltas: ahi no hay desde donde."""
+        with self.assertRaises(AsmError) as caja:
+            assemble('.include "trozo.inc"\n')
+        self.assertIn("relativa", str(caja.exception))
+
+    def test_ruta_sin_comillas(self):
+        with self.assertRaises(AsmError):
+            assemble(".include trozo.inc\n", Path("."), "prog.asm")
+
+    def test_las_secciones_del_incluido_cuentan(self):
+        """Un .inc que mete datos en .rodata no descoloca el .text de quien lo
+        incluye: las secciones se reordenan al final, como siempre."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "tabla.inc",
+                          "    .rodata\ntabla:\n    .word 1, 2\n    .text\n")
+            palabras = assemble(
+                'MOVI R1, tabla\nHALT\n.include "tabla.inc"\n',
+                Path(tmp), "prog.asm")
+        # dos instrucciones y dos palabras de datos, y la tabla detras del texto
+        self.assertEqual(len(palabras), 4)
+        self.assertEqual(palabras[0] & 0xFFFF, 8)
 
 
 if __name__ == "__main__":

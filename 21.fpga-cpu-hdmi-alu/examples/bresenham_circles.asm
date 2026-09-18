@@ -212,18 +212,7 @@ plot8:
     JAL   R30, putpixel        ; ( y, -x)
     JR    R29
 
-; ------------------------------------------------------------
-; putpixel: escribe el pixel (R4, R5) del color R6 en el buffer trasero.
-;
-; direccion = base + y*640 + x*2. El y*640 va con MUL, que son 11 ciclos frente
-; a los 37 de los dos SHL iterativos que usan las demos heredadas de la 18.
-;
-; Entrada: R4, R5, R6. No los modifica. Usa R7 y R8. Vuelve por R30.
-; ------------------------------------------------------------
-putpixel:
-    MUL    R7, R5, R24         ; y * 640
-    ADD    R8, R4, R4          ; x * 2
-    ADD    R7, R7, R8
-    ADD    R7, R7, R1
-    STOREH R6, R7, 0           ; un pixel, dos bytes, sin leer nada antes
-    JR     R30
+; putpixel vive ahora en x.tests/inc, en una sola copia: estaba duplicado
+; aqui, en bresenham_lines.asm y en cube.asm. Este programa no usa drawline,
+; asi que no incluye drawline.inc y no se lleva codigo muerto.
+    .include "putpixel.inc"

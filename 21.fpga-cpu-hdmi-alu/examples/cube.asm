@@ -227,75 +227,13 @@ wait_swap:
     ADDI  R27, R27, 3
     ANDI  R27, R27, 255
     BRA   frame
-
-; ------------------------------------------------------------
-; drawline: traza la recta de (R9,R10) a (R11,R12) con el color R6.
-;
-; Copia literal de `bresenham_lines.asm`. `dy` se guarda NEGADO para que las
-; dos decisiones del bucle sean simetricas y la misma rutina valga para los
-; ocho octantes sin casos especiales.
-;
-; Entrada: R9, R10, R11, R12 y R6.
-; Destruye R9, R10 y R13..R18, ademas de lo de putpixel. Vuelve por R31.
-; ------------------------------------------------------------
-drawline:
-    SUB   R13, R11, R9         ; dx = x1 - x0
-    MOVI  R15, 1               ; sx = +1
-    BGE   R13, R0, dx_ready
-    SUB   R13, R0, R13         ; dx = |dx|
-    MOVI  R15, -1
-
-dx_ready:
-    SUB   R14, R12, R10        ; dy = y1 - y0
-    MOVI  R16, 1               ; sy = +1
-    BGE   R14, R0, dy_positive
-    MOVI  R16, -1              ; si ya es negativo, ya vale -|dy|
-    BRA   dy_ready
-dy_positive:
-    SUB   R14, R0, R14         ; dy = -|dy|
-
-dy_ready:
-    ADD   R17, R13, R14        ; err = dx + dy
-
-line_step:
-    ADDI  R4, R9, 0
-    ADDI  R5, R10, 0
-    JAL   R30, putpixel
-
-    BNE   R9, R11, advance     ; ¿ya se llego al extremo?
-    BEQ   R10, R12, line_done
-
-advance:
-    ADD   R18, R17, R17        ; e2 = 2*err
-    BLT   R18, R14, skip_x     ; si e2 >= dy, avanzar en x
-    ADD   R17, R17, R14
-    ADD   R9, R9, R15
-skip_x:
-    BLT   R13, R18, skip_y     ; si e2 <= dx, avanzar en y
-    ADD   R17, R17, R13
-    ADD   R10, R10, R16
-skip_y:
-    BRA   line_step
-
-line_done:
-    RET                        ; alias de JR R31
-
-; ------------------------------------------------------------
-; putpixel: escribe el pixel (R4, R5) del color R6 en el buffer trasero.
-;
-; No comprueba limites. Aqui eso no es un descuido heredado: el rango de la
-; proyeccion esta acotado por construccion (ver cabecera) y comprobado sobre
-; los 65 536 pares de angulos posibles.
-;
-; Entrada: R4, R5, R6. No los modifica. Usa R7 y R8. Vuelve por R30.
-; ------------------------------------------------------------
-putpixel:
-    MUL    R7, R5, R24         ; y * 640
-    ADD    R8, R4, R4          ; x * 2
-    ADD    R7, R7, R8
-    ADD    R7, R7, R1
-    STOREH R6, R7, 0           ; un pixel, dos bytes, sin leer nada antes
-    JR     R30
+; Las rectas y los pixeles vienen de la biblioteca compartida. Estaban
+; copiados aqui, identicos a los de bresenham_lines.asm y de
+; bresenham_circles.asm; ahora hay una sola copia. El contrato es que R1
+; tenga la base del buffer trasero y R24 valga 640, cosa que hace el
+; bucle de arriba.
+    .include "drawline.inc"
+    .include "putpixel.inc"
 
     .rodata
 
@@ -329,39 +267,4 @@ edges:
     .word  8, 40, 0xFFFF
     .word 16, 48, 0xFFFF
     .word 24, 56, 0xFFFF
-
-; sin(2*pi*i/256) en Q16.16, 256 entradas. El coseno es esta misma tabla
-; leida 64 posiciones mas adelante.
-sin_table:
-    .word 0, 1608, 3216, 4821, 6424, 8022, 9616, 11204
-    .word 12785, 14359, 15924, 17479, 19024, 20557, 22078, 23586
-    .word 25080, 26558, 28020, 29466, 30893, 32303, 33692, 35062
-    .word 36410, 37736, 39040, 40320, 41576, 42806, 44011, 45190
-    .word 46341, 47464, 48559, 49624, 50660, 51665, 52639, 53581
-    .word 54491, 55368, 56212, 57022, 57798, 58538, 59244, 59914
-    .word 60547, 61145, 61705, 62228, 62714, 63162, 63572, 63944
-    .word 64277, 64571, 64827, 65043, 65220, 65358, 65457, 65516
-    .word 65536, 65516, 65457, 65358, 65220, 65043, 64827, 64571
-    .word 64277, 63944, 63572, 63162, 62714, 62228, 61705, 61145
-    .word 60547, 59914, 59244, 58538, 57798, 57022, 56212, 55368
-    .word 54491, 53581, 52639, 51665, 50660, 49624, 48559, 47464
-    .word 46341, 45190, 44011, 42806, 41576, 40320, 39040, 37736
-    .word 36410, 35062, 33692, 32303, 30893, 29466, 28020, 26558
-    .word 25080, 23586, 22078, 20557, 19024, 17479, 15924, 14359
-    .word 12785, 11204, 9616, 8022, 6424, 4821, 3216, 1608
-    .word 0, -1608, -3216, -4821, -6424, -8022, -9616, -11204
-    .word -12785, -14359, -15924, -17479, -19024, -20557, -22078, -23586
-    .word -25080, -26558, -28020, -29466, -30893, -32303, -33692, -35062
-    .word -36410, -37736, -39040, -40320, -41576, -42806, -44011, -45190
-    .word -46341, -47464, -48559, -49624, -50660, -51665, -52639, -53581
-    .word -54491, -55368, -56212, -57022, -57798, -58538, -59244, -59914
-    .word -60547, -61145, -61705, -62228, -62714, -63162, -63572, -63944
-    .word -64277, -64571, -64827, -65043, -65220, -65358, -65457, -65516
-    .word -65536, -65516, -65457, -65358, -65220, -65043, -64827, -64571
-    .word -64277, -63944, -63572, -63162, -62714, -62228, -61705, -61145
-    .word -60547, -59914, -59244, -58538, -57798, -57022, -56212, -55368
-    .word -54491, -53581, -52639, -51665, -50660, -49624, -48559, -47464
-    .word -46341, -45190, -44011, -42806, -41576, -40320, -39040, -37736
-    .word -36410, -35062, -33692, -32303, -30893, -29466, -28020, -26558
-    .word -25080, -23586, -22078, -20557, -19024, -17479, -15924, -14359
-    .word -12785, -11204, -9616, -8022, -6424, -4821, -3216, -1608
+    .include "sin256.inc"
