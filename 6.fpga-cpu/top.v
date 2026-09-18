@@ -8,7 +8,13 @@ module top (
     output ftdi_rxd
 );
 
-  localparam UART_DIVISOR = 40;
+  // 100 MHz / 100 = 1 Mbaud exacto, el mismo que 16, 18, 19 y 21, que tambien
+  // corren a 100 u 80. Con el reloj a 120 eran 40 y 3 Mbaud; a 100 no hay
+  // divisor que de 3 Mbaud (33,33) y `uart.v` ademas exige multiplo de 4
+  // --sobremuestrea a x4--, lo que descarta 50. Y 2,5 Mbaud tampoco vale: el
+  // FTDI solo sabe 3 MHz / n con n entero o n,5 a partir de 2, y 1,2 no es de
+  // los suyos. `monitor.py` lleva el mismo numero.
+  localparam UART_DIVISOR = 100;
 
   assign wifi_gpio0 = 1'b1;
 
@@ -19,13 +25,13 @@ module top (
 
   assign reset = ~locked;
 
-  pll_120 pll_120_i (
+  pll_100 pll_100_i (
       .clkin  (clk_25mhz),
       .clkout0(clk),
       .locked (locked)
   );
 
-  // UART interface: 120 MHz / 40 = 3 Mbaud
+  // UART interface: 100 MHz / 100 = 1 Mbaud
   wire [7:0] uart_rx_data;
   wire uart_rx_strobe;
   wire [7:0] uart_tx_data;

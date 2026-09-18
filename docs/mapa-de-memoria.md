@@ -737,8 +737,8 @@ Referencias principales:
 <!-- BEGIN GENERATED: prototype-summary -->
 | Prototype | Version | Monitor | Clock | Capabilities |
 |---|---|---|---|---|
-| [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 120.0 MHz | mul_div, read_word, write_word |
-| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 120.0 MHz | read_word, write_word |
+| [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 100.0 MHz | mul_div, read_word, write_word |
+| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 100.0 MHz | read_word, write_word |
 | [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
 | [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
 | [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, read_word, write_word, perf_counters |

@@ -9,7 +9,11 @@ from pathlib import Path
 
 import serial
 
-BAUDRATE = 3_000_000
+# 1 Mbaud, no 3: el reloj bajo a 100 MHz y 100/100 = 1 Mbaud exacto, el mismo
+# que 16, 18, 19 y 21. A 100 MHz no hay divisor que de 3 Mbaud (33,33), `uart.v`
+# ademas exige multiplo de 4 --sobremuestrea a x4-- y 2,5 Mbaud no lo sabe hacer
+# el FTDI. Gemelo de `UART_DIVISOR` en `top.v`.
+BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0xFFFF_FFFF
 # Los dos bancos EBR, vistos como 32 KiB seguidos. Estuvieron en 0x00000000 y

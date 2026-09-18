@@ -38,12 +38,28 @@ El monitor controla ambas memorias mientras la CPU está detenida. Durante la
 ejecución, la CPU lee instrucciones y realiza `LOAD`/`STORE`; los accesos de
 memoria del monitor se rechazan.
 
-## Temporización: 120 MHz, con el margen justo
+## Temporización: 100 MHz, con el margen justo
 
-El diseño corre a 120 MHz y **la semilla de nextpnr decide si cumple**: de ocho,
-cierran cuatro, entre 109,90 y 124,39 MHz. Por eso `apio.ini` fija `--seed 3`,
-que da 124,39 (+3,7 %). Esto es distinto del 15, donde la semilla sólo elige
-margen porque todas cumplen.
+El diseño corría a 120 MHz y **la semilla de nextpnr decidía si cumplía**: de
+ocho, cerraban cuatro. Con `WRITE_WORD` dentro del monitor no cierra ninguna
+—barrido de 85,92 a 99,40 MHz—, así que **desde el 18/09/2026 va a 100 MHz**,
+como ya hicieron la 16 (120 → 100) y la 18 (100 → 80) cuando les pasó lo mismo.
+Ver [`pll_100.v`](pll_100.v) y [`../docs/unificacion-mmio.md`](../docs/unificacion-mmio.md).
+
+A 100 cumple **una** semilla de ocho: la 4, con 104,41 MHz (+4,4 %), y es la que
+fija `apio.ini`. Sigue siendo el caso en que la semilla decide si el diseño
+funciona, no cuánto margen sobra, así que **cualquier cambio de RTL obliga a
+rebarrer**. Esto es distinto del 15, donde la semilla sólo elige margen porque
+todas cumplen.
+
+Bajar el reloj arrastró el baudio: 120/40 daban 3 Mbaud exactos y a 100 MHz no
+hay divisor que los dé. El puerto queda en **1 Mbaud** con divisor 100, el mismo
+que 16, 18, 19 y 21.
+
+El camino crítico que queda no está en la CPU ni en el monitor, sino en
+`mem_address → sysid_ready → memory_map_i.release_wait`: 1,2 ns de lógica y más
+de 4 de rutado. Esta carpeta ocupa el 7 % del chip y el emplazador la dispersa,
+de modo que aquí ya no se gana acortando lógica.
 
 Llegar ahí costó partir en dos los dos caminos que terminan escribiendo el banco
 de registros. Los dos eran la misma forma de fallo —mucha lógica combinacional

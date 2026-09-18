@@ -274,11 +274,12 @@ module monitor #(
   //
   // `response_byte_0` lo escriben una veintena de sitios del FSM, asi que su
   // entrada D es un mux de cuatro niveles de LUT. Colgar ahi la BRAM sumaba
-  // sus 5,83 ns de clk-to-q a esos cuatro niveles y salia EL camino critico de
-  // las diez carpetas: 9,05 ns en la 6 y 9,69 en la 10, o sea 110,45 y 103,15
-  // MHz con 120 exigidos. Con un registro propio la BRAM va a una D limpia, y
-  // el byte de bloque se elige en el mux de `tx_data`, que es registro a
-  // registro y poco profundo. No cambia ni un ciclo del protocolo.
+  // sus 5,8 ns de clk-to-q a esos cuatro niveles y salia EL camino critico de
+  // las diez carpetas: 9,05 ns en la 6 y 9,69 en la 10. Con un registro propio
+  // --que yosys absorbe en el registro de salida de la BRAM-- el byte de
+  // bloque se elige en el mux de `tx_data`, que es registro a registro y poco
+  // profundo. No cambia ni un ciclo del protocolo, y sale con MENOS LUTs y
+  // menos FFs que antes. Medido en la 10: mediana de 8 semillas 99,41 -> 106,49.
   reg [7:0] block_read_byte;
   // 1 mientras se emiten los bytes de un READ_BLOCK. Se pone a cero al empezar
   // CUALQUIER comando (STATE_DECODE_COMMAND es el paso obligado de todos), asi

@@ -26,6 +26,10 @@
 > baudio, porque 120 MHz / 40 = 3 Mbaud exacto y a 100 MHz el divisor saldria
 > 33,33. El razonamiento completo esta en [`cpu.v`](cpu.v).
 >
+> **Ese segundo argumento ya no vale**: el reloj bajo a 100 MHz igualmente, por
+> `WRITE_WORD`, y el baudio con el —a 1 Mbaud—. Si alguien quiere reabrir el
+> port de MUL/DIV, lo que tiene que medir es el barrido de HOY, no aquel.
+>
 > Lo que si se hizo fue **quitar los tres `localparam`**: el `cpu.v` los
 > declaraba y validaba su encoding sin implementarlos, o sea que aparentaba
 > soportarlos. `x.tests` lo declara ahora como la capacidad `mul_div`, que
@@ -35,8 +39,10 @@
 
 Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 `9.fpga-ram-param`. Todo el datapath principal funciona en un único dominio de
-120 MHz. El monitor UART conserva los comandos de ejecución y depuración de la
-carpeta 6, responde como versión **1.5** y trabaja a 3 Mbaud. Esa versión
+**100 MHz** —fueron 120 hasta el 18/09/2026, ver
+[`pll_100.v`](pll_100.v)—. El monitor UART conserva los comandos de ejecución y
+depuración de la carpeta 6, responde como versión **1.5** y trabaja a **1
+Mbaud**. Esa versión
 permite que `x.tests --version sdram` distinga este bitstream SDRAM del
 bitstream EBR 1.4.
 

@@ -40,12 +40,13 @@ foreach ($dev in $ftdi) {
 }
 $devices = foreach ($id in $ids) {
     $dev = Get-PnpDevice -InstanceId $id -ErrorAction SilentlyContinue
+    $isPresent = [bool]($all | Where-Object { $_.InstanceId -eq $id })
     $base = "HKLM:\SYSTEM\CurrentControlSet\Enum\$id\Device Parameters"
     $params = Get-ItemProperty -LiteralPath $base -ErrorAction SilentlyContinue
     $wdf = Get-ItemProperty -LiteralPath "$base\WDF" -ErrorAction SilentlyContinue
     [ordered]@{
         instance_id = $id
-        present = [bool]$dev
+        present = $isPresent
         status = if ($dev) { [string]$dev.Status } else { $null }
         class = if ($dev) { [string]$dev.Class } else { $null }
         name = if ($dev) { [string]$dev.FriendlyName } else { $null }

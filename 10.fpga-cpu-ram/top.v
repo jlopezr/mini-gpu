@@ -9,13 +9,22 @@ module top (
     output wire [12:0] sdram_a, output wire [1:0] sdram_ba,
     output wire [1:0] sdram_dqm, inout wire [15:0] sdram_d
 );
-  localparam integer CLK_FREQ_HZ = 120_000_000;
-  localparam integer UART_CLOCKS_PER_BIT = 40;
-  localparam integer UART_MAX_BAUD = 3_000_000;
+  // 100 MHz desde que el monitor lleva WRITE_WORD: a 120 no cumplia ninguna
+  // de ocho semillas (104,40 a 113,01 MHz, mediana 106,49). Ver pll_100.v.
+  // `CLK_FREQ_HZ` es lo que usa el controlador de SDRAM para recalcular sus
+  // tiempos, asi que tiene que bajar con el reloj y no despues.
+  localparam integer CLK_FREQ_HZ = 100_000_000;
+  // 100 MHz / 100 = 1 Mbaud exacto, el mismo que 16, 18, 19 y 21. A 100 no hay
+  // divisor que de los 3 Mbaud de antes (33,33), `uart.v` exige multiplo de 4
+  // --sobremuestrea a x4-- y 2,5 Mbaud no lo sabe hacer el FTDI, que solo da
+  // 3 MHz / n con n entero o n,5 a partir de 2. `monitor.py` lleva el mismo
+  // numero.
+  localparam integer UART_CLOCKS_PER_BIT = 100;
+  localparam integer UART_MAX_BAUD = 1_000_000;
   localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
 
   wire clk, pll_locked;
-  pll_120 pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
+  pll_100 pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
 
   // Shifted reset avoids a counter terminal-count path on the high-fanout
   // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then

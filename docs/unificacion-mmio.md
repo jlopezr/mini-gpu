@@ -20,17 +20,23 @@ criterio para ordenar es ese, no la dificultad.
 
 ---
 
-## Estado al 17/09/2026
+## Estado al 18/09/2026
 
-Quedan **dos** cosas con dueño, una política aplicada pendiente de placa y
-**una** fase entera que hoy no tiene quien la pida.
+El timing de la 6 y la 10 está **resuelto**: las dos bajan a 100 MHz y cierran.
+Queda **una** cosa con dueño y **una** fase entera que hoy no tiene quien la
+pida.
 
 | Qué | Dónde | Bloquea a |
 |---|---|---|
-| **Timing de la 6 y la 10 a 120 MHz** | fase 5 | resintetizarlas, y con ello su parte de la ronda de placa |
-| Ronda de placa en las nueve que no son la 19 | abajo | cerrar 3.5 y 5 |
-| Verificar en placa el error en direcciones inexistentes | fase 5 | cerrar la paridad entre núcleos, simuladores y monitor |
+| Ronda de placa: la 6, la 10, y **repetir las ocho ya hechas** | abajo | cerrar 3.5 y 5 |
 | `DEV_BITMAP` | fase 4b | nada: no tiene consumidor |
+
+Lo de «repetir las ocho» no es un retroceso: `monitor.v` volvió a cambiar
+después de verificarlas, y el fichero es el mismo en las diez carpetas, así que
+sus bitstreams ya no son los que se probaron. Es una pasada automatizada de
+unos diez minutos de placa, y sale más barato que la alternativa —un
+`monitor.v` aparte para la 6 y la 10— que reintroduciría exactamente las copias
+divergentes que esta fase acaba de quitar.
 
 ---
 
@@ -44,8 +50,32 @@ sobre cuál de ellos lo causó.
 contesta `4.19`, y sobre ella se comprobaron `SYS_ID` (`0x4d470013`), los
 contadores en MMIO con `read-word 0x80000300` mientras la CPU corría,
 `WRITE_WORD` sobre SDRAM y sobre `FB_BACK`, el rechazo de dirección no alineada
-en el RTL y el mensaje de «hay que parar la CPU». Lo que sigue son **las otras
-nueve**.
+en el RTL y el mensaje de «hay que parar la CPU».
+
+**Las otras siete con bitstream se pasaron el 17/09/2026** (12, 14, 16, 17, 18,
+21, 22), cada una con esas comprobaciones **y** la suite de casos contra placa
+(`test-board`). Todas en verde al terminar. La 17 no tiene `version.json` y por
+tanto no es un target de `test-board`: eso es deliberado, no un hueco.
+
+Los dos fallos que salieron eran de los que **sólo** da la placa:
+
+- **La 18 truncaba la dirección MMIO a cinco bits en su `top.v`.** Los
+  adaptadores, el mux y el decodificador declaran doce; Verilog trunca en
+  silencio al conectar el puerto, así que los siete bits altos se perdían y los
+  dieciséis dispositivos de la página caían todos sobre el de vídeo: pedir
+  `SYS_ID` o `PERF_CYCLES` devolvía `FB_FRONT`, y escribir en cualquier sitio
+  escribía `FB_FRONT`. No lo ve ningún banco porque ninguno instancia `top` —
+  es exactamente el mismo agujero que dejó `mem_read_word` sin conectar en 10 y
+  16. Arreglado y reverificado.
+- **`x.tests/backends/gpu_fpga.py` no miraba `requires`.** Mientras `cases-gpu`
+  fue el único origen de casos para placa no se notó; con `cases-shared` sí,
+  porque `shared-double-buffer` pide `video` y la 12 no lo tiene: se ejecutaba
+  hasta que la placa contestaba `ff`, o sea un ERROR donde tocaba un SKIP.
+  Añadida la comprobación que `fpga.py` ya tenía.
+
+**Esas ocho hay que repetirlas**, porque `monitor.v` volvió a cambiar después
+(ver `WRITE_WORD` más abajo) y el fichero es común a las diez. Pendientes,
+pues: la 6, la 10 y repetir las ocho.
 
 Lo que hay que validar, y por qué cada cosa puede fallar sólo en placa:
 
@@ -63,25 +93,26 @@ Lo que hay que validar, y por qué cada cosa puede fallar sólo en placa:
   sus `top.v`: en placa devolvía X. No se vio antes porque `monitor_tb` maneja
   esa señal él mismo y ningún banco instancia `top`. Hay ya un
   `test_top_wiring.py` que lo fija, pero quien tiene la última palabra es la
-  placa.
+  placa. **Visto ya en la 16**, que pasó entera; la 10 sigue pendiente.
 - **La convergencia de los `monitor.v` y `WRITE_WORD`**, que cambian el netlist
-  de las diez carpetas. De `WRITE_WORD` sólo está visto en placa el camino de
-  128 bits (la 19). **El de 16 bits —10 y 16, que hacen la escritura en DOS
-  ráfagas— y el de la GPU están probados en simulación y nada más**, y son
-  justamente los dos caminos que más código nuevo llevan.
+  de las diez carpetas. De `WRITE_WORD` el camino de 128 bits está visto en 19 y
+  18, y el de la GPU en 12, 14, 17 y 22. **El de 16 bits —10 y 16, que hacen la
+  escritura en DOS ráfagas— está visto en la 16 y falta la 10**, y es el que más
+  código nuevo lleva.
 
-Hace falta **resintetizar las diez**, y eso ya se hizo: **ocho cierran**
-(12, 14, 16, 17, 18, 19, 21, 22) y **la 6 y la 10 no**. Recordatorio que ya
-costó una vez y que aquí se volvió a cumplir: la semilla de `nextpnr` es
-propiedad de un *netlist*, no de un diseño, así que cualquier cambio de RTL
-invalida un barrido anterior.
+Recordatorio que ya costó una vez y que aquí se volvió a cumplir dos veces más:
+la semilla de `nextpnr` es propiedad de un *netlist*, no de un diseño, así que
+cualquier cambio de RTL invalida un barrido anterior.
 
 - La 19 mantiene su `--seed 4` y sigue cumpliendo.
 - La 16 **perdió** su semilla: la 4, que estaba fijada, cayó a 96,58 MHz con
   100 exigidos. Rebarrido: cumplen siete de ocho; se fijó la 1 (+5,0 %) y ya
   cierra a 105,03 MHz.
-- **La 6 y la 10 no se arreglan con semilla**, y eso es lo que queda abierto;
-  ver el apartado de `WRITE_WORD`.
+- **La 6 y la 10 no se arreglaban con semilla a 120 MHz**: bajaron a 100 y ahí
+  cierran. Ver el apartado de `WRITE_WORD`.
+- **Todas las demás hay que resintetizarlas otra vez**, porque `monitor.v`
+  cambió después de que se archivaran sus builds. Sus semillas fijadas vuelven
+  a ser de un netlist que ya no existe.
 
 `yosys` y `nextpnr` son monohilo: se sintetiza en paralelo con `Start-Job`, una
 carpeta por trabajo.
@@ -195,25 +226,66 @@ corren a 120 MHz, las dos únicas sin margen, y las dos que menos falta les hace
 `WRITE_WORD` —no tienen registros de vídeo ni `HALT_AT`, que es lo que el
 comando existe para arreglar; en ellas sólo ahorra tres viajes de UART.
 
-Tres salidas, y la elección es de quien lleve esto:
+### Cómo se resolvió (18/09/2026)
 
-1. **Bajar su reloj** a 100 MHz. Es lo que ya se hizo en la 16 (120 → 100) y en
-   la 18 (100 → 80) cuando pasó lo mismo, y hay precedente escrito en sus
-   `apio.ini`. Cuesta prestaciones en dos prototipos didácticos.
-2. **Registrar el mux de `req_wdata`/`req_wmask`** del camino nuevo, a costa de
-   un ciclo por acceso del monitor. Sobre los 16 ms de una ida y vuelta por UART
-   no se mide, y es el primer sitio donde mirar.
-3. **Dejar `WRITE_WORD` fuera de la 6 y la 10** con un parámetro `HAS_WRITE_WORD`
-   en `monitor.v`, como ya se hace con `HAS_SERIAL`. Mantiene el fichero único y
-   el coste desaparece donde estorba; a cambio vuelve a haber dos juegos de
-   comandos que numerar.
+Se hicieron **dos** cosas, no una: arreglar el camino crítico de `monitor.v`, y
+aun así bajar el reloj de las dos a 100 MHz.
+
+**El camino crítico era el mismo en las dos, y no era el mux de
+`req_wdata`/`req_wmask`** que la 16 señalaba en su `apio.ini`. Era la BRAM
+`block_read_buffer` entrando en el mux de `response_byte_0`: ese registro lo
+escriben una veintena de ramas del FSM, así que su entrada D son cuatro niveles
+de LUT, y colgar ahí la BRAM les sumaba sus 5,8 ns de clk-to-q. Salían 9,05 ns
+en la 6 y 9,69 en la 10.
+
+El arreglo es dar al byte de bloque su propio registro (`block_read_byte`, que
+yosys absorbe en el registro de salida de la BRAM) y elegirlo en el mux de
+`tx_data`, que es registro a registro. **No cambia ni un ciclo del protocolo** y
+sale con menos LUTs y menos FFs que antes. Vale para las diez carpetas.
+
+No bastó. A 120 MHz seguía sin cumplir ninguna semilla, y en la 6 **empeoró**:
+
+| | antes del arreglo | después, a 120 | después, a 100 |
+|---|---|---|---|
+| 6 | 108,51 (mediana de 8) | 88,93 | **104,41, cumple 1 de 8** |
+| 10 | 99,41 | 106,49 | **107,36, cumplen 7 de 8** |
+
+La 10 gana un 7 % y a 100 MHz va holgada. La 6 no: quitado el cuello de la
+BRAM, el que manda pasa a ser
+`mem_address → sysid_ready → memory_map_i.release_wait`, con 1,2 ns de lógica y
+más de 4 de rutado. La 6 ocupa el 7 % del chip y el emplazador la dispersa, así
+que ahí no se gana desde el RTL. **Cumple una semilla de ocho, la 4, con
++4,4 %**, que es lo más justo del repositorio: en esa carpeta la semilla ya no
+elige margen, elige si el diseño funciona. Su `apio.ini` lo dice con todas las
+letras.
+
+Bajar el reloj **arrastra el baudio**, como su `README.md` llevaba tiempo
+avisando: 120/40 daban 3 Mbaud exactos y a 100 MHz no hay divisor que los dé
+(33,33). `uart.v` además exige múltiplo de 4 —sobremuestrea a ×4—, lo que
+descarta 50, y 2,5 Mbaud no lo sabe hacer el FTDI. Las dos quedan en **1 Mbaud
+con divisor 100**, el mismo que 16, 18, 19 y 21.
+
+En la 10 hay que bajar también `CLK_FREQ_HZ` en su `top.v`: de ahí salen los
+tiempos del controlador de SDRAM, y quedarse en 120 sería pedirle refrescos a
+destiempo.
+
+La salida que **no** se tomó fue `HAS_WRITE_WORD` —dejar el comando fuera de la
+6 y la 10—, y tampoco un `monitor.v` aparte para esas dos. Las dos habrían
+salido más baratas hoy y más caras siempre: vuelven a partir en dos algo que
+esta fase acaba de unificar, y el precio de mantenerlo unido resultó ser una
+pasada de placa, no una deuda permanente.
 
 ### Lo que falta de este punto
 
 - [x] Correr los bancos de las diez carpetas y `x.tests` (235 tests).
-- [x] Síntesis de las diez: ocho cierran; la 16 tras rebarrer semilla.
-- [ ] **Cerrar timing en la 6 y la 10**, con una de las tres salidas de arriba.
-- [ ] Ronda de placa de las nueve que no son la 19.
+- [x] **Cerrar timing en la 6 y la 10**: `block_read_byte` en `monitor.v` y las
+      dos a 100 MHz, con 1 Mbaud. Semillas fijadas: la 4 en la 6, la 2 en la 10.
+- [x] Ronda de placa de las siete con bitstream (12, 14, 16, 17, 18, 21, 22),
+      con `test-board` además de las comprobaciones de contrato. Dos fallos,
+      los dos arreglados: la dirección MMIO truncada de la 18 y `requires` sin
+      mirar en `gpu_fpga.py`.
+- [ ] **Resintetizar las ocho** con el `monitor.v` nuevo, rebarriendo semilla.
+- [ ] **Ronda de placa de la 6, la 10 y otra vez las ocho.**
 
 ---
 
@@ -247,7 +319,13 @@ sincronía de UART.
       magic `0x4d470013`); los dispositivos 4 y 5, `SYS_ID +0x10` y `video +0xf0`
       se rechazan; y escribir `SYS_ID` se rechaza. O sea que el decodificador se
       comporta en placa como dice el contrato.
-- [ ] Verificar estas mismas rutas en las **otras nueve**, tras resintetizarlas.
+- [x] Verificar estas mismas rutas en **12, 14, 16, 17, 18, 21 y 22**
+      (17/09/2026). Las siete rechazan `SYS_ID+0x10`, los dispositivos 4 y 5 y
+      la escritura a `SYS_ID`; las que tienen vídeo rechazan además `video+0xf0`.
+      Aquí salió el truncamiento de dirección de la 18, que hacía que *todo*
+      ese rechazo no ocurriera: sin los siete bits altos no hay dispositivo
+      inexistente que valga, porque ninguna dirección sale del de vídeo.
+- [ ] Verificar la **6 y la 10**, y repetir las siete con el `monitor.v` nuevo.
 
 ---
 
