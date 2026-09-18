@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "video-starfield-fast",
+  "program": "../../../../21.fpga-cpu-hdmi-alu/examples/starfield_fast.asm",
+  "requires": ["frame_capture", "subword_memory", "calls", "shift_immediate", "mul_div"],
+  "run_until": {"swap": 40},
+  "max_instructions": 8000000,
+  "timeout_seconds": 30.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "video": {"underflow": false},
+    "frame": {"file": "../starfield/expected/frame.bin"}
+  }
+}

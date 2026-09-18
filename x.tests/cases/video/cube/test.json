@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "video-cube",
+  "program": "../../../../21.fpga-cpu-hdmi-alu/examples/cube.asm",
+  "requires": ["frame_capture", "subword_memory", "calls", "shift_immediate", "mul_div"],
+  "run_until": {"swap": 24},
+  "max_instructions": 6000000,
+  "timeout_seconds": 30.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "video": {"underflow": false},
+    "frame": {"file": "expected/frame.bin"}
+  }
+}

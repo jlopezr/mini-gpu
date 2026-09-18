@@ -1,6 +1,6 @@
 # Casos de vídeo
 
-Cinco casos, y cada uno cubre algo que los otros no. Todos declaran una
+Ocho casos, y cada uno cubre algo que los otros no. Todos declaran una
 [capacidad](../../README.md#capacidades), así que se omiten solos donde no hay
 con qué ejecutarlos.
 
@@ -11,8 +11,11 @@ con qué ejecutarlos.
 | [`bounce`](bounce) | `frame_capture` | Pitch, bordes y escrituras parciales de línea |
 | [`bresenham-lines`](bresenham-lines) | `frame_capture` | Ocho octantes, llamadas y píxeles RGB565 individuales |
 | [`bresenham-circles`](bresenham-circles) | `frame_capture` | Punto medio, simetría de ocho y tres niveles de llamadas |
+| [`starfield`](starfield) | `frame_capture` | `DIV` con dividendo negativo repartido por la pantalla, y estado que sobrevive entre frames |
+| [`starfield-fast`](starfield-fast) | `frame_capture` | Borrado incremental: que el buffer trasero es el frame de hace **dos** |
+| [`cube`](cube) | `frame_capture` | `MULFX` y coma fija Q16.16, y las dos reglas de redondeo de la ISA a la vez |
 
-## Por qué cinco y no uno
+## Por qué ocho y no uno
 
 **`registers`** no dibuja nada. Comprueba lo único que un programa necesita
 saber de los registros: que las bases arrancan donde dice el hardware, que
@@ -63,6 +66,54 @@ Cubre el algoritmo del punto medio, los ocho puntos simétricos y tres niveles
 de llamadas. Los dos Bresenham tienen además casos `*-core` en `cases/programs`:
 esos dejan la secuencia exacta de puntos en RAM, sin depender del vídeo.
 
+**`starfield`** ejecuta la demo del campo de estrellas de la 21 y para en el
+intercambio 40. Aporta dos cosas que los Bresenham no:
+
+- **`DIV` con dividendo negativo, 256 veces por frame y repartido por la
+  pantalla.** La proyección es `160 + x/z` con `x` de signo cualquiera. Un
+  truncamiento hacia menos infinito en vez de hacia cero desplaza un píxel las
+  estrellas de la mitad izquierda y de la mitad superior, y sólo ésas. Un caso
+  de ALU que compara cocientes sueltos mira el signo del resultado pero no su
+  reparto espacial, así que ese fallo se le escapa.
+- **Estado que sobrevive entre frames.** Es el único caso de vídeo cuyo frame N
+  no se puede calcular sin haber calculado los N-1 anteriores: la `z` de cada
+  estrella se acumula y las reapariciones consumen tiradas del PRNG. Eso fija
+  también el contrato del xorshift — si alguien lo toca, el campo entero cambia.
+
+**`starfield-fast`** es el mismo campo con borrado incremental, y **compara
+contra el `expected/frame.bin` de `starfield`**, no contra uno propio. Eso no es
+por ahorrar un fichero: es todo el caso.
+
+El 95% del frame de `starfield` es pintar de negro 38 400 palabras para volver a
+encender 256 píxeles. La versión rápida borra sólo esos 256 y pasa de 123 000 a
+16 000 instrucciones por frame —medido, 4 930 000 contra 641 000 hasta el
+intercambio 40—. Lo que cuesta ese ahorro es contabilidad: con doble buffer, el
+buffer trasero contiene el frame de **hace dos**, así que cada estrella guarda
+dos direcciones y se borra la más vieja. Y los borrados van todos en una pasada
+previa a los dibujos: entrelazados, el borrado de una estrella apagaría el píxel
+que otra acaba de encender cuando coinciden.
+
+Un fallo en esa contabilidad no se ve a ojo —el campo sigue pareciendo un campo
+de estrellas, con algún píxel de más o de menos—, pero sí se ve contra el frame
+de la versión que repinta entero. Que los dos programas den la imagen idéntica
+es la prueba, y es exactamente la razón que da `bounce` para repintar entero:
+sin un caso así, un fallo de contabilidad se confundiría con uno del hardware.
+
+**`cube`** ejecuta el cubo en alambre de la 21 y para en el intercambio 24. Es
+el único caso de vídeo que ejercita **coma fija**: `MULFX` en Q16.16 para las
+dos rotaciones, tabla de senos en `.rodata`, y perspectiva con `DIV`.
+
+Lo que cubre y ningún otro toca son **las dos reglas de redondeo de la ISA a la
+vez**. `MULFX` y `SARI` desplazan aritméticamente, o sea hacia menos infinito;
+`DIV` trunca hacia cero. Una implementación que aplique la misma regla a las
+tres —lo natural si se escribe deprisa— desplaza un píxel las aristas del lado
+negativo y sólo ésas. El modelo de referencia las escribe por separado y lo
+dice en el comentario, porque es el error que este caso existe para atrapar.
+
+Para en el 24 porque con pasos 1 y 3 los dos ángulos valen ahí 23 y 69: ni
+múltiplos ni simétricos, así que ninguna cara queda de canto y las doce aristas
+tienen longitud distinta de cero.
+
 ## Aislamiento: la placa no arranca de cero entre casos
 
 El simulador construye un `VideoDevice` nuevo en cada ejecución. La placa no:
@@ -89,6 +140,11 @@ esperado. **No se genera capturando la placa**: si el esperado saliera de una
 captura, el caso solo comprobaría que la placa sigue haciendo lo que hacía,
 incluido lo que haga mal.
 
+La excepción es `starfield-fast`, que no tiene `reference.py` porque apunta al
+esperado de `starfield`. No rompe la regla: ese fichero lo sigue calculando un
+modelo: lo que `starfield-fast` añade es que dos programas distintos tienen que
+coincidir con él.
+
 ```bash
 python cases/video/bounce/reference.py                  # regenera expected/frame.bin
 python cases/video/bounce/reference.py --trayectoria    # las posiciones y los rebotes
@@ -109,7 +165,7 @@ python ../../tools/compare-frames.py --rgb565 320x240 \
 # Los tres casos base, en la 18
 python run_tests.py --backend cpu-fpga --version bl8 --port COM3 cases/video
 
-# Los cinco, incluida la ISA que necesitan los Bresenham, en la 21
+# Los ocho, incluida la ISA que necesitan los Bresenham, en la 21
 python run_tests.py --backend cpu-fpga --version alu --port COM3 cases/video
 
 # Solo el que corre en la 16
@@ -117,7 +173,7 @@ python run_tests.py --backend cpu-fpga --version hdmi --port COM3 \
     cases/video/registers/test.json
 ```
 
-Los cinco corren también en el simulador, sin placa:
+Los ocho corren también en el simulador, sin placa:
 
 ```bash
 python run_tests.py --backend cpusim cases/video
