@@ -213,6 +213,68 @@ class CompareTest(unittest.TestCase):
             assemble("SLT R1, R2")
 
 
+class EtiquetaLocalTest(unittest.TestCase):
+    """Etiquetas `@x`, locales a la ultima global.
+
+    Existen por los `.include`: sin ellas `drawline.inc` se apropiaba de nueve
+    nombres globales, ocho de los cuales son saltos internos.
+    """
+
+    def test_el_mismo_nombre_en_dos_ambitos(self):
+        """Lo que justifica la funcion: dos rutinas con su propio `@loop`."""
+        palabras = assemble(
+            "uno:\n"
+            "@loop:\n"
+            "    ADD R1, R2, R3\n"
+            "    BNE R1, R0, @loop\n"
+            "dos:\n"
+            "@loop:\n"
+            "    SUB R1, R2, R3\n"
+            "    BNE R1, R0, @loop\n"
+        )
+        self.assertEqual(len(palabras), 4)
+        # Cada BNE salta a SU @loop, no al del otro ambito. El offset es
+        # relativo a PC+4 y va en palabras, asi que volver a la instruccion
+        # de arriba son -2, no -1.
+        for indice in (1, 3):
+            self.assertEqual(palabras[indice] & 0xFFFF, 0xFFFE)
+
+    def test_sin_etiqueta_global_antes(self):
+        with self.assertRaises(AsmError) as caja:
+            assemble("@x:\n    HALT\n")
+        self.assertIn("sin ninguna etiqueta global", str(caja.exception))
+
+    def test_local_no_definida_se_explica_con_su_nombre(self):
+        """El nombre interno es `a@no_existe`, que no lo escribio nadie."""
+        with self.assertRaises(AsmError) as caja:
+            assemble("a:\n    BRA @no_existe\n")
+        mensaje = str(caja.exception)
+        self.assertIn("etiqueta no definida", mensaje)
+        self.assertIn("@no_existe", mensaje)
+        self.assertIn("local de a", mensaje)
+
+    def test_una_local_no_abre_ambito(self):
+        """Si `@a` abriera ambito, `@b` perteneceria a `@a` y no a `g`."""
+        palabras = assemble(
+            "g:\n@a:\n    NOP\n@b:\n    NOP\n    BRA @a\n"
+        )
+        self.assertEqual(len(palabras), 3)
+        self.assertEqual(palabras[2] & 0xFFFF, 0xFFFD)   # tres atras
+
+    def test_arroba_dentro_de_una_cadena_no_es_etiqueta(self):
+        palabras = assemble('g:\n    .string "a@b"\n')
+        self.assertEqual(len(palabras), 1)               # 4 bytes: a @ b NUL
+
+    def test_no_choca_con_una_global_del_mismo_nombre(self):
+        palabras = assemble(
+            "loop:\n    NOP\n"
+            "g:\n@loop:\n    NOP\n    BRA @loop\n    BRA loop\n"
+        )
+        self.assertEqual(len(palabras), 4)
+        self.assertEqual(palabras[2] & 0xFFFF, 0xFFFE)   # @loop, la de arriba
+        self.assertEqual(palabras[3] & 0xFFFF, 0xFFFC)   # loop global, cuatro
+
+
 class IncludeTest(unittest.TestCase):
     """`.include`, que existe porque `drawline` estaba copiado en tres sitios.
 

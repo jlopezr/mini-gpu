@@ -415,6 +415,13 @@ de hardware.
 
 ## 5. Sintaxis del ensamblador
 
+> Esta sección es un resumen. La referencia completa de `miniisa_asm.py`
+> —directivas de datos y secciones, `.include`, `.once`, etiquetas locales `@`,
+> línea de órdenes y API de Python— está en
+> [`ensamblador.md`](ensamblador.md). Nada de eso forma parte de la ISA: se
+> resuelve antes de emitir un solo bit, y una implementación conforme no tiene
+> por qué saber que existe.
+
 - Los registros se escriben `R0`–`R31` sin distinguir mayúsculas.
 - Los operandos se separan mediante comas.
 - Los enteros aceptan la sintaxis de Python (`123`, `-4`, `0xFF`).

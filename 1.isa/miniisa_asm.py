@@ -177,8 +177,51 @@ BRANCH_OPS = {
 # ---------------------------------------------------------------------------
 
 REGISTER_RE = re.compile(r"^[Rr](\d+)$")
-LABEL_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
+LABEL_RE = re.compile(r"^@?[A-Za-z_.$][A-Za-z0-9_.$]*$")
 MEMORY_RE = re.compile(r"^(.+)\(([Rr]\d+)\)$")
+
+# ---------------------------------------------------------------------------
+# Etiquetas locales
+#
+# Una etiqueta que empieza por `@` pertenece a la ultima etiqueta global, y por
+# dentro pasa a llamarse `global@local`. Como `@` solo se admite al PRINCIPIO
+# de un nombre, ese nombre compuesto no lo puede escribir nadie a mano: no hay
+# forma de chocar con el.
+#
+# Existen por los `.include`. Sin ellas, `drawline.inc` se apropiaba de nueve
+# nombres globales --`dx_ready`, `skip_x`, `line_step`...-- de los que ocho son
+# saltos internos que no le importan a nadie. Con `@`, reserva uno.
+#
+# El sigilo es `@` y no `.` porque un `.loop:` se lee como una directiva, ni `_`
+# porque el backend de mini-lcc ya emite `_start` como simbolo global. `@` no
+# lo usa nadie en el repo y es la convencion de MASM.
+# ---------------------------------------------------------------------------
+
+LOCAL_REF_RE = re.compile(r"@[A-Za-z0-9_.$]+")
+
+
+def es_local(nombre: str) -> bool:
+    return nombre.startswith("@")
+
+
+def mangle_local(nombre: str, scope: str, donde: str) -> str:
+    """`@loop` dentro de `drawline` -> `drawline@loop`."""
+    if not scope:
+        raise AsmError(
+            f"{donde}: etiqueta local {nombre} sin ninguna etiqueta global "
+            "antes a la que pertenecer"
+        )
+    return scope + nombre
+
+
+def rewrite_locals(text: str, scope: str, donde: str) -> str:
+    """Sustituye las referencias `@x` por su nombre compuesto.
+
+    Se hace en la pasada 1, igual que los `.include`: a partir de ahi el resto
+    del ensamblador no sabe que existen las etiquetas locales, y `resolve_target`
+    y compañia siguen viendo nombres normales.
+    """
+    return LOCAL_REF_RE.sub(lambda m: mangle_local(m.group(0), scope, donde), text)
 
 
 # Nombre del origen cuando el fuente llega como cadena y no como fichero: los
@@ -655,6 +698,7 @@ def first_pass(source: str,
     lines: list[SourceLine] = []
     offsets = {name: 0 for name in SECTION_ORDER}
     section = ".text"
+    scope = ""          # ultima etiqueta global; a ella pertenecen las `@`
 
     for origin, number, raw in expand_includes(source, base_dir, origin, include_dirs):
         text = strip_comment(raw)
@@ -670,6 +714,12 @@ def first_pass(source: str,
 
             if not LABEL_RE.match(label):
                 break
+
+            if es_local(label):
+                label = mangle_local(label, scope, ubicacion(origin, number))
+            else:
+                # Abre ambito: las `@` que vengan detras le pertenecen.
+                scope = label
 
             if label in label_offsets:
                 # Con `.include`, el duplicado suele estar en OTRO fichero, y
@@ -694,6 +744,13 @@ def first_pass(source: str,
         partes = text.split(None, 1)
         mnemonic = partes[0].upper()
         operand_text = partes[1] if len(partes) > 1 else ""
+
+        # Referencias a etiquetas locales. Se saltan las cadenas, donde una
+        # `@` es parte del mensaje y no un nombre.
+        if mnemonic != ".STRING" and "@" in text:
+            text = rewrite_locals(text, scope, ubicacion(origin, number))
+            partes = text.split(None, 1)
+            operand_text = partes[1] if len(partes) > 1 else ""
 
         if is_directive(text):
             try:
@@ -792,6 +849,15 @@ def resolve_target(token: str, labels: dict[str, int]) -> int:
                     part = part[1:]
                 total += sign * resolve_target(part, labels)
             return total
+    if LABEL_RE.match(token) or "@" in token:
+        # Parece un nombre, no un numero. Decir "entero invalido" mandaba a
+        # buscar una errata en un literal que no existe; y con las etiquetas
+        # locales el nombre que se veia era el compuesto, `drawline@loop`, que
+        # no esta escrito en ningun sitio. Se muestra como lo escribio quien
+        # lo escribio.
+        global_, _, local = token.partition("@")
+        visible = f"@{local} (local de {global_})" if local else token
+        raise AsmError(f"etiqueta no definida: {visible}")
     return parse_int(token)
 
 
