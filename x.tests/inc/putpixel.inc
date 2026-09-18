@@ -13,6 +13,9 @@
 ;
 ; Etiqueta reservada: putpixel.
 ; ============================================================
+
+    .once
+
 ; ------------------------------------------------------------
 ; putpixel: escribe el pixel (R4, R5) del color R6 en el buffer trasero.
 ;

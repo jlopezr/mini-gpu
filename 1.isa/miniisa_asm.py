@@ -38,12 +38,18 @@ Labels:
 
 Inclusion de otros ficheros:
     .include "drawline.inc"
+    .once                   ; al principio del INCLUIDO: no entra dos veces
 
     Se busca primero en la carpeta del fichero que incluye, y despues en las
     carpetas pasadas con `-I` (repetible). La biblioteca compartida del repo
     esta en `x.tests/inc`, y los lanzadores ya la pasan. No hay espacios de
     nombres: las etiquetas de lo incluido son globales, y un choque se
     denuncia diciendo los dos sitios.
+
+    `.once` lo pone el fichero incluido, no quien lo incluye: ser idempotente
+    es una propiedad suya, y asi no hay que acordarse en cada llamada. Es lo
+    que permite que un .inc arrastre sus dependencias. Sin `.once`, incluir
+    dos veces emite el contenido dos veces, que a veces es lo que se quiere.
 
 Salida:
     binario little-endian, una palabra de 32 bits por instrucción.
@@ -461,7 +467,8 @@ def buscar_include(ruta: str, base_dir: Path | None,
 def expand_includes(source: str, base_dir: Path | None = None,
                     origin: str = ENTRADA,
                     include_dirs: tuple[Path, ...] = (),
-                    _stack: tuple[Path, ...] = ()) -> list[tuple[str, int, str]]:
+                    _stack: tuple[Path, ...] = (),
+                    _once: set[Path] | None = None) -> list[tuple[str, int, str]]:
     """Resuelve los `.include` y devuelve (origen, numero, linea) en orden.
 
     Se hace ANTES de la pasada 1, de modo que el resto del ensamblador sigue
@@ -475,6 +482,11 @@ def expand_includes(source: str, base_dir: Path | None = None,
     ensamblador desde la raiz.
     """
     filas: list[tuple[str, int, str]] = []
+    # Conjunto compartido por TODA la expansion, no por nivel: un fichero con
+    # `.once` incluido desde dos ramas distintas del arbol tiene que entrar una
+    # sola vez, no una por rama.
+    if _once is None:
+        _once = set()
 
     for number, raw in enumerate(source.splitlines(), 1):
         text = strip_comment(raw)
@@ -483,7 +495,21 @@ def expand_includes(source: str, base_dir: Path | None = None,
             continue
 
         partes = text.split(None, 1)
-        if partes[0].upper() != ".INCLUDE":
+        mnemonic = partes[0].upper()
+
+        if mnemonic == ".ONCE":
+            # El fichero se declara idempotente. Se aprende al incluirlo la
+            # primera vez --hay que leerlo para verlo-- y a partir de ahi las
+            # siguientes inclusiones se saltan enteras.
+            #
+            # En el fichero principal no hace nada, y eso es deliberado en vez
+            # de un error: un .asm puede querer ensamblarse suelto Y ser
+            # incluido por otro, y marcarlo no deberia impedir lo primero.
+            if _stack:
+                _once.add(_stack[-1])
+            continue
+
+        if mnemonic != ".INCLUDE":
             filas.append((origin, number, raw))
             continue
 
@@ -516,6 +542,12 @@ def expand_includes(source: str, base_dir: Path | None = None,
         except OSError as error:
             raise AsmError(f"{ubicacion(origin, number)}: {ruta}: {error}") from None
 
+        if resuelto in _once:
+            # Ya entro y se habia declarado `.once`. Saltarlo no es un caso
+            # raro: es lo que permite que drawline.inc pida putpixel.inc por su
+            # cuenta sin chocar con el programa que tambien lo incluye.
+            continue
+
         if resuelto in _stack:
             cadena = " -> ".join(p.name for p in _stack) + f" -> {resuelto.name}"
             raise AsmError(
@@ -537,7 +569,7 @@ def expand_includes(source: str, base_dir: Path | None = None,
         # otro sigue funcionando desde donde sea que lo incluyan.
         filas.extend(expand_includes(
             incluido, resuelto.parent, resuelto.name,
-            include_dirs, _stack + (resuelto,)
+            include_dirs, _stack + (resuelto,), _once
         ))
 
     return filas

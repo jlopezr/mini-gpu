@@ -197,5 +197,4 @@ edge_bottom:
 ; Las dos rutinas viven ahora en x.tests/inc, en una sola copia. Estaban
 ; duplicadas aqui y en cube.asm; putpixel, ademas, en bresenham_circles.asm.
 ; El contrato es que R1 tenga la base del buffer trasero y R24 valga 640.
-    .include "drawline.inc"
-    .include "putpixel.inc"
+    .include "drawline.inc"     ; arrastra putpixel.inc, los dos con .once

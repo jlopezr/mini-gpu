@@ -232,8 +232,7 @@ wait_swap:
 ; bresenham_circles.asm; ahora hay una sola copia. El contrato es que R1
 ; tenga la base del buffer trasero y R24 valga 640, cosa que hace el
 ; bucle de arriba.
-    .include "drawline.inc"
-    .include "putpixel.inc"
+    .include "drawline.inc"     ; arrastra putpixel.inc, los dos con .once
 
     .rodata
 

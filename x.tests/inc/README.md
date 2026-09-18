@@ -10,7 +10,7 @@ cubo se quedaba con la versión vieja.
 | Fichero | Qué define | Depende de |
 |---|---|---|
 | [`putpixel.inc`](putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
-| [`drawline.inc`](drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc` |
+| [`drawline.inc`](drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc`, que incluye él solo |
 | [`sin256.inc`](sin256.inc) | `sin_table`, 256 entradas Q16.16 en `.rodata` | — |
 
 ## Cómo se buscan
@@ -23,8 +23,7 @@ Los lanzadores (`run-board`, `capture-frame-sim`, `run_tests.py`) ya pasan esta
 carpeta, así que desde un `.asm` del repo basta con el nombre:
 
 ```asm
-    .include "drawline.inc"
-    .include "putpixel.inc"
+    .include "drawline.inc"     ; arrastra putpixel.inc por su cuenta
 ```
 
 A mano, o desde fuera de los lanzadores:
@@ -44,11 +43,13 @@ ensamblador dice los dos sitios:
 cube.asm:212: label duplicado: putpixel (ya definido en putpixel.inc:23)
 ```
 
-**Tampoco hay guardas de inclusión.** Por eso `drawline.inc` **no** incluye
-`putpixel.inc` por su cuenta, aunque lo necesite: si lo hiciera, un programa que
-incluyera los dos —lo natural— chocaría consigo mismo. Se incluyen los dos a
-mano, y así `bresenham_circles.asm`, que usa `putpixel` pero no `drawline`, no
-se lleva código muerto.
+**Los tres llevan `.once`**, así que un `.inc` puede arrastrar sus dependencias
+sin chocar con el programa que también las incluya. `.once` lo pone el fichero
+incluido, no quien lo incluye: ser idempotente es una propiedad suya, y así no
+hay que acordarse en cada sitio.
+
+Siguen siendo dos ficheros y no uno porque `bresenham_circles.asm` usa
+`putpixel` pero no `drawline`, y así no se lleva código muerto.
 
 ## Al cambiar algo de aquí
 

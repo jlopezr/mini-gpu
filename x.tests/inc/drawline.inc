@@ -6,10 +6,10 @@
 ; dos veces, con el riesgo de que los casos de x.tests que comparan contra el
 ; abanico pasaran mientras el cubo se quedaba con la version vieja.
 ;
-; DEPENDE de `putpixel.inc`, que hay que incluir tambien. No lo incluye el
-; solo a proposito: el ensamblador no tiene guardas de inclusion, asi que un
-; `.include` anidado chocaria con el de quien ya lo hubiera puesto. Y hay un
-; usuario --bresenham_circles.asm-- que quiere putpixel sin drawline.
+; DEPENDE de `putpixel.inc`, y lo incluye el solo: los dos llevan `.once`, asi
+; que el programa puede incluir tambien putpixel.inc --o no-- y entra una sola
+; vez igualmente. bresenham_circles.asm sigue pudiendo pedir putpixel sin
+; drawline, que es el caso que obliga a que sean dos ficheros y no uno.
 ;
 ; Etiquetas reservadas: drawline, dx_ready, dy_positive, dy_ready, line_step,
 ; advance, skip_x, skip_y, line_done.
@@ -17,6 +17,9 @@
 ; Solo define una rutina; no emite nada que se ejecute por caer dentro.
 ; Incluyelo DESPUES del bucle principal, o saltalo.
 ; ============================================================
+
+    .once
+
 ; ------------------------------------------------------------
 ; drawline: traza la recta de (R9,R10) a (R11,R12) con el color R6.
 ;
@@ -76,3 +79,5 @@ line_done:
     RET                        ; alias de JR R31
 
 
+
+    .include "putpixel.inc"

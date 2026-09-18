@@ -304,6 +304,48 @@ class IncludeTest(unittest.TestCase):
         with self.assertRaises(AsmError):
             assemble(".include trozo.inc\n", Path("."), "prog.asm")
 
+    def test_once_evita_la_segunda_inclusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "trozo.inc", "    .once\nsumar:\n    RET\n")
+            palabras = assemble(
+                'HALT\n.include "trozo.inc"\n.include "trozo.inc"\n',
+                Path(tmp), "prog.asm")
+        self.assertEqual(len(palabras), 2)      # HALT + RET, no RET dos veces
+
+    def test_sin_once_la_segunda_inclusion_choca(self):
+        """El contraste del anterior: `.once` es opt-in, no el comportamiento.
+
+        Incluir dos veces a proposito es legitimo --una tabla que se quiere
+        emitir dos veces-- asi que `.include` no deduplica por su cuenta.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "trozo.inc", "sumar:\n    RET\n")
+            with self.assertRaises(AsmError) as caja:
+                assemble('.include "trozo.inc"\n.include "trozo.inc"\n',
+                         Path(tmp), "prog.asm")
+        self.assertIn("duplicado", str(caja.exception))
+
+    def test_once_en_diamante(self):
+        """El caso que motiva `.once`: A y B piden C, y el programa pide los dos.
+
+        Es la forma que tiene drawline.inc de arrastrar putpixel.inc sin
+        chocar con el programa que tambien lo incluye.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "c.inc", "    .once\nhoja:\n    RET\n")
+            self.escribir(tmp, "a.inc", '.include "c.inc"\na:\n    RET\n')
+            self.escribir(tmp, "b.inc", '.include "c.inc"\nb:\n    RET\n')
+            palabras = assemble('HALT\n.include "a.inc"\n.include "b.inc"\n',
+                                Path(tmp), "prog.asm")
+        # HALT + hoja + a + b: la hoja una sola vez
+        self.assertEqual(len(palabras), 4)
+
+    def test_once_en_el_principal_no_hace_nada(self):
+        """Un .asm puede querer ensamblarse suelto Y ser incluido por otro, asi
+        que marcarlo no puede impedir lo primero."""
+        palabras = assemble("    .once\n    HALT\n")
+        self.assertEqual(len(palabras), 1)
+
     def test_las_secciones_del_incluido_cuentan(self):
         """Un .inc que mete datos en .rodata no descoloca el .text de quien lo
         incluye: las secciones se reordenan al final, como siempre."""
