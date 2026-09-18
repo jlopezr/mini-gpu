@@ -891,7 +891,7 @@ The `mini-tst` suite currently covers:
 - simple `memset`/`memcpy`-style routines;
 - generated manifests with register expectations and memory dumps.
 
-The current v0.1 baseline is:
+The current baseline is:
 
 ```sh
 python3 run-mini-tst.py --simulate
@@ -900,11 +900,18 @@ python3 run-mini-tst.py --simulate
 with expected result:
 
 ```text
-116/116 compiled+simulated (+4 xfail)
+139/139 compiled+simulated (+2 xfail)
 ```
 
-The test suite should be extended with dedicated 64-bit tests as the new
-lowering is implemented.
+The two expected failures are C99 designated initializers, which this lcc
+front-end does not parse (`97`, `98`).
+
+The 64-bit lowering now has dedicated tests of its own, the `long_long` ones in
+the `117`-`139` range: returns, arguments, memory words, add with carry,
+subtract with borrow, multiplication, division — signed, unsigned and by
+zero — shifts, bitwise operations, negation, signed and unsigned comparison,
+and spilling a pair across a call. See `y.lcc/README-miniisa.md` for what the
+backend covers.
 
 ---
 

@@ -1581,6 +1581,2668 @@ Ya tenemos suficiente base para empezar a estudiar código real.
 
 ---
 
+# Antes de la GPU: dibujar el cubo con una CPU
+
+Hasta ahora hemos hablado del framebuffer, de los píxeles y de cómo se representa el color. Sabemos, por tanto, cuál es el destino final de nuestro trabajo: una región de memoria que el sistema de vídeo recorrerá posteriormente para producir la imagen.
+
+Pero todavía queda una pregunta mucho más importante:
+
+**¿cómo pasamos de un cubo definido mediante coordenadas tridimensionales a esos píxeles del framebuffer?**
+
+Antes de introducir threads, warps, lanes o ejecución SIMT, resulta muy útil responder a esta pregunta utilizando únicamente una CPU.
+
+De hecho, una de las versiones anteriores del ejemplo del cubo hace exactamente eso. Todo el proceso se ejecuta secuencialmente: la CPU transforma los vértices, los proyecta sobre la pantalla, determina qué caras son visibles, divide esas caras en triángulos y finalmente recorre los píxeles de cada triángulo.
+
+Esto nos permitirá separar dos problemas que conviene no confundir:
+
+1. **Cómo se dibuja un objeto 3D.**
+2. **Cómo una GPU permite ejecutar ese trabajo de forma paralela.**
+
+La GPU no cambia las matemáticas fundamentales del rasterizado. Lo que cambia, sobre todo, es **cómo organizamos y distribuimos el trabajo**.
+
+---
+
+## 1. El pipeline completo ya existe en la CPU
+
+La versión CPU del cubo implementa aproximadamente este pipeline:
+
+```text
+         MODELO 3D
+             │
+             ▼
+       8 vértices (x,y,z)
+             │
+             ▼
+          rotación
+             │
+             ▼
+   vértices transformados
+             │
+             ▼
+     proyección perspectiva
+             │
+             ▼
+       8 puntos (x,y)
+             │
+             ▼
+       recorrer 6 caras
+             │
+             ▼
+     back-face culling
+             │
+             ▼
+  dividir cara en 2 triángulos
+             │
+             ▼
+       bounding box
+             │
+             ▼
+       edge functions
+             │
+             ▼
+        rasterización
+             │
+             ▼
+          putpixel
+             │
+             ▼
+        framebuffer
+             │
+             ▼
+           scanout
+```
+
+Este diagrama es importante porque, conceptualmente, **ya estamos haciendo gráficos 3D completos**.
+
+Todavía no hay una GPU involucrada.
+
+Eso nos enseña una primera idea fundamental:
+
+> Una GPU no es necesaria para definir las matemáticas de los gráficos 3D. La GPU aparece cuando queremos ejecutar esas matemáticas y procesar grandes cantidades de datos de forma eficiente.
+
+---
+
+# 2. El cubo comienza siendo solamente ocho puntos
+
+El cubo se almacena mediante ocho vértices tridimensionales.
+
+En el programa CPU aparecen como:
+
+```asm
+vertices:
+    .word -65536, -65536, -65536
+    .word  65536, -65536, -65536
+    .word -65536,  65536, -65536
+    .word  65536,  65536, -65536
+    .word -65536, -65536,  65536
+    .word  65536, -65536,  65536
+    .word -65536,  65536,  65536
+    .word  65536,  65536,  65536
+```
+
+Los valores están expresados en formato de punto fijo. Conceptualmente podemos imaginar simplemente:
+
+```text
+(-1,-1,-1)
+(+1,-1,-1)
+(-1,+1,-1)
+(+1,+1,-1)
+
+(-1,-1,+1)
+(+1,-1,+1)
+(-1,+1,+1)
+(+1,+1,+1)
+```
+
+Todavía no existen caras ni píxeles.
+
+Solo tenemos ocho posiciones en un espacio tridimensional.
+
+Podemos visualizarlo así:
+
+```text
+        6────────7
+       /│       /│
+      / │      / │
+     2────────3  │
+     │  │     │  │
+     │  4─────│──5
+     │ /      │ /
+     │/       │/
+     0────────1
+```
+
+Las caras del cubo se describen posteriormente indicando qué cuatro vértices forman cada una.
+
+---
+
+# 3. Rotar el objeto
+
+Si dibujásemos siempre los mismos vértices, el cubo permanecería inmóvil.
+
+Para animarlo modificamos sus coordenadas aplicando una rotación.
+
+La versión CPU realiza este trabajo recorriendo secuencialmente los ocho vértices:
+
+```text
+vértice 0
+    ↓
+rotar
+    ↓
+proyectar
+
+vértice 1
+    ↓
+rotar
+    ↓
+proyectar
+
+...
+
+vértice 7
+    ↓
+rotar
+    ↓
+proyectar
+```
+
+En ensamblador esto aparece como un bucle:
+
+```asm
+MOVI  R19, 8
+
+vertex_loop:
+    ...
+    ; transformar vértice
+    ...
+    ADDI  R19, R19, -1
+    BNE   R19, R0, vertex_loop
+```
+
+La CPU procesa un vértice después de otro.
+
+Esta observación será muy importante más adelante.
+
+Los ocho cálculos son prácticamente independientes:
+
+```text
+V0 ──► transform(V0)
+V1 ──► transform(V1)
+V2 ──► transform(V2)
+V3 ──► transform(V3)
+V4 ──► transform(V4)
+V5 ──► transform(V5)
+V6 ──► transform(V6)
+V7 ──► transform(V7)
+```
+
+La CPU los ejecuta secuencialmente porque ese es el modelo de ejecución que estamos utilizando.
+
+Pero el algoritmo ya nos está mostrando **paralelismo natural**.
+
+Más adelante veremos que esta correspondencia resulta especialmente atractiva para MiniGPU:
+
+```text
+8 vértices
+     ↕
+8 lanes
+```
+
+Por ahora, sin embargo, continuaremos pensando como una CPU.
+
+---
+
+# 4. Del espacio 3D a la pantalla 2D
+
+Después de rotar un vértice tenemos unas coordenadas tridimensionales:
+
+```text
+(x, y, z)
+```
+
+Pero el framebuffer es bidimensional.
+
+Necesitamos convertir:
+
+```text
+(x, y, z)
+```
+
+en:
+
+```text
+(screen_x, screen_y)
+```
+
+Para ello utilizamos una proyección perspectiva.
+
+De forma simplificada:
+
+$$
+screen_x = center_x + \frac{x \cdot focal}{z}
+$$
+
+$$
+screen_y = center_y + \frac{y \cdot focal}{z}
+$$
+
+En nuestro ejemplo:
+
+```text
+center_x = 160
+center_y = 120
+focal    = 140
+```
+
+porque la pantalla es de 320×240 píxeles.
+
+El código refleja directamente esta operación:
+
+```asm
+MUL   R11, R9, R13
+DIV   R11, R11, R10
+ADDI  R11, R11, 160
+
+MUL   R12, R7, R13
+DIV   R12, R12, R10
+ADDI  R12, R12, 120
+```
+
+Por tanto, después de transformar los ocho vértices ya no necesitamos trabajar con el cubo exclusivamente como objeto tridimensional.
+
+Tenemos ocho posiciones proyectadas:
+
+```text
+P0 = (x0,y0)
+P1 = (x1,y1)
+...
+P7 = (x7,y7)
+```
+
+que viven en el espacio de la pantalla.
+
+Esta frontera es conceptualmente importante:
+
+```text
+             GEOMETRÍA 3D
+
+(x,y,z) ──► rotación ──► perspectiva
+                              │
+                              ▼
+
+             RASTERIZACIÓN 2D
+
+                         (screen_x,
+                          screen_y)
+```
+
+El rasterizador que veremos a continuación no necesita saber que esos puntos pertenecían originalmente a un cubo tridimensional.
+
+Para él son simplemente puntos 2D.
+
+---
+
+# 5. Construir las caras
+
+Un conjunto de ocho puntos todavía no describe qué superficies forman el cubo.
+
+Por eso existe una tabla de caras.
+
+Cada cara contiene cuatro vértices:
+
+```text
+v0 ─────── v1
+│           │
+│           │
+│           │
+v3 ─────── v2
+```
+
+Pero nuestro rasterizador trabaja con triángulos.
+
+Dividimos entonces el cuadrilátero en dos:
+
+```text
+v0 ─────── v1
+│ \         │
+│   \       │
+│     \     │
+v3 ─────── v2
+```
+
+obteniendo:
+
+```text
+T0 = (v0,v1,v2)
+T1 = (v0,v2,v3)
+```
+
+Por tanto:
+
+```text
+6 caras × 2 triángulos/cara = 12 triángulos
+```
+
+como máximo.
+
+¿Por qué triángulos?
+
+Porque un triángulo tiene propiedades especialmente convenientes para el hardware y para el software:
+
+- siempre es plano;
+- siempre es convexo;
+- queda completamente definido por tres vértices;
+- podemos determinar fácilmente si un punto está dentro;
+- sus atributos pueden interpolarse de forma sencilla.
+
+Por eso el triángulo sigue siendo la primitiva fundamental de los rasterizadores modernos.
+
+---
+
+# 6. Antes de dibujar: back-face culling
+
+Un cubo es un objeto cerrado.
+
+Cuando lo observamos desde una determinada posición, aproximadamente la mitad de sus caras apuntan en dirección contraria a la cámara.
+
+No tiene sentido rasterizarlas.
+
+Podemos detectar esas caras utilizando el área orientada del triángulo proyectado.
+
+Para tres puntos:
+
+```text
+P0 = (x0,y0)
+P1 = (x1,y1)
+P2 = (x2,y2)
+```
+
+calculamos:
+
+$$
+area =
+(x_1-x_0)(y_2-y_0)
+-
+(y_1-y_0)(x_2-x_0)
+$$
+
+El signo nos indica la orientación del triángulo en pantalla.
+
+En el programa aparece literalmente:
+
+```asm
+SUB   R15, R11, R9
+SUB   R16, R14, R10
+MUL   R17, R15, R16
+
+SUB   R15, R12, R10
+SUB   R16, R13, R9
+MUL   R18, R15, R16
+
+SUB   R17, R17, R18
+```
+
+y después:
+
+```asm
+BGE   R0, R17, face_done
+```
+
+Si el área tiene la orientación que hemos definido como trasera, descartamos la cara completa.
+
+Esta operación recibe el nombre de:
+
+**back-face culling**.
+
+El pipeline se ha convertido entonces en:
+
+```text
+12 triángulos potenciales
+          │
+          ▼
+   orientación/área
+          │
+     ┌────┴────┐
+     │         │
+ trasero     visible
+     │         │
+ descartar     ▼
+           rasterizar
+```
+
+El convenio exacto del signo depende del orden de los vértices y del sentido de los ejes de pantalla. En este ejemplo, la tabla de caras está construida teniendo en cuenta que el eje Y de pantalla crece hacia abajo.
+
+---
+
+# 7. Hemos llegado al verdadero problema del rasterizador
+
+Supongamos que después de proyectar obtenemos un triángulo:
+
+```text
+             P1
+             /\
+            /  \
+           /    \
+          /      \
+         /        \
+        /          \
+       P0──────────P2
+```
+
+Tenemos las coordenadas de sus tres vértices.
+
+Pero el framebuffer no entiende triángulos.
+
+El framebuffer entiende píxeles.
+
+Necesitamos transformar:
+
+```text
+tres vértices
+```
+
+en algo parecido a:
+
+```text
+píxel (104,72)  → rojo
+píxel (105,72)  → rojo
+píxel (106,72)  → rojo
+píxel (103,73)  → rojo
+...
+```
+
+Ese proceso es la **rasterización**.
+
+Y aquí aparece una pregunta fundamental:
+
+> Dado un píxel `(x,y)`, ¿cómo sabemos si está dentro del triángulo?
+
+---
+
+# 8. Las funciones de borde
+
+Cada una de las tres aristas de un triángulo divide el plano en dos semiplanos.
+
+Podemos construir una función matemática que nos indique en cuál de ellos se encuentra un punto.
+
+Para una arista podemos escribir:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+donde los coeficientes dependen de sus dos vértices.
+
+Para una arista que va de:
+
+```text
+Pa = (xa,ya)
+```
+
+a:
+
+```text
+Pb = (xb,yb)
+```
+
+una forma habitual es:
+
+$$
+A = y_a-y_b
+$$
+
+$$
+B = x_b-x_a
+$$
+
+$$
+C = x_a y_b-x_b y_a
+$$
+
+y por tanto:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+Dependiendo del orden de los vértices, un punto situado en el lado interior de la arista producirá un valor positivo o negativo.
+
+Si hemos elegido consistentemente el orden de los vértices, podemos comprobar un triángulo mediante:
+
+```text
+E0(x,y) >= 0
+        AND
+E1(x,y) >= 0
+        AND
+E2(x,y) >= 0
+```
+
+Gráficamente:
+
+```text
+                   E1
+                  /
+                 /
+             +--/----+
+             | /     |
+         E0  |/      |   zona que satisface
+             /\      |   las tres condiciones
+            /  \     |
+           /    \    |
+          +------+---+
+              E2
+```
+
+La intersección de los tres semiplanos es precisamente el triángulo.
+
+Esta es una idea extraordinariamente potente.
+
+Hemos convertido la pregunta:
+
+```text
+¿está este píxel dentro de una figura?
+```
+
+en tres operaciones aritméticas y tres comparaciones.
+
+---
+
+# 9. No queremos comprobar toda la pantalla
+
+Una posibilidad extremadamente sencilla sería:
+
+```text
+for y = 0 .. 239:
+    for x = 0 .. 319:
+        comprobar E0
+        comprobar E1
+        comprobar E2
+```
+
+Funcionaría.
+
+Pero para un triángulo pequeño estaríamos comprobando decenas de miles de píxeles que evidentemente están muy lejos de él.
+
+Por eso calculamos primero su **bounding box**:
+
+```text
+minX = min(x0,x1,x2)
+maxX = max(x0,x1,x2)
+
+minY = min(y0,y1,y2)
+maxY = max(y0,y1,y2)
+```
+
+Obtenemos un rectángulo:
+
+```text
+        minX                 maxX
+          │                    │
+          ▼                    ▼
+
+minY  ─── +--------------------+
+          |         /\         |
+          |        /  \        |
+          |       /    \       |
+          |      /      \      |
+          |     /________\     |
+maxY  ─── +--------------------+
+```
+
+Ahora solo examinamos los píxeles contenidos en ese rectángulo.
+
+El código CPU comienza precisamente `fill_triangle` calculando esos cuatro límites.
+
+---
+
+# 10. El rasterizador secuencial más sencillo
+
+Llegados a este punto podríamos implementar:
+
+```text
+for y = minY .. maxY:
+    for x = minX .. maxX:
+
+        E0 = edge0(x,y)
+        E1 = edge1(x,y)
+        E2 = edge2(x,y)
+
+        if E0 >= 0 and
+           E1 >= 0 and
+           E2 >= 0:
+
+            putpixel(x,y,color)
+```
+
+Esto ya sería un rasterizador correcto.
+
+Pero tendría un problema.
+
+Calcular cada función:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+desde cero para cada píxel implica multiplicaciones repetidas.
+
+Y resulta que no hacen falta.
+
+---
+
+# 11. La propiedad incremental de las edge functions
+
+Partimos de:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+¿Qué ocurre al movernos un píxel hacia la derecha?
+
+$$
+E(x+1,y)=A(x+1)+By+C
+$$
+
+Desarrollando:
+
+$$
+E(x+1,y)=Ax+By+C+A
+$$
+
+por tanto:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+Lo mismo sucede verticalmente:
+
+$$
+E(x,y+1)=E(x,y)+B
+$$
+
+Esta propiedad cambia completamente el coste del rasterizador.
+
+Solo necesitamos calcular la función completa al comienzo.
+
+Después podemos recorrer los píxeles mediante sumas.
+
+```text
+          x → x+1 → x+2 → x+3
+
+E0        +A    +A    +A
+E1        +A1   +A1   +A1
+E2        +A2   +A2   +A2
+
+y
+│
+▼         +B
+y+1
+```
+
+La versión CPU utiliza una formulación equivalente basada en `dx` y `dy`.
+
+Al avanzar horizontalmente:
+
+```asm
+SUB   R12, R12, R21
+SUB   R13, R13, R23
+SUB   R14, R14, R28
+```
+
+Es decir:
+
+```text
+E += -dy
+```
+
+Y al avanzar verticalmente:
+
+```asm
+ADD   R9,  R9,  R20
+ADD   R10, R10, R22
+ADD   R11, R11, R25
+```
+
+es decir:
+
+```text
+E_row += dx
+```
+
+Las multiplicaciones se utilizan para calcular los valores iniciales de las tres funciones de borde.
+
+Después, el recorrido del triángulo es fundamentalmente:
+
+**sumas, comparaciones y saltos.**
+
+Esta característica será importantísima cuando llevemos el algoritmo a MiniGPU.
+
+---
+
+# 12. El corazón de `fill_triangle`
+
+Una vez inicializadas las tres funciones de borde, la estructura real del rasterizador CPU es muy sencilla.
+
+Conceptualmente:
+
+```text
+for y = minY .. maxY:
+
+    E0 = E0_row
+    E1 = E1_row
+    E2 = E2_row
+
+    for x = minX .. maxX:
+
+        if E0 >= 0 &&
+           E1 >= 0 &&
+           E2 >= 0:
+
+            putpixel(x,y,color)
+
+        E0 += stepX0
+        E1 += stepX1
+        E2 += stepX2
+
+    E0_row += stepY0
+    E1_row += stepY1
+    E2_row += stepY2
+```
+
+Y esto es prácticamente una traducción directa del ensamblador:
+
+```asm
+@tri_pixel:
+    BLT   R12, R0, @tri_skip
+    BLT   R13, R0, @tri_skip
+    BLT   R14, R0, @tri_skip
+
+    JAL   R30, putpixel
+
+@tri_skip:
+    SUB   R12, R12, R21
+    SUB   R13, R13, R23
+    SUB   R14, R14, R28
+
+    ADDI  R4, R4, 1
+    BGE   R16, R4, @tri_pixel
+```
+
+Lo más importante aquí no es memorizar los registros.
+
+Es reconocer el algoritmo:
+
+```text
+              ┌─────────────────┐
+              │ ¿E0,E1,E2 >= 0? │
+              └────────┬────────┘
+                       │
+              ┌────────┴────────┐
+             sí                 no
+              │                  │
+              ▼                  │
+          putpixel               │
+              │                  │
+              └────────┬─────────┘
+                       ▼
+                 avanzar E
+                       │
+                       ▼
+                  siguiente x
+```
+
+Este pequeño bucle contiene el núcleo del rasterizador que posteriormente paralelizaremos.
+
+---
+
+# 13. De un píxel al framebuffer
+
+Cuando las tres funciones de borde indican que el punto está dentro del triángulo, el programa llama a:
+
+```asm
+putpixel
+```
+
+Conceptualmente:
+
+```text
+putpixel(x,y,color)
+```
+
+termina convirtiéndose en una dirección de memoria del framebuffer.
+
+Si ignoramos por un momento el empaquetado de RGB565, la idea es:
+
+$$
+address =
+framebuffer +
+y \cdot stride +
+x \cdot bytesPerPixel
+$$
+
+Para nuestra pantalla:
+
+```text
+320 píxeles/fila
+2 bytes/píxel
+```
+
+por tanto:
+
+$$
+stride=320\times2=640\text{ bytes}
+$$
+
+que es precisamente el valor que conserva el programa:
+
+```asm
+MOVI R24, 640
+```
+
+Por tanto hemos completado toda la transformación:
+
+```text
+                 (x,y,z)
+                    │
+                    ▼
+                 rotación
+                    │
+                    ▼
+                perspectiva
+                    │
+                    ▼
+             (screen_x,screen_y)
+                    │
+                    ▼
+                 triángulo
+                    │
+                    ▼
+              edge functions
+                    │
+                    ▼
+             píxel interior
+                    │
+                    ▼
+                putpixel
+                    │
+                    ▼
+       dirección del framebuffer
+                    │
+                    ▼
+                  STORE
+```
+
+Ya podemos dibujar un cubo sólido.
+
+Y seguimos sin necesitar una GPU.
+
+---
+
+# 14. Limpiar el frame anterior
+
+Hay otro detalle que será importante más adelante.
+
+El framebuffer contiene memoria persistente.
+
+Si en el frame anterior el cubo ocupaba:
+
+```text
+       ███████
+       ███████
+       ███████
+```
+
+y en el nuevo frame se ha desplazado o rotado:
+
+```text
+             ███████
+             ███████
+             ███████
+```
+
+dibujar únicamente el nuevo cubo no elimina automáticamente los píxeles antiguos.
+
+Hay que limpiar la región anterior.
+
+La versión CPU limpia inicialmente los dos buffers completos y después, en cada frame, limpia una caja fija alrededor de la región donde puede aparecer el cubo.
+
+Conceptualmente:
+
+```text
+frame:
+
+    obtener back buffer
+
+    limpiar región
+          │
+          ▼
+    transformar vértices
+          │
+          ▼
+    rasterizar caras
+          │
+          ▼
+        swap
+```
+
+Esta operación parece secundaria, pero más adelante veremos que el borrado puede representar una cantidad significativa de tráfico de memoria.
+
+De hecho, una de las optimizaciones que aparecerá mucho más tarde, en v8, consistirá precisamente en reducir esa región de borrado.
+
+---
+
+# 15. Double buffering
+
+La CPU no dibuja directamente sobre el framebuffer que está siendo mostrado.
+
+Trabaja sobre el **back buffer**.
+
+Podemos imaginar:
+
+```text
+         SCANOUT
+            │
+            ▼
+     ┌──────────────┐
+     │ FRONT BUFFER │
+     │              │
+     │ frame N      │
+     └──────────────┘
+
+
+           CPU
+            │
+            ▼
+     ┌──────────────┐
+     │ BACK BUFFER  │
+     │              │
+     │ frame N+1    │
+     └──────────────┘
+```
+
+Cuando termina de renderizar:
+
+```text
+              SWAP
+                │
+                ▼
+
+ FRONT <────────────────> BACK
+```
+
+El frame recién terminado pasa a ser mostrado y el buffer anterior queda disponible para construir un nuevo frame.
+
+Esto separa dos actividades diferentes:
+
+```text
+renderizado → escribe framebuffer
+
+scanout     → lee framebuffer
+```
+
+y evita modificar arbitrariamente la imagen mientras el sistema de vídeo la está recorriendo.
+
+Esta arquitectura seguirá siendo exactamente igual cuando sustituyamos la CPU por MiniGPU.
+
+---
+
+# 16. ¿Dónde está el problema?
+
+Nuestro rasterizador CPU funciona.
+
+Entonces, ¿para qué queremos una GPU?
+
+Observemos dónde está el trabajo.
+
+Primero tenemos ocho vértices:
+
+```text
+V0 V1 V2 V3 V4 V5 V6 V7
+```
+
+y hacemos:
+
+```text
+transform(V0)
+transform(V1)
+transform(V2)
+...
+transform(V7)
+```
+
+Pero estas transformaciones son independientes.
+
+Después tenemos muchos píxeles:
+
+```text
+P0 P1 P2 P3 P4 P5 ... Pn
+```
+
+y para cada uno hacemos esencialmente:
+
+```text
+inside(P0)?
+inside(P1)?
+inside(P2)?
+...
+inside(Pn)?
+```
+
+También son, en gran medida, cálculos independientes.
+
+El algoritmo contiene por tanto una enorme cantidad de **paralelismo de datos**.
+
+La CPU que acabamos de utilizar lo expresa como:
+
+```text
+hacer A
+después B
+después C
+después D
+...
+```
+
+Pero matemáticamente muchas de esas operaciones podrían realizarse simultáneamente:
+
+```text
+       ┌──► A
+       ├──► B
+───────┼──► C
+       ├──► D
+       └──► ...
+```
+
+Y aquí aparece por fin la GPU.
+
+---
+
+# 17. El primer impulso: repartir los píxeles
+
+Una vez entendido el rasterizador secuencial, podemos formular una idea muy sencilla:
+
+> Si tenemos muchos elementos de ejecución, ¿por qué no hacemos que distintos threads procesen distintos píxeles?
+
+La CPU hacía:
+
+```text
+CPU
+
+pixel 0
+   ↓
+pixel 1
+   ↓
+pixel 2
+   ↓
+pixel 3
+   ↓
+...
+```
+
+Con múltiples threads podríamos intentar:
+
+```text
+thread 0 ──► píxeles ...
+thread 1 ──► píxeles ...
+thread 2 ──► píxeles ...
+thread 3 ──► píxeles ...
+...
+thread 63 ─► píxeles ...
+```
+
+Esta idea es el punto de partida de nuestra primera versión verdaderamente GPU del rasterizador.
+
+Pero pronto descubriremos que simplemente decir:
+
+**“tengo 64 threads, reparto el trabajo entre 64”**
+
+no es suficiente.
+
+También tendremos que preguntarnos:
+
+- ¿qué píxeles procesa cada thread?
+- ¿qué threads ejecutan juntos?
+- ¿cómo se agrupan en warps?
+- ¿qué representa una lane?
+- ¿qué ocurre si unas lanes entran en un `if` y otras no?
+- ¿qué direcciones de memoria genera cada lane?
+- ¿puede el LSU combinar varios accesos?
+- ¿cómo hacemos que las escrituras sean coalescentes?
+- ¿qué datos conviene calcular una sola vez?
+- ¿cómo sincronizamos distintas fases del frame?
+
+Es decir, pasaremos de estudiar únicamente un **algoritmo gráfico** a estudiar también su **mapeo sobre una arquitectura paralela**.
+
+---
+
+# 18. La transición fundamental
+
+Conviene detenerse aquí porque hemos alcanzado una frontera conceptual importante.
+
+Hasta este punto nuestra pregunta era:
+
+> **¿Cómo se dibuja un triángulo?**
+
+La respuesta ha sido:
+
+```text
+vértices
+   ↓
+proyección
+   ↓
+triángulos
+   ↓
+bounding box
+   ↓
+edge functions
+   ↓
+recorrer píxeles
+   ↓
+putpixel
+```
+
+A partir de ahora la pregunta será diferente:
+
+> **¿Cómo reorganizamos ese trabajo para ejecutarlo eficientemente sobre MiniGPU?**
+
+No vamos a cambiar las matemáticas fundamentales.
+
+Seguiremos teniendo:
+
+```text
+E0
+E1
+E2
+```
+
+seguiremos preguntando:
+
+```text
+E0 >= 0 &&
+E1 >= 0 &&
+E2 >= 0
+```
+
+y seguiremos terminando escribiendo RGB565 en el framebuffer.
+
+Lo que cambiará será la organización del trabajo.
+
+Por ejemplo, el rasterizador CPU avanza naturalmente:
+
+```text
+x
+x+1
+x+2
+x+3
+x+4
+...
+```
+
+Pero MiniGPU tiene ocho lanes y el framebuffer almacena dos píxeles RGB565 dentro de cada palabra de 32 bits.
+
+Eso hará que más adelante nos interese pensar en bloques como:
+
+```text
+lane 0 → píxeles  0, 1
+lane 1 → píxeles  2, 3
+lane 2 → píxeles  4, 5
+lane 3 → píxeles  6, 7
+lane 4 → píxeles  8, 9
+lane 5 → píxeles 10,11
+lane 6 → píxeles 12,13
+lane 7 → píxeles 14,15
+```
+
+De repente, una propiedad matemática que en la CPU decía:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+acabará produciendo relaciones como:
+
+$$
+E(x+16,y)=E(x,y)+16A
+$$
+
+No porque la geometría haya cambiado.
+
+No porque el triángulo sea diferente.
+
+Sino porque **hemos adaptado el recorrido del mismo algoritmo a la organización de nuestra máquina**.
+
+Esta distinción será una de las ideas centrales de todo lo que sigue.
+
+---
+
+# 19. Lo que debemos conservar de la versión CPU
+
+Antes de pasar a v3, podemos reducir todo el programa anterior a unas pocas ideas fundamentales.
+
+El pipeline gráfico es:
+
+```text
+modelo 3D
+    │
+    ▼
+transformación
+    │
+    ▼
+proyección
+    │
+    ▼
+triángulos 2D
+    │
+    ▼
+culling
+    │
+    ▼
+triangle setup
+    │
+    ▼
+rasterización
+    │
+    ▼
+píxeles RGB565
+    │
+    ▼
+framebuffer
+    │
+    ▼
+scanout
+```
+
+El núcleo matemático del rasterizador es:
+
+$$
+E_i(x,y)=A_i x+B_i y+C_i
+$$
+
+para las tres aristas, y un píxel pertenece al triángulo cuando satisface las tres condiciones de cobertura.
+
+La optimización matemática fundamental es:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+$$
+E(x,y+1)=E(x,y)+B
+$$
+
+Y el problema arquitectónico que tenemos delante es:
+
+```text
+                ALGORITMO SECUENCIAL
+
+                     for y
+                       │
+                       ▼
+                     for x
+                       │
+                       ▼
+                 edge tests
+                       │
+                       ▼
+                   putpixel
+
+
+                       │
+                       │
+                       ▼
+
+
+             ¿CÓMO LO PARALELIZAMOS?
+
+
+                       │
+                       ▼
+
+                MINIGPU / SIMT
+```
+
+Esta es precisamente la pregunta que intentarán responder las siguientes versiones.
+
+La primera respuesta no será perfecta.
+
+Tampoco queremos que lo sea.
+
+Comenzaremos con una distribución relativamente sencilla del rasterizado entre los threads de MiniGPU. Después iremos descubriendo sus problemas y, versión a versión, reorganizaremos el algoritmo para aprovechar mejor los warps, las lanes, el LSU y la memoria.
+
+Ese recorrido —más que el cubo en sí— es lo que nos permitirá entender **por qué una GPU acaba teniendo la arquitectura que tiene**.# Antes de la GPU: dibujar el cubo con una CPU
+
+Hasta ahora hemos hablado del framebuffer, de los píxeles y de cómo se representa el color. Sabemos, por tanto, cuál es el destino final de nuestro trabajo: una región de memoria que el sistema de vídeo recorrerá posteriormente para producir la imagen.
+
+Pero todavía queda una pregunta mucho más importante:
+
+**¿cómo pasamos de un cubo definido mediante coordenadas tridimensionales a esos píxeles del framebuffer?**
+
+Antes de introducir threads, warps, lanes o ejecución SIMT, resulta muy útil responder a esta pregunta utilizando únicamente una CPU.
+
+De hecho, una de las versiones anteriores del ejemplo del cubo hace exactamente eso. Todo el proceso se ejecuta secuencialmente: la CPU transforma los vértices, los proyecta sobre la pantalla, determina qué caras son visibles, divide esas caras en triángulos y finalmente recorre los píxeles de cada triángulo.
+
+Esto nos permitirá separar dos problemas que conviene no confundir:
+
+1. **Cómo se dibuja un objeto 3D.**
+2. **Cómo una GPU permite ejecutar ese trabajo de forma paralela.**
+
+La GPU no cambia las matemáticas fundamentales del rasterizado. Lo que cambia, sobre todo, es **cómo organizamos y distribuimos el trabajo**.
+
+---
+
+## 1. El pipeline completo ya existe en la CPU
+
+La versión CPU del cubo implementa aproximadamente este pipeline:
+
+```text
+         MODELO 3D
+             │
+             ▼
+       8 vértices (x,y,z)
+             │
+             ▼
+          rotación
+             │
+             ▼
+   vértices transformados
+             │
+             ▼
+     proyección perspectiva
+             │
+             ▼
+       8 puntos (x,y)
+             │
+             ▼
+       recorrer 6 caras
+             │
+             ▼
+     back-face culling
+             │
+             ▼
+  dividir cara en 2 triángulos
+             │
+             ▼
+       bounding box
+             │
+             ▼
+       edge functions
+             │
+             ▼
+        rasterización
+             │
+             ▼
+          putpixel
+             │
+             ▼
+        framebuffer
+             │
+             ▼
+           scanout
+```
+
+Este diagrama es importante porque, conceptualmente, **ya estamos haciendo gráficos 3D completos**.
+
+Todavía no hay una GPU involucrada.
+
+Eso nos enseña una primera idea fundamental:
+
+> Una GPU no es necesaria para definir las matemáticas de los gráficos 3D. La GPU aparece cuando queremos ejecutar esas matemáticas y procesar grandes cantidades de datos de forma eficiente.
+
+---
+
+# 2. El cubo comienza siendo solamente ocho puntos
+
+El cubo se almacena mediante ocho vértices tridimensionales.
+
+En el programa CPU aparecen como:
+
+```asm
+vertices:
+    .word -65536, -65536, -65536
+    .word  65536, -65536, -65536
+    .word -65536,  65536, -65536
+    .word  65536,  65536, -65536
+    .word -65536, -65536,  65536
+    .word  65536, -65536,  65536
+    .word -65536,  65536,  65536
+    .word  65536,  65536,  65536
+```
+
+Los valores están expresados en formato de punto fijo. Conceptualmente podemos imaginar simplemente:
+
+```text
+(-1,-1,-1)
+(+1,-1,-1)
+(-1,+1,-1)
+(+1,+1,-1)
+
+(-1,-1,+1)
+(+1,-1,+1)
+(-1,+1,+1)
+(+1,+1,+1)
+```
+
+Todavía no existen caras ni píxeles.
+
+Solo tenemos ocho posiciones en un espacio tridimensional.
+
+Podemos visualizarlo así:
+
+```text
+        6────────7
+       /│       /│
+      / │      / │
+     2────────3  │
+     │  │     │  │
+     │  4─────│──5
+     │ /      │ /
+     │/       │/
+     0────────1
+```
+
+Las caras del cubo se describen posteriormente indicando qué cuatro vértices forman cada una.
+
+---
+
+# 3. Rotar el objeto
+
+Si dibujásemos siempre los mismos vértices, el cubo permanecería inmóvil.
+
+Para animarlo modificamos sus coordenadas aplicando una rotación.
+
+La versión CPU realiza este trabajo recorriendo secuencialmente los ocho vértices:
+
+```text
+vértice 0
+    ↓
+rotar
+    ↓
+proyectar
+
+vértice 1
+    ↓
+rotar
+    ↓
+proyectar
+
+...
+
+vértice 7
+    ↓
+rotar
+    ↓
+proyectar
+```
+
+En ensamblador esto aparece como un bucle:
+
+```asm
+MOVI  R19, 8
+
+vertex_loop:
+    ...
+    ; transformar vértice
+    ...
+    ADDI  R19, R19, -1
+    BNE   R19, R0, vertex_loop
+```
+
+La CPU procesa un vértice después de otro.
+
+Esta observación será muy importante más adelante.
+
+Los ocho cálculos son prácticamente independientes:
+
+```text
+V0 ──► transform(V0)
+V1 ──► transform(V1)
+V2 ──► transform(V2)
+V3 ──► transform(V3)
+V4 ──► transform(V4)
+V5 ──► transform(V5)
+V6 ──► transform(V6)
+V7 ──► transform(V7)
+```
+
+La CPU los ejecuta secuencialmente porque ese es el modelo de ejecución que estamos utilizando.
+
+Pero el algoritmo ya nos está mostrando **paralelismo natural**.
+
+Más adelante veremos que esta correspondencia resulta especialmente atractiva para MiniGPU:
+
+```text
+8 vértices
+     ↕
+8 lanes
+```
+
+Por ahora, sin embargo, continuaremos pensando como una CPU.
+
+---
+
+# 4. Del espacio 3D a la pantalla 2D
+
+Después de rotar un vértice tenemos unas coordenadas tridimensionales:
+
+```text
+(x, y, z)
+```
+
+Pero el framebuffer es bidimensional.
+
+Necesitamos convertir:
+
+```text
+(x, y, z)
+```
+
+en:
+
+```text
+(screen_x, screen_y)
+```
+
+Para ello utilizamos una proyección perspectiva.
+
+De forma simplificada:
+
+$$
+screen_x = center_x + \frac{x \cdot focal}{z}
+$$
+
+$$
+screen_y = center_y + \frac{y \cdot focal}{z}
+$$
+
+En nuestro ejemplo:
+
+```text
+center_x = 160
+center_y = 120
+focal    = 140
+```
+
+porque la pantalla es de 320×240 píxeles.
+
+El código refleja directamente esta operación:
+
+```asm
+MUL   R11, R9, R13
+DIV   R11, R11, R10
+ADDI  R11, R11, 160
+
+MUL   R12, R7, R13
+DIV   R12, R12, R10
+ADDI  R12, R12, 120
+```
+
+Por tanto, después de transformar los ocho vértices ya no necesitamos trabajar con el cubo exclusivamente como objeto tridimensional.
+
+Tenemos ocho posiciones proyectadas:
+
+```text
+P0 = (x0,y0)
+P1 = (x1,y1)
+...
+P7 = (x7,y7)
+```
+
+que viven en el espacio de la pantalla.
+
+Esta frontera es conceptualmente importante:
+
+```text
+             GEOMETRÍA 3D
+
+(x,y,z) ──► rotación ──► perspectiva
+                              │
+                              ▼
+
+             RASTERIZACIÓN 2D
+
+                         (screen_x,
+                          screen_y)
+```
+
+El rasterizador que veremos a continuación no necesita saber que esos puntos pertenecían originalmente a un cubo tridimensional.
+
+Para él son simplemente puntos 2D.
+
+---
+
+# 5. Construir las caras
+
+Un conjunto de ocho puntos todavía no describe qué superficies forman el cubo.
+
+Por eso existe una tabla de caras.
+
+Cada cara contiene cuatro vértices:
+
+```text
+v0 ─────── v1
+│           │
+│           │
+│           │
+v3 ─────── v2
+```
+
+Pero nuestro rasterizador trabaja con triángulos.
+
+Dividimos entonces el cuadrilátero en dos:
+
+```text
+v0 ─────── v1
+│ \         │
+│   \       │
+│     \     │
+v3 ─────── v2
+```
+
+obteniendo:
+
+```text
+T0 = (v0,v1,v2)
+T1 = (v0,v2,v3)
+```
+
+Por tanto:
+
+```text
+6 caras × 2 triángulos/cara = 12 triángulos
+```
+
+como máximo.
+
+¿Por qué triángulos?
+
+Porque un triángulo tiene propiedades especialmente convenientes para el hardware y para el software:
+
+- siempre es plano;
+- siempre es convexo;
+- queda completamente definido por tres vértices;
+- podemos determinar fácilmente si un punto está dentro;
+- sus atributos pueden interpolarse de forma sencilla.
+
+Por eso el triángulo sigue siendo la primitiva fundamental de los rasterizadores modernos.
+
+---
+
+# 6. Antes de dibujar: back-face culling
+
+Un cubo es un objeto cerrado.
+
+Cuando lo observamos desde una determinada posición, aproximadamente la mitad de sus caras apuntan en dirección contraria a la cámara.
+
+No tiene sentido rasterizarlas.
+
+Podemos detectar esas caras utilizando el área orientada del triángulo proyectado.
+
+Para tres puntos:
+
+```text
+P0 = (x0,y0)
+P1 = (x1,y1)
+P2 = (x2,y2)
+```
+
+calculamos:
+
+$$
+area =
+(x_1-x_0)(y_2-y_0)
+-
+(y_1-y_0)(x_2-x_0)
+$$
+
+El signo nos indica la orientación del triángulo en pantalla.
+
+En el programa aparece literalmente:
+
+```asm
+SUB   R15, R11, R9
+SUB   R16, R14, R10
+MUL   R17, R15, R16
+
+SUB   R15, R12, R10
+SUB   R16, R13, R9
+MUL   R18, R15, R16
+
+SUB   R17, R17, R18
+```
+
+y después:
+
+```asm
+BGE   R0, R17, face_done
+```
+
+Si el área tiene la orientación que hemos definido como trasera, descartamos la cara completa.
+
+Esta operación recibe el nombre de:
+
+**back-face culling**.
+
+El pipeline se ha convertido entonces en:
+
+```text
+12 triángulos potenciales
+          │
+          ▼
+   orientación/área
+          │
+     ┌────┴────┐
+     │         │
+ trasero     visible
+     │         │
+ descartar     ▼
+           rasterizar
+```
+
+El convenio exacto del signo depende del orden de los vértices y del sentido de los ejes de pantalla. En este ejemplo, la tabla de caras está construida teniendo en cuenta que el eje Y de pantalla crece hacia abajo.
+
+---
+
+# 7. Hemos llegado al verdadero problema del rasterizador
+
+Supongamos que después de proyectar obtenemos un triángulo:
+
+```text
+             P1
+             /\
+            /  \
+           /    \
+          /      \
+         /        \
+        /          \
+       P0──────────P2
+```
+
+Tenemos las coordenadas de sus tres vértices.
+
+Pero el framebuffer no entiende triángulos.
+
+El framebuffer entiende píxeles.
+
+Necesitamos transformar:
+
+```text
+tres vértices
+```
+
+en algo parecido a:
+
+```text
+píxel (104,72)  → rojo
+píxel (105,72)  → rojo
+píxel (106,72)  → rojo
+píxel (103,73)  → rojo
+...
+```
+
+Ese proceso es la **rasterización**.
+
+Y aquí aparece una pregunta fundamental:
+
+> Dado un píxel `(x,y)`, ¿cómo sabemos si está dentro del triángulo?
+
+---
+
+# 8. Las funciones de borde
+
+Cada una de las tres aristas de un triángulo divide el plano en dos semiplanos.
+
+Podemos construir una función matemática que nos indique en cuál de ellos se encuentra un punto.
+
+Para una arista podemos escribir:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+donde los coeficientes dependen de sus dos vértices.
+
+Para una arista que va de:
+
+```text
+Pa = (xa,ya)
+```
+
+a:
+
+```text
+Pb = (xb,yb)
+```
+
+una forma habitual es:
+
+$$
+A = y_a-y_b
+$$
+
+$$
+B = x_b-x_a
+$$
+
+$$
+C = x_a y_b-x_b y_a
+$$
+
+y por tanto:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+Dependiendo del orden de los vértices, un punto situado en el lado interior de la arista producirá un valor positivo o negativo.
+
+Si hemos elegido consistentemente el orden de los vértices, podemos comprobar un triángulo mediante:
+
+```text
+E0(x,y) >= 0
+        AND
+E1(x,y) >= 0
+        AND
+E2(x,y) >= 0
+```
+
+Gráficamente:
+
+```text
+                   E1
+                  /
+                 /
+             +--/----+
+             | /     |
+         E0  |/      |   zona que satisface
+             /\      |   las tres condiciones
+            /  \     |
+           /    \    |
+          +------+---+
+              E2
+```
+
+La intersección de los tres semiplanos es precisamente el triángulo.
+
+Esta es una idea extraordinariamente potente.
+
+Hemos convertido la pregunta:
+
+```text
+¿está este píxel dentro de una figura?
+```
+
+en tres operaciones aritméticas y tres comparaciones.
+
+---
+
+# 9. No queremos comprobar toda la pantalla
+
+Una posibilidad extremadamente sencilla sería:
+
+```text
+for y = 0 .. 239:
+    for x = 0 .. 319:
+        comprobar E0
+        comprobar E1
+        comprobar E2
+```
+
+Funcionaría.
+
+Pero para un triángulo pequeño estaríamos comprobando decenas de miles de píxeles que evidentemente están muy lejos de él.
+
+Por eso calculamos primero su **bounding box**:
+
+```text
+minX = min(x0,x1,x2)
+maxX = max(x0,x1,x2)
+
+minY = min(y0,y1,y2)
+maxY = max(y0,y1,y2)
+```
+
+Obtenemos un rectángulo:
+
+```text
+        minX                 maxX
+          │                    │
+          ▼                    ▼
+
+minY  ─── +--------------------+
+          |         /\         |
+          |        /  \        |
+          |       /    \       |
+          |      /      \      |
+          |     /________\     |
+maxY  ─── +--------------------+
+```
+
+Ahora solo examinamos los píxeles contenidos en ese rectángulo.
+
+El código CPU comienza precisamente `fill_triangle` calculando esos cuatro límites.
+
+---
+
+# 10. El rasterizador secuencial más sencillo
+
+Llegados a este punto podríamos implementar:
+
+```text
+for y = minY .. maxY:
+    for x = minX .. maxX:
+
+        E0 = edge0(x,y)
+        E1 = edge1(x,y)
+        E2 = edge2(x,y)
+
+        if E0 >= 0 and
+           E1 >= 0 and
+           E2 >= 0:
+
+            putpixel(x,y,color)
+```
+
+Esto ya sería un rasterizador correcto.
+
+Pero tendría un problema.
+
+Calcular cada función:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+desde cero para cada píxel implica multiplicaciones repetidas.
+
+Y resulta que no hacen falta.
+
+---
+
+# 11. La propiedad incremental de las edge functions
+
+Partimos de:
+
+$$
+E(x,y)=Ax+By+C
+$$
+
+¿Qué ocurre al movernos un píxel hacia la derecha?
+
+$$
+E(x+1,y)=A(x+1)+By+C
+$$
+
+Desarrollando:
+
+$$
+E(x+1,y)=Ax+By+C+A
+$$
+
+por tanto:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+Lo mismo sucede verticalmente:
+
+$$
+E(x,y+1)=E(x,y)+B
+$$
+
+Esta propiedad cambia completamente el coste del rasterizador.
+
+Solo necesitamos calcular la función completa al comienzo.
+
+Después podemos recorrer los píxeles mediante sumas.
+
+```text
+          x → x+1 → x+2 → x+3
+
+E0        +A    +A    +A
+E1        +A1   +A1   +A1
+E2        +A2   +A2   +A2
+
+y
+│
+▼         +B
+y+1
+```
+
+La versión CPU utiliza una formulación equivalente basada en `dx` y `dy`.
+
+Al avanzar horizontalmente:
+
+```asm
+SUB   R12, R12, R21
+SUB   R13, R13, R23
+SUB   R14, R14, R28
+```
+
+Es decir:
+
+```text
+E += -dy
+```
+
+Y al avanzar verticalmente:
+
+```asm
+ADD   R9,  R9,  R20
+ADD   R10, R10, R22
+ADD   R11, R11, R25
+```
+
+es decir:
+
+```text
+E_row += dx
+```
+
+Las multiplicaciones se utilizan para calcular los valores iniciales de las tres funciones de borde.
+
+Después, el recorrido del triángulo es fundamentalmente:
+
+**sumas, comparaciones y saltos.**
+
+Esta característica será importantísima cuando llevemos el algoritmo a MiniGPU.
+
+---
+
+# 12. El corazón de `fill_triangle`
+
+Una vez inicializadas las tres funciones de borde, la estructura real del rasterizador CPU es muy sencilla.
+
+Conceptualmente:
+
+```text
+for y = minY .. maxY:
+
+    E0 = E0_row
+    E1 = E1_row
+    E2 = E2_row
+
+    for x = minX .. maxX:
+
+        if E0 >= 0 &&
+           E1 >= 0 &&
+           E2 >= 0:
+
+            putpixel(x,y,color)
+
+        E0 += stepX0
+        E1 += stepX1
+        E2 += stepX2
+
+    E0_row += stepY0
+    E1_row += stepY1
+    E2_row += stepY2
+```
+
+Y esto es prácticamente una traducción directa del ensamblador:
+
+```asm
+@tri_pixel:
+    BLT   R12, R0, @tri_skip
+    BLT   R13, R0, @tri_skip
+    BLT   R14, R0, @tri_skip
+
+    JAL   R30, putpixel
+
+@tri_skip:
+    SUB   R12, R12, R21
+    SUB   R13, R13, R23
+    SUB   R14, R14, R28
+
+    ADDI  R4, R4, 1
+    BGE   R16, R4, @tri_pixel
+```
+
+Lo más importante aquí no es memorizar los registros.
+
+Es reconocer el algoritmo:
+
+```text
+              ┌─────────────────┐
+              │ ¿E0,E1,E2 >= 0? │
+              └────────┬────────┘
+                       │
+              ┌────────┴────────┐
+             sí                 no
+              │                  │
+              ▼                  │
+          putpixel               │
+              │                  │
+              └────────┬─────────┘
+                       ▼
+                 avanzar E
+                       │
+                       ▼
+                  siguiente x
+```
+
+Este pequeño bucle contiene el núcleo del rasterizador que posteriormente paralelizaremos.
+
+---
+
+# 13. De un píxel al framebuffer
+
+Cuando las tres funciones de borde indican que el punto está dentro del triángulo, el programa llama a:
+
+```asm
+putpixel
+```
+
+Conceptualmente:
+
+```text
+putpixel(x,y,color)
+```
+
+termina convirtiéndose en una dirección de memoria del framebuffer.
+
+Si ignoramos por un momento el empaquetado de RGB565, la idea es:
+
+$$
+address =
+framebuffer +
+y \cdot stride +
+x \cdot bytesPerPixel
+$$
+
+Para nuestra pantalla:
+
+```text
+320 píxeles/fila
+2 bytes/píxel
+```
+
+por tanto:
+
+$$
+stride=320\times2=640\text{ bytes}
+$$
+
+que es precisamente el valor que conserva el programa:
+
+```asm
+MOVI R24, 640
+```
+
+Por tanto hemos completado toda la transformación:
+
+```text
+                 (x,y,z)
+                    │
+                    ▼
+                 rotación
+                    │
+                    ▼
+                perspectiva
+                    │
+                    ▼
+             (screen_x,screen_y)
+                    │
+                    ▼
+                 triángulo
+                    │
+                    ▼
+              edge functions
+                    │
+                    ▼
+             píxel interior
+                    │
+                    ▼
+                putpixel
+                    │
+                    ▼
+       dirección del framebuffer
+                    │
+                    ▼
+                  STORE
+```
+
+Ya podemos dibujar un cubo sólido.
+
+Y seguimos sin necesitar una GPU.
+
+---
+
+# 14. Limpiar el frame anterior
+
+Hay otro detalle que será importante más adelante.
+
+El framebuffer contiene memoria persistente.
+
+Si en el frame anterior el cubo ocupaba:
+
+```text
+       ███████
+       ███████
+       ███████
+```
+
+y en el nuevo frame se ha desplazado o rotado:
+
+```text
+             ███████
+             ███████
+             ███████
+```
+
+dibujar únicamente el nuevo cubo no elimina automáticamente los píxeles antiguos.
+
+Hay que limpiar la región anterior.
+
+La versión CPU limpia inicialmente los dos buffers completos y después, en cada frame, limpia una caja fija alrededor de la región donde puede aparecer el cubo.
+
+Conceptualmente:
+
+```text
+frame:
+
+    obtener back buffer
+
+    limpiar región
+          │
+          ▼
+    transformar vértices
+          │
+          ▼
+    rasterizar caras
+          │
+          ▼
+        swap
+```
+
+Esta operación parece secundaria, pero más adelante veremos que el borrado puede representar una cantidad significativa de tráfico de memoria.
+
+De hecho, una de las optimizaciones que aparecerá mucho más tarde, en v8, consistirá precisamente en reducir esa región de borrado.
+
+---
+
+# 15. Double buffering
+
+La CPU no dibuja directamente sobre el framebuffer que está siendo mostrado.
+
+Trabaja sobre el **back buffer**.
+
+Podemos imaginar:
+
+```text
+         SCANOUT
+            │
+            ▼
+     ┌──────────────┐
+     │ FRONT BUFFER │
+     │              │
+     │ frame N      │
+     └──────────────┘
+
+
+           CPU
+            │
+            ▼
+     ┌──────────────┐
+     │ BACK BUFFER  │
+     │              │
+     │ frame N+1    │
+     └──────────────┘
+```
+
+Cuando termina de renderizar:
+
+```text
+              SWAP
+                │
+                ▼
+
+ FRONT <────────────────> BACK
+```
+
+El frame recién terminado pasa a ser mostrado y el buffer anterior queda disponible para construir un nuevo frame.
+
+Esto separa dos actividades diferentes:
+
+```text
+renderizado → escribe framebuffer
+
+scanout     → lee framebuffer
+```
+
+y evita modificar arbitrariamente la imagen mientras el sistema de vídeo la está recorriendo.
+
+Esta arquitectura seguirá siendo exactamente igual cuando sustituyamos la CPU por MiniGPU.
+
+---
+
+# 16. ¿Dónde está el problema?
+
+Nuestro rasterizador CPU funciona.
+
+Entonces, ¿para qué queremos una GPU?
+
+Observemos dónde está el trabajo.
+
+Primero tenemos ocho vértices:
+
+```text
+V0 V1 V2 V3 V4 V5 V6 V7
+```
+
+y hacemos:
+
+```text
+transform(V0)
+transform(V1)
+transform(V2)
+...
+transform(V7)
+```
+
+Pero estas transformaciones son independientes.
+
+Después tenemos muchos píxeles:
+
+```text
+P0 P1 P2 P3 P4 P5 ... Pn
+```
+
+y para cada uno hacemos esencialmente:
+
+```text
+inside(P0)?
+inside(P1)?
+inside(P2)?
+...
+inside(Pn)?
+```
+
+También son, en gran medida, cálculos independientes.
+
+El algoritmo contiene por tanto una enorme cantidad de **paralelismo de datos**.
+
+La CPU que acabamos de utilizar lo expresa como:
+
+```text
+hacer A
+después B
+después C
+después D
+...
+```
+
+Pero matemáticamente muchas de esas operaciones podrían realizarse simultáneamente:
+
+```text
+       ┌──► A
+       ├──► B
+───────┼──► C
+       ├──► D
+       └──► ...
+```
+
+Y aquí aparece por fin la GPU.
+
+---
+
+# 17. El primer impulso: repartir los píxeles
+
+Una vez entendido el rasterizador secuencial, podemos formular una idea muy sencilla:
+
+> Si tenemos muchos elementos de ejecución, ¿por qué no hacemos que distintos threads procesen distintos píxeles?
+
+La CPU hacía:
+
+```text
+CPU
+
+pixel 0
+   ↓
+pixel 1
+   ↓
+pixel 2
+   ↓
+pixel 3
+   ↓
+...
+```
+
+Con múltiples threads podríamos intentar:
+
+```text
+thread 0 ──► píxeles ...
+thread 1 ──► píxeles ...
+thread 2 ──► píxeles ...
+thread 3 ──► píxeles ...
+...
+thread 63 ─► píxeles ...
+```
+
+Esta idea es el punto de partida de nuestra primera versión verdaderamente GPU del rasterizador.
+
+Pero pronto descubriremos que simplemente decir:
+
+**“tengo 64 threads, reparto el trabajo entre 64”**
+
+no es suficiente.
+
+También tendremos que preguntarnos:
+
+- ¿qué píxeles procesa cada thread?
+- ¿qué threads ejecutan juntos?
+- ¿cómo se agrupan en warps?
+- ¿qué representa una lane?
+- ¿qué ocurre si unas lanes entran en un `if` y otras no?
+- ¿qué direcciones de memoria genera cada lane?
+- ¿puede el LSU combinar varios accesos?
+- ¿cómo hacemos que las escrituras sean coalescentes?
+- ¿qué datos conviene calcular una sola vez?
+- ¿cómo sincronizamos distintas fases del frame?
+
+Es decir, pasaremos de estudiar únicamente un **algoritmo gráfico** a estudiar también su **mapeo sobre una arquitectura paralela**.
+
+---
+
+# 18. La transición fundamental
+
+Conviene detenerse aquí porque hemos alcanzado una frontera conceptual importante.
+
+Hasta este punto nuestra pregunta era:
+
+> **¿Cómo se dibuja un triángulo?**
+
+La respuesta ha sido:
+
+```text
+vértices
+   ↓
+proyección
+   ↓
+triángulos
+   ↓
+bounding box
+   ↓
+edge functions
+   ↓
+recorrer píxeles
+   ↓
+putpixel
+```
+
+A partir de ahora la pregunta será diferente:
+
+> **¿Cómo reorganizamos ese trabajo para ejecutarlo eficientemente sobre MiniGPU?**
+
+No vamos a cambiar las matemáticas fundamentales.
+
+Seguiremos teniendo:
+
+```text
+E0
+E1
+E2
+```
+
+seguiremos preguntando:
+
+```text
+E0 >= 0 &&
+E1 >= 0 &&
+E2 >= 0
+```
+
+y seguiremos terminando escribiendo RGB565 en el framebuffer.
+
+Lo que cambiará será la organización del trabajo.
+
+Por ejemplo, el rasterizador CPU avanza naturalmente:
+
+```text
+x
+x+1
+x+2
+x+3
+x+4
+...
+```
+
+Pero MiniGPU tiene ocho lanes y el framebuffer almacena dos píxeles RGB565 dentro de cada palabra de 32 bits.
+
+Eso hará que más adelante nos interese pensar en bloques como:
+
+```text
+lane 0 → píxeles  0, 1
+lane 1 → píxeles  2, 3
+lane 2 → píxeles  4, 5
+lane 3 → píxeles  6, 7
+lane 4 → píxeles  8, 9
+lane 5 → píxeles 10,11
+lane 6 → píxeles 12,13
+lane 7 → píxeles 14,15
+```
+
+De repente, una propiedad matemática que en la CPU decía:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+acabará produciendo relaciones como:
+
+$$
+E(x+16,y)=E(x,y)+16A
+$$
+
+No porque la geometría haya cambiado.
+
+No porque el triángulo sea diferente.
+
+Sino porque **hemos adaptado el recorrido del mismo algoritmo a la organización de nuestra máquina**.
+
+Esta distinción será una de las ideas centrales de todo lo que sigue.
+
+---
+
+# 19. Lo que debemos conservar de la versión CPU
+
+Antes de pasar a v3, podemos reducir todo el programa anterior a unas pocas ideas fundamentales.
+
+El pipeline gráfico es:
+
+```text
+modelo 3D
+    │
+    ▼
+transformación
+    │
+    ▼
+proyección
+    │
+    ▼
+triángulos 2D
+    │
+    ▼
+culling
+    │
+    ▼
+triangle setup
+    │
+    ▼
+rasterización
+    │
+    ▼
+píxeles RGB565
+    │
+    ▼
+framebuffer
+    │
+    ▼
+scanout
+```
+
+El núcleo matemático del rasterizador es:
+
+$$
+E_i(x,y)=A_i x+B_i y+C_i
+$$
+
+para las tres aristas, y un píxel pertenece al triángulo cuando satisface las tres condiciones de cobertura.
+
+La optimización matemática fundamental es:
+
+$$
+E(x+1,y)=E(x,y)+A
+$$
+
+$$
+E(x,y+1)=E(x,y)+B
+$$
+
+Y el problema arquitectónico que tenemos delante es:
+
+```text
+                ALGORITMO SECUENCIAL
+
+                     for y
+                       │
+                       ▼
+                     for x
+                       │
+                       ▼
+                 edge tests
+                       │
+                       ▼
+                   putpixel
+
+
+                       │
+                       │
+                       ▼
+
+
+             ¿CÓMO LO PARALELIZAMOS?
+
+
+                       │
+                       ▼
+
+                MINIGPU / SIMT
+```
+
+Esta es precisamente la pregunta que intentarán responder las siguientes versiones.
+
+La primera respuesta no será perfecta.
+
+Tampoco queremos que lo sea.
+
+Comenzaremos con una distribución relativamente sencilla del rasterizado entre los threads de MiniGPU. Después iremos descubriendo sus problemas y, versión a versión, reorganizaremos el algoritmo para aprovechar mejor los warps, las lanes, el LSU y la memoria.
+
+Ese recorrido —más que el cubo en sí— es lo que nos permitirá entender **por qué una GPU acaba teniendo la arquitectura que tiene**.
+
+---
+
 # Parte XV — v3: nuestro primer rasterizador paralelo
 
 ## 25. La filosofía de v3
