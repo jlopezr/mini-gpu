@@ -1,0 +1,19 @@
+{
+  "architecture": "cpu",
+  "name": "program-xorshift",
+  "program": "program.asm",
+  "expect": {
+    "pc": "0x4C",
+    "registers": {
+      "R1": "0x3AB14B11",
+      "R2": "0x00100228",
+      "R3": 0
+    },
+    "memory_dumps": [
+      {
+        "address": "0x00100200",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}

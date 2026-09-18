@@ -9,3 +9,4 @@ ensamblador + CPU + memoria.
 | [fibonacci](fibonacci/) | Bucle con dependencia entre iteraciones |
 | [memory-copy](memory-copy/) | `LOAD`/`STORE` en bucle |
 | [shift-multiply](shift-multiply/) | Multiplicación mediante desplazamientos |
+| [xorshift](xorshift/) | PRNG xorshift32: `XOR` + `SHL`/`SHR` en bucle |
