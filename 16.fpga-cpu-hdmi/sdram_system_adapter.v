@@ -252,6 +252,36 @@ module sdram_system_adapter #(
         pending_monitor_read_enable <= monitor_read_enable;
       end
 
+      // PENDIENTE, al proximo cambio de RTL de esta carpeta: falta
+      //
+      //   default: state <= STATE_IDLE;
+      //
+      // `state` es de 4 bits y solo hay 12 estados (0..11), asi que 12..15 no
+      // los cubre ninguna rama. `apio lint` lo avisa --es el unico
+      // CASEINCOMPLETE del repo-- y tiene razon: sin rama que coincida, TODOS
+      // los registros de este always mantienen su valor, o sea que la FSM se
+      // congelaria ahi para siempre. Y como este adaptador es el unico camino
+      // a la SDRAM de la 16, se pararian CPU, monitor y scanout a la vez, sin
+      // recuperacion salvo reset y sin ninguna senal que diga por que.
+      //
+      // No es un fallo vivo: las 25 asignaciones a `state` usan los
+      // localparams con nombre, ninguna lo calcula, y el reset lleva a
+      // STATE_IDLE. 12..15 es inalcanzable por construccion.
+      //
+      // Y no se arregla ya por el coste de VALIDARLO, no por el del arreglo:
+      // esta carpeta lleva semilla fija (`--seed 1` en apio.ini) y ese fichero
+      // cuenta con detalle que cualquier cambio de RTL invalida el barrido
+      // anterior --la version del monitor, una constante de ocho bits, movio
+      // una semilla de 89,17 a 83,61 MHz--. Dos palabras de arreglo obligan a
+      // rebarrer las ocho semillas de un diseno que hoy cierra y esta
+      // verificado en placa. Asi que va pegado al proximo cambio que ya
+      // necesite ese barrido.
+      //
+      // Por que solo pasa aqui: la 16 crecio a 12 estados al anadir el camino
+      // de dos beats del monitor (STATE_MON_SECOND..STATE_MON_WWAIT2) y `state`
+      // paso de 3 a 4 bits, que es donde se abrio el hueco. En 18, 19 y 21 el
+      // fichero se quedo en 8 estados con 3 bits --cubren el rango entero-- y
+      // ademas ya no se instancia en su top.v.
       case (state)
         STATE_IDLE: begin
           req_valid <= 1'b0;

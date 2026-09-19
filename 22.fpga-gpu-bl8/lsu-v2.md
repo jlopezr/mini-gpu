@@ -1,10 +1,23 @@
-# Propuesta: LSU v2, sobre el fabric y el controlador BL8
+# LSU v2, sobre el fabric y el controlador BL8
 
-Este documento es una propuesta de diseño, no código. Nada de lo que hay aquí
-está implementado. El objetivo es dejar de invertir en pulir
+**Estado: implementado.** `gpu_lsu2.v`, `gpu_aux_adapter_128.v` y
+`gpu_imem_buffer.v` están en esta carpeta, sus bancos pasan, y
+`gpu_system_bl8.v` + `top_bl8.v` sintetizan y pasan los 32 casos
+diferenciales. Las medidas están en la tabla de resultados del
+[`README.md`](README.md): −42% de ciclos, −17% de Fmax, x1,44 neto.
+
+Lo que sigue **no** está construido y se señala donde toca: la segmentación
+(v2.1, `pending_spec`), que vive en [`sm-pipeline.md`](sm-pipeline.md).
+
+Este documento nació como propuesta, y conserva esa forma porque explica
+*por qué* el diseño es como es y qué pasos no funcionaron. Donde dice "el
+algoritmo nuevo" o "hay que", léase como la descripción de lo que hoy hace el
+RTL.
+
+El objetivo era dejar de invertir en pulir
 `17.fpga-gpu-ram-v2/gpu_lsu.v` (rendimientos decrecientes, ver
 `docs/optimizacion.md` paso 7 y `lsu.md`) y en su lugar diseñar una LSU nueva
-que se apoye en piezas que la CPU (`21.fpga-cpu-hdmi-alu`) ya tiene
+que se apoyara en piezas que la CPU (`21.fpga-cpu-hdmi-alu`) ya tenía
 construidas, medidas y validadas: `memory_fabric_4.v` y
 `sdram_controller_128.v`.
 

@@ -1,6 +1,6 @@
 # Casos de vídeo
 
-Ocho casos, y cada uno cubre algo que los otros no. Todos declaran una
+Diez casos, y cada uno cubre algo que los otros no. Todos declaran una
 [capacidad](../../README.md#capacidades), así que se omiten solos donde no hay
 con qué ejecutarlos.
 
@@ -14,8 +14,10 @@ con qué ejecutarlos.
 | [`starfield`](starfield) | `frame_capture` | `DIV` con dividendo negativo repartido por la pantalla, y estado que sobrevive entre frames |
 | [`starfield-fast`](starfield-fast) | `frame_capture` | Borrado incremental: que el buffer trasero es el frame de hace **dos** |
 | [`cube`](cube) | `frame_capture` | `MULFX` y coma fija Q16.16, y las dos reglas de redondeo de la ISA a la vez |
+| [`swap-demo`](swap-demo) | `frame_capture` | Una imagen que **se mueve**: fija el desfase entre el swap N y lo que se ve |
+| [`swap-demo-fast`](swap-demo-fast) | `frame_capture` | El mismo frame por redibujo incremental sobre **dos** buffers |
 
-## Por qué ocho y no uno
+## Por qué diez y no uno
 
 **`registers`** no dibuja nada. Comprueba lo único que un programa necesita
 saber de los registros: que las bases arrancan donde dice el hardware, que
@@ -34,8 +36,39 @@ cada mil es peor que no tenerlo. Lo que hace es **esperar** a que se aplique,
 que además es lo que hace un programa de verdad.
 
 **`band`** pinta una banda verde fija sobre fondo azul. Es la imagen más simple
-que ejercita la cadena entera, y es fija a propósito: las demos de la 16 mueven
-la banda, así que el frame esperado dependería de en qué intercambio pares.
+que ejercita la cadena entera, y es fija a propósito: quita del caso la
+pregunta de en qué intercambio paras, para que un fallo solo pueda venir de la
+cadena hasta el framebuffer. Esa pregunta la responden los dos casos
+siguientes, que son las demos de la 16 sin tocar.
+
+**`swap-demo` y `swap-demo-fast`** son [`swap_demo.asm`](../../../21.fpga-cpu-hdmi-alu/examples/swap_demo.asm)
+y [`swap_demo_fast.asm`](../../../21.fpga-cpu-hdmi-alu/examples/swap_demo_fast.asm)
+ejecutados tal cual, sin copiarlos: la misma banda de `band`, pero **bajando
+dos píxeles por frame**. Son demos que no terminan nunca y a la vez casos de
+test, porque `run_until.swap` los para donde haga falta.
+
+Lo que aportan es el **desfase**. Con una imagen fija, parar en el swap 24 o en
+el 25 da lo mismo, y el caso no puede ver un error de uno en el doble buffer.
+Con una imagen que se mueve, el frame esperado solo cuadra si se acierta que
+tras el swap `N` se ve la banda en `2*(N-1)` y no en `2*N`: el intercambio hace
+visible lo que se dibujó **antes** del incremento. Comprobado al revés, que es
+lo que hace que el caso valga: generando la referencia con el desfase corrido
+uno, falla en `y=46`.
+
+Y el par no es redundante, por el mismo motivo que `starfield`/`starfield-fast`:
+`swap_demo` repinta las 240 líneas y `swap_demo_fast` solo 32, borrando la banda
+vieja y dibujando la nueva. El fallo clásico de esa optimización —borrar usando
+la posición del otro buffer, olvidando que hay dos— deja un rastro de bandas
+verdes que no se borran nunca. Contra un frame esperado eso es un fallo; a ojo,
+en una demo que corre, es algo que hay que fijarse en mirar. Los dos comparten
+`expected/frame.bin` precisamente porque deben dibujar lo mismo.
+
+Sus hermanos `tear_demo.asm` y `tear_demo_fast.asm` **no se pueden convertir en
+casos**, y conviene saber por qué: no piden `SWAP` nunca —es justo lo que
+demuestran— así que `run_until.swap` no se dispara. Y lo que enseñan es una
+carrera entre la CPU y el barrido, que depende de la velocidad relativa de los
+dos y que el simulador no modela. Se quedan como demos de mirar a ojo, que es
+lo que son.
 
 **`bounce`** es el cuadrado de siempre, rebotando en los cuatro bordes. Cubre
 tres cosas que una banda horizontal no puede:

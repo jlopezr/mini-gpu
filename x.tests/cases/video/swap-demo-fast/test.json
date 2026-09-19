@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "video-swap-demo-fast",
+  "program": "../../../../21.fpga-cpu-hdmi-alu/examples/swap_demo_fast.asm",
+  "requires": ["frame_capture"],
+  "run_until": { "swap": 24 },
+  "max_instructions": 20000000,
+  "timeout_seconds": 30.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "video": { "underflow": false },
+    "frame": { "file": "../swap-demo/expected/frame.bin" }
+  }
+}

@@ -190,7 +190,7 @@ en el orden en que aparecen en el bloque:
 | `STATUS` | RW | Bit 0 underflow pegajoso, bit 1 swap pendiente, bits 31:16 contador de frames; escribir bit 0 a 1 borra el underflow |
 | `SWAP_COUNT` | R | Intercambios completados. **Desde 18** |
 | `HALT_AT` | RW | Parar la CPU tras N intercambios. **Solo CPU, desde 18.** En 22 la dirección existe pero lee cero y la escritura se ignora |
-| `VIDEO_CTRL` | RW | Modo: 0 BLANK, 1 PATTERN, 2 SCANOUT, 3 reservado. **Solo 22** |
+| `VIDEO_CTRL` | RW | Modo: 0 BLANK, 1 PATTERN, 2 SCANOUT, 3 reservado. **16, 18, 19, 21 y 22**, desde la fase 3.5 |
 
 El mecanismo es el mismo en todas partes: escribir `SWAP` no intercambia nada,
 solo levanta `swap_pending`. El intercambio ocurre **en el vsync**, porque
@@ -208,8 +208,10 @@ primero y deja el segundo quieto.
 #### Discrepancias
 
 **Resueltas.** La dirección base y los offsets ya coinciden: el bloque empieza en
-`0x80000000` en las dos familias y `VIDEO_CTRL` —que solo tiene la 22— está al
-final, en `+0x18`, para que `FB_FRONT` quede en `+0x00` en todas partes. Y la 22
+`0x80000000` en las dos familias y `VIDEO_CTRL` está al final, en `+0x18`,
+para que `FB_FRONT` quede en `+0x00` en todas partes. Lo tuvo primero la 22, y
+la fase 3.5 lo llevó también a 16, 18, 19 y 21, así que hoy el bloque es el
+mismo offset a offset en las dos familias. Y la 22
 implementa el bit 1 de `STATUS` (`swap_pending`), que antes era cero fijo: código
 que sondease ese bit esperando al swap funcionaba en CPU y se colgaba en 22.
 

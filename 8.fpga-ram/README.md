@@ -3,7 +3,7 @@
 Este proyecto expone los 32 MiB de SDR SDRAM W9825G6KH como un espacio de
 memoria direccionado por bytes mediante el monitor UART. Es la unión del
 monitor de `5.fpga-monitor`, las direcciones de 32 bits de `6.fpga-cpu` y el
-controlador SDRAM de `8.ulx3s_w9825g6kh_test`.
+controlador SDRAM de `7.ulx3s_w9825g6kh_test`.
 
 Todo el diseño funciona inicialmente con `clk_25mhz`. La UART trabaja a
 625000 baudios (`25 MHz / 40`), con 8 bits, sin paridad y un bit de parada.

@@ -173,6 +173,115 @@ y recuperar atributos con perspectiva. `RSQRTFX` se orienta a normalización e
 iluminación. El recíproco de valores pequeños puede desbordar Q16.16; no se
 asume que todo resultado sea representable. No se sustituyen por `DIV` entero.
 
+#### Por qué no hay `DIVFX`
+
+Es la ausencia que más llama la atención del conjunto de coma fija, porque
+rompe la simetría: hay `MULFX` pero no su inversa. La razón no es que dividir
+en Q16.16 sea raro, sino **el ancho del dividendo**.
+
+El producto de dos Q16.16 sobra por arriba —hay que quitarle 16 bits— y por eso
+`MULFX` es el multiplicador de 64 bits que ya existe con un desplazamiento
+distinto al final: **la misma unidad, otra toma del resultado**. El cociente
+falta por abajo. Para que `a/b` salga en Q16.16 hay que escalar el dividendo
+antes de dividir:
+
+```text
+DIVFX(a, b) = (sign_extend48(a) << 16) / b
+```
+
+o sea **una división de 48 bits entre 32**, no de 32 entre 32. El `DIV` que hay
+no sirve reinterpretando sus entradas: `(a << 16)` desborda si `a` no cabe en
+16 bits, y `a / b` seguido de `SHL 16` pierde toda la parte fraccionaria, que
+era justo lo que se quería calcular. Hace falta un divisor más ancho, y un
+divisor secuencial de 48 bits son 48 ciclos y su propio camino crítico, en un
+diseño cuyo camino crítico ya está peleado.
+
+Y aun pagándolo, se pagaría **en cada división**. `RCPFX` existe precisamente
+porque en el uso que motiva todo esto —proyección en perspectiva— se divide un
+puñado de coordenadas entre **la misma** `w`: un recíproco y luego `MULFX` por
+cada una. El coste se paga una vez y se amortiza; con `DIVFX` se pagaría entero
+tantas veces como coordenadas haya.
+
+Así que la ausencia es **deliberada y de coste, no un olvido**. Queda escrito
+por si alguien vuelve a preguntarlo, y con la condición para reabrirlo: si
+apareciera un uso con divisores que no se repiten, `DIVFX` volvería a la mesa, y
+entonces el debate sería divisor ancho contra rutina software.
+
+#### Lo que NO hace falta arreglar en coma fija
+
+Por si acaso, porque es la duda gemela: **sumar y restar Q16.16 funciona con
+`ADD` y `SUB` normales, sin corrección ninguna.** Q16.16 es un entero con una
+escala implícita, y sumar dos valores de la misma escala da la misma escala.
+Solo multiplicar y dividir la mueven, y por eso `MULFX` existe y un `ADDFX` no
+tendría sentido. Comparar también funciona tal cual, porque el orden de los
+Q16.16 signed es el de los enteros signed que los representan.
+
+Las conversiones tampoco necesitan nada nuevo, y son de **una** instrucción:
+
+```asm
+SHLI R1, R1, 16     ; entero -> Q16.16
+SARI R2, R2, 16     ; Q16.16 -> entero, truncando hacia -infinito
+```
+
+Las dos existen desde la capability `shift_immediate`. La única operación de
+coma fija que hoy obliga a escribir una rutina es la división, y es de lo que
+trata el apartado anterior.
+
+Conviene decir además qué **no** puede hacer el ensamblador, porque es la
+salida que primero se le ocurre a cualquiera: no hay macros. `ensamblador.md`
+§«Lo que no hay» lo dice explícitamente, y los únicos atajos que existen son
+alias **1:1** —`RET` por `JR R31`, `SHLI/SHRI/SARI` por los shifts con el bit 10
+puesto—, que se resuelven en una entrada de tabla. Una pseudoinstrucción que
+emita dos o más instrucciones sería una funcionalidad nueva del ensamblador, no
+una entrada más en el mapa de opcodes, y como tal se decide aparte de esta
+propuesta.
+
+### Comparaciones: `SLT/SLTU` y los inmediatos `SLTI/SLTIU` — `0x26–0x29`
+
+**`SLT` y `SLTU` ya no son propuesta: existen**, con la capability `compare`, en
+los opcodes `0x26` y `0x27` de la ISA vigente (`isa.md` §3). Esta propuesta se
+escribió antes y su mapa los daba por libres; queda corregido abajo.
+
+Lo que sí se propone aquí son sus formas con inmediato:
+
+| Opcode | Mnemónico | Operandos       | Semántica                                        |
+|--------|-----------|-----------------|--------------------------------------------------|
+| `0x28` | `SLTI`    | `Rd, Ra, imm16` | `Rd = (signed(Ra) < sign_extend(imm16)) ? 1:0`   |
+| `0x29` | `SLTIU`   | `Rd, Ra, imm16` | `Rd = (Ra < sign_extend(imm16)) ? 1:0`, unsigned |
+
+I-Type, con los campos de §2. Como en RISC-V, **`SLTIU` extiende el signo del
+inmediato y luego compara sin signo**: eso es lo que hace que `SLTIU Rd, Ra, 1`
+materialice `Ra == 0`, que es el uso más común, y lo que evita que la
+comparación contra constantes pequeñas se vuelva un caso especial.
+
+**Cada una gasta un opcode entero, y ese es el argumento que hay que sopesar.**
+No caben como subfunción de una familia `func6`, porque `func6` ocupa
+exactamente los bits donde el I-Type pone el inmediato. Y el bloque de
+inmediatos `0x10–0x1F` está lleno en esta propuesta (`STOREP` y `LOADX` se
+llevaron los dos huecos que dejaba v0.1), así que van al bloque de control, que
+tiene diez libres. El bloque es un rango, no una regla de decodificación: lo
+que decide el formato es el opcode, no en qué cuarto del mapa cae.
+
+**Por qué merecen el sitio, siendo ortogonalidad y no rendimiento.** La v0.3 ya
+resuelve *comparar con una constante y saltar*: eso es `BRI` (`BLTI`, `BGEI`,
+`BLTUI`, `BGEUI`) en `0x21`. Lo que `SLTI` añade es **materializar el booleano
+en un registro** sin saltar, y ahí es donde se nota:
+
+- Con `SEL` (§ familia SELECT) se escribe código sin ramas: `SLTI` produce el
+  predicado y `SEL` elige el valor. En GPU eso es evitar una divergencia
+  completa de warp, no ahorrar dos instrucciones.
+- Sin `SLTI`, comparar contra una constante para obtener un 0/1 cuesta
+  `MOVI` + `SLT`, y gasta un registro temporal. En un bucle interior, ese
+  registro es justo el que no sobra.
+- Y es la asimetría que queda: `ADD/ADDI`, `AND/ANDI`, `OR/ORI`, `XOR/XORI`,
+  `SHL/SHLI` tienen todos su forma con inmediato. `SLT` sería la única
+  operación de la ALU con dos operandos que no la tiene.
+
+El coste real de aceptarlas no es el área —un comparador contra un inmediato
+extendido es el mismo que ya existe para `BRI`— sino que **dejan el bloque de
+control en ocho libres**. Si se aceptan, conviene decidirlo a la vez que los
+atómicos de §13, que son los otros candidatos serios a ese espacio.
+
 ## 6. Colores: PIX565 — `0x0B`
 
 Todas tienen operandos `Rd, Ra`, `Rb=Rc=0` y un único registro destino.
@@ -454,7 +563,11 @@ no una capability. Ni caches MUL/DIV ni número de ciclos forman parte del reper
 | `0x23`      | `JAL`                                              |
 | `0x24`      | `JALR`; `JR/RET` son alias                         |
 | `0x25`      | `LEAPC`, cálculo de dirección relativo al PC       |
-| `0x26–0x2F` | Libres                                             |
+| `0x26`      | `SLT` — **ya existe**, capability `compare`        |
+| `0x27`      | `SLTU` — **ya existe**, capability `compare`       |
+| `0x28`      | `SLTI`, propuesto en §5                            |
+| `0x29`      | `SLTIU`, propuesto en §5                           |
+| `0x2A–0x2F` | Libres                                             |
 | `0x30`      | GETID: `GETTID/GETLANE/GETWARP/GETWID`             |
 | `0x31`      | `SSY`                                              |
 | `0x32`      | `BAR`                                              |
@@ -469,9 +582,15 @@ no una capability. Ni caches MUL/DIV ni número de ciclos forman parte del reper
 |--------------------|--------------------:|-------:|
 | ALU                |                  16 |      0 |
 | Inmediatos/memoria |                  16 |      0 |
-| Control            |                   6 |     10 |
+| Control            |                  10 |      6 |
 | Sistema/SIMT       |                   8 |      8 |
-| **Total**          |              **46** | **18** |
+| **Total**          |              **50** | **14** |
+
+El bloque de control pasó de 6 a 10 por cuatro comparaciones: `SLT/SLTU`, que
+**ya están en el hardware** desde la capability `compare` y que el recuento
+anterior daba por libres, y `SLTI/SLTIU`, que esta propuesta añade. Es el
+bloque que más presión tiene ahora, y los atómicos de §13 apuntan al mismo
+sitio.
 
 Se cuentan las familias con contrato pendiente como asignaciones propuestas.
 Los huecos de subfunción dentro de cada familia siguen disponibles. La familia
