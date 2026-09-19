@@ -11,7 +11,7 @@ y memoria») define `LOAD` y `STORE` de exactamente cuatro bytes alineados, y
 deja `0x18–0x1F` como *reservadas*. Los accesos sub-palabra aparecen por primera
 vez en las propuestas, y **las dos propuestas no coinciden**:
 
-| Opcode | `propuesta-v0.2.md` §7 | `propuesta-v0.3.md` |
+| Opcode | `propuesta-v0.2.md` §7 | `propuesta-v0.4.md` |
 |--------|------------------------|---------------------|
 | `0x18` | `LOADB`                | `LOADB`             |
 | `0x19` | `LOADUB`               | `LOADBU`            |

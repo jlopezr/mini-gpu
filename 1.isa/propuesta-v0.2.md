@@ -9,7 +9,7 @@ es `21.fpga-cpu-hdmi-alu`.
 **v0.2 conserva los opcodes, formatos y comportamientos ya definidos.** Puede
 asignar huecos reservados y añadir capabilities, pero no mover instrucciones ni
 reinterpretar encodings válidos. La reorganización incompatible del mapa se
-estudia por separado en [propuesta-v0.3.md](propuesta-v0.3.md).
+queda consolidado en [propuesta-v0.4.md](propuesta-v0.4.md).
 
 La compatibilidad significa que un programa válido para la ISA vigente conserva
 su comportamiento en un backend que mantenga sus capabilities. No significa

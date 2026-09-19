@@ -8,7 +8,7 @@ completa, y referencia para su repertorio y encoding, es
 [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu/README.md). También se documenta
 el repertorio SIMT de MiniGPU, que la CPU escalar no ejecuta.
 [`propuesta-v0.2.md`](propuesta-v0.2.md) y
-[`propuesta-v0.3.md`](propuesta-v0.3.md) son propuestas de evolución: sus mapas
+[`propuesta-v0.4.md`](propuesta-v0.4.md) es la propuesta de evolución unificada: su mapa
 no sustituyen al definido aquí.
 
 ### Capabilities de instrucciones

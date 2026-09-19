@@ -183,7 +183,7 @@ registros condicionan la microarquitectura.
 
 ### ISA
 
-- Decidir qué propuestas de `propuesta-v0.2.md` y `propuesta-v0.3.md` se adoptan
+- Decidir qué propuestas de `propuesta-v0.2.md` y `propuesta-v0.4.md` se adoptan
   y distinguirlas del repertorio vigente, incluida su compatibilidad binaria.
 - Completar los contratos pendientes de las nuevas extensiones, especialmente
   los saltos indirectos divergentes en SIMT.

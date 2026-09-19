@@ -376,11 +376,11 @@ solo; restaurar, probablemente no.
 - **Revisar los inmediatos de la ISA.** `ADDI/ANDI/ORI/XORI` son opcodes base
   `0x11–0x14` desde v0.1. El único inmediato que faltaba era el de comparación, y
   `SLTI/SLTIU` están propuestos en
-  [`propuesta-v0.3.md`](1.isa/propuesta-v0.3.md) §5 con su coste en opcodes.
+  [`propuesta-v0.4.md`](1.isa/propuesta-v0.4.md) con su coste en opcodes.
 - **Divergencias entre versiones / `MULX`.** `MULX` no existía en ninguna parte
   del repo salvo en este fichero. Lo que hay es `MULFX` y `MULHI`, en las dos
   familias. La duda real que había detrás —por qué no hay `DIVFX`— está
-  contestada en [`propuesta-v0.3.md`](1.isa/propuesta-v0.3.md) §5: es el ancho
+  contestada en [`propuesta-v0.4.md`](1.isa/propuesta-v0.4.md): es el ancho
   del dividendo (48 bits, no 32), `ADD`/`SUB` funcionan tal cual, y las
   conversiones son un `SHLI`/`SARI`.
 - **Revisar `MONITOR_REGIONS`.** La ventana quedó abierta a la página entera
