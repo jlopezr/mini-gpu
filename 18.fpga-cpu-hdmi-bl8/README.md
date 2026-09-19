@@ -5,7 +5,7 @@
 > regla de la MiniISA y no una extension opcional. Ver
 > [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
 >
-> **Este monitor responde ahora 1.19.** Subio por el backport, sin cambiar
+> **Este monitor responde ahora 3.18.** Subio con el renumerado a juego de comandos (mayor) y numero de carpeta (menor), sin cambiar
 > ni un byte del protocolo: es lo unico que el PC puede preguntar para saber que
 > bitstream tiene delante, y un programa que use `R0` como registro general no
 > para con error en el bitstream viejo, da otro resultado en silencio.

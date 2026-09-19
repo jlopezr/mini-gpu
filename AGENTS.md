@@ -20,7 +20,7 @@ export PATH="$PWD/tools:$PATH"
 - `x.tests` (antes `x.cpu-tests`) tiene los backends de placa/simulador y el runner de casos
   (`run_tests.py`, antes `run_gpu_tests.py`); no dupliques esa lógica en `tools/`, solo añade
   lanzadores finos que la invoquen.
-- `docs/resumen-prototipos.md` y `docs/mapa-de-memoria.md` están escritos a mano: edítalos como
+- `docs/resumen-prototipos.md` está escrito a mano salvo sus tres bloques generados: edítalo como
   cualquier otro texto del repo, pero **respeta los marcadores `<!-- BEGIN/END GENERATED -->`**.
   `generate-docs` sobrescribe lo que haya entre ellos —lo que escribas ahí dentro se pierde— y no
   toca nada fuera. Lo que no hay que hacer es regenerarlos enteros, no editarlos.

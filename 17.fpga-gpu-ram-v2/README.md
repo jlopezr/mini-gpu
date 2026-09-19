@@ -12,7 +12,7 @@
 > se inicializaria nunca y en simulacion se quedaria a `X`. Dejando el barrido
 > fuera, lo escribe una vez y ninguna instruccion vuelve a tocarlo.
 >
-> **Este monitor responde ahora 2.4.** Subio por el backport, sin cambiar ni
+> **Este monitor responde ahora 3.17.** Subio con el renumerado a juego de comandos (mayor) y numero de carpeta (menor), sin cambiar ni
 > un byte del protocolo. Los numeros de version que se mencionan mas abajo son
 > historicos; los de hoy estan en [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
@@ -25,18 +25,20 @@ el diseño heredado.
 
 A su vez copia del RTL de `12.fpga-gpu` con memoria unificada de **32 MiB de SDRAM**
 en lugar de los ocho bancos EBR de 128 KiB. Destino: ULX3S-85F,
-**25 MHz**, UART **250000 baudios**, monitor **2.2**.
+**25 MHz**, UART **250000 baudios**, monitor **3.17**.
 
-Responde 2.2 y no 2.1 porque comparte todos los comandos con 12: es la versión
-la que permite a `x.tests --version sdram` distinguir este bitstream del de
-BRAM, igual que 1.5 y 1.6 separan las dos revisiones de CPU.
+Comparte todos los comandos con la 12 y con la 14: el mayor es igual porque el
+juego de comandos es el mismo, y el menor las distingue porque **es el número de
+carpeta**. Antes esos números se elegían a mano, y esta carpeta y la 14 llegaron
+a responder el mismo — con lo que comprobar el bitstream contra la placa
+equivocada pasaba en silencio.
 
 Código, LOAD/STORE y monitor comparten `0x00000000–0x01ffffff`.
 Las palabras son de 32 bits little-endian, alineadas a cuatro bytes;
 la última comienza en `0x01fffffc`. El monitor conserva sus accesos por byte
 y las ventanas de 12: depuración SIMT en `0x80000100` y configuración de warps
 en `0x80001000`, la segunda página, exclusiva de la GPU (ver
-[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6).
+[`docs/resumen-prototipos.md`](../docs/resumen-prototipos.md)).
 Los registros de la GPU siguen usando EBR; se sustituye la RAM de código/datos.
 
 ## Integración

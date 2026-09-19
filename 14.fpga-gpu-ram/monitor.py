@@ -19,7 +19,7 @@ ARCHITECTURAL_REGIONS = (
 )
 # Ventanas de configuración y depuración, accesibles solo desde el monitor.
 # Segunda pagina, exclusiva de la GPU: la primera queda para perifericos
-# compartidos con la CPU. Ver docs/mapa-de-memoria.md $6.
+# compartidos con la CPU. Ver docs/resumen-prototipos.md.
 WARP_CONFIG_BASE = 0x8000_1000
 SYSID_BASE = 0x8000_0f00
 MONITOR_REGIONS = (

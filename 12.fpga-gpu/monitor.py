@@ -24,7 +24,7 @@ ARCHITECTURAL_REGIONS = (
 # Lo comprueba x.tests/test_monitor_port.py.
 # La configuración de warps está en 0x80001000 (segunda página, exclusiva de la
 # GPU) y no en 0x80000000, que queda para periféricos compartidos con la CPU.
-# Ver docs/mapa-de-memoria.md §6.
+# Ver docs/resumen-prototipos.md.
 WARP_CONFIG_BASE = 0x8000_1000
 SIMT_DEBUG_BASE = 0x8000_0100
 SYSID_BASE = 0x8000_0f00

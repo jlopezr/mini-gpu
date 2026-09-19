@@ -170,9 +170,10 @@ Ejecutarlos sobre la CPU con SDRAM de la carpeta 10:
 python run_tests.py --backend cpu-fpga --version sdram --port COM3
 ```
 
-El backend consulta `GET_VERSION` antes de modificar la memoria. La versión
-EBR responde como monitor 1.6 y la versión SDRAM como 1.5. Las revisiones
-anteriores 1.2 y 1.3 corresponden al mapa con traducción de direcciones.
+El backend consulta `GET_VERSION` antes de modificar la memoria. La versión EBR
+responde como monitor 3.6 y la versión SDRAM como 3.10: el mayor es el juego de
+comandos y el menor, el número de carpeta. Ver
+[`docs/resumen-prototipos.md`](docs/resumen-prototipos.md).
 
 ## Construcción del diseño actual
 

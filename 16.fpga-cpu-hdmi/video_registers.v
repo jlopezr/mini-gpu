@@ -60,7 +60,7 @@
 // A cambio, cablearlas tenia dos costes. Uno es que 0x01000000 no es una
 // direccion valida en todos los mapas --en la 12, con 128 KiB de EBR, cae
 // fuera--, asi que el valor por defecto era correcto solo por coincidencia. El
-// otro es que mapa-de-memoria.md dice que esas bases "no son reservas
+// otro es que resumen-prototipos.md dice que esas bases "no son reservas
 // impuestas a todos los programas", y cableadas en el reset si lo eran.
 //
 // Cero no es una direccion util --es el principio de la memoria, donde esta el

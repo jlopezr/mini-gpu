@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Genera docs/synthesis-report.md a partir de prototype_report.collect();
 actualiza bloques marcados en documentación manual (las matrices de CPU y GPU
-de docs/resumen-prototipos.md, la tabla de docs/mapa-de-memoria.md) solo si ya
+y la tabla plana de docs/resumen-prototipos.md) solo si ya
 existen, para no sobrescribir texto escrito a mano."""
 from __future__ import annotations
 
@@ -267,7 +267,7 @@ def main() -> int:
          _matrix_table(reports, simulators, signals, "cpu")),
         (root / "docs/resumen-prototipos.md", "gpu-matrix",
          _matrix_table(reports, simulators, signals, "gpu")),
-        (root / "docs/mapa-de-memoria.md", "prototype-summary", _capabilities_table(reports)),
+        (root / "docs/resumen-prototipos.md", "prototype-summary", _capabilities_table(reports)),
     ):
         message = update_manual_doc(path, marker_name, body, args.check)
         print(message)

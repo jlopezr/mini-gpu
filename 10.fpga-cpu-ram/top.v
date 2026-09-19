@@ -136,7 +136,7 @@ module top (
   // placa. Al renumerarla por JUEGO DE COMANDOS, la 6 y la 10 contestan lo
   // mismo, asi que sin esto `--version sdram` daria por buena una 6 flasheada
   // y se mediria el hardware equivocado, que es exactamente el fallo que
-  // SYS_ID existe para cerrar. Ver docs/mapa-de-memoria.md §6.5.
+  // SYS_ID existe para cerrar. Ver docs/resumen-prototipos.md.
   wire sysid_selected = adapter_monitor_address[31:4] == 28'h800_00f0;
   wire [31:0] sysid_word;
   sysid #(

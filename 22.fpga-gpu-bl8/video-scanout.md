@@ -191,7 +191,7 @@ bloque (`+0x18`) para que `FB_FRONT` quede en `+0x00` en todas partes.
 
 Un programa de vídeo **sí** puede llevar la base como constante compilada. El
 contrato y el porqué están en
-[`../docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
+[`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 ## Implementado: pasos 1 y 2
 

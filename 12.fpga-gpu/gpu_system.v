@@ -52,7 +52,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     // la GPU. La separacion cuesta un bit mas en este comparador de prefijo, y
     // es lo que permite que el reparto siga valiendo el dia que CPU y GPU
     // compartan bitstream: lo exclusivo queda aparte, no intercalado entre lo
-    // compartido. Ver docs/mapa-de-memoria.md §6.
+    // compartido. Ver docs/resumen-prototipos.md.
     wire mmio=address[31:13]==19'h40000;
     wire gpu_page=address[12];
     // Con el nucleo EN MARCHA el host puede LEER el MMIO, no la RAM ni escribir

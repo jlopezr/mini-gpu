@@ -171,7 +171,7 @@ def monitor_cycle_counters_from_rtl(prototype_dir: Path) -> bool:
     sí está. Mismo nombre y valores opuestos para la misma carpeta.
 
     Esto mira el JUEGO DE COMANDOS DEL MONITOR; la capacidad mira el
-    dispositivo. Ver docs/mapa-de-memoria.md §6.5.
+    dispositivo. Ver docs/resumen-prototipos.md.
     """
     monitor_v = prototype_dir / "monitor.v"
     if not monitor_v.exists():

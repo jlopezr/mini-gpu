@@ -13,7 +13,7 @@
  * las tres 2.4 siendo hardware distinto, asi que `board-upload -p 22` con la 17
  * flasheada daba el bitstream por bueno y no subia nada. El sintoma era un
  * kernel fallando con error_code=0x02 al escribir un registro de video que ese
- * prototipo no tiene. Ver docs/mapa-de-memoria.md §6.5.
+ * prototipo no tiene. Ver docs/resumen-prototipos.md.
  *
  * SYS_ID lleva el NUMERO DE CARPETA porque ya existe, ya es unico y ya lo
  * resuelve `resolve_prototype`: no hay registro central que mantener ni nada
@@ -36,7 +36,7 @@ module sysid #(
     // puede poner mal sin que salte.
     parameter [7:0] FOLDER = 8'd0,
 
-    // Version del contrato de direcciones de docs/mapa-de-memoria.md §6. Es
+    // Version del contrato de direcciones de docs/resumen-prototipos.md. Es
     // DISTINTA de la version de monitor a proposito: el mapa cambia por otras
     // razones y a otro ritmo que el juego de comandos, y mezclarlos es como se
     // llego a diez numeros de version para cuatro juegos de comandos.

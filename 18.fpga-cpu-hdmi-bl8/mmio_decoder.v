@@ -17,7 +17,7 @@
  *   0x80000400 - 0x80000EFF   dispositivos 4..14, libres
  *   0x80000F00 - 0x80000FFF   dispositivo 15  identificacion (sysid)
  *
- * El slot 3 no se elige: es el que `mapa-de-memoria.md` §6 ya reservaba para
+ * El slot 3 no se elige: es el que `resumen-prototipos.md` ya reservaba para
  * los contadores, y el que la MiniGPU ocupa desde antes. El bloque de CPU es un
  * PREFIJO del de GPU --CYCLES en +0x00 y RETIRED en +0x04 en las dos-- asi que
  * un programa que lea esos dos registros vale en las dos familias.
@@ -25,7 +25,7 @@
  * El hueco del 1 no es casualidad ni desorden: en la familia MiniGPU
  * (12/14/17) `0x80000100` ya es la ventana de depuracion global --contadores,
  * warp y lane del primer fallo--. Dejarlo reservado aqui permite que las dos
- * familias converjan sin recolocar nada, y que `mapa-de-memoria.md` describa un
+ * familias converjan sin recolocar nada, y que `resumen-prototipos.md` describa un
  * solo mapa en vez de dos parecidos.
  *
  * COSTE. Ensanchar la ventana ABARATA la comparacion de prefijo: los dos

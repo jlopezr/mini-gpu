@@ -12,7 +12,7 @@
 > se inicializaria nunca y en simulacion se quedaria a `X`. Dejando el barrido
 > fuera, lo escribe una vez y ninguna instruccion vuelve a tocarlo.
 >
-> **Este monitor responde ahora 2.3.** Subio por el backport, sin cambiar ni
+> **Este monitor responde ahora 3.12.** Subio con el renumerado a juego de comandos (mayor) y numero de carpeta (menor), sin cambiar ni
 > un byte del protocolo. Los numeros de version que se mencionan mas abajo son
 > historicos; los de hoy estan en [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
@@ -193,7 +193,7 @@ compartidos con la CPU —la 12 solo tiene ahí la depuración SIMT—; la segun
 la segunda, y no en `0x80000000` como en las primeras versiones de esta carpeta:
 así lo exclusivo de la GPU queda separado de lo compartido en vez de
 intercalado. El contrato completo está en
-[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
+[`docs/resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 | Dirección | Contenido |
 |---|---|
@@ -208,7 +208,7 @@ intercalado. El contrato completo está en
 | `0x80000110` | PC del primer error |
 | `0x80000114` | Instrucciones retiradas del warp seleccionado en `0x80000100` |
 
-El monitor 2.1 distingue las regiones reutilizables y añade el contador por warp.
+El monitor distingue las regiones reutilizables y añade el contador por warp.
 RESET borra todos los contadores; reconfigurar un warp borra su contador local,
 sin modificar el contador global. Reconvergencia y liberación de BAR no cuentan
 como instrucciones adicionales.
@@ -255,6 +255,6 @@ Desde la raíz del repositorio:
 .\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
 ```
 
-El runner requiere monitor 2.1 y carga el proyecto cuando la placa responde con
+El runner requiere monitor 3.12 y carga el proyecto cuando la placa responde con
 otra versión. Ejecuta 26 casos GPU compatibles y explica los 8 omitidos por
 capacidades; véase [el runner](../x.tests/README.md).

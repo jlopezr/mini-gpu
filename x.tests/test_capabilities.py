@@ -113,7 +113,7 @@ class CapabilitiesTest(unittest.TestCase):
              "mul_div", "read_word", "write_word", "perf_counters"})
 
     def test_los_contadores_ya_no_son_comandos_de_monitor(self):
-        """El juego "+contadores" de mapa-de-memoria.md §6.5 ya no existe.
+        """El juego "+contadores" del mapa anterior ya no existe.
 
         `monitor_cycle_counters_from_rtl` detecta el comando 0x36, que se
         retiro en la fase 3.5. Que no quede NINGUNO es el objetivo, no un

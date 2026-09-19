@@ -4,6 +4,13 @@ Especificación y herramientas de la ISA común a MiniCPU y la futura MiniGPU.
 La referencia normativa es [`isa.md`](isa.md); [`proyecto.md`](proyecto.md)
 describe los objetivos y las decisiones generales.
 
+[`mmio.md`](mmio.md) es la otra referencia normativa: el contrato del espacio de
+direcciones y de los periféricos —MMIO v2— para CPU, GPU, el sistema integrado,
+los simuladores y el monitor. Dice cómo tiene que quedar todo; lo que implementa
+cada prototipo hoy está en
+[`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md), y **ninguno lo
+cumple todavía**.
+
 `miniisa_asm.py` ensambla una palabra little-endian de 32 bits por instrucción:
 
 ```powershell

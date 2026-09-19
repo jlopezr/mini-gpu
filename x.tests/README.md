@@ -158,16 +158,16 @@ y PC/warp/lane del primer fallo. Solo lee los registros citados en las
 expectativas para evitar 2048 transacciones UART por caso. Las observaciones
 no disponibles nunca se sustituyen por valores esperados.
 
-Desde la raíz del repositorio, para actualizar una placa con monitor 2.0 y
+Desde la raíz del repositorio, para actualizar una placa con otro bitstream y
 probar todos los casos compatibles:
 
 ```powershell
 .\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
 ```
 
-El backend exige monitor **2.3** y ofrece cargar `12.fpga-gpu` si responde otra
+El backend exige monitor **3.12** y ofrece cargar `12.fpga-gpu` si responde otra
 versión o si el monitor no responde. `--yes` autoriza esa carga. No fuerza una
-recarga si ya responde 2.3; para cargar otra compilación de la misma revisión:
+recarga si ya responde 3.12; para cargar otra compilación de la misma revisión:
 
 ```powershell
 .\.venv\Scripts\apio.exe upload -p .\12.fpga-gpu
@@ -254,24 +254,31 @@ lista especial de versiones FPGA o del simulador.
 
 Los backends de FPGA comprueban la versión física mediante `GET_VERSION`:
 
-| Backend | Valor | Proyecto | Monitor | Memoria implementada |
-|---|---|---|---:|---|
-| `cpu-fpga` | `ebr` | `6.fpga-cpu` | 1.6 | `0x00000000–0x00003fff`, `0x00100000–0x00103fff` |
-| `cpu-fpga` | `sdram` | `10.fpga-cpu-ram` | 1.5 | `0x00000000–0x01ffffff` |
-| `cpu-fpga` | `hdmi` | `16.fpga-cpu-hdmi` | 1.10 | `0x00000000–0x01ffffff` |
-| `cpu-fpga` | `bl8` | `18.fpga-cpu-hdmi-bl8` | 1.12 | `0x00000000–0x01ffffff` |
-| `cpu-fpga` | `subword` | `19.fpga-cpu-hdmi-ls` | 1.13 | `0x00000000–0x01ffffff` |
-| `gpu-fpga` | `bram` | `12.fpga-gpu` | 2.3 | 128 KiB de BRAM, 8 warps × 8 lanes |
+**La tabla de qué versión responde cada proyecto no se copia aquí**, porque se
+genera sola a partir del RTL: está en
+[`docs/resumen-prototipos.md`](../docs/resumen-prototipos.md). Una copia a mano
+en este fichero se quedaría atrás en cuanto cambiara un `top.v`, que es
+exactamente lo que le pasó a la que había.
 
-**La 19 responde 1.13 aunque su protocolo sea idéntico al 1.12 de la 18.** No
-añade ni un comando: las instrucciones nuevas viven enteras dentro de la CPU.
-Sube igual porque `GET_VERSION` es lo único que el runner puede preguntar antes
-de cargar un programa, y con las dos respondiendo 1.12 daría por bueno un
-bitstream de la 18 para los casos de `extensions`, que pararían con error `0x01`.
-Es el mismo motivo por el que 14 responde 2.2 compartiendo comandos con 12.
+Lo que sí conviene saber para leer esas respuestas:
 
-Para la tabla completa de qué tiene cada uno, ver
-[Comparativa de versiones](../docs/resumen-prototipos.md).
+```text
+mayor   = juego de comandos     3  base + READ_WORD/WRITE_WORD
+                                4  lo anterior + SEND_BYTES/RECV_BYTES
+menor   = número de carpeta     3.6, 3.10, 3.12, 3.14, 3.16, 3.17,
+                                3.18, 3.22, 4.19, 4.21
+```
+
+**Dos prototipos con el mismo juego de comandos responden distinto igualmente**,
+y eso es deliberado. La 19 y la 18 tienen protocolos idénticos —las instrucciones
+nuevas de la 19 viven enteras dentro de la CPU, no añaden ni un comando— pero
+`GET_VERSION` es lo único que el runner puede preguntar antes de cargar un
+programa: si las dos respondieran igual, daría por bueno un bitstream de la 18
+para los casos de `extensions`, que pararían con error `0x01`.
+
+Desde que el menor **es** el número de carpeta, esa unicidad ya no hay que
+vigilarla a mano. Antes sí, y llegó a fallar: la 14 y la 17 compartieron número
+siendo hardware distinto.
 
 La versión predeterminada de `cpu-fpga` es `alu` (21, la más completa; antes
 era `ebr`). La comprobación ocurre **una sola vez al construir el backend**,

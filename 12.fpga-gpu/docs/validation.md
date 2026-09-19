@@ -1,5 +1,10 @@
 # Validación del monitor 2.1 y del runner GPU
 
+> **Registro fechado, no estado actual.** Los números de versión de este
+> documento son los de su día. Esta carpeta responde hoy **3.12**: el esquema se
+> renumeró para que el mayor sea el juego de comandos y el menor, el número de
+> carpeta. Ver [`resumen-prototipos.md`](../../docs/resumen-prototipos.md).
+
 Fecha: 2026-09-10.
 
 - `python -m unittest discover -s x.tests -p 'test_*.py'`: 29 pruebas PASS.

@@ -357,7 +357,7 @@ $ prototype-report --prototype 21
 Prototype: 21.fpga-cpu-hdmi-alu
 Title: MiniCPU con la familia ALU completa, desplazamientos inmediatos y `R0` a cero
 Last commit: d99ca1d (2026-09-14) 10 does not have MUL/DIV
-Backend: cpu — alu (monitor 1.15)
+Backend: cpu — alu (monitor 4.21)
 Clock: 80.0 MHz
 Capabilities: mul_div, subword_memory, calls, shift_immediate, alu_extended, video, frame_capture, serial
 Memory map:
@@ -380,20 +380,21 @@ de dejar todo en blanco.
 $ generate-docs
 escrito: docs/synthesis-report.md
 actualizado: resumen-prototipos.md
-skip: docs/mapa-de-memoria.md no tiene <!-- BEGIN GENERATED: prototype-summary --> ...
+actualizado: resumen-prototipos.md
+actualizado: resumen-prototipos.md
 
 $ generate-docs --check     # no escribe nada; exit code 1 si algo cambiaría (para CI)
 ```
 
 `docs/synthesis-report.md` se regenera por completo en cada ejecución (no lo
-edites a mano). `docs/resumen-prototipos.md` y `docs/mapa-de-memoria.md` están
-escritos a mano, así que `generate-docs` **solo** toca lo que haya entre
-marcadores. Hay tres bloques, cada uno con su nombre:
+edites a mano). `docs/resumen-prototipos.md` está escrito a mano, así que
+`generate-docs` **solo** toca lo que haya entre marcadores. Hay tres bloques,
+los tres en ese mismo fichero:
 
 ```markdown
-<!-- BEGIN GENERATED: cpu-matrix -->      matriz CPU, en resumen-prototipos.md
-<!-- BEGIN GENERATED: gpu-matrix -->      matriz GPU, en resumen-prototipos.md
-<!-- BEGIN GENERATED: prototype-summary --> tabla plana, en mapa-de-memoria.md
+<!-- BEGIN GENERATED: cpu-matrix -->        matriz CPU
+<!-- BEGIN GENERATED: gpu-matrix -->        matriz GPU
+<!-- BEGIN GENERATED: prototype-summary --> tabla plana de los diez prototipos
 ```
 
 Si esos marcadores no existen en el archivo, no lo toca — hay que añadirlos a
@@ -449,7 +450,7 @@ prototipos:
 ```bash
 $ run-board --prototype 6 --program fpga_smoke_test.asm --port COM3
 Using prototype: 6.fpga-cpu
-Bitstream correcto: monitor 1.16.
+Bitstream correcto: monitor 3.6.
 == cargando fpga_smoke_test.bin en 0x00000000
 == arrancando
 CPU halted=True error=False ...
@@ -508,11 +509,11 @@ comando suelto, por si solo hace falta uno:
 ```bash
 $ board-info --prototype 6 --port COM3
 Using prototype: 6.fpga-cpu
-OK: monitor 1.16 (versión ebr).                # o MISMATCH, sin subir nada nunca
+OK: monitor 3.6 (versión ebr).                # o MISMATCH, sin subir nada nunca
 
 $ board-upload --prototype 6 --port COM3 -y
 Using prototype: 6.fpga-cpu
-Bitstream correcto: monitor 1.16.
+Bitstream correcto: monitor 3.6.
 
 $ board-load --prototype 6 --port COM3 --program fpga_smoke_test.asm
 Using prototype: 6.fpga-cpu

@@ -5,7 +5,7 @@
 > regla de la MiniISA y no una extension opcional. Ver
 > [`1.isa/isa.md`](../1.isa/isa.md) seccion 1.
 >
-> **Este monitor responde ahora 1.16.** Subio por el backport, sin cambiar
+> **Este monitor responde ahora 3.6.** Subio con el renumerado a juego de comandos (mayor) y numero de carpeta (menor), sin cambiar
 > ni un byte del protocolo: es lo unico que el PC puede preguntar para saber que
 > bitstream tiene delante, y un programa que use `R0` como registro general no
 > para con error en el bitstream viejo, da otro resultado en silencio.
@@ -17,7 +17,7 @@
 
 Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
 16 KiB. Es la versión FPGA `ebr` utilizada por `x.tests` y responde como
-monitor 1.6. Esta revisión implementa `MUL`, `MULFX` y `DIV`. `MUL` conserva
+monitor 3.6. Esta revisión implementa `MUL`, `MULFX` y `DIV`. `MUL` conserva
 los 32 bits bajos; `MULFX` opera en signed Q16.16 mediante cuatro productos
 parciales de 16 bits, y `DIV` usa un divisor signed iterativo de 32 pasos.
 

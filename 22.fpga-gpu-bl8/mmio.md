@@ -42,7 +42,7 @@ son de lectura, y un intento de escritura es fault.
 
 El vídeo está en `0x80000000` **con los mismos offsets que en los cores de CPU**,
 así que un programa de vídeo ya no cambia de constantes entre familias. El
-detalle del reparto está en [`../docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md) §6.
+detalle del reparto está en [`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
 ### Contadores (`gpu_perf_counters.v`)
 
@@ -121,12 +121,18 @@ esperar, en vez de dibujar a ciegas.
 ## Dónde está el contrato
 
 Este documento cuenta **por qué** la 22 abrió el MMIO y **cómo** está construido.
-No es la referencia de direcciones: el mapa completo del repositorio, el contrato
-de registros de cada dispositivo, las discrepancias entre prototipos y el reparto
-al que se quiere converger están en
-[`docs/mapa-de-memoria.md`](../docs/mapa-de-memoria.md).
+No es la referencia de direcciones. Esas están en dos sitios, y conviene no
+confundirlos:
 
-Ese contrato **ya está aplicado**: la configuración de warps salió de
+- **El contrato objetivo**, al que se quiere converger, es
+  [`1.isa/mmio.md`](../1.isa/mmio.md) — MMIO v2. **Esta carpeta no lo cumple**:
+  v2 abandona la página de 4 KiB y lleva el vídeo a `0x80200000`, los warps a
+  `0x82010000` y los contadores a `0x82030000`.
+- **Lo que hay implementado hoy** en cada prototipo, con sus discrepancias, está
+  en [`docs/resumen-prototipos.md`](../docs/resumen-prototipos.md).
+
+El reparto que sí está aplicado aquí es el anterior a v2: la configuración de
+warps salió de
 `0x80000000` a la página GPU `0x80001000`, y el vídeo volvió de `0x80000200` a
 `0x80000000`, que es donde lo tienen los cores de CPU. `VIDEO_CTRL`, que solo
 tiene la GPU, se fue al final del bloque (`+0x18`) para que `FB_FRONT` quedase en

@@ -5,7 +5,7 @@
 // Antes este bloque estaba en 0x80000200, porque 0x80000000 lo ocupaba la
 // configuracion de warps; ahora los warps viven en 0x80001000 (segunda pagina,
 // exclusiva de la GPU) y la primera pagina queda para lo compartido. Ver
-// docs/mapa-de-memoria.md §6.
+// docs/resumen-prototipos.md.
 //
 // Que coincida el bloque no basta si no coinciden los offsets dentro de el, asi
 // que VIDEO_CTRL -que solo tiene la GPU- se va al FINAL en vez de ocupar el

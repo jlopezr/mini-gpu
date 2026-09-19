@@ -101,7 +101,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     // compartidos con la CPU -aqui video y contadores-; la segunda
     // (0x80001000) es control exclusivo de la GPU. Cuesta un bit mas en este
     // comparador de prefijo, y es lo que permite que el reparto siga valiendo
-    // el dia que CPU y GPU compartan bitstream. Ver docs/mapa-de-memoria.md §6.
+    // el dia que CPU y GPU compartan bitstream. Ver docs/resumen-prototipos.md.
     //
     // La LSU solo deja pasar la primera pagina (`sel_addr[31:12]==20'h80000` en
     // gpu_lsu2.v), asi que la GPU alcanza el video y NO alcanza la

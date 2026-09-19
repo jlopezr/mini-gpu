@@ -1,181 +1,88 @@
-# Contrato MMIO v2 unificado de MiniCPU y MiniGPU
+# Contrato MMIO v2 de MiniCPU y MiniGPU
 
-**Estado:** propuesta consolidada para implementación.  
-**Compatibilidad:** MMIO v2 no mantiene compatibilidad binaria con los mapas MMIO de prototipos anteriores.
+**Qué es este documento.** La referencia de direcciones del proyecto: el espacio
+físico, los dispositivos, sus registros y las reglas de acceso. Dice **cómo
+tiene que quedar todo** — MiniCPU, MiniGPU, el sistema integrado, los
+simuladores, el monitor y las herramientas.
 
-Este documento define el contrato objetivo del espacio físico de direcciones y de los dispositivos MMIO para:
+**Qué no es.** No describe lo que hay implementado hoy. Ningún prototipo cumple
+todavía este contrato: lo que implementa cada uno está en
+[`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md), con su tabla
+de conformidad. Y lo que se hizo para llegar hasta aquí está en
+[`../docs/unificacion-mmio.md`](../docs/unificacion-mmio.md), que es un log
+cerrado, no una referencia.
 
-- MiniCPU.
-- MiniGPU.
-- Sistema integrado MiniCPU + MiniGPU.
-- Simulador MiniCPU.
-- Simulador MiniGPU.
-- Monitor y herramientas de depuración.
+**Compatibilidad.** MMIO v2 **no** mantiene compatibilidad binaria con el mapa
+de la página única de 4 KiB que implementan los prototipos actuales. La
+migración es trabajo pendiente y está en [`../TODO.md`](../TODO.md).
 
-Los mapas de los prototipos históricos siguen siendo válidos para documentar esas implementaciones, pero no condicionan MMIO v2.
-
----
-
-# 1. Principios de diseño
-
-## 1.1. Un único espacio físico
-
-CPU, GPU, monitor y futuros masters comparten el mismo espacio físico de direcciones.
-
-La regla fundamental es:
-
-> **Una dirección física identifica un único recurso del sistema. Su significado nunca depende del master que realiza el acceso.**
-
-Si:
-
-```text
-0x80200004 = VIDEO.FB_FRONT
-```
-
-esa dirección significa siempre `VIDEO.FB_FRONT`, independientemente de que acceda:
-
-- CPU;
-- GPU;
-- monitor;
-- DMA;
-- cualquier master futuro.
-
-No existen alias cuyo significado dependa del origen de la transacción.
+Las palabras en memoria son little-endian. Los rangos de las tablas son
+inclusivos salvo que se diga lo contrario.
 
 ---
 
-## 1.2. Dirección y permisos son independientes
+## 1. Principios
 
-El mapa físico determina:
+### 1.1. Un único espacio físico
 
-> **qué dispositivo corresponde a una dirección.**
+CPU, GPU, monitor y futuros masters comparten el mismo espacio de direcciones.
 
-Una política independiente determina:
+> **Una dirección física identifica un único recurso. Su significado nunca
+> depende del master que accede.**
 
-> **qué masters pueden acceder al dispositivo o registro.**
+`0x80200004` es `VIDEO.FB_FRONT` tanto si lo lee la CPU como si lo escribe un
+warp o lo sondea el monitor. No existen alias cuyo significado dependa del
+origen de la transacción.
 
-Conceptualmente:
+Esto es lo que hace que un binario de vídeo valga en varios prototipos sin
+cambiar constantes.
+
+### 1.2. Dirección y permiso son cosas distintas
+
+El mapa determina **qué dispositivo corresponde a una dirección**. Una política
+aparte determina **quién puede acceder a él**.
 
 ```text
-master
-  |
-  v
-address
-  |
-  v
-+-------------+
-| address map |
-+-------------+
-  |
-  v
-device/register
-  |
-  v
-permissions
-  |
-  +----> access
-  |
-  +----> error
+master ──> address ──> [ mapa ] ──> dispositivo/registro ──> [ permisos ] ──> acceso
+                                                                          └─> error
 ```
 
-Esto permite introducir en el futuro protección o nuevos masters sin modificar el mapa físico.
+Separarlos permite añadir protección o nuevos masters sin tocar el mapa.
+
+### 1.3. Los bloques son grandes y alineados
+
+Reservar direcciones no implementa memoria: un hueco de 64 KiB en el mapa no
+cuesta ni un LUT. A cambio da decodificación sencilla, direcciones estables y
+sitio para crecer.
+
+**MMIO v2 no compacta registros para ahorrar espacio de direcciones.** El mapa
+anterior sí lo hacía —una página de 4 KiB troceada en slots de 256 B— y el
+resultado fue que la ventana de configuración de warps quedó llena al 100 %,
+con ocho descriptores y ni un hueco, que es justo lo que la hizo imposible de
+ampliar.
+
+### 1.4. Los arrays crecen hacia arriba y el control va detrás
+
+> Cuando un bloque contiene un **array** —contadores, descriptores de warp,
+> futuros canales de DMA—, el array empieza en el **offset 0** del bloque, se le
+> reserva de una vez el espacio de su tamaño máximo, y los registros de control
+> van **detrás de esa extensión máxima**, nunca intercalados.
+
+Así el índice del elemento **es** su offset, no hace falta ninguna tabla de
+correspondencia, y añadir un elemento no mueve nada.
+
+Es una regla con nombre propio porque la alternativa se paga cara: con el
+control pegado detrás del último elemento, el primer elemento que añades obliga
+a moverlo, y mover un registro es renumerar — lo único que §1.5 prohíbe.
+
+### 1.5. Las direcciones congeladas son ABI
+
+No se renumeran dispositivos para mantener un orden conceptual. Un periférico
+nuevo ocupa una región libre; `0x80600000` es preferible a mover TIMER.
 
 ---
 
-## 1.3. El mapa no depende de la SDRAM actual
-
-La implementación actual utiliza normalmente 32 MiB:
-
-```text
-0x00000000 - 0x01FFFFFF    SDRAM
-```
-
-pero MMIO no se coloca inmediatamente después.
-
-Se reserva una región amplia para memoria y expansión futura.
-
----
-
-## 1.4. Los huecos no consumen memoria FPGA
-
-Reservar una región grande de direcciones para un dispositivo no implica implementar físicamente toda esa memoria.
-
-Los bloques grandes y alineados proporcionan:
-
-- decodificación sencilla;
-- direcciones estables;
-- expansión futura;
-- organización jerárquica;
-- ausencia de renumeraciones innecesarias.
-
-MMIO v2 no intenta compactar registros para ahorrar espacio de direcciones.
-
----
-
-# 2. Tamaños de acceso
-
-## 2.1. RAM
-
-La memoria ordinaria puede admitir los tamaños definidos por MiniISA:
-
-```text
-byte
-halfword
-word
-```
-
-según las instrucciones disponibles en cada perfil de ISA.
-
----
-
-## 2.2. MMIO
-
-Todos los registros MMIO son palabras de 32 bits.
-
-Sólo son válidos:
-
-```text
-LW
-SW
-```
-
-sobre direcciones alineadas:
-
-```text
-address[1:0] == 2'b00
-```
-
-Por tanto:
-
-```text
-LB / LBU    → error
-SB          → error
-LH / LHU    → error
-SH          → error
-LW / SW     → permitido
-```
-
-Esta regla es arquitectónica y no limita el fabric.
-
-El fabric puede transportar información como:
-
-```text
-address
-read/write
-wdata[31:0]
-size
-wstrb[3:0]
-```
-
-porque RAM puede necesitar accesos sub-palabra.
-
-> **La capacidad del fabric para transportar accesos sub-palabra es independiente del contrato MMIO.**
-
-Incluso periféricos que conceptualmente manipulan bytes, como SERIAL, exponen registros MMIO de 32 bits.
-
----
-
-# 3. Mapa físico global
+## 2. Mapa físico global
 
 ```text
 0000_0000 - 3FFF_FFFF    MEMORY / expansión de memoria
@@ -207,200 +114,221 @@ Incluso periféricos que conceptualmente manipulan bytes, como SERIAL, exponen r
 8300_0000 - FFFF_FFFF    RESERVED / FUTURE ACCELERATORS
 ```
 
+La organización tiene tres niveles y conviene verlos:
+
+- **`0x8000xxxx`–`0x800Fxxxx`**: el sistema en sí. Identificación, fabric,
+  controlador de memoria.
+- **`0x801xxxxx`–`0x80Fxxxxx`**: periféricos **compartidos**. Ni VIDEO ni SERIAL
+  son propiedad de la CPU o de la GPU: son del sistema, y por eso un programa de
+  cualquiera de las dos familias los ve en la misma dirección.
+- **`0x81xxxxxx` y `0x82xxxxxx`**: lo **exclusivo** de cada núcleo. Aquí sí hay
+  dueño, y por eso CPU y GPU pueden tener cada una su bloque de contadores sin
+  pelearse por una dirección.
+
+Esa separación entre compartido y exclusivo es lo que permite que un bitstream
+con CPU y GPU a la vez no tenga que recolocar nada.
+
+### 2.1. Alcance desde el código
+
+Todas las bases están alineadas a 64 KiB, así que una sola instrucción carga
+cualquiera de ellas:
+
+```asm
+MOVHI R1, 0x8020        ; R1 = 0x80200000, base de VIDEO
+LOAD  R2, R1, 0x04      ; R2 = FB_FRONT
+```
+
+`imm16` con signo cubre ±32 KiB desde el registro base, de sobra para cualquier
+bloque. Un programa que use tres dispositivos sostiene tres registros base, y
+hay 31 registros generales.
+
 ---
 
-# 4. Memoria principal
-
-La implementación SDRAM actual:
+## 3. Memoria principal
 
 ```text
 MEM_BASE = 0x00000000
-MEM_SIZE = 0x02000000
+MEM_SIZE = 0x02000000     (32 MiB en las implementaciones con SDRAM)
 ```
 
-corresponde a 32 MiB.
+Los dos son legibles en `SYSTEM` (§5), de modo que **un binario puede preguntar
+cuánta RAM hay** en vez de suponerlo. Las direcciones de la región MEMORY sin
+memoria física detrás generan error.
 
-Las direcciones posteriores dentro de la región MEMORY permanecen sin implementar hasta que exista memoria física detrás.
+### 3.1. Prototipos con EBR
 
-Un acceso a memoria no implementada genera error.
+Los prototipos sin SDRAM usan una región **contigua**, no dos bancos separados
+por un hueco:
+
+```text
+0000_0000 - 0000_7FFF    32 KiB EBR
+```
+
+La separación entre `.text`, `.rodata`, `.data`, `.bss` y pila es cosa del
+software —ensamblador y, en su día, linker—, no del mapa físico. Así
+`MEM_BASE`/`MEM_SIZE` describen también estos prototipos sin ninguna excepción,
+y un bloque de transferencia puede cruzar cualquier dirección interior.
+
+### 3.2. Framebuffers
+
+Los framebuffers son **RAM ordinaria**. Separar ventanas MMIO no obliga a
+duplicar memoria ni proporciona coherencia por sí solo. Sus direcciones son
+configuración, no reservas impuestas a todos los programas.
 
 ---
 
-## 4.1. Prototipos EBR
+## 4. Reglas de acceso
 
-Los prototipos que utilizan EBR deben utilizar preferentemente una región contigua.
+### 4.1. Tamaños
 
-En lugar de separar artificialmente programa y datos:
+La RAM admite los tamaños que defina MiniISA: byte, media palabra y palabra,
+según el perfil de ISA del prototipo.
 
-```text
-00000000    programa
-00100000    datos
-```
-
-se utilizará una región física continua, por ejemplo:
+**MMIO admite exclusivamente palabras de 32 bits alineadas.**
 
 ```text
-00000000 - 00007FFF    32 KiB EBR
+LW / SW  sobre address[1:0] == 2'b00    permitido
+LB / LBU / SB                           error
+LH / LHU / SH                           error
+cualquier dirección desalineada         error
 ```
 
-La separación entre:
+Es una regla **arquitectónica**, no una limitación del fabric. El fabric puede
+transportar `size` y `wstrb` porque la RAM los necesita; el contrato MMIO es
+independiente de eso. Incluso los periféricos que manipulan bytes, como SERIAL,
+exponen registros de 32 bits.
 
-```text
-.text
-.rodata
-.data
-.bss
-stack
+La razón es que un registro no es memoria: leerlo puede tener efectos laterales,
+y media lectura no tiene un significado definido. `SERIAL.DATA` extrae un byte
+de la cola — leerlo cuatro veces byte a byte extrae cuatro bytes, que no es lo
+que quería quien escribió `LW`.
+
+### 4.2. Acceso a MMIO desde código SIMT
+
+> **Una instrucción SIMT que accede a MMIO solo es válida cuando exactamente
+> una lane activa realiza el acceso.**
+
+```c
+if (lane_id == 0)
+    VIDEO_CTRL = VIDEO_SCANOUT;     // válido
 ```
 
-es responsabilidad del software, assembler/linker y no del mapa físico.
+Si dos o más lanes acceden a MMIO en la misma instrucción, el acceso genera
+**error**, aunque usen la misma dirección y escriban el mismo valor. No hay
+coalescing, ni broadcast, ni elección implícita de una lane.
 
-Esto permite que `MEM_BASE/MEM_SIZE` describan también los prototipos EBR de forma natural.
+La regla no se aplica a la RAM, donde el coalescing es precisamente lo que se
+quiere.
 
----
+El motivo es que un registro de 32 bits no es una línea de caché, y ocho lanes
+escribiendo registros distintos a la vez no tiene semántica útil. Serializarlas
+en silencio sería peor que el error: el mismo kernel haría cosas distintas según
+cuántas lanes estuvieran activas.
 
-# 5. Política de errores
+**Trampa conocida al escribir ese `if`:** un salto divergente necesita `SSY`
+delante marcando dónde reconvergen los caminos. Sin él el SM para con
+`ERROR_SIMT` (`0x06`), y el síntoma no se parece en nada a un problema de MMIO.
+
+### 4.3. Errores
 
 Un acceso MMIO es inválido cuando:
 
 1. el dispositivo no está implementado;
 2. el offset no corresponde a un registro;
-3. se escribe un registro RO;
-4. se utiliza un acceso distinto de 32 bits;
+3. se escribe un registro de solo lectura;
+4. el acceso no es de 32 bits;
 5. la dirección está desalineada;
 6. se escribe un valor arquitectónicamente inválido;
 7. el master no tiene permiso;
-8. una operación de control se solicita en un estado donde no es válida.
+8. se pide una operación de control en un estado donde no es válida.
 
-Los accesos inválidos no:
+Los accesos inválidos **no** devuelven cero en silencio, **no** ignoran la
+escritura y **no** corrigen el valor. Generan error.
 
-- devuelven cero silenciosamente;
-- ignoran escrituras;
-- corrigen valores automáticamente.
+La regla alcanza los accesos del programa **y los del monitor**, sueltos y por
+bloques. Filtrar solo los comandos del monitor no la implementa para el núcleo.
+El núcleo debe señalar el error de acceso a memoria y el monitor debe rechazar
+la transacción, sin presentar el cero del bus como lectura válida ni confirmar
+una escritura descartada.
 
-Generan error.
+Una lectura cero solo es válida si el contrato del registro la define
+expresamente — `DEVICES` leyendo cero significa «sin declarar», y eso es un
+valor, no un error.
 
 Conceptualmente se distinguen:
 
 ```text
-ACCESS_FAULT
-ALIGNMENT_FAULT
+ACCESS_FAULT        dispositivo ausente, offset reservado, permiso, estado
+ALIGNMENT_FAULT     dirección desalineada o tamaño no permitido
 ```
 
-aunque las implementaciones actuales puedan convertir ambos en una detención del core y un código de error para el monitor.
+Las implementaciones actuales pueden convertir ambos en una detención del
+núcleo y un código de error para el monitor. Una futura arquitectura de
+excepciones podrá mapearlos a traps.
 
-Una futura arquitectura de excepciones podrá mapearlos a traps.
+**Por qué error y no cero:** una lectura cero no distingue «este dispositivo no
+existe» de «este registro vale cero legítimamente». Rechazar el acceso preserva
+el diagnóstico de direcciones equivocadas, que es la clase de fallo que de otro
+modo aparece tres capas más arriba y sin pista de dónde vino.
 
 ---
 
-# 6. Acceso MMIO desde MiniGPU
-
-MiniGPU ejecuta instrucciones SIMT, por lo que una misma instrucción puede producir accesos desde múltiples lanes.
-
-MMIO v2 establece:
-
-> **Una instrucción SIMT que accede a MMIO sólo es válida cuando exactamente una lane activa realiza el acceso MMIO.**
-
-Por ejemplo:
-
-```c
-if (lane_id == 0)
-    VIDEO_CTRL = VIDEO_SCANOUT;
-```
-
-es válido.
-
-También:
-
-```c
-if (lane_id == 0)
-    SERIAL_DATA = 'A';
-```
-
-es válido.
-
-Si dos o más lanes intentan acceder a MMIO mediante la misma instrucción:
-
-```text
-MMIO access → error
-```
-
-aunque:
-
-- utilicen la misma dirección;
-- escriban el mismo valor.
-
-No existe coalescing, broadcast ni elección implícita de una lane para MMIO.
-
-Esta regla no se aplica a RAM.
-
----
-
-# 7. SYSTEM — `0x80000000`
-
-SYSTEM describe el sistema global.
+## 5. SYSTEM — `0x80000000`
 
 | Offset | Registro | Acceso | Función |
 |---:|---|---|---|
-| `+0x00` | `MAGIC` | R | Identificación MMIO |
-| `+0x04` | `MMIO_VERSION` | R | Versión del contrato |
-| `+0x08` | `SYSTEM_ID` | R | Tipo/revisión del sistema |
-| `+0x0C` | `DEVICES` | R | Dispositivos presentes |
-| `+0x10` | `MEM_BASE` | R | Base de memoria principal |
-| `+0x14` | `MEM_SIZE` | R | Tamaño de memoria |
-| `+0x18` | `MONITOR_VERSION` | R | Versión del protocolo monitor |
+| `+0x00` | `MAGIC` | R | Identificación de MMIO v2 |
+| `+0x04` | `MMIO_VERSION` | R | Versión de este contrato |
+| `+0x08` | `SYSTEM_ID` | R | Qué sistema es |
+| `+0x0C` | `DEVICES` | R | Bitmap de dispositivos presentes |
+| `+0x10` | `MEM_BASE` | R | Base de la memoria principal |
+| `+0x14` | `MEM_SIZE` | R | Tamaño de la memoria principal |
+| `+0x18` | `MONITOR_VERSION` | R | Versión del protocolo del monitor |
 
-Los offsets restantes están reservados.
+Las siete palabras son de **solo lectura**; escribirlas da error. El resto del
+bloque está reservado y también da error: no devuelve cero ni repite las
+palabras por alias.
 
----
-
-## 7.1. MAGIC
-
-Valor inicialmente propuesto:
+### 5.1. `MAGIC`
 
 ```text
 0x4D474155
 ```
 
-Permite reconocer MMIO v2.
+Permite reconocer MMIO v2 sin ambigüedad, y distinguirlo del `SYS_ID` del mapa
+anterior, que llevaba el magic `0x4D47` en los bits 31:16 de otra dirección. El
+magic existe para que el valor 0 no sea ambiguo entre «prototipo sin bloque de
+identificación» y «prototipo número 0».
 
----
-
-## 7.2. MMIO_VERSION
-
-Formato:
+### 5.2. `MMIO_VERSION`
 
 ```text
-bits 15:8    major
-bits  7:0    minor
+bits 15:8    major      un cambio incompatible lo incrementa
+bits  7:0    minor      una extensión compatible lo incrementa
 bits 31:16   0
 ```
 
-Un cambio incompatible incrementa `major`.
+### 5.3. `SYSTEM_ID`
 
-Una extensión compatible incrementa `minor`.
-
----
-
-## 7.3. SYSTEM_ID
-
-Describe el sistema global.
-
-Debe poder distinguir configuraciones como:
+Identifica qué sistema hay en la placa. Su valor es el **número de carpeta del
+prototipo**:
 
 ```text
-MiniCPU
-MiniGPU
-MiniCPU + MiniGPU
+bits  7:0    número de carpeta       22 → 0x16
+bits 31:8    reservado, cero
 ```
 
-No sustituye a `CPU_ID` ni `GPU_ID`.
+Elegir el número de carpeta tiene una virtud que ningún identificador asignado a
+mano iguala: **no hay nada que registrar al añadir un prototipo, y es imposible
+duplicarlo**, porque lo impone el nombre del directorio. La alternativa —una
+tabla de identificadores mantenida a mano— es una gemela más que sincronizar.
 
----
+`SYSTEM_ID` no sustituye a `CPU_ID` ni a `GPU_ID`, que describen los núcleos.
+Describe la configuración completa: MiniCPU, MiniGPU o MiniCPU + MiniGPU.
 
-# 8. SYSTEM.DEVICES
+### 5.4. `DEVICES`
 
-`DEVICES` es un bitmap estable.
+Bitmap estable de dispositivos presentes.
 
 ```text
 bit  0    SYSTEM
@@ -415,397 +343,259 @@ bit  8    DMA
 bit  9    CPU
 bit 10    GPU
 
-bits 31:11 reserved
+bits 31:11 reservados
 ```
 
-Aunque `SYSTEM` sea necesariamente presente para leer `DEVICES`, se mantiene su bit para que el bitmap sea una descripción completa y uniforme.
+> Una asignación de bit, una vez hecha, **nunca cambia de significado ni se
+> reutiliza** para otro dispositivo.
 
-Una asignación de bit congelada:
+`SYSTEM` conserva su bit aunque sea necesariamente presente para poder leer
+`DEVICES`, para que el bitmap sea una descripción completa y uniforme.
 
-> **Nunca cambia de significado ni se reutiliza para otro dispositivo.**
+FABRIC y SDRAM tienen bits separados porque hay configuraciones que carecen de
+uno de los dos.
 
-Los dispositivos reservados pero no implementados tienen su bit a cero.
+Un `DEVICES` que lee cero con `MMIO_VERSION` major 1 significa **«sin
+declarar»**, no «ningún dispositivo». Es un valor legítimo, no un error.
 
-Ejemplos:
+**De dónde sale.** `DEVICES` no se escribe a mano en cada `top.v`. Se deriva de
+lo que hay en el RTL, por el mismo camino que ya siguen las capacidades:
+[`../tools/capabilities.json`](../tools/capabilities.json) dice qué buscar en el
+RTL para saber si un prototipo tiene cada cosa, y
+[`../tools/rtl_facts.py`](../tools/rtl_facts.py) lo lee. Lo que no pueda salir
+del RTL va en el `version.json` de la carpeta. Un bitmap escrito a mano sería
+una tercera gemela junto a las ventanas del decodificador y la lista del
+cliente Python, que es exactamente lo que este contrato quiere quitar.
 
-```text
-CPU + EBR + SERIAL:
+### 5.5. `MEM_BASE` y `MEM_SIZE`
 
-SYSTEM = 1
-EBR    = 1
-SERIAL = 1
-CPU    = 1
-```
+Describen la memoria principal, de modo que un programa pueda colocarse sin
+suponer el tamaño. Un binario que quiera su framebuffer al final de la RAM lo
+calcula en vez de llevarlo compilado.
 
-```text
-MiniGPU + SDRAM + VIDEO:
+### 5.6. Descubrimiento
 
-SYSTEM = 1
-FABRIC = 1
-SDRAM  = 1
-VIDEO  = 1
-GPU    = 1
-```
+**No se descubren dispositivos sondeando direcciones.** Sondear no distingue un
+dispositivo ausente de un registro cuyo valor legítimo es cero, y con la
+política de §4.3 un sondeo a un dispositivo ausente además detiene el núcleo.
 
-FABRIC y SDRAM tienen bits separados porque existen configuraciones que pueden carecer de uno de ellos.
-
----
-
-# 9. Descubrimiento del sistema
-
-No se descubren dispositivos sondeando direcciones MMIO.
-
-El procedimiento correcto es:
+El procedimiento es:
 
 ```text
 leer SYSTEM.MAGIC
-        ↓
+      ↓
 comprobar MMIO_VERSION
-        ↓
+      ↓
 leer SYSTEM.DEVICES
-        ↓
-consultar los dispositivos presentes
+      ↓
+acceder solo a los dispositivos cuyo bit está a uno
 ```
 
-Una dirección perteneciente a un dispositivo cuyo bit `DEVICES` está a cero genera error.
+Una dirección de un dispositivo con su bit a cero genera error.
+
+**Compatibilidad con bitstreams antiguos.** Es responsabilidad del host, no del
+RTL nuevo. El host debe distinguir cuatro cosas: identificación válida, la
+lectura cero histórica de un bitstream anterior al bloque, un rechazo explícito
+del acceso, y un fallo de transporte. Un rechazo no demuestra por sí solo que el
+bitstream sea antiguo, y un timeout no debe convertirse en «sin
+identificación». Cambiar este contrato no modifica el comportamiento de un
+bitstream que ya está flasheado, así que no hace falta ninguna excepción en el
+RTL nuevo para conservar esa compatibilidad.
 
 ---
 
-# 10. FABRIC — `0x80010000`
+## 6. FABRIC — `0x80010000`
 
-Se reserva un bloque propio para estado, configuración e instrumentación del fabric.
+Bloque propio para estado, configuración e instrumentación de la interconexión.
+Existe solo en sistemas que incorporan un fabric, y su bit en `DEVICES` lo dice.
 
-```text
-0x80010000 - 0x8001FFFF
-```
-
-El bloque existe sólo en sistemas que incorporan el fabric correspondiente.
-
-Su contenido interno no se congela todavía.
-
-En particular, podrán incorporarse posteriormente contadores como:
-
-- transacciones por master;
-- ciclos de espera;
-- arbitraje;
-- utilización;
-- congestión;
-- stalls.
-
-Los contadores se definirán cuando exista necesidad real de medirlos.
+Su contenido **no se congela todavía**. Cuando haya necesidad real de medir se
+definirán contadores de transacciones por master, ciclos de espera, arbitraje,
+utilización, congestión y stalls.
 
 ---
 
-# 11. SDRAM — `0x80020000`
+## 7. SDRAM — `0x80020000`
 
-Se reserva:
+Bloque propio para información, configuración e instrumentación del controlador
+de SDRAM. Existe solo con `DEVICES.SDRAM = 1`.
 
-```text
-0x80020000 - 0x8002FFFF
-```
-
-para información, configuración e instrumentación específica del controlador SDRAM.
-
-El bloque sólo existe cuando `DEVICES.SDRAM = 1`.
-
-Su contenido se diseñará cuando sea necesario.
-
-Posibles métricas futuras incluyen:
-
-- lecturas;
-- escrituras;
-- bursts;
-- ciclos busy;
-- stalls;
-- comportamiento de filas/bancos.
-
-No se congelan todavía registros concretos.
+Su contenido **no se congela todavía**. Posibles métricas futuras: lecturas,
+escrituras, ráfagas, ciclos ocupado, stalls y comportamiento de filas y bancos.
 
 ---
 
-# 12. SERIAL — `0x80100000`
+## 8. SERIAL — `0x80100000`
+
+Periférico lógico de colas, no un segundo UART físico: los bytes pueden viajar
+encapsulados sobre el UART del monitor. Es un periférico **del sistema**,
+accesible desde CPU y desde GPU.
 
 | Offset | Registro | Acceso | Función |
 |---:|---|---|---|
-| `+0x00` | `DATA` | RW | RX/TX |
-| `+0x04` | `STATUS` | RW | Estado |
-| `+0x08` | `PEEK` | R | RX sin extraer |
+| `+0x00` | `DATA` | RW | Leer extrae un byte de RX; escribir inserta el byte bajo en TX |
+| `+0x04` | `STATUS` | RW | Ocupación de las colas y overrun |
+| `+0x08` | `PEEK` | R | Consulta la cabeza de RX **sin extraerla** |
 
-SERIAL continúa siendo un periférico lógico aunque físicamente pueda multiplexarse sobre el UART utilizado por el monitor.
-
----
-
-## 12.1. DATA
-
-Lectura:
+### 8.1. `DATA`
 
 ```text
-bits 7:0     byte RX
-bits 31:8    0
+lectura     bits  7:0   byte de RX, o cero si la cola está vacía
+            bits 31:8   cero
+escritura   bits  7:0   byte a insertar en TX
+            bits 31:8   ignorados
 ```
 
-La lectura consume el byte.
+La transacción sigue siendo de 32 bits. La lectura **consume** el byte.
 
-Si no existe dato:
+### 8.2. `STATUS`
 
 ```text
-DATA = 0
+bits  7:0    bytes disponibles en RX
+bits 15:8    huecos disponibles en TX
+bit  16      RX_OVERRUN, pegajoso, se limpia escribiendo uno (W1C)
+bits 31:17   reservados
 ```
 
-Escritura:
+`RX_OVERRUN` no debería levantarse nunca: el control de flujo lo hace el host
+con el campo de huecos libres que viaja en la respuesta de cada envío. Si se
+levanta, es que el host lo ignoró.
 
-```text
-bits 7:0     byte TX
-bits 31:8    reservados/ignorados
-```
+### 8.3. `PEEK`
 
-La transacción MMIO sigue siendo de 32 bits.
+Devuelve la cabeza de RX **sin extraerla**.
 
----
-
-## 12.2. STATUS
-
-Inicialmente:
-
-```text
-bits  7:0     bytes disponibles RX
-bits 15:8     huecos disponibles TX
-bit  16       RX_OVERRUN
-bits 31:17    reserved
-```
-
-`RX_OVERRUN` es sticky.
-
-Se limpia escribiendo uno en el bit correspondiente, W1C.
+Existe porque leer `DATA` tiene efecto lateral, y una herramienta de inspección
+que sondee la cola no puede permitirse consumir el byte que mira.
 
 ---
 
-## 12.3. PEEK
+## 9. VIDEO — `0x80200000`
 
-Devuelve el siguiente byte RX sin extraerlo.
+Un solo dispositivo, que agrupa generación de salida, scanout, framebuffers,
+swap, contadores de vídeo y captura determinista.
 
-Permite inspección desde monitor/debug sin introducir efectos laterales.
+**No existe `FRAME_CAPTURE` como dispositivo independiente.** La separación que
+había en algunos prototipos era histórica: no se había añadido un dispositivo,
+se había ensanchado uno.
 
----
-
-# 13. VIDEO — `0x80200000`
-
-VIDEO agrupa:
-
-- generación de salida;
-- scanout;
-- framebuffers;
-- swap;
-- contadores de vídeo;
-- captura determinista para validación.
-
-No se separa FRAME_CAPTURE en un periférico independiente.
-
-La separación existente en algunos prototipos es histórica y no forma parte del contrato v2.
-
-VIDEO es un periférico del sistema, no propiedad de CPU ni GPU.
-
----
-
-# 14. Registros VIDEO
+VIDEO es del **sistema**, no de la CPU ni de la GPU.
 
 | Offset | Registro | Acceso | Función |
 |---:|---|---|---|
-| `+0x00` | `CTRL` | RW | Modo |
-| `+0x04` | `FB_FRONT` | RW | Framebuffer visible |
-| `+0x08` | `FB_BACK` | RW | Framebuffer secundario |
-| `+0x0C` | `SWAP` | RW | Solicitud/estado swap |
-| `+0x10` | `STATUS` | RW | Estado |
+| `+0x00` | `CTRL` | RW | Modo de salida |
+| `+0x04` | `FB_FRONT` | RW | Dirección del buffer que se muestra |
+| `+0x08` | `FB_BACK` | RW | Dirección del buffer que se dibuja |
+| `+0x0C` | `SWAP` | RW | Solicitud y estado de intercambio |
+| `+0x10` | `STATUS` | RW | Underflow y swap pendiente |
 | `+0x14` | `FRAME_COUNT` | R | Frames emitidos |
-| `+0x18` | `SWAP_COUNT` | R | Swaps completados |
+| `+0x18` | `SWAP_COUNT` | R | Intercambios completados |
 | `+0x1C` | `HALT_AT` | RW | Captura determinista |
-| `+0x20` | `HALT_TARGET` | RW | Cores a detener |
-| `+0x24` | `VIDEO_TX` | R | Transacciones generadas |
+| `+0x20` | `HALT_TARGET` | RW | A quién parar |
+| `+0x24` | `VIDEO_TX` | R | Transacciones de memoria del scanout |
 
----
-
-# 15. VIDEO.CTRL
-
-Inicialmente:
+### 9.1. `CTRL`
 
 ```text
-bits 1:0
-
-0    BLANK
-1    PATTERN
-2    SCANOUT
-3    reserved
-
-bits 31:2 = 0
+bits 1:0     0  BLANK
+             1  PATTERN
+             2  SCANOUT
+             3  reservado
+bits 31:2    cero
 ```
 
-Escribir un modo reservado genera error.
+Escribir el modo reservado genera error.
 
----
+### 9.2. `FB_FRONT` y `FB_BACK`
 
-# 16. VIDEO.FB_FRONT / FB_BACK
+Direcciones físicas de byte, en RAM ordinaria.
 
-Contienen direcciones físicas de byte en memoria.
+**Deben estar alineadas a 16 bytes.** Una dirección mal alineada genera
+**error**: no se trunca ni se corrige.
 
-Los framebuffers son RAM ordinaria.
+Los 16 bytes salen de que el scanout lee en ráfagas. El truncamiento silencioso
+—que es lo que hacían los prototipos anteriores— es peor que el error por una
+razón concreta: era distinto en cada familia, 4 bytes en CPU y 16 en GPU, así
+que el mismo programa dibujaba bien en una placa y torcido en la otra sin que
+nada avisara.
 
-Las bases deben estar alineadas a:
+### 9.3. `SWAP`
+
+Escribir solicita intercambiar `FB_FRONT` y `FB_BACK`.
 
 ```text
-16 bytes
+lectura   bit 0     SWAP_PENDING
+          bits 31:1 cero
 ```
 
-Una dirección incorrectamente alineada genera error.
+**Escribir no intercambia nada**: solo levanta la petición. El intercambio
+ocurre **en el vsync**, porque cambiar la dirección a mitad de frame partiría la
+imagen en dos — que es exactamente el defecto que el doble buffer viene a
+quitar.
 
-No se trunca ni corrige automáticamente.
-
----
-
-# 17. VIDEO.SWAP
-
-Escribir solicita:
+### 9.4. `STATUS`
 
 ```text
-FB_FRONT <-> FB_BACK
+bit 0        UNDERFLOW, pegajoso, W1C
+bit 1        SWAP_PENDING
+bits 31:2    reservados
 ```
 
-El intercambio se completa en vsync.
+`UNDERFLOW` es un nivel pegajoso: si se pone a uno, ahí se queda hasta que
+alguien escriba un uno en el bit 0. Si se recargara cada vsync, un underflow de
+un solo frame sería invisible.
 
-Lectura:
+**Los contadores no se mezclan con `STATUS`.** `FRAME_COUNT` tiene su propio
+registro de 32 bits, no un hueco en los bits altos de éste.
+
+### 9.5. `FRAME_COUNT` y `SWAP_COUNT`
+
+Dos contadores de 32 bits que miden **eventos distintos**:
+
+- `FRAME_COUNT` cuenta frames emitidos por el scanout, corra o no el programa.
+- `SWAP_COUNT` cuenta intercambios completados.
+
+Un programa que no pide swaps hace avanzar el primero y deja el segundo quieto.
+Los dos dan la vuelta; a 60 Hz tardan 2,3 años, así que no llevan bandera de
+desbordamiento (§12.4).
+
+### 9.6. `HALT_AT` y `HALT_TARGET`
+
+Sirven para que el host capture un frame determinista: se arma la alarma, el
+núcleo se para solo, y el host lee el framebuffer con la imagen quieta.
 
 ```text
-bit 0    SWAP_PENDING
-bits 31:1 0
+HALT_AT = 0     desarmado
+HALT_AT = N     VIDEO pide detener los targets seleccionados cuando
+                FRAME_COUNT >= N
 ```
 
----
-
-# 18. VIDEO.STATUS
+La comparación es `>=` y no `==`, como defensa barata por si el contador se pasa
+de largo.
 
 ```text
-bit 0    UNDERFLOW
-bit 1    SWAP_PENDING
-bits 31:2 reserved
+HALT_TARGET   bit 0    CPU
+              bit 1    GPU
+              bits 31:2 reservados
 ```
 
-`UNDERFLOW` es sticky.
+`HALT_TARGET` existe porque **quien produce los frames y quien se para no tienen
+por qué ser el mismo**. En un sistema donde dibuja la GPU y la CPU orquesta,
+querer parar una, otra o las dos son tres casos reales.
 
-Se limpia mediante W1C.
+`HALT_AT` cuenta contra `FRAME_COUNT`, no contra `SWAP_COUNT`: un programa que
+se cuelga sin pedir swaps también tiene que poder capturarse.
 
-Los contadores no se mezclan con STATUS.
+### 9.7. `VIDEO_TX`
 
----
+Contador de 32 bits de transacciones de memoria generadas por el scanout.
 
-# 19. VIDEO.FRAME_COUNT
+Pertenece a VIDEO, no al bloque de contadores de la GPU, por la regla de §12.1:
+cada contador pertenece al componente que **genera** el evento. En su día vivió
+en los contadores de la GPU, y eso era un accidente de que solo la GPU tenía
+contadores.
 
-Contador de 32 bits de frames emitidos.
-
-Incrementa una vez por frame independientemente de que haya habido swap.
-
-Wrap-around natural.
-
----
-
-# 20. VIDEO.SWAP_COUNT
-
-Contador de 32 bits de swaps completados.
-
-Por tanto:
-
-```text
-FRAME_COUNT
-```
-
-y:
-
-```text
-SWAP_COUNT
-```
-
-miden eventos diferentes.
-
----
-
-# 21. VIDEO.HALT_AT
-
-Proporciona ejecución determinista para validación/captura.
-
-```text
-HALT_AT = 0
-```
-
-desactiva el mecanismo.
-
-Para:
-
-```text
-HALT_AT = N
-```
-
-VIDEO solicita detener los targets seleccionados cuando:
-
-```text
-FRAME_COUNT >= N
-```
-
-La comparación es `>=` y no exclusivamente `==`.
-
----
-
-# 22. VIDEO.HALT_TARGET
-
-```text
-bit 0    CPU
-bit 1    GPU
-bits 31:2 reserved
-```
-
-Ejemplos:
-
-```text
-0x0    ninguno
-0x1    CPU
-0x2    GPU
-0x3    CPU + GPU
-```
-
-Esto permite que el productor de los frames y el core detenido no tengan que ser necesariamente el mismo.
-
----
-
-# 23. VIDEO.VIDEO_TX
-
-Contador de 32 bits de transacciones de memoria generadas por VIDEO.
-
-Pertenece a VIDEO porque mide actividad originada por el dispositivo.
-
-En el futuro FABRIC podrá exponer adicionalmente su propia visión del tráfico VIDEO.
-
-Conceptualmente:
-
-```text
-VIDEO
-  |
-  | VIDEO_TX
-  v
-FABRIC
-  |
-  | fabric counters
-  v
-SDRAM
-  |
-  | controller counters
-  v
-memory
-```
-
-Estos contadores pueden medir puntos diferentes del camino.
-
----
-
-# 24. Reset de VIDEO
-
-Tras reset:
+### 9.8. Estado tras reset
 
 ```text
 CTRL          = PATTERN
@@ -818,78 +608,152 @@ HALT_TARGET   = 0
 VIDEO_TX      = 0
 ```
 
-El sistema no arranca directamente en SCANOUT.
-
-PATTERN proporciona diagnóstico independiente de SDRAM.
-
----
-
-# 25. TIMER — `0x80300000`
-
-Se reserva:
-
-```text
-0x80300000 - 0x8030FFFF
-```
-
-para el futuro timer del sistema.
-
-No se define todavía su interfaz.
-
-Mientras no esté implementado:
-
-```text
-DEVICES.TIMER = 0
-```
-
-y cualquier acceso genera error.
+**El sistema no arranca en SCANOUT**, y es deliberado: la SDRAM recién encendida
+contiene basura, así que arrancar en SCANOUT sería elegir por defecto una salida
+indefinida. Con PATTERN, ver el patrón demuestra que HDMI, PLL, cable y monitor
+funcionan, y no verlo señala aguas arriba.
 
 ---
 
-# 26. INTERRUPT CONTROLLER — `0x80400000`
+## 10. TIMER — `0x80300000`
 
-Se reserva:
+Reservado para el timer del sistema. Su interfaz **no se define todavía**.
+Mientras no exista, `DEVICES.TIMER = 0` y cualquier acceso genera error.
 
-```text
-0x80400000 - 0x8040FFFF
-```
-
-para el futuro controlador de interrupciones.
-
-No se congela todavía su interfaz.
-
-Fuentes futuras previstas incluyen al menos:
-
-```text
-GPU WARP_DONE
-GPU ERROR
-```
-
-además de TIMER y futuros periféricos.
+**Aquí vive el reloj de pared**, y esa es la razón de que no esté en los bloques
+de PERFORMANCE. Medir trabajo y medir tiempo son dos preguntas distintas, y
+§12.3 explica por qué mezclarlas da respuestas falsas.
 
 ---
 
-# 27. DMA — `0x80500000`
+## 11. INTERRUPT CONTROLLER — `0x80400000` · DMA — `0x80500000`
 
-Se reserva:
+Reservados. Sus interfaces no se congelan todavía, y sus bits de `DEVICES` están
+a cero mientras no existan.
+
+Del controlador de interrupciones se prevén al menos estas fuentes:
+`GPU.WARP_DONE`, error de GPU y TIMER.
+
+---
+
+## 12. Contadores de rendimiento: reglas comunes
+
+Estas reglas valen para `CPU PERFORMANCE` y `GPU PERFORMANCE`, y para los
+bloques de FABRIC y SDRAM cuando se definan.
+
+### 12.1. Cada contador pertenece a quien genera el evento
 
 ```text
-0x80500000 - 0x8050FFFF
+GPU LSU ──> FABRIC ──> SDRAM ──> memoria
+   │           │          │
+ LSU_TX    contadores  contadores
+           de fabric   del controlador
 ```
 
-para un futuro motor DMA.
+Los tres pueden medir puntos distintos del mismo camino, y eso es útil: así se
+localiza dónde aparece un cuello de botella sin mezclar eventos de capas
+diferentes. Lo que no se hace es meter el contador de tráfico de la pantalla
+dentro de la unidad de cómputo.
 
-Mientras no exista:
+### 12.2. Dan la vuelta, no saturan
+
+Los contadores son de 32 bits y hacen **wrap-around**.
+
+Saturar destruiría el uso normal, que es la **resta**: se lee antes, se lee
+después y se restan. Con wrap, `después − antes` sigue siendo correcto aunque el
+contador haya dado una vuelta en medio, porque la aritmética modular de 32 bits
+lo arregla sola. Con saturación, en cuanto una de las dos lecturas llega al
+máximo la medida se pierde entera y no hay forma de recuperarla.
+
+A 80 MHz, 2³² ciclos son 54 segundos; a 25 MHz, 172.
+
+### 12.3. Avanzan solo con el núcleo corriendo
+
+**Los contadores no corren libres.** Solo avanzan mientras el núcleo al que
+pertenecen ejecuta.
+
+No es un detalle de implementación, es el punto. Un contador libre sirve para
+que un programa se mida a sí mismo —las dos lecturas las hace él, y entre ellas
+solo pasa lo que él hace— pero **no** para que lo mida el host: ahí, entre las
+dos lecturas caben las órdenes por serie y el bucle que sondea si ha parado. Con
+el contador de ciclos corriendo libre, un perfilado daba un CPI de 43 en vez de
+15,6 — estaba midiendo el reloj de pared.
+
+`VIDEO_TX` se cuenta con el mismo criterio, porque el scanout sigue leyendo
+memoria con el núcleo parado y ese tráfico no es del programa.
+
+Quien quiera reloj de pared tiene el TIMER (§10). Son dos eventos distintos, no
+dos formas de contar lo mismo.
+
+### 12.4. Bandera de desbordamiento
+
+Cada contador tiene un bit pegajoso que dice si ha dado la vuelta, en
+`PERF_OVF`. Se pone a uno en la transición `0xFFFFFFFF → 0x00000000` y se limpia
+escribiendo un uno en ese bit (W1C).
+
+Así la resta sigue funcionando **y además se puede saber si es de fiar**. Es el
+mismo patrón que `VIDEO.STATUS.UNDERFLOW` y `SERIAL.STATUS.RX_OVERRUN`: un aviso
+pegajoso que no se pierde si nadie mira a tiempo.
+
+`RESET_COUNTERS` limpia también `PERF_OVF`. Si no lo hiciera, resetear para
+medir limpio dejaría un aviso de la medida anterior — el falso positivo que la
+bandera existe para evitar.
+
+Los contadores de VIDEO **no** llevan bandera, y es una decisión, no un olvido:
+dan la vuelta en horas (`VIDEO_TX`) o años (`FRAME_COUNT`, `SWAP_COUNT`), o sea
+nunca dentro de una medida. Añadírsela sería uniformidad por uniformidad.
+
+### 12.5. Congelar para leer
+
+`PERF_CTRL` tiene un bit para parar y arrancar todos los contadores del bloque a
+la vez.
+
+Sin él, leer seis contadores son seis instantes distintos con el programa
+corriendo entre medias, y el CPI que calcules es de una mezcla. Con freeze:
+parar, leer los seis contadores y `PERF_OVF`, arrancar.
+
+**`PERF_CTRL` nunca se replica.** Un segundo registro de control significaría
+dos escrituras para congelar, o sea dos instantes, que es justo el problema que
+el bit viene a resolver. Lo que crece con el número de contadores es `PERF_OVF`,
+no `PERF_CTRL`.
+
+### 12.6. Disposición del bloque
+
+Aplicando la regla de §1.4:
 
 ```text
-DEVICES.DMA = 0
++0x000 … +0x0FC   ARRAY DE CONTADORES, hasta 64 ranuras     R
+                  el contador n está en +4n
+                  las ranuras sin contador dan error
+
++0x100            PERF_CTRL      RW
++0x104            PERF_OVF0      W1C    contadores  0–31
++0x108            PERF_OVF1      W1C    contadores 32–63
++0x10C … +0xFFFF  reservado
+```
+
+La regla completa cabe en una línea:
+
+> El contador `n` está en `+4n`, y su bandera es el bit `n mod 32` de
+> `PERF_OVF[n div 32]`.
+
+Añadir un contador es ocupar la siguiente ranura libre: su bandera ya existe y
+no se mueve nada. `PERF_OVF1` se declara desde ahora aunque lea cero, porque
+añadirlo después obligaría a decidir dónde con el control ya congelado delante.
+
+`PERF_CTRL`:
+
+```text
+bit 0    ENABLE      1 cuenta, 0 congela todos los contadores del bloque
+bit 1    RESET       escribir uno pone a cero los contadores y PERF_OVF
+bits 31:2 reservados
 ```
 
 ---
 
-# 28. CPU CORE — `0x81000000`
+## 13. CPU — `0x81000000`
 
-Registros iniciales:
+### 13.1. CPU CORE — `0x81000000`
 
 | Offset | Registro | Acceso |
 |---:|---|---|
@@ -899,50 +763,37 @@ Registros iniciales:
 | `+0x0C` | `CPU_FEATURES` | R |
 | `+0x10` | `CPU_STATUS` | R |
 
-`CPU_ISA` describe capacidades arquitectónicas.
+`CPU_ISA` describe capacidades arquitectónicas; `CPU_FEATURES`, características
+de la implementación. Sus bits se documentan junto a MiniISA, y se derivan del
+RTL por el mismo camino que `DEVICES` (§5.4).
 
-`CPU_FEATURES` describe características de la implementación.
+### 13.2. CPU PERFORMANCE — `0x81010000`
 
-Las asignaciones concretas de bits se documentarán junto con MiniISA.
+Array según §12.6.
 
----
+| Ranura | Offset | Contador |
+|---:|---:|---|
+| 0 | `+0x00` | `CYCLES` |
+| 1 | `+0x04` | `RETIRED` |
+| 2 | `+0x08` | `IMEM_HITS` |
+| 3 | `+0x0C` | `IMEM_MISSES` |
+| 4 | `+0x10` | `MEM_TX` |
+| 5 | `+0x14` | `STALL_MEM` |
 
-# 29. CPU PERFORMANCE — `0x81010000`
+Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
+fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
+placa**, sin simular y sin cronómetro.
 
-Registros iniciales:
+### 13.3. CPU DEBUG — `0x81020000`
 
-| Offset | Registro | Acceso |
-|---:|---|---|
-| `+0x00` | `CYCLES` | R |
-| `+0x04` | `RETIRED` | R |
-| `+0x08` | `IMEM_HITS` | R |
-| `+0x0C` | `IMEM_MISSES` | R |
-| `+0x10` | `MEM_TX` | R |
-| `+0x14` | `STALL_MEM` | R |
-| `+0x18` | `PERF_CTRL` | RW |
-
-Inicialmente los contadores son de 32 bits y realizan wrap-around.
-
-`PERF_CTRL`:
-
-```text
-bit 0    RESET_COUNTERS
-bits 31:1 reserved
-```
-
-Escribir `1` pone los contadores a cero.
+Reservado para estado de depuración de CPU. No se congelan registros hasta que
+haya una necesidad concreta.
 
 ---
 
-# 30. CPU DEBUG — `0x81020000`
+## 14. GPU — `0x82000000`
 
-Se reserva un bloque separado para estado de depuración específico de CPU.
-
-No se congelan registros adicionales hasta que exista una necesidad concreta.
-
----
-
-# 31. GPU CORE / CONTROL — `0x82000000`
+### 14.1. GPU CORE / CONTROL — `0x82000000`
 
 | Offset | Registro | Acceso |
 |---:|---|---|
@@ -957,70 +808,32 @@ No se congelan registros adicionales hasta que exista una necesidad concreta.
 | `+0x20` | `WARP_LIVE` | R |
 | `+0x24` | `WARP_DONE` | RW |
 
----
-
-# 32. GPU_CAPS
-
-Formato inicial:
+### `GPU_CAPS`
 
 ```text
 bits  7:0    NUM_WARPS
 bits 15:8    NUM_LANES
-bits 31:16   reserved
+bits 31:16   reservados
 ```
 
-La implementación actual:
+La implementación actual tiene 8 y 8. **El software no debe asumirlo**: lo lee.
+
+### `GPU_STATUS`
 
 ```text
-NUM_WARPS = 8
-NUM_LANES = 8
+bit 0        RUNNING      hay ejecución activa
+bit 1        HALTED       ejecución global pausada
+bit 2        IDLE         no queda ningún warp vivo
+bit 3        ERROR        hay un error pendiente
+bits 15:8    LIVE_WARPS   número de warps vivos
+bits 31:16   reservados
 ```
 
-El software no debe asumir estos valores.
+`IDLE` es preferible a un `DONE` global porque la GPU puede recibir warps
+nuevos dinámicamente, así que «no queda trabajo» y «el trabajo terminó» no son
+lo mismo.
 
-MMIO v2 reserva máscaras de 32 bits para gestión de warps, permitiendo hasta 32 warps sin modificar el ABI.
-
-Una futura GPU con más de 32 warps podrá extender el bloque mediante registros adicionales.
-
----
-
-# 33. GPU_STATUS
-
-```text
-bit 0       RUNNING
-bit 1       HALTED
-bit 2       IDLE
-bit 3       ERROR
-bits 15:8   LIVE_WARPS
-bits 31:16  reserved
-```
-
-Semántica:
-
-```text
-RUNNING
-    existe ejecución GPU activa
-
-HALTED
-    ejecución global pausada
-
-IDLE
-    no queda ningún warp vivo
-
-ERROR
-    existe un error GPU pendiente
-
-LIVE_WARPS
-    número actual de warps vivos
-```
-
-`IDLE` es preferible a un `DONE` global porque la GPU puede recibir nuevos warps dinámicamente.
-
----
-
-# 34. GPU_CONTROL
-
-Bits de comando:
+### `GPU_CONTROL`
 
 ```text
 bit 0    RUN
@@ -1028,264 +841,53 @@ bit 1    HALT
 bit 2    RESUME
 bit 3    STEP
 bit 4    RESET
-bits 31:5 reserved
+bits 31:5 reservados
 ```
 
-Los bits son comandos.
-
-Escribir uno ejecuta la acción correspondiente.
-
-Leer devuelve cero en los bits de comando.
-
-No deben escribirse simultáneamente comandos incompatibles.
-
----
-
-# 35. GPU_CONTROL.RUN
-
-`RUN` proporciona el mecanismo sencillo de lanzamiento global.
-
-Antes de `RUN`, software configura los descriptores de warp.
-
-`RUN` arranca todos los warps implementados cuya máscara inicial de lanes sea distinta de cero.
-
-Conceptualmente:
-
-```text
-for each implemented warp n:
-
-    if WARP[n].ACTIVE != 0:
-        start warp n
-```
-
-El lanzamiento inicializa el estado runtime a partir del descriptor.
-
-`RUN` sólo es válido cuando no existen warps vivos.
-
-Ejecutar `RUN` mientras algún warp está vivo genera error.
-
----
-
-# 36. GPU_CONTROL.HALT
-
-`HALT` pausa globalmente la ejecución GPU.
-
-Conserva:
-
-- PCs;
-- máscaras live;
-- SIMT stacks;
-- waits;
-- estado LSU necesario;
-- estado de barreras;
-- demás estado runtime.
-
-Los warps no se reinicializan.
-
----
-
-# 37. GPU_CONTROL.RESUME
-
-Continúa una GPU detenida mediante `HALT`.
-
-Sólo es válido cuando:
-
-```text
-HALTED = 1
-```
-
-En otro estado genera error.
-
----
-
-# 38. GPU_CONTROL.STEP
-
-Ejecuta una unidad de avance de depuración estando la GPU detenida.
-
-Su semántica debe coincidir con la operación STEP utilizada por el monitor.
-
-Sólo es válido con:
-
-```text
-HALTED = 1
-```
-
-Tras STEP la GPU permanece detenida.
-
----
-
-# 39. GPU_CONTROL.RESET
-
-`RESET` descarta el estado runtime de ejecución GPU:
-
-- warps vivos;
-- SIMT stacks;
-- waits;
-- barreras;
-- errores runtime;
-- estado temporal del lanzamiento.
-
-No modifica los descriptores programados en `GPU_WARPS`.
-
-Por tanto puede hacerse:
-
-```text
-GPU_CONTROL.RESET
-GPU_CONTROL.RUN
-```
-
-para repetir un lanzamiento utilizando la misma configuración.
-
-El reset físico del SoC sigue siendo una operación distinta y reinicia también los registros arquitectónicos que corresponda.
-
----
-
-# 40. WARP_START
-
-`WARP_START` es una máscara de 32 bits.
-
-```text
-bit n = 1
-```
-
-solicita arrancar el warp `n`.
-
-Permite añadir trabajo mientras otros warps siguen ejecutando.
-
-Ejemplo:
-
-```text
-WARP_LIVE  = 00001011
-
-warp 2 está libre
-```
-
-CPU configura `WARP[2]` y escribe:
-
-```text
-WARP_START = 00000100
-```
-
-El warp 2 comienza a ejecutar sin afectar a los demás.
-
-Es error intentar arrancar:
-
-- un warp no implementado;
-- un warp que ya está vivo;
-- un descriptor cuya máscara inicial de lanes sea cero.
-
----
-
-# 41. WARP_LIVE
-
-Máscara de 32 bits de solo lectura.
-
-```text
-bit n = 1    warp n está vivo
-bit n = 0    warp n está libre/no ejecutando
-```
-
-Los bits correspondientes a warps no implementados son cero.
-
----
-
-# 42. WARP_DONE
-
-Máscara sticky de 32 bits.
-
-Cuando un warp termina:
-
-```text
-WARP_DONE[n] = 1
-```
-
-Los eventos no se pierden aunque CPU tarde en observarlos.
-
-Ejemplo:
-
-```text
-warp 0 termina
-warp 3 termina
-
-WARP_DONE = 00001001
-```
-
-Los bits son W1C:
-
-```text
-write 1 → clear
-write 0 → unchanged
-```
-
-Cuando `RUN` o `WARP_START` arranca un warp:
-
-```text
-WARP_DONE[n] = 0
-```
-
-automáticamente.
-
-Esto permite reutilizar slots de ejecución de forma natural.
-
-En el futuro:
-
-```text
-WARP_DONE != 0
-```
-
-podrá generar una interrupción GPU.
-
----
-
-# 43. Scheduling software de GPU
-
-MMIO v2 permite dos modelos.
-
-## Modelo sencillo
-
-```text
-configurar todos los warps
-        |
-        v
-GPU_CONTROL.RUN
-        |
-        v
-ejecutar hasta IDLE
-```
-
-Adecuado para programas sencillos y GPU autónoma.
-
-## Scheduler dinámico
-
-```text
-CPU mantiene cola de trabajo en RAM
-        |
-        v
-consulta WARP_LIVE / WARP_DONE
-        |
-        v
-encuentra slot libre
-        |
-        v
-programa WARP[n]
-        |
-        v
-WARP_START[n]
-```
-
-Esto permite mantener la GPU ocupada reutilizando warps físicos sin necesidad inicial de un command processor hardware.
-
----
-
-# 44. GPU WARPS — `0x82010000`
-
-Cada warp dispone de un descriptor de 16 bytes:
-
-```text
-base + 16*n
-```
-
-Formato:
+Son **comandos**: escribir un uno ejecuta la acción, y leer devuelve cero en
+esos bits. No deben escribirse a la vez comandos incompatibles.
+
+- **`RUN`** arranca todos los warps implementados cuya máscara inicial de lanes
+  sea distinta de cero, inicializando su estado runtime desde el descriptor.
+  Solo es válido cuando no hay warps vivos; con alguno vivo, error.
+- **`HALT`** pausa globalmente y **conserva** PCs, máscaras, pilas SIMT, waits,
+  estado de la LSU y barreras. Los warps no se reinicializan.
+- **`RESUME`** continúa. Solo válido con `HALTED = 1`.
+- **`STEP`** avanza una unidad de depuración con la GPU detenida, y la deja
+  detenida. Su semántica coincide con la del comando `STEP` del monitor.
+- **`RESET`** descarta el estado runtime —warps vivos, pilas, waits, barreras,
+  errores— pero **no** los descriptores, de modo que `RESET` seguido de `RUN`
+  repite un lanzamiento con la misma configuración. El reset físico del sistema
+  es otra cosa.
+
+**Este bloque es lo que permite que la CPU use la GPU como acelerador.** En el
+mapa anterior, `run/halt/step/reset` llegaban por señales del monitor, así que
+solo el host podía lanzar la GPU y solo con la GPU parada.
+
+### `WARP_START`, `WARP_LIVE`, `WARP_DONE`
+
+Tres máscaras de 32 bits, una por warp. Los bits de warps no implementados son
+cero.
+
+- **`WARP_START`** (W): escribir un uno en el bit `n` arranca el warp `n`.
+  Permite **añadir trabajo mientras otros warps ejecutan**. Es error arrancar un
+  warp no implementado, uno que ya está vivo, o un descriptor cuya máscara
+  inicial de lanes sea cero.
+- **`WARP_LIVE`** (R): qué warps están vivos ahora.
+- **`WARP_DONE`** (RW, W1C): máscara **pegajosa** de warps terminados. El evento
+  no se pierde aunque la CPU tarde en mirarlo. Arrancar un warp con `RUN` o
+  `WARP_START` limpia su bit automáticamente, de modo que las ranuras se
+  reutilizan sin ceremonia. En el futuro, `WARP_DONE != 0` podrá generar una
+  interrupción.
+
+Con estos tres registros caben dos modelos de uso: configurar todo y lanzar con
+`RUN`, o mantener una cola en RAM y reponer warps según se liberan ranuras, sin
+necesidad de un command processor en hardware.
+
+### 14.2. GPU WARPS — `0x82010000`
+
+Array de descriptores de 16 bytes, según la regla de §1.4: el descriptor `n`
+está en `base + 16n`, y no hay ningún registro de control dentro del bloque.
 
 | Offset | Registro | Acceso |
 |---:|---|---|
@@ -1294,52 +896,44 @@ Formato:
 | `+0x08` | `WORKGROUP_ID` | RW |
 | `+0x0C` | `SIMT_STATE` | R |
 
----
+El bloque de 64 KiB da sitio a **32 warps sin tocar el ABI**, que es el mismo
+número que cubren las máscaras de §14.1. Una GPU con más de 32 podrá extender
+el bloque con registros adicionales.
 
-# 45. WARP.ACTIVE
+### `ACTIVE`
 
-Es la máscara inicial de lanes.
+Máscara inicial de lanes. Para 8 lanes: `0x00` deshabilitado, `0x01` solo la
+lane 0, `0x0F` las cuatro primeras, `0xFF` las ocho. Los bits por encima de
+`NUM_LANES` deben ser cero.
 
-Para la implementación actual de 8 lanes:
+> **`ACTIVE == 0` significa descriptor deshabilitado para `RUN`.**
 
-```text
-0x00    warp deshabilitado
-0x01    lane 0
-0x0F    lanes 0..3
-0xFF    lanes 0..7
-```
+No hay un `WARP_ENABLE` aparte: sobraría.
 
-Los bits superiores a `NUM_LANES` deben ser cero.
-
-No existe un `WARP_ENABLE` independiente.
-
-> **ACTIVE == 0 significa descriptor deshabilitado para RUN.**
-
----
-
-# 46. WARP.SIMT_STATE
-
-Estado runtime de solo lectura.
-
-Inicialmente:
+### `SIMT_STATE`
 
 ```text
-bits  7:0     REGION depth
-bits 15:8     PATH depth
+bits  7:0     profundidad de REGION
+bits 15:8     profundidad de PATH
 bit  16       WAIT_MEM
 bit  17       WAIT_BAR
-bits 31:18    reserved
+bits 31:18    reservados
 ```
 
-Escribir genera error.
+Es estado runtime de **solo lectura**; escribirlo genera error. No es un hueco
+libre: si algún día entra una instrucción que necesite un identificador de warp
+por usuario, no cabe aquí.
 
-La información global `LIVE` se obtiene mediante `WARP_LIVE`, evitando mezclar configuración y scheduling dentro del descriptor.
+La información global de qué warps están vivos se obtiene con `WARP_LIVE`, no
+desde el descriptor, para no mezclar configuración con scheduling.
 
----
+Escribir un descriptor reinicia el estado de reconvergencia, barrera y contador
+local del warp. No es una interfaz para modificar contexto mientras el warp
+ejecuta.
 
-# 47. GPU SIMT DEBUG — `0x82020000`
+### 14.3. GPU SIMT DEBUG — `0x82020000`
 
-El bloque contiene exclusivamente información de depuración/microarquitectura SIMT.
+Solo información de depuración y microarquitectura SIMT.
 
 | Offset | Registro | Acceso |
 |---:|---|---|
@@ -1349,250 +943,188 @@ El bloque contiene exclusivamente información de depuración/microarquitectura 
 | `+0x0C` | `FIRST_ERROR_PC` | R |
 | `+0x10` | `WARP_RETIRED` | R |
 
-Se elimina el contador global `RETIRED` de este bloque.
-
-Pertenece a GPU PERFORMANCE.
-
----
-
-# 48. SIMT_DEBUG.CONTEXT
-
-Selecciona inicialmente:
+El contador global de instrucciones retiradas **no** está aquí: pertenece a GPU
+PERFORMANCE.
 
 ```text
-bits 2:0    lane
-bits 5:3    warp
-bits 31:6   reserved
+CONTEXT       bits 2:0    lane
+              bits 5:3    warp
+              bits 31:6   reservados
+
+FIRST_ERROR   bits 2:0    lane
+              bits 5:3    warp
+              bit  6      lane_valid
+              bits 15:8   error_code
+              bits 31:16  reservados
 ```
 
-Permite que monitor/debug consulte estado correspondiente a una lane/warp concreta.
+`FIRST_ERROR` guarda **el primero**, no el último: cuando algo se rompe en ocho
+lanes a la vez, el que informa es el que causó la parada. `error_code` es el
+espacio de códigos del SM — `0x06` es `ERROR_SIMT`, el de un salto divergente
+sin `SSY` delante.
+
+`LSU_SLOTS` está aquí y no en PERFORMANCE porque es un estado **instantáneo**,
+no un contador acumulado.
+
+`CONTEXT` gobierna también qué registros devuelve el comando de lectura de
+registros del monitor. No hay una ventana MMIO con los 32 registros: se leen por
+comando, y esta dirección solo dice de quién.
+
+### 14.4. GPU PERFORMANCE — `0x82030000`
+
+Array según §12.6.
+
+| Ranura | Offset | Contador |
+|---:|---:|---|
+| 0 | `+0x00` | `CYCLES` |
+| 1 | `+0x04` | `RETIRED` |
+| 2 | `+0x08` | `IMEM_HITS` |
+| 3 | `+0x0C` | `IMEM_MISSES` |
+| 4 | `+0x10` | `LSU_TX` |
+| 5 | `+0x14` | `STALL_MEM` |
+
+`LSU_TX` y `STALL_MEM` están aquí, y no en FABRIC, porque la LSU es parte de la
+GPU. `VIDEO_TX` **no** está aquí: es de VIDEO (§9.7).
 
 ---
 
-# 49. SIMT_DEBUG.LSU_SLOTS
+## 15. Visibilidad por master
 
-Describe el estado instantáneo de slots de la LSU.
+El mapa dice qué dispositivo hay en cada dirección; esta sección dice quién
+puede tocarlo. Son cosas independientes (§1.2), y esta política puede cambiar
+sin que cambie ni una dirección.
 
-Permanece en DEBUG porque es información microarquitectónica instantánea, no un contador de rendimiento.
-
-La LSU forma parte de MiniGPU.
-
----
-
-# 50. SIMT_DEBUG.FIRST_ERROR
-
-Conserva el primer error detectado.
-
-Formato inicial:
+**CPU**
 
 ```text
-bits 2:0     lane
-bits 5:3     warp
-bit  6       lane_valid
-bits 15:8    error_code
-bits 31:16   reserved
+SYSTEM                R
+FABRIC, SDRAM         según registro
+SERIAL, VIDEO         RW
+TIMER, INTC, DMA      futuro
+CPU CORE/PERF/DEBUG   según registro
+GPU CORE / CONTROL    RW      ← la CPU configura y lanza la GPU por MMIO
+GPU WARPS             RW
+GPU SIMT DEBUG        R
+GPU PERFORMANCE       R
 ```
 
-`FIRST_ERROR_PC` contiene el PC correspondiente.
+La CPU no necesita instrucciones especiales para usar la GPU: le basta el mapa.
 
----
-
-# 51. GPU PERFORMANCE — `0x82030000`
-
-| Offset | Registro | Acceso |
-|---:|---|---|
-| `+0x00` | `CYCLES` | R |
-| `+0x04` | `RETIRED` | R |
-| `+0x08` | `IMEM_HITS` | R |
-| `+0x0C` | `IMEM_MISSES` | R |
-| `+0x10` | `LSU_TX` | R |
-| `+0x14` | `STALL_MEM` | R |
-| `+0x18` | `PERF_CTRL` | RW |
-
-`VIDEO_TX` ya no pertenece a GPU PERFORMANCE.
-
-La LSU sí pertenece a GPU, por lo que:
+**GPU**
 
 ```text
-LSU_TX
-STALL_MEM
+SYSTEM                R
+SERIAL, VIDEO         RW, por acceso MMIO escalar (§4.2)
+GPU información       R
+GPU PERFORMANCE       según registro
 ```
 
-permanecen aquí.
+El acceso desde un warp a los registros de scheduling y control **está
+restringido**: un warp no debe reprogramarse a sí mismo ni a sus vecinos por
+accidente a través de `GPU WARPS` o `WARP_START`. No hay caso de uso que lo pida
+y sí modos de fallo.
+
+**Monitor**
+
+Alcanza todos los dispositivos implementados, para depurar. Sigue sujeto a todo
+lo demás: solo lectura donde lo haya, alineamiento, tamaños, efectos laterales y
+valores válidos.
 
 ---
 
-# 52. Separación de performance
+## 16. El monitor
 
-MMIO v2 distingue:
+### 16.1. Los comandos son una fachada
+
+El protocolo del monitor conserva sus comandos de control —`RUN`, `HALT`,
+`STEP`, `RESET`— para que el trabajo diario no cambie. Lo que cambia es que
+**por dentro escriben `GPU_CONTROL`** en vez de mover señales propias.
+
+Tiene dos consecuencias buenas:
+
+- **Una sola implementación** de arrancar la GPU, no dos que puedan divergir.
+- **Desaparece la única diferencia estructural entre el monitor de CPU y el de
+  GPU.** Hasta ahora, los comandos de lectura de registros y de reset iban
+  cableados a sitios distintos según la familia, y era lo único que no se
+  resolvía con parámetros. Si el control es una dirección, es la misma dirección
+  en las dos.
+
+### 16.2. Tamaños de acceso
 
 ```text
-CPU PERFORMANCE
-GPU PERFORMANCE
-VIDEO counters
-FABRIC instrumentation
-SDRAM instrumentation
+READ_BYTE  / WRITE_BYTE     RAM
+READ_WORD  / WRITE_WORD     RAM y MMIO
+transferencias de bloque    RAM y ventanas MMIO declaradas
 ```
 
-Cada contador debe pertenecer al componente que genera u observa el evento.
+Un acceso byte a byte dirigido a MMIO **no** debe convertirse en un acceso
+sub-palabra al periférico: violaría §4.1.
 
-Esto permite localizar posteriormente dónde aparece un cuello de botella:
+La razón de que `READ_WORD`/`WRITE_WORD` existan es que un registro no se puede
+leer ni escribir a trozos. Un contador de frames avanza entre dos bytes; y en
+un registro que rearma una alarma al escribirse, hacerlo en cuatro trozos la
+rearma cuatro veces con valores intermedios.
 
-```text
-GPU LSU
-   |
-   v
-FABRIC
-   |
-   v
-SDRAM
-```
+### 16.3. La versión del monitor describe el protocolo, y solo eso
 
-sin mezclar eventos de capas diferentes.
+`MONITOR_VERSION` sube cuando cambian los comandos o cuando algo se vuelve
+incompatible **en silencio**. No identifica el hardware.
 
----
+La identidad del hardware se lee de `SYSTEM_ID`, `DEVICES`, `CPU_FEATURES`,
+`GPU_CAPS` y compañía. Antes, un mismo número de versión lo llevaban prototipos
+con hardware distinto, y una comprobación de bitstream podía pasar contra la
+placa equivocada.
 
-# 53. Visibilidad inicial por master
+Conviene no confundir esto con eliminar la versión: hay cambios que un bitmap de
+dispositivos **no** detecta. Un core al que se le corrige el comportamiento de
+un registro tiene los mismos comandos, los mismos dispositivos y las mismas
+capacidades — y da otro resultado. Para eso sirve una versión, y por eso no se
+sustituye por capabilities.
 
-## CPU
+### 16.4. La lista blanca se deriva, no se copia
 
-En un SoC integrado, CPU puede acceder a:
+Las ventanas que el monitor acepta **se derivan** de qué dispositivos declara
+`DEVICES`. No se escriben a mano en el RTL y otra vez en el cliente Python.
 
-```text
-SYSTEM              R
-FABRIC              según registro
-SDRAM               según registro
-SERIAL              RW
-VIDEO               RW
-TIMER                futuro
-INTC                 futuro
-DMA                  futuro
-
-CPU CORE             según registro
-CPU PERFORMANCE      según registro
-CPU DEBUG            según registro
-
-GPU CORE/CONTROL     RW según registro
-GPU WARPS            RW
-GPU SIMT DEBUG       R / debug
-GPU PERFORMANCE      R / control autorizado
-```
-
-La CPU configura y lanza GPU exclusivamente mediante MMIO.
-
-No necesita instrucciones especiales para ello.
+Mantener dos listas gemelas a mano ya se cobró su precio: añadir una ventana en
+el RTL sin añadirla en la lista del monitor hace que éste rechace el comando
+antes de que llegue al decodificador, y el síntoma es un NACK que parece un
+bitstream viejo.
 
 ---
 
-## GPU
+## 17. Simuladores
 
-Inicialmente puede acceder a:
+Los simuladores implementan **el mismo contrato** que el RTL: mismas
+direcciones, mismos registros, mismos tamaños, mismo reset, mismos errores,
+mismas restricciones y mismos efectos laterales arquitectónicos.
 
-```text
-SYSTEM              R
-SERIAL              RW mediante acceso MMIO escalar
-VIDEO               RW mediante acceso MMIO escalar
-GPU information      R
-GPU PERFORMANCE      según registro
-```
+**No habrá programas `*_nommio` por limitaciones del simulador.** Un programa
+que se ejecuta en el modelo y en la placa tiene que ser el mismo programa, o la
+comparación no compara.
 
-El acceso desde warp a registros de scheduling/control puede restringirse.
+Lo que el modelo funcional **no** reproduce, y conviene tener presente al leer
+un resultado: contienda por la memoria, underflow, desgarro y el tiempo de
+llegada de los bytes por serie. VIDEO se modela funcionalmente sin reproducir
+HDMI eléctricamente.
 
-En particular, un warp no debe reprogramarse a sí mismo accidentalmente mediante `GPU_WARPS` o `WARP_START`.
-
----
-
-## Monitor
-
-El monitor puede alcanzar todos los dispositivos implementados para depuración.
-
-Sigue sujeto a:
-
-- RO/RW;
-- alineamiento;
-- tamaños;
-- efectos laterales;
-- valores válidos.
+**Lo que no se debe hacer nunca es aceptar un acceso MMIO sin modelar el
+dispositivo**, para que un programa deje de fallar. Un dispositivo que acepta
+todo y no hace nada convierte un error en un resultado silenciosamente
+incorrecto.
 
 ---
 
-# 54. Monitor: tamaños de acceso
+## 18. Orden entre CPU y GPU
 
-El protocolo del monitor debe distinguir RAM y MMIO correctamente.
-
-Se mantienen:
+En el sistema integrado debe garantizarse:
 
 ```text
-READ_BYTE
-WRITE_BYTE
-```
-
-para RAM.
-
-Se añaden:
-
-```text
-READ_WORD
-WRITE_WORD
-```
-
-para accesos de 32 bits.
-
-`READ_WORD/WRITE_WORD` pueden utilizarse tanto para RAM como para MMIO.
-
-Un `READ_BYTE/WRITE_BYTE` dirigido a MMIO no debe convertirse en un acceso sub-palabra al periférico.
-
-Las transferencias de bloque pueden mantenerse para carga eficiente de memoria.
-
----
-
-# 55. Monitor e identidad del hardware
-
-`MONITOR_VERSION` describe únicamente el protocolo.
-
-La identidad del hardware se obtiene mediante:
-
-```text
-SYSTEM
-CPU CORE
-GPU CORE
-DEVICES
-FEATURES
-CAPS
-```
-
-Esto permite utilizar un monitor común o parametrizado sin asociar artificialmente una versión de protocolo a una configuración concreta de FPGA.
-
----
-
-# 56. Simuladores
-
-Los simuladores deben implementar el mismo contrato que RTL:
-
-- mismas direcciones;
-- mismos registros;
-- mismos tamaños;
-- mismo reset;
-- mismos errores;
-- mismas restricciones;
-- mismos efectos laterales arquitectónicos.
-
-No existirán programas separados `*_nommio` por limitaciones artificiales del simulador.
-
-VIDEO puede modelarse funcionalmente sin reproducir eléctricamente HDMI.
-
----
-
-# 57. Orden CPU-GPU
-
-En el SoC integrado debe garantizarse:
-
-```text
-CPU escribe código/datos
+CPU escribe código y datos
         ↓
-CPU escribe descriptores GPU
+CPU escribe descriptores de warp
         ↓
-escrituras anteriores visibles
+esas escrituras son visibles
         ↓
 RUN / WARP_START
         ↓
@@ -1600,384 +1132,197 @@ GPU ejecuta
         ↓
 GPU completa sus escrituras
         ↓
-WARP_DONE / IDLE visible
+WARP_DONE / IDLE visibles
         ↓
 CPU consume resultados
 ```
 
-Un evento de finalización no debe hacerse visible antes de que las escrituras arquitectónicamente asociadas al trabajo hayan alcanzado el punto de coherencia acordado.
+> Un evento de finalización no debe hacerse visible antes de que las escrituras
+> asociadas a ese trabajo hayan alcanzado el punto de coherencia acordado.
 
-El mecanismo concreto puede utilizar:
+El mecanismo concreto —orden fuerte de MMIO, drenado de buffers, fences, o
+protocolo del fabric— se define al integrar. Lo que ya está decidido es la
+propiedad, no cómo se consigue.
 
-- orden fuerte de MMIO;
-- drain de buffers;
-- fences;
-- protocolo del fabric.
-
-Se definirá al integrar CPU y GPU.
-
----
-
-# 58. Dominios de reloj
-
-El mapa físico es independiente de las frecuencias.
-
-CPU, GPU, fabric, SDRAM y VIDEO pueden utilizar dominios distintos.
-
-Los adaptadores/fabric resuelven:
-
-- CDC;
-- handshake;
-- arbitraje;
-- backpressure.
-
+**Dominios de reloj.** CPU, GPU, fabric, SDRAM y VIDEO pueden ir a frecuencias
+distintas; los adaptadores resuelven CDC, handshake, arbitraje y backpressure.
 Una diferencia de reloj nunca modifica el significado de una dirección.
 
 ---
 
-# 59. Estado global tras reset
+## 19. Estado global tras reset
 
-Principio:
-
-> **El sistema arranca en un estado seguro, reproducible y diagnosticable.**
-
-Como mínimo:
+> El sistema arranca en un estado seguro, reproducible y diagnosticable.
 
 ```text
-VIDEO
-    PATTERN
-    FB_FRONT = 0
-    FB_BACK = 0
-    HALT_AT = 0
-
-GPU
-    ningún warp vivo
-    WARP_DONE = 0
-    no HALTED
-    sin error runtime
-
-CPU PERF
-    counters = 0
-
-GPU PERF
-    counters = 0
-
-SERIAL
-    queues empty
+VIDEO       CTRL = PATTERN, FB_FRONT = FB_BACK = 0, HALT_AT = 0
+GPU         ningún warp vivo, WARP_DONE = 0, no HALTED, sin error
+CPU PERF    contadores y PERF_OVF a cero
+GPU PERF    contadores y PERF_OVF a cero
+SERIAL      colas vacías
 ```
 
 ---
 
-# 60. Fuente única de constantes arquitectónicas
+## 20. Fuente única de constantes
 
-La fuente maestra del mapa MMIO será un include Verilog simple, por ejemplo:
-
-```text
-rtl/include/mmio_map.vh
-```
-
-Contendrá exclusivamente constantes arquitectónicas.
-
-Ejemplo:
+La fuente maestra del mapa es un include Verilog deliberadamente tonto —`define`,
+nombre y constante, sin lógica ni expresiones—:
 
 ```verilog
 `define MMIO_SYSTEM_BASE       32'h8000_0000
 `define MMIO_FABRIC_BASE       32'h8001_0000
 `define MMIO_SDRAM_BASE        32'h8002_0000
-
 `define MMIO_SERIAL_BASE       32'h8010_0000
 `define MMIO_VIDEO_BASE        32'h8020_0000
 `define MMIO_TIMER_BASE        32'h8030_0000
 `define MMIO_INTC_BASE         32'h8040_0000
 `define MMIO_DMA_BASE          32'h8050_0000
-
 `define MMIO_CPU_BASE          32'h8100_0000
 `define MMIO_CPU_PERF_BASE     32'h8101_0000
 `define MMIO_CPU_DEBUG_BASE    32'h8102_0000
-
 `define MMIO_GPU_BASE          32'h8200_0000
 `define MMIO_GPU_WARPS_BASE    32'h8201_0000
 `define MMIO_GPU_SIMT_BASE     32'h8202_0000
 `define MMIO_GPU_PERF_BASE     32'h8203_0000
 ```
 
-También contendrá offsets y bits arquitectónicos.
+De ahí se generan las definiciones para el ensamblador, para C, para el monitor
+y para los simuladores, de modo que las direcciones no se dupliquen a mano.
+
+Que sea tonto es el requisito: un fichero con lógica no se puede leer desde
+Python sin escribir un parser de Verilog.
+
+**Advertencia que viene de la experiencia, y que hay que resolver antes de
+construir esto:** un fichero generado se desincroniza en silencio si alguien
+toca el RTL y no regenera, mientras que un test que compara falla a gritos. La
+generación necesita, por tanto, un test que compruebe que lo generado está al
+día — y no lo hay todavía; hoy solo se generan fixtures de simulación y
+Markdown, nunca Verilog sintetizable.
 
 ---
 
-# 61. Generación de constantes para software
-
-`mmio_map.vh` se mantendrá deliberadamente sencillo:
-
-```text
-define + nombre + constante
-```
-
-sin lógica RTL ni expresiones complejas.
-
-Una herramienta podrá generar:
-
-```text
-mmio_map.vh
-     |
-     +----> minisoc.inc
-     |
-     +----> minisoc.h
-     |
-     +----> minisoc_mmio.py
-```
-
-para:
-
-- assembler;
-- C;
-- monitor;
-- simuladores;
-- herramientas.
-
-Así las direcciones no se duplican manualmente.
-
----
-
-# 62. Assembler y futuro linker
-
-A corto plazo el assembler debe poder compartir definiciones arquitectónicas, por ejemplo mediante:
-
-```asm
-.include "minisoc.inc"
-```
-
-El fichero generado podrá contener:
-
-```asm
-.equ VIDEO_BASE,       0x80200000
-.equ VIDEO_CTRL,       0x80200000
-.equ VIDEO_FB_FRONT,   0x80200004
-
-.equ GPU_BASE,         0x82000000
-.equ GPU_CONTROL,      0x82000018
-...
-```
-
-A medio plazo será conveniente soportar:
-
-- múltiples archivos;
-- símbolos externos;
-- relocations;
-- `.text`;
-- `.rodata`;
-- `.data`;
-- `.bss`;
-- linker script.
-
-La existencia del futuro linker no bloquea MMIO v2.
-
----
-
-# 63. Evolución del mapa
-
-Las direcciones congeladas son ABI.
-
-No se renumeran dispositivos para mantener un supuesto orden conceptual.
-
-Los nuevos dispositivos utilizan regiones libres.
-
-Por ejemplo, si aparece posteriormente otro periférico:
-
-```text
-8060_xxxx    NEW_DEVICE
-```
-
-es preferible a mover TIMER, INTC o DMA.
-
-Igualmente CPU/GPU pueden añadir nuevos sub-bloques dentro de sus regiones sin afectar al resto.
-
----
-
-# 64. Decisiones congeladas de MMIO v2
-
-Quedan fijados los siguientes principios:
+## 21. Decisiones congeladas
 
 1. Un único espacio físico global.
-2. Una dirección tiene un único significado.
+2. Una dirección tiene un único significado, sea quien sea el master.
 3. Los permisos son independientes del mapa.
-4. MMIO comienza en `0x80000000`.
-5. La región de memoria dispone de amplio margen de crecimiento.
+4. MMIO empieza en `0x80000000`.
+5. La región de memoria tiene margen amplio de crecimiento.
 6. Se abandona la página MMIO única de 4 KiB.
 7. Se abandonan los slots globales de 256 bytes.
-8. Los dispositivos utilizan bloques grandes y alineados.
-9. CPU y GPU disponen de regiones propias.
-10. FABRIC y SDRAM disponen de bloques propios.
+8. Los dispositivos ocupan bloques grandes y alineados a 64 KiB.
+9. CPU y GPU tienen regiones propias; los periféricos son compartidos.
+10. FABRIC y SDRAM tienen bloques y bits de `DEVICES` propios.
 11. TIMER, INTC y DMA tienen espacio reservado.
-12. MMIO sólo admite palabras de 32 bits alineadas.
-13. RAM puede admitir accesos sub-palabra.
-14. Los accesos inválidos producen error.
-15. MMIO SIMT requiere exactamente una lane realizando el acceso.
-16. VIDEO es un único dispositivo.
-17. FRAME_CAPTURE no existe como dispositivo independiente.
-18. FRAME_COUNT y SWAP_COUNT son registros de 32 bits separados.
-19. HALT_AT utiliza FRAME_COUNT.
-20. HALT_TARGET puede seleccionar CPU, GPU o ambos.
-21. VIDEO_TX pertenece a VIDEO.
-22. CPU PERFORMANCE y GPU PERFORMANCE tienen direcciones diferentes.
-23. LSU pertenece a GPU.
-24. SIMT DEBUG y GPU PERFORMANCE permanecen separados.
-25. RUN lanza de forma sencilla los descriptores habilitados.
-26. WARP_START permite scheduling dinámico.
-27. WARP_LIVE representa los slots actualmente ocupados.
-28. WARP_DONE es sticky y W1C.
-29. MMIO v2 reserva máscaras para hasta 32 warps.
-30. GPU_CAPS declara NUM_WARPS y NUM_LANES reales.
-31. HALT/RESUME/STEP/RESET forman parte de GPU_CONTROL.
-32. GPU_CONTROL.RESET conserva los descriptores.
-33. La CPU controla GPU mediante MMIO.
-34. El monitor utilizará READ_WORD/WRITE_WORD para MMIO.
-35. READ_BYTE/WRITE_BYTE permanecen disponibles para RAM.
-36. DEVICES tiene asignaciones estables.
-37. FABRIC y SDRAM tienen bits DEVICES independientes.
-38. EBR debe mapearse preferentemente como memoria contigua.
-39. Simuladores y RTL implementan el mismo contrato.
-40. Las constantes arquitectónicas parten de una fuente Verilog común.
-41. Las direcciones congeladas no se renumeran.
+12. MMIO solo admite palabras de 32 bits alineadas; la RAM admite sub-palabra.
+13. Los accesos inválidos producen error, en lectura y en escritura.
+14. Un acceso MMIO desde SIMT exige exactamente una lane activa.
+15. VIDEO es un único dispositivo del sistema; `FRAME_CAPTURE` no existe aparte.
+16. `FRAME_COUNT` y `SWAP_COUNT` son registros de 32 bits separados.
+17. `HALT_AT` cuenta contra `FRAME_COUNT`, con comparación `>=`.
+18. `HALT_TARGET` selecciona CPU, GPU o ambos.
+19. Las bases de framebuffer se alinean a 16 bytes; desalinear es error.
+20. `VIDEO_TX` pertenece a VIDEO.
+21. CPU PERFORMANCE y GPU PERFORMANCE tienen direcciones distintas.
+22. Cada contador pertenece al componente que genera el evento.
+23. Los contadores dan la vuelta; no saturan.
+24. Los contadores avanzan solo con su núcleo corriendo; el reloj de pared es
+    del TIMER.
+25. Cada contador tiene bandera pegajosa de desbordamiento, W1C, en `PERF_OVF`.
+26. `PERF_CTRL` es único por bloque y congela todos sus contadores a la vez.
+27. En un bloque con array, el array empieza en el offset 0 y el control va
+    detrás de su extensión máxima.
+28. SIMT DEBUG y GPU PERFORMANCE permanecen separados.
+29. `RUN` lanza los descriptores habilitados; `WARP_START` permite scheduling
+    dinámico.
+30. `WARP_DONE` es pegajoso y W1C.
+31. Las máscaras de warp son de 32 bits, para hasta 32 warps sin tocar el ABI.
+32. `GPU_CAPS` declara `NUM_WARPS` y `NUM_LANES` reales.
+33. `HALT`/`RESUME`/`STEP`/`RESET` forman parte de `GPU_CONTROL`.
+34. `GPU_CONTROL.RESET` conserva los descriptores.
+35. La CPU controla la GPU por MMIO, sin instrucciones especiales.
+36. Los comandos del monitor son una fachada sobre los registros.
+37. `MONITOR_VERSION` describe el protocolo; la identidad del hardware está en
+    `SYSTEM`, `CPU CORE` y `GPU CORE`.
+38. `SYSTEM_ID` es el número de carpeta del prototipo.
+39. `DEVICES` tiene asignaciones de bit congeladas y se deriva del RTL.
+40. La lista blanca del monitor se deriva de `DEVICES`, no se copia a mano.
+41. Los prototipos con EBR mapean su memoria como una región contigua.
+42. Simuladores y RTL implementan el mismo contrato; no hay programas `_nommio`.
+43. Las constantes arquitectónicas parten de una fuente Verilog común.
+44. Las direcciones congeladas no se renumeran.
 
 ---
 
-# 65. Aspectos deliberadamente pospuestos
+## 22. Deliberadamente pospuesto
 
-No son cuestiones abiertas del contrato básico, sino interfaces que se definirán cuando se implemente el hardware correspondiente:
+No son cuestiones abiertas del contrato, sino interfaces que se definirán cuando
+exista el hardware correspondiente:
 
-### FABRIC
-
-Registros internos y contadores de rendimiento.
-
-### SDRAM
-
-Registros internos y contadores del controlador.
-
-### TIMER
-
-Interfaz y frecuencia.
-
-### INTERRUPT CONTROLLER
-
-Fuentes, pending, masks, enables, prioridades y vectores.
-
-Se prevén al menos futuras fuentes:
-
-```text
-GPU WARP_DONE
-GPU ERROR
-TIMER
-```
-
-### DMA
-
-Canales, descriptores, tamaños y política de arbitraje.
-
-### CPU/GPU memory ordering
-
-El mecanismo exacto de fence/drain necesario para garantizar visibilidad entre CPU y GPU se definirá durante la integración del SoC.
+- **FABRIC** y **SDRAM**: registros internos y contadores.
+- **TIMER**: interfaz y frecuencia.
+- **INTERRUPT CONTROLLER**: fuentes, pending, máscaras, prioridades y vectores.
+- **DMA**: canales, descriptores, tamaños y arbitraje.
+- **Orden CPU-GPU**: el mecanismo concreto de fence o drenado (§18).
+- **Bits de `CPU_ISA`, `CPU_FEATURES`, `GPU_ISA` y `GPU_FEATURES`**: se
+  documentan junto a MiniISA.
 
 ---
 
-# 66. Resumen visual
+## 23. Resumen visual
 
 ```text
-0000_0000 ┌─────────────────────────────────────────────┐
-          │ MEMORY                                      │
-          │ actual SDRAM: 0000_0000 - 01FF_FFFF       │
-3FFF_FFFF └─────────────────────────────────────────────┘
+0000_0000 ┌───────────────────────────────────────────┐
+          │ MEMORY        SDRAM actual: 0000_0000     │
+3FFF_FFFF │                          .. 01FF_FFFF     │
+          └───────────────────────────────────────────┘
+4000_0000 ┌───────────────────────────────────────────┐
+7FFF_FFFF │ RESERVED                                  │
+          └───────────────────────────────────────────┘
 
-4000_0000 ┌─────────────────────────────────────────────┐
-          │ RESERVED                                    │
-7FFF_FFFF └─────────────────────────────────────────────┘
+          ══ sistema ═════════════════════════════════
+8000_0000 │ SYSTEM    MAGIC · VERSION · ID · DEVICES  │
+8001_0000 │ FABRIC                        [reservado] │
+8002_0000 │ SDRAM                         [reservado] │
 
+          ══ periféricos compartidos ═════════════════
+8010_0000 │ SERIAL    DATA · STATUS · PEEK            │
+8020_0000 │ VIDEO     CTRL · FB · SWAP · contadores   │
+8030_0000 │ TIMER                         [reservado] │
+8040_0000 │ INTC                          [reservado] │
+8050_0000 │ DMA                           [reservado] │
 
-8000_0000 ┌─────────────────────────────────────────────┐
-          │ SYSTEM                                      │
-8000_FFFF └─────────────────────────────────────────────┘
+          ══ exclusivo de CPU ════════════════════════
+8100_0000 │ CPU CORE                                  │
+8101_0000 │ CPU PERFORMANCE                           │
+8102_0000 │ CPU DEBUG                                 │
 
-8001_0000 ┌─────────────────────────────────────────────┐
-          │ FABRIC                                      │
-8001_FFFF └─────────────────────────────────────────────┘
+          ══ exclusivo de GPU ════════════════════════
+8200_0000 │ GPU CORE / CONTROL  STATUS · CONTROL      │
+          │                     WARP_START/LIVE/DONE  │
+8201_0000 │ GPU WARPS           32 descriptores       │
+8202_0000 │ GPU SIMT DEBUG                            │
+8203_0000 │ GPU PERFORMANCE                           │
 
-8002_0000 ┌─────────────────────────────────────────────┐
-          │ SDRAM                                       │
-8002_FFFF └─────────────────────────────────────────────┘
-
-
-8010_0000 ┌─────────────────────────────────────────────┐
-          │ SERIAL                                      │
-8010_FFFF └─────────────────────────────────────────────┘
-
-8020_0000 ┌─────────────────────────────────────────────┐
-          │ VIDEO                                       │
-8020_FFFF └─────────────────────────────────────────────┘
-
-8030_0000 ┌─────────────────────────────────────────────┐
-          │ TIMER                  [reserved]            │
-8030_FFFF └─────────────────────────────────────────────┘
-
-8040_0000 ┌─────────────────────────────────────────────┐
-          │ INTERRUPT CONTROLLER   [reserved]            │
-8040_FFFF └─────────────────────────────────────────────┘
-
-8050_0000 ┌─────────────────────────────────────────────┐
-          │ DMA                    [reserved]            │
-8050_FFFF └─────────────────────────────────────────────┘
-
-
-8100_0000 ┌─────────────────────────────────────────────┐
-          │ CPU CORE                                    │
-8100_FFFF └─────────────────────────────────────────────┘
-
-8101_0000 ┌─────────────────────────────────────────────┐
-          │ CPU PERFORMANCE                             │
-8101_FFFF └─────────────────────────────────────────────┘
-
-8102_0000 ┌─────────────────────────────────────────────┐
-          │ CPU DEBUG                                   │
-8102_FFFF └─────────────────────────────────────────────┘
-
-
-8200_0000 ┌─────────────────────────────────────────────┐
-          │ GPU CORE / CONTROL                          │
-          │                                             │
-          │ ID / VERSION / ISA / FEATURES / CAPS        │
-          │ STATUS / CONTROL                            │
-          │ WARP_START / WARP_LIVE / WARP_DONE          │
-8200_FFFF └─────────────────────────────────────────────┘
-
-8201_0000 ┌─────────────────────────────────────────────┐
-          │ GPU WARP DESCRIPTORS                        │
-8201_FFFF └─────────────────────────────────────────────┘
-
-8202_0000 ┌─────────────────────────────────────────────┐
-          │ GPU SIMT DEBUG                              │
-8202_FFFF └─────────────────────────────────────────────┘
-
-8203_0000 ┌─────────────────────────────────────────────┐
-          │ GPU PERFORMANCE                             │
-8203_FFFF └─────────────────────────────────────────────┘
-
-
-8300_0000 ┌─────────────────────────────────────────────┐
-          │ RESERVED / FUTURE ACCELERATORS              │
-FFFF_FFFF └─────────────────────────────────────────────┘
+8300_0000 ┌───────────────────────────────────────────┐
+FFFF_FFFF │ RESERVED / FUTURE ACCELERATORS            │
+          └───────────────────────────────────────────┘
 ```
 
 ---
 
-# 67. Regla arquitectónica final
-
-MMIO v2 puede resumirse mediante cuatro reglas:
+## 24. Las cuatro reglas
 
 > **Una dirección, un significado.**
 
-> **El mapa identifica hardware; los permisos determinan quién puede utilizarlo.**
+> **El mapa identifica hardware; los permisos determinan quién puede usarlo.**
 
-> **RAM admite los tamaños definidos por MiniISA; MMIO opera siempre sobre registros completos de 32 bits alineados.**
+> **La RAM admite los tamaños de MiniISA; MMIO opera siempre sobre registros
+> completos de 32 bits alineados.**
 
-> **MiniGPU puede acceder a MMIO desde código SIMT únicamente cuando la instrucción produce una única transacción escalar desde una lane.**
+> **Desde código SIMT, un acceso a MMIO solo vale cuando lo hace exactamente una
+> lane.**
 
-Estas reglas deben mantenerse aunque el sistema evolucione hacia múltiples masters, interrupciones, DMA, protección de memoria, nuevos aceleradores o configuraciones de CPU/GPU diferentes.
+Estas reglas se mantienen aunque el sistema evolucione hacia varios masters,
+interrupciones, DMA, protección de memoria o nuevos aceleradores.

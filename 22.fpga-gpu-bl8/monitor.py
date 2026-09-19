@@ -23,7 +23,7 @@ ARCHITECTURAL_REGIONS = (
 # la lista ya no esta cableada en `block_range_valid`, sino en los parametros de
 # cada instancia. Lo comprueba x.tests/test_monitor_port.py.
 # La primera página es de periféricos compartidos con la CPU y la segunda, de
-# control exclusivo de la GPU. Ver docs/mapa-de-memoria.md §6.
+# control exclusivo de la GPU. Ver docs/resumen-prototipos.md.
 WARP_CONFIG_BASE = 0x8000_1000
 VIDEO_BASE = 0x8000_0000
 SYSID_BASE = 0x8000_0f00
