@@ -133,6 +133,47 @@ Contar cuatro bytes por línea pase lo que pase es el error clásico aquí: una
 directiva de datos desplaza **todas** las etiquetas siguientes, y si la pasada 1
 no la mide bien, nada se queja y el programa salta a sitios equivocados.
 
+### Constantes: `.equ`
+
+```asm
+.equ VIDEO_BASE,  0x80200000
+.equ VIDEO_CTRL,  VIDEO_BASE+0x00
+.equ VIDEO_FRONT, VIDEO_BASE+0x04
+
+    LI   R2, VIDEO_BASE
+    STORE R3, R2, 0          ; CTRL
+```
+
+`.equ nombre, valor` (alias `.set`) da nombre a un valor. **No emite nada** y no
+desplaza ninguna etiqueta.
+
+Nombres y etiquetas comparten un **único espacio de nombres**: un nombre que ya
+es etiqueta no puede ser constante, ni al revés, y repetir una `.equ` es error.
+Un nombre que gana dos definiciones y se queda con la última es exactamente
+cómo un programa acaba usando un mapa de direcciones y el hardware otro.
+
+El valor se resuelve **en el sitio**, contra enteros y contra constantes ya
+definidas más arriba. No admite referencias hacia delante ni etiquetas:
+
+```asm
+.equ A, B+1      ; error: B todavía no existe
+.equ B, 4
+sitio:
+.equ C, sitio    ; error: en la pasada 1 `sitio` aún no tiene dirección
+```
+
+Es una limitación deliberada. Resolver referencias hacia delante pediría un
+solucionador de dependencias, y el uso para el que existe la directiva —el
+include de constantes de MMIO generado desde
+[`mmio.md` §20](mmio.md#20-fuente-única-de-constantes)— pide justo lo contrario:
+una fuente tonta, legible de arriba abajo.
+
+**`MOVHI` no resuelve símbolos**, sólo enteros. El vehículo para cargar una
+constante de 32 bits es `LI Rd, expr32`, que sí los resuelve. Conviene recordar
+que `LI` emite **dos** palabras donde `MOVHI` emitía una: cambiar un
+`MOVHI Rn, 0x8000` por un `LI Rn, BASE` alarga el programa y su cuenta de
+ciclos.
+
 ### Secciones
 
 `.text`, `.rodata`, `.data`, `.bss` (con alias `.code` y `.rdata`), o
@@ -228,6 +269,6 @@ simulador— ya que los tres envuelven la carga en `except ValueError`.
 ## Qué no tiene
 
 Ni macros, ni ensamblado condicional (`.if`/`.ifdef`), ni expresiones más allá
-de sumas y restas de etiquetas, ni linker. `.once` cubre el caso de las guardas
+de sumas y restas de etiquetas y constantes, ni linker. `.once` cubre el caso de las guardas
 de inclusión sin necesitar condicionales, que es la razón de que exista en esa
 forma y no como `.ifndef`.

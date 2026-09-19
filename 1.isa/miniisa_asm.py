@@ -695,6 +695,12 @@ def first_pass(source: str,
                ) -> tuple[list[SourceLine], dict[str, int], int]:
     label_offsets: dict[str, tuple[str, int]] = {}
     label_origins: dict[str, str] = {}
+    # Constantes de `.equ`. Van aparte de `label_offsets` porque no pertenecen a
+    # ninguna seccion: su valor es absoluto y no se desplaza al colocar la
+    # imagen. Se funden con las etiquetas al final, en un unico espacio de
+    # nombres, para que `resolve_target` no tenga que saber de cual viene cada
+    # nombre.
+    equates: dict[str, int] = {}
     lines: list[SourceLine] = []
     offsets = {name: 0 for name in SECTION_ORDER}
     section = ".text"
@@ -720,6 +726,12 @@ def first_pass(source: str,
             else:
                 # Abre ambito: las `@` que vengan detras le pertenecen.
                 scope = label
+
+            if label in equates:
+                raise AsmError(
+                    f"{ubicacion(origin, number)}: {label} ya es una constante "
+                    f".equ (definida en {label_origins[label]})"
+                )
 
             if label in label_offsets:
                 # Con `.include`, el duplicado suele estar en OTRO fichero, y
@@ -762,6 +774,43 @@ def first_pass(source: str,
                 if mnemonic.lower() in SECTION_DIRECTIVES:
                     section = normalize_section(mnemonic)
                     continue
+                if mnemonic in {".EQU", ".SET"}:
+                    ops = split_operands(operand_text)
+                    if len(ops) != 2:
+                        raise AsmError(
+                            f"{mnemonic.lower()} requiere: nombre, valor")
+                    name = ops[0]
+                    if not LABEL_RE.match(name) or es_local(name):
+                        raise AsmError(f"nombre de {mnemonic.lower()} invalido: {name}")
+                    if name in equates:
+                        raise AsmError(
+                            f"constante duplicada: {name} "
+                            f"(ya definida en {label_origins[name]})"
+                        )
+                    if name in label_offsets:
+                        raise AsmError(
+                            f"{name} ya es una etiqueta "
+                            f"(definida en {label_origins[name]})"
+                        )
+                    # El valor se resuelve AQUI, contra las constantes ya
+                    # definidas y nada mas. Una `.equ` no puede referirse a una
+                    # etiqueta ni a una constante posterior: en la pasada 1 las
+                    # etiquetas todavia no tienen direccion, y admitir
+                    # referencias hacia delante obligaria a un solucionador de
+                    # dependencias. El contrato de mmio.md §20 pide justo lo
+                    # contrario --una fuente tonta-- asi que la limitacion es
+                    # deliberada y el error lo dice.
+                    try:
+                        value = resolve_target(ops[1], equates)
+                    except AsmError:
+                        raise AsmError(
+                            f"valor de {mnemonic.lower()} no resoluble: {ops[1]} "
+                            f"(solo admite enteros y constantes .equ ya definidas)"
+                        ) from None
+                    equates[name] = value
+                    label_origins[name] = ubicacion(origin, number)
+                    continue
+
                 if mnemonic == ".COMM":
                     ops = split_operands(operand_text)
                     if len(ops) not in (2, 3):
@@ -769,7 +818,7 @@ def first_pass(source: str,
                     name = ops[0]
                     if not LABEL_RE.match(name):
                         raise AsmError(f"simbolo .comm invalido: {name}")
-                    if name in label_offsets:
+                    if name in label_offsets or name in equates:
                         raise AsmError(
                             f"label duplicado: {name} "
                             f"(ya definido en {label_origins[name]})"
@@ -806,6 +855,9 @@ def first_pass(source: str,
         name: bases[section_name] + offset
         for name, (section_name, offset) in label_offsets.items()
     }
+    # Un solo espacio de nombres. Las colisiones ya se rechazaron en las dos
+    # direcciones mas arriba, asi que aqui no puede pisarse nada.
+    labels.update(equates)
     laid_out_lines = [
         SourceLine(line.number, line.text,
                    bases[line.section] + line.pc, line.section)

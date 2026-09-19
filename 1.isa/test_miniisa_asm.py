@@ -422,5 +422,112 @@ class IncludeTest(unittest.TestCase):
         self.assertEqual(palabras[0] & 0xFFFF, 8)
 
 
+class EquTest(unittest.TestCase):
+    """`.equ` es la pieza sobre la que se apoya el generador de constantes de
+    MMIO v2 (`1.isa/mmio.md` §20): sin ella un `.inc` generado no puede dar
+    nombre a una direccion, y los programas siguen llevando el numero cableado.
+
+    Lo que se fija aqui es sobre todo lo que NO debe hacer. Una constante que
+    se resuelve a un valor equivocado no rompe el ensamblado: rompe el programa
+    en la placa, tres capas mas abajo.
+    """
+
+    def test_da_nombre_a_un_valor(self):
+        palabras = assemble(".equ BASE, 0x80200000\n.word BASE\n")
+        self.assertEqual(palabras, [0x80200000])
+
+    def test_sirve_de_inmediato_de_32_bits(self):
+        """`LI` es el vehiculo: `MOVHI` no resuelve simbolos, y una base de
+        MMIO no cabe en un imm16."""
+        palabras = assemble(".equ BASE, 0x80200000\nLI R2, BASE\n")
+        self.assertEqual(len(palabras), 2)
+        self.assertEqual(palabras[0] & 0xFFFF, 0x8020)
+        self.assertEqual(palabras[1] & 0xFFFF, 0x0000)
+
+    def test_aritmetica_de_offsets(self):
+        """Es como se expresa un registro: base mas offset, sin repetir la
+        base en cada `.equ`."""
+        palabras = assemble(
+            ".equ BASE, 0x80200000\n"
+            ".equ CTRL, BASE+0x00\n"
+            ".equ FB_FRONT, BASE+0x04\n"
+            ".word CTRL, FB_FRONT\n")
+        self.assertEqual(palabras, [0x80200000, 0x80200004])
+
+    def test_set_es_lo_mismo(self):
+        self.assertEqual(assemble(".set N, 7\n.word N\n"), [7])
+
+    def test_no_ocupa_espacio(self):
+        """Una `.equ` entre dos instrucciones no puede desplazar una etiqueta.
+        Si lo hiciera, todo salto posterior iria a parar a otro sitio."""
+        palabras = assemble(
+            "inicio:\n.equ N, 1\n.equ M, 2\nBRA inicio\n")
+        self.assertEqual(len(palabras), 1)
+
+    def test_llega_por_include(self):
+        """El caso real: las constantes vienen de un `.inc` generado."""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "mmio.inc").write_text(
+                ".equ VIDEO_BASE, 0x80200000\n", encoding="utf-8")
+            palabras = assemble(
+                '.include "mmio.inc"\n.word VIDEO_BASE\n',
+                Path(tmp), "prog.asm")
+        self.assertEqual(palabras, [0x80200000])
+
+    # ---- controles negativos -------------------------------------------
+    #
+    # Cada uno rompe a proposito una premisa del apartado anterior y exige que
+    # falle POR SU MOTIVO, no por un error cualquiera.
+
+    def test_nombre_no_definido_no_se_inventa(self):
+        """El fallo que importa: si un nombre mal escrito valiera cero, un
+        `LI R2, VIDEO_BSAE` apuntaria a la direccion 0 --que es RAM valida-- y
+        el programa escribiria en memoria en vez de en el registro."""
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ BASE, 0x80200000\n.word BSAE\n")
+        self.assertIn("BSAE", str(ctx.exception))
+        self.assertIn("no definida", str(ctx.exception))
+
+    def test_referencia_hacia_delante_es_error(self):
+        """Limitacion deliberada, no un descuido: en la pasada 1 el valor se
+        resuelve ya. Que falle a gritos es lo que impide que resuelva a algo
+        equivocado en silencio."""
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ A, B+1\n.equ B, 4\n")
+        self.assertIn("no resoluble", str(ctx.exception))
+
+    def test_no_puede_referirse_a_una_etiqueta(self):
+        with self.assertRaises(AsmError) as ctx:
+            assemble("sitio:\nHALT\n.equ A, sitio\n")
+        self.assertIn("no resoluble", str(ctx.exception))
+
+    def test_constante_duplicada(self):
+        """Dos `.inc` generados incluidos por error dan dos definiciones. Si
+        ganara la ultima, el programa usaria un mapa y el RTL otro."""
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ A, 1\n.equ A, 2\n")
+        self.assertIn("duplicada", str(ctx.exception))
+
+    def test_choca_con_una_etiqueta(self):
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ sitio, 1\nsitio:\nHALT\n")
+        self.assertIn("ya es una constante", str(ctx.exception))
+
+    def test_una_etiqueta_choca_con_la_constante(self):
+        with self.assertRaises(AsmError) as ctx:
+            assemble("sitio:\nHALT\n.equ sitio, 1\n")
+        self.assertIn("ya es una etiqueta", str(ctx.exception))
+
+    def test_exige_dos_operandos(self):
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ A\n")
+        self.assertIn("requiere", str(ctx.exception))
+
+    def test_nombre_invalido(self):
+        with self.assertRaises(AsmError) as ctx:
+            assemble(".equ 3A, 1\n")
+        self.assertIn("invalido", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

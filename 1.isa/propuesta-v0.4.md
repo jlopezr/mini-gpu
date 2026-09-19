@@ -99,7 +99,7 @@ syscalls: conserva su modelo de errores globales. Esta separación evita definir
 una entrada de trap ambigua cuando lanes divergentes o varios warps fallan a la
 vez; una futura GPU con privilegios requerirá una extensión propia.
 
-## 4. Formatos nuevos
+## 4. Formatos v0.4
 
 Se conserva el formato de registro de v0.3:
 
@@ -230,6 +230,131 @@ Después de estas asignaciones quedan **12 opcodes principales libres**: cinco
 en control (`0x2B–0x2F`) y siete en sistema/SIMT (`0x37–0x3D`). Los huecos
 `func6` de `ATOMIC` y `SYSTEM` quedan reservados para extensiones afines.
 
+### 5.1 Contratos de repertorio heredados de v0.3
+
+Esta sección conserva los contratos que no se deducen solo del mapa. En todas
+las operaciones se leen las fuentes antes de escribir el destino; los alias de
+registros son válidos y escribir `R0` descarta el resultado sin omitir efectos
+ni errores.
+
+| Familia | Contrato consolidado |
+|---------|----------------------|
+| MUL `0x03` | `MUL` devuelve low32; `MULHI`, `MULHU` y `MULHSU` devuelven high32 signed×signed, unsigned×unsigned y signed×unsigned. `MULFX` es Q16.16; `MACFX` suma su resultado al valor anterior de `Rd`. |
+| DIV `0x0A` | `DIV/DIVU/REM/REMU` mantienen semántica signed/unsigned. El divisor cero es `DIVISION_BY_ZERO` con traps privilegiados y error fatal sin ellos. |
+| MINMAX/SELECT/BIT | `MIN/MAX/MINU/MAXU`, `SEL Rd,Ra,Rb,Rc`, `CLZ(0)=32` y `POPC` son operaciones puras de registros. |
+| FXMATH `0x0F` | `RCPFX` y `RSQRTFX` siguen reservadas a backends con contrato numérico verificable; dominio, redondeo, overflow y tolerancia no quedan implícitos. |
+| PIX565 `0x0B` | `PACK565` empaqueta `0x00RRGGBB`; cada `UNPACK565*` devuelve un canal expandido a 8 bits. Hay un único destino, no una operación de tres resultados. |
+| Memoria | Bytes admiten cualquier dirección; halfwords requieren dirección par; palabras, múltiplo de cuatro. Cualquier acceso valida todo su intervalo y conserva bytes vecinos. |
+| STOREP `0x1E` | `STOREBP/STOREHP/STOREP` almacenan en la base antigua y, solo si terminan bien, incrementan la base con inmediato signed de 14 bits; `Rs=Ra` almacena el valor anterior. |
+| LOADX `0x1F` | Carga indexada de 32 bits: la dirección es base más índice escalado en bytes según el formato definido por la instrucción. |
+| Branches | Todos los offsets son signed en palabras y relativos a `PC+4`. `BRA` no enlaza; `JAL` escribe enlace; `JR` y `RET` son alias de `JALR R0,Ra,0` y `JALR R0,R31,0`. |
+| Comparaciones | `SLT/SLTU` materializan 0/1; `SLTI/SLTIU` extienden el signo del inmediato antes de comparar. |
+
+Las extensiones SIMT conservan los siguientes límites:
+
+- `GETTID/GETLANE/GETWARP/GETWID` son identificadores de ejecución GPU; en
+  CPU, `GETTID` conserva el resultado definido por el backend CPU.
+- `SSY` abre una región de reconvergencia, no salta; `BAR` exige participación
+  válida de las lanes y, en v0.4, además ordena su memoria según §11.
+- `EXIT` retira lanes activas; `HALT` conserva su semántica CPU/GPU, salvo que
+  en CPU USER es privilegiada según §6.
+- `BALLOT/ACTIVEMASK` y `SHFL` requieren sus capabilities GPU; `SHFL` permanece
+  pendiente de contrato completo y no puede declararse de forma parcial.
+
+Las propuestas de v0.3 que aún no tienen contrato definitivo no se convierten
+en comportamiento implícito: `RCPFX`, `RSQRTFX` y `SHFL` requieren especificar
+casos límite y un modelo de referencia antes de que un backend anuncie soporte.
+`SINFX`, `COSFX`, `LDR`, rotaciones, bitfields, `DIVFX` y atómicos adicionales
+no forman parte del repertorio v0.4; los dos atómicos definidos son los de §12.
+
+### 5.2 Coma fija y acumulación
+
+Los operandos de `MULFX` y `MACFX` se interpretan como enteros signed Q16.16.
+Para `MULFX Rd, Ra, Rb`, el resultado arquitectónico es el producto signed de
+64 bits desplazado aritméticamente 16 posiciones y truncado a sus 32 bits bajos:
+
+```text
+MULFX(Ra, Rb) = low32((signed32(Ra) * signed32(Rb)) >>> 16)
+```
+
+`MACFX Rd, Ra, Rb` no es una nueva acumulación de precisión extendida. Lee el
+valor antiguo de `Rd` junto con `Ra` y `Rb`, calcula el `MULFX` anterior y
+escribe:
+
+```text
+Rd = low32(old_Rd + MULFX(Ra, Rb))
+```
+
+Todas las fuentes se capturan antes de escribir el destino: `MACFX R5,R5,R5`
+es válido y usa el valor anterior de `R5` en los tres papeles. `Rd=R0` aporta
+cero como acumulador y descarta el resultado, pero no omite el cálculo ni un
+posible error. La operación no promete redondeo, saturación, acumulador de
+64 bits ni reutilización arquitectónicamente visible de resultados internos.
+
+Sumar, restar y comparar Q16.16 no requieren instrucciones especiales: `ADD`,
+`SUB` y comparaciones signed operan directamente sobre la misma escala.
+`SHLI 16` convierte un entero a Q16.16; `SARI 16` vuelve a entero truncando
+hacia menos infinito.
+
+No se define `DIVFX` en v0.4. Un cociente Q16.16 correcto requiere desplazar
+el dividendo 16 bits antes de dividir, es decir una división signed de 48 entre
+32 bits, no la división normal de 32 bits. `a << 16` en 32 bits puede perder
+información, y dividir primero para desplazar después pierde la fracción. Para
+el uso frecuente de varias coordenadas con el mismo divisor, `RCPFX` seguido de
+`MULFX` es la alternativa prevista cuando su contrato numérico esté cerrado.
+
+### 5.3 R0 físico y resultados secundarios (microarquitectura opcional)
+
+`R0` es arquitectónicamente constante: toda lectura devuelve cero y toda
+escritura se descarta. Eso no obliga a que su celda física sea cero. Una
+implementación puede conservar el almacenamiento físico correspondiente como
+estado interno no observable y usarlo de caché de un resultado secundario.
+
+Por ejemplo, tras un `DIV` puede guardar el resto y, tras un `MUL`, la mitad
+alta del producto, junto con los operandos y el modo que los produjo. Un
+`REM`/`REMU` o `MULHI`/`MULHU`/`MULHSU` posterior puede reutilizar ese valor solo
+si la clave coincide; ante fallo o reemplazo de caché ejecuta el cálculo normal.
+El depurador, las trazas arquitectónicas y cualquier lectura de `R0` continúan
+viendo cero.
+
+Esto no añade registros, formatos ni latencia visible al ISA. Un diseño sin
+esta caché, con una caché más pequeña o que use esa celda como scratch interno
+es igual de conforme: la corrección nunca puede depender de un acierto.
+
+### 5.4 Contratos concretos recuperados: píxeles y direccionamiento
+
+`PACK565` toma `0x00RRGGBB` y produce `R[7:3]:G[7:2]:B[7:3]`. Los desempaques
+devuelven un único canal expandido, no tres destinos: para los campos `r5`,
+`g6` y `b5`, respectivamente, `UNPACK565R = (r5 << 3) | (r5 >> 2)`,
+`UNPACK565G = (g6 << 2) | (g6 >> 4)` y `UNPACK565B = (b5 << 3) | (b5 >> 2)`.
+
+`STOREBP`, `STOREHP` y `STOREP` usan el formato `opcode | Rs | Ra | size |
+imm14`, donde `size=00/01/10` selecciona byte/halfword/palabra y `imm14` es
+signed en bytes. El acceso usa `old_Ra`; únicamente después de completarlo
+actualiza `Ra = low32(old_Ra + sext(imm14))`. En consecuencia, `Rs=Ra` es
+válido y almacena el valor anterior, y un fallo de acceso no cambia la base.
+
+`LOADX Rd, Ra, Rb, escala` solo carga palabras en v0.4. Con `escala=0..3`,
+`func6=escala`, `Rc=0`, calcula
+`low32(old_Ra + (unsigned32(old_Rb) << escala))` y aplica el mismo requisito
+de alineación y comprobación de cuatro bytes que `LOAD`. No modifica las
+fuentes; `Rd=Ra`, `Rd=Rb` o `Rd=R0` siguen usando las fuentes previas y el
+acceso se realiza aun cuando el destino sea R0.
+
+`LEAPC Rd, etiqueta` no carga ni salta: escribe
+`low32(PC + 4 + sext(off21))`, con `off21` signed **en bytes**, por lo que
+alcanza aproximadamente ±1 MiB y puede producir cualquier dirección byte.
+El ensamblador debe rechazar un destino fuera de alcance, sin truncarlo ni
+transformarlo silenciosamente. Es la pareja natural de `LOADX` para tablas;
+la alternativa futura `LDR` relativo a PC permanece sin asignar.
+
+Las ramas `BR/BRI` codifican las seis condiciones `EQ/NE/LT/GE/LTU/GEU` a
+partir de igualdad, menor signed y menor unsigned. Su offset, y los de `BRA`
+y `JAL`, son signed en palabras relativos a `PC+4`. `JALR` usa el formato
+vigente de §1.1: su inmediato está en palabras y el destino elimina los dos
+bits bajos; no se recupera aquí la variante histórica incompatible con esa
+regla.
+
 ## 6. Modos de ejecución
 
 Se definen dos modos:
@@ -346,7 +471,7 @@ utiliza accidentalmente la pila de la aplicación.
 La entrada de trap no guarda registros generales `R1–R31`: conservarlos todos
 en hardware elevaría el estado y la latencia de cada syscall o interrupción.
 El handler usa su pila de supervisor para salvar cualquier registro que vaya a
-modificar antes de llamar a código auxiliar o de reactivar interrupciones.
+modificar antes de llamar a código auxiliar.
 `R0` sigue siendo cero y no requiere salvado.
 
 `TVEC[1:0]` selecciona:
@@ -415,8 +540,9 @@ traps privilegiados o como error fatal en un perfil sin ellos. Si `EPC` está ma
 alineado, `ERET` no cambia PC, modo, pilas ni `IN_TRAP`, de modo que el handler
 puede corregir `EPC` y volver a intentarlo.
 
-`ERET` exige `EPC` alineado a cuatro bytes; en otro caso genera
-`INSTRUCTION_ALIGNMENT` sin abandonar supervisor.
+`ERET` comprueba defensivamente que `EPC` está alineado a cuatro bytes. En caso
+de corrupción interna no cambia estado ni retorna; un programa correcto no
+puede llegar a ese caso porque `MTSR EPC` ya rechaza valores desalineados.
 
 ### 8.1 EPC
 
@@ -609,10 +735,11 @@ dirección múltiplo de cuatro. MMIO no admite atómicos por defecto y produce
 `ATOMIC_ACCESS`; la única excepción es un dispositivo que documente
 expresamente soporte atómico y su semántica de efectos laterales.
 
-`ATOMADD` y `ATOMCAS` exigen simultáneamente permisos PMP de lectura y
+En CPU, `ATOMADD` y `ATOMCAS` exigen simultáneamente permisos PMP de lectura y
 escritura. En `ATOMCAS` se comprueban ambos antes de leer, aunque la comparación
 posterior no coincida y por tanto no se llegue a escribir; así CAS no abre un
-camino de lectura especial sobre memoria de solo lectura.
+camino de lectura especial sobre memoria de solo lectura. GPU y DMA aplican su
+política de acceso de plataforma, pues PMP en v0.4 solo regula CPU.
 
 `ATOMADD Rd, Ra, Rb`:
 
@@ -691,8 +818,8 @@ las causas y los vectores, pero no fija registros MMIO universales para timer,
 UART, GPU ni controlador de interrupciones: cada plataforma documenta su mapa,
 la prioridad interna y la operación de acknowledge.
 
-Los tres bits bajos de `IRQ_PENDING` e `IRQ_ENABLE` quedan asignados de forma
-portable, junto con DMA:
+Los cuatro bits bajos de `IRQ_PENDING` e `IRQ_ENABLE` quedan asignados de forma
+portable:
 
 | Bit | Fuente                 | Causa                 | Vector |
 |----:|------------------------|-----------------------|-------:|
@@ -785,10 +912,9 @@ no son permisos para que una implementación elija otra semántica:
    conserva la parada fatal. Es un espacio muy amplio, pero convierte `TRAP`
    en el único opcode cuyo formato cambia según que esos bits sean cero.
 8. **Un solo nivel hardware de trap.** Queda fijado un único banco de
-`EPC/CAUSE/BADADDR/PMODE/PIE`. El handler debe salvarlo antes de reactivar
-interrupciones; mientras `IN_TRAP=1`, estas siguen aplazadas y un segundo fallo
-síncrono produce `ERROR_DOUBLE_FAULT` fatal. Un anidamiento futuro requiere una
-extensión arquitectónica con contexto adicional.
+`EPC/CAUSE/BADADDR/PMODE/PIE`. Mientras `IN_TRAP=1`, las interrupciones siguen
+aplazadas y un segundo fallo síncrono produce `ERROR_DOUBLE_FAULT` fatal. Un
+anidamiento futuro requiere una extensión arquitectónica con contexto adicional.
 9. **ATOMCAS sin inmediato.** Queda fijado que la dirección es exactamente
    `Ra`; el software calcula cualquier offset antes de ejecutar el atómico.
    No se añade un formato especial ni un opcode adicional.
@@ -798,3 +924,91 @@ extensión arquitectónica con contexto adicional.
 11. **MMU.** Queda fuera de v0.4. PMP proporciona aislamiento físico, no
    procesos con memoria virtual; PTBASE, TLB y page faults se abordarán en una
    revisión posterior, previsiblemente v0.5.
+
+## 17. Extensión opcional: interfaz con etapas fijas GPU
+
+Esta sección describe una dirección de microarquitectura para conectar shaders,
+CPU y etapas fijas como ensamblado de primitivas, rasterizador o compositor. No
+asigna todavía opcodes, registros ABI ni capabilities: no forma parte del
+contrato ejecutable de v0.4 hasta que exista RTL, un modelo de referencia y
+medidas de coste.
+
+### 17.1 Dos productores, una cola lógica
+
+```text
+GPU shader ── exportación interna ─┐
+                                   ├─ cola/FIFO on-chip ── etapas fijas
+CPU ── command port MMIO ──────────┘
+```
+
+La cola puede estar implementada en EBR/FIFO interna; “cola” no implica una ida
+a SDRAM por cada vértice o fragmento. La RAM queda para command buffers grandes,
+descriptores, texturas y buffers persistentes. El frontend arbitra los dos
+productores y conserva el orden de cada paquete aceptado.
+
+### 17.2 Exportación GPU propuesta
+
+Un futuro `PIPE.EMIT` podría capturar registros de salida fijos del shader y
+emitir un paquete por cada lane activa. Una ABI posible reservaría una ventana
+alta de registros para posición, color, coordenadas de textura y flags. Con ocho
+lanes activas, una emisión genera ocho entradas en orden de lane 0 a 7.
+
+La operación debe ser atómica a nivel de warp: si la FIFO no tiene espacio para
+todas las entradas activas, no acepta ninguna y el warp espera. El scheduler
+puede ejecutar otros warps mientras tanto. Nunca se deja una emisión a medio
+encolar, porque complicaría reintentos y recovery.
+
+No se reserva aún `0x37` para ello. Si los perfiles demuestran que la interfaz
+merece una instrucción, una familia `PIPE` en uno de los opcodes libres de
+sistema/SIMT permitiría múltiples suboperaciones sin consumir el mapa entero.
+
+### 17.3 Camino CPU
+
+La CPU no necesita usar la ABI de registros GPU ni emitir píxeles uno a uno.
+Puede publicar comandos compactos mediante un puerto MMIO, por ejemplo
+`CLEAR`, `FILL_RECT`, `BLIT` o configuración de estado. Una secuencia típica
+publica argumentos, ejecuta `FENCE` y escribe un registro de submit/doorbell:
+
+```asm
+STORE argumentos, RASTER_ARGn
+FENCE
+STORE comando,    RASTER_SUBMIT
+```
+
+El `FENCE` de v0.4 ya garantiza que el frontend no observe el submit antes de
+los argumentos. Un estado, ticket o interrupción permite a CPU esperar la
+finalización si la operación lo necesita.
+
+### 17.4 Relación con GPUs comerciales
+
+El esquema reproduce a escala educativa una separación común: CPU/driver
+publica comandos para un frontend, mientras los shaders exportan resultados por
+rutas internas hacia el pipeline fijo. En hardware comercial esas rutas suelen
+ser varias colas y arbitrajes, no necesariamente una FIFO física única; aquí la
+cola lógica hace visible el contrato sin imponer la implementación.
+
+## 18. Guía no normativa de uso gráfico heredada de v0.3
+
+Esta guía no amplía el ISA; conserva el porqué de varias instrucciones que de
+otro modo solo aparecen como nombres en el mapa.
+
+- `PACK565`/`STOREHP` y `STOREBP` expresan recorridos de framebuffer RGB565 o
+  INDEX8. El postincremento ahorra el `ADDI`, pero no crea ráfagas ni aumenta
+  por sí solo el ancho de banda de memoria.
+- `UNPACK565R/G/B` permite manipular un canal por vez; tres instrucciones son
+  preferibles a una forma de cuatro registros porque preservan el formato
+  regular, evitan un destino triple y encajan con cálculos escalares por canal.
+- `MULFX` y `MACFX` cubren transformación/interpolación Q16.16, por ejemplo
+  `acumulado += componente * factor`. Para normalizar, una secuencia de
+  `MULFX`/`MACFX` calcula longitud al cuadrado; `RSQRTFX` solo podrá usarse
+  cuando su contrato numérico deje de estar pendiente.
+- `MIN/MAX` limitan coordenadas por lane sin abrir ramas; `SEL` elige entre
+  valores ya calculados, pero no sustituye una rama con cargas, stores u otros
+  efectos laterales.
+- `BALLOT` más `POPC` sirve para contar lanes con una condición; `ACTIVEMASK`
+  describe las participantes. Ninguno compacta trabajo ni modifica la máscara
+  activa. `SHFL` sigue pendiente de definir para fuentes inactivas o inválidas.
+- Para tablas, `LEAPC` obtiene una base cercana al código y `LOADX` selecciona
+  una entrada. Es el camino preferido para seno, gamma o coeficientes antes de
+  dedicar opcodes a `SINFX`, `COSFX` o `LDR`; esas alternativas no tienen
+  asignación en v0.4.
