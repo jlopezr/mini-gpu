@@ -15,6 +15,35 @@ Todo lo de aquí abajo funciona igual si lo lanzas desde la raíz del repo, desd
 repositorio solo (por `MINI_GPU_ROOT`, por su propia ruta, o buscando
 `tools/` + `README.md`).
 
+## Comprobar la trazabilidad documental
+
+`trace check` construye un modelo de los documentos Markdown del repositorio:
+cada documento y encabezado es una identidad, y cada enlace es una observación
+que debe poder resolverse. Detecta ficheros y anclas ausentes, identidades
+explícitas duplicadas y referencias que salen de la raíz. Los enlaces externos
+y los artefactos generados bajo `_build/` no forman parte del modelo.
+
+Los encabezados cuyo título empieza por `REQ-`, `DEC-` o `TEST-` son
+identidades semánticas globales. Además de impedir IDs repetidos, se exige que
+cada requisito esté conectado mediante enlaces con una decisión y una prueba,
+y que cada decisión esté conectada con una prueba. Los encabezados normales y
+sus enlaces siguen funcionando sin activar estas reglas de cobertura.
+
+```bash
+trace check                         # todos los Markdown del repositorio
+trace check README.md docs/         # solo observaciones de esas rutas
+trace check --root /ruta/mini-gpu   # raíz explícita para CI
+```
+
+Al seleccionar rutas se siguen indexando las identidades de todo el repositorio,
+de modo que sus enlaces pueden resolverse fuera del subconjunto. El comando
+devuelve 0 si todo resuelve, 1 si encuentra diagnósticos y 2 si el uso o una
+ruta de entrada no son válidos.
+
+Hay un [ejemplo autocontenido](traceability/example/README.md) con un requisito,
+una decisión y una prueba enlazados entre sí. Sirve como recorrido mínimo y
+como espacio seguro para experimentar con el modelo.
+
 ## Windows: un `.ps1` por cada lanzador
 
 Un fichero sin extensión no se puede ejecutar directamente en Windows (no hay
