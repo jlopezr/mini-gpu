@@ -3,6 +3,8 @@ version: 1
 
 scan:
   - "**/*.md"
+  - "**/*.sv"
+  - "**/*.v"
 
 exclude:
   - ".git/**"

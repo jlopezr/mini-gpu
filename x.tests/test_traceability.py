@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tools.trace_cli import main
-from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver
+from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver, SystemVerilogAdapter
 
 REPO = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO / "tools" / "traceability" / "example"
@@ -239,10 +239,74 @@ type: decision
         analysis = Resolver().analyze(model)
         self.assertEqual(analysis.diagnostics, ())
         triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
-        self.assertEqual(len(triples), 5)
+        self.assertEqual(len(triples), 6)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "satisfies", "REQ-DEVICE-IDENTITY"), triples)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "implements", "SPEC-DEVICE@identity"), triples)
+        self.assertIn(("IMPL-DEVICE-IDENTITY::identity-read", "implements", "SPEC-DEVICE#identity-register"), triples)
         self.assertIn(("VER-DEVICE-IDENTITY", "verifies", "SPEC-DEVICE#identity-register"), triples)
+
+    def test_systemverilog_artifact_and_formal_symbol(self):
+        result = SystemVerilogAdapter().read(EXAMPLE / "implementation.sv", REPO)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(
+            [(item.key, item.element_type) for item in result.identities],
+            [("IMPL-DEVICE-IDENTITY", "artifact"),
+             ("IMPL-DEVICE-IDENTITY::identity-read", "symbol")],
+        )
+        self.assertTrue(result.identities[1].formal)
+
+    def test_systemverilog_derived_symbol_and_separate_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "impl.sv", """// @artifact IMPL type=implementation
+module top;
+endmodule
+// @implements SPEC
+module derived_name;
+endmodule
+// @id stable
+// @implements SPEC
+module renamed;
+endmodule
+""")
+            result = SystemVerilogAdapter().read(path, root)
+            self.assertEqual(result.diagnostics, ())
+            self.assertEqual(
+                [item.key for item in result.identities],
+                ["IMPL", "IMPL::derived_name", "IMPL::stable"],
+            )
+            self.assertFalse(result.identities[1].formal)
+            self.assertTrue(result.identities[2].formal)
+
+    def test_systemverilog_binding_break_is_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "impl.sv", """// @artifact IMPL type=implementation
+`ifdef FPGA
+module top;
+endmodule
+""")
+            result = SystemVerilogAdapter().read(path, root)
+            self.assertEqual([item.code for item in result.diagnostics], ["annotation-binding"])
+
+    def test_unannotated_systemverilog_is_only_a_resource(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "plain.sv", "module plain; endmodule\n")
+            result = SystemVerilogAdapter().read(path, root)
+            self.assertEqual(result.identities, ())
+            self.assertEqual(result.observations, ())
+
+    def test_unknown_systemverilog_annotation_is_error_but_email_is_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "plain.sv", """// contact dev@example.com
+// @unknown TARGET
+module plain;
+endmodule
+""")
+            result = SystemVerilogAdapter().read(path, root)
+            self.assertEqual([item.code for item in result.diagnostics], ["unknown-annotation"])
 
     def test_cli_show_is_exact_and_calculates_inverse_view(self):
         output = io.StringIO()

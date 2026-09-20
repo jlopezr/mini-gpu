@@ -8,6 +8,7 @@ from .model import Model, ModelBuilder
 from .observation import Observation
 from .relation import Relation
 from .resolver import Resolution, Resolver
+from .systemverilog import SystemVerilogAdapter
 
 __all__ = [
     "Diagnostic",
@@ -22,5 +23,6 @@ __all__ = [
     "Resolver",
     "SourceLocation",
     "TraceConfig",
+    "SystemVerilogAdapter",
     "load_config",
 ]

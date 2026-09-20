@@ -24,4 +24,6 @@ trace show SPEC-DEVICE@identity
 ```
 
 El ejemplo es también una especificación ejecutable: los tests comprueban sus
-identidades, relaciones, atributos, resolución local y FACETs anidadas.
+identidades, relaciones, atributos, resolución local y FACETs anidadas. La
+implementación vive en `implementation.sv`: declara el ARTIFACT desde código y
+materializa un SYMBOL formal mediante una anotación compacta.

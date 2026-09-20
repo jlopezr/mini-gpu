@@ -73,9 +73,28 @@ Esto crea `SPEC-ISA@calls` y `SPEC-ISA#calls`. Su subtree determina el alcance;
 las facets anidadas conservan `parent-facet` y cada sección guarda únicamente
 su facet inmediata. Una frontera de artifact termina cualquier facet activa.
 
-Todavía no se interpretan anotaciones de código, `SYMBOL`, sidecars ni
-generación `gendoc`; únicamente se ignora correctamente el contenido situado
-dentro de bloques `gendoc` al construir el modelo.
+Todavía no se interpretan sidecars, otros lenguajes de código, jerarquía de
+símbolos ni generación `gendoc`; únicamente se ignora correctamente el
+contenido situado dentro de bloques `gendoc` al construir el modelo.
+
+### Anotaciones SystemVerilog
+
+El adapter SystemVerilog ofrece nivel 1–2: enlaza grupos de comentarios al
+siguiente `module` y reconoce artifacts, módulos nombrados y símbolos formales.
+
+```systemverilog
+// @artifact IMPL-MINIGPU type=implementation
+// @implements SPEC-ISA
+module minigpu (...);
+
+// update-mask @implements SPEC-SIMT#active-mask
+module mask_writer (...);
+```
+
+En el primer grupo las relaciones salen del ARTIFACT. En el segundo, el ID
+formal produce `IMPL-MINIGPU::update-mask`. También se admite `@id local-id`
+como anotación separada. Whitespace y comentarios normales no rompen el grupo;
+otro elemento sintáctico sí lo rompe y produce un diagnóstico.
 
 ```bash
 trace check                         # todos los Markdown del repositorio

@@ -11,6 +11,9 @@ from .diagnostic import Diagnostic
 from .identity import Identity, Resource
 from .markdown import MarkdownAdapter
 from .observation import Observation
+from .systemverilog import SystemVerilogAdapter
+
+ADAPTERS = {".md": MarkdownAdapter, ".sv": SystemVerilogAdapter, ".v": SystemVerilogAdapter}
 
 @dataclass(frozen=True)
 class Model:
@@ -24,14 +27,15 @@ class Model:
 
 class ModelBuilder:
     def __init__(self, adapter: MarkdownAdapter | None = None) -> None:
-        self.adapter = adapter or MarkdownAdapter()
+        self.adapter = adapter
 
     def discover(self, root: Path, config: TraceConfig | None = None) -> list[Path]:
         root = root.resolve()
         config = config or load_config(root)[0]
         paths: set[Path] = set()
         for pattern in config.scan:
-            paths.update(path.resolve() for path in root.glob(pattern) if path.is_file() and path.suffix.lower() == ".md")
+            paths.update(path.resolve() for path in root.glob(pattern)
+                         if path.is_file() and path.suffix.lower() in ADAPTERS)
         return sorted(path for path in paths if not config.excludes(path, root))
 
     def build(self, root: Path, paths: Iterable[Path] | None = None) -> Model:
@@ -42,7 +46,8 @@ class ModelBuilder:
         resources, identities, observations = [], [], []
         diagnostics = list(config_diagnostics)
         for path in discovered:
-            result = self.adapter.read(path, root)
+            adapter = self.adapter or ADAPTERS[path.suffix.lower()]()
+            result = adapter.read(path, root)
             resources.append(result.resource)
             identities.extend(result.identities)
             diagnostics.extend(result.diagnostics)
@@ -56,8 +61,9 @@ class ModelBuilder:
             path = supplied if supplied.is_absolute() else root / supplied
             path = path.resolve()
             if path.is_dir():
-                result.update(item.resolve() for item in path.rglob("*.md") if item.resolve() in self.discover(root))
-            elif path.is_file() and path.suffix.lower() == ".md":
+                discovered = set(self.discover(root))
+                result.update(item.resolve() for item in path.rglob("*") if item.resolve() in discovered)
+            elif path.is_file() and path.suffix.lower() in ADAPTERS:
                 if path not in self.discover(root):
                     raise ValueError(f"la ruta queda fuera de scan/exclude: {supplied}")
                 result.add(path)
