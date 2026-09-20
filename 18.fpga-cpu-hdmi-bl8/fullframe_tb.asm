@@ -1,5 +1,5 @@
 ; ============================================================
-; fullframe.asm - dibujo minimo para el banco de RTL a resolucion completa
+; fullframe_tb.asm - fullframe.asm con las bases bajas, para el banco de RTL
 ;
 ; Pinta una «L» azul --la linea de arriba y la columna de la izquierda-- y un
 ; cuadrado blanco fijo, y pide el intercambio. En bucle.
@@ -32,13 +32,16 @@
 
 .include "mmio.inc"
 
-; Las dos bases, y la unica diferencia con `../fullframe_tb.asm`, que es este
-; mismo programa para el banco de RTL. Ahi no caben: el modelo de SDRAM guarda
-; 4 bancos x 128 filas, la fila sale de los bits [23:11] de la direccion de
-; palabra, y 0x01000000 pide la fila 4096. `test_fullframe_fixture.py` obliga a
-; que los dos ficheros solo se diferencien en este bloque.
-.equ FB_FRONT_ADDR, 0x01000000
-.equ FB_BACK_ADDR, 0x01025800      ; FB_FRONT + 320*240*2
+; Las dos bases, y la unica diferencia con `examples/fullframe.asm`, que es
+; este mismo programa para la placa. Alli las bases son 0x01000000 y
+; 0x01025800; aqui no caben, porque el modelo de SDRAM guarda 4 bancos x 128
+; filas, la fila sale de los bits [23:11] de la direccion de palabra, y
+; 0x01000000 pide la fila 4096 --que el modelo denuncia como violacion, una
+; por acceso, asi que el sintoma es «60000 violaciones JEDEC» y no «direccion
+; mala»--. `x.tests/test_fullframe_fixture.py` obliga a que el cuerpo de los
+; dos ficheros sea identico y a que `fullframe.hex` salga de ESTE.
+.equ FB_FRONT_ADDR, 0x00010000
+.equ FB_BACK_ADDR, 0x00035800      ; FB_FRONT + 320*240*2
 
 start:
     LI    R20, MMIO_VIDEO_BASE

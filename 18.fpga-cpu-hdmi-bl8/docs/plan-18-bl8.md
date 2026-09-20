@@ -51,7 +51,7 @@ sincronizado con el vblank.
 | Reloj de CPU | 100 MHz, semilla 5 fijada en `apio.ini`; cierran 7 de 8 semillas |
 | Monitor UART | versión 1.10 a 1 Mbaud |
 | Framebuffer | RGB565 320×240 en `0x01000000`, 153 600 bytes |
-| Registros de vídeo | MMIO en `0x80000000`: `FB_FRONT`, `FB_BACK`, `SWAP`, `STATUS` |
+| Registros de vídeo | MMIO en `0x80200000` desde [MMIO v2](../../1.isa/mmio.md); eran `0x80000000` cuando se escribió esto |
 | Bancos de prueba | 9, todos en verde |
 | Suite de CPU en placa | 12 de 12 |
 

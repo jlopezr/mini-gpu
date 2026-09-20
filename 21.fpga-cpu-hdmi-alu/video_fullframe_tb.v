@@ -219,6 +219,10 @@ module video_fullframe_tb;
       // truncamiento accidental. Es lo que hace `top.v`.
       .address(mmio_address[7:0]), .write_data(mmio_write_data),
       .read_data(mmio_read_data),
+      // Atados, no al aire: un puerto sin conectar es un PINMISSING de lint, y
+      // ademas una entrada al aire vale x, y una x en running apagaria HALT_AT
+      // sin decirlo. Aqui no hay CPU que parar, asi que corre siempre.
+      .error(), .running(1'b1),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(underflow), .underflow_clear(video_underflow_clear),
       .halt_request(video_halt_request),

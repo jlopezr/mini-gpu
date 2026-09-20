@@ -310,9 +310,15 @@ class AnchosDePuertoTest(unittest.TestCase):
 #: darla por migrada**.
 DEUDA_EN_BANCOS = {
     # Pre-existente y AJENO a MMIO: `wire [7:0] halted, finished, error;`
-    # conectado a puertos de 1 bit. `perf_probe_tb.v` es copia idéntica en las
-    # tres carpetas, así que arreglarlo es un cambio compartido y no se mezcla
-    # con una migración de direcciones.
+    # conectado a puertos de 1 bit. `perf_probe_tb.v` es el MISMO banco en las
+    # tres carpetas --el de la 18 tiene ocho líneas de comentario menos, y de
+    # ahí el desfase de números de línea-- así que arreglarlo es un cambio
+    # compartido y no se mezcla con una migración de direcciones.
+    #
+    # Ojo con la palabra «idéntica», que es la que había aquí y no es cierta:
+    # invita a copiar el fichero de una carpeta a otra, y esas ocho líneas son
+    # justo las que explican que este banco monta `sdram_system_adapter` a
+    # propósito y NO debe migrarse nunca.
     "18.fpga-cpu-hdmi-bl8/perf_probe_tb.v:179",
     "18.fpga-cpu-hdmi-bl8/perf_probe_tb.v:180",
     "18.fpga-cpu-hdmi-bl8/perf_probe_tb.v:195",
@@ -323,9 +329,10 @@ DEUDA_EN_BANCOS = {
     "21.fpga-cpu-hdmi-alu/perf_probe_tb.v:188",
     "21.fpga-cpu-hdmi-alu/perf_probe_tb.v:203",
 
-    # La 18, todavía en v1. Son suyos y se arreglan cuando le toque migrar.
-    "18.fpga-cpu-hdmi-bl8/video_fullframe_tb.v:194",
-    "18.fpga-cpu-hdmi-bl8/video_fullframe_tb.v:200",
+    # La 18 tenía dos más, en `video_fullframe_tb.v`, de cuando estaba en v1.
+    # Se arreglaron al migrarla, así que NO están en esta lista: era deuda de
+    # verdad y no una excepción. Las tres de `perf_probe_tb` se quedan porque
+    # son de otra clase.
 
     # La 21 tenía cuatro más, de dirección MMIO, que su migración no ensanchó
     # (`mon_mmio_addr` de 5 bits, `mmio_addr` de 4, y una rebanada implícita

@@ -90,15 +90,15 @@ module cpu_burst_system_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [11:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [11:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;   // la pagina MMIO entera
+  wire [31:0] mmio_address;   // el espacio MMIO entero: en v2 va sin recortar
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
@@ -125,12 +125,18 @@ module cpu_burst_system_tb;
   wire [31:0] debug_front, debug_back;
   wire underflow_clear_unused, video_halt_request;
   wire [31:0] mmio_read_data;
+  wire mmio_video_error;
 
   video_registers registers_i (
       .clk(clk), .reset(reset),
       .select(mmio_select), .write(mmio_write),
       .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data), .read_data(mmio_read_data),
+      // `running` a uno: HALT_AT sólo cuenta mientras la CPU corre, y aqui no
+      // hay CPU parada que valga. `error` se observa pero no se realimenta:
+      // este banco no monta decodificador --el mapa lo cubre
+      // cpu_mmio_error_tb-- y lo que mide es que la ventana responde.
+      .error(mmio_video_error), .running(1'b1),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base_unused),
       .underflow_pix(1'b0), .underflow_clear(underflow_clear_unused),
       .halt_request(video_halt_request),
@@ -440,13 +446,13 @@ module cpu_burst_system_tb;
     // ---------------------------------------------------------------------
     // 5. La ventana de registros de video responde a los dos clientes.
     // ---------------------------------------------------------------------
-    mon_read(32'h8000_0000);
+    mon_read(32'h8020_0004);
     if (leido !== 8'h00) begin
       $display("FALLO: FB_FRONT[7:0] = %02x, esperado 00", leido);
       errors = errors + 1;
     end
-    mon_write(32'h8000_0008, 8'h01);
-    mon_read(32'h8000_0008);
+    mon_write_word(32'h8020_000C, 32'h0000_0001);   // SWAP, palabra entera
+    mon_read(32'h8020_000C);
     if (leido !== 8'h01) begin
       $display("FALLO: SWAP no conservo el valor escrito: %02x", leido);
       errors = errors + 1;

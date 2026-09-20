@@ -5,8 +5,9 @@
  * escrituras.
  *
  * Traduce los accesos de palabra de 32 bits de `dmem` a peticiones de 16 bytes
- * contra memory_fabric_4, y decodifica la ventana de registros de video en
- * 0x80000000, que no toca la SDRAM y se resuelve en un ciclo.
+ * contra memory_fabric_4, y decodifica el espacio MMIO --todo lo que empieza
+ * en 0x80000000, segun mmio.md v2--, que no toca la SDRAM y se resuelve en un
+ * ciclo.
  *
  * =====================================================================
  * Combinacion de escrituras, y por que NO es una cache
@@ -59,8 +60,7 @@
  * compensaria.
  */
 module cpu_dmem_adapter #(
-    parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000,
-    parameter [19:0] MMIO_PREFIX = 20'h80000
+    parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -80,12 +80,13 @@ module cpu_dmem_adapter #(
     // espera antes de tocar la SDRAM.
     output wire        wb_dirty,
 
-    // Ventana de registros de video.
+    // Espacio MMIO. La direccion va ENTERA: quien vive en cada bloque lo
+    // decide el decodificador, no este modulo.
     output reg         mmio_req,
     input  wire        mmio_ack,
     output reg         mmio_write,
     output reg  [3:0]  mmio_write_mask,
-    output reg  [11:0] mmio_address,
+    output reg  [31:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
     input wire mmio_error,
@@ -141,11 +142,24 @@ module cpu_dmem_adapter #(
   assign rsp_ready = (state == ST_WAIT);
 
   localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
+  // La 18 NO tiene accesos sub-palabra --eso entra en la 19-- asi que aqui la
+  // direccion efectiva si tiene que ser multiplo de cuatro. Es la unica linea
+  // en la que este fichero se aparta del de la 19, y la migracion a v2 no la
+  // toca: es una diferencia de ISA, no de mapa.
   wire address_in_sdram =
       ((dmem_address & ADDR_RANGE_MASK) == 32'd0) &&
       (dmem_address[1:0] == 2'b00);
-  wire address_is_mmio =
-      (dmem_address[31:12] == MMIO_PREFIX) && (dmem_address[1:0] == 2'b00);
+  // MMIO v2 (1.isa/mmio.md §21.4): MMIO empieza en 0x8000_0000 y llega hasta
+  // el final del espacio. Antes se comparaban los VEINTE bits altos contra
+  // 0x80000, porque todo el MMIO cabia en una pagina de 4 KiB; ahora los
+  // bloques estan a megabytes unos de otros, asi que la pertenencia al espacio
+  // MMIO es un solo bit y quien vive en cada bloque lo decide el decodificador.
+  //
+  // Es mas barato Y mas seguro: un bit no se puede truncar al conectar un
+  // puerto, que es como la 18 mando los dieciseis dispositivos al de video.
+  // Las direcciones de MMIO sin dispositivo detras dan error en el
+  // decodificador, que es lo que pide §4.3 -- no se filtran aqui.
+  wire address_is_mmio = dmem_address[31] && (dmem_address[1:0] == 2'b00);
   wire is_write = |dmem_write_enable;
   wire same_line = wb_valid && (dmem_address[31:4] == wb_line);
 
@@ -185,7 +199,7 @@ module cpu_dmem_adapter #(
       mmio_req <= 1'b0;
       mmio_write <= 1'b0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 12'h000;
+      mmio_address <= 32'h0000_0000;
       mmio_write_data <= 32'h0000_0000;
       wb_valid <= 1'b0;
       wb_flushing <= 1'b0;
@@ -223,7 +237,7 @@ module cpu_dmem_adapter #(
                 mmio_req <= 1'b1;
                 mmio_write <= is_write;
                 mmio_write_mask <= dmem_write_enable;
-                mmio_address <= dmem_address[11:0];
+                mmio_address <= dmem_address;
                 mmio_write_data <= dmem_write_data;
                 state <= ST_MMIO;
               end
@@ -286,7 +300,7 @@ module cpu_dmem_adapter #(
                 mmio_req <= 1'b1;
                 mmio_write <= |held_wen;
                 mmio_write_mask <= held_wen;
-                mmio_address <= held_address[11:0];
+                mmio_address <= held_address;
                 mmio_write_data <= held_wdata;
                 pending <= PEND_NONE;
                 state <= ST_MMIO;

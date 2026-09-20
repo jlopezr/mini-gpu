@@ -46,7 +46,13 @@ module monitor_tb;
 
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd18),
       .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+      // Las mismas TRES ventanas que `top.v`, una por bloque de MMIO v2 que
+      // esta carpeta tiene. Antes era una sola porque todos los dispositivos
+      // cabian en la pagina de 4 KiB; ahora estan a megabytes unos de otros.
+      // No hay ventana de SERIAL porque no hay puerto serie.
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
+      .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8021_0000),  // VIDEO
+      .WINDOW2_BASE(33'h0_8101_0000),.WINDOW2_END(33'h0_8102_0000))  // CPU PERF
     dut (
       .clk(clk),
       .reset(reset),
@@ -298,7 +304,8 @@ module monitor_tb;
       $fatal(1, "RESET_CPU mismatch");
 
     // Los contadores de rendimiento YA NO son comandos del monitor: son un
-    // dispositivo MMIO en 0x80000300, como en la MiniGPU. Lo que se comprueba
+    // dispositivo MMIO en 0x81010000 --el bloque CPU PERFORMANCE de MMIO v2--
+    // igual que en la MiniGPU. Lo que se comprueba
     // aqui es que los dos codigos viejos se RECHAZAN, que es lo que hace la
     // retirada segura: un cliente antiguo recibe un NO, no una respuesta
     // silenciosamente distinta.

@@ -241,10 +241,10 @@ La 17 no aparece con alias corto porque no está registrada en los backends de
 # El mapa de direcciones implementado
 
 Lo que sigue describe el mapa **de la página única de 4 KiB**, que es el que
-implementan hoy ocho de los diez prototipos con bitstream. No es el contrato
+implementan hoy siete de los diez prototipos con bitstream. No es el contrato
 objetivo: ese es [MMIO v2](../1.isa/mmio.md), y las carpetas que lo cumplen son
-la [19](../19.fpga-cpu-hdmi-ls) y la [21](../21.fpga-cpu-hdmi-alu), cuyo mapa es
-el de `mmio.md` y no el de aquí.
+la [18](../18.fpga-cpu-hdmi-bl8), la [19](../19.fpga-cpu-hdmi-ls) y la
+[21](../21.fpga-cpu-hdmi-alu), cuyo mapa es el de `mmio.md` y no el de aquí.
 
 ## Memoria de programa y datos
 
@@ -467,11 +467,13 @@ las cuatro palabras por alias.
 
 Qué le falta a cada prototipo para cumplir [`../1.isa/mmio.md`](../1.isa/mmio.md).
 **A casi todos les falta lo mismo de fondo**: el mapa entero, porque v2 abandona
-la página de 4 KiB y los slots de 256 B. La 21 y la 19 ya lo hicieron, y el
-camino está contado paso a paso en las dos bitácoras: la de la
-[21](../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md), que es la completa, y la de
+la página de 4 KiB y los slots de 256 B. La 21, la 19 y la 18 ya lo hicieron, y
+el camino está contado paso a paso en las tres bitácoras: la de la
+[21](../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md), que es la completa; la de
 la [19](../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md), que cuenta sólo lo que
-cambió al repetirla y trae la estimación corregida.
+cambió al repetirla y trae la estimación corregida; y la de la
+[18](../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md), que mide hasta dónde llega
+el atajo de copiar de una carpeta gemela y es la primera sin puerto serie.
 
 | Prototipo | Qué cumple ya | Qué le falta |
 |---|---|---|
@@ -479,7 +481,7 @@ cambió al repetirla y trae la estimación corregida.
 | 16 | Vídeo con offsets uniformes; contadores en MMIO | Direcciones v2; `FRAME_COUNT` de 32 bits; sin captura |
 | **21** | **Conforme.** Mapa de bloques de 64 KiB, `SYSTEM` con las siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros, y ningún `.asm` con la dirección cableada | Escrituras sub-palabra a MMIO (§4.1/§16.2): documentado y fijado en `video_registers_tb.v`; hay que mover el host a `WRITE_WORD` a la vez. Ver [la bitácora](../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) |
 | **19** | **Conforme.** Lo mismo que la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 21 | Lo mismo que la 21: escrituras sub-palabra a MMIO (§4.1/§16.2). **Sin sintetizar todavía**: la semilla de `apio.ini` está invalidada y el barrido pendiente. Ver [la bitácora](../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) |
-| 18 | Vídeo, captura, contadores | Direcciones v2; `HALT_TARGET`; `PERF_OVF`; `PERF_CTRL`. Seis de sus ocho ficheros MMIO son idénticos a los de la 19, así que se copian ya migrados |
+| **18** | **Conforme.** Lo mismo que la 19 y la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 19 y la 21. Sin puerto serie, así que su `DEVICES` es `0x225` y tiene **tres** ventanas de monitor en vez de cuatro | Lo mismo que las otras dos: escrituras sub-palabra a MMIO (§4.1/§16.2). **Sin sintetizar todavía**: la semilla 4 de `apio.ini` está invalidada y el barrido pendiente. Ver [la bitácora](../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) |
 | 12, 14, 17 | Warps y depuración SIMT; dos páginas | Direcciones v2; `GPU_CONTROL` y máscaras de warp; 32 warps |
 | 22 | Vídeo, contadores, warps, depuración; MMIO abierto a la GPU | Direcciones v2; `GPU_CONTROL`; `HALT_AT` real; separar `VIDEO_TX` |
 | 2, 11, 25 | Periféricos funcionales compartidos | `SYS_ID`; `HALT_AT` y serie en el RTL de GPU; retirar `plasma_nommio.asm` |
@@ -488,8 +490,9 @@ Transversal a todos, y lo que más trabajo lleva:
 
 - **Acceso MMIO desde SIMT con varias lanes**: hoy se sirven por turnos, la de
   menor índice primero; v2 §4.2 exige error.
-- **Alineación de framebuffer**: se trunca en silencio en todas menos la 19, la
-  21 y los tres simuladores funcionales, donde ya es error; v2 §9.2 exige error.
+- **Alineación de framebuffer**: se trunca en silencio en todas menos la 18, la
+  19, la 21 y los tres simuladores funcionales, donde ya es error; v2 §9.2 exige
+  error.
 - **Contadores**: unificar wrap, añadir `PERF_OVF` y `PERF_CTRL`, y mover
   `VIDEO_TX` a VIDEO.
 - **`DEVICES`**: hoy `DEV_BITMAP` lee cero. v2 lo deriva del RTL.

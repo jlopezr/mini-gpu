@@ -23,9 +23,13 @@ carpetas. Comparando con el `_build/default/hardware.pnr` de cada una:
 | 6, 10, 22              | **12, 14, 16, 17, 18, 19, 21**  |
 
 La 19 y la 21 estaban en la columna izquierda y han cambiado de lado: la
-migración a MMIO v2 les tocó el RTL y **ninguna se ha vuelto a sintetizar**, así
-que su bitstream es anterior al RTL igual que en las otras cinco. Es el mismo
-riesgo, sólo que éste lo hemos creado nosotros y está anotado.
+migración a MMIO v2 les tocó el RTL y su bitstream es anterior al RTL igual que
+en las otras cinco. Es el mismo riesgo, sólo que éste lo hemos creado nosotros y
+está anotado. La **18** está ahora en la misma situación, por lo mismo.
+
+De las tres, la única que se ha vuelto a sintetizar es la **21**, y el resultado
+es que **no cumple**: 79,90 MHz contra 80,00 con la semilla 13. O sea que el
+barrido de las tres no es una formalidad.
 
 En esas cinco, el bitstream que `test-board` programa **no es el RTL que hay en
 la carpeta**. Cualquier medida o validación que se haga contra ellas es de
@@ -60,17 +64,23 @@ sobre cuál de los cambios lo causó.
 **Qué falta.** Aplicar [`1.isa/mmio.md`](1.isa/mmio.md) al RTL, a los monitores,
 a los simuladores y a los tests. Es el contrato decidido el 19/09/2026.
 
-**Estado: la 21 y la 19 ya conforman**, y con ellas el ensamblador, el generador
-de constantes y los tres simuladores funcionales. **Quedan ocho carpetas.** Hay
-dos bitácoras: la de la
-[21](21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) es el camino completo, y la de la
+**Estado: la 21, la 19 y la 18 ya conforman**, y con ellas el ensamblador, el
+generador de constantes y los tres simuladores funcionales. **Quedan siete
+carpetas.** Hay tres bitácoras: la de la
+[21](21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) es el camino completo; la de la
 [19](19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) cuenta sólo lo que cambió al
-repetirlo y trae la estimación corregida. La tabla de conformidad está en
+repetirlo y trae la estimación corregida; y la de la
+[18](18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) mide hasta dónde llega el atajo
+de copiar de una gemela ya migrada, y es la primera carpeta sin puerto serie.
+La tabla de conformidad está en
 [`docs/resumen-prototipos.md`](docs/resumen-prototipos.md#conformidad-con-mmio-v2).
 
-**Ni la 19 ni la 21 se han sintetizado desde la migración**: las dos tienen la
-semilla de su `apio.ini` invalidada y el barrido pendiente, y ninguna se ha
-probado en placa.
+**Ninguna de las tres se ha sintetizado desde la migración con éxito**: las tres
+tienen la semilla de su `apio.ini` invalidada y el barrido pendiente, y ninguna
+se ha probado en placa. La 21 **sí se sintetizó**, el 20/09/2026, y **no cumple
+temporización**: 79,90 MHz contra los 80,00 del objetivo con la semilla 13, y
+11 590/5 236 LUT/FF frente a los 10 867/5 066 de antes. Está en
+`docs/synthesis-report.md`. El barrido de las tres se paga junto.
 
 Lo que ya está hecho y **no hay que repetir por carpeta**:
 
@@ -84,9 +94,11 @@ Lo que ya está hecho y **no hay que repetir por carpeta**:
   primera.
 - **`x.tests/test_top_wiring.py`**, que compara anchuras de puerto en los diez
   `top.v` **y ahora también en los bancos** (4681 comparaciones). Al extenderlo
-  aparecieron cuatro direcciones MMIO sin ensanchar en la 21, ya arregladas, y
-  quedan las de la 18 anotadas en `DEUDA_EN_BANCOS`. Trae además una
-  comprobación de que un `top.v` no estrecha el bitmap de registros de vídeo.
+  aparecieron cuatro direcciones MMIO sin ensanchar en la 21 y dos en la 18,
+  todas ya arregladas; en `DEUDA_EN_BANCOS` sólo quedan las tres de
+  `perf_probe_tb.v`, que son ajenas a MMIO y compartidas por 18, 19 y 21. Trae
+  además una comprobación de que un `top.v` no estrecha el bitmap de registros
+  de vídeo.
 - **`x.tests/test_fullframe_fixture.py`**, que descubre solo las carpetas con el
   trío `fullframe_tb.asm` / `examples/fullframe.asm` / `fullframe.hex`.
 - **Los periféricos funcionales** (`tools/sim_devices.py`, `sysid_device.py`) y
