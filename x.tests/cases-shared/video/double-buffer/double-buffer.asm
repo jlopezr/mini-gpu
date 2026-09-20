@@ -47,21 +47,37 @@
 ;   R0  cero, cableado por la ISA
 ; ============================================================
 
-    MOVHI R20, 0x8000          ; base de los registros de video
+.include "mmio.inc"
+
+    LI    R20, MMIO_VIDEO_BASE  ; base de los registros de video
     MOVI  R19, 0x0200          ; donde dejar el resultado
     MOVHI R10, 0x5A5A          ; marca; los bits de comprobacion van debajo
 
-    LOAD  R1, R20, 0           ; FB_FRONT antes
-    LOAD  R2, R20, 4           ; FB_BACK antes
+    LOAD  R1, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT antes
+    LOAD  R2, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK antes
 
-    ; ---- bit 0: escribir FB_BACK ignora los dos bits bajos ----
-    ; El valor sucio se construye sobre FB_BACK, no sobre una constante: asi
-    ; sigue apuntando a un buffer valido en las dos familias y el barrido no
-    ; lee basura mientras tanto.
-    ORI   R11, R2, 0x0003
-    STORE R11, R20, 4
-    LOAD  R5, R20, 4
-    XOR   R12, R5, R2          ; 0 si el hardware alineo a cuatro
+    ; ---- bit 0: escribir FB_BACK lo cambia, y se relee EXACTO ----
+    ; Hasta MMIO v2 esto escribia FB_BACK con los dos bits bajos a uno y
+    ; comprobaba que el hardware los ignoraba. Ya no: §9.2 dice que una base
+    ; desalineada es ERROR, no se trunca, asi que ese programa ahora aborta y
+    ; no hay forma de comprobarlo desde dentro --un programa no puede capturar
+    ; su propio fallo de acceso; eso lo prueba `video-fb-desalineada`--.
+    ; Lo que queda aqui es la mitad que si depende del doble buffer: el
+    ; registro guarda lo que se le escribe, sin inventarse bits.
+    ;
+    ; El valor se construye sobre FB_BACK, no sobre una constante: asi sigue
+    ; apuntando a un buffer valido en las dos familias --que no comparten
+    ; mapa de memoria-- y el barrido no lee basura mientras tanto. El
+    ; desplazamiento es de 16 bytes, el alineamiento que exige v2.
+    ADDI  R11, R2, 16
+    STORE R11, R20, MMIO_VIDEO_FB_BACK_OFF
+    LOAD  R5, R20, MMIO_VIDEO_FB_BACK_OFF
+    STORE R2, R20, MMIO_VIDEO_FB_BACK_OFF   ; se deja como estaba ANTES de
+                                            ; comparar: si se restaurase
+                                            ; despues, fallar el bit 0 se
+                                            ; llevaria por delante los bits 1
+                                            ; y 2 y un fallo pareceria tres
+    XOR   R12, R5, R11         ; 0 si se guardo tal cual
     BNE   R12, R0, pedir_swap
     ORI   R10, R10, 0x0001
 
@@ -72,13 +88,13 @@ pedir_swap:
     ; instrucciones pasan microsegundos. Seria un caso que falla una vez de
     ; cada mil, que es peor que no tenerlo.
     MOVI  R21, 1
-    STORE R21, R20, 8
+    STORE R21, R20, MMIO_VIDEO_SWAP_OFF
 esperar:
-    LOAD  R8, R20, 8
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
     BNE   R8, R0, esperar
 
-    LOAD  R3, R20, 0           ; FB_FRONT despues
-    LOAD  R4, R20, 4           ; FB_BACK despues
+    LOAD  R3, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT despues
+    LOAD  R4, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK despues
 
     ; ---- bit 1: las bases se INTERCAMBIAN, no se copia una sobre otra ----
     XOR   R12, R3, R2          ; el FB_FRONT nuevo es el FB_BACK viejo
@@ -93,7 +109,7 @@ comprobar_back:
 
 comprobar_underflow:
     ; ---- bit 3: el barrido no se quedo sin datos ----
-    LOAD  R6, R20, 12
+    LOAD  R6, R20, MMIO_VIDEO_STATUS_OFF
     ANDI  R6, R6, 1
     BNE   R6, R0, comprobar_ctrl
     ORI   R10, R10, 0x0008
@@ -108,12 +124,12 @@ comprobar_ctrl:
     ; la placa lo reinicia, asi que un caso que lo dejara cambiado se lo pasaria
     ; al siguiente, y el resultado dependeria del orden de ejecucion. Es el
     ; mismo error que ya se pago una vez con las bases de framebuffer.
-    LOAD  R13, R20, 24         ; modo actual
+    LOAD  R13, R20, MMIO_VIDEO_CTRL_OFF         ; modo actual
     MOVI  R14, 2               ; SCANOUT
-    STORE R14, R20, 24
-    LOAD  R15, R20, 24
+    STORE R14, R20, MMIO_VIDEO_CTRL_OFF
+    LOAD  R15, R20, MMIO_VIDEO_CTRL_OFF
     XOR   R12, R15, R14
-    STORE R13, R20, 24         ; dejarlo como estaba, pase lo que pase
+    STORE R13, R20, MMIO_VIDEO_CTRL_OFF         ; dejarlo como estaba, pase lo que pase
     BNE   R12, R0, terminar
     ORI   R10, R10, 0x0010
 

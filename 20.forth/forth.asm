@@ -61,7 +61,7 @@
 ;   0x00102000  memoria libre para @ y !
 ;   0x00103000  pila de retorno del interprete interno
 ;   0x00104000  diccionario en RAM, donde : anade palabras
-;   0x80000200  puerto serie: +0 DATA, +4 STATUS
+; SERIAL (MMIO v2, ver mmio_v1.inc): +0 DATA, +4 STATUS
 ;
 ; ---- Convencion de registros ----
 ;
@@ -77,9 +77,10 @@
 ;   R30 enlace de emit y key     R31 enlace de las rutinas del bucle principal
 ; ============================================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000
-    ORI   R20, R20, 0x0200      ; puerto serie
+    LI    R20, MMIO_SERIAL_BASE
     MOVHI R22, 0x0010           ; 0x00100000, base de la pila
     ADDI  R21, R22, 0           ; pila vacia
     MOVHI R23, 0x0010
@@ -1314,10 +1315,10 @@ rl_end:
 ; vacia devuelve cero --no bloquea, no puede bloquear-- y el interprete se
 ; pondria a procesar ceros a toda velocidad.
 key:
-    LOAD  R5, R20, 4
+    LOAD  R5, R20, MMIO_SERIAL_STATUS_OFF
     ANDI  R6, R5, 0x00FF
     BEQ   R6, R0, key
-    LOAD  R4, R20, 0
+    LOAD  R4, R20, MMIO_SERIAL_DATA_OFF
     JR    R30
 
 ; Manda el byte de R4. Vuelve por R30.
@@ -1326,11 +1327,11 @@ key:
 ; llena perderia caracteres en silencio: la cola son 64 bytes y el PC solo los
 ; recoge cuando sondea.
 emit:
-    LOAD  R5, R20, 4
+    LOAD  R5, R20, MMIO_SERIAL_STATUS_OFF
     SHR   R6, R5, R27
     ANDI  R6, R6, 0x00FF
     BEQ   R6, R0, emit
-    STORE R4, R20, 0
+    STORE R4, R20, MMIO_SERIAL_DATA_OFF
     JR    R30
 
 ; `emit` desde el bucle principal, que tiene R29 y R30 libres.

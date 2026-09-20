@@ -58,10 +58,10 @@ Lanzadores finos: ejecutan el script real de la carpeta correspondiente, no
 una reimplementación.
 
 ```bash
-$ miniisa examples/vector.asm            # -> 1.isa/miniisa_asm.py
-$ cpusim examples/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
-$ gpusim examples/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
-$ gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
+> miniisa examples/vector.asm            # -> 1.isa/miniisa_asm.py
+> cpusim examples/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
+> gpusim examples/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+> gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -373,6 +373,44 @@ viniendo de `x.tests/backends/{fpga,gpu_fpga}.py` — es una etiqueta elegida a
 mano, no algo verificable en el RTL. Si un prototipo no está registrado ahí
 (como le pasaba a `17.fpga-gpu-ram-v2`), cae al nombre de la carpeta en vez
 de dejar todo en blanco.
+
+## Las constantes del mapa MMIO
+
+```bash
+$ generate-mmio
+escrito: x.tests/inc/mmio.inc
+escrito: tools/mmio_map.py
+
+$ generate-mmio --check     # no escribe; exit code 1 si algo cambiaría (para CI)
+```
+
+La fuente única es [`1.isa/mmio_map.vh`](../1.isa/mmio_map.vh), que pide
+[`1.isa/mmio.md`](../1.isa/mmio.md) §20: sólo `define`, nombre y constante, sin
+una sola expresión. De ahí salen el include del ensamblador y el módulo Python
+que usan el monitor y los simuladores. **No edites lo generado**: toca el `.vh`
+y vuelve a ejecutar esto.
+
+El include se usa así, y `x.tests/inc` ya va en el `-I` tanto de
+`run_tests.py` como de `tools/run_board.py`, así que no hay que pasar nada:
+
+```asm
+.include "mmio.inc"
+    LI    R2, MMIO_VIDEO_BASE
+    STORE R3, R2, 0                  ; CTRL
+    LI    R4, MMIO_VIDEO_FB_FRONT_ADDR
+```
+
+Cada `_OFF` del `.vh` sale también como `_ADDR` con su base ya sumada. A qué
+bloque pertenece se deduce del prefijo del nombre, así que **un `_OFF` tiene
+que llamarse igual que su `_BASE`** — `MMIO_GPU_WARPS_PC_OFF` cuelga de
+`MMIO_GPU_WARPS_BASE`, y escribirlo sin la S lo colgaría de `MMIO_GPU_BASE`.
+El generador comprueba que no haya dos registros en la misma dirección y falla
+si los hay, que es como se caza ese error.
+
+`x.tests/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
+al día, que las direcciones son las que dice el contrato (con los números
+escritos a mano, para que un `.vh` mal editado no pase), y que el generador
+rechaza lo que no debe aceptar.
 
 ## Mantener la documentación generada al día
 

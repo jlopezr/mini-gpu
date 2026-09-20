@@ -141,11 +141,15 @@ class SimulatorBackend:
             dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
             swap = video.get("run_until_swap")
             if swap:
-                # Por `write`, no asignando el atributo: armar la alarma tiene
-                # efectos —pone SWAP_COUNT a cero y levanta el bit de armado—
-                # igual que en el hardware. Asignando `halt_at` a pelo se
-                # queda desarmada y el programa no para nunca.
-                dispositivo.write(dispositivo.HALT_AT, swap)
+                # Parada del arnes, NO por HALT_AT. Hasta v2 se hacia
+                # escribiendo HALT_AT, porque la alarma contaba intercambios y
+                # `run_until: {swap: N}` pedia exactamente eso. En v2 la alarma
+                # cuenta FRAMES (§9.7), asi que seguir usandola pararia en otro
+                # sitio --y ademas con HALT_TARGET a cero no pararia en
+                # absoluto--. Lo que el caso quiere es capturar el frame tras
+                # el intercambio N, que es una condicion de observacion del
+                # banco de pruebas y no un registro que el programa vea.
+                dispositivo.stop_after_swaps = swap
 
         # El puerto serie se construye SIEMPRE que el caso lo pida, aunque
         # `stdin` este vacio: un programa puede escribir sin haber leido nada.

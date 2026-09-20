@@ -174,7 +174,20 @@ class Pipeline:
         for address, data in stores:
             device = self.system.device_for(address)
             if device is not None:
-                device.write(address - device.BASE, int.from_bytes(data, 'little'))
+                # Un registro puede rechazar el DATO y no solo la direccion:
+                # desde MMIO v2 una base de framebuffer desalineada es error
+                # (§9.2). La validacion de arriba mira tamano y alineamiento
+                # del ACCESO, que es otra cosa y ocurre antes de tener el
+                # valor, asi que el fallo solo se puede ver aqui.
+                try:
+                    device.write(address - device.BASE,
+                                 int.from_bytes(data, 'little'))
+                except RuntimeError:
+                    fault = self.fault(ISAError(2, address), packet)
+                    self.system.stop_with_error(fault)
+                    self.event('fault', packet, fault=asdict(fault),
+                               source=source)
+                    return
             else:
                 self.system.memory[address:address + len(data)] = data
         w.instructions_executed += 1

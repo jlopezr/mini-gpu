@@ -141,29 +141,43 @@ class ProtocoloCompartidoTest(unittest.TestCase):
         bloque sobre el registro que acababa de existir -- `validate_block`
         exige `address + length <= end`, y `0x1c > 0x18`.
 
-        El RTL de las cuatro decodifica la página entera
-        (`address[31:12] == 20'h80000`), así que eso es lo que se exige aquí.
+        DE DÓNDE SE SACA LO QUE EL RTL ACEPTA. Antes, del `MMIO_PREFIX` de
+        20 bits del adaptador: con una sola página de 4 KiB, el prefijo ERA
+        la ventana. Con MMIO v2 el adaptador ya no lleva prefijo --mira un
+        bit-- y quien decide qué ventanas existen son los parámetros
+        `WINDOWn_BASE`/`WINDOWn_END` del `monitor #(...)` de cada `top.v`.
+
+        Ese cambio es una mejora, no un apaño: los `WINDOWn_*` son la gemela
+        DE VERDAD de `MONITOR_REGIONS` --el RTL filtra con unos y el host con
+        los otros-- mientras que el prefijo del adaptador sólo lo era por
+        casualidad, porque coincidían mientras todo cabía en una página.
         """
-        prefijo = re.compile(r"MMIO_PREFIX\s*=\s*\d+'h([0-9a-fA-F_]+)")
+        ventana = re.compile(
+            r"\.WINDOW(\d)_(BASE|END)\s*\(\s*\d+'h([0-9a-fA-F_]+)\s*\)")
         for prototipo in ("16.fpga-cpu-hdmi", "18.fpga-cpu-hdmi-bl8",
                           "19.fpga-cpu-hdmi-ls", "21.fpga-cpu-hdmi-alu"):
             monitor = cargar(prototipo)
-            # El camino ACTIVO es el del adaptador que usa el top; se busca el
-            # prefijo de 20 bits, que es el de la página de 4 KiB.
-            paginas = set()
-            for ruta in sorted((ROOT / prototipo).glob("*.v")):
-                if ruta.name.endswith("_tb.v"):
-                    continue
-                for digits in prefijo.findall(ruta.read_text(encoding="utf8")):
-                    valor = int(digits.replace("_", ""), 16)
-                    if valor == 0x80000:        # los 20 bits altos
-                        paginas.add((0x8000_0000, 0x8000_1000))
+            texto = (ROOT / prototipo / "top.v").read_text(encoding="utf8")
+            crudas: dict[str, dict[str, int]] = {}
+            for indice, extremo, digits in ventana.findall(texto):
+                crudas.setdefault(indice, {})[extremo] = int(
+                    digits.replace("_", ""), 16)
+
+            # Una ranura sin usar vale 0x1_ffff_ffff en las dos puntas.
+            rtl = {(v["BASE"], v["END"]) for v in crudas.values()
+                   if "BASE" in v and "END" in v
+                   and v["BASE"] != 0x1_FFFF_FFFF}
+
             with self.subTest(prototipo=prototipo):
-                self.assertTrue(paginas, f"{prototipo}: no encuentro MMIO_PREFIX")
-                self.assertIn((0x8000_0000, 0x8000_1000),
-                              set(monitor.MONITOR_REGIONS),
-                              f"{prototipo}: el host no cubre la página que el "
-                              f"RTL decodifica")
+                self.assertTrue(rtl, f"{prototipo}: no encuentro WINDOWn_* "
+                                     f"en top.v")
+                self.assertEqual(
+                    rtl, set(monitor.MONITOR_REGIONS),
+                    f"{prototipo}: las ventanas del RTL y las de monitor.py no "
+                    f"coinciden. El síntoma de esto en la placa es un NACK que "
+                    f"parece un bitstream viejo.\n"
+                    f"  RTL:      {sorted(rtl)}\n"
+                    f"  monitor:  {sorted(monitor.MONITOR_REGIONS)}")
 
     def test_el_modelo_de_warps_es_el_de_cada_placa(self):
         """El caso que se escapó: la 12 valida contra 128 KiB de EBR y las

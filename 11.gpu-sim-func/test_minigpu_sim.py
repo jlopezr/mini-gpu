@@ -306,9 +306,15 @@ class VideoDeviceTest(unittest.TestCase):
     def test_sin_dispositivo_el_mmio_sigue_siendo_memoria_fuera_de_rango(self):
         gpu = System(64, 1, 1)
         self.assertIsNone(gpu.device_for(VideoDevice.BASE))
-        # LOAD de 0x80000000: sin dispositivo es un acceso fuera de memoria, que
-        # es lo que hacian los casos de siempre.
-        gpu.load_program(program(imm(0x17, 1, value=0x8000),     # MOVHI R1,0x8000
+        # LOAD de la base de VIDEO: sin dispositivo es un acceso fuera de
+        # memoria, que es lo que hacian los casos de siempre.
+        #
+        # Antes de MMIO v2 esto usaba 0x80000000, y ahora ahi vive el bloque
+        # SYSTEM --que el System SIEMPRE instancia--, asi que la lectura tenia
+        # exito y el caso fallaba diciendo que no habia error. El caso no habla
+        # de una direccion concreta sino de "MMIO sin dispositivo detras", asi
+        # que la direccion se saca de la clase ausente en vez de escribirla.
+        gpu.load_program(program(imm(0x17, 1, value=VideoDevice.BASE >> 16),
                                  imm(0x15, 2, 1, 0),             # LOAD R2,(R1)
                                  HALT), launch=True)
         gpu.run(8)
@@ -317,13 +323,30 @@ class VideoDeviceTest(unittest.TestCase):
     def test_alineamiento_compartido_y_halt_at(self):
         """Los simuladores comparten contrato funcional, no el scanout GPU RTL."""
         video = VideoDevice(frame_instructions=1)
-        video.write(video.FB_BACK, 0x0102580F)
-        self.assertEqual(video.fb_back, 0x0102580C)
+        # v2 §9.2: desalinear es error, no se trunca. Y el alineamiento es de
+        # dieciseis bytes en las dos familias, que era justo lo que antes no
+        # coincidia --cuatro en CPU, dieciseis en GPU--.
+        with self.assertRaises(RuntimeError):
+            video.write(video.FB_BACK, 0x0102580F)
+        video.write(video.FB_BACK, 0x01025800)
+        self.assertEqual(video.fb_back, 0x01025800)
+
+        # La alarma cuenta FRAMES (§9.7) y hay que decirle a quien para: con
+        # HALT_TARGET a cero se consume sin detener nada.
         video.write(video.HALT_AT, 1)
+        video.write(video.HALT_TARGET, VideoDevice.HALT_TARGET_CPU)
         video.write(video.SWAP, 1)
         video.tick()
         self.assertEqual(video.swap_count, 1)
+        self.assertEqual(video.read(video.FRAME_COUNT), 1)
         self.assertTrue(video.halt_request)
+
+    def test_halt_at_sin_halt_target_no_para_a_nadie(self):
+        """La trampa al portar un programa de v1: HALT_AT ya no basta."""
+        video = VideoDevice(frame_instructions=1)
+        video.write(video.HALT_AT, 1)
+        video.tick()
+        self.assertFalse(video.halt_request)
 
     def test_video_ctrl_existe_y_arranca_en_pattern(self):
         """No en SCANOUT, y no es un descuido.
@@ -355,23 +378,36 @@ class VideoDeviceTest(unittest.TestCase):
         self.assertEqual(video.read(VideoDevice.SWAP_COUNT), 1)
         self.assertEqual(video.read(VideoDevice.SWAP), 0)
 
-    def test_status_lleva_los_frames_arriba_y_el_pendiente_en_el_bit_uno(self):
+    def test_los_frames_salen_de_frame_count_y_status_solo_lleva_estado(self):
+        """v2 saco los frames de STATUS y les dio registro propio (§9.5).
+
+        En v1 vivian en STATUS[31:16] y daban la vuelta a los 65536 frames,
+        unos dieciocho minutos. Aqui se comprueban las dos mitades: que
+        FRAME_COUNT cuenta, y que STATUS ya NO los lleva --si alguien los
+        dejase tambien arriba "por compatibilidad", un programa nuevo leeria
+        un numero que el hardware no promete--.
+        """
         video = VideoDevice(frame_instructions=1)
         video.tick()
         video.tick()
         video.write(VideoDevice.SWAP, 1)
+        self.assertEqual(video.read(VideoDevice.FRAME_COUNT), 2)
         estado = video.read(VideoDevice.STATUS)
-        self.assertEqual(estado >> 16, 2)
+        self.assertEqual(estado >> 16, 0)
         self.assertEqual(estado & 0b11, 0b10)   # pendiente si, underflow no
 
     def test_un_kernel_escribe_y_lee_los_registros(self):
         """El camino completo: LOAD y STORE de un lane contra el dispositivo."""
         gpu = System(256, 1, 1, video=VideoDevice(fb_front=0x10, fb_back=0x20))
         gpu.load_program(program(
-            imm(0x17, 20, value=0x8000),      # MOVHI R20, 0x8000
+            # La base de VIDEO en v2, 0x80200000, no 0x80000000: ahi esta
+            # SYSTEM. Sale de la clase para que no se quede vieja otra vez.
+            imm(0x17, 20, value=VideoDevice.BASE >> 16),
             imm(0x10, 21, value=0x40),        # MOVI  R21, 0x40
-            imm(0x16, 21, 20, 4),             # STORE R21, R20, 4  (FB_BACK)
-            imm(0x15, 1, 20, 4),              # LOAD  R1,  R20, 4
+            # FB_BACK esta en +8, no en +4: v2 devolvio CTRL al +0 y empujo
+            # las dos bases una palabra.
+            imm(0x16, 21, 20, VideoDevice.FB_BACK),
+            imm(0x15, 1, 20, VideoDevice.FB_BACK),
             HALT), launch=True)
         gpu.run(16)
         self.assertFalse(gpu.error, gpu.fault)

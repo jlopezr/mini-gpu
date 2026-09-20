@@ -18,16 +18,34 @@ class VideoDevice:
     HALT_AT y serie son capacidades del simulador aunque falten en la FPGA GPU.
     """
 
-    BASE = 0x8000_0000
-    SIZE = 256                      # slot MMIO compartido
+    BASE = 0x8020_0000
+    SIZE = 0x1_0000                 # bloque MMIO v2 de 64 KiB
 
-    FB_FRONT = 0x00
-    FB_BACK = 0x04
-    SWAP = 0x08
-    STATUS = 0x0C
-    SWAP_COUNT = 0x10
-    HALT_AT = 0x14
-    VIDEO_CTRL = 0x18
+    # Disposición de MMIO v2 (§9). CTRL vuelve a +0x00, `FRAME_COUNT` tiene
+    # registro propio en vez de vivir en los bits altos de STATUS, y aparecen
+    # HALT_TARGET y VIDEO_TX. §17 exige que el simulador implemente el MISMO
+    # contrato que el RTL, así que esta tabla y `video_registers.v` dicen lo
+    # mismo registro por registro.
+    VIDEO_CTRL = 0x00
+    FB_FRONT = 0x04
+    FB_BACK = 0x08
+    SWAP = 0x0C
+    STATUS = 0x10
+    FRAME_COUNT = 0x14
+    SWAP_COUNT = 0x18
+    HALT_AT = 0x1C
+    HALT_TARGET = 0x20
+    VIDEO_TX = 0x24
+
+    # Bits de HALT_TARGET (§9.6).
+    HALT_TARGET_CPU = 1 << 0
+    HALT_TARGET_GPU = 1 << 1
+
+    # Alineamiento exigido a FB_FRONT y FB_BACK (§9.2): dieciséis bytes, y
+    # desalinear es ERROR, no se trunca. El truncamiento silencioso era
+    # distinto en cada familia --4 bytes en CPU y 16 en GPU-- así que el mismo
+    # programa dibujaba bien en una placa y torcido en la otra.
+    FB_ALIGN = 16
 
     MODE_BLANK = 0
     MODE_PATTERN = 1
@@ -45,15 +63,25 @@ class VideoDevice:
                  frame_instructions: int = 1000):
         if frame_instructions <= 0:
             raise ValueError("frame_instructions debe ser positivo")
-        self.fb_front = fb_front & 0xFFFFFFFC
-        self.fb_back = fb_back & 0xFFFFFFFC
+        self.fb_front = fb_front & ~(self.FB_ALIGN - 1)
+        self.fb_back = fb_back & ~(self.FB_ALIGN - 1)
         self.swap_pending = False
         self.frame_count = 0
         self.swap_count = 0
         self.halt_at = 0
         self.halt_armed = False
-        # Alto durante un solo `tick`, cuando SWAP_COUNT alcanza HALT_AT.
+        self.halt_target = 0
+        self.video_tx = 0
+        # Alto durante un solo `tick`, cuando FRAME_COUNT alcanza HALT_AT.
         self.halt_request = False
+        #: Parada del ARNES, no del contrato: «para tras N intercambios».
+        #: No es un registro y no se puede leer desde el programa. Existe
+        #: porque `run_until: {swap: N}` de los casos es una condicion de
+        #: observacion --capturar el frame N-- y antes se implementaba
+        #: escribiendo HALT_AT, que en v2 cuenta FRAMES y no intercambios.
+        #: Colarla por HALT_AT haria que el simulador parase donde el
+        #: hardware no para, que es justo lo que §17 prohibe.
+        self.stop_after_swaps = 0
         # PATTERN tras el reset, igual que el RTL. Aquí no gobierna nada --no
         # hay barrido que leer la memoria-- pero el REGISTRO tiene que existir y
         # comportarse igual: un programa que lo escriba y lo relea debe obtener
@@ -63,8 +91,13 @@ class VideoDevice:
         self.frame_instructions = frame_instructions
         self._since_frame = 0
 
+    #: Los diez registros de §9, en orden. Lo que no esta aqui es ERROR, no
+    #: cero: §4.3 cambio el fallo silencioso por uno que se ve.
+    REGISTROS = (VIDEO_CTRL, FB_FRONT, FB_BACK, SWAP, STATUS, FRAME_COUNT,
+                 SWAP_COUNT, HALT_AT, HALT_TARGET, VIDEO_TX)
+
     def validate(self, offset: int, writing: bool = False) -> None:
-        if offset not in (self.FB_FRONT, self.FB_BACK, self.SWAP, self.STATUS, self.SWAP_COUNT, self.HALT_AT, self.VIDEO_CTRL):
+        if offset not in self.REGISTROS:
             raise RuntimeError(f"registro MMIO inexistente: {self.BASE + offset:#010x}")
 
     def contains(self, address: int) -> bool:
@@ -84,15 +117,29 @@ class VideoDevice:
             return
 
         self._since_frame = 0
-        self.frame_count = (self.frame_count + 1) & 0xFFFF
+        self.frame_count = u32(self.frame_count + 1)
+        # VIDEO_TX cuenta frames emitidos mientras el nucleo corre; aqui
+        # `tick` solo se llama mientras corre, asi que es el mismo contador.
+        self.video_tx = u32(self.video_tx + 1)
+
+        # La alarma cuenta FRAMES, no intercambios (§9.7), y se compara con
+        # `>=` --decision congelada 17--: armarla con un valor ya rebasado
+        # para en el frame siguiente en vez de no parar nunca.
+        if self.halt_armed and self.frame_count >= self.halt_at:
+            # HALT_TARGET decide A QUIEN se para. Sin el bit puesto la alarma
+            # se consume igual y no para a nadie: es lo que hace el RTL, y es
+            # la trampa de la que hay que acordarse al portar un programa
+            # viejo --HALT_TARGET arranca a cero, asi que escribir solo
+            # HALT_AT, como bastaba en v1, ya no detiene nada--.
+            self.halt_request = bool(self.halt_target & self.HALT_TARGET_CPU)
+            self.halt_armed = False
+
         if self.swap_pending:
             self.fb_front, self.fb_back = self.fb_back, self.fb_front
             self.swap_pending = False
             self.swap_count = u32(self.swap_count + 1)
-            # Alarma de un disparo y `>=`, igual que el hardware: ver `write`.
-            if self.halt_armed and self.swap_count >= self.halt_at:
+            if self.stop_after_swaps and self.swap_count >= self.stop_after_swaps:
                 self.halt_request = True
-                self.halt_armed = False
 
     def read(self, offset: int) -> int:
         self.validate(offset)
@@ -103,22 +150,38 @@ class VideoDevice:
         if offset == self.SWAP:
             return 1 if self.swap_pending else 0
         if offset == self.STATUS:
-            # bit 0 underflow (siempre cero aquí), bit 1 pendiente, 31:16 frames
-            return (self.frame_count << 16) | (2 if self.swap_pending else 0)
+            # bit 0 underflow (siempre cero aqui), bit 1 intercambio pendiente.
+            # Los frames YA NO viven aqui: tienen registro propio en v2, que es
+            # lo que les devuelve los 32 bits --en v1 cabian 16 y daban la
+            # vuelta a los 65536 frames, unos 18 minutos de video--.
+            return 2 if self.swap_pending else 0
+        if offset == self.FRAME_COUNT:
+            return self.frame_count
         if offset == self.SWAP_COUNT:
             return self.swap_count
         if offset == self.HALT_AT:
             return self.halt_at
+        if offset == self.HALT_TARGET:
+            return self.halt_target
+        if offset == self.VIDEO_TX:
+            return self.video_tx
         if offset == self.VIDEO_CTRL:
             return self.video_mode
         return 0
 
     def write(self, offset: int, value: int) -> None:
         self.validate(offset, writing=True)
-        if offset == self.FB_FRONT:
-            self.fb_front = value & 0xFFFF_FFFC     # se alinea a cuatro bytes
-        elif offset == self.FB_BACK:
-            self.fb_back = value & 0xFFFF_FFFC
+        if offset in (self.FB_FRONT, self.FB_BACK):
+            # Desalinear es ERROR, no se trunca (§9.2). El truncamiento
+            # silencioso dibujaba bien en una familia y torcido en la otra.
+            if value & (self.FB_ALIGN - 1):
+                raise RuntimeError(
+                    f"base de framebuffer no alineada a {self.FB_ALIGN} "
+                    f"bytes: 0x{value:08X}")
+            if offset == self.FB_FRONT:
+                self.fb_front = value
+            else:
+                self.fb_back = value
         elif offset == self.SWAP:
             # Cualquier escritura pide intercambio.
             self.swap_pending = True
@@ -127,17 +190,26 @@ class VideoDevice:
                             # nunca está puesto: no hay nada que borrar
         elif offset == self.HALT_AT:
             # Armar la alarma pone el origen de la cuenta aquí: HALT_AT es
-            # «para dentro de N intercambios», no «para en el intercambio
-            # número N desde el encendido». Aquí daría igual —cada ejecución
-            # construye un dispositivo nuevo— pero en la placa no: con la
-            # cuenta libre, un programa solo podría usarla una vez por arranque.
-            # Se copia la regla para que el simulador siga siendo comparable.
+            # «para dentro de N frames», no «para en el frame número N desde
+            # el encendido». Aquí daría igual —cada ejecución construye un
+            # dispositivo nuevo— pero en la placa no: con la cuenta libre, un
+            # programa solo podría usarla una vez por arranque. Se copia la
+            # regla, y con ella el efecto secundario: escribir HALT_AT PONE
+            # FRAME_COUNT A CERO, igual que hace `video_registers.v`.
             self.halt_at = value
-            self.swap_count = 0
+            self.frame_count = 0
             self.halt_armed = value != 0
+        elif offset == self.HALT_TARGET:
+            self.halt_target = value & (self.HALT_TARGET_CPU
+                                        | self.HALT_TARGET_GPU)
         elif offset == self.VIDEO_CTRL:
+            # El modo 3 esta reservado (§9.1) y escribirlo es error, no un
+            # modo raro: el RTL no lo decodifica y el scanout se quedaria sin
+            # fuente, que es peor de diagnosticar que un fallo en la tienda.
+            if value & 0b11 == 3:
+                raise RuntimeError("modo de video reservado: 3")
             self.video_mode = value & 0b11
-        # SWAP_COUNT es de solo lectura.
+        # FRAME_COUNT, SWAP_COUNT y VIDEO_TX son de solo lectura.
 
 
 class SerialDevice:
@@ -163,8 +235,8 @@ class SerialDevice:
     programa que dependa de CUANDO llega cada byte, no.
     """
 
-    BASE = 0x8000_0200
-    SIZE = 256
+    BASE = 0x8010_0000
+    SIZE = 0x1_0000             # bloque MMIO v2 de 64 KiB
 
     DATA = 0x00
     STATUS = 0x04

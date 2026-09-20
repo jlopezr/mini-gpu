@@ -89,16 +89,32 @@ DEFAULT_VERSION = "alu"
 # Registros de video, en direcciones de byte. Solo los usan las versiones que
 # declaran `video`; estan aqui y no en el monitor porque son del sistema, no
 # del protocolo.
-VIDEO_FB_FRONT = 0x8000_0000
-VIDEO_FB_BACK = 0x8000_0004
+# Las direcciones salen del mapa generado (`1.isa/mmio.md` §20), no escritas a
+# mano: eran una cuarta copia junto al decodificador Verilog, `monitor.py` y
+# cada `.asm`. De momento es el mapa de TRANSICION --bases de v2, offsets de
+# v1-- porque `video_registers.v` aun no ha movido sus registros.
+#
+# AVISO PARA LAS OTRAS NUEVE CARPETAS: este fichero lo comparten todos los
+# prototipos con placa. Al cambiarlo, los bitstreams de 6, 10, 16, 18 y 19
+# --que siguen en v1-- dejan de responder donde el arnes los busca, hasta que
+# se migren. Es sabido y aceptado, no una regresion.
+from tools.mmio_map import (  # noqa: E402
+    MMIO_VIDEO_BASE, MMIO_VIDEO_FB_FRONT_OFF, MMIO_VIDEO_FB_BACK_OFF,
+    MMIO_VIDEO_STATUS_OFF, MMIO_VIDEO_SWAP_COUNT_OFF, MMIO_VIDEO_HALT_AT_OFF,
+    MMIO_VIDEO_CTRL_OFF, MMIO_CPU_PERF_BASE, MMIO_PERF_CYCLES_OFF,
+    MMIO_PERF_RETIRED_OFF,
+)
+
+VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
+VIDEO_FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
 # Dónde pone el arnés el framebuffer: `FB_FRONT`/`FB_BACK`, importados arriba.
 # Ya NO es el valor de reset de la placa --que desde la fase 3.5 es cero en los
 # dos-- sino una dirección que elige el arnés, la misma que usan los dos
 # simuladores. Ver backends/video_layout.py.
-VIDEO_STATUS = 0x8000_000C
-VIDEO_SWAP_COUNT = 0x8000_0010
-VIDEO_HALT_AT = 0x8000_0014
-VIDEO_CTRL = 0x8000_0018
+VIDEO_STATUS = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
+VIDEO_SWAP_COUNT = MMIO_VIDEO_BASE + MMIO_VIDEO_SWAP_COUNT_OFF
+VIDEO_HALT_AT = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_AT_OFF
+VIDEO_CTRL = MMIO_VIDEO_BASE + MMIO_VIDEO_CTRL_OFF
 # Modos de salida. Tras el reset la placa arranca en PATTERN --ver
 # video_registers.v-- y el arnes enciende SCANOUT antes de cada caso de video.
 MODE_BLANK = 0
@@ -106,8 +122,8 @@ MODE_PATTERN = 1
 MODE_SCANOUT = 2
 # Contadores de rendimiento. Los MISMOS offsets que en la MiniGPU: el bloque de
 # CPU es un prefijo del de GPU, con CYCLES en +0x00 y RETIRED en +0x04.
-PERF_CYCLES = 0x8000_0300
-PERF_RETIRED = 0x8000_0304
+PERF_CYCLES = MMIO_CPU_PERF_BASE + MMIO_PERF_CYCLES_OFF
+PERF_RETIRED = MMIO_CPU_PERF_BASE + MMIO_PERF_RETIRED_OFF
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
 

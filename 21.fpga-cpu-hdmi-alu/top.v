@@ -101,8 +101,8 @@ module top (
 
   // Los contadores de rendimiento vivian AQUI, como dos registros que solo
   // leia el host con los comandos 0x36/0x37. Ahora son un dispositivo MMIO en
-  // 0x80000300, igual que en la MiniGPU, y el programa se mide a si mismo sin
-  // parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
+  // 0x81010000 --el bloque CPU PERFORMANCE de MMIO v2-- y el programa se mide
+  // a si mismo sin parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
   // MAYOR = 2: juego base MAS puerto serie, quince comandos. MENOR = numero de
   // carpeta. Ver docs/unificacion-mmio.md fase 5.
@@ -114,11 +114,25 @@ module top (
   // programa que lo use como registro general da resultados distintos sin parar
   // con error-- asi que el runner tiene que poder distinguir los dos bitstreams.
   //
-  // La ventana es la pagina entera de MMIO, gemela de MONITOR_REGIONS.
+  // Las ventanas que el monitor acepta, una por bloque de MMIO v2. Antes era
+  // UNA sola --la pagina de 4 KiB entera-- porque todos los dispositivos
+  // cabian dentro; ahora estan a megabytes unos de otros y hacen falta cuatro.
+  //
+  // `monitor.v` NO se toca: ya tenia cinco ranuras parametrizadas, y esa es la
+  // razon de que la migracion no necesite partir el fichero que las diez
+  // carpetas comparten byte a byte. Lo que cambia son los valores, que viven
+  // aqui.
+  //
+  // Siguen siendo gemelas de MONITOR_REGIONS en monitor.py, que es la lista
+  // que §16.4 quiere derivar de DEVICES en vez de mantener a mano. Eso es
+  // trabajo aparte; de momento las dos listas dicen lo mismo y hay un test.
   monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd21),
       .HAS_SERIAL(1),
       .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
+      .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
+      .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
+      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000))  // CPU PERF
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -222,12 +236,14 @@ module top (
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
   // Doce bits: la ventana pasa de 32 bytes a 4 KiB, repartidos en dieciseis
-  // dispositivos de 256. Ver mmio_decoder.v para el mapa y su coste.
-  wire [11:0] mmio_address;
+  // La direccion va ENTERA hasta el decodificador: en v2 los bloques estan a
+  // megabytes unos de otros. Ver mmio_decoder.v para el mapa y su coste.
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+  wire mmio_video_error, mmio_perf_select;
 
 
   // ===========================================================================
@@ -291,11 +307,11 @@ module top (
   // Los dos clientes de la ventana de registros de video.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [11:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [11:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
   cpu_dmem_adapter dmem_adapter_i(
@@ -536,36 +552,63 @@ module top (
       .fill_we(fill_we), .fill_addr(fill_addr),
       .fill_data(fill_data), .fill_done(fill_done));
 
-  // Reparto de la ventana MMIO entre dispositivos. El mapa esta en
-  // mmio_decoder.v; el video no se mueve de 0x80000000.
+  // Reparto del espacio MMIO entre dispositivos. El mapa esta en
+  // mmio_decoder.v. Con MMIO v2 el video se MUEVE de 0x80000000 a 0x80200000,
+  // y 0x80000000 pasa a ser el bloque SYSTEM.
+  //
   // ISA_PROFILE: MUL, DIV y accesos de subpalabra. El bit 3 (SIMT) va a CERO
   // aunque `cpu.v` decodifique SSY y BAR: aqui son NO-OP, puestos para poder
   // compartir binarios con la GPU. Encenderlo diria al host que este nucleo
   // diverge y reconverge, que es falso.
+  //
+  // DEVICES (§5.4): SYSTEM(0) + SDRAM(2) + SERIAL(4) + VIDEO(5) + CPU(9).
+  // No hay FABRIC declarado --lo hay fisicamente, pero su bloque no tiene
+  // registros-- ni EBR, ni TIMER, ni INTC, ni DMA, ni GPU.
+  //
+  //   bit 9 CPU | bit 5 VIDEO | bit 4 SERIAL | bit 2 SDRAM | bit 0 SYSTEM
+  //   0000_0010_0011_0101 = 0x0235
+  //
+  // Escribirlo a mano aqui es deuda conocida: §5.4 quiere que se DERIVE del
+  // RTL por el camino de capabilities.json, igual que las capacidades. Se
+  // hace en su momento; mientras tanto hay un test que lo contrasta.
   wire [31:0] mmio_perf_read_data;
-  mmio_decoder #(.FOLDER(8'd21), .HAS_SERIAL(1), .VIDEO_REGISTERS(64'h7f), .ISA_PROFILE(32'h0000_0007)) mmio_decoder_i(
-      .select(mmio_select), .write(mmio_write), .address(mmio_address),
+  mmio_decoder #(.FOLDER(8'd21), .HAS_SERIAL(1), .VIDEO_REGISTERS(64'h3ff),
+      .ISA_PROFILE(32'h0000_0007),
+      .DEVICES(32'h0000_0235),
+      .MEM_BASE(32'h0000_0000), .MEM_SIZE(32'h0200_0000),
+      .MONITOR_VERSION(32'h0000_0415))   // 4.21, el mismo que monitor_i
+    mmio_decoder_i(
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
       .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
-      .perf_read_data(mmio_perf_read_data),
+      .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .read_data(mmio_read_data), .error(mmio_error));
 
-  // Contadores de rendimiento en 0x80000300. `restart` es `cpu_run_request`:
-  // cada `run` empieza una medida nueva, que es lo que estos contadores hacian
-  // ya cuando vivian en este fichero.
+  // Contadores de rendimiento en 0x81010000 (CPU PERFORMANCE, mmio.md §13.2).
+  // `restart` es `cpu_run_request`: cada `run` empieza una medida nueva, que
+  // es lo que estos contadores hacian ya cuando vivian en este fichero.
+  //
+  // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
+  // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
   cpu_perf_counters perf_i(
       .clk(clk), .reset(reset),
-      .address(mmio_address[7:0]), .read_data(mmio_perf_read_data),
+      .select(mmio_perf_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_perf_read_data),
       .running(!cpu_halted), .retired(cpu_instruction_retired),
       .restart(cpu_run_request));
 
-  // Registros de video en 0x80000000, y con ellos el doble framebuffer.
+  // Registros de video en 0x80200000, y con ellos el doble framebuffer.
   video_registers registers_i(
       .clk(clk), .reset(reset),
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
       .address(mmio_address[7:0]), .write_data(mmio_write_data),
       .read_data(mmio_video_read_data),
+      .error(mmio_video_error),
+      .running(!cpu_halted),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(video_underflow),
       .underflow_clear(video_underflow_clear),

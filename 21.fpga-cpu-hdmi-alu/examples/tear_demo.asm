@@ -8,7 +8,7 @@
 ;
 ; Solo hay dos diferencias con swap_demo.asm, y las dos van marcadas abajo:
 ;
-;   1. LOAD R1, R20, 0   -> FB_FRONT, el buffer visible, en vez de FB_BACK.
+;   1. LOAD R1, R20, MMIO_VIDEO_FB_FRONT_OFF   -> FB_FRONT, el buffer visible, en vez de FB_BACK.
 ;   2. No se pide SWAP ni se espera a que ocurra.
 ;
 ; Todo lo demas es identico, a proposito: si algo se ve distinto tiene que
@@ -28,8 +28,10 @@
 ; aqui no hacen falta porque no hay intercambio que pedir ni que esperar.
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000          ; registros de video en 0x80000000
+    LI    R20, MMIO_VIDEO_BASE
 
     ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
     ; cero --el framebuffer es una decision del programa, no una reserva
@@ -37,17 +39,17 @@ start:
     ; propio programa. La direccion es la de siempre; lo que cambia es que
     ; ahora hay que escribirla.
     MOVHI R30, 0x0100
-    STORE R30, R20, 0          ; FB_FRONT
+    STORE R30, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
     MOVHI R30, 0x0102
     ORI   R30, R30, 0x5800
-    STORE R30, R20, 4          ; FB_BACK, un frame mas arriba
+    STORE R30, R20, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir
     ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
     MOVI  R30, 2               ; SCANOUT
-    STORE R30, R20, 24         ; VIDEO_CTRL
+    STORE R30, R20, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
 
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; fondo azul, en las dos mitades de la palabra
@@ -62,7 +64,7 @@ start:
 frame:
     ; DIFERENCIA 1: el buffer visible, no el trasero. Aqui es donde se rompe
     ; la imagen: se escribe justo lo que el barrido esta leyendo.
-    LOAD  R1, R20, 0           ; R1 = FB_FRONT
+    LOAD  R1, R20, MMIO_VIDEO_FB_FRONT_OFF           ; R1 = FB_FRONT
     MOVI  R2, 0
 
 line_loop:

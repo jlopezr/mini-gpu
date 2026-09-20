@@ -76,19 +76,21 @@
 ;   R31 enlace de rnd
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R2, 0x8000           ; registros de video en 0x80000000
+    LI    R2, MMIO_VIDEO_BASE
 
     ; Framebuffer. Tras el reset las dos bases valen cero, asi que heredarlas
     ; seria dibujar sobre el propio programa: hay que escribirlas.
     MOVHI R28, 0x0100
-    STORE R28, R2, 0           ; FB_FRONT = 0x01000000
+    STORE R28, R2, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT = 0x01000000
     MOVHI R28, 0x0102
     ORI   R28, R28, 0x5800
-    STORE R28, R2, 4           ; FB_BACK  = 0x01025800, un frame mas arriba
+    STORE R28, R2, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK  = 0x01025800, un frame mas arriba
 
     MOVI  R28, 2               ; SCANOUT: tras el reset el modo es PATTERN
-    STORE R28, R2, 24          ; VIDEO_CTRL
+    STORE R28, R2, MMIO_VIDEO_CTRL_OFF          ; VIDEO_CTRL
 
     MOVI  R14, 13              ; los tres desplazamientos del xorshift
     MOVI  R15, 17
@@ -121,7 +123,7 @@ seed_loop:
     BLT   R12, R20, seed_loop
 
 frame:
-    LOAD  R1, R2, 4            ; R1 = FB_BACK; cambia en cada intercambio
+    LOAD  R1, R2, MMIO_VIDEO_FB_BACK_OFF            ; R1 = FB_BACK; cambia en cada intercambio
 
     ; ---- borrar el buffer trasero a negro ----
     ; Se compara el puntero contra el final con BLTU: son direcciones, no
@@ -192,9 +194,9 @@ next_star:
     BLT   R12, R20, star_loop
 
     ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
-    STORE R25, R2, 8           ; SWAP = 1
+    STORE R25, R2, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 wait_swap:
-    LOAD  R28, R2, 8
+    LOAD  R28, R2, MMIO_VIDEO_SWAP_OFF
     BNE   R28, R0, wait_swap
 
     BRA   frame

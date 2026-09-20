@@ -9,20 +9,21 @@
 ;
 ; R7 guarda el STATUS inicial para que el caso pueda comprobarlo como registro.
 
-start:
-    MOVHI R20, 0x8000
-    ORI   R20, R20, 0x0200
+.include "mmio.inc"
 
-    LOAD  R7, R20, 4           ; STATUS con las dos colas vacias
+start:
+    LI    R20, MMIO_SERIAL_BASE
+
+    LOAD  R7, R20, MMIO_SERIAL_STATUS_OFF           ; STATUS con las dos colas vacias
 
     ; "OK\n", sin leer nada antes.
     MOVI  R6, 0x4F
-    STORE R6, R20, 0
+    STORE R6, R20, MMIO_SERIAL_DATA_OFF
     MOVI  R6, 0x4B
-    STORE R6, R20, 0
+    STORE R6, R20, MMIO_SERIAL_DATA_OFF
     MOVI  R6, 0x0A
-    STORE R6, R20, 0
+    STORE R6, R20, MMIO_SERIAL_DATA_OFF
 
     ; Y ahora la cola de salida tiene tres, asi que quedan 61 huecos.
-    LOAD  R8, R20, 4
+    LOAD  R8, R20, MMIO_SERIAL_STATUS_OFF
     HALT

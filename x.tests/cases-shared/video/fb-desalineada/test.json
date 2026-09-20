@@ -1,0 +1,14 @@
+{
+  "architecture": ["cpu", "gpu"],
+  "name": "shared-video-fb-desalineada",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["video"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "video": { "underflow": false }
+  }
+}

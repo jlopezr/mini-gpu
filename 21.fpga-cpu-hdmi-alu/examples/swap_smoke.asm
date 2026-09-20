@@ -17,8 +17,10 @@
 ;   R4 = FB_BACK  despues; tiene que ser igual a R1
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000          ; registros de video en 0x80000000
+    LI    R20, MMIO_VIDEO_BASE
 
     ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
     ; cero --el framebuffer es una decision del programa, no una reserva
@@ -26,28 +28,28 @@ start:
     ; propio programa. La direccion es la de siempre; lo que cambia es que
     ; ahora hay que escribirla.
     MOVHI R30, 0x0100
-    STORE R30, R20, 0          ; FB_FRONT
+    STORE R30, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
     MOVHI R30, 0x0102
     ORI   R30, R30, 0x5800
-    STORE R30, R20, 4          ; FB_BACK, un frame mas arriba
+    STORE R30, R20, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir
     ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
     MOVI  R30, 2               ; SCANOUT
-    STORE R30, R20, 24         ; VIDEO_CTRL
-    LOAD  R1, R20, 0           ; FB_FRONT
-    LOAD  R2, R20, 4           ; FB_BACK
+    STORE R30, R20, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
+    LOAD  R1, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT
+    LOAD  R2, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK
 
     MOVI  R7, 1
     MOVI  R9, 0
-    STORE R7, R20, 8           ; SWAP = 1
+    STORE R7, R20, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 
 wait_swap:
-    LOAD  R8, R20, 8           ; bit 0: intercambio pendiente
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF           ; bit 0: intercambio pendiente
     BNE   R8, R9, wait_swap
 
-    LOAD  R3, R20, 0           ; FB_FRONT tras el intercambio
-    LOAD  R4, R20, 4           ; FB_BACK tras el intercambio
+    LOAD  R3, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT tras el intercambio
+    LOAD  R4, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK tras el intercambio
     HALT

@@ -17,34 +17,72 @@ import serial
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
-# Ventana MMIO: 4 KiB repartidos en dieciseis dispositivos de 256 bytes.
+# Espacio MMIO v2 (1.isa/mmio.md §2): bloques de 64 KiB, separados por
+# megabytes. Ya no es una pagina de 4 KiB con dieciseis ranuras de 256 B.
 #
-#   0x80000000  dispositivo 0, video
-#   0x80000100  dispositivo 1, reservado a depuracion (lo usa la MiniGPU)
-#   0x80000200  dispositivo 2, puerto serie
+#   0x80000000  SYSTEM            identificacion, memoria, version
+#   0x80100000  SERIAL
+#   0x80200000  VIDEO
+#   0x81010000  CPU PERFORMANCE
 #
-# Era de 32 bytes --solo el video-- hasta que entro el serie. El mapa completo
-# esta en mmio_decoder.v.
-MMIO_BASE = 0x8000_0000
-MMIO_LIMIT = 0x8000_0FFF
-SERIAL_BASE = 0x8000_0200
+# Las constantes salen del mapa generado y NO se escriben aqui: eran una
+# gemela del decodificador Verilog, y §20 existe para quitarla. El mapa lo
+# genera `tools/generate-mmio` desde `1.isa/mmio_map.vh`.
+#
+# De momento se importa el mapa de MMIO v2
+# porque `video_registers.v` todavia tiene CTRL en +0x18. Cuando se migren los
+# offsets, esta linea pasa a `mmio_map`.
+#
+# El `sys.path` tiene que estar puesto ANTES, asi que el insert de la raiz del
+# repo sube aqui desde mas abajo, donde estaba para `tools/serial_ports.py`.
+_RAIZ = Path(__file__).resolve().parents[1]
+if str(_RAIZ) not in sys.path:
+    sys.path.insert(0, str(_RAIZ))
+
+from tools.mmio_map import (  # noqa: E402
+    MMIO_SYSTEM_BASE, MMIO_SERIAL_BASE, MMIO_VIDEO_BASE, MMIO_CPU_PERF_BASE,
+    MMIO_BLOCK_SIZE,
+)
+
+MMIO_BASE = MMIO_SYSTEM_BASE
+SERIAL_BASE = MMIO_SERIAL_BASE
+MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
-# Bloque de video en MMIO: FB_FRONT, FB_BACK, SWAP, STATUS, SWAP_COUNT, HALT_AT.
-# Solo filtra bloques y transferencias (validate_block / validate_transfer); los
-# accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo estar
-# vacia sin que se notara. El RTL si acepta un bloque sobre el MMIO: en el
-# adaptador la rama is_mmio va antes de la comprobacion de cpu_halted.
-# La ventana es la PAGINA ENTERA, los mismos 4 KiB que decodifica el RTL
-# (`address[31:12] == 20'h80000`, dieciseis dispositivos de 256 B). Estuvo en
-# 0x8000_0018 con un comentario que decia "llegara a 0x8000_001c cuando la fase
-# 3.5 anada VIDEO_CTRL": la fase lo anadio y la constante se quedo, asi que el
-# host rechazaba un bloque sobre el registro que acababa de existir. Un
-# subconjunto seria una tercera gemela que mantener, y ya se quedo atras una vez.
+# Las ventanas MMIO que el host acepta, una por bloque. Son GEMELAS de los
+# parametros WINDOW0..3 del `monitor #(...)` de top.v, y las dos tienen que
+# decir lo mismo: anadir una ventana en el RTL sin anadirla aqui hace que el
+# host rechace el comando antes de que llegue al decodificador, y el sintoma
+# es un NACK que parece un bitstream viejo.
+#
+# §16.4 quiere que esta lista se DERIVE de DEVICES en vez de mantenerse a
+# mano. Todavia no se hace; lo que si esta hecho es que las direcciones salgan
+# del mapa generado, asi que mover un bloque ya no son dos ediciones.
+#
+# Cada ventana es el bloque ENTERO de 64 KiB, no el subconjunto de registros
+# que existen hoy. Un subconjunto seria una tercera gemela que mantener, y ya
+# se quedo atras una vez: estuvo en 0x8000_0018 con un comentario que decia
+# "llegara a 0x8000_001c cuando la fase 3.5 anada VIDEO_CTRL", la fase lo
+# anadio y la constante se quedo. Quien rechaza un offset sin registro es el
+# decodificador, que es el unico que lo sabe.
+#
+# Solo filtra bloques y transferencias (validate_block / validate_transfer);
+# los accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo
+# estar vacia sin que se notara.
+# Los números van LITERALES y no derivados del mapa, aunque el mapa esté
+# importado justo arriba: `tools/prototype_report.py` lee esta asignación del
+# TEXTO del fichero, sin importar el módulo, y un `tuple(... for ...)` lo deja
+# ciego. Lo vigila `test_monitor_protocol.test_cada_carpeta_declara_su_propio_mapa`.
+#
+# Que estén escritos a mano no los deja sin comprobar: hay un test que los
+# contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_1000),
+    (0x8000_0000, 0x8001_0000),     # SYSTEM
+    (0x8010_0000, 0x8011_0000),     # SERIAL
+    (0x8020_0000, 0x8021_0000),     # VIDEO
+    (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

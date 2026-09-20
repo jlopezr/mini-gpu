@@ -43,7 +43,11 @@ module write_combine_tb;
 
   // -- MMIO -----------------------------------------------------------------
   wire mmio_req, mmio_write;
-  wire [3:0] mmio_mask, mmio_addr;
+  // Declaradas por separado A PROPOSITO. Compartian linea --`wire [3:0]
+  // mmio_mask, mmio_addr;`-- y la direccion heredaba la anchura de la
+  // mascara: cuatro bits contra un puerto de 32, truncados en silencio.
+  wire [3:0] mmio_mask;
+  wire [31:0] mmio_addr;
   wire [31:0] mmio_wdata;
   reg mmio_ack = 0;
   reg [31:0] mmio_rdata = 32'hcafe_0000;
@@ -288,7 +292,7 @@ module write_combine_tb;
     b0 = n_bursts;
     store(32'h0000_0204, 32'hbbbb_bbbb, 4'b1111);
     // Escribir SWAP.
-    store(32'h8000_0008, 32'h0000_0001, 4'b1111);
+    store(32'h8020_000C, 32'h0000_0001, 4'b1111);
     check("rafagas provocadas por el acceso MMIO", n_bursts - b0, 1);
     if (!orden_ok) begin
       $display("FALLO: `mmio_req` subio con el bufer todavia sucio: el SWAP");

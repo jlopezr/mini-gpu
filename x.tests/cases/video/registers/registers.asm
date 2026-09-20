@@ -34,40 +34,43 @@
 ;   R8  temporal de espera         R0  cero, cableado por la ISA
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000
+    LI    R20, MMIO_VIDEO_BASE
     ; El cero sale de R0, que la ISA cablea. Hasta el backport aqui habia un
     ; `MOVI R9, 0`: mientras R0 fue un registro general en cinco de los seis
     ; backends, usarlo habria funcionado por casualidad --los registros
     ; arrancan a cero-- hasta el dia que alguien lo escribiera.
 
     ; ---- valores iniciales ----
-    LOAD  R1, R20, 0           ; FB_FRONT
-    LOAD  R2, R20, 4           ; FB_BACK
+    LOAD  R1, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT
+    LOAD  R2, R20, MMIO_VIDEO_FB_BACK_OFF            ; FB_BACK
 
     ; ---- escribir FB_BACK y releerlo ----
-    ; Se escribe con los dos bits bajos a uno para comprobar de paso que el
-    ; hardware los ignora: las bases se alinean a cuatro bytes.
+    ; Se escribe una base alineada a 16 bytes y tiene que salir EXACTA. Hasta
+    ; MMIO v2 aqui se escribian los dos bits bajos a uno para ver que el
+    ; hardware los ignoraba; §9.2 convirtio eso en un error de acceso, y un
+    ; programa no puede comprobar su propio fallo: lo hace `video-fb-desalineada`.
     MOVHI R7, 0x0110
-    ORI   R7, R7, 0x0003
-    STORE R7, R20, 4
-    LOAD  R5, R20, 4           ; debe salir 0x01100000, sin los bits bajos
+    STORE R7, R20, MMIO_VIDEO_FB_BACK_OFF
+    LOAD  R5, R20, MMIO_VIDEO_FB_BACK_OFF            ; debe salir 0x01100000
 
     ; ---- devolver FB_BACK a su sitio y pedir intercambio ----
-    STORE R2, R20, 4
+    STORE R2, R20, MMIO_VIDEO_FB_BACK_OFF
     MOVI  R21, 1
-    STORE R21, R20, 8          ; SWAP
+    STORE R21, R20, MMIO_VIDEO_SWAP_OFF          ; SWAP
 
 wait_swap:
-    LOAD  R8, R20, 8
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
     BNE   R8, R0, wait_swap    ; esperar a que el hardware lo aplique
 
     ; ---- tras el intercambio, las bases estan cruzadas ----
-    LOAD  R3, R20, 0           ; FB_FRONT, deberia valer el FB_BACK de antes
-    LOAD  R4, R20, 4           ; FB_BACK,  deberia valer el FB_FRONT de antes
+    LOAD  R3, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT, deberia valer el FB_BACK de antes
+    LOAD  R4, R20, MMIO_VIDEO_FB_BACK_OFF            ; FB_BACK,  deberia valer el FB_FRONT de antes
 
     ; ---- underflow ----
-    LOAD  R6, R20, 12
+    LOAD  R6, R20, MMIO_VIDEO_STATUS_OFF
     ANDI  R6, R6, 1
 
     HALT

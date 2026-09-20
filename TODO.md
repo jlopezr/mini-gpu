@@ -18,9 +18,14 @@ la haya fijada, y después una ronda de placa de esas cinco más la **6** y la
 **Por qué importa.** `monitor.v` es del 18/09 00:07 y es idéntico en las diez
 carpetas. Comparando con el `_build/default/hardware.pnr` de cada una:
 
-| Resintetizadas después | Con bitstream anterior |
-|---|---|
-| 6, 10, 19, 21, 22 | **12, 14, 16, 17, 18** |
+| Resintetizadas después | Con bitstream anterior          |
+|------------------------|---------------------------------|
+| 6, 10, 22              | **12, 14, 16, 17, 18, 19, 21**  |
+
+La 19 y la 21 estaban en la columna izquierda y han cambiado de lado: la
+migración a MMIO v2 les tocó el RTL y **ninguna se ha vuelto a sintetizar**, así
+que su bitstream es anterior al RTL igual que en las otras cinco. Es el mismo
+riesgo, sólo que éste lo hemos creado nosotros y está anotado.
 
 En esas cinco, el bitstream que `test-board` programa **no es el RTL que hay en
 la carpeta**. Cualquier medida o validación que se haga contra ellas es de
@@ -53,13 +58,41 @@ sobre cuál de los cambios lo causó.
 ## 2. Migrar a MMIO v2
 
 **Qué falta.** Aplicar [`1.isa/mmio.md`](1.isa/mmio.md) al RTL, a los monitores,
-a los simuladores y a los tests. Es el contrato decidido el 19/09/2026 y **no lo
-cumple ninguna carpeta**: v2 abandona la página única de 4 KiB y los slots de
-256 B que implementan los diez prototipos. La tabla de conformidad, con lo que le
-falta a cada uno, está en
+a los simuladores y a los tests. Es el contrato decidido el 19/09/2026.
+
+**Estado: la 21 y la 19 ya conforman**, y con ellas el ensamblador, el generador
+de constantes y los tres simuladores funcionales. **Quedan ocho carpetas.** Hay
+dos bitácoras: la de la
+[21](21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) es el camino completo, y la de la
+[19](19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) cuenta sólo lo que cambió al
+repetirlo y trae la estimación corregida. La tabla de conformidad está en
 [`docs/resumen-prototipos.md`](docs/resumen-prototipos.md#conformidad-con-mmio-v2).
 
-Los trozos, de más a menos mecánico:
+**Ni la 19 ni la 21 se han sintetizado desde la migración**: las dos tienen la
+semilla de su `apio.ini` invalidada y el barrido pendiente, y ninguna se ha
+probado en placa.
+
+Lo que ya está hecho y **no hay que repetir por carpeta**:
+
+- **`.equ` en el ensamblador** y `mmio_map.vh` como fuente única generada
+  (v2 §20), con `tools/generate-mmio --check` y `x.tests/test_mmio_map.py`.
+- **`1.isa/mmio_map_v1.vh`**, el mapa de transición, con los mismos nombres que
+  v2 y los valores de hoy. Permite simbolizar los `.asm` de una carpeta **sin
+  mover ninguna dirección**, y que migrarla sea después cambiar la línea del
+  `.include`. Se borró al cerrar la 21 y hubo que rehacerlo para la 19: el
+  criterio correcto es que **sobra cuando lo suelta la última carpeta**, no la
+  primera.
+- **`x.tests/test_top_wiring.py`**, que compara anchuras de puerto en los diez
+  `top.v` **y ahora también en los bancos** (4681 comparaciones). Al extenderlo
+  aparecieron cuatro direcciones MMIO sin ensanchar en la 21, ya arregladas, y
+  quedan las de la 18 anotadas en `DEUDA_EN_BANCOS`. Trae además una
+  comprobación de que un `top.v` no estrecha el bitmap de registros de vídeo.
+- **`x.tests/test_fullframe_fixture.py`**, que descubre solo las carpetas con el
+  trío `fullframe_tb.asm` / `examples/fullframe.asm` / `fullframe.hex`.
+- **Los periféricos funcionales** (`tools/sim_devices.py`, `sysid_device.py`) y
+  los tres backends de simulador, que ya hablan v2.
+
+Los trozos que quedan por carpeta, de más a menos mecánico:
 
 - **Reubicar los bloques** a las bases de 64 KiB de v2 §2. Decodificadores,
   listas blancas, `monitor.py` y constantes de programas.
@@ -71,13 +104,17 @@ Los trozos, de más a menos mecánico:
   con freeze, y `VIDEO_TX` movido a VIDEO.
 - **Vídeo** (v2 §9): `FRAME_COUNT` de 32 bits fuera de `STATUS`, `HALT_TARGET`,
   y error en base desalineada en vez del truncamiento silencioso de hoy.
+- **Los bancos de pruebas**, que es donde está el trabajo que nadie cuenta: los
+  offsets viven sueltos por todo el fichero y no hay generador que los cubra.
 - **`GPU_CONTROL` y las máscaras de warp** (v2 §14.1), con los comandos del
   monitor pasando a ser una fachada que escribe esos registros. Es lo que
   permite que la CPU lance la GPU, y es el trozo con más RTL nuevo.
 - **Acceso MMIO desde SIMT**: hoy varias lanes se sirven por turnos; v2 §4.2
   exige error.
-- **`mmio_map.vh`** como fuente única generada (v2 §20), con el test que
-  compruebe que lo generado está al día — que es la pieza que hoy no existe.
+- **Escrituras sub-palabra a MMIO** (§4.1 y §16.2). Es lo único que la 21 deja
+  a deber, y a propósito: el host y varios bancos escriben byte a byte y
+  tienen que pasar a `WRITE_WORD` **a la vez**. Es un cambio del protocolo del
+  host, transversal, no de una carpeta.
 
 **Por qué importa.** Es lo que decide si la MiniGPU puede ser un acelerador de la
 MiniCPU o se queda como sistema hermano. Hoy `run/halt/step/reset` llegan por

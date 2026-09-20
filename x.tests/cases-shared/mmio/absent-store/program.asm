@@ -1,3 +1,6 @@
-MOVHI R1, 0x8000
-STORE R2, R1, 1024
-HALT
+; El mismo caso en escritura: tampoco se descarta en silencio.
+.include "mmio.inc"
+
+    LI    R1, MMIO_TIMER_BASE
+    STORE R2, R1, 0
+    HALT

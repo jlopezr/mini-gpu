@@ -205,10 +205,19 @@ Dos cosas difieren de la placa y conviene saberlas:
   la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
   resolución reducida, donde es barata.
 
-El programa es [`examples/fullframe.asm`](examples/fullframe.asm), que pinta una
-«L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un marco
-completo se ve igual si alguien intercambia los ejes; una línea arriba y una
-columna a la izquierda, no.
+El programa es [`fullframe_tb.asm`](fullframe_tb.asm) —**no**
+[`examples/fullframe.asm`](examples/fullframe.asm), que es el de la placa—, y
+pinta una «L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un
+marco completo se ve igual si alguien intercambia los ejes; una línea arriba y
+una columna a la izquierda, no.
+
+Los dos programas son idénticos salvo las dos `.equ` de las bases del
+framebuffer: en la placa están en `0x01000000`, y ahí no caben en el modelo de
+SDRAM del banco. Esta frase decía lo contrario y era falsa; regenerar
+`fullframe.hex` «como ponía aquí» hace que el banco cuente 60 000 violaciones
+JEDEC, que en realidad son 60 000 accesos a una fila que no existe.
+[`x.tests/test_fullframe_fixture.py`](../x.tests/test_fullframe_fixture.py)
+comprueba las tres cosas para que no vuelva a quedarse vieja.
 
 ## La combinación de escrituras
 
@@ -352,7 +361,7 @@ destino en
 [`../15.isa-v2/gpu_educativa_arquitectura.md`](../15.isa-v2/gpu_educativa_arquitectura.md).
 
 Estado: **hito D completado**. Hay doble framebuffer con intercambio
-sincronizado, gobernado desde una ventana de registros en `0x80000000` que
+sincronizado, gobernado desde una ventana de registros en `0x80200000` que
 manejan tanto la CPU como el monitor. Con esto termina la fase 2 del plan.
 
 **El dominio de CPU corre a 100 MHz desde el hito C**, y con él el monitor a
@@ -371,7 +380,7 @@ swap intercambiando `FB_FRONT` con `FB_BACK`. De la suite de CPU pasan **12 de
 | A    | Fusión: CPU de 10 intacta + 640×480p60 con patrón generado por lógica   | **hecho** |
 | B    | Doble line buffer, cruce de dominios y escalado 2×, con productor falso | **hecho** |
 | C    | Scanout real: la CPU escribe el framebuffer en SDRAM y se ve            | **hecho** |
-| D    | Registros en `0x80000000` y doble framebuffer con swap sincronizado     | **hecho** |
+| D    | Registros en `0x80200000` y doble framebuffer con swap sincronizado     | **hecho** |
 
 La separación ha pagado: los tres fallos que aparecieron en C —aritmética de
 línea, arbitraje y temporización— se pudieron mirar de uno en uno porque el
@@ -554,15 +563,35 @@ con el botón se ve bien, el problema está del line buffer hacia dentro.
 
 Una ventana de registros y el doble framebuffer que gobiernan.
 
-| Dirección    | Registro   |    | Contenido                                         |
-|--------------|------------|----|---------------------------------------------------|
-| `0x80000000` | `FB_FRONT` | RW | dirección de byte del buffer que se muestra       |
-| `0x80000004` | `FB_BACK`  | RW | dirección de byte del buffer que se dibuja        |
-| `0x80000008` | `SWAP`     | RW | escribir: pide intercambio. leer bit 0: pendiente |
-| `0x8000000c` | `STATUS`   | R  | bit 0 underflow, bit 1 pendiente, 31:16 frames    |
+Las direcciones son las de **MMIO v2** ([`1.isa/mmio.md`](../1.isa/mmio.md) §9).
+El bloque de vídeo vive en `0x80200000`, no en `0x80000000`, que ahora es
+SYSTEM. Un programa no las escribe a mano: hace `.include "mmio.inc"` y usa los
+símbolos, que los genera `tools/generate-mmio` desde `1.isa/mmio_map.vh`.
 
-Las direcciones se alinean a cuatro bytes: los dos bits bajos se ignoran al
-escribir y se leen como cero.
+| Dirección    | Símbolo del offset            | Registro      |    | Contenido                                         |
+|--------------|-------------------------------|---------------|----|---------------------------------------------------|
+| `0x80200000` | `MMIO_VIDEO_CTRL_OFF`         | `CTRL`        | RW | modo: 0 BLANK, 1 PATTERN, 2 SCANOUT               |
+| `0x80200004` | `MMIO_VIDEO_FB_FRONT_OFF`     | `FB_FRONT`    | RW | dirección de byte del buffer que se muestra       |
+| `0x80200008` | `MMIO_VIDEO_FB_BACK_OFF`      | `FB_BACK`     | RW | dirección de byte del buffer que se dibuja        |
+| `0x8020000c` | `MMIO_VIDEO_SWAP_OFF`         | `SWAP`        | RW | escribir: pide intercambio. leer bit 0: pendiente |
+| `0x80200010` | `MMIO_VIDEO_STATUS_OFF`       | `STATUS`      | R  | bit 0 underflow, bit 1 intercambio pendiente      |
+| `0x80200014` | `MMIO_VIDEO_FRAME_COUNT_OFF`  | `FRAME_COUNT` | R  | frames de barrido, registro propio de 32 bits     |
+| `0x80200018` | `MMIO_VIDEO_SWAP_COUNT_OFF`   | `SWAP_COUNT`  | R  | intercambios completados                          |
+| `0x8020001c` | `MMIO_VIDEO_HALT_AT_OFF`      | `HALT_AT`     | RW | alarma: para al llegar a ese **frame**            |
+| `0x80200020` | `MMIO_VIDEO_HALT_TARGET_OFF`  | `HALT_TARGET` | RW | a quién para. **Tras reset vale 0: a nadie**      |
+| `0x80200024` | `MMIO_VIDEO_TX_OFF`           | `VIDEO_TX`    | R  | transacciones de vídeo contra memoria             |
+
+Tres cambios respecto de v1 que muerden si se pasan por alto:
+
+- **`CTRL` se mueve al principio**, así que los cuatro registros de siempre
+  —`FB_FRONT`, `FB_BACK`, `SWAP` y `STATUS`— cambian todos de offset.
+- **`FRAME_COUNT` es un registro propio**, no los bits 31:16 de `STATUS`.
+- **`HALT_AT` cuenta frames, no intercambios**, y no para a nadie mientras
+  `HALT_TARGET` valga cero. El síntoma de olvidarlo es un timeout, que no se
+  parece a la causa.
+
+`FB_FRONT` y `FB_BACK` se alinean a **16 bytes**, y desalinearlas es un **error
+de acceso**: en v1 se truncaban los bits bajos en silencio.
 
 ### El instante del intercambio
 
@@ -603,7 +632,13 @@ Eso permite probar el swap **sin escribir ni una línea de programa**:
 ..\.venv\Scripts\python.exe ..\..\tools\make-framebuffer checker fb1.bin
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01000000 fb0.bin --port COM3
 ..\.venv\Scripts\python.exe monitor.py write-block 0x01025800 fb1.bin --port COM3
-..\.venv\Scripts\python.exe monitor.py write-byte 0x80000008 1 --port COM3
+# Tras el reset las dos bases valen CERO y el modo es PATTERN, asi que hay que
+# ponerlo todo: el framebuffer es una decision del programa, no una reserva que
+# el hardware imponga.
+..\.venv\Scripts\python.exe monitor.py write-word 0x80200004 0x01000000 --port COM3  # FB_FRONT
+..\.venv\Scripts\python.exe monitor.py write-word 0x80200008 0x01025800 --port COM3  # FB_BACK
+..\.venv\Scripts\python.exe monitor.py write-word 0x80200000 2 --port COM3           # CTRL = SCANOUT
+..\.venv\Scripts\python.exe monitor.py write-word 0x8020000C 1 --port COM3           # SWAP
 ```
 
 La pantalla debe saltar de las barras al tablero. Repetir el último comando

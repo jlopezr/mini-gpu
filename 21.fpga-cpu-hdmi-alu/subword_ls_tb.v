@@ -106,15 +106,18 @@ module subword_ls_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  // 32 bits como su puerto, no 5. Se quedo en 5 al migrar a v2 --el de la CPU
+  // si se ensancho-- y con los bloques separados por megabytes una direccion
+  // de cinco bits no puede ni expresar una base.
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;

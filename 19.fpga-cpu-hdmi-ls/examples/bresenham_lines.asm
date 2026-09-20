@@ -63,9 +63,10 @@
 ;   R28 temporal                       R29 temporal de `edge`
 ;   R30 enlace de putpixel             R31 enlace de drawline y de edge
 ; ============================================================
+.include "mmio.inc"
 
 start:
-    MOVHI R2, 0x8000           ; registros de video en 0x80000000
+    LI    R2, MMIO_VIDEO_BASE
 
     ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
     ; cero --el framebuffer es una decision del programa, no una reserva
@@ -73,17 +74,17 @@ start:
     ; propio programa. La direccion es la de siempre; lo que cambia es que
     ; ahora hay que escribirla.
     MOVHI R30, 0x0100
-    STORE R30, R2, 0          ; FB_FRONT
+    STORE R30, R2, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
     MOVHI R30, 0x0102
     ORI   R30, R30, 0x5800
-    STORE R30, R2, 4          ; FB_BACK, un frame mas arriba
+    STORE R30, R2, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir
     ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
     MOVI  R30, 2               ; SCANOUT
-    STORE R30, R2, 24         ; VIDEO_CTRL
+    STORE R30, R2, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
     MOVI  R3, 0                ; el cero con el que se compara; R0 no lo es
     MOVI  R0, 5
     MOVI  R23, 1
@@ -92,7 +93,7 @@ start:
     MOVI  R22, 0               ; sin giro en el primer frame
 
 frame:
-    LOAD  R1, R2, 4            ; R1 = FB_BACK; cambia en cada intercambio
+    LOAD  R1, R2, MMIO_VIDEO_FB_BACK_OFF            ; R1 = FB_BACK; cambia en cada intercambio
 
     ; ---- borrar el buffer trasero ----
     ; Se compara el puntero contra el final con BLTU, sin contador aparte. Son
@@ -140,9 +141,9 @@ no_wrap:
     BLT   R21, R28, next_line
 
     ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
-    STORE R23, R2, 8           ; SWAP = 1
+    STORE R23, R2, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 wait_swap:
-    LOAD  R28, R2, 8
+    LOAD  R28, R2, MMIO_VIDEO_SWAP_OFF
     BNE   R28, R3, wait_swap
 
     ; Girar el abanico. Siete no divide a 1116, asi que el dibujo no se repite

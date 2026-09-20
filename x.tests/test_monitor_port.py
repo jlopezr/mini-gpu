@@ -311,12 +311,44 @@ class SysIdTest(unittest.TestCase):
                 self.assertEqual(declarados, {esperado},
                                  f"{name}: el RTL dice {esperado:#06x}")
 
+    # Un `sysid.v` declara a que version del contrato MMIO pertenece por el
+    # magic que lleva dentro: 16'h4D47 en v1, la palabra 32'h4D47_4155 en v2.
+    MAGIC_V2 = re.compile(r"MAGIC\s*=\s*32'h4D47_4155", re.IGNORECASE)
+
     def test_sysid_es_copia_identica(self):
-        canonical = (ROOT / "22.fpga-gpu-bl8" / "sysid.v").read_bytes()
+        """Todos los `sysid.v` de la MISMA version del contrato son copia
+        byte a byte.
+
+        Antes la comprobacion era una sola: los diez ficheros identicos. Ya no
+        puede serlo, porque la migracion a MMIO v2 va carpeta por carpeta y
+        durante la travesia conviven dos generaciones del bloque -- cuatro
+        palabras en 0x80000F00 y siete en 0x80000000.
+
+        Lo que NO se puede perder es la propiedad que el test protegia: que
+        nadie toque una copia y deje las demas atras. Por eso se agrupa por
+        version y se exige identidad DENTRO de cada grupo. Cuando la ultima
+        carpeta migre, el grupo de v1 se queda vacio y esto vuelve a ser la
+        comprobacion de siempre sin tocar nada.
+
+        Relajarlo a "se parecen" habria sido lo facil y habria dejado de
+        comprobar justamente lo que importa.
+        """
+        grupos: dict[bool, list[str]] = {}
         for name in GPU_PROTOTYPES + CPU_CON_MMIO + ("6.fpga-cpu",
                                                      "10.fpga-cpu-ram"):
-            with self.subTest(prototype=name):
-                self.assertEqual((ROOT / name / "sysid.v").read_bytes(), canonical)
+            texto = (ROOT / name / "sysid.v").read_text(encoding="utf8")
+            grupos.setdefault(bool(self.MAGIC_V2.search(texto)), []).append(name)
+
+        self.assertTrue(grupos, "no se ha mirado ningun sysid.v")
+        for es_v2, nombres in sorted(grupos.items()):
+            canonical = (ROOT / nombres[0] / "sysid.v").read_bytes()
+            for name in nombres[1:]:
+                with self.subTest(version="v2" if es_v2 else "v1",
+                                  prototype=name, canonica=nombres[0]):
+                    self.assertEqual(
+                        (ROOT / name / "sysid.v").read_bytes(), canonical,
+                        f"{name}/sysid.v diverge de {nombres[0]}/sysid.v, y "
+                        f"los dos dicen ser MMIO {'v2' if es_v2 else 'v1'}")
 
     def test_el_id_es_el_numero_de_carpeta_sin_mmio(self):
         """6 y 10 instancian `sysid` DIRECTAMENTE en el top, no dentro de un

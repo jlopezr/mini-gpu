@@ -63,8 +63,12 @@ class SysIdDeviceTest(unittest.TestCase):
             dispositivo = (modulo.CPU(1024).sysid if nombre == "cpu"
                            else modulo.System(1024, 8, 8).sysid)
             with self.subTest(simulador=nombre):
-                palabra = dispositivo.read(SysIdDevice.SYS_ID)
-                self.assertEqual(palabra >> 16, MAGIC)
+                # En v2 el magic tiene su PROPIA palabra en +0x00; ya no
+                # viaja en los bits altos de SYSTEM_ID, que es el número de
+                # carpeta pelado (§5.3).
+                self.assertEqual(dispositivo.read(SysIdDevice.MAGIC_OFF), MAGIC)
+                palabra = dispositivo.read(SysIdDevice.SYSTEM_ID)
+                self.assertEqual(palabra >> 8, 0, "31:8 están reservados")
                 self.assertEqual(palabra & 0xFF, carpeta)
 
     def test_declaran_su_propia_carpeta_y_no_la_placa_que_modelan(self):
@@ -72,10 +76,10 @@ class SysIdDeviceTest(unittest.TestCase):
         una mentira útil, que es la peor clase: el simulador no tiene el mapa de
         memoria ni el juego de dispositivos de ninguna placa concreta."""
         modulo = cargar("cpu")
-        self.assertEqual(modulo.CPU(1024).sysid.read(SysIdDevice.SYS_ID) & 0xFF, 2)
+        self.assertEqual(modulo.CPU(1024).sysid.read(SysIdDevice.SYSTEM_ID) & 0xFF, 2)
         modulo = cargar("gpu")
         self.assertEqual(
-            modulo.System(1024, 8, 8).sysid.read(SysIdDevice.SYS_ID) & 0xFF, 11)
+            modulo.System(1024, 8, 8).sysid.read(SysIdDevice.SYSTEM_ID) & 0xFF, 11)
 
     def test_el_perfil_de_isa_es_el_que_el_modelo_ejecuta(self):
         """Escrito a mano pero CONTRASTADO, igual que en el RTL."""
@@ -94,7 +98,7 @@ class SysIdDeviceTest(unittest.TestCase):
             dispositivo = (modulo.CPU(1024).sysid if nombre == "cpu"
                            else modulo.System(1024, 8, 8).sysid)
             with self.subTest(simulador=nombre):
-                self.assertEqual(dispositivo.read(SysIdDevice.ISA_PROFILE),
+                self.assertEqual(dispositivo.isa_profile,
                                  esperado,
                                  f"{nombre}: el fuente dice {esperado:#04x}")
 
@@ -107,7 +111,7 @@ class SysIdDeviceTest(unittest.TestCase):
         """
         texto = SIMULADORES["cpu"][2].read_text(encoding="utf8")
         self.assertIn("0x31, 0x32", texto, "el simulador ya no decodifica SSY/BAR")
-        perfil = cargar("cpu").CPU(1024).sysid.read(SysIdDevice.ISA_PROFILE)
+        perfil = cargar("cpu").CPU(1024).sysid.isa_profile
         self.assertEqual(perfil & BIT_SIMT, 0)
 
     def test_el_modelo_de_ciclos_no_hereda_la_identidad_del_funcional(self):
@@ -125,32 +129,34 @@ class SysIdDeviceTest(unittest.TestCase):
         cargar("gpu")           # el funcional tiene que estar en el camino
         modulo = importlib.import_module("minigpu_cycle")
         sistema = modulo.System(1024, 8, 8)
-        palabra = sistema.sysid.read(SysIdDevice.SYS_ID)
+        palabra = sistema.sysid.read(SysIdDevice.SYSTEM_ID)
         self.assertEqual(palabra & 0xFF, 25)
-        self.assertEqual(palabra >> 16, MAGIC)
+        self.assertEqual(sistema.sysid.read(SysIdDevice.MAGIC_OFF), MAGIC)
         # El perfil sí es el mismo: cambia CUÁNDO ejecuta, no QUÉ.
         funcional = cargar("gpu").System(1024, 8, 8)
-        self.assertEqual(sistema.sysid.read(SysIdDevice.ISA_PROFILE),
-                         funcional.sysid.read(SysIdDevice.ISA_PROFILE))
+        self.assertEqual(sistema.sysid.isa_profile,
+                         funcional.sysid.isa_profile)
 
     def test_identificacion_rechaza_escrituras_y_offsets_reservados(self):
         dispositivo = SysIdDevice(folder=2, isa_profile=BIT_MUL)
-        antes = dispositivo.read(SysIdDevice.SYS_ID)
+        antes = dispositivo.read(SysIdDevice.SYSTEM_ID)
         for offset in range(0, 256, 4):
             with self.subTest(offset=offset):
                 with self.assertRaises(RuntimeError):
                     dispositivo.write(offset, 0xDEAD_BEEF)
-                if offset >= 16:
+                # En v2 el bloque tiene SIETE palabras, hasta +0x18. Antes
+                # eran cuatro y el corte estaba en 16.
+                if offset > SysIdDevice.MONITOR_VERSION:
                     with self.assertRaises(RuntimeError):
                         dispositivo.read(offset)
-        self.assertEqual(dispositivo.read(SysIdDevice.SYS_ID), antes)
-        self.assertEqual(dispositivo.read(SysIdDevice.DEV_BITMAP), 0)
+        self.assertEqual(dispositivo.read(SysIdDevice.SYSTEM_ID), antes)
+        self.assertEqual(dispositivo.read(SysIdDevice.DEVICES), 0)
 
     def test_se_lee_por_la_memoria_como_cualquier_mmio(self):
         """No basta con que el objeto exista: tiene que responder en
-        0x80000F00 cuando un programa hace LOAD."""
+        0x80000000 cuando un programa hace LOAD."""
         cpu = cargar("cpu").CPU(1024)
-        self.assertEqual(cpu.read_u32(0x8000_0F00) >> 16, MAGIC)
+        self.assertEqual(cpu.read_u32(0x8000_0000), MAGIC)
 
 
 if __name__ == "__main__":

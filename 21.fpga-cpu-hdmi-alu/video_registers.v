@@ -124,6 +124,20 @@ module video_registers #(
     input wire [31:0] write_data,
     output reg [31:0] read_data,
 
+    // Error de DATO, no de direccion. El decodificador rechaza offsets que no
+    // existen mirando solo la direccion; esto es lo otro que §4.3 llama
+    // invalido: "se escribe un valor arquitectonicamente invalido". Una base
+    // de framebuffer desalineada y un modo de CTRL reservado son eso.
+    //
+    // Sale del dispositivo porque es el unico que conoce la semantica de sus
+    // registros. El decodificador lo mezcla con el suyo.
+    output reg error,
+
+    // Alto mientras el nucleo ejecuta. Solo lo usa VIDEO_TX: §12.3 dice que
+    // ese contador no corre libre, porque el scanout sigue leyendo memoria
+    // con el nucleo parado y ese trafico no es del programa.
+    input wire running,
+
     // Interfaz con el subsistema de video
     input wire fill_start,
     input wire fill_first,
@@ -147,17 +161,33 @@ module video_registers #(
     output wire [31:0] debug_back
 );
 
-  localparam [5:0] REG_FB_FRONT  = 6'd0;
-  localparam [5:0] REG_FB_BACK   = 6'd1;
-  localparam [5:0] REG_SWAP      = 6'd2;
-  localparam [5:0] REG_STATUS    = 6'd3;
-  localparam [5:0] REG_SWAP_COUNT = 6'd4;
-  localparam [5:0] REG_HALT_AT   = 6'd5;
-  // VIDEO_CTRL va en +0x18, el MISMO offset que en la MiniGPU. Alli se puso al
-  // final --y no en +0x00, que habria sido lo natural para un registro de
-  // control-- precisamente para no desplazar ninguno de los que la CPU ya
-  // tenia. Ahora se cobra esa decision: el bloque coincide entero.
-  localparam [5:0] REG_CTRL      = 6'd6;
+  // Disposicion de MMIO v2 (1.isa/mmio.md §9). CTRL vuelve a +0x00, que es lo
+  // natural para un registro de control; estaba al final porque en su dia se
+  // anadio sin querer desplazar los que la CPU ya tenia, y v2 renumera de una
+  // vez para no arrastrar esa decision para siempre.
+  localparam [5:0] REG_CTRL        = 6'd0;   // +0x00
+  localparam [5:0] REG_FB_FRONT    = 6'd1;   // +0x04
+  localparam [5:0] REG_FB_BACK     = 6'd2;   // +0x08
+  localparam [5:0] REG_SWAP        = 6'd3;   // +0x0C
+  localparam [5:0] REG_STATUS      = 6'd4;   // +0x10
+  localparam [5:0] REG_FRAME_COUNT = 6'd5;   // +0x14
+  localparam [5:0] REG_SWAP_COUNT  = 6'd6;   // +0x18
+  localparam [5:0] REG_HALT_AT     = 6'd7;   // +0x1C
+  localparam [5:0] REG_HALT_TARGET = 6'd8;   // +0x20
+  localparam [5:0] REG_VIDEO_TX    = 6'd9;   // +0x24
+
+  // Bits de HALT_TARGET (§9.6). Existe porque quien produce los frames y
+  // quien se para no tienen por que ser el mismo: en un sistema donde dibuja
+  // la GPU y la CPU orquesta, parar una, otra o las dos son tres casos.
+  localparam integer HALT_TARGET_CPU = 0;
+  localparam integer HALT_TARGET_GPU = 1;
+
+  // Alineamiento exigido a FB_FRONT y FB_BACK (§9.2). Dieciseis bytes, porque
+  // el scanout lee en rafagas. Antes se TRUNCABA a cuatro; ahora desalinear
+  // es error, y el motivo es concreto: el truncamiento era distinto en cada
+  // familia --4 bytes en CPU y 16 en GPU-- asi que el mismo programa dibujaba
+  // bien en una placa y torcido en la otra sin que nada avisara.
+  localparam integer FB_ALIGN_BITS = 4;
 
   // Modos de salida. Los mismos numeros que gpu_video_regs.v.
   localparam [1:0] MODE_BLANK   = 2'd0;   // negro, sin leer la memoria
@@ -168,10 +198,15 @@ module video_registers #(
   reg [31:0] fb_front;
   reg [31:0] fb_back;
   reg swap_pending;
-  reg [15:0] frame_count;
+  // FRAME_COUNT es un registro PROPIO de 32 bits (§9.4 y §9.5). Vivia en los
+  // bits altos de STATUS, con dieciseis bits: los contadores no se mezclan
+  // con el estado.
+  reg [31:0] frame_count;
   reg [31:0] swap_count;
   reg [31:0] halt_at;
+  reg [31:0] halt_target;
   reg        halt_armed;
+  reg [31:0] video_tx;
 
   // El underflow nace en el dominio de pixel. Es un nivel pegajoso, asi que
   // basta con sincronizarlo; no hay pulso que perder.
@@ -205,21 +240,60 @@ module video_registers #(
 
   wire bus_write = select && write;
   // Verilog no admite seleccionar bits del resultado de una funcion, asi que
-  // la mezcla se materializa en una senal antes de forzar el alineamiento.
+  // la mezcla se materializa en una senal antes de comprobar el alineamiento.
   wire [31:0] merged_front = merge(fb_front, write_data, write_mask);
   wire [31:0] merged_back = merge(fb_back, write_data, write_mask);
+
+  // --- Validacion del DATO (§9.1 y §9.2) ---------------------------------
+  //
+  // Se comprueba sobre el valor YA MEZCLADO, no sobre `write_data`: el
+  // monitor puede escribir un registro byte a byte, y juzgar un byte suelto
+  // rechazaria una escritura parcial perfectamente valida.
+  // Solo se juzga la escritura de PALABRA COMPLETA. Con mascara parcial el
+  // valor mezclado pasa por estados intermedios que no cumplen el
+  // alineamiento --escribir 0x01000000 byte a byte empieza por 0x00000000 y
+  // sigue por 0x00000000, 0x00000000, 0x01000000-- y rechazarlos haria
+  // imposible escribir el registro desde el camino de byte del monitor.
+  //
+  // La solucion de verdad es que MMIO no acepte escrituras sub-palabra
+  // (§4.1 y §16.2); esta condicion desaparece el dia que se aplique. Ver la
+  // deuda anotada en `mmio_decoder.v`.
+  wire palabra_completa = (write_mask == 4'b1111);
+  wire front_desalineada = palabra_completa && |merged_front[FB_ALIGN_BITS-1:0];
+  wire back_desalineada  = palabra_completa && |merged_back[FB_ALIGN_BITS-1:0];
+  // El modo 3 esta reservado; escribirlo es error, no se trata como BLANK.
+  wire modo_reservado = (write_data[1:0] == 2'd3);
+
+  always @* begin
+    error = 1'b0;
+    if (bus_write) begin
+      case (selected)
+        REG_FB_FRONT: error = front_desalineada;
+        REG_FB_BACK:  error = back_desalineada;
+        REG_CTRL:     error = write_mask[0] && modo_reservado;
+        // Los contadores y VIDEO_TX son de solo lectura. No se filtran aqui
+        // --eso lo hace el decodificador por offset-- salvo que algun dia
+        // dejen de serlo.
+        default: ;
+      endcase
+    end
+  end
 
   always @(posedge clk) begin
     underflow_clear <= 1'b0;
     halt_request <= 1'b0;
 
     if (reset) begin
+      // Estado tras reset, §9.8. El sistema NO arranca en SCANOUT: la SDRAM
+      // recien encendida contiene basura.
       fb_front <= FB_FRONT_RESET;
       fb_back <= FB_BACK_RESET;
       swap_pending <= 1'b0;
-      frame_count <= 16'd0;
+      frame_count <= 32'd0;
       swap_count <= 32'd0;
       halt_at <= 32'd0;
+      halt_target <= 32'd0;
+      video_tx <= 32'd0;
       video_mode <= MODE_PATTERN;
       halt_armed <= 1'b0;
     end else begin
@@ -231,28 +305,52 @@ module video_registers #(
         fb_back <= fb_front;
         swap_pending <= 1'b0;
         swap_count <= swap_count + 1'b1;
-        // Parar la CPU justo aqui es lo que hace la captura determinista: el
-        // frame acaba de completarse y esta entero en el buffer frontal.
-        //
-        // El bit de armado se consume al disparar: es una alarma de un
-        // disparo, no una coincidencia permanente.
-        //
-        // Lo que arregla el fallo de la placa es que armar reinicie la cuenta
-        // (ver REG_HALT_AT abajo); el `>=` en lugar de `==` es defensa barata
-        // por si un intercambio pasara de largo, y el banco NO lo distingue:
-        // con la cuenta reiniciada, la igualdad tampoco se pierde.
-        if (halt_armed && (swap_count + 1'b1) >= halt_at) begin
-          halt_request <= 1'b1;
+      end
+
+      // FRAME_COUNT y la alarma. En v1 `HALT_AT` contaba contra SWAP_COUNT;
+      // §9.6 lo cambia a FRAME_COUNT, y el motivo esta escrito en el
+      // contrato: "un programa que se cuelga sin pedir swaps tambien tiene
+      // que poder capturarse". Con la cuenta de swaps, un programa colgado no
+      // dispara la alarma nunca y el host se queda esperando.
+      //
+      // El bit de armado se consume al disparar: es una alarma de un disparo,
+      // no una coincidencia permanente. Y armar reinicia la cuenta, que es lo
+      // que arreglo el fallo de la placa -- sin eso la alarma solo sirve una
+      // vez por arranque, porque la segunda el contador ya paso de largo.
+      //
+      // La comparacion es `>=` y no `==`, defensa barata por si el contador
+      // se pasara de largo (§9.6).
+      if (fill_start && fill_first) begin
+        frame_count <= frame_count + 1'b1;
+        if (halt_armed && (frame_count + 1'b1) >= halt_at) begin
+          // A quien se para lo dice HALT_TARGET (§9.6). Esta carpeta solo
+          // tiene CPU, asi que el bit de GPU se acepta y no hace nada: el
+          // registro significa lo mismo en las dos familias y un binario
+          // compartido no tiene que saber donde corre.
+          halt_request <= halt_target[HALT_TARGET_CPU];
           halt_armed <= 1'b0;
         end
       end
 
-      if (fill_start && fill_first) frame_count <= frame_count + 1'b1;
+      // VIDEO_TX: transacciones de memoria del scanout (§9.7). Cuenta los
+      // arranques de relleno de linea, que es lo que el scanout pide a la
+      // memoria. Pertenece a VIDEO y no al bloque de contadores de la CPU
+      // porque cada contador es de quien GENERA el evento (§12.1).
+      //
+      // Solo avanza con el nucleo corriendo (§12.3): con la CPU parada el
+      // scanout sigue leyendo, y ese trafico no es del programa. Da la vuelta
+      // y no satura (§12.2), que es lo que hace que la resta siga valiendo.
+      if (running && fill_start) video_tx <= video_tx + 1'b1;
 
-      if (bus_write) begin
+      // `!error`: una escritura invalida no tiene efecto. §4.3 dice que los
+      // accesos invalidos no ignoran la escritura EN SILENCIO --generan
+      // error-- pero tampoco la aplican a medias.
+      if (bus_write && !error) begin
         case (selected)
-          REG_FB_FRONT: fb_front <= {merged_front[31:2], 2'b00};
-          REG_FB_BACK:  fb_back  <= {merged_back[31:2], 2'b00};
+          // Ya no se trunca: si llega aqui, esta alineada. El truncamiento
+          // silencioso es lo que §9.2 prohibe.
+          REG_FB_FRONT: fb_front <= merged_front;
+          REG_FB_BACK:  fb_back  <= merged_back;
           // Cualquier escritura pide intercambio. Si cae en el mismo ciclo que
           // uno en curso, queda pendiente para el frame siguiente y no se
           // pierde, que es lo que pasaria si el `swap_now` de arriba ganara.
@@ -268,13 +366,22 @@ module video_registers #(
           // usarla una vez por arranque de la placa, porque la segunda vez el
           // contador ya ha pasado de largo. El simulador construye el
           // dispositivo de cero en cada ejecucion, asi que alli no se nota.
+          // Armar pone el origen de la cuenta AQUI: `HALT_AT` es "para dentro
+          // de N frames", no "para en el frame numero N desde el encendido".
+          // Sin esto un programa solo puede usarla una vez por arranque de la
+          // placa. El simulador construye el dispositivo de cero en cada
+          // ejecucion, asi que alli no se nota -- es un fallo que solo da la
+          // placa, y ya lo dio una vez.
           REG_HALT_AT:  begin
             halt_at <= merge(halt_at, write_data, write_mask);
-            swap_count <= 32'd0;
+            frame_count <= 32'd0;
             halt_armed <= merge(halt_at, write_data, write_mask) != 32'd0;
           end
+          REG_HALT_TARGET: halt_target <= merge(halt_target, write_data,
+                                                write_mask);
           REG_CTRL:     if (write_mask[0]) video_mode <= write_data[1:0];
-          default: ;  // SWAP_COUNT es de solo lectura
+          // FRAME_COUNT, SWAP_COUNT y VIDEO_TX son de solo lectura.
+          default: ;
         endcase
       end
     end
@@ -282,15 +389,19 @@ module video_registers #(
 
   always @(*) begin
     case (selected)
-      REG_FB_FRONT:   read_data = fb_front;
-      REG_FB_BACK:    read_data = fb_back;
-      REG_SWAP:       read_data = {31'd0, swap_pending};
-      REG_STATUS:     read_data = {frame_count, 14'd0, swap_pending,
-                                   underflow_sync_1};
-      REG_SWAP_COUNT: read_data = swap_count;
-      REG_HALT_AT:    read_data = halt_at;
-      REG_CTRL:       read_data = {30'd0, video_mode};
-      default:        read_data = 32'd0;
+      REG_CTRL:        read_data = {30'd0, video_mode};
+      REG_FB_FRONT:    read_data = fb_front;
+      REG_FB_BACK:     read_data = fb_back;
+      REG_SWAP:        read_data = {31'd0, swap_pending};
+      // STATUS ya NO lleva el contador de frames en los bits altos (§9.4):
+      // bit 0 UNDERFLOW pegajoso W1C, bit 1 SWAP_PENDING, resto reservado.
+      REG_STATUS:      read_data = {30'd0, swap_pending, underflow_sync_1};
+      REG_FRAME_COUNT: read_data = frame_count;
+      REG_SWAP_COUNT:  read_data = swap_count;
+      REG_HALT_AT:     read_data = halt_at;
+      REG_HALT_TARGET: read_data = halt_target;
+      REG_VIDEO_TX:    read_data = video_tx;
+      default:         read_data = 32'd0;
     endcase
   end
 endmodule

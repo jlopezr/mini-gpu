@@ -67,6 +67,8 @@ module cpu_burst_system_tb;
   reg [31:0] mon_address = 0;
   reg [7:0] mon_write_data = 0;
   reg mon_write_enable = 0, mon_read_enable = 0;
+  reg [31:0] mon_write_word_data = 0;
+  reg mon_write_word_enable = 0;
   wire [7:0] mon_read_data;
   wire [31:0] mon_read_word;   // la misma lectura sin trocear
   wire mon_ready, mon_error;
@@ -90,15 +92,15 @@ module cpu_burst_system_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [11:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [11:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
@@ -126,13 +128,16 @@ module cpu_burst_system_tb;
   wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+  wire mmio_video_error;
 
   // El mismo reparto de ventana que top.v.
   mmio_decoder mmio_decoder_i (
-      .select(mmio_select), .write(mmio_write), .address(mmio_address),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
       .serial_select(mmio_serial_select),
       .serial_read_data(mmio_serial_read_data),
+      .perf_select(),.perf_read_data(32'd0),
       .read_data(mmio_read_data), .error(mmio_error));
 
   video_registers registers_i (
@@ -140,6 +145,7 @@ module cpu_burst_system_tb;
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data), .read_data(mmio_video_read_data),
+      .error(mmio_video_error), .running(1'b1),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base_unused),
       .underflow_pix(1'b0), .underflow_clear(underflow_clear_unused),
       .halt_request(video_halt_request),
@@ -195,10 +201,7 @@ module cpu_burst_system_tb;
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted), .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable),
-      // Este banco no ejercita WRITE_WORD: atadas, no al aire. Una entrada sin
-      // conectar vale `x`, y `x` en el strobe se lleva por delante el resto.
-      .mem_write_word(32'd0), .mem_write_word_enable(1'b0),
-      .mem_read_enable(mon_read_enable),
+      .mem_write_word(mon_write_word_data), .mem_write_word_enable(mon_write_word_enable), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
@@ -329,7 +332,9 @@ module cpu_burst_system_tb;
     end
   endtask
 
-  task mon_write_word;
+  // Cuatro escrituras de byte. Vale para la RAM y NO vale para MMIO: desde
+  // v2 una escritura sub-palabra a un periferico es error (§4.1 y §16.2).
+  task mon_write_word_bytes;
     input [31:0] address;
     input [31:0] value;
     begin
@@ -337,6 +342,31 @@ module cpu_burst_system_tb;
       mon_write(address + 1, value[15:8]);
       mon_write(address + 2, value[23:16]);
       mon_write(address + 3, value[31:24]);
+    end
+  endtask
+
+  // La palabra entera en UNA transaccion, por el puerto que el monitor usa
+  // para WRITE_WORD. Es lo unico que MMIO acepta.
+  task mon_write_word;
+    input [31:0] address;
+    input [31:0] value;
+    begin
+      @(negedge clk);
+      mon_address = address;
+      mon_write_word_data = value;
+      mon_write_word_enable = 1'b1;
+      @(negedge clk);
+      mon_write_word_enable = 1'b0;
+      guard = 0;
+      while (!mon_ready && guard < 2000) begin
+        @(negedge clk);
+        guard = guard + 1;
+      end
+      if (!mon_ready)
+        $fatal(1, "sin respuesta al escribir la palabra %08x", address);
+      if (mon_error)
+        $fatal(1, "error al escribir la palabra %08x desde el monitor", address);
+      @(negedge clk);
     end
   endtask
 
@@ -460,13 +490,13 @@ module cpu_burst_system_tb;
     // ---------------------------------------------------------------------
     // 5. La ventana de registros de video responde a los dos clientes.
     // ---------------------------------------------------------------------
-    mon_read(32'h8000_0000);
+    mon_read(32'h8020_0004);
     if (leido !== 8'h00) begin
       $display("FALLO: FB_FRONT[7:0] = %02x, esperado 00", leido);
       errors = errors + 1;
     end
-    mon_write(32'h8000_0008, 8'h01);
-    mon_read(32'h8000_0008);
+    mon_write_word(32'h8020_000C, 32'h0000_0001);   // SWAP, palabra entera
+    mon_read(32'h8020_000C);
     if (leido !== 8'h01) begin
       $display("FALLO: SWAP no conservo el valor escrito: %02x", leido);
       errors = errors + 1;

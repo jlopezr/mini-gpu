@@ -112,19 +112,20 @@ module cpu_video_tb;
   // -- MMIO -------------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [11:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [11:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+  wire mmio_video_error;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
   wire [31:0] wb_merges, wb_flushes;
@@ -177,9 +178,7 @@ module cpu_video_tb;
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable),
-      // Sin WRITE_WORD aqui: atadas, que al aire valen `x`.
-      .mem_write_word(32'd0), .mem_write_word_enable(1'b0),
-      .mem_read_enable(mon_read_enable),
+      .mem_write_word(32'd0), .mem_write_word_enable(1'b0), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_bus_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
@@ -207,10 +206,12 @@ module cpu_video_tb;
   // aunque este banco no lo use: lo que se prueba aqui es el mapa que se
   // sintetiza, y eso incluye que anadir un dispositivo no mueva el video.
   mmio_decoder mmio_decoder_i (
-      .select(mmio_select), .write(mmio_write), .address(mmio_address),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
       .serial_select(mmio_serial_select),
       .serial_read_data(mmio_serial_read_data),
+      .perf_select(),.perf_read_data(32'd0),
       .read_data(mmio_read_data), .error(mmio_error));
 
   video_registers #(
@@ -220,6 +221,7 @@ module cpu_video_tb;
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data), .read_data(mmio_video_read_data),
+      .error(mmio_video_error), .running(1'b1),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(1'b0), .underflow_clear(underflow_clear),
       .halt_request(video_halt_request),
@@ -341,6 +343,8 @@ module cpu_video_tb;
   endtask
 
   reg [31:0] palabra;
+  reg [7:0] bloque[0:23];
+  integer b;
   task mon_read_word;
     input [31:0] address;
     begin
@@ -389,18 +393,18 @@ module cpu_video_tb;
     // 0x28 se queda pidiendo intercambios para que HALT_AT tenga algo que
     // contar.
     // -----------------------------------------------------------------------
-    mon_write_word(32'h0000_0000, 32'h5E80_8000); // MOVHI R20,0x8000
-    mon_write_word(32'h0000_0004, 32'h5434_0000); // LOAD  R1,R20,0
-    mon_write_word(32'h0000_0008, 32'h5454_0004); // LOAD  R2,R20,4
+    mon_write_word(32'h0000_0000, 32'h5E80_8020); // MOVHI R20,0x8020 (VIDEO)
+    mon_write_word(32'h0000_0004, 32'h5434_0004); // LOAD  R1,R20,FB_FRONT(+4)
+    mon_write_word(32'h0000_0008, 32'h5454_0008); // LOAD  R2,R20,FB_BACK(+8)
     mon_write_word(32'h0000_000c, 32'h40E0_0001); // MOVI  R7,1
     mon_write_word(32'h0000_0010, 32'h4120_0000); // MOVI  R9,0
-    mon_write_word(32'h0000_0014, 32'h58F4_0008); // STORE R7,R20,8
-    mon_write_word(32'h0000_0018, 32'h5514_0008); // LOAD  R8,R20,8
+    mon_write_word(32'h0000_0014, 32'h58F4_000C); // STORE R7,R20,SWAP(+C)
+    mon_write_word(32'h0000_0018, 32'h5514_000C); // LOAD  R8,R20,SWAP(+C)
     mon_write_word(32'h0000_001c, 32'h8509_FFFE); // BNE   R8,R9,-2
-    mon_write_word(32'h0000_0020, 32'h5474_0000); // LOAD  R3,R20,0
-    mon_write_word(32'h0000_0024, 32'h5494_0004); // LOAD  R4,R20,4
-    mon_write_word(32'h0000_0028, 32'h58F4_0008); // STORE R7,R20,8
-    mon_write_word(32'h0000_002c, 32'h5514_0008); // LOAD  R8,R20,8
+    mon_write_word(32'h0000_0020, 32'h5474_0004); // LOAD  R3,R20,FB_FRONT(+4)
+    mon_write_word(32'h0000_0024, 32'h5494_0008); // LOAD  R4,R20,FB_BACK(+8)
+    mon_write_word(32'h0000_0028, 32'h58F4_000C); // STORE R7,R20,SWAP(+C)
+    mon_write_word(32'h0000_002c, 32'h5514_000C); // LOAD  R8,R20,SWAP(+C)
     mon_write_word(32'h0000_0030, 32'h8509_FFFE); // BNE   R8,R9,-2
     mon_write_word(32'h0000_0034, 32'hBFFF_FFFC); // BRA   -4
 
@@ -409,17 +413,24 @@ module cpu_video_tb;
     // la ventana de 16 bytes del adaptador de la 16, 0x80000014 no decodificaba
     // como MMIO y el acceso se iba por el camino de SDRAM.
     // -----------------------------------------------------------------------
-    mon_write_word(32'h8000_0014, PARAR_EN);
-    mon_read_word(32'h8000_0014);
+    // HALT_TARGET primero: en MMIO v2 la alarma dice A QUIEN para (§9.6), y
+    // tras reset no para a nadie. Sin esta escritura el nucleo no se detiene
+    // y el sintoma es un timeout, no un error -- es el cambio de v2 que mas
+    // facil es pasar por alto al migrar una carpeta.
+    mon_write_word(32'h8020_0020, 32'h0000_0001);   // HALT_TARGET = CPU
+    mon_write_word(32'h8020_001C, PARAR_EN);        // HALT_AT
+    mon_read_word(32'h8020_001C);
     if (palabra !== PARAR_EN) begin
       $display("FALLO: HALT_AT leyo %08x, esperado %08x", palabra, PARAR_EN);
       errors = errors + 1;
     end
     // Armar reinicia la cuenta: es "para dentro de N", no "para en el N-esimo
-    // desde el encendido".
-    mon_read_word(32'h8000_0010);
+    // desde el encendido". En v2 la cuenta que cuenta es FRAME_COUNT (+0x14),
+    // no SWAP_COUNT: §9.6 lo cambia para que un programa colgado sin pedir
+    // swaps tambien se pueda capturar.
+    mon_read_word(32'h8020_0014);
     if (palabra !== 32'd0) begin
-      $display("FALLO: armar HALT_AT no puso SWAP_COUNT a cero: %08x", palabra);
+      $display("FALLO: armar HALT_AT no puso FRAME_COUNT a cero: %08x", palabra);
       errors = errors + 1;
     end
 
@@ -465,13 +476,13 @@ module cpu_video_tb;
     // -----------------------------------------------------------------------
     // Y lo que ve el monitor con la CPU ya parada.
     // -----------------------------------------------------------------------
-    mon_read_word(32'h8000_0010);
+    mon_read_word(32'h8020_0018);
     if (palabra !== PARAR_EN) begin
       $display("FALLO: SWAP_COUNT = %08x, esperado %0d", palabra, PARAR_EN);
       errors = errors + 1;
     end
 
-    mon_read_word(32'h8000_0000);
+    mon_read_word(32'h8020_0004);
     if (palabra !== FRONT_FINAL) begin
       $display("FALLO: FB_FRONT = %08x, esperado %08x tras %0d intercambios",
                palabra, FRONT_FINAL, PARAR_EN);
@@ -486,9 +497,42 @@ module cpu_video_tb;
 
     // La alarma es de un disparo: se consume al dispararse.
     un_frame();
-    mon_read_word(32'h8000_0010);
+    mon_read_word(32'h8020_0018);
     if (palabra !== PARAR_EN) begin
       $display("FALLO: SWAP_COUNT avanzo con la CPU parada: %08x", palabra);
+      errors = errors + 1;
+    end
+
+    // Un READ_BLOCK sobre el bloque de video: el monitor transfiere un bloque
+    // como lecturas de byte consecutivas sobre este mismo puerto, asi que
+    // recorrer los 24 bytes es lo que hace el comando a nivel de bus. Lo que se
+    // comprueba es que el rango ENTERO lo acepta el adaptador --mon_read aborta
+    // en cuanto uno devuelve error-- y que los bytes se recomponen.
+    //
+    // Hasta hoy MONITOR_REGIONS estaba vacio en 16/18/19/21, asi que el cliente
+    // rechazaba estos bloques antes de mandarlos y nadie habia comprobado que el
+    // RTL los aceptara. Ver TODO.md punto 10.
+    for (b = 0; b < 24; b = b + 1) begin
+      mon_read(32'h8020_0004 + b);
+      bloque[b] = leido;
+    end
+    if ({bloque[3], bloque[2], bloque[1], bloque[0]} !== debug_front) begin
+      $display("FALLO: FB_FRONT por bloque = %08x, por palabra = %08x",
+               {bloque[3], bloque[2], bloque[1], bloque[0]}, debug_front);
+      errors = errors + 1;
+    end
+    // El bloque empieza en FB_FRONT (+0x04), asi que los bytes 16..19 son
+    // +0x14: FRAME_COUNT, no SWAP_COUNT. En v1 ese offset era SWAP_COUNT y
+    // la etiqueta se quedo; con la disposicion de v2 son registros distintos.
+    //
+    // La comparacion es `>=` y no `==` a proposito: la alarma dispara cuando
+    // FRAME_COUNT alcanza PARAR_EN, pero el scanout SIGUE emitiendo frames
+    // con la CPU ya parada --§12.3 dice justo eso-- asi que para cuando el
+    // monitor lee el bloque el contador ya ha avanzado. Exigir igualdad
+    // convertiria el tiempo que tarda el monitor en un fallo.
+    if ({bloque[19], bloque[18], bloque[17], bloque[16]} < PARAR_EN) begin
+      $display("FALLO: FRAME_COUNT por bloque = %08x, esperado >= %0d",
+               {bloque[19], bloque[18], bloque[17], bloque[16]}, PARAR_EN);
       errors = errors + 1;
     end
 
@@ -499,7 +543,8 @@ module cpu_video_tb;
 
     if (errors != 0) $fatal(1, "%0d comprobaciones fallaron", errors);
     $display("OK: la CPU pidio el swap sobre el MMIO real, vio los buffers");
-    $display("    intercambiados, y HALT_AT la paro en el intercambio %0d", PARAR_EN);
+    $display("    intercambiados, HALT_AT la paro en el intercambio %0d,", PARAR_EN);
+    $display("    y los 24 bytes del bloque de video se leen seguidos");
     $finish;
   end
 

@@ -27,9 +27,9 @@ _Generado por `generate-docs` a partir de `x.tests/backends/` y `reports/`. No e
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | build | $glbnet$clk_pix | 99.39 / 25.00 | PASS |
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | build | $glbnet$clk_pix_5x | 324.57 / 125.00 | PASS |
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 83.92 / 80.00 | PASS |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix | 102.16 / 25.00 | PASS |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix_5x | 294.90 / 125.00 | PASS |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 89.67 / 80.00 | PASS |
+| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix | 103.59 / 25.00 | PASS |
+| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix_5x | 296.65 / 125.00 | PASS |
+| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 79.90 / 80.00 | FAIL |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix | 80.51 / 25.00 | PASS |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix_5x | 201.98 / 125.00 | PASS |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 36.78 / 25.00 | PASS |

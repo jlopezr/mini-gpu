@@ -106,15 +106,18 @@ module subword_ls_tb;
   // -- MMIO -----------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [4:0] mon_mmio_addr;
+  // 32 bits como su puerto, no 5. Se quedo en 5 al migrar a v2 --el de la CPU
+  // si se ensancho-- y con los bloques separados por megabytes una direccion
+  // de cinco bits no puede ni expresar una base.
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
@@ -178,9 +181,7 @@ module subword_ls_tb;
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable),
-      // Sin WRITE_WORD aqui: atadas, que al aire valen `x`.
-      .mem_write_word(32'd0), .mem_write_word_enable(1'b0),
-      .mem_read_enable(mon_read_enable),
+      .mem_write_word(32'd0), .mem_write_word_enable(1'b0), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),

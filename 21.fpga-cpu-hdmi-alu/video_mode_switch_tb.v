@@ -41,6 +41,7 @@
 // pixeles sean los correctos: de eso ya se ocupan video_burst_tb y
 // cpu_video_tb.
 module video_mode_switch_tb;
+  wire video_error_unused;
   reg clk = 0;
   always #5 clk = ~clk;
   reg reset = 1;
@@ -61,6 +62,7 @@ module video_mode_switch_tb;
       .clk(clk), .reset(reset),
       .select(select), .write(write), .write_mask(write_mask),
       .address(address), .write_data(write_data), .read_data(read_data),
+      .error(video_error_unused), .running(1'b1),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base),
       .underflow_pix(1'b0), .underflow_clear(), .halt_request(),
       .video_mode(video_mode),

@@ -62,8 +62,10 @@
 ;   R29 enlace de plot8   R30 enlace de putpixel   R31 enlace de circle
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R2, 0x8000           ; registros de video en 0x80000000
+    LI    R2, MMIO_VIDEO_BASE
 
     ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
     ; cero --el framebuffer es una decision del programa, no una reserva
@@ -71,24 +73,24 @@ start:
     ; propio programa. La direccion es la de siempre; lo que cambia es que
     ; ahora hay que escribirla.
     MOVHI R30, 0x0100
-    STORE R30, R2, 0          ; FB_FRONT
+    STORE R30, R2, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
     MOVHI R30, 0x0102
     ORI   R30, R30, 0x5800
-    STORE R30, R2, 4          ; FB_BACK, un frame mas arriba
+    STORE R30, R2, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir
     ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
     MOVI  R30, 2               ; SCANOUT
-    STORE R30, R2, 24         ; VIDEO_CTRL
+    STORE R30, R2, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
     MOVI  R23, 1
     MOVI  R24, 640
     MOVI  R25, 11
     MOVI  R22, 4               ; radio base de partida
 
 frame:
-    LOAD  R1, R2, 4            ; R1 = FB_BACK; cambia en cada intercambio
+    LOAD  R1, R2, MMIO_VIDEO_FB_BACK_OFF            ; R1 = FB_BACK; cambia en cada intercambio
 
     ; ---- borrar el buffer trasero ----
     ADDI  R26, R1, 0
@@ -126,9 +128,9 @@ next_circle:
     BLT   R20, R28, next_circle
 
     ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
-    STORE R23, R2, 8           ; SWAP = 1
+    STORE R23, R2, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 wait_swap:
-    LOAD  R28, R2, 8
+    LOAD  R28, R2, MMIO_VIDEO_SWAP_OFF
     BNE   R28, R0, wait_swap
 
     ; Crecer un pixel por frame y volver a empezar. El ciclo son 18 frames,

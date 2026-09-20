@@ -37,14 +37,27 @@ ARCHITECTURAL_REGIONS = (
 # accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo estar
 # vacia sin que se notara. El RTL si acepta un bloque sobre el MMIO: en el
 # adaptador la rama is_mmio va antes de la comprobacion de cpu_halted.
-# La ventana es la PAGINA ENTERA, los mismos 4 KiB que decodifica el RTL
-# (`address[31:12] == 20'h80000`, dieciseis dispositivos de 256 B). Estuvo en
-# 0x8000_0018 con un comentario que decia "llegara a 0x8000_001c cuando la fase
-# 3.5 anada VIDEO_CTRL": la fase lo anadio y la constante se quedo, asi que el
-# host rechazaba un bloque sobre el registro que acababa de existir. Un
-# subconjunto seria una tercera gemela que mantener, y ya se quedo atras una vez.
+# Una region por BLOQUE de MMIO v2. Antes era UNA sola --la pagina de 4 KiB
+# entera-- porque los dieciseis dispositivos cabian dentro; ahora estan a
+# megabytes unos de otros. Son las gemelas de los WINDOWn_* del `top.v`.
+#
+# Un subconjunto seria una tercera gemela que mantener, y ya se quedo atras una
+# vez: estuvo en 0x8000_0018 con un comentario que decia "llegara a
+# 0x8000_001c cuando la fase 3.5 anada VIDEO_CTRL", la fase lo anadio y la
+# constante se quedo, asi que el host rechazaba un bloque sobre el registro que
+# acababa de existir. Por eso cada region es el BLOQUE entero y no los
+# registros que hoy existen dentro.
+#
+# Los numeros van LITERALES y no derivados del mapa, aunque el mapa este
+# importado: `tools/prototype_report.py` lee esta asignacion del TEXTO del
+# fichero, sin importar el modulo, y un `tuple(... for ...)` lo deja ciego.
+# Escribirlos a mano es obligatorio; dejarlos sin comprobar, no: hay un test que
+# los contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_1000),
+    (0x8000_0000, 0x8001_0000),     # SYSTEM
+    (0x8010_0000, 0x8011_0000),     # SERIAL
+    (0x8020_0000, 0x8021_0000),     # VIDEO
+    (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

@@ -45,6 +45,17 @@
  * pediria la fila 4096 y no hay memoria de simulacion para tanto. Con las bases
  * bajas, los dos buffers caben en 128 filas. Es lo unico que difiere de la
  * placa, y no toca ningun camino logico.
+ *
+ * Por eso el programa es `fullframe_tb.asm` y NO `examples/fullframe.asm`:
+ * son el mismo programa salvo esas dos constantes. Durante anos la cabecera
+ * decia lo segundo y el .hex venia de lo primero, y al regenerarlo "como
+ * ponia aqui" el banco empezo a contar 60 000 violaciones JEDEC --que son en
+ * realidad 60 000 accesos a una fila que no existe--.
+ *
+ *   python ..\1.isa\miniisa_asm.py fullframe_tb.asm --hex fullframe.hex \
+ *       -I ..\x.tests\inc
+ *
+ * `x.tests/test_fullframe_fixture.py` comprueba que el .hex sale de ahi.
  */
 module video_fullframe_tb;
   localparam integer SRC_W = 320;
@@ -54,7 +65,11 @@ module video_fullframe_tb;
 
   // Donde paramos. Cada intercambio necesita un frame de video entero
   // (420 000 ciclos de pixel), asi que esto domina el tiempo de simulacion.
-  localparam integer SWAP_TO_STOP = 2;
+  // Antes eran INTERCAMBIOS; con MMIO v2 `HALT_AT` cuenta FRAMES (§9.6). No es
+  // lo mismo aqui: mientras la CPU dibuja el frame entero pasan varios frames
+  // de scanout sin que haya ningun intercambio, asi que la alarma llega mucho
+  // antes en terminos del programa. Con 2 paraba a la CPU a media rafaga.
+  localparam integer FRAMES_TO_STOP = 6;
 
   localparam [31:0] FB0 = 32'h0001_0000;
   localparam [31:0] FB1 = 32'h0003_5800;   // FB0 + 320*240*2
@@ -124,11 +139,13 @@ module video_fullframe_tb;
   // ---- MMIO ---------------------------------------------------------------
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [4:0] cpu_mmio_addr;
+  // 32 bits, no 5. Con cinco, cualquier offset por encima de +0x1F se
+  // truncaba en silencio: es el fallo que dejo la 18 muda, dentro de un banco.
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [4:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire wb_dirty;
 
@@ -197,7 +214,10 @@ module video_fullframe_tb;
   video_registers #(.FB_FRONT_RESET(FB0), .FB_BACK_RESET(FB1)) registers_i (
       .clk(clk_sys), .reset(reset),
       .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask),
-      .address(mmio_address), .write_data(mmio_write_data),
+      // La rebanada es EXPLICITA: el dispositivo solo ve el offset dentro de
+      // su bloque, y escribirlo asi lo convierte en una decision en vez de un
+      // truncamiento accidental. Es lo que hace `top.v`.
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
       .read_data(mmio_read_data),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(underflow), .underflow_clear(video_underflow_clear),
@@ -291,15 +311,24 @@ module video_fullframe_tb;
     end
   endfunction
 
-  reg [15:0] programa[0:511];
+  // PALABRAS de 32 bits, no medias palabras. El fichero lo escribe el
+  // ensamblador con `--hex` y nadie lo convierte por el camino: hasta MMIO v2
+  // el .hex se generaba a mano en medias palabras, y regenerarlo con la
+  // herramienta --que emite palabras-- cargaba un programa que no era el
+  // programa, con un sintoma que no se parecia a la causa. Un formato, una
+  // orden, y la orden esta en la cabecera del fichero.
+  reg [31:0] programa[0:255];
 
   task cargar_programa;
     integer n;
     begin
-      for (n = 0; n < 512; n = n + 1) programa[n] = 16'h0000;
+      for (n = 0; n < 256; n = n + 1) programa[n] = 32'h0000_0000;
       $readmemh("fullframe.hex", programa);
-      for (n = 0; n < 512; n = n + 1)
-        mem.mem[celda(n[23:0])] = programa[n];
+      // La SDRAM es de 16 bits: cada palabra ocupa dos celdas, la baja primero.
+      for (n = 0; n < 256; n = n + 1) begin
+        mem.mem[celda(2*n)]     = programa[n][15:0];
+        mem.mem[celda(2*n + 1)] = programa[n][31:16];
+      end
     end
   endtask
 
@@ -350,7 +379,11 @@ module video_fullframe_tb;
     // Armar la parada ANTES de arrancar, escribiendo HALT_AT por el mismo
     // camino que usaria el monitor. Es la unica prueba que ejercita ese
     // registro dentro del sistema completo.
-    escribir_mmio(5'h14, SWAP_TO_STOP);
+    // HALT_TARGET va PRIMERO: en MMIO v2 la alarma dice a quien para (§9.6) y
+    // tras reset no para a nadie. Sin esta escritura la CPU no se detiene y el
+    // banco se agota esperando, que es un sintoma que no se parece a la causa.
+    escribir_mmio(8'h20, 32'h0000_0001);        // HALT_TARGET = CPU
+    escribir_mmio(8'h1C, FRAMES_TO_STOP);         // HALT_AT, ahora en +0x1C
 
     @(negedge clk_sys); run_request = 1'b1;
     @(negedge clk_sys); run_request = 1'b0;
@@ -364,7 +397,7 @@ module video_fullframe_tb;
       guard = guard + 1;
     end
     if (!halted)
-      $fatal(1, "la CPU no paro en el intercambio %0d", SWAP_TO_STOP);
+      $fatal(1, "la CPU no paro en el intercambio %0d", FRAMES_TO_STOP);
     if (cpu_error)
       $fatal(1, "la CPU paro con error %02x en pc=%08x", cpu_error_code, debug_pc);
 
@@ -373,7 +406,7 @@ module video_fullframe_tb;
 
     $display("");
     $display("Parada en el intercambio %0d tras %0d ciclos de CPU",
-             SWAP_TO_STOP, ciclos);
+             FRAMES_TO_STOP, ciclos);
     $display("  SWAP_COUNT = %0d", leer_mmio(5'h10));
     $display("  underflow  = %0d", leer_mmio(5'h0c) & 1);
     $display("  FB_FRONT   = 0x%08x", leer_mmio(5'h00));
@@ -381,9 +414,9 @@ module video_fullframe_tb;
 
     if ((leer_mmio(5'h0c) & 1) !== 0)
       $fatal(1, "underflow: el scanout no llego a tiempo a resolucion completa");
-    if (leer_mmio(5'h10) !== SWAP_TO_STOP)
+    if (leer_mmio(5'h10) !== FRAMES_TO_STOP)
       $fatal(1, "SWAP_COUNT vale %0d, esperado %0d",
-             leer_mmio(5'h10), SWAP_TO_STOP);
+             leer_mmio(5'h10), FRAMES_TO_STOP);
     if (mem.errors != 0)
       $fatal(1, "el modelo de SDRAM conto %0d violaciones JEDEC", mem.errors);
 
@@ -412,7 +445,10 @@ module video_fullframe_tb;
   endfunction
 
   task escribir_mmio;
-    input [4:0] offset;
+    // OCHO bits, no cinco. Con cinco, `HALT_TARGET` en +0x20 se truncaba a
+    // +0x00 --o sea a CTRL-- sin que Verilog dijera nada: el mismo fallo de
+    // ancho que este banco existe para cazar, cometido dentro del banco.
+    input [7:0] offset;
     input [31:0] value;
     begin
       @(negedge clk_sys);

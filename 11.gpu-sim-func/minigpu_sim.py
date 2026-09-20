@@ -598,7 +598,19 @@ class Warp:
                 # dependa de eso esta mal escrito en las dos partes.
                 device = self.sm.system.device_for(address)
                 if device is not None:
-                    device.write(address - device.BASE, value)
+                    # Un registro puede rechazar el DATO, no solo la
+                    # direccion: desde MMIO v2 una base de framebuffer
+                    # desalineada es error en vez de truncarse (§9.2), y eso
+                    # `check_store` no lo puede ver --valida antes de tener el
+                    # valor--. Sin este try la excepcion salia del simulador
+                    # en vez de convertirse en el fallo del kernel.
+                    try:
+                        device.write(address - device.BASE, value)
+                    except RuntimeError:
+                        self.sm.system.stop_with_error(
+                            Fault(ERROR_MEMORY_ACCESS, self.pc, self.warp_id,
+                                  processor.core_id, address))
+                        return False
                 else:
                     struct.pack_into("<I", self.memory, address, value)
             if result.halted:

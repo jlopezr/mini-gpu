@@ -33,16 +33,15 @@ class PeripheralParityTest(unittest.TestCase):
         return backend.run(**args)
 
     def test_sysid_desde_load_en_los_tres(self):
-        source = "MOVHI R1, 0x8000\nLOAD R2, R1, 0xF00\nMOVI R3, 256\nSTORE R2, R3, 0\nHALT"
+        source = "MOVHI R1, 0x8000\nLOAD R2, R1, 8\nMOVI R3, 256\nSTORE R2, R3, 0\nHALT"
         for backend, folder in zip(self.backends, (2, 11, 25)):
             with self.subTest(folder=folder):
                 result = self.run_program(backend, source)
                 self.assertFalse(result["error"])
-                self.assertEqual(int.from_bytes(result["memory"][(256, 16)][:4], "little"), 0x4D470000 | folder)
+                self.assertEqual(int.from_bytes(result["memory"][(256, 16)][:4], "little"), folder)
 
     def test_serie_peek_data_y_salida_mayor_que_fifo(self):
-        source = """MOVHI R1, 0x8000
-ADDI R1, R1, 512
+        source = """MOVHI R1, 0x8010
 LOAD R2, R1, 8
 LOAD R3, R1, 0
 MOVI R4, 256
@@ -65,7 +64,11 @@ HALT"""
     def test_swap_capture_y_halt_at(self):
         for backend in self.backends:
             with self.subTest(backend=backend.version, architecture=backend.ARCHITECTURE):
-                result = self.run_program(backend, "MOVHI R1, 0x8000\nSTORE R0, R1, 8\nloop: BEQ R0, R0, loop",
+                # SWAP esta en +0x0C, no en +8: v2 devolvio CTRL al +0 y corrio
+                # una palabra las dos bases y todo lo que va detras. Con el 8
+                # viejo esto escribia FB_BACK, no pedia ningun intercambio, y
+                # el programa se comia el limite de instrucciones.
+                result = self.run_program(backend, "MOVHI R1, 0x8020\nSTORE R0, R1, 0x0C\nloop: BEQ R0, R0, loop",
                                           video={"run_until_swap": 1, "capture_frame": True},
                                           initial_memory=[(FB_BACK, b"\x34\x12\x78\x56")])
                 self.assertTrue(result["halted"])
@@ -75,12 +78,12 @@ HALT"""
                 self.assertEqual(result["video"]["frame"][:4], b"\x34\x12\x78\x56")
 
     def test_status_serie_observa_los_bytes_pendientes(self):
-        source = """MOVHI R1, 0x8000
+        source = """MOVHI R1, 0x8010
 MOVI R2, 65
-STORE R2, R1, 512
-STORE R2, R1, 512
-STORE R2, R1, 512
-LOAD R3, R1, 516
+STORE R2, R1, 0
+STORE R2, R1, 0
+STORE R2, R1, 0
+LOAD R3, R1, 4
 MOVI R4, 256
 STORE R3, R4, 0
 HALT"""
@@ -92,21 +95,30 @@ HALT"""
                 self.assertEqual(result["stdout"], b"AAA")
 
     def test_accesos_invalidos_son_errores_de_memoria(self):
-        # Slot ausente, offsets reservados y alias de SYS_ID; comprobar tambien
-        # que el STORE fallido no alcanza la siguiente instruccion.
+        """Offsets reservados dentro de un bloque y bloques sin dispositivo.
+
+        Con MMIO v2 las dos cosas se prueban en sitios distintos: antes todo
+        caía dentro de la misma página de 4 KiB y bastaba variar el offset;
+        ahora un dispositivo ausente es otra mitad alta.
+        """
         for backend in self.backends:
-            for offset in (0x400, 0x20C, 0xF10, 0xFFC):
+            # Offsets reservados DENTRO de SYSTEM: sólo hay siete palabras.
+            for offset in (0x1C, 0x20, 0xF0, 0xFC):
                 for op in ("LOAD", "STORE"):
                     with self.subTest(backend=backend.version, offset=offset, op=op):
                         source = f"MOVHI R1, 0x8000\n{op} R2, R1, {offset}\nHALT"
                         result = self.run_program(backend, source)
                         self.assertTrue(result["error"])
                         self.assertEqual(result["error_code"], 2)
-            for offset in (0xF00, 0xF04, 0xF08, 0xF0C):
-                result = self.run_program(backend, f"MOVHI R1, 0x8000\nSTORE R0, R1, {offset}\nHALT")
+            # Las siete palabras de SYSTEM son de SOLO LECTURA.
+            for offset in (0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18):
+                result = self.run_program(
+                    backend, f"MOVHI R1, 0x8000\nSTORE R0, R1, {offset}\nHALT")
                 self.assertTrue(result["error"])
                 self.assertEqual(result["error_code"], 2)
-            result = self.run_program(backend, "MOVHI R1, 0x8000\nLOAD R2, R1, 0xF08\nHALT")
+            # Y leerlas, no.
+            result = self.run_program(
+                backend, "MOVHI R1, 0x8000\nLOAD R2, R1, 0x0C\nHALT")
             self.assertFalse(result["error"])
 
     def test_offset_uart_reservado_no_consume_otro_lane(self):
@@ -128,8 +140,11 @@ HALT"""
     def test_video_reservado_y_dispositivo_ausente(self):
         for backend in self.backends:
             for op in ("LOAD", "STORE"):
-                for video, offset in ((None, 0), ({"capture_frame": True}, 0x1C)):
-                    result = self.run_program(backend, f"MOVHI R1, 0x8000\n{op} R2, R1, {offset}\nHALT", video=video)
+                # +0x28 es el primer offset reservado del bloque de VIDEO: los
+                # diez registros de §9 llegan hasta VIDEO_TX en +0x24. Antes
+                # aqui ponia 0x1C, que en v1 no existia y en v2 es HALT_AT.
+                for video, offset in ((None, 0), ({"capture_frame": True}, 0x28)):
+                    result = self.run_program(backend, f"MOVHI R1, 0x8020\n{op} R2, R1, {offset}\nHALT", video=video)
                     self.assertTrue(result["error"])
                     self.assertEqual(result["error_code"], 2)
 
@@ -171,7 +186,7 @@ HALT"""
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             program = folder / "echo.asm"
-            program.write_text("MOVHI R1, 0x8000\nLOAD R2, R1, 512\nSTORE R2, R1, 512\nHALT")
+            program.write_text("MOVHI R1, 0x8010\nLOAD R2, R1, 0\nSTORE R2, R1, 0\nHALT")
             incoming, outgoing = folder / "input.bin", folder / "output.bin"
             incoming.write_bytes(b"Q")
             for script in ("2.cpu-sim-func/minicpu_sim.py", "11.gpu-sim-func/minigpu_sim.py",

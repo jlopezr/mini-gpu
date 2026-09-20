@@ -25,8 +25,7 @@
  * colgar el monitor directamente del arbitro, que solo concede cuando le toca.
  */
 module monitor_mem_adapter_128 #(
-    parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000,
-    parameter [19:0] MMIO_PREFIX = 20'h80000
+    parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -62,7 +61,7 @@ module monitor_mem_adapter_128 #(
     input  wire        mmio_ack,
     output reg         mmio_write,
     output reg  [3:0]  mmio_write_mask,
-    output reg  [11:0] mmio_address,
+    output reg  [31:0] mmio_address,
     output reg  [31:0] mmio_write_data,
     input  wire [31:0] mmio_read_data,
     input wire mmio_error,
@@ -100,7 +99,7 @@ module monitor_mem_adapter_128 #(
   wire any_write = mem_write_enable || mem_write_word_enable;
   // Los accesos de byte no exigen alineamiento; WRITE_WORD si, y eso ya lo
   // comprueba el monitor antes de emitir el pulso.
-  wire is_mmio = (mem_address[31:12] == MMIO_PREFIX);
+  wire is_mmio = mem_address[31];   // mmio.md v2 §21.4
 
   always @(posedge clk) begin
     mem_ready <= 1'b0;
@@ -120,7 +119,7 @@ module monitor_mem_adapter_128 #(
       mmio_req <= 1'b0;
       mmio_write <= 1'b0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 12'h000;
+      mmio_address <= 32'h0000_0000;
       mmio_write_data <= 32'h0000_0000;
     end else begin
       case (state)
@@ -141,7 +140,7 @@ module monitor_mem_adapter_128 #(
               // valor intermedio: eso es toda la atomicidad que hacia falta.
               mmio_write_mask <= mem_write_word_enable
                                ? 4'b1111 : (4'b0001 << mem_address[1:0]);
-              mmio_address <= mem_address[11:0];
+              mmio_address <= mem_address;
               mmio_write_data <= mem_write_word_enable
                                ? mem_write_word : {4{mem_write_data}};
               state <= ST_MMIO;

@@ -93,7 +93,10 @@ module cpu_serial_tb;
   monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd19),
       .HAS_SERIAL(1),
       .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
+      .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
+      .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
+      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000))  // CPU PERF
     monitor_i (
       .clk(clk), .reset(reset),
       .rx_data(rx_data), .rx_strobe(rx_strobe),
@@ -136,19 +139,20 @@ module cpu_serial_tb;
   // -- MMIO -------------------------------------------------------------------
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
   wire [3:0] mon_mmio_mask;
-  wire [11:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_addr;
   wire [31:0] mon_mmio_wdata;
   wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
   wire [3:0] cpu_mmio_mask;
-  wire [11:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
   wire mmio_video_select, mmio_serial_select;
   wire [31:0] mmio_video_read_data, mmio_serial_read_data;
+  wire mmio_video_error;
   wire [31:0] ibuf_hits, ibuf_misses;
   wire wb_dirty;
   wire [31:0] wb_merges, wb_flushes;
@@ -196,9 +200,7 @@ module cpu_serial_tb;
       .wb_dirty(wb_dirty),
       .mem_address(mon_address), .mem_write_data(mon_write_data),
       .mem_write_enable(mon_write_enable),
-      .mem_write_word(mon_write_word),
-      .mem_write_word_enable(mon_write_word_enable),
-      .mem_read_enable(mon_read_enable),
+      .mem_write_word(mon_write_word), .mem_write_word_enable(mon_write_word_enable), .mem_read_enable(mon_read_enable),
       .mem_read_data(mon_read_data), .mem_read_word(mon_read_word), .mem_ready(mon_ready),
       .mem_error(mon_error),
       .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
@@ -223,10 +225,12 @@ module cpu_serial_tb;
       .write_data(mmio_write_data));
 
   mmio_decoder mmio_decoder_i (
-      .select(mmio_select), .write(mmio_write), .address(mmio_address),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
       .serial_select(mmio_serial_select),
       .serial_read_data(mmio_serial_read_data),
+      .perf_select(),.perf_read_data(32'd0),
       .read_data(mmio_read_data), .error(mmio_error));
 
   video_registers registers_i (
@@ -234,6 +238,7 @@ module cpu_serial_tb;
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask), .address(mmio_address[7:0]),
       .write_data(mmio_write_data), .read_data(mmio_video_read_data),
+      .error(mmio_video_error), .running(1'b1),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(),
       .underflow_pix(1'b0), .underflow_clear(),
       .halt_request(), .debug_front(), .debug_back());
@@ -337,6 +342,32 @@ module cpu_serial_tb;
     end
   endtask
 
+  // WRITE_WORD: la palabra entera en UNA transaccion. Es lo que hay que usar
+  // contra MMIO, donde una escritura parcial es error.
+  task mon_write_word_mmio;
+    input [31:0] address;
+    input [31:0] value;
+    begin
+      base = received_count;
+      wait (!monitor_busy && tx_ready);
+      send_byte(8'h13);                        // WRITE_WORD
+      send_byte(address[31:24]); send_byte(address[23:16]);
+      send_byte(address[15:8]);  send_byte(address[7:0]);
+      // El dato va con el byte BAJO primero, al reves que la direccion.
+      send_byte(value[7:0]);   send_byte(value[15:8]);
+      send_byte(value[23:16]); send_byte(value[31:24]);
+      wait (received_count == base + 1);
+      // `received[]` se escribe con asignacion no bloqueante, asi que en el
+      // instante en que `received_count` sube el byte todavia no esta puesto.
+      // Sin este ciclo de margen se lee una X y el error dice "respuesta XX",
+      // que parece un NACK y no lo es.
+      @(negedge clk);
+      if (received[base] !== 8'h93)
+        $fatal(1, "WRITE_WORD rechazado en %08x (respuesta %02x)",
+               address, received[base]);
+    end
+  endtask
+
   task load_word;
     input [31:0] address;
     input [31:0] value;
@@ -386,8 +417,10 @@ module cpu_serial_tb;
     // echo.asm: espera a que haya algo en RX, lo lee, le suma uno y lo mete en
     // TX. Ver la cabecera sobre por que suma uno.
     //
-    //     MOVHI R20, 0x8000
-    //     ORI   R20, R20, 0x0200     ; base del dispositivo serie
+    //     MOVHI R20, 0x8010          ; SERIAL esta en 0x80100000 (MMIO v2)
+    //     ORI   R20, R20, 0x0000     ; la mitad baja es cero, pero la
+    //                                ; instruccion se conserva para no mover
+    //                                ; los destinos de los saltos de abajo
     //     MOVI  R3, 0
     // loop: LOAD  R4, R20, 4         ; STATUS
     //     ANDI  R5, R4, 0x00FF       ; rx_count
@@ -397,8 +430,8 @@ module cpu_serial_tb;
     //     STORE R6, R20, 0           ; y lo devuelve
     //     BRA   loop
     // -----------------------------------------------------------------------
-    load_word(32'h0000_0000, 32'h5E80_8000);
-    load_word(32'h0000_0004, 32'h4E94_0200);
+    load_word(32'h0000_0000, 32'h5E80_8010);
+    load_word(32'h0000_0004, 32'h4E94_0000);
     load_word(32'h0000_0008, 32'h4060_0000);
     load_word(32'h0000_000c, 32'h5494_0004);
     load_word(32'h0000_0010, 32'h48A4_00FF);
@@ -484,12 +517,20 @@ module cpu_serial_tb;
     // valia 0x01000000; desde que el reset deja las dos bases a cero, leer cero
     // no distinguiria "el decodificador me manda al video" de "nadie responde y
     // el bus lee cero". Escribir y releer prueba el camino en los dos sentidos.
-    load_word(32'h8000_0000, 32'h0100_0000);
+    // WRITE_WORD y no `load_word`, que va byte a byte: desde MMIO v2 una
+    // escritura sub-palabra a un periferico es error (§4.1 y §16.2). Y no es
+    // un tecnicismo -- escribir FB_FRONT en cuatro trozos pasa por tres
+    // valores desalineados antes de llegar al bueno.
+    load_word(32'h8020_0004, 32'h0100_0000);
 
     base = received_count;
     wait (!monitor_busy && tx_ready);
     send_byte(8'h11);                          // READ_BYTE
-    send_byte(8'h80); send_byte(8'h00); send_byte(8'h00); send_byte(8'h03);
+    // 0x80200007: el byte alto de VIDEO.FB_FRONT, que en MMIO v2 esta en
+    // +0x04 y no en +0x00 --ahora +0x00 es CTRL--. La direccion va partida en
+    // cuatro bytes porque asi la manda el protocolo del monitor, y por eso no
+    // aparece en una busqueda de `32'h8020_0004`.
+    send_byte(8'h80); send_byte(8'h20); send_byte(8'h00); send_byte(8'h07);
     wait (received_count == base + 2);
     if (received[base] !== 8'h91 || received[base+1] !== 8'h01) begin
       $display("FALLO: FB_FRONT[31:24] = %02x, esperado 01", received[base+1]);

@@ -30,8 +30,10 @@
 ;   R27 primera linea despues (112)
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000          ; registros de video
+    LI    R20, MMIO_VIDEO_BASE          ; registros de video
 
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; azul en las dos mitades de la palabra
@@ -46,7 +48,7 @@ start:
     MOVI  R15, 7
     MOVI  R7, 1
 frame:
-    LOAD  R1, R20, 4           ; R1 = FB_BACK, cambia en cada intercambio
+    LOAD  R1, R20, MMIO_VIDEO_FB_BACK_OFF           ; R1 = FB_BACK, cambia en cada intercambio
     ADDI  R4, R1, 0            ; direccion de la linea 0
     MOVI  R2, 0
 
@@ -71,9 +73,9 @@ draw_word:
     BLT   R2, R22, draw_line
 
     ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
-    STORE R7, R20, 8           ; SWAP = 1
+    STORE R7, R20, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 wait_swap:
-    LOAD  R8, R20, 8
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
     BNE   R8, R0, wait_swap
 
     BRA   frame

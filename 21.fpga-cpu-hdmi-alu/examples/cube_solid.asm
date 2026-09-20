@@ -11,17 +11,18 @@
 ; se ocultan entre si (solo comparten aristas), por lo que no hace falta z-buffer.
 ; ============================================================
 
-start:
-    MOVHI R2, 0x8000
+.include "mmio.inc"
 
+start:
+    LI    R2, MMIO_VIDEO_BASE
     MOVHI R28, 0x0100
-    STORE R28, R2, 0           ; FB_FRONT = 0x01000000
+    STORE R28, R2, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT = 0x01000000
     MOVHI R28, 0x0102
     ORI   R28, R28, 0x5800
-    STORE R28, R2, 4           ; FB_BACK  = 0x01025800
+    STORE R28, R2, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK  = 0x01025800
 
     MOVI  R28, 2
-    STORE R28, R2, 24          ; VIDEO_CTRL = SCANOUT
+    STORE R28, R2, MMIO_VIDEO_CTRL_OFF          ; VIDEO_CTRL = SCANOUT
 
     MOVI  R24, 640             ; stride en bytes para putpixel
     MOVI  R26, 0               ; angulo X
@@ -37,7 +38,7 @@ clear_once:
     BLTU  R3, R28, clear_once
 
 frame:
-    LOAD  R1, R2, 4
+    LOAD  R1, R2, MMIO_VIDEO_FB_BACK_OFF
 
     ; Caja [32,288) x [8,232), igual que cube.asm.
     MOVI  R28, 5184
@@ -172,9 +173,9 @@ face_done:
     BNE   R19, R0, face_loop
 
     MOVI  R25, 1
-    STORE R25, R2, 8
+    STORE R25, R2, MMIO_VIDEO_SWAP_OFF
 wait_swap:
-    LOAD  R28, R2, 8
+    LOAD  R28, R2, MMIO_VIDEO_SWAP_OFF
     BNE   R28, R0, wait_swap
 
     ADDI  R26, R26, 1

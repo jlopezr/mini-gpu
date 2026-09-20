@@ -30,26 +30,32 @@
 ;   R27 alto del cuadrado (32)
 ; ============================================================
 
-start:
-    MOVHI R20, 0x8000
+.include "mmio.inc"
 
-    ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
-    ; cero --el framebuffer es una decision del programa, no una reserva
-    ; que el hardware impone-- asi que heredarlas seria dibujar sobre el
-    ; propio programa. La direccion es la de siempre; lo que cambia es que
-    ; ahora hay que escribirla.
-    MOVHI R30, 0x0100
-    STORE R30, R20, 0          ; FB_FRONT
-    MOVHI R30, 0x0102
-    ORI   R30, R30, 0x5800
-    STORE R30, R20, 4          ; FB_BACK, un frame mas arriba
+; Las dos bases, y la unica diferencia con `../fullframe_tb.asm`, que es este
+; mismo programa para el banco de RTL. Ahi no caben: el modelo de SDRAM guarda
+; 4 bancos x 128 filas, la fila sale de los bits [23:11] de la direccion de
+; palabra, y 0x01000000 pide la fila 4096. `test_fullframe_fixture.py` obliga a
+; que los dos ficheros solo se diferencien en este bloque.
+.equ FB_FRONT_ADDR, 0x01000000
+.equ FB_BACK_ADDR, 0x01025800      ; FB_FRONT + 320*240*2
+
+start:
+    LI    R20, MMIO_VIDEO_BASE
+    ; Las bases arrancan a cero --el framebuffer es una decision del programa,
+    ; no una reserva que el hardware impone-- asi que heredarlas seria dibujar
+    ; sobre el propio programa.
+    LI    R30, FB_FRONT_ADDR
+    STORE R30, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
+    LI    R30, FB_BACK_ADDR
+    STORE R30, R20, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
     ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
     ; recien encendida contiene basura, asi que arrancar leyendola daria
     ; una salida indefinida-- y un programa que dibuja tiene que pedir
     ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
     MOVI  R30, 2               ; SCANOUT
-    STORE R30, R20, 24         ; VIDEO_CTRL
+    STORE R30, R20, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
 
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; azul
@@ -68,7 +74,7 @@ start:
     MOVI  R17, 48              ; y
 
 frame:
-    LOAD  R1, R20, 4           ; FB_BACK
+    LOAD  R1, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK
 
     ; ---- linea de arriba, y = 0 ----
     ADDI  R6, R1, 0
@@ -111,9 +117,9 @@ sq_word:
     BLT   R2, R27, sq_line
 
     ; ---- pedir el intercambio y esperar ----
-    STORE R7, R20, 8
+    STORE R7, R20, MMIO_VIDEO_SWAP_OFF
 wait_swap:
-    LOAD  R8, R20, 8
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
     BNE   R8, R9, wait_swap
 
     BRA   frame

@@ -117,15 +117,15 @@ Un literal de cadena no tiene "función anterior" a la que pertenecer.
 
 ### Datos
 
-| Directiva | Qué emite |
-|---|---|
-| `.word v, …` | 32 bits por valor. Acepta etiquetas, que es lo que permite una tabla de direcciones |
-| `.half v, …` | 16 bits por valor |
-| `.byte v, …` | 8 bits por valor |
-| `.string "…"` | Los bytes del literal, **NUL final** y relleno hasta múltiplo de 4 |
-| `.space n` / `.zero n` | `n` bytes a cero |
-| `.align n` | Rellena hasta múltiplo de `n` |
-| `.comm sim, tam[, ali]` | Reserva `tam` bytes en `.bss` bajo ese símbolo |
+| Directiva               | Qué emite                                                                           |
+|-------------------------|-------------------------------------------------------------------------------------|
+| `.word v, …`            | 32 bits por valor. Acepta etiquetas, que es lo que permite una tabla de direcciones |
+| `.half v, …`            | 16 bits por valor                                                                   |
+| `.byte v, …`            | 8 bits por valor                                                                    |
+| `.string "…"`           | Los bytes del literal, **NUL final** y relleno hasta múltiplo de 4                  |
+| `.space n` / `.zero n`  | `n` bytes a cero                                                                    |
+| `.align n`              | Rellena hasta múltiplo de `n`                                                       |
+| `.comm sim, tam[, ali]` | Reserva `tam` bytes en `.bss` bajo ese símbolo                                      |
 
 Escapes en `.string`: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`.
 
@@ -201,7 +201,7 @@ cadena larga dé un error de ensamblado y no un `RecursionError` de Python.
 **No hay espacios de nombres.** Las etiquetas globales de lo incluido lo son
 para todo el programa. Un choque se denuncia diciendo los dos sitios:
 
-```
+```text
 cube.asm:212: label duplicado: putpixel (ya definido en putpixel.inc:23)
 ```
 

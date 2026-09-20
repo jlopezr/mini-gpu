@@ -1,7 +1,7 @@
 `default_nettype none
 
 /*
- * Dos clientes para una sola ventana de registros de video.
+ * Dos clientes para un solo camino de MMIO.
  *
  * En la 16 esto no existia: `sdram_system_adapter` arbitraba monitor, CPU y
  * video en una sola maquina de estados, asi que los accesos MMIO ya salian
@@ -21,7 +21,13 @@
  * el `ack`, porque la lectura de `video_registers` es combinacional respecto a
  * `address`, que se registro un ciclo antes en el propio cliente.
  */
-module mmio_mux (
+module mmio_mux #(
+    // La direccion va entera desde los clientes hasta el decodificador. El bus
+    // se declara UNA vez, aqui, y todo lo demas lo hereda: en v2 los bloques
+    // estan a megabytes unos de otros y un ancho copiado a mano en cada sitio
+    // es como la 18 mando los dieciseis dispositivos al de video.
+    parameter ADDR_BITS = 32
+) (
     input  wire        clk,
     input  wire        reset,
 
@@ -30,7 +36,7 @@ module mmio_mux (
     output reg         a_ack,
     input  wire        a_write,
     input  wire [3:0]  a_write_mask,
-    input  wire [11:0] a_address,
+    input  wire [ADDR_BITS-1:0] a_address,
     input  wire [31:0] a_write_data,
 
     // Cliente B: la CPU.
@@ -38,14 +44,14 @@ module mmio_mux (
     output reg         b_ack,
     input  wire        b_write,
     input  wire [3:0]  b_write_mask,
-    input  wire [11:0] b_address,
+    input  wire [ADDR_BITS-1:0] b_address,
     input  wire [31:0] b_write_data,
 
     // Hacia video_registers.
     output reg         select,
     output reg         write,
     output reg  [3:0]  write_mask,
-    output reg  [11:0] address,
+    output reg  [ADDR_BITS-1:0] address,
     output reg  [31:0] write_data
 );
   // `select` dura exactamente un ciclo, que es lo que espera video_registers:
@@ -68,7 +74,7 @@ module mmio_mux (
       busy <= 1'b0;
       granted_a <= 1'b0;
       write_mask <= 4'b0000;
-      address <= 12'h000;
+      address <= {ADDR_BITS{1'b0}};
       write_data <= 32'h0000_0000;
     end else if (!busy) begin
       /*

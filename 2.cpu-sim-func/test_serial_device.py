@@ -17,7 +17,11 @@ from pathlib import Path
 from minicpu_sim import CPU, SerialDevice
 
 REPO = Path(__file__).resolve().parents[1]
-UPPER_ASM = REPO / "19.fpga-cpu-hdmi-ls" / "examples" / "serial_upper.asm"
+# De la 21 y no de la 19, que es donde estuvo hasta MMIO v2: el simulador ya
+# implementa v2 (§17) y la 21 es de momento la unica carpeta migrada, asi que
+# el programa de la 19 aqui daria un fallo de acceso. Cuando la 19 se migre da
+# igual cual se use; hasta entonces, esta linea marca cual va por delante.
+UPPER_ASM = REPO / "21.fpga-cpu-hdmi-alu" / "examples" / "serial_upper.asm"
 
 
 def assemble(path: Path) -> bytes:
@@ -26,7 +30,13 @@ def assemble(path: Path) -> bytes:
     modulo = importlib.util.module_from_spec(spec)
     sys.modules["miniisa_asm_para_tests"] = modulo
     spec.loader.exec_module(modulo)
-    palabras = modulo.assemble(path.read_text(encoding="utf-8"))
+    # Con `-I x.tests/inc`, que es donde vive `mmio.inc` generado: desde MMIO
+    # v2 los ejemplos no llevan la direccion cableada, la incluyen.
+    palabras = modulo.assemble(
+        path.read_text(encoding="utf-8"),
+        base_dir=path.parent,
+        origin=str(path),
+        include_dirs=(REPO / "x.tests" / "inc",))
     return b"".join(struct.pack("<I", w) for w in palabras)
 
 
@@ -70,11 +80,16 @@ class SerialDeviceTest(unittest.TestCase):
 
     def test_fuera_de_la_ventana_no_es_del_dispositivo(self):
         dev = SerialDevice()
-        self.assertTrue(dev.contains(0x8000_0200))
-        self.assertTrue(dev.contains(0x8000_02FF))
-        # 0x80000000 es el video y 0x80000300 esta libre.
-        self.assertFalse(dev.contains(0x8000_0000))
-        self.assertFalse(dev.contains(0x8000_0300))
+        # En v2 SERIE es un bloque de 64 KiB propio en 0x80100000, no un slot
+        # de 256 bytes dentro de una pagina compartida. Los limites se sacan
+        # de la clase para que el caso siga diciendo "la ventana es la que el
+        # dispositivo declara" y no "la ventana es esta que copie aqui".
+        self.assertTrue(dev.contains(dev.BASE))
+        self.assertTrue(dev.contains(dev.BASE + dev.SIZE - 1))
+        # Justo fuera por los dos lados. Abajo esta SYSTEM y arriba VIDEO: el
+        # hueco del megabyte entre bloques es a proposito (§3).
+        self.assertFalse(dev.contains(dev.BASE - 1))
+        self.assertFalse(dev.contains(dev.BASE + dev.SIZE))
 
 
 class SerialUpperProgramTest(unittest.TestCase):

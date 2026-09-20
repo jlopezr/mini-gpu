@@ -52,8 +52,10 @@
 ;   R28 x maxima (320-32 = 288)            R29 y maxima (240-32 = 208)
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000          ; registros de video
+    LI    R20, MMIO_VIDEO_BASE          ; registros de video
 
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; azul, en las dos mitades de la palabra
@@ -79,7 +81,7 @@ start:
     MOVI  R19, 4
 
 frame:
-    LOAD  R1, R20, 4           ; R1 = FB_BACK, cambia en cada intercambio
+    LOAD  R1, R20, MMIO_VIDEO_FB_BACK_OFF           ; R1 = FB_BACK, cambia en cada intercambio
 
     ; ---- fondo completo ----
     ADDI  R4, R1, 0
@@ -121,9 +123,9 @@ sq_word:
     BLT   R2, R27, sq_line
 
     ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
-    STORE R7, R20, 8           ; SWAP = 1
+    STORE R7, R20, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
 wait_swap:
-    LOAD  R8, R20, 8
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
     BNE   R8, R0, wait_swap
 
     ; ---- mover, y rebotar en los bordes ----

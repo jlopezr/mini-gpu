@@ -42,20 +42,21 @@
 ;   R8  'a'   R9  'z'   R10 distancia entre mayuscula y minuscula
 ; ============================================================
 
+.include "mmio.inc"
+
 start:
-    MOVHI R20, 0x8000
-    ORI   R20, R20, 0x0200     ; 0x80000200
+    LI    R20, MMIO_SERIAL_BASE
     MOVI  R3, 0
     MOVI  R8, 0x61             ; 'a'
     MOVI  R9, 0x7A             ; 'z'
     MOVI  R10, 0x20            ; 'a' - 'A'
 
 wait:
-    LOAD  R4, R20, 4           ; STATUS
+    LOAD  R4, R20, MMIO_SERIAL_STATUS_OFF           ; STATUS
     ANDI  R5, R4, 0x00FF       ; cuantos bytes hay esperando
     BEQ   R5, R3, wait         ; nada todavia
 
-    LOAD  R6, R20, 0           ; DATA: saca un byte de la cola
+    LOAD  R6, R20, MMIO_SERIAL_DATA_OFF           ; DATA: saca un byte de la cola
 
     ; Solo las minusculas cambian. Todo lo demas --digitos, espacios, el
     ; salto de linea-- vuelve tal cual, que es lo que hace legible el eco.
@@ -64,5 +65,5 @@ wait:
     SUB   R6, R6, R10
 
 send:
-    STORE R6, R20, 0           ; DATA: lo mete en la cola de salida
+    STORE R6, R20, MMIO_SERIAL_DATA_OFF           ; DATA: lo mete en la cola de salida
     BRA   wait
