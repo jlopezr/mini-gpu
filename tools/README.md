@@ -156,6 +156,23 @@ $ trace query verifications-of SPEC-DEVICE#identity-register --format json
 relaciones `partial` no se combinan implícitamente. Esta slice expone el registro
 Python, pero todavía no carga módulos de queries arbitrarios desde el proyecto.
 
+### Rules Python
+
+Las rules son políticas verificables separadas de las queries. Se registran con
+`@rule`, devuelven `RuleFinding` y se activan explícitamente en `trace.yaml`:
+
+```yaml
+rules:
+  - accepted-requirements-satisfied
+  - accepted-specifications-implemented
+  - accepted-targets-fully-verified
+```
+
+`trace check` solo las ejecuta después de resolver un grafo válido. Los findings
+`error` provocan exit code 1; los `warning` se muestran sin hacer fallar el
+comando. `trace rule list` enumera el registro core. Una rule desconocida o una
+configuración duplicada/inválida es un error explícito.
+
 Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
 con el mismo ID local:
 
@@ -171,9 +188,9 @@ Esto crea `SPEC-ISA@calls` y `SPEC-ISA#calls`. Su subtree determina el alcance;
 las facets anidadas conservan `parent-facet` y cada sección guarda únicamente
 su facet inmediata. Una frontera de artifact termina cualquier facet activa.
 
-Todavía no se interpretan sidecars, otros lenguajes de código, jerarquía de
-símbolos ni generación `gendoc`; únicamente se ignora correctamente el
-contenido situado dentro de bloques `gendoc` al construir el modelo.
+Todavía no se modela jerarquía interna de símbolos. El contenido situado dentro
+de bloques `gendoc` se ignora al construir el modelo, para que el resultado
+generado nunca se convierta accidentalmente en fuente autoritativa.
 
 ### Anotaciones SystemVerilog
 
@@ -659,6 +676,26 @@ los tres en ese mismo fichero:
 
 Si esos marcadores no existen en el archivo, no lo toca — hay que añadirlos a
 mano una vez, donde tenga sentido insertar la tabla generada.
+
+`generate-docs` también materializa queries del grafo en bloques declarativos:
+
+```markdown
+<!-- gendoc:begin identity-register-implementations
+generator: trace.query
+query: implementations-of
+arguments:
+  - SPEC-DEVICE#identity-register
+-->
+
+... tabla generada ...
+
+<!-- gendoc:end identity-register-implementations -->
+```
+
+El generador llama directamente a `ModelBuilder`, `Graph` y `CORE_QUERIES`; no
+duplica la semántica del CLI. `--check` comprueba también estos bloques sin
+escribir. Como dogfood, `tools/generate_docs.py` declara el artifact
+`IMPL-GENDOC` y símbolos formales para sus cuatro generadores.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen

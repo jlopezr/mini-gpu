@@ -10,7 +10,7 @@ import yaml
 from .diagnostic import Diagnostic
 from .identity import SourceLocation
 
-CONFIG_FIELDS = frozenset({"project", "version", "scan", "exclude"})
+CONFIG_FIELDS = frozenset({"project", "version", "scan", "exclude", "rules"})
 DEFAULT_SCAN = ("**/*.md",)
 DEFAULT_EXCLUDE = (".git/**", ".venv/**", "**/__pycache__/**", "**/_build/**", "**/node_modules/**")
 
@@ -22,6 +22,7 @@ class TraceConfig:
     scan: tuple[str, ...]
     exclude: tuple[str, ...]
     path: Path | None = None
+    rules: tuple[str, ...] = ()
 
     def excludes(self, path: Path, root: Path) -> bool:
         relative = PurePosixPath(path.relative_to(root).as_posix())
@@ -61,6 +62,7 @@ def load_config(root: Path) -> tuple[TraceConfig, tuple[Diagnostic, ...]]:
     version = raw.get("version", 1)
     scan = raw.get("scan", list(DEFAULT_SCAN))
     exclude = raw.get("exclude", list(DEFAULT_EXCLUDE))
+    rules = raw.get("rules", [])
     if project is not None and not isinstance(project, str):
         diagnostics.append(Diagnostic("invalid-config", "project debe ser texto", location))
         project = None
@@ -71,7 +73,12 @@ def load_config(root: Path) -> tuple[TraceConfig, tuple[Diagnostic, ...]]:
         diagnostics.append(Diagnostic("unsupported-config-version", f"version no soportada: {version!r}", location))
     scan = _pattern_list("scan", scan, diagnostics, location)
     exclude = _pattern_list("exclude", exclude, diagnostics, location)
-    return TraceConfig(project, version, scan, exclude, path), tuple(diagnostics)
+    if not isinstance(rules, list) or not all(isinstance(item, str) and item for item in rules):
+        diagnostics.append(Diagnostic("invalid-config", "rules debe ser una lista de nombres", location))
+        rules = []
+    elif len(set(rules)) != len(rules):
+        diagnostics.append(Diagnostic("invalid-config", "rules contiene nombres duplicados", location))
+    return TraceConfig(project, version, scan, exclude, path, tuple(rules)), tuple(diagnostics)
 
 
 def _pattern_list(name, value, diagnostics, location) -> tuple[str, ...]:

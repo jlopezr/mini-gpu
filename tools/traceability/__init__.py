@@ -16,6 +16,7 @@ from .assembly import AssemblyAdapter
 from .impact import ImpactAnalyzer, ImpactedIdentity, ImpactHop, ImpactResult
 from .graph import Graph, GraphHop
 from .query import CORE_QUERIES, QueryDefinition, QueryMatch, QueryRegistry, QueryResult, query
+from .rules import CORE_RULES, RuleDefinition, RuleFinding, RuleRegistry, rule
 
 __all__ = [
     "Diagnostic",
@@ -47,5 +48,10 @@ __all__ = [
     "QueryRegistry",
     "QueryResult",
     "query",
+    "CORE_RULES",
+    "RuleDefinition",
+    "RuleFinding",
+    "RuleRegistry",
+    "rule",
     "load_config",
 ]

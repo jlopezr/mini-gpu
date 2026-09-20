@@ -6,8 +6,11 @@ existen, para no sobrescribir texto escrito a mano."""
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,10 +18,14 @@ sys.path.insert(0, str(ROOT))
 from tools.prototype import find_repo_root, list_prototypes
 from tools.prototype_report import collect, simulator_capabilities
 from tools.rtl_facts import load_capability_signals
+from tools.traceability import CORE_QUERIES, Graph, ModelBuilder
 
 MARKER_RE_TEMPLATE = "<!-- {tag} GENERATED: {name} -->"
+TRACE_BEGIN = re.compile(r"<!--\s*gendoc:begin\s+([A-Za-z0-9_-]+)\s*\n(.*?)\n-->", re.DOTALL)
+MARKDOWN_FENCE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})", re.MULTILINE)
 
 
+# @artifact IMPL-GENDOC type=implementation
 def marker_block(name: str, body: str) -> str:
     begin = MARKER_RE_TEMPLATE.format(tag="BEGIN", name=name)
     end = MARKER_RE_TEMPLATE.format(tag="END", name=name)
@@ -38,6 +45,7 @@ def update_marked_block(text: str, name: str, body: str) -> tuple[str, bool]:
     return new_text, True
 
 
+# @id capabilities-table
 def _capabilities_table(reports: list[dict]) -> str:
     rows = [r for r in reports if r["capabilities"]]
     if not rows:
@@ -130,6 +138,7 @@ def _expand_implies(names, signals: dict) -> frozenset:
     return frozenset(expanded)
 
 
+# @id capability-matrix
 def _matrix_table(reports: list[dict], simulators: list[dict], signals: dict,
                   architecture: str) -> str:
     columns = []
@@ -183,6 +192,7 @@ def _matrix_table(reports: list[dict], simulators: list[dict], signals: dict,
     return "\n".join(lines)
 
 
+# @id synthesis-table
 def _synthesis_table(reports: list[dict]) -> str:
     rows = [r for r in reports if r["synthesis"]]
     if not rows:
@@ -240,6 +250,108 @@ def update_manual_doc(path: Path, marker_name: str, body: str, check: bool) -> s
     return f"{'(check) cambiaría' if check else 'actualizado'}: {path.name}"
 
 
+# @id trace-query
+def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
+    """Materializa bloques gendoc cuyo generator es trace.query."""
+    output = []
+    cursor = 0
+    changed = 0
+    fenced = _fenced_ranges(text)
+    search_from = 0
+    while match := TRACE_BEGIN.search(text, search_from):
+        if any(start <= match.start() < end for start, end in fenced):
+            search_from = match.end()
+            continue
+        name = match.group(1)
+        end_marker = f"<!-- gendoc:end {name} -->"
+        end = text.find(end_marker, match.end())
+        if end < 0:
+            raise ValueError(f"bloque gendoc '{name}' sin cierre")
+        metadata = yaml.safe_load(match.group(2)) or {}
+        if not isinstance(metadata, dict):
+            raise ValueError(f"metadata inválida en bloque gendoc '{name}'")
+        output.append(text[cursor:match.end()])
+        if metadata.get("generator") != "trace.query":
+            output.append(text[match.end():end + len(end_marker)])
+            cursor = end + len(end_marker)
+            continue
+        unknown = set(metadata) - {"generator", "query", "arguments"}
+        if unknown:
+            raise ValueError(f"campos desconocidos en gendoc '{name}': {', '.join(sorted(unknown))}")
+        query_name = metadata.get("query")
+        arguments = metadata.get("arguments", [])
+        if not isinstance(query_name, str) or not isinstance(arguments, list) or not all(
+            isinstance(item, str) for item in arguments
+        ):
+            raise ValueError(f"query/arguments inválidos en bloque gendoc '{name}'")
+        result = CORE_QUERIES.run(query_name, graph, tuple(arguments))
+        body = _trace_query_table(result, graph.model.root)
+        replacement = f"\n\n{body}\n\n{end_marker}"
+        original = text[match.end():end + len(end_marker)]
+        changed += replacement != original
+        output.append(replacement)
+        cursor = end + len(end_marker)
+        search_from = cursor
+    output.append(text[cursor:])
+    return "".join(output), changed
+
+
+def _fenced_ranges(text: str) -> list[tuple[int, int]]:
+    result = []
+    opened = None
+    marker = None
+    for match in MARKDOWN_FENCE.finditer(text):
+        current = match.group(1)
+        if opened is None:
+            opened, marker = match.start(), current[0]
+        elif current[0] == marker:
+            line_end = text.find("\n", match.end())
+            result.append((opened, len(text) if line_end < 0 else line_end + 1))
+            opened = marker = None
+    if opened is not None:
+        result.append((opened, len(text)))
+    return result
+
+
+def _trace_query_table(result, root: Path) -> str:
+    if not result.matches:
+        return "_Sin resultados._"
+    lines = ["| Identity | Type | Location | Reason |", "|---|---|---|---|"]
+    for match in result.matches:
+        identity = match.identity
+        semantic_type = identity.artifact_type or identity.element_type
+        lines.append(
+            f"| `{identity.key}` | {semantic_type} | `{identity.location.display(root)}` | {match.reason} |"
+        )
+    return "\n".join(lines)
+
+
+def update_trace_docs(root: Path, check: bool) -> tuple[bool, list[str]]:
+    model = ModelBuilder().build(root)
+    graph = Graph(model)
+    if graph.resolution.diagnostics:
+        details = "; ".join(item.format(root) for item in graph.resolution.diagnostics)
+        raise ValueError(f"grafo de trazabilidad inválido: {details}")
+    changed = False
+    messages = []
+    for resource in model.resources:
+        path = resource.path
+        if path.suffix.lower() != ".md":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "gendoc:begin" not in text:
+            continue
+        rendered, replacements = update_trace_query_blocks(text, graph)
+        if not replacements:
+            continue
+        relative = path.relative_to(root).as_posix()
+        changed = True
+        messages.append(f"{'(check) cambiaría' if check else 'actualizado'}: {relative}")
+        if not check:
+            path.write_text(rendered, encoding="utf-8")
+    return changed, messages
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=None)
@@ -273,6 +385,15 @@ def main() -> int:
         print(message)
         if message.startswith("actualizado") or message.startswith("(check) cambiaría"):
             changed = True
+
+    try:
+        trace_changed, messages = update_trace_docs(root, args.check)
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    changed |= trace_changed
+    for message in messages:
+        print(message)
 
     if args.check:
         return 1 if changed else 0

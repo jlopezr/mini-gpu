@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from tools.prototype import find_repo_root
-from tools.traceability import CORE_QUERIES, Graph, ImpactAnalyzer, ModelBuilder, Resolver
+from tools.traceability import CORE_QUERIES, CORE_RULES, Graph, ImpactAnalyzer, ModelBuilder
 
 
 def parser() -> argparse.ArgumentParser:
@@ -53,6 +53,9 @@ def parser() -> argparse.ArgumentParser:
     query_command.add_argument("query_name", help="nombre de query, o 'list'")
     query_command.add_argument("query_arguments", nargs="*", help="argumentos posicionales de la query")
     _query_options(query_command)
+    rule_command = commands.add_parser("rule", help="inspecciona reglas Python registradas")
+    rule_command.add_argument("action", choices=("list",))
+    _query_options(rule_command)
     return result
 
 
@@ -72,12 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    resolver = Resolver()
     if args.command == "show":
         return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
         return show_impact(root, model, args.target, args.depth, args.json or args.format == "json")
-    if args.command in {"list", "incoming", "outgoing", "tree", "path", "query"}:
+    if args.command in {"list", "incoming", "outgoing", "tree", "path", "query", "rule"}:
         graph = Graph(model)
         if graph.resolution.diagnostics:
             return _invalid_graph(root, graph)
@@ -90,19 +92,27 @@ def main(argv: list[str] | None = None) -> int:
                 return show_tree(root, graph, args.identity, args.format)
             if args.command == "query":
                 return run_query(root, graph, args.query_name, tuple(args.query_arguments), args.format)
+            if args.command == "rule":
+                return show_rules(args.format)
             return show_path(graph, args.source, args.target, args.format)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    diagnostics = resolver.resolve(model)
+    graph = Graph(model)
+    diagnostics = list(graph.resolution.diagnostics)
+    if not diagnostics:
+        diagnostics.extend(CORE_RULES.run(graph, model.config.rules))
     for diagnostic in diagnostics:
-        print(diagnostic.format(root))
-    if diagnostics:
-        print(f"FAIL: {len(diagnostics)} problema(s), {len(model.observations)} observaciones")
+        prefix = "warning: " if diagnostic.severity == "warning" else ""
+        print(prefix + diagnostic.format(root))
+    errors = [item for item in diagnostics if item.severity == "error"]
+    if errors:
+        print(f"FAIL: {len(errors)} error(es), {len(model.observations)} observaciones")
         return 1
     print(f"OK: {len(model.identities)} identidades, {len(model.observations)} observaciones "
-          f"(cache: {model.cache_hits} reutilizados, {model.cache_misses} leídos)")
+          f"(cache: {model.cache_hits} reutilizados, {model.cache_misses} leídos)"
+          f"{f', {len(diagnostics)} warning(s)' if diagnostics else ''}")
     return 0
 
 
@@ -213,6 +223,18 @@ def run_query(root: Path, graph: Graph, name: str, arguments: tuple[str, ...], o
     else:
         for match in result.matches:
             print(f"{match.identity.key}: {match.reason}")
+    return 0
+
+
+def show_rules(output_format: str) -> int:
+    definitions = sorted(CORE_RULES.definitions.values(), key=lambda item: item.name)
+    if output_format == "json":
+        print(json.dumps([{
+            "name": item.name, "description": item.description,
+        } for item in definitions], ensure_ascii=False, indent=2))
+    else:
+        for item in definitions:
+            print(f"{item.name}: {item.description}")
     return 0
 
 

@@ -33,3 +33,22 @@ materializa un SYMBOL formal mediante una anotación compacta.
 verifica el checksum del recurso descrito.
 La verificación está declarada en `validation.py`, y `probe.asm` materializa un
 programa y un label MiniISA trazables con la misma gramática de anotaciones.
+
+## Implementaciones del registro
+
+Este bloque se materializa mediante la query registrada de `trace`; su contenido
+no participa a su vez en el modelo.
+
+<!-- gendoc:begin identity-register-implementations
+generator: trace.query
+query: implementations-of
+arguments:
+  - SPEC-DEVICE#identity-register
+-->
+
+| Identity | Type | Location | Reason |
+|---|---|---|---|
+| `IMPL-DEVICE-IDENTITY::identity-read` | symbol | `tools/traceability/example/implementation.sv:11` | implementa SPEC-DEVICE#identity-register |
+| `IMPL-DEVICE-PROBE::read-identity` | symbol | `tools/traceability/example/probe.asm:6` | implementa SPEC-DEVICE#identity-register |
+
+<!-- gendoc:end identity-register-implementations -->

@@ -1,6 +1,11 @@
 project: minigpu
 version: 1
 
+rules:
+  - accepted-requirements-satisfied
+  - accepted-specifications-implemented
+  - accepted-targets-fully-verified
+
 scan:
   - "**/*.md"
   - "**/*.sv"

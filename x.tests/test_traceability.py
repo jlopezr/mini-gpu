@@ -8,9 +8,11 @@ import unittest
 from pathlib import Path
 
 from tools.trace_cli import main
+from tools.generate_docs import update_trace_query_blocks
 from tools.traceability import (
     AssemblyAdapter, CORE_QUERIES, Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder,
-    PythonAdapter, QueryRegistry, Resolver, SidecarAdapter, SystemVerilogAdapter,
+    PythonAdapter, QueryRegistry, Resolver, RuleFinding, RuleRegistry, SidecarAdapter,
+    SystemVerilogAdapter,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -526,6 +528,60 @@ type: requirement
         self.assertEqual(status, 0)
         self.assertEqual(result["matches"][0]["id"], "VER-DEVICE-IDENTITY::identity-read")
         self.assertEqual(result["matches"][0]["reason"], "verifica SPEC-DEVICE#identity-register")
+
+    def test_rule_registry_supports_errors_warnings_and_unknown_rules(self):
+        registry = RuleRegistry()
+
+        @registry.rule
+        def sample_warning(graph):
+            yield RuleFinding(graph.one("REQ-DEVICE-IDENTITY"), "revísalo", "warning")
+
+        graph = Graph(ModelBuilder().build(REPO))
+        diagnostics = registry.run(graph, ("sample-warning", "missing"))
+        severities = {item.code: item.severity for item in diagnostics}
+        self.assertEqual(severities, {"rule:sample-warning": "warning", "unknown-rule": "error"})
+
+    def test_trace_check_executes_configured_rules(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", """rules:
+  - accepted-requirements-satisfied
+""")
+            self.write(root, "requirement.md", """<!-- trace:artifact REQ
+type: requirement
+status: accepted
+-->
+# Requirement
+""")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main(["check", "--root", str(root)])
+            self.assertEqual(status, 1)
+            self.assertIn("rule:accepted-requirements-satisfied", output.getvalue())
+
+    def test_gendoc_trace_query_block_is_idempotent(self):
+        graph = Graph(ModelBuilder().build(REPO))
+        source = """<!-- gendoc:begin implementations
+generator: trace.query
+query: implementations-of
+arguments:
+  - SPEC-DEVICE#identity-register
+-->
+
+outdated
+
+<!-- gendoc:end implementations -->
+"""
+        rendered, changed = update_trace_query_blocks(source, graph)
+        self.assertEqual(changed, 1)
+        self.assertIn("IMPL-DEVICE-PROBE::read-identity", rendered)
+        self.assertNotIn("outdated", rendered)
+        second, changed_again = update_trace_query_blocks(rendered, graph)
+        self.assertEqual((second, changed_again), (rendered, 0))
+
+        fenced = f"```markdown\n{source}```\n"
+        untouched, fenced_changes = update_trace_query_blocks(fenced, graph)
+        self.assertEqual((untouched, fenced_changes), (fenced, 0))
 
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:

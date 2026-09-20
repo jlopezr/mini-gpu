@@ -161,7 +161,7 @@ class GraphCache:
             } for item in result.observations],
             "diagnostics": [{
                 "code": item.code, "message": item.message,
-                "location": self._location(item.location),
+                "location": self._location(item.location), "severity": item.severity,
             } for item in result.diagnostics],
             "dependencies": [self._relative(item) for item in getattr(result, "dependencies", ())],
         }
@@ -174,7 +174,8 @@ class GraphCache:
             self._read_location(item["location"]), item.get("attributes", {}),
         ) for item in raw["observations"])
         diagnostics = tuple(Diagnostic(
-            item["code"], item["message"], self._read_location(item["location"])
+            item["code"], item["message"], self._read_location(item["location"]),
+            item.get("severity", "error"),
         ) for item in raw["diagnostics"])
         return CachedResult(
             Resource(self.root / raw["resource"]), identities, observations, diagnostics,
