@@ -33,6 +33,7 @@ sus enlaces siguen funcionando sin activar estas reglas de cobertura.
 trace check                         # todos los Markdown del repositorio
 trace check README.md docs/         # solo observaciones de esas rutas
 trace check --root /ruta/mini-gpu   # raíz explícita para CI
+trace show REQ-001                  # declaración y relaciones de una identidad
 ```
 
 Al seleccionar rutas se siguen indexando las identidades de todo el repositorio,

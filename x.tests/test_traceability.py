@@ -133,6 +133,33 @@ class TraceabilityTest(unittest.TestCase):
         self.assertEqual(Resolver().resolve(model), [])
         self.assertEqual(len(model.observations), 9)
 
+    def test_example_builds_typed_relations(self):
+        example = REPO / "tools" / "traceability" / "example"
+        analysis = Resolver().analyze(ModelBuilder().build(REPO, [example]))
+        triples = {
+            (item.source.semantic_id, item.kind, item.target.semantic_id)
+            for item in analysis.relations
+        }
+        self.assertIn(("DEC-001", "satisfies", "REQ-001"), triples)
+        self.assertIn(("TEST-001", "verifies", "REQ-001"), triples)
+        self.assertIn(("REQ-001", "specified-by", "DEC-001"), triples)
+
+    def test_cli_show_explains_identity_connections(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["show", "req-001", "--root", str(REPO)])
+        self.assertEqual(code, 0)
+        self.assertIn("REQ-001 [requirement]", output.getvalue())
+        self.assertIn("specified-by -> DEC-001", output.getvalue())
+        self.assertIn("verified-by -> TEST-001", output.getvalue())
+
+    def test_cli_show_reports_unknown_identity(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            code = main(["show", "REQ-999", "--root", str(REPO)])
+        self.assertEqual(code, 1)
+        self.assertIn("no existe la identidad", error.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

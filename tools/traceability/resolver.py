@@ -8,6 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 from .identity import SourceLocation
 from .model import Model
+from .relation import Relation, relation_kind
 
 IGNORED_SCHEMES = frozenset({"http", "https", "mailto", "data"})
 GENERATED_PARTS = frozenset({"_build"})
@@ -23,19 +24,40 @@ class Diagnostic:
         return f"{self.location.display(root)}: {self.code}: {self.message}"
 
 
+@dataclass(frozen=True)
+class Resolution:
+    diagnostics: tuple[Diagnostic, ...]
+    relations: tuple[Relation, ...]
+
+
 class Resolver:
     def resolve(self, model: Model) -> list[Diagnostic]:
+        return list(self.analyze(model).diagnostics)
+
+    def analyze(self, model: Model) -> Resolution:
         diagnostics = self._duplicates(model)
         identities = {identity.key: identity for identity in model.identities}
-        connections: set[tuple[str, str]] = set()
+        relations: set[Relation] = set()
         for observation in model.observations:
             diagnostic, target = self._resolve_observation(model, identities, observation)
             if diagnostic:
                 diagnostics.append(diagnostic)
             elif target and observation.source.semantic_id and target.semantic_id:
-                connections.add((observation.source.semantic_id, target.semantic_id))
-        diagnostics.extend(self._coverage(model, connections))
-        return sorted(diagnostics, key=lambda item: (str(item.location.path), item.location.line, item.code))
+                relations.add(Relation(
+                    observation.source,
+                    target,
+                    relation_kind(observation.source, target),
+                ))
+        diagnostics.extend(self._coverage(model, relations))
+        ordered_diagnostics = tuple(sorted(
+            diagnostics,
+            key=lambda item: (str(item.location.path), item.location.line, item.code),
+        ))
+        ordered_relations = tuple(sorted(
+            relations,
+            key=lambda item: (item.source.semantic_id or "", item.kind, item.target.semantic_id or ""),
+        ))
+        return Resolution(ordered_diagnostics, ordered_relations)
 
     def _duplicates(self, model: Model) -> list[Diagnostic]:
         first = {}
@@ -100,11 +122,13 @@ class Resolver:
             return Diagnostic("unresolved-identity", f"{kind} sin resolver: '{target}'", observation.location), None
         return None, identities[key]
 
-    def _coverage(self, model: Model, connections: set[tuple[str, str]]) -> list[Diagnostic]:
+    def _coverage(self, model: Model, relations: set[Relation]) -> list[Diagnostic]:
         """Reglas mínimas: requisito diseñado y probado; decisión probada."""
         typed = [identity for identity in model.identities if identity.semantic_id]
         neighbors: dict[str, set[str]] = {identity.semantic_id: set() for identity in typed}
-        for left, right in connections:
+        for relation in relations:
+            left = relation.source.semantic_id
+            right = relation.target.semantic_id
             neighbors.setdefault(left, set()).add(right)
             neighbors.setdefault(right, set()).add(left)
         kinds = {identity.semantic_id: identity.kind for identity in typed}

@@ -4,7 +4,8 @@ from .identity import Identity, SourceLocation
 from .markdown import MarkdownAdapter
 from .model import Model, ModelBuilder
 from .observation import Observation
-from .resolver import Diagnostic, Resolver
+from .relation import Relation
+from .resolver import Diagnostic, Resolution, Resolver
 
 __all__ = [
     "Diagnostic",
@@ -13,6 +14,8 @@ __all__ = [
     "Model",
     "ModelBuilder",
     "Observation",
+    "Relation",
+    "Resolution",
     "Resolver",
     "SourceLocation",
 ]

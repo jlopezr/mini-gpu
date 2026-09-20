@@ -11,6 +11,7 @@ Se puede comprobar desde la raíz del repositorio:
 
 ```bash
 trace check tools/traceability/example
+trace show REQ-001
 ```
 
 ## Cómo leer el modelo
@@ -21,6 +22,9 @@ o la sección que contiene el enlace. Los encabezados que empiezan por `REQ-`,
 `DEC-` o `TEST-` crean identidades tipadas. `ModelBuilder` reúne ambas
 colecciones y `Resolver` comprueba destinos y cobertura: cada requisito debe
 estar conectado con una decisión y una prueba, y cada decisión con una prueba.
+Las relaciones conservan la dirección y reciben un nombre (`satisfies`,
+`verifies`, `specified-by` o `verified-by`), por lo que `trace show REQ-001`
+puede explicar el vecindario de una identidad sin leer el grafo entero.
 
 Por ejemplo, este enlace:
 
