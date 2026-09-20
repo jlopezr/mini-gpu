@@ -264,9 +264,37 @@ module video_registers #(
   // El modo 3 esta reservado; escribirlo es error, no se trata como BLANK.
   wire modo_reservado = (write_data[1:0] == 2'd3);
 
+  // OJO: `write`, NO `bus_write`. El error tiene que seguir vivo un ciclo mas
+  // que `select`, y esa diferencia costo una placa.
+  //
+  // `select` es un pulso de UN ciclo que fabrica `mmio_mux`, y el cliente
+  // muestrea el error en el ciclo del `ack`, que es el SIGUIENTE. Con
+  // `bus_write = select && write` el error subia y bajaba antes de que nadie
+  // lo mirase: el dispositivo rechazaba la escritura --eso funciona, porque
+  // usa `bus_write` mas abajo y pasa en el mismo ciclo-- pero la CPU no se
+  // enteraba y seguia como si nada.
+  //
+  // Sintoma: escribir una base desalineada NO movia FB_BACK y la CPU acababa
+  // con error=0. O sea el peor de los dos mundos: la escritura no surtia
+  // efecto y el programa no podia saberlo. Lo mismo por el camino del monitor,
+  // que contestaba «Written» a una escritura que habia rechazado.
+  //
+  // Se arregla mirando solo `write`, que junto con `address`, `write_mask` y
+  // `write_data` los RETIENE el mux hasta la siguiente concesion --su propio
+  // comentario lo dice: «mantener direccion Y tipo de acceso hasta que el
+  // cliente consume ack»--. El decodificador ya filtra por dispositivo con
+  // `es_video`, que tambien sale de la direccion retenida.
+  //
+  // La escritura de verdad sigue usando `bus_write`, asi que ESTO NO CAMBIA
+  // cuando se escribe el registro; solo cuanto dura el aviso.
+  //
+  // Por que no lo vio ningun banco: ninguno instancia la cadena
+  // mux + decodificador + dispositivo. `cpu_mmio_error_tb` monta el
+  // decodificador suelto y le pone `select` a mano, asi que el error y la
+  // comprobacion caen en el mismo ciclo. Lo caza `mmio_error_ack_tb.v`.
   always @* begin
     error = 1'b0;
-    if (bus_write) begin
+    if (write) begin
       case (selected)
         REG_FB_FRONT: error = front_desalineada;
         REG_FB_BACK:  error = back_desalineada;

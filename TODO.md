@@ -22,14 +22,25 @@ carpetas. Comparando con el `_build/default/hardware.pnr` de cada una:
 |------------------------|---------------------------------|
 | 6, 10, 22              | **12, 14, 16, 17, 18, 19, 21**  |
 
-La 19 y la 21 estaban en la columna izquierda y han cambiado de lado: la
-migración a MMIO v2 les tocó el RTL y su bitstream es anterior al RTL igual que
-en las otras cinco. Es el mismo riesgo, sólo que éste lo hemos creado nosotros y
-está anotado. La **18** está ahora en la misma situación, por lo mismo.
+**La 18, la 19 y la 21 ya están resueltas** (20/09/2026). Se barrieron las tres,
+se fijó semilla nueva con su párrafo en cada `apio.ini` y se resintetizaron:
+**18 → semilla 6, 88,76 MHz; 19 → semilla 5, 85,02 MHz; 21 → semilla 5,
+84,04 MHz**, las tres PASS. `docs/synthesis-report.md` ya no registra ningún FAIL.
+El detalle está en [`docs/validacion-mmio-v2-placa.md`](docs/validacion-mmio-v2-placa.md).
 
-De las tres, la única que se ha vuelto a sintetizar es la **21**, y el resultado
-es que **no cumple**: 79,90 MHz contra 80,00 con la semilla 13. O sea que el
-barrido de las tres no es una formalidad.
+Quedan por tanto **12, 14, 16 y 17**.
+
+Y una trampa más, que costó descubrirla y vale para las cuatro que faltan:
+
+- **`build-sweep` NO sintetiza.** Re-ruta el `hardware.json` del build archivado
+  más reciente. Si esa carpeta ha tocado RTL desde entonces, el barrido mide un
+  diseño que ya no existe y devuelve ocho números perfectamente plausibles y
+  falsos, sin nada en la salida que lo delate. Hay que correr `tools/build`
+  **antes** de barrer, o comprobar la fecha del build de partida.
+- El `Elapsed` de `tools/build-status` es **`mm:ss`**, no `hh:mm`.
+- Un `build.log` de nextpnr trae la temporización **dos veces**: una estimación
+  pre-rutado (10-20 MHz más pesimista, y suele ser un FAIL aparatoso) y la buena.
+  **La buena es la última.**
 
 En esas cinco, el bitstream que `test-board` programa **no es el RTL que hay en
 la carpeta**. Cualquier medida o validación que se haga contra ellas es de
@@ -75,12 +86,110 @@ de copiar de una gemela ya migrada, y es la primera carpeta sin puerto serie.
 La tabla de conformidad está en
 [`docs/resumen-prototipos.md`](docs/resumen-prototipos.md#conformidad-con-mmio-v2).
 
-**Ninguna de las tres se ha sintetizado desde la migración con éxito**: las tres
-tienen la semilla de su `apio.ini` invalidada y el barrido pendiente, y ninguna
-se ha probado en placa. La 21 **sí se sintetizó**, el 20/09/2026, y **no cumple
-temporización**: 79,90 MHz contra los 80,00 del objetivo con la semilla 13, y
-11 590/5 236 LUT/FF frente a los 10 867/5 066 de antes. Está en
-`docs/synthesis-report.md`. El barrido de las tres se paga junto.
+**Las tres están sintetizadas, barridas y con semilla nueva fijada**
+(20/09/2026), y la **21 se ha validado en placa**. Ver
+[`docs/validacion-mmio-v2-placa.md`](docs/validacion-mmio-v2-placa.md).
+
+**v2 no cuesta frecuencia**, que era la pregunta abierta: sobre el mismo juego de
+semillas la 18 sigue en 8 de 8, la 21 en 7 de 16 —las mismas que en v1— y la 19
+**mejora de 3 de 8 a 6 de 8**, con la mediana volviendo por encima del objetivo.
+El FAIL de la 21 era la semilla. Lo único que baja de forma consistente es el
+techo, unos 3-6 MHz, por los ~650 LUT que añade el mapa.
+
+Y el área ya está repartida por módulo, medida: el bloque SYSTEM cuesta **+6
+LUT** —sus siete palabras son constantes—, mientras que `cpu_perf_counters` se
+lleva el **44 %** del total. `cpu_dmem_adapter` **encoge 66 LUT**, porque detectar
+MMIO pasó de comparar veinte bits a mirar uno. Para las carpetas que faltan: el
+grueso del coste está en los contadores de rendimiento, que son opcionales.
+
+> **Deuda nueva y no anotada hasta hoy: el backend de placa compartido.**
+> `x.tests/backends/fpga.py` es único para las diez carpetas y ya está en v2, así
+> que las siete sin migrar —**6, 10, 16** y las de GPU **12, 14, 17, 22**— tienen
+> sus tests de placa rotos hasta que migren. Se cura sola según migren.
+>
+> Y hasta el 20/09 ese fichero tenía además **la semántica de v1 con las
+> direcciones de v2**, que afectaba también a las carpetas ya migradas: armaba
+> `HALT_AT` con un número de intercambios (en v2 cuenta frames), no escribía nunca
+> `HALT_TARGET` (que arranca a cero, o sea que la alarma no paraba a nadie) y leía
+> los frames de `STATUS[31:16]` (en v2 tienen registro propio). El síntoma eran
+> nueve timeouts de 20-30 s en los casos de vídeo. **Arreglado**; los tests de
+> placa de la 21 pasan de 12 fallos a 5.
+
+**Las tres se han validado en placa** (18, 19 y 21), no solo la 21. Matriz de DQ
+**128/128 limpia en las tres**, ningún timeout, y el caso negativo de la 18
+confirmado: un acceso a SERIAL —ausente, `DEVICES = 0x225`— da **error**, no cero,
+mientras que la 19 responde en esa misma dirección.
+
+> **Segundo resto de v1 en el lado host, arreglado.** El `monitor.py` de la 18 y
+> el de la 19 tenían `MMIO_LIMIT = 0x8000_0FFF`, la página de 4 KiB de v1, y el
+> de la 19 además `SERIAL_BASE = 0x8000_0200`. Desde el CLI de esas dos eran
+> inalcanzables VIDEO, SERIAL y CPU PERF. `MONITOR_REGIONS` sí estaba migrado y
+> es lo que los tests contrastan; este par no lo miraba nadie, y como sólo se usa
+> desde la línea de órdenes, la suite de placa pasaba con el CLI roto. Peor: el
+> síntoma —`exit=1`— era idéntico al éxito que se buscaba al comprobar §4.3 en la
+> 18. Ahora las dos derivan del mapa generado, como la 21.
+>
+> **El test que lo habría cazado ya está**:
+> `test_monitor_protocol.test_la_ventana_del_cli_cubre_los_bloques_que_decodifica`
+> exige que la ventana del CLI cubra todas las regiones que la carpeta declara en
+> `MONITOR_REGIONS`, y ancla las constantes contra el mapa generado. Sólo mira
+> las carpetas ya en v2, así que las que faltan no fallan hasta que migren.
+
+> **Y un segundo arreglo del arnés: la paridad del doble buffer.** Parar la CPU
+> no para el doble buffer. Una petición de `SWAP` se atiende en la frontera de
+> frame siguiente, que la decide el barrido; si el programa la escribió justo
+> antes del `halt_cpu` del arnés, el intercambio se completa con la CPU ya parada
+> y `FB_FRONT` acaba apuntando al buffer pintado a medias. Sólo muerde a los
+> programas rápidos —`swap_demo` tarda 96 ms en volver a pedir intercambio y
+> `swap_demo_fast` 13 ms, que es el orden del viaje por el puerto serie—, y el
+> fallo era **perfectamente reproducible**, que es lo que despistó: un fallo
+> reproducible no descarta una carrera, sólo dice que un corredor gana casi
+> siempre. Corregido leyendo el frame de `FB_BACK` cuando sobra un número impar
+> de intercambios. Con esto pasan `video-swap-demo-fast` y `video-starfield-fast`
+> en las tres carpetas.
+
+> **Y un tercero: la memoria de los volcados.** Los casos con `memory_dumps` dan
+> por hecho que la memoria no escrita vale cero, que es lo que hace el simulador
+> (`bytearray`), y `reset_cpu` no toca la SDRAM. Los `expected.hex` de
+> `bresenham-circles-core` y `-lines-core` tienen 673 de 896 y 294 de 416
+> palabras a cero, y la que fallaba era siempre la primera que el programa no
+> escribe. Medido: `lines-core` a solas daba 47, y tras `circles-core` daba 32;
+> poniendo la región a cero a mano, pasa. **Afecta a los 31 casos con
+> `memory_dumps`**, no a dos: a los otros 29 el residuo les cuadraba por suerte.
+> Ahora el arnés pone a cero las regiones que el caso va a volcar, antes de
+> cargar el programa.
+
+> **Y el cuarto, que sí era de RTL y es el hallazgo de silicio de la ronda.**
+> `shared-video-fb-desalineada` fallaba en las tres: el dispositivo **rechazaba**
+> la escritura desalineada pero la CPU no se enteraba. La causa es de duración,
+> no de lógica: `mmio_mux` hace `select` un pulso de un ciclo y confirma al
+> cliente al siguiente, y `video_registers` colgaba su error de
+> `bus_write = select && write`, así que el error subía y bajaba **el ciclo antes
+> del `ack`**, que es donde `cpu_dmem_adapter` lo muestrea. El error de dirección
+> nunca estuvo roto porque sale de `address`/`write`, que el mux sí retiene.
+>
+> Arreglado con una línea —el error cuelga de `write`, no de `bus_write`— en las
+> tres copias. **No cambia cuándo se escribe el registro, sólo cuánto dura el
+> aviso.** Caza el bug `mmio_error_ack_tb.v`, nuevo en las tres carpetas: monta
+> la cadena mux + decodificador + dispositivo, como `top.v`, y mira el error
+> donde lo mira el cliente. Ninguno de los bancos que había podía verlo:
+> `cpu_mmio_error_tb` pone `select` a mano y el error cae en el mismo ciclo que
+> la comprobación.
+>
+> El rebarrido que obligó el cambio de RTL salió **mejor en las tres**: la 21 de
+> 3-de-8 a **7-de-8**, la 19 de 6-de-8 a **8-de-8** con su mejor mediana
+> histórica, y el área **baja** entre 53 y 208 LUT porque la condición se
+> simplifica. Semillas nuevas: 18 → 2 (87,67), 19 → 4 (88,87), 21 → 1 (87,34).
+
+**Las tres carpetas pasan la suite de placa entera y sin fallos**: 18 → 26/0,
+19 → 38/0, 21 → 53/0, matriz de DQ 128/128 en las tres, `synthesis-report.md` sin
+un solo FAIL. El detalle está en el log:
+`shared-video-fb-desalineada` (el silicio **rechaza** la escritura desalineada,
+pero el error de dato del dispositivo no llega a la CPU, mientras que el de
+dirección sí), los dos `video-*-fast` (comparan contra el frame esperado de su
+variante lenta, igualdad que sólo se sostiene con el modelo de frames sintético
+del simulador) y `program-bresenham-circles-core`, que además **no es
+determinista** en placa.
 
 Lo que ya está hecho y **no hay que repetir por carpeta**:
 

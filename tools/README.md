@@ -579,7 +579,7 @@ comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
 $ test-board --prototype 21 -y cases/basics
 Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
 Using prototype: 21.fpga-cpu-hdmi-alu
-$ .../run_tests.py --backend cpu-fpga --version alu --port /dev/... -y cases/basics
+$ .../run_tests.py --backend cpu-fpga -p 21 --port /dev/... -y cases/basics
 PASS smoke [cpu-fpga]
 PASS zero-register [cpu-fpga]
 2 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1.7s

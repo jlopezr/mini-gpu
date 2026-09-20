@@ -28,6 +28,7 @@ if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
+from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 
 # Límite común a todos los casos: que quepan en un espacio de 32 bits. Si el
 # caso cabe en el mapa concreto de un backend lo decide `incompatibility()`.
@@ -125,6 +126,36 @@ def resolve_backend_versions(
             )
         selected[backend_name] = version
     return selected
+
+
+def version_for_prototype(
+    prototype: str, backend_names: tuple[str, ...]
+) -> tuple[str, str]:
+    """Devuelve ``(backend FPGA, versión)`` para un prototipo registrado."""
+    hardware_names = tuple(
+        name for name in backend_names if name in ("cpu-fpga", "gpu-fpga")
+    )
+    if not hardware_names:
+        raise ValueError(
+            "--prototype solo se puede usar con un backend FPGA "
+            "(cpu-fpga, gpu-fpga, both o gpu-both)"
+        )
+
+    try:
+        directory = resolve_prototype(prototype, REPOSITORY)
+    except PrototypeResolutionError as error:
+        raise ValueError(str(error)) from error
+
+    for backend_name in hardware_names:
+        for version, configuration in BACKEND_DEFINITIONS[backend_name]["versions"].items():
+            monitor_path = REPOSITORY / configuration["monitor_path"]
+            if monitor_path.parent.resolve() == directory.resolve():
+                return backend_name, version
+
+    choices = ", ".join(hardware_names)
+    raise ValueError(
+        f"El prototipo {directory.name!r} no es una versión registrada para {choices}"
+    )
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -1257,6 +1288,11 @@ def main() -> int:
         metavar="[BACKEND=]VERSION",
         help="versión del backend; puede repetirse al usar varios backends",
     )
+    parser.add_argument(
+        "-p", "--prototype",
+        metavar="PROTOTIPO",
+        help="selecciona la versión FPGA por número, nombre o ruta del prototipo",
+    )
     parser.add_argument("--trace", action="store_true",
                         help="traza del scheduler GPU por instrucción de warp")
     parser.add_argument("--trace-detail", action="store_true",
@@ -1308,7 +1344,17 @@ def main() -> int:
         # Las versiones a medir: las que se pidan con --version, o todas las
         # del backend FPGA mas el simulador, que aporta las instrucciones de
         # los casos que ninguna placa puede contar.
+        if args.prototype is not None and args.version:
+            parser.error("--prototype y --version no se pueden combinar")
         pedidas = [v.split("=", 1)[-1] for v in args.version]
+        if args.prototype is not None:
+            try:
+                _, version = version_for_prototype(
+                    args.prototype, ("cpu-fpga",)
+                )
+            except ValueError as error:
+                parser.error(str(error))
+            pedidas = [version]
         if not pedidas:
             pedidas = list(fpga_backend.VERSIONS) + ["sim"]
         desconocidas = [v for v in pedidas
@@ -1327,7 +1373,15 @@ def main() -> int:
     }
     backend_names = backend_groups.get(args.backend, (args.backend,))
     try:
-        backend_versions = resolve_backend_versions(args.version, backend_names)
+        version_specs = list(args.version)
+        if args.prototype is not None:
+            if version_specs:
+                raise ValueError("--prototype y --version no se pueden combinar")
+            backend_name, version = version_for_prototype(
+                args.prototype, backend_names
+            )
+            version_specs.append(f"{backend_name}={version}")
+        backend_versions = resolve_backend_versions(version_specs, backend_names)
     except ValueError as error:
         parser.error(str(error))
 

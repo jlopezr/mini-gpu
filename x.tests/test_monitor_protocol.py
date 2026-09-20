@@ -179,6 +179,94 @@ class ProtocoloCompartidoTest(unittest.TestCase):
                     f"  RTL:      {sorted(rtl)}\n"
                     f"  monitor:  {sorted(monitor.MONITOR_REGIONS)}")
 
+    # Un `sysid.v` declara a qué versión del contrato MMIO pertenece por el
+    # magic que lleva dentro. Mismo criterio que
+    # `test_monitor_port.test_sysid_es_copia_identica`, para que las carpetas
+    # que sigan en v1 no fallen mientras dure la travesía.
+    MAGIC_V2 = re.compile(r"MAGIC\s*=\s*32'h4D47_4155", re.IGNORECASE)
+
+    def test_la_ventana_del_cli_cubre_los_bloques_que_decodifica(self):
+        """La OTRA gemela, la que se quedó atrás en la 18 y en la 19.
+
+        `monitor.py` guarda la ventana MMIO dos veces y para dos clientes
+        distintos:
+
+        - `MONITOR_REGIONS`, que usan `validate_block`/`validate_transfer` y
+          que ya tenía dos tests --contra el mapa generado y contra los
+          `WINDOWn_*` del `top.v`--.
+        - `MMIO_BASE`/`MMIO_LIMIT`, que usa `parse_address`, o sea la LÍNEA DE
+          ÓRDENES, y que no miraba nadie.
+
+        Hasta el 20/09/2026 la 18 y la 19 tenían `MMIO_LIMIT = 0x8000_0FFF`,
+        que es la página de 4 KiB de v1 y en v2 sólo cubre SYSTEM. Con
+        `MONITOR_REGIONS` ya migrado y declarando VIDEO en `0x8020_0000`, el
+        mismo fichero afirmaba dos cosas incompatibles: el bloque existe y la
+        dirección no es válida. `monitor.py read-word 0x80200000` fallaba sin
+        llegar a la placa.
+
+        POR QUÉ NO LO CAZÓ NADIE, y es lo que hace falta recordar: el síntoma
+        era `exit=1` con un `Error:`, que es EXACTAMENTE lo que se espera al
+        comprobar §4.3 --que un bloque ausente conteste error--. Al medir el
+        caso negativo de la 18 (SERIAL ausente) el resto de v1 se lee como la
+        confirmación que se venía a buscar. Un test que compara un código de
+        salida no habría servido; hay que comparar las constantes.
+
+        La invariante que se fija es interna al fichero y no necesita datos de
+        fuera: **la ventana que acepta el CLI tiene que cubrir todas las
+        regiones que la propia carpeta declara**. Así vale igual para la 18,
+        que tiene tres, que para la 21, que tiene cuatro, sin listar ninguna
+        aquí. Y se ancla además contra el mapa generado, para que las dos no
+        puedan estar mal a la vez de forma consistente.
+        """
+        sys.path.insert(0, str(ROOT))
+        try:
+            from tools.mmio_map import MMIO_SERIAL_BASE, MMIO_SYSTEM_BASE
+        finally:
+            sys.path.pop(0)
+
+        mirados = 0
+        for prototipo in PROTOTIPOS:
+            sysid = ROOT / prototipo / "sysid.v"
+            if not sysid.exists():
+                continue
+            if not self.MAGIC_V2.search(sysid.read_text(encoding="utf8")):
+                continue        # sigue en v1; le toca cuando migre
+            mirados += 1
+            monitor = cargar(prototipo)
+            base, limite = monitor.MMIO_BASE, monitor.MMIO_LIMIT
+
+            with self.subTest(prototipo=prototipo, constante="MMIO_BASE"):
+                self.assertEqual(
+                    MMIO_SYSTEM_BASE, base,
+                    f"{prototipo}: MMIO_BASE no es la base de SYSTEM del mapa")
+
+            for region_base, region_fin in monitor.MONITOR_REGIONS:
+                with self.subTest(prototipo=prototipo,
+                                  region=f"{region_base:#010x}"):
+                    self.assertTrue(
+                        base <= region_base and region_fin - 1 <= limite,
+                        f"{prototipo}: la ventana del CLI "
+                        f"[{base:#010x}, {limite:#010x}] no cubre la región "
+                        f"[{region_base:#010x}, {region_fin - 1:#010x}] que "
+                        f"declara MONITOR_REGIONS. El síntoma es que "
+                        f"`monitor.py read-word {region_base:#010x}` falla en "
+                        f"el HOST, sin llegar a la placa, con un mensaje que "
+                        f"se parece demasiado a un error de acceso legítimo.")
+
+            # Donde exista, el puerto serie tiene que estar donde dice el mapa.
+            # La 19 lo declaraba en 0x8000_0200, su dirección de v1.
+            if hasattr(monitor, "SERIAL_BASE"):
+                with self.subTest(prototipo=prototipo, constante="SERIAL_BASE"):
+                    self.assertEqual(
+                        MMIO_SERIAL_BASE, monitor.SERIAL_BASE,
+                        f"{prototipo}: SERIAL_BASE no es la del mapa generado")
+
+        # La guarda de siempre: un test que no mira nada pasa igual, y el modo
+        # de fallo por defecto de un filtro es no ver.
+        self.assertGreaterEqual(
+            mirados, 3, "no se ha mirado ninguna carpeta en v2; ¿ha cambiado "
+                        "el magic de sysid.v o la lista de prototipos?")
+
     def test_el_modelo_de_warps_es_el_de_cada_placa(self):
         """El caso que se escapó: la 12 valida contra 128 KiB de EBR y las
         otras contra 32 MiB de SDRAM. Compartir el valor aceptaba un `pc` que

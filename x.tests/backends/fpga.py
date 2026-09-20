@@ -102,7 +102,8 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_VIDEO_BASE, MMIO_VIDEO_FB_FRONT_OFF, MMIO_VIDEO_FB_BACK_OFF,
     MMIO_VIDEO_STATUS_OFF, MMIO_VIDEO_SWAP_COUNT_OFF, MMIO_VIDEO_HALT_AT_OFF,
     MMIO_VIDEO_CTRL_OFF, MMIO_CPU_PERF_BASE, MMIO_PERF_CYCLES_OFF,
-    MMIO_PERF_RETIRED_OFF,
+    MMIO_PERF_RETIRED_OFF, MMIO_VIDEO_FRAME_COUNT_OFF,
+    MMIO_VIDEO_HALT_TARGET_OFF,
 )
 
 VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
@@ -114,6 +115,13 @@ VIDEO_FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
 VIDEO_STATUS = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
 VIDEO_SWAP_COUNT = MMIO_VIDEO_BASE + MMIO_VIDEO_SWAP_COUNT_OFF
 VIDEO_HALT_AT = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_AT_OFF
+# En v2 los frames tienen registro propio de 32 bits. Ya NO estan en STATUS[31:16]:
+# leerlos de ahi da cero siempre, que es lo que este fichero hacia hasta hoy.
+VIDEO_FRAME_COUNT = MMIO_VIDEO_BASE + MMIO_VIDEO_FRAME_COUNT_OFF
+# Quien se para cuando salta la alarma. Arranca a CERO, o sea que armar HALT_AT
+# y no escribir esto --que era suficiente en v1-- no detiene a nadie.
+VIDEO_HALT_TARGET = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_TARGET_OFF
+VIDEO_HALT_TARGET_CPU = 1 << 0
 VIDEO_CTRL = MMIO_VIDEO_BASE + MMIO_VIDEO_CTRL_OFF
 # Modos de salida. Tras el reset la placa arranca en PATTERN --ver
 # video_registers.v-- y el arnes enciende SCANOUT antes de cada caso de video.
@@ -296,10 +304,50 @@ class FpgaBackend:
                 )
 
             client.reset_cpu()
+
+            # Las regiones que el caso va a volcar se ponen a CERO antes de
+            # nada. El simulador construye su memoria con `bytearray(tamano)`,
+            # o sea toda a cero, y los `expected.hex` lo dan por hecho: el de
+            # `bresenham-circles-core` tiene 673 de sus 896 palabras a cero, que
+            # son las que el programa NO escribe. En la placa esas palabras
+            # llevan lo que dejara el caso anterior, porque `reset_cpu` no toca
+            # la SDRAM.
+            #
+            # Medido: `bresenham-lines-core` a solas daba 47 en 0x00100008, y
+            # despues de `bresenham-circles-core` daba 32. Poniendo la region a
+            # cero a mano, los dos pasan. El sintoma era un valor que cambiaba
+            # en cada ejecucion y que no se parecia a su causa.
+            #
+            # Es propiedad del ARNES, igual que encender SCANOUT o borrar el
+            # underflow: el caso declara lo que espera, no como dejar la placa
+            # preparada. Y afecta a los 31 casos con `memory_dumps`, no solo a
+            # los dos que fallaban: a los otros el residuo les cuadraba por
+            # suerte, que es peor que fallar.
+            #
+            # Va ANTES del programa y de `initial_memory` para que los dos
+            # ganen si alguna region los solapa.
+            for address, size in memory_ranges:
+                if size:
+                    client.write_memory(address, bytes(size))
+
             client.write_memory(0, program)
 
             for address, data in initial_memory:
                 client.write_memory(address, data)
+
+            # Parada del ARNES tras N intercambios. Cero = no se usa. Se arma
+            # mas abajo solo si el caso pide `run_until: {swap: N}` y la carpeta
+            # tiene `frame_capture`.
+            parar_tras_swaps = 0
+            # SWAP_COUNT y FRAME_COUNT son del DISPOSITIVO DE VIDEO, no de la
+            # CPU: `reset_cpu` no los toca y solo el reset de la placa los pone a
+            # cero. Asi que llevan la cuenta acumulada de toda la sesion --se han
+            # visto valores de cinco cifras-- y hay que medir contra la linea
+            # base de ESTE caso. El simulador no tiene el problema porque
+            # construye un dispositivo nuevo por caso, y por eso sus contadores
+            # son per-caso; estos hay que restarlos para que sean comparables.
+            swaps_base = 0
+            frames_base = 0
 
             if video:
                 # Borrar el underflow de la ejecucion anterior ANTES de
@@ -338,10 +386,40 @@ class FpgaBackend:
                 # lee cero y se traga la escritura-- pero armar una parada que
                 # nadie va a atender seria mentirle al caso.
                 if tiene_captura:
-                    swap = video.get("run_until_swap")
-                    # Cero desarma la parada. Se escribe siempre, tambien cuando
-                    # el caso no la usa, para no heredarla del caso anterior.
-                    _write_register(client, VIDEO_HALT_AT, swap or 0)
+                    # `run_until: {swap: N}` NO se arma por HALT_AT. Es la misma
+                    # decision que tomo el simulador con `stop_after_swaps`, y
+                    # por la misma razon: es una condicion de OBSERVACION del
+                    # arnes --«captura el frame tras el intercambio N»-- no un
+                    # registro que el programa vea. Los usos del arnes salen del
+                    # contrato, no se traducen.
+                    #
+                    # Y en v2 traducirlo seria ademas incorrecto por partida
+                    # doble: HALT_AT cuenta FRAMES, no intercambios, y
+                    # HALT_TARGET arranca a cero, asi que la alarma no para a
+                    # nadie. Este fichero escribia el numero de swaps en HALT_AT
+                    # y no tocaba HALT_TARGET, o sea las dos cosas mal a la vez,
+                    # y el sintoma era un timeout de 20-30 s por caso de video,
+                    # que no se parece a la causa.
+                    #
+                    # La parada se hace desde el host, sondeando SWAP_COUNT
+                    # mientras la CPU corre (ver el bucle de espera). El frame
+                    # visible no cambia hasta el intercambio SIGUIENTE, asi que
+                    # llegar unos milisegundos tarde no altera lo que se captura.
+                    parar_tras_swaps = video.get("run_until_swap") or 0
+                    # Los dos a cero, siempre, tambien cuando el caso no usa la
+                    # alarma: solo el reset de la placa los reinicia y un caso
+                    # heredaria la alarma del anterior.
+                    _write_register(client, VIDEO_HALT_AT, 0)
+                    _write_register(client, VIDEO_HALT_TARGET, 0)
+                    # La linea base, despues de desarmar y justo antes de
+                    # arrancar. Sin esto la condicion `swaps >= N` es cierta en
+                    # el primer sondeo --el contador ya vale miles-- y el caso
+                    # para sin haber dibujado nada: nueve frames en blanco que
+                    # fallan en el pixel 0.
+                    swaps_base = _read_register(client, VIDEO_SWAP_COUNT,
+                                                tiene_palabra)
+                    frames_base = _read_register(client, VIDEO_FRAME_COUNT,
+                                                 tiene_palabra)
 
             # El puerto serie se llena ANTES de arrancar, no mientras corre.
             # Asi el caso es determinista: la CPU encuentra su entrada entera
@@ -368,6 +446,17 @@ class FpgaBackend:
                 status = client.get_status()
                 if status.halted:
                     break
+                # La parada del arnes: sondear SWAP_COUNT mientras la CPU corre
+                # y pararla al llegar. Los registros MMIO responden con el nucleo
+                # en marcha --el que no responde es la MEMORIA, que el monitor
+                # solo posee con la CPU parada-- asi que esto es leer un contador,
+                # no tocar el programa.
+                if parar_tras_swaps:
+                    swaps = _read_register(client, VIDEO_SWAP_COUNT, tiene_palabra)
+                    if ((swaps - swaps_base) & 0xFFFFFFFF) >= parar_tras_swaps:
+                        client.halt_cpu()
+                        status = client.get_status()
+                        break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
                     raise TimeoutError(
@@ -416,14 +505,52 @@ class FpgaBackend:
 
             video_result = None
             if video:
+                # ANTES de leer nada, esperar a que no quede intercambio
+                # pendiente. Parar la CPU no para el doble buffer: una peticion
+                # de SWAP se atiende en la frontera de frame siguiente, que la
+                # decide el barrido. Mientras siga pendiente, SWAP_COUNT y
+                # FB_FRONT pueden cambiar entre dos lecturas nuestras, y
+                # entonces la cuenta y la base que leemos son de instantes
+                # distintos: el contador dice que no hubo intercambio de mas y
+                # la base ya esta volteada.
+                #
+                # Eso hacia que `video-swap-demo-fast` fallara UNA DE CADA DOS
+                # veces despues de corregir la paridad, que es peor que el
+                # fallo original porque parece ruido.
+                #
+                # Con la CPU parada y sin nada pendiente, el dispositivo de
+                # video esta quieto y todo lo que se lea es coherente. Un frame
+                # son 16,7 ms; 200 ms es margen de sobra y no se agota nunca
+                # salvo que el barrido este detenido, en cuyo caso seguir
+                # esperando tampoco arreglaria nada.
+                if tiene_captura:
+                    limite = time.monotonic() + 0.2
+                    while time.monotonic() < limite:
+                        if not (_read_register(client, VIDEO_STATUS,
+                                               tiene_palabra) & 2):
+                            break
+
                 # Se lee DESPUES de que la CPU haya parado. Los registros
                 # responden tambien con la CPU en marcha, pero el frame no: el
                 # monitor solo posee la memoria con la CPU parada.
                 estado = _read_register(client, VIDEO_STATUS, tiene_palabra)
                 video_result = {
                     "underflow": bool(estado & 1),
-                    "frames": estado >> 16,
-                    "swaps": (_read_register(client, VIDEO_SWAP_COUNT, tiene_palabra)
+                    # De FRAME_COUNT, no de STATUS[31:16]. En v1 los frames
+                    # vivian en la mitad alta de STATUS y daban la vuelta a los
+                    # 65536 --unos 18 minutos--; en v2 tienen registro propio de
+                    # 32 bits. Leerlos del sitio viejo devuelve cero SIEMPRE, sin
+                    # error y sin ruido, que es el peor modo de fallo posible.
+                    # Los dos contra la linea base del caso, por lo que dice el
+                    # comentario de `swaps_base`: son contadores del dispositivo
+                    # de video y sobreviven a `reset_cpu`.
+                    "frames": ((_read_register(client, VIDEO_FRAME_COUNT,
+                                               tiene_palabra)
+                                - frames_base) & 0xFFFFFFFF
+                               if tiene_captura else estado >> 16),
+                    "swaps": ((_read_register(client, VIDEO_SWAP_COUNT,
+                                              tiene_palabra)
+                               - swaps_base) & 0xFFFFFFFF
                               if tiene_captura else None),
                     "fb_front": _read_register(client, VIDEO_FB_FRONT, tiene_palabra),
                     "frame": None,
@@ -431,8 +558,37 @@ class FpgaBackend:
                 if video.get("capture_frame"):
                     # Desde FB_FRONT, no desde una direccion fija: tras el
                     # intercambio N el buffer visible alterna segun la paridad.
+                    #
+                    # Y con una correccion, porque parar la CPU NO para el
+                    # doble buffer. Una peticion de intercambio se atiende en la
+                    # frontera de frame siguiente, que la decide el BARRIDO; si
+                    # el programa escribio SWAP justo antes de que llegara el
+                    # `halt_cpu` del arnes, el intercambio se completa con la
+                    # CPU ya parada y FB_FRONT acaba apuntando al buffer que el
+                    # programa estaba pintando a medias.
+                    #
+                    # Solo muerde a los programas rapidos, y por eso tardo en
+                    # verse: `swap_demo` repinta 240 lineas y tarda 96 ms en
+                    # volver a pedir intercambio, asi que la parada siempre cae
+                    # dentro de esa ventana. `swap_demo_fast` repinta 32 y
+                    # vuelve a pedirlo en 13 ms, que es el orden del viaje de
+                    # ida y vuelta por el puerto serie. Medido: la lenta para
+                    # con `swaps=24` y la rapida con `swaps=25`, y el frame
+                    # capturado salia con la banda dos filas mas abajo.
+                    #
+                    # La correccion es de paridad y no una heuristica: cada
+                    # intercambio de mas cambia de sitio el buffer que buscamos,
+                    # que es el que quedo completo tras el intercambio N. La CPU
+                    # esta parada, asi que su contenido ya no cambia.
+                    de_mas = 0
+                    if parar_tras_swaps and video_result["swaps"] is not None:
+                        de_mas = video_result["swaps"] - parar_tras_swaps
+                    origen = video_result["fb_front"]
+                    if de_mas % 2:
+                        origen = _read_register(client, VIDEO_FB_BACK,
+                                                tiene_palabra)
                     video_result["frame"] = client.read_memory(
-                        video_result["fb_front"], FRAME_BYTES)
+                        origen, FRAME_BYTES)
 
         return {
             "halted": status.halted,

@@ -16,11 +16,33 @@ import serial
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
-# Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.
-MMIO_BASE = 0x8000_0000
-# 32 bytes, no 16: la 18 anade SWAP_COUNT (0x10) y HALT_AT (0x14) a los cuatro
-# registros que venian de la 16.
-MMIO_LIMIT = 0x8000_0FFF
+
+# La ventana que acepta el CLI sale del MAPA GENERADO, no de un numero a mano.
+# Hasta el 20/09/2026 esto era la pagina de 4 KiB de v1 (`0x8000_0000` a
+# `0x8000_0FFF`), que en v2 solo cubre SYSTEM: `parse_address` rechazaba VIDEO
+# (`0x8020_0000`) y CPU PERF (`0x8101_0000`) ANTES de hablar con la placa, con
+# un mensaje que hablaba de una «MMIO register window» que ya no existe.
+#
+# No lo cazo ningun test porque los que hay contrastan MONITOR_REGIONS --que si
+# estaba migrado-- contra el mapa y contra los WINDOWn_* del top.v. Este par de
+# constantes no lo miraba nadie, y solo se usa desde la linea de ordenes, asi
+# que la suite de placa pasaba con el CLI roto.
+#
+# El `sys.path` tiene que estar puesto ANTES del import, igual que en la 21.
+_RAIZ = Path(__file__).resolve().parents[1]
+if str(_RAIZ) not in sys.path:
+    sys.path.insert(0, str(_RAIZ))
+
+from tools.mmio_map import (  # noqa: E402
+    MMIO_SYSTEM_BASE, MMIO_CPU_PERF_BASE, MMIO_BLOCK_SIZE,
+)
+
+MMIO_BASE = MMIO_SYSTEM_BASE
+# Hasta el ultimo bloque que esta carpeta decodifica. La 18 NO tiene SERIAL
+# --`HAS_SERIAL(0)`, `DEVICES = 0x225`-- pero el limite es el mismo: el hueco de
+# SERIAL cae dentro del rango y lo rechaza el decodificador de la placa, que es
+# donde tiene que rechazarse para que §4.3 se pueda comprobar de verdad.
+MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),

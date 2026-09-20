@@ -98,7 +98,7 @@ python run_tests.py --backend cpu-fpga --version sdram --port COM3
 python run_tests.py --backend cpu-fpga --version subword --port COM3
 
 # 4b. CPU sobre FPGA, además con la ALU completa, shifts inmediatos y R0 a cero
-python run_tests.py --backend cpu-fpga --version alu --port COM3
+python run_tests.py --backend cpu-fpga -p 21 --port COM3
 
 # 5. GPU sobre el simulador funcional
 python run_tests.py --backend gpusim
@@ -106,6 +106,10 @@ python run_tests.py --backend gpusim
 # 6. GPU sobre FPGA, versión BRAM
 python run_tests.py --backend gpu-fpga --version bram --port COM3
 ```
+
+En los backends FPGA, `-p`/`--prototype` permite seleccionar la versión por
+número, nombre completo o ruta del prototipo. Por ejemplo, `-p 21` equivale a
+`--version alu`. Ambas opciones son alternativas y no se pueden combinar.
 
 Qué necesita y qué ejecuta cada una:
 

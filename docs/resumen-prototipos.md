@@ -43,9 +43,9 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | 100 MHz | 100 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
-| **Fmax / objetivo** | — | 104.4 / 100 | 115.6 / 100 | 105.0 / 100 | 84.0 / 80 | 83.9 / 80 | 79.9 / 80 |
+| **Fmax / objetivo** | — | 104.4 / 100 | 115.6 / 100 | 105.0 / 100 | 87.7 / 80 | 88.9 / 80 | 87.3 / 80 |
 | **Memoria** | — | 32 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 5 978 / 2 622 | 5 342 / 2 477 | 7 496 / 3 566 | 9 830 / 4 918 | 10 535 / 5 001 | 11 590 / 5 236 |
+| **LUT / FF** | — | 5 978 / 2 622 | 5 342 / 2 477 | 7 496 / 3 566 | 10 319 / 5 088 | 11 129 / 5 171 | 11 382 / 5 236 |
 | **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 |
 | **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
 | `mul_div` | sí | sí | no | sí | sí | sí | sí |

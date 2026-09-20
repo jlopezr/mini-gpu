@@ -17,17 +17,34 @@ import serial
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
-# Ventana MMIO: 4 KiB repartidos en dieciseis dispositivos de 256 bytes.
+# La ventana que acepta el CLI sale del MAPA GENERADO, no de numeros a mano.
 #
-#   0x80000000  dispositivo 0, video
-#   0x80000100  dispositivo 1, reservado a depuracion (lo usa la MiniGPU)
-#   0x80000200  dispositivo 2, puerto serie
+# Hasta el 20/09/2026 este bloque seguia entero en v1 y describia la pagina de
+# 4 KiB con dieciseis dispositivos de 256 bytes, que es el mapa que la migracion
+# sustituyo por bloques de 64 KiB. Dos constantes estaban mal:
 #
-# Era de 32 bytes --solo el video-- hasta que entro el serie. El mapa completo
-# esta en mmio_decoder.v.
-MMIO_BASE = 0x8000_0000
-MMIO_LIMIT = 0x8000_0FFF
-SERIAL_BASE = 0x8000_0200
+#   MMIO_LIMIT  = 0x8000_0FFF   -> en v2 solo cubre SYSTEM; `parse_address`
+#                                  rechazaba SERIAL, VIDEO y CPU PERF ANTES de
+#                                  hablar con la placa
+#   SERIAL_BASE = 0x8000_0200   -> el serie vive en 0x8010_0000 desde v2
+#
+# No lo cazo ningun test: los que hay contrastan MONITOR_REGIONS --que si estaba
+# migrado-- contra el mapa generado y contra los WINDOWn_* del top.v. Este par
+# no lo miraba nadie, y como solo se usa desde la linea de ordenes, la suite de
+# placa pasaba con el CLI roto.
+#
+# El `sys.path` tiene que estar puesto ANTES del import, igual que en la 21.
+_RAIZ = Path(__file__).resolve().parents[1]
+if str(_RAIZ) not in sys.path:
+    sys.path.insert(0, str(_RAIZ))
+
+from tools.mmio_map import (  # noqa: E402
+    MMIO_SYSTEM_BASE, MMIO_SERIAL_BASE, MMIO_CPU_PERF_BASE, MMIO_BLOCK_SIZE,
+)
+
+MMIO_BASE = MMIO_SYSTEM_BASE
+MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
+SERIAL_BASE = MMIO_SERIAL_BASE
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
