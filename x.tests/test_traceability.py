@@ -181,6 +181,49 @@ type: decision
         with contextlib.redirect_stderr(error):
             self.assertEqual(main(["show", "req-device-identity", "--root", str(REPO)]), 1)
 
+    def test_trace_yaml_controls_scan_and_exclude(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", """project: demo
+version: 1
+scan: [docs/**/*.md]
+exclude: [docs/private/**]
+""")
+            self.write(root, "docs/public/spec.md", "# Public\n")
+            self.write(root, "docs/private/secret.md", "# Secret\n")
+            self.write(root, "README.md", "# Outside scan\n")
+            model = ModelBuilder().build(root)
+            self.assertEqual(model.config.project, "demo")
+            self.assertEqual(
+                [item.path.relative_to(root).as_posix() for item in model.resources],
+                ["docs/public/spec.md"],
+            )
+
+    def test_trace_yaml_unknown_field_and_version_are_errors(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", """project: demo
+version: 2
+scna: [docs/**]
+""")
+            codes = {item.code for item in Resolver().resolve(ModelBuilder().build(root))}
+            self.assertEqual(codes, {"unknown-config-field", "unsupported-config-version"})
+
+    def test_explicit_path_cannot_bypass_project_discovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: [docs/**/*.md]\nexclude: []\n")
+            outside = self.write(root, "README.md", "# Outside\n")
+            with self.assertRaisesRegex(ValueError, "fuera de scan/exclude"):
+                ModelBuilder().build(root, [outside])
+
+    def test_trace_yaml_patterns_cannot_escape_project_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: [../*.md]\nexclude: []\n")
+            diagnostics = Resolver().resolve(ModelBuilder().build(root))
+            self.assertEqual([item.code for item in diagnostics], ["invalid-config"])
+
 
 if __name__ == "__main__":
     unittest.main()

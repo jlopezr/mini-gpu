@@ -6,17 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .config import TraceConfig, load_config
 from .diagnostic import Diagnostic
 from .identity import Identity, Resource
 from .markdown import MarkdownAdapter
 from .observation import Observation
 
-DEFAULT_SKIPS = frozenset({".git", ".venv", "__pycache__", "_build", "node_modules"})
-
-
 @dataclass(frozen=True)
 class Model:
     root: Path
+    config: TraceConfig
     resources: tuple[Resource, ...]
     identities: tuple[Identity, ...]
     observations: tuple[Observation, ...]
@@ -27,16 +26,21 @@ class ModelBuilder:
     def __init__(self, adapter: MarkdownAdapter | None = None) -> None:
         self.adapter = adapter or MarkdownAdapter()
 
-    def discover(self, root: Path) -> list[Path]:
+    def discover(self, root: Path, config: TraceConfig | None = None) -> list[Path]:
         root = root.resolve()
-        return sorted(path for path in root.rglob("*.md")
-                      if not any(part in DEFAULT_SKIPS for part in path.relative_to(root).parts))
+        config = config or load_config(root)[0]
+        paths: set[Path] = set()
+        for pattern in config.scan:
+            paths.update(path.resolve() for path in root.glob(pattern) if path.is_file() and path.suffix.lower() == ".md")
+        return sorted(path for path in paths if not config.excludes(path, root))
 
     def build(self, root: Path, paths: Iterable[Path] | None = None) -> Model:
         root = root.resolve()
-        discovered = self.discover(root)
+        config, config_diagnostics = load_config(root)
+        discovered = self.discover(root, config)
         selected = set(discovered if paths is None else self._expand(root, paths))
-        resources, identities, observations, diagnostics = [], [], [], []
+        resources, identities, observations = [], [], []
+        diagnostics = list(config_diagnostics)
         for path in discovered:
             result = self.adapter.read(path, root)
             resources.append(result.resource)
@@ -44,7 +48,7 @@ class ModelBuilder:
             diagnostics.extend(result.diagnostics)
             if path in selected:
                 observations.extend(result.observations)
-        return Model(root, tuple(resources), tuple(identities), tuple(observations), tuple(diagnostics))
+        return Model(root, config, tuple(resources), tuple(identities), tuple(observations), tuple(diagnostics))
 
     def _expand(self, root: Path, paths: Iterable[Path]) -> list[Path]:
         result: set[Path] = set()
@@ -52,9 +56,10 @@ class ModelBuilder:
             path = supplied if supplied.is_absolute() else root / supplied
             path = path.resolve()
             if path.is_dir():
-                result.update(item for item in path.rglob("*.md")
-                              if not any(part in DEFAULT_SKIPS for part in item.relative_to(root).parts))
+                result.update(item.resolve() for item in path.rglob("*.md") if item.resolve() in self.discover(root))
             elif path.is_file() and path.suffix.lower() == ".md":
+                if path not in self.discover(root):
+                    raise ValueError(f"la ruta queda fuera de scan/exclude: {supplied}")
                 result.add(path)
             else:
                 raise ValueError(f"no existe un Markdown o directorio: {supplied}")

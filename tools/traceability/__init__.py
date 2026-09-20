@@ -1,6 +1,7 @@
 """Modelo mínimo para comprobar trazabilidad entre documentos Markdown."""
 
 from .diagnostic import Diagnostic
+from .config import TraceConfig, load_config
 from .identity import Identity, Resource, SourceLocation
 from .markdown import MarkdownAdapter
 from .model import Model, ModelBuilder
@@ -20,4 +21,6 @@ __all__ = [
     "Resolution",
     "Resolver",
     "SourceLocation",
+    "TraceConfig",
+    "load_config",
 ]

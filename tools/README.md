@@ -42,9 +42,25 @@ targets exactos y relaciones duplicadas. Solo conserva las relaciones authored
 en su dirección canónica; `trace show` calcula la vista inversa al consultar.
 
 Este vertical slice implementa `RESOURCE`, `ARTIFACT`, `SECTION` y relaciones
-Markdown. Todavía no interpreta `trace.yaml`, `FACET`, anotaciones de código,
-`SYMBOL`, sidecars ni generación `gendoc`; únicamente ignora correctamente el
-contenido situado dentro de bloques `gendoc` al construir el modelo.
+Markdown. `trace.yaml` controla el discovery con patrones `scan` y `exclude`:
+
+```yaml
+project: minigpu
+version: 1
+scan:
+  - "**/*.md"
+exclude:
+  - build/**
+  - .git/**
+```
+
+La configuración es estricta: campos desconocidos, versiones no soportadas y
+listas de patrones inválidas son errores. Una ruta explícita tampoco puede
+saltar los límites de `scan`/`exclude`.
+
+Todavía no se interpretan `FACET`, anotaciones de código, `SYMBOL`, sidecars ni
+generación `gendoc`; únicamente se ignora correctamente el contenido situado
+dentro de bloques `gendoc` al construir el modelo.
 
 ```bash
 trace check                         # todos los Markdown del repositorio

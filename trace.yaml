@@ -1,0 +1,12 @@
+project: minigpu
+version: 1
+
+scan:
+  - "**/*.md"
+
+exclude:
+  - ".git/**"
+  - ".venv/**"
+  - "**/__pycache__/**"
+  - "**/_build/**"
+  - "**/node_modules/**"
