@@ -6,6 +6,9 @@ scan:
   - "**/*.sv"
   - "**/*.v"
   - "**/*.trace.yaml"
+  - "**/*.py"
+  - "**/*.asm"
+  - "**/*.s"
 
 exclude:
   - ".git/**"

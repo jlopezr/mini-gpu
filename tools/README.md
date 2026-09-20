@@ -114,6 +114,12 @@ formal produce `IMPL-MINIGPU::update-mask`. También se admite `@id local-id`
 como anotación separada. Whitespace y comentarios normales no rompen el grupo;
 otro elemento sintáctico sí lo rompe y produce un diagnóstico.
 
+Python y ensamblador MiniISA reutilizan exactamente la misma gramática. Python
+asocia los grupos al siguiente `class`, `def` o `async def` (admite decoradores
+entre ambos); ASM los asocia al siguiente label. Sus comentarios son `#` y `;`
+respectivamente. Como en SystemVerilog, el código no anotado permanece como
+RESOURCE y no genera un inventario de SYMBOLs.
+
 ### Sidecars
 
 Un fichero `<basename>.trace.yaml` aporta metadata a un recurso que no conviene

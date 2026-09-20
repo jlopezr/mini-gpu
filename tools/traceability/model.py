@@ -14,8 +14,17 @@ from .markdown import MarkdownAdapter
 from .observation import Observation
 from .systemverilog import SystemVerilogAdapter
 from .sidecar import SidecarAdapter
+from .python import PythonAdapter
+from .assembly import AssemblyAdapter
 
-ADAPTERS = {".md": MarkdownAdapter, ".sv": SystemVerilogAdapter, ".v": SystemVerilogAdapter}
+ADAPTERS = {
+    ".md": MarkdownAdapter,
+    ".sv": SystemVerilogAdapter,
+    ".v": SystemVerilogAdapter,
+    ".py": PythonAdapter,
+    ".asm": AssemblyAdapter,
+    ".s": AssemblyAdapter,
+}
 
 
 def adapter_for(path: Path):

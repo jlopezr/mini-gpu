@@ -13,6 +13,7 @@ IMPL-DEVICE-IDENTITY --satisfies--> REQ-DEVICE-IDENTITY
 VER-DEVICE-IDENTITY --verifies coverage=complete--> SPEC-DEVICE#identity-register
 VER-DEVICE-IDENTITY --verifies--> REQ-DEVICE-IDENTITY
 SPEC-DEVICE --requires--> SRC-DEVICE-REGISTERS
+IMPL-DEVICE-PROBE --implements--> SPEC-DEVICE@identity
 ```
 
 Puede inspeccionarse desde la raíz del repositorio:
@@ -30,3 +31,5 @@ implementación vive en `implementation.sv`: declara el ARTIFACT desde código y
 materializa un SYMBOL formal mediante una anotación compacta.
 `device-registers.trace.yaml` asigna identidad estable a una fuente externa y
 verifica el checksum del recurso descrito.
+La verificación está declarada en `validation.py`, y `probe.asm` materializa un
+programa y un label MiniISA trazables con la misma gramática de anotaciones.

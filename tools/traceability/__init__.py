@@ -11,6 +11,8 @@ from .relation import Relation
 from .resolver import Resolution, Resolver
 from .systemverilog import SystemVerilogAdapter
 from .sidecar import SidecarAdapter
+from .python import PythonAdapter
+from .assembly import AssemblyAdapter
 
 __all__ = [
     "Diagnostic",
@@ -28,5 +30,7 @@ __all__ = [
     "TraceConfig",
     "SystemVerilogAdapter",
     "SidecarAdapter",
+    "PythonAdapter",
+    "AssemblyAdapter",
     "load_config",
 ]

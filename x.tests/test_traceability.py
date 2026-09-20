@@ -8,7 +8,10 @@ import unittest
 from pathlib import Path
 
 from tools.trace_cli import main
-from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver, SidecarAdapter, SystemVerilogAdapter
+from tools.traceability import (
+    AssemblyAdapter, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
+    SidecarAdapter, SystemVerilogAdapter,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO / "tools" / "traceability" / "example"
@@ -113,7 +116,7 @@ subjets: [gpu]
     def test_extended_verifies_coverage_is_preserved(self):
         model = ModelBuilder().build(REPO, [EXAMPLE])
         relation = next(item for item in Resolver().analyze(model).relations
-                        if item.source.key == "VER-DEVICE-IDENTITY" and item.target.key.startswith("SPEC-DEVICE#"))
+                        if item.source.key == "VER-DEVICE-IDENTITY::identity-read")
         self.assertEqual(relation.attributes, {"coverage": "complete"})
 
     def test_facet_creates_local_identity_and_associated_section(self):
@@ -242,12 +245,14 @@ type: decision
         analysis = Resolver().analyze(model)
         self.assertEqual(analysis.diagnostics, ())
         triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
-        self.assertEqual(len(triples), 7)
+        self.assertEqual(len(triples), 9)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "satisfies", "REQ-DEVICE-IDENTITY"), triples)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "implements", "SPEC-DEVICE@identity"), triples)
         self.assertIn(("IMPL-DEVICE-IDENTITY::identity-read", "implements", "SPEC-DEVICE#identity-register"), triples)
-        self.assertIn(("VER-DEVICE-IDENTITY", "verifies", "SPEC-DEVICE#identity-register"), triples)
+        self.assertIn(("VER-DEVICE-IDENTITY::identity-read", "verifies", "SPEC-DEVICE#identity-register"), triples)
         self.assertIn(("SPEC-DEVICE", "requires", "SRC-DEVICE-REGISTERS"), triples)
+        self.assertIn(("IMPL-DEVICE-PROBE", "implements", "SPEC-DEVICE@identity"), triples)
+        self.assertIn(("IMPL-DEVICE-PROBE::read-identity", "implements", "SPEC-DEVICE#identity-register"), triples)
 
     def test_sidecar_materializes_artifact_and_validates_checksum(self):
         path = EXAMPLE / "device-registers.trace.yaml"
@@ -430,6 +435,43 @@ endmodule
 """)
             result = SystemVerilogAdapter().read(path, root)
             self.assertEqual([item.code for item in result.diagnostics], ["unknown-annotation"])
+
+    def test_python_adapter_binds_artifact_and_function_symbol(self):
+        result = PythonAdapter().read(EXAMPLE / "validation.py", REPO)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(
+            [item.key for item in result.identities],
+            ["VER-DEVICE-IDENTITY", "VER-DEVICE-IDENTITY::identity-read"],
+        )
+        self.assertEqual(result.observations[1].attributes, {"coverage": "complete"})
+
+    def test_python_adapter_allows_decorator_before_definition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "test.py", """# @artifact VER type=verification
+class Suite: pass
+# stable @verifies SPEC
+@decorator()
+async def renamed(): pass
+""")
+            result = PythonAdapter().read(path, root)
+            self.assertEqual(result.diagnostics, ())
+            self.assertEqual(result.identities[-1].key, "VER::stable")
+
+    def test_assembly_adapter_binds_artifact_and_label(self):
+        result = AssemblyAdapter().read(EXAMPLE / "probe.asm", REPO)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(
+            [item.key for item in result.identities],
+            ["IMPL-DEVICE-PROBE", "IMPL-DEVICE-PROBE::read-identity"],
+        )
+
+    def test_assembly_instruction_breaks_annotation_binding(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "bad.asm", "; @artifact IMPL type=implementation\nNOP\nstart:\n")
+            result = AssemblyAdapter().read(path, root)
+            self.assertEqual([item.code for item in result.diagnostics], ["annotation-binding"])
 
     def test_cli_show_is_exact_and_calculates_inverse_view(self):
         output = io.StringIO()
