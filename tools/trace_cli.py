@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from tools.prototype import find_repo_root
-from tools.traceability import Graph, ImpactAnalyzer, ModelBuilder, Resolver
+from tools.traceability import CORE_QUERIES, Graph, ImpactAnalyzer, ModelBuilder, Resolver
 
 
 def parser() -> argparse.ArgumentParser:
@@ -49,6 +49,10 @@ def parser() -> argparse.ArgumentParser:
     path.add_argument("source")
     path.add_argument("target")
     _query_options(path)
+    query_command = commands.add_parser("query", help="lista o ejecuta queries Python registradas")
+    query_command.add_argument("query_name", help="nombre de query, o 'list'")
+    query_command.add_argument("query_arguments", nargs="*", help="argumentos posicionales de la query")
+    _query_options(query_command)
     return result
 
 
@@ -73,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
         return show_impact(root, model, args.target, args.depth, args.json or args.format == "json")
-    if args.command in {"list", "incoming", "outgoing", "tree", "path"}:
+    if args.command in {"list", "incoming", "outgoing", "tree", "path", "query"}:
         graph = Graph(model)
         if graph.resolution.diagnostics:
             return _invalid_graph(root, graph)
@@ -84,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
                 return show_relations(root, graph, args.identity, args.command, args.relation, args.format)
             if args.command == "tree":
                 return show_tree(root, graph, args.identity, args.format)
+            if args.command == "query":
+                return run_query(root, graph, args.query_name, tuple(args.query_arguments), args.format)
             return show_path(graph, args.source, args.target, args.format)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -172,6 +178,41 @@ def show_path(graph: Graph, source: str, target: str, output_format: str) -> int
         print(source)
     else:
         print(_format_route(route))
+    return 0
+
+
+def run_query(root: Path, graph: Graph, name: str, arguments: tuple[str, ...], output_format: str) -> int:
+    if name == "list":
+        if arguments:
+            raise ValueError("'trace query list' no acepta argumentos")
+        definitions = sorted(CORE_QUERIES.definitions.values(), key=lambda item: item.name)
+        if output_format == "json":
+            print(json.dumps([{
+                "name": item.name,
+                "description": item.description,
+                "arguments": list(item.arguments),
+            } for item in definitions], ensure_ascii=False, indent=2))
+        else:
+            for item in definitions:
+                signature = " ".join(f"<{argument}>" for argument in item.arguments)
+                print(f"{item.name}{(' ' + signature) if signature else ''}: {item.description}")
+        return 0
+    result = CORE_QUERIES.run(name, graph, arguments)
+    if output_format == "json":
+        print(json.dumps({
+            "query": result.query.name,
+            "arguments": list(result.arguments),
+            "matches": [{
+                **_identity_json(match.identity, root),
+                "reason": match.reason,
+                "relations": [_relation_json(item, root) for item in match.relations],
+            } for match in result.matches],
+        }, ensure_ascii=False, indent=2))
+    elif not result.matches:
+        print("sin resultados")
+    else:
+        for match in result.matches:
+            print(f"{match.identity.key}: {match.reason}")
     return 0
 
 

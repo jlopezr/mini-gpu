@@ -9,8 +9,8 @@ from pathlib import Path
 
 from tools.trace_cli import main
 from tools.traceability import (
-    AssemblyAdapter, Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
-    SidecarAdapter, SystemVerilogAdapter,
+    AssemblyAdapter, CORE_QUERIES, Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder,
+    PythonAdapter, QueryRegistry, Resolver, SidecarAdapter, SystemVerilogAdapter,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -468,6 +468,65 @@ type: requirement
             self.assertEqual(status, 1)
             self.assertIn("sin camino", output.getvalue())
 
+    def test_query_registry_rejects_duplicates_unknown_and_bad_arguments(self):
+        registry = QueryRegistry()
+
+        @registry.query("sample", description="sample")
+        def sample(graph):
+            return ()
+
+        @registry.query
+        def automatic_name(graph):
+            """automatic"""
+            return ()
+
+        with self.assertRaisesRegex(ValueError, "duplicada"):
+            registry.query("sample", description="duplicate")(lambda graph: ())
+        self.assertIn("automatic-name", registry.definitions)
+        graph = Graph(ModelBuilder().build(REPO))
+        with self.assertRaisesRegex(ValueError, "desconocida"):
+            registry.run("missing", graph)
+        with self.assertRaisesRegex(ValueError, "espera 0"):
+            registry.run("sample", graph, ("extra",))
+
+    def test_core_queries_preserve_coverage_semantics(self):
+        graph = Graph(ModelBuilder().build(REPO))
+        implementations = CORE_QUERIES.run(
+            "implementations-of", graph, ("SPEC-DEVICE#identity-register",)
+        )
+        self.assertEqual(
+            {item.identity.key for item in implementations.matches},
+            {"IMPL-DEVICE-IDENTITY::identity-read", "IMPL-DEVICE-PROBE::read-identity"},
+        )
+        fully_missing = CORE_QUERIES.run("not-fully-verified", graph)
+        self.assertNotIn(
+            "SPEC-DEVICE#identity-register",
+            {item.identity.key for item in fully_missing.matches},
+        )
+        self.assertIn(
+            "REQ-DEVICE-IDENTITY",
+            {item.identity.key for item in fully_missing.matches},
+        )
+
+    def test_cli_lists_and_executes_registered_queries(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = main(["query", "list", "--format", "json", "--root", str(REPO)])
+        definitions = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertIn("unimplemented", {item["name"] for item in definitions})
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = main([
+                "query", "verifications-of", "SPEC-DEVICE#identity-register",
+                "--format", "json", "--root", str(REPO),
+            ])
+        result = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertEqual(result["matches"][0]["id"], "VER-DEVICE-IDENTITY::identity-read")
+        self.assertEqual(result["matches"][0]["reason"], "verifica SPEC-DEVICE#identity-register")
+
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -570,6 +629,17 @@ async def renamed(): pass
             result = PythonAdapter().read(path, root)
             self.assertEqual(result.diagnostics, ())
             self.assertEqual(result.identities[-1].key, "VER::stable")
+
+    def test_python_query_decorator_is_not_trace_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "queries.py", """@query("custom")
+def custom(graph):
+    return ()
+""")
+            result = PythonAdapter().read(path, root)
+            self.assertEqual(result.diagnostics, ())
+            self.assertEqual(result.identities, ())
 
     def test_assembly_adapter_binds_artifact_and_label(self):
         result = AssemblyAdapter().read(EXAMPLE / "probe.asm", REPO)

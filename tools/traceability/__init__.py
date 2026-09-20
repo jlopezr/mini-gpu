@@ -15,6 +15,7 @@ from .python import PythonAdapter
 from .assembly import AssemblyAdapter
 from .impact import ImpactAnalyzer, ImpactedIdentity, ImpactHop, ImpactResult
 from .graph import Graph, GraphHop
+from .query import CORE_QUERIES, QueryDefinition, QueryMatch, QueryRegistry, QueryResult, query
 
 __all__ = [
     "Diagnostic",
@@ -40,5 +41,11 @@ __all__ = [
     "ImpactResult",
     "Graph",
     "GraphHop",
+    "CORE_QUERIES",
+    "QueryDefinition",
+    "QueryMatch",
+    "QueryRegistry",
+    "QueryResult",
+    "query",
     "load_config",
 ]

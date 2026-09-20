@@ -122,6 +122,40 @@ corto, indicando en cada salto si utilizó la dirección canónica o su vista
 inversa. `show`, `list`, `incoming`, `outgoing`, `tree`, `path` e `impact`
 aceptan `--format text|json`; `impact --json` se conserva como alias.
 
+### Queries Python
+
+Las preguntas reutilizables son funciones Python registradas, no comandos con
+lógica duplicada ni un DSL propio:
+
+```python
+from tools.traceability import query
+
+@query
+def my_query(graph):
+    ...
+
+@query("related-to", arguments=("identity",))
+def related_to(graph, identity):
+    ...
+```
+
+El registro core se consulta y ejecuta desde CLI:
+
+```bash
+$ trace query list
+$ trace query unimplemented
+$ trace query unverified
+$ trace query not-fully-verified
+$ trace query unsatisfied
+$ trace query implementations-of SPEC-DEVICE#identity-register
+$ trace query verifications-of SPEC-DEVICE#identity-register --format json
+```
+
+`unverified` significa que no existe ninguna relación entrante `verifies`.
+`not-fully-verified` exige al menos una relación con `coverage=complete`; varias
+relaciones `partial` no se combinan implícitamente. Esta slice expone el registro
+Python, pero todavía no carga módulos de queries arbitrarios desde el proyecto.
+
 Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
 con el mismo ID local:
 
