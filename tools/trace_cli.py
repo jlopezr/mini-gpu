@@ -63,6 +63,8 @@ def show_identity(root: Path, model, resolver: Resolver, requested: str) -> int:
     description = identity.artifact_type if identity.element_type == "artifact" else identity.element_type
     print(f"{identity.key} [{description}]")
     print(f"declarada en {identity.location.display(root)}")
+    if identity.parent_facet:
+        print(f"parent-facet: {identity.parent_facet}")
     connected = [
         relation for relation in analysis.relations
         if relation.source == identity or relation.target == identity

@@ -36,5 +36,6 @@ class Identity:
     location: SourceLocation
     artifact_type: str | None = None
     owner: str | None = None
+    parent_facet: str | None = None
     formal: bool = True
     metadata: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)

@@ -18,6 +18,20 @@ subjects: [cpu, gpu]
 
 ## Interfaz de identidad
 
-### Registro de identidad {#identity-register}
+<!-- trace:facet identity
+kind: capability
+-->
+
+### Identidad {#identity}
+
+#### Registro de identidad {#identity-register}
 
 La lectura devuelve la firma en los bits altos y la versión en los bajos.
+
+<!-- trace:facet versioning
+kind: capability
+-->
+
+#### Versionado {#versioning}
+
+La versión permite rechazar un bitstream incompatible antes de ejecutar código.

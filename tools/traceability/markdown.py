@@ -15,7 +15,7 @@ from .observation import Observation
 
 HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 EXPLICIT_ID = re.compile(r"\s*\{#([A-Za-z0-9_-]+)\}\s*$")
-DIRECTIVE = re.compile(r"^\s*<!--\s*trace:(artifact|relations)(?:\s+([^\s]+))?\s*$")
+DIRECTIVE = re.compile(r"^\s*<!--\s*trace:(artifact|facet|relations)(?:\s+([^\s]+))?\s*$")
 ID = re.compile(r"^[A-Za-z0-9_-]+$")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CORE_TYPES = frozenset({
@@ -27,6 +27,7 @@ CORE_RELATIONS = frozenset({
     "satisfies", "verifies", "produces", "supersedes",
 })
 ARTIFACT_FIELDS = frozenset({"type", "kind", "subjects", "status", "references", "members"}) | CORE_RELATIONS
+FACET_FIELDS = frozenset({"kind"}) | CORE_RELATIONS
 
 
 def derived_slug(text: str) -> str:
@@ -52,6 +53,7 @@ class MarkdownAdapter:
         observations: list[Observation] = []
         diagnostics: list[Diagnostic] = []
         artifact_stack: list[tuple[int, Identity]] = []
+        facet_stack: list[tuple[int, Identity]] = []
         pending: tuple[str, str | None, dict, int] | None = None
         in_generated = False
         fence_char: str | None = None
@@ -113,6 +115,8 @@ class MarkdownAdapter:
                 level = len(heading.group(1))
                 while artifact_stack and artifact_stack[-1][0] >= level:
                     artifact_stack.pop()
+                while facet_stack and facet_stack[-1][0] >= level:
+                    facet_stack.pop()
                 title = heading.group(2)
                 explicit = EXPLICIT_ID.search(title)
                 if pending and pending[0] == "artifact":
@@ -120,14 +124,39 @@ class MarkdownAdapter:
                     if artifact:
                         identities.append(artifact)
                         artifact_stack.append((level, artifact))
+                        facet_stack.clear()
                         observations.extend(self._relations(artifact, pending[2], path, pending[3], diagnostics, ARTIFACT_FIELDS))
                     pending = None
+                elif pending and pending[0] == "facet":
+                    if not artifact_stack:
+                        diagnostics.append(Diagnostic(
+                            "orphan-facet", "trace:facet debe estar dentro de un ARTIFACT",
+                            SourceLocation(path, pending[3]),
+                        ))
+                        pending = None
+                    else:
+                        owner = artifact_stack[-1][1]
+                        facet = self._facet(path, pending, owner, facet_stack, explicit, diagnostics)
+                        if facet:
+                            identities.append(facet)
+                            section = Identity(
+                                f"{owner.key}#{pending[1]}", "section", SourceLocation(path, number),
+                                owner=owner.key, parent_facet=facet.key, formal=True,
+                            )
+                            identities.append(section)
+                            facet_stack.append((level, facet))
+                            observations.extend(self._relations(
+                                facet, pending[2], path, pending[3], diagnostics, FACET_FIELDS
+                            ))
+                        pending = None
                 elif artifact_stack:
                     owner = artifact_stack[-1][1]
                     local_id = explicit.group(1) if explicit else derived_slug(title)
                     section = Identity(
                         f"{owner.key}#{local_id}", "section", SourceLocation(path, number),
-                        owner=owner.key, formal=bool(explicit),
+                        owner=owner.key,
+                        parent_facet=facet_stack[-1][1].key if facet_stack else None,
+                        formal=bool(explicit),
                     )
                     identities.append(section)
                     if pending and pending[0] == "relations":
@@ -167,6 +196,36 @@ class MarkdownAdapter:
         if artifact_type not in CORE_TYPES:
             diagnostics.append(Diagnostic("invalid-artifact-type", f"type inválido o ausente: {artifact_type!r}", location))
         return Identity(artifact_id, "artifact", location, artifact_type=artifact_type, metadata=metadata)
+
+    def _facet(self, path, pending, owner, facet_stack, explicit, diagnostics):
+        _, local_id, metadata, line = pending
+        location = SourceLocation(path, line)
+        if not local_id or not ID.fullmatch(local_id):
+            diagnostics.append(Diagnostic("invalid-facet-id", f"ID inválido: {local_id!r}", location))
+            return None
+        if not explicit:
+            diagnostics.append(Diagnostic(
+                "facet-requires-formal-section", "trace:facet exige un ID formal en su heading", location
+            ))
+            return None
+        if explicit.group(1) != local_id:
+            diagnostics.append(Diagnostic(
+                "facet-section-id-mismatch",
+                f"la FACET '{local_id}' debe asociarse a la SECTION '{{#{local_id}}}'",
+                location,
+            ))
+            return None
+        unknown = set(metadata) - FACET_FIELDS
+        for field in sorted(unknown):
+            diagnostics.append(Diagnostic("unknown-metadata", f"campo desconocido: '{field}'", location))
+        kind = metadata.get("kind")
+        if not isinstance(kind, str) or not kind:
+            diagnostics.append(Diagnostic("invalid-facet-kind", "FACET requiere un kind", location))
+        parent = facet_stack[-1][1].key if facet_stack else None
+        return Identity(
+            f"{owner.key}@{local_id}", "facet", location, owner=owner.key,
+            parent_facet=parent, metadata=metadata,
+        )
 
     def _relations(self, source, metadata, path, line, diagnostics, allowed):
         location = SourceLocation(path, line)

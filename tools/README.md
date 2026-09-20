@@ -58,7 +58,22 @@ La configuración es estricta: campos desconocidos, versiones no soportadas y
 listas de patrones inválidas son errores. Una ruta explícita tampoco puede
 saltar los límites de `scan`/`exclude`.
 
-Todavía no se interpretan `FACET`, anotaciones de código, `SYMBOL`, sidecars ni
+Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
+con el mismo ID local:
+
+```markdown
+<!-- trace:facet calls
+kind: capability
+-->
+
+## Function calls {#calls}
+```
+
+Esto crea `SPEC-ISA@calls` y `SPEC-ISA#calls`. Su subtree determina el alcance;
+las facets anidadas conservan `parent-facet` y cada sección guarda únicamente
+su facet inmediata. Una frontera de artifact termina cualquier facet activa.
+
+Todavía no se interpretan anotaciones de código, `SYMBOL`, sidecars ni
 generación `gendoc`; únicamente se ignora correctamente el contenido situado
 dentro de bloques `gendoc` al construir el modelo.
 

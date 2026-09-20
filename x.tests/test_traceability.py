@@ -113,6 +113,79 @@ subjets: [gpu]
                         if item.source.key == "VER-DEVICE-IDENTITY" and item.target.key.startswith("SPEC-DEVICE#"))
         self.assertEqual(relation.attributes, {"coverage": "complete"})
 
+    def test_facet_creates_local_identity_and_associated_section(self):
+        model = ModelBuilder().build(REPO, [EXAMPLE])
+        by_key = {item.key: item for item in model.identities}
+        facet = by_key["SPEC-DEVICE@identity"]
+        section = by_key["SPEC-DEVICE#identity"]
+        register = by_key["SPEC-DEVICE#identity-register"]
+        self.assertEqual((facet.element_type, facet.owner), ("facet", "SPEC-DEVICE"))
+        self.assertEqual(section.parent_facet, facet.key)
+        self.assertEqual(register.parent_facet, facet.key)
+
+    def test_nested_facet_has_structural_parent(self):
+        model = ModelBuilder().build(REPO, [EXAMPLE])
+        by_key = {item.key: item for item in model.identities}
+        nested = by_key["SPEC-DEVICE@versioning"]
+        self.assertEqual(nested.parent_facet, "SPEC-DEVICE@identity")
+        self.assertEqual(by_key["SPEC-DEVICE#versioning"].parent_facet, nested.key)
+
+    def test_facet_scope_ends_at_same_level_heading(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "spec.md", """<!-- trace:artifact SPEC
+type: specification
+-->
+# Spec
+<!-- trace:facet calls
+kind: capability
+-->
+## Calls {#calls}
+### Inside
+## Outside
+""")
+            by_key = {item.key: item for item in ModelBuilder().build(root).identities}
+            self.assertEqual(by_key["SPEC#inside"].parent_facet, "SPEC@calls")
+            self.assertIsNone(by_key["SPEC#outside"].parent_facet)
+
+    def test_facet_requires_matching_formal_section_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "spec.md", """<!-- trace:artifact SPEC
+type: specification
+-->
+# Spec
+<!-- trace:facet calls
+kind: capability
+-->
+## Calls {#other}
+""")
+            codes = [item.code for item in Resolver().resolve(ModelBuilder().build(root))]
+            self.assertEqual(codes, ["facet-section-id-mismatch"])
+
+    def test_facet_can_author_relations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "spec.md", """<!-- trace:artifact BASE
+type: specification
+-->
+# Base
+<!-- trace:artifact SPEC
+type: specification
+-->
+# Spec
+<!-- trace:facet calls
+kind: capability
+requires: [BASE]
+-->
+## Calls {#calls}
+""")
+            analysis = Resolver().analyze(ModelBuilder().build(root))
+            self.assertEqual(analysis.diagnostics, ())
+            relation = analysis.relations[0]
+            self.assertEqual((relation.source.key, relation.kind, relation.target.key),
+                             ("SPEC@calls", "requires", "BASE"))
+
     def test_generated_trace_directives_are_ignored(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -168,6 +241,7 @@ type: decision
         triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
         self.assertEqual(len(triples), 5)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "satisfies", "REQ-DEVICE-IDENTITY"), triples)
+        self.assertIn(("IMPL-DEVICE-IDENTITY", "implements", "SPEC-DEVICE@identity"), triples)
         self.assertIn(("VER-DEVICE-IDENTITY", "verifies", "SPEC-DEVICE#identity-register"), triples)
 
     def test_cli_show_is_exact_and_calculates_inverse_view(self):

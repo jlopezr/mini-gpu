@@ -2,7 +2,7 @@
 type: implementation
 subjects: [cpu, gpu]
 implements:
-  - SPEC-DEVICE#identity-register
+  - SPEC-DEVICE@identity
 satisfies:
   - REQ-DEVICE-IDENTITY
 -->
