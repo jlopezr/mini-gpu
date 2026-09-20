@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -585,11 +590,11 @@ module top (
   wire mmio_video_select;
   wire [31:0] mmio_video_read_data;
   wire [31:0] mmio_perf_read_data;
-  mmio_decoder #(.FOLDER(8'd18), .HAS_SERIAL(0), .VIDEO_REGISTERS(64'h3ff),
-      .ISA_PROFILE(32'h0000_0003),
-      .DEVICES(32'h0000_0225),
-      .MEM_BASE(32'h0000_0000), .MEM_SIZE(32'h0200_0000),
-      .MONITOR_VERSION(32'h0000_0312))   // 3.18, el mismo que monitor_i
+  mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(0), .VIDEO_REGISTERS(64'h3ff),
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      .DEVICES(`SYSID_DEVICES),
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION))   // 3.18, el mismo que monitor_i
     mmio_decoder_i(
       .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),

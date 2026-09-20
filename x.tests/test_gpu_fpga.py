@@ -11,12 +11,16 @@ from backends import gpu_fpga
 from backends.gpu_simulator import GpuBackend
 
 
+# MMIO v2 (1.isa/mmio.md §14). Las tres bases viajan como argumento y no
+# cableadas por la misma razón de siempre: leerlas de la base equivocada no
+# daría un error, daría observaciones de OTRO registro, que es peor.
+WARPS = 0x8201_0000     # §14.2, descriptores de 16 B
+SIMT = 0x8202_0000      # §14.3, depuración
+PERF = 0x8203_0000      # §14.4, contadores
+
+
 class SnapshotClient:
-    # `config_base` es parametro porque durante la migracion de
-    # docs/unificacion-mmio.md conviven las dos direcciones: la 12 ya tiene los
-    # descriptores en 0x80001000 y el resto sigue en 0x80000000. La ventana de
-    # depuracion (0x80000100) no se mueve en ninguna de las dos.
-    def __init__(self, fault=0, config_base=0x80000000):
+    def __init__(self, fault=0, config_base=WARPS):
         self.fault = fault
         self.config_base = config_base
         self.selected = (0, 0)
@@ -33,8 +37,13 @@ class SnapshotClient:
         if self.config_base <= address < self.config_base + 0x80:
             warp = (address - self.config_base) // 16
             return struct.pack('<4I', warp * 4, 0xff00 | warp, 0, 0)
-        value = {0x80000108: 123, 0x8000010c: self.fault,
-                 0x80000110: 44, 0x80000114: self.selected[0] + 10}[address]
+        # OJO al mapa: el contador GLOBAL de retiros está en PERF+0x04, y los
+        # tres de SIMT bajaron cuatro bytes al irse él del bloque. En v1 eran
+        # 0x108/0x10c/0x110/0x114, todos seguidos.
+        value = {PERF + 0x04: 123,       # RETIRED, global
+                 SIMT + 0x08: self.fault,       # FIRST_ERROR
+                 SIMT + 0x0c: 44,               # FIRST_ERROR_PC
+                 SIMT + 0x10: self.selected[0] + 10}[address]  # WARP_RETIRED
         return value.to_bytes(4, 'little')
 
 
@@ -43,7 +52,7 @@ class GpuFpgaTest(unittest.TestCase):
         client = SnapshotClient()
         fields = {'warp[3].lane[5].R7', 'warp[0].lane[2].R1', 'warp[3].lane[5].R9'}
         got = gpu_fpga.read_observations(
-            client, SimpleNamespace(error=False), fields, 0x80000000)
+            client, SimpleNamespace(error=False), fields, WARPS, SIMT, PERF)
         self.assertEqual(got['instructions_executed'], 123)
         self.assertFalse(got['fault.present'])
         self.assertEqual(got['warp[3].pc'], 12)
@@ -52,28 +61,40 @@ class GpuFpgaTest(unittest.TestCase):
         self.assertEqual(got['warp[3].lane[5].R7'], 30507)
         self.assertEqual(client.reads, [(0, 2, 1), (3, 5, 7), (3, 5, 9)])
 
-    def test_warp_state_se_lee_de_la_pagina_migrada(self):
-        """La 12 ya tiene los descriptores en 0x80001000. Leerlos de la base
-        vieja no daria un error: daria observaciones de otra ventana, que es
-        peor. Por eso la base viaja como argumento y no cableada."""
-        client = SnapshotClient(config_base=0x80001000)
+    def test_warp_state_se_lee_de_la_base_que_declara_el_prototipo(self):
+        """Leer los descriptores de la base equivocada no daria un error:
+        daria observaciones de otra ventana, que es peor. Por eso la base viaja
+        como argumento y no cableada. Se comprueba con una base inventada, no
+        con la de v1: un caso anclado a «la base vieja» caduca cuando la base
+        vieja deja de existir, y eso ya paso al cerrar v2."""
+        inventada = 0x8209_0000
+        client = SnapshotClient(config_base=inventada)
         got = gpu_fpga.read_observations(
-            client, SimpleNamespace(error=False), set(), 0x80001000)
+            client, SimpleNamespace(error=False), set(), inventada, SIMT, PERF)
         self.assertEqual(got['warp[3].pc'], 12)
         self.assertEqual(got['warp[3].active_mask'], 3)
 
-    def test_warp_config_base_sale_del_monitor_del_prototipo(self):
-        migrado = SimpleNamespace(WARP_CONFIG_BASE=0x80001000)
-        self.assertEqual(gpu_fpga.warp_config_base(migrado), 0x80001000)
-        # Un monitor que aun no declare la constante mantiene la base vieja.
-        self.assertEqual(gpu_fpga.warp_config_base(SimpleNamespace()), 0x80000000)
+    def test_las_tres_bases_salen_del_monitor_del_prototipo(self):
+        declarado = SimpleNamespace(WARP_CONFIG_BASE=0x8209_0000,
+                                    SIMT_DEBUG_BASE=0x820a_0000,
+                                    GPU_PERF_BASE=0x820b_0000)
+        self.assertEqual(gpu_fpga.warp_config_base(declarado), 0x8209_0000)
+        self.assertEqual(gpu_fpga.simt_debug_base(declarado), 0x820a_0000)
+        self.assertEqual(gpu_fpga.gpu_perf_base(declarado), 0x820b_0000)
+        # Un monitor que no las declare cae en las de v2, no en las de v1: si
+        # un prototipo nuevo se olvida, que falle apuntando al mapa vigente.
+        vacio = SimpleNamespace()
+        self.assertEqual(gpu_fpga.warp_config_base(vacio), WARPS)
+        self.assertEqual(gpu_fpga.simt_debug_base(vacio), SIMT)
+        self.assertEqual(gpu_fpga.gpu_perf_base(vacio), PERF)
 
     def test_fault_lane_valid_and_unavailable_memory_address(self):
         for code, valid in [(4, True), (6, False), (2, True)]:
             with self.subTest(code=code):
                 client = SnapshotClient((0x40 if valid else 0) | (3 << 3) | 5)
                 got = gpu_fpga.read_observations(
-                    client, SimpleNamespace(error=True, error_code=code), set(), 0x80000000)
+                    client, SimpleNamespace(error=True, error_code=code),
+                    set(), WARPS, SIMT, PERF)
                 self.assertEqual(got['fault.pc'], 44)
                 self.assertEqual(got['fault.warp_id'], 3)
                 self.assertEqual(got['fault.core_id'], 5 if valid else None)

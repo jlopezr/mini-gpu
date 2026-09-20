@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -163,22 +168,23 @@ module top (
                         (adapter_monitor_address[4:2] != 3'd7);
   wire [31:0] sysid_word;
   sysid #(
-      .FOLDER(8'd10),
+      .FOLDER(`SYSID_FOLDER),
       // A esta CPU le faltan MUL y DIV, y eso no se detecta de ninguna otra
       // forma en ejecucion: es justo el caso que ISA_PROFILE existe para
       // declarar.
-      .ISA_PROFILE(32'h0000_0000),
-      // Seccion 5.4: bit 0 SYSTEM, bit 2 SDRAM. Ni EBR, ni video, ni serie, ni
-      // contadores de CPU. El bit 9 (CPU) es del bloque CPU PERFORMANCE de
-      // 0x81010000, que aqui no existe.
-      .DEVICES(32'h0000_0005),
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      // Seccion 5.4: bit 0 SYSTEM, bit 2 SDRAM, bit 9 CPU. Ni EBR, ni video,
+      // ni serie, ni fabric. El porque del bit 9, que antes no iba, esta
+      // contado en el `top.v` de la 6: §5.4 describe dispositivos PRESENTES,
+      // no bloques MMIO implementados.
+      .DEVICES(`SYSID_DEVICES),
       // 32 MiB de SDRAM, el mismo numero que RAM_END en el monitor de arriba.
-      .MEM_BASE(32'h0000_0000), .MEM_SIZE(32'h0200_0000),
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
       // (mayor << 8) | menor, con los MISMOS numeros que el `monitor #(...)`
       // de mas arriba. No se deduce de nada: copiar el de otra carpeta es un
       // numero valido que hace declarar un juego de comandos que esta carpeta
       // no implementa, y no lo dice ningun test.
-      .MONITOR_VERSION(32'h0000_030A)   // 3.10, el mismo que monitor_i
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION)   // 3.10, el mismo que monitor_i
   ) sysid_i (
       .word(adapter_monitor_address[4:2]),
       .read_data(sysid_word)

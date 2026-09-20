@@ -4,8 +4,8 @@
   "_comment_listas": "'file' y 'architecture' admiten un valor o una lista. Con lista, 'file' son ALTERNATIVAS: vale la primera que exista y case el patrón. Las dos listas existen por la misma razón, que es un mismo dispositivo en las dos familias: el vídeo se llama 'video_registers.v' en CPU y 'gpu_video_regs.v' en GPU, y si 'video' fuese solo de arquitectura 'cpu' un caso GPU no podría declararlo en 'requires' -- ver run_tests.py:parse_requires. Ese era el bloqueo para compartir un programa de vídeo entre la 21 y la 22.",
 
   "mul_div": {
-    "architecture": "cpu",
-    "file": "cpu.v",
+    "architecture": ["cpu", "gpu"],
+    "file": ["cpu.v", "gpu_lane.v"],
     "pattern": "OPCODE_MUL:"
   },
   "subword_memory": {

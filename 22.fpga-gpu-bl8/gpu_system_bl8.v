@@ -107,8 +107,22 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     // gpu_lsu2.v), asi que la GPU alcanza el video y NO alcanza la
     // configuracion de warps. Antes eso habia que razonarlo mirando regiones;
     // ahora sale del reparto de paginas.
-    wire mmio=address[31:13]==19'h40000;
-    wire gpu_page=address[12];
+    // MMIO v2 (1.isa/mmio.md §2). Bloques de 64 KiB alineados: el bloque es
+    // address[31:16] y el offset dentro de el, address[15:0].
+    //
+    //   0x8000_xxxx  SYSTEM     identificacion (§5)
+    //   0x8020_xxxx  VIDEO      (§9) -- solo esta carpeta, de las cuatro GPU
+    //   0x8201_xxxx  GPU WARPS  descriptores (§14.2)
+    //   0x8202_xxxx  GPU SIMT   depuracion (§14.3)
+    //   0x8203_xxxx  GPU PERF   contadores (§14.4)
+    //
+    // GPU CORE (0x8200_0000, §14.1) NO se implementa: arranque y parada van
+    // por el protocolo del monitor. Contesta error, como pide §4.3.
+    wire mmio=address[31];
+    wire [15:0] block=address[31:16];
+    wire sel_system=block==16'h8000;
+    wire sel_warps =block==16'h8201;
+    wire sel_simt  =block==16'h8202;
     // Con el nucleo EN MARCHA el host puede LEER el MMIO, no la RAM ni escribir
     // nada. Los registros son registros y leerlos no molesta a nadie; la RAM
     // esta detras del camino que la GPU esta usando, y escribir VIDEO_CTRL o
@@ -121,10 +135,10 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     //
     // Se decide sobre `host_address`, la direccion SIN latear: en este punto
     // `address` es todavia la de la transaccion anterior.
-    wire host_mmio=host_address[31:13]==19'h40000;
+    wire host_mmio=host_address[31];
     wire host_permitted=halted || (host_read_enable && !host_write_enable && host_mmio);
     // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
-    wire cfg_region=gpu_page && address[11:7]==0;
+    wire cfg_region=sel_warps && address[15:7]==0;
     wire [3:0] byte_strobe=writing_word ? 4'b1111 : (4'b0001 << address[1:0]);
     wire [31:0] expanded_data=writing_word ? write_word : {4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
@@ -287,9 +301,12 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     // Ambas en la PRIMERA pagina. El mux sirve al host (que puede direccionar
     // las dos paginas) y a la GPU (que solo llega a la primera), asi que la
     // condicion de pagina se comprueba sobre la direccion ya multiplexada.
-    wire mux_gpu_page=mmio_addr_mux[12];
-    wire video_region=!mux_gpu_page && mmio_addr_mux[11:6]==6'b000000;
-    wire perf_region =!mux_gpu_page && mmio_addr_mux[11:6]==6'b001100;
+    // VIDEO y PERF los alcanza TAMBIEN el maestro GPU (§4.2), no solo el host,
+    // asi que se deciden sobre la direccion muxada y no sobre `address`. Es la
+    // diferencia que hace que estas dos lineas no se puedan copiar de la 17:
+    // alli no hay maestro GPU con acceso a MMIO porque no hay dispositivos.
+    wire video_region=mmio_addr_mux[31:16]==16'h8020;
+    wire perf_region =mmio_addr_mux[31:16]==16'h8203;
     wire [31:0] video_read_data, perf_read_data;
     wire video_bad, perf_bad;
     wire video_write=gm_accept ? (gm_write && video_region)
@@ -305,11 +322,27 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .write_data(mmio_wdata_mux),.write_strobe(mmio_strobe_mux),
         .read_data(video_read_data),.bad(video_bad),
         .underflow(video_underflow),.frame_pulse(video_frame_pulse),
+        // VIDEO_TX se ha mudado de `perf` a aqui (§9.7), con su `running`.
+        .video_tx(p2_req_valid && p2_req_ready),.running(!halted),
         .video_mode(video_mode),.fb_base(video_fb_base),
         .underflow_clear(video_underflow_clear));
 
     gpu_perf_counters perf (
-        .clk(clk),.reset(reset),
+        // `core_reset`, NO `reset`, y es un cambio de v2 con motivo.
+        //
+        // En v1 el contador global de retiros que leia el host estaba en el
+        // bloque de depuracion (+0x108) y era el del SM, que cuelga de
+        // `core_reset`: un `reset` del monitor lo ponia a cero y cada caso de
+        // prueba empezaba a contar de nuevo. En v2 ese contador es de GPU
+        // PERFORMANCE (§14.4) y lo sirve ESTE modulo, que colgaba de `reset`
+        // y por tanto acumulaba entre casos.
+        //
+        // Se vio en placa: `instructions_executed` daba 20.864.707 donde el
+        // caso esperaba 22. No es que el contador estuviera mal, es que era
+        // otro contador. Mientras `PERF_CTRL` no exista --y no existe, ver
+        // TODO.md 2.4-- el unico modo de ponerlos a cero es el reset, asi que
+        // tienen que compartir dominio con el nucleo que miden.
+        .clk(clk),.reset(core_reset),
         // Solo se cuenta mientras la GPU corre: si no, la medida desde el host
         // incluye el ir y venir por serie y el sondeo de "¿ha parado ya?".
         .running(!halted),
@@ -318,7 +351,6 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .retired(instruction_retired),.retired_lanes(sm_retired_lanes),
         .imem_hits(imem_hits),.imem_misses(imem_misses),
         .lsu_tx(p0_valid && p0_ready),
-        .video_tx(p2_req_valid && p2_req_ready),
         .stall_mem(lsu_valid && !lsu_ready));
 
     always @(posedge clk) begin
@@ -335,8 +367,21 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     end
 
     wire [31:0] sysid_data;
-    sysid #(.FOLDER(8'd22),.ISA_PROFILE(32'h0000_000b))
-        sysid_i(.word(address[3:2]),.read_data(sysid_data));
+    // Bloque SYSTEM de v2: siete palabras, en 0x80000000. `DEVICES` (§5.4)
+    // declara SYSTEM, SDRAM, VIDEO y GPU: esta es la unica de las cuatro GPU
+    // con video, y por eso es la unica que enciende el bit 5.
+    // La identidad NO se escribe aqui: sale de `sysid_params.vh`, generado por
+    // `tools/generate-sysid`. OJO: este fichero y `gpu_system.v` comparten
+    // carpeta, asi que los dos leen el MISMO `DEVICES` -- el de la carpeta, que
+    // declara VIDEO porque el bitstream de `default` lo tiene. El entorno
+    // `base-bl1`, que monta el otro sistema, declara de mas por eso; es el
+    // mismo reparto que ya tienen las ventanas del monitor y por la misma
+    // razon: la identidad es del PROTOTIPO, no del entorno.
+    sysid #(.FOLDER(`SYSID_FOLDER),.ISA_PROFILE(`SYSID_ISA_PROFILE),
+            .DEVICES(`SYSID_DEVICES),
+            .MEM_BASE(`SYSID_MEM_BASE),.MEM_SIZE(`SYSID_MEM_SIZE),
+            .MONITOR_VERSION(`SYSID_MONITOR_VERSION))
+        sysid_i(.word(address[4:2]),.read_data(sysid_data));
     reg [31:0] mmio_data;
     reg mmio_bad;
     always @* begin
@@ -344,26 +389,29 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         if(cfg_region) begin
             mmio_data=cfg_read_data;
             if(writing && address[3:2]==3) mmio_bad=1;
-        end else if(gpu_page) mmio_bad=1;  // resto de la pagina GPU: reservado
+        end else if(sel_warps) mmio_bad=1;   // resto del bloque WARPS: no hay
         else if(video_region) begin
             mmio_data=video_read_data; mmio_bad=video_bad;
         end else if(perf_region) begin
             mmio_data=perf_read_data; mmio_bad=perf_bad || writing;
-        end else case(address[11:2])
-            10'h040: mmio_data={24'b0,2'b0,debug_warp,debug_lane};
-            10'h041: begin mmio_data={24'b0,occupied}; mmio_bad=writing; end
-            10'h042: begin mmio_data=retired_count; mmio_bad=writing; end
-            10'h043: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
-            10'h044: begin mmio_data=error_pc; mmio_bad=writing; end
-            10'h045: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
-            // Bloque de identificacion en 0x80000F00. Solo lectura: escribir
-            // es `bad`, como en el resto de registros de estado. Es host-only,
-            // igual que los de depuracion; un kernel no lo alcanza.
-            10'h3c0,10'h3c1,10'h3c2,10'h3c3: begin
-                mmio_data=sysid_data; mmio_bad=writing;
-            end
+        end else if(sel_system) begin
+            // Solo lectura, y solo las siete palabras que existen.
+            if(address[15:5]==0) begin
+                mmio_data=sysid_data; mmio_bad=writing || address[4:2]==3'd7;
+            end else mmio_bad=1;
+        end else if(sel_simt) case(address[15:2])
+            // §14.3. OJO: FIRST_ERROR y los dos de abajo BAJAN cuatro bytes
+            // respecto de v1, porque el contador global de retiros se va a
+            // PERF y deja de estar intercalado en +0x08. Aqui PERF si existe
+            // de verdad, asi que el contador cambia de bloque, no de nombre.
+            14'h0000: mmio_data={24'b0,2'b0,debug_warp,debug_lane};
+            14'h0001: begin mmio_data={24'b0,occupied}; mmio_bad=writing; end
+            14'h0002: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
+            14'h0003: begin mmio_data=error_pc; mmio_bad=writing; end
+            14'h0004: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
             default: mmio_bad=1;
         endcase
+        else mmio_bad=1;   // bloque ausente (GPU CORE, SERIAL...)
     end
     always @(posedge clk) begin
         host_ready<=0;
@@ -393,7 +441,10 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
                     if(!gm_accept) begin
                         host_read_data<=mmio_data[address[1:0]*8 +: 8]; host_read_word<=mmio_data;
                         host_error<=mmio_bad; host_ready<=1; host_state<=0;
-                        if(writing && !gpu_page && address[11:0]==12'h100) begin
+                        // CONTEXT (§14.3 +0x00) es el unico registro de GPU que se
+                    // escribe. En v1 estaba en 0x80000100; ahora es el offset
+                    // cero del bloque SIMT.
+                    if(writing && sel_simt && address[15:0]==16'h0000) begin
                             debug_lane<=expanded_data[2:0]; debug_warp<=expanded_data[5:3];
                         end
                     end

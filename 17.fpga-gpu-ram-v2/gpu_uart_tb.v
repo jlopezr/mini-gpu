@@ -71,14 +71,14 @@ module gpu_uart_tb;
         exchange(7,1); if(response[0]!==8'hff) $fatal(1,"block crossed SDRAM boundary");
         // This is the path used by monitor.py configure: write one warp's PC,
         // masks and workgroup as little-endian words through MMIO.
-        request[0]=8'h20; request[1]=8'h80; request[2]=0; request[3]=8'h10; request[4]=8'h30;
+        request[0]=8'h20; request[1]=8'h82; request[2]=8'h01; request[3]=0; request[4]=8'h30;
         request[5]=0; request[6]=12;
         request[7]=0; request[8]=0; request[9]=0; request[10]=0;
         request[11]=8'h20; request[12]=0; request[13]=0; request[14]=0;
         request[15]=7; request[16]=0; request[17]=0; request[18]=0;
         exchange(19,1); if(response[0]!==8'ha0) $fatal(1,"warp configuration block write");
         // This is the path used by warp-status: read the complete 16-byte slot.
-        request[0]=8'h21; request[1]=8'h80; request[2]=0; request[3]=8'h10; request[4]=8'h30;
+        request[0]=8'h21; request[1]=8'h82; request[2]=8'h01; request[3]=0; request[4]=8'h30;
         request[5]=0; request[6]=16;
         exchange(7,17);
         if(response[0]!==8'ha1 || response[5]!==8'h20 || response[9]!==7 ||
@@ -88,7 +88,10 @@ module gpu_uart_tb;
         request[0]=8'h33; exchange(1,7);
         if(response[0]!==8'hb3 || response[1]!==1 || response[2]!==0 || response[6]!==8) $fatal(1,"GPU status");
         // Select warp 3, lane 5 through the byte-oriented MMIO window.
-        request[0]=8'h10; request[1]=8'h80; request[2]=0; request[3]=1; request[4]=0; request[5]=29;
+        // 0x82020000: CONTEXT de GPU SIMT DEBUG (§14.3 +0x00). En v1 esta
+        // direccion iba partida como 80 00 01 00 y no la encuentra ninguna
+        // busqueda de `32'h8000...`: es la forma "bytes de protocolo".
+        request[0]=8'h10; request[1]=8'h82; request[2]=8'h02; request[3]=0; request[4]=0; request[5]=29;
         exchange(6,1); if(response[0]!==8'h90) $fatal(1,"context select");
         request[0]=8'h34; request[1]=1; exchange(2,5);
         if({response[1],response[2],response[3],response[4]}!==32'd29 || response[0]!==8'hb4)

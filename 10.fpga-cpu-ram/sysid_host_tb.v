@@ -35,13 +35,13 @@ module sysid_host_tb;
         $fatal(1,"MAGIC incorrecto %h",dut.mem_read_word);
       if(!bad && addr==32'h80000004 && dut.mem_read_word!==32'h00000200)
         $fatal(1,"MMIO_VERSION incorrecta %h",dut.mem_read_word);
-      if(!bad && addr==32'h80000008 && dut.mem_read_word!==32'd10)
+      if(!bad && addr==32'h80000008 && dut.mem_read_word!==`SYSID_FOLDER)
         $fatal(1,"SYSTEM_ID incorrecto %h",dut.mem_read_word);
-      if(!bad && addr==32'h8000000c && dut.mem_read_word!==32'h00000005)
+      if(!bad && addr==32'h8000000c && dut.mem_read_word!==`SYSID_DEVICES)
         $fatal(1,"DEVICES incorrecto %h",dut.mem_read_word);
-      if(!bad && addr==32'h80000014 && dut.mem_read_word!==32'h02000000)
+      if(!bad && addr==32'h80000014 && dut.mem_read_word!==`SYSID_MEM_SIZE)
         $fatal(1,"MEM_SIZE incorrecto %h",dut.mem_read_word);
-      if(!bad && addr==32'h80000018 && dut.mem_read_word!==32'h0000030a)
+      if(!bad && addr==32'h80000018 && dut.mem_read_word!==`SYSID_MONITOR_VERSION)
         $fatal(1,"MONITOR_VERSION incorrecta %h",dut.mem_read_word);
       repeat(4) @(negedge clk);
     end

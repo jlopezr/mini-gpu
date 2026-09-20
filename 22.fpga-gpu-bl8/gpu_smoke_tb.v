@@ -89,7 +89,7 @@ module gpu_smoke_tb;
                  halted,error,error_code,debug_pc,cycles);
 
         // Leer R1 de warp 0, lane 0.
-        access(1,32'h80000100,8'd0);
+        access(1,32'h82020000,8'd0);
         @(negedge clk); debug_register=1;
         repeat(3) @(negedge clk);
         $display("R1 = %h", debug_data);

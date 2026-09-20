@@ -183,9 +183,9 @@ cobró de verdad.
 | | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
 |---|---|---|---|---|---|---|
 | **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | — | 33.6 / 25 | 32.0 / 25 | 48.1 / 25 | 36.8 / 25 |
+| **Fmax / objetivo** | — | — | 35.1 / 25 | 34.3 / 25 | 44.8 / 25 | 35.2 / 25 |
 | **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | — | 37 336 / 9 365 | 32 535 / 9 244 | 31 519 / 10 318 | 35 393 / 12 560 |
+| **LUT / FF** | — | — | 38 078 / 9 357 | 31 038 / 9 236 | 31 392 / 10 310 | 35 937 / 12 520 |
 | **Monitor** | — | — | 3.12 | 3.14 | 3.17 | 3.22 |
 | **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k |
 | `warp_config` | no | no | sí | sí | sí | sí |

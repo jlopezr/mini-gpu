@@ -21,15 +21,20 @@
 ; programa se cronometra a si mismo en la placa, sin simular y sin UART.
 
         GETTID R1
-        MOVHI R20, 0x8000       ; R20 = 0x80000000, base del MMIO
+        .include "mmio.inc"
+        LI    R20, MMIO_VIDEO_BASE
+        ; Los contadores YA NO cuelgan de la base de video: en MMIO v2 son un
+        ; bloque aparte, en 0x82030000. En v1 estaban los dos dentro de la
+        ; misma pagina de 4 KiB y bastaba un registro.
+        LI    R19, MMIO_GPU_PERF_BASE
 
         SSY   after_mmio
         BNE   R1, R0, after_mmio   ; los que no son el hilo 0 se saltan esto
         MOVI  R2, 2                ; VIDEO_CTRL = SCANOUT
-        STORE R2, R20, 24         ; 0x80000018
-        LOAD  R10, R20, 24        ; releer: deberia dar 2
-        LOAD  R3, R20, 768         ; 0x80000300 CYCLES
-        LOAD  R4, R20, 772         ; 0x80000304 RETIRED
+        STORE R2, R20, MMIO_VIDEO_CTRL_OFF
+        LOAD  R10, R20, MMIO_VIDEO_CTRL_OFF        ; releer: deberia dar 2
+        LOAD  R3, R19, MMIO_PERF_CYCLES_OFF
+        LOAD  R4, R19, MMIO_PERF_RETIRED_OFF
 after_mmio:
         BAR
 
@@ -50,9 +55,9 @@ work:
 
         SSY   done
         BNE   R1, R0, done
-        LOAD  R11, R20, 768     ; CYCLES otra vez
+        LOAD  R11, R19, MMIO_PERF_CYCLES_OFF     ; CYCLES otra vez
         SUB   R11, R11, R3      ; ciclos del tramo
-        LOAD  R12, R20, 772     ; RETIRED otra vez
+        LOAD  R12, R19, MMIO_PERF_RETIRED_OFF    ; RETIRED otra vez
         SUB   R12, R12, R4      ; instrucciones del tramo
 done:
         BAR

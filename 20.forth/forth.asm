@@ -61,7 +61,7 @@
 ;   0x00102000  memoria libre para @ y !
 ;   0x00103000  pila de retorno del interprete interno
 ;   0x00104000  diccionario en RAM, donde : anade palabras
-; SERIAL (MMIO v2, ver mmio_v1.inc): +0 DATA, +4 STATUS
+; SERIAL (MMIO v2, ver mmio.inc): +0 DATA, +4 STATUS
 ;
 ; ---- Convencion de registros ----
 ;

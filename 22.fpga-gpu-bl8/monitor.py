@@ -24,15 +24,26 @@ ARCHITECTURAL_REGIONS = (
 # cada instancia. Lo comprueba x.tests/test_monitor_port.py.
 # La primera página es de periféricos compartidos con la CPU y la segunda, de
 # control exclusivo de la GPU. Ver docs/resumen-prototipos.md.
-WARP_CONFIG_BASE = 0x8000_1000
-VIDEO_BASE = 0x8000_0000
-SYSID_BASE = 0x8000_0f00
+# Son la GEMELA de los parámetros WINDOWn_* del `monitor` que instancia
+# `top_bl8.v` — y OJO, de `top_bl8.v`, no de `top.v`: esta carpeta tiene dos
+# entornos con dos sistemas distintos, y el CLI habla con el bitstream de
+# `default`, que es el bl8. Las dos listas tienen que decir lo mismo.
+SYSID_BASE = 0x8000_0000         # SYSTEM (mmio.md §5), siete palabras
+VIDEO_BASE = 0x8020_0000         # VIDEO (§9), diez registros
+WARP_CONFIG_BASE = 0x8201_0000   # GPU WARPS (§14.2), ocho descriptores
+SIMT_DEBUG_BASE = 0x8202_0000    # GPU SIMT DEBUG (§14.3), cinco registros
+GPU_PERF_BASE = 0x8203_0000      # GPU PERFORMANCE (§14.4) + LANE_OPS
 MONITOR_REGIONS = (
-    (VIDEO_BASE, 0x8000_001c),    # vídeo: FB_FRONT/BACK, SWAP, STATUS... CTRL
-    (0x8000_0100, 0x8000_0118),   # depuración y contadores de retiro
-    (0x8000_0300, 0x8000_0320),   # contadores de rendimiento (ver mmio.md)
-    (WARP_CONFIG_BASE, 0x8000_1080),   # configuración de warps
-    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
+    (SYSID_BASE, 0x8000_001c),
+    # Vídeo: CTRL, FB_FRONT/BACK, SWAP, STATUS, FRAME_COUNT, SWAP_COUNT,
+    # HALT_AT, HALT_TARGET y VIDEO_TX. En v1 CTRL estaba al final y ahora está
+    # al principio: el bloque no sólo cambia de base, se reordena entero.
+    (VIDEO_BASE, 0x8020_0028),
+    (WARP_CONFIG_BASE, 0x8201_0080),
+    (SIMT_DEBUG_BASE, 0x8202_0014),
+    # Siete contadores: los seis de §14.4 más LANE_OPS, que es extensión de
+    # esta carpeta. VIDEO_TX ya no está aquí, se fue a VIDEO (§9.7).
+    (GPU_PERF_BASE, 0x8203_001c),
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
@@ -62,11 +73,18 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 # igual.
 _REGIONES = MEMORY_REGIONS
 _WARP_CONFIG_BASE = WARP_CONFIG_BASE
+_SIMT_DEBUG_BASE = SIMT_DEBUG_BASE
 
 
 class MonitorClient(WarpMixin, protocolo.MonitorClient):
     MEMORY_REGIONS = _REGIONES
     WARP_CONFIG_BASE = _WARP_CONFIG_BASE
+    # `DEBUG_BASE` también hay que declararlo: el valor por defecto de
+    # `WarpMixin` sigue siendo el de v1 (0x80000100). Al ser esta la última
+    # carpeta en migrar, ese valor por defecto ya no lo usa nadie — y por eso
+    # mismo conviene que lo declaren las cuatro y no que se arregle el defecto:
+    # un defecto correcto es un sitio del que hay que acordarse.
+    DEBUG_BASE = _SIMT_DEBUG_BASE
     # La memoria del MODELO con el que se valida el JSON antes de tocar la
     # placa. Es la de ESTE prototipo: un pc fuera de ella tiene que fallar
     # aqui y no despues, con los warps a medio escribir.

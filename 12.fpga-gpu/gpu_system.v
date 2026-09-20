@@ -1,4 +1,8 @@
 `default_nettype none
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta; se resuelve dentro de ella, que es lo que
+// deja este fichero identico entre prototipos.
+`include "sysid_params.vh"
 module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_DEPTH=8) (
     input clk, reset, gpu_reset,
     input run_request, halt_request, step_request,
@@ -53,8 +57,25 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     // es lo que permite que el reparto siga valiendo el dia que CPU y GPU
     // compartan bitstream: lo exclusivo queda aparte, no intercalado entre lo
     // compartido. Ver docs/resumen-prototipos.md.
-    wire mmio=address[31:13]==19'h40000;
-    wire gpu_page=address[12];
+    // MMIO v2 (1.isa/mmio.md §2). Se acabaron las dos paginas de 4 KiB: cada
+    // bloque son 64 KiB alineados, asi que el bloque es address[31:16] y el
+    // offset dentro de el es address[15:0]. No hay ranuras ni paginas.
+    //
+    //   0x8000_xxxx  SYSTEM        identificacion (§5)
+    //   0x8201_xxxx  GPU WARPS     descriptores (§14.2)
+    //   0x8202_xxxx  GPU SIMT      depuracion (§14.3)
+    //   0x8203_xxxx  GPU PERF      contadores (§14.4)
+    //
+    // GPU CORE (0x8200_0000, §14.1) NO se implementa aqui, y es deliberado:
+    // arranque y parada de la GPU van por el protocolo del monitor, no por
+    // MMIO, igual que CPU CORE (§13.1) tampoco existe en la familia CPU. El
+    // bloque contesta error, que es lo que §4.3 pide de un bloque ausente.
+    wire mmio=address[31];
+    wire [15:0] block=address[31:16];
+    wire sel_system=block==16'h8000;
+    wire sel_warps =block==16'h8201;
+    wire sel_simt  =block==16'h8202;
+    wire sel_perf  =block==16'h8203;
     // Con el nucleo EN MARCHA el host puede LEER el MMIO, no la RAM ni escribir
     // nada. Los registros son registros y leerlos no molesta a nadie; la RAM
     // esta detras del camino que la GPU esta usando, y escribir VIDEO_CTRL o
@@ -65,10 +86,13 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     //
     // Se decide sobre `host_address`, la direccion SIN latear: en este punto
     // `address` es todavia la de la transaccion anterior.
-    wire host_mmio=host_address[31:13]==19'h40000;
+    wire host_mmio=host_address[31];
     wire host_permitted=halted || (host_read_enable && !host_write_enable && host_mmio);
-    // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
-    wire cfg_region=gpu_page && address[11:7]==0;
+    // Descriptores de warp: 8 de 16 B, ahora en 0x82010000-0x8201007F. El
+    // reparto DENTRO del descriptor no cambia --PC/ACTIVE/GROUP/SIMT, que es
+    // lo que §14.2 congela-- asi que `cfg_word` sigue siendo address[6:2] y
+    // `gpu_sm.v` no se toca. Lo unico que se mueve es el bloque.
+    wire cfg_region=sel_warps && address[15:7]==0;
     wire [3:0] byte_strobe=writing_word ? 4'b1111 : (4'b0001 << address[1:0]);
     wire [31:0] expanded_data=writing_word ? write_word : {4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
@@ -124,8 +148,19 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         .aux_rsp_ready(aux_rsp_ready),.aux_read_data(aux_read_data),.aux_error(aux_error)
     );
     wire [31:0] sysid_data;
-    sysid #(.FOLDER(8'd12),.ISA_PROFILE(32'h0000_000b))
-        sysid_i(.word(address[3:2]),.read_data(sysid_data));
+    // Bloque SYSTEM de v2: siete palabras, en 0x80000000. `DEVICES` declara lo
+    // que este prototipo tiene de verdad (§5.4): SYSTEM, EBR y GPU. Es el
+    // unico de la familia con EBR en vez de SDRAM, y el unico cuyo `MEM_SIZE`
+    // no son 32 MiB: son los 128 KiB de bloque interno.
+    // La identidad NO se escribe aqui: sale de `sysid_params.vh`, que genera
+    // `tools/generate-sysid` leyendo el RTL de esta carpeta. Los 128 KiB de
+    // EBR de esta carpeta salen de su `RAM_END`, no de `MMIO_MEM_SIZE_EBR`,
+    // que son 32 KiB y describen la 6.
+    sysid #(.FOLDER(`SYSID_FOLDER),.ISA_PROFILE(`SYSID_ISA_PROFILE),
+            .DEVICES(`SYSID_DEVICES),
+            .MEM_BASE(`SYSID_MEM_BASE),.MEM_SIZE(`SYSID_MEM_SIZE),
+            .MONITOR_VERSION(`SYSID_MONITOR_VERSION))
+        sysid_i(.word(address[4:2]),.read_data(sysid_data));
     reg [31:0] mmio_data;
     reg mmio_bad;
     always @* begin
@@ -133,22 +168,29 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         if(cfg_region) begin
             mmio_data=cfg_read_data;
             if(writing && address[3:2]==3) mmio_bad=1;
-        end else if(gpu_page) mmio_bad=1;  // resto de la pagina GPU: reservado
-        else case(address[11:2])
-            10'h040: mmio_data={24'b0,2'b0,debug_warp,debug_lane};
-            10'h041: begin mmio_data={24'b0,occupied}; mmio_bad=writing; end
-            10'h042: begin mmio_data=retired_count; mmio_bad=writing; end
-            10'h043: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
-            10'h044: begin mmio_data=error_pc; mmio_bad=writing; end
-            10'h045: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
-            // Bloque de identificacion en 0x80000F00. Solo lectura: escribir
-            // es `bad`, como en el resto de registros de estado. Es host-only,
-            // igual que los de depuracion; un kernel no lo alcanza.
-            10'h3c0,10'h3c1,10'h3c2,10'h3c3: begin
-                mmio_data=sysid_data; mmio_bad=writing;
-            end
+        end else if(sel_warps) mmio_bad=1;   // resto del bloque WARPS: no hay
+        else if(sel_system) begin
+            if(address[15:5]==0) begin
+                mmio_data=sysid_data; mmio_bad=writing || address[4:2]==3'd7;
+            end else mmio_bad=1;
+        end else if(sel_simt) case(address[15:2])
+            // §14.3. OJO: FIRST_ERROR y los dos de abajo BAJAN cuatro bytes
+            // respecto de v1, porque el contador global de retiros se va a
+            // PERF y deja de estar intercalado en +0x08.
+            14'h0000: mmio_data={24'b0,2'b0,debug_warp,debug_lane};
+            14'h0001: begin mmio_data={24'b0,occupied}; mmio_bad=writing; end
+            14'h0002: begin mmio_data={16'b0,error_code,1'b0,error_lane_valid,error_warp,error_lane}; mmio_bad=writing; end
+            14'h0003: begin mmio_data=error_pc; mmio_bad=writing; end
+            14'h0004: begin mmio_data=debug_warp_retired_count; mmio_bad=writing; end
             default: mmio_bad=1;
         endcase
+        else if(sel_perf) case(address[15:2])
+            // §14.4, ranura 1. Este prototipo no tiene contador de ciclos, asi
+            // que la ranura 0 contesta error y no cero.
+            14'h0001: begin mmio_data=retired_count; mmio_bad=writing; end
+            default: mmio_bad=1;
+        endcase
+        else mmio_bad=1;   // bloque ausente (GPU CORE, VIDEO, SERIAL...)
     end
     always @(posedge clk) begin
         host_ready<=0;
@@ -170,7 +212,10 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
                 if(mmio) begin
                     host_read_data<=mmio_data[address[1:0]*8 +: 8]; host_read_word<=mmio_data;
                     host_error<=mmio_bad; host_ready<=1; host_state<=0;
-                    if(writing && !gpu_page && address[11:0]==12'h100) begin
+                    // CONTEXT (§14.3 +0x00) es el unico registro de GPU que se
+                    // escribe. En v1 estaba en 0x80000100; ahora es el offset
+                    // cero del bloque SIMT.
+                    if(writing && sel_simt && address[15:0]==16'h0000) begin
                         debug_lane<=expanded_data[2:0]; debug_warp<=expanded_data[5:3];
                     end
                 end else if(aux_ready) host_state<=2;

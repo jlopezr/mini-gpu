@@ -1,19 +1,21 @@
 `default_nettype none
-// Contadores de rendimiento, en 0x80000300. Solo lectura.
+// Contadores de rendimiento: GPU PERFORMANCE de MMIO v2, en 0x82030000. Solo
+// lectura.
 //
 // Existen porque hasta ahora todo se ha medido en simulacion, y la simulacion
 // de un frame entero tarda diez minutos. Con estos contadores un programa se
 // mide A SI MISMO en la placa, en tiempo real: lee CYCLES antes y despues de
 // dibujar y ya sabe lo que costo, sin cronometro ni UART de por medio.
 //
-//   0x80000300  CYCLES       ciclos CON LA GPU CORRIENDO (da la vuelta)
-//   0x80000304  RETIRED      instrucciones retiradas
-//   0x80000308  IMEM_HITS    aciertos del bufer de instrucciones
-//   0x8000030c  IMEM_MISSES  fallos del bufer de instrucciones
-//   0x80000310  LSU_TX       transacciones emitidas por la LSU vectorial
-//   0x80000314  VIDEO_TX     transacciones emitidas por el scanout
-//   0x80000318  STALL_MEM    ciclos con la LSU esperando a memoria
-//   0x8000031c  LANE_OPS     operaciones de HILO (suma de lanes activas)
+//   0x82030000  CYCLES       ciclos CON LA GPU CORRIENDO (da la vuelta)
+//   0x82030004  RETIRED      instrucciones retiradas
+//   0x82030008  IMEM_HITS    aciertos del bufer de instrucciones
+//   0x8203000c  IMEM_MISSES  fallos del bufer de instrucciones
+//   0x82030010  LSU_TX       transacciones emitidas por la LSU vectorial
+//   0x82030014  STALL_MEM    ciclos con la LSU esperando a memoria
+//   0x82030018  LANE_OPS     operaciones de HILO (suma de lanes activas)
+//
+// VIDEO_TX estaba aqui en v1 y ahora vive en VIDEO, en 0x80200024 (§9.7).
 //
 // Los que responden a "¿donde se va el tiempo?": con CYCLES, STALL_MEM e
 // IMEM_MISSES se separa computo de memoria de fetch sin instrumentar nada mas.
@@ -44,21 +46,33 @@ module gpu_perf_counters (
     // parado. La primera medida en placa salio con un CPI de 43 por esto, no
     // porque el cauce fuera lento.
     //
-    // VIDEO_TX tambien se cuenta gated: el scanout sigue leyendo SDRAM con la
-    // GPU parada, y contar ese trafico ensuciaba el reparto entre datos, video
-    // y fetch, que es justo para lo que sirve.
+    // VIDEO_TX se contaba gated por la misma razon --el scanout sigue leyendo
+    // SDRAM con la GPU parada-- y esa razon se ha ido con el a `gpu_video_regs`,
+    // donde `running` ahora entra como puerto para conservarla. Si alguien lo
+    // quita de alli, el contador vuelve a medir el reloj de pared.
     input wire running,
 
     input wire retired,
     input wire [7:0] retired_lanes,
     input wire [31:0] imem_hits, imem_misses,
-    input wire lsu_tx, video_tx, stall_mem
+    input wire lsu_tx, stall_mem
 );
+    // Ranuras de MMIO v2 §14.4. `VIDEO_TX` YA NO ESTA AQUI: se ha ido al
+    // bloque VIDEO, que es donde §9.7 lo pone --«pertenece a VIDEO, no al
+    // bloque de contadores de la GPU, por la regla de §12.1: cada contador
+    // pertenece al componente que GENERA el evento. En su dia vivio en los
+    // contadores de la GPU, y eso era un accidente de que solo la GPU tenia
+    // contadores»--. Al irse, STALL_MEM baja de la ranura 6 a la 5, que es
+    // donde §14.4 lo pone, y LANE_OPS de la 7 a la 6.
+    //
+    // LANE_OPS no lo nombra el mapa. Se queda en la primera ranura libre
+    // detras de las seis de §14.4; §12.6 da sitio para 64 y esto es una
+    // extension de esta carpeta, no del contrato.
     localparam [3:0] REG_CYCLES=4'd0, REG_RETIRED=4'd1, REG_IMEM_HITS=4'd2,
-                     REG_IMEM_MISSES=4'd3, REG_LSU_TX=4'd4, REG_VIDEO_TX=4'd5,
-                     REG_STALL_MEM=4'd6, REG_LANE_OPS=4'd7;
+                     REG_IMEM_MISSES=4'd3, REG_LSU_TX=4'd4,
+                     REG_STALL_MEM=4'd5, REG_LANE_OPS=4'd6;
 
-    reg [31:0] cycles, retired_count, lsu_tx_count, video_tx_count, stall_count;
+    reg [31:0] cycles, retired_count, lsu_tx_count, stall_count;
     reg [31:0] lane_ops;
     // popcount de la mascara: cuantas lanes retiran con esta instruccion.
     wire [3:0] lanes_now = {3'b000,retired_lanes[0]}+{3'b000,retired_lanes[1]}+{3'b000,retired_lanes[2]}+{3'b000,retired_lanes[3]}
@@ -72,7 +86,6 @@ module gpu_perf_counters (
             REG_IMEM_HITS:   read_data=imem_hits;
             REG_IMEM_MISSES: read_data=imem_misses;
             REG_LSU_TX:      read_data=lsu_tx_count;
-            REG_VIDEO_TX:    read_data=video_tx_count;
             REG_STALL_MEM:   read_data=stall_count;
             REG_LANE_OPS:    read_data=lane_ops;
             default:         bad=1'b1;
@@ -82,7 +95,7 @@ module gpu_perf_counters (
     always @(posedge clk) begin
         if(reset) begin
             cycles<=0; retired_count<=0; lsu_tx_count<=0;
-            video_tx_count<=0; stall_count<=0; lane_ops<=0;
+            stall_count<=0; lane_ops<=0;
         end else if(running) begin
             cycles<=cycles+1'b1;
             if(retired) begin
@@ -90,7 +103,6 @@ module gpu_perf_counters (
                 lane_ops<=lane_ops+{28'd0,lanes_now};
             end
             if(lsu_tx)    lsu_tx_count<=lsu_tx_count+1'b1;
-            if(video_tx)  video_tx_count<=video_tx_count+1'b1;
             if(stall_mem) stall_count<=stall_count+1'b1;
         end
     end

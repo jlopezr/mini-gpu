@@ -1,7 +1,7 @@
 import unittest
 from monitor import (
     MonitorClient, MonitorError, CpuStatus, format_registers, validate_transfer,
-    WARP_CONFIG_BASE,
+    WARP_CONFIG_BASE, SIMT_DEBUG_BASE, SYSID_BASE,
 )
 
 
@@ -67,22 +67,32 @@ class LaunchTest(unittest.TestCase):
     def test_select_context_encoding_and_bounds(self):
         client = RecordingClient()
         client.select_context(3,5)
-        self.assertEqual(client.calls, [('byte',0x80000100,29)])
+        # Por símbolo y no por número: si la base se mueve otra vez, este test
+        # se mueve con ella en vez de fallar con un número que hay que buscar.
+        self.assertEqual(client.calls, [('byte',SIMT_DEBUG_BASE,29)])
         with self.assertRaises(MonitorError): client.select_context(8,0)
         with self.assertRaises(MonitorError): client.select_context(0,-1)
 
     def test_transfer_boundaries(self):
         validate_transfer(0,33554432)
-        validate_transfer(0x80001000,128)
-        validate_transfer(0x80000100,20)
-        for address,size in [(33554431,2),(0x02000000,4),(0x8000107f,2),(0x80000000,4),(0,0)]:
+        validate_transfer(WARP_CONFIG_BASE,128)      # los ocho descriptores
+        validate_transfer(SIMT_DEBUG_BASE,20)        # los cinco de §14.3
+        validate_transfer(SYSID_BASE,28)             # las siete de SYSTEM
+        for address,size in [
+                (33554431,2),                 # cruza el final de la RAM
+                (0x02000000,4),               # justo detrás de la RAM
+                (WARP_CONFIG_BASE+0x7f,2),    # se sale del último descriptor
+                (SIMT_DEBUG_BASE+20,4),       # pasado el último de §14.3
+                (SYSID_BASE+28,4),            # pasada la séptima palabra
+                (0x82000000,4),               # GPU CORE: bloque no implementado
+                (0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 
     def test_read_complete_lane_register_file(self):
         client = RecordingClient()
         registers = client.read_registers(3, 5)
         self.assertEqual(registers, [0x10000000 + register for register in range(32)])
-        self.assertEqual(client.calls[0], ('byte', 0x80000100, 29))
+        self.assertEqual(client.calls[0], ('byte', SIMT_DEBUG_BASE, 29))
         self.assertEqual(client.calls[1:], [('register', register) for register in range(32)])
 
     def test_register_display_is_compact_and_complete(self):

@@ -64,18 +64,66 @@ module gpu_video_regs (
     input wire underflow,
     input wire frame_pulse,         // un pulso por vsync, dominio de sistema
 
+    // VIDEO_TX (§9.7): una transaccion de memoria del scanout por pulso.
+    // Vivia en `gpu_perf_counters` y se ha mudado aqui porque §12.1 dice que
+    // un contador es de quien GENERA el evento, y el scanout es de VIDEO.
+    //
+    // `running` viene con el: alli el contador estaba gated por «la GPU
+    // corre», porque el scanout sigue leyendo SDRAM con la GPU parada y contar
+    // ese trafico ensucia el reparto entre datos, video y fetch. La regla se
+    // muda con el contador; si se pierde, el numero vuelve a medir el reloj de
+    // pared y no el programa.
+    input wire video_tx,
+    input wire running,
+
     output reg [1:0]  video_mode,
     output wire [23:0] fb_base,     // al scanout: PALABRA de 16 bits del frente
     output wire       underflow_clear
 );
     localparam [1:0] MODE_PATTERN=2'd1;
-    // Los offsets son los del contrato compartido con la CPU.
-    localparam [3:0] REG_FB_FRONT=4'd0, REG_FB_BACK=4'd1, REG_SWAP=4'd2,
-                     REG_STATUS=4'd3, REG_SWAP_COUNT=4'd4, REG_HALT_AT=4'd5,
-                     REG_CTRL=4'd6;
+    // Los offsets son los del contrato compartido con la CPU: MMIO v2 §9, los
+    // mismos numeros que `video_registers.v` de 16/18/19/21.
+    //
+    // ESTE ES EL BLOQUE QUE MAS SE MUEVE al pasar de v1 a v2, y no cambia de
+    // base sino de reparto INTERNO. En v1 `CTRL` estaba al final, en la palabra
+    // 6, porque se anadio despues; en v2 esta en la 0 y empuja a los demas.
+    // Los cuatro que usan los kernels --FB_FRONT, FB_BACK, SWAP y CTRL--
+    // cambian los cuatro. Un programa migrado a medias no falla al ensamblar:
+    // escribe en el registro de al lado.
+    //
+    // Y aparece `FRAME_COUNT` como registro propio (§9.5). En v1 el contador
+    // de frames viajaba empotrado en los bits 31:16 de `STATUS`; ahora STATUS
+    // son solo las dos banderas y el contador es una palabra entera de 32
+    // bits, no de 16.
+    localparam [3:0] REG_CTRL        = 4'd0;   // +0x00
+    localparam [3:0] REG_FB_FRONT    = 4'd1;   // +0x04
+    localparam [3:0] REG_FB_BACK     = 4'd2;   // +0x08
+    localparam [3:0] REG_SWAP        = 4'd3;   // +0x0C
+    localparam [3:0] REG_STATUS      = 4'd4;   // +0x10
+    localparam [3:0] REG_FRAME_COUNT = 4'd5;   // +0x14
+    localparam [3:0] REG_SWAP_COUNT  = 4'd6;   // +0x18
+    localparam [3:0] REG_HALT_AT     = 4'd7;   // +0x1C
+    localparam [3:0] REG_HALT_TARGET = 4'd8;   // +0x20
+    localparam [3:0] REG_VIDEO_TX    = 4'd9;   // +0x24
 
     reg underflow_sticky;
     reg [15:0] frame_count;
+    reg [31:0] video_tx_count;
+
+    // §9.2: una base de framebuffer mal alineada genera ERROR, «no se trunca
+    // ni se corrige». Hasta aqui esto truncaba en silencio --4 bytes en CPU y
+    // 16 en GPU--, o sea que el mismo programa dibujaba bien en una placa y
+    // torcido en la otra sin que nada avisara. Es el motivo que da §9.2 para
+    // exigir el error, y `shared-video-fb-desalineada` es el caso que lo mide.
+    //
+    // Se juzga la palabra ENTERA que llega, no el registro ya guardado: el
+    // error sale ANTES de escribir nada. Y solo con los cuatro strobes, que es
+    // como escribe WRITE_WORD: una escritura byte a byte no puede juzgarse a
+    // trozos --el registro pasa por estados intermedios desalineados que son
+    // legitimos-- y por eso el caso usa la palabra entera.
+    wire fb_desalineada = sel && write && write_strobe==4'b1111 &&
+                          (word==REG_FB_FRONT || word==REG_FB_BACK) &&
+                          |write_data[3:0];
     reg clear_pulse;
     assign underflow_clear=clear_pulse;
 
@@ -91,6 +139,7 @@ module gpu_video_regs (
 
     always @* begin
         read_data=32'd0; bad=1'b0;
+        if(fb_desalineada) bad=1'b1;
         if(sel) case(word)
             REG_CTRL:       read_data={30'd0,video_mode};
             REG_FB_FRONT:   read_data={fb_front[31:4],4'b0000};
@@ -99,17 +148,26 @@ module gpu_video_regs (
             // El bit 1 es `swap_pending`, igual que en 16/18/19/21. Antes era
             // cero fijo aqui, y un programa que sondease ese bit esperando al
             // intercambio funcionaba en CPU y se colgaba en esta placa.
-            REG_STATUS:     read_data={frame_count,14'd0,swap_pending,underflow_sticky};
-            REG_SWAP_COUNT: read_data=swap_count;
-            // HALT_AT no existe aqui: la GPU no se para sola, la paran las
-            // ordenes del monitor. Lee CERO en vez de levantar `bad`, que es lo
-            // que hace la CPU con un registro ausente del bloque
-            // (video_registers.v, `default: read_data = 32'd0`). Si fallara, una
-            // lectura en bloque de los 28 bytes del bloque de video -que la
-            // lista blanca de monitor.v permite entera- daria NACK a mitad, y un
+            //
+            // En v2 STATUS son SOLO las dos banderas: el contador de frames se
+            // ha ido a su propio registro. Un programa de v1 que leyera STATUS
+            // y se quedara con los bits 31:16 para tener el frame ahora lee
+            // ceros -- no falla, devuelve otra cosa. Por eso la migracion de
+            // los `.asm` se hace por simbolo y no a ojo.
+            REG_STATUS:      read_data={30'd0,swap_pending,underflow_sticky};
+            REG_FRAME_COUNT: read_data={16'd0,frame_count};
+            REG_SWAP_COUNT:  read_data=swap_count;
+            // HALT_AT, HALT_TARGET y VIDEO_TX no existen aqui: la GPU no se
+            // para sola, la paran las ordenes del monitor. Leen CERO en vez de
+            // levantar `bad`, que es lo que hace la CPU con un registro ausente
+            // del bloque (video_registers.v, `default: read_data = 32'd0`). Si
+            // fallaran, una lectura en bloque del bloque de video entero --que
+            // la lista blanca de monitor.v permite-- daria NACK a mitad, y un
             // programa que sondee el registro se comportaria distinto en cada
-            // familia. Escribirlo se ignora, igual que en CPU.
-            REG_HALT_AT:    read_data=32'd0;
+            // familia. Escribirlos se ignora, igual que en CPU.
+            REG_VIDEO_TX:    read_data=video_tx_count;
+            REG_HALT_AT,
+            REG_HALT_TARGET: read_data=32'd0;
             default:        bad=1'b1;
         endcase
     end
@@ -122,7 +180,10 @@ module gpu_video_regs (
             swap_pending<=1'b0; swap_count<=32'd0;
             underflow_sticky<=1'b0;
             frame_count<=16'd0;
+            video_tx_count<=32'd0;
         end else begin
+            // Gated por `running`, igual que cuando vivia en los contadores.
+            if(video_tx && running) video_tx_count<=video_tx_count+1'b1;
             if(underflow) underflow_sticky<=1'b1;
             if(frame_pulse) begin
                 frame_count<=frame_count+1'b1;
@@ -134,7 +195,8 @@ module gpu_video_regs (
                     swap_count<=swap_count+1'b1;
                 end
             end
-            if(sel && write) case(word)
+            // `!fb_desalineada`: una base rechazada no se guarda ni a medias.
+        if(sel && write && !fb_desalineada) case(word)
                 REG_CTRL: if(write_strobe[0]) video_mode<=write_data[1:0];
                 // Byte a byte, que es como escribe el monitor; la GPU escribe
                 // los cuatro a la vez. La alineacion a 16 bytes se impone al

@@ -1,7 +1,7 @@
 import unittest
 from monitor import (
     MonitorClient, MonitorError, CpuStatus, format_registers, validate_transfer,
-    WARP_CONFIG_BASE,
+    WARP_CONFIG_BASE, SIMT_DEBUG_BASE, SYSID_BASE, VIDEO_BASE, GPU_PERF_BASE,
 )
 
 
@@ -67,23 +67,34 @@ class LaunchTest(unittest.TestCase):
     def test_select_context_encoding_and_bounds(self):
         client = RecordingClient()
         client.select_context(3,5)
-        self.assertEqual(client.calls, [('byte',0x80000100,29)])
+        self.assertEqual(client.calls, [('byte',SIMT_DEBUG_BASE,29)])
         with self.assertRaises(MonitorError): client.select_context(8,0)
         with self.assertRaises(MonitorError): client.select_context(0,-1)
 
     def test_transfer_boundaries(self):
         validate_transfer(0,33554432)
-        validate_transfer(0x80001000,128)
-        validate_transfer(0x80000000,28)   # ventana de video, ya compartida con CPU
-        validate_transfer(0x80000100,20)
-        for address,size in [(33554431,2),(0x02000000,4),(0x8000107f,2),(0x8000001c,4),(0,0)]:
+        validate_transfer(WARP_CONFIG_BASE,128)   # los ocho descriptores
+        validate_transfer(VIDEO_BASE,40)          # los diez registros de §9
+        validate_transfer(SIMT_DEBUG_BASE,20)     # los cinco de §14.3
+        validate_transfer(SYSID_BASE,28)          # las siete de SYSTEM
+        validate_transfer(GPU_PERF_BASE,28)       # los seis de §14.4 + LANE_OPS
+        for address,size in [
+                (33554431,2),                     # cruza el final de la SDRAM
+                (0x02000000,4),                   # justo detrás de la SDRAM
+                (WARP_CONFIG_BASE+0x7f,2),        # se sale del último descriptor
+                (VIDEO_BASE+40,4),                # pasado VIDEO_TX
+                (SIMT_DEBUG_BASE+20,4),           # pasado el último de §14.3
+                (GPU_PERF_BASE+28,4),             # pasado LANE_OPS
+                (SYSID_BASE+28,4),                # pasada la séptima palabra
+                (0x82000000,4),                   # GPU CORE: no implementado
+                (0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 
     def test_read_complete_lane_register_file(self):
         client = RecordingClient()
         registers = client.read_registers(3, 5)
         self.assertEqual(registers, [0x10000000 + register for register in range(32)])
-        self.assertEqual(client.calls[0], ('byte', 0x80000100, 29))
+        self.assertEqual(client.calls[0], ('byte', SIMT_DEBUG_BASE, 29))
         self.assertEqual(client.calls[1:], [('register', register) for register in range(32)])
 
     def test_register_display_is_compact_and_complete(self):

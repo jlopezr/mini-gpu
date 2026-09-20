@@ -102,7 +102,7 @@ module gpu_bench_video_tb;
                  halted,error,error_code,debug_pc,cycles);
 
         // R1 = tid, solo para confirmar que corrio.
-        access(1,32'h80000100,8'd0);
+        access(1,32'h82020000,8'd0);
         @(negedge clk); debug_register=1;
         repeat(3) @(negedge clk);
         $display("R1 = %h", debug_data);

@@ -1,4 +1,5 @@
 `default_nettype none
+`include "sysid_params.vh"
 `timescale 1ns/1ps
 // Verifica que la GPU llega a la ventana MMIO por su cuenta: escribe
 // VIDEO_CTRL, lo relee, y se cronometra leyendo los contadores.
@@ -47,20 +48,47 @@ module gpu_mmio_bl8_error_tb;
         @(negedge clk);host_write_enable=0;host_read_enable=0;cycles=0;
         while(!host_ready && cycles<100) begin @(negedge clk);cycles=cycles+1;end
         if(!host_ready || host_error!==bad) $fatal(1,"MMIO %h wr %b error %b",addr,wr,host_error);
-        if(!bad && !wr && addr==32'h80000f08 && host_read_word!==0)
-          $fatal(1,"DEV_BITMAP cero no es error");
       end
     endtask
+    // Bases de MMIO v2 (1.isa/mmio.md §2). Este banco ataca `gpu_system_bl8`,
+    // que SI tiene video y contadores -- al contrario que `gpu_mmio_error_tb`,
+    // que ataca el `gpu_system` del entorno `base-bl1` y no los tiene. Los dos
+    // bancos comprueban la misma regla sobre dos decodificadores distintos de
+    // la misma carpeta, y esa es la razon de que existan los dos.
+    localparam [31:0] SYSTEM_BASE = 32'h8000_0000;
+    localparam [31:0] VIDEO_BASE  = 32'h8020_0000;
+    localparam [31:0] GPU_BASE    = 32'h8200_0000;   // CORE: NO implementado
+    localparam [31:0] WARPS_BASE  = 32'h8201_0000;
+    localparam [31:0] SIMT_BASE   = 32'h8202_0000;
+    localparam [31:0] PERF_BASE   = 32'h8203_0000;
+    localparam [31:0] SERIAL_BASE = 32'h8010_0000;   // no lo tiene ninguna GPU
     initial begin
       repeat(4) @(negedge clk);reset=0;
       wait(halted);
       for(w=0;w<2;w=w+1) begin
-        access(w,32'h80000400,1);
-        access(w,32'h80001080,1);
-        for(k=0;k<16;k=k+4) access(w,32'h80000f00+k,w!=0);
-        for(k=16;k<256;k=k+4) access(w,32'h80000f00+k,1);
+        for(k=0;k<28;k=k+4) access(w,SYSTEM_BASE+k,w!=0);
+        for(k=28;k<256;k=k+4) access(w,SYSTEM_BASE+k,1);
+        // Bloques AUSENTES: dan ERROR, no cero.
+        access(w,GPU_BASE,1);            // GPU CORE (§14.1), no implementado
+        access(w,SERIAL_BASE,1);
+        // Dentro de un bloque PRESENTE, lo que sobra tambien es error.
+        access(w,WARPS_BASE+32'h80,1);   // pasados los 8 descriptores
+        access(w,SIMT_BASE+32'h14,1);    // pasados los 5 registros de §14.3
+        access(w,VIDEO_BASE+32'h28,1);   // pasados los 10 registros de §9
+        access(w,PERF_BASE+32'h1c,1);    // pasados los 7 contadores
       end
-      $display("PASS: GPU rechaza slots ausentes y alias de identificacion");$finish;
+      // VIDEO_TX (§9.7) vive AQUI y ya no en los contadores. Que conteste en
+      // VIDEO+0x24 y NO en PERF+0x14 es la mudanza entera en dos lineas.
+      access(0,VIDEO_BASE+32'h24,0);
+      // PERF+0x14 es ahora STALL_MEM, que existe: lo que ya no existe es
+      // VIDEO_TX en ese sitio. La prueba de que se movio es la de arriba.
+      access(0,PERF_BASE+32'h14,0);
+      access(1,PERF_BASE+32'h14,1);      // los contadores son de solo lectura
+      // DEVICES (§5.4): esta es la unica GPU con video, o sea el unico bit 5.
+      access(0,SYSTEM_BASE+32'h0c,0);
+      if(host_read_word!==`SYSID_DEVICES)
+        $fatal(1,"DEVICES %h no es el de sysid_params.vh (%h)",host_read_word,`SYSID_DEVICES);
+$display("PASS: bl8 rechaza bloques ausentes y declara los presentes");$finish;
     end
     initial begin #1000000;$fatal(1,"timeout");end
 endmodule

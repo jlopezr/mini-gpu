@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -98,20 +103,28 @@ module top (
                         (mem_address[4:2] != 3'd7);
   wire [31:0] sysid_word;
   sysid #(
-      .FOLDER(8'd6),
+      .FOLDER(`SYSID_FOLDER),
       // bit 0 MUL, bit 1 DIV. Esta CPU los tiene; no tiene sub-palabra ni SIMT.
-      .ISA_PROFILE(32'h0000_0003),
-      // Seccion 5.4: bit 0 SYSTEM, bit 3 EBR. Ni SDRAM, ni video, ni serie, ni
-      // contadores de CPU: esta carpeta es EBR y nada mas. El bit 9 (CPU) es
-      // del bloque CPU PERFORMANCE de 0x81010000, que aqui no existe.
-      .DEVICES(32'h0000_0009),
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      // Seccion 5.4: bit 0 SYSTEM, bit 3 EBR, bit 9 CPU. Ni SDRAM, ni video,
+      // ni serie, ni fabric.
+      //
+      // AQUI DECIA que el bit 9 no iba «porque es del bloque CPU PERFORMANCE
+      // de 0x81010000, que aqui no existe». Esa lectura --un bit por bloque
+      // MMIO-- no es la de §5.4, que dice «bitmap de dispositivos PRESENTES» y
+      // reserva un bit para EBR, que no es ningun bloque. Con la lectura vieja
+      // el bit seria cero en las diez carpetas, porque ni CPU CORE ni GPU CORE
+      // estan implementados, y el bitmap no distinguiria una CPU de una GPU.
+      // La 6 y la 10 eran las dos unicas que la seguian; las otras ocho ya
+      // declaraban su nucleo.
+      .DEVICES(`SYSID_DEVICES),
       // 32 KiB de EBR como region contigua (seccion 3.1 y decision 41).
-      .MEM_BASE(32'h0000_0000), .MEM_SIZE(32'h0000_8000),
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
       // (mayor << 8) | menor, con los MISMOS numeros que el `monitor #(...)`
       // de mas abajo. No se deduce de nada: copiar el de otra carpeta es un
       // numero valido que hace declarar un juego de comandos que esta carpeta
       // no implementa, y no lo dice ningun test.
-      .MONITOR_VERSION(32'h0000_0306)   // 3.6, el mismo que monitor_i
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION)   // 3.6, el mismo que monitor_i
   ) sysid_i (
       .word(mem_address[4:2]),
       .read_data(sysid_word)

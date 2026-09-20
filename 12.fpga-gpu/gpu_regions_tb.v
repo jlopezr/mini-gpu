@@ -1,5 +1,13 @@
 `timescale 1ns/1ps
 module gpu_regions_tb;
+    // MMIO v2 con nombre (consejo de la 21). Este banco tambien mezcla
+    // direcciones con codificaciones de instruccion (`32'hc4000003` es un SSY).
+    localparam [31:0] WARPS_BASE  = 32'h8201_0000;   // descriptor n en +16n
+    localparam [31:0] SIMT_BASE   = 32'h8202_0000;
+    localparam [31:0] WARP_ACTIVE = 32'h0000_0004;
+    localparam [31:0] WARP_GROUP  = 32'h0000_0008;
+    localparam [31:0] WARP_SIMT   = 32'h0000_000C;
+    localparam [31:0] SIMT_CONTEXT = 32'h0000_0000;
     reg clk=0;
     always #5 clk=~clk;
     reg reset=1,gpu_reset=0,run_request=0,halt_request=0,step_request=0;
@@ -49,7 +57,7 @@ module gpu_regions_tb;
             @(negedge clk); gpu_reset=1;
             @(negedge clk); gpu_reset=0;
             wait(halted); @(negedge clk);
-            for(w=1;w<8;w=w+1) write_word(32'h80001004+w*16,0);
+            for(w=1;w<8;w=w+1) write_word(WARPS_BASE+WARP_ACTIVE+w*16,0);
         end
     endtask
     task launch;
@@ -96,12 +104,12 @@ module gpu_regions_tb;
         launch; stopped(0,32);
         if(dut.sm.sp[0]!==0 || dut.sm.pp[0]!==0) $fatal(1,"finished stacks not cleared");
         for(i=0;i<8;i=i+1) begin
-            access(1,32'h80000100,i);
+            access(1,SIMT_BASE+SIMT_CONTEXT,i);
             @(negedge clk); debug_register=3;
             repeat(3) @(negedge clk);
             if(debug_data!==20+i) $fatal(1,"parked lane %0d result %h",i,debug_data);
         end
-        access(1,32'h80000100,0);
+        access(1,SIMT_BASE+SIMT_CONTEXT,0);
         // Third pending path overflows independently of the one-region limit.
         fresh;
         write_word(0,32'hc0200000); // GETTID R1
@@ -114,9 +122,9 @@ module gpu_regions_tb;
         launch; stopped(6,8);
         if(dut.sm.sp[0]!==1 || dut.sm.pp[0]!==2 || dut.sm.active[0]!==8'hfc)
             $fatal(1,"path overflow changed SIMT state");
-        read_word(32'h8000100c);
+        read_word(WARPS_BASE+WARP_SIMT);
         if(word_result!==32'h201) $fatal(1,"independent stack status %h",word_result);
-        write_word(32'h80001008,0);
+        write_word(WARPS_BASE+WARP_GROUP,0);
         if(dut.sm.sp[0]!==0 || dut.sm.pp[0]!==0) $fatal(1,"configuration did not clear stacks");
         // Direct join remains legal with both path slots occupied.
         fresh;
@@ -136,13 +144,13 @@ module gpu_regions_tb;
         write_word(52,32'hcc000000); // EXIT
         launch; stopped(0,56);
         for(i=0;i<8;i=i+1) begin
-            access(1,32'h80000100,i);
+            access(1,SIMT_BASE+SIMT_CONTEXT,i);
             @(negedge clk); debug_register=3;
             repeat(3) @(negedge clk);
             if(debug_data!==(i==0 ? 11 : i==1 ? 31 : i<4 ? 1 : 21))
                 $fatal(1,"full path direct join lane %0d result %h",i,debug_data);
         end
-        access(1,32'h80000100,0);
+        access(1,SIMT_BASE+SIMT_CONTEXT,0);
         // Distinct sites sharing a join still require two regions.
         fresh;
         write_word(0,32'hc4000001); // SSY +1

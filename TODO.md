@@ -4,33 +4,101 @@ Por orden de prioridad **argumentada**, no heredada. Cada punto dice qué falta,
 por qué importa y qué lo bloquea; si no se pueden escribir esas tres cosas, o no
 está verificado o no es un punto.
 
-Repasado el 19/09/2026 contra el árbol. Al final hay un apartado con lo cerrado,
+Repasado el 20/09/2026 contra el árbol. Al final hay un apartado con lo cerrado,
 para no volver a abrirlo por error.
 
 ---
 
-## 1. Cinco bitstreams no corresponden a su RTL
+## 1. Cerrar la ronda de placa: la 17 y los dos hallazgos de `DEVICES`
 
-**Qué falta.** Resintetizar **12, 14, 16, 17 y 18**, rebarriendo semilla donde
-la haya fijada, y después una ronda de placa de esas cinco más la **6** y la
-**10**, que nunca se han probado con el `monitor.v` final.
+**La parte de síntesis está hecha.** Medido el 20/09/2026 comparando el
+`hardware.pnr` de cada carpeta con su RTL más reciente **sin contar los
+`*_tb.v`**, que no entran en el bitstream: **las diez corresponden**. Las cuatro
+de GPU se resintetizaron al migrarlas a v2 (12 → 35,06 MHz, 14 → 34,25,
+17 → 44,83, 22 → 40,43 de `sdram_clk`), y 6, 10 y 16 ya lo estaban.
 
-**Por qué importa.** `monitor.v` es del 18/09 00:07 y es idéntico en las diez
-carpetas. Comparando con el `_build/default/hardware.pnr` de cada una:
+> Ojo al comparar: contar los `*_tb.v` da tres falsos positivos (18, 19 y 21
+> «viejas» por un banco tocado después). Un banco no se sintetiza.
 
-| Resintetizadas después | Con bitstream anterior          |
-|------------------------|---------------------------------|
-| 6, 10, 22              | **12, 14, 16, 17, 18, 19, 21**  |
+**La ronda está hecha y salió limpia** (20/09/2026). Las nueve carpetas que la
+suite conoce, con el mapa v2 y el `monitor.v` final:
 
-**La 18, la 19 y la 21 ya están resueltas** (20/09/2026). Se barrieron las tres,
-se fijó semilla nueva con su párrafo en cada `apio.ini` y se resintetizaron:
-**18 → semilla 6, 88,76 MHz; 19 → semilla 5, 85,02 MHz; 21 → semilla 5,
-84,04 MHz**, las tres PASS. `docs/synthesis-report.md` ya no registra ningún FAIL.
-El detalle está en [`docs/validacion-mmio-v2-placa.md`](docs/validacion-mmio-v2-placa.md).
+| | 6 | 10 | 12 | 14 | 16 | 18 | 19 | 21 | 22 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| Casos | 13 | 17 | 30 | 31 | 26 | 26 | 38 | 53 | 33 |
+| Fallos | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
 
-Quedan por tanto **12, 14, 16 y 17**.
+Las nueve pasan los cuatro `shared-mmio-*` —que un bloque **ausente** conteste
+error y no cero (§4.3), SYSTEM reservado, SYSTEM de sólo lectura—. La 16 y la
+22 pasan además `shared-video-fb-desalineada` y `shared-double-buffer`; la 16
+pasa los seis casos de vídeo, o sea que el `frame_capture` que ganó al migrar
+está confirmado en silicio.
 
-Y una trampa más, que costó descubrirla y vale para las cuatro que faltan:
+**Qué falta.** Tres cosas, ninguna grande:
+
+1. **La 17 no se puede probar con la suite.** Es la única carpeta de GPU **sin
+   `version.json`**, así que `run_tests.py --backend gpu-fpga` no la conoce
+   —sólo `bram` (12), `sdram` (14) y `lsu2` (22)—. Se validó a mano: `SYSTEM`
+   con los siete valores correctos, los cinco bloques ausentes rechazados por
+   la placa y un descriptor de warp escrito y releído en `0x82010030`. Falta
+   decidir si merece alias propio o si es redundante con `sdram`.
+2. **`DEVICES` tiene dos convenios en la familia CPU.** Medido leyendo el
+   registro en placa y contrastando con el RTL:
+
+   | | 6 | 10 | 16 | 18 | 19 | 21 | 12 | 14 | 17 | 22 |
+   |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+   | `DEVICES` | `009` | `005` | `225` | `225` | `235` | `235` | `409` | `405` | `405` | `425` |
+   | bit 9 CPU / 10 GPU | **no** | **no** | sí | sí | sí | sí | sí | sí | sí | sí |
+
+   Ocho de diez declaran su propio núcleo; **la 6 y la 10 no**. Como §5.4 dice
+   que un bit es «dispositivo presente» y las dos tienen CPU, parecen ellas las
+   que están mal — pero conviene decidirlo antes de tocar, porque la lectura
+   alternativa («el bit es el bloque MMIO del núcleo») dejaría mal a las otras
+   ocho: ni CPU CORE (§13.1) ni GPU CORE (§14.1) existen.
+3. **`DEVICES` se escribe a mano y §5.4 dice que no.** El contrato es
+   explícito: «no se escribe a mano en cada `top.v`. Se deriva de lo que hay en
+   el RTL […]. Un bitmap escrito a mano sería una tercera gemela junto a las
+   ventanas del decodificador y la lista del cliente Python». Es la fase 4b,
+   que el apartado de cerrado da por resuelta **en criterio** pero no en
+   código.
+
+   Y conviene saber dónde está de verdad antes de ir a cambiarlo, porque no es
+   donde el contrato supone. `sysid.v` —idéntico en las diez— sólo **declara**
+   el parámetro, con `32'd0` de defecto, y lo sirve en `+0x0C`. El valor lo
+   pone quien instancia:
+
+   | Familia | Dónde está el literal |
+   |---|---|
+   | CPU (6, 10) | `top.v` |
+   | CPU (16, 18, 19, 21) | `top.v`, reenviado por `mmio_decoder.v` |
+   | GPU (12, 14, 17) | **`gpu_system.v`**, no `top.v` |
+   | GPU (22) | **`gpu_system.v` y `gpu_system_bl8.v`**, los dos |
+
+   O sea **once literales en diez carpetas**. Y la colocación de GPU es peor
+   que la de CPU por un motivo concreto: `gpu_system.v` vale precisamente
+   porque es casi idéntico entre carpetas, y meterle ahí `DEVICES`, `MEM_SIZE`
+   y `MONITOR_VERSION` le añade divergencia por carpeta a un fichero que se
+   quiere compartido. Subirlos a `top.v`, como en CPU, dejaría el
+   `gpu_system.v` de la 14 y el de la 17 **byte a byte idénticos**.
+
+**Por qué importa.** Es el único paso que mide lo que ninguna otra cosa mide, y
+la lista está escrita en el encargo de la familia GPU:
+
+| Qué | Por qué no lo ve la simulación |
+|---|---|
+| Que el bloque SYSTEM conteste con los valores de **esa** carpeta | Ningún banco instancia `top` |
+| Que un bloque **ausente** conteste error y no cero | Las cuatro GPU tienen bloques ausentes; sólo la 22 tiene vídeo |
+| Que el error de un dispositivo **llegue al cliente** | Vive un ciclo y el cliente lo muestrea al siguiente |
+| La captura de DQ de la SDRAM (10, 14, 16, 17, 18, 19, 21, 22) | Entra por un pin |
+| Los `.asm` de `examples/` | Ningún `test.json` los ejecuta |
+
+Y hay un hueco concreto que sólo la placa cierra: `mmio_error_ack_tb.v` existe
+en 18, 19 y 21 y **no en las cuatro de GPU**, así que en la familia GPU nadie
+comprueba en simulación que el error de un dispositivo llegue al cliente.
+
+**Qué lo bloquea.** Nada. Son unos diez minutos de placa por carpeta.
+
+Trampas al ejecutarlo, todas ya pagadas:
 
 - **`build-sweep` NO sintetiza.** Re-ruta el `hardware.json` del build archivado
   más reciente. Si esa carpeta ha tocado RTL desde entonces, el barrido mide un
@@ -41,241 +109,137 @@ Y una trampa más, que costó descubrirla y vale para las cuatro que faltan:
 - Un `build.log` de nextpnr trae la temporización **dos veces**: una estimación
   pre-rutado (10-20 MHz más pesimista, y suele ser un FAIL aparatoso) y la buena.
   **La buena es la última.**
-
-En esas cinco, el bitstream que `test-board` programa **no es el RTL que hay en
-la carpeta**. Cualquier medida o validación que se haga contra ellas es de
-procedencia desconocida, y eso contamina en silencio todo lo demás — es
-exactamente el modo de fallo que ya apareció una vez, cuando el `default` de la
-22 apuntaba a otro diseño y la placa acababa con un bitstream que no era el que
-se creía haber subido.
-
-**Qué lo bloquea.** Nada. Son unos diez minutos de placa y un rato de síntesis.
-`yosys` y `nextpnr` son monohilo: se lanza en paralelo con `Start-Job`, una
-carpeta por trabajo.
-
-**Dos trampas al ejecutarlo:**
-
 - Hay que subir con `board-upload --rebuild`. Sin esa opción, `apio upload` se
   ahorra el trabajo cuando la versión coincide — y la versión **no distingue dos
-  builds de la misma carpeta**, que es exactamente el caso aquí: el número no
-  cambia, el netlist sí. Sin `--rebuild` se validaría otra vez el bitstream
-  viejo, creyendo lo contrario.
+  builds de la misma carpeta**. Sin `--rebuild` se validaría otra vez el
+  bitstream viejo, creyendo lo contrario. Es el modo de fallo que ya apareció
+  una vez, cuando el `default` de la 22 apuntaba a otro diseño.
 - Que la síntesis en segundo plano devuelva éxito **no significa que haya
-  cumplido timing**. Hay que mirar el resultado de cada una con `build-status`
-  antes de pasar a placa.
+  cumplido timing**. Hay que mirar cada una con `build-status` antes de pasar a
+  placa.
+- **La placa desaparece sola tras programar.** COM3 se va y vuelve por su
+  cuenta; no hay que replugar el USB, hay que esperar.
+- Si hay placa enchufada, **pregúntale lo que ya pueda contestar antes de
+  gastar una síntesis**: qué bitstream lleva, si su bloque SYSTEM responde.
 
-**Va primero porque es barato y porque todo lo que se valide en placa después
-depende de ello.** Y cuanto más se acumule sin verificar, menos dirá un fallo
-sobre cuál de los cambios lo causó.
+**Lo que la ronda encontró y la simulación no**, que es la razón de que este
+punto vaya primero:
+
+- **`x.tests/backends/gpu_fpga.py` seguía entero en v1** —los cinco registros
+  de vídeo y cuatro direcciones de depuración cableadas—. El backend de placa
+  que estaba migrado era `fpga.py`, que es **otro fichero**. 18 de 33 casos de
+  la 22 fallaban por esto. Ya migrado, con las tres bases leídas del
+  `monitor.py` del prototipo.
+- **Un contador cambió de dominio de reset al cambiar de bloque.** El global de
+  retiros lo servía el SM (`core_reset`) y pasó a servirlo `gpu_perf_counters`
+  (`reset`), que acumula entre casos: `instructions_executed` daba 20.864.707
+  donde el caso esperaba 22. No estaba mal el contador, **era otro contador**.
+- **La 22 truncaba la base de framebuffer desalineada** en vez de dar error
+  (§9.2). Arreglado y verificado.
+
+Ninguna de las tres la podía ver un banco, y las dos primeras no las ve
+**ningún** camino automático: nadie ejecuta el backend de placa.
 
 ---
 
-## 2. Migrar a MMIO v2
+## 2. Lo que MMIO v2 deja a deber
 
-**Qué falta.** Aplicar [`1.isa/mmio.md`](1.isa/mmio.md) al RTL, a los monitores,
-a los simuladores y a los tests. Es el contrato decidido el 19/09/2026.
-
-**Estado: la familia CPU entera conforma** —la 6, la 10, la 16, la 18, la 19 y
-la 21— y con ella el ensamblador, el generador de constantes y los tres
-simuladores funcionales. **Quedan cuatro carpetas, todas de GPU: 12, 14, 17 y
-22.** Hay seis bitácoras: la de la
-[21](21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) es el camino completo; la de la
-[19](19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) cuenta sólo lo que cambió al
-repetirlo y trae la estimación corregida; la de la
-[18](18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) mide hasta dónde llega el atajo
-de copiar de una gemela ya migrada, y es la primera carpeta sin puerto serie;
-la de la [6](6.fpga-cpu/docs/migracion-v2.md) es la primera **sin ningún bloque
-de dispositivo**, que es la forma que van a necesitar las de GPU, y lleva la
-fase 0 de las tres últimas; la de la
-[10](10.fpga-cpu-ram/docs/migracion-v2.md) mide lo que cuesta una gemela cuando
-los arreglos compartidos ya están hechos; y la de la
-[16](16.fpga-cpu-hdmi/docs/migracion-v2.md) lleva la decisión del bitmap de
-vídeo. La tabla de conformidad está en
+**La migración de las diez carpetas está hecha** (20/09/2026). Las seis de CPU
+—6, 10, 16, 18, 19, 21— y las cuatro de GPU —12, 14, 17, 22— conforman con
+[`1.isa/mmio.md`](1.isa/mmio.md) en bases, bloque SYSTEM, ventanas del monitor y
+programas. Los diez `sysid.v` son byte a byte idénticos, `1.isa/mmio_map_v1.vh`
+se ha borrado con todo su andamio, y los 152 `.asm` versionados pasan la guarda
+de direcciones cableadas. Las bitácoras por carpeta están enlazadas desde
 [`docs/resumen-prototipos.md`](docs/resumen-prototipos.md#conformidad-con-mmio-v2).
 
-> **La 16 GANA `frame_capture` al migrar.** Tenía cinco registros de vídeo y
-> adopta los diez de v2, o sea el `video_registers.v` compartido. Conservar los
-> cinco era conforme pero exigía bifurcar una cuarta variante de un fichero hoy
-> idéntico en cuatro carpetas, y dejaba a la 16 fuera de los casos de vídeo del
-> runner. El razonamiento está en su bitácora.
->
-> **La 6 y la 10 no ganan MMIO al migrar**, y eso sigue siendo cierto: no
-> tienen decodificador, ni página de dispositivos, ni nada que un programa
-> pueda leer. Lo único que se mueve es el bloque de identificación, de cuatro
-> palabras en `0x80000F00` a siete en `0x80000000`.
+**v2 no cuesta frecuencia.** En CPU el techo baja 3-6 MHz por los ~650 LUT del
+mapa; en GPU **ni eso**: 12 +3,3 %, 14 +10,0 %, 17 −4,1 %, 22 +5,3 %, con el
+camino crítico en el mismo sitio antes y después en las cuatro. El signo lo pone
+el emplazamiento, no el mapa.
 
-**Las tres están sintetizadas, barridas y con semilla nueva fijada**
-(20/09/2026), y la **21 se ha validado en placa**. Ver
-[`docs/validacion-mmio-v2-placa.md`](docs/validacion-mmio-v2-placa.md).
+Lo que queda son **seis deudas de contrato**, ninguna de ellas «migrar una
+carpeta». Van de más a menos transversal.
 
-**v2 no cuesta frecuencia**, que era la pregunta abierta: sobre el mismo juego de
-semillas la 18 sigue en 8 de 8, la 21 en 7 de 16 —las mismas que en v1— y la 19
-**mejora de 3 de 8 a 6 de 8**, con la mediana volviendo por encima del objetivo.
-El FAIL de la 21 era la semilla. Lo único que baja de forma consistente es el
-techo, unos 3-6 MHz, por los ~650 LUT que añade el mapa.
+### 2.1. Escrituras sub-palabra a MMIO (§4.1 y §16.2)
 
-Y el área ya está repartida por módulo, medida: el bloque SYSTEM cuesta **+6
-LUT** —sus siete palabras son constantes—, mientras que `cpu_perf_counters` se
-lleva el **44 %** del total. `cpu_dmem_adapter` **encoge 66 LUT**, porque detectar
-MMIO pasó de comparar veinte bits a mirar uno. Para las carpetas que faltan: el
-grueso del coste está en los contadores de rendimiento, que son opcionales.
+Lo único que la 21 dejó a deber a propósito, y sigue abierto en las seis de CPU.
+El host y varios bancos escriben byte a byte y tienen que pasar a `WRITE_WORD`
+**a la vez**: es un cambio del protocolo del host, transversal, no de una
+carpeta. Es la deuda más cara de las seis y la que más gente toca.
 
-> **Deuda del backend de placa compartido, ya sólo de GPU.**
-> `x.tests/backends/fpga.py` es único para las diez carpetas y está en v2, así
-> que las carpetas sin migrar tienen sus tests de placa rotos hasta que migren.
-> Con la 6, la 10 y la 16 hechas quedan **cuatro: 12, 14, 17 y 22**, todas de
-> GPU. Se cura sola según migren.
->
-> Y hasta el 20/09 ese fichero tenía además **la semántica de v1 con las
-> direcciones de v2**, que afectaba también a las carpetas ya migradas: armaba
-> `HALT_AT` con un número de intercambios (en v2 cuenta frames), no escribía nunca
-> `HALT_TARGET` (que arranca a cero, o sea que la alarma no paraba a nadie) y leía
-> los frames de `STATUS[31:16]` (en v2 tienen registro propio). El síntoma eran
-> nueve timeouts de 20-30 s en los casos de vídeo. **Arreglado**; los tests de
-> placa de la 21 pasan de 12 fallos a 5.
+### 2.2. GPU CORE no existe (§14.1)
 
-**Las tres se han validado en placa** (18, 19 y 21), no solo la 21. Matriz de DQ
-**128/128 limpia en las tres**, ningún timeout, y el caso negativo de la 18
-confirmado: un acceso a SERIAL —ausente, `DEVICES = 0x225`— da **error**, no cero,
-mientras que la 19 responde en esa misma dirección.
+`GPU_ID`, `VERSION`, `CAPS`, `STATUS`, `GPU_CONTROL` y `WARP_START/LIVE/DONE`
+**no están en ningún `.v` del repo**. Las cuatro carpetas de GPU decodifican el
+bloque `0x8200_0000` y contestan error, que es lo correcto para un bloque
+ausente (§4.3), pero el mapa promete registros que nadie implementa.
 
-> **Segundo resto de v1 en el lado host, arreglado.** El `monitor.py` de la 18 y
-> el de la 19 tenían `MMIO_LIMIT = 0x8000_0FFF`, la página de 4 KiB de v1, y el
-> de la 19 además `SERIAL_BASE = 0x8000_0200`. Desde el CLI de esas dos eran
-> inalcanzables VIDEO, SERIAL y CPU PERF. `MONITOR_REGIONS` sí estaba migrado y
-> es lo que los tests contrastan; este par no lo miraba nadie, y como sólo se usa
-> desde la línea de órdenes, la suite de placa pasaba con el CLI roto. Peor: el
-> síntoma —`exit=1`— era idéntico al éxito que se buscaba al comprobar §4.3 en la
-> 18. Ahora las dos derivan del mapa generado, como la 21.
->
-> **El test que lo habría cazado ya está**:
-> `test_monitor_protocol.test_la_ventana_del_cli_cubre_los_bloques_que_decodifica`
-> exige que la ventana del CLI cubra todas las regiones que la carpeta declara en
-> `MONITOR_REGIONS`, y ancla las constantes contra el mapa generado. Sólo mira
-> las carpetas ya en v2, así que las que faltan no fallan hasta que migren.
+Se dejó fuera de la migración con precedente: **CPU CORE (§13.1) tampoco
+existe**, y lo dice la cabecera de `sysid.v`. Implementarlo es hardware nuevo,
+no mover un mapa.
 
-> **Y un segundo arreglo del arnés: la paridad del doble buffer.** Parar la CPU
-> no para el doble buffer. Una petición de `SWAP` se atiende en la frontera de
-> frame siguiente, que la decide el barrido; si el programa la escribió justo
-> antes del `halt_cpu` del arnés, el intercambio se completa con la CPU ya parada
-> y `FB_FRONT` acaba apuntando al buffer pintado a medias. Sólo muerde a los
-> programas rápidos —`swap_demo` tarda 96 ms en volver a pedir intercambio y
-> `swap_demo_fast` 13 ms, que es el orden del viaje por el puerto serie—, y el
-> fallo era **perfectamente reproducible**, que es lo que despistó: un fallo
-> reproducible no descarta una carrera, sólo dice que un corredor gana casi
-> siempre. Corregido leyendo el frame de `FB_BACK` cuando sobra un número impar
-> de intercambios. Con esto pasan `video-swap-demo-fast` y `video-starfield-fast`
-> en las tres carpetas.
-
-> **Y un tercero: la memoria de los volcados.** Los casos con `memory_dumps` dan
-> por hecho que la memoria no escrita vale cero, que es lo que hace el simulador
-> (`bytearray`), y `reset_cpu` no toca la SDRAM. Los `expected.hex` de
-> `bresenham-circles-core` y `-lines-core` tienen 673 de 896 y 294 de 416
-> palabras a cero, y la que fallaba era siempre la primera que el programa no
-> escribe. Medido: `lines-core` a solas daba 47, y tras `circles-core` daba 32;
-> poniendo la región a cero a mano, pasa. **Afecta a los 31 casos con
-> `memory_dumps`**, no a dos: a los otros 29 el residuo les cuadraba por suerte.
-> Ahora el arnés pone a cero las regiones que el caso va a volcar, antes de
-> cargar el programa.
-
-> **Y el cuarto, que sí era de RTL y es el hallazgo de silicio de la ronda.**
-> `shared-video-fb-desalineada` fallaba en las tres: el dispositivo **rechazaba**
-> la escritura desalineada pero la CPU no se enteraba. La causa es de duración,
-> no de lógica: `mmio_mux` hace `select` un pulso de un ciclo y confirma al
-> cliente al siguiente, y `video_registers` colgaba su error de
-> `bus_write = select && write`, así que el error subía y bajaba **el ciclo antes
-> del `ack`**, que es donde `cpu_dmem_adapter` lo muestrea. El error de dirección
-> nunca estuvo roto porque sale de `address`/`write`, que el mux sí retiene.
->
-> Arreglado con una línea —el error cuelga de `write`, no de `bus_write`— en las
-> tres copias. **No cambia cuándo se escribe el registro, sólo cuánto dura el
-> aviso.** Caza el bug `mmio_error_ack_tb.v`, nuevo en las tres carpetas: monta
-> la cadena mux + decodificador + dispositivo, como `top.v`, y mira el error
-> donde lo mira el cliente. Ninguno de los bancos que había podía verlo:
-> `cpu_mmio_error_tb` pone `select` a mano y el error cae en el mismo ciclo que
-> la comprobación.
->
-> El rebarrido que obligó el cambio de RTL salió **mejor en las tres**: la 21 de
-> 3-de-8 a **7-de-8**, la 19 de 6-de-8 a **8-de-8** con su mejor mediana
-> histórica, y el área **baja** entre 53 y 208 LUT porque la condición se
-> simplifica. Semillas nuevas: 18 → 2 (87,67), 19 → 4 (88,87), 21 → 1 (87,34).
-
-**Las tres carpetas pasan la suite de placa entera y sin fallos**: 18 → 26/0,
-19 → 38/0, 21 → 53/0, matriz de DQ 128/128 en las tres, `synthesis-report.md` sin
-un solo FAIL. El detalle está en el log:
-`shared-video-fb-desalineada` (el silicio **rechaza** la escritura desalineada,
-pero el error de dato del dispositivo no llega a la CPU, mientras que el de
-dirección sí), los dos `video-*-fast` (comparan contra el frame esperado de su
-variante lenta, igualdad que sólo se sostiene con el modelo de frames sintético
-del simulador) y `program-bresenham-circles-core`, que además **no es
-determinista** en placa.
-
-Lo que ya está hecho y **no hay que repetir por carpeta**:
-
-- **`.equ` en el ensamblador** y `mmio_map.vh` como fuente única generada
-  (v2 §20), con `tools/generate-mmio --check` y `x.tests/test_mmio_map.py`.
-- **`1.isa/mmio_map_v1.vh`**, el mapa de transición, con los mismos nombres que
-  v2 y los valores de hoy. Permite simbolizar los `.asm` de una carpeta **sin
-  mover ninguna dirección**, y que migrarla sea después cambiar la línea del
-  `.include`. Se borró al cerrar la 21 y hubo que rehacerlo para la 19: el
-  criterio correcto es que **sobra cuando lo suelta la última carpeta**, no la
-  primera.
-- **`x.tests/test_top_wiring.py`**, que compara anchuras de puerto en los diez
-  `top.v` **y ahora también en los bancos** (4681 comparaciones). Al extenderlo
-  aparecieron cuatro direcciones MMIO sin ensanchar en la 21 y dos en la 18,
-  todas ya arregladas; en `DEUDA_EN_BANCOS` sólo quedan las tres de
-  `perf_probe_tb.v`, que son ajenas a MMIO y compartidas por 18, 19 y 21. Trae
-  además una comprobación de que un `top.v` no estrecha el bitmap de registros
-  de vídeo.
-- **`x.tests/test_fullframe_fixture.py`**, que descubre solo las carpetas con el
-  trío `fullframe_tb.asm` / `examples/fullframe.asm` / `fullframe.hex`.
-- **Los periféricos funcionales** (`tools/sim_devices.py`, `sysid_device.py`) y
-  los tres backends de simulador, que ya hablan v2.
-
-Los trozos que quedan por carpeta, de más a menos mecánico:
-
-- **Reubicar los bloques** a las bases de 64 KiB de v2 §2. Decodificadores,
-  listas blancas, `monitor.py` y constantes de programas.
-- **`SYSTEM`** (v2 §5): `MAGIC`, `MMIO_VERSION`, `SYSTEM_ID`, `DEVICES`,
-  `MEM_BASE`/`MEM_SIZE`, `MONITOR_VERSION`. Sustituye al `SYS_ID` de cuatro
-  palabras.
-- **Contadores** (v2 §12): array en el offset 0 con el control detrás, wrap
-  uniforme —hoy la CPU satura y la GPU da la vuelta—, `PERF_OVF`, `PERF_CTRL`
-  con freeze, y `VIDEO_TX` movido a VIDEO.
-- **Vídeo** (v2 §9): `FRAME_COUNT` de 32 bits fuera de `STATUS`, `HALT_TARGET`,
-  y error en base desalineada en vez del truncamiento silencioso de hoy.
-- **Los bancos de pruebas**, que es donde está el trabajo que nadie cuenta: los
-  offsets viven sueltos por todo el fichero y no hay generador que los cubra.
-- **`GPU_CONTROL` y las máscaras de warp** (v2 §14.1), con los comandos del
-  monitor pasando a ser una fachada que escribe esos registros. Es lo que
-  permite que la CPU lance la GPU, y es el trozo con más RTL nuevo.
-- **Acceso MMIO desde SIMT**: hoy varias lanes se sirven por turnos; v2 §4.2
-  exige error.
-- **Escrituras sub-palabra a MMIO** (§4.1 y §16.2). Es lo único que la 21 deja
-  a deber, y a propósito: el host y varios bancos escriben byte a byte y
-  tienen que pasar a `WRITE_WORD` **a la vez**. Es un cambio del protocolo del
-  host, transversal, no de una carpeta.
-
-**Por qué importa.** Es lo que decide si la MiniGPU puede ser un acelerador de la
-MiniCPU o se queda como sistema hermano. Hoy `run/halt/step/reset` llegan por
+**Por qué importa.** Es lo que decide si la MiniGPU puede ser un acelerador de
+la MiniCPU o se queda como sistema hermano. Hoy `run/halt/step/reset` llegan por
 señales del monitor, así que **solo el host puede lanzar la GPU, y solo con la
 GPU parada**. Y la ventana de warps está llena al 100 %, sin sitio para más de
-ocho.
+ocho. Es el trozo con más RTL nuevo de toda la lista.
 
-**Qué lo bloquea.** El punto 1: migrar sobre bitstreams que no corresponden a su
-RTL haría indistinguible un fallo de migración de uno de procedencia.
+### 2.3. Acceso MMIO desde SIMT: hoy se serializa, v2 exige error (§4.2)
 
-**Está en el 2 y no en el 1 a propósito**, y conviene decir la tensión: no hay
-ningún consumidor que lo pida hoy —no existe ningún bitstream con CPU y GPU
-juntas— así que su valor es futuro. Lo que lo sube hasta aquí es que el coste
-crece solo: cada prototipo nuevo construido sobre el mapa viejo es más
-migración después, y mientras tanto el RTL apunta a un mapa y la referencia
-describe otro.
+> «Si dos o más lanes acceden a MMIO en la misma instrucción, el acceso genera
+> **error** […]. Serializarlas en silencio sería peor que el error: el mismo
+> kernel haría cosas distintas según cuántas lanes estuvieran activas.»
 
-Antes de empezar conviene **medir el coste real** en una carpeta —la 16, que es
-pequeña y ya lleva semilla fija— en vez de planificar las diez a ciegas.
+`gpu_lsu2.v` hace exactamente lo que el contrato prohíbe, y su banco lo
+documenta como comportamiento esperado: *«dos lanes NO se coalescen: cada lane
+sale por su cuenta, la de menor índice primero»*. Arreglarlo es una condición en
+`gpu_lsu2.v` **y** cambiar ese caso del banco, que hoy afirma lo contrario.
 
----
+### 2.4. El bloque PERF de la GPU no cumple §12
+
+`cpu_perf_counters.v` tiene `PERF_CTRL`, `PERF_OVF0` y `PERF_OVF1`;
+`gpu_perf_counters.v` **no tiene ninguno**. O sea que en GPU no hay congelar
+para leer (§12.5) ni banderas de desbordamiento (§12.4). Falta también unificar
+el wrap: la CPU satura y la GPU da la vuelta.
+
+Lo que sí se hizo al migrar la 22: `VIDEO_TX` se movió de PERF a VIDEO, que es
+lo que pide §9.7, y con él su regla de *gating*. Eso bajó `STALL_MEM` a la
+ranura 5 y `LANE_OPS` a la 6.
+
+### 2.5. Vídeo de la GPU: dos divergencias medidas
+
+`gpu_video_regs.v` adoptó la numeración de v2 y sacó `FRAME_COUNT` de `STATUS`,
+pero quedan dos:
+
+- ~~**§9.2 exige error en base desalineada**~~ — **hecho** el 20/09/2026, y
+  verificado en placa: `shared-video-fb-desalineada` pasa en la 22. La GPU
+  truncaba en silencio; ahora `gpu_video_regs.v` rechaza la palabra entera y
+  no guarda nada. Sólo se juzga con los cuatro strobes, que es como escribe
+  `WRITE_WORD`: byte a byte el registro pasa por estados intermedios
+  desalineados que son legítimos.
+- **§9.5 pide `FRAME_COUNT` de 32 bits** y el de la GPU es un registro de 16
+  extendido con ceros. Sigue abierto. En placa se ve avanzar correctamente,
+  así que el síntoma sólo aparecería al dar la vuelta a los 65 536 frames —
+  unos 18 minutos a 60 Hz.
+
+### 2.6. Dos cosas del contrato, no del RTL
+
+Aparecieron al migrar la 12 y la 22, y son decisiones de `mmio.md`, no trabajo
+de carpeta:
+
+- **`MMIO_MEM_SIZE_EBR` describe la 6, no «los prototipos sin SDRAM».** Hay dos
+  —la 6 con 32 KiB y la 12 con **128 KiB**— y §3.1 documenta sólo el primero,
+  generalizando desde un único caso. El RTL de la 12 declara la verdad en su
+  `MEM_SIZE` y hay un caso que lo comprueba, pero **la constante y §3.1 siguen
+  diciendo 32 KiB**. O §3.1 admite dos tamaños, o la constante se renombra a
+  algo que diga de quién es.
+- **`LANE_OPS` no lo nombra el mapa.** Vive en la ranura 6 de GPU PERF, detrás
+  de las seis de §14.4, que §12.6 permite. O se declara como extensión o se
+  nombra.
+
+**Qué lo bloquea.** El punto 1 para todo lo que quiera medirse en placa. La 2.1
+no lo bloquea nada salvo que es transversal; la 2.2 es la única que es diseño de
+verdad.
 
 ## 3. Snapshots de ejecución (simulador)
 
@@ -297,9 +261,10 @@ abre con «semántica vigente de MiniISA v0.1» y la da por implementada en el
 funcional de 11, en `gpu_sm.v` de 12, 14, 17 y 22, y en `simt.py` de 25. El
 formato ya se puede congelar.
 
-**Es lo de más valor por esfuerzo de la lista, y es independiente del punto 2**:
-solo toca simulador, no comparte un fichero con la migración. Se puede hacer en
-paralelo.
+**Es lo de más valor por esfuerzo de la lista, y no depende de nadie**: sólo
+toca simulador, así que no comparte un fichero ni con la ronda de placa del
+punto 1 ni con las deudas del 2. Se puede hacer en paralelo con cualquiera de
+los dos.
 
 ---
 
@@ -399,11 +364,24 @@ Va junto con buscar inexactitudes entre doc y código, que es el mismo barrido.
 
 ## 7. `apio lint` no pasa en ningún prototipo
 
-**Qué falta.** Los siete salen con exit 1. Medido el 19/09/2026 con `tools/lint`:
+**Qué falta.** Los diez salen con exit 1. Medido el 20/09/2026 con `tools/lint`,
+ahora con las cuatro de GPU incluidas —faltaban en la tabla anterior—:
 
-| Prototipo | 6 | 10 | 16 | 18 | 19 | 21 | 22 |
-|---|--:|--:|--:|--:|--:|--:|--:|
-| Diagnósticos | 18 | 41 | 66 | 40 | 36 | 38 | 31 |
+| Prototipo | 6 | 10 | 12 | 14 | 16 | 17 | 18 | 19 | 21 | 22 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| Total | 18 | 41 | 17 | 17 | **66** | 17 | 39 | 32 | 34 | 31 |
+| `PINMISSING` | 18 | 20 | 17 | 17 | 35 | 17 | 39 | 32 | 34 | 31 |
+| `WIDTHEXPAND` | — | 21 | — | — | 29 | — | — | — | — | — |
+| otros | — | — | — | — | 2 | — | — | — | — | — |
+
+Dos cosas que la tabla vieja no dejaba ver:
+
+- **Las cuatro de GPU son las más limpias**, con 17 avisos y de un solo tipo.
+  Migrarlas a v2 no cambió ese número: 12, 14 y 17 tenían 17 antes y después, y
+  la 22 tenía 31 antes y después. El criterio de «no empeorar» es el reparto
+  **por tipo**, no el total.
+- **`WIDTHEXPAND` sólo existe en la 10 y en la 16.** Es el aviso de anchura que
+  la ronda de la familia CPU ya detectó, y sigue concentrado en esas dos.
 
 **Por qué importa.** Casi todo es ruido —`PINMISSING` en los `*_tb.v`:
 testbenches que instancian módulos a los que se añadieron puertos después, como
@@ -420,8 +398,14 @@ congelaría sin recuperación, y es el único camino a la SDRAM de esa carpeta.
 **Qué lo bloquea.** El arreglo de la 16 **está decidido y escrito como comentario
 en el propio fichero**, y espera al próximo cambio de RTL de esa carpeta: lleva
 semilla fija, y dos palabras de arreglo obligan a rebarrer las ocho semillas de
-un diseño que cierra y está verificado en placa. El punto 2 va a tocar esa
-carpeta de todas formas — es el momento de aplicarlo.
+un diseño que cierra.
+
+Antes esto decía «el punto 2 va a tocar esa carpeta de todas formas», y **ya no
+es cierto**: la migración a v2 de la 16 está hecha y **ninguna de las seis
+deudas que quedan del punto 2 pasa por esa carpeta** —son de GPU, del protocolo
+del host o del propio contrato—. Así que el arreglo necesita ahora una excusa
+propia para pagar el rebarrido, o se aplica aprovechando la ronda de placa del
+punto 1, que sí va a tocar esa carpeta.
 
 ---
 
@@ -525,6 +509,23 @@ solo; restaurar, probablemente no.
 - **El resto de la unificación MMIO.** Fases 0, 1, 2, 3, 3.4, 3.5, 4a y el
   renumerado de la 5, cerradas. Lo que hicieron vive en el RTL; el porqué, en
   [`docs/unificacion-mmio.md`](docs/unificacion-mmio.md), que es un log.
+- **Migrar las diez carpetas a MMIO v2.** Cerrado el 20/09/2026 con la 22. Lo
+  que queda de v2 son deudas de contrato, no migraciones, y está en el punto 2.
+  Con ello se cierran también:
+  - **El mapa de transición `1.isa/mmio_map_v1.vh`**, borrado por fin cumpliendo
+    su propio criterio —«sobra cuando lo suelta la ÚLTIMA carpeta»—, junto con
+    `x.tests/inc/mmio_v1.inc`, `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la
+    clase `MapaV1Test`. Se había borrado antes de tiempo una vez, al cerrar la
+    21, y hubo que rehacerlo entero para la 19.
+  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga.py`
+    lleva en v2 desde el 20/09 y las diez carpetas ya están en v2, así que no
+    queda ninguna con los tests de placa rotos por el mapa.
+  - **Los diez `sysid.v` idénticos**, con el grupo de v1 vacío:
+    `test_sysid_es_copia_identica` vuelve a ser la comprobación de siempre.
+  - **La guarda de direcciones cableadas** cubre ya los 152 `.asm` versionados,
+    con las **ocho** rutas de la familia GPU —`examples/` **y** `fixtures/` de
+    cada una—. Añadir sólo `examples/`, que es lo que decía el encargo, habría
+    dejado 128 de 152 sin vigilar.
 - **`docs/TODO JUAN.md`.** Absorbido y borrado. De lo que tenía, lo vivo pasó a
   los puntos 1 (la trampa de `--rebuild`), 6 (la separación README / `log.md` /
   `timing.md`) y 8 (latency timer y `MAX_BLOCK_SIZE`). El resto estaba hecho:

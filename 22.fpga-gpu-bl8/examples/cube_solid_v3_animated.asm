@@ -11,7 +11,8 @@
 ; hace falta una pasada de borrado.
 
         GETTID R1
-        MOVHI R30, 0x8000
+        .include "mmio.inc"
+        LI    R30, MMIO_VIDEO_BASE
         MOVI  R20, 160             ; palabras por fila
         MOVHI R10, 0xFFFF          ; mascara de la mitad alta
 
@@ -19,11 +20,11 @@
         SSY   video_ready
         BNE   R1, R0, video_ready
         MOVHI R27, 0x0010
-        STORE R27, R30, 0          ; FB_FRONT
+        STORE R27, R30, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
         MOVHI R27, 0x0014
-        STORE R27, R30, 4          ; FB_BACK
+        STORE R27, R30, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK
         MOVI  R27, 2
-        STORE R27, R30, 24         ; SCANOUT
+        STORE R27, R30, MMIO_VIDEO_CTRL_OFF         ; SCANOUT
 video_ready:
         BAR
         MOVI  R31, cube_frames
@@ -47,7 +48,7 @@ clear_loop:
         BAR
 
 frame_loop:
-        LOAD  R19, R30, 4          ; buffer trasero actual
+        LOAD  R19, R30, MMIO_VIDEO_FB_BACK_OFF          ; buffer trasero actual
         ; Caja del cubo: x=32..287, y=8..231. Son 128*224=28672 palabras,
         ; exactamente 448 por hilo. R3 es x local en palabras y R5 el indice
         ; global dentro del framebuffer.
@@ -136,9 +137,9 @@ no_wrap:
         SSY   swapped
         BNE   R1, R0, swapped
         MOVI  R15, 1
-        STORE R15, R30, 8
+        STORE R15, R30, MMIO_VIDEO_SWAP_OFF
 poll_swap:
-        LOAD  R15, R30, 8
+        LOAD  R15, R30, MMIO_VIDEO_SWAP_OFF
         ANDI  R15, R15, 1
         BNE   R15, R0, poll_swap
 swapped:

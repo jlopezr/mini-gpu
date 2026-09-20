@@ -10,7 +10,7 @@
 ; que "la cola esta vacia" significa lo mismo en los dos sitios.
 ;
 ; Puerto serie: +0 DATA, +4 STATUS (bits 7:0 = bytes esperando). La direccion
-; no se escribe aqui; sale del mapa (ver `mmio_v1.inc`).
+; no se escribe aqui; sale del mapa (ver `mmio.inc`).
 
 .include "mmio.inc"
 

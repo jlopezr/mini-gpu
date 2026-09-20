@@ -17,7 +17,7 @@ module gpu_lsu2 (
     input mem_rsp_valid, output mem_rsp_ready,
     input [127:0] mem_rsp_rdata, input mem_rsp_error,
 
-    // Ventana MMIO (0x80000xxx). Antes era fault y solo la alcanzaba el host
+    // Ventana MMIO (todo 0x8xxx_xxxx en v2). Antes era fault y solo la alcanzaba el host
     // con la GPU parada; ahora la GPU puede leerla y escribirla mientras corre,
     // que es lo que hace falta para que sincronice con el video y para que se
     // mida a si misma.
@@ -80,7 +80,18 @@ module gpu_lsu2 (
         for(i=0;i<8;i=i+1) begin
             // La ventana MMIO deja de ser fault: es un destino legitimo, solo
             // que por otro camino.
-            mmio_lanes[i]=sel_pending[i] && (sel_addr[i*32+12 +: 20]==20'h80000);
+            //
+            // MMIO v2: el espacio de dispositivos es TODO 0x8000_0000 arriba
+            // (§2), no una pagina de 4 KiB. Aqui estaba la comparacion de 20
+            // bits contra 0x80000, y es el SEXTO sitio de esta familia que
+            // decide "esto es MMIO" por su cuenta -- despues de los cuatro
+            // `gpu_system.v`, `gpu_system_bl8.v`, y sin contar el host.
+            //
+            // No lo encuentra ninguna busqueda de `32'h8000...`: aqui la
+            // direccion no es un literal, es un RANGO DE BITS comparado contra
+            // un prefijo. Es una septima forma de escribir una direccion,
+            // ademas de las seis que el encargo lista.
+            mmio_lanes[i]=sel_pending[i] && sel_addr[i*32+31];
             fault_lanes[i]=sel_pending[i] &&
                 ((|sel_addr[i*32+25 +: 7] && !mmio_lanes[i]) ||
                  |sel_addr[i*32 +: 2]);
