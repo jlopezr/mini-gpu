@@ -14,6 +14,8 @@ del protocolo del monitor.
 type: specification
 kind: interface
 subjects: [cpu, gpu]
+requires:
+  - SRC-DEVICE-REGISTERS
 -->
 
 ## Interfaz de identidad

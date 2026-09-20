@@ -1,0 +1,9 @@
+artifact: SRC-DEVICE-REGISTERS
+type: source
+kind: datasheet
+subjects: [cpu, gpu]
+
+resource:
+  file: device-registers.txt
+  revision: "Rev. A"
+  sha256: 4aabfd016ff4bb5637b9a2ed363275051ed33bb817000db4af2066c4b6c514e1

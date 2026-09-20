@@ -9,6 +9,7 @@ from .observation import Observation
 from .relation import Relation
 from .resolver import Resolution, Resolver
 from .systemverilog import SystemVerilogAdapter
+from .sidecar import SidecarAdapter
 
 __all__ = [
     "Diagnostic",
@@ -24,5 +25,6 @@ __all__ = [
     "SourceLocation",
     "TraceConfig",
     "SystemVerilogAdapter",
+    "SidecarAdapter",
     "load_config",
 ]

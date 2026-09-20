@@ -5,6 +5,7 @@ scan:
   - "**/*.md"
   - "**/*.sv"
   - "**/*.v"
+  - "**/*.trace.yaml"
 
 exclude:
   - ".git/**"

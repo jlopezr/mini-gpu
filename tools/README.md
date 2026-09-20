@@ -96,6 +96,27 @@ formal produce `IMPL-MINIGPU::update-mask`. También se admite `@id local-id`
 como anotación separada. Whitespace y comentarios normales no rompen el grupo;
 otro elemento sintáctico sí lo rompe y produce un diagnóstico.
 
+### Sidecars
+
+Un fichero `<basename>.trace.yaml` aporta metadata a un recurso que no conviene
+modificar. Puede declarar cualquier tipo de ARTIFACT; no implica `source` por
+sí mismo.
+
+```yaml
+artifact: SRC-W9825G6KH-DATASHEET
+type: source
+kind: datasheet
+resource:
+  file: w9825g6kh.pdf
+  revision: "Rev. A"
+  sha256: "..."
+```
+
+`resource.file` se resuelve respecto al sidecar y no puede salir de la raíz.
+Debe existir. Si se proporciona `sha256`, `trace check` valida su formato y el
+contenido. La metadata desconocida es un error y el artifact puede declarar
+las mismas relaciones core que una representación Markdown.
+
 ```bash
 trace check                         # todos los Markdown del repositorio
 trace check README.md docs/         # solo observaciones de esas rutas

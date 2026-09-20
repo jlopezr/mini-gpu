@@ -12,8 +12,15 @@ from .identity import Identity, Resource
 from .markdown import MarkdownAdapter
 from .observation import Observation
 from .systemverilog import SystemVerilogAdapter
+from .sidecar import SidecarAdapter
 
 ADAPTERS = {".md": MarkdownAdapter, ".sv": SystemVerilogAdapter, ".v": SystemVerilogAdapter}
+
+
+def adapter_for(path: Path):
+    if path.name.endswith(".trace.yaml"):
+        return SidecarAdapter
+    return ADAPTERS.get(path.suffix.lower())
 
 @dataclass(frozen=True)
 class Model:
@@ -35,7 +42,7 @@ class ModelBuilder:
         paths: set[Path] = set()
         for pattern in config.scan:
             paths.update(path.resolve() for path in root.glob(pattern)
-                         if path.is_file() and path.suffix.lower() in ADAPTERS)
+                         if path.is_file() and adapter_for(path))
         return sorted(path for path in paths if not config.excludes(path, root))
 
     def build(self, root: Path, paths: Iterable[Path] | None = None) -> Model:
@@ -46,7 +53,7 @@ class ModelBuilder:
         resources, identities, observations = [], [], []
         diagnostics = list(config_diagnostics)
         for path in discovered:
-            adapter = self.adapter or ADAPTERS[path.suffix.lower()]()
+            adapter = self.adapter or adapter_for(path)()
             result = adapter.read(path, root)
             resources.append(result.resource)
             identities.extend(result.identities)
@@ -63,7 +70,7 @@ class ModelBuilder:
             if path.is_dir():
                 discovered = set(self.discover(root))
                 result.update(item.resolve() for item in path.rglob("*") if item.resolve() in discovered)
-            elif path.is_file() and path.suffix.lower() in ADAPTERS:
+            elif path.is_file() and adapter_for(path):
                 if path not in self.discover(root):
                     raise ValueError(f"la ruta queda fuera de scan/exclude: {supplied}")
                 result.add(path)

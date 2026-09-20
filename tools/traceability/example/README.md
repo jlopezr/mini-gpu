@@ -12,6 +12,7 @@ IMPL-DEVICE-IDENTITY --implements--> SPEC-DEVICE@identity
 IMPL-DEVICE-IDENTITY --satisfies--> REQ-DEVICE-IDENTITY
 VER-DEVICE-IDENTITY --verifies coverage=complete--> SPEC-DEVICE#identity-register
 VER-DEVICE-IDENTITY --verifies--> REQ-DEVICE-IDENTITY
+SPEC-DEVICE --requires--> SRC-DEVICE-REGISTERS
 ```
 
 Puede inspeccionarse desde la raíz del repositorio:
@@ -27,3 +28,5 @@ El ejemplo es también una especificación ejecutable: los tests comprueban sus
 identidades, relaciones, atributos, resolución local y FACETs anidadas. La
 implementación vive en `implementation.sv`: declara el ARTIFACT desde código y
 materializa un SYMBOL formal mediante una anotación compacta.
+`device-registers.trace.yaml` asigna identidad estable a una fuente externa y
+verifica el checksum del recurso descrito.

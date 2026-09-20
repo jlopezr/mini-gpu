@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tools.trace_cli import main
-from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver, SystemVerilogAdapter
+from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver, SidecarAdapter, SystemVerilogAdapter
 
 REPO = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO / "tools" / "traceability" / "example"
@@ -239,11 +239,60 @@ type: decision
         analysis = Resolver().analyze(model)
         self.assertEqual(analysis.diagnostics, ())
         triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
-        self.assertEqual(len(triples), 6)
+        self.assertEqual(len(triples), 7)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "satisfies", "REQ-DEVICE-IDENTITY"), triples)
         self.assertIn(("IMPL-DEVICE-IDENTITY", "implements", "SPEC-DEVICE@identity"), triples)
         self.assertIn(("IMPL-DEVICE-IDENTITY::identity-read", "implements", "SPEC-DEVICE#identity-register"), triples)
         self.assertIn(("VER-DEVICE-IDENTITY", "verifies", "SPEC-DEVICE#identity-register"), triples)
+        self.assertIn(("SPEC-DEVICE", "requires", "SRC-DEVICE-REGISTERS"), triples)
+
+    def test_sidecar_materializes_artifact_and_validates_checksum(self):
+        path = EXAMPLE / "device-registers.trace.yaml"
+        result = SidecarAdapter().read(path, REPO)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(result.identities[0].key, "SRC-DEVICE-REGISTERS")
+        self.assertEqual(result.identities[0].artifact_type, "source")
+
+    def test_sidecar_checksum_mismatch_is_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "data.bin", "content")
+            path = self.write(root, "data.trace.yaml", """artifact: DATA
+type: evidence
+resource:
+  file: data.bin
+  sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+""")
+            result = SidecarAdapter().read(path, root)
+            self.assertEqual([item.code for item in result.diagnostics], ["checksum-mismatch"])
+
+    def test_sidecar_missing_and_outside_resources_are_errors(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / "repo"
+            root.mkdir()
+            missing = self.write(root, "missing.trace.yaml", """artifact: MISSING
+type: source
+resource: {file: absent.pdf}
+""")
+            outside = self.write(root, "outside.trace.yaml", """artifact: OUTSIDE
+type: source
+resource: {file: ../external.pdf}
+""")
+            self.write(parent, "external.pdf", "external")
+            self.assertEqual([item.code for item in SidecarAdapter().read(missing, root).diagnostics], ["missing-resource"])
+            self.assertEqual([item.code for item in SidecarAdapter().read(outside, root).diagnostics], ["outside-root"])
+
+    def test_sidecar_does_not_imply_source_type(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "firmware.bin", "binary")
+            path = self.write(root, "firmware.trace.yaml", """artifact: IMPL-FIRMWARE
+type: implementation
+resource: {file: firmware.bin}
+""")
+            result = SidecarAdapter().read(path, root)
+            self.assertEqual(result.identities[0].artifact_type, "implementation")
 
     def test_systemverilog_artifact_and_formal_symbol(self):
         result = SystemVerilogAdapter().read(EXAMPLE / "implementation.sv", REPO)
