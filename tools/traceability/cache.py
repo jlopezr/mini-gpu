@@ -29,7 +29,7 @@ class GraphCache:
         self.root = root.resolve()
         self.path = self.root / CACHE_FILE
         self.enabled = enabled
-        self.data = {"schema": CACHE_SCHEMA, "entries": {}}
+        self.data = {"schema": CACHE_SCHEMA, "entries": {}, "deleted": {}}
         self.dirty = False
         if enabled:
             self._load()
@@ -64,6 +64,7 @@ class GraphCache:
             },
             "fragment": self._serialize(result),
         }
+        self.data["deleted"].pop(key, None)
         self.dirty = True
 
     def retain(self, paths: list[Path]) -> None:
@@ -73,8 +74,22 @@ class GraphCache:
         entries = self.data["entries"]
         removed = set(entries) - wanted
         for key in removed:
+            if not (self.root / key).exists():
+                self.data["deleted"][key] = entries[key]
             del entries[key]
         self.dirty |= bool(removed)
+
+    def deleted_results(self) -> tuple[CachedResult, ...]:
+        """Return last-known fragments for resources no longer discovered."""
+        if not self.enabled:
+            return ()
+        results = []
+        for entry in self.data["deleted"].values():
+            try:
+                results.append(self._deserialize(entry["fragment"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return tuple(results)
 
     def save(self) -> None:
         if not self.enabled or not self.dirty:
@@ -92,6 +107,8 @@ class GraphCache:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             if data.get("schema") == CACHE_SCHEMA and isinstance(data.get("entries"), dict):
+                if not isinstance(data.get("deleted"), dict):
+                    data["deleted"] = {}
                 self.data = data
         except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
             pass

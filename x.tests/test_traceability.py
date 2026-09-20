@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tools.trace_cli import main
 from tools.traceability import (
-    AssemblyAdapter, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
+    AssemblyAdapter, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
     SidecarAdapter, SystemVerilogAdapter,
 )
 
@@ -344,7 +344,7 @@ type: requirement
             self.assertEqual((model.cache_hits, model.cache_misses), (1, 0))
             self.assertEqual(CountingAdapter.calls, 1)
 
-    def test_cache_drops_deleted_resource_fragment(self):
+    def test_cache_moves_deleted_resource_to_tombstone(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = self.write(root, "doc.md", "# Plain\n")
@@ -354,6 +354,68 @@ type: requirement
             cache = json.loads((root / ".trace" / "cache-v1.json").read_text(encoding="utf-8"))
             self.assertEqual(model.resources, ())
             self.assertEqual(cache["entries"], {})
+            self.assertIn("doc.md", cache["deleted"])
+
+    def test_impact_walks_incoming_and_outgoing_with_shortest_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "a.md", """<!-- trace:artifact A
+type: requirement
+-->
+# A
+""")
+            self.write(root, "b.md", """<!-- trace:artifact B
+type: specification
+requires: [A]
+-->
+# B
+""")
+            self.write(root, "c.md", """<!-- trace:artifact C
+type: implementation
+implements: [B]
+-->
+# C
+""")
+            result = ImpactAnalyzer().analyze(ModelBuilder().build(root), "A")
+            impacted = {item.identity.key: item for item in result.impacted}
+            self.assertEqual(impacted["B"].depth, 1)
+            self.assertEqual(impacted["C"].depth, 2)
+            self.assertEqual(impacted["B"].path[0].direction, "incoming")
+            self.assertEqual(impacted["C"].path[-1].relation, "implements")
+
+            limited = ImpactAnalyzer().analyze(ModelBuilder().build(root), "A", max_depth=1)
+            self.assertEqual([item.identity.key for item in limited.impacted], ["B"])
+
+    def test_impact_uses_cached_fragment_for_deleted_resource(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "a.md", """<!-- trace:artifact A
+type: requirement
+-->
+# A
+""")
+            deleted = self.write(root, "b.md", """<!-- trace:artifact B
+type: specification
+requires: [A]
+-->
+# B
+""")
+            ModelBuilder().build(root)
+            deleted.unlink()
+            model = ModelBuilder().build(root)
+            result = ImpactAnalyzer().analyze(model, "b.md")
+            self.assertTrue(result.deleted_resource)
+            self.assertEqual([item.key for item in result.seeds], ["B"])
+            self.assertEqual([item.identity.key for item in result.impacted], ["A"])
+
+    def test_cli_impact_json_is_machine_readable(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = main(["impact", "SPEC-DEVICE#identity-register", "--json", "--root", str(REPO)])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertEqual(payload["seeds"][0]["id"], "SPEC-DEVICE#identity-register")
+        self.assertTrue(any(item["depth"] == 1 for item in payload["impacted"]))
 
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:

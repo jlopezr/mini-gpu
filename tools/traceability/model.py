@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .config import TraceConfig, load_config
-from .cache import GraphCache
+from .cache import CachedResult, GraphCache
 from .diagnostic import Diagnostic
 from .identity import Identity, Resource
 from .markdown import MarkdownAdapter
@@ -42,6 +42,7 @@ class Model:
     diagnostics: tuple[Diagnostic, ...]
     cache_hits: int = 0
     cache_misses: int = 0
+    deleted_fragments: tuple[CachedResult, ...] = ()
 
 
 class ModelBuilder:
@@ -86,10 +87,11 @@ class ModelBuilder:
             if path in selected:
                 observations.extend(result.observations)
         cache.retain(discovered)
+        deleted_fragments = cache.deleted_results()
         cache.save()
         return Model(
             root, config, tuple(resources), tuple(identities), tuple(observations),
-            tuple(diagnostics), hits, misses,
+            tuple(diagnostics), hits, misses, deleted_fragments,
         )
 
     def _expand(self, root: Path, paths: Iterable[Path]) -> list[Path]:

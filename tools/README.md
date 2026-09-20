@@ -68,13 +68,38 @@ relaciones pendientes, diagnósticos, localizaciones y dependencias:
 - si cambia la metadata pero no el tamaño, se calcula SHA-256 y se reutiliza el
   fragmento cuando el contenido sigue siendo idéntico;
 - si cambia el contenido o la versión del adapter, se vuelve a parsear;
-- los resources borrados eliminan su fragmento completo;
+- los resources borrados salen del grafo activo y conservan su último fragmento
+  como tombstone para el análisis de impacto;
 - un sidecar se invalida también cuando cambia, aparece o desaparece el recurso
   que describe.
 
 El resolver reconstruye siempre el grafo global desde los fragmentos para que
 duplicados y referencias reflejen el conjunto actual. `trace check --no-cache`
 permite forzar una lectura completa; la salida normal informa hits y misses.
+
+### Análisis de impacto
+
+`trace impact` recorre en ambos sentidos únicamente las relaciones explícitas
+del grafo y muestra una ruta mínima que explica cada resultado. Acepta una
+identidad o un recurso; cuando se indica un recurso, todas las identidades que
+proceden de él son puntos de partida:
+
+```bash
+$ trace impact SPEC-DEVICE#identity-register
+$ trace impact tools/traceability/example/validation.py --depth 2
+$ trace impact REQ-DEVICE-IDENTITY --json
+```
+
+La salida separa afectados directos y transitivos. `--depth N` limita el
+recorrido y `--json` ofrece IDs, localizaciones, profundidad y cada salto de la
+ruta para integraciones. El recorrido es una vista de conectividad: no añade
+relaciones semánticas ni invierte su dirección canónica; cada salto indica si
+se recorrió una relación en sentido `outgoing` o `incoming`.
+
+Si un recurso desaparece después de haber sido cacheado,
+`trace impact ruta/al/recurso` utiliza su tombstone y lo marca expresamente en
+la salida. Esta posibilidad depende de la caché descartable: con `--no-cache`,
+o si se borra `.trace/cache-v1.json`, no existe historial del recurso eliminado.
 
 Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
 con el mismo ID local:

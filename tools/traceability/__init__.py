@@ -13,6 +13,7 @@ from .systemverilog import SystemVerilogAdapter
 from .sidecar import SidecarAdapter
 from .python import PythonAdapter
 from .assembly import AssemblyAdapter
+from .impact import ImpactAnalyzer, ImpactedIdentity, ImpactHop, ImpactResult
 
 __all__ = [
     "Diagnostic",
@@ -32,5 +33,9 @@ __all__ = [
     "SidecarAdapter",
     "PythonAdapter",
     "AssemblyAdapter",
+    "ImpactAnalyzer",
+    "ImpactedIdentity",
+    "ImpactHop",
+    "ImpactResult",
     "load_config",
 ]
