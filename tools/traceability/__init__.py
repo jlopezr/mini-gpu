@@ -14,6 +14,7 @@ from .sidecar import SidecarAdapter
 from .python import PythonAdapter
 from .assembly import AssemblyAdapter
 from .impact import ImpactAnalyzer, ImpactedIdentity, ImpactHop, ImpactResult
+from .graph import Graph, GraphHop
 
 __all__ = [
     "Diagnostic",
@@ -37,5 +38,7 @@ __all__ = [
     "ImpactedIdentity",
     "ImpactHop",
     "ImpactResult",
+    "Graph",
+    "GraphHop",
     "load_config",
 ]

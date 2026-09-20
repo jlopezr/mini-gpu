@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tools.trace_cli import main
 from tools.traceability import (
-    AssemblyAdapter, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
+    AssemblyAdapter, Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, Resolver,
     SidecarAdapter, SystemVerilogAdapter,
 )
 
@@ -416,6 +416,57 @@ requires: [A]
         self.assertEqual(status, 0)
         self.assertEqual(payload["seeds"][0]["id"], "SPEC-DEVICE#identity-register")
         self.assertTrue(any(item["depth"] == 1 for item in payload["impacted"]))
+
+    def test_graph_indexes_navigation_and_shortest_path(self):
+        graph = Graph(ModelBuilder().build(REPO))
+        self.assertTrue(any(item.key == "SPEC-DEVICE" for item in graph.by_artifact_type["specification"]))
+        self.assertTrue(any(item.key == "SPEC-DEVICE@identity" for item in graph.by_kind["capability"]))
+        incoming = graph.incoming("SPEC-DEVICE#identity-register", "implements")
+        self.assertEqual(
+            {item.source.key for item in incoming},
+            {"IMPL-DEVICE-IDENTITY::identity-read", "IMPL-DEVICE-PROBE::read-identity"},
+        )
+        route = graph.shortest_path("VER-DEVICE-IDENTITY::identity-read", "IMPL-DEVICE-PROBE::read-identity")
+        self.assertEqual([item.relation for item in route], ["verifies", "implements"])
+        self.assertEqual([item.direction for item in route], ["outgoing", "incoming"])
+
+    def test_cli_navigation_commands_have_json_output(self):
+        cases = (
+            (["list", "--type", "verification"], lambda value: value[0]["id"] == "VER-DEVICE-IDENTITY"),
+            (["incoming", "SPEC-DEVICE#identity-register", "--relation", "verifies"],
+             lambda value: value[0]["source"]["id"] == "VER-DEVICE-IDENTITY::identity-read"),
+            (["outgoing", "IMPL-DEVICE-PROBE", "--relation", "implements"],
+             lambda value: value[0]["target"]["id"] == "SPEC-DEVICE@identity"),
+            (["tree", "SPEC-DEVICE"], lambda value: bool(value["children"])),
+            (["path", "VER-DEVICE-IDENTITY::identity-read", "IMPL-DEVICE-PROBE::read-identity"],
+             lambda value: len(value["path"]) == 2),
+            (["show", "SPEC-DEVICE"], lambda value: value["id"] == "SPEC-DEVICE"),
+        )
+        for arguments, assertion in cases:
+            with self.subTest(command=arguments[0]):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = main([*arguments, "--format", "json", "--root", str(REPO)])
+                self.assertEqual(status, 0)
+                self.assertTrue(assertion(json.loads(output.getvalue())))
+
+    def test_cli_path_reports_disconnected_nodes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "nodes.md", """<!-- trace:artifact A
+type: requirement
+-->
+# A
+<!-- trace:artifact Z
+type: requirement
+-->
+# Z
+""")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main(["path", "A", "Z", "--root", str(root)])
+            self.assertEqual(status, 1)
+            self.assertIn("sin camino", output.getvalue())
 
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:

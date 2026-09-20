@@ -101,6 +101,27 @@ Si un recurso desaparece después de haber sido cacheado,
 la salida. Esta posibilidad depende de la caché descartable: con `--no-cache`,
 o si se borra `.trace/cache-v1.json`, no existe historial del recurso eliminado.
 
+### Navegación del grafo
+
+La API pública `Graph` construye una vez los índices por ID, tipo de elemento,
+tipo de artifact, `kind` y `subject`, además de relaciones entrantes, salientes
+y ownership estructural. Los comandos de consulta usan esos mismos índices:
+
+```bash
+$ trace list --type specification
+$ trace list --kind capability --format json
+$ trace incoming SPEC-DEVICE#identity-register --relation implements
+$ trace outgoing IMPL-DEVICE-PROBE --relation implements
+$ trace tree SPEC-DEVICE
+$ trace path VER-DEVICE-IDENTITY::identity-read IMPL-DEVICE-PROBE::read-identity
+```
+
+`tree` recorre estructura (`owner` y `parent-facet`), no relaciones semánticas.
+`path` recorre relaciones explícitas en ambos sentidos y devuelve el camino más
+corto, indicando en cada salto si utilizó la dirección canónica o su vista
+inversa. `show`, `list`, `incoming`, `outgoing`, `tree`, `path` e `impact`
+aceptan `--format text|json`; `impact --json` se conserva como alias.
+
 Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
 con el mismo ID local:
 

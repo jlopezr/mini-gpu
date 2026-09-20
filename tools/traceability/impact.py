@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .identity import Identity
 from .model import Model
-from .relation import Relation
+from .graph import Graph, GraphHop
 from .resolver import Resolution, Resolver
 
 
-@dataclass(frozen=True)
-class ImpactHop:
-    origin: str
-    destination: str
-    relation: str
-    direction: str
+ImpactHop = GraphHop
 
 
 @dataclass(frozen=True)
@@ -44,29 +38,9 @@ class ImpactAnalyzer:
         if not seeds:
             raise ValueError(f"no existe la identidad o recurso '{requested}'")
 
-        adjacency: dict[str, list[tuple[Identity, Relation, str]]] = {}
-        for relation in resolution.relations:
-            adjacency.setdefault(relation.source.key, []).append((relation.target, relation, "outgoing"))
-            adjacency.setdefault(relation.target.key, []).append((relation.source, relation, "incoming"))
-        for edges in adjacency.values():
-            edges.sort(key=lambda item: (item[0].key, item[1].kind, item[2]))
-
-        seed_keys = {item.key for item in seeds}
-        visited = set(seed_keys)
-        queue = deque((item, ()) for item in sorted(seeds, key=lambda item: item.key))
-        impacted = []
-        while queue:
-            identity, path = queue.popleft()
-            if max_depth is not None and len(path) >= max_depth:
-                continue
-            for neighbour, relation, direction in adjacency.get(identity.key, ()):
-                if neighbour.key in visited:
-                    continue
-                hop = ImpactHop(identity.key, neighbour.key, relation.kind, direction)
-                route = path + (hop,)
-                visited.add(neighbour.key)
-                impacted.append(ImpactedIdentity(neighbour, len(route), route))
-                queue.append((neighbour, route))
+        graph = Graph(working, resolution)
+        impacted = [ImpactedIdentity(identity, len(path), path)
+                    for identity, path in graph.reachable(tuple(seeds), max_depth)]
         impacted.sort(key=lambda item: (item.depth, item.identity.key))
         return ImpactResult(tuple(seeds), tuple(impacted), resolution, deleted)
 

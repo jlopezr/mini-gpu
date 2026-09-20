@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from tools.prototype import find_repo_root
-from tools.traceability import ImpactAnalyzer, ModelBuilder, Resolver
+from tools.traceability import Graph, ImpactAnalyzer, ModelBuilder, Resolver
 
 
 def parser() -> argparse.ArgumentParser:
@@ -21,15 +21,41 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     show = commands.add_parser("show", help="explica una identidad y sus relaciones")
     show.add_argument("identity", help="identidad semántica, por ejemplo REQ-001")
+    show.add_argument("--format", choices=("text", "json"), default="text")
     show.add_argument("--root", type=Path, help="raíz del repositorio")
     show.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     impact = commands.add_parser("impact", help="explica qué identidades quedan afectadas")
     impact.add_argument("target", help="identidad o ruta de un recurso, incluso borrado")
     impact.add_argument("--depth", type=int, help="profundidad máxima del recorrido")
-    impact.add_argument("--json", action="store_true", help="emite una respuesta JSON")
+    impact.add_argument("--json", action="store_true", help="alias compatible de --format json")
+    impact.add_argument("--format", choices=("text", "json"), default="text")
     impact.add_argument("--root", type=Path, help="raíz del repositorio")
     impact.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
+    listing = commands.add_parser("list", help="lista identidades del modelo")
+    listing.add_argument("--type", dest="element_type", help="tipo semántico o estructural")
+    listing.add_argument("--kind", help="kind de artifact o facet")
+    listing.add_argument("--subject", help="subject declarado")
+    _query_options(listing)
+    for name, help_text in (("incoming", "muestra relaciones entrantes"),
+                            ("outgoing", "muestra relaciones salientes")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("identity")
+        command.add_argument("--relation", help="filtra por tipo de relación")
+        _query_options(command)
+    tree = commands.add_parser("tree", help="muestra estructura y ownership")
+    tree.add_argument("identity")
+    _query_options(tree)
+    path = commands.add_parser("path", help="busca el camino semántico más corto")
+    path.add_argument("source")
+    path.add_argument("target")
+    _query_options(path)
     return result
+
+
+def _query_options(command) -> None:
+    command.add_argument("--format", choices=("text", "json"), default="text")
+    command.add_argument("--root", type=Path, help="raíz del repositorio")
+    command.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,9 +70,24 @@ def main(argv: list[str] | None = None) -> int:
 
     resolver = Resolver()
     if args.command == "show":
-        return show_identity(root, model, resolver, args.identity)
+        return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
-        return show_impact(root, model, args.target, args.depth, args.json)
+        return show_impact(root, model, args.target, args.depth, args.json or args.format == "json")
+    if args.command in {"list", "incoming", "outgoing", "tree", "path"}:
+        graph = Graph(model)
+        if graph.resolution.diagnostics:
+            return _invalid_graph(root, graph)
+        try:
+            if args.command == "list":
+                return list_identities(root, graph, args.element_type, args.kind, args.subject, args.format)
+            if args.command in {"incoming", "outgoing"}:
+                return show_relations(root, graph, args.identity, args.command, args.relation, args.format)
+            if args.command == "tree":
+                return show_tree(root, graph, args.identity, args.format)
+            return show_path(graph, args.source, args.target, args.format)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     diagnostics = resolver.resolve(model)
     for diagnostic in diagnostics:
@@ -56,6 +97,81 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"OK: {len(model.identities)} identidades, {len(model.observations)} observaciones "
           f"(cache: {model.cache_hits} reutilizados, {model.cache_misses} leídos)")
+    return 0
+
+
+def _invalid_graph(root: Path, graph: Graph) -> int:
+    for diagnostic in graph.resolution.diagnostics:
+        print(diagnostic.format(root), file=sys.stderr)
+    print("error: no se puede consultar un grafo inválido", file=sys.stderr)
+    return 1
+
+
+def list_identities(root: Path, graph: Graph, element_type, kind, subject, output_format: str) -> int:
+    identities = graph.identities(element_type=element_type, kind=kind, subject=subject)
+    if output_format == "json":
+        print(json.dumps([_identity_json(item, root) for item in identities], ensure_ascii=False, indent=2))
+    else:
+        for identity in identities:
+            description = identity.artifact_type if identity.element_type == "artifact" else identity.element_type
+            print(f"{identity.key} [{description}] {identity.location.display(root)}")
+    return 0
+
+
+def show_relations(root: Path, graph: Graph, requested: str, direction: str,
+                   relation_filter: str | None, output_format: str) -> int:
+    relations = getattr(graph, direction)(requested, relation_filter)
+    if output_format == "json":
+        print(json.dumps([_relation_json(item, root) for item in relations], ensure_ascii=False, indent=2))
+    elif not relations:
+        print("sin relaciones")
+    else:
+        for relation in relations:
+            print(f"{relation.source.key} --{relation.kind}--> {relation.target.key}")
+    return 0
+
+
+def show_tree(root: Path, graph: Graph, requested: str, output_format: str) -> int:
+    identity = graph.one(requested)
+
+    def node(item):
+        return {**_identity_json(item, root), "children": [node(child) for child in graph.children(item.key)]}
+
+    if output_format == "json":
+        print(json.dumps(node(identity), ensure_ascii=False, indent=2))
+        return 0
+
+    def lines(item, prefix=""):
+        result = [f"{prefix}{item.key} [{item.element_type}]"]
+        children = graph.children(item.key)
+        for index, child in enumerate(children):
+            last = index == len(children) - 1
+            branch = "\\-- " if last else "+-- "
+            continuation = "    " if last else "|   "
+            nested = lines(child, prefix + continuation)
+            nested[0] = prefix + branch + nested[0].removeprefix(prefix + continuation)
+            result.extend(nested)
+        return result
+
+    print("\n".join(lines(identity)))
+    return 0
+
+
+def show_path(graph: Graph, source: str, target: str, output_format: str) -> int:
+    route = graph.shortest_path(source, target)
+    if route is None:
+        if output_format == "json":
+            print(json.dumps({"source": source, "target": target, "path": None}, indent=2))
+        else:
+            print(f"sin camino entre {source} y {target}")
+        return 1
+    if output_format == "json":
+        print(json.dumps({"source": source, "target": target, "path": [_hop_json(item) for item in route]},
+                         ensure_ascii=False, indent=2))
+    elif not route:
+        print(source)
+    else:
+        print(_format_route(route))
     return 0
 
 
@@ -78,10 +194,7 @@ def show_impact(root: Path, model, requested: str, depth: int | None, as_json: b
             "impacted": [{
                 **_identity_json(item.identity, root),
                 "depth": item.depth,
-                "path": [{
-                    "from": hop.origin, "to": hop.destination,
-                    "relation": hop.relation, "direction": hop.direction,
-                } for hop in item.path],
+                "path": [_hop_json(hop) for hop in item.path],
             } for item in result.impacted],
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -110,7 +223,28 @@ def _identity_json(identity, root: Path) -> dict:
     return {
         "id": identity.key,
         "elementType": identity.element_type,
+        "artifactType": identity.artifact_type,
+        "owner": identity.owner,
+        "parentFacet": identity.parent_facet,
+        "formal": identity.formal,
+        "metadata": identity.metadata,
         "location": identity.location.display(root),
+    }
+
+
+def _relation_json(relation, root: Path) -> dict:
+    return {
+        "source": _identity_json(relation.source, root),
+        "relation": relation.kind,
+        "target": _identity_json(relation.target, root),
+        "attributes": relation.attributes,
+    }
+
+
+def _hop_json(hop) -> dict:
+    return {
+        "from": hop.origin, "to": hop.destination,
+        "relation": hop.relation, "direction": hop.direction,
     }
 
 
@@ -124,28 +258,29 @@ def _format_route(path) -> str:
     return " ".join(parts)
 
 
-def show_identity(root: Path, model, resolver: Resolver, requested: str) -> int:
-    matches = [item for item in model.identities if item.key == requested]
-    if not matches:
-        print(f"error: no existe la identidad '{requested}'", file=sys.stderr)
-        return 1
-    if len(matches) > 1:
-        print(f"error: la identidad '{requested}' está duplicada", file=sys.stderr)
-        for item in matches:
+def show_identity(root: Path, graph: Graph, requested: str, output_format: str) -> int:
+    try:
+        identity = graph.one(requested)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        for item in graph.by_key.get(requested, ())[1:]:
             print(f"  {item.location.display(root)}", file=sys.stderr)
         return 1
-
-    identity = matches[0]
-    analysis = resolver.analyze(model)
+    incoming = graph.incoming(requested)
+    outgoing = graph.outgoing(requested)
+    if output_format == "json":
+        print(json.dumps({
+            **_identity_json(identity, root),
+            "incoming": [_relation_json(item, root) for item in incoming],
+            "outgoing": [_relation_json(item, root) for item in outgoing],
+        }, ensure_ascii=False, indent=2))
+        return 0
     description = identity.artifact_type if identity.element_type == "artifact" else identity.element_type
     print(f"{identity.key} [{description}]")
     print(f"declarada en {identity.location.display(root)}")
     if identity.parent_facet:
         print(f"parent-facet: {identity.parent_facet}")
-    connected = [
-        relation for relation in analysis.relations
-        if relation.source == identity or relation.target == identity
-    ]
+    connected = outgoing + incoming
     if not connected:
         print("sin relaciones")
         return 0
