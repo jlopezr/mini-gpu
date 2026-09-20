@@ -319,6 +319,7 @@ class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):
         ROOT / "x.tests" / "cases",
         ROOT / "x.tests" / "cases-shared",
         ROOT / "20.forth",
+        ROOT / "16.fpga-cpu-hdmi" / "examples",
         ROOT / "18.fpga-cpu-hdmi-bl8" / "examples",
         ROOT / "19.fpga-cpu-hdmi-ls" / "examples",
         ROOT / "21.fpga-cpu-hdmi-alu" / "examples",

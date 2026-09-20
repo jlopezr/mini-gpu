@@ -75,16 +75,34 @@ sobre cuál de los cambios lo causó.
 **Qué falta.** Aplicar [`1.isa/mmio.md`](1.isa/mmio.md) al RTL, a los monitores,
 a los simuladores y a los tests. Es el contrato decidido el 19/09/2026.
 
-**Estado: la 21, la 19 y la 18 ya conforman**, y con ellas el ensamblador, el
-generador de constantes y los tres simuladores funcionales. **Quedan siete
-carpetas.** Hay tres bitácoras: la de la
+**Estado: la familia CPU entera conforma** —la 6, la 10, la 16, la 18, la 19 y
+la 21— y con ella el ensamblador, el generador de constantes y los tres
+simuladores funcionales. **Quedan cuatro carpetas, todas de GPU: 12, 14, 17 y
+22.** Hay seis bitácoras: la de la
 [21](21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) es el camino completo; la de la
 [19](19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) cuenta sólo lo que cambió al
-repetirlo y trae la estimación corregida; y la de la
+repetirlo y trae la estimación corregida; la de la
 [18](18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) mide hasta dónde llega el atajo
-de copiar de una gemela ya migrada, y es la primera carpeta sin puerto serie.
-La tabla de conformidad está en
+de copiar de una gemela ya migrada, y es la primera carpeta sin puerto serie;
+la de la [6](6.fpga-cpu/docs/migracion-v2.md) es la primera **sin ningún bloque
+de dispositivo**, que es la forma que van a necesitar las de GPU, y lleva la
+fase 0 de las tres últimas; la de la
+[10](10.fpga-cpu-ram/docs/migracion-v2.md) mide lo que cuesta una gemela cuando
+los arreglos compartidos ya están hechos; y la de la
+[16](16.fpga-cpu-hdmi/docs/migracion-v2.md) lleva la decisión del bitmap de
+vídeo. La tabla de conformidad está en
 [`docs/resumen-prototipos.md`](docs/resumen-prototipos.md#conformidad-con-mmio-v2).
+
+> **La 16 GANA `frame_capture` al migrar.** Tenía cinco registros de vídeo y
+> adopta los diez de v2, o sea el `video_registers.v` compartido. Conservar los
+> cinco era conforme pero exigía bifurcar una cuarta variante de un fichero hoy
+> idéntico en cuatro carpetas, y dejaba a la 16 fuera de los casos de vídeo del
+> runner. El razonamiento está en su bitácora.
+>
+> **La 6 y la 10 no ganan MMIO al migrar**, y eso sigue siendo cierto: no
+> tienen decodificador, ni página de dispositivos, ni nada que un programa
+> pueda leer. Lo único que se mueve es el bloque de identificación, de cuatro
+> palabras en `0x80000F00` a siete en `0x80000000`.
 
 **Las tres están sintetizadas, barridas y con semilla nueva fijada**
 (20/09/2026), y la **21 se ha validado en placa**. Ver
@@ -102,10 +120,11 @@ lleva el **44 %** del total. `cpu_dmem_adapter` **encoge 66 LUT**, porque detect
 MMIO pasó de comparar veinte bits a mirar uno. Para las carpetas que faltan: el
 grueso del coste está en los contadores de rendimiento, que son opcionales.
 
-> **Deuda nueva y no anotada hasta hoy: el backend de placa compartido.**
-> `x.tests/backends/fpga.py` es único para las diez carpetas y ya está en v2, así
-> que las siete sin migrar —**6, 10, 16** y las de GPU **12, 14, 17, 22**— tienen
-> sus tests de placa rotos hasta que migren. Se cura sola según migren.
+> **Deuda del backend de placa compartido, ya sólo de GPU.**
+> `x.tests/backends/fpga.py` es único para las diez carpetas y está en v2, así
+> que las carpetas sin migrar tienen sus tests de placa rotos hasta que migren.
+> Con la 6, la 10 y la 16 hechas quedan **cuatro: 12, 14, 17 y 22**, todas de
+> GPU. Se cura sola según migren.
 >
 > Y hasta el 20/09 ese fichero tenía además **la semántica de v1 con las
 > direcciones de v2**, que afectaba también a las carpetas ya migradas: armaba

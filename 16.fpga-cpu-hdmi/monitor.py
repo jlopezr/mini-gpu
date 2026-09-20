@@ -16,26 +16,62 @@ import serial
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT = 1.0
 MAX_ADDRESS = 0x01FF_FFFF
-# Registros de vídeo: FB_FRONT, FB_BACK, SWAP y STATUS.
-MMIO_BASE = 0x8000_0000
-MMIO_LIMIT = 0x8000_0FFF
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
-# Bloque de video en MMIO: FB_FRONT, FB_BACK, SWAP, STATUS, SWAP_COUNT, HALT_AT.
-# Solo filtra bloques y transferencias (validate_block / validate_transfer); los
-# accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo estar
-# vacia sin que se notara. El RTL si acepta un bloque sobre el MMIO: en el
-# adaptador la rama is_mmio va antes de la comprobacion de cpu_halted.
-# La ventana es la PAGINA ENTERA, los mismos 4 KiB que decodifica el RTL
-# (`address[31:12] == 20'h80000`, dieciseis dispositivos de 256 B). Estuvo en
-# 0x8000_0018 con un comentario que decia "llegara a 0x8000_001c cuando la fase
-# 3.5 anada VIDEO_CTRL": la fase lo anadio y la constante se quedo, asi que el
-# host rechazaba un bloque sobre el registro que acababa de existir. Un
-# subconjunto seria una tercera gemela que mantener, y ya se quedo atras una vez.
+
+# `tools` en el camino ANTES de importar de ahí. El insert ya existía más
+# abajo, para tools/serial_ports.py, pero ahora hace falta aquí arriba; es
+# idempotente.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.mmio_map import (  # noqa: E402
+    MMIO_SYSTEM_BASE, MMIO_CPU_PERF_BASE, MMIO_BLOCK_SIZE,
+)
+
+# Espacio MMIO v2 (1.isa/mmio.md §2): bloques de 64 KiB separados por
+# megabytes. Ya no es una página de 4 KiB con dieciséis ranuras de 256 B.
+#
+#   0x80000000  SYSTEM            identificación, memoria, versión
+#   0x80200000  VIDEO
+#   0x81010000  CPU PERFORMANCE
+#
+# No hay SERIAL: esta carpeta no tiene puerto serie, y su bit de DEVICES es
+# cero, así que un acceso a 0x80100000 da error.
+#
+# Las constantes salen del mapa generado y NO se escriben aquí: eran una
+# gemela del decodificador Verilog, y §20 existe para quitarla.
+#
+# `MMIO_LIMIT` es la que se quedó atrás en la 18 y en la 19, con los 4 KiB de
+# v1: la usa `parse_address`, o sea la LÍNEA DE ÓRDENES, y con VIDEO declarado
+# en 0x80200000 el mismo fichero afirmaba dos cosas incompatibles. El síntoma
+# es `exit=1` con un `Error:`, que es exactamente lo que se espera al
+# comprobar que un bloque ausente da error. Hay un test que lo fija.
+MMIO_BASE = MMIO_SYSTEM_BASE
+MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
+
+# Las ventanas MMIO que el host acepta, una por bloque. Son GEMELAS de los
+# parámetros WINDOW0..2 del `monitor #(...)` de top.v, y las dos tienen que
+# decir lo mismo: añadir una ventana en el RTL sin añadirla aquí hace que el
+# host rechace el comando antes de que llegue al decodificador, y el síntoma es
+# un NACK que parece un bitstream viejo.
+#
+# Cada ventana es el bloque ENTERO de 64 KiB, no el subconjunto de registros
+# que existen hoy. Un subconjunto sería una tercera gemela que mantener, y ya
+# se quedó atrás una vez: estuvo en 0x8000_0018 con un comentario que decía
+# "llegará a 0x8000_001c cuando la fase 3.5 añada VIDEO_CTRL", la fase lo
+# añadió y la constante se quedó. Quien rechaza un offset sin registro es el
+# decodificador, que es el único que lo sabe.
+#
+# Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
+# `tools/prototype_report.py` lee esta asignación del TEXTO del fichero, sin
+# importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
+# exige.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8000_1000),
+    (0x8000_0000, 0x8001_0000),   # SYSTEM
+    (0x8020_0000, 0x8021_0000),   # VIDEO
+    (0x8101_0000, 0x8102_0000),   # CPU PERFORMANCE
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

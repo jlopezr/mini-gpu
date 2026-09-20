@@ -95,12 +95,17 @@ class CapabilitiesTest(unittest.TestCase):
                          {"mul_div", "read_word", "write_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
         self.assertEqual(fpga.capabilities("sdram"), {"read_word", "write_word"})
-        # La 16 tiene video pero no con que capturar. `perf_counters` lo tienen
-        # las cuatro con ventana MMIO desde la fase 3.5, cuando los contadores
-        # dejaron de ser comandos de monitor y pasaron a ser un dispositivo.
+        # La 16 tiene video Y con que capturar, desde que migro a MMIO v2.
+        # Antes tenia cinco registros de video --sin FRAME_COUNT, SWAP_COUNT,
+        # HALT_AT, HALT_TARGET ni VIDEO_TX-- y por eso no capturaba; al migrar
+        # adopto el `video_registers.v` compartido, que es byte a byte el de la
+        # 18, la 19 y la 21. Ver 16.fpga-cpu-hdmi/docs/migracion-v2.md.
+        # `perf_counters` lo tienen las cuatro con ventana MMIO desde la fase
+        # 3.5, cuando los contadores dejaron de ser comandos de monitor y
+        # pasaron a ser un dispositivo.
         self.assertEqual(fpga.capabilities("hdmi"),
-                         {"video", "mul_div", "read_word", "write_word",
-                          "perf_counters"})
+                         {"video", "frame_capture", "mul_div", "read_word",
+                          "write_word", "perf_counters"})
         # La 18 tiene las dos.
         self.assertEqual(
             fpga.capabilities("bl8"),
@@ -294,14 +299,34 @@ class CapabilitiesTest(unittest.TestCase):
             if motivo is not None:
                 self.assertNotIn("sin video", motivo)
 
-    def test_captura_solo_en_la_18(self):
+    def test_captura_donde_hay_los_registros_que_la_hacen(self):
+        """Se llamaba `test_captura_solo_en_la_18` y usaba la 16 de contraste.
+
+        Dejo de valer cuando la 16 migro a MMIO v2 y adopto los diez registros
+        de video, o sea que GANO `frame_capture`. El contraste se mueve a las
+        carpetas que de verdad no tienen video --la 6 y la 10--, que es donde
+        la ausencia no depende de una version del contrato.
+
+        Lo que el test protege no cambia: que un caso que pide capturar un
+        frame se OMITA donde no se puede capturar, y que el motivo diga donde
+        si. Un caso de captura que no se omite no falla limpio: se cuelga
+        esperando una parada que nadie va a provocar.
+        """
         caso = self._caso(["frame_capture"])
-        motivo = fpga.incompatibility(caso, "hdmi")
-        self.assertIsNotNone(motivo)
-        self.assertIn("frame_capture", motivo)
-        # El motivo tiene que decir donde SI esta, que es lo que uno quiere
-        # saber al leer el SKIP.
-        self.assertIn("bl8", motivo)
+        for version in ("ebr", "sdram"):
+            motivo = fpga.incompatibility(caso, version)
+            with self.subTest(version=version):
+                self.assertIsNotNone(motivo)
+                self.assertIn("frame_capture", motivo)
+                # El motivo tiene que decir donde SI esta, que es lo que uno
+                # quiere saber al leer el SKIP.
+                self.assertIn("bl8", motivo)
+        # Y donde si la hay, la capacidad no puede ser el motivo.
+        for version in ("hdmi", "bl8"):
+            motivo = fpga.incompatibility(caso, version)
+            with self.subTest(version=version):
+                if motivo is not None:
+                    self.assertNotIn("frame_capture", motivo)
 
     def test_una_capacidad_no_se_declara_por_nombrarla_en_un_comentario(self):
         """Los patrones se buscan en el TEXTO, comentarios incluidos.
@@ -313,22 +338,60 @@ class CapabilitiesTest(unittest.TestCase):
         parar la CPU, y se habrian colgado esperando una parada que nadie iba a
         provocar.
 
-        Por eso los patrones apuntan a la IMPLEMENTACION. Esto lo fija sobre el
-        caso concreto que lo enseno, para que reescribir el patron a la ligera
-        vuelva a fallar aqui.
+        Por eso los patrones apuntan a la IMPLEMENTACION.
+
+        POR QUE ESTO YA NO SE ANCLA EN LA 16, que es lo que hacia antes. Al
+        migrar esa carpeta a MMIO v2 adopto el `video_registers.v` compartido,
+        o sea que ahora tiene HALT_AT de verdad y declara `frame_capture` con
+        razon. El sujeto del control negativo dejo de ser negativo.
+
+        Eso no se arregla buscando otra carpeta: cualquiera que se elija puede
+        ganar la capacidad manana por el mismo camino, y el test volveria a
+        romperse por una razon que no es la suya. Se reconstruye la FORMA del
+        fallo en un fichero sintetico, que es lo unico que no caduca: un
+        modulo que menciona el registro solo en un comentario, y que por tanto
+        no debe declarar nada.
         """
         from run_tests import REPOSITORY
         from tools.rtl_facts import capabilities_from_rtl, load_capability_signals
 
         senales = load_capability_signals(REPOSITORY)
-        carpeta = REPOSITORY / "16.fpga-cpu-hdmi"
-        self.assertNotIn("frame_capture", capabilities_from_rtl(carpeta, senales))
-        # Y el comentario que explica el hueco sigue ahi: si el patron se
-        # relajara otra vez, este fichero volveria a declarar la capacidad y el
-        # `assertNotIn` de arriba fallaria.
-        texto = (carpeta / "video_registers.v").read_text(encoding="utf-8")
-        self.assertIn("frame_capture", texto,
-                      "el comentario que explica el hueco deberia seguir ahi")
+
+        # El comentario es el del fallo real, palabra por palabra en su forma:
+        # explica que el registro NO esta, y al hacerlo lo nombra.
+        senuelo = (
+            "`default_nettype none\n"
+            "// Esta carpeta no implementa HALT_AT ni HALT_TARGET: no hay\n"
+            "// frame_capture aqui, y por eso el bloque acaba en STATUS.\n"
+            "module video_registers(input wire clk);\n"
+            "endmodule\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            carpeta = Path(tmp)
+            (carpeta / "video_registers.v").write_text(senuelo, encoding="utf-8")
+            detectadas = capabilities_from_rtl(carpeta, senales)
+
+        self.assertNotIn(
+            "frame_capture", detectadas,
+            "un comentario que NIEGA el registro lo estaria declarando: el "
+            "patron casa contra el texto en vez de contra la implementacion. "
+            "La consecuencia no es cosmetica -- esa carpeta aceptaria casos "
+            "con `run_until.swap`, que necesitan ese registro para parar la "
+            "CPU, y se colgarian esperando una parada que nadie va a provocar.")
+        # Y la otra mitad, para que el test no pase por no mirar nada: el
+        # mismo fichero CON la implementacion si la declara.
+        with tempfile.TemporaryDirectory() as tmp:
+            carpeta = Path(tmp)
+            (carpeta / "video_registers.v").write_text(
+                senuelo.replace("module video_registers(input wire clk);",
+                                "module video_registers(input wire clk);\n"
+                                "  localparam [5:0] REG_HALT_AT = 6'd7;\n"
+                                "  reg [31:0] halt_at;"),
+                encoding="utf-8")
+            self.assertIn("frame_capture",
+                          capabilities_from_rtl(carpeta, senales),
+                          "con la implementacion delante si tiene que "
+                          "declararla; si no, este test pasaria por no ver")
 
     def test_el_simulador_acepta_video(self):
         """Desde que `minicpu_sim.py` tiene `VideoDevice`, los acepta.

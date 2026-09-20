@@ -43,9 +43,9 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | 100 MHz | 100 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
-| **Fmax / objetivo** | — | 104.4 / 100 | 115.6 / 100 | 105.0 / 100 | 87.7 / 80 | 88.9 / 80 | 87.3 / 80 |
+| **Fmax / objetivo** | — | 117.6 / 100 | 115.2 / 100 | 103.2 / 100 | 87.7 / 80 | 88.9 / 80 | 87.3 / 80 |
 | **Memoria** | — | 32 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 5 978 / 2 622 | 5 342 / 2 477 | 7 496 / 3 566 | 10 319 / 5 088 | 11 129 / 5 171 | 11 382 / 5 236 |
+| **LUT / FF** | — | 6 042 / 2 624 | 5 352 / 2 477 | 8 171 / 3 798 | 10 319 / 5 088 | 11 129 / 5 171 | 11 382 / 5 236 |
 | **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 |
 | **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
 | `mul_div` | sí | sí | no | sí | sí | sí | sí |
@@ -54,7 +54,7 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | `shift_immediate` | sí | no | no | no | no | no | sí |
 | `alu_extended` | sí | no | no | no | no | no | sí |
 | `compare` | sí | no | no | no | no | no | sí |
-| `frame_capture` | sí | no | no | no | sí | sí | sí |
+| `frame_capture` | sí | no | no | sí | sí | sí | sí |
 | `serial` | sí | no | no | no | no | sí | sí |
 <!-- END GENERATED: cpu-matrix -->
 
@@ -224,7 +224,7 @@ aparezca código que suponga lo contrario.
 | [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 100.0 MHz | read_word, write_word |
 | [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
 | [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
-| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, read_word, write_word, perf_counters |
+| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
 | [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
 | [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 3.18 | 80.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial, read_word, write_word, perf_counters |
@@ -466,22 +466,28 @@ las cuatro palabras por alias.
 ## Conformidad con MMIO v2
 
 Qué le falta a cada prototipo para cumplir [`../1.isa/mmio.md`](../1.isa/mmio.md).
-**A casi todos les falta lo mismo de fondo**: el mapa entero, porque v2 abandona
-la página de 4 KiB y los slots de 256 B. La 21, la 19 y la 18 ya lo hicieron, y
-el camino está contado paso a paso en las tres bitácoras: la de la
+**A los que faltan les falta lo mismo de fondo**: el mapa entero, porque v2
+abandona la página de 4 KiB y los slots de 256 B. **La familia CPU entera ya lo
+hizo** —6, 10, 16, 18, 19 y 21— y sólo quedan las cuatro de GPU. El camino está
+contado paso a paso en seis bitácoras: la de la
 [21](../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md), que es la completa; la de
 la [19](../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md), que cuenta sólo lo que
-cambió al repetirla y trae la estimación corregida; y la de la
+cambió al repetirla y trae la estimación corregida; la de la
 [18](../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md), que mide hasta dónde llega
-el atajo de copiar de una carpeta gemela y es la primera sin puerto serie.
+el atajo de copiar de una carpeta gemela y es la primera sin puerto serie; la
+de la [6](../6.fpga-cpu/docs/migracion-v2.md), que es la primera **sin ningún
+bloque de dispositivo** y por tanto la forma que van a necesitar las de GPU; la
+de la [10](../10.fpga-cpu-ram/docs/migracion-v2.md), que mide lo que cuesta una
+gemela; y la de la [16](../16.fpga-cpu-hdmi/docs/migracion-v2.md), que lleva la
+decisión del bitmap de vídeo.
 
 | Prototipo | Qué cumple ya | Qué le falta |
 |---|---|---|
-| 6, 10 | Identificación por el monitor; memoria contigua | Todo el mapa v2; sin ventana de periféricos por diseño |
-| 16 | Vídeo con offsets uniformes; contadores en MMIO | Direcciones v2; `FRAME_COUNT` de 32 bits; sin captura |
+| **6, 10** | **Conformes.** Bloque `SYSTEM` de siete palabras en `0x80000000`, con `DEVICES` (`0x009` la 6, EBR; `0x005` la 10, SDRAM), `MEM_BASE`/`MEM_SIZE` y `MONITOR_VERSION`. Su `sysid.v` es byte a byte el de las otras cuatro. **Siguen sin ventana de periféricos, por diseño**: no tienen decodificador y un programa no puede leer el bloque, que cuelga sólo del camino del monitor | Nada del mapa. La palabra 7 del bloque (`+0x1C`) da error como pide §5, y hace falta una comparación de más para ello porque siete palabras no son potencia de dos. Ver la bitácora de la [6](../6.fpga-cpu/docs/migracion-v2.md) |
+| **16** | **Conforme.** Bloques de 64 KiB, `SYSTEM` de siete palabras, **los diez registros de vídeo** —gana `FRAME_COUNT` de 32 bits, `SWAP_COUNT`, `HALT_AT`, `HALT_TARGET` y `VIDEO_TX`, o sea `frame_capture`—, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros y ningún `.asm` con la dirección cableada. Sin puerto serie: `DEVICES = 0x225` y **tres** ventanas de monitor. Cinco de sus ficheros MMIO son byte a byte los de 18/19/21 | Lo mismo que el resto de la familia: escrituras sub-palabra a MMIO (§4.1/§16.2). Su bloque único `sdram_system_adapter.v` hace de mux y de adaptador a la vez, así que **su banco sí migra**, al revés que en 18/19/21. Ver [la bitácora](../16.fpga-cpu-hdmi/docs/migracion-v2.md) |
 | **21** | **Conforme.** Mapa de bloques de 64 KiB, `SYSTEM` con las siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros, y ningún `.asm` con la dirección cableada | Escrituras sub-palabra a MMIO (§4.1/§16.2): documentado y fijado en `video_registers_tb.v`; hay que mover el host a `WRITE_WORD` a la vez. Ver [la bitácora](../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) |
-| **19** | **Conforme.** Lo mismo que la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 21 | Lo mismo que la 21: escrituras sub-palabra a MMIO (§4.1/§16.2). **Sin sintetizar todavía**: la semilla de `apio.ini` está invalidada y el barrido pendiente. Ver [la bitácora](../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) |
-| **18** | **Conforme.** Lo mismo que la 19 y la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 19 y la 21. Sin puerto serie, así que su `DEVICES` es `0x225` y tiene **tres** ventanas de monitor en vez de cuatro | Lo mismo que las otras dos: escrituras sub-palabra a MMIO (§4.1/§16.2). **Sin sintetizar todavía**: la semilla 4 de `apio.ini` está invalidada y el barrido pendiente. Ver [la bitácora](../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) |
+| **19** | **Conforme.** Lo mismo que la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 21 | Lo mismo que la 21: escrituras sub-palabra a MMIO (§4.1/§16.2). Sintetizada, barrida y con semilla nueva fijada, y **validada en placa** el 20/09/2026. Ver [la bitácora](../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) |
+| **18** | **Conforme.** Lo mismo que la 19 y la 21: bloques de 64 KiB, `SYSTEM` de siete palabras, vídeo con `FRAME_COUNT`/`HALT_TARGET`/`VIDEO_TX` y alineación por error, contadores con `PERF_CTRL`/`PERF_OVF0`, errores en vez de ceros, y ningún `.asm` con la dirección cableada. Sus seis ficheros MMIO compartidos son byte a byte los de la 19 y la 21. Sin puerto serie, así que su `DEVICES` es `0x225` y tiene **tres** ventanas de monitor en vez de cuatro | Lo mismo que las otras dos: escrituras sub-palabra a MMIO (§4.1/§16.2). Sintetizada, barrida y con semilla nueva fijada, y **validada en placa** el 20/09/2026. Ver [la bitácora](../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) |
 | 12, 14, 17 | Warps y depuración SIMT; dos páginas | Direcciones v2; `GPU_CONTROL` y máscaras de warp; 32 warps |
 | 22 | Vídeo, contadores, warps, depuración; MMIO abierto a la GPU | Direcciones v2; `GPU_CONTROL`; `HALT_AT` real; separar `VIDEO_TX` |
 | 2, 11, 25 | Periféricos funcionales compartidos | `SYS_ID`; `HALT_AT` y serie en el RTL de GPU; retirar `plasma_nommio.asm` |

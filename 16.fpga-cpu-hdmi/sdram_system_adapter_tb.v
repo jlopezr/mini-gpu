@@ -24,9 +24,9 @@ module sdram_system_adapter_tb;
   // video tiene el suyo en video_sdram_tb.v.
   reg video_req=0; reg [23:0] video_addr=0;
   wire mmio_select,mmio_write; wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;   // la pagina MMIO entera
+  wire [31:0] mmio_address;   // el espacio MMIO entero, 32 bits desde v2
   wire [31:0] mmio_write_data; reg [31:0] mmio_read_data;
-  // Cuatro registros de mentira en la ventana 0x80000000, suficientes para
+  // Cuatro registros de mentira en la ventana de VIDEO, 0x80200000, suficientes para
   // comprobar el pegamento: decodificacion, mascara de byte y seleccion del
   // byte de vuelta. La semantica real vive en video_registers_tb.v.
   reg [31:0] mmio_regs[0:3];
@@ -127,7 +127,7 @@ module sdram_system_adapter_tb;
 
     // Y sobre un registro MMIO, donde cabe en un acceso: las cuatro
     // habilitaciones a la vez, sin pasar por valores intermedios.
-    escribe_palabra(32'h8000_0004,32'h1234_5678);
+    escribe_palabra(32'h8020_0004,32'h1234_5678);
     if(mmio_regs[1]!==32'h1234_5678)
       $fatal(1,"write-word MMIO dejo %08x",mmio_regs[1]);
 
@@ -169,10 +169,10 @@ module sdram_system_adapter_tb;
     @(negedge clk); cpu_imem_valid=0;
     repeat(2) @(negedge clk);
 
-    // --- ventana de registros de video en 0x80000000 ----------------------
+    // --- ventana de registros de video en 0x80200000 ----------------------
     // La CPU la usa con palabras completas.
     cpu_halted=0;
-    @(negedge clk); cpu_dmem_address=32'h8000_0004;
+    @(negedge clk); cpu_dmem_address=32'h8020_0004;
     cpu_dmem_write_data=32'hdead_beef; cpu_dmem_write_enable=4'b1111;
     cpu_dmem_valid=1;
     wait(cpu_dmem_ready); @(negedge clk); cpu_dmem_valid=0;
@@ -188,15 +188,37 @@ module sdram_system_adapter_tb;
     // El monitor accede byte a byte, y a estos registros tambien con la CPU
     // corriendo: no hay coherencia que romper y el contador de frames solo
     // sirve si se puede leer en marcha.
-    monitor_read_check(32'h8000_0006,8'had);
-    monitor_write(32'h8000_0007,8'h55);
+    monitor_read_check(32'h8020_0006,8'had);
+    monitor_write(32'h8020_0007,8'h55);
     if(mmio_regs[1]!==32'h55ad_beef)
       $fatal(1,"monitor byte write clobbered the register: %08x",mmio_regs[1]);
 
-    // Fuera de la ventana, una direccion alta sigue siendo un error.
+    // QUE CAMBIA EN v2, y es lo unico que este banco tuvo que replantear.
+    //
+    // Antes aqui se comprobaba que 0x90000000 daba error, porque la ventana
+    // del adaptador era `address[31:12] == 0x80000` y cualquier otra direccion
+    // alta caia fuera. En v2 la pertenencia al espacio MMIO es UN BIT,
+    // `address[31]`, asi que 0x90000000 SI es MMIO -- y esta bien que lo sea:
+    // quien decide si ese bloque existe es `mmio_decoder.v`, que este banco no
+    // monta, y que lo rechaza. Eso se prueba en `cpu_mmio_error_tb.v`.
+    //
+    // O sea que la afirmacion vieja ya no describe un fallo, describe el
+    // reparto anterior de responsabilidades. Se sustituye por la que si es del
+    // adaptador: que una direccion alta se ENCAMINA a MMIO y no a la SDRAM.
+    // Con los registros de mentira detras, eso se ve en que contesta sin
+    // error y sin pedir una rafaga.
     @(negedge clk); monitor_address=32'h9000_0000; monitor_read_enable=1;
     @(negedge clk); monitor_read_enable=0; wait(monitor_ready);
-    if(!monitor_error) $fatal(1,"monitor accepted an address outside the MMIO window");
+    if(monitor_error)
+      $fatal(1,"una direccion con address[31] tiene que encaminarse a MMIO");
+    @(negedge clk);
+
+    // Y lo que SIGUE siendo un error del adaptador: una direccion baja fuera
+    // de los 32 MiB de SDRAM. Esa comprobacion no se pierde, solo cambia de
+    // direccion, porque es la que de verdad le toca a este modulo.
+    @(negedge clk); monitor_address=32'h0200_0000; monitor_read_enable=1;
+    @(negedge clk); monitor_read_enable=0; wait(monitor_ready);
+    if(!monitor_error) $fatal(1,"monitor accepted an address past the SDRAM");
     @(negedge clk);
 
     @(negedge clk); monitor_address=0; monitor_read_enable=1;

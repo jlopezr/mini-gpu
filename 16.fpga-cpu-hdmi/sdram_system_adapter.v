@@ -77,14 +77,21 @@ module sdram_system_adapter #(
     output reg         cpu_dmem_ready,
     output reg         cpu_dmem_error,
 
-    // Ventana de registros de video en 0x80000000. No toca la SDRAM: se
-    // resuelve en un ciclo. La atienden tanto la CPU (palabra completa) como
-    // el monitor (byte a byte), porque poder mover el framebuffer desde el PC
-    // sin escribir un programa es la forma rapida de probar el swap.
+    // Espacio MMIO v2 (1.isa/mmio.md seccion 2): bloques de 64 KiB separados
+    // por megabytes, no una pagina de 4 KiB. No toca la SDRAM: se resuelve en
+    // un ciclo. Lo atienden tanto la CPU (palabra completa) como el monitor
+    // (byte a byte), porque poder mover el framebuffer desde el PC sin
+    // escribir un programa es la forma rapida de probar el swap.
+    //
+    // La direccion va ENTERA, 32 bits. Con doce no cabe ni la base de VIDEO:
+    // el decodificador elige bloque con `address[26:16]`, y pasarle una
+    // direccion truncada es el fallo de la 18 --dieciseis dispositivos cayendo
+    // sobre el de video-- que Verilog conecta sin un aviso. `test_top_wiring`
+    // existe por eso y compara estas anchuras.
     output reg mmio_select,
     output reg mmio_write,
     output reg [3:0] mmio_write_mask,
-    output reg [11:0] mmio_address,
+    output reg [31:0] mmio_address,
     output reg [31:0] mmio_write_data,
     input wire [31:0] mmio_read_data,
     input wire mmio_error,
@@ -132,10 +139,18 @@ module sdram_system_adapter #(
   // los otros clientes.
   localparam STATE_MON_WRITE2  = 4'd10;
   localparam STATE_MON_WWAIT2  = 4'd11;
+  // Segundo ciclo de un acceso MMIO: consumir la respuesta YA REGISTRADA.
+  // Ver el comentario de STATE_MMIO_WAIT, que es donde se explica por que.
+  localparam STATE_MMIO_DONE   = 4'd12;
 
-  // Ventana de registros de video: 0x80000000..0x8000000f. Se decodifica
-  // estricta; cualquier otra direccion alta sigue siendo un error, como antes.
-  localparam [19:0] MMIO_PREFIX = 20'h80000;
+  // La pertenencia al espacio MMIO es UN BIT, `address[31]`, y quien vive en
+  // cada bloque lo decide `mmio_decoder.v`. Antes era
+  // `address[31:12] == 20'h80000`, o sea veinte bits comparados aqui y una
+  // segunda decodificacion detras.
+  //
+  // Es mas barato Y mas seguro: un bit no se puede truncar al conectar un
+  // puerto, que es exactamente el fallo que costo una placa en la 18. En la
+  // 21 este cambio DEVOLVIO 66 LUT.
 
   reg [3:0] state;
   reg [2:0] owner;
@@ -160,6 +175,13 @@ module sdram_system_adapter #(
   reg saved_monitor_write_word_enable, pending_monitor_write_word_enable;
 
   reg [7:0] video_run;
+
+  // Respuesta MMIO registrada. Corta el lazo combinacional que va de
+  // `mmio_address` --un registro de este modulo-- al decodificador, de alli al
+  // dispositivo, y de vuelta a la logica de proximo estado de ESTA maquina.
+  // Ver STATE_MMIO_WAIT.
+  reg [31:0] mmio_rsp_data;
+  reg mmio_rsp_error;
 
   /*
    * El monitor pide memoria con un PULSO de un ciclo, no con un nivel
@@ -187,10 +209,9 @@ module sdram_system_adapter #(
       cpu_imem_address[31:25] == 0 && cpu_imem_address[1:0] == 0;
   wire cpu_dmem_address_valid =
       cpu_dmem_address[31:25] == 0 && cpu_dmem_address[1:0] == 0;
-  wire cpu_dmem_mmio =
-      cpu_dmem_address[31:12] == MMIO_PREFIX && cpu_dmem_address[1:0] == 0;
+  wire cpu_dmem_mmio = cpu_dmem_address[31] && cpu_dmem_address[1:0] == 0;
   // El monitor accede byte a byte, asi que no exige alineamiento.
-  wire monitor_mmio = saved_monitor_address[31:12] == MMIO_PREFIX;
+  wire monitor_mmio = saved_monitor_address[31];
 
   always @(posedge clk) begin
     monitor_ready <= 1'b0;
@@ -207,8 +228,10 @@ module sdram_system_adapter #(
       video_read_data <= 16'h0000;
       video_run <= 8'd0;
       mmio_write_mask <= 4'b0000;
-      mmio_address <= 12'h000;
+      mmio_address <= 32'h0000_0000;
       mmio_write_data <= 32'h0000_0000;
+      mmio_rsp_data <= 32'h0000_0000;
+      mmio_rsp_error <= 1'b0;
       state <= STATE_IDLE;
       owner <= OWNER_NONE;
       monitor_read_data <= 8'h00;
@@ -342,7 +365,7 @@ module sdram_system_adapter #(
               mmio_select <= 1'b1;
               mmio_write <= |cpu_dmem_write_enable;
               mmio_write_mask <= cpu_dmem_write_enable;
-              mmio_address <= cpu_dmem_address[11:0];
+              mmio_address <= cpu_dmem_address;
               mmio_write_data <= cpu_dmem_write_data;
               state <= STATE_MMIO_WAIT;
             end else if (!init_done || !cpu_dmem_address_valid) begin
@@ -388,7 +411,7 @@ module sdram_system_adapter #(
             // vez y el registro nunca pasa por un valor intermedio.
             mmio_write_mask <= saved_monitor_write_word_enable
                              ? 4'b1111 : (4'b0001 << saved_monitor_address[1:0]);
-            mmio_address <= saved_monitor_address[11:0];
+            mmio_address <= saved_monitor_address;
             mmio_write_data <= saved_monitor_write_word_enable
                              ? saved_monitor_write_word
                              : {4{saved_monitor_write_data}};
@@ -454,19 +477,55 @@ module sdram_system_adapter #(
         // combinacional del bloque de registros ya es valida en este ciclo. La
         // escritura, si la hay, ocurre en el flanco que cierra este estado:
         // `mmio_select` esta alto exactamente un ciclo.
+        //
+        // AQUI SOLO SE CAPTURA. Antes este estado ademas decidia el siguiente
+        // leyendo `mmio_error` y `mmio_read_data`, y eso cerraba un lazo
+        // combinacional de un ciclo entero:
+        //
+        //   mmio_address (FF de aqui) -> mmio_decoder -> video_registers
+        //     -> logica de proximo estado de ESTA maquina
+        //
+        // Medido sobre el build post-migracion, ese era EL camino critico de
+        // `sdram_clk`, empezando en `mmio_address[28]` --un bit que solo existe
+        // porque MMIO v2 ensancha la direccion de 12 a 32-- y pasando por
+        // `mmio_decoder.v:69`. Con el, la 16 no cumplia NINGUNA de dieciseis
+        // semillas: 90,32 a 99,63 MHz contra 100 exigidos.
+        //
+        // La 18, la 19 y la 21 no lo sufren porque `mmio_mux` se sienta entre
+        // el adaptador y el decodificador y parte ese camino. Esta carpeta no
+        // tiene mux --el arbitraje vive aqui dentro-- asi que hay que partirlo
+        // aqui, y esto es lo que cuesta: UN CICLO por acceso MMIO.
+        //
+        // Lo que NO se hace es alargar `mmio_select`. Sigue siendo un pulso de
+        // un ciclo a proposito: alargarlo dispararia dos veces los registros
+        // con efecto secundario, que es el bug que `mmio_mux.v` documenta --un
+        // LOAD comiendose dos caracteres y un STORE mandando el byte dos
+        // veces--. Y capturar AQUI, con `select` alto, es lo que conserva la
+        // leccion de la fase 8 de la validacion en placa: el error del
+        // dispositivo es combinacional y tiene una vida corta, asi que hay que
+        // mirarlo donde es valido, no un ciclo despues.
         STATE_MMIO_WAIT: begin
+          mmio_rsp_data <= mmio_read_data;
+          mmio_rsp_error <= mmio_error;
+          state <= STATE_MMIO_DONE;
+        end
+
+        // Y aqui se consume, ya registrado. Esta maquina decide el proximo
+        // estado mirando registros propios y ninguna senal que venga del
+        // decodificador.
+        STATE_MMIO_DONE: begin
           if (owner == OWNER_MONITOR) begin
             if (saved_monitor_read)
               monitor_read_data <=
-                  mmio_read_data[{saved_monitor_address[1:0], 3'b000} +: 8];
+                  mmio_rsp_data[{saved_monitor_address[1:0], 3'b000} +: 8];
               // En MMIO la palabra ya viene entera: un solo acceso.
-              monitor_read_word <= mmio_read_data;
+              monitor_read_word <= mmio_rsp_data;
             monitor_ready <= 1'b1;
-            monitor_error <= mmio_error;
+            monitor_error <= mmio_rsp_error;
           end else begin
-            if (saved_cpu_read) cpu_dmem_read_data <= mmio_read_data;
+            if (saved_cpu_read) cpu_dmem_read_data <= mmio_rsp_data;
             cpu_dmem_ready <= 1'b1;
-            cpu_dmem_error <= mmio_error;
+            cpu_dmem_error <= mmio_rsp_error;
           end
           state <= STATE_RELEASE;
         end
