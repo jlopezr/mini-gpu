@@ -23,24 +23,40 @@ MAX_ADDRESS = 0xFFFF_FFFF
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0000_8000),
 )
-# La 6 no tiene periféricos mapeados, pero sí `sysid`: cuatro palabras de solo
-# lectura en el camino del monitor, que es lo que le permite decir quién es sin
-# tener ventana MMIO de verdad. Ver docs/unificacion-mmio.md fase 4a.
-#
-# Hay que declararlo aquí aunque `read_word` no valide: `read_memory` y
-# `read_block` sí, así que sin esta línea leer la identificación por bloque se
-# rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
-# top.v pasa al monitor.
-SYSID_BASE = 0x8000_0f00
-MONITOR_REGIONS = (
-    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
-)
-MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
-
 # `tools` en el camino ANTES de importar de ahi. El insert ya existia
 # mas abajo, para tools/serial_ports.py, pero ahora hace falta aqui
 # arriba; es idempotente.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# La 6 no tiene periféricos mapeados, pero sí el bloque SYSTEM: siete palabras
+# de solo lectura en el camino del monitor, que es lo que le permite decir
+# quién es sin tener decodificador ni ventana MMIO de dispositivos.
+#
+# MMIO v2 (1.isa/mmio.md §5) lo mueve de 0x80000F00, donde eran cuatro
+# palabras, a 0x80000000, donde son siete.
+#
+# Hay que declarar la región aunque `read_word` no valide: `read_memory` y
+# `read_block` sí, así que sin esta línea leer la identificación por bloque se
+# rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
+# top.v pasa al monitor.
+#
+# NO hay aquí `MMIO_BASE`/`MMIO_LIMIT`, y es deliberado. En la 16, la 18, la
+# 19 y la 21 ese par es la ventana que `parse_address` acepta desde la línea de
+# órdenes. Esta carpeta no tiene `parse_address`: su CLI valida con
+# `MAX_ADDRESS`, que son los 32 bits enteros, y quien rechaza una dirección es
+# la placa. Declarar el par aquí sería afirmar un filtro que no existe, que es
+# exactamente cómo el `SERIAL_BASE` de la 19 sobrevivió sin que nada lo leyera
+# hasta que costó una sesión de placa. `test_monitor_protocol` comprueba la
+# misma invariante contra `MAX_ADDRESS` en las carpetas sin ese par.
+#
+# Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
+# `tools/prototype_report.py` lee esta asignación del TEXTO del fichero, sin
+# importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
+# exige. Que sea literal es obligatorio; que no esté comprobada, no.
+MONITOR_REGIONS = (
+    (0x8000_0000, 0x8001_0000),   # SYSTEM: MAGIC, VERSION, ID, DEVICES, MEM…
+)
+MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 # El protocolo del monitor vive UNA vez, en tools/monitor_protocol.py:
 # veinte de los veintiun metodos de este cliente eran identicos en las
 # diez carpetas con juego de comandos. Lo que se queda aqui es lo que

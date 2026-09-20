@@ -147,12 +147,19 @@ PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
 VERSION_PARAMETER = re.compile(r"\.(VERSION_\w+)\(\s*8'([hd])([0-9a-fA-F]+)\s*\)")
 
 
+# El mismo fallo lo tuvo `tools/rtl_facts.py`, y alli en silencio: se caia al
+# `localparam` por defecto y la 6 acabo anunciando monitor 1.0 en vez de 3.6, en
+# una tabla generada. Vive una sola vez, en `tools/`, y aqui se importa --como
+# manda AGENTS.md: no dupliques la logica, anade lanzadores finos--.
+from tools.rtl_facts import sin_comentarios  # noqa: E402
+
+
 def monitor_instantiations(prototype: Path):
     """Los parametros de cada `monitor #(...)` del prototipo, por fichero."""
     for path in sorted(prototype.glob("*.v")):
         if path.name == "monitor.v":
             continue        # ahi el `#(` es la DECLARACION, no una instancia
-        source = path.read_text(encoding="utf8")
+        source = sin_comentarios(path.read_text(encoding="utf8"))
         for match in re.finditer(r"\bmonitor\s*#\(", source):
             # emparejar parentesis: la lista lleva unos cuantos dentro
             depth, cursor = 1, match.end()

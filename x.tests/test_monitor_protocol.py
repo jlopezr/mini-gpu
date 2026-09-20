@@ -23,6 +23,7 @@ compartido hacía pasar un `pc` de 0x20000 que en esa placa no existe. Lo cazó
 
 import ast
 import importlib
+import inspect
 import re
 import sys
 import unittest
@@ -233,12 +234,53 @@ class ProtocoloCompartidoTest(unittest.TestCase):
                 continue        # sigue en v1; le toca cuando migre
             mirados += 1
             monitor = cargar(prototipo)
-            base, limite = monitor.MMIO_BASE, monitor.MMIO_LIMIT
 
-            with self.subTest(prototipo=prototipo, constante="MMIO_BASE"):
-                self.assertEqual(
-                    MMIO_SYSTEM_BASE, base,
-                    f"{prototipo}: MMIO_BASE no es la base de SYSTEM del mapa")
+            # No todas las carpetas filtran direcciones en el host. La 16, la
+            # 18, la 19 y la 21 tienen `parse_address`, que rechaza fuera de
+            # `MMIO_BASE`/`MMIO_LIMIT`; la 6 y la 10 no lo tienen y su CLI
+            # valida con `MAX_ADDRESS` a secas, o sea que la ventana del
+            # cliente son los 32 bits enteros y quien rechaza es la placa.
+            #
+            # La invariante es la MISMA en los dos casos --lo que el CLI
+            # acepta tiene que cubrir lo que la carpeta declara-- y se
+            # comprueba contra la constante que esa carpeta usa de verdad. Lo
+            # que NO se hace es saltarse la carpeta: un filtro cuyo modo de
+            # fallo por defecto es no ver es lo que dejó pasar esto la primera
+            # vez. Y tampoco se le pide a la 6 que declare un par de
+            # constantes que no lee nadie, que es la otra forma de que un dato
+            # se quede rancio sin que se note.
+            tiene_ventana_propia = hasattr(monitor, "MMIO_BASE")
+            if tiene_ventana_propia:
+                base, limite = monitor.MMIO_BASE, monitor.MMIO_LIMIT
+                with self.subTest(prototipo=prototipo, constante="MMIO_BASE"):
+                    self.assertEqual(
+                        MMIO_SYSTEM_BASE, base,
+                        f"{prototipo}: MMIO_BASE no es la base de SYSTEM del "
+                        f"mapa")
+            else:
+                base, limite = 0, monitor.MAX_ADDRESS
+                with self.subTest(prototipo=prototipo, constante="MAX_ADDRESS"):
+                    # Si esta carpeta gana un `parse_address` algún día, lo que
+                    # hay que hacer es declarar el par, no relajar esto.
+                    #
+                    # Se mira la DEFINICIÓN con `ast`, no el nombre en el
+                    # texto. La primera versión de esta guarda usaba
+                    # `assertNotIn` sobre el fuente y saltó contra el
+                    # comentario de `6/monitor.py` que explica, precisamente,
+                    # que esta carpeta no tiene `parse_address`. Es la misma
+                    # regla que `test_mmio_map` aprendió con INT_MIN: no es el
+                    # literal lo que distingue una cosa, es el uso.
+                    definidas = {
+                        nodo.name
+                        for nodo in ast.walk(
+                            ast.parse(inspect.getsource(monitor)))
+                        if isinstance(nodo, ast.FunctionDef)
+                    }
+                    self.assertNotIn(
+                        "parse_address", definidas,
+                        f"{prototipo}: define parse_address pero no declara "
+                        f"MMIO_BASE/MMIO_LIMIT, así que la ventana que el CLI "
+                        f"aplica de verdad no se está comprobando")
 
             for region_base, region_fin in monitor.MONITOR_REGIONS:
                 with self.subTest(prototipo=prototipo,
