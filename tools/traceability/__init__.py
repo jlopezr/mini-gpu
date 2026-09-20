@@ -2,6 +2,7 @@
 
 from .diagnostic import Diagnostic
 from .config import TraceConfig, load_config
+from .cache import GraphCache
 from .identity import Identity, Resource, SourceLocation
 from .markdown import MarkdownAdapter
 from .model import Model, ModelBuilder
@@ -14,6 +15,7 @@ from .sidecar import SidecarAdapter
 __all__ = [
     "Diagnostic",
     "Identity",
+    "GraphCache",
     "MarkdownAdapter",
     "Model",
     "ModelBuilder",

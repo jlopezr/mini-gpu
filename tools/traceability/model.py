@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .config import TraceConfig, load_config
+from .cache import GraphCache
 from .diagnostic import Diagnostic
 from .identity import Identity, Resource
 from .markdown import MarkdownAdapter
@@ -30,11 +31,14 @@ class Model:
     identities: tuple[Identity, ...]
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 
 class ModelBuilder:
-    def __init__(self, adapter: MarkdownAdapter | None = None) -> None:
+    def __init__(self, adapter: MarkdownAdapter | None = None, use_cache: bool = True) -> None:
         self.adapter = adapter
+        self.use_cache = use_cache
 
     def discover(self, root: Path, config: TraceConfig | None = None) -> list[Path]:
         root = root.resolve()
@@ -52,15 +56,32 @@ class ModelBuilder:
         selected = set(discovered if paths is None else self._expand(root, paths))
         resources, identities, observations = [], [], []
         diagnostics = list(config_diagnostics)
+        cache = GraphCache(root, self.use_cache)
+        hits = misses = 0
         for path in discovered:
             adapter = self.adapter or adapter_for(path)()
-            result = adapter.read(path, root)
+            adapter_version = (
+                f"{adapter.__class__.__module__}.{adapter.__class__.__name__}:"
+                f"{getattr(adapter, 'CACHE_VERSION', 1)}"
+            )
+            result = cache.get(path, adapter_version)
+            if result is None:
+                misses += 1
+                result = adapter.read(path, root)
+                cache.put(path, adapter_version, result)
+            else:
+                hits += 1
             resources.append(result.resource)
             identities.extend(result.identities)
             diagnostics.extend(result.diagnostics)
             if path in selected:
                 observations.extend(result.observations)
-        return Model(root, config, tuple(resources), tuple(identities), tuple(observations), tuple(diagnostics))
+        cache.retain(discovered)
+        cache.save()
+        return Model(
+            root, config, tuple(resources), tuple(identities), tuple(observations),
+            tuple(diagnostics), hits, misses,
+        )
 
     def _expand(self, root: Path, paths: Iterable[Path]) -> list[Path]:
         result: set[Path] = set()

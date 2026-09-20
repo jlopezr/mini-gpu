@@ -22,6 +22,7 @@ class SystemVerilogResult:
     identities: tuple[Identity, ...]
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
+    dependencies: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,8 @@ class Annotation:
 
 
 class SystemVerilogAdapter:
+    CACHE_VERSION = 1
+
     def read(self, path: Path, root: Path) -> SystemVerilogResult:
         path = path.resolve()
         identities, observations, diagnostics = [], [], []

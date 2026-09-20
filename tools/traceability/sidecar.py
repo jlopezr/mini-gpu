@@ -25,9 +25,12 @@ class SidecarResult:
     identities: tuple[Identity, ...]
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
+    dependencies: tuple[Path, ...] = ()
 
 
 class SidecarAdapter:
+    CACHE_VERSION = 1
+
     def read(self, path: Path, root: Path) -> SidecarResult:
         path, root = path.resolve(), root.resolve()
         location = SourceLocation(path, 1)
@@ -58,31 +61,32 @@ class SidecarAdapter:
                 metadata=metadata,
             )
 
-        self._validate_resource(metadata.get("resource"), path, root, location, diagnostics)
+        dependency = self._validate_resource(metadata.get("resource"), path, root, location, diagnostics)
         observations = self._relations(artifact, metadata, location, diagnostics) if artifact else []
         return SidecarResult(
-            Resource(path), (artifact,) if artifact else (), tuple(observations), tuple(diagnostics)
+            Resource(path), (artifact,) if artifact else (), tuple(observations), tuple(diagnostics),
+            (dependency,) if dependency else (),
         )
 
     def _validate_resource(self, value, sidecar, root, location, diagnostics):
         if not isinstance(value, dict):
             diagnostics.append(Diagnostic("invalid-sidecar-resource", "resource debe ser un mapping", location))
-            return
+            return None
         for field in sorted(set(value) - RESOURCE_FIELDS):
             diagnostics.append(Diagnostic("unknown-resource-field", f"campo desconocido: '{field}'", location))
         filename = value.get("file")
         if not isinstance(filename, str) or not filename:
             diagnostics.append(Diagnostic("invalid-sidecar-resource", "resource.file es obligatorio", location))
-            return
+            return None
         target = (sidecar.parent / filename).resolve()
         try:
             target.relative_to(root)
         except ValueError:
             diagnostics.append(Diagnostic("outside-root", f"resource.file sale de la raíz: '{filename}'", location))
-            return
+            return None
         if not target.is_file():
             diagnostics.append(Diagnostic("missing-resource", f"no existe resource.file: '{filename}'", location))
-            return
+            return target
         expected = value.get("sha256")
         if expected is not None:
             if not isinstance(expected, str) or len(expected) != 64 or any(char not in "0123456789abcdefABCDEF" for char in expected):
@@ -91,6 +95,7 @@ class SidecarAdapter:
                 actual = hashlib.sha256(target.read_bytes()).hexdigest()
                 if actual.lower() != expected.lower():
                     diagnostics.append(Diagnostic("checksum-mismatch", f"sha256 no coincide para '{filename}'", location))
+        return target
 
     def _relations(self, source, metadata, location, diagnostics):
         result = []

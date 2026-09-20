@@ -58,6 +58,24 @@ La configuración es estricta: campos desconocidos, versiones no soportadas y
 listas de patrones inválidas son errores. Una ruta explícita tampoco puede
 saltar los límites de `scan`/`exclude`.
 
+### Caché del grafo
+
+Cada adapter produce un fragmento de modelo por `RESOURCE`, almacenado en
+`.trace/cache-v1.json` (ignorado por Git). La caché conserva identidades,
+relaciones pendientes, diagnósticos, localizaciones y dependencias:
+
+- si `mtime_ns` y tamaño no cambian, no se abre el fichero;
+- si cambia la metadata pero no el tamaño, se calcula SHA-256 y se reutiliza el
+  fragmento cuando el contenido sigue siendo idéntico;
+- si cambia el contenido o la versión del adapter, se vuelve a parsear;
+- los resources borrados eliminan su fragmento completo;
+- un sidecar se invalida también cuando cambia, aparece o desaparece el recurso
+  que describe.
+
+El resolver reconstruye siempre el grafo global desde los fragmentos para que
+duplicados y referencias reflejen el conjunto actual. `trace check --no-cache`
+permite forzar una lectura completa; la salida normal informa hits y misses.
+
 Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
 con el mismo ID local:
 

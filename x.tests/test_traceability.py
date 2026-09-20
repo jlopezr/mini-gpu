@@ -1,5 +1,8 @@
 import contextlib
+import hashlib
 import io
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -293,6 +296,77 @@ resource: {file: firmware.bin}
 """)
             result = SidecarAdapter().read(path, root)
             self.assertEqual(result.identities[0].artifact_type, "implementation")
+
+    def test_cache_reuses_unchanged_resource_without_adapter_read(self):
+        class CountingAdapter(MarkdownAdapter):
+            calls = 0
+
+            def read(self, path, root):
+                type(self).calls += 1
+                return super().read(path, root)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "doc.md", """<!-- trace:artifact A
+type: requirement
+-->
+# A
+""")
+            CountingAdapter.calls = 0
+            first = ModelBuilder(adapter=CountingAdapter()).build(root)
+            second = ModelBuilder(adapter=CountingAdapter()).build(root)
+            self.assertEqual((first.cache_hits, first.cache_misses), (0, 1))
+            self.assertEqual((second.cache_hits, second.cache_misses), (1, 0))
+            self.assertEqual(CountingAdapter.calls, 1)
+            self.assertEqual(second.identities[0].key, "A")
+
+    def test_cache_hash_avoids_parse_when_only_timestamp_changes(self):
+        class CountingAdapter(MarkdownAdapter):
+            calls = 0
+
+            def read(self, path, root):
+                type(self).calls += 1
+                return super().read(path, root)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "doc.md", "# Plain\n")
+            CountingAdapter.calls = 0
+            ModelBuilder(adapter=CountingAdapter()).build(root)
+            stat = path.stat()
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+            model = ModelBuilder(adapter=CountingAdapter()).build(root)
+            self.assertEqual((model.cache_hits, model.cache_misses), (1, 0))
+            self.assertEqual(CountingAdapter.calls, 1)
+
+    def test_cache_drops_deleted_resource_fragment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "doc.md", "# Plain\n")
+            ModelBuilder().build(root)
+            path.unlink()
+            model = ModelBuilder().build(root)
+            cache = json.loads((root / ".trace" / "cache-v1.json").read_text(encoding="utf-8"))
+            self.assertEqual(model.resources, ())
+            self.assertEqual(cache["entries"], {})
+
+    def test_cache_invalidates_sidecar_when_described_resource_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            resource = self.write(root, "data.bin", "one")
+            digest = hashlib.sha256(resource.read_bytes()).hexdigest()
+            self.write(root, "data.trace.yaml", f"""artifact: DATA
+type: evidence
+resource:
+  file: data.bin
+  sha256: {digest}
+""")
+            self.write(root, "trace.yaml", "scan: ['**/*.trace.yaml']\nexclude: []\n")
+            ModelBuilder().build(root)
+            resource.write_text("two", encoding="utf-8")
+            model = ModelBuilder().build(root)
+            self.assertEqual(model.cache_misses, 1)
+            self.assertIn("checksum-mismatch", [item.code for item in model.diagnostics])
 
     def test_systemverilog_artifact_and_formal_symbol(self):
         result = SystemVerilogAdapter().read(EXAMPLE / "implementation.sv", REPO)

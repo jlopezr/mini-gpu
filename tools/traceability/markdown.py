@@ -43,9 +43,12 @@ class MarkdownResult:
     identities: tuple[Identity, ...]
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
+    dependencies: tuple[Path, ...] = ()
 
 
 class MarkdownAdapter:
+    CACHE_VERSION = 1
+
     def read(self, path: Path, root: Path) -> MarkdownResult:
         path = path.resolve()
         resource = Resource(path)

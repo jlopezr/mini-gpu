@@ -17,9 +17,11 @@ def parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="valida el Project Model y sus relaciones")
     check.add_argument("paths", nargs="*", type=Path, help="ficheros o directorios (por defecto, todo el repo)")
     check.add_argument("--root", type=Path, help="raíz del repositorio")
+    check.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     show = commands.add_parser("show", help="explica una identidad y sus relaciones")
     show.add_argument("identity", help="identidad semántica, por ejemplo REQ-001")
     show.add_argument("--root", type=Path, help="raíz del repositorio")
+    show.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     return result
 
 
@@ -28,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = args.root.resolve() if args.root else find_repo_root(Path.cwd())
         paths = args.paths or None if args.command == "check" else None
-        model = ModelBuilder().build(root, paths)
+        model = ModelBuilder(use_cache=not args.no_cache).build(root, paths)
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -43,7 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     if diagnostics:
         print(f"FAIL: {len(diagnostics)} problema(s), {len(model.observations)} observaciones")
         return 1
-    print(f"OK: {len(model.identities)} identidades, {len(model.observations)} observaciones")
+    print(f"OK: {len(model.identities)} identidades, {len(model.observations)} observaciones "
+          f"(cache: {model.cache_hits} reutilizados, {model.cache_misses} leídos)")
     return 0
 
 
