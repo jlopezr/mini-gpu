@@ -18,7 +18,9 @@ sys.path.insert(0, str(ROOT))
 from tools.prototype import find_repo_root, list_prototypes
 from tools.prototype_report import collect, simulator_capabilities
 from tools.rtl_facts import load_capability_signals
-from tools.traceability import CORE_QUERIES, Graph, ModelBuilder
+from tools.traceability import (
+    CORE_GENERATORS, GenerationContext, Graph, ModelBuilder, generator,
+)
 
 MARKER_RE_TEMPLATE = "<!-- {tag} GENERATED: {name} -->"
 TRACE_BEGIN = re.compile(r"<!--\s*gendoc:begin\s+([A-Za-z0-9_-]+)\s*\n(.*?)\n-->", re.DOTALL)
@@ -251,8 +253,8 @@ def update_manual_doc(path: Path, marker_name: str, body: str, check: bool) -> s
 
 
 # @id trace-query
-def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
-    """Materializa bloques gendoc cuyo generator es trace.query."""
+def update_generated_blocks(text: str, context: GenerationContext) -> tuple[str, int]:
+    """Materializa bloques gendoc mediante el GeneratorRegistry."""
     output = []
     cursor = 0
     changed = 0
@@ -271,21 +273,10 @@ def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
         if not isinstance(metadata, dict):
             raise ValueError(f"metadata inválida en bloque gendoc '{name}'")
         output.append(text[cursor:match.end()])
-        if metadata.get("generator") != "trace.query":
-            output.append(text[match.end():end + len(end_marker)])
-            cursor = end + len(end_marker)
-            continue
-        unknown = set(metadata) - {"generator", "query", "arguments"}
-        if unknown:
-            raise ValueError(f"campos desconocidos en gendoc '{name}': {', '.join(sorted(unknown))}")
-        query_name = metadata.get("query")
-        arguments = metadata.get("arguments", [])
-        if not isinstance(query_name, str) or not isinstance(arguments, list) or not all(
-            isinstance(item, str) for item in arguments
-        ):
-            raise ValueError(f"query/arguments inválidos en bloque gendoc '{name}'")
-        result = CORE_QUERIES.run(query_name, graph, tuple(arguments))
-        body = _trace_query_table(result, graph.model.root)
+        generator_name = metadata.pop("generator", None)
+        if not isinstance(generator_name, str):
+            raise ValueError(f"bloque gendoc '{name}' requiere generator")
+        body = CORE_GENERATORS.run(generator_name, context, metadata)
         replacement = f"\n\n{body}\n\n{end_marker}"
         original = text[match.end():end + len(end_marker)]
         changed += replacement != original
@@ -294,6 +285,11 @@ def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
         search_from = cursor
     output.append(text[cursor:])
     return "".join(output), changed
+
+
+def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
+    """Compatibilidad interna para callers del primer slice de gendoc."""
+    return update_generated_blocks(text, GenerationContext(graph.model.root, graph))
 
 
 def _fenced_ranges(text: str) -> list[tuple[int, int]]:
@@ -313,17 +309,28 @@ def _fenced_ranges(text: str) -> list[tuple[int, int]]:
     return result
 
 
-def _trace_query_table(result, root: Path) -> str:
-    if not result.matches:
-        return "_Sin resultados._"
-    lines = ["| Identity | Type | Location | Reason |", "|---|---|---|---|"]
-    for match in result.matches:
-        identity = match.identity
-        semantic_type = identity.artifact_type or identity.element_type
-        lines.append(
-            f"| `{identity.key}` | {semantic_type} | `{identity.location.display(root)}` | {match.reason} |"
-        )
-    return "\n".join(lines)
+@generator("prototype-summary", description="Tabla resumen de capacidades por prototipo")
+def generate_prototype_summary(context: GenerationContext, options: dict) -> str:
+    return _capabilities_table(context.values["reports"])
+
+
+@generator("cpu-matrix", description="Matriz de capacidades de MiniCPU")
+def generate_cpu_matrix(context: GenerationContext, options: dict) -> str:
+    return _matrix_table(
+        context.values["reports"], context.values["simulators"], context.values["signals"], "cpu"
+    )
+
+
+@generator("gpu-matrix", description="Matriz de capacidades de MiniGPU")
+def generate_gpu_matrix(context: GenerationContext, options: dict) -> str:
+    return _matrix_table(
+        context.values["reports"], context.values["simulators"], context.values["signals"], "gpu"
+    )
+
+
+@generator("synthesis-table", description="Últimos resultados de síntesis")
+def generate_synthesis_table(context: GenerationContext, options: dict) -> str:
+    return _synthesis_table(context.values["reports"])
 
 
 def update_trace_docs(root: Path, check: bool) -> tuple[bool, list[str]]:
@@ -334,6 +341,7 @@ def update_trace_docs(root: Path, check: bool) -> tuple[bool, list[str]]:
         raise ValueError(f"grafo de trazabilidad inválido: {details}")
     changed = False
     messages = []
+    context = GenerationContext(root, graph)
     for resource in model.resources:
         path = resource.path
         if path.suffix.lower() != ".md":
@@ -341,7 +349,7 @@ def update_trace_docs(root: Path, check: bool) -> tuple[bool, list[str]]:
         text = path.read_text(encoding="utf-8")
         if "gendoc:begin" not in text:
             continue
-        rendered, replacements = update_trace_query_blocks(text, graph)
+        rendered, replacements = update_generated_blocks(text, context)
         if not replacements:
             continue
         relative = path.relative_to(root).as_posix()
@@ -362,11 +370,15 @@ def main() -> int:
     reports = build_reports(root)
     simulators = simulator_capabilities(root)
     signals = load_capability_signals(root)
+    generation = GenerationContext(root, values={
+        "reports": reports, "simulators": simulators, "signals": signals,
+    })
 
     changed = False
 
     synthesis_doc = render_dedicated_doc(
-        "Último informe de síntesis por prototipo", "synthesis-table", _synthesis_table(reports)
+        "Último informe de síntesis por prototipo", "synthesis-table",
+        CORE_GENERATORS.run("synthesis-table", generation),
     )
     if write_if_changed(root / "docs" / "synthesis-report.md", synthesis_doc, args.check):
         changed = True
@@ -376,10 +388,11 @@ def main() -> int:
 
     for path, marker_name, body in (
         (root / "docs/resumen-prototipos.md", "cpu-matrix",
-         _matrix_table(reports, simulators, signals, "cpu")),
+         CORE_GENERATORS.run("cpu-matrix", generation)),
         (root / "docs/resumen-prototipos.md", "gpu-matrix",
-         _matrix_table(reports, simulators, signals, "gpu")),
-        (root / "docs/resumen-prototipos.md", "prototype-summary", _capabilities_table(reports)),
+         CORE_GENERATORS.run("gpu-matrix", generation)),
+        (root / "docs/resumen-prototipos.md", "prototype-summary",
+         CORE_GENERATORS.run("prototype-summary", generation)),
     ):
         message = update_manual_doc(path, marker_name, body, args.check)
         print(message)

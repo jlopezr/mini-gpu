@@ -697,6 +697,14 @@ duplica la semántica del CLI. `--check` comprueba también estos bloques sin
 escribir. Como dogfood, `tools/generate_docs.py` declara el artifact
 `IMPL-GENDOC` y símbolos formales para sus cuatro generadores.
 
+Todos se despachan ahora mediante `GeneratorRegistry`: `synthesis-table`,
+`cpu-matrix`, `gpu-matrix`, `prototype-summary` y `trace.query`. El decorador
+`@generator` permite registrar otros generadores Python sin añadir ramas al
+dispatcher. En cada ejecución se recalculan todos los bloques encontrados; la
+caché de `trace` evita releer recursos intactos y `generate-docs` solo escribe
+cuando el texto renderizado cambia. Todavía no existe caché ni declaración de
+dependencias específica por generador.
+
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
 del `VERSIONS` de `x.tests/backends/{simulator,gpu_simulator}.py`, que es donde

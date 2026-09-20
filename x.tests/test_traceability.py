@@ -10,9 +10,9 @@ from pathlib import Path
 from tools.trace_cli import main
 from tools.generate_docs import update_trace_query_blocks
 from tools.traceability import (
-    AssemblyAdapter, CORE_QUERIES, Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder,
-    PythonAdapter, QueryRegistry, Resolver, RuleFinding, RuleRegistry, SidecarAdapter,
-    SystemVerilogAdapter,
+    AssemblyAdapter, CORE_GENERATORS, CORE_QUERIES, GenerationContext, GeneratorRegistry,
+    Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, QueryRegistry,
+    Resolver, RuleFinding, RuleRegistry, SidecarAdapter, SystemVerilogAdapter,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -582,6 +582,24 @@ outdated
         fenced = f"```markdown\n{source}```\n"
         untouched, fenced_changes = update_trace_query_blocks(fenced, graph)
         self.assertEqual((untouched, fenced_changes), (fenced, 0))
+
+    def test_generator_registry_contains_legacy_and_trace_generators(self):
+        self.assertEqual(
+            set(CORE_GENERATORS.definitions),
+            {"trace.query", "prototype-summary", "cpu-matrix", "gpu-matrix", "synthesis-table"},
+        )
+        registry = GeneratorRegistry()
+
+        @registry.generator
+        def sample_generator(context, options):
+            return f"{context.root.name}:{options['value']}"
+
+        context = GenerationContext(Path("project"))
+        self.assertEqual(registry.run("sample-generator", context, {"value": "ok"}), "project:ok")
+        with self.assertRaisesRegex(ValueError, "duplicado"):
+            registry.generator("sample-generator")(lambda context, options: "")
+        with self.assertRaisesRegex(ValueError, "desconocido"):
+            registry.run("missing", context)
 
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:

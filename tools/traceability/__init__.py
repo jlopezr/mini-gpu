@@ -17,6 +17,9 @@ from .impact import ImpactAnalyzer, ImpactedIdentity, ImpactHop, ImpactResult
 from .graph import Graph, GraphHop
 from .query import CORE_QUERIES, QueryDefinition, QueryMatch, QueryRegistry, QueryResult, query
 from .rules import CORE_RULES, RuleDefinition, RuleFinding, RuleRegistry, rule
+from .generator import (
+    CORE_GENERATORS, GenerationContext, GeneratorDefinition, GeneratorRegistry, generator,
+)
 
 __all__ = [
     "Diagnostic",
@@ -53,5 +56,10 @@ __all__ = [
     "RuleFinding",
     "RuleRegistry",
     "rule",
+    "CORE_GENERATORS",
+    "GenerationContext",
+    "GeneratorDefinition",
+    "GeneratorRegistry",
+    "generator",
     "load_config",
 ]
