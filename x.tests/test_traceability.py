@@ -8,157 +8,178 @@ from tools.trace_cli import main
 from tools.traceability import MarkdownAdapter, ModelBuilder, Resolver
 
 REPO = Path(__file__).resolve().parents[1]
+EXAMPLE = REPO / "tools" / "traceability" / "example"
 
 
 class TraceabilityTest(unittest.TestCase):
-    def test_adapter_creates_document_section_and_link_observation(self):
+    def write(self, root, name, text):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_plain_markdown_is_only_a_resource(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            path = root / "README.md"
-            path.write_text("# Diseño\n\n[Detalle](docs/detail.md#contrato)\n", encoding="utf-8")
+            path = self.write(root, "README.md", "# Documento\n[Otro](other.md)\n")
             result = MarkdownAdapter().read(path, root)
-            self.assertEqual([item.key for item in result.identities], ["README.md", "README.md#diseño"])
-            self.assertEqual(result.observations[0].target, "docs/detail.md#contrato")
-            self.assertEqual(result.observations[0].location.line, 3)
+            self.assertEqual(result.resource.path, path)
+            self.assertEqual(result.identities, ())
+            self.assertEqual(result.observations, ())
 
-    def test_typed_heading_scopes_its_observations(self):
+    def test_artifact_has_explicit_case_sensitive_id_and_type(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            path = root / "requirements.md"
-            path.write_text("# Requisitos\n## REQ-007: vídeo\n[Diseño](design.md#dec-007-video)\n", encoding="utf-8")
+            path = self.write(root, "req.md", """<!-- trace:artifact Req-Mixed
+type: requirement
+-->
+# Requirement
+""")
+            artifact = MarkdownAdapter().read(path, root).identities[0]
+            self.assertEqual((artifact.key, artifact.artifact_type), ("Req-Mixed", "requirement"))
+
+    def test_sections_are_local_to_nearest_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "spec.md", """<!-- trace:artifact SPEC-A
+type: specification
+-->
+# Spec
+## Derived title
+### Stable title {#stable}
+""")
+            identities = MarkdownAdapter().read(path, root).identities
+            self.assertEqual([item.key for item in identities], ["SPEC-A", "SPEC-A#derived-title", "SPEC-A#stable"])
+            self.assertFalse(identities[1].formal)
+            self.assertTrue(identities[2].formal)
+
+    def test_artifact_relations_are_explicit_not_markdown_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "impl.md", """<!-- trace:artifact IMPL-A
+type: implementation
+implements: [SPEC-A]
+-->
+# Impl
+[ordinary link](somewhere.md)
+""")
             result = MarkdownAdapter().read(path, root)
-            requirement = result.identities[-1]
-            self.assertEqual((requirement.kind, requirement.semantic_id), ("requirement", "REQ-007"))
-            self.assertEqual(result.observations[0].source, requirement)
+            self.assertEqual([(item.relation, item.target) for item in result.observations], [("implements", "SPEC-A")])
 
-    def test_adapter_reads_legacy_cp1252_without_losing_anchor_text(self):
+    def test_section_relations_require_formal_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            path = root / "legacy.md"
-            path.write_bytes("# Qué cambió\n[Sección](#qué-cambió)\n".encode("cp1252"))
-            model = ModelBuilder().build(root)
-            self.assertEqual(Resolver().resolve(model), [])
+            path = self.write(root, "spec.md", """<!-- trace:artifact SPEC-A
+type: specification
+-->
+# Spec
+<!-- trace:relations
+derived-from: [DEC-A]
+-->
+## Unstable
+""")
+            result = MarkdownAdapter().read(path, root)
+            self.assertEqual([item.code for item in result.diagnostics], ["relations-require-formal-id"])
 
-    def test_resolver_accepts_relative_document_and_anchor(self):
+    def test_local_reference_resolves_inside_current_artifact(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "docs").mkdir()
-            (root / "README.md").write_text("[Contrato](docs/detail.md#contrato)\n", encoding="utf-8")
-            (root / "docs" / "detail.md").write_text("# Contrato\n", encoding="utf-8")
-            self.assertEqual(Resolver().resolve(ModelBuilder().build(root)), [])
+            self.write(root, "spec.md", """<!-- trace:artifact SPEC-A
+type: specification
+requires: ["#base"]
+-->
+# Spec
+## Base {#base}
+""")
+            analysis = Resolver().analyze(ModelBuilder().build(root))
+            self.assertEqual(analysis.diagnostics, ())
+            self.assertEqual(analysis.relations[0].target.key, "SPEC-A#base")
 
-    def test_resolver_reports_missing_file_and_anchor(self):
+    def test_unknown_metadata_and_type_are_errors(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "README.md").write_text(
-                "# Inicio\n[No existe](missing.md)\n[Ancla](#ausente)\n", encoding="utf-8"
-            )
-            diagnostics = Resolver().resolve(ModelBuilder().build(root))
-            self.assertEqual([item.code for item in diagnostics], ["missing-target", "unresolved-identity"])
+            self.write(root, "bad.md", """<!-- trace:artifact A
+type: requirementt
+subjets: [gpu]
+-->
+# Bad
+""")
+            codes = {item.code for item in Resolver().resolve(ModelBuilder().build(root))}
+            self.assertEqual(codes, {"invalid-artifact-type", "unknown-metadata"})
 
-    def test_explicit_duplicate_identity_is_an_error(self):
+    def test_extended_verifies_coverage_is_preserved(self):
+        model = ModelBuilder().build(REPO, [EXAMPLE])
+        relation = next(item for item in Resolver().analyze(model).relations
+                        if item.source.key == "VER-DEVICE-IDENTITY" and item.target.key.startswith("SPEC-DEVICE#"))
+        self.assertEqual(relation.attributes, {"coverage": "complete"})
+
+    def test_generated_trace_directives_are_ignored(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "README.md").write_text("# Uno {#mismo}\n## Dos {#mismo}\n", encoding="utf-8")
-            diagnostics = Resolver().resolve(ModelBuilder().build(root))
-            self.assertEqual([item.code for item in diagnostics], ["duplicate-identity"])
+            self.write(root, "generated.md", """<!-- gendoc:begin slot
+generator: test
+-->
+<!-- trace:artifact GENERATED
+type: requirement
+-->
+# Generated
+<!-- gendoc:end slot -->
+""")
+            self.assertEqual(ModelBuilder().build(root).identities, ())
 
-    def test_coverage_reports_requirement_without_decision_or_test(self):
+    def test_trace_directives_inside_code_fences_are_ignored(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "requirements.md").write_text("## REQ-001: identidad\n", encoding="utf-8")
-            diagnostics = Resolver().resolve(ModelBuilder().build(root))
-            self.assertEqual(
-                {item.code for item in diagnostics},
-                {"uncovered-requirement", "unverified-requirement"},
-            )
+            self.write(root, "guide.md", """```markdown
+<!-- trace:artifact EXAMPLE
+type: requirement
+-->
+# Example
+```
+""")
+            self.assertEqual(ModelBuilder().build(root).identities, ())
 
-    def test_duplicate_semantic_id_is_an_error(self):
+    def test_duplicate_artifact_and_relation_are_errors(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "one.md").write_text("## REQ-001: uno\n", encoding="utf-8")
-            (root / "two.md").write_text("## REQ-001: dos\n", encoding="utf-8")
-            codes = [item.code for item in Resolver().resolve(ModelBuilder().build(root))]
-            self.assertIn("duplicate-semantic-id", codes)
+            self.write(root, "a.md", """<!-- trace:artifact A
+type: decision
+addresses: [B, B]
+-->
+# A
+""")
+            self.write(root, "b.md", """<!-- trace:artifact B
+type: requirement
+-->
+# B
+<!-- trace:artifact A
+type: decision
+-->
+## Duplicate
+""")
+            codes = {item.code for item in Resolver().resolve(ModelBuilder().build(root))}
+            self.assertIn("duplicate-identity", codes)
+            self.assertIn("duplicate-relation", codes)
 
-    def test_code_fences_and_external_links_are_ignored(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "README.md").write_text(
-                "[Web](https://example.com)\n```md\n[roto](missing.md)\n```\n", encoding="utf-8"
-            )
-            self.assertEqual(Resolver().resolve(ModelBuilder().build(root)), [])
+    def test_example_resolves_to_authored_graph(self):
+        model = ModelBuilder().build(REPO, [EXAMPLE])
+        analysis = Resolver().analyze(model)
+        self.assertEqual(analysis.diagnostics, ())
+        triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
+        self.assertEqual(len(triples), 5)
+        self.assertIn(("IMPL-DEVICE-IDENTITY", "satisfies", "REQ-DEVICE-IDENTITY"), triples)
+        self.assertIn(("VER-DEVICE-IDENTITY", "verifies", "SPEC-DEVICE#identity-register"), triples)
 
-    def test_root_relative_link_and_non_markdown_asset(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "docs").mkdir()
-            (root / "docs" / "image.png").write_bytes(b"png")
-            (root / "README.md").write_text(
-                "![Imagen](/docs/image.png)\n[Inicio](/README.md)\n", encoding="utf-8"
-            )
-            self.assertEqual(Resolver().resolve(ModelBuilder().build(root)), [])
-
-    def test_link_outside_root_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "repo"
-            root.mkdir()
-            (root.parent / "secret.md").write_text("# Fuera\n", encoding="utf-8")
-            (root / "README.md").write_text("[Fuera](../secret.md)\n", encoding="utf-8")
-            diagnostics = Resolver().resolve(ModelBuilder().build(root))
-            self.assertEqual([item.code for item in diagnostics], ["outside-root"])
-
-    def test_missing_generated_build_artifact_is_allowed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "README.md").write_text(
-                "[Bitstream](_build/default/hardware.bit)\n", encoding="utf-8"
-            )
-            self.assertEqual(Resolver().resolve(ModelBuilder().build(root)), [])
-
-    def test_cli_check_exit_codes(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            readme = root / "README.md"
-            readme.write_text("# Bien\n", encoding="utf-8")
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["check", "--root", str(root)]), 0)
-            readme.write_text("[Roto](missing.md)\n", encoding="utf-8")
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["check", "--root", str(root)]), 1)
-
-    def test_bundled_example_resolves_end_to_end(self):
-        example = REPO / "tools" / "traceability" / "example"
-        model = ModelBuilder().build(REPO, [example])
-        self.assertEqual(Resolver().resolve(model), [])
-        self.assertEqual(len(model.observations), 9)
-
-    def test_example_builds_typed_relations(self):
-        example = REPO / "tools" / "traceability" / "example"
-        analysis = Resolver().analyze(ModelBuilder().build(REPO, [example]))
-        triples = {
-            (item.source.semantic_id, item.kind, item.target.semantic_id)
-            for item in analysis.relations
-        }
-        self.assertIn(("DEC-001", "satisfies", "REQ-001"), triples)
-        self.assertIn(("TEST-001", "verifies", "REQ-001"), triples)
-        self.assertIn(("REQ-001", "specified-by", "DEC-001"), triples)
-
-    def test_cli_show_explains_identity_connections(self):
+    def test_cli_show_is_exact_and_calculates_inverse_view(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = main(["show", "req-001", "--root", str(REPO)])
+            code = main(["show", "REQ-DEVICE-IDENTITY", "--root", str(REPO)])
         self.assertEqual(code, 0)
-        self.assertIn("REQ-001 [requirement]", output.getvalue())
-        self.assertIn("specified-by -> DEC-001", output.getvalue())
-        self.assertIn("verified-by -> TEST-001", output.getvalue())
-
-    def test_cli_show_reports_unknown_identity(self):
+        self.assertIn("REQ-DEVICE-IDENTITY [requirement]", output.getvalue())
+        self.assertIn("<- satisfies IMPL-DEVICE-IDENTITY", output.getvalue())
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
-            code = main(["show", "REQ-999", "--root", str(REPO)])
-        self.assertEqual(code, 1)
-        self.assertIn("no existe la identidad", error.getvalue())
+            self.assertEqual(main(["show", "req-device-identity", "--root", str(REPO)]), 1)
 
 
 if __name__ == "__main__":

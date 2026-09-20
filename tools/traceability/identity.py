@@ -1,9 +1,10 @@
-"""Identidades estables de los elementos observables."""
+"""Identidades semánticas independientes de su representación física."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True, order=True)
@@ -20,30 +21,20 @@ class SourceLocation:
 
 
 @dataclass(frozen=True)
+class Resource:
+    """Fichero físico examinado por un adaptador; no pertenece al grafo."""
+
+    path: Path
+
+
+@dataclass(frozen=True)
 class Identity:
-    """Nombre canónico de un documento o de una sección Markdown."""
+    """ARTIFACT o elemento local addressable del Project Model."""
 
     key: str
-    kind: str
+    element_type: str
     location: SourceLocation
-    semantic_id: str | None = None
-
-    @classmethod
-    def document(cls, path: Path, root: Path) -> "Identity":
-        return cls(path.relative_to(root).as_posix(), "document", SourceLocation(path, 1))
-
-    @classmethod
-    def section(
-        cls,
-        document: "Identity",
-        anchor: str,
-        line: int,
-        kind: str = "section",
-        semantic_id: str | None = None,
-    ) -> "Identity":
-        return cls(
-            f"{document.key}#{anchor}",
-            kind,
-            SourceLocation(document.location.path, line),
-            semantic_id,
-        )
+    artifact_type: str | None = None
+    owner: str | None = None
+    formal: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)

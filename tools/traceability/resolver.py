@@ -1,27 +1,12 @@
-"""Resolución de observaciones contra identidades y ficheros reales."""
+"""Resolución estricta de identidades y relaciones authored."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
-from .identity import SourceLocation
+from .diagnostic import Diagnostic
 from .model import Model
-from .relation import Relation, relation_kind
-
-IGNORED_SCHEMES = frozenset({"http", "https", "mailto", "data"})
-GENERATED_PARTS = frozenset({"_build"})
-
-
-@dataclass(frozen=True)
-class Diagnostic:
-    code: str
-    message: str
-    location: SourceLocation
-
-    def format(self, root: Path) -> str:
-        return f"{self.location.display(root)}: {self.code}: {self.message}"
+from .relation import Relation
 
 
 @dataclass(frozen=True)
@@ -35,113 +20,55 @@ class Resolver:
         return list(self.analyze(model).diagnostics)
 
     def analyze(self, model: Model) -> Resolution:
-        diagnostics = self._duplicates(model)
-        identities = {identity.key: identity for identity in model.identities}
-        relations: set[Relation] = set()
+        diagnostics = list(model.diagnostics)
+        by_key: dict[str, list] = {}
+        for identity in model.identities:
+            by_key.setdefault(identity.key, []).append(identity)
+        for key, matches in by_key.items():
+            if len(matches) > 1:
+                first = matches[0].location.display(model.root)
+                for duplicate in matches[1:]:
+                    diagnostics.append(Diagnostic(
+                        "duplicate-identity", f"'{key}' ya se declaró en {first}", duplicate.location
+                    ))
+
+        relations: list[Relation] = []
+        authored: set[tuple] = set()
         for observation in model.observations:
-            diagnostic, target = self._resolve_observation(model, identities, observation)
-            if diagnostic:
-                diagnostics.append(diagnostic)
-            elif target and observation.source.semantic_id and target.semantic_id:
-                relations.add(Relation(
-                    observation.source,
-                    target,
-                    relation_kind(observation.source, target),
+            target_key = self._target_key(observation.source, observation.target)
+            matches = by_key.get(target_key, [])
+            if not matches:
+                diagnostics.append(Diagnostic(
+                    "unresolved-identity", f"identidad sin resolver: '{observation.target}'", observation.location
                 ))
-        diagnostics.extend(self._coverage(model, relations))
-        ordered_diagnostics = tuple(sorted(
-            diagnostics,
-            key=lambda item: (str(item.location.path), item.location.line, item.code),
-        ))
-        ordered_relations = tuple(sorted(
-            relations,
-            key=lambda item: (item.source.semantic_id or "", item.kind, item.target.semantic_id or ""),
-        ))
-        return Resolution(ordered_diagnostics, ordered_relations)
-
-    def _duplicates(self, model: Model) -> list[Diagnostic]:
-        first = {}
-        result = []
-        for identity in model.identities:
-            if identity.key in first:
-                result.append(Diagnostic(
-                    "duplicate-identity",
-                    f"'{identity.key}' ya se declaró en {first[identity.key].display(model.root)}",
-                    identity.location,
-                ))
-            else:
-                first[identity.key] = identity.location
-        semantic = {}
-        for identity in model.identities:
-            if not identity.semantic_id:
                 continue
-            if identity.semantic_id in semantic:
-                result.append(Diagnostic(
-                    "duplicate-semantic-id",
-                    f"'{identity.semantic_id}' ya se declaró en {semantic[identity.semantic_id].display(model.root)}",
-                    identity.location,
+            if len(matches) > 1:
+                diagnostics.append(Diagnostic(
+                    "ambiguous-identity", f"identidad ambigua: '{observation.target}'", observation.location
                 ))
-            else:
-                semantic[identity.semantic_id] = identity.location
-        return result
+                continue
+            attributes = tuple(sorted(observation.attributes.items()))
+            edge = (observation.source.key, observation.relation, target_key, attributes)
+            if edge in authored:
+                diagnostics.append(Diagnostic(
+                    "duplicate-relation",
+                    f"relación duplicada: {observation.source.key} --{observation.relation}--> {target_key}",
+                    observation.location,
+                ))
+                continue
+            authored.add(edge)
+            relations.append(Relation(
+                observation.source, matches[0], observation.relation, observation.attributes
+            ))
 
-    def _resolve_observation(self, model, identities, observation):
-        target = unquote(observation.target)
-        parsed = urlsplit(target)
-        if parsed.scheme.lower() in IGNORED_SCHEMES or target.startswith("//"):
-            return None, None
+        return Resolution(
+            tuple(sorted(diagnostics, key=lambda item: (str(item.location.path), item.location.line, item.code))),
+            tuple(sorted(relations, key=lambda item: (item.source.key, item.kind, item.target.key))),
+        )
 
-        source_path = observation.source.location.path
-        raw_path = parsed.path
-        if not raw_path:
-            destination = source_path
-        elif raw_path.startswith("/"):
-            destination = model.root / raw_path.lstrip("/")
-        else:
-            destination = source_path.parent / raw_path
-        destination = destination.resolve()
-        try:
-            relative = destination.relative_to(model.root).as_posix()
-        except ValueError:
-            return Diagnostic("outside-root", f"'{target}' sale de la raíz", observation.location), None
-
-        if raw_path and not destination.exists():
-            if any(part in GENERATED_PARTS for part in Path(raw_path).parts):
-                return None, None
-            return Diagnostic("missing-target", f"no existe '{relative}'", observation.location), None
-
-        if destination.is_dir() or (raw_path and destination.suffix.lower() != ".md"):
-            if parsed.fragment:
-                return Diagnostic("invalid-anchor", f"'{target}' no apunta a un Markdown", observation.location), None
-            return None, None
-
-        document_key = relative if raw_path else source_path.relative_to(model.root).as_posix()
-        key = f"{document_key}#{parsed.fragment}" if parsed.fragment else document_key
-        if key not in identities:
-            kind = "ancla" if parsed.fragment else "documento"
-            return Diagnostic("unresolved-identity", f"{kind} sin resolver: '{target}'", observation.location), None
-        return None, identities[key]
-
-    def _coverage(self, model: Model, relations: set[Relation]) -> list[Diagnostic]:
-        """Reglas mínimas: requisito diseñado y probado; decisión probada."""
-        typed = [identity for identity in model.identities if identity.semantic_id]
-        neighbors: dict[str, set[str]] = {identity.semantic_id: set() for identity in typed}
-        for relation in relations:
-            left = relation.source.semantic_id
-            right = relation.target.semantic_id
-            neighbors.setdefault(left, set()).add(right)
-            neighbors.setdefault(right, set()).add(left)
-        kinds = {identity.semantic_id: identity.kind for identity in typed}
-        diagnostics = []
-        for identity in typed:
-            connected_kinds = {kinds.get(item) for item in neighbors[identity.semantic_id]}
-            required = ()
-            if identity.kind == "requirement":
-                required = (("decision", "uncovered-requirement", "no está conectado con una decisión"),
-                            ("test", "unverified-requirement", "no está conectado con una prueba"))
-            elif identity.kind == "decision":
-                required = (("test", "unverified-decision", "no está conectado con una prueba"),)
-            for target_kind, code, message in required:
-                if target_kind not in connected_kinds:
-                    diagnostics.append(Diagnostic(code, f"'{identity.semantic_id}' {message}", identity.location))
-        return diagnostics
+    @staticmethod
+    def _target_key(source, target: str) -> str:
+        if target.startswith(("#", "@", "::")):
+            owner = source.key if source.element_type == "artifact" else source.owner
+            return f"{owner}{target}"
+        return target

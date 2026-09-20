@@ -14,7 +14,7 @@ from tools.traceability import ModelBuilder, Resolver
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="trace", description="Comprueba la trazabilidad Markdown.")
     commands = result.add_subparsers(dest="command", required=True)
-    check = commands.add_parser("check", help="resuelve enlaces, documentos y secciones")
+    check = commands.add_parser("check", help="valida el Project Model y sus relaciones")
     check.add_argument("paths", nargs="*", type=Path, help="ficheros o directorios (por defecto, todo el repo)")
     check.add_argument("--root", type=Path, help="raíz del repositorio")
     show = commands.add_parser("show", help="explica una identidad y sus relaciones")
@@ -48,20 +48,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def show_identity(root: Path, model, resolver: Resolver, requested: str) -> int:
-    semantic_id = requested.upper()
-    matches = [item for item in model.identities if item.semantic_id == semantic_id]
+    matches = [item for item in model.identities if item.key == requested]
     if not matches:
         print(f"error: no existe la identidad '{requested}'", file=sys.stderr)
         return 1
     if len(matches) > 1:
-        print(f"error: la identidad '{semantic_id}' está duplicada", file=sys.stderr)
+        print(f"error: la identidad '{requested}' está duplicada", file=sys.stderr)
         for item in matches:
             print(f"  {item.location.display(root)}", file=sys.stderr)
         return 1
 
     identity = matches[0]
     analysis = resolver.analyze(model)
-    print(f"{identity.semantic_id} [{identity.kind}]")
+    description = identity.artifact_type if identity.element_type == "artifact" else identity.element_type
+    print(f"{identity.key} [{description}]")
     print(f"declarada en {identity.location.display(root)}")
     connected = [
         relation for relation in analysis.relations
@@ -72,10 +72,10 @@ def show_identity(root: Path, model, resolver: Resolver, requested: str) -> int:
         return 0
     for relation in connected:
         if relation.source == identity:
-            print(f"  {relation.kind} -> {relation.target.semantic_id} "
+            print(f"  {relation.kind} -> {relation.target.key} "
                   f"({relation.target.location.display(root)})")
         else:
-            print(f"  <- {relation.kind} {relation.source.semantic_id} "
+            print(f"  <- {relation.kind} {relation.source.key} "
                   f"({relation.source.location.display(root)})")
     return 0
 

@@ -1,10 +1,10 @@
-# Requisitos
+<!-- trace:artifact REQ-DEVICE-IDENTITY
+type: requirement
+kind: interface
+subjects: [cpu, gpu]
+-->
 
-## REQ-001: identidad del dispositivo
+# Identidad del dispositivo
 
 Cada prototipo debe exponer una identidad que permita distinguir el diseño y
-la versión de monitor antes de cargar o ejecutar un programa.
-
-La solución adoptada está descrita en
-[DEC-001](design.md#dec-001-registro-de-identidad) y se acepta mediante
-[TEST-001](validation.md#test-001-lectura-de-identidad).
+la versión del monitor antes de cargar o ejecutar un programa.

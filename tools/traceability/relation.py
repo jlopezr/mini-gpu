@@ -1,6 +1,7 @@
-"""Relaciones semánticas resueltas entre identidades tipadas."""
+"""Edge semántico explícito y resuelto."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from .identity import Identity
 
@@ -10,16 +11,4 @@ class Relation:
     source: Identity
     target: Identity
     kind: str
-
-
-def relation_kind(source: Identity, target: Identity) -> str:
-    """Nombra la relación desde la perspectiva de quien contiene el enlace."""
-    pair = (source.kind, target.kind)
-    return {
-        ("decision", "requirement"): "satisfies",
-        ("requirement", "decision"): "specified-by",
-        ("test", "requirement"): "verifies",
-        ("requirement", "test"): "verified-by",
-        ("test", "decision"): "verifies",
-        ("decision", "test"): "verified-by",
-    }.get(pair, "references")
+    attributes: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)

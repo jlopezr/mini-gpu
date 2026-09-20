@@ -1,10 +1,23 @@
-# Diseño
+<!-- trace:artifact DEC-DEVICE-IDENTITY
+type: decision
+subjects: [cpu, gpu]
+addresses:
+  - REQ-DEVICE-IDENTITY
+-->
 
-## DEC-001: registro de identidad
+# Registro de identidad
 
-Se usa un registro de solo lectura con una firma del diseño y una versión de
-protocolo. Esta decisión satisface
-[REQ-001](requirements.md#req-001-identidad-del-dispositivo).
+Se utiliza un registro de solo lectura con una firma del diseño y una versión
+del protocolo del monitor.
 
-La prueba que observa el comportamiento es
-[TEST-001](validation.md#test-001-lectura-de-identidad).
+<!-- trace:artifact SPEC-DEVICE
+type: specification
+kind: interface
+subjects: [cpu, gpu]
+-->
+
+## Interfaz de identidad
+
+### Registro de identidad {#identity-register}
+
+La lectura devuelve la firma en los bits altos y la versión en los bajos.

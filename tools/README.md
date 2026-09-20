@@ -17,23 +17,40 @@ repositorio solo (por `MINI_GPU_ROOT`, por su propia ruta, o buscando
 
 ## Comprobar la trazabilidad documental
 
-`trace check` construye un modelo de los documentos Markdown del repositorio:
-cada documento y encabezado es una identidad, y cada enlace es una observación
-que debe poder resolverse. Detecta ficheros y anclas ausentes, identidades
-explícitas duplicadas y referencias que salen de la raíz. Los enlaces externos
-y los artefactos generados bajo `_build/` no forman parte del modelo.
+`trace check` construye un Project Model conforme al metamodelo v0.3. Un fichero
+Markdown es un `RESOURCE`, no una identidad semántica. Los `ARTIFACT` se
+declaran explícitamente mediante un comentario seguido de su heading:
 
-Los encabezados cuyo título empieza por `REQ-`, `DEC-` o `TEST-` son
-identidades semánticas globales. Además de impedir IDs repetidos, se exige que
-cada requisito esté conectado mediante enlaces con una decisión y una prueba,
-y que cada decisión esté conectada con una prueba. Los encabezados normales y
-sus enlaces siguen funcionando sin activar estas reglas de cobertura.
+```markdown
+<!-- trace:artifact IMPL-MINIGPU
+type: implementation
+subjects: [isa, cpu, gpu]
+implements:
+  - SPEC-ISA
+-->
+
+# Implementación MiniGPU
+```
+
+El ID es global, sensible a mayúsculas y no deriva del `type`. Los headings
+dentro del artifact crean `SECTION` locales como `SPEC-ISA#ssy`; una sección
+que sea origen de relaciones necesita un ID formal `{#ssy}` y una directiva
+`trace:relations`. Los enlaces Markdown ordinarios no crean relaciones.
+
+El checker valida metadata YAML, tipos core, IDs únicos, atributos de relación,
+targets exactos y relaciones duplicadas. Solo conserva las relaciones authored
+en su dirección canónica; `trace show` calcula la vista inversa al consultar.
+
+Este vertical slice implementa `RESOURCE`, `ARTIFACT`, `SECTION` y relaciones
+Markdown. Todavía no interpreta `trace.yaml`, `FACET`, anotaciones de código,
+`SYMBOL`, sidecars ni generación `gendoc`; únicamente ignora correctamente el
+contenido situado dentro de bloques `gendoc` al construir el modelo.
 
 ```bash
 trace check                         # todos los Markdown del repositorio
 trace check README.md docs/         # solo observaciones de esas rutas
 trace check --root /ruta/mini-gpu   # raíz explícita para CI
-trace show REQ-001                  # declaración y relaciones de una identidad
+trace show REQ-DEVICE-IDENTITY      # declaración y relaciones de una identidad
 ```
 
 Al seleccionar rutas se siguen indexando las identidades de todo el repositorio,
@@ -41,9 +58,9 @@ de modo que sus enlaces pueden resolverse fuera del subconjunto. El comando
 devuelve 0 si todo resuelve, 1 si encuentra diagnósticos y 2 si el uso o una
 ruta de entrada no son válidos.
 
-Hay un [ejemplo autocontenido](traceability/example/README.md) con un requisito,
-una decisión y una prueba enlazados entre sí. Sirve como recorrido mínimo y
-como espacio seguro para experimentar con el modelo.
+Hay un [ejemplo autocontenido](traceability/example/README.md) con requisito,
+decisión, especificación, implementación y verificación. Sirve como recorrido
+mínimo y especificación ejecutable del adapter Markdown.
 
 ## Windows: un `.ps1` por cada lanzador
 
