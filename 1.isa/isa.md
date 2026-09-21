@@ -415,7 +415,7 @@ de hardware.
 
 ## 5. Sintaxis del ensamblador
 
-> Esta sección es un resumen. La referencia completa de `miniisa_asm.py`
+> Esta sección es un resumen. La referencia completa de `mini_asm.py`
 > —directivas de datos y secciones, `.include`, `.once`, etiquetas locales `@`,
 > línea de órdenes y API de Python— está en
 > [`ensamblador.md`](ensamblador.md). Nada de eso forma parte de la ISA: se

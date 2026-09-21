@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '1.isa'))
-from miniisa_asm import assemble, AsmError
+from mini_asm import assemble, AsmError
 from minigpu_sim import System, ERROR_SIMT, ERROR_BARRIER, ERROR_INVALID_ENCODING
 from gpu_trace import TextTrace, instruction_text
 

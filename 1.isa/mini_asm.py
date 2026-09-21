@@ -739,7 +739,7 @@ def first_pass(source: str,
                base_dir: Path | None = None,
                origin: str = ENTRADA,
                include_dirs: tuple[Path, ...] = (),
-               ) -> tuple[list[SourceLine], dict[str, int], int]:
+               ) -> tuple[list[SourceLine], dict[str, int], int, dict[str, int]]:
     label_offsets: dict[str, tuple[str, int]] = {}
     label_origins: dict[str, str] = {}
     # Constantes de `.equ`. Van aparte de `label_offsets` porque no pertenecen a
@@ -912,7 +912,10 @@ def first_pass(source: str,
     ]
     laid_out_lines.sort(key=lambda line: line.pc)
 
-    return laid_out_lines, labels, image_size
+    # `equates` se devuelve aparte de `labels` ademas de fundido en el: quien
+    # solo resuelve nombres quiere el espacio unico, pero el listado necesita
+    # distinguir una constante de una etiqueta, y el nombre no lo dice.
+    return laid_out_lines, labels, image_size, equates
 
 
 # ---------------------------------------------------------------------------
@@ -1179,7 +1182,7 @@ def assemble_bytes(source: str, base_dir: Path | None = None,
     `.include`: la carpeta del propio fichero, el nombre con el que citarlo en
     los errores, y las carpetas extra de busqueda. Ensamblar una cadena suelta
     sigue funcionando igual que antes de que existiera la directiva."""
-    lines, labels, image_size = first_pass(source, base_dir, origin, include_dirs)
+    lines, labels, image_size, _ = first_pass(source, base_dir, origin, include_dirs)
     image = bytearray()
 
     for line in lines:
@@ -1268,6 +1271,47 @@ def write_hex(image: bytes, path: Path) -> None:
             f.write(f"{word:08X}\n")
 
 
+def format_listing(source: str, base_dir: Path | None = None,
+                   origin: str = ENTRADA,
+                   include_dirs: tuple[Path, ...] = ()) -> str:
+    """Listado PC -> palabra -> fuente, mas la tabla de etiquetas.
+
+    No es un desensamblador: no decodifica la imagen, sino que empareja cada
+    linea del fuente ya expandido con el PC que le asigno la pasada 1 y con la
+    palabra que salio de la 2. Para saber que hay en una direccion concreta
+    -- tipicamente el `pc` que reporta la placa -- es lo mismo, y no obliga a
+    mantener una tabla de decodificacion en paralelo a `OPCODES`.
+    """
+    lines, labels, _, equates = first_pass(source, base_dir, origin, include_dirs)
+    image = assemble_bytes(source, base_dir, origin, include_dirs)
+
+    # Las constantes de `.equ` comparten espacio de nombres con las etiquetas
+    # pero no son posiciones del programa: anotarlas en el listado llenaria
+    # cada PC de nombres de `mmio.inc` que no estan ahi.
+    posiciones = {name: pc for name, pc in labels.items() if name not in equates}
+    por_pc: dict[int, list[str]] = {}
+    for name, pc in posiciones.items():
+        por_pc.setdefault(pc, []).append(name)
+
+    out: list[str] = []
+    for line in lines:
+        for name in sorted(por_pc.get(line.pc, [])):
+            out.append(f"{line.pc:08x}            {name}:")
+        trozo = image[line.pc:line.pc + 4]
+        if len(trozo) == 4:
+            word = f"{int.from_bytes(trozo, 'little'):08x}"
+        else:
+            word = "        "
+        out.append(f"{line.pc:08x}  {word}  {line.text}")
+
+    out.append("")
+    out.append("Etiquetas:")
+    for name, pc in sorted(posiciones.items(), key=lambda kv: (kv[1], kv[0])):
+        out.append(f"  {pc:08x}  {name}")
+
+    return "\n".join(out) + "\n"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MiniISA assembler v0.1")
     parser.add_argument("input", type=Path, help="fichero .asm")
@@ -1278,6 +1322,10 @@ def main() -> None:
                         help="donde buscar los .include, ademas de la carpeta "
                              "del propio fuente (que se mira siempre primero). "
                              "Se puede repetir; se prueban en orden")
+    parser.add_argument("--listing", type=Path, nargs="?", const=Path("-"),
+                        metavar="FICHERO",
+                        help="listado PC / palabra / fuente y tabla de "
+                             "etiquetas. Sin argumento sale por pantalla")
     args = parser.parse_args()
 
     source = args.input.read_text(encoding="utf-8")
@@ -1293,6 +1341,17 @@ def main() -> None:
 
     if args.hex_output:
         write_hex(image, args.hex_output)
+
+    if args.listing:
+        try:
+            listing = format_listing(source, args.input.parent, args.input.name,
+                                     tuple(args.include_dir))
+        except AsmError as e:                       # no deberia: ya ensamblo
+            raise SystemExit(f"error: {e}")
+        if str(args.listing) == "-":
+            print(listing, end="")
+        else:
+            args.listing.write_text(listing, encoding="utf-8")
 
     print(f"{len(image) // 4} palabras -> {output}")
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / '1.isa'))
-from miniisa_asm import assemble
+from mini_asm import assemble
 from minigpu_sim import System, ERROR_SIMT, ERROR_MEMORY_ACCESS
 
 

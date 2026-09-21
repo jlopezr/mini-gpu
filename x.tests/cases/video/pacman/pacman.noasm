@@ -1,0 +1,855 @@
+; ============================================================
+; MiniCPU Pac-Man demo v0
+;
+; 320x240 RGB565
+; Tiles: 16x16
+; Tilemap: 20x15
+;
+; tile:
+;   0 = EMPTY
+;   1 = PELLET
+;   2 = WALL
+;
+; FB0 = 0x01000000
+; FB1 = 0x01025800
+;
+; Estado persistente:
+;
+;   R20 = back framebuffer
+;   R21 = front framebuffer
+;
+;   R22 = pacman x
+;   R23 = pacman y
+;   R24 = pacman direction
+;
+;   R25 = ghost x
+;   R26 = ghost y
+;   R27 = ghost direction
+;
+;   R28 = PRNG state
+;
+; R31 = link register
+; ============================================================
+
+
+; ------------------------------------------------------------
+; Constantes conceptuales
+;
+; DIR_UP    = 0
+; DIR_RIGHT = 1
+; DIR_DOWN  = 2
+; DIR_LEFT  = 3
+;
+; TILE_EMPTY  = 0
+; TILE_PELLET = 1
+; TILE_WALL   = 2
+; ------------------------------------------------------------
+
+
+start:
+
+    ; front = FB0 = 0x01000000
+    MOVHI R21, 0x0100
+
+    ; back = FB1 = 0x01025800
+    MOVHI R20, 0x0102
+    ORI   R20, R20, 0x5800
+
+    ; Pac-Man empieza en tile (1,1)
+    ; x = 16, y = 16
+    MOVI R22, 16
+    MOVI R23, 16
+
+    ; dirección inicial: RIGHT
+    MOVI R24, 1
+
+    ; Fantasma: tile (18,13)
+    ; x = 288, y = 208
+    MOVI R25, 288
+    MOVI R26, 208
+
+    ; dirección inicial: LEFT
+    MOVI R27, 3
+
+    ; PRNG seed
+    MOVHI R28, 0x1234
+    ORI   R28, R28, 0x5678
+
+
+; ============================================================
+; MAIN LOOP
+; ============================================================
+
+main_loop:
+
+    ; -----------------------
+    ; UPDATE
+    ; -----------------------
+
+    JAL R31, update_pacman
+    JAL R31, update_ghost
+
+
+    ; -----------------------
+    ; RENDER
+    ; -----------------------
+
+    JAL R31, draw_maze
+    JAL R31, draw_pacman
+    JAL R31, draw_ghost
+
+
+    ; -----------------------
+    ; PRESENT
+    ; -----------------------
+
+    JAL R31, present
+
+    BRA main_loop
+
+
+
+; ============================================================
+; UPDATE PACMAN
+;
+; R22 = x
+; R23 = y
+; R24 = direction
+; ============================================================
+
+update_pacman:
+
+    ; Solo tomamos decisiones cuando estamos
+    ; exactamente alineados con el grid 16x16.
+
+    ANDI R1, R22, 15
+    BNE  R1, R0, pacman_move
+
+    ANDI R1, R23, 15
+    BNE  R1, R0, pacman_move
+
+
+    ; --------------------------------------------------------
+    ; Comer pastilla del tile actual
+    ;
+    ; tx = x >> 4
+    ; ty = y >> 4
+    ; index = ty*20 + tx
+    ; --------------------------------------------------------
+
+    SHRI R2, R22, 4
+    SHRI R3, R23, 4
+
+    MOVI R4, 20
+    MUL  R5, R3, R4
+    ADD  R5, R5, R2
+
+    LA   R6, maze
+    ADD  R6, R6, R5
+
+    LOADUB R7, R6, 0
+
+    ; ¿PELLET == 1?
+    MOVI R1, 1
+    BNE  R7, R1, pacman_check_forward
+
+    ; convertir pellet -> empty
+    STOREB R0, R6, 0
+
+
+pacman_check_forward:
+
+    ; --------------------------------------------------------
+    ; Comprobar tile que tenemos delante.
+    ;
+    ; entrada:
+    ;   R2 = tx
+    ;   R3 = ty
+    ;   R24 = dirección
+    ;
+    ; salida:
+    ;   R7 = tile
+    ; --------------------------------------------------------
+
+    ADD R4, R2, R0       ; next tx
+    ADD R5, R3, R0       ; next ty
+
+    MOVI R1, 0
+    BEQ  R24, R1, pacman_forward_up
+
+    MOVI R1, 1
+    BEQ  R24, R1, pacman_forward_right
+
+    MOVI R1, 2
+    BEQ  R24, R1, pacman_forward_down
+
+    ; LEFT
+    ADDI R4, R4, -1
+    BRA pacman_forward_test
+
+pacman_forward_up:
+    ADDI R5, R5, -1
+    BRA pacman_forward_test
+
+pacman_forward_right:
+    ADDI R4, R4, 1
+    BRA pacman_forward_test
+
+pacman_forward_down:
+    ADDI R5, R5, 1
+
+
+pacman_forward_test:
+
+    MOVI R6, 20
+    MUL  R7, R5, R6
+    ADD  R7, R7, R4
+
+    LA   R6, maze
+    ADD  R6, R6, R7
+
+    LOADUB R7, R6, 0
+
+    ; WALL == 2 ?
+    MOVI R1, 2
+    BNE  R7, R1, pacman_move
+
+
+    ; --------------------------------------------------------
+    ; Pared delante: escoger nueva dirección
+    ; --------------------------------------------------------
+
+    JAL R31, random32
+
+    ANDI R24, R28, 3
+
+    MOVI R10, 4
+
+
+pacman_try_direction:
+
+    ; tile actual
+    SHRI R2, R22, 4
+    SHRI R3, R23, 4
+
+    ADD R4, R2, R0
+    ADD R5, R3, R0
+
+    MOVI R1, 0
+    BEQ  R24, R1, pacman_try_up
+
+    MOVI R1, 1
+    BEQ  R24, R1, pacman_try_right
+
+    MOVI R1, 2
+    BEQ  R24, R1, pacman_try_down
+
+    ; LEFT
+    ADDI R4, R4, -1
+    BRA pacman_try_test
+
+pacman_try_up:
+    ADDI R5, R5, -1
+    BRA pacman_try_test
+
+pacman_try_right:
+    ADDI R4, R4, 1
+    BRA pacman_try_test
+
+pacman_try_down:
+    ADDI R5, R5, 1
+
+
+pacman_try_test:
+
+    MOVI R6, 20
+    MUL  R7, R5, R6
+    ADD  R7, R7, R4
+
+    LA   R6, maze
+    ADD  R6, R6, R7
+
+    LOADUB R7, R6, 0
+
+    MOVI R1, 2
+    BNE  R7, R1, pacman_move
+
+    ; bloqueada -> siguiente dirección
+    ADDI R24, R24, 1
+    ANDI R24, R24, 3
+
+    ADDI R10, R10, -1
+    BNE  R10, R0, pacman_try_direction
+
+    ; En principio imposible si el mapa es correcto.
+    RET
+
+
+pacman_move:
+
+    MOVI R1, 0
+    BEQ  R24, R1, pacman_move_up
+
+    MOVI R1, 1
+    BEQ  R24, R1, pacman_move_right
+
+    MOVI R1, 2
+    BEQ  R24, R1, pacman_move_down
+
+    ; LEFT
+    ADDI R22, R22, -1
+    RET
+
+pacman_move_up:
+    ADDI R23, R23, -1
+    RET
+
+pacman_move_right:
+    ADDI R22, R22, 1
+    RET
+
+pacman_move_down:
+    ADDI R23, R23, 1
+    RET
+
+
+
+; ============================================================
+; UPDATE GHOST
+;
+; Exactamente la misma idea, pero:
+;   - no come pellets
+;   - R25/R26/R27
+; ============================================================
+
+update_ghost:
+
+    ANDI R1, R25, 15
+    BNE  R1, R0, ghost_move
+
+    ANDI R1, R26, 15
+    BNE  R1, R0, ghost_move
+
+    ; tile actual
+    SHRI R2, R25, 4
+    SHRI R3, R26, 4
+
+    ; vecino
+    ADD R4, R2, R0
+    ADD R5, R3, R0
+
+    MOVI R1, 0
+    BEQ  R27, R1, ghost_forward_up
+
+    MOVI R1, 1
+    BEQ  R27, R1, ghost_forward_right
+
+    MOVI R1, 2
+    BEQ  R27, R1, ghost_forward_down
+
+    ; LEFT
+    ADDI R4, R4, -1
+    BRA ghost_forward_test
+
+ghost_forward_up:
+    ADDI R5, R5, -1
+    BRA ghost_forward_test
+
+ghost_forward_right:
+    ADDI R4, R4, 1
+    BRA ghost_forward_test
+
+ghost_forward_down:
+    ADDI R5, R5, 1
+
+
+ghost_forward_test:
+
+    MOVI R6, 20
+    MUL  R7, R5, R6
+    ADD  R7, R7, R4
+
+    LA   R6, maze
+    ADD  R6, R6, R7
+
+    LOADUB R7, R6, 0
+
+    MOVI R1, 2
+    BNE  R7, R1, ghost_move
+
+
+    ; pared -> nueva dirección aleatoria
+    JAL R31, random32
+
+    ANDI R27, R28, 3
+    MOVI R10, 4
+
+
+ghost_try_direction:
+
+    SHRI R2, R25, 4
+    SHRI R3, R26, 4
+
+    ADD R4, R2, R0
+    ADD R5, R3, R0
+
+    MOVI R1, 0
+    BEQ  R27, R1, ghost_try_up
+
+    MOVI R1, 1
+    BEQ  R27, R1, ghost_try_right
+
+    MOVI R1, 2
+    BEQ  R27, R1, ghost_try_down
+
+    ; LEFT
+    ADDI R4, R4, -1
+    BRA ghost_try_test
+
+ghost_try_up:
+    ADDI R5, R5, -1
+    BRA ghost_try_test
+
+ghost_try_right:
+    ADDI R4, R4, 1
+    BRA ghost_try_test
+
+ghost_try_down:
+    ADDI R5, R5, 1
+
+
+ghost_try_test:
+
+    MOVI R6, 20
+    MUL  R7, R5, R6
+    ADD  R7, R7, R4
+
+    LA   R6, maze
+    ADD  R6, R6, R7
+
+    LOADUB R7, R6, 0
+
+    MOVI R1, 2
+    BNE  R7, R1, ghost_move
+
+    ADDI R27, R27, 1
+    ANDI R27, R27, 3
+
+    ADDI R10, R10, -1
+    BNE  R10, R0, ghost_try_direction
+
+    RET
+
+
+ghost_move:
+
+    MOVI R1, 0
+    BEQ  R27, R1, ghost_move_up
+
+    MOVI R1, 1
+    BEQ  R27, R1, ghost_move_right
+
+    MOVI R1, 2
+    BEQ  R27, R1, ghost_move_down
+
+    ; LEFT
+    ADDI R25, R25, -1
+    RET
+
+ghost_move_up:
+    ADDI R26, R26, -1
+    RET
+
+ghost_move_right:
+    ADDI R25, R25, 1
+    RET
+
+ghost_move_down:
+    ADDI R26, R26, 1
+    RET
+
+
+
+; ============================================================
+; RANDOM32
+;
+; xorshift32
+;
+; R28 = estado
+; destruye R1
+; ============================================================
+
+random32:
+
+    SHLI R1, R28, 13
+    XOR  R28, R28, R1
+
+    SHRI R1, R28, 17
+    XOR  R28, R28, R1
+
+    SHLI R1, R28, 5
+    XOR  R28, R28, R1
+
+    RET
+
+
+
+; ============================================================
+; DRAW MAZE
+;
+; Dibuja 20x15 tiles directamente sobre R20.
+;
+; Para v0:
+;
+; EMPTY:
+;   negro
+;
+; PELLET:
+;   negro con pequeño punto amarillo
+;
+; WALL:
+;   azul sólido
+;
+; Esto sobrescribe TODA la pantalla, por lo que no necesitamos
+; clear_backbuffer.
+; ============================================================
+
+draw_maze:
+
+    LA   R1, maze          ; ptr tilemap
+
+    ADD  R2, R20, R0       ; comienzo framebuffer
+
+    MOVI R3, 15            ; filas de tiles
+
+
+draw_maze_row:
+
+    ; R4 = comienzo de esta fila de tiles
+    ADD  R4, R2, R0
+
+    MOVI R5, 20            ; columnas
+
+
+draw_maze_tile:
+
+    LOADUB R6, R1, 0
+
+    ; EMPTY?
+    BEQ R6, R0, draw_empty_tile
+
+    MOVI R7, 1
+    BEQ R6, R7, draw_pellet_tile
+
+    ; WALL
+    JAL R31, draw_wall_tile
+    BRA draw_maze_next_tile
+
+
+draw_empty_tile:
+
+    JAL R31, draw_empty_16
+    BRA draw_maze_next_tile
+
+
+draw_pellet_tile:
+
+    JAL R31, draw_pellet_16
+
+
+draw_maze_next_tile:
+
+    ADDI R1, R1, 1
+
+    ; siguiente tile = +16 pixels = +32 bytes
+    ADDI R4, R4, 32
+
+    ADDI R5, R5, -1
+    BNE  R5, R0, draw_maze_tile
+
+    ; siguiente fila de tiles:
+    ; 16 scanlines * 640 bytes = 10240 = 0x2800
+
+    MOVHI R7, 0
+    ORI   R7, R7, 0x2800
+    ADD   R2, R2, R7
+
+    ADDI R3, R3, -1
+    BNE  R3, R0, draw_maze_row
+
+    RET
+
+
+
+; ============================================================
+; DRAW EMPTY 16x16
+;
+; R4 = esquina superior izquierda
+;
+; destruye R6-R9
+; ============================================================
+
+draw_empty_16:
+
+    ADD  R6, R4, R0
+    MOVI R7, 16
+
+empty_row:
+
+    ADD  R8, R6, R0
+    MOVI R9, 16
+
+empty_pixel:
+
+    STOREH R0, R8, 0
+
+    ADDI R8, R8, 2
+    ADDI R9, R9, -1
+    BNE  R9, R0, empty_pixel
+
+    ADDI R6, R6, 640
+
+    ADDI R7, R7, -1
+    BNE  R7, R0, empty_row
+
+    RET
+
+
+
+; ============================================================
+; DRAW WALL 16x16
+;
+; De momento azul sólido.
+; RGB565 azul = 0x001F
+;
+; R4 = destino
+; ============================================================
+
+draw_wall_tile:
+
+    MOVI R10, 0x001F
+
+    ADD  R6, R4, R0
+    MOVI R7, 16
+
+wall_row:
+
+    ADD  R8, R6, R0
+    MOVI R9, 16
+
+wall_pixel:
+
+    STOREH R10, R8, 0
+
+    ADDI R8, R8, 2
+    ADDI R9, R9, -1
+    BNE  R9, R0, wall_pixel
+
+    ADDI R6, R6, 640
+
+    ADDI R7, R7, -1
+    BNE  R7, R0, wall_row
+
+    RET
+
+
+
+; ============================================================
+; DRAW PELLET 16x16
+;
+; Fondo negro + pellet amarillo 2x2.
+;
+; RGB565 amarillo = 0xFFE0
+; ============================================================
+
+draw_pellet_16:
+
+    ; Primero tile negro
+    JAL R30, draw_empty_16
+
+    ; posición (7,7)
+    ;
+    ; offset = 7*640 + 7*2
+    ;        = 4480 + 14
+    ;        = 4494
+
+    MOVI R6, 4494
+    ADD  R6, R4, R6
+
+    MOVI R7, -32
+    ; 0xFFE0 en 16 bits
+    ; MOVI sign-extiende -> 0xFFFFFFE0,
+    ; STOREH guarda los 16 bits bajos.
+
+    STOREH R7, R6, 0
+    STOREH R7, R6, 2
+
+    ADDI R6, R6, 640
+
+    STOREH R7, R6, 0
+    STOREH R7, R6, 2
+
+    JR R30
+
+
+
+; ============================================================
+; DRAW PACMAN
+;
+; sprite RGB565 16x16
+; 0x0000 = transparente
+;
+; R22 = x
+; R23 = y
+; ============================================================
+
+draw_pacman:
+
+    ; dst = back + y*640 + x*2
+
+    MOVI R1, 640
+    MUL  R2, R23, R1
+
+    SHLI R3, R22, 1
+
+    ADD R2, R2, R3
+    ADD R2, R2, R20
+
+    LA R1, pacman_sprite
+
+    JAL R30, draw_sprite_16
+
+    JR R30
+
+
+
+; ============================================================
+; DRAW GHOST
+; ============================================================
+
+draw_ghost:
+
+    MOVI R1, 640
+    MUL  R2, R26, R1
+
+    SHLI R3, R25, 1
+
+    ADD R2, R2, R3
+    ADD R2, R2, R20
+
+    LA R1, ghost_sprite
+
+    JAL R30, draw_sprite_16
+
+    JR R30
+
+
+
+; ============================================================
+; DRAW SPRITE 16x16
+;
+; R1 = sprite RGB565
+; R2 = framebuffer destination
+;
+; 0x0000 = transparente
+;
+; destruye R3-R8
+; ============================================================
+
+draw_sprite_16:
+
+    MOVI R3, 16
+
+
+sprite_row:
+
+    ADD R4, R1, R0
+    ADD R5, R2, R0
+
+    MOVI R6, 16
+
+
+sprite_pixel:
+
+    LOADUH R7, R4, 0
+
+    BEQ R7, R0, sprite_skip
+
+    STOREH R7, R5, 0
+
+
+sprite_skip:
+
+    ADDI R4, R4, 2
+    ADDI R5, R5, 2
+
+    ADDI R6, R6, -1
+    BNE  R6, R0, sprite_pixel
+
+    ; siguiente fila del sprite
+    ADDI R1, R1, 32
+
+    ; siguiente scanline framebuffer
+    ADDI R2, R2, 640
+
+    ADDI R3, R3, -1
+    BNE  R3, R0, sprite_row
+
+    RET
+
+
+
+; ============================================================
+; PRESENT
+;
+; Aquí falta únicamente conectar el protocolo MMIO real
+; del controlador de vídeo.
+;
+; Debe:
+;
+;   1. solicitar que scanout pase a R20
+;   2. esperar al VSYNC/swap ACK
+;   3. intercambiar R20/R21
+;
+; ============================================================
+
+present:
+
+    ; ------------------------------------------
+    ; TODO: MMIO REAL
+    ;
+    ; request_swap(R20)
+    ; wait_swap_ack()
+    ; ------------------------------------------
+
+
+    ; swap software front/back
+
+    ADD R1,  R20, R0
+    ADD R20, R21, R0
+    ADD R21, R1,  R0
+
+    RET
+
+
+
+; ============================================================
+; DATOS
+; ============================================================
+
+    .align 2
+
+maze:
+    .incbin "maze.bin"
+
+
+    .align 2
+
+pacman_sprite:
+    .incbin "pacman.bin"
+
+
+    .align 2
+
+ghost_sprite:
+    .incbin "ghost.bin"

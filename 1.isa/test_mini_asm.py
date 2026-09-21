@@ -13,7 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from miniisa_asm import AsmError, assemble, first_pass, strip_comment
+from mini_asm import (AsmError, assemble, first_pass, format_listing,
+                      strip_comment)
 
 
 class StripCommentTest(unittest.TestCase):
@@ -100,7 +101,7 @@ class LabelArithmeticTest(unittest.TestCase):
             "despues:",
             "    NOP",
         ])
-        _, labels, _ = first_pass(fuente)
+        _, labels, _, _ = first_pass(fuente)
         self.assertEqual(labels["tabla"], 4)
         self.assertEqual(labels["despues"], 16)
 
@@ -111,7 +112,7 @@ class LabelArithmeticTest(unittest.TestCase):
             "despues:",
             "    NOP",
         ])
-        _, labels, _ = first_pass(fuente)
+        _, labels, _, _ = first_pass(fuente)
         self.assertEqual(labels["despues"], 8)
 
     def test_movi_con_etiqueta_carga_su_direccion(self):
@@ -527,6 +528,57 @@ class EquTest(unittest.TestCase):
         with self.assertRaises(AsmError) as ctx:
             assemble(".equ 3A, 1\n")
         self.assertIn("invalido", str(ctx.exception))
+
+
+class ListingTest(unittest.TestCase):
+    """El listado existe para contestar «que hay en el PC que reporta la
+    placa», asi que lo que se fija es la correspondencia PC -> fuente."""
+
+    def test_cada_pc_lleva_su_palabra_y_su_fuente(self):
+        fuente = "\n".join([
+            "start:",
+            "    NOP",
+            "    NOP",
+        ])
+        listing = format_listing(fuente)
+        self.assertIn("00000000            start:", listing)
+        self.assertIn("00000000  00000000  NOP", listing)
+        self.assertIn("00000004  00000000  NOP", listing)
+
+    def test_el_pc_avanza_con_las_pseudo_de_dos_palabras(self):
+        # LI con un valor que no cabe en imm16 ocupa dos palabras: si el
+        # listado usara el numero de linea en vez del PC, la etiqueta
+        # siguiente saldria en 0x04.
+        fuente = "\n".join([
+            "    LI R1, 0x12345678",
+            "destino:",
+            "    NOP",
+        ])
+        listing = format_listing(fuente)
+        self.assertIn("00000008            destino:", listing)
+        self.assertIn("  00000008  destino", listing)
+
+    def test_las_constantes_equ_no_salen_como_etiquetas(self):
+        # Son nombres sin posicion: anotarlas pondria un `BASE:` en el PC 0 de
+        # cualquier programa que incluya un .inc de constantes.
+        fuente = "\n".join([
+            ".equ BASE, 0",
+            "start:",
+            "    NOP",
+        ])
+        listing = format_listing(fuente)
+        self.assertIn("start", listing)
+        self.assertNotIn("BASE", listing)
+
+    def test_una_constante_en_minusculas_tampoco(self):
+        # Control del caso anterior: el filtro mira `equates`, no si el nombre
+        # va en mayusculas.
+        fuente = "\n".join([
+            ".equ base, 0",
+            "start:",
+            "    NOP",
+        ])
+        self.assertNotIn("base", format_listing(fuente))
 
 
 if __name__ == "__main__":

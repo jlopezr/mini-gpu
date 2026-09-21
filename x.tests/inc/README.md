@@ -29,7 +29,7 @@ carpeta, así que desde un `.asm` del repo basta con el nombre:
 A mano, o desde fuera de los lanzadores:
 
 ```bash
-python 1.isa/miniisa_asm.py mi_programa.asm -I x.tests/inc
+python 1.isa/mini_asm.py mi_programa.asm -I x.tests/inc
 ```
 
 ## Dos cosas que hay que tener en la cabeza
@@ -67,6 +67,6 @@ esta carpeta— lo que hay que verificar es que el binario sale idéntico, que e
 más fuerte que pasar los tests:
 
 ```bash
-python 1.isa/miniisa_asm.py <programa>.asm -o nuevo.bin -I x.tests/inc
+python 1.isa/mini_asm.py <programa>.asm -o nuevo.bin -I x.tests/inc
 # y comparar nuevo.bin contra el de antes
 ```

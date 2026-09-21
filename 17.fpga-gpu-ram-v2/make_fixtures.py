@@ -7,7 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 sys.path[:0] = [str(ROOT.parent / '1.isa'), str(ROOT.parent / '11.gpu-sim-func')]
-from miniisa_asm import assemble
+from mini_asm import assemble
 from minigpu_sim import System
 
 cases = []

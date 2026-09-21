@@ -334,11 +334,11 @@ class PipelineTrace:
 
 
 def load_program(path):
-    # La logica vive en 1.isa/miniisa_asm.py para que los tres simuladores
+    # La logica vive en 1.isa/mini_asm.py para que los tres simuladores
     # carguen igual. Estaba solo aqui, y por eso `gpusim programa.asm` fallaba
     # mientras `gpusim-cycle programa.asm` funcionaba.
     sys.path.insert(0, str(HERE.parent / "1.isa"))
-    from miniisa_asm import load_program_bytes
+    from mini_asm import load_program_bytes
 
     return load_program_bytes(path)
 

@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "1.isa"))
-from miniisa_asm import assemble_bytes
+from mini_asm import assemble_bytes
 from backends.simulator import SimulatorBackend
 from backends.gpu_simulator import GpuBackend, capabilities
 from backends.video_layout import FB_BACK

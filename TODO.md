@@ -450,6 +450,27 @@ arquitectónico desde fuera, y obliga a abrir ventanas y comandos nuevos en
 `monitor.v` para algo que solo sirve para depurar. Volcar vale la pena por sí
 solo; restaurar, probablemente no.
 
+## 12. Board-upload no controla que protipo esta cargado
+
+```
+(tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases\video\pacman> board-load -p 21 --program .\pacman.asm
+Puerto detectado: COM3 (USB Serial Port (COM3))
+Using prototype: 21.fpga-cpu-hdmi-alu
+38425 palabras -> C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases\video\pacman\pacman.bin
+== cargando pacman.bin (153700 bytes) en 0x00000000
+error: `monitor.py reset` falló:
+Error: Invalid RESET_CPU response: f8
+Available ports: COM3 (FTDI), COM1, COM6, COM8
+```
+
+Y estaba la 22.
+
+## 13. Nuevo assembler/dissambler
+
+## 14. Revisar como se llaman a las tools
+
+Verificación: 65 tests en 1.isa OK (4 nuevos del listado), y 2.cpu-sim-func 44, 11.gpu-sim-func 62, 25.gpu-sim-cycle-uarch 30, x.tests — todo igual que antes. Comparé contra el árbol sin mis cambios con un git stash, y los tres fallos que salen (20.forth y dos No module named 'tools' en x.tests) ya estaban antes y son de cómo invoqué unittest discover,
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo

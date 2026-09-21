@@ -12,7 +12,7 @@ la ISA a partir de ella.
 - PARCIAL Existe un comportamiento parcial o provisional.
 - RESERVADO Opcode reservado; no forma parte de las instrucciones exigidas actualmente.
 
-La columna «Ensamblador» indica si `miniisa_asm.py` puede generar el encoding.
+La columna «Ensamblador» indica si `mini_asm.py` puede generar el encoding.
 No significa que el simulador o la FPGA puedan ejecutarlo todavía.
 
 ## Instrucciones definidas

@@ -113,7 +113,7 @@ siempre no servía: usa un `NOP`, cuya regla no ha cambiado.
 
 Verificación: [`shift_immediate_tb.v`](shift_immediate_tb.v), la clase
 `ShiftInmediatoTest` de
-[`../1.isa/test_miniisa_asm.py`](../1.isa/test_miniisa_asm.py), y el caso
+[`../1.isa/test_mini_asm.py`](../1.isa/test_mini_asm.py), y el caso
 [`shift-immediate/bounds`](../x.tests/cases/extensions/shift-immediate/bounds/).
 
 El testbench tiene un detalle que merece copiarse: en cada caso, el registro

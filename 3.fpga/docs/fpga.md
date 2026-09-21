@@ -71,7 +71,7 @@ memorias; cuando esté detenida o en reset, las controlará el monitor.
 
 ```text
 mandelbrot.asm
-      ↓ miniisa_asm.py
+      ↓ mini_asm.py
 mandelbrot.bin
       ↓ monitor UART
 RAM de instrucciones

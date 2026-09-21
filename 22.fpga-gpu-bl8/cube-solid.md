@@ -77,7 +77,7 @@ Regenerar las 64 orientaciones y ensamblar la versión recomendada:
 
 ```powershell
 .\.venv\Scripts\python.exe .\22.fpga-gpu-bl8\examples\make_cube_solid_frames.py
-.\tools\miniisa.ps1 .\22.fpga-gpu-bl8\examples\cube_solid.asm -o cube_solid.bin
+.\tools\mini-asm.ps1 .\22.fpga-gpu-bl8\examples\cube_solid.asm -o cube_solid.bin
 ```
 
 Cargarla en un bitstream 22 ya presente:

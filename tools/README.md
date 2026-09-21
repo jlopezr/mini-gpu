@@ -297,7 +297,7 @@ Lanzadores finos: ejecutan el script real de la carpeta correspondiente, no
 una reimplementación.
 
 ```bash
-> miniisa examples/vector.asm            # -> 1.isa/miniisa_asm.py
+> mini-asm examples/vector.asm           # -> 1.isa/mini_asm.py
 > cpusim examples/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
 > gpusim examples/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
 > gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
@@ -306,8 +306,16 @@ una reimplementación.
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
 
+`mini-asm` se llamaba `miniisa`, y el módulo `1.isa/mini_asm.py` se llamaba
+`miniisa_asm.py`. `MiniISA` sigue siendo el nombre de la ISA: el rename fue solo
+del ensamblador, para que quede junto a `mini-lcc`.
+
+Para saber qué instrucción hay en una dirección concreta —el `pc` que reporta
+`run-board` o un simulador— `mini-asm --listing` saca el listado PC / palabra /
+fuente y la tabla de etiquetas. Ver [`1.isa/ensamblador.md`](../1.isa/ensamblador.md).
+
 Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
-hace falta. La carga es `load_program_bytes()` de `1.isa/miniisa_asm.py`, una
+hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py`, una
 sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
 `.asm` solo funcionaban en `gpusim-cycle` — los otros dos leían el fichero como
 binario y morían con «el programa debe contener instrucciones completas», que

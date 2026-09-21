@@ -139,7 +139,7 @@ def main() -> int:
             source = Path(args.program)
             binary = source.with_suffix(".bin")
             root = Path(__file__).resolve().parents[1]
-            subprocess.run([sys.executable, str(root / "1.isa" / "miniisa_asm.py"),
+            subprocess.run([sys.executable, str(root / "1.isa" / "mini_asm.py"),
                             str(source)], check=True)
             client.reset_cpu()
             client.write_memory(0, binary.read_bytes())

@@ -69,7 +69,7 @@ module gpu_bench_tb;
 
     initial begin
         for(i=0;i<256;i=i+1) program_words[i]=32'h0;
-        // examples/bench.bin, ensamblado con 1.isa/miniisa_asm.py.
+        // examples/bench.bin, ensamblado con 1.isa/mini_asm.py.
         $readmemh("examples/bench.hex",program_words);
 
         repeat(4) @(negedge clk); reset=0;

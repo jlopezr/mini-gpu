@@ -1,4 +1,4 @@
-// Bucle interior de examples/perf_loop.asm, ensamblado con ../1.isa/miniisa_asm.py.
+// Bucle interior de examples/perf_loop.asm, ensamblado con ../1.isa/mini_asm.py.
 // Medias palabras de 16 bits en el orden en que las lee la SDRAM.
 0001
 5cc0

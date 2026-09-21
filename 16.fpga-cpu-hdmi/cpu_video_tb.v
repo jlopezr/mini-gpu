@@ -169,7 +169,7 @@ module cpu_video_tb;
     for(i=0;i<64;i=i+1) program_words[i]=0;
     repeat(2) @(negedge clk); reset=0;
 
-    // swap_smoke.asm, ensamblado con 1.isa/miniisa_asm.py. Las instrucciones
+    // swap_smoke.asm, ensamblado con 1.isa/mini_asm.py. Las instrucciones
     // se construyen con los `localparam` de arriba en vez de con el numero
     // pegado, que es lo que hacia que estos offsets fueran invisibles.
     write_word(32'h0000_0000,{16'h5E80,BASE_HI});      // MOVHI R20,0x8020

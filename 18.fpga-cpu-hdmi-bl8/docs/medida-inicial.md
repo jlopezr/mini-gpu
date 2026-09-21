@@ -44,7 +44,7 @@ espera + captura). Una escritura cuesta 7.
 
 El programa se precarga con `$readmemh` desde `perf_loop.hex`, que está
 versionado a propósito para que el banco no dependa del ensamblador. Se
-regenera desde el `.asm` con `../1.isa/miniisa_asm.py`.
+regenera desde el `.asm` con `../1.isa/mini_asm.py`.
 
 ## El barrido
 
@@ -180,7 +180,7 @@ y 4:
 Para regenerar `perf_loop.hex` tras tocar el `.asm`:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\1.isa\miniisa_asm.py examples\perf_loop.asm -o perf_loop.bin
+..\.venv\Scripts\python.exe ..\1.isa\mini_asm.py examples\perf_loop.asm -o perf_loop.bin
 ```
 
 y convertir el binario a medias palabras hexadecimales, una por línea.

@@ -29,7 +29,7 @@ def _load(name: str, ruta: Path):
 
 
 sim = _load("minicpu_sim_forth", REPO / "2.cpu-sim-func" / "minicpu_sim.py")
-asm = _load("miniisa_asm_forth", REPO / "1.isa" / "miniisa_asm.py")
+asm = _load("mini_asm_forth", REPO / "1.isa" / "mini_asm.py")
 
 PROGRAM = b"".join(
     struct.pack("<I", w) for w in asm.assemble(FORTH.read_text(encoding="utf-8")))

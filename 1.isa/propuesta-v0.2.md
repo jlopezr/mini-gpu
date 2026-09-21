@@ -379,7 +379,7 @@ La idea de carga de datos relativa al PC se conserva en v0.3 como extensión fut
 
 | Componente              | Trabajo pendiente                                                         |
 |-------------------------|---------------------------------------------------------------------------|
-| `1.isa/miniisa_asm.py`  | Nuevos mnemónicos y encodings, etiquetas y validación de operandos        |
+| `1.isa/mini_asm.py`  | Nuevos mnemónicos y encodings, etiquetas y validación de operandos        |
 | `2.cpu-sim-func`        | Referencia funcional de las operaciones nuevas adoptadas                  |
 | `11.gpu-sim-func`       | Nuevas operaciones, capabilities portadas, máscaras y fallos              |
 | CPU RTL basada en la 21 | Decodificación y datapaths de las capabilities elegidas                   |

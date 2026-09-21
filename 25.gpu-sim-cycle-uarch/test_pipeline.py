@@ -9,7 +9,7 @@ from isa import Result
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / '1.isa'))
-from miniisa_asm import assemble_bytes
+from mini_asm import assemble_bytes
 
 
 def make(source, warps=1, lanes=4, **kwargs):

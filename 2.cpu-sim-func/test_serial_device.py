@@ -26,9 +26,9 @@ UPPER_ASM = REPO / "21.fpga-cpu-hdmi-alu" / "examples" / "serial_upper.asm"
 
 def assemble(path: Path) -> bytes:
     spec = importlib.util.spec_from_file_location(
-        "miniisa_asm_para_tests", REPO / "1.isa" / "miniisa_asm.py")
+        "mini_asm_para_tests", REPO / "1.isa" / "mini_asm.py")
     modulo = importlib.util.module_from_spec(spec)
-    sys.modules["miniisa_asm_para_tests"] = modulo
+    sys.modules["mini_asm_para_tests"] = modulo
     spec.loader.exec_module(modulo)
     # Con `-I x.tests/inc`, que es donde vive `mmio.inc` generado: desde MMIO
     # v2 los ejemplos no llevan la direccion cableada, la incluyen.

@@ -61,7 +61,7 @@ un fichero común que arreglar una vez. `[TODAS]`
 
 > **El ensamblador no tiene constantes simbólicas.**
 
-`1.isa/miniisa_asm.py` soporta `.include` (ya se usa: `putpixel.inc`,
+`1.isa/mini_asm.py` soporta `.include` (ya se usa: `putpixel.inc`,
 `drawline.inc`, `sin256.inc`), etiquetas, `.comm` y aritmética `+`/`-` en
 `resolve_target`. Lo que **no** tiene es ninguna directiva tipo `.equ` / `.set`
 que dé nombre a un valor.
@@ -86,9 +86,9 @@ número de ciclos se romperá por esto y **no** por un error de dirección. `[TO
 
 Trabajo añadido al plan, antes del generador:
 
-1. `.equ NAME, expr` en `miniisa_asm.py`, alimentando el mismo diccionario
+1. `.equ NAME, expr` en `mini_asm.py`, alimentando el mismo diccionario
    `labels` (así hereda `resolve_target` y la aritmética `+`/`-` gratis).
-2. Su test en `1.isa/test_miniisa_asm.py`, con control negativo.
+2. Su test en `1.isa/test_mini_asm.py`, con control negativo.
 
 Es cambio en el ensamblador **compartido por las diez carpetas y por el
 simulador**, así que es la primera pieza del viaje y la que más se amortiza.
@@ -127,8 +127,8 @@ simbólicas no hay `.inc` generado que valga.
 
 | Fichero | Qué le pasa |
 |---|---|
-| `1.isa/miniisa_asm.py` | `.equ nombre, valor` (alias `.set`) en la pasada 1; dict `equates` aparte, fundido con `labels` al final |
-| `1.isa/test_miniisa_asm.py` | clase `EquTest`: 6 casos positivos y 8 controles negativos |
+| `1.isa/mini_asm.py` | `.equ nombre, valor` (alias `.set`) en la pasada 1; dict `equates` aparte, fundido con `labels` al final |
+| `1.isa/test_mini_asm.py` | clase `EquTest`: 6 casos positivos y 8 controles negativos |
 | `1.isa/ensamblador.md` | apartado «Constantes: `.equ`», y la línea de «Qué no tiene» |
 
 ### Las tres decisiones de diseño, y por qué
@@ -192,7 +192,7 @@ todavía no la usa ningún programa.
 ### Coste
 
 Unas 40 líneas de ensamblador y 100 de test. **No se repite en las otras nueve
-carpetas**: `miniisa_asm.py` es único y compartido. Es el trozo de la migración
+carpetas**: `mini_asm.py` es único y compartido. Es el trozo de la migración
 que más se amortiza.
 
 ---
@@ -270,7 +270,7 @@ que desaparece del fichero generado porque el parser se la saltó no la echa de
 menos nadie hasta la placa.
 
 Y un cuarto, `EnsamblaDeVerdadTest`, que ensambla de verdad contra
-`miniisa_asm` y compara las palabras. Un `.inc` sintácticamente válido pero
+`mini_asm` y compara las palabras. Un `.inc` sintácticamente válido pero
 inútil pasaría los otros tres.
 
 ### El control negativo

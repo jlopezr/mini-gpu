@@ -59,7 +59,7 @@ CARPETAS = _carpetas()
 
 def _ensamblador():
     spec = importlib.util.spec_from_file_location(
-        "miniisa_asm_para_fullframe", ROOT / "1.isa" / "miniisa_asm.py")
+        "mini_asm_para_fullframe", ROOT / "1.isa" / "mini_asm.py")
     modulo = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = modulo
     spec.loader.exec_module(modulo)
@@ -101,7 +101,7 @@ class FullframeFixtureTest(unittest.TestCase):
                     esperado,
                     f"{nombre}/fullframe.hex no cuadra con fullframe_tb.asm; "
                     f"regeneralo desde esa carpeta:\n"
-                    "  python ..\\1.isa\\miniisa_asm.py fullframe_tb.asm "
+                    "  python ..\\1.isa\\mini_asm.py fullframe_tb.asm "
                     "--hex fullframe.hex -I ..\\x.tests\\inc")
 
     def test_los_dos_programas_solo_difieren_en_las_bases(self):

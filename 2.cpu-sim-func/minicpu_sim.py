@@ -620,11 +620,11 @@ class CPU:
 
 def load_program_file(path: Path) -> bytes:
     """Acepta .asm, .bin o .hex. Misma funcion que usan minigpu_sim.py y
-    minigpu_cycle.py: vive en 1.isa/miniisa_asm.py para que los tres carguen
+    minigpu_cycle.py: vive en 1.isa/mini_asm.py para que los tres carguen
     igual y `cpusim programa.asm` signifique lo mismo que `gpusim programa.asm`.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "1.isa"))
-    from miniisa_asm import load_program_bytes
+    from mini_asm import load_program_bytes
 
     return load_program_bytes(path)
 

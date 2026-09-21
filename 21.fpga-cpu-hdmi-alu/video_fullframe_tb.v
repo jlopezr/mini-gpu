@@ -52,7 +52,7 @@
  * ponia aqui" el banco empezo a contar 60 000 violaciones JEDEC --que son en
  * realidad 60 000 accesos a una fila que no existe--.
  *
- *   python ..\1.isa\miniisa_asm.py fullframe_tb.asm --hex fullframe.hex \
+ *   python ..\1.isa\mini_asm.py fullframe_tb.asm --hex fullframe.hex \
  *       -I ..\x.tests\inc
  *
  * `x.tests/test_fullframe_fixture.py` comprueba que el .hex sale de ahi.

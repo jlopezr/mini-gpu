@@ -1,4 +1,4 @@
-python ..\1.isa\miniisa_asm.py fpga_smoke_test.asm -o fpga_smoke_test.bin
+python ..\1.isa\mini_asm.py fpga_smoke_test.asm -o fpga_smoke_test.bin
 apio build
 apio upload
 python monitor.py --port COM3 ping

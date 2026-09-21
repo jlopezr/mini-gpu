@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 if __name__ == "__main__":
-    source = ROOT / "1.isa" / "miniisa_asm.py"
+    source = ROOT / "1.isa" / "mini_asm.py"
     if not source.exists():
         print(f"error: no existe {source}", file=sys.stderr)
         raise SystemExit(2)

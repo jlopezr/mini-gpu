@@ -20,7 +20,7 @@ de direcciones `0x00000`–`0x1FFFF`.
 
 | Elemento                     | Tamaño      | Notas                                                   |
 |------------------------------|-------------|---------------------------------------------------------|
-| Programa mandelbrot          | **220 B**   | 55 instrucciones, ensamblado con `1.isa/miniisa_asm.py` |
+| Programa mandelbrot          | **220 B**   | 55 instrucciones, ensamblado con `1.isa/mini_asm.py` |
 | Framebuffer, 1 palabra/píxel | **300 KiB** | 320×240×4 = 307200 B. **No cabe**: 2.3× la BRAM entera  |
 | Framebuffer, 1 byte/píxel    | **75 KiB**  | 320×240 = 76800 B. Cabe, con 53 KiB libres              |
 

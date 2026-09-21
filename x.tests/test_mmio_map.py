@@ -401,7 +401,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
     inútil pasaría los otros tests."""
 
     def test_un_programa_usa_las_constantes(self):
-        from miniisa_asm import assemble
+        from mini_asm import assemble
 
         palabras = assemble(
             '.include "mmio.inc"\n'
@@ -414,7 +414,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
             [0x80200004, 0x80100000, 0x82020000, 0x4D474155], palabras)
 
     def test_li_carga_una_base(self):
-        from miniisa_asm import assemble
+        from mini_asm import assemble
 
         palabras = assemble(
             '.include "mmio.inc"\nLI R2, MMIO_VIDEO_BASE\n',
@@ -426,7 +426,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
     def test_el_inc_es_idempotente(self):
         """Lleva `.once`, así que incluirlo dos veces --que pasará en cuanto
         un `.inc` de biblioteca lo incluya también-- no duplica constantes."""
-        from miniisa_asm import assemble
+        from mini_asm import assemble
 
         palabras = assemble(
             '.include "mmio.inc"\n.include "mmio.inc"\n'

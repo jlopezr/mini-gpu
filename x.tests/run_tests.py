@@ -198,8 +198,8 @@ def load_program(path: Path) -> bytes:
         data = b"".join(struct.pack("<I", word) for word in words)
     elif suffix == ".asm":
         assembler = load_module(
-            "miniisa_asm_for_tests",
-            REPOSITORY / "1.isa" / "miniisa_asm.py",
+            "mini_asm_for_tests",
+            REPOSITORY / "1.isa" / "mini_asm.py",
         )
         # La carpeta del .asm y su nombre: la primera para que `.include`
         # resuelva sus rutas relativas al programa y no al directorio desde el

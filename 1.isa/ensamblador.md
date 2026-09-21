@@ -1,6 +1,6 @@
 # El ensamblador MiniISA
 
-Referencia de `miniisa_asm.py`: sintaxis, directivas y línea de órdenes.
+Referencia de `mini_asm.py`: sintaxis, directivas y línea de órdenes.
 
 **Esto no es la ISA.** [`isa.md`](isa.md) define la arquitectura —qué
 instrucciones existen, qué hacen y cómo se codifican— y la cumple cualquier
@@ -16,15 +16,41 @@ resuelven a direcciones absolutas dentro de esa imagen.
 ## Línea de órdenes
 
 ```bash
-python 1.isa/miniisa_asm.py programa.asm                  # -> programa.bin
-python 1.isa/miniisa_asm.py programa.asm -o otro.bin
-python 1.isa/miniisa_asm.py programa.asm --hex salida.hex
-python 1.isa/miniisa_asm.py programa.asm -I x.tests/inc   # dónde buscar .include
+python 1.isa/mini_asm.py programa.asm                  # -> programa.bin
+python 1.isa/mini_asm.py programa.asm -o otro.bin
+python 1.isa/mini_asm.py programa.asm --hex salida.hex
+python 1.isa/mini_asm.py programa.asm -I x.tests/inc   # dónde buscar .include
+python 1.isa/mini_asm.py programa.asm --listing        # listado por pantalla
+python 1.isa/mini_asm.py programa.asm --listing p.lst  # listado a fichero
 ```
 
 `-I` se puede repetir y se prueban en orden. Los lanzadores del repo
 (`run-board`, `capture-frame-sim`, `run_tests.py`) ya pasan `x.tests/inc`, así
 que desde un `.asm` del repo no hace falta.
+
+## Listado (`--listing`)
+
+Empareja cada línea del fuente —ya con los `.include` expandidos— con el PC que
+le asignó la pasada 1 y con la palabra que salió de la 2:
+
+```text
+00000038  43800002  MOVI  R28, MMIO_VIDEO_MODE_SCANOUT
+0000003c  5b820000  STORE R28, R2, MMIO_VIDEO_CTRL_OFF
+00000040            forever:
+00000040  bfffffff  BRA forever
+
+Etiquetas:
+  00000040  forever
+```
+
+Para lo que suele hacer falta —saber qué hay en el `pc` que reporta la placa o
+el simulador— es equivalente a desensamblar, y no obliga a mantener una tabla
+de decodificación en paralelo a `OPCODES`. Lo que **no** hace es leer un `.bin`
+suelto: necesita el fuente.
+
+Las constantes de `.equ` no aparecen como etiquetas. Comparten espacio de
+nombres con ellas, pero no son posiciones del programa: anotarlas llenaría cada
+PC con los nombres de `mmio.inc`.
 
 ## Sintaxis
 
@@ -250,7 +276,7 @@ tamaños de cada una.
 Los simuladores y los tests ensamblan sin pasar por la línea de órdenes:
 
 ```python
-from miniisa_asm import assemble, assemble_bytes
+from mini_asm import assemble, assemble_bytes
 
 assemble("MOVI R1, 1\nHALT")                       # -> [palabra, palabra]
 assemble_bytes(fuente, base_dir, nombre, (inc,))   # -> bytes

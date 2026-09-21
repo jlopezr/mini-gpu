@@ -24,7 +24,7 @@ Aquí se sigue **el mapa de la v0.2**, y con los nombres de la v0.2
 (`LOADUB`/`LOADUH`, no `LOADBU`/`LOADHU`). Al migrar a v0.3 habrá que
 recodificar `0x1A`–`0x1C` y renombrar dos mnemónicos; los sitios a tocar son los
 seis `localparam` de [`cpu.v`](../cpu.v), la tabla de
-[`1.isa/miniisa_asm.py`](../../1.isa/miniisa_asm.py) y las dos ramas
+[`1.isa/mini_asm.py`](../../1.isa/mini_asm.py) y las dos ramas
 `elif opcode in (...)` de
 [`2.cpu-sim-func/minicpu_sim.py`](../../2.cpu-sim-func/minicpu_sim.py). El resto
 del hardware no conoce los opcodes: solo tamaños y máscaras.

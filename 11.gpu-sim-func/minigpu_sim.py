@@ -881,13 +881,13 @@ class CPU:
         return LaneResult(regs, next_pc, halted, store)
 
 def load_program_file(path: Path) -> bytes:
-    """Acepta .asm, .bin o .hex. La logica vive en 1.isa/miniisa_asm.py para
+    """Acepta .asm, .bin o .hex. La logica vive en 1.isa/mini_asm.py para
     que los tres simuladores carguen igual; antes aqui se hacia `read_bytes()`
     a secas y un .asm moria con "el programa debe contener instrucciones
     completas", que es el sintoma (el texto no mide multiplo de 4), no la causa.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "1.isa"))
-    from miniisa_asm import load_program_bytes
+    from mini_asm import load_program_bytes
 
     return load_program_bytes(path)
 

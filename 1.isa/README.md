@@ -11,11 +11,11 @@ cada prototipo hoy está en
 [`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md), y **ninguno lo
 cumple todavía**.
 
-`miniisa_asm.py` ensambla una palabra little-endian de 32 bits por instrucción:
+`mini_asm.py` ensambla una palabra little-endian de 32 bits por instrucción:
 
 ```powershell
-python miniisa_asm.py minimal.asm -o minimal.bin
-python miniisa_asm.py mandelbrot.asm -o mandelbrot.bin --hex mandelbrot.hex
+python mini_asm.py minimal.asm -o minimal.bin
+python mini_asm.py mandelbrot.asm -o mandelbrot.bin --hex mandelbrot.hex
 ```
 
 La carpeta contiene además programas pequeños para comprobar el ensamblador y

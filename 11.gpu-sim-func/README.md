@@ -160,7 +160,7 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
 
 ## Extensiones SIMT
 
-El ensamblador compartido `../1.isa/miniisa_asm.py` acepta `SSY label`, `BAR` y
+El ensamblador compartido `../1.isa/mini_asm.py` acepta `SSY label`, `BAR` y
 `EXIT`. Son extensiones del simulador GPU; no se implementan aquí en la CPU/FPGA.
 
 Cada entrada JSON admite `workgroup_id` (entero no negativo, por defecto 0).
@@ -170,7 +170,7 @@ lanzamiento inicializan tanto `active_mask` como `live_mask`.
 Prueba de divergencia, reconvergencia y barrera entre dos warps:
 
 ```powershell
-python ../1.isa/miniisa_asm.py examples/simt_demo.asm -o examples/simt_demo.bin
+python ../1.isa/mini_asm.py examples/simt_demo.asm -o examples/simt_demo.bin
 python minigpu_sim.py examples/simt_demo.bin --num-warps 2 --trace-detail
 ```
 
