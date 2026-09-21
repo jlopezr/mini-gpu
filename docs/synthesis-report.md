@@ -33,8 +33,8 @@ generator: synthesis-table
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix | 101.66 / 25.00 | PASS |
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$clk_pix_5x | 342.82 / 125.00 | PASS |
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 87.34 / 80.00 | PASS |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix | 80.51 / 25.00 | PASS |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix_5x | 201.98 / 125.00 | PASS |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 36.78 / 25.00 | PASS |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | mmio-v2-fb-align | $glbnet$clk_pix | 80.50 / 25.00 | PASS |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | mmio-v2-fb-align | $glbnet$clk_pix_5x | 220.80 / 125.00 | PASS |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | mmio-v2-fb-align | $glbnet$sdram_clk$TRELLIS_IO_OUT | 35.23 / 25.00 | PASS |
 
 <!-- gendoc:end synthesis-table -->

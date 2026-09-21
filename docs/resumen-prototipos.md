@@ -51,7 +51,6 @@ generator: cpu-matrix
 | **LUT / FF** | — | 6 042 / 2 624 | 5 352 / 2 477 | 8 171 / 3 798 | 10 319 / 5 088 | 11 129 / 5 171 | 11 382 / 5 236 |
 | **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 |
 | **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
-| `mul_div` | sí | sí | no | sí | sí | sí | sí |
 | `subword_memory` | sí | no | no | no | no | sí | sí |
 | `calls` | sí | no | no | no | no | sí | sí |
 | `shift_immediate` | sí | no | no | no | no | no | sí |
@@ -233,14 +232,14 @@ generator: prototype-summary
 |---|---|---|---|---|
 | [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 100.0 MHz | mul_div, read_word, write_word |
 | [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 100.0 MHz | read_word, write_word |
-| [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
-| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
+| [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
+| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
 | [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
-| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | read_word, write_word, warp_config, simt_debug |
+| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
 | [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 3.18 | 80.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial, read_word, write_word, perf_counters |
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, serial, read_word, write_word, perf_counters |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | video, read_word, write_word, warp_config, simt_debug, perf_counters |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | mul_div, video, read_word, write_word, warp_config, simt_debug, perf_counters |
 
 <!-- gendoc:end prototype-summary -->
 
