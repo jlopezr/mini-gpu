@@ -655,29 +655,30 @@ rechaza lo que no debe aceptar.
 
 ```bash
 $ generate-docs
-escrito: docs/synthesis-report.md
-actualizado: resumen-prototipos.md
-actualizado: resumen-prototipos.md
-actualizado: resumen-prototipos.md
+actualizado: docs/resumen-prototipos.md
+actualizado: docs/synthesis-report.md
 
 $ generate-docs --check     # no escribe nada; exit code 1 si algo cambiaría (para CI)
+$ generate-docs --list-generators
 ```
 
-`docs/synthesis-report.md` se regenera por completo en cada ejecución (no lo
-edites a mano). `docs/resumen-prototipos.md` está escrito a mano, así que
-`generate-docs` **solo** toca lo que haya entre marcadores. Hay tres bloques,
-los tres en ese mismo fichero:
+`generate-docs` descubre los bloques declarativos en todos los Markdown que
+forman parte del modelo. Tanto `docs/synthesis-report.md` como
+`docs/resumen-prototipos.md` conservan el texto escrito a mano: la herramienta
+**solo** toca lo que haya entre los marcadores de cada bloque. Por ejemplo:
 
 ```markdown
-<!-- BEGIN GENERATED: cpu-matrix -->        matriz CPU
-<!-- BEGIN GENERATED: gpu-matrix -->        matriz GPU
-<!-- BEGIN GENERATED: prototype-summary --> tabla plana de los diez prototipos
+<!-- gendoc:begin cpu-capabilities
+generator: cpu-matrix
+-->
+
+... contenido generado ...
+
+<!-- gendoc:end cpu-capabilities -->
 ```
 
-Si esos marcadores no existen en el archivo, no lo toca — hay que añadirlos a
-mano una vez, donde tenga sentido insertar la tabla generada.
-
-`generate-docs` también materializa queries del grafo en bloques declarativos:
+El nombre del bloque es local al documento y el campo `generator` selecciona
+el generador registrado. El mismo mecanismo materializa queries del grafo:
 
 ```markdown
 <!-- gendoc:begin identity-register-implementations
@@ -700,10 +701,12 @@ escribir. Como dogfood, `tools/generate_docs.py` declara el artifact
 Todos se despachan ahora mediante `GeneratorRegistry`: `synthesis-table`,
 `cpu-matrix`, `gpu-matrix`, `prototype-summary` y `trace.query`. El decorador
 `@generator` permite registrar otros generadores Python sin añadir ramas al
-dispatcher. En cada ejecución se recalculan todos los bloques encontrados; la
-caché de `trace` evita releer recursos intactos y `generate-docs` solo escribe
-cuando el texto renderizado cambia. Todavía no existe caché ni declaración de
-dependencias específica por generador.
+dispatcher. `--list-generators` muestra el inventario disponible. En cada
+ejecución se recalculan todos los bloques encontrados; la
+caché de `trace` conserva también qué recursos contienen bloques, por lo que
+`generate-docs` solo vuelve a abrir esos Markdown y solo los escribe cuando el
+texto renderizado cambia. Todavía no existe caché ni declaración de dependencias
+específica por generador.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen

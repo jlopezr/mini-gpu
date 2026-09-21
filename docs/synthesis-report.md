@@ -1,8 +1,11 @@
 # Último informe de síntesis por prototipo
 
-_Generado por `generate-docs` a partir de `x.tests/backends/` y `reports/`. No editar a mano: los cambios se perderán._
+_La tabla la genera `generate-docs` a partir de `x.tests/backends/` y `reports/`; el texto exterior al bloque puede editarse a mano._
 
-<!-- BEGIN GENERATED: synthesis-table -->
+<!-- gendoc:begin synthesis-table
+generator: synthesis-table
+-->
+
 | Prototype | Label | Clock | Achieved / Target (MHz) | Status |
 |---|---|---|---|---|
 | [`3.fpga`](../3.fpga) | default | $glbnet$clk_25mhz$TRELLIS_IO_IN | 295.42 / 25.00 | PASS |
@@ -33,4 +36,5 @@ _Generado por `generate-docs` a partir de `x.tests/backends/` y `reports/`. No e
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix | 80.51 / 25.00 | PASS |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$clk_pix_5x | 201.98 / 125.00 | PASS |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 36.78 / 25.00 | PASS |
-<!-- END GENERATED: synthesis-table -->
+
+<!-- gendoc:end synthesis-table -->

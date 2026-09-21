@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from tools.trace_cli import main
-from tools.generate_docs import update_trace_query_blocks
+from tools.generate_docs import main as generate_docs_main, update_trace_docs, update_trace_query_blocks
 from tools.traceability import (
     AssemblyAdapter, CORE_GENERATORS, CORE_QUERIES, GenerationContext, GeneratorRegistry,
     Graph, ImpactAnalyzer, MarkdownAdapter, ModelBuilder, PythonAdapter, QueryRegistry,
@@ -600,6 +600,59 @@ outdated
             registry.generator("sample-generator")(lambda context, options: "")
         with self.assertRaisesRegex(ValueError, "desconocido"):
             registry.run("missing", context)
+
+    def test_generate_docs_discovers_registered_blocks_in_any_markdown(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            path = self.write(root, "arbitrary.md", """texto manual
+<!-- gendoc:begin summary
+generator: prototype-summary
+-->
+
+obsolete
+
+<!-- gendoc:end summary -->
+final manual
+""")
+            changed, messages = update_trace_docs(root, False, {
+                "reports": [], "simulators": [], "signals": {},
+            })
+            rendered = path.read_text(encoding="utf-8")
+            self.assertTrue(changed)
+            self.assertEqual(messages, ["actualizado: arbitrary.md"])
+            self.assertIn("_Ningún prototipo", rendered)
+            self.assertTrue(rendered.startswith("texto manual\n"))
+            self.assertTrue(rendered.endswith("final manual\n"))
+
+            refreshed = ModelBuilder().build(root)
+            cached = ModelBuilder().build(root)
+            self.assertEqual(refreshed.cache_misses, 1)
+            self.assertEqual(cached.cache_hits, 1)
+            self.assertEqual(
+                [(item.name, item.generator) for item in cached.generation_blocks],
+                [("summary", "prototype-summary")],
+            )
+
+    def test_markdown_ignores_gendoc_examples_inside_fences(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.write(root, "example.md", """```markdown
+<!-- gendoc:begin example
+generator: trace.query
+-->
+<!-- gendoc:end example -->
+```
+""")
+            result = MarkdownAdapter().read(path, root)
+            self.assertEqual(result.generation_blocks, ())
+
+    def test_generate_docs_lists_registered_generators_without_building_model(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = generate_docs_main(["--list-generators"])
+        self.assertEqual(status, 0)
+        self.assertIn("trace.query: Materializa", output.getvalue())
 
     def test_cache_invalidates_sidecar_when_described_resource_changes(self):
         with tempfile.TemporaryDirectory() as temporary:

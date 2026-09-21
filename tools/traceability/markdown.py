@@ -10,12 +10,14 @@ from pathlib import Path
 import yaml
 
 from .diagnostic import Diagnostic
+from .generation import GenerationBlock
 from .identity import Identity, Resource, SourceLocation
 from .observation import Observation
 
 HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 EXPLICIT_ID = re.compile(r"\s*\{#([A-Za-z0-9_-]+)\}\s*$")
 DIRECTIVE = re.compile(r"^\s*<!--\s*trace:(artifact|facet|relations)(?:\s+([^\s]+))?\s*$")
+GENDOC_BEGIN = re.compile(r"^\s*<!--\s*gendoc:begin\s+([A-Za-z0-9_-]+)\s*$")
 ID = re.compile(r"^[A-Za-z0-9_-]+$")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CORE_TYPES = frozenset({
@@ -44,6 +46,7 @@ class MarkdownResult:
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
     dependencies: tuple[Path, ...] = ()
+    generation_blocks: tuple[GenerationBlock, ...] = ()
 
 
 class MarkdownAdapter:
@@ -55,6 +58,7 @@ class MarkdownAdapter:
         identities: list[Identity] = []
         observations: list[Observation] = []
         diagnostics: list[Diagnostic] = []
+        generation_blocks: list[GenerationBlock] = []
         artifact_stack: list[tuple[int, Identity]] = []
         facet_stack: list[tuple[int, Identity]] = []
         pending: tuple[str, str | None, dict, int] | None = None
@@ -70,8 +74,6 @@ class MarkdownAdapter:
         while index < len(lines):
             line = lines[index]
             number = index + 1
-            if "<!-- gendoc:begin " in line:
-                in_generated = True
             if in_generated:
                 if "<!-- gendoc:end " in line:
                     in_generated = False
@@ -88,6 +90,35 @@ class MarkdownAdapter:
                 index += 1
                 continue
             if fence_char is not None:
+                index += 1
+                continue
+
+            generated = GENDOC_BEGIN.match(line)
+            if generated:
+                body = []
+                index += 1
+                while index < len(lines) and "-->" not in lines[index]:
+                    body.append(lines[index])
+                    index += 1
+                location = SourceLocation(path, number)
+                if index == len(lines):
+                    diagnostics.append(Diagnostic(
+                        "unterminated-gendoc", "comentario gendoc sin cierre", location
+                    ))
+                    break
+                try:
+                    metadata = yaml.safe_load("\n".join(body)) or {}
+                    if not isinstance(metadata, dict):
+                        raise ValueError("la metadata debe ser un mapping YAML")
+                    generator_name = metadata.pop("generator", None)
+                    if not isinstance(generator_name, str) or not generator_name:
+                        raise ValueError("gendoc requiere generator")
+                    generation_blocks.append(GenerationBlock(
+                        generated.group(1), generator_name, location, metadata,
+                    ))
+                except (yaml.YAMLError, ValueError) as exc:
+                    diagnostics.append(Diagnostic("invalid-gendoc", str(exc), location))
+                in_generated = True
                 index += 1
                 continue
 
@@ -184,7 +215,10 @@ class MarkdownAdapter:
                 pending = None
             index += 1
 
-        return MarkdownResult(resource, tuple(identities), tuple(observations), tuple(diagnostics))
+        return MarkdownResult(
+            resource, tuple(identities), tuple(observations), tuple(diagnostics),
+            generation_blocks=tuple(generation_blocks),
+        )
 
     def _artifact(self, path, pending, diagnostics):
         _, artifact_id, metadata, line = pending

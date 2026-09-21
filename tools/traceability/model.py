@@ -10,6 +10,7 @@ from .config import TraceConfig, load_config
 from .cache import CachedResult, GraphCache
 from .diagnostic import Diagnostic
 from .identity import Identity, Resource
+from .generation import GenerationBlock
 from .markdown import MarkdownAdapter
 from .observation import Observation
 from .systemverilog import SystemVerilogAdapter
@@ -43,6 +44,7 @@ class Model:
     cache_hits: int = 0
     cache_misses: int = 0
     deleted_fragments: tuple[CachedResult, ...] = ()
+    generation_blocks: tuple[GenerationBlock, ...] = ()
 
 
 class ModelBuilder:
@@ -64,7 +66,7 @@ class ModelBuilder:
         config, config_diagnostics = load_config(root)
         discovered = self.discover(root, config)
         selected = set(discovered if paths is None else self._expand(root, paths))
-        resources, identities, observations = [], [], []
+        resources, identities, observations, generation_blocks = [], [], [], []
         diagnostics = list(config_diagnostics)
         cache = GraphCache(root, self.use_cache)
         hits = misses = 0
@@ -84,6 +86,7 @@ class ModelBuilder:
             resources.append(result.resource)
             identities.extend(result.identities)
             diagnostics.extend(result.diagnostics)
+            generation_blocks.extend(getattr(result, "generation_blocks", ()))
             if path in selected:
                 observations.extend(result.observations)
         cache.retain(discovered)
@@ -92,6 +95,7 @@ class ModelBuilder:
         return Model(
             root, config, tuple(resources), tuple(identities), tuple(observations),
             tuple(diagnostics), hits, misses, deleted_fragments,
+            tuple(generation_blocks),
         )
 
     def _expand(self, root: Path, paths: Iterable[Path]) -> list[Path]:

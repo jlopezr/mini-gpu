@@ -9,9 +9,10 @@ from pathlib import Path
 
 from .diagnostic import Diagnostic
 from .identity import Identity, Resource, SourceLocation
+from .generation import GenerationBlock
 from .observation import Observation
 
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2
 CACHE_FILE = Path(".trace") / "cache-v1.json"
 
 
@@ -22,6 +23,7 @@ class CachedResult:
     observations: tuple[Observation, ...]
     diagnostics: tuple[Diagnostic, ...]
     dependencies: tuple[Path, ...] = ()
+    generation_blocks: tuple[GenerationBlock, ...] = ()
 
 
 class GraphCache:
@@ -164,6 +166,11 @@ class GraphCache:
                 "location": self._location(item.location), "severity": item.severity,
             } for item in result.diagnostics],
             "dependencies": [self._relative(item) for item in getattr(result, "dependencies", ())],
+            "generation_blocks": [{
+                "name": item.name, "generator": item.generator,
+                "location": self._location(item.location),
+                "options": self._json_value(item.options),
+            } for item in getattr(result, "generation_blocks", ())],
         }
 
     def _deserialize(self, raw: dict) -> CachedResult:
@@ -180,6 +187,10 @@ class GraphCache:
         return CachedResult(
             Resource(self.root / raw["resource"]), identities, observations, diagnostics,
             tuple(self.root / item for item in raw.get("dependencies", [])),
+            tuple(GenerationBlock(
+                item["name"], item["generator"], self._read_location(item["location"]),
+                item.get("options", {}),
+            ) for item in raw.get("generation_blocks", [])),
         )
 
     def _identity(self, item: Identity) -> dict:

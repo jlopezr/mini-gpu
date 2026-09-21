@@ -20,6 +20,7 @@ from .rules import CORE_RULES, RuleDefinition, RuleFinding, RuleRegistry, rule
 from .generator import (
     CORE_GENERATORS, GenerationContext, GeneratorDefinition, GeneratorRegistry, generator,
 )
+from .generation import GenerationBlock
 
 __all__ = [
     "Diagnostic",
@@ -61,5 +62,6 @@ __all__ = [
     "GeneratorDefinition",
     "GeneratorRegistry",
     "generator",
+    "GenerationBlock",
     "load_config",
 ]
