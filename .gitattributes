@@ -3,3 +3,4 @@
 # cada 0x0a que contenga a 0d 0a al hacer checkout y el fixture dejaría de
 # coincidir con lo que produce la CPU, sin error visible. Una línea lo evita.
 *.bin binary
+tools/traceability/example/device-registers.txt -text
