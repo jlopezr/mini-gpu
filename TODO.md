@@ -4,21 +4,12 @@ Por orden de prioridad **argumentada**, no heredada. Cada punto dice qué falta,
 por qué importa y qué lo bloquea; si no se pueden escribir esas tres cosas, o no
 está verificado o no es un punto.
 
-Repasado el 20/09/2026 contra el árbol. Al final hay un apartado con lo cerrado,
+Repasado el 21/09/2026 contra el árbol. Al final hay un apartado con lo cerrado,
 para no volver a abrirlo por error.
 
 ---
 
-## 1. Cerrar la ronda de placa: la 17 y los dos hallazgos de `DEVICES`
-
-**La parte de síntesis está hecha.** Medido el 20/09/2026 comparando el
-`hardware.pnr` de cada carpeta con su RTL más reciente **sin contar los
-`*_tb.v`**, que no entran en el bitstream: **las diez corresponden**. Las cuatro
-de GPU se resintetizaron al migrarlas a v2 (12 → 35,06 MHz, 14 → 34,25,
-17 → 44,83, 22 → 40,43 de `sdram_clk`), y 6, 10 y 16 ya lo estaban.
-
-> Ojo al comparar: contar los `*_tb.v` da tres falsos positivos (18, 19 y 21
-> «viejas» por un banco tocado después). Un banco no se sintetiza.
+## 1. Cerrar la ronda de placa
 
 **La ronda está hecha y salió limpia** (20/09/2026). Las nueve carpetas que la
 suite conoce, con el mapa v2 y el `monitor.v` final:
@@ -34,7 +25,7 @@ error y no cero (§4.3), SYSTEM reservado, SYSTEM de sólo lectura—. La 16 y l
 pasa los seis casos de vídeo, o sea que el `frame_capture` que ganó al migrar
 está confirmado en silicio.
 
-**Qué falta.** Tres cosas, ninguna grande:
+**Qué falta.** Dos cosas:
 
 1. **La 17 no se puede probar con la suite.** Es la única carpeta de GPU **sin
    `version.json`**, así que `run_tests.py --backend gpu-fpga` no la conoce
@@ -42,54 +33,21 @@ está confirmado en silicio.
    con los siete valores correctos, los cinco bloques ausentes rechazados por
    la placa y un descriptor de warp escrito y releído en `0x82010030`. Falta
    decidir si merece alias propio o si es redundante con `sdram`.
-2. **`DEVICES` tiene dos convenios en la familia CPU.** Medido leyendo el
-   registro en placa y contrastando con el RTL:
+2. **Resintetizar las diez y repetir la ronda.** Al generar la identidad desde
+   el RTL (`tools/generate-sysid`), `DEVICES` cambió en **seis** carpetas: la 6
+   y la 10 ganan su bit de CPU, y la 18, la 19, la 21 y la 22 el de FABRIC, que
+   ninguna declaraba pese a instanciar `memory_fabric_4`. Las diez elaboran y
+   pasan sus bancos, pero sus bitstreams ya no corresponden. Son unas dos horas
+   de síntesis más la ronda, que ya está guionizada.
 
-   | | 6 | 10 | 16 | 18 | 19 | 21 | 12 | 14 | 17 | 22 |
-   |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-   | `DEVICES` | `009` | `005` | `225` | `225` | `235` | `235` | `409` | `405` | `405` | `425` |
-   | bit 9 CPU / 10 GPU | **no** | **no** | sí | sí | sí | sí | sí | sí | sí | sí |
-
-   Ocho de diez declaran su propio núcleo; **la 6 y la 10 no**. Como §5.4 dice
-   que un bit es «dispositivo presente» y las dos tienen CPU, parecen ellas las
-   que están mal — pero conviene decidirlo antes de tocar, porque la lectura
-   alternativa («el bit es el bloque MMIO del núcleo») dejaría mal a las otras
-   ocho: ni CPU CORE (§13.1) ni GPU CORE (§14.1) existen.
-3. **`DEVICES` se escribe a mano y §5.4 dice que no.** El contrato es
-   explícito: «no se escribe a mano en cada `top.v`. Se deriva de lo que hay en
-   el RTL […]. Un bitmap escrito a mano sería una tercera gemela junto a las
-   ventanas del decodificador y la lista del cliente Python». Es la fase 4b,
-   que el apartado de cerrado da por resuelta **en criterio** pero no en
-   código.
-
-   Y conviene saber dónde está de verdad antes de ir a cambiarlo, porque no es
-   donde el contrato supone. `sysid.v` —idéntico en las diez— sólo **declara**
-   el parámetro, con `32'd0` de defecto, y lo sirve en `+0x0C`. El valor lo
-   pone quien instancia:
-
-   | Familia | Dónde está el literal |
-   |---|---|
-   | CPU (6, 10) | `top.v` |
-   | CPU (16, 18, 19, 21) | `top.v`, reenviado por `mmio_decoder.v` |
-   | GPU (12, 14, 17) | **`gpu_system.v`**, no `top.v` |
-   | GPU (22) | **`gpu_system.v` y `gpu_system_bl8.v`**, los dos |
-
-   O sea **once literales en diez carpetas**. Y la colocación de GPU es peor
-   que la de CPU por un motivo concreto: `gpu_system.v` vale precisamente
-   porque es casi idéntico entre carpetas, y meterle ahí `DEVICES`, `MEM_SIZE`
-   y `MONITOR_VERSION` le añade divergencia por carpeta a un fichero que se
-   quiere compartido. Subirlos a `top.v`, como en CPU, dejaría el
-   `gpu_system.v` de la 14 y el de la 17 **byte a byte idénticos**.
-
-**Por qué importa.** Es el único paso que mide lo que ninguna otra cosa mide, y
-la lista está escrita en el encargo de la familia GPU:
+**Por qué importa.** Es el único paso que mide lo que ninguna otra cosa mide:
 
 | Qué | Por qué no lo ve la simulación |
 |---|---|
 | Que el bloque SYSTEM conteste con los valores de **esa** carpeta | Ningún banco instancia `top` |
 | Que un bloque **ausente** conteste error y no cero | Las cuatro GPU tienen bloques ausentes; sólo la 22 tiene vídeo |
 | Que el error de un dispositivo **llegue al cliente** | Vive un ciclo y el cliente lo muestrea al siguiente |
-| La captura de DQ de la SDRAM (10, 14, 16, 17, 18, 19, 21, 22) | Entra por un pin |
+| La captura de DQ de la SDRAM | Entra por un pin |
 | Los `.asm` de `examples/` | Ningún `test.json` los ejecuta |
 
 Y hay un hueco concreto que sólo la placa cierra: `mmio_error_ack_tb.v` existe
@@ -111,9 +69,8 @@ Trampas al ejecutarlo, todas ya pagadas:
   **La buena es la última.**
 - Hay que subir con `board-upload --rebuild`. Sin esa opción, `apio upload` se
   ahorra el trabajo cuando la versión coincide — y la versión **no distingue dos
-  builds de la misma carpeta**. Sin `--rebuild` se validaría otra vez el
-  bitstream viejo, creyendo lo contrario. Es el modo de fallo que ya apareció
-  una vez, cuando el `default` de la 22 apuntaba a otro diseño.
+  builds de la misma carpeta**. Es el modo de fallo que ya apareció una vez,
+  cuando el `default` de la 22 apuntaba a otro diseño.
 - Que la síntesis en segundo plano devuelva éxito **no significa que haya
   cumplido timing**. Hay que mirar cada una con `build-status` antes de pasar a
   placa.
@@ -509,6 +466,31 @@ solo; restaurar, probablemente no.
 - **El resto de la unificación MMIO.** Fases 0, 1, 2, 3, 3.4, 3.5, 4a y el
   renumerado de la 5, cerradas. Lo que hicieron vive en el RTL; el porqué, en
   [`docs/unificacion-mmio.md`](docs/unificacion-mmio.md), que es un log.
+- **`DEVICES` escrito a mano, y sus dos convenios.** Cerrado el 21/09/2026.
+  `tools/generate-sysid` deriva del RTL la identidad de cada prototipo
+  —`FOLDER`, `ISA_PROFILE`, `DEVICES`, `MEM_BASE`/`MEM_SIZE`,
+  `MONITOR_VERSION`— y la escribe en `<carpeta>/sysid_params.vh`, que es lo que
+  §5.4 pedía. `sysid.v` sigue siendo la lógica compartida e idéntica en las
+  diez; los valores van aparte, y como el `include` se resuelve por carpeta,
+  **el `gpu_system.v` de la 14 y el de la 17 son ahora byte a byte idénticos**.
+  Al estrenarlo aparecieron **seis bits mal** en diez carpetas: la 6 y la 10 no
+  declaraban su bit de CPU y la 18, la 19, la 21 y la 22 no declaraban FABRIC
+  pese a instanciar `memory_fabric_4`. Ninguno rompía nada — un bit de más o de
+  menos en un bitmap descriptivo no da error, sólo miente.
+  - Se decidió que los bits 9 y 10 significan **«tiene ese núcleo»**, no «el
+    bloque CORE contesta»: §5.4 dice «dispositivos presentes» y reserva un bit
+    para EBR, que no es ningún bloque. La 6 y la 10 llevaban escrita la lectura
+    contraria y se corrigió.
+  - `mul_div` estaba declarada `"architecture": "cpu"` en `capabilities.json`
+    aunque `gpu_lane.v` tiene `OPCODE_MUL:` y `OPCODE_DIV:`. Corregido allí,
+    que es el sitio que el repo tiene para decir qué buscar en el RTL. No mueve
+    la selección de casos: los 47 de `x.tests/cases` declaran
+    `architecture: cpu` y ese filtro va antes que las capacidades.
+  - Lo vigila `x.tests/test_sysid_params.py` (sincronía, conformidad contra
+    números a mano, y que nadie vuelva a poner un literal en el RTL), más
+    `test_monitor_port.SysIdTest`, que deriva el perfil de los rasgos del RTL
+    por un camino distinto al del generador. Fue ese contraste el que cazó lo
+    de `mul_div`.
 - **Migrar las diez carpetas a MMIO v2.** Cerrado el 20/09/2026 con la 22. Lo
   que queda de v2 son deudas de contrato, no migraciones, y está en el punto 2.
   Con ello se cierran también:

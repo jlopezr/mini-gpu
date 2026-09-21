@@ -264,25 +264,24 @@ class SysIdTest(unittest.TestCase):
     mantener, pero tampoco hay nada que impida teclearlo mal: esto lo impide.
     """
 
-    FOLDER = re.compile(r"sysid\s*#\(\s*\.FOLDER\(8'd(\d+)\)")
-    # En CPU el `sysid` vive DENTRO de `mmio_decoder`, asi que el numero de
-    # carpeta viaja por el parametro del decodificador y no por el del bloque.
-    FOLDER_CPU = re.compile(r"mmio_decoder\s*#\(\s*\.FOLDER\(8'd(\d+)\)")
+    # La identidad ya NO se instancia con literales: sale de los `define` de
+    # `<carpeta>/sysid_params.vh`, que genera `tools/generate-sysid` leyendo el
+    # RTL (mmio.md §5.4). Antes esto buscaba `.FOLDER(8'dNN)` en el `.v`, y esa
+    # busqueda ya no encuentra nada -- el numero esta en el fichero generado.
+    DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",
+                        re.MULTILINE)
+
+    @classmethod
+    def _declarado(cls, name: str) -> dict[str, int]:
+        texto = (ROOT / name / "sysid_params.vh").read_text(encoding="utf8")
+        return {n: int(v.replace("_", ""), 16)
+                for n, v in cls.DEFINE.findall(texto)}
 
     def test_el_id_es_el_numero_de_carpeta(self):
         for name in GPU_PROTOTYPES:
-            esperado = int(name.split(".")[0])
-            encontrados = []
-            for path in sorted((ROOT / name).glob("*.v")):
-                if path.name == "sysid.v":
-                    continue        # ahi el `#(` es la DECLARACION
-                encontrados += [
-                    int(d) for d in self.FOLDER.findall(
-                        path.read_text(encoding="utf8"))
-                ]
             with self.subTest(prototype=name):
-                self.assertTrue(encontrados, f"{name} no instancia sysid")
-                self.assertEqual(set(encontrados), {esperado})
+                self.assertEqual(int(name.split(".")[0]),
+                                 self._declarado(name)["SYSID_FOLDER"])
 
     # bit 0 MUL, bit 1 DIV, bit 2 subword, bit 3 SIMT. El fichero donde vive
     # cada uno importa: SSY/BAR/EXIT se decodifican en gpu_sm.v y NO en
@@ -293,11 +292,22 @@ class SysIdTest(unittest.TestCase):
         (2, "gpu_lane.v", re.compile(r"OPCODE_LOADB|OPCODE_STOREB")),
         (3, "gpu_sm.v", re.compile(r"6'h31")),
     )
-    PROFILE = re.compile(r"\.ISA_PROFILE\(32'h([0-9a-fA-F_]+)\)")
-
     def test_el_perfil_de_isa_sale_del_rtl(self):
-        """Escrito a mano pero CONTRASTADO. Si alguien anade subword a un lane y
-        no toca el perfil, el bloque de identificacion mentiria en silencio."""
+        """Ya no esta escrito a mano, pero se sigue CONTRASTANDO, y por la
+        misma razon: si alguien anade subword a un lane y el perfil no se
+        entera, el bloque de identificacion mentiria en silencio.
+
+        Lo que se contrasta ahora es el GENERADOR. Este test mira los rasgos
+        directamente --`OPCODE_MUL` en `gpu_lane.v`, `6'h31` en `gpu_sm.v`-- y
+        `tools/generate_sysid.py` los mira a traves de `capabilities.json`.
+        Son dos caminos distintos al mismo numero, que es lo que hace que la
+        comprobacion valga: si coincidieran de origen seria una tautologia.
+
+        Sirvio en cuanto se escribio: `mul_div` estaba declarada
+        `"architecture": "cpu"` en `capabilities.json`, asi que el generador
+        daba 0x8 para las GPU --«esta GPU no sabe multiplicar»-- mientras estos
+        rasgos daban 0xb. La declaracion estaba mal y se corrigio alli.
+        """
         for name in GPU_PROTOTYPES:
             prototype = ROOT / name
             esperado = 0
@@ -305,18 +315,10 @@ class SysIdTest(unittest.TestCase):
                 ruta = prototype / fichero
                 if ruta.exists() and patron.search(ruta.read_text(encoding="utf8")):
                     esperado |= 1 << bit
-
-            declarados = set()
-            for path in sorted(prototype.glob("*.v")):
-                if path.name == "sysid.v":
-                    continue
-                declarados |= {
-                    int(d.replace("_", ""), 16)
-                    for d in self.PROFILE.findall(path.read_text(encoding="utf8"))
-                }
             with self.subTest(prototype=name):
-                self.assertEqual(declarados, {esperado},
-                                 f"{name}: el RTL dice {esperado:#06x}")
+                self.assertEqual(esperado,
+                                 self._declarado(name)["SYSID_ISA_PROFILE"],
+                                 f"{name}: los rasgos del RTL dicen {esperado:#06x}")
 
     # Un `sysid.v` declara a que version del contrato MMIO pertenece por el
     # magic que lleva dentro: 16'h4D47 en v1, la palabra 32'h4D47_4155 en v2.
@@ -359,36 +361,18 @@ class SysIdTest(unittest.TestCase):
 
     def test_el_id_es_el_numero_de_carpeta_sin_mmio(self):
         """6 y 10 instancian `sysid` DIRECTAMENTE en el top, no dentro de un
-        decodificador que no tienen, asi que se comprueban con el mismo patron
-        que la familia GPU."""
+        decodificador que no tienen. Desde que la identidad se genera, eso da
+        igual: el numero sale del mismo sitio en las diez."""
         for name in ("6.fpga-cpu", "10.fpga-cpu-ram"):
-            esperado = int(name.split(".")[0])
-            encontrados = []
-            for path in sorted((ROOT / name).glob("*.v")):
-                if path.name == "sysid.v":
-                    continue        # ahi el `#(` es la DECLARACION
-                encontrados += [
-                    int(d) for d in self.FOLDER.findall(
-                        path.read_text(encoding="utf8"))
-                ]
             with self.subTest(prototype=name):
-                self.assertTrue(encontrados, f"{name} no instancia sysid")
-                self.assertEqual(set(encontrados), {esperado})
+                self.assertEqual(int(name.split(".")[0]),
+                                 self._declarado(name)["SYSID_FOLDER"])
 
     def test_el_id_es_el_numero_de_carpeta_en_cpu(self):
         for name in CPU_CON_MMIO:
-            esperado = int(name.split(".")[0])
-            encontrados = []
-            for path in sorted((ROOT / name).glob("*.v")):
-                if path.name == "sysid.v":
-                    continue
-                encontrados += [
-                    int(d) for d in self.FOLDER_CPU.findall(
-                        path.read_text(encoding="utf8"))
-                ]
             with self.subTest(prototype=name):
-                self.assertTrue(encontrados, f"{name} no instancia mmio_decoder con FOLDER")
-                self.assertEqual(set(encontrados), {esperado})
+                self.assertEqual(int(name.split(".")[0]),
+                                 self._declarado(name)["SYSID_FOLDER"])
 
     # En CPU los rasgos viven en `cpu.v`, y el bit 3 NO se deriva: ver abajo.
     RASGOS_CPU = (
@@ -416,18 +400,10 @@ class SysIdTest(unittest.TestCase):
                     esperado |= 1 << bit
             self.assertTrue(re.search(r"OPCODE_SSY\b", cpu),
                             f"{name}: si SSY desaparece, revisar este test")
-
-            declarados = set()
-            for path in sorted(prototype.glob("*.v")):
-                if path.name == "sysid.v":
-                    continue
-                declarados |= {
-                    int(d.replace("_", ""), 16)
-                    for d in self.PROFILE.findall(path.read_text(encoding="utf8"))
-                }
             with self.subTest(prototype=name):
-                self.assertEqual(declarados, {esperado},
-                                 f"{name}: el RTL dice {esperado:#06x}")
+                self.assertEqual(esperado,
+                                 self._declarado(name)["SYSID_ISA_PROFILE"],
+                                 f"{name}: los rasgos del RTL dicen {esperado:#06x}")
                 self.assertFalse(esperado & 0b1000,
                                  f"{name}: el bit SIMT no va en CPU")
 
