@@ -39,7 +39,10 @@ semillas daba +14,5 % de holgura con el diseño roto.
 
 ## CPU
 
-<!-- BEGIN GENERATED: cpu-matrix -->
+<!-- gendoc:begin cpu-matrix
+generator: cpu-matrix
+-->
+
 | | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | 100 MHz | 100 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
@@ -56,7 +59,8 @@ semillas daba +14,5 % de holgura con el diseño roto.
 | `compare` | sí | no | no | no | no | no | sí |
 | `frame_capture` | sí | no | no | sí | sí | sí | sí |
 | `serial` | sí | no | no | no | no | sí | sí |
-<!-- END GENERATED: cpu-matrix -->
+
+<!-- gendoc:end cpu-matrix -->
 
 `2.sim` no tiene Fmax ni LUTs porque no es hardware, y tampoco tiene contadores
 de ciclos: no modela el tiempo. Lo que sí da es el número de instrucciones, que
@@ -179,7 +183,10 @@ cobró de verdad.
 
 ## GPU
 
-<!-- BEGIN GENERATED: gpu-matrix -->
+<!-- gendoc:begin gpu-matrix
+generator: gpu-matrix
+-->
+
 | | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
 |---|---|---|---|---|---|---|
 | **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
@@ -191,7 +198,8 @@ cobró de verdad.
 | `warp_config` | no | no | sí | sí | sí | sí |
 | `simt_debug` | no | no | sí | sí | sí | sí |
 | `atomic_warp_faults` | sí | sí | no | no | no | no |
-<!-- END GENERATED: gpu-matrix -->
+
+<!-- gendoc:end gpu-matrix -->
 
 La **17** es la 14 con el mismo comportamiento y el camino crítico reescrito:
 sigue ganándole unos 12 MHz con menos LUTs. Está restringida a 25 porque ese era
@@ -217,7 +225,10 @@ aparezca código que suponga lo contrario.
 
 ## Tabla plana de todos los prototipos
 
-<!-- BEGIN GENERATED: prototype-summary -->
+<!-- gendoc:begin prototype-summary
+generator: prototype-summary
+-->
+
 | Prototype | Version | Monitor | Clock | Capabilities |
 |---|---|---|---|---|
 | [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 100.0 MHz | mul_div, read_word, write_word |
@@ -230,7 +241,8 @@ aparezca código que suponga lo contrario.
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial, read_word, write_word, perf_counters |
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, serial, read_word, write_word, perf_counters |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | video, read_word, write_word, warp_config, simt_debug, perf_counters |
-<!-- END GENERATED: prototype-summary -->
+
+<!-- gendoc:end prototype-summary -->
 
 La 17 no aparece con alias corto porque no está registrada en los backends de
 `x.tests`; cae al nombre de la carpeta. Es deliberado: tampoco es un target de

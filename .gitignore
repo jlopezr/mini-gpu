@@ -1,4 +1,5 @@
 __pycache__
+.trace/
 
 _build
 .sconsign.dblite

@@ -1,0 +1,1 @@
+MiniGPU device identity register reference, revision A.

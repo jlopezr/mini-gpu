@@ -21,7 +21,7 @@ export PATH="$PWD/tools:$PATH"
   (`run_tests.py`, antes `run_gpu_tests.py`); no dupliques esa lógica en `tools/`, solo añade
   lanzadores finos que la invoquen.
 - `docs/resumen-prototipos.md` está escrito a mano salvo sus tres bloques generados: edítalo como
-  cualquier otro texto del repo, pero **respeta los marcadores `<!-- BEGIN/END GENERATED -->`**.
+  cualquier otro texto del repo, pero **respeta los bloques `<!-- gendoc:begin/end ... -->`**.
   `generate-docs` sobrescribe lo que haya entre ellos —lo que escribas ahí dentro se pierde— y no
   toca nada fuera. Lo que no hay que hacer es regenerarlos enteros, no editarlos.
 - La identidad de un prototipo (CPU/GPU, versión de monitor, reloj, capacidades) se lee del RTL

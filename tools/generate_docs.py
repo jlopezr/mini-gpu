@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Genera docs/synthesis-report.md a partir de prototype_report.collect();
-actualiza bloques marcados en documentación manual (las matrices de CPU y GPU
-y la tabla plana de docs/resumen-prototipos.md) solo si ya
-existen, para no sobrescribir texto escrito a mano."""
+"""Descubre y materializa los bloques ``gendoc`` registrados del repositorio."""
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,29 +15,18 @@ sys.path.insert(0, str(ROOT))
 from tools.prototype import find_repo_root, list_prototypes
 from tools.prototype_report import collect, simulator_capabilities
 from tools.rtl_facts import load_capability_signals
+from tools.traceability import (
+    CORE_GENERATORS, GenerationContext, Graph, ModelBuilder, generator,
+)
 
-MARKER_RE_TEMPLATE = "<!-- {tag} GENERATED: {name} -->"
-
-
-def marker_block(name: str, body: str) -> str:
-    begin = MARKER_RE_TEMPLATE.format(tag="BEGIN", name=name)
-    end = MARKER_RE_TEMPLATE.format(tag="END", name=name)
-    return f"{begin}\n{body}\n{end}"
+TRACE_BEGIN = re.compile(r"<!--\s*gendoc:begin\s+([A-Za-z0-9_-]+)\s*\n(.*?)\n-->", re.DOTALL)
+MARKDOWN_FENCE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})", re.MULTILINE)
 
 
-def update_marked_block(text: str, name: str, body: str) -> tuple[str, bool]:
-    """Reemplaza el contenido entre BEGIN/END GENERATED: name. Devuelve
-    (texto, encontrado). Si no encuentra los marcadores, no toca el texto."""
-    begin = MARKER_RE_TEMPLATE.format(tag="BEGIN", name=name)
-    end = MARKER_RE_TEMPLATE.format(tag="END", name=name)
-    start_idx = text.find(begin)
-    end_idx = text.find(end)
-    if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
-        return text, False
-    new_text = text[:start_idx] + begin + "\n" + body + "\n" + end + text[end_idx + len(end):]
-    return new_text, True
+# @artifact IMPL-GENDOC type=implementation
 
 
+# @id capabilities-table
 def _capabilities_table(reports: list[dict]) -> str:
     rows = [r for r in reports if r["capabilities"]]
     if not rows:
@@ -130,6 +119,7 @@ def _expand_implies(names, signals: dict) -> frozenset:
     return frozenset(expanded)
 
 
+# @id capability-matrix
 def _matrix_table(reports: list[dict], simulators: list[dict], signals: dict,
                   architecture: str) -> str:
     columns = []
@@ -183,6 +173,7 @@ def _matrix_table(reports: list[dict], simulators: list[dict], signals: dict,
     return "\n".join(lines)
 
 
+# @id synthesis-table
 def _synthesis_table(reports: list[dict]) -> str:
     rows = [r for r in reports if r["synthesis"]]
     if not rows:
@@ -207,72 +198,139 @@ def build_reports(root: Path) -> list[dict]:
     return [collect(prototype_dir, root) for prototype_dir in list_prototypes(root)]
 
 
-def render_dedicated_doc(title: str, marker_name: str, body: str) -> str:
-    header = f"# {title}\n\n_Generado por `generate-docs` a partir de `x.tests/backends/` y `reports/`. No editar a mano: los cambios se perderán._\n\n"
-    return header + marker_block(marker_name, body) + "\n"
+# @id trace-query
+def update_generated_blocks(text: str, context: GenerationContext) -> tuple[str, int]:
+    """Materializa bloques gendoc mediante el GeneratorRegistry."""
+    output = []
+    cursor = 0
+    changed = 0
+    fenced = _fenced_ranges(text)
+    search_from = 0
+    while match := TRACE_BEGIN.search(text, search_from):
+        if any(start <= match.start() < end for start, end in fenced):
+            search_from = match.end()
+            continue
+        name = match.group(1)
+        end_marker = f"<!-- gendoc:end {name} -->"
+        end = text.find(end_marker, match.end())
+        if end < 0:
+            raise ValueError(f"bloque gendoc '{name}' sin cierre")
+        metadata = yaml.safe_load(match.group(2)) or {}
+        if not isinstance(metadata, dict):
+            raise ValueError(f"metadata inválida en bloque gendoc '{name}'")
+        output.append(text[cursor:match.end()])
+        generator_name = metadata.pop("generator", None)
+        if not isinstance(generator_name, str):
+            raise ValueError(f"bloque gendoc '{name}' requiere generator")
+        body = CORE_GENERATORS.run(generator_name, context, metadata)
+        replacement = f"\n\n{body}\n\n{end_marker}"
+        original = text[match.end():end + len(end_marker)]
+        changed += replacement != original
+        output.append(replacement)
+        cursor = end + len(end_marker)
+        search_from = cursor
+    output.append(text[cursor:])
+    return "".join(output), changed
 
 
-def write_if_changed(path: Path, content: str, check: bool) -> bool:
-    existing = path.read_text(encoding="utf-8") if path.exists() else None
-    if existing == content:
-        return False
-    if check:
-        return True
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return True
+def update_trace_query_blocks(text: str, graph: Graph) -> tuple[str, int]:
+    """Compatibilidad interna para callers del primer slice de gendoc."""
+    return update_generated_blocks(text, GenerationContext(graph.model.root, graph))
 
 
-def update_manual_doc(path: Path, marker_name: str, body: str, check: bool) -> str:
-    if not path.exists():
-        return f"skip: {path.name} no existe"
-    text = path.read_text(encoding="utf-8")
-    new_text, found = update_marked_block(text, marker_name, body)
-    if not found:
-        return (
-            f"skip: {path.name} no tiene <!-- BEGIN GENERATED: {marker_name} --> ... "
-            f"<!-- END GENERATED: {marker_name} -->; añádelo a mano donde quieras la tabla generada"
-        )
-    if new_text == text:
-        return f"ok: {path.name} ya estaba al día"
-    if not check:
-        path.write_text(new_text, encoding="utf-8")
-    return f"{'(check) cambiaría' if check else 'actualizado'}: {path.name}"
+def _fenced_ranges(text: str) -> list[tuple[int, int]]:
+    result = []
+    opened = None
+    marker = None
+    for match in MARKDOWN_FENCE.finditer(text):
+        current = match.group(1)
+        if opened is None:
+            opened, marker = match.start(), current[0]
+        elif current[0] == marker:
+            line_end = text.find("\n", match.end())
+            result.append((opened, len(text) if line_end < 0 else line_end + 1))
+            opened = marker = None
+    if opened is not None:
+        result.append((opened, len(text)))
+    return result
 
 
-def main() -> int:
+@generator("prototype-summary", description="Tabla resumen de capacidades por prototipo")
+def generate_prototype_summary(context: GenerationContext, options: dict) -> str:
+    return _capabilities_table(context.values["reports"])
+
+
+@generator("cpu-matrix", description="Matriz de capacidades de MiniCPU")
+def generate_cpu_matrix(context: GenerationContext, options: dict) -> str:
+    return _matrix_table(
+        context.values["reports"], context.values["simulators"], context.values["signals"], "cpu"
+    )
+
+
+@generator("gpu-matrix", description="Matriz de capacidades de MiniGPU")
+def generate_gpu_matrix(context: GenerationContext, options: dict) -> str:
+    return _matrix_table(
+        context.values["reports"], context.values["simulators"], context.values["signals"], "gpu"
+    )
+
+
+@generator("synthesis-table", description="Últimos resultados de síntesis")
+def generate_synthesis_table(context: GenerationContext, options: dict) -> str:
+    return _synthesis_table(context.values["reports"])
+
+
+def update_trace_docs(root: Path, check: bool, values=None) -> tuple[bool, list[str]]:
+    model = ModelBuilder().build(root)
+    graph = Graph(model)
+    if graph.resolution.diagnostics:
+        details = "; ".join(item.format(root) for item in graph.resolution.diagnostics)
+        raise ValueError(f"grafo de trazabilidad inválido: {details}")
+    changed = False
+    messages = []
+    context = GenerationContext(root, graph, values or {})
+    paths = sorted({block.location.path for block in model.generation_blocks})
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        if "gendoc:begin" not in text:
+            continue
+        rendered, replacements = update_generated_blocks(text, context)
+        if not replacements:
+            continue
+        relative = path.relative_to(root).as_posix()
+        changed = True
+        messages.append(f"{'(check) cambiaría' if check else 'actualizado'}: {relative}")
+        if not check:
+            path.write_text(rendered, encoding="utf-8")
+    return changed, messages
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=None)
     parser.add_argument("--check", action="store_true", help="no escribe; indica si algo cambiaría")
-    args = parser.parse_args()
+    parser.add_argument("--list-generators", action="store_true", help="lista los generadores registrados")
+    args = parser.parse_args(argv)
+
+    if args.list_generators:
+        for definition in sorted(CORE_GENERATORS.definitions.values(), key=lambda item: item.name):
+            print(f"{definition.name}: {definition.description}")
+        return 0
 
     root = args.root.resolve() if args.root else find_repo_root(Path.cwd())
     reports = build_reports(root)
     simulators = simulator_capabilities(root)
     signals = load_capability_signals(root)
+    values = {
+        "reports": reports, "simulators": simulators, "signals": signals,
+    }
 
-    changed = False
-
-    synthesis_doc = render_dedicated_doc(
-        "Último informe de síntesis por prototipo", "synthesis-table", _synthesis_table(reports)
-    )
-    if write_if_changed(root / "docs" / "synthesis-report.md", synthesis_doc, args.check):
-        changed = True
-        print(f"{'(check) cambiaría' if args.check else 'escrito'}: docs/synthesis-report.md")
-    else:
-        print("ok: docs/synthesis-report.md ya estaba al día")
-
-    for path, marker_name, body in (
-        (root / "docs/resumen-prototipos.md", "cpu-matrix",
-         _matrix_table(reports, simulators, signals, "cpu")),
-        (root / "docs/resumen-prototipos.md", "gpu-matrix",
-         _matrix_table(reports, simulators, signals, "gpu")),
-        (root / "docs/resumen-prototipos.md", "prototype-summary", _capabilities_table(reports)),
-    ):
-        message = update_manual_doc(path, marker_name, body, args.check)
+    try:
+        changed, messages = update_trace_docs(root, args.check, values)
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for message in messages:
         print(message)
-        if message.startswith("actualizado") or message.startswith("(check) cambiaría"):
-            changed = True
 
     if args.check:
         return 1 if changed else 0

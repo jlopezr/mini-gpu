@@ -15,6 +15,245 @@ Todo lo de aquí abajo funciona igual si lo lanzas desde la raíz del repo, desd
 repositorio solo (por `MINI_GPU_ROOT`, por su propia ruta, o buscando
 `tools/` + `README.md`).
 
+## Comprobar la trazabilidad documental
+
+`trace check` construye un Project Model conforme al metamodelo v0.3. Un fichero
+Markdown es un `RESOURCE`, no una identidad semántica. Los `ARTIFACT` se
+declaran explícitamente mediante un comentario seguido de su heading:
+
+```markdown
+<!-- trace:artifact IMPL-MINIGPU
+type: implementation
+subjects: [isa, cpu, gpu]
+implements:
+  - SPEC-ISA
+-->
+
+# Implementación MiniGPU
+```
+
+El ID es global, sensible a mayúsculas y no deriva del `type`. Los headings
+dentro del artifact crean `SECTION` locales como `SPEC-ISA#ssy`; una sección
+que sea origen de relaciones necesita un ID formal `{#ssy}` y una directiva
+`trace:relations`. Los enlaces Markdown ordinarios no crean relaciones.
+
+El checker valida metadata YAML, tipos core, IDs únicos, atributos de relación,
+targets exactos y relaciones duplicadas. Solo conserva las relaciones authored
+en su dirección canónica; `trace show` calcula la vista inversa al consultar.
+
+Este vertical slice implementa `RESOURCE`, `ARTIFACT`, `SECTION` y relaciones
+Markdown. `trace.yaml` controla el discovery con patrones `scan` y `exclude`:
+
+```yaml
+project: minigpu
+version: 1
+scan:
+  - "**/*.md"
+exclude:
+  - build/**
+  - .git/**
+```
+
+La configuración es estricta: campos desconocidos, versiones no soportadas y
+listas de patrones inválidas son errores. Una ruta explícita tampoco puede
+saltar los límites de `scan`/`exclude`.
+
+### Caché del grafo
+
+Cada adapter produce un fragmento de modelo por `RESOURCE`, almacenado en
+`.trace/cache-v1.json` (ignorado por Git). La caché conserva identidades,
+relaciones pendientes, diagnósticos, localizaciones y dependencias:
+
+- si `mtime_ns` y tamaño no cambian, no se abre el fichero;
+- si cambia la metadata pero no el tamaño, se calcula SHA-256 y se reutiliza el
+  fragmento cuando el contenido sigue siendo idéntico;
+- si cambia el contenido o la versión del adapter, se vuelve a parsear;
+- los resources borrados salen del grafo activo y conservan su último fragmento
+  como tombstone para el análisis de impacto;
+- un sidecar se invalida también cuando cambia, aparece o desaparece el recurso
+  que describe.
+
+El resolver reconstruye siempre el grafo global desde los fragmentos para que
+duplicados y referencias reflejen el conjunto actual. `trace check --no-cache`
+permite forzar una lectura completa; la salida normal informa hits y misses.
+
+### Análisis de impacto
+
+`trace impact` recorre en ambos sentidos únicamente las relaciones explícitas
+del grafo y muestra una ruta mínima que explica cada resultado. Acepta una
+identidad o un recurso; cuando se indica un recurso, todas las identidades que
+proceden de él son puntos de partida:
+
+```bash
+$ trace impact SPEC-DEVICE#identity-register
+$ trace impact tools/traceability/example/validation.py --depth 2
+$ trace impact REQ-DEVICE-IDENTITY --json
+```
+
+La salida separa afectados directos y transitivos. `--depth N` limita el
+recorrido y `--json` ofrece IDs, localizaciones, profundidad y cada salto de la
+ruta para integraciones. El recorrido es una vista de conectividad: no añade
+relaciones semánticas ni invierte su dirección canónica; cada salto indica si
+se recorrió una relación en sentido `outgoing` o `incoming`.
+
+Si un recurso desaparece después de haber sido cacheado,
+`trace impact ruta/al/recurso` utiliza su tombstone y lo marca expresamente en
+la salida. Esta posibilidad depende de la caché descartable: con `--no-cache`,
+o si se borra `.trace/cache-v1.json`, no existe historial del recurso eliminado.
+
+### Navegación del grafo
+
+La API pública `Graph` construye una vez los índices por ID, tipo de elemento,
+tipo de artifact, `kind` y `subject`, además de relaciones entrantes, salientes
+y ownership estructural. Los comandos de consulta usan esos mismos índices:
+
+```bash
+$ trace list --type specification
+$ trace list --kind capability --format json
+$ trace incoming SPEC-DEVICE#identity-register --relation implements
+$ trace outgoing IMPL-DEVICE-PROBE --relation implements
+$ trace tree SPEC-DEVICE
+$ trace path VER-DEVICE-IDENTITY::identity-read IMPL-DEVICE-PROBE::read-identity
+```
+
+`tree` recorre estructura (`owner` y `parent-facet`), no relaciones semánticas.
+`path` recorre relaciones explícitas en ambos sentidos y devuelve el camino más
+corto, indicando en cada salto si utilizó la dirección canónica o su vista
+inversa. `show`, `list`, `incoming`, `outgoing`, `tree`, `path` e `impact`
+aceptan `--format text|json`; `impact --json` se conserva como alias.
+
+### Queries Python
+
+Las preguntas reutilizables son funciones Python registradas, no comandos con
+lógica duplicada ni un DSL propio:
+
+```python
+from tools.traceability import query
+
+@query
+def my_query(graph):
+    ...
+
+@query("related-to", arguments=("identity",))
+def related_to(graph, identity):
+    ...
+```
+
+El registro core se consulta y ejecuta desde CLI:
+
+```bash
+$ trace query list
+$ trace query unimplemented
+$ trace query unverified
+$ trace query not-fully-verified
+$ trace query unsatisfied
+$ trace query implementations-of SPEC-DEVICE#identity-register
+$ trace query verifications-of SPEC-DEVICE#identity-register --format json
+```
+
+`unverified` significa que no existe ninguna relación entrante `verifies`.
+`not-fully-verified` exige al menos una relación con `coverage=complete`; varias
+relaciones `partial` no se combinan implícitamente. Esta slice expone el registro
+Python, pero todavía no carga módulos de queries arbitrarios desde el proyecto.
+
+### Rules Python
+
+Las rules son políticas verificables separadas de las queries. Se registran con
+`@rule`, devuelven `RuleFinding` y se activan explícitamente en `trace.yaml`:
+
+```yaml
+rules:
+  - accepted-requirements-satisfied
+  - accepted-specifications-implemented
+  - accepted-targets-fully-verified
+```
+
+`trace check` solo las ejecuta después de resolver un grafo válido. Los findings
+`error` provocan exit code 1; los `warning` se muestran sin hacer fallar el
+comando. `trace rule list` enumera el registro core. Una rule desconocida o una
+configuración duplicada/inválida es un error explícito.
+
+Una `FACET` se declara dentro de un artifact y se asocia a una sección formal
+con el mismo ID local:
+
+```markdown
+<!-- trace:facet calls
+kind: capability
+-->
+
+## Function calls {#calls}
+```
+
+Esto crea `SPEC-ISA@calls` y `SPEC-ISA#calls`. Su subtree determina el alcance;
+las facets anidadas conservan `parent-facet` y cada sección guarda únicamente
+su facet inmediata. Una frontera de artifact termina cualquier facet activa.
+
+Todavía no se modela jerarquía interna de símbolos. El contenido situado dentro
+de bloques `gendoc` se ignora al construir el modelo, para que el resultado
+generado nunca se convierta accidentalmente en fuente autoritativa.
+
+### Anotaciones SystemVerilog
+
+El adapter SystemVerilog ofrece nivel 1–2: enlaza grupos de comentarios al
+siguiente `module` y reconoce artifacts, módulos nombrados y símbolos formales.
+
+```systemverilog
+// @artifact IMPL-MINIGPU type=implementation
+// @implements SPEC-ISA
+module minigpu (...);
+
+// update-mask @implements SPEC-SIMT#active-mask
+module mask_writer (...);
+```
+
+En el primer grupo las relaciones salen del ARTIFACT. En el segundo, el ID
+formal produce `IMPL-MINIGPU::update-mask`. También se admite `@id local-id`
+como anotación separada. Whitespace y comentarios normales no rompen el grupo;
+otro elemento sintáctico sí lo rompe y produce un diagnóstico.
+
+Python y ensamblador MiniISA reutilizan exactamente la misma gramática. Python
+asocia los grupos al siguiente `class`, `def` o `async def` (admite decoradores
+entre ambos); ASM los asocia al siguiente label. Sus comentarios son `#` y `;`
+respectivamente. Como en SystemVerilog, el código no anotado permanece como
+RESOURCE y no genera un inventario de SYMBOLs.
+
+### Sidecars
+
+Un fichero `<basename>.trace.yaml` aporta metadata a un recurso que no conviene
+modificar. Puede declarar cualquier tipo de ARTIFACT; no implica `source` por
+sí mismo.
+
+```yaml
+artifact: SRC-W9825G6KH-DATASHEET
+type: source
+kind: datasheet
+resource:
+  file: w9825g6kh.pdf
+  revision: "Rev. A"
+  sha256: "..."
+```
+
+`resource.file` se resuelve respecto al sidecar y no puede salir de la raíz.
+Debe existir. Si se proporciona `sha256`, `trace check` valida su formato y el
+contenido. La metadata desconocida es un error y el artifact puede declarar
+las mismas relaciones core que una representación Markdown.
+
+```bash
+trace check                         # todos los Markdown del repositorio
+trace check README.md docs/         # solo observaciones de esas rutas
+trace check --root /ruta/mini-gpu   # raíz explícita para CI
+trace show REQ-DEVICE-IDENTITY      # declaración y relaciones de una identidad
+```
+
+Al seleccionar rutas se siguen indexando las identidades de todo el repositorio,
+de modo que sus enlaces pueden resolverse fuera del subconjunto. El comando
+devuelve 0 si todo resuelve, 1 si encuentra diagnósticos y 2 si el uso o una
+ruta de entrada no son válidos.
+
+Hay un [ejemplo autocontenido](traceability/example/README.md) con requisito,
+decisión, especificación, implementación y verificación. Sirve como recorrido
+mínimo y especificación ejecutable del adapter Markdown.
+
 ## Windows: un `.ps1` por cada lanzador
 
 Un fichero sin extensión no se puede ejecutar directamente en Windows (no hay
@@ -416,27 +655,58 @@ rechaza lo que no debe aceptar.
 
 ```bash
 $ generate-docs
-escrito: docs/synthesis-report.md
-actualizado: resumen-prototipos.md
-actualizado: resumen-prototipos.md
-actualizado: resumen-prototipos.md
+actualizado: docs/resumen-prototipos.md
+actualizado: docs/synthesis-report.md
 
 $ generate-docs --check     # no escribe nada; exit code 1 si algo cambiaría (para CI)
+$ generate-docs --list-generators
 ```
 
-`docs/synthesis-report.md` se regenera por completo en cada ejecución (no lo
-edites a mano). `docs/resumen-prototipos.md` está escrito a mano, así que
-`generate-docs` **solo** toca lo que haya entre marcadores. Hay tres bloques,
-los tres en ese mismo fichero:
+`generate-docs` descubre los bloques declarativos en todos los Markdown que
+forman parte del modelo. Tanto `docs/synthesis-report.md` como
+`docs/resumen-prototipos.md` conservan el texto escrito a mano: la herramienta
+**solo** toca lo que haya entre los marcadores de cada bloque. Por ejemplo:
 
 ```markdown
-<!-- BEGIN GENERATED: cpu-matrix -->        matriz CPU
-<!-- BEGIN GENERATED: gpu-matrix -->        matriz GPU
-<!-- BEGIN GENERATED: prototype-summary --> tabla plana de los diez prototipos
+<!-- gendoc:begin cpu-capabilities
+generator: cpu-matrix
+-->
+
+... contenido generado ...
+
+<!-- gendoc:end cpu-capabilities -->
 ```
 
-Si esos marcadores no existen en el archivo, no lo toca — hay que añadirlos a
-mano una vez, donde tenga sentido insertar la tabla generada.
+El nombre del bloque es local al documento y el campo `generator` selecciona
+el generador registrado. El mismo mecanismo materializa queries del grafo:
+
+```markdown
+<!-- gendoc:begin identity-register-implementations
+generator: trace.query
+query: implementations-of
+arguments:
+  - SPEC-DEVICE#identity-register
+-->
+
+... tabla generada ...
+
+<!-- gendoc:end identity-register-implementations -->
+```
+
+El generador llama directamente a `ModelBuilder`, `Graph` y `CORE_QUERIES`; no
+duplica la semántica del CLI. `--check` comprueba también estos bloques sin
+escribir. Como dogfood, `tools/generate_docs.py` declara el artifact
+`IMPL-GENDOC` y símbolos formales para sus cuatro generadores.
+
+Todos se despachan ahora mediante `GeneratorRegistry`: `synthesis-table`,
+`cpu-matrix`, `gpu-matrix`, `prototype-summary` y `trace.query`. El decorador
+`@generator` permite registrar otros generadores Python sin añadir ramas al
+dispatcher. `--list-generators` muestra el inventario disponible. En cada
+ejecución se recalculan todos los bloques encontrados; la
+caché de `trace` conserva también qué recursos contienen bloques, por lo que
+`generate-docs` solo vuelve a abrir esos Markdown y solo los escribe cuando el
+texto renderizado cambia. Todavía no existe caché ni declaración de dependencias
+específica por generador.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
