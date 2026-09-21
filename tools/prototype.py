@@ -74,7 +74,7 @@ def read_ecp5_params(scons_params_text: str) -> dict[str, str]:
         result[key] = match.group(1)
     return result
 
-
+# TODO Locate the root by finding a trace.yaml file upwards. If in a inner folder a trace.yaml is found, ignore that folder, it belongs to a different project.
 def find_repo_root(start: Path | None = None) -> Path:
     """Busca la raíz del repositorio a partir de varias señales."""
     candidates: list[Path] = []
