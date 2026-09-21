@@ -163,17 +163,17 @@ module gpu_profile_tb;
 
         // ---- Volcado de los contadores de rendimiento (0x80000300) ----
         $display("=== PERFIL DE UN FRAME ===");
-        read_word(32'h80000300); $display("CYCLES      %0d", word_result);
-        read_word(32'h80000304); $display("RETIRED     %0d", word_result);
-        read_word(32'h80000308); $display("IMEM_HITS   %0d", word_result);
-        read_word(32'h8000030c); $display("IMEM_MISSES %0d", word_result);
-        read_word(32'h80000310); $display("LSU_TX      %0d", word_result);
-        read_word(32'h80000314); $display("VIDEO_TX    %0d", word_result);
-        read_word(32'h80000318); $display("STALL_MEM   %0d", word_result);
-        read_word(32'h8000031c); $display("LANE_OPS    %0d", word_result);
-        read_word(32'h80000010); $display("SWAP_COUNT  %0d", word_result);
+        read_word(32'h82030000); $display("CYCLES      %0d", word_result);
+        read_word(32'h82030004); $display("RETIRED     %0d", word_result);
+        read_word(32'h82030008); $display("IMEM_HITS   %0d", word_result);
+        read_word(32'h8203000c); $display("IMEM_MISSES %0d", word_result);
+        read_word(32'h82030010); $display("LSU_TX      %0d", word_result);
+        read_word(32'h80200024); $display("VIDEO_TX    %0d", word_result);
+        read_word(32'h82030014); $display("STALL_MEM   %0d", word_result);
+        read_word(32'h82030018); $display("LANE_OPS    %0d", word_result);
+        read_word(32'h80200018); $display("SWAP_COUNT  %0d", word_result);
 
-        read_word(32'h80000000);
+        read_word(32'h80200004);
         if(word_result!==32'h0014_0000) begin
             $display("FAIL: FB_FRONT=%h, esperaba 00140000",word_result);
             errors=errors+1;

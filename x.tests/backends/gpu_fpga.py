@@ -34,15 +34,18 @@ from tools.rtl_facts import (  # noqa: E402
 
 
 # Registros de video, en direcciones de byte. LOS MISMOS OFFSETS que en
-# `fpga.py`: ese es el contrato compartido de docs/unificacion-mmio.md, y si
-# algun dia dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no
-# aparecen ni HALT_AT --que la GPU no tiene-- ni las bases de reset: el backend
-# de CPU las restaura antes de cada caso, y un kernel de GPU se configura solo.
-VIDEO_FB_FRONT = 0x8000_0000
-VIDEO_FB_BACK = 0x8000_0004
-VIDEO_STATUS = 0x8000_000C
-VIDEO_SWAP_COUNT = 0x8000_0010
-VIDEO_CTRL = 0x8000_0018
+# `fpga.py`: ese es el contrato compartido, ahora MMIO v2 §9, y si algun dia
+# dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no aparecen ni
+# HALT_AT --que la GPU no tiene-- ni las bases de reset: el backend de CPU las
+# restaura antes de cada caso, y un kernel de GPU se configura solo.
+#
+# OJO AL MIGRAR: en v1 `CTRL` era el ultimo registro (+0x18) y ahora es el
+# PRIMERO (+0x00), asi que los cinco cambian de offset, no solo de base.
+VIDEO_FB_FRONT = 0x8020_0004
+VIDEO_FB_BACK = 0x8020_0008
+VIDEO_STATUS = 0x8020_0010
+VIDEO_SWAP_COUNT = 0x8020_0018
+VIDEO_CTRL = 0x8020_0000
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
 
@@ -192,25 +195,44 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
 def warp_config_base(monitor: ModuleType) -> int:
     """Dónde están los descriptores de warp en esta versión.
 
-    La dirección no es la misma en todos los prototipos mientras dure la
-    migración de `docs/unificacion-mmio.md`: la ventana se mueve de
-    `0x80000000` a `0x80001000`, una carpeta cada vez. Se lee del `monitor.py`
-    del prototipo, que es quien declara `MONITOR_REGIONS` y por tanto la única
-    fuente que no puede quedarse desfasada sin que falle antes el cliente.
+    Se lee del `monitor.py` del prototipo, que es quien declara
+    `MONITOR_REGIONS` y por tanto la única fuente que no puede quedarse
+    desfasada sin que falle antes el cliente. Con MMIO v2 las cuatro carpetas
+    de GPU la declaran en `0x82010000` (§14.2); el valor por defecto de aquí ya
+    no lo usa nadie y se deja en la base de v2, no en la de v1, para que un
+    prototipo nuevo que se olvide de declararla falle apuntando al mapa vigente.
     """
-    return getattr(monitor, 'WARP_CONFIG_BASE', 0x8000_0000)
+    return getattr(monitor, 'WARP_CONFIG_BASE', 0x8201_0000)
 
 
-def read_observations(client, status, requested: set[str], config_base: int) -> dict:
+def simt_debug_base(monitor: ModuleType) -> int:
+    """GPU SIMT DEBUG (§14.3). Igual que `warp_config_base`: del prototipo."""
+    return getattr(monitor, 'SIMT_DEBUG_BASE', 0x8202_0000)
+
+
+def gpu_perf_base(monitor: ModuleType) -> int:
+    """GPU PERFORMANCE (§14.4). El contador GLOBAL de retiros vive aquí.
+
+    En v1 estaba intercalado en el bloque de depuración, en `+0x108`, entre
+    `LSU_SLOTS` y `FIRST_ERROR`; en v2 es de PERF y los tres registros que
+    tenía debajo suben cuatro bytes. Es el cambio que hace que leer estas
+    direcciones con los offsets viejos no dé error sino **otro registro**.
+    """
+    return getattr(monitor, 'GPU_PERF_BASE', 0x8203_0000)
+
+
+def read_observations(client, status, requested: set[str], config_base: int,
+                      simt_base: int, perf_base: int) -> dict:
     """Read actual hardware state; register traffic is limited to assertions."""
     def word(address):
         return int.from_bytes(client.read_memory(address, 4), 'little')
 
-    result = {'fault.present': status.error, 'instructions_executed': word(0x80000108)}
+    result = {'fault.present': status.error,
+              'instructions_executed': word(perf_base + 0x04)}
     if status.error:
-        diagnostic = word(0x8000010c)
+        diagnostic = word(simt_base + 0x08)
         result.update({
-            'fault.pc': word(0x80000110),
+            'fault.pc': word(simt_base + 0x0c),
             'fault.warp_id': (diagnostic >> 3) & 7,
             'fault.core_id': diagnostic & 7 if diagnostic & 0x40 else None,
         })
@@ -224,7 +246,7 @@ def read_observations(client, status, requested: set[str], config_base: int) -> 
         result[f'{prefix}.pc'] = int.from_bytes(data[:4], 'little')
         result[f'{prefix}.active_mask'] = data[4]
         client.select_context(warp, 0)
-        result[f'{prefix}.instructions_executed'] = word(0x80000114)
+        result[f'{prefix}.instructions_executed'] = word(simt_base + 0x10)
     registers = []
     for key in requested:
         match = re.fullmatch(r'warp\[(\d+)\]\.lane\[(\d+)\]\.R(\d+)', key)
@@ -346,6 +368,8 @@ class GpuFpgaBackend:
             observations = read_observations(
                 client, status, observation_fields or set(),
                 warp_config_base(self.monitor),
+                simt_debug_base(self.monitor),
+                gpu_perf_base(self.monitor),
             )
             observations["duration_seconds"] = elapsed
 

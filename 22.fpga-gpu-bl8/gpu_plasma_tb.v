@@ -175,12 +175,12 @@ module gpu_plasma_tb;
 
         // Con 4 frames y un intercambio por frame, el ultimo dibujado (t=3)
         // acaba en 0x00100000 y ademas es el que se esta mostrando.
-        read_word(32'h80000010);
+        read_word(32'h80200018);
         if(word_result!==32'd4) begin
             $display("FAIL: SWAP_COUNT=%0d, esperaba 4",word_result);
             errors=errors+1;
         end else $display("OK: 4 intercambios completados");
-        read_word(32'h80000000);
+        read_word(32'h80200004);
         if(word_result!==32'h0010_0000) begin
             $display("FAIL: FB_FRONT=%h, esperaba 00100000",word_result);
             errors=errors+1;

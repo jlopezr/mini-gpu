@@ -247,7 +247,19 @@ def upload(project: Path) -> None:
     if bitstream is not None:
         print(f"--- `fujprog` directo con {bitstream} "
               "(bitstream ya actualizado, sin pasar por `apio upload`) ---", flush=True)
-        completed = subprocess.run([_find_fujprog(), "-l", "2", str(bitstream)], cwd=project)
+        # El mismo trato que el camino de `apio` de mas abajo. No lo tenia, y
+        # la asimetria no se veia porque esta rama solo se toma cuando la
+        # carpeta YA esta construida: en un arbol recien clonado `upload`
+        # siempre caia al camino de `apio`, que si lo trata. En cuanto alguien
+        # sintetiza, un `fujprog` ausente pasa de un mensaje util a una traza.
+        try:
+            completed = subprocess.run(
+                [_find_fujprog(), "-l", "2", str(bitstream)], cwd=project)
+        except FileNotFoundError as error:
+            raise BitstreamMismatch(
+                "No se encuentra `fujprog`; instálalo o carga el bitstream "
+                f"a mano desde {project}."
+            ) from error
         print("--- fin de `fujprog` ---", flush=True)
         if completed.returncode != 0:
             raise BitstreamMismatch(

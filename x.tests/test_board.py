@@ -151,11 +151,31 @@ class BoardTest(unittest.TestCase):
             ensure(monitor, board.UploadPolicy())
         upload.assert_called_once_with(PROJECT)
 
-    def test_apio_ausente_da_mensaje_util(self):
-        with mock.patch("subprocess.run", side_effect=FileNotFoundError()):
-            with self.assertRaises(board.BitstreamMismatch) as caught:
-                board.upload(PROJECT)
-        self.assertIn("apio", str(caught.exception))
+    def test_la_herramienta_ausente_da_mensaje_util(self):
+        """Los DOS caminos de `upload`, y antes solo se probaba uno.
+
+        `upload` tiene dos ramas: con bitstream fresco llama a `fujprog`
+        directo, y si no, a `apio upload`. Cual se toma depende de si la
+        carpeta esta construida, o sea de un artefacto que no esta en git.
+
+        Este test se escribio contra un arbol sin construir, asi que siempre
+        media la rama de `apio`, y ahi el `FileNotFoundError` si estaba
+        tratado. La de `fujprog` no lo estaba: en cuanto alguien sintetizaba
+        la 6, la misma prueba dejaba de comprobar el mensaje y se llevaba una
+        traza. Un test cuyo camino lo elige el estado del disco mide una cosa
+        distinta cada dia.
+
+        Se fija forzando cada rama a proposito.
+        """
+        for fresco, herramienta in ((None, "apio"), (PROJECT / "x.bit", "fujprog")):
+            with self.subTest(rama=herramienta):
+                with mock.patch.object(board, "_fresh_bitstream",
+                                       return_value=fresco), \
+                     mock.patch("subprocess.run",
+                                side_effect=FileNotFoundError()):
+                    with self.assertRaises(board.BitstreamMismatch) as caught:
+                        board.upload(PROJECT)
+                self.assertIn(herramienta, str(caught.exception))
 
     def test_apio_con_error_informa_del_codigo(self):
         completed = SimpleNamespace(returncode=2)

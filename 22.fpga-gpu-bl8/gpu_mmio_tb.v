@@ -69,7 +69,7 @@ module gpu_mmio_tb;
         input [4:0] r;
         output [31:0] value;
         begin
-            access(1,32'h80000100,8'd0);
+            access(1,32'h82020000,8'd0);
             @(negedge clk); debug_register=r;
             repeat(3) @(negedge clk);
             value=debug_data;

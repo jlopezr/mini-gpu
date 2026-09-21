@@ -25,13 +25,17 @@ ARCHITECTURAL_REGIONS = (
 # La configuración de warps está en 0x80001000 (segunda página, exclusiva de la
 # GPU) y no en 0x80000000, que queda para periféricos compartidos con la CPU.
 # Ver docs/resumen-prototipos.md.
-WARP_CONFIG_BASE = 0x8000_1000
-SIMT_DEBUG_BASE = 0x8000_0100
-SYSID_BASE = 0x8000_0f00
+SYSID_BASE = 0x8000_0000         # SYSTEM (mmio.md §5), siete palabras
+WARP_CONFIG_BASE = 0x8201_0000   # GPU WARPS (§14.2), ocho descriptores
+SIMT_DEBUG_BASE = 0x8202_0000    # GPU SIMT DEBUG (§14.3), cinco registros
+GPU_PERF_BASE = 0x8203_0000      # GPU PERFORMANCE (§14.4)
 MONITOR_REGIONS = (
-    (SIMT_DEBUG_BASE, 0x8000_0118),
-    (WARP_CONFIG_BASE, 0x8000_1080),
-    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
+    (SYSID_BASE, 0x8000_001c),
+    (WARP_CONFIG_BASE, 0x8201_0080),
+    (SIMT_DEBUG_BASE, 0x8202_0014),
+    # Solo la ranura 1, RETIRED. Este prototipo no tiene contador de ciclos,
+    # así que la ranura 0 no se abre: contestaría error.
+    (GPU_PERF_BASE + 0x04, GPU_PERF_BASE + 0x08),
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
@@ -61,10 +65,17 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 # igual.
 _REGIONES = MEMORY_REGIONS
 _WARP_CONFIG_BASE = WARP_CONFIG_BASE
+_SIMT_DEBUG_BASE = SIMT_DEBUG_BASE
 
 
 class MonitorClient(WarpMixin, protocolo.MonitorClient):
     MEMORY_REGIONS = _REGIONES
+    # `DEBUG_BASE` también hay que declararlo: el valor por defecto de
+    # `WarpMixin` sigue siendo el de v1 (0x80000100) porque la 22 todavía no
+    # está migrada. Sin esta línea, `select_context` escribiría en una
+    # dirección que este bitstream rechaza, y el síntoma sería «registros del
+    # warp equivocado», no un error.
+    DEBUG_BASE = _SIMT_DEBUG_BASE
     WARP_CONFIG_BASE = _WARP_CONFIG_BASE
     # La memoria del MODELO con el que se valida el JSON antes de tocar la
     # placa. Es la de ESTE prototipo: un pc fuera de ella tiene que fallar

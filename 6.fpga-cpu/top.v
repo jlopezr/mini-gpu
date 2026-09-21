@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -67,28 +72,61 @@ module top (
   wire mem_error;
 
   // ---------------------------------------------------------------------
-  // Identificacion del prototipo
+  // Bloque SYSTEM (MMIO v2, 1.isa/mmio.md seccion 5)
   // ---------------------------------------------------------------------
   //
   // Esta carpeta NO tiene MMIO, y no lo gana aqui. `sysid` cuelga del camino
-  // del MONITOR y nada mas: la CPU no lo ve, no hay pagina de dispositivos y
-  // un programa no puede leerlo. La leccion de esta carpeta --memoria plana,
-  // sin perifericos-- se queda como estaba.
+  // del MONITOR y nada mas: la CPU no lo ve, no hay decodificador, no hay
+  // pagina de dispositivos y un programa no puede leerlo. La leccion de esta
+  // carpeta --memoria plana, sin perifericos-- se queda como estaba.
+  //
+  // Lo unico que cambia al pasar a MMIO v2 es DONDE y CUANTO: el bloque de
+  // identificacion se mueve de 0x80000F00, donde eran cuatro palabras, a
+  // 0x80000000, donde son siete. No se anade ningun dispositivo.
   //
   // Existe porque la version de monitor dejo de servir para identificar la
   // placa. Al renumerarla por JUEGO DE COMANDOS, la 6 y la 10 contestan lo
   // mismo, asi que sin esto `--version ebr` daria por buena una 10 flasheada y
-  // se mediria el hardware equivocado, que es exactamente el fallo que SYS_ID
-  // existe para cerrar. Ver docs/resumen-prototipos.md.
-  wire sysid_selected = mem_address[31:4] == 28'h800_00f0;
+  // se mediria el hardware equivocado, que es exactamente el fallo que este
+  // bloque existe para cerrar. Ver docs/resumen-prototipos.md.
+  //
+  // POR QUE LA SELECCION LLEVA DOS COMPARACIONES. Siete palabras no son una
+  // potencia de dos, asi que `[31:5]` --que es lo que cuesta un solo
+  // comparador-- cubriria OCHO y la palabra 7 (+0x1C) contestaria el `default`
+  // del modulo, o sea un cero, en vez de dar error. La seccion 5 lo prohibe
+  // expresamente: el resto del bloque da error, no devuelve cero ni repite las
+  // palabras por alias. La segunda comparacion la excluye, y con eso +0x1C cae
+  // en `memory_map` y recibe error de direccion, igual que el resto del slot.
+  // Es el mismo criterio que `mmio_decoder.v` aplica con `offset[7:2] > 6'd6`
+  // en las carpetas que si tienen decodificador.
+  wire sysid_selected = (mem_address[31:5] == 27'h400_0000) &&
+                        (mem_address[4:2] != 3'd7);
   wire [31:0] sysid_word;
   sysid #(
-      .FOLDER(8'd6),
-      .CONTRACT(32'd1),
+      .FOLDER(`SYSID_FOLDER),
       // bit 0 MUL, bit 1 DIV. Esta CPU los tiene; no tiene sub-palabra ni SIMT.
-      .ISA_PROFILE(32'h0000_0003)
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      // Seccion 5.4: bit 0 SYSTEM, bit 3 EBR, bit 9 CPU. Ni SDRAM, ni video,
+      // ni serie, ni fabric.
+      //
+      // AQUI DECIA que el bit 9 no iba «porque es del bloque CPU PERFORMANCE
+      // de 0x81010000, que aqui no existe». Esa lectura --un bit por bloque
+      // MMIO-- no es la de §5.4, que dice «bitmap de dispositivos PRESENTES» y
+      // reserva un bit para EBR, que no es ningun bloque. Con la lectura vieja
+      // el bit seria cero en las diez carpetas, porque ni CPU CORE ni GPU CORE
+      // estan implementados, y el bitmap no distinguiria una CPU de una GPU.
+      // La 6 y la 10 eran las dos unicas que la seguian; las otras ocho ya
+      // declaraban su nucleo.
+      .DEVICES(`SYSID_DEVICES),
+      // 32 KiB de EBR como region contigua (seccion 3.1 y decision 41).
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
+      // (mayor << 8) | menor, con los MISMOS numeros que el `monitor #(...)`
+      // de mas abajo. No se deduce de nada: copiar el de otra carpeta es un
+      // numero valido que hace declarar un juego de comandos que esta carpeta
+      // no implementa, y no lo dice ningun test.
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION)   // 3.6, el mismo que monitor_i
   ) sysid_i (
-      .word(mem_address[3:2]),
+      .word(mem_address[4:2]),
       .read_data(sysid_word)
   );
 
@@ -152,13 +190,19 @@ module top (
   // esta carpeta antes: un programa que use `R0` como registro general no para
   // con error, da otro resultado en silencio. Ver 1.isa/isa.md seccion 1.
   //
-  // La unica ventana es la de identificacion. Esta carpeta no tiene MMIO de
-  // verdad --ni video, ni contadores-- pero si `sysid`, y sin declararlo aqui
-  // un READ_BLOCK sobre 0x80000f00 se rechazaria antes de llegar al
-  // decodificador. Gemela de MONITOR_REGIONS en monitor.py.
+  // La unica ventana es la del bloque SYSTEM. Esta carpeta no tiene MMIO de
+  // verdad --ni video, ni serie, ni contadores-- pero si identificacion, y sin
+  // declararla aqui un READ_BLOCK sobre 0x80000000 se rechazaria antes de
+  // llegar a `sysid`. Gemela de MONITOR_REGIONS en monitor.py.
+  //
+  // La ventana es el BLOQUE ENTERO de 64 KiB, no las siete palabras que hay
+  // hoy, por la razon que las carpetas con decodificador ya dejaron escrita:
+  // un subconjunto seria una tercera gemela que mantener, y ya se quedo atras
+  // una vez. Quien rechaza un offset sin registro es el que lo sabe --aqui, la
+  // seleccion de `sysid_selected` y `memory_map`--, no la lista del host.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd6),
       .RAM_END(33'h0_0000_8000),
-      .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000))  // SYSTEM
     monitor_i (
       .clk(clk),
       .reset(reset),
@@ -228,8 +272,10 @@ module top (
       .write_data(mem_write_data),
       .write_word(mem_write_word),
       .write_word_enable(mem_write_word_enable && !sysid_selected),
-      // El acceso al bloque de identificacion no llega a la memoria: alli
-      // 0x80000f00 esta fuera del mapa y levantaria `error`.
+      // El acceso al bloque SYSTEM no llega a la memoria: alli 0x80000000 esta
+      // fuera del mapa y levantaria `error`. Eso es justamente lo que se quiere
+      // para la palabra 7 y para el resto del slot, que `sysid_selected` deja
+      // pasar a proposito.
       .write_enable(mem_write_enable && !sysid_selected),
       .read_enable(mem_read_enable && !sysid_selected),
       .read_data(map_read_data), .read_word(map_read_word),

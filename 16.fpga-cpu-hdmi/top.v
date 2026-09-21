@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -99,7 +104,14 @@ module top (
   // tercera gemela que mantener. Gemela de MONITOR_REGIONS en monitor.py.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd16),
       .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+      // Tres ventanas, no cuatro: esta carpeta no tiene puerto serie, y abrir
+      // la de SERIAL solo dejaria pasar accesos que el decodificador va a
+      // rechazar. Cada una es el bloque ENTERO de 64 KiB, no el subconjunto de
+      // registros que existen hoy: un subconjunto seria una tercera gemela que
+      // mantener, y ya se quedo atras una vez.
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
+      .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8021_0000),  // VIDEO
+      .WINDOW2_BASE(33'h0_8101_0000),.WINDOW2_END(33'h0_8102_0000))  // CPU PERF
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -175,9 +187,18 @@ module top (
   wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_error;
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
+  // Borrado del underflow y parada por HALT_AT. Los dos nacen en el bloque de
+  // registros de video, que se instancia mucho mas abajo, y cruzan a otro
+  // sitio: el primero al dominio de pixel y el segundo a la CPU.
+  wire video_underflow_clear, video_halt_request;
   cpu cpu_i(
       .clk(clk), .reset(reset || cpu_reset_request),
-      .run_request(cpu_run_request), .halt_request(cpu_halt_request),
+      .run_request(cpu_run_request),
+      // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
+      // video, que la para al llegar al frame numero N. Lo segundo es lo que
+      // hace repetible una captura de frame, y es la capacidad que esta
+      // carpeta GANA al pasar a MMIO v2.
+      .halt_request(cpu_halt_request || video_halt_request),
       .step_request(cpu_step_request), .halted(cpu_halted), .error(cpu_error),
       .error_code(cpu_error_code), .instruction_retired(cpu_instruction_retired),
       .imem_valid(cpu_imem_valid), .imem_address(cpu_imem_address),
@@ -197,10 +218,13 @@ module top (
   wire [15:0] video_read_data;
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  // La pagina MMIO entera, repartida en 16 dispositivos de 256 bytes. Ver
-  // mmio_decoder.v: ensanchar ABARATA el prefijo --de comparar 28 bits a
-  // comparar 20-- y lo que se paga es un nivel de LUT en el mux de lectura.
-  wire [11:0] mmio_address;
+  // El espacio MMIO entero, en bloques de 64 KiB separados por megabytes
+  // (MMIO v2, 1.isa/mmio.md seccion 2). Ya no es una pagina de 4 KiB con
+  // dieciseis ranuras de 256 B, asi que la direccion va ENTERA: el
+  // decodificador elige bloque con `address[26:16]` y con doce bits no cabe ni
+  // la base de VIDEO. Truncarla es el fallo de la 18, que Verilog conecta sin
+  // un aviso; `test_top_wiring.py` compara esta anchura contra el puerto.
+  wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
 
@@ -318,6 +342,7 @@ module top (
       .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
       .underflow(video_underflow),
       .clk_sys(clk), .rst_sys(reset),
+      .underflow_clear(video_underflow_clear),
       .fill_start(fill_start), .fill_line(fill_line), .fill_first(fill_first),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
       .fill_done(fill_done));
@@ -364,43 +389,74 @@ module top (
       .fill_we(fill_we), .fill_addr(fill_addr),
       .fill_data(fill_data), .fill_done(fill_done));
 
-  // Reparto de la ventana MMIO entre dispositivos. El mapa esta en
-  // mmio_decoder.v; el video no se mueve de 0x80000000.
+  // Reparto del espacio MMIO entre bloques. El mapa esta en mmio_decoder.v:
+  // SYSTEM en 0x80000000, VIDEO en 0x80200000 y CPU PERFORMANCE en
+  // 0x81010000. El video se MUEVE: ya no esta en 0x80000000, que ahora es el
+  // bloque de identificacion.
   //
   // ISA_PROFILE: MUL y DIV. Ni subpalabra --esta carpeta no tiene
   // STOREB/LOADB-- ni el bit 3 de SIMT, que aunque `cpu.v` decodifique SSY y
   // BAR aqui son NO-OP, puestos para poder compartir binarios con la GPU.
   //
-  // Esta carpeta no tiene puerto serie: su `select` se queda sin conectar y su
-  // dato leido es cero, igual que cualquier dispositivo que no existe.
-  wire mmio_video_select;
+  // Esta carpeta no tiene puerto serie: su `select` se queda sin conectar, su
+  // dato leido es cero y su bit de DEVICES es cero, o sea que un acceso a
+  // 0x80100000 da error en vez de contestar (seccion 4.3).
+  //
+  // VIDEO_REGISTERS pasa de 0x4f a 0x3ff, y no es un renombrado: esta carpeta
+  // GANA los cinco registros de v2. Ver docs/migracion-v2.md, "la decision del
+  // bitmap". El valor tiene que ser el de lo que `video_registers.v`
+  // implementa de verdad, y hay un test que lo deriva de sus `localparam
+  // REG_*` en vez de creerse este numero.
+  //
+  // MONITOR_VERSION no se deduce de nada: es (mayor << 8) | menor con los
+  // MISMOS numeros que el `monitor #(...)` de arriba, o sea 3.16. Copiar el de
+  // otra carpeta es un numero perfectamente valido que hace que el bloque
+  // SYSTEM declare un juego de comandos que esta carpeta no implementa, y no
+  // lo dice ningun test.
+  wire mmio_video_select, mmio_video_error, mmio_perf_select;
   wire [31:0] mmio_video_read_data;
   wire [31:0] mmio_perf_read_data;
-  mmio_decoder #(.FOLDER(8'd16), .HAS_SERIAL(0), .VIDEO_REGISTERS(64'h4f), .ISA_PROFILE(32'h0000_0003)) mmio_decoder_i(
-      .select(mmio_select), .write(mmio_write), .address(mmio_address),
+  mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(0), .VIDEO_REGISTERS(64'h3ff),
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      // Seccion 5.4: bit 0 SYSTEM, bit 2 SDRAM, bit 5 VIDEO, bit 9 CPU. Sin
+      // el bit 4, que es SERIAL. Es el mismo 0x225 de la 18, y por lo mismo.
+      .DEVICES(`SYSID_DEVICES),
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION))   // 3.16, el mismo que monitor_i
+    mmio_decoder_i(
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
       .serial_select(), .serial_read_data(32'd0),
-      .perf_read_data(mmio_perf_read_data),
+      .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .read_data(mmio_read_data), .error(mmio_error));
 
-  // Contadores de rendimiento en 0x80000300. `restart` es `cpu_run_request`:
-  // cada `run` empieza una medida nueva, que es lo que estos contadores hacian
-  // ya cuando vivian en este fichero.
+  // Contadores de rendimiento en 0x81010000 (CPU PERFORMANCE, seccion 13.2).
+  // `restart` es `cpu_run_request`: cada `run` empieza una medida nueva, que
+  // es lo que estos contadores hacian ya cuando vivian en este fichero.
   cpu_perf_counters perf_i(
       .clk(clk), .reset(reset),
-      .address(mmio_address[7:0]), .read_data(mmio_perf_read_data),
+      .select(mmio_perf_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_perf_read_data),
       .running(!cpu_halted), .retired(cpu_instruction_retired),
       .restart(cpu_run_request));
 
-
-  // Registros de video en 0x80000000, y con ellos el doble framebuffer.
+  // Registros de video en 0x80200000, y con ellos el doble framebuffer.
   video_registers registers_i(
       .clk(clk), .reset(reset),
-      .select(mmio_video_select), .write(mmio_write), .write_mask(mmio_write_mask),
+      .select(mmio_video_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
       .address(mmio_address[7:0]), .write_data(mmio_write_data),
       .read_data(mmio_video_read_data),
+      .error(mmio_video_error),
+      .running(!cpu_halted),
       .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
       .underflow_pix(video_underflow),
+      .underflow_clear(video_underflow_clear),
+      .halt_request(video_halt_request),
       .video_mode(video_mode),
       .debug_front(), .debug_back());
 

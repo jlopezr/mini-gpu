@@ -1,3 +1,8 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
 `default_nettype none
 
 module top (
@@ -81,11 +86,17 @@ module top (
   // da otro resultado en silencio-- asi que sube la version aunque el protocolo
   // no cambie ni un byte. Ver 1.isa/isa.md seccion 1.
   //
-  // La unica ventana es la de identificacion: esta carpeta tiene `sysid` pero
-  // ningun otro MMIO. Gemela de MONITOR_REGIONS en monitor.py.
+  // La unica ventana es la del bloque SYSTEM: esta carpeta tiene
+  // identificacion pero ningun otro MMIO. Gemela de MONITOR_REGIONS en
+  // monitor.py.
+  //
+  // La ventana es el BLOQUE ENTERO de 64 KiB, no las siete palabras que hay
+  // hoy, por la razon que las carpetas con decodificador ya dejaron escrita:
+  // un subconjunto seria una tercera gemela que mantener, y ya se quedo atras
+  // una vez.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd10),
       .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0f00),.WINDOW0_END(33'h0_8000_0f10))
+      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000))  // SYSTEM
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -124,30 +135,58 @@ module top (
   wire [31:0] adapter_monitor_read_word;
   wire adapter_monitor_ready, adapter_monitor_error;
   // ---------------------------------------------------------------------
-  // Identificacion del prototipo
+  // Bloque SYSTEM (MMIO v2, 1.isa/mmio.md seccion 5)
   // ---------------------------------------------------------------------
   //
   // Esta carpeta NO tiene MMIO, y no lo gana aqui. `sysid` cuelga del camino
-  // del MONITOR y nada mas: la CPU no lo ve, no hay pagina de dispositivos y
-  // un programa no puede leerlo. La leccion de esta carpeta --mapa plano sobre
-  // SDRAM, sin perifericos-- se queda como estaba.
+  // del MONITOR y nada mas: la CPU no lo ve, no hay decodificador, no hay
+  // pagina de dispositivos y un programa no puede leerlo. La leccion de esta
+  // carpeta --mapa plano sobre SDRAM, sin perifericos-- se queda como estaba.
+  //
+  // Lo unico que cambia al pasar a MMIO v2 es DONDE y CUANTO: el bloque de
+  // identificacion se mueve de 0x80000F00, donde eran cuatro palabras, a
+  // 0x80000000, donde son siete. No se anade ningun dispositivo.
   //
   // Existe porque la version de monitor dejo de servir para identificar la
   // placa. Al renumerarla por JUEGO DE COMANDOS, la 6 y la 10 contestan lo
   // mismo, asi que sin esto `--version sdram` daria por buena una 6 flasheada
-  // y se mediria el hardware equivocado, que es exactamente el fallo que
-  // SYS_ID existe para cerrar. Ver docs/resumen-prototipos.md.
-  wire sysid_selected = adapter_monitor_address[31:4] == 28'h800_00f0;
+  // y se mediria el hardware equivocado, que es exactamente el fallo que este
+  // bloque existe para cerrar. Ver docs/resumen-prototipos.md.
+  //
+  // POR QUE LA SELECCION LLEVA DOS COMPARACIONES. Siete palabras no son una
+  // potencia de dos, asi que `[31:5]` --que es lo que cuesta un solo
+  // comparador-- cubriria OCHO y la palabra 7 (+0x1C) contestaria el `default`
+  // del modulo, o sea un cero, en vez de dar error. La seccion 5 lo prohibe
+  // expresamente. La segunda comparacion la excluye y con eso +0x1C recibe
+  // error de direccion como el resto del slot. Mismo criterio que la 6, y que
+  // el `offset[7:2] > 6'd6` de `mmio_decoder.v` donde hay decodificador.
+  //
+  // A diferencia de la 6, aqui la comparacion cuelga de la direccion YA
+  // REGISTRADA, asi que el camino es registro -> comparacion -> registro y no
+  // toca el critico. En la 6 sale del pin del bus.
+  wire sysid_selected = (adapter_monitor_address[31:5] == 27'h400_0000) &&
+                        (adapter_monitor_address[4:2] != 3'd7);
   wire [31:0] sysid_word;
   sysid #(
-      .FOLDER(8'd10),
-      .CONTRACT(32'd1),
+      .FOLDER(`SYSID_FOLDER),
       // A esta CPU le faltan MUL y DIV, y eso no se detecta de ninguna otra
       // forma en ejecucion: es justo el caso que ISA_PROFILE existe para
       // declarar.
-      .ISA_PROFILE(32'h0000_0000)
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      // Seccion 5.4: bit 0 SYSTEM, bit 2 SDRAM, bit 9 CPU. Ni EBR, ni video,
+      // ni serie, ni fabric. El porque del bit 9, que antes no iba, esta
+      // contado en el `top.v` de la 6: §5.4 describe dispositivos PRESENTES,
+      // no bloques MMIO implementados.
+      .DEVICES(`SYSID_DEVICES),
+      // 32 MiB de SDRAM, el mismo numero que RAM_END en el monitor de arriba.
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
+      // (mayor << 8) | menor, con los MISMOS numeros que el `monitor #(...)`
+      // de mas arriba. No se deduce de nada: copiar el de otra carpeta es un
+      // numero valido que hace declarar un juego de comandos que esta carpeta
+      // no implementa, y no lo dice ningun test.
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION)   // 3.10, el mismo que monitor_i
   ) sysid_i (
-      .word(adapter_monitor_address[3:2]),
+      .word(adapter_monitor_address[4:2]),
       .read_data(sysid_word)
   );
 
@@ -221,8 +260,10 @@ module top (
       .clk(clk), .reset(reset), .init_done(init_done),
       .monitor_address(adapter_monitor_address),
       .monitor_write_data(adapter_monitor_write_data),
-      // El acceso al bloque de identificacion no llega a la SDRAM: alli
-      // 0x80000f00 esta fuera del mapa y levantaria `error`.
+      // El acceso al bloque SYSTEM no llega a la SDRAM: alli 0x80000000 esta
+      // fuera del mapa y levantaria `error`. Eso es justamente lo que se
+      // quiere para la palabra 7 y para el resto del slot, que
+      // `sysid_selected` deja pasar a proposito.
       .monitor_write_enable(adapter_monitor_write_enable && !sysid_selected),
       .monitor_write_word(adapter_monitor_write_word),
       .monitor_write_word_enable(adapter_monitor_write_word_enable && !sysid_selected),

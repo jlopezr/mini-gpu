@@ -35,22 +35,24 @@ SOURCE = ROOT / "1.isa" / "mmio_map.vh"
 INC_OUTPUT = ROOT / "x.tests" / "inc" / "mmio.inc"
 PY_OUTPUT = ROOT / "tools" / "mmio_map.py"
 
-SOURCE_V1 = ROOT / "1.isa" / "mmio_map_v1.vh"
-INC_OUTPUT_V1 = ROOT / "x.tests" / "inc" / "mmio_v1.inc"
-PY_OUTPUT_V1 = ROOT / "tools" / "mmio_map_v1.py"
-
-#: (fuente, .inc, modulo .py). El segundo mapa es el de v1, con las mismas
-#: constantes y los valores de HOY, para que los programas de una carpeta
-#: puedan pasar a simbolos antes de que las direcciones se muevan.
+#: (fuente, .inc, modulo .py). Un solo mapa: el contrato.
 #:
-#: Se borro al cerrar la migracion de la 21 --"si un mapa de transicion sigue
-#: aqui y ningun `.asm` lo incluye, sobra"-- y hubo que rehacerlo entero para
-#: la 19. El criterio estaba mal: el andamio no sobra cuando lo suelta la
-#: primera carpeta, sobra cuando lo suelta la ULTIMA. Ocho carpetas seguian en
-#: v1 cuando se borro.
+#: Hubo un segundo, `1.isa/mmio_map_v1.vh`, con las mismas constantes y los
+#: valores de v1, para que los programas de una carpeta pudieran pasar a
+#: simbolos ANTES de que las direcciones se movieran. Se borro dos veces:
+#:
+#:   1. al cerrar la migracion de la 21 --"si un mapa de transicion sigue aqui
+#:      y ningun `.asm` lo incluye, sobra"--, y hubo que rehacerlo entero para
+#:      la 19. El criterio estaba mal: el andamio no sobra cuando lo suelta la
+#:      primera carpeta, sobra cuando lo suelta la ULTIMA. Ocho carpetas
+#:      seguian en v1 cuando se borro.
+#:   2. al cerrar la 22, que era esa ultima. Las diez carpetas estan en v2 y
+#:      ningun `.asm` del repo incluye `mmio_v1.inc`.
+#:
+#: Si algun dia hace falta otra transicion, esta en el historial y el patron
+#: esta contado en `19.fpga-cpu-hdmi-ls/docs/migracion-v2.md`.
 MAPAS = (
     (SOURCE, INC_OUTPUT, PY_OUTPUT),
-    (SOURCE_V1, INC_OUTPUT_V1, PY_OUTPUT_V1),
 )
 
 # `define NOMBRE 32'hXXXX_XXXX`, y nada mas. Cualquier otra forma se rechaza

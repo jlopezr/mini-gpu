@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lee los contadores de rendimiento de la placa y los presenta como un perfil.
 
-Los contadores viven en 0x80000300 (ver mmio.md). Existen precisamente para no
+Los contadores viven en 0x82030000 (ver mmio.md §14.4). Existen precisamente para no
 tener que simular: un frame entero de `plasma.asm` son ~3 millones de ciclos, y
 simularlo en RTL tarda unos diez minutos. Aqui se lee en un parpadeo.
 
@@ -32,17 +32,24 @@ import serial
 
 import monitor
 
-BASE = 0x80000300
+BASE = 0x8203_0000
+
+# OJO: en MMIO v2 los contadores YA NO ESTAN TODOS EN EL MISMO BLOQUE.
+# `VIDEO_TX` se ha ido a VIDEO, porque §12.1 dice que un contador pertenece a
+# quien genera el evento y el scanout es de vídeo (§9.7). Por eso cada entrada
+# lleva ahora su propia base: leer los ocho con `BASE + offset` daría siete
+# números buenos y un `STALL_MEM` disfrazado de `VIDEO_TX`.
+VIDEO_BASE = 0x8020_0000
 
 COUNTERS = [
-    ("CYCLES", 0x00, "ciclos"),
-    ("RETIRED", 0x04, "instrucciones retiradas"),
-    ("IMEM_HITS", 0x08, "aciertos del bufer de instrucciones"),
-    ("IMEM_MISSES", 0x0C, "fallos del bufer de instrucciones"),
-    ("LSU_TX", 0x10, "transacciones de la LSU vectorial"),
-    ("VIDEO_TX", 0x14, "transacciones del scanout"),
-    ("STALL_MEM", 0x18, "ciclos con la LSU sin aceptar peticion"),
-    ("LANE_OPS", 0x1C, "operaciones de hilo (suma de lanes activas)"),
+    ("CYCLES", BASE, 0x00, "ciclos"),
+    ("RETIRED", BASE, 0x04, "instrucciones retiradas"),
+    ("IMEM_HITS", BASE, 0x08, "aciertos del bufer de instrucciones"),
+    ("IMEM_MISSES", BASE, 0x0C, "fallos del bufer de instrucciones"),
+    ("LSU_TX", BASE, 0x10, "transacciones de la LSU vectorial"),
+    ("STALL_MEM", BASE, 0x14, "ciclos con la LSU sin aceptar peticion"),
+    ("LANE_OPS", BASE, 0x18, "operaciones de hilo (suma de lanes activas)"),
+    ("VIDEO_TX", VIDEO_BASE, 0x24, "transacciones del scanout"),
 ]
 
 
@@ -52,7 +59,8 @@ def read_word(client: monitor.MonitorClient, address: int) -> int:
 
 
 def snapshot(client: monitor.MonitorClient) -> dict[str, int]:
-    return {name: read_word(client, BASE + offset) for name, offset, _ in COUNTERS}
+    return {name: read_word(client, base + offset)
+            for name, base, offset, _ in COUNTERS}
 
 
 def report(before: dict[str, int], after: dict[str, int]) -> None:
@@ -64,7 +72,7 @@ def report(before: dict[str, int], after: dict[str, int]) -> None:
 
     print()
     print("=== PERFIL ===")
-    for name, _, description in COUNTERS:
+    for name, _, _, description in COUNTERS:
         print(f"  {name:<12} {delta[name]:>12,}   {description}")
 
     print()

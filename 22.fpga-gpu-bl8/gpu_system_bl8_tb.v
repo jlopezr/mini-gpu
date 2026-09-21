@@ -87,9 +87,9 @@ module gpu_system_bl8_tb;
             for(i=0;i<256;i=i+1) write_word(i*4,program_words[i]);
             for(i=0;i<512;i=i+1) write_word(4096+i*4,0);
             for(w=0;w<8;w=w+1) begin
-                write_word(32'h80001000+w*16,config_words[w*3]);
-                write_word(32'h80001004+w*16,config_words[w*3+1]);
-                write_word(32'h80001008+w*16,config_words[w*3+2]);
+                write_word(32'h82010000+w*16,config_words[w*3]);
+                write_word(32'h82010004+w*16,config_words[w*3+1]);
+                write_word(32'h82010008+w*16,config_words[w*3+2]);
             end
             @(negedge clk); run_request=1;
             @(negedge clk); run_request=0;
@@ -99,7 +99,7 @@ module gpu_system_bl8_tb;
             if(!halted || error) $fatal(1,"case %0d stopped: halted=%b code=%h pc=%h warp=%d state=%d",test_id,halted,error_code,debug_pc,dut.sm.error_warp,dut.sm.state);
             for(w=0;w<8;w=w+1) begin
                 for(l=0;l<8;l=l+1) begin
-                    access(1,32'h80000100,w*8+l);
+                    access(1,32'h82020000,w*8+l);
                     for(r=0;r<32;r=r+1) begin
                         @(negedge clk); debug_register=r;
                         repeat(3) @(negedge clk);
@@ -107,14 +107,14 @@ module gpu_system_bl8_tb;
                             $fatal(1,"case %0d w%0d lane%0d R%0d got %h expected %h",test_id,w,l,r,debug_data,expected[w*256+l*32+r]);
                     end
                 end
-                read_word(32'h80000114);
+                read_word(32'h82020010);
                 if(word_result!==expected_counts[w]) $fatal(1,"case %0d warp %0d retired count %0d expected %0d",test_id,w,word_result,expected_counts[w]);
-                read_word(32'h80001004+w*16);
+                read_word(32'h82010004+w*16);
                 if(word_result!=={16'b0,expected_state[w*3+2][7:0],expected_state[w*3+1][7:0]})
                     $fatal(1,"case %0d warp %0d masks mismatch",test_id,w);
-                read_word(32'h8000100c+w*16);
+                read_word(32'h8201000c+w*16);
                 if(word_result!==0) $fatal(1,"case %0d warp %0d control not cleared: %h",test_id,w,word_result);
-                read_word(32'h80001000+w*16);
+                read_word(32'h82010000+w*16);
                 if(word_result!==expected_state[w*3]) $fatal(1,"case %d warp %d PC got %h expected %h",test_id,w,word_result,expected_state[w*3]);
             end
             for(i=0;i<512;i=i+1) begin

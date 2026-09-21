@@ -38,7 +38,7 @@ if str(ROOT / "1.isa") not in sys.path:
     sys.path.insert(0, str(ROOT / "1.isa"))
 
 from tools.generate_mmio import (  # noqa: E402
-    MmioMapError, SOURCE, SOURCE_V1, base_de, desincronizados, generar,
+    MmioMapError, SOURCE, base_de, desincronizados, generar,
     parse_map, render_inc,
 )
 
@@ -56,14 +56,12 @@ class SincroniaTest(unittest.TestCase):
 
     def test_los_destinos_se_generan(self):
         """Si alguien añade una salida y olvida el test, esto lo dice. Y lo
-        dijo dos veces, las dos sin que nadie lo provocara: al añadir el mapa
-        v1 durante la migración de la 21, y al RESUCITARLO para la 19 después
-        de haberlo borrado. Es el único test de este fichero que ha saltado
-        por su cuenta."""
+        dijo tres veces, las tres sin que nadie lo provocara: al añadir el mapa
+        v1 durante la migración de la 21, al RESUCITARLO para la 19 después de
+        haberlo borrado, y al borrarlo definitivamente al cerrar la 22. Es el
+        único test de este fichero que ha saltado por su cuenta."""
         destinos = {p.name for p in generar()}
-        self.assertEqual(
-            {"mmio.inc", "mmio_map.py",
-             "mmio_v1.inc", "mmio_map_v1.py"}, destinos)
+        self.assertEqual({"mmio.inc", "mmio_map.py"}, destinos)
 
 
 class ConformidadTest(unittest.TestCase):
@@ -315,13 +313,30 @@ class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):
     # La 19 faltaba, y por eso sus doce programas siguieron en v1 sin que nadie
     # se enterara: la guarda existia, la carpeta no estaba dentro. Una lista de
     # carpetas escrita a mano vigila lo que le han dicho, no lo que hay.
+    #
+    # Y la familia GPU lo repitio en grande: las cuatro carpetas tienen DOS
+    # directorios con `.asm`, `examples/` y `fixtures/`, y el grueso esta en el
+    # segundo --128 de 152 programas--. Anadir solo `examples/`, que es lo que
+    # decia el encargo, habria dejado fuera el 84 % de lo que hay que vigilar.
+    # Por eso van las dos rutas de cada carpeta y no la raiz: la raiz arrastra
+    # los `_build/bench/{before,after}/fixtures` de la 17, 64 `.asm` generados
+    # que no son de nadie.
     CARPETAS = (
         ROOT / "x.tests" / "cases",
         ROOT / "x.tests" / "cases-shared",
         ROOT / "20.forth",
+        ROOT / "16.fpga-cpu-hdmi" / "examples",
         ROOT / "18.fpga-cpu-hdmi-bl8" / "examples",
         ROOT / "19.fpga-cpu-hdmi-ls" / "examples",
         ROOT / "21.fpga-cpu-hdmi-alu" / "examples",
+        ROOT / "12.fpga-gpu" / "examples",
+        ROOT / "12.fpga-gpu" / "fixtures",
+        ROOT / "14.fpga-gpu-ram" / "examples",
+        ROOT / "14.fpga-gpu-ram" / "fixtures",
+        ROOT / "17.fpga-gpu-ram-v2" / "examples",
+        ROOT / "17.fpga-gpu-ram-v2" / "fixtures",
+        ROOT / "22.fpga-gpu-bl8" / "examples",
+        ROOT / "22.fpga-gpu-bl8" / "fixtures",
     )
 
     # `MOVHI Rn, 0x8000` carga la mitad alta de 0x80000000. Buscar eso a secas
@@ -418,114 +433,6 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
             ".word MMIO_VIDEO_BASE\n",
             include_dirs=(ROOT / "x.tests" / "inc",))
         self.assertEqual([0x80200000], palabras)
-
-
-class MapaV1Test(unittest.TestCase):
-    """El andamio de transición: `1.isa/mmio_map_v1.vh`.
-
-    Existe para que los `.asm` de una carpeta pasen a símbolos SIN mover
-    ninguna dirección, y que migrarla sea después cambiar la línea del
-    `.include`. Todo ese plan se apoya en un invariante que hay que comprobar,
-    porque si falla no se nota al ensamblar sino en la placa.
-
-    Esta clase se borra con el mapa, cuando migre la última carpeta.
-    """
-
-    def test_los_nombres_de_v1_existen_todos_en_v2(self):
-        """EL invariante. Si un nombre de v1 no está en v2, cambiar el
-        `.include` deja un símbolo sin definir... y eso, al menos, es ruidoso.
-
-        Lo que de verdad protege es lo contrario de lo que parece: garantiza
-        que la migración de un `.asm` sea UNA línea. En cuanto un nombre no
-        existe en los dos lados, migrar ese fichero deja de ser mecánico y hay
-        que mirarlo, que es exactamente cuando la gente se equivoca."""
-        nombres = re.compile(r"`define\s+([A-Z][A-Z0-9_]*)")
-        v2 = set(nombres.findall(SOURCE.read_text(encoding="utf-8")))
-        v1 = set(nombres.findall(SOURCE_V1.read_text(encoding="utf-8")))
-        self.assertEqual(
-            set(), v1 - v2,
-            "hay constantes en el mapa v1 que no existen en v2, así que "
-            "cambiar el `.include` de un .asm no basta para migrarlo")
-
-    def test_los_valores_son_los_del_rtl_sin_migrar(self):
-        """Los números, copiados A MANO del RTL de la 19.
-
-        La duplicación es el mecanismo, igual que en `ConformidadTest`:
-        derivarlos del generador haría que este test pasara siempre. Fuentes:
-        `mmio_decoder.v` (device = address[11:8] sobre 0x80000) y los
-        `localparam REG_*` de cada dispositivo."""
-        from tools import mmio_map_v1 as v1  # noqa: PLC0415
-
-        # Ranuras de 256 bytes en una página de 4 KiB: DEV_VIDEO=0,
-        # DEV_SERIAL=2, DEV_PERF=3, DEV_SYSID=15.
-        self.assertEqual(0x80000000, v1.MMIO_VIDEO_BASE)
-        self.assertEqual(0x80000200, v1.MMIO_SERIAL_BASE)
-        self.assertEqual(0x80000300, v1.MMIO_CPU_PERF_BASE)
-        self.assertEqual(0x80000F00, v1.MMIO_SYSTEM_BASE)
-
-        # video_registers.v: CTRL es el 6 porque se añadió el último. En v2
-        # está en +0x00 y empuja a todos los demás.
-        self.assertEqual(0x00, v1.MMIO_VIDEO_FB_FRONT_OFF)
-        self.assertEqual(0x04, v1.MMIO_VIDEO_FB_BACK_OFF)
-        self.assertEqual(0x08, v1.MMIO_VIDEO_SWAP_OFF)
-        self.assertEqual(0x0C, v1.MMIO_VIDEO_STATUS_OFF)
-        self.assertEqual(0x10, v1.MMIO_VIDEO_SWAP_COUNT_OFF)
-        self.assertEqual(0x14, v1.MMIO_VIDEO_HALT_AT_OFF)
-        self.assertEqual(0x18, v1.MMIO_VIDEO_CTRL_OFF)
-
-        # serial_port.v: los tres coinciden con v2; sólo se mueve la base.
-        self.assertEqual(0x00, v1.MMIO_SERIAL_DATA_OFF)
-        self.assertEqual(0x04, v1.MMIO_SERIAL_STATUS_OFF)
-        self.assertEqual(0x08, v1.MMIO_SERIAL_PEEK_OFF)
-
-    def test_video_se_mueve_entero_al_pasar_a_v2(self):
-        """Lo que hace peligrosa la migración de esta carpeta, fijado.
-
-        No es que la base cambie --eso da error de decodificación, que es
-        ruidoso--: es que los CUATRO registros que usan los programas de la 19
-        cambian de offset. Un `.asm` a medio migrar no falla, escribe en el
-        registro de al lado."""
-        from tools import mmio_map as v2  # noqa: PLC0415
-        from tools import mmio_map_v1 as v1  # noqa: PLC0415
-
-        for nombre in ("FB_FRONT", "FB_BACK", "SWAP", "CTRL"):
-            self.assertNotEqual(
-                getattr(v1, f"MMIO_VIDEO_{nombre}_OFF"),
-                getattr(v2, f"MMIO_VIDEO_{nombre}_OFF"),
-                f"{nombre} tiene el mismo offset en v1 y v2; si esto pasa a "
-                "ser cierto, revisa este test antes de creértelo")
-
-    def test_incluir_los_dos_mapas_a_la_vez_es_error(self):
-        """Un programa a medio migrar NO ensambla.
-
-        Los dos `.inc` definen los mismos nombres, así que el ensamblador los
-        rechaza por constante duplicada. Es la red que impide dejarse un
-        `.include` viejo al lado del nuevo."""
-        from miniisa_asm import assemble
-
-        with self.assertRaises(Exception) as caso:
-            assemble(
-                '.include "mmio_v1.inc"\n.include "mmio.inc"\n'
-                ".word MMIO_VIDEO_BASE\n",
-                include_dirs=(ROOT / "x.tests" / "inc",))
-        # Salta en la PRIMERA constante común, no en una concreta, y el
-        # mensaje nombra los dos ficheros y las dos líneas.
-        mensaje = str(caso.exception)
-        self.assertIn("constante duplicada", mensaje)
-        self.assertIn("mmio_v1.inc", mensaje)
-
-    def test_ensambla_de_verdad_contra_el_mapa_de_hoy(self):
-        """Y da las direcciones de HOY, no las de v2."""
-        from miniisa_asm import assemble
-
-        palabras = assemble(
-            '.include "mmio_v1.inc"\n'
-            ".word MMIO_VIDEO_FB_FRONT_ADDR\n"
-            ".word MMIO_VIDEO_CTRL_ADDR\n"
-            ".word MMIO_SERIAL_DATA_ADDR\n",
-            include_dirs=(ROOT / "x.tests" / "inc",))
-        self.assertEqual([0x80000000, 0x80000018, 0x80000200], palabras)
-
 
 if __name__ == "__main__":
     unittest.main()

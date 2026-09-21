@@ -43,12 +43,17 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     // tiene video ni contadores, asi que esas dos ranuras van al centinela.
     monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd12),
         .RAM_END(33'h0_0002_0000),
-        .WINDOW0_BASE(33'h1_ffff_ffff),.WINDOW0_END(33'h0_0000_0000),
-        .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
-        .WINDOW2_BASE(33'h1_ffff_ffff),.WINDOW2_END(33'h0_0000_0000),
-        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080),
-        // Identificacion: SYS_ID, CONTRACT, DEV_BITMAP e ISA_PROFILE.
-        .WINDOW4_BASE(33'h0_8000_0f00),.WINDOW4_END(33'h0_8000_0f10))
+        // MMIO v2: una ventana por bloque presente. El final es EXCLUSIVO y se
+        // ajusta a lo que el bloque implementa, no a sus 64 KiB del mapa.
+        // SYSTEM (§5): siete palabras.
+        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001C),
+        // GPU WARPS (§14.2): ocho descriptores de 16 B.
+        .WINDOW1_BASE(33'h0_8201_0000),.WINDOW1_END(33'h0_8201_0080),
+        // GPU SIMT DEBUG (§14.3): cinco registros.
+        .WINDOW2_BASE(33'h0_8202_0000),.WINDOW2_END(33'h0_8202_0014),
+        // GPU PERFORMANCE (§14.4): solo la ranura 1, RETIRED. No hay CYCLES.
+        .WINDOW3_BASE(33'h0_8203_0004),.WINDOW3_END(33'h0_8203_0008),
+        .WINDOW4_BASE(33'h1_ffff_ffff),.WINDOW4_END(33'h0_0000_0000))
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),

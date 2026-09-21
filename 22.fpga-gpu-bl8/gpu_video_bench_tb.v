@@ -166,13 +166,13 @@ module gpu_video_bench_tb;
         end else $display("OK: en PATTERN, 0 peticiones de video");
 
         // ---- 3. Cambiar a SCANOUT por MMIO ----
-        access(1,32'h80000018,8'd2);
-        access(0,32'h80000018,8'd0);
+        access(1,32'h80200000,8'd2);
+        access(0,32'h80200000,8'd0);
         if(byte_result!==8'd2) begin
             $display("FAIL: VIDEO_CTRL leyo %0d, esperaba 2",byte_result);
             errors=errors+1;
         end else $display("OK: VIDEO_CTRL se escribe y se relee");
-        write_word(32'h80000000,32'h0010_0000);   // FB_BASE
+        write_word(32'h80200004,32'h0010_0000);   // FB_BASE
 
         video_tx=0;
         run_program(t_scanout);
@@ -191,7 +191,7 @@ module gpu_video_bench_tb;
                           first_line, first_addr);
 
         // Y el registro se relee como se escribio.
-        read_word(32'h80000000);
+        read_word(32'h80200004);
         if(word_result!==32'h0010_0000) begin
             $display("FAIL: FB_BASE leyo %h, esperaba 00100000",word_result);
             errors=errors+1;

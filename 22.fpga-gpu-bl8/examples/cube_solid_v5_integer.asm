@@ -5,18 +5,19 @@
 ; despues el rasterizador incremental de v4. No hay tabla de frames.
 
         GETTID R1
-        MOVHI R30, 0x8000
+        .include "mmio.inc"
+        LI    R30, MMIO_VIDEO_BASE
         MOVI  R20, 160
         MOVHI R10, 0xFFFF
 
         SSY   video_ready
         BNE   R1, R0, video_ready
         MOVHI R27, 0x0010
-        STORE R27, R30, 0
+        STORE R27, R30, MMIO_VIDEO_FB_FRONT_OFF
         MOVHI R27, 0x0014
-        STORE R27, R30, 4
+        STORE R27, R30, MMIO_VIDEO_FB_BACK_OFF
         MOVI  R27, 2
-        STORE R27, R30, 24
+        STORE R27, R30, MMIO_VIDEO_CTRL_OFF
 video_ready:
         BAR
 
@@ -282,7 +283,7 @@ geometry_ready:
         BAR
         MOVHI R10, 0xFFFF         ; geometria usa R10; restaurar mascara RGB565
 
-        LOAD  R19, R30, 4
+        LOAD  R19, R30, MMIO_VIDEO_FB_BACK_OFF
         ADD   R3, R1, R0
         MOVI  R5, 1296
         ADD   R5, R5, R1
@@ -410,9 +411,9 @@ triangle_done:
         SSY   swapped
         BNE   R1, R0, swapped
         MOVI  R15, 1
-        STORE R15, R30, 8
+        STORE R15, R30, MMIO_VIDEO_SWAP_OFF
 poll_swap:
-        LOAD  R15, R30, 8
+        LOAD  R15, R30, MMIO_VIDEO_SWAP_OFF
         ANDI  R15, R15, 1
         BNE   R15, R0, poll_swap
 swapped:

@@ -61,8 +61,10 @@ module video_mode_switch_tb;
       .clk(clk), .reset(reset),
       .select(select), .write(write), .write_mask(write_mask),
       .address(address), .write_data(write_data), .read_data(read_data),
+      .error(), .running(1'b1),
       .fill_start(1'b0), .fill_first(1'b0), .fb_base(fb_base),
       .underflow_pix(1'b0),
+      .underflow_clear(), .halt_request(),
       .video_mode(video_mode),
       .debug_front(), .debug_back());
 
@@ -157,7 +159,10 @@ module video_mode_switch_tb;
     begin
       @(posedge clk);
       select <= 1'b1; write <= 1'b1; write_mask <= 4'b1111;
-      address <= 8'h18; write_data <= {30'd0, modo};
+      // VIDEO_CTRL pasa de +0x18 a +0x00 en MMIO v2: es el primer registro del
+      // bloque y empuja a los otros cuatro. Escribirlo en +0x18 ahora no da
+      // error, escribe HALT_AT.
+      address <= 8'h00; write_data <= {30'd0, modo};
       @(posedge clk);
       select <= 1'b0; write <= 1'b0; write_mask <= 4'b0000;
     end

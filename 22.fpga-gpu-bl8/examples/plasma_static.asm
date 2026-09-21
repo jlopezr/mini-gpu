@@ -80,12 +80,13 @@
         ; ESCALARES (una lane cada vez), asi que dejar que los 64 escriban el
         ; mismo registro seria correcto pero absurdo. Un salto divergente
         ; necesita SSY delante o el SM para con ERROR_SIMT.
-        MOVHI R30, 0x8000       ; R30 = 0x80000000, base del MMIO
+        .include "mmio.inc"
+        LI    R30, MMIO_VIDEO_BASE
         SSY   video_ready
         BNE   R1, R0, video_ready
-        STORE R20, R30, 0     ; FB_FRONT = 0x00100000, el mismo que dibujamos
+        STORE R20, R30, MMIO_VIDEO_FB_FRONT_OFF     ; FB_FRONT = 0x00100000, el mismo que dibujamos
         MOVI  R27, 2
-        STORE R27, R30, 24     ; VIDEO_CTRL = SCANOUT
+        STORE R27, R30, MMIO_VIDEO_CTRL_OFF     ; VIDEO_CTRL = SCANOUT
 video_ready:
         BAR
 

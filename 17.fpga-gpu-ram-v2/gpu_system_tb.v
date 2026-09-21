@@ -1,5 +1,21 @@
 `timescale 1ns/1ps
 module gpu_system_tb;
+    // Las direcciones de MMIO v2 con nombre, ANTES de usarlas. Es el consejo
+    // de la 21 y en esta familia importa el doble: un `32'h8000_0100` suelto
+    // no se distingue a simple vista de un `32'hc8000000`, que es la
+    // codificacion de un BAR divergente y no una direccion. Con nombres, lo
+    // que queda en el cuerpo del banco son solo las instrucciones.
+    localparam [31:0] WARPS_BASE  = 32'h8201_0000;   // descriptor n en +16n
+    localparam [31:0] SIMT_BASE   = 32'h8202_0000;
+    // Dentro del descriptor (§14.2). No cambian respecto de v1.
+    localparam [31:0] WARP_PC     = 32'h0000_0000;
+    localparam [31:0] WARP_ACTIVE = 32'h0000_0004;
+    localparam [31:0] WARP_GROUP  = 32'h0000_0008;
+    localparam [31:0] WARP_SIMT   = 32'h0000_000C;
+    // Dentro de SIMT DEBUG (§14.3). WARP_RETIRED estaba en +0x14 en v1 y
+    // ahora esta en +0x10, porque el contador global se fue a PERF.
+    localparam [31:0] SIMT_CONTEXT      = 32'h0000_0000;
+    localparam [31:0] SIMT_WARP_RETIRED = 32'h0000_0010;
     reg clk=0;
     always #20 clk=~clk;
     reg reset=1,gpu_reset=0,run_request=0,halt_request=0,step_request=0;
@@ -64,9 +80,9 @@ module gpu_system_tb;
             for(i=0;i<256;i=i+1) write_word(i*4,program_words[i]);
             for(i=0;i<512;i=i+1) write_word(4096+i*4,0);
             for(w=0;w<8;w=w+1) begin
-                write_word(32'h80001000+w*16,config_words[w*3]);
-                write_word(32'h80001004+w*16,config_words[w*3+1]);
-                write_word(32'h80001008+w*16,config_words[w*3+2]);
+                write_word(WARPS_BASE+WARP_PC+w*16,config_words[w*3]);
+                write_word(WARPS_BASE+WARP_ACTIVE+w*16,config_words[w*3+1]);
+                write_word(WARPS_BASE+WARP_GROUP+w*16,config_words[w*3+2]);
             end
             @(negedge clk); run_request=1;
             @(negedge clk); run_request=0;
@@ -76,7 +92,7 @@ module gpu_system_tb;
             if(!halted || error) $fatal(1,"case %0d stopped: halted=%b code=%h pc=%h warp=%d state=%d",test_id,halted,error_code,debug_pc,dut.sm.error_warp,dut.sm.state);
             for(w=0;w<8;w=w+1) begin
                 for(l=0;l<8;l=l+1) begin
-                    access(1,32'h80000100,w*8+l);
+                    access(1,SIMT_BASE+SIMT_CONTEXT,w*8+l);
                     for(r=0;r<32;r=r+1) begin
                         @(negedge clk); debug_register=r;
                         repeat(3) @(negedge clk);
@@ -84,14 +100,14 @@ module gpu_system_tb;
                             $fatal(1,"case %0d w%0d lane%0d R%0d got %h expected %h",test_id,w,l,r,debug_data,expected[w*256+l*32+r]);
                     end
                 end
-                read_word(32'h80000114);
+                read_word(SIMT_BASE+SIMT_WARP_RETIRED);
                 if(word_result!==expected_counts[w]) $fatal(1,"case %0d warp %0d retired count %0d expected %0d",test_id,w,word_result,expected_counts[w]);
-                read_word(32'h80001004+w*16);
+                read_word(WARPS_BASE+WARP_ACTIVE+w*16);
                 if(word_result!=={16'b0,expected_state[w*3+2][7:0],expected_state[w*3+1][7:0]})
                     $fatal(1,"case %0d warp %0d masks mismatch",test_id,w);
-                read_word(32'h8000100c+w*16);
+                read_word(WARPS_BASE+WARP_SIMT+w*16);
                 if(word_result!==0) $fatal(1,"case %0d warp %0d control not cleared: %h",test_id,w,word_result);
-                read_word(32'h80001000+w*16);
+                read_word(WARPS_BASE+WARP_PC+w*16);
                 if(word_result!==expected_state[w*3]) $fatal(1,"case %d warp %d PC got %h expected %h",test_id,w,word_result,expected_state[w*3]);
             end
             for(i=0;i<512;i=i+1) begin

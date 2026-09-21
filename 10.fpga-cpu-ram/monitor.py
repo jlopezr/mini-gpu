@@ -20,17 +20,41 @@ MAX_ADDRESS = 0x01FF_FFFF
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
-# La 10 no tiene periféricos mapeados, pero sí `sysid`: cuatro palabras de solo
-# lectura en el camino del monitor, que es lo que le permite decir quién es sin
-# tener ventana MMIO de verdad. Ver docs/unificacion-mmio.md fase 4a.
+# La 10 no tiene periféricos mapeados, pero sí el bloque SYSTEM: siete
+# palabras de solo lectura en el camino del monitor, que es lo que le permite
+# decir quién es sin tener decodificador ni ventana MMIO de dispositivos.
 #
-# Hay que declararlo aquí aunque `read_word` no valide: `read_memory` y
+# MMIO v2 (1.isa/mmio.md §5) lo mueve de 0x80000F00, donde eran cuatro
+# palabras, a 0x80000000, donde son siete.
+#
+# Hay que declarar la región aunque `read_word` no valide: `read_memory` y
 # `read_block` sí, así que sin esta línea leer la identificación por bloque se
 # rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
 # top.v pasa al monitor.
-SYSID_BASE = 0x8000_0f00
+#
+# `MMIO_BASE`/`MMIO_LIMIT` son la ventana que `parse_address` acepta desde la
+# línea de órdenes, y aquí NO son cosmética: hasta ahora esta carpeta no las
+# tenía y su CLI validaba con `MAX_ADDRESS` a secas, que son los 32 MiB de
+# SDRAM. O sea que `monitor.py read-word 0x80000f00` se rechazaba en el host
+# sin llegar al cable, y el bloque de identificación --lo único que esta
+# carpeta tiene fuera de la memoria-- era inalcanzable desde la línea de
+# órdenes. No es una regresión de MMIO v2: pasaba igual en v1, y lo destapó
+# `test_la_ventana_del_cli_cubre_los_bloques_que_decodifica` al entrar esta
+# carpeta en su alcance.
+#
+# Lo que lo hacía invisible es lo de siempre: el síntoma era `exit=1` con un
+# `Error:`, que es exactamente lo que se espera de una dirección que la placa
+# rechaza. Hay que mirar de QUIÉN es el error.
+#
+# La 6 no necesita esto porque su `MAX_ADDRESS` son los 32 bits enteros.
+MMIO_BASE = 0x8000_0000
+MMIO_LIMIT = 0x8000_FFFF
+# Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
+# `tools/prototype_report.py` lee esta asignación del TEXTO del fichero, sin
+# importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
+# exige.
 MONITOR_REGIONS = (
-    (SYSID_BASE, 0x8000_0f10),   # identificación: SYS_ID, CONTRACT…
+    (0x8000_0000, 0x8001_0000),   # SYSTEM: MAGIC, VERSION, ID, DEVICES, MEM…
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 
@@ -173,6 +197,34 @@ def memory_test(client: MonitorClient, address: int, length: int) -> None:
     print(f"SDRAM test passed: {length} byte(s) from 0x{address:08x}")
 
 
+def parse_address(value: str) -> int:
+    """Dirección para CUALQUIER comando: SDRAM o el bloque SYSTEM.
+
+    Antes esto no existía y todos los comandos validaban con `MAX_ADDRESS`, que
+    describe sólo la SDRAM. `MONITOR_REGIONS` abre la ventana de
+    identificación justamente para que `validate_block` la deje pasar, y el
+    cliente la rechazaba una capa antes: el fichero afirmaba dos cosas
+    incompatibles, que el bloque existe y que la dirección no es válida.
+
+    Es la misma gemela que se quedó atrás en la 18 y en la 19, y se arregla
+    igual. El bloque responde también con la CPU en marcha, porque en el top la
+    selección va antes del arbitraje del adaptador.
+    """
+    try:
+        result = int(value, 0)
+    except ValueError as error:
+        raise MonitorError(f"Invalid address: {value}") from error
+
+    if 0 <= result <= MAX_ADDRESS or MMIO_BASE <= result <= MMIO_LIMIT:
+        return result
+
+    raise MonitorError(
+        f"Address must be between 0 and 0x{MAX_ADDRESS:x}, "
+        f"or inside the SYSTEM block "
+        f"0x{MMIO_BASE:08x}-0x{MMIO_LIMIT:08x}"
+    )
+
+
 def main() -> int:
     args = parse_args()
 
@@ -221,31 +273,31 @@ def main() -> int:
                 version = client.get_version()
                 print(f"FPGA monitor version: {version}")
             elif args.command == "write-byte":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 value = parse_integer(args.arguments[1], 0xFF, "byte value")
                 client.write_byte(address, value)
                 print(f"Written 0x{value:02x} at address 0x{address:04x}")
             elif args.command == "read-byte":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 value = client.read_byte(address)
                 print(f"Address 0x{address:04x}: 0x{value:02x}")
             elif args.command == "read-word":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 value = client.read_word(address)
                 print(f"Address 0x{address:08x}: 0x{value:08x}")
             elif args.command == "write-word":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 value = parse_integer(args.arguments[1], 0xFFFF_FFFF, "word value")
                 client.write_word(address, value)
                 print(f"Written 0x{value:08x} at address 0x{address:08x}")
             elif args.command == "write-block":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 source = Path(args.arguments[1])
                 data = source.read_bytes()
                 client.write_memory(address, data)
                 print(f"Written {len(data)} byte(s) at address 0x{address:04x}")
             elif args.command == "read-block":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 destination = Path(args.arguments[2])
                 data = client.read_memory(address, length)
@@ -255,7 +307,7 @@ def main() -> int:
                     f"into {destination}"
                 )
             elif args.command == "verify":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 source = Path(args.arguments[1])
                 expected = source.read_bytes()
                 actual = client.read_memory(address, len(expected))
@@ -271,7 +323,7 @@ def main() -> int:
                     )
                 print(f"Verified {len(expected)} byte(s) at address 0x{address:04x}")
             elif args.command == "memory-test":
-                address = parse_integer(args.arguments[0], MAX_ADDRESS, "address")
+                address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 memory_test(client, address, length)
             elif args.command == "run":

@@ -1,5 +1,12 @@
 `timescale 1ns/1ps
 module gpu_control_tb;
+    // MMIO v2 con nombre antes de usarlo (consejo de la 21). En ESTE banco es
+    // imprescindible: convive con `32'hc8000000`, `32'hf8000000` y
+    // `32'hb8000000`, que son CODIFICACIONES DE INSTRUCCION y no direcciones.
+    // Migrar una de esas por parecerse rompe el banco, y se parecen mucho.
+    localparam [31:0] WARPS_BASE  = 32'h8201_0000;   // descriptor n en +16n
+    localparam [31:0] WARP_PC     = 32'h0000_0000;
+    localparam [31:0] WARP_ACTIVE = 32'h0000_0004;
     reg clk=0;
     always #20 clk=~clk;
     reg reset=1,gpu_reset=0,run_request=0,halt_request=0,step_request=0;
@@ -52,7 +59,7 @@ module gpu_control_tb;
             @(negedge clk); gpu_reset=1;
             @(negedge clk); gpu_reset=0;
             wait(halted); @(negedge clk);
-            for(w=1;w<8;w=w+1) write_word(32'h80001004+w*16,0);
+            for(w=1;w<8;w=w+1) write_word(WARPS_BASE+WARP_ACTIVE+w*16,0);
         end
     endtask
     task launch;
@@ -84,7 +91,7 @@ module gpu_control_tb;
         fresh; write_word(0,32'h30200000); launch; stopped(4,0); // DIV R1,R0,R0
         fresh; write_word(0,32'h54200001); launch; stopped(2,0); // LOAD R1,R0,1
         fresh; write_word(0,32'h58200003); launch; stopped(2,0); // STORE R1,R0,3
-        fresh; write_word(32'h80001000,32'h02000000); launch; stopped(2,32'h02000000);
+        fresh; write_word(WARPS_BASE+WARP_PC,32'h02000000); launch; stopped(2,32'h02000000);
         fresh;
         for(i=0;i<9;i=i+1) write_word(i*4,32'hc4000010); // nine nested SSY frames
         launch; stopped(6,32);
@@ -103,7 +110,7 @@ module gpu_control_tb;
         fresh;
         write_word(0,32'hc8000000); write_word(4,32'hfc000000);
         write_word(8,32'hc8000000); write_word(12,32'hfc000000);
-        write_word(32'h80001014,255); write_word(32'h80001010,8);
+        write_word(WARPS_BASE+WARP_ACTIVE+1*16,255); write_word(WARPS_BASE+WARP_PC+1*16,8);
         launch; stopped(7,8);
         $display("PASS fault diagnostics: ISA, memory, division, stack and barriers");
 
@@ -156,7 +163,7 @@ module gpu_control_tb;
         write_word(32'h0010000c,32'h58240000); // STORE R1,R4,0
         write_word(32'h00100010,32'h54440000); // LOAD R2,R4,0
         write_word(32'h00100014,32'hfc000000); // HALT
-        write_word(32'h80001000,32'h00100000);
+        write_word(WARPS_BASE+WARP_PC,32'h00100000);
         launch; stopped(0,32'h00100018);
         debug_register=2; repeat(3) @(negedge clk);
         if(debug_data!==32'h1234) $fatal(1,"high SDRAM LOAD failure");

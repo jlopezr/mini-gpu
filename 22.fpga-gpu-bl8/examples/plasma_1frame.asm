@@ -67,7 +67,8 @@
 ; constante, que son 4 estados fijos, y los pocos SHR que quedan son de 2 y 4.
 
         GETTID R1               ; R1 = id global 0..63
-        MOVHI R30, 0x8000       ; R30 = 0x80000000, base del MMIO
+        .include "mmio.inc"
+        LI    R30, MMIO_VIDEO_BASE
         MOVI  R21, 160          ; palabras por fila
         MOVI  R22, 2048         ; rojo  -> bits 15:11, con MUL en vez de SHL 11
         MOVI  R23, 32           ; verde -> bits 10:5
@@ -84,16 +85,16 @@
         SSY   video_ready
         BNE   R1, R0, video_ready
         MOVHI R27, 0x0010
-        STORE R27, R30, 0     ; FB_FRONT = 0x00100000
+        STORE R27, R30, MMIO_VIDEO_FB_FRONT_OFF     ; FB_FRONT = 0x00100000
         MOVHI R27, 0x0014
-        STORE R27, R30, 4     ; FB_BACK  = 0x00140000
+        STORE R27, R30, MMIO_VIDEO_FB_BACK_OFF     ; FB_BACK  = 0x00140000
         MOVI  R27, 2
-        STORE R27, R30, 24     ; VIDEO_CTRL = SCANOUT, ya con los buffers puestos
+        STORE R27, R30, MMIO_VIDEO_CTRL_OFF     ; VIDEO_CTRL = SCANOUT, ya con los buffers puestos
 video_ready:
         BAR                     ; nadie lee FB_BACK antes de que este escrito
 
 frame_loop:
-        LOAD  R19, R30, 4     ; R19 = FB_BACK (0x80000004): donde toca dibujar
+        LOAD  R19, R30, MMIO_VIDEO_FB_BACK_OFF     ; R19 = FB_BACK (0x80000004): donde toca dibujar
         ADD   R3, R1, R0        ; x2 = tid
         MOVI  R4, 0             ; y  = 0
         ADD   R5, R1, R0        ; w  = tid
@@ -149,9 +150,9 @@ no_wrap:
         SSY   swapped
         BNE   R1, R0, swapped
         MOVI  R15, 1
-        STORE R15, R30, 8     ; SWAP = 1 (0x80000008)
+        STORE R15, R30, MMIO_VIDEO_SWAP_OFF     ; SWAP = 1 (0x80000008)
 poll_swap:
-        LOAD  R15, R30, 8
+        LOAD  R15, R30, MMIO_VIDEO_SWAP_OFF
         ANDI  R15, R15, 1
         BNE   R15, R0, poll_swap
 swapped:

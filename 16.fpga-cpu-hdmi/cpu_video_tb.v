@@ -37,7 +37,26 @@ module cpu_video_tb;
 
   wire mmio_select, mmio_write;
   wire [3:0] mmio_write_mask;
-  wire [11:0] mmio_address;   // la pagina MMIO entera
+  wire [31:0] mmio_address;   // el espacio MMIO entero, 32 bits desde v2
+  wire video_error, video_underflow_clear, video_halt_request;
+  wire [1:0] video_mode;
+
+  // Los offsets, con nombre y en un solo sitio.
+  //
+  // La 21 dejo escrito que esto hay que hacerlo ANTES de migrar ninguno: aqui
+  // estaban sueltos dentro de instrucciones ensambladas a mano, que es la
+  // forma en que una direccion MMIO se esconde de cualquier busqueda. En v2
+  // CTRL pasa a +0x00 y empuja a los otros tres, asi que los tres se mueven y
+  // ninguno da error al moverse mal: contesta el registro de al lado.
+  localparam [15:0] OFF_CTRL     = 16'h0000;
+  localparam [15:0] OFF_FB_FRONT = 16'h0004;
+  localparam [15:0] OFF_FB_BACK  = 16'h0008;
+  localparam [15:0] OFF_SWAP     = 16'h000c;
+  // Mitad alta de la base de VIDEO, 0x80200000. Este banco no monta
+  // decodificador --`select` va directo al dispositivo-- asi que el bloque no
+  // lo elige nadie; se usa el de verdad para que el programa sea el mismo que
+  // se ejecuta en la placa.
+  localparam [15:0] BASE_HI      = 16'h8020;
   wire [31:0] mmio_write_data, mmio_read_data;
 
   reg fill_start=0, fill_first=0;
@@ -93,8 +112,13 @@ module cpu_video_tb;
       .select(mmio_select),.write(mmio_write),.write_mask(mmio_write_mask),
       .address(mmio_address[7:0]),.write_data(mmio_write_data),
       .read_data(mmio_read_data),
+      .error(video_error),
+      .running(!halted),
       .fill_start(fill_start),.fill_first(fill_first),.fb_base(fb_base),
       .underflow_pix(1'b0),
+      .underflow_clear(video_underflow_clear),
+      .halt_request(video_halt_request),
+      .video_mode(video_mode),
       .debug_front(debug_front),.debug_back(debug_back));
 
   // Memoria de programa, con la misma latencia inmediata que usan los demas
@@ -145,18 +169,20 @@ module cpu_video_tb;
     for(i=0;i<64;i=i+1) program_words[i]=0;
     repeat(2) @(negedge clk); reset=0;
 
-    // swap_smoke.asm, ensamblado con 1.isa/miniisa_asm.py
-    write_word(32'h0000_0000,32'h5E80_8000); // MOVHI R20,0x8000
-    write_word(32'h0000_0004,32'h5434_0000); // LOAD  R1,R20,0
-    write_word(32'h0000_0008,32'h5454_0004); // LOAD  R2,R20,4
-    write_word(32'h0000_000c,32'h40E0_0001); // MOVI  R7,1
-    write_word(32'h0000_0010,32'h4120_0000); // MOVI  R9,0
-    write_word(32'h0000_0014,32'h58F4_0008); // STORE R7,R20,8
-    write_word(32'h0000_0018,32'h5514_0008); // LOAD  R8,R20,8
-    write_word(32'h0000_001c,32'h8509_FFFE); // BNE   R8,R9,wait_swap
-    write_word(32'h0000_0020,32'h5474_0000); // LOAD  R3,R20,0
-    write_word(32'h0000_0024,32'h5494_0004); // LOAD  R4,R20,4
-    write_word(32'h0000_0028,32'hFC00_0000); // HALT
+    // swap_smoke.asm, ensamblado con 1.isa/miniisa_asm.py. Las instrucciones
+    // se construyen con los `localparam` de arriba en vez de con el numero
+    // pegado, que es lo que hacia que estos offsets fueran invisibles.
+    write_word(32'h0000_0000,{16'h5E80,BASE_HI});      // MOVHI R20,0x8020
+    write_word(32'h0000_0004,{16'h5434,OFF_FB_FRONT}); // LOAD  R1,R20,FB_FRONT
+    write_word(32'h0000_0008,{16'h5454,OFF_FB_BACK});  // LOAD  R2,R20,FB_BACK
+    write_word(32'h0000_000c,32'h40E0_0001);           // MOVI  R7,1
+    write_word(32'h0000_0010,32'h4120_0000);           // MOVI  R9,0
+    write_word(32'h0000_0014,{16'h58F4,OFF_SWAP});     // STORE R7,R20,SWAP
+    write_word(32'h0000_0018,{16'h5514,OFF_SWAP});     // LOAD  R8,R20,SWAP
+    write_word(32'h0000_001c,32'h8509_FFFE);           // BNE   R8,R9,wait_swap
+    write_word(32'h0000_0020,{16'h5474,OFF_FB_FRONT}); // LOAD  R3,R20,FB_FRONT
+    write_word(32'h0000_0024,{16'h5494,OFF_FB_BACK});  // LOAD  R4,R20,FB_BACK
+    write_word(32'h0000_0028,32'hFC00_0000);           // HALT
 
     @(negedge clk); run_request=1; @(negedge clk); run_request=0;
 

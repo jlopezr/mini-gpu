@@ -363,6 +363,43 @@ def normalize_section(name: str) -> str:
     return SECTION_ALIASES[key]
 
 
+def read_hex_image(path: Path) -> bytes:
+    """Lee el formato .hex del ensamblador: una palabra de 32 bits por linea."""
+    out = bytearray()
+    try:
+        lines = path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise AsmError(f"no se puede leer {path}: {error}") from None
+    for number, raw in enumerate(lines, 1):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            value = int(token, 16)
+        except ValueError:
+            raise AsmError(
+                f"{path}:{number}: palabra hexadecimal invalida: {token}"
+            ) from None
+        if not 0 <= value <= 0xFFFFFFFF:
+            raise AsmError(
+                f"{path}:{number}: palabra hexadecimal fuera de 32 bits: {token}"
+            )
+        out += value.to_bytes(4, "little")
+    return bytes(out)
+
+
+def read_incbin(path: Path) -> bytes:
+    suffix = path.suffix.lower()
+    if suffix == ".hex":
+        return read_hex_image(path)
+    if suffix == ".bin":
+        try:
+            return path.read_bytes()
+        except OSError as error:
+            raise AsmError(f"no se puede leer {path}: {error}") from None
+    raise AsmError(f".incbin solo admite ficheros .bin o .hex: {path.name}")
+
+
 def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
     """Cuantos bytes ocupa, sin resolver etiquetas.
 
@@ -387,6 +424,8 @@ def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
         return len(valores)
     if mnemonic == ".STRING":
         return len(parse_string_literal(operand_text))
+    if mnemonic == ".INCBIN":
+        return len(read_incbin(Path(parse_include_path(operand_text))))
     if mnemonic in {".SPACE", ".ZERO"}:
         valores = split_operands(operand_text)
         if len(valores) != 1:
@@ -405,7 +444,7 @@ def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
 def instruction_size_bytes(text: str) -> int:
     parts = text.split(None, 1)
     mnemonic = parts[0].upper()
-    if mnemonic == "LI":
+    if mnemonic in {"LI", "LA"}:
         return 8
     return 4
 
@@ -444,6 +483,8 @@ def directive_bytes(mnemonic: str, operand_text: str,
         return bytes(out)
     if mnemonic == ".STRING":
         return parse_string_literal(operand_text)
+    if mnemonic == ".INCBIN":
+        return read_incbin(Path(parse_include_path(operand_text)))
     if mnemonic in {".SPACE", ".ZERO"}:
         return b"\x00" * directive_size_bytes(mnemonic, operand_text, 0)
     if mnemonic == ".ALIGN" or mnemonic in IGNORED_DIRECTIVES:
@@ -552,7 +593,7 @@ def expand_includes(source: str, base_dir: Path | None = None,
                 _once.add(_stack[-1])
             continue
 
-        if mnemonic != ".INCLUDE":
+        if mnemonic not in {".INCLUDE", ".INCBIN"}:
             filas.append((origin, number, raw))
             continue
 
@@ -563,7 +604,7 @@ def expand_includes(source: str, base_dir: Path | None = None,
 
         if base_dir is None and not include_dirs and not Path(ruta).is_absolute():
             raise AsmError(
-                f"{ubicacion(origin, number)}: .include con ruta relativa "
+                f"{ubicacion(origin, number)}: {mnemonic.lower()} con ruta relativa "
                 f"({ruta}) pero el fuente no viene de un fichero ni se dio "
                 "ninguna carpeta de busqueda (-I), asi que no hay desde donde "
                 "resolverla"
@@ -584,6 +625,12 @@ def expand_includes(source: str, base_dir: Path | None = None,
             resuelto = destino.resolve()
         except OSError as error:
             raise AsmError(f"{ubicacion(origin, number)}: {ruta}: {error}") from None
+
+        if mnemonic == ".INCBIN":
+            # Las dos pasadas deben abrir el mismo fichero. La ruta absoluta
+            # conserva ademas la carpeta de un .include anidado.
+            filas.append((origin, number, f'.incbin "{resuelto.as_posix()}"'))
+            continue
 
         if resuelto in _once:
             # Ya entro y se habia declarado `.once`. Saltarlo no es un caso
@@ -860,7 +907,7 @@ def first_pass(source: str,
     labels.update(equates)
     laid_out_lines = [
         SourceLine(line.number, line.text,
-                   bases[line.section] + line.pc, line.section)
+                   bases[line.section] + line.pc, line.section, line.origin)
         for line in lines
     ]
     laid_out_lines.sort(key=lambda line: line.pc)
@@ -919,8 +966,9 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     operand_text = parts[1] if len(parts) > 1 else ""
     ops = split_operands(operand_text)
 
-    if mnemonic == "LI":
-        raise AsmError("LI solo se puede usar como pseudoinstrucción completa")
+    if mnemonic in {"LI", "LA"}:
+        raise AsmError(
+            f"{mnemonic} solo se puede usar como pseudoinstrucción completa")
 
     # RET no es un opcode: el enlace vive en R31 por convencion de llamada.
     if mnemonic == "RET":
@@ -1108,9 +1156,9 @@ def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
     operand_text = parts[1] if len(parts) > 1 else ""
     ops = split_operands(operand_text)
 
-    if mnemonic == "LI":
+    if mnemonic in {"LI", "LA"}:
         if len(ops) != 2:
-            raise AsmError("LI requiere: Rd, expr32")
+            raise AsmError(f"{mnemonic} requiere: Rd, expr32")
         rd = parse_reg(ops[0])
         value = resolve_target(ops[1], labels) & 0xFFFFFFFF
         hi = (value >> 16) & 0xFFFF
@@ -1149,7 +1197,9 @@ def assemble_bytes(source: str, base_dir: Path | None = None,
             else:
                 image += assemble_text(line, labels)
         except AsmError as e:
-            raise AsmError(f"línea {line.number}: {e}\n    {line.text}") from None
+            raise AsmError(
+                f"{ubicacion(line.origin, line.number)}: {e}\n    {line.text}"
+            ) from None
 
     if len(image) < image_size:
         image += b"\x00" * (image_size - len(image))
@@ -1193,11 +1243,7 @@ def load_program_bytes(path) -> bytes:
                               path.parent, path.name)
 
     if suffix == ".hex":
-        return b"".join(
-            int(line, 16).to_bytes(4, "little")
-            for line in path.read_text().splitlines()
-            if line.strip()
-        )
+        return read_hex_image(path)
 
     if suffix == ".bin":
         return path.read_bytes()

@@ -158,6 +158,41 @@ class PrototypeReportTest(unittest.TestCase):
             root = self._make_repo(Path(tmp))
             self.assertEqual(_monitor_version_from_rtl(root / "6.fpga-cpu"), (1, 16))
 
+    def test_un_comentario_no_se_lee_como_una_instanciacion(self):
+        """El fallo silencioso que costó una tabla generada mal.
+
+        `_parameters_at_instantiation` busca `monitor #(` sobre el texto del
+        `.v`. Un comentario del `top.v` de la 6 que decía «los mismos números
+        que el `monitor #(...)` de más abajo» --que es la forma natural de
+        explicar de dónde sale `MONITOR_VERSION`-- casaba antes que la
+        instanciación de verdad.
+
+        Y el modo de fallo es lo que lo hace grave: no reventaba. Se caía al
+        `localparam` de `monitor.v`, que son los valores POR DEFECTO, así que la
+        6 pasó a anunciar monitor **1.0** en vez de 3.6 y el número salió en
+        `docs/resumen-prototipos.md` con toda naturalidad. Un `1.0` es una
+        versión perfectamente plausible.
+
+        Se fija sobre las dos mitades: que el comentario no gane, y que la
+        instanciación de verdad se siga leyendo.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._make_repo(Path(tmp))
+            carpeta = root / "6.fpga-cpu"
+            top = carpeta / "top.v"
+            top.write_text(textwrap.dedent("""
+                module top;
+                  // MONITOR_VERSION es (mayor << 8) | menor, con los mismos
+                  // numeros que el `monitor #(.VERSION_MAJOR(8'd9),
+                  // .VERSION_MINOR(8'd99))` de mas abajo.
+                  /* Y en un comentario de bloque tambien:
+                     monitor #(.VERSION_MAJOR(8'd7), .VERSION_MINOR(8'd77)) x( */
+                  monitor #(.VERSION_MAJOR(8'd3), .VERSION_MINOR(8'd6))
+                    monitor_i (.clk(clk));
+                endmodule
+            """), encoding="utf-8")
+            self.assertEqual(_monitor_version_from_rtl(carpeta), (3, 6))
+
     def test_clock_hz_from_rtl_reads_pll_attribute(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._make_repo(Path(tmp))

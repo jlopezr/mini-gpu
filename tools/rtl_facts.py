@@ -18,6 +18,32 @@ import re
 from pathlib import Path
 
 
+_COMENTARIO_VERILOG = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
+def sin_comentarios(source: str) -> str:
+    """El texto de un `.v` con los comentarios en blanco, conservando saltos.
+
+    Existe porque los analizadores de este fichero buscan estructura sobre
+    texto plano, y un comentario que menciona lo que buscan los engaña. El caso
+    concreto: un `top.v` que escribe «los mismos números que el `monitor #(...)`
+    de más abajo» --que es la forma natural de explicarlo-- hacía que
+    `_parameters_at_instantiation` encontrase una instancia inexistente.
+
+    Se arregla aquí, en el analizador, y no reescribiendo el comentario: lo
+    segundo obliga a todo el que edite un `top.v` a saber que hay un parser
+    mirando y a esquivarlo. Los saltos de línea se conservan para que las
+    posiciones sigan cuadrando.
+
+    `x.tests/test_monitor_port.py` importa esta misma función en vez de tener su
+    copia, porque tuvo exactamente este fallo el mismo día y en su propio
+    parser. Dos copias de un analizador son dos sitios donde arreglarlo, y sólo
+    uno falla ruidosamente.
+    """
+    return _COMENTARIO_VERILOG.sub(
+        lambda m: "".join(c if c == "\n" else " " for c in m.group(0)), source)
+
+
 def readme_title(prototype_dir: Path) -> str:
     """Primer encabezado `# ...` de README.md, o cadena vacía si no hay uno.
     Es el valor por defecto de `description`: `version.json` solo hace falta
@@ -56,19 +82,26 @@ def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:
             # Un banco de pruebas instancia el monitor pero no es lo que se
             # sintetiza, y va antes que top.v por orden alfabético.
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r"\bmonitor\s*#\(", text)
-        if not match:
-            continue
-        depth, cursor = 1, match.end()
-        while depth and cursor < len(text):
-            depth += {"(": 1, ")": -1}.get(text[cursor], 0)
-            cursor += 1
-        lista = text[match.end():cursor]
-        valores = dict(re.findall(r"\.(\w+)\(\s*8'([hd][0-9a-fA-F]+)\s*\)",
-                                  lista))
-        if "VERSION_MAJOR" in valores and "VERSION_MINOR" in valores:
-            return valores
+        text = sin_comentarios(path.read_text(encoding="utf-8",
+                                              errors="replace"))
+        # TODAS las coincidencias, no la primera. Con `re.search` bastaba un
+        # `monitor #(` que no fuera la instanciación buena para que este fichero
+        # se descartara entero, y el modo de fallo es silencioso: se cae al
+        # `localparam` de `monitor.v`, que son los valores POR DEFECTO, y la
+        # carpeta pasa a declarar una versión de monitor que no es la suya.
+        # Pasó de verdad: un comentario del `top.v` de la 6 que decía «los
+        # mismos números que el `monitor #(...)` de más abajo» dejó a esa
+        # carpeta anunciando 1.0 en vez de 3.6, y salió en la tabla generada.
+        for match in re.finditer(r"\bmonitor\s*#\(", text):
+            depth, cursor = 1, match.end()
+            while depth and cursor < len(text):
+                depth += {"(": 1, ")": -1}.get(text[cursor], 0)
+                cursor += 1
+            lista = text[match.end():cursor]
+            valores = dict(re.findall(r"\.(\w+)\(\s*8'([hd][0-9a-fA-F]+)\s*\)",
+                                      lista))
+            if "VERSION_MAJOR" in valores and "VERSION_MINOR" in valores:
+                return valores
     return None
 
 

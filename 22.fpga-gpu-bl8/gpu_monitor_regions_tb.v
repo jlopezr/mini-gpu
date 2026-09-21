@@ -50,11 +50,16 @@ module gpu_monitor_regions_tb;
     // Mismos parametros que top_bl8: este banco comprueba justo la lista blanca.
     monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd22),
         .RAM_END(33'h0_0200_0000),
-        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001c),
-        .WINDOW1_BASE(33'h0_8000_0100),.WINDOW1_END(33'h0_8000_0118),
-        .WINDOW2_BASE(33'h0_8000_0300),.WINDOW2_END(33'h0_8000_0320),
-        .WINDOW3_BASE(33'h0_8000_1000),.WINDOW3_END(33'h0_8000_1080),
-        .WINDOW4_BASE(33'h0_8000_0f00),.WINDOW4_END(33'h0_8000_0f10))
+        // CUARTA copia de la misma lista, despues de `top.v`, `top_bl8.v` y
+        // `MONITOR_REGIONS` de `monitor.py`. Tiene que decir lo mismo que
+        // `top_bl8.v`, que es el bitstream de `default`. Que este banco
+        // exista para vigilar la gemela y sea EL MISMO a su vez tiene su
+        // gracia: si alguien mueve una ventana, aqui hay que tocarlo tambien.
+        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001C),
+        .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8020_0028),
+        .WINDOW2_BASE(33'h0_8203_0000),.WINDOW2_END(33'h0_8203_001C),
+        .WINDOW3_BASE(33'h0_8201_0000),.WINDOW3_END(33'h0_8201_0080),
+        .WINDOW4_BASE(33'h0_8202_0000),.WINDOW4_END(33'h0_8202_0014))
       dut(.clk(clk),.reset(reset),
         .rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
@@ -150,42 +155,47 @@ module gpu_monitor_regions_tb;
         // reves) el fallo aparece solo en placa.
         read_block(32'h0000_0000, 16'd4, 1, "SDRAM baja");
         read_block(32'h01ff_fffc, 16'd4, 1, "SDRAM alta, ultima palabra");
-        read_block(32'h8000_0000, 16'd4, 1, "FB_FRONT");
-        read_block(32'h8000_0018, 16'd4, 1, "VIDEO_CTRL");
-        // El bloque de video ENTERO de una vez. Con 4 bytes no basta: el hueco
-        // de HALT_AT (+0x14) queda en medio, y si fallara en vez de leer cero
-        // este bloque daria NACK justo ahi.
-        read_block(32'h8000_0000, 16'd28, 1, "bloque de video completo");
-        read_block(32'h8000_0100, 16'd4, 1, "depuracion");
-        read_block(32'h8000_0300, 16'd4, 1, "CYCLES");
-        read_block(32'h8000_031c, 16'd4, 1, "LANE_OPS");
-        read_block(32'h8000_1000, 16'd4, 1, "configuracion de warps");
-        read_block(32'h8000_107c, 16'd4, 1, "ultimo descriptor de warp");
-        read_block(32'h8000_0f00, 16'd16, 1, "bloque de identificacion entero");
+        read_block(32'h8020_0004, 16'd4, 1, "FB_FRONT");
+        read_block(32'h8020_0000, 16'd4, 1, "VIDEO_CTRL");
+        // El bloque de video ENTERO de una vez, desde CTRL. Con 4 bytes no
+        // basta: los huecos de HALT_AT y HALT_TARGET quedan en medio, y si
+        // fallaran en vez de leer cero este bloque daria NACK justo ahi.
+        read_block(32'h8020_0000, 16'd40, 1, "bloque de video completo");
+        read_block(32'h8202_0000, 16'd4, 1, "depuracion");
+        read_block(32'h8203_0000, 16'd4, 1, "CYCLES");
+        read_block(32'h8203_0018, 16'd4, 1, "LANE_OPS");
+        read_block(32'h8201_0000, 16'd4, 1, "configuracion de warps");
+        read_block(32'h8201_007c, 16'd4, 1, "ultimo descriptor de warp");
+        read_block(32'h8000_0000, 16'd28, 1, "bloque SYSTEM entero");
 
         // Y los bordes: una ventana que acepta de mas es tan mala como una que
         // rechaza de menos, porque el acceso acaba en un decodificador que no
         // sabe que contestar.
         read_block(32'h0200_0000, 16'd4, 0, "por encima de la SDRAM");
-        read_block(32'h8000_001c, 16'd4, 0, "justo despues del bloque de video");
-        read_block(32'h8000_0320, 16'd4, 0, "justo despues de los contadores");
-        read_block(32'h8000_0280, 16'd4, 0, "hueco donde estaba el video antes");
-        read_block(32'h8000_0014, 16'd16, 0, "bloque que desborda el video");
-        // La primera pagina ya no tiene los warps, y la segunda solo los tiene
-        // a ellos: pedir el resto de la pagina GPU tiene que fallar.
-        read_block(32'h8000_1080, 16'd4, 0, "justo despues de los warps");
-        read_block(32'h8000_0f10, 16'd4, 0, "justo despues de la identificacion");
+        read_block(32'h8020_0028, 16'd4, 0, "justo despues del bloque de video");
+        read_block(32'h8203_001c, 16'd4, 0, "justo despues de los contadores");
+        // GPU CORE (§14.1) no se implementa en esta carpeta: es un bloque del
+        // mapa que no tiene nada detras, y la ventana no debe abrirlo. En v1
+        // este caso apuntaba al «hueco donde estaba el video antes», que era
+        // una direccion sin sentido en v2 -- un control negativo anclado a un
+        // accidente de la disposicion vieja en vez de a la forma.
+        read_block(32'h8200_0000, 16'd4, 0, "GPU CORE, bloque no implementado");
+        read_block(32'h8020_0020, 16'd16, 0, "bloque que desborda el video");
+        // Cada bloque abre solo lo que implementa: pedir mas tiene que fallar
+        // aunque la direccion caiga dentro de los 64 KiB del bloque.
+        read_block(32'h8201_0080, 16'd4, 0, "justo despues de los warps");
+        read_block(32'h8000_001c, 16'd4, 0, "justo despues de SYSTEM");
 
         // READ_WORD: cinco bytes de respuesta (92 + la palabra en little-endian)
         // en UNA transaccion de bus, que es lo que la hace atomica. La memoria de
         // este banco devuelve siempre 5a5a5a5a.
-        read_word(32'h8000_000c, 1, "VIDEO_STATUS alineado");
-        read_word(32'h8000_0300, 1, "CYCLES alineado");
+        read_word(32'h8020_0010, 1, "VIDEO_STATUS alineado");
+        read_word(32'h8203_0000, 1, "CYCLES alineado");
         // Y exige alineamiento: la memoria entrega la palabra que CONTIENE la
         // direccion, asi que una no alineada devolveria otra palabra distinta de
         // la pedida. Mejor rechazarla que mentir.
-        read_word(32'h8000_000e, 0, "VIDEO_STATUS desalineado");
-        read_word(32'h8000_0001, 0, "FB_FRONT desalineado");
+        read_word(32'h8020_0012, 0, "VIDEO_STATUS desalineado");
+        read_word(32'h8020_0005, 0, "FB_FRONT desalineado");
 
         $display("PASS lista blanca del monitor (por parametro): 9 ventanas validas, 7 bordes rechazados");
         $display("PASS READ_WORD: 2 lecturas alineadas, 2 desalineadas rechazadas");

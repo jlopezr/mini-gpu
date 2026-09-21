@@ -76,11 +76,21 @@ module video_scanout #(
     output reg de_out,
     output reg hsync_out,
     output reg vsync_out,
-    output reg underflow,        // pegajoso hasta rst_pix
+    // Pegajoso: una vez alto se queda hasta que alguien lo borre. Lo pone el
+    // dominio de pixel, que es quien detecta que el banco no llego a tiempo.
+    output reg underflow,
 
     // ---- dominio de sistema: interfaz del productor ----
     input wire clk_sys,
     input wire rst_sys,
+    // Pulso de un ciclo que borra `underflow`. Viene del bloque de registros,
+    // o sea del dominio de sistema, mientras que el latch vive en el de pixel:
+    // por eso cruza como toggle y no como nivel.
+    //
+    // Sin esto el bit solo se borraba recargando el bitstream, y eso impide
+    // tener una suite de pruebas graficas: el primer caso que falla contamina
+    // todos los siguientes de la misma sesion.
+    input wire underflow_clear,
     output reg fill_start,                  // pulso de un ciclo
     output wire [LINE_BITS-1:0] fill_line,  // linea fuente pedida
     // Alto cuando la peticion es la PRIMERA del frame. Es el unico instante
@@ -126,6 +136,18 @@ module video_scanout #(
     done_sync_2 <= done_sync_1;
   end
 
+  // Borrado del underflow, cruzando de sistema a pixel con el mismo patron de
+  // toggle que usa `done` en sentido contrario.
+  reg clear_toggle_sys;
+  reg clr_sync_0, clr_sync_1, clr_sync_2;
+  wire clear_pulse_pix = clr_sync_1 ^ clr_sync_2;
+
+  always @(posedge clk_pix) begin
+    clr_sync_0 <= clear_toggle_sys;
+    clr_sync_1 <= clr_sync_0;
+    clr_sync_2 <= clr_sync_1;
+  end
+
   wire frame_start = (sy == V_ACTIVE_W) && (sx == 12'd0);
   // Al acabar una linea de pantalla impar se ha mostrado dos veces la misma
   // linea fuente: toca cambiar de banco.
@@ -146,6 +168,11 @@ module video_scanout #(
       pending <= 1'b0;
       underflow <= 1'b0;
     end else begin
+      // El borrado va ANTES del `case`, que es donde se pone el bit: si en el
+      // mismo ciclo llega un borrado y ocurre un underflow de verdad, gana el
+      // underflow. Al reves se perderia justo el que interesa.
+      if (clear_pulse_pix) underflow <= 1'b0;
+
       // La respuesta del productor valida el banco que se pidio. Va antes del
       // `case` para que liberar un banco en el mismo ciclo tenga prioridad.
       if (done_pulse_pix) begin
@@ -227,12 +254,14 @@ module video_scanout #(
       req_sync_2 <= 1'b0;
       fill_start <= 1'b0;
       done_toggle_sys <= 1'b0;
+      clear_toggle_sys <= 1'b0;
     end else begin
       req_sync_0 <= req_toggle;
       req_sync_1 <= req_sync_0;
       req_sync_2 <= req_sync_1;
       fill_start <= req_sync_1 ^ req_sync_2;
       if (fill_done) done_toggle_sys <= ~done_toggle_sys;
+      if (underflow_clear) clear_toggle_sys <= ~clear_toggle_sys;
     end
   end
 
