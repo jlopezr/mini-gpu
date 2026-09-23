@@ -118,6 +118,7 @@
 ; que una espera por ciclos duraria lo que le diese la gana alli. A 60 Hz son
 ; unos dos segundos.
 .equ LOGO_SWAPS,  120
+.equ MOUTH_HOLD,  6             ; frames que dura cada estado de la boca
 
 ; =========================================================================
 ; Arranque
@@ -173,6 +174,10 @@ logo_hold:
     ; este frame. Arranca en 0 y alterna con cada intercambio.
     LI    R1, parity
     STORE R0, R1, 0
+    LI    R1, mouth_phase
+    STORE R0, R1, 0
+    LI    R1, mouth_timer
+    STORE R0, R1, 0
 
 ; =========================================================================
 ; Bucle de juego
@@ -191,6 +196,24 @@ game_loop:
     LOAD  R2, R1, 0
     XORI  R2, R2, 1
     STORE R2, R1, 0
+
+    ; Mantener cada estado varios frames para que la animacion sea legible.
+    LI    R1, mouth_timer
+    LOAD  R2, R1, 0
+    ADDI  R2, R2, 1
+    MOVI  R3, MOUTH_HOLD
+    BLT   R2, R3, @store_mouth_timer
+    STORE R0, R1, 0
+
+    ; alternar la animacion de la boca
+    LI    R1, mouth_phase
+    LOAD  R2, R1, 0
+    XORI  R2, R2, 1
+    STORE R2, R1, 0
+    BRA   @mouth_done
+@store_mouth_timer:
+    STORE R2, R1, 0
+@mouth_done:
 
     BRA   game_loop
 
@@ -483,6 +506,32 @@ draw_entities:
     LOAD  R5, R12, E_Y
     LOAD  R6, R12, E_COL
     LOAD  R7, R12, E_BM
+    BNE   R10, R0, @draw_entity
+
+    LI    R1, mouth_phase
+    LOAD  R1, R1, 0
+    BEQ   R1, R0, @pac_closed
+
+    ; Con la boca abierta, Pac-Man usa una mascara distinta segun la direccion.
+    LOAD  R1, R12, E_DX
+    LOAD  R2, R12, E_DY
+    BNE   R1, R0, @pac_horizontal
+    BGE   R2, R0, @pac_down
+    LI    R7, pac_bm_up
+    BRA   @draw_entity
+@pac_down:
+    LI    R7, pac_bm_down
+    BRA   @draw_entity
+@pac_horizontal:
+    BGE   R1, R0, @pac_right
+    LI    R7, pac_bm_left
+    BRA   @draw_entity
+@pac_right:
+    LI    R7, pac_bm_right
+    BRA   @draw_entity
+@pac_closed:
+    LI    R7, pac_bm_closed
+@draw_entity:
     JAL   R31, draw_sprite
 
     ; anotar la posicion para poder borrarla dentro de dos frames
@@ -652,6 +701,24 @@ eat_pill:
     STORE R4, R3, 0
     BNE   R4, R0, @out
 
+    ; ---- victoria: volver a mostrar la pantalla de carga ----
+    ; Se escribe en los DOS buffers para que ningun intercambio muestre el
+    ; laberinto viejo mientras dura la pantalla de carga.
+    ADDI  R29, R29, -4
+    STORE R27, R29, 0
+    LI    R27, FB0
+    JAL   R31, draw_logo
+    LI    R27, FB1
+    JAL   R31, draw_logo
+    LOAD  R27, R29, 0
+    ADDI  R29, R29, 4
+
+    MOVI  R12, LOGO_SWAPS
+@win_logo:
+    JAL   R31, swap_and_wait
+    ADDI  R12, R12, -1
+    BNE   R12, R0, @win_logo
+
     ; ---- laberinto limpio: se repone ----
     ; Hay que repintarlo en los DOS buffers aqui mismo. Dejarlo al borrado
     ; incremental no serviria: ese solo toca los 2x2 tiles bajo las entidades,
@@ -666,6 +733,12 @@ eat_pill:
     JAL   R31, draw_maze
     LOAD  R27, R29, 0
     ADDI  R29, R29, 4
+
+    ; Reiniciar tambien la fase visual de Pac-Man para la nueva partida.
+    LI    R1, mouth_phase
+    STORE R0, R1, 0
+    LI    R1, mouth_timer
+    STORE R0, R1, 0
 
 @out:
     LOAD  R31, R29, 0
@@ -1346,6 +1419,57 @@ pac_bm:
     .byte 0b01111110
     .byte 0b00111100
 
+pac_bm_closed:
+    .byte 0b00111100
+    .byte 0b01111110
+    .byte 0b11111111
+    .byte 0b11111111
+    .byte 0b11111111
+    .byte 0b11111111
+    .byte 0b01111110
+    .byte 0b00111100
+
+; Variantes de Pac-Man con la boca orientada en cada direccion.
+pac_bm_right:
+    .byte 0b00111100
+    .byte 0b01111110
+    .byte 0b11111110
+    .byte 0b11111100
+    .byte 0b11111000
+    .byte 0b11111100
+    .byte 0b11111110
+    .byte 0b01111110
+
+pac_bm_left:
+    .byte 0b00111100
+    .byte 0b01111110
+    .byte 0b01111111
+    .byte 0b00111111
+    .byte 0b00011111
+    .byte 0b00111111
+    .byte 0b01111111
+    .byte 0b01111110
+
+pac_bm_down:
+    .byte 0b00111100
+    .byte 0b01111110
+    .byte 0b11111111
+    .byte 0b11111111
+    .byte 0b11100111
+    .byte 0b11000011
+    .byte 0b10000001
+    .byte 0b00000000
+
+pac_bm_up:
+    .byte 0b00000000
+    .byte 0b10000001
+    .byte 0b11000011
+    .byte 0b11100111
+    .byte 0b11111111
+    .byte 0b11111111
+    .byte 0b01111110
+    .byte 0b00111100
+
 ghost_bm:
     .byte 0b00111100
     .byte 0b01111110
@@ -1411,6 +1535,8 @@ bfsq:       .space 4800
 seed_rng:   .space 4
 pills_left: .space 4
 parity:     .space 4
+mouth_phase: .space 4
+mouth_timer: .space 4
 
             .space 512
 stack_top:
