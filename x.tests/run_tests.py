@@ -579,6 +579,37 @@ def comparable(resultado: dict, case: dict) -> dict:
     return recortado
 
 
+def video_timing_suffix(resultado: dict, case: dict, backend_name: str) -> str:
+    """Resume la cadencia HDMI real de un caso que para tras N swaps.
+
+    El simulador tambien devuelve ambos contadores, pero sus frames avanzan por
+    instrucciones y no por tiempo de barrido. Mostrarlo alli con el mismo
+    aspecto que en placa sugeriria una medida fisica que no existe.
+    """
+    if backend_name != "cpu-fpga" or not case.get("run_until"):
+        return ""
+    video = resultado.get("video") or {}
+    frames = video.get("frames")
+    swaps = video.get("swaps")
+    if not isinstance(frames, int) or not isinstance(swaps, int):
+        return ""
+    # Los deltas ya llegan calculados modulo 2^32 por el backend. Durante una
+    # medida normal hay como mucho un swap por frame, de modo que la diferencia
+    # son refrescos en los que se repitio el buffer frontal.
+    repetidos = frames - swaps
+    frame_label = "refresco" if frames == 1 else "refrescos"
+    swap_label = "swap" if swaps == 1 else "swaps"
+    resumen = (f"{frames} {frame_label}, {swaps} {swap_label}, "
+               f"{repetidos} sin swap")
+    # Con muy pocos intercambios, los frames de arranque y detencion dominan
+    # el cociente. A partir de diez ya es una orientacion util. MMIO no expone
+    # la frecuencia del modo de video, asi que se declara el supuesto de 60 Hz.
+    if swaps >= 10 and frames > 0:
+        fps = 60.0 * swaps / frames
+        resumen += f", ~{fps:.1f} FPS @ 60 Hz"
+    return f" ({resumen})"
+
+
 def expand_capabilities(names) -> frozenset:
     """Anade las capacidades implicadas por las declaradas."""
     resultado = set(names)
@@ -1523,13 +1554,17 @@ def main() -> int:
                 # El tiempo solo se anota junto al caso cuando es alto, para no
                 # ensuciar la salida de los casos rápidos.
                 slow = f" ({elapsed:.1f}s)" if elapsed >= SLOW_CASE_SECONDS else ""
+                video_timing = video_timing_suffix(
+                    result, case, backend_name)
                 if errors:
                     failures += 1
-                    print(f"FAIL {case['name']} [{backend_name}]{slow}")
+                    print(f"FAIL {case['name']} [{backend_name}]"
+                          f"{slow}{video_timing}")
                     for error in errors:
                         print(f"  {error}")
                 else:
-                    print(f"PASS {case['name']} [{backend_name}]{slow}")
+                    print(f"PASS {case['name']} [{backend_name}]"
+                          f"{slow}{video_timing}")
 
             if args.backend == 'gpu-both':
                 left, right = results['gpusim'], results['gpu-fpga']

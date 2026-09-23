@@ -160,5 +160,33 @@ class BackendArgumentsTest(unittest.TestCase):
         self.assertEqual(con["video"]["run_until_swap"], 2)
 
 
+class VideoTimingOutputTest(unittest.TestCase):
+    def test_muestra_contadores_fisicos_en_run_until_de_placa(self):
+        case = {"run_until": {"swap": 300}}
+        result = {"video": {"frames": 318, "swaps": 300}}
+        self.assertEqual(
+            run_tests.video_timing_suffix(result, case, "cpu-fpga"),
+            " (318 refrescos, 300 swaps, 18 sin swap, ~56.6 FPS @ 60 Hz)")
+
+    def test_no_calcula_fps_con_una_muestra_demasiado_corta(self):
+        case = {"run_until": {"swap": 1}}
+        result = {"video": {"frames": 3, "swaps": 1}}
+        self.assertEqual(
+            run_tests.video_timing_suffix(result, case, "cpu-fpga"),
+            " (3 refrescos, 1 swap, 2 sin swap)")
+
+    def test_no_presenta_frames_sinteticos_como_medida_fisica(self):
+        case = {"run_until": {"swap": 300}}
+        result = {"video": {"frames": 318, "swaps": 300}}
+        self.assertEqual(
+            run_tests.video_timing_suffix(result, case, "cpusim"), "")
+
+    def test_sin_run_until_no_hay_resumen(self):
+        result = {"video": {"frames": 10, "swaps": 0}}
+        self.assertEqual(
+            run_tests.video_timing_suffix(result, {"run_until": None},
+                                          "cpu-fpga"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

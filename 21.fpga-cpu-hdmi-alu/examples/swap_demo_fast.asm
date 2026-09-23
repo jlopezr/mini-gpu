@@ -2,38 +2,22 @@
 ; swap_demo_fast.asm - la misma banda que swap_demo.asm, redibujando
 ; solo lo que cambia
 ;
-; swap_demo.asm repinta las 240 lineas enteras cada frame: 38 400 escrituras
-; mas cuatro instrucciones de bucle por cada una. Esta version pinta 32 lineas
-; en lugar de 240 (borrar la banda vieja, dibujar la nueva), asi que hace
-; 5 120 escrituras: 7,5 veces menos trabajo. Medido en la placa, el dibujo pasa
-; de 96,6 ms a 13,2 ms por frame, una mejora de 7,3x que casa con el trabajo
-; ahorrado.
+; swap_demo.asm repinta las 240 lineas enteras: 38 400 escrituras por imagen.
+; Esta version solo borra las 16 lineas de la banda anterior y dibuja las 16
+; de la nueva: 5 120 escrituras, 7,5 veces menos. Ese ahorro permite acercarse
+; a un swap por cada refresco de 60 Hz en el hardware actual.
 ;
-; Lo que se ve en pantalla no es eso, sino el efecto de cruzar ese umbral:
-; 13,2 ms caben en los 16,7 ms de un frame de video y 96,6 ms no. Con la espera
-; al intercambio, un frame dibujado dura un numero entero de frames de video,
-; asi que swap_demo.asm sale a 9,8 fps (uno de cada seis) y este se engancha a
-; 59,3, o sea a los 60 del monitor. Sobran 3,5 ms por frame: a partir de aqui
-; manda la pantalla, no la CPU.
+; Con doble buffer, el buffer trasero contiene la imagen de hace dos swaps, no
+; la ultima imagen mostrada. Por eso R10 y R11 recuerdan por separado donde
+; quedo la banda en cada buffer y rotan despues de cada intercambio. Sin esa
+; cuenta quedarian bandas antiguas sin borrar.
 ;
-; El detalle que lo hace interesante, y que no existe con un solo buffer:
-; el buffer trasero NO contiene lo que se dibujo el frame pasado, sino lo del
-; frame ANTERIOR a ese, porque los dos buffers se alternan. Asi que para
-; borrar hay que recordar donde quedo la banda en CADA buffer por separado.
-; Eso son R10 y R11, que rotan en cada intercambio. Equivocarse aqui deja un
-; rastro de bandas verdes que no se borran nunca, y es el fallo clasico del
-; doble buffer.
-;
-; Arranque: los dos buffers empiezan con basura, asi que los dos primeros
-; frames borran 240 lineas en vez de 16. No hace falta codigo aparte para eso:
-; basta con que el numero de lineas a borrar sea una variable (R28) que pasa
-; de 240 a 16 cuando los dos buffers ya estan limpios.
+; Al arrancar, los dos buffers contienen datos desconocidos. Las dos primeras
+; vueltas limpian uno completo cada una; despues R28 pasa de 240 a 16 y solo se
+; borra la banda antigua.
 ;
 ; No se usa MUL: esta CPU declara el opcode pero no lo ejecuta. La direccion
 ; de una linea es base + y*640, y 640 = 512 + 128, o sea (y<<9) + (y<<7).
-;
-; Registros de video, en 0x80000000:
-;   +0  FB_FRONT   +4  FB_BACK   +8  SWAP   +12  STATUS
 ;
 ; Convencion de registros:
 ;   R1  base del buffer trasero    R2  contador de lineas
@@ -56,21 +40,14 @@
 start:
     LI    R20, MMIO_VIDEO_BASE
 
-    ; Elegir donde vive el framebuffer. Tras el reset las dos bases valen
-    ; cero --el framebuffer es una decision del programa, no una reserva
-    ; que el hardware impone-- asi que heredarlas seria dibujar sobre el
-    ; propio programa. La direccion es la de siempre; lo que cambia es que
-    ; ahora hay que escribirla.
+    ; Elegir dos zonas de RAM, separadas por el tamano de un framebuffer.
     MOVHI R30, 0x0100
     STORE R30, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
     MOVHI R30, 0x0102
     ORI   R30, R30, 0x5800
     STORE R30, R20, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
 
-    ; Encender el scanout. Tras el reset el modo es PATTERN --la memoria
-    ; recien encendida contiene basura, asi que arrancar leyendola daria
-    ; una salida indefinida-- y un programa que dibuja tiene que pedir
-    ; que se vea lo que dibuja. Ver video_registers.v, VIDEO_CTRL.
+    ; Mostrar los framebuffers. Tras el reset VIDEO esta en modo PATTERN.
     MOVI  R30, 2               ; SCANOUT
     STORE R30, R20, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
 
