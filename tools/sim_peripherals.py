@@ -10,7 +10,8 @@ def add_arguments(parser):
     group.add_argument("--video", action="store_true", help="habilita registros MMIO de vídeo")
     group.add_argument("--frame-instructions", type=int, default=1000,
                        help="instrucciones CPU/de warp por frame sintético (1000)")
-    group.add_argument("--halt-after-swaps", type=int, help="habilita vídeo y arma HALT_AT")
+    group.add_argument("--halt-after-swaps", type=int,
+                       help="habilita vídeo y para tras N intercambios")
     group.add_argument("--frame-output", type=Path, help="habilita vídeo y guarda FB_FRONT en RGB565 320x240")
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
@@ -26,7 +27,10 @@ def from_arguments(args):
     if args.video or args.frame_output or args.halt_after_swaps is not None:
         video = VideoDevice(frame_instructions=args.frame_instructions)
         if args.halt_after_swaps:
-            video.write(video.HALT_AT, args.halt_after_swaps)
+            # Esta opción es una condición del host basada en SWAP_COUNT. No
+            # se implementa con HALT_AT: en MMIO v2 ese registro cuenta frames
+            # de vídeo y además necesita HALT_TARGET.
+            video.stop_after_swaps = args.halt_after_swaps
     serial = None
     if args.serial or args.serial_input or args.serial_output:
         serial = SerialDevice(stdin=args.serial_input.read_bytes() if args.serial_input else b"")

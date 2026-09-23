@@ -68,7 +68,14 @@ HALT"""
                 # una palabra las dos bases y todo lo que va detras. Con el 8
                 # viejo esto escribia FB_BACK, no pedia ningun intercambio, y
                 # el programa se comia el limite de instrucciones.
-                result = self.run_program(backend, "MOVHI R1, 0x8020\nSTORE R0, R1, 0x0C\nloop: BEQ R0, R0, loop",
+                result = self.run_program(backend, """MOVHI R1, 0x8020
+MOVHI R2, 0x0100
+STORE R2, R1, 4
+MOVHI R2, 0x0102
+ORI R2, R2, 0x5800
+STORE R2, R1, 8
+STORE R0, R1, 0x0C
+loop: BEQ R0, R0, loop""",
                                           video={"run_until_swap": 1, "capture_frame": True},
                                           initial_memory=[(FB_BACK, b"\x34\x12\x78\x56")])
                 self.assertTrue(result["halted"])

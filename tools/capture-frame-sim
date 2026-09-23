@@ -111,7 +111,13 @@ def main(argv: list[str] | None = None) -> int:
     cpu.load_program(program)
 
     if args.swap is not None:
-        video.write(video.HALT_AT, args.swap)
+        if args.swap <= 0:
+            parser.error("--swap debe ser positivo")
+        # --swap cuenta intercambios, no frames de vídeo. HALT_AT pertenece al
+        # contrato MMIO y desde v2 cuenta FRAME_COUNT además de necesitar un
+        # HALT_TARGET; la condición interna de captura es la que modela
+        # explícitamente "parar después de N swaps".
+        video.stop_after_swaps = args.swap
         cpu.run(args.max_instrucciones)
         if not cpu.halted:
             raise SystemExit(
@@ -126,13 +132,10 @@ def main(argv: list[str] | None = None) -> int:
                     f"error: el programa paró (HALT) antes de las "
                     f"{args.instrucciones} instrucciones pedidas")
             cpu.step()
-        # Escribir HALT_AT arma la alarma «dentro de N intercambios desde
-        # AHORA» (ver VideoDevice.write en minicpu_sim.py) y de paso pone
-        # swap_count a cero, así que el total absoluto hay que guardarlo
-        # antes de armar. Con N=1 para en el próximo, sin importar cuántos
-        # hubiera antes.
-        swaps_antes = video.swap_count
-        video.write(video.HALT_AT, 1)
+        # Capturar el siguiente intercambio posterior al punto solicitado.
+        # stop_after_swaps compara con el contador absoluto y no altera el
+        # estado MMIO visible del programa.
+        video.stop_after_swaps = video.swap_count + 1
         restantes = args.max_instrucciones - args.instrucciones
         pasos = 0
         while not cpu.halted:
@@ -142,7 +145,6 @@ def main(argv: list[str] | None = None) -> int:
                     "instrucciones siguientes a --instrucciones")
             cpu.step()
             pasos += 1
-        video.swap_count += swaps_antes
 
     frame = bytes(cpu.memory[video.fb_front:video.fb_front + FRAME_BYTES])
 

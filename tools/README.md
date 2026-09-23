@@ -345,7 +345,7 @@ opciones de `tools/sim_peripherals.py`:
 |---|---|
 | `--video` | Activa registros de vídeo en `0x80000000` |
 | `--frame-instructions N` | Periodo sintético del frame, 1000 por defecto; debe ser positivo |
-| `--halt-after-swaps N` | Activa vídeo y arma `HALT_AT` para parar tras N swaps |
+| `--halt-after-swaps N` | Activa vídeo y para el simulador tras N intercambios |
 | `--frame-output frame.bin` | Activa vídeo y guarda el framebuffer frontal RGB565 de 320×240 |
 | `--serial` | Activa serie en `0x80000200` |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
