@@ -1496,6 +1496,9 @@ def main() -> int:
     # no, porque hay una sola placa. Ver `run_cases_in_parallel`.
     simulator_names = [n for n in backends if n in SIMULADORES]
     jobs = resolve_jobs(args.jobs, len(simulator_names), len(cases), args)
+    if jobs > 1:
+        print(f"Ejecutando casos de simulador en paralelo con {jobs} procesos; "
+              "los tiempos individuales se solapan.")
     parallel_results = (
         run_cases_in_parallel(cases, simulator_names, backend_versions, args, jobs)
         if jobs > 1 else {}
