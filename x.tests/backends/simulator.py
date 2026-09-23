@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from . import video_layout
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.sim_peripherals import video_result
 
@@ -133,12 +132,11 @@ class SimulatorBackend:
                 raise RuntimeError(
                     f"el simulador {self.version!r} no tiene VideoDevice")
             dispositivo = self.video_class()
-            # Poner el framebuffer donde el arnés lo quiere, igual que hace el
-            # backend de placa. El dispositivo arranca con las bases a cero
-            # --como el hardware-- y hay casos que dibujan donde les digan.
-            # Ver backends/video_layout.py.
-            dispositivo.write(dispositivo.FB_FRONT, video_layout.FB_FRONT)
-            dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
+            # Las bases arrancan a cero, como el hardware, y ahí se quedan: el
+            # framebuffer lo elige el PROGRAMA, no el arnés. El arnés preparaba
+            # las dos bases por `band` y `bounce`, que eran los únicos que las
+            # heredaban; desde que se las ponen ellos, los once programas de
+            # vídeo del repositorio se configuran solos y esto sobra.
             swap = video.get("run_until_swap")
             if swap:
                 # Parada del arnes, NO por HALT_AT. Hasta v2 se hacia

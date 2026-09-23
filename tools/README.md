@@ -375,6 +375,112 @@ el mismo PC al capturar. No se simulan desgarro, underflow ni tiempo físico de
 UART/HDMI. `--frame-output` vuelca RAM desde `FB_FRONT`, no renderiza PATTERN ni
 BLANK. Los accesos MMIO requieren palabras alineadas de 32 bits.
 
+## Depurador interactivo (`mini-dbg`)
+
+Un solo depurador que se **conecta** a dos sitios: el simulador funcional o la
+placa por el monitor serie. Mismos comandos, misma interfaz, mismo núcleo.
+
+```bash
+> mini-dbg programa.asm                  # simulador funcional (2.cpu-sim-func)
+> mini-dbg --board --prototype 21        # placa real, por monitor.py
+> mini-dbg --board -p 21 programa.asm    # placa, con el fuente para el listado
+```
+
+El programa hace dos cosas: se carga en el simulador y sirve de mapa
+`PC -> fuente`. Con `--board` no se carga nada —de eso ya se ocupa
+`board-load`— pero el `.asm` sigue valiendo para ver el código tal como se
+escribió en vez de palabras en crudo. El mapa no es un desensamblador: lo
+construye `mini_asm.first_pass`, como `mini-asm --listing`, así que conserva
+comentarios, etiquetas y macros. Con un `.bin` o un `.hex` se ven `.word`.
+
+La TUI son cuatro paneles —código con el PC centrado, registros, memoria y
+consola— y una línea de comandos. Cada tecla hace exactamente lo mismo que
+escribir el comando, ni más ni menos:
+
+| Comando | Tecla | Qué hace |
+|---|---|---|
+| `step [N]` | `s` | Ejecuta N instrucciones (1 por defecto). No para en breakpoints |
+| `over` | `n` | Un paso, saltando entera la llamada si es `JAL`/`JALR` |
+| `run [N]` | `c` | Hasta breakpoint, `HALT` o error |
+| `until X` | — | Hasta la dirección o etiqueta X |
+| `break [X]` | `b` | Breakpoint en X (o en el PC con la tecla); sin argumento los lista |
+| `delete [X]` | — | Borra el breakpoint X, o todos |
+| `regs [Rn]` | — | Los registros, o uno |
+| `set X V` | — | `set R5 0x10`, `set pc bucle` |
+| `mem [X N]` | — | Vuelca N bytes desde X y mueve el panel de memoria |
+| `write X V` | — | Escribe la palabra V en la dirección X |
+| `fb [X]` | `v` | Ventana de framebuffer: `front` (por defecto), `back`, `both`, `off` |
+| `reset` | `R` | PC, registros y contadores a cero sin borrar la memoria |
+
+### Ver el framebuffer mientras se depura
+
+`v` (o `fb`) abre una **ventana** aparte con el framebuffer, en tkinter —de la
+biblioteca estándar, no hace falta pygame ni nada nuevo—. `fb both` enseña los
+dos buffers lado a lado, `+`/`-` amplían y `Esc` cierra.
+
+Los dos buffers no enseñan lo mismo, y esa es la gracia:
+
+- **front** es el frame estable, el que estaría saliendo por HDMI.
+- **back** es sobre el que el programa está dibujando *ahora*, así que con la
+  máquina parada a mitad de dibujo se ve a medias. Eso no es un fallo de la
+  captura: es ver exactamente hasta dónde había llegado. Es justo lo contrario
+  de `capture-frames`, que para en el swap para que la captura salga
+  entera y determinista — las dos herramientas quieren cosas distintas.
+
+En el simulador la ventana se repinta **después de cada comando**, así que se
+ve el dibujo avanzar paso a paso. En la placa no: son ~1,5 s por buffer a
+1 Mbaud (el número está medido en `tools/capture-frames`), así que se refresca
+cuando se pide con `fb`. `fb auto on|off` cambia ese comportamiento si en algún
+caso concreto interesa lo contrario.
+
+Las bases no se cablean: `FB_FRONT` y `FB_BACK` se releen en cada refresco
+porque el swap las intercambia. En el simulador se le preguntan al dispositivo;
+en la placa se leen de la ventana de vídeo de MMIO v2 (`0x80200000`), pero sólo
+después de comprobar el magic de SYS_ID y el bit de vídeo de `DEVICES`. Sin
+magic no se lee nada: en v2 `0x80000000` es SYSTEM, así que leer ahí a ciegas
+devolvería el propio magic con pinta de dirección de framebuffer.
+
+**Para depurar un caso de vídeo, `--fb-layout`.** Desde la fase 3.5 las bases
+arrancan a cero, y casos como `band` o `bounce` leen `FB_BACK` y dibujan donde
+les digan: sin colocarlas antes, dibujan sobre su propio código en la dirección
+cero y mueren con un encoding inválido que parece un fallo del caso y no lo es
+(lo explica [`x.tests/backends/video_layout.py`](../x.tests/backends/video_layout.py)).
+`--fb-layout` las pone donde las pone el arnés, importando sus direcciones de
+ahí en vez de copiarlas:
+
+```bash
+> mini-dbg x.tests/cases/video/band/band.asm --fb-layout -x "run 400000" 
+```
+
+Direcciones y valores aceptan etiquetas del programa, `0x...`, decimal y `pc`.
+Los `.include` se buscan en `x.tests/inc` siempre —es donde vive `mmio.inc`—
+más lo que se añada con `-I`.
+Para tuberías, `ssh` o una máquina sin `textual`, `--no-tui` da el mismo
+depurador en modo línea. Se puede arrancar con trabajo hecho:
+`mini-dbg programa.asm --break bucle -x run`.
+
+**Qué se puede hacer en cada sitio.** No todo objetivo soporta todo, y el que
+no, lo dice en vez de fingirlo:
+
+| Operación | Simulador | Placa |
+|---|---|---|
+| Paso, breakpoints, leer registros y memoria | sí | sí |
+| Escribir memoria, `reset` | sí | sí |
+| `set Rn` / `set pc` | sí | **no** — pide comandos nuevos en `monitor.v` (punto 11 del TODO) |
+| `run` sin breakpoints | paso a paso (ya es rápido) | `RUN` del monitor, no miles de `STEP` por el serie |
+
+Un `run` **con** breakpoints en la placa sí va instrucción a instrucción por el
+puerto serie, porque el hardware no tiene comparador de PC: es correcto pero
+lento, así que conviene acercarse con `until` y afinar desde ahí.
+
+**Dónde está.** `tools/debug_core.py` es el depurador entero —comandos,
+ejecución, breakpoints— y no pinta nada; `tools/debug_tui.py` solo coloca en
+paneles lo que el núcleo devuelve. En medio, `tools/debug_target.py` define qué
+necesita el depurador de la máquina que depura, con una implementación para el
+simulador y otra (`tools/debug_board.py`) para el monitor. Añadir la MiniGPU
+—warps y carriles— es escribir un tercer objetivo, no tocar la interfaz.
+Suite: `python -m unittest discover -s x.tests -p test_debugger.py`.
+
 ## Ejecutar la suite de tests
 
 `x.tests` (backends de placa/simulador, casos, runner) tiene su propio

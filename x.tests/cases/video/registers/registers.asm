@@ -4,12 +4,12 @@
 ; No dibuja nada. Comprueba lo unico que un programa necesita saber de los
 ; registros para usar el doble buffer:
 ;
-;   - FB_FRONT y FB_BACK valen lo que el runner acaba de dejarles;
-;     OJO: esto NO comprueba el valor de encendido. Solo el reset de la placa
-;     reinicia esas bases, asi que un caso anterior que dejara un numero impar
-;     de intercambios se las pasaba cruzadas a este, y fallaba una de cada dos
-;     veces. Desde que el backend las normaliza antes de cada ejecucion, lo que
-;     queda probado aqui es que se leen, no de donde parten;
+;   - una base escrita se relee EXACTA: el programa pone FB_FRONT y FB_BACK al
+;     arrancar y comprueba que valen lo que escribio. OJO: esto NO comprueba el
+;     valor de encendido, que no es asunto de un programa. Antes las heredaba
+;     del runner, y como solo el reset de la placa reinicia esas bases, un caso
+;     anterior que dejara un numero impar de intercambios se las pasaba
+;     cruzadas y este fallaba una de cada dos veces;
 ;   - escribir FB_BACK lo cambia, y se alinea a cuatro bytes;
 ;   - escribir SWAP pide un intercambio, y al aplicarse las dos bases se
 ;     INTERCAMBIAN, no se copia una sobre la otra;
@@ -42,6 +42,19 @@ start:
     ; `MOVI R9, 0`: mientras R0 fue un registro general en cinco de los seis
     ; backends, usarlo habria funcionado por casualidad --los registros
     ; arrancan a cero-- hasta el dia que alguien lo escribiera.
+
+    ; ---- partida conocida ----
+    ; Las pone ESTE programa, no el runner. Antes las heredaba, y eso obligaba
+    ; al arnes a normalizarlas antes de cada ejecucion: solo el reset de la
+    ; placa reinicia las bases, asi que un caso anterior que dejara un numero
+    ; impar de intercambios se las pasaba cruzadas y este fallaba una de cada
+    ; dos veces. Poniendolas aqui, el caso no depende de nadie y comprueba
+    ; ademas que una base escrita se lee EXACTA.
+    MOVHI R9, 0x0100
+    STORE R9, R20, MMIO_VIDEO_FB_FRONT_OFF
+    MOVHI R9, 0x0102
+    ORI   R9, R9, 0x5800
+    STORE R9, R20, MMIO_VIDEO_FB_BACK_OFF
 
     ; ---- valores iniciales ----
     LOAD  R1, R20, MMIO_VIDEO_FB_FRONT_OFF           ; FB_FRONT

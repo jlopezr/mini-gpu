@@ -2,3 +2,7 @@ pillow
 apio
 pyserial
 PyYAML
+# La TUI de mini-dbg. El tope es por apio, que clava rich==14.0.0: textual 6+
+# pide rich>=14.2 y romperia el entorno de sintesis. Sin textual instalado,
+# mini-dbg sigue funcionando en modo linea.
+textual<6

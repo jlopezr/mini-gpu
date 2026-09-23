@@ -83,6 +83,11 @@ rechaza en vez de truncarse.
 
 `RET` es un alias de `JR R31`.
 
+`LA Rd, etiqueta` carga una dirección absoluta de 32 bits. Es una
+pseudoinstrucción de dos palabras (`MOVHI` + `ORI`), igual que `LI`, pero hace
+explícito que el operando se usa como dirección. Admite aritmética sencilla de
+símbolos, por ejemplo `LA R3, tabla+8`.
+
 ## Etiquetas
 
 Una etiqueta vale como inmediato, y entonces **es su dirección**. Es como se
@@ -149,11 +154,19 @@ Un literal de cadena no tiene "función anterior" a la que pertenecer.
 | `.half v, …`            | 16 bits por valor                                                                   |
 | `.byte v, …`            | 8 bits por valor                                                                    |
 | `.string "…"`           | Los bytes del literal, **NUL final** y relleno hasta múltiplo de 4                  |
+| `.incbin "ruta"`        | Inserta un `.bin` literalmente o un `.hex` de palabras de 32 bits por línea        |
 | `.space n` / `.zero n`  | `n` bytes a cero                                                                    |
 | `.align n`              | Rellena hasta múltiplo de `n`                                                       |
 | `.comm sim, tam[, ali]` | Reserva `tam` bytes en `.bss` bajo ese símbolo                                      |
 
 Escapes en `.string`: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`.
+
+Las rutas de `.incbin` se buscan con las mismas reglas que `.include`: primero
+junto al fichero que contiene la directiva y después en cada carpeta `-I`. Un
+`.bin` se copia byte a byte. Un `.hex` usa el mismo formato que `--hex`: una
+palabra hexadecimal de hasta 32 bits por línea, emitida en little-endian. La
+directiva no añade alineación propia; el relleno final de la imagen sigue
+haciéndose hasta múltiplo de cuatro bytes.
 
 Contar cuatro bytes por línea pase lo que pase es el error clásico aquí: una
 directiva de datos desplaza **todas** las etiquetas siguientes, y si la pasada 1

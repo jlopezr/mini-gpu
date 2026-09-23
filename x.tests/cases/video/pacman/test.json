@@ -3,13 +3,12 @@
   "name": "pacman",
   "program": "pacman.asm",
   "requires": ["frame_capture", "subword_memory", "calls", "shift_immediate", "mul_div"],
-  "run_until": {"swap": 10},
-  "max_instructions": 1000000,
-  "timeout_seconds": 20.0,
+  "run_until": {"swap": 300},
+  "max_instructions": 8000000,
+  "timeout_seconds": 60.0,
   "expect": {
     "error": false,
     "error_code": 0,
-    "video": {"underflow": false},
-    "NOT-YET-IMPLEMENTED": {"frame": {"file": "expected/frame.bin"}}
+    "video": {"underflow": false}
   }
 }

@@ -53,9 +53,19 @@ WIDTH = 320
 HEIGHT = 240
 FB_BASE = 0x01000000
 
-FB_FRONT = 0x80000000
-FB_BACK = 0x80000004
-VIDEO_CTRL = 0x80000018
+# Del mapa generado, no cableadas: estas tres se quedaron en el mapa v1 --la
+# ventana de vídeo en 0x80000000, con VIDEO_CTRL al final-- cuando la migración
+# a v2 la movió a 0x80200000 y puso CTRL delante de todo. En v2 0x80000000 es
+# SYSTEM y es de sólo lectura, así que la subida se iba en un rechazo del
+# monitor sin que el motivo tuviera nada que ver con la imagen.
+from tools.mmio_map import (  # noqa: E402
+    MMIO_VIDEO_BASE, MMIO_VIDEO_CTRL_OFF, MMIO_VIDEO_FB_BACK_OFF,
+    MMIO_VIDEO_FB_FRONT_OFF,
+)
+
+FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
+FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
+VIDEO_CTRL = MMIO_VIDEO_BASE + MMIO_VIDEO_CTRL_OFF
 MODE_SCANOUT = 2
 
 

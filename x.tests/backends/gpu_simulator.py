@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from . import video_layout
 from .simulator import _load_module, video_result
 
 VERSIONS = {
@@ -89,11 +88,9 @@ class GpuBackend:
                 # una condicion de observacion, no un registro. Misma razon y
                 # mismo cambio que en backends/simulator.py.
                 dispositivo.stop_after_swaps = video["run_until_swap"]
-            # Igual que en los otros dos backends: el dispositivo arranca con
-            # las bases a cero, como el hardware, y es el arnes quien elige
-            # donde vive el framebuffer. Ver backends/video_layout.py.
-            dispositivo.write(dispositivo.FB_FRONT, video_layout.FB_FRONT)
-            dispositivo.write(dispositivo.FB_BACK, video_layout.FB_BACK)
+            # Igual que en los otros dos backends: las bases arrancan a cero,
+            # como el hardware, y se quedan asi. Donde vive el framebuffer lo
+            # elige el PROGRAMA, que es quien lo va a dibujar.
         size = self.module.config_warp_size(warp_config)
         serie = self.module.SerialDevice(stdin=stdin)
         serie.attach_host()

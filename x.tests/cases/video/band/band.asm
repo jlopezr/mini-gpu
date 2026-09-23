@@ -27,13 +27,24 @@
 ;   R20 base de los registros       R22 lineas totales (240)
 ;   R23 color de fondo              R24 color de la banda
 ;   R25 palabras por linea (160)    R26 primera linea de la banda (96)
-;   R27 primera linea despues (112)
+;   R27 primera linea despues (112)  R28 temporal de las bases (solo al inicio)
 ; ============================================================
 
 .include "mmio.inc"
 
 start:
     LI    R20, MMIO_VIDEO_BASE          ; registros de video
+
+    ; Las dos bases se las pone el programa, como el resto de los ejemplos de
+    ; video. Arrancan a cero desde la fase 3.5 --cero no pretende ser una
+    ; direccion util-- asi que heredarlas era dibujar sobre el propio programa
+    ; en la direccion cero. Separadas por 0x25800, justo un frame de 320x240
+    ; en RGB565, y las dos alineadas a 16 como pide MMIO_VIDEO_FB_ALIGN.
+    MOVHI R28, 0x0100
+    STORE R28, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT = 0x01000000
+    MOVHI R28, 0x0102
+    ORI   R28, R28, 0x5800
+    STORE R28, R20, MMIO_VIDEO_FB_BACK_OFF           ; FB_BACK  = 0x01025800
 
     MOVHI R23, 0x001F
     ORI   R23, R23, 0x001F     ; azul en las dos mitades de la palabra

@@ -1,29 +1,27 @@
-"""Dónde pone el arnés el framebuffer, y por qué lo tiene que poner él.
+"""Dónde ponen el framebuffer los programas de vídeo del repositorio.
 
-Hasta la fase 3.5 las bases venían cableadas en el reset del hardware
-(`0x01000000` y `0x01025800`), y un caso que dibujara las heredaba sin
-escribirlas. Ya no: `video_registers.v` arranca con las dos a cero, porque cero
-no pretende ser una dirección útil --el framebuffer es una decisión del
-programa, no una reserva que el hardware impone-- y porque `0x01000000` ni
-siquiera es válida en todos los mapas.
+Esto ya no lo escribe nadie: lo escribe cada programa. Las bases arrancan a
+cero desde la fase 3.5 --cero no pretende ser una dirección útil, porque el
+framebuffer es una decisión del programa y no una reserva que el hardware
+impone-- y los once programas de vídeo del repositorio las ponen ellos al
+arrancar, con `STORE` a `FB_FRONT` y `FB_BACK`.
 
-La consecuencia para las pruebas es que *alguien* tiene que elegir la dirección
-antes de que el caso arranque. Dos casos de `cases/video` --`band` y
-`bounce`-- leen FB_BACK y dibujan donde les digan, así que sin esto dibujarían
-sobre el propio programa, en la dirección cero.
+Durante un tiempo las puso el arnés, y solo por dos casos: `band` y `bounce`
+eran los únicos que las heredaban en vez de escribirlas. Preparar la máquina
+desde fuera tapaba además un problema de verdad --solo el reset de la placa
+reinicia las bases, así que un caso que dejara un número impar de intercambios
+se las pasaba cruzadas al siguiente-- que desaparece solo en cuanto cada
+programa escribe las suyas.
 
-Ese alguien es el arnés y no el caso, por la misma razón por la que el arnés
-enciende SCANOUT: el caso declara lo que espera, no cómo dejar la máquina
-preparada.
+Lo que queda aquí son las dos direcciones que los programas usan de hecho, para
+que las pruebas que necesitan mirar el framebuffer sepan dónde está sin
+duplicar el número. Están separadas por 0x25800, justo un frame de 320x240 en
+RGB565, y las dos alineadas a 16 como exige §9.2.
 
-Y vive aquí, en un solo sitio, porque lo usan los tres backends que corren
-vídeo --placa, simulador de CPU y simulador de GPU-- y `test_differential`
-compara el framebuffer del simulador contra el de la placa byte a byte. Si las
-copias se separaran, la comparación fallaría por una diferencia que no está en
-lo que se prueba.
+Si un programa elige otra dirección no pasa nada: los backends capturan el
+frame leyendo `FB_FRONT` de la placa o del dispositivo, nunca una dirección
+fija.
 """
 
-# 320*240*2 bytes de separación entre los dos buffers: el frontal justo encima
-# del área que usan los programas de prueba, y el trasero a un frame de él.
 FB_FRONT = 0x0100_0000
 FB_BACK = 0x0102_5800

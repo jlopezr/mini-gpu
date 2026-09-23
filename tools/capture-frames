@@ -26,6 +26,20 @@ frame N sale igual siempre.
 
 Los ficheros salen como <prefijo>_NNN.bin, en RGB565 crudo de 320x240, en el
 directorio actual: es lo que comen make-framebuffer y compare-frames.py.
+
+Habla MMIO v2 y por palabras enteras
+------------------------------------
+
+Las direcciones se importan de `tools/mmio_map.py`, no se cablean, y los
+registros se escriben con `write-word`. Las dos cosas estuvieron mal a la vez:
+esto se quedó en el mapa v1 --video en 0x80000000, que en v2 es SYSTEM-- y
+escribía cada palabra en cuatro `write-byte`, lo que rearma `HALT_AT` cuatro
+veces con valores intermedios y dispara la captura donde no toca. Lo segundo
+está descrito en `mmio_decoder.v`, que nombra a esta herramienta.
+
+Los tests de `x.tests/test_video_tools.py` no lo cogieron porque prueban el
+parseo de las respuestas con el monitor simulado, y ahí una dirección
+equivocada da una respuesta igual de válida.
 """
 from __future__ import annotations
 
@@ -37,32 +51,60 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.mmio_map import (
+    MMIO_VIDEO_BASE, MMIO_VIDEO_FB_FRONT_OFF, MMIO_VIDEO_HALT_AT_OFF,
+    MMIO_VIDEO_HALT_TARGET_OFF, MMIO_VIDEO_STATUS_OFF,
+    MMIO_VIDEO_SWAP_COUNT_OFF,
+)
 from tools.run_board import assemble, detect_port, resolve_program, resolve_target, run_monitor_cli
 
-FB_FRONT = 0x80000000
-STATUS = 0x8000000C
-SWAP_COUNT = 0x80000010
-HALT_AT = 0x80000014
+# Las direcciones salen de `tools/mmio_map.py`, que es el mapa generado, y no
+# van cableadas: estuvieron cableadas al mapa v1 (vídeo en 0x80000000) y se
+# quedaron ahí cuando la migración a v2 movió la ventana a 0x80200000 y corrió
+# los registros. En v2 0x80000000 es SYSTEM, así que esto leía el magic de
+# SYS_ID creyendo que era un FB_FRONT.
+FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
+STATUS = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
+SWAP_COUNT = MMIO_VIDEO_BASE + MMIO_VIDEO_SWAP_COUNT_OFF
+HALT_AT = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_AT_OFF
+HALT_TARGET = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_TARGET_OFF
+HALT_TARGET_CPU = 1 << 0
 
 
 def write_reg(prototype_dir: Path, port: str, address: int, value: int) -> None:
-    # El monitor accede byte a byte, así que una palabra son cuatro comandos.
-    for i in range(4):
-        byte = (value >> (i * 8)) & 0xFF
-        run_monitor_cli(prototype_dir, port, "write-byte", f"0x{address + i:08x}", str(byte))
+    """Una palabra, en UN comando.
+
+    Antes eran cuatro `write-byte`, y con `HALT_AT` eso no es una ineficiencia
+    sino un fallo: escribirlo rearma la alarma y reinicia el contador de frames
+    CADA VEZ, así que en cuatro trozos se rearmaba cuatro veces con valores
+    intermedios (0x000000NN, 0x0000NNNN...) y la captura se disparaba donde no
+    tocaba. Está descrito en `mmio_decoder.v` --que nombra a esta herramienta--
+    y es el ejemplo de §16.2 del mapa.
+    """
+    run_monitor_cli(prototype_dir, port, "write-word", f"0x{address:08x}", str(value))
 
 
 def read_reg(prototype_dir: Path, port: str, address: int) -> int:
-    value = 0
-    for i in range(4):
-        # `read-byte` imprime «Address 0x80000000: 0x00», no el número suelto.
-        text = run_monitor_cli(prototype_dir, port, "read-byte", f"0x{address + i:08x}")
-        line = text.strip().splitlines()[-1]
-        if ":" not in line:
-            raise SystemExit(f"error: respuesta inesperada de read-byte: '{line}'")
-        byte = int(line.rsplit(":", 1)[1].strip(), 16)
-        value |= byte << (i * 8)
-    return value
+    # `read-word` imprime «Address 0x80200004: 0x01000000», no el número suelto.
+    text = run_monitor_cli(prototype_dir, port, "read-word", f"0x{address:08x}")
+    line = text.strip().splitlines()[-1]
+    if ":" not in line:
+        raise SystemExit(f"error: respuesta inesperada de read-word: '{line}'")
+    return int(line.rsplit(":", 1)[1].strip(), 16)
+
+
+def arm_halt(prototype_dir: Path, port: str, swap: int) -> None:
+    """Arma la alarma para que la CPU pare en el intercambio `swap`.
+
+    El orden no es indiferente: `HALT_TARGET` va PRIMERO. Es nuevo en MMIO v2
+    (§9.6) --la alarma dice A QUIEN para-- y arranca a cero, así que sin
+    escribirlo `HALT_AT` se arma y no para a nadie: la captura agotaría su
+    espera en todos los programas, hicieran swaps o no.
+
+    Vive en su propia función para que el orden se pueda probar sin placa.
+    """
+    write_reg(prototype_dir, port, HALT_TARGET, HALT_TARGET_CPU)
+    write_reg(prototype_dir, port, HALT_AT, swap)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         # Borrar el underflow de la pasada anterior. Sin esto, el primer
         # frame que lo provoque contamina todos los demás.
         write_reg(target.prototype_dir, port, STATUS, 1)
-        write_reg(target.prototype_dir, port, HALT_AT, swap)
+        arm_halt(target.prototype_dir, port, swap)
 
         run_monitor_cli(target.prototype_dir, port, "run")
 

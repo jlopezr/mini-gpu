@@ -18,6 +18,7 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.mmio_map import MMIO_VIDEO_BASE, MMIO_VIDEO_STATUS_OFF
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
 from tools.prototype_report import _capabilities
 
@@ -240,7 +241,13 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
         # malo-- que desaparece con la fase 3.4: las cuatro GPU atienden ahora
         # las LECTURAS de MMIO con el nucleo en marcha, igual que la CPU. Y es
         # justo cuando interesa mirar el underflow: en una demo que no para.
-        video_status = run_monitor_cli(prototype_dir, port, "read-byte", "0x8000000c")
+        # La dirección sale del mapa generado. Estuvo cableada a 0x8000000c, el
+        # STATUS de vídeo del mapa v1: en v2 esa dirección es el registro
+        # DEVICES de SYSTEM, cuyo bit 0 está siempre a uno, así que esto
+        # anunciaba underflow en TODAS las ejecuciones con vídeo.
+        status_address = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
+        video_status = run_monitor_cli(prototype_dir, port, "read-word",
+                                       f"0x{status_address:08x}")
         if ":" in video_status and int(video_status.rsplit(":", 1)[1].strip(), 16) & 1:
             print("!! underflow de video marcado (pegajoso: puede venir de antes)", file=sys.stderr)
     return 0

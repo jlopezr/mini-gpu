@@ -11,7 +11,6 @@ from pathlib import Path
 from types import ModuleType
 
 from . import board
-from .video_layout import FB_BACK, FB_FRONT
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -108,10 +107,6 @@ from tools.mmio_map import (  # noqa: E402
 
 VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
 VIDEO_FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
-# Dónde pone el arnés el framebuffer: `FB_FRONT`/`FB_BACK`, importados arriba.
-# Ya NO es el valor de reset de la placa --que desde la fase 3.5 es cero en los
-# dos-- sino una dirección que elige el arnés, la misma que usan los dos
-# simuladores. Ver backends/video_layout.py.
 VIDEO_STATUS = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
 VIDEO_SWAP_COUNT = MMIO_VIDEO_BASE + MMIO_VIDEO_SWAP_COUNT_OFF
 VIDEO_HALT_AT = MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_AT_OFF
@@ -356,18 +351,13 @@ class FpgaBackend:
                 # sabe cual fue. En las versiones sin `frame_capture` STATUS es
                 # de solo lectura y la escritura se ignora, que es inofensivo.
                 _write_register(client, VIDEO_STATUS, 1)
-                # Y poner las bases donde el arnes las quiere. Hacen falta dos
-                # cosas a la vez. Una, que exista un framebuffer: desde la fase
-                # 3.5 el reset deja las dos bases a cero, asi que un caso que
-                # dibuje donde le digan --`band` y `bounce` leen FB_BACK--
-                # dibujaria sobre el propio programa. Y dos, que sea el MISMO
-                # sitio en cada ejecucion: solo el reset de la placa las
-                # reinicia, asi que un caso que deje un numero IMPAR de
-                # intercambios se las pasaria cruzadas al siguiente, y
-                # `video-registers` fallaria una de cada dos veces segun lo que
-                # corriera antes.
-                _write_register(client, VIDEO_FB_FRONT, FB_FRONT)
-                _write_register(client, VIDEO_FB_BACK, FB_BACK)
+                # Las bases NO se tocan: el framebuffer lo elige el programa.
+                # Esto las ponia por `band` y `bounce`, los dos unicos que las
+                # heredaban, y de paso tapaba que solo el reset de la placa las
+                # reinicia --un caso que dejara un numero IMPAR de intercambios
+                # se las pasaba cruzadas al siguiente--. Eso ya no importa:
+                # cada programa escribe las suyas al arrancar, asi que ninguno
+                # depende de lo que dejara el anterior.
                 # Y encender el scanout, porque tras el reset el modo es
                 # PATTERN. No es cosmetica: en PATTERN el barrido NO lee la
                 # memoria, asi que no puede haber underflow y un

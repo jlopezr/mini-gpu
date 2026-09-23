@@ -424,14 +424,23 @@ y detenerse en un PC o un warp concreto. Debe ser una herramienta **aparte**, no
 una opción de `run_tests.py`: el runner responde pasa/falla y un depurador
 interactivo es otro oficio.
 
-**Parcial.** `monitor.py step` ya existe —un paso de CPU en placa real— pero es
-el primitivo de bajo nivel, no la herramienta descrita aquí: no inspecciona
-registros ni memoria automáticamente, ni para en un PC o warp concreto.
-`TextTrace` ya hace el resto del trabajo sucio.
+**Hecho para la CPU.** `mini-dbg` ([`tools/README.md`](tools/README.md)) es esa
+herramienta aparte: TUI de cuatro paneles, paso a paso, breakpoints por
+etiqueta, lectura y escritura de registros y memoria, y ventana de framebuffer
+(`front` estable y `back` a medio dibujar). Y **se conecta** a los dos
+sitios con el mismo comando —`mini-dbg programa.asm` al simulador funcional,
+`mini-dbg --board -p 21` a la placa por el monitor—, que era la mitad del punto:
+`monitor.py step` sigue siendo el primitivo, pero ya no hay que usarlo a pelo.
 
-**Por qué importa poco.** No encuentra fallos, ayuda a entenderlos una vez
-encontrados, y con las expectativas actuales `--trace-detail` ya cubre casi todos
-los casos. Si sale el punto 3, cubre buena parte de esto de rebote.
+**Qué falta.** El warp. Hoy el depurador habla de un PC y 32 registros, no de
+warps y carriles, así que en la MiniGPU no sirve. Es un `DebugTarget` más
+(`tools/debug_target.py`) más vista de carriles: la interfaz y los comandos no
+se tocan. En placa, además, no se pueden escribir registros ni mover el PC; eso
+es el punto 11 y `mini-dbg` lo rechaza con su motivo en vez de fingirlo.
+
+**Por qué sigue importando poco.** No encuentra fallos, ayuda a entenderlos una
+vez encontrados, y con las expectativas actuales `--trace-detail` ya cubre casi
+todos los casos.
 
 ---
 

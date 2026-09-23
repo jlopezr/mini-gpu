@@ -28,33 +28,73 @@ measure_demo = _load("measure-demo")
 
 
 class CaptureFramesRegisterTest(unittest.TestCase):
-    def test_read_reg_assembles_little_endian_bytes(self):
-        responses = [
-            "Address 0x80000000: 0x78",
-            "Address 0x80000001: 0x56",
-            "Address 0x80000002: 0x34",
-            "Address 0x80000003: 0x12",
-        ]
-        with mock.patch.object(capture_frames, "run_monitor_cli", side_effect=responses):
-            value = capture_frames.read_reg(Path("/proto"), "COM3", 0x80000000)
+    def test_read_reg_parses_a_word(self):
+        with mock.patch.object(capture_frames, "run_monitor_cli",
+                               return_value="Address 0x80200004: 0x12345678"):
+            value = capture_frames.read_reg(Path("/proto"), "COM3",
+                                            capture_frames.FB_FRONT)
         self.assertEqual(value, 0x12345678)
 
     def test_read_reg_rejects_unexpected_output(self):
         with mock.patch.object(capture_frames, "run_monitor_cli", return_value="garbage"):
             with self.assertRaises(SystemExit):
-                capture_frames.read_reg(Path("/proto"), "COM3", 0x80000000)
+                capture_frames.read_reg(Path("/proto"), "COM3", 0x80200004)
 
-    def test_write_reg_sends_four_write_byte_commands(self):
+    def test_write_reg_sends_one_word_command(self):
+        # Y no cuatro `write-byte`: escribir HALT_AT en trozos lo rearma cuatro
+        # veces con valores intermedios y la captura se dispara donde no toca
+        # (el hazard que describe `mmio_decoder.v` nombrando a esta
+        # herramienta).
         calls = []
         with mock.patch.object(capture_frames, "run_monitor_cli",
                                side_effect=lambda p, port, *a: calls.append(a)):
-            capture_frames.write_reg(Path("/proto"), "COM3", 0x8000000C, 0x01)
-        self.assertEqual(calls, [
-            ("write-byte", "0x8000000c", "1"),
-            ("write-byte", "0x8000000d", "0"),
-            ("write-byte", "0x8000000e", "0"),
-            ("write-byte", "0x8000000f", "0"),
-        ])
+            capture_frames.write_reg(Path("/proto"), "COM3",
+                                     capture_frames.STATUS, 0x01)
+        self.assertEqual(calls, [("write-word", "0x80200010", "1")])
+
+
+class CaptureFramesAddressTest(unittest.TestCase):
+    """Las direcciones, contra el mapa generado.
+
+    Es el test que faltaba: las de aquí se quedaron en el mapa v1 cuando la
+    migración movió la ventana de vídeo, y probar sólo el parseo de respuestas
+    no lo coge --una dirección equivocada da una respuesta igual de válida--.
+    """
+
+    def test_registers_match_the_generated_map(self):
+        from tools.mmio_map import (
+            MMIO_VIDEO_BASE, MMIO_VIDEO_FB_FRONT_OFF, MMIO_VIDEO_HALT_AT_OFF,
+            MMIO_VIDEO_HALT_TARGET_OFF, MMIO_VIDEO_STATUS_OFF,
+            MMIO_VIDEO_SWAP_COUNT_OFF,
+        )
+
+        esperado = {
+            "FB_FRONT": MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF,
+            "STATUS": MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF,
+            "SWAP_COUNT": MMIO_VIDEO_BASE + MMIO_VIDEO_SWAP_COUNT_OFF,
+            "HALT_AT": MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_AT_OFF,
+            "HALT_TARGET": MMIO_VIDEO_BASE + MMIO_VIDEO_HALT_TARGET_OFF,
+        }
+        for nombre, direccion in esperado.items():
+            self.assertEqual(getattr(capture_frames, nombre), direccion, nombre)
+
+    def test_video_window_is_not_the_system_window(self):
+        from tools.mmio_map import MMIO_SYSTEM_BASE, MMIO_VIDEO_BASE
+
+        # El fallo concreto que hubo: leer FB_FRONT en 0x80000000, que en v2
+        # devuelve el magic de SYS_ID con pinta de dirección de framebuffer.
+        self.assertNotEqual(MMIO_VIDEO_BASE, MMIO_SYSTEM_BASE)
+        self.assertGreaterEqual(capture_frames.FB_FRONT, MMIO_VIDEO_BASE)
+
+    def test_halt_target_is_armed_before_halt_at(self):
+        calls = []
+        with mock.patch.object(capture_frames, "run_monitor_cli",
+                               side_effect=lambda p, port, *a: calls.append(a)):
+            capture_frames.arm_halt(Path("/proto"), "COM3", 7)
+        direcciones = [int(a[1], 16) for a in calls]
+        self.assertEqual(direcciones,
+                         [capture_frames.HALT_TARGET, capture_frames.HALT_AT])
+        self.assertEqual(calls[-1][2], "7")
 
 
 class MeasureDemoRegisterTest(unittest.TestCase):

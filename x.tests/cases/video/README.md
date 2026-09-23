@@ -1,6 +1,6 @@
 # Casos de vídeo
 
-Diez casos, y cada uno cubre algo que los otros no. Todos declaran una
+Once casos, y cada uno cubre algo que los otros no. Todos declaran una
 [capacidad](../../README.md#capacidades), así que se omiten solos donde no hay
 con qué ejecutarlos.
 
@@ -16,6 +16,7 @@ con qué ejecutarlos.
 | [`cube`](cube) | `frame_capture` | `MULFX` y coma fija Q16.16, y las dos reglas de redondeo de la ISA a la vez |
 | [`swap-demo`](swap-demo) | `frame_capture` | Una imagen que **se mueve**: fija el desfase entre el swap N y lo que se ve |
 | [`swap-demo-fast`](swap-demo-fast) | `frame_capture` | El mismo frame por redibujo incremental sobre **dos** buffers |
+| [`pacman`](pacman) | `frame_capture` | Un programa largo y con estado, sin frame esperado: el único que se mira a ojo |
 
 ## Por qué diez y no uno
 
@@ -147,6 +148,42 @@ Para en el 24 porque con pasos 1 y 3 los dos ángulos valen ahí 23 y 69: ni
 múltiplos ni simétricos, así que ninguna cara queda de canto y las doce aristas
 tienen longitud distinta de cero.
 
+**`pacman`** es la excepción de la lista: una demo que se juega sola —Pac-Man
+busca pastillas, cuatro fantasmas se mueven al azar— y el único caso de vídeo
+**sin `expect.frame`**. Comprueba lo que sí es barato de comprobar en un
+programa así: que no da error, que no hay underflow y que sigue pidiendo
+intercambios 300 veces seguidas.
+
+No tiene frame esperado a propósito. El estado del que depende cada frame
+—1200 tiles, cinco entidades, la cola del recorrido en anchura, el PRNG— es
+tan grande que un `reference.py` sería una segunda implementación completa del
+juego en Python, y entonces lo que fallaría sería la sincronía entre las dos y
+no el hardware. Lo que este caso aporta es lo otro: **un programa largo**
+—unas 1 400 instrucciones de código, con llamadas anidadas, pila propia,
+accesos sub-palabra y `REMU`— corriendo millones de instrucciones sin
+desviarse. Los casos con frame esperado son cortos; ninguno ejercita eso.
+
+Los dos fallos que encontró mientras se escribía dicen bien qué clase de error
+vive en esta franja, y ninguno de los dos se veía en una captura suelta:
+
+- **Una rutina de dibujo usaba `R10` de temporal**, y quien la llamaba llevaba
+  ahí el índice del bucle. El bucle se quedaba sin condición de salida. Un
+  frame capturado en los primeros intercambios sale perfecto; el programa se
+  cuelga después.
+- **Al reposicionar tras una colisión se olvidaban las posiciones anteriores**,
+  así que los sprites ya pintados en los dos buffers no se borraban nunca. A
+  los 900 intercambios había ocho fantasmas en pantalla. Es exactamente el
+  fallo de contabilidad de doble buffer contra el que existe `starfield-fast`,
+  pero aquí aparece por una vía que aquél no tiene: el teletransporte.
+
+Y una tercera cosa que solo se ve mirando el estado, no la pantalla: la
+primera versión elegía el camino con un vistazo de ocho tiles en línea recta,
+y en cuanto Pac-Man limpiaba su rincón se quedaba dando vueltas por él para
+siempre. Las pastillas se congelaban en 167 de 468 y la imagen seguía
+pareciendo una partida normal. Por eso la búsqueda de pastillas es un
+recorrido en anchura sobre la rejilla y no un vistazo local; los fantasmas sí
+se esquivan mirando en línea recta, que para eso sí basta.
+
 ## Aislamiento: la placa no arranca de cero entre casos
 
 El simulador construye un `VideoDevice` nuevo en cada ejecución. La placa no:
@@ -178,6 +215,9 @@ esperado de `starfield`. No rompe la regla: ese fichero lo sigue calculando un
 modelo: lo que `starfield-fast` añade es que dos programas distintos tienen que
 coincidir con él.
 
+`pacman` queda fuera de esta sección entera: no declara `expect.frame`, así que
+no hay nada que calcular. Lo que se mira allí está más arriba.
+
 ```bash
 python cases/video/bounce/reference.py                  # regenera expected/frame.bin
 python cases/video/bounce/reference.py --trayectoria    # las posiciones y los rebotes
@@ -206,7 +246,7 @@ python run_tests.py --backend cpu-fpga --version hdmi --port COM3 \
     cases/video/registers/test.json
 ```
 
-Los ocho corren también en el simulador, sin placa:
+Los once corren también en el simulador, sin placa:
 
 ```bash
 python run_tests.py --backend cpusim cases/video

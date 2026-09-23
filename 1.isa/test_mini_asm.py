@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mini_asm import (AsmError, assemble, first_pass, format_listing,
+from mini_asm import (AsmError, assemble, assemble_bytes, first_pass, format_listing,
                       strip_comment)
 
 
@@ -132,6 +132,68 @@ class LabelArithmeticTest(unittest.TestCase):
         with self.assertRaises(AsmError) as error:
             assemble("\n".join(fuente))
         self.assertIn("MOVI", str(error.exception))
+
+
+class LoadAddressTest(unittest.TestCase):
+
+    def test_la_carga_la_direccion_completa(self):
+        palabras = assemble("LA R3, datos\nHALT\ndatos:\n.word 0x12345678\n")
+        self.assertEqual(len(palabras), 4)
+        self.assertEqual(palabras[0] & 0xFFFF, 0)
+        self.assertEqual(palabras[1] & 0xFFFF, 12)
+
+    def test_la_admite_aritmetica_de_etiquetas(self):
+        palabras = assemble("LA R1, tabla+4\nHALT\ntabla:\n.word 1, 2\n")
+        self.assertEqual(palabras[1] & 0xFFFF, 16)
+
+    def test_la_exige_dos_operandos(self):
+        with self.assertRaises(AsmError) as error:
+            assemble("LA R1\n")
+        self.assertIn("LA requiere", str(error.exception))
+
+
+class IncbinTest(unittest.TestCase):
+
+    def test_inserta_binario_sin_reinterpretarlo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "datos.bin").write_bytes(b"\x01\x02\x03\x04\x05")
+            source = '.byte 0xAA\ndatos:\n.incbin "datos.bin"\nfin:\n'
+            image = assemble_bytes(source, Path(tmp), "prog.asm")
+            _, labels, _, _ = first_pass(source, Path(tmp), "prog.asm")
+        self.assertEqual(image, b"\xAA\x01\x02\x03\x04\x05\x00\x00")
+        self.assertEqual(labels["datos"], 1)
+        self.assertEqual(labels["fin"], 6)
+
+    def test_inserta_hex_como_palabras_little_endian(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "datos.hex").write_text(
+                "12345678\n0000000A\n", encoding="ascii")
+            image = assemble_bytes('.incbin "datos.hex"\n', Path(tmp), "prog.asm")
+        self.assertEqual(image, b"\x78\x56\x34\x12\x0A\x00\x00\x00")
+
+    def test_resuelve_desde_la_carpeta_del_include(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = Path(tmp, "sub")
+            sub.mkdir()
+            Path(sub, "datos.bin").write_bytes(b"ABCD")
+            Path(sub, "tabla.inc").write_text(
+                '.incbin "datos.bin"\n', encoding="utf-8")
+            image = assemble_bytes(
+                '.include "sub/tabla.inc"\n', Path(tmp), "prog.asm")
+        self.assertEqual(image, b"ABCD")
+
+    def test_rechaza_extension_desconocida(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "datos.txt").write_text("00", encoding="ascii")
+            with self.assertRaises(AsmError) as error:
+                assemble('.incbin "datos.txt"\n', Path(tmp), "prog.asm")
+        self.assertIn("solo admite", str(error.exception))
+
+    def test_fichero_ausente_informa_la_ruta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(AsmError) as error:
+                assemble('.incbin "ausente.bin"\n', Path(tmp), "prog.asm")
+        self.assertIn("ausente.bin", str(error.exception))
 
 
 class ShiftInmediatoTest(unittest.TestCase):
