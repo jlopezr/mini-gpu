@@ -16,6 +16,7 @@ motivo legible.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 # Qué sabe hacer un objetivo, más allá del mínimo (leer estado y dar un paso).
@@ -115,10 +116,13 @@ class DebugTarget(ABC):
         self.require(CAPS_RESET)
         raise NotImplementedError
 
-    def free_run(self) -> None:
+    def free_run(self, on_progress: Callable[[], None] | None = None) -> None:
         """Arranca y espera a que la máquina se pare por su cuenta."""
         self.require(CAPS_FREE_RUN)
         raise NotImplementedError
+
+    def request_interrupt(self) -> None:
+        """Solicita parar una ejecución larga, si el objetivo corre solo."""
 
     def video_layout(self) -> VideoLayout | None:
         """Dónde mirar el framebuffer, o `None` si esta máquina no tiene vídeo.
@@ -127,6 +131,10 @@ class DebugTarget(ABC):
         simulador tiene el dispositivo delante y la placa tiene que preguntar
         por MMIO, donde además las direcciones cambiaron entre v1 y v2.
         """
+        return None
+
+    def video_swap_count(self) -> int | None:
+        """Intercambios completados, o `None` si no se pueden observar."""
         return None
 
     #: Si leer 150 KiB es instantáneo. En la placa son ~1,5 s por framebuffer a
@@ -210,3 +218,7 @@ class SimTarget(DebugTarget):
         if video is None:
             return None
         return VideoLayout(video.fb_front, video.fb_back)
+
+    def video_swap_count(self) -> int | None:
+        video = getattr(self.cpu, "video", None)
+        return None if video is None else video.swap_count

@@ -1,8 +1,10 @@
 """La ventana de framebuffer del depurador, vista desde el depurador.
 
 Lee los dos buffers del objetivo y se los pasa a `tools/fb_window.py`, que
-corre aparte. Aquí no hay nada de Tk: este módulo sólo sabe leer memoria,
-escribir un `.bin` temporal y mandar una línea por la tubería.
+corre aparte. Aquí no hay nada de Tk: este módulo sólo sabe leer memoria y
+mandar una línea JSON con los píxeles codificados en Base64 por la tubería.
+La ventana devuelve por stdout los eventos que pertenecen al depurador, como
+`Esc` para interrumpir la ejecución sin cerrar el framebuffer.
 
 El coste de refrescar no es el mismo en los dos sitios, y eso decide el
 comportamiento por defecto. En el simulador leer un framebuffer es copiar 150
@@ -20,10 +22,13 @@ precisamente para que la captura sea entera y determinista.
 """
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
-import tempfile
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from tools.debug_target import DebugTarget, TargetError
@@ -35,13 +40,19 @@ BUFFERS = ("front", "back")
 class VideoViewer:
     """Un proceso de ventana, o ninguno, y lo que hay que mandarle."""
 
-    def __init__(self, target: DebugTarget) -> None:
+    def __init__(self, target: DebugTarget,
+                 on_interrupt: Callable[[], None] | None = None,
+                 on_key: Callable[[str], None] | None = None,
+                 on_error: Callable[[str], None] | None = None) -> None:
         self.target = target
+        self.on_interrupt = on_interrupt
+        self.on_key = on_key
+        self.on_error = on_error
         self.process: subprocess.Popen | None = None
         self.showing: tuple[str, ...] = ()
         # En placa, refrescar cuesta segundos: sólo cuando se pide.
         self.auto = target.fast_memory
-        self._directory: tempfile.TemporaryDirectory | None = None
+        self._last_title_refresh = 0.0
 
     @property
     def open(self) -> bool:
@@ -76,9 +87,6 @@ class VideoViewer:
                 self.process.kill()
         self.process = None
         self.showing = ()
-        if self._directory is not None:
-            self._directory.cleanup()
-            self._directory = None
         return "ventana cerrada"
 
     def refresh(self, force: bool = False) -> None:
@@ -90,7 +98,7 @@ class VideoViewer:
         if not self.showing:
             return
         if not self.open:
-            # La ha cerrado quien depura, con la X o con Escape.
+            # La ha cerrado quien depura con la X.
             self.process = None
             self.showing = ()
             return
@@ -101,8 +109,8 @@ class VideoViewer:
         payload: dict[str, object] = {"title": self._title()}
         for name in self.showing:
             address = layout.fb_front if name == "front" else layout.fb_back
-            path = self._write(name, address, layout.frame_bytes)
-            payload[name] = str(path)
+            payload[name] = self._read_base64(name, address,
+                                              layout.frame_bytes)
         for name in BUFFERS:
             if name not in self.showing:
                 payload[name] = None
@@ -114,25 +122,33 @@ class VideoViewer:
             self.process = None
             self.showing = ()
 
+    def refresh_title(self, force: bool = False) -> None:
+        """Actualiza solo PC/contador, sin volver a leer ningún framebuffer."""
+        if not self.open:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_title_refresh < 0.1:
+            return
+        self._last_title_refresh = now
+        try:
+            self.process.stdin.write(json.dumps({"title": self._title()}) + "\n")
+            self.process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            self.process = None
+            self.showing = ()
+
     def _title(self) -> str:
         state = self.target.state()
         return (f"{self.target.name}  PC=0x{state.pc:08X}  "
                 f"instr={state.instructions}")
 
-    def _write(self, name: str, address: int, size: int) -> Path:
+    def _read_base64(self, name: str, address: int, size: int) -> str:
         try:
             data = self.target.read_memory(address, size)
         except TargetError as exc:
             raise TargetError(
                 f"framebuffer {name} en 0x{address:08X}: {exc}") from None
-        if self._directory is None:
-            self._directory = tempfile.TemporaryDirectory(prefix="mini-dbg-")
-        # Se escribe a fichero y no por la tubería porque son 150 KiB por
-        # refresco: por stdin habría que trocear y sincronizar, y el fichero
-        # temporal lo resuelve sin inventar un protocolo binario.
-        path = Path(self._directory.name) / f"{name}.bin"
-        path.write_bytes(data)
-        return path
+        return base64.b64encode(data).decode("ascii")
 
     def _spawn(self) -> None:
         layout = self.layout()
@@ -140,6 +156,36 @@ class VideoViewer:
             self.process = subprocess.Popen(
                 [sys.executable, str(ROOT / "tools" / "fb_window.py"),
                  f"{layout.width}x{layout.height}"],
-                stdin=subprocess.PIPE, text=True)
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True, bufsize=1)
+            threading.Thread(
+                target=self._read_events, args=(self.process,), daemon=True
+            ).start()
         except OSError as exc:
             raise TargetError(f"no se pudo abrir la ventana: {exc}") from None
+
+    def _read_events(self, process: subprocess.Popen) -> None:
+        """Recibe eventos de Tk sin bloquear el hilo de la TUI."""
+        if process.stdout is None:
+            return
+        for line in process.stdout:
+            self._handle_event(line)
+
+    def _handle_event(self, line: str) -> None:
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            if self.on_error is not None and line.strip():
+                self.on_error(line.strip())
+            return
+        if event.get("event") == "interrupt" and self.on_interrupt is not None:
+            self.on_interrupt()
+        elif event.get("event") == "key" and self.on_key is not None:
+            key = event.get("key")
+            if isinstance(key, str):
+                self.on_key(key)
+        elif event.get("event") == "error" and self.on_error is not None:
+            message = event.get("message")
+            if isinstance(message, str):
+                self.on_error(message)

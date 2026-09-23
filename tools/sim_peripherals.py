@@ -1,8 +1,11 @@
 """Configuración y salidas comunes de periféricos de los tres simuladores."""
+import re
+import sys
 from pathlib import Path
 from tools.sim_devices import VideoDevice, SerialDevice
 
 FRAME_BYTES = 320 * 240 * 2
+VIDEO_SYMBOL_RE = re.compile(r"\bMMIO_VIDEO_[A-Za-z0-9_]*\b")
 
 
 def add_arguments(parser):
@@ -18,13 +21,39 @@ def add_arguments(parser):
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
 
 
+def video_requested(args) -> bool:
+    return bool(args.video or args.frame_output
+                or args.halt_after_swaps is not None)
+
+
+def missing_video_warning(program: Path, args) -> str | None:
+    """Mensaje si un ASM parece usar vídeo pero no se creó el periférico."""
+    program = Path(program)
+    if video_requested(args) or program.suffix.lower() != ".asm":
+        return None
+    source = program.read_text(encoding="utf-8")
+    if VIDEO_SYMBOL_RE.search(source) is None:
+        return None
+    return ("el programa usa símbolos MMIO_VIDEO_* pero el periférico de "
+            "vídeo no está habilitado; vuelve a ejecutar con --video")
+
+
+def warn_missing_video(program: Path, args) -> bool:
+    """Imprime el aviso para las CLI que no tienen consola propia."""
+    warning = missing_video_warning(program, args)
+    if warning is None:
+        return False
+    print(f"AVISO: {warning}", file=sys.stderr)
+    return True
+
+
 def from_arguments(args):
     if args.frame_instructions <= 0:
         raise ValueError("frame-instructions debe ser positivo")
     if args.halt_after_swaps is not None and args.halt_after_swaps <= 0:
         raise ValueError("halt-after-swaps debe ser positivo")
     video = None
-    if args.video or args.frame_output or args.halt_after_swaps is not None:
+    if video_requested(args):
         video = VideoDevice(frame_instructions=args.frame_instructions)
         if args.halt_after_swaps:
             # Esta opción es una condición del host basada en SWAP_COUNT. No

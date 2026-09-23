@@ -17,7 +17,9 @@ capacidad no se declara y el comando responde que el objetivo no la soporta.
 from __future__ import annotations
 
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +39,7 @@ from tools.mmio_map import (  # noqa: E402
 )
 
 # Cuánto se espera a que un `run` libre termine antes de rendirse y avisar.
-FREE_RUN_TIMEOUT = 10.0
+FREE_RUN_TIMEOUT = None
 
 # Las bases de vídeo se preguntan por MMIO v2 y no se cablean, porque el swap
 # las intercambia. No hay camino para el mapa v1 (vídeo en 0x80000000, sin
@@ -56,10 +58,11 @@ class BoardTarget(DebugTarget):
     fast_memory = False
 
     def __init__(self, client, name: str = "placa",
-                 free_run_timeout: float = FREE_RUN_TIMEOUT) -> None:
+                 free_run_timeout: float | None = FREE_RUN_TIMEOUT) -> None:
         self.client = client
         self.name = name
         self.free_run_timeout = free_run_timeout
+        self._interrupt = threading.Event()
 
     def state(self) -> TargetState:
         status = self._call(self.client.get_status)
@@ -101,11 +104,18 @@ class BoardTarget(DebugTarget):
     def reset(self) -> None:
         self._call(self.client.reset_cpu)
 
-    def free_run(self) -> None:
+    def free_run(self, on_progress: Callable[[], None] | None = None) -> None:
+        self._interrupt.clear()
         self._call(self.client.run_cpu)
-        deadline = time.monotonic() + self.free_run_timeout
+        deadline = (None if self.free_run_timeout is None else
+                    time.monotonic() + self.free_run_timeout)
         while not self._call(self.client.get_status).halted:
-            if time.monotonic() > deadline:
+            if on_progress is not None:
+                on_progress()
+            if self._interrupt.is_set():
+                self._call(self.client.halt_cpu)
+                return
+            if deadline is not None and time.monotonic() > deadline:
                 # Pararla deja la sesión utilizable: el PC queda donde estaba
                 # y se puede seguir mirando, que es justo lo que se quiere
                 # cuando un programa no termina.
@@ -113,6 +123,9 @@ class BoardTarget(DebugTarget):
                 raise TargetError(
                     f"el nucleo sigue corriendo tras {self.free_run_timeout:g}s"
                     "; lo he parado donde estaba")
+
+    def request_interrupt(self) -> None:
+        self._interrupt.set()
 
     def video_layout(self) -> VideoLayout | None:
         """Descubre la ventana de vídeo preguntándole al hardware.

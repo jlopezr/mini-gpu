@@ -652,6 +652,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        sim_peripherals.warn_missing_video(args.program, args)
         cpu = CPU(args.memory_size, **sim_peripherals.from_arguments(args))
         program = load_program_file(args.program)
     except (ValueError, OSError) as exc:

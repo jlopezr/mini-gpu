@@ -6,8 +6,11 @@ no se prueba aquí a propósito: no tiene lógica propia, cada tecla llama al
 mismo `execute()` que se prueba abajo.
 """
 import importlib.util
+import base64
+import io
 import sys
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +20,8 @@ sys.path.insert(0, str(ROOT / "2.cpu-sim-func"))
 from minicpu_sim import CPU  # noqa: E402
 from tools import debug_source  # noqa: E402
 from tools.debug_core import (  # noqa: E402
-    STOP_BREAKPOINT, STOP_ERROR, STOP_HALT, STOP_LIMIT, STOP_STEPPED,
+    STOP_BREAKPOINT, STOP_ERROR, STOP_FINISHED, STOP_HALT, STOP_INTERRUPTED,
+    STOP_LIMIT, STOP_STEPPED, STOP_SWAP,
     CommandError, DebugSession,
 )
 from tools.debug_target import SimTarget, TargetError, TargetState  # noqa: E402
@@ -51,6 +55,50 @@ def build(source_text: str = PROGRAM, tmp: Path | None = None) -> DebugSession:
     return DebugSession(SimTarget(cpu), source)
 
 
+class PeripheralWarningTest(unittest.TestCase):
+    def test_video_source_without_device_warns(self):
+        import argparse
+        import tempfile
+
+        from tools import sim_peripherals
+
+        path = Path(tempfile.mkdtemp()) / "video.asm"
+        path.write_text("STORE R1, R2, MMIO_VIDEO_SWAP_OFF\n",
+                        encoding="utf-8")
+        args = argparse.Namespace(
+            video=False, frame_output=None, halt_after_swaps=None)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            warned = sim_peripherals.warn_missing_video(path, args)
+        self.assertTrue(warned)
+        self.assertIn("--video", stderr.getvalue())
+
+    def test_video_source_with_device_does_not_warn(self):
+        import argparse
+        import tempfile
+
+        from tools import sim_peripherals
+
+        path = Path(tempfile.mkdtemp()) / "video.asm"
+        path.write_text("LOAD R1, R2, MMIO_VIDEO_STATUS_OFF\n",
+                        encoding="utf-8")
+        args = argparse.Namespace(
+            video=True, frame_output=None, halt_after_swaps=None)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            warned = sim_peripherals.warn_missing_video(path, args)
+        self.assertFalse(warned)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_mini_dbg_no_longer_accepts_fb_layout(self):
+        from tools.debug_cli import build_parser
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit):
+            build_parser().parse_args(["program.asm", "--fb-layout"])
+        self.assertIn("unrecognized arguments: --fb-layout", stderr.getvalue())
+
+
 class SourceMapTest(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -80,6 +128,65 @@ class SourceMapTest(unittest.TestCase):
         # Sin fuente se ven palabras en vez de texto, que es peor pero sirve;
         # lo que no puede es tumbar el depurador con el programa ya cargado.
         self.assertTrue(debug_source.from_program(self.tmp / "no-existe.asm").empty)
+
+    def test_li_reserves_two_rows_and_expands_while_executing(self):
+        session = build("LI R1, 0x12345678\nHALT\n", tmp=self.tmp)
+
+        rows = session.listing()
+        self.assertEqual([row.address for row in rows[:3]], [0, 4, 8])
+        self.assertEqual(
+            rows[0].text,
+            "LI R1, 0x12345678                ──────▶ MOVHI R1, 0x1234")
+        self.assertEqual(
+            rows[1].text,
+            "  (continuacion)                 └─────▶ ORI R1, R1, 0x5678")
+
+        session.step()
+        rows = session.listing()
+        self.assertEqual(
+            rows[0].text,
+            "LI R1, 0x12345678                ──────▶ MOVHI R1, 0x1234")
+        self.assertEqual(
+            rows[1].text,
+            "  (continuacion)                 └─────▶ ORI R1, R1, 0x5678")
+
+        session.step()
+        rows = session.listing()
+        self.assertEqual(rows[0].text, "LI R1, 0x12345678")
+        self.assertEqual(rows[1].text, "  (continuacion)")
+
+    def test_symbolic_memory_offset_has_effective_address(self):
+        session = build(
+            ".equ PORT_OFF, 12\nMOVI R2, 0x1000\n"
+            "STORE R1, R2, PORT_OFF\nHALT\n", tmp=self.tmp)
+        session.step()
+        self.assertEqual(
+            session.source.memory_annotation(4, session.target.registers()),
+            "; +12 [0x0000100C]")
+
+    def test_negative_symbolic_memory_offset(self):
+        session = build(
+            ".equ PREV, -4\nMOVI R2, 0x1000\n"
+            "LOAD R1, R2, PREV\nHALT\n", tmp=self.tmp)
+        session.step()
+        self.assertEqual(
+            session.source.memory_annotation(4, session.target.registers()),
+            "; -4 [0x00000FFC]")
+
+    def test_direct_jump_has_code_target_annotation(self):
+        session = build(
+            "BRA destino\nMOVI R1, 1\ndestino:\nHALT\n", tmp=self.tmp)
+        self.assertEqual(
+            session.source.target_annotation(0, session.target.registers()),
+            ("; → [0x00000008]", "code", 8))
+
+    def test_indirect_jump_uses_current_base_register(self):
+        session = build(
+            "MOVI R2, 0x20\nJALR R31, R2, 2\nHALT\n", tmp=self.tmp)
+        session.step()
+        self.assertEqual(
+            session.source.target_annotation(4, session.target.registers()),
+            ("; → [0x00000028]", "code", 0x28))
 
 
 class SteppingTest(unittest.TestCase):
@@ -128,6 +235,21 @@ class SteppingTest(unittest.TestCase):
         self.assertEqual(stop.kind, STOP_LIMIT)
         self.assertEqual(stop.executed, 50)
 
+    def test_run_command_accepts_an_explicit_limit(self):
+        session = build("bucle:\n    BRA bucle\n")
+        self.assertIn("limite de 50", session.execute("run 50")[0])
+
+    def test_run_can_be_interrupted(self):
+        session = build("bucle:\n    BRA bucle\n")
+        session.interrupt()
+        stop = session.resume()
+        self.assertEqual(stop.kind, STOP_INTERRUPTED)
+
+    def test_regs_accepts_register_with_or_without_r(self):
+        self.session.step()
+        self.assertEqual(self.session.execute("regs R1"),
+                         self.session.execute("regs 1"))
+
     def test_error_is_reported_as_error(self):
         session = build("    .word 0xFFFFFFFF\n")
         stop = session.resume()
@@ -151,6 +273,24 @@ class SteppingTest(unittest.TestCase):
     def test_step_over_on_a_normal_instruction_is_a_step(self):
         self.session.step_over()
         self.assertEqual(self.session.target.state().instructions, 1)
+
+    def test_finish_ignores_returns_from_nested_calls(self):
+        session = build(
+            "    JAL R31, outer\n"
+            "    HALT\n"
+            "outer:\n"
+            "    ADDI R20, R31, 0\n"
+            "    JAL R31, inner\n"
+            "    ADDI R31, R20, 0\n"
+            "    JR R31\n"
+            "inner:\n"
+            "    MOVI R3, 7\n"
+            "    JR R31\n")
+        session.step()
+        stop = session.finish()
+        self.assertEqual(stop.kind, STOP_FINISHED)
+        self.assertEqual(session.target.state().pc, 4)
+        self.assertEqual(session.target.registers()[3], 7)
 
 
 class CommandTest(unittest.TestCase):
@@ -306,6 +446,34 @@ class VideoTest(unittest.TestCase):
         with self.assertRaises(TargetError):
             session.execute("fb")
 
+    def test_frame_stops_after_swap_is_completed(self):
+        from tools.sim_devices import VideoDevice
+
+        cpu, session = self.build()
+        cpu.video.frame_instructions = 3
+        cpu.video.write(VideoDevice.SWAP, 1)
+        stop = session.run_to_next_swap()
+        self.assertEqual(stop.kind, STOP_SWAP)
+        self.assertEqual(stop.executed, 3)
+        self.assertEqual(cpu.video.swap_count, 1)
+        self.assertFalse(cpu.video.swap_pending)
+
+    def test_frame_without_video_is_rejected(self):
+        _, session = self.build(video=False)
+        with self.assertRaises(TargetError):
+            session.execute("frame")
+
+    def test_help_only_lists_available_video_commands(self):
+        _, without_video = self.build(video=False)
+        help_text = "\n".join(without_video.execute("help"))
+        self.assertNotIn("fb [X]", help_text)
+        self.assertNotIn("frame", help_text)
+
+        _, with_video = self.build(video=True)
+        help_text = "\n".join(with_video.execute("help"))
+        self.assertIn("fb [X]", help_text)
+        self.assertIn("frame", help_text)
+
     def test_layout_follows_the_registers(self):
         from tools.sim_devices import VideoDevice
 
@@ -325,7 +493,7 @@ class VideoTest(unittest.TestCase):
         session.execute("fb")
         payload = self.process.payloads[-1]
         self.assertIsNone(payload["back"])
-        data = Path(payload["front"]).read_bytes()
+        data = base64.b64decode(payload["front"])
         self.assertEqual(len(data), 320 * 240 * 2)
         self.assertEqual(data[:4], b"\x1f\x00\xe0\x07")
 
@@ -341,6 +509,82 @@ class VideoTest(unittest.TestCase):
         antes = len(self.process.lines)
         session.execute("step")
         self.assertGreater(len(self.process.lines), antes)
+
+    def test_successive_frames_are_sent_in_memory(self):
+        cpu, session = self.build()
+        session.execute("fb")
+        first = self.process.payloads[-1]["front"]
+        cpu.memory[0] = 1
+        session.execute("step")
+        second = self.process.payloads[-1]["front"]
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(base64.b64decode(second)), 320 * 240 * 2)
+
+    def test_continue_refreshes_when_a_swap_completes(self):
+        from tools.sim_devices import VideoDevice
+
+        cpu, session = self.build()
+        cpu.video.frame_instructions = 3
+        session.execute("fb")
+        before = sum("front" in payload for payload in self.process.payloads)
+        cpu.video.write(VideoDevice.SWAP, 1)
+        session.resume(max_instructions=5)
+        self.assertEqual(cpu.video.swap_count, 1)
+        after = sum("front" in payload for payload in self.process.payloads)
+        self.assertEqual(after, before + 1)
+
+    def test_continue_does_not_refresh_frames_with_auto_off(self):
+        from tools.sim_devices import VideoDevice
+
+        cpu, session = self.build()
+        cpu.video.frame_instructions = 3
+        session.execute("fb")
+        session.video.auto = False
+        before = sum("front" in payload for payload in self.process.payloads)
+        cpu.video.write(VideoDevice.SWAP, 1)
+        session.resume(max_instructions=5)
+        after = sum("front" in payload for payload in self.process.payloads)
+        self.assertEqual(after, before)
+
+    def test_continue_updates_title_without_sending_a_new_frame(self):
+        _, session = self.build()
+        session.execute("fb")
+        before = len(self.process.payloads)
+        session.resume(max_instructions=2)
+        new_payloads = self.process.payloads[before:]
+        self.assertTrue(any(set(payload) == {"title"}
+                            for payload in new_payloads))
+
+    def test_escape_event_interrupts_without_closing_video(self):
+        _, session = self.build()
+        session.execute("fb")
+        session.video._handle_event('{"event": "interrupt"}')
+        self.assertTrue(session._interrupt.is_set())
+        self.assertTrue(session.video.open)
+
+    def test_key_event_is_forwarded_without_closing_video(self):
+        _, session = self.build()
+        session.execute("fb")
+        keys = []
+        session.video.on_key = keys.append
+        session.video._handle_event('{"event": "key", "key": "s"}')
+        self.assertEqual(keys, ["s"])
+        self.assertTrue(session.video.open)
+
+    def test_video_errors_are_forwarded_to_the_debugger(self):
+        _, session = self.build()
+        errors = []
+        session.video.on_error = errors.append
+        session.video._handle_event(
+            '{"event": "error", "message": "not enough image data"}')
+        self.assertEqual(errors, ["not enough image data"])
+
+    def test_non_json_child_stderr_is_forwarded_as_an_error(self):
+        _, session = self.build()
+        errors = []
+        session.video.on_error = errors.append
+        session.video._handle_event("Pillow explotó\n")
+        self.assertEqual(errors, ["Pillow explotó"])
 
     def test_closing_the_window_stops_the_refresh(self):
         _, session = self.build()
@@ -540,6 +784,88 @@ class TuiTest(unittest.TestCase):
         self.pilot(body)
         self.assertEqual(self.session.target.state().instructions, 2)
 
+    def test_slash_searches_in_the_focused_code_panel(self):
+        async def body(app, pilot):
+            from textual.widgets import Input
+
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("/")
+            await pilot.pause()
+            prompt = app.query_one("#prompt", Input)
+            self.assertIs(app.focused, prompt)
+            prompt.value = "bucle"
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app.code_center,
+                             self.session.source.resolve("bucle"))
+            self.assertEqual(app.focused.id, "code")
+
+        self.pilot(body)
+
+    def test_a_repeats_the_last_search(self):
+        async def body(app, pilot):
+            from textual.widgets import Input
+
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("/")
+            prompt = app.query_one("#prompt", Input)
+            prompt.value = "ADDI"
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app.code_center, 8)
+
+            await pilot.press("a")
+            await pilot.pause()
+            self.assertEqual(app.code_center, 12)
+
+        self.pilot(body)
+
+    def test_video_keys_can_type_a_code_search(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            app.action_video_key("/")
+            for key in "bucle":
+                app.action_video_key(key)
+            app.action_video_key("Return")
+            await pilot.pause()
+            self.assertEqual(app.code_center,
+                             self.session.source.resolve("bucle"))
+
+        self.pilot(body)
+
+    def test_footer_bindings_follow_capabilities_and_focused_panel(self):
+        async def body(app, pilot):
+            self.assertNotIn("v", app._bindings.key_to_bindings)
+            self.assertNotIn("f", app._bindings.key_to_bindings)
+
+            await pilot.click("#code", offset=(1, 1))
+            code_keys = app.query_one("#code")._bindings.key_to_bindings
+            self.assertIn("b", code_keys)
+            self.assertIn("p", code_keys)
+            self.assertNotIn("h", code_keys)
+
+            await pilot.click("#memory", offset=(1, 1))
+            memory_keys = app.query_one("#memory")._bindings.key_to_bindings
+            self.assertIn("h", memory_keys)
+            self.assertNotIn("b", memory_keys)
+
+            await pilot.click("#registers", offset=(1, 1))
+            register_keys = app.query_one(
+                "#registers")._bindings.key_to_bindings
+            self.assertNotIn("b", register_keys)
+            self.assertNotIn("h", register_keys)
+
+        self.pilot(body)
+
+    def test_video_footer_adds_v_and_f(self):
+        from tools.debug_tui import build_app
+        from tools.sim_devices import VideoDevice
+
+        cpu = CPU(64 * 1024, video=VideoDevice())
+        app = build_app(DebugSession(SimTarget(cpu)))
+        self.assertIn("v", app._bindings.key_to_bindings)
+        self.assertIn("f", app._bindings.key_to_bindings)
+
     def test_typed_command_runs(self):
         async def body(app, pilot):
             from textual.widgets import Input
@@ -567,6 +893,360 @@ class TuiTest(unittest.TestCase):
         self.pilot(body)
         self.assertEqual(self.session.target.state().instructions, 0)
 
+    def test_click_outside_prompt_restores_debugger_keys(self):
+        async def body(app, pilot):
+            from textual.widgets import Input
+
+            prompt = app.query_one("#prompt", Input)
+            await pilot.click(prompt)
+            await pilot.pause()
+            self.assertIs(app.focused, prompt)
+
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(app.focused.id, "code")
+
+            await pilot.press("s")
+            await pilot.pause()
+
+        self.pilot(body)
+        self.assertEqual(self.session.target.state().instructions, 1)
+
+    def test_click_console_focuses_command_prompt(self):
+        async def body(app, pilot):
+            from textual.widgets import Input
+
+            prompt = app.query_one("#prompt", Input)
+            await pilot.click("#console", offset=(2, 1))
+            await pilot.pause()
+            self.assertIs(app.focused, prompt)
+
+        self.pilot(body)
+
+    def test_code_arrows_scroll_and_p_returns_to_pc(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(app.code_center, 4)
+
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertIsNone(app.code_center)
+
+        self.pilot(body)
+
+    def test_b_toggles_breakpoint_on_selected_code_line(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("down")
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(self.session.breakpoints, {4})
+
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(self.session.breakpoints, set())
+
+        self.pilot(body)
+
+    def test_u_runs_until_the_selected_code_line(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("down")
+            await pilot.press("down")
+            self.assertEqual(app.code_center, 8)
+            await pilot.press("u")
+            await pilot.pause()
+            while app.running:
+                await pilot.pause()
+
+        self.pilot(body)
+        self.assertEqual(self.session.target.state().pc, 8)
+
+    def test_b_toggles_breakpoint_at_pc_without_code_cursor(self):
+        async def body(app, pilot):
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(self.session.breakpoints, {0})
+
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(self.session.breakpoints, set())
+
+        self.pilot(body)
+
+    def test_scrolled_code_marks_selected_instruction(self):
+        from tools.debug_tui import _code_view
+
+        rendered, _, visible = _code_view(
+            self.session, height=8, center=8)
+        selected = next(line for line in rendered.splitlines()
+                        if "0x00000008" in line)
+        self.assertIn(">", selected)
+        self.assertIn(8, visible)
+
+    def test_code_and_memory_links_have_different_colors(self):
+        import tempfile
+
+        from tools.debug_tui import _code_view
+
+        tmp = Path(tempfile.mkdtemp())
+        code = build("BRA destino\ndestino:\nHALT\n", tmp=tmp)
+        memory = build(
+            ".equ PORT, 8\nSTORE R1, R2, PORT\nHALT\n", tmp=tmp)
+        self.assertIn("[dim cyan]; →", _code_view(code)[0])
+        self.assertIn("[dim magenta]; +8", _code_view(memory)[0])
+
+    def test_mmio_memory_links_use_a_third_color(self):
+        import tempfile
+
+        from tools.debug_tui import _code_view
+
+        session = build(
+            "LI R2, 0x80200000\n"
+            ".equ SWAP, 12\n"
+            "STORE R1, R2, SWAP\nHALT\n",
+            tmp=Path(tempfile.mkdtemp()))
+        session.step(2)
+        self.assertIn("[dim yellow]; +12 \\[0x8020000C]",
+                      _code_view(session)[0])
+
+    def test_execution_returns_code_cursor_to_pc(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("down")
+            await pilot.press("s")
+            await pilot.pause()
+            self.assertIsNone(app.code_center)
+
+        self.pilot(body)
+
+    def test_execution_returns_to_pc_if_it_was_not_visible(self):
+        async def body(app, pilot):
+            app.code_center = 0x100
+            app.code_row_addresses = {0x100}
+            app.dispatch("step")
+            await pilot.pause()
+            self.assertIsNone(app.code_center)
+
+        self.pilot(body)
+
+    def test_click_effective_address_moves_memory_panel(self):
+        import asyncio
+        import tempfile
+
+        from tools.debug_tui import build_app
+
+        session = build(
+            ".equ PORT, 12\nMOVI R2, 0x1000\nSTORE R1, R2, PORT\nHALT\n",
+            tmp=Path(tempfile.mkdtemp()))
+        session.step()
+        app = build_app(session)
+
+        async def go():
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                code = app.query_one("#code")
+                row, target = next(
+                    (row, target)
+                    for row, target in enumerate(app.code_row_targets)
+                    if target is not None)
+                kind, address, start, _ = target
+                self.assertEqual(kind, "memory")
+                self.assertEqual(address, 0x100C)
+                x = code.content_region.x - code.region.x + start + 1
+                y = code.content_region.y - code.region.y + row
+                await pilot.click("#code", offset=(x, y))
+                await pilot.pause()
+
+        asyncio.run(go())
+        self.assertEqual(session.memory_address, 0x1000)
+
+    def test_click_jump_target_moves_code_view(self):
+        import asyncio
+        import tempfile
+
+        from tools.debug_tui import build_app
+
+        label = "destino_" + "largo_" * 12
+        session = build(
+            f"BRA {label}\nMOVI R1, 1\n{label}:\nHALT\n",
+            tmp=Path(tempfile.mkdtemp()))
+        app = build_app(session)
+
+        async def go():
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                code = app.query_one("#code")
+                row, target = next(
+                    (row, target)
+                    for row, target in enumerate(app.code_row_targets)
+                    if target is not None and target[0] == "code")
+                _, address, start, _ = target
+                self.assertEqual(address, 8)
+                x = code.content_region.x - code.region.x + start + 1
+                y = code.content_region.y - code.region.y + row
+                await pilot.click("#code", offset=(x, y))
+                await pilot.pause()
+
+        asyncio.run(go())
+        self.assertEqual(app.code_center, 8)
+
+    def test_memory_arrows_and_h_move_memory_view(self):
+        async def body(app, pilot):
+            await pilot.click("#memory", offset=(1, 1))
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(self.session.memory_address, 16)
+
+            await pilot.press("up")
+            await pilot.pause()
+            self.assertEqual(self.session.memory_address, 0)
+
+            self.session.memory_address = 0x100
+            await pilot.press("h")
+            await pilot.pause()
+            self.assertEqual(self.session.memory_address, 0)
+
+        self.pilot(body)
+
+    def test_page_and_home_work_in_code_and_memory(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.press("pagedown")
+            await pilot.pause()
+            self.assertIsNotNone(app.code_center)
+            self.assertGreater(app.code_center, 0)
+            await pilot.press("home")
+            await pilot.pause()
+            self.assertEqual(app.code_center, 0)
+
+            await pilot.click("#memory", offset=(1, 1))
+            await pilot.press("pagedown")
+            await pilot.pause()
+            self.assertGreater(self.session.memory_address, 0)
+            await pilot.press("home")
+            await pilot.pause()
+            self.assertEqual(self.session.memory_address, 0)
+
+        self.pilot(body)
+
+    def test_escape_interrupts_continue_worker(self):
+        import asyncio
+        import tempfile
+
+        from tools.debug_tui import build_app
+
+        session = build("bucle:\n    BRA bucle\n",
+                        tmp=Path(tempfile.mkdtemp()))
+        app = build_app(session)
+
+        async def go():
+            async with app.run_test() as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.press("escape")
+                for _ in range(50):
+                    if not app.running:
+                        break
+                    await pilot.pause()
+
+        asyncio.run(go())
+        self.assertFalse(app.running)
+        self.assertGreater(session.target.state().instructions, 0)
+
+    def test_closing_tui_interrupts_an_unlimited_run_worker(self):
+        import asyncio
+        import tempfile
+
+        from tools.debug_tui import build_app
+
+        session = build("bucle:\n    BRA bucle\n",
+                        tmp=Path(tempfile.mkdtemp()))
+        app = build_app(session)
+
+        async def go():
+            async with app.run_test() as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                app.exit()
+
+        asyncio.run(go())
+        self.assertTrue(session._interrupt.is_set())
+
+    def test_ctrl_c_interrupts_instead_of_tearing_down_asyncio(self):
+        import asyncio
+        import tempfile
+
+        from tools.debug_tui import build_app
+
+        session = build("bucle:\n    BRA bucle\n",
+                        tmp=Path(tempfile.mkdtemp()))
+        app = build_app(session)
+
+        async def go():
+            async with app.run_test() as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.press("ctrl+c")
+                for _ in range(50):
+                    if not app.running:
+                        break
+                    await pilot.pause()
+
+        asyncio.run(go())
+        self.assertFalse(app.running)
+
+    def test_focused_panel_has_double_border(self):
+        async def body(app, pilot):
+            await pilot.click("#code", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(
+                app.query_one("#code").styles.border_top[0], "double")
+
+            await pilot.click("#memory", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(
+                app.query_one("#memory").styles.border_top[0], "double")
+
+            await pilot.click("#registers", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(
+                app.query_one("#registers").styles.border_top[0], "double")
+
+            await pilot.click("#console", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(
+                app.query_one("#console-area").styles.border_top[0],
+                "double")
+
+        self.pilot(body)
+
+    def test_register_panel_scrolls_with_arrows(self):
+        async def body(app, pilot):
+            registers = app.query_one("#registers")
+            await pilot.click(registers, offset=(1, 1))
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertGreater(registers.scroll_y, 0)
+
+        self.pilot(body)
+
+    def test_error_console_lines_are_red(self):
+        from tools.debug_tui import _console_markup
+
+        self.assertEqual(
+            _console_markup("ERROR 0x02 (acceso a memoria)"),
+            "[red]ERROR 0x02 (acceso a memoria)[/red]")
+
+    def test_warnings_are_yellow_and_uppercase_in_console(self):
+        from tools.debug_tui import _warning_markup
+
+        self.assertEqual(
+            _warning_markup("falta --video"),
+            "[bold yellow]AVISO: falta --video[/bold yellow]")
+
     def test_panels_show_the_state(self):
         captured = {}
 
@@ -577,16 +1257,91 @@ class TuiTest(unittest.TestCase):
             await pilot.pause()
             captured["status"] = app.sub_title
             captured["registers"] = str(
-                app.query_one("#registers", Static).renderable)
+                app.query_one("#register-values", Static).renderable)
 
         self.pilot(body)
         self.assertIn("PC=0x00000004", captured["status"])
         self.assertIn("R1", captured["registers"])
 
+    def test_only_changed_registers_are_highlighted(self):
+        captured = {}
+
+        async def body(app, pilot):
+            from textual.widgets import Static
+
+            await pilot.press("s")
+            await pilot.pause()
+            captured["changed"] = app.changed_registers
+            captured["registers"] = str(
+                app.query_one("#register-values", Static).renderable)
+
+        self.pilot(body)
+        self.assertEqual(captured["changed"], {1})
+        self.assertIn("[bold yellow]R1", captured["registers"])
+        self.assertNotIn("[bold]R2", captured["registers"])
+
+    def test_code_and_register_panels_fill_the_top_row(self):
+        captured = {}
+
+        async def body(app, pilot):
+            await pilot.pause()
+            captured["code"] = app.query_one("#code").region
+            captured["registers"] = app.query_one("#registers").region
+            captured["memory"] = app.query_one("#memory").region
+
+        self.pilot(body)
+        self.assertEqual(captured["code"].bottom,
+                         captured["registers"].bottom)
+        self.assertEqual(captured["code"].bottom, captured["memory"].y)
+
+    def test_prompt_is_inside_console_panel(self):
+        captured = {}
+
+        async def body(app, pilot):
+            await pilot.pause()
+            captured["area"] = app.query_one("#console-area").region
+            captured["prompt"] = app.query_one("#prompt").region
+
+        self.pilot(body)
+        self.assertTrue(captured["area"].contains_region(captured["prompt"]))
+
     def test_source_brackets_are_not_markup(self):
         from tools.debug_tui import _escape
 
         self.assertEqual(_escape("LOAD R1, [R2]"), "LOAD R1, \\[R2]")
+
+    def test_code_listing_fills_the_available_height(self):
+        from tools.debug_tui import _code_lines
+
+        program = "\n".join("MOVI R1, 1" for _ in range(80))
+        # `build` solo necesita una carpeta para crear el mapa fuente.
+        import tempfile
+        session = build(program, tmp=Path(tempfile.mkdtemp()))
+        rendered = _code_lines(session, height=30)
+        self.assertEqual(len(rendered.splitlines()), 30)
+        self.assertIn("0x00000070", rendered)
+
+    def test_initial_li_does_not_leave_code_panel_empty(self):
+        import asyncio
+        import tempfile
+
+        from textual.widgets import Static
+        from tools.debug_tui import build_app
+
+        program = "LI R1, 0x12345678\n" + "\n".join(
+            "MOVI R2, 1" for _ in range(80))
+        session = build(program, tmp=Path(tempfile.mkdtemp()))
+        app = build_app(session)
+        captured = {}
+
+        async def go():
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                rendered = str(app.query_one("#code", Static).renderable)
+                captured["lines"] = len(rendered.splitlines())
+
+        asyncio.run(go())
+        self.assertGreater(captured["lines"], 2)
 
 
 class BoardVideoTest(unittest.TestCase):

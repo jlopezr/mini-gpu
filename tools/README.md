@@ -401,8 +401,9 @@ escribir el comando, ni más ni menos:
 |---|---|---|
 | `step [N]` | `s` | Ejecuta N instrucciones (1 por defecto). No para en breakpoints |
 | `over` | `n` | Un paso, saltando entera la llamada si es `JAL`/`JALR` |
-| `run [N]` | `c` | Hasta breakpoint, `HALT` o error |
-| `until X` | — | Hasta la dirección o etiqueta X |
+| `finish` | `o` | Ejecuta hasta salir de la función actual |
+| `run [N]` | `c` | Hasta breakpoint, `HALT`, error o `Esc`; con N, como máximo N instrucciones |
+| `until X` | `u` | Hasta la dirección, etiqueta o línea marcada por el cursor |
 | `break [X]` | `b` | Breakpoint en X (o en el PC con la tecla); sin argumento los lista |
 | `delete [X]` | — | Borra el breakpoint X, o todos |
 | `regs [Rn]` | — | Los registros, o uno |
@@ -410,13 +411,42 @@ escribir el comando, ni más ni menos:
 | `mem [X N]` | — | Vuelca N bytes desde X y mueve el panel de memoria |
 | `write X V` | — | Escribe la palabra V en la dirección X |
 | `fb [X]` | `v` | Ventana de framebuffer: `front` (por defecto), `back`, `both`, `off` |
+| `frame` | `f` | Ejecuta hasta que se completa el siguiente intercambio de framebuffer |
 | `reset` | `R` | PC, registros y contadores a cero sin borrar la memoria |
+
+Durante `run`, `until`, `over`, `finish` o `frame`, `Esc` solicita la parada y devuelve
+el control a la TUI. Código y memoria aceptan también `PageUp`, `PageDown` y
+`Home`; `Home` lleva al inicio del programa o a `0x00000000`, respectivamente.
+`Ctrl+C` hace lo mismo durante la ejecución; con la máquina ya parada, sale del
+depurador limpiamente.
+`run` sin argumento no tiene límite interno, pensado también para programas
+gráficos con bucle principal permanente. `run N` o `--run-limit N` permiten
+pedir expresamente un máximo.
+Después de ejecutar, el cursor de código vuelve al PC y el siguiente
+`↑`/`↓` parte de la instrucción actual.
+Con el foco en código, registros o memoria, `/` abre una búsqueda en ese panel.
+En memoria busca bytes hexadecimales (`DE AD BE EF`) o texto dentro de la
+ventana mostrada. `a` repite la última búsqueda en el mismo panel.
+Los comentarios clicables usan cian para destinos de código, magenta para RAM
+y amarillo para MMIO (`0x80000000` en adelante). La dirección efectiva de un
+acceso se calcula con la instantánea actual de los registros: es exacta cuando
+el PC está en esa instrucción y orientativa al inspeccionar código futuro.
+
+El pie muestra únicamente acciones disponibles. `v` y `f` no aparecen si el
+objetivo no ofrece vídeo; al cambiar el foco añade las teclas propias del panel:
+`↑`/`↓`, `/`, `a`, `p`, `b` y `u` en código, `↑`/`↓`, `/` y `a` en registros, y
+`↑`/`↓`, `/`, `a` y `h` en memoria.
 
 ### Ver el framebuffer mientras se depura
 
 `v` (o `fb`) abre una **ventana** aparte con el framebuffer, en tkinter —de la
 biblioteca estándar, no hace falta pygame ni nada nuevo—. `fb both` enseña los
-dos buffers lado a lado, `+`/`-` amplían y `Esc` cierra.
+dos buffers lado a lado, `+`/`-` amplían y `Esc` detiene la ejecución en curso
+sin cerrar la ventana. La X (o `fb off`) sí la cierra.
+Mientras la ventana de vídeo tiene el foco, sus teclas de depuración se
+reenvían como si estuviera seleccionado el panel de código: `s`, `n`, `o`,
+`c`, `f`, `R`, cursores, `PageUp`/`PageDown`, `Home`, `p`, `b`, `u`, `/` y
+`a`. El zoom conserva `+`/`-`.
 
 Los dos buffers no enseñan lo mismo, y esa es la gracia:
 
@@ -432,6 +462,15 @@ ve el dibujo avanzar paso a paso. En la placa no: son ~1,5 s por buffer a
 1 Mbaud (el número está medido en `tools/capture-frames`), así que se refresca
 cuando se pide con `fb`. `fb auto on|off` cambia ese comportamiento si en algún
 caso concreto interesa lo contrario.
+Durante una ejecución larga, el título con `PC` e `instr` se actualiza unas
+diez veces por segundo aunque no haya un frame nuevo; este refresco no lee ni
+transfiere los píxeles.
+Cada frame viaja íntegramente en memoria por la tubería, codificado en Base64;
+no se crean archivos temporales ni interviene el bloqueo de ficheros de
+Windows. La ventana agrupa los frames que llegan más deprisa de lo que puede
+pintarlos. Si Pillow falla igualmente,
+el error aparece en rojo en la consola de la TUI en vez de quedar oculto bajo
+el repintado del terminal.
 
 Las bases no se cablean: `FB_FRONT` y `FB_BACK` se releen en cada refresco
 porque el swap las intercambia. En el simulador se le preguntan al dispositivo;
@@ -440,16 +479,13 @@ después de comprobar el magic de SYS_ID y el bit de vídeo de `DEVICES`. Sin
 magic no se lee nada: en v2 `0x80000000` es SYSTEM, así que leer ahí a ciegas
 devolvería el propio magic con pinta de dirección de framebuffer.
 
-**Para depurar un caso de vídeo, `--fb-layout`.** Desde la fase 3.5 las bases
-arrancan a cero, y casos como `band` o `bounce` leen `FB_BACK` y dibujan donde
-les digan: sin colocarlas antes, dibujan sobre su propio código en la dirección
-cero y mueren con un encoding inválido que parece un fallo del caso y no lo es
-(lo explica [`x.tests/backends/video_layout.py`](../x.tests/backends/video_layout.py)).
-`--fb-layout` las pone donde las pone el arnés, importando sus direcciones de
-ahí en vez de copiarlas:
+Los programas de vídeo escriben sus propias bases `FB_FRONT` y `FB_BACK`; el
+depurador no las prepara desde fuera. Hay que habilitar el dispositivo con
+`--video`. Si un fuente usa símbolos `MMIO_VIDEO_*` sin esa opción, `mini-dbg`
+y `cpusim` muestran un aviso antes de ejecutarlo:
 
 ```bash
-> mini-dbg x.tests/cases/video/band/band.asm --fb-layout -x "run 400000" 
+> mini-dbg x.tests/cases/video/fire/fire.asm --video -x "run 400000"
 ```
 
 Direcciones y valores aceptan etiquetas del programa, `0x...`, decimal y `pc`.

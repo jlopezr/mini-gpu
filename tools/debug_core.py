@@ -10,6 +10,7 @@ placa sin cambiar una coma.
 from __future__ import annotations
 
 import bisect
+import threading
 from dataclasses import dataclass
 
 from tools.debug_source import SourceMap
@@ -24,6 +25,9 @@ STOP_HALT = "halt"
 STOP_ERROR = "error"
 STOP_LIMIT = "limit"
 STOP_STEPPED = "stepped"
+STOP_SWAP = "swap"
+STOP_INTERRUPTED = "interrupted"
+STOP_FINISHED = "finished"
 STOP_ALREADY = "already-halted"
 
 ERROR_NAMES = {
@@ -69,11 +73,17 @@ class DebugSession:
     """Una máquina parada, un mapa de fuente y un puñado de comandos."""
 
     def __init__(self, target: DebugTarget, source: SourceMap | None = None,
-                 run_limit: int = DEFAULT_RUN_LIMIT) -> None:
+                 run_limit: int | None = None) -> None:
         self.target = target
         self.source = source or SourceMap()
         self.run_limit = run_limit
+        # `finish` y `frame` necesitan una red de seguridad porque no aceptan
+        # límite explícito. `run`, en cambio, es ilimitado salvo `run N` o
+        # `--run-limit N`.
+        self.operation_limit = run_limit or DEFAULT_RUN_LIMIT
         self.breakpoints: set[int] = set()
+        self._interrupt = threading.Event()
+        self.warnings: list[str] = []
         self.quit = False
         # La ventana de framebuffer se crea al primer `fb`: quien no la use no
         # paga ni un proceso ni el import.
@@ -81,7 +91,7 @@ class DebugSession:
         # Ventana del panel de memoria; los comandos `mem`/`x` la mueven.
         self.memory_address = 0
         self.memory_length = 128
-        self._known_pcs = sorted(self.source.text)
+        self._known_pcs = sorted(self.source.addresses)
 
     # -- ejecución ---------------------------------------------------------
 
@@ -116,7 +126,7 @@ class DebugSession:
         marks = set(self.breakpoints)
         if stop_at:
             marks |= stop_at
-        budget = self.run_limit if max_instructions is None else max_instructions
+        budget = max_instructions
 
         if self.target.state().halted:
             return StopReason(STOP_ALREADY, 0)
@@ -126,15 +136,34 @@ class DebugSession:
             # instrucción, así que se deja correr al objetivo. El contador sale
             # de su propio estado, no de contar pasos aquí.
             before = self.target.state().instructions
-            self.target.free_run()
+            progress = (self.refresh_video_title
+                        if self._video is not None and self._video.open
+                        else None)
+            self.target.free_run(on_progress=progress)
             after = self.target.state()
+            if self._interrupt.is_set():
+                return StopReason(
+                    STOP_INTERRUPTED,
+                    max(0, after.instructions - before))
             return StopReason(self._halt_kind(),
                               max(0, after.instructions - before))
 
         executed = 0
-        while executed < budget:
+        watch_swaps = (self._video is not None and self._video.open
+                       and self._video.auto)
+        last_swap = self.target.video_swap_count() if watch_swaps else None
+        while budget is None or executed < budget:
+            if self._interrupt.is_set():
+                return StopReason(STOP_INTERRUPTED, executed)
             self.target.step()
             executed += 1
+            self.refresh_video_title()
+            if watch_swaps:
+                current_swap = self.target.video_swap_count()
+                if (current_swap is not None and last_swap is not None
+                        and current_swap != last_swap):
+                    self.refresh_video()
+                last_swap = current_swap
             state = self.target.state()
             if state.halted:
                 return StopReason(self._halt_kind(), executed)
@@ -152,6 +181,77 @@ class DebugSession:
             return self.step()
         return self.resume(stop_at={(state.pc + 4) & 0xFFFFFFFF})
 
+    def finish(self) -> StopReason:
+        """Ejecuta hasta retornar de la función que contiene el PC actual.
+
+        Se sigue la profundidad de las llamadas ejecutadas desde este punto;
+        así un RET de una función hija no se confunde con el RET que buscamos.
+        No depende del valor inicial de R31 ni de cómo se guarde en la pila.
+        """
+        if self.target.state().halted:
+            return StopReason(STOP_ALREADY, 0)
+
+        executed = 0
+        depth = 0
+        while executed < self.operation_limit:
+            if self._interrupt.is_set():
+                return StopReason(STOP_INTERRUPTED, executed)
+            state = self.target.state()
+            word = self.word_at(state.pc)
+            if word is None:
+                self.target.step()
+                executed += 1
+            else:
+                opcode = (word >> 26) & 0x3F
+                is_call = opcode in _CALL_OPCODES
+                is_return = (opcode == 0x2E
+                             and ((word >> 16) & 0x1F) == 31)
+                self.target.step()
+                executed += 1
+                if is_return:
+                    if depth == 0:
+                        state = self.target.state()
+                        if state.halted:
+                            return StopReason(self._halt_kind(), executed)
+                        return StopReason(STOP_FINISHED, executed)
+                    depth -= 1
+                elif is_call:
+                    depth += 1
+
+            state = self.target.state()
+            if state.halted:
+                return StopReason(self._halt_kind(), executed)
+            if state.pc in self.breakpoints:
+                return StopReason(STOP_BREAKPOINT, executed)
+        return StopReason(STOP_LIMIT, executed)
+
+    def run_to_next_swap(self) -> StopReason:
+        """Ejecuta hasta que el vídeo complete el siguiente intercambio."""
+        initial = self.target.video_swap_count()
+        if initial is None:
+            raise TargetError("este objetivo no permite esperar un frame")
+        executed = 0
+        while executed < self.operation_limit:
+            if self._interrupt.is_set():
+                return StopReason(STOP_INTERRUPTED, executed)
+            if self.target.state().halted:
+                return StopReason(
+                    STOP_ALREADY if executed == 0 else self._halt_kind(),
+                    executed)
+            self.target.step()
+            executed += 1
+            current = self.target.video_swap_count()
+            if current is not None and current != initial:
+                return StopReason(STOP_SWAP, executed)
+        return StopReason(STOP_LIMIT, executed)
+
+    def clear_interrupt(self) -> None:
+        self._interrupt.clear()
+
+    def interrupt(self) -> None:
+        self._interrupt.set()
+        self.target.request_interrupt()
+
     def _halt_kind(self) -> str:
         return STOP_ERROR if self.target.state().error else STOP_HALT
 
@@ -164,7 +264,8 @@ class DebugSession:
             return None
         return int.from_bytes(data, "little")
 
-    def listing(self, before: int = 8, after: int = 16) -> list[ListingRow]:
+    def listing(self, before: int = 8, after: int = 16,
+                center: int | None = None) -> list[ListingRow]:
         """Las instrucciones alrededor del PC, para el panel de código.
 
         Con mapa de fuente se recorren los PC que el ensamblador asignó de
@@ -172,19 +273,22 @@ class DebugSession:
         él, de cuatro en cuatro, que es lo único que se puede suponer.
         """
         pc = self.target.state().pc
+        view_pc = pc if center is None else center
         if self._known_pcs:
-            index = bisect.bisect_left(self._known_pcs, pc)
-            if index >= len(self._known_pcs) or self._known_pcs[index] != pc:
+            index = bisect.bisect_left(self._known_pcs, view_pc)
+            if (index >= len(self._known_pcs)
+                    or self._known_pcs[index] != view_pc):
                 # El PC no está en el mapa (datos, o programa distinto del
                 # fuente): se enseña igualmente, encajado donde le toca.
                 addresses = self._known_pcs[max(0, index - before):index]
-                addresses = addresses + [pc] + self._known_pcs[index:index + after]
+                addresses = (addresses + [view_pc]
+                             + self._known_pcs[index:index + after])
             else:
                 start = max(0, index - before)
                 addresses = self._known_pcs[start:index + after + 1]
         else:
-            start = max(0, pc - 4 * before)
-            addresses = list(range(start, pc + 4 * (after + 1), 4))
+            start = max(0, view_pc - 4 * before)
+            addresses = list(range(start, view_pc + 4 * (after + 1), 4))
 
         rows = []
         for address in addresses:
@@ -192,7 +296,7 @@ class DebugSession:
             rows.append(ListingRow(
                 address=address,
                 word=word,
-                text=self.source.describe(address, word),
+                text=self.source.describe(address, word, pc),
                 is_pc=address == pc,
                 has_breakpoint=address in self.breakpoints,
                 labels=tuple(self.source.labels_at.get(address, ())),
@@ -242,6 +346,12 @@ class DebugSession:
             return f"0x{state.pc:08X}" + suffix
         if stop.kind == STOP_BREAKPOINT:
             return f"parada en 0x{state.pc:08X}" + suffix
+        if stop.kind == STOP_SWAP:
+            return "intercambio de framebuffer completado" + suffix
+        if stop.kind == STOP_FINISHED:
+            return f"retorno completado en 0x{state.pc:08X}" + suffix
+        if stop.kind == STOP_INTERRUPTED:
+            return "ejecucion interrumpida" + suffix
         if stop.kind == STOP_ERROR:
             name = ERROR_NAMES.get(state.error_code, "desconocido")
             return (f"ERROR 0x{state.error_code:02X} ({name}) en "
@@ -287,7 +397,7 @@ class DebugSession:
         if self._video is None:
             from tools.debug_video import VideoViewer
 
-            self._video = VideoViewer(self.target)
+            self._video = VideoViewer(self.target, on_interrupt=self.interrupt)
         return self._video
 
     def close_video(self) -> None:
@@ -299,6 +409,11 @@ class DebugSession:
         """Repinta la ventana si está abierta y toca. Barato si no lo está."""
         if self._video is not None:
             self._video.refresh()
+
+    def refresh_video_title(self) -> None:
+        """Actualiza la barra de la ventana sin tocar los píxeles."""
+        if self._video is not None:
+            self._video.refresh_title()
 
     def execute(self, line: str) -> list[str]:
         """Ejecuta una línea de comando y devuelve lo que hay que enseñar.
@@ -335,8 +450,13 @@ class DebugSession:
             raise CommandError("`over` no lleva argumentos")
         return [self.describe_stop(self.step_over())]
 
+    def _cmd_finish(self, args: list[str]) -> list[str]:
+        if args:
+            raise CommandError("`finish` no lleva argumentos")
+        return [self.describe_stop(self.finish())]
+
     def _cmd_run(self, args: list[str]) -> list[str]:
-        limit = self._parse_count(args[0]) if args else None
+        limit = self._parse_count(args[0]) if args else self.run_limit
         return [self.describe_stop(self.resume(max_instructions=limit))]
 
     def _cmd_until(self, args: list[str]) -> list[str]:
@@ -422,6 +542,8 @@ class DebugSession:
 
     def _cmd_fb(self, args: list[str]) -> list[str]:
         """`fb`, `fb back`, `fb both`, `fb off`, `fb auto on|off`."""
+        if self.target.video_layout() is None:
+            raise TargetError("este objetivo no tiene vídeo")
         if args and args[0] == "off":
             return [self.video.close()]
         if args and args[0] == "auto":
@@ -445,6 +567,11 @@ class DebugSession:
                          "(o `fb auto on`, a ~1,5 s por buffer)")
         return lines
 
+    def _cmd_frame(self, args: list[str]) -> list[str]:
+        if args:
+            raise CommandError("`frame` no lleva argumentos")
+        return [self.describe_stop(self.run_to_next_swap())]
+
     def _cmd_reset(self, args: list[str]) -> list[str]:
         self.target.require(CAPS_RESET)
         self.target.reset()
@@ -457,14 +584,22 @@ class DebugSession:
         return []
 
     def _cmd_help(self, args: list[str]) -> list[str]:
-        return [f"{name:<10} {text}" for name, text in HELP]
+        hidden = set()
+        if self.target.video_layout() is None:
+            hidden.add("fb")
+        if self.target.video_swap_count() is None:
+            hidden.add("frame")
+        return [f"{name:<10} {text}" for name, text in HELP
+                if name.split()[0] not in hidden]
 
 
 def _parse_register(token: str) -> int:
     text = token.upper()
-    if not text.startswith("R") or not text[1:].isdigit():
+    if text.startswith("R"):
+        text = text[1:]
+    if not text.isdigit():
         raise CommandError(f"no es un registro: '{token}'")
-    index = int(text[1:])
+    index = int(text)
     if not 0 <= index < 32:
         raise CommandError(f"registro fuera de rango: '{token}'")
     return index
@@ -485,6 +620,7 @@ def format_memory_row(address: int, data: bytes) -> str:
 HELP: tuple[tuple[str, str], ...] = (
     ("step [N]", "ejecuta N instrucciones (por defecto 1)"),
     ("over", "un paso, saltando la llamada entera si es JAL/JALR"),
+    ("finish", "ejecuta hasta retornar de la funcion actual"),
     ("run [N]", "ejecuta hasta breakpoint, HALT o error"),
     ("until X", "ejecuta hasta la direccion o etiqueta X"),
     ("break [X]", "pone un breakpoint, o los lista si no hay argumento"),
@@ -494,6 +630,7 @@ HELP: tuple[tuple[str, str], ...] = (
     ("mem [X N]", "vuelca N bytes desde X"),
     ("write X V", "escribe la palabra V en la direccion X"),
     ("fb [X]", "ventana de framebuffer: front (por defecto), back, both, off"),
+    ("frame", "ejecuta hasta completar el siguiente intercambio de framebuffer"),
     ("reset", "reinicia PC, registros y contadores sin borrar memoria"),
     ("quit", "sale"),
 )
@@ -501,6 +638,7 @@ HELP: tuple[tuple[str, str], ...] = (
 _COMMANDS = {
     "step": DebugSession._cmd_step, "s": DebugSession._cmd_step,
     "over": DebugSession._cmd_over, "n": DebugSession._cmd_over,
+    "finish": DebugSession._cmd_finish,
     "run": DebugSession._cmd_run, "c": DebugSession._cmd_run,
     "continue": DebugSession._cmd_run,
     "until": DebugSession._cmd_until, "u": DebugSession._cmd_until,
@@ -512,6 +650,7 @@ _COMMANDS = {
     "mem": DebugSession._cmd_mem, "x": DebugSession._cmd_mem,
     "write": DebugSession._cmd_write, "w": DebugSession._cmd_write,
     "fb": DebugSession._cmd_fb, "v": DebugSession._cmd_fb,
+    "frame": DebugSession._cmd_frame, "f": DebugSession._cmd_frame,
     "reset": DebugSession._cmd_reset,
     "help": DebugSession._cmd_help, "?": DebugSession._cmd_help,
     "quit": DebugSession._cmd_quit, "q": DebugSession._cmd_quit,

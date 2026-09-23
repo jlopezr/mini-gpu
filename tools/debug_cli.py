@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from tools import debug_source, sim_peripherals  # noqa: E402
 from tools.debug_core import (  # noqa: E402
-    CommandError, DEFAULT_RUN_LIMIT, DebugSession,
+    CommandError, DebugSession,
 )
 from tools.debug_target import SimTarget, TargetError  # noqa: E402
 
@@ -45,17 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="memoria del simulador en bytes (admite 0x...)")
     parser.add_argument("--load-address", type=lambda v: int(v, 0), default=0,
                         help="direccion de carga en el simulador")
-    parser.add_argument("--fb-layout", nargs="?", const="arnes",
-                        metavar="FRONT[,BACK]",
-                        help="coloca FB_FRONT/FB_BACK antes de arrancar, como "
-                             "hace el arnes de x.tests; sin valor usa sus "
-                             "mismas direcciones. Implica --video")
     parser.add_argument("--include", "-I", action="append", default=[],
                         type=Path, metavar="DIR",
                         help="carpeta extra para los .include; repetible. "
                              "x.tests/inc se busca siempre")
-    parser.add_argument("--run-limit", type=int, default=DEFAULT_RUN_LIMIT,
-                        help="tope de instrucciones de un `run` sin breakpoint")
+    parser.add_argument("--run-limit", type=int, default=None,
+                        help="tope opcional de instrucciones de `run`; "
+                             "por defecto no hay limite")
     parser.add_argument("--break", dest="breakpoints", action="append",
                         default=[], metavar="X",
                         help="breakpoint inicial (direccion o etiqueta); repetible")
@@ -85,49 +81,12 @@ def load_program(path: Path, includes: tuple[Path, ...]) -> bytes:
     return load_program_bytes(path)
 
 
-def apply_fb_layout(cpu, value: str) -> None:
-    """Deja el framebuffer donde lo dejaría el arnés antes de correr un caso.
-
-    `x.tests/backends/video_layout.py` explica por qué hace falta: desde la
-    fase 3.5 las bases arrancan a cero, y casos como `band` o `bounce` leen
-    FB_BACK y dibujan donde les digan. Sin esto dibujan sobre el propio
-    programa en la dirección cero y mueren con un encoding inválido, que
-    parece un fallo del caso y no lo es.
-
-    Las direcciones se importan de allí, no se copian: ese fichero avisa de
-    que `test_differential` compara framebuffers del simulador y de la placa
-    byte a byte, y dos copias que se separen romperían la comparación.
-    """
-    from tools.sim_devices import VideoDevice
-
-    sys.path.insert(0, str(ROOT / "x.tests"))
-    from backends import video_layout
-
-    front, back = video_layout.FB_FRONT, video_layout.FB_BACK
-    if value != "arnes":
-        partes = value.split(",")
-        front = int(partes[0], 0)
-        if len(partes) > 1:
-            back = int(partes[1], 0)
-        elif len(partes) == 1:
-            # Un solo valor: el trasero, a un frame del frontal.
-            back = front + VideoDevice.FRAME_BYTES if hasattr(
-                VideoDevice, "FRAME_BYTES") else front + 320 * 240 * 2
-
-    cpu.video.write(VideoDevice.FB_FRONT, front)
-    cpu.video.write(VideoDevice.FB_BACK, back)
-
-
 def open_simulator(args, includes: tuple[Path, ...]) -> SimTarget:
     sys.path.insert(0, str(ROOT / "2.cpu-sim-func"))
     from minicpu_sim import CPU
 
-    if args.fb_layout is not None:
-        args.video = True
     cpu = CPU(args.memory_size, **sim_peripherals.from_arguments(args))
     cpu.load_program(load_program(args.program, includes), args.load_address)
-    if args.fb_layout is not None:
-        apply_fb_layout(cpu, args.fb_layout)
     return SimTarget(cpu)
 
 
@@ -161,6 +120,10 @@ def main(argv: list[str] | None = None) -> int:
     source = (debug_source.from_program(args.program, includes)
               if args.program is not None else debug_source.SourceMap())
     session = DebugSession(target, source, run_limit=args.run_limit)
+    if not args.board:
+        warning = sim_peripherals.missing_video_warning(args.program, args)
+        if warning is not None:
+            session.warnings.append(warning)
 
     startup = [f"break {mark}" for mark in args.breakpoints] + args.command
     try:
