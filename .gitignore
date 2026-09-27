@@ -10,3 +10,5 @@ hardware.json
 result.bin
 
 reports/
+
+.DS_Store
