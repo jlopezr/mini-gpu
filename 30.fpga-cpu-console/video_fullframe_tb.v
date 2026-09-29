@@ -64,12 +64,21 @@ module video_fullframe_tb;
   localparam integer POWERUP_US = 2;
 
   // Donde paramos. Cada intercambio necesita un frame de video entero
-  // (420 000 ciclos de pixel), asi que esto domina el tiempo de simulacion.
-  // Antes eran INTERCAMBIOS; con MMIO v2 `HALT_AT` cuenta FRAMES (§9.6). No es
-  // lo mismo aqui: mientras la CPU dibuja el frame entero pasan varios frames
-  // de scanout sin que haya ningun intercambio, asi que la alarma llega mucho
-  // antes en terminos del programa. Con 2 paraba a la CPU a media rafaga.
-  localparam integer FRAMES_TO_STOP = 6;
+  // (420 000 ciclos de pixel), asi que esto domina el tiempo de simulacion:
+  // unos 19 s de reloj de pared por frame.
+  //
+  // Con 2 basta. El programa pinta siempre LO MISMO y a la CPU le cuesta ~0,5 ms
+  // por buffer frente a los 16,8 ms de un frame, asi que el segundo frame ya es
+  // el regimen permanente: el scanout lee un buffer mientras la CPU dibuja el
+  // otro. `underflow` es un flag acumulado, de modo que una lectura al final
+  // cubre todos los frames simulados; mas frames repetirian el mismo trafico.
+  // Los dos buffers se comprueban al final (ver mas abajo), asi que tampoco
+  // hace falta un N mayor para llegar al segundo. Al hacer el cambio se probaron
+  // 2, 3, 4 y 6, y pasan todos. Antes eran 6, con la nota de que con 2 la CPU se
+  // paraba a media rafaga; ya no se reproduce.
+  //
+  // Antes eran INTERCAMBIOS; con MMIO v2 `HALT_AT` cuenta FRAMES (§9.6).
+  localparam integer FRAMES_TO_STOP = 2;
 
   localparam [31:0] FB0 = 32'h0001_0000;
   localparam [31:0] FB1 = 32'h0003_5800;   // FB0 + 320*240*2
@@ -426,6 +435,14 @@ module video_fullframe_tb;
     if (mem.errors != 0)
       $fatal(1, "el modelo de SDRAM conto %0d violaciones JEDEC", mem.errors);
 
+    // Los DOS buffers. `volcar` dejo `base_palabra` en el frontal; el trasero es
+    // el otro. Con un numero par de frames el frontal es siempre FB0, y FB1 no se
+    // habria mirado nunca. Al parar, la CPU puede haber empezado a redibujar el
+    // trasero, pero escribe los mismos valores que ya tenia.
+    $display("  frontal (0x%08x):", {base_palabra, 1'b0});
+    comprobar_imagen;
+    base_palabra = (leer_mmio(5'h00) == FB0) ? FB1[24:1] : FB0[24:1];
+    $display("  trasero (0x%08x):", {base_palabra, 1'b0});
     comprobar_imagen;
 
     $display("");
