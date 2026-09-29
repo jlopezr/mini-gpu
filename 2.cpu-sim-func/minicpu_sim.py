@@ -22,11 +22,12 @@ por compatibilidad. Las operaciones hacen wrap módulo 2**32, los binarios son
 little-endian y los branches son relativos a PC+4 con offsets expresados en
 palabras de 32 bits.
 
-Este modelo utiliza una memoria unificada y byte-addressed de 32 MiB por defecto.
-La implementación FPGA, en cambio, tiene espacios Harvard separados de 16 KiB
-para programa y datos. Esta diferencia es deliberada: los programas deben evitar
-que sus datos se solapen con el código y respetar los límites físicos cuando se
-destinen a la FPGA.
+Este modelo utiliza una memoria unificada y byte-addressed de 32 MiB por defecto,
+que es la de los prototipos con SDRAM (10 y posteriores). El prototipo 6, en
+BRAM, tiene 32 KiB contiguos (dos bancos de 16 KiB, programa y datos, con el bit
+14 de la dirección eligiendo banco); ese es el único caso con un límite físico
+más estrecho que el del simulador, y un programa destinado a él debe respetarlo
+por su cuenta. Ver `docs/resumen-prototipos.md`, sección "Memoria".
 
 Los errores detienen la CPU y conservan código y PC de la instrucción que los
 provocó. No existen vectores de excepción ni reanudación.

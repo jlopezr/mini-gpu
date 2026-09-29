@@ -146,6 +146,31 @@ class LoadAddressTest(unittest.TestCase):
         palabras = assemble("LA R1, tabla+4\nHALT\ntabla:\n.word 1, 2\n")
         self.assertEqual(palabras[1] & 0xFFFF, 16)
 
+    def test_li_con_literal_corto_es_una_palabra(self):
+        for texto, imm in (("0", 0), ("100", 100), ("-1", 0xFFFF), ("-32768", 0x8000),
+                           ("32767", 0x7FFF), ("0x7FFF", 0x7FFF), ("3+4", 7)):
+            with self.subTest(literal=texto):
+                palabras = assemble(f"LI R2, {texto}\n")
+                self.assertEqual(palabras, assemble(f"MOVI R2, {texto}\n"))
+                self.assertEqual(palabras[0] & 0xFFFF, imm)
+
+    def test_li_con_literal_largo_sigue_siendo_dos_palabras(self):
+        for texto in ("32768", "-32769", "0x12345678", "0xFFFFFFFF"):
+            with self.subTest(literal=texto):
+                self.assertEqual(len(assemble(f"LI R2, {texto}\n")), 2)
+
+    def test_li_simbolico_y_la_siguen_en_dos_palabras(self):
+        """Etiquetas y `.equ` no tienen valor en la primera pasada. Cuando se
+        relajen (TODO en `li_short_literal`) este test tendra que cambiar."""
+        self.assertEqual(len(assemble("LI R1, datos\nHALT\ndatos:\n.word 1\n")), 4)
+        self.assertEqual(len(assemble(".equ N, 5\nLI R1, N\n")), 2)
+        self.assertEqual(len(assemble("LA R1, 5\n")), 2)
+
+    def test_li_corto_no_desplaza_mal_las_etiquetas(self):
+        palabras = assemble("LI R1, 5\nLI R2, 0x12345678\nfin:\nLA R3, fin\n")
+        # 1 + 2 palabras antes de `fin`: su direccion es 12.
+        self.assertEqual(palabras[3 + 1] & 0xFFFF, 12)
+
     def test_la_exige_dos_operandos(self):
         with self.assertRaises(AsmError) as error:
             assemble("LA R1\n")

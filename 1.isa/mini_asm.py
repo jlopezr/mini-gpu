@@ -441,10 +441,38 @@ def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
     raise AsmError(f"directiva desconocida: {mnemonic}")
 
 
+def li_short_literal(operand_text: str) -> int | None:
+    """El valor de `LI Rd, literal` si cabe en un `MOVI` (signed16), o None.
+
+    Solo un literal numerico se puede decidir en la primera pasada: una etiqueta
+    o un `.equ` todavia no tienen valor cuando hay que fijar el tamano, asi que
+    esos siguen ocupando dos palabras.
+
+    TODO(relajacion): `LI Rd, etiqueta` tambien cabria en una palabra cuando la
+    direccion es < 32 KiB (`MOVI` admite etiquetas, ver mas abajo). Para saberlo
+    hay que fijar tamanos sin conocer las direcciones: suponer todos los `LI`
+    simbolicos cortos, asignar direcciones, alargar los que no quepan y repetir
+    hasta que no cambie ninguno. Con eso el backend de lcc podria emitir `LI` +
+    acceso para cualquier global sin pagar dos instrucciones por los cercanos.
+    `LA` se quedaria siempre en dos (es el "dame la direccion completa").
+    """
+    ops = split_operands(operand_text)
+    if len(ops) != 2:
+        return None
+    try:
+        value = parse_int(ops[1])
+    except AsmError:
+        return None
+    return value if -(1 << 15) <= value < (1 << 15) else None
+
+
 def instruction_size_bytes(text: str) -> int:
     parts = text.split(None, 1)
     mnemonic = parts[0].upper()
-    if mnemonic in {"LI", "LA"}:
+    if mnemonic == "LI":
+        operand_text = parts[1] if len(parts) > 1 else ""
+        return 4 if li_short_literal(operand_text) is not None else 8
+    if mnemonic == "LA":
         return 8
     return 4
 
@@ -1163,6 +1191,11 @@ def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
         if len(ops) != 2:
             raise AsmError(f"{mnemonic} requiere: Rd, expr32")
         rd = parse_reg(ops[0])
+        short = li_short_literal(operand_text) if mnemonic == "LI" else None
+        if short is not None:
+            # Mismo criterio que `instruction_size_bytes`: si ahi ocupo una
+            # palabra, aqui tiene que salir una.
+            return encode_i(OPCODES["MOVI"], rd, 0, short & 0xFFFF).to_bytes(4, "little")
         value = resolve_target(ops[1], labels) & 0xFFFFFFFF
         hi = (value >> 16) & 0xFFFF
         lo = value & 0xFFFF
