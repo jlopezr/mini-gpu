@@ -7,12 +7,18 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from tools.build_runner import (
     BuildRunner,
+    build_all,
+    buildable_prototypes,
     clean_logs,
     create_build_record,
     list_builds,
+    prototype_build_summary,
+    process_exists,
     read_status,
     stop_build,
     tail_log,
@@ -21,6 +27,40 @@ from tools.build_runner import (
 
 
 class BuildRunnerTest(unittest.TestCase):
+    def test_process_exists_recognizes_current_and_missing_pid(self):
+        self.assertTrue(process_exists(os.getpid()))
+        self.assertFalse(process_exists(2 ** 30))
+
+    def test_prototype_summary_does_not_change_a_live_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype = root / "1.live"
+            prototype.mkdir()
+            (prototype / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            reports = root / "reports"
+            record = create_build_record(reports, prototype.name, "build", ["build"])
+            update_build_record(record["status_path"], pid=os.getpid())
+
+            rows = prototype_build_summary(root, reports)
+
+            self.assertEqual(rows[0]["state"], "RUNNING")
+            self.assertEqual(rows[0]["bitstream"], "MISSING")
+            self.assertEqual(read_status(record["status_path"])["state"], "running")
+    def test_build_all_runs_apio_prototypes_sequentially_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("2.second", "1.first", "3.no-apio"):
+                (root / name).mkdir()
+            (root / "1.first" / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            (root / "2.second" / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            run = mock.Mock(side_effect=[SimpleNamespace(returncode=2), SimpleNamespace(returncode=0)])
+
+            result = build_all(root, run=run)
+
+            self.assertEqual(result, 1)
+            self.assertEqual([call.args[0][5] for call in run.call_args_list],
+                             ["1.first", "2.second"])
+            self.assertEqual(buildable_prototypes(root), [root / "1.first", root / "2.second"])
     def test_status_json_is_created_and_updated(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -87,13 +127,35 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(len(entries), 2)
             self.assertIn("one", "\n".join(entry["label"] for entry in entries))
 
+    def test_list_builds_marks_dead_running_process_as_interrupted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = create_build_record(root, "17.fpga-gpu-ram-v2", "orphan", ["echo", "old"])
+            update_build_record(record["status_path"], pid=2 ** 30)
+
+            entry = list_builds(root)[0]
+
+            self.assertEqual(entry["state"], "interrupted")
+            self.assertIsNotNone(entry["finished_at"])
+            self.assertEqual(read_status(record["status_path"])["state"], "interrupted")
+
+    def test_list_builds_keeps_live_running_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = create_build_record(root, "17.fpga-gpu-ram-v2", "active", ["echo", "new"])
+            update_build_record(record["status_path"], pid=os.getpid())
+
+            entry = list_builds(root)[0]
+
+            self.assertEqual(entry["state"], "running")
+
     def test_clean_logs_dry_run_keeps_active_and_last_successful(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             active = create_build_record(root, "17.fpga-gpu-ram-v2", "active", ["sleep", "10"])
             stale = create_build_record(root, "17.fpga-gpu-ram-v2", "stale", ["echo", "old"])
             success = create_build_record(root, "17.fpga-gpu-ram-v2", "last-good", ["echo", "good"])
-            update_build_record(active["status_path"], state="running", pid=1234)
+            update_build_record(active["status_path"], state="running", pid=os.getpid())
             update_build_record(stale["status_path"], state="failed")
             update_build_record(success["status_path"], state="success")
             summary = clean_logs(root, keep=1, dry_run=True, yes=False)

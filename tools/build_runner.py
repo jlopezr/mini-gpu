@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
+from tools.prototype import (
+    PrototypeResolutionError,
+    find_repo_root,
+    list_prototypes,
+    resolve_prototype,
+)
 
 
 BUILD_ROOT = Path(os.environ.get("MINI_GPU_ROOT", find_repo_root(Path.cwd()) if Path.cwd().exists() else Path(__file__).resolve().parents[1]))
@@ -92,10 +97,53 @@ def update_build_record(status_path: Path | str, **updates) -> dict:
     path = Path(status_path)
     data = read_status(path)
     data.update(updates)
-    if updates.get("state") in {"success", "failed", "stopped"}:
+    if updates.get("state") in {"success", "failed", "stopped", "interrupted"}:
         data["finished_at"] = utc_now()
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
+
+
+def process_exists(pid: int) -> bool:
+    """Return whether *pid* currently names a process.
+
+    Signal 0 does not terminate the process.  It only asks the operating
+    system to validate the PID; lack of permission still proves that the
+    process exists.
+    """
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() == 5  # ACCESS_DENIED also proves it exists
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        # Windows reports an invalid/dead PID as a generic OSError rather than
+        # ProcessLookupError on some Python versions.
+        return False
+    return True
+
+
+def reconcile_build_record(status_path: Path | str, record: dict) -> dict:
+    """Persist an interrupted state when a recorded build process is gone."""
+    pid = record.get("pid")
+    if record.get("state") != "running" or pid is None:
+        return record
+    try:
+        alive = process_exists(int(pid))
+    except (TypeError, ValueError):
+        alive = False
+    if alive:
+        return record
+    return update_build_record(status_path, state="interrupted")
 
 
 def tail_log(log_path: Path | str, lines: int = 20) -> str:
@@ -123,9 +171,197 @@ def list_builds(root: Path | str) -> list[dict]:
             record = read_status(status_path)
         except json.JSONDecodeError:
             continue
+        record = reconcile_build_record(status_path, record)
         record["folder"] = str(child)
         entries.append(record)
     return entries
+
+
+def buildable_prototypes(repo_root: Path) -> list[Path]:
+    """Return prototype directories that declare an Apio project."""
+    return [path for path in list_prototypes(repo_root) if (path / "apio.ini").is_file()]
+
+
+def bitstream_status(prototype: Path) -> str:
+    """Return CURRENT, STALE or MISSING for a prototype's default Apio env."""
+    from tools.build_report import bitstream_is_current, default_env
+
+    bitstream = prototype / "_build" / default_env(prototype) / "hardware.bit"
+    if not bitstream.is_file():
+        return "MISSING"
+    return "CURRENT" if bitstream_is_current(prototype) else "STALE"
+
+
+def _build_archive(record: dict, prototype: Path) -> Path | None:
+    folder_text = record.get("folder")
+    folder = Path(folder_text) if folder_text else None
+    archived = _find_archived_report(folder / "build.log") if folder else None
+    if archived:
+        path = Path(archived)
+        if path.exists():
+            return path
+    archives = sorted((prototype / "reports").glob("*/metadata.json"))
+    return archives[-1].parent if archives else None
+
+
+def _record_from_archive(archive: Path, timing: str) -> dict:
+    try:
+        metadata = json.loads((archive / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    exit_code = metadata.get("exit_code")
+    successful = exit_code == 0 and timing != "FAIL"
+    return {
+        "state": "success" if successful else "failed",
+        "started_at": metadata.get("started", "-"),
+        "label": metadata.get("label", "build"),
+        "exit_code": exit_code,
+    }
+
+
+def _elapsed_text(record: dict, archive: Path | None) -> str:
+    if archive is not None:
+        metadata_path = archive / "metadata.json"
+        try:
+            seconds = float(json.loads(metadata_path.read_text(encoding="utf-8"))["elapsed_seconds"])
+            return f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            pass
+    try:
+        started = datetime.fromisoformat(record["started_at"].replace("Z", "+00:00"))
+        end_text = record.get("finished_at")
+        ended = (datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+                 if end_text else datetime.now(timezone.utc))
+        seconds = max(0, int((ended - started).total_seconds()))
+        return f"{seconds // 60:02d}:{seconds % 60:02d}"
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return "-"
+
+
+def _timing_text(archive: Path | None) -> tuple[str, str]:
+    if archive is None:
+        return "-", "-"
+    try:
+        summary = json.loads((archive / "summary.json").read_text(encoding="utf-8"))
+        clocks = summary.get("clocks", {})
+    except (OSError, json.JSONDecodeError):
+        return "-", "-"
+    if not clocks:
+        return "-", "-"
+    passes = all(values.get("achieved", 0) >= values.get("constraint", 0)
+                 for values in clocks.values())
+    limiting = min(clocks.values(), key=lambda values:
+                   values.get("achieved", 0) / max(values.get("constraint", 0), 0.001))
+    fmax = f"{limiting.get('achieved', 0):.1f}/{limiting.get('constraint', 0):.1f}"
+    return "PASS" if passes else "FAIL", fmax
+
+
+def _local_date_text(value: str | None) -> str:
+    """Format an ISO timestamp in the computer's local time zone."""
+    if not value or value == "-":
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        local = parsed.astimezone()
+    except (ValueError, TypeError):
+        return "-"
+    return f"{local:%Y-%m-%d %H:%M}"
+
+
+def prototype_build_summary(repo_root: Path, report_root: Path,
+                            prototype: str | None = None) -> list[dict]:
+    """Aggregate build history and local artifacts without starting builds."""
+    from tools.build_report import configured_seed
+
+    entries = list_builds(report_root)
+    latest: dict[str, dict] = {}
+    for entry in entries:
+        name = normalize_prototype(entry.get("prototype"))
+        if name and (name not in latest or entry.get("started_at", "") > latest[name].get("started_at", "")):
+            latest[name] = entry
+    wanted = normalize_prototype(prototype) if prototype else None
+    rows = []
+    for path in buildable_prototypes(repo_root):
+        if wanted and path.name != wanted:
+            continue
+        record = latest.get(path.name)
+        archive = _build_archive(record, path) if record else _build_archive({}, path)
+        timing, fmax = _timing_text(archive)
+        if record is None and archive is not None:
+            record = _record_from_archive(archive, timing) or None
+        state = str(record.get("state", "never")).upper() if record else "NEVER"
+        if state == "FAILED" and timing == "FAIL":
+            state = "TIMING_FAIL"
+        rows.append({
+            "prototype": path.name,
+            "bitstream": bitstream_status(path),
+            "state": state,
+            "timing": timing,
+            "fmax": fmax,
+            "seed": str(configured_seed(path) or "-"),
+            "elapsed": _elapsed_text(record, archive) if record else "-",
+            "date": _local_date_text(record.get("started_at")) if record else "-",
+            "label": record.get("label", "-") if record else "-",
+        })
+    return rows
+
+
+def print_prototype_build_summary(rows: list[dict]) -> None:
+    use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    colors = {
+        "CURRENT": "32", "SUCCESS": "32", "PASS": "32",
+        "STALE": "33", "INTERRUPTED": "33", "TIMING_FAIL": "33", "RUNNING": "36",
+        "MISSING": "31", "FAILED": "31", "FAIL": "31",
+        "NEVER": "2",
+    }
+
+    def field(value: str, width: int) -> str:
+        padded = f"{value:<{width}}"
+        code = colors.get(value)
+        return f"\033[{code}m{padded}\033[0m" if use_color and code else padded
+
+    active = [row["prototype"] for row in rows if row["state"] == "RUNNING"]
+    if active:
+        message = "ACTIVE BUILD" if len(active) == 1 else "ACTIVE BUILDS"
+        text = f"{message}: {', '.join(active)}"
+        print(f"\033[36;1m{text}\033[0m" if use_color else text)
+    print(f"  {'PROTOTYPE':<29} {'BITSTREAM':<10} {'LAST BUILD':<12} {'TIMING':<6} "
+          f"{'SEED':<5} {'FMAX/REQ':<13} {'ELAPSED':<8} {'DATE':<16} LABEL")
+    for row in rows:
+        marker = "*" if row["state"] == "RUNNING" else " "
+        print(f"{marker} {row['prototype']:<29} {field(row['bitstream'], 10)} "
+              f"{field(row['state'], 12)} {field(row['timing'], 6)} "
+              f"{row['seed']:<5} {row['fmax']:<13} {row['elapsed']:<8} "
+              f"{row['date']:<16} {row['label']}")
+
+
+def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,
+              incremental: bool | None = None, run=subprocess.run) -> int:
+    """Build every Apio prototype sequentially and keep going after failures."""
+    prototypes = buildable_prototypes(repo_root)
+    if not prototypes:
+        print("No buildable prototypes found")
+        return 0
+    results: list[tuple[str, int]] = []
+    for index, prototype in enumerate(prototypes, 1):
+        print(f"\n== [{index}/{len(prototypes)}] {prototype.name} ==", flush=True)
+        command = [
+            sys.executable, "-m", "tools.build_runner", "build",
+            "--prototype", prototype.name, "--label", label,
+        ]
+        if archive_only:
+            command.append("--archive-only")
+        if incremental is not None:
+            command.append("--incremental" if incremental else "--no-incremental")
+        completed = run(command, cwd=repo_root)
+        results.append((prototype.name, completed.returncode))
+
+    print("\n== build --all summary ==")
+    for name, returncode in results:
+        print(f"{'SUCCESS' if returncode == 0 else 'FAILED':<8} {name}")
+    failed = sum(returncode != 0 for _, returncode in results)
+    print(f"{len(results) - failed} successful, {failed} failed")
+    return 1 if failed else 0
 
 
 def _parse_size(value: str | int | None) -> int | None:
@@ -372,6 +608,8 @@ def _main() -> int:
     list_cmd = subparsers.add_parser("list", help="Lista builds anteriores")
     list_cmd.add_argument("-p", "--prototype", default=None)
     list_cmd.add_argument("--root", type=Path, default=None)
+    list_cmd.add_argument("--prototypes", action="store_true",
+                          help="resume el estado de cada prototipo construible")
 
     stop_cmd = subparsers.add_parser("stop", help="Detiene el build activo")
     stop_cmd.add_argument("-p", "--prototype", default=None)
@@ -395,11 +633,18 @@ def _main() -> int:
     run_cmd.add_argument("cmd_args", nargs=argparse.REMAINDER, metavar="command")
 
     build_cmd = subparsers.add_parser("build", help="Sintetiza con apio y archiva timing (tools/build_report.py)")
-    build_cmd.add_argument("-p", "--prototype", required=True)
+    build_target = build_cmd.add_mutually_exclusive_group(required=True)
+    build_target.add_argument("-p", "--prototype")
+    build_target.add_argument("--all", action="store_true", help="construye secuencialmente todos los prototipos con apio.ini")
     build_cmd.add_argument("--label", default="build")
     build_cmd.add_argument("--root", type=Path, default=None)
     build_cmd.add_argument("--archive-only", action="store_true")
-    build_cmd.add_argument("--incremental", action="store_true")
+    build_cache = build_cmd.add_mutually_exclusive_group()
+    build_cache.add_argument("--incremental", dest="incremental", action="store_true",
+                             help="fuerza una ejecución usando la caché normal de Apio")
+    build_cache.add_argument("--no-incremental", dest="incremental", action="store_false",
+                             help="fuerza PNR detallado y regenera el routing")
+    build_cmd.set_defaults(incremental=None)
     build_cmd.add_argument("--background", action="store_true", help="Lanza el build en segundo plano y vuelve enseguida")
 
     test_cmd = subparsers.add_parser("test", help="Ejecuta la suite de un prototipo (tools/test_runner.py)")
@@ -435,13 +680,18 @@ def _main() -> int:
 
     report_root = getattr(args, "root", None) or (find_repo_root(Path.cwd()) / "reports")
     if args.command == "list":
+        if args.prototypes:
+            repo_root = find_repo_root(Path.cwd())
+            rows = prototype_build_summary(repo_root, report_root, args.prototype)
+            print_prototype_build_summary(rows)
+            return 0
         entries = list_builds(report_root)
         if args.prototype:
             entries = [entry for entry in entries if entry.get("prototype") == args.prototype]
         if not entries:
             print("No builds found")
             return 0
-        print(f"{'ID':<28} {'STATE':<8} {'AGE':<8} {'LABEL'}")
+        print(f"{'ID':<28} {'STATE':<12} {'AGE':<8} {'LABEL'}")
         now = datetime.now(timezone.utc)
         for entry in sorted(entries, key=lambda e: e.get("started_at", ""), reverse=True):
             started = datetime.fromisoformat(entry.get("started_at", "1970-01-01T00:00:00Z").replace("Z", "+00:00"))
@@ -452,7 +702,7 @@ def _main() -> int:
                 age_str = f"{hours // 24}d"
             else:
                 age_str = f"{hours:02d}:{minutes:02d}"
-            print(f"{entry.get('id', 'unknown'):<28} {str(entry.get('state', 'unknown')).upper():<8} {age_str:<8} {entry.get('label', '')}")
+            print(f"{entry.get('id', 'unknown'):<28} {str(entry.get('state', 'unknown')).upper():<12} {age_str:<8} {entry.get('label', '')}")
         return 0
 
     if args.command == "status":
@@ -477,6 +727,11 @@ def _main() -> int:
                 print("No builds found")
                 return 1
             log_path = Path(record.get("folder") or report_root / record.get("id", "")) / "build.log"
+        archived_report = _find_archived_report(log_path)
+        if archived_report:
+            detailed_log = Path(archived_report) / "build.log"
+            if detailed_log.is_file():
+                log_path = detailed_log
         if args.follow:
             try:
                 for line in BuildRunner.follow_log(log_path, timeout=60.0):
@@ -507,12 +762,19 @@ def _main() -> int:
         return 0
 
     if args.command == "build":
+        if args.all:
+            if args.background:
+                parser.error("build --all no admite --background; los builds se ejecutan secuencialmente")
+            repo_root = find_repo_root(Path.cwd())
+            return build_all(repo_root, label=args.label,
+                             archive_only=args.archive_only,
+                             incremental=args.incremental)
         report_script = Path(__file__).resolve().with_name("build_report.py")
         command = [sys.executable, str(report_script), "--prototype", args.prototype, "--label", args.label]
         if args.archive_only:
             command.append("--archive-only")
-        if args.incremental:
-            command.append("--incremental")
+        if args.incremental is not None:
+            command.append("--incremental" if args.incremental else "--no-incremental")
         args.cmd_args = ["--", *command]
         args.command = "run"
 

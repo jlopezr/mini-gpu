@@ -118,7 +118,7 @@ class BoardTest(unittest.TestCase):
         upload.assert_called_once_with(PROJECT)
 
     def test_upload_que_no_programa_la_placa_falla(self):
-        # `apio upload` puede terminar bien sin dejar la placa programada.
+        # Construir y programar puede terminar sin dejar la placa correcta.
         monitor = fake_monitor([(1, 5), (1, 5)])
         with mock.patch.object(board, "upload"):
             with self.assertRaises(board.BitstreamMismatch) as caught:
@@ -155,7 +155,7 @@ class BoardTest(unittest.TestCase):
         """Los DOS caminos de `upload`, y antes solo se probaba uno.
 
         `upload` tiene dos ramas: con bitstream fresco llama a `fujprog`
-        directo, y si no, a `apio upload`. Cual se toma depende de si la
+        directo, y si no, al build registrado. Cual se toma depende de si la
         carpeta esta construida, o sea de un artefacto que no esta en git.
 
         Este test se escribio contra un arbol sin construir, asi que siempre
@@ -167,7 +167,7 @@ class BoardTest(unittest.TestCase):
 
         Se fija forzando cada rama a proposito.
         """
-        for fresco, herramienta in ((None, "apio"), (PROJECT / "x.bit", "fujprog")):
+        for fresco, herramienta in ((None, "build común"), (PROJECT / "x.bit", "fujprog")):
             with self.subTest(rama=herramienta):
                 with mock.patch.object(board, "_fresh_bitstream",
                                        return_value=fresco), \
@@ -177,24 +177,31 @@ class BoardTest(unittest.TestCase):
                         board.upload(PROJECT)
                 self.assertIn(herramienta, str(caught.exception))
 
-    def test_apio_con_error_informa_del_codigo(self):
+    def test_build_con_error_informa_del_codigo(self):
         completed = SimpleNamespace(returncode=2)
         with mock.patch("subprocess.run", return_value=completed):
             with self.assertRaises(board.BitstreamMismatch) as caught:
                 board.upload(PROJECT)
         self.assertIn("código 2", str(caught.exception))
 
-    def test_apio_no_captura_su_salida(self):
+    def test_build_y_programacion_no_capturan_su_salida(self):
         # Si se capturara, una carga de varios minutos pareceria un cuelgue.
         completed = SimpleNamespace(returncode=0)
-        with mock.patch("subprocess.run", return_value=completed) as run:
+        with mock.patch.object(board, "_fresh_bitstream",
+                               side_effect=[None, PROJECT / "x.bit"]), \
+             mock.patch("subprocess.run", return_value=completed) as run:
             board.upload(PROJECT)
-        self.assertNotIn("capture_output", run.call_args.kwargs)
-        self.assertNotIn("stdout", run.call_args.kwargs)
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            self.assertNotIn("capture_output", call.kwargs)
+            self.assertNotIn("stdout", call.kwargs)
+        build_command = run.call_args_list[0].args[0]
+        self.assertEqual(build_command[1:4], ["-m", "tools.build_runner", "build"])
+        self.assertIn("auto-upload", build_command)
 
 
 class FreshBitstreamTest(unittest.TestCase):
-    """Cuando se puede reutilizar el bitstream y saltarse `apio upload`.
+    """Cuando se puede reutilizar el bitstream y saltarse el build.
 
     El atajo vale unos diez minutos de nextpnr por carga, asi que los dos
     errores cuestan caro en direcciones opuestas: perderlo sin motivo hace

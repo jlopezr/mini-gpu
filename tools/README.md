@@ -583,10 +583,25 @@ Status: .../reports/20260915-001203-synth/status.json
 Log: .../reports/20260915-001203-synth/build.log
 ```
 
-`--archive-only` archiva los resultados existentes sin volver a sintetizar;
-`--incremental` usa la caché normal de apio (sin progreso de PNR en vivo).
+`--archive-only` archiva los resultados existentes sin volver a sintetizar.
+Por defecto se reutiliza el último informe detallado si sus hashes coinciden
+con el RTL, constraints y opciones actuales. Si no coinciden, ejecuta PNR
+detallado y guarda el log completo. `--no-incremental` fuerza siempre un PNR
+detallado nuevo; `--incremental` fuerza una ejecución usando la caché interna
+de Apio y no pide el progreso detallado de routing.
 Funciona igual sin `--background` (bloquea hasta terminar, con la misma
 salida por pantalla).
+
+Para reconstruir todos los prototipos que declaran un proyecto Apio:
+
+```powershell
+.\tools\build.ps1 --all
+```
+
+Los recorre en orden numérico y de forma secuencial, crea una entrada de
+`build-list` por prototipo, continúa si alguno falla y muestra un resumen al
+final. `--all` no admite `--background`, para no lanzar varias síntesis FPGA
+simultáneas accidentalmente.
 
 Desde otra terminal (o desde otro directorio: `build-status` también acepta
 `--prototype` para encontrarlo sin tener que estar dentro de la carpeta):
@@ -604,13 +619,41 @@ Recent output:
 $ build-log --prototype 17 --lines 50
 $ build-log --prototype 17 --follow        # como tail -f / Get-Content -Wait
 $ build-list --prototype 17                # builds anteriores, más nuevo primero
+$ build-list --prototypes                  # una fila de estado por prototipo RTL
 $ build-stop --prototype 17                # SIGTERM al build activo
 ```
+
+`build-list --prototypes` cruza el último intento registrado con el bitstream
+local y el informe archivado. Distingue `CURRENT`, `STALE` y `MISSING` del
+estado del último build (`SUCCESS`, `FAILED`, `TIMING_FAIL`, `RUNNING`,
+`INTERRUPTED` o `NEVER`), y muestra timing, Fmax requerida/alcanzada del reloj limitante,
+la semilla fija de NextPNR (o `-` si no hay ninguna), duración, fecha y
+etiqueta. Es una consulta: no lanza ni detiene builds.
+Cuando el build produjo un resultado válido pero no alcanzó la frecuencia
+requerida, `LAST BUILD` muestra `TIMING_FAIL` en amarillo y la columna
+`TIMING` conserva `FAIL` en rojo; `FAILED` queda reservado para errores sin
+un informe de timing válido.
+La fecha se convierte a la zona horaria local del ordenador.
+En una terminal colorea los estados (`CURRENT`/`SUCCESS`/`PASS` en verde,
+obsoletos o interrumpidos en amarillo, fallos o ausencias en rojo y builds
+activos en cian); al redirigir la salida no emite secuencias ANSI. Si hay algún
+build activo, lo anuncia sobre la tabla y marca su fila con `*`. La variable
+de entorno `NO_COLOR` desactiva también el color interactivo.
 
 `--background` devuelve el control enseguida: crea `status.json` de inmediato
 y sigue el proceso en segundo plano de verdad (grupo/sesión propios), no
 bloquea la terminal que lo lanzó. Si lo paras con `build-stop`, el estado
 queda en `stopped`, no en `failed`.
+
+Al consultar el historial, un registro que siga marcado como `running` pero
+cuyo PID ya no exista se corrige y persiste como `interrupted`. Esto recupera
+los estados que quedan huérfanos tras cerrar una terminal, reiniciar el equipo
+o terminar externamente el proceso de seguimiento.
+
+Los backends de placa usan este mismo camino cuando necesitan reconstruir un
+bitstream antes de programarlo. Esa síntesis automática aparece por tanto en
+`build-list`, con etiqueta `auto-upload`, y genera el mismo archivo de timing
+que un `build --prototype N` explícito.
 
 Cuando ya no necesitas builds antiguos:
 

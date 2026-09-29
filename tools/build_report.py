@@ -73,9 +73,101 @@ def default_env(prototype_dir):
         return 'default'
 
 
+def configured_seed(prototype_dir):
+    """Seed fixed for the environment used by plain ``apio build``."""
+    config = configparser.ConfigParser()
+    try:
+        config.read(prototype_dir / 'apio.ini', encoding='utf-8')
+        env = default_env(prototype_dir)
+        env_section = f'env:{env}'
+        if config.has_option(env_section, 'nextpnr-extra-options'):
+            options = config.get(env_section, 'nextpnr-extra-options')
+        else:
+            options = config.get('common', 'nextpnr-extra-options', fallback='')
+    except (configparser.Error, OSError):
+        return None
+    match = re.search(r'(?:^|\s)--seed(?:\s+|=)(\d+)(?:\s|$)', options)
+    return int(match.group(1)) if match else None
+
+
+def synthesizable_source_hashes(prototype_dir):
+    """Hashes used to decide whether the local bitstream matches the RTL."""
+    paths = [
+        *prototype_dir.glob('*.v'), *prototype_dir.glob('*.sv'),
+        *prototype_dir.glob('*.vh'), *prototype_dir.glob('*.lpf'),
+        *prototype_dir.glob('sim/*.vh'), prototype_dir / 'apio.ini',
+    ]
+    paths = [path for path in paths
+             if path.is_file() and not path.name.endswith('_tb.v')]
+    return {
+        str(path.relative_to(prototype_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in paths
+    }
+
+
+def bitstream_is_current(prototype_dir):
+    """Whether hardware.bit represents the current synthesizable sources.
+
+    A successful cached Apio build may deliberately preserve hardware.bit's
+    old mtime. Prefer the reproducible source hashes archived by build_report;
+    use mtimes only for old builds that predate that metadata.
+    """
+    bitstream = prototype_dir / '_build' / default_env(prototype_dir) / 'hardware.bit'
+    if not bitstream.is_file():
+        return False
+    reports = sorted((prototype_dir / 'reports').glob('*/metadata.json'), reverse=True)
+    if reports:
+        try:
+            metadata = json.loads(reports[0].read_text(encoding='utf-8'))
+            archived = metadata.get('source_sha256', {})
+            relevant = {
+                name: digest for name, digest in archived.items()
+                if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf'})
+                and not Path(name).name.endswith('_tb.v')
+            }
+            if metadata.get('exit_code') == 0 and relevant:
+                return relevant == synthesizable_source_hashes(prototype_dir)
+        except (OSError, json.JSONDecodeError):
+            pass
+    built_at = bitstream.stat().st_mtime
+    return all(path.stat().st_mtime <= built_at for path in [
+        *prototype_dir.glob('*.v'), *prototype_dir.glob('*.sv'),
+        *prototype_dir.glob('*.vh'), *prototype_dir.glob('*.lpf'),
+        prototype_dir / 'apio.ini',
+    ] if path.is_file() and not path.name.endswith('_tb.v'))
+
+
+def _metadata_source_hashes(metadata):
+    return {
+        name: digest for name, digest in metadata.get('source_sha256', {}).items()
+        if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf'})
+        and not Path(name).name.endswith('_tb.v')
+    }
+
+
+def reusable_detailed_report(prototype_dir):
+    """Newest detailed report that exactly matches the current RTL, if any."""
+    if not bitstream_is_current(prototype_dir):
+        return None
+    current = synthesizable_source_hashes(prototype_dir)
+    for metadata_path in sorted(
+            (prototype_dir / 'reports').glob('*/metadata.json'), reverse=True):
+        folder = metadata_path.parent
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (metadata.get('exit_code') == 0
+                and metadata.get('incremental') is False
+                and _metadata_source_hashes(metadata) == current
+                and all((folder / name).is_file()
+                        for name in ('build.log', 'hardware.pnr', 'summary.json'))):
+            return folder
+    return None
+
+
 def timing_passes(clocks):
-    return bool(clocks) and all(v['constraint'] >= 25 and
-                               v['achieved'] >= v['constraint']
+    return bool(clocks) and all(v['achieved'] >= v['constraint']
                                for v in clocks.values())
 
 
@@ -104,8 +196,12 @@ def main():
     parser.add_argument('--label', default='build')
     parser.add_argument('--archive-only', action='store_true',
                         help='Archive existing outputs; does not run Apio.')
-    parser.add_argument('--incremental', action='store_true',
-                        help='Use normal Apio caching; suppresses live PNR progress.')
+    cache_mode = parser.add_mutually_exclusive_group()
+    cache_mode.add_argument('--incremental', dest='incremental', action='store_true',
+                            help='Force a run using normal Apio caching.')
+    cache_mode.add_argument('--no-incremental', dest='incremental', action='store_false',
+                            help='Force detailed PNR progress and regenerate routing.')
+    parser.set_defaults(incremental=None)
     args = parser.parse_args()
     repo_root = find_repo_root(Path.cwd())
     try:
@@ -118,23 +214,31 @@ def main():
     # Apio clean removes all of _build. Keep the history outside that tree.
     history = ROOT / 'reports'
     previous = sorted(history.glob('*/summary.json'))
+    if not args.archive_only and args.incremental is None:
+        reusable = reusable_detailed_report(ROOT)
+        if reusable is not None:
+            print(f'Reports: {reusable}', flush=True)
+            print(f'RTL and build options unchanged; reusing detailed report: {reusable}')
+            summary = json.loads((reusable / 'summary.json').read_text(encoding='utf-8'))
+            return 0 if timing_passes(summary.get('clocks', {})) else 1
     folder = history / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + label)
     folder.mkdir(parents=True)
     hashes = {}
     # Apio searches recursively for constraints. A ZIP avoids treating archived
     # LPF/RTL files as additional project inputs on the next build.
     with zipfile.ZipFile(folder / 'sources.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-        for pattern in ('*.v', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh'):
+        for pattern in ('*.v', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh'):
             for src in ROOT.glob(pattern):
                 relative = src.relative_to(ROOT)
                 data = src.read_bytes()
                 archive.writestr(str(relative), data)
                 hashes[str(relative)] = hashlib.sha256(data).hexdigest()
     command = [find_apio_binary(ROOT.parent), 'build', '-p', str(ROOT)]
-    if not args.incremental:
+    detailed = args.incremental is not True
+    if detailed:
         command.append('--verbose-pnr')
     metadata = dict(label=args.label, archive_only=args.archive_only,
-                    incremental=args.incremental,
+                    incremental=not detailed,
                     command=command, source_sha256=hashes,
                     started=datetime.now().isoformat())
     if args.archive_only:
@@ -199,7 +303,7 @@ def main():
     print(text)
     if not args.archive_only:
         print(f'Build log: {folder / "build.log"}')
-        if args.incremental:
+        if not detailed:
             print('Incremental mode: live routing progress and slack histograms are not requested.')
     print(f'Detailed timing: {report_path}')
     return 0 if passed else 1

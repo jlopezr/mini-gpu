@@ -7,16 +7,29 @@ import io
 import json
 import zipfile
 
-from tools.build_report import extract_log_details, main, summarize, timing_passes
+from tools.build_report import (configured_seed, extract_log_details, main,
+                                summarize, synthesizable_source_hashes,
+                                timing_passes)
 
 
 class BuildReportTest(unittest.TestCase):
-    def test_incremental_build_archives_without_exposing_constraints(self):
+    def test_configured_seed_uses_the_default_environment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'apio.ini').write_text(
+                '[apio]\ndefault-env = chosen\n[common]\n'
+                'nextpnr-extra-options = --seed 3\n[env:chosen]\n'
+                'nextpnr-extra-options = --detailed-timing-report --seed=7\n',
+                encoding='utf-8')
+            self.assertEqual(configured_seed(root), 7)
+
+    def test_default_build_uses_cache_and_archives_report(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / 'project'
             output = root / '_build/default'
             output.mkdir(parents=True)
             (root / 'board.lpf').write_text('constraint')
+            (root / 'params.vh').write_text('`define WIDTH 8\n')
             (output / 'hardware.pnr').write_text(json.dumps({
                 'fmax': {'clk': {'constraint': 25, 'achieved': 40}},
             }))
@@ -24,16 +37,50 @@ class BuildReportTest(unittest.TestCase):
             process.stdout = iter(['cached build\n'])
             process.wait.return_value = 0
             with patch('tools.build_report.resolve_prototype', return_value=root), \
-                 patch('sys.argv', ['build_report', '--prototype', 'project', '--incremental']), \
+                 patch('sys.argv', ['build_report', '--prototype', 'project']), \
                  patch('tools.build_report.subprocess.Popen', return_value=process) as launch, \
                  patch('sys.stdout', new_callable=io.StringIO):
                 self.assertEqual(main(), 0)
-            self.assertNotIn('--verbose-pnr', launch.call_args.args[0])
+            self.assertIn('--verbose-pnr', launch.call_args.args[0])
             folder = next((root / 'reports').iterdir())
             self.assertEqual(list(folder.rglob('*.lpf')), [])
             with zipfile.ZipFile(folder / 'sources.zip') as archive:
                 self.assertEqual(archive.read('board.lpf'), b'constraint')
+                self.assertEqual(archive.read('params.vh'), (root / 'params.vh').read_bytes())
+            metadata = json.loads((folder / 'metadata.json').read_text())
+            self.assertIn('params.vh', metadata['source_sha256'])
             self.assertTrue((folder / 'summary.json').exists())
+
+    def test_default_reuses_matching_detailed_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'project'
+            root.mkdir()
+            (root / 'apio.ini').write_text('[env:default]\nboard = ulx3s-85f\n')
+            (root / 'top.v').write_text('module top; endmodule\n')
+            output = root / '_build/default'
+            output.mkdir(parents=True)
+            (output / 'hardware.bit').write_bytes(b'bitstream')
+            report = root / 'reports/20260929-120000-000000-build'
+            report.mkdir(parents=True)
+            metadata = {
+                'incremental': False,
+                'exit_code': 0,
+                'source_sha256': synthesizable_source_hashes(root),
+            }
+            (report / 'metadata.json').write_text(json.dumps(metadata))
+            (report / 'build.log').write_text('detailed routing log\n')
+            (report / 'hardware.pnr').write_text('{}')
+            (report / 'summary.json').write_text(json.dumps({
+                'clocks': {'clk': {'constraint': 25, 'achieved': 40}},
+            }))
+            with patch('tools.build_report.resolve_prototype', return_value=root), \
+                 patch('sys.argv', ['build_report', '--prototype', 'project']), \
+                 patch('tools.build_report.subprocess.Popen') as launch, \
+                 patch('sys.stdout', new_callable=io.StringIO) as output_text:
+                self.assertEqual(main(), 0)
+            launch.assert_not_called()
+            self.assertIn('reusing detailed report', output_text.getvalue())
+            self.assertEqual(len(list((root / 'reports').iterdir())), 1)
 
     def test_failed_build_does_not_summarize_stale_report(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -50,6 +97,20 @@ class BuildReportTest(unittest.TestCase):
                  patch('sys.stdout', new_callable=io.StringIO):
                 self.assertEqual(main(), 1)
             self.assertFalse(list((root / 'reports').glob('*/summary.json')))
+
+    def test_no_incremental_requests_detailed_pnr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            process = MagicMock()
+            process.stdout = iter(['failed\n'])
+            process.wait.return_value = 1
+            with patch('tools.build_report.resolve_prototype', return_value=root), \
+                 patch('sys.argv', ['build_report', '--prototype', 'project',
+                                    '--no-incremental']), \
+                 patch('tools.build_report.subprocess.Popen', return_value=process) as launch, \
+                 patch('sys.stdout', new_callable=io.StringIO):
+                self.assertEqual(main(), 1)
+            self.assertIn('--verbose-pnr', launch.call_args.args[0])
 
     def test_extracts_native_progress_and_negative_slack(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -72,7 +133,9 @@ class BuildReportTest(unittest.TestCase):
     def test_all_clock_domains_must_pass(self):
         self.assertTrue(timing_passes({'clk': {'constraint': 25, 'achieved': 37}}))
         self.assertFalse(timing_passes({}))
-        self.assertFalse(timing_passes({'clk': {'constraint': 24, 'achieved': 37}}))
+        self.assertTrue(timing_passes({
+            'internal': {'constraint': 19.38, 'achieved': 153.85},
+        }))
         self.assertFalse(timing_passes({
             'clk': {'constraint': 25, 'achieved': 37},
             'fast': {'constraint': 100, 'achieved': 99},

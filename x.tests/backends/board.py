@@ -3,7 +3,7 @@
 Separa dos situaciones que se arreglan de forma distinta:
 
 - La placa no responde: no hay nada que subir, es un error seco.
-- La placa responde con otro monitor: se puede resolver con `apio upload`.
+- La placa responde con otro monitor: se puede reconstruir y programar.
 """
 
 from __future__ import annotations
@@ -159,28 +159,18 @@ def _fresh_bitstream(project: Path) -> Path | None:
     """`_build/default/hardware.bit` si es más reciente que todo el RTL,
     constraints y `apio.ini` del proyecto; si no, None.
 
-    Evita relanzar `apio upload` (y con él todo `nextpnr`) cuando `build` ya
+    Evita relanzar el build (y con él todo `nextpnr`) cuando `build` ya
     dejó un bitstream válido para las fuentes actuales: `apio build` añade
     `--verbose-pnr` para su propio informe, lo que cambia la firma del
-    comando que ve SCons frente a la que usa `apio upload`, así que este
-    último siempre repite síntesis+PNR enteros aunque nada haya cambiado.
+    comando que ve SCons frente a otros lanzadores, que podrían repetir
+    síntesis+PNR enteros aunque nada haya cambiado.
     """
     if not _is_ulx3s(project):
         return None
-    bitstream = project / "_build" / "default" / "hardware.bit"
-    if not bitstream.exists():
-        return None
-    bitstream_mtime = bitstream.stat().st_mtime
-    # Los bancos de prueba NO entran: no se sintetizan, asi que tocar uno no
-    # puede cambiar el bitstream. Contarlos costaba una sintesis entera --unos
-    # diez minutos de nextpnr-- cada vez que alguien arreglaba un `*_tb.v`, que
-    # es justo lo que mas se toca. `tools/rtl_facts.py` los salta por lo mismo.
-    sources = [*project.glob("*.v"), *project.glob("*.sv"), *project.glob("*.lpf"),
-               project / "apio.ini"]
-    sources = [source for source in sources if not source.name.endswith("_tb.v")]
-    if any(source.exists() and source.stat().st_mtime > bitstream_mtime for source in sources):
-        return None
-    return bitstream
+    from tools.build_report import bitstream_is_current, default_env
+
+    bitstream = project / "_build" / default_env(project) / "hardware.bit"
+    return bitstream if bitstream_is_current(project) else None
 
 
 def _upload_stamp(project: Path) -> Path:
@@ -231,65 +221,63 @@ def bitstream_newer_than_upload(project: Path) -> bool:
     return bitstream.stat().st_mtime_ns > uploaded_at
 
 
+def _program_bitstream(project: Path, bitstream: Path) -> None:
+    """Program an already validated bitstream without rebuilding it."""
+    print(f"--- `fujprog` directo con {bitstream} ---", flush=True)
+    try:
+        completed = subprocess.run(
+            [_find_fujprog(), "-l", "2", str(bitstream)], cwd=project)
+    except FileNotFoundError as error:
+        raise BitstreamMismatch(
+            "No se encuentra `fujprog`; instálalo o carga el bitstream "
+            f"a mano desde {project}."
+        ) from error
+    print("--- fin de `fujprog` ---", flush=True)
+    if completed.returncode != 0:
+        raise BitstreamMismatch(
+            f"`fujprog` falló en {project} con código "
+            f"{completed.returncode}; revisa su salida más arriba."
+        )
+    time.sleep(1.5)
+    _mark_uploaded(project)
+
+
 def upload(project: Path) -> None:
-    """Programa la placa con el bitstream del proyecto.
+    """Build when needed, then program the project's current bitstream.
 
-    Si `_build/default/hardware.bit` ya está actualizado (típicamente porque
-    `build` acaba de dejarlo así), lo programa directamente con `fujprog` en
-    vez de pasar por `apio upload` (ver `_fresh_bitstream`). Si no hay
-    bitstream fresco, cae al camino normal, que sintetiza desde cero.
-
-    No captura la salida: sintetizar y cargar puede tardar minutos y sin verla
-    parece que el runner se ha colgado. `apio`/`fujprog` heredan la consola y
-    escriben su progreso en vivo.
+    The build uses the common tracked path, so automatic test-triggered
+    synthesis appears in ``build-list`` and archives its timing report.
     """
     bitstream = _fresh_bitstream(project)
     if bitstream is not None:
-        print(f"--- `fujprog` directo con {bitstream} "
-              "(bitstream ya actualizado, sin pasar por `apio upload`) ---", flush=True)
-        # El mismo trato que el camino de `apio` de mas abajo. No lo tenia, y
-        # la asimetria no se veia porque esta rama solo se toma cuando la
-        # carpeta YA esta construida: en un arbol recien clonado `upload`
-        # siempre caia al camino de `apio`, que si lo trata. En cuanto alguien
-        # sintetiza, un `fujprog` ausente pasa de un mensaje util a una traza.
-        try:
-            completed = subprocess.run(
-                [_find_fujprog(), "-l", "2", str(bitstream)], cwd=project)
-        except FileNotFoundError as error:
-            raise BitstreamMismatch(
-                "No se encuentra `fujprog`; instálalo o carga el bitstream "
-                f"a mano desde {project}."
-            ) from error
-        print("--- fin de `fujprog` ---", flush=True)
-        if completed.returncode != 0:
-            raise BitstreamMismatch(
-                f"`fujprog` falló en {project} con código "
-                f"{completed.returncode}; revisa su salida más arriba."
-            )
-        # `apio upload` deja este mismo margen gratis por su propio overhead
-        # de proceso; sin él, la FPGA todavía se está reconfigurando (y el
-        # puente USB-serie reestabilizando) cuando el monitor la interroga.
-        time.sleep(1.5)
-        _mark_uploaded(project)
+        _program_bitstream(project, bitstream)
         return
 
-    print(f"--- `apio upload` en {project} "
+    repository = Path(__file__).resolve().parents[2]
+    print(f"--- build registrado de {project} "
           f"(puede tardar varios minutos) ---", flush=True)
     try:
-        apio = Path(sys.executable).with_name("apio.exe" if sys.platform == "win32" else "apio")
-        completed = subprocess.run([str(apio) if apio.is_file() else "apio", "upload"], cwd=project)
+        completed = subprocess.run([
+            sys.executable, "-m", "tools.build_runner", "build",
+            "--prototype", str(project), "--label", "auto-upload",
+        ], cwd=repository)
     except FileNotFoundError as error:
         raise BitstreamMismatch(
-            "No se encuentra `apio` en el PATH; instálalo o carga el bitstream "
-            f"a mano desde {project}."
+            "No se pudo ejecutar el build común; comprueba el entorno Python "
+            f"y las herramientas de síntesis para {project}."
         ) from error
-    print("--- fin de `apio upload` ---", flush=True)
+    print("--- fin del build registrado ---", flush=True)
     if completed.returncode != 0:
         raise BitstreamMismatch(
-            f"`apio upload` falló en {project} con código "
+            f"El build de {project} falló con código "
             f"{completed.returncode}; revisa su salida más arriba."
         )
-    _mark_uploaded(project)
+    bitstream = _fresh_bitstream(project)
+    if bitstream is None:
+        raise BitstreamMismatch(
+            f"El build de {project} terminó sin dejar un bitstream actualizado."
+        )
+    _program_bitstream(project, bitstream)
 
 
 def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
@@ -300,7 +288,8 @@ def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
 
     Sube el bitstream solo si la placa responde con otra versión, la política lo
     permite y el usuario lo confirma. Después vuelve a preguntar la versión: que
-    `apio upload` termine bien no garantiza que la placa quedara programada.
+    El build y la programación pueden terminar sin que la placa quede con el
+    monitor esperado, por eso se vuelve a comprobar después.
     """
     expected_text = ".".join(map(str, expected))
     try:
@@ -334,13 +323,13 @@ def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
         actual = read_monitor_version(monitor, port, serial_timeout)
     except MonitorSilent as error:
         raise BitstreamMismatch(
-            f"Tras `apio upload` la placa sigue sin responder: {error} "
+            f"Tras reconstruir y programar, la placa sigue sin responder: {error} "
             f"Revisa que {project} sea el proyecto correcto."
         ) from error
     if actual != expected:
         actual_text = ".".join(map(str, actual))
         raise BitstreamMismatch(
-            f"Tras `apio upload` la placa sigue respondiendo con monitor "
+            f"Tras reconstruir y programar, la placa sigue respondiendo con monitor "
             f"{actual_text} en vez de {expected_text}. Revisa que {project} sea "
             "el proyecto correcto y que la carga llegara a la placa."
         )
