@@ -18,7 +18,7 @@ hardware pequeño, determinista y razonable para ECP5/ULX3S.
 
 ------------------------------------------------------------------------
 
-## 1. Principios de diseño
+# 1. Principios de diseño
 
 El subsistema 2D sigue estas reglas:
 

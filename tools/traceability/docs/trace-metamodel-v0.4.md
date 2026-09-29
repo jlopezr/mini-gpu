@@ -1046,6 +1046,11 @@ gendoc check
 
 No es un registro central de instancias.
 
+Un `trace.yaml` en un subdirectorio declara un proyecto independiente:
+el discovery del proyecto padre no entra en ese directorio, aunque `scan`
+lo cubra. Solo cuenta la configuración de la raíz desde la que se invoca;
+para analizar el proyecto anidado hay que usarlo como raíz.
+
 Los Artifact y sus relaciones viven en Markdown, código o sidecars.
 
 ------------------------------------------------------------------------

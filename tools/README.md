@@ -245,6 +245,17 @@ trace check --root /ruta/mini-gpu   # raíz explícita para CI
 trace show REQ-DEVICE-IDENTITY      # declaración y relaciones de una identidad
 ```
 
+`trace coverage` ayuda a migrar documentación existente: compara los ficheros
+que descubre `scan` con las identidades declaradas y resume por directorio
+cuántos siguen sin marcar. No es una query porque esos ficheros aún no son
+identidades del grafo.
+
+```bash
+trace coverage                      # resumen por directorio de primer nivel
+trace coverage --depth 2 --files    # más detalle y lista de ficheros sin marcar
+trace coverage 30.fpga-cpu-console  # solo una zona
+```
+
 Al seleccionar rutas se siguen indexando las identidades de todo el repositorio,
 de modo que sus enlaces pueden resolverse fuera del subconjunto. El comando
 devuelve 0 si todo resuelve, 1 si encuentra diagnósticos y 2 si el uso o una

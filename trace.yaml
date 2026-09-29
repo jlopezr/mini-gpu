@@ -21,3 +21,4 @@ exclude:
   - "**/__pycache__/**"
   - "**/_build/**"
   - "**/node_modules/**"
+  - "**/y.lcc/**"

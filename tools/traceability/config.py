@@ -34,9 +34,11 @@ def _prefix_match(path: PurePosixPath, pattern: str) -> bool:
         return False
     prefix = pattern[:-3].rstrip("/")
     value = path.as_posix()
-    if "/" not in prefix and prefix.startswith("**"):
-        name = prefix.removeprefix("**/")
-        return name in path.parts
+    if prefix.startswith("**/"):
+        names = tuple(prefix.removeprefix("**/").split("/"))
+        parts = path.parts
+        return any(parts[start:start + len(names)] == names
+                   for start in range(len(parts) - len(names) + 1))
     return value == prefix or value.startswith(f"{prefix}/")
 
 

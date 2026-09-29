@@ -16,7 +16,8 @@ from tools.traceability import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-EXAMPLE = REPO / "tools" / "traceability" / "example"
+PROJECT = REPO / "tools" / "traceability"
+EXAMPLE = PROJECT / "example"
 
 
 class TraceabilityTest(unittest.TestCase):
@@ -116,13 +117,13 @@ subjets: [gpu]
             self.assertEqual(codes, {"invalid-artifact-type", "unknown-metadata"})
 
     def test_extended_verifies_coverage_is_preserved(self):
-        model = ModelBuilder().build(REPO, [EXAMPLE])
+        model = ModelBuilder().build(PROJECT, [EXAMPLE])
         relation = next(item for item in Resolver().analyze(model).relations
                         if item.source.key == "VER-DEVICE-IDENTITY::identity-read")
         self.assertEqual(relation.attributes, {"coverage": "complete"})
 
     def test_facet_creates_local_identity_and_associated_section(self):
-        model = ModelBuilder().build(REPO, [EXAMPLE])
+        model = ModelBuilder().build(PROJECT, [EXAMPLE])
         by_key = {item.key: item for item in model.identities}
         facet = by_key["SPEC-DEVICE@identity"]
         section = by_key["SPEC-DEVICE#identity"]
@@ -132,7 +133,7 @@ subjets: [gpu]
         self.assertEqual(register.parent_facet, facet.key)
 
     def test_nested_facet_has_structural_parent(self):
-        model = ModelBuilder().build(REPO, [EXAMPLE])
+        model = ModelBuilder().build(PROJECT, [EXAMPLE])
         by_key = {item.key: item for item in model.identities}
         nested = by_key["SPEC-DEVICE@versioning"]
         self.assertEqual(nested.parent_facet, "SPEC-DEVICE@identity")
@@ -243,7 +244,7 @@ type: decision
             self.assertIn("duplicate-relation", codes)
 
     def test_example_resolves_to_authored_graph(self):
-        model = ModelBuilder().build(REPO, [EXAMPLE])
+        model = ModelBuilder().build(PROJECT, [EXAMPLE])
         analysis = Resolver().analyze(model)
         self.assertEqual(analysis.diagnostics, ())
         triples = {(item.source.key, item.kind, item.target.key) for item in analysis.relations}
@@ -413,14 +414,14 @@ requires: [A]
     def test_cli_impact_json_is_machine_readable(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = main(["impact", "SPEC-DEVICE#identity-register", "--json", "--root", str(REPO)])
+            status = main(["impact", "SPEC-DEVICE#identity-register", "--json", "--root", str(PROJECT)])
         payload = json.loads(output.getvalue())
         self.assertEqual(status, 0)
         self.assertEqual(payload["seeds"][0]["id"], "SPEC-DEVICE#identity-register")
         self.assertTrue(any(item["depth"] == 1 for item in payload["impacted"]))
 
     def test_graph_indexes_navigation_and_shortest_path(self):
-        graph = Graph(ModelBuilder().build(REPO))
+        graph = Graph(ModelBuilder().build(PROJECT))
         self.assertTrue(any(item.key == "SPEC-DEVICE" for item in graph.by_artifact_type["specification"]))
         self.assertTrue(any(item.key == "SPEC-DEVICE@identity" for item in graph.by_kind["capability"]))
         incoming = graph.incoming("SPEC-DEVICE#identity-register", "implements")
@@ -448,7 +449,7 @@ requires: [A]
             with self.subTest(command=arguments[0]):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    status = main([*arguments, "--format", "json", "--root", str(REPO)])
+                    status = main([*arguments, "--format", "json", "--root", str(PROJECT)])
                 self.assertEqual(status, 0)
                 self.assertTrue(assertion(json.loads(output.getvalue())))
 
@@ -485,14 +486,14 @@ type: requirement
         with self.assertRaisesRegex(ValueError, "duplicada"):
             registry.query("sample", description="duplicate")(lambda graph: ())
         self.assertIn("automatic-name", registry.definitions)
-        graph = Graph(ModelBuilder().build(REPO))
+        graph = Graph(ModelBuilder().build(PROJECT))
         with self.assertRaisesRegex(ValueError, "desconocida"):
             registry.run("missing", graph)
         with self.assertRaisesRegex(ValueError, "espera 0"):
             registry.run("sample", graph, ("extra",))
 
     def test_core_queries_preserve_coverage_semantics(self):
-        graph = Graph(ModelBuilder().build(REPO))
+        graph = Graph(ModelBuilder().build(PROJECT))
         implementations = CORE_QUERIES.run(
             "implementations-of", graph, ("SPEC-DEVICE#identity-register",)
         )
@@ -513,7 +514,7 @@ type: requirement
     def test_cli_lists_and_executes_registered_queries(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = main(["query", "list", "--format", "json", "--root", str(REPO)])
+            status = main(["query", "list", "--format", "json", "--root", str(PROJECT)])
         definitions = json.loads(output.getvalue())
         self.assertEqual(status, 0)
         self.assertIn("unimplemented", {item["name"] for item in definitions})
@@ -522,7 +523,7 @@ type: requirement
         with contextlib.redirect_stdout(output):
             status = main([
                 "query", "verifications-of", "SPEC-DEVICE#identity-register",
-                "--format", "json", "--root", str(REPO),
+                "--format", "json", "--root", str(PROJECT),
             ])
         result = json.loads(output.getvalue())
         self.assertEqual(status, 0)
@@ -536,7 +537,7 @@ type: requirement
         def sample_warning(graph):
             yield RuleFinding(graph.one("REQ-DEVICE-IDENTITY"), "revísalo", "warning")
 
-        graph = Graph(ModelBuilder().build(REPO))
+        graph = Graph(ModelBuilder().build(PROJECT))
         diagnostics = registry.run(graph, ("sample-warning", "missing"))
         severities = {item.code: item.severity for item in diagnostics}
         self.assertEqual(severities, {"rule:sample-warning": "warning", "unknown-rule": "error"})
@@ -560,7 +561,7 @@ status: accepted
             self.assertIn("rule:accepted-requirements-satisfied", output.getvalue())
 
     def test_gendoc_trace_query_block_is_idempotent(self):
-        graph = Graph(ModelBuilder().build(REPO))
+        graph = Graph(ModelBuilder().build(PROJECT))
         source = """<!-- gendoc:begin implementations
 generator: trace.query
 query: implementations-of
@@ -786,13 +787,13 @@ def custom(graph):
     def test_cli_show_is_exact_and_calculates_inverse_view(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = main(["show", "REQ-DEVICE-IDENTITY", "--root", str(REPO)])
+            code = main(["show", "REQ-DEVICE-IDENTITY", "--root", str(PROJECT)])
         self.assertEqual(code, 0)
         self.assertIn("REQ-DEVICE-IDENTITY [requirement]", output.getvalue())
         self.assertIn("<- satisfies IMPL-DEVICE-IDENTITY", output.getvalue())
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
-            self.assertEqual(main(["show", "req-device-identity", "--root", str(REPO)]), 1)
+            self.assertEqual(main(["show", "req-device-identity", "--root", str(PROJECT)]), 1)
 
     def test_trace_yaml_controls_scan_and_exclude(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -829,6 +830,54 @@ scna: [docs/**]
             outside = self.write(root, "README.md", "# Outside\n")
             with self.assertRaisesRegex(ValueError, "fuera de scan/exclude"):
                 ModelBuilder().build(root, [outside])
+
+    def test_recursive_directory_excludes_match_at_any_depth(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: ['**/vendor/**', '**/a/b/**']\n")
+            kept = self.write(root, "docs/keep.md", "# Keep\n")
+            self.write(root, "vendor/top.md", "# x\n")
+            self.write(root, "vendor/deep/er/more.md", "# x\n")
+            self.write(root, "docs/vendor/x/y/z.md", "# x\n")
+            self.write(root, "q/a/b/c/d.md", "# x\n")
+            self.write(root, "q/a/other.md", "# keep too\n")
+            found = {path.relative_to(root.resolve()).as_posix() for path in ModelBuilder().discover(root)}
+            self.assertEqual(found, {"docs/keep.md", "q/a/other.md"})
+
+    def test_coverage_reports_files_without_identities(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            self.write(root, "docs/marked.md", "<!-- trace:artifact DES-A\ntype: design\n-->\n# A\n")
+            self.write(root, "docs/plain.md", "uno\ndos\ntres\n")
+            self.write(root, "other/plain.md", "uno\n")
+            self.write(root, "sub/trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            self.write(root, "sub/ignored.md", "x\n")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main(["coverage", "--format", "json", "--root", str(root)])
+            self.assertEqual(status, 0)
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["untraced"], [{"path": "docs/plain.md", "lines": 3},
+                                                {"path": "other/plain.md", "lines": 1}])
+            self.assertEqual({row["directory"]: (row["traced"], row["untraced"]) for row in data["summary"]},
+                             {"docs": (1, 1), "other": (0, 1)})
+            self.assertEqual(data["nested_projects"], ["sub"])
+
+    def test_nested_trace_yaml_is_an_independent_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            outer = self.write(root, "docs/outer.md", "# Outer\n")
+            self.write(root, "sub/trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            inner = self.write(root, "sub/inner.md", "# Inner\n")
+            deep = self.write(root, "sub/deeper/deep.md", "# Deep\n")
+            builder = ModelBuilder()
+            self.assertEqual(builder.discover(root), [outer.resolve()])
+            self.assertEqual(builder.nested_projects(root), [(root / "sub").resolve()])
+            self.assertEqual(builder.discover(root / "sub"), sorted([inner.resolve(), deep.resolve()]))
+            with self.assertRaisesRegex(ValueError, "fuera de scan/exclude"):
+                builder.build(root, [inner])
 
     def test_trace_yaml_patterns_cannot_escape_project_root(self):
         with tempfile.TemporaryDirectory() as temporary:

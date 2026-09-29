@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.prototype import find_repo_root
 from tools.traceability import CORE_QUERIES, CORE_RULES, Graph, ImpactAnalyzer, ModelBuilder
+from tools.traceability.coverage import file_coverage
 
 
 def parser() -> argparse.ArgumentParser:
@@ -31,6 +32,11 @@ def parser() -> argparse.ArgumentParser:
     impact.add_argument("--format", choices=("text", "json"), default="text")
     impact.add_argument("--root", type=Path, help="raíz del repositorio")
     impact.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
+    coverage = commands.add_parser("coverage", help="muestra qué ficheros aún no declaran ninguna identidad")
+    coverage.add_argument("paths", nargs="*", type=Path, help="ficheros o directorios a resumir (por defecto, todo)")
+    coverage.add_argument("--depth", type=int, default=1, help="niveles de directorio por los que agrupar (por defecto, 1)")
+    coverage.add_argument("--files", action="store_true", help="lista cada fichero sin identidades")
+    _query_options(coverage)
     listing = commands.add_parser("list", help="lista identidades del modelo")
     listing.add_argument("--type", dest="element_type", help="tipo semántico o estructural")
     listing.add_argument("--kind", help="kind de artifact o facet")
@@ -75,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    if args.command == "coverage":
+        return show_coverage(root, model, args.paths, args.depth, args.files, args.format)
     if args.command == "show":
         return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
@@ -113,6 +121,53 @@ def main(argv: list[str] | None = None) -> int:
     print(f"OK: {len(model.identities)} identidades, {len(model.observations)} observaciones "
           f"(cache: {model.cache_hits} reutilizados, {model.cache_misses} leídos)"
           f"{f', {len(diagnostics)} warning(s)' if diagnostics else ''}")
+    return 0
+
+
+def show_coverage(root: Path, model, paths: list[Path], depth: int, list_files: bool,
+                  output_format: str) -> int:
+    items = file_coverage(model)
+    if paths:
+        selected = [(path if path.is_absolute() else root / path).resolve() for path in paths]
+        items = [item for item in items if any(item.path.is_relative_to(path) for path in selected)]
+
+    def group(item) -> str:
+        parts = item.path.relative_to(root).parent.parts[:max(depth, 1)]
+        return "/".join(parts) or "."
+
+    groups: dict[str, list[int]] = {}
+    for item in items:
+        counts = groups.setdefault(group(item), [0, 0])
+        counts[0] += 1
+        counts[1] += bool(item.identities)
+    untraced = sorted((item for item in items if not item.identities),
+                      key=lambda item: (group(item), -item.lines, item.path))
+    nested = [path.relative_to(root).as_posix()
+              for path in ModelBuilder().nested_projects(root, model.config)]
+    rows = sorted(groups.items(), key=lambda entry: (entry[1][1] - entry[1][0], entry[0]))
+
+    if output_format == "json":
+        print(json.dumps({
+            "summary": [{"directory": name, "files": total, "traced": traced, "untraced": total - traced}
+                        for name, (total, traced) in rows],
+            "untraced": [{"path": item.path.relative_to(root).as_posix(), "lines": item.lines}
+                         for item in untraced],
+            "nested_projects": nested,
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    total = sum(counts[0] for counts in groups.values())
+    traced = sum(counts[1] for counts in groups.values())
+    print(f"{traced}/{total} ficheros declaran alguna identidad ({len(untraced)} sin marcar)")
+    width = max((len(name) for name, _ in rows), default=1)
+    for name, (count, done) in rows:
+        print(f"  {name:<{width}}  {done:>4}/{count:<4} marcados, {count - done:>4} sin marcar")
+    if list_files:
+        print("sin marcar (por directorio, más largos primero):")
+        for item in untraced:
+            print(f"  {item.path.relative_to(root).as_posix()} ({item.lines} líneas)")
+    if nested:
+        print("proyectos anidados (fuera de este análisis): " + ", ".join(nested))
     return 0
 
 

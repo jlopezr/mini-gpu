@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -59,7 +60,24 @@ class ModelBuilder:
         for pattern in config.scan:
             paths.update(path.resolve() for path in root.glob(pattern)
                          if path.is_file() and adapter_for(path))
-        return sorted(path for path in paths if not config.excludes(path, root))
+        nested = self.nested_projects(root, config)
+        return sorted(path for path in paths
+                      if not config.excludes(path, root)
+                      and not any(path.is_relative_to(project) for project in nested))
+
+    def nested_projects(self, root: Path, config: TraceConfig | None = None) -> list[Path]:
+        """Directorios bajo `root` con su propio trace.yaml: proyectos independientes."""
+        root = root.resolve()
+        config = config or load_config(root)[0]
+        nested: list[Path] = []
+        for current, dirs, files in os.walk(root):
+            here = Path(current)
+            if here != root and "trace.yaml" in files:
+                nested.append(here)
+                dirs.clear()
+                continue
+            dirs[:] = [name for name in dirs if not config.excludes(here / name, root)]
+        return sorted(nested)
 
     def build(self, root: Path, paths: Iterable[Path] | None = None) -> Model:
         root = root.resolve()
