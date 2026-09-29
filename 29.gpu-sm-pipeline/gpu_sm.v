@@ -637,7 +637,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 // lane los captura. Deja de pulsar a partir de ahora.
                 x_started<=1;
             end else if (x_valid && !x_completes) begin
-                done<=done | lane_retired;
+                // Una lane que falla termina la instruccion sin retirarla.
+                // Si solo esperamos `lane_retired`, TRAP, DIV por cero y los
+                // fallos de opcode/encoding dejan el token de X ocupado para
+                // siempre y el monitor nunca llega a observar `halted`.
+                done<=done | lane_retired | lane_halted;
             end
         end
     end
