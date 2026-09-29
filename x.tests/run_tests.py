@@ -992,6 +992,29 @@ def _stall_breakdown(medida: dict | None) -> dict | None:
                           medida.get("stalls"))
 
 
+def _video_pacing(medida: dict | None) -> dict | None:
+    """Frames, intercambios y su cociente, o `None` si la medida no los tiene.
+
+    Solo hay `swaps` donde el RTL tiene `frame_capture`: sin ella, `frames` sale
+    de un registro que en v2 ya no lo lleva, y una tabla con ese cero seria una
+    mentira que parece una medida.
+    """
+    if not medida or medida.get("skipped"):
+        return None
+    video = medida.get("video")
+    cycles = medida.get("cycles")
+    # Sin ciclos es el simulador, cuyos `frames` no miden tiempo real.
+    if not video or video.get("swaps") is None or cycles is None:
+        return None
+    frames, swaps = video["frames"], video["swaps"]
+    return {
+        "frames": frames,
+        "swaps": swaps,
+        "swaps_per_frame": swaps / frames if frames else None,
+        "cycles_per_swap": cycles / swaps if swaps else None,
+    }
+
+
 def _format_percent(fraction: float | None) -> str:
     return "n/d" if fraction is None else f"{100.0 * fraction:.1f} %"
 
@@ -1075,6 +1098,36 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "buffer`: busquedas servidas sin ir a la SDRAM. `Tx/instr.`: peticiones",
             "de la CPU al fabric (busquedas que fallan y accesos a datos) por",
             "instruccion. Contadores de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # El ritmo de los casos de video: frames emitidos e intercambios hechos
+    # durante la ejecucion. Es lo que dice si el MMIO del reparto es espera de
+    # vsync (swaps ~ frames) o una CPU que no llega (swaps < frames).
+    ritmo = [(caso, v, _video_pacing(medidas.get((caso, v))))
+             for caso in casos for v in versiones]
+    ritmo = [fila for fila in ritmo if fila[2] is not None]
+    if ritmo:
+        lineas += ["", "## Ritmo de video", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Frames", "Swaps", "Swaps/frame", "Ciclos/swap"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 4))
+        for caso, version, p in ritmo:
+            lineas.append(_markdown_row([
+                caso, version, f"{p['frames']:,}".replace(",", " "),
+                f"{p['swaps']:,}".replace(",", " "),
+                "n/d" if p["swaps_per_frame"] is None
+                else f"{p['swaps_per_frame']:.2f}",
+                "n/d" if p["cycles_per_swap"] is None
+                else f"{p['cycles_per_swap']:,.0f}".replace(",", " ")]))
+        lineas += [
+            "",
+            "`Frames`: frames emitidos por el scanout entre arrancar y parar la CPU;",
+            "`Swaps`: intercambios de framebuffer completados en ese tiempo.",
+            "`Swaps/frame` cerca de 1 con un programa que pide un intercambio por",
+            "frame: la CPU llega sobrada y el tiempo que no calcula es espera de",
+            "vsync. Bien por debajo de 1: se pierden vblanks, la CPU es el limite.",
+            "Los frames se cuentan con el reloj de pared de la placa, asi que llevan",
+            "unos pocos de mas por el viaje de parada; no compares un caso corto.",
         ]
 
     lineas += [
@@ -1203,13 +1256,23 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                 "clock_hz": result.get("clock_hz"),
                 "stalls": result.get("stalls"),
             }
+            if result.get("video"):
+                # Solo lo que sirve para juzgar el ritmo; `frame` son 150 KB de
+                # pixeles que no caben en un measure.json.
+                medidas[clave]["video"] = {
+                    "frames": result["video"]["frames"],
+                    "swaps": result["video"]["swaps"],
+                }
             r = _stall_breakdown(medidas[clave])
             reparto = ("" if r is None else
                        f" (busqueda {_format_percent(r['fetch'])}, "
                        f"datos {_format_percent(r['data'])}, "
                        f"MMIO {_format_percent(r['mmio'])})")
+            p = _video_pacing(medidas[clave])
+            ritmo = ("" if p is None else
+                     f", {p['swaps']} swaps en {p['frames']} frames")
             print(f"PROFILED {case['name']} [{version}]: "
-                  f"CPI {_format_cpi(medidas[clave])}{reparto}")
+                  f"CPI {_format_cpi(medidas[clave])}{reparto}{ritmo}")
 
     # Casos que sincronizan con algo real (vsync o UART) en vez de con un
     # numero fijo de instrucciones: su recuento varia por diseno entre

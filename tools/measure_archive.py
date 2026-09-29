@@ -97,8 +97,9 @@ def archive_measurement(prototype_dir, version, measurements, table, label,
                         realtime=(), now=None):
     """Escribe la medida de una version y devuelve la carpeta.
 
-    `measurements` es `{caso: {instructions, cycles, clock_hz, stalls}}` (o
-    `{skipped, reason}`); `table` es el Markdown de esa version, ya hecho.
+    `measurements` es `{caso: {instructions, cycles, clock_hz, stalls, video}}`
+    (o `{skipped, reason}`); `video` es `{frames, swaps}` y solo lo llevan los
+    casos de video. `table` es el Markdown de esa version, ya hecho.
     """
     now = now or datetime.now()
     safe = re.sub(r'[^A-Za-z0-9_-]', '_', label)

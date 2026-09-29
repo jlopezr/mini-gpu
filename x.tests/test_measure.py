@@ -201,6 +201,40 @@ class MeasurementTableTest(unittest.TestCase):
         celdas = [c.strip() for c in fila.strip("|").split("|")]
         self.assertEqual(celdas[4], "0.0 %")          # calculo
 
+    def test_ritmo_de_video(self):
+        """300 swaps en 310 frames: 0,97 por frame, 1,2 M ciclos por swap."""
+        m = medida(1000, 360_000_000, 80_000_000)
+        m["video"] = {"frames": 310, "swaps": 300}
+        tabla = measurement_table({("pacman", "console"): m},
+                                  ["pacman"], ["console"])
+        self.assertIn("## Ritmo de video", tabla)
+        fila = [l for l in tabla.splitlines()
+                if l.startswith("| pacman | console | 310 |")][0]
+        celdas = [c.strip() for c in fila.strip("|").split("|")]
+        self.assertEqual(celdas[2:], ["310", "300", "0.97", "1 200 000"])
+
+    def test_sin_video_o_sin_swaps_no_hay_tabla_de_ritmo(self):
+        """Sin `frame_capture` swaps es None y frames sale de un registro que
+        en v2 vale cero: mejor ninguna fila que una fila que miente."""
+        sin_swaps = medida(10, 100, 80_000_000)
+        sin_swaps["video"] = {"frames": 0, "swaps": None}
+        # El simulador no tiene ciclos: sus frames no miden tiempo.
+        simulador = medida(10)
+        simulador["video"] = {"frames": 5, "swaps": 5}
+        tabla = measurement_table(
+            {("v", "hdmi"): sin_swaps, ("v", "sim"): simulador,
+             ("p", "console"): medida(10, 100, 80_000_000)},
+            ["v", "p"], ["hdmi", "sim", "console"])
+        self.assertNotIn("Ritmo de video", tabla)
+
+    def test_ritmo_sin_frames_no_divide_por_cero(self):
+        m = medida(10, 100, 80_000_000)
+        m["video"] = {"frames": 0, "swaps": 0}
+        tabla = measurement_table({("v", "console"): m}, ["v"], ["console"])
+        fila = [l for l in tabla.splitlines() if l.startswith("| v | console | 0 |")][0]
+        celdas = [c.strip() for c in fila.strip("|").split("|")]
+        self.assertEqual(celdas[4:], ["n/d", "n/d"])
+
 
 if __name__ == "__main__":
     unittest.main()
