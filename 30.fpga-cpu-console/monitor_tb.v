@@ -186,8 +186,9 @@ module monitor_tb;
     begin
       @(negedge clk);
       cpu_address = offset; cpu_select = 1'b1; cpu_write = 1'b0;
-      #1 leido = cpu_read_data;
       @(negedge clk);
+      // serial_port devuelve la lectura registrada: valida el ciclo siguiente.
+      leido = cpu_read_data;
       cpu_select = 1'b0;
     end
   endtask

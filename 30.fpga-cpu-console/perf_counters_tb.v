@@ -46,7 +46,8 @@ module perf_counters_tb;
   endtask
 
   task leer(input [15:0] a, output [31:0] v);
-    begin address = a; #1; v = read_data; end
+    // read_data sale registrado: valido tras un flanco con la direccion puesta.
+    begin address = a; @(negedge clk); v = read_data; end
   endtask
 
   task comprobar(input [8*30:1] nombre, input [15:0] a, input [31:0] esperado);

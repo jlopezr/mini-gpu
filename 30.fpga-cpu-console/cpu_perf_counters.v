@@ -288,30 +288,38 @@ module cpu_perf_counters (
     end
   end
 
+  reg [31:0] read_value;
   always @* begin
     if (es_array) begin
       case (slot)
-        SLOT_CYCLES:      read_data = cycles;
-        SLOT_RETIRED:     read_data = retired_count;
-        SLOT_IMEM_HITS:   read_data = imem_hits;
-        SLOT_IMEM_MISSES: read_data = imem_misses;
-        SLOT_MEM_TX:      read_data = mem_tx;
-        SLOT_STALL_MEM:   read_data = stall_mem;
-        SLOT_STALL_FETCH: read_data = stall_fetch;
-        SLOT_STALL_MMIO:  read_data = stall_mmio;
-        default:          read_data = 32'd0;   // ranura sin contador: da error
+        SLOT_CYCLES:      read_value = cycles;
+        SLOT_RETIRED:     read_value = retired_count;
+        SLOT_IMEM_HITS:   read_value = imem_hits;
+        SLOT_IMEM_MISSES: read_value = imem_misses;
+        SLOT_MEM_TX:      read_value = mem_tx;
+        SLOT_STALL_MEM:   read_value = stall_mem;
+        SLOT_STALL_FETCH: read_value = stall_fetch;
+        SLOT_STALL_MMIO:  read_value = stall_mmio;
+        default:          read_value = 32'd0;   // ranura sin contador: da error
       endcase
     end else begin
       case (address)
-        OFF_CTRL: read_data = {30'd0, 1'b0, enable};
-        OFF_OVF0: read_data = ovf0;
+        OFF_CTRL: read_value = {30'd0, 1'b0, enable};
+        OFF_OVF0: read_value = ovf0;
         // PERF_OVF1 lee cero y existe desde ahora aunque no tenga
         // contadores detras (§12.6).
-        OFF_OVF1: read_data = 32'd0;
-        default:  read_data = 32'd0;
+        OFF_OVF1: read_value = 32'd0;
+        default:  read_value = 32'd0;
       endcase
     end
   end
+
+  // `read_data` sale registrado todos los ciclos, igual que en serial_port: la
+  // direccion esta retenida por el mux, asi que el valor que mmio_decoder
+  // muestrea un ciclo despues del `select` es el calculado EN el ciclo del
+  // `select`. Sin ciclo de latencia extra. Un contador se ve con un ciclo mas
+  // de antiguedad, que con la CPU leyendolo es indistinguible.
+  always @(posedge clk) read_data <= read_value;
 
   // Solo para que el linter no avise de un parametro sin usar: NUM_COUNTERS
   // documenta cuantas ranuras existen y lo usa el decodificador.

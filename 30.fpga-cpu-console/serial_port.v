@@ -110,8 +110,8 @@ module serial_port #(
     input  wire        clk,
     input  wire        reset,
 
-    // Bus MMIO. Mismo contrato que video_registers: `select` dura un ciclo y
-    // la lectura es combinacional respecto a `address`.
+    // Bus MMIO. `select` dura un ciclo. La lectura sale REGISTRADA: es valida en
+    // el ciclo siguiente al `select`, que es cuando mmio_decoder la muestrea.
     input  wire        select,
     input  wire        write,
     input  wire [3:0]  write_mask,
@@ -194,15 +194,30 @@ module serial_port #(
     end
   end
 
-  always @* begin
+  /*
+   * `read_data` sale REGISTRADO, y se registra todos los ciclos.
+   *
+   * Era combinacional --lectura asincrona de la cola, comparacion de la cuenta
+   * y mux de registros-- y caia entera en el ciclo del registro `read_data` de
+   * `mmio_decoder`, que lo muestrea un ciclo despues del `select`. Eran los
+   * caminos de 11-12 ns de la 30.
+   *
+   * Registrarlo aqui no cambia la latencia: el valor que ve el decoder en ese
+   * flanco es el calculado en el ciclo del `select`, y en ese ciclo `address` ya
+   * es el de la transaccion (el mux la retiene) y `rx_pop` aun no ha adelantado
+   * el puntero (lo hace despues de ese flanco), asi que DATA sigue devolviendo el
+   * byte bueno. Lo unico que cambia es que STATUS se ve con un ciclo menos de
+   * antiguedad, equivalente a una carrera con un push del PC.
+   */
+  always @(posedge clk) begin
     case (selected)
       // Cero con la cola vacia, no el ultimo byte otra vez: un programa que
       // lea sin mirar STATUS ve ceros, no basura repetida.
-      REG_DATA:   read_data = (rx_count == 0) ? 32'd0 : {24'd0, rx_head};
-      REG_STATUS: read_data = {15'd0, rx_overrun, tx_free,
-                               {{(8 - ABITS - 1){1'b0}}, rx_count}};
-      REG_PEEK:   read_data = (rx_count == 0) ? 32'd0 : {24'd0, rx_head};
-      default:    read_data = 32'd0;
+      REG_DATA:   read_data <= (rx_count == 0) ? 32'd0 : {24'd0, rx_head};
+      REG_STATUS: read_data <= {15'd0, rx_overrun, tx_free,
+                                {{(8 - ABITS - 1){1'b0}}, rx_count}};
+      REG_PEEK:   read_data <= (rx_count == 0) ? 32'd0 : {24'd0, rx_head};
+      default:    read_data <= 32'd0;
     endcase
   end
 endmodule

@@ -54,8 +54,10 @@ module serial_port_tb;
     begin
       @(negedge clk);
       address = addr; select = 1; write = 0;
-      #1 leido = read_data;   // combinacional, valida en el mismo ciclo
       @(negedge clk);
+      // Registrada: valida en el ciclo siguiente al `select`, que es cuando la
+      // muestrea mmio_decoder. El `pop` de DATA mueve el puntero justo despues.
+      leido = read_data;
       select = 0;
     end
   endtask
@@ -202,8 +204,8 @@ module serial_port_tb;
     @(negedge clk);
     address = REG_DATA; select = 1; write = 0;
     host_push = 1; host_push_data = 8'h33;
-    #1 leido = read_data;
     @(negedge clk);
+    leido = read_data;
     select = 0; host_push = 0;
     check(leido, 32'h11, "el byte que salia en un ciclo con push");
     bus_read(REG_STATUS);
