@@ -81,6 +81,16 @@ class AnalisisTest(unittest.TestCase):
         texto = '\n'.join(tw.report_lines(tw.analyze(informe()), top=5, color=True))
         self.assertIn('\033[33m11.30\033[0m', texto)
 
+    def test_cruce_atribuye_al_modulo_que_maneja_la_ultima_red(self):
+        a = tw.analyze(informe(nets=[net('serial_i.rx_LUT4_Z', 'mmio_decoder_i.read_data_TRELLIS_FF_Q_7', 11.2),
+                                     net('serial_i.rx_LUT4_Z', 'mmio_decoder_i.read_data_TRELLIS_FF_Q_2', 10.5),
+                                     net('cpu_i.pc_LUT4_Z', 'cpu_i.pc_TRELLIS_FF_Q_1', 6.0)]))
+        self.assertEqual(a['hops'][('serial_i', 'mmio_decoder_i')]['near'], 2)
+        self.assertEqual(a['hops'][('cpu_i', 'cpu_i')]['near'], 0)
+        texto = '\n'.join(tw.cross_lines(a))
+        self.assertRegex(texto, r'serial_i\s+mmio_decoder_i\s+11\.20\s+2\s+0')
+        self.assertNotIn('cpu_i', texto.split('\n', 1)[1])                  # sin destinos cerca, no sale
+
     def test_comparar_enseña_la_bajada_y_el_total_de_destinos(self):
         malo = tw.analyze(informe(78.0, nets=[net('d', 'wide_i.buffer_TRELLIS_FF_Q_1', 12.4),
                                               net('d', 'wide_i.buffer_TRELLIS_FF_Q_2', 11.9)]))

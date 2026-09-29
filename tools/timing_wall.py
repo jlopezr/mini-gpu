@@ -130,6 +130,7 @@ def analyze(pnr, clock=None):
     name, constraint, achieved = pick_clock(pnr, clock)
     period = 1000.0 / constraint
     families = {}
+    hops = {}
     endpoints = 0
     for net in pnr['detailed_net_timings']:
         if name not in net.get('event', ''):
@@ -147,8 +148,13 @@ def analyze(pnr, clock=None):
             entry['hard'] += arrival >= HARD * period
             entry['endpoints'] += 1
             endpoints += 1
+            hop = hops.setdefault((module(net.get('driver', '')), module(cell)),
+                                  dict(worst=0.0, near=0, hard=0))
+            hop['worst'] = max(hop['worst'], arrival)
+            hop['near'] += arrival >= NEAR * period
+            hop['hard'] += arrival >= HARD * period
     return dict(clock=name, constraint=constraint, achieved=achieved, period=period,
-                endpoints=endpoints, families=families,
+                endpoints=endpoints, families=families, hops=hops,
                 near=sum(f['near'] for f in families.values()),
                 hard=sum(f['hard'] for f in families.values()))
 
@@ -216,6 +222,25 @@ def report_lines(analysis, top=20, source=None, color=False):
     return lines + _table(rows, color)
 
 
+def cross_lines(analysis, top=12, color=False):
+    """Ultimo salto -> modulo destino, para los destinos casi criticos.
+
+    El origen es el modulo que maneja la ULTIMA red antes del registro destino
+    (por el nombre de su celda), no el registro que lanza la senal: el informe de
+    nextpnr no trae la ruta completa, solo red a red. Un LUT de `serial_i` que
+    alimenta un registro de `mmio_decoder_i` dice de quien es la logica de ese
+    ultimo tramo, que es lo que el agrupado por destino esconde.
+    """
+    p = analysis['period']
+    ranked = sorted(((k, v) for k, v in analysis['hops'].items() if v['near']),
+                    key=lambda kv: (-kv[1]['near'], -kv[1]['worst']))[:top]
+    rows = [('ULTIMO SALTO (modulo)', 'DESTINO (modulo)', 'LLEGADA', '>=80 %', '>=90 %')]
+    for (src, dst), h in ranked:
+        rows.append((src, dst, _arrival_cell(h['worst'], p), str(h['near']), str(h['hard'])))
+    return ['Ultimo salto: modulo que maneja la ultima red antes del destino (no el registro de origen).'] \
+        + _table(rows, color)
+
+
 def compare_lines(a, b, top=20, source_a=None, source_b=None, color=False):
     """Familias de dos builds lado a lado: baja la llegada, o baja el numero de destinos?"""
     p = a['period']
@@ -253,6 +278,8 @@ def main(argv=None):
                         help='segundo informe (mismos tipos de ruta que SOURCE) para comparar lado a lado')
     parser.add_argument('--clock', help='trozo del nombre del reloj (por defecto, el de menos margen)')
     parser.add_argument('--top', type=int, default=20, help='cuantas familias enseñar (20)')
+    parser.add_argument('--cross', action='store_true',
+                        help='añade la tabla ultimo salto -> destino (quien maneja la ultima red)')
     args = parser.parse_args(argv)
 
     if args.source is not None:
@@ -281,6 +308,8 @@ def main(argv=None):
         print('\n'.join(compare_lines(analysis, second, args.top, f'{note} ({path})', str(other), color)))
     else:
         print('\n'.join(report_lines(analysis, args.top, f'{note} ({path})', color)))
+        if args.cross:
+            print('\n' + '\n'.join(cross_lines(analysis, color=color)))
     return 0
 
 
