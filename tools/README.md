@@ -743,6 +743,60 @@ $ build-sweep --prototype 17 --seeds 1 2 3 --report-dir 17.fpga-gpu-ram-v2/repor
 $ build-sweep --prototype 17 --seeds 1 2 3 4 5 --background   # se sigue con build-status/build-log
 ```
 
+Cada semilla queda en `reports/<build>/sweep-<fecha>/seed-N/`, con
+`results.json` y `medians.json` en la carpeta del barrido. Al final imprime
+cuántas cumplen, el rango, la mediana y la semilla con más margen. Hay dos
+usos distintos, y cada uno tiene su opción:
+
+- **Fijar semilla porque vamos justos** (`--apply`): escribe `--seed N`, la de
+  más margen, en el `nextpnr-extra-options` del `apio.ini` (solo si alguna
+  cumple timing; conserva comentarios y saltos de línea). Es opt-in: las
+  carpetas GPU no fijan semilla a propósito, ahí no se usa. Deja el bitstream
+  en STALE hasta que se reconstruya con la semilla nueva. Los párrafos de
+  números del `apio.ini` se siguen apuntando a mano.
+- **Saber si un cambio de RTL mejora o empeora** (`--compare`): no fijes una
+  semilla, que mezcla el efecto del cambio con el ruido del placement. Barre
+  las mismas semillas antes y después, y compara:
+
+  ```bash
+  $ build-sweep --prototype 17 --seeds 1 2 3 4 5 6 7 8      # antes del cambio
+  # ... cambio de RTL ...
+  $ build --prototype 17
+  $ build-sweep --prototype 17 --seeds 1 2 3 4 5 6 7 8 \
+        --compare 17.fpga-gpu-ram-v2/reports/<build-antiguo>/sweep-<fecha>
+  ```
+
+  Por reloj imprime mediana, peor caso y rango de los dos barridos, y un
+  veredicto: `MEJORA`, `EMPEORA` o «dentro del ruido» cuando el cambio de
+  mediana no supera el mayor de los dos rangos. Exige exactamente las mismas
+  semillas que el barrido de referencia y se niega antes de barrer si no
+  coinciden. Es una heurística, no una prueba estadística.
+
+**Consultar barridos ya hechos** (no lanza nada ni crea registro en `reports/`):
+
+```bash
+$ build-sweep --prototype 6 --list            # una fila por barrido y reloj
+$ build-sweep --prototype 6 --show latest     # detalle por semilla del último
+$ build-sweep --prototype 6 --show 20260920-1334   # o un trozo del nombre (ver --list)
+```
+
+`build-sweep --last` (sin `--prototype`) hace lo mismo para todos los prototipos
+a la vez: una fila por reloj del **último** barrido de cada prototipo que tenga
+alguno, con el margen del peor caso sobre lo exigido.
+
+En terminal (y sin `NO_COLOR`), `--last`, `--list`, `--show`, `--compare` y el
+resumen del propio barrido colorean los valores: peor / mediana / mejor y el
+margen en verde si llegan a lo exigido y en rojo si no; `CUMPLEN` en verde si
+cumplen todas las semillas, amarillo si algunas y rojo si ninguna; y el
+veredicto de `--compare` (`MEJORA` verde, `EMPEORA` rojo, ruido amarillo). Al
+redirigir a un fichero o al log no se escribe ningún código de color.
+
+`--list` enseña, de todos los builds archivados, cuántas semillas cumplieron y
+el peor / mediana / mejor de cada reloj frente al exigido; `2/3` en SEEDS
+significa que una semilla pedida no llegó a dar informe. `--show` añade el
+margen en % por semilla y marca las que no dieron informe. Acepta `latest`, un
+trozo único del nombre del barrido o su ruta.
+
 Antes reemplazaba a `tools/seed-sweep.ps1` (retirado): ese trabajaba directo
 sobre `_build/<env>/` sin pasar por el archivo de `reports/`; `build-sweep`
 pide un build archivado primero, pero a cambio verifica que ese build pasó

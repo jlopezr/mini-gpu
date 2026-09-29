@@ -27,6 +27,33 @@ from tools.build_runner import (
 
 
 class BuildRunnerTest(unittest.TestCase):
+    def test_sweep_forwards_compare_and_apply_to_sweep_report(self):
+        from tools import build_runner
+
+        with tempfile.TemporaryDirectory() as temp:
+            previous = Path(temp) / "sweep-x"
+            with mock.patch("sys.argv", ["build_runner", "sweep", "-p", "17", "--seeds", "1", "2",
+                                         "--compare", str(previous), "--apply", "--root", temp]), \
+                 mock.patch.object(build_runner, "create_build_record",
+                                   return_value={"folder": Path(temp), "status_path": Path(temp) / "s"}), \
+                 mock.patch.object(build_runner, "_run_and_track", return_value=0) as run:
+                self.assertEqual(build_runner._main(), 0)
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--compare") + 1], str(previous.resolve()))
+            self.assertIn("--apply", command)
+
+    def test_sweep_list_and_show_query_without_creating_a_build_record(self):
+        from tools import build_runner
+
+        for flags, expected in ((["--list"], ["--list"]), (["--show", "latest"], ["--show", "latest"])):
+            with mock.patch("sys.argv", ["build_runner", "sweep", "-p", "6", *flags]), \
+                 mock.patch.object(build_runner, "create_build_record") as record, \
+                 mock.patch.object(build_runner.subprocess, "run",
+                                   return_value=mock.Mock(returncode=0)) as run:
+                self.assertEqual(build_runner._main(), 0)
+            record.assert_not_called()
+            self.assertEqual(run.call_args.args[0][-len(expected):], expected)
+
     def test_process_exists_recognizes_current_and_missing_pid(self):
         self.assertTrue(process_exists(os.getpid()))
         self.assertFalse(process_exists(2 ** 30))

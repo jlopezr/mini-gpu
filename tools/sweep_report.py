@@ -29,6 +29,7 @@ import argparse
 from datetime import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import statistics
@@ -36,12 +37,13 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from build_report import extract_log_details, summarize, timing_passes
+from build_report import (extract_log_details, set_configured_seed, summarize,
+                          timing_passes)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.prototype import (
     PrototypeResolutionError, find_repo_root, find_toolchain_binary,
-    oss_cad_suite_env, read_ecp5_params, resolve_prototype,
+    list_prototypes, oss_cad_suite_env, read_ecp5_params, resolve_prototype,
 )
 
 
@@ -56,12 +58,281 @@ def latest_report_dir(prototype_dir: Path) -> Path:
     return candidates[0]
 
 
+def load_results(path: Path) -> list:
+    """results.json de un barrido anterior; vale la carpeta sweep-* o el fichero."""
+    path = Path(path)
+    if path.is_dir():
+        path = path / 'results.json'
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f'No se puede leer el barrido de referencia {path}: {exc}')
+
+
+def compare_sweeps(old: list, new: list, color: bool = None) -> list:
+    """Líneas que comparan dos barridos con las MISMAS semillas.
+
+    Con una sola semilla, la diferencia entre antes y después mezcla el efecto
+    del cambio con el ruido del placement. Por eso se compara el conjunto: la
+    mediana dice si el cambio mueve el diseño, el peor caso es lo que se
+    declara, y el rango es el ruido. Un cambio de mediana menor que el mayor de
+    los dos rangos no se distingue de cambiar de semilla.
+    """
+    color = _use_color() if color is None else color
+    seeds = sorted({r['seed'] for r in old} & {r['seed'] for r in new})
+    if len(seeds) < 2:
+        raise SystemExit('Hacen falta al menos 2 semillas en común para comparar barridos.')
+    old = {r['seed']: r for r in old if r['seed'] in seeds}
+    new = {r['seed']: r for r in new if r['seed'] in seeds}
+    lines = [f'\nComparación con el barrido anterior ({len(seeds)} semillas comunes: '
+             f'{" ".join(map(str, seeds))})']
+    clocks = sorted(set.intersection(*(set(r['clocks']) for r in [*old.values(), *new.values()])))
+    for clock in clocks:
+        a = [old[s]['clocks'][clock]['achieved'] for s in seeds]
+        b = [new[s]['clocks'][clock]['achieved'] for s in seeds]
+        median_a, median_b = statistics.median(a), statistics.median(b)
+        noise = max(max(a) - min(a), max(b) - min(b))
+        delta = median_b - median_a
+        if abs(delta) <= noise:
+            verdict = _paint('dentro del ruido: no se distingue de cambiar de semilla', '33', color)
+        else:
+            verdict = (_paint('MEJORA', '32', color) if delta > 0
+                       else _paint('EMPEORA', '31', color))
+        lines.append(f'  {clock}: mediana {median_a:.2f} -> {median_b:.2f} ({delta:+.2f}), '
+                     f'peor {min(a):.2f} -> {min(b):.2f} ({min(b) - min(a):+.2f}), '
+                     f'rango {max(a) - min(a):.2f} -> {max(b) - min(b):.2f}: {verdict}')
+    cumplen = [sum(r['passes'] for r in group.values()) for group in (old, new)]
+    lines.append(f'  Cumplen: {cumplen[0]} de {len(seeds)} -> {cumplen[1]} de {len(seeds)}')
+    return lines
+
+
+def find_sweeps(prototype_dir: Path) -> list:
+    """Carpetas sweep-* de todos los builds archivados, de más antigua a más nueva."""
+    return sorted((prototype_dir / 'reports').glob('*/sweep-*'), key=lambda d: d.name)
+
+
+def clock_stats(results: list) -> dict:
+    return {clock: dict(
+        worst=min(r['clocks'][clock]['achieved'] for r in results),
+        median=statistics.median(r['clocks'][clock]['achieved'] for r in results),
+        best=max(r['clocks'][clock]['achieved'] for r in results),
+        required=results[0]['clocks'][clock]['constraint'])
+        for clock in sorted(results[0]['clocks'])}
+
+
+def _requested_seeds(folder: Path, results: list) -> list:
+    try:
+        return json.loads((folder / 'metadata.json').read_text())['seeds']
+    except (OSError, json.JSONDecodeError, KeyError):
+        return [r['seed'] for r in results]
+
+
+def _stamp(name: str) -> str:
+    """20260929-132616 de 'sweep-20260929-132616-192231' o del nombre del build."""
+    return name.removeprefix('sweep-')[:15]
+
+
+def _use_color() -> bool:
+    """Igual que build-list: solo en un terminal y si no hay NO_COLOR."""
+    return sys.stdout.isatty() and 'NO_COLOR' not in os.environ
+
+
+def _paint(text: str, code: str, color: bool = True) -> str:
+    return f'\033[{code}m{text}\033[0m' if color else text
+
+
+def _reaches(value: float, required: float) -> str:
+    """Verde si el valor llega a lo exigido, rojo si no."""
+    return '32' if value >= required else '31'
+
+
+def _passing_code(passing: int, total: int) -> str:
+    """Verde si cumplen todas las semillas, rojo si ninguna, amarillo si algunas."""
+    return '32' if passing == total else '31' if passing == 0 else '33'
+
+
+def _passing_cell(results: list) -> tuple:
+    passing = sum(r['passes'] for r in results)
+    return f'{passing}/{len(results)}', _passing_code(passing, len(results))
+
+
+def _stat_cells(s: dict, margin: bool = False) -> tuple:
+    """Peor / mediana / mejor coloreados contra lo exigido, y luego lo exigido."""
+    cells = [(f'{s[key]:.2f}', _reaches(s[key], s['required'])) for key in ('worst', 'median', 'best')]
+    cells.append(f'{s["required"]:.0f}')
+    if margin:
+        cells.append((f'{100 * (s["worst"] / s["required"] - 1):+.1f} %', _reaches(s['worst'], s['required'])))
+    return tuple(cells)
+
+
+def _table(rows: list, color: bool) -> list:
+    """Alinea columnas. Una celda es un texto o (texto, color ANSI); None es una línea en blanco.
+
+    Se rellena el texto plano y el color se pone después, para que los códigos
+    ANSI no cuenten como ancho.
+    """
+    grid = [None if row is None else [c if isinstance(c, tuple) else (c, None) for c in row]
+            for row in rows]
+    widths = [max(len(row[i][0]) for row in grid if row) for i in range(len(rows[0]))]
+    lines = []
+    for row in grid:
+        cells = [_paint(text, code, color and code is not None) + ' ' * (width - len(text))
+                 for (text, code), width in zip(row, widths)] if row else []
+        lines.append('  '.join(cells).rstrip())
+    return lines
+
+
+def list_sweeps(prototype_dir: Path, color: bool = None) -> list:
+    """Una fila por barrido y reloj, para ver de un vistazo cómo ha ido el timing."""
+    sweeps = find_sweeps(prototype_dir)
+    if not sweeps:
+        return [f'No hay barridos en {prototype_dir / "reports"}. Ejecuta build-sweep primero.']
+    rows = [('BUILD', 'SWEEP', 'SEEDS', 'CUMPLEN', 'RELOJ', 'PEOR', 'MEDIANA', 'MEJOR', 'EXIGIDOS')]
+    for folder in sweeps:
+        try:
+            results = json.loads((folder / 'results.json').read_text())
+        except (OSError, json.JSONDecodeError):
+            results = []
+        head = (_stamp(folder.parent.name), _stamp(folder.name))
+        if not results:
+            rows.append((*head, '0', '-', '-', '-', '-', '-', 'sin resultados'))
+            continue
+        requested = _requested_seeds(folder, results)
+        seeds = str(len(results)) if len(results) == len(requested) else f'{len(results)}/{len(requested)}'
+        cumplen = _passing_cell(results)
+        for clock, s in clock_stats(results).items():
+            rows.append((*head, seeds, cumplen, clock, *_stat_cells(s)))
+    return _table(rows, _use_color() if color is None else color)
+
+
+def last_sweeps(root: Path, color: bool = None) -> list:
+    """El barrido más reciente de cada prototipo que tenga alguno."""
+    rows = [('PROTOTIPO', 'BUILD', 'SWEEP', 'SEEDS', 'CUMPLEN', 'RELOJ', 'PEOR', 'MEDIANA',
+             'MEJOR', 'EXIGIDOS', 'MARGEN PEOR')]
+    for prototype_dir in list_prototypes(root):
+        sweeps = find_sweeps(prototype_dir)
+        if not sweeps:
+            continue
+        folder = sweeps[-1]
+        try:
+            results = json.loads((folder / 'results.json').read_text())
+        except (OSError, json.JSONDecodeError):
+            results = []
+        if len(rows) > 1:
+            rows.append(None)  # línea en blanco entre prototipos: cada uno puede tener varios relojes
+        head = (prototype_dir.name, _stamp(folder.parent.name), _stamp(folder.name))
+        if not results:
+            rows.append((*head, '0', '-', '-', '-', '-', '-', '-', 'sin resultados', ''))
+            continue
+        requested = _requested_seeds(folder, results)
+        seeds = str(len(results)) if len(results) == len(requested) else f'{len(results)}/{len(requested)}'
+        cumplen = _passing_cell(results)
+        for n, (clock, s) in enumerate(clock_stats(results).items()):
+            # Los datos del barrido solo en la primera fila: las demás son otros relojes.
+            lead = (*head, seeds, cumplen) if n == 0 else ('',) * 5
+            rows.append((*lead, clock, *_stat_cells(s, margin=True)))
+    if len(rows) == 1:
+        return ['Ningún prototipo tiene barridos todavía. Ejecuta build-sweep primero.']
+    return _table(rows, _use_color() if color is None else color)
+
+
+def resolve_sweep(prototype_dir: Path, spec: str) -> Path:
+    """`latest`, una ruta, o un trozo del nombre del barrido (20260929-1405...)."""
+    sweeps = find_sweeps(prototype_dir)
+    if spec == 'latest':
+        if not sweeps:
+            raise SystemExit(f'No hay barridos en {prototype_dir / "reports"}.')
+        return sweeps[-1]
+    if Path(spec).is_dir():
+        return Path(spec).resolve()
+    matches = [d for d in sweeps if spec in d.name]
+    if len(matches) != 1:
+        raise SystemExit(f'"{spec}" coincide con {len(matches)} barridos; usa --list para ver '
+                         f'los nombres o pasa la ruta completa.' if matches else
+                         f'No hay ningún barrido que contenga "{spec}"; usa --list.')
+    return matches[0]
+
+
+def show_sweep(folder: Path, color: bool = None) -> list:
+    """Detalle de un barrido: una fila por semilla, con el margen por reloj."""
+    try:
+        results = json.loads((folder / 'results.json').read_text())
+    except (OSError, json.JSONDecodeError):
+        results = []
+    lines = [f'Barrido: {folder}', f'Build:   {folder.parent.name}']
+    fallidas = sorted(
+        d.name for d in folder.glob('seed-*')
+        if not (d / 'summary.json').exists())
+    if not results:
+        return [*lines, 'Sin resultados.' + (f' Semillas sin informe: {", ".join(fallidas)}' if fallidas else '')]
+    requested = _requested_seeds(folder, results)
+    lines.append(f'Semillas pedidas: {" ".join(map(str, requested))}')
+    color = _use_color() if color is None else color
+    rows = [('SEMILLA', 'RESULTADO', 'RELOJES (MHz alcanzados/exigidos, margen)')]
+    for r in sorted(results, key=lambda r: r['seed']):
+        # La última columna lleva un color por reloj, así que se pinta a mano.
+        clocks = ', '.join(
+            _paint(f'{c} {v["achieved"]:.2f}/{v["constraint"]:.0f} '
+                   f'({100 * (v["achieved"] / v["constraint"] - 1):+.1f} %)',
+                   _reaches(v['achieved'], v['constraint']), color)
+            for c, v in sorted(r['clocks'].items()))
+        rows.append((str(r['seed']), ('OK', '32') if r['passes'] else ('NO', '31'), clocks))
+    lines += _table(rows, color)
+    if fallidas:
+        lines.append(f'Sin informe (nextpnr falló o se interrumpió): {", ".join(fallidas)}')
+    passing = sum(r['passes'] for r in results)
+    lines.append(_paint(f'Cumplen {passing} de {len(results)}',
+                        _passing_code(passing, len(results)), color))
+    for clock, s in clock_stats(results).items():
+        peor, mediana, mejor, exigidos = _stat_cells(s)
+        lines.append(f'  {clock}: peor {_paint(*peor, color)}, mediana {_paint(*mediana, color)}, '
+                     f'mejor {_paint(*mejor, color)}, exigidos {exigidos}')
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('-p', '--prototype', required=True)
+    parser.add_argument('-p', '--prototype')
     parser.add_argument('--report-dir', type=Path, default=None)
     parser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5])
+    parser.add_argument('--apply', action='store_true',
+                        help='escribe la semilla con más margen en el apio.ini del prototipo '
+                             '(solo si alguna cumple timing)')
+    parser.add_argument('--compare', type=Path, default=None, metavar='SWEEP',
+                        help='carpeta sweep-* (o su results.json) de un barrido anterior con las '
+                             'mismas semillas; compara mediana, peor caso y rango para saber si '
+                             'un cambio de RTL mejora o empeora')
+    parser.add_argument('--list', action='store_true',
+                        help='lista los barridos ya hechos del prototipo (peor, mediana y mejor '
+                             'por reloj)')
+    parser.add_argument('--show', metavar='SWEEP', default=None,
+                        help='detalle por semilla de un barrido: "latest", un trozo de su nombre '
+                             '(ver --list) o su ruta')
+    parser.add_argument('--last', action='store_true',
+                        help='resumen del último barrido de cada prototipo que tenga alguno '
+                             '(no necesita --prototype)')
     args = parser.parse_args()
+    color = _use_color()
+    if args.last:
+        print('\n'.join(last_sweeps(find_repo_root(Path.cwd()))))
+        return
+    if args.prototype is None:
+        parser.error('-p/--prototype es obligatorio (salvo con --last)')
+    if args.list or args.show is not None:
+        try:
+            listed = resolve_prototype(args.prototype, root=find_repo_root(Path.cwd()))
+        except PrototypeResolutionError as exc:
+            raise SystemExit(f'error: {exc}')
+        print(f'Using prototype: {listed.name}')
+        print('\n'.join(list_sweeps(listed) if args.list
+                        else show_sweep(resolve_sweep(listed, args.show))))
+        return
+    reference = None
+    if args.compare is not None:
+        reference = load_results(args.compare)
+        if {r['seed'] for r in reference} != set(args.seeds):
+            raise SystemExit(f'--compare exige las mismas semillas que el barrido de referencia '
+                             f'({sorted(r["seed"] for r in reference)}); has pasado {sorted(args.seeds)}.')
     repo_root = find_repo_root(Path.cwd())
     try:
         prototype_dir = resolve_prototype(args.prototype, root=repo_root)
@@ -127,7 +398,7 @@ def main():
             cumple = timing_passes(summary['clocks'])
             results.append(dict(seed=seed, clocks=summary['clocks'], passes=cumple))
             (folder / 'results.json').write_text(json.dumps(results, indent=2))
-            print(f"{'OK ' if cumple else 'NO '} seed {seed}: "
+            print(f"{_paint('OK', '32', color) if cumple else _paint('NO', '31', color)} seed {seed}: "
                   + ', '.join(
                       f"{clock} {v['achieved']:.2f}/{v['constraint']:.0f} MHz"
                       for clock, v in sorted(summary['clocks'].items()))
@@ -144,20 +415,31 @@ def main():
     # el diseño está al borde y no que hubo mala suerte, y por eso se imprime
     # aunque alguna semilla cumpla.
     cumplen = [r for r in results if r['passes']]
-    print(f'\nCumplen {len(cumplen)} de {len(results)}')
+    print('\n' + _paint(f'Cumplen {len(cumplen)} de {len(results)}',
+                         _passing_code(len(cumplen), len(results)), color))
     for clock in sorted(results[0]['clocks']):
         valores = [r['clocks'][clock]['achieved'] for r in results]
         exigido = results[0]['clocks'][clock]['constraint']
-        print(f'  {clock}: {min(valores):.2f} a {max(valores):.2f} MHz, '
-              f'mediana {medians[clock]:.2f}, exigidos {exigido:.0f}')
+        print(f'  {clock}: {_paint(f"{min(valores):.2f}", _reaches(min(valores), exigido), color)} a '
+              f'{_paint(f"{max(valores):.2f}", _reaches(max(valores), exigido), color)} MHz, '
+              f'mediana {_paint(f"{medians[clock]:.2f}", _reaches(medians[clock], exigido), color)}, '
+              f'exigidos {exigido:.0f}')
     if cumplen:
         limitante = lambda r: min(  # noqa: E731 - el reloj con menos margen
             v['achieved'] / v['constraint'] for v in r['clocks'].values())
         mejor = max(cumplen, key=limitante)
         print(f'Más margen: semilla {mejor["seed"]} '
               f'({100 * (limitante(mejor) - 1):+.1f} % en su reloj más justo)')
+        if args.apply:
+            previous = set_configured_seed(prototype_dir, mejor['seed'])
+            print(f'apio.ini: --seed {previous if previous is not None else "(ninguna)"}'
+                  f' -> {mejor["seed"]}. El bitstream actual queda STALE hasta reconstruir.')
     else:
         print('Ninguna semilla cumple: aquí el problema ya no es la semilla.')
+        if args.apply:
+            print('--apply: no se toca el apio.ini.')
+    if reference is not None:
+        print('\n'.join(compare_sweeps(reference, results)))
     print(f'Informes: {folder}', flush=True)
 
 

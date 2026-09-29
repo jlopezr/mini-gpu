@@ -90,6 +90,40 @@ def configured_seed(prototype_dir):
     return int(match.group(1)) if match else None
 
 
+def set_configured_seed(prototype_dir, seed):
+    """Write ``--seed N`` into the nextpnr options that ``configured_seed`` reads.
+
+    Edits the line in place (comments and line endings stay), replacing an
+    existing ``--seed`` or appending one. Returns the previous seed.
+    """
+    path = prototype_dir / 'apio.ini'
+    previous = configured_seed(prototype_dir)
+    lines = path.read_bytes().decode('utf-8').splitlines(keepends=True)
+    option = re.compile(r'^(\s*nextpnr-extra-options\s*=)(.*?)(\r?\n?)$')
+    found = {}
+    section = None
+    for index, line in enumerate(lines):
+        header = re.match(r'^\s*\[([^\]]+)\]', line)
+        if header:
+            section = header.group(1)
+        elif option.match(line):
+            found.setdefault(section, index)
+    env_section = f'env:{default_env(prototype_dir)}'
+    target = found.get(env_section, found.get('common'))
+    if target is None:
+        raise SystemExit(f'{path} no tiene nextpnr-extra-options en [{env_section}] ni en [common]; '
+                         f'anade --seed {seed} a mano.')
+    head, value, newline = option.match(lines[target]).groups()
+    seed_re = re.compile(r'(^|\s)--seed(?:\s+|=)\d+(?=\s|$)')
+    if seed_re.search(value):
+        value = seed_re.sub(lambda m: f'{m.group(1)}--seed {seed}', value, count=1)
+    else:
+        value = f'{value.rstrip()} --seed {seed}' if value.strip() else f' --seed {seed}'
+    lines[target] = f'{head}{value}{newline}'
+    path.write_text(''.join(lines), encoding='utf-8', newline='')
+    return previous
+
+
 def synthesizable_source_hashes(prototype_dir):
     """Hashes used to decide whether the local bitstream matches the RTL."""
     paths = [
@@ -227,7 +261,7 @@ def main():
     # Apio searches recursively for constraints. A ZIP avoids treating archived
     # LPF/RTL files as additional project inputs on the next build.
     with zipfile.ZipFile(folder / 'sources.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-        for pattern in ('*.v', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh'):
+        for pattern in ('*.v', '*.sv', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh'):
             for src in ROOT.glob(pattern):
                 relative = src.relative_to(ROOT)
                 data = src.read_bytes()

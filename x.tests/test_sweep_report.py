@@ -119,5 +119,206 @@ class SweepTest(unittest.TestCase):
                     sweep_report.main()
 
 
+def resultados(*achieved, primera=1, constraint=80):
+    return [dict(seed=primera + i, clocks=reloj(a, constraint), passes=a >= constraint)
+            for i, a in enumerate(achieved)]
+
+
+class CompareTest(unittest.TestCase):
+    def test_un_cambio_mayor_que_el_ruido_es_mejora_o_empeora(self):
+        mejora = "\n".join(sweep_report.compare_sweeps(
+            resultados(80, 82, 84), resultados(90, 92, 94)))
+        self.assertIn("MEJORA", mejora)
+        empeora = "\n".join(sweep_report.compare_sweeps(
+            resultados(90, 92, 94), resultados(80, 82, 84)))
+        self.assertIn("EMPEORA", empeora)
+        self.assertIn("peor 90.00 -> 80.00 (-10.00)", empeora)
+
+    def test_un_cambio_dentro_del_rango_es_ruido(self):
+        """Con seeds dispersas, +1 MHz de mediana es otra semilla, no el RTL."""
+        salida = "\n".join(sweep_report.compare_sweeps(
+            resultados(70, 80, 90), resultados(71, 81, 91)))
+        self.assertIn("dentro del ruido", salida)
+        self.assertNotIn("MEJORA", salida)
+
+    def test_compara_solo_semillas_comunes_y_pide_al_menos_dos(self):
+        salida = "\n".join(sweep_report.compare_sweeps(
+            resultados(80, 82, 84), resultados(82, 84, primera=2)))
+        self.assertIn("2 semillas comunes: 2 3", salida)
+        with self.assertRaises(SystemExit):
+            sweep_report.compare_sweeps(resultados(80, 82), resultados(80, primera=2))
+
+    def test_compare_con_otras_semillas_se_niega_antes_de_barrer(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            anterior = Path(temp) / "sweep-x"
+            anterior.mkdir()
+            (anterior / "results.json").write_text(json.dumps(resultados(80, 82, 84)))
+            with patch.object(sys, "argv", ["sweep_report", "-p", "x", "--seeds", "1", "2",
+                                            "--compare", str(anterior)]):
+                with self.assertRaises(SystemExit) as error:
+                    sweep_report.main()
+            self.assertIn("mismas semillas", str(error.exception))
+
+
+def montar_barrido(raiz: Path, build: str, nombre: str, achieved, pedidas=None) -> Path:
+    carpeta = raiz / "reports" / build / nombre
+    carpeta.mkdir(parents=True)
+    resultados_ = resultados(*achieved)
+    (carpeta / "results.json").write_text(json.dumps(resultados_))
+    seeds = pedidas or [r["seed"] for r in resultados_]
+    (carpeta / "metadata.json").write_text(json.dumps({"seeds": seeds}))
+    for seed in seeds:
+        (carpeta / f"seed-{seed}").mkdir()
+        if seed in [r["seed"] for r in resultados_]:
+            (carpeta / f"seed-{seed}" / "summary.json").write_text("{}")
+    return carpeta
+
+
+class ColorTest(unittest.TestCase):
+    VERDE, ROJO, AMARILLO, FIN = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
+
+    def test_show_pinta_cada_valor_segun_llegue_o_no_a_lo_exigido(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            carpeta = montar_barrido(Path(temp), "20260929-100000-000000-build",
+                                     "sweep-20260929-101500-000001", [70, 90])
+            con = sweep_report.show_sweep(carpeta, color=True)
+            sin = sweep_report.show_sweep(carpeta, color=False)
+        texto = "\n".join(con)
+        self.assertIn(f"{self.ROJO}NO{self.FIN}", texto)
+        self.assertIn(f"{self.VERDE}OK{self.FIN}", texto)
+        self.assertIn(f"{self.AMARILLO}Cumplen 1 de 2{self.FIN}", texto)
+        self.assertIn(f"peor {self.ROJO}70.00{self.FIN}", texto)
+        self.assertIn(f"mejor {self.VERDE}90.00{self.FIN}", texto)
+        self.assertNotIn("\033", "\n".join(sin))
+
+    def test_las_columnas_no_se_desalinean_al_pintar(self):
+        import re
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            montar_barrido(raiz, "20260929-100000-000000-build", "sweep-20260929-101500-000001", [70, 90])
+            con = sweep_report.list_sweeps(raiz, color=True)
+            sin = sweep_report.list_sweeps(raiz, color=False)
+        quitar = lambda linea: re.sub(r"\033\[\d+m", "", linea)  # noqa: E731
+        self.assertEqual([quitar(linea) for linea in con], sin)
+        self.assertIn(f"{self.AMARILLO}1/2{self.FIN}", con[1])
+
+    def test_compare_pinta_el_veredicto(self):
+        mejora = "\n".join(sweep_report.compare_sweeps(
+            resultados(80, 82, 84), resultados(90, 92, 94), color=True))
+        self.assertIn(f"{self.VERDE}MEJORA{self.FIN}", mejora)
+        empeora = "\n".join(sweep_report.compare_sweeps(
+            resultados(90, 92, 94), resultados(80, 82, 84), color=True))
+        self.assertIn(f"{self.ROJO}EMPEORA{self.FIN}", empeora)
+
+    def test_sin_terminal_o_con_no_color_no_hay_codigos(self):
+        with patch.object(sys.stdout, "isatty", return_value=True, create=True), \
+             patch.dict("os.environ", {"NO_COLOR": "1"}):
+            self.assertFalse(sweep_report._use_color())
+        with patch.object(sys, "stdout", io.StringIO()):
+            self.assertFalse(sweep_report._use_color())
+
+
+class ConsultaTest(unittest.TestCase):
+    def _correr(self, raiz, *argumentos):
+        texto = io.StringIO()
+        with patch.object(sweep_report, "resolve_prototype", return_value=raiz), \
+             patch.object(sweep_report, "find_repo_root", return_value=raiz), \
+             patch.object(sys, "argv", ["sweep_report", "-p", "x", *argumentos]), \
+             patch.object(sys, "stdout", texto):
+            sweep_report.main()
+        return texto.getvalue()
+
+    def test_list_muestra_una_fila_por_barrido_y_reloj(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            montar_barrido(raiz, "20260929-100000-000000-build", "sweep-20260929-101500-000001",
+                           [70, 80, 90])
+            montar_barrido(raiz, "20260930-100000-000000-build", "sweep-20260930-101500-000001",
+                           [85, 86], pedidas=[1, 2, 3])
+            salida = self._correr(raiz, "--list")
+        self.assertIn("20260929-101500", salida)
+        self.assertRegex(salida, r"20260929-100000\s+20260929-101500\s+3\s+2/3\s+clk\s+70\.00\s+80\.00\s+90\.00")
+        # Una semilla pedida que no dio informe se ve como 2/3, no se esconde.
+        self.assertRegex(salida, r"20260930-101500\s+2/3\s+2/2\s+clk")
+
+    def test_last_resume_el_ultimo_barrido_de_cada_prototipo_con_barridos(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            uno, dos, sin = raiz / "1.uno", raiz / "2.dos", raiz / "3.sin"
+            montar_barrido(uno, "20260929-100000-000000-build", "sweep-20260929-101500-000001", [70, 90])
+            montar_barrido(uno, "20260930-100000-000000-build", "sweep-20260930-101500-000001", [84, 88])
+            montar_barrido(dos, "20260929-110000-000000-build", "sweep-20260929-111500-000001", [80, 81])
+            sin.mkdir()
+            # Un segundo reloj en 2.dos: su fila no repite prototipo ni datos del barrido.
+            resultados_dos = json.loads((dos / "reports/20260929-110000-000000-build/"
+                                         "sweep-20260929-111500-000001/results.json").read_text())
+            for r in resultados_dos:
+                r["clocks"]["otro"] = {"constraint": 25, "achieved": 30}
+            (dos / "reports/20260929-110000-000000-build/sweep-20260929-111500-000001/"
+             "results.json").write_text(json.dumps(resultados_dos))
+            texto = io.StringIO()
+            with patch.object(sweep_report, "find_repo_root", return_value=raiz), \
+                 patch.object(sweep_report, "list_prototypes", return_value=[uno, dos, sin]), \
+                 patch.object(sys, "argv", ["sweep_report", "--last"]), \
+                 patch.object(sys, "stdout", texto):
+                sweep_report.main()
+        salida = texto.getvalue()
+        self.assertRegex(salida, r"1\.uno\s+20260930-100000\s+20260930-101500\s+2\s+2/2\s+clk\s+84\.00")
+        self.assertNotIn("20260929-101500", salida)  # el barrido viejo de 1.uno no sale
+        self.assertRegex(salida, r"2\.dos\s+.*\+0\.0 %")
+        self.assertRegex(salida, r"1\.uno .*\+5\.0 %")
+        self.assertNotIn("3.sin", salida)
+        # Una línea en blanco entre prototipos, y ninguna al final.
+        lineas = salida.rstrip("\n").split("\n")
+        self.assertEqual(lineas.count(""), 1)
+        self.assertEqual(lineas[lineas.index("") - 1].split()[0], "1.uno")
+        self.assertEqual(lineas[lineas.index("") + 1].split()[0], "2.dos")
+        self.assertEqual(sum("2.dos" in linea for linea in lineas), 1)
+        self.assertTrue(lineas[-1].lstrip().startswith("otro"))
+
+    def test_list_sin_barridos_lo_dice(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertIn("No hay barridos", self._correr(Path(temp), "--list"))
+
+    def test_show_detalla_cada_semilla_y_las_que_no_dieron_informe(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            montar_barrido(raiz, "20260929-100000-000000-build", "sweep-20260929-101500-000001",
+                           [70, 90], pedidas=[1, 2, 3])
+            salida = self._correr(raiz, "--show", "latest")
+            por_trozo = self._correr(raiz, "--show", "101500")
+        self.assertEqual(salida, por_trozo)
+        self.assertRegex(salida, r"1\s+NO\s+clk 70\.00/80 \(-12\.5 %\)")
+        self.assertRegex(salida, r"2\s+OK\s+clk 90\.00/80 \(\+12\.5 %\)")
+        self.assertIn("Sin informe (nextpnr falló o se interrumpió): seed-3", salida)
+        self.assertIn("Cumplen 1 de 2", salida)
+
+    def test_show_con_un_nombre_ambiguo_o_inexistente_se_niega(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            montar_barrido(raiz, "20260929-100000-000000-build", "sweep-20260929-101500-000001", [80, 81])
+            montar_barrido(raiz, "20260930-100000-000000-build", "sweep-20260930-101500-000001", [80, 81])
+            with self.assertRaises(SystemExit):
+                self._correr(raiz, "--show", "101500")
+            with self.assertRaises(SystemExit):
+                self._correr(raiz, "--show", "no-existe")
+
+
 if __name__ == "__main__":
     unittest.main()

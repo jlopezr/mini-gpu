@@ -660,11 +660,21 @@ def _main() -> int:
     test_cmd.add_argument("--background", action="store_true", help="Lanza el test en segundo plano y vuelve enseguida")
 
     sweep_cmd = subparsers.add_parser("sweep", help="Barrido de semillas de placement (tools/sweep_report.py)")
-    sweep_cmd.add_argument("-p", "--prototype", required=True)
+    sweep_cmd.add_argument("-p", "--prototype", help="obligatorio salvo con --last")
+    sweep_cmd.add_argument("--last", action="store_true",
+                           help="Resumen del último barrido de cada prototipo que tenga alguno")
     sweep_cmd.add_argument("--label", default="sweep")
     sweep_cmd.add_argument("--root", type=Path, default=None)
     sweep_cmd.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     sweep_cmd.add_argument("--report-dir", type=Path, default=None)
+    sweep_cmd.add_argument("--compare", type=Path, default=None, metavar="SWEEP",
+                           help="Carpeta sweep-* de un barrido anterior con las mismas semillas")
+    sweep_cmd.add_argument("--list", action="store_true",
+                           help="Lista los barridos ya hechos del prototipo")
+    sweep_cmd.add_argument("--show", metavar="SWEEP", default=None,
+                           help="Detalle por semilla de un barrido (latest, trozo del nombre o ruta)")
+    sweep_cmd.add_argument("--apply", action="store_true",
+                           help="Escribe en el apio.ini la semilla con más margen (solo si alguna cumple)")
     sweep_cmd.add_argument("--background", action="store_true", help="Lanza el barrido en segundo plano y vuelve enseguida")
 
     track_cmd = subparsers.add_parser("_track", help=argparse.SUPPRESS)
@@ -794,12 +804,32 @@ def _main() -> int:
         args.cmd_args = ["--", *command]
         args.command = "run"
 
+    if args.command == "sweep" and (args.last or args.list or args.show is not None):
+        # Solo consulta: no es un build, así que no crea registro en reports/.
+        sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
+        query = [sys.executable, str(sweep_script)]
+        if args.last:
+            query.append("--last")
+        else:
+            if args.prototype is None:
+                parser.error("--list/--show necesitan --prototype")
+            query += ["--prototype", args.prototype]
+            query += ["--list"] if args.list else ["--show", args.show]
+        return subprocess.run(query, cwd=Path.cwd()).returncode
+
+    if args.command == "sweep" and args.prototype is None:
+        parser.error("sweep necesita --prototype (salvo con --last)")
+
     if args.command == "sweep":
         sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
         command = [sys.executable, str(sweep_script), "--prototype", args.prototype,
                   "--seeds", *(str(seed) for seed in args.seeds)]
         if args.report_dir is not None:
             command += ["--report-dir", str(args.report_dir)]
+        if args.compare is not None:
+            command += ["--compare", str(args.compare.resolve())]
+        if args.apply:
+            command.append("--apply")
         args.cmd_args = ["--", *command]
         args.command = "run"
 

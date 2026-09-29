@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--upload", dest="upload", action="store_true", default=None)
     parser.add_argument("--no-upload", dest="upload", action="store_false")
     parser.add_argument("-y", "--yes", action="store_true", help="autoriza la carga del bitstream sin preguntar")
-    parser.add_argument("--reset", action="store_true", help="solo resetea la CPU y sale")
+    parser.add_argument("--reset", action="store_true", help="solo resetea la CPU")
     parser.add_argument("--no-run", action="store_true", help="carga el programa pero no lo arranca")
     parser.add_argument("--interactive", action="store_true", help="deja una consola serie interactiva al terminar")
     parser.add_argument("--verbose", action="store_true")

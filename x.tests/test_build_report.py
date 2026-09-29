@@ -8,7 +8,7 @@ import json
 import zipfile
 
 from tools.build_report import (configured_seed, extract_log_details, main,
-                                summarize, synthesizable_source_hashes,
+                                set_configured_seed, summarize, synthesizable_source_hashes,
                                 timing_passes)
 
 
@@ -23,6 +23,27 @@ class BuildReportTest(unittest.TestCase):
                 encoding='utf-8')
             self.assertEqual(configured_seed(root), 7)
 
+    def test_set_configured_seed_replaces_or_appends_in_place(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ini = root / 'apio.ini'
+            ini.write_text(
+                '# nota\r\n[apio]\r\ndefault-env = chosen\r\n[env:other]\r\n'
+                'nextpnr-extra-options = --seed 1\r\n[env:chosen]\r\n'
+                'nextpnr-extra-options = --detailed-timing-report --seed 3\r\n',
+                encoding='utf-8', newline='')
+            self.assertEqual(set_configured_seed(root, 9), 3)
+            self.assertEqual(configured_seed(root), 9)
+            text = ini.read_bytes().decode()
+            self.assertIn('[env:other]\r\nnextpnr-extra-options = --seed 1\r\n', text)
+            self.assertIn('--detailed-timing-report --seed 9\r\n', text)
+            ini.write_text('[env:chosen]\nnextpnr-extra-options = --foo\n', encoding='utf-8')
+            (root / 'apio.ini').write_text(
+                '[apio]\ndefault-env = chosen\n[env:chosen]\nnextpnr-extra-options = --foo\n',
+                encoding='utf-8')
+            self.assertIsNone(set_configured_seed(root, 2))
+            self.assertEqual(configured_seed(root), 2)
+
     def test_default_build_uses_cache_and_archives_report(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / 'project'
@@ -30,6 +51,7 @@ class BuildReportTest(unittest.TestCase):
             output.mkdir(parents=True)
             (root / 'board.lpf').write_text('constraint')
             (root / 'params.vh').write_text('`define WIDTH 8\n')
+            (root / 'top.sv').write_text('module top; endmodule\n')
             (output / 'hardware.pnr').write_text(json.dumps({
                 'fmax': {'clk': {'constraint': 25, 'achieved': 40}},
             }))
@@ -49,6 +71,8 @@ class BuildReportTest(unittest.TestCase):
                 self.assertEqual(archive.read('params.vh'), (root / 'params.vh').read_bytes())
             metadata = json.loads((folder / 'metadata.json').read_text())
             self.assertIn('params.vh', metadata['source_sha256'])
+            self.assertEqual(metadata['source_sha256'], synthesizable_source_hashes(root))
+            self.assertIn('top.sv', metadata['source_sha256'])
             self.assertTrue((folder / 'summary.json').exists())
 
     def test_default_reuses_matching_detailed_report(self):
