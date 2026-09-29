@@ -1,14 +1,11 @@
 __pycache__
 .trace/
-
 _build
 .sconsign.dblite
 hardware.bit
 hardware.config
 hardware.json
-
 result.bin
-
 reports/
-
+diagrams/
 .DS_Store
