@@ -53,7 +53,7 @@ sin retirarse; no son una instrucción completada para el CPI.
 Tienen dos costes porque pueden reutilizar el medio resultado que dejó su `MUL`
 o su `DIV` inmediatamente anterior. **El resultado es el mismo en los dos
 casos**; lo único que cambia es esta tabla. Las reglas del acierto están en
-[`alu-extendida.md`](alu-extendida.md) §3.
+[`alu-extendida.md`](../../21.fpga-cpu-hdmi-alu/docs/alu-extendida.md) §3.
 
 El ahorro de `REM` es el grande —32 ciclos, las iteraciones del divisor
 completas— y **está medido en placa**, no deducido de los estados:
@@ -122,7 +122,7 @@ instrucciones por palabra (`STORE`, dos `ADDI` y `BLT`):
 
 Son **4,15× menos ciclos** y **3,32× de mejora en tiempo**, contando la bajada
 de 100 a 80 MHz. No es una aceleración universal: depende del programa.
-El detalle está en [combinación de escrituras](combinacion-escrituras.md) y
+El detalle está en [combinación de escrituras](../../18.fpga-cpu-hdmi-bl8/docs/combinacion-escrituras.md) y
 el banco de integración es [`cpu_burst_system_tb.v`](../cpu_burst_system_tb.v).
 Estas cifras no deben mezclarse con las medidas antiguas en placa de las demos,
 que corresponden a otras condiciones de ejecución.

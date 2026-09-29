@@ -182,7 +182,7 @@ operandos positivos la versión rota sale bien. El discriminante es `-1 × -1`:
 signed da parte alta `0x00000000`, unsigned daría `0xFFFFFFFE`.
 
 El razonamiento completo, y el del signo del resto, están en
-[`docs/alu-extendida.md`](docs/alu-extendida.md).
+[`docs/alu-extendida.md`](../21.fpga-cpu-hdmi-alu/docs/alu-extendida.md).
 
 Verificación: [`alu_extended_tb.v`](alu_extended_tb.v), con veintidós vectores
 —la mitad con operandos negativos— y las cuatro divisiones por cero, más los
@@ -213,7 +213,7 @@ El monitor **no escribe registros** —su único acceso al banco es
 no hay ningún `SET_REGISTER` que se convierta en un no-op silencioso. Se
 comprobó expresamente.
 
-Detalles en [`docs/registro-cero.md`](docs/registro-cero.md). Verificación:
+Detalles en [`docs/registro-cero.md`](../21.fpga-cpu-hdmi-alu/docs/registro-cero.md). Verificación:
 [`zero_register_tb.v`](zero_register_tb.v), que recorre los seis caminos por los
 que la CPU escribe el banco, y el caso
 [`basics/zero-register`](../x.tests/cases/basics/zero-register/).
@@ -320,7 +320,7 @@ aciertos, *exactamente iguales* en los fallos—, porque un camino rápido que n
 se activara nunca pasaría el testbench entero.
 
 Las reglas y qué protege cada una están en
-[`docs/alu-extendida.md`](docs/alu-extendida.md) §3.
+[`docs/alu-extendida.md`](../21.fpga-cpu-hdmi-alu/docs/alu-extendida.md) §3.
 
 ### Romper las suites a propósito
 
@@ -423,7 +423,7 @@ exigencia de dirección múltiplo de cuatro, que ahora comprueba la CPU —la ú
 que conoce el tamaño del acceso— antes de llegar al bus.
 
 El diseño entero, la tabla de opcodes y lo que costará la migración a v0.3 están
-en [`docs/accesos-sub-palabra.md`](docs/accesos-sub-palabra.md). La verificación
+en [`docs/accesos-sub-palabra.md`](../19.fpga-cpu-hdmi-ls/docs/accesos-sub-palabra.md). La verificación
 es [`subword_ls_tb.v`](subword_ls_tb.v), sobre el sistema completo, y la clase
 `SubwordAccessTest` de
 [`../2.cpu-sim-func/test_minicpu_sim.py`](../2.cpu-sim-func/test_minicpu_sim.py)
@@ -435,7 +435,7 @@ por pixel.
 Las llamadas cuestan aún menos hardware: reutilizan `STATE_BRANCH_COMMIT` entero
 y solo añaden un sumador de desplazamiento y el enlace escrito desde `pc`. El
 diseño y por qué `JR` sigue teniendo opcode propio están en
-[`docs/llamadas.md`](docs/llamadas.md); la verificación es el lote de llamadas de
+[`docs/llamadas.md`](../21.fpga-cpu-hdmi-alu/docs/llamadas.md); la verificación es el lote de llamadas de
 [`cpu_tb.v`](cpu_tb.v).
 
 **El monitor sube a 1.13 sin añadir ni un comando.** Las nueve instrucciones
@@ -508,7 +508,7 @@ Nada de esto está verificado **en placa**: la ULX3S no estaba conectada a esta
 máquina. Todo lo de abajo es simulación, síntesis y barrido de semillas.
 
 El paso 0 reordenó el plan y está contado entero en
-[`docs/medida-inicial.md`](docs/medida-inicial.md). El resumen: de los ~26 ciclos
+[`docs/medida-inicial.md`](../18.fpga-cpu-hdmi-bl8/docs/medida-inicial.md). El resumen: de los ~26 ciclos
 por acceso de 16 bits, **8 son comandos de SDRAM y 6,5 son suelo de handshake y
 de CPU**; y **el scanout se lleva otro 35 %** del tiempo de la CPU. Por eso el
 búfer de instrucciones se hizo primero: es lo más grande, y no necesita BL8 para
@@ -517,7 +517,7 @@ nada —sobre el bus de 16 bits ya daba 2,65×—.
 El paso 2 encontró **dos fallos** en el controlador BL8 que llegó de
 `pruebas/sdram`, uno de ellos grave: la ráfaga de lectura salía corrida un beat
 en la placa. Está contado en
-[`docs/controlador-bl8.md`](docs/controlador-bl8.md).
+[`docs/controlador-bl8.md`](../18.fpga-cpu-hdmi-bl8/docs/controlador-bl8.md).
 
 El paso 3 sustituye el lector de líneas por
 [`video_line_source_burst.v`](video_line_source_burst.v), con el mismo contrato
@@ -531,7 +531,7 @@ interior de `swap_demo_fast` pasa de los **146 ciclos por palabra de la 16 a
 49,7: 2,94×**, medido por
 [`cpu_burst_system_tb.v`](cpu_burst_system_tb.v) sobre el sistema completo.
 Cómo está montado y qué costó cerrar temporización está en
-[`docs/camino-de-memoria.md`](docs/camino-de-memoria.md).
+[`docs/camino-de-memoria.md`](../18.fpga-cpu-hdmi-bl8/docs/camino-de-memoria.md).
 
 Mejora sobre el techo que daba el búfer con el bus de 16 bits (53,2 ciclos por
 palabra) porque ahora **una línea de 16 bytes es exactamente una ráfaga BL8**: un
@@ -614,7 +614,7 @@ la CPU, y lectura que caiga en la línea guardada—, y cada uno tiene control
 negativo comprobado: se quitó del RTL y se verificó que el banco falla. Ahí
 apareció un fallo real, que `wb_dirty` bajaba al *empezar* el volcado y no al
 terminarlo, con lo que la carrera con el monitor seguía abierta. Está contado en
-[`docs/combinacion-escrituras.md`](docs/combinacion-escrituras.md).
+[`docs/combinacion-escrituras.md`](../18.fpga-cpu-hdmi-bl8/docs/combinacion-escrituras.md).
 
 ## El árbitro, y dos cosas que su banco corrigió
 
@@ -723,7 +723,7 @@ bus de 128 bits, que ensancha el árbitro, el controlador y los tres adaptadores
 
 Lo que costó cerrar temporización —de 84 a 100 MHz, con una parada en 78 por
 arreglar el camino crítico equivocado— está en
-[`docs/camino-de-memoria.md`](docs/camino-de-memoria.md).
+[`docs/camino-de-memoria.md`](../18.fpga-cpu-hdmi-bl8/docs/camino-de-memoria.md).
 
 ---
 
@@ -1034,7 +1034,7 @@ figuras de verdad, píxel a píxel:
 
 Las operaciones que este último deja como candidatas para evolucionar la ISA
 —y las optimizaciones que no necesitan tocarla— se analizan en
-[`docs/cubo-solido-isa.md`](docs/cubo-solido-isa.md).
+[`docs/cubo-solido-isa.md`](../21.fpga-cpu-hdmi-alu/docs/cubo-solido-isa.md).
 
 Son también los primeros ejemplos que usan `JAL`/`JR`. Un `putpixel` como
 subrutina es lo mínimo para que un programa así se pueda escribir: sin
@@ -1045,7 +1045,7 @@ Los dos reparten el enlace entre varios registros —`R31` y `R30` en las rectas
 más `R29` en las circunferencias— en lugar de salvarlo en memoria. Funciona
 porque `JAL` nombra su registro de enlace explícitamente, y es barato con dos o
 tres niveles, pero **no escala**: con recursión no vale de ninguna manera. Los
-propios ficheros lo explican y apuntan a [`docs/llamadas.md`](docs/llamadas.md);
+propios ficheros lo explican y apuntan a [`docs/llamadas.md`](../21.fpga-cpu-hdmi-alu/docs/llamadas.md);
 el caso `calls-link-and-return` de [`x.tests`](../x.tests) hace la
 versión con pila.
 

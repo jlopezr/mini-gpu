@@ -38,7 +38,7 @@ elimina por su cuenta los flops y la entrada del multiplexor.
 Añadir un `(addr == 0) ? 0 : registers[addr]` explícito metería un multiplexor
 extra en la ruta de lectura del banco, que es justo donde no se quiere: esa ruta
 es combinacional y desemboca en `operand_a`/`operand_b`, y es la que obligó a
-meter `STATE_DECODE` en su día. Ver [timing.md](timing.md).
+meter `STATE_DECODE` en su día. Ver [timing.md](../../10.fpga-cpu-ram/docs/timing.md).
 
 ## Qué NO hay que arreglar: el monitor
 

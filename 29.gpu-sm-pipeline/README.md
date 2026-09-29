@@ -10,7 +10,7 @@ lanes ociosas) por un cauce segmentado de 6 etapas con registro
 **S → F → I → D → X → W**, una instrucción en vuelo por warp, sin bypasses de
 registros ni de PC.
 
-El diseño está redactado en [`sm-pipeline.md`](sm-pipeline.md) (heredado de la
+El diseño está redactado en [`sm-pipeline.md`](../22.fpga-gpu-bl8/sm-pipeline.md) (heredado de la
 22, donde se escribió antes de implementarlo). La especificación ejecutable de
 esta misma microarquitectura — mismo nombre de etapas, mismo contrato de una
 instrucción por warp, misma prioridad fija W>LSU en el puerto de escritura del
@@ -26,10 +26,10 @@ iteración, no parte de esta.
 
 | Documento | De qué va |
 | --- | --- |
-| [`sm-pipeline.md`](sm-pipeline.md) | El diseño del cauce de 6 etapas: motivación, riesgos, roadmap |
-| [`lsu-v2.md`](lsu-v2.md) | La LSU heredada de la 22 (sin cambios aquí) |
-| [`profiling.md`](profiling.md) | Línea base de ciclos/instrucción de la 22, el número a batir |
-| [`mmio.md`](mmio.md) / [`video-scanout.md`](video-scanout.md) | Heredados de la 22, sin cambios funcionales |
+| [`sm-pipeline.md`](../22.fpga-gpu-bl8/sm-pipeline.md) | El diseño del cauce de 6 etapas: motivación, riesgos, roadmap |
+| [`lsu-v2.md`](../22.fpga-gpu-bl8/lsu-v2.md) | La LSU heredada de la 22 (sin cambios aquí) |
+| [`profiling.md`](../22.fpga-gpu-bl8/profiling.md) | Línea base de ciclos/instrucción de la 22, el número a batir |
+| [`mmio.md`](../22.fpga-gpu-bl8/mmio.md) / [`video-scanout.md`](../22.fpga-gpu-bl8/video-scanout.md) | Heredados de la 22, sin cambios funcionales |
 
 ## Estado
 
