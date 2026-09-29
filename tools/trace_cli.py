@@ -10,7 +10,8 @@ from pathlib import Path
 
 from tools.prototype import find_repo_root
 from tools.traceability import CORE_QUERIES, CORE_RULES, Graph, ImpactAnalyzer, ModelBuilder
-from tools.traceability.coverage import file_coverage
+from tools.traceability.coverage import file_coverage, repeated, unique_untraced
+from tools.traceability.dedupe import apply_plan, build_plan
 
 
 def parser() -> argparse.ArgumentParser:
@@ -36,7 +37,21 @@ def parser() -> argparse.ArgumentParser:
     coverage.add_argument("paths", nargs="*", type=Path, help="ficheros o directorios a resumir (por defecto, todo)")
     coverage.add_argument("--depth", type=int, default=1, help="niveles de directorio por los que agrupar (por defecto, 1)")
     coverage.add_argument("--files", action="store_true", help="lista cada fichero sin identidades")
+    coverage.add_argument("--ext", action="append", metavar="EXT",
+                          help="solo ficheros con esta extensión, por ejemplo --ext md (repetible)")
+    coverage.add_argument("--repeated", action="store_true",
+                          help="muestra solo las copias redundantes (sin el original) y cuánto se limpiaría")
+    coverage.add_argument("--unique", action="store_true",
+                          help="omite copias idénticas de un fichero ya marcado o listado antes")
     _query_options(coverage)
+    dedupe = commands.add_parser("dedupe", help="borra copias idénticas de documentos y reapunta sus enlaces")
+    dedupe.add_argument("paths", nargs="*", type=Path, help="limita a las copias bajo estas rutas")
+    dedupe.add_argument("--ext", action="append", metavar="EXT",
+                        help="extensiones a tratar (por defecto, md; los enlaces solo se reescriben en .md)")
+    dedupe.add_argument("--apply", action="store_true",
+                        help="reescribe enlaces y borra las copias; sin esto solo muestra el plan")
+    dedupe.add_argument("--root", type=Path, help="raíz del repositorio")
+    dedupe.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     listing = commands.add_parser("list", help="lista identidades del modelo")
     listing.add_argument("--type", dest="element_type", help="tipo semántico o estructural")
     listing.add_argument("--kind", help="kind de artifact o facet")
@@ -81,8 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    if args.command == "dedupe":
+        return run_dedupe(root, model, args.paths, args.ext, args.apply)
+    if args.command == "coverage" and args.repeated:
+        return show_repeated(root, model, args.paths, args.depth, args.files, args.ext, args.format)
     if args.command == "coverage":
-        return show_coverage(root, model, args.paths, args.depth, args.files, args.format)
+        return show_coverage(root, model, args.paths, args.depth, args.files, args.unique, args.ext, args.format)
     if args.command == "show":
         return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
@@ -124,16 +143,97 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def show_coverage(root: Path, model, paths: list[Path], depth: int, list_files: bool,
-                  output_format: str) -> int:
-    items = file_coverage(model)
+def run_dedupe(root: Path, model, paths: list[Path], extensions: list[str] | None, apply: bool) -> int:
+    suffixes = {"." + item.lstrip(".").lower() for item in extensions or ["md"]}
+    plan = build_plan(root, file_coverage(model), paths, suffixes)
+    rel = lambda path: path.relative_to(root).as_posix()
+    for copy, original in plan.deletions:
+        print(f"borrar {rel(copy)}  (queda {rel(original)})")
+    for path, reason in plan.skipped:
+        print(f"omitido {rel(path)}: {reason}")
+    for rewrite in plan.rewrites:
+        print(f"enlace {rel(rewrite.path)}:{rewrite.line}: {rewrite.old} -> {rewrite.new}")
+    if plan.mentions:
+        print("menciones sueltas que no se pueden reescribir (revisar a mano):")
+        for mention in plan.mentions:
+            print(f"  {rel(mention.path)}:{mention.line}: {mention.text[:100]}  [{mention.copy.name}]")
+    files = len({rewrite.path for rewrite in plan.rewrites})
+    print(f"{len(plan.deletions)} copias, {len(plan.rewrites)} enlaces en {files} ficheros, "
+          f"{len(plan.mentions)} menciones sueltas")
+    if not apply:
+        print("vista previa: no se ha modificado nada; usa --apply para ejecutarlo")
+        return 0
+    try:
+        apply_plan(plan)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print("aplicado")
+    return 0
+
+
+def _select(root: Path, items, paths: list[Path], extensions: list[str] | None, key=lambda item: item):
+    """Filtra por extensión y por rutas; `key` extrae el FileCoverage de cada elemento."""
+    if extensions:
+        suffixes = {"." + item.lstrip(".").lower() for item in extensions}
+        items = [item for item in items if key(item).path.suffix.lower() in suffixes]
     if paths:
         selected = [(path if path.is_absolute() else root / path).resolve() for path in paths]
-        items = [item for item in items if any(item.path.is_relative_to(path) for path in selected)]
+        items = [item for item in items if any(key(item).path.is_relative_to(path) for path in selected)]
+    return items
+
+
+def _group_name(root: Path, item, depth: int) -> str:
+    parts = item.path.relative_to(root).parent.parts[:max(depth, 1)]
+    return "/".join(parts) or "."
+
+
+def show_repeated(root: Path, model, paths: list[Path], depth: int, list_files: bool,
+                  extensions: list[str] | None, output_format: str) -> int:
+    pairs = _select(root, repeated(file_coverage(model)), paths, extensions, key=lambda pair: pair[0])
+    rel = lambda item: item.path.relative_to(root).as_posix()
+    groups: dict[str, list[int]] = {}
+    for copy, _ in pairs:
+        counts = groups.setdefault(_group_name(root, copy, depth), [0, 0])
+        counts[0] += 1
+        counts[1] += copy.lines
+    rows = sorted(groups.items(), key=lambda entry: (-entry[1][0], entry[0]))
+    total_files = sum(counts[0] for counts in groups.values())
+    total_lines = sum(counts[1] for counts in groups.values())
+
+    if output_format == "json":
+        print(json.dumps({
+            "summary": [{"directory": name, "files": count, "lines": lines} for name, (count, lines) in rows],
+            "total": {"files": total_files, "lines": total_lines},
+            "repeated": [{"path": rel(copy), "lines": copy.lines, "copy_of": rel(original),
+                          "traced": bool(copy.identities)} for copy, original in pairs],
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"{total_files} ficheros repetidos, {total_lines} líneas que se podrían quitar")
+    width = max((len(name) for name, _ in rows), default=1)
+    for name, (count, lines) in rows:
+        print(f"  {name:<{width}}  {count:>4} ficheros, {lines:>7} líneas")
+    if list_files:
+        print("repetidos (copia <- original):")
+        for copy, original in pairs:
+            flag = " [con identidades]" if copy.identities else ""
+            print(f"  {rel(copy)} ({copy.lines} líneas) <- {rel(original)}{flag}")
+    return 0
+
+
+def show_coverage(root: Path, model, paths: list[Path], depth: int, list_files: bool,
+                  unique: bool, extensions: list[str] | None, output_format: str) -> int:
+    items = file_coverage(model)
+    copies: dict[Path, list[Path]] = {}
+    if unique:
+        kept, copies = unique_untraced(items)
+        keep = {item.path for item in kept}
+        items = [item for item in items if item.identities or item.path in keep]
+    items = _select(root, items, paths, extensions)
 
     def group(item) -> str:
-        parts = item.path.relative_to(root).parent.parts[:max(depth, 1)]
-        return "/".join(parts) or "."
+        return _group_name(root, item, depth)
 
     groups: dict[str, list[int]] = {}
     for item in items:
@@ -150,7 +250,8 @@ def show_coverage(root: Path, model, paths: list[Path], depth: int, list_files: 
         print(json.dumps({
             "summary": [{"directory": name, "files": total, "traced": traced, "untraced": total - traced}
                         for name, (total, traced) in rows],
-            "untraced": [{"path": item.path.relative_to(root).as_posix(), "lines": item.lines}
+            "untraced": [{"path": item.path.relative_to(root).as_posix(), "lines": item.lines,
+                          "copies": [path.relative_to(root).as_posix() for path in copies.get(item.path, ())]}
                          for item in untraced],
             "nested_projects": nested,
         }, ensure_ascii=False, indent=2))
@@ -165,7 +266,10 @@ def show_coverage(root: Path, model, paths: list[Path], depth: int, list_files: 
     if list_files:
         print("sin marcar (por directorio, más largos primero):")
         for item in untraced:
-            print(f"  {item.path.relative_to(root).as_posix()} ({item.lines} líneas)")
+            extra = f", +{len(copies[item.path])} copias" if copies.get(item.path) else ""
+            print(f"  {item.path.relative_to(root).as_posix()} ({item.lines} líneas{extra})")
+            for copy in copies.get(item.path, ()):
+                print(f"      = {copy.relative_to(root).as_posix()}")
     if nested:
         print("proyectos anidados (fuera de este análisis): " + ", ".join(nested))
     return 0

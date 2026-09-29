@@ -858,11 +858,94 @@ scna: [docs/**]
                 status = main(["coverage", "--format", "json", "--root", str(root)])
             self.assertEqual(status, 0)
             data = json.loads(output.getvalue())
-            self.assertEqual(data["untraced"], [{"path": "docs/plain.md", "lines": 3},
-                                                {"path": "other/plain.md", "lines": 1}])
+            self.assertEqual(data["untraced"], [{"path": "docs/plain.md", "lines": 3, "copies": []},
+                                                {"path": "other/plain.md", "lines": 1, "copies": []}])
             self.assertEqual({row["directory"]: (row["traced"], row["untraced"]) for row in data["summary"]},
                              {"docs": (1, 1), "other": (0, 1)})
             self.assertEqual(data["nested_projects"], ["sub"])
+
+    def test_coverage_unique_collapses_identical_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            marked = "<!-- trace:artifact DES-A\ntype: design\n-->\n# A\n"
+            self.write(root, "a/marked.md", marked)
+            self.write(root, "a/copy-of-marked.md", marked)
+            self.write(root, "a/shared.md", "")
+            (root / "a" / "shared.md").write_bytes(b"uno\r\ndos\r\n")
+            self.write(root, "b/shared.md", "uno\ndos\n")
+            self.write(root, "c/shared.md", "uno\ndos\n")
+            self.write(root, "c/own.md", "distinto\n")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                main(["coverage", "--unique", "--format", "json", "--root", str(root)])
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["untraced"], [
+                {"path": "a/shared.md", "lines": 2, "copies": ["b/shared.md", "c/shared.md"]},
+                {"path": "c/own.md", "lines": 1, "copies": []},
+            ])
+
+    def test_coverage_repeated_lists_only_redundant_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: []\n")
+            self.write(root, "10.b/doc.md", "uno\ndos\n")
+            self.write(root, "6.a/doc.md", "uno\ndos\n")
+            self.write(root, "7.c/doc.md", "uno\ndos\n")
+            self.write(root, "6.a/own.md", "solo\n")
+            self.write(root, "6.a/empty.md", "")
+            self.write(root, "7.c/empty.md", "")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main(["coverage", "--repeated", "--format", "json", "--root", str(root)])
+            self.assertEqual(status, 0)
+            data = json.loads(output.getvalue())
+            self.assertEqual([(item["path"], item["copy_of"]) for item in data["repeated"]],
+                             [("7.c/doc.md", "6.a/doc.md"), ("10.b/doc.md", "6.a/doc.md")])
+            self.assertEqual(data["total"], {"files": 2, "lines": 4})
+
+    def test_dedupe_previews_then_repoints_links_and_deletes_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write(root, "trace.yaml", "scan: ['**/*.md', '**/*.v']\nexclude: []\n")
+            self.write(root, "6.a/doc.md", "# Doc\n\ncuerpo\n")
+            self.write(root, "7.b/doc.md", "# Doc\n\ncuerpo\n")
+            readme = self.write(root, "7.b/README.md", "\n".join([
+                "Ver [doc](doc.md#sec) y [otro](other-doc.md) y [web](https://x.org/doc.md).",
+                "```",
+                "[en codigo](doc.md)",
+                "```",
+                "[ref]: ./doc.md",
+                "",
+            ]))
+            self.write(root, "7.b/other-doc.md", "distinto\n")
+            self.write(root, "7.b/top.v", "// ver doc.md para el detalle\n")
+
+            def run(*extra):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = main(["dedupe", "--root", str(root), *extra])
+                return status, output.getvalue()
+
+            before = readme.read_text(encoding="utf-8")
+            status, text = run()
+            self.assertEqual(status, 0)
+            self.assertIn("vista previa", text)
+            self.assertIn("top.v:1", text)
+            self.assertEqual(readme.read_text(encoding="utf-8"), before)
+            self.assertTrue((root / "7.b" / "doc.md").exists())
+
+            status, _ = run("--apply")
+            self.assertEqual(status, 0)
+            self.assertFalse((root / "7.b" / "doc.md").exists())
+            self.assertTrue((root / "6.a" / "doc.md").exists())
+            self.assertEqual(readme.read_text(encoding="utf-8").splitlines(), [
+                "Ver [doc](../6.a/doc.md#sec) y [otro](other-doc.md) y [web](https://x.org/doc.md).",
+                "```",
+                "[en codigo](doc.md)",
+                "```",
+                "[ref]: ../6.a/doc.md",
+            ])
 
     def test_nested_trace_yaml_is_an_independent_project(self):
         with tempfile.TemporaryDirectory() as temporary:
