@@ -87,6 +87,29 @@ int main(void)
         return 1;
     }
 
+    /* INPUT reads its line from the same character stream, with editing. */
+    h.input =
+        "10 INPUT \"Name: \"; N$\n"
+        "20 INPUT AGE\n"
+        "30 PRINT \"Hi \" + N$ + \" \" + STR$(AGE + 1)\n"
+        "RUN\n"
+        "Bo\bob\n"
+        "4x\b1\n";
+    h.input_pos = 0;
+    h.output[0] = 0;
+    mb_program_init(&program, memory, sizeof(memory));
+    mb_runtime_init(&runtime);
+
+    r = mb_repl(&program, &runtime, &io, line, sizeof(line), 64);
+    if (r != MB_OK) {
+        printf("repl (input) failed: %d\n", r);
+        return 1;
+    }
+    if (!contains(h.output, "Name: Bo\b \bob\r\n? 4x\b \b1\r\nHi Bob 42\r\n")) {
+        printf("missing input session:\n%s\n", h.output);
+        return 1;
+    }
+
     printf("ok: repl\n");
     return 0;
 }

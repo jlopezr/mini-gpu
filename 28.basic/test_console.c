@@ -273,6 +273,24 @@ int main(void)
     if (process(&program, &runtime, "RUN", &run_io, &console_io)) return 1;
     if (expect(output.text, "1\n2\n3\n6\n4\n2\n") != 0) return 1;
 
+    if (process(&program, &runtime, "NEW", &run_io, &console_io)) return 1;
+    output.text[0] = 0;
+    if (process(&program, &runtime, "10 A = 5", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "20 WHILE A < 3", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "30 PRINT 99", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "40 WEND", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "RUN", &run_io, &console_io)) return 1;
+    if (expect(output.text, "") != 0) return 1;
+
+    if (process(&program, &runtime, "NEW", &run_io, &console_io)) return 1;
+    output.text[0] = 0;
+    if (process(&program, &runtime, "10 A = 1", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "20 IF A = 0 THEN", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "30 PRINT 99", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "40 END IF", &run_io, &console_io)) return 1;
+    if (process(&program, &runtime, "RUN", &run_io, &console_io)) return 1;
+    if (expect(output.text, "") != 0) return 1;
+
     printf("ok: console line processing\n");
     return 0;
 }

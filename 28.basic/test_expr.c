@@ -45,9 +45,9 @@ int main(void)
     if (check_expr("(1 + 2) * 3", &runtime, 9)) return 1;
     if (check_expr("A + B * 2", &runtime, 11)) return 1;
     if (check_expr("-A + 10", &runtime, 7)) return 1;
-    if (check_expr("A < B", &runtime, 1)) return 1;
+    if (check_expr("A < B", &runtime, -1)) return 1;
     if (check_expr("A >= B", &runtime, 0)) return 1;
-    if (check_expr("A <> B", &runtime, 1)) return 1;
+    if (check_expr("A <> B", &runtime, -1)) return 1;
 
     r = mb_compile_expr("1 / 0", code, sizeof(code), &len);
     if (r != MB_OK) return 1;

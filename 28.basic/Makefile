@@ -19,12 +19,31 @@ test_console: $(CORE) $(HEADERS) test_console.c
 test_repl: $(CORE) $(HEADERS) test_repl.c
 	$(CC) $(CFLAGS) -o test_repl $(CORE) test_repl.c
 
-test: test_basic_store test_expr test_run test_console test_repl
+test_strings: $(CORE) $(HEADERS) test_strings.c
+	$(CC) $(CFLAGS) -o test_strings $(CORE) test_strings.c
+
+test_input: $(CORE) $(HEADERS) test_input.c
+	$(CC) $(CFLAGS) -o test_input $(CORE) test_input.c
+
+test_arrays: $(CORE) $(HEADERS) test_arrays.c
+	$(CC) $(CFLAGS) -o test_arrays $(CORE) test_arrays.c
+
+test_logic: $(CORE) $(HEADERS) test_logic.c
+	$(CC) $(CFLAGS) -o test_logic $(CORE) test_logic.c
+
+basic_host: $(CORE) $(HEADERS) basic_platform.h basic_main.c basic_platform_host.c
+	$(CC) $(CFLAGS) -o basic_host $(CORE) basic_main.c basic_platform_host.c
+
+test: test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic
 	./test_basic_store
 	./test_expr
 	./test_run
 	./test_console
 	./test_repl
+	./test_strings
+	./test_input
+	./test_arrays
+	./test_logic
 
 clean:
-	rm -f test_basic_store test_expr test_run test_console test_repl
+	rm -f basic_host test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic
