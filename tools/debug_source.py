@@ -145,7 +145,10 @@ def from_program(path: Path,
         return SourceMap()
 
     try:
-        from mini_asm import first_pass, parse_reg, resolve_target, split_operands
+        from mini_asm import (
+            first_pass, instruction_size_bytes, li_short_literal, parse_reg,
+            resolve_target, split_operands,
+        )
 
         lines, labels, _, equates = first_pass(
             path.read_text(encoding="utf-8"), path.parent, path.name,
@@ -162,7 +165,14 @@ def from_program(path: Path,
         mnemonic = parts[0].upper()
         operands = split_operands(parts[1] if len(parts) > 1 else "")
         if mnemonic in {"LI", "LA"}:
-            if len(operands) == 2:
+            if len(operands) == 2 and instruction_size_bytes(line.text) == 4:
+                # `LI` con un literal que cabe en signed16: una sola palabra,
+                # un `MOVI`. No hay continuación, y marcar pc+4 como tal
+                # taparía la instrucción siguiente.
+                register = operands[0]
+                source.expansions[line.pc] = (
+                    f"MOVI {register}, {li_short_literal(parts[1])}",)
+            elif len(operands) == 2:
                 register, value_text = operands
                 value = resolve_target(value_text, labels) & 0xFFFFFFFF
                 source.expansions[line.pc] = (

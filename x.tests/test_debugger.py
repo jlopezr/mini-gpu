@@ -155,6 +155,26 @@ class SourceMapTest(unittest.TestCase):
         self.assertEqual(rows[0].text, "LI R1, 0x12345678")
         self.assertEqual(rows[1].text, "  (continuacion)")
 
+    def test_short_li_is_one_row_with_no_continuation(self):
+        # `LI` con un literal de signed16 es un MOVI: una palabra. La fila
+        # siguiente es la instrucción de verdad, no una "continuacion".
+        session = build("LI R1, 5\nHALT\n", tmp=self.tmp)
+
+        rows = session.listing()
+        self.assertEqual([row.address for row in rows[:2]], [0, 4])
+        self.assertEqual(rows[1].text, "HALT")
+
+        session.step()
+        rows = session.listing()
+        self.assertEqual(rows[0].text, "LI R1, 5")
+        self.assertEqual(rows[1].text, "HALT")
+        self.assertEqual(session.source.continuations, {})
+
+    def test_short_li_shows_its_expansion_while_it_is_the_active_row(self):
+        session = build("LI R1, -3\nHALT\n", tmp=self.tmp)
+        self.assertEqual(session.listing()[0].text,
+                         "LI R1, -3" + " " * 23 + "──────▶ MOVI R1, -3")
+
     def test_symbolic_memory_offset_has_effective_address(self):
         session = build(
             ".equ PORT_OFF, 12\nMOVI R2, 0x1000\n"
