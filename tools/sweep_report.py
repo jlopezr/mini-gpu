@@ -26,6 +26,7 @@ Lo que sí sigue siendo motivo para no empezar es que el build de partida no sea
 de fiar —falló, es sólo archivo, o las fuentes cambiaron mientras se
 construía—, porque entonces el netlist no representa a nada."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import hashlib
 import json
@@ -313,6 +314,9 @@ def main():
     parser.add_argument('-p', '--prototype')
     parser.add_argument('--report-dir', type=Path, default=None)
     parser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5])
+    parser.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 3) // 3),
+                        help='semillas en paralelo (por defecto un tercio de los hilos: nextpnr '
+                             'es monohilo y usa unos 500 MB). No cambia ningun resultado')
     parser.add_argument('--apply', action='store_true',
                         help='escribe la semilla con más margen en el apio.ini del prototipo '
                              '(solo si alguna cumple timing)')
@@ -397,7 +401,9 @@ def main():
                 raise SystemExit(f'Se esperaba exactamente un .lpf en sources.zip; hay {lpf_names}')
             lpf = Path(temporary) / lpf_names[0]
             lpf.write_bytes(archive.read(lpf_names[0]))
-        for seed in args.seeds:
+        def route(seed):
+            """Una semilla entera. Cada una vive en su carpeta, asi que en paralelo
+            no comparten nada salvo `hardware.json`, que solo se lee."""
             run = folder / f'seed-{seed}'
             run.mkdir()
             command = [str(exe), f"--{params['type']}", '--package', params['package'],
@@ -417,17 +423,31 @@ def main():
             # sigue, para no perder las otras siete por una.
             if result.returncode:
                 print(f'Seed {seed}: nextpnr falló; retenido en {run}', flush=True)
-                continue
+                return None
             summary = summarize(json.loads((run / 'hardware.pnr').read_text()))
             (run / 'summary.json').write_text(json.dumps(summary, indent=2))
-            cumple = timing_passes(summary['clocks'])
-            results.append(dict(seed=seed, clocks=summary['clocks'], passes=cumple))
-            (folder / 'results.json').write_text(json.dumps(results, indent=2))
-            print(f"{_paint('OK', '32', color) if cumple else _paint('NO', '31', color)} seed {seed}: "
-                  + ', '.join(
-                      f"{clock} {v['achieved']:.2f}/{v['constraint']:.0f} MHz"
-                      for clock, v in sorted(summary['clocks'].items()))
-                  , flush=True)
+            return dict(seed=seed, clocks=summary['clocks'],
+                        passes=timing_passes(summary['clocks']))
+
+        # nextpnr es monohilo y con la misma semilla es determinista: correr
+        # varias a la vez no cambia ningun resultado, solo el tiempo de pared.
+        jobs = max(1, min(args.jobs, len(args.seeds)))
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = [pool.submit(route, seed) for seed in args.seeds]
+            for future in as_completed(pending):
+                outcome = future.result()
+                if outcome is None:
+                    continue
+                results.append(outcome)
+                results.sort(key=lambda r: r['seed'])
+                (folder / 'results.json').write_text(json.dumps(results, indent=2))
+                cumple = outcome['passes']
+                print(f"{_paint('OK', '32', color) if cumple else _paint('NO', '31', color)} "
+                      f"seed {outcome['seed']}: "
+                      + ', '.join(
+                          f"{clock} {v['achieved']:.2f}/{v['constraint']:.0f} MHz"
+                          for clock, v in sorted(outcome['clocks'].items()))
+                      , flush=True)
     if not results:
         raise SystemExit('Ninguna semilla llegó a producir un informe.')
     medians = {clock: statistics.median(r['clocks'][clock]['achieved'] for r in results)

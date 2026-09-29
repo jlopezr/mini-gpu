@@ -676,6 +676,8 @@ def _main() -> int:
     sweep_cmd.add_argument("--nextpnr-options", nargs="+", default=[], metavar="OPCION",
                            help="Opciones extra de nextpnr sin guiones y con = para el valor, "
                                 "p. ej. tmg-ripup placer-heap-timingweight=30")
+    sweep_cmd.add_argument("--jobs", type=int, default=None,
+                           help="Semillas en paralelo (por defecto, un tercio de los hilos de la máquina)")
     sweep_cmd.add_argument("--apply", action="store_true",
                            help="Escribe en el apio.ini la semilla con más margen (solo si alguna cumple)")
     sweep_cmd.add_argument("--background", action="store_true", help="Lanza el barrido en segundo plano y vuelve enseguida")
@@ -833,6 +835,8 @@ def _main() -> int:
             command += ["--nextpnr-options", *args.nextpnr_options]
         if args.compare is not None:
             command += ["--compare", str(args.compare.resolve())]
+        if args.jobs is not None:
+            command += ["--jobs", str(args.jobs)]
         if args.apply:
             command.append("--apply")
         args.cmd_args = ["--", *command]
