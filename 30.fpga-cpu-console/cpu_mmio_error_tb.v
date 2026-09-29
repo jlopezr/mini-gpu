@@ -41,7 +41,7 @@ module cpu_mmio_error_tb;
   // Los mismos parametros que `top.v`. Tienen que coincidir: este banco
   // comprueba valores concretos de SYSTEM, y un banco con otra configuracion
   // probaria un decodificador que no es el que se sintetiza.
-  mmio_decoder #(.FOLDER(8'd21),.HAS_SERIAL(1),
+  mmio_decoder #(.FOLDER(8'd21),.HAS_SERIAL(1),.PERF_SLOTS(8),
     .VIDEO_REGISTERS(64'h3ff),.ISA_PROFILE(32'h0000_0007),
     .DEVICES(32'h0000_0235),
     .MEM_BASE(32'h0000_0000),.MEM_SIZE(32'h0200_0000),
@@ -156,7 +156,11 @@ module cpu_mmio_error_tb;
       // entero era de solo lectura.
       check(16'h8101,16'h0000,w,0);      // CYCLES
       check(16'h8101,16'h0004,w,0);      // RETIRED
-      check(16'h8101,16'h0008,w,1);      // ranura sin contador
+      // Las seis siguientes existen desde que la carpeta tiene los contadores de
+      // espera: IMEM_HITS, IMEM_MISSES, MEM_TX, STALL_MEM, STALL_FETCH, STALL_MMIO.
+      check(16'h8101,16'h0008,w,0);
+      check(16'h8101,16'h001c,w,0);      // la ultima, STALL_MMIO
+      check(16'h8101,16'h0020,w,1);      // ranura 8: sin contador
       check(16'h8101,16'h00fc,w,1);      // ultima ranura del array, vacia
       check(16'h8101,16'h0100,w,0);      // PERF_CTRL
       check(16'h8101,16'h0108,w,0);      // PERF_OVF1

@@ -77,6 +77,11 @@ module mmio_decoder #(
     parameter [31:0] FOLDER = 32'd0,
     parameter [31:0] ISA_PROFILE = 32'd0,
     parameter HAS_SERIAL = 1,
+    // Cuantas ranuras del array de CPU PERFORMANCE existen de verdad (mmio.md
+    // §12.6): las demas dan error, no ceros. Tiene que coincidir con
+    // `NUM_COUNTERS` de `cpu_perf_counters`. Por defecto dos --CYCLES y RETIRED--,
+    // que es lo que tienen las carpetas anteriores; esta pone ocho.
+    parameter integer PERF_SLOTS = 2,
     // Que palabras del bloque VIDEO existen. Diez en MMIO v2 (§9): CTRL,
     // FB_FRONT, FB_BACK, SWAP, STATUS, FRAME_COUNT, SWAP_COUNT, HALT_AT,
     // HALT_TARGET y VIDEO_TX.
@@ -223,10 +228,10 @@ module mmio_decoder #(
       // Disposicion de §12.6. Aqui SI hay registros por encima de +0xFF: el
       // array llega hasta +0x0FC y el control esta detras, en +0x100.
       //
-      //   +0x000..+0x0FC  array: solo las ranuras con contador
+      //   +0x000..+0x0FC  array: solo las ranuras con contador (PERF_SLOTS)
       //   +0x100..+0x108  PERF_CTRL, PERF_OVF0, PERF_OVF1
       if (offset < 16'h0100)
-        error_direccion = (palabra > 6'd1) || |offset[15:8];
+        error_direccion = (palabra >= PERF_SLOTS) || |offset[15:8];
       else
         error_direccion = (offset > 16'h0108) || |offset[1:0]
                           || (offset[15:8] != 8'h01);

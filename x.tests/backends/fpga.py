@@ -103,6 +103,8 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_VIDEO_CTRL_OFF, MMIO_CPU_PERF_BASE, MMIO_PERF_CYCLES_OFF,
     MMIO_PERF_RETIRED_OFF, MMIO_VIDEO_FRAME_COUNT_OFF,
     MMIO_VIDEO_HALT_TARGET_OFF,
+    MMIO_PERF_IMEM_HITS_OFF, MMIO_PERF_IMEM_MISSES_OFF, MMIO_PERF_MEM_TX_OFF,
+    MMIO_PERF_STALL_MEM_OFF, MMIO_PERF_STALL_FETCH_OFF, MMIO_PERF_STALL_MMIO_OFF,
 )
 
 VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
@@ -127,6 +129,17 @@ MODE_SCANOUT = 2
 # CPU es un prefijo del de GPU, con CYCLES en +0x00 y RETIRED en +0x04.
 PERF_CYCLES = MMIO_CPU_PERF_BASE + MMIO_PERF_CYCLES_OFF
 PERF_RETIRED = MMIO_CPU_PERF_BASE + MMIO_PERF_RETIRED_OFF
+# Los contadores de espera (capacidad `perf_stalls`, mmio.md §13.2). Con
+# CYCLES se reparte el tiempo: CYCLES = calculo + STALL_MEM + STALL_MMIO, y de
+# STALL_MEM se separan la busqueda (STALL_FETCH) y los datos (el resto).
+PERF_STALL_COUNTERS = {
+    "imem_hits": MMIO_CPU_PERF_BASE + MMIO_PERF_IMEM_HITS_OFF,
+    "imem_misses": MMIO_CPU_PERF_BASE + MMIO_PERF_IMEM_MISSES_OFF,
+    "mem_tx": MMIO_CPU_PERF_BASE + MMIO_PERF_MEM_TX_OFF,
+    "stall_mem": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MEM_OFF,
+    "stall_fetch": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_FETCH_OFF,
+    "stall_mmio": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MMIO_OFF,
+}
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
 
@@ -489,9 +502,17 @@ class FpgaBackend:
             # son un dispositivo como los demas --ver cpu_perf_counters.v-- y la
             # capacidad se detecta del RTL igual que el resto.
             cycles = instructions = None
+            esperas = None
             if "perf_counters" in capacidades:
                 cycles = _read_register(client, PERF_CYCLES, tiene_palabra)
                 instructions = _read_register(client, PERF_RETIRED, tiene_palabra)
+            # Los de espera solo donde el RTL los tiene: leer una ranura sin
+            # contador da error de MMIO, no un cero.
+            if "perf_stalls" in capacidades:
+                esperas = {
+                    nombre: _read_register(client, direccion, tiene_palabra)
+                    for nombre, direccion in PERF_STALL_COUNTERS.items()
+                }
 
             video_result = None
             if video:
@@ -591,5 +612,7 @@ class FpgaBackend:
             "stdout": salida_serie,
             "cycles": cycles,
             "instructions": instructions,
+            # `None` en las versiones sin contadores de espera.
+            "stalls": esperas,
             "clock_hz": self.configuration.get("clock_hz"),
         }

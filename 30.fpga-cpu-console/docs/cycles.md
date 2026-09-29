@@ -129,35 +129,98 @@ que corresponden a otras condiciones de ejecución.
 
 ## Contadores de rendimiento
 
-La 18 añade dos contadores en [`top.v`](../top.v), accesibles desde el monitor,
-para medir el CPI de programas completos con las esperas de memoria incluidas.
+La CPU tiene un dispositivo de contadores, **CPU PERFORMANCE**, en el MMIO
+`0x81010000` (contrato: [`mmio.md`](../../1.isa/mmio.md) §12 y §13.2; hardware:
+[`cpu_perf_counters.v`](../cpu_perf_counters.v)). Mide el CPI de programas
+completos con las esperas de memoria incluidas, y **como es MMIO, el propio
+programa puede leerlo en marcha**. Antes eran dos registros sueltos de
+[`top.v`](../top.v) que solo veía el host, con la CPU parada, por los comandos
+`0x36` y `0x37` del monitor: esos comandos ya no existen.
+
+| Ranura | Offset  | Contador      | Qué cuenta                                              |
+|-------:|---------|---------------|---------------------------------------------------------|
+| 0      | `+0x00` | `CYCLES`      | Ciclos con la CPU no parada                             |
+| 1      | `+0x04` | `RETIRED`     | Instrucciones retiradas                                 |
+| 2      | `+0x08` | `IMEM_HITS`   | Búsquedas servidas por el búfer de instrucciones        |
+| 3      | `+0x0C` | `IMEM_MISSES` | Búsquedas que tuvieron que ir a la SDRAM                |
+| 4      | `+0x10` | `MEM_TX`      | Peticiones de la CPU al fabric (fallos de búfer y datos)|
+| 5      | `+0x14` | `STALL_MEM`   | Ciclos esperando a memoria (búsqueda o datos)           |
+| 6      | `+0x18` | `STALL_FETCH` | De esos, los de la búsqueda de instrucción              |
+| 7      | `+0x1C` | `STALL_MMIO`  | Ciclos esperando a un dispositivo MMIO                  |
+
+Con ellos **los ciclos se reparten**, sin instrumentar nada más:
+
+```text
+CYCLES = cálculo + STALL_MEM + STALL_MMIO
+STALL_MEM = STALL_FETCH (búsqueda) + datos
+```
+
+`IMEM_HITS + IMEM_MISSES` son las búsquedas cacheables, y `MEM_TX / RETIRED` dice
+cuántas veces por instrucción hay que ir al fabric. El CPI es `CYCLES / RETIRED`
+y el IPC su inverso.
+
+Decisiones que importan al leer los números:
+
+- **Se ponen a cero al arrancar la CPU** (`run`), no al resetearla. Así `run` /
+  `halt` / `run` da tres medidas independientes en vez de una suma que crece sin
+  sentido.
+- **Dan la vuelta, no saturan** (mmio.md §12.2). A 80 MHz son 53 segundos de
+  `CYCLES`, y `RETIRED` tarda unos siete minutos con un CPI de 8. Un programa que
+  lleva corriendo más que eso tiene **valores absolutos sin sentido**; las
+  *diferencias* entre dos lecturas siguen valiendo por la aritmética modular, y
+  cada contador tiene una bandera de desbordamiento en `PERF_OVF0`
+  (`+0x104`, W1C).
+- **Solo cuentan con la CPU corriendo** (§12.3), y `PERF_CTRL.ENABLE` (`+0x100`)
+  los congela todos a la vez: leer seis contadores son seis instantes distintos si
+  el programa sigue corriendo. `monitor.py perf` lo hace solo.
+- **Los eventos se registran antes de contarse**, así que cada uno llega un ciclo
+  tarde; en una medida de miles de ciclos no se nota. Es lo que evita cargar el
+  camino de acierto del búfer de instrucciones, que era de los críticos.
+- **`RETIRED` no se condiciona a `running`**: el `HALT` retira en el mismo ciclo
+  en que la CPU se para, y con el filtro puesto se perdía justo esa.
+
+### Cómo leerlos
+
+```powershell
+..\.venv\Scripts\python.exe monitor.py perf        # lo acumulado desde el último run
+..\.venv\Scripts\python.exe monitor.py perf 2      # lo contado en una ventana de 2 s
+```
+
+`perf` congela el bloque, lee los ocho contadores y avisa si alguno ha dado la
+vuelta. **Con un programa que lleva minutos corriendo usa `perf N`**: mide una
+ventana, que es correcta aunque los contadores hayan dado la vuelta. En una
+placa con un bitstream anterior a los contadores de espera solo salen `CYCLES` y
+`RETIRED`, y lo dice.
+
+Y para comparar programas y versiones, `x.tests` lo mide por caso (tercera tabla,
+«Reparto de los ciclos»):
+
+```powershell
+..\x.tests\run_tests.py --backend cpu-fpga --measure medidas.md --port COM3 ..\x.tests\cases
+```
+
+Un ejemplo, en simulación, con el bucle interior de `cpu_burst_system_tb.v`
+(160 palabras de framebuffer; sale de `apio test cpu_burst_system_tb.v`):
+
+| Contador           |   Valor | Lectura                               |
+|--------------------|--------:|---------------------------------------|
+| `CYCLES`           |   5 640 |                                       |
+| `RETIRED`          |     645 | CPI 8,74                              |
+| `STALL_MEM`        |   1 615 | 28,6 % de los ciclos                  |
+| `STALL_FETCH`      |     708 | 12,6 % (de esos)                      |
+| `STALL_MMIO`       |       0 | 0,0 %                                 |
+| `IMEM_HITS/MISSES` | 642 / 3 | 99,5 % de acierto                     |
+| `MEM_TX`           |      42 | igual que las ráfagas del controlador |
+
+O sea que **en ese bucle casi un tercio de los ciclos es esperar a memoria**,
+repartido entre la búsqueda (12,6 %) y los datos (16,1 %), con un búfer que acierta
+el 99,5 %: los fallos son tres, pero cada uno cuesta una lectura entera de SDRAM.
+En placa, sobre el programa de la consola corriendo, `perf 2` dio **CPI 8,20**
+(IPC 0,122) con el bitstream anterior a los contadores de espera; el reparto está
+por medir en placa.
+
 Las medidas en placa de abajo son las registradas en el proyecto; esta
 actualización documental no supone una nueva ejecución en hardware.
-
-`instruction_retired` salía de la CPU desde la 6 y no iba a ninguna parte. Ahora
-alimenta `cpu_instructions`; junto a `cpu_cycles` da el CPI real, esperas de
-memoria incluidas, que es justo lo que este documento estimaba a mano.
-
-| Registro           | Qué cuenta                      |
-|--------------------|---------------------------------|
-| `cpu_cycles`       | Ciclos con la CPU no parada     |
-| `cpu_instructions` | Pulsos de `instruction_retired` |
-
-Dos decisiones que importan al leer los números:
-
-- **Se ponen a cero al arrancar la CPU**, no al resetearla. Así `run` / `halt` /
-  `run` da tres medidas independientes en vez de una suma que crece sin sentido.
-- **Saturan en vez de dar la vuelta.** Un contador que ha dado la vuelta miente
-  en silencio, y a 80 MHz son 53 segundos de programa.
-
-Son dos comandos del monitor y no uno (`0x36` ciclos, `0x37` instrucciones)
-porque el búfer de respuesta tiene 7 bytes y los dos contadores juntos necesitan
-9. Se leen con la CPU ya parada, así que ninguno se mueve entre una lectura y la
-otra.
-
-```bash
-python monitor.py perf --port COM3   # cycles=... instructions=... CPI=...
-```
 
 ### Medido en placa
 

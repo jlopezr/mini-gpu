@@ -779,10 +779,57 @@ Array según §12.6.
 | 3 | `+0x0C` | `IMEM_MISSES` |
 | 4 | `+0x10` | `MEM_TX` |
 | 5 | `+0x14` | `STALL_MEM` |
+| 6 | `+0x18` | `STALL_FETCH` (extensión) |
+| 7 | `+0x1C` | `STALL_MMIO` (extensión) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
-placa**, sin simular y sin cronómetro.
+placa**, sin simular y sin cronómetro. Las ranuras 6 y 7 son las dos siguientes
+libres, como pide §12.6, y separan lo que `STALL_MEM` junta.
+
+**Qué cuenta cada uno.** Todos siguen §12: 32 bits, dan la vuelta, tienen su
+bandera en `PERF_OVF0` (el bit `n` es el de la ranura `n`) y avanzan solo con el
+núcleo corriendo, salvo `RETIRED` (abajo).
+
+| Contador | Cuenta |
+|---|---|
+| `CYCLES` | Ciclos en los que el núcleo no está parado. Incluye los que espera a memoria o a un dispositivo. |
+| `RETIRED` | Instrucciones retiradas, una por pulso. **No** se condiciona a que el núcleo corra: el `HALT` se retira en el mismo ciclo en que el núcleo se para, y contarlo es lo que hace que coincida con el simulador. Sí se congela con `PERF_CTRL.ENABLE`. |
+| `IMEM_HITS` | Búsquedas de instrucción cacheables servidas por el búfer, sin ir a memoria. |
+| `IMEM_MISSES` | Búsquedas cacheables que necesitaron leer una línea de memoria. Una búsqueda cacheable es la que cae dentro de la memoria y llega con la inicialización terminada: las demás se contestan con error y no cuentan. |
+| `MEM_TX` | Peticiones que el núcleo hace al fabric de memoria: cada relleno de línea de instrucciones y cada lectura o volcado de datos. Una petición cuenta **una vez**, se acepte cuando se acepte. El volcado del búfer de escrituras que sigue a un `halt` no cuenta, porque el núcleo ya no corre (§12.3). |
+| `STALL_MEM` | Ciclos con una petición de memoria del núcleo pendiente, sea búsqueda de instrucción o acceso a datos a memoria, y sin respuesta todavía. |
+| `STALL_FETCH` | De los de `STALL_MEM`, los de la búsqueda de instrucción. Los de datos son `STALL_MEM − STALL_FETCH`. |
+| `STALL_MMIO` | Ciclos con un acceso a datos a un dispositivo MMIO pendiente. **No** se suman a `STALL_MEM`: un dispositivo no es memoria. |
+
+**Identidades.** Con ellas se comprueba una implementación y se reparte el
+tiempo:
+
+```text
+CYCLES = cálculo + STALL_MEM + STALL_MMIO
+IMEM_HITS + IMEM_MISSES  ≈  RETIRED            (una búsqueda por instrucción)
+CPI = CYCLES / RETIRED         IPC = RETIRED / CYCLES
+```
+
+La primera se cumple salvo por uno o dos ciclos: los eventos cruzan un registro
+antes de contarse, así que llegan un ciclo tarde. Es un retraso constante, no un
+error acumulado.
+
+**Qué implementa cada carpeta.** Un bloque declara las ranuras que tiene y las
+demás dan error (§12.6), no cero. Las CPU de las carpetas 16 a 21 implementan las
+ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
+detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
+RTL. Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+son bloques distintos y no chocan.
+
+**Cómo se leen.** Con el núcleo parado, o congelando el bloque con
+`PERF_CTRL.ENABLE = 0` (§12.5) si sigue corriendo: leer ocho contadores son ocho
+instantes distintos con el programa corriendo entre medias. Un programa que
+lleva más de 53 s a 80 MHz ya ha dado la vuelta en `CYCLES` (y en unos siete
+minutos en `RETIRED`, con un CPI de 8): sus valores absolutos no significan nada
+—`PERF_OVF0` lo dice—, pero la resta de dos lecturas sigue valiendo (§12.2). En
+el PC, `monitor.py perf [segundos]` y `x.tests/run_tests.py --measure` hacen todo
+esto.
 
 ### 13.3. CPU DEBUG — `0x81020000`
 

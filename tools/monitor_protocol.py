@@ -82,10 +82,18 @@ RSP_RECV_BYTES = 0xB9
 RSP_SELECT_CONTEXT = 0xBA
 RSP_ERROR = 0xFF
 
-# Contadores de rendimiento, en el MMIO y no en un comando propio. Los MISMOS
-# offsets en las dos familias: el bloque de CPU es un prefijo del de GPU.
-PERF_CYCLES = 0x8000_0300
-PERF_RETIRED = 0x8000_0304
+# Contadores de rendimiento de CPU, en el MMIO y no en un comando propio: el
+# bloque CPU PERFORMANCE de MMIO v2 (mmio.md §13.2). Estaban en `0x8000_0300`, que
+# era donde vivian en v1; en v2 ese offset del bloque SYSTEM da error, asi que
+# `monitor.py perf` decia «The FPGA rejected the command» en todas las carpetas.
+from tools.mmio_map import (  # noqa: E402
+    MMIO_CPU_PERF_BASE,
+    MMIO_PERF_CYCLES_OFF,
+    MMIO_PERF_RETIRED_OFF,
+)
+
+PERF_CYCLES = MMIO_CPU_PERF_BASE + MMIO_PERF_CYCLES_OFF
+PERF_RETIRED = MMIO_CPU_PERF_BASE + MMIO_PERF_RETIRED_OFF
 
 
 class MonitorError(Exception):
@@ -370,7 +378,7 @@ class MonitorClient:
 
 
 class PerfMixin:
-    """Contadores de rendimiento, para el hardware que trae el dispositivo 3.
+    """Contadores de rendimiento, para el hardware con CPU PERFORMANCE (§13.2).
 
     Se leen del MMIO y no de un comando propio. `GET_CYCLES` (`0x36`) y
     `GET_INSTRUCTIONS` (`0x37`) existieron y se retiraron al pasar los

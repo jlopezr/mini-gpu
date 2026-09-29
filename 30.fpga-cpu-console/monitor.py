@@ -436,7 +436,10 @@ def main() -> int:
             "console": 0,
             "send": 1,
         }
-        if len(args.arguments) != expected_arguments[args.command]:
+        # `perf` admite un argumento opcional: la ventana en segundos.
+        if args.command == "perf" and len(args.arguments) <= 1:
+            pass
+        elif len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
                 f"{args.command} expects {expected_arguments[args.command]} argument(s)"
             )
@@ -538,16 +541,45 @@ def main() -> int:
                     f"error_code=0x{status.error_code:02x} pc=0x{status.pc:08x}"
                 )
             elif args.command == "perf":
-                cycles = client.get_cycles()
-                instructions = client.get_instructions()
-                if instructions == 0:
-                    print(f"cycles={cycles} instructions=0 (CPI: sin datos)")
-                else:
-                    cpi = cycles / instructions
-                    print(
-                        f"cycles={cycles} instructions={instructions} "
-                        f"CPI={cpi:.2f}"
-                    )
+                # Los ocho contadores de CPU PERFORMANCE (mmio.md §13.2), leidos
+                # con el bloque congelado para que sean de un mismo instante
+                # aunque la CPU siga corriendo. Los da la vuelta a 2^32: ver el
+                # aviso si alguno lo ha hecho.
+                from tools.perf_counters import difference, format_report, read_counters
+
+                # `perf` da los valores acumulados; `perf N` espera N segundos y
+                # da lo contado en ESA ventana, que es lo que sirve con un
+                # programa que lleva minutos corriendo (los contadores dan la
+                # vuelta a los 53 s y sus valores absolutos ya no dicen nada).
+                ventana = None
+                if args.arguments:
+                    try:
+                        ventana = float(args.arguments[0])
+                    except ValueError as error:
+                        raise MonitorError(
+                            f"perf espera segundos, no {args.arguments[0]!r}") from error
+                    if ventana <= 0:
+                        raise MonitorError("perf espera una ventana de mas de 0 segundos")
+                aviso = None
+                con_esperas = True
+                try:
+                    contadores = read_counters(
+                        client.read_word, client.write_word, stalls=True)
+                except MonitorError:
+                    # Un bitstream anterior a los contadores de espera: leer
+                    # una ranura sin contador da error de MMIO, no ceros.
+                    con_esperas = False
+                    contadores = read_counters(client.read_word, client.write_word)
+                    aviso = ("  (esta placa solo tiene CYCLES y RETIRED: falta el "
+                             "bitstream con los contadores de espera)")
+                if ventana is not None:
+                    time.sleep(ventana)
+                    contadores = difference(contadores, read_counters(
+                        client.read_word, client.write_word, stalls=con_esperas))
+                    print(f"ventana de {ventana:g} s")
+                print("\n".join(format_report(contadores)))
+                if aviso:
+                    print(aviso)
             elif args.command == "console":
                 interactive_console(client)
             elif args.command == "send":

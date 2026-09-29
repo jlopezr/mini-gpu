@@ -103,6 +103,7 @@ module cpu_burst_system_tb;
   wire [31:0] mmio_address;
   wire [31:0] mmio_write_data;
   wire [31:0] ibuf_hits, ibuf_misses;
+  wire ibuf_hit_event, ibuf_miss_event;
   wire wb_dirty;
   wire [31:0] wb_merges, wb_flushes;
 
@@ -197,7 +198,22 @@ module cpu_burst_system_tb;
       .req_addr(p1_addr), .req_wdata(p1_wdata), .req_wmask(p1_wmask),
       .rsp_valid(p1_rsp_valid), .rsp_ready(p1_rsp_ready),
       .rsp_rdata(p1_rsp_rdata), .rsp_error(p1_rsp_error),
-      .hit_count(ibuf_hits), .miss_count(ibuf_misses));
+      .hit_count(ibuf_hits), .miss_count(ibuf_misses),
+      .hit_event(ibuf_hit_event), .miss_event(ibuf_miss_event));
+
+  // Los contadores de rendimiento de la CPU, cableados como en top.v. Aqui no
+  // se leen por el bus sino por jerarquia: lo que se prueba es que los eventos
+  // llegan bien, y que cuentan lo que el propio banco mide por su cuenta.
+  cpu_perf_counters perf_i (
+      .clk(clk), .reset(reset),
+      .select(1'b0), .write(1'b0), .write_mask(4'b0000), .address(16'd0),
+      .write_data(32'd0), .read_data(),
+      .running(!halted), .retired(instruction_retired), .restart(run_request),
+      .imem_valid(imem_valid), .imem_ready(imem_ready),
+      .dmem_valid(dmem_valid), .dmem_ready(dmem_ready),
+      .dmem_is_mmio(dmem_address[31] && dmem_address[1:0] == 2'b00),
+      .imem_hit(ibuf_hit_event), .imem_miss(ibuf_miss_event),
+      .mem_req0(p0_valid), .mem_req1(p1_valid));
 
   monitor_mem_adapter_128 monitor_adapter_i (
       .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted), .wb_dirty(wb_dirty),
@@ -453,6 +469,45 @@ module cpu_burst_system_tb;
     $display("  bufer de instrucciones: %0d aciertos, %0d fallos",
              ibuf_hits, ibuf_misses);
     $display("  mejora sobre la 16: %.2fx", BASE_CYCLES_PER_WORD / por_palabra);
+
+    // Contadores de rendimiento: los eventos llegan de los modulos de verdad,
+    // asi que tienen que coincidir con lo que este banco mide por su cuenta.
+    // Se dejan unos ciclos a que el ultimo evento cruce sus registros.
+    repeat (4) @(negedge clk);
+    $display("  contadores: CYCLES %0d, RETIRED %0d, IMEM %0d/%0d, MEM_TX %0d,",
+             perf_i.cycles, perf_i.retired_count, perf_i.imem_hits,
+             perf_i.imem_misses, perf_i.mem_tx);
+    $display("              STALL_MEM %0d (busqueda %0d), STALL_MMIO %0d",
+             perf_i.stall_mem, perf_i.stall_fetch, perf_i.stall_mmio);
+    if (perf_i.imem_hits !== ibuf_hits || perf_i.imem_misses !== ibuf_misses) begin
+      $display("FALLO: IMEM_HITS/MISSES %0d/%0d, el bufer cuenta %0d/%0d",
+               perf_i.imem_hits, perf_i.imem_misses, ibuf_hits, ibuf_misses);
+      errors = errors + 1;
+    end
+    // Cada rafaga del controlador es una peticion de la CPU (datos o busqueda):
+    // aqui no hay vídeo ni monitor activo mientras corre el bucle.
+    if (perf_i.mem_tx !== bursts) begin
+      $display("FALLO: MEM_TX %0d, el controlador vio %0d rafagas", perf_i.mem_tx, bursts);
+      errors = errors + 1;
+    end
+    // Los ciclos con la CPU en marcha son los del banco, con una holgura de
+    // los ciclos del propio `run` y `halt`.
+    if (perf_i.cycles + 4 < ciclos || perf_i.cycles > ciclos + 4) begin
+      $display("FALLO: CYCLES %0d, el banco conto %0d", perf_i.cycles, ciclos);
+      errors = errors + 1;
+    end
+    // El reparto tiene que ser coherente: la busqueda es parte de la espera de
+    // memoria, y esta parte de los ciclos. Cada fallo de bufer cuesta una lectura
+    // de SDRAM entera, asi que la espera de busqueda no puede ser menor.
+    if (perf_i.stall_fetch > perf_i.stall_mem || perf_i.stall_mem > perf_i.cycles) begin
+      $display("FALLO: esperas incoherentes: busqueda %0d, memoria %0d, ciclos %0d",
+               perf_i.stall_fetch, perf_i.stall_mem, perf_i.cycles);
+      errors = errors + 1;
+    end
+    if (perf_i.stall_fetch < 8 * ibuf_misses) begin
+      $display("FALLO: %0d ciclos de espera de busqueda para %0d fallos", perf_i.stall_fetch, ibuf_misses);
+      errors = errors + 1;
+    end
 
     // El programa entero son 36 bytes: tres lineas de 16. Ninguna se relee.
     if (ibuf_misses !== 32'd3) begin

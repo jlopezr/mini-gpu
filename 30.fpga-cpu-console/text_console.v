@@ -77,22 +77,16 @@ module text_console #(
     $readmemh(FONT_FILE, font_ram);
   end
 
-  reg validation_error;
-  always @* begin
-    validation_error = 1'b0;
-    if (write && (is_font_reg || is_palette || is_text)) begin
-      if (!full_word)
-        validation_error = 1'b1;
-      else if (address == FONT_COUNT)
-        validation_error = !loader_range_valid;
-      else if (address == FONT_DATA3)
-        validation_error = loader_count == 0;
-      else if (is_palette)
-        validation_error = |write_data[31:24];
-      else if (is_text)
-        validation_error = |write_data[31:16];
-    end
-  end
+  // Tres validaciones separadas (los rangos son disjuntos). Si fueran una
+  // sola, el sumador de loader_range_valid quedaria en la ruta que habilita la
+  // escritura de text_ram y palette_ram, y esa ruta no cierra a 80 MHz.
+  wire font_error = write && is_font_reg &&
+      (!full_word ||
+       (address == FONT_COUNT && !loader_range_valid) ||
+       (address == FONT_DATA3 && loader_count == 0));
+  wire palette_error = write && is_palette && (!full_word || |write_data[31:24]);
+  wire text_error = write && is_text && (!full_word || |write_data[31:16]);
+  wire validation_error = font_error || palette_error || text_error;
 
   // El cliente consume el error en el ciclo posterior al pulso de select.
   // Se registra para que FONT_DATA3 no se convierta falsamente en invalido
@@ -113,7 +107,14 @@ module text_console #(
       if (select && !write && is_palette)
         palette_read_q <= palette_ram[palette_index];
       if (select && write) write_error <= validation_error;
-      if (select && write && !validation_error) begin
+      if (select && write && is_palette && !palette_error) begin
+        palette_ram[palette_index] <= write_data[23:0];
+        if (palette_index != 0 && palette_index < 16)
+          text_palette[palette_index[3:0]] <= write_data[23:0];
+      end
+      if (select && write && is_text && !text_error)
+        text_ram[text_index] <= write_data[15:0];
+      if (select && write && is_font_reg && !font_error) begin
       case (address)
         FONT_COUNT: loader_count <= write_data[8:0];
         FONT_GLYPH: loader_glyph <= write_data[7:0];
@@ -126,15 +127,7 @@ module text_console #(
           loader_count <= loader_count - 1'b1;
           if (loader_glyph != 8'hff) loader_glyph <= loader_glyph + 1'b1;
         end
-        default: begin
-          if (is_palette) begin
-            palette_ram[palette_index] <= write_data[23:0];
-            if (palette_index != 0 && palette_index < 16)
-              text_palette[palette_index[3:0]] <= write_data[23:0];
-          end else if (is_text) begin
-            text_ram[text_index] <= write_data[15:0];
-          end
-        end
+        default: ;
       endcase
       end
     end

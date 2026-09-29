@@ -21,7 +21,7 @@ GENDOC_BEGIN = re.compile(r"^\s*<!--\s*gendoc:begin\s+([A-Za-z0-9_-]+)\s*$")
 ID = re.compile(r"^[A-Za-z0-9_-]+$")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CORE_TYPES = frozenset({
-    "need", "requirement", "decision", "specification", "implementation",
+    "need", "requirement", "design", "decision", "specification", "implementation",
     "verification", "evidence", "source",
 })
 CORE_RELATIONS = frozenset({

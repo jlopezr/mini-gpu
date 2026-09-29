@@ -1474,23 +1474,38 @@ Pasan **12 de 12** casos.
 
 ### Medir el CPI
 
-`top.v` cuenta ciclos e instrucciones mientras la CPU corre, y el monitor los
-saca con los comandos `0x36` y `0x37`:
+La CPU tiene un dispositivo MMIO de contadores, **CPU PERFORMANCE**, en
+`0x81010000` ([`cpu_perf_counters.v`](cpu_perf_counters.v), contrato en
+[`mmio.md`](../1.isa/mmio.md) §13.2). Son ocho: `CYCLES` y `RETIRED` (CPI e IPC),
+las búsquedas que aciertan y fallan en el búfer de instrucciones, las peticiones
+al fabric y tres de espera —a la búsqueda, a los datos y a MMIO— que reparten los
+ciclos entre cálculo y memoria. El propio programa puede leerlos, porque son
+MMIO. Los comandos `0x36` y `0x37` del monitor, que daban solo los dos primeros,
+ya no existen.
+
+Desde el PC, `monitor.py perf` congela el bloque, lee los ocho y da el reparto:
 
 ```powershell
-..\.venv\Scripts\python.exe monitor.py perf --port COM3
+..\.venv\Scripts\python.exe monitor.py perf --port COM3        # lo acumulado desde el último run
+..\.venv\Scripts\python.exe monitor.py perf 2 --port COM3      # lo contado en una ventana de 2 s
 ```
 
+Con un programa que lleva minutos corriendo, usa la ventana (`perf 2`): los
+contadores dan la vuelta a los 53 s y sus valores absolutos dejan de significar
+nada, aunque las diferencias siguen valiendo. El comando avisa cuando pasa.
+
 Para comparar esta versión con las anteriores en los mismos programas, el runner
-tiene `--measure`, que saca una tabla en Markdown:
+tiene `--measure`, que saca una tabla en Markdown con instrucciones, tiempo y CPI
+y, para las versiones que tienen los contadores de espera —hoy solo esta—, una
+tercera con el reparto de los ciclos de cada caso:
 
 ```powershell
 ..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga `
     --measure medidas.md --port COM3 ..\x.tests\cases
 ```
 
-El porqué de los dos contadores, y qué miden exactamente, está en
-[`docs/cycles.md`](docs/cycles.md).
+Qué cuenta exactamente cada contador, cómo leerlos, un ejemplo y por qué dan la
+vuelta en lugar de saturar están en [`docs/cycles.md`](docs/cycles.md).
 
 ### `MUL`, `MULFX` y `DIV`
 

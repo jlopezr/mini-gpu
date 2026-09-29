@@ -20,8 +20,14 @@ import unittest
 from run_tests import measurement_table
 
 
-def medida(instructions=None, cycles=None, clock_hz=None):
-    return {"instructions": instructions, "cycles": cycles, "clock_hz": clock_hz}
+def medida(instructions=None, cycles=None, clock_hz=None, stalls=None):
+    return {"instructions": instructions, "cycles": cycles, "clock_hz": clock_hz,
+            "stalls": stalls}
+
+
+def esperas(imem_hits=0, imem_misses=0, mem_tx=0, stall_mem=0, stall_fetch=0, stall_mmio=0):
+    return {"imem_hits": imem_hits, "imem_misses": imem_misses, "mem_tx": mem_tx,
+            "stall_mem": stall_mem, "stall_fetch": stall_fetch, "stall_mmio": stall_mmio}
 
 
 class MeasurementTableTest(unittest.TestCase):
@@ -141,6 +147,59 @@ class MeasurementTableTest(unittest.TestCase):
         self.assertIn("## Tiempo de CPU (ms)", tabla)
         # Y las cabeceras llevan la version como columna.
         self.assertEqual(tabla.count("| bl8 |"), 2)
+        # Sin contadores de espera no hay tercera tabla, y la leyenda ya no habla
+        # de comandos de monitor que no existen.
+        self.assertNotIn("Reparto de los ciclos", tabla)
+        self.assertNotIn("0x36", tabla)
+
+    def test_reparto_de_ciclos_con_contadores_de_espera(self):
+        """1000 ciclos: 120 esperando busqueda, 180 datos, 50 MMIO, 650 calculo."""
+        tabla = measurement_table(
+            {("loop", "console"): medida(
+                125, 1000, 80_000_000,
+                esperas(imem_hits=120, imem_misses=5, mem_tx=30,
+                        stall_mem=300, stall_fetch=120, stall_mmio=50))},
+            ["loop"], ["console"])
+        self.assertIn("## Reparto de los ciclos", tabla)
+        fila = [l for l in tabla.splitlines() if l.startswith("| loop | console | 1 000 |")][0]
+        celdas = [c.strip() for c in fila.strip("|").split("|")]
+        # CPI 8,00; calculo 65 %; busqueda 12 %; datos 18 %; MMIO 5 %.
+        self.assertEqual(celdas[3:8], ["8.00", "65.0 %", "12.0 %", "18.0 %", "5.0 %"])
+        # Acierto = 120 / 125 = 96 %; 30 peticiones en 125 instrucciones.
+        self.assertEqual(celdas[8:], ["96.0 %", "0.240"])
+
+    def test_el_reparto_solo_lista_versiones_con_contadores(self):
+        tabla = measurement_table(
+            {
+                ("p", "alu"): medida(100, 800, 80_000_000),
+                ("p", "console"): medida(100, 800, 80_000_000,
+                                         esperas(stall_mem=80, stall_fetch=10)),
+                ("p", "sim"): medida(100),
+            },
+            ["p"], ["alu", "console", "sim"])
+        reparto = tabla.split("## Reparto de los ciclos")[1].split("Calculo +")[0]
+        self.assertIn("| p | console |", reparto)
+        self.assertNotIn("| p | alu |", reparto)
+        self.assertNotIn("| p | sim |", reparto)
+
+    def test_reparto_sin_busquedas_ni_instrucciones_es_n_d_y_no_divide_por_cero(self):
+        tabla = measurement_table(
+            {("trap", "console"): medida(0, 12, 80_000_000, esperas(stall_mem=2, stall_fetch=2))},
+            ["trap"], ["console"])
+        fila = [l for l in tabla.splitlines() if l.startswith("| trap | console | 12 |")][0]
+        celdas = [c.strip() for c in fila.strip("|").split("|")]
+        self.assertEqual(celdas[8:], ["n/d", "n/d"])
+
+    def test_el_calculo_no_sale_negativo(self):
+        """Los eventos cruzan registros: la suma de esperas puede pasarse de
+        CYCLES en un ciclo o dos, y el calculo no baja de cero."""
+        tabla = measurement_table(
+            {("p", "console"): medida(10, 100, 80_000_000,
+                                      esperas(stall_mem=101, stall_fetch=101))},
+            ["p"], ["console"])
+        fila = [l for l in tabla.splitlines() if l.startswith("| p | console | 100 |")][0]
+        celdas = [c.strip() for c in fila.strip("|").split("|")]
+        self.assertEqual(celdas[4], "0.0 %")          # calculo
 
 
 if __name__ == "__main__":

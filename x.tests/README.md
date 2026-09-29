@@ -430,9 +430,9 @@ instrucciones, tiempo y CPI.
 # Todas las versiones de placa, más el simulador
 python run_tests.py --backend cpu-fpga --measure medidas.md --port COM3 cases
 
-# Solo dos versiones, y sin nombre de fichero (sale en medidas.md)
+# Solo dos versiones, y sin nombre de fichero: solo se archiva en reports/
 python run_tests.py --backend cpu-fpga --version hdmi --version bl8 \
-    --measure --port COM3 cases/programs
+    --measure --measure-label antes-de-segmentar --port COM3 cases/programs
 
 # Sin placa: solo cuenta instrucciones, que es la mitad de la tabla
 python run_tests.py --backend cpusim --version sim --measure cases
@@ -440,6 +440,14 @@ python run_tests.py --backend cpusim --version sim --measure cases
 
 Cambiar de versión recarga el bitstream, así que el bucle exterior es la versión
 y no el caso; con cuatro versiones son cuatro cargas, no cuatro por caso.
+
+**La medida se archiva sola**, con o sin fichero, en
+`<prototipo>/reports/<fecha>-medida-<etiqueta>/`: `measure.json` (datos de cada
+caso, hash de las fuentes sintetizables y el Fmax del build de *esas* fuentes) y
+`measure.md` (la tabla de esa versión). El CPI solo vale para el RTL con que se
+midió, y un build que no coincide con las fuentes actuales no aporta Fmax: la
+medida sale con `Fmax n/d`. `tools/measure-compare` pone dos medidas juntas; ver
+`tools/README.md`.
 
 **El tiempo no es el reloj de pared.** Entre arrancar y parar la CPU hay decenas
 de vueltas de UART a 1 Mbaud, y eso enmascara por completo un programa de
@@ -585,6 +593,8 @@ declara lo que necesita:
 | `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpusim`, `alu` |
 | `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpusim`, `alu` |
 | `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |
+| `perf_counters` | `CYCLES` y `RETIRED` de CPU PERFORMANCE (`0x81010000`): dan el CPI de `--measure` | `hdmi`, `bl8`, `subword`, `alu`, `console` |
+| `perf_stalls` | Además las ranuras 2 a 7 (`IMEM_HITS`, `IMEM_MISSES`, `MEM_TX`, `STALL_MEM`, `STALL_FETCH`, `STALL_MMIO`): `--measure` reparte los ciclos entre cálculo, búsqueda, datos y MMIO | `console` |
 
 Las cuatro de ISA existen por la misma razón que las de vídeo: sin ellas, un
 caso ejecutado en un bitstream anterior no fallaría con un diagnóstico útil,

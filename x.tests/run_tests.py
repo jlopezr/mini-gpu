@@ -27,6 +27,8 @@ REPOSITORY = ROOT.parent
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
+from tools.measure_archive import archive_measurement  # noqa: E402
+from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 
@@ -535,7 +537,7 @@ CAPABILITY_IMPLIES = {
 # compararlo entre backends tiene el mismo problema y no lo veia nadie --medido:
 # 196 contra 192 en `video-bounce`, dos instrucciones del bucle de espera--.
 # Sin `run_until` el PC si se compara, porque entonces es determinista.
-PERF_FIELDS = ("cycles", "instructions", "clock_hz")
+PERF_FIELDS = ("cycles", "instructions", "clock_hz", "stalls")
 VIDEO_FIELDS_EXCLUDED = ("frames",)
 
 
@@ -977,6 +979,23 @@ def _markdown_row(cells: list[str]) -> str:
     return "| " + " | ".join(cells) + " |"
 
 
+def _stall_breakdown(medida: dict | None) -> dict | None:
+    """Reparto de los ciclos de una medida, o `None` si no hay con que hacerlo.
+
+    Es `tools.perf_counters.breakdown`, la misma cuenta que `monitor.py perf`:
+    una tabla y un comando que repartieran distinto los ciclos del mismo programa
+    serian peor que no tener ninguno.
+    """
+    if not medida or medida.get("skipped"):
+        return None
+    return perf_breakdown(medida.get("cycles"), medida.get("instructions"),
+                          medida.get("stalls"))
+
+
+def _format_percent(fraction: float | None) -> str:
+    return "n/d" if fraction is None else f"{100.0 * fraction:.1f} %"
+
+
 def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
                       video_realtime: frozenset = frozenset(),
                       serial_realtime: frozenset = frozenset()) -> str:
@@ -1029,11 +1048,41 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
         lineas.append(_markdown_row(
             [caso] + [_format_ms(medidas.get((caso, v))) for v in versiones]))
 
+    # El reparto de los ciclos, solo para las versiones con contadores de espera
+    # (capacidad `perf_stalls`). Sin ninguna, la tabla es la de siempre.
+    reparto = [(caso, v, medidas.get((caso, v)), _stall_breakdown(medidas.get((caso, v))))
+               for caso in casos for v in versiones]
+    reparto = [fila for fila in reparto if fila[3] is not None]
+    if reparto:
+        lineas += ["", "## Reparto de los ciclos", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Ciclos", "CPI", "Calculo", "Busqueda", "Datos",
+             "MMIO", "Acierto buffer", "Tx/instr."]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 8))
+        for caso, version, medida, r in reparto:
+            tx = r["tx_per_instruction"]
+            lineas.append(_markdown_row([
+                caso, version, f"{medida['cycles']:,}".replace(",", " "),
+                _format_cpi(medida), _format_percent(r["compute"]),
+                _format_percent(r["fetch"]), _format_percent(r["data"]),
+                _format_percent(r["mmio"]), _format_percent(r["hit_rate"]),
+                "n/d" if tx is None else f"{tx:.3f}"]))
+        lineas += [
+            "",
+            "Calculo + Busqueda + Datos + MMIO = 100 % de los ciclos con la CPU en",
+            "marcha. `Busqueda`: esperando una instruccion; `Datos`: esperando un",
+            "LOAD/STORE a memoria; `MMIO`: esperando a un dispositivo. `Acierto",
+            "buffer`: busquedas servidas sin ir a la SDRAM. `Tx/instr.`: peticiones",
+            "de la CPU al fabric (busquedas que fallan y accesos a datos) por",
+            "instruccion. Contadores de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
     lineas += [
         "",
         "`n/a`: la version no admite el caso (mapa de memoria o capacidades).",
-        "`sin contadores`: la version no tiene los comandos 0x36/0x37, o es",
-        "el simulador, que cuenta instrucciones pero no modela el tiempo.",
+        "`sin contadores`: la version no tiene el bloque CPU PERFORMANCE (los",
+        "contadores de ciclos y de instrucciones), o es el simulador, que cuenta",
+        "instrucciones pero no modela el tiempo.",
         "`n/d`: 0 instrucciones retiradas (el caso trampea desde el arranque);",
         "el CPI esta indefinido, no es que falte el contador.",
         "",
@@ -1152,9 +1201,15 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                 "instructions": result.get("instructions"),
                 "cycles": result.get("cycles"),
                 "clock_hz": result.get("clock_hz"),
+                "stalls": result.get("stalls"),
             }
+            r = _stall_breakdown(medidas[clave])
+            reparto = ("" if r is None else
+                       f" (busqueda {_format_percent(r['fetch'])}, "
+                       f"datos {_format_percent(r['data'])}, "
+                       f"MMIO {_format_percent(r['mmio'])})")
             print(f"PROFILED {case['name']} [{version}]: "
-                  f"CPI {_format_cpi(medidas[clave])}")
+                  f"CPI {_format_cpi(medidas[clave])}{reparto}")
 
     # Casos que sincronizan con algo real (vsync o UART) en vez de con un
     # numero fijo de instrucciones: su recuento varia por diseno entre
@@ -1164,12 +1219,40 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
         if {"video", "frame_capture"} & set(case["requires"]))
     serial_realtime = frozenset(case["name"] for case in casos if case["stdin"])
 
+    nombres = [case["name"] for case in casos]
     tabla = measurement_table(
-        medidas, [case["name"] for case in casos], list(versiones),
+        medidas, nombres, list(versiones),
         video_realtime=video_realtime, serial_realtime=serial_realtime)
-    args.measure.write_text(tabla, encoding="utf-8")
-    print(f"\nTabla escrita en {args.measure}")
+    # Sin FICHERO la medida solo se archiva en reports; con FICHERO tambien se
+    # escribe ahi.
+    if args.measure:
+        args.measure.write_text(tabla, encoding="utf-8")
+        print(f"\nTabla escrita en {args.measure}")
     print(tabla)
+
+    # Una carpeta por version, junto al build de ESE RTL: el CPI solo vale para
+    # las fuentes con que se midio, y `measure_archive compare` lo junta con el
+    # Fmax de cada build.
+    for version in versiones:
+        if version == "sim":
+            continue
+        propias = {nombre: medidas[(nombre, version)] for nombre in nombres
+                   if (nombre, version) in medidas}
+        if not propias:
+            continue
+        directorio = REPOSITORY / fpga_backend.VERSIONS[version]["monitor_path"].parent
+        carpeta = archive_measurement(
+            directorio, version, propias,
+            measurement_table(medidas, nombres, [version],
+                              video_realtime=video_realtime,
+                              serial_realtime=serial_realtime),
+            args.measure_label,
+            realtime=video_realtime | serial_realtime)
+        document = json.loads((carpeta / "measure.json").read_text(encoding="utf-8"))
+        fmax = document["fmax"]
+        print(f"Medida archivada en {carpeta.relative_to(REPOSITORY)}"
+              + (f" (Fmax {fmax['achieved_mhz']:.2f} MHz)" if fmax else
+                 " (sin build de estas fuentes: falta el Fmax)"))
     return 0
 
 
@@ -1339,11 +1422,15 @@ def main() -> int:
                         help="nunca cargar el bitstream: si la placa no tiene "
                              "la versión correcta, falla")
     parser.add_argument("--measure", type=Path, nargs="?",
-                        const=Path("medidas.md"), default=None, metavar="FICHERO",
+                        const=False, default=None, metavar="FICHERO",
                         help="ejecuta cada caso en todas las versiones "
-                             "aplicables y escribe una tabla Markdown con "
-                             "instrucciones, tiempo y CPI "
-                             "(medidas.md si se omite el nombre)")
+                             "aplicables y archiva la medida (instrucciones, "
+                             "tiempo, CPI, reparto de ciclos y Fmax del build) "
+                             "en <prototipo>/reports/. Con FICHERO escribe "
+                             "ademas la tabla Markdown ahi")
+    parser.add_argument("--measure-label", default="medida", metavar="ETIQUETA",
+                        help="nombre de la medida archivada, p. ej. "
+                             "'antes-de-segmentar' (medida si se omite)")
     parser.add_argument("--jobs", "-j", type=int, default=0, metavar="N",
                         help="procesos para los casos de simulador (0 = tantos "
                              "como hilos tenga la máquina; 1 = secuencial de "

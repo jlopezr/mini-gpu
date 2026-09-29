@@ -347,8 +347,10 @@ module top (
   // memoria de programa con la CPU parada, y un reset de CPU tambien la deja
   // parada, asi que los dos casos quedan cubiertos por la misma senal.
   //
-  // Los contadores de aciertos y fallos no se conectan: existen para los bancos
-  // de prueba y la sintesis los quita.
+  // `hit_count`/`miss_count` no se conectan: existen para los bancos de prueba
+  // y la sintesis los quita. Los contadores de rendimiento de la CPU
+  // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
+  wire ibuf_hit, ibuf_miss;
   instruction_buffer #(.LINES(4), .INDEX_BITS(2)) instruction_buffer_i(
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
@@ -358,7 +360,8 @@ module top (
       .req_addr(p1_addr), .req_wdata(p1_wdata), .req_wmask(p1_wmask),
       .rsp_valid(p1_rsp_valid), .rsp_ready(p1_rsp_ready),
       .rsp_rdata(p1_rsp_rdata), .rsp_error(p1_rsp_error),
-      .hit_count(), .miss_count());
+      .hit_count(), .miss_count(),
+      .hit_event(ibuf_hit), .miss_event(ibuf_miss));
 
   monitor_mem_adapter_128 monitor_adapter_i(
       .clk(clk), .reset(reset), .init_done(init_done),
@@ -583,6 +586,8 @@ module top (
   // hace en su momento; mientras tanto hay un test que lo contrasta.
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1),
+      // Ocho contadores en CPU PERFORMANCE: los mismos que `cpu_perf_counters`.
+      .PERF_SLOTS(8),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
@@ -610,7 +615,15 @@ module top (
       .address(mmio_address[15:0]), .write_data(mmio_write_data),
       .read_data(mmio_perf_read_data),
       .running(!cpu_halted), .retired(cpu_instruction_retired),
-      .restart(cpu_run_request));
+      .restart(cpu_run_request),
+      // Esperas de la CPU. Un acceso a datos es MMIO con el mismo criterio que
+      // `cpu_dmem_adapter` (`address_is_mmio`), y todo esto va a registros
+      // dentro del bloque: ver la cabecera de cpu_perf_counters.v.
+      .imem_valid(cpu_imem_valid), .imem_ready(cpu_imem_ready),
+      .dmem_valid(cpu_dmem_valid), .dmem_ready(cpu_dmem_ready),
+      .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
+      .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
+      .mem_req0(p0_valid), .mem_req1(p1_valid));
 
   wire text_enable;
 

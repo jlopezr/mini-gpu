@@ -77,6 +77,14 @@
     "architecture": ["cpu", "gpu"],
     "file": ["gpu_perf_counters.v", "cpu_perf_counters.v"]
   },
+
+  "_comment_perf_stalls": "Los contadores de espera de CPU PERFORMANCE (mmio.md §13.2, ranuras 2 a 7: IMEM_HITS, IMEM_MISSES, MEM_TX, STALL_MEM, STALL_FETCH, STALL_MMIO). `--measure` los lee y reparte los ciclos de cada caso en calculo, busqueda, datos y MMIO. El patron es el localparam de la ranura de STALL_MEM: existe solo en los cpu_perf_counters.v que tienen todo el array, no en los de dos contadores.",
+  "perf_stalls": {
+    "architecture": "cpu",
+    "file": "cpu_perf_counters.v",
+    "pattern": "SLOT_STALL_MEM\\s*=",
+    "implies": ["perf_counters"]
+  },
   "atomic_warp_faults": {
     "architecture": "gpu"
   }

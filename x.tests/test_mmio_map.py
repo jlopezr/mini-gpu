@@ -164,6 +164,25 @@ class ConformidadTest(unittest.TestCase):
         self.assertEqual(self.mapa["MMIO_PERF_MAX_COUNTERS"] * 4,
                          self.mapa["MMIO_PERF_CTRL_OFF"])
 
+    def test_ranuras_de_los_contadores_de_cpu(self):
+        """§13.2: el contador n esta en +4n. Las cuatro primeras despues de
+        CYCLES y RETIRED son las del contrato; STALL_FETCH y STALL_MMIO son las
+        dos siguientes, extension de CPU PERFORMANCE."""
+        esperado = {
+            "MMIO_PERF_CYCLES_OFF": 0x00, "MMIO_PERF_RETIRED_OFF": 0x04,
+            "MMIO_PERF_IMEM_HITS_OFF": 0x08, "MMIO_PERF_IMEM_MISSES_OFF": 0x0C,
+            "MMIO_PERF_MEM_TX_OFF": 0x10, "MMIO_PERF_STALL_MEM_OFF": 0x14,
+            "MMIO_PERF_STALL_FETCH_OFF": 0x18, "MMIO_PERF_STALL_MMIO_OFF": 0x1C,
+        }
+        for nombre, valor in esperado.items():
+            with self.subTest(nombre):
+                self.assertEqual(valor, self.mapa[nombre])
+                # Dentro del array y alineado a palabra.
+                self.assertLess(valor, self.mapa["MMIO_PERF_CTRL_OFF"])
+                self.assertEqual(0, valor % 4)
+        # Ninguna ranura se repite: dos contadores en el mismo offset serian uno.
+        self.assertEqual(len(set(esperado.values())), len(esperado))
+
     def test_bits_de_devices_congelados(self):
         """§5.4: una asignación de bit nunca cambia de significado."""
         esperado = {

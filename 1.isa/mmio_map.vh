@@ -138,6 +138,13 @@
 `define MMIO_PERF_LSU_TX_OFF       32'h0000_0010
 `define MMIO_PERF_STALL_MEM_OFF    32'h0000_0014
 
+// Extensiones de CPU PERFORMANCE (mmio.md §13.2): las dos ranuras siguientes,
+// solo en las implementaciones que las tienen. En GPU PERFORMANCE las ranuras 6 y
+// 7 son OTRAS cosas de su carpeta (LANE_OPS, NO_WARP_STALL), asi que estos dos
+// nombres son de CPU aunque lleven la plantilla `MMIO_PERF_`.
+`define MMIO_PERF_STALL_FETCH_OFF  32'h0000_0018
+`define MMIO_PERF_STALL_MMIO_OFF   32'h0000_001C
+
 // ==== CPU CORE (mmio.md §13.1) ===========================================
 
 `define MMIO_CPU_ID_OFF            32'h0000_0000

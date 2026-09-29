@@ -841,6 +841,40 @@ sobre `_build/<env>/` sin pasar por el archivo de `reports/`; `build-sweep`
 pide un build archivado primero, pero a cambio verifica que ese build pasó
 timing y queda constancia de qué fuentes se barrieron.
 
+## El muro de caminos casi críticos (`timing-wall`)
+
+Un build que cierra con poca holgura casi nunca tiene **un** camino malo: tiene
+cientos casi igual de malos, y arreglar el peor solo descubre el siguiente.
+`timing-wall` enseña ese muro —qué registros de destino llegan tarde, de qué
+módulos son y cuántos— y compara dos builds para ver si un cambio baja el muro o
+solo el primer camino:
+
+```bash
+$ timing-wall -p 30                                   # último build (o, si no trae detalle, el último barrido)
+$ timing-wall -p 30 --sweep latest --seed 5           # una semilla concreta de un barrido
+$ timing-wall <barrido> --compare <otro-barrido>      # antes y después de un cambio de RTL
+$ timing-wall informe.pnr --clock sdram --top 30
+```
+
+Acepta un `hardware.pnr`, una carpeta `seed-N` o un barrido entero (se toma su
+mejor semilla). Por defecto mira el reloj de menos margen. La `LLEGADA` es el
+tiempo acumulado hasta el registro de destino desde el flanco de reloj, como el
+último número de un camino crítico; `HOLGURA = periodo − llegada`, y las columnas
+`>=80 %` y `>=90 %` cuentan destinos por encima de esa fracción del periodo. Sale
+además el resumen por módulo, que suele decir más que la lista de registros.
+
+Ejemplo real (la 30, sdram_clk a 80 MHz): del mejor build sin opciones de
+nextpnr al que está en la placa, los destinos a ≥ 80 % del periodo bajan de 675 a
+293 y los de ≥ 90 % de 223 a 11. Antes de arreglar nada, el 80 % del muro eran
+registros anchos de `dmem_adapter_i` (`wb_data`, de 128 bits, y sus máscaras).
+
+Necesita el informe detallado de nextpnr (`--detailed-timing-report`): **todas las
+semillas de `build-sweep` lo llevan**, pero un `build` normal no, salvo que el
+`apio.ini` lo pida. Solo se miran los destinos del reloj elegido, sin las rutas
+hasta los pines. Es una lectura de un solo netlist y una sola semilla: la
+colocación mueve las cifras, así que conviene comparar semillas de un mismo
+barrido y no una contra otra suelta.
+
 ## Encadenar todo (`check`)
 
 `test` → `lint` → `build`, en ese
@@ -1145,6 +1179,43 @@ Si el prototipo no tiene identidad inferible (sin `cpu.v`/`gpu_sm.v`/
 `gpu_system.v` + `monitor.v` con versión), falla con un mensaje claro en vez
 de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
 `--backend`/`--version` a mano.
+
+### CPI y reparto de los ciclos (`--measure`)
+
+`test-board --prototype 30 --measure medidas.md <casos>` ejecuta cada caso y
+escribe una tabla en Markdown: instrucciones y CPI por versión, tiempo de CPU y,
+**solo para las versiones con contadores de espera** (capacidad `perf_stalls`, hoy
+la 30), una tercera tabla, «Reparto de los ciclos»: qué fracción de los ciclos de
+cada caso es cálculo, espera a la búsqueda de instrucciones, espera a datos y
+espera a MMIO, más la tasa de acierto del búfer de instrucciones y las peticiones
+a memoria por instrucción. Los contadores son los de CPU PERFORMANCE
+(`1.isa/mmio.md` §13.2); las versiones que solo tienen `CYCLES` y `RETIRED` salen
+sin esa tabla, no con ceros.
+
+Para mirar un programa suelto, o uno que ya está corriendo en la placa, el
+`monitor.py` de la 30 tiene `perf`: `monitor.py perf` da lo acumulado y
+`monitor.py perf 2` lo contado en una ventana de 2 s, que es lo correcto cuando
+lleva minutos corriendo (los contadores dan la vuelta a los 53 s a 80 MHz).
+Los dos usan `tools/perf_counters.py`, así que reparten los ciclos igual.
+
+#### Archivo de medidas y comparación (`measure-compare`)
+
+`--measure` archiva cada medida en `<prototipo>/reports/<fecha>-medida-<etiqueta>/`
+(`measure.json` y `measure.md`), con o sin nombre de fichero. Guarda los datos de
+cada caso, el hash de las fuentes sintetizables y el Fmax del build hecho con
+*esas* fuentes; si no hay un build que coincida, el Fmax queda en `n/d`. Se pone
+nombre con `--measure-label antes-de-segmentar`.
+
+```bash
+$ measure-compare -p 30                 # las dos medidas más recientes del prototipo
+$ measure-compare A B                   # carpetas o measure.json, primero la de antes
+```
+
+Junta CPI y frecuencia en **ns por instrucción = CPI / Fmax**, para juzgar una
+propuesta de subir Fmax que empeore el CPI. Es una **proyección**: el reloj real
+está fijo (80 MHz, por el divisor de la UART) y nadie ha corrido a la Fmax del
+build. El CPI global es ciclos totales entre instrucciones totales, sin los casos
+de vídeo y UART, cuyas instrucciones dependen del reloj o del baudrate.
 
 ## Herramientas de vídeo/HDMI (16, 18, 19, 21)
 
