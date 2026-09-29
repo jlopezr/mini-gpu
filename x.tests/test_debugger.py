@@ -173,7 +173,7 @@ class SourceMapTest(unittest.TestCase):
     def test_short_li_shows_its_expansion_while_it_is_the_active_row(self):
         session = build("LI R1, -3\nHALT\n", tmp=self.tmp)
         self.assertEqual(session.listing()[0].text,
-                         "LI R1, -3" + " " * 23 + "──────▶ MOVI R1, -3")
+                         "LI R1, -3" + " " * 24 + "──────▶ MOVI R1, -3")
 
     def test_symbolic_memory_offset_has_effective_address(self):
         session = build(

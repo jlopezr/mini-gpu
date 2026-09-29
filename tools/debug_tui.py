@@ -354,8 +354,11 @@ def build_app(session: DebugSession):
             # Un `to_thread()` no se cancela con la coroutine que lo espera:
             # hay que despertar explícitamente el bucle de `run` para que
             # asyncio no se quede esperando su executor durante el cierre.
-            if self.running:
-                session.interrupt()
+            # Sin condicionar a `self.running`: al desmontar, Textual ya ha
+            # cancelado el worker y su `finally` ha puesto `running = False`
+            # aunque el hilo de `run` siga girando. Interrumpir en vacío es
+            # inocuo; no interrumpir cuelga el proceso.
+            session.interrupt()
 
         def refresh_panels(self) -> None:
             code = self.query_one("#code", Static)

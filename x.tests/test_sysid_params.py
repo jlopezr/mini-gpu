@@ -49,6 +49,7 @@ ESPERADO = {
     "19.fpga-cpu-hdmi-ls": (0x0237, 0x7, 0x0200_0000),
     "21.fpga-cpu-hdmi-alu": (0x0237, 0x7, 0x0200_0000),
     "22.fpga-gpu-bl8":   (0x0427, 0xB, 0x0200_0000),
+    "29.gpu-sm-pipeline": (0x0427, 0xB, 0x0200_0000),
 }
 
 DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",
@@ -70,9 +71,9 @@ class SincroniaTest(unittest.TestCase):
             + "\n  ".join(str(p) for p in fuera))
 
     def test_hay_uno_por_prototipo(self):
-        """Diez carpetas con `sysid.v`, diez ficheros. Si alguien añade un
+        """Once carpetas con `sysid.v`, once ficheros. Si alguien añade un
         prototipo y no regenera, aquí salta y no tres semanas después."""
-        self.assertEqual(10, len(generar()))
+        self.assertEqual(11, len(generar()))
         self.assertEqual({p.name for p in prototipos()}, set(ESPERADO))
 
 
