@@ -35,4 +35,4 @@ export PATH="$PWD/tools:$PATH"
   La única excepción, deliberada, es `13.hdmi/check_timing.ps1`: 13 no es un prototipo sino una
   prueba independiente multi-env, y ese script barre semillas y las fija en su `apio.ini`.
 - Cada lanzador tiene su `.ps1` para Windows y ninguno lleva lógica propia, salvo
-  `interface-diagram.ps1` (experimental, fuera de este sistema).
+  `module-diagram.ps1` (experimental, fuera de este sistema).

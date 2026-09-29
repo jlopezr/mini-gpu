@@ -406,12 +406,13 @@ las de los puntos 1 y 2 la paga entera.
 
 **Por qué importa.** Hoy no hay forma barata de entender un prototipo nuevo sin
 leerse el `top.v` entero. Y hay media hecha:
-[`tools/interface-diagram.ps1`](tools/interface-diagram.ps1) saca el SVG de la
-**interfaz** de un módulo con `yosys` blackbox + `show`; lo que no hace es el
-grafo de conexiones **entre** módulos.
+[`tools/module-diagram.ps1`](tools/module-diagram.ps1) saca el SVG de la
+**interfaz** de un módulo con `yosys` + `netlistsvg`, y con `-Inside` el top con
+sus submódulos a un nivel; lo que no hace es el grafo de conexiones **entre**
+módulos de todo el prototipo, ni resolver solo qué `.v` hay que pasarle.
 
 **Qué lo bloquea.** Nada. `tools/rtl_facts.py` ya empieza a leer lo que hace
-falta. Además `interface-diagram.ps1` es la única herramienta del repo sin
+falta. Además `module-diagram.ps1` es la única herramienta del repo sin
 lanzador y fuera del sistema de `tools/` ([`AGENTS.md`](AGENTS.md)), así que
 integrarla cierra también esa anomalía.
 
