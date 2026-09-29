@@ -29,7 +29,7 @@ class SidecarResult:
 
 
 class SidecarAdapter:
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
 
     def read(self, path: Path, root: Path) -> SidecarResult:
         path, root = path.resolve(), root.resolve()

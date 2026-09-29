@@ -50,7 +50,7 @@ class MarkdownResult:
 
 
 class MarkdownAdapter:
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
 
     def read(self, path: Path, root: Path) -> MarkdownResult:
         path = path.resolve()

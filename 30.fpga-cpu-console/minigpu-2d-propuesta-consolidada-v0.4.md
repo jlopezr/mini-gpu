@@ -1,9 +1,6 @@
 <!-- trace:artifact DES-MINIGPU-2D-V04
 type: design
 kind: proposal
--->
-
-<!-- trace:relations
 supersedes:
   - DES-MINIGPU-2D-V03
 -->

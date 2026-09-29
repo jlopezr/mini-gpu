@@ -32,7 +32,7 @@ class Annotation:
 
 
 class AnnotatedCodeAdapter:
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
     COMMENT: re.Pattern
     ELEMENT: re.Pattern
     element_name = "elemento"
