@@ -768,9 +768,35 @@ usos distintos, y cada uno tiene su opción:
 
   Por reloj imprime mediana, peor caso y rango de los dos barridos, y un
   veredicto: `MEJORA`, `EMPEORA` o «dentro del ruido» cuando el cambio de
-  mediana no supera el mayor de los dos rangos. Exige exactamente las mismas
+  mediana no supera dos veces el error típico de la diferencia entre los dos
+  conjuntos (desviación / √n de cada uno). El rango de las semillas no vale
+  para esto: con ocho es tan ancho que tapaba una mejora de +6 MHz. Exige exactamente las mismas
   semillas que el barrido de referencia y se niega antes de barrer si no
   coinciden. Es una heurística, no una prueba estadística.
+
+**Probar opciones de nextpnr** (`--nextpnr-options`): antes de tocar el
+`apio.ini`, se mide con el mismo barrido sobre el mismo build archivado. Las
+opciones van **sin guiones** y con `=` para el valor, para que no dependan de
+cómo cite cada shell:
+
+```bash
+$ build-sweep --prototype 30 --seeds 1 2 3 4 5 6 7 8 --nextpnr-options tmg-ripup placer-heap-timingweight=120 \
+      --compare 30.fpga-cpu-console/reports/<build>/sweep-<base>
+```
+
+Quedan anotadas en el barrido (`--list` las muestra en la columna OPCIONES) y
+con `--apply` se escriben en el `apio.ini` **junto con la semilla**: una semilla
+solo vale con las opciones con las que se midió. No admite `seed`, `json`,
+`report`, `lpf`, `textcfg`, `package`, `speed` ni `force`, que ya pone el
+barrido. Hay que comparar siempre contra un barrido base **con las mismas
+semillas y el mismo build**.
+
+Lo medido en la 30 (ocho semillas, mismo netlist, mediana de `sdram_clk`, 80
+MHz exigidos): `tmg-ripup` y `placer-heap-timingweight` de 60 a 250 suben la
+mediana y hacen que algunas semillas cumplan; `--router router2` la baja 13 MHz;
+`placer-heap-critexp`, `placer-heap-beta` y `freq` dan exactamente lo mismo que
+sin ellas, y `placer static` empeora. `tmg-ripup` alarga el rutado (unos 4-5
+minutos por semilla en la 30).
 
 **Consultar barridos ya hechos** (no lanza nada ni crea registro en `reports/`):
 
@@ -796,6 +822,19 @@ el peor / mediana / mejor de cada reloj frente al exigido; `2/3` en SEEDS
 significa que una semilla pedida no llegó a dar informe. `--show` añade el
 margen en % por semilla y marca las que no dieron informe. Acepta `latest`, un
 trozo único del nombre del barrido o su ruta.
+
+**Cuándo fijar semilla y qué Fmax declarar.** Se fija (`--apply`) cuando el
+margen se mide en unidades, como en las carpetas de CPU: ahí la semilla decide
+si el diseño cumple. En las de GPU (12, 14, 17, 22) el margen se mide en
+decenas por ciento, la semilla no decide nada, y fijarla solo daría un número
+reproducible a costa de rebarrer con cada cambio de RTL: no se fija. En ese
+caso el Fmax que vale es el **peor** del barrido, no el de un build suelto, que
+es optimista y no reproducible. (Esto contradice a propósito la «Definición de
+terminado» de `docs/encargo-migracion-v2-gpu.md`, que pide semilla fijada.)
+
+`build-sweep` no sintetiza: re-ruta el `hardware.json` del último build
+archivado. Si el RTL ha cambiado desde entonces devuelve ocho números
+plausibles y falsos, así que ejecuta `build` justo antes.
 
 Antes reemplazaba a `tools/seed-sweep.ps1` (retirado): ese trabajaba directo
 sobre `_build/<env>/` sin pasar por el archivo de `reports/`; `build-sweep`

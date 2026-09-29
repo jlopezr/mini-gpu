@@ -8,7 +8,7 @@ import json
 import zipfile
 
 from tools.build_report import (configured_seed, extract_log_details, main,
-                                set_configured_seed, summarize, synthesizable_source_hashes,
+                                nextpnr_flags, set_configured_seed, summarize, synthesizable_source_hashes,
                                 timing_passes)
 
 
@@ -43,6 +43,53 @@ class BuildReportTest(unittest.TestCase):
                 encoding='utf-8')
             self.assertIsNone(set_configured_seed(root, 2))
             self.assertEqual(configured_seed(root), 2)
+
+    def test_set_configured_seed_writes_the_options_the_seed_was_measured_with(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ini = root / 'apio.ini'
+            ini.write_text(
+                '[env:default]\nboard = x\n'
+                'nextpnr-extra-options = --detailed-timing-report --placer-heap-timingweight 30 --seed 2\n',
+                encoding='utf-8')
+            set_configured_seed(root, 5, ['tmg-ripup', 'placer-heap-timingweight=120'])
+            options = ini.read_text().split('nextpnr-extra-options =')[1].split()
+            self.assertEqual(options.count('--placer-heap-timingweight'), 1)
+            self.assertEqual(options[options.index('--placer-heap-timingweight') + 1], '120')
+            self.assertIn('--tmg-ripup', options)
+            self.assertIn('--detailed-timing-report', options)
+            self.assertEqual(configured_seed(root), 5)
+            # Sin opciones, la linea conserva las que tenia.
+            set_configured_seed(root, 6)
+            self.assertIn('--tmg-ripup', ini.read_text())
+            # Y si la opcion no existia en el fichero, se crea con ellas.
+            ini.write_text('[env:default]\nboard = x\n', encoding='utf-8')
+            set_configured_seed(root, 3, ['tmg-ripup'])
+            self.assertIn('nextpnr-extra-options = --seed 3 --tmg-ripup', ini.read_text())
+
+    def test_nextpnr_flags_reject_what_the_sweep_already_sets(self):
+        self.assertEqual(nextpnr_flags(['router=router1', 'no-tmdriv']),
+                         ['--router', 'router1', '--no-tmdriv'])
+        for forbidden in ('seed=3', 'json=x', 'force'):
+            with self.assertRaises(SystemExit):
+                nextpnr_flags([forbidden])
+
+    def test_set_configured_seed_creates_the_option_when_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ini = root / 'apio.ini'
+            ini.write_text('[env:default]\r\nboard = x\r\ntop-module = top\r\n\r\n[env:other]\r\nboard = y',
+                           encoding='utf-8', newline='')
+            self.assertIsNone(set_configured_seed(root, 4))
+            self.assertEqual(configured_seed(root), 4)
+            self.assertEqual(
+                ini.read_bytes().decode(),
+                '[env:default]\r\nboard = x\r\ntop-module = top\r\n'
+                'nextpnr-extra-options = --seed 4\r\n\r\n[env:other]\r\nboard = y')
+            ini.write_text('[env:default]\nboard = x', encoding='utf-8', newline='')
+            set_configured_seed(root, 7)
+            self.assertEqual(ini.read_bytes().decode(),
+                             '[env:default]\nboard = x\nnextpnr-extra-options = --seed 7\n')
 
     def test_default_build_uses_cache_and_archives_report(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -673,6 +673,9 @@ def _main() -> int:
                            help="Lista los barridos ya hechos del prototipo")
     sweep_cmd.add_argument("--show", metavar="SWEEP", default=None,
                            help="Detalle por semilla de un barrido (latest, trozo del nombre o ruta)")
+    sweep_cmd.add_argument("--nextpnr-options", nargs="+", default=[], metavar="OPCION",
+                           help="Opciones extra de nextpnr sin guiones y con = para el valor, "
+                                "p. ej. tmg-ripup placer-heap-timingweight=30")
     sweep_cmd.add_argument("--apply", action="store_true",
                            help="Escribe en el apio.ini la semilla con más margen (solo si alguna cumple)")
     sweep_cmd.add_argument("--background", action="store_true", help="Lanza el barrido en segundo plano y vuelve enseguida")
@@ -826,6 +829,8 @@ def _main() -> int:
                   "--seeds", *(str(seed) for seed in args.seeds)]
         if args.report_dir is not None:
             command += ["--report-dir", str(args.report_dir)]
+        if args.nextpnr_options:
+            command += ["--nextpnr-options", *args.nextpnr_options]
         if args.compare is not None:
             command += ["--compare", str(args.compare.resolve())]
         if args.apply:

@@ -51,9 +51,13 @@ def montar_build(directorio: Path, achieved: float) -> Path:
 
 
 class SweepTest(unittest.TestCase):
-    def _correr(self, achieved_fuente, achieved_por_semilla, seeds=(1, 2)):
-        """Corre el barrido con nextpnr simulado y devuelve lo que imprime."""
+    def _correr(self, achieved_fuente, achieved_por_semilla, seeds=(1, 2), extra=()):
+        """Corre el barrido con nextpnr simulado y devuelve lo que imprime.
+
+        Los comandos que habria lanzado quedan en `self.comandos`."""
         import tempfile
+
+        self.comandos = []
 
         with tempfile.TemporaryDirectory() as temp:
             raiz = Path(temp)
@@ -62,6 +66,7 @@ class SweepTest(unittest.TestCase):
 
             def falso_nextpnr(command, **kwargs):
                 # nextpnr escribe su informe donde se lo pidan: --report.
+                self.comandos.append(command)
                 destino = Path(command[command.index("--report") + 1])
                 destino.write_text(json.dumps({"fmax": reloj(next(salidas))}))
                 return MagicMock(returncode=0)
@@ -79,10 +84,31 @@ class SweepTest(unittest.TestCase):
                  patch.object(sweep_report.subprocess, "run", falso_nextpnr), \
                  patch.object(sys, "argv",
                               ["sweep_report", "-p", "x",
-                               "--seeds", *(str(s) for s in seeds)]), \
+                               "--seeds", *(str(s) for s in seeds), *extra]), \
                  patch.object(sys, "stdout", texto):
                 sweep_report.main()
             return texto.getvalue()
+
+    def test_las_opciones_de_nextpnr_llegan_al_comando_y_se_anotan(self):
+        self._correr(85.0, [90.0, 91.0],
+                     extra=["--nextpnr-options", "tmg-ripup", "placer-heap-timingweight=30"])
+        for comando in self.comandos:
+            self.assertEqual(comando[comando.index("--tmg-ripup") - 2:comando.index("--tmg-ripup") + 3],
+                             ["--seed", comando[comando.index("--seed") + 1], "--tmg-ripup",
+                              "--placer-heap-timingweight", "30"])
+        self.assertEqual(len(self.comandos), 2)
+
+    def test_sin_opciones_el_comando_es_el_de_siempre(self):
+        self._correr(85.0, [90.0, 91.0])
+        self.assertNotIn("--tmg-ripup", self.comandos[0])
+        self.assertEqual(self.comandos[0][self.comandos[0].index("--seed") + 2], "--json")
+
+    def test_nextpnr_flags_rechaza_lo_que_ya_pone_el_barrido(self):
+        self.assertEqual(sweep_report.nextpnr_flags(["router=router1", "no-tmdriv"]),
+                         ["--router", "router1", "--no-tmdriv"])
+        for prohibido in ("seed=3", "json=x", "force"):
+            with self.assertRaises(SystemExit):
+                sweep_report.nextpnr_flags([prohibido])
 
     def test_barre_aunque_el_build_de_partida_no_cumpla(self):
         """El caso de la 19: partir de un netlist que falla es el motivo de

@@ -37,8 +37,8 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from build_report import (extract_log_details, set_configured_seed, summarize,
-                          timing_passes)
+from build_report import (extract_log_details, nextpnr_flags, set_configured_seed,
+                          summarize, timing_passes)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.prototype import (
@@ -75,8 +75,10 @@ def compare_sweeps(old: list, new: list, color: bool = None) -> list:
     Con una sola semilla, la diferencia entre antes y después mezcla el efecto
     del cambio con el ruido del placement. Por eso se compara el conjunto: la
     mediana dice si el cambio mueve el diseño, el peor caso es lo que se
-    declara, y el rango es el ruido. Un cambio de mediana menor que el mayor de
-    los dos rangos no se distingue de cambiar de semilla.
+    declara, y el rango se enseña como referencia. Se llama ruido a un cambio de
+    mediana menor que dos veces el error tipico de la diferencia entre los dos
+    conjuntos (desviacion / raiz de n de cada uno); no es una prueba estadistica
+    seria, pero con ocho semillas separa lo que el rango tapaba.
     """
     color = _use_color() if color is None else color
     seeds = sorted({r['seed'] for r in old} & {r['seed'] for r in new})
@@ -91,8 +93,12 @@ def compare_sweeps(old: list, new: list, color: bool = None) -> list:
         a = [old[s]['clocks'][clock]['achieved'] for s in seeds]
         b = [new[s]['clocks'][clock]['achieved'] for s in seeds]
         median_a, median_b = statistics.median(a), statistics.median(b)
-        noise = max(max(a) - min(a), max(b) - min(b))
         delta = median_b - median_a
+        # Error tipico de la diferencia entre dos muestras independientes. El rango
+        # de las semillas NO vale como ruido: con ocho semillas es tan ancho que
+        # tapaba mejoras de +6 MHz con todas las semillas nuevas por encima de casi
+        # todas las antiguas.
+        noise = 2 * (statistics.variance(a) / len(a) + statistics.variance(b) / len(b)) ** 0.5
         if abs(delta) <= noise:
             verdict = _paint('dentro del ruido: no se distingue de cambiar de semilla', '33', color)
         else:
@@ -125,6 +131,15 @@ def _requested_seeds(folder: Path, results: list) -> list:
         return json.loads((folder / 'metadata.json').read_text())['seeds']
     except (OSError, json.JSONDecodeError, KeyError):
         return [r['seed'] for r in results]
+
+
+def _options_text(folder: Path) -> str:
+    """Las opciones extra de nextpnr con las que se hizo el barrido, o `-`."""
+    try:
+        options = json.loads((folder / 'metadata.json').read_text()).get('nextpnr_options') or []
+    except (OSError, json.JSONDecodeError):
+        options = []
+    return ' '.join(options) or '-'
 
 
 def _stamp(name: str) -> str:
@@ -187,21 +202,23 @@ def list_sweeps(prototype_dir: Path, color: bool = None) -> list:
     sweeps = find_sweeps(prototype_dir)
     if not sweeps:
         return [f'No hay barridos en {prototype_dir / "reports"}. Ejecuta build-sweep primero.']
-    rows = [('BUILD', 'SWEEP', 'SEEDS', 'CUMPLEN', 'RELOJ', 'PEOR', 'MEDIANA', 'MEJOR', 'EXIGIDOS')]
+    rows = [('BUILD', 'SWEEP', 'SEEDS', 'CUMPLEN', 'RELOJ', 'PEOR', 'MEDIANA', 'MEJOR', 'EXIGIDOS',
+             'OPCIONES')]
     for folder in sweeps:
         try:
             results = json.loads((folder / 'results.json').read_text())
         except (OSError, json.JSONDecodeError):
             results = []
         head = (_stamp(folder.parent.name), _stamp(folder.name))
+        opciones = _options_text(folder)
         if not results:
-            rows.append((*head, '0', '-', '-', '-', '-', '-', 'sin resultados'))
+            rows.append((*head, '0', '-', '-', '-', '-', '-', 'sin resultados', opciones))
             continue
         requested = _requested_seeds(folder, results)
         seeds = str(len(results)) if len(results) == len(requested) else f'{len(results)}/{len(requested)}'
         cumplen = _passing_cell(results)
         for clock, s in clock_stats(results).items():
-            rows.append((*head, seeds, cumplen, clock, *_stat_cells(s)))
+            rows.append((*head, seeds, cumplen, clock, *_stat_cells(s), opciones))
     return _table(rows, _use_color() if color is None else color)
 
 
@@ -267,6 +284,7 @@ def show_sweep(folder: Path, color: bool = None) -> list:
         return [*lines, 'Sin resultados.' + (f' Semillas sin informe: {", ".join(fallidas)}' if fallidas else '')]
     requested = _requested_seeds(folder, results)
     lines.append(f'Semillas pedidas: {" ".join(map(str, requested))}')
+    lines.append(f'Opciones nextpnr: {_options_text(folder)}')
     color = _use_color() if color is None else color
     rows = [('SEMILLA', 'RESULTADO', 'RELOJES (MHz alcanzados/exigidos, margen)')]
     for r in sorted(results, key=lambda r: r['seed']):
@@ -298,6 +316,11 @@ def main():
     parser.add_argument('--apply', action='store_true',
                         help='escribe la semilla con más margen en el apio.ini del prototipo '
                              '(solo si alguna cumple timing)')
+    parser.add_argument('--nextpnr-options', nargs='+', default=[], metavar='OPCION',
+                        help='opciones extra de nextpnr, SIN guiones y con = para el valor: '
+                             'tmg-ripup placer-heap-timingweight=30 router=router1. Para '
+                             'medir si una opcion ayuda antes de ponerla en el apio.ini; '
+                             'quedan anotadas en el barrido')
     parser.add_argument('--compare', type=Path, default=None, metavar='SWEEP',
                         help='carpeta sweep-* (o su results.json) de un barrido anterior con las '
                              'mismas semillas; compara mediana, peor caso y rango para saber si '
@@ -327,6 +350,7 @@ def main():
         print('\n'.join(list_sweeps(listed) if args.list
                         else show_sweep(resolve_sweep(listed, args.show))))
         return
+    extra_flags = nextpnr_flags(args.nextpnr_options)
     reference = None
     if args.compare is not None:
         reference = load_results(args.compare)
@@ -360,7 +384,8 @@ def main():
     hashes = {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
               for name in ('hardware.json', 'sources.zip')}
     (folder / 'metadata.json').write_text(json.dumps(dict(source=str(source), sha256=hashes,
-        seeds=args.seeds, tool_sha256=hashlib.sha256(exe.read_bytes()).hexdigest()), indent=2))
+        seeds=args.seeds, nextpnr_options=args.nextpnr_options,
+        tool_sha256=hashlib.sha256(exe.read_bytes()).hexdigest()), indent=2))
     shutil.copy2(__file__, folder / 'sweep_report.py')
     params = read_ecp5_params((source / 'scons.params').read_text())
     results = []
@@ -377,7 +402,7 @@ def main():
             run.mkdir()
             command = [str(exe), f"--{params['type']}", '--package', params['package'],
                 '--speed', params['speed'],
-                '--seed', str(seed), '--json', str(source / 'hardware.json'),
+                '--seed', str(seed), *extra_flags, '--json', str(source / 'hardware.json'),
                 '--report', str(run / 'hardware.pnr'), '--lpf', str(lpf),
                 '--textcfg', str(run / 'hardware.config'), '--timing-allow-fail',
                 '--detailed-timing-report', '--force']
@@ -431,9 +456,11 @@ def main():
         print(f'Más margen: semilla {mejor["seed"]} '
               f'({100 * (limitante(mejor) - 1):+.1f} % en su reloj más justo)')
         if args.apply:
-            previous = set_configured_seed(prototype_dir, mejor['seed'])
+            previous = set_configured_seed(prototype_dir, mejor['seed'], args.nextpnr_options)
             print(f'apio.ini: --seed {previous if previous is not None else "(ninguna)"}'
-                  f' -> {mejor["seed"]}. El bitstream actual queda STALE hasta reconstruir.')
+                  f' -> {mejor["seed"]}'
+                  + (f', y opciones {" ".join(extra_flags)}' if extra_flags else '')
+                  + '. El bitstream actual queda STALE hasta reconstruir.')
     else:
         print('Ninguna semilla cumple: aquí el problema ya no es la semilla.')
         if args.apply:

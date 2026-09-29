@@ -90,12 +90,51 @@ def configured_seed(prototype_dir):
     return int(match.group(1)) if match else None
 
 
-def set_configured_seed(prototype_dir, seed):
+def nextpnr_flags(items):
+    """`tmg-ripup placer-heap-timingweight=30` -> ['--tmg-ripup', '--placer-heap-timingweight', '30'].
+
+    Sin guiones y con `=` para que argparse no las tome por opciones propias y
+    para que no dependan de como cite cada shell.
+    """
+    flags = []
+    for item in items:
+        name, _, value = item.lstrip('-').partition('=')
+        if name in ('seed', 'json', 'report', 'lpf', 'textcfg', 'package', 'speed', 'force'):
+            raise SystemExit(f'--nextpnr-options no puede llevar "{name}": ya lo pone el barrido.')
+        flags += [f'--{name}', *([value] if value else [])]
+    return flags
+
+
+def merge_nextpnr_flags(value, flags):
+    """Deja en `value` (texto de nextpnr-extra-options) las banderas de `flags`.
+
+    Las que ya estaban con el mismo nombre se sustituyen, con o sin valor.
+    """
+    names = {flag.split('=', 1)[0] for flag in flags if flag.startswith('--')}
+    tokens = value.split()
+    kept = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if token.startswith('--') and token.split('=', 1)[0] in names:
+            if '=' not in token and index < len(tokens) and not tokens[index].startswith('--'):
+                index += 1
+            continue
+        kept.append(token)
+    return ' '.join(kept + list(flags))
+
+
+def set_configured_seed(prototype_dir, seed, options=()):
     """Write ``--seed N`` into the nextpnr options that ``configured_seed`` reads.
 
     Edits the line in place (comments and line endings stay), replacing an
-    existing ``--seed`` or appending one. Returns the previous seed.
+    existing ``--seed`` or appending one. ``options`` son opciones extra de
+    nextpnr en el formato de ``nextpnr_flags``, con las que se eligio la
+    semilla: una semilla solo vale con las opciones con las que se midio.
+    Returns the previous seed.
     """
+    flags = nextpnr_flags(options)
     path = prototype_dir / 'apio.ini'
     previous = configured_seed(prototype_dir)
     lines = path.read_bytes().decode('utf-8').splitlines(keepends=True)
@@ -111,14 +150,30 @@ def set_configured_seed(prototype_dir, seed):
     env_section = f'env:{default_env(prototype_dir)}'
     target = found.get(env_section, found.get('common'))
     if target is None:
-        raise SystemExit(f'{path} no tiene nextpnr-extra-options en [{env_section}] ni en [common]; '
-                         f'anade --seed {seed} a mano.')
+        # Sin la opción en ningún sitio: se crea al final de la sección del entorno.
+        start = next((i for i, line in enumerate(lines)
+                      if re.match(rf'^\s*\[{re.escape(env_section)}\]', line)), None)
+        if start is None:
+            raise SystemExit(f'{path} no tiene la seccion [{env_section}]; anade --seed {seed} a mano.')
+        end = next((i for i in range(start + 1, len(lines))
+                    if re.match(r'^\s*\[', lines[i])), len(lines))
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        newline = '\r\n' if lines[start].endswith('\r\n') else '\n'
+        if not lines[end - 1].endswith(('\n', '\r')):
+            lines[end - 1] += newline
+        lines.insert(end, 'nextpnr-extra-options = '
+                          + merge_nextpnr_flags(f'--seed {seed}', flags) + newline)
+        path.write_text(''.join(lines), encoding='utf-8', newline='')
+        return previous
     head, value, newline = option.match(lines[target]).groups()
     seed_re = re.compile(r'(^|\s)--seed(?:\s+|=)\d+(?=\s|$)')
     if seed_re.search(value):
         value = seed_re.sub(lambda m: f'{m.group(1)}--seed {seed}', value, count=1)
     else:
         value = f'{value.rstrip()} --seed {seed}' if value.strip() else f' --seed {seed}'
+    if flags:
+        value = ' ' + merge_nextpnr_flags(value, flags)
     lines[target] = f'{head}{value}{newline}'
     path.write_text(''.join(lines), encoding='utf-8', newline='')
     return previous

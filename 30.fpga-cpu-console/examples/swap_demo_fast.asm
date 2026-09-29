@@ -1,0 +1,144 @@
+; ============================================================
+; swap_demo_fast.asm - la misma banda que swap_demo.asm, redibujando
+; solo lo que cambia
+;
+; swap_demo.asm repinta las 240 lineas enteras: 38 400 escrituras por imagen.
+; Esta version solo borra las 16 lineas de la banda anterior y dibuja las 16
+; de la nueva: 5 120 escrituras, 7,5 veces menos. Ese ahorro permite acercarse
+; a un swap por cada refresco de 60 Hz en el hardware actual.
+;
+; Con doble buffer, el buffer trasero contiene la imagen de hace dos swaps, no
+; la ultima imagen mostrada. Por eso R10 y R11 recuerdan por separado donde
+; quedo la banda en cada buffer y rotan despues de cada intercambio. Sin esa
+; cuenta quedarian bandas antiguas sin borrar.
+;
+; Al arrancar, los dos buffers contienen datos desconocidos. Las dos primeras
+; vueltas limpian uno completo cada una; despues R28 pasa de 240 a 16 y solo se
+; borra la banda antigua.
+;
+; No se usa MUL: esta CPU declara el opcode pero no lo ejecuta. La direccion
+; de una linea es base + y*640, y 640 = 512 + 128, o sea (y<<9) + (y<<7).
+;
+; Convencion de registros:
+;   R1  base del buffer trasero    R2  contador de lineas
+;   R3  contador de palabras       R4  direccion de la linea
+;   R5  temporal                   R6  puntero de escritura
+;   R7  constante 1                R8  lectura de SWAP
+;   R9  constante 0                R10 y de la banda en el buffer trasero
+;   R11 y de la banda en el otro   R12 y del bloque que se pinta
+;   R13 color del bloque           R14 constante 9   R15 constante 7
+;   R26 lineas del bloque que se pinta
+;   R20 base de los registros      R21 y de la banda, este frame
+;   R22 y maximo                   R23 color de fondo
+;   R24 color de la banda          R25 palabras por linea
+;   R27 alto de la banda           R28 lineas a borrar (240 al principio)
+;   R29 frames de arranque hechos  R30 constante 2
+; ============================================================
+
+.include "mmio.inc"
+
+start:
+    LI    R20, MMIO_VIDEO_BASE
+
+    ; Elegir dos zonas de RAM, separadas por el tamano de un framebuffer.
+    MOVHI R30, 0x0100
+    STORE R30, R20, MMIO_VIDEO_FB_FRONT_OFF          ; FB_FRONT
+    MOVHI R30, 0x0102
+    ORI   R30, R30, 0x5800
+    STORE R30, R20, MMIO_VIDEO_FB_BACK_OFF          ; FB_BACK, un frame mas arriba
+
+    ; Mostrar los framebuffers. Tras el reset VIDEO esta en modo PATTERN.
+    MOVI  R30, 2               ; SCANOUT
+    STORE R30, R20, MMIO_VIDEO_CTRL_OFF         ; VIDEO_CTRL
+
+    MOVHI R23, 0x001F
+    ORI   R23, R23, 0x001F     ; fondo azul, en las dos mitades de la palabra
+    MOVHI R24, 0x07E0
+    ORI   R24, R24, 0x07E0     ; banda verde
+
+    MOVI  R25, 160             ; palabras por linea (320 px de 16 bits)
+    MOVI  R27, 16              ; alto de la banda
+    MOVI  R28, 240             ; al principio hay que limpiar el buffer entero
+    MOVI  R29, 0               ; frames de arranque completados
+    MOVI  R30, 2               ; uno por buffer
+    MOVI  R21, 0               ; y de la banda
+    MOVI  R22, 224             ; 240 - alto de la banda
+    MOVI  R10, 0               ; ninguno de los dos buffers tiene banda todavia
+    MOVI  R11, 0
+    MOVI  R14, 9               ; desplazamientos para *640
+    MOVI  R15, 7
+    MOVI  R7, 1
+    MOVI  R9, 0
+
+frame:
+    LOAD  R1, R20, MMIO_VIDEO_FB_BACK_OFF           ; R1 = FB_BACK; cambia en cada intercambio
+
+    ; ---- borrar la banda que este buffer tenia ----
+    ADDI  R12, R10, 0
+    ADDI  R13, R23, 0          ; con el color de fondo
+    ADDI  R26, R28, 0          ; 240 lineas al arrancar, 16 despues
+
+    SHL   R4, R12, R14         ; y*512
+    SHL   R5, R12, R15         ; y*128
+    ADD   R4, R4, R5           ; y*640
+    ADD   R4, R4, R1           ; + base del buffer
+    MOVI  R2, 0
+
+erase_line:
+    MOVI  R3, 0
+    ADDI  R6, R4, 0
+erase_word:
+    STORE R13, R6, 0
+    ADDI  R6, R6, 4
+    ADDI  R3, R3, 1
+    BLT   R3, R25, erase_word
+    ADDI  R4, R4, 640
+    ADDI  R2, R2, 1
+    BLT   R2, R26, erase_line
+
+    ; ---- dibujar la banda en su sitio nuevo ----
+    ADDI  R12, R21, 0
+    ADDI  R13, R24, 0          ; con el color de la banda
+    ADDI  R26, R27, 0          ; siempre 16 lineas
+
+    SHL   R4, R12, R14
+    SHL   R5, R12, R15
+    ADD   R4, R4, R5
+    ADD   R4, R4, R1
+    MOVI  R2, 0
+
+draw_line:
+    MOVI  R3, 0
+    ADDI  R6, R4, 0
+draw_word:
+    STORE R13, R6, 0
+    ADDI  R6, R6, 4
+    ADDI  R3, R3, 1
+    BLT   R3, R25, draw_word
+    ADDI  R4, R4, 640
+    ADDI  R2, R2, 1
+    BLT   R2, R26, draw_line
+
+    ; ---- pedir el intercambio y esperar a que el hardware lo aplique ----
+    STORE R7, R20, MMIO_VIDEO_SWAP_OFF           ; SWAP = 1
+wait_swap:
+    LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF
+    BNE   R8, R9, wait_swap
+
+    ; Este buffer ya tiene la banda en R21; el que pasa a ser trasero es el
+    ; otro, que la tiene donde diga R11. Por eso los dos valores rotan.
+    ADDI  R5, R11, 0
+    ADDI  R11, R21, 0
+    ADDI  R10, R5, 0
+
+    ; Cuando los dos buffers estan limpios, borrar 16 lineas basta.
+    BGE   R29, R30, moved
+    ADDI  R29, R29, 1
+    BLT   R29, R30, moved
+    ADDI  R28, R27, 0          ; borrar solo el alto de la banda
+
+moved:
+    ADDI  R21, R21, 2          ; mover la banda
+    BLT   R21, R22, frame
+    MOVI  R21, 0
+    BRA   frame
