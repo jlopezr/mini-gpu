@@ -379,7 +379,13 @@ module memory_fabric_4 #(
             active_wdata <= 128'd0;
             active_wmask <= 16'd0;
 
-            response_data <= 128'd0;
+            // `response_data` no se reinicia ni se pone a cero con un error:
+            // solo se carga con la respuesta de la SDRAM (ST_WAIT). Antes tambien
+            // se cargaba en ST_IDLE al rechazar una direccion, y eso colgaba de
+            // su habilitacion todo el cono arbitraje -> mux de direcciones ->
+            // comparador de rango, sobre 128 biestables. Nadie lee el dato con
+            // `rsp_error` alto (la CPU descarta el LOAD, instruction_buffer y
+            // monitor_mem_adapter_128 lo ignoran) ni antes de `rsp_valid`.
             response_error <= 1'b0;
 
             ready_pulse <= 4'b0000;
@@ -451,7 +457,6 @@ module memory_fabric_4 #(
                             MASTER_0:
                                 if (((p0_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p0_req_addr[3:0] != 4'b0000)) begin
-                                    response_data <= 128'd0;
                                     response_error <= 1'b1;
                                     state <= ST_RESP;
                                 end else begin
@@ -461,7 +466,6 @@ module memory_fabric_4 #(
                             MASTER_1:
                                 if (((p1_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p1_req_addr[3:0] != 4'b0000)) begin
-                                    response_data <= 128'd0;
                                     response_error <= 1'b1;
                                     state <= ST_RESP;
                                 end else begin
@@ -471,7 +475,6 @@ module memory_fabric_4 #(
                             MASTER_2:
                                 if (((p2_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p2_req_addr[3:0] != 4'b0000)) begin
-                                    response_data <= 128'd0;
                                     response_error <= 1'b1;
                                     state <= ST_RESP;
                                 end else begin
@@ -481,7 +484,6 @@ module memory_fabric_4 #(
                             default:
                                 if (((p3_req_addr & ADDR_RANGE_MASK) != 32'd0) ||
                                     (p3_req_addr[3:0] != 4'b0000)) begin
-                                    response_data <= 128'd0;
                                     response_error <= 1'b1;
                                     state <= ST_RESP;
                                 end else begin

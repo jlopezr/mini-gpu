@@ -44,6 +44,32 @@ module text_console_tb;
     end
   endtask
 
+  // Una lectura como la entrega mmio_mux + mmio_decoder: `address` valida en el
+  // ciclo 0, `select` al dispositivo en el 1, y mmio_decoder muestrea
+  // `read_data` al final del 2. La direccion se mantiene los tres ciclos.
+  task mmio_read(input [15:0] addr, output [31:0] data);
+    begin
+      @(negedge clk_sys);
+      address = addr; write = 0; select = 0;
+      @(negedge clk_sys);
+      select = 1;
+      @(negedge clk_sys);
+      select = 0;
+      data = read_data;
+    end
+  endtask
+
+  task check_read(input [15:0] addr, input [31:0] want);
+    reg [31:0] got;
+    begin
+      mmio_read(addr, got);
+      if (got !== want) begin
+        $display("FAIL: lectura %04x = %08x, esperado %08x", addr, got, want);
+        failures = failures + 1;
+      end
+    end
+  endtask
+
   task settle_pixel;
     integer n;
     begin
@@ -92,6 +118,24 @@ module text_console_tb;
       $display("FAIL: transparencia %02x%02x%02x", r, g, b);
       failures = failures + 1;
     end
+
+    // Lecturas MMIO. El dato de las RAM sale de la BRAM, y text_ram son varios
+    // bloques (2400 palabras): se leen celdas en bloques distintos, seguidas y
+    // alternadas, para que un dato viejo no pueda colarse de una a otra.
+    mmio_write(16'h8000, 32'h00000abc);     // palabra 2048: otro bloque de BRAM
+    mmio_write(16'h6004, 32'h00001234);
+    check_read(16'h6000, 32'h00000141);
+    check_read(16'h8000, 32'h00000abc);
+    check_read(16'h6004, 32'h00001234);
+    check_read(16'h8000, 32'h00000abc);
+    check_read(16'h6000, 32'h00000141);
+    check_read(16'h1004, 32'h00ff0000);     // paleta
+    check_read(16'h1008, 32'h000000ff);
+    check_read(16'h1004, 32'h00ff0000);
+    check_read(16'h0088, 32'h00000080);     // font_data0
+    check_read(16'h0084, 32'd66);           // loader_glyph: 65 + 1 tras FONT_DATA3
+    check_read(16'h0080, 32'd0);            // loader_count: 1 - 1
+    check_read(16'h6000, 32'h00000141);     // una de texto despues de una de paleta
 
     // Bits de celda reservados: error y ninguna escritura.
     @(negedge clk_sys);

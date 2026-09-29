@@ -102,10 +102,6 @@ module text_console #(
       font_data2 <= 0;
       write_error <= 1'b0;
     end else begin
-      if (select && !write && is_text)
-        text_read_q <= text_ram[text_index];
-      if (select && !write && is_palette)
-        palette_read_q <= palette_ram[palette_index];
       if (select && write) write_error <= validation_error;
       if (select && write && is_palette && !palette_error) begin
         palette_ram[palette_index] <= write_data[23:0];
@@ -131,6 +127,30 @@ module text_console #(
       endcase
       end
     end
+  end
+
+  // Lectura de text_ram y palette_ram en DOS pasos, un ciclo antes que antes.
+  //
+  // mmio_mux registra `address` en el ciclo 0 (el de su `select`), el decoder da
+  // el `select` a este modulo en el 1, y mmio_decoder muestrea `read_data` al
+  // final del 2. La lectura de la BRAM arrancaba con el `select`, en el ciclo 1,
+  // y su salida (clk-to-q de 5,6 ns) atravesaba el mux entre bloques de BRAM, el
+  // OR con video y el mux del decoder en el mismo ciclo 2: era el camino
+  // critico de la 30. Ahora la BRAM lee de forma continua desde `address` --leer
+  // no tiene efectos-- ya en el ciclo 0, y un biestable de fabrica retiene el
+  // dato en el 1. El dato llega al decoder en el mismo ciclo 2, asi que la
+  // latencia del bus no cambia.
+  //
+  // Depende de que `address` se mantenga estable durante toda la transaccion, que
+  // es el contrato de mmio_mux, y de que el contenido no cambie entre el ciclo 0
+  // y el 1: una escritura nunca comparte transaccion con una lectura.
+  reg [15:0] text_read_bram;
+  reg [23:0] palette_read_bram;
+  always @(posedge clk_sys) begin
+    text_read_bram    <= text_ram[text_index];
+    palette_read_bram <= palette_ram[palette_index];
+    text_read_q       <= text_read_bram;
+    palette_read_q    <= palette_read_bram;
   end
 
   always @* begin
