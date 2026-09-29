@@ -716,12 +716,32 @@ aparte: una lista se desincroniza en cuanto alguien renombra o borra un banco y
 el filtro deja de filtrar sin que nadie se entere. Al omitir alguno, `test`
 dice cuál y cómo pedirlo.
 
-Un prototipo sin ningún banco marcado se comporta exactamente como antes: una
-sola llamada a `apio test`. El recorrido por bancos sueltos solo se usa cuando
-hay algo que excluir.
+Con `--jobs 1`, un prototipo sin ningún banco marcado hace una sola llamada a
+`apio test`, y el recorrido por bancos sueltos solo se usa cuando hay algo que
+excluir. Con el valor por defecto (`--jobs 2`) los bancos se reparten como se
+explica abajo.
 
 Al marcar uno, deja cubierto lo mismo por otro lado. `gpu_plasma_tb` tiene a
 `gpu_plasma4_tb`, que corre el mismo camino con 24 filas en vez de 240 (~50 s).
+
+### Bancos en paralelo (`--jobs`)
+
+`test` reparte los bancos RTL en `--jobs N` grupos (por defecto 2) que corren a
+la vez. Cada grupo es **una** invocación de `apio test` sobre su **propia copia**
+de la carpeta del prototipo, y no sobre la real: apio/scons guardan estado en el
+proyecto y dos `apio test` sobre la misma carpeta se pisarían. Las copias son
+hermanas de la carpeta (`_tmp_test_<k>_<prototipo>`, para que rutas como
+`..\x.tests\inc` sigan valiendo), no llevan `reports/` ni `_build/`, y se borran
+al terminar, también si algo falla.
+
+- El reparto es por turnos, sin más. Sirve cuando un banco pesa más que todos los
+  demás juntos, como `video_fullframe_tb` en la 30 (unos 40 s de simulación
+  frente a ~10 s del resto): la suite tarda lo que ese banco y los demás corren
+  a su lado. Más grupos no lo bajan.
+- Los ficheros que un banco escribe en su carpeta (`frame_full.hex/.bin`) se
+  copian de vuelta a la carpeta real, como con una sola invocación.
+- `--jobs 1` es el comportamiento anterior, sin copias.
+- La salida de cada grupo se imprime entera al terminar, no mientras corre.
 
 ### Solo lint (`lint`)
 

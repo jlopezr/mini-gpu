@@ -7,8 +7,11 @@ no aplica a ese prototipo en concreto, en vez de fingir que existe."""
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +42,103 @@ def slow_testbenches(prototype_dir: Path) -> list[Path]:
     return found
 
 
+TEMP_PREFIX = "_tmp_test_"
+# Lo que no se copia a las carpetas de trabajo: historial pesado y estado de build.
+NO_COPIAR = {"reports", "_build", "__pycache__", ".git"}
+
+
+def testbenches(prototype_dir: Path) -> list[Path]:
+    return sorted(prototype_dir.glob("*_tb.v")) + sorted(prototype_dir.glob("*_tb.sv"))
+
+
+def _copy_worktree(prototype_dir: Path, dest: Path, keep: set[str]) -> dict[str, int]:
+    """Copia el prototipo a `dest` con SOLO los bancos de `keep`.
+
+    Devuelve el mtime (ns) de cada fichero de la raiz, para saber luego cuales
+    ha escrito un banco. `reports/` y `_build/` no se copian: pesan gigas y
+    apio no los necesita para simular.
+    """
+    dest.mkdir()
+    mtimes = {}
+    todos = {p.name for p in testbenches(prototype_dir)}
+    for item in prototype_dir.iterdir():
+        if item.name in NO_COPIAR:
+            continue
+        if item.is_dir():
+            shutil.copytree(item, dest / item.name)
+        elif item.name in todos and item.name not in keep:
+            continue
+        else:
+            shutil.copy2(item, dest / item.name)
+            mtimes[item.name] = (dest / item.name).stat().st_mtime_ns
+    return mtimes
+
+
+def _copy_back(dest: Path, prototype_dir: Path, mtimes: dict[str, int]) -> None:
+    """Devuelve los ficheros de la raiz que un banco ha creado o modificado.
+
+    Algunos bancos escriben en su directorio de trabajo (`frame_full.hex/.bin`,
+    que luego se miran a mano). Con las copias aisladas esos ficheros se
+    perderian; asi el resultado en el directorio del prototipo es el de siempre.
+    """
+    for item in dest.iterdir():
+        if not item.is_file() or item.name in NO_COPIAR:
+            continue
+        if mtimes.get(item.name) != item.stat().st_mtime_ns:
+            shutil.copy2(item, prototype_dir / item.name)
+
+
+def run_rtl_parallel(apio: str, prototype_dir: Path, benches: list[Path], jobs: int) -> list[str]:
+    """`apio test` sobre `jobs` grupos de bancos a la vez. Devuelve los fallos.
+
+    Cada grupo corre en su propia copia (hermana de la carpeta, para que las
+    rutas relativas `..\\x.tests\\...` sigan valiendo): apio/scons guardan estado
+    en el proyecto, y dos `apio test` sobre la misma carpeta se pisarian. Es UNA
+    invocacion de apio por grupo, no una por banco, para no pagar el arranque de
+    scons en cada uno.
+
+    El reparto es por turnos, sin mas: en la 30 un banco de 115 s pesa mas que los
+    otros treinta juntos, y con esa forma cualquier reparto acaba en lo que tarda
+    el grupo que lo lleva.
+    """
+    groups = [benches[i::jobs] for i in range(jobs) if benches[i::jobs]]
+    parent = prototype_dir.parent
+    dirs = [parent / f"{TEMP_PREFIX}{k}_{prototype_dir.name}" for k in range(len(groups))]
+    print(f"== regresión RTL (apio test), {len(benches)} bancos en {len(groups)} grupos en paralelo",
+          flush=True)
+    results = []
+    try:
+        for d in dirs:
+            shutil.rmtree(d, ignore_errors=True)      # sobrante de una ejecucion interrumpida
+        state = [_copy_worktree(prototype_dir, d, {b.name for b in g}) for d, g in zip(dirs, groups)]
+
+        def run(index):
+            started = time.monotonic()
+            done = subprocess.run([apio, "test", "-p", str(dirs[index])], cwd=str(dirs[index]),
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
+            return done, time.monotonic() - started
+
+        with ThreadPoolExecutor(max_workers=len(groups)) as pool:
+            results = list(pool.map(run, range(len(groups))))
+        for d, mtimes in zip(dirs, state):
+            _copy_back(d, prototype_dir, mtimes)
+    finally:
+        for d in dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    failures = []
+    for k, (group, (done, seconds)) in enumerate(zip(groups, results), start=1):
+        print(f"== grupo {k}/{len(groups)}: {len(group)} bancos, {seconds:.1f} s "
+              f"({', '.join(p.name for p in group)})", flush=True)
+        print(done.stdout, end="", flush=True)
+        if done.stderr:
+            print(done.stderr, end="", file=sys.stderr, flush=True)
+        if done.returncode != 0:
+            print(f"!! apio test (grupo {k}) falló (exit {done.returncode})", file=sys.stderr)
+            failures.append(f"apio test (grupo {k})")
+    return failures
+
+
 def run_step(name: str, command: list[str], cwd: Path) -> int:
     print(f"== {name}", flush=True)
     print(f"$ {' '.join(command)}", flush=True)
@@ -58,7 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lint-only", action="store_true",
                         help="solo apio lint: sin fixtures, tests Python ni regresión RTL")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--jobs", type=int, default=2,
+                        help="grupos de bancos RTL en paralelo, cada uno en su copia de la carpeta "
+                             "(por defecto 2; 1 = una sola invocacion de apio, como antes)")
     args = parser.parse_args(argv)
+    if args.jobs < 1:
+        parser.error("--jobs tiene que ser al menos 1")
     if args.lint_only:
         args.lint = True
 
@@ -97,7 +202,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             ran_something = True
             slow = slow_testbenches(prototype_dir)
-            if not slow or args.full:
+            slow_names = {path.name for path in slow}
+            rapidos = [path for path in testbenches(prototype_dir)
+                       if args.full or path.name not in slow_names]
+            if args.jobs > 1 and len(rapidos) > 1:
+                if slow and not args.full:
+                    print("   omitidos por lentos (usa --full para incluirlos): "
+                          + ", ".join(sorted(slow_names)), flush=True)
+                failures.extend(run_rtl_parallel(apio, prototype_dir, rapidos, args.jobs))
+            elif not slow or args.full:
                 # Sin bancos lentos (o con --full) se deja hacer a apio, que es
                 # una sola invocacion y la salida de siempre.
                 if run_step("regresión RTL (apio test)",

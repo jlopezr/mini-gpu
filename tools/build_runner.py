@@ -657,6 +657,8 @@ def _main() -> int:
     test_cmd.add_argument("--lint", action="store_true", help="añade apio lint")
     test_cmd.add_argument("--lint-only", action="store_true", help="solo apio lint, sin fixtures/tests/regresión RTL")
     test_cmd.add_argument("--verbose", action="store_true")
+    test_cmd.add_argument("--jobs", type=int, default=None,
+                          help="Grupos de bancos RTL en paralelo (por defecto 2; 1 = como antes)")
     test_cmd.add_argument("--background", action="store_true", help="Lanza el test en segundo plano y vuelve enseguida")
 
     sweep_cmd = subparsers.add_parser("sweep", help="Barrido de semillas de placement (tools/sweep_report.py)")
@@ -806,6 +808,8 @@ def _main() -> int:
             command.append("--lint-only")
         if args.verbose:
             command.append("--verbose")
+        if args.jobs is not None:
+            command += ["--jobs", str(args.jobs)]
         args.cmd_args = ["--", *command]
         args.command = "run"
 
