@@ -49,6 +49,7 @@ COUNTERS = [
     ("LSU_TX", BASE, 0x10, "transacciones de la LSU vectorial"),
     ("STALL_MEM", BASE, 0x14, "ciclos con la LSU sin aceptar peticion"),
     ("LANE_OPS", BASE, 0x18, "operaciones de hilo (suma de lanes activas)"),
+    ("NO_WARP_STALL", BASE, 0x1C, "ciclos con F libre y ningun warp elegible"),
     ("VIDEO_TX", VIDEO_BASE, 0x24, "transacciones del scanout"),
 ]
 

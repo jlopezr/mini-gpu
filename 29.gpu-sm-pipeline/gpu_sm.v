@@ -38,6 +38,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     output reg instruction_retired,
     output reg [7:0] retired_lanes,
     output reg [31:0] retired_count,
+    output no_warp_stall,
     output [31:0] debug_warp_retired_count,
     input [2:0] debug_warp, debug_lane,
     input [4:0] debug_register,
@@ -301,6 +302,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         for(a=0;a<8;a=a+1)
             if(!release_found && releasing[a]) begin release_found=1; release_warp=a[2:0]; end
     end
+
+    // Burbuja de S por falta de warp elegible: F esta libre (no es
+    // contrapresion del cauce) y aun asi ningun warp pasa el filtro de
+    // pick_found, con algo todavia vivo (si nada esta vivo el programa ha
+    // terminado y eso no es una burbuja, es el final). Separa "el cauce no
+    // tiene con que llenarse" de "el cauce esta lleno", que es justo la
+    // pregunta que profiling.md deja abierta al segmentar S/F/I/D/X/W.
+    assign no_warp_stall = init_done && running && !error && !f_valid &&
+                           !pick_found && any_live && !step_locked;
 
     // -- X: deteccion de fallo y de divergencia -------------------------------
     reg [7:0] taken;

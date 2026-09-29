@@ -92,6 +92,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     wire [7:0] lsu_mask,lsu_rsp_error,occupied;
     wire [255:0] lsu_address,lsu_data,lsu_rsp_data;
     wire [7:0] sm_retired_lanes;
+    wire sm_no_warp_stall;
     reg [1:0] host_state;
     reg [31:0] address;
     reg [7:0] write_data;
@@ -173,7 +174,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .lsu_write(lsu_write),.lsu_address(lsu_address),.lsu_data(lsu_data),
         .lsu_rsp_valid(lsu_rsp_valid),.lsu_rsp_ready(lsu_rsp_ready),.lsu_rsp_tag(lsu_rsp_tag),
         .lsu_rsp_data(lsu_rsp_data),.lsu_rsp_error(lsu_rsp_error),.lsu_occupied(occupied),
-        .retired_lanes(sm_retired_lanes)
+        .retired_lanes(sm_retired_lanes),.no_warp_stall(sm_no_warp_stall)
     );
 
     // Camino MMIO de la GPU. El bloque que lo sirve esta mas abajo, junto a los
@@ -352,7 +353,8 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .retired(instruction_retired),.retired_lanes(sm_retired_lanes),
         .imem_hits(imem_hits),.imem_misses(imem_misses),
         .lsu_tx(p0_valid && p0_ready),
-        .stall_mem(lsu_valid && !lsu_ready));
+        .stall_mem(lsu_valid && !lsu_ready),
+        .no_warp_stall(sm_no_warp_stall));
 
     always @(posedge clk) begin
         if(core_reset) begin gm_busy<=1'b0; gm_rd<=32'd0; gm_err<=1'b0; end

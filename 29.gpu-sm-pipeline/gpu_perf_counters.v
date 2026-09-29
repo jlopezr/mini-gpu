@@ -55,7 +55,8 @@ module gpu_perf_counters (
     input wire retired,
     input wire [7:0] retired_lanes,
     input wire [31:0] imem_hits, imem_misses,
-    input wire lsu_tx, stall_mem
+    input wire lsu_tx, stall_mem,
+    input wire no_warp_stall
 );
     // Ranuras de MMIO v2 §14.4. `VIDEO_TX` YA NO ESTA AQUI: se ha ido al
     // bloque VIDEO, que es donde §9.7 lo pone --«pertenece a VIDEO, no al
@@ -70,10 +71,16 @@ module gpu_perf_counters (
     // extension de esta carpeta, no del contrato.
     localparam [3:0] REG_CYCLES=4'd0, REG_RETIRED=4'd1, REG_IMEM_HITS=4'd2,
                      REG_IMEM_MISSES=4'd3, REG_LSU_TX=4'd4,
-                     REG_STALL_MEM=4'd5, REG_LANE_OPS=4'd6;
+                     REG_STALL_MEM=4'd5, REG_LANE_OPS=4'd6,
+                     REG_NO_WARP_STALL=4'd7;
 
     reg [31:0] cycles, retired_count, lsu_tx_count, stall_count;
     reg [31:0] lane_ops;
+    // Ciclos en los que S tenia hueco (F libre) y aun asi ningun warp paso
+    // pick_found, con algo vivo. Distingue burbuja por falta de warps
+    // elegibles (este prototipo, 29, sin bypass) de contrapresion del cauce
+    // o simplemente el programa habiendo terminado. Ver gpu_sm.v.
+    reg [31:0] no_warp_stall_count;
     // popcount de la mascara: cuantas lanes retiran con esta instruccion.
     wire [3:0] lanes_now = {3'b000,retired_lanes[0]}+{3'b000,retired_lanes[1]}+{3'b000,retired_lanes[2]}+{3'b000,retired_lanes[3]}
                          + {3'b000,retired_lanes[4]}+{3'b000,retired_lanes[5]}+{3'b000,retired_lanes[6]}+{3'b000,retired_lanes[7]};
@@ -88,6 +95,7 @@ module gpu_perf_counters (
             REG_LSU_TX:      read_data=lsu_tx_count;
             REG_STALL_MEM:   read_data=stall_count;
             REG_LANE_OPS:    read_data=lane_ops;
+            REG_NO_WARP_STALL: read_data=no_warp_stall_count;
             default:         bad=1'b1;
         endcase
     end
@@ -95,7 +103,7 @@ module gpu_perf_counters (
     always @(posedge clk) begin
         if(reset) begin
             cycles<=0; retired_count<=0; lsu_tx_count<=0;
-            stall_count<=0; lane_ops<=0;
+            stall_count<=0; lane_ops<=0; no_warp_stall_count<=0;
         end else if(running) begin
             cycles<=cycles+1'b1;
             if(retired) begin
@@ -104,6 +112,7 @@ module gpu_perf_counters (
             end
             if(lsu_tx)    lsu_tx_count<=lsu_tx_count+1'b1;
             if(stall_mem) stall_count<=stall_count+1'b1;
+            if(no_warp_stall) no_warp_stall_count<=no_warp_stall_count+1'b1;
         end
     end
 endmodule

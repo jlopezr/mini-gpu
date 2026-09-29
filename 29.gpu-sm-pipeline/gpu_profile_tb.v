@@ -171,6 +171,7 @@ module gpu_profile_tb;
         read_word(32'h80200024); $display("VIDEO_TX    %0d", word_result);
         read_word(32'h82030014); $display("STALL_MEM   %0d", word_result);
         read_word(32'h82030018); $display("LANE_OPS    %0d", word_result);
+        read_word(32'h8203001c); $display("NO_WARP_STALL %0d", word_result);
         read_word(32'h80200018); $display("SWAP_COUNT  %0d", word_result);
 
         read_word(32'h80200004);
