@@ -56,13 +56,15 @@ cada píxel tiene un único escritor y el host lee después de terminar todos.
 El simulador cuenta instrucciones emitidas por warp, no ciclos de hardware.
 
 `expected.bin` procede del algoritmo escalar de `0.mandelbrot/mandelbrot_fixed.py`,
-no de la salida GPU. Para regenerarlo intencionadamente:
+no de la salida GPU. Lo calcula [`reference.py`](reference.py). Para regenerarlo
+intencionadamente:
 
 ```powershell
-.venv/Scripts/python.exe x.tests/cases-gpu/programs/mandelbrot/run.py --reference-only
+.venv/Scripts/python.exe x.tests/cases-gpu/programs/mandelbrot/reference.py
 ```
 
-La ejecución normal nunca regenera la referencia. La prueba compara todas las
+(`run.py --reference-only` hace lo mismo.) La ejecución normal no sobrescribe la
+referencia; solo `run_tests.py` la genera, y únicamente cuando falta el fichero. La prueba compara todas las
 palabras, el total de 10 255 708 instrucciones de warp, que no hay fallo, que
 los ocho warps han terminado y los registros de configuración final de una lane
 de cada warp.

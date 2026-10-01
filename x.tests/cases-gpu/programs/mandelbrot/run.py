@@ -14,17 +14,11 @@ sys.path.insert(0, str(ROOT / "x.tests"))
 from backends.gpu_simulator import GpuBackend
 from run_tests import load_case, compare_result
 
-WIDTH, HEIGHT, MAX_ITER = 320, 240, 256
+# La referencia escalar vive en reference.py; aquí solo se reutiliza.
+_REFERENCE = runpy.run_path(str(HERE / "reference.py"))
+WIDTH, HEIGHT, MAX_ITER = _REFERENCE["WIDTH"], _REFERENCE["HEIGHT"], _REFERENCE["MAX_ITER"]
+generate_reference = _REFERENCE["generate_reference"]
 BASE = 0x00100000
-
-
-def generate_reference():
-    """Referencia escalar Q16.16, independiente del ensamblador y la GPU."""
-    reference = runpy.run_path(str(ROOT / "0.mandelbrot/mandelbrot_fixed.py"))
-    values = [reference["mandelbrot"](*reference["pixel_to_complex"](x, y), MAX_ITER)
-              for y in range(HEIGHT) for x in range(WIDTH)]
-    (HERE / "expected.bin").write_bytes(struct.pack(f"<{len(values)}I", *values))
-    print("Generado expected.bin desde la referencia escalar", flush=True)
 
 
 def main():
