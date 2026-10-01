@@ -4,73 +4,33 @@ Por orden de prioridad **argumentada**, no heredada. Cada punto dice qué falta,
 por qué importa y qué lo bloquea; si no se pueden escribir esas tres cosas, o no
 está verificado o no es un punto.
 
-Repasado el 21/09/2026 contra el árbol. Al final hay un apartado con lo cerrado,
+Repasado el 01/10/2026 contra el árbol. Al final hay un apartado con lo cerrado,
 para no volver a abrirlo por error.
 
 ---
 
-## 0. Unificar ejemplos de codigo
-cambiar de nombre la carpetacases -> cases-cpu
-
-los diferentes programas de prueba se sabe que versiones de prototipos (o por ejemplo
-extensiones) necesitan? quiero decir, si ejecuto uno de los programas de prueba que no
-funcionara en ese prototipo concreto se detecta y no se ejecuta. este mecanismo esta bien configurado?
-
-podemos añadir una funcion para ejecutar los tests en todas las prototipos sean cpu o gpu?
-que al generar estas ejecuciones se guarde profiling.
-
-que al final con este profiling se genere un informe con tablas. por ejemplo para cada
-programa los valores de tiempo de ejecucion, CPI, etc... para cada prototipo y poder
-mirar si vamos a mejor o peor. Si los programas son de video pues las FPS tb.
-
-la placa esta conectada asi que puedes probarlo
-
 ## 1. Cerrar la ronda de placa
 
-**La ronda está hecha y salió limpia** (20/09/2026). Las nueve carpetas que la
-suite conoce, con el mapa v2 y el `monitor.v` final:
+**La ronda se repitió el 01/10/2026 y salió limpia**: la suite completa en las
+once carpetas que la conocen —6, 10, 12, 14, 16, 18, 19, 21, 22, 29 y 30— con 0
+fallos, y con los bitstreams resintetizados desde el RTL actual (la identidad
+`DEVICES` ya sale de `tools/generate-sysid`). Se lanza con `test-all`.
 
-| | 6 | 10 | 12 | 14 | 16 | 18 | 19 | 21 | 22 |
-|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| Casos | 13 | 17 | 30 | 31 | 26 | 26 | 38 | 53 | 33 |
-| Fallos | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+**Qué falta.** Una cosa: **`mmio_error_ack_tb.v` existe en 18, 19 y 21 y no en
+las GPU**, así que en la familia GPU nadie comprueba en simulación que el error
+de un dispositivo llegue al cliente. La placa lo cierra (los cuatro
+`shared-mmio-*` pasan), pero un banco lo cerraría sin placa.
 
-Las nueve pasan los cuatro `shared-mmio-*` —que un bloque **ausente** conteste
-error y no cero (§4.3), SYSTEM reservado, SYSTEM de sólo lectura—. La 16 y la
-22 pasan además `shared-video-fb-desalineada` y `shared-double-buffer`; la 16
-pasa los seis casos de vídeo, o sea que el `frame_capture` que ganó al migrar
-está confirmado en silicio.
-
-**Qué falta.** Dos cosas:
-
-1. **La 17 no se puede probar con la suite.** Es la única carpeta de GPU **sin
-   `version.json`**, así que `run_tests.py --backend gpu-fpga` no la conoce
-   —sólo `bram` (12), `sdram` (14) y `lsu2` (22)—. Se validó a mano: `SYSTEM`
-   con los siete valores correctos, los cinco bloques ausentes rechazados por
-   la placa y un descriptor de warp escrito y releído en `0x82010030`. Falta
-   decidir si merece alias propio o si es redundante con `sdram`.
-2. **Resintetizar las diez y repetir la ronda.** Al generar la identidad desde
-   el RTL (`tools/generate-sysid`), `DEVICES` cambió en **seis** carpetas: la 6
-   y la 10 ganan su bit de CPU, y la 18, la 19, la 21 y la 22 el de FABRIC, que
-   ninguna declaraba pese a instanciar `memory_fabric_4`. Las diez elaboran y
-   pasan sus bancos, pero sus bitstreams ya no corresponden. Son unas dos horas
-   de síntesis más la ronda, que ya está guionizada.
-
-**Por qué importa.** Es el único paso que mide lo que ninguna otra cosa mide:
+**Por qué importa.** La placa mide lo que ninguna otra cosa mide:
 
 | Qué | Por qué no lo ve la simulación |
 |---|---|
 | Que el bloque SYSTEM conteste con los valores de **esa** carpeta | Ningún banco instancia `top` |
-| Que un bloque **ausente** conteste error y no cero | Las cuatro GPU tienen bloques ausentes; sólo la 22 tiene vídeo |
+| Que un bloque **ausente** conteste error y no cero | Las GPU tienen bloques ausentes; sólo la 22 y la 29 tienen vídeo |
 | Que el error de un dispositivo **llegue al cliente** | Vive un ciclo y el cliente lo muestrea al siguiente |
 | La captura de DQ de la SDRAM | Entra por un pin |
-| Los `.asm` de `examples/` | Ningún `test.json` los ejecuta |
 
-Y hay un hueco concreto que sólo la placa cierra: `mmio_error_ack_tb.v` existe
-en 18, 19 y 21 y **no en las cuatro de GPU**, así que en la familia GPU nadie
-comprueba en simulación que el error de un dispositivo llegue al cliente.
-
-**Qué lo bloquea.** Nada. Son unos diez minutos de placa por carpeta.
+**Qué lo bloquea.** Nada.
 
 Trampas al ejecutarlo, todas ya pagadas:
 
@@ -79,6 +39,12 @@ Trampas al ejecutarlo, todas ya pagadas:
   diseño que ya no existe y devuelve ocho números perfectamente plausibles y
   falsos, sin nada en la salida que lo delate. Hay que correr `tools/build`
   **antes** de barrer, o comprobar la fecha del build de partida.
+- **La semilla de nextpnr es de un netlist concreto.** Tras cambiar RTL hay que
+  re-barrerla: la 16 pasó de cerrar timing a 99,0/100 MHz con la semilla antigua
+  al cambiar `HALT_AT`.
+- **Tocar un `.v`, aunque sea un comentario, deja el bitstream STALE** (también
+  `.vh`, `.lpf` y `apio.ini`). Y varios ficheros se copian idénticos entre
+  carpetas, con un test que lo exige.
 - El `Elapsed` de `tools/build-status` es **`mm:ss`**, no `hh:mm`.
 - Un `build.log` de nextpnr trae la temporización **dos veces**: una estimación
   pre-rutado (10-20 MHz más pesimista, y suele ser un FAIL aparatoso) y la buena.
@@ -94,24 +60,6 @@ Trampas al ejecutarlo, todas ya pagadas:
   cuenta; no hay que replugar el USB, hay que esperar.
 - Si hay placa enchufada, **pregúntale lo que ya pueda contestar antes de
   gastar una síntesis**: qué bitstream lleva, si su bloque SYSTEM responde.
-
-**Lo que la ronda encontró y la simulación no**, que es la razón de que este
-punto vaya primero:
-
-- **`x.tests/backends/gpu_fpga.py` seguía entero en v1** —los cinco registros
-  de vídeo y cuatro direcciones de depuración cableadas—. El backend de placa
-  que estaba migrado era `fpga.py`, que es **otro fichero**. 18 de 33 casos de
-  la 22 fallaban por esto. Ya migrado, con las tres bases leídas del
-  `monitor.py` del prototipo.
-- **Un contador cambió de dominio de reset al cambiar de bloque.** El global de
-  retiros lo servía el SM (`core_reset`) y pasó a servirlo `gpu_perf_counters`
-  (`reset`), que acumula entre casos: `instructions_executed` daba 20.864.707
-  donde el caso esperaba 22. No estaba mal el contador, **era otro contador**.
-- **La 22 truncaba la base de framebuffer desalineada** en vez de dar error
-  (§9.2). Arreglado y verificado.
-
-Ninguna de las tres la podía ver un banco, y las dos primeras no las ve
-**ningún** camino automático: nadie ejecuta el backend de placa.
 
 ---
 
@@ -179,21 +127,12 @@ Lo que sí se hizo al migrar la 22: `VIDEO_TX` se movió de PERF a VIDEO, que es
 lo que pide §9.7, y con él su regla de *gating*. Eso bajó `STALL_MEM` a la
 ranura 5 y `LANE_OPS` a la 6.
 
-### 2.5. Vídeo de la GPU: dos divergencias medidas
+### 2.5. Vídeo de la GPU: `FRAME_COUNT` de 16 bits
 
 `gpu_video_regs.v` adoptó la numeración de v2 y sacó `FRAME_COUNT` de `STATUS`,
-pero quedan dos:
-
-- ~~**§9.2 exige error en base desalineada**~~ — **hecho** el 20/09/2026, y
-  verificado en placa: `shared-video-fb-desalineada` pasa en la 22. La GPU
-  truncaba en silencio; ahora `gpu_video_regs.v` rechaza la palabra entera y
-  no guarda nada. Sólo se juzga con los cuatro strobes, que es como escribe
-  `WRITE_WORD`: byte a byte el registro pasa por estados intermedios
-  desalineados que son legítimos.
-- **§9.5 pide `FRAME_COUNT` de 32 bits** y el de la GPU es un registro de 16
-  extendido con ceros. Sigue abierto. En placa se ve avanzar correctamente,
-  así que el síntoma sólo aparecería al dar la vuelta a los 65 536 frames —
-  unos 18 minutos a 60 Hz.
+pero §9.5 lo pide de **32 bits** y el de la GPU es un registro de 16 extendido
+con ceros. En placa se ve avanzar correctamente, así que el síntoma sólo
+aparecería al dar la vuelta a los 65 536 frames — unos 18 minutos a 60 Hz.
 
 ### 2.6. Dos cosas del contrato, no del RTL
 
@@ -241,23 +180,21 @@ los dos.
 
 ---
 
-## 4. Segmentar el cauce del SM
+## 4. Segmentar la unidad X del SM
 
-**Qué falta.** Implementar el diseño ya escrito en
-[`22.fpga-gpu-bl8/sm-pipeline.md`](22.fpga-gpu-bl8/sm-pipeline.md), que el README
-de la 22 llama v2.1 (`pending_spec`, preparación en la sombra).
+**Hecho:** el cauce de 6 etapas (S → F → I → D → X → W) está en
+[`29.fpga-gpu-sm-pipeline`](29.fpga-gpu-sm-pipeline) y pasa la suite en placa.
+Medido en la ronda del 01/10/2026, el CPI de warp baja de 16,3 en la 22 a 8,4.
 
-**Por qué importa.** El camino crítico **se mudó**: ya no vive en la LSU, vive en
-el SM ([`lsu-v2.md`](22.fpga-gpu-bl8/lsu-v2.md)). Seguir puliendo la LSU es donde
-están los rendimientos decrecientes; el SM es donde queda ganancia. Este punto
-sustituye al antiguo «optimizar LSU», que está hecho: `gpu_lsu2.v`,
-`gpu_aux_adapter_128.v` y `gpu_imem_buffer.v` sobre `memory_fabric_4` y
-`sdram_controller_128` dieron −42 % de ciclos, −17 % de Fmax, **x1,44 neto**.
+**Qué falta.** `gpu_lane.v`, la unidad X, se reutiliza tal cual con su FSM
+interna de 15 estados: 4 ciclos la ALU, 8 la MUL y hasta 37 la DIV. Colapsarla y
+segmentar X en sub-etapas (X1/X2/X3…) es la siguiente iteración, según el README
+de la 29.
 
-**Qué lo bloquea.** Nada, y hay con qué predecir la ganancia antes de escribir
-RTL: el simulador de ciclos de
-[`25.gpu-sim-cycle-uarch`](25.gpu-sim-cycle-uarch) existe, con su `DESIGN.md` y
-su `VALIDATION.md`.
+**Por qué importa.** Con el cauce hecho, X es lo que queda por segmentar y lo
+que fija lo que cuesta cada instrucción.
+
+**Qué lo bloquea.** Nada conocido.
 
 ---
 
@@ -337,24 +274,26 @@ Va junto con buscar inexactitudes entre doc y código, que es el mismo barrido.
 
 ## 7. `apio lint` no pasa en ningún prototipo
 
-**Qué falta.** Los diez salen con exit 1. Medido el 20/09/2026 con `tools/lint`,
-ahora con las cuatro de GPU incluidas —faltaban en la tabla anterior—:
+**Qué falta.** Los doce salen con exit 1. Medido el 01/10/2026 con `tools/lint`:
 
-| Prototipo | 6 | 10 | 12 | 14 | 16 | 17 | 18 | 19 | 21 | 22 |
-|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| Total | 18 | 41 | 17 | 17 | **66** | 17 | 39 | 32 | 34 | 31 |
-| `PINMISSING` | 18 | 20 | 17 | 17 | 35 | 17 | 39 | 32 | 34 | 31 |
-| `WIDTHEXPAND` | — | 21 | — | — | 29 | — | — | — | — | — |
-| otros | — | — | — | — | 2 | — | — | — | — | — |
+| Prototipo | 6 | 10 | 12 | 14 | 16 | 17 | 18 | 19 | 21 | 22 | 29 | 30 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| Total | 19 | 42 | 18 | 18 | **67** | 18 | 40 | 33 | 35 | 32 | 27 | 43 |
+| `PINMISSING` | 18 | 20 | 17 | 17 | 35 | 17 | 39 | 32 | 34 | 31 | 25 | 42 |
+| `WIDTHEXPAND` | — | 21 | — | — | 29 | — | — | — | — | — | — | 1 |
+| `WIDTHTRUNC` | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | — |
+| otros | — | — | — | — | 2 | — | — | — | — | — | 1 | — |
 
-Dos cosas que la tabla vieja no dejaba ver:
+Tres cosas que conviene saber:
 
-- **Las cuatro de GPU son las más limpias**, con 17 avisos y de un solo tipo.
-  Migrarlas a v2 no cambió ese número: 12, 14 y 17 tenían 17 antes y después, y
-  la 22 tenía 31 antes y después. El criterio de «no empeorar» es el reparto
-  **por tipo**, no el total.
-- **`WIDTHEXPAND` sólo existe en la 10 y en la 16.** Es el aviso de anchura que
-  la ronda de la familia CPU ya detectó, y sigue concentrado en esas dos.
+- **`WIDTHTRUNC` es nuevo en todas menos la 30**, y es el mismo aviso en `sysid.v:44`:
+  `FOLDER` es de 8 bits y `sysid_params.vh` le da una constante de 32. Aparece
+  desde que la identidad se genera del RTL. Se arregla en el generador
+  (`tools/generate-sysid`) escribiendo la constante con su ancho.
+- **`WIDTHEXPAND` sólo existe en la 10, la 16 y, con un aviso, la 30**
+  (`mmio_decoder.v:234`). Es el aviso de anchura que la ronda de la familia CPU
+  ya detectó.
+- **El criterio de «no empeorar» es el reparto por tipo**, no el total.
 
 **Por qué importa.** Casi todo es ruido —`PINMISSING` en los `*_tb.v`:
 testbenches que instancian módulos a los que se añadieron puertos después, como
@@ -362,11 +301,12 @@ testbenches que instancian módulos a los que se añadieron puertos después, co
 `video_mode`—. Pero mientras el lint salga en rojo por ruido, **no sirve para
 detectar lo que sí importa**, y ya hay un caso real escondido dentro.
 
-**El único que no es ruido es el `CASEINCOMPLETE` de la 16**, en
+**Los que no son ruido son los `CASEINCOMPLETE`**: el de la 16, en
 `sdram_system_adapter.v:285`: `state` es de 4 bits con 12 estados y el `case` no
 tiene `default`, así que 12–15 no los cubre nadie. No es un fallo vivo —esos
 valores son inalcanzables por construcción— pero si se alcanzaran la FSM se
-congelaría sin recuperación, y es el único camino a la SDRAM de esa carpeta.
+congelaría sin recuperación, y es el único camino a la SDRAM de esa carpeta. La 29 trae otro en
+`gpu_sm.v:455` que conviene mirar con el mismo criterio.
 
 **Qué lo bloquea.** El arreglo de la 16 **está decidido y escrito como comentario
 en el propio fichero**, y espera al próximo cambio de RTL de esa carpeta: lleva
@@ -495,12 +435,15 @@ Y estaba la 22.
 
 ## 14. Revisar como se llaman a las tools
 
-Verificación: 65 tests en 1.isa OK (4 nuevos del listado), y 2.cpu-sim-func 44, 11.gpu-sim-func 62, 25.gpu-sim-cycle-uarch 30, x.tests — todo igual que antes. Comparé contra el árbol sin mis cambios con un git stash, y los tres fallos que salen (20.forth y dos No module named 'tools' en x.tests) ya estaban antes y son de cómo invoqué unittest discover,
-
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
 
+- **La 17 en la suite de placa.** Decidido el 01/10/2026 dejarla fuera: fue un
+  intento que no llegó a cerrarse y no merece alias propio ni `version.json`. Se
+  validó a mano: `SYSTEM` con los siete valores correctos, los cinco bloques
+  ausentes rechazados por la placa y un descriptor de warp escrito y releído en
+  `0x82010030`.
 - **`DEV_BITMAP` como punto propio.** Era la fase 4b de la unificación y estuvo
   abierto sin consumidor. Ya no es un punto suelto: es `SYSTEM.DEVICES` en
   [`1.isa/mmio.md`](1.isa/mmio.md) §5.4, dentro del punto 2. Y la contradicción
