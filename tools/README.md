@@ -552,6 +552,30 @@ $ run-tests --hardware           # casos contra placa real, backend gpu-fpga
 $ run-tests -- --backend cpu-fpga               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
 ```
 
+### Informe de tiempos de todas las suites (`test-timings`)
+
+`test-timings` ejecuta y ordena de mayor a menor todos los tests unitarios
+Python del repositorio (por método y con subtotal por carpeta), los bancos RTL de un prototipo (por banco) y los casos de
+`x.tests` para `cpusim`, `gpusim` y `gpusim-cycle`. Escribe por defecto
+`reports/test-timings.md`. Usa `--jobs 1` por defecto para que el total y los
+tiempos individuales no se solapen:
+
+```powershell
+.\tools\test-timings.ps1 --prototype 30
+.\tools\test-timings.ps1 --prototype 30 --cpu-prototype 30 --gpu-prototype 29
+.\tools\test-timings.ps1 --full --json reports/test-timings.json
+```
+
+Las placas son opt-in y se ejecutan con `--no-upload`: el script no cambia el
+bitstream. `--cases RUTA` (repetible) limita los casos, y `--skip-python`,
+`--skip-rtl` y `--skip-x-tests` permiten medir una parte. Los bancos marcados
+`TEST-LENTO` solo entran con `--full`.
+
+No incluye síntesis, lint ni checks de documentación: son validaciones, pero no
+tests de ejecución comparables. Tampoco incluye la suite propia opcional de
+`y.lcc` ni `13.hdmi/check_timing.ps1`; ambas son proyectos/pruebas independientes
+y requieren dependencias o entornos distintos.
+
 ## Compilador C experimental (`mini-lcc`)
 
 El fork de lcc con backend MiniISA se integra como submodulo en

@@ -1561,6 +1561,9 @@ def main() -> int:
                         metavar="N",
                         help="lista las N ejecuciones más lentas al terminar "
                              "(10 si se omite el valor)")
+    parser.add_argument("--timings-json", type=Path, metavar="FICHERO",
+                        help="escribe tiempos de pared por caso y el total en JSON "
+                             "(para herramientas; no cambia las comprobaciones)")
     args = parser.parse_args()
     if args.trace_limit is not None and args.trace_limit < 0:
         parser.error("--trace-limit no puede ser negativo")
@@ -1809,6 +1812,20 @@ def main() -> int:
             print(f"  {elapsed:7.2f}s  {name} [{backend_name}]")
 
     total = time.monotonic() - started
+    if args.timings_json is not None:
+        payload = {
+            "backend": args.backend,
+            "total_seconds": total,
+            "case_count": len(cases),
+            "failures": failures,
+            "skipped": skipped,
+            "executions": [
+                {"seconds": elapsed, "case": name, "backend": backend_name}
+                for elapsed, name, backend_name in sorted(durations, reverse=True)
+            ],
+        }
+        args.timings_json.parent.mkdir(parents=True, exist_ok=True)
+        args.timings_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"{len(cases)} caso(s), {failures} fallo(s), "
           f"{skipped} omitido(s) por arquitectura o capacidades, {total:.1f}s")
     return 1 if failures else 0
