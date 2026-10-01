@@ -154,7 +154,7 @@ class GpuFpgaTest(unittest.TestCase):
         for broken in (False, True):
             def execute_variant(**kwargs):
                 result = execute(**kwargs)
-                if broken:
+                if broken:  # noqa: B023 (se usa dentro de la misma iteracion)
                     result['observations']['warp[3].lane[7].R1'] = 0
                 return result
             with self.subTest(broken=broken), patch('sys.argv', ['runner', '--backend', 'gpu-both', '--port', 'COM3', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, redirect_stdout(io.StringIO()) as output:

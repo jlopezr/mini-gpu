@@ -175,7 +175,7 @@ def write_fixtures(selected, out):
         prefix.with_suffix('.bin').write_bytes(binary)
 
         def hexfile(suffix, values):
-            prefix.with_suffix(suffix).write_text(''.join(f'{v:08x}\n' for v in values))
+            prefix.with_suffix(suffix).write_text(''.join(f'{v:08x}\n' for v in values))  # noqa: B023 (se llama dentro de la iteracion)
         hexfile('.program.hex', words + [0] * (256 - len(words)))
         hexfile('.regs.hex', [r for w in gpu.streaming_multiprocessor.warps for lane in w.processors for r in lane.regs])
         hexfile('.memory.hex', struct.unpack('<512I', gpu.memory[4096:6144]))

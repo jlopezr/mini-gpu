@@ -1,0 +1,14 @@
+# Solo configuracion de herramientas; el repositorio no es un paquete Python.
+
+[tool.ruff.lint]
+# Ruff reciente activa por defecto cientos de reglas de estilo. Aqui solo las que
+# apuntan a fallos reales:
+#   F     pyflakes: imports y variables sin usar, nombres sin definir.
+#   B017  assertRaises(Exception) demasiado ancho.
+#   B023  closure que no captura la variable del bucle.
+select = ["F", "B017", "B023"]
+
+[tool.ruff.lint.per-file-ignores]
+# Cada monitor.py reexporta nombres de tools.serial_ports que usan los tests
+# (monitor.ftdi_ports, monitor.FTDI_VENDOR_ID); no son imports sobrantes.
+"**/monitor.py" = ["F401"]
