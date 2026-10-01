@@ -8,9 +8,7 @@ simuladores, el monitor y las herramientas.
 **Qué no es.** No describe lo que hay implementado hoy. Ningún prototipo cumple
 todavía este contrato: lo que implementa cada uno está en
 [`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md), con su tabla
-de conformidad. Y lo que se hizo para llegar hasta aquí está en
-[`../docs/unificacion-mmio.md`](../docs/unificacion-mmio.md), que es un log
-cerrado, no una referencia.
+de conformidad.
 
 **Compatibilidad.** MMIO v2 **no** mantiene compatibilidad binaria con el mapa
 de la página única de 4 KiB que implementan los prototipos actuales. La

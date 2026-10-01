@@ -9,9 +9,7 @@ Contrato de referencia: [`../../1.isa/mmio.md`](../../1.isa/mmio.md).
 son [la bitácora de la 21](../../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md) —el
 camino completo—, [la de la 19](../../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md)
 —lo que cambió al repetirlo— y [la de la 18](../../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md)
-—hasta dónde llega el atajo de copiar—. Encima de las tres está
-[la validación en placa](../../docs/validacion-mmio-v2-placa.md), que es lo que
-sólo se ve cuando el bitstream existe.
+—hasta dónde llega el atajo de copiar—.
 
 La **fase 0 de este documento cubre las tres carpetas** de este encargo —la 6,
 la 10 y la 16—, porque se verificó una vez. Las bitácoras de la

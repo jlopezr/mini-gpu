@@ -918,8 +918,8 @@ si el diseño cumple. En las de GPU (12, 14, 17, 22) el margen se mide en
 decenas por ciento, la semilla no decide nada, y fijarla solo daría un número
 reproducible a costa de rebarrer con cada cambio de RTL: no se fija. En ese
 caso el Fmax que vale es el **peor** del barrido, no el de un build suelto, que
-es optimista y no reproducible. (Esto contradice a propósito la «Definición de
-terminado» de `docs/encargo-migracion-v2-gpu.md`, que pide semilla fijada.)
+es optimista y no reproducible. Para una medición reproducible concreta sí se
+puede fijar la semilla, pero no representa el peor caso del barrido.
 
 `build-sweep` no sintetiza: re-ruta el `hardware.json` del último build
 archivado. Si el RTL ha cambiado desde entonces devuelve ocho números

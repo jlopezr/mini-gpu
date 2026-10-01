@@ -260,10 +260,9 @@ cuanto al criterio:
 
 **Por qué importa.** No es renombrar ficheros: es decidir si `optimizacion.md` se
 generaliza o es específico de la 17, y qué se hace con un documento de plan una
-vez ejecutado el plan. Ese último caso acaba de resolverse una vez —
-[`docs/unificacion-mmio.md`](docs/unificacion-mmio.md) pasó a ser un log
-explícito, con una cabecera que dice que no es una referencia— y esa receta es
-exactamente la separación README/`log.md` de arriba, aplicada a `docs/`.
+vez ejecutado el plan. La receta es exactamente la separación README/`log.md`
+de arriba, aplicada a `docs/`: la documentación vigente conserva el resultado
+y el documento de trabajo deja de ser una referencia permanente.
 
 **Qué lo bloquea.** Nada, salvo que es trabajo tedioso sin resultado medible.
 
@@ -471,8 +470,8 @@ de builds, o que `build-list` ignore los registros de etiqueta `test` al elegir 
   comprueba que lo generado está al día, que es lo que le faltaba al argumento
   de 4a.
 - **El resto de la unificación MMIO.** Fases 0, 1, 2, 3, 3.4, 3.5, 4a y el
-  renumerado de la 5, cerradas. Lo que hicieron vive en el RTL; el porqué, en
-  [`docs/unificacion-mmio.md`](docs/unificacion-mmio.md), que es un log.
+  renumerado de la 5, cerradas. El resultado vive en el RTL y en el contrato
+  MMIO vigente.
 - **`DEVICES` escrito a mano, y sus dos convenios.** Cerrado el 21/09/2026.
   `tools/generate-sysid` deriva del RTL la identidad de cada prototipo
   —`FOLDER`, `ISA_PROFILE`, `DEVICES`, `MEM_BASE`/`MEM_SIZE`,

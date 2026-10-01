@@ -44,7 +44,7 @@ El diseño corría a 120 MHz y **la semilla de nextpnr decidía si cumplía**: d
 ocho, cerraban cuatro. Con `WRITE_WORD` dentro del monitor no cierra ninguna
 —barrido de 85,92 a 99,40 MHz—, así que **desde el 18/09/2026 va a 100 MHz**,
 como ya hicieron la 16 (120 → 100) y la 18 (100 → 80) cuando les pasó lo mismo.
-Ver [`pll_100.v`](pll_100.v) y [`../docs/unificacion-mmio.md`](../docs/unificacion-mmio.md).
+Ver [`pll_100.v`](pll_100.v).
 
 A 100 cumple **una** semilla de ocho: la 4, con 104,41 MHz (+4,4 %), y es la que
 fija `apio.ini`. Sigue siendo el caso en que la semilla decide si el diseño

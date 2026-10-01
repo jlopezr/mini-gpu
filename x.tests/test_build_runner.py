@@ -6,11 +6,16 @@ import tempfile
 import threading
 import time
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from tools.build_runner import (
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.build_runner import (  # noqa: E402
     BuildRunner,
     build_all,
     buildable_prototypes,

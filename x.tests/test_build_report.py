@@ -5,11 +5,17 @@ import tempfile
 from unittest.mock import patch, MagicMock
 import io
 import json
+import sys
 import zipfile
 
-from tools.build_report import (configured_seed, extract_log_details, main,
-                                nextpnr_flags, set_configured_seed, summarize, synthesizable_source_hashes,
-                                timing_passes)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.build_report import (  # noqa: E402
+    configured_seed, extract_log_details, main, nextpnr_flags,
+    set_configured_seed, summarize, synthesizable_source_hashes, timing_passes,
+)
 
 
 class BuildReportTest(unittest.TestCase):

@@ -11,9 +11,8 @@ diseño de las siete palabras y los dos analizadores compartidos que hubo que
 arreglar. Aquí sólo se escribe lo que en la 10 no salió igual.
 
 Antes de ésas están [la 21](../../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md),
-[la 19](../../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md),
-[la 18](../../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) y
-[la validación en placa](../../docs/validacion-mmio-v2-placa.md).
+[la 19](../../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) y
+[la 18](../../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md).
 
 ---
 

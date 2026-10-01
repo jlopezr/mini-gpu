@@ -9,9 +9,8 @@ Contrato de referencia: [`../../1.isa/mmio.md`](../../1.isa/mmio.md).
 las tres carpetas** de este encargo y los dos analizadores compartidos que hubo
 que arreglar; la [de la 10](../../10.fpga-cpu-ram/docs/migracion-v2.md), lo que
 cuesta una gemela. Antes están [la 21](../../21.fpga-cpu-hdmi-alu/docs/migracion-v2.md)
-—el camino completo—, [la 19](../../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md),
-[la 18](../../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md) y
-[la validación en placa](../../docs/validacion-mmio-v2-placa.md).
+—el camino completo—, [la 19](../../19.fpga-cpu-hdmi-ls/docs/migracion-v2.md) y
+[la 18](../../18.fpga-cpu-hdmi-bl8/docs/migracion-v2.md).
 
 **Alcance de cada decisión:**
 

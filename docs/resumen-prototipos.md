@@ -90,8 +90,8 @@ Copiar el fichero es el port entero, y sus cinco suites pasan a la primera.
 
 Un uno de ocho al +2,4 % es una lotería, y es el mismo criterio con el que la 16
 bajó de 120 a 100 y la 18 de 100 a 80. Aquello se midió cuando la 10 corría a
-120 MHz; hoy corre a 100 —ver [`unificacion-mmio.md`](unificacion-mmio.md)— así
-que el barrido habría que repetirlo antes de dar la conclusión por buena. Lo que
+120 MHz; hoy corre a 100, así que el barrido habría que repetirlo antes de dar
+la conclusión por buena. Lo que
 no cambia es que portar las tres instrucciones es copiar un fichero y
 revalidar una carpeta entera.
 
@@ -148,9 +148,7 @@ No es que la CPU empeore. El camino crítico se mudó:
 
 - La **6** y la **10** cerraban a 120 MHz con una CPU sola colgada de memoria.
   Hoy corren a 100: `WRITE_WORD` les costó entre 15 y 19 MHz y ninguna de las
-  ocho semillas cerraba a 120. El razonamiento completo, con el barrido y el
-  arreglo del camino crítico, está en
-  [`unificacion-mmio.md`](unificacion-mmio.md).
+  ocho semillas cerraba a 120.
 - La **16** baja a 100 porque entra el vídeo, que compite por la SDRAM.
 - La **18** baja a 80 al pasar el camino de memoria a 128 bits para ráfagas
   BL8. A 100 no cumplía ninguna semilla (83,9 a 91,8 MHz). A cambio, el bucle

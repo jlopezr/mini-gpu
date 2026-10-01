@@ -8,8 +8,8 @@ temporización). Esto es sólo la diferencia.
 
 ## El encargo estaba mayormente bien, y donde fallaba fallaba por omisión
 
-[El encargo](../../docs/encargo-migracion-v2-gpu.md) se midió en `8c2b261` y se
-ejecutó en `5423e65`, dos commits después. El único cambio entre medio que toca
+El trabajo se midió en `8c2b261` y se ejecutó en `5423e65`, dos commits después.
+El único cambio entre medio que toca
 estas carpetas es un `.md` nuevo, así que sus medidas de RTL seguían vivas.
 
 Su **corrección grande es correcta**: `gpu_system.v` es de hecho un fichero
