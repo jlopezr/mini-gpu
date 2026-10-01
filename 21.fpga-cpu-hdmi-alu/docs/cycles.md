@@ -75,8 +75,9 @@ ciclos limpios sino lo que tarde el fetch. Así la resta **es** el ahorro.
 Para repetirlo:
 
 ```powershell
+python ..\1.isa\mini_asm.py ..\x.tests\cases-cpu\demos\fastpath-hit\fastpath_hit.asm -o fastpath_hit.bin
 python monitor.py --port COM3 reset
-python monitor.py --port COM3 write-block 0x00000000 examples\fastpath_hit.bin
+python monitor.py --port COM3 write-block 0x00000000 fastpath_hit.bin
 python monitor.py --port COM3 run
 python monitor.py --port COM3 perf
 ```
