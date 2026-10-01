@@ -8,6 +8,11 @@ programa, `requires`, `run_until`, `max_instructions`, y para GPU un
 
     python record_case.py cases-cpu/demos/fastpath-hit/test.json
     python record_case.py cases-gpu/demos/smoke/test.json --frame
+    python record_case.py cases-gpu/simt/exit/x/test.json --all-lanes --zeros
+
+En GPU solo graba, por defecto, las lanes 0 y la ultima de cada warp y omite los
+registros a cero. `--all-lanes` y `--zeros` lo amplian cuando el caso trata de
+QUE lane hace algo (un salto que solo toma la 4) o de que algo NO se ejecuto.
 
 Lo grabado es una INSTANTANEA del simulador, no un oraculo independiente: dice
 que el programa hace hoy lo que hacia ayer, no que lo que hace sea correcto. Su
@@ -44,7 +49,8 @@ def _hex(value: int) -> str:
     return f"0x{value & 0xFFFFFFFF:08x}"
 
 
-def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = False) -> dict:
+def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = False,
+           all_lanes: bool = False, zeros: bool = False) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw.setdefault("expect", {})
     architecture = raw["architecture"]
@@ -105,12 +111,22 @@ def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = F
             key = str(w["id"])
             prefix = f"warp[{key}]"
             # Los hilos 0 y el ultimo: bastan para ver una divergencia sin
-            # volcar 8 hilos por warp.
+            # volcar 8 hilos por warp. Con --all-lanes se vuelcan todos, que es
+            # lo que hace falta cuando solo una lane intermedia toma el salto.
             registros = {}
-            for lane in sorted({0, lanes - 1}):
+            volcadas = range(lanes) if all_lanes else sorted({0, lanes - 1})
+            # Lo normal es omitir los ceros (casi todos los registros lo son).
+            # Pero «R3 vale 0 en esta lane y 7 en las demas» es justo la prueba
+            # de que una lane no ejecuto algo, y sin el cero no se comprueba.
+            # Con --zeros se graban tambien los ceros de los registros que valen
+            # algo en alguna lane del warp.
+            usados = {n for n in CPU_REGISTERS
+                      if any(observed[f"{prefix}.lane[{l}].R{n}"] for l in range(lanes))}
+            for lane in volcadas:
                 registros[str(lane)] = {
                     f"R{n}": observed[f"{prefix}.lane[{lane}].R{n}"]
-                    for n in CPU_REGISTERS if observed[f"{prefix}.lane[{lane}].R{n}"]}
+                    for n in CPU_REGISTERS
+                    if observed[f"{prefix}.lane[{lane}].R{n}"] or (zeros and n in usados)}
             expect["warps"][key] = {
                 "pc": observed[f"{prefix}.pc"],
                 "active_mask": observed[f"{prefix}.active_mask"],
@@ -155,10 +171,16 @@ def main() -> int:
                         help="max_instructions = el doble de lo observado (minimo 1000)")
     parser.add_argument("--allow-error", action="store_true",
                         help="grabar aunque el simulador termine con error")
+    parser.add_argument("--all-lanes", action="store_true",
+                        help="GPU: volcar todas las lanes de cada warp, no solo la 0 y la ultima")
+    parser.add_argument("--zeros", action="store_true",
+                        help="GPU: grabar tambien los ceros de los registros que valen algo "
+                             "en alguna lane del warp")
     args = parser.parse_args()
     for path in args.test_json:
         path = path.resolve()
-        grabado = record(path, args.frame, args.tighten, args.allow_error)
+        grabado = record(path, args.frame, args.tighten, args.allow_error,
+                         args.all_lanes, args.zeros)
         path.write_text(json.dumps(grabado, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"grabado {path.relative_to(ROOT)}")
     return 0
