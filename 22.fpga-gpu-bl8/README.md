@@ -12,9 +12,9 @@ que coalesce por línea de 16 bytes en vez de servir una lane por acceso.
 | [`profiling.md`](profiling.md) | **Dónde se va el tiempo**, con los contadores de `0x80000300` |
 | [`sm-pipeline.md`](sm-pipeline.md) | Propuesta para segmentar el cauce del SM (diseño, sin implementar) |
 
-Para medir en placa sin simular: `python profile.py --port COM3 --program examples/plasma.asm`.
+Para medir en placa sin simular: `python profile.py --port COM3 --program x.tests/cases-gpu/demos/plasma/plasma.asm`.
 
-[`examples/cube_solid.asm`](examples/cube_solid.asm) hace que los
+[`x.tests/cases-gpu/demos/cube-solid/cube_solid.asm`](../x.tests/cases-gpu/demos/cube-solid/cube_solid.asm) hace que los
 64 hilos rastericen un cubo sólido animado, empaquetando dos píxeles RGB565 por
 `STORE`. La versión actual calcula en la GPU la rotación Q2.14 de los ocho
 vértices, la perspectiva entera, el culling y los descriptores; conserva solo

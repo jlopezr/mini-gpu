@@ -1,0 +1,156 @@
+{
+  "architecture": "gpu",
+  "name": "demo-mmio-selftest",
+  "program": "mmio_selftest.asm",
+  "warp_config": "warps.json",
+  "requires": [
+    "mul_div",
+    "video"
+  ],
+  "max_instructions": 1000,
+  "timeout_seconds": 60.0,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "instructions_executed": 64,
+    "warps": {
+      "0": {
+        "pc": 32,
+        "active_mask": 1,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R2": 2,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 7,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "1": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 8,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 15,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "2": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 16,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 23,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "3": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 24,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 31,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "4": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 32,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 39,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "5": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 40,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 47,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "6": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 48,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 55,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      },
+      "7": {
+        "pc": 48,
+        "active_mask": 255,
+        "instructions_executed": 8,
+        "registers": {
+          "0": {
+            "R1": 56,
+            "R19": 2181234688,
+            "R20": 2149580800
+          },
+          "7": {
+            "R1": 63,
+            "R19": 2181234688,
+            "R20": 2149580800
+          }
+        }
+      }
+    }
+  }
+}

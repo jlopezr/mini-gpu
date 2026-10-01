@@ -15,7 +15,7 @@ VERSIONS = {
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
         # Perifericos funcionales compartidos; no implica soporte en la FPGA.
-        "capabilities": ("atomic_warp_faults", "frame_capture", "serial"),
+        "capabilities": ("atomic_warp_faults", "frame_capture", "serial", "mul_div"),
         "description": "simulador funcional MiniGPU actual",
     },
 }

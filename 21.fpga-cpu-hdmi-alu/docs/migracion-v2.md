@@ -35,7 +35,7 @@ encargo. La mayoría se sostiene; tres no, y una de ellas cambia el plan.
 ### Lo que no cuadró
 
 **1. El reparto de los 19 `.asm` es otro.** El total sí es 19, pero son **5 en
-`x.tests/cases/` y 14 en `examples/`**, no 7 y 12.
+`x.tests/cases-cpu/` y 14 en `examples/`**, no 7 y 12.
 
 - Casos: `video/registers`, `video/bounce`, `video/band`,
   `extensions/serial/uppercase`, `extensions/serial/empty-input`.
@@ -338,9 +338,9 @@ El generador pasó de un mapa a una tabla de mapas, unas 20 líneas.
 |---|---|
 | `1.isa/mmio_map_v1.vh` | **nuevo**, temporal. El mapa de hoy |
 | `tools/generate_mmio.py` | tabla `MAPAS` en vez de una fuente; `parse_map`/`render_*` reciben el nombre de la fuente |
-| 5 `.asm` de `x.tests/cases` | `.include "mmio_v1.inc"`, `LI Rn, MMIO_*_BASE`, offsets por símbolo |
+| 5 `.asm` de `x.tests/cases-cpu` | `.include "mmio_v1.inc"`, `LI Rn, MMIO_*_BASE`, offsets por símbolo |
 | 14 `.asm` de `examples/` | lo mismo; 84 offsets en total |
-| `x.tests/cases/video/registers/test.json` | `pc` de `0x44` a `0x48` |
+| `x.tests/cases-cpu/video/registers/test.json` | `pc` de `0x44` a `0x48` |
 | `x.tests/test_mmio_map.py` | clase del mapa v1, y la guarda de «ningún `.asm` cableado» |
 
 ### Qué se rompió
@@ -366,10 +366,10 @@ La guarda «ningún `.asm` lleva una dirección cableada» se escribió primero
 buscando `MOVHI Rn, 0x8000`. Saltó con cuatro casos:
 
 ```text
-cases/alu/shift-amount/program.asm:4          MOVHI R1, 0x8000   ; INT_MIN
-cases/extensions/alu-extended/mulhi-signed    MOVHI R13, 0x8000
-cases/extensions/alu-extended/remainder-signs MOVHI R19, 0x8000
-cases/extensions/compare/signed-unsigned      MOVHI R13, 0x8000
+cases-cpu/alu/shift-amount/program.asm:4          MOVHI R1, 0x8000   ; INT_MIN
+cases-cpu/extensions/alu-extended/mulhi-signed    MOVHI R13, 0x8000
+cases-cpu/extensions/alu-extended/remainder-signs MOVHI R19, 0x8000
+cases-cpu/extensions/compare/signed-unsigned      MOVHI R13, 0x8000
 ```
 
 Ninguno es una dirección: `0x80000000` ahí es **INT_MIN**, un operando de la
@@ -635,12 +635,12 @@ miré». Se listan porque el **patrón** es lo que se repite:
 
 ### El alcance de la guarda estaba mal
 
-`test_ningun_asm_carga_una_base_mmio_a_mano` sólo miraba `x.tests/cases` y
+`test_ningun_asm_carga_una_base_mmio_a_mano` sólo miraba `x.tests/cases-cpu` y
 `21/examples`. Los seis `.asm` de los puntos 6 y 7 aparecieron **corriendo el
 simulador**, que es tarde: el sentido de esa guarda es que salte barato.
 
 Ampliada a `cases-shared` y `20.forth`. La lección no es de patrón sino de
-alcance: **los programas de este repo no viven todos bajo `x.tests/cases`**. Al
+alcance: **los programas de este repo no viven todos bajo `x.tests/cases-cpu`**. Al
 migrar la siguiente carpeta, lo primero es listar dónde hay `.asm`. `[TODAS]`
 
 ### Una gemela que mejoró por el camino
@@ -736,7 +736,7 @@ JEDEC. El banco modela 4 bancos × **128** filas, la fila sale de los bits
 
 Y la causa de fondo era mía, con un agravante documental:
 
-- Regeneré `fullframe.hex` desde `examples/fullframe.asm`, **que es el
+- Regeneré `fullframe.hex` desde `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`, **que es el
   programa de la placa** y pone el framebuffer en 0x01000000.
 - La cabecera del banco y el README decían que el `.hex` salía justamente de
   ahí. **Llevaban tiempo mintiendo**: el `.hex` versionado usaba bases bajas,
@@ -748,9 +748,9 @@ Y la causa de fondo era mía, con un agravante documental:
 
 Arreglo, en tres piezas que valen para cualquier carpeta:
 
-1. `fullframe_tb.asm` existe de verdad, al lado del banco, y es el programa
+1. `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe de verdad, al lado del banco, y es el programa
    del banco. Las dos bases son `.equ` al principio, y es **lo único** que lo
-   diferencia de `examples/fullframe.asm`.
+   diferencia de `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`.
 2. El banco lee **palabras de 32 bits** y las parte en dos celdas de SDRAM. Un
    formato, una orden, y la orden está escrita en la cabecera del banco.
 3. `x.tests/test_fullframe_fixture.py` comprueba las tres cosas: que el `.hex`

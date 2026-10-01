@@ -18,7 +18,7 @@ todas las extensiones posteriores a la v0.1:
 
 Aquí es donde se prueba primero una instrucción nueva; por eso el backend
 declara las ocho capacidades y los casos de
-[`../x.tests/cases/extensions`](../x.tests/cases/extensions) corren aquí
+[`../x.tests/cases-cpu/extensions`](../x.tests/cases-cpu/extensions) corren aquí
 sin placa.
 
 **`R0` está cableado a cero** desde que lo está la 21, y es el único cambio de

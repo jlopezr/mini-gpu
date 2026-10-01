@@ -7,7 +7,7 @@ simularlo en RTL tarda unos diez minutos. Aqui se lee en un parpadeo.
 
 Uso tipico -- medir un programa de punta a punta:
 
-    python profile.py --port COM3 --program examples/plasma.asm
+    python profile.py --port COM3 --program x.tests/cases-gpu/demos/plasma/plasma.asm
 
 Eso carga el programa, toma los contadores, lo ejecuta, los vuelve a tomar, y
 presenta la diferencia. Sin --program, solo muestra el estado actual.

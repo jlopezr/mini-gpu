@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 # implementa v2 (§17) y la 21 es de momento la unica carpeta migrada, asi que
 # el programa de la 19 aqui daria un fallo de acceso. Cuando la 19 se migre da
 # igual cual se use; hasta entonces, esta linea marca cual va por delante.
-UPPER_ASM = REPO / "21.fpga-cpu-hdmi-alu" / "examples" / "serial_upper.asm"
+UPPER_ASM = REPO / "x.tests" / "cases-cpu" / "demos" / "serial-upper" / "serial_upper.asm"
 
 
 def assemble(path: Path) -> bytes:

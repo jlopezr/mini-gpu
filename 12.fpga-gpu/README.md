@@ -162,7 +162,7 @@ Desde esta carpeta, con el bitstream de esta versión cargado:
 
 El ejemplo escribe los valores `100..163` en las 64 palabras desde `0x1000`,
 y cada thread lee de vuelta su valor en R5. Warp 3/lane 5 devuelve 129.
-`examples/simt.asm` ejercita divergencia anidada y BAR; en R3 quedan
+`x.tests/cases-gpu/demos/simt/simt.asm` ejercita divergencia anidada y BAR; en R3 quedan
 `12,12,22,22,31,31,31,31` por warp.
 
 Para un lanzamiento específico, cargar primero el programa y después:

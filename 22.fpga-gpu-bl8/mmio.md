@@ -99,7 +99,7 @@ en su ciclo de aceptación. No hace falta arbitraje ni prioridad.
 
 ## Dos trampas de la ISA que costaron un intento
 
-Escribiendo `examples/mmio_selftest.asm` me di de bruces con las dos:
+Escribiendo `x.tests/cases-gpu/demos/mmio-selftest/mmio_selftest.asm` me di de bruces con las dos:
 
 1. **Un salto divergente necesita `SSY etiqueta` delante**, marcando dónde
    reconvergen los caminos. Sin él, el SM para con `ERROR_SIMT` (0x06). Mi

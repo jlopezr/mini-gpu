@@ -1,0 +1,30 @@
+{
+  "architecture": "cpu",
+  "name": "demo-swap-smoke",
+  "program": "swap_smoke.asm",
+  "requires": [
+    "frame_capture"
+  ],
+  "run_until": {
+    "swap": 3
+  },
+  "max_instructions": 2010,
+  "timeout_seconds": 60.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R1": "0x01000000",
+      "R2": "0x01025800",
+      "R3": "0x01025800",
+      "R4": "0x01000000",
+      "R7": "0x00000001",
+      "R20": "0x80200000",
+      "R30": "0x00000002"
+    },
+    "frame": {
+      "file": "expected/frame.bin"
+    }
+  }
+}

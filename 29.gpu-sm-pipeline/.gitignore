@@ -1,5 +1,0 @@
-*.log
-output.bin
-_build/
-reports/
-__pycache__/

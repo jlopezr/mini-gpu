@@ -241,7 +241,7 @@ Antes de borrarlo se comprobó que **ningún `.asm` del repo incluye
 `mmio_v1.inc`**. Quedaban dos referencias y las dos eran comentarios rancios en
 ficheros que ya incluían `mmio.inc`: `20.forth/forth.asm`, que decía «SERIAL
 (MMIO v2, ver mmio_v1.inc)» —contradiciéndose a sí mismo en la misma línea— y
-`x.tests/cases/extensions/serial/uppercase/program.asm`. Corregidos.
+`x.tests/cases-cpu/extensions/serial/uppercase/program.asm`. Corregidos.
 
 La suite de `x.tests` pasa de 285 a **280** tests: los cinco que faltan son los
 de `MapaV1Test`, borrados a propósito con el andamio que vigilaban.

@@ -44,7 +44,7 @@ es [`subword_ls_tb.v`](subword_ls_tb.v), sobre el sistema completo, y la clase
 `SubwordAccessTest` de
 [`../2.cpu-sim-func/test_minicpu_sim.py`](../2.cpu-sim-func/test_minicpu_sim.py)
 sobre el simulador funcional. El demo que las justifica es
-[`examples/subword_demo.asm`](examples/subword_demo.asm): un degradado RGB565
+[`../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm`](../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm): un degradado RGB565
 pixel a pixel, que con solo `STORE` de 32 bits costaría una lectura y una mezcla
 por pixel.
 
@@ -205,8 +205,8 @@ Dos cosas difieren de la placa y conviene saberlas:
   la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
   resolución reducida, donde es barata.
 
-El programa es [`fullframe_tb.asm`](fullframe_tb.asm) —**no**
-[`examples/fullframe.asm`](examples/fullframe.asm), que es el de la placa—, y
+El programa es [`../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm) —**no**
+[`../x.tests/cases-cpu/demos/fullframe/fullframe.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe.asm), que es el de la placa—, y
 pinta una «L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un
 marco completo se ve igual si alguien intercambia los ejes; una línea arriba y
 una columna a la izquierda, no.
@@ -295,7 +295,7 @@ de `imem` tal cual; del lado de la memoria es un puerto de 128 bits.
 
 Son **cuatro líneas de 16 bytes**, mapeo directo, 512 biestables de datos. El
 tamaño no es arbitrario: 16 bytes son exactamente las cuatro instrucciones del
-bucle interior de [`swap_demo_fast`](examples/swap_demo_fast.asm), así que desde
+bucle interior de [`swap_demo_fast`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
 la segunda iteración el bucle entero vive dentro y el `BLT` salta dentro del
 propio búfer.
 
@@ -654,17 +654,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](examples/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](examples/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](examples/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](examples/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](../x.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](examples/swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
@@ -678,8 +678,8 @@ figuras de verdad, píxel a píxel:
 
 | Programa | Qué dibuja | Qué enseña |
 |---|---|---|
-| [`bresenham_lines.asm`](examples/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
-| [`bresenham_circles.asm`](examples/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
+| [`bresenham_lines.asm`](../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
+| [`bresenham_circles.asm`](../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
 
 Son también los primeros ejemplos que usan `JAL`/`JR`. Un `putpixel` como
 subrutina es lo mínimo para que un programa así se pueda escribir: sin

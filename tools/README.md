@@ -308,10 +308,10 @@ Lanzadores finos: ejecutan el script real de la carpeta correspondiente, no
 una reimplementación.
 
 ```bash
-> mini-asm examples/vector.asm           # -> 1.isa/mini_asm.py
-> cpusim examples/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
-> gpusim examples/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
-> gpusim-cycle examples/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
+> mini-asm ../x.tests/cases-gpu/demos/vector/vector.asm           # -> 1.isa/mini_asm.py
+> cpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
+> gpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+> gpusim-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -496,7 +496,7 @@ depurador no las prepara desde fuera. Hay que habilitar el dispositivo con
 y `cpusim` muestran un aviso antes de ejecutarlo:
 
 ```bash
-> mini-dbg x.tests/cases/video/fire/fire.asm --video -x "run 400000"
+> mini-dbg x.tests/cases-cpu/video/fire/fire.asm --video -x "run 400000"
 ```
 
 Direcciones y valores aceptan etiquetas del programa, `0x...`, decimal y `pc`.
@@ -1197,10 +1197,10 @@ comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
 `--measure`...) a `run_tests.py` sin tocarlo:
 
 ```bash
-$ test-board --prototype 21 -y cases/basics
+$ test-board --prototype 21 -y cases-cpu/basics
 Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
 Using prototype: 21.fpga-cpu-hdmi-alu
-$ .../run_tests.py --backend cpu-fpga -p 21 --port /dev/... -y cases/basics
+$ .../run_tests.py --backend cpu-fpga -p 21 --port /dev/... -y cases-cpu/basics
 PASS smoke [cpu-fpga]
 PASS zero-register [cpu-fpga]
 2 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1.7s
@@ -1298,8 +1298,8 @@ y el formato de salida lo decide la extensión (`.bin`, `.hex`, o cualquier
 cosa que entienda Pillow vía `frame-to-image.py`):
 
 ```bash
-$ capture-frame-sim cases/video/bounce/bounce.asm --swap 20 frame.png
-$ capture-frame-sim cases/video/band/band.asm --instrucciones 500000 frame.bin
+$ capture-frame-sim cases-cpu/video/bounce/bounce.asm --swap 20 frame.png
+$ capture-frame-sim cases-cpu/video/band/band.asm --instrucciones 500000 frame.bin
 ```
 
 `--swap N` para en el N-ésimo intercambio completado desde el arranque.

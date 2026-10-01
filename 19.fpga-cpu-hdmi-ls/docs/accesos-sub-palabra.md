@@ -103,5 +103,5 @@ familia de proyectos ya vigila: conviene rebarrer semillas tras sintetizar.
 - [`2.cpu-sim-func/test_minicpu_sim.py`](../../2.cpu-sim-func/test_minicpu_sim.py)
   — la clase `SubwordAccessTest` cubre lo mismo sobre el simulador funcional, de
   modo que simulador y hardware se puedan contrastar.
-- [`examples/subword_demo.asm`](../examples/subword_demo.asm) — pinta una banda
+- [`../../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm`](../../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm) — pinta una banda
   RGB565 con `STOREH`, que es el caso de uso que motiva las instrucciones.

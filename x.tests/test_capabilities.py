@@ -444,7 +444,7 @@ class CapabilitiesTest(unittest.TestCase):
 
         Es la propiedad que hace legitimo que el simulador declare
         `frame_capture`: un programa que espera a que su intercambio se aplique
-        --todos los de cases/video-- nunca dibuja con uno pendiente, asi que la
+        --todos los de cases-cpu/video-- nunca dibuja con uno pendiente, asi que la
         secuencia de frames es la misma sea cual sea el periodo. Lo unico que
         cambia es cuantas vueltas da el bucle de espera.
         """

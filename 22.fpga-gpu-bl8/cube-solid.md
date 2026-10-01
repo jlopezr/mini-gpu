@@ -2,18 +2,18 @@
 
 El cubo sólido compara estrategias de rasterización sobre el mismo framebuffer
 RGB565, con doble buffer y `SCANOUT` activo. La referencia CPU es
-`21.fpga-cpu-hdmi-alu/examples/cube_solid.asm`.
+`x.tests/cases-cpu/demos/cube-solid/cube_solid.asm`.
 
 | Versión | Cambio aislado | FPS en placa | Instrucciones de warp, primer frame |
 |---|---|---:|---:|
 | CPU 21 | Triángulos incrementales escalares | 12,01 | — |
 | GPU v1 | Cuatro triángulos estáticos sobre pantalla completa | 2,25 | 733.000 |
 | GPU v2 | Cuatro triángulos estáticos y caja limitada | 4,20 | 483.000 |
-| [`v3_animated`](examples/cube_solid_v3_animated.asm) | 64 orientaciones, seis slots; descriptor recargado por palabra | 2,15 | 861.000 |
-| [`v4_incremental`](examples/cube_solid_v4_incremental.asm) | Triángulo por pasada, caja propia y bordes incrementales | **13,41** | **190.000** |
-| [`v5_integer`](examples/cube_solid_v5_integer.asm) | Rotación, perspectiva, culling y setup calculados en la GPU | 12,30 | 191.000 |
-| [`v6_vertex_simt`](examples/cube_solid_v6_vertex_simt.asm) | Un warp transforma los ocho vértices, una lane por vértice | 12,30 | 191.000 |
-| [`v7_face_simt`](examples/cube_solid_v7_face_simt.asm) | Seis lanes procesan seis caras; dos slots fijos por cara | 12,30 | 192.000 |
+| [`v3_animated`](../x.tests/cases-gpu/demos/cube-solid/cube_solid_v3_animated.asm) | 64 orientaciones, seis slots; descriptor recargado por palabra | 2,15 | 861.000 |
+| [`v4_incremental`](../x.tests/cases-gpu/demos/cube-solid/cube_solid_v4_incremental.asm) | Triángulo por pasada, caja propia y bordes incrementales | **13,41** | **190.000** |
+| [`v5_integer`](../x.tests/cases-gpu/demos/cube-solid/cube_solid_v5_integer.asm) | Rotación, perspectiva, culling y setup calculados en la GPU | 12,30 | 191.000 |
+| [`v6_vertex_simt`](../x.tests/cases-gpu/demos/cube-solid/cube_solid_v6_vertex_simt.asm) | Un warp transforma los ocho vértices, una lane por vértice | 12,30 | 191.000 |
+| [`v7_face_simt`](../x.tests/cases-gpu/demos/cube-solid/cube_solid_v7_face_simt.asm) | Seis lanes procesan seis caras; dos slots fijos por cara | 12,30 | 192.000 |
 
 Las cifras de instrucciones del primer frame incluyen la limpieza inicial de
 los dos buffers. Los FPS se midieron mediante `SWAP_COUNT` durante unos diez
@@ -76,8 +76,8 @@ La imagen del primer frame de v4 coincide byte a byte con la referencia CPU:
 Regenerar las 64 orientaciones y ensamblar la versión recomendada:
 
 ```powershell
-.\.venv\Scripts\python.exe .\22.fpga-gpu-bl8\examples\make_cube_solid_frames.py
-.\tools\mini-asm.ps1 .\22.fpga-gpu-bl8\examples\cube_solid.asm -o cube_solid.bin
+.\.venv\Scripts\python.exe .\22.fpga-gpu-bl8\x.tests/cases-gpu/demos/cube-solid/make_cube_solid_frames.py
+.\tools\mini-asm.ps1 .\22.fpga-gpu-bl8\x.tests/cases-gpu/demos/cube-solid/cube_solid.asm -o cube_solid.bin
 ```
 
 Cargarla en un bitstream 22 ya presente:
@@ -86,7 +86,7 @@ Cargarla en un bitstream 22 ya presente:
 .\tools\board-load.ps1 --prototype 22 --program cube_solid --port COM3
 ```
 
-`examples/cube_solid.asm` es el nombre estable y apunta a la mejor versión. Las
+`x.tests/cases-gpu/demos/cube-solid/cube_solid.asm` es el nombre estable y apunta a la mejor versión. Las
 versiones numeradas conservan los hitos que aportan una medición distinta. Los
 `.bin` no se versionan.
 

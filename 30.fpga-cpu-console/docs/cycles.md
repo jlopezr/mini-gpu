@@ -60,8 +60,8 @@ completas— y **está medido en placa**, no deducido de los estados:
 
 | Programa | Instrucciones | Ciclos | CPI |
 |---|---:|---:|---:|
-| [`examples/fastpath_hit.asm`](../examples/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
-| [`examples/fastpath_miss.asm`](../examples/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+| [`../../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`../../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
 
 Los dos programas son el mismo fichero con un carácter distinto: el `REM` lee
 `R2` o `R3`, que valen lo mismo. Mismo trabajo aritmético, mismas 4 005
@@ -250,7 +250,7 @@ comparar los mismos programas entre versiones, además del coste por opcode.
 
 ### Los casos de las extensiones, medidos igual
 
-Los siete de [`cases/extensions`](../../x.tests/cases/extensions), en la
+Los siete de [`cases-cpu/extensions`](../../x.tests/cases-cpu/extensions), en la
 misma placa y con el vídeo corriendo:
 
 | Programa                      | Instr. | CPI   |

@@ -1,0 +1,43 @@
+{
+  "architecture": "cpu",
+  "name": "demo-fullframe",
+  "program": "fullframe.asm",
+  "requires": [
+    "frame_capture"
+  ],
+  "run_until": {
+    "swap": 2
+  },
+  "max_instructions": 15998,
+  "timeout_seconds": 60.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R1": "0x01000000",
+      "R2": "0x00000020",
+      "R3": "0x00000010",
+      "R4": "0x0100c880",
+      "R5": "0x00000080",
+      "R6": "0x0100c640",
+      "R7": "0x00000001",
+      "R8": "0x00000001",
+      "R14": "0x00000009",
+      "R15": "0x00000007",
+      "R16": "0x00000040",
+      "R17": "0x00000030",
+      "R20": "0x80200000",
+      "R22": "0x000000f0",
+      "R23": "0x001f001f",
+      "R24": "0xffffffff",
+      "R25": "0x000000a0",
+      "R26": "0x00000010",
+      "R27": "0x00000020",
+      "R30": "0x00000002"
+    },
+    "frame": {
+      "file": "expected/frame.bin"
+    }
+  }
+}

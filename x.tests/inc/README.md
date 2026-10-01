@@ -58,8 +58,8 @@ se comprueba con la suite entera, no sólo con el programa que se estaba
 tocando:
 
 ```bash
-python x.tests/run_tests.py --backend cpusim cases/video cases/programs
-test-board --prototype 21 -y x.tests/cases/video
+python x.tests/run_tests.py --backend cpusim cases-cpu/video cases-cpu/programs
+test-board --prototype 21 -y x.tests/cases-cpu/video
 ```
 
 Cuando el cambio pretende **no** alterar el código generado —como el que creó

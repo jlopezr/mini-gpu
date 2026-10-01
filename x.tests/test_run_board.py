@@ -71,7 +71,7 @@ class ResolveProgramTest(unittest.TestCase):
             root = Path(tmp)
             prototype_dir = root / "6.fpga-cpu"
             prototype_dir.mkdir()
-            other_dir = root / "x.tests" / "cases" / "basics"
+            other_dir = root / "x.tests" / "cases-cpu" / "basics"
             other_dir.mkdir(parents=True)
             program = other_dir / "vector.asm"
             program.write_text("HALT\n", encoding="utf-8")
@@ -350,7 +350,7 @@ class MainTestTest(unittest.TestCase):
              mock.patch.object(run_board.subprocess, "run") as run:
             run.return_value = SimpleNamespace(returncode=0)
             code = run_board.main_test([
-                "--prototype", "21", "--port", "COM3", "-y", "cases/basics",
+                "--prototype", "21", "--port", "COM3", "-y", "cases-cpu/basics",
             ])
         self.assertEqual(code, 0)
         run.assert_called_once()
@@ -362,7 +362,7 @@ class MainTestTest(unittest.TestCase):
         self.assertIn("--port", command)
         self.assertEqual(command[command.index("--port") + 1], "COM3")
         self.assertIn("-y", command)
-        self.assertIn("cases/basics", command)
+        self.assertIn("cases-cpu/basics", command)
 
     def test_without_inferable_identity_fails_without_running_anything(self):
         with mock.patch.object(run_board, "_capabilities", return_value={}), \

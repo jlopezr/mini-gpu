@@ -1,5 +1,6 @@
 {
   "architecture": "gpu",
+  "requires": ["mul_div"],
   "name": "gpu-mandelbrot",
   "program": "mandelbrot.asm",
   "warp_config": "warps.json",

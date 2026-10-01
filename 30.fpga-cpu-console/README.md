@@ -138,14 +138,14 @@ válido; con cualquier bit de `extra[9:0]` puesto sigue dando
 
 Eso deja un agujero fácil de abrir sin enterarse: si alguien quita la
 comprobación entera, nada se queja. Lo tapa
-[`cases/extensions/shift-immediate/reserved-fields`](../x.tests/cases/extensions/shift-immediate/reserved-fields/),
+[`cases-cpu/extensions/shift-immediate/reserved-fields`](../x.tests/cases-cpu/extensions/shift-immediate/reserved-fields/),
 que es la mitad negativa del cambio. El caso `errors/invalid-encoding` de
 siempre no servía: usa un `NOP`, cuya regla no ha cambiado.
 
 Verificación: [`shift_immediate_tb.v`](shift_immediate_tb.v), la clase
 `ShiftInmediatoTest` de
 [`../1.isa/test_mini_asm.py`](../1.isa/test_mini_asm.py), y el caso
-[`shift-immediate/bounds`](../x.tests/cases/extensions/shift-immediate/bounds/).
+[`shift-immediate/bounds`](../x.tests/cases-cpu/extensions/shift-immediate/bounds/).
 
 El testbench tiene un detalle que merece copiarse: en cada caso, el registro
 **cuyo número coincide con la cantidad** recibe un valor distinto de la
@@ -187,7 +187,7 @@ El razonamiento completo, y el del signo del resto, están en
 Verificación: [`alu_extended_tb.v`](alu_extended_tb.v), con veintidós vectores
 —la mitad con operandos negativos— y las cuatro divisiones por cero, más los
 casos
-[`alu-extended/`](../x.tests/cases/extensions/alu-extended/) de
+[`alu-extended/`](../x.tests/cases-cpu/extensions/alu-extended/) de
 `x.tests`.
 
 ---
@@ -216,7 +216,7 @@ comprobó expresamente.
 Detalles en [`docs/registro-cero.md`](../21.fpga-cpu-hdmi-alu/docs/registro-cero.md). Verificación:
 [`zero_register_tb.v`](zero_register_tb.v), que recorre los seis caminos por los
 que la CPU escribe el banco, y el caso
-[`basics/zero-register`](../x.tests/cases/basics/zero-register/).
+[`basics/zero-register`](../x.tests/cases-cpu/basics/zero-register/).
 
 > **Esto ya no es exclusivo de la 21.** El cambio se llevó después a las otras
 > ocho implementaciones —cinco de CPU, tres de GPU— y `R0` a cero pasó a ser una
@@ -237,9 +237,9 @@ port es un intercambio, no un parche:
 | Programa | Antes | Ahora |
 |---|---|---|
 | [`../20.forth/forth.asm`](../20.forth/forth.asm) | `R0` = `BASE`, `R3` = cero (59 usos) | `R0` = cero, `R3` = `BASE`; sobra el `MOVI R3, 0` |
-| [`examples/bresenham_lines.asm`](examples/bresenham_lines.asm) | `R0` = 5, `R3` = cero, `R25` = 11 | `R0` = cero; `R3` y `R25` libres, y los dos `SHL` pasan a `SHLI` |
+| [`../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`](../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | `R0` = 5, `R3` = cero, `R25` = 11 | `R0` = cero; `R3` y `R25` libres, y los dos `SHL` pasan a `SHLI` |
 
-De propina, [`examples/bresenham_circles.asm`](examples/bresenham_circles.asm)
+De propina, [`../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm`](../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm)
 —que no estaba roto, solo desperdiciaba `R3`— va igual, y los tres programas
 salen **más cortos**: `forth.asm` pierde una instrucción y `bresenham_lines`
 tres.
@@ -290,8 +290,8 @@ instrucciones y lo único que cambia es si la etiqueta acierta:
 
 | Programa | Instrucciones | Ciclos | CPI |
 |---|---:|---:|---:|
-| [`examples/fastpath_hit.asm`](examples/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
-| [`examples/fastpath_miss.asm`](examples/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+| [`../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
 
 **31 985 ciclos de diferencia en 1 000 vueltas: 31,99 por acierto**, que son
 exactamente las 32 iteraciones del divisor. El CPI baja un 33 %.
@@ -389,10 +389,10 @@ y los dos están entre los vectores de
 Verificación: [`compare_tb.v`](compare_tb.v), con el discriminante que separa
 las dos instrucciones —mismo par de bits, respuesta distinta según se lea con
 signo o sin él, comprobado en los dos órdenes— y el caso
-[`compare/signed-unsigned`](../x.tests/cases/extensions/compare/signed-unsigned/)
+[`compare/signed-unsigned`](../x.tests/cases-cpu/extensions/compare/signed-unsigned/)
 de `x.tests`. La mitad negativa del encoding, que quitar la comprobación de
 `extra[10:0]` no rompería nada, la cubre
-[`compare/reserved-fields`](../x.tests/cases/extensions/compare/reserved-fields/).
+[`compare/reserved-fields`](../x.tests/cases-cpu/extensions/compare/reserved-fields/).
 
 | Mutación | La detecta |
 |---|---|
@@ -428,7 +428,7 @@ es [`subword_ls_tb.v`](subword_ls_tb.v), sobre el sistema completo, y la clase
 `SubwordAccessTest` de
 [`../2.cpu-sim-func/test_minicpu_sim.py`](../2.cpu-sim-func/test_minicpu_sim.py)
 sobre el simulador funcional. El demo que las justifica es
-[`examples/subword_demo.asm`](examples/subword_demo.asm): un degradado RGB565
+[`../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm`](../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm): un degradado RGB565
 pixel a pixel, que con solo `STORE` de 32 bits costaría una lectura y una mezcla
 por pixel.
 
@@ -589,7 +589,7 @@ Dos cosas difieren de la placa y conviene saberlas:
   la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
   resolución reducida, donde es barata.
 
-El programa es [`examples/fullframe.asm`](examples/fullframe.asm), que pinta una
+El programa es [`../x.tests/cases-cpu/demos/fullframe/fullframe.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe.asm), que pinta una
 «L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un marco
 completo se ve igual si alguien intercambia los ejes; una línea arriba y una
 columna a la izquierda, no.
@@ -670,7 +670,7 @@ de `imem` tal cual; del lado de la memoria es un puerto de 128 bits.
 
 Son **cuatro líneas de 16 bytes**, mapeo directo, 512 biestables de datos. El
 tamaño no es arbitrario: 16 bytes son exactamente las cuatro instrucciones del
-bucle interior de [`swap_demo_fast`](examples/swap_demo_fast.asm), así que desde
+bucle interior de [`swap_demo_fast`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
 la segunda iteración el bucle entero vive dentro y el `BLT` salta dentro del
 propio búfer.
 
@@ -1003,17 +1003,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](examples/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](examples/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](examples/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](examples/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](../x.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](examples/swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
@@ -1027,10 +1027,10 @@ figuras de verdad, píxel a píxel:
 
 | Programa | Qué dibuja | Qué enseña |
 |---|---|---|
-| [`bresenham_lines.asm`](examples/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
-| [`bresenham_circles.asm`](examples/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
-| [`cube.asm`](examples/cube.asm) | Cubo en alambre con perspectiva | Rotaciones Q16.16, `MULFX`, `DIV` y tabla de senos |
-| [`cube_solid.asm`](examples/cube_solid.asm) | Cubo de caras sólidas | Back-face culling y triángulos con funciones de borde incrementales, sin z-buffer |
+| [`bresenham_lines.asm`](../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
+| [`bresenham_circles.asm`](../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
+| [`cube.asm`](../x.tests/cases-cpu/video/cube/cube.asm) | Cubo en alambre con perspectiva | Rotaciones Q16.16, `MULFX`, `DIV` y tabla de senos |
+| [`cube_solid.asm`](../x.tests/cases-cpu/demos/cube-solid/cube_solid.asm) | Cubo de caras sólidas | Back-face culling y triángulos con funciones de borde incrementales, sin z-buffer |
 
 Las operaciones que este último deja como candidatas para evolucionar la ISA
 —y las optimizaciones que no necesitan tocarla— se analizan en

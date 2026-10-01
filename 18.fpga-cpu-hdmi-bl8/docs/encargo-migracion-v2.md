@@ -151,7 +151,7 @@ de 2 a 6.
 **3. Las fixtures versionadas mienten sobre su origen.** La 18 tiene siete
 ficheros generados en la raíz: `fullframe.hex`, `perf_loop.hex`,
 `frame_full.hex`, `frame_full.bin`, `fb_bars.bin`, `fb_checker.bin` y
-`fb_frame.bin`. **No tiene `fullframe_tb.asm`**, igual que le pasaba a la 19, y
+`fb_frame.bin`. **No tiene `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**, igual que le pasaba a la 19, y
 su README dice de dónde sale `fullframe.hex`.
 
 En la 21 esa frase era falsa y regenerar el `.hex` «como ponía ahí» dio *60 009
@@ -160,7 +160,7 @@ contados por la misma función de error. **Antes de regenerar una fixture,
 comprueba de qué fuente sale de verdad y en qué formato la lee su consumidor.**
 
 `x.tests/test_fullframe_fixture.py` ya **descubre solo** las carpetas con el
-trío completo, así que cubrirá la 18 el día que crees su `fullframe_tb.asm` —
+trío completo, así que cubrirá la 18 el día que crees su `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` —
 pero **no antes**, y ése es justo el momento en que hace falta. Créalo pronto.
 
 **4. `monitor.v` es copia idéntica en las diez carpetas** y hay un test que lo

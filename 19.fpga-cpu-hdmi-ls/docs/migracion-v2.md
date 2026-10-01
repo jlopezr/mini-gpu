@@ -116,9 +116,9 @@ De los tres `.hex` de la raíz:
 
 `fullframe.hex` es el caso exacto de la trampa 3. En la 19:
 
-- **no existe `fullframe_tb.asm`.** La 21 lo creó al arreglar el rojo número 1;
+- **no existe `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`.** La 21 lo creó al arreglar el rojo número 1;
   aquí el banco sigue leyendo un `.hex` sin fuente declarada al lado.
-- `README.md:208` dice «El programa es `examples/fullframe.asm`». Es la misma
+- `README.md:208` dice «El programa es `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`». Es la misma
   frase falsa que tenía la 21: ese programa pone el framebuffer en
   `0x01000000`, y el modelo de SDRAM del banco no llega.
 - La cabecera del banco, en cambio, **sí** documenta bien las bases bajas
@@ -689,12 +689,12 @@ migraciones independientes convergieron al mismo texto.
 
 Se aplicaron las tres piezas de la 21:
 
-1. **`fullframe_tb.asm` existe**, al lado del banco. Es `examples/fullframe.asm`
+1. **`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe**, al lado del banco. Es `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`
    con las dos bases del framebuffer como `.equ`, bajas para que quepan en las
    128 filas del modelo de SDRAM.
 2. **`fullframe.hex` regenerado desde ahí**, en palabras de 32 bits, con la
    orden escrita en la cabecera del banco.
-3. **El README corregido.** Decía que el programa era `examples/fullframe.asm`
+3. **El README corregido.** Decía que el programa era `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`
    y era falso, la misma frase que tenía la 21.
 
 Confirmación fuerte: el `fullframe.hex` regenerado sale **byte a byte igual al
@@ -706,7 +706,7 @@ de la 21**.
 > Con la carpeta escrita a mano arriba, cubrir la 19 dependía de que alguien se
 > acordara de añadirla — que es exactamente cómo la cabecera del banco de la 21
 > llegó a mentir durante meses. Un test que se descubre solo cubre la 18 el día
-> que cree su `fullframe_tb.asm`, sin que nadie lo recuerde. `[TODAS]`
+> que cree su `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`, sin que nadie lo recuerde. `[TODAS]`
 
 Control negativo: regenerado el `.hex` desde el programa de la placa —la
 mutación que de verdad ocurrió en la 21— el test falla, nombra la carpeta y da

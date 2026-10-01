@@ -5,7 +5,7 @@ Este es el fichero que decide si el modelo sirve para algo. Mientras no
 reproduzca el diseño ACTUAL dentro de una tolerancia razonable, cualquier
 predicción suya sobre el cauce segmentado es ficción.
 
-Referencia: 22.fpga-gpu-bl8/profiling.md, un frame de examples/plasma.asm con
+Referencia: 22.fpga-gpu-bl8/profiling.md, un frame de plasma.asm (x.tests/cases-gpu/demos/plasma) con
 el scanout encendido, medido con gpu_profile_tb.v sobre el RTL.
 """
 from __future__ import annotations
@@ -17,13 +17,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "11.gpu-sim-func"))
+sys.path.insert(0, str(ROOT / "1.isa"))
 
 import minigpu_sim as func  # noqa: E402
+from mini_asm import assemble_bytes  # noqa: E402
 
 from uarch import Config, Model  # noqa: E402
 
 
-# Medido en RTL con gpu_calib_tb.v sobre examples/plasma_nommio.asm, un frame
+# Medido en RTL con gpu_calib_tb.v sobre plasma_nommio.asm, un frame
 # con el scanout encendido.
 #
 # Se usa la variante SIN MMIO a proposito: plasma.asm lee FB_BACK y escribe
@@ -42,12 +44,13 @@ REFERENCE = {
     "lsu_tx": 9_600,
 }
 
-PROGRAM = ROOT / "22.fpga-gpu-bl8" / "examples" / "plasma_nommio.bin"
+PROGRAM = ROOT / "x.tests" / "cases-gpu" / "demos" / "plasma" / "plasma_nommio.asm"
 
 
 def build_system(program: Path) -> func.System:
     system = func.System()
-    data = program.read_bytes()
+    data = assemble_bytes(program.read_text(encoding="utf-8"), program.parent, str(program),
+                          (ROOT / "x.tests" / "inc",))
     system.memory[0:len(data)] = data
     system.configure_warps({"warps": [{"id": i, "enabled": True, "pc": 0, "active_mask": 0xFF}
                                  for i in range(8)]})
@@ -95,7 +98,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not PROGRAM.exists():
-        raise SystemExit(f"falta {PROGRAM}; ensambla plasma_1frame.asm primero")
+        raise SystemExit(f"falta {PROGRAM}")
 
     system = build_system(PROGRAM)
     cfg = Config(model=args.model)

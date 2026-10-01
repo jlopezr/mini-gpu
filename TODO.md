@@ -9,6 +9,22 @@ para no volver a abrirlo por error.
 
 ---
 
+## 0. Unificar ejemplos de codigo
+cambiar de nombre la carpetacases -> cases-cpu
+
+los diferentes programas de prueba se sabe que versiones de prototipos (o por ejemplo
+extensiones) necesitan? quiero decir, si ejecuto uno de los programas de prueba que no
+funcionara en ese prototipo concreto se detecta y no se ejecuta. este mecanismo esta bien configurado?
+
+podemos añadir una funcion para ejecutar los tests en todas las prototipos sean cpu o gpu?
+que al generar estas ejecuciones se guarde profiling.
+
+que al final con este profiling se genere un informe con tablas. por ejemplo para cada
+programa los valores de tiempo de ejecucion, CPI, etc... para cada prototipo y poder
+mirar si vamos a mejor o peor. Si los programas son de video pues las FPS tb.
+
+la placa esta conectada asi que puedes probarlo
+
 ## 1. Cerrar la ronda de placa
 
 **La ronda está hecha y salió limpia** (20/09/2026). Las nueve carpetas que la
@@ -463,10 +479,10 @@ solo; restaurar, probablemente no.
 ## 12. Board-upload no controla que protipo esta cargado
 
 ```
-(tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases\video\pacman> board-load -p 21 --program .\pacman.asm
+(tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases-cpu\video\pacman> board-load -p 21 --program .\pacman.asm
 Puerto detectado: COM3 (USB Serial Port (COM3))
 Using prototype: 21.fpga-cpu-hdmi-alu
-38425 palabras -> C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases\video\pacman\pacman.bin
+38425 palabras -> C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases-cpu\video\pacman\pacman.bin
 == cargando pacman.bin (153700 bytes) en 0x00000000
 error: `monitor.py reset` falló:
 Error: Invalid RESET_CPU response: f8
@@ -515,7 +531,7 @@ Verificación: 65 tests en 1.isa OK (4 nuevos del listado), y 2.cpu-sim-func 44,
   - `mul_div` estaba declarada `"architecture": "cpu"` en `capabilities.json`
     aunque `gpu_lane.v` tiene `OPCODE_MUL:` y `OPCODE_DIV:`. Corregido allí,
     que es el sitio que el repo tiene para decir qué buscar en el RTL. No mueve
-    la selección de casos: los 47 de `x.tests/cases` declaran
+    la selección de casos: los 47 de `x.tests/cases-cpu` declaran
     `architecture: cpu` y ese filtro va antes que las capacidades.
   - Lo vigila `x.tests/test_sysid_params.py` (sincronía, conformidad contra
     números a mano, y que nadie vuelva a poner un literal en el RTL), más
@@ -579,12 +595,12 @@ Verificación: 65 tests en 1.isa OK (4 nuevos del listado), y 2.cpu-sim-func 44,
   fichero llegó a decir: `perf` lee `0x80000300` y con la ventana estrecha se
   rechazaba en el cliente.
 - **Tests de capacidad en `x.tests`.** El mecanismo está sano (34 `test.json` con
-  `requires`). El smoke test es `cases/basics/smoke`, y `swap_demo`/
-  `swap_demo_fast` son `cases/video/swap-demo` y `cases/video/swap-demo-fast`,
+  `requires`). El smoke test es `cases-cpu/basics/smoke`, y `swap_demo`/
+  `swap_demo_fast` son `cases-cpu/video/swap-demo` y `cases-cpu/video/swap-demo-fast`,
   apuntando al `.asm` de la 21 sin copiarlo. `tear_demo` **no se puede convertir
   en caso** y no es una tarea pendiente: no pide `SWAP` nunca —es justo lo que
   demuestra—, así que `run_until.swap` no se dispara, y lo que enseña es una
   carrera que el simulador no modela. Razonado en
-  [`x.tests/cases/video/README.md`](x.tests/cases/video/README.md).
+  [`x.tests/cases-cpu/video/README.md`](x.tests/cases-cpu/video/README.md).
 - **«¿VVP qué ejecuta?»** Sí, el RTL: `vvp` corre el binario que compila
   `iverilog` a partir del RTL y su testbench.

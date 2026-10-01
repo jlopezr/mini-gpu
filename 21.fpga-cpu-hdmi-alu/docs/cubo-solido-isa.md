@@ -1,6 +1,6 @@
 # Qué pide a la ISA un cubo sólido
 
-Este documento usa [`cube_solid.asm`](../examples/cube_solid.asm) como carga de
+Este documento usa [`cube_solid.asm`](../../x.tests/cases-cpu/demos/cube-solid/cube_solid.asm) como carga de
 trabajo concreta para evaluar extensiones de MiniISA. No intenta convertir la
 ISA en una API gráfica: separa las operaciones generales que se repiten en el
 programa de las optimizaciones que deben quedarse en software o en la

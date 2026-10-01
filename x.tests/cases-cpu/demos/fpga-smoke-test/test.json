@@ -1,0 +1,19 @@
+{
+  "architecture": "cpu",
+  "name": "demo-fpga-smoke-test",
+  "program": "fpga_smoke_test.asm",
+  "max_instructions": 1000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "pc": 32,
+    "registers": {
+      "R1": "0x0000000a",
+      "R2": "0x00000014",
+      "R3": "0x0000001e",
+      "R4": "0x00100010",
+      "R5": "0x0000001e"
+    }
+  }
+}

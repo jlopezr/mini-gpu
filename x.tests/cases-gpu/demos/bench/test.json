@@ -1,0 +1,166 @@
+{
+  "architecture": "gpu",
+  "name": "demo-bench",
+  "program": "bench.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 160144,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "instructions_executed": 80072,
+    "warps": {
+      "0": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 4096,
+            "R6": 1
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 4124,
+            "R6": 1
+          }
+        }
+      },
+      "1": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 8,
+            "R2": 4,
+            "R3": 4128,
+            "R6": 1
+          },
+          "7": {
+            "R1": 15,
+            "R2": 4,
+            "R3": 4156,
+            "R6": 1
+          }
+        }
+      },
+      "2": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 16,
+            "R2": 4,
+            "R3": 4160,
+            "R6": 1
+          },
+          "7": {
+            "R1": 23,
+            "R2": 4,
+            "R3": 4188,
+            "R6": 1
+          }
+        }
+      },
+      "3": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 24,
+            "R2": 4,
+            "R3": 4192,
+            "R6": 1
+          },
+          "7": {
+            "R1": 31,
+            "R2": 4,
+            "R3": 4220,
+            "R6": 1
+          }
+        }
+      },
+      "4": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 32,
+            "R2": 4,
+            "R3": 4224,
+            "R6": 1
+          },
+          "7": {
+            "R1": 39,
+            "R2": 4,
+            "R3": 4252,
+            "R6": 1
+          }
+        }
+      },
+      "5": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 40,
+            "R2": 4,
+            "R3": 4256,
+            "R6": 1
+          },
+          "7": {
+            "R1": 47,
+            "R2": 4,
+            "R3": 4284,
+            "R6": 1
+          }
+        }
+      },
+      "6": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 48,
+            "R2": 4,
+            "R3": 4288,
+            "R6": 1
+          },
+          "7": {
+            "R1": 55,
+            "R2": 4,
+            "R3": 4316,
+            "R6": 1
+          }
+        }
+      },
+      "7": {
+        "pc": 56,
+        "active_mask": 0,
+        "instructions_executed": 10009,
+        "registers": {
+          "0": {
+            "R1": 56,
+            "R2": 4,
+            "R3": 4320,
+            "R6": 1
+          },
+          "7": {
+            "R1": 63,
+            "R2": 4,
+            "R3": 4348,
+            "R6": 1
+          }
+        }
+      }
+    }
+  }
+}

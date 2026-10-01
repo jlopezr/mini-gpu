@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "demo-perf-loop",
+  "program": "perf_loop.asm",
+  "max_instructions": 1290,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "pc": 36,
+    "registers": {
+      "R3": "0x000000a0",
+      "R6": "0x00010280",
+      "R13": "0x00001234",
+      "R25": "0x000000a0"
+    }
+  }
+}

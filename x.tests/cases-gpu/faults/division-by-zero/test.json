@@ -52,6 +52,7 @@
     }
   },
   "requires": [
-    "atomic_warp_faults"
+    "atomic_warp_faults",
+    "mul_div"
   ]
 }

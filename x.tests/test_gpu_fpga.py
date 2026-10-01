@@ -113,8 +113,13 @@ class GpuFpgaTest(unittest.TestCase):
                 skipped[case['name']] = reason
             else:
                 accepted.append(case['name'])
-        self.assertEqual(len(accepted), 26)
-        self.assertEqual(len(skipped), 8)
+        self.assertEqual(len(accepted), 34)
+        self.assertEqual(len(skipped), 10)
+        # Las demos de vídeo se omiten por lo que les falta a la placa, no por
+        # accidente: sin ventana de vídeo, o sin captura de frame.
+        self.assertIn('sin video', skipped['demo-mmio-selftest'])
+        self.assertIn('sin frame_capture', skipped['demo-plasma'])
+        self.assertIn('demo-plasma-nommio', accepted)
         self.assertIn('fuera del mapa de memoria', skipped['gpu-mandelbrot'])
         self.assertIn('fuera del mapa de memoria', skipped['gpu-load-out-of-bounds'])
         self.assertIn('atómicos', skipped['gpu-division-by-zero'])

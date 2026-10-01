@@ -27,7 +27,7 @@ recta es recta**, exigiendo que los puntos intermedios caigan exactos, y que la
 pendiente sea exactamente el número de accesos contados.
 
 El programa es el bucle interior real de `swap_demo_fast`, aislado en
-[`../examples/perf_loop.asm`](../examples/perf_loop.asm), 160 iteraciones (una
+[`../../x.tests/cases-cpu/demos/perf-loop/perf_loop.asm`](../../x.tests/cases-cpu/demos/perf-loop/perf_loop.asm), 160 iteraciones (una
 línea de framebuffer):
 
 ```asm
@@ -180,7 +180,7 @@ y 4:
 Para regenerar `perf_loop.hex` tras tocar el `.asm`:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\1.isa\mini_asm.py examples\perf_loop.asm -o perf_loop.bin
+..\.venv\Scripts\python.exe ..\1.isa\mini_asm.py ../../x.tests/cases-cpu/demos/perf-loop/perf_loop.asm -o perf_loop.bin
 ```
 
 y convertir el binario a medias palabras hexadecimales, una por línea.

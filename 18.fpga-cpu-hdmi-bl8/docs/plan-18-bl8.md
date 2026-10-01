@@ -63,7 +63,7 @@ particular `docs/timing.md`.
 Estas cifras son medidas en la placa, no estimaciones. La herramienta es
 `tools/measure-demo.ps1`.
 
-El bucle interior de `examples/swap_demo_fast.asm` rellena el framebuffer:
+El bucle interior de `../../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm` rellena el framebuffer:
 
 ```asm
 draw_word:

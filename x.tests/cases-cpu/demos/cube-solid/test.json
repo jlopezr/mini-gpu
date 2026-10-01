@@ -1,0 +1,57 @@
+{
+  "architecture": "cpu",
+  "name": "demo-cube-solid",
+  "program": "cube_solid.asm",
+  "requires": [
+    "calls",
+    "frame_capture",
+    "mul_div",
+    "shift_immediate",
+    "subword_memory"
+  ],
+  "run_until": {
+    "swap": 3
+  },
+  "max_instructions": 3791998,
+  "timeout_seconds": 60.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R1": "0x01025800",
+      "R2": "0x80200000",
+      "R3": "0x00000410",
+      "R4": "0x000000df",
+      "R5": "0x000000c5",
+      "R6": "0x0000f800",
+      "R7": "0x010443bc",
+      "R8": "0x000001bc",
+      "R9": "0x000000e0",
+      "R10": "0x0000002f",
+      "R11": "0x000000c9",
+      "R12": "0x00000052",
+      "R13": "0x000000c9",
+      "R14": "0x0000009a",
+      "R15": "0x00000023",
+      "R16": "0xffffffe9",
+      "R17": "0xfffff988",
+      "R18": "0xfffffcdb",
+      "R20": "0x00000089",
+      "R21": "0x0000008b",
+      "R22": "0xffffff7b",
+      "R23": "0xfffffff6",
+      "R24": "0x00000280",
+      "R25": "0x00000001",
+      "R26": "0x00000002",
+      "R27": "0x00000006",
+      "R28": "0x00000001",
+      "R29": "0x00100038",
+      "R30": "0x000002f4",
+      "R31": "0x000001f0"
+    },
+    "frame": {
+      "file": "expected/frame.bin"
+    }
+  }
+}

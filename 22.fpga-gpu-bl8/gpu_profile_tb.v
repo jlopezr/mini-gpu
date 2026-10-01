@@ -1,6 +1,6 @@
 `default_nettype none
 `timescale 1ns/1ps
-// Corre examples/plasma.asm con el scanout encendido, comprueba que el
+// Corre x.tests/cases-gpu/demos/plasma/plasma.asm con el scanout encendido, comprueba que el
 // framebuffer queda bien y mide cuanto cuesta un frame.
 //
 // Como en gpu_video_bench_tb, el dominio de pixel se deja fuera (lleva

@@ -11,7 +11,7 @@ escrituras se funden ahí y se contestan **en un ciclo**, sin tocar la memoria. 
 salirse de la línea, se vuelca de una sola ráfaga.
 
 Cuatro `STORE` consecutivos con `+4` —que es exactamente el bucle interior de
-[`swap_demo_fast`](../examples/swap_demo_fast.asm)— caben en una línea. Así que
+[`swap_demo_fast`](../../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm)— caben en una línea. Así que
 las 160 escrituras de una línea de framebuffer pasan de **160 ráfagas a 40**, y
 la CPU deja de esperar a la memoria en tres de cada cuatro.
 

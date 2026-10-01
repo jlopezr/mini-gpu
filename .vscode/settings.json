@@ -4,7 +4,7 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "/^python x\\.tests\\\\run_tests\\.py --backend cpusim x\\.tests\\\\cases\\\\video\\\\pacman\\\\test\\.json$/": {
+        "/^python x\\.tests\\\\run_tests\\.py --backend cpusim x\\.tests\\\\cases-cpu\\\\video\\\\pacman\\\\test\\.json$/": {
             "approve": true,
             "matchCommandLine": true
         }

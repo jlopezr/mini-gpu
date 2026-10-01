@@ -33,7 +33,7 @@
 > Lo que si se hizo fue **quitar los tres `localparam`**: el `cpu.v` los
 > declaraba y validaba su encoding sin implementarlos, o sea que aparentaba
 > soportarlos. `x.tests` lo declara ahora como la capacidad `mul_div`, que
-> esta es la unica version en no tener, y `cases/alu/multiply` se omite aqui con
+> esta es la unica version en no tener, y `cases-cpu/alu/multiply` se omite aqui con
 > un SKIP en vez de fallar.
 
 

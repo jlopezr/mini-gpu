@@ -170,7 +170,7 @@ lanzamiento inicializan tanto `active_mask` como `live_mask`.
 Prueba de divergencia, reconvergencia y barrera entre dos warps:
 
 ```powershell
-python ../1.isa/mini_asm.py examples/simt_demo.asm -o examples/simt_demo.bin
+python ../1.isa/mini_asm.py x.tests/cases-gpu/demos/simt-demo/simt_demo.asm -o examples/simt_demo.bin
 python minigpu_sim.py examples/simt_demo.bin --num-warps 2 --trace-detail
 ```
 

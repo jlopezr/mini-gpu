@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INC = ROOT / "x.tests" / "inc"
+FUENTES = ROOT / "x.tests" / "cases-cpu" / "demos" / "fullframe"
 
 
 def _carpetas():
@@ -40,13 +41,15 @@ def _carpetas():
     Se descubren solas a proposito: la 19 necesito exactamente estas mismas
     comprobaciones, y con la carpeta cableada arriba habria habido que acordarse
     de anadirla --que es justo como la cabecera del banco de la 21 llego a
-    mentir durante meses sin que nadie lo notara--. Cuando migre la 18, queda
-    cubierta el dia que cree su `fullframe_tb.asm`.
+    mentir durante meses sin que nadie lo notara--. Los dos fuentes
+    (`fullframe.asm` y `fullframe_tb.asm`) son uno solo, compartido, en
+    `x.tests/cases-cpu/demos/fullframe`: lo que distingue a cada carpeta es su
+    `fullframe.hex` y su banco `.v`.
     """
     encontradas = []
     for carpeta in sorted(ROOT.glob("*.fpga-*")):
-        banco = carpeta / "fullframe_tb.asm"
-        placa = carpeta / "examples" / "fullframe.asm"
+        banco = FUENTES / "fullframe_tb.asm"
+        placa = FUENTES / "fullframe.asm"
         fichero_hex = carpeta / "fullframe.hex"
         bench = carpeta / "video_fullframe_tb.v"
         if all(p.exists() for p in (banco, placa, fichero_hex, bench)):
@@ -101,7 +104,8 @@ class FullframeFixtureTest(unittest.TestCase):
                     esperado,
                     f"{nombre}/fullframe.hex no cuadra con fullframe_tb.asm; "
                     f"regeneralo desde esa carpeta:\n"
-                    "  python ..\\1.isa\\mini_asm.py fullframe_tb.asm "
+                    "  python ..\\1.isa\\mini_asm.py "
+                    "..\\x.tests\\cases-cpu\\demos\\fullframe\\fullframe_tb.asm "
                     "--hex fullframe.hex -I ..\\x.tests\\inc")
 
     def test_los_dos_programas_solo_difieren_en_las_bases(self):

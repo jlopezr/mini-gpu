@@ -99,7 +99,7 @@ Lo que sí se hizo: **quitar de su `cpu.v` los tres `localparam`**. Estaban
 declarados y validados en el `case` de encoding pero sin rama en el EXECUTE, así
 que el resultado era correcto —`ERROR_INVALID_OPCODE`— y el código mentía:
 aparentaba soportarlas. Ahora el fichero dice la verdad. `x.tests` lo declara
-como la capacidad **`mul_div`**, y `cases/alu/multiply` se omite ahí con un
+como la capacidad **`mul_div`**, y `cases-cpu/alu/multiply` se omite ahí con un
 `SKIP` en vez de fallar.
 
 `mul_div` es la única capacidad del runner que significa «a este le **falta**

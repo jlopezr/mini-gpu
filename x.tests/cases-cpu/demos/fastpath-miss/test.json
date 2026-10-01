@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "demo-fastpath-miss",
+  "program": "fastpath_miss.asm",
+  "max_instructions": 8010,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "pc": 36,
+    "registers": {
+      "R1": "0x00007530",
+      "R2": "0x00000003",
+      "R3": "0x00000003",
+      "R5": "0x00002710"
+    }
+  }
+}

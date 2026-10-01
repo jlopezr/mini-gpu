@@ -327,7 +327,7 @@ class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):
     # nuevo salte en un test barato y no tres capas más abajo.
     #
     # La lección es de alcance, no de patrón: los programas de este repo NO
-    # viven todos bajo `x.tests/cases`. Al migrar la siguiente carpeta,
+    # viven todos bajo `x.tests/cases-cpu`. Al migrar la siguiente carpeta,
     # empieza por listar dónde hay `.asm`.
     # La 19 faltaba, y por eso sus doce programas siguieron en v1 sin que nadie
     # se enterara: la guarda existia, la carpeta no estaba dentro. Una lista de
@@ -340,21 +340,18 @@ class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):
     # Por eso van las dos rutas de cada carpeta y no la raiz: la raiz arrastra
     # los `_build/bench/{before,after}/fixtures` de la 17, 64 `.asm` generados
     # que no son de nadie.
+    #
+    # Hoy los fuentes de las demos (los antiguos `examples/` de cada prototipo)
+    # viven una sola vez bajo `x.tests/cases-cpu*/`, asi que solo `fixtures/` queda
+    # fuera de ahi. Esta lista ya no necesita una entrada por prototipo.
     CARPETAS = (
-        ROOT / "x.tests" / "cases",
+        ROOT / "x.tests" / "cases-cpu",
+        ROOT / "x.tests" / "cases-gpu",
         ROOT / "x.tests" / "cases-shared",
         ROOT / "20.forth",
-        ROOT / "16.fpga-cpu-hdmi" / "examples",
-        ROOT / "18.fpga-cpu-hdmi-bl8" / "examples",
-        ROOT / "19.fpga-cpu-hdmi-ls" / "examples",
-        ROOT / "21.fpga-cpu-hdmi-alu" / "examples",
-        ROOT / "12.fpga-gpu" / "examples",
         ROOT / "12.fpga-gpu" / "fixtures",
-        ROOT / "14.fpga-gpu-ram" / "examples",
         ROOT / "14.fpga-gpu-ram" / "fixtures",
-        ROOT / "17.fpga-gpu-ram-v2" / "examples",
         ROOT / "17.fpga-gpu-ram-v2" / "fixtures",
-        ROOT / "22.fpga-gpu-bl8" / "examples",
         ROOT / "22.fpga-gpu-bl8" / "fixtures",
     )
 
@@ -406,9 +403,9 @@ class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):
     def test_los_casos_de_alu_siguen_usando_int_min(self):
         """Que los cuatro sigan ahí sin tocar. Si alguien los «migrara» por
         error, el valor dejaría de ser INT_MIN y el caso probaría otra cosa."""
-        for ruta in ("cases/alu/shift-amount/program.asm",
-                     "cases/extensions/alu-extended/mulhi-signed/program.asm",
-                     "cases/extensions/compare/signed-unsigned/program.asm"):
+        for ruta in ("cases-cpu/alu/shift-amount/program.asm",
+                     "cases-cpu/extensions/alu-extended/mulhi-signed/program.asm",
+                     "cases-cpu/extensions/compare/signed-unsigned/program.asm"):
             with self.subTest(ruta):
                 texto = (ROOT / "x.tests" / ruta).read_text(encoding="utf-8")
                 self.assertRegex(texto, r"MOVHI\s+R\d+,\s*0x8000")

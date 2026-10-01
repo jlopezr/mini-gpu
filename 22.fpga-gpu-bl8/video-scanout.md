@@ -29,7 +29,7 @@ Bancos: `sdram_bandwidth_tb.v` (pico) y `gpu_bench_tb.v` (la GPU sola).
 
 `video_traffic_gen.v` imita el patrón de un scanout —ráfagas de 40
 transacciones por línea fuente, con `urgent` alto— sin dibujar nada. Enchufado
-al puerto 2 del fabric, corriendo `examples/bench.asm`:
+al puerto 2 del fabric, corriendo `x.tests/cases-gpu/demos/bench/bench.asm`:
 
 | | Ciclos | |
 | --- | --- | --- |
@@ -240,7 +240,7 @@ agresivo que el real. **+29% es el número bueno.**
 El segundo es la lección que se repite en este documento: **una prueba que
 verifica que algo ocurre no verifica que ocurra bien.**
 
-## El primer programa que dibuja: `examples/plasma.asm`
+## El primer programa que dibuja: `x.tests/cases-gpu/demos/plasma/plasma.asm`
 
 Los 64 hilos (`GETTID` da el id global `{warp,lane}`) se reparten las 38 400
 palabras del framebuffer con paso 64, elegido para que los 8 hilos de un warp
@@ -343,7 +343,7 @@ bastante más grande que el cambio de `VIDEO_CTRL` en sí. Conviene partirlo:
    que es justo lo que se quería probar.
 2. **Añadir `video_line_source_sdram` en p2** y el modo `SCANOUT`. A partir de
    aquí se puede medir en placa lo que este documento midió en simulación:
-   correr `examples/bench.asm` con `VIDEO_CTRL=SCANOUT` y con `=BLANK`, y
+   correr `x.tests/cases-gpu/demos/bench/bench.asm` con `VIDEO_CTRL=SCANOUT` y con `=BLANK`, y
    comparar con el +37,4%.
 3. **Backport a 21**, con el `STORE` de habilitación en las demos.
 

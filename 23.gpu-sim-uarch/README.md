@@ -32,7 +32,7 @@ pruebas "verificaba" el vídeo sin comprobar a qué dirección leía.
 
 ## Estado: validado
 
-Contra `gpu_calib_tb.v` sobre `examples/plasma_nommio.asm`, un frame:
+Contra `gpu_calib_tb.v` sobre `x.tests/cases-gpu/demos/plasma/plasma_nommio.asm`, un frame:
 
 | Magnitud | Modelo | RTL | Error |
 | --- | --- | --- | --- |

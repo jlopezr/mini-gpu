@@ -1,8 +1,42 @@
 # Tests de MiniCPU y MiniGPU
 
 También incluye el backend funcional MiniGPU (`--backend gpusim`), con casos en
-`cases-gpu`. Los casos CPU siguen en `cases` y el modo `both` sigue comparando
-exclusivamente el simulador CPU con la FPGA.
+`cases-gpu`. Los casos CPU están en `cases-cpu` y el modo `both` sigue comparando
+exclusivamente el simulador CPU con la FPGA. `cases-shared` tiene los que
+declaran las dos arquitecturas.
+
+## Dónde viven los programas
+
+Todo `.asm` de prueba o de demostración vive aquí, una sola vez, y no dentro de
+la carpeta de cada prototipo. Las carpetas de prototipo no tienen `examples/`
+versionado: lo que sus testbenches Verilog leen de `examples/*.hex` lo genera
+`tools/stage_programs.py` desde estos fuentes (lo ejecuta `test`, y no se
+versiona).
+
+- `cases-*/<familia>/<caso>/` — casos con `test.json` y expectativas.
+- `cases-cpu/demos/` y `cases-gpu/demos/` — las antiguas `examples/`. Cada
+  programa tiene su carpeta, con `test.json` si es comprobable de forma barata.
+  Las variantes para ISAs anteriores llevan `.legacy-<prototipos>.asm` y no se
+  ejecutan: son para las placas viejas (16/18/19, 12/14/17).
+
+### Convertir una demo en un caso
+
+Una demo que termina sola, o que se puede parar tras N intercambios de vídeo
+(`run_until: {"swap": N}`), se convierte en caso sin teclear las expectativas:
+
+```powershell
+# 1. escribe test.json con nombre, program, requires, max_instructions y "expect": {}
+# 2. grábalo desde el simulador; --tighten deja max_instructions en el doble de
+#    lo observado, y --frame guarda el frame tras run_until.swap
+python record_case.py cases-cpu/demos/swap-smoke/test.json --tighten --frame
+```
+
+Lo grabado es una instantánea del simulador, no un oráculo independiente: su
+valor llega al ejecutarlo contra la placa (`--backend both` / `gpu-both`), donde
+el RTL debe coincidir. Un caso de demo tiene que parar en cuanto ha hecho lo
+mínimo para comprobarse (una demo que tarda decenas de segundos no es un test):
+por eso `tear_demo` y `tear_demo_fast`, que necesitan ~65 s en el simulador
+para tres intercambios, no son casos.
 
 ## MiniGPU: ejemplo completo de suma de vectores
 
@@ -115,11 +149,11 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpusim` | ninguno | — | los 38 de `cases/` |
+| 1 | `cpusim` | ninguno | — | todos los de `cases-cpu/` y `cases-shared/` |
 | 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
 | 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
 | 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 28; 10 omitidos por capacidades |
-| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | los 38 de `cases/` |
+| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | todos los de `cases-cpu/` y `cases-shared/` |
 | 5 | `gpusim` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
 
@@ -194,17 +228,17 @@ y compara los dos estados observados entre sí:
 python run_tests.py --backend both --version cpu-fpga=sdram --port COM3
 ```
 
-Sin rutas explícitas se descubren todos los ficheros `cases/**/test.json`. Los
+Sin rutas explícitas se descubren todos los ficheros `cases-cpu/**/test.json`. Los
 casos CPU se agrupan igual que los GPU:
 
 | Grupo | Qué valida |
 |---|---|
-| [alu](cases/alu/) | Reglas de la ALU que la ISA fija explícitamente |
-| [basics](cases/basics/) | Camino mínimo de ejecución y de memoria, y `R0` cableado a cero |
-| [errors](cases/errors/) | Códigos de error y PC de la instrucción causante |
-| [extensions](cases/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra, consola serie, desplazamientos inmediatos y ALU extendida |
-| [programs](cases/programs/) | Programas con bucles, como prueba de integración |
-| [video](cases/video/) | Registros de vídeo, intercambio y frame capturado |
+| [alu](cases-cpu/alu/) | Reglas de la ALU que la ISA fija explícitamente |
+| [basics](cases-cpu/basics/) | Camino mínimo de ejecución y de memoria, y `R0` cableado a cero |
+| [errors](cases-cpu/errors/) | Códigos de error y PC de la instrucción causante |
+| [extensions](cases-cpu/extensions/) | Lo posterior a la v0.1: llamadas, accesos sub-palabra, consola serie, desplazamientos inmediatos y ALU extendida |
+| [programs](cases-cpu/programs/) | Programas con bucles, como prueba de integración |
+| [video](cases-cpu/video/) | Registros de vídeo, intercambio y frame capturado |
 
 Los de `extensions` y `video` llevan `requires`, así que no corren en todos los
 backends; ver [Capacidades](#capacidades).
@@ -212,7 +246,7 @@ backends; ver [Capacidades](#capacidades).
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_tests.py cases/basics/smoke/test.json --backend cpusim
+python run_tests.py cases-cpu/basics/smoke/test.json --backend cpusim
 ```
 
 Los casos GPU admiten traza del scheduler. `--trace-limit` limita los eventos
@@ -432,7 +466,7 @@ python run_tests.py --backend cpu-fpga --measure medidas.md --port COM3 cases
 
 # Solo dos versiones, y sin nombre de fichero: solo se archiva en reports/
 python run_tests.py --backend cpu-fpga --version hdmi --version bl8 \
-    --measure --measure-label antes-de-segmentar --port COM3 cases/programs
+    --measure --measure-label antes-de-segmentar --port COM3 cases-cpu/programs
 
 # Sin placa: solo cuenta instrucciones, que es la mitad de la tabla
 python run_tests.py --backend cpusim --version sim --measure cases
@@ -480,12 +514,12 @@ causante. Los códigos comunes son:
 | `0x04` | División por cero                                       |
 | `0x05` | Opcode conocido con campos reservados inválidos         |
 
-Los casos de `cases/errors` verifican por separado `TRAP`, opcode inválido y
+Los casos de `cases-cpu/errors` verifican por separado `TRAP`, opcode inválido y
 encoding inválido sobre ambos backends.
 
 ## Programas de integración
 
-`cases/programs` contiene cargas de trabajo pequeñas pero completas:
+`cases-cpu/programs` contiene cargas de trabajo pequeñas pero completas:
 
 - `fibonacci`: bucle, aritmética y generación secuencial de un array;
 - `array-sum`: entrada inicial, acumulación con wrap y resultado en memoria;
@@ -496,7 +530,7 @@ Estos casos complementan los tests unitarios de RTL comprobando el flujo entero
 ensamblador, CPU, memoria, monitor y backend.
 
 El más grande de todos no está ahí sino en
-[`cases/extensions/serial/forth`](cases/extensions/serial/forth/), porque
+[`cases-cpu/extensions/serial/forth`](cases-cpu/extensions/serial/forth/), porque
 necesita `serial`: ejecuta el [Forth de la carpeta 20](../20.forth/) entero
 —1107 instrucciones, 26 opcodes— y le da una sesión que interpreta, compila una
 palabra nueva con `:` y la llama. Es el único caso en el que el programa bajo
@@ -632,7 +666,7 @@ según los bitstreams las van implementando; ésta desaparece entera el día que
 **`R0` cableado a cero** lo fue —se llamaba `zero_register`— mientras solo lo
 tenía la 21. Ya no: con el backport aplicado lo cumplen las nueve
 implementaciones, así que es una regla de la MiniISA y no algo que un backend
-pueda tener o no. Su caso vive en `cases/basics/zero-register` y corre en todas
+pueda tener o no. Su caso vive en `cases-cpu/basics/zero-register` y corre en todas
 partes, sin `requires`.
 
 Fue además la **única capacidad no aditiva** que ha tenido este runner, y eso es
@@ -679,7 +713,7 @@ razón que merece explicarse: **para un programa que espera a que su intercambio
 se aplique, el periodo da igual**. El programa nunca dibuja mientras hay un
 intercambio pendiente, así que la secuencia de frames es idéntica sea cual sea
 el periodo; lo único que cambia es cuántas vueltas da su bucle de espera. Los
-cinco casos de `cases/video` sincronizan, y por eso el simulador puede declarar
+cinco casos de `cases-cpu/video` sincronizan, y por eso el simulador puede declarar
 `frame_capture` honestamente. `test_capabilities.py` lo comprueba con tres
 periodos distintos.
 
@@ -737,5 +771,5 @@ que decir la dirección, la mitad apuntarían al buffer que no es. El backend le
 Y el fichero de `frame` tiene que salir de un **modelo**, no de una captura de
 la propia placa. Si el esperado se genera capturando, el caso solo comprueba que
 la placa sigue haciendo lo que hacía, incluido lo que haga mal.
-[`cases/video/band/reference.py`](cases/video/band/reference.py) es el ejemplo.
+[`cases-cpu/video/band/reference.py`](cases-cpu/video/band/reference.py) es el ejemplo.
 Para ver dónde difieren dos frames, [`../tools/compare-frames.py`](../tools/compare-frames.py).

@@ -534,7 +534,7 @@ el cuello de botella. Y cambia la conclusión de la sección anterior: partir
 
 Los 32 casos diferenciales son pruebas de ISA: programas cortos, casi sin
 tráfico de datos. Por eso su medida estaba dominada por el fetch y la
-coalescencia no se notaba. `examples/bench.asm` es lo contrario — un bucle de
+coalescencia no se notaba. `x.tests/cases-gpu/demos/bench/bench.asm` es lo contrario — un bucle de
 `LOAD`/`ADD`/`STORE` con direcciones `base + lane*4` (o sea, el caso
 coalescido) y 2000 iteraciones:
 

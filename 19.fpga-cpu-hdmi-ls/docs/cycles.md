@@ -145,7 +145,7 @@ comparar los mismos programas entre versiones, además del coste por opcode.
 
 ### Los casos de las extensiones, medidos igual
 
-Los siete de [`cases/extensions`](../../x.tests/cases/extensions), en la
+Los siete de [`cases-cpu/extensions`](../../x.tests/cases-cpu/extensions), en la
 misma placa y con el vídeo corriendo:
 
 | Programa                      | Instr. | CPI   |

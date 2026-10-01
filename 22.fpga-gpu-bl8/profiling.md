@@ -1,6 +1,6 @@
 # Perfil de un frame: dónde se va el tiempo
 
-Medida de **un frame** de `examples/plasma.asm` con el scanout encendido, leída
+Medida de **un frame** de `x.tests/cases-gpu/demos/plasma/plasma.asm` con el scanout encendido, leída
 de los contadores de `0x80000300` (ver `mmio.md`). En placa se saca con
 `profile.py`; esta concreta salió de `gpu_profile_tb.v`.
 

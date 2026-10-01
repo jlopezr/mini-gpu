@@ -1,0 +1,14 @@
+{
+  "architecture": "cpu",
+  "name": "pacman",
+  "program": "pacman.asm",
+  "requires": ["frame_capture", "subword_memory", "calls", "shift_immediate", "alu_extended"],
+  "run_until": {"swap": 300},
+  "max_instructions": 8000000,
+  "timeout_seconds": 60.0,
+  "expect": {
+    "error": false,
+    "error_code": 0,
+    "video": {"underflow": false}
+  }
+}

@@ -15,7 +15,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     // Tamano del bufer de instrucciones, en lineas de 16 bytes.
     // INDEX_BITS tiene que ser $clog2(LINES).
     //
-    // 16 lineas = 256 bytes, y no las 4 de 21. Medido con examples/plasma.asm,
+    // 16 lineas = 256 bytes, y no las 4 de 21. Medido con x.tests/cases-gpu/demos/plasma/plasma.asm,
     // cuyo bucle ocupa ~160 bytes y por tanto NO cabe en 64:
     //
     //    4 lineas: 4 480 403 ciclos/frame, 188 778 fallos (29%)

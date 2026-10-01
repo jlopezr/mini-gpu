@@ -1,5 +1,6 @@
 {
   "architecture": "gpu",
+  "requires": ["mul_div"],
   "name": "gpu-convergence",
   "program": "convergence.asm",
   "warp_config": "warps.json",

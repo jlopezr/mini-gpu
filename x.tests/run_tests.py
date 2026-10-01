@@ -485,7 +485,7 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # en su `cpu.v`--. Las demas capacidades dicen «este backend tiene algo de mas»;
 # esta dice «a este le falta algo de la base».
 #
-# Existe por la misma razon practica que el resto: sin ella, `cases/alu/multiply`
+# Existe por la misma razon practica que el resto: sin ella, `cases-cpu/alu/multiply`
 # falla en esa placa con ERROR_INVALID_OPCODE, que es lo mismo que produce un
 # ensamblador roto. Con ella, el SKIP dice donde esta el problema. Pero conviene
 # NO leer el SKIP como «aqui no hace falta»: ahi falta algo que la ISA exige, y
@@ -918,7 +918,7 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
 def discover_cases(arguments: list[Path]) -> list[Path]:
     if arguments:
         # Un directorio vale por todos los casos que cuelgan de el, que es como
-        # lo documenta el README (`cases/video`).
+        # lo documenta el README (`cases-cpu/video`).
         encontrados = []
         for path in arguments:
             path = path.resolve()
@@ -931,7 +931,7 @@ def discover_cases(arguments: list[Path]) -> list[Path]:
     # binario y las mismas expectativas en las dos familias. Tienen carpeta
     # propia porque ahi esta su valor -- si viven mezclados con los de CPU, el
     # dia que uno deje de correr como GPU nadie lo nota.
-    return sorted(path for folder in ("cases", "cases-gpu", "cases-shared")
+    return sorted(path for folder in ("cases-cpu", "cases-gpu", "cases-shared")
                   for path in (ROOT / folder).glob("**/test.json"))
 
 

@@ -54,7 +54,7 @@ por tipo.
 - `monitor.py:39` tiene `MONITOR_REGIONS` con **una sola** ventana,
   `(0x8000_0000, 0x8000_1000)`. Exacto.
 - Los siete ficheros generados de la raíz están los siete, y **no existe
-  `fullframe_tb.asm`**. Exacto.
+  `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**. Exacto.
 - `video_registers.v:241` usa `>=` con el comentario que lo declara defensa
   deliberada. **La corrección que el encargo le hace al log de la 21 es
   correcta**: no hay ningún bug de `==` que arreglar aquí.
@@ -239,12 +239,12 @@ en `test_mmio_map.py`. Falló al instante nombrando **los seis ficheros**, ni un
 más ni uno menos, lo que confirma de paso el inventario de la fase 0:
 
 ```text
-18\examples\fullframe.asm:34:       MOVHI R20, 0x8000
-18\examples\swap_demo.asm:32:       MOVHI R20, 0x8000   ; registros de video en 0x80000000
-18\examples\swap_demo_fast.asm:55:  MOVHI R20, 0x8000
-18\examples\swap_smoke.asm:21:      MOVHI R20, 0x8000
-18\examples\tear_demo.asm:32:       MOVHI R20, 0x8000
-18\examples\tear_demo_fast.asm:50:  MOVHI R20, 0x8000
+18\../../x.tests/cases-cpu/demos/fullframe/fullframe.asm:34:       MOVHI R20, 0x8000
+18\../../x.tests/cases-cpu/video/swap-demo/swap_demo.asm:32:       MOVHI R20, 0x8000   ; registros de video en 0x80000000
+18\../../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm:55:  MOVHI R20, 0x8000
+18\../../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm:21:      MOVHI R20, 0x8000
+18\../../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm:32:       MOVHI R20, 0x8000
+18\../../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm:50:  MOVHI R20, 0x8000
 ```
 
 Es todavía **más homogéneo que la 19**: una sola base (`R20`), un solo
@@ -279,12 +279,12 @@ necesita más justificación que el hash.
 
 `fullframe.asm` no creció +1 como los otros cinco, sino **+2**, y el verificador
 lo cazó. No era un error: la 19, al arreglar su fixture, sacó además **las dos
-bases del framebuffer** a `.equ` para que su `examples/fullframe.asm` y su
-`fullframe_tb.asm` sólo se diferencien en ese bloque —que es justo lo que
+bases del framebuffer** a `.equ` para que su `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm` y su
+`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` sólo se diferencien en ese bloque —que es justo lo que
 `test_fullframe_fixture.py` exige—.
 
 Eso llega a la 18 con la copia, y es deseable, porque la 18 va a necesitar su
-propio `fullframe_tb.asm`. Pero deja el fichero **hablando de un hermano que
+propio `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`. Pero deja el fichero **hablando de un hermano que
 todavía no existe**: el comentario nuevo dice «la unica diferencia con
 `../fullframe_tb.asm`». Queda pendiente para la fase de la fixture.
 
@@ -499,11 +499,11 @@ tres carpetas. Lo mismo vale para `mmio_monitor_tb.v` y su `0x80000f00`.
 Con el RTL en v2, los seis programas pasaron de `mmio_v1.inc` a `mmio.inc`.
 **Una línea por fichero**, que es exactamente lo que el andamio compra.
 
-### La fixture: `fullframe_tb.asm` creado, y el `.hex` coincide con los otros dos
+### La fixture: `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` creado, y el `.hex` coincide con los otros dos
 
 El banco ya migrado falló con «la CPU paró con error 05 en pc=00000004»: el
 `fullframe.hex` versionado seguía siendo el de v1. Se aplicaron las tres piezas:
-`fullframe_tb.asm` copiado de la 19 (los cuerpos son idénticos, sólo cambian las
+`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` copiado de la 19 (los cuerpos son idénticos, sólo cambian las
 dos `.equ`), el `.hex` regenerado **desde ahí** con la orden escrita en la
 cabecera del banco, y el README corregido.
 

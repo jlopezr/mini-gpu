@@ -61,7 +61,7 @@ haga falta, se recupera cambiando el alias del ensamblador y reensamblando.
 ## Qué se rompió, y la regla que lo hace reversible
 
 Los programas que usan `R0` como registro general. Eran dos, `20.forth/forth.asm`
-y `examples/bresenham_lines.asm`, y están **portados**; el detalle está en el
+y `../../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`, y están **portados**; el detalle está en el
 [README de esta carpeta](../README.md#qué-se-rompió-con-r0-a-cero-y-cómo-quedó).
 
 La regla que conviene retener, porque decide qué se puede cambiar antes del

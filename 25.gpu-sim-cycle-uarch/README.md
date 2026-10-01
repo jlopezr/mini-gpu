@@ -8,7 +8,7 @@ un load mantiene su respuesta e `in_flight` hasta escribir el banco.
 ```powershell
 # Desde la raíz del repositorio:
 .\tools\test.ps1 --prototype 25 --quick
-.\tools\gpusim-cycle.ps1 25.gpu-sim-cycle-uarch/examples/load_store.asm `
+.\tools\gpusim-cycle.ps1 x.tests/cases-gpu/demos/load-store/load_store.asm `
   --report 25.gpu-sim-cycle-uarch/reports/load_store.json `
   --trace 25.gpu-sim-cycle-uarch/reports/load_store.jsonl --trace-cycles 100
 .\.venv\Scripts\python.exe x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu/memory
