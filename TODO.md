@@ -435,6 +435,23 @@ Y estaba la 22.
 
 ## 14. Revisar como se llaman a las tools
 
+## 15. `tools/lint` ensucia el estado de build de cada prototipo
+
+**Qué falta.** `tools/lint -p N` se registra como un build de etiqueta `test` y
+termina `FAILED` siempre que el lint saca avisos, o sea, hoy en los doce
+prototipos. Ese registro pasa a ser el «último build» en `build-list
+--prototypes`, que enseña `FAILED` en todos aunque el bitstream sea `CURRENT` y la
+síntesis estuviera bien. Pasó el 01/10/2026 al medir el punto 7: doce prototipos
+en rojo hasta borrar a mano quince carpetas de `reports/`.
+
+**Por qué importa.** Quien lo ejecuta para mirar avisos no espera tocar el estado
+de las síntesis, y quien mira `build-list` después no tiene forma de distinguir un
+fallo de timing de un lint con avisos.
+
+**Qué lo bloquea.** Nada. Lo razonable es que el lint no escriba en el historial
+de builds, o que `build-list` ignore los registros de etiqueta `test` al elegir el
+último build.
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
