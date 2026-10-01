@@ -41,12 +41,12 @@ El RTL todavía necesita adaptarse a ella para ejecutar este kernel correctament
 
 ## expected.bin
 
-Generado por `make_expected.py` desde la referencia escalar Q16.16 de
+Generado por `reference.py` desde la referencia escalar Q16.16 de
 `0.mandelbrot/mandelbrot_fixed.py`, saturando a 255. Son 76800 bytes, con 17206
 píxeles saturados — exactamente los que la referencia sin saturar deja en 256.
 
 ```
-python x.tests/cases-gpu/programs/mandelbrot-packed/make_expected.py
+python x.tests/cases-gpu/programs/mandelbrot-packed/reference.py
 ```
 
 ## Alcance de las expectativas

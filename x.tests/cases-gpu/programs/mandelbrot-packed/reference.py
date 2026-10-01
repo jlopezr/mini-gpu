@@ -1,4 +1,4 @@
-"""Genera expected.bin desde la referencia escalar Q16.16.
+"""Modelo de referencia: genera expected.bin desde la referencia escalar Q16.16.
 
 El framebuffer empaquetado es un byte por pixel, saturado a 255, en el mismo
 orden de exploracion que la version de una palabra por pixel. Como el kernel
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
+ROOT = HERE.parents[3]
 
 WIDTH, HEIGHT, MAX_ITER = 320, 240, 256
 

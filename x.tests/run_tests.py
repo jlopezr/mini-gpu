@@ -221,10 +221,11 @@ def load_program(path: Path) -> bytes:
     return data
 
 
-# Scripts que escriben los ficheros esperados de un caso. Los `*.bin` están
-# ignorados por git (x.tests/.gitignore), así que en un clon limpio faltan los
-# esperados que se calculan en vez de grabarse: se generan al vuelo.
-DATA_GENERATORS = ("reference.py", "make_expected.py")
+# Script que escribe los ficheros esperados de un caso: un modelo de referencia
+# independiente del programa. Los `*.bin` están ignorados por git
+# (x.tests/.gitignore), así que en un clon limpio faltan los esperados que se
+# calculan en vez de grabarse: se generan al vuelo. Un único nombre a propósito.
+DATA_GENERATORS = ("reference.py",)
 
 
 def generate_missing_data_file(path: Path) -> None:

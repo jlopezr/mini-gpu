@@ -1,8 +1,8 @@
 """`load_data_file` ejecuta el generador del caso cuando falta el fichero.
 
 Los `*.bin` están ignorados por git (x.tests/.gitignore), así que en un clon
-limpio faltan los esperados que se calculan con `reference.py` o
-`make_expected.py`. El runner los genera al vuelo, y solo cuando faltan.
+limpio faltan los esperados que se calculan con `reference.py`. El runner los
+genera al vuelo, y solo cuando faltan.
 """
 
 import contextlib
@@ -36,9 +36,11 @@ class DataGeneratorTest(unittest.TestCase):
         (self.caso / "reference.py").write_text(ESCRIBE_FRAME, encoding="utf-8")
         self.assertEqual(self.cargar(self.esperado), b"\x01\x02\x03\x04")
 
-    def test_make_expected_py_is_also_a_generator(self):
+    def test_only_reference_py_is_a_generator(self):
+        # Un solo nombre: otro script de la carpeta no se ejecuta aunque exista.
         (self.caso / "make_expected.py").write_text(ESCRIBE_FRAME, encoding="utf-8")
-        self.assertEqual(self.cargar(self.esperado), b"\x01\x02\x03\x04")
+        with self.assertRaises(FileNotFoundError):
+            self.cargar(self.esperado)
 
     def test_existing_file_is_not_regenerated(self):
         self.esperado.parent.mkdir()
