@@ -18,6 +18,11 @@ python mini_asm.py minimal.asm -o minimal.bin
 python mini_asm.py mandelbrot.asm -o mandelbrot.bin --hex mandelbrot.hex
 ```
 
+Sin `-o`, el `.bin` va a `_build/<nombre>.bin` junto al fuente, no al lado del
+`.asm`: es salida regenerable y no debe confundirse con un fichero de entrada
+(`.incbin`, un `expected.bin`). `_build/` está ignorada por git. `board-load` y
+`run-board` ensamblan a la misma carpeta.
+
 La carpeta contiene además programas pequeños para comprobar el ensamblador y
 una primera versión de Mandelbrot escrita en MiniISA. Al cambiar un encoding,
 deben actualizarse conjuntamente la especificación, el ensamblador, el

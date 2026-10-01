@@ -317,6 +317,10 @@ una reimplementación.
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
 
+Sin `-o`, `mini-asm` deja el binario en `_build/<nombre>.bin` junto al fuente
+(carpeta ignorada por git), no al lado del `.asm`. `board-load` y `run-board`
+ensamblan ahí mismo, así que `vector.asm` acaba en `vector/_build/vector.bin`.
+
 `mini-asm` se llamaba `miniisa`, y el módulo `1.isa/mini_asm.py` se llamaba
 `miniisa_asm.py`. `MiniISA` sigue siendo el nombre de la ISA: el rename fue solo
 del ensamblador, para que quede junto a `mini-lcc`.
