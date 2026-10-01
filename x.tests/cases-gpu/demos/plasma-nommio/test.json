@@ -3,6 +3,9 @@
   "name": "demo-plasma-nommio",
   "program": "../plasma/plasma_nommio.asm",
   "warp_config": "warps.json",
+  "requires": [
+    "large_memory"
+  ],
   "max_instructions": 303760,
   "expect": {
     "halted": true,

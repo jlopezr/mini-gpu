@@ -2,6 +2,9 @@
   "architecture": "cpu",
   "name": "demo-perf-loop",
   "program": "perf_loop.asm",
+  "requires": [
+    "large_memory"
+  ],
   "max_instructions": 1290,
   "expect": {
     "halted": true,

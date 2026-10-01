@@ -44,7 +44,7 @@ def _hex(value: int) -> str:
     return f"0x{value & 0xFFFFFFFF:08x}"
 
 
-def record(path: Path, frame: bool, tighten: bool = False) -> dict:
+def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = False) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw.setdefault("expect", {})
     architecture = raw["architecture"]
@@ -52,7 +52,9 @@ def record(path: Path, frame: bool, tighten: bool = False) -> dict:
         raise SystemExit("un caso compartido no se graba: elige una familia")
     case = rt.load_case(path, architecture)
     video = None
-    if case["run_until"] or frame:
+    # Lo mismo que decide el runner: sin `run_until`, `expect.video` ni frame, el
+    # simulador no lleva dispositivo de video y cualquier acceso MMIO es un error.
+    if case["run_until"] or frame or case["expected"]["video"]:
         video = {"run_until_swap": (case["run_until"] or {}).get("swap"),
                  "capture_frame": frame}
     expect = dict(raw["expect"])
@@ -66,10 +68,18 @@ def record(path: Path, frame: bool, tighten: bool = False) -> dict:
             **({"video": video} if video else {}))
         expect.update(halted=result["halted"], error=result["error"],
                       error_code=f"0x{result['error_code']:02x}")
+        # Con `run_until` la parada es asincrona: la CPU se para donde pille, y el
+        # PC y los registros de ese instante dependen de la velocidad del
+        # arnes, no del programa. Lo unico estable es el frame. (El runner ya
+        # prohibe `expect.pc` junto a `run_until` por lo mismo; los registros
+        # tienen el mismo problema y no los comprueba nadie, asi que no se
+        # graban: en la placa fallarian siempre.)
         if not case["run_until"]:
             expect["pc"] = result["pc"]
-        expect["registers"] = {f"R{n}": _hex(v) for n, v in sorted(result["registers"].items())
-                               if v}
+            expect["registers"] = {f"R{n}": _hex(v)
+                                   for n, v in sorted(result["registers"].items()) if v}
+        else:
+            expect.pop("registers", None)
     else:
         warps = case["warp_config"]["warps"]
         lanes = case["warp_config"].get("warp_size", 8)
@@ -84,7 +94,12 @@ def record(path: Path, frame: bool, tighten: bool = False) -> dict:
         expect.update(halted=result["halted"], error=result["error"],
                       error_code=f"0x{result['error_code']:02x}")
         observed = result["observations"]
-        expect["instructions_executed"] = observed["instructions_executed"]
+        # Mismo motivo que en CPU: con `run_until` la parada es asincrona y ni
+        # las instrucciones ni el estado de los warps en ese instante son del
+        # programa. En la placa fallarian siempre; el runner los rechaza.
+        warps = [] if case["run_until"] else warps
+        if not case["run_until"]:
+            expect["instructions_executed"] = observed["instructions_executed"]
         expect["warps"] = {}
         for w in warps:
             key = str(w["id"])
@@ -102,6 +117,8 @@ def record(path: Path, frame: bool, tighten: bool = False) -> dict:
                 "instructions_executed": observed[f"{prefix}.instructions_executed"],
                 "registers": registros,
             }
+        if not expect["warps"]:
+            del expect["warps"]
 
     if frame:
         if result.get("video") is None or "frame" not in result["video"]:
@@ -110,6 +127,17 @@ def record(path: Path, frame: bool, tighten: bool = False) -> dict:
         destino.mkdir(exist_ok=True)
         (destino / "frame.bin").write_bytes(result["video"]["frame"])
         expect["frame"] = {"file": "expected/frame.bin"}
+    # Un error del simulador NO se graba como lo esperado: puede ser el simulador
+    # el que no llega (no tiene el bloque de contadores GPU, ni la ventana de un
+    # periferico), no el programa el que falla. `demo-mmio-selftest` se grabo
+    # asi, con un ERROR_MEMORY_ACCESS del simulador, y la placa --que si tiene el
+    # hardware-- lo ejecutaba limpio: el caso exigia el fallo.
+    if expect["error"] and not allow_error:
+        raise SystemExit(
+            f"el simulador termino con error (codigo {expect['error_code']}); no se graba. "
+            "Si el caso trata justo de ese error, usa --allow-error; si no, el programa "
+            "necesita algo que el simulador no tiene: declara esa capacidad en `requires` "
+            "y escribe `expect` a mano.")
     raw["expect"] = expect
     if tighten:
         contadas = (result["instructions"] if architecture == "cpu"
@@ -125,10 +153,12 @@ def main() -> int:
                         help="captura el frame tras run_until.swap")
     parser.add_argument("--tighten", action="store_true",
                         help="max_instructions = el doble de lo observado (minimo 1000)")
+    parser.add_argument("--allow-error", action="store_true",
+                        help="grabar aunque el simulador termine con error")
     args = parser.parse_args()
     for path in args.test_json:
         path = path.resolve()
-        grabado = record(path, args.frame, args.tighten)
+        grabado = record(path, args.frame, args.tighten, args.allow_error)
         path.write_text(json.dumps(grabado, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"grabado {path.relative_to(ROOT)}")
     return 0

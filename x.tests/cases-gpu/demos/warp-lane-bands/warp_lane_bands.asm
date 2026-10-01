@@ -10,10 +10,12 @@
 ; configura la CPU o el monitor desde fuera (VIDEO vive en 0x80200000 segun
 ; mmio.md, y aqui no aparece ninguna direccion 0x8xxxxxxx).
 ;
-; AVISO: `isa.md` dice que GETWARP y GETLANE no estan implementadas ni tienen
-; opcode asignado. Se usan aqui por encargo explicito. El resto del programa es
-; capability Base: no usa MULHI, DIVU, REM, REMU, SLT, SLTU, JAL, JALR, JR,
-; los accesos sub-palabra ni la variante de desplazamiento inmediato.
+; Warp y lane salen de GETTID, que vale `warp_id * warp_size + lane_id` (isa.md):
+; warp = tid >> 3 y lane = tid & 7. Se escribio primero con GETWARP y GETLANE,
+; de la propuesta v0.2, que no tienen opcode: no se renombraron, nunca llegaron
+; a existir. El resto del programa es capability Base: no usa MULHI, DIVU, REM,
+; REMU, SLT, SLTU, JAL, JALR, JR, los accesos sub-palabra ni la variante de
+; desplazamiento inmediato.
 ;
 ; Reparto
 ; -------
@@ -46,13 +48,14 @@
 ; ============================================================
 
 start:
-    GETWARP R1                  ; 0..7
-    GETLANE R2                  ; 0..7
-
     MOVI  R20, 11               ; cantidades de desplazamiento, en registro:
     MOVI  R21, 5                ; SHL/SHR por registro son Base, la variante
     MOVI  R22, 3                ; inmediata (SHLI/SHRI) pide `shift_immediate`
     MOVI  R23, 16
+
+    GETTID R2                   ; 0..63 = warp*8 + lane
+    SHR   R1, R2, R22           ; warp, 0..7
+    ANDI  R2, R2, 7             ; lane, 0..7
 
     ; ---- color base del warp ----
     ; Cadena de comparaciones en vez de tabla en memoria: `isa.md` documenta

@@ -2,6 +2,9 @@
   "architecture": "cpu",
   "name": "demo-fpga-smoke-test",
   "program": "fpga_smoke_test.asm",
+  "requires": [
+    "large_memory"
+  ],
   "max_instructions": 1000,
   "expect": {
     "halted": true,

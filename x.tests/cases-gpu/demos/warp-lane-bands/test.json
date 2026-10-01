@@ -1,0 +1,16 @@
+{
+  "architecture": "gpu",
+  "name": "demo-warp-lane-bands",
+  "program": "warp_lane_bands.asm",
+  "warp_config": "warps.json",
+  "requires": ["mul_div"],
+  "max_instructions": 40000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "memory_dumps": [
+      { "address": "0x01000000", "file": "expected.bin" }
+    ]
+  }
+}

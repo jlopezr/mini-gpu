@@ -2,6 +2,9 @@
   "architecture": "cpu",
   "name": "demo-fastpath-miss",
   "program": "fastpath_miss.asm",
+  "requires": [
+    "alu_extended"
+  ],
   "max_instructions": 8010,
   "expect": {
     "halted": true,

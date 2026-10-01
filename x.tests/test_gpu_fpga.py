@@ -113,13 +113,25 @@ class GpuFpgaTest(unittest.TestCase):
                 skipped[case['name']] = reason
             else:
                 accepted.append(case['name'])
-        self.assertEqual(len(accepted), 34)
-        self.assertEqual(len(skipped), 10)
+        self.assertEqual(len(accepted), 33)
+        self.assertEqual(len(skipped), 12)
+        # Pinta 320x240 en 0x01000000: fuera de la memoria de la versión por
+        # defecto (BRAM), pero dentro de la de las tres GPU con SDRAM.
+        self.assertIn('fuera del mapa de memoria', skipped['demo-warp-lane-bands'])
+        bands = runner.load_case(
+            runner.ROOT / 'cases-gpu/demos/warp-lane-bands/test.json')
+        for version in ('sdram', 'lsu2', 'smpipe'):
+            with self.subTest(version=version):
+                self.assertIsNone(gpu_fpga.incompatibility(bands, version))
         # Las demos de vídeo se omiten por lo que les falta a la placa, no por
         # accidente: sin ventana de vídeo, o sin captura de frame.
-        self.assertIn('sin video', skipped['demo-mmio-selftest'])
+        self.assertIn('video', skipped['demo-mmio-selftest'])
+        self.assertIn('perf_counters', skipped['demo-mmio-selftest'])
         self.assertIn('sin frame_capture', skipped['demo-plasma'])
-        self.assertIn('demo-plasma-nommio', accepted)
+        # plasma-nommio pinta 320x240 en memoria: sin SDRAM, la placa pararia con
+        # ERROR_MEMORY_ACCESS, que es lo que le pasaba a la 12.
+        self.assertIn('sin large_memory', skipped['demo-plasma-nommio'])
+        self.assertIn('demo-bench', accepted)
         self.assertIn('fuera del mapa de memoria', skipped['gpu-mandelbrot'])
         self.assertIn('fuera del mapa de memoria', skipped['gpu-load-out-of-bounds'])
         self.assertIn('atómicos', skipped['gpu-division-by-zero'])
