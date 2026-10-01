@@ -70,17 +70,25 @@ class VideoDevice:
         self.swap_count = 0
         self.halt_at = 0
         self.halt_armed = False
+        # Intercambios completados desde que se armo la alarma. Interno, como
+        # en el RTL: no es un registro.
+        self.halt_swaps = 0
         self.halt_target = 0
+        #: Que bit de HALT_TARGET detiene a ESTE nucleo: el de CPU por defecto, y
+        #: el simulador de GPU lo pone a `HALT_TARGET_GPU` al colgarselo. El otro
+        #: bit se acepta y no hace nada (§9.6): el registro significa lo mismo
+        #: en las dos familias y un binario compartido no tiene que saber donde
+        #: corre.
+        self.halt_owner = self.HALT_TARGET_CPU
         self.video_tx = 0
-        # Alto durante un solo `tick`, cuando FRAME_COUNT alcanza HALT_AT.
+        # Alto durante un solo `tick`, cuando se completa el intercambio N
+        # desde que se armo HALT_AT.
         self.halt_request = False
-        #: Parada del ARNES, no del contrato: «para tras N intercambios».
-        #: No es un registro y no se puede leer desde el programa. Existe
-        #: porque `run_until: {swap: N}` de los casos es una condicion de
-        #: observacion --capturar el frame N-- y antes se implementaba
-        #: escribiendo HALT_AT, que en v2 cuenta FRAMES y no intercambios.
-        #: Colarla por HALT_AT haria que el simulador parase donde el
-        #: hardware no para, que es justo lo que §17 prohibe.
+        #: Parada del ARNES: «para tras N intercambios contados desde el
+        #: reset». No es un registro y no se puede leer desde el programa.
+        #: `run_until: {swap: N}` de los casos es una condicion de observacion
+        #: --capturar el frame N-- y no pasa por HALT_AT ni por HALT_TARGET, que
+        #: son del contrato: el programa podria verlos y cambiarlos.
         self.stop_after_swaps = 0
         # PATTERN tras el reset, igual que el RTL. Aquí no gobierna nada --no
         # hay barrido que leer la memoria-- pero el REGISTRO tiene que existir y
@@ -117,27 +125,29 @@ class VideoDevice:
             return
 
         self._since_frame = 0
+        # FRAME_COUNT: frames de video, independiente de la alarma.
         self.frame_count = u32(self.frame_count + 1)
         # VIDEO_TX cuenta frames emitidos mientras el nucleo corre; aqui
         # `tick` solo se llama mientras corre, asi que es el mismo contador.
         self.video_tx = u32(self.video_tx + 1)
 
-        # La alarma cuenta FRAMES, no intercambios (§9.7), y se compara con
-        # `>=` --decision congelada 17--: armarla con un valor ya rebasado
-        # para en el frame siguiente en vez de no parar nunca.
-        if self.halt_armed and self.frame_count >= self.halt_at:
-            # HALT_TARGET decide A QUIEN se para. Sin el bit puesto la alarma
-            # se consume igual y no para a nadie: es lo que hace el RTL, y es
-            # la trampa de la que hay que acordarse al portar un programa
-            # viejo --HALT_TARGET arranca a cero, asi que escribir solo
-            # HALT_AT, como bastaba en v1, ya no detiene nada--.
-            self.halt_request = bool(self.halt_target & self.HALT_TARGET_CPU)
-            self.halt_armed = False
-
         if self.swap_pending:
             self.fb_front, self.fb_back = self.fb_back, self.fb_front
             self.swap_pending = False
             self.swap_count = u32(self.swap_count + 1)
+            self.halt_swaps = u32(self.halt_swaps + 1)
+            # La alarma cuenta INTERCAMBIOS completados desde que se armo
+            # (§9.6), y se compara con `>=` --decision congelada 17--: armarla
+            # con un valor ya rebasado para en el intercambio siguiente en vez
+            # de no parar nunca.
+            if self.halt_armed and self.halt_swaps >= self.halt_at:
+                # HALT_TARGET decide A QUIEN se para. Sin el bit puesto la
+                # alarma se consume igual y no para a nadie: es lo que hace el
+                # RTL, y es la trampa de la que hay que acordarse al portar un
+                # programa viejo --HALT_TARGET arranca a cero, asi que escribir
+                # solo HALT_AT, como bastaba en v1, ya no detiene nada--.
+                self.halt_request = bool(self.halt_target & self.halt_owner)
+                self.halt_armed = False
             if self.stop_after_swaps and self.swap_count >= self.stop_after_swaps:
                 self.halt_request = True
 
@@ -190,14 +200,14 @@ class VideoDevice:
                             # nunca está puesto: no hay nada que borrar
         elif offset == self.HALT_AT:
             # Armar la alarma pone el origen de la cuenta aquí: HALT_AT es
-            # «para dentro de N frames», no «para en el frame número N desde
-            # el encendido». Aquí daría igual —cada ejecución construye un
-            # dispositivo nuevo— pero en la placa no: con la cuenta libre, un
-            # programa solo podría usarla una vez por arranque. Se copia la
-            # regla, y con ella el efecto secundario: escribir HALT_AT PONE
-            # FRAME_COUNT A CERO, igual que hace `video_registers.v`.
+            # «para dentro de N intercambios», no «para en el intercambio
+            # número N desde el encendido». Aquí daría igual —cada ejecución
+            # construye un dispositivo nuevo— pero en la placa no: con la
+            # cuenta libre, un programa solo podría usarla una vez por
+            # arranque. La cuenta es `halt_swaps`, interna: armar NO toca
+            # FRAME_COUNT ni SWAP_COUNT, igual que `video_registers.v`.
             self.halt_at = value
-            self.frame_count = 0
+            self.halt_swaps = 0
             self.halt_armed = value != 0
         elif offset == self.HALT_TARGET:
             self.halt_target = value & (self.HALT_TARGET_CPU

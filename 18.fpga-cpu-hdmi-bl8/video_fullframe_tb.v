@@ -77,8 +77,10 @@ module video_fullframe_tb;
   // 2, 3, 4 y 6, y pasan todos. Antes eran 6, con la nota de que con 2 la CPU se
   // paraba a media rafaga; ya no se reproduce.
   //
-  // Antes eran INTERCAMBIOS; con MMIO v2 `HALT_AT` cuenta FRAMES (§9.6).
-  localparam integer FRAMES_TO_STOP = 2;
+  // `HALT_AT` cuenta INTERCAMBIOS completados desde que se arma (§9.6), asi
+  // que la CPU se para justo al completarse el segundo, con el frame entero
+  // en el buffer frontal.
+  localparam integer SWAPS_TO_STOP = 2;
 
   localparam [31:0] FB0 = 32'h0001_0000;
   localparam [31:0] FB1 = 32'h0003_5800;   // FB0 + 320*240*2
@@ -396,7 +398,7 @@ module video_fullframe_tb;
     // tras reset no para a nadie. Sin esta escritura la CPU no se detiene y el
     // banco se agota esperando, que es un sintoma que no se parece a la causa.
     escribir_mmio(8'h20, 32'h0000_0001);        // HALT_TARGET = CPU
-    escribir_mmio(8'h1C, FRAMES_TO_STOP);         // HALT_AT, ahora en +0x1C
+    escribir_mmio(8'h1C, SWAPS_TO_STOP);         // HALT_AT, ahora en +0x1C
 
     @(negedge clk_sys); run_request = 1'b1;
     @(negedge clk_sys); run_request = 1'b0;
@@ -410,7 +412,7 @@ module video_fullframe_tb;
       guard = guard + 1;
     end
     if (!halted)
-      $fatal(1, "la CPU no paro en el intercambio %0d", FRAMES_TO_STOP);
+      $fatal(1, "la CPU no paro en el intercambio %0d", SWAPS_TO_STOP);
     if (cpu_error)
       $fatal(1, "la CPU paro con error %02x en pc=%08x", cpu_error_code, debug_pc);
 
@@ -419,7 +421,7 @@ module video_fullframe_tb;
 
     $display("");
     $display("Parada en el intercambio %0d tras %0d ciclos de CPU",
-             FRAMES_TO_STOP, ciclos);
+             SWAPS_TO_STOP, ciclos);
     $display("  SWAP_COUNT = %0d", leer_mmio(5'h10));
     $display("  underflow  = %0d", leer_mmio(5'h0c) & 1);
     $display("  FB_FRONT   = 0x%08x", leer_mmio(5'h00));
@@ -427,9 +429,9 @@ module video_fullframe_tb;
 
     if ((leer_mmio(5'h0c) & 1) !== 0)
       $fatal(1, "underflow: el scanout no llego a tiempo a resolucion completa");
-    if (leer_mmio(5'h10) !== FRAMES_TO_STOP)
+    if (leer_mmio(5'h10) !== SWAPS_TO_STOP)
       $fatal(1, "SWAP_COUNT vale %0d, esperado %0d",
-             leer_mmio(5'h10), FRAMES_TO_STOP);
+             leer_mmio(5'h10), SWAPS_TO_STOP);
     if (mem.errors != 0)
       $fatal(1, "el modelo de SDRAM conto %0d violaciones JEDEC", mem.errors);
 

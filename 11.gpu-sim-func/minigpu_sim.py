@@ -226,6 +226,9 @@ class System:
         # rango y da ERROR_MEMORY_ACCESS, que es lo que hacían los casos de
         # siempre.
         self.video = video
+        if video is not None:
+            # En la GPU para el bit de GPU de HALT_TARGET, no el de CPU (§9.6).
+            video.halt_owner = VideoDevice.HALT_TARGET_GPU
         self.serial = serial
         self.peripheral_halted = False
         # El bloque de identificacion existe SIEMPRE, a diferencia del video:

@@ -10,10 +10,14 @@
 //                              bit 1    intercambio pendiente
 //                              31:16    contador de frames de VIDEO
 //                              escribir bit 0 a 1: borra el underflow
-//   0x80000010  SWAP_COUNT R   intercambios completados desde que se armo
-//                              HALT_AT (o desde el reset, si no se ha armado)
-//   0x80000014  HALT_AT    RW  parar la CPU dentro de N intercambios; armarlo
-//                              pone SWAP_COUNT a cero (0 = desactivado)
+//   0x80000010  SWAP_COUNT R   intercambios completados desde el reset
+//   0x80000014  HALT_AT    RW  parar la CPU dentro de N intercambios completados
+//                              desde que se arma, y 0 es desarmado. Armar no toca
+//                              ningun contador. Ver HALT_TARGET: sin el, no para
+//                              a nadie
+//
+// (Los offsets de esta tabla son los de v1. Los de MMIO v2, donde VIDEO_CTRL
+// va primero, estan en mmio.md §9.)
 //   0x80000018  VIDEO_CTRL RW  bits 1:0  modo de salida
 //                                  0  BLANK    negro, sin leer la memoria
 //                                  1  PATTERN  patron de prueba, sin leerla
@@ -212,6 +216,10 @@ module video_registers #(
   reg [31:0] halt_at;
   reg [31:0] halt_target;
   reg        halt_armed;
+  // Intercambios completados desde que se armo la alarma. Es INTERNO: armar
+  // no toca FRAME_COUNT ni SWAP_COUNT, que son del dispositivo y solo los pone
+  // a cero el reset (§9.6).
+  reg [31:0] halt_swaps;
   reg [31:0] video_tx;
 
   // El underflow nace en el dominio de pixel. Es un nivel pegajoso, asi que
@@ -342,6 +350,7 @@ module video_registers #(
       video_tx <= 32'd0;
       video_mode <= MODE_PATTERN;
       halt_armed <= 1'b0;
+      halt_swaps <= 32'd0;
     end else begin
       if (select && write && core_address && selected == REG_SWAP)
         commit_error_latched <= !palabra_completa || commit_reservado
@@ -349,33 +358,28 @@ module video_registers #(
       // El intercambio va primero para que una escritura del bus en el mismo
       // ciclo gane: si el software fija una base justo ahora, esa es la que
       // quiere, no la que acaba de rotar.
+      //
+      // Y aqui vive la alarma. `HALT_AT` cuenta INTERCAMBIOS completados
+      // (§9.6): en el que toca, el frame recien intercambiado esta entero y en
+      // el buffer frontal, de modo que lo que se captura es repetible aunque
+      // el programa tarde lo que tarde y se salte frames. Contar frames de
+      // video, como hizo la v2 antes, para la CPU en un punto cualquiera de su
+      // dibujo.
+      //
+      // Un programa que se cuelga sin pedir swaps no dispara la alarma: lo
+      // para el limite de tiempo del host, que tambien puede leer el estado
+      // con el nucleo parado.
+      //
+      // El bit de armado se consume al disparar: es una alarma de un disparo,
+      // no una coincidencia permanente. La comparacion es `>=` y no `==`,
+      // defensa barata por si el contador se pasara de largo.
       if (swap_now) begin
         fb_front <= fb_back;
         fb_back <= fb_front;
         swap_pending <= 1'b0;
         swap_count <= swap_count + 1'b1;
-      end
-      if (fill_start && fill_first && state_commit_pending) begin
-        config_active <= config_shadow;
-        state_commit_pending <= 1'b0;
-      end
-
-      // FRAME_COUNT y la alarma. En v1 `HALT_AT` contaba contra SWAP_COUNT;
-      // §9.6 lo cambia a FRAME_COUNT, y el motivo esta escrito en el
-      // contrato: "un programa que se cuelga sin pedir swaps tambien tiene
-      // que poder capturarse". Con la cuenta de swaps, un programa colgado no
-      // dispara la alarma nunca y el host se queda esperando.
-      //
-      // El bit de armado se consume al disparar: es una alarma de un disparo,
-      // no una coincidencia permanente. Y armar reinicia la cuenta, que es lo
-      // que arreglo el fallo de la placa -- sin eso la alarma solo sirve una
-      // vez por arranque, porque la segunda el contador ya paso de largo.
-      //
-      // La comparacion es `>=` y no `==`, defensa barata por si el contador
-      // se pasara de largo (§9.6).
-      if (fill_start && fill_first) begin
-        frame_count <= frame_count + 1'b1;
-        if (halt_armed && (frame_count + 1'b1) >= halt_at) begin
+        halt_swaps <= halt_swaps + 1'b1;
+        if (halt_armed && (halt_swaps + 1'b1) >= halt_at) begin
           // A quien se para lo dice HALT_TARGET (§9.6). Esta carpeta solo
           // tiene CPU, asi que el bit de GPU se acepta y no hace nada: el
           // registro significa lo mismo en las dos familias y un binario
@@ -384,6 +388,15 @@ module video_registers #(
           halt_armed <= 1'b0;
         end
       end
+      if (fill_start && fill_first && state_commit_pending) begin
+        config_active <= config_shadow;
+        state_commit_pending <= 1'b0;
+      end
+
+      // FRAME_COUNT: frames de VIDEO, avanza aunque la CPU este parada y es
+      // independiente de la alarma.
+      if (fill_start && fill_first)
+        frame_count <= frame_count + 1'b1;
 
       // VIDEO_TX: transacciones de memoria del scanout (§9.7). Cuenta los
       // arranques de relleno de linea, que es lo que el scanout pide a la
@@ -423,17 +436,15 @@ module video_registers #(
           // "para dentro de N intercambios", no "para en el intercambio
           // numero N desde el encendido": sin esto, un programa solo puede
           // usarla una vez por arranque de la placa, porque la segunda vez el
-          // contador ya ha pasado de largo. El simulador construye el
-          // dispositivo de cero en cada ejecucion, asi que alli no se nota.
-          // Armar pone el origen de la cuenta AQUI: `HALT_AT` es "para dentro
-          // de N frames", no "para en el frame numero N desde el encendido".
-          // Sin esto un programa solo puede usarla una vez por arranque de la
-          // placa. El simulador construye el dispositivo de cero en cada
-          // ejecucion, asi que alli no se nota -- es un fallo que solo da la
-          // placa, y ya lo dio una vez.
+          // contador ya ha pasado de largo. Fallo que solo da la placa, y ya
+          // lo dio una vez: el simulador construye el dispositivo de cero en
+          // cada ejecucion y alli no se nota.
+          //
+          // El origen es el contador interno `halt_swaps`: armar no toca
+          // SWAP_COUNT ni FRAME_COUNT, que siguen siendo del dispositivo.
           REG_HALT_AT:  begin
             halt_at <= merge(halt_at, write_data, write_mask);
-            frame_count <= 32'd0;
+            halt_swaps <= 32'd0;
             halt_armed <= merge(halt_at, write_data, write_mask) != 32'd0;
           end
           REG_HALT_TARGET: halt_target <= merge(halt_target, write_data,

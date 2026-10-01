@@ -142,7 +142,7 @@ module mmio_decoder #(
   // mascara parcial pasa, como en v1.
   //
   // El riesgo es real y concreto, no teorico. `HALT_AT` rearma la alarma y
-  // reinicia el contador de frames CADA VEZ que se escribe, asi que hacerlo
+  // reinicia su cuenta de intercambios CADA VEZ que se escribe, asi que hacerlo
   // en cuatro trozos la rearma cuatro veces con valores intermedios
   // --0x000000NN, 0x0000NNNN...-- y la captura se dispara donde no toca. Es
   // exactamente el ejemplo que pone §16.2.

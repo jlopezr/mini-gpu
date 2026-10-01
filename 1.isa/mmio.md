@@ -490,7 +490,7 @@ VIDEO es del **sistema**, no de la CPU ni de la GPU.
 | `+0x10` | `STATUS` | RW | Underflow y swap pendiente |
 | `+0x14` | `FRAME_COUNT` | R | Frames emitidos |
 | `+0x18` | `SWAP_COUNT` | R | Intercambios completados |
-| `+0x1C` | `HALT_AT` | RW | Captura determinista |
+| `+0x1C` | `HALT_AT` | RW | Parar tras N intercambios (captura determinista) |
 | `+0x20` | `HALT_TARGET` | RW | A quién parar |
 | `+0x24` | `VIDEO_TX` | R | Transacciones de memoria del scanout |
 
@@ -566,9 +566,15 @@ núcleo se para solo, y el host lee el framebuffer con la imagen quieta.
 
 ```text
 HALT_AT = 0     desarmado
-HALT_AT = N     VIDEO pide detener los targets seleccionados cuando
-                FRAME_COUNT >= N
+HALT_AT = N     VIDEO pide detener los targets seleccionados al completarse
+                el intercambio número N desde que se arma
 ```
+
+Es una alarma de **un disparo** y **relativa al momento de armarla**: «para dentro
+de N intercambios», no «para en el intercambio N desde el encendido», que solo
+serviría una vez por arranque. VIDEO cuenta los intercambios desde el armado en
+un contador **interno**; armar no toca `FRAME_COUNT` ni `SWAP_COUNT`, que solo
+reinicia el reset de VIDEO.
 
 La comparación es `>=` y no `==`, como defensa barata por si el contador se pasa
 de largo.
@@ -583,8 +589,23 @@ HALT_TARGET   bit 0    CPU
 por qué ser el mismo**. En un sistema donde dibuja la GPU y la CPU orquesta,
 querer parar una, otra o las dos son tres casos reales.
 
-`HALT_AT` cuenta contra `FRAME_COUNT`, no contra `SWAP_COUNT`: un programa que
-se cuelga sin pedir swaps también tiene que poder capturarse.
+**`HALT_AT` cuenta intercambios, no frames de vídeo.** Parar al llegar el frame N
+deja al núcleo en un punto cualquiera de su dibujo: el buffer trasero está a
+medias y lo que se capture depende de la velocidad relativa entre el programa y
+el barrido. En el intercambio N completado, en cambio, el frame recién
+intercambiado está entero y en el buffer frontal, aunque el programa tarde lo
+que tarde y se salte frames: la captura es repetible.
+
+Un programa que se cuelga sin pedir swaps no dispara la alarma. Eso no deja al
+host esperando: el límite de tiempo (o de instrucciones, en el simulador) lo
+detiene, y con el núcleo parado la memoria y los registros se pueden leer igual.
+
+> **Historia.** La v1 contaba intercambios. MMIO v2 lo cambió a `FRAME_COUNT`
+> para que un programa colgado también pudiera capturarse con la alarma, y eso
+> costó la propiedad de arriba: el número de swaps al disparar dependía de la
+> velocidad del programa, y el arnés tuvo que parar sondeando `SWAP_COUNT` desde
+> el host. Se vuelve a contar intercambios (decisión 17, revisada); el caso
+> colgado lo cubre el límite de tiempo.
 
 ### 9.7. `VIDEO_TX`
 
@@ -1267,7 +1288,8 @@ Markdown, nunca Verilog sintetizable.
 14. Un acceso MMIO desde SIMT exige exactamente una lane activa.
 15. VIDEO es un único dispositivo del sistema; `FRAME_CAPTURE` no existe aparte.
 16. `FRAME_COUNT` y `SWAP_COUNT` son registros de 32 bits separados.
-17. `HALT_AT` cuenta contra `FRAME_COUNT`, con comparación `>=`.
+17. `HALT_AT` cuenta intercambios completados desde que se arma, con comparación
+    `>=` (revisada: antes contaba contra `FRAME_COUNT`; ver §9.6).
 18. `HALT_TARGET` selecciona CPU, GPU o ambos.
 19. Las bases de framebuffer se alinean a 16 bytes; desalinear es error.
 20. `VIDEO_TX` pertenece a VIDEO.

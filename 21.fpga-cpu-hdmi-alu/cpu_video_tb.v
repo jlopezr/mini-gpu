@@ -424,13 +424,14 @@ module cpu_video_tb;
       $display("FALLO: HALT_AT leyo %08x, esperado %08x", palabra, PARAR_EN);
       errors = errors + 1;
     end
-    // Armar reinicia la cuenta: es "para dentro de N", no "para en el N-esimo
-    // desde el encendido". En v2 la cuenta que cuenta es FRAME_COUNT (+0x14),
-    // no SWAP_COUNT: §9.6 lo cambia para que un programa colgado sin pedir
-    // swaps tambien se pueda capturar.
-    mon_read_word(32'h8020_0014);
+    // La alarma cuenta INTERCAMBIOS desde que se arma (§9.6), con un contador
+    // interno: es "para dentro de N", no "para en el N-esimo desde el
+    // encendido". Que armar no reinicia ni SWAP_COUNT ni FRAME_COUNT lo cubre
+    // video_registers_tb.v con valores distintos de cero; aqui, antes de
+    // arrancar, solo se comprueba que SWAP_COUNT todavia no se ha movido.
+    mon_read_word(32'h8020_0018);
     if (palabra !== 32'd0) begin
-      $display("FALLO: armar HALT_AT no puso FRAME_COUNT a cero: %08x", palabra);
+      $display("FALLO: SWAP_COUNT no vale cero antes de arrancar: %08x", palabra);
       errors = errors + 1;
     end
 
@@ -444,7 +445,7 @@ module cpu_video_tb;
     if (halted) $fatal(1, "el programa salio del bucle de espera sin ningun frame");
 
     // -----------------------------------------------------------------------
-    // PARAR_EN frames. El ultimo tiene que parar la CPU por si solo.
+    // PARAR_EN intercambios. El ultimo tiene que parar la CPU por si solo.
     // -----------------------------------------------------------------------
     for (i = 0; i < PARAR_EN; i = i + 1) begin
       if (halted && i < PARAR_EN - 1) begin
@@ -525,11 +526,11 @@ module cpu_video_tb;
     // +0x14: FRAME_COUNT, no SWAP_COUNT. En v1 ese offset era SWAP_COUNT y
     // la etiqueta se quedo; con la disposicion de v2 son registros distintos.
     //
-    // La comparacion es `>=` y no `==` a proposito: la alarma dispara cuando
-    // FRAME_COUNT alcanza PARAR_EN, pero el scanout SIGUE emitiendo frames
-    // con la CPU ya parada --§12.3 dice justo eso-- asi que para cuando el
-    // monitor lee el bloque el contador ya ha avanzado. Exigir igualdad
-    // convertiria el tiempo que tarda el monitor en un fallo.
+    // La comparacion es `>=` y no `==` a proposito: cada intercambio necesita
+    // un frame, asi que hay al menos PARAR_EN, pero el scanout SIGUE emitiendo
+    // frames con la CPU ya parada --§12.3 dice justo eso-- y para cuando el
+    // monitor lee el bloque el contador ya ha avanzado. La alarma no cuenta
+    // frames, cuenta intercambios (§9.6): esto solo comprueba el registro.
     if ({bloque[19], bloque[18], bloque[17], bloque[16]} < PARAR_EN) begin
       $display("FALLO: FRAME_COUNT por bloque = %08x, esperado >= %0d",
                {bloque[19], bloque[18], bloque[17], bloque[16]}, PARAR_EN);

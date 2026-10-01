@@ -577,18 +577,20 @@ símbolos, que los genera `tools/generate-mmio` desde `1.isa/mmio_map.vh`.
 | `0x80200010` | `MMIO_VIDEO_STATUS_OFF`       | `STATUS`      | R  | bit 0 underflow, bit 1 intercambio pendiente      |
 | `0x80200014` | `MMIO_VIDEO_FRAME_COUNT_OFF`  | `FRAME_COUNT` | R  | frames de barrido, registro propio de 32 bits     |
 | `0x80200018` | `MMIO_VIDEO_SWAP_COUNT_OFF`   | `SWAP_COUNT`  | R  | intercambios completados                          |
-| `0x8020001c` | `MMIO_VIDEO_HALT_AT_OFF`      | `HALT_AT`     | RW | alarma: para al llegar a ese **frame**            |
+| `0x8020001c` | `MMIO_VIDEO_HALT_AT_OFF`      | `HALT_AT`     | RW | alarma: para al completarse ese **intercambio**   |
 | `0x80200020` | `MMIO_VIDEO_HALT_TARGET_OFF`  | `HALT_TARGET` | RW | a quién para. **Tras reset vale 0: a nadie**      |
 | `0x80200024` | `MMIO_VIDEO_TX_OFF`           | `VIDEO_TX`    | R  | transacciones de vídeo contra memoria             |
 
-Tres cambios respecto de v1 que muerden si se pasan por alto:
+Tres cosas de v2 que muerden si se pasan por alto:
 
 - **`CTRL` se mueve al principio**, así que los cuatro registros de siempre
   —`FB_FRONT`, `FB_BACK`, `SWAP` y `STATUS`— cambian todos de offset.
 - **`FRAME_COUNT` es un registro propio**, no los bits 31:16 de `STATUS`.
-- **`HALT_AT` cuenta frames, no intercambios**, y no para a nadie mientras
-  `HALT_TARGET` valga cero. El síntoma de olvidarlo es un timeout, que no se
-  parece a la causa.
+- **`HALT_AT` no para a nadie mientras `HALT_TARGET` valga cero.** El síntoma
+  de olvidarlo es un timeout, que no se parece a la causa. Cuenta
+  **intercambios** completados desde que se arma, como en v1 (MMIO v2 llegó a
+  contar frames y volvió a intercambios: mmio.md §9.6); armarlo no toca
+  `FRAME_COUNT` ni `SWAP_COUNT`.
 
 `FB_FRONT` y `FB_BACK` se alinean a **16 bytes**, y desalinearlas es un **error
 de acceso**: en v1 se truncaban los bits bajos en silencio.

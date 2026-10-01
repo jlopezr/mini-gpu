@@ -57,8 +57,8 @@ def from_arguments(args):
         video = VideoDevice(frame_instructions=args.frame_instructions)
         if args.halt_after_swaps:
             # Esta opción es una condición del host basada en SWAP_COUNT. No
-            # se implementa con HALT_AT: en MMIO v2 ese registro cuenta frames
-            # de vídeo y además necesita HALT_TARGET.
+            # se implementa con HALT_AT: es un registro del contrato, que el
+            # programa ve, y además necesita HALT_TARGET.
             video.stop_after_swaps = args.halt_after_swaps
     serial = None
     if args.serial or args.serial_input or args.serial_output:

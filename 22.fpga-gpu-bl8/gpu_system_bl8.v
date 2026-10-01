@@ -153,10 +153,14 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     assign aux_strobe=writing ? byte_strobe : 4'b0;
     assign aux_rsp_ready=host_state==2;
     wire host_idle=host_state==0 && !host_write_enable && !host_read_enable;
+    // Parada pedida por VIDEO: la alarma HALT_AT de `gpu_video_regs` (§9.6). Se
+    // une a la del monitor en la misma peticion del SM, que solo necesita un
+    // pulso. Se declara aqui y no junto a `vregs` porque el SM la usa antes.
+    wire video_halt_request;
 
     gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH), .SIMT_REGION_DEPTH(SIMT_REGION_DEPTH), .SIMT_PATH_DEPTH(SIMT_PATH_DEPTH)) sm (
         .clk(clk),.reset(core_reset),.run_request(run_request && host_idle),
-        .halt_request(halt_request),.step_request(step_request && host_idle),
+        .halt_request(halt_request || video_halt_request),.step_request(step_request && host_idle),
         .halted(halted),.error(error),.error_code(error_code),
         .error_warp(error_warp),.error_lane(error_lane),.error_lane_valid(error_lane_valid),
         .error_pc(error_pc),.instruction_retired(instruction_retired),.retired_count(retired_count),
@@ -325,7 +329,8 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         // VIDEO_TX se ha mudado de `perf` a aqui (§9.7), con su `running`.
         .video_tx(p2_req_valid && p2_req_ready),.running(!halted),
         .video_mode(video_mode),.fb_base(video_fb_base),
-        .underflow_clear(video_underflow_clear));
+        .underflow_clear(video_underflow_clear),
+        .halt_request(video_halt_request));
 
     gpu_perf_counters perf (
         // `core_reset`, NO `reset`, y es un cambio de v2 con motivo.

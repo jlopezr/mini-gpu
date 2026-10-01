@@ -331,8 +331,9 @@ class VideoDeviceTest(unittest.TestCase):
         video.write(video.FB_BACK, 0x01025800)
         self.assertEqual(video.fb_back, 0x01025800)
 
-        # La alarma cuenta FRAMES (§9.7) y hay que decirle a quien para: con
-        # HALT_TARGET a cero se consume sin detener nada.
+        # La alarma cuenta INTERCAMBIOS (§9.6) y hay que decirle a quien para:
+        # con HALT_TARGET a cero se consume sin detener nada. Un VideoDevice
+        # suelto es de CPU por defecto; el de GPU se prueba mas abajo.
         video.write(video.HALT_AT, 1)
         video.write(video.HALT_TARGET, VideoDevice.HALT_TARGET_CPU)
         video.write(video.SWAP, 1)
@@ -340,6 +341,24 @@ class VideoDeviceTest(unittest.TestCase):
         self.assertEqual(video.swap_count, 1)
         self.assertEqual(video.read(video.FRAME_COUNT), 1)
         self.assertTrue(video.halt_request)
+
+    def test_en_la_gpu_para_el_bit_de_gpu_y_el_de_cpu_no_hace_nada(self):
+        """El registro significa lo mismo en las dos familias (§9.6).
+
+        Colgado de una GPU, el bit que detiene es el de GPU; el de CPU se acepta
+        y se consume sin parar a nadie, como el de GPU en la CPU.
+        """
+        for bit, para in ((VideoDevice.HALT_TARGET_GPU, True),
+                          (VideoDevice.HALT_TARGET_CPU, False)):
+            with self.subTest(bit=bit):
+                video = VideoDevice(frame_instructions=1)
+                System(64, 1, 1, video=video)
+                video.write(video.HALT_AT, 1)
+                video.write(video.HALT_TARGET, bit)
+                video.write(video.SWAP, 1)
+                video.tick()
+                self.assertEqual(video.halt_request, para)
+                self.assertFalse(video.halt_armed, "se consume igualmente")
 
     def test_halt_at_sin_halt_target_no_para_a_nadie(self):
         """La trampa al portar un programa de v1: HALT_AT ya no basta."""

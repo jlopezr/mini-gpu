@@ -20,11 +20,14 @@
 //                                31:16     contador de frames de video
 //                                escribir bit 0 a 1: borra el underflow
 //   0x80000010  SWAP_COUNT   R   intercambios completados desde el reset
-//   0x80000014  (HALT_AT)    R0  solo CPU. Aqui lee cero y la escritura se
-//                                ignora, igual que la CPU con un registro que no
-//                                tiene. La GPU no se para sola: la paran las
-//                                ordenes del monitor, y sus kernels terminan con
-//                                HALT, asi que no hace falta armar una captura.
+//   0x80000014  HALT_AT      RW  parar la GPU dentro de N intercambios completados
+//                                desde que se arma, y 0 es desarmado. Armar no
+//                                toca ningun contador. Ver HALT_TARGET: sin el,
+//                                no para a nadie. Es el mismo registro que en
+//                                la CPU (mmio.md §9.6)
+//
+// (Los offsets de esta tabla son los de v1. Los de MMIO v2, donde VIDEO_CTRL
+// va primero, estan en mmio.md §9.)
 //   0x80000018  VIDEO_CTRL   RW  bits 1:0  modo de salida
 //                                    0  BLANK    negro, sin leer SDRAM
 //                                    1  PATTERN  patron de prueba, sin leer SDRAM
@@ -78,9 +81,18 @@ module gpu_video_regs (
 
     output reg [1:0]  video_mode,
     output wire [23:0] fb_base,     // al scanout: PALABRA de 16 bits del frente
-    output wire       underflow_clear
+    output wire       underflow_clear,
+
+    // Pulso de un ciclo al completarse el intercambio HALT_AT desde que se armo,
+    // si HALT_TARGET tiene el bit de GPU. Va a la peticion de parada del SM, la
+    // misma que usa el monitor: la GPU termina la instruccion en vuelo y para.
+    output reg        halt_request
 );
     localparam [1:0] MODE_PATTERN=2'd1;
+    // Bits de HALT_TARGET (§9.6). Aqui solo hay GPU: el bit de CPU se acepta y
+    // no hace nada, porque el registro significa lo mismo en las dos familias y
+    // un binario compartido no tiene que saber donde corre.
+    localparam integer HALT_TARGET_GPU=1;
     // Los offsets son los del contrato compartido con la CPU: MMIO v2 §9, los
     // mismos numeros que `video_registers.v` de 16/18/19/21.
     //
@@ -137,6 +149,29 @@ module gpu_video_regs (
     reg [31:0] swap_count;
     assign fb_base={fb_front[24:4],3'b000};
 
+    // La alarma. `halt_swaps` cuenta los intercambios completados desde que se
+    // armo y es INTERNO: armar no toca SWAP_COUNT ni FRAME_COUNT, que son del
+    // dispositivo y solo los reinicia el reset (§9.6).
+    reg [31:0] halt_at;
+    reg [31:0] halt_target;
+    reg [31:0] halt_swaps;
+    reg halt_armed;
+
+    // Escritura por bytes, que es como escribe el monitor.
+    function [31:0] merge;
+        input [31:0] previo, nuevo;
+        input [3:0] strobe;
+        begin
+            merge = previo;
+            if(strobe[0]) merge[7:0]   = nuevo[7:0];
+            if(strobe[1]) merge[15:8]  = nuevo[15:8];
+            if(strobe[2]) merge[23:16] = nuevo[23:16];
+            if(strobe[3]) merge[31:24] = nuevo[31:24];
+        end
+    endfunction
+    wire [31:0] halt_at_merged = merge(halt_at, write_data, write_strobe);
+    wire [31:0] halt_target_merged = merge(halt_target, write_data, write_strobe);
+
     always @* begin
         read_data=32'd0; bad=1'b0;
         if(fb_desalineada) bad=1'b1;
@@ -157,23 +192,16 @@ module gpu_video_regs (
             REG_STATUS:      read_data={30'd0,swap_pending,underflow_sticky};
             REG_FRAME_COUNT: read_data={16'd0,frame_count};
             REG_SWAP_COUNT:  read_data=swap_count;
-            // HALT_AT, HALT_TARGET y VIDEO_TX no existen aqui: la GPU no se
-            // para sola, la paran las ordenes del monitor. Leen CERO en vez de
-            // levantar `bad`, que es lo que hace la CPU con un registro ausente
-            // del bloque (video_registers.v, `default: read_data = 32'd0`). Si
-            // fallaran, una lectura en bloque del bloque de video entero --que
-            // la lista blanca de monitor.v permite-- daria NACK a mitad, y un
-            // programa que sondee el registro se comportaria distinto en cada
-            // familia. Escribirlos se ignora, igual que en CPU.
             REG_VIDEO_TX:    read_data=video_tx_count;
-            REG_HALT_AT,
-            REG_HALT_TARGET: read_data=32'd0;
+            REG_HALT_AT:     read_data=halt_at;
+            REG_HALT_TARGET: read_data=halt_target;
             default:        bad=1'b1;
         endcase
     end
 
     always @(posedge clk) begin
         clear_pulse<=1'b0;
+        halt_request<=1'b0;
         if(reset) begin
             video_mode<=MODE_PATTERN;
             fb_front<=32'd0; fb_back<=32'd0;
@@ -181,6 +209,8 @@ module gpu_video_regs (
             underflow_sticky<=1'b0;
             frame_count<=16'd0;
             video_tx_count<=32'd0;
+            halt_at<=32'd0; halt_target<=32'd0; halt_swaps<=32'd0;
+            halt_armed<=1'b0;
         end else begin
             // Gated por `running`, igual que cuando vivia en los contadores.
             if(video_tx && running) video_tx_count<=video_tx_count+1'b1;
@@ -193,6 +223,19 @@ module gpu_video_regs (
                     fb_back<=fb_front;
                     swap_pending<=1'b0;
                     swap_count<=swap_count+1'b1;
+                    // La alarma cuenta INTERCAMBIOS completados desde que se
+                    // armo (§9.6): en el que toca, el frame recien
+                    // intercambiado esta entero y en el buffer frontal, aunque
+                    // el kernel tarde lo que tarde y se salte frames. El bit de
+                    // armado se consume al disparar, y la comparacion es `>=`
+                    // y no `==`, defensa barata por si el contador se pasara.
+                    // Un kernel que se cuelga sin pedir swaps no la dispara: lo
+                    // para el limite de tiempo del host.
+                    halt_swaps<=halt_swaps+1'b1;
+                    if(halt_armed && (halt_swaps+1'b1)>=halt_at) begin
+                        halt_request<=halt_target[HALT_TARGET_GPU];
+                        halt_armed<=1'b0;
+                    end
                 end
             end
             // `!fb_desalineada`: una base rechazada no se guarda ni a medias.
@@ -217,6 +260,18 @@ module gpu_video_regs (
                 REG_STATUS: if(write_strobe[0] && write_data[0]) begin
                     underflow_sticky<=1'b0; clear_pulse<=1'b1;
                 end
+                // Armar pone el origen de la cuenta AQUI: HALT_AT es "para
+                // dentro de N intercambios", no "para en el intercambio numero
+                // N desde el encendido". Sin esto la alarma solo serviria una
+                // vez por arranque de la placa: la segunda el contador ya habria
+                // pasado de largo.
+                REG_HALT_AT: begin
+                    halt_at<=halt_at_merged;
+                    halt_swaps<=32'd0;
+                    halt_armed<=|halt_at_merged;
+                end
+                // Solo existen los bits de CPU y GPU; el resto esta reservado.
+                REG_HALT_TARGET: halt_target<={30'd0,halt_target_merged[1:0]};
                 default: ;
             endcase
         end

@@ -253,8 +253,8 @@ class MonitorClient:
           - `FB_FRONT` lo lee el scanout, que cuelga de `reset` y no de
             `core_reset`, asi que sigue vivo con el nucleo parado: durante esa
             ventana el puntero es mitad viejo y mitad nuevo.
-          - `HALT_AT` es peor: CUALQUIER escritura reinicia `swap_count` y
-            rearma la alarma con el valor ya mezclado, asi que byte a byte eso
+          - `HALT_AT` es peor: CUALQUIER escritura reinicia la cuenta de la
+            alarma y la rearma con el valor ya mezclado, asi que byte a byte eso
             pasa cuatro veces y con valores intermedios.
 
         Vive en la clase base y no en un mixin --donde nacio, cuando solo la 19

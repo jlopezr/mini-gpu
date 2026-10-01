@@ -153,6 +153,17 @@ module video_registers_tb;
     if (select && error) error_count = error_count + 1;
   end
 
+  // Un intercambio COMPLETADO: pedirlo y dejar que empiece el frame siguiente,
+  // que es donde se aplica. Luego un par de ciclos, porque el pulso de
+  // `halt_request` lo engancha el muestreador en el flanco siguiente.
+  task complete_swap;
+    begin
+      bus_write_word(SWAP, 32'h1);
+      line_request(1'b1, base_seen);
+      repeat (2) @(negedge clk);
+    end
+  endtask
+
   initial begin
     $dumpvars(0, video_registers_tb);
 
@@ -331,22 +342,17 @@ module video_registers_tb;
       $fatal(1, "SWAP_COUNT no conto el intercambio: %0d -> %0d",
              swaps_before, value);
 
-    // --- HALT_AT para la CPU en el FRAME N ---------------------------------
-    // En v1 contaba INTERCAMBIOS. En v2 cuenta frames (§9.7), y no es lo
-    // mismo: mientras un programa dibuja un frame entero pasan varios frames
-    // de barrido sin ningun intercambio, asi que la alarma llega mucho antes
-    // en terminos del programa. Todo lo que sigue son `line_request(1)`, que
-    // es un frame, y ya no hace falta pedir swap para que la cuenta avance.
+    // --- HALT_AT para la CPU en el SWAP N ----------------------------------
+    // Cuenta INTERCAMBIOS completados (§9.6), no frames de video: en el que
+    // toca, el frame recien intercambiado esta entero y en el buffer frontal.
+    // Mientras un programa dibuja un frame entero pasan varios frames de
+    // barrido sin ningun intercambio, y esos no cuentan.
     bus_read(HALT_AT, value);
     if (value !== 32'd0) $fatal(1, "HALT_AT no arranca a cero: %08x", value);
 
-    // El pulso lo engancha el muestreador en el flanco SIGUIENTE al del
-    // frame, asi que hay que dejar pasar un par de ciclos antes de mirar el
-    // contador. Comprobar nada mas volver de `line_request` daria «no paro»
-    // siempre, incluso con el hardware correcto.
+    // Desarmada, un intercambio no para a nadie.
     mark = halt_count;
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+    complete_swap;
     if (halt_count != mark) $fatal(1, "HALT_AT a cero paro la CPU");
 
     // --- HALT_TARGET: la alarma dice A QUIEN para (§9.6) -------------------
@@ -358,32 +364,44 @@ module video_registers_tb;
       $fatal(1, "HALT_TARGET no arranca a cero: %08x", value);
     bus_write_word(HALT_AT, 32'd1);
     mark = halt_count;
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+    complete_swap;
     if (halt_count != mark)
       $fatal(1, "paro sin HALT_TARGET: la alarma no mira a quien para");
 
     bus_write_word(HALT_TARGET, TARGET_CPU);
 
     // Armar: la cuenta es RELATIVA a este momento, asi que se pide 2 y no «el
-    // que haga dos mas». Armar tambien pone FRAME_COUNT a cero --en v1 ponia
-    // SWAP_COUNT, que es el otro contador--.
+    // que haga dos mas». Y armar NO toca los contadores del dispositivo: la
+    // alarma cuenta con uno interno, y SWAP_COUNT y FRAME_COUNT siguen siendo
+    // de VIDEO y solo los reinicia el reset.
+    bus_read(FRAME_COUNT, frames_before);
+    bus_read(SWAP_COUNT, swaps_before);
     bus_write_word(HALT_AT, 32'd2);
     bus_read(FRAME_COUNT, value);
-    if (value !== 32'd0)
-      $fatal(1, "armar HALT_AT no puso FRAME_COUNT a cero: %0d", value);
+    if (value !== frames_before)
+      $fatal(1, "armar HALT_AT toco FRAME_COUNT: %0d -> %0d", frames_before, value);
+    bus_read(SWAP_COUNT, value);
+    if (value !== swaps_before)
+      $fatal(1, "armar HALT_AT toco SWAP_COUNT: %0d -> %0d", swaps_before, value);
 
-    // El frame de en medio no debe parar nada.
+    // Frames SIN intercambio no cuentan: un programa lento deja pasar muchos
+    // y la alarma tiene que esperar a sus swaps, no al barrido.
     mark = halt_count;
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+    repeat (3) begin
+      line_request(1'b1, base_seen);
+      repeat (2) @(negedge clk);
+    end
     if (halt_count != mark)
-      $fatal(1, "HALT_AT paro en el frame equivocado");
-    // Y el siguiente si.
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+      $fatal(1, "HALT_AT paro en un frame sin intercambio");
+
+    // El primer intercambio no para nada.
+    complete_swap;
+    if (halt_count != mark)
+      $fatal(1, "HALT_AT paro en el intercambio equivocado");
+    // Y el segundo si.
+    complete_swap;
     if (halt_count == mark)
-      $fatal(1, "HALT_AT no paro a los dos frames");
+      $fatal(1, "HALT_AT no paro a los dos intercambios");
 
     // --- Y se puede volver a armar -----------------------------------------
     // Este es el fallo que encontro la placa y que la simulacion no veia: con
@@ -395,15 +413,13 @@ module video_registers_tb;
     // Control negativo: sin el arreglo, este bloque se queda en «no paro».
     bus_write_word(HALT_AT, 32'd1);
     mark = halt_count;
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+    complete_swap;
     if (halt_count == mark)
       $fatal(1, "HALT_AT no volvio a armarse");
 
-    // Y es de UN disparo: consumida, los frames siguientes no paran.
+    // Y es de UN disparo: consumida, los intercambios siguientes no paran.
     mark = halt_count;
-    line_request(1'b1, base_seen);
-    repeat (2) @(negedge clk);
+    complete_swap;
     if (halt_count != mark)
       $fatal(1, "HALT_AT siguio disparando despues de consumirse");
 
@@ -426,7 +442,7 @@ module video_registers_tb;
     bus_read(SWAP, value);
     if (value[1] !== 1'b0) $fatal(1, "STATE_COMMIT no termino");
 
-    $display("OK: commits, contadores, underflow y parada en el frame N");
+    $display("OK: commits, contadores, underflow y parada en el intercambio N");
     $finish;
   end
 
