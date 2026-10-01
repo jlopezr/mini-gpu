@@ -11,17 +11,21 @@ python -m unittest discover -s . -v
 
 Desde la raíz del repositorio puede usarse `.venv/Scripts/python.exe`.
 
-## Los programas de `examples/`
+## Los programas de ejemplo
 
-- **`vecsum.asm`** es el más sencillo que ejercita SIMT de verdad: cada lane
-  suma un elemento de dos vectores de 16 palabras y guarda el resultado. La
-  dirección sale de `GETTID` y un desplazamiento, así que las 16 lanes escriben
-  en sitios distintos sin coordinarse. Los vectores viven en `0x0100` y
-  `0x0140`, y el resultado en `0x0180`.
-- **`simt_demo.asm`** ejercita divergencia anidada y `BAR`. Es el que usa la
-  sección de extensiones SIMT, más abajo.
-- **`divzero.asm`** está **vacío**, 0 bytes. El nombre sugiere que iba a probar
-  la división por cero y nunca se escribió.
+Los fuentes `.asm` no viven aquí sino en `x.tests/cases-gpu/` (uno por carpeta,
+con su README). Esta carpeta solo los ejecuta: se ensamblan con `mini_asm.py` a
+un `.bin` cuando hace falta, como en los comandos de más abajo. No se versiona
+ningún binario ensamblado.
+
+- **`x.tests/cases-gpu/demos/vecsum/vecsum.asm`** es el más sencillo que
+  ejercita SIMT de verdad: cada lane suma un elemento de dos vectores de 16
+  palabras y guarda el resultado. La dirección sale de `GETTID` y un
+  desplazamiento, así que las 16 lanes escriben en sitios distintos sin
+  coordinarse. Los vectores viven en `0x0100` y `0x0140`, y el resultado en
+  `0x0180`.
+- **`x.tests/cases-gpu/demos/simt-demo/simt_demo.asm`** ejercita divergencia
+  simple y `BAR`. Es el que usa la sección de extensiones SIMT, más abajo.
 
 ### De dónde sale `memoria.bin`
 
