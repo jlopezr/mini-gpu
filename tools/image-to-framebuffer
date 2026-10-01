@@ -30,8 +30,8 @@ a esa dirección y se pone `VIDEO_CTRL` en SCANOUT. No hace falta ningún
 programa cargado — el scanout lee SDRAM por su cuenta, así que la imagen se
 queda fija en el monitor hasta que alguien escriba otra cosa.
 
-`VIDEO_CTRL` solo existe en la 22; en 16/18/19/21 el scanout está siempre
-encendido y la herramienta lo dice en vez de fallar.
+Las direcciones y valores de los registros salen del mapa MMIO generado, no de
+constantes específicas de un prototipo.
 
 Uso:
 
@@ -53,20 +53,7 @@ WIDTH = 320
 HEIGHT = 240
 FB_BASE = 0x01000000
 
-# Del mapa generado, no cableadas: estas tres se quedaron en el mapa v1 --la
-# ventana de vídeo en 0x80000000, con VIDEO_CTRL al final-- cuando la migración
-# a v2 la movió a 0x80200000 y puso CTRL delante de todo. En v2 0x80000000 es
-# SYSTEM y es de sólo lectura, así que la subida se iba en un rechazo del
-# monitor sin que el motivo tuviera nada que ver con la imagen.
-from tools.mmio_map import (  # noqa: E402
-    MMIO_VIDEO_BASE, MMIO_VIDEO_CTRL_OFF, MMIO_VIDEO_FB_BACK_OFF,
-    MMIO_VIDEO_FB_FRONT_OFF,
-)
-
-FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
-FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
-VIDEO_CTRL = MMIO_VIDEO_BASE + MMIO_VIDEO_CTRL_OFF
-MODE_SCANOUT = 2
+from tools.framebuffer_upload import upload_framebuffer  # noqa: E402
 
 
 def rgb565(r: int, g: int, b: int) -> int:
@@ -135,85 +122,6 @@ def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
     return bytes(datos)
 
 
-def escribir_registro(prototype_dir: Path, port: str, address: int, value: int) -> None:
-    """Una palabra, UN comando. Antes eran cuatro `write-byte`.
-
-    Esto ya no es sólo por comodidad. `FB_FRONT` lo lee el scanout, que cuelga
-    de `reset` y no de `core_reset`, así que sigue vivo con el núcleo parado:
-    escrito byte a byte, durante casi un milisegundo el puntero era mitad viejo
-    y mitad nuevo y el barrido podía leer de una dirección que nadie pidió. Con
-    `write-word` el registro nunca pasa por un valor intermedio.
-
-    De paso son tres viajes menos por registro, y cada ida y vuelta cuesta
-    16 ms fijos por el latency timer del FTDI.
-    """
-    from tools.run_board import run_monitor_cli
-
-    run_monitor_cli(prototype_dir, port, "write-word",
-                    f"0x{address:08x}", f"0x{value:08x}")
-
-
-def leer_palabra(prototype_dir: Path, port: str, address: int) -> int | None:
-    """Lee una palabra con `read-word`; None si el prototipo no tiene ese comando."""
-    from tools.run_board import run_monitor_cli
-
-    try:
-        texto = run_monitor_cli(prototype_dir, port, "read-word", f"0x{address:08x}")
-    except SystemExit:
-        return None
-    linea = texto.strip().splitlines()[-1]
-    if ":" not in linea:
-        return None
-    try:
-        return int(linea.rsplit(":", 1)[1].strip(), 16)
-    except ValueError:
-        return None
-
-
-def subir(prototipo: str, port: str | None, fichero: Path, direccion: int) -> int:
-    from tools.run_board import detect_port, resolve_target, run_monitor_cli
-
-    target = resolve_target(prototipo)
-    puerto = port if port is not None else detect_port()
-    prototype_dir = target.prototype_dir
-
-    # Las capacidades cuelgan de `capability["capabilities"]`, no de la raíz.
-    # Esto miraba `capability.get("video")`, que es SIEMPRE None: `--upload`
-    # abortaba con «no tiene vídeo» en los cuatro prototipos que sí lo tienen,
-    # o sea que nunca funcionó. Lo mismo hace `run_board.load_and_run`, que es
-    # de donde había que copiarlo.
-    if "video" not in target.capability.get("capabilities", ()):
-        raise SystemExit(f"error: {prototype_dir.name} no tiene vídeo; "
-                         "nada que mostrar en el monitor")
-
-    # El monitor rechaza cualquier acceso a memoria con el núcleo corriendo, y
-    # además no queremos que un programa previo siga pintando encima.
-    run_monitor_cli(prototype_dir, puerto, "reset")
-
-    print(f"Escribiendo {fichero.stat().st_size} bytes en 0x{direccion:08x} "
-          "(~2 min a 250 kbaud)...")
-    run_monitor_cli(prototype_dir, puerto, "write-block",
-                    f"0x{direccion:08x}", str(fichero.resolve()))
-
-    # Las dos bases a la misma imagen: sin programa no hay swaps, y si alguien
-    # pide uno después se ve lo mismo en vez de basura.
-    escribir_registro(prototype_dir, puerto, FB_FRONT, direccion)
-    escribir_registro(prototype_dir, puerto, FB_BACK, direccion)
-    escribir_registro(prototype_dir, puerto, VIDEO_CTRL, MODE_SCANOUT)
-
-    modo = leer_palabra(prototype_dir, puerto, VIDEO_CTRL)
-    if modo is None:
-        print("VIDEO_CTRL: no se pudo leer de vuelta; si el prototipo no lo "
-              "tiene, su scanout está siempre encendido y la imagen ya se ve")
-    elif modo & 3 != MODE_SCANOUT:
-        print(f"VIDEO_CTRL lee {modo & 3}, no SCANOUT: este prototipo no tiene "
-              "control de modo (solo la 22). Su scanout está siempre encendido, "
-              "así que la imagen se ve igualmente")
-    else:
-        print("VIDEO_CTRL = 2 (SCANOUT); la imagen debería estar en el monitor")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -272,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cargar a mano: monitor.py write-block 0x{direccion:08x} {salida}")
         return 0
 
-    return subir(args.prototype, args.port, salida, direccion)
+    return upload_framebuffer(args.prototype, args.port, salida, direccion)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Muestra un patrón de diagnóstico en la placa sin ejecutar la CPU.
+
+Genera un framebuffer RGB565, para el núcleo, lo carga en SDRAM y configura
+FB_FRONT, FB_BACK y VIDEO_CTRL usando el mapa MMIO común.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.framebuffer_patterns import HEIGHT, PATTERNS, WIDTH, render  # noqa: E402
+from tools.framebuffer_upload import upload_framebuffer  # noqa: E402
+
+FB_BASE = 0x01000000
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-p", "--prototype", required=True,
+                        help="prototipo de destino (número, nombre o ruta)")
+    parser.add_argument("--pattern", choices=sorted(PATTERNS), default="gradient")
+    parser.add_argument("--port", default=None,
+                        help="por defecto, detecta el adaptador FTDI")
+    parser.add_argument("--address", type=lambda value: int(value, 0), default=FB_BASE,
+                        help="dirección SDRAM, por defecto 0x01000000")
+    args = parser.parse_args(argv)
+
+    with tempfile.TemporaryDirectory(prefix="mini-gpu-demo-no-cpu-") as directory:
+        framebuffer = Path(directory) / f"{args.pattern}.bin"
+        framebuffer.write_bytes(render(args.pattern))
+        print(f"Patrón {args.pattern}: {WIDTH}x{HEIGHT} RGB565, "
+              f"{framebuffer.stat().st_size} bytes")
+        return upload_framebuffer(args.prototype, args.port, framebuffer, args.address)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

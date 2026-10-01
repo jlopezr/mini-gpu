@@ -319,14 +319,14 @@ el monitor rechaza cualquier acceso a memoria mientras la CPU corre. Olvidarlo
 da un error de acceso que parece un fallo de la placa y no lo es.
 
 Y aparte de los cinco programas hay uno que no es un programa:
-[`examples/demo-no-cpu.ps1`](examples/demo-no-cpu.ps1) pinta una imagen **sin
-ejecutar ni una instrucción**, escribiendo el framebuffer desde el PC y pidiendo
-el intercambio. Es el mejor aislante de fallos que hay aquí: si la imagen
+El comando común `demo-no-cpu` pinta una imagen **sin
+ejecutar ni una instrucción**, escribiendo el framebuffer desde el PC y
+configurando el scanout. Es el mejor aislante de fallos que hay aquí: si la imagen
 aparece, el scanout, la SDRAM, los registros de vídeo y la cadena DVI funcionan,
 y cualquier problema que veas con una demo está en el programa o en la CPU.
 
 ```powershell
-.\examples\demo-no-cpu.ps1 -Pattern frame
+..\tools\demo-no-cpu.ps1 --prototype 16 --pattern frame
 ```
 
 #### Qué se ve, y por qué

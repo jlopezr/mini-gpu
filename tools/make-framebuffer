@@ -27,59 +27,16 @@ Los patrones están pensados para diagnosticar, no para lucir:
 """
 
 import argparse
-import struct
 import sys
 
-WIDTH = 320
-HEIGHT = 240
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.framebuffer_patterns import HEIGHT, PATTERNS, WIDTH, render
+
 FB_BASE = 0x01000000
-
-
-def rgb565(r, g, b):
-    """Empaqueta tres componentes de 8 bits en un pixel RGB565."""
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-
-
-def bars(x, y):
-    del y
-    palette = [
-        (255, 255, 255), (255, 255, 0), (0, 255, 255), (0, 255, 0),
-        (255, 0, 255), (255, 0, 0), (0, 0, 255), (0, 0, 0),
-    ]
-    return rgb565(*palette[(x * len(palette)) // WIDTH])
-
-
-def diagonal(x, y):
-    if (x * HEIGHT) // WIDTH == y:
-        return 0xFFFF
-    return rgb565(x * 255 // (WIDTH - 1), y * 255 // (HEIGHT - 1), 0)
-
-
-def checker(x, y):
-    return 0xFFFF if ((x // 16) + (y // 16)) % 2 else 0x0000
-
-
-def gradient(x, y):
-    return rgb565(x * 255 // (WIDTH - 1), y * 255 // (HEIGHT - 1), 0)
-
-
-def frame(x, y):
-    on_border = x in (0, WIDTH - 1) or y in (0, HEIGHT - 1)
-    on_cross = x == WIDTH // 2 or y == HEIGHT // 2
-    if on_border:
-        return rgb565(255, 255, 255)
-    if on_cross:
-        return rgb565(255, 0, 0)
-    return 0x0000
-
-
-PATTERNS = {
-    "bars": bars,
-    "diagonal": diagonal,
-    "checker": checker,
-    "gradient": gradient,
-    "frame": frame,
-}
 
 
 def main(argv=None):
@@ -89,11 +46,7 @@ def main(argv=None):
     parser.add_argument("output")
     arguments = parser.parse_args(argv)
 
-    generate = PATTERNS[arguments.pattern]
-    pixels = bytearray()
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            pixels += struct.pack("<H", generate(x, y) & 0xFFFF)
+    pixels = render(arguments.pattern)
 
     with open(arguments.output, "wb") as handle:
         handle.write(pixels)

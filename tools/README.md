@@ -1358,18 +1358,21 @@ la anterior solo sobre los casos que ambas tienen. Los casos de vídeo de GPU (`
 corren en placa en la 22 y la 29: paran tras N intercambios sondeando
 `SWAP_COUNT`, igual que los de CPU (`x.tests/backends/video_stop.py`).
 
-## Herramientas de vídeo/HDMI (16, 18, 19, 21)
+## Herramientas de vídeo/HDMI
 
 Comunes a los cuatro prototipos con framebuffer + HDMI, todas con `--prototype`/`-p`:
 
 ```bash
 $ make-framebuffer bars fb.bin                                  # genera un patrón RGB565 320x240
+$ demo-no-cpu --prototype 21 --pattern frame                    # lo muestra sin ejecutar CPU
 $ capture-frames --prototype 21 swap_demo_fast --frames 4       # captura frames deterministas
 $ measure-demo --prototype 21                                   # FPS de swap_demo/tear_demo (lee R21)
 ```
 
-`make-framebuffer` no depende de ninguna versión concreta (mismo formato en
-las cuatro carpetas). `capture-frames` y `measure-demo` sí hablan con una
+`make-framebuffer` no depende de ninguna versión concreta. `demo-no-cpu`
+genera uno de sus patrones, para el núcleo, lo carga en SDRAM y configura el
+scanout con el mapa MMIO común; acepta `--port` y detecta el FTDI si se omite.
+`capture-frames` y `measure-demo` sí hablan con una
 placa real por el protocolo de vídeo compartido, reutilizando
 `resolve_target`/`run_monitor_cli`/`detect_port` de `run_board.py`;
 `measure-demo` en particular solo tiene sentido con las demos
