@@ -14,12 +14,38 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "x.tests"))
 
 from tools import stage_programs  # noqa: E402
 from tools.prototype import (  # noqa: E402
     PrototypeResolutionError, find_apio_binary, resolve_prototype,
 )
 from tools.test_runner import fixtures_step, slow_testbenches, testbenches  # noqa: E402
+
+
+def newest_board_prototype(family: str) -> str:
+    """Número del prototipo más reciente registrado para una familia de placa."""
+    from tools.bench_all import prototypes
+
+    candidates = prototypes(family)
+    if not candidates:
+        raise ValueError(f"no hay prototipos de placa para {family}")
+    return str(max(candidates, key=lambda item: item[1])[1])
+
+
+def detected_board_port() -> str | None:
+    """Puerto FTDI, o None si no hay placa; la ambigüedad sigue siendo un error."""
+    from backends import board
+
+    try:
+        return board.detect_port()
+    except SystemExit as exc:
+        # detect_port distingue ya entre cero y varios FTDI. Solo la ausencia
+        # es el caso opcional del hardware automático; varios exige que el usuario
+        # elija un puerto y no se debe convertir silenciosamente en "ninguno".
+        if "no se encontró ningún adaptador FTDI" in str(exc):
+            return None
+        raise
 
 
 class TimedResult(unittest.TextTestResult):
@@ -154,12 +180,15 @@ def rtl_suite(python: str, prototype: str, full: bool, quiet: bool) -> dict:
 
 def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
             cases: list[str], jobs: int, quiet: bool,
-            skip_slow: bool = False) -> dict:
+            skip_slow: bool = False, upload: bool = False,
+            port: str | None = None) -> dict:
     output = temp / f"{backend}.json"
     command = [python, str(ROOT / "x.tests" / "run_tests.py"), "--backend", backend,
                "--jobs", str(jobs), "--timings-json", str(output)]
     if prototype:
-        command += ["--prototype", prototype, "--no-upload"]
+        command += ["--prototype", prototype, "--yes" if upload else "--no-upload"]
+    if port:
+        command += ["--port", port]
     if skip_slow:
         command.append("--skip-slow")
     command += cases
@@ -211,16 +240,19 @@ def markdown(suites: list[dict], started: str, command: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prototype", default="30", help="prototipo para los bancos RTL (30)")
+    parser.add_argument("--prototype", action="append",
+                        help="prototipo para bancos RTL; repetible (CPU y GPU más nuevas si se omite)")
     parser.add_argument("--cpu-prototype", help="añade x.tests en una placa CPU (sin cargar bitstream)")
     parser.add_argument("--gpu-prototype", help="añade x.tests en una placa GPU (sin cargar bitstream)")
+    parser.add_argument("--skip-hardware", action="store_true",
+                        help="no detecta ni modifica la placa")
     parser.add_argument("--cases", action="append", default=[], metavar="RUTA",
                         help="limita los casos x.tests; se puede repetir")
     parser.add_argument("--jobs", type=int, default=1,
                         help="procesos para x.tests (1 da tiempos y total comparables)")
     parser.add_argument("--full", action="store_true", help="incluye bancos RTL TEST-LENTO")
     parser.add_argument("--full-x-tests", action="store_true",
-                        help="incluye Mandelbrot y Mandelbrot packed en los simuladores GPU")
+                        help="incluye en los simuladores GPU los casos marcados slow")
     parser.add_argument("--skip-python", action="store_true")
     parser.add_argument("--skip-rtl", action="store_true")
     parser.add_argument("--skip-x-tests", action="store_true")
@@ -235,18 +267,37 @@ def main(argv: list[str] | None = None) -> int:
         return python_worker(args.python_worker, "test_*.py", args.worker_output, args.verbose)
     if args.jobs < 1:
         parser.error("--jobs debe ser al menos 1")
+    if args.skip_hardware and (args.cpu_prototype or args.gpu_prototype):
+        parser.error("--skip-hardware no se combina con --cpu-prototype/--gpu-prototype")
     python = str(ROOT / ".venv" / "Scripts" / "python.exe")
     if not Path(python).exists():
         python = sys.executable
     suites = []
     started = time.strftime("%Y-%m-%d %H:%M:%S %z")
+    hardware_port = None
+    automatic_hardware = (not args.skip_hardware and not args.skip_x_tests
+                          and not (args.cpu_prototype or args.gpu_prototype))
+    if automatic_hardware:
+        hardware_port = detected_board_port()
+        if hardware_port is None:
+            print("No se detectó ninguna placa FTDI; se omiten las medidas hardware.")
+        else:
+            args.cpu_prototype = newest_board_prototype("cpu")
+            args.gpu_prototype = newest_board_prototype("gpu")
+            print(f"Placa detectada en {hardware_port}; se medirán CPU {args.cpu_prototype} "
+                  f"y GPU {args.gpu_prototype}, cargando sus bitstreams.")
     try:
         with tempfile.TemporaryDirectory(prefix="mini-gpu-test-timings-") as folder:
             temp = Path(folder)
             if not args.skip_python:
                 suites.append(python_suite(python, temp, args.verbose, args.quiet))
             if not args.skip_rtl:
-                suites.append(rtl_suite(python, args.prototype, args.full, args.quiet))
+                rtl_prototypes = args.prototype or [
+                    newest_board_prototype("cpu"),
+                    newest_board_prototype("gpu"),
+                ]
+                for prototype in rtl_prototypes:
+                    suites.append(rtl_suite(python, prototype, args.full, args.quiet))
             if not args.skip_x_tests:
                 for backend in ("cpusim", "gpusim", "gpusim-cycle"):
                     skip_slow = (not args.full_x_tests
@@ -254,9 +305,13 @@ def main(argv: list[str] | None = None) -> int:
                     suites.append(x_suite(python, backend, temp, None, args.cases,
                                           args.jobs, args.quiet, skip_slow))
                 if args.cpu_prototype:
-                    suites.append(x_suite(python, "cpu-fpga", temp, args.cpu_prototype, args.cases, 1, args.quiet))
+                    suites.append(x_suite(python, "cpu-fpga", temp, args.cpu_prototype,
+                                          args.cases, 1, args.quiet,
+                                          upload=automatic_hardware, port=hardware_port))
                 if args.gpu_prototype:
-                    suites.append(x_suite(python, "gpu-fpga", temp, args.gpu_prototype, args.cases, 1, args.quiet))
+                    suites.append(x_suite(python, "gpu-fpga", temp, args.gpu_prototype,
+                                          args.cases, 1, args.quiet,
+                                          upload=automatic_hardware, port=hardware_port))
     except (PrototypeResolutionError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

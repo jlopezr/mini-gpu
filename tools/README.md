@@ -561,13 +561,20 @@ Python del repositorio (por método y con subtotal por carpeta), los bancos RTL 
 tiempos individuales no se solapen:
 
 ```powershell
-.\tools\test-timings.ps1 --prototype 30
+.\tools\test-timings.ps1                                  # todo; usa la placa si la detecta
+.\tools\test-timings.ps1 --prototype 30                   # solo este RTL
+.\tools\test-timings.ps1 --prototype 30 --prototype 29     # RTL CPU y GPU
 .\tools\test-timings.ps1 --prototype 30 --cpu-prototype 30 --gpu-prototype 29
+.\tools\test-timings.ps1 --skip-hardware                    # no detectar ni modificar la placa
 .\tools\test-timings.ps1 --full --json reports/test-timings.json
 ```
 
-Las placas son opt-in y se ejecutan con `--no-upload`: el script no cambia el
-bitstream. `--cases RUTA` (repetible) limita los casos, y `--skip-python`,
+Por defecto detecta un único FTDI: si está conectado, elige el prototipo
+registrado de número más alto de cada familia y acepta cargar primero su
+bitstream CPU y después el GPU; si no encuentra ninguno, omite hardware sin
+fallar. `--skip-hardware` evita incluso la detección y garantiza que no toca la
+placa. Al indicar `--cpu-prototype`/`--gpu-prototype` manualmente no carga nada
+(`--no-upload`). `--cases RUTA` (repetible) limita los casos, y `--skip-python`,
 `--skip-rtl` y `--skip-x-tests` permiten medir una parte. Los bancos marcados
 `TEST-LENTO` solo entran con `--full`.
 
