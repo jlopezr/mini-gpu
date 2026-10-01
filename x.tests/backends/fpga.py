@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from types import ModuleType
 
-from . import board
+from . import board, video_stop
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -140,6 +140,9 @@ PERF_STALL_COUNTERS = {
     "stall_fetch": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_FETCH_OFF,
     "stall_mmio": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MMIO_OFF,
 }
+REGISTROS_VIDEO = video_stop.Registros(
+    status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
+    fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
 
@@ -268,7 +271,12 @@ class FpgaBackend:
             "cpu-fpga", version, upload_policy or board.UploadPolicy(),
         )
 
-    def run(
+    def run(self, *args, **kwargs) -> dict:
+        # Si la parada por intercambios sale imprecisa, el caso se repite: ver
+        # `video_stop`. Sin `run_until` no hay parada que pueda serlo.
+        return video_stop.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+
+    def _run_una_vez(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -282,6 +290,7 @@ class FpgaBackend:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
         capacidades = capabilities(self.version)
         tiene_captura = "frame_capture" in capacidades
+        tiene_video = "video" in capacidades
         # Los registros de video se leen de una pieza donde se pueda: STATUS
         # lleva el contador de frames, que avanza aunque el nucleo este parado.
         tiene_palabra = "read_word" in capacidades
@@ -300,6 +309,10 @@ class FpgaBackend:
             dsrdtr=False,
         ) as connection:
             client = self.monitor.MonitorClient(connection)
+
+            def leer_registro(direccion: int) -> int:
+                return _read_register(client, direccion, tiene_palabra)
+
             actual_version = client.get_version()
             expected_version = self.configuration["monitor_version"]
             actual_tuple = (actual_version.major, actual_version.minor)
@@ -347,6 +360,7 @@ class FpgaBackend:
             # mas abajo solo si el caso pide `run_until: {swap: N}` y la carpeta
             # tiene `frame_capture`.
             parar_tras_swaps = 0
+            por_hardware = False
             # SWAP_COUNT y FRAME_COUNT son del DISPOSITIVO DE VIDEO, no de la
             # CPU: `reset_cpu` no los toca y solo el reset de la placa los pone a
             # cero. Asi que llevan la cuenta acumulada de toda la sesion --se han
@@ -389,26 +403,27 @@ class FpgaBackend:
                 # lee cero y se traga la escritura-- pero armar una parada que
                 # nadie va a atender seria mentirle al caso.
                 if tiene_captura:
-                    # `run_until: {swap: N}` NO se arma por HALT_AT. Es la misma
-                    # decision que tomo el simulador con `stop_after_swaps`, y
-                    # por la misma razon: es una condicion de OBSERVACION del
-                    # arnes --«captura el frame tras el intercambio N»-- no un
-                    # registro que el programa vea. Los usos del arnes salen del
-                    # contrato, no se traducen.
+                    # `run_until: {swap: N}` es una condicion de OBSERVACION del
+                    # arnes --«captura el frame tras el intercambio N»-- y hay
+                    # dos formas de pararla, segun lo que declare el RTL:
                     #
-                    # Y en v2 traducirlo seria ademas incorrecto por partida
-                    # doble: HALT_AT cuenta FRAMES, no intercambios, y
-                    # HALT_TARGET arranca a cero, asi que la alarma no para a
-                    # nadie. Este fichero escribia el numero de swaps en HALT_AT
-                    # y no tocaba HALT_TARGET, o sea las dos cosas mal a la vez,
-                    # y el sintoma era un timeout de 20-30 s por caso de video,
-                    # que no se parece a la causa.
+                    #   halt_on_swap  HALT_AT cuenta intercambios (§9.6): se
+                    #                 arma y la CPU se para sola, en el ciclo
+                    #                 del intercambio N. Es exacto.
+                    #   sin ella      HALT_AT cuenta FRAMES --asi lo dejo la
+                    #                 v2--, que no es lo mismo: el numero de
+                    #                 swaps al disparar depende de lo rapido
+                    #                 que dibuje el programa. Se sondea
+                    #                 SWAP_COUNT desde el host (video_stop.py).
                     #
-                    # La parada se hace desde el host, sondeando SWAP_COUNT
-                    # mientras la CPU corre (ver el bucle de espera). El frame
-                    # visible no cambia hasta el intercambio SIGUIENTE, asi que
-                    # llegar unos milisegundos tarde no altera lo que se captura.
+                    # Por el segundo camino escribir los swaps en HALT_AT era
+                    # ademas incorrecto por partida doble: contaba frames, y
+                    # HALT_TARGET arranca a cero, asi que no paraba a nadie. El
+                    # sintoma era un timeout de 20-30 s por caso de video, que
+                    # no se parece a la causa.
                     parar_tras_swaps = video.get("run_until_swap") or 0
+                    por_hardware = bool(
+                        parar_tras_swaps and "halt_on_swap" in capacidades)
                     # Los dos a cero, siempre, tambien cuando el caso no usa la
                     # alarma: solo el reset de la placa los reinicia y un caso
                     # heredaria la alarma del anterior.
@@ -418,11 +433,34 @@ class FpgaBackend:
                     # arrancar. Sin esto la condicion `swaps >= N` es cierta en
                     # el primer sondeo --el contador ya vale miles-- y el caso
                     # para sin haber dibujado nada: nueve frames en blanco que
-                    # fallan en el pixel 0.
+                    # fallan en el pixel 0. Con la alarma de hardware sirve
+                    # para el informe: armar no toca SWAP_COUNT.
                     swaps_base = _read_register(client, VIDEO_SWAP_COUNT,
                                                 tiene_palabra)
                     frames_base = _read_register(client, VIDEO_FRAME_COUNT,
                                                  tiene_palabra)
+                    if por_hardware:
+                        # HALT_TARGET primero: arranca a cero y sin el bit de
+                        # CPU la alarma se consume sin parar a nadie. Y lo
+                        # ultimo antes de arrancar, porque armar pone a cero la
+                        # cuenta de la alarma.
+                        _write_register(client, VIDEO_HALT_TARGET,
+                                        VIDEO_HALT_TARGET_CPU)
+                        _write_register(client, VIDEO_HALT_AT, parar_tras_swaps)
+
+            # Un caso que NO usa video no puede heredar el scanout encendido de
+            # uno que si. El modo de VIDEO_CTRL sobrevive a `reset_cpu` --solo
+            # lo reinicia el reset de la placa-- y con SCANOUT el barrido lee la
+            # SDRAM y compite con la CPU: un programa de 13 instrucciones tardaba
+            # a veces 250-279 ciclos en vez de 210, de forma intermitente (3 de
+            # cada 40 ejecuciones), y las medidas de CPI de los casos cortos
+            # saltaban hasta un 35 % entre pasadas con el mismo RTL. Se vuelve al
+            # estado de reset: modo PATTERN, que no lee memoria, y underflow
+            # limpio. Va aqui y no en cada caso de video porque lo que hay que
+            # garantizar es el punto de partida del SIGUIENTE, sea cual sea.
+            if tiene_video and not video:
+                _write_register(client, VIDEO_STATUS, 1)
+                _write_register(client, VIDEO_CTRL, MODE_PATTERN)
 
             # El puerto serie se llena ANTES de arrancar, no mientras corre.
             # Asi el caso es determinista: la CPU encuentra su entrada entera
@@ -454,11 +492,10 @@ class FpgaBackend:
                 # en marcha --el que no responde es la MEMORIA, que el monitor
                 # solo posee con la CPU parada-- asi que esto es leer un contador,
                 # no tocar el programa.
-                if parar_tras_swaps:
-                    swaps = _read_register(client, VIDEO_SWAP_COUNT, tiene_palabra)
-                    if ((swaps - swaps_base) & 0xFFFFFFFF) >= parar_tras_swaps:
-                        client.halt_cpu()
-                        status = client.get_status()
+                if parar_tras_swaps and not por_hardware:
+                    if video_stop.hay_que_parar(leer_registro, REGISTROS_VIDEO,
+                                                swaps_base, parar_tras_swaps):
+                        status = video_stop.parar(client)
                         break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
@@ -535,11 +572,8 @@ class FpgaBackend:
                 # salvo que el barrido este detenido, en cuyo caso seguir
                 # esperando tampoco arreglaria nada.
                 if tiene_captura:
-                    limite = time.monotonic() + 0.2
-                    while time.monotonic() < limite:
-                        if not (_read_register(client, VIDEO_STATUS,
-                                               tiene_palabra) & 2):
-                            break
+                    video_stop.esperar_sin_pendiente(leer_registro,
+                                                     REGISTROS_VIDEO)
 
                 # Se lee DESPUES de que la CPU haya parado. Los registros
                 # responden tambien con la CPU en marcha, pero el frame no: el
@@ -591,15 +625,16 @@ class FpgaBackend:
                     # intercambio de mas cambia de sitio el buffer que buscamos,
                     # que es el que quedo completo tras el intercambio N. La CPU
                     # esta parada, asi que su contenido ya no cambia.
-                    de_mas = 0
-                    if parar_tras_swaps and video_result["swaps"] is not None:
-                        de_mas = video_result["swaps"] - parar_tras_swaps
-                    origen = video_result["fb_front"]
-                    if de_mas % 2:
-                        origen = _read_register(client, VIDEO_FB_BACK,
-                                                tiene_palabra)
-                    video_result["frame"] = client.read_memory(
-                        origen, FRAME_BYTES)
+                    #
+                    # La corrección vive en `video_stop.frame_tras_swap`, que
+                    # además falla con `ParadaImprecisa` si se pasó de largo en
+                    # dos o más: antes se corregía por paridad sin mirar cuánto.
+                    pedidos = parar_tras_swaps if (
+                        parar_tras_swaps
+                        and video_result["swaps"] is not None) else None
+                    video_result["frame"] = video_stop.frame_tras_swap(
+                        client, leer_registro, REGISTROS_VIDEO,
+                        video_result["swaps"], pedidos, FRAME_BYTES)
 
         return {
             "halted": status.halted,

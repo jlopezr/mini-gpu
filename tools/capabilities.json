@@ -38,13 +38,26 @@
     "architecture": ["cpu", "gpu"],
     "file": ["video_registers.v", "gpu_video_regs.v"]
   },
-  "_comment_patrones": "Un 'pattern' se busca en el TEXTO del fichero, comentarios incluidos. Por eso apuntan a la IMPLEMENTACION y no al nombre a secas: 'HALT_AT' casaba con un comentario de la 16 que decia que ese registro NO existe alli, y la 16 pasaba a declarar 'frame_capture' -- con lo que habria aceptado casos con run_until.swap que no puede detener. 'REG_HALT_AT =' solo casa con el localparam que lo define.",
+  "_comment_patrones": "Un 'pattern' se busca en el TEXTO del fichero, comentarios incluidos. Por eso apuntan a la IMPLEMENTACION y no al nombre a secas: 'HALT_AT' casaba con un comentario de la 16 que decia que ese registro NO existe alli, y la 16 pasaba a declarar 'frame_capture' -- con lo que habria aceptado casos con run_until.swap que no puede detener. 'REG_SWAP_COUNT =' solo casa con el localparam que lo define.",
 
+  "_comment_frame_capture": "Poder parar el programa tras N intercambios y capturar su frame (`run_until: {swap: N}`). Lo hace el arnes sondeando SWAP_COUNT (x.tests/backends/video_stop.py), asi que lo que hace falta es ese registro, que esta en las dos familias: no HALT_AT, que cuenta frames y en la GPU no existe. Cuando HALT_AT cuente intercambios el arnes podra armarlo en lugar de sondear, pero la capacidad seguira siendo esta.",
   "frame_capture": {
     "architecture": ["cpu", "gpu"],
-    "file": "video_registers.v",
-    "pattern": "REG_HALT_AT\\s*=",
+    "file": ["video_registers.v", "gpu_video_regs.v"],
+    "pattern": "REG_SWAP_COUNT\\s*=",
     "implies": ["video"]
+  },
+  "_comment_halt_on_swap": "HALT_AT cuenta INTERCAMBIOS completados desde que se arma (mmio.md §9.6, decision 17 revisada), de modo que el arnes puede armarlo en vez de sondear SWAP_COUNT desde el host: la parada es exacta, sin viaje por el puerto serie de por medio. Se detecta por el contador interno `halt_swaps` de la alarma, y por su declaracion: el nombre aparece en comentarios. Implica frame_capture, que es lo que un caso pide. Hoy solo las CPU con video lo tienen; las GPU llegan cuando su gpu_video_regs.v implemente la alarma.",
+  "halt_on_swap": {
+    "architecture": ["cpu", "gpu"],
+    "file": ["video_registers.v", "gpu_video_regs.v"],
+    "pattern": "reg\\s*\\[31:0\\]\\s*halt_swaps\\s*;",
+    "implies": ["frame_capture"]
+  },
+  "_comment_large_memory": "Memoria de programa/datos por encima de los 128 KiB de BRAM: un controlador de SDRAM en el RTL. Es lo que separa los prototipos con 32 MiB de los que solo tienen BRAM (6 y 12). Un caso lo declara cuando su programa ESCRIBE o LEE mas alla de 0x1ffff aunque no lo diga ninguna `initial_memory` ni `memory_dumps`, que son las unicas que `region_incompatibility` mira: sin esto, el programa para en la placa con ERROR_MEMORY_ACCESS (0x02) y parece un fallo del RTL.",
+  "large_memory": {
+    "architecture": ["cpu", "gpu"],
+    "file": ["sdram_controller.v", "sdram_controller_128.v"]
   },
   "serial": {
     "architecture": "cpu",

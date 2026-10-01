@@ -608,8 +608,8 @@ parcialmente los casos válidos.
 ## Capacidades
 
 La arquitectura no basta: dentro de «CPU» hay bitstreams muy distintos. El de
-`6.fpga-cpu` no tiene vídeo; el de `16.fpga-cpu-hdmi` sí, pero no puede pararse
-en un frame concreto; el de `18.fpga-cpu-hdmi-bl8` puede las dos cosas. Un caso
+`6.fpga-cpu` no tiene vídeo; el de `16.fpga-cpu-hdmi` y los de las GPU `22` y
+`29` sí tienen vídeo y pueden pararse tras un intercambio concreto. Un caso
 declara lo que necesita:
 
 ```json
@@ -619,8 +619,9 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpusim`, `hdmi`, `bl8`, `subword`, `alu` |
-| `frame_capture` | Además `HALT_AT`, `SWAP_COUNT` y borrado de underflow | `cpusim`, `bl8`, `subword`, `alu` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpusim`, `gpusim`, `hdmi`, `bl8`, `subword`, `alu`, `console`, y las GPU `22` y `29` |
+| `frame_capture` | Parar tras N intercambios y capturar el frame: hace falta `SWAP_COUNT` (se detecta de `video_registers.v` o `gpu_video_regs.v`), no `HALT_AT` | los mismos que `video` |
+| `halt_on_swap` | `HALT_AT` cuenta intercambios: el arnés lo arma en vez de sondear. Implica `frame_capture`; un caso no lo pide, lo elige el backend | todas las que tienen vídeo: las CPU (`hdmi`, `bl8`, `subword`, `alu`, `console`) y las GPU 22 y 29 |
 | `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpusim`, `subword`, `alu` |
 | `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpusim`, `subword`, `alu` |
 | `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpusim`, `subword`, `alu` |
@@ -759,9 +760,38 @@ de su dibujo, con el buffer trasero a medias, y lo que se capture depende de la
 velocidad relativa entre CPU y barrido: el caso saldría distinto cada vez. En el
 N-ésimo intercambio completado el frame está entero por construcción.
 
+**Cómo se para en placa.** Hay dos caminos, según lo que declare el RTL:
+
+- **`halt_on_swap`** (todo lo que tiene vídeo: las CPU 16, 18, 19, 21 y 30 y las
+  GPU 22 y 29). `HALT_AT` cuenta intercambios completados desde que se arma
+  (mmio.md §9.6), así que el backend escribe `HALT_TARGET` (bit de CPU o de GPU
+  según la familia) y `HALT_AT = N` antes de arrancar, y el núcleo se para solo
+  al completarse el intercambio N. En la CPU es exacto al ciclo; en la GPU el SM
+  termina la instrucción en vuelo, como con cualquier parada.
+- **Sin ella**, que hoy no le toca a ninguna placa con vídeo. El host sondea
+  `SWAP_COUNT` mientras el programa corre y manda parar al llegar a N. Es lo que
+  hace `backends/video_stop.py`, y queda como respaldo para una versión nueva
+  que tuviera `SWAP_COUNT` pero no la alarma.
+
+El sondeo llega tarde lo que tarda el viaje por el puerto serie, y la alarma de
+hardware unos ciclos. En ese hueco el programa puede pedir otro intercambio, así
+que en los dos caminos se comprueba cuántos hubo de más tras parar:
+
+| Intercambios de más | Qué se hace |
+|---|---|
+| 0 | se captura `FB_FRONT` |
+| 1 | se captura `FB_BACK`: el buffer buscado pasó a ser el trasero |
+| 2 o más | `ParadaImprecisa`: el buffer ya se repintó; el caso se repite hasta 3 veces |
+
+Con la CPU y la GPU de placa, un caso que no sale limpio a la tercera falla con
+ese error en lugar de dar un frame que difiere en un píxel y parece ruido. Medido
+en la 21 con `cube-solid`, 50 ejecuciones: siempre exactamente N.
+
 **Con `run_until` no se puede declarar `expect.pc`**, y el runner lo rechaza al
 cargar. La parada es asíncrona, así que el PC queda donde pille a la CPU;
-aceptarlo daría un caso que pasa o falla según lo rápido que vaya ese día.
+aceptarlo daría un caso que pasa o falla según lo rápido que vaya ese día. En
+GPU lo mismo vale para `expect.warps` y `instructions_executed`: solo se
+comprueban `halted`, `error` y el frame. `record_case.py` ya no los graba.
 
 **`expect.frame` no lleva dirección** a propósito. Tras el intercambio N,
 `FB_FRONT` alterna entre los dos buffers según la paridad: si el caso tuviera

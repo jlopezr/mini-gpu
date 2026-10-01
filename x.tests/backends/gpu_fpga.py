@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from types import ModuleType
 
-from . import board
+from . import board, video_stop
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -27,6 +27,7 @@ if str(_REPOSITORY) not in sys.path:
 from tools.rtl_facts import (  # noqa: E402
     backend_from_rtl,
     capabilities_from_rtl,
+    clock_hz_from_rtl,
     load_capability_signals,
     monitor_version_from_rtl,
     readme_title,
@@ -35,9 +36,9 @@ from tools.rtl_facts import (  # noqa: E402
 
 # Registros de video, en direcciones de byte. LOS MISMOS OFFSETS que en
 # `fpga.py`: ese es el contrato compartido, ahora MMIO v2 §9, y si algun dia
-# dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no aparecen ni
-# HALT_AT --que la GPU no tiene-- ni las bases de reset: el backend de CPU las
-# restaura antes de cada caso, y un kernel de GPU se configura solo.
+# dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no aparecen las
+# bases de reset: el backend de CPU las restaura antes de cada caso, y un kernel
+# de GPU se configura solo.
 #
 # OJO AL MIGRAR: en v1 `CTRL` era el ultimo registro (+0x18) y ahora es el
 # PRIMERO (+0x00), asi que los cinco cambian de offset, no solo de base.
@@ -46,8 +47,28 @@ VIDEO_FB_BACK = 0x8020_0008
 VIDEO_STATUS = 0x8020_0010
 VIDEO_SWAP_COUNT = 0x8020_0018
 VIDEO_CTRL = 0x8020_0000
+# La alarma (§9.6). En la GPU solo desde que `halt_on_swap` la implementa en
+# `gpu_video_regs.v`; antes esos dos huecos leian cero y se tragaban la escritura.
+VIDEO_HALT_AT = 0x8020_001C
+VIDEO_HALT_TARGET = 0x8020_0020
+VIDEO_HALT_TARGET_GPU = 1 << 1
+REGISTROS_VIDEO = video_stop.Registros(
+    status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
+    fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
+
+
+def _write_register(client, address: int, value: int) -> None:
+    """Byte a byte: los registros de video viven fuera de las regiones de
+    memoria que valida `write_memory`, y el monitor solo los atiende asi."""
+    for offset, byte in enumerate(value.to_bytes(4, "little")):
+        client.write_byte(address + offset, byte)
+
+
+# Modo de VIDEO_CTRL tras el reset de la placa: patron de prueba, el barrido no
+# lee memoria. Es el estado en que arrancan los casos.
+VIDEO_MODE_PATTERN = 1
 
 
 def _read_register(client, address: int) -> int:
@@ -95,12 +116,16 @@ def _build_versions() -> dict:
                 f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
                 f"{directory / 'monitor.v'}"
             )
-        versions[manifest["alias"]] = {
+        entry = {
             "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
             "monitor_version": monitor_version,
             "description": manifest.get("description") or readme_title(directory),
             "capabilities": capabilities_from_rtl(directory, signals),
         }
+        clock_hz = clock_hz_from_rtl(directory)
+        if clock_hz is not None:
+            entry["clock_hz"] = clock_hz
+        versions[manifest["alias"]] = entry
     return versions
 
 
@@ -298,7 +323,12 @@ class GpuFpgaBackend:
             "gpu-fpga", version, upload_policy or board.UploadPolicy(),
         )
 
-    def run(
+    def run(self, *args, **kwargs) -> dict:
+        # Si la parada por intercambios sale imprecisa, el caso se repite: ver
+        # `video_stop`. Sin `run_until` no hay parada que pueda serlo.
+        return video_stop.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+
+    def _run_una_vez(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -349,6 +379,43 @@ class GpuFpgaBackend:
             # workgroup de cada warp. Por eso va después de cargar el programa.
             client.configure_warps(warp_config)
 
+            # Devolver el video al estado de reset. `reset_cpu` no lo toca --el
+            # scanout cuelga del reset de la placa, no del del nucleo-- asi que un
+            # caso que deja SCANOUT encendido o el underflow pegado se lo pasa al
+            # siguiente: `demo-mmio-selftest` hacia fallar a los dos casos
+            # `shared-video-*` que corrian despues, y solo pasaban con la placa
+            # recien cargada. Es propiedad del arnes, como en `fpga.py`: el caso
+            # declara lo que espera, no como dejar la placa preparada.
+            capacidades = self.configuration["capabilities"]
+            if "video" in capacidades:
+                _write_register(client, VIDEO_STATUS, 1)
+                _write_register(client, VIDEO_CTRL, VIDEO_MODE_PATTERN)
+            # Y la alarma desarmada: solo el reset de la placa la reinicia, y un
+            # caso que se quedara sin consumirla --un timeout-- se la pasaria al
+            # siguiente.
+            if "halt_on_swap" in capacidades:
+                _write_register(client, VIDEO_HALT_AT, 0)
+                _write_register(client, VIDEO_HALT_TARGET, 0)
+
+            def leer_registro(direccion: int) -> int:
+                return _read_register(client, direccion)
+
+            # SWAP_COUNT es del dispositivo de vídeo y sobrevive a `reset_cpu`:
+            # la parada y el informe lo miden contra la base de ESTE caso.
+            parar_tras_swaps = (video or {}).get("run_until_swap") or 0
+            # Dos formas de parar, igual que en `fpga.py`: con `halt_on_swap`
+            # `HALT_AT` cuenta intercambios (§9.6) y se arma; sin ella se sondea
+            # SWAP_COUNT desde el host (video_stop.py).
+            por_hardware = bool(parar_tras_swaps and "halt_on_swap" in capacidades)
+            swaps_base = (_read_register(client, VIDEO_SWAP_COUNT)
+                          if video is not None else 0)
+            if por_hardware:
+                # HALT_TARGET primero: arranca a cero y sin el bit de GPU la
+                # alarma se consume sin parar a nadie. Y HALT_AT lo ultimo antes
+                # de arrancar, porque armar pone a cero la cuenta de la alarma.
+                _write_register(client, VIDEO_HALT_TARGET, VIDEO_HALT_TARGET_GPU)
+                _write_register(client, VIDEO_HALT_AT, parar_tras_swaps)
+
             started = time.monotonic()
             client.run_cpu()
             deadline = started + timeout_seconds
@@ -357,12 +424,22 @@ class GpuFpgaBackend:
                 status = client.get_status()
                 if status.halted:
                     break
+                # La parada del arnés, igual que en `fpga.py`: un programa de
+                # vídeo no termina solo. Con la alarma de hardware se espera a
+                # que pare sola; sin ella se sondea SWAP_COUNT.
+                sondeando = bool(parar_tras_swaps and not por_hardware)
+                if sondeando:
+                    if video_stop.hay_que_parar(leer_registro, REGISTROS_VIDEO,
+                                                swaps_base, parar_tras_swaps):
+                        status = video_stop.parar(client)
+                        break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
                     raise TimeoutError(
                         f"La GPU no terminó en {timeout_seconds:g} segundos"
                     )
-                time.sleep(0.01)
+                if not sondeando:
+                    time.sleep(0.01)
 
             elapsed = time.monotonic() - started
             observations = read_observations(
@@ -372,6 +449,12 @@ class GpuFpgaBackend:
                 gpu_perf_base(self.monitor),
             )
             observations["duration_seconds"] = elapsed
+            # Ciclos con la GPU corriendo e instrucciones de WARP retiradas, del
+            # bloque GPU PERFORMANCE. Solo donde el RTL lo tiene: en 12/14/17 esa
+            # direccion no responde, y un cero ahi seria una medida falsa.
+            cycles = None
+            if "perf_counters" in self.configuration["capabilities"]:
+                cycles = _read_register(client, gpu_perf_base(self.monitor))
 
             memory = {
                 (address, size): client.read_memory(address, size)
@@ -384,21 +467,27 @@ class GpuFpgaBackend:
                 # familia CPU: los registros responden tambien en marcha, pero
                 # la memoria no, porque el monitor solo la posee con el nucleo
                 # detenido.
+                # Parar el núcleo no para el doble buffer: se espera a que no
+                # quede un intercambio pendiente antes de leer nada.
+                video_stop.esperar_sin_pendiente(leer_registro, REGISTROS_VIDEO)
                 estado = _read_register(client, VIDEO_STATUS)
                 video_result = {
                     "underflow": bool(estado & 1),
                     "frames": estado >> 16,
                     # HALT_AT no existe aqui, pero SWAP_COUNT si: esta dentro de
                     # la ventana en las cuatro GPU.
-                    "swaps": _read_register(client, VIDEO_SWAP_COUNT),
+                    "swaps": video_stop.swaps_desde(
+                        leer_registro, REGISTROS_VIDEO, swaps_base),
                     "fb_front": _read_register(client, VIDEO_FB_FRONT),
                     "frame": None,
                 }
                 if video.get("capture_frame"):
                     # Desde FB_FRONT, no desde una direccion fija: tras el
                     # intercambio N el buffer visible alterna segun la paridad.
-                    video_result["frame"] = client.read_memory(
-                        video_result["fb_front"], FRAME_BYTES)
+                    video_result["frame"] = video_stop.frame_tras_swap(
+                        client, leer_registro, REGISTROS_VIDEO,
+                        video_result["swaps"], parar_tras_swaps or None,
+                        FRAME_BYTES)
 
         return {
             "halted": status.halted,
@@ -406,6 +495,11 @@ class GpuFpgaBackend:
             "error_code": status.error_code,
             "pc": status.pc,
             "registers": {},
+            "cycles": cycles,
+            "instructions": (observations["instructions_executed"]
+                             if cycles is not None else None),
+            "clock_hz": self.configuration.get("clock_hz"),
+            "stalls": None,
             "video": video_result,
             "observations": observations,
             "memory": memory,

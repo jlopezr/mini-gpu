@@ -461,13 +461,15 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # Dos capacidades y no una, porque la diferencia es real:
 #
 #   video          hay scanout leyendo un framebuffer de memoria y ventana de
-#                  registros en 0x80000000. La tienen 16 y 18.
-#   frame_capture  ademas hay HALT_AT, SWAP_COUNT y borrado de underflow, o
-#                  sea se puede parar en un intercambio concreto y leer el
-#                  frame de forma repetible. Solo la 18.
+#                  registros en 0x80000000.
+#   frame_capture  ademas hay SWAP_COUNT, o sea se puede parar en un
+#                  intercambio concreto y leer el frame de forma repetible
+#                  (el arnes sondea el contador: backends/video_stop.py). Se
+#                  escribio cuando solo la 18 tenia con que capturar; hoy la
+#                  tienen todas las que tienen video, CPU y GPU.
 #
-# Con una sola capacidad, un caso de captura se omitiria en la 16 por el motivo
-# equivocado: alli hay video, lo que no hay es con que capturar.
+# Con una sola capacidad, un caso de captura se omitiria donde hay video por el
+# motivo equivocado: lo que faltaria seria con que capturar.
 #
 # Las otras dos son de ISA, no de periferico, y aparecen porque la 19 extiende
 # el juego de instrucciones y las anteriores no:
@@ -934,6 +936,14 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
         size = parse_integer(warp_config.get("warp_size", 8), "warp_size")
         if size == 0:
             raise ValueError("warp_size debe ser positivo")
+        # Lo mismo que el PC en CPU, mas abajo: con `run_until` la parada es
+        # asincrona y el estado de los warps en ese instante no es del programa.
+        if run_until is not None and (
+                "warps" in expected_raw or "instructions_executed" in expected_raw):
+            raise ValueError(
+                "con run_until el estado de los warps no es determinista: "
+                "la parada es asincrona; solo se comprueba halted, error y el frame"
+            )
         case["warp_config"] = warp_config
         case["expected"]["observations"] = gpu_expectations(expected_raw, size)
     elif run_until is not None:
@@ -1205,21 +1215,25 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     Cambiar de version recarga el bitstream, asi que el bucle exterior es la
     version y no el caso: al reves seria una carga por caso y por version.
     """
+    # Una tabla compara una familia: los casos de CPU y los de GPU no se
+    # mezclan. Los de las dos familias se miden como la que se pida.
+    familia = "gpu" if args.backend.startswith("gpu") else "cpu"
+    nombre_sim, nombre_fpga = (("gpusim", "gpu-fpga") if familia == "gpu"
+                               else ("cpusim", "cpu-fpga"))
+    fpga_versions = (gpu_fpga_backend if familia == "gpu" else fpga_backend).VERSIONS
     casos = []
     for path in case_paths:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            if "cpu" not in case_architectures(raw):
+            if familia not in case_architectures(raw):
                 continue
-            # Explicito: un caso de las dos familias se mide como CPU, que es
-            # lo unico que esta tabla compara.
-            case = load_case(path, "cpu")
+            case = load_case(path, familia)
         except (OSError, ValueError, TypeError, KeyError) as error:
             print(f"ERROR {path}: {error}", file=sys.stderr)
             return 2
         casos.append(case)
     if not casos:
-        print("No hay casos de CPU que medir", file=sys.stderr)
+        print(f"No hay casos de {familia.upper()} que medir", file=sys.stderr)
         return 2
 
     # Se detecta una sola vez, no en cada versión FPGA del bucle.
@@ -1231,10 +1245,10 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     for version in versiones:
         simulador = version == "sim"
         if simulador:
-            backend = SimulatorBackend(REPOSITORY)
+            backend = (GpuBackend if familia == "gpu" else SimulatorBackend)(REPOSITORY)
         else:
             try:
-                backend = FpgaBackend(
+                backend = (GpuFpgaBackend if familia == "gpu" else FpgaBackend)(
                     REPOSITORY, port=port,
                     serial_timeout=args.serial_timeout, version=version,
                     upload_policy=upload_policy,
@@ -1247,7 +1261,7 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
         for case in casos:
             clave = (case["name"], version)
             modulo = BACKEND_DEFINITIONS[
-                "cpusim" if simulador else "cpu-fpga"]["module"]
+                nombre_sim if simulador else nombre_fpga]["module"]
             comprueba = getattr(modulo, "incompatibility", None)
             motivo = None
             if comprueba:
@@ -1258,20 +1272,29 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                 print(f"SKIP {case['name']} [{version}]: {motivo}")
                 continue
             try:
-                result = backend.run(
-                    program=case["program"],
-                    initial_memory=case["initial_memory"],
-                    register_numbers=set(case["expected"]["registers"]),
-                    memory_ranges=list(case["expected"]["memory"]),
-                    max_instructions=case["max_instructions"],
-                    timeout_seconds=case["timeout_seconds"],
-                    stdin=case["stdin"],
-                    **({"video": {
-                        "run_until_swap": (case["run_until"] or {}).get("swap"),
-                        "capture_frame": case["expected"]["frame"] is not None,
-                    }} if (case["run_until"] or case["expected"]["video"]
-                           or case["expected"]["frame"] is not None) else {}),
-                )
+                if familia == "gpu":
+                    result = backend.run(**backend_arguments(
+                        case, nombre_sim if simulador else nombre_fpga, args))
+                    # El simulador no tiene contadores: da las instrucciones de
+                    # warp y nada de tiempo, como el de CPU.
+                    if result.get("instructions") is None and simulador:
+                        result["instructions"] = (
+                            result["observations"]["instructions_executed"])
+                else:
+                    result = backend.run(
+                        program=case["program"],
+                        initial_memory=case["initial_memory"],
+                        register_numbers=set(case["expected"]["registers"]),
+                        memory_ranges=list(case["expected"]["memory"]),
+                        max_instructions=case["max_instructions"],
+                        timeout_seconds=case["timeout_seconds"],
+                        stdin=case["stdin"],
+                        **({"video": {
+                            "run_until_swap": (case["run_until"] or {}).get("swap"),
+                            "capture_frame": case["expected"]["frame"] is not None,
+                        }} if (case["run_until"] or case["expected"]["video"]
+                               or case["expected"]["frame"] is not None) else {}),
+                    )
             except Exception as error:
                 medidas[clave] = {"skipped": True, "reason": str(error)}
                 print(f"ERROR {case['name']} [{version}]: {error}",
@@ -1339,7 +1362,7 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                    if (nombre, version) in medidas}
         if not propias:
             continue
-        directorio = REPOSITORY / fpga_backend.VERSIONS[version]["monitor_path"].parent
+        directorio = REPOSITORY / fpga_versions[version]["monitor_path"].parent
         carpeta = archive_measurement(
             directorio, version, propias,
             measurement_table(medidas, nombres, [version],
@@ -1556,8 +1579,10 @@ def main() -> int:
         return 2
 
     if args.measure is not None:
-        if args.backend.startswith("gpu"):
-            parser.error("--measure es de los backends de CPU")
+        gpu_measure = args.backend.startswith("gpu")
+        if args.backend in ("both", "gpu-both"):
+            parser.error("--measure mide una familia: usa --backend cpu-fpga o gpu-fpga")
+        medibles = (gpu_fpga_backend if gpu_measure else fpga_backend).VERSIONS
         # Las versiones a medir: las que se pidan con --version, o todas las
         # del backend FPGA mas el simulador, que aporta las instrucciones de
         # los casos que ninguna placa puede contar.
@@ -1567,15 +1592,15 @@ def main() -> int:
         if args.prototype is not None:
             try:
                 _, version = version_for_prototype(
-                    args.prototype, ("cpu-fpga",)
+                    args.prototype, ("gpu-fpga",) if gpu_measure else ("cpu-fpga",)
                 )
             except ValueError as error:
                 parser.error(str(error))
             pedidas = [version]
         if not pedidas:
-            pedidas = list(fpga_backend.VERSIONS) + ["sim"]
+            pedidas = list(medibles) + ["sim"]
         desconocidas = [v for v in pedidas
-                        if v != "sim" and v not in fpga_backend.VERSIONS]
+                        if v != "sim" and v not in medibles]
         if desconocidas:
             parser.error(f"versiones desconocidas: {', '.join(desconocidas)}")
         return run_measurements(

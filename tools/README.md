@@ -382,7 +382,10 @@ El contrato funcional de vídeo incluye `SWAP_COUNT`, `HALT_AT` y `VIDEO_CTRL`.
 Las bases arrancan a cero y las configura el programa; se alinean a 4 bytes en
 los tres modelos. Una escritura a `SWAP` pide intercambio, incluso con valor
 cero. Para portabilidad al RTL GPU, alinear bases a 16 y escribir 1 a `SWAP`.
-El RTL GPU no gana serie ni `HALT_AT` por esta unificación de simuladores.
+`HALT_AT` cuenta intercambios completados desde que se arma (mmio.md §9.6) y
+`HALT_TARGET` dice a quién para: el bit 0 a la CPU y el 1 a la GPU, y cada modelo
+solo hace caso al suyo. El RTL GPU no gana serie por esta unificación de
+simuladores.
 
 El frame se mide en instrucciones CPU o de warp, no en ciclos del pipeline.
 Los puntos de avance y el orden entre warps dependen del motor: no se promete
@@ -1251,6 +1254,58 @@ propuesta de subir Fmax que empeore el CPI. Es una **proyección**: el reloj rea
 está fijo (80 MHz, por el divisor de la UART) y nadie ha corrido a la Fmax del
 build. El CPI global es ciclos totales entre instrucciones totales, sin los casos
 de vídeo y UART, cuyas instrucciones dependen del reloj o del baudrate.
+
+#### Probar todos los prototipos (`test-all`)
+
+`test-all` ejecuta la suite completa en cada prototipo con placa, de uno en uno
+(hay una sola placa), y escribe una matriz caso × prototipo en
+`reports/pruebas/<fecha>-<familia>.md`: `PASS`, `FAIL` o `SKIP`, con una sección
+que dice por qué se omitió cada caso y otra con el detalle de los fallos. Un
+`SKIP` por capacidades no es un fallo; el código de salida es 0 solo sin `FAIL`
+ni prototipos que no arrancan. Una pasada que termina con código distinto de cero
+sin ningún `FAIL` (una excepción del arnés a mitad) sale como `INCOMPLETO` en la
+columna Estado, con lo ya ejecutado en la matriz: antes salía como `OK` con medio
+informe.
+
+```bash
+$ test-all --family gpu --yes          # 12, 14, 22 y 29
+$ test-all --family cpu --yes
+$ test-all -p 22 -p 29 --yes           # solo esos
+$ test-all --list
+```
+
+#### Medir todos los prototipos y comparar (`bench-all`, `perf-report`)
+
+`--measure` funciona con `--backend cpu-fpga` y con `--backend gpu-fpga`. En GPU
+el CPI son ciclos por instrucción **de warp**, y solo salen ciclos donde el RTL
+tiene el bloque GPU PERFORMANCE (22 y 29; en 12 y 14 sale `sin contadores`).
+
+```bash
+$ bench-all --list                      # qué prototipos mediría, sin tocar la placa
+$ bench-all --yes                       # todos, CPU y GPU, y al final el informe
+$ bench-all --family gpu -p 22 --yes    # solo la 22
+$ perf-report                           # solo el informe, con lo ya archivado
+$ perf-report --label bench --history 8
+```
+
+`bench-all` llama a `run_tests.py --measure -p N` por prototipo, así que cada uno
+sube su bitstream (y lo sintetiza si sus fuentes cambiaron: la primera pasada
+tarda). Un prototipo que falla no detiene a los demás. El informe va a
+`reports/rendimiento/<fecha>-informe.md` y trae, por familia: un resumen por
+prototipo (reloj, Fmax, CPI, ns/instr), y tablas de tiempo (ms), CPI y FPS donde
+cada fila es un programa y cada columna un prototipo, más la evolución de cada
+uno entre medidas y los casos cuyo CPI cambió un 1 % o más.
+
+Tres cosas que el informe repite donde importan: el CPI del resumen es sobre los
+casos que **todos** los prototipos de la tabla midieron (otro conjunto da otro
+promedio); los programas de vídeo y UART llevan `*` porque su tiempo depende de
+vsync o del baudrate; y los FPS son intercambios por segundo de la placa, que con
+vsync a 60 Hz no pasan de 60 y solo se dan con 10 intercambios o más (con menos
+sale `corto`: el arranque pesa más que el ritmo). Los prototipos sin contadores
+(6, 10, 12 y 14) no entran en el CPI común, y la evolución compara cada medida con
+la anterior solo sobre los casos que ambas tienen. Los casos de vídeo de GPU (`demo-plasma`)
+corren en placa en la 22 y la 29: paran tras N intercambios sondeando
+`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/video_stop.py`).
 
 ## Herramientas de vídeo/HDMI (16, 18, 19, 21)
 

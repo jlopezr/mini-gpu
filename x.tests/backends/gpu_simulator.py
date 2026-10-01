@@ -9,13 +9,15 @@ VERSIONS = {
         "simulator_path": Path("25.gpu-sim-cycle-uarch/minigpu_cycle.py"),
         "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
         "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
-                         "shift_immediate", "subword_memory", "frame_capture", "serial"),
+                         "shift_immediate", "subword_memory", "frame_capture", "serial",
+                         "mul_div", "large_memory"),
         "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
     },
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
         # Perifericos funcionales compartidos; no implica soporte en la FPGA.
-        "capabilities": ("atomic_warp_faults", "frame_capture", "serial", "mul_div"),
+        "capabilities": ("atomic_warp_faults", "frame_capture", "serial", "mul_div",
+                         "large_memory"),
         "description": "simulador funcional MiniGPU actual",
     },
 }
@@ -82,11 +84,11 @@ class GpuBackend:
                     f"el simulador de GPU {self.version!r} no tiene VideoDevice")
             dispositivo = video_class()
             if video.get("run_until_swap"):
-                # Parada del arnes, no por HALT_AT: en MMIO v2 la alarma
-                # cuenta FRAMES (§9.7) y ademas necesita HALT_TARGET. Lo que
-                # el caso pide --capturar el frame tras el intercambio N-- es
-                # una condicion de observacion, no un registro. Misma razon y
-                # mismo cambio que en backends/simulator.py.
+                # Parada del arnes, no por HALT_AT: es un registro del contrato
+                # y necesita HALT_TARGET. Lo que el caso pide --capturar el
+                # frame tras el intercambio N-- es una condicion de
+                # observacion, no un registro. Misma razon que en
+                # backends/simulator.py.
                 dispositivo.stop_after_swaps = video["run_until_swap"]
             # Igual que en los otros dos backends: las bases arrancan a cero,
             # como el hardware, y se quedan asi. Donde vive el framebuffer lo

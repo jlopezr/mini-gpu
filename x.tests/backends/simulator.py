@@ -23,7 +23,7 @@ VERSIONS = {
         # simulador la tiene desde siempre.
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
                          "shift_immediate", "alu_extended", "mul_div",
-                         "compare"),
+                         "compare", "large_memory"),
         "description": "simulador funcional MiniCPU actual",
     },
 }
@@ -139,14 +139,13 @@ class SimulatorBackend:
             # vídeo del repositorio se configuran solos y esto sobra.
             swap = video.get("run_until_swap")
             if swap:
-                # Parada del arnes, NO por HALT_AT. Hasta v2 se hacia
-                # escribiendo HALT_AT, porque la alarma contaba intercambios y
-                # `run_until: {swap: N}` pedia exactamente eso. En v2 la alarma
-                # cuenta FRAMES (§9.7), asi que seguir usandola pararia en otro
-                # sitio --y ademas con HALT_TARGET a cero no pararia en
-                # absoluto--. Lo que el caso quiere es capturar el frame tras
-                # el intercambio N, que es una condicion de observacion del
-                # banco de pruebas y no un registro que el programa vea.
+                # Parada del arnes, NO por HALT_AT. `run_until: {swap: N}` es
+                # una condicion de observacion del banco de pruebas --captura
+                # el frame tras el intercambio N-- y no un registro que el
+                # programa vea: armar HALT_AT, ademas de HALT_TARGET, seria
+                # escribir en el dispositivo del programa. Cuentan lo mismo
+                # desde que §9.6 volvio a contar intercambios, pero el arnes
+                # no toca los registros del contrato.
                 dispositivo.stop_after_swaps = swap
 
         # El puerto serie se construye SIEMPRE que el caso lo pida, aunque

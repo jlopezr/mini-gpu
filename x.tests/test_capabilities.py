@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backends import fpga, simulator
+from backends import fpga, gpu_fpga, simulator
 from run_tests import (
     CAPABILITIES,
     expand_capabilities,
@@ -94,7 +94,9 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(fpga.capabilities("ebr"),
                          {"mul_div", "read_word", "write_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
-        self.assertEqual(fpga.capabilities("sdram"), {"read_word", "write_word"})
+        # `large_memory` es la SDRAM: la tienen todas menos la 6 (EBR).
+        self.assertEqual(fpga.capabilities("sdram"),
+                         {"read_word", "write_word", "large_memory"})
         # La 16 tiene video Y con que capturar, desde que migro a MMIO v2.
         # Antes tenia cinco registros de video --sin FRAME_COUNT, SWAP_COUNT,
         # HALT_AT, HALT_TARGET ni VIDEO_TX-- y por eso no capturaba; al migrar
@@ -103,19 +105,23 @@ class CapabilitiesTest(unittest.TestCase):
         # `perf_counters` lo tienen las cuatro con ventana MMIO desde la fase
         # 3.5, cuando los contadores dejaron de ser comandos de monitor y
         # pasaron a ser un dispositivo.
+        # `halt_on_swap`: la alarma HALT_AT cuenta intercambios (§9.6), asi que
+        # el arnes la arma en vez de sondear SWAP_COUNT.
         self.assertEqual(fpga.capabilities("hdmi"),
-                         {"video", "frame_capture", "mul_div", "read_word",
-                          "write_word", "perf_counters"})
+                         {"video", "frame_capture", "halt_on_swap", "mul_div",
+                          "read_word", "write_word", "perf_counters",
+                          "large_memory"})
         # La 18 tiene las dos.
         self.assertEqual(
             fpga.capabilities("bl8"),
-            {"video", "frame_capture", "mul_div", "read_word", "write_word",
-             "perf_counters"})
+            {"video", "frame_capture", "halt_on_swap", "mul_div", "read_word",
+             "write_word", "perf_counters", "large_memory"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
             fpga.capabilities("subword"),
-            {"video", "frame_capture", "subword_memory", "calls", "serial",
-             "mul_div", "read_word", "write_word", "perf_counters"})
+            {"video", "frame_capture", "halt_on_swap", "subword_memory",
+             "calls", "serial", "mul_div", "read_word", "write_word",
+             "perf_counters", "large_memory"})
 
     def test_los_contadores_ya_no_son_comandos_de_monitor(self):
         """El juego "+contadores" del mapa anterior ya no existe.
@@ -375,7 +381,7 @@ class CapabilitiesTest(unittest.TestCase):
         # explica que el registro NO esta, y al hacerlo lo nombra.
         senuelo = (
             "`default_nettype none\n"
-            "// Esta carpeta no implementa HALT_AT ni HALT_TARGET: no hay\n"
+            "// Esta carpeta no implementa SWAP_COUNT ni HALT_TARGET: no hay\n"
             "// frame_capture aqui, y por eso el bloque acaba en STATUS.\n"
             "module video_registers(input wire clk);\n"
             "endmodule\n"
@@ -399,13 +405,64 @@ class CapabilitiesTest(unittest.TestCase):
             (carpeta / "video_registers.v").write_text(
                 senuelo.replace("module video_registers(input wire clk);",
                                 "module video_registers(input wire clk);\n"
-                                "  localparam [5:0] REG_HALT_AT = 6'd7;\n"
-                                "  reg [31:0] halt_at;"),
+                                "  localparam [5:0] REG_SWAP_COUNT = 6'd6;\n"
+                                "  reg [31:0] swap_count;"),
                 encoding="utf-8")
             self.assertIn("frame_capture",
                           capabilities_from_rtl(carpeta, senales),
                           "con la implementacion delante si tiene que "
                           "declararla; si no, este test pasaria por no ver")
+
+    def test_halt_on_swap_solo_donde_la_alarma_cuenta_intercambios(self):
+        """La capacidad la da el contador interno `halt_swaps`, no el registro.
+
+        `REG_HALT_AT` existe tambien en las GPU, donde solo ocupa el hueco y lee
+        cero; y en las CPU existia antes de que la alarma contara intercambios.
+        Detectar el registro declararia la capacidad donde la alarma no hace lo
+        que el arnes espera.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import capabilities_from_rtl, load_capability_signals
+
+        senales = load_capability_signals(REPOSITORY)
+
+        def detectadas(texto):
+            with tempfile.TemporaryDirectory() as tmp:
+                carpeta = Path(tmp)
+                (carpeta / "video_registers.v").write_text(texto, encoding="utf-8")
+                return capabilities_from_rtl(carpeta, senales)
+
+        solo_registro = (
+            "module video_registers(input wire clk);\n"
+            "  localparam [5:0] REG_HALT_AT = 6'd7;\n"
+            "  reg [31:0] halt_at;\n"
+            "endmodule\n")
+        self.assertNotIn("halt_on_swap", detectadas(solo_registro))
+
+        # El nombre en un comentario tampoco: los patrones miran el texto.
+        comentario = solo_registro.replace(
+            "endmodule", "// la alarma cuenta con halt_swaps\nendmodule")
+        self.assertNotIn("halt_on_swap", detectadas(comentario))
+
+        con_contador = solo_registro.replace(
+            "endmodule", "  reg [31:0] halt_swaps;\nendmodule")
+        self.assertIn("halt_on_swap", detectadas(con_contador))
+
+    def test_todo_lo_que_tiene_video_arma_la_alarma(self):
+        """CPU y GPU: la alarma HALT_AT cuenta intercambios en las dos familias.
+
+        Las GPU la ganaron cuando `gpu_video_regs.v` dejo de tener HALT_AT como
+        un hueco que leia cero. Las que no tienen video --12 y 14-- no tienen
+        alarma, y paran por sondeo si algun dia se les pide (video_stop.py).
+        """
+        for version in ("hdmi", "bl8", "subword", "alu", "console"):
+            with self.subTest(familia="cpu", version=version):
+                self.assertIn("halt_on_swap", fpga.capabilities(version))
+        for version, configuracion in gpu_fpga.VERSIONS.items():
+            capacidades = configuracion["capabilities"]
+            with self.subTest(familia="gpu", version=version):
+                self.assertEqual("halt_on_swap" in capacidades,
+                                 "video" in capacidades)
 
     def test_el_simulador_acepta_video(self):
         """Desde que `minicpu_sim.py` tiene `VideoDevice`, los acepta.
