@@ -75,7 +75,7 @@ module gpu_mmio_bl8_error_tb;
         access(w,WARPS_BASE+32'h80,1);   // pasados los 8 descriptores
         access(w,SIMT_BASE+32'h14,1);    // pasados los 5 registros de §14.3
         access(w,VIDEO_BASE+32'h28,1);   // pasados los 10 registros de §9
-        access(w,PERF_BASE+32'h1c,1);    // pasados los 7 contadores
+        access(w,PERF_BASE+32'h20,1);    // pasados los 8 contadores
       end
       // VIDEO_TX (§9.7) vive AQUI y ya no en los contadores. Que conteste en
       // VIDEO+0x24 y NO en PERF+0x14 es la mudanza entera en dos lineas.
