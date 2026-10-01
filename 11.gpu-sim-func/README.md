@@ -18,7 +18,7 @@ con su README). Esta carpeta solo los ejecuta: se ensamblan con `mini_asm.py` a
 un `.bin` cuando hace falta, como en los comandos de más abajo. No se versiona
 ningún binario ensamblado.
 
-- **`x.tests/cases-gpu/demos/vecsum/vecsum.asm`** es el más sencillo que
+- **`x.tests/cases-gpu/memory/vecsum/vecsum.asm`** es el más sencillo que
   ejercita SIMT de verdad: cada lane suma un elemento de dos vectores de 16
   palabras y guarda el resultado. La dirección sale de `GETTID` y un
   desplazamiento, así que las 16 lanes escriben en sitios distintos sin
