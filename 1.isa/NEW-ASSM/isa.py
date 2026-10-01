@@ -23,7 +23,6 @@ Las instrucciones son siempre de 32 bits y se almacenan little-endian.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 
 # ============================================================================

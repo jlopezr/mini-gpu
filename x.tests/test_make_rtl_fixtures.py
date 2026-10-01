@@ -227,8 +227,9 @@ class FormatoTest(unittest.TestCase):
         self.assertFalse((out / "02.asm").exists())
 
     def test_un_programa_que_falla_en_el_simulador_aborta(self):
-        with self.assertRaises(Exception):
-            self._generar([_caso("mal", source="LOAD R1, R0, 0x7ffff0\nHALT")])
+        # Ensambla (0x7fff cabe en signed16) pero direcciona fuera de la memoria simulada.
+        with self.assertRaises(AssertionError):
+            self._generar([_caso("mal", source="LOAD R1, R0, 0x7fff\nHALT")])
 
     def test_la_configuracion_de_warps_llega_al_config_hex(self):
         config = {"warp_size": 8, "warps": [{"id": 0}, {"id": 1, "pc": 4, "active_mask": 15, "workgroup_id": 3}]}

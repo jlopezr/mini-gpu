@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from minigpu_sim import System, ERROR_SIMT
+from minigpu_sim import System
 from gpu_trace import TextTrace
 
 

@@ -835,7 +835,7 @@ scna: [docs/**]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.write(root, "trace.yaml", "scan: ['**/*.md']\nexclude: ['**/vendor/**', '**/a/b/**']\n")
-            kept = self.write(root, "docs/keep.md", "# Keep\n")
+            self.write(root, "docs/keep.md", "# Keep\n")
             self.write(root, "vendor/top.md", "# x\n")
             self.write(root, "vendor/deep/er/more.md", "# x\n")
             self.write(root, "docs/vendor/x/y/z.md", "# x\n")

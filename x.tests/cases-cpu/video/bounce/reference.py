@@ -107,7 +107,6 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.trayectoria:
-        anterior = posicion(0)
         for paso in range(1, args.swap + 1):
             actual = posicion(paso)
             marcas = []
@@ -117,7 +116,6 @@ def main() -> int:
                 marcas.append("rebote en y")
             if marcas or paso >= args.swap - 2:
                 print(f"  paso {paso:3d}: {actual}  {', '.join(marcas)}")
-            anterior = actual
         return 0
 
     aqui = Path(__file__).resolve().parent

@@ -12,7 +12,6 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.prototype import (
@@ -562,11 +561,8 @@ def _find_archived_report(log_file: Path) -> str | None:
 
 
 def _print_status_summary(record: dict) -> None:
-    log_path = Path(record.get("log_path", ""))
     root = Path(record.get("root", "."))
     log_file = root / record.get("id", "") / "build.log"
-    if log_file.exists():
-        log_path = log_file
     print(f"Prototype: {record.get('prototype', 'unknown')}")
     print(f"Label: {record.get('label', 'build')}")
     print(f"State: {record.get('state', 'unknown')}")

@@ -23,7 +23,7 @@ Human-readable pipeline trace:
 """
 
 import argparse
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
 from dataclasses import asdict
 import json
 from pathlib import Path
