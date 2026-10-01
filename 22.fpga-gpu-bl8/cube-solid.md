@@ -76,8 +76,8 @@ La imagen del primer frame de v4 coincide byte a byte con la referencia CPU:
 Regenerar las 64 orientaciones y ensamblar la versión recomendada:
 
 ```powershell
-.\.venv\Scripts\python.exe .\22.fpga-gpu-bl8\x.tests/cases-gpu/demos/cube-solid/make_cube_solid_frames.py
-.\tools\mini-asm.ps1 .\22.fpga-gpu-bl8\x.tests/cases-gpu/demos/cube-solid/cube_solid.asm -o cube_solid.bin
+.\.venv\Scripts\python.exe .\x.tests\cases-gpu\demos\cube-solid\make_cube_solid_frames.py
+.\tools\mini-asm.ps1 .\x.tests\cases-gpu\demos\cube-solid\cube_solid.asm -o cube_solid.bin
 ```
 
 Cargarla en un bitstream 22 ya presente:
