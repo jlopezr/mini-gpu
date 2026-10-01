@@ -834,7 +834,7 @@ $ fixtures-report --prototype 22     # una sola columna
 La matriz lleva el `NN` de cada caso o `-` si el prototipo lo omite, con el motivo debajo. Después
 comprueba tres cosas y sale con 1 si alguna falla:
 
-1. un banco pide `examples/X.hex` y no hay `X.asm` en `x.tests` (el banco no tendría programa);
+1. un banco pide `generated/programs/X.hex` y no hay `X.asm` en `x.tests` (el banco no tendría programa);
 2. un caso marcado `rtl.differential` que ningún prototipo usa (marca que no hace nada);
 3. un programa que un banco pide por nombre y que ni un caso (que lo ejecute) ni un README de su
    carpeta documentan: corre en la regresión sin que nadie diga qué prueba.

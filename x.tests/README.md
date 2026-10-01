@@ -9,7 +9,7 @@ declaran las dos arquitecturas.
 
 Todo `.asm` de prueba o de demostración vive aquí, una sola vez, y no dentro de
 la carpeta de cada prototipo. Las carpetas de prototipo no tienen `examples/`
-versionado: lo que sus testbenches Verilog leen de `examples/*.hex` lo genera
+versionado: lo que sus testbenches Verilog leen de `generated/programs/*.hex` lo genera
 `tools/stage_programs.py` desde estos fuentes (lo ejecuta `test`, y no se
 versiona).
 

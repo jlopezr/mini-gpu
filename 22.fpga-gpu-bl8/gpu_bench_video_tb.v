@@ -1,6 +1,6 @@
 `default_nettype none
 `timescale 1ns/1ps
-// Corre examples/smoke.bin en el sistema BL8 exactamente como lo hace
+// Corre generated/programs/bench.hex en el sistema BL8 exactamente como lo hace
 // run-board: reset de GPU (ocho warps llenos a PC=0), cargar el programa byte
 // a byte por el host, arrancar, y leer R1. Sin fixtures ni config words, que es
 // justo lo que hace la placa.
@@ -81,8 +81,8 @@ module gpu_bench_video_tb;
 
     initial begin
         for(i=0;i<256;i=i+1) program_words[i]=32'h0;
-        // examples/bench.bin, ensamblado con 1.isa/mini_asm.py.
-        $readmemh("examples/bench.hex",program_words);
+        // generated/programs/bench.hex, ensamblado con 1.isa/mini_asm.py.
+        $readmemh("generated/programs/bench.hex",program_words);
 
         repeat(4) @(negedge clk); reset=0;
         @(negedge clk); gpu_reset=1;

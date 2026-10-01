@@ -12,7 +12,7 @@ Uso tipico -- medir un programa de punta a punta:
 Eso carga el programa, toma los contadores, lo ejecuta, los vuelve a tomar, y
 presenta la diferencia. Sin --program, solo muestra el estado actual.
 
-Los programas de examples/ se configuran el video ellos mismos, asi que aqui no
+Los programas de generated/programs/ se configuran el video ellos mismos, asi que aqui no
 se toca ningun registro de video: solo se carga y se arranca. La excepcion es
 plasma_nommio.asm, que no puede tocar el MMIO sin dejar de correr en el
 simulador funcional; si lo perfilas, el scanout se queda como estuviera. Eso

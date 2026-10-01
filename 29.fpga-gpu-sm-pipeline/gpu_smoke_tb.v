@@ -1,6 +1,6 @@
 `default_nettype none
 `timescale 1ns/1ps
-// Corre examples/smoke.bin en el sistema BL8 exactamente como lo hace
+// Ejecuta el smoke mínimo integrado en el propio banco.
 // run-board: reset de GPU (ocho warps llenos a PC=0), cargar el programa byte
 // a byte por el host, arrancar, y leer R1. Sin fixtures ni config words, que es
 // justo lo que hace la placa.

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Ensambla en `<prototipo>/examples/` los programas que sus bancos Verilog leen.
+"""Ensambla en `<prototipo>/generated/programs/` lo que leen los bancos Verilog.
 
 Los fuentes `.asm` viven una sola vez, bajo `x.tests/cases-cpu*/`. Los testbenches
-`.v`, en cambio, hacen `$readmemh("examples/plasma.hex")` con una ruta relativa
+`.v`, en cambio, hacen `$readmemh("generated/programs/plasma.hex")` con una ruta relativa
 a su carpeta; en vez de tocar cada banco, este paso deja ahí el `.bin`/`.hex`
-que piden. No hay lista que mantener: se leen las referencias `examples/<x>.bin`
-o `.hex` de los `.v` del prototipo y se busca `<x>.asm` bajo `x.tests`.
+que piden. No hay lista que mantener: se leen las llamadas a `$readmemh` de
+los `.v` del prototipo y se busca el `<x>.asm` correspondiente bajo `x.tests`.
 
-Lo que se genera no se versiona (`examples/*.bin` y `*.hex` en el `.gitignore`
-del prototipo).
+Lo generado no se versiona (`generated/` está en el `.gitignore` del prototipo).
 
     stage_programs.py --prototype 22
 """
@@ -22,9 +21,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "1.isa"), str(ROOT)]
 
-from mini_asm import assemble_bytes, write_hex  # noqa: E402
+from mini_asm import assemble_bytes, write_hex
 
-REFERENCIA = re.compile(r"""examples/([A-Za-z0-9_\-]+)\.(bin|hex)\b""")
+REFERENCIA = re.compile(
+    r"""\$readmemh\(\s*[\"']generated/programs/([A-Za-z0-9_\-]+)\.(hex)[\"']"""
+)
 FUENTES = ROOT / "x.tests"
 INCLUDES = (FUENTES / "inc",)
 
@@ -45,10 +46,13 @@ def buscar_fuente(nombre: str) -> Path | None:
 
 
 def pedidos(prototipo: Path) -> dict[str, set[str]]:
-    """Programas que los `.v` del prototipo leen de `examples/`, con sus extensiones."""
+    """Programas que los `.v` leen de `generated/programs/`."""
     resultado: dict[str, set[str]] = {}
     for banco in prototipo.glob("*.v"):
-        for nombre, extension in REFERENCIA.findall(banco.read_text(encoding="utf-8", errors="replace")):
+        texto = banco.read_text(encoding="utf-8", errors="replace")
+        texto = re.sub(r"/\*.*?\*/", "", texto, flags=re.DOTALL)
+        texto = re.sub(r"//.*", "", texto)
+        for nombre, extension in REFERENCIA.findall(texto):
             resultado.setdefault(nombre, set()).add(extension)
     return resultado
 
@@ -57,8 +61,8 @@ def stage(prototipo: Path) -> int:
     quiero = pedidos(prototipo)
     if not quiero:
         return 0
-    destino = prototipo / "examples"
-    destino.mkdir(exist_ok=True)
+    destino = prototipo / "generated" / "programs"
+    destino.mkdir(parents=True, exist_ok=True)
     faltan = []
     for nombre, extensiones in sorted(quiero.items()):
         fuente = buscar_fuente(nombre)
@@ -67,9 +71,9 @@ def stage(prototipo: Path) -> int:
             continue
         imagen = assemble_bytes(fuente.read_text(encoding="utf-8"), fuente.parent,
                                 str(fuente), INCLUDES)
-        (destino / f"{nombre}.bin").write_bytes(imagen)
-        write_hex(imagen, destino / f"{nombre}.hex")
-        print(f"  {fuente.relative_to(ROOT)} -> {destino.relative_to(ROOT)}/{nombre}.bin/.hex")
+        if "hex" in extensiones:
+            write_hex(imagen, destino / f"{nombre}.hex")
+        print(f"  {fuente.relative_to(ROOT)} -> {destino.relative_to(ROOT)}/{nombre}.hex")
     if faltan:
         print(f"error: sin fuente en x.tests: {', '.join(faltan)}", file=sys.stderr)
         return 1
@@ -77,7 +81,7 @@ def stage(prototipo: Path) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--prototype", required=True)
     args = parser.parse_args()
     from tools.prototype import resolve_prototype

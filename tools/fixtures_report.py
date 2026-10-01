@@ -8,7 +8,7 @@ Imprime una matriz con el número `NN` que cada caso tiene en cada prototipo (el
 de `fixtures/NN.*`) o `-` si ese prototipo lo omite, y debajo el motivo de cada
 omisión. Después comprueba tres cosas y sale con 1 si alguna falla:
 
-1. Un banco pide `examples/X.hex` y no hay `X.asm` en `x.tests`.
+1. Un banco pide `generated/programs/X.hex` y no hay `X.asm` en `x.tests`.
 2. Un caso marcado `rtl.differential` que ningún prototipo usa.
 3. Un programa que un banco pide por nombre y que ni un caso ni un README
    documentan: se ejecuta en la regresión pero nadie dice qué prueba.
@@ -62,7 +62,7 @@ def render_matrix(rows, numbers: list[str]) -> str:
 
 
 def bench_requests(prototype_dir: Path) -> dict[str, set[str]]:
-    """banco -> programas `examples/<x>` que pide, sin extension."""
+    """banco -> programas `generated/programs/<x>` que pide, sin extensión."""
     found = {}
     for bench in sorted(prototype_dir.glob('*.v')):
         names = {name for name, _ in stage_programs.REFERENCIA.findall(
@@ -103,9 +103,9 @@ def check(root: Path, rows, prototypes: list[Path]) -> list[str]:
                 source = _source_of(name)
                 where = f'{proto.name}/{bench}'
                 if source is None:
-                    problems.append(f'{where} pide examples/{name} y no hay {name}.asm en x.tests')
+                    problems.append(f'{where} pide generated/programs/{name}.hex y no hay {name}.asm en x.tests')
                 elif isinstance(source, str):
-                    problems.append(f'{where} pide examples/{name}: {source}')
+                    problems.append(f'{where} pide generated/programs/{name}.hex: {source}')
                 elif not documented(source):
                     problems.append(f'{where} usa {source.relative_to(root).as_posix()}, que ningún '
                                     f'caso ni README documenta')

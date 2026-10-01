@@ -131,7 +131,7 @@ module gpu_calib_tb;
 
     initial begin
         for(i=0;i<256;i=i+1) program_words[i]=32'h0;
-        $readmemh("examples/plasma_nommio.hex",program_words);
+        $readmemh("generated/programs/plasma_nommio.hex",program_words);
         repeat(4) @(negedge clk); reset=0;
         wait(halted); @(negedge clk);
 

@@ -1,4 +1,5 @@
 {
+    "python.analysis.extraPaths": ["1.isa"],
     "chat.tools.terminal.autoApprove": {
         "/^python x\\.tests\\\\run_tests\\.py --help$/": {
             "approve": true,

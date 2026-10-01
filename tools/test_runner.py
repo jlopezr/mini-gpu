@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     ran_something = False
     failures: list[str] = []
 
-    # Los bancos leen `examples/<x>.hex`; el fuente vive en x.tests. Sin esto, un
+    # Los bancos leen `generated/programs/<x>.hex`; el fuente vive en x.tests. Sin esto, un
     # clon limpio no tiene con que correr `gpu_plasma_tb` y compania.
     if not args.lint_only and stage_programs.stage(prototype_dir) != 0:
         failures.append("programas")

@@ -84,7 +84,8 @@ class ComprobacionesTest(unittest.TestCase):
         self.proto.mkdir()
 
     def banco(self, programa):
-        (self.proto / "x_tb.v").write_text(f'$readmemh("examples/{programa}.hex", m);\n', encoding="utf-8")
+        (self.proto / "x_tb.v").write_text(
+            f'$readmemh("generated/programs/{programa}.hex", m);\n', encoding="utf-8")
 
     def demo(self, nombre, readme=None, test_json=None):
         d = self.fuentes / "cases-gpu" / "demos" / nombre
@@ -102,7 +103,20 @@ class ComprobacionesTest(unittest.TestCase):
     def test_programa_inexistente(self):
         self.banco("fantasma")
         (problema,) = self.problemas()
-        self.assertIn("pide examples/fantasma y no hay fantasma.asm", problema)
+        self.assertIn("pide generated/programs/fantasma.hex y no hay fantasma.asm", problema)
+
+    def test_una_ruta_mencionada_solo_en_un_comentario_no_se_prepara(self):
+        (self.proto / "x_tb.v").write_text(
+            '// antes: $readmemh("generated/programs/antiguo.hex", m);\n', encoding="utf-8")
+        self.assertEqual(stage_programs.pedidos(self.proto), {})
+
+    def test_stage_genera_solo_el_hex_que_lee_el_banco(self):
+        self.demo("plasma")
+        self.banco("plasma")
+        self.assertEqual(stage_programs.stage(self.proto), 0)
+        destino = self.proto / "generated" / "programs"
+        self.assertTrue((destino / "plasma.hex").is_file())
+        self.assertFalse((destino / "plasma.bin").exists())
 
     def test_programa_sin_caso_ni_readme(self):
         self.demo("huerfano")
