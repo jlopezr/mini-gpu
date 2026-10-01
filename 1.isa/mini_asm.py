@@ -1292,7 +1292,17 @@ def load_program_bytes(path) -> bytes:
 # Output
 # ---------------------------------------------------------------------------
 
+def default_output(source: Path) -> Path:
+    """Donde va el .bin si no se da `-o`: `_build/` al lado del fuente.
+
+    Antes era `<fuente>.bin` en la propia carpeta del caso, donde nada lo
+    distinguia de un fichero de entrada (`.incbin`, `expected.bin`) y las
+    carpetas acababan con binarios huerfanos."""
+    return source.parent / "_build" / source.with_suffix(".bin").name
+
+
 def write_binary(image: bytes, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         f.write(image)
 
@@ -1348,7 +1358,10 @@ def format_listing(source: str, base_dir: Path | None = None,
 def main() -> None:
     parser = argparse.ArgumentParser(description="MiniISA assembler v0.1")
     parser.add_argument("input", type=Path, help="fichero .asm")
-    parser.add_argument("-o", "--output", type=Path, help="salida .bin")
+    parser.add_argument("-o", "--output", type=Path,
+                        help="salida .bin (por defecto _build/<nombre>.bin junto "
+                             "al fuente: carpeta ignorada por git, para que el "
+                             "binario regenerable no se confunda con una entrada)")
     parser.add_argument("--hex", dest="hex_output", type=Path, help="salida hexadecimal textual")
     parser.add_argument("-I", "--include-dir", type=Path, action="append", default=[],
                         metavar="CARPETA",
@@ -1369,7 +1382,7 @@ def main() -> None:
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 
-    output = args.output or args.input.with_suffix(".bin")
+    output = args.output or default_output(args.input)
     write_binary(image, output)
 
     if args.hex_output:

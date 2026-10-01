@@ -1,3 +1,9 @@
 **/*.bin
+# Frames de referencia GRABADOS con record_case.py (no hay generador
+# independiente): son la fuente de verdad del caso, así que se versionan. Los
+# que sí tienen reference.py se regeneran solos al faltar (ver run_tests.py).
+!cases-cpu/demos/cube-solid/expected/frame.bin
+!cases-cpu/demos/subword-demo/expected/frame.bin
+!cases-gpu/demos/plasma/expected/frame.bin
 **/medidas.md
 generated/

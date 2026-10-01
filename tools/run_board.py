@@ -60,7 +60,9 @@ def run_monitor_cli(prototype_dir: Path, port: str, *args: str) -> str:
 
 
 def assemble(root: Path, source: Path, verbose: bool) -> Path:
-    binary = source.with_suffix(".bin")
+    # `_build/` junto al fuente, igual que el valor por defecto de mini_asm.py:
+    # el binario se regenera siempre y no debe parecer una entrada del caso.
+    binary = source.parent / "_build" / source.with_suffix(".bin").name
     # `-I x.tests/inc` da acceso a la biblioteca de `.include` compartida. La
     # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
     # un trozo local con el mismo nombre sigue ganando.

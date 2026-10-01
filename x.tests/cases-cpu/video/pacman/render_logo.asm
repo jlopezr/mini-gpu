@@ -32,4 +32,4 @@ forever:
 .rodata
 
 image:
-    .incbin "minigpu-small.bin"
+    .incbin "../../../../1.isa/minigpu-small.bin"

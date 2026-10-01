@@ -13,8 +13,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mini_asm import (AsmError, assemble, assemble_bytes, first_pass, format_listing,
-                      strip_comment)
+from mini_asm import (AsmError, assemble, assemble_bytes, default_output, first_pass,
+                      format_listing, strip_comment, write_binary)
+
+
+class DefaultOutputTest(unittest.TestCase):
+    def test_default_goes_to_build_next_to_source(self):
+        self.assertEqual(default_output(Path("caso/band.asm")),
+                         Path("caso/_build/band.bin"))
+
+    def test_write_binary_creates_missing_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = Path(tmp, "_build", "p.bin")
+            write_binary(b"\x01\x02\x03\x04", destino)
+            self.assertEqual(destino.read_bytes(), b"\x01\x02\x03\x04")
 
 
 class StripCommentTest(unittest.TestCase):

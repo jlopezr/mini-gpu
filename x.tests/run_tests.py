@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import struct
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -220,8 +221,42 @@ def load_program(path: Path) -> bytes:
     return data
 
 
+# Scripts que escriben los ficheros esperados de un caso. Los `*.bin` están
+# ignorados por git (x.tests/.gitignore), así que en un clon limpio faltan los
+# esperados que se calculan en vez de grabarse: se generan al vuelo.
+DATA_GENERATORS = ("reference.py", "make_expected.py")
+
+
+def generate_missing_data_file(path: Path) -> None:
+    """Si `path` no existe, ejecuta el generador del caso que lo produce.
+
+    El generador está junto al fichero o una carpeta más arriba (`expected/`).
+    Solo se llama cuando el fichero falta, de modo que no altera casos que ya
+    funcionan; si no hay generador o no deja el fichero, `load_data_file`
+    falla con el error de siempre."""
+    for folder in (path.parent, path.parent.parent):
+        for name in DATA_GENERATORS:
+            script = folder / name
+            if not script.is_file():
+                continue
+            print(f"  generando {path.name}: {script.parent.name}/{script.name}")
+            completed = subprocess.run(
+                [sys.executable, str(script)], cwd=folder,
+                capture_output=True, text=True,
+            )
+            if completed.returncode != 0:
+                raise ValueError(
+                    f"{script.name} falló al generar {path.name}:\n"
+                    f"{completed.stdout}{completed.stderr}"
+                )
+            if path.exists():
+                return
+
+
 def load_data_file(path: Path) -> bytes:
     """Load raw bytes, or little-endian 32-bit words from a textual .hex file."""
+    if not path.exists():
+        generate_missing_data_file(path)
     if path.suffix.lower() != ".hex":
         return path.read_bytes()
     words = [
