@@ -140,6 +140,17 @@ def run_rtl_parallel(apio: str, prototype_dir: Path, benches: list[Path], jobs: 
     return failures
 
 
+def fixtures_step(prototype_dir: Path) -> list[str] | None:
+    """Comando que deja `fixtures/` al día, o None si el prototipo no las usa."""
+    from tools import make_rtl_fixtures
+
+    if make_rtl_fixtures.consumes_fixtures(prototype_dir):
+        return [sys.executable, str(ROOT / "tools" / "make_rtl_fixtures.py"),
+                "--prototype", str(prototype_dir)]
+    own = prototype_dir / "make_fixtures.py"
+    return [sys.executable, str(own)] if own.exists() else None
+
+
 def run_step(name: str, command: list[str], cwd: Path) -> int:
     print(f"== {name}", flush=True)
     print(f"$ {' '.join(command)}", flush=True)
@@ -185,10 +196,13 @@ def main(argv: list[str] | None = None) -> int:
         failures.append("programas")
         return _summarize(failures)
 
-    fixtures_script = prototype_dir / "make_fixtures.py"
-    if fixtures_script.exists() and not args.lint_only:
+    # Los bancos diferenciales de GPU leen `fixtures/` (ignorada por git): se
+    # regeneran con el generador compartido. `make_fixtures.py` propio queda como
+    # alternativa para un prototipo que necesite el suyo.
+    fixtures_command = fixtures_step(prototype_dir)
+    if fixtures_command is not None and not args.lint_only:
         ran_something = True
-        if run_step("fixtures", [sys.executable, str(fixtures_script)], prototype_dir) != 0:
+        if run_step("fixtures", fixtures_command, prototype_dir) != 0:
             failures.append("fixtures")
             return _summarize(failures)
 

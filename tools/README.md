@@ -687,7 +687,7 @@ cualquier build `running`, y el último `success` — nunca borra sin `--yes`.
 
 Igual que `build`: común a cualquier prototipo, sin copiar nada a su carpeta.
 Cada paso se salta con claridad si no aplica — no todos los prototipos tienen
-`make_fixtures.py`, `test_*.py` propios o `apio.ini`:
+fixtures, `test_*.py` propios o `apio.ini`:
 
 ```bash
 $ test --prototype 21
@@ -704,7 +704,9 @@ $ test --prototype 22 --full          # incluye los bancos lentos (alias: --slow
 $ test --prototype 17 --background    # se sigue con build-status/build-log, igual que build
 ```
 
-Orden de pasos: `make_fixtures.py` (si existe) → `test_*.py` propios por
+Orden de pasos: fixtures (si algún banco del prototipo incluye `fixtures/count.vh`,
+las genera `tools/make_rtl_fixtures.py --prototype N`; si no, el `make_fixtures.py`
+propio, si existe) → `test_*.py` propios por
 `unittest discover` (si hay alguno) → `apio test` (regresión RTL contra los
 testbenches del `apio.ini`, salvo `--quick`) → `apio lint` (solo con
 `--lint`). Un prototipo sin nada de eso —`test_*.py` ni `apio.ini`— avisa y
