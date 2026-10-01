@@ -37,10 +37,10 @@
     Muestra esta ayuda (tambien con -h, --help o sin argumentos).
 
 .EXAMPLE
-    .\tools\module-diagram.ps1 29.gpu-sm-pipeline\gpu_aux_adapter_128.v
+    .\tools\module-diagram.ps1 29.fpga-gpu-sm-pipeline\gpu_aux_adapter_128.v
 
 .EXAMPLE
-    .\tools\module-diagram.ps1 29.gpu-sm-pipeline\gpu_system_bl8.v -Inside
+    .\tools\module-diagram.ps1 29.fpga-gpu-sm-pipeline\gpu_system_bl8.v -Inside
 #>
 
 param(

@@ -5,7 +5,7 @@
 // `sysid.v`, que es byte a byte identico en las diez carpetas; aqui
 // solo estan los numeros, que si son de cada una.
 //
-// Prototipo: 29.gpu-sm-pipeline
+// Prototipo: 29.fpga-gpu-sm-pipeline
 
 // La guarda no es adorno: la 22 tiene DOS sistemas --`gpu_system.v` y
 // `gpu_system_bl8.v`-- y los dos se compilan juntos, asi que los dos

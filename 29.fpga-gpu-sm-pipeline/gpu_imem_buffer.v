@@ -35,7 +35,7 @@
 // INVARIANTE del que depende esto: el SM no puede tener dos busquedas en
 // vuelo (F es un unico registro que no reemite hasta consumir la respuesta
 // de la anterior), asi que `imem_ready` sigue pudiendo ser constante. Lo que
-// SI cambio al segmentar el cauce del SM (29.gpu-sm-pipeline): I puede
+// SI cambio al segmentar el cauce del SM (29.fpga-gpu-sm-pipeline): I puede
 // retener una respuesta ya servida mientras espera a que D se libere, asi
 // que el pulso de un ciclo de `buf_ready` ya no basta -- se retiene mas
 // abajo hasta que `imem_rsp_ready` lo consume.
