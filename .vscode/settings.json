@@ -1,5 +1,6 @@
 {
     "python.analysis.extraPaths": ["1.isa"],
+    "markdownlint.ignore": ["y.lcc/src/**"],
     "chat.tools.terminal.autoApprove": {
         "/^python x\\.tests\\\\run_tests\\.py --help$/": {
             "approve": true,
