@@ -1,0 +1,52 @@
+{
+  "warps": [
+    {
+      "id": 0,
+      "pc": 0,
+      "active_mask": 255,
+      "workgroup_id": 0
+    },
+    {
+      "id": 1,
+      "pc": 0,
+      "active_mask": 85,
+      "workgroup_id": 0
+    },
+    {
+      "id": 2,
+      "pc": 0,
+      "active_mask": 255,
+      "workgroup_id": 0
+    },
+    {
+      "id": 3,
+      "pc": 0,
+      "active_mask": 85,
+      "workgroup_id": 0
+    },
+    {
+      "id": 4,
+      "pc": 16,
+      "active_mask": 255,
+      "workgroup_id": 1
+    },
+    {
+      "id": 5,
+      "pc": 16,
+      "active_mask": 85,
+      "workgroup_id": 1
+    },
+    {
+      "id": 6,
+      "pc": 16,
+      "active_mask": 255,
+      "workgroup_id": 1
+    },
+    {
+      "id": 7,
+      "pc": 16,
+      "active_mask": 85,
+      "workgroup_id": 1
+    }
+  ]
+}

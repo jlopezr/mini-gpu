@@ -1,0 +1,164 @@
+{
+  "architecture": "gpu",
+  "name": "ssy-sequential-regions",
+  "rtl": {
+    "differential": true
+  },
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "instructions_executed": 88,
+    "warps": {
+      "0": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "1": {
+            "R3": 21
+          },
+          "2": {
+            "R3": 21
+          },
+          "3": {
+            "R3": 21
+          },
+          "4": {
+            "R3": 11
+          },
+          "5": {
+            "R3": 11
+          },
+          "6": {
+            "R3": 11
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "1": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "2": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "3": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "4": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "5": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "6": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      },
+      "7": {
+        "pc": 44,
+        "active_mask": 0,
+        "instructions_executed": 11,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 21
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 11
+          }
+        }
+      }
+    }
+  }
+}

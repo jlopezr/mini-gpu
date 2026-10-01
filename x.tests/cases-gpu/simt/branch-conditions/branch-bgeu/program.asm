@@ -1,0 +1,12 @@
+; BGEU: salta si Ra >= Rb sin signo. R1 = tid - 4 es "negativo" (enorme) para tid < 4.
+GETTID R1
+ANDI R1, R1, 7
+ADDI R1, R1, -4
+SSY join
+BGEU R1, R0, taken
+MOVI R3, 3
+BRA join
+taken:
+MOVI R3, 7
+join:
+HALT

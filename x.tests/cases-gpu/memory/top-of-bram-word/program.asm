@@ -1,0 +1,8 @@
+; Escritura y lectura en 0x1FFFC, la última palabra de 128 KiB.
+MOVHI R1, 1
+ORI R1, R1, 0xfffc
+MOVI R2, 77
+STORE R2, R1, 0
+BAR
+LOAD R3, R1, 0
+HALT

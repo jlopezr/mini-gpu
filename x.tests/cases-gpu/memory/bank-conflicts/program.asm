@@ -1,0 +1,10 @@
+; Stride de 32 bytes: cada hilo cae en un banco distinto de los otros de su warp.
+GETTID R1
+MOVI R2, 32
+MUL R3, R1, R2
+ADDI R3, R3, 4096
+ADDI R4, R1, 123
+STORE R4, R3, 0
+LOAD R5, R3, 0
+BAR
+EXIT

@@ -1,0 +1,13 @@
+; Lo que un hilo escribe antes de BAR lo ve el hilo opuesto (tid ^ 63) después.
+GETTID R1
+MOVI R2, 4
+MUL R3, R1, R2
+ADDI R3, R3, 4096
+STORE R1, R3, 0
+BAR
+XORI R4, R1, 63
+MUL R4, R4, R2
+ADDI R4, R4, 4096
+LOAD R5, R4, 0
+BAR
+HALT

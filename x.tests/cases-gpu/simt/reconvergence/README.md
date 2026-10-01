@@ -12,3 +12,4 @@ todas las lanes vuelven a juntarse en el join.
 | [ssy-fallthrough-is-join](ssy-fallthrough-is-join/) | `PC+4 == join`: se aparca sin reservar `PATH` |
 | [branch-target-next-pc](branch-target-next-pc/) | Destino tomado `== PC+4`: no hay divergencia |
 | [simt-reached-join](simt-reached-join/) | El join cierra la REGION en cada vuelta |
+| [branch-next-pc-no-ssy](branch-next-pc-no-ssy/) | Salto al PC siguiente **sin** `SSY` |

@@ -11,3 +11,4 @@ parte del simulador con más reglas propias.
 | [exit](exit/) | Lanes que mueren con estado SIMT abierto |
 | [capacity](capacity/) | Límites de las pilas REGION y PATH |
 | [barriers](barriers/) | Interacción de `BAR` con la divergencia |
+| [branch-conditions](branch-conditions/) | Las seis condiciones de salto bajo un `SSY` |

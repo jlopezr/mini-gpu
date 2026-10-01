@@ -1,0 +1,160 @@
+{
+  "architecture": "gpu",
+  "name": "top-of-bram-word",
+  "rtl": {
+    "differential": true
+  },
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "memory_dumps": [
+      {
+        "address": 131068,
+        "file": "expected/memory_1fffc.hex"
+      }
+    ],
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "instructions_executed": 56,
+    "warps": {
+      "0": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "1": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "2": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "3": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "4": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "5": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "6": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      },
+      "7": {
+        "pc": 28,
+        "active_mask": 0,
+        "instructions_executed": 7,
+        "registers": {
+          "0": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          },
+          "7": {
+            "R1": 131068,
+            "R2": 77,
+            "R3": 77
+          }
+        }
+      }
+    }
+  }
+}

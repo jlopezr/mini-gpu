@@ -1,0 +1,191 @@
+{
+  "architecture": "gpu",
+  "name": "bank-conflicts",
+  "rtl": {
+    "differential": true
+  },
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "memory_dumps": [
+      {
+        "address": 4096,
+        "file": "expected/memory_1000.hex"
+      }
+    ],
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "instructions_executed": 72,
+    "warps": {
+      "0": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R2": 32,
+            "R3": 4096,
+            "R4": 123,
+            "R5": 123
+          },
+          "7": {
+            "R1": 7,
+            "R2": 32,
+            "R3": 4320,
+            "R4": 130,
+            "R5": 130
+          }
+        }
+      },
+      "1": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 8,
+            "R2": 32,
+            "R3": 4352,
+            "R4": 131,
+            "R5": 131
+          },
+          "7": {
+            "R1": 15,
+            "R2": 32,
+            "R3": 4576,
+            "R4": 138,
+            "R5": 138
+          }
+        }
+      },
+      "2": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 16,
+            "R2": 32,
+            "R3": 4608,
+            "R4": 139,
+            "R5": 139
+          },
+          "7": {
+            "R1": 23,
+            "R2": 32,
+            "R3": 4832,
+            "R4": 146,
+            "R5": 146
+          }
+        }
+      },
+      "3": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 24,
+            "R2": 32,
+            "R3": 4864,
+            "R4": 147,
+            "R5": 147
+          },
+          "7": {
+            "R1": 31,
+            "R2": 32,
+            "R3": 5088,
+            "R4": 154,
+            "R5": 154
+          }
+        }
+      },
+      "4": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 32,
+            "R2": 32,
+            "R3": 5120,
+            "R4": 155,
+            "R5": 155
+          },
+          "7": {
+            "R1": 39,
+            "R2": 32,
+            "R3": 5344,
+            "R4": 162,
+            "R5": 162
+          }
+        }
+      },
+      "5": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 40,
+            "R2": 32,
+            "R3": 5376,
+            "R4": 163,
+            "R5": 163
+          },
+          "7": {
+            "R1": 47,
+            "R2": 32,
+            "R3": 5600,
+            "R4": 170,
+            "R5": 170
+          }
+        }
+      },
+      "6": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 48,
+            "R2": 32,
+            "R3": 5632,
+            "R4": 171,
+            "R5": 171
+          },
+          "7": {
+            "R1": 55,
+            "R2": 32,
+            "R3": 5856,
+            "R4": 178,
+            "R5": 178
+          }
+        }
+      },
+      "7": {
+        "pc": 36,
+        "active_mask": 0,
+        "instructions_executed": 9,
+        "registers": {
+          "0": {
+            "R1": 56,
+            "R2": 32,
+            "R3": 5888,
+            "R4": 179,
+            "R5": 179
+          },
+          "7": {
+            "R1": 63,
+            "R2": 32,
+            "R3": 6112,
+            "R4": 186,
+            "R5": 186
+          }
+        }
+      }
+    }
+  }
+}

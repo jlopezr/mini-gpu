@@ -1,0 +1,138 @@
+{
+  "architecture": "gpu",
+  "name": "workgroup-barrier-isolation",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "warps": {
+      "0": {
+        "pc": 20,
+        "active_mask": 0,
+        "instructions_executed": 5,
+        "registers": {
+          "0": {
+            "R3": 7,
+            "R5": 4096
+          },
+          "7": {
+            "R3": 7,
+            "R5": 4096
+          }
+        }
+      },
+      "1": {
+        "pc": 20,
+        "active_mask": 0,
+        "instructions_executed": 5,
+        "registers": {
+          "0": {
+            "R3": 7,
+            "R5": 4096
+          },
+          "7": {
+            "R3": 7,
+            "R5": 4096
+          }
+        }
+      },
+      "2": {
+        "pc": 20,
+        "active_mask": 0,
+        "instructions_executed": 5,
+        "registers": {
+          "0": {
+            "R3": 7,
+            "R5": 4096
+          },
+          "7": {
+            "R3": 7,
+            "R5": 4096
+          }
+        }
+      },
+      "3": {
+        "pc": 20,
+        "active_mask": 0,
+        "instructions_executed": 5,
+        "registers": {
+          "0": {
+            "R3": 7,
+            "R5": 4096
+          },
+          "7": {
+            "R3": 7,
+            "R5": 4096
+          }
+        }
+      },
+      "4": {
+        "pc": 44,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          },
+          "7": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          }
+        }
+      },
+      "5": {
+        "pc": 44,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          },
+          "7": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          }
+        }
+      },
+      "6": {
+        "pc": 44,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          },
+          "7": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          }
+        }
+      },
+      "7": {
+        "pc": 44,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          },
+          "7": {
+            "R4": 9,
+            "R5": 4096,
+            "R6": 7
+          }
+        }
+      }
+    }
+  }
+}

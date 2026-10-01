@@ -10,6 +10,9 @@ de empujar otra. Es la regla que permite poner un `SSY` dentro de un bucle.
 | [ssy-reuse-with-pending-path](ssy-reuse-with-pending-path/) | La reutilización no pierde un `PATH` pendiente |
 | [ssy-same-join-different-pc](ssy-same-join-different-pc/) | Mismo join pero otro PC: no es reutilización |
 | [simt-unused-ssy-loop](simt-unused-ssy-loop/) | Reejecución sin divergencia alguna |
+| [ssy-loop-tid-trip-count](ssy-loop-tid-trip-count/) | Bucle con `SSY` y un número de vueltas por lane |
+| [ssy-reuse-accumulating-paths](ssy-reuse-accumulating-paths/) | Reutilización de la REGION mientras la pila de PATH se llena |
+| [ssy-sequential-regions](ssy-sequential-regions/) | Dos REGION seguidas |
 
 `ssy-region-full-reuse`, en [capacity](../capacity/), prueba la misma regla con
 la pila deliberadamente llena.

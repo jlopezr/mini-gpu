@@ -1,0 +1,190 @@
+{
+  "architecture": "gpu",
+  "name": "barrier-visibility",
+  "rtl": {
+    "differential": true
+  },
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 1000,
+  "expect": {
+    "memory_dumps": [
+      {
+        "address": 4096,
+        "file": "expected/memory_1000.hex"
+      }
+    ],
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "instructions_executed": 96,
+    "warps": {
+      "0": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R2": 4,
+            "R3": 4096,
+            "R4": 4348,
+            "R5": 63
+          },
+          "7": {
+            "R1": 7,
+            "R2": 4,
+            "R3": 4124,
+            "R4": 4320,
+            "R5": 56
+          }
+        }
+      },
+      "1": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 8,
+            "R2": 4,
+            "R3": 4128,
+            "R4": 4316,
+            "R5": 55
+          },
+          "7": {
+            "R1": 15,
+            "R2": 4,
+            "R3": 4156,
+            "R4": 4288,
+            "R5": 48
+          }
+        }
+      },
+      "2": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 16,
+            "R2": 4,
+            "R3": 4160,
+            "R4": 4284,
+            "R5": 47
+          },
+          "7": {
+            "R1": 23,
+            "R2": 4,
+            "R3": 4188,
+            "R4": 4256,
+            "R5": 40
+          }
+        }
+      },
+      "3": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 24,
+            "R2": 4,
+            "R3": 4192,
+            "R4": 4252,
+            "R5": 39
+          },
+          "7": {
+            "R1": 31,
+            "R2": 4,
+            "R3": 4220,
+            "R4": 4224,
+            "R5": 32
+          }
+        }
+      },
+      "4": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 32,
+            "R2": 4,
+            "R3": 4224,
+            "R4": 4220,
+            "R5": 31
+          },
+          "7": {
+            "R1": 39,
+            "R2": 4,
+            "R3": 4252,
+            "R4": 4192,
+            "R5": 24
+          }
+        }
+      },
+      "5": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 40,
+            "R2": 4,
+            "R3": 4256,
+            "R4": 4188,
+            "R5": 23
+          },
+          "7": {
+            "R1": 47,
+            "R2": 4,
+            "R3": 4284,
+            "R4": 4160,
+            "R5": 16
+          }
+        }
+      },
+      "6": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 48,
+            "R2": 4,
+            "R3": 4288,
+            "R4": 4156,
+            "R5": 15
+          },
+          "7": {
+            "R1": 55,
+            "R2": 4,
+            "R3": 4316,
+            "R4": 4128,
+            "R5": 8
+          }
+        }
+      },
+      "7": {
+        "pc": 48,
+        "active_mask": 0,
+        "instructions_executed": 12,
+        "registers": {
+          "0": {
+            "R1": 56,
+            "R2": 4,
+            "R3": 4320,
+            "R4": 4124,
+            "R5": 7
+          },
+          "7": {
+            "R1": 63,
+            "R2": 4,
+            "R3": 4348,
+            "R4": 4096
+          }
+        }
+      }
+    }
+  }
+}
