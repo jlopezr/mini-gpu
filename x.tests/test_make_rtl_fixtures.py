@@ -167,10 +167,10 @@ class ListaDeCasosTest(unittest.TestCase):
         """Los programas con azar usan semilla fija: dos lecturas, mismo texto."""
         self.assertEqual(gen.all_cases(), gen.all_cases())
 
-    def test_los_casos_de_x_tests_van_antes_que_los_pendientes(self):
+    def test_todos_los_casos_proceden_de_x_tests_en_orden(self):
         nombres = [c.name for c in gen.all_cases()]
         marcados = [c.name for c in gen.load_marked_cases()]
-        self.assertEqual(nombres[:len(marcados)], marcados)
+        self.assertEqual(nombres, marcados)
         self.assertEqual(marcados, sorted(marcados))
 
     def test_todos_los_casos_del_repo_se_generan(self):

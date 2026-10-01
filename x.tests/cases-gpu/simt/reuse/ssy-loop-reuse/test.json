@@ -3,6 +3,7 @@
   "name": "ssy-loop-reuse",
   "program": "program.asm",
   "warp_config": "warps.json",
+  "rtl": {"differential": true, "warp_config": "../../../rtl-8-warps.json"},
   "max_instructions": 1000,
   "expect": {
     "halted": true,

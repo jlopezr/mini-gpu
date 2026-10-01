@@ -3,6 +3,7 @@
   "name": "ssy-nested-path-base",
   "program": "program.asm",
   "warp_config": "warps.json",
+  "rtl": {"differential": true, "warp_config": "../../../rtl-8-warps.json"},
   "max_instructions": 150,
   "expect": {
     "halted": true,

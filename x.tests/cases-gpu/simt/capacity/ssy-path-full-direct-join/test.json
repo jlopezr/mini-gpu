@@ -3,6 +3,7 @@
   "name": "ssy-path-full-direct-join",
   "program": "program.asm",
   "warp_config": "warps.json",
+  "rtl": {"differential": true, "warp_config": "../../../rtl-8-warps.json"},
   "max_instructions": 100,
   "simulator_options": {
     "simt_path_depth": 2
