@@ -705,8 +705,9 @@ $ test --prototype 17 --background    # se sigue con build-status/build-log, igu
 ```
 
 Orden de pasos: fixtures (si algún banco del prototipo incluye `fixtures/count.vh`,
-las genera `tools/make_rtl_fixtures.py --prototype N`; si no, el `make_fixtures.py`
-propio, si existe) → `test_*.py` propios por
+las genera `tools/make_rtl_fixtures.py --prototype N`, ver
+[Fixtures diferenciales de RTL](#fixtures-diferenciales-de-rtl-make_rtl_fixtures-y-fixtures-report);
+si no, el `make_fixtures.py` propio, si existe) → `test_*.py` propios por
 `unittest discover` (si hay alguno) → `apio test` (regresión RTL contra los
 testbenches del `apio.ini`, salvo `--quick`) → `apio lint` (solo con
 `--lint`). Un prototipo sin nada de eso —`test_*.py` ni `apio.ini`— avisa y
@@ -768,6 +769,54 @@ OK
 
 `lint` es `test --lint-only`: nunca toca fixtures, tests Python ni la
 regresión RTL, aunque el prototipo los tenga.
+
+## Fixtures diferenciales de RTL (`make_rtl_fixtures` y `fixtures-report`)
+
+`gpu_system_tb.v` (y `gpu_system_bl8_tb.v` en 22 y 29) compara el estado completo del RTL con el del
+simulador funcional, programa a programa. Lo que lee está en `<prototipo>/fixtures/` (`NN.program.hex`,
+`NN.regs.hex`, `NN.memory.hex`, `NN.config.hex`, `NN.counts.hex`, `NN.state.hex`, `manifest.json` y
+`count.vh`). **No se versiona**: lo genera un único script para los cinco prototipos de GPU (12, 14, 17,
+22 y 29), a partir de los casos de `x.tests/cases-gpu`.
+
+```bash
+python tools/make_rtl_fixtures.py --prototype 22        # escribe 22.fpga-gpu-bl8/fixtures/
+python tools/make_rtl_fixtures.py -p 12 --out /tmp/f    # a otro sitio, para comparar
+```
+
+`test --prototype N` ya lo ejecuta como primer paso (un prototipo cuyo banco incluye `fixtures/count.vh`
+lo usa; si no, su `make_fixtures.py` propio, si lo tiene), así que a mano solo hace falta para el banco
+suelto: `apio test -p 22.fpga-gpu-bl8 gpu_system_tb.v` necesita las fixtures ya generadas.
+
+Qué casos entran y por qué lo decide el propio caso, en su `test.json`
+(ver [x.tests/README.md](../x.tests/README.md#casos-para-el-diferencial-de-rtl)). Un caso entra en un
+prototipo solo si todo su `requires` está entre las capacidades que `rtl_facts` lee de su RTL; los
+casos van por ruta ordenada, así que el `NN` de un caso puede ser distinto en cada prototipo.
+
+`fixtures-report` dice cuál es cuál:
+
+```
+$ fixtures-report
+caso                                       12   14   17   22   29
+alu/random-arithmetic                      01   01   01   01   01
+...
+Omisiones:
+  <caso> en 12: falta video
+
+Sin problemas.
+
+$ fixtures-report --prototype 22     # una sola columna
+```
+
+La matriz lleva el `NN` de cada caso o `-` si el prototipo lo omite, con el motivo debajo. Después
+comprueba tres cosas y sale con 1 si alguna falla:
+
+1. un banco pide `examples/X.hex` y no hay `X.asm` en `x.tests` (el banco no tendría programa);
+2. un caso marcado `rtl.differential` que ningún prototipo usa (marca que no hace nada);
+3. un programa que un banco pide por nombre y que ni un caso (que lo ejecute) ni un README de su
+   carpeta documentan: corre en la regresión sin que nadie diga qué prueba.
+
+Los bancos que piden su programa por nombre (`gpu_smoke_tb`, `gpu_plasma_tb`, `gpu_bench_tb`...) no
+usan `fixtures/`: los resuelve `stage_programs.py` desde `x.tests`, y `fixtures-report` solo los vigila.
 
 ## Barrido de semillas de placement (`build-sweep`)
 

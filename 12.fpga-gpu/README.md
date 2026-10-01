@@ -229,7 +229,8 @@ para ello usar `configure`, que valida el JSON antes de escribir.
 `Tests` regenera las referencias con el simulador funcional y ejecuta Apio.
 Los testbenches tienen watchdog y `$fatal` ante discrepancias:
 
-- `gpu_system_tb.v`: 32 programas diferenciales, todos los 2048 registros,
+- `gpu_system_tb.v`: 34 programas diferenciales (los casos de `x.tests/cases-gpu` marcados
+  `rtl.differential`, ver `fixtures-report`), todos los 2048 registros,
   PC finales y 512 palabras de datos por caso. Incluye memoria unificada y código
   modificado tras BAR, límites de RAM, conflictos, aritmética y SIMT.
 - `gpu_lsu_tb.v`: ocho slots llenos, colisiones, errores de dirección, ocho

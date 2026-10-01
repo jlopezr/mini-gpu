@@ -113,7 +113,7 @@ class GpuFpgaTest(unittest.TestCase):
                 skipped[case['name']] = reason
             else:
                 accepted.append(case['name'])
-        self.assertEqual(len(accepted), 33)
+        self.assertEqual(len(accepted), 58)
         self.assertEqual(len(skipped), 12)
         # Pinta 320x240 en 0x01000000: fuera de la memoria de la versión por
         # defecto (BRAM), pero dentro de la de las tres GPU con SDRAM.

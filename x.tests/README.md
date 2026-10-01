@@ -588,6 +588,37 @@ del warp y `address: null` un fallo sin dirección de acceso, como DIV o TRAP.
 estos detalles. Solo está disponible para casos GPU. Un campo ausente en el
 resultado del backend nunca equivale a un `null` esperado.
 
+## Casos para el diferencial de RTL
+
+Los bancos `gpu_system_tb.v` / `gpu_system_bl8_tb.v` comparan el RTL con el simulador funcional. Sus
+programas son casos de `cases-gpu` como cualquier otro, marcados en el `test.json`:
+
+```json
+"rtl": { "differential": true, "warp_config": "../../rtl-8-warps.json", "exclude": ["12"] }
+```
+
+- `differential`: el caso entra en las fixtures de RTL (`tools/make_rtl_fixtures.py`).
+- `warp_config` (opcional): lanzamiento que usa el RTL, relativo al caso. El banco lanza **8 warps** y hay
+  casos cuyo `warps.json` lanza 1 o 2 (`demos/vector`, `demos/simt`): sin esto el RTL perdería la
+  cobertura multi-warp. `cases-gpu/rtl-8-warps.json` es el lanzamiento de 8 warps, todos en `pc = 0`.
+- `exclude` (opcional): números de prototipo que no lo ejecutan. Solo para lo que `requires` no sepa
+  decir; ahora no lo usa ningún caso.
+
+La aplicabilidad por prototipo la da `requires`: un caso con `["mul_div"]` solo entra en los prototipos
+cuyo RTL lo tiene. Una clave `rtl` desconocida es un error, no se ignora.
+
+Qué sí y qué no marcar:
+
+- Sí: programas deterministas que terminan con `HALT`/`EXIT` sin error y con contadores de instrucciones
+  fijos, para los que el simulador es la referencia.
+- No: casos con fallo esperado (`r0-load-still-faults`: el banco exige que el simulador no termine con
+  error) ni con bucles de espera cuyo número de vueltas depende del planificador
+  (`workgroup-barrier-isolation`: el diferencial compara contadores exactos).
+- Un caso que necesite un modelo de referencia lo lleva en `reference.py`.
+
+`fixtures-report` (ver [tools/README.md](../tools/README.md#fixtures-diferenciales-de-rtl-make_rtl_fixtures-y-fixtures-report))
+muestra qué caso corre en qué prototipo y por qué se omite el que falte.
+
 ## Arquitectura y compatibilidad
 
 Todos los casos declaran explícitamente `"architecture": "cpu"` o

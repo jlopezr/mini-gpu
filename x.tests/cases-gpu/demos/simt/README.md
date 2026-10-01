@@ -29,5 +29,6 @@ de reconvergencia los vuelve a juntar en el orden bueno.
 
 - Parada limpia sin error y los registros de cada warp (`warps.json`).
 - La versión de un solo nivel es [`simt-demo`](../simt-demo/).
+- Lleva `rtl.differential` con `warp_config` de 8 warps: `tools/make_rtl_fixtures.py` lo ejecuta así en el simulador funcional y `gpu_system_tb.v` compara con ello el estado completo del RTL. El caso, en cambio, se prueba con los 2 warps de `warps.json`.
 
 Contexto: [README de la categoría](../README.md).

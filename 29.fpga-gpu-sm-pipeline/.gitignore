@@ -6,3 +6,6 @@ __pycache__/
 
 # Generado por tools/stage_programs.py desde x.tests/cases-gpu/demos
 examples/
+
+# Generado por tools/make_rtl_fixtures.py desde los casos de x.tests/cases-gpu marcados rtl.differential
+fixtures/

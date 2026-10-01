@@ -24,7 +24,7 @@ Validación realizada el 11 de septiembre de 2026.
 Comandos ejecutados desde la raíz:
 
 ```powershell
-.venv/Scripts/python.exe 14.fpga-gpu-ram/make_fixtures.py
+.venv/Scripts/python.exe tools/make_rtl_fixtures.py --prototype 14   # antes: make_fixtures.py propio
 .venv/Scripts/python.exe -m unittest discover -s 14.fpga-gpu-ram -p test_*.py -v
 .venv/Scripts/apio.exe test -p 14.fpga-gpu-ram
 .venv/Scripts/apio.exe test -p 14.fpga-gpu-ram gpu_uart_tb.v

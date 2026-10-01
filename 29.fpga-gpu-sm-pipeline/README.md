@@ -38,7 +38,7 @@ iteración, no parte de esta.
 | `gpu_lsu2.v`, `gpu_register_file.v`, `gpu_lane.v` | Copiados tal cual de la 22, sin tocar |
 | `gpu_imem_buffer.v` | **Revisado y corregido**: el pulso de un ciclo de la respuesta se pierde si I está ocupada reteniendo la anterior (contrapresión I→F). Se retiene ahora en un registro hasta que `imem_rsp_ready` la consume |
 | `gpu_sm.v` — cauce S/F/I/D/X/W | **Reescrito.** Una instrucción en vuelo por warp, sin bypasses; `gpu_lane` reutilizada tal cual como X |
-| Suite completa (`.\tools\test.ps1 --prototype 29`) | **Pasa entera**: 32 casos diferenciales, MMIO, vídeo, LSU, regiones SIMT, barreras, UART físico, bench |
+| Suite completa (`.\tools\test.ps1 --prototype 29`) | **Pasa entera**: 34 casos diferenciales, MMIO, vídeo, LSU, regiones SIMT, barreras, UART físico, bench |
 
 Tres bugs de temporización reales encontrados y corregidos durante la implementación,
 todos por la misma causa raíz (un módulo compartido — el puerto de RF, el
@@ -66,7 +66,7 @@ cauce — sin bypass en ningún punto — más que por el trabajo real).
 
 ## Verificación
 
-1. Los 32 casos diferenciales de ISA (`gpu_system_bl8_tb.v`) son la red de
+1. Los 34 casos diferenciales de ISA (`gpu_system_bl8_tb.v`) son la red de
    seguridad obligatoria en cada paso.
 2. Comparar ciclos/instrucción contra la línea base de la 22
    (`profiling.md`: 17,57 ciclos/instr) usando los mismos contadores de

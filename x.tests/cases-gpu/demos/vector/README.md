@@ -21,5 +21,6 @@ propia palabra de memoria y lo vuelve a leer. Es el escalón siguiente a
 ## Qué comprueba el `test.json`
 
 - Parada limpia sin error y los registros finales de cada warp (`warps.json`).
+- Lleva `rtl.differential` con `warp_config` de 8 warps: `tools/make_rtl_fixtures.py` lo ejecuta así en el simulador funcional y `gpu_system_tb.v` compara con ello el estado completo del RTL. El caso, en cambio, se prueba con los 2 warps de `warps.json`.
 
 Contexto: [README de la categoría](../README.md).

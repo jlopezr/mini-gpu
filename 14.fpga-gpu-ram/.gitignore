@@ -2,3 +2,6 @@
 output.bin
 _build/
 __pycache__/
+
+# Generado por tools/make_rtl_fixtures.py desde los casos de x.tests/cases-gpu marcados rtl.differential
+fixtures/

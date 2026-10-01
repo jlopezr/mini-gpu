@@ -1,3 +1,0 @@
-BAR
-MOVI R3, 8
-EXIT

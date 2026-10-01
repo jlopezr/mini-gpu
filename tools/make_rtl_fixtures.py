@@ -1,23 +1,42 @@
 #!/usr/bin/env python3
 """Generador compartido de fixtures diferenciales de RTL para los prototipos de GPU.
 
-Sustituye a los `make_fixtures.py` que había copiados en cada prototipo. Ensambla
-cada programa MiniISA con `1.isa/mini_asm.py`, lo ejecuta en el simulador
-funcional (`11.gpu-sim-func`) y escribe en `<prototipo>/fixtures/` el estado que
+Sustituye a los `make_fixtures.py` que había copiados en cada prototipo. Toma los
+casos de `x.tests/cases-gpu` marcados con `"rtl": {"differential": true}`, los
+ensambla con `1.isa/mini_asm.py`, los ejecuta en el simulador funcional
+(`11.gpu-sim-func`) y escribe en `<prototipo>/fixtures/` el estado que
 `gpu_system_tb.v` compara contra el del RTL.
 
     python tools/make_rtl_fixtures.py --prototype 22
 
 El formato de salida NO se puede tocar sin tocar el banco: los ficheros, su
-orden y su contenido son lo que lee `$readmemh`. Cada caso declara en `requires`
-las capacidades que el prototipo necesita para ejecutarlo (las mismas que usa
-`x.tests`); un prototipo que no las tiene lo omite en vez de fallar en el RTL.
+orden y su contenido son lo que lee `$readmemh`.
+
+La marca `rtl` de un `test.json`:
+
+    "rtl": {
+      "differential": true,
+      "warp_config": "../../rtl-8-warps.json",   // opcional
+      "exclude": ["12"]                           // opcional
+    }
+
+- `warp_config`: lanzamiento para el RTL, relativo al caso. Por defecto, el
+  `warp_config` del propio caso. Existe porque el banco lanza 8 warps y hay
+  casos cuyo `warps.json` lanza 1 o 2 (el simulador los prueba así), y el RTL
+  perdería la cobertura multi-warp.
+- `exclude`: números de prototipo que no lo ejecutan. Solo para lo que `requires`
+  no sepa decir.
+
+Cada caso se incluye en un prototipo solo si todo su `requires` está entre las
+capacidades que `tools/rtl_facts.py` lee de su RTL. El orden es el de las rutas
+de los casos, ordenadas, así que la numeración `NN` puede diferir entre
+prototipos.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import random
+import re
 import struct
 import sys
 from pathlib import Path
@@ -26,8 +45,11 @@ from typing import NamedTuple
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / '1.isa'), str(ROOT / '11.gpu-sim-func')]
 
+CASES_DIR = ROOT / 'x.tests' / 'cases-gpu'
 SIM_MEMORY_BYTES = 128 * 1024
 MAX_STEPS = 10000
+WARP_SIZE = 8
+RTL_KEYS = {'differential', 'warp_config', 'exclude'}
 
 
 class Case(NamedTuple):
@@ -35,196 +57,73 @@ class Case(NamedTuple):
     source: str
     config: dict | None = None
     requires: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
 
 
-cases: list[Case] = []
+class RtlMarkError(ValueError):
+    pass
+
+
+def _read_json(path):
+    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
+
+
+def rtl_mark(raw, where='caso'):
+    """El bloque `rtl` de un test.json validado, o None si no es diferencial."""
+    mark = raw.get('rtl')
+    if mark is None:
+        return None
+    if not isinstance(mark, dict):
+        raise RtlMarkError(f'{where}: rtl debe ser un objeto')
+    unknown = set(mark) - RTL_KEYS
+    if unknown:
+        raise RtlMarkError(f'{where}: claves de rtl desconocidas: {", ".join(sorted(unknown))}')
+    if not mark.get('differential'):
+        return None
+    exclude = mark.get('exclude', [])
+    if not isinstance(exclude, list) or not all(isinstance(x, str) for x in exclude):
+        raise RtlMarkError(f'{where}: rtl.exclude debe ser una lista de números de prototipo (cadenas)')
+    return mark
+
+
+def load_marked_cases(cases_dir=CASES_DIR):
+    """Los casos marcados `rtl.differential`, por ruta ordenada."""
+    cases_dir = Path(cases_dir)
+    found = []
+    for test_json in sorted(cases_dir.rglob('test.json'), key=lambda p: p.relative_to(cases_dir).as_posix()):
+        where = test_json.parent.relative_to(cases_dir).as_posix()
+        raw = _read_json(test_json)
+        mark = rtl_mark(raw, where)
+        if mark is None:
+            continue
+        if raw.get('architecture') != 'gpu':
+            raise RtlMarkError(f'{where}: solo los casos de GPU pueden ser diferenciales de RTL')
+        directory = test_json.parent
+        config_name = mark.get('warp_config', raw.get('warp_config'))
+        config = _read_json(directory / config_name) if config_name else None
+        found.append(Case(
+            name=where,
+            source=(directory / raw['program']).read_text(encoding='utf-8'),
+            config=config,
+            requires=tuple(raw.get('requires', [])),
+            exclude=tuple(mark.get('exclude', [])),
+        ))
+    return found
+
+
+# --------------------------------------------------------------------------
+# Programas que todavía viven aquí y no en x.tests.
+#
+# Son los 9 programas `regions_*` de test_simt_regions.py que tienen un caso
+# parecido (no idéntico) en cases-gpu/simt. Se quedan hasta decidir si ese caso
+# los sustituye en el diferencial: ver el informe de la fase 3.
+# --------------------------------------------------------------------------
+pending: list[Case] = []
 
 
 def case(name, source, config=None, requires=()):
-    cases.append(Case(name, source, config, tuple(requires)))
+    pending.append(Case(name, source, config, tuple(requires)))
 
-
-case('vector', '''
-GETTID R1
-MOVI R2, 4
-MUL R3, R1, R2
-ADDI R3, R3, 4096
-ADDI R4, R1, 100
-STORE R4, R3, 0
-LOAD R5, R3, 0
-BAR
-HALT
-''')
-case('nested', '''
-GETTID R1
-ANDI R1, R1, 7
-MOVI R2, 4
-SSY join
-BLT R1, R2, low
-MOVI R3, 30
-BRA join
-low:
-MOVI R2, 2
-SSY inner
-BLT R1, R2, lowest
-MOVI R3, 20
-BRA inner
-lowest:
-MOVI R3, 10
-inner:
-ADDI R3, R3, 1
-join:
-ADDI R3, R3, 1
-BAR
-EXIT
-''')
-case('loop', '''
-GETTID R1
-ANDI R1, R1, 7
-loop:
-SSY done
-BEQ R1, R0, done
-ADDI R1, R1, -1
-ADDI R3, R3, 1
-BRA loop
-done:
-BAR
-EXIT
-''')
-for name, first, second in [('exit_first','EXIT','MOVI R3, 7'),
-                            ('exit_second','MOVI R3, 7','EXIT'),
-                            ('exit_both','HALT','EXIT')]:
-    case(name, f'''
-GETTID R1
-ANDI R1, R1, 7
-MOVI R2, 4
-SSY join
-BLT R1, R2, low
-{first}
-BRA join
-low:
-{second}
-join:
-ADDI R3, R3, 1
-BAR
-EXIT
-''')
-case('groups', 'BAR\nMOVI R3, 7\nBAR\nEXIT\nBAR\nMOVI R4, 9\nBAR\nEXIT',
-     {'warps':[dict(id=w, pc=0 if w<4 else 16, active_mask=0x55 if w%2 else 0xff,
-                    workgroup_id=w//4) for w in range(8)]})
-case('finished_participant', 'BAR\nMOVI R3, 8\nEXIT',
-     {'warps':[dict(id=0),dict(id=1,pc=8)]})
-case('bank_conflicts', '''
-GETTID R1
-MOVI R2, 32
-MUL R3, R1, R2
-ADDI R3, R3, 4096
-ADDI R4, R1, 123
-STORE R4, R3, 0
-LOAD R5, R3, 0
-BAR
-EXIT
-''')
-case('barrier_visibility', '''
-GETTID R1
-MOVI R2, 4
-MUL R3, R1, R2
-ADDI R3, R3, 4096
-STORE R1, R3, 0
-BAR
-XORI R4, R1, 63
-MUL R4, R4, R2
-ADDI R4, R4, 4096
-LOAD R5, R4, 0
-BAR
-HALT
-''')
-rng=random.Random(1288)
-lines=['GETTID R1', 'MOVI R0, -17', 'MOVI R2, -3', 'MOVHI R3, 0x8000',
-       'MOVI R4, 1', 'DIV R5, R3, R2', 'MOVI R2, -1', 'DIV R6, R3, R2',
-       'MULFX R7, R0, R3', 'MOVHI R8, 0xffff', 'ORI R8, R8, 0x8001',
-       'MULFX R9, R8, R8', 'NOP']
-for op in ['ADD','SUB','MUL','MULFX','DIV','AND','OR','XOR','SHL','SHR','SAR']*3:
-    # Divisor R4 is preserved and nonzero. R0 is hard-wired to zero: the MOVI R0 above
-    # must be discarded and every R0 source operand must read 0.
-    lines.append(f'{op} R{rng.randrange(10,32)}, R{rng.randrange(10)}, R{4 if op=="DIV" else rng.randrange(10)}')
-lines += ['ANDI R10, R0, 0xff', 'XORI R11, R10, 0xffff', 'HALT']
-case('arithmetic', '\n'.join(lines))
-for op in ['BEQ','BNE','BLT','BGE','BLTU','BGEU']:
-    case('branch_'+op.lower(), f'''
-GETTID R1
-ANDI R1, R1, 7
-ADDI R1, R1, -4
-SSY join
-{op} R1, R0, taken
-MOVI R3, 3
-BRA join
-taken:
-MOVI R3, 7
-join:
-HALT
-''')
-
-case('unified_code', '''
-LOAD R2, R0, 0
-MOVHI R4, 0x40e0
-ORI R4, R4, 123
-STORE R4, R0, 64
-BAR
-BRA modified
-NOP
-NOP
-NOP
-NOP
-NOP
-NOP
-NOP
-NOP
-NOP
-NOP
-modified:
-HALT
-HALT
-''')
-case('last_word', '''
-MOVHI R1, 1
-ORI R1, R1, 0xfffc
-MOVI R2, 77
-STORE R2, R1, 0
-BAR
-LOAD R3, R1, 0
-HALT
-''')
-case('early_halt_unwind', '''
-SSY outer
-SSY inner
-HALT
-NOP
-inner:
-NOP
-NOP
-outer:
-MOVI R3, 99
-HALT
-''')
-
-
-# Reusable-region semantics, independently evaluated by the functional simulator.
-case('regions_pending_loop', '''
-GETTID R1
-ANDI R1, R1, 7
-loop:
-SSY done
-BEQ R1, R0, handler
-ADDI R1, R1, -1
-BRA loop
-handler:
-ADDI R3, R3, 10
-BRA done
-done:
-ADDI R3, R3, 1
-EXIT
-''')
 
 case('regions_nested_region_cannot_run_outer_pending_path_early', '''
 GETTID R1
@@ -302,30 +201,6 @@ ADDI R3, R3, 1
 EXIT
 ''')
 
-case('regions_identical_next_pcs_do_not_diverge_without_ssy', '''
-GETTID R1
-ANDI R1, R1, 7
-BEQ R1, R0, next
-next: ADDI R3, R3, 1
-EXIT
-''')
-
-case('regions_sequential_regions_release_capacity_before_next_if', '''
-GETTID R1
-ANDI R1, R1, 7
-MOVI R2, 4
-SSY first
-BLT R1, R2, first
-ADDI R3, R3, 10
-first:
-SSY second
-BGE R1, R2, second
-ADDI R3, R3, 20
-second:
-ADDI R3, R3, 1
-EXIT
-''')
-
 case('regions_exit_unwinds_inner_before_outer_pending_path', '''
 GETTID R1
 ANDI R1, R1, 7
@@ -384,6 +259,12 @@ EXIT
 ''')
 
 
+def all_cases(cases_dir=CASES_DIR):
+    """Todos los casos candidatos, en el orden de las fixtures: primero los de
+    x.tests por ruta y después los que aún viven aquí."""
+    return load_marked_cases(cases_dir) + list(pending)
+
+
 def consumes_fixtures(prototype_dir):
     """¿Algún banco del prototipo lee `fixtures/`? Se mira el `include` de count.vh
     en vez de fijar un nombre de banco: 29 lo llama `gpu_system_bl8_tb.v`."""
@@ -393,17 +274,27 @@ def consumes_fixtures(prototype_dir):
     return False
 
 
-def select_cases(all_cases, capabilities):
+def prototype_number(prototype_dir):
+    match = re.match(r'(\d+)', Path(prototype_dir).name)
+    return match.group(1) if match else None
+
+
+def omission_reasons(case_, capabilities, prototype=None):
+    """Por qué un prototipo omite el caso; lista vacía si lo incluye."""
+    reasons = [f'falta {name}' for name in sorted(set(case_.requires) - set(capabilities))]
+    if prototype is not None and prototype in case_.exclude:
+        reasons.append('excluido')
+    return reasons
+
+
+def select_cases(all_, capabilities, prototype=None):
     """Los casos aplicables a un prototipo, en el orden en que se declararon."""
-    available = set(capabilities)
-    return [c for c in all_cases if set(c.requires) <= available]
+    return [c for c in all_ if not omission_reasons(c, capabilities, prototype)]
 
 
-def skipped_cases(all_cases, capabilities):
-    """(caso, capacidades que faltan) de lo que `select_cases` deja fuera."""
-    available = set(capabilities)
-    return [(c, sorted(set(c.requires) - available))
-            for c in all_cases if not set(c.requires) <= available]
+def skipped_cases(all_, capabilities, prototype=None):
+    """(caso, motivos) de lo que `select_cases` deja fuera."""
+    return [(c, r) for c in all_ if (r := omission_reasons(c, capabilities, prototype))]
 
 
 def write_fixtures(selected, out):
@@ -414,10 +305,14 @@ def write_fixtures(selected, out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     metadata = []
-    for index, (name, source, config, _requires) in enumerate(selected):
+    for index, (name, source, config, _requires, _exclude) in enumerate(selected):
+        if config is not None and config.get('warp_size', WARP_SIZE) != WARP_SIZE:
+            raise ValueError(f'{name}: el banco de RTL lanza warps de {WARP_SIZE} lanes')
         words = assemble(source)
+        if len(words) > 256:
+            raise ValueError(f'{name}: {len(words)} palabras; el banco carga 256')
         binary = struct.pack('<' + 'I' * len(words), *words)
-        gpu = System(SIM_MEMORY_BYTES, 8, 8)
+        gpu = System(SIM_MEMORY_BYTES, 8, WARP_SIZE)
         gpu.load_program(binary)
         if config is not None:
             gpu.configure_warps(config)
@@ -457,11 +352,13 @@ def main(argv=None):
         print(f'error: {exc}', file=sys.stderr)
         return 2
     capabilities = capabilities_from_rtl(prototype_dir, load_capability_signals(root))
-    selected = select_cases(cases, capabilities)
+    number = prototype_number(prototype_dir)
+    candidates = all_cases()
+    selected = select_cases(candidates, capabilities, number)
     out = Path(args.out) if args.out else prototype_dir / 'fixtures'
     count = write_fixtures(selected, out)
-    for case_, missing in skipped_cases(cases, capabilities):
-        print(f'omitido {case_.name}: faltan {", ".join(missing)}')
+    for case_, reasons in skipped_cases(candidates, capabilities, number):
+        print(f'omitido {case_.name}: {", ".join(reasons)}')
     print(f'Generated {count} differential cases')
     return 0
 

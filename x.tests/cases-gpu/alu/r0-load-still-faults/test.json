@@ -8,12 +8,6 @@
     "halted": true,
     "error": true,
     "error_code": "0x02",
-    "fault": {
-      "pc": 4,
-      "warp_id": 0,
-      "core_id": 0,
-      "address": 2147418112
-    },
     "instructions_executed": 1,
     "warps": {
       "0": {

@@ -14,7 +14,7 @@ fallar.
 
 ## Qué comprueba el `test.json`
 
-- `error = true`, `error_code = 0x02` y el fallo: `pc = 4`, warp 0, lane 0, dirección `0x7FFF0000`.
+- `error = true` y `error_code = 0x02`. No se declara el bloque `fault` (pc, warp, lane y dirección `0x7FFF0000`): `expect.fault` exige la dirección y el monitor de la placa no la expone, así que con él el caso se omitiría en hardware, que es donde interesa comprobar este contrato.
 - 1 instrucción completada y `pc = 4`: la anterior al fallo.
 - No lleva `rtl.differential`: el banco diferencial exige que el simulador no termine con error.
 
