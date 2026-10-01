@@ -47,7 +47,7 @@ Settings: **115200 baud, 8 data bits, no parity, 1 stop bit**.
 
 The design prints one line per second, for example:
 
-```
+```text
 WR=0012AC84 FULL=0 EMPTY=1 FSEEN=1 ESEEN=1 ERR=0 PASS=1
 ```
 

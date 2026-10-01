@@ -31,7 +31,7 @@ del hardware no conoce los opcodes: solo tamaños y máscaras.
 
 ## Semántica
 
-```
+```text
 LOADB   Rd, Ra, imm16   Rd = sign_extend(mem8 [Ra + imm16])
 LOADUB  Rd, Ra, imm16   Rd = zero_extend(mem8 [Ra + imm16])
 LOADH   Rd, Ra, imm16   Rd = sign_extend(mem16[Ra + imm16])
@@ -88,7 +88,7 @@ escritura del banco de registros, y un desplazador de máscara de cuatro bits en
 el de escritura. Ambos son pequeños, pero el primero cae en un camino que esta
 familia de proyectos ya vigila: conviene rebarrer semillas tras sintetizar.
 
-```
+```powershell
 ..\tools\build-sweep.ps1 --prototype 19.fpga-cpu-hdmi-ls --seeds 1 2 3 4 5 6 7 8
 ```
 

@@ -8,7 +8,7 @@ mismo fichero con un solo carácter distinto.
 
 ## Comportamiento esperado
 
-```
+```text
 hit:   DIV R5, R1, R2        miss:  DIV R5, R1, R2
        REM R6, R1, R2               REM R6, R1, R3
 ```

@@ -14,7 +14,6 @@
 > menciona mas abajo son historicos; los de hoy estan en
 > [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
-
 Copia de [`../16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) cuyo camino de memoria se
 va sustituyendo por uno de ráfagas BL8, para que la CPU no pase la vida
 esperando a la SDRAM. Es el punto 0 del [`../TODO.md`](../TODO.md).
@@ -843,7 +842,7 @@ primera vez. Después empezó a fallar de forma intermitente. Una matriz de las
 128 casillas (8 beats × 16 DQ), escribiendo un único 1 aislado en cada una,
 dio el diagnóstico:
 
-```
+```text
 semilla 7 ->  (3,4) (3,5) (7,4) (7,5)
 semilla 1 ->  (0,6) (3,4) (3,6) (4,6) (6,6) (7,4) (7,6)
 ```

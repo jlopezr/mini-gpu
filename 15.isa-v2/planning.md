@@ -4,7 +4,7 @@ Me parece buena idea que la **fase 0 sea la LSU**, porque si la memoria y el arb
 
 1. **Fase 0 — Optimizar LSU y dejar memoria fiable**
    Objetivo: arreglar el `pick`, registrar arbitraje si hace falta, validar loads/stores de las 8 lanes y coalescing básico. Aún no necesitas HDMI para la prueba principal, pero si ya está disponible puedes usarlo como “osciloscopio visual”.
-   
+
    Prueba: CPU rellena un framebuffer con un patrón simple en SDRAM y la GPU hace copias o modificaciones sencillas sobre bloques. Por ejemplo, invertir colores de una región o copiar una franja. Resultado visible: una pantalla con bloques que cambian correctamente, sin píxeles corruptos.
 
    Éxito de la fase: `LD/ST` fiables, arbitraje de memoria estable y comportamiento conocido cuando varios warps quieren memoria.

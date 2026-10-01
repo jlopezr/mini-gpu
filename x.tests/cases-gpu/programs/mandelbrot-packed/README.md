@@ -45,7 +45,7 @@ Generado por `reference.py` desde la referencia escalar Q16.16 de
 `0.mandelbrot/mandelbrot_fixed.py`, saturando a 255. Son 76800 bytes, con 17206
 píxeles saturados — exactamente los que la referencia sin saturar deja en 256.
 
-```
+```bash
 python x.tests/cases-gpu/programs/mandelbrot-packed/reference.py
 ```
 

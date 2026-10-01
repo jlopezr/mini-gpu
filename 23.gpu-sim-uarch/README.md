@@ -21,7 +21,7 @@ simulación:
 uno que no existe.** `validate.py` lo contrasta contra las cifras medidas en
 RTL, y mientras no cuadren, los números del modo `pipelined` son ficción.
 
-```
+```bash
 python validate.py                 # contra el diseno actual
 python validate.py --model pipelined
 ```

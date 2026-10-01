@@ -44,7 +44,7 @@ formato que se elija.
 
 En `gpu_bram.v` / `gpu_lsu.v` la dirección se descompone así:
 
-```
+```text
 addr[16:5]  ->  fila dentro del banco (4096 filas)
 addr[4:2]   ->  banco (0..7)
 addr[1:0]   ->  byte dentro de la palabra (hoy: debe ser 0)

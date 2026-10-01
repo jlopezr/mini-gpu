@@ -36,7 +36,6 @@
 > esta es la unica version en no tener, y `cases-cpu/alu/multiply` se omite aqui con
 > un SKIP en vez de fallar.
 
-
 Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 `9.fpga-ram-param`. Todo el datapath principal funciona en un único dominio de
 **100 MHz** —fueron 120 hasta el 18/09/2026, ver

@@ -1,6 +1,5 @@
 # La LSU de `17.fpga-gpu-ram-v2`
 
-
 ## Estado de este documento
 
 Las secciones **"Visión general"**, **"Entradas y salidas"**, **"El
@@ -22,6 +21,7 @@ la idea, no implementación en curso. Todo lo que hay bajo ese título es
 hipotético hasta que se decida construirlo.
 
 ## Visión general
+
 La LSU (`gpu_lsu.v`) es el único punto de acceso a la SDRAM. Todo lo que toca
 memoria pasa por ella, por tres puertos distintos, arbitrados internamente:
 

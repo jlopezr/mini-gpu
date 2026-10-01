@@ -489,4 +489,3 @@ evolución; la v0.3 sí elimina su opcode y adopta la pseudoinstrucción.
 **MiniISA v0.1 vigente conserva `JR` y `0x2E` sigue ocupado.** Eliminarlo o
 reasignarlo rompería los binarios que lo utilizan y requeriría una revisión
 explícita de la codificación y del ensamblador.
- 

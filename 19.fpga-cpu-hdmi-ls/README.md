@@ -14,7 +14,6 @@
 > menciona mas abajo son historicos; los de hoy estan en
 > [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
-
 Copia de [`../18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) con nueve
 instrucciones nuevas: `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH`, `STOREH`
 y las llamadas `JAL`, `JALR` y `JR`. Todo lo demás —camino de ráfagas BL8,
@@ -966,7 +965,7 @@ primera vez. Después empezó a fallar de forma intermitente. Una matriz de las
 128 casillas (8 beats × 16 DQ), escribiendo un único 1 aislado en cada una,
 dio el diagnóstico:
 
-```
+```text
 semilla 7 ->  (3,4) (3,5) (7,4) (7,5)
 semilla 1 ->  (0,6) (3,4) (3,6) (4,6) (6,6) (7,4) (7,6)
 ```

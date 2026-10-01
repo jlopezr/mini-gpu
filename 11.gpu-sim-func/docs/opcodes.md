@@ -272,6 +272,7 @@ EXIT
 
 mientras que la divergencia de los branches existentes se gestiona mediante
 `active_mask`, `live_mask` y las pilas REGION/PATH.
+
 ## Concreción en el simulador funcional
 
 | Instrucción | Opcode (bits 31:26) | Bits 25:0                              |

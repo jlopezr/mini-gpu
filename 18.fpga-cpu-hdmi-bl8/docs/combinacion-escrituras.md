@@ -50,7 +50,7 @@ El banco lleva un vigilante permanente que baja `orden_ok` si `mmio_req` sube
 alguna vez con el búfer sucio, en cualquier ciclo del banco entero. Quitando el
 vaciado:
 
-```
+```text
 FALLO: `mmio_req` subio con el bufer todavia sucio: el SWAP
        podria adelantar a los pixeles del frame
 ```
@@ -68,7 +68,7 @@ inmediatamente y ve el frame anterior. La señal es ahora
 `wb_valid || wb_flushing`, y el banco comprueba que al bajar, la memoria **ya**
 tiene el dato:
 
-```
+```text
 FALLO rafagas provocadas por el halt: 0, esperado 1
 FALLO: al bajar wb_dirty la memoria tiene 00000000000000000000000000000000
 ```

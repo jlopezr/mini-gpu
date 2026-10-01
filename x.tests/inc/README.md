@@ -39,7 +39,7 @@ todo el programa: `drawline`, `dx_ready`, `line_step`, `putpixel`, `sin_table`â€
 Cada `.inc` las lista en su cabecera. Un choque no pasa desapercibido â€” el
 ensamblador dice los dos sitios:
 
-```
+```text
 cube.asm:212: label duplicado: putpixel (ya definido en putpixel.inc:23)
 ```
 

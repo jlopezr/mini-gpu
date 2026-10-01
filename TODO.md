@@ -417,7 +417,7 @@ solo; restaurar, probablemente no.
 
 ## 12. Board-upload no controla que protipo esta cargado
 
-```
+```text
 (tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases-cpu\video\pacman> board-load -p 21 --program .\pacman.asm
 Puerto detectado: COM3 (USB Serial Port (COM3))
 Using prototype: 21.fpga-cpu-hdmi-alu

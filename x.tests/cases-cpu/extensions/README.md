@@ -58,4 +58,3 @@ Lo que sí existe es
 el resultado correcto de las secuencias en las que el atajo **no** debe
 acertar. No comprueba ciclos —no puede—; comprueba que los números son los que
 serían sin atajo, y por eso vale igual contra el simulador, que no lo modela.
-

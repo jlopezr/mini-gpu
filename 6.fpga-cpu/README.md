@@ -14,7 +14,6 @@
 > menciona mas abajo son historicos; los de hoy estan en
 > [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
-
 Integración de la MiniCPU multiciclo, el monitor UART y dos memorias EBR de
 16 KiB. Es la versión FPGA `ebr` utilizada por `x.tests` y responde como
 monitor 3.6. Esta revisión implementa `MUL`, `MULFX` y `DIV`. `MUL` conserva

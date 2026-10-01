@@ -135,11 +135,9 @@ Illegal instruction:
 
     EPC = PC de la instrucción ilegal
 
-
 Access fault:
 
     EPC = PC de LOAD/STORE que falló
-
 
 TRAP software:
 
@@ -294,7 +292,6 @@ El coste hardware adicional respecto al modo directo es pequeño:
 DIRECT:
 
     trap_target = BASE
-
 
 VECTORED:
 

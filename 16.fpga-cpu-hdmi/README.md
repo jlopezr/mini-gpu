@@ -14,7 +14,6 @@
 > menciona mas abajo son historicos; los de hoy estan en
 > [`resumen-prototipos.md`](../docs/resumen-prototipos.md).
 
-
 Fusión de la CPU con SDRAM de `10.fpga-cpu-ram` y la cadena DVI de `13.hdmi`,
 sobre ULX3S-85F. El plan por fases está en
 [`../15.isa-v2/planning.md`](../15.isa-v2/planning.md) y la arquitectura de

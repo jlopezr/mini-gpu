@@ -198,7 +198,7 @@ Dos avisos de método que costaron tiempo antes:
 
 ## Verificación, sin saltarte ninguna
 
-```
+```bash
 ./tools/test --prototype 18
 python x.tests/run_tests.py --backend cpusim
 ./tools/lint --prototype 18          # compara el reparto por tipo, no el total

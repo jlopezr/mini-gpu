@@ -1,4 +1,5 @@
 # De un cubo 3D a píxeles
+
 ## Una introducción a la GPU desde MiniGPU
 
 ### 1. Introducción

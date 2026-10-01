@@ -35,6 +35,7 @@ n en los shifts es operand_b[4:0], de 0 a 31 — así que SHL va de 10 a 41 cicl
 Las marcadas con `!` son las dos que he derivado de la FSM, no medidas, porque el testbench no las ejecuta. Y ahí hay un detalle que te interesa: la tabla de valores esperados de cpu_memory_map_tb.v:66-77 manda MULFX (0x03) y DIV (0x0c) a la rama else, que espera 9 ciclos. Si algún día añades un programa de test que use DIV a través de memory_map, ese $fatal saltará con "expected 9, got 42" y no será un bug de la CPU, sino de la tabla del testbench.
 
 ## Lo que esto significa para el rendimiento
+
 De los 9 ciclos base, 5 son esperar a la memoria de instrucciones. Es decir, el 56% del tiempo de una ADD es fetch. A 100 MHz una instrucción simple tarda 90 ns → unos 11 MIPS.
 
 Si en algún momento quieres subir el rendimiento, el orden de impacto es claro: acortar la latencia de fetch (quitar el registro de respuesta cross-bank ahorraría 1 ciclo de los 9, un 11%) rinde mucho más que optimizar cualquier instrucción concreta. Y solapar fetch con retire sería lo grande, pero eso ya es pipelining de verdad.

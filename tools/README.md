@@ -818,7 +818,7 @@ casos van por ruta ordenada, así que el `NN` de un caso puede ser distinto en c
 
 `fixtures-report` dice cuál es cuál:
 
-```
+```text
 $ fixtures-report
 caso                                       12   14   17   22   29
 alu/random-arithmetic                      01   01   01   01   01
