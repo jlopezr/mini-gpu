@@ -153,12 +153,15 @@ def rtl_suite(python: str, prototype: str, full: bool, quiet: bool) -> dict:
 
 
 def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
-            cases: list[str], jobs: int, quiet: bool) -> dict:
+            cases: list[str], jobs: int, quiet: bool,
+            skip_slow: bool = False) -> dict:
     output = temp / f"{backend}.json"
     command = [python, str(ROOT / "x.tests" / "run_tests.py"), "--backend", backend,
                "--jobs", str(jobs), "--timings-json", str(output)]
     if prototype:
         command += ["--prototype", prototype, "--no-upload"]
+    if skip_slow:
+        command.append("--skip-slow")
     command += cases
     code, wall = run(command, ROOT / "x.tests", quiet)
     data = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
@@ -167,7 +170,7 @@ def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
             "kind": "x.tests", "total_seconds": data.get("total_seconds", wall),
             "wall_seconds": wall, "exit_code": code, "tests": [
                 {"name": f'{item["case"]} [{item["backend"]}]', "seconds": item["seconds"]}
-                for item in executions], **data}
+                for item in executions], "slow_cases_omitted": skip_slow, **data}
 
 
 def duration(value: float) -> str:
@@ -194,6 +197,8 @@ def markdown(suites: list[dict], started: str, command: str) -> str:
         if suite.get("omitted_slow"):
             lines += ["", "Omitidos por `TEST-LENTO` (usa `--full`): " +
                       ", ".join(f'`{x}`' for x in suite["omitted_slow"]) + "."]
+        if suite.get("slow_cases_omitted"):
+            lines += ["", "Se omitieron los casos marcados con `slow` en su `test.json`."]
         if suite.get("groups"):
             lines += ["", "### Totales por carpeta", "", "| Carpeta | Tests | Tiempo | Estado |",
                       "|---|---:|---:|---|"]
@@ -214,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=1,
                         help="procesos para x.tests (1 da tiempos y total comparables)")
     parser.add_argument("--full", action="store_true", help="incluye bancos RTL TEST-LENTO")
+    parser.add_argument("--full-x-tests", action="store_true",
+                        help="incluye Mandelbrot y Mandelbrot packed en los simuladores GPU")
     parser.add_argument("--skip-python", action="store_true")
     parser.add_argument("--skip-rtl", action="store_true")
     parser.add_argument("--skip-x-tests", action="store_true")
@@ -242,7 +249,10 @@ def main(argv: list[str] | None = None) -> int:
                 suites.append(rtl_suite(python, args.prototype, args.full, args.quiet))
             if not args.skip_x_tests:
                 for backend in ("cpusim", "gpusim", "gpusim-cycle"):
-                    suites.append(x_suite(python, backend, temp, None, args.cases, args.jobs, args.quiet))
+                    skip_slow = (not args.full_x_tests
+                                 and backend in ("gpusim", "gpusim-cycle"))
+                    suites.append(x_suite(python, backend, temp, None, args.cases,
+                                          args.jobs, args.quiet, skip_slow))
                 if args.cpu_prototype:
                     suites.append(x_suite(python, "cpu-fpga", temp, args.cpu_prototype, args.cases, 1, args.quiet))
                 if args.gpu_prototype:

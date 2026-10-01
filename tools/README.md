@@ -571,6 +571,15 @@ bitstream. `--cases RUTA` (repetible) limita los casos, y `--skip-python`,
 `--skip-rtl` y `--skip-x-tests` permiten medir una parte. Los bancos marcados
 `TEST-LENTO` solo entran con `--full`.
 
+Los casos cuyo `test.json` declara `"slow": "motivo"` se omiten por defecto
+en `gpusim` y `gpusim-cycle`: hoy son las dos imágenes completas, `mandelbrot`
+y `mandelbrot-packed`, que dominan el tiempo del informe y ocultan el coste del
+resto de la suite. `--full-x-tests` los incluye. Esta
+exclusión no se aplica a las placas CPU/GPU, cuyo coste y comportamiento interesa
+medir por separado. El runner general ofrece también `--exclude-case RUTA`
+(repetible) para excluir un caso o una carpeta en cualquier ejecución, y
+`--skip-slow` para respetar la marca declarativa.
+
 No incluye síntesis, lint ni checks de documentación: son validaciones, pero no
 tests de ejecución comparables. Tampoco incluye la suite propia opcional de
 `y.lcc` ni `13.hdmi/check_timing.ps1`; ambas son proyectos/pruebas independientes

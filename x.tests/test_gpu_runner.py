@@ -2,10 +2,12 @@
 
 import copy
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from backends.gpu_simulator import GpuBackend
-from run_tests import ROOT, REPOSITORY, load_case, compare_result, discover_cases
+from run_tests import (ROOT, REPOSITORY, load_case, compare_result,
+                       discover_cases, exclude_cases, slow_reason)
 
 
 class GpuRunnerTest(unittest.TestCase):
@@ -68,6 +70,22 @@ class GpuRunnerTest(unittest.TestCase):
                 case_architecture(raw)
         self.assertIn(self.path, discover_cases([]))
         self.assertIn(ROOT / 'cases-cpu/basics/smoke/test.json', discover_cases([]))
+
+    def test_exclusion_accepts_a_case_or_a_whole_directory(self):
+        smoke = ROOT / 'cases-cpu/basics/smoke/test.json'
+        cases = [self.path, smoke]
+        self.assertEqual(exclude_cases(cases, [self.path]), [smoke])
+        self.assertEqual(
+            exclude_cases(cases, [Path('cases-gpu/memory')], cwd=ROOT),
+            [smoke],
+        )
+
+    def test_slow_exige_un_motivo(self):
+        self.assertIsNone(slow_reason({}))
+        self.assertEqual(slow_reason({"slow": " tarda mucho "}), "tarda mucho")
+        for value in (True, False, "", "   ", 3, []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                slow_reason({"slow": value})
 
     def test_mixed_explicit_selection_rejected_before_backend_construction(self):
         import run_tests as runner

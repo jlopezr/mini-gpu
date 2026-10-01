@@ -2,6 +2,7 @@
   "architecture": "gpu",
   "requires": ["mul_div"],
   "name": "gpu-mandelbrot",
+  "slow": "imagen completa de 320x240; ejecuta casi 9,6 millones de instrucciones",
   "program": "mandelbrot.asm",
   "warp_config": "warps.json",
   "max_instructions": 50000000,

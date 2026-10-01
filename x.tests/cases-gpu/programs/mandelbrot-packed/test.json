@@ -2,6 +2,7 @@
   "architecture": "gpu",
   "requires": ["mul_div"],
   "name": "gpu-mandelbrot-packed",
+  "slow": "imagen completa de 320x240 con multiplicación empaquetada",
   "program": "mandelbrot.asm",
   "warp_config": "warps.json",
   "max_instructions": 50000000,

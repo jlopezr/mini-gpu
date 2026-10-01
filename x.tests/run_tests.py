@@ -770,6 +770,16 @@ def resolve_architecture(architectures: tuple[str, ...],
     return supported.pop()
 
 
+def slow_reason(raw: dict) -> str | None:
+    """Motivo declarativo por el que un caso queda fuera de pasadas rápidas."""
+    value = raw.get("slow")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("slow debe ser una cadena no vacía que explique el motivo")
+    return value.strip()
+
+
 def load_case(path: Path, architecture: str | None = None) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     directory = path.parent
@@ -979,6 +989,16 @@ def discover_cases(arguments: list[Path]) -> list[Path]:
     # dia que uno deje de correr como GPU nadie lo nota.
     return sorted(path for folder in ("cases-cpu", "cases-gpu", "cases-shared")
                   for path in (ROOT / folder).glob("**/test.json"))
+
+
+def exclude_cases(case_paths: list[Path], exclusions: list[Path], cwd: Path | None = None) -> list[Path]:
+    """Quita ficheros concretos o árboles completos, con rutas relativas a cwd."""
+    base = cwd or Path.cwd()
+    resolved = [(path if path.is_absolute() else base / path).resolve()
+                for path in exclusions]
+    return [path for path in case_paths
+            if not any(path.resolve() == exclusion or exclusion in path.resolve().parents
+                       for exclusion in resolved)]
 
 
 # ---------------------------------------------------------------------------
@@ -1507,6 +1527,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cases", nargs="*", type=Path, metavar="TEST_JSON")
     parser.add_argument(
+        "--exclude-case",
+        action="append",
+        default=[],
+        type=Path,
+        metavar="RUTA",
+        help="omite un test.json o todos los casos bajo una carpeta; puede repetirse",
+    )
+    parser.add_argument("--skip-slow", action="store_true",
+                        help="omite casos cuyo test.json declare slow con un motivo")
+    parser.add_argument(
         "--backend",
         choices=(
             "cpusim", "cpu-fpga", "both",
@@ -1577,6 +1607,8 @@ def main() -> int:
         parser.error("--jobs no puede ser negativo")
 
     case_paths = discover_cases(args.cases)
+    if args.exclude_case:
+        case_paths = exclude_cases(case_paths, args.exclude_case)
     if not case_paths:
         print("No se encontraron casos", file=sys.stderr)
         return 2
@@ -1636,6 +1668,11 @@ def main() -> int:
     try:
         for path in case_paths:
             raw = json.loads(path.read_text(encoding="utf-8"))
+            reason_slow = slow_reason(raw)
+            if args.skip_slow and reason_slow:
+                print(f"SKIP {raw.get('name', path)}: lento ({reason_slow})")
+                skipped += 1
+                continue
             architectures = case_architectures(raw)
             if not args.cases and any(
                 BACKEND_DEFINITIONS[name]["architecture"] not in architectures
@@ -1827,7 +1864,7 @@ def main() -> int:
         args.timings_json.parent.mkdir(parents=True, exist_ok=True)
         args.timings_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"{len(cases)} caso(s), {failures} fallo(s), "
-          f"{skipped} omitido(s) por arquitectura o capacidades, {total:.1f}s")
+          f"{skipped} omitido(s) por arquitectura, capacidades o selección, {total:.1f}s")
     return 1 if failures else 0
 
 
