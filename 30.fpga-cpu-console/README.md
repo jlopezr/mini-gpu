@@ -50,7 +50,7 @@ separadas a propósito: `x.tests` declara tres capacidades distintas
 **El 3 es incompatible con la v0.1**; los otros tres son aditivos. Un programa
 que use `R0` como registro general no falla aquí con error: da otro resultado,
 en silencio. Lo que se rompe está listado abajo, en
-[§3](#qué-se-rompe-con-r0-a-cero), y **no se ha portado**.
+[§3](#qué-se-rompió-con-r0-a-cero-y-cómo-quedó), y **no se ha portado**.
 
 **El monitor sube a 1.15** sin añadir ni un comando, por el mismo criterio que
 llevó de 1.12 a 1.13 —`GET_VERSION` es lo único que el PC puede preguntar antes

@@ -31,7 +31,7 @@ sorpresa. Los ficheros tocados son los mismos cinco, con los mismos cambios:
 | `top.v` | selección, parámetros, ventana | sí, con otros valores |
 | `sysid_host_tb.v` | las siete palabras y el final del bloque | sí |
 | `monitor_tb.v` | una línea | sí |
-| `monitor.py` | **no**, y es lo único que no es gemelo (abajo) |
+| `monitor.py` | la ventana de direcciones que valida el host (abajo) | **no**, es lo único que no es gemelo |
 
 Los valores propios, que son los únicos que hay que repasar uno a uno:
 
