@@ -1,3 +1,6 @@
 [submodule "y.lcc"]
 	path = y.lcc
 	url = git@github.com:jlopezr/mini-lcc.git
+[submodule "z.tui"]
+	path = z.tui
+	url = git@github.com:jlopezr/tui.git
