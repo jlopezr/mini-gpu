@@ -210,20 +210,69 @@ class WiringTest(unittest.TestCase):
         sim_peripherals.finish_display(cpu)
 
 
+class MouseHoldTest(unittest.TestCase):
+    """El ratón no se pierde si la FIFO está casi llena: se funde y se entrega."""
+
+    def setUp(self):
+        self.display, self.device, _ = display_with_machine()
+
+    def put(self, buttons=0, dx=0, dy=0):
+        self.display.events.put({"event": "mouse", "buttons": buttons, "dx": dx, "dy": dy})
+        self.display.apply_events(self.device)
+
+    def test_con_sitio_se_entrega_en_el_acto(self):
+        self.put(0, 5, 0)
+        self.assertEqual(drain(self.device), [{"type": "move", "dx": 5, "dy": 0}])
+
+    def test_con_la_cola_casi_llena_se_retiene_sin_overflow(self):
+        for _ in range(InputDevice.FIFO_DEPTH - 3):          # deja 3 huecos: menos de los reservados
+            self.device.key_down(4)
+            self.device.key_up(4)
+            if len(self.device.fifo) >= InputDevice.FIFO_DEPTH - 3:
+                break
+        self.put(0, 5, 0)
+        self.put(0, 3, 2)
+        self.assertFalse(self.device.overflow)
+        self.assertEqual(self.display._pending_mouse, [0, 8, 2])
+
+    def test_al_haber_hueco_se_entrega_la_suma_exacta(self):
+        while len(self.device.fifo) < InputDevice.FIFO_DEPTH - 3:
+            self.device.mouse_move(1, 0)
+        self.put(0, 5, 0)
+        self.put(0, 3, 2)
+        for _ in range(8):                                    # el programa lee y hace sitio
+            self.device.read(InputDevice.EVENT_DATA)
+        self.display.apply_events(self.device)
+        self.assertIsNone(self.display._pending_mouse)
+        self.assertEqual(drain(self.device)[-1], {"type": "move", "dx": 8, "dy": 2})
+        self.assertFalse(self.device.overflow)
+
+    def test_los_botones_pendientes_son_los_ultimos(self):
+        while len(self.device.fifo) < InputDevice.FIFO_DEPTH - 3:
+            self.device.mouse_move(1, 0)
+        self.put(1, 1, 0)                                     # botón izquierdo pulsado
+        self.put(0, 1, 0)                                     # y soltado antes de que haya sitio
+        self.assertEqual(self.display._pending_mouse[0], 0)
+
+    def test_sin_raton_presente_se_descarta(self):
+        while len(self.device.fifo) < InputDevice.FIFO_DEPTH - 3:
+            self.device.mouse_move(1, 0)
+        self.put(0, 5, 0)
+        self.device.disconnect_mouse()
+        self.display.apply_events(self.device)
+        self.assertIsNone(self.display._pending_mouse)
+
+
 class PaintDemoTest(unittest.TestCase):
     """El pintor de `2.cpu-sim-func/examples` con una entrada guionizada."""
 
-    def test_clic_y_arrastre_pintan(self):
-        script = input_script.parse(
-            "@0 keyboard connect\n@0 mouse connect\n"
-            "@2000 mouse move 20 10\n@4000 mouse button left down\n"
-            "@6000 mouse move 5 0\n@8000 mouse button left up\n")
+    def run_demo(self, script_text, instructions=400_000):
         device = InputDevice()
-        device.attach_script(script)
+        device.attach_script(input_script.parse(script_text))
         cpu = minicpu_sim.CPU(video=VideoDevice(), input_device=device)
         cpu.load_program(minicpu_sim.load_program_file(
             ROOT / "2.cpu-sim-func" / "examples" / "input_paint.asm"))
-        for _ in range(400_000):
+        for _ in range(instructions):
             cpu.step()
         self.assertFalse(cpu.error)
 
@@ -231,9 +280,40 @@ class PaintDemoTest(unittest.TestCase):
             offset = 0x100000 + 2 * (y * 320 + x)
             return cpu.memory[offset] | cpu.memory[offset + 1] << 8
 
+        return pixel
+
+    def test_clic_y_arrastre_pintan(self):
+        # El pincel arranca en (160, 120) y se mueve medio pixel por cada pixel
+        # de ratón, que es lo que hace que siga al puntero sobre una ventana x2.
+        pixel = self.run_demo(
+            "@0 keyboard connect\n@0 mouse connect\n"
+            "@2000 mouse move 20 10\n@4000 mouse button left down\n"
+            "@6000 mouse move 6 0\n@8000 mouse button left up\n")
         self.assertEqual(pixel(160, 120), 0)                # moverse sin boton no pinta
-        for x, y in ((180, 130), (181, 131), (185, 130)):   # clic y arrastre, 2x2 cada uno
+        for x, y in ((170, 125), (171, 126), (173, 125)):   # clic y arrastre, 2x2 cada uno
             self.assertEqual(pixel(x, y), 0xFFFF, (x, y))
+
+    def test_las_letras_dan_su_color(self):
+        colores = {"R": 0xF800, "G": 0x07E0, "B": 0x001F, "Y": 0xFFE0,
+                   "C": 0x07FF, "M": 0xF81F, "W": 0xFFFF}
+        for letra, color in colores.items():
+            with self.subTest(letra=letra):
+                pixel = self.run_demo(
+                    f"@0 keyboard connect\n@0 mouse connect\n@2000 key press {letra}\n"
+                    "@4000 mouse button left down\n", instructions=200_000)
+                self.assertEqual(pixel(160, 120), color)
+
+    def test_otra_tecla_da_un_color_que_no_es_el_de_las_letras_con_nombre(self):
+        pixel = self.run_demo(
+            "@0 keyboard connect\n@0 mouse connect\n@2000 key press Q\n"
+            "@4000 mouse button left down\n", instructions=200_000)
+        self.assertNotIn(pixel(160, 120), (0, 0xF800, 0x07E0, 0x001F, 0xFFE0, 0x07FF, 0xF81F))
+
+    def test_la_barra_espaciadora_borra(self):
+        pixel = self.run_demo(
+            "@0 keyboard connect\n@0 mouse connect\n@2000 mouse button left down\n"
+            "@40000 key press SPACE\n", instructions=400_000)
+        self.assertEqual(pixel(160, 120), 0)
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ class SimDisplay:
         self._last_snapshot = None
         self._last_send = 0.0
         self._last_title = 0.0
+        self._pending_mouse: list[int] | None = None
 
     # ---- ciclo de vida -------------------------------------------------------
 
@@ -115,7 +116,45 @@ class SimDisplay:
         if not self.closed:
             self._send_screen()
 
+    # Huecos que se dejan libres en la FIFO antes de soltarle ratón: un report
+    # puede dar dos botones y un movimiento partido.
+    MOUSE_ROOM = 4
+
+    def _hold_mouse(self, buttons: int, dx: int, dy: int) -> None:
+        """El ratón no se pierde: se funde hasta que la FIFO tenga sitio.
+
+        Es política del anfitrión, no del dispositivo, que sigue siendo fiel al
+        contrato (con la FIFO llena, un movimiento se pierde y no se recupera).
+        Pero aquí el simulador corre mucho más despacio que el USB real --y más
+        aún bajo el depurador--, y perder movimiento hace que el pincel no siga
+        al puntero. Sumar los deltas pendientes conserva el recorrido exacto.
+        """
+        pending = self._pending_mouse
+        if pending is None:
+            self._pending_mouse = [buttons, dx, dy]
+        else:
+            pending[0] = buttons
+            pending[1] += dx
+            pending[2] += dy
+
+    def _flush_mouse(self, device) -> None:
+        pending = self._pending_mouse
+        if pending is None or device is None:
+            return
+        if not device.mouse_present:
+            self._pending_mouse = None
+            return
+        if len(device.fifo) <= device.FIFO_DEPTH - self.MOUSE_ROOM:
+            self._pending_mouse = None
+            device.mouse_report(*pending)
+
     def apply_events(self, device) -> None:
+        try:
+            self._apply_queued(device)
+        finally:
+            self._flush_mouse(device)
+
+    def _apply_queued(self, device) -> None:
         while True:
             try:
                 event = self.events.get_nowait()
@@ -125,8 +164,8 @@ class SimDisplay:
             if kind == "keys" and device is not None and device.keyboard_present:
                 device.keyboard_report(set(event.get("pressed", ())))
             elif kind == "mouse" and device is not None and device.mouse_present:
-                device.mouse_report(int(event.get("buttons", 0)),
-                                    int(event.get("dx", 0)), int(event.get("dy", 0)))
+                self._hold_mouse(int(event.get("buttons", 0)),
+                                 int(event.get("dx", 0)), int(event.get("dy", 0)))
             elif kind == "interrupt":
                 self.interrupted = True
                 if self.on_interrupt is not None:

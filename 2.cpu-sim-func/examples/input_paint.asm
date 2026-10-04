@@ -6,8 +6,14 @@
 ;
 ;   mover el raton            mueve el pincel
 ;   mantener el boton izq.    pinta (un cuadrado de 2x2 por cada movimiento)
-;   cualquier tecla           cambia el color (sale del Usage ID de la tecla)
+;   R G B Y C M W             rojo, verde, azul, amarillo, cian, magenta, blanco
+;   cualquier otra tecla      un color que sale de su Usage ID
 ;   barra espaciadora         borra la pantalla
+;
+; El raton de INPUT es RELATIVO: el programa no sabe donde esta el puntero, solo
+; cuanto se ha movido, asi que el pincel arranca en el centro y se mueve desde
+; ahi. La posicion se lleva en medios pixeles de framebuffer: la ventana enseña
+; el framebuffer a doble tamano, y asi el pincel sigue al puntero a su velocidad.
 ;
 ; Se ejecuta con ventana, y como no acaba solo, con un limite generoso:
 ;
@@ -15,7 +21,8 @@
 ;
 ; Registros:
 ;   R20 base de VIDEO     R21 base de INPUT     R22 framebuffer (0x00100000)
-;   R10 x   R11 y         R12 color RGB565      R13 boton izquierdo pulsado
+;   R10 x, R11 y          en medios pixeles (0..639, 0..479)
+;   R12 color RGB565      R13 boton izquierdo pulsado
 ; ============================================================
 
 .include "mmio.inc"
@@ -29,8 +36,8 @@ start:
     MOVI  R3, MMIO_VIDEO_MODE_SCANOUT
     STORE R3, R20, MMIO_VIDEO_CTRL_OFF
 
-    MOVI  R10, 160                          ; pincel en el centro
-    MOVI  R11, 120
+    MOVI  R10, 320                          ; pincel en el centro (160, 120)
+    MOVI  R11, 240
     MOVI  R12, -1                           ; blanco (STOREH guarda los 16 bits bajos)
     MOVI  R13, 0
     BRA   do_clear
@@ -57,7 +64,45 @@ loop:
     BEQ   R4, R0, loop
     MOVI  R4, 0x2C                          ; barra espaciadora
     BEQ   R9, R4, do_clear
-    SHLI  R12, R9, 11                       ; color a partir del Usage ID
+
+    ; Colores con nombre (Usage IDs de las letras: R=0x15 G=0x0A B=0x05 Y=0x1C
+    ; C=0x06 M=0x10 W=0x1A).
+    MOVI  R4, 0x15
+    BNE   R9, R4, not_red
+    MOVI  R12, -2048                        ; 0xF800
+    BRA   loop
+not_red:
+    MOVI  R4, 0x0A
+    BNE   R9, R4, not_green
+    MOVI  R12, 2016                         ; 0x07E0
+    BRA   loop
+not_green:
+    MOVI  R4, 0x05
+    BNE   R9, R4, not_blue
+    MOVI  R12, 31                           ; 0x001F
+    BRA   loop
+not_blue:
+    MOVI  R4, 0x1C
+    BNE   R9, R4, not_yellow
+    MOVI  R12, -32                          ; 0xFFE0
+    BRA   loop
+not_yellow:
+    MOVI  R4, 0x06
+    BNE   R9, R4, not_cyan
+    MOVI  R12, 2047                         ; 0x07FF
+    BRA   loop
+not_cyan:
+    MOVI  R4, 0x10
+    BNE   R9, R4, not_magenta
+    MOVI  R12, -2017                        ; 0xF81F
+    BRA   loop
+not_magenta:
+    MOVI  R4, 0x1A
+    BNE   R9, R4, other_key
+    MOVI  R12, -1                           ; 0xFFFF
+    BRA   loop
+other_key:
+    SHLI  R12, R9, 11                       ; el resto: color a partir del Usage ID
     SHLI  R5, R9, 5
     OR    R12, R12, R5
     OR    R12, R12, R9
@@ -83,24 +128,26 @@ on_move:
     BGE   R10, R0, x_not_negative           ; mantener el pincel dentro de 320x240
     MOVI  R10, 0
 x_not_negative:
-    MOVI  R9, 319
+    MOVI  R9, 639
     BLT   R10, R9, x_inside
-    MOVI  R10, 319
+    MOVI  R10, 639
 x_inside:
     BGE   R11, R0, y_not_negative
     MOVI  R11, 0
 y_not_negative:
-    MOVI  R9, 239
+    MOVI  R9, 479
     BLT   R11, R9, y_inside
-    MOVI  R11, 239
+    MOVI  R11, 479
 y_inside:
     BEQ   R13, R0, loop                     ; sin boton, solo se mueve
 
 plot:
-    SHLI  R4, R11, 8                        ; y * 320 = (y << 8) + (y << 6)
-    SHLI  R5, R11, 6
+    SHRI  R14, R11, 1                       ; y en pixeles
+    SHLI  R4, R14, 8                        ; y * 320 = (y << 8) + (y << 6)
+    SHLI  R5, R14, 6
     ADD   R4, R4, R5
-    ADD   R4, R4, R10                       ; + x
+    SHRI  R14, R10, 1                       ; x en pixeles
+    ADD   R4, R4, R14
     SHLI  R4, R4, 1                         ; * 2 bytes por pixel
     ADD   R4, R4, R22
     STOREH R12, R4, 0
