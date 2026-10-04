@@ -122,7 +122,9 @@ def main() -> int:
     if args.input:
         keyboard = host_input.HostKeyboard(
             lambda pressed: emit({"event": "keys", "pressed": sorted(pressed)}))
-        mouse = host_input.HostMouse()
+        # El ratón se supone al principio en el centro de la ventana.
+        mouse = host_input.HostMouse(origin=(screen.SCREEN_SIZE[0] * args.scale // 2,
+                                             screen.SCREEN_SIZE[1] * args.scale // 2))
         sent = {"buttons": 0}
 
         def sync_modifiers() -> None:
@@ -172,7 +174,7 @@ def main() -> int:
         root.bind("<KeyRelease>", key_event(False))
         root.bind("<FocusOut>", lost_focus)
         view.bind("<Enter>", lambda e: mouse.enter(e.x, e.y))
-        view.bind("<Leave>", lambda e: mouse.leave())
+        view.bind("<Leave>", lambda e: mouse.leave(e.x, e.y))
         view.bind("<Motion>", lambda e: mouse.motion(e.x, e.y))
         for number in (1, 2, 3):
             view.bind(f"<ButtonPress-{number}>",

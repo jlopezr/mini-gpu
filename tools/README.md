@@ -399,7 +399,9 @@ da el scancode y de ahí el Usage ID, así que no dependen del layout. Los
 modificadores se leen del sistema y AltGr no deja pulsado un Control. Mantener
 una tecla no repite pulsaciones: el contrato no define typematic, es del
 software. Los movimientos del ratón se funden en un evento por muestreo
-(10 ms) y el puntero solo cuenta mientras está sobre la ventana. Si la FIFO de
+(10 ms). El ratón se supone al principio en el centro de la ventana, y cuando el
+puntero sale y vuelve a entrar por otro sitio se entrega el desplazamiento neto
+de fuera, de modo que un pincel no se descoloca. Si la FIFO de
 INPUT está casi llena, el simulador retiene el movimiento y lo entrega sumado
 cuando hay hueco, en vez de perderlo (el dispositivo sigue siendo fiel al
 contrato: lo que llegara con la cola llena se perdería). Perder el foco suelta

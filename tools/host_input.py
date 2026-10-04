@@ -209,27 +209,40 @@ class HostMouse:
     Tk da posiciones absolutas dentro de la ventana; INPUT quiere deltas. Los
     deltas se acumulan hasta `drain()`, que es la fusión de movimientos
     consecutivos: el USB real llega a unos 125 Hz, no a un evento por píxel.
+
+    Un ratón real no deja de informar de su movimiento al salir de la ventana,
+    y un programa con un pincel o un cursor propio lo necesita para no
+    descolocarse. Por eso la salida y la reentrada cuentan: al volver a entrar
+    se entrega el desplazamiento neto entre por donde salió y por donde entra.
+    Con `origin`, el ratón se supone al principio en ese punto (el centro de la
+    ventana, donde un programa suele arrancar su cursor), y la primera entrada
+    entrega lo que hay de ahí al puntero.
     """
 
     TK_BUTTONS = {1: 0, 3: 1, 2: 2}         # Tk: 1 izq., 2 central, 3 der.
 
-    def __init__(self):
+    def __init__(self, origin: tuple[int, int] | None = None):
         self.buttons = 0
         self.dx = 0
         self.dy = 0
-        self._last: tuple[int, int] | None = None
+        self._last: tuple[int, int] | None = origin
 
-    def enter(self, x: int, y: int) -> None:
-        self._last = (x, y)                 # entrar no es mover
-
-    def leave(self) -> None:
-        self._last = None
-
-    def motion(self, x: int, y: int) -> None:
+    def _move_to(self, x: int, y: int) -> None:
         if self._last is not None:
             self.dx += x - self._last[0]
             self.dy += y - self._last[1]
         self._last = (x, y)
+
+    def enter(self, x: int, y: int) -> None:
+        self._move_to(x, y)                 # el recorrido de fuera, de golpe
+
+    def leave(self, x: int | None = None, y: int | None = None) -> None:
+        """El puntero sale; (x, y) es por dónde, y es lo último que se sabe."""
+        if x is not None and y is not None:
+            self._move_to(x, y)
+
+    def motion(self, x: int, y: int) -> None:
+        self._move_to(x, y)
 
     def button(self, tk_number: int, down: bool) -> None:
         bit = self.TK_BUTTONS.get(tk_number)

@@ -183,21 +183,45 @@ class HostMouseTest(unittest.TestCase):
         mouse.motion(115, 60)
         self.assertEqual(mouse.drain(0), (0, 15, 10))
 
-    def test_entrar_en_la_ventana_no_es_mover(self):
+    def test_sin_origen_la_primera_entrada_no_es_mover(self):
+        # No hay referencia hasta que el puntero se ve por primera vez.
         mouse = HostMouse()
-        mouse.motion(300, 300)            # sin enter previo: no hay referencia
         mouse.enter(10, 10)
         self.assertIsNone(mouse.drain(0))
+        mouse.motion(15, 10)                # desde ahí, ya sí
+        self.assertEqual(mouse.drain(0), (0, 5, 0))
 
-    def test_volver_a_entrar_no_salta(self):
-        # El puntero sale por un lado y vuelve por otro: ese salto no cuenta.
-        mouse = HostMouse()
+    def test_con_origen_la_primera_entrada_lleva_del_centro_al_puntero(self):
+        mouse = HostMouse(origin=(320, 240))
+        mouse.enter(400, 200)
+        self.assertEqual(mouse.drain(0), (0, 80, -40))
+
+    def test_volver_a_entrar_entrega_el_desplazamiento_neto(self):
+        # Sale por la derecha y vuelve por la izquierda: un ratón real habría
+        # informado de todo ese recorrido, y el programa lo necesita.
+        mouse = HostMouse(origin=(0, 0))
         mouse.enter(500, 40)
+        mouse.drain(0)
         mouse.motion(510, 40)
-        mouse.leave()
+        mouse.leave(515, 40)                # último punto conocido, en el borde
         mouse.enter(5, 200)
         mouse.motion(8, 200)
-        self.assertEqual(mouse.drain(0), (0, 13, 0))
+        self.assertEqual(mouse.drain(0), (0, 8 - 500, 200 - 40))
+
+    def test_salir_cuenta_hasta_el_borde(self):
+        mouse = HostMouse(origin=(100, 100))
+        mouse.leave(120, 100)
+        self.assertEqual(mouse.drain(0), (0, 20, 0))
+
+    def test_el_recorrido_fuera_no_se_inventa(self):
+        # Entrar donde se salió no mueve nada.
+        mouse = HostMouse(origin=(0, 0))
+        mouse.enter(50, 50)
+        mouse.drain(0)
+        mouse.leave(60, 50)
+        mouse.drain(0)
+        mouse.enter(60, 50)
+        self.assertIsNone(mouse.drain(0))
 
     def test_drain_funde_y_vacia(self):
         mouse = HostMouse()
