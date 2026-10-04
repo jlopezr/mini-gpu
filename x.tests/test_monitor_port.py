@@ -138,6 +138,10 @@ COMMAND_PROTOTYPES = GPU_PROTOTYPES + CPU_CON_MMIO + (
     "6.fpga-cpu", "10.fpga-cpu-ram",
 )
 
+# Las copias de monitor.v son doce: las diez anteriores mas la 29 y la 30, que
+# tienen su propio juego de pruebas pero hablan el mismo protocolo.
+COPIAS_DE_MONITOR = COMMAND_PROTOTYPES + ("29.fpga-gpu-sm-pipeline", "30.fpga-cpu-console")
+
 PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
 # La version tambien: divergio entre top_bl8.v y el banco de regiones sin que
 # nada saltara, y rtl_facts leia la del banco por ir antes alfabeticamente.
@@ -198,7 +202,7 @@ def rtl_windows(values: dict) -> set:
 
 
 class SharedMonitorTest(unittest.TestCase):
-    """Los diez monitor.v con juego de comandos son COPIA IDENTICA.
+    """Los doce monitor.v con juego de comandos son COPIA IDENTICA.
 
     Se decidio copia y no fichero compartido para que cada carpeta siga siendo
     autocontenida. Lo que antes los diferenciaba --version, tamano de RAM y la
@@ -207,13 +211,13 @@ class SharedMonitorTest(unittest.TestCase):
     salta aqui.
     """
 
-    def test_las_diez_copias_son_identicas(self):
+    def test_las_doce_copias_son_identicas(self):
         canonical = (ROOT / "22.fpga-gpu-bl8" / "monitor.v").read_bytes()
-        for name in COMMAND_PROTOTYPES:
+        for name in COPIAS_DE_MONITOR:
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
 
-    def test_write_word_esta_en_las_diez(self):
+    def test_write_word_esta_en_las_doce(self):
         """WRITE_WORD entro por una sola carpeta y volvio a converger.
 
         Estuvo un tiempo solo en la 19, con una excepcion en el test de arriba
@@ -224,7 +228,7 @@ class SharedMonitorTest(unittest.TestCase):
         sigue existiendo, para que no desaparezca de las diez a la vez sin que
         nadie se entere.
         """
-        for name in COMMAND_PROTOTYPES:
+        for name in COPIAS_DE_MONITOR:
             with self.subTest(prototype=name):
                 texto = (ROOT / name / "monitor.v").read_text(encoding="utf8")
                 self.assertIn("CMD_WRITE_WORD", texto)

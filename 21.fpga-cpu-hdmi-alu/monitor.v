@@ -20,27 +20,43 @@
  *   35             (RESET_CPU)   -> b5
  *   38 LL DD...    (SEND_BYTES)  -> b8 NN     NN aceptados, puede ser < LL
  *   39 MM          (RECV_BYTES)  -> b9 NN DD... NN <= MM, puede ser 0
- *   any other command            -> ff
+ *   3b NN W0..     (INPUT_EVENTS)   -> bb FF     NN palabras de 4 bytes (LE)
+ *   3c PP          (INPUT_PRESENCE) -> bc FF     PP: bit0 teclado, bit1 raton *   any other command            -> ff
  *
  * SEND_BYTES y RECV_BYTES son el puerto serie de la CPU, y SOLO existen con
  * HAS_SERIAL = 1. Funcionan con la CPU EN MARCHA, porque no tocan la SDRAM.
  * `NN` es el control de flujo: el que devuelve SEND_BYTES dice cuantos cupieron
  * en la cola, y el resto se reenvia.
  *
+ * INPUT_EVENTS e INPUT_PRESENCE alimentan el bloque INPUT (teclado y raton,
+ * mmio.md §25) con eventos ya formados por el PC, y SOLO existen con
+ * HAS_INPUT = 1. Tampoco tocan la SDRAM. Cada palabra de evento son 4 bytes en
+ * little-endian, como los datos de WRITE_WORD. `FF` es en las dos respuestas el
+ * numero de huecos libres de la FIFO DESPUES de aplicar el comando: el control
+ * de flujo del PC. Como SEND_BYTES, INPUT_EVENTS consume SIEMPRE las N palabras
+ * aunque la FIFO se llene --las que no caben se pierden con OVERFLOW, que es lo
+ * que manda el contrato--: si se cortara a medias, los bytes que quedan en el
+ * cable se leerian como comandos y el enlace se desincronizaria. N = 0 es legal
+ * y sirve de sondeo de los huecos libres.
+ *
  * ---------------------------------------------------------------------------
- * FICHERO UNICO. Este monitor es COPIA IDENTICA en las diez carpetas que hablan
- * el protocolo: 6, 10, 12, 14, 16, 17, 18, 19, 21 y 22. Todo lo que distingue a
- * un prototipo de otro --version, tamano de RAM, ventanas MMIO, si tiene puerto
- * serie-- entra por parametro desde su `top.v`, que es donde vive el
- * razonamiento de ese prototipo. Antes habia diez ficheros parecidos, y
- * "parecidos" es justo lo que hace que un arreglo se aplique en nueve.
+ * FICHERO UNICO. Este monitor es COPIA IDENTICA en las doce carpetas que hablan
+ * el protocolo: 6, 10, 12, 14, 16, 17, 18, 19, 21, 22, 29 y 30. Todo lo que
+ * distingue a un prototipo de otro --version, tamano de RAM, ventanas MMIO, si
+ * tiene puerto serie o INPUT-- entra por parametro desde su `top.v`, que es
+ * donde vive el razonamiento de ese prototipo. Antes habia diez ficheros
+ * parecidos, y "parecidos" es justo lo que hace que un arreglo se aplique en
+ * nueve.
  *
  * Lo comprueba `x.tests/test_monitor_port.py`: si dos copias dejan de ser
  * identicas, falla.
  *
- * DOS JUEGOS DE COMANDOS, y el mayor de la version dice cual: 1 es el juego
- * base (13 comandos) y 2 es base + serie (15). El menor es el numero de
- * carpeta. Ver docs/unificacion-mmio.md fase 5.
+ * TRES JUEGOS DE COMANDOS, y el mayor de la version dice cual: 3 es el juego
+ * base (13 comandos), 4 es base + serie (15) y 5 es base + serie + INPUT (17).
+ * El menor es el numero de carpeta. Los puertos y los estados de lo que una
+ * carpeta no tiene (HAS_SERIAL / HAS_INPUT = 0) los elimina la sintesis, y esos
+ * comandos contestan `ff` como cualquier desconocido: por eso anadir INPUT no
+ * cambia el protocolo de las carpetas que no lo tienen, y su mayor no sube.
  * ---------------------------------------------------------------------------
  *
  * Addresses and lengths are transferred most-significant byte first. Block
@@ -90,6 +106,11 @@ module monitor #(
     // Con 0 los dos comandos contestan `ff` como cualquier otro desconocido, y
     // la sintesis se lleva por delante sus estados y sus puertos.
     parameter HAS_SERIAL = 0,
+
+    // 1 si este prototipo tiene el bloque INPUT (INPUT_EVENTS/INPUT_PRESENCE).
+    // Con 0 los dos comandos contestan `ff` y la sintesis se lleva por delante
+    // sus estados y sus puertos, igual que con HAS_SERIAL.
+    parameter HAS_INPUT = 0,
 
     // Primer byte que ya NO es RAM. 32 KiB en la 6, 128 KiB de BRAM en la 12,
     // 32 MiB de SDRAM en las demas.
@@ -174,6 +195,16 @@ module monitor #(
     input [7:0] serial_tx_data,
     input [7:0] serial_tx_count,
 
+    // INPUT (teclado y raton). Existen SIEMPRE, como los del serie, y un `top`
+    // sin INPUT puede dejarlos sin conectar: con HAS_INPUT = 0 nada los lee.
+    // Los eventos salen de uno en uno, ya completos, hacia input_registers.
+    output reg input_event_valid,
+    output reg [31:0] input_event_word,
+    output reg input_presence_write,
+    output reg input_presence_keyboard,
+    output reg input_presence_mouse,
+    input [4:0] input_free_slots,
+
     output reg [7:0] last_command,
     output busy
 );
@@ -194,6 +225,8 @@ module monitor #(
   localparam [7:0] CMD_RESET_CPU = 8'h35;
   localparam [7:0] CMD_SEND_BYTES = 8'h38;
   localparam [7:0] CMD_RECV_BYTES = 8'h39;
+  localparam [7:0] CMD_INPUT_EVENTS = 8'h3b;
+  localparam [7:0] CMD_INPUT_PRESENCE = 8'h3c;
   localparam [7:0] RSP_PONG = 8'h81;
   localparam [7:0] RSP_VERSION = 8'h82;
   localparam [7:0] RSP_WRITE_BYTE = 8'h90;
@@ -210,6 +243,8 @@ module monitor #(
   localparam [7:0] RSP_RESET_CPU = 8'hb5;
   localparam [7:0] RSP_SEND_BYTES = 8'hb8;
   localparam [7:0] RSP_RECV_BYTES = 8'hb9;
+  localparam [7:0] RSP_INPUT_EVENTS = 8'hbb;
+  localparam [7:0] RSP_INPUT_PRESENCE = 8'hbc;
   localparam [7:0] RSP_ERROR = 8'hff;
 
   localparam [5:0] STATE_IDLE = 6'd0;
@@ -266,6 +301,19 @@ module monitor #(
   // escribiria una palabra con el byte alto sin actualizar.
   localparam [5:0] STATE_WRITE_WORD_DATA = 6'd40;
   localparam [5:0] STATE_WRITE_WORD_ISSUE = 6'd41;
+  // INPUT. Como SEND_BYTES, INPUT_EVENTS consume siempre las N palabras. Cada
+  // palabra se ensambla en `input_event_word` (desplazando, LE) y se emite con un
+  // pulso de `input_event_valid`; el ISSUE existe por lo mismo que el de
+  // WRITE_WORD: con asignaciones no bloqueantes, en el ciclo del cuarto byte la
+  // palabra aun no esta completa. Despues de cada evento hacen falta DOS ciclos
+  // antes de mirar `input_free_slots`: uno con `valid` alto y otro para que la
+  // cuenta de la FIFO ya refleje el push (SETTLE1 y SETTLE2).
+  localparam [5:0] STATE_INPUT_EVENTS_COUNT = 6'd42;
+  localparam [5:0] STATE_INPUT_EVENTS_DATA = 6'd43;
+  localparam [5:0] STATE_INPUT_EVENT_ISSUE = 6'd44;
+  localparam [5:0] STATE_INPUT_SETTLE1 = 6'd45;
+  localparam [5:0] STATE_INPUT_SETTLE2 = 6'd46;
+  localparam [5:0] STATE_INPUT_PRESENCE_FLAGS = 6'd47;
   // No se emite a1 hasta saber que TODOS los bytes son validos: ff dentro
   // del payload es un dato legitimo, no un marcador de error. Sin reset del
   // array para permitir inferir RAM; solo se leen los bytes ya capturados.
@@ -311,8 +359,13 @@ module monitor #(
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [15:0] command_decoded;
+  (* keep = "true" *) reg [17:0] command_decoded;
 
+  // Palabras que faltan del INPUT_EVENTS en curso, byte de la palabra que toca y
+  // si la respuesta es la de INPUT_PRESENCE (bc) en vez de la de eventos (bb).
+  reg [7:0] input_words_left;
+  reg [1:0] input_byte_index;
+  reg input_is_presence;
   // Bytes que faltan del paquete serie en curso, y cuantos entraron en la cola.
   reg [7:0] serial_remaining;
   reg [7:0] serial_accepted;
@@ -367,6 +420,9 @@ module monitor #(
     // Pulsos de un ciclo hacia serial_port, igual que tx_strobe.
     serial_push <= 1'b0;
     serial_pop <= 1'b0;
+    // Pulsos de un ciclo hacia input_registers.
+    input_event_valid <= 1'b0;
+    input_presence_write <= 1'b0;
 
     if (reset) begin
       tx_data <= 8'h00;
@@ -407,7 +463,15 @@ module monitor #(
       response_byte_6 <= 8'h00;
       block_read_byte <= 8'h00;
       response_from_block <= 1'b0;
-      command_decoded <= 16'h0;
+      command_decoded <= 18'h0;
+      input_event_valid <= 1'b0;
+      input_event_word <= 32'h0000_0000;
+      input_presence_write <= 1'b0;
+      input_presence_keyboard <= 1'b0;
+      input_presence_mouse <= 1'b0;
+      input_words_left <= 8'd0;
+      input_byte_index <= 2'd0;
+      input_is_presence <= 1'b0;
       serial_push <= 1'b0;
       serial_push_data <= 8'h00;
       serial_pop <= 1'b0;
@@ -420,6 +484,8 @@ module monitor #(
             last_command <= rx_data;
             response_index <= 3'd0;
             command_decoded <= {
+              (HAS_INPUT != 0) && (rx_data == CMD_INPUT_PRESENCE),
+              (HAS_INPUT != 0) && (rx_data == CMD_INPUT_EVENTS),
               rx_data == CMD_WRITE_WORD,
               rx_data == CMD_READ_WORD,
               rx_data == CMD_RECV_BYTES, rx_data == CMD_SEND_BYTES,
@@ -533,6 +599,10 @@ module monitor #(
                   state <= STATE_SERIAL_SEND_LENGTH;
               (HAS_SERIAL != 0) && command_decoded[13]:
                   state <= STATE_SERIAL_RECV_MAX;
+              // Igual con HAS_INPUT = 0: `command_decoded[16]` y `[17]` valen
+              // cero constante y caen al `default`.
+              command_decoded[16]: state <= STATE_INPUT_EVENTS_COUNT;
+              command_decoded[17]: state <= STATE_INPUT_PRESENCE_FLAGS;
               default: begin
                 response_byte_0 <= RSP_ERROR;
                 response_length <= 3'd1;
@@ -967,6 +1037,65 @@ module monitor #(
           state <= STATE_RESPOND;
         end
 
+        // -------------------------------------------------------------------
+        // INPUT_EVENTS: 3b NN <NN palabras de 4 bytes, LE> -> bb FF
+        // INPUT_PRESENCE: 3c PP -> bc FF
+        //
+        // FF = huecos libres de la FIFO de INPUT tras aplicar el comando.
+        // -------------------------------------------------------------------
+        STATE_INPUT_EVENTS_COUNT: begin
+          if (rx_strobe) begin
+            input_words_left <= rx_data;
+            input_byte_index <= 2'd0;
+            input_is_presence <= 1'b0;
+            // NN = 0: sondeo, se responde sin esperar palabras.
+            state <= (rx_data == 8'd0) ? STATE_INPUT_SETTLE2
+                                       : STATE_INPUT_EVENTS_DATA;
+          end
+        end
+
+        STATE_INPUT_EVENTS_DATA: begin
+          if (rx_strobe) begin
+            // Primer byte = el menos significativo: tras cuatro desplazamientos
+            // cae en [7:0].
+            input_event_word <= {rx_data, input_event_word[31:8]};
+            input_byte_index <= input_byte_index + 1'b1;
+            if (input_byte_index == 2'd3) state <= STATE_INPUT_EVENT_ISSUE;
+          end
+        end
+
+        STATE_INPUT_EVENT_ISSUE: begin
+          input_event_valid <= 1'b1;
+          input_words_left <= input_words_left - 1'b1;
+          state <= STATE_INPUT_SETTLE1;
+        end
+
+        STATE_INPUT_SETTLE1: state <= STATE_INPUT_SETTLE2;
+
+        STATE_INPUT_SETTLE2: begin
+          if (input_words_left != 8'd0) begin
+            state <= STATE_INPUT_EVENTS_DATA;
+          end else begin
+            response_byte_0 <= input_is_presence ? RSP_INPUT_PRESENCE
+                                                 : RSP_INPUT_EVENTS;
+            response_byte_1 <= {3'b000, input_free_slots};
+            response_length <= 3'd2;
+            response_index <= 3'd0;
+            response_done_state <= STATE_IDLE;
+            state <= STATE_RESPOND;
+          end
+        end
+
+        STATE_INPUT_PRESENCE_FLAGS: begin
+          if (rx_strobe) begin
+            input_presence_keyboard <= rx_data[0];
+            input_presence_mouse <= rx_data[1];
+            input_presence_write <= 1'b1;
+            input_words_left <= 8'd0;
+            input_is_presence <= 1'b1;
+            state <= STATE_INPUT_SETTLE1;
+          end
+        end
         STATE_SERIAL_RECV_DATA: begin
           // La cabeza de la cola es combinacional, asi que ya esta aqui; sacar
           // y transmitir van juntos.
