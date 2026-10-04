@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.sysid_device import (  # noqa: E402
-    BIT_DIV, BIT_MUL, BIT_SUBWORD, SysIdDevice,
+    BIT_DIV, BIT_MUL, BIT_SUBWORD, SysIdDevice, declared_devices,
 )
 
 # Qué sabe ejecutar ESTE modelo, no la placa que modela.
@@ -158,7 +158,10 @@ class CPU:
         # carpeta con juego de comandos tiene, asi que un programa que se
         # identifique tiene que poder probarse aqui sin montar nada.
         self.sysid = sysid if sysid is not None else SysIdDevice(
-            folder=2, isa_profile=SIMULATOR_ISA_PROFILE)
+            folder=2, isa_profile=SIMULATOR_ISA_PROFILE,
+            devices=declared_devices(serial=serial is not None,
+                                     video=video is not None,
+                                     input=input_device is not None))
 
     def _device(self, address: int):
         """Que dispositivo MMIO, si alguno, responde a esta direccion.

@@ -152,6 +152,19 @@ class SysIdDeviceTest(unittest.TestCase):
         self.assertEqual(dispositivo.read(SysIdDevice.SYSTEM_ID), antes)
         self.assertEqual(dispositivo.read(SysIdDevice.DEVICES), 0)
 
+    def test_el_simulador_declara_los_dispositivos_que_lleva(self):
+        """DEVICES no es 0 si hay teclado y raton: INPUT es el bit 11 (§5.4)."""
+        from tools.sim_devices import InputDevice, SerialDevice, VideoDevice
+        modulo = cargar("cpu")
+        desnuda = modulo.CPU(1024).read_u32(0x8000_000C)
+        self.assertEqual(desnuda, (1 << 0) | (1 << 9))          # SYSTEM + CPU
+        con_input = modulo.CPU(1024, input_device=InputDevice())
+        self.assertEqual(con_input.read_u32(0x8000_000C) >> 11 & 1, 1)
+        completa = modulo.CPU(1024, video=VideoDevice(), serial=SerialDevice(),
+                              input_device=InputDevice())
+        self.assertEqual(completa.read_u32(0x8000_000C),
+                         (1 << 0) | (1 << 4) | (1 << 5) | (1 << 9) | (1 << 11))
+
     def test_se_lee_por_la_memoria_como_cualquier_mmio(self):
         """No basta con que el objeto exista: tiene que responder en
         0x80000000 cuando un programa hace LOAD."""

@@ -63,6 +63,36 @@ BIT_SUBWORD = 1 << 2
 BIT_SIMT = 1 << 3
 
 
+# Los bits de DEVICES (mmio.md §5.4) que un simulador puede declarar por lo que
+# lleva conectado. Los mismos que `tools/generate_sysid.py` deriva del RTL; la
+# memoria (SDRAM, EBR, FABRIC) no se declara aquí porque un simulador no tiene
+# esa distinción.
+DEV_SYSTEM = 1 << 0
+DEV_SERIAL = 1 << 4
+DEV_VIDEO = 1 << 5
+DEV_CPU = 1 << 9
+DEV_INPUT = 1 << 11
+
+
+def declared_devices(*, serial: bool = False, video: bool = False,
+                     input: bool = False) -> int:
+    """El bitmap de DEVICES de una CPU simulada con esos dispositivos.
+
+    Antes todos los simuladores contestaban 0, o sea «sin declarar», aunque
+    llevaran teclado y ratón: un programa que mira el bit INPUT para decidir si
+    leer `0x80600000` funcionaba en la placa y se paraba con error en el
+    simulador (§17: mismo contrato).
+    """
+    bits = DEV_SYSTEM | DEV_CPU
+    if serial:
+        bits |= DEV_SERIAL
+    if video:
+        bits |= DEV_VIDEO
+    if input:
+        bits |= DEV_INPUT
+    return bits
+
+
 class SysIdDevice:
     """Siete palabras de solo lectura; el resto del bloque da error."""
 
