@@ -20,6 +20,12 @@ def add_arguments(parser):
                        help="habilita vídeo con la consola de texto 80x30 (CONFIG, paleta, texto)")
     group.add_argument("--console-output", type=Path,
                        help="habilita --console y guarda la pantalla de texto al terminar (UTF-8)")
+    group.add_argument("--console-image", type=Path,
+                       help="habilita --console y guarda la pantalla como PNG 640x480, "
+                            "dibujada con --console-font y sobre el framebuffer si se usa")
+    group.add_argument("--console-font", default="cpc464",
+                       help="fuente de --console-image: nombre en "
+                            "30.fpga-cpu-console/fonts (pc, cpc464, tamzen) o ruta a un .hex")
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
@@ -32,7 +38,8 @@ def video_requested(args) -> bool:
 
 def console_requested(args) -> bool:
     return bool(getattr(args, "console", False)
-                or getattr(args, "console_output", None))
+                or getattr(args, "console_output", None)
+                or getattr(args, "console_image", None))
 
 
 def missing_video_warning(program: Path, args) -> str | None:
@@ -91,11 +98,39 @@ def video_result(machine, capture=False):
                 fb_front=video.fb_front, frame=frame)
 
 
+def resolve_font(spec: str) -> Path:
+    """`spec` es una ruta a un .hex o el nombre de una fuente de la 30."""
+    if Path(spec).is_file():
+        return Path(spec)
+    fonts = Path(__file__).resolve().parents[1] / "30.fpga-cpu-console" / "fonts"
+    named = fonts / f"font8x16_{spec}.hex"
+    if not named.is_file():
+        known = ", ".join(p.stem.removeprefix("font8x16_") for p in sorted(fonts.glob("*.hex")))
+        raise ValueError(f"fuente desconocida: {spec}. Disponibles: {known}")
+    return named
+
+
+def write_console_image(args, machine):
+    from tools import console_render
+    video = machine.video
+    framebuffer = None
+    if video.video_mode == video.MODE_SCANOUT:
+        base = video.fb_front
+        if 0 <= base and base + FRAME_BYTES <= len(machine.memory):
+            framebuffer = bytes(machine.memory[base:base + FRAME_BYTES])
+    font = console_render.load_font(resolve_font(args.console_font))
+    console_render.write_png(
+        args.console_image,
+        console_render.render_rgb(video.text_ram, video.palette, font, framebuffer))
+
+
 def write_outputs(args, machine):
     if args.frame_output:
         args.frame_output.write_bytes(video_result(machine, True)["frame"])
     if getattr(args, "console_output", None):
         args.console_output.write_text("\n".join(machine.video.text_lines()) + "\n",
                                        encoding="utf-8")
+    if getattr(args, "console_image", None):
+        write_console_image(args, machine)
     if args.serial_output:
         args.serial_output.write_bytes(machine.serial.output())

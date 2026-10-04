@@ -364,6 +364,7 @@ opciones de `tools/sim_peripherals.py`:
 | `--frame-output frame.bin` | Activa vídeo y guarda el framebuffer frontal RGB565 de 320×240 |
 | `--console` | Activa vídeo con la consola de texto 80×30 de la 30: `CONFIG` (`+0x40`), paleta (`+0x1000`) y texto (`+0x6000`) dentro de la ventana de vídeo. `SWAP` pasa a ser `FRAME_COMMIT` de dos bits (swap y `STATE_COMMIT`) |
 | `--console-output pantalla.txt` | Activa `--console` y vuelca la pantalla de texto (30 líneas, UTF-8) al terminar |
+| `--console-image pantalla.png` | Activa `--console` y guarda la pantalla como PNG 640×480, dibujada con `--console-font` (nombre de `30.fpga-cpu-console/fonts` —`cpc464` por defecto, `pc`, `tamzen`— o ruta a un `.hex`). Compone la consola sobre el framebuffer si el programa lo usa (`VIDEO_CTRL` en scanout); el color 0 es transparente, como en el RTL, y sin framebuffer sale negro. `--frame-output` y `fb_window` solo muestran el framebuffer, sin la consola |
 | `--serial` | Activa serie en `0x80000200` |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
 | `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |
@@ -1286,6 +1287,25 @@ monitor). `board-upload` es el mismo chequeo que hace `run-board` por
 defecto, con `--rebuild`/`--no-upload`/`-y`. `board-load` **no comprueba la
 identidad del bitstream** — asume que ya es el correcto y va directo a
 ensamblar/cargar/ejecutar; combínalo con `board-upload` si no estás seguro.
+
+### Cambiar la fuente de la consola sin resintetizar (`font-patch`)
+
+La fuente de `text_console.v` es contenido inicial de cuatro EBR: cambiarla no
+cambia el netlist, así que no hace falta volver a sintetizar. `font-patch`
+localiza esos EBR en `_build/default/hardware.config` por su contenido (detecta
+cuál de las fuentes de `fonts/` lleva), los reescribe con la pedida y repaquea
+con `ecppack`:
+
+```bash
+$ font-patch --prototype 30 pc               # deja _build/default/font-pc.bit
+$ font-patch --prototype 30 cpc464 --upload  # y lo programa (SRAM) con fujprog
+```
+
+No toca `hardware.bit` ni el sello de subida. Tras `--upload` la CPU arranca
+vacía: recarga el programa con `board-load`. Solo vale para el netlist con el
+que se construyó el `.config`; si cambia el RTL hay que reconstruir, y entonces
+la fuente entra por `FONT_FILE`. Parchear a la fuente por defecto da el mismo
+bitstream, byte a byte, que una síntesis completa (comprobado en la 30).
 
 ### Suite de casos contra placa real (`test-board`)
 
