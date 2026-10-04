@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .simulator import _load_module, video_result
+from .simulator import _load_module, input_device, video_result
 
 VERSIONS = {
     "cycle": {
@@ -10,14 +10,14 @@ VERSIONS = {
         "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
         "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
                          "shift_immediate", "subword_memory", "frame_capture", "serial",
-                         "mul_div", "large_memory"),
+                         "mul_div", "large_memory", "input"),
         "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
     },
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
         # Perifericos funcionales compartidos; no implica soporte en la FPGA.
         "capabilities": ("atomic_warp_faults", "frame_capture", "serial", "mul_div",
-                         "large_memory"),
+                         "large_memory", "input"),
         "description": "simulador funcional MiniGPU actual",
     },
 }
@@ -73,7 +73,8 @@ class GpuBackend:
             trace: bool = False, trace_detail: bool = False,
             trace_limit: int | None = None, trace_file: Path | None = None,
             simulator_options: dict | None = None,
-            video: dict | None = None, stdin: bytes = b"") -> dict:
+            video: dict | None = None, stdin: bytes = b"",
+            input_script: str | None = None) -> dict:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
         dispositivo = None
@@ -97,6 +98,7 @@ class GpuBackend:
         serie = self.module.SerialDevice(stdin=stdin)
         serie.attach_host()
         gpu = self.module.System(warp_size=size, video=dispositivo, serial=serie,
+                                 input_device=input_device(input_script),
                                  **(simulator_options or {}))
         gpu.load_program(program, launch=False)
         for address, data in initial_memory:

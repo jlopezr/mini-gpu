@@ -100,5 +100,10 @@
   },
   "atomic_warp_faults": {
     "architecture": "gpu"
+  },
+
+  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file': ningun RTL lo implementa todavia, asi que solo los simuladores lo declaran y un caso con `requires: [\"input\"]` se omite en la placa. Cuando exista un input_registers.v, aqui se le pone su 'file' y la placa lo detecta sola. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
+  "input": {
+    "architecture": ["cpu", "gpu"]
   }
 }

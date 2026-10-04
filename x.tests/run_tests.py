@@ -907,6 +907,25 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
         raise ValueError(
             "stdin y expect.stdout necesitan requires: [\"serial\"]")
 
+    # ------------------------------------------------------------------ input
+    #
+    # `input` es un guion de INPUT (tools/input_script.py) como lista de lineas:
+    # lo que el teclado y el raton hacen y cuando, medido en instrucciones
+    # completadas. El guion conecta lo que use --no hay flags aqui-- y se
+    # comprueba al CARGAR el caso: un error de guion es del caso, no del
+    # simulador, y tiene que aparecer con su linea y no a media ejecucion.
+    input_raw = raw.get("input")
+    input_text = None
+    if input_raw is not None:
+        if not (isinstance(input_raw, list)
+                and all(isinstance(line, str) for line in input_raw)):
+            raise ValueError("input debe ser una lista de lineas de guion")
+        if "input" not in capacidades:
+            raise ValueError("input necesita requires: [\"input\"]")
+        from tools import input_script
+        input_text = "\n".join(input_raw) + "\n"
+        input_script.check(input_script.parse(input_text))
+
     max_instructions = raw.get("max_instructions", 1_000_000)
     timeout_seconds = raw.get("timeout_seconds", 5.0)
     if not isinstance(max_instructions, int) or max_instructions < 1:
@@ -927,6 +946,7 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
         "timeout_seconds": float(timeout_seconds),
         "simulator_options": simulator_options(raw, architecture),
         "stdin": stdin_bytes,
+        "input_script": input_text,
         "expected": {
             "stdout": expected_stdout,
             "halted": expected_raw.get("halted", True),
@@ -1309,6 +1329,8 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
                         max_instructions=case["max_instructions"],
                         timeout_seconds=case["timeout_seconds"],
                         stdin=case["stdin"],
+                        **({"input_script": case["input_script"]}
+                           if case.get("input_script") is not None else {}),
                         **({"video": {
                             "run_until_swap": (case["run_until"] or {}).get("swap"),
                             "capture_frame": case["expected"]["frame"] is not None,
@@ -1416,6 +1438,10 @@ def backend_arguments(case: dict, backend_name: str, args) -> dict:
         # Los simuladores GPU comparten serie; el backend GPU FPGA no.
         **({"stdin": case["stdin"]} if case["architecture"] == "cpu"
            or backend_name in SIMULADORES_GPU else {}),
+        # Solo los simuladores declaran `input`, y el runner omite el caso en
+        # los demas backends antes de llegar aqui.
+        **({"input_script": case["input_script"]}
+           if case.get("input_script") is not None else {}),
         **({"warp_config": case["warp_config"]}
            if case["architecture"] == "gpu" else {}),
         **({"observation_fields": set(case["expected"]["observations"])}

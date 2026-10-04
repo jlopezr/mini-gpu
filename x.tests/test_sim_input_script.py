@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT / "11.gpu-sim-func"))
 
 from tools import hid_keys, input_script, sim_peripherals
@@ -195,6 +196,83 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(events(device), [])
         system.tick_devices()
         self.assertEqual(len(events(device)), 2)
+
+
+class CaseFieldTest(unittest.TestCase):
+    """El campo `input` de un test.json."""
+
+    def load(self, **fields):
+        sys.path.insert(0, str(ROOT / "x.tests"))
+        import json
+        import run_tests
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "program.asm").write_text("HALT\n", encoding="utf-8")
+            case = {"architecture": "cpu", "name": "caso", "program": "program.asm",
+                    "expect": {}, **fields}
+            path = Path(tmp) / "test.json"
+            path.write_text(json.dumps(case), encoding="utf-8")
+            return run_tests.load_case(path)
+
+    def test_un_caso_con_input_lo_guarda_como_texto(self):
+        case = self.load(requires=["input"], input=["@0 keyboard connect", "@5 key press A"])
+        self.assertEqual(case["input_script"], "@0 keyboard connect\n@5 key press A\n")
+
+    def test_sin_input_no_hay_guion(self):
+        self.assertIsNone(self.load()["input_script"])
+
+    def test_input_exige_requires_input(self):
+        with self.assertRaises(ValueError) as error:
+            self.load(input=["@0 keyboard connect"])
+        self.assertIn('requires: ["input"]', str(error.exception))
+
+    def test_input_debe_ser_una_lista_de_cadenas(self):
+        for bad in ("@0 keyboard connect", [1, 2], {"a": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.load(requires=["input"], input=bad)
+
+    def test_un_guion_malo_se_rechaza_al_cargar_el_caso(self):
+        with self.assertRaises(ValueError) as error:
+            self.load(requires=["input"], input=["@0 key press A"])
+        self.assertIn("línea 1", str(error.exception))
+
+
+class ParityTest(unittest.TestCase):
+    """El mismo programa lee el mismo guion en los tres motores."""
+
+    PROGRAM = """MOVHI R1, 0x8060
+MOVI R6, 256
+MOVI R5, 2
+loop: LOAD R3, R1, 4
+ANDI R3, R3, 0xFF
+BEQ R3, R0, loop
+LOAD R4, R1, 0
+STORE R4, R6, 0
+ADDI R6, R6, 4
+ADDI R5, R5, -1
+BNE R5, R0, loop
+HALT"""
+    SCRIPT = "@0 keyboard connect\n@50 key press A\n"
+
+    def test_los_tres_motores(self):
+        sys.path.insert(0, str(ROOT / "x.tests"))
+        from mini_asm import assemble_bytes
+        from backends.simulator import SimulatorBackend
+        from backends.gpu_simulator import GpuBackend
+        backends = [SimulatorBackend(ROOT), GpuBackend(ROOT), GpuBackend(ROOT, "cycle")]
+        for backend in backends:
+            with self.subTest(backend=backend.version, architecture=backend.ARCHITECTURE):
+                args = dict(program=assemble_bytes(self.PROGRAM), initial_memory=[],
+                            register_numbers=set(), memory_ranges=[(256, 8)],
+                            max_instructions=10000, timeout_seconds=10,
+                            input_script=self.SCRIPT)
+                if isinstance(backend, GpuBackend):
+                    args["warp_config"] = {"warp_size": 1, "warps": [
+                        {"id": 0, "pc": 0, "active_mask": 1}]}
+                result = backend.run(**args)
+                self.assertFalse(result["error"])
+                self.assertEqual(result["memory"][(256, 8)],
+                                 (0x0000_0104).to_bytes(4, "little")
+                                 + (0x0000_0004).to_bytes(4, "little"))
 
 
 def namespace(**kwargs):

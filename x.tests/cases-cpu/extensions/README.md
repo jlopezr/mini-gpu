@@ -9,6 +9,7 @@ eso todos sus casos llevan `requires`:
 | [calls](calls/) | `calls` | `JAL`, `JALR`, `JR` (`0x2C–0x2E`) | 19 |
 | [subword](subword/) | `subword_memory` | `LOADB`…`STOREH` (`0x18–0x1D`) | 19 |
 | [serial](serial/) | `serial` | Puerto serie en `0x80000200` | 19 |
+| [input](input/) | `input` | Teclado y ratón (INPUT, `0x80600000`) | solo simuladores |
 | [shift-immediate](shift-immediate/) | `shift_immediate` | `SHLI`, `SHRI`, `SARI` | 21 |
 | [alu-extended](alu-extended/) | `alu_extended` | `MULHI`, `DIVU`, `REM`, `REMU` (`0x0B`, `0x0D–0x0F`) | 21 |
 | [compare](compare/) | `compare` | `SLT`, `SLTU` (`0x26–0x27`) | 21 |

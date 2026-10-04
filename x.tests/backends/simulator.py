@@ -23,7 +23,7 @@ VERSIONS = {
         # simulador la tiene desde siempre.
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
                          "shift_immediate", "alu_extended", "mul_div",
-                         "compare", "large_memory"),
+                         "compare", "large_memory", "input"),
         "description": "simulador funcional MiniCPU actual",
     },
 }
@@ -71,6 +71,24 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     if faltan:
         return f"el simulador {version!r} no tiene {', '.join(faltan)}"
     return None
+
+
+def input_device(script: str | None):
+    """El INPUT de un caso, o None si no declara `input`.
+
+    El guion tiene que conectar lo que use: aquí no hay `--keyboard` ni
+    `--mouse`, así que un caso describe el comportamiento entero.
+    """
+    if script is None:
+        return None
+    from tools import input_script
+    from tools.sim_devices import InputDevice
+
+    device = InputDevice()
+    actions = input_script.parse(script)
+    input_script.check(actions)
+    device.attach_script(actions)
+    return device
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -123,6 +141,7 @@ class SimulatorBackend:
         timeout_seconds: float,
         video: dict | None = None,
         stdin: bytes = b"",
+        input_script: str | None = None,
     ) -> dict:
         del timeout_seconds  # El simulador usa un límite de instrucciones.
 
@@ -158,7 +177,8 @@ class SimulatorBackend:
             serie = self.serial_class(stdin=stdin)
             serie.attach_host()
 
-        cpu = self.cpu_class(self.memory_size, video=dispositivo, serial=serie)
+        cpu = self.cpu_class(self.memory_size, video=dispositivo, serial=serie,
+                             input_device=input_device(input_script))
         cpu.load_program(program)
 
         for address, data in initial_memory:
