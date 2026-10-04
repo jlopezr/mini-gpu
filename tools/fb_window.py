@@ -13,7 +13,7 @@ buffers contienen RGB565 codificado en Base64:
 
 Cada clave que venga con datos se repinta; una clave ausente deja su panel como
 estaba. Por `stdout`, la ventana devuelve `{"event": "interrupt"}` al pulsar
-`Esc`; cerrar con la X termina el proceso, y el depurador se entera solo la
+`F12`; cerrar con la X termina el proceso, y el depurador se entera solo la
 próxima vez que intenta refrescar.
 
 Tk y no pygame: viene con Python, y aquí no hace falta nada más que enseñar un
@@ -200,14 +200,16 @@ def main() -> int:
 
     def enviar_tecla(evento):
         # `char` conserva la R mayúscula; para cursores y PageUp se necesita
-        # `keysym`. Zoom y Escape tienen su binding específico.
+        # `keysym`. Zoom y F12 tienen su binding específico. Esc ya no
+        # interrumpe: es una tecla como las demás, y la ventana de pantalla
+        # (`screen_window.py`) la manda al programa.
         if evento.keysym in {"plus", "KP_Add", "minus", "KP_Subtract",
-                             "Escape"}:
+                             "F12"}:
             return
         key = evento.char or evento.keysym
         print(json.dumps({"event": "key", "key": key}), flush=True)
 
-    raiz.bind("<Escape>", interrumpir)
+    raiz.bind("<F12>", interrumpir)
     raiz.bind("<KeyPress>", enviar_tecla, add="+")
 
     raiz.after(50, bombear)

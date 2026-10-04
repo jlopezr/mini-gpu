@@ -4,7 +4,7 @@ Lee los dos buffers del objetivo y se los pasa a `tools/fb_window.py`, que
 corre aparte. Aquí no hay nada de Tk: este módulo sólo sabe leer memoria y
 mandar una línea JSON con los píxeles codificados en Base64 por la tubería.
 La ventana devuelve por stdout los eventos que pertenecen al depurador, como
-`Esc` para interrumpir la ejecución sin cerrar el framebuffer.
+`F12` para interrumpir la ejecución sin cerrar el framebuffer.
 
 El coste de refrescar no es el mismo en los dos sitios, y eso decide el
 comportamiento por defecto. En el simulador leer un framebuffer es copiar 150

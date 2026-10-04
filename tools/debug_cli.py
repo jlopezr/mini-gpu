@@ -101,12 +101,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.board and args.prototype is None:
         print("error: --board necesita --prototype", file=sys.stderr)
         return 2
-    if args.window:
-        # La ventana del depurador es la del comando `fb`; la entrada de teclado
-        # y ratón en ella llega en otro paso. Mejor un error que una opción que
-        # se acepta y no hace nada.
-        print("error: --window todavía no está disponible en mini-dbg "
-              "(use el comando `fb` para ver el framebuffer)", file=sys.stderr)
+    if args.window and args.board:
+        print("error: --window es del simulador; en la placa use `fb`", file=sys.stderr)
+        return 2
+    if args.serial_tty:
+        # La TUI es dueña del terminal: teclas y salida del serie no pueden
+        # compartirlo. El serie del programa se ve en el panel de consola.
+        print("error: --serial-tty no vale en mini-dbg, la TUI ocupa el terminal "
+              "(use --serial-input para darle entrada al programa)", file=sys.stderr)
         return 2
 
     includes = include_dirs(args)
@@ -132,6 +134,15 @@ def main(argv: list[str] | None = None) -> int:
         warning = sim_peripherals.missing_video_warning(args.program, args)
         if warning is not None:
             session.warnings.append(warning)
+
+    if args.window:
+        # Misma ventana que `fb screen`, abierta desde el principio.
+        try:
+            session.screen_font = sim_peripherals.resolve_font(args.console_font)
+            print(session.open_screen())
+        except (TargetError, ValueError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
 
     startup = [f"break {mark}" for mark in args.breakpoints] + args.command
     try:

@@ -26,17 +26,22 @@ import time
 from pathlib import Path
 
 from tools import screen
+from tools.sim_host import stop_machine
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class SimDisplay:
     def __init__(self, font: Path, scale: int = 1, refresh_hz: float = 15.0,
-                 every: int = 2000):
+                 every: int = 2000, on_interrupt=None, stop_on_close: bool = True):
         self.font = Path(font)
         self.scale = scale
         self.period = 1.0 / refresh_hz
         self.every = every
+        # El depurador no quiere que F12 ni cerrar la ventana PAREN la máquina
+        # (la dejaría con `halted`): pide `on_interrupt` y `stop_on_close=False`.
+        self.on_interrupt = on_interrupt
+        self.stop_on_close = stop_on_close
         self.machine = None
         self.process: subprocess.Popen | None = None
         self.events: queue.Queue = queue.Queue()
@@ -51,16 +56,34 @@ class SimDisplay:
     def bind(self, machine) -> None:
         self.machine = machine
 
-    def start(self, device) -> None:
-        """Abre la ventana y conecta teclado y ratón."""
+    @property
+    def is_open(self) -> bool:
+        return (self.process is not None and self.process.poll() is None
+                and not self.closed)
+
+    def start(self, device=None) -> None:
+        """Abre la ventana. Con `device`, conecta teclado y ratón a INPUT; sin
+        él la ventana solo muestra la pantalla."""
+        self.closed = False
+        self.interrupted = False
+        self._last_snapshot = None
+        command = [sys.executable, str(ROOT / "tools" / "screen_window.py"), str(self.font),
+                   "--scale", str(self.scale)]
+        if device is not None:
+            command.append("--input")
         self.process = subprocess.Popen(
-            [sys.executable, str(ROOT / "tools" / "screen_window.py"), str(self.font),
-             "--input", "--scale", str(self.scale)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         threading.Thread(target=self._read_events, args=(self.process,), daemon=True).start()
-        device.connect_keyboard()
-        device.connect_mouse()
+        if device is not None:
+            device.connect_keyboard()
+            device.connect_mouse()
         self._send_screen(force=True)
+
+    def refresh(self, device=None, force: bool = True) -> None:
+        """Entrada pendiente y, con `force`, la pantalla de ahora mismo."""
+        self.apply_events(device)
+        if not self.closed:
+            self._send_screen(force=force)
 
     def _read_events(self, process) -> None:
         for line in process.stdout:
@@ -99,30 +122,29 @@ class SimDisplay:
             except queue.Empty:
                 return
             kind = event.get("event")
-            if kind == "keys" and device.keyboard_present:
+            if kind == "keys" and device is not None and device.keyboard_present:
                 device.keyboard_report(set(event.get("pressed", ())))
-            elif kind == "mouse" and device.mouse_present:
+            elif kind == "mouse" and device is not None and device.mouse_present:
                 device.mouse_report(int(event.get("buttons", 0)),
                                     int(event.get("dx", 0)), int(event.get("dy", 0)))
             elif kind == "interrupt":
                 self.interrupted = True
-                self._stop_machine()
+                if self.on_interrupt is not None:
+                    self.on_interrupt()
+                else:
+                    self._stop_machine()
             elif kind == "error":
                 print(f"ventana: {event.get('message')}", file=sys.stderr)
             elif kind == "closed":
                 self.closed = True
-                device.disconnect_keyboard()
-                device.disconnect_mouse()
-                self._stop_machine()
+                if device is not None:
+                    device.disconnect_keyboard()
+                    device.disconnect_mouse()
+                if self.stop_on_close:
+                    self._stop_machine()
 
     def _stop_machine(self) -> None:
-        machine = self.machine
-        if machine is None:
-            return
-        if hasattr(machine, "peripheral_halted"):
-            machine.peripheral_halted = True        # GPU
-        else:
-            machine.halted = True                   # CPU
+        stop_machine(self.machine)
 
     def _title(self) -> str:
         count = getattr(self.machine, "instructions_executed", None)

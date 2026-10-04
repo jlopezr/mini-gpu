@@ -124,6 +124,10 @@ def signed_divide(a: int, b: int) -> int:
 from tools.sim_devices import VideoDevice, SerialDevice, InputDevice
 
 
+class InstructionLimitExceeded(RuntimeError):
+    """`run` llegó al límite de instrucciones sin que el programa parara."""
+
+
 class CPU:
     """Estado y ejecución secuencial de una MiniCPU escalar."""
 
@@ -608,7 +612,7 @@ class CPU:
         """Ejecuta hasta HALT respetando un límite de seguridad."""
         while not self.halted:
             if self.instructions_executed >= max_instructions:
-                raise RuntimeError(
+                raise InstructionLimitExceeded(
                     f"límite de instrucciones alcanzado "
                     f"en PC=0x{self.pc:08X}"
                 )
@@ -669,10 +673,20 @@ def main() -> None:
         raise SystemExit(2) from None
     cpu.load_program(program)
     sim_peripherals.start_display(cpu)
-    cpu.run(args.run_limit)
+    limited = None
+    try:
+        cpu.run(args.run_limit)
+    except InstructionLimitExceeded as exc:
+        # No es un fallo del simulador: el programa no paró dentro del límite.
+        # Un programa interactivo con bucle principal acaba así, y las salidas
+        # (framebuffer, consola, serie) siguen siendo lo que se quería ver.
+        limited = str(exc)
     sim_peripherals.write_outputs(args, cpu)
 
-    if cpu.error:
+    if limited:
+        print(f"Simulador: {limited} tras {cpu.instructions_executed} instrucciones "
+              f"(--run-limit {args.run_limit})", file=sys.stderr)
+    elif cpu.error:
         print(
             f"ERROR 0x{cpu.error_code:02X} en PC=0x{cpu.error_pc:08X} "
             f"tras {cpu.instructions_executed} instrucciones"
@@ -698,6 +712,8 @@ def main() -> None:
 
     sys.stdout.flush()
     sim_peripherals.finish_display(cpu)
+    if limited:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,11 @@ class DebugSession:
         # La ventana de framebuffer se crea al primer `fb`: quien no la use no
         # paga ni un proceso ni el import.
         self._video = None
+        # Ventana de pantalla (`fb screen`): la del simulador, con consola y con
+        # teclado y ratón hacia INPUT. Es distinta de la de `_video`, que enseña
+        # los buffers crudos y sirve también en la placa.
+        self._screen = None
+        self.screen_font = None
         # Ventana del panel de memoria; los comandos `mem`/`x` la mueven.
         self.memory_address = 0
         self.memory_length = 128
@@ -400,20 +405,68 @@ class DebugSession:
             self._video = VideoViewer(self.target, on_interrupt=self.interrupt)
         return self._video
 
+    def _input_device(self):
+        machine = self.target.simulated_machine()
+        return getattr(machine, "input", None)
+
+    def open_screen(self) -> str:
+        """Abre (o refresca) la ventana de pantalla del simulador."""
+        machine = self.target.simulated_machine()
+        if machine is None or getattr(machine, "video", None) is None:
+            raise TargetError(
+                "la ventana de pantalla solo existe en el simulador con vídeo "
+                "(hace falta --video o --window)")
+        device = machine.input
+        if self._screen is not None and self._screen.is_open:
+            self._screen.refresh(device, force=True)
+            return "pantalla refrescada"
+        from tools.sim_display import SimDisplay
+        from tools.sim_peripherals import resolve_font
+
+        # F12 y cerrar la ventana no paran la máquina: F12 interrumpe la
+        # ejecución en curso, como cualquier otra orden del depurador.
+        display = SimDisplay(self.screen_font or resolve_font("cpc464"),
+                             on_interrupt=self.interrupt, stop_on_close=False)
+        display.bind(machine)
+        if device is not None:
+            device.attach_host(display, every=1000)
+        display.start(device)
+        self._screen = display
+        if device is None:
+            return ("ventana de pantalla (sin INPUT: --keyboard, --mouse o "
+                    "--window para teclado y ratón)")
+        return "ventana de pantalla con teclado y ratón; F12 interrumpe"
+
+    def close_screen(self) -> None:
+        screen, self._screen = self._screen, None
+        if screen is None:
+            return
+        device = self._input_device()
+        if device is not None and device.host is screen:
+            device.host = None
+        screen.close()
+
     def close_video(self) -> None:
-        """Cierra la ventana si llegó a abrirse. Idempotente."""
+        """Cierra las ventanas si llegaron a abrirse. Idempotente."""
         if self._video is not None:
             self._video.close()
+        self.close_screen()
 
     def refresh_video(self) -> None:
         """Repinta la ventana si está abierta y toca. Barato si no lo está."""
         if self._video is not None:
             self._video.refresh()
+        if self._screen is not None:
+            self._screen.refresh(self._input_device(), force=True)
 
     def refresh_video_title(self) -> None:
         """Actualiza la barra de la ventana sin tocar los píxeles."""
         if self._video is not None:
             self._video.refresh_title()
+        if self._screen is not None and self._screen.process is not None:
+            # Con INPUT, `InputDevice.tick` ya da la mano; esto cubre el caso
+            # sin INPUT y es barato: `poll` solo trabaja si toca refrescar.
+            self._screen.poll(self._input_device())
 
     def execute(self, line: str) -> list[str]:
         """Ejecuta una línea de comando y devuelve lo que hay que enseñar.
@@ -544,7 +597,10 @@ class DebugSession:
         """`fb`, `fb back`, `fb both`, `fb off`, `fb auto on|off`."""
         if self.target.video_layout() is None:
             raise TargetError("este objetivo no tiene vídeo")
+        if args == ["screen"]:
+            return [self.open_screen()]
         if args and args[0] == "off":
+            self.close_screen()
             return [self.video.close()]
         if args and args[0] == "auto":
             if len(args) != 2 or args[1] not in ("on", "off"):
@@ -565,6 +621,51 @@ class DebugSession:
         if not self.video.auto:
             lines.append("`fb` otra vez para refrescar "
                          "(o `fb auto on`, a ~1,5 s por buffer)")
+        return lines
+
+    def _cmd_input(self, args: list[str]) -> list[str]:
+        """Estado de INPUT sin consumir nada: mirar la cola no la vacía."""
+        if args:
+            raise CommandError("`input` no lleva argumentos")
+        device = self._input_device()
+        if device is None:
+            raise TargetError(
+                "este objetivo no tiene INPUT (en el simulador: --keyboard, "
+                "--mouse, --window o --input-script)")
+        from tools import hid_keys
+        from tools.sim_devices import InputDevice
+
+        def present(flag: bool) -> str:
+            return "presente" if flag else "ausente"
+
+        buttons = {0: "left", 1: "right", 2: "middle"}
+        lines = [
+            f"teclado {present(device.keyboard_present)}, "
+            f"ratón {present(device.mouse_present)}, "
+            f"cola {len(device.fifo)}/{InputDevice.FIFO_DEPTH}"
+            + (", OVERFLOW" if device.overflow else ""),
+            "teclas pulsadas: "
+            + (" ".join(hid_keys.name_of(u) for u in device.pressed()) or "ninguna"),
+            "botones del ratón: "
+            + (" ".join(buttons.get(n, str(n)) for n in device._bits(device.mouse_buttons))
+               or "ninguno"),
+        ]
+        for index, word in enumerate(device.fifo):
+            event = InputDevice.decode_event(word)
+            if event["type"] == "key":
+                text = (f"tecla {hid_keys.name_of(event['usage'])} "
+                        f"{'down' if event['down'] else 'up'}"
+                        f"  modificadores=0x{event['modifiers']:02X}")
+            elif event["type"] == "modifiers":
+                text = f"modificadores 0x{event['modifiers']:02X}"
+            elif event["type"] == "button":
+                text = (f"botón {buttons.get(event['button'], event['button'])} "
+                        f"{'down' if event['down'] else 'up'}")
+            elif event["type"] == "move":
+                text = f"movimiento dx={event['dx']} dy={event['dy']}"
+            else:
+                text = f"evento reservado 0x{event['word']:08X}"
+            lines.append(f"  {index:>2}: {text}")
         return lines
 
     def _cmd_frame(self, args: list[str]) -> list[str]:
@@ -589,6 +690,8 @@ class DebugSession:
             hidden.add("fb")
         if self.target.video_swap_count() is None:
             hidden.add("frame")
+        if self._input_device() is None:
+            hidden.add("input")
         return [f"{name:<10} {text}" for name, text in HELP
                 if name.split()[0] not in hidden]
 
@@ -629,7 +732,9 @@ HELP: tuple[tuple[str, str], ...] = (
     ("set X V", "escribe `set R5 0x10` o `set pc etiqueta`"),
     ("mem [X N]", "vuelca N bytes desde X"),
     ("write X V", "escribe la palabra V en la direccion X"),
-    ("fb [X]", "ventana de framebuffer: front (por defecto), back, both, off"),
+    ("fb [X]", "ventana de framebuffer: front (por defecto), back, both, off; "
+               "`fb screen` es la pantalla del simulador, con consola y teclado/ratón"),
+    ("input", "estado de INPUT: teclas, botones y cola de eventos, sin consumirlos"),
     ("frame", "ejecuta hasta completar el siguiente intercambio de framebuffer"),
     ("reset", "reinicia PC, registros y contadores sin borrar memoria"),
     ("quit", "sale"),
@@ -651,6 +756,7 @@ _COMMANDS = {
     "write": DebugSession._cmd_write, "w": DebugSession._cmd_write,
     "fb": DebugSession._cmd_fb, "v": DebugSession._cmd_fb,
     "frame": DebugSession._cmd_frame, "f": DebugSession._cmd_frame,
+    "input": DebugSession._cmd_input,
     "reset": DebugSession._cmd_reset,
     "help": DebugSession._cmd_help, "?": DebugSession._cmd_help,
     "quit": DebugSession._cmd_quit, "q": DebugSession._cmd_quit,

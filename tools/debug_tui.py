@@ -292,6 +292,7 @@ def build_app(session: DebugSession):
             ("o", "command('finish')", "salir funcion"),
             ("c", "command('run')", "continuar"),
             ("R", "command('reset')", "reset"),
+            ("f12", "interrupt", ""),
             ("escape", "interrupt", ""),
             ("ctrl+c", "ctrl_c", ""),
             ("q", "quit", "salir"),
@@ -378,7 +379,7 @@ def build_app(session: DebugSession):
         def dispatch(self, command: str) -> None:
             log = self.query_one("#console", RichLog)
             log.write(f"[bold cyan]> {command}[/bold cyan]")
-            log.write("[dim]Esc para interrumpir la ejecución[/dim]")
+            log.write("[dim]F12 (o Esc) para interrumpir la ejecución[/dim]")
             before = session.target.registers()
             try:
                 for line in session.execute(command):

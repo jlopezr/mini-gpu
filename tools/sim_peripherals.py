@@ -27,6 +27,9 @@ def add_arguments(parser):
                        help="fuente de --console-image: nombre en "
                             "30.fpga-cpu-console/fonts (pc, cpc464, tamzen) o ruta a un .hex")
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
+    group.add_argument("--serial-tty", action="store_true",
+                       help="habilita serie y lo conecta al terminal: la salida del programa va a "
+                            "stdout y lo que se teclea entra por RX. Ctrl+C sale. No vale en mini-dbg")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
     group.add_argument("--window", action="store_true",
@@ -88,9 +91,13 @@ def from_arguments(args):
             # programa ve, y además necesita HALT_TARGET.
             video.stop_after_swaps = args.halt_after_swaps
     serial = None
-    if args.serial or args.serial_input or args.serial_output:
+    if (args.serial or args.serial_input or args.serial_output
+            or getattr(args, "serial_tty", False)):
         serial = SerialDevice(stdin=args.serial_input.read_bytes() if args.serial_input else b"")
         serial.attach_host()
+        if getattr(args, "serial_tty", False):
+            from tools.sim_host import SerialTty
+            serial.attach_tty(SerialTty())
     return {"video": video, "serial": serial, "input_device": input_from_arguments(args)}
 
 
@@ -120,6 +127,10 @@ def input_from_arguments(args):
 def start_display(machine):
     """Abre la ventana de `--window`, si se pidió. Llamar con el simulador ya
     construido y antes de ejecutarlo."""
+    tty = getattr(getattr(machine, "serial", None), "tty", None)
+    if tty is not None:
+        tty.bind(machine)
+        tty.start()
     device = getattr(machine, "input", None)
     host = getattr(device, "host", None)
     if host is not None:
@@ -129,7 +140,11 @@ def start_display(machine):
 
 
 def finish_display(machine) -> None:
-    """Al acabar el programa, deja la última imagen hasta que se cierre la ventana."""
+    """Al acabar el programa, restaura el terminal y deja la última imagen
+    hasta que se cierre la ventana."""
+    tty = getattr(getattr(machine, "serial", None), "tty", None)
+    if tty is not None:
+        tty.close()
     device = getattr(machine, "input", None)
     host = getattr(device, "host", None)
     if host is not None:

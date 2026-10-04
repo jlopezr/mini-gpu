@@ -366,9 +366,10 @@ opciones de `tools/sim_peripherals.py`:
 | `--console-output pantalla.txt` | Activa `--console` y vuelca la pantalla de texto (30 líneas, UTF-8) al terminar |
 | `--console-image pantalla.png` | Activa `--console` y guarda la pantalla como PNG 640×480, dibujada con `--console-font` (nombre de `30.fpga-cpu-console/fonts` —`cpc464` por defecto, `pc`, `tamzen`— o ruta a un `.hex`). Compone la consola sobre el framebuffer si el programa lo usa (`VIDEO_CTRL` en scanout); el color 0 es transparente, como en el RTL, y sin framebuffer sale negro. `--frame-output` y `fb_window` solo muestran el framebuffer, sin la consola |
 | `--serial` | Activa serie en `0x80000200` |
+| `--serial-tty` | Activa serie y lo conecta al terminal: la salida del programa va a stdout y lo que se teclea entra por RX (sin eco ni Enter, como `run-board --interactive`). **Ctrl+C** sale. Combinable con `--window` (ventana para teclado y ratón, terminal para la UART). No vale en `mini-dbg`: la TUI ocupa el terminal |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
 | `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |
-| `--window` | Abre una ventana con la pantalla (framebuffer, consola o ambos, según `VIDEO_CTRL` y `CONFIG`) y conecta su teclado y ratón a INPUT. Implica vídeo; `--console` y `--console-font` valen igual. **F12** o cerrar la ventana paran el simulador; al terminar el programa la última imagen se queda hasta cerrarla. Solo `cpusim`, `gpusim` y `gpusim-cycle`; `mini-dbg` aún no |
+| `--window` | Abre una ventana con la pantalla (framebuffer, consola o ambos, según `VIDEO_CTRL` y `CONFIG`) y conecta su teclado y ratón a INPUT. Implica vídeo; `--console` y `--console-font` valen igual. **F12** o cerrar la ventana paran el simulador; al terminar el programa la última imagen se queda hasta cerrarla. En `mini-dbg` es la ventana de `fb screen` y F12 interrumpe la ejecución sin parar la máquina |
 | `--keyboard` | Activa INPUT (teclado y ratón, `mmio.md` §25, en `0x80600000`) con un teclado presente desde el principio |
 | `--mouse` | Activa INPUT con un ratón presente desde el principio |
 | `--input-script entrada.txt` | Activa INPUT y carga un guion de entrada. El guion conecta lo que no pidan `--keyboard`/`--mouse`; se comprueba entero al cargar |
@@ -474,7 +475,7 @@ escribir el comando, ni más ni menos:
 | `step [N]` | `s` | Ejecuta N instrucciones (1 por defecto). No para en breakpoints |
 | `over` | `n` | Un paso, saltando entera la llamada si es `JAL`/`JALR` |
 | `finish` | `o` | Ejecuta hasta salir de la función actual |
-| `run [N]` | `c` | Hasta breakpoint, `HALT`, error o `Esc`; con N, como máximo N instrucciones |
+| `run [N]` | `c` | Hasta breakpoint, `HALT`, error, `F12` o `Esc`; con N, como máximo N instrucciones |
 | `until X` | `u` | Hasta la dirección, etiqueta o línea marcada por el cursor |
 | `break [X]` | `b` | Breakpoint en X (o en el PC con la tecla); sin argumento los lista |
 | `delete [X]` | — | Borra el breakpoint X, o todos |
@@ -482,12 +483,14 @@ escribir el comando, ni más ni menos:
 | `set X V` | — | `set R5 0x10`, `set pc bucle` |
 | `mem [X N]` | — | Vuelca N bytes desde X y mueve el panel de memoria |
 | `write X V` | — | Escribe la palabra V en la dirección X |
-| `fb [X]` | `v` | Ventana de framebuffer: `front` (por defecto), `back`, `both`, `off` |
+| `fb [X]` | `v` | Ventana de framebuffer: `front` (por defecto), `back`, `both`, `off`. `fb screen` abre la pantalla del simulador (framebuffer, consola o ambos) con teclado y ratón hacia INPUT; `--window` la abre al arrancar |
+| `input` | — | Estado de INPUT: presencia, teclas pulsadas, botones del ratón y la cola de eventos, sin consumirlos. Solo si hay INPUT (`--keyboard`, `--mouse`, `--window` o `--input-script`) |
 | `frame` | `f` | Ejecuta hasta que se completa el siguiente intercambio de framebuffer |
 | `reset` | `R` | PC, registros y contadores a cero sin borrar la memoria |
 
-Durante `run`, `until`, `over`, `finish` o `frame`, `Esc` solicita la parada y devuelve
-el control a la TUI. Código y memoria aceptan también `PageUp`, `PageDown` y
+Durante `run`, `until`, `over`, `finish` o `frame`, `F12` (o `Esc` en la TUI) solicita
+la parada y devuelve el control a la TUI. En las ventanas **solo** `F12`: `Esc` es una
+tecla más del programa que se depura. Código y memoria aceptan también `PageUp`, `PageDown` y
 `Home`; `Home` lleva al inicio del programa o a `0x00000000`, respectivamente.
 `Ctrl+C` hace lo mismo durante la ejecución; con la máquina ya parada, sale del
 depurador limpiamente.
@@ -513,7 +516,7 @@ objetivo no ofrece vídeo; al cambiar el foco añade las teclas propias del pane
 
 `v` (o `fb`) abre una **ventana** aparte con el framebuffer, en tkinter —de la
 biblioteca estándar, no hace falta pygame ni nada nuevo—. `fb both` enseña los
-dos buffers lado a lado, `+`/`-` amplían y `Esc` detiene la ejecución en curso
+dos buffers lado a lado, `+`/`-` amplían y `F12` detiene la ejecución en curso
 sin cerrar la ventana. La X (o `fb off`) sí la cierra.
 Mientras la ventana de vídeo tiene el foco, sus teclas de depuración se
 reenvían como si estuviera seleccionado el panel de código: `s`, `n`, `o`,

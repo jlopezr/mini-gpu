@@ -22,6 +22,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 BUILD = HERE / "_build"
 
+sys.path.insert(0, str(REPO))
+from tools.sim_host import Keyboard  # noqa: E402  (el mismo lector que --serial-tty)
+
 
 def compile_basic(source: Path, asm: Path) -> int:
     return subprocess.call([sys.executable, str(REPO / "tools" / "mini-lcc"),
@@ -55,46 +58,6 @@ def run_batch(args) -> int:
         print(result.stdout + result.stderr, file=sys.stderr)
         return result.returncode or 1
     return 0
-
-
-class Keyboard:
-    """Teclas sueltas, sin eco y sin esperar a Enter. Windows y POSIX."""
-
-    def __enter__(self):
-        if sys.platform == "win32":
-            import msvcrt
-            self._msvcrt = msvcrt
-        else:
-            import termios
-            import tty
-            self._termios = termios
-            self._fd = sys.stdin.fileno()
-            self._saved = termios.tcgetattr(self._fd)
-            tty.setcbreak(self._fd)
-        return self
-
-    def __exit__(self, *exc):
-        if sys.platform != "win32":
-            self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._saved)
-
-    def read(self) -> bytes:
-        """Los bytes pendientes; vacio si no se ha pulsado nada."""
-        out = bytearray()
-        if sys.platform == "win32":
-            while self._msvcrt.kbhit():
-                ch = self._msvcrt.getwch()
-                if ch in ("\x00", "\xe0"):      # tecla de funcion o flecha: su 2o byte
-                    self._msvcrt.getwch()
-                    continue
-                out += ch.encode("latin-1", "replace")
-        else:
-            import select
-            while select.select([sys.stdin], [], [], 0)[0]:
-                data = sys.stdin.buffer.read1(64)
-                if not data:
-                    break
-                out += data
-        return bytes(out)
 
 
 def run_interactive(args) -> int:

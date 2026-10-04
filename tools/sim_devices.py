@@ -353,13 +353,33 @@ class SerialDevice:
         self.overrun = False
         self.host_output = None
         self._host_ticks = 0
+        # Terminal interactivo (`tools/sim_host.py:SerialTty`), si lo hay.
+        self.tty = None
+        self.tty_every = 200
+        self._tty_ticks = 0
 
     def tick(self):
         if self.host_output is not None:
             self._host_ticks += 1
             if self._host_ticks >= 32:
                 self._host_ticks = 0
-                self.host_output.extend(self.pop(255))
+                chunk = self.pop(255)
+                self.host_output.extend(chunk)
+                if chunk and self.tty is not None:
+                    self.tty.write(chunk)
+        if self.tty is not None:
+            self._tty_ticks += 1
+            if self._tty_ticks >= self.tty_every:
+                self._tty_ticks = 0
+                self.tty.poll(self)
+
+    def attach_tty(self, tty, every: int = 200):
+        """El terminal como extremo del puerto: la salida del programa va a
+        stdout y las teclas entran por RX. Vacía TX igual que `attach_host`."""
+        if self.host_output is None:
+            self.attach_host()
+        self.tty = tty
+        self.tty_every = every
 
     def attach_host(self):
         """El host vacía TX cada 32 instrucciones; conserva la observación de FIFO."""
@@ -605,6 +625,10 @@ class InputDevice:
             self.overflow = True
             return
         self.fifo.append(word)
+
+    def pressed(self) -> list[int]:
+        """Usage IDs pulsados ahora, ascendentes (mirarlos no consume nada)."""
+        return list(self._bits(self.keys))
 
     @property
     def modifiers(self) -> int:

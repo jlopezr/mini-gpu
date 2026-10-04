@@ -137,6 +137,11 @@ class DebugTarget(ABC):
         """Intercambios completados, o `None` si no se pueden observar."""
         return None
 
+    def simulated_machine(self):
+        """El simulador que hay detrás, o `None` en la placa. La ventana de
+        pantalla y el comando `input` miran su estado directamente."""
+        return None
+
     #: Si leer 150 KiB es instantáneo. En la placa son ~1,5 s por framebuffer a
     #: 1 Mbaud, y de eso depende que la ventana se refresque sola o a mano.
     fast_memory: bool = True
@@ -222,3 +227,6 @@ class SimTarget(DebugTarget):
     def video_swap_count(self) -> int | None:
         video = getattr(self.cpu, "video", None)
         return None if video is None else video.swap_count
+
+    def simulated_machine(self):
+        return self.cpu
