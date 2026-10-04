@@ -123,8 +123,10 @@ def main() -> int:
         keyboard = host_input.HostKeyboard(
             lambda pressed: emit({"event": "keys", "pressed": sorted(pressed)}))
         # El ratón se supone al principio en el centro de la ventana.
-        mouse = host_input.HostMouse(origin=(screen.SCREEN_SIZE[0] * args.scale // 2,
-                                             screen.SCREEN_SIZE[1] * args.scale // 2))
+        width = screen.SCREEN_SIZE[0] * args.scale
+        height = screen.SCREEN_SIZE[1] * args.scale
+        mouse = host_input.HostMouse(origin=(width // 2, height // 2),
+                                     bounds=(width, height))
         sent = {"buttons": 0}
 
         def sync_modifiers() -> None:

@@ -221,13 +221,22 @@ class HostMouse:
 
     TK_BUTTONS = {1: 0, 3: 1, 2: 2}         # Tk: 1 izq., 2 central, 3 der.
 
-    def __init__(self, origin: tuple[int, int] | None = None):
+    def __init__(self, origin: tuple[int, int] | None = None,
+                 bounds: tuple[int, int] | None = None):
         self.buttons = 0
         self.dx = 0
         self.dy = 0
         self._last: tuple[int, int] | None = origin
+        # Tamaño de la ventana. Las posiciones se limitan a su interior: al salir
+        # deprisa, Tk da coordenadas muy fuera de rango, y un programa que
+        # recorta su cursor a la pantalla --como cualquiera-- perdería ese
+        # exceso para siempre y no volvería a coincidir con el puntero.
+        self.bounds = bounds
 
     def _move_to(self, x: int, y: int) -> None:
+        if self.bounds is not None:
+            x = max(0, min(self.bounds[0] - 1, x))
+            y = max(0, min(self.bounds[1] - 1, y))
         if self._last is not None:
             self.dx += x - self._last[0]
             self.dy += y - self._last[1]

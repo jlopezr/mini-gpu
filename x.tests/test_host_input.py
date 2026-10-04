@@ -208,6 +208,32 @@ class HostMouseTest(unittest.TestCase):
         mouse.motion(8, 200)
         self.assertEqual(mouse.drain(0), (0, 8 - 500, 200 - 40))
 
+    def test_las_posiciones_fuera_de_la_ventana_se_limitan_al_borde(self):
+        # Salir deprisa: Tk da una coordenada muy fuera. Lo que no cabe en la
+        # pantalla del programa no se debe entregar, o no se recupera.
+        mouse = HostMouse(origin=(600, 400), bounds=(640, 480))
+        mouse.leave(900, 700)
+        self.assertEqual(mouse.drain(0), (0, 39, 79))          # hasta (639, 479)
+
+    def test_reentrar_tras_salir_lejos_deja_el_pincel_en_el_puntero(self):
+        # Simula al programa: recorta su pincel a la pantalla, como la demo.
+        mouse = HostMouse(origin=(320, 240), bounds=(640, 480))
+        brush = [320, 240]
+        pointer_path = [("enter", 100, 100), ("motion", 600, 300), ("leave", 1500, -400),
+                        ("enter", 5, 470), ("motion", 40, 420), ("leave", -90, 420),
+                        ("enter", 300, 5), ("motion", 310, 9)]
+        for action, x, y in pointer_path:
+            getattr(mouse, action)(x, y)
+            _, dx, dy = mouse.drain(0) or (0, 0, 0)
+            brush[0] = max(0, min(639, brush[0] + dx))
+            brush[1] = max(0, min(479, brush[1] + dy))
+        self.assertEqual(brush, [310, 9])
+
+    def test_los_movimientos_con_boton_fuera_tambien_se_limitan(self):
+        mouse = HostMouse(origin=(320, 240), bounds=(640, 480))
+        mouse.motion(-50, 240)                              # arrastre fuera, por la izquierda
+        self.assertEqual(mouse.drain(0), (0, -320, 0))
+
     def test_salir_cuenta_hasta_el_borde(self):
         mouse = HostMouse(origin=(100, 100))
         mouse.leave(120, 100)
