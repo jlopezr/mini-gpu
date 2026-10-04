@@ -6,6 +6,7 @@ eventos en el hilo principal y cerrar la ventana no puede tumbar al simulador ni
 al depurador. Lo usan los dos.
 
     screen_window.py FUENTE.hex [--input] [--scale N]
+    screen_window.py --panel --input [--scale N]
 
 Por `stdin`, una línea JSON por refresco (el framebuffer en Base64):
 
@@ -23,6 +24,12 @@ Por `stdin`, una línea JSON por refresco (el framebuffer en Base64):
 `keys` y `mouse` son reports de estado completo, los de `InputDevice`: la
 traducción de Tk a teclas físicas HID está en `tools/host_input.py`. Con
 `--input` las teclas van al programa; sin él, la ventana solo muestra.
+
+Con `--panel` no hay pantalla que dibujar --no hace falta fuente-- sino un panel
+informativo que captura teclado y ratón igual que la ventana normal. Es lo que
+usa `monitor.py input`: la imagen la enseña el HDMI de la placa, y leer el
+framebuffer por UART costaría ~1,5 s por frame. Por `stdin` acepta
+`{"panel": "texto"}` para cambiar lo que dice el panel.
 """
 from __future__ import annotations
 
@@ -47,7 +54,9 @@ def emit(event: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("font", type=Path)
+    parser.add_argument("font", type=Path, nargs="?")
+    parser.add_argument("--panel", action="store_true",
+                        help="sin pantalla: un panel que solo captura la entrada")
     parser.add_argument("--input", action="store_true",
                         help="captura teclado y ratón y los manda como reports")
     parser.add_argument("--scale", type=int, default=1)
@@ -55,11 +64,18 @@ def main() -> int:
 
     import tkinter as tk
 
-    from PIL import Image, ImageTk
+    from tools import host_input, screen
 
-    from tools import console_render, host_input, screen
+    if args.panel:
+        compositor = None
+    else:
+        if args.font is None:
+            parser.error("falta la fuente (o usa --panel)")
+        from PIL import Image, ImageTk
 
-    compositor = screen.Compositor(console_render.load_font(args.font))
+        from tools import console_render
+
+        compositor = screen.Compositor(console_render.load_font(args.font))
     scancode_of = host_input.default_scancode_of()
 
     requests: queue.Queue = queue.Queue()
@@ -80,9 +96,20 @@ def main() -> int:
     root.title("mini-gpu")
     root.configure(background="#101010")
     root.resizable(False, False)
-    view = tk.Label(root, background="#000000", borderwidth=0)
-    view.pack()
     state = {"photo": None, "title": ""}
+    if args.panel:
+        panel_size = (screen.SCREEN_SIZE[0] * args.scale, screen.SCREEN_SIZE[1] * args.scale)
+        view = tk.Canvas(root, width=panel_size[0], height=panel_size[1],
+                         background="#101820", highlightthickness=0)
+        view.pack()
+        panel_text = view.create_text(
+            panel_size[0] // 2, panel_size[1] // 2, fill="#9fb4c7", justify="center",
+            width=panel_size[0] - 40, font=("Segoe UI", 12),
+            text="Capturando teclado y raton hacia la placa.\n\nF12 para salir.")
+        root.title("mini-gpu  ·  F12 sale  ·  entrada hacia la placa")
+    else:
+        view = tk.Label(root, background="#000000", borderwidth=0)
+        view.pack()
 
     def show(snap: dict, title: str | None) -> None:
         if snap.get("fb"):
@@ -107,7 +134,9 @@ def main() -> int:
                 if message is None:
                     root.destroy()          # el simulador cerró la tubería
                     return
-                latest = message if "screen" in message else latest
+                if args.panel and "panel" in message:
+                    view.itemconfigure(panel_text, text=message["panel"])
+                latest = message if "screen" in message and not args.panel else latest
                 if "screen" not in message and "title" in message:
                     root.title(f"mini-gpu  ·  {message['title']}")
         except queue.Empty:

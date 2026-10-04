@@ -1162,6 +1162,54 @@ el RTL sin añadirla en la lista del monitor hace que éste rechace el comando
 antes de que llegue al decodificador, y el síntoma es un NACK que parece un
 bitstream viejo.
 
+### 16.5. Alimentar INPUT desde el monitor
+
+El PC puede hacer de teclado y de ratón de la placa sin ningún dispositivo USB.
+El **adaptador** de §25 y del Apéndice A es entonces el software del PC: calcula
+los eventos —con las mismas reglas de orden que el simulador— y el bloque INPUT
+de la FPGA solo guarda STATE y la FIFO. Son dos comandos, y solo existen donde
+el RTL declara `HAS_INPUT` (hoy, la 30); en los demás contestan `ff`, como
+cualquier comando desconocido.
+
+```text
+3B NN W0 .. W(NN-1)   INPUT_EVENTS    ->  BB FF
+3C PP                 INPUT_PRESENCE  ->  BC FF
+```
+
+- `INPUT_EVENTS`: `NN` palabras de evento, cada una de **4 bytes en
+  little-endian** —el orden de los datos de `WRITE_WORD`— y con el formato
+  exacto de §25.5-§25.8, o sea el mismo que leerá el programa por `EVENT_DATA`.
+  Todas las palabras de un report van en **un** comando, así que su orden es el
+  que mandó el PC. `NN = 0` es legal y sirve de **sondeo** de los huecos libres.
+- `INPUT_PRESENCE`: `PP` bit 0 = teclado, bit 1 = ratón; 1 conecta y 0
+  desconecta, y desconectar pone a cero el STATE de ese dispositivo (§25.4). Los
+  eventos de la conexión inicial y las liberaciones de la desconexión (§25.11)
+  son eventos normales que manda el adaptador antes o después.
+- `FF` es en las dos respuestas el número de **huecos libres** de la FIFO
+  *después* de aplicar el comando: el control de flujo, como el `NN` de
+  `SEND_BYTES`.
+
+Como `SEND_BYTES`, `INPUT_EVENTS` **consume siempre las `NN` palabras**, aunque
+la FIFO se llene. Las que no caben se pierden con `OVERFLOW`, que es lo que
+manda §25.5. Cortar a medias dejaría sus bytes en el cable, donde se leerían
+como comandos y desincronizarían el enlace. Es el cliente quien no manda lo que
+no cabe, mirando el `FF` de la respuesta anterior: las teclas y los botones
+esperan en el PC, y el movimiento del ratón se funde (se suma) mientras no hay
+sitio, en vez de perderse.
+
+Funcionan con la CPU en marcha o parada, porque no tocan la SDRAM. El bloque
+aplica cada palabra tal cual la recibe: no comprueba que el dispositivo esté
+presente, no filtra un `KEY` de `0xE0..0xE7` ni un `TYPE` reservado (se
+encola), y si coincidieran un evento y un cambio de presencia ganaría la
+presencia; eso lo evita el monitor, que los serializa.
+
+El `MAYOR` de §16.3 es **3** para el juego base, **4** con el puerto serie y
+**5** con INPUT: la 30 es la única de MAYOR 5, y las carpetas que reciben el
+mismo `monitor.v` con `HAS_INPUT = 0` conservan el suyo porque su protocolo no
+cambia.
+
+Cliente: `InputMixin` en `tools/monitor_protocol.py` (el codec),
+`tools/input_adapter.py` (el adaptador) y `monitor.py input` en la 30.
 ---
 
 ## 17. Simuladores
@@ -1815,7 +1863,8 @@ INPUT v1 **no genera IRQ**. El software consulta `STATUS.COUNT` y consume
 
 El monitor y los simuladores modelan INPUT, no USB. Deben reproducir
 exactamente el mismo STATE, formatos, orden de eventos, semántica de overflow y
-reglas de conexión/desconexión que la FPGA.
+reglas de conexión/desconexión que la FPGA. El protocolo con que el monitor
+alimenta el bloque está en §16.5.
 
 La traducción del teclado anfitrión se hace a Usage ID físico, no a carácter.
 Así el software MiniCPU observa el mismo ABI con independencia del backend.

@@ -656,7 +656,8 @@ declara lo que necesita:
 | `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D` | `cpusim`, `subword`, `alu` |
 | `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpusim`, `subword`, `alu` |
 | `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpusim`, `subword`, `alu` |
-| `input` | INPUT, teclado y ratón (`mmio.md` §25, `0x80600000`). El caso lo alimenta con `"input": [líneas de guion]` (`tools/input_script.py`; `@N`/`+N` en instrucciones completadas), que se comprueba al cargar el caso. Ningún RTL lo implementa aún, así que solo lo declaran los simuladores y en la placa el caso se omite | `cpusim`, `gpusim`, `gpusim-cycle` |
+| `input` | INPUT, teclado y ratón (`mmio.md` §25, `0x80600000`). El caso lo alimenta con `"input": [líneas de guion]` (`tools/input_script.py`; `@N`/`+N` en instrucciones completadas), que se comprueba al cargar el caso. Es **que el arnés sabe alimentarlo**, no que el RTL lo tenga (eso es `input_device`): la placa recibe eventos del monitor, no tiempo en instrucciones, así que solo lo declaran los simuladores y en la placa el caso se omite | `cpusim`, `gpusim`, `gpusim-cycle` |
+| `input_device` | El RTL tiene el bloque INPUT (`input_registers.v`), alimentado por `INPUT_EVENTS`/`INPUT_PRESENCE` del monitor. Da el bit INPUT de `DEVICES` (`mmio.md` §5.4). **No implica `input`**: tener el dispositivo no significa poder reproducir un guion con tiempo | `console` |
 | `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpusim`, `alu` |
 | `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpusim`, `alu` |
 | `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |

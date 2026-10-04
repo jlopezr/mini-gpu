@@ -409,6 +409,26 @@ todo. El ratón de INPUT es **relativo**: el programa no sabe dónde está el
 puntero, solo cuánto se mueve, así que un pincel arranca donde el programa
 diga y se mueve desde ahí; para ver el puntero hay que dibujarlo.
 
+#### En la placa (`monitor.py input`)
+
+En la 30, el teclado y el ratón del PC alimentan el INPUT de la FPGA a través del
+monitor, sin ningún USB conectado a la placa:
+
+```powershell
+python 30.fpga-cpu-console\monitor.py input
+```
+
+Abre una ventana que **solo captura** (con `tools/screen_window.py --panel`; la
+imagen la enseña el HDMI de la placa, porque leer el framebuffer por UART
+costaría ~1,5 s por frame) y manda cada report como eventos con `INPUT_EVENTS`
+(`mmio.md` §16.5). Es la misma captura y la misma traducción a teclas físicas
+que la ventana del simulador. **F12** sale, y al salir manda las liberaciones de
+lo que siguiera pulsado y la presencia a cero. La lógica —qué palabras salen, el
+control de flujo con los huecos libres de la FIFO, que el movimiento se funda
+mientras no hay sitio— está en `tools/input_adapter.py` y se prueba sin placa
+(`x.tests/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
+timer del FTDI, así que se manda un comando por vuelta con todo lo que cabe.
+
 #### Guiones de entrada (`--input-script`)
 
 Una acción por línea, con el instante en instrucciones completadas (de CPU o

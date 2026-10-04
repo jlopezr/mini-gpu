@@ -100,6 +100,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import monitor_protocol as protocolo  # noqa: E402
 from tools.monitor_protocol import (  # noqa: E402,F401
     MAX_BLOCK_SIZE,
+    CommandRejected,
     CpuStatus,
     MonitorError,
     Version,
@@ -177,6 +178,43 @@ def interactive_uart(client: MonitorClient, poll: float = 0.005) -> None:
                 return
             client.send_all(linea.encode("latin-1"))
 
+
+def interactive_input(client: MonitorClient) -> None:
+    """Teclado y raton del PC hacia el INPUT de la placa. F12 sale.
+
+    Abre una ventana que SOLO captura (la imagen la ensena el HDMI de la placa:
+    leer el framebuffer por UART costaria ~1,5 s por frame) y manda cada report
+    como eventos con INPUT_EVENTS. Todo lo que se puede probar sin una persona
+    delante --que eventos salen, el control de flujo, las liberaciones al
+    salir-- vive en `tools/input_adapter.py`; esto es solo la ventana.
+    """
+    from tools import input_adapter
+
+    ventana = input_adapter.WindowSource(scale=2)
+    print("Teclado y raton del PC -> INPUT de la placa. F12 en la ventana para salir.")
+    ultimo = [0.0]
+
+    def estado(adaptador) -> None:
+        ahora = time.monotonic()
+        if ahora - ultimo[0] < 0.5:
+            return
+        ultimo[0] = ahora
+        huecos = "?" if adaptador.free is None else adaptador.free
+        ventana.panel(
+            "Capturando teclado y raton hacia la placa.\n\n"
+            f"huecos libres en la FIFO: {huecos}\n"
+            f"eventos esperando: {len(adaptador.queue)}\n\n"
+            "F12 para salir.")
+
+    try:
+        input_adapter.run_session(client, ventana, status=estado)
+    except CommandRejected:
+        raise MonitorError(
+            "La placa rechazo INPUT_PRESENCE: este bitstream no tiene el bloque "
+            "INPUT (hace falta monitor 5.x, o sea la 30 con INPUT).") from None
+    finally:
+        ventana.close()
+    print("INPUT desconectado: teclas soltadas y presencia a cero.")
 
 # Deteccion del puerto y listado: en tools/serial_ports.py.
 #
@@ -267,6 +305,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "perf",
             "uart",
             "send",
+            "input",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -437,6 +476,7 @@ def main() -> int:
             "perf": 0,
             "uart": 0,
             "send": 1,
+            "input": 0,
         }
         # `perf` admite un argumento opcional: la ventana en segundos.
         if args.command == "perf" and len(args.arguments) <= 1:
@@ -584,6 +624,8 @@ def main() -> int:
                     print(aviso)
             elif args.command == "uart":
                 interactive_uart(client)
+            elif args.command == "input":
+                interactive_input(client)
             elif args.command == "send":
                 # Manda una cadena y ensena lo que conteste, sin terminal. Es
                 # la forma de probar un programa interactivo desde un script.

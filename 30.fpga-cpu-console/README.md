@@ -31,6 +31,68 @@ y mixtas en 0xB0..0xDF. Origen, licencia y regeneración están documentados en
 | `PALETTE[256]` | `0x1000..0x13fc` |
 | `TEXT[2400]` | `0x6000..0x857c` |
 
+## INPUT: el teclado y el ratón del PC en la placa
+
+La 30 añade el bloque INPUT de [`mmio.md` §25](../1.isa/mmio.md) en
+`0x80600000`, **sin ningún teclado ni ratón conectado a la FPGA**: los eventos
+los manda el PC por el monitor.
+
+```text
+ teclado / ratón del PC
+        │  tools/screen_window.py --panel     captura (Tk), teclas físicas HID
+        ▼
+ tools/input_adapter.py        el ADAPTADOR: calcula los eventos con las reglas
+        │                      de InputDevice y respeta el control de flujo
+        │  INPUT_EVENTS (3B) / INPUT_PRESENCE (3C)      por la UART del monitor
+        ▼
+ monitor.v  ──►  input_registers.v  ──►  MMIO  ──►  el programa (polling)
+                 STATE + FIFO de 16
+```
+
+El adaptador está en el PC, no en la FPGA. El bloque [`input_registers.v`](input_registers.v)
+**solo guarda**: recibe eventos ya formados, actualiza STATE (`KEY_STATE0..7`,
+`MOUSE_BUTTONS`) y los mete en la FIFO. Se valoró y se descartó mandar el estado
+completo de las teclas y calcular las diferencias en la FPGA: habría hecho falta
+un comparador de 256 bits, un buscador del primer bit distinto y una FSM de
+serialización en una carpeta que cierra a 80 MHz por los pelos, y las reglas de
+orden habrían quedado escritas dos veces (Python y Verilog). Además, el día que
+llegue el USB real su adaptador también producirá eventos, no estados: así este
+bloque sirve igual para el monitor, para USB o para cualquier otra fuente.
+
+Cómo se usa:
+
+```powershell
+python 30.fpga-cpu-console\monitor.py input      # F12 en la ventana para salir
+```
+
+Las decisiones y el protocolo de los dos comandos están en `mmio.md` §16.5. En
+resumen: cada palabra son 4 bytes en little-endian, todas las de un report van
+en un comando, la respuesta lleva los huecos libres de la FIFO (el control de
+flujo) y el monitor consume siempre todas las palabras aunque no quepan.
+
+Qué cambió respecto a la 21 para tenerlo:
+
+| Pieza | Cambio |
+|---|---|
+| [`input_registers.v`](input_registers.v) | El bloque: STATE, FIFO de 16 palabras drop-new, `OVERFLOW` pegajoso, `FLUSH` con prioridad sobre el push |
+| `monitor.v` | `HAS_INPUT`, `INPUT_EVENTS` (`3B`) e `INPUT_PRESENCE` (`3C`). Copia **idéntica** en las doce carpetas con monitor; con `HAS_INPUT = 0` contestan `ff` |
+| `mmio_decoder.v` | Bloque `0x8060_0000`: solo palabras alineadas; escribir un registro de solo lectura, leer `EVENT_CTRL`, un registro reservado o una máscara parcial dan error |
+| `top.v` | `HAS_INPUT`, `WINDOW4` del monitor y monitor **5.30** (MAYOR 5: juego base + serie + INPUT) |
+| `DEVICES` | 0x237 → **0xA37** (bit 11, INPUT), derivado de la capacidad `input_device` |
+
+Las demás carpetas reciben el nuevo `monitor.v` con `HAS_INPUT = 0`: su protocolo
+no cambia, pero el texto del fichero sí, así que **sus bitstreams quedan
+desfasados** hasta que se vuelvan a sintetizar.
+
+Pruebas, todas sin placa:
+
+| Banco | Qué comprueba |
+|---|---|
+| [`input_registers_tb.v`](input_registers_tb.v) | Diferencial contra `InputDevice`: 7 760 operaciones de `input_vectors.hex` (lo genera `tools/gen_input_vectors.py`), con las colisiones `FLUSH`/pop/`CLEAR_OVERFLOW` en el mismo ciclo |
+| [`monitor_input_tb.v`](monitor_input_tb.v) | Los dos comandos contra el bloque real: lotes de 1 y 16, lote mayor que los huecos, sondeo, y `HAS_INPUT = 0` contestando `ff` |
+| [`mmio_input_ack_tb.v`](mmio_input_ack_tb.v) | Mux + decodificador + bloque: los accesos inválidos dan error en el ciclo del `ack` y no tienen efecto |
+| [`cpu_input_tb.v`](cpu_input_tb.v) | Un programa lee INPUT mientras el monitor lo alimenta, con la CPU en marcha y parada |
+| `test_input_codec.py` | El codec Python contra un modelo de la FPGA |
 ## Base CPU heredada
 
 La CPU conserva los **cuatro cambios independientes** de la 21. Todo lo demás

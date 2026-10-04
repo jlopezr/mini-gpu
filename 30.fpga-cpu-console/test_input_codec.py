@@ -118,8 +118,16 @@ class InputEventsTest(unittest.TestCase):
         # El enlace no se ha desincronizado: el siguiente comando responde bien.
         self.assertEqual(c.set_input_presence(True, True), 0)
 
+    def test_sondeo_con_cero_palabras(self):
+        placa = FakeBoard()
+        c = cliente(placa)
+        self.assertEqual(c.send_input_events([]), 16)
+        c.send_input_events([InputDevice.mouse_move_event(1, 1)] * 3)
+        self.assertEqual(c.send_input_events([]), 13)
+        self.assertEqual(len(placa.device.fifo), 3)
+
     def test_rango_de_palabras(self):
-        for malo in ([], [0] * 17):
+        for malo in ([0] * 17,):
             with self.assertRaises(ValueError):
                 cliente(FakeBoard()).send_input_events(malo)
 
@@ -146,6 +154,14 @@ class InputPresenceTest(unittest.TestCase):
         self.assertEqual(placa.device.keys, 0)
         self.assertTrue(placa.device.mouse_present)
 
+
+class ComandoInputTest(unittest.TestCase):
+
+    def test_el_cli_acepta_input_sin_argumentos(self):
+        args = monitor.parse_args(["input", "--port", "COM6"])
+        self.assertEqual(args.command, "input")
+        self.assertEqual(args.arguments, [])
+        self.assertEqual(args.port, "COM6")
 
 if __name__ == "__main__":
     unittest.main()

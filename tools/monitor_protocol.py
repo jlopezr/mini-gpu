@@ -536,15 +536,18 @@ class InputMixin:
     INPUT_FIFO_DEPTH = 16
 
     def send_input_events(self, words) -> int:
-        """Manda 1..16 eventos en un solo comando y devuelve los huecos libres.
+        """Manda 0..16 eventos en un solo comando y devuelve los huecos libres.
 
         La FPGA consume siempre todas las palabras, aunque no quepan: las que
         sobran se pierden con OVERFLOW, y es el cliente quien decide no
-        mandarlas mirando el valor devuelto por la llamada anterior.
+        mandarlas mirando el valor devuelto por la llamada anterior. Con cero
+        palabras el comando es un sondeo: no cambia nada y dice los huecos que
+        hay ahora, que es lo que hace falta para saber cuándo la CPU ha vaciado
+        la cola.
         """
         words = list(words)
-        if not 1 <= len(words) <= self.INPUT_FIFO_DEPTH:
-            raise ValueError("INPUT_EVENTS lleva entre 1 y 16 palabras")
+        if len(words) > self.INPUT_FIFO_DEPTH:
+            raise ValueError("INPUT_EVENTS lleva como mucho 16 palabras")
         payload = b"".join(w.to_bytes(4, byteorder="little") for w in words)
         request = bytes((CMD_INPUT_EVENTS, len(words))) + payload
         return self._input_response(request, RSP_INPUT_EVENTS, "INPUT_EVENTS")
