@@ -184,7 +184,8 @@ def synthesizable_source_hashes(prototype_dir):
     paths = [
         *prototype_dir.glob('*.v'), *prototype_dir.glob('*.sv'),
         *prototype_dir.glob('*.vh'), *prototype_dir.glob('*.lpf'),
-        *prototype_dir.glob('sim/*.vh'), prototype_dir / 'apio.ini',
+        *prototype_dir.glob('sim/*.vh'), *prototype_dir.glob('fonts/*.hex'),
+        prototype_dir / 'apio.ini',
     ]
     paths = [path for path in paths
              if path.is_file() and not path.name.endswith('_tb.v')]
@@ -211,7 +212,7 @@ def bitstream_is_current(prototype_dir):
             archived = metadata.get('source_sha256', {})
             relevant = {
                 name: digest for name, digest in archived.items()
-                if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf'})
+                if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
                 and not Path(name).name.endswith('_tb.v')
             }
             if metadata.get('exit_code') == 0 and relevant:
@@ -222,14 +223,14 @@ def bitstream_is_current(prototype_dir):
     return all(path.stat().st_mtime <= built_at for path in [
         *prototype_dir.glob('*.v'), *prototype_dir.glob('*.sv'),
         *prototype_dir.glob('*.vh'), *prototype_dir.glob('*.lpf'),
-        prototype_dir / 'apio.ini',
+        *prototype_dir.glob('fonts/*.hex'), prototype_dir / 'apio.ini',
     ] if path.is_file() and not path.name.endswith('_tb.v'))
 
 
 def _metadata_source_hashes(metadata):
     return {
         name: digest for name, digest in metadata.get('source_sha256', {}).items()
-        if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf'})
+        if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
         and not Path(name).name.endswith('_tb.v')
     }
 
@@ -316,7 +317,8 @@ def main():
     # Apio searches recursively for constraints. A ZIP avoids treating archived
     # LPF/RTL files as additional project inputs on the next build.
     with zipfile.ZipFile(folder / 'sources.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-        for pattern in ('*.v', '*.sv', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh'):
+        for pattern in ('*.v', '*.sv', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh',
+                        'fonts/*.hex'):
             for src in ROOT.glob(pattern):
                 relative = src.relative_to(ROOT)
                 data = src.read_bytes()

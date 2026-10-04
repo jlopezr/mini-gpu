@@ -17,8 +17,9 @@ la consola.
 La fuente inicial es la variante Mode 1 de
 [CPC464](https://codeberg.org/Dmian/font-cpc464), convertida de 8×8 a 8×16
 mediante duplicación vertical exacta. También se conserva una fuente alternativa
-estilo PC/CP437. Origen, codificación, licencia y regeneración están documentados
-en [`fonts/README.md`](fonts/README.md).
+estilo PC (Unscii). Las dos siguen la asignación CP437, con cajas simples, dobles
+y mixtas en 0xB0..0xDF. Origen, licencia y regeneración están documentados en
+[`fonts/README.md`](fonts/README.md).
 
 ## Mapa de este hito
 
