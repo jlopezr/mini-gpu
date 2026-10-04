@@ -216,6 +216,20 @@ def main() -> int:
     else:
         root.bind("<F12>", lambda e: emit({"event": "interrupt"}))
 
+    if args.panel:
+        # Centrada en el monitor: es una ventana de captura que se usa con el
+        # ratón, y que salga en una esquina obliga a buscarla.
+        # `geometry` coloca el marco EXTERIOR, así que hay que contar la barra
+        # de título y los bordes: se miden tras mostrarla una vez.
+        root.update()
+        border = root.winfo_rootx() - root.winfo_x()
+        title = root.winfo_rooty() - root.winfo_y()
+        width = root.winfo_width() + 2 * border
+        height = root.winfo_height() + title + border
+        left = (root.winfo_screenwidth() - width) // 2
+        top = (root.winfo_screenheight() - height) // 2
+        root.geometry(f"+{max(left, 0)}+{max(top, 0)}")
+
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.after(REFRESH_MS, pump)
     root.focus_force()
