@@ -43,6 +43,9 @@ from tools.sim_devices import InputDevice  # noqa: E402
 MOUSE_ROOM = 2
 # Cada cuánto se sondea la FIFO cuando no cabe nada: la CPU la va vaciando.
 PROBE_PERIOD = 0.005
+# Lo máximo que cabe en un movimiento (12 bits con signo). Basta para cruzar la
+# pantalla de 640x480 de una vez.
+HOME_SWEEP = 2047
 
 
 class InputAdapter:
@@ -64,6 +67,24 @@ class InputAdapter:
         """Presencia de teclado y ratón. Parten del estado vacío (§25.11)."""
         self.free = self.client.set_input_presence(True, True)
         self.connected = True
+
+    def home(self, x: int, y: int) -> None:
+        """Deja el puntero de la placa en (x, y) sea cual sea su posición.
+
+        El ratón de INPUT es relativo, y el programa de la placa sigue vivo entre
+        una sesión y otra: conserva el puntero donde lo dejó la anterior, mientras
+        que la ventana de captura supone que empieza en su centro. Sin esto, cada
+        vez que se sale y se vuelve a entrar queda un desfase. Se barre hacia la
+        esquina (0, 0), donde cualquier programa que recorte su cursor a la
+        pantalla lo deja, y de ahí se va a (x, y), con lo que el punto de partida
+        es conocido.
+        """
+        self._commit_move()
+        self.dx = -HOME_SWEEP
+        self.dy = -HOME_SWEEP
+        self._commit_move()
+        self.dx = x
+        self.dy = y
 
     def close(self, timeout: float = 2.0) -> None:
         """Libera lo pulsado, espera a que salga y quita la presencia."""
@@ -158,11 +179,17 @@ class InputAdapter:
         return words
 
 
-def run_session(client, source, status=None) -> None:
+def run_session(client, source, status=None, home: bool = True) -> None:
     """Conecta, atiende a `source` hasta F12 o hasta cerrar la ventana, y
-    desconecta. `source.poll(timeout)` devuelve la lista de eventos pendientes."""
+    desconecta. `source.poll(timeout)` devuelve la lista de eventos pendientes.
+
+    Con `home`, y si la fuente dice dónde supone el ratón al empezar
+    (`source.origin`), el puntero de la placa se lleva allí al conectar."""
     adapter = InputAdapter(client)
     adapter.connect()
+    origin = getattr(source, "origin", None)
+    if home and origin is not None:
+        adapter.home(*origin)
     try:
         running = True
         while running:
@@ -187,6 +214,9 @@ class WindowSource:
     # pixeles de framebuffer (320x240) precisamente porque la pantalla es el
     # doble, así que el pincel sigue al puntero a su velocidad.
     def __init__(self, scale: int = 1):
+        from tools.screen import SCREEN_SIZE
+        # Donde la ventana supone el ratón al empezar: su centro (screen_window.py).
+        self.origin = (SCREEN_SIZE[0] * scale // 2, SCREEN_SIZE[1] * scale // 2)
         command = [sys.executable, str(ROOT / "tools" / "screen_window.py"),
                    "--panel", "--input", "--scale", str(scale)]
         self.process = subprocess.Popen(

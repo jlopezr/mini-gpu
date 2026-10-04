@@ -213,5 +213,41 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(client.commands[-1], ("presence", False, False))
 
 
+class PointerHomeTest(unittest.TestCase):
+    """El programa de la placa sigue vivo entre sesiones y conserva su puntero."""
+
+    @staticmethod
+    def board_pointer(words, start):
+        """Un programa que recorta su puntero a la pantalla de 640x480."""
+        x, y = start
+        for event in decoded(words):
+            if event["type"] == "move":
+                x = max(0, min(639, x + event["dx"]))
+                y = max(0, min(479, y + event["dy"]))
+        return x, y
+
+    class Origin(FakeSource):
+        origin = (320, 240)
+
+    def sesion(self, start, home=True):
+        client = FakeClient()
+        silencio = [{"event": "mouse", "buttons": 0, "dx": 0, "dy": 0}]
+        fuente = self.Origin(silencio, silencio, silencio, silencio)
+        run_session(client, fuente, home=home)
+        return self.board_pointer(client.received, start)
+
+    def test_el_puntero_acaba_en_el_origen_desde_cualquier_sitio(self):
+        for start in [(320, 240), (0, 0), (639, 479), (500, 100), (3, 400)]:
+            self.assertEqual(self.sesion(start), (320, 240), start)
+
+    def test_sin_home_el_puntero_se_queda_donde_estaba(self):
+        self.assertEqual(self.sesion((500, 100), home=False), (500, 100))
+
+    def test_una_fuente_sin_origen_no_mueve_nada(self):
+        client = FakeClient()
+        run_session(client, FakeSource([{"event": "mouse", "buttons": 0, "dx": 0, "dy": 0}]))
+        self.assertEqual(self.board_pointer(client.received, (500, 100)), (500, 100))
+
+
 if __name__ == "__main__":
     unittest.main()

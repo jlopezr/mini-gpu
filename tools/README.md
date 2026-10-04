@@ -429,6 +429,15 @@ mientras no hay sitio— está en `tools/input_adapter.py` y se prueba sin placa
 (`x.tests/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
 timer del FTDI, así que se manda un comando por vuelta con todo lo que cabe.
 
+**El puntero se resincroniza al conectar.** El ratón de INPUT es relativo y el
+programa de la placa sigue vivo entre una sesión y otra, así que conserva el
+puntero donde lo dejó la anterior, mientras que la ventana de captura supone que
+empieza en su centro. Sin más, cada vez que se sale y se vuelve a entrar queda un
+desfase. Al conectar se barre el puntero hacia la esquina (0,0), donde lo deja
+cualquier programa que recorte su cursor a la pantalla, y de ahí al centro de la
+ventana (`InputAdapter.home`). Con `--keep-pointer` no se hace, para un programa
+que use el movimiento como entrada relativa y no quiera ese barrido.
+
 #### Guiones de entrada (`--input-script`)
 
 Una acción por línea, con el instante en instrucciones completadas (de CPU o

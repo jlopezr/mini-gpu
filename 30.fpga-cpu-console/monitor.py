@@ -179,7 +179,7 @@ def interactive_uart(client: MonitorClient, poll: float = 0.005) -> None:
             client.send_all(linea.encode("latin-1"))
 
 
-def interactive_input(client: MonitorClient) -> None:
+def interactive_input(client: MonitorClient, home: bool = True) -> None:
     """Teclado y raton del PC hacia el INPUT de la placa. F12 sale.
 
     Abre una ventana que SOLO captura (la imagen la ensena el HDMI de la placa:
@@ -207,7 +207,7 @@ def interactive_input(client: MonitorClient) -> None:
             "F12 para salir.")
 
     try:
-        input_adapter.run_session(client, ventana, status=estado)
+        input_adapter.run_session(client, ventana, status=estado, home=home)
     except CommandRejected:
         raise MonitorError(
             "La placa rechazo INPUT_PRESENCE: este bitstream no tiene el bloque "
@@ -319,6 +319,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_TIMEOUT,
         help=f"Response timeout in seconds (default: {DEFAULT_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--keep-pointer",
+        action="store_true",
+        help="input: no llevar el puntero de la placa al centro al conectar "
+             "(por defecto se resincroniza con la ventana)",
     )
     args = parser.parse_args(argv)
     if texto_de_send is not None:
@@ -625,7 +631,7 @@ def main() -> int:
             elif args.command == "uart":
                 interactive_uart(client)
             elif args.command == "input":
-                interactive_input(client)
+                interactive_input(client, home=not args.keep_pointer)
             elif args.command == "send":
                 # Manda una cadena y ensena lo que conteste, sin terminal. Es
                 # la forma de probar un programa interactivo desde un script.
