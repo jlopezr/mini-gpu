@@ -190,7 +190,7 @@ def interactive_input(client: MonitorClient) -> None:
     """
     from tools import input_adapter
 
-    ventana = input_adapter.WindowSource(scale=2)
+    ventana = input_adapter.WindowSource()
     print("Teclado y raton del PC -> INPUT de la placa. F12 en la ventana para salir.")
     ultimo = [0.0]
 

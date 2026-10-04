@@ -182,7 +182,11 @@ def run_session(client, source, status=None) -> None:
 class WindowSource:
     """La ventana de captura (`screen_window.py --panel`) como fuente de eventos."""
 
-    def __init__(self, scale: int = 2):
+    # Escala 1: la ventana mide 640x480, o sea lo que sale por HDMI, y un pixel
+    # del ratón es un movimiento de INPUT. `input_paint.asm` cuenta en medios
+    # pixeles de framebuffer (320x240) precisamente porque la pantalla es el
+    # doble, así que el pincel sigue al puntero a su velocidad.
+    def __init__(self, scale: int = 1):
         command = [sys.executable, str(ROOT / "tools" / "screen_window.py"),
                    "--panel", "--input", "--scale", str(scale)]
         self.process = subprocess.Popen(
