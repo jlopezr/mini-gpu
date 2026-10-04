@@ -65,7 +65,7 @@ def barrer(cliente, base: int) -> list[tuple[int, int]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default="COM3")
-    parser.add_argument("--timeout", type=float, default=1.0)
+    parser.add_argument("--serial-timeout", type=float, default=1.0)
     parser.add_argument(
         "--direcciones", type=lambda v: int(v, 0), nargs="+",
         default=list(DIRECCIONES_POR_DEFECTO),
@@ -77,7 +77,7 @@ def main() -> int:
             parser.error(f"0x{base:x} no esta alineada a 16 bytes")
 
     total = 0
-    with serial.Serial(args.port, 1_000_000, timeout=args.timeout) as puerto:
+    with serial.Serial(args.port, 1_000_000, timeout=args.serial_timeout) as puerto:
         cliente = monitor.MonitorClient(puerto)
         # La memoria es del monitor solo con la CPU parada.
         cliente.halt_cpu()

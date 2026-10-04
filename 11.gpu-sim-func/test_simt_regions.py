@@ -372,7 +372,7 @@ class RegionTest(unittest.TestCase):
                     result = subprocess.run(
                         [sys.executable, str(Path(__file__).with_name('minigpu_sim.py')),
                          str(binary), '--num-warps', '1', '--memory-size', '2048',
-                         '--max', '100', *options],
+                         '--run-limit', '100', *options],
                         capture_output=True, text=True, timeout=10, check=False)
                     self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
                     if expected == 2:

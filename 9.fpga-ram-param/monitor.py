@@ -196,7 +196,7 @@ def parse_args() -> argparse.Namespace:
         help="Puerto serie de la ULX3S (por defecto: el unico FTDI conectado)",
     )
     parser.add_argument(
-        "--timeout",
+        "--serial-timeout",
         type=float,
         default=DEFAULT_TIMEOUT,
         help=f"Response timeout in seconds (default: {DEFAULT_TIMEOUT})",
@@ -292,8 +292,8 @@ def main() -> int:
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=args.timeout,
-            write_timeout=args.timeout,
+            timeout=args.serial_timeout,
+            write_timeout=args.serial_timeout,
             xonxoff=False,
             rtscts=False,
             dsrdtr=False,

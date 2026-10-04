@@ -46,7 +46,7 @@ def run_batch(args) -> int:
     result = subprocess.run(
         [sys.executable, str(REPO / "2.cpu-sim-func" / "minicpu_sim.py"), str(asm),
          "--serial-input", str(BUILD / "input.txt"), "--serial-output", str(out),
-         "--max", str(args.max)],
+         "--run-limit", str(args.run_limit)],
         capture_output=True, text=True)
     if out.exists():
         sys.stdout.buffer.write(out.read_bytes())
@@ -156,7 +156,7 @@ def main() -> int:
                         help="fuente BASIC, o - para stdin; sin argumento, interactivo")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="teclado y pantalla en vivo (por defecto sin `program`)")
-    parser.add_argument("--max", type=int, default=200_000_000,
+    parser.add_argument("--run-limit", type=int, default=200_000_000,
                         help="tope de instrucciones del simulador (por lotes)")
     parser.add_argument("--chunk", type=int, default=5000,
                         help="instrucciones entre lecturas del teclado (interactivo)")

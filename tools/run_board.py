@@ -256,16 +256,16 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
 
 
 def open_console(target: Target, port: str) -> int:
-    """Deja una consola serie interactiva (`monitor.py console`). Solo la
+    """Deja una consola serie interactiva (`monitor.py uart`). Solo la
     tienen los monitores con capacidad `serial`."""
-    command = [sys.executable, str(target.prototype_dir / "monitor.py"), "console", "--port", port]
+    command = [sys.executable, str(target.prototype_dir / "monitor.py"), "uart", "--port", port]
     try:
         completed = subprocess.run(command, cwd=str(target.prototype_dir))
     except KeyboardInterrupt:
         return 0
     if completed.returncode == 2:
         print(
-            f"aviso: {target.prototype_dir.name} no tiene comando `console` "
+            f"aviso: {target.prototype_dir.name} no tiene comando `uart` "
             "(solo lo tienen los monitores con capacidad `serial`). "
             "Usa `monitor.py status`/`read-register` a mano.",
             file=sys.stderr,

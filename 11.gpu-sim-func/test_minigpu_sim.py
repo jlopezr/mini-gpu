@@ -103,7 +103,7 @@ class MiniGpuTest(unittest.TestCase):
             config = Path(folder) / 'launch.json'
             binary.write_bytes(program(TRAP, HALT))
             command = [sys.executable, str(Path(__file__).with_name('minigpu_sim.py')),
-                       str(binary), '--config', str(config), '--memory-size', '64', '--max', '1']
+                       str(binary), '--config', str(config), '--memory-size', '64', '--run-limit', '1']
             config.write_text(json.dumps({'warp_size': 4, 'warps': [
                 {'id': 7, 'pc': '0x4', 'active_mask': '0x3'}]}), encoding='utf-8')
             result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
@@ -287,7 +287,7 @@ class MiniGpuTest(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(Path(__file__).with_name('minigpu_sim.py')),
                      str(binary), '--num-warps', '1', '--warp-size', '2',
-                     '--memory-size', '64', '--max', str(limit)],
+                     '--memory-size', '64', '--run-limit', str(limit)],
                     capture_output=True, text=True, timeout=10, check=False,
                 )
                 self.assertEqual(result.returncode, code, result.stderr)

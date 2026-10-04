@@ -15,7 +15,7 @@
 ; Se usa por la consola del monitor, que es la misma UART por la que se carga:
 ;
 ;     .\run-demo.ps1 forth            (desde 20.forth)
-;     ..\.venv\Scripts\python.exe ..\19.fpga-cpu-hdmi-ls\monitor.py console
+;     ..\.venv\Scripts\python.exe ..\19.fpga-cpu-hdmi-ls\monitor.py uart
 ;
 ;     ok> 2 3 + .
 ;     5

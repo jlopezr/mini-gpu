@@ -158,7 +158,7 @@ class DemoTuiTest(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, str(ROOT / "2.cpu-sim-func" / "minicpu_sim.py"),
                  str(DEMO_BIN), "--serial-input", str(keys),
-                 "--console-output", str(screen), "--max", "50000000"],
+                 "--console-output", str(screen), "--run-limit", "50000000"],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertNotIn("ERROR", result.stdout)
@@ -175,7 +175,7 @@ class DemoTuiTest(unittest.TestCase):
                 [sys.executable, str(ROOT / "2.cpu-sim-func" / "minicpu_sim.py"),
                  str(DEMO_BIN), "--serial-input", str(keys),
                  "--console-image", str(image), "--console-font", "tamzen",
-                 "--max", "50000000"],
+                 "--run-limit", "50000000"],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             data = image.read_bytes()

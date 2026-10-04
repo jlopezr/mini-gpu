@@ -898,7 +898,7 @@ def load_program_file(path: Path) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Simulador funcional de MiniGPU")
     parser.add_argument("program", type=Path, help=".asm, .bin o .hex")
-    parser.add_argument("--max", type=int, default=100_000_000,
+    parser.add_argument("--run-limit", type=int, default=100_000_000,
                         help="límite total de instrucciones de warp completadas")
     parser.add_argument("--memory-size", type=lambda x: int(x, 0), default=32 * 1024 * 1024)
     parser.add_argument("--num-warps", type=int, default=8)
@@ -952,7 +952,7 @@ def main() -> int:
             with output as stream:
                 system.trace = TextTrace(stream, detail=args.trace_detail, limit=args.trace_limit)
                 try:
-                    system.run(args.max)
+                    system.run(args.run_limit)
                 except SimulationError as exc:
                     system.trace.finish(f'SIMULADOR: {exc}')
                     raise
@@ -962,7 +962,7 @@ def main() -> int:
                 finally:
                     system.trace = None
         else:
-            system.run(args.max)
+            system.run(args.run_limit)
         sim_peripherals.write_outputs(args, system)
         if system.fault:
             fault = system.fault

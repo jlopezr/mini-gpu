@@ -126,7 +126,7 @@ def validate_transfer(address: int, length: int) -> None:
     protocolo.validate_transfer(address, length, MEMORY_REGIONS)
 
 
-def interactive_console(client: MonitorClient, poll: float = 0.005) -> None:
+def interactive_uart(client: MonitorClient, poll: float = 0.005) -> None:
     """Terminal sobre el puerto serie de la CPU. Se sale con Ctrl+].
 
     Esto NO es el codec: es la parte que no se puede probar sin una persona
@@ -194,7 +194,7 @@ from tools.serial_ports import (  # noqa: E402
 
 # Las unicas opciones que se comen el token siguiente. Lo necesita
 # `_extrae_texto_de_send` para saber cual es el primer POSICIONAL.
-_OPCIONES_CON_VALOR = ("--port", "--timeout")
+_OPCIONES_CON_VALOR = ("--port", "--serial-timeout")
 
 
 def _extrae_texto_de_send(argv: list[str]) -> tuple[list[str], str | None]:
@@ -209,7 +209,7 @@ def _extrae_texto_de_send(argv: list[str]) -> tuple[list[str], str | None]:
     El escape `--` de argparse ya valia, pero exige acordarse y ademas es
     GLOBAL: en `send -- -y --port COM6` el puerto tambien se vuelve texto, asi
     que arregla un caso rompiendo el otro. Por eso el texto se saca a mano
-    antes de parsear y se devuelve a su sitio despues; `--port`/`--timeout`
+    antes de parsear y se devuelve a su sitio despues; `--port`/`--serial-timeout`
     siguen funcionando vayan delante o detras.
 
     Si el usuario escribe su propio `--`, no se toca nada: ha dicho
@@ -263,7 +263,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "read-register",
             "reset",
             "perf",
-            "console",
+            "uart",
             "send",
         ),
     )
@@ -274,7 +274,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Puerto serie de la ULX3S (por defecto: el unico FTDI conectado)",
     )
     parser.add_argument(
-        "--timeout",
+        "--serial-timeout",
         type=float,
         default=DEFAULT_TIMEOUT,
         help=f"Response timeout in seconds (default: {DEFAULT_TIMEOUT})",
@@ -433,7 +433,7 @@ def main() -> int:
             "read-register": 1,
             "reset": 0,
             "perf": 0,
-            "console": 0,
+            "uart": 0,
             "send": 1,
         }
         # `perf` admite un argumento opcional: la ventana en segundos.
@@ -450,8 +450,8 @@ def main() -> int:
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=args.timeout,
-            write_timeout=args.timeout,
+            timeout=args.serial_timeout,
+            write_timeout=args.serial_timeout,
             xonxoff=False,
             rtscts=False,
             dsrdtr=False,
@@ -580,8 +580,8 @@ def main() -> int:
                 print("\n".join(format_report(contadores)))
                 if aviso:
                     print(aviso)
-            elif args.command == "console":
-                interactive_console(client)
+            elif args.command == "uart":
+                interactive_uart(client)
             elif args.command == "send":
                 # Manda una cadena y ensena lo que conteste, sin terminal. Es
                 # la forma de probar un programa interactivo desde un script.

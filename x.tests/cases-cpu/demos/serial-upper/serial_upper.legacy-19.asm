@@ -8,7 +8,7 @@
 ; Corre para siempre; se para con `monitor.py halt`. Para probarlo:
 ;
 ;     .\run-demo.ps1 serial_upper
-;     ..\.venv\Scripts\python.exe monitor.py console --port COM3
+;     ..\.venv\Scripts\python.exe monitor.py uart --port COM3
 ;
 ; O sin terminal, desde un script:
 ;

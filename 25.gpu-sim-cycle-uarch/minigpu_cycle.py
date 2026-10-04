@@ -386,7 +386,7 @@ def main():
     )
 
     parser.add_argument(
-        "--max", "--max-instructions",
+        "--run-limit",
         dest="max_instructions",
         type=int,
         default=100_000_000,

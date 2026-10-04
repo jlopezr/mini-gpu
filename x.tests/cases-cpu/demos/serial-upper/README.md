@@ -26,7 +26,7 @@ consola y sale `HOLA`.
 
 ```powershell
 .\run-demo.ps1 serial_upper
-..\.venv\Scripts\python.exe monitor.py console --port COM3
+..\.venv\Scripts\python.exe monitor.py uart --port COM3
 # o, sin terminal:
 ..\.venv\Scripts\python.exe monitor.py send "hola" --port COM3
 ```

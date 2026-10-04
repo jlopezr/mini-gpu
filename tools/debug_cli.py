@@ -49,9 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
                         type=Path, metavar="DIR",
                         help="carpeta extra para los .include; repetible. "
                              "x.tests/inc se busca siempre")
-    parser.add_argument("--run-limit", type=int, default=None,
-                        help="tope opcional de instrucciones de `run`; "
-                             "por defecto no hay limite")
+    parser.add_argument("--run-limit", metavar="N", type=int,
+                        default=None,
+                        help="tope opcional de instrucciones por ejecucion "
+                             "(`run`); por defecto no hay limite")
     parser.add_argument("--break", dest="breakpoints", action="append",
                         default=[], metavar="X",
                         help="breakpoint inicial (direccion o etiqueta); repetible")

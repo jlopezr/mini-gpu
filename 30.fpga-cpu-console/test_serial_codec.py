@@ -4,7 +4,7 @@ Lo que se prueba aqui es `send_bytes` / `send_all` / `recv_bytes` de
 `monitor.py` contra un modelo del lado FPGA: una cola de 64 bytes que acepta lo
 que le cabe y responde exactamente como el RTL.
 
-`interactive_console()` NO se prueba, y por eso esta separado del codec: lee un
+`interactive_uart()` NO se prueba, y por eso esta separado del codec: lee un
 teclado y escribe una pantalla, o sea que probarlo seria probar `msvcrt`. Todo
 lo que puede estar mal sin que haya nadie delante --empaquetar, reenviar lo que
 no cupo, reensamblar la respuesta-- vive en el codec.

@@ -635,7 +635,7 @@ def main() -> None:
         description="Simulador funcional de MiniCPU para MiniISA v0.1"
     )
     parser.add_argument("program", type=Path, help=".asm, .bin o .hex")
-    parser.add_argument("--max", type=int, default=100_000_000)
+    parser.add_argument("--run-limit", type=int, default=100_000_000)
     parser.add_argument(
         "--memory-size",
         type=lambda value: int(value, 0),
@@ -662,7 +662,7 @@ def main() -> None:
         print(f"Simulador: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     cpu.load_program(program)
-    cpu.run(args.max)
+    cpu.run(args.run_limit)
     sim_peripherals.write_outputs(args, cpu)
 
     if cpu.error:
