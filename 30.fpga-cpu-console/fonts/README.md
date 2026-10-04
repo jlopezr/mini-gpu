@@ -19,8 +19,21 @@ las sombras, los bloques y las cajas simples, dobles y mixtas. Los códigos 0x00
   TTF no tiene (símbolos de 0x01..0x1F y letras griegas y símbolos matemáticos
   de 0xE0..0xFF) también salen de Unscii.
 
-Cuatro glifos no existen en ninguna de las dos fuentes y están dibujados a mano
-en `make_font.py`: `☼` (0x0F), `⌂` (0x7F), `⌐` (0xA9) y `∙` (0xF9).
+- `font8x16_tamzen.hex`: el texto sale de
+  [Tamzen 8×16](https://github.com/sunaku/tamzen-font) (`bdf/Tamzen8x16r.bdf`,
+  derivada de Tamsyn de Scott Fial), sin duplicar filas, y es de trazo fino
+  (1 px). Solo trae Latin-1 (189 glifos): 137 códigos salen del BDF. Las cajas
+  simples, dobles y mixtas (0xB3..0xDA) las genera `make_font.py` con líneas de
+  1 px centradas en el eje del `+` de Tamzen (columna 4, fila 7), con las mismas
+  reglas de unión que las de Unscii, y los punteros 0x10, 0x11, 0x1E y 0x1F son
+  pequeños. Sombras, bloques y el resto de símbolos salen de Unscii. Licencia
+  permisiva (usar, copiar, modificar y
+  distribuir); el aviso está en [`LICENSE-Tamzen.txt`](LICENSE-Tamzen.txt).
+  SHA-256 del BDF:
+  `3161aa86340af37a169536d7fac4afaa1b8cdb4de555e17c14c97aa5995e9b1a`.
+
+Cuatro glifos no existen en ninguna de las fuentes de partida y están dibujados
+a mano en `make_font.py`: `☼` (0x0F), `⌂` (0x7F), `⌐` (0xA9) y `∙` (0xF9).
 
 La fuente CPC procede de
 [`CPC464-Mode1.ttf`](https://codeberg.org/Dmian/font-cpc464/src/branch/main/fonts/static/CPC464-Mode1.ttf),
@@ -33,11 +46,21 @@ Conversión reproducible (desde esta carpeta; hace falta Pillow):
 ```powershell
 python ..\make_font.py --profile pc --unscii unscii-16.hex
 python ..\make_font.py --profile cpc464 --unscii unscii-16.hex --ttf CPC464-Mode1.ttf
+python ..\make_font.py --profile tamzen --unscii unscii-16.hex --bdf Tamzen8x16r.bdf
 ```
 
 `unscii-16.hex` se descarga de
 `https://raw.githubusercontent.com/viznut/unscii/master/fontfiles/unscii-16.hex`.
-El script imprime de dónde sale cada glifo (`ttf`, `unscii`, `hand`, `blank`).
+`Tamzen8x16r.bdf` está en
+`https://raw.githubusercontent.com/sunaku/tamzen-font/master/bdf/Tamzen8x16r.bdf`.
+El script imprime de dónde sale cada glifo (`ttf`, `bdf`, `unscii`, `hand`, `blank`).
+
+Para probar una u otra en la placa sin resintetizar, `tools/font-patch`
+(`font-patch -p 30 tamzen --upload`), o en el simulador con
+`cpusim ... --console-image pantalla.png --console-font tamzen`.
+[`previews/`](previews) tiene la demo del TUI de z.tui dibujada con cada una:
+[CPC464](previews/tui-cpc464.png), [PC](previews/tui-pc.png) y
+[Tamzen](previews/tui-tamzen.png).
 
 `text_console.v` selecciona el fichero mediante el parámetro `FONT_FILE`; el
 valor inicial del prototipo 30 es la variante CPC. Cambiar el contenido de un
