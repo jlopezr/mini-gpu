@@ -83,12 +83,7 @@ class FakeBoard:
                     return
                 flags = self._pendiente[1]
                 self._pendiente[:2] = b""
-                if not flags & 1:
-                    self.device.keys = 0
-                if not flags & 2:
-                    self.device.mouse_buttons = 0
-                self.device.keyboard_present = bool(flags & 1)
-                self.device.mouse_present = bool(flags & 2)
+                self.device.set_presence(bool(flags & 1), bool(flags & 2))
                 self.salida += bytes((0xBC, self._libres()))
             else:
                 raise AssertionError(f"comando inesperado 0x{comando:02x}")

@@ -812,4 +812,17 @@ class InputDevice:
             self._apply_buttons(0)
         self.mouse_present = False
 
+    def set_presence(self, keyboard: bool, mouse: bool) -> None:
+        """Presencia a secas, sin generar eventos: lo que hace `INPUT_PRESENCE`.
+
+        Quitarla pone a cero el STATE de ese dispositivo (invariante de §25.4);
+        ponerla solo marca PRESENT. Las liberaciones y los eventos de conexión
+        (§25.11) son eventos normales que manda el adaptador por su lado.
+        """
+        if not keyboard:
+            self.keys = 0
+        if not mouse:
+            self.mouse_buttons = 0
+        self.keyboard_present = keyboard
+        self.mouse_present = mouse
 
