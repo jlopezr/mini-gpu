@@ -418,3 +418,274 @@ class SerialDevice:
             self.overrun = False
 
 
+class InputDevice:
+    """Teclado y ratón normalizados (`1.isa/mmio.md` §25), en 0x80600000.
+
+    Modela INPUT, no USB: la entrada llega como *reports* de estado completo
+    (`keyboard_report`, `mouse_report`) y el dispositivo calcula STATE y la cola
+    de eventos exactamente como lo hará el RTL --mismo orden, mismo overflow,
+    mismas reglas de conexión y desconexión--. Un report que cambia varias
+    cosas produce varios eventos y no es atómico respecto a la FIFO.
+
+    Lo que el dispositivo NO hace, porque es política de quien lo alimenta:
+    fundir movimientos de ratón consecutivos, traducir teclas del anfitrión a
+    Usage IDs o decidir cuándo llega cada report. Aquí el desbordamiento de la
+    FIFO es fiel al contrato: con mucho ratón y un programa que no lee, se pierde.
+
+    Los accesos inválidos --registro reservado, escribir uno de solo lectura,
+    leer `EVENT_CTRL`, bits reservados de `EVENT_CTRL`-- lanzan `RuntimeError`,
+    como el resto de dispositivos, y no tienen efecto.
+    """
+
+    BASE = 0x8060_0000
+    SIZE = 0x1_0000                 # bloque MMIO v2 de 64 KiB
+
+    EVENT_DATA = 0x00
+    STATUS = 0x04
+    EVENT_CTRL = 0x08
+    KEY_STATE0 = 0x10               # KEY_STATE0..7 en +0x10..+0x2C
+    KEY_STATE_WORDS = 8
+    MOUSE_BUTTONS = 0x30
+
+    # STATUS (§25.4).
+    STATUS_COUNT_MASK = 0xFFFF
+    STATUS_OVERFLOW = 1 << 16
+    STATUS_KEYBOARD_PRESENT = 1 << 17
+    STATUS_MOUSE_PRESENT = 1 << 18
+
+    # EVENT_CTRL (§25.9).
+    CTRL_FLUSH = 1 << 0
+    CTRL_CLEAR_OVERFLOW = 1 << 1
+
+    # Tipos de evento (§25.5).
+    TYPE_KEY = 0x00
+    TYPE_MOUSE_BUTTON = 0x01
+    TYPE_MOUSE_MOVE = 0x02
+
+    FIFO_DEPTH = 16                 # la del primer RTL; no forma parte del ABI
+    MODIFIER_FIRST = 0xE0           # Usage IDs 0xE0..0xE7: Ctrl, Shift, Alt, GUI
+    MODIFIER_LAST = 0xE7
+    MOUSE_BUTTON_COUNT = 32
+    MOVE_MIN = -2048
+    MOVE_MAX = 2047
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        """Estado tras reset (§25.11): todo a cero, FIFO vacía, sin presencia."""
+        self.keys = 0                   # bitmap de 256 bits, bit u = Usage ID u
+        self.mouse_buttons = 0
+        self.fifo = []
+        self.overflow = False
+        self.keyboard_present = False
+        self.mouse_present = False
+
+    # ---- lado MMIO ----------------------------------------------------------
+
+    def contains(self, address: int) -> bool:
+        return self.BASE <= address < self.BASE + self.SIZE
+
+    def tick(self) -> None:
+        """No tiene reloj propio: la entrada la inyecta el anfitrión."""
+
+    def _is_key_state(self, offset: int) -> bool:
+        first = self.KEY_STATE0
+        return (first <= offset < first + 4 * self.KEY_STATE_WORDS
+                and (offset - first) % 4 == 0)
+
+    def validate(self, offset: int, writing: bool = False) -> None:
+        if writing:
+            ok = offset == self.EVENT_CTRL
+        else:
+            ok = (offset in (self.EVENT_DATA, self.STATUS, self.MOUSE_BUTTONS)
+                  or self._is_key_state(offset))
+        if not ok:
+            kind = "escritura" if writing else "lectura"
+            raise RuntimeError(
+                f"{kind} invalida en INPUT: {self.BASE + offset:#010x}")
+
+    def status(self) -> int:
+        return ((len(self.fifo) & self.STATUS_COUNT_MASK)
+                | (self.STATUS_OVERFLOW if self.overflow else 0)
+                | (self.STATUS_KEYBOARD_PRESENT if self.keyboard_present else 0)
+                | (self.STATUS_MOUSE_PRESENT if self.mouse_present else 0))
+
+    def read(self, offset: int) -> int:
+        self.validate(offset)
+        if offset == self.EVENT_DATA:
+            # Leer extrae el evento más antiguo; con la cola vacía devuelve 0
+            # y no tiene efecto. COUNT, no el valor, dice si había evento.
+            return self.fifo.pop(0) if self.fifo else 0
+        if offset == self.STATUS:
+            return self.status()
+        if offset == self.MOUSE_BUTTONS:
+            return self.mouse_buttons
+        index = (offset - self.KEY_STATE0) // 4
+        return (self.keys >> (32 * index)) & 0xFFFF_FFFF
+
+    def write(self, offset: int, value: int) -> None:
+        self.validate(offset, writing=True)
+        if value >> 2:
+            raise RuntimeError(f"EVENT_CTRL con bits reservados: 0x{value:08X}")
+        if value & self.CTRL_FLUSH:
+            self.fifo.clear()           # no toca OVERFLOW, STATE ni PRESENT
+        if value & self.CTRL_CLEAR_OVERFLOW:
+            self.overflow = False       # no toca la FIFO
+
+    # ---- codificación de eventos -------------------------------------------
+
+    @classmethod
+    def key_event(cls, usage: int, down: bool, modifiers: int) -> int:
+        return (usage & 0xFF) | (int(down) << 8) | ((modifiers & 0xFF) << 16) \
+            | (cls.TYPE_KEY << 24)
+
+    @classmethod
+    def mouse_button_event(cls, button: int, down: bool) -> int:
+        return (button & 0xFF) | (int(down) << 8) | (cls.TYPE_MOUSE_BUTTON << 24)
+
+    @classmethod
+    def mouse_move_event(cls, dx: int, dy: int) -> int:
+        return (dx & 0xFFF) | ((dy & 0xFFF) << 12) | (cls.TYPE_MOUSE_MOVE << 24)
+
+    @classmethod
+    def decode_event(cls, word: int) -> dict:
+        """Un evento de la FIFO como diccionario, para tests y depuración."""
+        kind = word >> 24
+
+        def signed12(value):
+            return value - 0x1000 if value & 0x800 else value
+
+        if kind == cls.TYPE_KEY:
+            usage = word & 0xFF
+            modifiers = (word >> 16) & 0xFF
+            if usage == 0:
+                return {"type": "modifiers", "modifiers": modifiers}
+            return {"type": "key", "usage": usage, "down": bool(word >> 8 & 1),
+                    "modifiers": modifiers}
+        if kind == cls.TYPE_MOUSE_BUTTON:
+            return {"type": "button", "button": word & 0xFF,
+                    "down": bool(word >> 8 & 1)}
+        if kind == cls.TYPE_MOUSE_MOVE:
+            return {"type": "move", "dx": signed12(word & 0xFFF),
+                    "dy": signed12((word >> 12) & 0xFFF)}
+        return {"type": "reserved", "word": word}
+
+    # ---- lado anfitrión -----------------------------------------------------
+
+    def _push(self, word: int) -> None:
+        """Drop-new (§25.5): con la cola llena se pierde el evento nuevo."""
+        if len(self.fifo) >= self.FIFO_DEPTH:
+            self.overflow = True
+            return
+        self.fifo.append(word)
+
+    @property
+    def modifiers(self) -> int:
+        """Bitmap HID de modificadores: el bit n es el Usage ID 0xE0 + n."""
+        return (self.keys >> self.MODIFIER_FIRST) & 0xFF
+
+    def _apply_keys(self, new_keys: int) -> None:
+        old_keys = self.keys
+        old_modifiers = self.modifiers
+        self.keys = new_keys             # STATE se actualiza aunque se pierdan eventos
+        new_modifiers = self.modifiers
+        normal = ((1 << self.MODIFIER_FIRST) - 1) | (0xFF << (self.MODIFIER_LAST + 1))
+        released = old_keys & ~new_keys & normal
+        pressed = new_keys & ~old_keys & normal
+        for usage in self._bits(released):
+            self._push(self.key_event(usage, False, new_modifiers))
+        if new_modifiers != old_modifiers:
+            self._push(self.key_event(0, False, new_modifiers))
+        for usage in self._bits(pressed):
+            self._push(self.key_event(usage, True, new_modifiers))
+
+    @staticmethod
+    def _bits(mask: int):
+        """Posiciones de los bits a uno, ascendentes."""
+        position = 0
+        while mask:
+            if mask & 1:
+                yield position
+            mask >>= 1
+            position += 1
+
+    @staticmethod
+    def _keys_mask(usages) -> int:
+        mask = 0
+        for usage in usages:
+            if not 1 <= usage <= 0xFF:
+                raise ValueError(f"Usage ID fuera de rango (1..255): {usage}")
+            mask |= 1 << usage
+        return mask
+
+    def keyboard_report(self, pressed) -> None:
+        """Estado completo del teclado: todos los Usage IDs pulsados ahora,
+        modificadores `0xE0..0xE7` incluidos. Exige teclado presente."""
+        if not self.keyboard_present:
+            raise ValueError("teclado no presente")
+        self._apply_keys(self._keys_mask(pressed))
+
+    def key_down(self, usage: int) -> None:
+        self.keyboard_report(set(self._bits(self.keys)) | {usage})
+
+    def key_up(self, usage: int) -> None:
+        self.keyboard_report(set(self._bits(self.keys)) - {usage})
+
+    def connect_keyboard(self, pressed=()) -> None:
+        """Conexión: transición desde el estado vacío hacia `pressed` (§25.11)."""
+        self.keyboard_present = True
+        self._apply_keys(self._keys_mask(pressed))
+
+    def disconnect_keyboard(self) -> None:
+        """Desconexión: transición al estado vacío y después PRESENT a cero."""
+        if self.keyboard_present:
+            self._apply_keys(0)
+        self.keyboard_present = False
+
+    def _apply_buttons(self, new_buttons: int) -> None:
+        old_buttons = self.mouse_buttons
+        self.mouse_buttons = new_buttons
+        for button in self._bits(old_buttons & ~new_buttons):
+            self._push(self.mouse_button_event(button, False))
+        for button in self._bits(new_buttons & ~old_buttons):
+            self._push(self.mouse_button_event(button, True))
+
+    def _push_move(self, dx: int, dy: int) -> None:
+        """Parte un delta grande en eventos signed12 cuya suma es exacta."""
+        while dx or dy:
+            step_x = max(self.MOVE_MIN, min(self.MOVE_MAX, dx))
+            step_y = max(self.MOVE_MIN, min(self.MOVE_MAX, dy))
+            self._push(self.mouse_move_event(step_x, step_y))
+            dx -= step_x
+            dy -= step_y
+
+    def mouse_report(self, buttons: int, dx: int = 0, dy: int = 0) -> None:
+        """Estado completo de botones (bitmap) más el movimiento relativo."""
+        if not self.mouse_present:
+            raise ValueError("ratón no presente")
+        if not 0 <= buttons <= 0xFFFF_FFFF:
+            raise ValueError(f"bitmap de botones fuera de rango: {buttons}")
+        self._apply_buttons(buttons)
+        self._push_move(dx, dy)
+
+    def mouse_move(self, dx: int, dy: int) -> None:
+        self.mouse_report(self.mouse_buttons, dx, dy)
+
+    def mouse_button(self, button: int, down: bool) -> None:
+        if not 0 <= button < self.MOUSE_BUTTON_COUNT:
+            raise ValueError(f"botón fuera de rango (0..31): {button}")
+        bit = 1 << button
+        self.mouse_report((self.mouse_buttons | bit) if down
+                          else (self.mouse_buttons & ~bit))
+
+    def connect_mouse(self, buttons: int = 0) -> None:
+        self.mouse_present = True
+        self._apply_buttons(buttons)
+
+    def disconnect_mouse(self) -> None:
+        if self.mouse_present:
+            self._apply_buttons(0)
+        self.mouse_present = False
+
+

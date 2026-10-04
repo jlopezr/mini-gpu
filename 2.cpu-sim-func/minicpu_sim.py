@@ -121,7 +121,7 @@ def signed_divide(a: int, b: int) -> int:
     return quotient
 
 
-from tools.sim_devices import VideoDevice, SerialDevice
+from tools.sim_devices import VideoDevice, SerialDevice, InputDevice
 
 
 class CPU:
@@ -130,7 +130,8 @@ class CPU:
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  video: "VideoDevice | None" = None,
                  serial: "SerialDevice | None" = None,
-                 sysid: "SysIdDevice | None" = None):
+                 sysid: "SysIdDevice | None" = None,
+                 input_device: "InputDevice | None" = None):
         self.regs = [0] * 32
         self.pc = 0
         self.memory = bytearray(memory_size)
@@ -145,6 +146,9 @@ class CPU:
         # Igual que el video: sin dispositivo, 0x80000200 sigue siendo memoria
         # fuera de rango y da error.
         self.serial = serial
+        # Teclado y ratón (§25). Igual que vídeo y serie: sin dispositivo,
+        # 0x80600000 es memoria fuera de rango y da error.
+        self.input = input_device
         # El bloque de identificacion. A diferencia de los otros dos, este se
         # construye SIEMPRE si no se pasa: es el unico dispositivo que toda
         # carpeta con juego de comandos tiene, asi que un programa que se
@@ -158,7 +162,7 @@ class CPU:
         El reparto por ventanas es el de `mmio_decoder.v`: cada dispositivo
         ocupa 256 bytes dentro de 0x80000000-0x80000FFF.
         """
-        for device in (self.video, self.serial, self.sysid):
+        for device in (self.video, self.serial, self.input, self.sysid):
             if device is not None and device.contains(address):
                 return device
         return None

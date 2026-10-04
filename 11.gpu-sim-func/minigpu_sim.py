@@ -198,7 +198,7 @@ class SimtPath:
     pending_mask: int
 
 
-from tools.sim_devices import VideoDevice, SerialDevice
+from tools.sim_devices import VideoDevice, SerialDevice, InputDevice
 
 
 class System:
@@ -209,7 +209,8 @@ class System:
                  simt_region_depth: int = MAX_SIMT_REGIONS,
                  simt_path_depth: int = MAX_SIMT_PATHS,
                  video: "VideoDevice | None" = None,
-                 serial: "SerialDevice | None" = None):
+                 serial: "SerialDevice | None" = None,
+                 input_device: "InputDevice | None" = None):
         if memory_size <= 0 or num_warps <= 0 or warp_size <= 0:
             raise ValueError("memoria, número de warps y tamaño de warp deben ser positivos")
         if num_warps > MAX_WARPS:
@@ -230,6 +231,7 @@ class System:
             # En la GPU para el bit de GPU de HALT_TARGET, no el de CPU (§9.6).
             video.halt_owner = VideoDevice.HALT_TARGET_GPU
         self.serial = serial
+        self.input = input_device
         self.peripheral_halted = False
         # El bloque de identificacion existe SIEMPRE, a diferencia del video:
         # es el unico dispositivo que toda carpeta con juego de comandos tiene,
@@ -241,7 +243,7 @@ class System:
 
     def device_for(self, address: int):
         """Qué dispositivo MMIO, si alguno, responde a esta dirección."""
-        for device in (self.video, self.serial):
+        for device in (self.video, self.serial, self.input):
             if device is not None and device.contains(address):
                 return device
         if self.sysid.contains(address):
