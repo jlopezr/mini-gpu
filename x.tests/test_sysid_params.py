@@ -50,7 +50,7 @@ ESPERADO = {
     "21.fpga-cpu-hdmi-alu": (0x0237, 0x7, 0x0200_0000),
     "22.fpga-gpu-bl8":   (0x0427, 0xB, 0x0200_0000),
     "29.fpga-gpu-sm-pipeline": (0x0427, 0xB, 0x0200_0000),
-    "30.fpga-cpu-console": (0x0237, 0x7, 0x0200_0000),
+    "30.fpga-cpu-console": (0x0A37, 0x7, 0x0200_0000),   # + INPUT (bit 11)
 }
 
 DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",

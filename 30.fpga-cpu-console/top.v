@@ -104,13 +104,24 @@ module top (
   wire [7:0] serial_host_push_data;
   wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
 
+  // Lado del monitor de INPUT: los eventos ya formados que manda el PC con
+  // INPUT_EVENTS e INPUT_PRESENCE. El adaptador es el software del PC; este
+  // bloque solo guarda STATE y la FIFO. Ver input_registers.v.
+  wire input_event_valid, input_presence_write;
+  wire input_presence_keyboard, input_presence_mouse;
+  wire [31:0] input_event_word;
+  wire [4:0] input_free_slots;
   // Los contadores de rendimiento vivian AQUI, como dos registros que solo
   // leia el host con los comandos 0x36/0x37. Ahora son un dispositivo MMIO en
   // 0x81010000 --el bloque CPU PERFORMANCE de MMIO v2-- y el programa se mide
   // a si mismo sin parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
 
-  // MAYOR = 2: juego base MAS puerto serie, quince comandos. MENOR = numero de
-  // carpeta. Ver docs/unificacion-mmio.md fase 5.
+  // MAYOR = 5: juego base MAS puerto serie MAS INPUT, diecisiete comandos. Los
+  // MAYORES son 3 (base), 4 (base + serie) y 5 (base + serie + INPUT): la 30 es
+  // la unica con los dos comandos de INPUT, asi que es la unica que sube. MENOR
+  // = numero de carpeta. Las demas carpetas reciben el mismo monitor.v con
+  // HAS_INPUT = 0 y contestan `ff` a esos comandos, o sea que su protocolo no
+  // cambia y su MAYOR tampoco.
   //
   // 1.15 fue la ALU completa: MULHI, DIVU, REM y REMU (0x0B, 0x0D..0x0F), los
   // desplazamientos con cantidad inmediata (bit 10 de SHL/SHR/SAR) y R0 cableado
@@ -131,13 +142,14 @@ module top (
   // Siguen siendo gemelas de MONITOR_REGIONS en monitor.py, que es la lista
   // que §16.4 quiere derivar de DEVICES en vez de mantener a mano. Eso es
   // trabajo aparte; de momento las dos listas dicen lo mismo y hay un test.
-  monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd30),
-      .HAS_SERIAL(1),
+  monitor #(.VERSION_MAJOR(8'd5),.VERSION_MINOR(8'd30),
+      .HAS_SERIAL(1), .HAS_INPUT(1),
       .RAM_END(33'h0_0200_0000),
       .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
       .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
       .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000))  // CPU PERF
+      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000),  // CPU PERF
+      .WINDOW4_BASE(33'h0_8060_0000),.WINDOW4_END(33'h0_8061_0000))  // INPUT
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -158,6 +170,11 @@ module top (
       .serial_rx_free(serial_host_rx_free),
       .serial_pop(serial_host_pop), .serial_tx_data(serial_host_tx_data),
       .serial_tx_count(serial_host_tx_count),
+      .input_event_valid(input_event_valid), .input_event_word(input_event_word),
+      .input_presence_write(input_presence_write),
+      .input_presence_keyboard(input_presence_keyboard),
+      .input_presence_mouse(input_presence_mouse),
+      .input_free_slots(input_free_slots),
       .last_command(last_command), .busy(monitor_busy));
 
   // Register both directions of the monitor memory port. Besides making the
@@ -246,9 +263,10 @@ module top (
   wire [31:0] mmio_address;
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
-  wire mmio_video_select, mmio_serial_select;
+  wire mmio_video_select, mmio_serial_select, mmio_input_select;
   wire [31:0] mmio_video_read_data, mmio_video_core_read_data;
-  wire [31:0] mmio_console_read_data, mmio_serial_read_data;
+  wire [31:0] mmio_console_read_data, mmio_serial_read_data, mmio_input_read_data;
+  wire mmio_input_error;
   wire mmio_video_error, mmio_video_core_error, mmio_console_error;
   wire mmio_perf_select;
   assign mmio_video_read_data = mmio_video_core_read_data
@@ -574,31 +592,27 @@ module top (
   // compartir binarios con la GPU. Encenderlo diria al host que este nucleo
   // diverge y reconverge, que es falso.
   //
-  // DEVICES (§5.4): SYSTEM(0) + SDRAM(2) + SERIAL(4) + VIDEO(5) + CPU(9).
-  // No hay FABRIC declarado --lo hay fisicamente, pero su bloque no tiene
-  // registros-- ni EBR, ni TIMER, ni INTC, ni DMA, ni GPU.
-  //
-  //   bit 9 CPU | bit 5 VIDEO | bit 4 SERIAL | bit 2 SDRAM | bit 0 SYSTEM
-  //   0000_0010_0011_0101 = 0x0235
-  //
-  // Escribirlo a mano aqui es deuda conocida: §5.4 quiere que se DERIVE del
-  // RTL por el camino de capabilities.json, igual que las capacidades. Se
-  // hace en su momento; mientras tanto hay un test que lo contrasta.
+  // DEVICES (§5.4) no se escribe aqui: sale de `sysid_params.vh`, que genera
+  // tools/generate-sysid desde este RTL. Hoy son SYSTEM(0) + FABRIC(1) +
+  // SDRAM(2) + SERIAL(4) + VIDEO(5) + CPU(9) + INPUT(11) = 0x0A37; el bit
+  // INPUT sale de la capacidad `input_device` (existe input_registers.v).
   wire [31:0] mmio_perf_read_data;
-  mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1),
+  mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
       // Ocho contadores en CPU PERFORMANCE: los mismos que `cpu_perf_counters`.
       .PERF_SLOTS(8),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
       .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
-      .MONITOR_VERSION(`SYSID_MONITOR_VERSION))   // 4.30, el mismo que monitor_i
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION))   // 5.30, el mismo que monitor_i
     mmio_decoder_i(
       .clk(clk),
       .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
       .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
       .video_error(mmio_video_error),
       .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
+      .input_select(mmio_input_select), .input_read_data(mmio_input_read_data),
+      .input_error(mmio_input_error),
       .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .read_data(mmio_read_data), .error(mmio_error));
 
@@ -656,6 +670,21 @@ module top (
       .host_rx_free(serial_host_rx_free),
       .host_pop(serial_host_pop), .host_tx_data(serial_host_tx_data),
       .host_tx_count(serial_host_tx_count));
+
+  // INPUT (teclado y raton) en 0x80600000. No hay ningun teclado ni raton
+  // conectado a la FPGA: los eventos llegan del PC por el monitor. La presencia
+  // tambien: la manda el PC con INPUT_PRESENCE.
+  input_registers input_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_input_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
+      .read_data(mmio_input_read_data), .input_error(mmio_input_error),
+      .event_valid(input_event_valid), .event_word(input_event_word),
+      .presence_write(input_presence_write),
+      .presence_keyboard(input_presence_keyboard),
+      .presence_mouse(input_presence_mouse),
+      .free_slots(input_free_slots));
 
   // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
   // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el

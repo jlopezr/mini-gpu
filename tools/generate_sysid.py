@@ -65,6 +65,7 @@ BIT_SERIAL = 4
 BIT_VIDEO = 5
 BIT_CPU = 9
 BIT_GPU = 10
+BIT_INPUT = 11
 
 AVISO = ("GENERADO por tools/generate-sysid desde el RTL de esta carpeta. "
          "No editar.")
@@ -139,6 +140,11 @@ def devices_de(directorio: Path, capacidades: set[str]) -> int:
         bits |= 1 << BIT_SERIAL
     if "video" in capacidades:
         bits |= 1 << BIT_VIDEO
+    # `input_device` (el RTL tiene input_registers.v), NO `input`: esta ultima es
+    # que el arnes sabe alimentar el dispositivo y solo la declaran los
+    # simuladores. Ver el comentario de `input_device` en capabilities.json.
+    if "input_device" in capacidades:
+        bits |= 1 << BIT_INPUT
 
     arquitectura = backend_from_rtl(directorio)
     if arquitectura == "cpu":

@@ -601,6 +601,25 @@ class CapabilitiesTest(unittest.TestCase):
                 load_case(ruta)
         self.assertIn("video", str(error.exception))
 
+    def test_input_device_no_es_input(self):
+        """El RTL tiene INPUT, pero la placa no sabe reproducir un guion.
+
+        `input_device` dice que existe input_registers.v; `input` que el arnes
+        puede ALIMENTAR el dispositivo con un guion con tiempo en instrucciones.
+        La placa recibe eventos del monitor, no tiempo en instrucciones, asi que
+        la 30 declara la primera y NO la segunda: si declarara `input`,
+        `--backend cpu-fpga` intentaria correr extensions/input/keys-and-mouse
+        en la placa y fallaria en vez de omitirse.
+        """
+        self.assertIn("input_device", fpga.capabilities("console"))
+        self.assertNotIn("input", fpga.capabilities("console"))
+        for nombre in fpga.VERSIONS:
+            if nombre != "console":
+                self.assertNotIn("input_device", fpga.capabilities(nombre), nombre)
+            self.assertNotIn("input", fpga.capabilities(nombre), nombre)
+        # Los simuladores si declaran `input`.
+        self.assertIn("input", CAPABILITIES)
+
     def test_todas_las_capacidades_tienen_arquitectura(self):
         # Una capacidad nueva sin arquitectura declarada se colaria en casos de
         # las dos, que es justo lo que este diccionario existe para impedir.

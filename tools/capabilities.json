@@ -102,8 +102,14 @@
     "architecture": "gpu"
   },
 
-  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file': ningun RTL lo implementa todavia, asi que solo los simuladores lo declaran y un caso con `requires: [\"input\"]` se omite en la placa. Cuando exista un input_registers.v, aqui se le pone su 'file' y la placa lo detecta sola. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
+  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores y un caso con `requires: [\"input\"]` se omite en la placa, tenga o no el RTL el dispositivo (eso es `input_device`, mas abajo). Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
   "input": {
     "architecture": ["cpu", "gpu"]
+  },
+
+  "_comment_input_device": "El RTL TIENE el bloque INPUT (input_registers.v). No es lo mismo que `input`: aquel dice que el arnes sabe ALIMENTAR el dispositivo con un guion con tiempo en instrucciones, y la placa no puede reproducir ese tiempo --recibe eventos del monitor cuando el PC los manda--. Por eso un caso con `requires: [\"input\"]` sigue omitiendose en la placa aunque ya tenga el dispositivo, y por eso son dos capacidades. Esta es la que lee tools/generate_sysid.py para el bit INPUT de DEVICES (mmio.md §5.4).",
+  "input_device": {
+    "architecture": "cpu",
+    "file": "input_registers.v"
   }
 }

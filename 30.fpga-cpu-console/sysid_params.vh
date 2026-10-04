@@ -16,9 +16,9 @@
 
 `define SYSID_FOLDER             32'h0000_001E
 `define SYSID_ISA_PROFILE        32'h0000_0007
-`define SYSID_DEVICES            32'h0000_0237
+`define SYSID_DEVICES            32'h0000_0A37
 `define SYSID_MEM_BASE           32'h0000_0000
 `define SYSID_MEM_SIZE           32'h0200_0000
-`define SYSID_MONITOR_VERSION    32'h0000_041E
+`define SYSID_MONITOR_VERSION    32'h0000_051E
 
 `endif
