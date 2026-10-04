@@ -504,5 +504,38 @@ HALT"""
         self.assertIsNone(minigpu_sim.System().device_for(InputDevice.BASE))
 
 
+class PureEventsTest(unittest.TestCase):
+    """`keyboard_events` / `mouse_events` son el adaptador: no tocan ninguna FIFO."""
+
+    def test_orden_de_un_report_de_teclado(self):
+        old = (1 << KEY_A) | (1 << LSHIFT)
+        new = 1 << KEY_B
+        words = InputDevice.keyboard_events(old, new)
+        self.assertEqual([InputDevice.decode_event(w)["type"] for w in words],
+                         ["key", "modifiers", "key"])
+        self.assertEqual([InputDevice.decode_event(w).get("down") for w in words],
+                         [False, None, True])
+
+    def test_usages_altos_no_modificadores_generan_evento(self):
+        words = InputDevice.keyboard_events(0, 1 << 0xFF)
+        self.assertEqual([InputDevice.decode_event(w)["usage"] for w in words], [0xFF])
+
+    def test_movimiento_grande_se_parte_en_signed12(self):
+        words = InputDevice.mouse_events(0, 0, 5000, -3000)
+        moves = [InputDevice.decode_event(w) for w in words]
+        self.assertEqual(sum(m["dx"] for m in moves), 5000)
+        self.assertEqual(sum(m["dy"] for m in moves), -3000)
+
+    def test_apply_event_actualiza_state_aunque_la_fifo_este_llena(self):
+        device = present_device()
+        for _ in range(16):
+            device.apply_event(InputDevice.mouse_move_event(1, 1))
+        device.apply_event(InputDevice.key_event(KEY_A, True, 0))
+        device.apply_event(InputDevice.mouse_button_event(LEFT, True))
+        self.assertTrue(device.overflow)
+        self.assertEqual(len(device.fifo), 16)
+        self.assertEqual(device.read(InputDevice.KEY_STATE0), 1 << KEY_A)
+        self.assertEqual(device.read(InputDevice.MOUSE_BUTTONS), 1)
+
 if __name__ == "__main__":
     unittest.main()

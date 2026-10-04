@@ -62,6 +62,8 @@ CMD_RESET_CPU = 0x35
 CMD_SEND_BYTES = 0x38
 CMD_RECV_BYTES = 0x39
 CMD_SELECT_CONTEXT = 0x3A
+CMD_INPUT_EVENTS = 0x3B
+CMD_INPUT_PRESENCE = 0x3C
 
 RSP_PONG = b"\x81"
 RSP_VERSION = 0x82
@@ -80,6 +82,8 @@ RSP_RESET_CPU = b"\xb5"
 RSP_SEND_BYTES = 0xB8
 RSP_RECV_BYTES = 0xB9
 RSP_SELECT_CONTEXT = 0xBA
+RSP_INPUT_EVENTS = 0xBB
+RSP_INPUT_PRESENCE = 0xBC
 RSP_ERROR = 0xFF
 
 # Contadores de rendimiento de CPU, en el MMIO y no en un comando propio: el
@@ -519,3 +523,50 @@ class SerialMixin:
         if count > maximum:
             raise MonitorError(f"RECV_BYTES devolvio {count} de {maximum}")
         return self._read_exact(count) if count else b""
+
+
+class InputMixin:
+    """El bloque INPUT (teclado y ratón, mmio.md §25) alimentado por el enlace.
+
+    El adaptador es el PC: calcula los eventos (`InputDevice.keyboard_events`,
+    `mouse_events`) y la FPGA solo los guarda. Los dos comandos devuelven los
+    huecos libres de la FIFO DESPUÉS de aplicarlos, que es el control de flujo.
+    """
+
+    INPUT_FIFO_DEPTH = 16
+
+    def send_input_events(self, words) -> int:
+        """Manda 1..16 eventos en un solo comando y devuelve los huecos libres.
+
+        La FPGA consume siempre todas las palabras, aunque no quepan: las que
+        sobran se pierden con OVERFLOW, y es el cliente quien decide no
+        mandarlas mirando el valor devuelto por la llamada anterior.
+        """
+        words = list(words)
+        if not 1 <= len(words) <= self.INPUT_FIFO_DEPTH:
+            raise ValueError("INPUT_EVENTS lleva entre 1 y 16 palabras")
+        payload = b"".join(w.to_bytes(4, byteorder="little") for w in words)
+        request = bytes((CMD_INPUT_EVENTS, len(words))) + payload
+        return self._input_response(request, RSP_INPUT_EVENTS, "INPUT_EVENTS")
+
+    def set_input_presence(self, keyboard: bool, mouse: bool) -> int:
+        """Conecta (True) o desconecta (False) cada dispositivo; devuelve los
+        huecos libres. Desconectar pone a cero el STATE de ese dispositivo."""
+        flags = int(keyboard) | (int(mouse) << 1)
+        request = bytes((CMD_INPUT_PRESENCE, flags))
+        return self._input_response(request, RSP_INPUT_PRESENCE, "INPUT_PRESENCE")
+
+    def _input_response(self, request: bytes, expected: int, name: str) -> int:
+        # Un comando que la FPGA no conoce (HAS_INPUT=0) se contesta con un solo
+        # byte 0xFF: se mira el primero antes de esperar el segundo.
+        self._send(request)
+        first = self._read_exact(1)
+        if first[0] == RSP_ERROR:
+            raise CommandRejected("The FPGA rejected the command")
+        response = first + self._read_exact(1)
+        if response[0] != expected:
+            raise MonitorError(f"Invalid {name} response: {response.hex(' ')}")
+        free = response[1]
+        if free > self.INPUT_FIFO_DEPTH:
+            raise MonitorError(f"{name} dice {free} huecos libres (máximo 16)")
+        return free

@@ -619,13 +619,60 @@ class InputDevice:
 
     # ---- lado anfitrión -----------------------------------------------------
 
+    def apply_event(self, word: int) -> None:
+        """Aplica un evento ya formado: lo que hace el RTL con cada palabra.
+
+        STATE se actualiza SIEMPRE, aunque la FIFO esté llena y el evento se
+        pierda (§25.5); después se intenta encolar (drop-new con OVERFLOW). Los
+        eventos los calcula el adaptador (`keyboard_events`, `mouse_events`): el
+        dispositivo no ordena ni compara estados, solo guarda.
+        """
+        kind = word >> 24
+        if kind == self.TYPE_KEY:
+            usage = word & 0xFF
+            if usage:
+                bit = 1 << usage
+                self.keys = (self.keys | bit) if (word >> 8) & 1 else (self.keys & ~bit)
+            else:
+                # Cambio de modificadores: pone los Usage IDs 0xE0..0xE7.
+                mask = 0xFF << self.MODIFIER_FIRST
+                self.keys = (self.keys & ~mask) | (((word >> 16) & 0xFF) << self.MODIFIER_FIRST)
+        elif kind == self.TYPE_MOUSE_BUTTON:
+            bit = 1 << (word & 0xFF)
+            self.mouse_buttons = ((self.mouse_buttons | bit) if (word >> 8) & 1
+                                  else (self.mouse_buttons & ~bit)) & 0xFFFF_FFFF
+        self._push(word)
+
+    def apply_event(self, word: int) -> None:
+        """Aplica un evento ya formado: lo que hace el RTL con cada palabra.
+
+        STATE se actualiza SIEMPRE, aunque la FIFO esté llena y el evento se
+        pierda (§25.5); después se intenta encolar (drop-new con OVERFLOW). Los
+        eventos los calcula el adaptador (`keyboard_events`, `mouse_events`): el
+        dispositivo no ordena ni compara estados, solo guarda.
+        """
+        kind = word >> 24
+        if kind == self.TYPE_KEY:
+            usage = word & 0xFF
+            if usage:
+                bit = 1 << usage
+                self.keys = (self.keys | bit) if (word >> 8) & 1 else (self.keys & ~bit)
+            else:
+                # Cambio de modificadores: pone los Usage IDs 0xE0..0xE7.
+                mask = 0xFF << self.MODIFIER_FIRST
+                self.keys = (self.keys & ~mask) | (((word >> 16) & 0xFF) << self.MODIFIER_FIRST)
+        elif kind == self.TYPE_MOUSE_BUTTON:
+            bit = 1 << (word & 0xFF)
+            self.mouse_buttons = ((self.mouse_buttons | bit) if (word >> 8) & 1
+                                  else (self.mouse_buttons & ~bit)) & 0xFFFF_FFFF
+        self._push(word)
+
     def _push(self, word: int) -> None:
         """Drop-new (§25.5): con la cola llena se pierde el evento nuevo."""
         if len(self.fifo) >= self.FIFO_DEPTH:
             self.overflow = True
             return
         self.fifo.append(word)
-
     def pressed(self) -> list[int]:
         """Usage IDs pulsados ahora, ascendentes (mirarlos no consume nada)."""
         return list(self._bits(self.keys))
@@ -635,21 +682,28 @@ class InputDevice:
         """Bitmap HID de modificadores: el bit n es el Usage ID 0xE0 + n."""
         return (self.keys >> self.MODIFIER_FIRST) & 0xFF
 
-    def _apply_keys(self, new_keys: int) -> None:
-        old_keys = self.keys
-        old_modifiers = self.modifiers
-        self.keys = new_keys             # STATE se actualiza aunque se pierdan eventos
-        new_modifiers = self.modifiers
-        normal = ((1 << self.MODIFIER_FIRST) - 1) | (0xFF << (self.MODIFIER_LAST + 1))
+    @classmethod
+    def keyboard_events(cls, old_keys: int, new_keys: int) -> list[int]:
+        """Palabras que llevan el teclado de `old_keys` a `new_keys` (bitmaps de
+        256 bits, bit u = Usage ID u). Orden de §25.7: primero las liberaciones
+        (Usage ascendente), luego el cambio de modificadores si lo hay y por
+        último las pulsaciones. Todas llevan los modificadores NUEVOS."""
+        new_modifiers = (new_keys >> cls.MODIFIER_FIRST) & 0xFF
+        old_modifiers = (old_keys >> cls.MODIFIER_FIRST) & 0xFF
+        normal = ((1 << cls.MODIFIER_FIRST) - 1) | ((1 << 256) - (1 << (cls.MODIFIER_LAST + 1)))
         released = old_keys & ~new_keys & normal
         pressed = new_keys & ~old_keys & normal
-        for usage in self._bits(released):
-            self._push(self.key_event(usage, False, new_modifiers))
+        words = [cls.key_event(usage, False, new_modifiers)
+                 for usage in cls._bits(released)]
         if new_modifiers != old_modifiers:
-            self._push(self.key_event(0, False, new_modifiers))
-        for usage in self._bits(pressed):
-            self._push(self.key_event(usage, True, new_modifiers))
+            words.append(cls.key_event(0, False, new_modifiers))
+        words += [cls.key_event(usage, True, new_modifiers)
+                  for usage in cls._bits(pressed)]
+        return words
 
+    def _apply_keys(self, new_keys: int) -> None:
+        for word in self.keyboard_events(self.keys, new_keys):
+            self.apply_event(word)
     @staticmethod
     def _bits(mask: int):
         """Posiciones de los bits a uno, ascendentes."""
@@ -693,31 +747,51 @@ class InputDevice:
             self._apply_keys(0)
         self.keyboard_present = False
 
-    def _apply_buttons(self, new_buttons: int) -> None:
-        old_buttons = self.mouse_buttons
-        self.mouse_buttons = new_buttons
-        for button in self._bits(old_buttons & ~new_buttons):
-            self._push(self.mouse_button_event(button, False))
-        for button in self._bits(new_buttons & ~old_buttons):
-            self._push(self.mouse_button_event(button, True))
-
-    def _push_move(self, dx: int, dy: int) -> None:
-        """Parte un delta grande en eventos signed12 cuya suma es exacta."""
+    @classmethod
+    def mouse_events(cls, old_buttons: int, new_buttons: int,
+                     dx: int = 0, dy: int = 0) -> list[int]:
+        """Palabras de un report de ratón: botones soltados, botones pulsados
+        y el movimiento, partido en eventos signed12 cuya suma es exacta."""
+        words = [cls.mouse_button_event(button, False)
+                 for button in cls._bits(old_buttons & ~new_buttons)]
+        words += [cls.mouse_button_event(button, True)
+                  for button in cls._bits(new_buttons & ~old_buttons)]
         while dx or dy:
-            step_x = max(self.MOVE_MIN, min(self.MOVE_MAX, dx))
-            step_y = max(self.MOVE_MIN, min(self.MOVE_MAX, dy))
-            self._push(self.mouse_move_event(step_x, step_y))
+            step_x = max(cls.MOVE_MIN, min(cls.MOVE_MAX, dx))
+            step_y = max(cls.MOVE_MIN, min(cls.MOVE_MAX, dy))
+            words.append(cls.mouse_move_event(step_x, step_y))
             dx -= step_x
             dy -= step_y
+        return words
 
+    @classmethod
+    def mouse_events(cls, old_buttons: int, new_buttons: int,
+                     dx: int = 0, dy: int = 0) -> list[int]:
+        """Palabras de un report de ratón: botones soltados, botones pulsados
+        y el movimiento, partido en eventos signed12 cuya suma es exacta."""
+        words = [cls.mouse_button_event(button, False)
+                 for button in cls._bits(old_buttons & ~new_buttons)]
+        words += [cls.mouse_button_event(button, True)
+                  for button in cls._bits(new_buttons & ~old_buttons)]
+        while dx or dy:
+            step_x = max(cls.MOVE_MIN, min(cls.MOVE_MAX, dx))
+            step_y = max(cls.MOVE_MIN, min(cls.MOVE_MAX, dy))
+            words.append(cls.mouse_move_event(step_x, step_y))
+            dx -= step_x
+            dy -= step_y
+        return words
+
+    def _apply_buttons(self, new_buttons: int) -> None:
+        for word in self.mouse_events(self.mouse_buttons, new_buttons):
+            self.apply_event(word)
     def mouse_report(self, buttons: int, dx: int = 0, dy: int = 0) -> None:
         """Estado completo de botones (bitmap) más el movimiento relativo."""
         if not self.mouse_present:
             raise ValueError("ratón no presente")
         if not 0 <= buttons <= 0xFFFF_FFFF:
             raise ValueError(f"bitmap de botones fuera de rango: {buttons}")
-        self._apply_buttons(buttons)
-        self._push_move(dx, dy)
+        for word in self.mouse_events(self.mouse_buttons, buttons, dx, dy):
+            self.apply_event(word)
 
     def mouse_move(self, dx: int, dy: int) -> None:
         self.mouse_report(self.mouse_buttons, dx, dy)

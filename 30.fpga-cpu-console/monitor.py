@@ -103,6 +103,7 @@ from tools.monitor_protocol import (  # noqa: E402,F401
     MonitorError,
     Version,
     parse_integer,
+    InputMixin,
     SerialMixin,
     PerfMixin,
 )
@@ -114,7 +115,7 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 _REGIONES = MEMORY_REGIONS
 
 
-class MonitorClient(SerialMixin, PerfMixin, protocolo.MonitorClient):
+class MonitorClient(InputMixin, SerialMixin, PerfMixin, protocolo.MonitorClient):
     MEMORY_REGIONS = _REGIONES
 
 
