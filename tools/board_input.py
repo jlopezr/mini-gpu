@@ -47,6 +47,22 @@ CELL_W, CELL_H = 8, 16
 SCREEN_W, SCREEN_H = COLS * CELL_W, ROWS * CELL_H
 
 
+# Los códigos 0..31 y 127 de la fuente de la pantalla son dibujos (CP437 del PC
+# original: caras, flechas, triángulos...), pero el códec de Python los trata como
+# caracteres de control. Aquí llevan el dibujo, así que un triángulo se busca como "▲".
+_LOW_GLYPHS = " ☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼"
+
+
+def glyph(code: int) -> str:
+    """El carácter con el que se ve la celda de código `code` (CP437 con dibujos)."""
+    code &= 0xFF
+    if 1 <= code < 32:
+        return _LOW_GLYPHS[code]
+    if code == 127:
+        return "⌂"
+    return bytes([code]).decode("cp437")
+
+
 class Screen:
     """Una foto de la pantalla de texto: una palabra por celda (mmio.md §9)."""
 
@@ -54,9 +70,8 @@ class Screen:
         self.cells = cells                  # fila -> COLS palabras
 
     def row(self, number: int) -> str:
-        """El texto de una fila, sin los espacios del final (CP437)."""
-        words = self.cells[number]
-        return "".join(bytes([w & 0xFF]).decode("cp437") for w in words).rstrip()
+        """El texto de una fila, sin los espacios del final (CP437 con dibujos)."""
+        return "".join(glyph(w) for w in self.cells[number]).rstrip()
 
     @property
     def rows(self) -> list[str]:

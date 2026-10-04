@@ -119,6 +119,21 @@ class ScreenTest(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 b.wait_for("adios", timeout=0.05, rows=[13])
 
+    def test_los_codigos_bajos_son_dibujos_y_no_caracteres_de_control(self):
+        # Los triangulos de las barras y del combo son 0x1E y 0x1F.
+        self.assertEqual(board_input.glyph(0x1E), "▲")
+        self.assertEqual(board_input.glyph(0x1F), "▼")
+        self.assertEqual(board_input.glyph(0x10), "►")
+        self.assertEqual(board_input.glyph(0x41), "A")
+        self.assertEqual(board_input.glyph(0xA4), "ñ")
+        self.assertEqual(board_input.glyph(0xFB), "√")
+        self.assertEqual(board_input.glyph(127), "⌂")
+        fake, session = board()
+        fake.text[(3, 7)] = chr(0x1F)
+        with session as b:
+            self.assertEqual(b.screen(rows=[7]).row(7), "   ▼")
+            self.assertEqual(b.screen(rows=[7]).find("▼"), (3, 7))
+
     def test_la_pantalla_entera_son_treinta_filas_de_ochenta(self):
         fake, session = board()
         shot = read_screen(fake)
