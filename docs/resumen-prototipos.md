@@ -43,21 +43,22 @@ semillas daba +14,5 % de holgura con el diseño roto.
 generator: cpu-matrix
 -->
 
-| | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) |
-|---|---|---|---|---|---|---|---|
-| **Reloj** | — | 100 MHz | 100 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz |
-| **Fmax / objetivo** | — | 117.6 / 100 | 115.2 / 100 | 103.2 / 100 | 87.7 / 80 | 88.9 / 80 | 87.3 / 80 |
-| **Memoria** | — | 32 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | 6 042 / 2 624 | 5 352 / 2 477 | 8 171 / 3 798 | 10 319 / 5 088 | 11 129 / 5 171 | 11 382 / 5 236 |
-| **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 |
-| **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
-| `subword_memory` | sí | no | no | no | no | sí | sí |
-| `calls` | sí | no | no | no | no | sí | sí |
-| `shift_immediate` | sí | no | no | no | no | no | sí |
-| `alu_extended` | sí | no | no | no | no | no | sí |
-| `compare` | sí | no | no | no | no | no | sí |
-| `frame_capture` | sí | no | no | sí | sí | sí | sí |
-| `serial` | sí | no | no | no | no | sí | sí |
+| | [2.sim](../2.cpu-sim-func) | [6.ebr](../6.fpga-cpu) | [10.sdram](../10.fpga-cpu-ram) | [16.hdmi](../16.fpga-cpu-hdmi) | [18.bl8](../18.fpga-cpu-hdmi-bl8) | [19.subword](../19.fpga-cpu-hdmi-ls) | [21.alu](../21.fpga-cpu-hdmi-alu) | [30.console](../30.fpga-cpu-console) |
+|---|---|---|---|---|---|---|---|---|
+| **Reloj** | — | 100 MHz | 100 MHz | 100 MHz | 80 MHz | 80 MHz | 80 MHz | 80 MHz |
+| **Fmax / objetivo** | — | 112.5 / 100 | 105.7 / 100 | 105.2 / 100 | 87.5 / 80 | 86.6 / 80 | 88.1 / 80 | 85.8 / 80 |
+| **Memoria** | — | 32 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | 6 035 / 2 624 | 5 391 / 2 477 | 8 158 / 3 830 | 10 302 / 5 120 | 11 179 / 5 203 | 11 502 / 5 268 | 13 808 / 6 320 |
+| **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 | 5.30 |
+| **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
+| `subword_memory` | sí | no | no | no | no | sí | sí | sí |
+| `calls` | sí | no | no | no | no | sí | sí | sí |
+| `shift_immediate` | sí | no | no | no | no | no | sí | sí |
+| `alu_extended` | sí | no | no | no | no | no | sí | sí |
+| `compare` | sí | no | no | no | no | no | sí | sí |
+| `serial` | sí | no | no | no | no | sí | sí | sí |
+| `perf_stalls` | no | no | no | no | no | no | no | sí |
+| `input_device` | no | no | no | no | no | no | no | sí |
 
 <!-- gendoc:end cpu-matrix -->
 
@@ -118,9 +119,16 @@ instancia el monitor:
 ```text
 mayor   = juego de comandos     3  base + READ_WORD/WRITE_WORD
                                 4  lo anterior + SEND_BYTES/RECV_BYTES
+                                5  lo anterior + INPUT_EVENTS/INPUT_PRESENCE
 menor   = número de carpeta     3.6, 3.10, 3.12, 3.14, 3.16, 3.17,
-                                3.18, 3.22, 4.19, 4.21
+                                3.18, 3.22, 4.19, 4.21, 5.30
 ```
+
+El mayor 5 es solo de la 30, que es la única con el bloque INPUT. Las otras
+carpetas llevan el mismo `monitor.v` con `HAS_INPUT = 0`, donde esos dos comandos
+contestan `ff` como cualquier desconocido: su protocolo no cambia y por eso su
+mayor tampoco. El texto del fichero sí cambió, así que sus bitstreams quedan
+desfasados respecto al RTL hasta que se vuelvan a sintetizar.
 
 Eso arregla de golpe los dos problemas que tenía el esquema anterior, en el que
 había diez números arbitrarios para cuatro juegos de comandos:
@@ -184,17 +192,17 @@ cobró de verdad.
 generator: gpu-matrix
 -->
 
-| | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) |
-|---|---|---|---|---|---|---|
-| **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | — | 35.1 / 25 | 34.3 / 25 | 44.8 / 25 | 35.2 / 25 |
-| **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | — | 38 078 / 9 357 | 31 038 / 9 236 | 31 392 / 10 310 | 35 937 / 12 520 |
-| **Monitor** | — | — | 3.12 | 3.14 | 3.17 | 3.22 |
-| **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k |
-| `warp_config` | no | no | sí | sí | sí | sí |
-| `simt_debug` | no | no | sí | sí | sí | sí |
-| `atomic_warp_faults` | sí | sí | no | no | no | no |
+| | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) | [29.smpipe](../29.fpga-gpu-sm-pipeline) |
+|---|---|---|---|---|---|---|---|
+| **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
+| **Fmax / objetivo** | — | — | 35.1 / 25 | 31.6 / 25 | 46.5 / 25 | 38.4 / 25 | 35.1 / 25 |
+| **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
+| **LUT / FF** | — | — | 38 078 / 9 357 | 31 375 / 9 236 | 30 070 / 10 310 | 36 366 / 12 588 | 42 053 / 13 907 |
+| **Monitor** | — | — | 3.12 | 3.14 | 3.17 | 3.22 | 3.29 |
+| **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k | 250 k |
+| `warp_config` | no | no | sí | sí | sí | sí | sí |
+| `simt_debug` | no | no | sí | sí | sí | sí | sí |
+| `atomic_warp_faults` | sí | sí | no | no | no | no | no |
 
 <!-- gendoc:end gpu-matrix -->
 
@@ -229,15 +237,17 @@ generator: prototype-summary
 | Prototype | Version | Monitor | Clock | Capabilities |
 |---|---|---|---|---|
 | [`6.fpga-cpu`](../6.fpga-cpu) | ebr | 3.6 | 100.0 MHz | mul_div, read_word, write_word |
-| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 100.0 MHz | read_word, write_word |
+| [`10.fpga-cpu-ram`](../10.fpga-cpu-ram) | sdram | 3.10 | 100.0 MHz | large_memory, read_word, write_word |
 | [`12.fpga-gpu`](../12.fpga-gpu) | bram | 3.12 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
-| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
-| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
-| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | mul_div, read_word, write_word, warp_config, simt_debug |
-| [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 3.18 | 80.0 MHz | mul_div, video, frame_capture, read_word, write_word, perf_counters |
-| [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, serial, read_word, write_word, perf_counters |
-| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, serial, read_word, write_word, perf_counters |
-| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | mul_div, video, read_word, write_word, warp_config, simt_debug, perf_counters |
+| [`14.fpga-gpu-ram`](../14.fpga-gpu-ram) | sdram | 3.14 | 25.0 MHz | mul_div, large_memory, read_word, write_word, warp_config, simt_debug |
+| [`16.fpga-cpu-hdmi`](../16.fpga-cpu-hdmi) | hdmi | 3.16 | 100.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, perf_counters |
+| [`17.fpga-gpu-ram-v2`](../17.fpga-gpu-ram-v2) | 17.fpga-gpu-ram-v2 | 3.17 | 25.0 MHz | mul_div, large_memory, read_word, write_word, warp_config, simt_debug |
+| [`18.fpga-cpu-hdmi-bl8`](../18.fpga-cpu-hdmi-bl8) | bl8 | 3.18 | 80.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, perf_counters |
+| [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters |
+| [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters |
+| [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, warp_config, simt_debug, perf_counters |
+| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | smpipe | 3.29 | 25.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, warp_config, simt_debug, perf_counters |
+| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | console | 5.30 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters, perf_stalls, input_device |
 
 <!-- gendoc:end prototype-summary -->
 
