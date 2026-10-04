@@ -362,6 +362,8 @@ opciones de `tools/sim_peripherals.py`:
 | `--frame-instructions N` | Periodo sintético del frame, 1000 por defecto; debe ser positivo |
 | `--halt-after-swaps N` | Activa vídeo y para el simulador tras N intercambios |
 | `--frame-output frame.bin` | Activa vídeo y guarda el framebuffer frontal RGB565 de 320×240 |
+| `--console` | Activa vídeo con la consola de texto 80×30 de la 30: `CONFIG` (`+0x40`), paleta (`+0x1000`) y texto (`+0x6000`) dentro de la ventana de vídeo. `SWAP` pasa a ser `FRAME_COMMIT` de dos bits (swap y `STATE_COMMIT`) |
+| `--console-output pantalla.txt` | Activa `--console` y vuelca la pantalla de texto (30 líneas, UTF-8) al terminar |
 | `--serial` | Activa serie en `0x80000200` |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
 | `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |

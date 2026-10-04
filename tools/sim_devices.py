@@ -59,10 +59,30 @@ class VideoDevice:
     #
     # Poner aquí la dirección cómoda sería peor que no modelarlo: un programa
     # que la heredase pasaría en el simulador y fallaría en la placa.
+    # Consola de texto (30.fpga-cpu-console, `video_registers.v`). Solo existe
+    # con `console=True`: sin ella esas direcciones siguen siendo «registro
+    # inexistente», que es lo que hace el resto de prototipos.
+    CONFIG = 0x40
+    PALETTE_BASE = 0x1000           # 256 palabras
+    PALETTE_WORDS = 256
+    TEXT_BASE = 0x6000              # 80x30 celdas, una palabra cada una
+    TEXT_COLUMNS = 80
+    TEXT_ROWS = 30
+    TEXT_WORDS = TEXT_COLUMNS * TEXT_ROWS
+    CONFIG_TEXT_ENABLE = 1 << 2
+    SWAP_REQUEST = 1 << 0           # con consola, SWAP son dos bits (RTL)
+    STATE_COMMIT = 1 << 1
+
     def __init__(self, fb_front: int = 0, fb_back: int = 0,
-                 frame_instructions: int = 1000):
+                 frame_instructions: int = 1000, console: bool = False):
         if frame_instructions <= 0:
             raise ValueError("frame_instructions debe ser positivo")
+        self.console = console
+        self.config_shadow = 0
+        self.config_active = 0
+        self.state_commit_pending = False
+        self.palette = [0] * self.PALETTE_WORDS
+        self.text_ram = [0] * self.TEXT_WORDS
         self.fb_front = fb_front & ~(self.FB_ALIGN - 1)
         self.fb_back = fb_back & ~(self.FB_ALIGN - 1)
         self.swap_pending = False
@@ -104,9 +124,42 @@ class VideoDevice:
     REGISTROS = (VIDEO_CTRL, FB_FRONT, FB_BACK, SWAP, STATUS, FRAME_COUNT,
                  SWAP_COUNT, HALT_AT, HALT_TARGET, VIDEO_TX)
 
+    def _console_index(self, offset: int):
+        """(memoria, índice) si `offset` cae en paleta o texto; si no, None."""
+        if not self.console:
+            return None
+        if self.PALETTE_BASE <= offset < self.PALETTE_BASE + 4 * self.PALETTE_WORDS:
+            return self.palette, (offset - self.PALETTE_BASE) >> 2
+        if self.TEXT_BASE <= offset < self.TEXT_BASE + 4 * self.TEXT_WORDS:
+            return self.text_ram, (offset - self.TEXT_BASE) >> 2
+        return None
+
     def validate(self, offset: int, writing: bool = False) -> None:
-        if offset not in self.REGISTROS:
-            raise RuntimeError(f"registro MMIO inexistente: {self.BASE + offset:#010x}")
+        if offset in self.REGISTROS:
+            return
+        if self.console and (offset == self.CONFIG
+                             or self._console_index(offset) is not None):
+            return
+        raise RuntimeError(f"registro MMIO inexistente: {self.BASE + offset:#010x}")
+
+    # Los códigos 0x01-0x1F de la fuente son glifos (triángulos de scrollbar,
+    # flechas...), no controles. Python los decodifica como control y
+    # `str.splitlines` partiría la fila en 0x1C-0x1E.
+    _LOW_GLYPHS = "☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼"
+
+    def text_lines(self):
+        """El contenido de la consola como 30 cadenas de 80 caracteres (CP437)."""
+        def glyph(cell):
+            code = cell & 0xFF
+            if code == 0:
+                return " "
+            if code < 0x20:
+                return self._LOW_GLYPHS[code - 1]
+            return bytes([code]).decode("cp437")
+
+        return ["".join(glyph(cell) for cell in
+                        self.text_ram[row * self.TEXT_COLUMNS:(row + 1) * self.TEXT_COLUMNS])
+                for row in range(self.TEXT_ROWS)]
 
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
@@ -131,6 +184,10 @@ class VideoDevice:
         # `tick` solo se llama mientras corre, asi que es el mismo contador.
         self.video_tx = u32(self.video_tx + 1)
 
+        if self.state_commit_pending:
+            self.config_active = self.config_shadow
+            self.state_commit_pending = False
+
         if self.swap_pending:
             self.fb_front, self.fb_back = self.fb_back, self.fb_front
             self.swap_pending = False
@@ -153,17 +210,28 @@ class VideoDevice:
 
     def read(self, offset: int) -> int:
         self.validate(offset)
+        indexed = self._console_index(offset)
+        if indexed is not None:
+            memory, index = indexed
+            return memory[index]
+        if offset == self.CONFIG:
+            return self.config_shadow
         if offset == self.FB_FRONT:
             return self.fb_front
         if offset == self.FB_BACK:
             return self.fb_back
         if offset == self.SWAP:
+            if self.console:
+                return (int(self.state_commit_pending) << 1) | int(self.swap_pending)
             return 1 if self.swap_pending else 0
         if offset == self.STATUS:
             # bit 0 underflow (siempre cero aqui), bit 1 intercambio pendiente.
             # Los frames YA NO viven aqui: tienen registro propio en v2, que es
             # lo que les devuelve los 32 bits --en v1 cabian 16 y daban la
             # vuelta a los 65536 frames, unos 18 minutos de video--.
+            if self.console:
+                return (int(self.state_commit_pending) << 3) | (
+                    2 if self.swap_pending else 0)
             return 2 if self.swap_pending else 0
         if offset == self.FRAME_COUNT:
             return self.frame_count
@@ -181,6 +249,30 @@ class VideoDevice:
 
     def write(self, offset: int, value: int) -> None:
         self.validate(offset, writing=True)
+        indexed = self._console_index(offset)
+        if indexed is not None:
+            memory, index = indexed
+            memory[index] = u32(value)
+            return
+        if offset == self.CONFIG:
+            # Bits 31:3 reservados: error y la escritura no surte efecto.
+            if value >> 3:
+                raise RuntimeError(f"CONFIG con bits reservados: 0x{value:08X}")
+            self.config_shadow = value
+            return
+        if self.console and offset == self.SWAP:
+            # Con consola, SWAP es FRAME_COMMIT: bit 0 intercambio y bit 1
+            # STATE_COMMIT. Bits reservados o petición con la anterior aún
+            # pendiente son error y no tienen efecto, como en el RTL.
+            if (value >> 2
+                    or (value & self.SWAP_REQUEST and self.swap_pending)
+                    or (value & self.STATE_COMMIT and self.state_commit_pending)):
+                raise RuntimeError(f"FRAME_COMMIT inválido: 0x{value:08X}")
+            if value & self.SWAP_REQUEST:
+                self.swap_pending = True
+            if value & self.STATE_COMMIT:
+                self.state_commit_pending = True
+            return
         if offset in (self.FB_FRONT, self.FB_BACK):
             # Desalinear es ERROR, no se trunca (§9.2). El truncamiento
             # silencioso dibujaba bien en una familia y torcido en la otra.

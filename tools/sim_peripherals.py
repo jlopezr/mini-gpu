@@ -16,14 +16,23 @@ def add_arguments(parser):
     group.add_argument("--halt-after-swaps", type=int,
                        help="habilita vídeo y para tras N intercambios")
     group.add_argument("--frame-output", type=Path, help="habilita vídeo y guarda FB_FRONT en RGB565 320x240")
+    group.add_argument("--console", action="store_true",
+                       help="habilita vídeo con la consola de texto 80x30 (CONFIG, paleta, texto)")
+    group.add_argument("--console-output", type=Path,
+                       help="habilita --console y guarda la pantalla de texto al terminar (UTF-8)")
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
 
 
 def video_requested(args) -> bool:
-    return bool(args.video or args.frame_output
+    return bool(args.video or args.frame_output or console_requested(args)
                 or args.halt_after_swaps is not None)
+
+
+def console_requested(args) -> bool:
+    return bool(getattr(args, "console", False)
+                or getattr(args, "console_output", None))
 
 
 def missing_video_warning(program: Path, args) -> str | None:
@@ -54,7 +63,8 @@ def from_arguments(args):
         raise ValueError("halt-after-swaps debe ser positivo")
     video = None
     if video_requested(args):
-        video = VideoDevice(frame_instructions=args.frame_instructions)
+        video = VideoDevice(frame_instructions=args.frame_instructions,
+                            console=console_requested(args))
         if args.halt_after_swaps:
             # Esta opción es una condición del host basada en SWAP_COUNT. No
             # se implementa con HALT_AT: es un registro del contrato, que el
@@ -84,5 +94,8 @@ def video_result(machine, capture=False):
 def write_outputs(args, machine):
     if args.frame_output:
         args.frame_output.write_bytes(video_result(machine, True)["frame"])
+    if getattr(args, "console_output", None):
+        args.console_output.write_text("\n".join(machine.video.text_lines()) + "\n",
+                                       encoding="utf-8")
     if args.serial_output:
         args.serial_output.write_bytes(machine.serial.output())
