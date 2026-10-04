@@ -254,6 +254,8 @@ class System:
         """Un paso del reloj sintético de los dispositivos."""
         if self.serial is not None:
             self.serial.tick()
+        if self.input is not None:
+            self.input.tick()
         if self.video is not None:
             self.video.tick()
             if self.video.halt_request:

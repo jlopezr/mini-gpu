@@ -2,7 +2,7 @@
 import re
 import sys
 from pathlib import Path
-from tools.sim_devices import VideoDevice, SerialDevice
+from tools.sim_devices import VideoDevice, SerialDevice, InputDevice
 
 FRAME_BYTES = 320 * 240 * 2
 VIDEO_SYMBOL_RE = re.compile(r"\bMMIO_VIDEO_[A-Za-z0-9_]*\b")
@@ -29,6 +29,13 @@ def add_arguments(parser):
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
+    group.add_argument("--keyboard", action="store_true",
+                       help="habilita INPUT (mmio.md §25) con un teclado presente desde el principio")
+    group.add_argument("--mouse", action="store_true",
+                       help="habilita INPUT con un ratón presente desde el principio")
+    group.add_argument("--input-script", type=Path,
+                       help="habilita INPUT y carga un guion de entrada (tools/input_script.py); "
+                            "el guion conecta lo que no pidan --keyboard/--mouse")
 
 
 def video_requested(args) -> bool:
@@ -81,7 +88,25 @@ def from_arguments(args):
     if args.serial or args.serial_input or args.serial_output:
         serial = SerialDevice(stdin=args.serial_input.read_bytes() if args.serial_input else b"")
         serial.attach_host()
-    return {"video": video, "serial": serial}
+    return {"video": video, "serial": serial, "input_device": input_from_arguments(args)}
+
+
+def input_from_arguments(args):
+    """El INPUT que piden `--keyboard`, `--mouse` e `--input-script`, o None."""
+    keyboard = getattr(args, "keyboard", False)
+    mouse = getattr(args, "mouse", False)
+    script = getattr(args, "input_script", None)
+    if not (keyboard or mouse or script):
+        return None
+    from tools import input_script
+    actions = input_script.load(script, keyboard, mouse) if script else []
+    device = InputDevice()
+    if keyboard:
+        device.connect_keyboard()
+    if mouse:
+        device.connect_mouse()
+    device.attach_script(actions)
+    return device
 
 
 def video_result(machine, capture=False):

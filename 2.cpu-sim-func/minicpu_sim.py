@@ -601,6 +601,8 @@ class CPU:
         self.instructions_executed += 1
         if self.serial is not None:
             self.serial.tick()
+        if self.input is not None:
+            self.input.tick()
 
     def run(self, max_instructions: int = 100_000_000) -> None:
         """Ejecuta hasta HALT respetando un límite de seguridad."""

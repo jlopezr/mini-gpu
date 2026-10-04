@@ -470,7 +470,20 @@ class InputDevice:
     MOVE_MAX = 2047
 
     def __init__(self):
+        # Guion de entrada (`tools/input_script.py`): acciones ordenadas por
+        # instante, y las instrucciones completadas hasta ahora.
+        self.script = []
+        self.ticks = 0
         self.reset()
+
+    def attach_script(self, actions) -> None:
+        """Programa acciones para instantes futuros; las de `@0` se aplican ya."""
+        self.script = sorted(actions, key=lambda action: action.at)
+        self._run_due()
+
+    def _run_due(self) -> None:
+        while self.script and self.script[0].at <= self.ticks:
+            self.script.pop(0).run(self)
 
     def reset(self) -> None:
         """Estado tras reset (§25.11): todo a cero, FIFO vacía, sin presencia."""
@@ -487,7 +500,10 @@ class InputDevice:
         return self.BASE <= address < self.BASE + self.SIZE
 
     def tick(self) -> None:
-        """No tiene reloj propio: la entrada la inyecta el anfitrión."""
+        """Una instrucción completada: aplica las acciones del guion que toquen."""
+        self.ticks += 1
+        if self.script:
+            self._run_due()
 
     def _is_key_state(self, offset: int) -> bool:
         first = self.KEY_STATE0

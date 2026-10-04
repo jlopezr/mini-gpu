@@ -368,13 +368,43 @@ opciones de `tools/sim_peripherals.py`:
 | `--serial` | Activa serie en `0x80000200` |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
 | `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |
+| `--keyboard` | Activa INPUT (teclado y ratón, `mmio.md` §25, en `0x80600000`) con un teclado presente desde el principio |
+| `--mouse` | Activa INPUT con un ratón presente desde el principio |
+| `--input-script entrada.txt` | Activa INPUT y carga un guion de entrada. El guion conecta lo que no pidan `--keyboard`/`--mouse`; se comprueba entero al cargar |
 
 Por ejemplo, las mismas opciones sirven con cualquiera de los tres lanzadores:
 
 ```powershell
 .\tools\cpusim.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
 .\tools\gpusim-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
+.\tools\cpusim.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
 ```
+
+#### Guiones de entrada (`--input-script`)
+
+Una acción por línea, con el instante en instrucciones completadas (de CPU o
+de warp): `@N` es absoluto y `+N` relativo a la línea anterior. `@0` se aplica
+al cargar, antes de la primera instrucción.
+
+```text
+@0    keyboard connect               # o `keyboard connect A LSHIFT` con teclas ya pulsadas
++100  key press H                    # down y up, dos reports
++10   type "Hola\n"                  # teclado US; las mayúsculas llevan LSHIFT
++50   key down LSHIFT A              # varias teclas = un solo report
++50   key up LSHIFT A
+@500  mouse connect
++10   mouse move 12 -5
++10   mouse button left click        # left, right, middle o 0..31; down, up o click
++10   mouse report 0b101 3 4         # bitmap de botones y movimiento en un report
++10   keyboard disconnect            # libera lo pulsado y deja STATE a cero
+```
+
+Las teclas son nombres de `tools/hid_keys.py` (`A`, `ENTER`, `LSHIFT`, `F1`,
+`UP`...) o Usage IDs literales (`0x2C`); un dígito suelto es la tecla del
+dígito, no el Usage ID. El simulador reproduce INPUT, no USB: aplica los
+reports con el orden de eventos, el overflow y las reglas de
+conexión/desconexión de §25, así que un guion que lanza más de 16 eventos sin
+que el programa los lea los pierde igual que la FPGA.
 
 `SYS_ID` siempre está disponible, también mediante LOAD en la 25. Vídeo y serie
 son opcionales en la API (`video=VideoDevice()`, `serial=SerialDevice()`). El
