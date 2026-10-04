@@ -29,6 +29,9 @@ def add_arguments(parser):
     group.add_argument("--serial", action="store_true", help="habilita el puerto serie MMIO")
     group.add_argument("--serial-input", type=Path, help="habilita serie y carga bytes de entrada")
     group.add_argument("--serial-output", type=Path, help="habilita serie y guarda los bytes de salida")
+    group.add_argument("--window", action="store_true",
+                       help="abre una ventana con la pantalla (framebuffer, consola o ambos) y "
+                            "conecta su teclado y ratón a INPUT; implica vídeo. F12 para el simulador")
     group.add_argument("--keyboard", action="store_true",
                        help="habilita INPUT (mmio.md §25) con un teclado presente desde el principio")
     group.add_argument("--mouse", action="store_true",
@@ -40,7 +43,7 @@ def add_arguments(parser):
 
 def video_requested(args) -> bool:
     return bool(args.video or args.frame_output or console_requested(args)
-                or args.halt_after_swaps is not None)
+                or args.halt_after_swaps is not None or getattr(args, "window", False))
 
 
 def console_requested(args) -> bool:
@@ -96,17 +99,41 @@ def input_from_arguments(args):
     keyboard = getattr(args, "keyboard", False)
     mouse = getattr(args, "mouse", False)
     script = getattr(args, "input_script", None)
-    if not (keyboard or mouse or script):
+    window = getattr(args, "window", False)
+    if not (keyboard or mouse or script or window):
         return None
     from tools import input_script
-    actions = input_script.load(script, keyboard, mouse) if script else []
+    # Con ventana, teclado y ratón los conecta la propia ventana al abrirse.
+    actions = input_script.load(script, keyboard or window, mouse or window) if script else []
     device = InputDevice()
     if keyboard:
         device.connect_keyboard()
     if mouse:
         device.connect_mouse()
     device.attach_script(actions)
+    if window:
+        from tools.sim_display import SimDisplay
+        device.attach_host(SimDisplay(resolve_font(args.console_font)))
     return device
+
+
+def start_display(machine):
+    """Abre la ventana de `--window`, si se pidió. Llamar con el simulador ya
+    construido y antes de ejecutarlo."""
+    device = getattr(machine, "input", None)
+    host = getattr(device, "host", None)
+    if host is not None:
+        host.bind(machine)
+        host.start(device)
+    return host
+
+
+def finish_display(machine) -> None:
+    """Al acabar el programa, deja la última imagen hasta que se cierre la ventana."""
+    device = getattr(machine, "input", None)
+    host = getattr(device, "host", None)
+    if host is not None:
+        host.finish(device)
 
 
 def video_result(machine, capture=False):

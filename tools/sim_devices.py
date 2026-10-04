@@ -474,7 +474,15 @@ class InputDevice:
         # instante, y las instrucciones completadas hasta ahora.
         self.script = []
         self.ticks = 0
+        # Anfitrión interactivo (`tools/sim_display.py`): se le da la mano cada
+        # `host_every` instrucciones para que traiga entrada y refresque.
+        self.host = None
+        self.host_every = 1000
         self.reset()
+
+    def attach_host(self, host, every: int = 1000) -> None:
+        self.host = host
+        self.host_every = every
 
     def attach_script(self, actions) -> None:
         """Programa acciones para instantes futuros; las de `@0` se aplican ya."""
@@ -504,6 +512,8 @@ class InputDevice:
         self.ticks += 1
         if self.script:
             self._run_due()
+        if self.host is not None and self.ticks % self.host_every == 0:
+            self.host.poll(self)
 
     def _is_key_state(self, offset: int) -> bool:
         first = self.KEY_STATE0

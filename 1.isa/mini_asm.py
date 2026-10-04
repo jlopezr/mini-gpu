@@ -1274,8 +1274,12 @@ def load_program_bytes(path) -> bytes:
     suffix = path.suffix.lower()
 
     if suffix == ".asm":
+        # `x.tests/inc` se busca siempre, como en el depurador: es donde vive
+        # `mmio.inc`, y sin esto un programa que lo incluye solo se podia
+        # ensamblar desde el runner de tests o desde `mini-dbg`.
+        shared = Path(__file__).resolve().parents[1] / "x.tests" / "inc"
         return assemble_bytes(path.read_text(encoding="utf-8"),
-                              path.parent, path.name)
+                              path.parent, path.name, (shared,))
 
     if suffix == ".hex":
         return read_hex_image(path)

@@ -558,6 +558,7 @@ def main():
         )
 
         gpu.load_program(program)
+        sim_peripherals.start_display(gpu)
 
         if args.warp_config:
             gpu.configure_warps(
@@ -765,6 +766,8 @@ def main():
 
             sim_peripherals.write_outputs(args, gpu)
             print_report(report, gpu)
+            sys.stdout.flush()
+            sim_peripherals.finish_display(gpu)
 
             return 2 if limited else 1 if gpu.error else 0
 

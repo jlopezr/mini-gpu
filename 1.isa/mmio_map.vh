@@ -42,6 +42,7 @@
 `define MMIO_TIMER_BASE            32'h8030_0000
 `define MMIO_INTC_BASE             32'h8040_0000
 `define MMIO_DMA_BASE              32'h8050_0000
+`define MMIO_INPUT_BASE            32'h8060_0000
 `define MMIO_CPU_BASE              32'h8100_0000
 `define MMIO_CPU_PERF_BASE         32'h8101_0000
 `define MMIO_CPU_DEBUG_BASE        32'h8102_0000
@@ -82,6 +83,7 @@
 `define MMIO_DEV_DMA_BIT           32'h0000_0008
 `define MMIO_DEV_CPU_BIT           32'h0000_0009
 `define MMIO_DEV_GPU_BIT           32'h0000_000A
+`define MMIO_DEV_INPUT_BIT         32'h0000_000B
 
 // ==== SERIAL (mmio.md §8) ================================================
 
@@ -114,6 +116,36 @@
 // Bits de HALT_TARGET (mmio.md §9.6).
 `define MMIO_VIDEO_HALT_CPU_BIT    32'h0000_0000
 `define MMIO_VIDEO_HALT_GPU_BIT    32'h0000_0001
+
+// ==== INPUT, teclado y raton (mmio.md §25) ===============================
+
+`define MMIO_INPUT_EVENT_DATA_OFF  32'h0000_0000
+`define MMIO_INPUT_STATUS_OFF      32'h0000_0004
+`define MMIO_INPUT_EVENT_CTRL_OFF  32'h0000_0008
+`define MMIO_INPUT_KEY_STATE0_OFF  32'h0000_0010
+`define MMIO_INPUT_KEY_STATE1_OFF  32'h0000_0014
+`define MMIO_INPUT_KEY_STATE2_OFF  32'h0000_0018
+`define MMIO_INPUT_KEY_STATE3_OFF  32'h0000_001C
+`define MMIO_INPUT_KEY_STATE4_OFF  32'h0000_0020
+`define MMIO_INPUT_KEY_STATE5_OFF  32'h0000_0024
+`define MMIO_INPUT_KEY_STATE6_OFF  32'h0000_0028
+`define MMIO_INPUT_KEY_STATE7_OFF  32'h0000_002C
+`define MMIO_INPUT_MOUSE_BUTTONS_OFF 32'h0000_0030
+
+// STATUS (mmio.md §25.4): COUNT en 15:0 y tres banderas.
+`define MMIO_INPUT_STATUS_COUNT_MASK       32'h0000_FFFF
+`define MMIO_INPUT_STATUS_OVERFLOW         32'h0001_0000
+`define MMIO_INPUT_STATUS_KEYBOARD_PRESENT 32'h0002_0000
+`define MMIO_INPUT_STATUS_MOUSE_PRESENT    32'h0004_0000
+
+// EVENT_CTRL (mmio.md §25.9). Los bits 31:2 se escriben a cero.
+`define MMIO_INPUT_CTRL_FLUSH              32'h0000_0001
+`define MMIO_INPUT_CTRL_CLEAR_OVERFLOW     32'h0000_0002
+
+// Tipo de evento, bits 31:24 de EVENT_DATA (mmio.md §25.5).
+`define MMIO_INPUT_TYPE_KEY                32'h0000_0000
+`define MMIO_INPUT_TYPE_MOUSE_BUTTON       32'h0000_0001
+`define MMIO_INPUT_TYPE_MOUSE_MOVE         32'h0000_0002
 
 // ==== Bloques de contadores (mmio.md §12.6) ==============================
 //

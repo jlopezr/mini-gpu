@@ -368,6 +368,7 @@ opciones de `tools/sim_peripherals.py`:
 | `--serial` | Activa serie en `0x80000200` |
 | `--serial-input entrada.bin` | Activa serie y precarga los bytes de entrada |
 | `--serial-output salida.bin` | Activa serie y recoge la salida durante toda la ejecución |
+| `--window` | Abre una ventana con la pantalla (framebuffer, consola o ambos, según `VIDEO_CTRL` y `CONFIG`) y conecta su teclado y ratón a INPUT. Implica vídeo; `--console` y `--console-font` valen igual. **F12** o cerrar la ventana paran el simulador; al terminar el programa la última imagen se queda hasta cerrarla. Solo `cpusim`, `gpusim` y `gpusim-cycle`; `mini-dbg` aún no |
 | `--keyboard` | Activa INPUT (teclado y ratón, `mmio.md` §25, en `0x80600000`) con un teclado presente desde el principio |
 | `--mouse` | Activa INPUT con un ratón presente desde el principio |
 | `--input-script entrada.txt` | Activa INPUT y carga un guion de entrada. El guion conecta lo que no pidan `--keyboard`/`--mouse`; se comprueba entero al cargar |
@@ -379,6 +380,26 @@ Por ejemplo, las mismas opciones sirven con cualquiera de los tres lanzadores:
 .\tools\gpusim-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
 .\tools\cpusim.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
 ```
+
+#### Ventana (`--window`)
+
+```powershell
+.\tools\cpusim.ps1 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
+```
+
+El pintor de `2.cpu-sim-func/examples/input_paint.asm` dibuja con el ratón
+(botón izquierdo), cambia de color con cualquier tecla y borra con la barra
+espaciadora. La ventana es un proceso aparte (`tools/screen_window.py`, Tk y
+PIL) y el simulador la refresca unas 15 veces por segundo solo si la pantalla
+cambió; no hay ritmo de tiempo real, el simulador corre tan deprisa como puede.
+
+Las teclas viajan como **teclas físicas** (`tools/host_input.py`): `MapVirtualKey`
+da el scancode y de ahí el Usage ID, así que no dependen del layout. Los
+modificadores se leen del sistema y AltGr no deja pulsado un Control. Mantener
+una tecla no repite pulsaciones: el contrato no define typematic, es del
+software. Los movimientos del ratón se funden en un evento por muestreo
+(10 ms) y el puntero solo cuenta mientras está sobre la ventana. Perder el
+foco suelta todo.
 
 #### Guiones de entrada (`--input-script`)
 

@@ -150,6 +150,9 @@ class HostKeyboard:
         self.emit = emit
         self.pressed: set[int] = set()
         self._since: dict[int, int] = {}
+        # AltGr retirado: mientras dure, el Control_L falso que el SO sigue
+        # contando como pulsado no vuelve a entrar.
+        self._altgr = False
 
     def _changed(self, before: set[int]) -> None:
         if self.pressed != before:
@@ -179,8 +182,18 @@ class HostKeyboard:
         before = set(self.pressed)
         keep = {u for u in self.pressed
                 if not hid_keys.MODIFIER_FIRST <= u <= hid_keys.MODIFIER_LAST}
-        self.pressed = keep | {u for u in modifiers
-                               if hid_keys.MODIFIER_FIRST <= u <= hid_keys.MODIFIER_LAST}
+        wanted = {u for u in modifiers
+                  if hid_keys.MODIFIER_FIRST <= u <= hid_keys.MODIFIER_LAST}
+        ralt, lctrl = hid_keys.usage_of("RALT"), hid_keys.usage_of("LCTRL")
+        if ralt not in wanted:
+            self._altgr = False
+        elif lctrl in wanted and (self._altgr or (ralt not in before
+                                                  and lctrl not in before)):
+            # AltGr: Alt derecho y Control izquierdo aparecen juntos. El Control
+            # es el falso del SO y se retira mientras dure el Alt derecho.
+            self._altgr = True
+            wanted.discard(lctrl)
+        self.pressed = keep | wanted
         self._changed(before)
 
     def release_all(self) -> None:

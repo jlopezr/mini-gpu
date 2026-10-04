@@ -942,6 +942,7 @@ def main() -> int:
                 system.configure_warps(config)
             except TypeError as exc:
                 raise ValueError(str(exc)) from exc
+        sim_peripherals.start_display(system)
         tracing = args.trace or args.trace_detail or args.trace_file is not None or args.trace_limit is not None
         if args.trace_limit is not None and args.trace_limit < 0:
             raise ValueError('trace-limit no puede ser negativo')
@@ -979,6 +980,8 @@ def main() -> int:
         if args.dump:
             address, size, filename = args.dump
             system.dump_memory(int(address, 0), int(size, 0), Path(filename))
+        sys.stdout.flush()
+        sim_peripherals.finish_display(system)
         return 1 if system.error else 0
     except (OSError, ValueError, SimulationError) as exc:
         print(f"Simulador: {exc}", file=sys.stderr)

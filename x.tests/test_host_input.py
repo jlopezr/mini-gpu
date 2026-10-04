@@ -143,6 +143,23 @@ class HostKeyboardTest(unittest.TestCase):
         self.keyboard.press(usage("RALT"), time_ms=1001)
         self.assertEqual(self.reports[-1], frozenset({0xE6}))
 
+    def test_altgr_leido_del_sistema_no_deja_pasar_el_control_falso(self):
+        # El SO sigue contando Control_L mientras dura AltGr: no debe volver.
+        self.keyboard.set_modifiers({usage("LCTRL"), usage("RALT")})
+        self.assertEqual(self.reports[-1], frozenset({0xE6}))
+        self.keyboard.set_modifiers({usage("LCTRL"), usage("RALT")})
+        self.assertEqual(len(self.reports), 1)
+        self.keyboard.set_modifiers(set())
+        self.assertEqual(self.reports[-1], frozenset())
+        # Pasado AltGr, un Control izquierdo auténtico vuelve a contar.
+        self.keyboard.set_modifiers({usage("LCTRL")})
+        self.assertEqual(self.reports[-1], frozenset({0xE0}))
+
+    def test_control_ya_pulsado_y_despues_alt_derecho_son_dos_teclas(self):
+        self.keyboard.set_modifiers({usage("LCTRL")})
+        self.keyboard.set_modifiers({usage("LCTRL"), usage("RALT")})
+        self.assertEqual(self.reports[-1], frozenset({0xE0, 0xE6}))
+
     def test_ctrl_y_alt_derecho_pulsados_a_mano_se_respetan(self):
         self.keyboard.press(usage("LCTRL"), time_ms=1000)
         self.keyboard.press(usage("RALT"), time_ms=1500)

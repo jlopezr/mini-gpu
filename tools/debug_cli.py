@@ -101,6 +101,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.board and args.prototype is None:
         print("error: --board necesita --prototype", file=sys.stderr)
         return 2
+    if args.window:
+        # La ventana del depurador es la del comando `fb`; la entrada de teclado
+        # y ratón en ella llega en otro paso. Mejor un error que una opción que
+        # se acepta y no hace nada.
+        print("error: --window todavía no está disponible en mini-dbg "
+              "(use el comando `fb` para ver el framebuffer)", file=sys.stderr)
+        return 2
 
     includes = include_dirs(args)
     connection = None

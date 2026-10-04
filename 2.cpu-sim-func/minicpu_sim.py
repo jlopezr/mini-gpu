@@ -668,6 +668,7 @@ def main() -> None:
         print(f"Simulador: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     cpu.load_program(program)
+    sim_peripherals.start_display(cpu)
     cpu.run(args.run_limit)
     sim_peripherals.write_outputs(args, cpu)
 
@@ -694,6 +695,9 @@ def main() -> None:
             f"Volcados {size} bytes desde 0x{address:08X} "
             f"a {filename}"
         )
+
+    sys.stdout.flush()
+    sim_peripherals.finish_display(cpu)
 
 
 if __name__ == "__main__":
