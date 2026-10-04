@@ -95,9 +95,12 @@ class InputAdapter:
         self.queue += InputDevice.mouse_events(self.buttons, 0)
         self.keys = self.buttons = 0
         deadline = self.clock() + timeout
-        while self.queue and self.clock() < deadline:
-            if not self.pump():
-                time.sleep(PROBE_PERIOD)
+        try:
+            while self.queue and self.clock() < deadline:
+                if not self.pump():
+                    time.sleep(PROBE_PERIOD)
+        except KeyboardInterrupt:
+            pass                        # otro Ctrl+C: dejar de esperar, pero quitar la presencia
         self.free = self.client.set_input_presence(False, False)
         self.connected = False
 
@@ -202,6 +205,9 @@ def run_session(client, source, status=None, home: bool = True) -> None:
                 time.sleep(PROBE_PERIOD)
             if status is not None:
                 status(adapter)
+    except KeyboardInterrupt:
+        # Ctrl+C sale igual que F12: se sueltan las teclas y se quita la presencia.
+        print("\nCtrl+C: soltando teclas y desconectando INPUT...", file=sys.stderr)
     finally:
         adapter.close()
 

@@ -213,6 +213,54 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(client.commands[-1], ("presence", False, False))
 
 
+class CtrlCTest(unittest.TestCase):
+    """Ctrl+C sale igual que F12: nada pulsado y la presencia a cero."""
+
+    class Interrumpida(FakeSource):
+        """Entrega sus lotes y luego se interrumpe, como Ctrl+C en la consola."""
+
+        def __init__(self, client, *batches):
+            super().__init__(*batches)
+            self.client = client
+            self.arm_client = False
+
+        def poll(self, timeout):
+            if not self.batches:
+                if self.arm_client:
+                    self.client.armed = True
+                raise KeyboardInterrupt
+            return self.batches.pop(0)
+
+    class FallaUnaVez(FakeClient):
+        armed = False
+
+        def send_input_events(self, words):
+            if self.armed:
+                self.armed = False
+                raise KeyboardInterrupt     # un segundo Ctrl+C, durante el cierre
+            return super().send_input_events(words)
+
+    def test_ctrl_c_suelta_todo_y_quita_la_presencia(self):
+        client = FakeClient()
+        fuente = self.Interrumpida(
+            client,
+            [{"event": "keys", "pressed": [LSHIFT, A]},
+             {"event": "mouse", "buttons": 1, "dx": 0, "dy": 0}])
+        run_session(client, fuente)             # no propaga KeyboardInterrupt
+        self.assertEqual(client.device.keys, 0)
+        self.assertEqual(client.device.mouse_buttons, 0)
+        self.assertEqual(client.commands[-1], ("presence", False, False))
+
+    def test_un_segundo_ctrl_c_durante_el_cierre_tambien_quita_la_presencia(self):
+        client = self.FallaUnaVez()
+        fuente = self.Interrumpida(
+            client, [{"event": "keys", "pressed": [A]}])
+        fuente.arm_client = True
+        run_session(client, fuente)
+        self.assertEqual(client.commands[-1], ("presence", False, False))
+        self.assertFalse(client.device.mouse_present)
+
+
 class PointerHomeTest(unittest.TestCase):
     """El programa de la placa sigue vivo entre sesiones y conserva su puntero."""
 

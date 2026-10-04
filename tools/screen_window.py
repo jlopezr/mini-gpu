@@ -37,6 +37,7 @@ import argparse
 import base64
 import json
 import queue
+import signal
 import sys
 import threading
 from pathlib import Path
@@ -61,6 +62,11 @@ def main() -> int:
                         help="captura teclado y ratón y los manda como reports")
     parser.add_argument("--scale", type=int, default=1)
     args = parser.parse_args()
+    if args.input:
+        # Ctrl+C en la consola le llega a este proceso igual que al monitor que
+        # lo lanzó. El que decide es el monitor: suelta las teclas, quita la
+        # presencia y cierra esta ventana. Aquí solo estorbaría con un traceback.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     import tkinter as tk
 
