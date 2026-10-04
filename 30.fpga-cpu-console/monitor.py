@@ -306,6 +306,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "uart",
             "send",
             "input",
+            "screen",
         ),
     )
     parser.add_argument("arguments", nargs="*", metavar="ARG")
@@ -319,6 +320,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_TIMEOUT,
         help=f"Response timeout in seconds (default: {DEFAULT_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--script",
+        default=None,
+        metavar="GUION",
+        help="input: ejecuta un guion (tools/board_script.py) en vez de abrir la ventana",
+    )
+    parser.add_argument(
+        "--settle-ms",
+        type=int,
+        default=150,
+        help="input --script: tiempo que se deja a la aplicacion para repintar antes "
+             "de mirar la pantalla (por defecto 150)",
     )
     parser.add_argument(
         "--keep-pointer",
@@ -483,9 +497,13 @@ def main() -> int:
             "uart": 0,
             "send": 1,
             "input": 0,
+            "screen": 0,
         }
         # `perf` admite un argumento opcional: la ventana en segundos.
         if args.command == "perf" and len(args.arguments) <= 1:
+            pass
+        # `screen` admite las filas que se quieren ver; sin ninguna, todas.
+        elif args.command == "screen":
             pass
         elif len(args.arguments) != expected_arguments[args.command]:
             raise MonitorError(
@@ -630,8 +648,31 @@ def main() -> int:
                     print(aviso)
             elif args.command == "uart":
                 interactive_uart(client)
+            elif args.command == "input" and args.script is not None:
+                from tools import board_script
+
+                try:
+                    pasos = board_script.load(args.script)
+                    comprobaciones = board_script.run(
+                        client, pasos, home=not args.keep_pointer,
+                        settle=args.settle_ms / 1000)
+                except (board_script.ScriptError, board_script.ScriptFailure,
+                        OSError) as error:
+                    raise MonitorError(str(error)) from None
+                print(f"Guion terminado: {comprobaciones} comprobacion(es) correctas.")
             elif args.command == "input":
                 interactive_input(client, home=not args.keep_pointer)
+            elif args.command == "screen":
+                # La pantalla de texto como texto: sin ventana ni captura. Sin
+                # argumentos, las 30 filas (~5 s: la RAM de texto se lee palabra
+                # a palabra); con numeros, solo esas filas.
+                from tools import board_input
+
+                filas = [parse_integer(texto, board_input.ROWS - 1, "fila")
+                         for texto in args.arguments] or None
+                captura = board_input.read_screen(client, filas)
+                for numero in sorted(captura.cells):
+                    print(f"{numero:2d}|{captura.row(numero)}")
             elif args.command == "send":
                 # Manda una cadena y ensena lo que conteste, sin terminal. Es
                 # la forma de probar un programa interactivo desde un script.

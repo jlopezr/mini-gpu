@@ -438,6 +438,54 @@ cualquier programa que recorte su cursor a la pantalla, y de ahí al centro de l
 ventana (`InputAdapter.home`). Con `--keep-pointer` no se hace, para un programa
 que use el movimiento como entrada relativa y no quiera ese barrido.
 
+#### Pruebas automáticas en la placa
+
+`monitor.py input` es para una persona. Para automatizar hay tres piezas, de la
+más baja a la más alta:
+
+- **`monitor.py screen [FILA...]`** imprime la pantalla de texto (80x30) como
+  texto, entera o solo las filas que se piden. La RAM de texto no se puede leer en
+  bloque por el monitor, así que son ~2 ms por celda: ~0,2 s una fila, ~5 s la
+  pantalla entera.
+- **`tools/board_input.py`** (`BoardInput`) es lo mismo que la ventana pero desde
+  Python: `tap`, `key_down`, `click(columna, fila)`, `screen()`, `wait_for(texto)`.
+  Resincroniza el puntero al empezar y lleva la cuenta de dónde está, así que un
+  clic cae en su celda sea cual sea el estado en que dejó la placa la sesión
+  anterior, y espera a que la CPU haya sacado los eventos y la aplicación haya
+  repintado antes de mirar.
+- **`monitor.py input --script guion.txt`** ejecuta un guion de
+  `tools/board_script.py`: el mismo formato que `--input-script` del simulador
+  (`keyboard`, `mouse`, `key`, `type`), con los instantes en **milisegundos** en vez
+  de instrucciones, y cuatro verbos que solo existen con una placa delante:
+
+```text
+@0     keyboard connect
++0     mouse connect
++300   type "hola"
++0     click 53 6                      # columna, fila de la pantalla de texto
++0     moveto 40 15                    # solo mueve el puntero
++0     expect row 13 contains "hola"   # tras dejar a la aplicación repintar
++0     expect row 29 is "Control: Edit"
++0     expect screen absent "Error"
++0     wait row 29 contains "Edit" 3000    # espera hasta 3000 ms (5000 por defecto)
+```
+
+  `expect` y `wait` admiten `contains`, `is` (fila entera) y `absent`, sobre
+  `row N` o `screen`. El guion se comprueba entero al cargarlo (una tecla sin
+  teclado conectado, una celda fuera de pantalla, una línea mal escrita fallan con
+  el número de línea y antes de tocar la placa). Una comprobación que falla para el
+  guion, dice qué esperaba y qué había, y el código de salida es 1. Pase lo que
+  pase, al terminar se sueltan las teclas y los botones, y se quita la presencia.
+  `--settle-ms` es el tiempo que se deja a la aplicación para repintar (150 por
+  defecto) y `--keep-pointer` desactiva la resincronización del puntero. Ejemplo:
+  `z.tui/test/board_controls.txt`.
+
+Qué usar: para la lógica (teclado español, repintado, controles) el simulador con
+`--input-script`, que es determinista y no necesita placa; para comprobar la placa
+de verdad (latencia, FIFO, repintado real), estos. Se prueban sin placa en
+`x.tests/test_board_input.py` y `x.tests/test_board_script.py`, con una FPGA y una
+aplicación simuladas.
+
 #### Guiones de entrada (`--input-script`)
 
 Una acción por línea, con el instante en instrucciones completadas (de CPU o
