@@ -23,9 +23,14 @@ eventos que el simulador; aquí se mandan a la placa en vez de a un dispositivo
 simulado. `click` y `moveto` cuentan con que el puntero de la placa está donde cree
 la sombra: al conectar el ratón se resincroniza (`InputAdapter.home`).
 
-`expect` mira la pantalla de texto después de dejar a la aplicación el tiempo de
-repintar (`settle`). `row N` lee solo esa fila (~0,2 s); `screen`, las 30 (~5 s).
-Una comprobación que falla para el guion y dice qué esperaba y qué vio.
+`expect` mira la pantalla de texto en cuanto la placa ha consumido lo enviado, y si
+lo que espera ver (`contains`, `is`) no está sigue mirando hasta 4 x `settle` (la
+aplicación puede estar repintando); `absent` deja pasar `settle` y mira una vez,
+porque la ausencia no se confirma viendo algo. `wait` mira hasta que se cumpla o se
+agote su tiempo, sin dormir entre lecturas. `row N` lee solo esa fila (~0,16 s: 80
+palabras a ~2 ms cada una, la latencia del USB-serie; el monitor no admite lecturas
+encadenadas ni en bloque sobre la RAM de texto); `screen`, las 30 (~5 s). Una
+comprobación que falla para el guion y dice qué esperaba y qué vio.
 """
 from __future__ import annotations
 
@@ -44,7 +49,7 @@ from tools import board_input, input_script  # noqa: E402
 from tools.sim_devices import InputDevice  # noqa: E402
 
 DEFAULT_WAIT_MS = 5000
-POLL_SECONDS = 0.1
+POLL_SECONDS = 0.02
 
 
 class ScriptError(ValueError):
@@ -257,32 +262,43 @@ class Runner:
         self.device(lambda d: d.mouse_button(button, True))
         self.device(lambda d: d.mouse_button(button, False))
 
-    def _look(self, rows) -> board_input.Screen:
-        self.board.flush(settle=True)
-        return board_input.read_screen(self.board.client, rows)
+    def _until(self, rows, operator: str, text: str, timeout: float):
+        """Mira la pantalla hasta que se cumpla la condición o pase `timeout`.
+
+        Devuelve (cumplida, última captura). Leer una fila ya cuesta ~0,16 s por el
+        puerto serie, así que no hace falta dormir entre lecturas. Una condición
+        `absent` no se puede confirmar viendo algo: hay que dejar a la aplicación
+        el tiempo de repintar (`settle`) y mirar después."""
+        deadline = time.monotonic() + timeout
+        self.board.flush(settle=operator == "absent")
+        while True:
+            shot = board_input.read_screen(self.board.client, rows)
+            if _holds(shot, rows, operator, text):
+                return True, shot
+            if time.monotonic() >= deadline:
+                return False, shot
+            time.sleep(POLL_SECONDS)
 
     def expect(self, rows, operator: str, text: str) -> None:
-        shot = self._look(rows)
+        """Lo que se espera ver ya, tras dar a la aplicación tiempo de repintar: si
+        no está, se sigue mirando durante `4 x settle`, que es lo que habría tardado
+        en repintar una aplicación lenta."""
+        grace = 0 if operator == "absent" else 4 * self.board.settle
+        ok, shot = self._until(rows, operator, text, grace)
         self.checks += 1
-        if not _holds(shot, rows, operator, text):
+        if not ok:
             seen = shot.row(rows[0]) if rows is not None else shot.text
             raise ScriptFailure(f"esperaba que {_describe(rows, operator, text)}, y hay:\n"
                                 f"{seen}")
 
     def wait(self, rows, operator: str, text: str, timeout_ms: int) -> None:
-        deadline = time.monotonic() + timeout_ms / 1000
-        self.board.flush(settle=True)
-        while True:
-            shot = board_input.read_screen(self.board.client, rows)
-            if _holds(shot, rows, operator, text):
-                self.checks += 1
-                return
-            if time.monotonic() >= deadline:
-                seen = shot.row(rows[0]) if rows is not None else shot.text
-                raise ScriptFailure(
-                    f"tras {timeout_ms} ms sigue sin cumplirse que "
-                    f"{_describe(rows, operator, text)}; hay:\n{seen}")
-            time.sleep(POLL_SECONDS)
+        ok, shot = self._until(rows, operator, text, timeout_ms / 1000)
+        if not ok:
+            seen = shot.row(rows[0]) if rows is not None else shot.text
+            raise ScriptFailure(
+                f"tras {timeout_ms} ms sigue sin cumplirse que "
+                f"{_describe(rows, operator, text)}; hay:\n{seen}")
+        self.checks += 1
 
     def release_everything(self) -> None:
         """Al terminar, aunque sea por un error: nada pulsado y sin presencia."""

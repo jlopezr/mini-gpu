@@ -464,7 +464,7 @@ más baja a la más alta:
 +300   type "hola"
 +0     click 53 6                      # columna, fila de la pantalla de texto
 +0     moveto 40 15                    # solo mueve el puntero
-+0     expect row 13 contains "hola"   # tras dejar a la aplicación repintar
++0     expect row 13 contains "hola"   # lo que debe verse ya (con un margen)
 +0     expect row 29 is "Control: Edit"
 +0     expect screen absent "Error"
 +0     wait row 29 contains "Edit" 3000    # espera hasta 3000 ms (5000 por defecto)
@@ -476,9 +476,17 @@ más baja a la más alta:
   el número de línea y antes de tocar la placa). Una comprobación que falla para el
   guion, dice qué esperaba y qué había, y el código de salida es 1. Pase lo que
   pase, al terminar se sueltan las teclas y los botones, y se quita la presencia.
-  `--settle-ms` es el tiempo que se deja a la aplicación para repintar (150 por
-  defecto) y `--keep-pointer` desactiva la resincronización del puntero. Ejemplo:
-  `z.tui/test/board_controls.txt`.
+
+  **Cuánto se espera.** Leer una fila cuesta ~0,16 s (80 palabras a ~2 ms: la
+  latencia del USB-serie; el monitor no encadena peticiones ni lee bloques de la RAM
+  de texto), así que nada duerme entre lecturas. `wait` mira hasta que se cumple o
+  se agota su tiempo. `expect ... contains|is` mira en cuanto la placa consumió lo
+  enviado y, si no está, sigue hasta `4 x settle`; `absent` espera `settle` y mira
+  una vez, porque la ausencia no se confirma viendo algo. Lo que arranca la
+  aplicación (justo tras `board-load`) se espera con un `wait`, no con un `+300` y un
+  sueño. `--settle-ms` (150 por defecto) es el tiempo que se deja a la aplicación
+  para repintar; `--keep-pointer` desactiva la resincronización del puntero.
+  Ejemplo: `z.tui/test/board_controls.txt`.
 
 Qué usar: para la lógica (teclado español, repintado, controles) el simulador con
 `--input-script`, que es determinista y no necesita placa; para comprobar la placa

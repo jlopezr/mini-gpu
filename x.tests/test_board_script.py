@@ -162,6 +162,42 @@ class ScreenCheckTest(unittest.TestCase):
         self.assertEqual(fake.device.keys, 0)
         self.assertEqual(fake.commands[-1], ("presence", False, False))
 
+    def test_wait_que_ya_se_cumple_no_duerme_el_tiempo_de_asentamiento(self):
+        fake = self.fake_with(5, "listo")
+        steps = board_script.parse('@0 wait row 5 contains "listo" 5000\n')
+        start = time.monotonic()
+        board_script.run(fake, steps, settle=0.5, log=lambda line: None)
+        self.assertLess(time.monotonic() - start, 0.4)
+
+    def test_expect_sigue_mirando_si_la_aplicacion_tarda_en_repintar(self):
+        class Slow(FakeBoard):
+            """El texto aparece `delay` segundos después de la primera lectura."""
+            def __init__(self, delay):
+                super().__init__()
+                self.delay, self.first = delay, None
+
+            def read_word(self, address):
+                self.first = self.first or time.monotonic()
+                if time.monotonic() - self.first < self.delay:
+                    return ord(" ")
+                return super().read_word(address)
+
+        for delay, ok in ((0.03, True), (0.6, False)):
+            fake = Slow(delay)
+            fake.text[(0, 5)] = "x"
+            steps = board_script.parse('@0 expect row 5 contains "x"\n')
+            if ok:
+                board_script.run(fake, steps, settle=0.05, log=lambda line: None)
+            else:
+                with self.assertRaises(ScriptFailure):
+                    board_script.run(fake, steps, settle=0.05, log=lambda line: None)
+
+    def test_expect_absent_mira_una_vez_tras_el_asentamiento(self):
+        fake = self.fake_with(5, "hola")
+        steps = board_script.parse('@0 expect row 5 absent "adios"\n')
+        self.assertEqual(
+            board_script.run(fake, steps, settle=0, log=lambda line: None), 1)
+
     def test_wait_espera_a_que_aparezca_y_agota_el_tiempo_si_no(self):
         fake = self.fake_with(5, "listo")
         run('@0 wait row 5 contains "listo" 200\n', fake=fake)
