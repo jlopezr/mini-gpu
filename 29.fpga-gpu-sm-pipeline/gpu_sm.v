@@ -44,6 +44,10 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     input [4:0] debug_register,
     output [31:0] debug_data, debug_pc,
     input cfg_write,
+    // Que bloque de GPU WARPS (§14.2): 0 descriptores, 1 LOGICAL_WARP_ID[n]
+    // (+0x200), 2 WARP_ARG[n] (+0x280). En los dos arrays el warp es
+    // cfg_word[2:0]; en los descriptores, cfg_word[4:2].
+    input [1:0] cfg_bank,
     input [4:0] cfg_word,
     input [31:0] cfg_data,
     input [3:0] cfg_strobe,
@@ -60,6 +64,10 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     output [2:0] lsu_tag,
     output [7:0] lsu_mask,
     output lsu_write,
+    // Tamano del acceso: 0 palabra, 1 byte, 2 media palabra. `lsu_signed` solo
+    // importa en las cargas: LOADB y LOADH extienden el signo, el resto ceros.
+    output [1:0] lsu_size,
+    output lsu_signed,
     output [255:0] lsu_address, lsu_data,
     input lsu_rsp_valid,
     output lsu_rsp_ready,
@@ -80,6 +88,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg running, pause_pending, stepping, step_locked;
     reg [2:0] cursor;
     reg [31:0] pc[0:7], groups[0:7], generation[0:7];
+    // LOGICAL_WARP_ID[n] y WARP_ARG[n] (§14.2): lo que leen GETLWARP y GETARG.
+    reg [31:0] logical_id[0:7], warp_arg[0:7];
     reg [7:0] active[0:7], live[0:7];
     reg [7:0] busy, wait_bar;
     reg [4:0] load_rd[0:7];
@@ -122,6 +132,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
 
     reg x_valid, x_started;
     reg [2:0] x_warp;
+    // Id logico y argumento del warp de X, copiados al entrar: asi la lane no
+    // cuelga de un mux de 8 entradas indexado por `x_warp`.
+    reg [31:0] x_logical_id, x_warp_arg;
     reg [31:0] x_pc, x_instruction, x_sequential_pc, x_target, x_branch_target;
     reg [255:0] x_rf_a, x_rf_b;
     reg [7:0] done;
@@ -144,11 +157,18 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // presentarla en cuanto entra en D, la lectura llegaria tarde. Es D quien
     // la presenta, con sus propios campos (disponibles ya el primer ciclo),
     // y espera un ciclo mas (`d_ready`) a que el dato se asiente.
+    // Accesos a memoria. Palabra: LOAD 0x15, STORE 0x16. Sub-palabra (isa.md,
+    // capability subword_memory): LOADB 0x18, LOADUB 0x19, STOREB 0x1A, LOADH
+    // 0x1B, LOADUH 0x1C, STOREH 0x1D. Los tres de escritura sacan el dato de Rd.
+    localparam [5:0] OPCODE_LOAD = 6'h15, OPCODE_STORE = 6'h16;
+    localparam [5:0] OPCODE_LOADB = 6'h18, OPCODE_LOADUB = 6'h19, OPCODE_STOREB = 6'h1a;
+    localparam [5:0] OPCODE_LOADH = 6'h1b, OPCODE_LOADUH = 6'h1c, OPCODE_STOREH = 6'h1d;
     wire [5:0] i_opcode=i_instruction[31:26];
     wire i_branch=i_opcode>=6'h20 && i_opcode<=6'h25;
+    wire i_is_store=i_opcode==OPCODE_STORE || i_opcode==OPCODE_STOREB || i_opcode==OPCODE_STOREH;
     wire [4:0] i_ra=i_branch ? i_instruction[25:21] : i_instruction[20:16];
     wire [4:0] i_rb=i_branch ? i_instruction[20:16] :
-        (i_opcode==6'h16 ? i_instruction[25:21] : i_instruction[15:11]);
+        (i_is_store ? i_instruction[25:21] : i_instruction[15:11]);
 
     wire [255:0] rf_a, rf_b, lane_pc, lane_write_data;
     wire [39:0] lane_write_address;
@@ -159,16 +179,19 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // -- D: decodificacion ---------------------------------------------------
     wire [5:0] d_opcode=d_instruction[31:26];
     wire d_branch_for_ra=d_opcode>=6'h20 && d_opcode<=6'h25;
+    wire d_is_store=d_opcode==OPCODE_STORE || d_opcode==OPCODE_STOREB || d_opcode==OPCODE_STOREH;
     wire [4:0] d_ra=d_branch_for_ra ? d_instruction[25:21] : d_instruction[20:16];
     wire [4:0] d_rb=d_branch_for_ra ? d_instruction[20:16] :
-        (d_opcode==6'h16 ? d_instruction[25:21] : d_instruction[15:11]);
+        (d_is_store ? d_instruction[25:21] : d_instruction[15:11]);
     // D activo para efectos de despacho/compromiso solo tras asentarse el
     // puerto de lectura de RF (ver `d_ready` en el always secuencial).
     wire d_active=d_valid && d_ready;
-    wire d_is_memory=d_opcode==6'h15 || d_opcode==6'h16;
+    wire d_is_byte=d_opcode==OPCODE_LOADB || d_opcode==OPCODE_LOADUB || d_opcode==OPCODE_STOREB;
+    wire d_is_half=d_opcode==OPCODE_LOADH || d_opcode==OPCODE_LOADUH || d_opcode==OPCODE_STOREH;
+    wire d_is_memory=d_opcode==OPCODE_LOAD || d_opcode==OPCODE_STORE || d_is_byte || d_is_half;
     wire d_is_special=d_opcode==6'h31 || d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f;
     wire d_encoding_bad=(d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f) && d_instruction[25:0]!=0;
-    wire d_write=d_opcode==6'h16;
+    wire d_write=d_is_store;
     wire [31:0] d_immediate={{16{d_instruction[15]}},d_instruction[15:0]};
     wire [31:0] d_ssy_index={29'b0,d_warp}*SIMT_REGION_DEPTH+{{(32-SP_BITS){1'b0}},sp[d_warp]};
 
@@ -227,6 +250,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         gpu_lane #(.EXTERNAL_FETCH(1)) alu (
             .clk(clk), .reset(reset), .launch_pc(x_pc),
             .thread_id({26'b0,x_warp,l[2:0]}),
+            .lane_id(l[2:0]), .warp_id(x_warp),
+            .logical_warp_id(x_logical_id), .warp_arg(x_warp_arg),
             .register_a(x_rf_a[l*32 +: 32]), .register_b(x_rf_b[l*32 +: 32]),
             .register_write_enable(lane_we[l]),
             .register_write_address(lane_write_address[l*5 +: 5]),
@@ -256,8 +281,17 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     assign lsu_tag=d_warp;
     assign lsu_mask=active[d_warp];
     assign lsu_write=d_write;
+    assign lsu_size=d_is_byte ? 2'd1 : d_is_half ? 2'd2 : 2'd0;
+    assign lsu_signed=d_opcode==OPCODE_LOADB || d_opcode==OPCODE_LOADH;
     assign lsu_address=d_rf_a+{8{d_immediate}};
-    assign lsu_data=d_rf_b;
+    // El dato de un STOREB/STOREH se replica en todos los carriles de la
+    // palabra: lo que decide cual vale es la mascara de bytes que forma la LSU
+    // con la direccion, asi que aqui no hace falta saber a que byte va.
+    genvar sl;
+    generate for(sl=0;sl<8;sl=sl+1) begin: store_lanes
+        wire [31:0] v=d_rf_b[sl*32 +: 32];
+        assign lsu_data[sl*32 +: 32]=d_is_byte ? {4{v[7:0]}} : d_is_half ? {2{v[15:0]}} : v;
+    end endgenerate
 
     // -- Mantenimiento independiente: reconvergencia SIMT y barreras ---------
     reg normalize_found;
@@ -331,7 +365,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire x_commits_ok = x_completes && !alu_fault;
 
     always @* begin
-        case(cfg_word[1:0])
+        if(cfg_bank==2'd1) cfg_read_data=logical_id[cfg_word[2:0]];
+        else if(cfg_bank==2'd2) cfg_read_data=warp_arg[cfg_word[2:0]];
+        else case(cfg_word[1:0])
             0: cfg_read_data=pc[cfg_word[4:2]];
             1: cfg_read_data={16'b0,live[cfg_word[4:2]],active[cfg_word[4:2]]};
             2: cfg_read_data=groups[cfg_word[4:2]];
@@ -373,10 +409,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             i_valid<=0; i_warp<=0; i_pc<=0; i_instruction<=0; i_sequential_pc<=0;
             d_valid<=0; d_settled<=0; d_ready<=0; d_warp<=0; d_pc<=0; d_instruction<=0; d_sequential_pc<=0; d_target<=0; d_branch_target<=0;
             d_rf_a<=0; d_rf_b<=0;
-            x_valid<=0; x_started<=0; x_warp<=0; x_pc<=0; x_instruction<=0; x_sequential_pc<=0; x_target<=0; x_branch_target<=0;
+            x_valid<=0; x_started<=0; x_warp<=0; x_logical_id<=0; x_warp_arg<=0; x_pc<=0; x_instruction<=0; x_sequential_pc<=0; x_target<=0; x_branch_target<=0;
             x_rf_a<=0; x_rf_b<=0; done<=0;
             for(w=0;w<8;w=w+1) begin
                 pc[w]<=0; active[w]<=8'hff; live[w]<=8'hff; groups[w]<=0;
+                logical_id[w]<=0; warp_arg[w]<=0;
                 warp_retired_count[w]<=0; generation[w]<=0; sp[w]<=0; pp[w]<=0; load_rd[w]<=0;
                 join_pc_top[w]<=0; ssy_pc_top[w]<=0; entry_mask_top[w]<=0; path_base_top[w]<=0;
                 pending_pc_top[w]<=0; pending_mask_top[w]<=0;
@@ -387,7 +424,16 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 if(init_address==255) init_done<=1;
             end
             if (halt_request && running) pause_pending<=1;
-            if (halted && cfg_write) begin
+            // Los dos arrays (§14.2) son de lectura y escritura y no tienen
+            // efectos laterales: tocarlos no reinicia el estado SIMT del warp,
+            // a diferencia de los descriptores (abajo).
+            if (halted && cfg_write && cfg_bank!=2'd0) begin
+                for(c=0;c<4;c=c+1) if(cfg_strobe[c]) begin
+                    if(cfg_bank==2'd1) logical_id[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                    else warp_arg[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                end
+            end
+            if (halted && cfg_write && cfg_bank==2'd0) begin
                 for(c=0;c<4;c=c+1) if(cfg_strobe[c]) begin
                     if(cfg_word[1:0]==0) pc[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
                     if(cfg_word[1:0]==2) groups[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
@@ -626,6 +672,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (d_to_x_fire) begin
                 x_valid<=1; x_started<=0; x_warp<=d_warp; x_pc<=d_pc;
+                x_logical_id<=logical_id[d_warp]; x_warp_arg<=warp_arg[d_warp];
                 x_instruction<=d_instruction; x_sequential_pc<=d_sequential_pc;
                 x_target<=d_target; x_branch_target<=d_branch_target;
                 x_rf_a<=d_rf_a; x_rf_b<=d_rf_b;

@@ -39,7 +39,9 @@ MONITOR_REGIONS = (
     # HALT_AT, HALT_TARGET y VIDEO_TX. En v1 CTRL estaba al final y ahora está
     # al principio: el bloque no sólo cambia de base, se reordena entero.
     (VIDEO_BASE, 0x8020_0028),
-    (WARP_CONFIG_BASE, 0x8201_0080),
+    # Ocho descriptores de 16 B y, a partir de +0x200, LOGICAL_WARP_ID[n] y
+    # WARP_ARG[n]. Una sola ventana: los huecos de en medio contestan error.
+    (WARP_CONFIG_BASE, 0x8201_02A0),
     (SIMT_DEBUG_BASE, 0x8202_0014),
     # Siete contadores: los seis de §14.4 más LANE_OPS, que es extensión de
     # esta carpeta. VIDEO_TX ya no está aquí, se fue a VIDEO (§9.7).

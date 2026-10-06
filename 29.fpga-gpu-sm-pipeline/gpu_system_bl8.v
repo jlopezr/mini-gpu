@@ -87,7 +87,8 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     wire cfg_write;
     wire fetch_valid,fetch_ready,fetch_rsp_valid,fetch_rsp_ready,fetch_error;
     wire [31:0] fetch_address,fetch_data;
-    wire lsu_valid,lsu_ready,lsu_write,lsu_rsp_valid,lsu_rsp_ready;
+    wire lsu_valid,lsu_ready,lsu_write,lsu_signed,lsu_rsp_valid,lsu_rsp_ready;
+    wire [1:0] lsu_size;
     wire [2:0] lsu_tag,lsu_rsp_tag;
     wire [7:0] lsu_mask,lsu_rsp_error,occupied;
     wire [255:0] lsu_address,lsu_data,lsu_rsp_data;
@@ -139,8 +140,16 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     // `address` es todavia la de la transaccion anterior.
     wire host_mmio=host_address[31];
     wire host_permitted=halted || (host_read_enable && !host_write_enable && host_mmio);
-    // Configuracion de warps: 8 descriptores de 16 B en 0x80001000-0x8000107F.
-    wire cfg_region=sel_warps && address[15:7]==0;
+    // GPU WARPS (§14.2): ocho descriptores de 16 B en +0x000..+0x07F, y los dos
+    // arrays de una palabra por warp, LOGICAL_WARP_ID[n] en +0x200 y WARP_ARG[n]
+    // en +0x280. El contrato reserva 32 warps; esta GPU tiene ocho, asi que de
+    // cada array solo existen las ocho primeras palabras (+0x200..+0x21F y
+    // +0x280..+0x29F). Lo demas del bloque contesta error.
+    wire cfg_desc=sel_warps && address[15:7]==0;
+    wire cfg_lid =sel_warps && address[15:5]==11'h010;   // +0x200..+0x21F
+    wire cfg_arg =sel_warps && address[15:5]==11'h014;   // +0x280..+0x29F
+    wire cfg_region=cfg_desc || cfg_lid || cfg_arg;
+    wire [1:0] cfg_bank={cfg_arg,cfg_lid};
     wire [3:0] byte_strobe=writing_word ? 4'b1111 : (4'b0001 << address[1:0]);
     wire [31:0] expanded_data=writing_word ? write_word : {4{write_data}};
     assign cfg_write=host_state==1 && mmio && cfg_region && writing && halted;
@@ -169,13 +178,14 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         .debug_warp(debug_warp),.debug_lane(debug_lane),.debug_register(debug_register),
         .debug_data(debug_data),.debug_pc(debug_pc),
         .debug_warp_retired_count(debug_warp_retired_count),
-        .cfg_write(cfg_write),.cfg_word(address[6:2]),.cfg_data(expanded_data),
+        .cfg_write(cfg_write),.cfg_bank(cfg_bank),.cfg_word(address[6:2]),.cfg_data(expanded_data),
         .cfg_strobe(byte_strobe),.cfg_read_data(cfg_read_data),
         .imem_valid(fetch_valid),.imem_ready(fetch_ready),.imem_address(fetch_address),
         .imem_rsp_valid(fetch_rsp_valid),.imem_rsp_ready(fetch_rsp_ready),
         .imem_data(fetch_data),.imem_error(fetch_error),
         .lsu_valid(lsu_valid),.lsu_ready(lsu_ready),.lsu_tag(lsu_tag),.lsu_mask(lsu_mask),
-        .lsu_write(lsu_write),.lsu_address(lsu_address),.lsu_data(lsu_data),
+        .lsu_write(lsu_write),.lsu_size(lsu_size),.lsu_signed(lsu_signed),
+        .lsu_address(lsu_address),.lsu_data(lsu_data),
         .lsu_rsp_valid(lsu_rsp_valid),.lsu_rsp_ready(lsu_rsp_ready),.lsu_rsp_tag(lsu_rsp_tag),
         .lsu_rsp_data(lsu_rsp_data),.lsu_rsp_error(lsu_rsp_error),.lsu_occupied(occupied),
         .retired_lanes(sm_retired_lanes),.no_warp_stall(sm_no_warp_stall)
@@ -195,6 +205,7 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
     gpu_lsu2 lsu (
         .clk(clk),.reset(core_reset),.req_valid(lsu_valid),.req_ready(lsu_ready),
         .req_tag(lsu_tag),.req_mask(lsu_mask),.req_write(lsu_write),
+        .req_size(lsu_size),.req_signed(lsu_signed),
         .req_address(lsu_address),.req_data(lsu_data),.rsp_valid(lsu_rsp_valid),
         .rsp_ready(lsu_rsp_ready),.rsp_tag(lsu_rsp_tag),.rsp_data(lsu_rsp_data),
         .rsp_error(lsu_rsp_error),.occupied(occupied),
@@ -393,7 +404,9 @@ module gpu_system_bl8 #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SI
         mmio_data=0; mmio_bad=0;
         if(cfg_region) begin
             mmio_data=cfg_read_data;
-            if(writing && address[3:2]==3) mmio_bad=1;
+            // SIMT_STATE (+0xC de cada descriptor) es de solo lectura; los dos
+            // arrays, de lectura y escritura.
+            if(cfg_desc && writing && address[3:2]==3) mmio_bad=1;
         end else if(sel_warps) mmio_bad=1;   // resto del bloque WARPS: no hay
         else if(video_region) begin
             mmio_data=video_read_data; mmio_bad=video_bad;

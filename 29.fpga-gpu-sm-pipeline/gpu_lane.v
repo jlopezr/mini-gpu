@@ -16,7 +16,7 @@
  *   STORE Rs, Ra, imm16
  *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
  *   BRA offset
- *   GETTID Rd (returns zero in MiniCPU)
+ *   GETTID/GETLANE/GETWARP/GETLWARP/GETARG Rd (GETID family, opcode 0x30)
  *   HALT
  *
  * The CPU starts halted after reset. run_request starts continuous execution;
@@ -41,6 +41,13 @@ module gpu_lane #(
 ) (
     input [31:0] launch_pc,
     input [31:0] thread_id,
+    // La familia GETID (isa.md, opcode 0x30): el campo Y de la instruccion es el
+    // `type`. 0 GETTID = thread_id, 1 GETLANE, 2 GETWARP, 3 GETLWARP, 4 GETARG.
+    // El SM los presenta ya asentados cuando la lane ejecuta.
+    input [2:0] lane_id,
+    input [2:0] warp_id,
+    input [31:0] logical_warp_id,
+    input [31:0] warp_arg,
     input [31:0] register_a,
     input [31:0] register_b,
     output reg register_write_enable,
@@ -217,8 +224,10 @@ module gpu_lane #(
         instruction_encoding_valid = instruction[10:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;
+      // GETID: Y es el `type` (0..4) e imm16 = 0. Un type mayor que 4 esta
+      // reservado y es ERROR_INVALID_ENCODING.
       OPCODE_GETTID:
-        instruction_encoding_valid = instruction[20:0] == 0;
+        instruction_encoding_valid = instruction[15:0] == 0 && instruction[20:16] <= 5'd4;
       default: instruction_encoding_valid = 1'b1;
     endcase
   end
@@ -525,7 +534,13 @@ module gpu_lane #(
 
             OPCODE_GETTID: begin
               register_write_address <= rd;
-              register_write_data <= thread_id;
+              case (ra)
+                5'd1: register_write_data <= {29'b0, lane_id};
+                5'd2: register_write_data <= {29'b0, warp_id};
+                5'd3: register_write_data <= logical_warp_id;
+                5'd4: register_write_data <= warp_arg;
+                default: register_write_data <= thread_id;
+              endcase
               register_write_enable <= 1'b1;
               state <= STATE_RETIRE;
             end

@@ -7,6 +7,11 @@ module gpu_lsu2 (
     input clk, reset,
     input req_valid, output req_ready,
     input [2:0] req_tag, input [7:0] req_mask, input req_write,
+    // Tamano del acceso (0 palabra, 1 byte, 2 media palabra) y, en las cargas,
+    // si se extiende el signo. Es del warp entero: todas sus lanes ejecutan la
+    // misma instruccion. En un STORE pequeno `req_data` llega ya replicado en
+    // los carriles de la palabra y es la mascara de bytes la que elige.
+    input [1:0] req_size, input req_signed,
     input [255:0] req_address, req_data,
     output reg rsp_valid, input rsp_ready,
     output reg [2:0] rsp_tag, output reg [255:0] rsp_data,
@@ -38,6 +43,8 @@ module gpu_lsu2 (
     reg [7:0] busy, has_pending, pending[0:7], errors[0:7];
     reg [255:0] addresses[0:7], values[0:7];
     reg stores[0:7];
+    reg [1:0] sizes[0:7];
+    reg signeds[0:7];
     // Grupo en vuelo, registrado en GROUP.
     reg [7:0] grp_lanes;
     reg [15:0] grp_sel;          // 2 bits por lane: que palabra de la linea le toca
@@ -75,6 +82,8 @@ module gpu_lsu2 (
     wire [255:0] sel_addr=addresses[selected], sel_value=values[selected];
     wire [7:0] sel_pending=pending[selected];
     wire sel_write=stores[selected];
+    wire [1:0] sel_size=sizes[selected];
+    wire sel_signed=signeds[selected];
     reg [7:0] fault_lanes, cand_lanes, mmio_lanes;
     always @* begin
         for(i=0;i<8;i=i+1) begin
@@ -92,9 +101,14 @@ module gpu_lsu2 (
             // un prefijo. Es una septima forma de escribir una direccion,
             // ademas de las seis que el encargo lista.
             mmio_lanes[i]=sel_pending[i] && sel_addr[i*32+31];
+            // Alineacion segun el tamano: la palabra a 4, la media palabra a 2 y
+            // el byte a nada. MMIO es SOLO de palabras (mmio.md §4.1): un acceso
+            // pequeno a un registro es fault, no se parte ni se trunca.
             fault_lanes[i]=sel_pending[i] &&
                 ((|sel_addr[i*32+25 +: 7] && !mmio_lanes[i]) ||
-                 |sel_addr[i*32 +: 2]);
+                 (sel_size==2'd0 && |sel_addr[i*32 +: 2]) ||
+                 (sel_size==2'd2 && sel_addr[i*32]) ||
+                 (mmio_lanes[i] && sel_size!=2'd0));
             cand_lanes[i]=sel_pending[i] && !fault_lanes[i];
         end
     end
@@ -154,7 +168,11 @@ module gpu_lsu2 (
         end
     endgenerate
     // Si la lane lider apunta a MMIO, el grupo es ELLA SOLA: acceso escalar.
-    wire leader_is_mmio=mmio_lanes[leader_idx];
+    // `cand_lanes[leader_idx]`: sin ella, cuando TODAS las lanes pendientes
+    // fallan no hay lider y `leader_idx` vale 0 por defecto, asi que una lane 0
+    // a MMIO que acaba de ser declarada fault salia igualmente por el bus. Una
+    // escritura pequena a un registro habria escrito la palabra entera.
+    wire leader_is_mmio=mmio_lanes[leader_idx] && cand_lanes[leader_idx];
     wire [7:0] leader_onehot=8'b1<<leader_idx;
     wire [31:0] leader_addr=sel_addr[{leader_idx,5'b0} +: 32];
     wire [31:0] leader_value=sel_value[{leader_idx,5'b0} +: 32];
@@ -168,8 +186,29 @@ module gpu_lsu2 (
                        sel_addr[3*32+2 +: 2], sel_addr[2*32+2 +: 2],
                        sel_addr[1*32+2 +: 2], sel_addr[0*32+2 +: 2]};
     wire [127:0] n_wdata={slot_data[3],slot_data[2],slot_data[1],slot_data[0]};
-    wire [15:0] n_wmask={{4{|slot_win[3]}},{4{|slot_win[2]}},
-                         {4{|slot_win[1]}},{4{|slot_win[0]}}};
+    // Mascara de bytes de la lane que gana cada palabra: las cuatro de una
+    // palabra entera, o el byte / la mitad que toca segun la direccion. Dos
+    // lanes en la MISMA palabra siguen sin ir juntas (el dedup de slot de
+    // arriba), aunque escriban bytes distintos: la que pierde espera otra
+    // vuelta. Es correcto y mas lento que fusionarlas, y el orden entre ellas
+    // es el de siempre, el de menor lane primero.
+    wire [3:0] lane_strb[0:7];
+    wire [3:0] slot_strb[0:3];
+    generate
+        for(k=0;k<8;k=k+1) begin: lane_strobes
+            assign lane_strb[k]=sel_size==2'd0 ? 4'b1111 :
+                sel_size==2'd1 ? (4'b0001 << sel_addr[k*32 +: 2]) :
+                (sel_addr[k*32+1] ? 4'b1100 : 4'b0011);
+        end
+        for(s=0;s<4;s=s+1) begin: slot_strobes
+            assign slot_strb[s]=
+                ({4{slot_win[s][0]}} & lane_strb[0]) | ({4{slot_win[s][1]}} & lane_strb[1]) |
+                ({4{slot_win[s][2]}} & lane_strb[2]) | ({4{slot_win[s][3]}} & lane_strb[3]) |
+                ({4{slot_win[s][4]}} & lane_strb[4]) | ({4{slot_win[s][5]}} & lane_strb[5]) |
+                ({4{slot_win[s][6]}} & lane_strb[6]) | ({4{slot_win[s][7]}} & lane_strb[7]);
+        end
+    endgenerate
+    wire [15:0] n_wmask={slot_strb[3],slot_strb[2],slot_strb[1],slot_strb[0]};
     // pending tras retirar lo que se cierra en cada punto.
     wire [7:0] pending_after_fault=sel_pending & ~fault_lanes;
     wire [7:0] pending_after_group=sel_pending & ~grp_lanes;
@@ -194,9 +233,20 @@ module gpu_lsu2 (
     generate for(lane=0;lane<8;lane=lane+1) begin: response_lanes
         reg [31:0] words[0:7];
         wire [1:0] wsel=grp_sel[lane*2 +: 2];
+        wire [31:0] word=rsp_line[{wsel,5'b0} +: 32];
+        // Carga pequena: se elige el byte o la mitad de la palabra que trae la
+        // linea, segun los dos bits bajos de la direccion de ESTA lane, y se
+        // extiende con signo o con ceros. La palabra va tal cual.
+        wire [1:0] low=sel_addr[lane*32 +: 2];
+        wire [7:0] byte_sel=word[{low,3'b0} +: 8];
+        wire [15:0] half_sel=low[1] ? word[31:16] : word[15:0];
+        wire [31:0] loaded=
+            sel_size==2'd1 ? (sel_signed ? {{24{byte_sel[7]}},byte_sel} : {24'b0,byte_sel}) :
+            sel_size==2'd2 ? (sel_signed ? {{16{half_sel[15]}},half_sel} : {16'b0,half_sel}) :
+            word;
         always @(posedge clk)
             if(!reset && state==RETIRE && grp_lanes[lane] && !grp_write)
-                words[selected]<=rsp_line[{wsel,5'b0} +: 32];
+                words[selected]<=loaded;
         assign completed_data[lane*32 +: 32]=words[selected];
     end endgenerate
 
@@ -213,6 +263,7 @@ module gpu_lsu2 (
                 busy[req_tag]<=1; pending[req_tag]<=req_mask; has_pending[req_tag]<=|req_mask;
                 errors[req_tag]<=0;
                 addresses[req_tag]<=req_address; values[req_tag]<=req_data; stores[req_tag]<=req_write;
+                sizes[req_tag]<=req_size; signeds[req_tag]<=req_signed;
             end
             case(state)
                 IDLE: if(found) begin

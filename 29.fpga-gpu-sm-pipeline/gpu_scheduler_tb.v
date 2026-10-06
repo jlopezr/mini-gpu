@@ -8,6 +8,7 @@ module gpu_scheduler_tb;
     wire [31:0] error_pc,retired_count,debug_warp_retired_count,debug_data,debug_pc,cfg_read_data;
     reg [2:0] debug_warp=0,debug_lane=0;
     reg [4:0] debug_register=3,cfg_word=0;
+    reg [1:0] cfg_bank=0;           // 0: descriptores (§14.2)
     reg cfg_write=0;
     reg [31:0] cfg_data=0;
     reg [3:0] cfg_strobe=15;
@@ -16,7 +17,8 @@ module gpu_scheduler_tb;
     reg imem_rsp_valid=0,imem_error=0;
     wire imem_ready=!imem_rsp_valid;
     reg [31:0] imem_data=0;
-    wire lsu_valid,lsu_write,lsu_rsp_ready;
+    wire lsu_valid,lsu_write,lsu_signed,lsu_rsp_ready;
+    wire [1:0] lsu_size;
     wire [2:0] lsu_tag;
     wire [7:0] lsu_mask;
     wire [255:0] lsu_address,lsu_data;
@@ -29,6 +31,7 @@ module gpu_scheduler_tb;
     // retired_lanes llego con los contadores de rendimiento. Este banco no lo
     // mira, pero la conexion por comodin exige que exista en el ambito.
     wire [7:0] retired_lanes;
+    wire no_warp_stall;             // idem: lo declara el SM desde el perfilado
 
     gpu_sm dut(.*);
     integer l;

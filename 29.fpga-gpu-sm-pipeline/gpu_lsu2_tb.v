@@ -7,7 +7,8 @@ module gpu_lsu2_tb;
     reg clk=0, reset=1;
     always #5 clk=~clk;
 
-    reg req_valid=0, req_write=0;
+    reg req_valid=0, req_write=0, req_signed=0;
+    reg [1:0] req_size=0;
     reg [2:0] req_tag=0;
     reg [7:0] req_mask=0;
     reg [255:0] req_address=0, req_data=0;
@@ -37,6 +38,7 @@ module gpu_lsu2_tb;
         .clk(clk), .reset(reset),
         .req_valid(req_valid), .req_ready(req_ready), .req_tag(req_tag),
         .req_mask(req_mask), .req_write(req_write),
+        .req_size(req_size), .req_signed(req_signed),
         .req_address(req_address), .req_data(req_data),
         .rsp_valid(rsp_valid), .rsp_ready(rsp_ready), .rsp_tag(rsp_tag),
         .rsp_data(rsp_data), .rsp_error(rsp_error), .occupied(occupied),
@@ -105,6 +107,25 @@ module gpu_lsu2_tb;
         end
     endtask
 
+    // Acceso pequeno: `size` 1 byte, 2 media palabra; `sgn` extiende el signo.
+    task issue_sized;
+        input [2:0] tag;
+        input write;
+        input [7:0] mask;
+        input [255:0] addr;
+        input [255:0] data;
+        input [1:0] size;
+        input sgn;
+    begin
+        @(negedge clk);
+        req_valid=1; req_tag=tag; req_write=write; req_mask=mask;
+        req_address=addr; req_data=data; req_size=size; req_signed=sgn;
+        @(posedge clk);
+        while(!req_ready) @(posedge clk);
+        @(negedge clk); req_valid=0; req_size=0; req_signed=0;
+    end
+    endtask
+
     task issue;
         input [2:0] tag;
         input write;
@@ -112,12 +133,7 @@ module gpu_lsu2_tb;
         input [255:0] addr;
         input [255:0] data;
     begin
-        @(negedge clk);
-        req_valid=1; req_tag=tag; req_write=write; req_mask=mask;
-        req_address=addr; req_data=data;
-        @(posedge clk);
-        while(!req_ready) @(posedge clk);
-        @(negedge clk); req_valid=0;
+        issue_sized(tag, write, mask, addr, data, 2'd0, 1'b0);
     end
     endtask
 
@@ -287,6 +303,99 @@ module gpu_lsu2_tb;
         // venia de MMIO, y elija el `sel` que elija saca el valor bueno.
         check_eq(got[0 +: 32], 32'hCAFE_0001, "mmio lane 0");
         check_eq(got[32 +: 32], 32'hDEAD_BEEF, "mmio lane 1");
+
+        // ================================================================
+        // Accesos de 8 y 16 bits (subword_memory).
+        // ================================================================
+
+        // ---- 10. STOREB de ocho lanes en bytes consecutivos ----
+        // El dato llega replicado en los cuatro carriles de la palabra (como lo
+        // hace gpu_sm) y la mascara de bytes elige cual vale. Cuatro lanes caen
+        // en la MISMA palabra, y dos palabras no se fusionan: ganan de una en
+        // una, y el resultado es el mismo. mem[100] = bytes 0x640..0x64F, con
+        // fondo FF para ver que no se escribe de mas.
+        mem[100]={16{8'hFF}};
+        for(j=0;j<8;j=j+1) begin
+            addr[j*32 +: 32]=32'h0000_0640 + j;
+            data[j*32 +: 32]={4{8'h10+j[7:0]}};
+        end
+        issue_sized(3'd2, 1'b1, 8'hff, addr, data, 2'd1, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "storeb sin fault");
+        check_eq(mem[100], {8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,
+                            8'h17,8'h16,8'h15,8'h14,8'h13,8'h12,8'h11,8'h10}, "storeb: solo sus bytes");
+
+        // ---- 11. STOREH: dos mitades por palabra ----
+        mem[101]={16{8'hFF}};
+        for(j=0;j<8;j=j+1) begin
+            addr[j*32 +: 32]=32'h0000_0650 + j*2;
+            data[j*32 +: 32]={2{16'hA000+j[15:0]}};
+        end
+        issue_sized(3'd3, 1'b1, 8'hff, addr, data, 2'd2, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "storeh sin fault");
+        check_eq(mem[101], {16'hA007,16'hA006,16'hA005,16'hA004,
+                            16'hA003,16'hA002,16'hA001,16'hA000}, "storeh: solo sus mitades");
+
+        // ---- 12. Dos lanes en el MISMO byte: gana la mayor, como siempre ----
+        mem[102]={16{8'hFF}};
+        addr=0; data=0;
+        addr[0*32 +: 32]=32'h0000_0661; data[0*32 +: 32]={4{8'h11}};
+        addr[1*32 +: 32]=32'h0000_0661; data[1*32 +: 32]={4{8'h22}};
+        issue_sized(3'd4, 1'b1, 8'h03, addr, data, 2'd1, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(mem[102][15:8], 8'h22, "storeb mismo byte: la lane mayor escribe la ultima");
+        check_eq(mem[102][7:0], 8'hFF, "storeb mismo byte: el vecino intacto");
+
+        // ---- 13. LOADB / LOADUB: cada lane su byte, de la misma palabra ----
+        mem[103]={32'h0000_0000,32'h0000_0000,32'h0000_0000,32'h8070_6050};
+        for(j=0;j<8;j=j+1) addr[j*32 +: 32]=32'h0000_0670 + (j%4);
+        issue_sized(3'd5, 1'b0, 8'hff, addr, 256'd0, 2'd1, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(got[0*32 +: 32], 32'h0000_0050, "loadub byte 0");
+        check_eq(got[1*32 +: 32], 32'h0000_0060, "loadub byte 1");
+        check_eq(got[2*32 +: 32], 32'h0000_0070, "loadub byte 2");
+        check_eq(got[3*32 +: 32], 32'h0000_0080, "loadub byte 3 (bit alto a uno, con ceros)");
+        issue_sized(3'd6, 1'b0, 8'hff, addr, 256'd0, 2'd1, 1'b1);
+        await_rsp(got, err, tag);
+        check_eq(got[2*32 +: 32], 32'h0000_0070, "loadb con bit alto a cero");
+        check_eq(got[3*32 +: 32], 32'hFFFF_FF80, "loadb extiende el signo");
+
+        // ---- 14. LOADH / LOADUH ----
+        mem[104]={32'h0000_0000,32'h0000_0000,32'h0000_0000,32'hBEEF_7FFF};
+        addr=0;
+        addr[0*32 +: 32]=32'h0000_0680; addr[1*32 +: 32]=32'h0000_0682;
+        issue_sized(3'd7, 1'b0, 8'h03, addr, 256'd0, 2'd2, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(got[0*32 +: 32], 32'h0000_7FFF, "loaduh mitad baja");
+        check_eq(got[1*32 +: 32], 32'h0000_BEEF, "loaduh mitad alta, con ceros");
+        issue_sized(3'd0, 1'b0, 8'h03, addr, 256'd0, 2'd2, 1'b1);
+        await_rsp(got, err, tag);
+        check_eq(got[0*32 +: 32], 32'h0000_7FFF, "loadh con bit alto a cero");
+        check_eq(got[1*32 +: 32], 32'hFFFF_BEEF, "loadh extiende el signo");
+
+        // ---- 15. Faults: media palabra impar, y pequeno a MMIO ----
+        addr=0; addr[0*32 +: 32]=32'h0000_0681;
+        issue_sized(3'd1, 1'b0, 8'h01, addr, 256'd0, 2'd2, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'b0000_0001, "loadh impar es fault");
+        addr=0; addr[0*32 +: 32]=32'h0000_0683;    // un byte en direccion impar es legal
+        issue_sized(3'd2, 1'b0, 8'h01, addr, 256'd0, 2'd1, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "loadub en direccion impar es legal");
+        addr=0; addr[0*32 +: 32]=32'h8020_0008;
+        base_tx=mmio_transactions;
+        issue_sized(3'd3, 1'b0, 8'h01, addr, 256'd0, 2'd1, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'b0000_0001, "loadb a MMIO es fault (mmio.md 4.1)");
+        issue_sized(3'd4, 1'b1, 8'h01, addr, 256'd0, 2'd2, 1'b0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'b0000_0001, "storeh a MMIO es fault");
+        check_eq(mmio_transactions-base_tx, 0, "los pequenos a MMIO no llegan al bus");
+        // y la palabra sigue funcionando por el mismo camino
+        issue(3'd5, 1'b0, 8'h01, addr, 256'd0);
+        await_rsp(got, err, tag);
+        check_eq(err, 8'd0, "load de palabra a MMIO sigue legal");
 
         repeat(20) @(posedge clk);
         if(errors==0) $display("gpu_lsu2_tb: TODAS LAS PRUEBAS PASAN");

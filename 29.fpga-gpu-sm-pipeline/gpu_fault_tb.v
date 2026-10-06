@@ -12,6 +12,7 @@ module gpu_fault_tb;
     wire [31:0] error_pc, retired_count, debug_warp_retired_count;
     reg [2:0] debug_warp=0, debug_lane=0;
     reg [4:0] debug_register=0, cfg_word=0;
+    reg [1:0] cfg_bank=0;           // 0: descriptores (§14.2)
     wire [31:0] debug_data, debug_pc, cfg_read_data;
     reg cfg_write=0;
     reg [31:0] cfg_data=0;
@@ -28,7 +29,8 @@ module gpu_fault_tb;
     wire [2:0] lsu_tag;
     reg [2:0] lsu_rsp_tag=0;
     wire [7:0] lsu_mask;
-    wire lsu_write;
+    wire lsu_write, lsu_signed;
+    wire [1:0] lsu_size;
     wire [255:0] lsu_address, lsu_data;
     reg [255:0] lsu_rsp_data=0;
     reg [7:0] lsu_rsp_error=0, lsu_occupied=0;

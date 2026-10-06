@@ -50,8 +50,11 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
         .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8020_0028),
         // GPU PERFORMANCE (§14.4) + LANE_OPS, que es extension de la carpeta.
         .WINDOW2_BASE(33'h0_8203_0000),.WINDOW2_END(33'h0_8203_001C),
-        // GPU WARPS (§14.2): ocho descriptores de 16 B.
-        .WINDOW3_BASE(33'h0_8201_0000),.WINDOW3_END(33'h0_8201_0080),
+        // GPU WARPS (§14.2): ocho descriptores de 16 B (+0x000) y los arrays
+        // LOGICAL_WARP_ID[n] (+0x200) y WARP_ARG[n] (+0x280). Es UNA ventana, asi
+        // que cubre tambien los huecos de en medio; esos contestan error desde
+        // el decodificador de gpu_system_bl8, no cero.
+        .WINDOW3_BASE(33'h0_8201_0000),.WINDOW3_END(33'h0_8201_02A0),
         // GPU SIMT DEBUG (§14.3): cinco registros.
         .WINDOW4_BASE(33'h0_8202_0000),.WINDOW4_END(33'h0_8202_0014))
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
