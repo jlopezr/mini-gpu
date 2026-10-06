@@ -75,6 +75,22 @@ Su uso principal es identificar qué código corresponde al `pc` reportado por l
 
 El listado no desensambla un `.bin` independiente: necesita el código fuente utilizado para producirlo.
 
+Tras `Etiquetas:` el listado trae dos bloques pensados para medir el programa, que no mueven nada de lo anterior:
+
+```text
+Secciones:
+  00000000  0000f590  .text
+  0000f590  00000dd2  .rodata
+  00010364  00000220  .data
+  00010584  0000e5e0  .bss
+
+Simbolos:
+  00000010  00000020  .text    tui_strlen
+  00010584  00003ce4  .bss     L.2937
+```
+
+`Secciones:` da dirección inicial y tamaño de cada sección. `Simbolos:` da, de cada etiqueta, su dirección, su tamaño y su sección. El tamaño de un símbolo `.comm` es exacto; el de los demás llega hasta la siguiente etiqueta de su sección (o hasta el final de ella) e incluye el relleno de `.align`. El ensamblador no sabe qué etiquetas son locales de una función —no existe `.size`—, así que lista todas; agrupar `L.n` dentro de su función es cosa de quien lea, como hace `tools/asm-sizes`.
+
 Las constantes definidas mediante `.equ` no aparecen en la tabla de etiquetas. Aunque constantes y etiquetas comparten espacio de nombres, las constantes no representan posiciones del programa; incluirlas asociaría innecesariamente a los PC nombres procedentes, por ejemplo, de `mmio.inc`.
 
 ## Sintaxis
@@ -105,7 +121,14 @@ STORE Rs, Ra, offset
 
 `RET` es un alias de `JR R31`.
 
-`LA Rd, etiqueta` carga una dirección absoluta de 32 bits. Es una pseudoinstrucción de dos palabras (`MOVHI` + `ORI`), al igual que `LI`, pero expresa que el operando se utiliza como dirección.
+`LA Rd, etiqueta` carga una dirección absoluta de 32 bits. Es una pseudoinstrucción de dos palabras (`MOVHI` + `ORI`) y expresa que el operando se utiliza como dirección.
+
+`LI Rd, expr` ocupa una o dos palabras según el valor:
+
+- **Una palabra** si cabe en 16 bits: `MOVI` de −32768 a 32767 y `ORI Rd, R0, v` de 32768 a 65535 (el segundo solo si el operando es simbólico; un literal numérico de 32768 a 65535 sigue siendo de dos palabras).
+- **Dos palabras** (`MOVHI` + `ORI`) en cualquier otro caso.
+
+Si el operando es una etiqueta o un `.equ`, su valor no se conoce al contar tamaños, y a la vez la dirección de la etiqueta depende de ellos. El ensamblador lo resuelve **relajando**: asume que todos esos `LI` caben en una palabra, coloca el programa, alarga a dos los que no caben y repite hasta que ninguno cambia. Termina porque alargar un `LI` solo mueve las direcciones hacia arriba. Un programa de menos de 64 KiB queda con todos sus `LI` de etiqueta en una palabra; uno mayor paga las dos solo en las etiquetas que pasan de 65535 (el `.bss`, por ejemplo). `LA` no se relaja.
 
 Admite aritmética sencilla de símbolos, por ejemplo:
 
@@ -216,7 +239,7 @@ Esta restricción es deliberada. Resolver referencias hacia delante requeriría 
 
 `MOVHI` solo admite enteros y no resuelve símbolos. Para cargar una constante simbólica de 32 bits debe utilizarse `LI Rd, expr32`.
 
-`LI` emite dos palabras donde `MOVHI` emitía una; por tanto, sustituir `MOVHI Rn, 0x8000` por `LI Rn, BASE` aumenta el tamaño del programa y su cuenta de ciclos.
+`LI` emite dos palabras donde `MOVHI` emitía una, salvo que el valor quepa en 16 bits (ver `LI` arriba); por tanto, sustituir `MOVHI Rn, 0x8000` por `LI Rn, BASE` aumenta el tamaño del programa y su cuenta de ciclos cuando `BASE` es una dirección alta.
 
 ### Secciones
 

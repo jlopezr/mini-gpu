@@ -253,6 +253,9 @@ class SourceLine:
     pc: int
     section: str = ".text"
     origin: str = ENTRADA
+    # Bytes que ocupa la línea ya colocada. Lo fija la pasada 1: un `LI` con
+    # etiqueta mide 4 u 8 según adónde caiga, y el texto solo ya no lo dice.
+    size: int = 4
 
 
 def strip_comment(line: str) -> str:
@@ -443,17 +446,12 @@ def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:
 def li_short_literal(operand_text: str) -> int | None:
     """El valor de `LI Rd, literal` si cabe en un `MOVI` (signed16), o None.
 
-    Solo un literal numerico se puede decidir en la primera pasada: una etiqueta
-    o un `.equ` todavia no tienen valor cuando hay que fijar el tamano, asi que
-    esos siguen ocupando dos palabras.
-
-    TODO(relajacion): `LI Rd, etiqueta` tambien cabria en una palabra cuando la
-    direccion es < 32 KiB (`MOVI` admite etiquetas, ver mas abajo). Para saberlo
-    hay que fijar tamanos sin conocer las direcciones: suponer todos los `LI`
-    simbolicos cortos, asignar direcciones, alargar los que no quepan y repetir
-    hasta que no cambie ninguno. Con eso el backend de lcc podria emitir `LI` +
-    acceso para cualquier global sin pagar dos instrucciones por los cercanos.
-    `LA` se quedaria siempre en dos (es el "dame la direccion completa").
+    Solo un literal numerico se decide aqui, con el texto. Los que llevan una
+    etiqueta o un `.equ` no tienen valor hasta colocar la imagen: se relajan en
+    `layout_pass` (ver `li_has_label`). Un literal numerico fuera de rango sigue
+    midiendo dos palabras aunque quepa en 16 bits sin signo; solo se relajan
+    los simbolicos. `LA` se queda siempre en dos (es el "dame la direccion
+    completa").
     """
     ops = split_operands(operand_text)
     if len(ops) != 2:
@@ -463,6 +461,29 @@ def li_short_literal(operand_text: str) -> int | None:
     except AsmError:
         return None
     return value if -(1 << 15) <= value < (1 << 15) else None
+
+
+# Rango de un `LI` simbolico de una palabra: `MOVI` llega a 32767 (extiende el
+# signo) y `ORI Rd, R0, v` hasta 65535 (rellena con ceros).
+LI_SHORT_MIN = -(1 << 15)
+LI_SHORT_MAX = (1 << 16) - 1
+
+
+def li_has_label(text: str) -> bool:
+    """¿Es un `LI Rd, expr` cuyo operando no es un literal numerico?
+
+    Esos son los candidatos a relajarse a una palabra."""
+    parts = text.split(None, 1)
+    if parts[0].upper() != "LI" or len(parts) < 2:
+        return False
+    ops = split_operands(parts[1])
+    if len(ops) != 2:
+        return False
+    try:
+        parse_int(ops[1])
+    except AsmError:
+        return True
+    return False
 
 
 def instruction_size_bytes(text: str) -> int:
@@ -762,11 +783,84 @@ def encode_b(opcode: int, offset26: int = 0) -> int:
 # Pass 1
 # ---------------------------------------------------------------------------
 
+@dataclass
+class Layout:
+    """Lo que la pasada 1 sabe de la imagen y `first_pass` no devuelve.
+
+    Lo usa el listado para decir en qué sección está cada etiqueta y cuánto
+    ocupa cada sección; `first_pass` lo descarta para no cambiar su firma.
+    """
+    label_section: dict[str, str]      # etiqueta -> sección en que cae
+    comm_sizes: dict[str, int]         # símbolos `.comm` -> su tamaño exacto
+    section_base: dict[str, int]       # sección -> dirección inicial
+    section_size: dict[str, int]       # sección -> bytes que ocupa
+
+
 def first_pass(source: str,
                base_dir: Path | None = None,
                origin: str = ENTRADA,
                include_dirs: tuple[Path, ...] = (),
                ) -> tuple[list[SourceLine], dict[str, int], int, dict[str, int]]:
+    lines, labels, image_size, equates, _ = layout_pass(
+        source, base_dir, origin, include_dirs)
+    return lines, labels, image_size, equates
+
+
+def layout_pass(source: str,
+                base_dir: Path | None = None,
+                origin: str = ENTRADA,
+                include_dirs: tuple[Path, ...] = (),
+                ) -> tuple[list[SourceLine], dict[str, int], int,
+                           dict[str, int], Layout]:
+    """Pasada 1 con relajación de `LI Rd, etiqueta`.
+
+    El tamaño de ese `LI` depende de la dirección de la etiqueta, y la
+    dirección depende de los tamaños. Se resuelve por punto fijo: se parte de
+    que todos caben en una palabra, se coloca todo, y los que no caben en 16
+    bits se alargan a dos; se repite hasta que no cambie ninguno.
+
+    Termina, y en el mínimo, porque alargar un `LI` solo empuja las
+    direcciones hacia arriba (el relleno de `.align` también es monótono en la
+    posición): uno que no cabe ya no puede volver a caber.
+    """
+    shrunk: set[int] | None = None      # None: todos los candidatos, primera vez
+    while True:
+        lines, labels, image_size, equates, info, candidates = _layout_once(
+            source, base_dir, origin, include_dirs, shrunk)
+        actual = set(range(len(candidates))) if shrunk is None else shrunk
+        keep = {i for i in actual if li_label_fits(candidates[i], labels)}
+        if keep == actual:
+            return lines, labels, image_size, equates, info
+        shrunk = keep
+
+
+def li_label_fits(operand: str, labels: dict[str, int]) -> bool:
+    """¿Cabe el valor de `LI Rd, operand` en una sola palabra?
+
+    Rango de `LI_SHORT_MIN`..`LI_SHORT_MAX`: de -32768 a 32767 sale un `MOVI`
+    (extiende el signo) y de 32768 a 65535 un `ORI Rd, R0, v` (rellena con
+    ceros). Un nombre sin resolver no cabe: se queda en dos palabras y el
+    error de «etiqueta no definida» salta en la pasada 2, como antes.
+    """
+    try:
+        value = resolve_target(operand, labels)
+    except AsmError:
+        return False
+    return LI_SHORT_MIN <= value <= LI_SHORT_MAX
+
+
+def _layout_once(source: str,
+                 base_dir: Path | None,
+                 origin: str,
+                 include_dirs: tuple[Path, ...],
+                 shrunk: set[int] | None,
+                 ) -> tuple[list[SourceLine], dict[str, int], int,
+                            dict[str, int], Layout, list[str]]:
+    """Una colocación completa. `shrunk` son los `LI` con etiqueta (numerados
+    por orden de aparición) que miden 4 bytes; `None` es «todos». Devuelve
+    además el operando de cada uno, para que `layout_pass` compruebe si cabe."""
+    candidates: list[str] = []
+    comm_sizes: dict[str, int] = {}
     label_offsets: dict[str, tuple[str, int]] = {}
     label_origins: dict[str, str] = {}
     # Constantes de `.equ`. Van aparte de `label_offsets` porque no pertenecen a
@@ -904,6 +998,7 @@ def first_pass(source: str,
                     offsets[".bss"] = align_to(offsets[".bss"], alignment)
                     label_offsets[name] = (".bss", offsets[".bss"])
                     label_origins[name] = ubicacion(origin, number)
+                    comm_sizes[name] = size
                     offsets[".bss"] += size
                     continue
 
@@ -911,11 +1006,19 @@ def first_pass(source: str,
             except AsmError as error:
                 raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
             if size:
-                lines.append(SourceLine(number, text, offsets[section], section, origin))
+                lines.append(SourceLine(number, text, offsets[section], section,
+                                        origin, size))
                 offsets[section] += size
         else:
-            lines.append(SourceLine(number, text, offsets[section], section, origin))
-            offsets[section] += instruction_size_bytes(text)
+            size = instruction_size_bytes(text)
+            if li_has_label(text):
+                index = len(candidates)
+                candidates.append(split_operands(text.split(None, 1)[1])[1])
+                if shrunk is None or index in shrunk:
+                    size = 4
+            lines.append(SourceLine(number, text, offsets[section], section,
+                                    origin, size))
+            offsets[section] += size
 
     bases: dict[str, int] = {}
     pc = 0
@@ -934,7 +1037,8 @@ def first_pass(source: str,
     labels.update(equates)
     laid_out_lines = [
         SourceLine(line.number, line.text,
-                   bases[line.section] + line.pc, line.section, line.origin)
+                   bases[line.section] + line.pc, line.section, line.origin,
+                   line.size)
         for line in lines
     ]
     laid_out_lines.sort(key=lambda line: line.pc)
@@ -942,7 +1046,13 @@ def first_pass(source: str,
     # `equates` se devuelve aparte de `labels` ademas de fundido en el: quien
     # solo resuelve nombres quiere el espacio unico, pero el listado necesita
     # distinguir una constante de una etiqueta, y el nombre no lo dice.
-    return laid_out_lines, labels, image_size, equates
+    info = Layout(
+        label_section={name: sec for name, (sec, _) in label_offsets.items()},
+        comm_sizes=comm_sizes,
+        section_base=bases,
+        section_size=dict(offsets),
+    )
+    return laid_out_lines, labels, image_size, equates, info, candidates
 
 
 # ---------------------------------------------------------------------------
@@ -1190,11 +1300,19 @@ def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
         if len(ops) != 2:
             raise AsmError(f"{mnemonic} requiere: Rd, expr32")
         rd = parse_reg(ops[0])
-        short = li_short_literal(operand_text) if mnemonic == "LI" else None
-        if short is not None:
-            # Mismo criterio que `instruction_size_bytes`: si ahi ocupo una
-            # palabra, aqui tiene que salir una.
-            return encode_i(OPCODES["MOVI"], rd, 0, short & 0xFFFF).to_bytes(4, "little")
+        if mnemonic == "LI" and line.size == 4:
+            # Una palabra: lo que decidio la pasada 1 (`line.size`), no el
+            # texto, porque un LI con etiqueta mide 4 u 8 segun adonde caiga.
+            short = li_short_literal(operand_text)
+            if short is None:
+                short = resolve_target(ops[1], labels)
+            if not LI_SHORT_MIN <= short <= LI_SHORT_MAX:
+                raise AsmError(f"LI de una palabra con un valor que no cabe: {short}")
+            if short < (1 << 15):
+                word = encode_i(OPCODES["MOVI"], rd, 0, short & 0xFFFF)
+            else:
+                word = encode_i(OPCODES["ORI"], rd, 0, short)
+            return word.to_bytes(4, "little")
         value = resolve_target(ops[1], labels) & 0xFFFFFFFF
         hi = (value >> 16) & 0xFFFF
         lo = value & 0xFFFF
@@ -1328,7 +1446,8 @@ def format_listing(source: str, base_dir: Path | None = None,
     -- tipicamente el `pc` que reporta la placa -- es lo mismo, y no obliga a
     mantener una tabla de decodificacion en paralelo a `OPCODES`.
     """
-    lines, labels, _, equates = first_pass(source, base_dir, origin, include_dirs)
+    lines, labels, _, equates, info = layout_pass(
+        source, base_dir, origin, include_dirs)
     image = assemble_bytes(source, base_dir, origin, include_dirs)
 
     # Las constantes de `.equ` comparten espacio de nombres con las etiquetas
@@ -1354,6 +1473,32 @@ def format_listing(source: str, base_dir: Path | None = None,
     out.append("Etiquetas:")
     for name, pc in sorted(posiciones.items(), key=lambda kv: (kv[1], kv[0])):
         out.append(f"  {pc:08x}  {name}")
+
+    # Bloques para medir. Van después de `Etiquetas:` para no mover nada de lo
+    # que ya lee quien consulta un PC: el listado antiguo es un prefijo de este.
+    out.append("")
+    out.append("Secciones:")
+    for sec in SECTION_ORDER:
+        base = info.section_base[sec]
+        out.append(f"  {base:08x}  {info.section_size[sec]:08x}  {sec}")
+
+    # Tamaño de un símbolo: el de `.comm` es exacto; el resto llega hasta la
+    # siguiente etiqueta de su sección (o hasta el final de ella), así que
+    # incluye el relleno de `.align`. El ensamblador no sabe qué etiquetas son
+    # locales de una función —`.size` no existe—, y las lista todas.
+    por_seccion: dict[str, list[int]] = {}
+    for name in posiciones:
+        por_seccion.setdefault(info.label_section[name], []).append(posiciones[name])
+    out.append("")
+    out.append("Simbolos:")
+    for name, pc in sorted(posiciones.items(), key=lambda kv: (kv[1], kv[0])):
+        sec = info.label_section[name]
+        if name in info.comm_sizes:
+            size = info.comm_sizes[name]
+        else:
+            fin = info.section_base[sec] + info.section_size[sec]
+            size = min((p for p in por_seccion[sec] if p > pc), default=fin) - pc
+        out.append(f"  {pc:08x}  {size:08x}  {sec:7s}  {name}")
 
     return "\n".join(out) + "\n"
 

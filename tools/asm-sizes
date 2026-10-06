@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Tamaño por función y por dato de un programa, a partir de su listado.
+
+Lee el listado de `mini-asm --listing`, solo los bloques del final:
+
+    Secciones:   base  tamaño  sección
+    Simbolos:    pc    tamaño  sección  nombre
+
+El tamaño de cada símbolo lo calcula el ensamblador (el de `.comm` es exacto;
+el resto llega hasta la siguiente etiqueta de su sección e incluye el relleno
+de `.align`), así que aquí no se reconstruye nada desde el fuente.
+
+El ensamblador lista todas las etiquetas, también las locales del compilador
+(`L.n`), porque no sabe qué es una función. Aquí se agrupan:
+
+- en `.text`, las `L.n` pertenecen a la función que las contiene;
+- en `.rodata`, las `L.n` son literales de cadena y se suman aparte;
+- en `.data` y `.bss`, una `L.n` es una variable estática y cuenta como símbolo.
+
+Uso:
+    asm-sizes programa.lst
+    asm-sizes programa.lst --top 15
+    asm-sizes programa.lst --datos
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+STRINGS = "(literales L.n en .rodata)"
+
+
+@dataclass
+class Symbol:
+    name: str
+    section: str
+    size: int = 0
+
+
+def parse_listing(path: Path) -> tuple[dict[str, tuple[int, int]], list[Symbol]]:
+    """(secciones {nombre: (base, tamaño)}, símbolos agrupados)."""
+    sections: dict[str, tuple[int, int]] = {}
+    raw_syms: list[tuple[int, int, str, str]] = []
+    block = ""
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw in ("Secciones:", "Simbolos:"):
+            block = raw
+            continue
+        if raw and not raw.startswith(" "):
+            block = ""
+        t = raw.split()
+        if block == "Secciones:" and len(t) == 3:
+            sections[t[2]] = (int(t[0], 16), int(t[1], 16))
+        elif block == "Simbolos:" and len(t) == 4:
+            raw_syms.append((int(t[0], 16), int(t[1], 16), t[2], t[3]))
+    if not sections or not raw_syms:
+        raise ValueError(
+            "el listado no trae los bloques Secciones:/Simbolos: "
+            "(es de un mini-asm antiguo); vuelve a generarlo con mini-asm --listing")
+
+    symbols: list[Symbol] = []
+    current: Symbol | None = None
+    strings: Symbol | None = None
+    seen: set[tuple[str, int]] = set()  # varias etiquetas pueden compartir PC
+    for pc, size, sec, name in sorted(raw_syms):
+        local = name.startswith("L.")
+        if local and (sec, pc) in seen:
+            continue
+        seen.add((sec, pc))
+        if local and sec == ".text" and current is not None and current.section == ".text":
+            current.size += size
+        elif local and sec == ".rodata":
+            if strings is None:
+                strings = Symbol(STRINGS, sec)
+                symbols.append(strings)
+            strings.size += size
+        else:
+            current = Symbol(name, sec, size)
+            symbols.append(current)
+    return sections, symbols
+
+
+def table(rows: list[Symbol], total: int, top: int | None, with_section: bool) -> None:
+    shown = rows if top is None else rows[:top]
+    extra = f" {'sec':<7}" if with_section else ""
+    print(f"{'bytes':>7} {'%':>5}{extra} simbolo")
+    for s in shown:
+        sec = f" {s.section:<7}" if with_section else ""
+        print(f"{s.size:7d} {100 * s.size / total:5.1f}{sec} {s.name}")
+    if len(shown) < len(rows):
+        rest = sum(s.size for s in rows[len(shown):])
+        pad = f" {'':<7}" if with_section else ""
+        print(f"{rest:7d} {100 * rest / total:5.1f}{pad} ... otros {len(rows) - len(shown)}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Tamaño por función de un listado de mini-asm.")
+    ap.add_argument("listing", type=Path, help="listado .lst")
+    ap.add_argument("--top", type=int, default=25, help="cuántos símbolos mostrar (25)")
+    ap.add_argument("--all", action="store_true", help="mostrar todos")
+    ap.add_argument("--datos", action="store_true", help="listar también los símbolos de datos")
+    args = ap.parse_args(argv)
+
+    if not args.listing.is_file():
+        print(f"asm-sizes: no existe {args.listing}", file=sys.stderr)
+        return 2
+    try:
+        sections, symbols = parse_listing(args.listing)
+    except ValueError as error:
+        print(f"asm-sizes: {error}", file=sys.stderr)
+        return 1
+
+    top = None if args.all else args.top
+    funcs = sorted((s for s in symbols if s.section == ".text"), key=lambda s: s.size, reverse=True)
+    data = sorted((s for s in symbols if s.section != ".text"), key=lambda s: s.size, reverse=True)
+    image = max(base + size for base, size in sections.values())
+
+    print(f"{args.listing}: imagen de {image} B")
+    for name, (base, size) in sections.items():
+        print(f"  {name:<8} {size:7d} B  {100 * size / image:5.1f} %  (desde {base:#x})")
+    print()
+    table(funcs, max(sections.get(".text", (0, 0))[1], 1), top, False)
+    if args.datos:
+        print()
+        table(data, max(image - sections.get(".text", (0, 0))[1], 1), top, True)
+
+    bin_path = args.listing.with_suffix(".bin")
+    if bin_path.is_file():
+        size = bin_path.stat().st_size
+        print(f"\n{bin_path.name}: {size} B"
+              + ("" if size == image else f" (la imagen del listado es de {image} B; diferencia {size - image:+d})"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

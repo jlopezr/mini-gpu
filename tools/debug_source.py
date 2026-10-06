@@ -146,8 +146,8 @@ def from_program(path: Path,
 
     try:
         from mini_asm import (
-            first_pass, instruction_size_bytes, li_short_literal, parse_reg,
-            resolve_target, split_operands,
+            first_pass, li_short_literal, parse_reg, resolve_target,
+            split_operands,
         )
 
         lines, labels, _, equates = first_pass(
@@ -165,13 +165,18 @@ def from_program(path: Path,
         mnemonic = parts[0].upper()
         operands = split_operands(parts[1] if len(parts) > 1 else "")
         if mnemonic in {"LI", "LA"}:
-            if len(operands) == 2 and instruction_size_bytes(line.text) == 4:
-                # `LI` con un literal que cabe en signed16: una sola palabra,
-                # un `MOVI`. No hay continuación, y marcar pc+4 como tal
-                # taparía la instrucción siguiente.
+            if len(operands) == 2 and line.size == 4:
+                # `LI` de una sola palabra: un `MOVI`, o un `ORI Rd, R0, v`
+                # si el valor pasa de 32767 (un LI con etiqueta). No hay
+                # continuación, y marcar pc+4 como tal taparía la
+                # instrucción siguiente.
                 register = operands[0]
+                value = li_short_literal(parts[1])
+                if value is None:
+                    value = resolve_target(operands[1], labels)
                 source.expansions[line.pc] = (
-                    f"MOVI {register}, {li_short_literal(parts[1])}",)
+                    f"MOVI {register}, {value}" if value < 0x8000
+                    else f"ORI {register}, R0, 0x{value:04X}",)
             elif len(operands) == 2:
                 register, value_text = operands
                 value = resolve_target(value_text, labels) & 0xFFFFFFFF

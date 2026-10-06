@@ -171,12 +171,53 @@ class LoadAddressTest(unittest.TestCase):
             with self.subTest(literal=texto):
                 self.assertEqual(len(assemble(f"LI R2, {texto}\n")), 2)
 
-    def test_li_simbolico_y_la_siguen_en_dos_palabras(self):
-        """Etiquetas y `.equ` no tienen valor en la primera pasada. Cuando se
-        relajen (TODO en `li_short_literal`) este test tendra que cambiar."""
-        self.assertEqual(len(assemble("LI R1, datos\nHALT\ndatos:\n.word 1\n")), 4)
-        self.assertEqual(len(assemble(".equ N, 5\nLI R1, N\n")), 2)
+    def test_li_simbolico_cercano_es_una_palabra(self):
+        """Una etiqueta que cabe en 16 bits no necesita MOVHI + ORI."""
+        palabras = assemble("LI R1, datos\nHALT\ndatos:\n.word 1\n")
+        self.assertEqual(len(palabras), 3)
+        self.assertEqual(palabras[0], assemble("MOVI R1, 8\n")[0])
+        # Lo mismo con un `.equ`, y con aritmetica de etiquetas.
+        self.assertEqual(assemble(".equ N, 5\nLI R1, N\n"), assemble("MOVI R1, 5\n"))
+        self.assertEqual(len(assemble("LI R1, datos+4\nHALT\ndatos:\n.word 1, 2\n")), 4)
+
+    def test_la_sigue_siempre_en_dos_palabras(self):
         self.assertEqual(len(assemble("LA R1, 5\n")), 2)
+        self.assertEqual(len(assemble("LA R1, datos\nHALT\ndatos:\n.word 1\n")), 4)
+
+    def test_li_simbolico_entre_32_y_64_kib_usa_ori_desde_r0(self):
+        # `datos` cae en 4 + 39996 = 40000: no cabe en un MOVI, si en un ORI.
+        fuente = "LI R1, datos\n.space 39996\ndatos:\n.word 1\n"
+        palabras = assemble(fuente)
+        self.assertEqual(palabras[0], assemble("ORI R1, R0, 40000\n")[0])
+        self.assertEqual(len(palabras), 1 + 39996 // 4 + 1)
+
+    def test_li_simbolico_pasado_de_64_kib_sigue_en_dos_palabras(self):
+        palabras = assemble("LI R1, datos\n.space 70000\ndatos:\n.word 1\n")
+        self.assertEqual(palabras[0] >> 26, assemble("MOVHI R1, 0\n")[0] >> 26)
+        self.assertEqual(palabras[1] >> 26, assemble("ORI R1, R1, 0\n")[0] >> 26)
+
+    def test_relajacion_en_el_limite_de_64_kib(self):
+        """Con el LI de una palabra, `x` cae en 4 + N. En 65535 todavia cabe y
+        el LI se queda en 4 bytes; un byte mas (65536) no cabe, el LI pasa a 8
+        y `x` sube a 65540, que sigue sin caber."""
+        cabe = assemble("LI R1, x\n.space 65531\nx:\n.word 1\n")
+        self.assertEqual(cabe[0], assemble("ORI R1, R0, 65535\n")[0])
+        no_cabe = assemble("LI R1, x\n.space 65532\nx:\n.word 1\n")
+        self.assertEqual(no_cabe[0] >> 26, assemble("MOVHI R1, 0\n")[0] >> 26)
+        # La mitad baja cargada es la direccion real, con el LI ya de 8 bytes.
+        self.assertEqual(no_cabe[1] & 0xFFFF, 65540 & 0xFFFF)
+
+    def test_li_no_resuelto_sigue_siendo_error_en_la_pasada_2(self):
+        with self.assertRaises(AsmError):
+            assemble("LI R1, no_existe\n")
+
+    def test_varios_li_se_relajan_a_la_vez_y_las_etiquetas_cuadran(self):
+        fuente = "\n".join(["LI R1, a", "LI R2, b", "LI R3, 0x12345678",
+                            "a:", "NOP", "b:", "HALT"])
+        palabras = assemble(fuente)
+        # 1 + 1 + 2 palabras antes de `a` (16), `b` en 20.
+        self.assertEqual(palabras[0] & 0xFFFF, 16)
+        self.assertEqual(palabras[1] & 0xFFFF, 20)
 
     def test_li_corto_no_desplaza_mal_las_etiquetas(self):
         palabras = assemble("LI R1, 5\nLI R2, 0x12345678\nfin:\nLA R3, fin\n")
@@ -678,6 +719,37 @@ class ListingTest(unittest.TestCase):
             "    NOP",
         ])
         self.assertNotIn("base", format_listing(fuente))
+
+    def test_secciones_y_simbolos_dan_tamano_y_seccion(self):
+        # `tabla` es el `.comm`: reserva 8 bytes en .bss, no se confunde con
+        # `.space`, que reservaria otros 8 detras. `a` y `b` miden hasta la
+        # siguiente etiqueta de su seccion; el ultimo, hasta el final de ella.
+        fuente = "\n".join([
+            "a:",
+            "    NOP",
+            "    NOP",
+            "b:",
+            "    NOP",
+            ".data",
+            "dato:",
+            ".word 1",
+            ".bss",
+            ".comm tabla,8",
+        ])
+        listing = format_listing(fuente)
+        self.assertIn("Secciones:", listing)
+        self.assertIn("  00000000  0000000c  .text", listing)
+        self.assertIn("  00000000  00000008  .text    a", listing)
+        self.assertIn("  00000008  00000004  .text    b", listing)
+        self.assertIn("  0000000c  00000004  .data    dato", listing)
+        self.assertIn("  00000010  00000008  .bss     tabla", listing)
+
+    def test_el_listado_antiguo_es_prefijo_del_nuevo(self):
+        # Quien consulta un PC lee hasta `Etiquetas:`; los bloques nuevos van
+        # detras y no mueven nada de lo anterior.
+        listing = format_listing("start:\n    NOP\n")
+        self.assertLess(listing.index("Etiquetas:"), listing.index("Secciones:"))
+        self.assertLess(listing.index("Secciones:"), listing.index("Simbolos:"))
 
 
 if __name__ == "__main__":

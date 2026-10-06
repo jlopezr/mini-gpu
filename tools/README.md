@@ -329,6 +329,18 @@ Para saber qué instrucción hay en una dirección concreta —el `pc` que repor
 `run-board` o un simulador— `mini-asm --listing` saca el listado PC / palabra /
 fuente y la tabla de etiquetas. Ver [`1.isa/ensamblador.md`](../1.isa/ensamblador.md).
 
+Para saber **qué funciones ocupan más** de un programa, `asm-sizes` lee los
+bloques `Secciones:` y `Simbolos:` de ese listado (los calcula el ensamblador)
+y da el tamaño de cada función y de cada dato, con el reparto por sección:
+
+```text
+> mini-asm z.tui/_build/tui_mini.s --listing tui_mini.lst -o tui_mini.bin
+> asm-sizes tui_mini.lst --top 15 --datos
+```
+
+Solo necesita el `.lst`. Si es de un `mini-asm` anterior a esos bloques, lo
+dice y hay que regenerarlo. La imagen del listado coincide con el `.bin`.
+
 Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
 hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py`, una
 sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
