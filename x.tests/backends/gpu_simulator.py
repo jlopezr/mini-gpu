@@ -10,14 +10,14 @@ VERSIONS = {
         "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
         "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
                          "shift_immediate", "subword_memory", "frame_capture", "serial",
-                         "mul_div", "large_memory", "input"),
+                         "mul_div", "large_memory", "input", "gpu_ids"),
         "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
     },
     "current": {
         "simulator_path": Path("11.gpu-sim-func/minigpu_sim.py"),
         # Perifericos funcionales compartidos; no implica soporte en la FPGA.
         "capabilities": ("atomic_warp_faults", "frame_capture", "serial", "mul_div",
-                         "large_memory", "input"),
+                         "subword_memory", "large_memory", "input", "gpu_ids"),
         "description": "simulador funcional MiniGPU actual",
     },
 }

@@ -102,6 +102,11 @@
     "architecture": "gpu"
   },
 
+  "_comment_gpu_ids": "La familia GETID entera (isa.md, opcode 0x30): GETLANE, GETWARP, GETLWARP y GETARG, ademas de GETTID, y los campos `logical_warp_id` y `arg` de cada warp en `warps.json` (LOGICAL_WARP_ID[n] y WARP_ARG[n] de GPU WARPS, mmio.md §14.2). Sin 'file' A PROPOSITO, como `atomic_warp_faults`: hoy solo la declaran los simuladores (11 y 25). El RTL de la GPU solo tiene GETTID, y un `type` distinto de 0 para con ERROR_INVALID_ENCODING (0x05) --que es lo mismo que produce un ensamblador roto--, asi que un caso que la pida se omite en la placa hasta que se implemente. Cuando llegue, esta entrada gana 'file' y 'pattern' y los casos empiezan a ejecutarse alli sin tocarlos. El runner exige declararla si un `warps.json` usa `logical_warp_id` o `arg`.",
+  "gpu_ids": {
+    "architecture": "gpu"
+  },
+
   "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores y un caso con `requires: [\"input\"]` se omite en la placa, tenga o no el RTL el dispositivo (eso es `input_device`, mas abajo). Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
   "input": {
     "architecture": ["cpu", "gpu"]

@@ -974,6 +974,16 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
                 "con run_until el estado de los warps no es determinista: "
                 "la parada es asincrona; solo se comprueba halted, error y el frame"
             )
+        # `logical_warp_id` y `arg` solo existen donde existe GETID: un caso que
+        # los ponga y no lo diga se ejecutaria en un RTL sin ellos con otro
+        # significado (o error), no con un SKIP que explique por que.
+        warps_raw = warp_config.get("warps", [])
+        if "gpu_ids" not in capacidades and isinstance(warps_raw, list) and any(
+                isinstance(w, dict) and ({"logical_warp_id", "arg"} & w.keys())
+                for w in warps_raw):
+            raise ValueError(
+                "logical_warp_id y arg en warp_config necesitan "
+                "requires: [\"gpu_ids\"]")
         case["warp_config"] = warp_config
         case["expected"]["observations"] = gpu_expectations(expected_raw, size)
     elif run_until is not None:

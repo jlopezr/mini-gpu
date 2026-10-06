@@ -1,0 +1,7 @@
+{
+  "warp_size": 4,
+  "warps": [
+    {"id": 0, "active_mask": 15, "logical_warp_id": 7, "arg": "0x1000"},
+    {"id": 3, "active_mask": 15, "logical_warp_id": 2, "arg": "0x2000"}
+  ]
+}

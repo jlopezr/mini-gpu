@@ -206,6 +206,7 @@
           "video",
           "frame_capture",
           "subword_memory",
+          "gpu_ids",
           "calls",
           "serial"
         ]

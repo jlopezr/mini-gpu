@@ -114,7 +114,10 @@ class GpuFpgaTest(unittest.TestCase):
             else:
                 accepted.append(case['name'])
         self.assertEqual(len(accepted), 58)
-        self.assertEqual(len(skipped), 12)
+        self.assertEqual(len(skipped), 13)
+        # `gpu_ids` solo la declaran los simuladores: el RTL no tiene GETLANE,
+        # GETWARP, GETLWARP ni GETARG, y sin esto pararia con 0x05.
+        self.assertIn('gpu_ids', skipped['gpu-ids-getid-family-conformance'])
         # Pinta 320x240 en 0x01000000: fuera de la memoria de la versión por
         # defecto (BRAM), pero dentro de la de las tres GPU con SDRAM.
         self.assertIn('fuera del mapa de memoria', skipped['demo-warp-lane-bands'])

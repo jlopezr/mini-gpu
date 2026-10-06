@@ -53,6 +53,41 @@ class GpuRunnerTest(unittest.TestCase):
         result = self.run_case(self.case)
         self.assertEqual(compare_result(self.case, result, 'gpu'), [])
 
+    def test_warp_config_ids_need_the_gpu_ids_capability(self):
+        import json
+        import tempfile
+        source = ROOT / 'cases-gpu/extensions/gpu-ids/getid-family'
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for name in ('program.asm', 'warps.json', 'test.json'):
+                (directory / name).write_text(
+                    (source / name).read_text(encoding='utf-8'), encoding='utf-8')
+            self.assertEqual(load_case(directory / 'test.json')['requires'], ['gpu_ids'])
+            raw = json.loads((directory / 'test.json').read_text(encoding='utf-8'))
+            raw['requires'] = []
+            (directory / 'test.json').write_text(json.dumps(raw), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'gpu_ids'):
+                load_case(directory / 'test.json')
+            # Sin esos campos, el caso no necesita la capacidad.
+            warps = json.loads((directory / 'warps.json').read_text(encoding='utf-8'))
+            for warp in warps['warps']:
+                del warp['logical_warp_id'], warp['arg']
+            (directory / 'warps.json').write_text(json.dumps(warps), encoding='utf-8')
+            self.assertEqual(load_case(directory / 'test.json')['requires'], [])
+
+    def test_getid_case_runs_on_both_simulators(self):
+        from backends.gpu_simulator import incompatibility
+        case = load_case(ROOT / 'cases-gpu/extensions/gpu-ids/getid-family/test.json')
+        for version in ('current', 'cycle'):
+            with self.subTest(version=version):
+                self.assertIsNone(incompatibility(case, version))
+                result = GpuBackend(REPOSITORY, version).run(
+                    program=case['program'], initial_memory=case['initial_memory'],
+                    register_numbers=set(), memory_ranges=[],
+                    max_instructions=case['max_instructions'], timeout_seconds=1,
+                    warp_config=case['warp_config'])
+                self.assertEqual(compare_result(case, result, 'gpu'), [])
+
     def test_backend_selection_and_discovery(self):
         from run_tests import validate_compatibility, case_architecture
         cpu = load_case(ROOT / 'cases-cpu/basics/smoke/test.json')
