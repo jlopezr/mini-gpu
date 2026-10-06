@@ -25,8 +25,6 @@ typedef char mb_check_input_fits_line[(MB_INPUT_LINE_MAX <= 255) ? 1 : -1];
 typedef struct MBKeywordInfo MBKeywordInfo;
 typedef struct MBOperatorInfo MBOperatorInfo;
 typedef struct MBExecResult MBExecResult;
-typedef struct MBJumpEntry MBJumpEntry;
-typedef struct MBRunPlan MBRunPlan;
 typedef struct MBBlockPrep MBBlockPrep;
 
 struct MBKeywordInfo {
@@ -43,16 +41,6 @@ struct MBOperatorInfo {
 struct MBExecResult {
     mb_u8 jumped;
     mb_u16 next;
-};
-
-struct MBJumpEntry {
-    mb_u16 from;
-    mb_u16 to;
-};
-
-struct MBRunPlan {
-    MBJumpEntry jumps[MB_RUN_JUMP_MAX];
-    mb_u8 jump_count;
 };
 
 struct MBBlockPrep {
@@ -784,6 +772,11 @@ static const char *error_text(int err)
     return "ERROR";
 }
 
+const char *mb_error_text(int err)
+{
+    return error_text(err);
+}
+
 static void print_error(const MBReplIO *io, int err)
 {
     if (err == MB_OK) {
@@ -1081,6 +1074,7 @@ void mb_runtime_init(MBRuntime *runtime)
         runtime->arrays[i].is_str = 0;
     }
     runtime->frame_sp = 0;
+    runtime->input_prompted = 0;
     runtime->str_used = 0;
     runtime->str_top = 0;
     runtime->str_garbage = 0;
@@ -3839,12 +3833,21 @@ static int execute_input(MBRuntime *runtime, const mb_u8 *code, mb_u16 code_len,
     if (io == 0 || io->read_line == 0) return MB_ERR_NO_INPUT;
 
     for (;;) {
-        if (prompt_len != 0) {
-            io_print_text(io, (const char *)(code + 3), prompt_len);
-        } else {
-            io_print_text(io, "? ", 2);
+        /* A statement that waited is run again from its start: the prompt is
+           already on screen, so it is not printed twice. */
+        if (!runtime->input_prompted) {
+            if (prompt_len != 0) {
+                io_print_text(io, (const char *)(code + 3), prompt_len);
+            } else {
+                io_print_text(io, "? ", 2);
+            }
         }
         n = io->read_line(line, sizeof(line), io->ctx);
+        if (n == MB_READ_WAIT) {
+            runtime->input_prompted = 1;
+            return MB_WAITING_INPUT;
+        }
+        runtime->input_prompted = 0;
         if (n < 0) return MB_ERR_NO_INPUT;
         if (code[0] == MB_ST_INPUT_STR) {
             return input_string(runtime, var, line, (mb_u16)n);
@@ -4210,38 +4213,154 @@ static int run_immediate_statement(MBProgram *program, MBRuntime *runtime, const
     return r;
 }
 
+int mb_run_begin(const MBProgram *program, MBRuntime *runtime, MBRun *run)
+{
+    int r;
+
+    if (program == 0 || runtime == 0 || run == 0) {
+        return MB_ERR_BAD_ARG;
+    }
+    r = prepare_run_plan(program, &run->plan);
+    if (r != MB_OK) {
+        return r;
+    }
+    run->current = program->first;
+    runtime->frame_sp = 0;
+    runtime->input_prompted = 0;
+    return MB_OK;
+}
+
+/* Executes one statement. MB_RUNNING while there is more, MB_OK at the end;
+   a statement that has to wait leaves run->current where it is. */
+static int run_one(const MBProgram *program, MBRuntime *runtime, MBRun *run, const MBIO *io)
+{
+    mb_u16 next;
+    int r;
+
+    r = execute_statement(program, &run->plan, run->current, runtime, io, &next);
+    if (r != MB_OK) {
+        return r;
+    }
+    run->current = next;
+    return next == MB_NONE ? MB_OK : MB_RUNNING;
+}
+
+int mb_run_step(const MBProgram *program, MBRuntime *runtime, MBRun *run, const MBIO *io, mb_u16 max_statements)
+{
+    mb_u16 n;
+    int r;
+
+    if (program == 0 || runtime == 0 || run == 0) {
+        return MB_ERR_BAD_ARG;
+    }
+    if (run->current == MB_NONE) {
+        return MB_OK;
+    }
+    n = max_statements == 0 ? 1u : max_statements;
+    do {
+        r = run_one(program, runtime, run, io);
+        if (r != MB_RUNNING) {
+            return r;
+        }
+        --n;
+    } while (n != 0);
+    return MB_RUNNING;
+}
+
+mb_u16 mb_run_line(const MBProgram *program, const MBRun *run)
+{
+    if (program == 0 || run == 0 || run->current == MB_NONE) {
+        return 0;
+    }
+    return rec_line(program, run->current);
+}
+
 int mb_program_run(const MBProgram *program, MBRuntime *runtime, const MBIO *io, mb_u16 max_steps)
 {
-    MBRunPlan plan;
-    mb_u16 current;
-    mb_u16 next;
+    MBRun run;
     mb_u16 steps;
     int r;
 
-    if (program == 0 || runtime == 0) {
-        return MB_ERR_BAD_ARG;
-    }
-
-    r = prepare_run_plan(program, &plan);
+    r = mb_run_begin(program, runtime, &run);
     if (r != MB_OK) {
         return r;
     }
 
-    current = program->first;
     steps = 0;
-    runtime->frame_sp = 0;
-    while (current != MB_NONE) {
+    while (run.current != MB_NONE) {
         if (max_steps != 0 && steps >= max_steps) {
             return MB_ERR_TOO_MANY_STEPS;
         }
-        r = execute_statement(program, &plan, current, runtime, io, &next);
-        if (r != MB_OK) {
+        r = run_one(program, runtime, &run, io);
+        if (r == MB_WAITING_INPUT) {
+            runtime->input_prompted = 0;
+            return MB_ERR_NO_INPUT; /* a blocking caller has nobody to wait for */
+        }
+        if (r < 0) {
             return r;
         }
-        current = next;
         ++steps;
     }
 
+    return MB_OK;
+}
+
+int mb_program_load_text(MBProgram *program, const char *text, mb_u16 len, mb_u16 *error_line)
+{
+    char line[MB_LOAD_LINE_MAX];
+    const char *s;
+    mb_u16 number;
+    mb_u16 start;
+    mb_u16 end;
+    mb_u16 n;
+    mb_u16 i;
+    mb_u16 lineno;
+    int r;
+
+    if (program == 0 || text == 0) {
+        return MB_ERR_BAD_ARG;
+    }
+
+    lineno = 0;
+    start = 0;
+    while (start < len) {
+        end = start;
+        while (end < len && text[end] != '\n') {
+            ++end;
+        }
+        ++lineno;
+        n = (mb_u16)(end - start);
+        if (n != 0 && text[start + n - 1u] == '\r') {
+            --n;
+        }
+        r = MB_OK;
+        if (n >= sizeof(line)) {
+            r = MB_ERR_FULL;
+        } else {
+            for (i = 0; i < n; ++i) {
+                line[i] = text[start + i];
+            }
+            line[n] = 0;
+            s = line;
+            if (!cstr_is_empty_after_spaces(s)) {
+                if (!parse_leading_line_number(&s, &number) || number == 0) {
+                    r = MB_ERR_BAD_LINE;
+                } else if (cstr_is_empty_after_spaces(s)) {
+                    r = mb_program_delete_line(program, number);
+                } else {
+                    skip_cstr_spaces(&s);
+                    r = mb_program_store_statement(program, number, s);
+                }
+            }
+        }
+        if (r != MB_OK) {
+            if (error_line != 0) {
+                *error_line = lineno;
+            }
+            return r;
+        }
+        start = (mb_u16)(end + 1u);
+    }
     return MB_OK;
 }
 

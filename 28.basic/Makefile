@@ -31,6 +31,9 @@ test_arrays: $(CORE) $(HEADERS) test_arrays.c
 test_logic: $(CORE) $(HEADERS) test_logic.c
 	$(CC) $(CFLAGS) -o test_logic $(CORE) test_logic.c
 
+test_step: $(CORE) $(HEADERS) test_step.c
+	$(CC) $(CFLAGS) -o test_step $(CORE) test_step.c
+
 basic_host: $(CORE) $(HEADERS) basic_platform.h basic_main.c basic_platform_host.c
 	$(CC) $(CFLAGS) -o basic_host $(CORE) basic_main.c basic_platform_host.c
 
@@ -46,7 +49,8 @@ _build/basic_console.asm: $(CONSOLE_SRC)
 
 basic_console: _build/basic_console.asm
 
-test: test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic
+test: test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic test_step
+	./test_step
 	./test_basic_store
 	./test_expr
 	./test_run
@@ -58,4 +62,4 @@ test: test_basic_store test_expr test_run test_console test_repl test_strings te
 	./test_logic
 
 clean:
-	rm -f _build/basic_console.asm basic_host test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic
+	rm -f _build/basic_console.asm basic_host test_basic_store test_expr test_run test_console test_repl test_strings test_input test_arrays test_logic test_step

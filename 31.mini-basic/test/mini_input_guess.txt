@@ -1,0 +1,13 @@
+# F5 sobre el programa de ejemplo y tres respuestas al INPUT (10, 50, 37).
+# Un "frame" del simulador es una instruccion; los saltos dejan acabar cada repintado.
+@0 keyboard connect
+@20000000 key press F5
++20000000 key press 1
++2000000 key press 0
++2000000 key press ENTER
++20000000 key press 5
++2000000 key press 0
++2000000 key press ENTER
++20000000 key press 3
++2000000 key press 7
++2000000 key press ENTER

@@ -454,6 +454,38 @@ which stops the program with `MB_ERR_NO_INPUT`. The same error comes back when
 `read_line` is not set. `mb_repl` provides one that reads from its `get_char`,
 with echo and backspace.
 
+## Running in slices, and loading a whole program
+
+`mb_program_run` does not return until the program ends. A host with something
+else to do (a screen to redraw, a break key to look at) uses the sliced form:
+
+```c
+MBRun run;                                  /* the caller owns it */
+mb_run_begin(&program, &runtime, &run);     /* prepares jumps, rewinds */
+do {
+    r = mb_run_step(&program, &runtime, &run, &io, 200);  /* up to 200 statements */
+    /* ... poll keys, redraw ... */
+} while (r == MB_RUNNING || r == MB_WAITING_INPUT);
+```
+
+`MB_OK` is the end of the program, a negative value an error. Abandoning a run
+(a break key) is just not calling `mb_run_step` again. `mb_program_run` is built
+on the same pieces, so both behave the same.
+
+`INPUT` can wait without blocking: if `read_line` returns `MB_READ_WAIT` (-2),
+`mb_run_step` returns `MB_WAITING_INPUT` and the statement is run again from its
+start on the next call, without printing the prompt a second time. The caller
+gathers the line meanwhile (a text box, say) and makes `read_line` deliver it.
+Called through `mb_program_run`, which has nobody to wait for, `MB_READ_WAIT`
+becomes `?NO INPUT`.
+
+`mb_program_load_text(&program, text, len, &error_line)` stores a whole program
+given as text, one numbered line per text line (`\n` or `\r\n`, blank lines
+skipped, a bare number deletes the line). It does not clear the program first
+(`mb_program_clear` does). On an error it returns it and `error_line` is the
+1-based position of the offending text line, which is what an editor wants to
+put its cursor on.
+
 `mb_repl` wraps that command layer with character I/O callbacks:
 
 ```text

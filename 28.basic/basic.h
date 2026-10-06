@@ -26,6 +26,17 @@ enum {
     MB_ERR_ARRAY_EXISTS = -17
 };
 
+/* Non-error results of mb_run_step (positive, so any negative is an error). */
+enum {
+    MB_RUNNING = 1,       /* more statements to run */
+    MB_WAITING_INPUT = 2  /* an INPUT has no line yet; call mb_run_step again later */
+};
+
+/* MBIO.read_line may return this instead of a length: "no line yet". Only
+   mb_run_step understands it (as MB_WAITING_INPUT); mb_program_run turns it
+   into MB_ERR_NO_INPUT. Any other negative value still means no more input. */
+#define MB_READ_WAIT (-2)
+
 /* Sizes and limits. Everything tunable lives here.
 
    The text limits form a chain: what the compiler accepts has to be something
@@ -39,6 +50,7 @@ enum {
     MB_EXPR_STACK_MAX = 16,      /* operands of one expression */
     MB_HEAP_SIZE = 2048,         /* bytes shared by strings and arrays, at most 65535 */
     MB_RUN_JUMP_MAX = 64,        /* IF/ELSE/WHILE/FOR jumps prepared by RUN */
+    MB_LOAD_LINE_MAX = 256,      /* one source line given to mb_program_load_text */
 
     /* Builtins */
     MB_BUILTIN_NAME_MAX = 12,
@@ -132,6 +144,9 @@ typedef struct MBConsoleIO MBConsoleIO;
 typedef struct MBReplIO MBReplIO;
 typedef struct MBSymbol MBSymbol;
 typedef struct MBFrame MBFrame;
+typedef struct MBJumpEntry MBJumpEntry;
+typedef struct MBRunPlan MBRunPlan;
+typedef struct MBRun MBRun;
 typedef struct MBBuiltin MBBuiltin;
 typedef struct MBArray MBArray;
 
@@ -176,10 +191,29 @@ struct MBProgram {
     mb_u8 builtin_count;
 };
 
+struct MBJumpEntry {
+    mb_u16 from;
+    mb_u16 to;
+};
+
+/* Jumps paired by the preparation pass that starts a run. */
+struct MBRunPlan {
+    MBJumpEntry jumps[MB_RUN_JUMP_MAX];
+    mb_u8 jump_count;
+};
+
+/* A run in progress: where it is and the plan it follows. The caller owns it
+   and must not touch the program while it is live. */
+struct MBRun {
+    MBRunPlan plan;
+    mb_u16 current; /* offset of the next statement; 0 when finished */
+};
+
 struct MBRuntime {
     mb_i32 vars[MB_VAR_COUNT];
     MBFrame frames[MB_CONTROL_STACK_MAX];
     mb_u8 frame_sp;
+    mb_u8 input_prompted; /* an INPUT printed its prompt and is waiting for the line */
     /* One heap for strings and arrays:
          [0, str_used)        persistent strings (a string holds a handle,
                               offset << 16 | length)
@@ -246,6 +280,28 @@ int mb_compile_statement(const char *text, mb_u8 *out, mb_u16 cap, mb_u16 *out_l
 int mb_decompile_statement(const mb_u8 *code, mb_u16 len, char *out, mb_u16 cap);
 int mb_program_store_statement(MBProgram *program, mb_u16 line, const char *text);
 int mb_program_run(const MBProgram *program, MBRuntime *runtime, const MBIO *io, mb_u16 max_steps);
+
+/* Run in slices, so the caller can do other things in between (redraw a screen,
+   look for a break key). mb_run_begin prepares the run; each mb_run_step then
+   executes up to max_statements statements (at least one) and returns
+   MB_RUNNING (call again), MB_OK (the program ended), MB_WAITING_INPUT (an
+   INPUT is waiting: call again once io->read_line can deliver a line) or a
+   negative error. To abandon a run, just stop calling mb_run_step. */
+int mb_run_begin(const MBProgram *program, MBRuntime *runtime, MBRun *run);
+int mb_run_step(const MBProgram *program, MBRuntime *runtime, MBRun *run, const MBIO *io, mb_u16 max_statements);
+
+/* Line number of the statement a run is at: after mb_run_step returned an error,
+   the one that failed. 0 when the run has finished. */
+mb_u16 mb_run_line(const MBProgram *program, const MBRun *run);
+
+/* Name of an error, as the REPL prints it after the '?' ("DIV ZERO"). */
+const char *mb_error_text(int err);
+
+/* Stores a whole program given as text: one numbered line per text line ('\n'
+   or "\r\n"); blank lines are skipped. It does not clear the program first. On
+   an error returns it and sets *error_line (when not null) to the 1-based
+   position of the offending text line. */
+int mb_program_load_text(MBProgram *program, const char *text, mb_u16 len, mb_u16 *error_line);
 int mb_console_process_line(MBProgram *program,
                             MBRuntime *runtime,
                             const char *line,

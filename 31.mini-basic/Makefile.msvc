@@ -1,0 +1,54 @@
+# mini-basic para Windows (consola VT). Desde un entorno de MSVC:
+#
+#   nmake /f Makefile.msvc          compila mini-basic.exe
+#   nmake /f Makefile.msvc clean
+#
+# Lo de 28.basic y z.tui se compila desde sus carpetas, sin copiarlo aqui.
+CC = cl
+OBJDIR = _build\obj
+BASIC = ..\28.basic
+TUI = ..\z.tui
+CFLAGS = /nologo /Fo$(OBJDIR)\ /TC /W4 /D_CRT_SECURE_NO_WARNINGS /I$(BASIC) /I$(TUI)
+TARGET = mini-basic.exe
+
+BASIC_SRC = $(BASIC)\basic.c $(BASIC)\basic_builtins.c
+
+TUI_SRC = $(TUI)\tui.c $(TUI)\tui_window.c $(TUI)\tui_button.c $(TUI)\tui_label.c \
+	$(TUI)\tui_panel.c $(TUI)\tui_edit.c $(TUI)\tui_listbox.c $(TUI)\tui_menu.c \
+	$(TUI)\tui_statusbar.c $(TUI)\tui_checkbox.c $(TUI)\tui_radiobutton.c \
+	$(TUI)\tui_combobox.c $(TUI)\tui_scrollbar.c $(TUI)\tui_textmodel.c \
+	$(TUI)\tui_editor.c
+
+BACKEND_SRC = $(TUI)\console_vt_win32.c $(TUI)\console_dirty.c
+
+all: $(TARGET)
+
+$(TARGET): mb_main.c $(BASIC_SRC) $(TUI_SRC) $(BACKEND_SRC) \
+	$(BASIC)\basic.h $(TUI)\tui.h $(TUI)\tui_internal.h $(TUI)\console.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(CFLAGS) /Fe$@ mb_main.c $(BASIC_SRC) $(TUI_SRC) $(BACKEND_SRC)
+
+# --- MiniCPU (prototipo 30). Entorno de MSVC de 32 bits (vcvars32.bat).
+# mini-lcc preprocesa con cl sin -I, por eso mb_main.c incluye por ruta relativa.
+#
+#   nmake /f Makefile.msvc mini       compila y ensambla a _build\mb_mini.bin
+#   nmake /f Makefile.msvc mini-run   la sube a la placa y la arranca
+#
+# El teclado de la placa es el de INPUT (monitor.py input): la UART no tiene F5.
+TOOLS = ..\tools
+PS = powershell -NoProfile -ExecutionPolicy Bypass -File
+MINI_BIN = _build\mb_mini.bin
+
+$(MINI_BIN): mb_unity_mini.c mb_main.c $(BASIC_SRC) $(TUI_SRC) $(TUI)\console_mini.c
+	@if not exist _build mkdir _build
+	$(PS) $(TOOLS)\mini-lcc.ps1 mb_unity_mini.c -o _build\mb_mini.s
+	$(PS) $(TOOLS)\mini-asm.ps1 _build\mb_mini.s -o $(MINI_BIN)
+
+mini: $(MINI_BIN)
+
+mini-run: $(MINI_BIN)
+	$(PS) $(TOOLS)\run-board.ps1 --prototype 30 --program $(MINI_BIN)
+
+clean:
+	-del /q $(TARGET) $(OBJDIR)\*.obj 2>NUL
+	-del /q _build\mb_mini.s $(MINI_BIN) 2>NUL
