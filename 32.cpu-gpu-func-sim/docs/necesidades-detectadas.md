@@ -43,7 +43,9 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 - La alternativa a `GETARG`: `R1 = WARP_ARG` en todas las lanes al lanzar. Encaja con el ABI (`R1`–`R4` son argumentos) pero obliga a escribir el banco de registros desde el lanzador, y no se ha revisado el RTL.
 - Se puede recuperar si se quieren kernels en C con el primer argumento en R1.
 
-### N3. `LOGICAL_WARP_ID[n]` y `WARP_ARG[n]` en GPU WARPS — contrato y simulador hechos, RTL pendiente
+### N3. `LOGICAL_WARP_ID[n]` y `WARP_ARG[n]` en GPU WARPS — hecho en el RTL de la 29 y probado en placa (2026-10-06)
+
+- **RTL de la 29**: los dos arrays en `gpu_system_bl8.v` (`+0x200` y `+0x280`, ocho palabras cada uno) y en `gpu_sm.v`. El monitor tiene una sola ventana para GPU WARPS y se ensanchó a `0x820102A0` (`top_bl8.v` y `monitor.py`); los huecos contestan error. El host los escribe con el núcleo parado, que es lo que permite el monitor. **Falta**: escribirlos con el warp vivo (no hay GPU CORE, y por tanto no hay `WARP_START`).
 
 - Dos arrays nuevos tras los 32 descriptores (mmio.md §14.2, regla §1.4): `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280`.
 - Lectura y escritura. Escribirlos en un warp vivo es error, como el resto del descriptor.
@@ -51,7 +53,7 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 - `LOGICAL_WARP_ID` es el antiguo `warp_user_id` de `propuesta-v0.2.md`, cuya ventana MMIO quedó "pendiente de asignación".
 - Tocan: mmio.md, `tools/mmio_map.py` (generado), simulador de la 32 (`GpuWarpsDevice`), simulador de `11` (estado por warp), RTL.
 
-### N4. `GETID` con `type` 1 a 4 — ensamblador y simuladores (11 y 25) hechos, RTL pendiente
+### N4. `GETID` con `type` 1 a 4 — ensamblador, simuladores (11 y 25) y RTL de la 29 hechos; probado en placa
 
 - `GETID` es el opcode `0x30`, con el campo `type` en el campo Y. `type = 0` es el encoding actual de `GETTID`, así que los binarios existentes no cambian.
 
@@ -69,17 +71,20 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 - Tocan: las cuatro propuestas, `isa.md`, `mini_asm.py`, simulador de `11` y RTL.
 - `GETGWARP`, citado de memoria, no existe en el repo.
 
-### N5. Semántica de reset — contrato y simulador hechos, RTL pendiente
+### N5. Semántica de reset — contrato y simulador hechos, RTL de la 29 distinto a propósito
 
 - `propuesta-v0.2.md` dice que `warp_user_id` "vale cero tras reset de GPU".
 - En MMIO v2, `GPU_CONTROL.RESET` conserva los descriptores. `LOGICAL_WARP_ID` y `WARP_ARG` son configuración del lanzador: `RESET` los conserva y solo el reset físico los pone a cero.
+- **El RTL de la 29 no lo cumple, a propósito**: el único reset que tiene es el del monitor (`core_reset`), que ya reinicia los descriptores, y pone a cero también los dos arrays. Cuando exista GPU CORE con su `RESET` propio habrá que separar los dos resets.
 
-### N6. Accesos de 8 y 16 bits en la GPU — simulador hecho, RTL pendiente
+### N6. Accesos de 8 y 16 bits en la GPU — simulador y RTL de la 29 hechos; probado en placa
 
 - Hecho el 2026-10-06 en el simulador de `11` (y por tanto en el de la 32): `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH`, `STOREH`, solo contra RAM; contra MMIO son error (§4.1). El perfil de ISA declara `SUBWORD`.
 - Ya los tenían la CPU (2, 19, 21, 30) y el modelo de ciclos de la 25.
-- **Pendiente en el RTL de la 29**: decodificar `0x18–0x1D` en `gpu_lane.v`, y en la LSU (`gpu_lsu2.v`, coalescencia por línea de 16 bytes) tamaños, extensión de signo y máscaras de bytes. Dos lanes que escriben bytes distintos de la misma palabra se funden en una escritura con `wstrb`. Después, que el perfil del RTL declare `SUBWORD` (hoy `0x0b`).
-- Mientras tanto, el simulador va por delante de la placa: un kernel con accesos pequeños corre en el simulador y no en la FPGA.
+- **Hecho en el RTL de la 29 el 2026-10-06**: el SM decodifica `0x18–0x1D` (no la lane) y los despacha a la LSU con tamaño y signo; la LSU forma la máscara de bytes por lane y extrae byte o media palabra con signo en la respuesta. El perfil de ISA pasa de `0x0b` a `0x0f`. Verificado en el banco directo de la LSU, en el diferencial de RTL (36 casos) y en la placa (72 casos, 0 fallos).
+- **Dos lanes en la misma palabra no se fusionan**: aunque escriban bytes distintos, gana la de menor índice y la otra espera otra vuelta. Es correcto y cuesta una vuelta de LSU por lane en un `memset` por bytes (cuatro vueltas por palabra). Fusionarlas con las máscaras de bytes sería la optimización natural, y no se ha medido cuánto pesa.
+- **Un fallo antiguo de la LSU salió al probarlo**: con todas las lanes pendientes en fallo y la lane 0 a MMIO, el acceso salía igualmente por el bus. Un `STOREH` fallido a un registro habría escrito la palabra entera. Arreglado en `gpu_lsu2.v` (`leader_is_mmio` exige candidata).
+- **Contra el RTL anterior**: un kernel con accesos pequeños paraba con `ERROR_INVALID_OPCODE`. Ya corre igual en el simulador y en la 29; las demás GPU (22 y anteriores) siguen sin ellos.
 - Con esto desaparecen los bordes de la D9 y el caso desalineado de la D10.
 
 ### N7. Errores por warp en vez de globales — pospuesto
@@ -106,3 +111,14 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 - Salió al escribir `examples/dma/gpu_runtime.inc`: `ANDI R7, R4, GPU_ST_ERROR` daba «entero inválido». `MOVI`, `ADDI`, `LOAD`, `STORE` y los saltos resuelven etiquetas y `.equ` (`resolve_target`), pero el grupo sin signo (`I3_UNSIGNED_OPS`) llamaba a `parse_int` y solo aceptaba literales.
 - Arreglado: ahora usa `resolve_target`, con el mismo rango sin signo de 16 bits (un `.equ` de `0x10000` o negativo sigue siendo error). Test en `test_mini_asm.py`.
 - Queda por decidir si `NEW-ASSM` lo hereda, junto con N4.
+
+### N10. Un warp no puede leer SYSTEM en el RTL de la 29 — discrepancia con mmio.md §15, sin tocar
+
+- Salió al probar en placa el caso `subword-mmio-byte`: un `LOAD` de palabra de `0x80000000` desde un warp para con `ERROR_MEMORY_ACCESS`. El decodificador de `gpu_system_bl8.v` solo deja a la GPU llegar a VIDEO y PERF (`gm_err` es cierto para cualquier otro bloque), mientras que §15 dice que un warp lee SYSTEM y los simuladores lo permiten.
+- Hace falta si un kernel quiere leer `MEM_SIZE` o `DEVICES` (el runtime de la CPU lo necesita para validar rangos, pero ese corre en la CPU, no en la GPU). No bloquea nada de este diseño.
+- Efecto en los casos: `subword-mmio-byte` se ejecuta contra SYSTEM y por eso no discrimina en la placa; ahí falla antes, en el `LOAD` de palabra. El acceso pequeño a MMIO se comprobó contra VIDEO en la placa y en el banco de la LSU.
+
+### N11. El monitor no expone la dirección efectiva de un fallo — límite conocido
+
+- Los casos de fallo de memoria declaran `fault.address` (el esquema lo exige) y la placa los omite. Se comprobaron a mano contra la placa con la dirección a `null`: `LOADH` impar, `LOADB` y `STOREH` a VIDEO paran con error `0x02` en el PC esperado, y el `LOADUB` impar anterior es legal.
+- Si se quisieran en la suite de la placa habría que dejar `address` opcional en el esquema y exponer la dirección en `FIRST_ERROR` o declarar que no se compara.

@@ -298,10 +298,10 @@ Se quiere averiguar:
 | # | Cambio | Estado |
 |---|---|---|
 | N1 | Interrupciones: IRQ con `WARP_DONE != 0` y espera tipo `WFI`. Requiere definir el INTC. | pospuesto |
-| N3 | `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280` de GPU WARPS (§14.2, regla §1.4). Lectura y escritura; error si el warp está vivo. | contrato y simulador de `32` hechos; RTL pendiente |
-| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de las propuestas v0.2 a v0.4b. | ensamblador, `isa.md` y simuladores de `11` y `25` hechos; faltan `NEW-ASSM` y el RTL |
-| N5 | `RESET` conserva `LOGICAL_WARP_ID` y `WARP_ARG`; solo el reset físico los pone a cero. | contrato y simulador de `32` hechos; RTL pendiente |
-| N6 | Accesos de 8 y 16 bits en la GPU. Simulador de `11` hecho; **RTL de la 29 pendiente**, con su LSU y coalescer. | simulador hecho |
+| N3 | `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280` de GPU WARPS (§14.2, regla §1.4). Lectura y escritura; error si el warp está vivo. | contrato y simulador de `32` hechos; RTL de la 29 hecho (con el núcleo parado) y probado en placa |
+| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de las propuestas v0.2 a v0.4b. | ensamblador, `isa.md` y simuladores de `11` y `25` hechos; RTL de la 29 hecho y probado en placa; falta `NEW-ASSM` |
+| N5 | `RESET` conserva `LOGICAL_WARP_ID` y `WARP_ARG`; solo el reset físico los pone a cero. | contrato y simulador de `32` hechos; el RTL de la 29 los pone a cero con el único reset que tiene (ver N5 de las notas) |
+| N6 | Accesos de 8 y 16 bits en la GPU. Simulador de `11` hecho; RTL de la 29 con su LSU. | simulador y RTL de la 29 hechos y probados en placa; las demás GPU no los tienen |
 | N7 | Errores por warp, en lugar de un fallo que para toda la GPU. Delicado, no caro en área; efecto en Fmax sin medir. | pospuesto |
 | N8 | `ATOMADD`, `ATOMCAS` y `FENCE`. La v1 no los necesita. | pospuesto |
 
@@ -320,7 +320,7 @@ Se quiere averiguar:
 **Pendiente, sin bloquear el resto:**
 
 - El ensamblador de `1.isa/NEW-ASSM`, que tiene su propia tabla de instrucciones: hay que decidir si es el vigente.
-- El RTL de la GPU: `GETID`, los dos arrays, y los accesos de 8 y 16 bits.
+- El RTL de la GPU que falta para el protocolo completo: **GPU CORE** (`GPU_STATUS`, `GPU_CONTROL`, `WARP_START`, `WARP_LIVE`, `WARP_DONE`), escribir descriptores con la GPU en marcha, y un sistema con CPU y GPU a la vez sobre una RAM compartida. `GETID`, los arrays de warp y los accesos de 8 y 16 bits ya están en la 29. Ver también N10 de las notas (un warp no llega a SYSTEM en la 29).
 - El runtime en C (cola, ids con generación, política CPU/GPU, kernels 2D), sobre el protocolo que ya valida el arnés. No hay linker: el compilador genera un `.asm` y el runtime y los kernels se incluyen con `.include`, como aquí.
 - Re-ejecutar las familias `programs` y `demos` de `gpusim` tras el cambio de `GETID` (no se han repetido).
 
