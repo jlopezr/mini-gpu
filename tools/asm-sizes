@@ -11,7 +11,8 @@ el resto llega hasta la siguiente etiqueta de su sección e incluye el relleno
 de `.align`), así que aquí no se reconstruye nada desde el fuente.
 
 El ensamblador lista todas las etiquetas, también las locales del compilador
-(`L.n`), porque no sabe qué es una función. Aquí se agrupan:
+(`L.n`) y las del runtime de coma flotante (`__sf.n`), porque no sabe qué es
+una función. Aquí se agrupan (con `L.n` se entienden las dos):
 
 - en `.text`, las `L.n` pertenecen a la función que las contiene;
 - en `.rodata`, las `L.n` son literales de cadena y se suman aparte;
@@ -65,7 +66,7 @@ def parse_listing(path: Path) -> tuple[dict[str, tuple[int, int]], list[Symbol]]
     strings: Symbol | None = None
     seen: set[tuple[str, int]] = set()  # varias etiquetas pueden compartir PC
     for pc, size, sec, name in sorted(raw_syms):
-        local = name.startswith("L.")
+        local = name.startswith(("L.", "__sf."))   # locales del compilador y del runtime
         if local and (sec, pc) in seen:
             continue
         seen.add((sec, pc))

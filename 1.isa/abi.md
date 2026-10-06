@@ -27,8 +27,14 @@ representation described here define the intended ABI.
 - Stack: grows downward.
 - Entry point: `_start` at address `0x00000000`.
 
-Floating point, varargs, some bitfield details, and some aggregate conventions
-are not yet considered ABI-stable.
+Varargs, some bitfield details, and some aggregate conventions are not yet
+considered ABI-stable.
+
+Floating point has no hardware: `mini-lcc` implements `float` and `double`
+(IEEE-754 binary32/binary64) in software. A `float` travels in one integer
+register and a `double` in a register pair, with the same argument slots and
+return registers as `int` and `long long`. The convention is the compiler's, not
+yet a stable ABI feature; see `y.lcc/README-miniisa.md`.
 
 ---
 
@@ -931,7 +937,8 @@ The following areas remain incomplete or provisional:
 - repeated reads of same-width bitfields can currently clobber a shared mask
   register;
 - C99 designated initializers are not parsed by the current lcc front-end;
-- floating point is not a stable ABI feature;
+- floating point is done in software by the compiler and is not a stable ABI
+  feature;
 - aggregate calling and return conventions remain partly provisional;
 - register allocation and prologue/epilogue generation are conservative and
   not yet optimized.
