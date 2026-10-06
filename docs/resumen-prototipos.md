@@ -51,13 +51,22 @@ generator: cpu-matrix
 | **LUT / FF** | — | 6 035 / 2 624 | 5 391 / 2 477 | 8 158 / 3 830 | 10 302 / 5 120 | 11 179 / 5 203 | 11 502 / 5 268 | 13 808 / 6 320 |
 | **Monitor** | — | 3.6 | 3.10 | 3.16 | 3.18 | 4.19 | 4.21 | 5.30 |
 | **Baudios** | — | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M | 1 M |
+| `mul_div` | sí | sí | no | sí | sí | sí | sí | sí |
 | `subword_memory` | sí | no | no | no | no | sí | sí | sí |
 | `calls` | sí | no | no | no | no | sí | sí | sí |
 | `shift_immediate` | sí | no | no | no | no | no | sí | sí |
 | `alu_extended` | sí | no | no | no | no | no | sí | sí |
 | `compare` | sí | no | no | no | no | no | sí | sí |
+| `video` | sí | no | no | sí | sí | sí | sí | sí |
+| `frame_capture` | sí | no | no | sí | sí | sí | sí | sí |
+| `halt_on_swap` | no | no | no | sí | sí | sí | sí | sí |
+| `large_memory` | sí | no | sí | sí | sí | sí | sí | sí |
 | `serial` | sí | no | no | no | no | sí | sí | sí |
+| `read_word` | no | sí | sí | sí | sí | sí | sí | sí |
+| `write_word` | no | sí | sí | sí | sí | sí | sí | sí |
+| `perf_counters` | no | no | no | sí | sí | sí | sí | sí |
 | `perf_stalls` | no | no | no | no | no | no | no | sí |
+| `input` | sí | no | no | no | no | no | no | no |
 | `input_device` | no | no | no | no | no | no | no | sí |
 
 <!-- gendoc:end cpu-matrix -->
@@ -195,14 +204,25 @@ generator: gpu-matrix
 | | [25.sim](../25.gpu-sim-cycle-uarch) | [11.sim](../11.gpu-sim-func) | [12.bram](../12.fpga-gpu) | [14.sdram](../14.fpga-gpu-ram) | [17.fpga-gpu-ram-v2](../17.fpga-gpu-ram-v2) | [22.lsu2](../22.fpga-gpu-bl8) | [29.smpipe](../29.fpga-gpu-sm-pipeline) |
 |---|---|---|---|---|---|---|---|
 | **Reloj** | — | — | 25 MHz | 25 MHz | 25 MHz | 25 MHz | 25 MHz |
-| **Fmax / objetivo** | — | — | 35.1 / 25 | 31.6 / 25 | 46.5 / 25 | 38.4 / 25 | 35.1 / 25 |
+| **Fmax / objetivo** | — | — | 35.1 / 25 | 31.6 / 25 | 46.5 / 25 | 38.4 / 25 | 38.4 / 25 |
 | **Memoria** | — | — | 128 KiB | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
-| **LUT / FF** | — | — | 38 078 / 9 357 | 31 375 / 9 236 | 30 070 / 10 310 | 36 366 / 12 588 | 42 053 / 13 907 |
+| **LUT / FF** | — | — | 38 078 / 9 357 | 31 375 / 9 236 | 30 070 / 10 310 | 36 366 / 12 588 | 47 473 / 14 516 |
 | **Monitor** | — | — | 3.12 | 3.14 | 3.17 | 3.22 | 3.29 |
 | **Baudios** | — | — | 250 k | 250 k | 250 k | 250 k | 250 k |
+| `mul_div` | sí | sí | sí | sí | sí | sí | sí |
+| `subword_memory` | sí | sí | no | no | no | no | sí |
+| `video` | sí | sí | no | no | no | sí | sí |
+| `frame_capture` | sí | sí | no | no | no | sí | sí |
+| `halt_on_swap` | no | no | no | no | no | sí | sí |
+| `large_memory` | sí | sí | no | sí | sí | sí | sí |
+| `read_word` | no | no | sí | sí | sí | sí | sí |
+| `write_word` | no | no | sí | sí | sí | sí | sí |
 | `warp_config` | no | no | sí | sí | sí | sí | sí |
 | `simt_debug` | no | no | sí | sí | sí | sí | sí |
+| `perf_counters` | no | no | no | no | no | sí | sí |
 | `atomic_warp_faults` | sí | sí | no | no | no | no | no |
+| `gpu_ids` | sí | sí | no | no | no | no | sí |
+| `input` | sí | sí | no | no | no | no | no |
 
 <!-- gendoc:end gpu-matrix -->
 
@@ -246,7 +266,7 @@ generator: prototype-summary
 | [`19.fpga-cpu-hdmi-ls`](../19.fpga-cpu-hdmi-ls) | subword | 4.19 | 80.0 MHz | mul_div, subword_memory, calls, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters |
 | [`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu) | alu | 4.21 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters |
 | [`22.fpga-gpu-bl8`](../22.fpga-gpu-bl8) | lsu2 | 3.22 | 25.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, warp_config, simt_debug, perf_counters |
-| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | smpipe | 3.29 | 25.0 MHz | mul_div, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, warp_config, simt_debug, perf_counters |
+| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | smpipe | 3.29 | 25.0 MHz | mul_div, subword_memory, video, frame_capture, halt_on_swap, large_memory, read_word, write_word, warp_config, simt_debug, perf_counters, gpu_ids |
 | [`30.fpga-cpu-console`](../30.fpga-cpu-console) | console | 5.30 | 80.0 MHz | mul_div, subword_memory, calls, shift_immediate, alu_extended, compare, video, frame_capture, halt_on_swap, large_memory, serial, read_word, write_word, perf_counters, perf_stalls, input_device |
 
 <!-- gendoc:end prototype-summary -->

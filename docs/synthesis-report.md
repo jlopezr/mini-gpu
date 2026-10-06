@@ -40,11 +40,11 @@ generator: synthesis-table
 | [`26.async-fifo`](../26.async-fifo) | build | $glbnet$clk_rd | 158.03 / 19.38 | PASS |
 | [`27.async-fifo-uart`](../27.async-fifo-uart) | build | $glbnet$clk_25mhz$TRELLIS_IO_IN | 144.20 / 25.00 | PASS |
 | [`27.async-fifo-uart`](../27.async-fifo-uart) | build | $glbnet$clk_rd | 153.85 / 19.38 | PASS |
-| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | auto-upload | $glbnet$clk_pix | 78.22 / 25.00 | PASS |
-| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | auto-upload | $glbnet$clk_pix_5x | 243.84 / 125.00 | PASS |
-| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | auto-upload | $glbnet$sdram_clk$TRELLIS_IO_OUT | 35.05 / 25.00 | PASS |
-| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | build | $glbnet$clk_pix | 56.27 / 25.00 | PASS |
-| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | build | $glbnet$clk_pix_5x | 284.01 / 125.00 | PASS |
-| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | build | $glbnet$sdram_clk$TRELLIS_IO_OUT | 85.76 / 80.00 | PASS |
+| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | getid-subword | $glbnet$clk_pix | 75.43 / 25.00 | PASS |
+| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | getid-subword | $glbnet$clk_pix_5x | 200.12 / 125.00 | PASS |
+| [`29.fpga-gpu-sm-pipeline`](../29.fpga-gpu-sm-pipeline) | getid-subword | $glbnet$sdram_clk$TRELLIS_IO_OUT | 38.37 / 25.00 | PASS |
+| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | auto-upload | $glbnet$clk_pix | 56.27 / 25.00 | PASS |
+| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | auto-upload | $glbnet$clk_pix_5x | 284.01 / 125.00 | PASS |
+| [`30.fpga-cpu-console`](../30.fpga-cpu-console) | auto-upload | $glbnet$sdram_clk$TRELLIS_IO_OUT | 85.76 / 80.00 | PASS |
 
 <!-- gendoc:end synthesis-table -->

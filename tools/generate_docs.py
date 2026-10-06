@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from tools.prototype import find_repo_root, list_prototypes
 from tools.prototype_report import collect, simulator_capabilities
-from tools.rtl_facts import load_capability_signals
+from tools.rtl_facts import capability_architectures, load_capability_signals
 from tools.traceability import (
     CORE_GENERATORS, GenerationContext, Graph, ModelBuilder, generator,
 )
@@ -163,7 +163,10 @@ def _matrix_table(reports: list[dict], simulators: list[dict], signals: dict,
     row("Baudios", lambda c: _baud_cell(c.get("uart_baud")))
 
     for capability, spec in signals.items():
-        if spec.get("architecture") != architecture:
+        # `architecture` admite una cadena o una lista (video, mul_div... las
+        # tienen CPU y GPU): una capacidad compartida sale en las dos tablas.
+        # Comparar con `!=` dejaba fuera todas las de lista.
+        if architecture not in capability_architectures(spec):
             continue
         lines.append(
             f"| `{capability}` | "

@@ -168,6 +168,10 @@ def write_fixtures(selected, out):
         if config is not None:
             gpu.configure_warps(config)
         initial = [(w.pc, w.active_mask, w.workgroup_id) for w in gpu.streaming_multiprocessor.warps]
+        # LOGICAL_WARP_ID[n] y WARP_ARG[n] (mmio.md 14.2), un par por warp. Los
+        # lee el banco de los prototipos que los implementan (hoy el 29); los
+        # demas no abren este fichero.
+        ids = [v for w in gpu.streaming_multiprocessor.warps for v in (w.logical_warp_id, w.arg)]
         gpu.run(MAX_STEPS)
         assert not gpu.error, (name, gpu.fault)
         prefix = out / f'{index:02d}'
@@ -180,6 +184,7 @@ def write_fixtures(selected, out):
         hexfile('.regs.hex', [r for w in gpu.streaming_multiprocessor.warps for lane in w.processors for r in lane.regs])
         hexfile('.memory.hex', struct.unpack('<512I', gpu.memory[4096:6144]))
         hexfile('.config.hex', [v for row in initial for v in row])
+        hexfile('.ids.hex', ids)
         hexfile('.counts.hex', [w.instructions_executed for w in gpu.streaming_multiprocessor.warps])
         hexfile('.state.hex', [v for w in gpu.streaming_multiprocessor.warps for v in (w.pc, w.active_mask, w.live_mask)])
         metadata.append(dict(id=index, name=name, instructions=gpu.instructions_executed))

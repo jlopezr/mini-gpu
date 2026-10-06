@@ -416,6 +416,10 @@ class WarpMixin:
 
     # Lo declara cada prototipo.
     WARP_CONFIG_BASE = 0x8000_1000
+    # Los dos arrays de una palabra por warp, a continuacion de los descriptores
+    # (mmio.md §14.2). Son del contrato y valen para todos los prototipos.
+    LOGICAL_ID_OFFSET = 0x200
+    WARP_ARG_OFFSET = 0x280
     # Dispositivo 1 de la página MMIO: depuración.
     DEBUG_BASE = 0x8000_0100
     # La memoria del MODELO con el que se valida el JSON antes de tocar el
@@ -462,6 +466,16 @@ class WarpMixin:
             self.write_memory(base, w.pc.to_bytes(4, 'little'))
             self.write_memory(base + 4, w.active_mask.to_bytes(4, 'little'))
             self.write_memory(base + 8, w.workgroup_id.to_bytes(4, 'little'))
+            # LOGICAL_WARP_ID[n] y WARP_ARG[n] (mmio.md 14.2): solo en el RTL
+            # que los tiene (capacidad `gpu_ids`). El reset de arriba los deja
+            # a cero, asi que un warp sin ellos no escribe nada y las GPU que no
+            # los implementan siguen configurandose igual que antes.
+            if w.logical_warp_id:
+                self.write_memory(self.WARP_CONFIG_BASE + self.LOGICAL_ID_OFFSET + w.warp_id * 4,
+                                  w.logical_warp_id.to_bytes(4, 'little'))
+            if w.arg:
+                self.write_memory(self.WARP_CONFIG_BASE + self.WARP_ARG_OFFSET + w.warp_id * 4,
+                                  w.arg.to_bytes(4, 'little'))
 
 
 class SerialMixin:
