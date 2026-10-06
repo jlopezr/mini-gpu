@@ -568,7 +568,24 @@ conoce la familia `GETID` ni que `ANDI`/`ORI`/`XORI` aceptan `.equ`. Es el punto
 de este archivo, hoy vacío: decidir si `NEW-ASSM` es el ensamblador vigente antes
 de portarle nada.
 
-### 16.8. Lo que depende de GPU CORE (2.2)
+### 16.8. Tres comprobaciones que no se han hecho
+
+- **Las familias `programs` y `demos` de `gpusim` y `gpusim-cycle` no se han
+  vuelto a pasar** tras el cambio de `GETID` en 11 y 25. Se pasaron alu, faults,
+  memory, scheduling, simt y extensions (mandelbrot tarda unos 100 s por
+  simulador). En la placa sí pasan todas, así que el riesgo es del simulador.
+- **Falta contrastar la LSU del modelo de ciclos (25) con el RTL en los stores
+  pequeños a la misma palabra.** El RTL serializa las lanes que caen en la misma
+  palabra (una vuelta por lane). Si el 25 las fusiona o las cuenta distinto, un
+  kernel con `STOREB` en bucle saldrá más barato en el modelo que en la placa, y
+  calibrar el número de warps con el 25 (como se propuso) daría una cifra
+  optimista.
+- **No se ha medido el efecto en ciclos de la 29.** El cambio añadió unos 4 400
+  LUT (de unos 43 000 a 47 473) y lógica en la ruta de respuesta de la LSU. Fmax
+  y timing no se resienten (38,4 / 25 MHz), pero no se han repetido los contadores
+  `CYCLES`/`RETIRED` de `gpu_bench` contra la línea base de `profiling.md`.
+
+### 16.9. Lo que depende de GPU CORE (2.2)
 
 El protocolo de `32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md` (runtime de CPU con
 `WARP_START`/`WARP_DONE`, ids de job con generación, kernels `memset`/`memcpy`)
