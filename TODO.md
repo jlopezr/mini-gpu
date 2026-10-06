@@ -105,6 +105,10 @@ señales del monitor, así que **solo el host puede lanzar la GPU, y solo con la
 GPU parada**. Y la ventana de warps está llena al 100 %, sin sitio para más de
 ocho. Es el trozo con más RTL nuevo de toda la lista.
 
+Arrastra varias cosas que salieron al implementar `GETID` en la 29: que un warp
+lea SYSTEM, separar el reset del núcleo del de configuración y escribir
+descriptores con la GPU en marcha. Están en el punto [16.2](#162-un-warp-no-puede-leer-system-en-el-rtl-de-la-29-n10).
+
 ### 2.3. Acceso MMIO desde SIMT: hoy se serializa, v2 exige error (§4.2)
 
 > «Si dos o más lanes acceden a MMIO en la misma instrucción, el acceso genera
@@ -450,6 +454,129 @@ fallo de timing de un lint con avisos.
 **Qué lo bloquea.** Nada. Lo razonable es que el lint no escriba en el historial
 de builds, o que `build-list` ignore los registros de etiqueta `test` al elegir el
 último build.
+
+## 16. Lo que queda tras `GETID` y los accesos de 8 y 16 bits en la 29
+
+**Hecho el 06/10/2026.** El RTL de la 29 ejecuta `GETID` (`type` 0 a 4) con los
+arrays `LOGICAL_WARP_ID` y `WARP_ARG`, y `LOADB`…`STOREH`. Probado en placa: 72
+casos de GPU, 0 fallos; síntesis con la semilla 2, 38,4 / 25 MHz. Lo que sigue
+son los cabos que salieron al hacerlo, de más a menos importante. Las notas de
+diseño están en
+[`32.cpu-gpu-func-sim/docs/necesidades-detectadas.md`](32.cpu-gpu-func-sim/docs/necesidades-detectadas.md).
+
+### 16.1. `fault.address` obligatorio deja fuera de la placa los casos de fallo de memoria
+
+**Qué falta.** El esquema de `x.tests` exige `fault.address` y el monitor no la
+expone, así que `gpu_fpga.incompatibility` omite todo caso que la declare. Dos de
+los casos nuevos (`subword/misaligned-halfword` y `subword/mmio-byte`) se omiten
+por eso, aunque el RTL los hace bien: se comprobaron a mano contra la placa con la
+dirección a `null` y coinciden en todo menos en ella (N11).
+
+**Por qué importa.** Es el único sitio donde los fallos de memoria de la LSU
+quedarían cubiertos en hardware; hoy solo los cubre su banco directo y una
+comprobación manual.
+
+**Qué lo bloquea.** Nada. Hacer `address` opcional y que la comparación use solo
+los campos declarados, **con una marca explícita** para quien la omite
+(`"address": "unexposed"`) y no un simple «no ponerla», para que no sea un hueco
+por descuido. No toca RTL ni síntesis. Exponer la dirección en el RTL
+(`FIRST_ERROR_ADDR`) cambiaría `mmio.md` y costaría área en la LSU: no merece la
+pena solo por esto.
+
+### 16.2. Un warp no puede leer SYSTEM en el RTL de la 29 (N10)
+
+**Qué falta.** `gpu_system_bl8.v` solo deja a la GPU llegar a VIDEO y PERF; un
+`LOAD` de `0x80000000` desde un warp para con `ERROR_MEMORY_ACCESS`. `mmio.md`
+§15 dice que un warp lee SYSTEM y los simuladores lo permiten.
+
+**Por qué importa.** Un kernel que quisiera leer `MEM_SIZE` o `DEVICES` no puede.
+Y el caso `subword/mmio-byte` no discrimina en la placa: falla antes, en el
+`LOAD` de palabra, no en el `LOADB` que quiere probar.
+
+**Qué lo bloquea.** Es una condición en el decodificador, pero cuesta otra
+síntesis (unos 25 minutos en la 29). **No sintetizar solo por esto**: tocar el
+mismo decodificador es parte del trabajo de GPU CORE (2.2), y se hace en el mismo
+cambio. Junto con él, en esa misma pasada:
+
+- Separar el reset del núcleo del reset de configuración: hoy el único reset de
+  la 29 (`core_reset`, el del monitor) pone a cero los dos arrays, y el contrato
+  dice que `GPU_CONTROL.RESET` los conserva (N5).
+- Escribir descriptores y arrays con la GPU en marcha, en los warps no vivos.
+  Hoy el host solo escribe con el núcleo parado, y eso impide el `WARP_START` de
+  un warp mientras otros corren.
+
+### 16.3. `getid-family` solo corre en simulador
+
+**Qué falta.** Usa `warp_size = 4` y el RTL tiene 8 lanes, así que la placa lo
+omite. Es correcto por diseño (prueba otra geometría), pero su README no lo dice y
+su `test.json` tampoco.
+
+**Qué lo bloquea.** Nada: una línea en el README. `getid-8warps` ya cubre lo mismo
+en placa.
+
+### 16.4. Fusionar los stores de lanes que caen en la misma palabra
+
+**Qué falta.** Dos lanes que escriben bytes distintos de la misma palabra no se
+fusionan: gana la de menor índice y la otra espera otra vuelta de la LSU. Un
+`memset` por bytes cuesta cuatro vueltas por palabra.
+
+**Por qué importa.** Los kernels de memoria del diseño `diseno-gpu-dma.md` van
+por palabras en la v1 justo para esquivarlo, pero quien use `STOREB` en un bucle lo
+paga. **No está medido**: antes de tocar la LSU, medir con
+`cases-gpu/extensions/subword/lane-bytes-halves` cuánto pesa en ciclos (modelo 25
+y contadores `CYCLES`/`RETIRED` de la placa).
+
+**Qué lo bloquea.** Medirlo. Fusionar con las máscaras de bytes que la LSU ya
+forma es el camino natural, pero añade lógica en el camino crítico de `gpu_lsu2`.
+
+### 16.5. Acelerar la síntesis de la 29: probar `router2 --threads`
+
+**Qué falta.** El build de la 29 tarda unos 23 minutos y es casi todo `nextpnr`,
+que con `router1` (el de `apio.ini`) es monohilo. El nextpnr instalado (0.10)
+tiene `router2` y `--threads`, y la máquina tiene 24 hilos. No hay comparativas
+publicadas de `router1` frente a `router2` en ECP5 que hayamos encontrado.
+
+**Por qué importa.** Cada cambio de RTL de la 29 cuesta ese tiempo, y el trabajo
+de 2.2 va a necesitar varias iteraciones.
+
+**Qué lo bloquea.** Medirlo en una copia de la carpeta, no en la real: la misma
+síntesis con `--router router2 --threads 8`, comparando tiempo, Fmax y que cierre
+timing a 25 MHz. Cambia el resultado (otro enrutado, otra semilla): solo se adopta
+si cierra y baja el tiempo de verdad, y obliga a re-barrer semillas. Lo que sí
+escala sin riesgo es lanzar varias semillas o carpetas a la vez.
+
+**No actualizar el oss-cad-suite a ciegas.** El instalado (marzo de 2026, Yosys
+0.63+173) es anterior a una regresión de ABC que empeoró el timing en ECP5 en las
+versiones 20260331 a 20260415 y se arregló en la 20260513
+([hilo](https://yosyshq.discourse.group/t/timing-closure-degraded/139)).
+
+### 16.6. Las demás GPU no tienen `GETID` ni accesos pequeños
+
+**Qué falta.** Solo la 29 los implementa. 12, 14, 17 y 22 siguen parando con
+`0x05` o `0x01`; sus casos se omiten por capacidad, que es lo correcto, pero un
+kernel que los use solo corre en la 29 y en los simuladores. `gpu_lane.v` y
+`gpu_lsu2.v` ya no son copia de los de la 22.
+
+**Qué lo bloquea.** Decidir si se retroportan o se dan por congeladas. Si la 22
+sigue siendo la línea base de comparación de ciclos (`profiling.md`), conviene que
+no se mueva.
+
+### 16.7. `NEW-ASSM` y el ensamblador vigente
+
+**Qué falta.** `1.isa/NEW-ASSM` tiene su propia tabla de instrucciones y no
+conoce la familia `GETID` ni que `ANDI`/`ORI`/`XORI` aceptan `.equ`. Es el punto 13
+de este archivo, hoy vacío: decidir si `NEW-ASSM` es el ensamblador vigente antes
+de portarle nada.
+
+### 16.8. Lo que depende de GPU CORE (2.2)
+
+El protocolo de `32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md` (runtime de CPU con
+`WARP_START`/`WARP_DONE`, ids de job con generación, kernels `memset`/`memcpy`)
+está validado en simulador con el arnés de `32.cpu-gpu-func-sim/examples/dma`. En
+placa **no hay prototipo con CPU y GPU a la vez** ni GPU CORE, así que es lo último
+de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
+último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera
+un `.asm` y el runtime y los kernels se incluyen con `.include`).
 
 ---
 
