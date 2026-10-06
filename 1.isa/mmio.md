@@ -1002,6 +1002,33 @@ Escribir un descriptor reinicia el estado de reconvergencia, barrera y contador
 local del warp. No es una interfaz para modificar contexto mientras el warp
 ejecuta.
 
+### `LOGICAL_WARP_ID` y `WARP_ARG`
+
+Dos arrays de una palabra de 32 bits por warp, a continuación de los 32
+descriptores (§1.4). El elemento `n` de cada uno está en `base + 4n`:
+
+| Offset | Registro | Acceso | Lo lee |
+|---:|---|---|---|
+| `+0x200 + 4n` | `LOGICAL_WARP_ID[n]` | RW | `GETLWARP` |
+| `+0x280 + 4n` | `WARP_ARG[n]` | RW | `GETARG` |
+
+- **`LOGICAL_WARP_ID`** es el identificador lógico del warp: el que asigna el
+  lanzador, independiente del slot físico donde se ejecute. Es el
+  `warp_user_id` de las propuestas de ISA, con otro nombre. Vive en un registro
+  propio, y no dentro de un bloque de argumentos en RAM, para que el monitor y
+  la traza lo lean directamente.
+- **`WARP_ARG`** es el argumento del warp, típicamente un puntero al bloque de
+  argumentos de su trabajo. Es el valor que el kernel recibe con `GETARG`.
+- No caben en el descriptor: su stride de 16 bytes está congelado (§1.5) y
+  `SIMT_STATE` no es un hueco libre.
+- Siguen las reglas del descriptor: un warp no implementado, o escribir con el
+  warp vivo, es error. Valen cero tras el reset del sistema. Son configuración
+  del lanzador, así que `GPU_CONTROL.RESET` los **conserva**, igual que los
+  descriptores.
+- Los warps no pueden escribirlos (§15, «GPU WARPS»).
+
+No son `WORKGROUP_ID`, que solo agrupa warps para `BAR`.
+
 ### 14.3. GPU SIMT DEBUG — `0x82020000`
 
 Solo información de depuración y microarquitectura SIMT.
@@ -1417,6 +1444,9 @@ Markdown, nunca Verilog sintetizable.
     4KRO/6KRO/NKRO y señales concretas de RTL no forman parte del ABI.
 66. El monitor y los simuladores reproducen exactamente el mismo ABI, orden y
     semántica de INPUT que la FPGA.
+67. `LOGICAL_WARP_ID[n]` (`+0x200`) y `WARP_ARG[n]` (`+0x280`) son dos arrays de
+    una palabra por warp, tras los 32 descriptores. `GPU_CONTROL.RESET` los
+    conserva; el reset del sistema los pone a cero.
 
 ---
 

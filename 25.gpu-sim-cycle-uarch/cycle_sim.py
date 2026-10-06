@@ -62,8 +62,10 @@ class Pipeline:
         results = []
         for lane, regs in packet.operands:
             try:
+                w = self.warps[packet.warp]
                 result = execute(packet.decoded, regs,
-                                 packet.warp * len(self.warps[packet.warp].processors) + lane)
+                                 (packet.warp * len(w.processors) + lane, lane, packet.warp,
+                                  w.logical_warp_id, w.arg))
                 if result.access:
                     address, size, value, _ = result.access
                     device = self.system.device_for(address)

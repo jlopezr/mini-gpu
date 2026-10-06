@@ -58,6 +58,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(p.counters.occupancy['X'], 24)
         self.assertEqual(p.counters.lane_ops, 128)
 
+    def test_getid_family_matches_oracle(self):
+        source = 'GETTID R1\nGETLANE R2\nGETWARP R3\nGETLWARP R4\nGETARG R5\nHALT'
+        config = {'warp_size': 4, 'warps': [
+            {'id': w, 'pc': 0, 'logical_warp_id': 100 + w, 'arg': 0x1000 * (w + 1)}
+            for w in range(3)]}
+        pipeline = make(source, warps=3)
+        oracle = functional.System(8192, 3, 4)
+        oracle.load_program(assemble_bytes(source))
+        for system in (pipeline.system, oracle):
+            system.configure_warps(config)
+        oracle.run(100000)
+        pipeline.run(1000000)
+        self.assertEqual(architecture(pipeline.system), architecture(oracle))
+        lane = pipeline.warps[2].processors[3].regs
+        self.assertEqual(lane[1:6], [11, 3, 2, 102, 0x3000])
+
     def test_multicycle_blocks_x_and_retains_front(self):
         p = make('MOVI R1,9\nMOVI R2,2\nDIV R3,R1,R2\nADD R4,R1,R2\nHALT', warps=8)
         events = []

@@ -4,11 +4,14 @@
 Implementa todas las instrucciones actualmente definidas y el estado
 arquitectónico de error:
 
-- Sistema: NOP, GETTID y HALT.
+- Sistema: NOP, HALT y la familia GETID (opcode 0x30): GETTID, GETLANE,
+  GETWARP, GETLWARP y GETARG. Un `type` mayor que 4 es `ERROR_INVALID_ENCODING`.
 - ALU: ADD, SUB, AND, OR, XOR, SHL, SHR y SAR.
 - Aritmética: MUL, MULFX y DIV.
 - Inmediatas: MOVI, MOVHI, ADDI, ANDI, ORI y XORI.
-- Memoria: LOAD y STORE.
+- Memoria: LOAD y STORE, y los accesos de 8 y 16 bits LOADB, LOADUB, STOREB,
+  LOADH, LOADUH y STOREH. Solo a RAM: un acceso sub-palabra a MMIO es error
+  (mmio.md §4.1), igual que uno desalineado.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
 
 El estado consta de PC y 32 registros de 32 bits, de los que **R0 está cableado
@@ -43,14 +46,16 @@ from gpu_trace import TextTrace, TraceEvent
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.sysid_device import (  # noqa: E402
-    BIT_DIV, BIT_MUL, BIT_SIMT, SysIdDevice,
+    BIT_DIV, BIT_MUL, BIT_SIMT, BIT_SUBWORD, SysIdDevice,
 )
 
-# Qué sabe ejecutar ESTE modelo. Sin `BIT_SUBWORD`: los accesos de 8 y 16 bits
-# están en la MiniCPU y a la MiniGPU le siguen faltando, pendientes de backport.
-# Coincide con el `0x0b` que declaran las cuatro GPU en RTL, y un test lo
-# contrasta contra los opcodes que el modelo ejecuta.
-SIMULATOR_ISA_PROFILE = BIT_MUL | BIT_DIV | BIT_SIMT
+# Qué sabe ejecutar ESTE modelo. Con `BIT_SUBWORD`: los accesos de 8 y 16 bits
+# (LOADB/LOADUB/STOREB/LOADH/LOADUH/STOREH) se retroportaron aquí desde la
+# MiniCPU y desde el modelo de ciclos de la 25, que ya los tenían. El RTL de las
+# GPU todavía NO: declara `0x0b` (sin este bit), así que este modelo va por
+# delante de la placa. Un test contrasta el perfil con los opcodes que el modelo
+# ejecuta, no con el RTL.
+SIMULATOR_ISA_PROFILE = BIT_MUL | BIT_DIV | BIT_SUBWORD | BIT_SIMT
 
 MASK32 = 0xFFFFFFFF
 MAX_WARPS = 8
@@ -65,6 +70,14 @@ ERROR_INVALID_ENCODING = 0x05
 ERROR_SIMT = 0x06
 ERROR_BARRIER = 0x07
 
+# GETID (opcode 0x30): el campo Y es el `type`. 0 GETTID, 1 GETLANE, 2 GETWARP,
+# 3 GETLWARP (LOGICAL_WARP_ID) y 4 GETARG (WARP_ARG). Los demás están reservados.
+GETID_LAST_TYPE = 4
+
+# Opcodes de memoria y bytes que tocan. Solo los usa la traza detallada.
+ACCESS_SIZE = {0x15: 4, 0x16: 4, 0x18: 1, 0x19: 1, 0x1A: 1, 0x1B: 2, 0x1C: 2, 0x1D: 2}
+LOAD_OPCODES = frozenset((0x15, 0x18, 0x19, 0x1B, 0x1C))
+
 
 def valid_encoding(instr: int, opcode: int) -> bool:
     """Comprueba los campos reservados de instrucciones conocidas."""
@@ -74,8 +87,8 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         return (instr & 0x7FF) == 0
     if opcode in {0x10, 0x17}:  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
-    if opcode == 0x30:  # GETTID requires Y=0 and imm16=0
-        return (instr & 0x1FFFFF) == 0
+    if opcode == 0x30:  # GETID: Y es el `type` (0..4) e imm16 = 0
+        return (instr & 0xFFFF) == 0 and ((instr >> 16) & 0x1F) <= GETID_LAST_TYPE
     return True
 
 
@@ -153,7 +166,8 @@ class LaneResult:
     regs: list[int]
     next_pc: int
     halted: bool
-    store: tuple[int, int] | None
+    #: (dirección, valor, tamaño en bytes: 1, 2 o 4). El valor ya viene recortado.
+    store: tuple[int, int, int] | None
 
 
 def config_integer(value: object, field: str) -> int:
@@ -317,7 +331,8 @@ class System:
         states = {}
         for index, entry in enumerate(entries):
             label = f'warps[{index}]'
-            entry = config_fields(entry, {'id', 'enabled', 'pc', 'active_mask', 'workgroup_id'}, label)
+            entry = config_fields(entry, {'id', 'enabled', 'pc', 'active_mask', 'workgroup_id',
+                                          'logical_warp_id', 'arg'}, label)
             warp_id = config_integer(entry.get('id'), f'{label}.id')
             if not 0 <= warp_id < sm.num_warps:
                 raise ValueError(f"config: {label}.id fuera de rango (0..{sm.num_warps - 1})")
@@ -336,14 +351,24 @@ class System:
             group = config_integer(entry.get('workgroup_id', 0), f'{label}.workgroup_id')
             if group < 0:
                 raise ValueError("config: workgroup_id debe ser no negativo")
-            states[warp_id] = (pc, mask if enabled else 0, group)
+            # Los valores de GETLWARP y GETARG son palabras de 32 bits.
+            values = []
+            for name in ('logical_warp_id', 'arg'):
+                value = config_integer(entry.get(name, 0), f'{label}.{name}')
+                if not 0 <= value <= MASK32:
+                    raise ValueError(f"config: {label}.{name} debe caber en 32 bits sin signo")
+                values.append(value)
+            states[warp_id] = (pc, mask if enabled else 0, group, *values)
         self.fault = None
         self.peripheral_halted = False
         sm.reset()
-        for warp_id, (pc, mask, group) in states.items():
-            sm.warps[warp_id].pc = pc
-            sm.warps[warp_id].active_mask = sm.warps[warp_id].live_mask = mask
-            sm.warps[warp_id].workgroup_id = group
+        for warp_id, (pc, mask, group, logical_id, arg) in states.items():
+            warp = sm.warps[warp_id]
+            warp.pc = pc
+            warp.active_mask = warp.live_mask = mask
+            warp.workgroup_id = group
+            warp.logical_warp_id = logical_id
+            warp.arg = arg
 
     def step(self) -> bool:
         """Emite como máximo una instrucción de un warp (round-robin)."""
@@ -443,11 +468,13 @@ class StreamingMultiprocessor:
                 for number, (old, new) in enumerate(zip(regs, after)):
                     if old != new:
                         details.append(f'T{lane_id} R{number}: 0x{old:08X} -> 0x{new:08X}')
-                if word is not None and word >> 26 in (0x15, 0x16):
+                if word is not None and word >> 26 in ACCESS_SIZE:
                     op, rd, ra = word >> 26, (word >> 21) & 31, (word >> 16) & 31
                     address = u32(regs[ra] + sign_extend(word & 0xFFFF, 16))
-                    value = after[rd] if op == 0x15 else regs[rd]
-                    details.append(f'T{lane_id} {"READ" if op == 0x15 else "WRITE"} '
+                    is_load = op in LOAD_OPCODES
+                    value = (after[rd] if is_load
+                             else regs[rd] & ((1 << 8 * ACCESS_SIZE[op]) - 1))
+                    details.append(f'T{lane_id} {"READ" if is_load else "WRITE"} '
                                    f'[0x{address:08X}] = 0x{value:08X}')
         trace(TraceEvent(warp.warp_id, pc, mask, warp.live_mask, word, warp.pc, outcome, tuple(details)))
         return completed
@@ -475,6 +502,11 @@ class Warp:
         self.live_mask = 0
         self.state = 'READY'
         self.workgroup_id = 0
+        # Los lee GETLWARP y GETARG. Valen cero tras el reset, como el resto de la
+        # configuración del warp; un lanzador (`configure_warps`, o el MMIO de la
+        # carpeta 32) los fija después.
+        self.logical_warp_id = 0
+        self.arg = 0
         self.barrier_generation = 0
         self.barrier_key = None
         self.region_stack: list[SimtRegion] = []
@@ -519,7 +551,8 @@ class Warp:
             if opcode not in {
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                 0x09, 0x0A, 0x0C, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
-                0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2F,
+                0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+                0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2F,
                 0x30, 0x31, 0x32, 0x33, 0x3E, 0x3F,
             }:
                 raise ExecutionFault(ERROR_INVALID_OPCODE)
@@ -597,7 +630,7 @@ class Warp:
         for processor, result in results:
             processor.regs[:] = result.regs
             if result.store is not None:
-                address, value = result.store
+                address, value, size = result.store
                 # Las escrituras se aplican en orden de lane. Si varios lanes
                 # escriben el MISMO registro MMIO en la misma instruccion, gana
                 # el ultimo, que es una de las ordenes posibles: el hardware las
@@ -618,8 +651,14 @@ class Warp:
                             Fault(ERROR_MEMORY_ACCESS, self.pc, self.warp_id,
                                   processor.core_id, address))
                         return False
-                else:
+                elif size == 4:
                     struct.pack_into("<I", self.memory, address, value)
+                else:
+                    # STOREB/STOREH solo tocan sus bytes: dos lanes que escriben
+                    # bytes distintos de la misma palabra aciertan las dos, que es
+                    # lo que hace el `wstrb` en el fabric. Si escriben el mismo
+                    # byte gana la ultima en orden de lane.
+                    self.memory[address:address + size] = value.to_bytes(size, "little")
             if result.halted:
                 self.active_mask &= ~(1 << processor.core_id)
                 self.live_mask &= ~(1 << processor.core_id)
@@ -658,6 +697,18 @@ class CPU:
             return device.read(address - device.BASE)
         except RuntimeError as exc:
             raise ExecutionFault(ERROR_MEMORY_ACCESS, address) from exc
+
+    def check_subword(self, address: int, size: int) -> None:
+        """Valida un acceso de 1 o 2 bytes, de carga o de almacenamiento.
+
+        Es RAM y nada más: el MMIO solo admite palabras de 32 bits alineadas
+        (mmio.md §4.1), porque leer un registro tiene efectos y media lectura no
+        tiene significado. Una media palabra exige dirección par; un byte, nada.
+        """
+        if (size == 2 and address & 1
+                or self.warp.sm.system.device_for(address) is not None
+                or address < 0 or address + size > len(self.memory)):
+            raise ExecutionFault(ERROR_MEMORY_ACCESS, address)
 
     def check_store(self, address: int, writing: bool = True) -> None:
         """Valida el destino de un STORE antes de diferirlo."""
@@ -811,7 +862,30 @@ class CPU:
 
             address = u32(regs[ra] + imm16)
             self.check_store(address)
-            store = (address, u32(regs[source]))
+            store = (address, u32(regs[source]), 4)
+
+        elif opcode in (0x18, 0x19, 0x1B, 0x1C):  # LOADB/LOADUB/LOADH/LOADUH
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            size = 1 if opcode in (0x18, 0x19) else 2
+            is_signed = opcode in (0x18, 0x1B)
+
+            address = u32(regs[ra] + imm16)
+            self.check_subword(address, size)
+            raw = int.from_bytes(self.memory[address:address + size], "little")
+            regs[rd] = u32(sign_extend(raw, 8 * size)) if is_signed else raw
+
+        elif opcode in (0x1A, 0x1D):  # STOREB / STOREH
+            # Como en STORE, el campo Rd contiene el registro fuente.
+            source = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            imm16 = sign_extend(instr & 0xFFFF, 16)
+            size = 1 if opcode == 0x1A else 2
+
+            address = u32(regs[ra] + imm16)
+            self.check_subword(address, size)
+            store = (address, regs[source] & ((1 << (8 * size)) - 1), size)
 
         elif opcode == 0x20:  # BEQ
             ra = (instr >> 21) & 0x1F
@@ -861,9 +935,15 @@ class CPU:
             offset26 = sign_extend(instr & 0x03FFFFFF, 26)
             next_pc = u32(next_pc + (offset26 << 2))
 
-        elif opcode == 0x30:  # GETTID
+        elif opcode == 0x30:  # GETID: GETTID/GETLANE/GETWARP/GETLWARP/GETARG
             rd = (instr >> 21) & 0x1F
-            regs[rd] = self.warp.warp_id * self.warp.num_threads + self.core_id
+            warp = self.warp
+            # `valid_encoding` ya garantizó type <= GETID_LAST_TYPE.
+            regs[rd] = (warp.warp_id * warp.num_threads + self.core_id,
+                        self.core_id,
+                        warp.warp_id,
+                        warp.logical_warp_id,
+                        warp.arg)[(instr >> 16) & 0x1F]
 
         elif opcode in (0x33, 0x3F):  # HALT
             halted = True
@@ -911,7 +991,7 @@ def main() -> int:
                         help="capacidad de la pila de regiones por warp (por defecto: 8)")
     parser.add_argument("--simt-path-depth", type=int, default=MAX_SIMT_PATHS,
                         help="capacidad de la pila de caminos por warp (por defecto: 8)")
-    parser.add_argument("--config", type=Path, help="JSON con PC y máscara inicial de cada warp")
+    parser.add_argument("--config", type=Path, help="JSON con PC, máscara, workgroup_id, logical_warp_id y arg de cada warp")
     parser.add_argument("--dump", nargs=3, metavar=("ADDRESS", "SIZE", "FILE"))
     parser.add_argument("--trace", action="store_true", help="traza del scheduler por instrucción de warp")
     parser.add_argument("--trace-detail", action="store_true", help="incluye registros y memoria por hilo")

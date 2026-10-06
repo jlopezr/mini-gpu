@@ -435,5 +435,243 @@ class VideoDeviceTest(unittest.TestCase):
                          0x40)
 
 
+class SubwordMemoryTest(unittest.TestCase):
+    """LOADB/LOADUB/STOREB/LOADH/LOADUH/STOREH, retroportados de la MiniCPU.
+
+    Los modelos de la CPU y de ciclos de la 25 ya los tenían; el RTL de las GPU
+    todavía no, así que este modelo va por delante de la placa.
+    """
+
+    LOADB, LOADUB, STOREB, LOADH, LOADUH, STOREH = 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D
+
+    def make(self, *words, lanes=1, memory=128):
+        gpu = System(memory, 1, lanes)
+        gpu.load_program(program(*words), 0)
+        return gpu
+
+    def lanes(self, gpu):
+        return gpu.streaming_multiprocessor.warps[0].processors
+
+    def test_profile_declares_subword_and_matches_the_cpu_model(self):
+        from tools.sysid_device import BIT_SUBWORD
+        from minigpu_sim import SIMULATOR_ISA_PROFILE
+        self.assertTrue(SIMULATOR_ISA_PROFILE & BIT_SUBWORD)
+        self.assertEqual(System(64, 1, 1).sysid.isa_profile, SIMULATOR_ISA_PROFILE)
+
+    def test_store_and_load_each_size_with_sign_and_zero_extension(self):
+        gpu = self.make(
+            imm(self.STOREB, 2, 1, 0),      # mem[64] = 0xF0
+            imm(self.LOADB, 3, 1, 0),       # con signo
+            imm(self.LOADUB, 4, 1, 0),      # con ceros
+            imm(self.STOREH, 2, 1, 2),      # mem[66..67] = F0 80
+            imm(self.LOADH, 5, 1, 2),
+            imm(self.LOADUH, 6, 1, 2),
+            HALT)
+        lane = self.lanes(gpu)[0]
+        lane.regs[1], lane.regs[2] = 64, 0xFFFF80F0
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual(bytes(gpu.memory[64:68]), bytes([0xF0, 0x00, 0xF0, 0x80]))
+        self.assertEqual(lane.regs[3:7], [0xFFFFFFF0, 0xF0, 0xFFFF80F0, 0x80F0])
+
+    def test_a_store_only_touches_its_own_bytes(self):
+        gpu = self.make(imm(self.STOREB, 2, 1, 1), imm(self.STOREH, 3, 1, 2), HALT)
+        gpu.memory[64:68] = bytes([0xAA, 0xBB, 0xCC, 0xDD])
+        lane = self.lanes(gpu)[0]
+        lane.regs[1], lane.regs[2], lane.regs[3] = 64, 0x11, 0x12342233
+        gpu.run()
+        self.assertEqual(bytes(gpu.memory[64:68]), bytes([0xAA, 0x11, 0x33, 0x22]))
+
+    def test_lanes_writing_different_bytes_of_one_word_both_land(self):
+        """Lo que hace el `wstrb` en el fabric: no se pisan entre sí."""
+        gpu = self.make(imm(0x30, 1), imm(0x11, 2, 1, 64), imm(0x11, 3, 1, 1),
+                        imm(self.STOREB, 3, 2, 0), HALT, lanes=4)
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual(bytes(gpu.memory[64:68]), bytes([1, 2, 3, 4]))
+        self.assertEqual(struct.unpack_from('<I', gpu.memory, 64)[0], 0x04030201)
+
+    def test_bytes_may_be_unaligned_but_halfwords_may_not(self):
+        for op in (self.LOADB, self.LOADUB, self.STOREB):
+            with self.subTest(op=op):
+                gpu = self.make(imm(op, 2, 1, 0), HALT)
+                self.lanes(gpu)[0].regs[1] = 65
+                gpu.run()
+                self.assertFalse(gpu.error, gpu.fault)
+        for op in (self.LOADH, self.LOADUH, self.STOREH):
+            with self.subTest(op=op):
+                gpu = self.make(imm(op, 2, 1, 0), HALT)
+                self.lanes(gpu)[0].regs[1] = 65
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_MEMORY_ACCESS)
+                self.assertEqual(gpu.fault.address, 65)
+
+    def test_faults_are_atomic_across_lanes(self):
+        """Una lane que falla impide que ninguna otra escriba, como con STORE."""
+        for op, bad in ((self.STOREB, 128), (self.STOREH, 65), (self.STOREH, 128),
+                        (self.LOADB, 128), (self.LOADH, 127)):
+            with self.subTest(op=op, address=bad):
+                gpu = self.make(imm(op, 2, 1, 0), HALT, lanes=2)
+                lanes = self.lanes(gpu)
+                lanes[0].regs[1], lanes[1].regs[1] = 64, bad
+                for lane in lanes:
+                    lane.regs[2] = 0x77
+                before = bytes(gpu.memory)
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_MEMORY_ACCESS)
+                self.assertEqual(gpu.fault.address, bad)
+                self.assertEqual(gpu.fault.core_id, 1)
+                self.assertEqual(bytes(gpu.memory), before)
+                self.assertEqual([c.regs[2] for c in lanes], [0x77, 0x77])
+
+    def test_the_last_bytes_of_memory_are_reachable(self):
+        gpu = self.make(imm(self.LOADUB, 2, 1, 127), imm(self.LOADUH, 3, 1, 126), HALT)
+        gpu.memory[126:128] = bytes([0x34, 0x12])
+        gpu.run()
+        lane = self.lanes(gpu)[0]
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual((lane.regs[2], lane.regs[3]), (0x12, 0x1234))
+
+    def test_subword_access_to_mmio_is_a_fault_but_a_word_access_works(self):
+        """§4.1: el MMIO solo admite palabras de 32 bits alineadas."""
+        base = 0x8000          # SYSTEM, que el System siempre instancia
+        for op in (self.LOADB, self.LOADUB, self.STOREB,
+                   self.LOADH, self.LOADUH, self.STOREH):
+            with self.subTest(op=op):
+                gpu = self.make(imm(0x17, 1, value=base), imm(op, 2, 1, 0), HALT)
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_MEMORY_ACCESS)
+                self.assertEqual(gpu.fault.address, base << 16)
+        gpu = self.make(imm(0x17, 1, value=base), imm(0x15, 2, 1, 0), HALT)
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+
+    def test_r0_stays_zero_and_stores_zero(self):
+        gpu = self.make(imm(self.LOADB, 0, 1, 0), imm(self.STOREB, 0, 1, 1), HALT)
+        gpu.memory[64:66] = bytes([0x55, 0x66])
+        lane = self.lanes(gpu)[0]
+        lane.regs[1] = 64
+        gpu.run()
+        self.assertEqual(lane.regs[0], 0)
+        self.assertEqual(bytes(gpu.memory[64:66]), bytes([0x55, 0x00]))
+
+    def test_detailed_trace_shows_the_bytes_that_move(self):
+        import io
+        from gpu_trace import TextTrace
+        gpu = self.make(imm(self.STOREH, 2, 1, 2), imm(self.LOADB, 3, 1, 2), HALT)
+        lane = self.lanes(gpu)[0]
+        lane.regs[1], lane.regs[2] = 64, 0xABCD80F0
+        stream = io.StringIO()
+        gpu.trace = TextTrace(stream, detail=True)
+        gpu.run()
+        text = stream.getvalue()
+        self.assertIn('STOREH', text)
+        self.assertIn('WRITE [0x00000042] = 0x000080F0', text)
+        self.assertIn('READ [0x00000042] = 0xFFFFFFF0', text)
+
+
+class GetIdTest(unittest.TestCase):
+    """La familia GETID (opcode 0x30): el campo Y es el `type`.
+
+    0 GETTID, 1 GETLANE, 2 GETWARP, 3 GETLWARP (LOGICAL_WARP_ID), 4 GETARG
+    (WARP_ARG). El 5 en adelante está reservado.
+    """
+
+    def getid(self, type_, rd=1):
+        return imm(0x30, rd, type_)
+
+    def system(self, warps=2, lanes=4, *words, config=None):
+        gpu = System(128, warps, lanes)
+        gpu.load_program(program(*words), 0, launch=config is None)
+        if config is not None:
+            gpu.configure_warps(config)
+        return gpu
+
+    def test_each_type_returns_its_value_per_lane(self):
+        gpu = self.system(
+            2, 4,
+            self.getid(0, 5), self.getid(1, 1), self.getid(2, 2),
+            self.getid(3, 3), self.getid(4, 4), HALT,
+            config={'warp_size': 4, 'warps': [
+                {'id': 0, 'logical_warp_id': 10, 'arg': 0x1000},
+                {'id': 1, 'logical_warp_id': 11, 'arg': '0x2000'}]})
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        for warp_id, warp in enumerate(gpu.streaming_multiprocessor.warps):
+            for lane_id, lane in enumerate(warp.processors):
+                with self.subTest(warp=warp_id, lane=lane_id):
+                    # R1 GETLANE, R2 GETWARP, R3 GETLWARP, R4 GETARG, R5 GETTID
+                    self.assertEqual(lane.regs[5], warp_id * 4 + lane_id)
+                    self.assertEqual(lane.regs[1], lane_id)
+                    self.assertEqual(lane.regs[2], warp_id)
+                    self.assertEqual(lane.regs[3], 10 + warp_id)
+                    self.assertEqual(lane.regs[4], 0x1000 * (warp_id + 1))
+
+    def test_logical_id_is_independent_of_the_physical_slot(self):
+        """Dos warps físicos con el mismo id lógico: lo que identifica es el id."""
+        gpu = self.system(2, 2, self.getid(2, 1), self.getid(3, 2), HALT,
+                          config={'warp_size': 2, 'warps': [
+                              {'id': 0, 'logical_warp_id': 7},
+                              {'id': 1, 'logical_warp_id': 7}]})
+        gpu.run()
+        warps = gpu.streaming_multiprocessor.warps
+        self.assertEqual([w.processors[0].regs[1] for w in warps], [0, 1])
+        self.assertEqual([w.processors[0].regs[2] for w in warps], [7, 7])
+
+    def test_logical_id_and_arg_default_to_zero(self):
+        gpu = self.system(1, 2, self.getid(3, 1), self.getid(4, 2), HALT)
+        gpu.run()
+        lane = gpu.streaming_multiprocessor.warps[0].processors[0]
+        self.assertEqual((lane.regs[1], lane.regs[2]), (0, 0))
+
+    def test_full_32_bit_values(self):
+        gpu = self.system(1, 1, self.getid(3, 1), self.getid(4, 2), HALT,
+                          config={'warp_size': 1, 'warps': [
+                              {'id': 0, 'logical_warp_id': 0xFFFFFFFF, 'arg': 0x80000000}]})
+        gpu.run()
+        lane = gpu.streaming_multiprocessor.warps[0].processors[0]
+        self.assertEqual((lane.regs[1], lane.regs[2]), (0xFFFFFFFF, 0x80000000))
+
+    def test_writing_r0_is_discarded(self):
+        gpu = self.system(1, 1, self.getid(4, 0), HALT,
+                          config={'warp_size': 1, 'warps': [{'id': 0, 'arg': 99}]})
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual(gpu.streaming_multiprocessor.warps[0].processors[0].regs[0], 0)
+
+    def test_reserved_types_and_nonzero_imm16_are_invalid_encodings(self):
+        words = [self.getid(t) for t in (5, 6, 17, 31)]
+        words.append(imm(0x30, 1, 1, 7))            # imm16 distinto de cero
+        for word in words:
+            with self.subTest(word=f'{word:#010x}'):
+                gpu = self.system(1, 1, word, HALT)
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_INVALID_ENCODING)
+                self.assertEqual(gpu.error_pc, 0)
+
+    def test_config_values_are_validated(self):
+        for entry in ({'id': 0, 'logical_warp_id': -1}, {'id': 0, 'arg': 1 << 32},
+                      {'id': 0, 'arg': True}, {'id': 0, 'logical_warp_id': 'x'}):
+            with self.subTest(entry=entry):
+                gpu = System(128, 1, 1)
+                gpu.load_program(program(HALT), 0, launch=False)
+                with self.assertRaises(ValueError):
+                    gpu.configure_warps({'warp_size': 1, 'warps': [entry]})
+
+    def test_reset_clears_them_like_the_rest_of_the_warp_state(self):
+        gpu = self.system(1, 1, HALT,
+                          config={'warp_size': 1, 'warps': [
+                              {'id': 0, 'logical_warp_id': 5, 'arg': 6}]})
+        gpu.streaming_multiprocessor.reset()
+        warp = gpu.streaming_multiprocessor.warps[0]
+        self.assertEqual((warp.logical_warp_id, warp.arg), (0, 0))
+
+    def test_trace_names_the_whole_family(self):
+        from gpu_trace import instruction_text
+        for type_, name in enumerate(('GETTID', 'GETLANE', 'GETWARP', 'GETLWARP', 'GETARG')):
+            self.assertEqual(instruction_text(self.getid(type_, 3)), f'{name} R3')
+        self.assertTrue(instruction_text(self.getid(5)).startswith('.word'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -147,7 +147,23 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
 
 ## Alcance del modelo
 
-- `GETTID` devuelve `warp_id * warp_size + core_id`.
+- La familia `GETID` (opcode `0x30`, el campo Y es el `type`):
+
+  | Mnemónico | `type` | Devuelve |
+  |---|---:|---|
+  | `GETTID` | 0 | `warp_id * warp_size + core_id` |
+  | `GETLANE` | 1 | `core_id`, la lane dentro del warp |
+  | `GETWARP` | 2 | `warp_id`, el slot de warp físico |
+  | `GETLWARP` | 3 | el id lógico del warp (`logical_warp_id`) |
+  | `GETARG` | 4 | el argumento del warp (`arg`), por ejemplo un puntero |
+
+  Un `type` mayor que 4, o `imm16` distinto de cero, es `ERROR_INVALID_ENCODING`.
+  El id lógico y el argumento valen 0 por defecto y se fijan con `--config`
+  (más abajo). El simulador de la carpeta 32 los expone por MMIO.
+
+- Accesos de 8 y 16 bits: `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH` y
+  `STOREH`, solo contra RAM. Un acceso sub-palabra a MMIO es error, y una media
+  palabra exige dirección par. El RTL de las GPU todavía no los tiene.
 
 - Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](docs/opcodes.md).
   `EXIT` retira lanes permanentemente y `BAR` sincroniza un workgroup.
@@ -170,6 +186,9 @@ El ensamblador compartido `../1.isa/mini_asm.py` acepta `SSY label`, `BAR` y
 Cada entrada JSON admite `workgroup_id` (entero no negativo, por defecto 0).
 Sin configuración, todos los warps pertenecen al workgroup 0. Las máscaras de
 lanzamiento inicializan tanto `active_mask` como `live_mask`.
+
+También admite `logical_warp_id` y `arg`, enteros de 32 bits sin signo (por
+defecto 0), que leen `GETLWARP` y `GETARG`.
 
 Prueba de divergencia, reconvergencia y barrera entre dos warps:
 

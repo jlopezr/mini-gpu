@@ -36,6 +36,12 @@ class DatapathTests(unittest.TestCase):
                 self.assertEqual(expected, cpu.regs, hex(word))
                 self.assertEqual(result.next_pc, cpu.pc)
 
+    def test_getid_selects_type(self):
+        ids = (10, 11, 12, 13, 14)
+        for type_ in range(5):
+            word = 0x30 << 26 | 1 << 21 | type_ << 16
+            self.assertEqual(execute(decode(word, 0), [0] * 32, ids).write, (1, ids[type_]))
+
     def test_signed_corner_cases(self):
         for a, b in ((0x80000000, 0xffffffff), (0xfffffff9, 2), (7, 0xfffffffe)):
             regs = [0, a, b] + [0] * 29
@@ -54,6 +60,10 @@ class DatapathTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 4)
         for op in (0, 1, 7, 0xb, 0x26, 0x30, 0x32, 0x33, 0x3f):
             with self.assertRaises(ISAError) as caught: decode(op << 26 | 1, 0)
+            self.assertEqual(caught.exception.code, 5)
+        for type_ in (5, 31):  # GETID: type fuera de 0..4
+            with self.assertRaises(ISAError) as caught:
+                decode(0x30 << 26 | 1 << 21 | type_ << 16, 0)
             self.assertEqual(caught.exception.code, 5)
         for op in (0x1e, 0x28, 0x2c, 0x2d, 0x2e, 0x34):
             with self.assertRaises(ISAError) as caught: decode(op << 26, 0)

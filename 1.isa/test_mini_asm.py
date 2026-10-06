@@ -180,6 +180,23 @@ class LoadAddressTest(unittest.TestCase):
         self.assertEqual(assemble(".equ N, 5\nLI R1, N\n"), assemble("MOVI R1, 5\n"))
         self.assertEqual(len(assemble("LI R1, datos+4\nHALT\ndatos:\n.word 1, 2\n")), 4)
 
+    def test_andi_ori_xori_admiten_equ_y_aritmetica_como_el_resto(self):
+        """El grupo sin signo solo aceptaba literales; MOVI, ADDI y LOAD no."""
+        for op in ("ANDI", "ORI", "XORI"):
+            with self.subTest(op=op):
+                self.assertEqual(assemble(f".equ M, 0x80\n{op} R1, R2, M\n"),
+                                 assemble(f"{op} R1, R2, 0x80\n"))
+                self.assertEqual(assemble(f".equ M, 0x80\n{op} R1, R2, M+8\n"),
+                                 assemble(f"{op} R1, R2, 0x88\n"))
+        # Una etiqueta es su direccion, y el rango sigue siendo el sin signo de 16 bits.
+        self.assertEqual(assemble("ORI R1, R0, datos\nHALT\ndatos:\n.word 1\n")[0],
+                         assemble("ORI R1, R0, 8\n")[0])
+        self.assertEqual(assemble(".equ M, 0xFFFF\nANDI R1, R2, M\n"),
+                         assemble("ANDI R1, R2, 65535\n"))
+        for fuente in (".equ M, 0x10000\nANDI R1, R2, M\n", ".equ M, -1\nORI R1, R2, M\n"):
+            with self.subTest(fuente=fuente), self.assertRaises(AsmError):
+                assemble(fuente)
+
     def test_la_sigue_siempre_en_dos_palabras(self):
         self.assertEqual(len(assemble("LA R1, 5\n")), 2)
         self.assertEqual(len(assemble("LA R1, datos\nHALT\ndatos:\n.word 1\n")), 4)
@@ -750,6 +767,50 @@ class ListingTest(unittest.TestCase):
         listing = format_listing("start:\n    NOP\n")
         self.assertLess(listing.index("Etiquetas:"), listing.index("Secciones:"))
         self.assertLess(listing.index("Secciones:"), listing.index("Simbolos:"))
+
+
+class GetIdFamilyTest(unittest.TestCase):
+    """GETTID, GETLANE, GETWARP, GETLWARP y GETARG: un opcode, un campo `type`."""
+
+    OPCODE = 0x30
+
+    @staticmethod
+    def word(rd: int, type_: int) -> int:
+        return 0x30 << 26 | rd << 21 | type_ << 16
+
+    def test_cada_mnemonico_lleva_su_type_en_el_campo_y(self):
+        for mnemonico, tipo in (("GETTID", 0), ("GETLANE", 1), ("GETWARP", 2),
+                                ("GETLWARP", 3), ("GETARG", 4)):
+            with self.subTest(mnemonico):
+                self.assertEqual(assemble(f"{mnemonico} R7"), [self.word(7, tipo)])
+
+    def test_gettid_conserva_su_encoding_de_siempre(self):
+        """`type = 0` es el GETTID de antes: los binarios existentes no cambian.
+
+        0xC0200000 es el `GETTID R1` que escriben a mano los bancos de prueba del
+        RTL (`gpu_regions_tb.v`)."""
+        self.assertEqual(assemble("GETTID R1"), [0xC0200000])
+
+    def test_mayusculas_y_minusculas(self):
+        self.assertEqual(assemble("getlane r2"), assemble("GETLANE R2"))
+
+    def test_destino_r0_se_codifica_igual(self):
+        # Escribir R0 se descarta al ejecutar; el ensamblador no lo prohíbe.
+        self.assertEqual(assemble("GETARG R0"), [self.word(0, 4)])
+
+    def test_operandos_incorrectos(self):
+        for fuente in ("GETLANE", "GETARG R1, R2", "GETLWARP 5"):
+            with self.subTest(fuente), self.assertRaises(AsmError):
+                assemble(fuente)
+
+    def test_getwid_ya_no_existe(self):
+        """Se renombró a GETLWARP: un solo nombre, sin alias."""
+        with self.assertRaises(AsmError):
+            assemble("GETWID R1")
+
+    def test_ocupan_una_palabra_y_no_mueven_etiquetas(self):
+        fuente = "GETTID R1\nGETARG R2\nfin: HALT"
+        self.assertEqual(first_pass(fuente)[1]["fin"], 8)
 
 
 if __name__ == "__main__":

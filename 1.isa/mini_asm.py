@@ -23,7 +23,8 @@ Sintaxis inicial:
     JR    R5
     RET               ; alias de JR R31
 
-    GETTID R1
+    GETTID R1          ; identificadores de GPU: GETTID, GETLANE, GETWARP,
+    GETLANE R2         ; GETLWARP y GETARG (mismo opcode, distinto `type`)
     NOP
     HALT
 
@@ -155,6 +156,27 @@ SHIFT_IMM_OPS = {
     "SHLI": "SHL",
     "SHRI": "SHR",
     "SARI": "SAR",
+}
+
+# La familia GETID: un solo opcode (0x30, el de GETTID) con el campo `type` en el
+# campo Y de un I-Type con imm16 = 0 (propuesta-v0.3.md §9, propuesta-v0.4b.md
+# §6.1). `type = 0` es el encoding de siempre de GETTID, así que los binarios
+# existentes no cambian. Tampoco gastan entrada propia en OPCODES.
+#
+#   GETTID   0   thread residente: warp * lanes + lane
+#   GETLANE  1   lane dentro del warp
+#   GETWARP  2   slot de warp físico
+#   GETLWARP 3   LOGICAL_WARP_ID, el id lógico que asigna el lanzador
+#   GETARG   4   WARP_ARG, el puntero a los argumentos del job
+#
+# GETLWARP es el antiguo GETWID (`warp_user_id`): se renombró porque GETWID se
+# leía como "workgroup id". Un tipo mayor que 4 está reservado.
+GETID_TYPES = {
+    "GETTID": 0,
+    "GETLANE": 1,
+    "GETWARP": 2,
+    "GETLWARP": 3,
+    "GETARG": 4,
 }
 
 I3_SIGNED_OPS = {
@@ -1131,6 +1153,13 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
         return encode_r(OPCODES[SHIFT_IMM_OPS[mnemonic]], rd, ra, amount,
                         SHIFT_IMMEDIATE_BIT)
 
+    # GETTID/GETLANE/GETWARP/GETLWARP/GETARG Rd: mismo opcode, distinto `type`.
+    if mnemonic in GETID_TYPES:
+        if len(ops) != 1:
+            raise AsmError(f"{mnemonic} requiere: Rd")
+        rd = parse_reg(ops[0])
+        return encode_i(OPCODES["GETTID"], rd, GETID_TYPES[mnemonic], 0)
+
     if mnemonic not in OPCODES:
         raise AsmError(f"instrucción desconocida: {mnemonic}")
 
@@ -1207,7 +1236,9 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
             raise AsmError(f"{mnemonic} requiere: X, Y, imm16")
         x = parse_reg(ops[0])
         y = parse_reg(ops[1])
-        imm = check_unsigned(parse_int(ops[2]), 16, f"inmediato {mnemonic}")
+        # Como en el grupo con signo: admite `.equ` y aritmetica de etiquetas.
+        imm = check_unsigned(resolve_target(ops[2], labels), 16,
+                             f"inmediato {mnemonic}")
         return encode_i(opcode, x, y, imm)
 
     # -------------------------------------------------------
@@ -1266,15 +1297,7 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
         ra = parse_reg(ops[0])
         return encode_i(opcode, 0, ra, 0)
 
-    # -------------------------------------------------------
-    # GETTID Rd
-    # -------------------------------------------------------
-
-    if mnemonic == "GETTID":
-        if len(ops) != 1:
-            raise AsmError("GETTID requiere: Rd")
-        rd = parse_reg(ops[0])
-        return encode_i(opcode, rd, 0, 0)
+    # (GETTID y el resto de la familia GETID se ensamblan arriba, con `GETID_TYPES`.)
 
     # -------------------------------------------------------
     # SSY label

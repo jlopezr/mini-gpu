@@ -7,6 +7,7 @@ from dataclasses import dataclass
 MASK = 0xffffffff
 MEMORY = frozenset((0x15, 0x16, *range(0x18, 0x1e)))
 STORES = frozenset((0x16, 0x1a, 0x1d))
+GETID_LAST_TYPE = 4  # GETTID, GETLANE, GETWARP, GETLWARP, GETARG
 SPECIAL = frozenset((0x31, 0x32, 0x33, 0x3f))
 SUPPORTED = frozenset((*range(0x1e), *range(0x20, 0x28), 0x2f,
                        0x30, 0x31, 0x32, 0x33, 0x3e, 0x3f))
@@ -14,7 +15,7 @@ NAMES = dict(enumerate(('NOP ADD SUB MULFX AND OR XOR SHL SHR SAR MUL MULHI '
                         'DIV DIVU REM REMU MOVI ADDI ANDI ORI XORI LOAD STORE MOVHI '
                         'LOADB LOADUB STOREB LOADH LOADUH STOREH').split()))
 NAMES.update(zip(range(0x20, 0x28), 'BEQ BNE BLT BGE BLTU BGEU SLT SLTU'.split()))
-NAMES.update({0x2f: 'BRA', 0x30: 'GETTID', 0x31: 'SSY', 0x32: 'BAR',
+NAMES.update({0x2f: 'BRA', 0x30: 'GETID', 0x31: 'SSY', 0x32: 'BAR',
               0x33: 'EXIT', 0x3e: 'TRAP', 0x3f: 'HALT'})
 
 
@@ -54,8 +55,8 @@ def decode(word, pc):
         invalid = bool(word & 0x7ff)
     elif op in (0x10, 0x17):
         invalid = ra != 0
-    elif op == 0x30:
-        invalid = bool(word & 0x1fffff)
+    elif op == 0x30:  # GETID: Y es el type (0..4) e imm16 = 0
+        invalid = bool(word & 0xffff) or ra > GETID_LAST_TYPE
     if invalid:
         raise ISAError(5)
     seq = (pc + 4) & MASK
@@ -71,8 +72,11 @@ class Result:
     access: tuple[int, int, int | None, bool] | None = None
 
 
-def execute(d, registers, tid=0):
-    """Evaluate latched operands; a memory operation returns a request, not data."""
+def execute(d, registers, ids=(0, 0, 0, 0, 0)):
+    """Evaluate latched operands; a memory operation returns a request, not data.
+
+    `ids` is (GETTID, GETLANE, GETWARP, GETLWARP, GETARG) for the executing lane.
+    """
     r = (0, *registers[1:])
     a, b, op = r[d.ra], r[d.rb], d.op
     value = None
@@ -111,7 +115,7 @@ def execute(d, registers, tid=0):
     elif op == 0x26: value = int(signed(a) < signed(b))
     elif op == 0x27: value = int(a < b)
     elif op == 0x2f: pc = d.target
-    elif op == 0x30: value = tid
+    elif op == 0x30: value = ids[d.ra]
     return Result(pc, (d.rd, value & MASK) if value is not None and d.rd else None)
 
 

@@ -215,6 +215,13 @@
 `define MMIO_GPU_WARPS_GROUP_OFF   32'h0000_0008
 `define MMIO_GPU_WARPS_SIMT_OFF    32'h0000_000C
 
+// Dos arrays de una palabra por warp, a continuacion de los 32 descriptores
+// (32 * 16 = 0x200), segun la regla de mmio.md §1.4: el elemento n esta en
+// `_OFF + 4n`. LOGICAL_ID es el id lógico del warp que lee GETLWARP; ARG es el
+// argumento del job que lee GETARG.
+`define MMIO_GPU_WARPS_LOGICAL_ID_OFF 32'h0000_0200
+`define MMIO_GPU_WARPS_ARG_OFF     32'h0000_0280
+
 // ==== GPU SIMT DEBUG (mmio.md §14.3) =====================================
 
 `define MMIO_GPU_SIMT_CONTEXT_OFF  32'h0000_0000

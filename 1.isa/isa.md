@@ -350,7 +350,7 @@ son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
 
 |      Opcode | Mnemónico | Operandos | Estado                               |
 |------------:|-----------|-----------|--------------------------------------|
-|      `0x30` | `GETTID`  | `Rd`      | MiniGPU; en MiniCPU devuelve cero    |
+|      `0x30` | `GETID`   | `Rd`      | familia `GETTID`/`GETLANE`/`GETWARP`/`GETLWARP`/`GETARG`; en MiniCPU solo `GETTID`, que devuelve cero |
 |      `0x31` | `SSY`     | `label`   | MiniGPU; en MiniCPU no-op. B-Type    |
 |      `0x32` | `BAR`     | —         | MiniGPU; en MiniCPU no-op            |
 |      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
@@ -386,8 +386,30 @@ quedan lanes vivas, el warp termina y se vacían sus pilas REGION y PATH.
 (`X = 0`, `Y = 0`, `imm16 = 0`). Son instrucciones de MiniGPU; no se añaden
 al repertorio implementado por la MiniCPU escalar.
 
-`GETLANE` y `GETWARP` no están implementadas ni tienen opcode asignado en esta
-versión. Su posible incorporación se describe en `propuesta-v0.2.md`.
+**`GETID`** es la familia de identificadores de ejecución: un solo opcode, `0x30`,
+con el campo `type` en el campo Y de un I-Type con `imm16 = 0`. `type = 0` es el
+`GETTID` de siempre, así que los binarios existentes no cambian.
+
+| `type` | Mnemónico | Devuelve |
+|---:|---|---|
+| 0 | `GETTID` | thread residente, `warp_id * warp_size + core_id` |
+| 1 | `GETLANE` | índice de lane dentro del warp |
+| 2 | `GETWARP` | slot de warp físico |
+| 3 | `GETLWARP` | `LOGICAL_WARP_ID`: el id lógico que asigna el lanzador, independiente del slot físico |
+| 4 | `GETARG` | `WARP_ARG`: el argumento del warp, típicamente un puntero al bloque de argumentos de su trabajo |
+
+Un `type` mayor que 4, o `imm16` distinto de cero, es `ERROR_INVALID_ENCODING`.
+`GETLWARP` y `GETARG` valen lo que el lanzador haya escrito en `LOGICAL_WARP_ID[n]`
+y `WARP_ARG[n]` (`mmio.md` §14.2), y cero tras el reset. Son iguales para todas las
+lanes del warp, y solo escriben las lanes activas.
+
+`GETLWARP` es el antiguo `GETWID` (`warp_user_id`) de las propuestas v0.2 a v0.4b:
+se renombró porque `GETWID` se leía como «workgroup id», que es otra cosa
+(`WORKGROUP_ID` solo agrupa warps para `BAR`). `GETARG` es nueva.
+
+**Estado:** el ensamblador (`mini_asm.py`), el simulador funcional de `11` y el de
+`32` los implementan. **Faltan** el modelo de ciclos de `25`, el ensamblador de
+`NEW-ASSM` y el RTL.
 
 `HALT` detiene la MiniCPU. En la MiniGPU actual retira las lanes activas con
 la misma semántica que `EXIT`.
