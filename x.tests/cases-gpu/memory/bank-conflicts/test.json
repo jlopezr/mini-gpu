@@ -7,6 +7,12 @@
   "program": "program.asm",
   "warp_config": "warps.json",
   "max_instructions": 1000,
+  "initial_memory": [
+    {
+      "address": 4096,
+      "file": "initial_zeros.hex"
+    }
+  ],
   "expect": {
     "memory_dumps": [
       {

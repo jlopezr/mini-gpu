@@ -1,0 +1,13 @@
+{
+  "warp_size": 8,
+  "warps": [
+    {"id": 0, "pc": 0, "active_mask": 255},
+    {"id": 1, "pc": 0, "active_mask": 255},
+    {"id": 2, "pc": 0, "active_mask": 255},
+    {"id": 3, "pc": 0, "active_mask": 255},
+    {"id": 4, "pc": 0, "active_mask": 255},
+    {"id": 5, "pc": 0, "active_mask": 255},
+    {"id": 6, "pc": 0, "active_mask": 255},
+    {"id": 7, "pc": 0, "active_mask": 255}
+  ]
+}

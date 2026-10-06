@@ -1,0 +1,9 @@
+{
+  "warp_size": 8,
+  "warps": [
+    {"id": 0, "pc": 0, "active_mask": 255, "logical_warp_id": 11, "arg": "0x00000100"},
+    {"id": 1, "pc": 0, "active_mask": 255, "logical_warp_id": 10, "arg": "0x00000200"},
+    {"id": 2, "pc": 0, "active_mask": 255, "logical_warp_id": 9, "arg": "0x00000300"},
+    {"id": 5, "pc": 0, "active_mask": 255, "logical_warp_id": "0x80000000", "arg": "0xFFFFFFFF"}
+  ]
+}

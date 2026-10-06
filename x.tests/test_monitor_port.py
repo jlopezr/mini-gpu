@@ -294,6 +294,9 @@ class SysIdTest(unittest.TestCase):
         (0, "gpu_lane.v", re.compile(r"OPCODE_MUL\b")),
         (1, "gpu_lane.v", re.compile(r"OPCODE_DIV\b")),
         (2, "gpu_lane.v", re.compile(r"OPCODE_LOADB|OPCODE_STOREB")),
+        # En la 29 los accesos pequenos los despacha el SM a la LSU, y la lane
+        # no los ve: se decodifican aqui.
+        (2, "gpu_sm.v", re.compile(r"OPCODE_LOADB\b")),
         (3, "gpu_sm.v", re.compile(r"6'h31")),
     )
     def test_el_perfil_de_isa_sale_del_rtl(self):

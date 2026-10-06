@@ -114,10 +114,13 @@ class GpuFpgaTest(unittest.TestCase):
             else:
                 accepted.append(case['name'])
         self.assertEqual(len(accepted), 58)
-        self.assertEqual(len(skipped), 13)
-        # `gpu_ids` solo la declaran los simuladores: el RTL no tiene GETLANE,
-        # GETWARP, GETLWARP ni GETARG, y sin esto pararia con 0x05.
+        self.assertEqual(len(skipped), 18)
+        # La version por defecto (BRAM, sin GETID ni accesos pequenos) los omite:
+        # sin la capacidad pararia con 0x05 o 0x01, que es lo que produce un
+        # ensamblador roto.
         self.assertIn('gpu_ids', skipped['gpu-ids-getid-family-conformance'])
+        self.assertIn('gpu_ids', skipped['gpu-ids-getid-8warps'])
+        self.assertIn('subword_memory', skipped['subword-lane-bytes-halves'])
         # Pinta 320x240 en 0x01000000: fuera de la memoria de la versión por
         # defecto (BRAM), pero dentro de la de las tres GPU con SDRAM.
         self.assertIn('fuera del mapa de memoria', skipped['demo-warp-lane-bands'])
@@ -140,6 +143,33 @@ class GpuFpgaTest(unittest.TestCase):
         self.assertIn('atómicos', skipped['gpu-division-by-zero'])
         self.assertIn('gpu-mandelbrot-packed', accepted)
         self.assertIn('ssy-all-paths', accepted)
+
+    def test_la_29_declara_getid_y_accesos_pequenos_y_ejecuta_sus_casos(self):
+        """`gpu_ids` y `subword_memory` salen del RTL de la 29, y solo de el:
+        ninguna otra GPU los tiene todavia."""
+        self.assertLessEqual({'gpu_ids', 'subword_memory'},
+                             gpu_fpga.capabilities('smpipe'))
+        for version in ('bram', 'sdram', 'lsu2'):
+            with self.subTest(version=version):
+                self.assertFalse({'gpu_ids', 'subword_memory'} &
+                                 gpu_fpga.capabilities(version))
+        for nombre in ('gpu-ids/getid-8warps', 'gpu-ids/getid-reserved-type',
+                       'subword/lane-bytes-halves'):
+            case = runner.load_case(
+                runner.ROOT / f'cases-gpu/extensions/{nombre}/test.json')
+            with self.subTest(case=nombre):
+                self.assertIsNone(gpu_fpga.incompatibility(case, 'smpipe'))
+        # getid-family lanza warps de 4 lanes y el RTL tiene 8: solo simulador.
+        familia = runner.load_case(
+            runner.ROOT / 'cases-gpu/extensions/gpu-ids/getid-family/test.json')
+        self.assertIn('warp_size', gpu_fpga.incompatibility(familia, 'smpipe'))
+        # Los dos de fallo de memoria declaran la direccion, y el monitor no la
+        # expone: se omiten por eso, no por una capacidad que falte.
+        for nombre in ('subword/misaligned-halfword', 'subword/mmio-byte'):
+            case = runner.load_case(
+                runner.ROOT / f'cases-gpu/extensions/{nombre}/test.json')
+            with self.subTest(case=nombre):
+                self.assertIn('dirección', gpu_fpga.incompatibility(case, 'smpipe'))
 
     def test_explicit_incompatible_case_rejected_before_hardware(self):
         path = runner.ROOT / 'cases-gpu/programs/mandelbrot/test.json'

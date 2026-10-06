@@ -1,0 +1,29 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-ids-getid-reserved-type",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["gpu_ids"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 5,
+    "fault": {
+      "pc": 8,
+      "warp_id": 0,
+      "core_id": null,
+      "address": null
+    },
+    "warps": {
+      "0": {
+        "pc": 8,
+        "registers": {
+          "0": {
+            "R2": 4660
+          }
+        }
+      }
+    }
+  }
+}

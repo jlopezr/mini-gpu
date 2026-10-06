@@ -188,7 +188,7 @@ class ListaDeCasosTest(unittest.TestCase):
 class FormatoTest(unittest.TestCase):
 
     EXTENSIONES = {".asm", ".bin", ".program.hex", ".regs.hex", ".memory.hex",
-                   ".config.hex", ".counts.hex", ".state.hex"}
+                   ".config.hex", ".counts.hex", ".state.hex", ".ids.hex"}
 
     def _generar(self, casos):
         tmp = tempfile.TemporaryDirectory()
@@ -214,7 +214,8 @@ class FormatoTest(unittest.TestCase):
         programa = (out / "00.program.hex").read_text().split()
         self.assertEqual(len(programa), 256)
         for archivo, palabras in (("regs", 8 * 8 * 32), ("config", 8 * 3),
-                                  ("counts", 8), ("state", 8 * 3), ("memory", 512)):
+                                  ("counts", 8), ("state", 8 * 3), ("memory", 512),
+                                  ("ids", 8 * 2)):
             lineas = (out / f"00.{archivo}.hex").read_text().split()
             self.assertEqual(len(lineas), palabras, archivo)
             self.assertTrue(all(len(l) == 8 and int(l, 16) >= 0 for l in lineas), archivo)
@@ -236,6 +237,17 @@ class FormatoTest(unittest.TestCase):
         out, _ = self._generar([_caso("a", source="NOP\nHALT", config=config)])
         palabras = (out / "00.config.hex").read_text().split()
         self.assertEqual(palabras[3:6], ["00000004", "0000000f", "00000003"])
+
+    def test_el_id_logico_y_el_argumento_llegan_al_ids_hex(self):
+        # Un par (LOGICAL_WARP_ID, WARP_ARG) por warp, en orden de slot fisico.
+        config = {"warp_size": 8, "warps": [
+            {"id": 0, "logical_warp_id": 7, "arg": "0x1000"},
+            {"id": 3, "logical_warp_id": 2, "arg": 0x2000}]}
+        out, _ = self._generar([_caso("a", source="NOP\nHALT", config=config)])
+        palabras = (out / "00.ids.hex").read_text().split()
+        self.assertEqual(palabras[0:2], ["00000007", "00001000"])
+        self.assertEqual(palabras[2:6], ["00000000"] * 4, "los warps sin configurar, a cero")
+        self.assertEqual(palabras[6:8], ["00000002", "00002000"])
 
 
 class ConsumidorTest(unittest.TestCase):

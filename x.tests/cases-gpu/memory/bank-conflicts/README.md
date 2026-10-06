@@ -16,3 +16,5 @@ Cada hilo accede a `4096 + 32·tid`: las 8 lanes de un warp caen en 8 bloques de
 - Lleva `rtl.differential`: `tools/make_rtl_fixtures.py` lo ejecuta en el simulador funcional y `gpu_system_tb.v` compara con ello el estado completo del RTL.
 
 Contexto: [README de la categoría](../README.md).
+
+Lleva initial_memory a cero sobre la zona que vuelca: escribe una palabra de cada ocho y compara el resto con ceros, y en la placa la SDRAM no se inicializa, así que dependía de lo que hubiera dejado el caso anterior.

@@ -1,0 +1,30 @@
+{
+  "architecture": "gpu",
+  "name": "subword-misaligned-halfword-gpu",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["subword_memory"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "fault": {
+      "pc": 8,
+      "warp_id": 0,
+      "core_id": 0,
+      "address": 4097
+    },
+    "warps": {
+      "0": {
+        "pc": 8,
+        "registers": {
+          "0": {
+            "R1": 4097,
+            "R2": 0
+          }
+        }
+      }
+    }
+  }
+}

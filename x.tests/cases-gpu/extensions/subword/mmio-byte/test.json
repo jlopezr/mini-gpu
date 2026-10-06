@@ -1,0 +1,29 @@
+{
+  "architecture": "gpu",
+  "name": "subword-mmio-byte",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["subword_memory"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "fault": {
+      "pc": 12,
+      "warp_id": 0,
+      "core_id": 0,
+      "address": "0x80000000"
+    },
+    "warps": {
+      "0": {
+        "pc": 12,
+        "registers": {
+          "0": {
+            "R1": "0x80000000"
+          }
+        }
+      }
+    }
+  }
+}
