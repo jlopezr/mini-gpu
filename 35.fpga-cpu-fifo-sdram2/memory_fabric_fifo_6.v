@@ -542,8 +542,26 @@ module memory_fabric_fifo_6 #(
 
     wire rsp_queue_full  = (rsp_count == QUEUE_DEPTH);
     wire rsp_queue_empty = (rsp_count == 0);
-    // The credit rule guarantees room, so a completion is never held back.
-    wire rsp_push = complete;
+    // La finalizacion se REGISTRA antes de entrar en la cola: `complete` mira
+    // `meta_error[meta_rd_ptr]` y `sdram_done`, y si ademas habilitaba los 129
+    // bits de `rsp_data_mem` era un fanout combinacional que cruzaba media
+    // FPGA. `rp_data` captura sin habilitacion (`sdram_rdata` solo vale en el
+    // ciclo de `done`, y `rp_valid` dice cuando importa).
+    //
+    // La regla de creditos sigue valiendo: `outstanding` baja con `rsp_pop`, asi
+    // que la peticion que espera en `rp_*` sigue contando y la cola tiene sitio.
+    reg         rp_valid;
+    reg [5:0]   rp_port;
+    reg [128:0] rp_data;
+
+    always @(posedge clk) begin
+        rp_valid <= !reset && complete;
+        rp_port  <= meta_port[meta_rd_ptr];
+        rp_data  <= meta_error[meta_rd_ptr] ? {1'b1, 128'd0}
+                                            : {1'b0, sdram_rdata};
+    end
+
+    wire rsp_push = rp_valid;
 
     reg         route_valid;
     reg [5:0]   route_port;
@@ -579,7 +597,7 @@ module memory_fabric_fifo_6 #(
     assign sdram_req_wmask = backend_wmask;
 
     assign busy = (state != ST_IDLE) || !cmd_empty || issue_valid ||
-                  (outstanding != 0) || route_valid;
+                  (outstanding != 0) || rp_valid || route_valid;
 
     // Command and response queue storage/counts. Both queues support one push
     // and one pop in the same cycle without changing their occupancy.
@@ -612,10 +630,8 @@ module memory_fabric_fifo_6 #(
             endcase
 
             if (rsp_push) begin
-                rsp_port_mem[rsp_wr_ptr] <= meta_port[meta_rd_ptr];
-                rsp_data_mem[rsp_wr_ptr] <= meta_error[meta_rd_ptr]
-                    ? {1'b1, 128'd0}
-                    : {1'b0, sdram_rdata};
+                rsp_port_mem[rsp_wr_ptr] <= rp_port;
+                rsp_data_mem[rsp_wr_ptr] <= rp_data;
                 rsp_wr_ptr <= rsp_wr_ptr + 1'b1;
             end
             if (rsp_pop)
