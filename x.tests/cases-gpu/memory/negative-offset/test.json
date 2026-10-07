@@ -1,0 +1,53 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-negative-offset",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "max_instructions": 20,
+  "initial_memory": [
+    {
+      "address": "0x100",
+      "file": "zeros.hex"
+    },
+    {
+      "address": "0x140",
+      "file": "in.hex"
+    },
+    {
+      "address": "0x180",
+      "file": "zeros.hex"
+    }
+  ],
+  "expect": {
+    "error": false,
+    "fault": null,
+    "instructions_executed": 9,
+    "warps": {
+      "0": {
+        "pc": 36,
+        "instructions_executed": 9,
+        "active_mask": 0,
+        "registers": {
+          "0": {
+            "R5": 1,
+            "R6": 160
+          },
+          "7": {
+            "R5": 8,
+            "R6": 181
+          }
+        }
+      }
+    },
+    "memory_dumps": [
+      {
+        "address": "0x100",
+        "file": "expected-out.hex"
+      },
+      {
+        "address": "0x180",
+        "file": "expected-copy.hex"
+      }
+    ]
+  }
+}

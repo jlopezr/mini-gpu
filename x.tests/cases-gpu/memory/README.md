@@ -12,3 +12,4 @@ resultado contra volcados de memoria.
 | [bank-conflicts](bank-conflicts/) | Stride de 32 bytes: ninguna coalescencia |
 | [top-of-bram-word](top-of-bram-word/) | Escritura y lectura en `0x1FFFC` (límite de 128 KiB) |
 | [unified-code](unified-code/) | Un `STORE` sobre el código cambia lo que se ejecuta |
+| [negative-offset](negative-offset/) | `LOAD`/`STORE` con desplazamiento negativo: el acarreo de una lane no pasa a la siguiente |
