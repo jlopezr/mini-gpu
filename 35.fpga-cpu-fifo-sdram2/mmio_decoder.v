@@ -221,46 +221,62 @@ module mmio_decoder #(
   wire escritura_parcial = write && (write_mask != 4'b1111);
   /* verilator lint_on UNUSEDSIGNAL */
 
+  // El error de direccion se calcula EN PARALELO: un `e_*` por dispositivo, sin
+  // depender del bloque, y al final se elige con las coincidencias de bloque.
+  // Antes era una cadena if/else que ponia los comparadores de rango de VIDEO
+  // y de PERF detras de la decodificacion del bloque, en el camino critico de
+  // la CPU. Los rangos son ahora decodificaciones de bits.
+  wire word_aligned = !(|offset[1:0]);
+
+  // Solo lectura, y solo las siete palabras. El resto del bloque da error: no
+  // devuelve cero ni repite las palabras por alias (§5).
+  wire e_system = write || offset_alto || (offset[7:2] > 6'd6) || !word_aligned;
+  wire e_serial = offset_alto || (palabra > 6'd2);
+
+  // Registros de control bajos y ventanas de consola 2D v0.4.
+  // 0x0080..0x0094: offset[15:5] == 4 y, alineado, offset[4:0] <= 0x14, que es
+  // !(offset[4] && offset[3]).
+  wire v_rango_80 = (offset[15:5] == 11'd4) && !(offset[4] && offset[3]);
+  // 0x1000..0x13FC.
+  wire v_rango_1000 = (offset[15:10] == 6'b000100);
+  // 0x6000..0x857C: 0x6000..0x7FFF mas 0x8000..0x857C (offset[10:8] <= 5 y, en 5,
+  // offset[7] = 0).
+  wire v_rango_6000 = (offset[15:13] == 3'b011)
+      || ((offset[15:11] == 5'b10000)
+          && !(offset[10] && offset[9])
+          && !(offset[10] && offset[8] && offset[7]));
+  wire e_video = !((!offset_alto && VIDEO_REGISTERS[palabra])
+      || ((v_rango_80 || v_rango_1000 || v_rango_6000) && word_aligned));
+
+  // §25. Palabras alineadas y nada mas (restriccion de INPUT: solo accesos
+  // de 32 bits). Lectura: EVENT_DATA (+0x00), STATUS (+0x04), KEY_STATE0..7
+  // (+0x10..+0x2C) y MOUSE_BUTTONS (+0x30). Escritura: SOLO EVENT_CTRL
+  // (+0x08); leerlo, escribir un registro de solo lectura, el hueco +0x0C,
+  // los huecos hasta +0x10 y todo lo que pase de +0x30 dan error. Una
+  // escritura con mascara parcial tambien: no es una palabra.
+  wire e_input = offset_alto || !word_aligned
+      || (write ? ((palabra != 6'd2) || (write_mask != 4'b1111))
+                : !((palabra <= 6'd1) || (palabra >= 6'd4 && palabra <= 6'd12)));
+
+  // Disposicion de §12.6. Aqui SI hay registros por encima de +0xFF: el array
+  // llega hasta +0x0FC y el control esta detras, en +0x100.
+  //
+  //   +0x000..+0x0FC  array: solo las ranuras con contador (PERF_SLOTS)
+  //   +0x100..+0x108  PERF_CTRL, PERF_OVF0, PERF_OVF1
+  wire e_perf = !offset_alto
+      ? (palabra >= PERF_SLOTS)
+      : ((offset > 16'h0108) || !word_aligned || (offset[15:8] != 8'h01));
+
+  wire hay_bloque = es_system_d || es_serial_d || es_video_d || es_perf_d
+                    || es_input_d;
+
   always @* begin
-    error_direccion = 1'b0;
-    if (fuera) begin
-      error_direccion = 1'b1;
-    end else if (es_system_d) begin
-      // Solo lectura, y solo las siete palabras. El resto del bloque da
-      // error: no devuelve cero ni repite las palabras por alias (§5).
-      error_direccion = write || offset_alto || (offset[7:2] > 6'd6)
-                        || |offset[1:0];
-    end else if (es_serial_d) begin
-      error_direccion = offset_alto || (palabra > 6'd2);
-    end else if (es_video_d) begin
-      // Registros de control bajos y ventanas de consola 2D v0.4.
-      error_direccion = !((!offset_alto && VIDEO_REGISTERS[palabra])
-          || ((offset >= 16'h0080) && (offset <= 16'h0094) && !(|offset[1:0]))
-          || ((offset >= 16'h1000) && (offset <= 16'h13fc) && !(|offset[1:0]))
-          || ((offset >= 16'h6000) && (offset <= 16'h857c) && !(|offset[1:0])));
-    end else if (es_input_d) begin
-      // §25. Palabras alineadas y nada mas (restriccion de INPUT: solo accesos
-      // de 32 bits). Lectura: EVENT_DATA (+0x00), STATUS (+0x04), KEY_STATE0..7
-      // (+0x10..+0x2C) y MOUSE_BUTTONS (+0x30). Escritura: SOLO EVENT_CTRL
-      // (+0x08); leerlo, escribir un registro de solo lectura, el hueco +0x0C,
-      // los huecos hasta +0x10 y todo lo que pase de +0x30 dan error. Una
-      // escritura con mascara parcial tambien: no es una palabra.
-      error_direccion = offset_alto || |offset[1:0]
-          || (write ? ((palabra != 6'd2) || (write_mask != 4'b1111))
-                    : !((palabra <= 6'd1) || (palabra >= 6'd4 && palabra <= 6'd12)));
-    end else if (es_perf_d) begin      // Disposicion de §12.6. Aqui SI hay registros por encima de +0xFF: el
-      // array llega hasta +0x0FC y el control esta detras, en +0x100.
-      //
-      //   +0x000..+0x0FC  array: solo las ranuras con contador (PERF_SLOTS)
-      //   +0x100..+0x108  PERF_CTRL, PERF_OVF0, PERF_OVF1
-      if (offset < 16'h0100)
-        error_direccion = (palabra >= PERF_SLOTS) || |offset[15:8];
-      else
-        error_direccion = (offset > 16'h0108) || |offset[1:0]
-                          || (offset[15:8] != 8'h01);
-    end else begin
-      error_direccion = 1'b1;       // bloque sin dispositivo
-    end
+    error_direccion = fuera || !hay_bloque
+        || (es_system_d && e_system)
+        || (es_serial_d && e_serial)
+        || (es_video_d  && e_video)
+        || (es_input_d  && e_input)
+        || (es_perf_d   && e_perf);
   end
 
   // El error que ve el nucleo: el de direccion mas el que pone el

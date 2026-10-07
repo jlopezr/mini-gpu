@@ -361,9 +361,19 @@ module sdram_controller_128 #(
     reg [DCAP:0]   rd_pipe;       // rd_pipe[k] = hace k ciclos que salio un READ
     reg [DCAP+7:0] dn_pipe;       // idem para cualquier READ/WRITE
     reg            cap_run;
-    reg [2:0]      cap_idx;
-    // Beat que se captura en este ciclo: el 0 al arrancar, luego cap_idx.
-    wire [2:0]     cap_beat = cap_run ? cap_idx : 3'd0;
+    // Beat que se captura en este ciclo, en one-hot registrado: el 0 al
+    // arrancar (`cap0`) y luego `cap_oh[i]`, que avanza un bit por ciclo. Un
+    // contador con decodificador por beat ponia un comparador delante de cada
+    // habilitacion de `rdata`.
+    reg [7:1]      cap_oh;
+    wire           cap0 = rd_pipe[DCAP] && !cap_run;
+
+    // Copia registrada de !wr_run: la habilitacion de wr_buf (144 flops) no
+    // cuelga del mismo registro que usa el resto de la FSM.
+    reg            wr_free;
+
+    // Copia registrada de ref_state == R_WAIT, para el camino de act_issue.
+    reg            ref_wait;
 
     reg [3:0]  inflight;
 
@@ -532,7 +542,12 @@ module sdram_controller_128 #(
 
     wire act_issue =
         run && !col_issue && sel_v && !row_open[sel_b] &&
-        trrd_z && (ref_state != R_WAIT);
+        trrd_z && !ref_wait;
+
+    // Valor que tendra wr_run el ciclo siguiente.
+    wire wr_run_n = (col_issue && hb_write) ? 1'b1 :
+                    col_issue ? wr_run :
+                    (wr_run && wr_idx != 3'd7);
 
     // REFRESH: solo con los cuatro bancos precargados y el bus quieto.
     wire all_idle =
@@ -577,6 +592,7 @@ module sdram_controller_128 #(
             timing_count <= 0;
 
             ref_state <= R_NONE;
+            ref_wait <= 1'b0;
             refresh_count <= 0;
             refresh_due <= 1'b0;
 
@@ -611,7 +627,8 @@ module sdram_controller_128 #(
             rd_pipe <= 0;
             dn_pipe <= 0;
             cap_run <= 1'b0;
-            cap_idx <= 0;
+            cap_oh <= 0;
+            wr_free <= 1'b1;
             inflight <= 0;
 
             done <= 1'b0;
@@ -756,13 +773,15 @@ module sdram_controller_128 #(
                         refresh_due <= 1'b0;
                         timing_count <= TRFC_CYCLES[15:0] - 16'd1;
                         ref_state <= R_WAIT;
+                        ref_wait <= 1'b1;
                     end
                 end
 
                 default: begin   // R_WAIT
-                    if (timing_count == 0)
+                    if (timing_count == 0) begin
                         ref_state <= R_NONE;
-                    else
+                        ref_wait <= 1'b0;
+                    end else
                         timing_count <= timing_count - 1'b1;
                 end
             endcase
@@ -831,7 +850,7 @@ module sdram_controller_128 #(
             // el WRITE, `wr_run` aun vale 0 y carga justo el dato de ese slot;
             // despues `wr_run` lo congela. Asi su habilitacion no cuelga de
             // `col_issue`, que ya tiene bastante fanout.
-            if (!wr_run) begin
+            if (wr_free) begin
                 wr_buf <= hb_wdata;
                 wr_mask <= hb_wmask;
             end
@@ -874,15 +893,17 @@ module sdram_controller_128 #(
             rd_pipe <= {rd_pipe[DCAP-1:0], col_issue && !hb_write};
             dn_pipe <= {dn_pipe[DCAP+6:0], col_issue};
 
-            if (rd_pipe[DCAP] || cap_run) begin
-                // Del registro de flanco de bajada, no de DQ directamente.
-                // Ver `dq_negedge` arriba.
-                for (i = 0; i < 8; i = i + 1)
-                    if (cap_beat == i[2:0])
-                        rdata[i*16 +: 16] <= dq_negedge;
-                cap_idx <= cap_beat + 3'd1;
-                cap_run <= !(cap_run && cap_idx == 3'd7);
-            end
+            // Del registro de flanco de bajada, no de DQ directamente.
+            // Ver `dq_negedge` arriba.
+            if (cap0)
+                rdata[15:0] <= dq_negedge;
+            for (i = 1; i < 8; i = i + 1)
+                if (cap_oh[i])
+                    rdata[i*16 +: 16] <= dq_negedge;
+            cap_oh <= {cap_oh[6:1], cap0};
+            cap_run <= cap0 || (|cap_oh[6:1]);
+
+            wr_free <= !wr_run_n;
 
             // `done` sube en el ciclo en que el ultimo beat ya esta en rdata.
             // Las escrituras usan la misma latencia: asi los `done` salen en
