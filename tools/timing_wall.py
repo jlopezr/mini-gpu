@@ -15,6 +15,11 @@ ultimo barrido.
 reloj, como el ultimo numero de un camino critico. El periodo es el del reloj
 elegido (el de menos margen si no se dice), asi que `HOLGURA = periodo - llegada`.
 El resto de dominios y las rutas de entrada y salida de pin no se miran.
+
+Yosys aplana el diseño, asi que los registros de la CPU no llevan el nombre de su
+modulo y el agrupado por modulo los deja en `(anonimo)`. `--path` enseña en cambio
+el camino critico completo del reloj, salto a salto, con el fichero y la linea de
+cada red con nombre y la distancia que recorre en la FPGA.
 """
 import argparse
 import collections
@@ -159,6 +164,61 @@ def analyze(pnr, clock=None):
                 hard=sum(f['hard'] for f in families.values()))
 
 
+def critical_path(pnr, clock=None):
+    """El camino critico completo del reloj, salto a salto, con fichero y posicion.
+
+    `detailed_net_timings` solo trae los destinos finales (registros y RAM), asi
+    que no permite reconstruir el camino de cada uno: las LUT intermedias no
+    salen. El camino critico de `critical_paths` si es completo, y cada red con
+    nombre conserva `sources` (fichero:linea donde se declara). Las redes que crea
+    ABC no tienen fuente y salen sin ella, pero la posicion (`loc`) deja ver si
+    el camino cruza media FPGA.
+    """
+    name, constraint, achieved = pick_clock(pnr, clock)
+    edge = lambda event: re.sub(r'^(posedge|negedge) ', '', event or '')  # noqa: E731
+    paths = [p for p in pnr.get('critical_paths', [])
+             if edge(p.get('from')) == name and edge(p.get('to')) == name]
+    if not paths:
+        raise SystemExit(f'El informe no trae camino critico propio del reloj {name}.')
+    hops, total = [], 0.0
+    for step in paths[0]['path']:
+        total += step['delay']
+        source = (step.get('sources') or [''])[0]
+        if 'share/yosys' in source.replace('\\', '/'):    # la celda de la biblioteca, no es RTL nuestro
+            source = ''
+        hops.append(dict(kind=step['type'], delay=step['delay'], total=total,
+                         net=step.get('net', ''), source=source,
+                         start=tuple(step['from'].get('loc', ())), end=tuple(step['to'].get('loc', ()))))
+    return dict(clock=name, constraint=constraint, achieved=achieved, period=1000.0 / constraint,
+                hops=hops, total=total)
+
+
+def path_lines(path, source=None, color=False):
+    lines = []
+    if source:
+        lines.append(f'Fuente: {source}')
+    lines.append(f'Reloj: {path["clock"]}   exigido {path["constraint"]:.1f} MHz '
+                 f'(periodo {path["period"]:.2f} ns)   alcanzado {path["achieved"]:.2f} MHz')
+    rows = [('TIPO', 'NS', 'ACUM', 'DISTANCIA', 'RED', 'DONDE SE DECLARA')]
+    logic = routing = 0.0
+    for h in path['hops']:
+        if h['kind'] == 'routing':
+            routing += h['delay']
+        elif h['kind'] == 'logic':
+            logic += h['delay']
+        far = ''
+        if h['kind'] == 'routing' and len(h['start']) == 2 and len(h['end']) == 2:
+            far = str(abs(h['start'][0] - h['end'][0]) + abs(h['start'][1] - h['end'][1]))
+        slow = h['kind'] == 'routing' and h['delay'] >= 1.5
+        rows.append((h['kind'], (f'{h["delay"]:.2f}', '33' if slow else None), f'{h["total"]:.2f}', far,
+                     h['net'][:60], h['source']))
+    lines += [''] + _table(rows, color)
+    lines += ['', f'Camino de {path["total"]:.2f} ns: {logic:.2f} de logica y {routing:.2f} de ruteo '
+                  f'({100 * routing / max(path["total"], 1e-9):.0f} % ruteo; el resto es clk-a-q y setup).',
+              'DISTANCIA es la suma de columnas y filas entre los extremos de cada salto de ruteo.']
+    return lines
+
+
 def by_module(analysis):
     modules = collections.defaultdict(lambda: dict(worst=0.0, near=0, hard=0))
     for entry in analysis['families'].values():
@@ -280,6 +340,9 @@ def main(argv=None):
     parser.add_argument('--top', type=int, default=20, help='cuantas familias enseñar (20)')
     parser.add_argument('--cross', action='store_true',
                         help='añade la tabla ultimo salto -> destino (quien maneja la ultima red)')
+    parser.add_argument('--path', action='store_true',
+                        help='enseña el camino critico completo del reloj, salto a salto, con fichero, linea y '
+                             'distancia: para cuando el diseño esta aplanado y el muro sale como (anonimo)')
     args = parser.parse_args(argv)
 
     if args.source is not None:
@@ -300,8 +363,13 @@ def main(argv=None):
             note += ' (el build no trae detalle por red; se usa el ultimo barrido)'
     else:
         parser.error('indica un informe o --prototype')
-    analysis = analyze(load_pnr(path), args.clock)
     color = _use_color()
+    if args.path:
+        if args.compare is not None:
+            parser.error('--path no se combina con --compare')
+        print('\n'.join(path_lines(critical_path(load_pnr(path), args.clock), f'{note} ({path})', color)))
+        return 0
+    analysis = analyze(load_pnr(path), args.clock)
     if args.compare is not None:
         other = pnr_from_path(args.compare)
         second = analyze(load_pnr(other), analysis['clock'])

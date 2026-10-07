@@ -91,6 +91,42 @@ class AnalisisTest(unittest.TestCase):
         self.assertRegex(texto, r'serial_i\s+mmio_decoder_i\s+11\.20\s+2\s+0')
         self.assertNotIn('cpu_i', texto.split('\n', 1)[1])                  # sin destinos cerca, no sale
 
+    def test_path_enseña_el_camino_critico_con_fuente_distancia_y_porcentaje_de_ruteo(self):
+        def paso(tipo, retardo, red='', fuente=None, inicio=(10, 10), fin=(10, 10)):
+            p = {'type': tipo, 'delay': retardo, 'from': {'cell': 'c', 'loc': list(inicio), 'port': 'Q'},
+                 'to': {'cell': 'c', 'loc': list(fin), 'port': 'D'}}
+            if red:
+                p['net'] = red
+            if fuente:
+                p['sources'] = [fuente]
+            return p
+        pnr = informe()
+        pnr['fmax'] = {'$glbnet$clk': {'constraint': 80.0, 'achieved': 70.0},
+                       '$glbnet$clk_pix': {'constraint': 25.0, 'achieved': 60.0}}
+        pnr['critical_paths'] = [
+            {'from': 'posedge $glbnet$clk_pix', 'to': 'posedge $glbnet$clk_pix',
+             'path': [paso('routing', 9.0, 'pix')]},
+            {'from': 'posedge $glbnet$clk', 'to': 'posedge $glbnet$clk', 'path': [
+                paso('clk-to-q', 0.5),
+                paso('routing', 1.0, 'cpu_imem_address[3]', 'instruction_buffer.v:111.23-111.26', (10, 10), (13, 12)),
+                paso('logic', 0.25),
+                paso('routing', 2.25, '$abc$lut', 'C:\\x\\share/yosys/lattice/cells_map_trellis.v:108.23-108.24',
+                     (13, 12), (40, 12))]}]
+        camino = tw.critical_path(pnr)
+        self.assertEqual(camino['clock'], '$glbnet$clk')                 # no el pix, que lo contiene
+        self.assertAlmostEqual(camino['total'], 4.0)
+        texto = '\n'.join(tw.path_lines(camino))
+        self.assertIn('instruction_buffer.v:111', texto)
+        self.assertNotIn('cells_map_trellis', texto)                     # la biblioteca no es nuestro RTL
+        self.assertRegex(texto, r'routing\s+1\.00\s+1\.50\s+5\s+cpu_imem_address')   # 3 + 2 de distancia
+        self.assertRegex(texto, r'routing\s+2\.25\s+4\.00\s+27')
+        self.assertIn('0.25 de logica y 3.25 de ruteo (81 % ruteo', texto)
+
+    def test_path_sin_camino_propio_del_reloj_lo_dice(self):
+        with self.assertRaises(SystemExit) as error:
+            tw.critical_path(dict(informe(), critical_paths=[]))
+        self.assertIn('camino critico', str(error.exception))
+
     def test_comparar_enseña_la_bajada_y_el_total_de_destinos(self):
         malo = tw.analyze(informe(78.0, nets=[net('d', 'wide_i.buffer_TRELLIS_FF_Q_1', 12.4),
                                               net('d', 'wide_i.buffer_TRELLIS_FF_Q_2', 11.9)]))

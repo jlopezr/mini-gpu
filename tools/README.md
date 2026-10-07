@@ -1154,6 +1154,26 @@ tiempo acumulado hasta el registro de destino desde el flanco de reloj, como el
 `>=80 %` y `>=90 %` cuentan destinos por encima de esa fracción del periodo. Sale
 además el resumen por módulo, que suele decir más que la lista de registros.
 
+**Cuando el muro sale como `(anonimo)`** (`--path`). Yosys aplana el diseño y los
+registros de, por ejemplo, la CPU acaban llamandose `$auto$ff.cc:337:slice$N`: el
+agrupado por modulo no dice de quien son. El informe detallado de nextpnr solo trae
+los destinos finales (no las LUT intermedias), asi que el camino de cada destino no
+se puede reconstruir. Lo que si trae completo es el **camino critico** de cada
+dominio, y `--path` lo enseña salto a salto:
+
+```bash
+$ timing-wall -p 35 --sweep latest --seed 24 --path            # el reloj de menos margen
+$ timing-wall -p 35 --sweep latest --seed 24 --path --clock sdram
+```
+
+Por salto: tipo, retardo, acumulado, **distancia** (columnas + filas entre los
+extremos del salto de ruteo; en amarillo los de 1,5 ns o mas), la red y donde se
+declara (`fichero.v:linea`; las redes que crea ABC no tienen fuente). Al final, el
+reparto logica/ruteo. Sirve para ver si un camino pierde el tiempo en niveles de
+logica o en un salto largo (p. ej. un `CE` con mucho fanout que cruza la FPGA). Es
+**un** camino por dominio y semilla: para saber si el problema es general hay que
+mirarlo en varias semillas del mismo barrido.
+
 Ejemplo real (la 30, sdram_clk a 80 MHz): del mejor build sin opciones de
 nextpnr al que está en la placa, los destinos a ≥ 80 % del periodo bajan de 675 a
 293 y los de ≥ 90 % de 223 a 11. Antes de arreglar nada, el 80 % del muro eran
