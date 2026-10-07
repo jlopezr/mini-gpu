@@ -595,6 +595,33 @@ de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
 último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera
 un `.asm` y el runtime y los kernels se incluyen con `.include`).
 
+### 16.10. El acarreo entre lanes de `lsu_address` en la 29: falta verlo en placa
+
+**Qué se descubrió** (7 de octubre de 2026, al recortar `gpu_sm` para la 36).
+`assign lsu_address=d_rf_a+{8{d_immediate}}` era UN sumador de 256 bits: el acarreo
+de la lane n entraba en la n+1. Con un desplazamiento negativo (inmediato
+`0xFFFFFFxx`) casi toda suma acarrea y cada lane recibía un byte de más. Reproducido
+en `iverilog` con `a={0x104,0x100}`, `imm=-4`: la lane 1 daba `0x101`. Entró en la
+29; la 12, 14, 17 y 22 sumaban por lane, y la 32 es un simulador sin RTL.
+
+**Qué se hizo.** Arreglo en `29.../gpu_sm.v` y en la 36 (rama `gpu-36-bram`,
+commits `1668af4` y `5728e81`), `gpu_barrier_tb` en la 36 (con el `gpu_sm` anterior
+acaba en error; con solo el sumador arreglado pasa) y el caso
+`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `gpusim` y
+`gpusim-cycle`.
+
+**Qué falta.**
+- **Pasar el caso en placa con la 29 antes y después del arreglo.** No se ha visto
+  fallar: la razón por la que los simuladores no lo detectan es que suman por lane
+  en Python. Hasta que falle sin el arreglo, no está demostrado que el caso lo cubra.
+- **Reconstruir el bitstream de la 29** (el RTL cambió) y re-barrer semillas antes
+  de fiarse de los números de su README.
+- **Revisar si algún caso anterior de la 29 en placa pasaba por casualidad** con un
+  offset negativo y base baja (sin acarreo), y si el `mandelbrot`/`demos` los usan.
+- Las optimizaciones de área de `gpu_sm` (scheduler por vector de elegibilidad,
+  `same_group`, `generation` de 1 bit) están solo en la 36; no se han portado a la
+  29 porque cambiarían su timing sin medirlo.
+
 ## 17. Más margen en el reloj de CPU de la 35: la validación de bloques del monitor
 
 **Qué se descubrió** (7 de octubre de 2026, semilla 24 del barrido sobre el RTL
