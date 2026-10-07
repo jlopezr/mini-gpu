@@ -82,7 +82,7 @@ Build con semilla 17 y `--tmg-ripup --placer-heap-timingweight 30`: memoria
 107,35 MHz para 100, CPU 83,21 MHz para 80 (+4 % en el reloj más justo), píxel y
 TMDS con margen.
 
-Barrido de 24 semillas con esas opciones (7 de octubre de 2026): cumplen 11 de 23
+Barrido de 24 semillas con esas opciones (7 de octubre de 2026): cumplen 10 de 23
 terminadas (la 20 no acabó); la memoria pasa de 100 MHz en todas, y la CPU, que es
 la que limita, va de 73 a 83 MHz. Dos cambios lo hicieron posible:
 
@@ -92,7 +92,7 @@ la que limita, va de 73 a 83 MHz. Dos cambios lo hicieron posible:
 - **RTL.** `memory_fabric_fifo_6.v` registra la finalización (`rp_valid`,
   `rp_port`, `rp_data`) antes de escribir en `rsp_data_mem`: `complete` habilitaba
   129 bits en combinacional y la red cruzaba media FPGA. Con eso y los retoques
-  del controlador y del decodificador MMIO pasan de 3 de 24 a 11 de 23.
+  del controlador y del decodificador MMIO pasan de 3 de 24 a 10 de 23.
 
 Cualquier cambio de RTL exige re-barrer: la semilla vale para un netlist concreto.
 Antes de barrer, `build` (el barrido re-ruta el último build archivado; un barrido
