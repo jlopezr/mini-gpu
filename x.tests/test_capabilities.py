@@ -144,18 +144,20 @@ class CapabilitiesTest(unittest.TestCase):
                 REPOSITORY / fpga.VERSIONS[nombre]["monitor_path"].parent)]
         self.assertEqual(con_comando, [])
 
-    def test_los_contadores_de_espera_solo_los_tiene_la_30(self):
+    def test_los_contadores_de_espera_solo_los_tiene_la_familia_de_la_30(self):
         """`perf_stalls` (ranuras 2 a 7 de CPU PERFORMANCE, mmio.md §13.2) se
-        detecta del RTL, y hoy solo esta en `cpu_perf_counters.v` de la 30. Las
-        demas CPU tienen el bloque de dos contadores: leerles esas ranuras da
-        error de MMIO, no ceros, asi que `--measure` no debe intentarlo."""
+        detecta del RTL: esta en `cpu_perf_counters.v` de la 30 y de las
+        carpetas que la heredan (34 `fifo`, 35 `sdram2`). Las demas CPU tienen
+        el bloque de dos contadores: leerles esas ranuras da error de MMIO, no
+        ceros, asi que `--measure` no debe intentarlo."""
         con_esperas = sorted(
             nombre for nombre, version in fpga.VERSIONS.items()
             if "perf_stalls" in version["capabilities"])
-        self.assertEqual(con_esperas, ["console"])
+        self.assertEqual(con_esperas, ["console", "fifo", "sdram2"])
         # Quien los tiene declara tambien los de ciclos e instrucciones: sin
         # CYCLES y RETIRED no hay con que repartir nada.
-        self.assertIn("perf_counters", fpga.capabilities("console"))
+        for nombre in con_esperas:
+            self.assertIn("perf_counters", fpga.capabilities(nombre), nombre)
         self.assertNotIn("perf_stalls", fpga.capabilities("alu"))
 
     def test_read_word_en_todas(self):
