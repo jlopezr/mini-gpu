@@ -283,7 +283,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     assign lsu_write=d_write;
     assign lsu_size=d_is_byte ? 2'd1 : d_is_half ? 2'd2 : 2'd0;
     assign lsu_signed=d_opcode==OPCODE_LOADB || d_opcode==OPCODE_LOADH;
-    assign lsu_address=d_rf_a+{8{d_immediate}};
+    // Ocho sumadores de 32 bits, uno por lane. Escrito como
+    // `d_rf_a+{8{d_immediate}}` era UN sumador de 256 bits, y el acarreo de la
+    // lane n entraba en la lane n+1: con un desplazamiento negativo (el
+    // inmediato extendido en signo vale 0xFFFFFFFx) cada lane sumaba uno de mas
+    // a la siguiente. En 12, 14, 17 y 22 ya era por lane.
+    genvar al;
+    generate for(al=0;al<8;al=al+1) begin: address_lanes
+        assign lsu_address[al*32 +: 32]=d_rf_a[al*32 +: 32]+d_immediate;
+    end endgenerate
     // El dato de un STOREB/STOREH se replica en todos los carriles de la
     // palabra: lo que decide cual vale es la mascara de bytes que forma la LSU
     // con la direccion, asi que aqui no hace falta saber a que byte va.
