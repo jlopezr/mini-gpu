@@ -1,0 +1,18 @@
+{
+  "architecture": "cpu",
+  "name": "gpu-launch-run",
+  "program": "launch_run.asm",
+  "requires": [
+    "gpu_core"
+  ],
+  "timeout_seconds": 20.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R1": 2,
+      "R2": 226
+    }
+  }
+}

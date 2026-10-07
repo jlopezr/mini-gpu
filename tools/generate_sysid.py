@@ -112,6 +112,11 @@ def _instancia(directorio: Path, modulo: str) -> bool:
     return False
 
 
+def tiene_gpu(directorio: Path) -> bool:
+    """La carpeta tiene un nucleo de GPU: el SM esta en el RTL."""
+    return (directorio / "gpu_sm.v").exists()
+
+
 def devices_de(directorio: Path, capacidades: set[str]) -> int:
     """El bitmap de §5.4 de este prototipo.
 
@@ -149,6 +154,10 @@ def devices_de(directorio: Path, capacidades: set[str]) -> int:
     arquitectura = backend_from_rtl(directorio)
     if arquitectura == "cpu":
         bits |= 1 << BIT_CPU
+        # Una carpeta con CPU y GPU (la 36): el nucleo de la CPU se ve por
+        # `cpu.v` y el de la GPU por `gpu_sm.v`; los dos bits van encendidos.
+        if tiene_gpu(directorio):
+            bits |= 1 << BIT_GPU
     elif arquitectura == "gpu":
         bits |= 1 << BIT_GPU
     else:
@@ -210,9 +219,16 @@ def identidad(directorio: Path, senales: dict) -> dict[str, int]:
         raise SysidError(f"{directorio.name}: no se pudo leer "
                          f"VERSION_MAJOR/VERSION_MINOR de monitor.v")
     mayor, menor = version
+    # `SYSID_ISA_PROFILE` describe el nucleo de la CPU; la GPU lo da en
+    # `GPU_ISA`. En una carpeta con las dos, `simt_debug` (bit 3, SIMT) sale del
+    # RTL de la GPU y no es de la CPU.
+    if tiene_gpu(directorio) and backend_from_rtl(directorio) == "cpu":
+        capacidades_isa = capacidades - {"simt_debug"}
+    else:
+        capacidades_isa = capacidades
     return {
         "SYSID_FOLDER": int(directorio.name.split(".", 1)[0]),
-        "SYSID_ISA_PROFILE": isa_profile_de(capacidades),
+        "SYSID_ISA_PROFILE": isa_profile_de(capacidades_isa),
         "SYSID_DEVICES": devices_de(directorio, capacidades),
         "SYSID_MEM_BASE": 0x0000_0000,
         "SYSID_MEM_SIZE": mem_size_de(directorio),

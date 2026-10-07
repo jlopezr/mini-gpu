@@ -52,6 +52,10 @@ ESPERADO = {
     # 0xF y no 0xB: la 29 es la unica GPU con accesos de 8 y 16 bits (bit 2).
     "29.fpga-gpu-sm-pipeline": (0x0427, 0xF, 0x0200_0000),
     "30.fpga-cpu-console": (0x0A37, 0x7, 0x0200_0000),   # + INPUT (bit 11)
+    "34.fpga-cpu-fifo":  (0x0A37, 0x7, 0x0200_0000),
+    "35.fpga-cpu-fifo-sdram2": (0x0A37, 0x7, 0x0200_0000),
+    # CPU y GPU a la vez (bits 9 y 10); el perfil ISA es el de la CPU.
+    "36.fpga-cpu-gpu":   (0x0E37, 0x7, 0x0200_0000),
 }
 
 DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",
@@ -73,9 +77,9 @@ class SincroniaTest(unittest.TestCase):
             + "\n  ".join(str(p) for p in fuera))
 
     def test_hay_uno_por_prototipo(self):
-        """Doce carpetas con `sysid.v`, doce ficheros. Si alguien añade un
+        """Una carpeta con `sysid.v`, un fichero. Si alguien añade un
         prototipo y no regenera, aquí salta y no tres semanas después."""
-        self.assertEqual(12, len(generar()))
+        self.assertEqual(len(ESPERADO), len(generar()))
         self.assertEqual({p.name for p in prototipos()}, set(ESPERADO))
 
 
@@ -106,7 +110,10 @@ class ConformidadTest(unittest.TestCase):
             with self.subTest(carpeta.name):
                 devices = _leer(carpeta)["SYSID_DEVICES"]
                 cpu, gpu = devices >> 9 & 1, devices >> 10 & 1
-                self.assertEqual(1, cpu + gpu, "ni CPU ni GPU, o las dos")
+                if (carpeta / "gpu_sm.v").exists() and (carpeta / "cpu.v").exists():
+                    self.assertEqual(2, cpu + gpu, "CPU y GPU: los dos bits")
+                else:
+                    self.assertEqual(1, cpu + gpu, "ni CPU ni GPU, o las dos")
                 sdram, ebr = devices >> 2 & 1, devices >> 3 & 1
                 self.assertEqual(1, sdram + ebr, "ni SDRAM ni EBR, o las dos")
                 self.assertTrue(devices & 1, "SYSTEM siempre presente (§5.4)")
