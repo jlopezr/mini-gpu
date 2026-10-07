@@ -1,5 +1,9 @@
 # FIFO de memoria con cuatro masters
 
+La evolución propuesta para recuperar 100 MHz con seis puertos y admitir varias
+peticiones pendientes o en vuelo está descrita en
+[`propuesta-fabric6-pipeline.md`](propuesta-fabric6-pipeline.md).
+
 Prototipo de diagnóstico en ULX3S para validar una arquitectura de memoria con
 cuatro masters, cruces de dominio mediante FIFO asíncrona, arbitraje y un único
 controlador SDRAM compartido.
@@ -13,7 +17,10 @@ El diseño tiene dos dominios de reloj:
 
 Cada master conserva una interfaz `valid/ready`. Un `fabric_fifo_bridge`
 proporciona por puerto una FIFO de requests hacia memoria y otra de responses
-hacia el master. El fabric admite una única transacción SDRAM global en vuelo.
+hacia el master. En `top_fabric6`, el fabric añade una cola global de ocho
+comandos y otra de ocho respuestas. Puede aceptar y acumular varias peticiones
+mientras el controlador ejecuta una; el controlador SDRAM todavía procesa una
+única transacción interna cada vez.
 
 Los puertos son:
 
@@ -76,14 +83,16 @@ generar aunque falle timing porque Apio invoca NextPNR con
 El aviso de Yosys sobre soporte limitado de tri-state procede del bus
 bidireccional de la SDRAM y es esperado.
 
-Con esa misma semilla, la prueba final de seis puertos —incluida su telemetría
-ligera de validación— sintetiza y genera bitstream, pero alcanza 89,43 MHz en el
-dominio de memoria, por debajo de los 100 MHz. Usa 9466 `TRELLIS_COMB`, 5964
-`TRELLIS_FF` y 468 `TRELLIS_RAMW`, frente a 7398, 4556 y 312 en la construcción
-de cuatro puertos. El camino crítico de 11,18 ns sale de
-`fabric_i.active_master` y acaba en la lógica de escritura de una FIFO de
-respuesta: el primer coste a atacar está en el retorno/demultiplexado del fabric
-de seis puertos, no en el controlador SDRAM.
+Con esa misma semilla, la versión de seis puertos con router registrado y colas
+globales de ocho comandos y ocho respuestas alcanza **105,83 MHz** en el dominio
+de memoria. Usa 9785 `TRELLIS_COMB`, 6307 `TRELLIS_FF` y 548 `TRELLIS_RAMW`,
+frente a 7398, 4556 y 312 en la construcción de cuatro puertos. El camino
+crítico mide 9,45 ns y se encuentra ahora dentro de `sdram_controller_128`, desde
+`timing_count`; el retorno/demultiplexado del fabric ha dejado de ser crítico.
+
+El bitstream se validó en placa con los cinco generadores, el monitor bajo
+contención, tráfico urgent, soak de 60 segundos y el bloque UART de 4 KiB, sin
+errores ni mismatches.
 
 ## Test RTL del árbitro
 

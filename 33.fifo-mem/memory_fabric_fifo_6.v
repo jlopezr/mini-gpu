@@ -118,14 +118,11 @@ module memory_fabric_fifo_6 #(
     localparam MASTER_4 = 3'd4;
     localparam MASTER_5 = 3'd5;
 
-    localparam ST_IDLE    = 3'd0;
-    localparam ST_CAPTURE = 3'd1;
-    localparam ST_CHECK   = 3'd2;
-    localparam ST_ISSUE   = 3'd3;
-    localparam ST_WAIT    = 3'd4;
-    localparam ST_RESP    = 3'd5;
+    localparam ST_IDLE    = 2'd0;
+    localparam ST_CAPTURE = 2'd1;
+    localparam ST_CHECK   = 2'd2;
 
-    reg [2:0] state;
+    reg [1:0] state;
 
     reg [2:0] grant; reg grant_valid; reg [2:0] active_master;
 
@@ -455,180 +452,263 @@ module memory_fabric_fifo_6 #(
                                       head5_data;
 
     // ================================================================
-    // Active transaction
+    // Global command queue
     // ================================================================
 
-    reg         active_write;
-    reg [31:0]  active_addr;
-    reg [127:0] active_wdata;
-    reg [15:0]  active_wmask;
+    localparam QUEUE_ADDR_WIDTH = 3;
+    localparam QUEUE_DEPTH = (1 << QUEUE_ADDR_WIDTH);
 
-    reg [127:0] response_rdata;
-    reg         response_error;
+    reg [2:0]   cmd_master [0:QUEUE_DEPTH-1];
+    reg         cmd_write  [0:QUEUE_DEPTH-1];
+    reg [31:0]  cmd_addr   [0:QUEUE_DEPTH-1];
+    reg [127:0] cmd_wdata  [0:QUEUE_DEPTH-1];
+    reg [15:0]  cmd_wmask  [0:QUEUE_DEPTH-1];
+    reg         cmd_error  [0:QUEUE_DEPTH-1];
 
-    wire active_rsp_full =
-        (active_master == MASTER_0) ? p0_rsp_full :
-        (active_master == MASTER_1) ? p1_rsp_full :
-        (active_master == MASTER_2) ? p2_rsp_full :
-        (active_master == MASTER_3) ? p3_rsp_full :
-        (active_master == MASTER_4) ? p4_rsp_full :
-                                      p5_rsp_full;
+    reg [QUEUE_ADDR_WIDTH-1:0] cmd_wr_ptr;
+    reg [QUEUE_ADDR_WIDTH-1:0] cmd_rd_ptr;
+    reg [QUEUE_ADDR_WIDTH:0]   cmd_count;
 
-    // ================================================================
-    // SDRAM
-    // ================================================================
+    reg         intake_write;
+    reg [31:0]  intake_addr;
+    reg [127:0] intake_wdata;
+    reg [15:0]  intake_wmask;
 
-    assign sdram_req_valid = (state == ST_ISSUE);
-    assign sdram_req_write = active_write;
-    assign sdram_req_addr  = active_addr[24:1];
-    assign sdram_req_wdata = active_wdata;
-    assign sdram_req_wmask = active_wmask;
-
-    assign busy = (state != ST_IDLE);
+    wire cmd_full  = (cmd_count == QUEUE_DEPTH);
+    wire cmd_empty = (cmd_count == 0);
+    wire cmd_push  = (state == ST_CHECK) && !cmd_full;
 
     // ================================================================
-    // Response FIFO
+    // Sequential SDRAM backend
     // ================================================================
 
-    wire response_fire = (state == ST_RESP) && !active_rsp_full;
+    localparam BE_IDLE     = 2'd0;
+    localparam BE_ISSUE    = 2'd1;
+    localparam BE_WAIT     = 2'd2;
+    localparam BE_COMPLETE = 2'd3;
 
-    assign p0_rsp_wr_en =
-        response_fire && active_master == MASTER_0;
+    reg [1:0] backend_state;
+    reg [5:0] backend_port;
+    reg       backend_write;
+    reg [31:0] backend_addr;
+    reg [127:0] backend_wdata;
+    reg [15:0] backend_wmask;
+    reg [127:0] backend_result_data;
+    reg         backend_result_error;
 
-    assign p1_rsp_wr_en =
-        response_fire && active_master == MASTER_1;
-
-    assign p2_rsp_wr_en =
-        response_fire && active_master == MASTER_2;
-
-    assign p3_rsp_wr_en =
-        response_fire && active_master == MASTER_3;
-
-    assign p4_rsp_wr_en =
-        response_fire && active_master == MASTER_4;
-
-    assign p5_rsp_wr_en =
-        response_fire && active_master == MASTER_5;
-
-    assign p0_rsp_data = {response_error,response_rdata};
-    assign p1_rsp_data = {response_error,response_rdata};
-    assign p2_rsp_data = {response_error,response_rdata};
-    assign p3_rsp_data = {response_error,response_rdata};
-    assign p4_rsp_data = {response_error,response_rdata};
-    assign p5_rsp_data = {response_error,response_rdata};
+    wire cmd_pop = (backend_state == BE_IDLE) && !cmd_empty;
 
     // ================================================================
-    // Main FSM
+    // Global response queue and registered router
     // ================================================================
 
+    reg [5:0]   rsp_port_mem [0:QUEUE_DEPTH-1];
+    reg [128:0] rsp_data_mem [0:QUEUE_DEPTH-1];
+    reg [QUEUE_ADDR_WIDTH-1:0] rsp_wr_ptr;
+    reg [QUEUE_ADDR_WIDTH-1:0] rsp_rd_ptr;
+    reg [QUEUE_ADDR_WIDTH:0]   rsp_count;
+
+    wire rsp_queue_full  = (rsp_count == QUEUE_DEPTH);
+    wire rsp_queue_empty = (rsp_count == 0);
+    wire rsp_push = (backend_state == BE_COMPLETE) && !rsp_queue_full;
+
+    reg         route_valid;
+    reg [5:0]   route_port;
+    reg [128:0] route_data;
+    wire rsp_pop = !route_valid && !rsp_queue_empty;
+
+    assign p0_rsp_wr_en = route_valid && route_port[0] && !p0_rsp_full;
+    assign p1_rsp_wr_en = route_valid && route_port[1] && !p1_rsp_full;
+    assign p2_rsp_wr_en = route_valid && route_port[2] && !p2_rsp_full;
+    assign p3_rsp_wr_en = route_valid && route_port[3] && !p3_rsp_full;
+    assign p4_rsp_wr_en = route_valid && route_port[4] && !p4_rsp_full;
+    assign p5_rsp_wr_en = route_valid && route_port[5] && !p5_rsp_full;
+
+    wire route_fire =
+        p0_rsp_wr_en || p1_rsp_wr_en || p2_rsp_wr_en ||
+        p3_rsp_wr_en || p4_rsp_wr_en || p5_rsp_wr_en;
+
+    assign p0_rsp_data = route_data;
+    assign p1_rsp_data = route_data;
+    assign p2_rsp_data = route_data;
+    assign p3_rsp_data = route_data;
+    assign p4_rsp_data = route_data;
+    assign p5_rsp_data = route_data;
+
+    // ================================================================
+    // SDRAM interface
+    // ================================================================
+
+    assign sdram_req_valid = (backend_state == BE_ISSUE);
+    assign sdram_req_write = backend_write;
+    assign sdram_req_addr  = backend_addr[24:1];
+    assign sdram_req_wdata = backend_wdata;
+    assign sdram_req_wmask = backend_wmask;
+
+    assign busy = (state != ST_IDLE) || !cmd_empty ||
+                  (backend_state != BE_IDLE) || !rsp_queue_empty || route_valid;
+
+    // Command and response queue storage/counts. Both queues support one push
+    // and one pop in the same cycle without changing their occupancy.
     always @(posedge clk) begin
         if (reset) begin
-            state          <= ST_IDLE;
-            rr_next        <= MASTER_0;
-            active_master  <= MASTER_0;
+            cmd_wr_ptr <= 0;
+            cmd_rd_ptr <= 0;
+            cmd_count  <= 0;
+            rsp_wr_ptr <= 0;
+            rsp_rd_ptr <= 0;
+            rsp_count  <= 0;
+        end else begin
+            if (cmd_push) begin
+                cmd_master[cmd_wr_ptr] <= active_master;
+                cmd_write[cmd_wr_ptr]  <= intake_write;
+                cmd_addr[cmd_wr_ptr]   <= intake_addr;
+                cmd_wdata[cmd_wr_ptr]  <= intake_wdata;
+                cmd_wmask[cmd_wr_ptr]  <= intake_wmask;
+                cmd_error[cmd_wr_ptr]  <=
+                    (intake_addr >= SDRAM_SIZE_BYTES) ||
+                    (intake_addr[3:0] != 4'b0000);
+                cmd_wr_ptr <= cmd_wr_ptr + 1'b1;
+            end
+            if (cmd_pop)
+                cmd_rd_ptr <= cmd_rd_ptr + 1'b1;
+            case ({cmd_push, cmd_pop})
+                2'b10: cmd_count <= cmd_count + 1'b1;
+                2'b01: cmd_count <= cmd_count - 1'b1;
+                default: cmd_count <= cmd_count;
+            endcase
 
-            active_write   <= 1'b0;
-            active_addr    <= 32'd0;
-            active_wdata   <= 128'd0;
-            active_wmask   <= 16'd0;
+            if (rsp_push) begin
+                rsp_port_mem[rsp_wr_ptr] <= backend_port;
+                rsp_data_mem[rsp_wr_ptr] <=
+                    {backend_result_error, backend_result_data};
+                rsp_wr_ptr <= rsp_wr_ptr + 1'b1;
+            end
+            if (rsp_pop)
+                rsp_rd_ptr <= rsp_rd_ptr + 1'b1;
+            case ({rsp_push, rsp_pop})
+                2'b10: rsp_count <= rsp_count + 1'b1;
+                2'b01: rsp_count <= rsp_count - 1'b1;
+                default: rsp_count <= rsp_count;
+            endcase
+        end
+    end
 
-            response_rdata <= 128'd0;
-            response_error <= 1'b0;
-
+    // Frontend: arbitrate, capture and enqueue independently of SDRAM.
+    always @(posedge clk) begin
+        if (reset) begin
+            state         <= ST_IDLE;
+            rr_next       <= MASTER_0;
+            active_master <= MASTER_0;
+            intake_write  <= 1'b0;
+            intake_addr   <= 32'd0;
+            intake_wdata  <= 128'd0;
+            intake_wmask  <= 16'd0;
         end else begin
             case (state)
-
-                // ----------------------------------------------------
-                // The FIFO read latency has already happened in the
-                // prefetch engines. Arbitration sees complete requests.
-                // ----------------------------------------------------
                 ST_IDLE: begin
-                    if (grant_valid) begin
+                    if (grant_valid && !cmd_full) begin
                         active_master <= grant;
-
                         state <= ST_CAPTURE;
                     end
                 end
-
-                // ----------------------------------------------------
-                // Select the complete request using the registered
-                // master. This separates urgent/RR arbitration from the
-                // 178-bit payload mux that feeds the active registers.
-                // The corresponding head remains valid until this edge.
-                // ----------------------------------------------------
                 ST_CAPTURE: begin
-
-                    active_write <= active_head_data[176];
-                    active_addr  <= active_head_data[175:144];
-                    active_wdata <= active_head_data[143:16];
-                    active_wmask <= active_head_data[15:0];
-
+                    intake_write <= active_head_data[176];
+                    intake_addr  <= active_head_data[175:144];
+                    intake_wdata <= active_head_data[143:16];
+                    intake_wmask <= active_head_data[15:0];
                     state <= ST_CHECK;
                 end
-
-                // ----------------------------------------------------
-                // Validate the registered request.  Keeping this in a
-                // separate cycle breaks the path through the 178-bit
-                // grant mux, address comparator and state update.
-                // ----------------------------------------------------
                 ST_CHECK: begin
-
-                    // Byte address must be inside SDRAM and aligned
-                    // to the 16-byte fabric transaction.
-                    if ((active_addr >= SDRAM_SIZE_BYTES) ||
-                        (active_addr[3:0] != 4'b0000)) begin
-
-                        response_rdata <= 128'd0;
-                        response_error <= 1'b1;
-                        state <= ST_RESP;
-
-                    end else begin
-                        response_error <= 1'b0;
-                        state <= ST_ISSUE;
-                    end
-                end
-
-                // ----------------------------------------------------
-                // Hold the request until the SDRAM controller accepts.
-                // ----------------------------------------------------
-                ST_ISSUE: begin
-                    if (sdram_req_ready)
-                        state <= ST_WAIT;
-                end
-
-                // ----------------------------------------------------
-                // Wait for completion.
-                // ----------------------------------------------------
-                ST_WAIT: begin
-                    if (sdram_done) begin
-                        response_rdata <= sdram_rdata;
-                        response_error <= 1'b0;
-                        state <= ST_RESP;
-                    end
-                end
-
-                // ----------------------------------------------------
-                // Wait for room in the corresponding response FIFO.
-                // ----------------------------------------------------
-                ST_RESP: begin
-                    if (!active_rsp_full) begin
+                    if (!cmd_full) begin
                         case (active_master)
                             MASTER_0: rr_next <= MASTER_1;
                             MASTER_1: rr_next <= MASTER_2;
                             MASTER_2: rr_next <= MASTER_3;
                             MASTER_3: rr_next <= MASTER_4;
                             MASTER_4: rr_next <= MASTER_5;
-                            MASTER_5: rr_next <= MASTER_0;
+                            default:  rr_next <= MASTER_0;
                         endcase
-
                         state <= ST_IDLE;
                     end
                 end
-
-                default:
-                    state <= ST_IDLE;
-
+                default: state <= ST_IDLE;
             endcase
+        end
+    end
+
+    // Backend: pop commands, execute one at a time and enqueue completions.
+    always @(posedge clk) begin
+        if (reset) begin
+            backend_state        <= BE_IDLE;
+            backend_port         <= 6'b000001;
+            backend_write        <= 1'b0;
+            backend_addr         <= 32'd0;
+            backend_wdata        <= 128'd0;
+            backend_wmask        <= 16'd0;
+            backend_result_data  <= 128'd0;
+            backend_result_error <= 1'b0;
+        end else begin
+            case (backend_state)
+                BE_IDLE: begin
+                    if (!cmd_empty) begin
+                        case (cmd_master[cmd_rd_ptr])
+                            MASTER_0: backend_port <= 6'b000001;
+                            MASTER_1: backend_port <= 6'b000010;
+                            MASTER_2: backend_port <= 6'b000100;
+                            MASTER_3: backend_port <= 6'b001000;
+                            MASTER_4: backend_port <= 6'b010000;
+                            default:  backend_port <= 6'b100000;
+                        endcase
+                        backend_write <= cmd_write[cmd_rd_ptr];
+                        backend_addr  <= cmd_addr[cmd_rd_ptr];
+                        backend_wdata <= cmd_wdata[cmd_rd_ptr];
+                        backend_wmask <= cmd_wmask[cmd_rd_ptr];
+                        if (cmd_error[cmd_rd_ptr]) begin
+                            backend_result_data  <= 128'd0;
+                            backend_result_error <= 1'b1;
+                            backend_state <= BE_COMPLETE;
+                        end else begin
+                            backend_result_error <= 1'b0;
+                            backend_state <= BE_ISSUE;
+                        end
+                    end
+                end
+                BE_ISSUE: begin
+                    if (sdram_req_ready)
+                        backend_state <= BE_WAIT;
+                end
+                BE_WAIT: begin
+                    if (sdram_done) begin
+                        backend_result_data  <= sdram_rdata;
+                        backend_result_error <= 1'b0;
+                        backend_state <= BE_COMPLETE;
+                    end
+                end
+                BE_COMPLETE: begin
+                    if (!rsp_queue_full)
+                        backend_state <= BE_IDLE;
+                end
+                default: backend_state <= BE_IDLE;
+            endcase
+        end
+    end
+
+    // Registered response router. A blocked destination cannot alter or lose
+    // the staged response, while the global response queue absorbs later ones.
+    always @(posedge clk) begin
+        if (reset) begin
+            route_valid <= 1'b0;
+            route_port  <= 6'b000001;
+            route_data  <= 129'd0;
+        end else begin
+            if (rsp_pop) begin
+                route_valid <= 1'b1;
+                route_port  <= rsp_port_mem[rsp_rd_ptr];
+                route_data  <= rsp_data_mem[rsp_rd_ptr];
+            end else if (route_fire) begin
+                route_valid <= 1'b0;
+            end
         end
     end
 
