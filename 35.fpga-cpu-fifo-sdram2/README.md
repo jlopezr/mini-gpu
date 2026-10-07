@@ -104,11 +104,20 @@ Caminos críticos del build con semilla 12:
   destinos bloqueados;
 - el resto, como en la 34.
 
-## Pendiente
+## Placa
 
-- Validar en placa. Lo que ninguna simulación decide: la calibración de
-  `READ_DELAY_CYCLES` a 100 MHz con lecturas encadenadas sin hueco, y el cierre de
-  timing de la lógica nueva.
+En ULX3S 85K, con los dos generadores de tráfico activos (7 de octubre de 2026):
+monitor 5.35, 28 casos de CPU (basics, alu, errores, vídeo, programas) y después
+tres rondas de los 62 casos de `cases-cpu` y `cases-shared` (sin `input`, que
+esta placa no tiene): 186 ejecuciones, 0 fallos, unos 164 s seguidos. El vídeo
+mantiene unos 58 FPS en pacman. Esto cubre la calibración de `READ_DELAY_CYCLES`
+a 100 MHz con lecturas encadenadas sin hueco.
+
+No se pudieron mirar los LED de mismatch y de error de respuesta de los
+generadores (pegajosos), así que lo comprobado es el comportamiento de CPU y
+vídeo, no esos dos indicadores.
+
+## Pendiente
 - Reutilizar filas abiertas (página abierta) para que el recorrido secuencial de
   un solo master también gane.
 
