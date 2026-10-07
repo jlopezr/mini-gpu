@@ -595,6 +595,41 @@ de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
 último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera
 un `.asm` y el runtime y los kernels se incluyen con `.include`).
 
+## 17. Más margen en el reloj de CPU de la 35: la validación de bloques del monitor
+
+**Qué se descubrió** (7 de octubre de 2026, semilla 24 del barrido sobre el RTL
+nuevo, CPU 77,10 MHz para 80). `timing-wall --path` da un camino de 12,97 ns que
+**no es de la CPU sino del monitor**: sale de `monitor_i.block_end_address`
+(`monitor.v:344`), pasa por 14 LUT (3,2 ns de lógica, 9,3 de ruteo) y acaba en el
+`CE` de un registro. Es `STATE_VALIDATE_BLOCK` (`monitor.v:835-851`): en un solo
+ciclo evalúa `block_length` fuera de rango y `block_range_valid` (RAM más cinco
+`in_window`, once comparadores de 33 bits) y con ese resultado decide el `if` que
+habilita `response_byte_0`, `response_length`, `response_index`,
+`response_done_state` y `state`. El comentario de `monitor.v:379` ya sacó el
+sumador del camino, pero no la comparación de rangos.
+
+**Arreglo propuesto, sin hacer.** Un estado nuevo (`STATE_CHECK_BLOCK`, del 48 en
+adelante, que están libres) entre `STATE_CALCULATE_BLOCK_END` y
+`STATE_VALIDATE_BLOCK` que registre el veredicto en `block_ok`; la validación pasa
+a mirar solo ese bit. Cuesta un ciclo de 80 MHz por comando de bloque (un byte de
+UART a 115200 son unos 87 µs): irrelevante. El protocolo no cambia. Solo en la
+copia del 35, no en el `monitor.v` de las demás.
+
+**Por qué no se hizo.** El 35 ya cierra con la semilla 17 (CPU 83,21, memoria
+107,35). Los caminos críticos **cambian de semilla a semilla**: en el barrido
+antiguo la semilla 24 caía en `instruction_buffer.v:111` (10 LUT hasta un `CE` con
+un salto de 2,56 ns que cruza 31 posiciones), así que quitar este muro no
+garantiza subir la mediana. Probarlo cuesta un build, un barrido de 24 semillas
+(2-3 horas con `tmg-ripup`) y repetir la validación en placa.
+
+**Cómo comprobarlo si se retoma.** Commit aparte en la rama, `build` antes de
+barrer (el barrido re-ruta el último build archivado), mismas opciones de nextpnr
+(`tmg-ripup placer-heap-timingweight=30`) y comparar contra el barrido
+`sweep-20261007-140059-470717` de la 35 (10 de 23 cumplen, CPU 73 a 83 MHz). Si la
+mediana de CPU no sube, quitar el commit. Ojo: con el diseño aplanado
+`timing-wall` solo atribuye módulo a `input_i` y `console_i`; para el resto, usar
+`--path` en varias semillas.
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
