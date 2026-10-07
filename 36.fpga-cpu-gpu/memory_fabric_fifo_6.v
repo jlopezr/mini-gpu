@@ -515,7 +515,14 @@ module memory_fabric_fifo_6 #(
     wire issue_go = issue_valid && credit_ok &&
                     (issue_error || sdram_req_ready);
 
-    wire cmd_pop = (!issue_valid || issue_go) && !cmd_empty;
+    // El siguiente comando solo entra cuando la etapa de emision ya esta
+    // VACIA, no en el mismo ciclo en que el controlador toma el anterior.
+    // Con `(!issue_valid || issue_go)`, `sdram_req_ready` (que sale del FSM del
+    // controlador) llegaba a los ~200 enables de backend_* y a los punteros de
+    // la cola: era el camino de 10,7 ns de la 36 (issue_go con fan-out 51 y
+    // 3,3 ns de ruteo, sdram_clk 93,7 MHz). Cuesta un ciclo de vacio entre dos
+    // peticiones: el controlador no admite una rafaga BL8 en menos de cuatro.
+    wire cmd_pop = !issue_valid && !cmd_empty;
 
     reg [5:0]  meta_port  [0:QUEUE_DEPTH-1];
     reg        meta_error [0:QUEUE_DEPTH-1];

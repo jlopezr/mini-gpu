@@ -1,4 +1,4 @@
 {
-  "alias": "sdram2",
-  "description": "CPU y scanout sobre fabric FIFO de seis puertos con controlador SDRAM de cuatro bancos en paralelo"
+  "alias": "cpugpu",
+  "description": "CPU que lanza una GPU de 8 lanes por MMIO (GPU CORE) sobre el fabric FIFO de seis puertos con SDRAM de cuatro bancos"
 }

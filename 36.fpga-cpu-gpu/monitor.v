@@ -314,6 +314,8 @@ module monitor #(
   localparam [5:0] STATE_INPUT_SETTLE1 = 6'd45;
   localparam [5:0] STATE_INPUT_SETTLE2 = 6'd46;
   localparam [5:0] STATE_INPUT_PRESENCE_FLAGS = 6'd47;
+  // Veredicto del bloque registrado antes de actuar (ver STATE_CHECK_BLOCK).
+  localparam [5:0] STATE_CHECK_BLOCK = 6'd48;
   // No se emite a1 hasta saber que TODOS los bytes son validos: ff dentro
   // del payload es un dato legitimo, no un marcador de error. Sin reset del
   // array para permitir inferir RAM; solo se leen los bytes ya capturados.
@@ -342,6 +344,8 @@ module monitor #(
   reg [15:0] block_length;
   reg [15:0] block_remaining;
   reg [32:0] block_end_address;
+  // 1 si longitud y rango del bloque son validos (se calcula en CHECK_BLOCK).
+  reg block_ok;
   reg [7:0] mem_read_data_latched;
   reg [31:0] mem_read_word_latched;
   // READ_WORD y WRITE_WORD comparten los estados de direccion y de espera con
@@ -447,6 +451,7 @@ module monitor #(
       block_length <= 16'd0;
       block_remaining <= 16'd0;
       block_end_address <= 33'h000000000;
+      block_ok <= 1'b0;
       mem_read_data_latched <= 8'h00;
       mem_read_word_latched <= 32'h0000_0000;
       word_access <= 1'b0;
@@ -826,16 +831,28 @@ module monitor #(
         STATE_CALCULATE_BLOCK_END: begin
           block_end_address <=
               {1'b0, mem_address} + {17'd0, block_length};
+          state <= STATE_CHECK_BLOCK;
+        end
+
+        // Judge the block in its own stage and register the verdict. Doing it
+        // in STATE_VALIDATE_BLOCK put the length test and the six range
+        // comparators (eleven 33-bit comparisons) in front of the enables of
+        // response_byte_0, response_length, response_index,
+        // response_done_state and state: a 14-LUT path that limited the CPU
+        // clock of prototype 36 to 69,7 MHz (TODO 17). One extra 80 MHz cycle
+        // per block command; the protocol does not change.
+        // The end address is exclusive, so a one-byte transfer at 0x01ffffff
+        // is valid and ends exactly at 0x02000000.
+        STATE_CHECK_BLOCK: begin
+          block_ok <= !(block_length == 0 || block_length > 16'd256 ||
+                        !block_range_valid({1'b0, mem_address}, block_end_address));
           state <= STATE_VALIDATE_BLOCK;
         end
 
-        // Validate after registering both the length and exclusive end.
-        // The end address is exclusive, so a one-byte transfer at 0x01ffffff
-        // is valid and ends exactly at 0x02000000.
+        // Act on the registered verdict.
         STATE_VALIDATE_BLOCK: begin
             block_index <= 8'd0;
-            if (block_length == 0 || block_length > 16'd256 ||
-                !block_range_valid({1'b0, mem_address}, block_end_address)) begin
+            if (!block_ok) begin
               response_byte_0 <= RSP_ERROR;
               response_length <= 3'd1;
               response_index <= 3'd0;
