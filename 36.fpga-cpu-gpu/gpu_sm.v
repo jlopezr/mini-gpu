@@ -92,7 +92,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg [7:0] init_address;
     reg running, pause_pending, stepping, step_locked;
     reg [2:0] cursor;
-    reg [31:0] pc[0:7], groups[0:7], generation[0:7];
+    reg [31:0] pc[0:7], groups[0:7];
+    // Paridad del episodio de barrera (antes un contador de 32 bits). Solo se
+    // compara por igualdad entre warps de un mismo grupo, y uno que llega a la
+    // siguiente BAR se queda bloqueado en ella: como mucho coexisten la
+    // generacion G y la G+1, y para distinguirlas basta un bit.
+    reg generation[0:7];
     // LOGICAL_WARP_ID[n] y WARP_ARG[n] (§14.2): lo que leen GETLWARP y GETARG.
     reg [31:0] logical_id[0:7], warp_arg[0:7];
     reg [7:0] active[0:7], live[0:7];
@@ -290,7 +295,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     assign lsu_write=d_write;
     assign lsu_size=d_is_byte ? 2'd1 : d_is_half ? 2'd2 : 2'd0;
     assign lsu_signed=d_opcode==OPCODE_LOADB || d_opcode==OPCODE_LOADH;
-    assign lsu_address=d_rf_a+{8{d_immediate}};
+    // Ocho sumadores de 32 bits, uno por lane. Escrito como
+    // `d_rf_a+{8{d_immediate}}` era UN sumador de 256 bits, y el acarreo de la
+    // lane n entraba en la lane n+1: con un desplazamiento negativo (el
+    // inmediato extendido en signo vale 0xFFFFFFFx) cada lane sumaba uno de mas
+    // a la siguiente.
+    genvar al;
+    generate for(al=0;al<8;al=al+1) begin: address_lanes
+        assign lsu_address[al*32 +: 32]=d_rf_a[al*32 +: 32]+d_immediate;
+    end endgenerate
     // El dato de un STOREB/STOREH se replica en todos los carriles de la
     // palabra: lo que decide cual vale es la mascara de bytes que forma la LSU
     // con la direccion, asi que aqui no hace falta saber a que byte va.
@@ -311,34 +324,67 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg pick_found;
     reg [2:0] pick_warp;
     reg any_live, all_bar, bar_mismatch_for_d;
+    // Igualdad de grupo entre pares de warps. Es simetrica y la diagonal es
+    // siempre cierta, asi que bastan 28 comparadores de 32 bits y no los 64 que
+    // salian de escribir `groups[a]==groups[b]` dentro del bucle doble.
+    wire [63:0] same_group;
+    genvar ga, gb;
+    generate for(ga=0;ga<8;ga=ga+1) begin: sg_row
+        for(gb=0;gb<8;gb=gb+1) begin: sg_col
+            if(ga==gb) assign same_group[ga*8+gb]=1'b1;
+            else if(ga<gb) assign same_group[ga*8+gb]=(groups[ga]==groups[gb]);
+            else assign same_group[ga*8+gb]=same_group[gb*8+ga];
+        end
+    end endgenerate
+    // Warp que necesita reconvergir, calculado UNA vez por warp. Antes se
+    // repetia para `candidate` indexando pc y join_pc_top con un mux de 8 y 32
+    // bits, ademas del de `normalize`: dos juegos de comparadores en vez de uno.
+    reg [7:0] reconv;
+    integer rc;
+    always @* for(rc=0;rc<8;rc=rc+1)
+        reconv[rc]=(active[rc]==0 || (sp[rc]!=0 && pc[rc]==join_pc_top[rc]));
     integer a,b;
-    reg [2:0] candidate;
-    reg candidate_needs_reconvergence;
+    // Todo por warp y con indices constantes; el round-robin trabaja solo sobre
+    // vectores de un bit. Antes cada vuelta indexaba active, sp, pc y
+    // join_pc_top con `cursor+a`, y los comparadores de 32 bits colgaban de
+    // muxes de 8 entradas.
+    reg [7:0] live_vec, base_elig, elig_rot;
+    reg [15:0] elig_dup;
+    reg [2:0] rot_pick;
+    always @* begin
+        for(a=0;a<8;a=a+1) live_vec[a]=(live[a]!=0);
+        base_elig=live_vec & ~busy & ~wait_bar;
+        elig_dup={base_elig & ~reconv, base_elig & ~reconv};
+        elig_rot=elig_dup[{1'b0,cursor} +: 8];
+        casez (elig_rot)
+            8'b???????1: rot_pick=3'd0;
+            8'b??????10: rot_pick=3'd1;
+            8'b?????100: rot_pick=3'd2;
+            8'b????1000: rot_pick=3'd3;
+            8'b???10000: rot_pick=3'd4;
+            8'b??100000: rot_pick=3'd5;
+            8'b?1000000: rot_pick=3'd6;
+            8'b10000000: rot_pick=3'd7;
+            default:     rot_pick=3'd0;
+        endcase
+    end
     always @* begin
         normalize_found=0; normalize_warp=0;
-        pick_found=0; pick_warp=cursor; any_live=0; release_bar=0;
-        all_bar=0; bar_mismatch_for_d=0; candidate=0; candidate_needs_reconvergence=0;
+        pick_found=|elig_rot; pick_warp=cursor+rot_pick; any_live=|live_vec; release_bar=0;
+        all_bar=0; bar_mismatch_for_d=0;
         for(a=0;a<8;a=a+1) begin
-            if (live[a]!=0) any_live=1;
-            if (!normalize_found && live[a]!=0 && !busy[a] && !wait_bar[a] &&
-                (active[a]==0 || (sp[a]!=0 && pc[a]==join_pc_top[a]))) begin
+            if (!normalize_found && base_elig[a] && reconv[a]) begin
                 normalize_found=1; normalize_warp=a[2:0];
             end
-            candidate=cursor+a[2:0];
-            candidate_needs_reconvergence=(active[candidate]==0 ||
-                (sp[candidate]!=0 && pc[candidate]==join_pc_top[candidate]));
-            if (!pick_found && live[candidate]!=0 && !busy[candidate] && !wait_bar[candidate] &&
-                !candidate_needs_reconvergence) begin
-                pick_found=1; pick_warp=candidate;
-            end
             all_bar=wait_bar[a];
-            for(b=0;b<8;b=b+1) begin
-                if (groups[a]==groups[b] && live[b]!=0 && !wait_bar[b]) all_bar=0;
-                if (d_valid && d_opcode==6'h32 && wait_bar[b] && groups[b]==groups[d_warp] &&
-                    (pc[b]!=d_pc || generation[b]!=generation[d_warp])) bar_mismatch_for_d=1;
-            end
+            for(b=0;b<8;b=b+1)
+                if (same_group[a*8+b] && live_vec[b] && !wait_bar[b]) all_bar=0;
             release_bar[a]=all_bar;
         end
+        // No depende de `a`: se escribia dentro del bucle y salian ocho copias.
+        for(b=0;b<8;b=b+1)
+            if (d_valid && d_opcode==6'h32 && wait_bar[b] && same_group[d_warp*8+b] &&
+                (pc[b]!=d_pc || generation[b]!=generation[d_warp])) bar_mismatch_for_d=1;
         release_found=0; release_warp=0;
         for(a=0;a<8;a=a+1)
             if(!release_found && releasing[a]) begin release_found=1; release_warp=a[2:0]; end
