@@ -1,0 +1,4 @@
+{
+  "alias": "fifo",
+  "description": "CPU y scanout sobre fabric FIFO de seis puertos con carga sostenida"
+}
