@@ -26,6 +26,7 @@ simulación.
 from __future__ import annotations
 
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -185,6 +186,86 @@ def check(actions: list[Action], keyboard: bool = False, mouse: bool = False) ->
         except ValueError as error:
             raise ValueError(
                 f"guion de entrada, línea {action.line} ({action.text}): {error}") from None
+
+
+class _Recorder(InputDevice):
+    """El oráculo de INPUT, sin límite de FIFO: guarda los eventos que saldrían.
+
+    Sirve para pasar un guion a la placa. El dispositivo real tiene su propia
+    FIFO de 16 palabras; aquí lo único que interesa es QUÉ eventos produce cada
+    acción y en qué orden, así que se recogen todos y es `play_on_board` quien
+    decide cuándo cabe mandarlos.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.emitted: list[int] = []
+
+    def _push(self, word: int) -> None:
+        self.emitted.append(word)
+
+
+def play_on_board(client, actions: list[Action], timeout: float = 10.0,
+                  clock: Callable[[], float] = time.monotonic,
+                  sleep: Callable[[float], None] = time.sleep) -> None:
+    """Reproduce un guion sobre el INPUT de la placa, por el monitor.
+
+    El guion está escrito en instrucciones (`@N`), y la placa no cuenta
+    instrucciones desde el host: el instante se IGNORA y solo se conserva el
+    ORDEN. Vale para los casos cuyo programa espera cada evento sondeando
+    `STATUS.COUNT`, que es lo que hacen los de `extensions/input`: lo que
+    observan es qué llega y en qué orden, no cuándo.
+
+    Cada acción se ejecuta sobre un dispositivo sombra, que produce los eventos
+    exactos del oráculo (mismo orden, mismas reglas de conexión y desconexión), y
+    esos eventos se mandan con `INPUT_EVENTS` respetando los huecos libres que
+    devuelve cada respuesta. La presencia se pone ANTES de los eventos cuando se
+    conecta algo y DESPUÉS cuando se desconecta, como en §25.11.
+
+    Exige la FIFO de la placa vacía al empezar: solo la CPU puede vaciarla, así
+    que un evento sin consumir de otra sesión contaminaría el caso, y es mejor
+    avisar que dar un resultado raro.
+    """
+    deadline = clock() + timeout
+    depth = client.INPUT_FIFO_DEPTH
+    free = client.set_input_presence(False, False)
+    if free != depth:
+        raise RuntimeError(
+            f"la FIFO de INPUT tiene {depth - free} evento(s) sin consumir de una "
+            "sesión anterior; reinicia la placa o deja que un programa los lea")
+    shadow = _Recorder()
+    sent = (False, False)
+
+    def wait_room() -> int:
+        nonlocal free
+        while free == 0:
+            if clock() >= deadline:
+                raise TimeoutError(
+                    "la CPU no vació la FIFO de INPUT: el guion no cabe")
+            sleep(0.005)
+            free = client.send_input_events([])
+        return free
+
+    for action in actions:
+        try:
+            action.run(shadow)
+        except ValueError as error:
+            raise ValueError(
+                f"guion de entrada, línea {action.line} ({action.text}): {error}"
+            ) from None
+        words, shadow.emitted = shadow.emitted, []
+        presence = (shadow.keyboard_present, shadow.mouse_present)
+        connecting = any(now and not before for now, before in zip(presence, sent))
+        if connecting:
+            free = client.set_input_presence(*presence)
+            sent = presence
+        while words:
+            take = min(wait_room(), len(words))
+            free = client.send_input_events(words[:take])
+            words = words[take:]
+        if presence != sent:
+            free = client.set_input_presence(*presence)
+            sent = presence
 
 
 def load(path: Path, keyboard: bool = False, mouse: bool = False) -> list[Action]:

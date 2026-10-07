@@ -110,12 +110,12 @@
     "pattern": "register_write_data\\s*<=\\s*warp_arg"
   },
 
-  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores y un caso con `requires: [\"input\"]` se omite en la placa, tenga o no el RTL el dispositivo (eso es `input_device`, mas abajo). Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
+  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores, y las placas con el dispositivo (`input_device`, mas abajo) lo reciben de ella: x.tests/backends/fpga.py anade `input` a toda version con `input_device`. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
   "input": {
     "architecture": ["cpu", "gpu"]
   },
 
-  "_comment_input_device": "El RTL TIENE el bloque INPUT (input_registers.v). No es lo mismo que `input`: aquel dice que el arnes sabe ALIMENTAR el dispositivo con un guion con tiempo en instrucciones, y la placa no puede reproducir ese tiempo --recibe eventos del monitor cuando el PC los manda--. Por eso un caso con `requires: [\"input\"]` sigue omitiendose en la placa aunque ya tenga el dispositivo, y por eso son dos capacidades. Esta es la que lee tools/generate_sysid.py para el bit INPUT de DEVICES (mmio.md §5.4).",
+  "_comment_input_device": "El RTL TIENE el bloque INPUT (input_registers.v). No es lo mismo que `input`: aquel dice que el arnes sabe ALIMENTAR el dispositivo con un guion. En los simuladores el guion tiene tiempo en instrucciones; la placa no puede reproducir ese tiempo --recibe eventos del monitor cuando el PC los manda-- y `tools.input_script.play_on_board` conserva solo el ORDEN, asi que solo valen los casos cuyo programa espera cada evento sondeando STATUS.COUNT. Son dos capacidades porque la segunda la declaran tambien los simuladores, que no tienen RTL. Esta es la que lee tools/generate_sysid.py para el bit INPUT de DEVICES (mmio.md §5.4).",
   "input_device": {
     "architecture": "cpu",
     "file": "input_registers.v"

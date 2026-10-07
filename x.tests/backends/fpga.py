@@ -67,11 +67,17 @@ def _build_versions() -> dict:
                 f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
                 f"{directory / 'monitor.v'}"
             )
+        capabilities = capabilities_from_rtl(directory, signals)
+        # `input_device` (el RTL tiene INPUT) implica `input` (el arnes sabe
+        # alimentarlo): el guion se reproduce por el monitor, conservando el
+        # orden de los eventos y no su instante. Ver `play_on_board`.
+        if "input_device" in capabilities and "input" not in capabilities:
+            capabilities = capabilities + ("input",)
         entry = {
             "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
             "monitor_version": monitor_version,
             "description": manifest.get("description") or readme_title(directory),
-            "capabilities": capabilities_from_rtl(directory, signals),
+            "capabilities": capabilities,
         }
         clock_hz = clock_hz_from_rtl(directory)
         if clock_hz is not None:
@@ -286,6 +292,7 @@ class FpgaBackend:
         timeout_seconds: float,
         video: dict | None = None,
         stdin: bytes = b"",
+        input_script: str | None = None,
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
         capacidades = capabilities(self.version)
@@ -483,6 +490,21 @@ class FpgaBackend:
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
 
+            # El guion de INPUT se reproduce con la CPU YA en marcha: la FIFO de
+            # la placa solo tiene 16 huecos y solo la CPU los libera, asi que un
+            # guion largo no cabe antes de arrancar. Se conserva el ORDEN de los
+            # eventos y no su instante (los `@N` son instrucciones del simulador);
+            # ver `tools.input_script.play_on_board`.
+            if input_script is not None:
+                if not hasattr(client, "send_input_events"):
+                    raise RuntimeError(
+                        "este monitor no tiene INPUT_EVENTS: no puede reproducir "
+                        "un guion de entrada")
+                from tools import input_script as guion
+
+                guion.play_on_board(
+                    client, guion.parse(input_script), timeout=timeout_seconds)
+
             while True:
                 status = client.get_status()
                 if status.halted:
@@ -530,6 +552,12 @@ class FpgaBackend:
                 (address, size): client.read_memory(address, size)
                 for address, size in memory_ranges
             }
+
+            # Ya con la CPU parada y los registros leidos (el caso puede esperar
+            # ver la presencia en STATUS): que el siguiente no herede teclas ni
+            # presencia.
+            if input_script is not None:
+                client.set_input_presence(False, False)
 
             # Los contadores, antes que nada lo demas que toque la memoria: la
             # CPU ya esta parada, asi que no se mueven, pero leerlos aqui deja
