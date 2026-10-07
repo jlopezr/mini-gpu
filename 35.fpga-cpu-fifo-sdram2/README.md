@@ -78,17 +78,30 @@ limitado por el ciclo de fila (`ACTIVE` → precarga → `ACTIVE`).
 
 ## Timing
 
-Build con semilla 12 (la de la 34, sin cambiar): memoria 102,8 MHz para 100,
-CPU 84,95 MHz para 80, píxel y TMDS con margen; 19.194 LUT, 11.465 FF, 10 EBR.
-Es una semilla afortunada: un barrido de las semillas 1 a 8 no cierra ninguna
-(memoria 89 a 99 MHz, CPU 66 a 78 MHz). Cualquier cambio de RTL puede perder el
-cierre y exige re-barrer.
+Build con semilla 17 y `--tmg-ripup --placer-heap-timingweight 30`: memoria
+107,35 MHz para 100, CPU 83,21 MHz para 80 (+4 % en el reloj más justo), píxel y
+TMDS con margen.
 
-Caminos críticos del build con semilla 12:
+Barrido de 24 semillas con esas opciones (7 de octubre de 2026): cumplen 11 de 23
+terminadas (la 20 no acabó); la memoria pasa de 100 MHz en todas, y la CPU, que es
+la que limita, va de 73 a 83 MHz. Dos cambios lo hicieron posible:
 
-- reloj de CPU: decodificador MMIO (`mmio_address` → comparador de `palabra`
-  contra `PERF_SLOTS`), heredado de la 34;
-- reloj de memoria: lógica de decisión del controlador desde `ref_state`.
+- **Opciones de nextpnr.** Sin ellas, un barrido de 8 semillas no cerraba ninguna
+  (memoria 89 a 99 MHz, CPU 66 a 78 MHz). Con ellas, sobre el mismo RTL antiguo,
+  cerraban 3 de 24.
+- **RTL.** `memory_fabric_fifo_6.v` registra la finalización (`rp_valid`,
+  `rp_port`, `rp_data`) antes de escribir en `rsp_data_mem`: `complete` habilitaba
+  129 bits en combinacional y la red cruzaba media FPGA. Con eso y los retoques
+  del controlador y del decodificador MMIO pasan de 3 de 24 a 11 de 23.
+
+Cualquier cambio de RTL exige re-barrer: la semilla vale para un netlist concreto.
+Antes de barrer, `build` (el barrido re-ruta el último build archivado; un barrido
+sobre un build viejo da números plausibles y falsos).
+
+Los caminos críticos cambian de semilla a semilla y son casi todo ruteo (75 a
+80 %): reloj de CPU, la búsqueda de instrucciones (`instruction_buffer.v`) y el
+decodificador MMIO; reloj de memoria, el candidato de ACTIVE del controlador.
+`timing-wall --path` los enseña salto a salto.
 
 ## Validación
 
@@ -111,7 +124,13 @@ monitor 5.35, 28 casos de CPU (basics, alu, errores, vídeo, programas) y despu�
 tres rondas de los 62 casos de `cases-cpu` y `cases-shared` (sin `input`, que
 esta placa no tiene): 186 ejecuciones, 0 fallos, unos 164 s seguidos. El vídeo
 mantiene unos 58 FPS en pacman. Esto cubre la calibración de `READ_DELAY_CYCLES`
-a 100 MHz con lecturas encadenadas sin hueco.
+a 100 MHz con lecturas encadenadas sin hueco. (La placa SÍ tiene `input_device`;
+la frase «sin `input`» era un error: el arnés reproduce los guiones de INPUT por
+el monitor.)
+
+Con la semilla 17 y el RTL nuevo (7 de octubre de 2026, por la tarde): 57 casos de
+`basics`, `alu`, `errors`, `extensions`, `programs`, `video` y `demos`, 0 fallos,
+incluido `input-keys-and-mouse`.
 
 No se pudieron mirar los LED de mismatch y de error de respuesta de los
 generadores (pegajosos), así que lo comprobado es el comportamiento de CPU y
