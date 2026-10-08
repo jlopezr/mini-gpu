@@ -316,8 +316,36 @@ JR R31
         unit = parse_unit(source, "k.s")
         pass_intrinsics(unit, {})
         body = [l.render() for l in functions(unit)["__kernel_k"].body if l.kind == "instr"]
-        self.assertEqual(body[:4], ["GETARG R28", "LOAD R12, R28, 0", "LOAD R28, R28, 4",
-                                    "MUL R28, R28, R12"])
+        temp = body[1].split()[1].rstrip(",")                  # el registro libre que se haya elegido
+        self.assertNotIn(temp, ("R28", "R1"))
+        self.assertEqual(body[:4], ["GETARG R28", f"LOAD {temp}, R28, 0", "LOAD R28, R28, 4",
+                                    f"MUL R28, R28, {temp}"])
+        assemble_bytes(render_unit(unit))
+
+    def test_one_loaded_address_serves_several_reads_even_across_blocks(self):
+        """lcc carga la direccion de la variable una vez y la reutiliza (a veces antes de un bucle)."""
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+LI R15, __gpu_arg
+LOAD R14, R15, 0
+BRA L.2
+L.1:
+LOAD R13, R15, 0
+ADD R14, R14, R13
+L.2:
+BLT R14, R3, L.1
+EXIT
+.extern __gpu_arg 4
+"""
+        unit = parse_unit(source, "k.s")
+        stats = {}
+        pass_intrinsics(unit, stats)
+        body = [l.render() for l in functions(unit)["__kernel_k"].body if l.kind == "instr"]
+        self.assertEqual(stats["intrinsics"], 2)
+        self.assertEqual(body.count("GETARG R14") + body.count("GETARG R13"), 2)
+        self.assertFalse(any("R15" in text or "__gpu_arg" in text for text in body))   # y el LI desaparece
         assemble_bytes(render_unit(unit))
 
 

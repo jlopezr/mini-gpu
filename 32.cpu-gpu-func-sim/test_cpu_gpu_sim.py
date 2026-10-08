@@ -1717,6 +1717,43 @@ class CSystemKernelsTest(unittest.TestCase):
                 self.assertLessEqual(c_count, asm_count * self.MAX_RATIO)
 
 
+class CRotateTest(unittest.TestCase):
+    """`examples/c/rotate_c.c`: la rotación de textura en C (CPU, GPU inocente y GPU buena, el mismo
+    cuerpo con otro reparto de trabajo) frente a `rotate.inc`. Las seis versiones dejan la imagen del
+    modelo; el coste de C frente al ensamblador tiene un tope que bajará cuando mini-opt saque del bucle lo
+    invariante (ver el README de examples/c)."""
+
+    # medido: CPU 1,22, GPU inocente 1,44, GPU buena 1,45
+    MAX_RATIO = {"CPU": 1.35, "GPU inocente": 1.6, "GPU buena": 1.6}
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(C_EXAMPLES))
+        import compare_rotate
+        try:
+            cls.rows = compare_rotate.compare(5)
+        except compare_rotate.c_build.BuildError as error:
+            if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
+                raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+            raise
+
+    def test_every_version_draws_the_modelled_image(self):
+        for name, _, _, _, correct in self.rows:
+            with self.subTest(name):
+                self.assertTrue(correct)
+
+    def test_c_stays_within_its_cost_cap_against_assembler(self):
+        for name, _, asm_count, c_count, _ in self.rows:
+            with self.subTest(name):
+                self.assertLessEqual(c_count, asm_count * self.MAX_RATIO[name])
+
+    def test_the_two_gpu_mappings_run_the_same_body(self):
+        counts = {name: c for name, _, _, c, _ in self.rows}
+        # la buena recorre 160 columnas en 20 vueltas de 8 y la inocente en 160: mismo trabajo,
+        # distinto numero de instrucciones de warp, pero del mismo orden
+        self.assertLess(abs(counts["GPU buena"] - counts["GPU inocente"]), counts["GPU inocente"] * 0.2)
+
+
 class CDivergenceTest(unittest.TestCase):
     """`examples/c/diverge_c.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
     `ssy` de mini-opt. Cada resultado se compara con el mismo cálculo en Python."""

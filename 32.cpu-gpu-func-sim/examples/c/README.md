@@ -85,6 +85,63 @@ con mucho cálculo y campos de estructura (la rotación, el cubo) la diferencia 
 lcc relee de la estructura cada campo que usa en el bucle. `CSystemKernelsTest` pone un tope del
 10 % a la proporción para que un cambio en el compilador que empeore el código se note.
 
+## Las tres versiones de una demo: CPU, GPU inocente y GPU buena
+
+`GRID_FOR` es solo el reparto más sencillo para una dimensión. Lo que distingue a la GPU inocente de
+la buena en `examples/race` no es un bucle distinto: es **qué hilo hace qué trozo del trabajo**. En C
+se ve así: el cuerpo se escribe una sola vez (`rotate_body.h`) y cada versión lo incluye con cuatro
+expresiones distintas, la fila y la columna por la que empieza el hilo y de cuánto en cuánto salta:
+
+| | filas: primera, paso | columnas: primera, paso | qué escriben las 8 lanes de un warp |
+|---|---|---|---|
+| CPU | 0, 1 | 0, 1 | (un solo hilo) |
+| GPU inocente | `__gpu_tid`, todos los hilos | 0, 1 | ocho filas distintas, a 1280 B unas de otras |
+| GPU buena | `__gpu_lwarp`, todos los warps | `__gpu_lane`, las lanes de un warp | ocho palabras seguidas |
+
+`rotate_c.c` define esos valores tres veces con `#define`, incluye el cuerpo, y los deshace. La fila
+`GRID_FOR(i, n, step)` de arriba es el caso unidimensional de la GPU buena: primera = `__gpu_tid`,
+paso = `__gpu_nthreads`. Para una imagen se aplican dos veces, una por la fila y otra por la columna.
+
+El cuerpo no puede ser una función que llame a otra: la GPU de la 36 no tiene `JAL`, así que lcc no
+puede enlazar la llamada dentro de un kernel, y lcc no expande funciones en línea. De ahí la
+plantilla por `#include`.
+
+## C frente a ensamblador: la rotación de textura
+
+`compare_rotate.py` ejecuta los seis (tres métodos × C y ensamblador) con los mismos datos y comprueba
+que cada uno dibuja la imagen del modelo en Python. Los kernels de GPU se lanzan sin programa de CPU y
+la CPU se ejecuta hasta `HALT`:
+
+| Método | Cuenta | Ensamblador | C | C / ens. |
+|---|---|---:|---:|---:|
+| CPU | instrucciones de CPU | 233.806 | 285.439 | 1,22 |
+| GPU inocente | instrucciones de warp | 29.426 | 42.231 | 1,44 |
+| GPU buena | instrucciones de warp | 30.864 | 44.664 | 1,45 |
+
+Aquí sí hay diferencia, a diferencia de los kernels de sistema. El bucle de celdas son **20
+instrucciones en C contra 14 en ensamblador**, y las seis de más son de tres clases, las tres de
+sacar del bucle lo que no cambia en él:
+
+- **`MOVI` + desplazamiento** (dos veces por celda): la GPU no tiene `SHLI`, y la constante (7, 2) se
+  vuelve a cargar en cada vuelta. En ensamblador está en un registro desde antes del bucle.
+- **`p += cstep` escalado a cada vuelta:** un `MOVI`, un `SHL` y un `ADD` donde el ensamblador tiene un
+  `ADDI`, aunque `cstep` no cambia dentro del bucle.
+- **Una copia del texel** (`ADD R28,R15,R0`) y **la constante 160 cargada antes de cada `BLT`**.
+
+Dos cosas que importan de cara a escribir C para esta máquina:
+
+- **lcc reparte los registros por orden de declaración.** Con 14 registros preservados y 18 variables,
+  declarar primero las frías (`blk`, `fb`, `u00`...) dejaba a `u`, `v` y `texel` en la pila, y el bucle
+  de celdas leía y escribía la pila en cada vuelta. En `rotate_body.h` las variables se declaran de la más
+  caliente a la más fría.
+- **Una pila en la GPU es cara.** Cada lane tiene su porción, a 512 bytes de la siguiente, así que un
+  acceso a la pila de los ocho lanes son ocho transacciones. `mini-opt` ya quita los guardados y
+  restauraciones de registros preservados aunque el kernel tenga locales, pero no los locales.
+
+Lo que falta para cerrar la brecha es un pase de `mini-opt` que saque del bucle las instrucciones
+invariantes (y mantenga sus constantes en registros). `CRotateTest` pone topes al coste (1,35 en la CPU,
+1,6 en la GPU) que deberán bajarse cuando exista.
+
 ## Límites de hoy
 
 - **Hasta 4 parámetros** de 32 bits por kernel (`R1`–`R4`); con más, un puntero a estructura.

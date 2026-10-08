@@ -296,6 +296,18 @@ def live_after(block: Block, live_out: set[int], position: int) -> set[int]:
     return live
 
 
+def number(text: str) -> int | None:
+    """Un desplazamiento numerico como los de lcc: `16`, `-8`, `-8+80` (un local mas el tamano del
+    marco). None si lleva un nombre (una etiqueta)."""
+    parts = re.findall(r"[+-]?[^+-]+", text.strip().replace(" ", ""))
+    if not parts or "".join(parts) != text.strip().replace(" ", ""):
+        return None
+    try:
+        return sum(int(part, 0) for part in parts)
+    except ValueError:
+        return None
+
+
 def instr(op: str, *args: str) -> Line:
     return Line("instr", "", op=op, args=list(args))
 
@@ -346,54 +358,101 @@ INTRINSIC_STORES = {
 }
 
 
+def reaching_symbols(blocks: list[Block], names: set[str]) -> list[dict[int, str]]:
+    """Por bloque, que registros contienen a la entrada la direccion de un intrinseco
+    (`LI r, __gpu_x`). Solo se conserva lo que llega igual por todos los caminos.
+    lcc carga la direccion una vez y la reutiliza para varias lecturas, a veces desde
+    otro bloque (antes de un bucle, por ejemplo)."""
+    entry: list[dict[int, str] | None] = [None] * len(blocks)
+    entry[0] = {}
+    changed = True
+    while changed:
+        changed = False
+        for block in blocks:
+            if entry[block.index] is None:
+                continue
+            current = dict(entry[block.index])
+            for line in block.lines:
+                if line.kind == "instr":
+                    defs, _ = defs_uses(line)
+                    for d in defs:
+                        current.pop(d, None)
+                    if line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
+                        current[reg_of(line.args[0])] = line.args[1]
+            for s in block.succ:
+                if entry[s] is None:
+                    entry[s] = dict(current)
+                    changed = True
+                else:
+                    merged = {r: sym for r, sym in entry[s].items() if current.get(r) == sym}
+                    if merged != entry[s]:
+                        entry[s] = merged
+                        changed = True
+    return [e if e is not None else {} for e in entry]
+
+
 @register_pass("intrinsics", "variables __gpu_* -> GETTID/GETLANE/GETWARP/GETLWARP/GETARG/BAR")
 def pass_intrinsics(unit: Unit, stats: dict) -> None:
     names = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES) | COMPOSITE_LOADS
     for function in unit.functions():
+        where = f"{unit.path}: {function.name}"
+        blocks = build_cfg(function)
+        if not blocks:
+            continue
+        live_out = liveness(blocks)
+        held = reaching_symbols(blocks, names)
+        for block in blocks:
+            current = dict(held[block.index])
+            i = 0
+            while i < len(block.lines):
+                line = block.lines[i]
+                if line.kind != "instr":
+                    i += 1
+                    continue
+                defs, _ = defs_uses(line)
+                new = None
+                sym = current.get(reg_of(line.args[1])) if line.op in ("LOAD", "STORE") and len(line.args) == 3 \
+                    and line.args[2] in ("0", "+0") and reg_of(line.args[1]) is not None else None
+                if sym is not None and line.op == "LOAD" and (sym in INTRINSIC_LOADS or sym in COMPOSITE_LOADS):
+                    d = line.args[0]
+                    if sym in COMPOSITE_LOADS:
+                        after = live_after(block, live_out[block.index], i)
+                        t = free_register(after | {reg_of(d)}, where)
+                        new = [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
+                               instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
+                    else:
+                        new = [instr(INTRINSIC_LOADS[sym], d)]
+                elif sym is not None and line.op == "STORE" and sym in INTRINSIC_STORES \
+                        and reg_of(line.args[0]) not in current:
+                    new = [instr(INTRINSIC_STORES[sym])]
+                if new is not None:
+                    block.lines[i:i + 1] = new
+                    stats["intrinsics"] = stats.get("intrinsics", 0) + 1
+                    i += len(new)
+                else:
+                    i += 1
+                for d in defs:
+                    current.pop(d, None)
+                if line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
+                    current[reg_of(line.args[0])] = line.args[1]
+        # la direccion cargada ya no la usa nadie: fuera. Si algo mas la usa (se tomo la
+        # direccion, se sumo...), no se puede reescribir
+        function.body = [line for block in blocks for line in block.lines]
         blocks = build_cfg(function)
         live_out = liveness(blocks)
         for block in blocks:
             i = 0
-            while i < len(block.lines) - 1:
-                a, b = block.lines[i], block.lines[i + 1]
-                if (a.kind == "instr" and a.op == "LI" and len(a.args) == 2
-                        and a.args[1] in names and b.kind == "instr"):
-                    tmp = reg_of(a.args[0])
-                    sym = a.args[1]
-                    is_load = (sym in INTRINSIC_LOADS or sym in COMPOSITE_LOADS) and b.op == "LOAD"
-                    is_store = sym in INTRINSIC_STORES and b.op == "STORE"
-                    ok_shape = (len(b.args) == 3 and b.args[2] in ("0", "+0")
-                                and reg_of(b.args[1]) == tmp)
-                    if not ((is_load or is_store) and ok_shape):
-                        raise OptError(
-                            f"{unit.path}: '{sym}' solo se puede leer"
-                            f"{' o escribir' if sym in INTRINSIC_STORES else ''} como "
-                            f"variable entera ({function.name})")
-                    if is_load:
-                        dest = reg_of(b.args[0])
-                        # el temporal de la direccion no puede seguir vivo
-                        if tmp != dest and tmp in live_after(block, live_out[block.index], i + 1):
-                            raise OptError(
-                                f"{unit.path}: {function.name}: R{tmp} sigue vivo tras leer {sym}")
-                        if sym in COMPOSITE_LOADS:
-                            after = live_after(block, live_out[block.index], i + 1)
-                            d = b.args[0]
-                            t = tmp if tmp != dest else free_register(after | {dest},
-                                                                      f"{unit.path}: {function.name}")
-                            new = [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
-                                   instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
-                        else:
-                            new = Line("instr", "", op=INTRINSIC_LOADS[sym], args=[b.args[0]])
-                    else:
-                        if tmp in live_after(block, live_out[block.index], i + 1):
-                            raise OptError(
-                                f"{unit.path}: {function.name}: R{tmp} sigue vivo tras escribir {sym}")
-                        new = Line("instr", "", op=INTRINSIC_STORES[sym])
-                    block.lines[i:i + 2] = new if isinstance(new, list) else [new]
-                    stats["intrinsics"] = stats.get("intrinsics", 0) + 1
-                else:
-                    i += 1
-        # volver a montar el cuerpo con los bloques tocados
+            while i < len(block.lines):
+                line = block.lines[i]
+                if line.kind == "instr" and line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
+                    register = reg_of(line.args[0])
+                    if register in live_after(block, live_out[block.index], i):
+                        raise OptError(f"{where}: '{line.args[1]}' solo se puede leer"
+                                       f"{' o escribir' if line.args[1] in INTRINSIC_STORES else ''} como "
+                                       f"variable entera (R{register} sigue vivo tras leer {line.args[1]})")
+                    del block.lines[i]
+                    continue
+                i += 1
         function.body = [line for block in blocks for line in block.lines]
     # las declaraciones `.extern` de los intrinsecos ya no designan nada
     unit.chunks = [c for c in unit.chunks
@@ -432,44 +491,53 @@ GPU_ISA = "36"
 
 
 def drop_frame(function: Function, stats: dict) -> bool:
-    """Quita el marco de pila de un kernel si solo guardaba y restauraba registros preservados.
+    """Quita de un kernel lo que lcc guarda y restaura de los registros preservados.
 
-    El prologo de lcc (`ADDI R30,R30,-N` y `STORE Rk,R30,off` de cada R16..R29 que usa) y
-    el epilogo que lo deshace sirven para devolver esos registros a quien llamo. Un kernel
-    no vuelve a nadie: acaba con EXIT. Si NADA mas toca R30 (ni un local ni un derrame), se
-    borra todo el marco y el kernel no necesita pila. Devuelve True si ya no queda ninguna
-    referencia a R30, y False si el kernel usa la pila de verdad (y no se toca nada)."""
+    El prologo de lcc (`ADDI R30,R30,-N` y un `STORE Rk,R30,off` por cada R16..R29 que usa) y el
+    epilogo que lo deshace (los `LOAD` y el `ADDI R30,R30,N`) devuelven esos registros a quien
+    llamo. Un kernel no vuelve a nadie: acaba con EXIT. Siempre se borran esos guardados y
+    restauraciones (en la GPU cada uno es un acceso a la pila de la lane, con direcciones
+    separadas por lane, es decir sin coalescer). Si tras eso NADA mas toca R30 (ni un local ni un
+    derrame), se borra tambien el marco y el kernel no necesita pila.
+
+    Devuelve True si ya no queda ninguna referencia a R30, y False si el kernel usa la pila de
+    verdad (y se queda con su marco para los locales)."""
     refs = [l for l in function.body
             if l.kind == "instr" and any(reg_of(a) == STACK for a in l.args)]
     if not refs:
         return True
     first = refs[0]
     if not (first.op == "ADDI" and [a.upper() for a in first.args[:2]] == ["R30", "R30"]
-            and int(first.args[2], 0) < 0):
+            and (number(first.args[2]) or 0) < 0):
         return False
-    size = -int(first.args[2], 0)
+    size = -number(first.args[2])
     saves: dict[int, int] = {}                  # desplazamiento -> registro preservado
     for line in refs[1:]:
         if line.op != "STORE" or reg_of(line.args[1]) != STACK:
             break
-        register, offset = reg_of(line.args[0]), int(line.args[2], 0)
-        if register is None or not 16 <= register <= 29 or offset in saves or not 0 <= offset < size:
-            return False
+        register, offset = reg_of(line.args[0]), number(line.args[2])
+        if (register is None or not 16 <= register <= 29 or offset is None or offset in saves
+                or not 0 <= offset < size):
+            break
         saves[offset] = register
-    remove = [first] + refs[1:1 + len(saves)]
+    remove = list(refs[1:1 + len(saves)])
     for line in refs[1 + len(saves):]:
         if (line.op == "LOAD" and reg_of(line.args[1]) == STACK
-                and saves.get(int(line.args[2], 0)) == reg_of(line.args[0])):
+                and saves.get(number(line.args[2])) == reg_of(line.args[0])):
             remove.append(line)
-        elif (line.op == "ADDI" and [a.upper() for a in line.args[:2]] == ["R30", "R30"]
-              and int(line.args[2], 0) == size):
-            remove.append(line)
-        else:
-            return False                        # un local o un derrame: la pila se usa
+    rest = [l for l in refs[1:] if all(l is not r for r in remove)]
+    epilogue = [l for l in rest if l.op == "ADDI" and [a.upper() for a in l.args[:2]] == ["R30", "R30"]
+                and number(l.args[2]) == size]
+    only_frame = len(rest) == len(epilogue)
+    if only_frame:
+        remove += [first] + epilogue
+    if not remove:
+        return False
     gone = {id(line) for line in remove}
     function.body = [line for line in function.body if id(line) not in gone]
-    stats["kernels.frames"] = stats.get("kernels.frames", 0) + 1
-    return True
+    stats["kernels.frames" if only_frame else "kernels.saves"] = \
+        stats.get("kernels.frames" if only_frame else "kernels.saves", 0) + 1
+    return only_frame
 
 
 @register_pass("kernels", "__kernel_*: desplazamientos con registro, ISA de la GPU, entrada (pila de "
@@ -511,11 +579,11 @@ def pass_kernels(unit: Unit, stats: dict) -> None:
         frame = 0
         for line in function.body:
             if line.kind == "instr" and line.op == "ADDI" and [a.upper() for a in line.args[:2]] == ["R30", "R30"]:
-                frame = -int(line.args[2], 0)
+                frame = -(number(line.args[2]) or 0)
                 break
         for line in function.body:
             if (line.kind == "instr" and line.op in LOADS and reg_of(line.args[1]) == STACK
-                    and int(line.args[2], 0) >= frame > 0):
+                    and (number(line.args[2]) or 0) >= frame > 0):
                 raise OptError(f"{where}: un kernel admite {KERNEL_PARAMS} parametros como maximo "
                                "(pasa un puntero a una estructura)")
         uses_stack = not drop_frame(function, stats)
