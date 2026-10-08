@@ -878,12 +878,18 @@ que un `build --prototype N` explícito.
 Cuando ya no necesitas builds antiguos:
 
 ```bash
-$ build-clean-logs --dry-run              # qué borraría, sin borrar nada
-$ build-clean-logs --prototype 17 --keep 5 --yes
+$ build-clean --dry-run                  # qué borraría, sin borrar nada
+$ build-clean --prototype 17 --keep 5 --keep-reports 3 --yes
 ```
 
-Por defecto conserva los 10 builds más recientes, los de los últimos 30 días,
-cualquier build `running`, y el último `success` — nunca borra sin `--yes`.
+`build-clean` limpia dos cosas. Los logs de ejecución de `reports/` en la raíz
+(`--keep`, 10 por defecto, `--older-than`, `--max-size`) y los archivos de build
+de `<prototipo>/reports/`. De estos conserva completos los `--keep-reports`
+(2) más recientes, el último que cumplió timing y los que aún no tienen
+`metadata.json` (build en curso). En los demás borra solo lo pesado
+(`hardware.json`, `.config`, `.pnr` y las carpetas `sweep-*`) y deja
+`summary.*`, `metadata.json`, `build.log` y `sources.zip`; con `--full` borra
+la carpeta entera. Nunca borra sin `--yes`.
 
 ## Suite de un prototipo (`test`)
 

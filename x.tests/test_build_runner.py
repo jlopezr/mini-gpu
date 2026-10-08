@@ -19,6 +19,7 @@ from tools.build_runner import (  # noqa: E402
     build_all,
     buildable_prototypes,
     clean_logs,
+    clean_reports,
     create_build_record,
     list_builds,
     prototype_build_summary,
@@ -305,6 +306,45 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertTrue(active["folder"].exists())
             self.assertTrue(success["folder"].exists())
             self.assertGreater(summary["bytes_freed"], 0)
+
+    def _make_archive(self, proto, name, exit_code=0, achieved=100, metadata=True):
+        archive = proto / "reports" / name
+        (archive / "sweep-x").mkdir(parents=True)
+        (archive / "sweep-x" / "big.bin").write_bytes(b"x" * 100)
+        for heavy in ("hardware.json", "hardware.config", "hardware.pnr"):
+            (archive / heavy).write_bytes(b"x" * 1000)
+        (archive / "summary.json").write_text(json.dumps(
+            {"clocks": {"clk": {"achieved": achieved, "constraint": 80}}}), encoding="utf-8")
+        if metadata:
+            (archive / "metadata.json").write_text(
+                json.dumps({"exit_code": exit_code}), encoding="utf-8")
+        return archive
+
+    def test_clean_reports_lightens_old_archives_and_protects_recent_and_last_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proto = root / "17.fpga-gpu-ram-v2"
+            proto.mkdir()
+            (proto / "apio.ini").write_text("[env:default]\n", encoding="utf-8")
+            good = self._make_archive(proto, "20260101-000001-a")
+            old = self._make_archive(proto, "20260101-000002-b", achieved=50)
+            running = self._make_archive(proto, "20260101-000003-c", metadata=False)
+            newest = self._make_archive(proto, "20260101-000004-d", achieved=50)
+            newer = self._make_archive(proto, "20260101-000005-e", exit_code=1)
+            summary = clean_reports(root, keep=2, dry_run=True)
+            self.assertTrue(summary["dry_run"])
+            self.assertTrue((old / "hardware.json").exists())
+            summary = clean_reports(root, keep=2, dry_run=False, yes=True)
+            self.assertFalse((old / "hardware.json").exists())
+            self.assertFalse((old / "sweep-x").exists())
+            self.assertTrue((old / "summary.json").exists())
+            self.assertTrue((old / "metadata.json").exists())
+            for kept in (good, running, newest, newer):
+                self.assertTrue((kept / "hardware.json").exists(), kept)
+            self.assertGreater(summary["bytes_freed"], 0)
+            clean_reports(root, keep=2, full=True, dry_run=False, yes=True)
+            self.assertFalse(old.exists())
+            self.assertTrue(good.exists())
 
 
 if __name__ == "__main__":

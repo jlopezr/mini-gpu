@@ -492,6 +492,95 @@ def clean_logs(root: Path | str, keep: int = 10, older_than_days: int | None = N
     return summary
 
 
+HEAVY_ARCHIVE_FILES = ("hardware.json", "hardware.config", "hardware.pnr")
+
+
+def _archive_timing_ok(archive: Path) -> bool:
+    """True si el archivo terminó bien y todos sus relojes cumplen."""
+    try:
+        metadata = json.loads((archive / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if metadata.get("exit_code") != 0:
+        return False
+    try:
+        summary = json.loads((archive / "summary.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    return all(clock.get("achieved", 0) >= clock.get("constraint", 0)
+               for clock in summary.get("clocks", {}).values())
+
+
+def _tree_size(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+
+
+def _remove_tree(path: Path) -> None:
+    if path.is_file() or path.is_symlink():
+        path.unlink()
+        return
+    for child in sorted(path.rglob("*"), reverse=True):
+        if child.is_file() or child.is_symlink():
+            child.unlink()
+        elif child.is_dir():
+            child.rmdir()
+    path.rmdir()
+
+
+def clean_reports(repo_root: Path | str, keep: int = 2, prototype: str | None = None,
+                  full: bool = False, dry_run: bool = True, yes: bool = False) -> dict:
+    """Aligera los archivos de build de `<prototipo>/reports/`.
+
+    Se conservan intactos los `keep` más recientes, el último que cumplió timing
+    y los que no tienen `metadata.json` (build en curso). En el resto se borran
+    los ficheros pesados y los `sweep-*`; con `full`, la carpeta entera.
+    """
+    base = Path(repo_root).resolve()
+    prototypes = buildable_prototypes(base)
+    if prototype:
+        wanted = normalize_prototype(prototype)
+        prototypes = [p for p in prototypes if normalize_prototype(p.name) == wanted]
+    would_remove: list[Path] = []
+    kept: list[str] = []
+    for proto in prototypes:
+        reports = proto / "reports"
+        archives = sorted(p for p in reports.glob("*") if p.is_dir()) if reports.is_dir() else []
+        protected = set(archives[-keep:]) if keep > 0 else set()
+        protected.update(p for p in archives if not (p / "metadata.json").exists())
+        last_ok = next((p for p in reversed(archives) if _archive_timing_ok(p)), None)
+        if last_ok is not None:
+            protected.add(last_ok)
+        for archive in archives:
+            if archive in protected:
+                kept.append(str(archive))
+            elif full:
+                would_remove.append(archive)
+            else:
+                would_remove.extend(p for p in archive.iterdir()
+                                    if p.name in HEAVY_ARCHIVE_FILES
+                                    or (p.is_dir() and p.name.startswith("sweep-")))
+    bytes_freed = sum(_tree_size(p) for p in would_remove)
+    summary = {
+        "dry_run": dry_run or not yes,
+        "would_remove": [str(p) for p in would_remove],
+        "removed": [],
+        "bytes_freed": bytes_freed,
+        "kept": sorted(kept),
+        "prototype": prototype,
+        "keep": keep,
+        "full": full,
+    }
+    if dry_run or not yes:
+        return summary
+    for path in would_remove:
+        if path.exists():
+            _remove_tree(path)
+            summary["removed"].append(str(path))
+    return summary
+
+
 def stop_build(status_path: Path | str) -> bool:
     path = Path(status_path)
     if not path.exists():
@@ -657,12 +746,19 @@ def _main() -> int:
     stop_cmd.add_argument("--id", default=None)
     stop_cmd.add_argument("--root", type=Path, default=None)
 
-    clean_cmd = subparsers.add_parser("clean-logs", help="Limpia logs antiguos con seguridad")
+    clean_cmd = subparsers.add_parser(
+        "clean", help="Limpia logs y reports antiguos con seguridad")
     clean_cmd.add_argument("-p", "--prototype", default=None)
-    clean_cmd.add_argument("--root", type=Path, default=None)
-    clean_cmd.add_argument("--keep", type=int, default=10)
-    clean_cmd.add_argument("--older-than", type=int, default=None)
-    clean_cmd.add_argument("--max-size", default=None)
+    clean_cmd.add_argument("--root", type=Path, default=None,
+                           help="carpeta de logs de ejecución (por defecto reports/ de la raíz)")
+    clean_cmd.add_argument("--keep", type=int, default=10,
+                           help="logs de ejecución que se conservan")
+    clean_cmd.add_argument("--keep-reports", type=int, default=2,
+                           help="archivos de build por prototipo que se conservan completos")
+    clean_cmd.add_argument("--full", action="store_true",
+                           help="borra los reports viejos enteros, no solo lo pesado")
+    clean_cmd.add_argument("--older-than", type=int, default=None, help="solo logs")
+    clean_cmd.add_argument("--max-size", default=None, help="solo logs")
     clean_cmd.add_argument("--dry-run", action="store_true")
     clean_cmd.add_argument("--yes", action="store_true", default=False)
 
@@ -812,11 +908,17 @@ def _main() -> int:
         status_path = Path(record.get("folder")) / "status.json"
         return 0 if stop_build(status_path) else 1
 
-    if args.command == "clean-logs":
-        summary = clean_logs(report_root, keep=args.keep, older_than_days=args.older_than,
-                            max_size=args.max_size, prototype=args.prototype,
-                            dry_run=args.dry_run, yes=args.yes)
-        print(json.dumps(summary, indent=2))
+    if args.command == "clean":
+        logs = clean_logs(report_root, keep=args.keep, older_than_days=args.older_than,
+                          max_size=args.max_size, prototype=args.prototype,
+                          dry_run=args.dry_run, yes=args.yes)
+        reports = clean_reports(find_repo_root(Path.cwd()), keep=args.keep_reports,
+                                prototype=args.prototype, full=args.full,
+                                dry_run=args.dry_run, yes=args.yes)
+        print(json.dumps({"logs": logs, "reports": reports}, indent=2))
+        freed = logs["bytes_freed"] + reports["bytes_freed"]
+        verb = "liberaría" if args.dry_run or not args.yes else "liberados"
+        print(f"{verb} {freed / 1024 ** 2:.0f} MB", file=sys.stderr)
         return 0
 
     if args.command == "build":

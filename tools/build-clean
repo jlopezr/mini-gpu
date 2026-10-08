@@ -8,5 +8,5 @@ sys.path.insert(0, str(ROOT))
 from tools.build_runner import _main
 
 if __name__ == "__main__":
-    sys.argv.insert(1, "clean-logs")
+    sys.argv.insert(1, "clean")
     raise SystemExit(_main())
