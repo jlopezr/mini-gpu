@@ -61,6 +61,57 @@ def latest_report_dir(prototype_dir: Path) -> Path:
     return candidates[0]
 
 
+def live_report_dir(prototype_dir: Path) -> Path:
+    """Carpeta de un build EN CURSO: la última de reports/ que ya tiene su
+    `metadata.json` (se escribe al arrancar) pero todavía no su `summary.json`
+    (se escribe al terminar). Es la contraria de `latest_report_dir`."""
+    history = prototype_dir / 'reports'
+    candidates = sorted(
+        (d for d in history.iterdir()
+         if (d / 'metadata.json').exists() and not (d / 'summary.json').exists()),
+        reverse=True,
+    ) if history.exists() else []
+    if not candidates:
+        raise SystemExit(f'No hay ningún build en curso en {history}: no se puede usar --live.')
+    return candidates[0]
+
+
+def live_synthesis(prototype_dir: Path, report_dir: Path) -> tuple:
+    """`hardware.json` y `scons.params` de la síntesis del build en curso.
+
+    El barrido solo repite colocación y rutado, y la síntesis ya está hecha en
+    cuanto yosys escribe `hardware.json`: no hace falta esperar a que termine el
+    rutado de la semilla del `apio.ini` para barrer las demás. Se comprueba:
+
+    * que los dos ficheros son de ESTE build y no de uno anterior (su fecha es
+      posterior al arranque, que marca `sources.zip`);
+    * que `hardware.json` está entero (yosys lo escribe de golpe al final, pero
+      se mira que acabe en `}`);
+    * que las fuentes no han cambiado desde que arrancó el build: si alguien
+      edita un `.v`, la síntesis ya no es la de lo que hay en disco.
+    """
+    build = prototype_dir / '_build' / 'default'
+    started = (report_dir / 'sources.zip').stat().st_mtime
+    for name in ('hardware.json', 'scons.params'):
+        path = build / name
+        if not path.exists() or path.stat().st_mtime < started - 2:
+            raise SystemExit(f'{path} no es de este build ({report_dir.name}): la síntesis '
+                             f'aún no ha terminado, o el build ha fallado antes.')
+    with (build / 'hardware.json').open('rb') as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - 64))      # un fichero corto es de por si sospechoso
+        if not handle.read().rstrip().endswith(b'}'):
+            raise SystemExit('hardware.json está incompleto: yosys sigue escribiéndolo.')
+    recorded = json.loads((report_dir / 'metadata.json').read_text()).get('source_sha256', {})
+    changed = sorted(name for name, digest in recorded.items()
+                     if (prototype_dir / name).exists()
+                     and hashlib.sha256((prototype_dir / name).read_bytes()).hexdigest() != digest)
+    if changed:
+        raise SystemExit('Las fuentes han cambiado desde que arrancó el build; la síntesis no es la '
+                         f'de lo que hay en disco: {", ".join(changed)}')
+    return build / 'hardware.json', build / 'scons.params'
+
+
 def load_results(path: Path) -> list:
     """results.json de un barrido anterior; vale la carpeta sweep-* o el fichero."""
     path = Path(path)
@@ -452,6 +503,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-p', '--prototype')
     parser.add_argument('--report-dir', type=Path, default=None)
+    parser.add_argument('--live', action='store_true',
+                        help='barre la síntesis de un build EN CURSO (la de _build/default), sin '
+                             'esperar a que termine su rutado: sirve para lanzar las demás '
+                             'semillas mientras la del apio.ini sigue. Falla si las fuentes '
+                             'han cambiado desde que arrancó')
     parser.add_argument('--seeds', type=int, nargs='+', default=None,
                         help='semillas a barrer (por defecto 1 2 3 4 5)')
     parser.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 3) // 3),
@@ -541,35 +597,54 @@ def main():
     except PrototypeResolutionError as exc:
         raise SystemExit(f'error: {exc}')
     print(f'Using prototype: {prototype_dir.name}')
-    source = (args.report_dir if args.report_dir is not None else latest_report_dir(prototype_dir)).resolve()
-    metadata = json.loads((source / 'metadata.json').read_text())
-    if metadata.get('exit_code') != 0 or metadata.get('archive_only') or metadata.get('sources_changed_during_build'):
-        raise SystemExit('Require a successful, unchanged, non-archive-only build.')
-    original = json.loads((source / 'hardware.pnr').read_text())
-    # Que el netlist de partida no cumpla timing NO impide barrer: es el caso
-    # en que el barrido hace falta. Se avisa, porque cambia cómo se lee el
-    # resultado -- aquí el barrido no mide la dispersión de un diseño sano,
-    # sino si hay alguna semilla que lo salve.
-    if not timing_passes(original.get('fmax', {})):
-        print('Aviso: el build de partida NO cumple timing; se barre igual.',
+    if args.live and args.report_dir is not None:
+        parser.error('--live y --report-dir se excluyen: --live toma el build en curso')
+    live_files = None
+    if args.live:
+        source = live_report_dir(prototype_dir).resolve()
+        live_files = live_synthesis(prototype_dir, source)
+        print(f'Build en curso: {source.name}. Se barre su síntesis ({live_files[0]}).',
               flush=True)
+    else:
+        source = (args.report_dir if args.report_dir is not None else latest_report_dir(prototype_dir)).resolve()
+        metadata = json.loads((source / 'metadata.json').read_text())
+        if metadata.get('exit_code') != 0 or metadata.get('archive_only') or metadata.get('sources_changed_during_build'):
+            raise SystemExit('Require a successful, unchanged, non-archive-only build.')
+        original = json.loads((source / 'hardware.pnr').read_text())
+        # Que el netlist de partida no cumpla timing NO impide barrer: es el caso
+        # en que el barrido hace falta. Se avisa, porque cambia cómo se lee el
+        # resultado -- aquí el barrido no mide la dispersión de un diseño sano,
+        # sino si hay alguna semilla que lo salve.
+        if not timing_passes(original.get('fmax', {})):
+            print('Aviso: el build de partida NO cumple timing; se barre igual.',
+                  flush=True)
     if len(set(args.seeds)) != len(args.seeds):
         raise SystemExit('Duplicate seeds are not independent samples.')
     folder = source / ('sweep-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     folder.mkdir()
+    # Los ficheros de partida. Normalmente son los del build archivado; con
+    # --live se copian a una carpeta del barrido, para que sea autocontenido y
+    # no dependa de que `_build/default` siga igual cuando el build termine.
+    files = source
+    if live_files is not None:
+        files = folder / 'base'
+        files.mkdir()
+        shutil.copy2(live_files[0], files / 'hardware.json')
+        shutil.copy2(live_files[1], files / 'scons.params')
+        shutil.copy2(source / 'sources.zip', files / 'sources.zip')
     exe = find_toolchain_binary('nextpnr-ecp5')
     env = oss_cad_suite_env()
-    hashes = {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
+    hashes = {name: hashlib.sha256((files / name).read_bytes()).hexdigest()
               for name in ('hardware.json', 'sources.zip')}
     (folder / 'metadata.json').write_text(json.dumps(dict(source=str(source), sha256=hashes,
-        seeds=args.seeds, nextpnr_options=args.nextpnr_options,
+        live=args.live, seeds=args.seeds, nextpnr_options=args.nextpnr_options,
         tool_sha256=hashlib.sha256(exe.read_bytes()).hexdigest()), indent=2))
     shutil.copy2(__file__, folder / 'sweep_report.py')
-    params = read_ecp5_params((source / 'scons.params').read_text())
+    params = read_ecp5_params((files / 'scons.params').read_text())
     results = []
     # Only the archived constraint is extracted, outside Apio's recursive tree.
     with tempfile.TemporaryDirectory(prefix='gpu-sweep-') as temporary:
-        with zipfile.ZipFile(source / 'sources.zip') as archive:
+        with zipfile.ZipFile(files / 'sources.zip') as archive:
             lpf_names = [name for name in archive.namelist() if name.endswith('.lpf')]
             if len(lpf_names) != 1:
                 raise SystemExit(f'Se esperaba exactamente un .lpf en sources.zip; hay {lpf_names}')
@@ -582,7 +657,7 @@ def main():
             run.mkdir()
             command = [str(exe), f"--{params['type']}", '--package', params['package'],
                 '--speed', params['speed'],
-                '--seed', str(seed), *extra_flags, '--json', str(source / 'hardware.json'),
+                '--seed', str(seed), *extra_flags, '--json', str(files / 'hardware.json'),
                 '--report', str(run / 'hardware.pnr'), '--lpf', str(lpf),
                 '--textcfg', str(run / 'hardware.config'), '--timing-allow-fail',
                 '--detailed-timing-report', '--force']

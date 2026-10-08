@@ -861,6 +861,10 @@ def _main() -> int:
     sweep_cmd.add_argument("--seeds", type=int, nargs="+", default=None,
                            help="Semillas a barrer (por defecto 1 2 3 4 5)")
     sweep_cmd.add_argument("--report-dir", type=Path, default=None)
+    sweep_cmd.add_argument("--live", action="store_true",
+                           help="Barre la síntesis de un build EN CURSO, sin esperar a que termine "
+                                "su rutado: para lanzar las demás semillas mientras la del apio.ini "
+                                "sigue. Falla si las fuentes han cambiado desde que arrancó")
     sweep_cmd.add_argument("--compare", type=Path, default=None, metavar="SWEEP",
                            help="Carpeta sweep-* de un barrido anterior con las mismas semillas")
     sweep_cmd.add_argument("--list", action="store_true",
@@ -1033,6 +1037,8 @@ def _main() -> int:
                   "--seeds", *(str(seed) for seed in (args.seeds or [1, 2, 3, 4, 5]))]
         if args.report_dir is not None:
             command += ["--report-dir", str(args.report_dir)]
+        if args.live:
+            command.append("--live")
         if args.nextpnr_options:
             command += ["--nextpnr-options", *args.nextpnr_options]
         if args.compare is not None:

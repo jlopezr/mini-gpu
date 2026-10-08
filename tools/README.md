@@ -1233,6 +1233,29 @@ $ build-sweep --prototype 17 --seeds 1 2 3 --report-dir 17.fpga-gpu-ram-v2/repor
 $ build-sweep --prototype 17 --seeds 1 2 3 4 5 --background   # se sigue con build-status/build-log
 ```
 
+**El barrido no sintetiza.** Repite colocación y rutado sobre el `hardware.json`
+del último build archivado, así que si has cambiado RTL hay que hacer **antes** un
+`build`: si no, barre el netlist viejo (el aviso «el build de partida NO cumple
+timing; se barre igual» es la pista, y el nombre de la carpeta `reports/<build>` del
+log también).
+
+**Sin esperar al rutado del build (`--live`).** La síntesis de un build termina a
+los pocos minutos y el rutado de la semilla del `apio.ini` puede tardar una hora.
+Con `--live` el barrido toma la síntesis de `_build/default` del build **en curso**
+y barre las demás semillas a la vez, sin esperar:
+
+```bash
+$ build --prototype 37 --label hito2 --background     # sigue con la semilla del apio.ini
+$ build-sweep --prototype 37 --live --seeds 1 2 3 4 5 6 8 --jobs 7 --background
+```
+
+Comprueba que esa síntesis es de ese build (su fecha es posterior al arranque y el
+`hardware.json` está entero) y que **las fuentes no han cambiado** desde que
+arrancó (hashes del `metadata.json`); si no, se niega. Copia la síntesis a
+`sweep-*/base/`, de modo que el barrido queda autocontenido y se puede adoptar
+(`--promote`) cuando el build haya terminado. Cuida la memoria: cada `nextpnr` pesa
+alrededor de 1 GB, y el build en curso es uno más.
+
 Cada semilla queda en `reports/<build>/sweep-<fecha>/seed-N/`, con
 `results.json` y `medians.json` en la carpeta del barrido. Al final imprime
 cuántas cumplen, el rango, la mediana y la semilla con más margen. Hay dos
