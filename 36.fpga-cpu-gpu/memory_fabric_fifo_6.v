@@ -435,6 +435,18 @@ module memory_fabric_fifo_6 #(
     wire issue_go = issue_valid && credit_ok &&
                     (issue_error || sdram_req_ready);
 
+    // `issue_go` depende de `sdram_req_ready`, que sale del FSM del controlador.
+    // Alimentando ademas el empuje a `meta` (RAM con escritura condicionada), su
+    // contador y el de creditos, llegaba a tener fan-out 32-51 y 2,6-3,3 ns de
+    // ruteo: era el muro de sdram_clk de la 36 (85,5 / 88,9 MHz). Ahora solo
+    // limpia `issue_valid` y se REGISTRA en `go_q`; el empuje ocurre un ciclo
+    // despues, con `backend_port` e `issue_error` todavia intactos (la etapa de
+    // emision no se recarga hasta ese mismo flanco, ver `cmd_pop`). Un `done`
+    // tarda al menos cuatro ciclos en llegar tras aceptar el controlador, y el
+    // siguiente `issue_go` no puede ocurrir antes de dos ciclos, cuando
+    // `outstanding` ya cuenta esta peticion.
+    reg go_q;
+
     // El siguiente comando solo entra cuando la etapa de emision ya esta
     // VACIA, no en el mismo ciclo en que el controlador toma el anterior.
     // Con `(!issue_valid || issue_go)`, `sdram_req_ready` (que sale del FSM del
@@ -524,7 +536,7 @@ module memory_fabric_fifo_6 #(
     assign sdram_req_wmask = backend_wmask;
 
     assign busy = (state != ST_IDLE) || !cmd_empty || issue_valid ||
-                  (outstanding != 0) || rp_valid || route_valid;
+                  (outstanding != 0) || go_q || rp_valid || route_valid;
 
     // Command and response queue storage/counts. Both queues support one push
     // and one pop in the same cycle without changing their occupancy.
@@ -654,21 +666,23 @@ module memory_fabric_fifo_6 #(
             meta_rd_ptr <= 0;
             meta_count  <= 0;
             outstanding <= 0;
+            go_q        <= 1'b0;
         end else begin
-            if (issue_go) begin
+            go_q <= issue_go;
+            if (go_q) begin
                 meta_port[meta_wr_ptr]  <= backend_port;
                 meta_error[meta_wr_ptr] <= issue_error;
                 meta_wr_ptr <= meta_wr_ptr + 1'b1;
             end
             if (complete)
                 meta_rd_ptr <= meta_rd_ptr + 1'b1;
-            case ({issue_go, complete})
+            case ({go_q, complete})
                 2'b10: meta_count <= meta_count + 1'b1;
                 2'b01: meta_count <= meta_count - 1'b1;
                 default: meta_count <= meta_count;
             endcase
 
-            case ({issue_go, rsp_pop})
+            case ({go_q, rsp_pop})
                 2'b10: outstanding <= outstanding + 1'b1;
                 2'b01: outstanding <= outstanding - 1'b1;
                 default: outstanding <= outstanding;
