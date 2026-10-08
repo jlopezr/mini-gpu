@@ -312,7 +312,7 @@ una reimplementación.
 > cpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
 > gpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
 > gpusim-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
-> cpugpusim ../32.cpu-gpu-func-sim/examples/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
+> cpugpusim ../32.cpu-gpu-func-sim/examples/asm/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -711,7 +711,7 @@ Suite: `python -m unittest discover -s x.tests -p "test_debugger*.py"`.
 ### Depurar CPU + GPU (`mini-dbg --gpu`)
 
 ```bash
-> mini-dbg --gpu 32.cpu-gpu-func-sim/examples/launch.asm
+> mini-dbg --gpu 32.cpu-gpu-func-sim/examples/asm/launch.asm
 > mini-dbg --gpu programa.asm --num-warps 4 --warp-size 8 --cpu-steps 2 --gpu-steps 1
 ```
 

@@ -1,6 +1,6 @@
 # Programas en C con CPU y GPU
 
-A diferencia de `examples/dma`, `examples/race` y `examples/render`, que están en
+A diferencia de `examples/asm` (`dma`, `race`, `render`), que está en
 ensamblador, esto es C compilado con `mini-lcc`. Un mismo `.c` lleva el código de la CPU
 (`main`) y los kernels de la GPU:
 
@@ -19,9 +19,25 @@ int main(void) {                                           /* CPU */
 ```
 
 ```text
-python examples/c/build.py examples/c/memset_c.c        # -> examples/c/_build/memset_c.bin
-python cpu_gpu_sim.py examples/c/_build/memset_c.bin
+python examples/c/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
+python cpu_gpu_sim.py examples/c/_build/memset.bin
 ```
+
+## Dónde está cada cosa
+
+`examples/asm` y `examples/c` tienen los mismos temas, y lo que existe en las dos tiene el mismo
+nombre en la misma carpeta, para encontrar rápido la otra versión:
+
+| Tema | Ensamblador | C |
+|---|---|---|
+| `dma` | `asm/dma/gpu_kernels.inc` (memset, memcpy, fill_rect, blit) | `c/dma/gpu_kernels.c` |
+| `dma` | (dentro de `gpu_kernels.inc`) | `c/dma/memset.c`: programa completo con CPU y GPU |
+| `race` | `asm/race/rotate.inc` (+ `rotate.asm`) | `c/race/rotate.c` (+ `rotate_body.h`) |
+| `simt` | | `c/simt/diverge.c` (solo en C) |
+| `render`, `launch.asm`, `race/{cube,life,blur}` | sí | aún no |
+
+En `c/` sueltos quedan la infraestructura (`gpu.h`, `gpu.c`, `build.py`) y los comparadores
+(`compare.py`, `compare_rotate.py`); las salidas de la compilación van a `c/_build/`.
 
 ## Cómo funciona
 
@@ -36,7 +52,7 @@ python cpu_gpu_sim.py examples/c/_build/memset_c.bin
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
 - **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`gpu.c`), que rellena el
-  bloque de argumentos y llama a `gpu_run` de `examples/dma/gpu_runtime.inc` (el runtime de
+  bloque de argumentos y llama a `gpu_run` de `examples/asm/dma/gpu_runtime.inc` (el runtime de
   ensamblador de siempre). Lanza y espera.
 - **El arranque** es `1.isa/runtime/crt0.s`; `build.py` compila con `mini-lcc --no-crt`.
 - **La divergencia no se escribe:** un `if`, un `while` o un `break` cuyas lanes tomen
@@ -48,16 +64,16 @@ python cpu_gpu_sim.py examples/c/_build/memset_c.bin
 
 ## Los ejemplos
 
-- **`memset_c.c`**: el kernel más sencillo, sin divergencia (`n` es múltiplo de los hilos).
-- **`diverge_c.c`**: cinco kernels con divergencia: un bucle cuyas lanes salen en vueltas
+- **`dma/memset.c`**: el kernel más sencillo, sin divergencia (`n` es múltiplo de los hilos).
+- **`simt/diverge.c`**: cinco kernels con divergencia: un bucle cuyas lanes salen en vueltas
   distintas, `if`/`else` por id de hilo, un `while` con un número de vueltas distinto por
   lane, una salida anticipada y dos bucles anidados con `break`. Se comprueban contra un
   modelo en Python (`CDivergenceTest`).
 
 ## C frente a ensamblador
 
-`sysk_c.c` reescribe en C los cuatro kernels de sistema (`memset`, `memcpy`, `fill_rect`, `blit`),
-con el mismo reparto y el mismo bloque de argumentos que `examples/dma/gpu_kernels.inc`.
+`dma/gpu_kernels.c` reescribe en C los cuatro kernels de sistema (`memset`, `memcpy`, `fill_rect`, `blit`),
+con el mismo reparto y el mismo bloque de argumentos que `examples/asm/dma/gpu_kernels.inc`.
 `compare.py` los lanza en el simulador sin programa de CPU, con los mismos datos, y cuenta las
 instrucciones de warp que retira la GPU. Los dos juegos dejan la misma memoria (y la que dice un
 modelo en Python):
@@ -88,8 +104,8 @@ lcc relee de la estructura cada campo que usa en el bucle. `CSystemKernelsTest` 
 ## Las tres versiones de una demo: CPU, GPU inocente y GPU buena
 
 `GRID_FOR` es solo el reparto más sencillo para una dimensión. Lo que distingue a la GPU inocente de
-la buena en `examples/race` no es un bucle distinto: es **qué hilo hace qué trozo del trabajo**. En C
-se ve así: el cuerpo se escribe una sola vez (`rotate_body.h`) y cada versión lo incluye con cuatro
+la buena en `examples/asm/race` no es un bucle distinto: es **qué hilo hace qué trozo del trabajo**. En C
+se ve así: el cuerpo se escribe una sola vez (`race/rotate_body.h`) y cada versión lo incluye con cuatro
 expresiones distintas, la fila y la columna por la que empieza el hilo y de cuánto en cuánto salta:
 
 | | filas: primera, paso | columnas: primera, paso | qué escriben las 8 lanes de un warp |
@@ -98,7 +114,7 @@ expresiones distintas, la fila y la columna por la que empieza el hilo y de cuá
 | GPU inocente | `__gpu_tid`, todos los hilos | 0, 1 | ocho filas distintas, a 1280 B unas de otras |
 | GPU buena | `__gpu_lwarp`, todos los warps | `__gpu_lane`, las lanes de un warp | ocho palabras seguidas |
 
-`rotate_c.c` define esos valores tres veces con `#define`, incluye el cuerpo, y los deshace. La fila
+`race/rotate.c` define esos valores tres veces con `#define`, incluye el cuerpo, y los deshace. La fila
 `GRID_FOR(i, n, step)` de arriba es el caso unidimensional de la GPU buena: primera = `__gpu_tid`,
 paso = `__gpu_nthreads`. Para una imagen se aplican dos veces, una por la fila y otra por la columna.
 

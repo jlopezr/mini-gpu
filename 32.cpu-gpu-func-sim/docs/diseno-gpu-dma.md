@@ -237,7 +237,7 @@ Todos los kernels de la v1 trabajan **por palabras**. La CPU resuelve en el env�
 
 `memcpy` por palabras exige que `src` y `dst` sean congruentes módulo 4. Si no lo son, la operación va por la CPU en la v1.
 
-**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `examples/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
+**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `examples/asm/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
 
 Estructura de `MEMSET` (el resto es variante de este esquema):
 
@@ -317,9 +317,9 @@ Se quiere averiguar:
 4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `x.tests/inc/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
 5. `25.gpu-sim-cycle-uarch`: `GETID` con `type` 0 a 4, con el mismo diferencial contra `11`.
 6. `x.tests`: la capability `gpu_ids` (`tools/capabilities.json`, sin `file`: solo los simuladores), `logical_warp_id` y `arg` en `warps.json` (el runner exige declararla) y el caso `cases-gpu/extensions/gpu-ids/getid-family`.
-7. `examples/dma/`: el arnés mínimo en ensamblador (ver abajo).
+7. `examples/asm/dma/`: el arnés mínimo en ensamblador (ver abajo).
 
-**El arnés mínimo** (`examples/dma/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
+**El arnés mínimo** (`examples/asm/dma/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
 
 **Pendiente, sin bloquear el resto:**
 

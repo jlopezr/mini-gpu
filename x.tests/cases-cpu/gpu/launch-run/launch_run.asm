@@ -1,7 +1,7 @@
 ; ============================================================
 ; launch_run.asm - la CPU lanza dos warps de la GPU con GPU_CONTROL.RUN
 ;
-; Es examples/launch.asm de 32.cpu-gpu-func-sim con dos cambios:
+; Es examples/asm/launch.asm de 32.cpu-gpu-func-sim con dos cambios:
 ;
 ;   * empieza con GPU_CONTROL.RESET y apaga los warps que no usa (ACTIVE = 0), para
 ;     no heredar WARP_DONE ni descriptores de una ejecucion anterior (la GPU sigue

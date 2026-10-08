@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compara en el simulador los kernels de sistema en C (sysk_c.c) con los de ensamblador.
+"""Compara en el simulador los kernels de sistema en C (dma/gpu_kernels.c) con los de ensamblador.
 
     python examples/c/compare.py [--out tabla.md]
 
@@ -55,15 +55,15 @@ WORKLOADS = [
 
 def asm_image():
     source = '.include "mmio.inc"\n.include "gpu_kernels.inc"\n'
-    folder = HERE.parent / "dma"
+    folder = HERE.parent / "asm" / "dma"
     image = assemble_bytes(source, folder, "kernels.asm", (INC,))
     labels = first_pass(source, folder, "kernels.asm", (INC,))[1]
     return image, {k: labels[f"gpu_k_{k}"] for k in ("memset", "memcpy", "fill_rect", "blit")}
 
 
 def c_image():
-    binary = c_build.build(HERE / "sysk_c.c")
-    wrapper = HERE / "_build" / "sysk_c.asm"
+    binary = c_build.build(HERE / "dma" / "gpu_kernels.c")
+    wrapper = HERE / "_build" / "gpu_kernels.asm"
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), {k: labels[f"__kernel_{k}"] for k in ("memset", "memcpy", "fill_rect", "blit")}

@@ -595,7 +595,7 @@ de portarle nada.
 
 El protocolo de `32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md` (runtime de CPU con
 `WARP_START`/`WARP_DONE`, ids de job con generación, kernels `memset`/`memcpy`)
-está validado en simulador con el arnés de `32.cpu-gpu-func-sim/examples/dma`. En
+está validado en simulador con el arnés de `32.cpu-gpu-func-sim/examples/asm/dma`. En
 placa **no hay prototipo con CPU y GPU a la vez** ni GPU CORE, así que es lo último
 de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
 último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera

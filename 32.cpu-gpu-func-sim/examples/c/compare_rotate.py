@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""La rotacion de textura (examples/race/rotate.inc) en C frente a ensamblador, en los tres metodos.
+"""La rotacion de textura (examples/asm/race/rotate.inc) en C frente a ensamblador, en los tres metodos.
 
     python examples/c/compare_rotate.py [--frame 5]
 
 CPU, GPU inocente (un hilo por fila) y GPU buena (un warp por fila), cada uno en C
-(rotate_c.c) y en ensamblador (rotate.inc). Las dos GPU se lanzan sin programa de CPU, con los
+(c/race/rotate.c) y en ensamblador (rotate.inc). Las dos GPU se lanzan sin programa de CPU, con los
 mismos datos que gpu_run (descriptores y WARP_START); la CPU se ejecuta hasta HALT. Se cuentan
 instrucciones (de CPU, o de warp) y se comprueba que cada una deja la imagen del modelo en Python.
 """
@@ -27,7 +27,7 @@ FB = 0x01100000
 BLOCK = 0x001F0000
 ROWS, COLS = 104, 160
 WARPS = 8
-RACE = HERE.parent / "race"
+RACE = HERE.parent / "asm" / "race"
 
 
 def texture():
@@ -75,8 +75,8 @@ def asm_program():
 
 
 def c_program():
-    binary = c_build.build(HERE / "rotate_c.c")
-    wrapper = HERE / "_build" / "rotate_c.asm"
+    binary = c_build.build(HERE / "race" / "rotate.c")
+    wrapper = HERE / "_build" / "rotate.asm"
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels

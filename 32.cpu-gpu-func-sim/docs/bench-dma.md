@@ -5,7 +5,7 @@ benchmark que pedía `diseno-gpu-dma.md` §8.2 para fijar los umbrales de decisi
 
 ## Cómo se mide
 
-`examples/dma/bench_dma_board.asm` (código en `bench_dma.inc`) ejecuta cada operación
+`examples/asm/dma/bench_dma_board.asm` (código en `bench_dma.inc`) ejecuta cada operación
 con cada tamaño (32 B a 1 MiB) y cada configuración (la CPU sola y la GPU con 1, 2, 4
 y 8 warps). Se hacen tres repeticiones de cada una y se queda con la mejor. Los
 ciclos son los del contador `CYCLES` de la CPU (80 MHz), medidos alrededor de la
@@ -27,8 +27,8 @@ si merece la pena.
 Para repetirlo:
 
 ```text
-run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/dma/bench_dma_board.asm
-python 32.cpu-gpu-func-sim/examples/dma/bench_dma_report.py --out tabla.md
+run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/bench_dma_board.asm
+python 32.cpu-gpu-func-sim/examples/asm/dma/bench_dma_report.py --out tabla.md
 ```
 
 ## Resultados
@@ -134,7 +134,7 @@ transacción de 16 B, y el simulador de ciclos suponía 17. Una hipótesis era q
 que mientras espera lee sin parar `STATUS` y `WARP_DONE` del MMIO de la GPU, le quitara
 tiempo al puente entre los dos relojes.
 
-`examples/dma/poll_exp_board.asm` (código en `poll_exp.inc`) la pone a prueba. Lanza
+`examples/asm/dma/poll_exp_board.asm` (código en `poll_exp.inc`) la pone a prueba. Lanza
 `memset` y `memcpy` de 256 KiB con 1, 2, 4 y 8 warps y espera de tres maneras: sondeando
 sin parar (como `gpu_run`), sondeando con una pausa de unos 40 µs entre lecturas, y sin
 tocar el MMIO de la GPU durante unos 275 ms para leerlo una sola vez cuando ya ha
@@ -143,8 +143,8 @@ terminado. Se mide con los contadores de rendimiento **de la propia GPU** (`CYCL
 no dependen de cómo espere la CPU. Para repetirlo:
 
 ```text
-run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/dma/poll_exp_board.asm
-python 32.cpu-gpu-func-sim/examples/dma/poll_exp_report.py
+run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/poll_exp_board.asm
+python 32.cpu-gpu-func-sim/examples/asm/dma/poll_exp_report.py
 ```
 
 | Operación | Warps | Modo de espera | Ciclos GPU | Transacciones | Ciclos GPU por transacción | Instrucciones de warp | Ciclos por instrucción | Fallos IMEM | Espera de memoria | MB/s (reloj de la GPU) | Ciclos CPU |
@@ -191,14 +191,14 @@ es falsa. Lo que sale de la tabla, además:
 
 ## Qué limita de verdad a la GPU: el coste de cada instrucción, no la memoria
 
-Con el sondeo descartado quedaban la LSU y la SDRAM. `examples/dma/lat_exp_board.asm`
+Con el sondeo descartado quedaban la LSU y la SDRAM. `examples/asm/dma/lat_exp_board.asm`
 (código en `lat_exp.inc`) mide la latencia de UN acceso: un warp con una sola lane
 activa hace N accesos dependientes uno detrás de otro, con separaciones entre
 direcciones de 0 a 64 KiB, y se compara con el mismo bucle sin acceso. Para repetirlo:
 
 ```text
-run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/dma/lat_exp_board.asm
-python 32.cpu-gpu-func-sim/examples/dma/lat_exp_report.py
+run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/lat_exp_board.asm
+python 32.cpu-gpu-func-sim/examples/asm/dma/lat_exp_report.py
 ```
 
 | Kernel | Stride | N | Ciclos GPU | Ciclos por vuelta | Instrucciones | Ciclos por instrucción | Fallos IMEM | Transacciones | Latencia del acceso (ciclos) | (ns) |

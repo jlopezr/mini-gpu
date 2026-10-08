@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
-    python examples/c/build.py examples/c/memset_c.c [-o salida.bin]
+    python examples/c/build.py examples/c/dma/memset.c [-o salida.bin]
 
 Por cada .c (el programa y gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y kernels).
 Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de ensamblador
-de la GPU (examples/dma/gpu_runtime.inc), ensamblado con mini-asm. Todo queda en `_build/`.
+de la GPU (examples/asm/dma/gpu_runtime.inc), ensamblado con mini-asm. Todo queda en `_build/`.
 Necesita y.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini-lcc).
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from mini_asm import assemble_bytes, write_hex  # noqa: E402
 BUILD = HERE / "_build"
 INCLUDE_DIRS = (ROOT / "x.tests" / "inc",)
 CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
-GPU_RUNTIME = HERE.parent / "dma" / "gpu_runtime.inc"
+GPU_RUNTIME = HERE.parent / "asm" / "dma" / "gpu_runtime.inc"
 
 
 class BuildError(RuntimeError):

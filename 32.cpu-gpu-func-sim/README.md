@@ -10,34 +10,34 @@ que les falta para convivir. Un arreglo en cualquiera de los dos simuladores
 llega aquí sin tocar nada.
 
 ```bash
-cpugpusim examples/launch.asm
+cpugpusim examples/asm/launch.asm
 python -m unittest test_cpu_gpu_sim        # desde esta carpeta
 ```
 
-[`examples/launch.asm`](examples/launch.asm) es un solo fichero con el código de
+[`examples/asm/launch.asm`](examples/asm/launch.asm) es un solo fichero con el código de
 la CPU y el kernel de la GPU. Se carga entero en la dirección 0, y la CPU
 lanza los warps con la etiqueta `kernel` en el descriptor: no hay ninguna
 dirección escrita a mano. Los resultados también van en una etiqueta (`out`).
 
-[`examples/dma/`](examples/dma/dma.asm) es el arnés del diseño de
+[`examples/asm/dma/`](examples/asm/dma/dma.asm) es el arnés del diseño de
 [`docs/diseno-gpu-dma.md`](docs/diseno-gpu-dma.md): la GPU como `memset` y
 `memcpy`, lanzada por polling desde un runtime de CPU (`gpu_runtime.inc`) con los
 kernels en `gpu_kernels.inc`, todo en una sola imagen. Incluye un job que falla,
 uno que no termina y la recuperación de la GPU.
 
-[`examples/render/`](examples/render/render.asm) es un programa gráfico: un
+[`examples/asm/render/`](examples/asm/render/render.asm) es un programa gráfico: un
 plasma que pinta la GPU y cuyo bucle de frames lleva la CPU.
 
 ```bash
-cpugpusim examples/render/render.asm --window
-mini-dbg --gpu examples/render/render.asm --window     # depurado
+cpugpusim examples/asm/render/render.asm --window
+mini-dbg --gpu examples/asm/render/render.asm --window     # depurado
 ```
 
 `--window` abre la ventana y ya implica el vídeo. Sin ventana, `--video` da los
 registros de vídeo (en `mini-dbg`, `fb` abre una ventana con el framebuffer).
 
 La CPU configura el vídeo, y en cada frame escribe los argumentos, lanza 8 warps
-con el runtime de `examples/dma`, espera, pide el `SWAP` y espera a que se
+con el runtime de `examples/asm/dma`, espera, pide el `SWAP` y espera a que se
 aplique. Cada uno de los 64 hilos pinta una fila de un mosaico de 80 × 60 celdas
 de 4 × 4 píxeles, con tres ondas triangulares (una por canal RGB565) calculadas
 sin ramas; solo diverge al principio, en los 4 hilos que sobran. Un frame son
@@ -46,12 +46,12 @@ con un modelo en Python. Con `mini-dbg`, `break gpu_k_render` para en cada warp
 (ocho veces por frame): `until present` o `watch` sobre el framebuffer trasero
 dan una vista más tranquila.
 
-[`examples/render/render_cpu.asm`](examples/render/render_cpu.asm) pinta **la misma
+[`examples/asm/render/render_cpu.asm`](examples/asm/render/render_cpu.asm) pinta **la misma
 imagen byte a byte** solo con la CPU (el test lo exige), para tener con qué
 comparar lo que aporta la GPU: 42 instrucciones por celda, unas 203 000 por
 frame, frente a las 27 000 de warp de la versión con GPU.
 
-[`examples/render/render_v2.asm`](examples/render/render_v2.asm) es la misma
+[`examples/asm/render/render_v2.asm`](examples/asm/render/render_v2.asm) es la misma
 imagen con **las escrituras coalescidas**: en vez de un hilo por fila de celdas
 (8 lanes escribiendo en 8 filas distintas), un warp pinta una fila entera y sus 8
 lanes escriben 8 palabras consecutivas, 32 bytes seguidos. Solo cambia el reparto;
@@ -93,7 +93,7 @@ periodo, y por eso va a 30 fps y no a 60. Frente al modelo, la v1 sale como se
 esperaba (27,2 ms medidos contra 26,2) y la v2 no (19,6 contra 8,4): el modelo
 subestima el código limitado por cálculo.
 
-## Demos "carrera" (`examples/race`)
+## Demos "carrera" (`examples/asm/race`)
 
 Tres demos que hacen **el mismo trabajo con tres métodos** y los turnan cada 60
 fotogramas: la CPU sola, la GPU "ingenua" (un hilo por fila: las 8 lanes de un warp
@@ -144,7 +144,7 @@ Medido en la placa (80 MHz), tiempo por fotograma:
   manda y el cálculo de más del desenfoque queda tapado. En la CPU, que sí paga el
   cálculo, `blur` tarda un 10 % más.
 
-## Kernels de sistema y su benchmark (`examples/dma`)
+## Kernels de sistema y su benchmark (`examples/asm/dma`)
 
 `gpu_kernels.inc` tiene los kernels de `docs/diseno-gpu-dma.md` §7: `memset`, `memcpy`,
 `fill_rect` y `blit` (falta `convert`). `rect.asm` ejercita `fill_rect` y `blit` con
