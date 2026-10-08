@@ -39,6 +39,13 @@ POLL_BREAKPOINT = "breakpoint"
 POLL_HALT = "halt"
 POLL_ERROR = "error"
 POLL_STALLED = "stalled"
+#: Solo en ejecuciones con ámbito (`run gpu`, `until X warp`): ya no queda nada
+#: de ese ámbito que ejecutar, porque terminó.
+POLL_IDLE = "idle"
+
+# Ámbitos de una ejecución libre: qué avanza y qué queda congelado.
+SCOPE_GPU = "gpu"      # solo la GPU, la CPU quieta
+SCOPE_WARP = "warp"    # solo el warp con foco
 
 
 @dataclass(frozen=True)
@@ -181,8 +188,18 @@ class DebugTarget(ABC):
     track_writer: bool = False
     _writer: str = ""
 
-    def advance(self) -> bool:
-        """Una unidad de ejecución libre. False si nada pudo avanzar."""
+    def scope_blocker(self, scope: str) -> str | None:
+        """Por qué no se puede ejecutar con ese ámbito (`SCOPE_*`), o `None`."""
+        return f"{self.name} no tiene GPU"
+
+    def advance(self, scope: str | None = None) -> bool:
+        """Una unidad de ejecución libre. False si nada pudo avanzar.
+
+        Con `scope`, solo avanza esa parte (la GPU, o el warp con foco): lo
+        implementan los objetivos con GPU.
+        """
+        if scope is not None:
+            raise TargetError(f"{self.name} no tiene GPU")
         if self.track_writer:
             self._writer = f"PC=0x{self.state().pc:08X}"
         self.step()

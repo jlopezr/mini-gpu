@@ -28,8 +28,9 @@ from __future__ import annotations
 
 from tools.debug_target import (
     CAPS_RESET, CAPS_RESET_GPU, CAPS_WRITE_MEMORY, CAPS_WRITE_PC,
-    CAPS_WRITE_REGISTER, POLL_BREAKPOINT, POLL_ERROR, POLL_HALT, POLL_STALLED,
-    DebugTarget, LaneGrid, TargetError, TargetState, VideoLayout, WarpRow,
+    CAPS_WRITE_REGISTER, POLL_BREAKPOINT, POLL_ERROR, POLL_HALT, POLL_IDLE,
+    POLL_STALLED, SCOPE_WARP, DebugTarget, LaneGrid, TargetError, TargetState,
+    VideoLayout, WarpRow,
 )
 
 CPU = "cpu"
@@ -68,6 +69,8 @@ class SystemTarget(DebugTarget):
         # lanzados por la CPU, y un warp lanzado ya está *en* su primera
         # instrucción: si hay una marca ahí tiene que parar antes de ejecutarla.
         self._live_before = 0
+        # Ámbito del último `advance` (None, "gpu" o "warp"): `poll` lo necesita.
+        self._scope: str | None = None
         # Warps lanzados sobre una marca que todavía no han parado.
         self._pending: list[int] = []
         # (núcleo, warp, PC de la instrucción) del último `advance`; el PC de un
@@ -318,11 +321,52 @@ class SystemTarget(DebugTarget):
             return False
         return not system.finished
 
-    def advance(self) -> bool:
-        """Una instrucción de CPU o de warp, según el reparto del simulador."""
+    def scope_blocker(self, scope: str) -> str | None:
+        gpu = self._gpu
+        blocker = self._gpu_blocker()
+        if blocker is not None:
+            return blocker
+        if scope == SCOPE_WARP:
+            number = self._warp
+            if not gpu.live >> number & 1:
+                return f"el warp {number} no esta vivo"
+            if not self._runnable(number):
+                return (f"el warp {number} espera en una barrera y no puede "
+                        "avanzar solo")
+        elif not any(self._runnable(n) for n in range(gpu.num_warps)):
+            return "ningun warp puede avanzar: los vivos esperan en una barrera"
+        return None
+
+    def _advance_scoped(self, scope: str) -> bool:
+        """Una instrucción de warp con la CPU quieta: del planificador, o del warp con foco."""
+        gpu = self._gpu
+        self._writer_data = None
+        before = ([warp.pc for warp in gpu.warps]
+                  if self.track_writer else None)
+        if scope == SCOPE_WARP:
+            number = self._warp
+            ran = self._runnable(number) and gpu.step_warp(number)
+            if not ran and gpu.fault is None:
+                return False
+        else:
+            number = gpu.step_scheduled()
+            if number is None:
+                return False
+        self._stepped = (GPU, number)
+        self._writer_data = (GPU, number, before[number] if before else None)
+        return True
+
+    def advance(self, scope: str | None = None) -> bool:
+        """Una instrucción de CPU o de warp, según el reparto del simulador.
+
+        Con `scope`, solo la GPU (`gpu`) o solo el warp con foco (`warp`).
+        """
+        self._scope = scope
+        self._stepped = None
+        if scope is not None:
+            return self._advance_scoped(scope)
         system = self.system
         total = system.cpu_steps + system.gpu_steps
-        self._stepped = None
         self._writer_data = None
         self._live_before = self._gpu.live
         if self._pending:
@@ -378,7 +422,36 @@ class SystemTarget(DebugTarget):
         alive = bool(gpu.live >> self._warp & 1) and not warp.halted
         return self.system.cpu.pc, (warp.pc if alive else None)
 
+    def _gpu_hit(self, number: int, marks: set[int]) -> bool:
+        """Si el warp que acaba de ejecutar está parado en una marca (y toma el foco)."""
+        warp = self._gpu.warps[number]
+        # `READY` porque un warp que acaba de llegar a `BAR` conserva el PC de la
+        # barrera: sin esto, una marca en ella saltaría dos veces.
+        if not warp.halted and warp.state == "READY" and warp.pc in marks:
+            self._core = GPU
+            self._focus_warp(number)
+            return True
+        return False
+
+    def _poll_scoped(self, marks: set[int]) -> str | None:
+        gpu = self._gpu
+        if gpu.fault is not None:
+            self._core = GPU
+            self._focus_warp(gpu.fault.warp_id)
+            return POLL_ERROR
+        if self._scope == SCOPE_WARP:
+            finished = not gpu.live >> self._warp & 1
+        else:
+            finished = gpu.live == 0
+        if finished:
+            return POLL_IDLE
+        if self._stepped is None:
+            return POLL_STALLED
+        return POLL_BREAKPOINT if self._gpu_hit(self._stepped[1], marks) else None
+
     def poll(self, marks: set[int]) -> str | None:
+        if self._scope is not None:
+            return self._poll_scoped(marks)
         system = self.system
         cpu, gpu = system.cpu, self._gpu
         if cpu.error:
@@ -417,14 +490,7 @@ class SystemTarget(DebugTarget):
                 self._focus_warp(number)
                 return POLL_BREAKPOINT
             return None
-        warp = gpu.warps[number]
-        # `READY` porque un warp que acaba de llegar a `BAR` conserva el PC de la
-        # barrera: sin esto, una marca en ella saltaría dos veces.
-        if not warp.halted and warp.state == "READY" and warp.pc in marks:
-            self._core = GPU
-            self._focus_warp(number)
-            return POLL_BREAKPOINT
-        return None
+        return POLL_BREAKPOINT if self._gpu_hit(number, marks) else None
 
     # -- escritura y reset --------------------------------------------------
 
@@ -462,12 +528,14 @@ class SystemTarget(DebugTarget):
         self._warp = self._lane = 0
         self._slot = 0
         self._stepped = None
+        self._scope = None
         self._pending.clear()
         self._notices.clear()
 
     def reset_gpu(self) -> None:
         self._gpu.reset()
         self._stepped = None
+        self._scope = None
         self._pending.clear()
 
     # -- vídeo --------------------------------------------------------------

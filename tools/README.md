@@ -754,6 +754,22 @@ un warp falla (parada total, con el foco en el que falló). Un `step` explícito
 ignora los breakpoints. `over`
 y `finish` actúan sobre el núcleo con foco; la GPU no tiene `JAL`/`JR`.
 
+**Ejecutar con parte del sistema quieta.** `run` y `until` avanzan CPU y GPU a la
+vez. Con un ámbito, solo avanza una parte y el resto queda congelado:
+
+| Comando | Avanza | Para en |
+|---|---|---|
+| `run gpu [N]` | solo la GPU, con el planificador; la CPU queda donde estaba | breakpoint, `watch`, error, o cuando no quedan warps vivos |
+| `run warp [N]` | solo el warp con foco (implica el foco en la GPU) | lo mismo, o cuando ese warp termina o espera en una barrera |
+| `until X gpu`, `until X warp` | como los anteriores | además, la dirección X |
+
+Sirven para aislar qué hace la GPU sin que la CPU llegue al sondeo ni al swap.
+Con `run gpu` los warps acaban con `WARP_DONE` sin recoger (la CPU no ha hecho el
+W1C), y un `run` normal después deja que la CPU lo recoja. Un warp que espera en
+una barrera no puede avanzar solo: la parada lo dice, y habrá que avanzar los
+demás (`step`, `round`) o usar `run gpu`. Los límites de `N` cuentan
+instrucciones de warp.
+
 **Una sola lista de breakpoints.** Es una dirección, y vale para los dos
 núcleos: salta el que llegue. Un warp recién lanzado sobre una marca para antes
 de ejecutar su primera instrucción —una vez por warp lanzado—, que es como se

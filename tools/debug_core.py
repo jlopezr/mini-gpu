@@ -17,7 +17,8 @@ from tools.debug_source import SourceMap
 from tools.debug_target import (
     CAPS_FREE_RUN, CAPS_RESET, CAPS_RESET_GPU, CAPS_WRITE_MEMORY,
     CAPS_WRITE_PC, CAPS_WRITE_REGISTER, POLL_BREAKPOINT, POLL_ERROR,
-    POLL_HALT, POLL_STALLED, DebugTarget, LaneGrid, TargetError, WarpRow,
+    POLL_HALT, POLL_IDLE, POLL_STALLED, SCOPE_GPU, SCOPE_WARP, DebugTarget,
+    LaneGrid, TargetError, WarpRow,
 )
 
 # Por qué se paró la ejecución. La TUI los traduce a un color y un mensaje.
@@ -26,6 +27,7 @@ STOP_BREAKPOINT = POLL_BREAKPOINT
 STOP_HALT = POLL_HALT
 STOP_ERROR = POLL_ERROR
 STOP_STALLED = POLL_STALLED
+STOP_IDLE = POLL_IDLE
 STOP_WATCH = "watch"
 STOP_LIMIT = "limit"
 STOP_STEPPED = "stepped"
@@ -129,6 +131,8 @@ class DebugSession:
         self._serial = 0
         # Lo que dijo el último `watch` que paró una ejecución.
         self._watch_lines: list[str] = []
+        # Ámbito de la última ejecución, para redactar su motivo de parada.
+        self._last_scope: str | None = None
         self._interrupt = threading.Event()
         self.warnings: list[str] = []
         self.quit = False
@@ -170,22 +174,31 @@ class DebugSession:
         return StopReason(STOP_STEPPED, executed)
 
     def resume(self, stop_at: set[int] | None = None,
-               max_instructions: int | None = None) -> StopReason:
+               max_instructions: int | None = None,
+               scope: str | None = None) -> StopReason:
         """Ejecuta hasta una marca, hasta que pare, o hasta agotar el límite.
 
         La marca del PC actual se ignora: si no, `run` con un breakpoint justo
         donde estamos parados no avanzaría nunca.
+
+        Con `scope`, solo avanza esa parte y el resto queda congelado: la GPU
+        sola (`SCOPE_GPU`) o solo el warp con foco (`SCOPE_WARP`).
         """
         marks = set(self.breakpoints)
         if stop_at:
             marks |= stop_at
         budget = max_instructions
+        self._last_scope = scope
 
-        if not self.target.can_run():
+        if scope is not None:
+            blocker = self.target.scope_blocker(scope)
+            if blocker is not None:
+                return StopReason(STOP_ALREADY, 0, blocker)
+        elif not self.target.can_run():
             return StopReason(STOP_ALREADY, 0)
 
-        if not marks and not self.watches and self.target.supports(
-                CAPS_FREE_RUN):
+        if scope is None and not marks and not self.watches \
+                and self.target.supports(CAPS_FREE_RUN):
             # Sin ninguna marca no hay nada que comprobar entre instrucción e
             # instrucción, así que se deja correr al objetivo. El contador sale
             # de su propio estado, no de contar pasos aquí.
@@ -209,7 +222,10 @@ class DebugSession:
         while budget is None or executed < budget:
             if self._interrupt.is_set():
                 return StopReason(STOP_INTERRUPTED, executed)
-            self.target.advance()
+            if scope is None:
+                self.target.advance()
+            else:
+                self.target.advance(scope)
             executed += 1
             self.refresh_video_title()
             if watch_swaps:
@@ -458,7 +474,17 @@ class DebugSession:
             writer = self.target.last_writer()
             return ("; ".join(self._watch_lines)
                     + (f" (escrito por {writer})" if writer else "") + suffix)
+        if stop.kind == STOP_IDLE:
+            what = ("el warp ha terminado" if self._last_scope == SCOPE_WARP
+                    else "la GPU no tiene mas warps vivos: todos terminaron")
+            return what + where + suffix
         if stop.kind == STOP_STALLED:
+            if self._last_scope == SCOPE_WARP:
+                return ("el warp espera en una barrera y no puede avanzar solo"
+                        + where + suffix)
+            if self._last_scope == SCOPE_GPU:
+                return ("sin progreso: los warps vivos esperan en una barrera "
+                        "a la que no llegan todos" + suffix)
             return ("sin progreso: la CPU esta parada y quedan warps vivos que "
                     "no pueden avanzar (¿una barrera a la que no llegan todos?)"
                     + suffix)
@@ -629,15 +655,40 @@ class DebugSession:
             raise CommandError("`finish` no lleva argumentos")
         return [self.describe_stop(self.finish())]
 
+    def _split_scope(self, args: list[str]) -> tuple[str | None, list[str]]:
+        """Separa el ámbito (`gpu` o `warp`) del resto de los argumentos.
+
+        `warp` implica el foco en la GPU, como `warp N`: el warp con foco es el
+        que va a correr, y eso solo tiene sentido si se está mirando la GPU.
+        """
+        scope, rest = None, []
+        for arg in args:
+            if arg.lower() in (SCOPE_GPU, SCOPE_WARP):
+                if scope is not None:
+                    raise CommandError("un solo ambito: gpu o warp")
+                scope = arg.lower()
+            else:
+                rest.append(arg)
+        if scope is not None:
+            self._require_gpu()
+        if scope == SCOPE_WARP:
+            self.target.set_core(SCOPE_GPU)
+        return scope, rest
+
     def _cmd_run(self, args: list[str]) -> list[str]:
-        limit = self._parse_count(args[0]) if args else self.run_limit
-        return [self.describe_stop(self.resume(max_instructions=limit))]
+        scope, rest = self._split_scope(args)
+        if len(rest) > 1:
+            raise CommandError("uso: run [gpu|warp] [N]")
+        limit = self._parse_count(rest[0]) if rest else self.run_limit
+        return [self.describe_stop(
+            self.resume(max_instructions=limit, scope=scope))]
 
     def _cmd_until(self, args: list[str]) -> list[str]:
-        if len(args) != 1:
-            raise CommandError("uso: until DIRECCION|etiqueta")
-        target = self.parse_address(args[0])
-        return [self.describe_stop(self.resume(stop_at={target}))]
+        scope, rest = self._split_scope(args)
+        if len(rest) != 1:
+            raise CommandError("uso: until DIRECCION|etiqueta [gpu|warp]")
+        target = self.parse_address(rest[0])
+        return [self.describe_stop(self.resume(stop_at={target}, scope=scope))]
 
     def _cmd_break(self, args: list[str]) -> list[str]:
         if not args:
@@ -967,8 +1018,10 @@ class DebugSession:
         if self.target.warp_rows() is None:
             hidden.update({"core", "warp", "lane", "warps", "lanes",
                            "round", "sched"})
-        return [(name, text) for name, text in HELP
-                if name.split()[0] not in hidden]
+        has_gpu = self.target.warp_rows() is not None
+        return [(HELP_WITH_GPU[name.split()[0]] if has_gpu
+                 and name.split()[0] in HELP_WITH_GPU else (name, text))
+                for name, text in HELP if name.split()[0] not in hidden]
 
     def help_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
         """`help_entries` agrupados por tema, en el orden de `HELP_SECTIONS`."""
@@ -1087,11 +1140,23 @@ HELP: tuple[tuple[str, str], ...] = (
                   "foco las sigue (es el STEP del hardware)"),
     ("warps", "tabla de warps: estado, PC, mascara de lanes, pilas SIMT"),
     ("lanes", "registros de todas las lanes del warp con foco"),
-    ("reset [gpu]", "reinicia PC, registros y contadores sin borrar memoria; "
-                    "con CPU+GPU, `reset` es el duro (RAM a cero e imagen "
-                    "recargada) y `reset gpu` el blando"),
+    ("reset", "reinicia PC, registros y contadores sin borrar memoria"),
     ("quit", "sale"),
 )
+
+#: `run` y `until` con un objetivo que tiene GPU: ganan el ámbito opcional.
+HELP_WITH_GPU: dict[str, tuple[str, str]] = {
+    "run": ("run [gpu|warp] [N]",
+            "ejecuta hasta breakpoint, HALT o error; `gpu` solo la GPU (la "
+            "CPU quieta), `warp` solo el warp con foco"),
+    "until": ("until X [gpu|warp]",
+              "ejecuta hasta la direccion o etiqueta X, con el mismo ambito "
+              "opcional que `run`"),
+    "reset": ("reset [gpu]",
+              "duro: RAM a cero, imagen recargada, CPU y GPU como tras el "
+              "reset del sistema; `reset gpu` es el blando (warps y errores, "
+              "sin tocar descriptores ni memoria)"),
+}
 
 #: Cómo se agrupan los comandos en la ventana de ayuda. Un comando que no esté
 #: aquí cae en «Otros»: no se pierde, pero se nota y se coloca.

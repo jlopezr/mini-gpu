@@ -294,7 +294,7 @@ def _help_markup(session: DebugSession,
         lines.append(f"[bold cyan]{title}[/bold cyan]")
         for name, text in entries:
             # Rellenar ANTES de escapar: el escape añade una barra a cada `[`.
-            lines.append(f"  [bold]{_escape(f'{name:<15}')}[/bold] {_escape(text)}")
+            lines.append(f"  [bold]{_escape(f'{name:<20}')}[/bold] {_escape(text)}")
         lines.append("")
     lines += [
         "[bold cyan]Colores y marcas[/bold cyan]",

@@ -396,6 +396,148 @@ class SchedTest(unittest.TestCase):
             DebugSession(SimTarget(CPU(64 * 1024))).execute("sched")
 
 
+class ScopeTest(unittest.TestCase):
+    """`run gpu`, `run warp` y `until X [gpu|warp]`: ejecutar con parte del sistema quieta."""
+
+    def kernel(self, session, offset=0):
+        return session.source.resolve("kernel") + offset
+
+    def test_run_gpu_finishes_the_warps_and_leaves_the_cpu_where_it_was(self):
+        session = launched()
+        system = session.target.system
+        cpu = (system.cpu.pc, system.cpu.instructions_executed)
+        lines = session.execute("run gpu")
+        self.assertIn("la GPU no tiene mas warps vivos", lines[0])
+        self.assertEqual((system.cpu.pc, system.cpu.instructions_executed), cpu)
+        self.assertEqual(system.gpu.retired, 2 * 4)
+        # nadie ha recogido el resultado: la CPU sigue sin hacer el W1C
+        self.assertEqual((system.gpu.live, system.gpu.done), (0, 0b11))
+
+    def test_the_cpu_can_then_collect_the_result(self):
+        session = launched()
+        session.execute("run gpu")
+        self.assertEqual(session.resume().kind, STOP_HALT)
+
+    def test_run_gpu_stops_at_a_breakpoint_hit_by_a_warp(self):
+        session = launched()
+        system = session.target.system
+        session.execute(f"break {self.kernel(session, 8)}")
+        lines = session.execute("run gpu")
+        self.assertIn("[GPU warp 0]", lines[0])
+        self.assertEqual(system.gpu.warps[0].instructions_executed, 2)
+        self.assertEqual(system.cpu.instructions_executed,
+                         system.cpu.instructions_executed)   # sin tocar la CPU
+
+    def test_run_gpu_honours_a_limit(self):
+        session = launched()
+        lines = session.execute("run gpu 3")
+        self.assertIn("limite de 3", lines[0])
+        self.assertEqual(session.target.system.gpu.retired, 3)
+
+    def test_run_gpu_stops_on_a_watch_and_names_the_writer(self):
+        session = launched(KERNEL_STORE)
+        session.execute("watch out")
+        lines = session.execute("run gpu")
+        self.assertIn("escrito por GPU warp 0", lines[0])
+
+    def test_run_gpu_stops_on_a_fault(self):
+        session = launched(KERNEL_FAULT)
+        session.execute("core cpu")
+        lines = session.execute("run gpu")
+        self.assertIn("ERROR 0x02", lines[0])
+        self.assertEqual(session.target.core(), "gpu")
+
+    def test_until_runs_only_the_focused_warp(self):
+        session = launched()
+        system = session.target.system
+        cpu = system.cpu.instructions_executed
+        lines = session.execute(f"until {self.kernel(session, 8)} warp")
+        self.assertIn("[GPU warp 0]", lines[0])
+        warps = system.gpu.warps
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [2, 0])
+        self.assertEqual(system.cpu.instructions_executed, cpu)
+
+    def test_run_warp_runs_the_focused_warp_to_the_end(self):
+        session = launched()
+        session.execute("warp 1")
+        lines = session.execute("run warp")
+        self.assertIn("el warp ha terminado [GPU warp 1]", lines[0])
+        warps = session.target.system.gpu.warps
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [0, 4])
+        self.assertEqual(session.target.system.gpu.live, 0b01)   # el 0 sigue vivo
+
+    def test_until_warp_that_cannot_be_reached_ends_with_the_warp(self):
+        session = launched()
+        lines = session.execute("until 0x1000 warp")
+        self.assertIn("el warp ha terminado", lines[0])
+
+    def test_run_warp_says_when_the_warp_waits_in_a_barrier(self):
+        session = launched(KERNEL_BARRIER)
+        lines = session.execute("run warp")
+        self.assertIn("espera en una barrera y no puede avanzar solo", lines[0])
+        warps = session.target.system.gpu.warps
+        self.assertEqual(warps[0].state, "WAIT_BAR")
+        self.assertEqual(warps[1].instructions_executed, 0)
+        # y volver a pedirlo lo dice sin ejecutar nada
+        self.assertIn("espera en una barrera", session.execute("run warp")[0])
+
+    def test_warp_scope_implies_the_gpu_focus(self):
+        session = launched()
+        session.execute("core cpu")
+        session.execute("run warp 2")
+        self.assertEqual(session.target.core(), "gpu")
+        self.assertEqual(
+            session.target.system.gpu.warps[0].instructions_executed, 2)
+
+    def test_a_warp_that_is_not_alive_cannot_run(self):
+        session = launched()
+        session.execute("warp 5")
+        self.assertIn("el warp 5 no esta vivo", session.execute("run warp")[0])
+
+    def test_a_gpu_without_live_warps_says_so(self):
+        lines = build().execute("run gpu")
+        self.assertIn("no tiene warps vivos", lines[0])
+
+    def test_scope_is_forgotten_by_the_next_plain_run(self):
+        session = launched()
+        session.execute("delete all")
+        session.execute("run warp 2")
+        self.assertEqual(session.resume().kind, STOP_HALT)
+
+    def test_a_watch_stops_a_warp_run(self):
+        session = launched(KERNEL_STORE)
+        session.execute("watch out")
+        lines = session.execute("run warp")
+        self.assertIn("escrito por GPU warp 0", lines[0])
+        self.assertEqual(
+            session.target.system.gpu.warps[1].instructions_executed, 0)
+
+    def test_unscoped_run_still_moves_everything(self):
+        session = launched()
+        system = session.target.system
+        session.execute("delete all")
+        session.execute("run")
+        self.assertTrue(system.finished)
+        self.assertEqual(system.gpu.warps[1].instructions_executed, 4)
+
+    def test_scopes_need_a_gpu_and_only_one_is_allowed(self):
+        single = DebugSession(SimTarget(CPU(64 * 1024)))
+        for command in ("run gpu", "run warp", "until 0 gpu"):
+            with self.assertRaises(TargetError, msg=command):
+                single.execute(command)
+        with self.assertRaises(Exception):
+            launched().execute("run gpu warp")
+
+    def test_help_documents_the_scopes_only_where_there_is_a_gpu(self):
+        text = "\n".join(build().execute("help"))
+        self.assertIn("run [gpu|warp] [N]", text)
+        self.assertIn("until X [gpu|warp]", text)
+        single = DebugSession(SimTarget(CPU(64 * 1024)))
+        plain = "\n".join(single.execute("help"))
+        self.assertIn("run [N]", plain)
+        self.assertNotIn("gpu", plain.lower())
+
+
 class FocusTest(unittest.TestCase):
     def test_core_without_argument_toggles(self):
         session = build()
