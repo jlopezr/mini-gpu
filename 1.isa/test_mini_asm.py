@@ -433,6 +433,51 @@ class EtiquetaLocalTest(unittest.TestCase):
         self.assertEqual(palabras[3] & 0xFFFF, 0xFFFC)   # loop global, cuatro
 
 
+class EtiquetaDelCompiladorTest(unittest.TestCase):
+    """Las `L.n` de lcc son privadas del fichero: cada compilacion las numera desde 1."""
+
+    def escribir(self, carpeta, nombre, texto):
+        ruta = Path(carpeta) / nombre
+        ruta.write_text(texto, encoding="utf-8")
+        return ruta
+
+    def test_dos_ficheros_con_la_misma_L_se_pueden_incluir(self):
+        trozo = "{f}:\n    BRA L.2\n    NOP\nL.2:\n    HALT\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "a.s", trozo.format(f="fa"))
+            self.escribir(tmp, "b.s", trozo.format(f="fb"))
+            programa = '.include "a.s"\n.include "b.s"\n'
+            palabras = assemble(programa, Path(tmp), "prog.asm")
+        self.assertEqual(len(palabras), 6)
+        # cada BRA salta a SU L.2 (dos palabras mas alla), no a la del otro fichero
+        self.assertEqual(palabras[0] & 0x03FFFFFF, 1)
+        self.assertEqual(palabras[3] & 0x03FFFFFF, 1)
+
+    def test_el_fuente_principal_conserva_sus_nombres(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "a.s", "fa:\n    BRA L.2\nL.2:\n    HALT\n")
+            programa = 'BRA L.2\nL.2:\n    NOP\n.include "a.s"\n'
+            lineas, etiquetas, _, _ = first_pass(programa, Path(tmp), "prog.asm")
+        self.assertIn("L.2", etiquetas)
+        self.assertIn("L.1.2", etiquetas)
+
+    def test_los_datos_de_lcc_las_comparten_las_funciones_del_fichero(self):
+        """Un literal `L.5` en `.data` lo usan dos funciones del MISMO fichero."""
+        trozo = ("f:\n    LI R1, L.5\n    JR R31\n"
+                 "g:\n    LI R1, L.5\n    JR R31\n"
+                 ".data\nL.5:\n    .word 7\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "a.s", trozo)
+            palabras = assemble('HALT\n.include "a.s"\n', Path(tmp), "prog.asm")
+        self.assertGreater(len(palabras), 0)
+
+    def test_dentro_de_una_cadena_no_se_toca(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.escribir(tmp, "a.s", 'f:\n    .string "ver L.2 aqui"\n')
+            image = assemble_bytes('HALT\n.include "a.s"\n', Path(tmp), "prog.asm")
+        self.assertIn(b"ver L.2 aqui", image)
+
+
 class IncludeTest(unittest.TestCase):
     """`.include`, que existe porque `drawline` estaba copiado en tres sitios.
 

@@ -618,11 +618,47 @@ def buscar_include(ruta: str, base_dir: Path | None,
     return None
 
 
+# Etiquetas internas del compilador: lcc numera `L.1`, `L.2`... desde 1 en CADA
+# compilacion, asi que dos `.s` de lcc incluidos desde un mismo fuente chocarian
+# en `L.2`. Son privadas del fichero donde aparecen, no de la funcion: lcc las usa
+# tambien para datos (literales de cadena, constantes) que varias funciones
+# referencian. El fuente principal conserva sus nombres; cada fichero incluido
+# pasa a `L.<n>.<k>`, con `n` su orden de inclusion (1, 2...).
+COMPILER_LABEL_RE = re.compile(r"\bL\.(\d+)\b")
+
+
+def scope_compiler_labels(raw: str, tag: int) -> str:
+    """`L.k` -> `L.<tag>.k` fuera de las cadenas. `tag == 0` (fuente principal) no cambia."""
+    if tag == 0 or "L." not in raw:
+        return raw
+    pieces: list[str] = []
+    start = 0
+    inside = False
+    escaped = False
+    for index, char in enumerate(raw):
+        if escaped:
+            escaped = False
+        elif char == "\\" and inside:
+            escaped = True
+        elif char == '"':
+            piece = raw[start:index]
+            pieces.append(piece if inside else
+                          COMPILER_LABEL_RE.sub(lambda m: f"L.{tag}.{m.group(1)}", piece))
+            start = index
+            inside = not inside
+    tail = raw[start:]
+    pieces.append(tail if inside else
+                  COMPILER_LABEL_RE.sub(lambda m: f"L.{tag}.{m.group(1)}", tail))
+    return "".join(pieces)
+
+
 def expand_includes(source: str, base_dir: Path | None = None,
                     origin: str = ENTRADA,
                     include_dirs: tuple[Path, ...] = (),
                     _stack: tuple[Path, ...] = (),
-                    _once: set[Path] | None = None) -> list[tuple[str, int, str]]:
+                    _once: set[Path] | None = None,
+                    _counter: list[int] | None = None,
+                    _tag: int = 0) -> list[tuple[str, int, str]]:
     """Resuelve los `.include` y devuelve (origen, numero, linea) en orden.
 
     Se hace ANTES de la pasada 1, de modo que el resto del ensamblador sigue
@@ -641,11 +677,13 @@ def expand_includes(source: str, base_dir: Path | None = None,
     # sola vez, no una por rama.
     if _once is None:
         _once = set()
+    if _counter is None:
+        _counter = [0]
 
     for number, raw in enumerate(source.splitlines(), 1):
         text = strip_comment(raw)
         if not text or not is_directive(text):
-            filas.append((origin, number, raw))
+            filas.append((origin, number, scope_compiler_labels(raw, _tag)))
             continue
 
         partes = text.split(None, 1)
@@ -664,7 +702,7 @@ def expand_includes(source: str, base_dir: Path | None = None,
             continue
 
         if mnemonic not in {".INCLUDE", ".INCBIN"}:
-            filas.append((origin, number, raw))
+            filas.append((origin, number, scope_compiler_labels(raw, _tag)))
             continue
 
         try:
@@ -727,9 +765,10 @@ def expand_includes(source: str, base_dir: Path | None = None,
         # El fichero incluido resuelve SUS `.include` desde su propia carpeta,
         # no desde la del programa que lo incluyo. Asi un .inc que se apoya en
         # otro sigue funcionando desde donde sea que lo incluyan.
+        _counter[0] += 1
         filas.extend(expand_includes(
             incluido, resuelto.parent, resuelto.name,
-            include_dirs, _stack + (resuelto,), _once
+            include_dirs, _stack + (resuelto,), _once, _counter, _counter[0]
         ))
 
     return filas
