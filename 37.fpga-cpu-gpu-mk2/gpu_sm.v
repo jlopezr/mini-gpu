@@ -211,6 +211,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire [5:0] x_opcode=x_instruction[31:26];
     wire x_branch=x_opcode>=6'h20 && x_opcode<=6'h25;
     wire x_opcode_is_bra=x_opcode==6'h2f;
+    // Llamadas (capability calls). JAL salta a un destino que ya conoce el
+    // packet (como BRA). JALR y JR lo sacan de un registro: cada lane lo deja en
+    // su `lane_pc` y el warp solo puede seguir si todas las activas coinciden.
+    wire x_opcode_is_jal=x_opcode==6'h2c;
+    wire x_opcode_is_indirect=x_opcode==6'h2d || x_opcode==6'h2e;
     wire [31:0] x_path_index={29'b0,x_warp}*SIMT_PATH_DEPTH+{{(32-PP_BITS){1'b0}},pp[x_warp]};
 
     // X siempre gana el puerto de escritura de RF frente a una respuesta de
@@ -404,9 +409,20 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg alu_fault;
     reg [2:0] fault_lane;
     reg [7:0] fault_code;
+    // Destino de un salto indirecto: el de la lane activa de numero menor. Si
+    // alguna otra activa llega a un destino distinto, el warp diverge por un
+    // salto que no se puede dividir (no hay un destino que apilar), y es error.
+    reg [31:0] indirect_target;
+    reg indirect_diverges;
     integer t;
     always @* begin
         taken=0; alu_fault=0; fault_lane=0; fault_code=ERROR_NONE;
+        indirect_target=lane_pc[31:0]; indirect_diverges=0;
+        for(t=7;t>=0;t=t-1)
+            if(active[x_warp][t]) indirect_target=lane_pc[t*32 +: 32];
+        for(t=0;t<8;t=t+1)
+            if(active[x_warp][t] && lane_pc[t*32 +: 32]!=indirect_target)
+                indirect_diverges=1;
         for(t=0;t<8;t=t+1) begin
             taken[t]=x_valid && active[x_warp][t] && lane_pc[t*32 +: 32] != x_sequential_pc;
             if (x_valid && !alu_fault && active[x_warp][t] && lane_error[t]) begin
@@ -511,7 +527,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             if (x_would_fault) begin
                 fault(fault_code,x_warp,fault_lane,fault_code==ERROR_DIVISION_BY_ZERO);
             end else if (x_commits_ok) begin
-                if(x_branch && taken!=0 && taken!=active[x_warp]) begin
+                if(x_opcode_is_indirect && indirect_diverges) begin
+                    fault(ERROR_SIMT,x_warp,0,0);
+                end else if(x_branch && taken!=0 && taken!=active[x_warp]) begin
                     if(sp[x_warp]==0) fault(ERROR_SIMT,x_warp,0,0);
                     else if(x_branch_target==join_pc_top[x_warp]) begin
                         active[x_warp]<=active[x_warp] & ~taken;
@@ -538,6 +556,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 end else begin
                     if (x_branch && taken!=0) pc[x_warp]<=x_branch_target;
                     else if(x_opcode_is_bra) pc[x_warp]<=x_target;
+                    else if(x_opcode_is_jal) pc[x_warp]<=x_branch_target;
+                    else if(x_opcode_is_indirect) pc[x_warp]<=indirect_target;
                     else pc[x_warp]<=x_sequential_pc;
                     instruction_retired<=1; retired_lanes<=active[x_warp]; retired_count<=retired_count+1'b1;
                     warp_retired_count[x_warp]<=warp_retired_count[x_warp]+1'b1;

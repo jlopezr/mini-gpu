@@ -17,6 +17,7 @@
  *   STORE Rs, Ra, imm16
  *   BEQ/BNE/BLT/BGE/BLTU/BGEU Ra, Rb, offset
  *   BRA offset
+ *   JAL Rd, offset / JALR Rd, Ra, offset / JR Ra
  *   GETTID/GETLANE/GETWARP/GETLWARP/GETARG Rd (GETID family, opcode 0x30)
  *   HALT
  *
@@ -117,6 +118,9 @@ module gpu_lane #(
   localparam [5:0] OPCODE_SLT = 6'h26;
   localparam [5:0] OPCODE_SLTU = 6'h27;
 
+  localparam [5:0] OPCODE_JAL = 6'h2c;
+  localparam [5:0] OPCODE_JALR = 6'h2d;
+  localparam [5:0] OPCODE_JR = 6'h2e;
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
@@ -239,6 +243,12 @@ module gpu_lane #(
         instruction_encoding_valid = instruction[10:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;
+      // JAL no tiene registro fuente y JR no tiene ni destino ni inmediato.
+      OPCODE_JAL:
+        instruction_encoding_valid = instruction[20:16] == 0;
+      OPCODE_JR:
+        instruction_encoding_valid = instruction[25:21] == 0 &&
+                                     instruction[15:0] == 0;
       // GETID: Y es el `type` (0..4) e imm16 = 0. Un type mayor que 4 esta
       // reservado y es ERROR_INVALID_ENCODING.
       OPCODE_GETTID:
@@ -653,6 +663,36 @@ module gpu_lane #(
               branch_b_sign <= operand_b[31];
               branch_kind <= 3'd7;
               state <= STATE_BRANCH_COMPARE;
+            end
+
+            // Llamadas y saltos indirectos, como en la CPU. `pc` ya vale la
+            // direccion de la instruccion siguiente: es el enlace. Los operandos
+            // se leyeron antes de escribirlo, asi que Rd = Ra funciona. En los
+            // saltos indirectos se descartan los dos bits bajos del destino.
+            // El SM comprueba que todas las lanes activas lleguen al mismo.
+            OPCODE_JAL: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= pc + {{14{instruction[15]}}, instruction[15:0], 2'b00};
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_JALR: begin
+              register_write_address <= rd;
+              register_write_data <= pc;
+              register_write_enable <= 1'b1;
+              branch_taken <= 1'b1;
+              branch_target <= (operand_a +
+                  {{14{instruction[15]}}, instruction[15:0], 2'b00}) & ~32'd3;
+              state <= STATE_BRANCH_COMMIT;
+            end
+
+            OPCODE_JR: begin
+              branch_taken <= 1'b1;
+              branch_target <= operand_a & ~32'd3;
+              state <= STATE_BRANCH_COMMIT;
             end
 
             OPCODE_BRA: begin
