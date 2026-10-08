@@ -319,7 +319,7 @@ def live_in_entry(blocks: list[Block], live_out: list[set[int]]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = ["intrinsics", "kernels"]
+DEFAULT_PASSES = ["intrinsics", "kernels", "ssy"]
 
 
 def register_pass(name: str, doc: str):
@@ -490,6 +490,236 @@ def pass_kernels(unit: Unit, stats: dict) -> None:
         stats["kernels"] = stats.get("kernels", 0) + 1
 
 
+# ---------------------------------------------------------------------------
+# SSY automatico: donde reconvergen los caminos de un salto divergente
+#
+# Un salto condicional cuyas lanes toman caminos distintos necesita una region
+# abierta con `SSY join` (isa.md): sin ella el SM para con ERROR_SIMT. `join` es el
+# postdominador inmediato del salto, el primer punto por el que pasan todos los
+# caminos. En un bucle cuyas lanes salen en vueltas distintas, la region se abre
+# una vez antes del bucle (en el preheader), con el punto de salida como join; asi
+# valen tanto el salto de vuelta como cualquier `break`.
+#
+# Solo hace falta para los saltos que PUEDEN divergir. Un valor varia entre lanes si
+# viene de GETTID o GETLANE (o de una pila, que es de cada lane) y se propaga por la
+# aritmetica y las cargas; lo que se define bajo un salto divergente tambien varia.
+# Con `SSY_ALL` se trata todo salto condicional como divergente.
+# ---------------------------------------------------------------------------
+
+SSY_ALL = False
+VARYING_SOURCES = {"GETTID", "GETLANE"}
+UNIFORM_SOURCES = {"MOVI", "MOVHI", "LI", "GETWARP", "GETLWARP", "GETARG"}
+
+
+def postdominators(blocks: list[Block]) -> list[set[int]]:
+    """pdom[b] = bloques que estan en todo camino de b a la salida (incluido b). El
+    indice len(blocks) es la salida virtual."""
+    n = len(blocks)
+    pdom = [set(range(n + 1)) for _ in range(n)] + [{n}]
+    changed = True
+    while changed:
+        changed = False
+        for b in reversed(range(n)):
+            succ = blocks[b].succ or [n]
+            new = set.intersection(*(pdom[s] for s in succ)) | {b}
+            if new != pdom[b]:
+                pdom[b], changed = new, True
+    return pdom
+
+
+def immediate_postdominator(pdom: list[set[int]], b: int) -> int:
+    strict = pdom[b] - {b}
+    return max(strict, key=lambda p: len(pdom[p]))     # la cadena de postdominadores: el mas cercano
+
+
+def dominators(blocks: list[Block]) -> list[set[int]]:
+    n = len(blocks)
+    dom = [set(range(n)) for _ in range(n)]
+    dom[0] = {0}
+    preds: list[list[int]] = [[] for _ in range(n)]
+    for block in blocks:
+        for s in block.succ:
+            preds[s].append(block.index)
+    changed = True
+    while changed:
+        changed = False
+        for b in range(1, n):
+            if not preds[b]:
+                continue
+            new = set.intersection(*(dom[p] for p in preds[b])) | {b}
+            if new != dom[b]:
+                dom[b], changed = new, True
+    return dom
+
+
+def natural_loops(blocks: list[Block], dom: list[set[int]]) -> dict[int, set[int]]:
+    """cabecera -> cuerpo, uniendo los bucles que comparten cabecera."""
+    preds: list[list[int]] = [[] for _ in blocks]
+    for block in blocks:
+        for s in block.succ:
+            preds[s].append(block.index)
+    loops: dict[int, set[int]] = {}
+    for block in blocks:
+        for h in block.succ:
+            if h in dom[block.index]:                       # arista de vuelta u -> h
+                body = loops.setdefault(h, {h})
+                stack = [block.index]
+                while stack:
+                    x = stack.pop()
+                    if x not in body:
+                        body.add(x)
+                        stack.extend(preds[x])
+    return loops
+
+
+def divergent_branches(blocks: list[Block], pdom: list[set[int]]) -> set[int]:
+    """Indices de los bloques cuyo salto condicional puede divergir."""
+    n = len(blocks)
+    last = {b.index: next((l for l in reversed(b.lines) if l.kind == "instr"), None) for b in blocks}
+    conditional = {i for i, l in last.items() if l is not None and l.op in BRANCHES}
+    if SSY_ALL:
+        return conditional
+    tainted: set[int] = set()
+    while True:
+        var_in = [set() for _ in range(n)]
+        changed = True
+        while changed:
+            changed = False
+            for block in blocks:
+                var = set(var_in[block.index])
+                for line in block.lines:
+                    if line.kind != "instr":
+                        continue
+                    defs, uses = defs_uses(line)
+                    if not defs:
+                        continue
+                    if line.op in VARYING_SOURCES or block.index in tainted:
+                        varying = True
+                    elif line.op in UNIFORM_SOURCES:
+                        varying = False
+                    elif line.op in LOADS:
+                        base = reg_of(line.args[1])
+                        varying = base == STACK or base in var       # direccion distinta = dato distinto
+                    else:
+                        varying = bool(uses & var)
+                    var = (var | defs) if varying else (var - defs)
+                for s in block.succ:
+                    if not var <= var_in[s]:
+                        var_in[s] |= var
+                        changed = True
+        found: set[int] = set()
+        for block in blocks:
+            if block.index not in conditional:
+                continue
+            var = set(var_in[block.index])
+            for line in block.lines[:-1]:
+                if line.kind == "instr":
+                    defs, uses = defs_uses(line)
+                    if line.op in VARYING_SOURCES or block.index in tainted:
+                        v = True
+                    elif line.op in UNIFORM_SOURCES:
+                        v = False
+                    elif line.op in LOADS:
+                        v = reg_of(line.args[1]) == STACK or reg_of(line.args[1]) in var
+                    else:
+                        v = bool(uses & var)
+                    if defs:
+                        var = (var | defs) if v else (var - defs)
+            branch = last[block.index]
+            if any(reg_of(a) in var for a in branch.args[:2] if reg_of(a) is not None):
+                found.add(block.index)
+        # lo que se ejecuta bajo un salto divergente es de unas lanes y no de otras
+        region: set[int] = set()
+        for b in found:
+            join = immediate_postdominator(pdom, b)
+            stack = list(blocks[b].succ)
+            while stack:
+                x = stack.pop()
+                if x == join or x in region:
+                    continue
+                region.add(x)
+                stack.extend(blocks[x].succ)
+        if region <= tainted:
+            return found
+        tainted |= region
+
+
+@register_pass("ssy", "SSY delante de los saltos que pueden divergir (en bucles, antes del bucle)")
+def pass_ssy(unit: Unit, stats: dict) -> None:
+    for function in unit.functions():
+        if not function.name.startswith(KERNEL_PREFIX):
+            continue
+        where = f"{unit.path}: {function.name}"
+        blocks = build_cfg(function)
+        if not blocks:
+            continue
+        pdom = postdominators(blocks)
+        dom = dominators(blocks)
+        div = divergent_branches(blocks, pdom)
+        if not div:
+            continue
+        count = [0]
+
+        def label_of(index: int) -> str:
+            block = blocks[index]
+            if block.lines and block.lines[0].kind == "label":
+                return block.lines[0].name
+            count[0] += 1
+            name = f"__ssy_{function.name}_{count[0]}"
+            block.lines.insert(0, Line("label", "", name=name))
+            return name
+
+        def common_postdominator(targets: list[int]) -> int:
+            common = set.intersection(*(pdom[t] for t in targets))
+            if not common:
+                raise OptError(f"{where}: no encuentro donde reconvergen las salidas de un bucle")
+            return max(common, key=lambda p: len(pdom[p]))
+
+        handled: set[int] = set()
+        edits: list[tuple[Block, int | None, int]] = []       # (bloque, posicion o None=al final, join)
+        preds: list[list[int]] = [[] for _ in blocks]
+        for block in blocks:
+            for s in block.succ:
+                preds[s].append(block.index)
+        for header, body in sorted(natural_loops(blocks, dom).items()):
+            exits = [b for b in body if b in div and any(s not in body for s in blocks[b].succ)]
+            if not exits:
+                continue
+            targets = sorted({s for b in exits for s in blocks[b].succ if s not in body})
+            join = targets[0] if len(targets) == 1 else common_postdominator(targets)
+            for b in exits:
+                if immediate_postdominator(pdom, b) == join:
+                    handled.add(b)
+            if not any(b in handled for b in exits):
+                continue
+            for p in preds[header]:
+                if p in body:
+                    continue
+                term = next((l for l in reversed(blocks[p].lines) if l.kind == "instr"), None)
+                pos = None
+                if term is not None and term.op == "BRA":
+                    pos = max(i for i, l in enumerate(blocks[p].lines) if l is term)
+                elif term is not None and (term.op in BRANCHES or term.op in ("EXIT", "HALT", "JR")):
+                    raise OptError(f"{where}: la entrada a un bucle con divergencia sale de un salto "
+                                   "condicional; no se sabe donde abrir su region")
+                edits.append((blocks[p], pos, join))
+        for b in sorted(div - handled):
+            join = immediate_postdominator(pdom, b)
+            if join >= len(blocks):
+                raise OptError(f"{where}: un salto divergente no reconverge antes de salir del kernel")
+            edits.append((blocks[b], len(blocks[b].lines) - 1, join))
+        # los `SSY` se anaden de atras adelante para no mover las posiciones pendientes
+        for block, pos, join in sorted(edits, key=lambda e: (e[0].index, -1 if e[1] is None else e[1]),
+                                       reverse=True):
+            ssy = instr("SSY", label_of(join))
+            if pos is None:
+                block.lines.append(ssy)
+            else:
+                block.lines.insert(pos, ssy)
+            stats["ssy"] = stats.get("ssy", 0) + 1
+        function.body = [line for block in blocks for line in block.lines]
+
+
 def directive_parts(line: Line) -> list[str]:
     return line.text.replace(",", " ").split()
 
@@ -517,6 +747,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, help="`.s` de salida (por defecto stdout)")
     parser.add_argument("--passes", help="pases separados por coma, en orden "
                         f"(por defecto {','.join(DEFAULT_PASSES)}; vacio = ninguno)")
+    parser.add_argument("--ssy-all", action="store_true",
+                        help="pase ssy: tratar todo salto condicional como divergente")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -527,6 +759,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.input is None:
         parser.error("hace falta un .s de entrada")
     passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
+    global SSY_ALL
+    SSY_ALL = args.ssy_all
     stats: dict = {}
     try:
         text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)

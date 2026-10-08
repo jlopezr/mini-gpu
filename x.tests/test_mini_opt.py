@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 
 from mini_asm import assemble_bytes  # noqa: E402
 from tools.mini_opt import (  # noqa: E402
-    OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels,
+    OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 
 RUNTIME = ROOT / "1.isa" / "runtime"
@@ -289,6 +289,90 @@ JR R31
         self.assertEqual(body[:4], ["GETARG R28", "LOAD R12, R28, 0", "LOAD R28, R28, 4",
                                     "MUL R28, R28, R12"])
         assemble_bytes(render_unit(unit))
+
+
+def ssy_body(source):
+    unit = parse_unit(source, "k.s")
+    pass_ssy(unit, {})
+    return [l.render() for l in functions(unit)["__kernel_k"].body]
+
+
+IF_ELSE = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+ANDI R6, R5, 1
+BEQ R6, R0, L.1
+ADDI R7, R5, 3
+BRA L.2
+L.1:
+ADDI R7, R5, 100
+L.2:
+STORE R7, R5, 0
+EXIT
+"""
+
+LOOP = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+BRA L.5
+L.2:
+STORE R5, R5, 0
+ADDI R5, R5, 64
+L.5:
+BLT R5, R3, L.2
+L.1:
+EXIT
+"""
+
+
+class SsyTest(unittest.TestCase):
+    def test_if_else_gets_an_ssy_before_the_branch_with_the_merge_point_as_join(self):
+        body = ssy_body(IF_ELSE)
+        branch = body.index("BEQ R6, R0, L.1")
+        self.assertEqual(body[branch - 1], "SSY L.2")
+        self.assertEqual(sum(l.startswith("SSY") for l in body), 1)
+
+    def test_loop_opens_its_region_once_before_the_loop(self):
+        body = ssy_body(LOOP)
+        self.assertEqual(body.index("SSY L.1") + 1, body.index("BRA L.5"))   # en el preheader
+        self.assertEqual(sum(l.startswith("SSY") for l in body), 1)          # ninguno dentro
+
+    def test_a_branch_on_uniform_values_needs_no_ssy(self):
+        # R3 sale de los parametros (nunca de GETTID/GETLANE): todas las lanes lo ven igual
+        source = LOOP.replace("GETTID R5", "MOVI R5, 0")
+        self.assertFalse(any(l.startswith("SSY") for l in ssy_body(source)))
+
+    def test_what_is_defined_under_a_divergent_branch_varies_afterwards(self):
+        # R7 vale cosas distintas segun la lane; el segundo salto, que solo mira R7, tambien diverge
+        source = IF_ELSE.replace("STORE R7, R5, 0", "BEQ R7, R0, L.3\nSTORE R7, R5, 0\nL.3:")
+        body = ssy_body(source)
+        self.assertEqual(sum(l.startswith("SSY") for l in body), 2)
+
+    def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
+        import tools.mini_opt as opt
+        source = LOOP.replace("GETTID R5", "MOVI R5, 0")
+        opt.SSY_ALL = True
+        try:
+            body = ssy_body(source)
+        finally:
+            opt.SSY_ALL = False
+        self.assertTrue(any(l.startswith("SSY") for l in body))
+
+    def test_functions_that_are_not_kernels_are_left_alone(self):
+        source = IF_ELSE.replace("__kernel_k", "host")
+        unit = parse_unit(source, "k.s")
+        pass_ssy(unit, {})
+        self.assertFalse(any(l.render().startswith("SSY") for l in unit.lines()))
+
+    def test_output_assembles(self):
+        for source in (IF_ELSE, LOOP):
+            unit = parse_unit(source, "k.s")
+            pass_ssy(unit, {})
+            assemble_bytes(render_unit(unit))
 
 
 class FilterTest(unittest.TestCase):

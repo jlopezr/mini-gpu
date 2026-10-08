@@ -958,6 +958,11 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
   Ejemplo completo en `32.cpu-gpu-func-sim/examples/c/`.
 
+- **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
+  postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
+  Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, la pila, y lo definido
+  bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos.
+
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él).
 

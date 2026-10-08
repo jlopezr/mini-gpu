@@ -1665,5 +1665,63 @@ class CKernelTest(unittest.TestCase):
         self.assertGreater(self.system.gpu.retired, 128 * 4 * 5)
 
 
+class CDivergenceTest(unittest.TestCase):
+    """`examples/c/diverge_c.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
+    `ssy` de mini-opt. Cada resultado se compara con el mismo cálculo en Python."""
+
+    THREADS = 32
+
+    @classmethod
+    def setUpClass(cls):
+        image, cls.labels = build_c_example("diverge_c")
+        cls.system = CpuGpuSystem(MEMORY)
+        cls.system.load_cpu_program(image)
+        cls.outcome = cls.system.run()
+
+    def words(self, label, count):
+        return [word(self.system, self.labels[label] + 4 * i) for i in range(count)]
+
+    def test_the_five_launches_finish_without_a_simt_error(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.gpu.fault)
+        self.assertEqual(self.words("status", 5), [GPU_OK] * 5)
+
+    def test_tail_loop_exits_in_different_iterations(self):
+        # 1000 palabras entre 32 hilos: las lanes 0..7 hacen 32 vueltas y el resto, 31
+        data = self.words("tail", 1000 + 16)
+        self.assertEqual(data[:1000], [0xABCD] * 1000)
+        self.assertEqual(data[1000:], [0] * 16)
+
+    def test_if_else_on_the_thread_id(self):
+        expected = [i * 3 if i & 1 else i + 100 for i in range(self.THREADS)]
+        self.assertEqual(self.words("parity", self.THREADS), expected)
+
+    def test_loop_with_a_different_trip_count_per_lane(self):
+        def steps(x):
+            count = 0
+            while x > 1:
+                x = x + 1 if x & 1 else x >> 1
+                count += 1
+            return count
+        expected = [steps(i + 1) for i in range(self.THREADS)]
+        self.assertEqual(self.words("steps", self.THREADS), expected)
+        self.assertGreater(len(set(expected)), 4)          # que de verdad varíe
+
+    def test_early_return_leaves_the_rest_untouched(self):
+        expected = [i * i + 1 for i in range(21)] + [0x5555] * (self.THREADS + 8 - 21)
+        self.assertEqual(self.words("guard", self.THREADS + 8), expected)
+
+    def test_nested_loops_with_break(self):
+        def count(i):
+            n = 0
+            for a in range((i & 7) + 1):
+                for b in range(6):
+                    if a * b >= 10:
+                        break
+                    n += 1
+            return n
+        self.assertEqual(self.words("nested", self.THREADS), [count(i) for i in range(self.THREADS)])
+
+
 if __name__ == "__main__":
     unittest.main()
