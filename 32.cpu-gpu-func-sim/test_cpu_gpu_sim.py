@@ -1,5 +1,6 @@
 import contextlib
 import io
+import math
 import struct
 import sys
 import tempfile
@@ -477,6 +478,174 @@ class LifeRaceTest(unittest.TestCase):
 
     def test_neither_gpu_kernel_diverges(self):
         for warp in self.system.gpu.warps:
+            self.assertEqual((len(warp.region_stack), len(warp.path_stack)), (0, 0))
+
+
+BLUR_SPOTS = ((3, 2), (2, 5), (5, 3))
+
+
+def blur_step(grid, frame: int):
+    """Un fotograma de `blur.inc`: enciende los puntos y desenfoca (borde a cero)."""
+    grid = [row[:] for row in grid]
+    for sx, sy in BLUR_SPOTS:
+        x = abs(((frame * sx) & 255) - 128) + 16
+        y = abs(((frame * sy + 64) & 127) - 64) + 16
+        for j in (y - 1, y, y + 1):
+            for i in (x - 1, x, x + 1):
+                grid[j][i] = 255
+    rows, cols = len(grid), len(grid[0])
+
+    def at(j, i):
+        return grid[j][i] if 0 <= j < rows and 0 <= i < cols else 0
+
+    return [[((4 * at(j, i)
+               + 2 * (at(j - 1, i) + at(j + 1, i) + at(j, i - 1) + at(j, i + 1))
+               + at(j - 1, i - 1) + at(j - 1, i + 1) + at(j + 1, i - 1) + at(j + 1, i + 1))
+              * 15) >> 8
+             for i in range(cols)] for j in range(rows)]
+
+
+def blur_pixels(grid) -> bytes:
+    """Las 208 líneas de `blur.inc`: la paleta del calor, 2 x 2 píxeles por celda."""
+    out = bytearray()
+    for row in grid:
+        line = b"".join(struct.pack("<H", ((v << 8) & 0xF800) | ((v << 3) & 0x07E0)) * 2
+                        for v in row)
+        out += line * 2
+    return bytes(out)
+
+
+class BlurRaceTest(unittest.TestCase):
+    """`examples/race/blur.asm`: los tres métodos tienen que dar el mismo calor."""
+
+    FRAMES = 7
+    PROGRAM = RACE / "blur.asm"
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(cls.PROGRAM)
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+        cls.generations = [[[0] * 160 for _ in range(104)]]
+        for frame in range(cls.FRAMES):
+            cls.generations.append(blur_step(cls.generations[-1], frame))
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_frame_is_the_blur_after_the_last_frame(self):
+        self.assertEqual(self.screen(self.video.fb_front),
+                         blur_pixels(self.generations[self.FRAMES]))
+
+    def test_the_previous_frame_is_the_one_before(self):
+        self.assertEqual(self.screen(self.video.fb_back),
+                         blur_pixels(self.generations[self.FRAMES - 1]))
+
+    def test_there_is_heat_and_it_spreads(self):
+        last = self.generations[self.FRAMES]
+        self.assertGreater(max(map(max, last)), 150)
+        self.assertGreater(sum(1 for row in last for v in row if v), 100)
+
+    def test_the_gpu_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+        for warp in gpu.warps:
+            self.assertEqual((len(warp.region_stack), len(warp.path_stack)), (0, 0))
+
+
+def rotate_texture():
+    """La textura de `rotate.inc`: 128 x 128 palabras con el mismo píxel dos veces."""
+    out = []
+    for ty in range(128):
+        for tx in range(128):
+            if ((tx >> 4) ^ (ty >> 4)) & 1:
+                red = tx >> 2
+                color = red << 11 | (ty >> 1) << 5 | (31 - red)
+            else:
+                color = 0x18C3
+            out.append(color | color << 16)
+    return out
+
+
+def rotate_image(frame: int, texture) -> bytes:
+    """Las 208 líneas de `rotate.inc` en `frame`, con la misma aritmética entera."""
+    sin = [int(round(128 * math.sin(2 * math.pi * k / 64))) for k in range(64)]
+    a = abs((frame & 31) - 16) - 8
+    s = 48 + abs(((frame * 3) & 63) - 32)
+    dux = (sin[(a + 16) & 63] * s) >> 7
+    dvx = (sin[a & 63] * s) >> 7
+    u00 = 8192 + 40 * frame - 80 * dux + 52 * dvx
+    v00 = 8192 + 24 * frame - 80 * dvx - 52 * dux
+    out = bytearray()
+    for y in range(104):
+        u, v = u00 - y * dvx, v00 + y * dux
+        row = []
+        for _ in range(160):
+            row.append(texture[(v & 0x3F80) + ((u >> 7) & 127)])
+            u += dux
+            v += dvx
+        line = struct.pack("<160I", *row)
+        out += line * 2
+    return bytes(out)
+
+
+class RotateRaceTest(unittest.TestCase):
+    """`examples/race/rotate.asm`: los tres métodos tienen que dar la misma imagen."""
+
+    FRAMES = 7
+    PROGRAM = RACE / "rotate.asm"
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(cls.PROGRAM)
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+        cls.texture = rotate_texture()
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_frame_is_the_last_one_drawn(self):
+        self.assertEqual(self.screen(self.video.fb_front),
+                         rotate_image(self.FRAMES - 1, self.texture))
+
+    def test_the_previous_frame_is_the_one_before(self):
+        self.assertEqual(self.screen(self.video.fb_back),
+                         rotate_image(self.FRAMES - 2, self.texture))
+
+    def test_consecutive_frames_differ(self):
+        self.assertNotEqual(rotate_image(0, self.texture), rotate_image(1, self.texture))
+
+    def test_the_gpu_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+        for warp in gpu.warps:
             self.assertEqual((len(warp.region_stack), len(warp.path_stack)), (0, 0))
 
 
