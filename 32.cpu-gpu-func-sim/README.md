@@ -72,6 +72,27 @@ iterativos (un bit por ciclo, `SAR` por 31 cuesta 31). Son cifras del **modelo**
 en la placa el mismo código tarda más (en `demo-bench` la placa midió 1,55× los
 ciclos del modelo), así que 8,4 ms es una cota inferior, no una predicción.
 
+### Medido en la placa (36, hito 1)
+
+Las variantes `*_board.asm` (con `gpu_runtime_board.inc`, que lanza con `RUN` porque
+la 36 aún no tiene `WARP_START`) cuentan sus propios ciclos con el `CYCLES` de la
+CPU (80 MHz). Se leen con `monitor.py halt` y `read-register`: `R22` ciclos de
+pintado, `R29` ciclos del frame entero, `R19` frames válidos (los que cruzan una
+parada del monitor se descartan: sin eso salen cifras que dependen de cuánto se
+tarda en leer). Vídeo a 59,5 Hz.
+
+| | pintado | frame entero | fps |
+|---|---:|---:|---:|
+| `render_cpu_board.asm` | 54,2 ms | 67,2 ms (4 periodos) | 14,8 |
+| `render_board.asm` (v1) | 27,2 ms | 33,6 ms (2 periodos) | 29,8 |
+| `render_v2_board.asm` | 19,6 ms | 33,6 ms (2 periodos) | 29,8 |
+
+El frame entero es siempre un número entero de periodos de vídeo (16,8 ms) porque
+el swap espera al siguiente frame. La v2 pinta en 19,6 ms: 3 ms por encima de un
+periodo, y por eso va a 30 fps y no a 60. Frente al modelo, la v1 sale como se
+esperaba (27,2 ms medidos contra 26,2) y la v2 no (19,6 contra 8,4): el modelo
+subestima el código limitado por cálculo.
+
 ## Qué se comparte
 
 | | |

@@ -1,7 +1,9 @@
 ; ---- SOLO PLACA: mide los ciclos de CPU que tarda en pintarse cada frame ----
 ; Con la CPU parada (monitor.py halt): R21 = frames, R22 = ciclos acumulados de
 ; pintado (sin contar la espera al swap), R24 = base del PERF de la CPU.
-; Media por frame = (R22b - R22a) / (R21b - R21a); a 80 MHz, 80000 ciclos = 1 ms.
+; R29 = ciclos del frame entero (pintado + espera al swap), R19 = frames validos.
+; Los frames que cruzan una parada del monitor (> 200 ms) no se acumulan.
+; Media por frame = (R22b - R22a) / (R19b - R19a); a 80 MHz, 80000 ciclos = 1 ms.
 ; ============================================================
 ; render.asm - un plasma pintado por la GPU, con la CPU llevando el bucle
 ;
@@ -74,6 +76,9 @@ start:
 
     MOVI  R21, 0
     MOVI  R22, 0
+    MOVI  R29, 0
+    MOVI  R19, 0
+    LI    R30, 16000000                     ; 200 ms: mas que cualquier frame
     LI    R24, MMIO_CPU_PERF_BASE
 
 frame:
@@ -88,14 +93,20 @@ frame:
     BNE   R1, R0, failed                    ; GPU_OK = 0
 
     LOAD  R28, R24, MMIO_PERF_CYCLES_OFF    ; fin del pintado
-    SUB   R28, R28, R23
-    ADD   R22, R22, R28
+    SUB   R18, R28, R23                     ; ciclos de pintado de este frame
 present:
     MOVI  R7, 1
     STORE R7, R20, MMIO_VIDEO_SWAP_OFF      ; pedir el intercambio
 wait_swap:
     LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF      ; se aplica al empezar un frame
     BNE   R8, R0, wait_swap
+    LOAD  R28, R24, MMIO_PERF_CYCLES_OFF    ; fin del frame entero (tras el swap)
+    SUB   R28, R28, R23
+    BGEU  R28, R30, skip_acc                ; cruzo una parada del monitor: no vale
+    ADD   R29, R29, R28                     ; R29 = ciclos de frame entero
+    ADD   R22, R22, R18                     ; R22 = ciclos de pintado
+    ADDI  R19, R19, 1                       ; R19 = frames validos
+skip_acc:
     ADDI  R21, R21, 1
     BRA   frame
 
