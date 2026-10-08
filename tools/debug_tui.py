@@ -418,6 +418,8 @@ def build_app(session: DebugSession):
             ("g", "command('core')", "CPU/GPU"),
             ("w", "command('warp')", "siguiente warp"),
             ("l", "command('lane')", "siguiente lane"),
+            ("r", "command('round')", "ronda de warps"),
+            ("t", "command('sched')", "paso del planificador"),
         ] if has_gpu else [])
 
         def __init__(self) -> None:
@@ -564,7 +566,7 @@ def build_app(session: DebugSession):
             if command.split(None, 1)[0].lower() in {
                     "s", "step", "n", "next", "over", "c", "continue",
                     "run", "until", "f", "frame", "finish", "reset",
-                    "core", "warp", "lane"}:
+                    "core", "warp", "lane", "round", "sched"}:
                 # Después de ejecutar, el cursor conceptual vuelve al PC aunque
                 # la selección anterior siguiera visible. Así el próximo
                 # arriba/abajo siempre parte de la instrucción actual.

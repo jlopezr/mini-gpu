@@ -725,6 +725,8 @@ foco recibe `step`, `regs`, `set`, el listado y la barra de estado.
 | `core [cpu\|gpu]` | `g` | cambia de núcleo (sin argumento, alterna) |
 | `warp [N]` | `w` | foco en el warp N (sin argumento, el siguiente); implica GPU |
 | `lane [N]` | `l` | foco en la lane N (sin argumento, la siguiente); implica GPU |
+| `round [N]` | `r` | una instrucción en cada warp que pueda avanzar, en orden de warp; el foco no se mueve |
+| `sched [N]` | `t` | N instrucciones del warp que elige el planificador (round-robin); el foco las sigue |
 | `warps` | | tabla de warps |
 | `lanes` | | registros de todas las lanes del warp (omite las filas a cero) |
 
@@ -733,7 +735,12 @@ congelada: se ve el `WARP_START` hacer vivos a los warps sin que ejecuten. Con e
 foco en la GPU avanza *un warp* —el del foco— y ningún otro, ni el puntero del
 planificador. Si ese warp espera en una barrera o ha terminado, el foco pasa al
 siguiente que pueda avanzar y la consola lo dice (`el warp 0 espera en una
-barrera; sigo con el warp 1`). Un `step` explícito ignora los breakpoints. `over`
+barrera; sigo con el warp 1`). Para ver el entrelazado sin ir cambiando de warp a
+mano hay dos formas: `round` hace avanzar una instrucción a todos los warps
+vivos (se ve la tabla entera moverse), y `sched` da el paso que daría el
+hardware, eligiendo el planificador y llevándose el foco con él. Los dos paran si
+un warp falla (parada total, con el foco en el que falló). Un `step` explícito
+ignora los breakpoints. `over`
 y `finish` actúan sobre el núcleo con foco; la GPU no tiene `JAL`/`JR`.
 
 **Una sola lista de breakpoints.** Es una dirección, y vale para los dos

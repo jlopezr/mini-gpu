@@ -164,14 +164,16 @@ class SystemTarget(DebugTarget):
         # Directo sobre el bytearray, como `SimTarget`: mirar no tiene efectos.
         return bytes(memory[address:address + length])
 
-    def idle_reason(self) -> str | None:
-        if self._core == CPU:
-            return None
+    def _gpu_blocker(self) -> str | None:
+        """Por qué la GPU no puede avanzar, sea cual sea el foco."""
         if self._gpu.fault is not None:
             return "la GPU tiene un error pendiente (usa `reset gpu`)"
         if self._gpu.live == 0:
             return "la GPU no tiene warps vivos (la CPU los lanza con WARP_START)"
         return None
+
+    def idle_reason(self) -> str | None:
+        return None if self._core == CPU else self._gpu_blocker()
 
     def stop_location(self) -> str:
         if self._core == CPU:
@@ -256,8 +258,9 @@ class SystemTarget(DebugTarget):
         if self._core == CPU:
             self.system.step_cpu()
             return
-        if self._gpu.fault is not None:
-            raise TargetError("la GPU tiene un error pendiente (usa `reset gpu`)")
+        blocker = self._gpu_blocker()
+        if blocker is not None:
+            raise TargetError(blocker)
         number = self._pick_warp()
         if number is None:
             raise TargetError(
@@ -270,6 +273,42 @@ class SystemTarget(DebugTarget):
                 f"el warp {self._warp} {why}; sigo con el warp {number}")
             self._focus_warp(number)
         self._gpu.step_warp(number)
+
+    def gpu_fault(self) -> bool:
+        return self._gpu.fault is not None
+
+    def round_warps(self) -> list[int]:
+        blocker = self._gpu_blocker()
+        if blocker is not None:
+            raise TargetError(blocker)
+        ran = []
+        for number in range(self._gpu.num_warps):
+            # Se mira en su turno: un warp que acaba de terminar o de esperar
+            # en una barrera, o que otro acaba de liberar, cuenta como está ahora.
+            if not self._runnable(number):
+                continue
+            self._gpu.step_warp(number)
+            ran.append(number)
+            if self._gpu.fault is not None:
+                # Parada total: ninguno más ejecuta y el foco va al que falló.
+                self.select_warp(number)
+                break
+        if not ran:
+            raise TargetError(
+                "ningún warp puede avanzar: los vivos esperan en una barrera")
+        return ran
+
+    def sched_step(self) -> int:
+        blocker = self._gpu_blocker()
+        if blocker is not None:
+            raise TargetError(blocker)
+        number = self._gpu.step_scheduled()
+        if number is None:
+            raise TargetError(
+                "ningún warp puede avanzar: los vivos esperan en una barrera")
+        # `select_warp` pone el foco en la GPU y conserva la lane si sigue activa.
+        self.select_warp(number)
+        return number
 
     # -- ejecución libre, parada total --------------------------------------
 

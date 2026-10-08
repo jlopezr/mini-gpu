@@ -893,6 +893,50 @@ class DebugSession:
         self.target.select_lane(self._parse_index(args[0]) if args else None)
         return [self._focus_line()]
 
+    def _cmd_round(self, args: list[str]) -> list[str]:
+        """`round [N]`: una instrucción en cada warp que pueda avanzar, N veces."""
+        count = self._parse_count(args[0]) if args else 1
+        self._require_gpu()
+        executed, rounds, last = 0, 0, []
+        for _ in range(count):
+            try:
+                last = self.target.round_warps()
+            except TargetError:
+                if rounds == 0:
+                    raise
+                break
+            rounds += 1
+            executed += len(last)
+            if self.target.gpu_fault():
+                break
+        if rounds == 1:
+            lines = ["ronda: warps " + " ".join(str(n) for n in last)
+                     + f" ({executed} instrucciones)"]
+        else:
+            lines = [f"{rounds} rondas ({executed} instrucciones)"]
+        if self.target.gpu_fault():
+            lines.append(self.describe_stop(StopReason(STOP_ERROR, executed)))
+        return lines
+
+    def _cmd_sched(self, args: list[str]) -> list[str]:
+        """`sched [N]`: N instrucciones elegidas por el planificador; el foco las sigue."""
+        count = self._parse_count(args[0]) if args else 1
+        self._require_gpu()
+        executed = 0
+        for _ in range(count):
+            try:
+                self.target.sched_step()
+            except TargetError:
+                if executed == 0:
+                    raise
+                break
+            executed += 1
+            if self.target.gpu_fault():
+                break
+        if self.target.gpu_fault():
+            return [self.describe_stop(StopReason(STOP_ERROR, executed))]
+        return [self.describe_stop(StopReason(STOP_STEPPED, executed))]
+
     def _cmd_warps(self, args: list[str]) -> list[str]:
         if args:
             raise CommandError("`warps` no lleva argumentos")
@@ -920,7 +964,8 @@ class DebugSession:
         if self._input_device() is None:
             hidden.add("input")
         if self.target.warp_rows() is None:
-            hidden.update({"core", "warp", "lane", "warps", "lanes"})
+            hidden.update({"core", "warp", "lane", "warps", "lanes",
+                           "round", "sched"})
         return [f"{name:<10} {text}" for name, text in HELP
                 if name.split()[0] not in hidden]
 
@@ -1022,6 +1067,10 @@ HELP: tuple[tuple[str, str], ...] = (
                        "recibe step, regs, set y el listado"),
     ("warp [N]", "foco en el warp N de la GPU (sin argumento, el siguiente)"),
     ("lane [N]", "foco en la lane N del warp (sin argumento, la siguiente)"),
+    ("round [N]", "una instruccion en cada warp que pueda avanzar, en orden "
+                  "(el foco no se mueve); N rondas"),
+    ("sched [N]", "N instrucciones del warp que elige el planificador; el "
+                  "foco las sigue (es el STEP del hardware)"),
     ("warps", "tabla de warps: estado, PC, mascara de lanes, pilas SIMT"),
     ("lanes", "registros de todas las lanes del warp con foco"),
     ("reset [gpu]", "reinicia PC, registros y contadores sin borrar memoria; "
@@ -1052,6 +1101,8 @@ _COMMANDS = {
     "core": DebugSession._cmd_core,
     "warp": DebugSession._cmd_warp,
     "lane": DebugSession._cmd_lane,
+    "round": DebugSession._cmd_round,
+    "sched": DebugSession._cmd_sched,
     "warps": DebugSession._cmd_warps,
     "lanes": DebugSession._cmd_lanes,
     "reset": DebugSession._cmd_reset,

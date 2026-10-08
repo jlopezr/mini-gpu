@@ -236,6 +236,166 @@ class SteppingTest(unittest.TestCase):
         self.assertEqual(scheduler.next_warp, before)
 
 
+class RoundTest(unittest.TestCase):
+    """`round`: una instrucción en cada warp que pueda avanzar, sin mover el foco."""
+
+    def test_one_round_runs_one_instruction_in_every_live_warp(self):
+        session = launched()
+        system = session.target.system
+        cpu_before = system.cpu.instructions_executed
+        lines = session.execute("round")
+        warps = system.gpu.warps
+        self.assertEqual([w.instructions_executed for w in warps[:3]], [1, 1, 0])
+        self.assertIn("warps 0 1", lines[0])
+        self.assertIn("2 instrucciones", lines[0])
+        self.assertEqual(system.cpu.instructions_executed, cpu_before)
+
+    def test_the_focus_does_not_move(self):
+        session = launched()
+        session.execute("warp 1")
+        before = session.target.name
+        session.execute("round 2")
+        self.assertEqual(session.target.name, before)
+        session.execute("core cpu")
+        session.execute("round")
+        self.assertEqual(session.target.core(), "cpu")
+
+    def test_several_rounds_are_summarised(self):
+        session = launched()
+        lines = session.execute("round 3")
+        self.assertEqual(lines, ["3 rondas (6 instrucciones)"])
+        warps = session.target.system.gpu.warps
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [3, 3])
+
+    def test_a_finished_warp_drops_out_of_the_next_rounds(self):
+        session = launched()
+        session.execute("round 4")                  # los dos acaban (4 instr.)
+        with self.assertRaises(TargetError) as caught:
+            session.execute("round")
+        self.assertIn("no tiene warps vivos", str(caught.exception))
+
+    def test_rounds_stop_when_nothing_is_left_to_run(self):
+        session = launched()
+        lines = session.execute("round 10")
+        self.assertEqual(lines, ["4 rondas (8 instrucciones)"])
+
+    def test_a_barrier_is_crossed_inside_a_round(self):
+        session = launched(KERNEL_BARRIER)
+        warps = session.target.system.gpu.warps
+        session.execute("round 2")        # GETTID, y BAR: el segundo libera a los dos
+        self.assertEqual([w.state for w in warps[:2]], ["READY", "READY"])
+        session.execute("round")          # ADDI de los dos, ya sin esperar
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [3, 3])
+
+    def test_a_fault_stops_the_round_and_focuses_the_faulty_warp(self):
+        session = launched(KERNEL_FAULT)
+        session.execute("core cpu")
+        session.execute("round")
+        lines = session.execute("round")             # el LOAD del warp 0 falla
+        self.assertIn("ERROR 0x02", lines[-1])
+        self.assertEqual(session.target.core(), "gpu")
+        warps = session.target.system.gpu.warps
+        # parada total: el warp 1 no ejecutó su LOAD
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [1, 1])
+
+    def test_it_needs_a_gpu(self):
+        with self.assertRaises(TargetError):
+            DebugSession(SimTarget(CPU(64 * 1024))).execute("round")
+
+    def test_without_live_warps_it_says_why(self):
+        with self.assertRaises(TargetError) as caught:
+            build().execute("round")
+        self.assertIn("no tiene warps vivos", str(caught.exception))
+
+
+class SchedTest(unittest.TestCase):
+    """`sched`: el paso del planificador, con el foco siguiendo al warp."""
+
+    def focus(self, session):
+        return [r.number for r in session.target.warp_rows() if r.focused]
+
+    def test_the_scheduler_alternates_warps_and_the_focus_follows(self):
+        session = launched()
+        order = []
+        for _ in range(4):
+            session.execute("sched")
+            order.append(self.focus(session)[0])
+        self.assertEqual(order, [0, 1, 0, 1])
+
+    def test_the_line_names_the_warp_that_ran(self):
+        session = launched()
+        session.execute("sched")
+        self.assertIn("[GPU warp 1]", session.execute("sched")[0])
+
+    def test_it_moves_the_focus_from_the_cpu_to_the_gpu(self):
+        session = launched()
+        session.execute("core cpu")
+        session.execute("sched")
+        self.assertEqual(session.target.core(), "gpu")
+
+    def test_the_lane_survives_the_change_of_warp(self):
+        session = launched()
+        session.execute("lane 5")
+        session.execute("sched 2")
+        self.assertIn("l5", session.target.name)
+
+    def test_n_steps_in_a_row(self):
+        session = launched()
+        lines = session.execute("sched 4")
+        self.assertIn("(4 instrucciones)", lines[0])
+        warps = session.target.system.gpu.warps
+        self.assertEqual([w.instructions_executed for w in warps[:2]], [2, 2])
+
+    def test_it_matches_the_real_round_robin(self):
+        # Mismo orden que el planificador de verdad: lo que `run` ejecutaría.
+        session = launched()
+        gpu = session.target.system.gpu
+        order = []
+        for _ in range(4):
+            before = [w.instructions_executed for w in gpu.warps]
+            session.execute("sched")
+            after = [w.instructions_executed for w in gpu.warps]
+            order.append(next(i for i, (a, b) in enumerate(zip(before, after))
+                              if a != b))
+        reference = launched().target.system.gpu
+        expected = []
+        for _ in range(4):
+            before = [w.instructions_executed for w in reference.warps]
+            reference.step()
+            after = [w.instructions_executed for w in reference.warps]
+            expected.append(next(i for i, (a, b) in enumerate(zip(before, after))
+                                 if a != b))
+        self.assertEqual(order, expected)
+
+    def test_a_manual_step_does_not_disturb_the_scheduler(self):
+        session = launched()
+        session.execute("warp 1")
+        session.execute("step 2")                    # a mano, sin planificador
+        session.execute("sched")
+        self.assertEqual(self.focus(session), [0])   # el planificador seguía en 0
+
+    def test_it_skips_a_warp_waiting_in_a_barrier(self):
+        session = launched(KERNEL_BARRIER)
+        session.execute("sched 3")                   # w0 GETTID, w1 GETTID, w0 BAR
+        warps = session.target.system.gpu.warps
+        self.assertEqual(warps[0].state, "WAIT_BAR")
+        session.execute("sched")                     # le toca a w1, no a w0
+        self.assertEqual(self.focus(session), [1])
+
+    def test_a_fault_is_reported_and_stops_the_run_of_steps(self):
+        session = launched(KERNEL_FAULT)
+        lines = session.execute("sched 10")
+        self.assertIn("ERROR 0x02", lines[0])
+
+    def test_it_needs_live_warps(self):
+        with self.assertRaises(TargetError):
+            build().execute("sched")
+
+    def test_it_needs_a_gpu(self):
+        with self.assertRaises(TargetError):
+            DebugSession(SimTarget(CPU(64 * 1024))).execute("sched")
+
+
 class FocusTest(unittest.TestCase):
     def test_core_without_argument_toggles(self):
         session = build()
@@ -671,6 +831,24 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(seen["core"], "cpu")
         self.assertEqual(seen["after_w"], ("gpu", [1]))
         self.assertIn("l1", seen["lane"])
+
+    def test_r_runs_a_round_and_t_a_scheduler_step(self):
+        session = launched()
+        seen = {}
+
+        async def body(app, pilot):
+            await pilot.press("r")
+            await pilot.pause()
+            warps = session.target.system.gpu.warps
+            seen["round"] = [w.instructions_executed for w in warps[:2]]
+            await pilot.press("t")
+            await pilot.pause()
+            seen["sched"] = [r.number for r in session.target.warp_rows()
+                             if r.focused]
+
+        self.pilot(session, body)
+        self.assertEqual(seen["round"], [1, 1])
+        self.assertEqual(seen["sched"], [0])
 
     def test_stepping_highlights_the_lane_cells_that_changed(self):
         session = launched()

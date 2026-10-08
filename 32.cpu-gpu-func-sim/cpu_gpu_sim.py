@@ -334,6 +334,24 @@ class GpuUnit:
             self._retire()
         return retired
 
+    def step_scheduled(self) -> int | None:
+        """Una instrucción del warp que elegiría el planificador (depuración).
+
+        Es el round-robin de `step` --el primer warp vivo y sin esperar desde
+        `next_warp`--, que además avanza el puntero, pero ejecutando con la GPU
+        detenida como el `STEP` de §14.1. Devuelve el warp que ejecutó, o None
+        si ninguno puede avanzar.
+        """
+        scheduler = self.system.streaming_multiprocessor
+        for offset in range(self.num_warps):
+            number = (scheduler.next_warp + offset) % self.num_warps
+            warp = self.warps[number]
+            if self.live >> number & 1 and not warp.halted and warp.state == "READY":
+                scheduler.next_warp = (number + 1) % self.num_warps
+                self.step_warp(number)
+                return number
+        return None
+
     # -- comandos de §14.1 ------------------------------------------------
 
     def _launch(self, number: int) -> None:

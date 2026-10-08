@@ -259,6 +259,22 @@ class DebugTarget(ABC):
         self.require(CAPS_RESET_GPU)
         raise NotImplementedError
 
+    def gpu_fault(self) -> bool:
+        """Si la GPU tiene un error pendiente."""
+        return False
+
+    def round_warps(self) -> list[int]:
+        """Una instrucción en cada warp que pueda avanzar, en orden de warp.
+
+        Devuelve los warps que ejecutaron. El foco no se mueve.
+        """
+        raise TargetError(f"{self.name} no tiene GPU")
+
+    def sched_step(self) -> int:
+        """Una instrucción del warp que elegiría el planificador; el foco pasa
+        a él. Devuelve su número."""
+        raise TargetError(f"{self.name} no tiene GPU")
+
     def video_layout(self) -> VideoLayout | None:
         """Dónde mirar el framebuffer, o `None` si esta máquina no tiene vídeo.
 
