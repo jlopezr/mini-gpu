@@ -309,133 +309,53 @@ module memory_fabric_fifo_6 #(
     wire urgent4 = head4_valid && head4_data[177];
     wire urgent5 = head5_valid && head5_data[177];
 
-    // First choose among urgent requests using the same RR ordering.
-    // If there are no urgent requests, choose among all requests.
+    // Round-robin con dos pasadas: primero las urgentes y, si no hay ninguna,
+    // todas las peticiones, siempre empezando en `rr_next`.
+    //
+    // Antes eran dos `case (rr_next)` de seis ramas con cadenas `if/else if` de
+    // seis peticiones, y el camino critico de la 36 (sdram_clk 95,5 MHz) era
+    // `head3_valid -> grant`: 11 LUT en serie. Ahora las dos pasadas se calculan
+    // A LA VEZ con la misma funcion y solo al final se elige una:
+    //   * `ge` deja pasar las posiciones >= rr_next; si hay alguna, gana la de
+    //     menor indice entre ellas (la primera tras rr_next);
+    //   * si no, gana la de menor indice de todas (se da la vuelta).
+    // Es el orden de las cadenas de antes, sin la cadena.
+    function [3:0] rr_pick;           // {hay alguna, indice}
+        input [5:0] v;
+        input [2:0] r;
+        reg [5:0] ge, hi, p;
+        reg [2:0] idx;
+        begin
+            ge = 6'b111111 << r;
+            hi = v & ge;
+            p  = (hi != 6'd0) ? hi : v;
+            casez (p)
+                6'b?????1: idx = 3'd0;
+                6'b????10: idx = 3'd1;
+                6'b???100: idx = 3'd2;
+                6'b??1000: idx = 3'd3;
+                6'b?10000: idx = 3'd4;
+                default:   idx = 3'd5;
+            endcase
+            rr_pick = {(v != 6'd0), idx};
+        end
+    endfunction
+
+    wire [5:0] arb_urgent = {urgent5, urgent4, urgent3, urgent2, urgent1, urgent0};
+    wire [5:0] arb_any    = {head5_valid, head4_valid, head3_valid,
+                             head2_valid, head1_valid, head0_valid};
+    wire [3:0] pick_urgent = rr_pick(arb_urgent, rr_next);
+    wire [3:0] pick_any    = rr_pick(arb_any, rr_next);
 
     always @* begin
         grant       = rr_next;
         grant_valid = 1'b0;
-
-        // ------------------------------------------------------------
-        // Urgent pass
-        // ------------------------------------------------------------
-
-        case (rr_next)
-            MASTER_0: begin
-                if      (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-                else if (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-                else if (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-                else if (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-                else if (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-                else if (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-            end
-
-            MASTER_1: begin
-                if      (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-                else if (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-                else if (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-                else if (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-                else if (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-                else if (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-            end
-
-            MASTER_2: begin
-                if      (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-                else if (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-                else if (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-                else if (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-                else if (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-                else if (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-            end
-
-            MASTER_3: begin
-                if      (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-                else if (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-                else if (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-                else if (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-                else if (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-                else if (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-            end
-
-            MASTER_4: begin
-                if      (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-                else if (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-                else if (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-                else if (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-                else if (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-                else if (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-            end
-
-            default: begin
-                if      (urgent5) begin grant=MASTER_5; grant_valid=1'b1; end
-                else if (urgent0) begin grant=MASTER_0; grant_valid=1'b1; end
-                else if (urgent1) begin grant=MASTER_1; grant_valid=1'b1; end
-                else if (urgent2) begin grant=MASTER_2; grant_valid=1'b1; end
-                else if (urgent3) begin grant=MASTER_3; grant_valid=1'b1; end
-                else if (urgent4) begin grant=MASTER_4; grant_valid=1'b1; end
-            end
-        endcase
-
-        // ------------------------------------------------------------
-        // Normal RR pass
-        // ------------------------------------------------------------
-
-        if (!grant_valid) begin
-            case (rr_next)
-                MASTER_0: begin
-                    if      (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                    else if (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                    else if (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                    else if (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                    else if (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                    else if (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                end
-
-                MASTER_1: begin
-                    if      (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                    else if (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                    else if (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                    else if (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                    else if (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                    else if (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                end
-
-                MASTER_2: begin
-                    if      (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                    else if (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                    else if (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                    else if (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                    else if (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                    else if (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                end
-
-                MASTER_3: begin
-                    if      (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                    else if (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                    else if (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                    else if (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                    else if (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                    else if (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                end
-
-                MASTER_4: begin
-                    if      (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                    else if (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                    else if (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                    else if (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                    else if (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                    else if (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                end
-
-                default: begin
-                    if      (head5_valid) begin grant=MASTER_5; grant_valid=1'b1; end
-                    else if (head0_valid) begin grant=MASTER_0; grant_valid=1'b1; end
-                    else if (head1_valid) begin grant=MASTER_1; grant_valid=1'b1; end
-                    else if (head2_valid) begin grant=MASTER_2; grant_valid=1'b1; end
-                    else if (head3_valid) begin grant=MASTER_3; grant_valid=1'b1; end
-                    else if (head4_valid) begin grant=MASTER_4; grant_valid=1'b1; end
-                end
-            endcase
+        if (pick_urgent[3]) begin
+            grant       = pick_urgent[2:0];
+            grant_valid = 1'b1;
+        end else if (pick_any[3]) begin
+            grant       = pick_any[2:0];
+            grant_valid = 1'b1;
         end
     end
 
