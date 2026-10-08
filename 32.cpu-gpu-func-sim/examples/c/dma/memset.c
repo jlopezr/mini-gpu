@@ -1,6 +1,6 @@
 /* memset.c - el primer programa en C con CPU y GPU en el mismo fichero
  *
- *   python examples/c/system/build.py examples/c/dma/memset.c
+ *   python examples/c/build.py examples/c/dma/memset.c
  *   python cpu_gpu_sim.py examples/c/_build/memset.bin
  *
  * El kernel rellena `buffer` con un valor desde 4 warps de la GPU; la CPU lo lanza con una

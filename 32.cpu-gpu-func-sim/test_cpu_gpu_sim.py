@@ -1617,13 +1617,12 @@ class CommandLineTest(unittest.TestCase):
 
 
 C_EXAMPLES = HERE / "examples" / "c"
-C_SYSTEM = C_EXAMPLES / "system"
 
 
 def build_c_example(name: str):
     """Compila `examples/c/<name>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
     Se omite la prueba si no hay compilador (rcc de y.lcc y MSVC); cualquier otro fallo es un error."""
-    sys.path.insert(0, str(C_SYSTEM))
+    sys.path.insert(0, str(C_EXAMPLES))
     import build as c_build
     try:
         binary = c_build.build(C_EXAMPLES / f"{name}.c")
@@ -1676,7 +1675,7 @@ class CSystemKernelsTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(C_SYSTEM))
+        sys.path.insert(0, str(C_EXAMPLES))
         import compare
         cls.compare = compare
         try:
@@ -1729,7 +1728,7 @@ class CRotateTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(C_SYSTEM))
+        sys.path.insert(0, str(C_EXAMPLES))
         import compare_rotate
         try:
             cls.rows = compare_rotate.compare(5)

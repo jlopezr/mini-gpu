@@ -1,6 +1,6 @@
 /* rotate.c - la rotacion de textura de examples/asm/race/rotate.inc, en C: CPU, GPU inocente y GPU buena
  *
- *   python examples/c/system/compare_rotate.py
+ *   python examples/c/compare_rotate.py
  *
  * El cuerpo esta en rotate_body.h, una sola vez; este fichero lo incluye tres veces con otro
  * reparto de trabajo entre hilos (ver la tabla de rotate_body.h). Bloque de argumentos: el de

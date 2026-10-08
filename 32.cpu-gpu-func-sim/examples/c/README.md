@@ -19,7 +19,7 @@ int main(void) {                                           /* CPU */
 ```
 
 ```text
-python examples/c/system/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
+python examples/c/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
 python cpu_gpu_sim.py examples/c/_build/memset.bin
 ```
 
@@ -36,9 +36,9 @@ nombre en la misma carpeta, para encontrar rápido la otra versión:
 | `simt` | | `c/simt/diverge.c` (solo en C) |
 | `render`, `launch.asm`, `race/{cube,life,blur}` | sí | aún no |
 
-En `c/system/` está lo común: `gpu.h`, `gpu.c`, `build.py` y los comparadores (`compare.py`,
-`compare_rotate.py`). `build.py` pasa esa carpeta a `mini-lcc -I`, así que los ejemplos solo
-escriben `#include "gpu.h"`. Las salidas de la compilación van a `c/_build/`.
+En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`); `build.py` pasa esa carpeta a
+`mini-lcc -I`, así que los ejemplos solo escriben `#include "gpu.h"`. En `c/` quedan las herramientas
+(`build.py`, `compare.py`, `compare_rotate.py`) y las salidas de la compilación van a `c/_build/`.
 
 ## Cómo funciona
 
