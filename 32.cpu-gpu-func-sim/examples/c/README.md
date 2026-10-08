@@ -156,7 +156,7 @@ Dos cosas que importan de cara a escribir C para esta máquina:
   acceso a la pila de los ocho lanes son ocho transacciones. `mini-opt` ya quita los guardados y
   restauraciones de registros preservados aunque el kernel tenga locales, pero no los locales.
 
-Esa brecha es la que cierra el pase `hoist` de `mini-opt` (sección siguiente): los números de arriba son
+Esa brecha es la que cierra el pase `licm` de `mini-opt` (sección siguiente): los números de arriba son
 los de antes de él, y con él la rotación queda en 1,08 / 1,08 / 1,12 veces el ensamblador.
 
 ## Los pases de `mini-opt`, medidos
@@ -168,11 +168,14 @@ pases nuevos son:
 - **`jumps`**: un `BRA` o salto condicional a una etiqueta que solo salta, va directo al destino, y un
   `BRA` a la línea siguiente se quita. En estos ejemplos no encontró nada que hacer (lcc ya no deja esas
   cadenas): se queda por seguridad, pero no hay medida a su favor.
-- **`hoist`**: en cada bucle sin bucles dentro ni llamadas, saca al preheader lo que no cambia: las
+- **`licm`**: en cada bucle sin bucles dentro ni llamadas, saca al preheader lo que no cambia: las
   constantes (`MOVI`/`LI`, el `MOVI` previo a cada desplazamiento de la GPU, los límites de las
   comparaciones) y las cuentas cuyos operandos son fijos (`SHL p, cstep, 2`). Usa un registro que el
   bucle no toque (R5..R15, y en un kernel también los R16..R29 sin uso); un cero se cambia por `R0`. No
-  toca cargas ni `DIV`.
+  toca cargas ni `DIV`. Es LICM (*loop-invariant code motion*) conservador, sobre registros ya asignados.
+- **`copyprop`**: propagación de copias y código muerto. Donde `ADD d, s, R0` llega a un uso de `d` por todos
+  los caminos sin que `d` ni `s` se reescriban, el uso lee `s`; las copias y cualquier instrucción pura
+  cuyo resultado nadie lee se borran. lcc copia a un temporal casi todo lo que compara o indexa.
 - **`ssy`** ahora quita el `SSY` que cae siempre después de otro con el mismo destino (la región ya está
   abierta; la GPU deja divergir más de un salto dentro de ella, como en el `if / else if` del cubo).
 
@@ -180,13 +183,13 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 
 | Carga | Ensamblador | C antes | C ahora | antes / ens. | ahora / ens. | mejora |
 |---|---:|---:|---:|---:|---:|---:|
-| memset 4096 | 3.132 | 3.136 | 2.628 | 1,00 | 0,84 | 1,19x |
-| memcpy 4096 | 4.156 | 4.160 | 3.652 | 1,00 | 0,88 | 1,14x |
+| memset 4096 | 3.132 | 3.136 | 2.616 | 1,00 | 0,84 | 1,20x |
+| memcpy 4096 | 4.156 | 4.160 | 3.640 | 1,00 | 0,88 | 1,14x |
 | fill_rect 64x64 | 3.640 | 3.640 | 3.192 | 1,00 | 0,88 | 1,14x |
 | blit 64x64 | 4.796 | 4.800 | 4.352 | 1,00 | 0,91 | 1,10x |
 | fill_rect 7x13 (3 warps) | 182 | 182 | 175 | 1,00 | 0,96 | 1,04x |
 | blit 7x13 (5 warps) | 257 | 262 | 255 | 1,02 | 0,99 | 1,03x |
-| rotación, CPU | 233.806 | 285.439 | 252.263 | 1,22 | 1,08 | 1,13x |
+| rotación, CPU | 233.806 | 285.439 | 235.621 | 1,22 | 1,01 | 1,21x |
 | rotación, GPU inocente (warp) | 29.426 | 42.231 | 31.870 | 1,44 | 1,08 | 1,33x |
 | rotación, GPU buena (warp) | 30.864 | 44.664 | 34.576 | 1,45 | 1,12 | 1,29x |
 
@@ -195,16 +198,16 @@ del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que
 que tarde menos: son instrucciones, no ciclos, y la mezcla de cargas y ALU es la misma.
 
 Texto, por pase (`mini-opt --stats`; lo que añade o quita; `ssy` añade porque pone regiones que antes no
-estaban, y `hoist` quita menos de lo que mueve porque cada constante se carga una vez en el preheader):
+estaban, y `licm` quita menos de lo que mueve porque cada constante se carga una vez en el preheader):
 
-| Fichero | kernels | hoist | ssy | total |
+| Fichero | kernels | licm | ssy | total |
 |---|---:|---:|---:|---:|
 | `dma/gpu_kernels.c` | -52 | +0 (4 sacadas) | +4 | -52 |
 | `race/rotate.c` | -36 | -2 | +3 | -40 |
 | `race/cube.c` | -20 | -23 (64 sacadas) | +6 (10 unidas) | -38 |
 | `simt/diverge.c` | -14 | -1 | +7 | -11 |
 
-`CSystemKernelsTest` y `CRotateTest` fijan topes a esas proporciones (1,05; y 1,15 / 1,2 / 1,2).
+`CSystemKernelsTest` y `CRotateTest` fijan topes a esas proporciones (1,05; y 1,05 / 1,2 / 1,2).
 
 ## El cubo en la placa
 
@@ -227,13 +230,14 @@ Ciclos de CPU a 80 MHz por fotograma, medidos en la placa (último trabajo de ca
 | GPU inocente | 2.206.206 | 2.603.215 | 1,18 |
 | GPU buena | 1.258.934 | 2.150.567 | 1,71 |
 
-Eso, sin `hoist` ni `SSY` unidos. Con ellos (el mismo programa recompilado, otra lectura de cada uno):
+Eso, sin `licm` ni `SSY` unidos. Con ellos (el mismo programa recompilado, otra lectura de cada uno), y
+después con `copyprop` además:
 
-| Método | Ensamblador | C | C / ens. |
-|---|---:|---:|---:|
-| CPU | 7.073.724 | 8.198.496 | 1,16 |
-| GPU inocente | 2.206.206 | 2.390.343 | 1,08 |
-| GPU buena | 1.258.934 | 1.895.447 | 1,51 |
+| Método | Ensamblador | C con `licm` | C con `licm` y `copyprop` | C / ens. |
+|---|---:|---:|---:|---:|
+| CPU | 7.073.724 | 8.198.496 | 6.785.491 | 0,96 |
+| GPU inocente | 2.206.206 | 2.390.343 | 2.330.803 | 1,06 |
+| GPU buena | 1.258.934 | 1.895.447 | 1.656.606 | 1,32 |
 
 Es una sola medida de cada uno, no una media. Los `SSY` bajan de 16 a 6 y las constantes salen del bucle.
 La GPU buena sigue siendo la peor. El bucle de celdas ya lleva un solo `SSY` por celda, como el

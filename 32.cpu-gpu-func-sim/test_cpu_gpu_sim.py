@@ -1684,7 +1684,7 @@ class CSystemKernelsTest(unittest.TestCase):
     instrucciones de warp. La proporción tiene un tope para que un cambio en mini-lcc o mini-opt que
     empeore el código se note."""
 
-    MAX_RATIO = 1.05        # medido: 0,84 a 0,99 (antes de `hoist`, 1,00 a 1,02)
+    MAX_RATIO = 1.05        # medido: 0,84 a 0,99 (antes de `licm`, 1,00 a 1,02)
 
     @classmethod
     def setUpClass(cls):
@@ -1733,11 +1733,11 @@ class CSystemKernelsTest(unittest.TestCase):
 class CRotateTest(unittest.TestCase):
     """`examples/c/race/rotate.c`: la rotación de textura en C (CPU, GPU inocente y GPU buena, el mismo
     cuerpo con otro reparto de trabajo) frente a `rotate.inc`. Las seis versiones dejan la imagen del
-    modelo; el coste de C frente al ensamblador tiene un tope (el pase `hoist` de mini-opt saca del bucle lo
+    modelo; el coste de C frente al ensamblador tiene un tope (el pase `licm` de mini-opt saca del bucle lo
     invariante; ver el README de examples/c)."""
 
-    # medido: CPU 1,08, GPU inocente 1,08, GPU buena 1,12 (antes de `hoist`: 1,22, 1,44, 1,45)
-    MAX_RATIO = {"CPU": 1.15, "GPU inocente": 1.2, "GPU buena": 1.2}
+    # medido: CPU 1,01, GPU inocente 1,08, GPU buena 1,12 (antes de `licm` y `copyprop`: 1,22, 1,44, 1,45)
+    MAX_RATIO = {"CPU": 1.05, "GPU inocente": 1.2, "GPU buena": 1.2}
 
     @classmethod
     def setUpClass(cls):

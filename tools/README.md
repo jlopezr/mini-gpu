@@ -966,10 +966,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
   además el `SSY` que cae siempre después de otro con el mismo destino.
 
-- **Pase `hoist`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
+- **Pase `licm`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
   las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
   viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
+- **Pase `copyprop`:** propagación de copias (`ADD d, s, R0`: donde llega por todos los caminos, los
+  usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores

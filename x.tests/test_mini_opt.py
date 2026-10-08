@@ -449,7 +449,7 @@ class JumpsTest(unittest.TestCase):
         self.assertEqual(stats["jumps.removed"], 1)
 
 
-HOIST_LOOP = """.text
+LICM_LOOP = """.text
 .globl f
 f:
 MOVI R16, 0
@@ -464,46 +464,82 @@ JR R31
 """
 
 
-class HoistTest(unittest.TestCase):
-    def hoist(self, body: str):
+class LicmTest(unittest.TestCase):
+    def licm(self, body: str):
         stats = {}
-        out = lines_of(optimize(HOIST_LOOP.format(body=body), ["hoist"], stats=stats))
+        out = lines_of(optimize(LICM_LOOP.format(body=body), ["licm"], stats=stats))
         return out, stats
 
     def test_constants_leave_the_loop_and_the_uses_follow_them(self):
-        out, stats = self.hoist("MOVI R8, 100\nADD R9, R16, R8\nSTORE R9, R1, 0")
+        out, stats = self.licm("MOVI R8, 100\nADD R9, R16, R8\nSTORE R9, R1, 0")
         self.assertIn("MOVI R5, 100", out[:out.index("BRA L.2")])        # en el preheader
         loop = out[out.index("L.1:"):]
         self.assertFalse(any(l.startswith("MOVI") for l in loop), loop)
         self.assertIn("ADD R9, R16, R5", loop)
-        self.assertEqual(stats["hoist.loops"], 1)
+        self.assertEqual(stats["licm.loops"], 1)
 
     def test_a_computation_with_fixed_operands_leaves_too(self):
-        out, _ = self.hoist("MOVI R8, 3\nSHL R9, R1, R8\nADD R10, R16, R9\nSTORE R10, R2, 0")
+        out, _ = self.licm("MOVI R8, 3\nSHL R9, R1, R8\nADD R10, R16, R9\nSTORE R10, R2, 0")
         loop = out[out.index("L.1:"):]
         self.assertFalse(any(l.startswith(("MOVI", "SHL")) for l in loop), loop)
         self.assertTrue(any(l.startswith("SHL") for l in out[:out.index("BRA L.2")]))
 
     def test_a_value_that_changes_in_the_loop_stays(self):
-        out, _ = self.hoist("ADD R9, R16, R16\nSTORE R9, R1, 0")
+        out, _ = self.licm("ADD R9, R16, R16\nSTORE R9, R1, 0")
         self.assertIn("ADD R9, R16, R16", out[out.index("L.1:"):])
 
     def test_a_use_reached_by_two_definitions_stays(self):
         body = "BEQ R1, R0, L.7\nMOVI R8, 1\nBRA L.8\nL.7:\nMOVI R8, 2\nL.8:\nADD R9, R16, R8\nSTORE R9, R2, 0"
-        out, _ = self.hoist(body)
+        out, _ = self.licm(body)
         loop = out[out.index("L.1:"):]
         self.assertIn("MOVI R8, 1", loop)
         self.assertIn("MOVI R8, 2", loop)
 
     def test_a_zero_uses_r0_and_no_register(self):
-        out, stats = self.hoist("MOVI R8, 0\nSTORE R8, R1, 0")
+        out, stats = self.licm("MOVI R8, 0\nSTORE R8, R1, 0")
         self.assertIn("STORE R0, R1, 0", out)
-        self.assertEqual(stats["hoist.registers"], 1)                    # solo el `10` de la comparacion
+        self.assertEqual(stats["licm.registers"], 1)                    # solo el `10` de la comparacion
 
     def test_a_loop_with_a_call_is_left_alone(self):
-        out, stats = self.hoist("MOVI R8, 100\nJAL R31, g\nADD R9, R16, R8")
+        out, stats = self.licm("MOVI R8, 100\nJAL R31, g\nADD R9, R16, R8")
         self.assertIn("MOVI R8, 100", out[out.index("L.1:"):])
-        self.assertNotIn("hoist.loops", stats)
+        self.assertNotIn("licm.loops", stats)
+
+
+class CopyPropTest(unittest.TestCase):
+    def run_pass(self, body: str):
+        stats = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        return lines_of(optimize(source, ["copyprop"], stats=stats)), stats
+
+    def test_a_use_reads_the_original_and_the_copy_disappears(self):
+        out, stats = self.run_pass("ADD R13, R28, R0\nBGEU R13, R6, L.1\nL.1:")
+        self.assertIn("BGEU R28, R6, L.1", out)
+        self.assertNotIn("ADD R13, R28, R0", out)
+        self.assertEqual(stats["copyprop.removed"], 1)
+
+    def test_if_the_original_changes_in_between_the_copy_stays(self):
+        out, _ = self.run_pass("ADD R13, R28, R0\nADDI R28, R28, 1\nSTORE R13, R1, 0")
+        self.assertIn("ADD R13, R28, R0", out)
+        self.assertIn("STORE R13, R1, 0", out)
+
+    def test_a_copy_that_does_not_reach_by_every_path_is_not_used(self):
+        body = "BEQ R1, R0, L.2\nADD R13, R28, R0\nL.2:\nSTORE R13, R2, 0"
+        out, _ = self.run_pass(body)
+        self.assertIn("STORE R13, R2, 0", out)
+
+    def test_a_call_cuts_the_copies_of_temporaries(self):
+        out, _ = self.run_pass("ADD R13, R7, R0\nJAL R31, g\nSTORE R13, R2, 0")
+        self.assertIn("STORE R13, R2, 0", out)
+
+    def test_dead_pure_code_goes_but_a_load_stays(self):
+        out, _ = self.run_pass("MOVI R8, 5\nLOAD R9, R1, 0")
+        self.assertNotIn("MOVI R8, 5", out)
+        self.assertIn("LOAD R9, R1, 0", out)
+
+    def test_the_value_returned_is_not_dead(self):
+        out, _ = self.run_pass("ADD R1, R7, R0")
+        self.assertIn("ADD R1, R7, R0", out)
 
 
 class SsyMergeTest(unittest.TestCase):

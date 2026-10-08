@@ -331,7 +331,7 @@ def live_in_entry(blocks: list[Block], live_out: list[set[int]]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "hoist", "ssy"]
+DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "copyprop", "licm", "ssy"]
 
 
 def register_pass(name: str, doc: str):
@@ -654,7 +654,7 @@ def pass_jumps(unit: Unit, stats: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sacar de un bucle lo que no cambia en el (hoist)
+# Sacar de un bucle lo que no cambia en el (LICM, loop-invariant code motion)
 #
 # lcc no hace nada entre bloques: la constante de una comparacion, el `MOVI` previo a cada
 # desplazamiento (la GPU no tiene SHLI) o una cuenta con valores fijos se repiten en cada
@@ -667,7 +667,7 @@ def pass_jumps(unit: Unit, stats: dict) -> None:
 # registro. Los registros libres son R5..R15; en un kernel, tambien los R16..R29 que nadie usa.
 # ---------------------------------------------------------------------------
 
-HOIST_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | {"MOVI", "MOVHI", "LI"}
+LICM_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | {"MOVI", "MOVHI", "LI"}
 ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
 
 
@@ -750,7 +750,7 @@ def reaching_in_loop(blocks: list[Block], body: set[int]):
     return uses_of, reach, out
 
 
-def hoist_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
+def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
                stats: dict) -> None:
     """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros."""
     while True:
@@ -768,7 +768,7 @@ def hoist_loop(blocks: list[Block], body: set[int], header: int, pre: Block, all
         groups: dict[tuple, list[tuple[Block, Line]]] = {}
         for b in sorted(body):
             for line in blocks[b].lines:
-                if line.kind != "instr" or line.op not in HOIST_OPS:
+                if line.kind != "instr" or line.op not in LICM_OPS:
                     continue
                 defs, uses = defs_uses(line)
                 if len(defs) != 1 or uses & written:
@@ -799,10 +799,10 @@ def hoist_loop(blocks: list[Block], body: set[int], header: int, pre: Block, all
             return
         if key in zero:
             name = "R0"
-            stats["hoist.zeros"] = stats.get("hoist.zeros", 0) + 1
+            stats["licm.zeros"] = stats.get("licm.zeros", 0) + 1
         else:
             name = f"R{free[0]}"
-            stats["hoist.registers"] = stats.get("hoist.registers", 0) + 1
+            stats["licm.registers"] = stats.get("licm.registers", 0) + 1
             op, args = key
             template = groups[key][0][1]
             at = len(pre.lines)
@@ -816,11 +816,11 @@ def hoist_loop(blocks: list[Block], body: set[int], header: int, pre: Block, all
                     if reg_of(use.args[i]) == t:
                         use.args[i] = name
             block.lines = [l for l in block.lines if l is not line]
-            stats["hoist.removed"] = stats.get("hoist.removed", 0) + 1
+            stats["licm.removed"] = stats.get("licm.removed", 0) + 1
 
 
-@register_pass("hoist", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
-def pass_hoist(unit: Unit, stats: dict) -> None:
+@register_pass("licm", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
+def pass_licm(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
         blocks = build_cfg(function)
         if len(blocks) < 2:
@@ -838,10 +838,123 @@ def pass_hoist(unit: Unit, stats: dict) -> None:
             if len(outside) != 1 or blocks[outside[0]].succ != [header]:
                 continue
             pre = blocks[outside[0]]
-            before = stats.get("hoist.removed", 0)
-            hoist_loop(blocks, body, header, pre, allowed, stats)
-            if stats.get("hoist.removed", 0) > before:
-                stats["hoist.loops"] = stats.get("hoist.loops", 0) + 1
+            before = stats.get("licm.removed", 0)
+            licm_loop(blocks, body, header, pre, allowed, stats)
+            if stats.get("licm.removed", 0) > before:
+                stats["licm.loops"] = stats.get("licm.loops", 0) + 1
+        function.body = [line for block in blocks for line in block.lines]
+
+
+# ---------------------------------------------------------------------------
+# Propagacion de copias y codigo muerto
+#
+# lcc copia a un temporal casi todo lo que compara o indexa (`ADD R13, R28, R0 ; BGEU R13, R6, L`).
+# Donde la copia `d <- s` llega a un uso de `d` por todos los caminos y ni `d` ni `s` se
+# reescriben por el medio, el uso lee `s`; y la copia, si ya nadie lee `d`, se borra (igual que
+# cualquier instruccion pura cuyo resultado no se lee). Es un analisis hacia delante de copias
+# disponibles: la interseccion de lo que llega por cada camino. Una llamada destruye los
+# registros que no se conservan, asi que corta las copias de temporales.
+# ---------------------------------------------------------------------------
+
+DEAD_OK = LICM_OPS
+
+
+def copy_of(line: Line) -> tuple[int, int] | None:
+    """(destino, origen) si la instruccion es una copia de registro."""
+    if line.kind != "instr":
+        return None
+    if line.op == "ADD" and len(line.args) == 3 and reg_of(line.args[2]) == 0:
+        d, s = reg_of(line.args[0]), reg_of(line.args[1])
+    elif line.op == "ADDI" and len(line.args) == 3 and number(line.args[2]) == 0:
+        d, s = reg_of(line.args[0]), reg_of(line.args[1])
+    else:
+        return None
+    return (d, s) if d is not None and s is not None and d != s and d != 0 else None
+
+
+def available_copies(blocks: list[Block]) -> list[dict[int, int] | None]:
+    """Copias {destino: origen} que valen a la entrada de cada bloque (None = aun sin calcular)."""
+    n = len(blocks)
+    preds: list[list[int]] = [[] for _ in range(n)]
+    for block in blocks:
+        for s in block.succ:
+            preds[s].append(block.index)
+
+    def step(state: dict[int, int], line: Line) -> None:
+        defs, _ = defs_uses(line)
+        for reg in defs:
+            for key in [k for k, v in state.items() if k == reg or v == reg]:
+                del state[key]
+        pair = copy_of(line)
+        if pair is not None:
+            state[pair[0]] = pair[1]
+
+    entry: list[dict[int, int] | None] = [None] * n
+    out: list[dict[int, int] | None] = [None] * n
+    entry[0] = {}
+    changed = True
+    while changed:
+        changed = False
+        for b in range(n):
+            if b != 0:
+                known = [out[p] for p in preds[b] if out[p] is not None]
+                if not known:
+                    continue
+                new = {k: v for k, v in known[0].items() if all(o.get(k) == v for o in known[1:])}
+                if entry[b] != new:
+                    entry[b], changed = new, True
+            state = dict(entry[b] or {})
+            for line in blocks[b].lines:
+                if line.kind == "instr":
+                    step(state, line)
+            if out[b] != state:
+                out[b], changed = state, True
+    return entry
+
+
+@register_pass("copyprop", "propagacion de copias (ADD d, s, R0) y borrado de lo que ya nadie lee")
+def pass_copyprop(unit: Unit, stats: dict) -> None:
+    for function in unit.functions():
+        blocks = build_cfg(function)
+        if not blocks:
+            continue
+        entry = available_copies(blocks)
+        for b, block in enumerate(blocks):
+            state = dict(entry[b] or {})
+            for line in block.lines:
+                if line.kind != "instr":
+                    continue
+                slots = use_slots(line)
+                for i in slots or []:
+                    reg = reg_of(line.args[i])
+                    if reg in state:
+                        line.args[i] = f"R{state[reg]}"
+                        stats["copyprop.rewritten"] = stats.get("copyprop.rewritten", 0) + 1
+                defs, _ = defs_uses(line)
+                for reg in defs:
+                    for key in [k for k, v in state.items() if k == reg or v == reg]:
+                        del state[key]
+                pair = copy_of(line)
+                if pair is not None:
+                    state[pair[0]] = pair[1]
+        while True:                                   # codigo muerto: pura y su resultado no se lee
+            live_out = liveness(blocks)
+            removed = 0
+            for block in blocks:
+                keep: list[Line] = []
+                for position, line in enumerate(block.lines):
+                    if line.kind == "instr" and line.op in DEAD_OK:
+                        defs, _ = defs_uses(line)
+                        if len(defs) == 1 and not defs & live_after(block, live_out[block.index], position):
+                            removed += 1
+                            continue
+                    keep.append(line)
+                block.lines = keep
+                if removed:
+                    break                             # la vida cambio: recalcular
+            if not removed:
+                break
+            stats["copyprop.removed"] = stats.get("copyprop.removed", 0) + removed
         function.body = [line for block in blocks for line in block.lines]
 
 
