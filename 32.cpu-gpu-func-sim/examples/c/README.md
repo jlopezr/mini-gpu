@@ -28,9 +28,11 @@ python cpu_gpu_sim.py examples/c/_build/memset_c.bin
 - **`KERNEL(nombre)`** pone `__kernel_nombre` al nombre de la función. Es la marca que lee
   `mini-opt`: lcc no tiene atributos.
 - **`mini-opt`** (pases `intrinsics` y `kernels`, ver `tools/README.md`) convierte esa función en
-  el punto de entrada de una lane: fija su pila (`__gpu_stack`, 512 bytes por lane), carga los
-  parámetros que el kernel lee desde el bloque de argumentos (`GETARG`) y sustituye el
-  `JR R31` final por `EXIT`. Además cambia los desplazamientos con cantidad inmediata
+  el punto de entrada de una lane: carga los parámetros que el kernel lee desde el bloque de
+  argumentos (`GETARG`) y sustituye el `JR R31` final por `EXIT`. Quita además el marco de
+  pila que lcc monta para guardar y restaurar registros preservados, que a un kernel no le
+  sirve (nadie recibe esos registros de vuelta). Solo si el kernel usa la pila de verdad (un
+  array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
 - **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`gpu.c`), que rellena el

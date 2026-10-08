@@ -224,12 +224,42 @@ def kernel_body(source, name="__kernel_k", **kwargs):
 
 
 class KernelsTest(unittest.TestCase):
-    def test_entry_sets_the_lane_stack_and_loads_only_the_parameters_read(self):
+    def test_entry_loads_only_the_parameters_read(self):
         body = kernel_body(KERNEL_S)
+        # lee R1 y R3 (parametros 0 y 2); R2 no se carga
+        self.assertEqual(body[:3], ["GETARG R5", "LOAD R1, R5, 8", "LOAD R3, R5, 16"])
+
+    def test_a_kernel_that_does_not_touch_the_stack_gets_no_stack(self):
+        body = kernel_body(KERNEL_S)
+        self.assertFalse(any("R30" in text or "__gpu_stack" in text for text in body))
+
+    def test_the_frame_that_only_saved_preserved_registers_is_dropped(self):
+        source = KERNEL_S.replace("ADD R15, R1, R0\n", """\
+ADDI R30, R30, -16
+STORE R28, R30, 0
+STORE R29, R30, 4
+ADD R15, R1, R0
+""").replace("JR R31", "LOAD R28, R30, 0\nLOAD R29, R30, 4\nADDI R30, R30, 16\nJR R31")
+        unit = parse_unit(source, "k.s")
+        stats = {}
+        pass_kernels(unit, stats)
+        body = [l.render() for l in functions(unit)["__kernel_k"].body if l.kind == "instr"]
+        self.assertEqual(stats["kernels.frames"], 1)
+        self.assertFalse(any("R30" in text for text in body))
+        self.assertEqual(body[-1], "EXIT")
+
+    def test_a_kernel_that_really_uses_the_stack_keeps_it_and_gets_the_lane_stack(self):
+        # un local en el marco (STORE de un registro que no es preservado): la pila se usa
+        source = KERNEL_S.replace("ADD R15, R1, R0\n", """\
+ADDI R30, R30, -16
+STORE R1, R30, 4
+ADD R15, R1, R0
+""").replace("JR R31", "ADDI R30, R30, 16\nJR R31")
+        body = kernel_body(source)
         self.assertEqual(body[:5], ["GETTID R5", "MOVI R6, 512", "MUL R5, R5, R6",
                                     "LI R30, __gpu_stack+512", "ADD R30, R30, R5"])
-        # lee R1 y R3 (parametros 0 y 2); R2 no se carga
-        self.assertEqual(body[5:8], ["GETARG R5", "LOAD R1, R5, 8", "LOAD R3, R5, 16"])
+        self.assertIn("ADDI R30, R30, -16", body)
+        self.assertEqual(body[-1], "EXIT")
 
     def test_return_becomes_exit(self):
         body = kernel_body(KERNEL_S)

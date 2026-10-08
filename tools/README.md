@@ -952,7 +952,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `32.cpu-gpu-func-sim/examples/c/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
-  pila, carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
+  pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
+  carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
   si el kernel usa una instrucción que la GPU del prototipo no ejecuta o pide más de 4
   parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
