@@ -10,7 +10,7 @@ import cpu_gpu_sim as sim
 from cpu_gpu_sim import AccessFault, CpuGpuSystem, InstructionLimitExceeded, mm
 
 sys.path.insert(0, str(sim.ROOT / "1.isa"))
-from mini_asm import assemble_bytes  # noqa: E402
+from mini_asm import assemble_bytes, first_pass  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 INC = sim.ROOT / "x.tests" / "inc"
@@ -368,6 +368,169 @@ class RenderCpuExampleTest(unittest.TestCase):
         # Medido: es el dato que usan las estimaciones de fotogramas por segundo.
         per_frame = self.cpu.instructions_executed / 2
         self.assertAlmostEqual(per_frame / (80 * 60), 42, delta=0.5)
+
+
+RACE = HERE / "examples" / "race"
+RACE_COLORS = (0x07E0, 0xFD20, 0x07FF)      # CPU, GPU ingenua, GPU bien puesta
+
+
+def race_image(path: Path):
+    """(imagen, etiquetas) de un demo de `examples/race`."""
+    source = path.read_text(encoding="utf-8")
+    labels = first_pass(source, path.parent, path.name, (INC,))[1]
+    return assemble_bytes(source, path.parent, path.name, (INC,)), labels
+
+
+def life_soup(seed: int = 12345):
+    """La sopa inicial de `life.inc`: el mismo generador y los mismos dos bits."""
+    state, grid = seed, []
+    for _ in range(104):
+        row = []
+        for _ in range(160):
+            state = (state * 1664525 + 1013904223) & 0xFFFFFFFF
+            row.append((state >> 30) & (state >> 29) & 1)
+        grid.append(row)
+    return grid
+
+
+def life_step(grid):
+    """B3/S23 en una rejilla con el borde muerto."""
+    rows, cols = len(grid), len(grid[0])
+    out = []
+    for y in range(rows):
+        row = []
+        for x in range(cols):
+            n = sum(grid[j][i]
+                    for j in range(max(0, y - 1), min(rows, y + 2))
+                    for i in range(max(0, x - 1), min(cols, x + 2))) - grid[y][x]
+            row.append(1 if n == 3 or (n == 2 and grid[y][x]) else 0)
+        out.append(row)
+    return out
+
+
+def life_pixels(grid, color: int) -> bytes:
+    """Las 208 líneas de `life.inc`: cada celda, un cuadrado de 2 x 2 píxeles."""
+    out = bytearray()
+    for grid_row in grid:
+        line = b"".join(struct.pack("<H", color if cell else 0) * 2 for cell in grid_row)
+        out += line * 2
+    return bytes(out)
+
+
+class LifeRaceTest(unittest.TestCase):
+    """`examples/race/life.asm`: los tres métodos tienen que dar la misma vida.
+
+    Con `race_period` a 1 el método cambia en cada fotograma (CPU, GPU ingenua,
+    GPU bien puesta, CPU...) y la rejilla pasa de uno a otro sin ningún arreglo: si
+    un solo método calculara algo distinto, la generación 7 ya no coincidiría.
+    """
+
+    FRAMES = 7
+    PROGRAM = RACE / "life.asm"
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(cls.PROGRAM)
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+        cls.labels = labels
+        cls.generations = [life_soup()]
+        for _ in range(cls.FRAMES):
+            cls.generations.append(life_step(cls.generations[-1]))
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_frame_is_the_last_generation_drawn_by_its_method(self):
+        method = (self.FRAMES - 1) % 3
+        self.assertEqual(self.screen(self.video.fb_front),
+                         life_pixels(self.generations[self.FRAMES], RACE_COLORS[method]))
+
+    def test_the_previous_frame_is_the_generation_before_in_the_color_of_its_own_method(self):
+        method = (self.FRAMES - 2) % 3
+        self.assertEqual(self.screen(self.video.fb_back),
+                         life_pixels(self.generations[self.FRAMES - 1], RACE_COLORS[method]))
+
+    def test_the_soup_is_alive_and_changes(self):
+        # sin esto, "las tres iguales" valdría también para una rejilla vacía
+        first, last = self.generations[0], self.generations[self.FRAMES]
+        self.assertGreater(sum(map(sum, first)), 3000)
+        self.assertNotEqual(first, last)
+        self.assertGreater(sum(map(sum, last)), 1500)
+
+    def test_both_gpu_kernels_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+    def test_neither_gpu_kernel_diverges(self):
+        for warp in self.system.gpu.warps:
+            self.assertEqual((len(warp.region_stack), len(warp.path_stack)), (0, 0))
+
+
+class LifeRaceStripTest(unittest.TestCase):
+    """La gráfica de tiempos: una columna por fotograma, color por método."""
+
+    FRAMES = 4
+
+    @classmethod
+    def setUpClass(cls):
+        # un reloj falso que avanza 7 líneas de gráfica en cada lectura
+        real, real_labels = race_image(RACE / "life.asm")
+        shift = struct.unpack_from("<I", real, real_labels["race_shift"])[0]
+        source = f"""
+.include "mmio.inc"
+.include "race_host.inc"
+.include "life.inc"
+.include "../dma/gpu_runtime.inc"
+bench_init:
+    RET
+bench_now:
+    LI    R2, fake_clock
+    LOAD  R1, R2, 0
+    LI    R3, {7 << shift}
+    ADD   R1, R1, R3
+    STORE R1, R2, 0
+    RET
+fake_clock:
+    .word 0
+"""
+        image = assemble_bytes(source, RACE, "strip.asm", (INC,))
+        labels = first_pass(source, RACE, "strip.asm", (INC,))[1]
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.system.run()
+        cls.video = video
+
+    def column(self, base: int, x: int):
+        return [struct.unpack_from("<H", self.system.memory, base + y * 640 + 2 * x)[0]
+                for y in range(32)]
+
+    def test_each_frame_has_its_own_column_in_the_color_of_its_method(self):
+        for frame in range(self.FRAMES):
+            color = RACE_COLORS[frame % 3]
+            expected = [0] * 25 + [color] * 7
+            for base in (0x01000000, 0x01025800):
+                self.assertEqual(self.column(base, frame), expected, f"frame {frame}")
+
+    def test_the_columns_after_the_last_frame_are_still_empty(self):
+        self.assertEqual(self.column(0x01000000, self.FRAMES), [0] * 32)
+        self.assertEqual(self.column(0x01025800, 319), [0] * 32)
 
 
 class WarpConfigArraysTest(unittest.TestCase):
