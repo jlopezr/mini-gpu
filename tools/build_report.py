@@ -73,18 +73,24 @@ def default_env(prototype_dir):
         return 'default'
 
 
-def configured_seed(prototype_dir):
-    """Seed fixed for the environment used by plain ``apio build``."""
+def configured_options(prototype_dir):
+    """Text of ``nextpnr-extra-options`` used by plain ``apio build`` (None if unreadable)."""
     config = configparser.ConfigParser()
     try:
         config.read(prototype_dir / 'apio.ini', encoding='utf-8')
         env = default_env(prototype_dir)
         env_section = f'env:{env}'
         if config.has_option(env_section, 'nextpnr-extra-options'):
-            options = config.get(env_section, 'nextpnr-extra-options')
-        else:
-            options = config.get('common', 'nextpnr-extra-options', fallback='')
+            return config.get(env_section, 'nextpnr-extra-options')
+        return config.get('common', 'nextpnr-extra-options', fallback='')
     except (configparser.Error, OSError):
+        return None
+
+
+def configured_seed(prototype_dir):
+    """Seed fixed for the environment used by plain ``apio build``."""
+    options = configured_options(prototype_dir)
+    if options is None:
         return None
     match = re.search(r'(?:^|\s)--seed(?:\s+|=)(\d+)(?:\s|$)', options)
     return int(match.group(1)) if match else None

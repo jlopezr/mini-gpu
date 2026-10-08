@@ -38,12 +38,14 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from build_report import (extract_log_details, nextpnr_flags, set_configured_seed,
-                          summarize, timing_passes)
+from build_report import (_metadata_source_hashes, configured_options, configured_seed,
+                          default_env, extract_log_details, nextpnr_flags,
+                          set_configured_seed, summarize, synthesizable_source_hashes,
+                          timing_passes)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.prototype import (
-    PrototypeResolutionError, find_repo_root, find_toolchain_binary,
+    PrototypeResolutionError, find_oss_cad_suite, find_repo_root, find_toolchain_binary,
     list_prototypes, oss_cad_suite_env, read_ecp5_params, resolve_prototype,
 )
 
@@ -271,6 +273,92 @@ def resolve_sweep(prototype_dir: Path, spec: str) -> Path:
     return matches[0]
 
 
+def promote_seed(prototype_dir: Path, sweep: Path, seed: int) -> Path:
+    """Convierte una semilla de un barrido en un build archivado y en el bitstream.
+
+    El barrido guarda `hardware.config` y `hardware.pnr` por semilla, pero no el
+    `.bit` ni deja nada en `_build/`, y cambiar el `apio.ini` invalida el hash del
+    build anterior. Con la misma semilla y el mismo netlist nextpnr es
+    determinista, asi que en vez de volver a sintetizar se empaqueta el `.config`
+    con `ecppack` (segundos) y se archiva como un build mas.
+
+    Se niega si las fuentes ya no son las del build que se barrio, o si el
+    `apio.ini` no lleva esa semilla y las opciones con las que se barrio: el
+    bitstream no representaria a lo que el `apio.ini` dice que se construye.
+    """
+    run = sweep / f'seed-{seed}'
+    for name in ('hardware.config', 'hardware.pnr', 'summary.json'):
+        if not (run / name).is_file():
+            raise SystemExit(f'La semilla {seed} no tiene {name} en {sweep.name}.')
+    if (run / 'exit_code.txt').read_text().strip() != '0':
+        raise SystemExit(f'nextpnr fallo con la semilla {seed}; no hay nada que promover.')
+    summary = json.loads((run / 'summary.json').read_text())
+    if not timing_passes(summary['clocks']):
+        raise SystemExit(f'La semilla {seed} no cumple timing; no se promueve.')
+    sweep_meta = json.loads((sweep / 'metadata.json').read_text())
+    source = sweep.parent
+    source_meta = json.loads((source / 'metadata.json').read_text())
+    if source_meta.get('exit_code') != 0 or source_meta.get('sources_changed_during_build'):
+        raise SystemExit('El build de partida del barrido no es de fiar.')
+
+    current = synthesizable_source_hashes(prototype_dir)
+    rtl = lambda hashes: {k: v for k, v in hashes.items() if k != 'apio.ini'}  # noqa: E731
+    if rtl(_metadata_source_hashes(source_meta)) != rtl(current):
+        raise SystemExit('Las fuentes han cambiado desde el build que se barrio; '
+                         'reconstruye y vuelve a barrer.')
+    if configured_seed(prototype_dir) != seed:
+        raise SystemExit(f'El apio.ini lleva --seed {configured_seed(prototype_dir)}, '
+                         f'no {seed}: usa --apply o pon la semilla antes de promover.')
+    options = configured_options(prototype_dir) or ''
+    missing = [flag for flag in nextpnr_flags(sweep_meta.get('nextpnr_options', []))
+               if flag.startswith('--') and flag not in options.split()]
+    if missing:
+        raise SystemExit(f'El apio.ini no lleva {" ".join(missing)}, con lo que se barrio.')
+
+    suite = find_oss_cad_suite()
+    ecppack = find_toolchain_binary('ecppack')
+    folder = prototype_dir / 'reports' / (datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+                                          + f'-promote-seed{seed}')
+    folder.mkdir()
+    hashes = {}
+    with zipfile.ZipFile(folder / 'sources.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+        for pattern in ('*.v', '*.sv', '*.vh', '*.ini', '*.lpf', '*.ps1', '*.py', 'sim/*.vh',
+                        'fonts/*.hex'):
+            for src in prototype_dir.glob(pattern):
+                relative = src.relative_to(prototype_dir)
+                data = src.read_bytes()
+                archive.writestr(str(relative), data)
+                hashes[str(relative)] = hashlib.sha256(data).hexdigest()
+    command = [str(ecppack), '--compress', '--db', str(suite / 'share' / 'trellis' / 'database'),
+               str(run / 'hardware.config'), str(folder / 'hardware.bit')]
+    started = datetime.now()
+    result = subprocess.run(command, capture_output=True, text=True, env=oss_cad_suite_env())
+    if result.returncode:
+        shutil.rmtree(folder)
+        raise SystemExit(f'ecppack fallo:\n{result.stdout}{result.stderr}')
+    for name in ('hardware.config', 'hardware.pnr', 'summary.json', 'build.log'):
+        shutil.copy2(run / name, folder / name)
+    for name in ('hardware.json', 'scons.params'):
+        shutil.copy2(source / name, folder / name)
+    (folder / 'metadata.json').write_text(json.dumps(dict(
+        label=f'promote-seed{seed}', archive_only=False, incremental=False,
+        command=command, source_sha256=hashes, started=started.isoformat(),
+        exit_code=0, elapsed_seconds=(datetime.now() - started).total_seconds(),
+        sources_changed_during_build=[], promoted_from=str(run),
+        sweep_sha256={n: hashlib.sha256((run / n).read_bytes()).hexdigest()
+                      for n in ('hardware.config', 'hardware.pnr')}), indent=2),
+        encoding='utf-8')
+    (folder / 'summary.txt').write_text(
+        f'Label: promote-seed{seed}\nPromoted from {run}\n' + ''.join(
+            f'{c}: {v["achieved"]:.2f} MHz; required {v["constraint"]:.2f} MHz\n'
+            for c, v in summary['clocks'].items()), encoding='utf-8')
+    build_dir = prototype_dir / '_build' / default_env(prototype_dir)
+    build_dir.mkdir(parents=True, exist_ok=True)
+    for name in ('hardware.bit', 'hardware.config', 'hardware.pnr', 'hardware.json'):
+        shutil.copy2(folder / name, build_dir / name)
+    return folder
+
+
 def show_sweep(folder: Path, color: bool = None) -> list:
     """Detalle de un barrido: una fila por semilla, con el margen por reloj."""
     try:
@@ -335,6 +423,12 @@ def main():
     parser.add_argument('--show', metavar='SWEEP', default=None,
                         help='detalle por semilla de un barrido: "latest", un trozo de su nombre '
                              '(ver --list) o su ruta')
+    parser.add_argument('--promote', type=int, metavar='SEMILLA', default=None,
+                        help='convierte esa semilla de un barrido (el ultimo, o el de --from) en '
+                             'build archivado y en _build/hardware.bit, sin volver a sintetizar. '
+                             'El apio.ini debe llevar ya esa semilla (--apply)')
+    parser.add_argument('--from', dest='from_sweep', default='latest', metavar='SWEEP',
+                        help='barrido del que promover: "latest", un trozo de su nombre o su ruta')
     parser.add_argument('--last', action='store_true',
                         help='resumen del último barrido de cada prototipo que tenga alguno '
                              '(no necesita --prototype)')
@@ -345,6 +439,15 @@ def main():
         return
     if args.prototype is None:
         parser.error('-p/--prototype es obligatorio (salvo con --last)')
+    if args.promote is not None:
+        try:
+            target = resolve_prototype(args.prototype, root=find_repo_root(Path.cwd()))
+        except PrototypeResolutionError as exc:
+            raise SystemExit(f'error: {exc}')
+        print(f'Using prototype: {target.name}')
+        folder = promote_seed(target, resolve_sweep(target, args.from_sweep), args.promote)
+        print(f'Promovida la semilla {args.promote}: {folder}')
+        return
     if args.list or args.show is not None:
         try:
             listed = resolve_prototype(args.prototype, root=find_repo_root(Path.cwd()))

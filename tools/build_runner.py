@@ -812,6 +812,10 @@ def _main() -> int:
                            help="Lista los barridos ya hechos del prototipo")
     sweep_cmd.add_argument("--show", metavar="SWEEP", default=None,
                            help="Detalle por semilla de un barrido (latest, trozo del nombre o ruta)")
+    sweep_cmd.add_argument("--promote", type=int, metavar="SEMILLA", default=None,
+                           help="Convierte esa semilla de un barrido en build archivado y bitstream, sin sintetizar")
+    sweep_cmd.add_argument("--from", dest="from_sweep", default="latest", metavar="SWEEP",
+                           help="Barrido del que promover (por defecto el último)")
     sweep_cmd.add_argument("--nextpnr-options", nargs="+", default=[], metavar="OPCION",
                            help="Opciones extra de nextpnr sin guiones y con = para el valor, "
                                 "p. ej. tmg-ripup placer-heap-timingweight=30")
@@ -956,17 +960,22 @@ def _main() -> int:
         args.cmd_args = ["--", *command]
         args.command = "run"
 
-    if args.command == "sweep" and (args.last or args.list or args.show is not None):
-        # Solo consulta: no es un build, así que no crea registro en reports/.
+    if args.command == "sweep" and (args.last or args.list or args.show is not None
+                                    or args.promote is not None):
+        # Solo consulta o promoción (segundos): no es un build, así que no crea
+        # registro en reports/.
         sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
         query = [sys.executable, str(sweep_script)]
         if args.last:
             query.append("--last")
         else:
             if args.prototype is None:
-                parser.error("--list/--show necesitan --prototype")
+                parser.error("--list/--show/--promote necesitan --prototype")
             query += ["--prototype", args.prototype]
-            query += ["--list"] if args.list else ["--show", args.show]
+            if args.promote is not None:
+                query += ["--promote", str(args.promote), "--from", args.from_sweep]
+            else:
+                query += ["--list"] if args.list else ["--show", args.show]
         return subprocess.run(query, cwd=Path.cwd()).returncode
 
     if args.command == "sweep" and args.prototype is None:
