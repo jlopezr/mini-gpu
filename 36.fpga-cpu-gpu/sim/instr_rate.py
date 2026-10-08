@@ -2,13 +2,17 @@
 """Mide en el RTL de la 36 (simulado con iverilog) cuantos ciclos de GPU cuesta
 una instruccion de warp, segun su tipo y segun el numero de warps.
 
-    python 36.fpga-cpu-gpu/sim/instr_rate.py [--warps 1 8] [--repeat 20]
+    python 36.fpga-cpu-gpu/sim/instr_rate.py [--rtl 37.fpga-cpu-gpu-mk2] [--warps 1 8] [--repeat 20]
 
 Para cada tipo se ensambla un kernel con `repeat` copias de la instruccion, se
 lanza con N warps usando el testbench `gpu_system_tb.v` (con la RAM del banco,
 latencias 5 y 7) y se cuentan los ciclos de GPU con `running` alto. Se resta un
 kernel sin ninguna copia, asi que el resultado es ciclos por instruccion de
 warp en regimen, sin el arranque ni el HALT.
+
+`--rtl` elige la carpeta del prototipo (por nombre dentro del repo o por ruta); por
+defecto la 36. Usa el `gpu_system_tb.v` y los `.v` de esa carpeta, asi que sirve para
+cualquier prototipo con la misma estructura (36, 37, ...).
 
 Hace falta `iverilog` y `vvp` en el PATH (viven en el paquete oss-cad-suite de
 apio). Las latencias de memoria son las del testbench, no las de la SDRAM de la
@@ -25,8 +29,8 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RTL = HERE.parent
-sys.path.insert(0, str(RTL.parent / "1.isa"))
+REPO = HERE.parents[1]
+sys.path.insert(0, str(REPO / "1.isa"))
 from mini_asm import assemble_bytes, write_hex  # noqa: E402
 
 SOURCES = ["gpu_system.v", "gpu_sm.v", "gpu_lane.v", "gpu_register_file.v", "gpu_lsu2.v",
@@ -51,8 +55,8 @@ CASES = {
 }
 
 
-def testbench(warps: int, hexfile: Path) -> str:
-    src = (RTL / "gpu_system_tb.v").read_text(encoding="utf-8")
+def testbench(rtl: Path, warps: int, hexfile: Path) -> str:
+    src = (rtl / "gpu_system_tb.v").read_text(encoding="utf-8")
     descriptors = "".join(
         f"        expect_write_ok(WARPS + 32'h{w * 16:02x}, 32'h0);\n"
         f"        expect_write_ok(WARPS + 32'h{w * 16 + 4:02x}, 32'hff);\n" for w in range(warps))
@@ -85,36 +89,44 @@ def testbench(warps: int, hexfile: Path) -> str:
     return src[:k] + tracer + src[k:]
 
 
-def run(work: Path, warps: int, body: list[str]) -> tuple[int, int]:
+def run(rtl: Path, work: Path, warps: int, body: list[str]) -> tuple[int, int]:
     asm = "\n".join(PROLOGUE + body + ["HALT"]) + "\n"
     hexfile = work / "kernel.hex"
     write_hex(assemble_bytes(asm, work), hexfile)
     tb = work / "tb.v"
-    tb.write_text(testbench(warps, hexfile), encoding="utf-8")
+    tb.write_text(testbench(rtl, warps, hexfile), encoding="utf-8")
     vvp = work / "tb.vvp"
     subprocess.run(["iverilog", "-g2012", "-o", str(vvp), str(tb)] + SOURCES,
-                   check=True, cwd=RTL)
+                   check=True, cwd=rtl)
     out = subprocess.run(["vvp", str(vvp)], check=True, capture_output=True,
-                         text=True, cwd=RTL).stdout
+                         text=True, cwd=rtl).stdout
     match = re.search(r"TOTAL (\d+) (\d+)", out)
     return int(match.group(1)), int(match.group(2))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--rtl", default="36.fpga-cpu-gpu",
+                        help="carpeta del prototipo (nombre en el repo o ruta)")
     parser.add_argument("--warps", type=int, nargs="+", default=[1, 8])
     parser.add_argument("--repeat", type=int, default=20,
                         help="copias de la instruccion por kernel (el codigo debe caber antes de 0x400)")
     parser.add_argument("--out", type=Path, help="escribe la tabla en Markdown")
     args = parser.parse_args()
+    rtl = Path(args.rtl)
+    if not rtl.is_absolute() and not (rtl / "gpu_system_tb.v").exists():
+        rtl = REPO / args.rtl
+    rtl = rtl.resolve()
+    if not (rtl / "gpu_system_tb.v").exists():
+        parser.error(f"{rtl} no tiene gpu_system_tb.v")
 
     rows: dict[str, list[float]] = {name: [] for name in CASES}
     with tempfile.TemporaryDirectory() as temp:
         work = Path(temp)
         for warps in args.warps:
-            base_cycles, base_retired = run(work, warps, [])
+            base_cycles, base_retired = run(rtl, work, warps, [])
             for name, body in CASES.items():
-                cycles, retired = run(work, warps, body * args.repeat)
+                cycles, retired = run(rtl, work, warps, body * args.repeat)
                 rows[name].append((cycles - base_cycles) / (retired - base_retired))
 
     header = "| Instruccion | " + " | ".join(f"{w} warp{'s' if w > 1 else ''}" for w in args.warps) + " |"
