@@ -72,6 +72,29 @@ class BuildRunnerTest(unittest.TestCase):
             record.assert_not_called()
             self.assertEqual(run.call_args.args[0][-len(expected):], expected)
 
+    def test_build_list_columns_stay_aligned_with_a_long_id(self):
+        from datetime import datetime, timezone
+        from tools.build_runner import format_build_list
+
+        now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+        entries = [
+            {"id": "20261008-110314-927410-mmio-rd-stage", "state": "failed",
+             "started_at": "2026-10-08T11:00:00Z", "label": "mmio-rd-stage"},
+            {"id": "20261008-095531-931064-sweep", "state": "success",
+             "started_at": "2026-10-08T09:55:00Z", "label": "sweep"},
+        ]
+        lines = format_build_list(entries, now)
+        starts = {"STATE": lines[0].index("STATE"), "AGE": lines[0].index("AGE"),
+                  "LABEL": lines[0].index("LABEL")}
+        # STATE empieza tras el ID mas largo, y cada columna en el mismo sitio.
+        self.assertEqual(starts["STATE"], len(entries[0]["id"]) + 2)
+        self.assertEqual(lines[1].index("FAILED"), starts["STATE"])
+        self.assertEqual(lines[2].index("SUCCESS"), starts["STATE"])
+        self.assertEqual(lines[1].index("01:00"), starts["AGE"])
+        self.assertEqual(lines[2].index("02:05"), starts["AGE"])
+        self.assertEqual(lines[1].rindex("mmio-rd-stage"), starts["LABEL"])
+        self.assertEqual(lines[2].rindex("sweep"), starts["LABEL"])
+
     def test_process_exists_recognizes_current_and_missing_pid(self):
         self.assertTrue(process_exists(os.getpid()))
         self.assertFalse(process_exists(2 ** 30))

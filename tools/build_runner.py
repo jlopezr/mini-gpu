@@ -331,6 +331,31 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
     return rows
 
 
+def format_build_list(entries: list[dict], now: datetime) -> list[str]:
+    """Tabla de `list`: el ancho de ID sale del ID mas largo, no de uno fijo.
+
+    Con un ancho fijo, un ID con etiqueta larga (`...-mmio-rd-stage`) desplazaba
+    el resto de las columnas de su fila.
+    """
+    rows = []
+    for entry in sorted(entries, key=lambda e: e.get("started_at", ""), reverse=True):
+        started = datetime.fromisoformat(
+            entry.get("started_at", "1970-01-01T00:00:00Z").replace("Z", "+00:00"))
+        hours, remainder = divmod(int((now - started).total_seconds()), 3600)
+        minutes, _ = divmod(remainder, 60)
+        age = f"{hours // 24}d" if hours >= 24 else f"{hours:02d}:{minutes:02d}"
+        rows.append((str(entry.get("id", "unknown")),
+                     str(entry.get("state", "unknown")).upper(), age,
+                     str(entry.get("label", ""))))
+    width_id = max([len("ID"), *(len(row[0]) for row in rows)])
+    width_state = max([len("STATE"), *(len(row[1]) for row in rows)])
+    width_age = max([len("AGE"), *(len(row[2]) for row in rows)])
+    lines = [f"{'ID':<{width_id}}  {'STATE':<{width_state}}  {'AGE':<{width_age}}  LABEL"]
+    lines += [f"{i:<{width_id}}  {s:<{width_state}}  {a:<{width_age}}  {label}"
+              for i, s, a, label in rows]
+    return lines
+
+
 def print_prototype_build_summary(rows: list[dict]) -> None:
     use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     colors = {
@@ -851,18 +876,7 @@ def _main() -> int:
         if not entries:
             print("No builds found")
             return 0
-        print(f"{'ID':<28} {'STATE':<12} {'AGE':<8} {'LABEL'}")
-        now = datetime.now(timezone.utc)
-        for entry in sorted(entries, key=lambda e: e.get("started_at", ""), reverse=True):
-            started = datetime.fromisoformat(entry.get("started_at", "1970-01-01T00:00:00Z").replace("Z", "+00:00"))
-            age = now - started
-            hours, remainder = divmod(int(age.total_seconds()), 3600)
-            minutes, _ = divmod(remainder, 60)
-            if hours >= 24:
-                age_str = f"{hours // 24}d"
-            else:
-                age_str = f"{hours:02d}:{minutes:02d}"
-            print(f"{entry.get('id', 'unknown'):<28} {str(entry.get('state', 'unknown')).upper():<12} {age_str:<8} {entry.get('label', '')}")
+        print("\n".join(format_build_list(entries, datetime.now(timezone.utc))))
         return 0
 
     if args.command == "status":
