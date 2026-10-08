@@ -257,6 +257,69 @@ def _watch_panel_lines(session: DebugSession) -> str:
     return "\n".join(lines)
 
 
+_KEY_NAMES = {"f1": "F1", "f12": "F12", "escape": "Esc"}
+
+
+def _help_markup(session: DebugSession,
+                 bindings: list[tuple[str, str, str]]) -> str:
+    """El contenido de la ventana de ayuda: comandos, teclas, colores y marcas.
+
+    Las teclas salen de los `BINDINGS` de la propia app, no de una lista
+    aparte: lo que la ventana dice es lo que de verdad hay, también con vídeo o
+    GPU y sin ellos.
+    """
+    lines = ["[dim]Todo lo que se hace con una tecla se puede escribir como "
+             "comando, y la tecla no hace otra cosa.[/dim]", ""]
+    lines.append("[bold cyan]Teclas[/bold cyan]")
+    shown = [(_KEY_NAMES.get(key, key), description)
+             for key, _, description in bindings if description]
+    for key, description in shown:
+        lines.append(f"  [bold]{_escape(key):<6}[/bold] {_escape(description)}")
+    lines += [
+        "  [bold]Esc[/bold]    interrumpe una ejecución en curso (también F12)",
+        "",
+        "[bold cyan]Según el panel con el foco[/bold cyan]",
+        "  [bold]código[/bold]     ↑ ↓ PgUp PgDn Home mueven · [bold]p[/bold] "
+        "centra el PC · [bold]b[/bold] alterna breakpoint · [bold]u[/bold] "
+        "ejecuta hasta aquí · [bold]/[/bold] busca · [bold]a[/bold] repite",
+        "  [bold]registros[/bold]  ↑ ↓ desplazan · [bold]/[/bold] busca "
+        "(R5) · [bold]a[/bold] repite",
+        "  [bold]memoria[/bold]    ↑ ↓ PgUp PgDn mueven · [bold]h[/bold] o "
+        "Home vuelven a 0 · [bold]/[/bold] busca bytes o texto",
+        "  Un clic en la dirección efectiva o en el destino de un salto del "
+        "código lleva ahí el panel de memoria o de código.",
+        "",
+    ]
+    for title, entries in session.help_sections():
+        lines.append(f"[bold cyan]{title}[/bold cyan]")
+        for name, text in entries:
+            # Rellenar ANTES de escapar: el escape añade una barra a cada `[`.
+            lines.append(f"  [bold]{_escape(f'{name:<15}')}[/bold] {_escape(text)}")
+        lines.append("")
+    lines += [
+        "[bold cyan]Colores y marcas[/bold cyan]",
+        "  En el código: [cyan]cian[/cyan] destino de un salto, "
+        "[magenta]magenta[/magenta] dirección de RAM, "
+        "[yellow]amarillo[/yellow] MMIO; [red]*[/red] breakpoint; fila en "
+        "inverso, el PC del núcleo con foco.",
+    ]
+    if session.target.pcs() is not None:
+        lines += [
+            "  [bold green]C[/bold green] PC de la CPU · [bold #4da3ff]G[/bold "
+            "#4da3ff] PC del warp con foco (si está vivo).",
+            "  Máscara de lanes: ● activa · ○ viva pero fuera de la ruta · "
+            "· muerta. [bold]r1 p0[/bold] son las pilas SIMT: regiones `SSY` "
+            "abiertas y caminos pendientes.",
+            "  Rejilla de lanes: [bold yellow]amarillo[/bold yellow] cambió con "
+            "el último comando · atenuada, lane fuera de la ruta · "
+            "[cyan]R5[/cyan] en cian, las lanes activas no coinciden.",
+            "  Estados de warp: LIBRE · CONFIG (descriptor escrito, sin "
+            "lanzar) · READY · [yellow]WAIT_BAR[/yellow] · FIN · "
+            "[bold red]ERROR[/bold red].",
+        ]
+    return "\n".join(lines)
+
+
 def _memory_lines(session: DebugSession) -> str:
     rows = session.memory_rows()
     if not rows:
@@ -288,6 +351,7 @@ def build_app(session: DebugSession):
     from textual import events
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
+    from textual.screen import ModalScreen
     from textual.widgets import Footer, Input, RichLog, Static
 
     has_video = session.target.video_layout() is not None
@@ -397,10 +461,47 @@ def build_app(session: DebugSession):
         def action_repeat_search(self) -> None:
             self.app.action_repeat_search()
 
+    class HelpScreen(ModalScreen):
+        """La ayuda, flotando sobre el depurador. Cualquier tecla de cierre vuelve."""
+
+        BINDINGS = [
+            ("escape", "close", "cerrar"),
+            ("f1", "close", "cerrar"),
+            ("q", "close", "cerrar"),
+            ("question_mark", "close", "cerrar"),
+        ]
+        DEFAULT_CSS = """
+        HelpScreen { align: center middle; }
+        #help-box {
+            width: 94%; height: 90%; border: thick $accent;
+            background: $surface; padding: 0 2;
+        }
+        """
+
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="help-box"):
+                yield Static(self.text, id="help-text")
+
+        def on_mount(self) -> None:
+            box = self.query_one("#help-box")
+            box.border_title = "ayuda"
+            box.border_subtitle = ("Esc, F1 o q cierran · ↑ ↓ PgUp PgDn "
+                                   "desplazan")
+            box.focus()
+
+        def action_close(self) -> None:
+            self.dismiss()
+
     class DebuggerApp(App):
         CSS = globals()["CSS"]
         TITLE = "minidbg"
         BINDINGS = [
+            ("f1", "help", "ayuda"),
+            ("question_mark", "help_key", ""),
             ("s", "command('step')", "paso"),
             ("n", "command('over')", "saltar llamada"),
             ("o", "command('finish')", "salir funcion"),
@@ -469,7 +570,7 @@ def build_app(session: DebugSession):
                 warps.border_title = "warps"
                 warps.styles.height = len(session.target.warp_rows()) + 3
             self.query_one("#console", RichLog).write(
-                "[dim]`help` lista los comandos. Las teclas de abajo hacen "
+                "[dim]F1 (o `help`) abre la ayuda. Las teclas de abajo hacen "
                 "lo mismo que escribirlos.[/dim]")
             for warning in session.warnings:
                 self.query_one("#console", RichLog).write(
@@ -528,6 +629,11 @@ def build_app(session: DebugSession):
             self.refresh_panels()
 
         def dispatch(self, command: str) -> None:
+            if command.split(None, 1)[0].lower() in {"help", "?"}:
+                # En la TUI la ayuda es una ventana; el modo línea sigue
+                # imprimiendo la lista.
+                self.action_help()
+                return
             log = self.query_one("#console", RichLog)
             log.write(f"[bold cyan]> {command}[/bold cyan]")
             log.write("[dim]F12 (o Esc) para interrumpir la ejecución[/dim]")
@@ -689,6 +795,19 @@ def build_app(session: DebugSession):
                 self.refresh_panels()
             elif self.focused is self.query_one("#memory", MemoryPanel):
                 self.action_memory_home()
+
+        def action_help(self) -> None:
+            if isinstance(self.screen, HelpScreen):
+                return
+            bindings = [(binding[0], binding[1], binding[2])
+                        for binding in self.BINDINGS]
+            self.push_screen(HelpScreen(_help_markup(session, bindings)))
+
+        def action_help_key(self) -> None:
+            # `?` es una tecla de texto: escribiendo un comando no abre nada.
+            if self.focused is self.query_one("#prompt", Input):
+                return
+            self.action_help()
 
         def action_interrupt(self) -> None:
             if self.running:

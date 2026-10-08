@@ -612,6 +612,14 @@ y amarillo para MMIO (`0x80000000` en adelante). La dirección efectiva de un
 acceso se calcula con la instantánea actual de los registros: es exacta cuando
 el PC está en esa instrucción y orientativa al inspeccionar código futuro.
 
+**Ayuda.** `F1` (o `?` con el foco fuera de la línea de comandos, o escribir
+`help`) abre una ventana flotante con todo: las teclas, las propias de cada
+panel, los comandos agrupados por tema y el significado de los colores y marcas.
+Solo enseña lo que el objetivo tiene —sin la sección de CPU + GPU en un solo
+núcleo, ni `fb` sin vídeo— y las teclas salen de las de la propia aplicación, así
+que no se desactualiza. `Esc`, `F1` o `q` la cierran, y las flechas la
+desplazan. En modo línea (`--no-tui`), `help` sigue imprimiendo la lista.
+
 El pie muestra únicamente acciones disponibles. `v` y `f` no aparecen si el
 objetivo no ofrece vídeo; al cambiar el foco añade las teclas propias del panel:
 `↑`/`↓`, `/`, `a`, `p`, `b` y `u` en código, `↑`/`↓`, `/` y `a` en registros, y

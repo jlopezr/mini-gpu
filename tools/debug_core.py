@@ -955,7 +955,8 @@ class DebugSession:
         self.close_video()
         return []
 
-    def _cmd_help(self, args: list[str]) -> list[str]:
+    def help_entries(self) -> list[tuple[str, str]]:
+        """Los comandos que este objetivo tiene: sin `fb` si no hay vídeo, etc."""
         hidden = set()
         if self.target.video_layout() is None:
             hidden.add("fb")
@@ -966,8 +967,21 @@ class DebugSession:
         if self.target.warp_rows() is None:
             hidden.update({"core", "warp", "lane", "warps", "lanes",
                            "round", "sched"})
-        return [f"{name:<10} {text}" for name, text in HELP
+        return [(name, text) for name, text in HELP
                 if name.split()[0] not in hidden]
+
+    def help_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
+        """`help_entries` agrupados por tema, en el orden de `HELP_SECTIONS`."""
+        grouped: dict[str, list[tuple[str, str]]] = {
+            title: [] for title in HELP_SECTIONS}
+        for name, text in self.help_entries():
+            title = next((title for title, names in HELP_SECTIONS.items()
+                          if name.split()[0] in names), "Otros")
+            grouped.setdefault(title, []).append((name, text))
+        return [(title, items) for title, items in grouped.items() if items]
+
+    def _cmd_help(self, args: list[str]) -> list[str]:
+        return [f"{name:<10} {text}" for name, text in self.help_entries()]
 
 
 def _parse_register(token: str) -> int:
@@ -1078,6 +1092,18 @@ HELP: tuple[tuple[str, str], ...] = (
                     "recargada) y `reset gpu` el blando"),
     ("quit", "sale"),
 )
+
+#: Cómo se agrupan los comandos en la ventana de ayuda. Un comando que no esté
+#: aquí cae en «Otros»: no se pierde, pero se nota y se coloca.
+HELP_SECTIONS: dict[str, frozenset[str]] = {
+    "Ejecución": frozenset({"step", "over", "finish", "run", "until", "frame"}),
+    "Breakpoints y watch": frozenset({"break", "delete", "watch", "unwatch"}),
+    "Estado": frozenset({"regs", "set", "mem", "write"}),
+    "CPU + GPU": frozenset({"core", "warp", "lane", "warps", "lanes",
+                            "round", "sched"}),
+    "Vídeo y entrada": frozenset({"fb", "input"}),
+    "Sesión": frozenset({"reset", "quit"}),
+}
 
 _COMMANDS = {
     "step": DebugSession._cmd_step, "s": DebugSession._cmd_step,

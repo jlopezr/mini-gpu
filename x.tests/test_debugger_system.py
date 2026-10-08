@@ -938,6 +938,101 @@ class TuiTest(unittest.TestCase):
         self.assertIn("← 0x00000000  GPU warp 0, PC=", seen["text"])
         self.assertNotIn("bold yellow", seen["later"])
 
+    def test_f1_opens_the_help_window_and_escape_closes_it(self):
+        session = launched()
+        seen = {}
+
+        async def body(app, pilot):
+            await pilot.pause()
+            seen["before"] = type(app.screen).__name__
+            await pilot.press("f1")
+            await pilot.pause()
+            seen["open"] = type(app.screen).__name__
+            await pilot.press("escape")
+            await pilot.pause()
+            seen["closed"] = type(app.screen).__name__
+            # `q` dentro de la ayuda cierra la ayuda, no sale del depurador
+            await pilot.press("f1", "q")
+            await pilot.pause()
+            seen["q"] = type(app.screen).__name__
+
+        self.pilot(session, body)
+        self.assertEqual(seen["open"], "HelpScreen")
+        self.assertEqual(seen["before"], seen["closed"])
+        self.assertEqual(seen["q"], seen["before"])
+
+    def test_typing_help_opens_the_window_instead_of_printing_the_list(self):
+        session = launched()
+        seen = {}
+
+        async def body(app, pilot):
+            from textual.widgets import Input, RichLog
+
+            prompt = app.query_one("#prompt", Input)
+            prompt.focus()
+            prompt.value = "help"
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            seen["screen"] = type(app.screen).__name__
+            seen["log"] = len(app.query_one("#console", RichLog).lines)
+
+        self.pilot(session, body)
+        self.assertEqual(seen["screen"], "HelpScreen")
+        self.assertLess(seen["log"], 8)         # no se volcó la lista de comandos
+
+    def test_question_mark_is_text_while_typing(self):
+        session = launched()
+        seen = {}
+
+        async def body(app, pilot):
+            from textual.widgets import Input
+
+            app.query_one("#prompt", Input).focus()
+            await pilot.pause()
+            await pilot.press("question_mark")
+            await pilot.pause()
+            seen["typing"] = type(app.screen).__name__
+            app.set_focus(None)
+            await pilot.press("question_mark")
+            await pilot.pause()
+            seen["panel"] = type(app.screen).__name__
+
+        self.pilot(session, body)
+        self.assertNotEqual(seen["typing"], "HelpScreen")
+        self.assertEqual(seen["panel"], "HelpScreen")
+
+    def test_help_text_follows_what_the_target_has(self):
+        from tools.debug_tui import _help_markup
+
+        bindings = [("s", "command('step')", "paso"), ("g", "command('core')", "CPU/GPU")]
+        gpu = _help_markup(launched(), bindings)
+        for text in ("CPU + GPU", "round", "sched", "watch", "Teclas",
+                     "Colores y marcas", "PC de la CPU"):
+            self.assertIn(text, gpu)
+        single = _help_markup(DebugSession(SimTarget(CPU(64 * 1024))), bindings)
+        self.assertNotIn("CPU + GPU", single)
+        self.assertNotIn("round", single)
+        self.assertNotIn("PC de la CPU", single)
+
+    def test_help_text_renders_without_errors(self):
+        import io
+
+        from rich.console import Console
+
+        from tools.debug_tui import _help_markup
+
+        console = Console(file=io.StringIO(), force_terminal=True, width=100)
+        console.print(_help_markup(launched(), [("s", "command('step')", "paso"),
+                                                ("f1", "help", "ayuda")]))
+
+    def test_every_command_has_a_help_section(self):
+        from tools.debug_core import HELP, HELP_SECTIONS
+
+        sectioned = set().union(*HELP_SECTIONS.values())
+        for name, _ in HELP:
+            self.assertIn(name.split()[0], sectioned, name)
+
     def test_lane_markup_renders_without_errors(self):
         import io
 
