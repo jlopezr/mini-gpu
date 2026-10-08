@@ -27,8 +27,20 @@
 // flanco"), igual que documenta DESIGN.md. Cuesta una burbuja extra en cada
 // transicion pero evita carreras de dos escritores sobre el mismo registro.
 module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_DEPTH=8) (
-    input clk, reset,
+    // `reset` es el del sistema: lo borra todo, descriptores incluidos.
+    // `soft_reset` es GPU_CONTROL.RESET (mmio.md §14.1): descarta el estado de
+    // ejecucion y conserva los descriptores, LOGICAL_WARP_ID y WARP_ARG.
+    input clk, reset, soft_reset,
     input run_request, halt_request, step_request,
+    // Lanzamiento (RUN y WARP_START). `launch_mask` dice que warps; con
+    // `launch_all` son todos los que tienen ACTIVE != 0 en su descriptor. Copia
+    // el descriptor al estado de ejecucion y, con `launch_run`, pone la GPU en
+    // marcha (si no, queda parada: HALT, o un lanzamiento en pausa). Quien lo
+    // pide ya ha comprobado que los warps existen, estan libres y tienen
+    // ACTIVE != 0: aqui no se discute.
+    input launch, launch_run, launch_all,
+    input [7:0] launch_mask,
+    output [7:0] desc_enabled,
     output halted,
     // Para GPU CORE (§14.1): el SM esta ejecutando, y que warps tienen alguna
     // lane viva (WARP_LIVE). `halted` mezcla "pausada" con "terminada", asi que
@@ -93,6 +105,14 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg running, pause_pending, stepping, step_locked;
     reg [2:0] cursor;
     reg [31:0] pc[0:7], groups[0:7];
+    // El DESCRIPTOR de cada warp (mmio.md §14.2, «Reglas de lanzamiento»): lo
+    // que el lanzador escribio. Es distinto del estado de ejecucion (`pc`,
+    // `active`, `groups`): lo copia el lanzamiento y el warp no lo modifica, asi
+    // que sobrevive a la ejecucion y a GPU_CONTROL.RESET.
+    reg [31:0] desc_pc[0:7], desc_groups[0:7];
+    reg [7:0] desc_active[0:7];
+    assign desc_enabled={|desc_active[7],|desc_active[6],|desc_active[5],|desc_active[4],
+                         |desc_active[3],|desc_active[2],|desc_active[1],|desc_active[0]};
     // Paridad del episodio de barrera (antes un contador de 32 bits). Solo se
     // compara por igualdad entre warps de un mismo grupo, y uno que llega a la
     // siguiente BAR se queda bloqueado en ella: como mucho coexisten la
@@ -437,12 +457,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         if(cfg_bank==2'd1) cfg_read_data=logical_id[cfg_word[2:0]];
         else if(cfg_bank==2'd2) cfg_read_data=warp_arg[cfg_word[2:0]];
         else case(cfg_word[1:0])
-            0: cfg_read_data=pc[cfg_word[4:2]];
-            // 36: ACTIVE es solo la mascara (mmio.md §14.2). En la 29 devolvia
-            // tambien `live` en los bits 15:8. Hasta que el hito 2 guarde una copia
-            // del descriptor, tras ejecutar refleja la mascara de ejecucion.
-            1: cfg_read_data={24'b0,active[cfg_word[4:2]]};
-            2: cfg_read_data=groups[cfg_word[4:2]];
+            // Los tres primeros son el DESCRIPTOR, no el estado de ejecucion:
+            // devuelven lo escrito, tambien con el warp en marcha. ACTIVE es solo
+            // la mascara (mmio.md §14.2); en la 29 devolvia ademas `live`.
+            0: cfg_read_data=desc_pc[cfg_word[4:2]];
+            1: cfg_read_data={24'b0,desc_active[cfg_word[4:2]]};
+            2: cfg_read_data=desc_groups[cfg_word[4:2]];
             3: begin
                 cfg_read_data=0;
                 cfg_read_data[SP_BITS-1:0]=sp[cfg_word[4:2]];
@@ -469,10 +489,36 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         end
     endtask
 
+    // Descriptores y arrays de GPU WARPS: configuracion del lanzador. Solo el
+    // reset del sistema los borra. Quien escribe (gpu_system) ya ha comprobado
+    // que el warp no esta vivo.
     integer w,c;
     always @(posedge clk) begin
-        instruction_retired<=0; retired_lanes<=8'd0;
         if (reset) begin
+            for(w=0;w<8;w=w+1) begin
+                desc_pc[w]<=0; desc_active[w]<=8'h00; desc_groups[w]<=0;
+                logical_id[w]<=0; warp_arg[w]<=0;
+            end
+        end else if (cfg_write) begin
+            for(c=0;c<4;c=c+1) if(cfg_strobe[c]) begin
+                if(cfg_bank==2'd1) logical_id[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                else if(cfg_bank==2'd2) warp_arg[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                else begin
+                    if(cfg_word[1:0]==0) desc_pc[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                    if(cfg_word[1:0]==2) desc_groups[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
+                end
+            end
+            if(cfg_bank==2'd0 && cfg_word[1:0]==1 && cfg_strobe[0])
+                desc_active[cfg_word[4:2]]<=cfg_data[7:0];
+        end
+    end
+
+    // Warps que arranca este lanzamiento.
+    wire [7:0] launch_set = launch_all ? desc_enabled : launch_mask;
+
+    always @(posedge clk) begin
+        instruction_retired<=0; retired_lanes<=8'd0;
+        if (reset || soft_reset) begin
             init_address<=0; init_done<=0; running<=0; pause_pending<=0; stepping<=0; step_locked<=0;
             cursor<=0; busy<=0; wait_bar<=0; releasing<=0; load_is_write<=0;
             error<=0; error_code<=ERROR_NONE; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
@@ -488,7 +534,6 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 // "deshabilitado", mmio.md §14.2). En la 29 arrancaban los ocho a
                 // PC=0, que con la CPU compartiendo la RAM seria su propio codigo.
                 pc[w]<=0; active[w]<=8'h00; live[w]<=8'h00; groups[w]<=0;
-                logical_id[w]<=0; warp_arg[w]<=0;
                 warp_retired_count[w]<=0; generation[w]<=0; sp[w]<=0; pp[w]<=0; load_rd[w]<=0;
                 join_pc_top[w]<=0; ssy_pc_top[w]<=0; entry_mask_top[w]<=0; path_base_top[w]<=0;
                 pending_pc_top[w]<=0; pending_mask_top[w]<=0;
@@ -499,27 +544,6 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 if(init_address==255) init_done<=1;
             end
             if (halt_request && running) pause_pending<=1;
-            // Los dos arrays (§14.2) son de lectura y escritura y no tienen
-            // efectos laterales: tocarlos no reinicia el estado SIMT del warp,
-            // a diferencia de los descriptores (abajo).
-            if (halted && cfg_write && cfg_bank!=2'd0) begin
-                for(c=0;c<4;c=c+1) if(cfg_strobe[c]) begin
-                    if(cfg_bank==2'd1) logical_id[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
-                    else warp_arg[cfg_word[2:0]][c*8 +: 8]<=cfg_data[c*8 +: 8];
-                end
-            end
-            if (halted && cfg_write && cfg_bank==2'd0) begin
-                for(c=0;c<4;c=c+1) if(cfg_strobe[c]) begin
-                    if(cfg_word[1:0]==0) pc[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
-                    if(cfg_word[1:0]==2) groups[cfg_word[4:2]][c*8 +: 8]<=cfg_data[c*8 +: 8];
-                end
-                if(cfg_word[1:0]==1 && cfg_strobe[0]) begin
-                    active[cfg_word[4:2]]<=cfg_data[7:0]; live[cfg_word[4:2]]<=cfg_data[7:0];
-                end
-                warp_retired_count[cfg_word[4:2]]<=0; sp[cfg_word[4:2]]<=0; pp[cfg_word[4:2]]<=0;
-                wait_bar[cfg_word[4:2]]<=0; releasing[cfg_word[4:2]]<=0; generation[cfg_word[4:2]]<=0;
-            end
-
             // ---------------------------------------------------------
             // Compromiso (W): X > respuesta de LSU > especial de D.
             // Como mucho un evento de retiro por ciclo.
@@ -768,6 +792,26 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 // fallos de opcode/encoding dejan el token de X ocupado para
                 // siempre y el monitor nunca llega a observar `halted`.
                 done<=done | lane_retired | lane_halted;
+            end
+
+            // ---------------------------------------------------------
+            // Lanzamiento (RUN, WARP_START): el descriptor pasa al estado de
+            // ejecucion y el warp queda vivo. Va AL FINAL a proposito: un warp
+            // que se lanza no estaba vivo, asi que nadie mas lo toca, pero
+            // `running<=1` tiene que ganar al `running<=0` de «ya no queda nada
+            // vivo» de mas arriba (un WARP_START justo cuando el ultimo warp
+            // acaba de terminar).
+            // ---------------------------------------------------------
+            if (launch && !error) begin
+                for(w=0;w<8;w=w+1) if (launch_set[w]) begin
+                    pc[w]<=desc_pc[w]; groups[w]<=desc_groups[w];
+                    active[w]<=desc_active[w]; live[w]<=desc_active[w];
+                    warp_retired_count[w]<=0; sp[w]<=0; pp[w]<=0;
+                    wait_bar[w]<=0; releasing[w]<=0; generation[w]<=0;
+                end
+                if (launch_run) begin
+                    running<=1; stepping<=0; step_locked<=0; pause_pending<=0;
+                end
             end
         end
     end

@@ -48,7 +48,7 @@ Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
 |-----------------------------------------|------------------|---------|----------------|--------------------|-----------|
 | `12`, `14`, `17`, `22` (GPU)            | —                | —       | —              | —                  | —         |
 | `29.fpga-gpu-sm-pipeline`               | Sí               | —       | —              | —                  | —         |
-| `37.fpga-cpu-gpu-mk2` (GPU)             | Sí               | Sí      | Sí             | —                  | Sí        |
+| `37.fpga-cpu-gpu-mk2` (GPU)             | Sí               | Sí      | Sí             | Sí                 | Sí        |
 | `11.gpu-sim-func` / `gpusim` (`current`)| Sí               | —       | —              | —                  | —         |
 | `25.gpu-sim-cycle-uarch` (`cycle`)      | Sí               | Sí      | Sí             | Sí                 | Sí        |
 

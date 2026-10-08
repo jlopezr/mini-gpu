@@ -100,7 +100,8 @@ module gpu_alu_tb;
     localparam [31:0] A_TABLE = 32'h800, B_TABLE = 32'h900;
     localparam [31:0] SLT_OUT = 32'hA00, SLTU_OUT = 32'hB00, MULHI_OUT = 32'hC00,
                       DIV_OUT = 32'hD00, DIVU_OUT = 32'hE00, REM_OUT = 32'hF00,
-                      REMU_OUT = 32'h1000;
+                      REMU_OUT = 32'h1000, SHLI_OUT = 32'h1100, SHRI_OUT = 32'h1200,
+                      SARI_OUT = 32'h1300, SHLI0_OUT = 32'h1400;
 
     function [31:0] word;
         input [31:0] byte_addr;
@@ -118,7 +119,7 @@ module gpu_alu_tb;
     // Comprueba una tabla de 32 resultados contra `want`, que cada llamada
     // calcula a partir de (a, b) segun `which`.
     localparam W_SLT = 0, W_SLTU = 1, W_MULHI = 2, W_DIV = 3, W_DIVU = 4,
-               W_REM = 5, W_REMU = 6;
+               W_REM = 5, W_REMU = 6, W_SHLI = 7, W_SHRI = 8, W_SARI = 9, W_SHLI0 = 10;
     reg signed [63:0] product;
     reg signed [31:0] sa, sb, sq;
     function [31:0] expected;
@@ -145,6 +146,11 @@ module gpu_alu_tb;
                     else begin sq = sa % sb; expected = sq; end
                 end
                 W_REMU: expected = a % b;
+                // Cantidad inmediata: 5, 31, 9 y 0 (el operando b no se usa).
+                W_SHLI: expected = a << 5;
+                W_SHRI: expected = a >> 31;
+                W_SARI: begin sa = a; sq = sa >>> 9; expected = sq; end
+                W_SHLI0: expected = a;
                 default: expected = 32'hxxxx_xxxx;
             endcase
         end
@@ -230,6 +236,10 @@ module gpu_alu_tb;
         check_table("DIVU", DIVU_OUT, W_DIVU);
         check_table("REM",  REM_OUT,  W_REM);
         check_table("REMU", REMU_OUT, W_REMU);
+        check_table("SHLI", SHLI_OUT, W_SHLI);
+        check_table("SHRI", SHRI_OUT, W_SHRI);
+        check_table("SARI", SARI_OUT, W_SARI);
+        check_table("SHLI 0", SHLI0_OUT, W_SHLI0);
         if (bad != 0) begin
             $display("GPU_ALU: %0d errores", bad);
             $fatal(1);

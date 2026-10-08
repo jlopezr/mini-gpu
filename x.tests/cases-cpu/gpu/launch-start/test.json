@@ -1,0 +1,23 @@
+{
+  "architecture": "cpu",
+  "name": "gpu-launch-start",
+  "program": "launch_start.asm",
+  "requires": [
+    "gpu_core",
+    "gpu_warp_start"
+  ],
+  "timeout_seconds": 20.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R1": 65,
+      "R2": 0,
+      "R3": 1,
+      "R4": 255,
+      "R5": 0,
+      "R6": 255
+    }
+  }
+}

@@ -14,6 +14,8 @@ prototipo: `mk2`. Identificación de placa: monitor `5.37`.
 3. **Hito 2 de GPU CORE**, en commits pequeños: `WARP_START`, `RESET` que conserva
    los descriptores, descriptores con la GPU en marcha, `WARP_LIVE` y `WARP_DONE`
    completos, registros de identidad. Más de ocho warps, solo si hace falta.
+4. **Las instrucciones de la CPU que le faltaban a la GPU**: `SLT`, `SLTU`, `MULHI`,
+   `DIVU`, `REM`, `REMU`, `JAL`, `JALR` y `JR` (hecho; ver «La GPU»).
 
 Mientras no se diga otra cosa abajo, **lo que sigue describe la 36**, de la que
 parte esta carpeta; los números de timing y de placa son los de la 36, no
@@ -69,13 +71,39 @@ barreras. Dos cambios respecto a la 29, ambos por area y por correctitud:
 **GPU CORE** (`mmio.md` §14.1): `GPU_CONTROL`, `GPU_STATUS`, `WARP_LIVE` y
 `WARP_DONE`. La LSU y el buffer de instrucciones salen como los puertos 4 y 5.
 
-### Limitaciones del hito 1
+### Instrucciones de la CPU en la GPU (37)
+
+La lane ejecuta ahora lo mismo que la CPU: `SLT` y `SLTU` (reutilizan la resta y el
+estado de comparación de los saltos), `MULHI` (el camino de `MULFX` con otra
+ventana de salida), `DIVU`, `REM` y `REMU` (el camino de `DIV`, con operandos
+crudos o con el resto como resultado), `SHLI`, `SHRI` y `SARI` (la cantidad
+sale del campo `Rb` si el bit 10 está a uno) y `JAL`, `JALR` y `JR`. Un salto indirecto
+sale de un registro por lane, así que el SM exige que **todas las lanes activas
+coincidan**: si no, para con `ERROR_SIMT` (0x06) en lugar de serializar.
+Bancos: `gpu_alu_tb.v` y `gpu_jump_tb.v`.
+
+### Hito 2 de GPU CORE (37)
+
+Las reglas están en `mmio.md` §14.1, «Reglas de lanzamiento». En el RTL:
+
+- El SM guarda el **descriptor** de cada warp (`desc_pc`, `desc_active`,
+  `desc_groups`) aparte de su estado de ejecución. `RUN` y `WARP_START` copian
+  uno al otro (`launch`), así que leer un descriptor devuelve siempre lo escrito.
+- `RESET` es un reset blando: descarta el estado de ejecución y conserva los
+  descriptores, `LOGICAL_WARP_ID` y `WARP_ARG`. Solo el reset del sistema los borra.
+- Un descriptor se escribe mientras **su** warp no esté vivo; con otros warps
+  ejecutando es válido. `WARP_START` es todo o nada.
+- Configurar ya no hace vivo a un warp: `WARP_LIVE` solo cambia al lanzarlo.
+  Por eso, para depurar con `STEP`, se hace `HALT`, `WARP_START` y `STEP`.
+
+Costo estimado: unos 70 FF por warp (los tres descriptores) y su mux de lectura.
+Bancos: `gpu_core_tb.v` (siete bloques) y el caso `cases-cpu/gpu/launch-start`.
+
+### Limitaciones
 
 - La GPU **no es maestro de MMIO**: un warp que toque una dirección MMIO recibe
   error. La única ruta de MMIO va de la CPU a la GPU.
-- `WARP_START` da error. Se lanza con `RUN`, que reanuda lo que escribieron los
-  descriptores; `WARP_LIVE` ya refleja un warp configurado antes de `RUN`.
-- `RESET` reinicia también los descriptores (el contrato dice que los conserva).
+- Más de ocho warps no; `NUM_WARPS` aún no es un parámetro.
 - No hay vídeo propio de la GPU: el único bloque VIDEO es el de la CPU. Tampoco
   hay todavía un registro de «ha terminado la parte gráfica» (`wait_graphics`),
   que dependerá del rasterizador.
@@ -183,6 +211,6 @@ visible.
 - Probar en placa (`board-upload`, `test-board`).
 - **Tiempo máximo en `mmio_mux`** para el acceso a la GPU: si la GPU no contesta,
   el bus MMIO se queda esperando (y con él el monitor).
-- Hito 2: `WARP_START`, que `RESET` conserve los descriptores, `WARP_LIVE` y
-  `WARP_DONE` completos, y un registro de fin de la parte gráfica.
+- Un registro de fin de la parte gráfica (`wait_graphics`), cuando exista el
+  rasterizador, y los registros de identidad del hito 2.
 - Reutilizar filas abiertas (página abierta), como en la 35.

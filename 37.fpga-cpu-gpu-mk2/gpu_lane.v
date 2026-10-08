@@ -9,7 +9,7 @@
  *   NOP
  *   MOVI Rd, imm16
  *   ADD/SUB/MUL/MULHI/MULFX/DIV/DIVU/REM/REMU/AND/OR/XOR Rd, Ra, Rb
- *   SHL/SHR/SAR Rd, Ra, Rb
+ *   SHL/SHR/SAR Rd, Ra, Rb       (SHLI/SHRI/SARI Rd, Ra, imm5 con el bit 10)
  *   SLT/SLTU Rd, Ra, Rb
  *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
  *   MOVHI Rd, imm16
@@ -225,6 +225,10 @@ module gpu_lane #(
   wire [4:0] rb = instruction[15:11];
   wire [31:0] immediate_signed = {{16{instruction[15]}}, instruction[15:0]};
   wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
+  // Cantidad de desplazamiento: del registro, o inmediata en el campo Rb si el
+  // bit 10 esta a uno. `operand_b` no significa nada en el modo inmediato.
+  wire shift_immediate = instruction[10];
+  wire [4:0] shift_amount = shift_immediate ? rb : operand_b[4:0];
 
   // Validate the reserved fields combinationally, then register the result in
   // STATE_DECODE. The register keeps validation logic out of the execute-state
@@ -237,10 +241,14 @@ module gpu_lane #(
       OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
         instruction_encoding_valid = instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
-      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV,
+      OPCODE_MUL, OPCODE_DIV,
       OPCODE_SLT, OPCODE_SLTU, OPCODE_MULHI, OPCODE_DIVU, OPCODE_REM,
       OPCODE_REMU:
         instruction_encoding_valid = instruction[10:0] == 0;
+      // Los desplazamientos dejan libre el bit 10: con el a uno, la cantidad
+      // es inmediata y va en el campo Rb (SHLI, SHRI, SARI).
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:
+        instruction_encoding_valid = instruction[9:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;
       // JAL no tiene registro fuente y JR no tiene ni destino ni inmediato.
@@ -524,25 +532,25 @@ module gpu_lane #(
             OPCODE_SHL: begin
               shift_destination <= rd;
               shift_result <= operand_a;
-              shift_remaining <= operand_b[4:0];
+              shift_remaining <= shift_amount;
               shift_kind <= 2'd0;
-              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
             end
 
             OPCODE_SHR: begin
               shift_destination <= rd;
               shift_result <= operand_a;
-              shift_remaining <= operand_b[4:0];
+              shift_remaining <= shift_amount;
               shift_kind <= 2'd1;
-              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
             end
 
             OPCODE_SAR: begin
               shift_destination <= rd;
               shift_result <= operand_a;
-              shift_remaining <= operand_b[4:0];
+              shift_remaining <= shift_amount;
               shift_kind <= 2'd2;
-              state <= operand_b[4:0] == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
+              state <= shift_amount == 0 ? STATE_SHIFT_WRITE : STATE_SHIFT_STEP;
             end
 
             OPCODE_ADDI: begin

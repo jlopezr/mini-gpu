@@ -1,13 +1,15 @@
 ; ============================================================
 ; launch_run.asm - la CPU lanza dos warps de la GPU con GPU_CONTROL.RUN
 ;
-; Es examples/launch.asm de 32.cpu-gpu-func-sim con dos cambios, por lo que la
-; 36 tiene hoy (hito 1) y todavia no WARP_START:
+; Es examples/launch.asm de 32.cpu-gpu-func-sim con dos cambios:
 ;
-;   * empieza con GPU_CONTROL.RESET, para no heredar descriptores ni WARP_DONE de
-;     una ejecucion anterior (la GPU sigue ahi entre un caso y el siguiente);
-;   * lanza con RUN en vez de WARP_START. Los warps sin descriptor tienen
-;     ACTIVE = 0 y no arrancan.
+;   * empieza con GPU_CONTROL.RESET y apaga los warps que no usa (ACTIVE = 0), para
+;     no heredar WARP_DONE ni descriptores de una ejecucion anterior (la GPU sigue
+;     ahi entre un caso y el siguiente). RESET conserva los descriptores desde el
+;     hito 2 (mmio.md §14.1), asi que apagarlos hay que hacerlo; en el hito 1 no
+;     hacia falta y el programa vale igual;
+;   * lanza con RUN en vez de WARP_START. Los warps con ACTIVE = 0 no arrancan.
+;     El caso launch-start usa WARP_START.
 ;
 ; Un solo fichero: el codigo de la CPU empieza en 0 y el kernel de la GPU va
 ; detras, en la misma imagen. El kernel escribe out[tid] = tid*tid + 1 con
@@ -28,12 +30,22 @@ start:
     MOVI  R16, 16                           ; GPU_CONTROL.RESET
     STORE R16, R10, MMIO_GPU_CONTROL_OFF
 
-    ; Tras RESET la GPU tarda unos ciclos en volver a estar parada; los
-    ; descriptores solo se escriben con la GPU parada (si no, error).
+    ; Tras RESET la GPU tarda unos ciclos en volver a estar parada (reinicia el
+    ; banco de registros); se espera antes de tocar los descriptores.
     MOVI  R17, 64
 settle:
     ADDI  R17, R17, -1
     BNE   R17, R0, settle
+
+    ; Apagar los warps 2 a 7: puede que una ejecucion anterior los dejara
+    ; habilitados, y RUN arrancaria todos los que tengan ACTIVE != 0.
+    MOVI  R18, 6
+    ADDI  R19, R11, 32 + MMIO_GPU_WARPS_ACTIVE_OFF
+off:
+    STORE R0, R19, 0
+    ADDI  R19, R19, 16
+    ADDI  R18, R18, -1
+    BNE   R18, R0, off
 
     STORE R12, R11, MMIO_GPU_WARPS_PC_OFF
     STORE R13, R11, MMIO_GPU_WARPS_ACTIVE_OFF

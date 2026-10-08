@@ -16,6 +16,7 @@ respondieran igual a las mismas escrituras, un caso fallaría en una de las dos.
 | `compare` | [slt-sltu](compare/slt-sltu/) | `SLT` y `SLTU` sobre dieciséis pares de borde |
 | `alu-extended` | [mulhi-div-rem](alu-extended/mulhi-div-rem/) | `MULHI`, `DIV`, `DIVU`, `REM` y `REMU`, con `-2^31 / -1` y divisores por encima de 2^31 |
 | `alu-extended` | `divu-by-zero`, `rem-by-zero`, `remu-by-zero` | Dividir entre cero para con `0x04` |
+| `shift-immediate` | [shli-shri-sari](shift-immediate/shli-shri-sari/) | `SHLI`, `SHRI` y `SARI` con cantidades de 0 a 31 |
 | `calls` | [call-return](calls/call-return/) | `JAL`, `JALR` y `JR`, incluido `Rd = Ra` y un destino con los bits bajos sucios |
 
 Como la GPU reparte trabajo con `GETTID` entre 64 hilos y eso no existe en la CPU,

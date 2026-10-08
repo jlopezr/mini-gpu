@@ -6,6 +6,8 @@
 ;   MULHI    en 0xC00          DIV      en 0xD00
 ;   DIVU     en 0xE00          REM      en 0xF00
 ;   REMU     en 0x1000
+;   SHLI a,5 en 0x1100         SHRI a,31 en 0x1200
+;   SARI a,9 en 0x1300         SHLI a,0  en 0x1400
 kernel:
     GETTID R1
     MOVI   R2, 2
@@ -27,4 +29,13 @@ kernel:
     STORE  R8, R3, 0xF00
     REMU   R8, R6, R7
     STORE  R8, R3, 0x1000
+
+    SHLI   R8, R6, 5
+    STORE  R8, R3, 0x1100
+    SHRI   R8, R6, 31
+    STORE  R8, R3, 0x1200
+    SARI   R8, R6, 9
+    STORE  R8, R3, 0x1300
+    SHLI   R8, R6, 0
+    STORE  R8, R3, 0x1400
     HALT

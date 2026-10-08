@@ -955,6 +955,38 @@ Con estos tres registros caben dos modelos de uso: configurar todo y lanzar con
 `RUN`, o mantener una cola en RAM y reponer warps según se liberan ranuras, sin
 necesidad de un command processor en hardware.
 
+### Reglas de lanzamiento
+
+Lo que fijan estas reglas es lo que antes dejaba el texto abierto. Se acordaron
+al preparar el hito 2 de la 37, y son un solo conjunto: ninguna vale sin las demás.
+
+**Descriptor y estado de ejecución son cosas distintas.** Los registros de
+GPU WARPS (§14.2: `PC`, `ACTIVE`, `WORKGROUP_ID`) son el **descriptor**: lo que el
+lanzador escribió. Leerlos devuelve siempre eso, también con el warp en marcha, y
+el warp no lo modifica al ejecutar. `RUN` y `WARP_START` **copian** el descriptor
+al estado de ejecución del warp. Lo que sí cambia con la ejecución es
+`SIMT_STATE`, `WARP_LIVE` y `WARP_DONE`. Esto es lo que permite que `RESET`
+conserve los descriptores, y que un warp se pueda relanzar sin reescribirlo.
+
+| Operación | Efecto | Es error si |
+|---|---|---|
+| Escribir un descriptor, `LOGICAL_WARP_ID` o `WARP_ARG` | cambia el descriptor; no toca el estado de ejecución | el warp no existe, **o ese warp está vivo**. Con otros warps vivos, es válido |
+| `RUN` | arranca todos los warps con `ACTIVE != 0` y limpia **solo su** bit de `WARP_DONE` | hay algún warp vivo, o ninguno tiene `ACTIVE != 0` |
+| `WARP_START` | arranca los warps cuyo bit está a uno y limpia su bit de `WARP_DONE` | cualquiera de los bits pedidos es de un warp inexistente, ya vivo o con `ACTIVE == 0` |
+| `RESET` | pone a cero `WARP_LIVE` y `WARP_DONE` y descarta pilas, esperas, barreras y errores | nunca. Conserva descriptores, `LOGICAL_WARP_ID` y `WARP_ARG` |
+
+- **`WARP_START` es todo o nada.** Si un solo bit pedido es inválido, da error y
+  **no arranca ninguno**.
+- **`WARP_START` con la GPU en reposo** (`IDLE`) arranca los warps y la GPU pasa a
+  `RUNNING`: no hace falta un `RUN`. **Con la GPU `HALTED`** deja los warps vivos
+  pero en pausa, y siguen con `RESUME`. Con la GPU en error, es error.
+- **`RUN` sigue siendo la forma de lanzar «todo lo configurado»**; `WARP_START`
+  es la de añadir trabajo. Un `WARP_START` de varios bits a la vez equivale a
+  un `RUN` restringido a esos warps.
+- **El bit de `WARP_DONE` de un warp solo se limpia al arrancarlo** (o con W1C, o
+  con `RESET`). Los demás conservan el suyo.
+- **`GPU_STATUS.ERROR` se limpia con `RESET`**, como hoy, y con nada más.
+
 ### 14.2. GPU WARPS — `0x82010000`
 
 Array de descriptores de 16 bytes, según la regla de §1.4: el descriptor `n`
@@ -998,9 +1030,10 @@ por usuario, no cabe aquí.
 La información global de qué warps están vivos se obtiene con `WARP_LIVE`, no
 desde el descriptor, para no mezclar configuración con scheduling.
 
-Escribir un descriptor reinicia el estado de reconvergencia, barrera y contador
-local del warp. No es una interfaz para modificar contexto mientras el warp
-ejecuta.
+Escribir un descriptor solo cambia el descriptor (ver «Reglas de lanzamiento» en
+§14.1): el estado de reconvergencia, barrera y contador local del warp se inicia
+cuando `RUN` o `WARP_START` lo arrancan, no al escribir. Con el warp vivo, escribir
+es error: no es una interfaz para modificar contexto mientras ejecuta.
 
 ### `LOGICAL_WARP_ID` y `WARP_ARG`
 
