@@ -921,32 +921,38 @@ Por ahora esta validacion comprueba compilacion y simulacion dentro de
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
 las suites de `x.tests`.
 
-## Paso entre el compilador y el ensamblador (`mini-link`)
+## Compilar C para la CPU y la GPU: `mini-lcc --no-crt`, `crt0` y `mini-opt`
 
-`mini-link` lee los `.s` de `mini-lcc`, les aplica transformaciones y los junta en un
-solo `.s` para `mini-asm`. Cada entrada es una *unidad* con un papel, `cpu` (el
-anfitrión, por defecto) o `gpu` (kernels):
+Tres piezas pequeñas entre el compilador y el ensamblador:
 
 ```bash
-$ mini-lcc host.c -o host.s
-$ mini-lcc kernels.c -o kernels.s
-$ mini-link host.s --gpu kernels.s -o programa.s --stats
-$ mini-asm programa.s -o programa.bin
+$ mini-lcc host.c --no-crt -o host.s          # sin _start ni __stack
+$ mini-lcc kernels.c --no-crt -o kernels.s
+$ mini-opt kernels.s -o kernels.opt.s --stats # pases sobre el .s
+$ cat programa.asm
+    .include "crt0.s"                         # primero: _start en la direccion 0
+    .include "host.s"
+    .include "kernels.opt.s"
+$ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 ```
 
-- **Unión:** una sola `_start` (la de la primera unidad `cpu`), un solo `.comm` por
-  símbolo, y los `.extern` se comprueban entre unidades: error si falta un símbolo o
-  está repetido.
-- **Pases** (`--list-passes`): a las unidades `gpu` se les aplica `intrinsics`. El C
-  declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase
-  convierte `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`,
-  `__gpu_warp`, `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Se
-  rechaza la dirección de un intrínseco o un temporal que siga vivo.
-- **Para añadir una transformación:** una función con `@register_pass` en
-  `tools/mini_link.py`. Dispone del troceado en funciones, del grafo de flujo
-  (`build_cfg`) y de la vida de registros (`liveness`).
+- **`--no-crt`** (`rcc -crt=none`): el compilador no emite `_start` ni `.comm __stack`. El
+  arranque es `1.isa/runtime/crt0.s` (pone la pila, llama a `main`, para). Sin la opción el
+  compilador sigue emitiéndolo como siempre.
+- **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
+  compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
+  que dos `.s` no chocan.
+- **`mini-opt`** transforma un `.s` en otro con pases (`--list-passes`). Hoy `intrinsics`: el
+  C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
+  `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
+  `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
+  intrínseco o un temporal que siga vivo. Para añadir una transformación: una función con
+  `@register_pass` en `tools/mini_opt.py`, con troceado en funciones, grafo de flujo
+  (`build_cfg`) y vida de registros (`liveness`).
 
-Pruebas: `x.tests/test_mini_link.py` (no necesita MSVC).
+Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
+necesita MSVC y se omite sin él).
+
 ## Build con historial de timing, en segundo plano, estado, logs
 
 `tools/build` (con `tools/build_report.py`) es común a cualquier prototipo con

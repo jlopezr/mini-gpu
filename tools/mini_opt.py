@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-"""Paso entre el `.s` del compilador y `mini-asm`: junta unidades y las transforma.
+"""Filtro entre el `.s` del compilador y `mini-asm`: aplica pases a un `.s`.
 
-    mini-link host.s --gpu kernels.s -o programa.s
-    mini-asm programa.s -o programa.bin
+    mini-lcc --no-crt kernels.c -o kernels.s
+    mini-opt kernels.s -o kernels.opt.s --stats
+    mini-asm programa.asm -o programa.bin       # con `.include "kernels.opt.s"`
 
-Cada entrada es una *unidad* con un papel: `cpu` (lo que corre el anfitrion, el
-valor por defecto) o `gpu` (kernels). El paso:
+Juntar unidades lo hace el ensamblador con `.include` (y desde que las `L.n` de lcc
+son privadas de cada fichero, dos `.s` no chocan); el arranque, `1.isa/runtime/crt0.s`.
+Este filtro solo transforma un `.s` en otro: lo trocea en funciones, calcula su grafo de
+flujo y la vida de sus registros, y aplica los pases pedidos (`--list-passes`).
 
-  1. lee cada `.s` y lo trocea en funciones, con su grafo de flujo y su vida de
-     registros (lo que necesite cualquier transformacion);
-  2. aplica a cada unidad los *pases* de su papel (`--list-passes`);
-  3. une las unidades en un solo `.s`: una sola `_start` (la de la primera
-     unidad `cpu`), un solo `.comm` por simbolo, simbolos externos resueltos
-     entre unidades, y error si falta alguno o esta repetido.
-
-El primer pase es `intrinsics`, el equivalente a `threadIdx`/`__syncthreads` de
-CUDA sin tocar `rcc`: el C declara `extern volatile int __gpu_tid;` y lo lee
-como una variable; el pase convierte el par `LI r,__gpu_tid ; LOAD d,r,0` en
-`GETTID d`. Para anadir otro intrinseco basta una entrada en `INTRINSIC_LOADS`
-o `INTRINSIC_STORES`; para otra transformacion, una funcion con `@register_pass`.
+El primer pase es `intrinsics`, el equivalente a `threadIdx`/`__syncthreads` de CUDA sin
+tocar `rcc`: el C declara `extern volatile int __gpu_tid;` y lo lee como una variable;
+el pase convierte el par `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d`. Para anadir otro
+intrinseco basta una entrada en `INTRINSIC_LOADS` o `INTRINSIC_STORES`; para otra
+transformacion, una funcion con `@register_pass`.
 """
 from __future__ import annotations
 
@@ -35,13 +31,12 @@ from typing import Callable
 
 LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")     # las etiquetas internas de lcc
-COMPILER_LOCAL_REF_RE = re.compile(r"\bL\.(\d+)\b")
 REGISTER_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
 
-class LinkError(ValueError):
-    """Entrada mala (simbolo repetido, indefinido, intrinseco mal usado...)."""
+class OptError(ValueError):
+    """Entrada mala (un intrinseco mal usado...)."""
 
 
 @dataclass
@@ -91,7 +86,6 @@ class Function:
 @dataclass
 class Unit:
     path: str
-    role: str                       # "cpu" | "gpu"
     chunks: list = field(default_factory=list)   # Line o Function, en orden
 
     def functions(self) -> list[Function]:
@@ -111,13 +105,13 @@ HEADER_DIRECTIVES = (".globl", ".global", ".align")
 SECTION_WORDS = (".text", ".code", ".data", ".bss", ".rodata", ".rdata")
 
 
-def parse_unit(source: str, path: str = "<entrada>", role: str = "cpu") -> Unit:
+def parse_unit(source: str, path: str = "<entrada>") -> Unit:
     """Trocea el `.s`: una funcion es una etiqueta de `.text` que no es interna de
     lcc (`L.n`), con sus directivas de cabecera (`.globl`, `.align`) y hasta la
     siguiente funcion o el siguiente cambio de seccion. Las directivas de
     cabecera se retienen hasta ver la linea siguiente: si es una funcion, son su
     cabecera; si no, siguen siendo parte de lo que estaba abierto."""
-    unit = Unit(path, role)
+    unit = Unit(path)
     section = ".text"
     pending: list[Line] = []
     current: Function | None = None
@@ -307,7 +301,7 @@ def live_after(block: Block, live_out: set[int], position: int) -> set[int]:
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = {"cpu": [], "gpu": ["intrinsics"]}
+DEFAULT_PASSES = ["intrinsics"]
 
 
 def register_pass(name: str, doc: str):
@@ -350,7 +344,7 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
                     ok_shape = (len(b.args) == 3 and b.args[2] in ("0", "+0")
                                 and reg_of(b.args[1]) == tmp)
                     if not ((is_load or is_store) and ok_shape):
-                        raise LinkError(
+                        raise OptError(
                             f"{unit.path}: '{sym}' solo se puede leer"
                             f"{' o escribir' if sym in INTRINSIC_STORES else ''} como "
                             f"variable entera ({function.name})")
@@ -358,12 +352,12 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
                         dest = reg_of(b.args[0])
                         # el temporal de la direccion no puede seguir vivo
                         if tmp != dest and tmp in live_after(block, live_out[block.index], i + 1):
-                            raise LinkError(
+                            raise OptError(
                                 f"{unit.path}: {function.name}: R{tmp} sigue vivo tras leer {sym}")
                         new = Line("instr", "", op=INTRINSIC_LOADS[sym], args=[b.args[0]])
                     else:
                         if tmp in live_after(block, live_out[block.index], i + 1):
-                            raise LinkError(
+                            raise OptError(
                                 f"{unit.path}: {function.name}: R{tmp} sigue vivo tras escribir {sym}")
                         new = Line("instr", "", op=INTRINSIC_STORES[sym])
                     block.lines[i:i + 2] = [new]
@@ -381,103 +375,37 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
         for line in function.body:
             if line.kind == "instr" and any(a in names for a in line.args):
-                raise LinkError(
+                raise OptError(
                     f"{unit.path}: {function.name}: uso no soportado de un intrinseco: {line.render()}")
-
-
-# ---------------------------------------------------------------------------
-# Union de unidades
-# ---------------------------------------------------------------------------
-
-def defined_symbols(unit: Unit) -> set[str]:
-    return {l.name for l in unit.lines() if l.kind == "label"}
 
 
 def directive_parts(line: Line) -> list[str]:
     return line.text.replace(",", " ").split()
 
 
-def link(units: list[Unit], allow_undefined: bool = False) -> str:
-    """Une las unidades en un `.s`. `_start` solo de la primera `cpu`; `.comm`
-    sin repetir; los `.extern` desaparecen (se comprueban); funciones unicas."""
-    defined: dict[str, str] = {}
-    start_owner = next((u for u in units if u.role == "cpu"), None)
-    for unit in units:
-        for name in defined_symbols(unit):
-            if COMPILER_LOCAL_RE.match(name):
-                continue
-            if name == "_start" and unit is not start_owner:
-                continue
-            if name in defined:
-                raise LinkError(f"simbolo repetido '{name}' en {defined[name]} y {unit.path}")
-            defined[name] = unit.path
-    comm: dict[str, tuple[int, str]] = {}
-    externs: dict[str, str] = {}
-    out: list[str] = []
-    for index, unit in enumerate(units):
-        # las `L.n` de lcc empiezan en 1 en cada compilacion: sin renombrarlas por
-        # unidad, dos `.s` juntos (con `.include` tambien) chocan en `L.2`
-        local = lambda text, i=index: COMPILER_LOCAL_REF_RE.sub(lambda m: f"L.{i}.{m.group(1)}", text)
-        for chunk in unit.chunks:
-            lines = chunk.header + chunk.body if isinstance(chunk, Function) else [chunk]
-            if isinstance(chunk, Function) and chunk.name == "_start" and unit is not start_owner:
-                continue
-            for line in lines:
-                if line.kind == "directive":
-                    parts = directive_parts(line)
-                    word = parts[0].lower()
-                    if word == ".extern":
-                        externs.setdefault(parts[1], unit.path)
-                        continue
-                    if word == ".comm":
-                        size = int(parts[2], 0)
-                        if parts[1] in defined and parts[1] not in comm:
-                            raise LinkError(f".comm '{parts[1]}' choca con una definicion en {defined[parts[1]]}")
-                        old = comm.get(parts[1], (0, unit.path))
-                        comm[parts[1]] = (max(old[0], size), old[1])
-                        continue
-                out.append(local(line.render()))
-    undefined = sorted(s for s in externs if s not in defined and s not in comm)
-    if undefined and not allow_undefined:
-        raise LinkError("simbolos sin definir: " + ", ".join(
-            f"{s} (declarado en {externs[s]})" for s in undefined))
-    if comm:
-        out.append(".bss")
-        out.extend(f".comm {name},{size}" for name, (size, _) in comm.items())
-    return "\n".join(out) + "\n"
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
-def run(inputs: list[tuple[str, str]], passes: dict[str, list[str]] | None = None,
-        allow_undefined: bool = False, stats: dict | None = None) -> str:
-    """inputs: [(ruta, papel)]. Devuelve el `.s` unido."""
-    passes = passes or DEFAULT_PASSES
+def optimize(source: str, passes: list[str] | None = None, path: str = "<entrada>",
+             stats: dict | None = None) -> str:
+    """Aplica los pases (por defecto `DEFAULT_PASSES`) a un `.s` y devuelve el nuevo."""
+    passes = DEFAULT_PASSES if passes is None else passes
     stats = stats if stats is not None else {}
-    units = []
-    for path, role in inputs:
-        unit = parse_unit(Path(path).read_text(encoding="utf-8"), path, role)
-        for name in passes.get(role, []):
-            if name not in PASSES:
-                raise LinkError(f"pase desconocido '{name}' (--list-passes)")
-            PASSES[name][0](unit, stats)
-        units.append(unit)
-    return link(units, allow_undefined)
+    unit = parse_unit(source, path)
+    for name in passes:
+        if name not in PASSES:
+            raise OptError(f"pase desconocido '{name}' (--list-passes)")
+        PASSES[name][0](unit, stats)
+    return render_unit(unit)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("files", nargs="*", help=".s del anfitrion (papel cpu)")
-    parser.add_argument("--cpu", action="append", default=[], metavar="FILE")
-    parser.add_argument("--gpu", action="append", default=[], metavar="FILE",
-                        help=".s de kernels de la GPU (se les aplican los pases gpu)")
+    parser.add_argument("input", nargs="?", type=Path, help=".s de entrada")
     parser.add_argument("-o", "--output", type=Path, help="`.s` de salida (por defecto stdout)")
-    parser.add_argument("--passes-gpu", help="pases de las unidades gpu, separados por coma "
-                        f"(por defecto {','.join(DEFAULT_PASSES['gpu']) or 'ninguno'})")
-    parser.add_argument("--passes-cpu", help="pases de las unidades cpu (por defecto ninguno)")
-    parser.add_argument("--allow-undefined", action="store_true")
+    parser.add_argument("--passes", help="pases separados por coma, en orden "
+                        f"(por defecto {','.join(DEFAULT_PASSES)}; vacio = ninguno)")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -485,19 +413,14 @@ def main(argv: list[str] | None = None) -> int:
         for name, (_, doc) in PASSES.items():
             print(f"{name:12s} {doc}")
         return 0
-    inputs = [(f, "cpu") for f in args.files + args.cpu] + [(f, "gpu") for f in args.gpu]
-    if not inputs:
-        parser.error("hace falta al menos un .s")
-    passes = {"cpu": DEFAULT_PASSES["cpu"], "gpu": DEFAULT_PASSES["gpu"]}
-    if args.passes_gpu is not None:
-        passes["gpu"] = [p for p in args.passes_gpu.split(",") if p]
-    if args.passes_cpu is not None:
-        passes["cpu"] = [p for p in args.passes_cpu.split(",") if p]
+    if args.input is None:
+        parser.error("hace falta un .s de entrada")
+    passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
     stats: dict = {}
     try:
-        text = run(inputs, passes, args.allow_undefined, stats)
-    except LinkError as error:
-        print(f"mini-link: {error}", file=sys.stderr)
+        text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)
+    except OptError as error:
+        print(f"mini-opt: {error}", file=sys.stderr)
         return 1
     if args.output:
         args.output.write_text(text, encoding="utf-8")

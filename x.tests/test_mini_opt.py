@@ -1,16 +1,17 @@
-"""`tools/mini_link.py`: el paso entre el `.s` de mini-lcc y mini-asm.
+"""`tools/mini_opt.py`: filtro entre el `.s` de mini-lcc y mini-asm.
 
-Los `.s` de entrada son salida real de `mini-lcc` (copiada), asi que no hace falta
-MSVC para correr la suite. Se comprueba:
+Los `.s` de entrada son salida real de `mini-lcc --no-crt` (copiada), asi que no hace
+falta MSVC para correr la suite. Se comprueba:
 
   - que el troceado en funciones es fiel (reensamblar el `.s` troceado da los mismos
     bytes que el original);
   - el grafo de flujo y la vida de registros;
   - el pase `intrinsics`: `LI r,__gpu_tid ; LOAD d,r,0` pasa a `GETTID d`, y se rechaza
     lo que no se puede reescribir con seguridad;
-  - la union: una sola `_start`, un solo `.comm`, simbolos entre unidades, errores.
+  - el filtro entero y su salida junto al `crt0` y un anfitrion, por `.include`.
 """
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,20 +21,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "1.isa"))
 
 from mini_asm import assemble_bytes  # noqa: E402
-from tools.mini_link import (  # noqa: E402
-    LinkError, build_cfg, link, liveness, parse_unit, pass_intrinsics, render_unit, run)
+from tools.mini_opt import (  # noqa: E402
+    OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, render_unit)
 
-# Salida real de mini-lcc para:
+RUNTIME = ROOT / "1.isa" / "runtime"
+
+# Salida real de `mini-lcc --no-crt` para:
 #   extern volatile int __gpu_tid;
 #   void k_memset(int *dst, int value, int n) { int i; for (i = __gpu_tid; i < n; i += 64) dst[i] = value; }
 #   int k_max(int a, int b) { return a > b ? a : b; }
 KERNELS = """\
 .text
-.globl _start
-_start:
-LI R30, __stack+8192
-JAL R31, main
-HALT
 .globl k_memset
 .text
 .align 4
@@ -72,25 +70,22 @@ L.10:
 JR R31
 .extern __gpu_tid 4
 .bss
-.comm __stack,8192
 """
 
+# Un anfitrion compilado con `--no-crt` que tambien usa L.1 y L.2
 HOST = """\
 .text
-.globl _start
-_start:
-LI R30, __stack+8192
-JAL R31, main
-HALT
 .globl main
-.text
 .align 4
 main:
-LI R1, k_memset
+LI R1, 7
+LI R2, 3
+BLT R1, R2, L.2
 JR R31
-.extern k_memset 4
+L.2:
+MOVI R1, 0
+JR R31
 .bss
-.comm __stack,8192
 """
 
 
@@ -100,31 +95,32 @@ def functions(unit):
 
 class ParseTest(unittest.TestCase):
     def test_functions_are_split_with_their_headers(self):
-        unit = parse_unit(KERNELS, "k.s", "gpu")
+        unit = parse_unit(KERNELS, "k.s")
         fns = functions(unit)
-        self.assertEqual(list(fns), ["_start", "k_memset", "k_max"])
+        self.assertEqual(list(fns), ["k_memset", "k_max"])
         self.assertEqual([h.text for h in fns["k_memset"].header],
-                         [".globl k_memset", ".text", ".align 4"])
+                         [".text", ".globl k_memset", ".text", ".align 4"])
+        self.assertEqual([h.text for h in fns["k_max"].header], [".globl k_max", ".align 4"])
         # las etiquetas internas de lcc se quedan dentro de la funcion
         labels = [l.name for l in fns["k_memset"].body if l.kind == "label"]
         self.assertEqual(labels, ["k_memset", "L.2", "L.3", "L.5", "L.1"])
 
     def test_declarations_are_not_part_of_the_last_function(self):
-        unit = parse_unit(KERNELS, "k.s", "gpu")
+        unit = parse_unit(KERNELS, "k.s")
         last = functions(unit)["k_max"].body[-1]
         self.assertEqual(last.render(), "JR R31")
 
     def test_reassembling_the_split_unit_gives_the_same_image(self):
-        # autocontenido: sin `main` ni la variable especial, que solo el pase resuelve
-        source = KERNELS.replace("JAL R31, main", "JAL R31, k_max").replace(
-            "LI R12, __gpu_tid", "LI R12, __stack").replace(".extern __gpu_tid 4\n", "")
-        unit = parse_unit(source, "k.s", "gpu")
+        # autocontenido: sin la variable especial, que solo el pase resuelve
+        source = KERNELS.replace("LI R12, __gpu_tid", "LI R12, k_max").replace(
+            ".extern __gpu_tid 4\n", "")
+        unit = parse_unit(source, "k.s")
         self.assertEqual(assemble_bytes(render_unit(unit)), assemble_bytes(source))
 
 
 class FlowTest(unittest.TestCase):
     def setUp(self):
-        self.fn = functions(parse_unit(KERNELS, "k.s", "gpu"))["k_max"]
+        self.fn = functions(parse_unit(KERNELS, "k.s"))["k_max"]
 
     def test_basic_blocks_and_edges(self):
         blocks = build_cfg(self.fn)
@@ -145,7 +141,7 @@ class FlowTest(unittest.TestCase):
 
 class IntrinsicsTest(unittest.TestCase):
     def test_gettid_replaces_the_load_of_the_magic_variable(self):
-        unit = parse_unit(KERNELS, "k.s", "gpu")
+        unit = parse_unit(KERNELS, "k.s")
         stats = {}
         pass_intrinsics(unit, stats)
         text = render_unit(unit)
@@ -173,7 +169,7 @@ EXIT
 .extern __gpu_arg 4
 .extern __gpu_bar 4
 """
-        unit = parse_unit(source, "k.s", "gpu")
+        unit = parse_unit(source, "k.s")
         pass_intrinsics(unit, {})
         body = [l.render() for l in functions(unit)["k"].body if l.kind == "instr"]
         self.assertEqual(body, ["GETLANE R6", "GETLWARP R7", "GETARG R8", "BAR", "EXIT"])
@@ -190,8 +186,8 @@ ADD R1, R5, R6
 JR R31
 .extern __gpu_tid 4
 """
-        with self.assertRaisesRegex(LinkError, "sigue vivo"):
-            pass_intrinsics(parse_unit(source, "k.s", "gpu"), {})
+        with self.assertRaisesRegex(OptError, "sigue vivo"):
+            pass_intrinsics(parse_unit(source, "k.s"), {})
 
     def test_taking_the_address_is_rejected(self):
         source = """\
@@ -202,58 +198,46 @@ LI R1, __gpu_tid
 JR R31
 .extern __gpu_tid 4
 """
-        with self.assertRaisesRegex(LinkError, "variable entera"):
-            pass_intrinsics(parse_unit(source, "k.s", "gpu"), {})
+        with self.assertRaisesRegex(OptError, "variable entera"):
+            pass_intrinsics(parse_unit(source, "k.s"), {})
 
 
-class LinkTest(unittest.TestCase):
-    def write(self, folder, name, text):
-        path = Path(folder) / name
-        path.write_text(text, encoding="utf-8")
-        return str(path)
-
-    def test_link_cpu_and_gpu(self):
-        with tempfile.TemporaryDirectory() as temp:
-            host = self.write(temp, "host.s", HOST)
-            gpu = self.write(temp, "gpu.s", KERNELS)
-            text = run([(host, "cpu"), (gpu, "gpu")])
-        self.assertEqual(text.count("_start:"), 1)
-        self.assertEqual(text.count(".comm __stack"), 1)
-        self.assertNotIn(".extern", text)
+class FilterTest(unittest.TestCase):
+    def test_optimize_applies_the_default_pass(self):
+        stats = {}
+        text = optimize(KERNELS, stats=stats)
+        self.assertEqual(stats["intrinsics"], 1)
         self.assertIn("GETTID R29", text)
-        image = assemble_bytes(text)
+
+    def test_no_passes_leaves_the_text_alone(self):
+        text = optimize(KERNELS, passes=[])
+        self.assertIn("LI R12, __gpu_tid", text)
+
+    def test_unknown_pass_is_an_error(self):
+        with self.assertRaisesRegex(OptError, "desconocido"):
+            optimize(KERNELS, passes=["no-existe"])
+
+    def test_output_assembles_with_crt0_and_a_host_that_reuses_the_labels(self):
+        """crt0 + anfitrion + kernels, por `.include`: sin `_start` ni `.comm` repetidos
+        y con las mismas `L.n` en los dos ficheros."""
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            (temp / "host.s").write_text(HOST, encoding="utf-8")
+            (temp / "kernels.s").write_text(optimize(KERNELS), encoding="utf-8")
+            source = '.include "crt0.s"\n.include "host.s"\n.include "kernels.s"\n'
+            image = assemble_bytes(source, temp, "prog.asm", (RUNTIME,))
         self.assertGreater(len(image), 0)
 
-    def test_compiler_local_labels_do_not_collide_between_units(self):
-        # lcc numera `L.n` desde 1 en cada compilacion: las dos unidades usan L.2
-        other = KERNELS.replace("k_memset", "k_other").replace("k_max", "k_other_max")
+    def test_command_line_writes_the_output_file(self):
         with tempfile.TemporaryDirectory() as temp:
-            host = self.write(temp, "host.s", HOST)
-            gpu = self.write(temp, "gpu.s", KERNELS)
-            gpu2 = self.write(temp, "gpu2.s", other)
-            text = run([(host, "cpu"), (gpu, "gpu"), (gpu2, "gpu")])
-        self.assertEqual(text.count("L.1.2:"), 1)
-        self.assertEqual(text.count("L.2.2:"), 1)
-        assemble_bytes(text)                              # y el ensamblador lo acepta
-
-    def test_undefined_symbol_is_an_error(self):
-        with tempfile.TemporaryDirectory() as temp:
-            host = self.write(temp, "host.s", HOST)
-            with self.assertRaisesRegex(LinkError, "k_memset"):
-                run([(host, "cpu")])
-
-    def test_duplicate_symbol_is_an_error(self):
-        with tempfile.TemporaryDirectory() as temp:
-            host = self.write(temp, "host.s", HOST)
-            gpu = self.write(temp, "gpu.s", KERNELS)
-            with self.assertRaisesRegex(LinkError, "repetido"):
-                run([(host, "cpu"), (gpu, "gpu"), (gpu, "gpu")])
-
-    def test_cpu_unit_without_passes_is_left_alone(self):
-        with tempfile.TemporaryDirectory() as temp:
-            gpu = self.write(temp, "gpu.s", KERNELS)
-            text = run([(gpu, "cpu")], allow_undefined=True)
-        self.assertIn("LI R12, __gpu_tid", text)    # sin el pase, el `.s` sigue igual
+            temp = Path(temp)
+            (temp / "k.s").write_text(KERNELS, encoding="utf-8")
+            done = subprocess.run([sys.executable, str(ROOT / "tools" / "mini-opt"), str(temp / "k.s"),
+                                   "-o", str(temp / "k.opt.s"), "--stats"],
+                                  capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
+            self.assertIn("intrinsics", done.stderr)
 
 
 if __name__ == "__main__":

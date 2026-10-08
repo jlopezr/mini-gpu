@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Lanzador global de `mini_link.main`."""
+"""Lanzador global de `mini_opt.main`."""
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.mini_link import main
+from tools.mini_opt import main
 
 if __name__ == "__main__":
     raise SystemExit(main())
