@@ -618,7 +618,10 @@ panel, los comandos agrupados por tema y el significado de los colores y marcas.
 Solo enseña lo que el objetivo tiene —sin la sección de CPU + GPU en un solo
 núcleo, ni `fb` sin vídeo— y las teclas salen de las de la propia aplicación, así
 que no se desactualiza. `Esc`, `F1` o `q` la cierran, y las flechas la
-desplazan. En modo línea (`--no-tui`), `help` sigue imprimiendo la lista.
+desplazan. La paleta de Textual (`Ctrl+P`) no ofrece su «Show keys and help
+panel», que abre una barra lateral que se come un tercio del ancho: en su lugar
+tiene «Ayuda del depurador», la misma ventana. En modo línea (`--no-tui`), `help`
+sigue imprimiendo la lista.
 
 El pie muestra únicamente acciones disponibles. `v` y `f` no aparecen si el
 objetivo no ofrece vídeo; al cambiar el foco añade las teclas propias del panel:

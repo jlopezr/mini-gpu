@@ -796,6 +796,25 @@ def build_app(session: DebugSession):
             elif self.focused is self.query_one("#memory", MemoryPanel):
                 self.action_memory_home()
 
+        def get_system_commands(self, screen):
+            """La paleta (Ctrl+P) sin el panel lateral de teclas de Textual.
+
+            Ese panel se come un tercio del ancho y repite lo que ya dice la
+            ayuda propia, así que en su lugar la paleta ofrece la ventana de F1.
+            """
+            from textual.app import SystemCommand
+
+            for command in super().get_system_commands(screen):
+                if "help panel" not in command.title.lower():
+                    yield command
+            yield SystemCommand(
+                "Ayuda del depurador",
+                "Teclas, comandos, colores y marcas (F1)", self.action_help)
+
+        def action_show_help_panel(self) -> None:
+            # Por si algo lo invoca directamente: la misma ventana, no el panel.
+            self.action_help()
+
         def action_help(self) -> None:
             if isinstance(self.screen, HelpScreen):
                 return

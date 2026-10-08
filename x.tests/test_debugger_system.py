@@ -961,6 +961,28 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(seen["before"], seen["closed"])
         self.assertEqual(seen["q"], seen["before"])
 
+    def test_the_palette_offers_our_help_and_not_textuals_side_panel(self):
+        session = launched()
+        seen = {}
+
+        async def body(app, pilot):
+            await pilot.pause()
+            commands = list(app.get_system_commands(app.screen))
+            seen["titles"] = [command.title for command in commands]
+            # Lo que haría el comando del panel de Textual, invocado a pelo:
+            app.action_show_help_panel()
+            await pilot.pause()
+            seen["screen"] = type(app.screen).__name__
+            seen["panels"] = len(app.screen.query("HelpPanel"))
+
+        self.pilot(session, body)
+        titles = " | ".join(seen["titles"]).lower()
+        self.assertNotIn("help panel", titles)
+        self.assertIn("ayuda del depurador", titles)
+        self.assertIn("quit", titles)                 # lo demás se conserva
+        self.assertEqual(seen["screen"], "HelpScreen")
+        self.assertEqual(seen["panels"], 0)
+
     def test_typing_help_opens_the_window_instead_of_printing_the_list(self):
         session = launched()
         seen = {}
