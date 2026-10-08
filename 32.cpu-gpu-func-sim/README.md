@@ -51,6 +51,27 @@ imagen byte a byte** solo con la CPU (el test lo exige), para tener con qué
 comparar lo que aporta la GPU: 42 instrucciones por celda, unas 203 000 por
 frame, frente a las 27 000 de warp de la versión con GPU.
 
+[`examples/render/render_v2.asm`](examples/render/render_v2.asm) es la misma
+imagen con **las escrituras coalescidas**: en vez de un hilo por fila de celdas
+(8 lanes escribiendo en 8 filas distintas), un warp pinta una fila entera y sus 8
+lanes escriben 8 palabras consecutivas, 32 bytes seguidos. Solo cambia el reparto;
+la aritmética es idéntica y los tests exigen la misma imagen.
+
+Medido con el simulador de ciclos (`gpusim-cycle`, carpeta 25) sobre el kernel de
+cada versión, un frame:
+
+| | instr. de warp | transacciones LSU | ciclos | a 25 MHz | X ocupada |
+|---|---:|---:|---:|---:|---:|
+| `render.asm` (v1) | 27 072 | 38 400 | 654 550 | 26,2 ms | 16 % |
+| `render_v2.asm` | 46 564 | 9 600 | 209 999 | 8,4 ms | 95 % |
+
+La v1 es de la memoria (cada transacción son ~17 ciclos y no se juntan nunca); la
+v2 hace casi el doble de instrucciones pero cuatro veces menos transacciones, y
+pasa a ser del cálculo: el 85 % del tiempo de X son los desplazamientos, que son
+iterativos (un bit por ciclo, `SAR` por 31 cuesta 31). Son cifras del **modelo**:
+en la placa el mismo código tarda más (en `demo-bench` la placa midió 1,55× los
+ciclos del modelo), así que 8,4 ms es una cota inferior, no una predicción.
+
 ## Qué se comparte
 
 | | |

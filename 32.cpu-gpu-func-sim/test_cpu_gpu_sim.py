@@ -279,15 +279,20 @@ def plasma_reference(frame: int) -> bytes:
     return bytes(out)
 
 
+RENDER_V2 = HERE / "examples" / "render" / "render_v2.asm"
+
+
 class RenderExampleTest(unittest.TestCase):
     """`examples/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
+
+    PROGRAM = RENDER
 
     @classmethod
     def setUpClass(cls):
         video = sim.VideoDevice(frame_instructions=1000)
         video.stop_after_swaps = 2
         cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
-        cls.system.load_cpu_program(sim.load_program_file(RENDER))
+        cls.system.load_cpu_program(sim.load_program_file(cls.PROGRAM))
         cls.outcome = cls.system.run()
         cls.video = video
 
@@ -312,6 +317,24 @@ class RenderExampleTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
         # 8 warps por frame; la CPU relanza los mismos ocho
         self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+
+class RenderV2ExampleTest(RenderExampleTest):
+    """`render_v2.asm`: las escrituras coalescidas. La imagen tiene que ser la misma."""
+
+    PROGRAM = RENDER_V2
+
+    def test_it_never_diverges(self):
+        # Las 8 lanes de un warp tienen siempre la misma fila: el bucle de filas
+        # es uniforme y no abre ninguna región SIMT (v1 sí, en los 4 hilos que
+        # sobraban).
+        for warp in self.system.gpu.warps:
+            self.assertEqual((len(warp.region_stack), len(warp.path_stack)),
+                             (0, 0))
+
+    def test_a_frame_is_about_46_thousand_warp_instructions(self):
+        per_frame = self.system.gpu.retired / 2
+        self.assertAlmostEqual(per_frame, 46_500, delta=1_500)
 
 
 RENDER_CPU = HERE / "examples" / "render" / "render_cpu.asm"
