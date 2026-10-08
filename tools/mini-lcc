@@ -84,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, help="ensamblador de salida")
     parser.add_argument("--keep-i", type=Path, metavar="PATH",
                         help="guarda tambien el C preprocesado")
+    parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
+                        help="carpeta extra para #include (repetible)")
     parser.add_argument("--no-crt", action="store_true",
                         help="no emite `_start` ni `.comm __stack`: el arranque lo pone un crt0 "
                              "(1.isa/runtime/crt0.s) o, en una unidad sin `main`, nadie")
@@ -115,12 +117,12 @@ def main(argv: list[str] | None = None) -> int:
                 print("error: no encuentro MSVC con el toolset de C++ para preprocesar", file=sys.stderr)
                 return 2
             command = [
-                "cl", "/nologo", "/EP", "/P", f"/I{INCLUDE}",
+                "cl", "/nologo", "/EP", "/P", f"/I{INCLUDE}", *[f"/I{d.resolve()}" for d in args.includes],
                 f"/Fi:{preprocessed}", str(source),
             ]
         else:
             command = [
-                "cc", "-E", "-P", "-I", str(INCLUDE), str(source),
+                "cc", "-E", "-P", "-I", str(INCLUDE), *[x for d in args.includes for x in ("-I", str(d.resolve()))], str(source),
                 "-o", str(preprocessed),
             ]
         code = subprocess.call(command)

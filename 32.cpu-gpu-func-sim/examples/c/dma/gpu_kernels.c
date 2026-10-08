@@ -3,7 +3,7 @@
  * memset, memcpy, fill_rect y blit con el mismo reparto y el mismo bloque de argumentos que
  * `examples/asm/dma/gpu_kernels.inc` (ensamblador), para comparar instrucciones: ver compare.py.
  *
- *   python examples/c/compare.py
+ *   python examples/c/system/compare.py
  *
  * Bloque de argumentos (gpu_run): +0 nwarps  +4 nlanes  +8 p0  +12 p1  +16 p2 ...
  *   memset     p0 = dst  p1 = valor  p2 = nwords
@@ -15,7 +15,7 @@
  * cinco y seis, mas de los cuatro registros de argumentos, asi que leen el bloque directamente
  * (`__gpu_arg`), como el ensamblador.
  */
-#include "../gpu.h"
+#include "gpu.h"
 
 typedef struct {
     int nwarps, nlanes;

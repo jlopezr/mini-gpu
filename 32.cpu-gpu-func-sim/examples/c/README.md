@@ -19,7 +19,7 @@ int main(void) {                                           /* CPU */
 ```
 
 ```text
-python examples/c/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
+python examples/c/system/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
 python cpu_gpu_sim.py examples/c/_build/memset.bin
 ```
 
@@ -36,8 +36,9 @@ nombre en la misma carpeta, para encontrar rápido la otra versión:
 | `simt` | | `c/simt/diverge.c` (solo en C) |
 | `render`, `launch.asm`, `race/{cube,life,blur}` | sí | aún no |
 
-En `c/` sueltos quedan la infraestructura (`gpu.h`, `gpu.c`, `build.py`) y los comparadores
-(`compare.py`, `compare_rotate.py`); las salidas de la compilación van a `c/_build/`.
+En `c/system/` está lo común: `gpu.h`, `gpu.c`, `build.py` y los comparadores (`compare.py`,
+`compare_rotate.py`). `build.py` pasa esa carpeta a `mini-lcc -I`, así que los ejemplos solo
+escriben `#include "gpu.h"`. Las salidas de la compilación van a `c/_build/`.
 
 ## Cómo funciona
 
@@ -51,7 +52,7 @@ En `c/` sueltos quedan la infraestructura (`gpu.h`, `gpu.c`, `build.py`) y los c
   array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
-- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`gpu.c`), que rellena el
+- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`system/gpu.c`), que rellena el
   bloque de argumentos y llama a `gpu_run` de `examples/asm/dma/gpu_runtime.inc` (el runtime de
   ensamblador de siempre). Lanza y espera.
 - **El arranque** es `1.isa/runtime/crt0.s`; `build.py` compila con `mini-lcc --no-crt`.

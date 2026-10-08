@@ -1,12 +1,12 @@
 /* rotate.c - la rotacion de textura de examples/asm/race/rotate.inc, en C: CPU, GPU inocente y GPU buena
  *
- *   python examples/c/compare_rotate.py
+ *   python examples/c/system/compare_rotate.py
  *
  * El cuerpo esta en rotate_body.h, una sola vez; este fichero lo incluye tres veces con otro
  * reparto de trabajo entre hilos (ver la tabla de rotate_body.h). Bloque de argumentos: el de
  * gpu_run, p0 = framebuffer, p1 = u de la celda (0, 0), p2 = v, p3 = dux, p4 = dvx.
  */
-#include "../gpu.h"
+#include "gpu.h"
 
 #define ROT_COLS 160
 #define ROT_ROWS 104

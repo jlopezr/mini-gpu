@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
-    python examples/c/build.py examples/c/dma/memset.c [-o salida.bin]
+    python examples/c/system/build.py examples/c/dma/memset.c [-o salida.bin]
 
 Por cada .c (el programa y gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y kernels).
 Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de ensamblador
@@ -16,15 +16,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
+ROOT = HERE.parents[3]
 TOOLS = ROOT / "tools"
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import assemble_bytes, write_hex  # noqa: E402
 
-BUILD = HERE / "_build"
+BUILD = HERE.parent / "_build"
 INCLUDE_DIRS = (ROOT / "x.tests" / "inc",)
 CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
-GPU_RUNTIME = HERE.parent / "asm" / "dma" / "gpu_runtime.inc"
+GPU_RUNTIME = HERE.parents[1] / "asm" / "dma" / "gpu_runtime.inc"
 
 
 class BuildError(RuntimeError):
@@ -42,7 +42,7 @@ def compile_c(source: Path) -> Path:
     BUILD.mkdir(exist_ok=True)
     plain = BUILD / f"{source.stem}.s"
     optimized = BUILD / f"{source.stem}.opt.s"
-    run(TOOLS / "mini-lcc", source, "--no-crt", "-o", plain)
+    run(TOOLS / "mini-lcc", source, "--no-crt", "-I", HERE, "-o", plain)
     run(TOOLS / "mini-opt", plain, "-o", optimized)
     return optimized
 

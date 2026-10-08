@@ -936,6 +936,7 @@ $ cat programa.asm
 $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 ```
 
+- **`-I DIR`** (repetible): carpeta extra para `#include "..."`, además de la del propio fuente.
 - **`--no-crt`** (`rcc -crt=none`): el compilador no emite `_start` ni `.comm __stack`. El
   arranque es `1.isa/runtime/crt0.s` (pone la pila, llama a `main`, para). Sin la opción el
   compilador sigue emitiéndolo como siempre.
@@ -951,7 +952,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   (`build_cfg`) y vida de registros (`liveness`).
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
-  `32.cpu-gpu-func-sim/examples/c/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  `32.cpu-gpu-func-sim/examples/c/system/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
   carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
