@@ -314,6 +314,39 @@ class RenderExampleTest(unittest.TestCase):
         self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
 
 
+RENDER_CPU = HERE / "examples" / "render" / "render_cpu.asm"
+
+
+class RenderCpuExampleTest(unittest.TestCase):
+    """`render_cpu.asm`: el mismo plasma, pintado solo por la CPU.
+
+    Es la referencia de la comparación con la GPU, y solo vale si la imagen es
+    la misma byte a byte.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = 2
+        cls.cpu = sim.cpu_sim.CPU(32 * 1024 * 1024, video=video)
+        cls.cpu.load_program(sim.load_program_file(RENDER_CPU))
+        cls.cpu.run(2_000_000)
+        cls.video = video
+
+    def test_it_paints_exactly_the_image_the_gpu_paints(self):
+        front, back = self.video.fb_front, self.video.fb_back
+        size = 320 * 240 * 2
+        self.assertEqual(bytes(self.cpu.memory[front:front + size]),
+                         plasma_reference(1))
+        self.assertEqual(bytes(self.cpu.memory[back:back + size]),
+                         plasma_reference(0))
+
+    def test_a_frame_is_about_42_instructions_per_cell(self):
+        # Medido: es el dato que usan las estimaciones de fotogramas por segundo.
+        per_frame = self.cpu.instructions_executed / 2
+        self.assertAlmostEqual(per_frame / (80 * 60), 42, delta=0.5)
+
+
 class WarpConfigArraysTest(unittest.TestCase):
     """`LOGICAL_WARP_ID[n]` y `WARP_ARG[n]` (§14.2) y las instrucciones que los leen."""
 

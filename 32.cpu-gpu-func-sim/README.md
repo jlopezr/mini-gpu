@@ -46,6 +46,11 @@ con un modelo en Python. Con `mini-dbg`, `break gpu_k_render` para en cada warp
 (ocho veces por frame): `until present` o `watch` sobre el framebuffer trasero
 dan una vista más tranquila.
 
+[`examples/render/render_cpu.asm`](examples/render/render_cpu.asm) pinta **la misma
+imagen byte a byte** solo con la CPU (el test lo exige), para tener con qué
+comparar lo que aporta la GPU: 42 instrucciones por celda, unas 203 000 por
+frame, frente a las 27 000 de warp de la versión con GPU.
+
 ## Qué se comparte
 
 | | |
