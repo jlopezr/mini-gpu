@@ -189,7 +189,7 @@ es falsa. Lo que sale de la tabla, además:
   GPU por transacción de 16 B en `memset` y 30 en `memcpy`, el doble de los 17 del modelo.
   Con un solo warp son 61 y 45. La sección siguiente explica de dónde sale.
 
-## Qué limita de verdad a la GPU: el ritmo de instrucciones, no la memoria
+## Qué limita de verdad a la GPU: el coste de cada instrucción, no la memoria
 
 Con el sondeo descartado quedaban la LSU y la SDRAM. `examples/dma/lat_exp_board.asm`
 (código en `lat_exp.inc`) mide la latencia de UN acceso: un warp con una sola lane
@@ -237,8 +237,9 @@ instrucciones, tarda 72 ciclos por vuelta: **14,4 ciclos de GPU por instrucción
 retirada**, con un solo warp y sin fallos de búfer de instrucciones (4 en total). Un
 warp no puede lanzar una instrucción detrás de otra: tarda unos 14 ciclos en completarla.
 
-**3. Y con más warps no baja del todo: unos 12,7 ciclos por instrucción.** Con `memset`,
-que mide los ciclos y las instrucciones retiradas con los contadores de la propia GPU:
+**3. Con más warps el coste baja, pero no a uno: depende de la instrucción.** Con
+`memset`, que mide los ciclos y las instrucciones retiradas con los contadores de la
+propia GPU:
 
 | Warps | Ciclos GPU | Instrucciones de warp | Ciclos por instrucción | Ciclos por transacción |
 |---:|---:|---:|---:|---:|
@@ -247,40 +248,86 @@ que mide los ciclos y las instrucciones retiradas con los contadores de la propi
 | 4 | 635 157 | 49 212 | 12,9 | 38,7 |
 | 8 | 628 113 | 49 272 | 12,7 | 38,2 |
 
-El número de instrucciones es el mismo (el trabajo es el mismo); lo que cambia es lo que
-tarda cada una. Con un warp son 20,2 ciclos: los 14 de la instrucción más lo que espera
-a memoria. Con dos o más warps se tapa la espera y se llega a un suelo de ~12,7 ciclos
-por instrucción de warp **que no baja con más warps**: el SM retira una instrucción cada
-12,7 ciclos como mucho, con independencia de cuántos warps haya listos.
+El número de instrucciones es el mismo; lo que cambia es lo que tarda cada una. Con un
+warp son 20,2 ciclos: los 14 de la instrucción más lo que espera a memoria. Con dos o
+más warps se tapa la espera y se llega a ~12,7, que **no baja con más warps**. Ese 12,7
+no es una constante del SM: es el promedio de la mezcla de instrucciones del bucle, como
+se ve a continuación.
 
-**Y eso explica el techo de ~38 ciclos por transacción.** El bucle de `memset` son seis
-instrucciones por dos transacciones (una instrucción `STORE` de ocho lanes es una
-escritura de 32 B, dos de 16 B): tres instrucciones por transacción, 3 x 12,7 = 38,2. El de
-`memcpy` son ocho instrucciones por cuatro transacciones: dos por transacción, 2 x 12,7 =
-25,5 (se miden 29,7). El techo de ~10 MB/s no lo pone la memoria, sino que hay
-demasiadas instrucciones por cada byte movido.
+## De dónde salen esos ciclos: la etapa X, medida en el RTL
+
+El SM (`36.fpga-cpu-gpu/gpu_sm.v`) es un cauce S → F → I → D → X → W con una
+instrucción en vuelo por warp y sin bypass (un warp no vuelve a ser elegible hasta que
+su instrucción compromete). Solo hay **una** etapa X para los ocho warps, y es la FSM de
+`gpu_lane.v` heredada de la CPU (decode, execute, retire), que no está segmentada.
+`36.fpga-cpu-gpu/sim/instr_rate.py` simula el RTL con iverilog y mide los ciclos por
+instrucción de warp de cada tipo (kernel con 20 copias de la instrucción menos el mismo
+kernel sin ellas):
+
+```text
+python 36.fpga-cpu-gpu/sim/instr_rate.py --warps 1 2 8
+```
+
+| Instrucción | 1 warp | 2 warps | 8 warps |
+|---|---:|---:|---:|
+| ADD / ADDI / MOVI | 16,2 | 8,1 | 7,0 |
+| NOP | 16,2 | 8,1 | 7,0 |
+| SHL por 2 | 19,2 | 10,8 | 10,0 |
+| SHL por 5 | 22,2 | 13,4 | 13,0 |
+| MUL | 20,2 | 11,6 | 11,0 |
+| BNE no tomado | 18,2 | 9,9 | 9,0 |
+| STORE (ocho lanes seguidas) | 31,2 | 24,6 | 20,1 |
+| LOAD (ocho lanes seguidas) | 31,2 | 24,6 | 20,1 |
+| STORE + 2 ADD | 21,2 | 13,6 | 11,1 |
+| STORE + 4 ADD | 19,2 | 11,4 | 9,5 |
+
+Lo que dice la tabla (y una traza ciclo a ciclo de las etapas):
+
+- **Un warp solo ve la latencia entera del cauce**: unos 16 ciclos en el simulador (14,4 en
+  la placa; cambia con la latencia del búfer de instrucciones). Una instrucción ALU pasa
+  1 ciclo en S, 3 en F, 1 en I, 4 en D y unos 7 en X.
+- **Con ocho warps, F, I y D se solapan con X y el caudal lo fija X**: una ALU simple
+  ocupa X 7 ciclos, un salto 9, un desplazamiento 7 más la cantidad desplazada (el
+  desplazador es de un bit por ciclo), una multiplicación 11. Con dos warps ya se está
+  casi en el caudal de ocho.
+- **Las instrucciones de memoria no se solapan con las de ALU.** `STORE` + 4 `ADD` cuesta
+  47 ciclos por grupo, que es lo que da sumar los tiempos por separado (20 + 4 x 7 = 48);
+  con `STORE` + 2 `ADD`, 33 contra 34. Es compatible con que D sea un único hueco en
+  orden que se queda esperando a la LSU, pero no se ha comprobado el mecanismo.
+- **El simulador usa la RAM del testbench** (latencias 5 y 7), no la SDRAM de la placa: las
+  cifras de ALU, saltos, desplazamientos y `MUL` no dependen de la memoria; las de
+  `LOAD` y `STORE` son orientativas.
+
+**Esto explica los números de la placa.** El bucle de `memset` es `BGEU` (9), `SHL` por 2
+(10), `ADD` (7), `STORE`, `ADD` (7) y `BRA`: unos 40 ciclos de X sin contar `STORE`
+ni `BRA`. Con la `STORE` del simulador (20) salen unos 60 ciclos por vuelta, y la placa mide
+76 (6 instrucciones x 12,7). La diferencia es la `STORE` real contra SDRAM: serían unos 36
+ciclos, 18 por transacción de 16 B. El de `memcpy` pasa por una mezcla parecida y sale
+a 30 ciclos por transacción.
 
 También explica por qué el modelo de ciclos de la 25 subestimaba el código con cálculo:
-suponía una instrucción por ciclo en la etapa X y la placa tarda unos 13. Los 46 564
-instrucciones de warp de un fotograma del plasma v2 a 12,7 ciclos son 23,7 ms, y se
-midieron 19,6; el modelo daba 8,4.
+suponía una instrucción por ciclo en X y el RTL tarda 7 como mínimo. Los 46 564
+instrucciones de warp de un fotograma del plasma v2, con esa mezcla (12,7 de media), son
+23,7 ms, y se midieron 19,6; el modelo daba 8,4.
 
-**Qué implica.** El rendimiento de la GPU es, hoy, **~2 millones de instrucciones de warp
-por segundo** (25 MHz entre 12,7), es decir, unos 16 millones de operaciones de lane por
-segundo con las ocho lanes activas. La CPU hace unos 10 millones de instrucciones por
-segundo (80 MHz entre unos 7,5 ciclos por instrucción, el CPI medido en el plasma). Con
-las ocho lanes activas, la GPU solo es 1,5 veces más rápida que la CPU en operaciones por
-segundo. Lo que ganan los demos de `race` por encima de eso viene de que la CPU paga
-más en sus instrucciones lentas (un desplazamiento cuesta 7 + n ciclos y una
-multiplicación 11) y de que la GPU las comparte entre ocho lanes.
+**Qué implica.** La GPU retira del orden de 2 a 3 millones de instrucciones de warp por
+segundo (25 MHz entre 7 a 13 ciclos), es decir, unos 16 a 24 millones de operaciones de
+lane por segundo con las ocho lanes activas. La CPU hace unos 10 millones de instrucciones
+por segundo (80 MHz entre unos 7,5 ciclos por instrucción, el CPI medido en el plasma): su
+FSM es la misma que la de la lane, así que paga lo mismo en desplazamientos y
+multiplicaciones. Con las ocho lanes activas, la GPU solo es entre 1,5 y 2,5 veces más
+rápida que la CPU en operaciones por segundo.
 Hay dos caminos para mejorarlo:
 
-- **En el RTL del SM:** que una instrucción de warp no tarde 12 o 14 ciclos. Es lo que
-  limita todo lo demás.
-- **En los kernels, sin tocar el RTL:** menos instrucciones por transacción. Desenrollar el
-  bucle de `memset` para que una vuelta haga cuatro `STORE` con desplazamientos
-  inmediatos deja una instrucción por transacción, tres veces menos que ahora. Con eso la GPU
-  pasaría de 10 MB/s a unos 30 MB/s, por encima de los 15 de la CPU. No se ha probado.
+- **En el RTL del SM:** acortar los 7 ciclos de X de una operación simple, un desplazador
+  de varios bits por ciclo y que una instrucción de memoria no bloquee a las de ALU. Es lo
+  que limita todo lo demás.
+- **En los kernels, sin tocar el RTL:** menos instrucciones y de las baratas. Quitar el
+  `SHL` del bucle (avanzar el puntero con `ADDI`) ahorra unos 10 ciclos por vuelta, y
+  desenrollar para que una vuelta haga cuatro `STORE` reparte el salto y el `BGEU` entre
+  cuatro. Con los 18 ciclos por transacción de la `STORE` real, el techo sería la memoria,
+  unos 20 MB/s: por encima de los 15 de la CPU, pero no los 30 que se estimaron antes
+  contando 12,7 ciclos por instrucción. No se ha probado.
 
 ## Lo que sale de aquí para la política CPU / GPU
 
@@ -298,10 +345,8 @@ Hoy, en esta placa y con esta GPU:
 
 - **Con el vídeo activo.** La lectura de pantalla compite con la GPU y con la CPU por
   la SDRAM. No se ha medido el efecto.
-- **Si desenrollar los kernels sube de verdad el techo.** La cuenta dice que sí, de unos 10
-  MB/s a unos 30 en `memset`, pero no se ha escrito ni medido. Si la cuenta es cierta, la
-  política de arriba (`memset` y `fill_rect` siempre por la CPU) cambia.
-- **De dónde salen los ~12,7 ciclos por instrucción** (si son las lanes en serie, la
-  profundidad del cauce o la falta de bypass del SM, que es lo que dice el comentario
-  de `gpu_perf_counters.v` sobre este prototipo). Eso es una pregunta para el RTL, no
-  para los kernels.
+- **Si desenrollar los kernels y quitar el `SHL` sube de verdad el techo** de `memset`
+  de unos 10 MB/s a unos 20. La cuenta lo dice, pero no se ha escrito ni medido. Si es
+  cierta, la política de arriba (`memset` y `fill_rect` siempre por la CPU) cambia.
+- **El mecanismo por el que una instrucción de memoria no se solapa con las de ALU**
+  (se sospecha del hueco único de D). Y el coste de `BRA`, que no se ha medido.
