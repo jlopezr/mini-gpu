@@ -25,6 +25,24 @@ dirección escrita a mano. Los resultados también van en una etiqueta (`out`).
 kernels en `gpu_kernels.inc`, todo en una sola imagen. Incluye un job que falla,
 uno que no termina y la recuperación de la GPU.
 
+[`examples/render/`](examples/render/render.asm) es un programa gráfico: un
+plasma que pinta la GPU y cuyo bucle de frames lleva la CPU.
+
+```bash
+cpugpusim examples/render/render.asm --video --window
+mini-dbg --gpu examples/render/render.asm --video --window     # depurado
+```
+
+La CPU configura el vídeo, y en cada frame escribe los argumentos, lanza 8 warps
+con el runtime de `examples/dma`, espera, pide el `SWAP` y espera a que se
+aplique. Cada uno de los 64 hilos pinta una fila de un mosaico de 80 × 60 celdas
+de 4 × 4 píxeles, con tres ondas triangulares (una por canal RGB565) calculadas
+sin ramas; solo diverge al principio, en los 4 hilos que sobran. Un frame son
+unas 27 000 instrucciones de warp. `test_cpu_gpu_sim.py` lo compara píxel a píxel
+con un modelo en Python. Con `mini-dbg`, `break gpu_k_render` para en cada warp
+(ocho veces por frame): `until present` o `watch` sobre el framebuffer trasero
+dan una vista más tranquila.
+
 ## Qué se comparte
 
 | | |

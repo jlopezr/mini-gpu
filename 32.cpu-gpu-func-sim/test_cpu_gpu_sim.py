@@ -253,6 +253,67 @@ class DmaHarnessTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
+RENDER = HERE / "examples" / "render" / "render.asm"
+
+
+def plasma_reference(frame: int) -> bytes:
+    """El framebuffer RGB565 de `render.asm` en `frame`, calculado en Python.
+
+    Es la misma aritmética entera que el kernel: tres ondas triangulares de seis
+    bits, una por canal, en un mosaico de 80 x 60 celdas de 4 x 4 píxeles.
+    """
+    def tri(p):
+        a = abs((p & 63) - 32)
+        return a - (a >> 5)
+
+    out = bytearray(320 * 240 * 2)
+    for cy in range(60):
+        for cx in range(80):
+            pixel = (tri(cx + cy + frame) << 11
+                     | tri(2 * cx - cy + 2 * frame) << 6
+                     | tri(2 * cy - cx + 3 * frame))
+            cell = struct.pack("<I", pixel | pixel << 16) * 2
+            for line in range(4):
+                start = ((cy * 4 + line) * 320 + cx * 4) * 2
+                out[start:start + 8] = cell
+    return bytes(out)
+
+
+class RenderExampleTest(unittest.TestCase):
+    """`examples/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
+
+    @classmethod
+    def setUpClass(cls):
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = 2
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(sim.load_program_file(RENDER))
+        cls.outcome = cls.system.run()
+        cls.video = video
+
+    def test_it_stops_after_the_second_swap_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, 2)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_frame_is_the_second_one_drawn_by_the_gpu(self):
+        base = self.video.fb_front
+        frame = bytes(self.system.memory[base:base + 320 * 240 * 2])
+        self.assertEqual(frame, plasma_reference(1))
+
+    def test_the_other_buffer_still_holds_the_first_frame(self):
+        base = self.video.fb_back
+        frame = bytes(self.system.memory[base:base + 320 * 240 * 2])
+        self.assertEqual(frame, plasma_reference(0))
+
+    def test_every_warp_was_used_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        # 8 warps por frame; la CPU relanza los mismos ocho
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+
 class WarpConfigArraysTest(unittest.TestCase):
     """`LOGICAL_WARP_ID[n]` y `WARP_ARG[n]` (§14.2) y las instrucciones que los leen."""
 
