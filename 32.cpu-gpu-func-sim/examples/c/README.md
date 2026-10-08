@@ -171,8 +171,14 @@ pases nuevos son:
 - **`licm`**: en cada bucle sin bucles dentro ni llamadas, saca al preheader lo que no cambia: las
   constantes (`MOVI`/`LI`, el `MOVI` previo a cada desplazamiento de la GPU, los límites de las
   comparaciones) y las cuentas cuyos operandos son fijos (`SHL p, cstep, 2`). Usa un registro que el
-  bucle no toque (R5..R15, y en un kernel también los R16..R29 sin uso); un cero se cambia por `R0`. No
+  bucle no toque y que la vida de registros diga libre (R5..R15, R1..R4, R31, y en un kernel también los
+  R16..R29 sin uso; R31 solo mientras la función no tenga que volver por él); un cero se cambia por `R0`. No
   toca cargas ni `DIV`. Es LICM (*loop-invariant code motion*) conservador, sobre registros ya asignados.
+- **`constprop`**: donde un registro vale una constante por todos los caminos, la instrucción que lo lee usa
+  el inmediato: `MOVI R7, 256 ; SUB d, a, R7` pasa a `ADDI d, a, -256` (también `ADD`, `AND`, `OR`, `XOR`), y
+  `SHL d, a, R9` con R9 = 1 pasa a `ADD d, a, a`. La constante deja de ocupar un registro, que es lo que
+  importa en un kernel: los saltos y los desplazamientos de la GPU no tienen inmediato, así que esas
+  constantes se quedan. No cambia el número de instrucciones ejecutadas, solo los registros.
 - **`copyprop`**: propagación de copias y código muerto. Donde `ADD d, s, R0` llega a un uso de `d` por todos
   los caminos sin que `d` ni `s` se reescriban, el uso lee `s`; las copias y cualquier instrucción pura
   cuyo resultado nadie lee se borran. lcc copia a un temporal casi todo lo que compara o indexa.
@@ -233,11 +239,15 @@ Ciclos de CPU a 80 MHz por fotograma, medidos en la placa (último trabajo de ca
 Eso, sin `licm` ni `SSY` unidos. Con ellos (el mismo programa recompilado, otra lectura de cada uno), y
 después con `copyprop` además:
 
-| Método | Ensamblador | C con `licm` | C con `licm` y `copyprop` | C / ens. |
-|---|---:|---:|---:|---:|
-| CPU | 7.073.724 | 8.198.496 | 6.785.491 | 0,96 |
-| GPU inocente | 2.206.206 | 2.390.343 | 2.330.803 | 1,06 |
-| GPU buena | 1.258.934 | 1.895.447 | 1.656.606 | 1,32 |
+| Método | Ensamblador | C con `licm` | C con `licm` y `copyprop` | C con `constprop` y R1..R4/R31 | C / ens. |
+|---|---:|---:|---:|---:|---:|
+| CPU | 7.073.724 | 8.198.496 | 6.785.491 | 7.080.804 | 1,00 |
+| GPU inocente | 2.206.206 | 2.390.343 | 2.330.803 | 2.290.832 | 1,04 |
+| GPU buena | 1.258.934 | 1.895.447 | 1.656.606 | 1.579.128 | 1,25 |
+
+Cada columna es una lectura distinta de `race_cycles`, del último fotograma de ese método, y el coste
+de un fotograma depende del ángulo del cubo: entre columnas hay unos puntos de ruido (la CPU sube de 6,79 M
+a 7,08 M sin que el código de su bucle haya cambiado), y solo la GPU buena muestra una mejora clara.
 
 Es una sola medida de cada uno, no una media. Los `SSY` bajan de 16 a 6 y las constantes salen del bucle.
 La GPU buena sigue siendo la peor. El bucle de celdas ya lleva un solo `SSY` por celda, como el

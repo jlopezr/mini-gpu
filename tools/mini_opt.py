@@ -331,7 +331,7 @@ def live_in_entry(blocks: list[Block], live_out: list[set[int]]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "copyprop", "licm", "ssy"]
+DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "constprop", "copyprop", "licm", "ssy"]
 
 
 def register_pass(name: str, doc: str):
@@ -664,7 +664,7 @@ def pass_jumps(unit: Unit, stats: dict) -> None:
 # tiene que venir solo de esa definicion (definiciones que alcanzan), y el registro no puede
 # estar vivo al salir del bucle por otra via. No toca cargas (haria falta saber que nada las
 # modifica) ni lo que puede dar un fallo (DIV, REM). Un cero se sustituye por R0 sin gastar
-# registro. Los registros libres son R5..R15; en un kernel, tambien los R16..R29 que nadie usa.
+# registro. Los registros libres son R5..R15, R1..R4 y R31 (si la vida de registros dice que lo estan); en un kernel, tambien los R16..R29 que nadie usa.
 # ---------------------------------------------------------------------------
 
 LICM_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | {"MOVI", "MOVHI", "LI"}
@@ -828,7 +828,9 @@ def pass_licm(unit: Unit, stats: dict) -> None:
         dom = dominators(blocks)
         loops = natural_loops(blocks, dom)
         kernel = function.name.startswith(KERNEL_PREFIX)
-        allowed = list(range(5, 16)) + (list(range(16, 30)) if kernel else [])
+        # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
+        # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
+        allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
         for header, body in sorted(loops.items()):
             if any(h != header and h in body for h in loops):         # tiene un bucle dentro
                 continue
@@ -912,6 +914,28 @@ def available_copies(blocks: list[Block]) -> list[dict[int, int] | None]:
     return entry
 
 
+def remove_dead(blocks: list[Block], stats: dict, name: str) -> None:
+    """Borra las instrucciones puras cuyo resultado no se lee, hasta que no quede ninguna."""
+    while True:
+        live_out = liveness(blocks)
+        removed = 0
+        for block in blocks:
+            keep: list[Line] = []
+            for position, line in enumerate(block.lines):
+                if line.kind == "instr" and line.op in DEAD_OK:
+                    defs, _ = defs_uses(line)
+                    if len(defs) == 1 and not defs & live_after(block, live_out[block.index], position):
+                        removed += 1
+                        continue
+                keep.append(line)
+            block.lines = keep
+            if removed:
+                break                                 # la vida cambio: recalcular
+        if not removed:
+            return
+        stats[f"{name}.removed"] = stats.get(f"{name}.removed", 0) + removed
+
+
 @register_pass("copyprop", "propagacion de copias (ADD d, s, R0) y borrado de lo que ya nadie lee")
 def pass_copyprop(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
@@ -937,24 +961,123 @@ def pass_copyprop(unit: Unit, stats: dict) -> None:
                 pair = copy_of(line)
                 if pair is not None:
                     state[pair[0]] = pair[1]
-        while True:                                   # codigo muerto: pura y su resultado no se lee
-            live_out = liveness(blocks)
-            removed = 0
-            for block in blocks:
-                keep: list[Line] = []
-                for position, line in enumerate(block.lines):
-                    if line.kind == "instr" and line.op in DEAD_OK:
-                        defs, _ = defs_uses(line)
-                        if len(defs) == 1 and not defs & live_after(block, live_out[block.index], position):
-                            removed += 1
-                            continue
-                    keep.append(line)
-                block.lines = keep
-                if removed:
-                    break                             # la vida cambio: recalcular
-            if not removed:
-                break
-            stats["copyprop.removed"] = stats.get("copyprop.removed", 0) + removed
+        remove_dead(blocks, stats, "copyprop")
+        function.body = [line for block in blocks for line in block.lines]
+
+
+# ---------------------------------------------------------------------------
+# Propagacion de constantes
+#
+# Donde un registro vale una constante por todos los caminos (`MOVI R7, 256`), la instruccion que
+# lo lee pasa a su forma con inmediato: `SUB d, a, R7` -> `ADDI d, a, -256`; `ADD`, `AND`, `OR` y
+# `XOR` igual (la suma con signo de 16 bits, la logica sin signo). Un desplazamiento de 1 bit es
+# una suma: `SHL d, a, R9` con R9 = 1 -> `ADD d, a, a`. La constante deja de ocupar un registro
+# (la GPU no tiene saltos ni desplazamientos con inmediato, asi que no todas se van).
+# ---------------------------------------------------------------------------
+
+FOLD_LOGIC = {"AND": "ANDI", "OR": "ORI", "XOR": "XORI"}
+
+
+def constant_of(line: Line) -> int | None:
+    """Valor que deja en su destino una instruccion que carga una constante numerica."""
+    if line.kind != "instr" or not line.args:
+        return None
+    if line.op in ("MOVI", "LI"):
+        return number(line.args[1])
+    if line.op == "ADDI" and reg_of(line.args[1]) == 0:
+        return number(line.args[2])
+    return None
+
+
+def known_constants(blocks: list[Block]) -> list[dict[int, int] | None]:
+    """Constantes {registro: valor} que valen a la entrada de cada bloque (interseccion por los caminos)."""
+    n = len(blocks)
+    preds: list[list[int]] = [[] for _ in range(n)]
+    for block in blocks:
+        for s in block.succ:
+            preds[s].append(block.index)
+
+    def step(state: dict[int, int], line: Line) -> None:
+        for reg in defs_uses(line)[0]:
+            state.pop(reg, None)
+        value = constant_of(line)
+        if value is not None and reg_of(line.args[0]) not in (None, 0):
+            state[reg_of(line.args[0])] = value
+
+    entry: list[dict[int, int] | None] = [None] * n
+    out: list[dict[int, int] | None] = [None] * n
+    entry[0] = {}
+    changed = True
+    while changed:
+        changed = False
+        for b in range(n):
+            if b != 0:
+                known = [out[p] for p in preds[b] if out[p] is not None]
+                if not known:
+                    continue
+                new = {k: v for k, v in known[0].items() if all(o.get(k) == v for o in known[1:])}
+                if entry[b] != new:
+                    entry[b], changed = new, True
+            state = dict(entry[b] or {})
+            for line in blocks[b].lines:
+                if line.kind == "instr":
+                    step(state, line)
+            if out[b] != state:
+                out[b], changed = state, True
+    return entry
+
+
+def fold_constant(line: Line, state: dict[int, int]) -> bool:
+    """Reescribe `line` con inmediato si un operando es una constante conocida."""
+    if line.op not in R3 or len(line.args) != 3:
+        return False
+    d, a, b = line.args
+    ra, rb = reg_of(a), reg_of(b)
+    ca = state.get(ra) if ra not in (None, 0) else None
+    cb = state.get(rb) if rb not in (None, 0) else None
+    if line.op == "ADD":
+        if cb is not None and -32768 <= cb <= 32767:
+            line.op, line.args = "ADDI", [d, a, str(cb)]
+        elif ca is not None and -32768 <= ca <= 32767:
+            line.op, line.args = "ADDI", [d, b, str(ca)]
+        else:
+            return False
+    elif line.op == "SUB" and cb is not None and -32768 <= -cb <= 32767:
+        line.op, line.args = "ADDI", [d, a, str(-cb)]
+    elif line.op in FOLD_LOGIC:
+        if cb is not None and 0 <= cb <= 0xFFFF:
+            line.op, line.args = FOLD_LOGIC[line.op], [d, a, str(cb)]
+        elif ca is not None and 0 <= ca <= 0xFFFF:
+            line.op, line.args = FOLD_LOGIC[line.op], [d, b, str(ca)]
+        else:
+            return False
+    elif line.op == "SHL" and cb == 1:
+        line.op, line.args = "ADD", [d, a, a]
+    else:
+        return False
+    return True
+
+
+@register_pass("constprop", "constantes conocidas: ADD/SUB/AND/OR/XOR a su forma con inmediato, SHL por 1 a ADD")
+def pass_constprop(unit: Unit, stats: dict) -> None:
+    for function in unit.functions():
+        blocks = build_cfg(function)
+        if not blocks:
+            continue
+        entry = known_constants(blocks)
+        for b, block in enumerate(blocks):
+            state = dict(entry[b] or {})
+            for line in block.lines:
+                if line.kind != "instr":
+                    continue
+                if fold_constant(line, state):
+                    stats["constprop.folded"] = stats.get("constprop.folded", 0) + 1
+                for reg in defs_uses(line)[0]:
+                    state.pop(reg, None)
+                value = constant_of(line)
+                if value is not None and reg_of(line.args[0]) not in (None, 0):
+                    state[reg_of(line.args[0])] = value
+        remove_dead(blocks, stats, "constprop")
         function.body = [line for block in blocks for line in block.lines]
 
 

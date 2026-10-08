@@ -970,6 +970,9 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
   viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
+- **Pase `constprop`:** donde un registro vale una constante por todos los caminos, `ADD`, `SUB`, `AND`,
+  `OR` y `XOR` pasan a su forma con inmediato, y `SHL` por 1 a `ADD d, a, a`; la constante, si ya nadie la
+  lee, se borra.
 - **Pase `copyprop`:** propagación de copias (`ADD d, s, R0`: donde llega por todos los caminos, los
   usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea

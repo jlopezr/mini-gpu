@@ -542,6 +542,88 @@ class CopyPropTest(unittest.TestCase):
         self.assertIn("ADD R1, R7, R0", out)
 
 
+class ConstPropTest(unittest.TestCase):
+    def run_pass(self, body: str):
+        stats = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        return lines_of(optimize(source, ["constprop"], stats=stats)), stats
+
+    def test_a_subtraction_of_a_constant_becomes_an_addi(self):
+        out, stats = self.run_pass("MOVI R7, 256\nSUB R13, R28, R7\nSTORE R13, R1, 0")
+        self.assertIn("ADDI R13, R28, -256", out)
+        self.assertNotIn("MOVI R7, 256", out)                    # y la constante ya no se lee
+        self.assertEqual(stats["constprop.folded"], 1)
+
+    def test_and_or_xor_take_the_unsigned_immediate(self):
+        out, _ = self.run_pass("MOVI R7, 252\nAND R13, R28, R7\nOR R14, R7, R28\nSTORE R13, R1, 0\nSTORE R14, R1, 4")
+        self.assertIn("ANDI R13, R28, 252", out)
+        self.assertIn("ORI R14, R28, 252", out)
+
+    def test_a_shift_by_one_is_an_add(self):
+        out, _ = self.run_pass("MOVI R9, 1\nSHL R14, R14, R9\nSTORE R14, R1, 0")
+        self.assertIn("ADD R14, R14, R14", out)
+        self.assertNotIn("MOVI R9, 1", out)
+
+    def test_a_constant_that_does_not_fit_stays_in_its_register(self):
+        out, _ = self.run_pass("LI R7, 100000\nADD R13, R28, R7\nSTORE R13, R1, 0")
+        self.assertIn("ADD R13, R28, R7", out)
+
+    def test_a_register_that_is_a_constant_on_one_path_only_is_not_folded(self):
+        body = "MOVI R7, 5\nBEQ R1, R0, L.2\nMOVI R7, 6\nL.2:\nSUB R13, R28, R7\nSTORE R13, R2, 0"
+        out, _ = self.run_pass(body)
+        self.assertIn("SUB R13, R28, R7", out)
+
+    def test_a_copy_from_r0_is_left_as_a_copy(self):
+        out, _ = self.run_pass("ADD R13, R28, R0\nSTORE R13, R1, 0")
+        self.assertIn("ADD R13, R28, R0", out)
+
+
+FREE_REGISTERS_LOOP = """.text
+.globl f
+f:
+{prologue}
+MOVI R16, 0
+BRA L.2
+L.1:
+ADD R1, R1, R2
+ADD R3, R3, R4
+ADD R5, R5, R6
+ADD R7, R7, R8
+MOVI R9, 77
+ADD R10, R10, R9
+ADD R11, R11, R12
+ADD R13, R13, R14
+ADD R15, R15, R16
+ADDI R16, R16, 1
+L.2:
+MOVI R17, 10
+BLT R16, R17, L.1
+{epilogue}
+JR R31
+"""
+
+
+class LicmFreeRegistersTest(unittest.TestCase):
+    def run_pass(self, prologue: str = "", epilogue: str = ""):
+        source = FREE_REGISTERS_LOOP.format(prologue=prologue, epilogue=epilogue)
+        return lines_of(optimize(source, ["licm"]))
+
+    def test_r31_is_not_used_while_the_function_still_has_to_return_through_it(self):
+        out = self.run_pass()
+        self.assertIn("MOVI R9, 77", out[out.index("L.1:"):])             # no hay donde ponerla
+
+    def test_r31_is_free_in_a_loop_that_comes_between_its_save_and_its_restore(self):
+        out = self.run_pass("STORE R31, R30, 0", "LOAD R31, R30, 0")
+        self.assertIn("MOVI R31, 77", out[:out.index("BRA L.2")])
+        self.assertIn("ADD R10, R10, R31", out[out.index("L.1:"):])
+
+    def test_argument_registers_are_used_when_nobody_reads_them(self):
+        source = FREE_REGISTERS_LOOP.format(prologue="", epilogue="").replace("ADD R1, R1, R2\nADD R3, R3, R4\n", "")
+        out = lines_of(optimize(source, ["licm"]))
+        self.assertTrue(any(l in ("MOVI R1, 77", "MOVI R2, 77", "MOVI R3, 77", "MOVI R4, 77")
+                            for l in out[:out.index("BRA L.2")]), out)
+
+
 class SsyMergeTest(unittest.TestCase):
     def test_a_second_branch_with_the_same_join_shares_the_first_region(self):
         source = (".text\n.globl __kernel_k\n__kernel_k:\nGETTID R16\nANDI R7, R16, 1\nBEQ R7, R0, L.2\n"
