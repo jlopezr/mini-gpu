@@ -112,6 +112,7 @@ simulador sale plana: los simuladores cuentan instrucciones, no ciclos.
 | `life` | juego de la vida, 160 x 104 celdas | 9 lecturas, 3 escrituras |
 | `blur` | difusión de calor: 3 puntos que se mueven y un desenfoque 3 x 3 | 9 lecturas, 3 escrituras, algo más de cálculo |
 | `rotate` | una textura que gira y se acerca (un gather por celda) | 1 lectura, 2 escrituras |
+| `cube` | un cubo sólido con una textura por cara, girando sobre dos ejes (ortográfico) | 1 lectura, 2 escrituras, mucho cálculo y divergencia |
 
 Cada uno tiene su versión para el simulador (`life.asm`) y para la placa
 (`life_board.asm`: runtime con `RUN` y `CYCLES`). El anfitrión es `race_host.inc`
@@ -127,12 +128,18 @@ Medido en la placa (80 MHz), tiempo por fotograma:
 | `life` | 172,7 ms | 138,7 ms | 45,1 ms | 3,1 x |
 | `blur` | 190,9 ms | 138,7 ms | 45,4 ms | 3,1 x |
 | `rotate` | 42,0 ms | 29,5 ms | 12,2 ms | 2,4 x |
+| `cube` | 89,6 ms | 27,4 ms | 15,6 ms | 1,8 x |
 
 - **La GPU ingenua apenas gana a la CPU** (1,3 x a 1,4 x): sus lecturas y escrituras
   no se pueden juntar, y la GPU, que va a 25 MHz, se pasa el tiempo en la memoria.
 - **Colocar las lanes bien es lo que mueve la aguja**: 3,1 x en los dos demos de
   rejilla, donde las 9 lecturas y las 3 escrituras se coalescen, y 2,4 x en la
   rotación, donde solo se junta la escritura y la lectura es un gather.
+- **`cube` es el que más gana la GPU a la CPU** (3,3 x la ingenua, 5,7 x la bien puesta)
+  porque tiene mucho cálculo por celda y lo reparte entre las lanes, pero la
+  diferencia entre las dos GPU es la menor (1,8 x): el cálculo pesa más y la lectura
+  de textura es un gather. Las lanes de un warp pueden tomar caminos distintos en
+  cada celda (tres caras y el fondo), y ahí la ingenua pierde más.
 - **`life` y `blur` dan lo mismo en la GPU** (138,7 y 45,1 / 45,4 ms): la memoria
   manda y el cálculo de más del desenfoque queda tapado. En la CPU, que sí paga el
   cálculo, `blur` tarda un 10 % más.

@@ -649,6 +649,157 @@ class RotateRaceTest(unittest.TestCase):
             self.assertEqual((len(warp.region_stack), len(warp.path_stack)), (0, 0))
 
 
+CUBE_SIN = [int(round(128 * math.sin(2 * math.pi * k / 64))) for k in range(64)]
+CUBE_EPS = 256
+CUBE_LIM = 8192 + 2 * CUBE_EPS
+CUBE_BG = 0x10A2
+CUBE_PALETTE = [(0xF800, 0xFFFF), (0x7800, 0x8410), (0x07E0, 0xFFE0),
+                (0x03E0, 0x8400), (0x001F, 0x07FF), (0x000F, 0x0410)]
+
+
+def trunc_div(a: int, b: int) -> int:
+    """La división de la CPU: truncada hacia cero."""
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+def cube_texture(ident: int):
+    """Una de las seis texturas de `cube.inc`: 64 x 64 palabras, borde negro de 2."""
+    pattern = ident >> 1
+    c0, c1 = CUBE_PALETTE[ident]
+    out = []
+    for ty in range(64):
+        for tx in range(64):
+            if pattern == 0:
+                bit = ((tx >> 3) ^ (ty >> 3)) & 1
+            elif pattern == 1:
+                bit = ((tx + ty) >> 3) & 1
+            else:
+                bit = ((tx >> 2) & (ty >> 2)) & 1
+            color = c1 if bit else c0
+            if (tx - 2) & 0xFFFFFFFF >= 60 or (ty - 2) & 0xFFFFFFFF >= 60:
+                color = 0
+            out.append(color | color << 16)
+    return out
+
+
+def cube_matrix(frame: int):
+    """R = Rx(a) Ry(b) en Q7: b es el fotograma y a sus tres cuartos."""
+    b, a = frame & 63, (frame * 3 >> 2) & 63
+    sb, cb = CUBE_SIN[b], CUBE_SIN[(b + 16) & 63]
+    sa, ca = CUBE_SIN[a], CUBE_SIN[(a + 16) & 63]
+    return [[cb, 0, sb],
+            [(sa * sb) >> 7, ca, (-(sa * cb)) >> 7],
+            [(-(ca * sb)) >> 7, sa, (ca * cb) >> 7]]
+
+
+def cube_faces(frame: int):
+    """Por eje, (textura, u00, v00, ux, vx, uy, vy), o una entrada inerte si está de canto."""
+    m = cube_matrix(frame)
+    out = []
+    for i in range(3):
+        if m[2][i] == 0:
+            out.append((0, 0x40000000, 0x40000000, 0, 0, 0, 0))
+            continue
+        s = 1 if m[2][i] > 0 else -1
+        coefficients = []
+        for axis in ((i + 1) % 3, (i + 2) % 3):
+            q = trunc_div(m[2][axis] << 14, m[2][i])
+            cx = (m[0][axis] << 7) - ((q * m[0][i]) >> 7)
+            cy = (m[1][axis] << 7) - ((q * m[1][i]) >> 7)
+            ux, uy = cx >> 7, cy >> 7
+            start = 4096 + ((s * q) >> 2) - 80 * ux - 52 * uy + CUBE_EPS
+            coefficients.append((start, ux, uy))
+        (u00, ux, uy), (v00, vx, vy) = coefficients
+        out.append((2 * i + (s < 0), u00, v00, ux, vx, uy, vy))
+    return out
+
+
+def cube_image(frame: int, textures) -> bytes:
+    """Las 208 líneas de `cube.inc` en `frame`, celda a celda como los tres métodos."""
+    faces = cube_faces(frame)
+    out = bytearray()
+    for y in range(104):
+        state = [[u00 + y * uy, v00 + y * vy, ux, vx, tex]
+                 for (tex, u00, v00, ux, vx, uy, vy) in faces]
+        row = []
+        for _ in range(160):
+            pixel = CUBE_BG | CUBE_BG << 16
+            for u, v, _ux, _vx, tex in state:
+                if (u & 0xFFFFFFFF) < CUBE_LIM and (v & 0xFFFFFFFF) < CUBE_LIM:
+                    index = (((v - CUBE_EPS) * 2) & 0x3F00) \
+                        + ((((u - CUBE_EPS) & 0xFFFFFFFF) >> 5) & 0xFC)
+                    pixel = textures[tex][index >> 2]
+                    break
+            row.append(pixel)
+            for s in state:
+                s[0] += s[2]
+                s[1] += s[3]
+        out += struct.pack("<160I", *row) * 2
+    return bytes(out)
+
+
+class CubeRaceTest(unittest.TestCase):
+    """`examples/race/cube.asm`: los tres métodos tienen que dibujar el mismo cubo."""
+
+    FRAMES = 7
+    PROGRAM = RACE / "cube.asm"
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(cls.PROGRAM)
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+        cls.textures = [cube_texture(i) for i in range(6)]
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_frame_is_the_last_one_drawn(self):
+        self.assertEqual(self.screen(self.video.fb_front),
+                         cube_image(self.FRAMES - 1, self.textures))
+
+    def test_the_previous_frame_is_the_one_before(self):
+        self.assertEqual(self.screen(self.video.fb_back),
+                         cube_image(self.FRAMES - 2, self.textures))
+
+    def test_there_is_a_cube_and_a_background(self):
+        image = cube_image(self.FRAMES - 1, self.textures)
+        words = struct.unpack("<%dI" % (len(image) // 4), image)
+        background = CUBE_BG | CUBE_BG << 16
+        painted = sum(1 for w in words if w != background)
+        self.assertGreater(painted, 2000)
+        self.assertLess(painted, len(words) * 0.8)
+        self.assertGreater(len(set(words)), 6)
+
+    def test_the_gpu_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+    def test_a_face_seen_edge_on_is_inert_and_the_rest_have_their_own_texture(self):
+        for frame in range(64):
+            matrix, faces = cube_matrix(frame), cube_faces(frame)
+            live = [f for f, row in zip(faces, range(3)) if matrix[2][row] != 0]
+            self.assertTrue(live, frame)
+            self.assertEqual(len({f[0] for f in live}), len(live), frame)
+            for face, axis in zip(faces, range(3)):
+                if matrix[2][axis] == 0:
+                    self.assertEqual(face[1], 0x40000000, frame)
+
+
 class LifeRaceStripTest(unittest.TestCase):
     """La gráfica de tiempos: una columna por fotograma, color por método."""
 
