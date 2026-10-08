@@ -1,4 +1,4 @@
-"""`tools/mini_opt.py`: filtro entre el `.s` de mini-lcc y mini-asm.
+"""`tools/mini_opt/` (paquete): filtro entre el `.s` de mini-lcc y mini-asm.
 
 Los `.s` de entrada son salida real de `mini-lcc --no-crt` (copiada), asi que no hace
 falta MSVC para correr la suite. Se comprueba:
@@ -411,7 +411,7 @@ class SsyTest(unittest.TestCase):
         self.assertEqual(sum(l.startswith("SSY") for l in body), 2)
 
     def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
-        import tools.mini_opt as opt
+        from tools.mini_opt.passes import ssy as opt
         source = LOOP.replace("GETTID R5", "MOVI R5, 0")
         opt.SSY_ALL = True
         try:
