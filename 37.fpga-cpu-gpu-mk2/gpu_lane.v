@@ -10,6 +10,7 @@
  *   MOVI Rd, imm16
  *   ADD/SUB/MUL/MULFX/DIV/AND/OR/XOR Rd, Ra, Rb
  *   SHL/SHR/SAR Rd, Ra, Rb
+ *   SLT/SLTU Rd, Ra, Rb
  *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
  *   MOVHI Rd, imm16
  *   LOAD Rd, Ra, imm16
@@ -109,7 +110,8 @@ module gpu_lane #(
   localparam [5:0] OPCODE_BGE = 6'h23;
   localparam [5:0] OPCODE_BLTU = 6'h24;
   localparam [5:0] OPCODE_BGEU = 6'h25;
-
+  localparam [5:0] OPCODE_SLT = 6'h26;
+  localparam [5:0] OPCODE_SLTU = 6'h27;
 
   localparam [5:0] OPCODE_BRA = 6'h2f;
   localparam [5:0] OPCODE_GETTID = 6'h30;
@@ -220,7 +222,8 @@ module gpu_lane #(
       OPCODE_NOP, OPCODE_TRAP, OPCODE_HALT:
         instruction_encoding_valid = instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
-      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV:
+      OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV,
+      OPCODE_SLT, OPCODE_SLTU:
         instruction_encoding_valid = instruction[10:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;
@@ -599,6 +602,24 @@ module gpu_lane #(
               state <= STATE_BRANCH_COMPARE;
             end
 
+            // SLT/SLTU comparten la resta registrada y el estado de los saltos
+            // (kinds 6 y 7): en vez de decidir un salto, escriben 0 o 1 en Rd.
+            OPCODE_SLT: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd6;
+              state <= STATE_BRANCH_COMPARE;
+            end
+
+            OPCODE_SLTU: begin
+              branch_difference <= {1'b0, operand_a} - {1'b0, operand_b};
+              branch_a_sign <= operand_a[31];
+              branch_b_sign <= operand_b[31];
+              branch_kind <= 3'd7;
+              state <= STATE_BRANCH_COMPARE;
+            end
+
             OPCODE_BRA: begin
               branch_taken <= 1'b1;
               branch_target <= pc + {{4{instruction[25]}}, instruction[25:0], 2'b00};
@@ -788,7 +809,16 @@ module gpu_lane #(
             3'd4: branch_taken <= branch_difference[32];
             default: branch_taken <= !branch_difference[32];
           endcase
-          state <= STATE_BRANCH_COMMIT;
+          if (branch_kind[2:1] == 2'b11) begin
+            // SLT (6) y SLTU (7): el resultado va a Rd y no hay salto que
+            // confirmar, asi que se salta STATE_BRANCH_COMMIT.
+            register_write_address <= rd;
+            register_write_data <= {31'b0, branch_kind[0] ? branch_difference[32] :
+                (branch_a_sign != branch_b_sign ? branch_a_sign : branch_difference[31])};
+            register_write_enable <= 1'b1;
+            state <= STATE_RETIRE;
+          end else
+            state <= STATE_BRANCH_COMMIT;
         end
 
         // Comparison and target calculation are registered before modifying PC.
