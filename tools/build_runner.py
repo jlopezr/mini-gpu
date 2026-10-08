@@ -351,25 +351,26 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         text = f"{message}: {', '.join(active)}"
         print(f"\033[36;1m{text}\033[0m" if use_color else text)
     print(f"  {'PROTOTYPE':<29} {'BITSTREAM':<10} {'LAST BUILD':<12} {'TIMING':<6} "
-          f"{'SEED':<5} {'FMAX/REQ':<13} {'ELAPSED':<8} {'DATE':<16} LABEL")
+          f"{'SEED':<5} {'CLOCK':<11} {'FMAX/REQ':<13} {'ELAPSED':<8} {'DATE':<16} LABEL")
     for row in rows:
         marker = "*" if row["state"] == "RUNNING" else " "
+        # Un reloj por linea. El primero es el que limita (el de menos margen) y
+        # va en la fila del prototipo; el resto, debajo, en las mismas columnas
+        # CLOCK / FMAX/REQ y con su propio PASS/FAIL en TIMING.
+        clocks = row.get("clocks", [])
+        if clocks:
+            name, achieved, required = clocks[0]
+            clock_name, fmax = name, f"{achieved:.1f}/{required:.1f}"
+        else:
+            clock_name, fmax = "-", row["fmax"]
         print(f"{marker} {row['prototype']:<29} {field(row['bitstream'], 10)} "
               f"{field(row['state'], 12)} {field(row['timing'], 6)} "
-              f"{row['seed']:<5} {row['fmax']:<13} {row['elapsed']:<8} "
+              f"{row['seed']:<5} {clock_name:<11} {fmax:<13} {row['elapsed']:<8} "
               f"{row['date']:<16} {row['label']}")
-        # Con mas de un reloj, la columna FMAX/REQ solo ensenia el que limita;
-        # debajo van todos, y el que no cumple en rojo.
-        clocks = row.get("clocks", [])
-        if len(clocks) > 1:
-            parts = []
-            for name, achieved, required in clocks:
-                failing = achieved < required
-                text = f"{name} {achieved:.1f}/{round(required, 1):g}" + ("!" if failing else "")
-                if use_color and failing:
-                    text = f"\033[31m{text}\033[0m"
-                parts.append(text)
-            print(f"    {'':<29} " + "  ".join(parts))
+        for name, achieved, required in clocks[1:]:
+            verdict = "PASS" if achieved >= required else "FAIL"
+            print(f"  {'':<29} {'':<10} {'':<12} {field(verdict, 6)} "
+                  f"{'':<5} {name:<11} {f'{achieved:.1f}/{required:.1f}'}")
 
 
 def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,

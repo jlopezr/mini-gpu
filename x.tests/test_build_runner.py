@@ -125,12 +125,26 @@ class BuildRunnerTest(unittest.TestCase):
         with redirect_stdout(out):
             print_prototype_build_summary([row, single])
         lines = out.getvalue().splitlines()
-        # La cabecera, el prototipo con tres relojes y su linea extra, y el de uno.
-        self.assertEqual(len(lines), 4)
-        self.assertIn("sdram_clk 85.5/100!", lines[2])
-        self.assertIn("clk 83.2/80", lines[2])
-        self.assertNotIn("clk 83.2/80!", lines[2])
-        self.assertIn("8.single", lines[3])
+        # Cabecera, tres lineas para el prototipo de tres relojes (un reloj por
+        # linea) y una para el de uno.
+        self.assertEqual(len(lines), 5)
+        self.assertIn("9.multi", lines[1])
+        self.assertIn("sdram_clk", lines[1])       # el que limita va en su fila
+        self.assertIn("85.5/100.0", lines[1])
+        self.assertIn("clk ", lines[2])
+        self.assertIn("83.2/80.0", lines[2])
+        self.assertIn("PASS", lines[2])
+        self.assertIn("clk_25mhz", lines[3])
+        self.assertIn("37.8/25.0", lines[3])
+        self.assertNotIn("9.multi", lines[2])
+        self.assertIn("8.single", lines[4])
+        # Las columnas CLOCK y FMAX/REQ caen en la misma posicion en todas.
+        header = lines[0]
+        clock_col, fmax_col = header.index("CLOCK"), header.index("FMAX/REQ")
+        for index, expected in ((1, "sdram_clk"), (2, "clk"), (3, "clk_25mhz")):
+            self.assertEqual(lines[index][clock_col:].split()[0], expected)
+        for index, expected in ((1, "85.5/100.0"), (2, "83.2/80.0"), (3, "37.8/25.0")):
+            self.assertEqual(lines[index][fmax_col:].split()[0], expected)
 
     def test_a_running_test_is_still_shown_as_active(self):
         with tempfile.TemporaryDirectory() as tmp:
