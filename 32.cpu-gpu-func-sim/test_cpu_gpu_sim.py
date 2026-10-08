@@ -1665,6 +1665,58 @@ class CKernelTest(unittest.TestCase):
         self.assertGreater(self.system.gpu.retired, 128 * 4 * 5)
 
 
+class CSystemKernelsTest(unittest.TestCase):
+    """`examples/c/sysk_c.c` frente a `gpu_kernels.inc`: los kernels de sistema en C dejan la misma
+    memoria que los de ensamblador (y la que dice un modelo en Python) con casi las mismas
+    instrucciones de warp. La proporción tiene un tope para que un cambio en mini-lcc o mini-opt que
+    empeore el código se note."""
+
+    MAX_RATIO = 1.10        # medido: 1,00 a 1,02
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(C_EXAMPLES))
+        import compare
+        cls.compare = compare
+        try:
+            cls.rows = compare.compare()
+        except compare.c_build.BuildError as error:
+            if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
+                raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+            raise
+
+    def model(self, work):
+        c = self.compare
+        words = [0x5A5A5A5A] * 16384
+        src = c.pattern(16384, 7)
+        if work.kernel == "memset":
+            words[:work.params[2]] = [work.params[1]] * work.params[2]
+        elif work.kernel == "memcpy":
+            words[:work.params[2]] = src[:work.params[2]]
+        elif work.kernel == "fill_rect":
+            _, pitch, row_words, rows, value = work.params
+            for r in range(rows):
+                start = r * pitch // 4
+                words[start:start + row_words] = [value] * row_words
+        else:
+            _, dst_pitch, _, src_pitch, row_words, rows = work.params
+            for r in range(rows):
+                start, s0 = r * dst_pitch // 4, r * src_pitch // 4
+                words[start:start + row_words] = src[s0:s0 + row_words]
+        return struct.pack("<16384I", *words)
+
+    def test_both_implementations_leave_what_the_model_says(self):
+        for work, _, _, same, memory in self.rows:
+            with self.subTest(work.name):
+                self.assertTrue(same, "C y ensamblador dejan memorias distintas")
+                self.assertEqual(memory, self.model(work))
+
+    def test_c_costs_about_the_same_warp_instructions_as_assembler(self):
+        for work, asm_count, c_count, _, _ in self.rows:
+            with self.subTest(work.name):
+                self.assertLessEqual(c_count, asm_count * self.MAX_RATIO)
+
+
 class CDivergenceTest(unittest.TestCase):
     """`examples/c/diverge_c.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
     `ssy` de mini-opt. Cada resultado se compara con el mismo cálculo en Python."""

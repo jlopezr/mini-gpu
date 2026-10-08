@@ -54,6 +54,37 @@ python cpu_gpu_sim.py examples/c/_build/memset_c.bin
   lane, una salida anticipada y dos bucles anidados con `break`. Se comprueban contra un
   modelo en Python (`CDivergenceTest`).
 
+## C frente a ensamblador
+
+`sysk_c.c` reescribe en C los cuatro kernels de sistema (`memset`, `memcpy`, `fill_rect`, `blit`),
+con el mismo reparto y el mismo bloque de argumentos que `examples/dma/gpu_kernels.inc`.
+`compare.py` los lanza en el simulador sin programa de CPU, con los mismos datos, y cuenta las
+instrucciones de warp que retira la GPU. Los dos juegos dejan la misma memoria (y la que dice un
+modelo en Python):
+
+| Carga | Elementos | Ensamblador | C | C / ens. | Instr. por elemento (ens.) | (C) |
+|---|---:|---:|---:|---:|---:|---:|
+| memset 4096 | 4096 | 3.132 | 3.136 | 1,00 | 0,76 | 0,77 |
+| memcpy 4096 | 4096 | 4.156 | 4.160 | 1,00 | 1,01 | 1,02 |
+| fill_rect 64x64 | 4096 | 3.640 | 3.640 | 1,00 | 0,89 | 0,89 |
+| blit 64x64 | 4096 | 4.796 | 4.800 | 1,00 | 1,17 | 1,17 |
+| fill_rect 7x13 (3 warps) | 91 | 182 | 182 | 1,00 | 2,00 | 2,00 |
+| blit 7x13 (5 warps) | 91 | 257 | 262 | 1,02 | 2,82 | 2,88 |
+
+**El C cuesta lo mismo que el ensamblador en estos kernels**, con diferencias de entre el 0 y el
+2 %. El bucle interior es idéntico, seis instrucciones por vuelta en los dos: `SHL` más `ADD` para
+indexar, la carga o el almacenamiento, el incremento y el salto. En C el `MOVI` previo al `SHL`
+(la GPU no tiene `SHLI`) ocupa el sitio del `BGEU` de arriba del bucle de ensamblador, porque lcc
+pone la condición abajo. Las cuatro o cinco instrucciones de más de la entrada se pagan una vez
+por lane.
+
+Dos reservas: son instrucciones de warp, no ciclos (una `LOAD` cuesta ~20 ciclos y una ALU 7, según
+`36.fpga-cpu-gpu/sim/instr_rate.py`; la mezcla de los dos bucles es parecida, así que los ciclos
+deberían serlo, pero no se ha medido en la placa), y son kernels cortos y sin estructuras. En uno
+con mucho cálculo y campos de estructura (la rotación, el cubo) la diferencia puede ser mayor:
+lcc relee de la estructura cada campo que usa en el bucle. `CSystemKernelsTest` pone un tope del
+10 % a la proporción para que un cambio en el compilador que empeore el código se note.
+
 ## Límites de hoy
 
 - **Hasta 4 parámetros** de 32 bits por kernel (`R1`–`R4`); con más, un puntero a estructura.
