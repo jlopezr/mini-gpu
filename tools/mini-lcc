@@ -84,7 +84,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, help="ensamblador de salida")
     parser.add_argument("--keep-i", type=Path, metavar="PATH",
                         help="guarda tambien el C preprocesado")
+    parser.add_argument("--no-crt", action="store_true",
+                        help="no emite `_start` ni `.comm __stack`: el arranque lo pone un crt0 "
+                             "(1.isa/runtime/crt0.s) o, en una unidad sin `main`, nadie")
     args = parser.parse_args(argv)
+    rcc_flags = ["-crt=none"] if args.no_crt else []
 
     script = MINI_LCC / "run-mini-tst.py"
     if not script.exists():
@@ -102,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     if source.suffix == ".i":
-        return run([str(RCC), "-target=mini/none", str(source), str(output)])
+        return run([str(RCC), "-target=mini/none", *rcc_flags, str(source), str(output)])
 
     with tempfile.TemporaryDirectory(prefix="mini-lcc-") as tmp:
         preprocessed = Path(tmp) / f"{source.stem}.i"
@@ -126,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             keep_i = args.keep_i.resolve()
             keep_i.parent.mkdir(parents=True, exist_ok=True)
             keep_i.write_text(preprocessed.read_text(encoding="utf-8"), encoding="utf-8")
-        return run([str(RCC), "-target=mini/none", str(preprocessed), str(output)])
+        return run([str(RCC), "-target=mini/none", *rcc_flags, str(preprocessed), str(output)])
 
 
 if __name__ == "__main__":

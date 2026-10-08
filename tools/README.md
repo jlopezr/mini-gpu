@@ -921,6 +921,32 @@ Por ahora esta validacion comprueba compilacion y simulacion dentro de
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
 las suites de `x.tests`.
 
+## Paso entre el compilador y el ensamblador (`mini-link`)
+
+`mini-link` lee los `.s` de `mini-lcc`, les aplica transformaciones y los junta en un
+solo `.s` para `mini-asm`. Cada entrada es una *unidad* con un papel, `cpu` (el
+anfitrión, por defecto) o `gpu` (kernels):
+
+```bash
+$ mini-lcc host.c -o host.s
+$ mini-lcc kernels.c -o kernels.s
+$ mini-link host.s --gpu kernels.s -o programa.s --stats
+$ mini-asm programa.s -o programa.bin
+```
+
+- **Unión:** una sola `_start` (la de la primera unidad `cpu`), un solo `.comm` por
+  símbolo, y los `.extern` se comprueban entre unidades: error si falta un símbolo o
+  está repetido.
+- **Pases** (`--list-passes`): a las unidades `gpu` se les aplica `intrinsics`. El C
+  declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase
+  convierte `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`,
+  `__gpu_warp`, `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Se
+  rechaza la dirección de un intrínseco o un temporal que siga vivo.
+- **Para añadir una transformación:** una función con `@register_pass` en
+  `tools/mini_link.py`. Dispone del troceado en funciones, del grafo de flujo
+  (`build_cfg`) y de la vida de registros (`liveness`).
+
+Pruebas: `x.tests/test_mini_link.py` (no necesita MSVC).
 ## Build con historial de timing, en segundo plano, estado, logs
 
 `tools/build` (con `tools/build_report.py`) es común a cualquier prototipo con
