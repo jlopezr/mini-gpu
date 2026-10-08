@@ -275,6 +275,11 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
     entries = list_builds(report_root)
     latest: dict[str, dict] = {}
     for entry in entries:
+        # LAST BUILD habla de sintesis, no de pruebas: un `test` (lint o suite)
+        # que acaba FAILED no debe tapar un build bueno. Se mantiene si sigue
+        # en marcha, para que el aviso de ACTIVE BUILD lo siga mostrando.
+        if entry.get("label") == "test" and str(entry.get("state", "")).lower() != "running":
+            continue
         name = normalize_prototype(entry.get("prototype"))
         if name and (name not in latest or entry.get("started_at", "") > latest[name].get("started_at", "")):
             latest[name] = entry

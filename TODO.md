@@ -440,6 +440,12 @@ Y estaba la 22.
 
 ## 15. `tools/lint` ensucia el estado de build de cada prototipo
 
+> **Resuelto el 8/10/2026.** `prototype_build_summary` (`build-list --prototypes`)
+> ignora los registros de etiqueta `test` al elegir el último build, salvo los que
+> siguen en marcha. Test en `x.tests/test_build_runner.py`. El texto de abajo se
+> conserva como historia; el aviso de ancho que provocó el último `FAILED` de la 34
+> (`mmio_decoder.v:257`, `palabra >= PERF_SLOTS`) sigue sin limpiar.
+
 **Qué falta.** `tools/lint -p N` se registra como un build de etiqueta `test` y
 termina `FAILED` siempre que el lint saca avisos, o sea, hoy en los doce
 prototipos. Ese registro pasa a ser el «último build» en `build-list

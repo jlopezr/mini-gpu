@@ -77,6 +77,42 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(rows[0]["state"], "RUNNING")
             self.assertEqual(rows[0]["bitstream"], "MISSING")
             self.assertEqual(read_status(record["status_path"])["state"], "running")
+
+    def test_a_failed_test_run_does_not_hide_the_last_build(self):
+        # TODO 15: `test --lint-only` acababa FAILED y pasaba a ser "el ultimo
+        # build" de la tabla, en rojo, con la sintesis bien.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype = root / "1.lint"
+            prototype.mkdir()
+            (prototype / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            reports = root / "reports"
+            build = create_build_record(reports, prototype.name, "build", ["build"])
+            update_build_record(build["status_path"], state="success", exit_code=0,
+                                started_at="2026-10-01T10:00:00Z")
+            lint = create_build_record(reports, prototype.name, "test", ["test", "--lint-only"])
+            update_build_record(lint["status_path"], state="failed", exit_code=1,
+                                started_at="2026-10-01T11:00:00Z")
+
+            rows = prototype_build_summary(root, reports)
+
+            self.assertEqual(rows[0]["state"], "SUCCESS")
+            self.assertEqual(rows[0]["label"], "build")
+
+    def test_a_running_test_is_still_shown_as_active(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype = root / "1.live"
+            prototype.mkdir()
+            (prototype / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            reports = root / "reports"
+            record = create_build_record(reports, prototype.name, "test", ["test"])
+            update_build_record(record["status_path"], pid=os.getpid())
+
+            rows = prototype_build_summary(root, reports)
+
+            self.assertEqual(rows[0]["state"], "RUNNING")
+
     def test_build_all_runs_apio_prototypes_sequentially_and_continues(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
