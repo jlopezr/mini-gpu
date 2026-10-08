@@ -163,14 +163,37 @@ module input_registers (
     else pop_q <= bus_read && (selected == REG_EVENT_DATA);
   end
 
+  // La FIFO ve el evento, el FLUSH y el CLEAR un ciclo despues, los tres juntos
+  // (el orden entre ellos no cambia). Sin esto el write enable de `store`
+  // dependia, por `input_error`, de `write_data[31:2]` y de la mascara, y esa red
+  // (el bus de datos de escritura, con carga de todos los perifericos) fue el
+  // camino critico de `clk` en la 37: 16,9 ns frente a 12,5. Ahora `write_data`
+  // solo llega a tres registros. Unico cambio visible: un evento que llega el
+  // ciclo anterior a un pop con la FIFO llena ya no se pierde, porque su push
+  // coincide con el pop.
+  reg        flush_q, clear_q, event_valid_q;
+  reg [31:0] event_word_q;
+  always @(posedge clk) begin
+    if (reset) begin
+      flush_q <= 1'b0;
+      clear_q <= 1'b0;
+      event_valid_q <= 1'b0;
+    end else begin
+      flush_q <= ctrl_flush;
+      clear_q <= ctrl_clear;
+      event_valid_q <= event_valid;
+    end
+    event_word_q <= event_word;
+  end
+
   wire full   = (count == DEPTH[4:0]);
   wire empty  = (count == 5'd0);
   wire do_pop = pop_q && !empty;
   // FLUSH gana al PUSH (§25.9): la FIFO termina vacia y el evento se descarta,
   // aunque STATE ya lo haya recogido. Y FLUSH no produce overflow.
-  wire do_push = event_valid && !ctrl_flush && (!full || do_pop);
+  wire do_push = event_valid_q && !flush_q && (!full || do_pop);
   // Perdida: evento valido, sin FLUSH, FIFO llena y sin pop que libere hueco.
-  wire lost = event_valid && !ctrl_flush && full && !do_pop;
+  wire lost = event_valid_q && !flush_q && full && !do_pop;
 
   assign free_slots = DEPTH[4:0] - count;
 
@@ -181,13 +204,13 @@ module input_registers (
       count <= 5'd0;
       overflow <= 1'b0;
     end else begin
-      if (ctrl_flush) begin
+      if (flush_q) begin
         read_ptr <= 4'd0;
         write_ptr <= 4'd0;
         count <= 5'd0;
       end else begin
         if (do_push) begin
-          store[write_ptr] <= event_word;
+          store[write_ptr] <= event_word_q;
           write_ptr <= write_ptr + 1'b1;
         end
         if (do_pop) read_ptr <= read_ptr + 1'b1;
@@ -200,7 +223,7 @@ module input_registers (
         endcase
       end
       // CLEAR_OVERFLOW pierde contra una perdida simultanea (§25.9).
-      if (ctrl_clear) overflow <= 1'b0;
+      if (clear_q) overflow <= 1'b0;
       if (lost) overflow <= 1'b1;
     end
   end
