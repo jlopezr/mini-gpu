@@ -224,6 +224,18 @@ class LinkTest(unittest.TestCase):
         image = assemble_bytes(text)
         self.assertGreater(len(image), 0)
 
+    def test_compiler_local_labels_do_not_collide_between_units(self):
+        # lcc numera `L.n` desde 1 en cada compilacion: las dos unidades usan L.2
+        other = KERNELS.replace("k_memset", "k_other").replace("k_max", "k_other_max")
+        with tempfile.TemporaryDirectory() as temp:
+            host = self.write(temp, "host.s", HOST)
+            gpu = self.write(temp, "gpu.s", KERNELS)
+            gpu2 = self.write(temp, "gpu2.s", other)
+            text = run([(host, "cpu"), (gpu, "gpu"), (gpu2, "gpu")])
+        self.assertEqual(text.count("L.1.2:"), 1)
+        self.assertEqual(text.count("L.2.2:"), 1)
+        assemble_bytes(text)                              # y el ensamblador lo acepta
+
     def test_undefined_symbol_is_an_error(self):
         with tempfile.TemporaryDirectory() as temp:
             host = self.write(temp, "host.s", HOST)

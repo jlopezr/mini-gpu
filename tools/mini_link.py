@@ -35,6 +35,7 @@ from typing import Callable
 
 LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")     # las etiquetas internas de lcc
+COMPILER_LOCAL_REF_RE = re.compile(r"\bL\.(\d+)\b")
 REGISTER_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
@@ -413,7 +414,10 @@ def link(units: list[Unit], allow_undefined: bool = False) -> str:
     comm: dict[str, tuple[int, str]] = {}
     externs: dict[str, str] = {}
     out: list[str] = []
-    for unit in units:
+    for index, unit in enumerate(units):
+        # las `L.n` de lcc empiezan en 1 en cada compilacion: sin renombrarlas por
+        # unidad, dos `.s` juntos (con `.include` tambien) chocan en `L.2`
+        local = lambda text, i=index: COMPILER_LOCAL_REF_RE.sub(lambda m: f"L.{i}.{m.group(1)}", text)
         for chunk in unit.chunks:
             lines = chunk.header + chunk.body if isinstance(chunk, Function) else [chunk]
             if isinstance(chunk, Function) and chunk.name == "_start" and unit is not start_owner:
@@ -432,7 +436,7 @@ def link(units: list[Unit], allow_undefined: bool = False) -> str:
                         old = comm.get(parts[1], (0, unit.path))
                         comm[parts[1]] = (max(old[0], size), old[1])
                         continue
-                out.append(line.render())
+                out.append(local(line.render()))
     undefined = sorted(s for s in externs if s not in defined and s not in comm)
     if undefined and not allow_undefined:
         raise LinkError("simbolos sin definir: " + ", ".join(
