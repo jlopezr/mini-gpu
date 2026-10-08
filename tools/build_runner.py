@@ -804,7 +804,8 @@ def _main() -> int:
                            help="Resumen del último barrido de cada prototipo que tenga alguno")
     sweep_cmd.add_argument("--label", default="sweep")
     sweep_cmd.add_argument("--root", type=Path, default=None)
-    sweep_cmd.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    sweep_cmd.add_argument("--seeds", type=int, nargs="+", default=None,
+                           help="Semillas a barrer (por defecto 1 2 3 4 5)")
     sweep_cmd.add_argument("--report-dir", type=Path, default=None)
     sweep_cmd.add_argument("--compare", type=Path, default=None, metavar="SWEEP",
                            help="Carpeta sweep-* de un barrido anterior con las mismas semillas")
@@ -812,8 +813,11 @@ def _main() -> int:
                            help="Lista los barridos ya hechos del prototipo")
     sweep_cmd.add_argument("--show", metavar="SWEEP", default=None,
                            help="Detalle por semilla de un barrido (latest, trozo del nombre o ruta)")
-    sweep_cmd.add_argument("--promote", type=int, metavar="SEMILLA", default=None,
-                           help="Convierte esa semilla de un barrido en build archivado y bitstream, sin sintetizar")
+    sweep_cmd.add_argument("--promote", nargs="?", const="best", default=None, metavar="SEMILLA",
+                           help="Adopta una semilla: la escribe en el apio.ini y la deja como build "
+                                "archivado y bitstream, sin sintetizar. Sin valor, la de más margen. "
+                                "Con --seeds actúa al terminar el barrido; sin --seeds, sobre el último "
+                                "barrido (o el de --from)")
     sweep_cmd.add_argument("--from", dest="from_sweep", default="latest", metavar="SWEEP",
                            help="Barrido del que promover (por defecto el último)")
     sweep_cmd.add_argument("--nextpnr-options", nargs="+", default=[], metavar="OPCION",
@@ -821,8 +825,6 @@ def _main() -> int:
                                 "p. ej. tmg-ripup placer-heap-timingweight=30")
     sweep_cmd.add_argument("--jobs", type=int, default=None,
                            help="Semillas en paralelo (por defecto, un tercio de los hilos de la máquina)")
-    sweep_cmd.add_argument("--apply", action="store_true",
-                           help="Escribe en el apio.ini la semilla con más margen (solo si alguna cumple)")
     sweep_cmd.add_argument("--background", action="store_true", help="Lanza el barrido en segundo plano y vuelve enseguida")
 
     track_cmd = subparsers.add_parser("_track", help=argparse.SUPPRESS)
@@ -960,10 +962,11 @@ def _main() -> int:
         args.cmd_args = ["--", *command]
         args.command = "run"
 
+    promote_only = args.command == "sweep" and args.promote is not None and args.seeds is None
     if args.command == "sweep" and (args.last or args.list or args.show is not None
-                                    or args.promote is not None):
-        # Solo consulta o promoción (segundos): no es un build, así que no crea
-        # registro en reports/.
+                                    or promote_only):
+        # Solo consulta o adopción de un barrido ya hecho (segundos): no es un
+        # build, así que no crea registro en reports/.
         sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
         query = [sys.executable, str(sweep_script)]
         if args.last:
@@ -972,8 +975,8 @@ def _main() -> int:
             if args.prototype is None:
                 parser.error("--list/--show/--promote necesitan --prototype")
             query += ["--prototype", args.prototype]
-            if args.promote is not None:
-                query += ["--promote", str(args.promote), "--from", args.from_sweep]
+            if promote_only:
+                query += ["--promote", args.promote, "--from", args.from_sweep]
             else:
                 query += ["--list"] if args.list else ["--show", args.show]
         return subprocess.run(query, cwd=Path.cwd()).returncode
@@ -984,7 +987,7 @@ def _main() -> int:
     if args.command == "sweep":
         sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
         command = [sys.executable, str(sweep_script), "--prototype", args.prototype,
-                  "--seeds", *(str(seed) for seed in args.seeds)]
+                  "--seeds", *(str(seed) for seed in (args.seeds or [1, 2, 3, 4, 5]))]
         if args.report_dir is not None:
             command += ["--report-dir", str(args.report_dir)]
         if args.nextpnr_options:
@@ -993,8 +996,8 @@ def _main() -> int:
             command += ["--compare", str(args.compare.resolve())]
         if args.jobs is not None:
             command += ["--jobs", str(args.jobs)]
-        if args.apply:
-            command.append("--apply")
+        if args.promote is not None:
+            command += ["--promote", args.promote]
         args.cmd_args = ["--", *command]
         args.command = "run"
 

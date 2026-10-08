@@ -273,6 +273,46 @@ def resolve_sweep(prototype_dir: Path, spec: str) -> Path:
     return matches[0]
 
 
+def margin(result: dict) -> float:
+    """Holgura de una semilla: la del reloj con menos margen (1.0 = justo)."""
+    return min(v['achieved'] / v['constraint'] for v in result['clocks'].values())
+
+
+def best_seed(results: list) -> dict:
+    """La semilla que cumple con mas margen en su reloj mas justo, o None."""
+    passing = [r for r in results if r['passes']]
+    return max(passing, key=margin) if passing else None
+
+
+def best_per_clock(results: list) -> dict:
+    """Por reloj, la semilla que cumple (todos los relojes) con mas holgura en ese."""
+    passing = [r for r in results if r['passes']]
+    return {clock: max(passing, key=lambda r: r['clocks'][clock]['achieved']
+                       / r['clocks'][clock]['constraint'])
+            for clock in (passing[0]['clocks'] if passing else {})}
+
+
+def best_per_clock_lines(results: list, chosen: int = None, color: bool = None) -> list:
+    """Tabla 'mejor semilla por reloj' para decidir a mano cuando discrepan.
+
+    Solo semillas que cumplen todos los relojes. `chosen` marca la que
+    `--promote` sin valor adoptaria."""
+    best = best_per_clock(results)
+    if len({r['seed'] for r in best.values()}) < 2:
+        return []        # una sola semilla es la mejor en todo: no hay nada que decidir
+    color = _use_color() if color is None else color
+    width = max(len(c) for c in best)
+    lines = ['Mejor semilla por reloj (solo las que cumplen todos):']
+    for clock, r in sorted(best.items()):
+        v = r['clocks'][clock]
+        tag = '  <- la de mas margen global' if r['seed'] == chosen else ''
+        lines.append(f'  {clock:<{width}}  semilla {r["seed"]:>3}  '
+                     + _paint(f'{v["achieved"]:.2f}/{v["constraint"]:.0f} MHz '
+                              f'({100 * (v["achieved"] / v["constraint"] - 1):+.1f} %)',
+                              _reaches(v['achieved'], v['constraint']), color) + tag)
+    return lines
+
+
 def promote_seed(prototype_dir: Path, sweep: Path, seed: int) -> Path:
     """Convierte una semilla de un barrido en un build archivado y en el bitstream.
 
@@ -282,9 +322,10 @@ def promote_seed(prototype_dir: Path, sweep: Path, seed: int) -> Path:
     determinista, asi que en vez de volver a sintetizar se empaqueta el `.config`
     con `ecppack` (segundos) y se archiva como un build mas.
 
-    Se niega si las fuentes ya no son las del build que se barrio, o si el
-    `apio.ini` no lleva esa semilla y las opciones con las que se barrio: el
-    bitstream no representaria a lo que el `apio.ini` dice que se construye.
+    Adoptar la semilla incluye escribirla en el `apio.ini`, junto con las
+    opciones de nextpnr con las que se barrio: una semilla solo vale con ellas.
+    Se niega si las fuentes ya no son las del build que se barrio, o si la
+    semilla no cumple timing; el `apio.ini` no se toca en esos casos.
     """
     run = sweep / f'seed-{seed}'
     for name in ('hardware.config', 'hardware.pnr', 'summary.json'):
@@ -306,17 +347,27 @@ def promote_seed(prototype_dir: Path, sweep: Path, seed: int) -> Path:
     if rtl(_metadata_source_hashes(source_meta)) != rtl(current):
         raise SystemExit('Las fuentes han cambiado desde el build que se barrio; '
                          'reconstruye y vuelve a barrer.')
-    if configured_seed(prototype_dir) != seed:
-        raise SystemExit(f'El apio.ini lleva --seed {configured_seed(prototype_dir)}, '
-                         f'no {seed}: usa --apply o pon la semilla antes de promover.')
-    options = configured_options(prototype_dir) or ''
-    missing = [flag for flag in nextpnr_flags(sweep_meta.get('nextpnr_options', []))
-               if flag.startswith('--') and flag not in options.split()]
-    if missing:
-        raise SystemExit(f'El apio.ini no lleva {" ".join(missing)}, con lo que se barrio.')
-
     suite = find_oss_cad_suite()
     ecppack = find_toolchain_binary('ecppack')
+    # Fijar la semilla y las opciones con las que se midio es parte de adoptarla:
+    # el archivo lleva el hash del apio.ini nuevo. Si algo falla despues, el
+    # apio.ini vuelve a como estaba.
+    ini = prototype_dir / 'apio.ini'
+    original_ini = ini.read_bytes()
+    swept_options = sweep_meta.get('nextpnr_options', [])
+    previous = set_configured_seed(prototype_dir, seed, swept_options)
+    print(f'apio.ini: --seed {previous if previous is not None else "(ninguna)"} -> {seed}'
+          + (f', y opciones {" ".join(nextpnr_flags(swept_options))}' if swept_options else ''))
+    try:
+        return _archive_promotion(prototype_dir, sweep, run, seed, summary, suite, ecppack,
+                                  source)
+    except BaseException:
+        ini.write_bytes(original_ini)
+        raise
+
+
+def _archive_promotion(prototype_dir, sweep, run, seed, summary, suite, ecppack, source):
+    """Segunda mitad de `promote_seed`: empaqueta, archiva y deja `_build/`."""
     folder = prototype_dir / 'reports' / (datetime.now().strftime('%Y%m%d-%H%M%S-%f')
                                           + f'-promote-seed{seed}')
     folder.mkdir()
@@ -401,13 +452,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-p', '--prototype')
     parser.add_argument('--report-dir', type=Path, default=None)
-    parser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5])
+    parser.add_argument('--seeds', type=int, nargs='+', default=None,
+                        help='semillas a barrer (por defecto 1 2 3 4 5)')
     parser.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 3) // 3),
                         help='semillas en paralelo (por defecto un tercio de los hilos: nextpnr '
                              'es monohilo y usa unos 500 MB). No cambia ningun resultado')
-    parser.add_argument('--apply', action='store_true',
-                        help='escribe la semilla con más margen en el apio.ini del prototipo '
-                             '(solo si alguna cumple timing)')
     parser.add_argument('--nextpnr-options', nargs='+', default=[], metavar='OPCION',
                         help='opciones extra de nextpnr, SIN guiones y con = para el valor: '
                              'tmg-ripup placer-heap-timingweight=30 router=router1. Para '
@@ -423,10 +472,13 @@ def main():
     parser.add_argument('--show', metavar='SWEEP', default=None,
                         help='detalle por semilla de un barrido: "latest", un trozo de su nombre '
                              '(ver --list) o su ruta')
-    parser.add_argument('--promote', type=int, metavar='SEMILLA', default=None,
-                        help='convierte esa semilla de un barrido (el ultimo, o el de --from) en '
-                             'build archivado y en _build/hardware.bit, sin volver a sintetizar. '
-                             'El apio.ini debe llevar ya esa semilla (--apply)')
+    parser.add_argument('--promote', nargs='?', const='best', default=None, metavar='SEMILLA',
+                        help='adopta una semilla: la escribe en el apio.ini con las opciones con '
+                             'que se barrio y la convierte en build archivado y en '
+                             '_build/hardware.bit, sin volver a sintetizar. Sin valor, la que '
+                             'cumple con mas margen; con valor, esa (si cumple). Con --seeds '
+                             'actua al terminar el barrido; sin --seeds, sobre un barrido ya '
+                             'hecho (el ultimo, o el de --from). Si ninguna cumple, no toca nada')
     parser.add_argument('--from', dest='from_sweep', default='latest', metavar='SWEEP',
                         help='barrido del que promover: "latest", un trozo de su nombre o su ruta')
     parser.add_argument('--last', action='store_true',
@@ -439,15 +491,30 @@ def main():
         return
     if args.prototype is None:
         parser.error('-p/--prototype es obligatorio (salvo con --last)')
-    if args.promote is not None:
+    if args.promote is not None and args.promote != 'best':
+        try:
+            args.promote = int(args.promote)
+        except ValueError:
+            parser.error('--promote admite una semilla (entero) o nada, para la de mas margen')
+    if args.promote is not None and args.seeds is None:
         try:
             target = resolve_prototype(args.prototype, root=find_repo_root(Path.cwd()))
         except PrototypeResolutionError as exc:
             raise SystemExit(f'error: {exc}')
         print(f'Using prototype: {target.name}')
-        folder = promote_seed(target, resolve_sweep(target, args.from_sweep), args.promote)
-        print(f'Promovida la semilla {args.promote}: {folder}')
+        existing = resolve_sweep(target, args.from_sweep)
+        seed = args.promote
+        if seed == 'best':
+            chosen = best_seed(load_results(existing))
+            if chosen is None:
+                raise SystemExit(f'Ninguna semilla de {existing.name} cumple timing: no se '
+                                 f'adopta ninguna y el apio.ini queda como esta.')
+            seed = chosen['seed']
+        folder = promote_seed(target, existing, seed)
+        print(f'Adoptada la semilla {seed}: {folder}')
         return
+    if args.from_sweep != 'latest':
+        parser.error('--from solo tiene sentido con --promote y sin --seeds')
     if args.list or args.show is not None:
         try:
             listed = resolve_prototype(args.prototype, root=find_repo_root(Path.cwd()))
@@ -457,6 +524,10 @@ def main():
         print('\n'.join(list_sweeps(listed) if args.list
                         else show_sweep(resolve_sweep(listed, args.show))))
         return
+    if args.seeds is None:
+        args.seeds = [1, 2, 3, 4, 5]
+    if isinstance(args.promote, int) and args.promote not in args.seeds:
+        parser.error(f'--promote {args.promote}: esa semilla no esta entre las que se barren')
     extra_flags = nextpnr_flags(args.nextpnr_options)
     reference = None
     if args.compare is not None:
@@ -572,25 +643,27 @@ def main():
               f'{_paint(f"{max(valores):.2f}", _reaches(max(valores), exigido), color)} MHz, '
               f'mediana {_paint(f"{medians[clock]:.2f}", _reaches(medians[clock], exigido), color)}, '
               f'exigidos {exigido:.0f}')
-    if cumplen:
-        limitante = lambda r: min(  # noqa: E731 - el reloj con menos margen
-            v['achieved'] / v['constraint'] for v in r['clocks'].values())
-        mejor = max(cumplen, key=limitante)
+    mejor = best_seed(results)
+    if mejor is not None:
         print(f'Más margen: semilla {mejor["seed"]} '
-              f'({100 * (limitante(mejor) - 1):+.1f} % en su reloj más justo)')
-        if args.apply:
-            previous = set_configured_seed(prototype_dir, mejor['seed'], args.nextpnr_options)
-            print(f'apio.ini: --seed {previous if previous is not None else "(ninguna)"}'
-                  f' -> {mejor["seed"]}'
-                  + (f', y opciones {" ".join(extra_flags)}' if extra_flags else '')
-                  + '. El bitstream actual queda STALE hasta reconstruir.')
+              f'({100 * (margin(mejor) - 1):+.1f} % en su reloj más justo)')
+        # Cuando la mejor global no es la mejor en cada reloj, se ve aqui: p. ej.
+        # dejar margen en el reloj de la CPU porque se va a tocar, y adoptar con
+        # `--promote N` la que lo da.
+        print('\n'.join(best_per_clock_lines(results, mejor['seed'], color)))
     else:
         print('Ninguna semilla cumple: aquí el problema ya no es la semilla.')
-        if args.apply:
-            print('--apply: no se toca el apio.ini.')
     if reference is not None:
         print('\n'.join(compare_sweeps(reference, results)))
     print(f'Informes: {folder}', flush=True)
+    if args.promote is not None:
+        wanted = mejor['seed'] if args.promote == 'best' and mejor else args.promote
+        if mejor is None or wanted not in {r['seed'] for r in cumplen}:
+            print('--promote: ' + ('ninguna semilla cumple' if mejor is None else
+                  f'la semilla {wanted} no cumple timing') + '; no se toca el apio.ini.')
+        else:
+            adopted = promote_seed(prototype_dir, folder, wanted)
+            print(f'Adoptada la semilla {wanted}: {adopted}')
 
 
 if __name__ == '__main__':

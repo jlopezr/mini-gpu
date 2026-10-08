@@ -1045,12 +1045,14 @@ Cada semilla queda en `reports/<build>/sweep-<fecha>/seed-N/`, con
 cuántas cumplen, el rango, la mediana y la semilla con más margen. Hay dos
 usos distintos, y cada uno tiene su opción:
 
-- **Fijar semilla porque vamos justos** (`--apply`): escribe `--seed N`, la de
-  más margen, en el `nextpnr-extra-options` del `apio.ini` (solo si alguna
-  cumple timing; conserva comentarios y saltos de línea). Es opt-in: las
-  carpetas GPU no fijan semilla a propósito, ahí no se usa. Deja el bitstream
-  en STALE hasta que se reconstruya con la semilla nueva. Los párrafos de
-  números del `apio.ini` se siguen apuntando a mano.
+- **Adoptar una semilla porque vamos justos** (`--promote`): escribe `--seed N`
+  en el `nextpnr-extra-options` del `apio.ini` (conserva comentarios y saltos de
+  línea) y deja el bitstream de esa semilla como build archivado y en
+  `_build/`, sin volver a sintetizar (ver más abajo). Sin valor adopta la que
+  cumple con más margen; con valor (`--promote 9`), esa, si cumple. Si ninguna
+  cumple no toca nada. Es opt-in: las carpetas GPU no fijan semilla a
+  propósito, ahí no se usa. Los párrafos de números del `apio.ini` se siguen
+  apuntando a mano.
 - **Saber si un cambio de RTL mejora o empeora** (`--compare`): no fijes una
   semilla, que mezcla el efecto del cambio con el ruido del placement. Barre
   las mismas semillas antes y después, y compara:
@@ -1082,7 +1084,7 @@ $ build-sweep --prototype 30 --seeds 1 2 3 4 5 6 7 8 --nextpnr-options tmg-ripup
 ```
 
 Quedan anotadas en el barrido (`--list` las muestra en la columna OPCIONES) y
-con `--apply` se escriben en el `apio.ini` **junto con la semilla**: una semilla
+con `--promote` se escriben en el `apio.ini` **junto con la semilla**: una semilla
 solo vale con las opciones con las que se midió. No admite `seed`, `json`,
 `report`, `lpf`, `textcfg`, `package`, `speed` ni `force`, que ya pone el
 barrido. Hay que comparar siempre contra un barrido base **con las mismas
@@ -1120,7 +1122,7 @@ significa que una semilla pedida no llegó a dar informe. `--show` añade el
 margen en % por semilla y marca las que no dieron informe. Acepta `latest`, un
 trozo único del nombre del barrido o su ruta.
 
-**Cuándo fijar semilla y qué Fmax declarar.** Se fija (`--apply`) cuando el
+**Cuándo fijar semilla y qué Fmax declarar.** Se fija (`--promote`) cuando el
 margen se mide en unidades, como en las carpetas de CPU: ahí la semilla decide
 si el diseño cumple. En las de GPU (12, 14, 17, 22) el margen se mide en
 decenas por ciento, la semilla no decide nada, y fijarla solo daría un número
@@ -1129,22 +1131,34 @@ caso el Fmax que vale es el **peor** del barrido, no el de un build suelto, que
 es optimista y no reproducible. Para una medición reproducible concreta sí se
 puede fijar la semilla, pero no representa el peor caso del barrido.
 
-**Promover una semilla sin recompilar.** Tras `--apply`, el `apio.ini` cambia y
-el bitstream queda STALE, pero la semilla buena ya está enrutada en el barrido
+**Adoptar una semilla sin recompilar** (`--promote`). Cambiar el `apio.ini` deja
+el bitstream STALE, pero la semilla buena ya está enrutada en el barrido
 (`hardware.config`). Con la misma semilla y el mismo netlist nextpnr es
-determinista, así que en vez de sintetizar otra vez:
+determinista, así que en vez de sintetizar otra vez `--promote`:
 
 ```bash
-$ build-sweep --prototype 16 --promote 9                 # del último barrido
-$ build-sweep --prototype 16 --promote 9 --from 20261008-0955
+$ build-sweep --prototype 16 --seeds 1 2 3 4 5 6 7 8 --promote   # barre y adopta la mejor
+$ build-sweep --prototype 16 --seeds 1 2 3 4 5 6 7 8 --promote 3 # barre y adopta la 3
+$ build-sweep --prototype 16 --promote                           # del último barrido, la mejor
+$ build-sweep --prototype 16 --promote 9 --from 20261008-0955    # esa, de otro barrido
 ```
 
-empaqueta ese `.config` con `ecppack` (segundos), lo archiva como un build más
-(`<fecha>-promote-seedN`, con `hardware.bit` y su `sources.zip`) y lo deja en
-`_build/<env>/`, con lo que el prototipo vuelve a ser CURRENT. Se niega si el
-RTL cambió desde el build que se barrió, si el `apio.ini` no lleva esa semilla
-y las opciones con las que se barrió, o si la semilla no cumple timing. En la 16
-el `.bit` promovido es idéntico, byte a byte, al de un `build` completo.
+Con `--seeds` actúa al terminar el barrido; sin `--seeds`, sobre uno ya hecho
+(`--from` elige cuál). Escribe la semilla y las opciones de nextpnr con las que
+se midió en el `apio.ini`, empaqueta ese `.config` con `ecppack` (segundos), lo
+archiva como un build más (`<fecha>-promote-seedN`, con `hardware.bit` y su
+`sources.zip`) y lo deja en `_build/<env>/`, con lo que el prototipo vuelve a
+ser CURRENT. Se niega, sin tocar el `apio.ini`, si el RTL cambió desde el build
+que se barrió o si la semilla no cumple timing (una semilla cumple si cumplen
+**todos** sus relojes). Si falla el empaquetado, el `apio.ini` vuelve a como
+estaba. En la 16 el `.bit` promovido es idéntico, byte a byte, al de un `build`
+completo.
+
+"Más margen" es la semilla cuyo reloj más justo tiene más holgura. Cuando hay
+varias que cumplen y no son la mejor en todos los relojes, el barrido imprime
+al final **la mejor semilla de cada reloj**, y marca la elegida. Sirve para
+decidir a mano: por ejemplo, adoptar con `--promote N` la que deja más margen en
+el reloj de la CPU porque se va a tocar, aunque no sea la de más margen global.
 
 `build-sweep` no sintetiza: re-ruta el `hardware.json` del último build
 archivado. Si el RTL ha cambiado desde entonces devuelve ocho números
