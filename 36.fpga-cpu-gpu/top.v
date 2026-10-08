@@ -68,6 +68,21 @@ module top (
     end
   end
 
+  // Copias del reset, una por bloque. Con un solo `reset` el fan-out llegaba a
+  // todo el chip, y en la 36 el camino critico de la CPU era esa red: 8,5 ns de
+  // ruteo, distancia 154, hasta el FSM de la CPU. Cada copia se registra con la
+  // misma condicion que `reset_shift[15]` --mismo instante, mismo valor-- y
+  // `keep` impide que la sintesis las vuelva a fusionar en una.
+  (* keep = "true" *) reg reset_mon = 1'b1, reset_cpu = 1'b1, reset_bus = 1'b1, reset_vid = 1'b1;
+  always @(posedge clk) begin
+    if (!pll_locked || !btn_pwr_n) begin
+      reset_mon <= 1'b1; reset_cpu <= 1'b1; reset_bus <= 1'b1; reset_vid <= 1'b1;
+    end else begin
+      reset_mon <= reset_shift[14]; reset_cpu <= reset_shift[14];
+      reset_bus <= reset_shift[14]; reset_vid <= reset_shift[14];
+    end
+  end
+
   reg [15:0] reset_mem_shift = 16'hffff;
   wire reset_mem = reset_mem_shift[15];
   always @(posedge clk_mem) begin
@@ -81,7 +96,7 @@ module top (
   wire [7:0] uart_rx_data, uart_tx_data;
   wire uart_rx_strobe, uart_tx_strobe, uart_tx_ready;
   uart #(.DIVISOR(UART_DIVISOR)) uart_i(
-      .clk(clk), .reset(reset), .serial_rxd(ftdi_txd), .serial_txd(ftdi_rxd),
+      .clk(clk), .reset(reset_mon), .serial_rxd(ftdi_txd), .serial_txd(ftdi_rxd),
       .rxd(uart_rx_data), .rxd_strobe(uart_rx_strobe),
       .txd(uart_tx_data), .txd_strobe(uart_tx_strobe), .txd_ready(uart_tx_ready));
 
@@ -90,7 +105,7 @@ module top (
   (* keep = "true" *) reg [7:0] monitor_rx_data;
   (* keep = "true" *) reg monitor_rx_strobe;
   always @(posedge clk) begin
-    if (reset) begin
+    if (reset_mon) begin
       monitor_rx_data <= 8'h00;
       monitor_rx_strobe <= 1'b0;
     end else begin
@@ -164,7 +179,7 @@ module top (
       .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000),  // CPU PERF
       .WINDOW4_BASE(33'h0_8060_0000),.WINDOW4_END(33'h0_8061_0000))  // INPUT
     monitor_i (
-      .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
+      .clk(clk), .reset(reset_mon), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
       .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
       .mem_address(mem_address), .mem_write_data(mem_write_data),
@@ -205,7 +220,7 @@ module top (
   reg [31:0] registered_mem_read_word;
   reg registered_mem_ready, registered_mem_error;
   always @(posedge clk) begin
-    if (reset) begin
+    if (reset_mon) begin
       adapter_monitor_address <= 32'h0000_0000;
       adapter_monitor_write_data <= 8'h00;
       adapter_monitor_write_word <= 32'h0000_0000;
@@ -245,7 +260,7 @@ module top (
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
   cpu cpu_i(
-      .clk(clk), .reset(reset || cpu_reset_request),
+      .clk(clk), .reset(reset_cpu || cpu_reset_request),
       .run_request(cpu_run_request),
       // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
       // video, que la para al completar el intercambio numero N. Lo segundo es
@@ -359,7 +374,7 @@ module top (
   wire [31:0] cpu_mmio_wdata;
 
   cpu_dmem_adapter dmem_adapter_i(
-      .clk(clk), .reset(reset), .init_done(init_done),
+      .clk(clk), .reset(reset_cpu), .init_done(init_done),
       .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
@@ -386,7 +401,7 @@ module top (
   // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
   wire ibuf_hit, ibuf_miss;
   instruction_buffer #(.LINES(4), .INDEX_BITS(2)) instruction_buffer_i(
-      .clk(clk), .reset(reset), .init_done(init_done),
+      .clk(clk), .reset(reset_cpu), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
       .cpu_imem_read_data(cpu_imem_read_data), .cpu_imem_ready(cpu_imem_ready),
@@ -398,7 +413,7 @@ module top (
       .hit_event(ibuf_hit), .miss_event(ibuf_miss));
 
   monitor_mem_adapter_128 monitor_adapter_i(
-      .clk(clk), .reset(reset), .init_done(init_done),
+      .clk(clk), .reset(reset_mon), .init_done(init_done),
       .cpu_halted(cpu_halted), .wb_dirty(wb_dirty),
       .mem_address(adapter_monitor_address),
       .mem_write_data(adapter_monitor_write_data),
@@ -421,7 +436,7 @@ module top (
   // que puede esperar un ciclo, y asi un SWAP escrito desde el PC no se queda
   // detras de un programa que dibuja a toda velocidad.
   mmio_mux mmio_mux_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .a_req(mon_mmio_req), .a_ack(mon_mmio_ack), .a_write(mon_mmio_write),
       .a_write_mask(mon_mmio_mask), .a_address(mon_mmio_addr),
       .a_write_data(mon_mmio_wdata),
@@ -473,7 +488,7 @@ module top (
   wire gpu_h_valid, gpu_h_write, gpu_h_done, gpu_h_error;
   wire [31:0] gpu_h_addr, gpu_h_wdata, gpu_h_rdata;
   gpu_mmio_bridge gpu_bridge_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .start(mmio_gpu_select), .write(mmio_write), .address(mmio_address),
       .write_data(mmio_write_data),
       .done(gpu_bridge_done), .read_data(gpu_bridge_read_data), .error(gpu_bridge_error),
@@ -719,7 +734,7 @@ module top (
       .r(scan_r), .g(scan_g), .b(scan_b),
       .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
       .underflow(video_underflow),
-      .clk_sys(clk), .rst_sys(reset),
+      .clk_sys(clk), .rst_sys(reset_vid),
       .underflow_clear(video_underflow_clear),
       .fill_start(fill_start), .fill_line(fill_line), .fill_first(fill_first),
       .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
@@ -745,7 +760,7 @@ module top (
   wire [15:0] burst_data, pat_data;
 
   video_line_source_burst source_i(
-      .clk(clk), .reset(reset), .fb_base(fb_base),
+      .clk(clk), .reset(reset_vid), .fb_base(fb_base),
       .fill_start(start_sdram), .fill_line(fill_line),
       .fill_we(burst_we), .fill_addr(burst_addr), .fill_data(burst_data),
       .fill_done(burst_done),
@@ -756,13 +771,13 @@ module top (
       .rsp_rdata(p2_rsp_rdata), .rsp_error(p2_rsp_error));
 
   video_line_source_pattern pattern_source_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_vid),
       .fill_start(start_pattern), .fill_line(fill_line),
       .fill_we(pat_we), .fill_addr(pat_addr), .fill_data(pat_data),
       .fill_done(pat_done));
 
   video_line_source_mux source_mux_i(
-      .clk(clk), .reset(reset), .video_mode(video_mode),
+      .clk(clk), .reset(reset_vid), .video_mode(video_mode),
       .fill_start(fill_start),
       .start_sdram(start_sdram), .start_pattern(start_pattern),
       .burst_we(burst_we), .burst_addr(burst_addr),
@@ -814,7 +829,7 @@ module top (
   // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
   // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
   cpu_perf_counters perf_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .select(mmio_perf_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
       .address(mmio_address[15:0]), .write_data(mmio_write_data),
@@ -834,7 +849,7 @@ module top (
 
   // Registros de video en 0x80200000, y con ellos el doble framebuffer.
   video_registers registers_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
       .address(mmio_address[15:0]), .write_data(mmio_write_data),
@@ -852,7 +867,7 @@ module top (
   // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del
   // monitor, no por esta ventana: ver serial_port.v.
   serial_port serial_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .select(mmio_serial_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
       .address(mmio_address[7:0]), .write_data(mmio_write_data),
@@ -866,7 +881,7 @@ module top (
   // conectado a la FPGA: los eventos llegan del PC por el monitor. La presencia
   // tambien: la manda el PC con INPUT_PRESENCE.
   input_registers input_i(
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset_bus),
       .select(mmio_input_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
       .address(mmio_address[7:0]), .write_data(mmio_write_data),
@@ -910,7 +925,7 @@ module top (
   wire [7:0] base_b = show_pattern ? paint_b_d : scan_b;
 
   text_console console_i(
-      .clk_sys(clk), .reset_sys(reset),
+      .clk_sys(clk), .reset_sys(reset_bus),
       .select(mmio_video_select), .write(mmio_write),
       .write_mask(mmio_write_mask), .address(mmio_address[15:0]),
       .write_data(mmio_write_data), .read_data(mmio_console_read_data),
