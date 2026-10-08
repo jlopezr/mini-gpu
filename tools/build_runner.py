@@ -355,22 +355,28 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
     for row in rows:
         marker = "*" if row["state"] == "RUNNING" else " "
         # Un reloj por linea. El primero es el que limita (el de menos margen) y
-        # va en la fila del prototipo; el resto, debajo, en las mismas columnas
-        # CLOCK / FMAX/REQ y con su propio PASS/FAIL en TIMING.
+        # va en la fila del prototipo, junto al PASS/FAIL general; el resto,
+        # debajo, en las mismas columnas CLOCK / FMAX/REQ. El valor de un reloj
+        # que no cumple es lo que sale en rojo.
+        def clock_value(achieved: float, required: float, width: int) -> str:
+            text = f"{achieved:.1f}/{required:.1f}"
+            padded = f"{text:<{width}}"
+            return (f"\033[31m{padded}\033[0m"
+                    if use_color and achieved < required else padded)
+
         clocks = row.get("clocks", [])
         if clocks:
             name, achieved, required = clocks[0]
-            clock_name, fmax = name, f"{achieved:.1f}/{required:.1f}"
+            clock_name, fmax = name, clock_value(achieved, required, 13)
         else:
-            clock_name, fmax = "-", row["fmax"]
+            clock_name, fmax = "-", f"{row['fmax']:<13}"
         print(f"{marker} {row['prototype']:<29} {field(row['bitstream'], 10)} "
               f"{field(row['state'], 12)} {field(row['timing'], 6)} "
-              f"{row['seed']:<5} {clock_name:<11} {fmax:<13} {row['elapsed']:<8} "
+              f"{row['seed']:<5} {clock_name:<11} {fmax} {row['elapsed']:<8} "
               f"{row['date']:<16} {row['label']}")
         for name, achieved, required in clocks[1:]:
-            verdict = "PASS" if achieved >= required else "FAIL"
-            print(f"  {'':<29} {'':<10} {'':<12} {field(verdict, 6)} "
-                  f"{'':<5} {name:<11} {f'{achieved:.1f}/{required:.1f}'}")
+            print(f"  {'':<29} {'':<10} {'':<12} {'':<6} {'':<5} {name:<11} "
+                  f"{clock_value(achieved, required, 0)}")
 
 
 def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,

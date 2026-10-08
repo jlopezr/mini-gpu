@@ -133,7 +133,11 @@ class BuildRunnerTest(unittest.TestCase):
         self.assertIn("85.5/100.0", lines[1])
         self.assertIn("clk ", lines[2])
         self.assertIn("83.2/80.0", lines[2])
-        self.assertIn("PASS", lines[2])
+        # El veredicto es uno solo, en la fila del prototipo: las lineas de los
+        # demas relojes no llevan PASS ni FAIL.
+        self.assertIn("FAIL", lines[1])
+        self.assertNotIn("PASS", lines[2])
+        self.assertNotIn("FAIL", lines[2])
         self.assertIn("clk_25mhz", lines[3])
         self.assertIn("37.8/25.0", lines[3])
         self.assertNotIn("9.multi", lines[2])
@@ -145,6 +149,30 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(lines[index][clock_col:].split()[0], expected)
         for index, expected in ((1, "85.5/100.0"), (2, "83.2/80.0"), (3, "37.8/25.0")):
             self.assertEqual(lines[index][fmax_col:].split()[0], expected)
+
+    def test_only_the_failing_clock_value_is_red(self):
+        import io
+        from contextlib import redirect_stdout
+        from tools.build_runner import print_prototype_build_summary
+
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        clocks = [("sdram_clk", 94.8, 100.0), ("clk_pix", 100.6, 25.0)]
+        row = {"prototype": "16.x", "bitstream": "CURRENT", "state": "TIMING_FAIL",
+               "timing": "FAIL", "fmax": "94.8/100.0", "seed": "13", "elapsed": "02:51",
+               "date": "-", "label": "build", "clocks": clocks}
+        out = Tty()
+        with mock.patch.dict(os.environ, {}, clear=False) as env:
+            env.pop("NO_COLOR", None)
+            with redirect_stdout(out):
+                print_prototype_build_summary([row])
+        lines = out.getvalue().splitlines()
+
+        self.assertIn("\033[31m94.8/100.0", lines[1])     # el que no cumple, en rojo
+        self.assertNotIn("\033[31m100.6/25.0", lines[2])  # el que cumple, no
+        self.assertEqual(lines[2].count("\033[31m"), 0)
 
     def test_a_running_test_is_still_shown_as_active(self):
         with tempfile.TemporaryDirectory() as tmp:
