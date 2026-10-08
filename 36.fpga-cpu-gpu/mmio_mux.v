@@ -39,10 +39,13 @@
  *
  *   ciclo 0  select alto (un pulso); el decodificador registra la decodificacion
  *   ciclo 1  el decodificador pone `select` a los dispositivos; escriben
- *   ciclo 2  se muestrean `read_data` y `error`, con la escritura ya hecha
- *   ciclo 3  ack; `read_data` y `error` salen de registros
+ *   ciclo 2  se muestrean `read_data` y `error` de los dispositivos (a un
+ *            registro por dispositivo), con la escritura ya hecha
+ *   ciclo 3  el decodificador elige entre esos registros
+ *   ciclo 4  ack; `read_data` y `error` salen de registros
  *
- * EXTRA_CYCLES = 2 es lo que necesita `mmio_decoder`; con 0 el `ack` llega un
+ * EXTRA_CYCLES = 3 es lo que necesita `mmio_decoder` (eran 2 antes de registrar
+ * la salida de cada dispositivo, ver su "etapa 3"); con 0 el `ack` llega un
  * ciclo despues del `select`, como antes. Solo lo usan los bancos que montan
  * este modulo SIN decodificador.
  */
@@ -53,9 +56,9 @@ module mmio_mux #(
     // es como la 18 mando los dieciseis dispositivos al de video.
     parameter ADDR_BITS = 32,
     // Ciclos que se espera, tras el de `select`, antes del `ack`. Tiene que
-    // coincidir con la latencia de `mmio_decoder` (2); un banco sin
+    // coincidir con la latencia de `mmio_decoder` (3); un banco sin
     // decodificador pone 0.
-    parameter EXTRA_CYCLES = 2
+    parameter EXTRA_CYCLES = 3
 ) (
     input  wire        clk,
     input  wire        reset,

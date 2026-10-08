@@ -46,7 +46,7 @@
  * monitor.
  *
  * ---------------------------------------------------------------------
- * SEGMENTADO EN DOS ETAPAS
+ * SEGMENTADO EN TRES ETAPAS (la tercera, al final, se anadio despues)
  * ---------------------------------------------------------------------
  *
  * Antes todo esto era combinacional entre la direccion que registra
@@ -66,7 +66,11 @@
  * (`commit_error_latched`), y el puerto serie saca el byte de la cola un ciclo
  * despues del `select`, asi que `read_data` solo es valido hasta entonces.
  *
- * `mmio_mux` espera esos dos ciclos antes del `ack` (parametro EXTRA_CYCLES);
+ *   etapa 3  cada dispositivo se registra en el mismo ciclo en que antes se
+ *            muestreaba, y el mux de `read_data` y el `error` salen un ciclo
+ *            despues (ver mas abajo)
+ *
+ * `mmio_mux` espera esos tres ciclos antes del `ack` (parametro EXTRA_CYCLES);
  * los dos tienen que cambiar a la vez. `address`, `write`, `write_mask` y
  * `write_data` llegan retenidos por el mux durante toda la transaccion.
  */
@@ -305,16 +309,41 @@ module mmio_decoder #(
   //
   // Etapa 2: se registran el error y el dato. Se muestrean con los `es_*` ya en
   // registros, un ciclo despues de que el dispositivo recibiera su `select`.
+  //
+  // Etapa 3: lo que devuelve cada dispositivo se registra ANTES del mux. La
+  // lectura de un dispositivo es combinacional desde `address` (el `case` de
+  // video_registers, los rangos de la consola, el OR de top.v), y el mux de
+  // abajo se le sumaba en el mismo ciclo: en la 36 eran once LUT desde
+  // `mmio_address[4]` hasta `read_data` y el camino critico de la CPU (77 MHz).
+  // Se registra el MISMO ciclo en que antes se muestreaba, asi que cada
+  // dispositivo se lee con el mismo estado que antes (la cola serie sin sacar,
+  // el latch de SWAP ya escrito, el tercer registro de la RAM de la consola); lo
+  // unico que cambia es que `read_data` y `error` salen un ciclo despues, y por
+  // eso `mmio_mux` espera uno mas (EXTRA_CYCLES = 3).
+  reg [31:0] system_rd_q, serial_rd_q, video_rd_q, perf_rd_q, input_rd_q, gpu_rd_q;
+  reg video_err_q, input_err_q, gpu_err_q;
   always @(posedge clk) begin
-    error <= error_direccion_q || (es_video && video_error)
-             || (es_input && input_error) || (es_gpu && gpu_error);
+    system_rd_q <= system_read_data;
+    serial_rd_q <= serial_read_data;
+    video_rd_q  <= video_read_data;
+    perf_rd_q   <= perf_read_data;
+    input_rd_q  <= input_read_data;
+    gpu_rd_q    <= gpu_read_data;
+    video_err_q <= video_error;
+    input_err_q <= input_error;
+    gpu_err_q   <= gpu_error;
+  end
 
-    if (es_system)      read_data <= system_read_data;
-    else if (es_serial) read_data <= serial_read_data;
-    else if (es_video)  read_data <= video_read_data;
-    else if (es_perf)   read_data <= perf_read_data;
-    else if (es_input)  read_data <= input_read_data;
-    else if (es_gpu)    read_data <= gpu_read_data;
+  always @(posedge clk) begin
+    error <= error_direccion_q || (es_video && video_err_q)
+             || (es_input && input_err_q) || (es_gpu && gpu_err_q);
+
+    if (es_system)      read_data <= system_rd_q;
+    else if (es_serial) read_data <= serial_rd_q;
+    else if (es_video)  read_data <= video_rd_q;
+    else if (es_perf)   read_data <= perf_rd_q;
+    else if (es_input)  read_data <= input_rd_q;
+    else if (es_gpu)    read_data <= gpu_rd_q;
     else                read_data <= 32'd0;
   end
 endmodule
