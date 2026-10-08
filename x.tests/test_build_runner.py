@@ -95,6 +95,36 @@ class BuildRunnerTest(unittest.TestCase):
         self.assertEqual(lines[1].rindex("mmio-rd-stage"), starts["LABEL"])
         self.assertEqual(lines[2].rindex("sweep"), starts["LABEL"])
 
+    def test_prototype_table_widths_follow_the_longest_values(self):
+        import contextlib
+        import io
+        from tools.build_runner import print_prototype_build_summary
+
+        def row(name, clock):
+            return {"prototype": name, "bitstream": "CURRENT", "state": "SUCCESS",
+                    "timing": "PASS", "fmax": "-", "seed": "7", "elapsed": "01:00",
+                    "date": "2026-10-08 12:00", "label": "build",
+                    "clocks": [(clock, 123.4, 100.0), ("clk_otro_largo", 55.5, 25.0)]}
+
+        rows = [row("1.corto", "clk"),
+                row("99.un-prototipo-con-un-nombre-bastante-largo", "sdram_clk_muy_largo")]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            print_prototype_build_summary(rows)
+        lines = out.getvalue().splitlines()
+        header = lines[0]
+        for column, value in (("BITSTREAM", "CURRENT"), ("CLOCK", None), ("LABEL", "build")):
+            start = header.index(column)
+            for line in (lines[1], lines[3]):
+                if value:
+                    self.assertEqual(line.index(value, 2 + len(rows[0]["prototype"])), start,
+                                     (column, line))
+        # El primer reloj de cada fila y el segundo, debajo, empiezan en CLOCK.
+        self.assertEqual(lines[1].index("clk "), header.index("CLOCK"))
+        self.assertEqual(lines[3].index("sdram_clk_muy_largo"), header.index("CLOCK"))
+        self.assertEqual(lines[2].index("clk_otro_largo"), header.index("CLOCK"))
+        self.assertEqual(lines[4].index("clk_otro_largo"), header.index("CLOCK"))
+
     def test_process_exists_recognizes_current_and_missing_pid(self):
         self.assertTrue(process_exists(os.getpid()))
         self.assertFalse(process_exists(2 ** 30))

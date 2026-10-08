@@ -375,8 +375,28 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         message = "ACTIVE BUILD" if len(active) == 1 else "ACTIVE BUILDS"
         text = f"{message}: {', '.join(active)}"
         print(f"\033[36;1m{text}\033[0m" if use_color else text)
-    print(f"  {'PROTOTYPE':<29} {'BITSTREAM':<10} {'LAST BUILD':<12} {'TIMING':<6} "
-          f"{'SEED':<5} {'CLOCK':<11} {'FMAX/REQ':<13} {'ELAPSED':<8} {'DATE':<16} LABEL")
+    # El ancho de cada columna sale de sus valores, no de uno fijo: un nombre de
+    # prototipo o de reloj mas largo de lo previsto desalineaba el resto de la fila.
+    def widest(header: str, values) -> int:
+        return max([len(header), *(len(str(value)) for value in values)])
+
+    def fmax_text(row: dict, clock: tuple) -> str:
+        return f"{clock[1]:.1f}/{clock[2]:.1f}"
+
+    w_proto = widest("PROTOTYPE", (row["prototype"] for row in rows))
+    w_bit = widest("BITSTREAM", (row["bitstream"] for row in rows))
+    w_state = widest("LAST BUILD", (row["state"] for row in rows))
+    w_timing = widest("TIMING", (row["timing"] for row in rows))
+    w_seed = widest("SEED", (row["seed"] for row in rows))
+    w_clock = widest("CLOCK", (clock[0] for row in rows for clock in row.get("clocks", [])))
+    w_clock = max(w_clock, widest("CLOCK", ("-",)))
+    w_fmax = widest("FMAX/REQ", (fmax_text(row, clock) if row.get("clocks") else row["fmax"]
+                                 for row in rows for clock in (row.get("clocks") or [None])[:1]))
+    w_elapsed = widest("ELAPSED", (row["elapsed"] for row in rows))
+    w_date = widest("DATE", (row["date"] for row in rows))
+    print(f"  {'PROTOTYPE':<{w_proto}} {'BITSTREAM':<{w_bit}} {'LAST BUILD':<{w_state}} "
+          f"{'TIMING':<{w_timing}} {'SEED':<{w_seed}} {'CLOCK':<{w_clock}} "
+          f"{'FMAX/REQ':<{w_fmax}} {'ELAPSED':<{w_elapsed}} {'DATE':<{w_date}} LABEL")
     for row in rows:
         marker = "*" if row["state"] == "RUNNING" else " "
         # Un reloj por linea. El primero es el que limita (el de menos margen) y
@@ -392,15 +412,16 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         clocks = row.get("clocks", [])
         if clocks:
             name, achieved, required = clocks[0]
-            clock_name, fmax = name, clock_value(achieved, required, 13)
+            clock_name, fmax = name, clock_value(achieved, required, w_fmax)
         else:
-            clock_name, fmax = "-", f"{row['fmax']:<13}"
-        print(f"{marker} {row['prototype']:<29} {field(row['bitstream'], 10)} "
-              f"{field(row['state'], 12)} {field(row['timing'], 6)} "
-              f"{row['seed']:<5} {clock_name:<11} {fmax} {row['elapsed']:<8} "
-              f"{row['date']:<16} {row['label']}")
+            clock_name, fmax = "-", f"{row['fmax']:<{w_fmax}}"
+        print(f"{marker} {row['prototype']:<{w_proto}} {field(row['bitstream'], w_bit)} "
+              f"{field(row['state'], w_state)} {field(row['timing'], w_timing)} "
+              f"{row['seed']:<{w_seed}} {clock_name:<{w_clock}} {fmax} "
+              f"{row['elapsed']:<{w_elapsed}} {row['date']:<{w_date}} {row['label']}")
         for name, achieved, required in clocks[1:]:
-            print(f"  {'':<29} {'':<10} {'':<12} {'':<6} {'':<5} {name:<11} "
+            print(f"  {'':<{w_proto}} {'':<{w_bit}} {'':<{w_state}} {'':<{w_timing}} "
+                  f"{'':<{w_seed}} {name:<{w_clock}} "
                   f"{clock_value(achieved, required, 0)}")
 
 
