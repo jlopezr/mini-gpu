@@ -350,6 +350,40 @@ class BenchDmaTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
+POLL_EXP = HERE / "examples" / "dma" / "poll_exp.asm"
+
+
+class PollExperimentTest(unittest.TestCase):
+    """`poll_exp.asm`: los 24 trabajos (memset y memcpy, 1 a 8 warps, 3 maneras de
+    esperar) salen bien. Los ciclos no existen en el simulador: solo se comprueba
+    que el programa funciona."""
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(POLL_EXP)
+        cls.labels = labels
+        cls.system = CpuGpuSystem(32 * 1024 * 1024)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 50), labels["exp_initial_cfg"])
+        cls.outcome = cls.system.run()
+
+    def test_it_finishes_with_every_job_correct(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+        self.assertEqual(word(self.system, self.labels["exp_done"]), 1)
+        self.assertEqual(word(self.system, self.labels["exp_errors"]), 0)
+
+    def test_the_last_job_is_a_memcpy_of_256_kib_with_eight_warps(self):
+        src = [(i * 0x9E3779B1 + 0x1234567) & 0xFFFFFFFF for i in (0, 1, 65535)]
+        dst = [word(self.system, 0x600000 + 4 * i) for i in (0, 1, 65535)]
+        self.assertEqual(dst, src)
+
+    def test_nothing_is_left_live_or_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+
+
 RENDER = HERE / "examples" / "render" / "render.asm"
 
 

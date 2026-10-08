@@ -153,7 +153,9 @@ comprobando el resultado. En la placa, `bench_dma_board.asm` y `bench_dma_report
 miden cada operación con cada tamaño (32 B a 1 MiB) en la CPU y en la GPU con 1, 2, 4
 y 8 warps. Las tablas y lo que se deduce de ellas están en [docs/bench-dma.md](docs/bench-dma.md):
 la GPU solo gana en `memcpy` y `blit` (1,2 a 1,3 x, desde unos 4 KiB) y pierde siempre en
-`memset` y `fill_rect`.
+`memset` y `fill_rect`. Cada transacción de 16 B cuesta unos 38 ciclos de GPU (30 en
+`memcpy`), el doble de lo que suponía el simulador de ciclos, y no es por el sondeo de la
+CPU: `poll_exp_board.asm` lo descarta midiendo con los contadores de la propia GPU.
 
 ## Qué se comparte
 

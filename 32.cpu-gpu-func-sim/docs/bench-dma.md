@@ -127,6 +127,73 @@ un tercio en las operaciones grandes, y de 2 a 4 otro 4 a 6 %. Con 8 warps no
 mejora a 4: el límite es la memoria, no el número de warps. En las operaciones pequeñas
 (hasta 16 KiB) el mejor es 2 o 4 warps, porque cada warp de más cuesta 9 µs.
 
+## ¿El sondeo de la CPU frena a la GPU? No
+
+El benchmark dejó una pregunta: la GPU escribe a ~10 MB/s, unos 38 ciclos de GPU por
+transacción de 16 B, y el simulador de ciclos suponía 17. Una hipótesis era que la CPU,
+que mientras espera lee sin parar `STATUS` y `WARP_DONE` del MMIO de la GPU, le quitara
+tiempo al puente entre los dos relojes.
+
+`examples/dma/poll_exp_board.asm` (código en `poll_exp.inc`) la pone a prueba. Lanza
+`memset` y `memcpy` de 256 KiB con 1, 2, 4 y 8 warps y espera de tres maneras: sondeando
+sin parar (como `gpu_run`), sondeando con una pausa de unos 40 µs entre lecturas, y sin
+tocar el MMIO de la GPU durante unos 275 ms para leerlo una sola vez cuando ya ha
+terminado. Se mide con los contadores de rendimiento **de la propia GPU** (`CYCLES`,
+`LSU_TX`, `STALL_MEM`, en `0x82030000`), que solo avanzan con la GPU corriendo y por tanto
+no dependen de cómo espere la CPU. Para repetirlo:
+
+```text
+run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/dma/poll_exp_board.asm
+python 32.cpu-gpu-func-sim/examples/dma/poll_exp_report.py
+```
+
+| Operación | Warps | Modo de espera | Ciclos GPU | Transacciones | Ciclos GPU por transacción | Espera de memoria | MB/s (reloj de la GPU) | Ciclos CPU |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| memset | 1 | sondeo continuo | 994,859 | 16,389 | 60.7 | 0 % | 6.59 | 3,185,548 |
+| memset | 1 | sondeo con pausa | 994,836 | 16,389 | 60.7 | 0 % | 6.59 | 3,187,596 |
+| memset | 1 | sin sondear | 994,753 | 16,389 | 60.7 | 0 % | 6.59 | 22,002,132 |
+| memset | 2 | sondeo continuo | 662,972 | 16,394 | 40.4 | 0 % | 9.89 | 2,123,787 |
+| memset | 2 | sondeo con pausa | 662,818 | 16,394 | 40.4 | 0 % | 9.89 | 2,124,503 |
+| memset | 2 | sin sondear | 662,869 | 16,394 | 40.4 | 0 % | 9.89 | 22,002,371 |
+| memset | 4 | sondeo continuo | 635,126 | 16,404 | 38.7 | 0 % | 10.32 | 2,035,127 |
+| memset | 4 | sondeo con pausa | 635,373 | 16,404 | 38.7 | 0 % | 10.31 | 2,039,363 |
+| memset | 4 | sin sondear | 635,071 | 16,404 | 38.7 | 0 % | 10.32 | 22,002,811 |
+| memset | 8 | sondeo continuo | 628,011 | 16,424 | 38.2 | 0 % | 10.44 | 2,013,235 |
+| memset | 8 | sondeo con pausa | 627,796 | 16,424 | 38.2 | 0 % | 10.44 | 2,013,272 |
+| memset | 8 | sin sondear | 627,961 | 16,424 | 38.2 | 0 % | 10.44 | 22,003,755 |
+| memcpy | 1 | sondeo continuo | 1,478,196 | 32,773 | 45.1 | 0 % | 4.43 | 4,732,292 |
+| memcpy | 1 | sondeo con pausa | 1,478,238 | 32,773 | 45.1 | 0 % | 4.43 | 4,733,015 |
+| memcpy | 1 | sin sondear | 1,478,124 | 32,773 | 45.1 | 0 % | 4.43 | 22,002,121 |
+| memcpy | 2 | sondeo continuo | 1,045,683 | 32,778 | 31.9 | 0 % | 6.27 | 3,348,408 |
+| memcpy | 2 | sondeo con pausa | 1,045,675 | 32,778 | 31.9 | 0 % | 6.27 | 3,350,027 |
+| memcpy | 2 | sin sondear | 1,045,639 | 32,778 | 31.9 | 0 % | 6.27 | 22,002,339 |
+| memcpy | 4 | sondeo continuo | 988,651 | 32,788 | 30.2 | 0 % | 6.63 | 3,166,458 |
+| memcpy | 4 | sondeo con pausa | 988,399 | 32,788 | 30.1 | 0 % | 6.63 | 3,165,795 |
+| memcpy | 4 | sin sondear | 988,616 | 32,788 | 30.2 | 0 % | 6.63 | 22,002,824 |
+| memcpy | 8 | sondeo continuo | 972,910 | 32,808 | 29.7 | 0 % | 6.74 | 3,117,043 |
+| memcpy | 8 | sondeo con pausa | 972,760 | 32,808 | 29.7 | 0 % | 6.74 | 3,117,164 |
+| memcpy | 8 | sin sondear | 973,010 | 32,808 | 29.7 | 0 % | 6.74 | 22,003,751 |
+
+**Los ciclos de GPU son los mismos con los tres modos de espera**, con diferencias de
+0,03 % o menos, y las transacciones también. El sondeo no frena a la GPU: la hipótesis
+es falsa. Lo que sale de la tabla, además:
+
+- **Cuántos ciclos cuesta de verdad una transacción.** Con la memoria saturada (4 u 8
+  warps) son **38 a 39 ciclos de GPU por transacción de 16 B** en `memset` y **30** en
+  `memcpy`, el doble de los 17 del modelo. Con un solo warp son 61 y 45: ahí el warp espera
+  a que acabe cada acceso y no hay otro que lo tape.
+- **Las transacciones son las esperadas.** 256 KiB son 16 384 de 16 B y se miden 16 389:
+  las cinco de más son las lecturas de los cinco argumentos del kernel. La coalescencia
+  funciona exactamente como se diseñó: ocho palabras seguidas de un warp son dos
+  transacciones.
+- **`STALL_MEM` vale 0 siempre, y no dice nada.** Cuenta los ciclos en que la LSU tiene una
+  petición y la interfaz no la acepta (`lsu_valid && !lsu_ready`), y la LSU acepta y espera la
+  respuesta por dentro. No sirve para ver si la GPU espera a la memoria.
+
+La causa del techo de ~38 ciclos por transacción sigue sin saberse: ya no es el sondeo.
+Queda el camino de la memoria (el fabric de seis puertos y la SDRAM) o la propia LSU.
+Para separarlos habría que medir la latencia de una sola transacción aislada.
+
 ## Lo que sale de aquí para la política CPU / GPU
 
 Hoy, en esta placa y con esta GPU:
@@ -141,14 +208,12 @@ Hoy, en esta placa y con esta GPU:
 
 ## Lo que no se ha comprobado
 
-- **Por qué el techo de la GPU es ~10 MB/s.** Con 8 warps, escribir 1 MiB son 65 536
-  transacciones de 16 B en 100 ms: unos 38 ciclos de GPU (25 MHz) por transacción. El
-  simulador de ciclos suponía 17. Hay dos hipótesis, sin medir: que la CPU, que sondea
-  el MMIO de la GPU mientras espera, le quite tiempo al puente, o que la contienda en
-  el fabric de seis puertos sea mayor de lo que modela el simulador. Se podría separar
-  midiendo con la CPU sin sondear (esperar un tiempo fijo y leer `WARP_DONE` una sola vez).
+- **Por qué cada transacción de 16 B cuesta ~38 ciclos de GPU (~30 en `memcpy`) y no
+  los 17 del simulador de ciclos.** El sondeo de la CPU ya está descartado (arriba).
+  Queda el camino de la memoria (el fabric de seis puertos y la SDRAM) o la propia LSU.
+  Para separarlos habría que medir la latencia de una sola transacción aislada.
 - **Con el vídeo activo.** La lectura de pantalla compite con la GPU y con la CPU por
   la SDRAM. No se ha medido el efecto.
-- Los kernels hacen una palabra por lane y vuelta con un bucle de siete instrucciones
-  y no están optimizados (por ejemplo, desenrollados): si el límite estuviera en las
-  instrucciones y no en la memoria, el techo de la GPU podría subir.
+- **Los kernels no son el límite.** Hacen una palabra por lane y vuelta con un bucle de
+  seis o siete instrucciones, unos 4 ciclos por transacción, y con 4 y 8 warps los ciclos
+  por transacción no bajan. Desenrollarlos no subiría el techo.
