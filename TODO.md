@@ -663,6 +663,40 @@ mediana de CPU no sube, quitar el commit. Ojo: con el diseño aplanado
 `timing-wall` solo atribuye módulo a `input_i` y `console_i`; para el resto, usar
 `--path` en varias semillas.
 
+**Actualización (8 de octubre de 2026).** El arreglo ya está hecho en la 36
+(`STATE_CHECK_BLOCK` y `block_ok`), no en la 35, y con él deja de ser el muro de
+la CPU. Sigue sin aplicarse al `monitor.v` de la 35 ni al de las demás.
+
+## 18. Tiempo máximo en el acceso MMIO a la GPU (36)
+
+**Qué falta.** Un contador en `mmio_mux` que cuente solo mientras espera
+`slow_done` del puente de la GPU (`gpu_mmio_bridge`), con unos 1.000 ciclos de
+80 MHz (10 bits, unos 12 µs; un acceso normal tarda decenas). Si salta: dar el
+acceso por terminado, devolver error al cliente y **ignorar un `slow_done` que
+llegue tarde** (hoy el mux acepta `slow_done` solo si hay un acceso lento en
+curso, pero tras un tiempo agotado conviene dejar la GPU marcada como caída hasta
+el siguiente reset, para que una respuesta tardía no se confunda con la de otro
+acceso). Hace falta un caso en `gpu_mmio_bridge_tb.v` con una GPU que no contesta.
+
+**Por qué importa.** Sin él, si la GPU no contesta nunca, `mmio_mux` espera para
+siempre: la CPU se queda parada en esa instrucción y el monitor tampoco puede
+tocar el MMIO (el bus es único), de modo que solo se sale con el reset de la
+placa. Hoy no se ve porque `gpu_system` siempre contesta, con error si la
+dirección es mala; podría pasar con un reloj de la GPU parado, un fallo de su
+reset o un camino futuro sin respuesta.
+
+**Qué lo bloquea.** No es técnico: cualquier cambio de RTL deja el bitstream de
+la 36 en STALE y cuesta un build de unos 40 minutos (rutado de `router1`,
+cerró el 8 de octubre con `sdram_clk` +2,0 % y CPU +4,9 %, márgenes finos).
+Conviene hacerlo **junto con otro cambio de RTL**, y después de probar la 36 en
+placa; si en placa se ve un cuelgue al tocar la GPU, sube de prioridad.
+
+**Va con esto, en el mismo cambio.** Documentar en el comentario de
+`gpu_mmio_bridge.v` tres cosas: que el reset de un solo dominio dejaría un `done`
+espurio (hoy los dos cuelgan del mismo botón); que nextpnr no analiza los caminos
+entre `clk` y `gclk`, así que con otra herramienta habría que marcarlos como
+`false path`; y que sin tiempo máximo una GPU caída bloquea el bus.
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
