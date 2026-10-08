@@ -1,0 +1,87 @@
+// Project F Library - Dual clock generation (ECP5)
+// Copyright Will Green, open source hardware released under the MIT License
+// Learn more at https://projectf.io/posts/ecp5-fpga-clock/
+
+module clock2_gen #(
+    parameter CLKI_DIV  = 1,     // input clock divider
+    parameter CLKFB_DIV = 1,     // feedback divider
+    parameter CLKOP_DIV = 1,     // primary output clock divider
+    parameter CLKOP_CPHASE = 0,  // primary output clock phase
+    parameter CLKOS_DIV = 1,     // secondary output clock divider
+    parameter CLKOS_CPHASE = 0   // secondary output clock phase
+    ) (
+    input  wire clk_in,      // input clock
+    output wire clk_5x_out,  // output 5x clock
+    output wire clk_out,     // output clock
+    output reg  clk_locked   // clock locked?
+    );
+
+`ifdef SYNTHESIZE
+    wire locked;  // unsynced lock signal
+
+    // HDL attributes (values are from Project Trellis)
+    (* ICP_CURRENT="12" *)
+    (* LPF_RESISTOR="8" *)
+    (* MFG_ENABLE_FILTEROPAMP="1" *)
+    (* MFG_GMCREF_SEL="2" *)
+
+    // El EHXPLLL tiene mas salidas de las que usamos (ENCLKOS, los CLKOS que no
+    // se sacan...). No conectarlas es lo normal en una primitiva de Lattice, asi
+    // que se silencia aqui y solo aqui: avisos fijos tapan los que si importan.
+
+    // verilator lint_off PINMISSING
+
+    EHXPLLL #(
+        .PLLRST_ENA("DISABLED"),
+        .INTFB_WAKE("DISABLED"),
+        .STDBY_ENABLE("DISABLED"),
+        .DPHASE_SOURCE("DISABLED"),
+        .OUTDIVIDER_MUXA("DIVA"),
+        .OUTDIVIDER_MUXB("DIVB"),
+        .OUTDIVIDER_MUXC("DIVC"),
+        .OUTDIVIDER_MUXD("DIVD"),
+        .CLKI_DIV(CLKI_DIV),
+        .CLKOP_ENABLE("ENABLED"),
+        .CLKOP_DIV(CLKOP_DIV),
+        .CLKOP_CPHASE(CLKOP_CPHASE),
+        .CLKOP_FPHASE(0),
+        .CLKOS_ENABLE("ENABLED"),
+        .CLKOS_DIV(CLKOS_DIV),
+        .CLKOS_CPHASE(CLKOS_CPHASE),
+        .CLKOS_FPHASE(0),
+        .FEEDBK_PATH("CLKOP"),
+        .CLKFB_DIV(CLKFB_DIV)
+    ) pll_i (
+        .RST(1'b0),
+        .STDBY(1'b0),
+        .CLKI(clk_in),
+        .CLKOP(clk_5x_out),
+        .CLKOS(clk_out),
+        .CLKFB(clk_5x_out),
+        .CLKINTFB(),
+        .PHASESEL0(1'b0),
+        .PHASESEL1(1'b0),
+        .PHASEDIR(1'b1),
+        .PHASESTEP(1'b1),
+        .PHASELOADREG(1'b1),
+        .PLLWAKESYNC(1'b0),
+        .ENCLKOP(1'b0),
+        .LOCK(locked)
+    );
+    // verilator lint_on PINMISSING
+
+    // ensure clock lock is synced with output clock
+    reg locked_sync;
+    always @(posedge clk_out) begin
+        locked_sync <= locked;
+        clk_locked <= locked_sync;
+    end
+`else
+    // Sin primitivas de PLL en simulacion, igual que `pll_120`. Los dos relojes
+    // pasan a ser el de entrada, asi que una simulacion de `top` no reproduce
+    // la relacion 5x ni el cruce de dominios: eso se comprueba en banco aparte.
+    assign clk_5x_out = clk_in;
+    assign clk_out = clk_in;
+    initial clk_locked = 1'b1;
+`endif
+endmodule

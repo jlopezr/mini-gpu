@@ -103,7 +103,7 @@
     "architecture": "gpu"
   },
 
-  "_comment_gpu_core": "Una CPU que lanza una GPU por MMIO (GPU CORE, mmio.md §14.1): el RTL tiene el puente que cruza el bus de la CPU al reloj de la GPU. Hoy solo la 36. Un caso CPU lo declara cuando su programa escribe GPU_CONTROL o los descriptores de warp. No dice cuanto del contrato esta: el hito 1 de la 36 lanza con RUN y todavia no con WARP_START.",
+  "_comment_gpu_core": "Una CPU que lanza una GPU por MMIO (GPU CORE, mmio.md §14.1): el RTL tiene el puente que cruza el bus de la CPU al reloj de la GPU. Hoy la 36 y la 37. Un caso CPU lo declara cuando su programa escribe GPU_CONTROL o los descriptores de warp. No dice cuanto del contrato esta: el hito 1 de la 36 lanza con RUN y todavia no con WARP_START.",
   "gpu_core": {
     "architecture": "cpu",
     "file": "gpu_mmio_bridge.v"

@@ -1,0 +1,4 @@
+{
+  "alias": "mk2",
+  "description": "Segunda version de la 36: la CPU lanza una GPU de 8 lanes por MMIO (GPU CORE), con mas margen en el controlador SDRAM y el hito 2 de GPU CORE"
+}
