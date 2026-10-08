@@ -98,7 +98,9 @@ module gpu_alu_tb;
     localparam [31:0] CORE = 32'h8200_0000, WARPS = 32'h8201_0000;
     localparam [31:0] ST_IDLE = 4, ST_ERROR = 8;
     localparam [31:0] A_TABLE = 32'h800, B_TABLE = 32'h900;
-    localparam [31:0] SLT_OUT = 32'hA00, SLTU_OUT = 32'hB00;
+    localparam [31:0] SLT_OUT = 32'hA00, SLTU_OUT = 32'hB00, MULHI_OUT = 32'hC00,
+                      DIV_OUT = 32'hD00, DIVU_OUT = 32'hE00, REM_OUT = 32'hF00,
+                      REMU_OUT = 32'h1000;
 
     function [31:0] word;
         input [31:0] byte_addr;
@@ -115,7 +117,10 @@ module gpu_alu_tb;
 
     // Comprueba una tabla de 32 resultados contra `want`, que cada llamada
     // calcula a partir de (a, b) segun `which`.
-    localparam W_SLT = 0, W_SLTU = 1;
+    localparam W_SLT = 0, W_SLTU = 1, W_MULHI = 2, W_DIV = 3, W_DIVU = 4,
+               W_REM = 5, W_REMU = 6;
+    reg signed [63:0] product;
+    reg signed [31:0] sa, sb, sq;
     function [31:0] expected;
         input integer which;
         input [31:0] a, b;
@@ -123,6 +128,23 @@ module gpu_alu_tb;
             case (which)
                 W_SLT:  expected = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0;
                 W_SLTU: expected = (a < b) ? 32'd1 : 32'd0;
+                W_MULHI: begin
+                    product = $signed({{32{a[31]}}, a}) * $signed({{32{b[31]}}, b});
+                    expected = product[63:32];
+                end
+                // -2^31 / -1 no cabe: el cociente da la vuelta y el resto es 0.
+                W_DIV: begin
+                    sa = a; sb = b;
+                    if (a == 32'h8000_0000 && b == 32'hffff_ffff) expected = 32'h8000_0000;
+                    else begin sq = sa / sb; expected = sq; end
+                end
+                W_DIVU: expected = a / b;
+                W_REM: begin
+                    sa = a; sb = b;
+                    if (a == 32'h8000_0000 && b == 32'hffff_ffff) expected = 32'd0;
+                    else begin sq = sa % sb; expected = sq; end
+                end
+                W_REMU: expected = a % b;
                 default: expected = 32'hxxxx_xxxx;
             endcase
         end
@@ -162,6 +184,11 @@ module gpu_alu_tb;
         end
         op_b[5]  = op_a[5];          // operandos iguales
         op_b[21] = op_a[21];
+        // Casos que rompen implementaciones ingenuas.
+        op_a[9]  = 32'h8000_0000;  op_b[9]  = 32'hffff_ffff;   // -2^31 / -1
+        op_a[11] = 32'hffff_ffff;  op_b[11] = 32'h8000_0001;   // divisor > 2^31
+        op_a[13] = 32'hffff_fffe;  op_b[13] = 32'hc000_0000;
+        op_a[26] = 32'h8000_0000;  op_b[26] = 32'h8000_0000;   // minimo por minimo
 
         for (i = 0; i < LINES; i = i + 1) mem[i] = 128'd0;
         for (i = 0; i < 64; i = i + 1) kernel_words[i] = 32'd0;
@@ -198,6 +225,11 @@ module gpu_alu_tb;
         bad = 0;
         check_table("SLT",  SLT_OUT,  W_SLT);
         check_table("SLTU", SLTU_OUT, W_SLTU);
+        check_table("MULHI", MULHI_OUT, W_MULHI);
+        check_table("DIV",  DIV_OUT,  W_DIV);
+        check_table("DIVU", DIVU_OUT, W_DIVU);
+        check_table("REM",  REM_OUT,  W_REM);
+        check_table("REMU", REMU_OUT, W_REMU);
         if (bad != 0) begin
             $display("GPU_ALU: %0d errores", bad);
             $fatal(1);

@@ -8,7 +8,7 @@
  * Implemented instructions:
  *   NOP
  *   MOVI Rd, imm16
- *   ADD/SUB/MUL/MULFX/DIV/AND/OR/XOR Rd, Ra, Rb
+ *   ADD/SUB/MUL/MULHI/MULFX/DIV/DIVU/REM/REMU/AND/OR/XOR Rd, Ra, Rb
  *   SHL/SHR/SAR Rd, Ra, Rb
  *   SLT/SLTU Rd, Ra, Rb
  *   ADDI/ANDI/ORI/XORI Rd, Ra, imm16
@@ -95,7 +95,11 @@ module gpu_lane #(
   localparam [5:0] OPCODE_SHR = 6'h08;
   localparam [5:0] OPCODE_SAR = 6'h09;
   localparam [5:0] OPCODE_MUL = 6'h0a;
+  localparam [5:0] OPCODE_MULHI = 6'h0b;
   localparam [5:0] OPCODE_DIV = 6'h0c;
+  localparam [5:0] OPCODE_DIVU = 6'h0d;
+  localparam [5:0] OPCODE_REM = 6'h0e;
+  localparam [5:0] OPCODE_REMU = 6'h0f;
   localparam [5:0] OPCODE_MOVI = 6'h10;
   localparam [5:0] OPCODE_ADDI = 6'h11;
   localparam [5:0] OPCODE_ANDI = 6'h12;
@@ -196,13 +200,20 @@ module gpu_lane #(
   reg divide_negative;
   reg [4:0] divide_destination;
   reg divide_write_pending;
+  reg divide_select_remainder;
+  reg multiply_high;
 
+  // 32 bits bastan tambien para DIVU/REMU con un divisor por encima de 2^31:
+  // antes del paso i el resto es menor que 2^i (es el prefijo del dividendo),
+  // asi que en el ultimo paso es menor que 2^31 y desplazarlo no pierde nada.
   wire [31:0] divide_shifted_remainder =
       {divide_remainder[30:0], divide_dividend[31]};
   wire [31:0] divide_remainder_difference =
       divide_shifted_remainder - divide_divisor;
   wire [31:0] divide_next_quotient =
       {divide_quotient[30:0], divide_shifted_remainder >= divide_divisor};
+  wire [31:0] divide_result = divide_select_remainder ? divide_remainder
+                                                       : divide_quotient;
 
   wire [5:0] opcode = instruction[31:26];
   wire [4:0] rd = instruction[25:21];
@@ -223,7 +234,8 @@ module gpu_lane #(
         instruction_encoding_valid = instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
       OPCODE_SHL, OPCODE_SHR, OPCODE_SAR, OPCODE_MUL, OPCODE_DIV,
-      OPCODE_SLT, OPCODE_SLTU:
+      OPCODE_SLT, OPCODE_SLTU, OPCODE_MULHI, OPCODE_DIVU, OPCODE_REM,
+      OPCODE_REMU:
         instruction_encoding_valid = instruction[10:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
         instruction_encoding_valid = instruction[20:16] == 0;
@@ -305,6 +317,8 @@ module gpu_lane #(
       divide_negative <= 1'b0;
       divide_destination <= 5'd0;
       divide_write_pending <= 1'b0;
+      divide_select_remainder <= 1'b0;
+      multiply_high <= 1'b0;
       register_a_address <= 5'd0;
       register_b_address <= 5'd0;
       register_write_enable <= 1'b0;
@@ -441,6 +455,21 @@ module gpu_lane #(
               multiply_operand_b <= operand_b;
               multiply_destination <= rd;
               multiply_fixed <= 1'b0;
+              multiply_high <= 1'b0;
+              divide_write_pending <= 1'b0;
+              state <= STATE_MUL_PRODUCTS;
+            end
+
+            // MULHI: los 32 bits altos del producto con signo. Es el camino de
+            // MULFX (magnitudes, producto de 64 bits, signo al final) con otra
+            // ventana de salida: [63:32] en vez de [47:16].
+            OPCODE_MULHI: begin
+              multiply_operand_a <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
+              multiply_operand_b <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+              multiply_destination <= rd;
+              multiply_fixed <= 1'b1;
+              multiply_high <= 1'b1;
+              multiply_negative <= operand_a[31] ^ operand_b[31];
               divide_write_pending <= 1'b0;
               state <= STATE_MUL_PRODUCTS;
             end
@@ -451,12 +480,16 @@ module gpu_lane #(
               multiply_operand_b <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
               multiply_destination <= rd;
               multiply_fixed <= 1'b1;
+              multiply_high <= 1'b0;
               multiply_negative <= operand_a[31] ^ operand_b[31];
               divide_write_pending <= 1'b0;
               state <= STATE_MUL_PRODUCTS;
             end
 
-            OPCODE_DIV: begin
+            // DIV/REM operan sobre magnitudes y ponen el signo al final (el
+            // cociente lleva a^b, el resto el del dividendo); DIVU/REMU usan los
+            // operandos tal cual. REM/REMU escriben el resto en vez del cociente.
+            OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
               if (operand_b == 0) begin
                 halted <= 1'b1;
                 error <= 1'b1;
@@ -464,12 +497,14 @@ module gpu_lane #(
                 pc <= pc - 32'd4;
                 state <= STATE_HALTED;
               end else begin
-                divide_dividend <= operand_a[31] ? (~operand_a + 1'b1) : operand_a;
-                divide_divisor <= operand_b[31] ? (~operand_b + 1'b1) : operand_b;
+                divide_dividend <= (!opcode[0] && operand_a[31]) ? (~operand_a + 1'b1) : operand_a;
+                divide_divisor <= (!opcode[0] && operand_b[31]) ? (~operand_b + 1'b1) : operand_b;
                 divide_quotient <= 32'h0000_0000;
                 divide_remainder <= 32'h0000_0000;
                 divide_count <= 6'd0;
-                divide_negative <= operand_a[31] ^ operand_b[31];
+                divide_select_remainder <= opcode[1];
+                divide_negative <= opcode[0] ? 1'b0 :
+                    (opcode[1] ? operand_a[31] : operand_a[31] ^ operand_b[31]);
                 divide_destination <= rd;
                 divide_write_pending <= 1'b1;
                 state <= STATE_DIV_STEP;
@@ -766,7 +801,12 @@ module gpu_lane #(
               divide_destination : multiply_destination;
           if (divide_write_pending)
             register_write_data <= divide_negative ?
-                (~divide_quotient + 1'b1) : divide_quotient;
+                (~divide_result + 1'b1) : divide_result;
+          else if (multiply_high)
+            register_write_data <= multiply_negative ?
+                (~multiply_unsigned_product[63:32] +
+                 (multiply_unsigned_product[31:0] == 0)) :
+                multiply_unsigned_product[63:32];
           else
             register_write_data <= multiply_fixed ?
                 (multiply_negative ?
