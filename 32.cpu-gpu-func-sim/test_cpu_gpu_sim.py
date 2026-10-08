@@ -1616,5 +1616,54 @@ class CommandLineTest(unittest.TestCase):
                            "tras el primer warp aún hay líneas de CPU: se intercalan")
 
 
+C_EXAMPLES = HERE / "examples" / "c"
+
+
+def build_c_example(name: str):
+    """Compila `examples/c/<name>.c` (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
+    Se omite la prueba si no hay compilador (rcc de y.lcc y MSVC); cualquier otro fallo es un error."""
+    sys.path.insert(0, str(C_EXAMPLES))
+    import build as c_build
+    try:
+        binary = c_build.build(C_EXAMPLES / f"{name}.c")
+    except c_build.BuildError as error:
+        if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
+            raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+        raise
+    wrapper = (C_EXAMPLES / "_build" / f"{name}.asm")
+    labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
+                        c_build.INCLUDE_DIRS)[1]
+    return binary.read_bytes(), labels
+
+
+class CKernelTest(unittest.TestCase):
+    """`examples/c/memset_c.c`: un programa en C con la CPU y un kernel de GPU en el mismo fichero,
+    compilado con mini-lcc y mini-opt."""
+
+    @classmethod
+    def setUpClass(cls):
+        image, cls.labels = build_c_example("memset_c")
+        cls.system = CpuGpuSystem(MEMORY)
+        cls.system.load_cpu_program(image)
+        cls.outcome = cls.system.run()
+
+    def words(self, label, count):
+        return [word(self.system, self.labels[label] + 4 * i) for i in range(count)]
+
+    def test_the_program_halts_with_the_gpu_idle_and_gpu_ok(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.cpu.error)
+        self.assertEqual(self.words("status", 1), [GPU_OK])
+
+    def test_the_kernel_fills_the_whole_buffer_and_nothing_beyond(self):
+        buffer = self.words("buffer", 4096 + 16)
+        self.assertEqual(buffer[:4096], [0xABCD] * 4096)
+        self.assertEqual(buffer[4096:], [0] * 16)
+
+    def test_every_lane_of_four_warps_ran(self):
+        # 4 warps x 8 lanes sobre 4096 palabras: 128 vueltas por lane
+        self.assertGreater(self.system.gpu.retired, 128 * 4 * 5)
+
+
 if __name__ == "__main__":
     unittest.main()

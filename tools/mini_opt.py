@@ -296,12 +296,30 @@ def live_after(block: Block, live_out: set[int], position: int) -> set[int]:
     return live
 
 
+def instr(op: str, *args: str) -> Line:
+    return Line("instr", "", op=op, args=list(args))
+
+
+def free_register(busy: set[int], where: str) -> int:
+    """Un temporal de R5..R15 que no este en `busy`. R5 y R6 son los scratch del
+    backend (nunca los asigna el compilador), asi que casi siempre hay uno."""
+    for r in range(5, 16):
+        if r not in busy:
+            return r
+    raise OptError(f"{where}: no queda ningun registro libre para una expansion")
+
+
+def live_in_entry(blocks: list[Block], live_out: list[set[int]]) -> set[int]:
+    """Registros que la funcion lee antes de escribirlos (vivos a la entrada)."""
+    return live_after(Block(-1, [Line("directive", "")] + blocks[0].lines), live_out[0], 0)
+
+
 # ---------------------------------------------------------------------------
 # Pases
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = ["intrinsics"]
+DEFAULT_PASSES = ["intrinsics", "kernels"]
 
 
 def register_pass(name: str, doc: str):
@@ -319,6 +337,9 @@ INTRINSIC_LOADS = {
     "__gpu_lwarp": "GETLWARP",
     "__gpu_arg": "GETARG",
 }
+# Compuestos: se leen como una variable pero valen mas de una instruccion.
+#   __gpu_nthreads = nwarps * nlanes del job, del bloque de argumentos (+0 y +4).
+COMPOSITE_LOADS = {"__gpu_nthreads"}
 # Escrituras: `LI r,sim ; STORE v,r,0` => `OP` (el valor se descarta).
 INTRINSIC_STORES = {
     "__gpu_bar": "BAR",
@@ -327,7 +348,7 @@ INTRINSIC_STORES = {
 
 @register_pass("intrinsics", "variables __gpu_* -> GETTID/GETLANE/GETWARP/GETLWARP/GETARG/BAR")
 def pass_intrinsics(unit: Unit, stats: dict) -> None:
-    names = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES)
+    names = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES) | COMPOSITE_LOADS
     for function in unit.functions():
         blocks = build_cfg(function)
         live_out = liveness(blocks)
@@ -339,7 +360,7 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
                         and a.args[1] in names and b.kind == "instr"):
                     tmp = reg_of(a.args[0])
                     sym = a.args[1]
-                    is_load = sym in INTRINSIC_LOADS and b.op == "LOAD"
+                    is_load = (sym in INTRINSIC_LOADS or sym in COMPOSITE_LOADS) and b.op == "LOAD"
                     is_store = sym in INTRINSIC_STORES and b.op == "STORE"
                     ok_shape = (len(b.args) == 3 and b.args[2] in ("0", "+0")
                                 and reg_of(b.args[1]) == tmp)
@@ -354,13 +375,21 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
                         if tmp != dest and tmp in live_after(block, live_out[block.index], i + 1):
                             raise OptError(
                                 f"{unit.path}: {function.name}: R{tmp} sigue vivo tras leer {sym}")
-                        new = Line("instr", "", op=INTRINSIC_LOADS[sym], args=[b.args[0]])
+                        if sym in COMPOSITE_LOADS:
+                            after = live_after(block, live_out[block.index], i + 1)
+                            d = b.args[0]
+                            t = tmp if tmp != dest else free_register(after | {dest},
+                                                                      f"{unit.path}: {function.name}")
+                            new = [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
+                                   instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
+                        else:
+                            new = Line("instr", "", op=INTRINSIC_LOADS[sym], args=[b.args[0]])
                     else:
                         if tmp in live_after(block, live_out[block.index], i + 1):
                             raise OptError(
                                 f"{unit.path}: {function.name}: R{tmp} sigue vivo tras escribir {sym}")
                         new = Line("instr", "", op=INTRINSIC_STORES[sym])
-                    block.lines[i:i + 2] = [new]
+                    block.lines[i:i + 2] = new if isinstance(new, list) else [new]
                     stats["intrinsics"] = stats.get("intrinsics", 0) + 1
                 else:
                     i += 1
@@ -377,6 +406,88 @@ def pass_intrinsics(unit: Unit, stats: dict) -> None:
             if line.kind == "instr" and any(a in names for a in line.args):
                 raise OptError(
                     f"{unit.path}: {function.name}: uso no soportado de un intrinseco: {line.render()}")
+
+
+# ---------------------------------------------------------------------------
+# Kernels de GPU: `__kernel_<nombre>` es una funcion que arranca una lane
+# ---------------------------------------------------------------------------
+
+KERNEL_PREFIX = "__kernel_"
+# Bytes de pila por lane y simbolo de la zona; los define el runtime de C (gpu.c) y
+# tienen que coincidir con `GPU_STACK_PER_LANE` de gpu.h.
+GPU_STACK_PER_LANE = 512
+GPU_STACK_SYMBOL = "__gpu_stack"
+KERNEL_PARAMS = 4                       # R1..R4, del bloque de argumentos +8, +12, +16, +20
+SHIFT_IMMEDIATE = {"SHLI": "SHL", "SHRI": "SHR", "SARI": "SAR"}
+
+# Lo que ejecutan las lanes de la GPU en cada prototipo. `LI` es un pseudo del ensamblador.
+GPU_ISAS = {
+    "36": {"NOP", "ADD", "SUB", "MULFX", "AND", "OR", "XOR", "SHL", "SHR", "SAR", "MUL", "DIV",
+           "MOVI", "ADDI", "ANDI", "ORI", "XORI", "LI", "MOVHI", "LOAD", "STORE", "LOADB",
+           "LOADUB", "STOREB", "LOADH", "LOADUH", "STOREH", "BEQ", "BNE", "BLT", "BGE",
+           "BLTU", "BGEU", "BRA", "GETTID", "GETLANE", "GETWARP", "GETLWARP", "GETARG",
+           "SSY", "BAR", "EXIT", "TRAP", "HALT"},
+}
+GPU_ISA = "36"
+
+
+@register_pass("kernels", "__kernel_*: desplazamientos con registro, ISA de la GPU, entrada (pila de "
+                          "lane y parametros desde GETARG) y EXIT en vez de JR R31")
+def pass_kernels(unit: Unit, stats: dict) -> None:
+    allowed = GPU_ISAS[GPU_ISA]
+    for function in unit.functions():
+        if not function.name.startswith(KERNEL_PREFIX):
+            continue
+        where = f"{unit.path}: {function.name}"
+        # el retorno de un kernel es parar la lane
+        for line in function.body:
+            if line.kind == "instr" and line.op == "JR" and [a.upper() for a in line.args] == ["R31"]:
+                line.op, line.args = "EXIT", []
+        blocks = build_cfg(function)
+        live_out = liveness(blocks)
+        # desplazamientos con cantidad inmediata: la GPU solo los tiene con registro
+        for block in blocks:
+            i = 0
+            while i < len(block.lines):
+                line = block.lines[i]
+                if line.kind == "instr" and line.op in SHIFT_IMMEDIATE:
+                    d, a, k = line.args
+                    busy = live_after(block, live_out[block.index], i) | {reg_of(d), reg_of(a)}
+                    t = free_register(busy, where)
+                    block.lines[i:i + 1] = [instr("MOVI", f"R{t}", k),
+                                            instr(SHIFT_IMMEDIATE[line.op], d, a, f"R{t}")]
+                    stats["kernels.shifts"] = stats.get("kernels.shifts", 0) + 1
+                    i += 2
+                else:
+                    i += 1
+        function.body = [line for block in blocks for line in block.lines]
+        for line in function.body:
+            if line.kind == "instr" and line.op not in allowed:
+                raise OptError(f"{where}: la GPU del prototipo {GPU_ISA} no ejecuta {line.op} "
+                               f"({line.render()})")
+        # parametros: R1..R4 que el cuerpo lee antes de escribir. Mas de cuatro irian a la
+        # pila del llamador, que un kernel no tiene.
+        frame = 0
+        for line in function.body:
+            if line.kind == "instr" and line.op == "ADDI" and [a.upper() for a in line.args[:2]] == ["R30", "R30"]:
+                frame = -int(line.args[2], 0)
+                break
+        for line in function.body:
+            if (line.kind == "instr" and line.op in LOADS and reg_of(line.args[1]) == STACK
+                    and int(line.args[2], 0) >= frame > 0):
+                raise OptError(f"{where}: un kernel admite {KERNEL_PARAMS} parametros como maximo "
+                               "(pasa un puntero a una estructura)")
+        blocks = build_cfg(function)
+        live_out = liveness(blocks)
+        params = sorted(r for r in live_in_entry(blocks, live_out) if r in ARG_REGS)
+        size = GPU_STACK_PER_LANE
+        entry = [instr("GETTID", "R5"), instr("MOVI", "R6", str(size)), instr("MUL", "R5", "R5", "R6"),
+                 instr("LI", "R30", f"{GPU_STACK_SYMBOL}+{size}"), instr("ADD", "R30", "R30", "R5")]
+        if params:
+            entry.append(instr("GETARG", "R5"))
+            entry += [instr("LOAD", f"R{r}", "R5", str(8 + 4 * (r - 1))) for r in params]
+        function.body[1:1] = entry              # justo despues de la etiqueta de la funcion
+        stats["kernels"] = stats.get("kernels", 0) + 1
 
 
 def directive_parts(line: Line) -> list[str]:

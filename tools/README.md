@@ -950,6 +950,14 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `@register_pass` en `tools/mini_opt.py`, con troceado en funciones, grafo de flujo
   (`build_cfg`) y vida de registros (`liveness`).
 
+- **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
+  `32.cpu-gpu-func-sim/examples/c/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  pila, carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
+  por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
+  si el kernel usa una instrucción que la GPU del prototipo no ejecuta o pide más de 4
+  parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
+  Ejemplo completo en `32.cpu-gpu-func-sim/examples/c/`.
+
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él).
 

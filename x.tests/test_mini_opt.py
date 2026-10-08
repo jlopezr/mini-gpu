@@ -22,7 +22,8 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 
 from mini_asm import assemble_bytes  # noqa: E402
 from tools.mini_opt import (  # noqa: E402
-    OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, render_unit)
+    OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels,
+    render_unit)
 
 RUNTIME = ROOT / "1.isa" / "runtime"
 
@@ -200,6 +201,94 @@ JR R31
 """
         with self.assertRaisesRegex(OptError, "variable entera"):
             pass_intrinsics(parse_unit(source, "k.s"), {})
+
+
+KERNEL_S = """\
+.text
+.globl __kernel_k
+.align 4
+__kernel_k:
+ADD R15, R1, R0
+ADD R14, R3, R0
+SHLI R12, R15, 2
+ADD R12, R12, R14
+STORE R15, R12, 0
+JR R31
+"""
+
+
+def kernel_body(source, name="__kernel_k", **kwargs):
+    unit = parse_unit(source, "k.s")
+    pass_kernels(unit, {})
+    return [l.render() for l in functions(unit)[name].body if l.kind == "instr"]
+
+
+class KernelsTest(unittest.TestCase):
+    def test_entry_sets_the_lane_stack_and_loads_only_the_parameters_read(self):
+        body = kernel_body(KERNEL_S)
+        self.assertEqual(body[:5], ["GETTID R5", "MOVI R6, 512", "MUL R5, R5, R6",
+                                    "LI R30, __gpu_stack+512", "ADD R30, R30, R5"])
+        # lee R1 y R3 (parametros 0 y 2); R2 no se carga
+        self.assertEqual(body[5:8], ["GETARG R5", "LOAD R1, R5, 8", "LOAD R3, R5, 16"])
+
+    def test_return_becomes_exit(self):
+        body = kernel_body(KERNEL_S)
+        self.assertEqual(body[-1], "EXIT")
+        self.assertNotIn("JR R31", body)
+
+    def test_immediate_shifts_use_a_free_register(self):
+        body = kernel_body(KERNEL_S)
+        self.assertNotIn("SHLI", " ".join(body))
+        index = next(i for i, text in enumerate(body) if text.startswith("SHL "))
+        self.assertTrue(body[index - 1].startswith("MOVI R"))
+        temp = body[index - 1].split()[1].rstrip(",")
+        self.assertIn(f"R{temp[1:]}", body[index])
+        self.assertNotIn(temp, ("R12", "R15"))         # ni el destino ni el origen
+
+    def test_other_functions_are_left_alone(self):
+        source = KERNEL_S + ".globl host\n.align 4\nhost:\nSHLI R1, R1, 2\nJR R31\n"
+        body = kernel_body(source, "host")
+        self.assertEqual(body, ["SHLI R1, R1, 2", "JR R31"])
+
+    def test_an_instruction_the_gpu_lacks_is_an_error(self):
+        for op in ("REM R1, R1, R2", "SLT R1, R1, R2", "MULHI R1, R1, R2", "JAL R31, other"):
+            source = KERNEL_S.replace("STORE R15, R12, 0", op + "\nSTORE R15, R12, 0")
+            with self.assertRaisesRegex(OptError, "no ejecuta"):
+                pass_kernels(parse_unit(source, "k.s"), {})
+
+    def test_more_than_four_parameters_is_an_error(self):
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+ADDI R30, R30, -16
+STORE R29, R30, 0
+LOAD R5, R30, 16
+STORE R5, R1, 0
+LOAD R29, R30, 0
+ADDI R30, R30, 16
+JR R31
+"""
+        with self.assertRaisesRegex(OptError, "parametros como maximo"):
+            pass_kernels(parse_unit(source, "k.s"), {})
+
+    def test_nthreads_reads_the_block_and_multiplies(self):
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+LI R12, __gpu_nthreads
+LOAD R28, R12, 0
+ADD R1, R28, R0
+JR R31
+.extern __gpu_nthreads 4
+"""
+        unit = parse_unit(source, "k.s")
+        pass_intrinsics(unit, {})
+        body = [l.render() for l in functions(unit)["__kernel_k"].body if l.kind == "instr"]
+        self.assertEqual(body[:4], ["GETARG R28", "LOAD R12, R28, 0", "LOAD R28, R28, 4",
+                                    "MUL R28, R28, R12"])
+        assemble_bytes(render_unit(unit))
 
 
 class FilterTest(unittest.TestCase):
