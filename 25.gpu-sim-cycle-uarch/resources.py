@@ -109,7 +109,7 @@ class Counters:
             group = ('MUL' if opcode in ('MULFX', 'MUL', 'MULHI') else
                      'SHIFT' if opcode in ('SHL', 'SHR', 'SAR') else
                      'DIV' if opcode in ('DIV', 'DIVU', 'REM', 'REMU') else
-                     'CONTROL' if opcode in ('BEQ', 'BNE', 'BLT', 'BGE', 'BLTU', 'BGEU', 'BRA') else
+                     'CONTROL' if opcode in ('BEQ', 'BNE', 'BLT', 'BGE', 'BLTU', 'BGEU', 'BRA', 'JAL', 'JALR', 'JR') else
                      'FAULT' if opcode == 'FAULT' else 'ALU')
             groups[group] += cycles
         result['x_cycles_by_unit'] = groups

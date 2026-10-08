@@ -1,0 +1,19 @@
+{
+  "architecture": ["cpu", "gpu"],
+  "name": "shared-calls-call-return",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["calls"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "memory_dumps": [
+      {
+        "address": "0x00001000",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}

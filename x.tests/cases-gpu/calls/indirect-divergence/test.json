@@ -1,0 +1,13 @@
+{
+  "architecture": "gpu",
+  "name": "gpu-calls-indirect-divergence",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": ["calls", "atomic_warp_faults"],
+  "max_instructions": 100,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": 6
+  }
+}
