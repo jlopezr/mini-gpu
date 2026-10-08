@@ -91,6 +91,20 @@ module top (
     else
       reset_mem_shift <= {reset_mem_shift[14:0], 1'b0};
   end
+
+  // Dos copias de `reset_mem`, igual que las del reloj de la CPU: una red unica
+  // llegaba al controlador SDRAM y al fabric desde el otro lado del chip, y en la
+  // 36 el camino critico de sdram_clk era esa red (7,7 ns de ruteo, distancia
+  // 141, 94,7 MHz). Misma condicion que `reset_mem_shift[15]`, `keep` contra la
+  // fusion.
+  (* keep = "true" *) reg reset_ctl = 1'b1, reset_fab = 1'b1;
+  always @(posedge clk_mem) begin
+    if (!pll_mem_locked || !btn_pwr_n) begin
+      reset_ctl <= 1'b1; reset_fab <= 1'b1;
+    end else begin
+      reset_ctl <= reset_mem_shift[14]; reset_fab <= reset_mem_shift[14];
+    end
+  end
   assign wifi_gpio0 = 1'b1;
 
   wire [7:0] uart_rx_data, uart_tx_data;
@@ -614,7 +628,7 @@ module top (
           .req_wmask(m_req_wmask[bridge_index]),
           .rsp_valid(m_rsp_valid[bridge_index]), .rsp_ready(m_rsp_ready[bridge_index]),
           .rsp_rdata(m_rsp_rdata[bridge_index]), .rsp_error(m_rsp_error[bridge_index]),
-          .mem_clk(clk_mem), .mem_reset(reset_mem),
+          .mem_clk(clk_mem), .mem_reset(reset_fab),
           .mem_req_empty(req_empty[bridge_index]),
           .mem_req_rd_en(req_rd_en[bridge_index]),
           .mem_req_rd_valid(req_rd_valid[bridge_index]),
@@ -626,7 +640,7 @@ module top (
   endgenerate
 
   memory_fabric_fifo_6 fabric_i(
-      .clk(clk_mem), .reset(reset_mem),
+      .clk(clk_mem), .reset(reset_fab),
       .p0_req_empty(req_empty[0]), .p0_req_rd_en(req_rd_en[0]), .p0_req_rd_valid(req_rd_valid[0]), .p0_req_data(req_data[0]), .p0_rsp_full(rsp_full[0]), .p0_rsp_wr_en(rsp_wr_en[0]), .p0_rsp_data(rsp_data[0]),
       .p1_req_empty(req_empty[1]), .p1_req_rd_en(req_rd_en[1]), .p1_req_rd_valid(req_rd_valid[1]), .p1_req_data(req_data[1]), .p1_rsp_full(rsp_full[1]), .p1_rsp_wr_en(rsp_wr_en[1]), .p1_rsp_data(rsp_data[1]),
       .p2_req_empty(req_empty[2]), .p2_req_rd_en(req_rd_en[2]), .p2_req_rd_valid(req_rd_valid[2]), .p2_req_data(req_data[2]), .p2_rsp_full(rsp_full[2]), .p2_rsp_wr_en(rsp_wr_en[2]), .p2_rsp_data(rsp_data[2]),
@@ -652,7 +666,7 @@ module top (
   assign init_done = init_done_sync2;
 
   sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
-      .clk(clk_mem), .reset(reset_mem),
+      .clk(clk_mem), .reset(reset_ctl),
       .req_valid(fab_req_valid), .req_write(fab_req_write),
       .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),
       .req_wmask(fab_req_wmask), .req_ready(fab_req_ready),
