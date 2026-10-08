@@ -384,6 +384,38 @@ class PollExperimentTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
+LAT_EXP = HERE / "examples" / "dma" / "lat_exp.asm"
+
+
+class LatencyExperimentTest(unittest.TestCase):
+    """`lat_exp.asm`: los 24 trabajos de una lane terminan y escriben donde deben."""
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(LAT_EXP)
+        cls.labels = labels
+        cls.system = CpuGpuSystem(32 * 1024 * 1024)
+        cls.system.load_cpu_program(image)
+        cls.outcome = cls.system.run()
+
+    def test_it_finishes_cleanly(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+        self.assertEqual(word(self.system, self.labels["lat_done"]), 1)
+
+    def test_the_last_store_kernel_wrote_every_address_it_visited(self):
+        # el último trabajo: store, stride 65536, 128 vueltas desde 0x600000
+        for i in (0, 1, 64, 127):
+            self.assertEqual(word(self.system, 0x600000 + i * 65536), 0x1234ABCD, i)
+        # y entre dos direcciones visitadas no se tocó nada
+        self.assertNotEqual(word(self.system, 0x600000 + 4), 0x1234ABCD)
+
+    def test_nothing_is_left_live_or_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+
+
 RENDER = HERE / "examples" / "render" / "render.asm"
 
 

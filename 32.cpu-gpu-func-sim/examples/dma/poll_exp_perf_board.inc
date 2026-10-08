@@ -11,6 +11,13 @@ exp_perf_read:
     LOAD  R3, R4, 0x14                      ; STALL_MEM
     RET
 
+; exp_perf_read2: R1 = RETIRED (instrucciones de warp), R2 = IMEM_MISSES
+exp_perf_read2:
+    LI    R4, MMIO_GPU_PERF_BASE
+    LOAD  R1, R4, 0x04
+    LOAD  R2, R4, 0x0C
+    RET
+
 ; R10 = base de la GPU. La 36 (hito 1) lanza con RUN: no tiene WARP_START.
 exp_launch:
     MOVI  R14, GPU_CTRL_RUN

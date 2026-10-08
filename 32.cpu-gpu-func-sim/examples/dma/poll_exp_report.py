@@ -4,7 +4,7 @@
     run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/dma/poll_exp_board.asm
     python 32.cpu-gpu-func-sim/examples/dma/poll_exp_report.py [--out tabla.md]
 
-La CPU tiene que estar parada (el programa acaba con HALT). Lee 392 bytes desde
+La CPU tiene que estar parada (el programa acaba con HALT). Lee 584 bytes desde
 `exp_done`: el fin, los fallos y las 24 filas de cuatro palabras.
 """
 from __future__ import annotations
@@ -38,25 +38,28 @@ def read_results(program: Path, port: str | None):
         command = [sys.executable, "-X", "utf8", str(ROOT / "36.fpga-cpu-gpu" / "monitor.py")]
         if port:
             command += ["--port", port]
-        command += ["read-block", str(labels["exp_done"]), "392", str(block)]
+        command += ["read-block", str(labels["exp_done"]), "584", str(block)]
         subprocess.run(command, check=True, capture_output=True, text=True)
         data = block.read_bytes()
     done, errors = struct.unpack_from("<II", data, 0)
-    rows = [struct.unpack_from("<4I", data, 8 + 16 * i) for i in range(24)]
+    rows = [struct.unpack_from("<6I", data, 8 + 24 * i) for i in range(24)]
     return done, errors, rows
 
 
 def table(rows) -> str:
     out = ["| Operación | Warps | Modo de espera | Ciclos GPU | Transacciones | Ciclos GPU por transacción"
+           " | Instrucciones de warp | Ciclos por instrucción | Fallos IMEM"
            " | Espera de memoria | MB/s (reloj de la GPU) | Ciclos CPU |",
-           "|---|---:|---|---:|---:|---:|---:|---:|---:|"]
+           "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for op, name in enumerate(OPERATIONS):
         for w, warps in enumerate(WARPS):
             for mode, label in enumerate(MODES):
-                cycles, tx, stall, cpu = rows[(op * 4 + w) * 3 + mode]
+                cycles, tx, stall, cpu, retired, misses = rows[(op * 4 + w) * 3 + mode]
                 per_tx = cycles / tx if tx else 0
+                per_instr = cycles / retired if retired else 0
                 mbs = BYTES / (cycles / GPU_HZ) / 1e6 if cycles else 0
                 out.append(f"| {name} | {warps} | {label} | {cycles:,} | {tx:,} | {per_tx:.1f} "
+                           f"| {retired:,} | {per_instr:.1f} | {misses:,} "
                            f"| {stall / cycles * 100 if cycles else 0:.0f} % | {mbs:.2f} | {cpu:,} |")
     return "\n".join(out)
 

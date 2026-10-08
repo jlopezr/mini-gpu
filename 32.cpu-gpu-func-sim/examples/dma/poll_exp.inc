@@ -18,9 +18,10 @@
 ; modo 0 al modo 2.
 ;
 ; Trabajos: memset y memcpy de 256 KiB, con 1, 2, 4 y 8 warps: 2 x 4 x 3 = 24 medidas.
-; Cada fila de `exp_results` son cuatro palabras:
+; Cada fila de `exp_results` son seis palabras:
 ;
-;     ciclos de GPU   transacciones de la LSU   ciclos de GPU esperando a memoria   ciclos de CPU
+;     ciclos de GPU   transacciones de la LSU   ciclos de GPU esperando a memoria
+;     ciclos de CPU   instrucciones de warp retiradas   fallos del búfer de instrucciones
 ;
 ; La fila es (operación * 4 + warps) * 3 + modo. Mira poll_exp_report.py.
 ; ============================================================
@@ -136,6 +137,9 @@ exp_run:
     ADDI  R20, R1, 0
     ADDI  R21, R2, 0
     ADDI  R22, R3, 0
+    JAL   R31, exp_perf_read2
+    ADDI  R27, R1, 0
+    ADDI  R28, R2, 0
 
     LI    R10, MMIO_GPU_BASE
     LI    R11, MMIO_GPU_WARPS_BASE
@@ -193,6 +197,12 @@ exp_finished:
     STORE R1, R4, 0
     STORE R2, R4, 4
     STORE R3, R4, 8
+    JAL   R31, exp_perf_read2
+    SUB   R1, R1, R27
+    SUB   R2, R2, R28
+    LI    R4, exp_cur
+    STORE R1, R4, 12
+    STORE R2, R4, 16
     JR    R30
 
 ; ---- la comprobación: primera y última palabra del destino ----
@@ -237,7 +247,8 @@ exp_store:
     MOVI  R5, 3
     MUL   R4, R4, R5
     ADD   R4, R4, R26
-    SHLI  R4, R4, 4
+    MOVI  R5, 24
+    MUL   R4, R4, R5
     LI    R5, exp_results
     ADD   R4, R4, R5
     LI    R5, exp_cur
@@ -248,17 +259,21 @@ exp_store:
     LOAD  R6, R5, 8
     STORE R6, R4, 8
     STORE R23, R4, 12
+    LOAD  R6, R5, 12
+    STORE R6, R4, 16
+    LOAD  R6, R5, 16
+    STORE R6, R4, 20
     RET
 
-; ---- datos: exp_done, exp_errors y exp_results, seguidos (8 + 24 * 16 bytes) ----
+; ---- datos: exp_done, exp_errors y exp_results, seguidos (8 + 24 * 24 bytes) ----
 exp_done:
     .word 0
 exp_errors:
     .word 0
 exp_results:
-    .space 384
+    .space 576
 exp_cur:
-    .space 12
+    .space 20
 exp_initial_cfg:
     .word EXP_INITIAL
 job_args:
