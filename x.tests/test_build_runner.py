@@ -99,6 +99,39 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(rows[0]["state"], "SUCCESS")
             self.assertEqual(rows[0]["label"], "build")
 
+    def test_every_clock_is_listed_when_there_is_more_than_one(self):
+        import io
+        from contextlib import redirect_stdout
+        from tools.build_runner import _clock_details, print_prototype_build_summary
+
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / "summary.json").write_text(json.dumps({"clocks": {
+                "$glbnet$clk": {"achieved": 83.2, "constraint": 80},
+                "$glbnet$sdram_clk$TRELLIS_IO_OUT": {"achieved": 85.5, "constraint": 100},
+                "$glbnet$clk_25mhz$TRELLIS_IO_IN": {"achieved": 37.8, "constraint": 25},
+            }}), encoding="utf-8")
+            clocks = _clock_details(archive)
+
+        # Primero el que menos margen tiene, con el nombre sin prefijo ni sufijo.
+        self.assertEqual([name for name, _, _ in clocks], ["sdram_clk", "clk", "clk_25mhz"])
+        self.assertEqual(_clock_details(None), [])
+
+        row = {"prototype": "9.multi", "bitstream": "CURRENT", "state": "SUCCESS",
+               "timing": "FAIL", "fmax": "85.5/100.0", "seed": "7", "elapsed": "01:00",
+               "date": "-", "label": "build", "clocks": clocks}
+        single = dict(row, prototype="8.single", clocks=clocks[:1])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            print_prototype_build_summary([row, single])
+        lines = out.getvalue().splitlines()
+        # La cabecera, el prototipo con tres relojes y su linea extra, y el de uno.
+        self.assertEqual(len(lines), 4)
+        self.assertIn("sdram_clk 85.5/100!", lines[2])
+        self.assertIn("clk 83.2/80", lines[2])
+        self.assertNotIn("clk 83.2/80!", lines[2])
+        self.assertIn("8.single", lines[3])
+
     def test_a_running_test_is_still_shown_as_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

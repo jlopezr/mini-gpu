@@ -255,6 +255,26 @@ def _timing_text(archive: Path | None) -> tuple[str, str]:
     return "PASS" if passes else "FAIL", fmax
 
 
+def _clock_short_name(name: str) -> str:
+    """`$glbnet$sdram_clk$TRELLIS_IO_OUT` -> `sdram_clk`."""
+    return name.removeprefix("$glbnet$").split("$")[0]
+
+
+def _clock_details(archive: Path | None) -> list[tuple[str, float, float]]:
+    """Todos los relojes del ultimo informe: (nombre, alcanzado, exigido).
+
+    Ordenados de menos a mas margen, asi el primero es el que limita."""
+    if archive is None:
+        return []
+    try:
+        clocks = json.loads((archive / "summary.json").read_text(encoding="utf-8")).get("clocks", {})
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = [(_clock_short_name(name), float(values.get("achieved", 0)),
+             float(values.get("constraint", 0))) for name, values in clocks.items()]
+    return sorted(rows, key=lambda row: row[1] / max(row[2], 0.001))
+
+
 def _local_date_text(value: str | None) -> str:
     """Format an ISO timestamp in the computer's local time zone."""
     if not value or value == "-":
@@ -302,6 +322,7 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
             "state": state,
             "timing": timing,
             "fmax": fmax,
+            "clocks": _clock_details(archive),
             "seed": str(configured_seed(path) or "-"),
             "elapsed": _elapsed_text(record, archive) if record else "-",
             "date": _local_date_text(record.get("started_at")) if record else "-",
@@ -337,6 +358,18 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
               f"{field(row['state'], 12)} {field(row['timing'], 6)} "
               f"{row['seed']:<5} {row['fmax']:<13} {row['elapsed']:<8} "
               f"{row['date']:<16} {row['label']}")
+        # Con mas de un reloj, la columna FMAX/REQ solo ensenia el que limita;
+        # debajo van todos, y el que no cumple en rojo.
+        clocks = row.get("clocks", [])
+        if len(clocks) > 1:
+            parts = []
+            for name, achieved, required in clocks:
+                failing = achieved < required
+                text = f"{name} {achieved:.1f}/{round(required, 1):g}" + ("!" if failing else "")
+                if use_color and failing:
+                    text = f"\033[31m{text}\033[0m"
+                parts.append(text)
+            print(f"    {'':<29} " + "  ".join(parts))
 
 
 def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,
