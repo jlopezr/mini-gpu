@@ -29,9 +29,12 @@ uno que no termina y la recuperación de la GPU.
 plasma que pinta la GPU y cuyo bucle de frames lleva la CPU.
 
 ```bash
-cpugpusim examples/render/render.asm --video --window
-mini-dbg --gpu examples/render/render.asm --video --window     # depurado
+cpugpusim examples/render/render.asm --window
+mini-dbg --gpu examples/render/render.asm --window     # depurado
 ```
+
+`--window` abre la ventana y ya implica el vídeo. Sin ventana, `--video` da los
+registros de vídeo (en `mini-dbg`, `fb` abre una ventana con el framebuffer).
 
 La CPU configura el vídeo, y en cada frame escribe los argumentos, lanza 8 warps
 con el runtime de `examples/dma`, espera, pide el `SWAP` y espera a que se

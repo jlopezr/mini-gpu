@@ -11,9 +11,11 @@
 ;         pantalla es un mosaico de 80 x 60 celdas de 4 x 4 píxeles y el hilo
 ;         `cy` pinta las 80 celdas de la fila `cy` (los hilos 60..63 sobran).
 ;
-;   python cpu_gpu_sim.py examples\render\render.asm --video --window
-;   mini-dbg --gpu examples\render\render.asm --video --window
+;   python cpu_gpu_sim.py examples\render\render.asm --window
+;   mini-dbg --gpu examples\render\render.asm --window
 ;
+; `--window` abre la ventana y ya implica el vídeo. Sin ventana, `--video` (y
+; `fb` dentro de mini-dbg) basta para tener los registros de vídeo.
 ; Con la ventana abierta se ve el plasma moverse. Para depurar: `break
 ; gpu_k_render` y `run` paran al lanzar cada frame, `watch` sobre FB_BACK
 ; enseña quién pinta qué, y `break present` para justo antes del SWAP.
