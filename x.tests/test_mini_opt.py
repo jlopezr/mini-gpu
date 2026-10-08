@@ -433,6 +433,89 @@ class SsyTest(unittest.TestCase):
             assemble_bytes(render_unit(unit))
 
 
+def lines_of(text: str) -> list[str]:
+    return [l.strip() for l in text.splitlines() if l.strip()]
+
+
+class JumpsTest(unittest.TestCase):
+    def test_a_branch_to_a_label_that_only_jumps_goes_straight_to_the_target(self):
+        out = optimize(".text\nf:\nBEQ R1, R0, L.3\nADDI R2, R2, 1\nL.3:\nBRA L.4\nL.4:\nJR R31\n", ["jumps"])
+        self.assertIn("BEQ R1, R0, L.4", lines_of(out))
+
+    def test_a_jump_to_the_next_line_is_dropped(self):
+        stats = {}
+        out = optimize(".text\nf:\nADDI R2, R2, 1\nBRA L.1\nL.1:\nJR R31\n", ["jumps"], stats=stats)
+        self.assertNotIn("BRA L.1", lines_of(out))
+        self.assertEqual(stats["jumps.removed"], 1)
+
+
+HOIST_LOOP = """.text
+.globl f
+f:
+MOVI R16, 0
+BRA L.2
+L.1:
+{body}
+ADDI R16, R16, 1
+L.2:
+MOVI R7, 10
+BLT R16, R7, L.1
+JR R31
+"""
+
+
+class HoistTest(unittest.TestCase):
+    def hoist(self, body: str):
+        stats = {}
+        out = lines_of(optimize(HOIST_LOOP.format(body=body), ["hoist"], stats=stats))
+        return out, stats
+
+    def test_constants_leave_the_loop_and_the_uses_follow_them(self):
+        out, stats = self.hoist("MOVI R8, 100\nADD R9, R16, R8\nSTORE R9, R1, 0")
+        self.assertIn("MOVI R5, 100", out[:out.index("BRA L.2")])        # en el preheader
+        loop = out[out.index("L.1:"):]
+        self.assertFalse(any(l.startswith("MOVI") for l in loop), loop)
+        self.assertIn("ADD R9, R16, R5", loop)
+        self.assertEqual(stats["hoist.loops"], 1)
+
+    def test_a_computation_with_fixed_operands_leaves_too(self):
+        out, _ = self.hoist("MOVI R8, 3\nSHL R9, R1, R8\nADD R10, R16, R9\nSTORE R10, R2, 0")
+        loop = out[out.index("L.1:"):]
+        self.assertFalse(any(l.startswith(("MOVI", "SHL")) for l in loop), loop)
+        self.assertTrue(any(l.startswith("SHL") for l in out[:out.index("BRA L.2")]))
+
+    def test_a_value_that_changes_in_the_loop_stays(self):
+        out, _ = self.hoist("ADD R9, R16, R16\nSTORE R9, R1, 0")
+        self.assertIn("ADD R9, R16, R16", out[out.index("L.1:"):])
+
+    def test_a_use_reached_by_two_definitions_stays(self):
+        body = "BEQ R1, R0, L.7\nMOVI R8, 1\nBRA L.8\nL.7:\nMOVI R8, 2\nL.8:\nADD R9, R16, R8\nSTORE R9, R2, 0"
+        out, _ = self.hoist(body)
+        loop = out[out.index("L.1:"):]
+        self.assertIn("MOVI R8, 1", loop)
+        self.assertIn("MOVI R8, 2", loop)
+
+    def test_a_zero_uses_r0_and_no_register(self):
+        out, stats = self.hoist("MOVI R8, 0\nSTORE R8, R1, 0")
+        self.assertIn("STORE R0, R1, 0", out)
+        self.assertEqual(stats["hoist.registers"], 1)                    # solo el `10` de la comparacion
+
+    def test_a_loop_with_a_call_is_left_alone(self):
+        out, stats = self.hoist("MOVI R8, 100\nJAL R31, g\nADD R9, R16, R8")
+        self.assertIn("MOVI R8, 100", out[out.index("L.1:"):])
+        self.assertNotIn("hoist.loops", stats)
+
+
+class SsyMergeTest(unittest.TestCase):
+    def test_a_second_branch_with_the_same_join_shares_the_first_region(self):
+        source = (".text\n.globl __kernel_k\n__kernel_k:\nGETTID R16\nANDI R7, R16, 1\nBEQ R7, R0, L.2\n"
+                  "ANDI R8, R16, 2\nBEQ R8, R0, L.2\nSTORE R16, R1, 0\nL.2:\nEXIT\n")
+        stats = {}
+        out = lines_of(optimize(source, ["ssy"], stats=stats))
+        self.assertEqual(sum(l.startswith("SSY") for l in out), 1)
+        self.assertEqual(stats["ssy.merged"], 1)
+
+
 class FilterTest(unittest.TestCase):
     def test_optimize_applies_the_default_pass(self):
         stats = {}

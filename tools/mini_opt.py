@@ -239,7 +239,7 @@ def build_cfg(function: Function) -> list[Block]:
     blocks: list[Block] = []
     current: list[Line] = []
     for line in function.body:
-        if line.kind == "label" and current:
+        if line.kind == "label" and any(l.kind != "label" for l in current):   # varias etiquetas seguidas: un bloque
             blocks.append(Block(len(blocks), current))
             current = []
         current.append(line)
@@ -331,7 +331,7 @@ def live_in_entry(blocks: list[Block], live_out: list[set[int]]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 PASSES: dict[str, tuple[Callable, str]] = {}
-DEFAULT_PASSES = ["intrinsics", "kernels", "ssy"]
+DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "hoist", "ssy"]
 
 
 def register_pass(name: str, doc: str):
@@ -603,6 +603,249 @@ def pass_kernels(unit: Unit, stats: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Saltos encadenados: `Lx: BRA Ly` -> los que saltan a Lx saltan a Ly
+#
+# lcc cierra cada `if/else` anidado con su propia etiqueta que solo salta a la de fuera. Para el
+# flujo es lo mismo, pero cada una es un postdominador distinto, y el pase `ssy` abre una
+# region por cada uno. Con las cadenas deshechas todos los caminos reconvergen en el mismo punto.
+# ---------------------------------------------------------------------------
+
+@register_pass("jumps", "BRA a una etiqueta que solo salta: salta al destino final; quita el BRA a la linea siguiente")
+def pass_jumps(unit: Unit, stats: dict) -> None:
+    for function in unit.functions():
+        body = function.body
+        forward: dict[str, str] = {}                  # etiqueta -> destino, si su codigo es `BRA destino`
+        for i, line in enumerate(body):
+            if line.kind != "label":
+                continue
+            j = i + 1
+            while j < len(body) and body[j].kind == "label":
+                j += 1
+            if j < len(body) and body[j].kind == "instr" and body[j].op == "BRA" and len(body[j].args) == 1:
+                forward[line.name] = body[j].args[0]
+
+        def final(label: str) -> str:
+            seen = {label}
+            while label in forward and forward[label] not in seen:
+                label = forward[label]
+                seen.add(label)
+            return label
+
+        for line in body:
+            if line.kind == "instr" and (line.op in BRANCHES or line.op == "BRA"):
+                target = line.args[-1]
+                new = final(target)
+                if new != target:
+                    line.args[-1] = new
+                    stats["jumps.threaded"] = stats.get("jumps.threaded", 0) + 1
+        kept: list[Line] = []
+        for i, line in enumerate(body):
+            if line.kind == "instr" and line.op == "BRA":
+                j = i + 1
+                names = set()
+                while j < len(body) and body[j].kind == "label":
+                    names.add(body[j].name)
+                    j += 1
+                if line.args[-1] in names:                # salta a donde ya iba a caer
+                    stats["jumps.removed"] = stats.get("jumps.removed", 0) + 1
+                    continue
+            kept.append(line)
+        function.body = kept
+
+
+# ---------------------------------------------------------------------------
+# Sacar de un bucle lo que no cambia en el (hoist)
+#
+# lcc no hace nada entre bloques: la constante de una comparacion, el `MOVI` previo a cada
+# desplazamiento (la GPU no tiene SHLI) o una cuenta con valores fijos se repiten en cada
+# vuelta. Para cada bucle sin bucles dentro y sin llamadas, una instruccion pura cuyos operandos
+# no se escriben en el bucle (una constante, `SHL t, a, c` con `a` y `c` fijos...) se calcula
+# una vez en el preheader, en un registro que el bucle no usa, y se borra de dentro. Cada uso
+# tiene que venir solo de esa definicion (definiciones que alcanzan), y el registro no puede
+# estar vivo al salir del bucle por otra via. No toca cargas (haria falta saber que nada las
+# modifica) ni lo que puede dar un fallo (DIV, REM). Un cero se sustituye por R0 sin gastar
+# registro. Los registros libres son R5..R15; en un kernel, tambien los R16..R29 que nadie usa.
+# ---------------------------------------------------------------------------
+
+HOIST_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | {"MOVI", "MOVHI", "LI"}
+ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
+
+
+def use_slots(line: Line) -> list[int] | None:
+    """Posiciones de los operandos que son registros leidos; None si no se sabe reescribirlos."""
+    op = line.op
+    if op in R3:
+        return [1, 2]
+    if op in IMM2 or op in LOADS:
+        return [1]
+    if op in STORES or op in BRANCHES:
+        return [0, 1]
+    if op in WRITE_ONLY1:
+        return []
+    return None
+
+
+def live_in_blocks(blocks: list[Block], live_out: list[set[int]]) -> list[set[int]]:
+    result = []
+    for block in blocks:
+        live = set(live_out[block.index])
+        for line in reversed(block.lines):
+            if line.kind == "instr":
+                defs, uses = defs_uses(line)
+                live = (live - defs) | uses
+        result.append(live)
+    return result
+
+
+def reaching_in_loop(blocks: list[Block], body: set[int]):
+    """Definiciones que alcanzan cada uso dentro del bucle.
+
+    Devuelve (uses_of, reach, out): `uses_of[id(def)]` = lista de (linea, registro) que esa
+    definicion alcanza; `reach[(id(linea), registro)]` = conjunto de definiciones que llegan a ese
+    uso (ENTRY = la de antes del bucle); `out[bloque]` = el estado al salir del bloque."""
+    preds: dict[int, list[int]] = {b: [] for b in body}
+    for b in body:
+        for s in blocks[b].succ:
+            if s in body:
+                preds[s].append(b)
+    out: dict[int, dict[int, frozenset]] = {b: {} for b in body}
+
+    def entering(b: int) -> dict[int, frozenset]:
+        states = [out[p] for p in preds[b]]
+        outside = [p for p in range(len(blocks)) if b in blocks[p].succ and p not in body]
+        states += [{}] * len(outside)              # desde fuera: todo viene de ENTRY
+        keys = set().union(*(s.keys() for s in states)) if states else set()
+        return {k: frozenset().union(*(s.get(k, ENTRY) for s in states)) for k in keys}
+
+    def run(state: dict, block: Block) -> dict:
+        for line in block.lines:
+            if line.kind == "instr":
+                for reg in defs_uses(line)[0]:
+                    state[reg] = frozenset({id(line)})
+        return state
+
+    changed = True
+    while changed:
+        changed = False
+        for b in sorted(body):
+            new = run(dict(entering(b)), blocks[b])
+            if new != out[b]:
+                out[b], changed = new, True
+    uses_of: dict[int, list] = {}
+    reach: dict[tuple[int, int], frozenset] = {}
+    for b in sorted(body):
+        state = dict(entering(b))
+        for line in blocks[b].lines:
+            if line.kind != "instr":
+                continue
+            defs, uses = defs_uses(line)
+            for reg in uses:
+                found = state.get(reg, ENTRY)
+                reach[(id(line), reg)] = found
+                for d in found:
+                    if d:
+                        uses_of.setdefault(d, []).append((line, reg))
+            for reg in defs:
+                state[reg] = frozenset({id(line)})
+    return uses_of, reach, out
+
+
+def hoist_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
+               stats: dict) -> None:
+    """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros."""
+    while True:
+        live_in = live_in_blocks(blocks, liveness(blocks))
+        uses_of, reach, out = reaching_in_loop(blocks, body)
+        written: set[int] = set()
+        mentioned: set[int] = set()
+        for b in body:
+            for line in blocks[b].lines:
+                if line.kind == "instr":
+                    defs, uses = defs_uses(line)
+                    written |= defs
+                    mentioned |= defs | uses
+        free = [r for r in allowed if r not in mentioned and r not in live_in[header]]
+        groups: dict[tuple, list[tuple[Block, Line]]] = {}
+        for b in sorted(body):
+            for line in blocks[b].lines:
+                if line.kind != "instr" or line.op not in HOIST_OPS:
+                    continue
+                defs, uses = defs_uses(line)
+                if len(defs) != 1 or uses & written:
+                    continue
+                t = next(iter(defs))
+                reached = uses_of.get(id(line), [])
+                if not reached:
+                    continue
+                if any(reach[(id(u), r)] != frozenset({id(line)}) or use_slots(u) is None
+                       or not any(reg_of(u.args[i]) == t for i in use_slots(u)) for u, r in reached):
+                    continue
+                if any(t in live_in[s] and id(line) in out[x].get(t, ())
+                       for x in body for s in blocks[x].succ if s not in body):
+                    continue
+                groups.setdefault((line.op, tuple(a.upper() if REGISTER_RE.match(a.strip()) else a
+                                                    for a in line.args[1:])), []).append((blocks[b], line))
+        if not groups:
+            return
+        # los ceros no gastan registro; despues, lo que mas veces se repite
+        zero = [k for k in groups if k[0] in ("MOVI", "LI") and number(k[1][0]) == 0]
+        ordered = zero + sorted((k for k in groups if k not in zero), key=lambda k: -len(groups[k]))
+        key = None
+        for k in ordered:
+            if k in zero or free:
+                key = k
+                break
+        if key is None:
+            return
+        if key in zero:
+            name = "R0"
+            stats["hoist.zeros"] = stats.get("hoist.zeros", 0) + 1
+        else:
+            name = f"R{free[0]}"
+            stats["hoist.registers"] = stats.get("hoist.registers", 0) + 1
+            op, args = key
+            template = groups[key][0][1]
+            at = len(pre.lines)
+            if pre.lines and pre.lines[-1].kind == "instr" and pre.lines[-1].op == "BRA":
+                at -= 1
+            pre.lines.insert(at, instr(op, name, *template.args[1:]))
+        for block, line in groups[key]:
+            t = reg_of(line.args[0])
+            for use, _ in uses_of[id(line)]:
+                for i in use_slots(use):
+                    if reg_of(use.args[i]) == t:
+                        use.args[i] = name
+            block.lines = [l for l in block.lines if l is not line]
+            stats["hoist.removed"] = stats.get("hoist.removed", 0) + 1
+
+
+@register_pass("hoist", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
+def pass_hoist(unit: Unit, stats: dict) -> None:
+    for function in unit.functions():
+        blocks = build_cfg(function)
+        if len(blocks) < 2:
+            continue
+        dom = dominators(blocks)
+        loops = natural_loops(blocks, dom)
+        kernel = function.name.startswith(KERNEL_PREFIX)
+        allowed = list(range(5, 16)) + (list(range(16, 30)) if kernel else [])
+        for header, body in sorted(loops.items()):
+            if any(h != header and h in body for h in loops):         # tiene un bucle dentro
+                continue
+            if any(l.kind == "instr" and l.op in ("JAL", "JALR") for b in body for l in blocks[b].lines):
+                continue
+            outside = [b.index for b in blocks if header in b.succ and b.index not in body]
+            if len(outside) != 1 or blocks[outside[0]].succ != [header]:
+                continue
+            pre = blocks[outside[0]]
+            before = stats.get("hoist.removed", 0)
+            hoist_loop(blocks, body, header, pre, allowed, stats)
+            if stats.get("hoist.removed", 0) > before:
+                stats["hoist.loops"] = stats.get("hoist.loops", 0) + 1
+        function.body = [line for block in blocks for line in block.lines]
+
+
+# ---------------------------------------------------------------------------
 # SSY automatico: donde reconvergen los caminos de un salto divergente
 #
 # Un salto condicional cuyas lanes toman caminos distintos necesita una region
@@ -820,6 +1063,39 @@ def pass_ssy(unit: Unit, stats: dict) -> None:
             if join >= len(blocks):
                 raise OptError(f"{where}: un salto divergente no reconverge antes de salir del kernel")
             edits.append((blocks[b], len(blocks[b].lines) - 1, join))
+        # un `SSY` que cae siempre despues de otro con el mismo destino sobra: la region ya esta abierta
+        # (y puede divergir mas de un salto dentro de ella, como en un `if/else if`). Se conserva si por
+        # el camino se abre otra region con otro destino, que seria la mas interna.
+        def reach(starts: set[int], avoid: set[int], edges) -> set[int]:
+            seen: set[int] = set()
+            stack = [s for s in starts if s not in avoid]
+            while stack:
+                x = stack.pop()
+                if x in seen or x in avoid:
+                    continue
+                seen.add(x)
+                stack.extend(edges[x])
+            return seen
+
+        forward = [list(b.succ) for b in blocks]
+        edges_sorted = sorted(edits, key=lambda e: e[0].index)
+        for e2 in edges_sorted:
+            for e1 in edges_sorted:
+                if not any(e2 is a for a in edits):
+                    break
+                if e1 is e2 or e1[2] != e2[2] or e1[0].index == e2[0].index or not any(e1 is a for a in edits):
+                    continue
+                join = e2[2]
+                starts = {0} | set(blocks[join].succ)
+                if e2[0].index in reach(starts, {join, e1[0].index}, forward):
+                    continue                                    # hay un camino que no pasa por e1
+                between = (reach(set(forward[e1[0].index]), {join}, forward)
+                           & reach({e2[0].index}, {join}, preds))
+                if any(o[2] != join and o[0].index in between for o in edits if o is not e1 and o is not e2):
+                    continue
+                edits[:] = [e for e in edits if e is not e2]
+                stats["ssy.merged"] = stats.get("ssy.merged", 0) + 1
+                break
         # los `SSY` se anaden de atras adelante para no mover las posiciones pendientes
         for block, pos, join in sorted(edits, key=lambda e: (e[0].index, -1 if e[1] is None else e[1]),
                                        reverse=True):
@@ -840,6 +1116,10 @@ def directive_parts(line: Line) -> list[str]:
 # CLI
 # ---------------------------------------------------------------------------
 
+def count_instructions(unit: Unit) -> int:
+    return sum(1 for line in unit.lines() if line.kind == "instr")
+
+
 def optimize(source: str, passes: list[str] | None = None, path: str = "<entrada>",
              stats: dict | None = None) -> str:
     """Aplica los pases (por defecto `DEFAULT_PASSES`) a un `.s` y devuelve el nuevo."""
@@ -849,8 +1129,23 @@ def optimize(source: str, passes: list[str] | None = None, path: str = "<entrada
     for name in passes:
         if name not in PASSES:
             raise OptError(f"pase desconocido '{name}' (--list-passes)")
+        before = count_instructions(unit)
         PASSES[name][0](unit, stats)
+        stats[f"{name}.instrs"] = count_instructions(unit) - before
     return render_unit(unit)
+
+
+def print_stats(stats: dict, passes: list[str] | None) -> None:
+    """Una linea por pase: instrucciones estaticas que anade (+) o quita (-) y sus contadores."""
+    names = DEFAULT_PASSES if passes is None else passes
+    total = 0
+    for name in names:
+        delta = stats.get(f"{name}.instrs", 0)
+        total += delta
+        extra = ", ".join(f"{k.split('.', 1)[1] if '.' in k else k}={v}" for k, v in stats.items()
+                          if (k == name or k.startswith(name + ".")) and k != f"{name}.instrs")
+        print(f"  {name:11s} {delta:+5d} instrucciones  {extra}", file=sys.stderr)
+    print(f"  {'total':11s} {total:+5d} instrucciones (estaticas)", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -884,7 +1179,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(text)
     if args.stats:
-        print("pases:", stats or "nada que hacer", file=sys.stderr)
+        print_stats(stats, passes)
     return 0
 
 

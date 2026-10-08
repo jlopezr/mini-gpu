@@ -963,7 +963,18 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
   Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, la pila, y lo definido
-  bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos.
+  bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
+  además el `SSY` que cae siempre después de otro con el mismo destino.
+
+- **Pase `hoist`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
+  las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
+  registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
+  viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
+- **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
+  siguiente se quita.
+- **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores
+  (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/examples/c/opt_stats.py` lo junta con las
+  instrucciones ejecutadas en el simulador, con y sin los pases.
 
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él).

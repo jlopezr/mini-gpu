@@ -13,6 +13,7 @@ Necesita y.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -49,7 +50,8 @@ def compile_c(source: Path) -> Path:
     plain = BUILD / f"{source.stem}.s"
     optimized = BUILD / f"{source.stem}.opt.s"
     run(TOOLS / "mini-lcc", source, "--no-crt", "-I", SYSTEM, "-o", plain)
-    run(TOOLS / "mini-opt", plain, "-o", optimized)
+    passes = os.environ.get("MINI_OPT_PASSES")       # para comparar (opt_stats.py); por defecto, todos
+    run(TOOLS / "mini-opt", plain, "-o", optimized, *(["--passes", passes] if passes is not None else []))
     return optimized
 
 
