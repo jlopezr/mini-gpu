@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
-    python examples/c/build.py examples/c/dma/memset.c [-o salida.bin]
+    python examples/c/build.py examples/c/dma/memset.c [-o salida.bin] [--board]
 
 Por cada .c (el programa y gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y kernels).
 Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de ensamblador
 de la GPU (examples/asm/dma/gpu_runtime.inc), ensamblado con mini-asm. Todo queda en `_build/`.
+Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU
+reales en `bench_now()`; la salida se llama `<nombre>_board.bin`.
 Necesita y.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini-lcc).
 """
 from __future__ import annotations
@@ -25,7 +27,10 @@ SYSTEM = HERE / "system"
 BUILD = HERE / "_build"
 INCLUDE_DIRS = (ROOT / "x.tests" / "inc",)
 CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
-GPU_RUNTIME = HERE.parent / "asm" / "dma" / "gpu_runtime.inc"
+ASM = HERE.parent / "asm"
+# (runtime de la GPU, medida de ciclos): simulador y placa 36
+RUNTIMES = {False: (ASM / "dma" / "gpu_runtime.inc", ASM / "race" / "bench_sim.inc"),
+            True: (ASM / "dma" / "gpu_runtime_board.inc", ASM / "race" / "bench_board.inc")}
 
 
 class BuildError(RuntimeError):
@@ -48,16 +53,18 @@ def compile_c(source: Path) -> Path:
     return optimized
 
 
-def build(program: Path, output: Path | None = None) -> Path:
+def build(program: Path, output: Path | None = None, board: bool = False) -> Path:
     program = program.resolve()
-    output = output or BUILD / f"{program.stem}.bin"
+    name = program.stem + ("_board" if board else "")
+    output = output or BUILD / f"{name}.bin"
+    runtime, bench = RUNTIMES[board]
     parts = [compile_c(program), compile_c(SYSTEM / "gpu.c")]
     BUILD.mkdir(exist_ok=True)
-    wrapper = BUILD / f"{program.stem}.asm"
+    wrapper = BUILD / f"{name}.asm"
     wrapper.write_text(
         f'; generado por build.py\n.include "mmio.inc"\n.include "{CRT0.as_posix()}"\n'
         + "".join(f'.include "{part.as_posix()}"\n' for part in parts)
-        + f'.include "{GPU_RUNTIME.as_posix()}"\n', encoding="utf-8")
+        + f'.include "{runtime.as_posix()}"\n.include "{bench.as_posix()}"\n', encoding="utf-8")
     image = assemble_bytes(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                            INCLUDE_DIRS)
     output.write_bytes(image)
@@ -69,9 +76,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("program", type=Path, help="el .c con main y los kernels")
     parser.add_argument("-o", "--output", type=Path)
+    parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")
     args = parser.parse_args()
     try:
-        out = build(args.program, args.output)
+        out = build(args.program, args.output, args.board)
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1

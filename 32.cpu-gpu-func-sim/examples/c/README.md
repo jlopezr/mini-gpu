@@ -33,10 +33,11 @@ nombre en la misma carpeta, para encontrar rápido la otra versión:
 | `dma` | `asm/dma/gpu_kernels.inc` (memset, memcpy, fill_rect, blit) | `c/dma/gpu_kernels.c` |
 | `dma` | (dentro de `gpu_kernels.inc`) | `c/dma/memset.c`: programa completo con CPU y GPU |
 | `race` | `asm/race/rotate.inc` (+ `rotate.asm`) | `c/race/rotate.c` (+ `rotate_body.h`) |
+| `race` | `asm/race/cube.inc` + `race_host.inc` (+ `cube_board.asm`) | `c/race/cube.c` (+ `cube_body.h`): el demo entero, anfitrión incluido |
 | `simt` | | `c/simt/diverge.c` (solo en C) |
-| `render`, `launch.asm`, `race/{cube,life,blur}` | sí | aún no |
+| `render`, `launch.asm`, `race/{life,blur}` | sí | aún no |
 
-En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`); `build.py` pasa esa carpeta a
+En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`, `mmio.h`); `build.py` pasa esa carpeta a
 `mini-lcc -I`, así que los ejemplos solo escriben `#include "gpu.h"`. En `c/` quedan las herramientas
 (`build.py`, `compare.py`, `compare_rotate.py`) y las salidas de la compilación van a `c/_build/`.
 
@@ -159,14 +160,39 @@ Lo que falta para cerrar la brecha es un pase de `mini-opt` que saque del bucle 
 invariantes (y mantenga sus constantes en registros). `CRotateTest` pone topes al coste (1,35 en la CPU,
 1,6 en la GPU) que deberán bajarse cuando exista.
 
+## El cubo en la placa
+
+`race/cube.c` es el demo completo en C: texturas, matriz y caras, anfitrión de vídeo con doble
+buffer, método que toca cada 60 fotogramas y gráfica de tiempos. Se compila para la placa 36 con
+`--board` (runtime con `RUN` y `bench_now()` con los ciclos de CPU reales):
+
+```text
+python examples/c/build.py examples/c/race/cube.c --board        # -> _build/cube_board.bin
+run-board --prototype 36 --program 32.cpu-gpu-func-sim/examples/c/_build/cube_board.bin
+```
+
+`CCubeRaceTest` comprueba en el simulador que dibuja, método a método, lo mismo que `cube.asm`.
+Ciclos de CPU a 80 MHz por fotograma, medidos en la placa (último trabajo de cada método, de
+`race_cycles`):
+
+| Método | Ensamblador | C | C / ens. |
+|---|---:|---:|---:|
+| CPU | 7.073.724 | 10.486.159 | 1,48 |
+| GPU inocente | 2.206.206 | 2.603.215 | 1,18 |
+| GPU buena | 1.258.934 | 2.150.567 | 1,71 |
+
+Es una sola medida de cada uno, no una media. La GPU buena sale la peor porque el cuerpo de la
+celda, con 14 registros preservados para 14 valores calientes, pierde lo que el ensamblador hace
+a mano (constantes en registros, un solo `SSY` por celda): C pone un `SSY` delante de cada salto
+y vuelve a cargar `LIM` y `256` en cada comparación.
+
 ## Límites de hoy
 
 - **Hasta 4 parámetros** de 32 bits por kernel (`R1`–`R4`); con más, un puntero a estructura.
 - **Un kernel no se puede llamar desde la CPU** (empieza con `GETTID` y acaba con `EXIT`).
 - **Sin llamadas dentro de un kernel** (la GPU de la 36 no tiene `JAL`), ni `long long`,
   ni `float`, ni división sin signo.
-- **Sólo el simulador de la 32** está probado; en la placa falta el lanzamiento con `RUN`
-  de `gpu_runtime_board.inc` (la 36 no tiene `WARP_START`).
+- **Placa:** solo está probado el cubo (`--board`, runtime con `RUN`, la 36 no tiene `WARP_START`).
 
 Las pruebas son `CKernelTest` y `CDivergenceTest` en `test_cpu_gpu_sim.py` (se omite si no hay compilador: necesita
 `y.lcc/build/rcc` y MSVC).

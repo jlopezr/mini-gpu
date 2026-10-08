@@ -908,8 +908,12 @@ class CubeRaceTest(unittest.TestCase):
     PROGRAM = RACE / "cube.asm"
 
     @classmethod
+    def image(cls):
+        return race_image(cls.PROGRAM)
+
+    @classmethod
     def setUpClass(cls):
-        image, labels = race_image(cls.PROGRAM)
+        image, labels = cls.image()
         video = sim.VideoDevice(frame_instructions=1000)
         video.stop_after_swaps = cls.FRAMES
         cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
@@ -960,6 +964,15 @@ class CubeRaceTest(unittest.TestCase):
             for face, axis in zip(faces, range(3)):
                 if matrix[2][axis] == 0:
                     self.assertEqual(face[1], 0x40000000, frame)
+
+
+class CCubeRaceTest(CubeRaceTest):
+    """`examples/c/race/cube.c`: el cubo en C (el anfitrión también) dibuja lo mismo que cube.asm: los tres
+    métodos, fotograma a fotograma, contra el mismo modelo en Python."""
+
+    @classmethod
+    def image(cls):
+        return build_c_example("race/cube")
 
 
 class LifeRaceStripTest(unittest.TestCase):
