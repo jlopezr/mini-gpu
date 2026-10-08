@@ -331,6 +331,10 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
     return rows
 
 
+# Espacio entre columnas de las tablas de `list`. Un solo sitio para las dos.
+COLUMN_GAP = "  "
+
+
 def format_build_list(entries: list[dict], now: datetime) -> list[str]:
     """Tabla de `list`: el ancho de ID sale del ID mas largo, no de uno fijo.
 
@@ -350,8 +354,10 @@ def format_build_list(entries: list[dict], now: datetime) -> list[str]:
     width_id = max([len("ID"), *(len(row[0]) for row in rows)])
     width_state = max([len("STATE"), *(len(row[1]) for row in rows)])
     width_age = max([len("AGE"), *(len(row[2]) for row in rows)])
-    lines = [f"{'ID':<{width_id}}  {'STATE':<{width_state}}  {'AGE':<{width_age}}  LABEL"]
-    lines += [f"{i:<{width_id}}  {s:<{width_state}}  {a:<{width_age}}  {label}"
+    lines = [COLUMN_GAP.join((f"{'ID':<{width_id}}", f"{'STATE':<{width_state}}",
+                              f"{'AGE':<{width_age}}", "LABEL"))]
+    lines += [COLUMN_GAP.join((f"{i:<{width_id}}", f"{s:<{width_state}}",
+                               f"{a:<{width_age}}", label))
               for i, s, a, label in rows]
     return lines
 
@@ -394,9 +400,10 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
                                  for row in rows for clock in (row.get("clocks") or [None])[:1]))
     w_elapsed = widest("ELAPSED", (row["elapsed"] for row in rows))
     w_date = widest("DATE", (row["date"] for row in rows))
-    print(f"  {'PROTOTYPE':<{w_proto}} {'BITSTREAM':<{w_bit}} {'LAST BUILD':<{w_state}} "
-          f"{'TIMING':<{w_timing}} {'SEED':<{w_seed}} {'CLOCK':<{w_clock}} "
-          f"{'FMAX/REQ':<{w_fmax}} {'ELAPSED':<{w_elapsed}} {'DATE':<{w_date}} LABEL")
+    print("  " + COLUMN_GAP.join((
+        f"{'PROTOTYPE':<{w_proto}}", f"{'BITSTREAM':<{w_bit}}", f"{'LAST BUILD':<{w_state}}",
+        f"{'TIMING':<{w_timing}}", f"{'SEED':<{w_seed}}", f"{'CLOCK':<{w_clock}}",
+        f"{'FMAX/REQ':<{w_fmax}}", f"{'ELAPSED':<{w_elapsed}}", f"{'DATE':<{w_date}}", "LABEL")))
     for row in rows:
         marker = "*" if row["state"] == "RUNNING" else " "
         # Un reloj por linea. El primero es el que limita (el de menos margen) y
@@ -415,14 +422,15 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
             clock_name, fmax = name, clock_value(achieved, required, w_fmax)
         else:
             clock_name, fmax = "-", f"{row['fmax']:<{w_fmax}}"
-        print(f"{marker} {row['prototype']:<{w_proto}} {field(row['bitstream'], w_bit)} "
-              f"{field(row['state'], w_state)} {field(row['timing'], w_timing)} "
-              f"{row['seed']:<{w_seed}} {clock_name:<{w_clock}} {fmax} "
-              f"{row['elapsed']:<{w_elapsed}} {row['date']:<{w_date}} {row['label']}")
+        print(f"{marker} " + COLUMN_GAP.join((
+            f"{row['prototype']:<{w_proto}}", field(row['bitstream'], w_bit),
+            field(row['state'], w_state), field(row['timing'], w_timing),
+            f"{row['seed']:<{w_seed}}", f"{clock_name:<{w_clock}}", fmax,
+            f"{row['elapsed']:<{w_elapsed}}", f"{row['date']:<{w_date}}", row['label'])))
         for name, achieved, required in clocks[1:]:
-            print(f"  {'':<{w_proto}} {'':<{w_bit}} {'':<{w_state}} {'':<{w_timing}} "
-                  f"{'':<{w_seed}} {name:<{w_clock}} "
-                  f"{clock_value(achieved, required, 0)}")
+            print("  " + COLUMN_GAP.join((
+                " " * w_proto, " " * w_bit, " " * w_state, " " * w_timing, " " * w_seed,
+                f"{name:<{w_clock}}", clock_value(achieved, required, 0))))
 
 
 def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,
