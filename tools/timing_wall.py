@@ -106,7 +106,9 @@ def pick_clock(pnr, wanted=None):
     if not fmax:
         raise SystemExit('El informe no trae fmax: no se sabe que reloj mirar.')
     if wanted:
-        matches = [c for c in fmax if wanted in c]
+        # Un nombre exacto gana al trozo: `clk` esta dentro de `clk_pix`, pero el
+        # reloj completo (`$glbnet$clk`) solo puede ser uno.
+        matches = [c for c in fmax if c == wanted] or [c for c in fmax if wanted in c]
         if len(matches) != 1:
             raise SystemExit(f'"{wanted}" coincide con {len(matches)} relojes: {", ".join(fmax)}')
         name = matches[0]

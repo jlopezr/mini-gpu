@@ -408,15 +408,24 @@ module video_registers #(
       // y no satura (§12.2), que es lo que hace que la resta siga valiendo.
       if (running && fill_start) video_tx <= video_tx + 1'b1;
 
-      // `!error`: una escritura invalida no tiene efecto. §4.3 dice que los
-      // accesos invalidos no ignoran la escritura EN SILENCIO --generan
-      // error-- pero tampoco la aplican a medias.
-      if (bus_write && (!error || selected == REG_SWAP)) begin
+      // Una escritura invalida no tiene efecto. §4.3 dice que los accesos
+      // invalidos no ignoran la escritura EN SILENCIO --generan error-- pero
+      // tampoco la aplican a medias.
+      //
+      // Cada registro mira SU condicion y no el `error` de arriba. Con
+      // `!error` delante de todo, cada habilitacion de escritura colgaba de la
+      // seleccion de registro dos veces --una dentro del `case` del error y otra
+      // en este-- mas la mezcla por bytes y la comprobacion de alineamiento: en
+      // la 36 eran doce LUT desde `mmio_address[6]` y el camino critico de la
+      // CPU (70-77 MHz). Es lo mismo que decia el `case` del error, registro a
+      // registro: los que no tenian caso (STATUS, HALT_AT, HALT_TARGET) no
+      // tenian error.
+      if (bus_write) begin
         case (selected)
           // Ya no se trunca: si llega aqui, esta alineada. El truncamiento
           // silencioso es lo que §9.2 prohibe.
-          REG_FB_FRONT: fb_front <= merged_front;
-          REG_FB_BACK:  fb_back  <= merged_back;
+          REG_FB_FRONT: if (!front_desalineada) fb_front <= merged_front;
+          REG_FB_BACK:  if (!back_desalineada)  fb_back  <= merged_back;
           // Cualquier escritura pide intercambio. Si cae en el mismo ciclo que
           // uno en curso, queda pendiente para el frame siguiente y no se
           // pierde, que es lo que pasaria si el `swap_now` de arriba ganara.
@@ -426,7 +435,8 @@ module video_registers #(
               if (write_data[1]) state_commit_pending <= 1'b1;
             end
           end
-          REG_CONFIG: config_shadow <= write_data;
+          REG_CONFIG: if (palabra_completa && !config_reservada)
+                        config_shadow <= write_data;
           // Escribir un uno en el bit 0 borra el underflow. El resto de STATUS
           // sigue siendo de solo lectura: son cuentas, no estado que nadie
           // deba poder falsear.
@@ -449,7 +459,8 @@ module video_registers #(
           end
           REG_HALT_TARGET: halt_target <= merge(halt_target, write_data,
                                                 write_mask);
-          REG_CTRL:     if (write_mask[0]) video_mode <= write_data[1:0];
+          REG_CTRL:     if (write_mask[0] && !modo_reservado)
+                          video_mode <= write_data[1:0];
           // FRAME_COUNT, SWAP_COUNT y VIDEO_TX son de solo lectura.
           default: ;
         endcase
