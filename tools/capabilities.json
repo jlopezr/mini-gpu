@@ -14,9 +14,10 @@
     "file": ["cpu.v", "gpu_sm.v"],
     "pattern": "OPCODE_LOADB:|wire d_is_byte="
   },
+  "_comment_isa_en_gpu": "alu_extended (MULHI, DIVU, REM, REMU), compare (SLT, SLTU) y calls (JAL, JALR, JR) son de las dos familias desde que la lane de la 37 (gpu_lane.v) las implementa. El patron es el `case` de la instruccion, que cada fichero escribe igual: `OPCODE_MULHI:` en cpu.v y en gpu_lane.v. Un salto indirecto con destinos distintos por lane NO es un caso de la capacidad: en la GPU para con ERROR_SIMT (0x06), y en la CPU no existe.",
   "calls": {
-    "architecture": "cpu",
-    "file": "cpu.v",
+    "architecture": ["cpu", "gpu"],
+    "file": ["cpu.v", "gpu_lane.v"],
     "pattern": "OPCODE_JAL:"
   },
   "shift_immediate": {
@@ -25,14 +26,14 @@
     "pattern": "shift_immediate"
   },
   "alu_extended": {
-    "architecture": "cpu",
-    "file": "cpu.v",
+    "architecture": ["cpu", "gpu"],
+    "file": ["cpu.v", "gpu_lane.v"],
     "pattern": "OPCODE_MULHI:",
     "implies": ["mul_div"]
   },
   "compare": {
-    "architecture": "cpu",
-    "file": "cpu.v",
+    "architecture": ["cpu", "gpu"],
+    "file": ["cpu.v", "gpu_lane.v"],
     "pattern": "OPCODE_SLT:"
   },
   "video": {

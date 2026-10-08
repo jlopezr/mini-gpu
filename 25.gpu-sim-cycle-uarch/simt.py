@@ -58,6 +58,9 @@ def control_result(w, d, results, warps, memory_size):
         if len(pcs) == 1:
             n.pc = pcs.pop()
         else:
+            # Un salto indirecto que lleva a destinos distintos no tiene un
+            # destino que apilar: es error, como en gpu_sm.v.
+            if d.op in (0x2d, 0x2e): raise ISAError(6)
             if not n.region_stack: raise ISAError(6)
             region = n.region_stack[-1]
             taken = sum(1 << lane for lane, result in results if result.next_pc != d.seq)

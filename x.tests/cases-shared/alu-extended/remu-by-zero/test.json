@@ -1,0 +1,18 @@
+{
+  "architecture": [
+    "cpu",
+    "gpu"
+  ],
+  "name": "shared-alu-extended-remu-by-zero",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": [
+    "alu_extended"
+  ],
+  "max_instructions": 20,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x04"
+  }
+}

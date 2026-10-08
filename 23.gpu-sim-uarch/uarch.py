@@ -90,9 +90,11 @@ class Config:
 
 
 MEM_OPCODES = {0x15, 0x16}           # LOAD, STORE
-# 0x0B/0x0D/0x0E/0x0F (MULHI, DIVU, REM, REMU) NO los implementa gpu_lane.v:
-# caen en su `default` y dan ERROR_INVALID_OPCODE. Se dejan aqui porque el
-# ensamblador si los emite y el core nuevo los traera.
+# 0x0B/0x0D/0x0E/0x0F (MULHI, DIVU, REM, REMU) NO los implementa el gpu_lane.v
+# de la 29: caen en su `default` y dan ERROR_INVALID_OPCODE. El de la 37 SI los
+# tiene (con SLT, SLTU, JAL, JALR y JR), y reutiliza el camino de MUL y de DIV,
+# asi que cuestan lo mismo que ellos. Se dejan aqui porque el ensamblador los
+# emite.
 MUL_OPCODES = {0x03, 0x0A, 0x0B}
 DIV_OPCODES = {0x0C, 0x0D, 0x0E, 0x0F}
 SHIFT_OPCODES = {0x07, 0x08, 0x09}

@@ -113,8 +113,8 @@ class GpuFpgaTest(unittest.TestCase):
                 skipped[case['name']] = reason
             else:
                 accepted.append(case['name'])
-        self.assertEqual(len(accepted), 58)
-        self.assertEqual(len(skipped), 18)
+        self.assertEqual(len(accepted), 59)
+        self.assertEqual(len(skipped), 19)
         # La version por defecto (BRAM, sin GETID ni accesos pequenos) los omite:
         # sin la capacidad pararia con 0x05 o 0x01, que es lo que produce un
         # ensamblador roto.

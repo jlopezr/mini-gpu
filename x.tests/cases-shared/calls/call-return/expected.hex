@@ -1,0 +1,5 @@
+# doble(5), triple(7), enlace de JALR Rd=Ra (0x24 + 4), JR con destino sucio
+0000000A
+00000015
+00000028
+00000004

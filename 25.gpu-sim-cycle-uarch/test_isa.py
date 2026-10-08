@@ -65,7 +65,7 @@ class DatapathTests(unittest.TestCase):
             with self.assertRaises(ISAError) as caught:
                 decode(0x30 << 26 | 1 << 21 | type_ << 16, 0)
             self.assertEqual(caught.exception.code, 5)
-        for op in (0x1e, 0x28, 0x2c, 0x2d, 0x2e, 0x34):
+        for op in (0x1e, 0x28, 0x34):
             with self.assertRaises(ISAError) as caught: decode(op << 26, 0)
             self.assertEqual(caught.exception.code, 1)
 

@@ -1,0 +1,24 @@
+{
+  "architecture": [
+    "cpu",
+    "gpu"
+  ],
+  "name": "shared-alu-extended-mulhi-div-rem",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": [
+    "alu_extended"
+  ],
+  "max_instructions": 600,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "memory_dumps": [
+      {
+        "address": "0x00001000",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}

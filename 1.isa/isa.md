@@ -41,6 +41,23 @@ Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 | `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                 | Sí        |
 | `2.cpu-sim-func` / `cpusim` | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
+Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
+(`gpu_lane.v`) y el SM añade las SIMT:
+
+| Implementación                          | `subword_memory` | `calls` | `alu_extended` | `shift_immediate` | `compare` |
+|-----------------------------------------|------------------|---------|----------------|--------------------|-----------|
+| `12`, `14`, `17`, `22` (GPU)            | —                | —       | —              | —                  | —         |
+| `29.fpga-gpu-sm-pipeline`               | Sí               | —       | —              | —                  | —         |
+| `37.fpga-cpu-gpu-mk2` (GPU)             | Sí               | Sí      | Sí             | —                  | Sí        |
+| `11.gpu-sim-func` / `gpusim` (`current`)| Sí               | —       | —              | —                  | —         |
+| `25.gpu-sim-cycle-uarch` (`cycle`)      | Sí               | Sí      | Sí             | Sí                 | Sí        |
+
+En la GPU, `JALR` y `JR` sacan el destino de un registro por lane, y un warp solo
+puede seguir si **todas sus lanes activas** llegan al mismo destino. Si no, para
+con `ERROR_SIMT` (0x06) en lugar de serializar en silencio: no hay un destino que
+apilar en la pila de divergencia. Un warp convergente, o con lanes enmascaradas
+que coinciden, funciona como en la CPU.
+
 Las declaraciones del runner están en
 [`backends/fpga.py`](../x.tests/backends/fpga.py) y
 [`backends/simulator.py`](../x.tests/backends/simulator.py); los casos usan

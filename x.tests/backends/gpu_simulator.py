@@ -8,7 +8,7 @@ VERSIONS = {
     "cycle": {
         "simulator_path": Path("25.gpu-sim-cycle-uarch/minigpu_cycle.py"),
         "trace_path": Path("11.gpu-sim-func/gpu_trace.py"),
-        "capabilities": ("atomic_warp_faults", "alu_extended", "compare",
+        "capabilities": ("atomic_warp_faults", "alu_extended", "compare", "calls",
                          "shift_immediate", "subword_memory", "frame_capture", "serial",
                          "mul_div", "large_memory", "input", "gpu_ids"),
         "description": "modelo cycle-accurate S/F/I/D/X/W de la futura MiniGPU",
