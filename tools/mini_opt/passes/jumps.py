@@ -1,8 +1,10 @@
-"""Saltos encadenados: `Lx: BRA Ly` -> los que saltan a Lx saltan a Ly
+"""Saltos encadenados (jump threading): `Lx: BRA Ly` -> los que saltan a Lx saltan a Ly
 
 lcc cierra cada `if/else` anidado con su propia etiqueta que solo salta a la de fuera. Para el
 flujo es lo mismo, pero cada una es un postdominador distinto, y el pase `ssy` abre una
-region por cada uno. Con las cadenas deshechas todos los caminos reconvergen en el mismo punto."""
+region por cada uno. Con las cadenas deshechas todos los caminos reconvergen en el mismo punto.
+Despues, un `BRA` a la etiqueta que viene justo debajo se borra: ya iba a caer ahi. Las
+etiquetas que se quedan sin saltos no se borran; no estorban."""
 from __future__ import annotations
 
 from ..isa import BRANCHES

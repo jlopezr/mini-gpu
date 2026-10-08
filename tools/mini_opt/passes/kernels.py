@@ -1,4 +1,19 @@
-"""Kernels de GPU: `__kernel_<nombre>` es una funcion que arranca una lane"""
+"""Kernels de GPU: `__kernel_<nombre>` es una funcion C que ejecuta cada lane de la GPU
+
+lcc compila un kernel como cualquier funcion, para la CPU: guarda y restaura los registros
+preservados, retorna con `JR R31`, recibe los parametros en R1..R4 y tiene una pila. La GPU no
+tiene nada de eso, asi que el pase deja solo lo que una lane necesita:
+
+ - el retorno `JR R31` pasa a `EXIT` (una lane no vuelve a nadie);
+ - `SHLI`/`SHRI`/`SARI` (que la GPU no tiene) pasan a `MOVI t,k ; SHL d,a,t` con un `t` libre;
+ - se borran los guardados y restauraciones de R16..R29 y, si nada mas usa la pila, el marco
+   entero (en la GPU cada acceso a la pila es de una lane y no se coalesce);
+ - al entrar, `GETARG` y un `LOAD` por parametro leen R1..R4 del bloque de argumentos del
+   trabajo, y, solo si el kernel usa pila, se calcula la de la lane (`__gpu_stack` + tid * 512);
+ - se comprueba que solo hay instrucciones de la GPU del prototipo (`GPU_ISAS`) y que no hay
+   mas de cuatro parametros (error si no).
+
+Los demas pases usan `KERNEL_PREFIX` para tratar los kernels de forma distinta."""
 from __future__ import annotations
 
 from ..flow import Block, build_cfg, free_register, live_after, live_in_entry, liveness

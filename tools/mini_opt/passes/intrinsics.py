@@ -1,4 +1,18 @@
-"""Pase `intrinsics`: las variables `__gpu_*` pasan a `GETTID`, `GETLANE`... y `__gpu_bar = 0;` a `BAR`."""
+"""Intrinsecos de GPU: variables `__gpu_*` que el C lee como si fueran normales
+
+Es el equivalente a `threadIdx` / `__syncthreads` de CUDA sin tocar `rcc`: el C declara
+`extern volatile int __gpu_tid;` y lo lee como una variable, y lcc lo compila como la carga de
+una direccion mas un `LOAD`. El pase convierte el par `LI r,__gpu_tid ; LOAD d,r,0` en
+`GETTID d` (y `__gpu_lane`, `__gpu_warp`, `__gpu_lwarp`, `__gpu_arg` en su `GET*`). Escribir
+`__gpu_bar = 0;` pasa a `BAR`. `__gpu_nthreads` es compuesto: lee del bloque de argumentos
+(`GETARG`) el numero de warps y de lanes y los multiplica.
+
+La direccion puede haberse cargado en otro bloque, asi que se sigue con un analisis de
+registros que contienen la direccion de un intrinseco por todos los caminos. Despues se borra
+la carga de la direccion y la declaracion `.extern`. Si la direccion se usa para otra cosa
+(se toma `&__gpu_tid`, se suma...), no se puede reescribir y es un error.
+
+Para anadir otro intrinseco basta una entrada en `INTRINSIC_LOADS` o `INTRINSIC_STORES`."""
 from __future__ import annotations
 
 from ..flow import Block, build_cfg, forward_must, free_register, live_after, liveness
