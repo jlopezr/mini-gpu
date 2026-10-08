@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -61,6 +62,7 @@ class PromoteSeedTest(unittest.TestCase):
         self.assertTrue(bitstream_is_current(self.proto))
 
     def test_refuses_when_apio_ini_has_another_seed(self):
+        shutil.copytree(self.sweep / 'seed-9', self.sweep / 'seed-3')
         with self.assertRaises(SystemExit) as caught:
             self.promote(seed=3)
         self.assertIn('--seed 9', str(caught.exception))
