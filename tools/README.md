@@ -693,9 +693,108 @@ lento, así que conviene acercarse con `until` y afinar desde ahí.
 ejecución, breakpoints— y no pinta nada; `tools/debug_tui.py` solo coloca en
 paneles lo que el núcleo devuelve. En medio, `tools/debug_target.py` define qué
 necesita el depurador de la máquina que depura, con una implementación para el
-simulador y otra (`tools/debug_board.py`) para el monitor. Añadir la MiniGPU
-—warps y carriles— es escribir un tercer objetivo, no tocar la interfaz.
-Suite: `python -m unittest discover -s x.tests -p test_debugger.py`.
+simulador y otra (`tools/debug_board.py`) para el monitor. CPU y GPU juntas son
+un tercer objetivo, `tools/debug_system.py` (siguiente apartado).
+Suite: `python -m unittest discover -s x.tests -p "test_debugger*.py"`.
+
+### Depurar CPU + GPU (`mini-dbg --gpu`)
+
+```bash
+> mini-dbg --gpu 32.cpu-gpu-func-sim/examples/launch.asm
+> mini-dbg --gpu programa.asm --num-warps 4 --warp-size 8 --cpu-steps 2 --gpu-steps 1
+```
+
+Monta el simulador de `32.cpu-gpu-func-sim` (CPU y GPU sobre la misma RAM): el
+programa lleva el código de la CPU y el kernel en una imagen, como en
+`cpugpusim`. Solo existe en el simulador; la placa no lo tiene porque el
+monitor de las carpetas con GPU no da los registros de lane (hace falta un
+comando de selección de contexto en `monitor.v`).
+
+**Parada total.** `run`, `until` y `frame` hacen avanzar a los dos núcleos con
+el reparto de `--cpu-steps`/`--gpu-steps`, y en cuanto uno para (breakpoint,
+error) paran los dos. El foco pasa al núcleo responsable y el mensaje lo dice:
+`parada en 0x0000004C [GPU warp 1]`. Una CPU con `HALT` no corta a la GPU: se
+sigue hasta que los warps terminen. Si la CPU ya paró y quedan warps que no
+pueden avanzar (una barrera a la que no llegan todos) sale con «sin progreso».
+
+**Foco.** Hay un núcleo con foco y, dentro de la GPU, un warp y una lane. El
+foco recibe `step`, `regs`, `set`, el listado y la barra de estado.
+
+| Comando | Tecla | Hace |
+|---|---|---|
+| `core [cpu\|gpu]` | `g` | cambia de núcleo (sin argumento, alterna) |
+| `warp [N]` | `w` | foco en el warp N (sin argumento, el siguiente); implica GPU |
+| `lane [N]` | `l` | foco en la lane N (sin argumento, la siguiente); implica GPU |
+| `warps` | | tabla de warps |
+| `lanes` | | registros de todas las lanes del warp (omite las filas a cero) |
+
+**`step` mueve solo el núcleo con foco.** Con el foco en la CPU, la GPU queda
+congelada: se ve el `WARP_START` hacer vivos a los warps sin que ejecuten. Con el
+foco en la GPU avanza *un warp* —el del foco— y ningún otro, ni el puntero del
+planificador. Si ese warp espera en una barrera o ha terminado, el foco pasa al
+siguiente que pueda avanzar y la consola lo dice (`el warp 0 espera en una
+barrera; sigo con el warp 1`). Un `step` explícito ignora los breakpoints. `over`
+y `finish` actúan sobre el núcleo con foco; la GPU no tiene `JAL`/`JR`.
+
+**Una sola lista de breakpoints.** Es una dirección, y vale para los dos
+núcleos: salta el que llegue. Un warp recién lanzado sobre una marca para antes
+de ejecutar su primera instrucción —una vez por warp lanzado—, que es como se
+llega a la primera línea de un kernel: `break kernel`, `run`. No hay ISA por
+núcleo: el listado es el del fuente, y una instrucción que el núcleo no sabe
+ejecutar falla al ejecutarla.
+
+**Dos resets.**
+
+| Comando | Qué hace |
+|---|---|
+| `reset gpu` | blando: descarta warps, errores y barreras; **conserva** descriptores, memoria y la CPU |
+| `reset` | duro: RAM a cero, imagen recargada, CPU y GPU como tras el reset del sistema (§19); conserva los breakpoints |
+
+El reset duro no toca el estado de vídeo, serie ni entrada: el anfitrión los
+configuró al arrancar y el simulador no tiene un reset de sistema para ellos.
+
+**Paneles.** La tabla de warps está siempre arriba a la derecha: estado
+(`LIBRE`, `CONFIG` —descriptor escrito y sin lanzar, con su PC y máscara—,
+`READY`, `WAIT_BAR`, `FIN`, `ERROR`), PC, máscara de lanes (`●` activa, `○` viva
+pero fuera de la ruta, `·` muerta), profundidades de las pilas SIMT, id lógico y
+argumento. Debajo, los registros: los de la CPU, o con el foco en la GPU una
+rejilla con una columna por lane del warp (la del foco subrayada, las lanes
+inactivas atenuadas, los valores que cambiaron en amarillo y el nombre del
+registro en cian si las lanes activas no coinciden). La columna es fija de 84
+caracteres: por debajo de unos 140 de terminal el panel de código se queda
+estrecho.
+
+**Dos indicadores en el listado.** Entre la marca de breakpoint y la dirección
+hay dos columnas: `C` (verde) donde está el PC de la CPU y `G` (azul fijo `#4da3ff`, no un color ANSI: según el tema del terminal `bright_blue` sale blanco) donde está
+el del warp con foco, si está vivo. La fila resaltada en inverso sigue siendo la
+del núcleo con foco. El listado se centra en esa fila, así que el otro
+indicador puede quedar fuera de pantalla: `core` lleva el foco y el listado a él.
+
+**`watch`.** `watch X [N]` vigila N bytes en X (4 por defecto, admite etiquetas) y
+para la ejecución cuando su valor cambia, diciendo **quién escribió**:
+
+```text
+> watch out
+> run
+watch 0x00000150: 0x00000000 → 0x00000007 (escrito por GPU warp 0, PC=0x00000048) (31 instrucciones)
+```
+
+El foco se va al núcleo que escribió. En la TUI, mientras haya watches aparece
+un panel `watch` a la derecha de la memoria (se esconde con `unwatch all`): dos
+líneas por watch con el valor actual —en amarillo si cambió con el último
+comando— y debajo el valor anterior y quién lo escribió. Caben cuatro. `watch`
+sin argumento los lista y
+`unwatch [X|all]` los quita. Funciona también con un solo núcleo (entonces dice
+solo `PC=...`). Tras un `step` que no pasa por `run`, el cambio se anuncia en la
+consola; un `write` o un `set` del propio usuario no es una noticia.
+Limitaciones: compara el valor tras cada instrucción, así que una escritura del
+mismo valor no se ve; con watches activos `run` va instrucción a instrucción
+(en la placa, donde cada lectura es un viaje por el serie, `watch` se rechaza); y
+solo mira RAM, no MMIO.
+
+**Escrituras.** `write` va con los permisos de la CPU (`mmio.md` §15): escribir un
+descriptor con el warp vivo, o un bloque que la CPU no puede tocar, es un error
+normal que se enseña en la consola; no para ningún núcleo.
 
 ## Ejecutar la suite de tests
 

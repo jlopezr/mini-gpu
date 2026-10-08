@@ -19,7 +19,7 @@ tienen que funcionar en una máquina sin `textual` instalado.
 from __future__ import annotations
 
 from tools.debug_core import (
-    CommandError, DebugSession, format_memory_row,
+    CommandError, DebugSession, format_memory_row, mask_bits,
 )
 from tools.debug_target import TargetError
 from tools.mmio_map import MMIO_SYSTEM_BASE
@@ -34,7 +34,14 @@ Screen { layout: vertical; }
     scrollbar-size: 1 1;
 }
 #register-values { height: auto; }
-#memory { height: 10; border: round $accent; padding: 0 1; }
+#side { width: 84; height: 100%; }
+#side #registers { width: 100%; height: 1fr; }
+#warps { border: round $accent; padding: 0 1; height: 11; }
+#bottom { height: 10; }
+#memory { width: 1fr; height: 10; border: round $accent; padding: 0 1; }
+#watches-panel {
+    display: none; width: 52; height: 10; border: round $accent; padding: 0 1;
+}
 #console-area { height: 9; border: round $accent; }
 #code:focus, #registers:focus, #memory:focus, #console-area:focus-within {
     border: double $warning;
@@ -66,6 +73,9 @@ def _code_view(
     pc = session.target.state().pc
     listing = (session.listing(before=radius, after=radius, center=center)
                if radius is not None else session.listing())
+    # Con CPU y GPU, dos columnas más: `C` donde está el PC de la CPU y `G`
+    # donde está el del warp con foco (si está vivo).
+    two_cores = session.target.pcs() is not None
     for row in listing:
         for label in row.labels:
             text = f"{label}:"
@@ -76,10 +86,17 @@ def _code_view(
         mark_text = "*" if row.has_breakpoint else " "
         mark = "[red]*[/red]" if row.has_breakpoint else " "
         word = f"{row.word:08X}" if row.word is not None else "????????"
-        line = (f"{cursor}{mark} 0x{row.address:08X}  {word}  "
+        gutter = gutter_text = ""
+        if two_cores:
+            gutter_text = ("C" if row.cpu_pc else " ") + (
+                "G" if row.gpu_pc else " ")
+            gutter = (("[bold green]C[/bold green]" if row.cpu_pc else " ")
+                      + ("[bold #4da3ff]G[/bold #4da3ff]"
+                         if row.gpu_pc else " "))
+        line = (f"{cursor}{mark}{gutter} 0x{row.address:08X}  {word}  "
                 f"{_escape(row.text)}")
-        visible = (f"{cursor_text}{mark_text} 0x{row.address:08X}  {word}  "
-                   f"{row.text}")
+        visible = (f"{cursor_text}{mark_text}{gutter_text} "
+                   f"0x{row.address:08X}  {word}  {row.text}")
         if row.address == (pc if center is None else center):
             focus_row = len(rows)
         annotation = session.source.target_annotation(row.address, registers)
@@ -144,6 +161,102 @@ def _register_lines(session: DebugSession,
     return "\n".join(rows)
 
 
+_STATE_STYLE = {
+    "WAIT_BAR": "yellow", "ERROR": "bold red",
+    "FIN": "dim", "LIBRE": "dim", "CONFIG": "dim",
+}
+
+
+def _wrap(text: str, style: str) -> str:
+    """Markup de Rich, sin etiquetas si no hay estilo (no existe `none underline`)."""
+    return f"[{style}]{text}[/{style}]" if style else text
+
+
+def _warp_lines(session: DebugSession) -> str:
+    """La tabla de warps: el del foco con `▶`, el estado con su color."""
+    rows = session.target.warp_rows() or []
+    lines = ["[dim]   W  estado    PC          lanes     SIMT   logico  arg[/dim]"]
+    for row in rows:
+        style = _STATE_STYLE.get(row.state, "")
+        text = (f"{'▶' if row.focused else ' '}  {row.number:<2} "
+                f"{row.state:<8}  0x{row.pc:08X}  "
+                f"{mask_bits(row.active_mask, row.live_mask, row.lanes)}  "
+                f"r{row.region_depth} p{row.path_depth}   "
+                f"{row.logical_id:<6}  0x{row.arg:08X}")
+        if row.focused:
+            style = f"bold {style}" if style else "bold cyan"
+        lines.append(_wrap(text, style))
+    return "\n".join(lines)
+
+
+def _lane_lines(session: DebugSession,
+                changed: set[tuple[int, int]] | None = None) -> str:
+    """Registros por lane del warp con foco: una columna por lane.
+
+    Las lanes fuera de la ruta activa van atenuadas, la del foco subrayada, las
+    celdas que cambiaron en el último comando en amarillo y el nombre del
+    registro en cian cuando las lanes activas no coinciden (divergencia).
+    """
+    changed = changed or set()
+    grid = session.target.lane_grid()
+    if grid is None:
+        return ""
+    lanes = len(grid.regs)
+    header = "    " + " ".join(
+        (f"[bold underline]{'L' + str(lane):>8}[/bold underline]"
+         if lane == grid.lane else f"[dim]{'L' + str(lane):>8}[/dim]")
+        for lane in range(lanes))
+    lines = [header]
+    for register in range(32):
+        cells = []
+        active_values = set()
+        for lane in range(lanes):
+            value = grid.regs[lane][register]
+            active = grid.active_mask >> lane & 1
+            if active:
+                active_values.add(value)
+            if (lane, register) in changed:
+                style = "bold yellow"
+            elif not active:
+                style = "dim"
+            else:
+                style = ""
+            if lane == grid.lane:
+                style = f"{style} underline".strip()
+            cells.append(_wrap(f"{value:08X}", style))
+        label_style = "cyan" if len(active_values) > 1 else ""
+        lines.append(_wrap(f"R{register:<2}", label_style) + " "
+                     + " ".join(cells))
+    return "\n".join(lines)
+
+
+def _watch_value(data: bytes | None) -> str:
+    """Hasta 8 bytes como número; más, los 8 primeros y puntos suspensivos."""
+    if data is None:
+        return "—"
+    shown = data[:8]
+    text = f"0x{int.from_bytes(shown, 'little'):0{2 * len(shown)}X}"
+    return text + ("…" if len(data) > 8 else "")
+
+
+def _watch_panel_lines(session: DebugSession) -> str:
+    """Dos líneas por watch: valor actual y, debajo, de dónde venía y quién lo cambió."""
+    lines = []
+    for row in session.watch_rows():
+        name = _escape(row.label) if row.label else f"0x{row.address:08X}"
+        head = f"{name}  {_watch_value(row.value)}"
+        if row.length != 4:
+            head += f"  [{row.length} B]"
+        style = "bold yellow" if row.changed else ""
+        lines.append(_wrap(head, style))
+        if row.previous is None:
+            lines.append("[dim]  sin cambios[/dim]")
+        else:
+            who = f"  {_escape(row.writer)}" if row.writer else ""
+            lines.append(f"[dim]  ← {_watch_value(row.previous)}{who}[/dim]")
+    return "\n".join(lines)
+
+
 def _memory_lines(session: DebugSession) -> str:
     rows = session.memory_rows()
     if not rows:
@@ -179,6 +292,7 @@ def build_app(session: DebugSession):
 
     has_video = session.target.video_layout() is not None
     can_advance_frame = session.target.video_swap_count() is not None
+    has_gpu = session.target.warp_rows() is not None
 
     class CodePanel(Static):
         can_focus = True
@@ -300,11 +414,16 @@ def build_app(session: DebugSession):
             ("v", "command('fb')", "ver framebuffer"),
         ] if has_video else []) + ([
             ("f", "command('frame')", "siguiente frame"),
-        ] if can_advance_frame else [])
+        ] if can_advance_frame else []) + ([
+            ("g", "command('core')", "CPU/GPU"),
+            ("w", "command('warp')", "siguiente warp"),
+            ("l", "command('lane')", "siguiente lane"),
+        ] if has_gpu else [])
 
         def __init__(self) -> None:
             super().__init__()
             self.changed_registers: set[int] = set()
+            self.changed_cells: set[tuple[int, int]] = set()
             self.code_center: int | None = None
             self.code_row_targets: list[
                 tuple[str, int, int, int] | None] = []
@@ -320,8 +439,18 @@ def build_app(session: DebugSession):
         def compose(self) -> ComposeResult:
             with Horizontal(id="top"):
                 yield CodePanel(id="code")
-                yield RegisterPanel(id="registers")
-            yield MemoryPanel(id="memory")
+                if has_gpu:
+                    # Tabla de warps fija arriba, registros debajo: los de la
+                    # CPU, o la rejilla de lanes si el foco está en la GPU.
+                    with Vertical(id="side"):
+                        yield Static(id="warps")
+                        yield RegisterPanel(id="registers")
+                else:
+                    yield RegisterPanel(id="registers")
+            with Horizontal(id="bottom"):
+                yield MemoryPanel(id="memory")
+                # Solo se ve mientras haya watches (ver `refresh_panels`).
+                yield Static(id="watches-panel")
             with Vertical(id="console-area"):
                 yield RichLog(id="console", markup=True, wrap=True)
                 yield Input(placeholder="comando (`help` para la lista)",
@@ -333,6 +462,10 @@ def build_app(session: DebugSession):
             self.query_one("#registers", RegisterPanel).border_title = "registros"
             self.query_one("#memory", Static).border_title = "memoria"
             self.query_one("#console-area", Vertical).border_title = "consola"
+            if has_gpu:
+                warps = self.query_one("#warps", Static)
+                warps.border_title = "warps"
+                warps.styles.height = len(session.target.warp_rows()) + 3
             self.query_one("#console", RichLog).write(
                 "[dim]`help` lista los comandos. Las teclas de abajo hacen "
                 "lo mismo que escribirlos.[/dim]")
@@ -366,9 +499,25 @@ def build_app(session: DebugSession):
             rendered, self.code_row_targets, self.code_row_addresses = _code_view(
                 session, code.content_region.height, self.code_center)
             code.update(rendered)
-            self.query_one("#register-values", Static).update(
-                _register_lines(session, self.changed_registers))
+            registers = self.query_one("#registers", RegisterPanel)
+            if has_gpu:
+                self.query_one("#warps", Static).update(_warp_lines(session))
+            if has_gpu and session.target.core() == "gpu":
+                registers.border_title = (
+                    f"registros GPU · warp {session.target.lane_grid().warp}"
+                    " · lanes")
+                values = _lane_lines(session, self.changed_cells)
+            else:
+                registers.border_title = ("registros CPU" if has_gpu
+                                          else "registros")
+                values = _register_lines(session, self.changed_registers)
+            self.query_one("#register-values", Static).update(values)
             self.query_one("#memory", Static).update(_memory_lines(session))
+            watches = self.query_one("#watches-panel", Static)
+            watches.border_title = "watch"
+            watches.display = bool(session.watches)
+            if session.watches:
+                watches.update(_watch_panel_lines(session))
             self.sub_title = session.status_line()
 
         def on_resize(self) -> None:
@@ -380,7 +529,7 @@ def build_app(session: DebugSession):
             log = self.query_one("#console", RichLog)
             log.write(f"[bold cyan]> {command}[/bold cyan]")
             log.write("[dim]F12 (o Esc) para interrumpir la ejecución[/dim]")
-            before = session.target.registers()
+            before = self._snapshot()
             try:
                 for line in session.execute(command):
                     log.write(_console_markup(line))
@@ -388,16 +537,34 @@ def build_app(session: DebugSession):
                 log.write(f"[red]{exc}[/red]")
             self._finish_dispatch(command, before)
 
-        def _finish_dispatch(self, command: str,
-                             before: list[int]) -> None:
+        def _snapshot(self) -> tuple:
+            """Lo que hace falta para saber qué cambió con un comando."""
+            grid = session.target.lane_grid() if has_gpu else None
+            return (session.target.focus_key(), session.target.registers(),
+                    grid)
+
+        def _finish_dispatch(self, command: str, before: tuple) -> None:
+            key, registers, grid = before
             after = session.target.registers()
+            # Si el foco cambió de núcleo, warp o lane, los registros son de
+            # otro sitio y compararlos marcaría todo como cambiado.
+            same_focus = key == session.target.focus_key()
             self.changed_registers = {
-                index for index, (old, new) in enumerate(zip(before, after))
+                index for index, (old, new) in enumerate(zip(registers, after))
                 if old != new
-            }
+            } if same_focus else set()
+            self.changed_cells = set()
+            now = session.target.lane_grid() if has_gpu else None
+            if grid is not None and now is not None and grid.warp == now.warp:
+                self.changed_cells = {
+                    (lane, register)
+                    for lane in range(len(now.regs))
+                    for register in range(32)
+                    if grid.regs[lane][register] != now.regs[lane][register]}
             if command.split(None, 1)[0].lower() in {
                     "s", "step", "n", "next", "over", "c", "continue",
-                    "run", "until", "f", "frame", "finish", "reset"}:
+                    "run", "until", "f", "frame", "finish", "reset",
+                    "core", "warp", "lane"}:
                 # Después de ejecutar, el cursor conceptual vuelve al PC aunque
                 # la selección anterior siguiera visible. Así el próximo
                 # arriba/abajo siempre parte de la instrucción actual.
@@ -425,7 +592,7 @@ def build_app(session: DebugSession):
 
             log = self.query_one("#console", RichLog)
             log.write(f"[bold cyan]> {command}[/bold cyan]")
-            before = session.target.registers()
+            before = self._snapshot()
             session.clear_interrupt()
             self.running = True
             self.spinner_index = 0

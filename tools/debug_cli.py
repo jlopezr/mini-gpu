@@ -3,6 +3,7 @@
     mini-dbg programa.asm                 # contra el simulador funcional
     mini-dbg --board -p 21                # contra la placa, por el monitor
     mini-dbg --board -p 21 programa.asm   # placa, con el fuente para el listado
+    mini-dbg --gpu programa.asm           # simulador de CPU + GPU (carpeta 32)
 
 El programa que se le pasa hace dos cosas: se carga en el simulador y sirve de
 mapa `PC -> fuente`. Con `--board` no se carga nada --de eso ya se ocupa
@@ -49,6 +50,18 @@ def build_parser() -> argparse.ArgumentParser:
                         type=Path, metavar="DIR",
                         help="carpeta extra para los .include; repetible. "
                              "x.tests/inc se busca siempre")
+    parser.add_argument("--gpu", action="store_true",
+                        help="simula CPU + GPU sobre la misma RAM "
+                             "(32.cpu-gpu-func-sim); el programa lleva el "
+                             "codigo de la CPU y el kernel en una imagen")
+    parser.add_argument("--num-warps", type=int, default=None,
+                        help="warps de la GPU (8); solo con --gpu")
+    parser.add_argument("--warp-size", type=int, default=None,
+                        help="lanes por warp (8); solo con --gpu")
+    parser.add_argument("--cpu-steps", type=int, default=None,
+                        help="instrucciones de CPU por ronda (1); solo con --gpu")
+    parser.add_argument("--gpu-steps", type=int, default=None,
+                        help="instrucciones de warp por ronda (1); solo con --gpu")
     parser.add_argument("--run-limit", metavar="N", type=int,
                         default=None,
                         help="tope opcional de instrucciones por ejecucion "
@@ -91,6 +104,22 @@ def open_simulator(args, includes: tuple[Path, ...]) -> SimTarget:
     return SimTarget(cpu)
 
 
+def open_system(args, includes: tuple[Path, ...]):
+    """CPU y GPU juntas: el simulador de la carpeta 32 detrás de `SystemTarget`."""
+    sys.path.insert(0, str(ROOT / "32.cpu-gpu-func-sim"))
+    from cpu_gpu_sim import CpuGpuSystem
+    from tools.debug_system import SystemTarget
+
+    options = {name: getattr(args, name) for name in
+               ("num_warps", "warp_size", "cpu_steps", "gpu_steps")
+               if getattr(args, name) is not None}
+    system = CpuGpuSystem(args.memory_size, **options,
+                          **sim_peripherals.from_arguments(args))
+    image = load_program(args.program, includes)
+    system.load_cpu_program(image, args.load_address)
+    return SystemTarget(system, image, args.load_address)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -100,6 +129,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.board and args.prototype is None:
         print("error: --board necesita --prototype", file=sys.stderr)
+        return 2
+    if args.gpu and args.board:
+        print("error: --gpu es del simulador; la placa con GPU aun no tiene "
+              "monitor que de los registros de lane", file=sys.stderr)
+        return 2
+    gpu_only = (args.num_warps, args.warp_size, args.cpu_steps, args.gpu_steps)
+    if not args.gpu and any(value is not None for value in gpu_only):
+        print("error: --num-warps, --warp-size, --cpu-steps y --gpu-steps "
+              "necesitan --gpu", file=sys.stderr)
         return 2
     if args.window and args.board:
         print("error: --window es del simulador; en la placa use `fb`", file=sys.stderr)
@@ -119,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
 
             target, connection = connect(
                 args.prototype, args.port, args.serial_timeout)
+        elif args.gpu:
+            target = open_system(args, includes)
         else:
             target = open_simulator(args, includes)
     except (TargetError, ValueError, OSError) as exc:

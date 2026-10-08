@@ -302,13 +302,36 @@ class GpuUnit:
         """Una instrucción de warp. Detecta los warps que acaban de terminar."""
         retired = self.system.step()
         if retired:
-            self.retired += 1
-            for number, warp in enumerate(self.warps):
-                bit = 1 << number
-                if self.live & bit and warp.halted:
-                    self.live &= ~bit
-                    self.done |= bit
-            self.on_retire()
+            self._retire()
+        return retired
+
+    def _retire(self) -> None:
+        self.retired += 1
+        for number, warp in enumerate(self.warps):
+            bit = 1 << number
+            if self.live & bit and warp.halted:
+                self.live &= ~bit
+                self.done |= bit
+        self.on_retire()
+
+    def step_warp(self, number: int) -> bool:
+        """Una instrucción del warp `number` y de ningún otro (depuración).
+
+        El round-robin de `step` no interviene: no elige warp ni avanza su
+        puntero. Con la GPU detenida por `HALT` ejecuta igualmente, como el
+        `STEP` de §14.1, y la deja detenida. False si ese warp no puede avanzar
+        (no está vivo, espera en una barrera) o si la instrucción falla.
+        """
+        warp = self.warps[number]
+        if not self.live >> number & 1:
+            return False
+        halted, self.system.peripheral_halted = self.system.peripheral_halted, False
+        try:
+            retired = self.system.streaming_multiprocessor._step_warp(warp)
+        finally:
+            self.system.peripheral_halted = halted or self.system.peripheral_halted
+        if retired:
+            self._retire()
         return retired
 
     # -- comandos de §14.1 ------------------------------------------------
@@ -362,6 +385,15 @@ class GpuUnit:
         self.system.streaming_multiprocessor.reset()
         self.live = 0
         self.done = 0
+
+    def hard_reset(self) -> None:
+        """El estado tras el reset del sistema (§19): también los descriptores."""
+        self.reset()
+        for descriptor in self.descriptors:
+            for field in descriptor:
+                descriptor[field] = 0
+        self.context_warp = self.context_lane = 0
+        self.retired = 0
 
     def warp_start(self, mask: int) -> None:
         if mask >> self.num_warps:
@@ -659,6 +691,20 @@ class CpuGpuSystem:
         le da a cada warp la dirección de su etiqueta por el descriptor.
         """
         self.cpu.load_program(data, address)
+
+    def hard_reset(self, image: bytes, address: int = 0) -> None:
+        """Empezar de nuevo: RAM a cero, imagen recargada, CPU y GPU como tras el reset.
+
+        Es lo que el depurador llama `reset`. Los dispositivos (vídeo, serie,
+        entrada) conservan su estado: el anfitrión los configuró al arrancar
+        (presencia de teclado, guiones) y el simulador no tiene un reset de
+        sistema para ellos.
+        """
+        self.memory[:] = bytes(len(self.memory))
+        self.cpu.reset()
+        self.cpu.load_program(image, address)
+        self.gpu.hard_reset()
+        self.cpu_instructions = 0
 
     def enable_trace(self, stream, limit: int | None = None) -> None:
         """Traza intercalada: «CPU» delante de cada instrucción de CPU, «GPU» de cada de warp.

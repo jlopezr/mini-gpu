@@ -29,6 +29,16 @@ CAPS_RESET = "reset"
 #: dando pasos. Sin esto, un `run` sin breakpoints en la placa serían miles de
 #: `STEP` por el puerto serie, a 115200 baudios.
 CAPS_FREE_RUN = "free-run"
+#: El objetivo es una GPU con su propio reset (sin tocar descriptores ni memoria)
+#: además del reset del sistema entero.
+CAPS_RESET_GPU = "reset-gpu"
+
+# Qué contesta `DebugTarget.poll` cuando hay que parar. Son las mismas cadenas
+# que los `STOP_*` del núcleo, que los reexporta.
+POLL_BREAKPOINT = "breakpoint"
+POLL_HALT = "halt"
+POLL_ERROR = "error"
+POLL_STALLED = "stalled"
 
 
 @dataclass(frozen=True)
@@ -60,6 +70,39 @@ class TargetState:
     error_code: int
     error_pc: int
     instructions: int
+
+
+@dataclass(frozen=True)
+class WarpRow:
+    """Una fila de la tabla de warps de una GPU."""
+
+    number: int
+    #: LIBRE, READY, WAIT_BAR, FIN (terminó y nadie lo ha recogido) o ERROR.
+    state: str
+    pc: int
+    active_mask: int
+    live_mask: int
+    region_depth: int
+    path_depth: int
+    logical_id: int
+    arg: int
+    #: El warp con el foco de depuración.
+    focused: bool
+    #: Un `step` suyo avanzaría (vivo y no bloqueado).
+    runnable: bool
+    #: Lanes por warp, para pintar las máscaras.
+    lanes: int = 8
+
+
+@dataclass(frozen=True)
+class LaneGrid:
+    """Los registros de todas las lanes de un warp: `regs[lane][registro]`."""
+
+    warp: int
+    lane: int
+    active_mask: int
+    live_mask: int
+    regs: tuple[tuple[int, ...], ...]
 
 
 class TargetError(RuntimeError):
@@ -123,6 +166,98 @@ class DebugTarget(ABC):
 
     def request_interrupt(self) -> None:
         """Solicita parar una ejecución larga, si el objetivo corre solo."""
+
+    # -- ejecución libre ----------------------------------------------------
+    # `run`, `until` y `frame` no llaman a `step`: repiten `advance` y preguntan
+    # a `poll` si toca parar. En un solo núcleo son `step` y «¿PC en una marca?»;
+    # un sistema con varios núcleos decide aquí quién avanza y quién ha parado.
+
+    def can_run(self) -> bool:
+        """Si ejecutar libremente puede cambiar algo."""
+        return not self.state().halted
+
+    #: Lo activa la sesión mientras haya `watch`: pide a `advance` recordar qué
+    #: instrucción ejecutó, para poder decir quién escribió. Apagado no cuesta nada.
+    track_writer: bool = False
+    _writer: str = ""
+
+    def advance(self) -> bool:
+        """Una unidad de ejecución libre. False si nada pudo avanzar."""
+        if self.track_writer:
+            self._writer = f"PC=0x{self.state().pc:08X}"
+        self.step()
+        return True
+
+    def last_writer(self) -> str:
+        """Quién ejecutó la última instrucción de `advance` (`PC=0x...`)."""
+        return self._writer
+
+    def focus_last_actor(self) -> None:
+        """Pone el foco en el núcleo de la última instrucción de `advance`."""
+
+    def pcs(self) -> tuple[int, int | None] | None:
+        """(PC de la CPU, PC del warp con foco si está vivo) para marcar el
+        listado con los dos indicadores, o `None` si hay un solo núcleo."""
+        return None
+
+    def poll(self, marks: set[int]) -> str | None:
+        """Tras `advance`: `POLL_*` si hay que parar, o `None` para seguir.
+
+        Un objetivo con varios núcleos mueve aquí su foco al que ha parado.
+        """
+        state = self.state()
+        if state.halted:
+            return POLL_ERROR if state.error else POLL_HALT
+        if state.pc in marks:
+            return POLL_BREAKPOINT
+        return None
+
+    def stop_location(self) -> str:
+        """Qué núcleo está parado, para los mensajes (` [GPU w3]`), o vacío."""
+        return ""
+
+    def idle_reason(self) -> str | None:
+        """Por qué `step` no puede hacer nada, si hay una razón mejor que «parada»."""
+        return None
+
+    def pop_notices(self) -> list[str]:
+        """Avisos acumulados desde la última vez (cambios de foco automáticos)."""
+        return []
+
+    def summary(self) -> str:
+        """Texto extra para la barra de estado (el otro núcleo, por ejemplo)."""
+        return ""
+
+    # -- varios núcleos -----------------------------------------------------
+
+    def warp_rows(self) -> list[WarpRow] | None:
+        """La tabla de warps, o `None` si el objetivo no tiene GPU."""
+        return None
+
+    def lane_grid(self) -> LaneGrid | None:
+        """Registros de todas las lanes del warp con foco, o `None`."""
+        return None
+
+    def focus_key(self) -> tuple | None:
+        """Identifica el núcleo con foco: si cambia, no se comparan registros."""
+        return None
+
+    def core(self) -> str:
+        """`cpu` o `gpu`: el núcleo con foco."""
+        return "cpu"
+
+    def set_core(self, core: str | None) -> None:
+        raise TargetError(f"{self.name} no tiene GPU")
+
+    def select_warp(self, number: int | None) -> None:
+        raise TargetError(f"{self.name} no tiene GPU")
+
+    def select_lane(self, number: int | None) -> None:
+        raise TargetError(f"{self.name} no tiene GPU")
+
+    def reset_gpu(self) -> None:
+        self.require(CAPS_RESET_GPU)
+        raise NotImplementedError
 
     def video_layout(self) -> VideoLayout | None:
         """Dónde mirar el framebuffer, o `None` si esta máquina no tiene vídeo.

@@ -15,14 +15,18 @@ from dataclasses import dataclass
 
 from tools.debug_source import SourceMap
 from tools.debug_target import (
-    CAPS_FREE_RUN, CAPS_RESET, CAPS_WRITE_MEMORY, CAPS_WRITE_PC,
-    CAPS_WRITE_REGISTER, DebugTarget, TargetError,
+    CAPS_FREE_RUN, CAPS_RESET, CAPS_RESET_GPU, CAPS_WRITE_MEMORY,
+    CAPS_WRITE_PC, CAPS_WRITE_REGISTER, POLL_BREAKPOINT, POLL_ERROR,
+    POLL_HALT, POLL_STALLED, DebugTarget, LaneGrid, TargetError, WarpRow,
 )
 
 # Por qué se paró la ejecución. La TUI los traduce a un color y un mensaje.
-STOP_BREAKPOINT = "breakpoint"
-STOP_HALT = "halt"
-STOP_ERROR = "error"
+# Los cuatro primeros son lo que contesta `DebugTarget.poll`.
+STOP_BREAKPOINT = POLL_BREAKPOINT
+STOP_HALT = POLL_HALT
+STOP_ERROR = POLL_ERROR
+STOP_STALLED = POLL_STALLED
+STOP_WATCH = "watch"
 STOP_LIMIT = "limit"
 STOP_STEPPED = "stepped"
 STOP_SWAP = "swap"
@@ -37,6 +41,9 @@ ERROR_NAMES = {
     0x03: "trap explicito",
     0x04: "division por cero",
     0x05: "encoding invalido",
+    # Solo los da la GPU.
+    0x06: "SIMT: salto divergente sin SSY o pilas llenas",
+    0x07: "barrera invalida",
 }
 
 # Opcodes que dejan dirección de retorno: los que `over` salta entero.
@@ -53,6 +60,8 @@ class CommandError(ValueError):
 class StopReason:
     kind: str
     executed: int
+    #: Si es mejor que el texto genérico del motivo, lo que se enseña.
+    detail: str = ""
 
     @property
     def stopped_by_user_mark(self) -> bool:
@@ -67,6 +76,39 @@ class ListingRow:
     is_pc: bool
     has_breakpoint: bool
     labels: tuple[str, ...]
+    #: Los dos indicadores de un sistema CPU+GPU: el PC de la CPU y el del warp
+    #: con foco. `is_pc` sigue siendo el del núcleo con foco.
+    cpu_pc: bool = False
+    gpu_pc: bool = False
+
+
+@dataclass
+class Watch:
+    """Una región de memoria vigilada y el valor con que se vio por última vez."""
+
+    address: int
+    length: int
+    value: bytes
+    #: Valor antes del último cambio y quién lo hizo (vacío si no se sabe: un
+    #: `step` explícito no recoge autor).
+    previous: bytes | None = None
+    writer: str = ""
+    #: Número del comando en que cambió por última vez.
+    changed_at: int = -1
+
+
+@dataclass(frozen=True)
+class WatchRow:
+    """Lo que enseña el panel de watches de la TUI."""
+
+    address: int
+    label: str | None
+    length: int
+    value: bytes
+    previous: bytes | None
+    writer: str
+    #: Cambió con el último comando.
+    changed: bool
 
 
 class DebugSession:
@@ -82,6 +124,11 @@ class DebugSession:
         # `--run-limit N`.
         self.operation_limit = run_limit or DEFAULT_RUN_LIMIT
         self.breakpoints: set[int] = set()
+        self.watches: dict[int, Watch] = {}
+        # Cuenta de comandos: dice si un watch cambió «con el último».
+        self._serial = 0
+        # Lo que dijo el último `watch` que paró una ejecución.
+        self._watch_lines: list[str] = []
         self._interrupt = threading.Event()
         self.warnings: list[str] = []
         self.quit = False
@@ -111,9 +158,10 @@ class DebugSession:
         for _ in range(max(1, count)):
             state = self.target.state()
             if state.halted:
-                return StopReason(
-                    STOP_ALREADY if executed == 0 else self._halt_kind(),
-                    executed)
+                if executed == 0:
+                    return StopReason(STOP_ALREADY, 0,
+                                      self.target.idle_reason() or "")
+                return StopReason(self._halt_kind(), executed)
             self.target.step()
             executed += 1
         state = self.target.state()
@@ -133,10 +181,11 @@ class DebugSession:
             marks |= stop_at
         budget = max_instructions
 
-        if self.target.state().halted:
+        if not self.target.can_run():
             return StopReason(STOP_ALREADY, 0)
 
-        if not marks and self.target.supports(CAPS_FREE_RUN):
+        if not marks and not self.watches and self.target.supports(
+                CAPS_FREE_RUN):
             # Sin ninguna marca no hay nada que comprobar entre instrucción e
             # instrucción, así que se deja correr al objetivo. El contador sale
             # de su propio estado, no de contar pasos aquí.
@@ -160,7 +209,7 @@ class DebugSession:
         while budget is None or executed < budget:
             if self._interrupt.is_set():
                 return StopReason(STOP_INTERRUPTED, executed)
-            self.target.step()
+            self.target.advance()
             executed += 1
             self.refresh_video_title()
             if watch_swaps:
@@ -169,12 +218,56 @@ class DebugSession:
                         and current_swap != last_swap):
                     self.refresh_video()
                 last_swap = current_swap
-            state = self.target.state()
-            if state.halted:
-                return StopReason(self._halt_kind(), executed)
-            if state.pc in marks:
-                return StopReason(STOP_BREAKPOINT, executed)
+            if self.watches and self._watch_stop():
+                return StopReason(STOP_WATCH, executed)
+            kind = self.target.poll(marks)
+            if kind is not None:
+                return StopReason(kind, executed)
         return StopReason(STOP_LIMIT, executed)
+
+    def _watch_stop(self) -> bool:
+        """Si una región vigilada cambió con la última instrucción."""
+        changes = self._watch_changes(self.target.last_writer())
+        if not changes:
+            return False
+        self._watch_lines = changes
+        # El foco va al núcleo que escribió: es de quien se quiere el estado.
+        self.target.focus_last_actor()
+        return True
+
+    def _watch_changes(self, writer: str = "") -> list[str]:
+        """Regiones vigiladas que ya no valen lo que valían; las rebasa."""
+        changes = []
+        for watch in self.watches.values():
+            try:
+                now = self.target.read_memory(watch.address, watch.length)
+            except TargetError:
+                continue
+            if now != watch.value:
+                changes.append(
+                    f"watch 0x{watch.address:08X}: "
+                    f"{_format_watch(watch.value)} → {_format_watch(now)}")
+                watch.previous, watch.value = watch.value, now
+                watch.writer = writer
+                watch.changed_at = self._serial
+        return changes
+
+    def watch_rows(self) -> list[WatchRow]:
+        return [WatchRow(
+            address=watch.address, label=self.source.symbol(watch.address),
+            length=watch.length, value=watch.value, previous=watch.previous,
+            writer=watch.writer, changed=watch.changed_at == self._serial)
+            for watch in sorted(self.watches.values(),
+                                key=lambda w: w.address)]
+
+    def _rebase_watches(self) -> None:
+        """Da por bueno el valor actual: lo cambió el usuario, no el programa."""
+        for watch in self.watches.values():
+            try:
+                watch.value = self.target.read_memory(
+                    watch.address, watch.length)
+            except TargetError:
+                pass
 
     def step_over(self) -> StopReason:
         """Un paso, pero una llamada cuenta como una sola instrucción."""
@@ -236,18 +329,21 @@ class DebugSession:
         if initial is None:
             raise TargetError("este objetivo no permite esperar un frame")
         executed = 0
+        if not self.target.can_run():
+            return StopReason(STOP_ALREADY, 0)
         while executed < self.operation_limit:
             if self._interrupt.is_set():
                 return StopReason(STOP_INTERRUPTED, executed)
-            if self.target.state().halted:
-                return StopReason(
-                    STOP_ALREADY if executed == 0 else self._halt_kind(),
-                    executed)
-            self.target.step()
+            self.target.advance()
             executed += 1
             current = self.target.video_swap_count()
             if current is not None and current != initial:
                 return StopReason(STOP_SWAP, executed)
+            if self.watches and self._watch_stop():
+                return StopReason(STOP_WATCH, executed)
+            kind = self.target.poll(set())
+            if kind is not None:
+                return StopReason(kind, executed)
         return StopReason(STOP_LIMIT, executed)
 
     def clear_interrupt(self) -> None:
@@ -295,6 +391,7 @@ class DebugSession:
             start = max(0, view_pc - 4 * before)
             addresses = list(range(start, view_pc + 4 * (after + 1), 4))
 
+        pcs = self.target.pcs()
         rows = []
         for address in addresses:
             word = self.word_at(address)
@@ -305,6 +402,8 @@ class DebugSession:
                 is_pc=address == pc,
                 has_breakpoint=address in self.breakpoints,
                 labels=tuple(self.source.labels_at.get(address, ())),
+                cpu_pc=pcs is not None and address == pcs[0],
+                gpu_pc=pcs is not None and address == pcs[1],
             ))
         return rows
 
@@ -340,17 +439,29 @@ class DebugSession:
                 f"en 0x{state.error_pc:08X}")
         elif state.halted:
             parts.append("HALT")
+        summary = self.target.summary()
+        if summary:
+            parts.append(f"│ {summary}")
         return "  ".join(parts)
 
     def describe_stop(self, stop: StopReason) -> str:
         state = self.target.state()
         if stop.kind == STOP_ALREADY:
-            return "la maquina ya estaba parada (usa `reset`)"
+            return stop.detail or "la maquina ya estaba parada (usa `reset`)"
         suffix = f" ({stop.executed} instrucciones)"
+        where = self.target.stop_location()
         if stop.kind == STOP_STEPPED:
-            return f"0x{state.pc:08X}" + suffix
+            return f"0x{state.pc:08X}" + where + suffix
         if stop.kind == STOP_BREAKPOINT:
-            return f"parada en 0x{state.pc:08X}" + suffix
+            return f"parada en 0x{state.pc:08X}" + where + suffix
+        if stop.kind == STOP_WATCH:
+            writer = self.target.last_writer()
+            return ("; ".join(self._watch_lines)
+                    + (f" (escrito por {writer})" if writer else "") + suffix)
+        if stop.kind == STOP_STALLED:
+            return ("sin progreso: la CPU esta parada y quedan warps vivos que "
+                    "no pueden avanzar (¿una barrera a la que no llegan todos?)"
+                    + suffix)
         if stop.kind == STOP_SWAP:
             return "intercambio de framebuffer completado" + suffix
         if stop.kind == STOP_FINISHED:
@@ -360,7 +471,7 @@ class DebugSession:
         if stop.kind == STOP_ERROR:
             name = ERROR_NAMES.get(state.error_code, "desconocido")
             return (f"ERROR 0x{state.error_code:02X} ({name}) en "
-                    f"0x{state.error_pc:08X}" + suffix)
+                    f"0x{state.error_pc:08X}" + where + suffix)
         if stop.kind == STOP_HALT:
             return "HALT" + suffix
         return f"limite de {stop.executed} instrucciones alcanzado"
@@ -479,12 +590,21 @@ class DebugSession:
         if not parts:
             return []
         name, args = parts[0].lower(), parts[1:]
+        self._serial += 1
 
         handler = _COMMANDS.get(name)
         if handler is None:
             raise CommandError(
                 f"comando desconocido: '{name}' (prueba `help`)")
         lines = handler(self, args)
+        if self.watches:
+            if name in _USER_WRITES:
+                # Lo cambió quien depura: no es una noticia.
+                self._rebase_watches()
+            else:
+                # Un `step`, `over`... que no pasó por `resume` también puede
+                # haber escrito; si `resume` ya lo contó, aquí no hay cambio.
+                lines = lines + self._watch_changes()
         # Tras cualquier comando, la ventana de vídeo enseña el estado nuevo.
         # Aquí y no en la TUI: así el modo línea la refresca igual, sin repetir
         # la llamada en dos sitios.
@@ -496,7 +616,8 @@ class DebugSession:
 
     def _cmd_step(self, args: list[str]) -> list[str]:
         count = self._parse_count(args[0]) if args else 1
-        return [self.describe_stop(self.step(count))]
+        stop = self.step(count)
+        return self.target.pop_notices() + [self.describe_stop(stop)]
 
     def _cmd_over(self, args: list[str]) -> list[str]:
         if args:
@@ -544,6 +665,48 @@ class DebugSession:
             symbol = self.source.symbol(address)
             lines.append(f"0x{address:08X}" + (f"  {symbol}" if symbol else ""))
         return lines
+
+    def _cmd_watch(self, args: list[str]) -> list[str]:
+        """`watch X [N]`: parar cuando cambie el valor de N bytes en X."""
+        if not args:
+            if not self.watches:
+                return ["sin watches"]
+            return [f"0x{watch.address:08X}  {watch.length} bytes  "
+                    f"= {_format_watch(watch.value)}"
+                    + (f"  {self.source.symbol(watch.address)}"
+                       if self.source.symbol(watch.address) else "")
+                    for watch in sorted(self.watches.values(),
+                                        key=lambda w: w.address)]
+        if len(args) > 2:
+            raise CommandError("uso: watch DIRECCION|etiqueta [BYTES]")
+        if not self.target.fast_memory:
+            raise TargetError(
+                "este objetivo lee la memoria por un enlace lento: un watch "
+                "obligaría a leerla tras cada instruccion")
+        address = self.parse_address(args[0])
+        length = self._parse_count(args[1]) if len(args) > 1 else 4
+        try:
+            value = self.target.read_memory(address, length)
+        except TargetError:
+            raise CommandError(
+                f"region ilegible: 0x{address:08X}+{length}") from None
+        self.watches[address] = Watch(address, length, value)
+        self.target.track_writer = True
+        return [f"watch en 0x{address:08X} ({length} bytes), "
+                f"vale {_format_watch(value)}"]
+
+    def _cmd_unwatch(self, args: list[str]) -> list[str]:
+        if not args or args[0] == "all":
+            count = len(self.watches)
+            self.watches.clear()
+            self.target.track_writer = False
+            return [f"{count} watches borrados"]
+        address = self.parse_address(args[0])
+        if address not in self.watches:
+            raise CommandError(f"no hay watch en 0x{address:08X}")
+        del self.watches[address]
+        self.target.track_writer = bool(self.watches)
+        return [f"borrado el watch de 0x{address:08X}"]
 
     def _cmd_regs(self, args: list[str]) -> list[str]:
         if args:
@@ -674,9 +837,73 @@ class DebugSession:
         return [self.describe_stop(self.run_to_next_swap())]
 
     def _cmd_reset(self, args: list[str]) -> list[str]:
+        if args == ["gpu"]:
+            self.target.require(CAPS_RESET_GPU)
+            self.target.reset_gpu()
+            return ["reset blando de la GPU: warps, errores y barreras "
+                    "descartados; descriptores y memoria intactos"]
+        if args:
+            raise CommandError("uso: reset  |  reset gpu")
         self.target.require(CAPS_RESET)
         self.target.reset()
+        if self.target.warp_rows() is not None:
+            return ["reset duro: RAM a cero, imagen recargada, CPU y GPU "
+                    "como tras el reset del sistema"]
         return ["reset"]
+
+    # -- CPU + GPU ---------------------------------------------------------
+
+    def _require_gpu(self) -> list[WarpRow]:
+        rows = self.target.warp_rows()
+        if rows is None:
+            raise TargetError(
+                "este objetivo no tiene GPU (en el simulador: --gpu)")
+        return rows
+
+    def _parse_index(self, token: str) -> int:
+        try:
+            value = int(token, 0)
+        except ValueError:
+            raise CommandError(f"numero invalido: '{token}'") from None
+        if value < 0:
+            raise CommandError("no puede ser negativo")
+        return value
+
+    def _focus_line(self) -> str:
+        return f"foco: {self.target.name}"
+
+    def _cmd_core(self, args: list[str]) -> list[str]:
+        if len(args) > 1:
+            raise CommandError("uso: core [cpu|gpu]")
+        self._require_gpu()
+        self.target.set_core(args[0].lower() if args else None)
+        return [self._focus_line()]
+
+    def _cmd_warp(self, args: list[str]) -> list[str]:
+        if len(args) > 1:
+            raise CommandError("uso: warp [N]")
+        self._require_gpu()
+        self.target.select_warp(self._parse_index(args[0]) if args else None)
+        return [self._focus_line()]
+
+    def _cmd_lane(self, args: list[str]) -> list[str]:
+        if len(args) > 1:
+            raise CommandError("uso: lane [N]")
+        self._require_gpu()
+        self.target.select_lane(self._parse_index(args[0]) if args else None)
+        return [self._focus_line()]
+
+    def _cmd_warps(self, args: list[str]) -> list[str]:
+        if args:
+            raise CommandError("`warps` no lleva argumentos")
+        return format_warp_table(self._require_gpu())
+
+    def _cmd_lanes(self, args: list[str]) -> list[str]:
+        if args:
+            raise CommandError("`lanes` no lleva argumentos")
+        self._require_gpu()
+        grid = self.target.lane_grid()
+        return format_lane_grid(grid) if grid is not None else []
 
     def _cmd_quit(self, args: list[str]) -> list[str]:
         self.quit = True
@@ -692,6 +919,8 @@ class DebugSession:
             hidden.add("frame")
         if self._input_device() is None:
             hidden.add("input")
+        if self.target.warp_rows() is None:
+            hidden.update({"core", "warp", "lane", "warps", "lanes"})
         return [f"{name:<10} {text}" for name, text in HELP
                 if name.split()[0] not in hidden]
 
@@ -720,6 +949,56 @@ def format_memory_row(address: int, data: bytes) -> str:
     return f"0x{address:08X}  {hexa}  |{ascii_text}|"
 
 
+def _format_watch(data: bytes) -> str:
+    """Hasta 8 bytes como número little-endian; más, como bytes en orden."""
+    if len(data) <= 8:
+        return f"0x{int.from_bytes(data, 'little'):0{2 * len(data)}X}"
+    return " ".join(f"{byte:02X}" for byte in data)
+
+
+#: Comandos con los que quien depura cambia memoria o estado a propósito.
+_USER_WRITES = {"write", "w", "set", "reset"}
+
+
+def mask_bits(active: int, live: int, lanes: int) -> str:
+    """Una lane por carácter: `●` activa, `○` viva pero fuera de la ruta, `·` muerta."""
+    return "".join(
+        "●" if active >> lane & 1 else "○" if live >> lane & 1 else "·"
+        for lane in range(lanes))
+
+
+def format_warp_table(rows: list[WarpRow]) -> list[str]:
+    lines = ["   W  estado    PC          lanes     SIMT   logico  arg"]
+    for row in rows:
+        lines.append(
+            f"{'▶' if row.focused else ' '}  {row.number:<2} {row.state:<8}  "
+            f"0x{row.pc:08X}  "
+            f"{mask_bits(row.active_mask, row.live_mask, row.lanes)}  "
+            f"r{row.region_depth} p{row.path_depth}   "
+            f"{row.logical_id:<6}  0x{row.arg:08X}")
+    return lines
+
+
+def format_lane_grid(grid: LaneGrid) -> list[str]:
+    """Registros por lane. Se omiten las filas que valen cero en todas."""
+    lanes = len(grid.regs)
+    lines = [f"warp {grid.warp}   lanes "
+             + mask_bits(grid.active_mask, grid.live_mask, lanes)
+             + f"   foco: lane {grid.lane}",
+             "    " + " ".join(f"{'L' + str(lane):>8}" for lane in range(lanes))]
+    hidden = 0
+    for register in range(32):
+        values = [grid.regs[lane][register] for lane in range(lanes)]
+        if not any(values):
+            hidden += 1
+            continue
+        lines.append(f"R{register:<2} "
+                     + " ".join(f"{value:08X}" for value in values))
+    if hidden:
+        lines.append(f"({hidden} registros a cero en todas las lanes omitidos)")
+    return lines
+
+
 HELP: tuple[tuple[str, str], ...] = (
     ("step [N]", "ejecuta N instrucciones (por defecto 1)"),
     ("over", "un paso, saltando la llamada entera si es JAL/JALR"),
@@ -728,6 +1007,9 @@ HELP: tuple[tuple[str, str], ...] = (
     ("until X", "ejecuta hasta la direccion o etiqueta X"),
     ("break [X]", "pone un breakpoint, o los lista si no hay argumento"),
     ("delete [X]", "borra el breakpoint X, o todos"),
+    ("watch [X N]", "para cuando cambie el valor de N bytes en X (4 por "
+                    "defecto) y dice quien escribio; sin argumento, los lista"),
+    ("unwatch [X]", "borra el watch de X, o todos"),
     ("regs [Rn]", "enseña los registros"),
     ("set X V", "escribe `set R5 0x10` o `set pc etiqueta`"),
     ("mem [X N]", "vuelca N bytes desde X"),
@@ -736,7 +1018,15 @@ HELP: tuple[tuple[str, str], ...] = (
                "`fb screen` es la pantalla del simulador, con consola y teclado/ratón"),
     ("input", "estado de INPUT: teclas, botones y cola de eventos, sin consumirlos"),
     ("frame", "ejecuta hasta completar el siguiente intercambio de framebuffer"),
-    ("reset", "reinicia PC, registros y contadores sin borrar memoria"),
+    ("core [cpu|gpu]", "cambia el nucleo con foco (sin argumento, alterna): "
+                       "recibe step, regs, set y el listado"),
+    ("warp [N]", "foco en el warp N de la GPU (sin argumento, el siguiente)"),
+    ("lane [N]", "foco en la lane N del warp (sin argumento, la siguiente)"),
+    ("warps", "tabla de warps: estado, PC, mascara de lanes, pilas SIMT"),
+    ("lanes", "registros de todas las lanes del warp con foco"),
+    ("reset [gpu]", "reinicia PC, registros y contadores sin borrar memoria; "
+                    "con CPU+GPU, `reset` es el duro (RAM a cero e imagen "
+                    "recargada) y `reset gpu` el blando"),
     ("quit", "sale"),
 )
 
@@ -750,6 +1040,8 @@ _COMMANDS = {
     "break": DebugSession._cmd_break, "b": DebugSession._cmd_break,
     "delete": DebugSession._cmd_delete, "d": DebugSession._cmd_delete,
     "breaks": DebugSession._cmd_breaks,
+    "watch": DebugSession._cmd_watch,
+    "unwatch": DebugSession._cmd_unwatch,
     "regs": DebugSession._cmd_regs, "r": DebugSession._cmd_regs,
     "set": DebugSession._cmd_set,
     "mem": DebugSession._cmd_mem, "x": DebugSession._cmd_mem,
@@ -757,6 +1049,11 @@ _COMMANDS = {
     "fb": DebugSession._cmd_fb, "v": DebugSession._cmd_fb,
     "frame": DebugSession._cmd_frame, "f": DebugSession._cmd_frame,
     "input": DebugSession._cmd_input,
+    "core": DebugSession._cmd_core,
+    "warp": DebugSession._cmd_warp,
+    "lane": DebugSession._cmd_lane,
+    "warps": DebugSession._cmd_warps,
+    "lanes": DebugSession._cmd_lanes,
     "reset": DebugSession._cmd_reset,
     "help": DebugSession._cmd_help, "?": DebugSession._cmd_help,
     "quit": DebugSession._cmd_quit, "q": DebugSession._cmd_quit,
