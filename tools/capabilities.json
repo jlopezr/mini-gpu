@@ -21,8 +21,8 @@
     "pattern": "OPCODE_JAL:"
   },
   "shift_immediate": {
-    "architecture": "cpu",
-    "file": "cpu.v",
+    "architecture": ["cpu", "gpu"],
+    "file": ["cpu.v", "gpu_lane.v"],
     "pattern": "shift_immediate"
   },
   "alu_extended": {

@@ -76,7 +76,8 @@ barreras. Dos cambios respecto a la 29, ambos por area y por correctitud:
 La lane ejecuta ahora lo mismo que la CPU: `SLT` y `SLTU` (reutilizan la resta y el
 estado de comparación de los saltos), `MULHI` (el camino de `MULFX` con otra
 ventana de salida), `DIVU`, `REM` y `REMU` (el camino de `DIV`, con operandos
-crudos o con el resto como resultado) y `JAL`, `JALR` y `JR`. Un salto indirecto
+crudos o con el resto como resultado), `SHLI`, `SHRI` y `SARI` (la cantidad
+sale del campo `Rb` si el bit 10 está a uno) y `JAL`, `JALR` y `JR`. Un salto indirecto
 sale de un registro por lane, así que el SM exige que **todas las lanes activas
 coincidan**: si no, para con `ERROR_SIMT` (0x06) en lugar de serializar.
 Bancos: `gpu_alu_tb.v` y `gpu_jump_tb.v`.

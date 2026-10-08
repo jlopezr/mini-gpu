@@ -1,0 +1,24 @@
+{
+  "architecture": [
+    "cpu",
+    "gpu"
+  ],
+  "name": "shared-shift-immediate-shli-shri-sari",
+  "program": "program.asm",
+  "warp_config": "warps.json",
+  "requires": [
+    "shift_immediate"
+  ],
+  "max_instructions": 1200,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "memory_dumps": [
+      {
+        "address": "0x00001000",
+        "file": "expected.hex"
+      }
+    ]
+  }
+}
