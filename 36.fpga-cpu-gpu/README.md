@@ -1,143 +1,169 @@
-# CPU a 80 MHz sobre fabric FIFO con SDRAM de cuatro bancos en paralelo
+# CPU que lanza una GPU de 8 carriles por MMIO, sobre el fabric FIFO de seis puertos
 
-Prototipo derivado de `34.fpga-cpu-fifo`. Los masters, los puertos del fabric, los
-dominios de reloj y los LED son los mismos; lo que cambia es el camino entre las
-colas del fabric y los pines de la SDRAM. Es la fase 3 de
-[`propuesta-fabric6-pipeline.md`](propuesta-fabric6-pipeline.md): varias operaciones
-realmente en vuelo dentro del controlador.
+Prototipo derivado de `35.fpga-cpu-fifo-sdram2` (CPU, vídeo, monitor y SDRAM de
+cuatro bancos en paralelo) y del núcleo de GPU de `29.fpga-gpu-sm-pipeline`. La
+CPU de 80 MHz carga un kernel en la RAM compartida, configura los warps y arranca
+la GPU escribiendo registros MMIO; la GPU, en su propio reloj, lee y escribe esa
+misma RAM por dos puertos del fabric. Es el **hito 1** del plan de integración:
+lo mínimo para que la CPU lance un kernel y espere a que acabe.
 
-## Qué cambia respecto a la 34
+Alias del prototipo: `cpugpu`. Identificación de placa: monitor `5.36`.
 
-El controlador secuencial hacía `ACTIVE`, esperar tRCD, `READ`/`WRITE`, ráfaga y
-esperar tRP antes de aceptar nada más: unos 16 ciclos por petición de 16 bytes, con
-el bus de datos útil solo en 8.
+## Quién es quién
 
-`sdram_controller_128.v` tiene ahora un **slot de petición por banco** y una
-temporización independiente por banco. Mientras un banco espera tRCD o su
-precarga automática, otro recibe su `ACTIVE` o saca su ráfaga. Solo se serializa
-lo que es físicamente único:
+| Bloque | Reloj | Qué es |
+|---|---|---|
+| CPU, monitor, bus MMIO, vídeo (registros y consola) | `clk` 80 MHz | como en la 35 |
+| SDRAM, fabric, controlador | `sdram_clk` 100 MHz | como en la 35 |
+| GPU (`gpu_system`) | `clk_25mhz` 25 MHz | el oscilador de la placa, sin PLL |
+| Píxel y TMDS | 25 MHz y 125 MHz | como en la 35 |
 
-- el bus de comandos (un comando por ciclo);
-- el bus de datos (una ráfaga BL8 cada vez, con 1 ciclo de guardia al pasar de
-  leer a escribir);
-- tRRD entre dos `ACTIVE`.
+Puertos del fabric:
 
-Política:
+| Puerto | Master |
+|---|---|
+| 0 | datos de la CPU |
+| 1 | instrucciones de la CPU |
+| 2 | vídeo (scanout, urgente) |
+| 3 | monitor |
+| 4 | GPU: LSU vectorial (datos) |
+| 5 | GPU: búsqueda de instrucciones |
 
-- **página cerrada**, como la 34: cada acceso es `ACTIVE` + `READ`/`WRITE` con
-  auto-precarga;
-- los `ACTIVE` se **adelantan**: un slot cuyo banco está libre recibe su `ACTIVE`
-  sin esperar turno, el más antiguo primero;
-- los `READ`/`WRITE` salen **en orden de llegada**, de modo que las respuestas
-  salen en el orden de las peticiones sin buffers de reordenación;
-- las salidas hacia la SDRAM son **registros** (la 34 las generaba combinacionalmente
-  desde el estado) y las escrituras copian su dato a un buffer común, de modo que
-  el slot queda libre en cuanto sale el comando;
-- refresco: con el temporizador vencido deja de aceptar peticiones, deja que se
-  vacíen los slots, comprueba los cuatro bancos precargados y emite `REFRESH`.
-  `MAX_ACCESS_CYCLES` pasa de 32 a 64 para cubrir ese vaciado.
+Los puertos 4 y 5 cruzan del reloj de la GPU al de memoria con un puente
+asíncrono cada uno (`fabric_fifo_bridge.v`), como los demás masters.
 
-El banco se decodifica del bit 10:9 de la dirección de palabra, es decir, cambia
-cada 1 KiB. Un recorrido secuencial largo de un solo master se queda en un banco; el
-paralelismo se ve cuando varios masters (CPU, scanout, monitor, generadores)
-atacan regiones distintas.
+## La GPU
 
-### Interfaz con el fabric
+`gpu_sm.v` es el SM de la 29: 8 carriles, 8 warps, reconvergencia con pila SIMT,
+barreras. Dos cambios respecto a la 29, ambos por area y por correctitud:
 
-La interfaz de señales no cambia, la semántica sí:
+- **El sumador de direcciones es uno por carril.** `d_rf_a + {8{d_immediate}}`
+  era un único sumador de 256 bits, y con un desplazamiento negativo el acarreo
+  de un carril contaminaba al siguiente. Está arreglado también en la 29; el
+  caso `x.tests/cases-gpu/memory/negative-offset` lo cubre.
+- **Menos lógica de selección.** Comparadores de grupo (`same_group`) calculados
+  una vez por pareja, `generation` de 1 bit, detección de reconvergencia por
+  warp y elección del siguiente warp con una máscara de elegibilidad rotada:
+  11.189 LUT4 en el SM contra 13.502 antes.
 
-- `req_ready` depende de la dirección: es el slot de su banco el que debe estar libre;
-- puede haber hasta cuatro peticiones aceptadas más las que esperan `done`;
-- `done` es un pulso **por petición aceptada, en orden**; `rdata` es válida en ese
-  ciclo (en una escritura no significa nada).
+`gpu_system.v` envuelve el SM sin su fabric ni su vídeo y añade el bloque
+**GPU CORE** (`mmio.md` §14.1): `GPU_CONTROL`, `GPU_STATUS`, `WARP_LIVE` y
+`WARP_DONE`. La LSU y el buffer de instrucciones salen como los puertos 4 y 5.
 
-`memory_fabric_fifo_6.v` sustituye el backend secuencial por una etapa de emisión,
-una FIFO de destinos (`meta`) que se empuja al aceptar el controlador y se
-vacía con cada `done`, y un contador de créditos: solo se emite si
-`meta + cola de respuestas < 8`. Así cada `done` encuentra hueco en la cola global
-de respuestas y el controlador no necesita contrapresión de salida. Una dirección
-inválida no llega al controlador, pero viaja marcada como error por la misma FIFO
-para no adelantar a las anteriores.
+### Limitaciones del hito 1
 
-## Rendimiento en simulación
+- La GPU **no es maestro de MMIO**: un warp que toque una dirección MMIO recibe
+  error. La única ruta de MMIO va de la CPU a la GPU.
+- `WARP_START` da error. Se lanza con `RUN`, que reanuda lo que escribieron los
+  descriptores; `WARP_LIVE` ya refleja un warp configurado antes de `RUN`.
+- `RESET` reinicia también los descriptores (el contrato dice que los conserva).
+- No hay vídeo propio de la GPU: el único bloque VIDEO es el de la CPU. Tampoco
+  hay todavía un registro de «ha terminado la parte gráfica» (`wait_graphics`),
+  que dependerá del rasterizador.
 
-Lecturas de 16 bytes contra el modelo JEDEC, 100 MHz, ciclos por petición:
+## El bus MMIO
 
-| Patrón | 34 (secuencial) | 35 |
-|---|---:|---:|
-| alternando los cuatro bancos | 17,21 | 8,19 |
-| siempre el mismo banco | 17,21 | 12,32 |
-| lecturas y escrituras alternadas, cuatro bancos | 16,71 | 9,19 |
+Todo el espacio MMIO empieza en `0x8000_0000` (`1.isa/mmio.md` v2). La CPU llega
+por `cpu_dmem_adapter`, que vacía el buffer de escrituras antes de cualquier
+acceso MMIO para conservar el orden. El monitor llega por su propio adaptador.
+`mmio_mux` atiende a uno cada vez (el monitor primero) y `mmio_decoder` reparte
+por bloque:
 
-Medido con `sdram_bank_parallel_tb.v` contra el controlador de cada carpeta (el
-de la 33 y el de la 34 son idénticos). A 100 MHz, 16 B por petición:
-93 MB/s en la 34 y 195 MB/s en la 35 en el mejor caso, sobre un pico de 200 MB/s.
+| Bloque | Dirección | Dispositivo |
+|---|---|---|
+| SYSTEM | `0x8000_0000` | identificación, memoria, versión |
+| SERIAL | `0x8010_0000` | puerto serie del programa |
+| VIDEO | `0x8020_0000` | registros de vídeo y consola de texto |
+| INPUT | `0x8060_0000` | teclado y ratón (llegan del PC por el monitor) |
+| CPU PERF | `0x8101_0000` | ocho contadores de rendimiento |
+| GPU | `0x8200_0000..0x8203_FFFF` | CORE, WARPS, SIMT y PERF de la GPU |
 
-8 ciclos es el límite del bus de datos con ráfagas BL8. El mismo banco queda
-limitado por el ciclo de fila (`ACTIVE` → precarga → `ACTIVE`).
+El bus está segmentado en tres etapas (registro de la decodificación, registro de
+la salida de cada dispositivo, mux de lectura) y un acceso tarda **4 ciclos**.
+`mmio_mux` espera `EXTRA_CYCLES = 3`; el decodificador y el mux tienen que
+cambiar a la vez. Los registros de la GPU viven en otro reloj, y `gpu_mmio_bridge`
+los cruza con petición y confirmación por cambio de nivel, un acceso en vuelo:
+`mmio_mux` espera su `done` con dirección, dato y tipo retenidos.
+
+`mmio_bus_tb.v` monta mux, decodificador y todos los dispositivos con una GPU
+simulada y comprueba 96 accesos (`sim/mmio_bus_expected.hex`).
+`gpu_mmio_bridge_tb.v` ejercita el puente con 80 y 25 MHz sin relación de fase.
+
+## La memoria
+
+Es la de la 35: slot por banco con temporización independiente, página cerrada,
+`ACTIVE` adelantados y `READ`/`WRITE` en orden de llegada. Ver el README de la 35
+para el detalle y las cifras (8,19 ciclos por petición alternando bancos, 12,32 en
+el mismo banco). Lo que cambia en la 36 es solo de timing:
+
+- el candidato de `ACTIVE` se elige en paralelo por banco, con selección one-hot,
+  en vez de una cadena de prioridad;
+- el árbitro del fabric calcula la ronda con una función sin bucles;
+- `issue_go` solo limpia `issue_valid` y el empuje a la cola `meta` y a los
+  créditos ocurre un ciclo después (`go_q`).
 
 ## Timing
 
-Build con semilla 17 y `--tmg-ripup --placer-heap-timingweight 30`: memoria
-107,35 MHz para 100, CPU 83,21 MHz para 80 (+4 % en el reloj más justo), píxel y
-TMDS con margen.
+Síntesis con `-nowidelut` (quita `PFUMX` y `L6MUX21`: −11 % de LUT4) y nextpnr
+**sin** `--tmg-ripup`, con `--placer-heap-timingweight 120` y semilla 7. Con
+`--tmg-ripup`, `router1` repite el enrutado en rondas y no terminaba (2,5 h).
 
-Barrido de 24 semillas con esas opciones (7 de octubre de 2026): cumplen 10 de 23
-terminadas (la 20 no acabó); la memoria pasa de 100 MHz en todas, y la CPU, que es
-la que limita, va de 73 a 83 MHz. Dos cambios lo hicieron posible:
+Build del 8 de octubre de 2026 (`reset-mem-copies`, 41 minutos de rutado):
 
-- **Opciones de nextpnr.** Sin ellas, un barrido de 8 semillas no cerraba ninguna
-  (memoria 89 a 99 MHz, CPU 66 a 78 MHz). Con ellas, sobre el mismo RTL antiguo,
-  cerraban 3 de 24.
-- **RTL.** `memory_fabric_fifo_6.v` registra la finalización (`rp_valid`,
-  `rp_port`, `rp_data`) antes de escribir en `rsp_data_mem`: `complete` habilitaba
-  129 bits en combinacional y la red cruzaba media FPGA. Con eso y los retoques
-  del controlador y del decodificador MMIO pasan de 3 de 24 a 10 de 23.
+| Reloj | Alcanzado | Exigido | Margen |
+|---|---:|---:|---:|
+| `sdram_clk` | 102,0 | 100 | +2,0 % |
+| CPU `clk` | 83,9 | 80 | +4,9 % |
+| `clk_pix_5x` | 174,2 | 125 | +39 % |
+| `clk_25mhz` (GPU) | 35,6 | 25 | +42 % |
+| `clk_pix` | 54,4 | 25 | +118 % |
 
-Cualquier cambio de RTL exige re-barrer: la semilla vale para un netlist concreto.
-Antes de barrer, `build` (el barrido re-ruta el último build archivado; un barrido
-sobre un build viejo da números plausibles y falsos).
+Ocupación: 52.846 de 83.640 `TRELLIS_COMB` (63 %), 24.131 FF, 26 de 208 EBR y
+38 de 156 multiplicadores.
 
-Los caminos críticos cambian de semilla a semilla y son casi todo ruteo (75 a
-80 %): reloj de CPU, la búsqueda de instrucciones (`instruction_buffer.v`) y el
-decodificador MMIO; reloj de memoria, el candidato de ACTIVE del controlador.
-`timing-wall --path` los enseña salto a salto.
+Lo que hizo falta, en el orden en que apareció cada muro:
+
+1. **Monitor.** La validación del bloque (rango, longitud) se calcula en un estado
+   propio y se guarda en `block_ok`.
+2. **Controlador y fabric.** Lo de arriba: selección de `ACTIVE` en paralelo,
+   árbitro sin bucles, `go_q`.
+3. **Consola de texto.** El sumador de `FONT_COUNT` ya no cuelga del enable de la
+   RAM de fuente.
+4. **`video_registers`.** Cada registro comprueba su propia condición de escritura
+   y no el `error` global.
+5. **Bus MMIO.** Etapa de lectura por dispositivo (arriba).
+6. **Reset.** Un único `reset` llegaba a todo el chip: 8,5 ns de ruteo en el
+   camino de la CPU y 7,7 ns en el de `sdram_clk`. Hay copias registradas por
+   bloque (`reset_mon`, `reset_cpu`, `reset_bus`, `reset_vid`; `reset_ctl` y
+   `reset_fab` en el lado de memoria), con `keep` para que no se fusionen.
+
+El margen de `sdram_clk` es fino. **La semilla vale para un netlist concreto:**
+cualquier cambio de RTL, incluso un comentario en un `.v` o en el `apio.ini`,
+deja el bitstream en STALE y obliga a re-barrer
+(`build-sweep --promote`, ver `tools/README.md`).
 
 ## Validación
 
-- `sdram_bank_parallel_tb.v` (nuevo): peticiones sin esperar respuesta contra el
-  modelo de SDRAM, con marcador de referencia, vigilante de tRRD y del bus de
-  datos, tráfico aleatorio con pausas durante decenas de refrescos y medida de
-  ciclos por petición. Corre con `READ_DELAY_CYCLES` 0 y 1. Se comprobó que
-  detecta tres mutaciones del controlador (guardia de cambio de sentido, tRP tras
-  lectura y tWR tras escritura);
-- `sdram_controller_128_tb.v` (de la 30): el banco secuencial, intacto;
-- `memory_fabric_fifo_6_tb.v`: controlador simulado en tubería; añade errores
-  que conservan su sitio en el orden y el límite de créditos con todos los
-  destinos bloqueados;
-- el resto, como en la 34.
+- `mmio_bus_tb.v` y `gpu_mmio_bridge_tb.v`, arriba.
+- `gpu_system_tb.v` y `gpu_barrier_tb.v`: el sistema GPU y la barrera con su RAM
+  simulada. La barrera es un test propio de la 36.
+- `sdram_bank_parallel_tb.v`, `sdram_controller_128_tb.v` y
+  `memory_fabric_fifo_6_tb.v`: como en la 35.
+- `x.tests/cases-cpu/gpu/launch-run` (capacidad `gpu_core`): la CPU lanza un
+  kernel y comprueba los registros al terminar.
 
 ## Placa
 
-En ULX3S 85K, con los dos generadores de tráfico activos (7 de octubre de 2026):
-monitor 5.35, 28 casos de CPU (basics, alu, errores, vídeo, programas) y después
-tres rondas de los 62 casos de `cases-cpu` y `cases-shared` (sin `input`, que
-esta placa no tiene): 186 ejecuciones, 0 fallos, unos 164 s seguidos. El vídeo
-mantiene unos 58 FPS en pacman. Esto cubre la calibración de `READ_DELAY_CYCLES`
-a 100 MHz con lecturas encadenadas sin hueco. (La placa SÍ tiene `input_device`;
-la frase «sin `input`» era un error: el arnés reproduce los guiones de INPUT por
-el monitor.)
-
-Con la semilla 17 y el RTL nuevo (7 de octubre de 2026, por la tarde): 57 casos de
-`basics`, `alu`, `errors`, `extensions`, `programs`, `video` y `demos`, 0 fallos,
-incluido `input-keys-and-mouse`.
-
-No se pudieron mirar los LED de mismatch y de error de respuesta de los
-generadores (pegajosos), así que lo comprobado es el comportamiento de CPU y
-vídeo, no esos dos indicadores.
+**Todavía no probado en placa.** El bitstream cumple timing (8 de octubre de
+2026) y la simulación pasa. Falta cargarlo, correr `launch-run` y la regresión de
+la CPU, para confirmar que el bus MMIO con una etapa más no ha cambiado nada
+visible.
 
 ## Pendiente
-- Reutilizar filas abiertas (página abierta) para que el recorrido secuencial de
-  un solo master también gane.
 
-La identificación de placa es monitor `5.35`.
+- Probar en placa (`board-upload`, `test-board`).
+- **Tiempo máximo en `mmio_mux`** para el acceso a la GPU: si la GPU no contesta,
+  el bus MMIO se queda esperando (y con él el monitor).
+- Hito 2: `WARP_START`, que `RESET` conserve los descriptores, `WARP_LIVE` y
+  `WARP_DONE` completos, y un registro de fin de la parte gráfica.
+- Reutilizar filas abiertas (página abierta), como en la 35.
