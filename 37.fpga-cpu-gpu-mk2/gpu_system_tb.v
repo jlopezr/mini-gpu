@@ -13,9 +13,13 @@
 //   * escribir descriptores, lanzar con RUN y esperar a que la GPU termine;
 //   * que el kernel `out[tid] = tid*tid + 1` deja 16 palabras en RAM;
 //   * WARP_LIVE, WARP_DONE (pegajoso y W1C);
-//   * los errores de contrato: WARP_START (hito 2), comandos a la vez, bits
-//     reservados, RESUME sin HALT, registros inexistentes, escribir un
-//     descriptor con la GPU en marcha.
+//   * los errores de contrato: WARP_START sobre un descriptor deshabilitado,
+//     comandos a la vez, bits reservados, RESUME sin HALT, registros
+//     inexistentes.
+//
+// Las reglas de lanzamiento del hito 2 (WARP_START, RESET que conserva los
+// descriptores, escribir descriptores con otros warps vivos) las prueba
+// gpu_core_tb.v.
 module gpu_system_tb;
     reg clk = 0, gclk = 0;
     always #6.25 clk = ~clk;
@@ -184,7 +188,7 @@ module gpu_system_tb;
         expect_write_error(CORE + 32'h14, 32'd1);    // GPU_STATUS tambien
         expect_read_error (CORE + 32'h28);           // fuera del bloque
         expect_read_error (32'h8204_0000);           // bloque que no es de la GPU
-        expect_write_error(CORE + 32'h1c, 32'h1);    // WARP_START: hito 2
+        expect_write_error(CORE + 32'h1c, 32'h1);    // WARP_START con ACTIVE = 0
         expect_write_error(CORE + 32'h18, 32'h3);    // dos comandos a la vez
         expect_write_error(CORE + 32'h18, 32'h20);   // bit reservado
         expect_write_error(CORE + 32'h18, 32'h4);    // RESUME sin HALT
@@ -201,7 +205,7 @@ module gpu_system_tb;
         expect_read(WARPS + 32'h04, 32'h0000_00ff);
         expect_read(WARPS + 32'h14, 32'h0000_00ff);
         expect_read(WARPS + 32'h24, 32'h0000_0000);       // warp 2 sigue apagado
-        expect_read(CORE + 32'h20, 32'h0000_0003);        // WARP_LIVE (hito 1: ya con los descriptores)
+        expect_read(CORE + 32'h20, 32'h0000_0000);        // WARP_LIVE: configurar no arranca
 
         // ---- RUN ----
         expect_write_ok(CORE + 32'h18, 32'h1);
@@ -253,7 +257,7 @@ module gpu_system_tb;
         repeat (50) @(negedge gclk);
         expect_read(CORE + 32'h14, ST_IDLE);
 
-        $display("GPU_SYSTEM: OK (hito 1)");
+        $display("GPU_SYSTEM: OK");
         $finish;
     end
 

@@ -99,6 +99,12 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     reg cfg_write;
     wire halted, sm_running, sm_error, instruction_retired, sm_no_warp_stall;
     wire [7:0] live_warps;
+    // Warps con ACTIVE != 0 en su descriptor: los que RUN arranca y los unicos
+    // que WARP_START acepta.
+    wire [7:0] desc_enabled;
+    // Lanzamiento hacia el SM (RUN, WARP_START): pulso de un ciclo.
+    reg launch, launch_run, launch_all;
+    reg [7:0] launch_mask;
     wire [7:0] sm_retired_lanes;
     assign gpu_halted = halted;
     assign gpu_error = sm_error;
@@ -132,6 +138,9 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire cfg_arg  = sel_warps && address[15:5] == 11'h014;
     wire cfg_region = cfg_desc || cfg_lid || cfg_arg;
     wire [1:0] cfg_bank = {cfg_arg, cfg_lid};
+    // El warp al que apunta el acceso: descriptor n en +16n, arrays en +4n.
+    wire [2:0] cfg_warp = cfg_desc ? address[6:4] : address[4:2];
+    wire cfg_warp_live = live_warps[cfg_warp];
     wire [3:0] byte_strobe = 4'b1111;
 
     // ------------------------------------------------------------------
@@ -185,11 +194,20 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         ctrl_bad = 1'b0;
         if (write_data[31:5] != 0) ctrl_bad = 1'b1;                 // bits reservados
         else if ((write_data[4:0] & (write_data[4:0] - 5'd1)) != 0) ctrl_bad = 1'b1;   // varios a la vez
+        // RUN (mmio.md §14.1, «Reglas de lanzamiento»): solo sin warps vivos y
+        // con algun descriptor habilitado. No exige `halted`: justo despues de
+        // que el ultimo warp acabe, el SM tarda unos ciclos en parar del todo.
+        else if (write_data[CTRL_RUN] && (live_warps != 0 || sm_error || desc_enabled == 0)) ctrl_bad = 1'b1;
         // `gpu_sm` solo acepta estos pulsos con `halted`; si no, se perderian.
-        else if (write_data[CTRL_RUN] && (!halted || sm_error)) ctrl_bad = 1'b1;
         else if (write_data[CTRL_RESUME] && (!paused_now || sm_error)) ctrl_bad = 1'b1;
         else if (write_data[CTRL_STEP] && !paused_now) ctrl_bad = 1'b1;
     end
+
+    // WARP_START: todo o nada. Error si algun bit pedido es de un warp que no
+    // existe, que ya esta vivo o cuyo descriptor tiene ACTIVE == 0, o si la GPU
+    // esta en error. Pedir cero warps no hace nada y no es error.
+    wire start_bad = (write_data[31:8] != 0) || sm_error ||
+                     ((write_data[7:0] & (live_warps | ~desc_enabled)) != 0);
 
     // ------------------------------------------------------------------
     // GPU SIMT DEBUG (§14.3) y GPU PERFORMANCE (§14.4)
@@ -224,9 +242,10 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             mmio_bad  = core_bad;
         end else if (cfg_region) begin
             mmio_data = cfg_read_data;
-            // SIMT_STATE (+0xC de cada descriptor) es de solo lectura. Los
-            // descriptores solo se escriben con la GPU parada.
-            if (writing && (!halted || (cfg_desc && address[3:2] == 2'd3))) mmio_bad = 1'b1;
+            // SIMT_STATE (+0xC de cada descriptor) es de solo lectura. Un
+            // descriptor (y los dos arrays) se escribe mientras SU warp no este
+            // vivo; los de otros warps no importan (mmio.md §14.1).
+            if (writing && (cfg_warp_live || (cfg_desc && address[3:2] == 2'd3))) mmio_bad = 1'b1;
         end else if (sel_warps) begin
             mmio_bad = 1'b1;                   // resto del bloque: no hay nada
         end else if (sel_simt) begin
@@ -268,7 +287,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             h_rdata <= mmio_data;
             h_error <= mmio_bad ||
                        (writing && sel_core && address[15:0] == 16'h0018 && ctrl_bad) ||
-                       (writing && sel_core && address[15:0] == 16'h001c);   // WARP_START: hito 2
+                       (writing && sel_core && address[15:0] == 16'h001c && start_bad);
         end
     end
 
@@ -279,10 +298,12 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         step_request <= 1'b0;
         gpu_reset    <= 1'b0;
         cfg_write    <= 1'b0;
+        launch       <= 1'b0;
         live_prev    <= live_warps;
         if (reset) begin
             paused <= 1'b0;
             done_mask <= 8'd0;
+            launch_run <= 1'b0; launch_all <= 1'b0; launch_mask <= 8'd0;
             debug_warp <= 3'd0;
             debug_lane <= 3'd0;
         end else begin
@@ -298,11 +319,22 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
                 // WARP_DONE es W1C.
                 if (writing && sel_core && address[15:0] == 16'h0024)
                     done_mask <= (done_mask | (live_prev & ~live_warps)) & ~write_data[7:0];
-                // Escribir un descriptor lo reconfigura: se descarta su "terminado".
-                if (writing && cfg_desc && address[3:2] == 2'd1 && halted)
-                    done_mask[address[6:4]] <= 1'b0;
+                // WARP_START: arranca los warps pedidos y limpia su "terminado".
+                // En reposo la GPU pasa a RUNNING; parada (HALT) o con otros
+                // warps ejecutando, solo se anaden. Todo o nada: `start_bad`.
+                if (writing && sel_core && address[15:0] == 16'h001c && !start_bad) begin
+                    launch <= 1'b1; launch_all <= 1'b0; launch_mask <= write_data[7:0];
+                    launch_run <= !paused;
+                    done_mask <= (done_mask | (live_prev & ~live_warps)) & ~write_data[7:0];
+                end
                 if (cmd_write) begin
-                    if (write_data[CTRL_RUN])    begin run_request  <= 1'b1; paused <= 1'b0; end
+                    // RUN lanza todos los descriptores habilitados y pone la GPU
+                    // en marcha, aunque estuviera pausada.
+                    if (write_data[CTRL_RUN]) begin
+                        launch <= 1'b1; launch_all <= 1'b1; launch_mask <= 8'd0;
+                        launch_run <= 1'b1; paused <= 1'b0;
+                        done_mask <= (done_mask | (live_prev & ~live_warps)) & ~desc_enabled;
+                    end
                     if (write_data[CTRL_HALT])   begin halt_request <= 1'b1; paused <= 1'b1; end
                     if (write_data[CTRL_RESUME]) begin run_request  <= 1'b1; paused <= 1'b0; end
                     if (write_data[CTRL_STEP])         step_request <= 1'b1;
@@ -317,7 +349,9 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     end
 
     gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH), .SIMT_REGION_DEPTH(SIMT_REGION_DEPTH), .SIMT_PATH_DEPTH(SIMT_PATH_DEPTH)) sm (
-        .clk(clk), .reset(core_reset), .run_request(run_request),
+        .clk(clk), .reset(reset), .soft_reset(gpu_reset), .run_request(run_request),
+        .launch(launch), .launch_run(launch_run), .launch_all(launch_all),
+        .launch_mask(launch_mask), .desc_enabled(desc_enabled),
         .halt_request(halt_request), .step_request(step_request),
         .halted(halted), .sm_running(sm_running), .live_warps(live_warps),
         .error(sm_error), .error_code(error_code),

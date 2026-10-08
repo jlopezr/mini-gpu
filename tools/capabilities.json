@@ -110,6 +110,14 @@
     "file": "gpu_mmio_bridge.v"
   },
 
+  "_comment_gpu_warp_start": "El hito 2 de GPU CORE (mmio.md §14.1, «Reglas de lanzamiento»): WARP_START arranca warps sueltos, RESET conserva los descriptores y escribir el descriptor de un warp solo es error si ESE warp esta vivo. Se detecta por el registro de la mascara de lanzamiento de gpu_system.v, que solo existe cuando el lanzamiento es por warp. Implica gpu_core: sin el puente no hay nada que lanzar.",
+  "gpu_warp_start": {
+    "architecture": "cpu",
+    "file": "gpu_system.v",
+    "pattern": "reg \\[7:0\\] launch_mask",
+    "implies": ["gpu_core"]
+  },
+
   "_comment_gpu_ids": "La familia GETID entera (isa.md, opcode 0x30): GETLANE, GETWARP, GETLWARP y GETARG, ademas de GETTID, y los campos `logical_warp_id` y `arg` de cada warp en `warps.json` (LOGICAL_WARP_ID[n] y WARP_ARG[n] de GPU WARPS, mmio.md §14.2). La declaran los simuladores (11 y 25) y el RTL que la implementa, que se detecta en la lane: el `case` de GETID escribe `warp_arg`. Una GPU sin ella solo tiene GETTID, y un `type` distinto de 0 para con ERROR_INVALID_ENCODING (0x05) --que es lo mismo que produce un ensamblador roto--, asi que sus casos se omiten alli en vez de fallar. El runner exige declararla si un `warps.json` usa `logical_warp_id` o `arg`.",
   "gpu_ids": {
     "architecture": "gpu",
