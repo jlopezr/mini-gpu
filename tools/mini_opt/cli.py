@@ -43,7 +43,7 @@ def print_stats(stats: dict, passes: list[str] | None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Filtro entre el `.s` del compilador y `mini-asm`: aplica pases a un `.s`.")
     parser.add_argument("input", nargs="?", type=Path, help=".s de entrada")
     parser.add_argument("-o", "--output", type=Path, help="`.s` de salida (por defecto stdout)")
     parser.add_argument("--passes", help="pases separados por coma, en orden "

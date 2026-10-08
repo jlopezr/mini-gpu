@@ -30,8 +30,17 @@ from __future__ import annotations
 from . import passes as passes
 from .cli import count_instructions, main, optimize, print_stats
 from .dead import remove_dead
-from .flow import (Block, build_cfg, dominators, immediate_postdominator, live_after, live_in_entry,
-                   liveness, natural_loops, postdominators)
+from .flow import (
+    Block,
+    build_cfg,
+    dominators,
+    immediate_postdominator,
+    live_after,
+    live_in_entry,
+    liveness,
+    natural_loops,
+    postdominators,
+)
 from .isa import defs_uses, number, reg_of
 from .model import Function, Line, OptError, Unit, directive_parts, parse_unit, render_unit
 from .passes.constprop import pass_constprop

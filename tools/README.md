@@ -947,9 +947,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
-  intrínseco o un temporal que siga vivo. Para añadir una transformación: una función con
-  `@register_pass` en `tools/mini_opt.py`, con troceado en funciones, grafo de flujo
-  (`build_cfg`) y vida de registros (`liveness`).
+  intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
+  por pase en `passes/` (`intrinsics`, `kernels`, `jumps`, `constprop`, `copyprop`, `licm`, `ssy`) y,
+  aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
+  grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
+  transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
+  `passes/__init__.py`.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `32.cpu-gpu-func-sim/examples/c/system/gpu.h`) pasa a ser el punto de entrada de una lane: fija su

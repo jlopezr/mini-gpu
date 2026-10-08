@@ -5,7 +5,6 @@ from .flow import Block, live_after, liveness
 from .isa import PURE_OPS, defs_uses
 from .model import Line
 
-
 DEAD_OK = PURE_OPS
 
 

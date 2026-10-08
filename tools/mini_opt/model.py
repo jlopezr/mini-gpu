@@ -4,8 +4,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-
-
 LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 
 COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")     # las etiquetas internas de lcc

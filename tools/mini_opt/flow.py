@@ -1,10 +1,14 @@
 """Bloques basicos, vida de registros, dominadores, postdominadores y bucles naturales."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from .isa import BRANCHES, defs_uses
 from .model import Function, Line, OptError
+
+V = TypeVar("V")
 
 
 @dataclass
@@ -12,6 +16,18 @@ class Block:
     index: int
     lines: list[Line]
     succ: list[int] = field(default_factory=list)
+
+    def last_instr(self) -> Line | None:
+        """La ultima instruccion del bloque (la que lo termina, si salta)."""
+        return next((l for l in reversed(self.lines) if l.kind == "instr"), None)
+
+
+def predecessors(blocks: list[Block]) -> list[list[int]]:
+    preds: list[list[int]] = [[] for _ in blocks]
+    for block in blocks:
+        for s in block.succ:
+            preds[s].append(block.index)
+    return preds
 
 
 def label_target(line: Line) -> str:
@@ -40,7 +56,7 @@ def build_cfg(function: Function) -> list[Block]:
             if line.kind == "label":
                 at[line.name] = block.index
     for block in blocks:
-        last = next((l for l in reversed(block.lines) if l.kind == "instr"), None)
+        last = block.last_instr()
         falls = last is None or last.op not in ("BRA", "EXIT", "HALT", "TRAP", "JR")
         if last is not None and (last.op in BRANCHES or last.op == "BRA"):
             target = label_target(last)
@@ -107,6 +123,37 @@ def live_in_blocks(blocks: list[Block], live_out: list[set[int]]) -> list[set[in
     return result
 
 
+def forward_must(blocks: list[Block], step: Callable[[dict[int, V], Line], None]) -> list[dict[int, V]]:
+    """Analisis hacia delante de lo que vale por TODOS los caminos (la interseccion).
+
+    El estado es `{registro: valor}` (una copia, una constante, el simbolo que contiene...). `step`
+    lo actualiza para cada instruccion. Devuelve el estado a la entrada de cada bloque; un bloque
+    al que no llega nada (codigo muerto) tiene el estado vacio. La entrada de la funcion
+    empieza vacia, y un camino aun sin calcular no resta (se parte de 'todo vale')."""
+    preds = predecessors(blocks)
+    entry: list[dict[int, V] | None] = [None] * len(blocks)
+    out: list[dict[int, V] | None] = [None] * len(blocks)
+    entry[0] = {}
+    changed = True
+    while changed:
+        changed = False
+        for b, block in enumerate(blocks):
+            if b != 0:
+                known = [o for o in (out[p] for p in preds[b]) if o is not None]
+                if not known:
+                    continue
+                new = {k: v for k, v in known[0].items() if all(o.get(k) == v for o in known[1:])}
+                if entry[b] != new:
+                    entry[b], changed = new, True
+            state = dict(entry[b] or {})
+            for line in block.lines:
+                if line.kind == "instr":
+                    step(state, line)
+            if out[b] != state:
+                out[b], changed = state, True
+    return [e if e is not None else {} for e in entry]
+
+
 def postdominators(blocks: list[Block]) -> list[set[int]]:
     """pdom[b] = bloques que estan en todo camino de b a la salida (incluido b). El
     indice len(blocks) es la salida virtual."""
@@ -132,10 +179,7 @@ def dominators(blocks: list[Block]) -> list[set[int]]:
     n = len(blocks)
     dom = [set(range(n)) for _ in range(n)]
     dom[0] = {0}
-    preds: list[list[int]] = [[] for _ in range(n)]
-    for block in blocks:
-        for s in block.succ:
-            preds[s].append(block.index)
+    preds = predecessors(blocks)
     changed = True
     while changed:
         changed = False
@@ -150,10 +194,7 @@ def dominators(blocks: list[Block]) -> list[set[int]]:
 
 def natural_loops(blocks: list[Block], dom: list[set[int]]) -> dict[int, set[int]]:
     """cabecera -> cuerpo, uniendo los bucles que comparten cabecera."""
-    preds: list[list[int]] = [[] for _ in blocks]
-    for block in blocks:
-        for s in block.succ:
-            preds[s].append(block.index)
+    preds = predecessors(blocks)
     loops: dict[int, set[int]] = {}
     for block in blocks:
         for h in block.succ:

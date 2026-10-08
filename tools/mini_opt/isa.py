@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import re
 
-from .model import Line
-
+from .model import Line, OptError
 
 REGISTER_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
 
@@ -41,34 +40,45 @@ def reg_of(arg: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def reg(arg: str) -> int:
+    """El numero de un operando que tiene que ser un registro."""
+    number_ = reg_of(arg)
+    if number_ is None:
+        raise OptError(f"se esperaba un registro y es '{arg}'")
+    return number_
+
+
 def defs_uses(line: Line) -> tuple[set[int], set[int]]:
     """(escribe, lee) de una instruccion. Una llamada lee los argumentos y
     destruye los caller-saved; un `JR` (retorno) lee lo que el llamador espera."""
-    op, args = line.op, line.args
-    regs = [reg_of(a) for a in args]
+    op = line.op
+    regs = [reg_of(a) for a in line.args]       # None donde el operando no es un registro
     defs: set[int] = set()
     uses: set[int] = set()
+
+    def add(into: set[int], *numbers: int | None) -> None:
+        into.update(n for n in numbers if n is not None)
+
     if op in R3:
-        defs.add(regs[0]); uses.update(regs[1:3])
+        add(defs, regs[0]); add(uses, *regs[1:3])
     elif op in IMM2 or op in LOADS:
-        defs.add(regs[0]); uses.add(regs[1])
+        add(defs, regs[0]); add(uses, regs[1])
     elif op in WRITE_ONLY1:
-        defs.add(regs[0])
+        add(defs, regs[0])
     elif op in STORES or op in BRANCHES:
-        uses.update(r for r in regs[:2] if r is not None)
+        add(uses, *regs[:2])
     elif op == "JAL":
-        defs.update(CALLER_SAVED); defs.add(LINK); defs.add(regs[0] if regs[0] is not None else LINK)
+        defs.update(CALLER_SAVED); defs.add(LINK); add(defs, regs[0])
         uses.update(ARG_REGS)
     elif op == "JALR":
         defs.update(CALLER_SAVED); defs.add(LINK)
-        uses.update(ARG_REGS); uses.update(r for r in regs if r is not None)
+        uses.update(ARG_REGS); add(uses, *regs)
     elif op == "JR":
-        uses.update(r for r in regs if r is not None)
+        add(uses, *regs)
         uses.update((1, 2, STACK, *CALLEE_SAVED))
     elif op in ("EXIT", "HALT", "TRAP"):
         uses.update((STACK, *CALLEE_SAVED))
-    defs.discard(None); uses.discard(None)
-    defs.discard(0); uses.discard(0)        # R0 es la constante cero
+    defs.discard(0); uses.discard(0)            # R0 es la constante cero
     return defs, uses
 
 

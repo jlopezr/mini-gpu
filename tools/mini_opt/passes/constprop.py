@@ -8,18 +8,19 @@ una suma: `SHL d, a, R9` con R9 = 1 -> `ADD d, a, a`. La constante deja de ocupa
 from __future__ import annotations
 
 from ..dead import remove_dead
-from ..flow import Block, build_cfg
+from ..flow import build_cfg, forward_must
 from ..isa import R3, defs_uses, number, reg_of
 from ..model import Line, Unit
 from ..registry import register_pass
 
-
 FOLD_LOGIC = {"AND": "ANDI", "OR": "ORI", "XOR": "XORI"}
+SIGNED_16 = range(-32768, 32768)
+UNSIGNED_16 = range(0, 0x10000)
 
 
 def constant_of(line: Line) -> int | None:
     """Valor que deja en su destino una instruccion que carga una constante numerica."""
-    if line.kind != "instr" or not line.args:
+    if line.kind != "instr" or len(line.args) < 2:
         return None
     if line.op in ("MOVI", "LI"):
         return number(line.args[1])
@@ -28,42 +29,14 @@ def constant_of(line: Line) -> int | None:
     return None
 
 
-def known_constants(blocks: list[Block]) -> list[dict[int, int] | None]:
-    """Constantes {registro: valor} que valen a la entrada de cada bloque (interseccion por los caminos)."""
-    n = len(blocks)
-    preds: list[list[int]] = [[] for _ in range(n)]
-    for block in blocks:
-        for s in block.succ:
-            preds[s].append(block.index)
-
-    def step(state: dict[int, int], line: Line) -> None:
-        for reg in defs_uses(line)[0]:
-            state.pop(reg, None)
-        value = constant_of(line)
-        if value is not None and reg_of(line.args[0]) not in (None, 0):
-            state[reg_of(line.args[0])] = value
-
-    entry: list[dict[int, int] | None] = [None] * n
-    out: list[dict[int, int] | None] = [None] * n
-    entry[0] = {}
-    changed = True
-    while changed:
-        changed = False
-        for b in range(n):
-            if b != 0:
-                known = [out[p] for p in preds[b] if out[p] is not None]
-                if not known:
-                    continue
-                new = {k: v for k, v in known[0].items() if all(o.get(k) == v for o in known[1:])}
-                if entry[b] != new:
-                    entry[b], changed = new, True
-            state = dict(entry[b] or {})
-            for line in blocks[b].lines:
-                if line.kind == "instr":
-                    step(state, line)
-            if out[b] != state:
-                out[b], changed = state, True
-    return entry
+def track_constants(state: dict[int, int], line: Line) -> None:
+    """Actualiza las constantes vigentes `{registro: valor}` tras ejecutar `line`."""
+    for written in defs_uses(line)[0]:
+        state.pop(written, None)
+    value = constant_of(line)
+    dest = reg_of(line.args[0]) if value is not None else None
+    if value is not None and dest:                  # None y R0 no cuentan
+        state[dest] = value
 
 
 def fold_constant(line: Line, state: dict[int, int]) -> bool:
@@ -72,21 +45,21 @@ def fold_constant(line: Line, state: dict[int, int]) -> bool:
         return False
     d, a, b = line.args
     ra, rb = reg_of(a), reg_of(b)
-    ca = state.get(ra) if ra not in (None, 0) else None
-    cb = state.get(rb) if rb not in (None, 0) else None
+    ca = state.get(ra) if ra else None
+    cb = state.get(rb) if rb else None
     if line.op == "ADD":
-        if cb is not None and -32768 <= cb <= 32767:
+        if cb is not None and cb in SIGNED_16:
             line.op, line.args = "ADDI", [d, a, str(cb)]
-        elif ca is not None and -32768 <= ca <= 32767:
+        elif ca is not None and ca in SIGNED_16:
             line.op, line.args = "ADDI", [d, b, str(ca)]
         else:
             return False
-    elif line.op == "SUB" and cb is not None and -32768 <= -cb <= 32767:
+    elif line.op == "SUB" and cb is not None and -cb in SIGNED_16:
         line.op, line.args = "ADDI", [d, a, str(-cb)]
     elif line.op in FOLD_LOGIC:
-        if cb is not None and 0 <= cb <= 0xFFFF:
+        if cb is not None and cb in UNSIGNED_16:
             line.op, line.args = FOLD_LOGIC[line.op], [d, a, str(cb)]
-        elif ca is not None and 0 <= ca <= 0xFFFF:
+        elif ca is not None and ca in UNSIGNED_16:
             line.op, line.args = FOLD_LOGIC[line.op], [d, b, str(ca)]
         else:
             return False
@@ -103,18 +76,13 @@ def pass_constprop(unit: Unit, stats: dict) -> None:
         blocks = build_cfg(function)
         if not blocks:
             continue
-        entry = known_constants(blocks)
-        for b, block in enumerate(blocks):
-            state = dict(entry[b] or {})
+        for block, entering in zip(blocks, forward_must(blocks, track_constants)):
+            state = dict(entering)
             for line in block.lines:
                 if line.kind != "instr":
                     continue
                 if fold_constant(line, state):
                     stats["constprop.folded"] = stats.get("constprop.folded", 0) + 1
-                for reg in defs_uses(line)[0]:
-                    state.pop(reg, None)
-                value = constant_of(line)
-                if value is not None and reg_of(line.args[0]) not in (None, 0):
-                    state[reg_of(line.args[0])] = value
+                track_constants(state, line)
         remove_dead(blocks, stats, "constprop")
         function.body = [line for block in blocks for line in block.lines]

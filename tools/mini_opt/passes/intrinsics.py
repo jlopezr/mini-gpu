@@ -1,11 +1,10 @@
 """Pase `intrinsics`: las variables `__gpu_*` pasan a `GETTID`, `GETLANE`... y `__gpu_bar = 0;` a `BAR`."""
 from __future__ import annotations
 
-from ..flow import Block, build_cfg, free_register, live_after, liveness
-from ..isa import defs_uses, instr, reg_of
-from ..model import Line, OptError, Unit, directive_parts
+from ..flow import Block, build_cfg, forward_must, free_register, live_after, liveness
+from ..isa import defs_uses, instr, reg, reg_of
+from ..model import Function, Line, OptError, Unit, directive_parts
 from ..registry import register_pass
-
 
 # Variables especiales -> instruccion. `LI r,sim ; LOAD d,r,0` => `OP d`.
 INTRINSIC_LOADS = {
@@ -25,111 +24,110 @@ INTRINSIC_STORES = {
     "__gpu_bar": "BAR",
 }
 
+INTRINSIC_NAMES = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES) | COMPOSITE_LOADS
 
-def reaching_symbols(blocks: list[Block], names: set[str]) -> list[dict[int, str]]:
-    """Por bloque, que registros contienen a la entrada la direccion de un intrinseco
-    (`LI r, __gpu_x`). Solo se conserva lo que llega igual por todos los caminos.
-    lcc carga la direccion una vez y la reutiliza para varias lecturas, a veces desde
-    otro bloque (antes de un bucle, por ejemplo)."""
-    entry: list[dict[int, str] | None] = [None] * len(blocks)
-    entry[0] = {}
-    changed = True
-    while changed:
-        changed = False
-        for block in blocks:
-            if entry[block.index] is None:
+
+def is_address_load(line: Line) -> bool:
+    """`LI r, __gpu_x`: carga la direccion de un intrinseco."""
+    return line.kind == "instr" and line.op == "LI" and len(line.args) == 2 and line.args[1] in INTRINSIC_NAMES
+
+
+def track_addresses(state: dict[int, str], line: Line) -> None:
+    """Que registros contienen ahora la direccion de que intrinseco."""
+    for written in defs_uses(line)[0]:
+        state.pop(written, None)
+    if is_address_load(line):
+        state[reg(line.args[0])] = line.args[1]
+
+
+def accessed_symbol(line: Line, state: dict[int, str]) -> str | None:
+    """El intrinseco al que accede `LOAD d, r, 0` o `STORE v, r, 0` con `r` = su direccion."""
+    if line.op not in ("LOAD", "STORE") or len(line.args) != 3 or line.args[2] not in ("0", "+0"):
+        return None
+    base = reg_of(line.args[1])
+    return state.get(base) if base is not None else None
+
+
+def replacement(line: Line, symbol: str, state: dict[int, str], block: Block, live_out: set[int],
+                position: int, where: str) -> list[Line] | None:
+    """Las instrucciones que sustituyen a una lectura o escritura de un intrinseco."""
+    if line.op == "LOAD" and symbol in INTRINSIC_LOADS:
+        return [instr(INTRINSIC_LOADS[symbol], line.args[0])]
+    if line.op == "LOAD" and symbol in COMPOSITE_LOADS:
+        d = line.args[0]
+        busy = live_after(block, live_out, position) | {reg(d)}
+        t = free_register(busy, where)
+        return [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
+                instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
+    if line.op == "STORE" and symbol in INTRINSIC_STORES and reg_of(line.args[0]) not in state:
+        return [instr(INTRINSIC_STORES[symbol])]
+    return None
+
+
+def rewrite_accesses(blocks: list[Block], where: str, stats: dict) -> None:
+    live_out = liveness(blocks)
+    for block, entering in zip(blocks, forward_must(blocks, track_addresses)):
+        state = dict(entering)
+        i = 0
+        while i < len(block.lines):
+            line = block.lines[i]
+            if line.kind != "instr":
+                i += 1
                 continue
-            current = dict(entry[block.index])
-            for line in block.lines:
-                if line.kind == "instr":
-                    defs, _ = defs_uses(line)
-                    for d in defs:
-                        current.pop(d, None)
-                    if line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
-                        current[reg_of(line.args[0])] = line.args[1]
-            for s in block.succ:
-                if entry[s] is None:
-                    entry[s] = dict(current)
-                    changed = True
-                else:
-                    merged = {r: sym for r, sym in entry[s].items() if current.get(r) == sym}
-                    if merged != entry[s]:
-                        entry[s] = merged
-                        changed = True
-    return [e if e is not None else {} for e in entry]
+            symbol = accessed_symbol(line, state)
+            new = replacement(line, symbol, state, block, live_out[block.index], i, where) if symbol else None
+            if new is not None:
+                block.lines[i:i + 1] = new
+                stats["intrinsics"] = stats.get("intrinsics", 0) + 1
+                i += len(new)
+            else:
+                i += 1
+            track_addresses(state, line)
+
+
+def drop_address_loads(function: Function, where: str) -> None:
+    """La direccion cargada ya no la usa nadie: fuera. Si algo mas la usa (se tomo la direccion,
+    se sumo...), no se puede reescribir."""
+    blocks = build_cfg(function)
+    live_out = liveness(blocks)
+    for block in blocks:
+        i = 0
+        while i < len(block.lines):
+            line = block.lines[i]
+            if is_address_load(line):
+                register = reg(line.args[0])
+                if register in live_after(block, live_out[block.index], i):
+                    symbol = line.args[1]
+                    raise OptError(f"{where}: '{symbol}' solo se puede leer"
+                                   f"{' o escribir' if symbol in INTRINSIC_STORES else ''} como "
+                                   f"variable entera (R{register} sigue vivo tras leer {symbol})")
+                del block.lines[i]
+                continue
+            i += 1
+    function.body = [line for block in blocks for line in block.lines]
+
+
+def is_intrinsic_declaration(chunk: object) -> bool:
+    """`.extern __gpu_x`: ya no designa nada."""
+    if not (isinstance(chunk, Line) and chunk.kind == "directive"):
+        return False
+    parts = directive_parts(chunk)
+    return len(parts) > 1 and parts[0].lower() == ".extern" and parts[1] in INTRINSIC_NAMES
 
 
 @register_pass("intrinsics", "variables __gpu_* -> GETTID/GETLANE/GETWARP/GETLWARP/GETARG/BAR")
 def pass_intrinsics(unit: Unit, stats: dict) -> None:
-    names = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES) | COMPOSITE_LOADS
     for function in unit.functions():
         where = f"{unit.path}: {function.name}"
         blocks = build_cfg(function)
         if not blocks:
             continue
-        live_out = liveness(blocks)
-        held = reaching_symbols(blocks, names)
-        for block in blocks:
-            current = dict(held[block.index])
-            i = 0
-            while i < len(block.lines):
-                line = block.lines[i]
-                if line.kind != "instr":
-                    i += 1
-                    continue
-                defs, _ = defs_uses(line)
-                new = None
-                sym = current.get(reg_of(line.args[1])) if line.op in ("LOAD", "STORE") and len(line.args) == 3 \
-                    and line.args[2] in ("0", "+0") and reg_of(line.args[1]) is not None else None
-                if sym is not None and line.op == "LOAD" and (sym in INTRINSIC_LOADS or sym in COMPOSITE_LOADS):
-                    d = line.args[0]
-                    if sym in COMPOSITE_LOADS:
-                        after = live_after(block, live_out[block.index], i)
-                        t = free_register(after | {reg_of(d)}, where)
-                        new = [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
-                               instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
-                    else:
-                        new = [instr(INTRINSIC_LOADS[sym], d)]
-                elif sym is not None and line.op == "STORE" and sym in INTRINSIC_STORES \
-                        and reg_of(line.args[0]) not in current:
-                    new = [instr(INTRINSIC_STORES[sym])]
-                if new is not None:
-                    block.lines[i:i + 1] = new
-                    stats["intrinsics"] = stats.get("intrinsics", 0) + 1
-                    i += len(new)
-                else:
-                    i += 1
-                for d in defs:
-                    current.pop(d, None)
-                if line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
-                    current[reg_of(line.args[0])] = line.args[1]
-        # la direccion cargada ya no la usa nadie: fuera. Si algo mas la usa (se tomo la
-        # direccion, se sumo...), no se puede reescribir
+        rewrite_accesses(blocks, where, stats)
         function.body = [line for block in blocks for line in block.lines]
-        blocks = build_cfg(function)
-        live_out = liveness(blocks)
-        for block in blocks:
-            i = 0
-            while i < len(block.lines):
-                line = block.lines[i]
-                if line.kind == "instr" and line.op == "LI" and len(line.args) == 2 and line.args[1] in names:
-                    register = reg_of(line.args[0])
-                    if register in live_after(block, live_out[block.index], i):
-                        raise OptError(f"{where}: '{line.args[1]}' solo se puede leer"
-                                       f"{' o escribir' if line.args[1] in INTRINSIC_STORES else ''} como "
-                                       f"variable entera (R{register} sigue vivo tras leer {line.args[1]})")
-                    del block.lines[i]
-                    continue
-                i += 1
-        function.body = [line for block in blocks for line in block.lines]
-    # las declaraciones `.extern` de los intrinsecos ya no designan nada
-    unit.chunks = [c for c in unit.chunks
-                   if not (isinstance(c, Line) and c.kind == "directive"
-                           and directive_parts(c)[0].lower() == ".extern"
-                           and directive_parts(c)[1] in names)]
-    # ninguna referencia suelta a un intrinseco
-    for function in unit.functions():
+        drop_address_loads(function, where)
+    unit.chunks = [c for c in unit.chunks if not is_intrinsic_declaration(c)]
+    for function in unit.functions():                  # ninguna referencia suelta a un intrinseco
         for line in function.body:
-            if line.kind == "instr" and any(a in names for a in line.args):
+            if line.kind == "instr" and any(a in INTRINSIC_NAMES for a in line.args):
                 raise OptError(
                     f"{unit.path}: {function.name}: uso no soportado de un intrinseco: {line.render()}")

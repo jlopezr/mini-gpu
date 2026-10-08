@@ -9,7 +9,7 @@ registros que no se conservan, asi que corta las copias de temporales."""
 from __future__ import annotations
 
 from ..dead import remove_dead
-from ..flow import Block, build_cfg
+from ..flow import build_cfg, forward_must
 from ..isa import defs_uses, number, reg_of, use_slots
 from ..model import Line, Unit
 from ..registry import register_pass
@@ -17,55 +17,28 @@ from ..registry import register_pass
 
 def copy_of(line: Line) -> tuple[int, int] | None:
     """(destino, origen) si la instruccion es una copia de registro."""
-    if line.kind != "instr":
+    if line.kind != "instr" or len(line.args) != 3:
         return None
-    if line.op == "ADD" and len(line.args) == 3 and reg_of(line.args[2]) == 0:
-        d, s = reg_of(line.args[0]), reg_of(line.args[1])
-    elif line.op == "ADDI" and len(line.args) == 3 and number(line.args[2]) == 0:
-        d, s = reg_of(line.args[0]), reg_of(line.args[1])
+    if line.op == "ADD" and reg_of(line.args[2]) == 0:
+        pass
+    elif line.op == "ADDI" and number(line.args[2]) == 0:
+        pass
     else:
         return None
-    return (d, s) if d is not None and s is not None and d != s and d != 0 else None
+    dest, origin = reg_of(line.args[0]), reg_of(line.args[1])
+    if dest is None or origin is None or dest == origin or dest == 0:
+        return None
+    return dest, origin
 
 
-def available_copies(blocks: list[Block]) -> list[dict[int, int] | None]:
-    """Copias {destino: origen} que valen a la entrada de cada bloque (None = aun sin calcular)."""
-    n = len(blocks)
-    preds: list[list[int]] = [[] for _ in range(n)]
-    for block in blocks:
-        for s in block.succ:
-            preds[s].append(block.index)
-
-    def step(state: dict[int, int], line: Line) -> None:
-        defs, _ = defs_uses(line)
-        for reg in defs:
-            for key in [k for k, v in state.items() if k == reg or v == reg]:
-                del state[key]
-        pair = copy_of(line)
-        if pair is not None:
-            state[pair[0]] = pair[1]
-
-    entry: list[dict[int, int] | None] = [None] * n
-    out: list[dict[int, int] | None] = [None] * n
-    entry[0] = {}
-    changed = True
-    while changed:
-        changed = False
-        for b in range(n):
-            if b != 0:
-                known = [out[p] for p in preds[b] if out[p] is not None]
-                if not known:
-                    continue
-                new = {k: v for k, v in known[0].items() if all(o.get(k) == v for o in known[1:])}
-                if entry[b] != new:
-                    entry[b], changed = new, True
-            state = dict(entry[b] or {})
-            for line in blocks[b].lines:
-                if line.kind == "instr":
-                    step(state, line)
-            if out[b] != state:
-                out[b], changed = state, True
-    return entry
+def track_copies(state: dict[int, int], line: Line) -> None:
+    """Actualiza las copias vigentes `{destino: origen}` tras ejecutar `line`."""
+    for written in defs_uses(line)[0]:
+        for key in [k for k, v in state.items() if k == written or v == written]:
+            del state[key]
+    pair = copy_of(line)
+    if pair is not None:
+        state[pair[0]] = pair[1]
 
 
 @register_pass("copyprop", "propagacion de copias (ADD d, s, R0) y borrado de lo que ya nadie lee")
@@ -74,24 +47,16 @@ def pass_copyprop(unit: Unit, stats: dict) -> None:
         blocks = build_cfg(function)
         if not blocks:
             continue
-        entry = available_copies(blocks)
-        for b, block in enumerate(blocks):
-            state = dict(entry[b] or {})
+        for block, entering in zip(blocks, forward_must(blocks, track_copies)):
+            state = dict(entering)
             for line in block.lines:
                 if line.kind != "instr":
                     continue
-                slots = use_slots(line)
-                for i in slots or []:
-                    reg = reg_of(line.args[i])
-                    if reg in state:
-                        line.args[i] = f"R{state[reg]}"
+                for slot in use_slots(line) or []:
+                    origin = state.get(reg_of(line.args[slot]) or 0)
+                    if origin is not None:
+                        line.args[slot] = f"R{origin}"
                         stats["copyprop.rewritten"] = stats.get("copyprop.rewritten", 0) + 1
-                defs, _ = defs_uses(line)
-                for reg in defs:
-                    for key in [k for k, v in state.items() if k == reg or v == reg]:
-                        del state[key]
-                pair = copy_of(line)
-                if pair is not None:
-                    state[pair[0]] = pair[1]
+                track_copies(state, line)
         remove_dead(blocks, stats, "copyprop")
         function.body = [line for block in blocks for line in block.lines]
