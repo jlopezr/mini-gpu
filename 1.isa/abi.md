@@ -105,8 +105,13 @@ The initial stack top is therefore:
 0x00010000
 ```
 
-A future runtime should move this startup sequence into a separate `crt0`
-object or configurable runtime file.
+The startup sequence now also exists as a separate file,
+`1.isa/runtime/crt0.s`, and `mini-lcc --no-crt` (`rcc -crt=none`) leaves it out
+of the compiler output (no `_start`, no `.comm __stack`). A program is then
+assembled as `.include "crt0.s"` first (`_start` must sit at address 0) followed
+by the compiled `.s`; a unit without `main`, such as a set of GPU kernels, is
+compiled with `--no-crt` and carries no startup at all. Without the option the
+compiler still emits the sequence above, so existing programs are unchanged.
 
 ---
 
