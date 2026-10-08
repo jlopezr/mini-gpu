@@ -697,6 +697,37 @@ espurio (hoy los dos cuelgan del mismo botón); que nextpnr no analiza los camin
 entre `clk` y `gclk`, así que con otra herramienta habría que marcarlos como
 `false path`; y que sin tiempo máximo una GPU caída bloquea el bus.
 
+## 19. ¿Atajo `REM` tras `DIV` (y `MULHI` tras `MUL`) en la lane de la GPU? (37)
+
+**Idea, para pensar.** La CPU (`cpu.v`) guarda una etiqueta de la última operación
+(tipo y registros fuente) y, si la instrucción siguiente es el `REM`/`REMU` de ese
+`DIV`/`DIVU`, o el `MULHI` de ese `MUL`, con los mismos registros, se salta las 32
+iteraciones o los pasos de multiplicación. La lane de la 37 no lo tiene: cada
+operación paga su coste entero (`DIV` unos 36 ciclos).
+
+**Coste.** En área, poco: unos 13 bits y dos comparadores de 5 bits por lane, o sea
+unos 100 FF y 100-150 LUT en total. Lo caro es hacerlo **correcto** en una GPU:
+las ocho lanes ejecutan lo que el SM les manda y el SM alterna warps, así que la
+etiqueta tendría que ser por warp (o invalidarse al cambiar de warp), cubrir que
+la máscara activa no cambie entre las dos instrucciones y que el resto sobreviva
+en el registro compartido de la lane.
+
+**Por qué quizá no merece la pena.** Con varios warps vivos, el `DIV` ocupa X unos
+32 ciclos y, al acabar, el planificador suele elegir otro warp listo antes de que
+llegue el `REM` del primero: el acierto sería casi nulo. Solo ayudaría con un warp
+vivo o muy pocos.
+
+**Alternativa sin hardware.** La ISA define `REM(a, b) = a − DIV(a, b) × b`. Un kernel
+que necesite cociente y resto puede emitir `DIV`, `MUL`, `SUB` (unos 6 ciclos extra
+en vez de 32). Se hace en el compilador o a mano, sin tocar el RTL y vale en todas
+las GPU.
+
+**Condición para hacerlo.** Medir antes si la división pesa en algún kernel real
+(plasma, copias, render). Los contadores `CYCLES` y `RETIRED` de GPU PERFORMANCE no
+separan por operación; haría falta contar las instrucciones `DIV*`/`REM*` retiradas
+(o mirar el programa) para saber qué fracción de ciclos son de división. Si no
+aparece, se cierra sin hacer nada.
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
