@@ -80,10 +80,17 @@ module text_console #(
   // Tres validaciones separadas (los rangos son disjuntos). Si fueran una
   // sola, el sumador de loader_range_valid quedaria en la ruta que habilita la
   // escritura de text_ram y palette_ram, y esa ruta no cierra a 80 MHz.
-  wire font_error = write && is_font_reg &&
+  // El sumador de `loader_range_valid` solo importa al escribir FONT_COUNT. Si
+  // colgara del `font_error` que gobierna TODA la escritura de fuente, el
+  // enable de `font_ram` (FONT_DATA3) esperaria a `loader_glyph + write_data`
+  // aunque no lo use: en la 36 era el camino critico de la CPU, 14,0 ns con
+  // `write_data` de fan-out 63 (4,1 ns de ruteo) y 71,3 MHz. Por eso el error
+  // "de siempre" se separa del de FONT_COUNT, que se comprueba dentro de su rama.
+  wire font_error_other = write && is_font_reg &&
       (!full_word ||
-       (address == FONT_COUNT && !loader_range_valid) ||
        (address == FONT_DATA3 && loader_count == 0));
+  wire font_error = font_error_other ||
+      (write && is_font_reg && address == FONT_COUNT && !loader_range_valid);
   wire palette_error = write && is_palette && (!full_word || |write_data[31:24]);
   wire text_error = write && is_text && (!full_word || |write_data[31:16]);
   wire validation_error = font_error || palette_error || text_error;
@@ -110,9 +117,9 @@ module text_console #(
       end
       if (select && write && is_text && !text_error)
         text_ram[text_index] <= write_data[15:0];
-      if (select && write && is_font_reg && !font_error) begin
+      if (select && write && is_font_reg && !font_error_other) begin
       case (address)
-        FONT_COUNT: loader_count <= write_data[8:0];
+        FONT_COUNT: if (loader_range_valid) loader_count <= write_data[8:0];
         FONT_GLYPH: loader_glyph <= write_data[7:0];
         FONT_DATA0: font_data0 <= write_data;
         FONT_DATA1: font_data1 <= write_data;
