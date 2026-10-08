@@ -237,6 +237,8 @@ Todos los kernels de la v1 trabajan **por palabras**. La CPU resuelve en el env�
 
 `memcpy` por palabras exige que `src` y `dst` sean congruentes módulo 4. Si no lo son, la operación va por la CPU en la v1.
 
+**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `examples/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
+
 Estructura de `MEMSET` (el resto es variante de este esquema):
 
 ```c
@@ -280,6 +282,8 @@ nwarps = min(NUM_WARPS, GPU_MAX_WARPS_PER_JOB, ceil(size / GPU_MIN_BYTES_PER_WAR
 Los tres umbrales (`GPU_THRESHOLD_*`, `GPU_MAX_WARPS_PER_JOB`, `GPU_MIN_BYTES_PER_WARP`) son constantes configurables, **sin valor inicial decidido**: los fija el benchmark, no la teoría.
 
 ### 8.2 Benchmark
+
+**Hecho en la placa 36 (hito 1): ver [bench-dma.md](bench-dma.md)** con las tablas y las conclusiones. En resumen: la GPU solo gana en `memcpy` y `blit` (1,2 a 1,3 x en 1 MiB, desde unos 4 KiB), pierde siempre en `memset` y `fill_rect` (0,65 a 0,70 x), el lanzamiento cuesta unos 40 µs más 9 µs por warp, y con más de 2 a 4 warps no mejora. `CONVERT` no se ha medido. Lo que sigue es la propuesta original.
 
 Tamaños: 32 B, 64 B, 128 B, 256 B, 1 KB, 4 KB, 16 KB, 64 KB, 256 KB y 1 MB. Operaciones: `memcpy`, `memset`, y después `fill_rect` y `blit`. Configuraciones: **CPU, GPU con 1, 2, 4 y 8 warps.** La GPU actual tiene 8 warps físicos (`GPU_CAPS`), así que "16 warps" no es una configuración real.
 

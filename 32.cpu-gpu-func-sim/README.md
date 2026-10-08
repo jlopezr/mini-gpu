@@ -144,6 +144,17 @@ Medido en la placa (80 MHz), tiempo por fotograma:
   manda y el cálculo de más del desenfoque queda tapado. En la CPU, que sí paga el
   cálculo, `blur` tarda un 10 % más.
 
+## Kernels de sistema y su benchmark (`examples/dma`)
+
+`gpu_kernels.inc` tiene los kernels de `docs/diseno-gpu-dma.md` §7: `memset`, `memcpy`,
+`fill_rect` y `blit` (falta `convert`). `rect.asm` ejercita `fill_rect` y `blit` con
+geometrías incómodas y `bench_dma.asm` los cuatro, con todas las configuraciones,
+comprobando el resultado. En la placa, `bench_dma_board.asm` y `bench_dma_report.py`
+miden cada operación con cada tamaño (32 B a 1 MiB) en la CPU y en la GPU con 1, 2, 4
+y 8 warps. Las tablas y lo que se deduce de ellas están en [docs/bench-dma.md](docs/bench-dma.md):
+la GPU solo gana en `memcpy` y `blit` (1,2 a 1,3 x, desde unos 4 KiB) y pierde siempre en
+`memset` y `fill_rect`.
+
 ## Qué se comparte
 
 | | |

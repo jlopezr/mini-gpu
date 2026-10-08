@@ -254,6 +254,102 @@ class DmaHarnessTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
+RECT = HERE / "examples" / "dma" / "rect.asm"
+
+
+class RectKernelsTest(unittest.TestCase):
+    """`gpu_k_fill_rect` y `gpu_k_blit`: el rectángulo exacto y nada alrededor."""
+
+    RESULTS = 0x10000
+    GUARD_WORD = 0xDEADBEEF
+
+    @classmethod
+    def setUpClass(cls):
+        cls.system = CpuGpuSystem(MEMORY)
+        cls.system.load_cpu_program(sim.load_program_file(RECT))
+        guard = struct.pack("<I", cls.GUARD_WORD) * 0x4000           # 64 KiB de guarda
+        for base in (0x20000, 0x40000, 0x50000, 0x70000):
+            cls.system.load_memory(guard, base)
+        cls.src1 = [0x1000 + n * 7 for n in range(7 * 15)]            # 7 filas, pitch 60
+        cls.system.load_memory(struct.pack("<105I", *cls.src1), 0x30000)
+        cls.src2 = [0x9000 + n for n in range(3 * 8)]                 # 3 filas, pitch 32
+        cls.system.load_memory(struct.pack("<24I", *cls.src2), 0x60000)
+        cls.outcome = cls.system.run()
+
+    def words(self, base, count):
+        return [word(self.system, base + 4 * i) for i in range(count)]
+
+    def test_the_four_jobs_finish_cleanly(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.cpu.error)
+        self.assertEqual(self.words(self.RESULTS, 4), [GPU_OK] * 4)
+
+    def test_fill_rect_writes_exactly_its_rectangle(self):
+        # 7 filas de 13 palabras en un pitch de 24 (96 bytes): fuera de ellas, guarda
+        expected = []
+        for row in range(7):
+            expected += [0xAAAA5555] * 13 + [self.GUARD_WORD] * 11
+        expected += [self.GUARD_WORD] * 24                            # la fila 8, intacta
+        self.assertEqual(self.words(0x20000, len(expected)), expected)
+
+    def test_blit_copies_each_row_to_its_place_and_nothing_else(self):
+        expected = []
+        for row in range(7):
+            expected += self.src1[row * 15:row * 15 + 13] + [self.GUARD_WORD] * 15
+        expected += [self.GUARD_WORD] * 28                            # la fila 8, intacta
+        self.assertEqual(self.words(0x40000, len(expected)), expected)
+
+    def test_a_one_word_fill_rect_writes_one_word(self):
+        self.assertEqual(self.words(0x50000, 3), [0x12345678, self.GUARD_WORD, self.GUARD_WORD])
+
+    def test_a_blit_with_fewer_rows_than_warps_still_copies_every_row(self):
+        expected = []
+        for row in range(3):
+            expected += self.src2[row * 8:row * 8 + 8] + [self.GUARD_WORD] * 8
+        expected += [self.GUARD_WORD] * 16                            # la fila 4, intacta
+        self.assertEqual(self.words(0x70000, len(expected)), expected)
+
+    def test_nothing_is_left_live_or_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+
+
+BENCH_DMA = HERE / "examples" / "dma" / "bench_dma.asm"
+
+
+class BenchDmaTest(unittest.TestCase):
+    """`bench_dma.asm` con tamaños hasta 4 KiB y una repetición: 4 operaciones x 5
+    configuraciones x 6 tamaños, y cada una tiene que dar el resultado correcto."""
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = race_image(BENCH_DMA)
+        cls.labels = labels
+        cls.system = CpuGpuSystem(32 * 1024 * 1024)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 6), labels["bench_nsizes"])
+        cls.system.load_memory(struct.pack("<I", 1), labels["bench_reps"])
+        cls.outcome = cls.system.run()
+
+    def test_it_finishes_with_every_configuration_correct(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+        self.assertEqual(word(self.system, self.labels["bench_done"]), 1)
+        self.assertEqual(word(self.system, self.labels["bench_errors"]), 0)
+
+    def test_the_last_blit_left_its_rows_in_the_destination(self):
+        # el último trabajo: blit de 4 KiB con 8 warps = 16 filas de 64 palabras, pitch 640
+        src = [(i * 0x9E3779B1 + 0x1234567) & 0xFFFFFFFF for i in range(1024)]
+        for row in range(16):
+            got = [word(self.system, 0x600000 + row * 640 + 4 * i) for i in range(64)]
+            self.assertEqual(got, src[row * 64:row * 64 + 64], f"fila {row}")
+
+    def test_nothing_is_left_live_or_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+
+
 RENDER = HERE / "examples" / "render" / "render.asm"
 
 
