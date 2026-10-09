@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .model import OptError, Unit, parse_unit, render_unit
-from .passes import ssy
+from .passes import licm, ssy
 from .registry import DEFAULT_PASSES, PASSES
 
 
@@ -50,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
                         f"(por defecto {','.join(DEFAULT_PASSES)}; vacio = ninguno)")
     parser.add_argument("--ssy-all", action="store_true",
                         help="pase ssy: tratar todo salto condicional como divergente")
+    parser.add_argument("--assume-noalias", action="store_true",
+                        help="pase licm: en un kernel, lo que escribe un puntero de los argumentos no pisa lo que el "
+                             "propio kernel lee por el nombre de una global; permite sacar esas cargas del bucle")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -61,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("hace falta un .s de entrada")
     passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
     ssy.SSY_ALL = args.ssy_all
+    licm.NOALIAS = args.assume_noalias
     stats: dict = {}
     try:
         text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)

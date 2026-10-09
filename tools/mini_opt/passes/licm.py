@@ -35,11 +35,19 @@ from ..isa import (
     reg_of,
     use_slots,
 )
+from ..dead import remove_dead
+from ..isa import LOADS
 from ..model import Line, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
+from .sharebase import split_address
 
 ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
+
+# `--assume-noalias`: en un kernel, lo que se escribe por un puntero que llega por los argumentos no pisa lo que el
+# propio kernel lee por el nombre de una variable global. No se puede demostrar desde el ensamblador, asi que no
+# es el comportamiento por defecto (ver `readonly_symbols`).
+NOALIAS = False
 
 Key = tuple[str, tuple[str, ...]]           # (mnemonico, operandos tras el destino): lo que se calcula
 Candidate = tuple[Block, Line]
@@ -116,8 +124,67 @@ def can_move(line: Line, t: int, facts: Reaching, body: set[int], blocks: list[B
     return True
 
 
+def uses_of_definition(blocks: list[Block], block: int, start: int, register: int) -> list[Line]:
+    """Las instrucciones que leen `register` tal como lo deja la que esta en `blocks[block].lines[start - 1]`,
+    por cualquier camino y hasta que se reescriba."""
+    found: list[Line] = []
+    seen: set[int] = set()
+    stack = [(block, start)]
+    while stack:
+        index, position = stack.pop()
+        killed = False
+        for line in blocks[index].lines[position:]:
+            if line.kind != "instr":
+                continue
+            defs, uses = defs_uses(line)
+            if register in uses:
+                found.append(line)
+            if register in defs:
+                killed = True
+                break
+        if not killed:
+            for s in blocks[index].succ:
+                if s not in seen:
+                    seen.add(s)
+                    stack.append((s, 0))
+    return found
+
+
+def readonly_symbols(blocks: list[Block]) -> set[str]:
+    """Simbolos que esta funcion solo lee: cada `LI Rx, simbolo+K` tiene como unicos usos `LOAD d, Rx, k`
+    (ni una suma, ni un `STORE`, ni pasarlo a una llamada), por cualquier camino. No dice nada de lo que
+    escribe otro codigo: la CPU puede escribir en el mientras el kernel no corre."""
+    seen: set[str] = set()
+    bad: set[str] = set()
+    for b, block in enumerate(blocks):
+        for position, line in enumerate(block.lines):
+            if line.kind != "instr" or line.op != "LI" or len(line.args) != 2:
+                continue
+            address, register = split_address(line.args[1]), reg_of(line.args[0])
+            if address is None or not register:
+                continue
+            seen.add(address[0])
+            for use in uses_of_definition(blocks, b, position + 1, register):
+                if not (use.op in LOADS and len(use.args) == 3 and reg_of(use.args[1]) == register):
+                    bad.add(address[0])
+    return seen - bad
+
+
+def invariant_load_ok(line: Line, pre: Block, readonly: set[str]) -> bool:
+    """Una carga cuya base es la direccion de un simbolo que el kernel solo lee (la ultima definicion de la base en
+    el preheader es `LI base, simbolo+K`) es invariante mientras la base no cambie en el bucle."""
+    if line.op not in LOADS or len(line.args) != 3:
+        return False
+    base = reg_of(line.args[1])
+    for previous in reversed(pre.lines):
+        if previous.kind == "instr" and base in defs_uses(previous)[0]:
+            address = split_address(previous.args[1]) if previous.op == "LI" and len(previous.args) == 2 else None
+            return address is not None and address[0] in readonly
+    return False
+
+
 def invariant_groups(blocks: list[Block], body: set[int], facts: Reaching,
-                     live_in: list[set[int]]) -> dict[Key, list[Candidate]]:
+                     live_in: list[set[int]], loads_ok=None) -> dict[Key, list[Candidate]]:
     """Las instrucciones que se pueden sacar, agrupadas por lo que calculan (una por grupo en el preheader)."""
     written: set[int] = set()
     for b in body:
@@ -127,7 +194,7 @@ def invariant_groups(blocks: list[Block], body: set[int], facts: Reaching,
     groups: dict[Key, list[Candidate]] = {}
     for b in sorted(body):
         for line in blocks[b].lines:
-            if line.kind != "instr" or line.op not in PURE_OPS:
+            if line.kind != "instr" or (line.op not in PURE_OPS and not (loads_ok and loads_ok(line))):
                 continue
             defs, uses = defs_uses(line)
             if len(defs) != 1 or uses & written:
@@ -190,12 +257,13 @@ def move_group(key: Key, members: list[Candidate], facts: Reaching, pre: Block, 
 
 
 def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
-              stats: dict) -> None:
+              stats: dict, readonly: frozenset[str] = frozenset()) -> None:
     """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros."""
+    loads_ok = (lambda line: invariant_load_ok(line, pre, readonly)) if readonly else None
     while True:
         live_in = live_in_blocks(blocks, liveness(blocks))
         facts = reaching_in_loop(blocks, body)
-        groups = invariant_groups(blocks, body, facts, live_in)
+        groups = invariant_groups(blocks, body, facts, live_in, loads_ok)
         free = free_registers(blocks, body, header, allowed, live_in)
         key = choose_group(groups, free)
         if key is None:
@@ -219,6 +287,7 @@ def pass_licm(unit: Unit, stats: dict) -> None:
             continue
         loops = natural_loops(blocks, dominators(blocks))
         kernel = function.name.startswith(KERNEL_PREFIX)
+        readonly = frozenset(readonly_symbols(blocks)) if NOALIAS and kernel else frozenset()
         # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
         # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
@@ -231,7 +300,9 @@ def pass_licm(unit: Unit, stats: dict) -> None:
             if pre is None:
                 continue
             before = stats.get("licm.removed", 0)
-            licm_loop(blocks, body, header, pre, allowed, stats)
+            licm_loop(blocks, body, header, pre, allowed, stats, readonly)
             if stats.get("licm.removed", 0) > before:
                 stats["licm.loops"] = stats.get("licm.loops", 0) + 1
+        if readonly:
+            remove_dead(blocks, stats, "licm")           # las direcciones que solo servian de base a lo que se saco
         function.body = [line for block in blocks for line in block.lines]

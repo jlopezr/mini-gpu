@@ -17,7 +17,7 @@ Un modulo por cosa:
     dead.py       codigo muerto (lo usan constprop y copyprop)
     registry.py   el registro de pases (`@register_pass`) y el orden por defecto
     cli.py        `optimize`, `--stats` y la linea de ordenes
-    passes/       un fichero por pase: intrinsics, kernels, jumps, constprop, copyprop, licm, ssy
+    passes/       un fichero por pase: intrinsics, kernels, jumps, stackslots, constprop, copyprop, licm, sharebase, ssy
 
 El pase `intrinsics` es el equivalente a `threadIdx`/`__syncthreads` de CUDA sin tocar `rcc`:
 el C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte el
@@ -49,7 +49,9 @@ from .passes.intrinsics import pass_intrinsics
 from .passes.jumps import pass_jumps
 from .passes.kernels import pass_kernels
 from .passes.licm import pass_licm
+from .passes.sharebase import pass_sharebase
 from .passes.ssy import pass_ssy
+from .passes.stackslots import pass_stackslots
 from .registry import DEFAULT_PASSES, PASSES, register_pass
 
 __all__ = [
@@ -57,6 +59,6 @@ __all__ = [
     "count_instructions", "defs_uses", "directive_parts", "dominators", "immediate_postdominator",
     "live_after", "live_in_entry", "liveness", "main", "natural_loops", "number", "optimize",
     "parse_unit", "pass_constprop", "pass_copyprop", "pass_intrinsics", "pass_jumps", "pass_kernels",
-    "pass_licm", "pass_ssy", "passes", "postdominators", "print_stats", "reg_of", "register_pass",
+    "pass_licm", "pass_sharebase", "pass_ssy", "pass_stackslots", "passes", "postdominators", "print_stats", "reg_of", "register_pass",
     "remove_dead", "render_unit",
 ]

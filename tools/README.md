@@ -948,7 +948,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
-  por pase en `passes/` (`intrinsics`, `kernels`, `jumps`, `constprop`, `copyprop`, `licm`, `ssy`) y,
+  por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `copyprop`, `licm`,
+  `sharebase`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -972,12 +973,44 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 - **Pase `licm`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
   las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
-  viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
+  viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`, salvo con
+  `--assume-noalias`: en un kernel, una carga cuya base es la dirección de un símbolo que el kernel solo lee
+  (todos los usos de `LI base, símbolo+K` en la función son `LOAD`, por cualquier camino) sale del bucle si la
+  base no cambia en él. El filtro no puede demostrar que lo que el kernel escribe por un puntero de sus
+  argumentos no pisa ese símbolo (lcc no tiene `restrict` ni hay información de tipos en el `.s`), así que es una
+  suposición del programador y está apagada por defecto. `examples/c/build.py` la enciende para los
+  ejemplos de la 32; `MINI_OPT_NOALIAS=0` la apaga. Con ella, `licm` borra después el código que queda muerto.
+- **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene
+  su porción a 512 bytes de la siguiente (un acceso de un warp son 8 transacciones). Los huecos de pila
+  que son una palabra a un desplazamiento fijo de `R30`, a los que solo se accede con `LOAD`/`STORE` de
+  palabra y de los que nadie toma la dirección, y alguno de cuyos accesos está en un bucle, pasan a un
+  registro que ninguna instrucción de la función menciona (`LOAD Rd, R30, k` es `ADD Rd, Rp, R0`; `STORE
+  Rs, R30, k` es `ADD Rp, Rs, R0`); `constprop` y `copyprop`, que van después, quitan las copias. Si caben
+  también los huecos que no están en bucles, se llevan todos y desaparece el marco entero (los `ADDI R30,
+  R30, ±n` y, en un kernel, la preparación de la pila de la lane). Para saber a qué hueco apunta un acceso
+  sigue cuánto vale `R30` por el grafo de flujo; si dos caminos no coinciden, o `R30` se toca de otra forma
+  que en la preparación del principio, no hace nada. Registros: en una función normal solo R1..R15 y sin
+  llamadas; en un kernel también R31 y los R16..R29 que sobren. Los huecos más calientes (los accesos
+  dentro de bucles pesan 10 por nivel de anidamiento) se llevan primero.
+- **Pase `sharebase`:** lcc carga cada campo de una tabla con su propio `LI` (`LI R12, cube_faces+4 ; LOAD
+  R12, R12, 0`). Dentro de un bloque, los `LI simbolo+K` del mismo símbolo cuyo registro solo se lee como
+  base de `LOAD`/`STORE` (y no sale vivo del bloque) se cambian por un único `LI base, simbolo` en un
+  registro que nadie toca durante el tramo, y cada acceso suma su `K` al desplazamiento. Necesita al
+  menos dos `LI` del mismo símbolo y un registro libre (los mismos que `licm`; en un kernel también los
+  R16..R29 sin uso); si no lo hay, no hace nada. Va después de `licm`, que se queda primero con los
+  registros que necesita para sacar cosas de los bucles.
 - **Pase `constprop`:** donde un registro vale una constante por todos los caminos, `ADD`, `SUB`, `AND`,
   `OR` y `XOR` pasan a su forma con inmediato, y `SHL` por 1 a `ADD d, a, a`; la constante, si ya nadie la
-  lee, se borra.
+  lee, se borra. Con la misma información: se quita un `MOVI`/`LI` que carga lo que el registro ya vale
+  (`redundant`); si los dos operandos son constantes la operación se hace en el filtro y queda un
+  `MOVI`/`LI` (`evaluated`, con la aritmética de 32 bits de la máquina; una copia `ADD d, x, R0` no se
+  evalúa, es lo que sigue `copyprop`); `x+0`, `x-0`, `x|0`, `x^0`, `x<<0`, `x*1` y `x&-1` pasan a una
+  copia (o se borran si `d` es `x`) y `x*0`, `x&0`, `x-x` y `x^x` a un cero (`identities`); y
+  `MUL d, a, K` seguido de `SHL d, d, S` queda `MUL d, a, K<<S`, con la constante recargada ya
+  desplazada antes del `MUL` (`fused`; solo si ese registro no se lee después).
 - **Pase `copyprop`:** propagación de copias (`ADD d, s, R0`: donde llega por todos los caminos, los
-  usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones.
+  usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones. Una copia que queda de
+  un registro sobre sí mismo también se borra.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores

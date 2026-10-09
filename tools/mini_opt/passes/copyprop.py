@@ -31,6 +31,15 @@ def copy_of(line: Line) -> tuple[int, int] | None:
     return dest, origin
 
 
+def is_self_copy(line: Line) -> bool:
+    """`ADD d, d, R0` (o `ADDI d, d, 0`): copiar un registro a si mismo."""
+    if line.kind != "instr" or len(line.args) != 3:
+        return False
+    d, s = reg_of(line.args[0]), reg_of(line.args[1])
+    zero = (line.op == "ADD" and reg_of(line.args[2]) == 0) or (line.op == "ADDI" and number(line.args[2]) == 0)
+    return zero and d is not None and d == s and d != 0
+
+
 def track_copies(state: dict[int, int], line: Line) -> None:
     """Actualiza las copias vigentes `{destino: origen}` tras ejecutar `line`."""
     for written in defs_uses(line)[0]:
@@ -49,14 +58,21 @@ def pass_copyprop(unit: Unit, stats: dict) -> None:
             continue
         for block, entering in zip(blocks, forward_must(blocks, track_copies)):
             state = dict(entering)
+            keep = []
             for line in block.lines:
                 if line.kind != "instr":
+                    keep.append(line)
                     continue
                 for slot in use_slots(line) or []:
                     origin = state.get(reg_of(line.args[slot]) or 0)
                     if origin is not None:
                         line.args[slot] = f"R{origin}"
                         stats["copyprop.rewritten"] = stats.get("copyprop.rewritten", 0) + 1
+                if is_self_copy(line):                       # `ADD R14, R31, R0` con R31 = R14: ya no hace nada
+                    stats["copyprop.removed"] = stats.get("copyprop.removed", 0) + 1
+                    continue
+                keep.append(line)
                 track_copies(state, line)
+            block.lines = keep
         remove_dead(blocks, stats, "copyprop")
         function.body = [line for block in blocks for line in block.lines]

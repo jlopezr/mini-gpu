@@ -178,7 +178,24 @@ pases nuevos son:
   el inmediato: `MOVI R7, 256 ; SUB d, a, R7` pasa a `ADDI d, a, -256` (también `ADD`, `AND`, `OR`, `XOR`), y
   `SHL d, a, R9` con R9 = 1 pasa a `ADD d, a, a`. La constante deja de ocupar un registro, que es lo que
   importa en un kernel: los saltos y los desplazamientos de la GPU no tienen inmediato, así que esas
-  constantes se quedan. No cambia el número de instrucciones ejecutadas, solo los registros.
+  constantes se quedan. Hace además cuatro cosas más con lo mismo (ver `tools/README.md`): quita el `MOVI`/`LI`
+  que recarga lo que el registro ya vale (lcc carga el `3` de cada `SHL` aunque no lo haya tocado), hace en el
+  filtro las operaciones entre dos constantes, simplifica identidades (`x+0`, `x*1`, `x-x`...) y funde un `MUL`
+  por una constante seguido de un `SHL` en un solo `MUL` (`320 * 4` pasa a `1280`). Casi todo es estático:
+  en las cargas de arriba cambia en menos de un 1 % las instrucciones ejecutadas.
+- **`stackslots`**: lo que lcc no cabe en registros va a la pila de la lane, que en la GPU cuesta 8
+  transacciones por acceso de un warp. En el cubo, la fila, la lane y el paso del bucle de filas se leían y
+  escribían 6 veces por fila; ahora viven en registros que el kernel no usa (R31, R4...) y desaparece el marco
+  entero con su preparación (unas 7 instrucciones por lane). Solo se promocionan los huecos de los que nadie
+  toma la dirección y que se acceden con `LOAD`/`STORE` de palabra; si no queda registro libre, no se hace
+  nada. Además, `constprop` sigue ahora las constantes a través de copias y `copyprop` borra las copias de un
+  registro sobre sí mismo, para limpiar lo que deja. Como `sharebase`, su efecto está sobre todo en ciclos de
+  memoria y solo se confirma en la placa.
+- **`sharebase`**: lcc carga cada campo de una tabla con su propio `LI` (`LI R12, cube_faces+4 ; LOAD R12,
+  R12, 0`), 24 veces en la preparación de cada fila del cubo. Dentro de un bloque cambia los `LI` del mismo
+  símbolo por uno solo en un registro libre y suma cada desplazamiento al del `LOAD`, como hace a mano
+  `cube.inc`. Es estático: en el cubo quita 66 instrucciones del texto, pero su efecto
+  en ciclos solo se sabe midiéndolo en la placa.
 - **`copyprop`**: propagación de copias y código muerto. Donde `ADD d, s, R0` llega a un uso de `d` por todos
   los caminos sin que `d` ni `s` se reescriban, el uso lee `s`; las copias y cualquier instrucción pura
   cuyo resultado nadie lee se borran. lcc copia a un temporal casi todo lo que compara o indexa.
@@ -195,9 +212,9 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 | blit 64x64 | 4.796 | 4.800 | 4.352 | 1,00 | 0,91 | 1,10x |
 | fill_rect 7x13 (3 warps) | 182 | 182 | 175 | 1,00 | 0,96 | 1,04x |
 | blit 7x13 (5 warps) | 257 | 262 | 255 | 1,02 | 0,99 | 1,03x |
-| rotación, CPU | 233.806 | 285.439 | 235.621 | 1,22 | 1,01 | 1,21x |
-| rotación, GPU inocente (warp) | 29.426 | 42.231 | 31.870 | 1,44 | 1,08 | 1,33x |
-| rotación, GPU buena (warp) | 30.864 | 44.664 | 34.576 | 1,45 | 1,12 | 1,29x |
+| rotación, CPU | 233.806 | 285.439 | 234.888 | 1,22 | 1,00 | 1,22x |
+| rotación, GPU inocente (warp) | 29.426 | 42.231 | 31.694 | 1,44 | 1,08 | 1,33x |
+| rotación, GPU buena (warp) | 30.864 | 44.664 | 34.088 | 1,45 | 1,10 | 1,31x |
 
 En los kernels de sistema el C ya ejecuta menos instrucciones que el ensamblador a mano (el ensamblador
 del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que sea menos no quiere decir
@@ -254,6 +271,28 @@ La GPU buena sigue siendo la peor. El bucle de celdas ya lleva un solo `SSY` por
 ensamblador, pero quedan una copia `ADD Rd, Rs, R0` por cada coordenada que se compara (lcc copia para el
 cast a `unsigned`), la carga de la base de la textura en cada acierto (el ensamblador la tiene en un
 registro) y un `SHL` donde el ensamblador suma el valor a sí mismo.
+
+Con `sharebase`, `stackslots` y los cambios de `constprop` y `copyprop` (9 de octubre de 2026), medido en la
+placa 36 con el mismo programa y el ensamblador en la misma sesión. Mediana de unas 40 lecturas de
+`race_cycles` por variante (con el cubo girando, una lectura varía ±8 % según el ángulo; repetir la misma
+variante da lo mismo a un 1 %). «Antes» es el pipeline anterior a esos dos pases, pero ya con los pases de
+`constprop` nuevos:
+
+| Método | Ensamblador | C antes | C con `sharebase` | C con `stackslots` y `sharebase` | C / ens. |
+|---|---:|---:|---:|---:|---:|
+| CPU | 7.159.000 | 7.024.800 | 6.866.900 | 6.850.200 | 0,96 |
+| GPU inocente | 2.187.000 | 2.318.600 | 2.319.600 | 2.260.000 | 1,03 |
+| GPU buena | 1.257.000 | 1.564.000 | 1.537.100 | 1.343.800 | 1,07 |
+
+Casi toda la mejora de la GPU buena (1,24 → 1,07 veces el ensamblador, de 1,56 M a 1,34 M ciclos) viene de
+`stackslots`: la fila, la lane y el paso dejan de leerse de la pila de la lane. `sharebase` aporta un 1-2 %,
+que está al nivel del ruido. Después se añadió `--assume-noalias` en `licm` (los kernels no escriben por sus
+punteros de argumento lo que leen por el nombre de una global; `build.py` la enciende, `MINI_OPT_NOALIAS=0` la
+apaga), que saca del bucle de celdas la carga de la base de la textura. Medido igual (dos rondas, cada variante
+con el ensamblador intercalado): GPU inocente 2.260.000 → 2.211.000 ciclos y GPU buena 1.351.600 → 1.326.200, un
+2 % cada una, y la CPU no cambia. Con eso la GPU buena queda en 1,06 veces el ensamblador (1,07 antes) y la
+inocente en 1,01. Es poco para una suposición que el filtro no puede comprobar. Para medirlo: `halt`, `read-block` de `race_cycles` y `run` con el `monitor.py`
+de la 36 (no lee memoria con la CPU en marcha); la dirección sale de las etiquetas del ensamblado.
 
 ## El plano con logos y alfa
 
