@@ -35,7 +35,6 @@ from ..isa import (
     reg_of,
     use_slots,
 )
-from ..dead import remove_dead
 from ..isa import LOADS
 from ..model import Line, Unit
 from ..registry import register_pass
@@ -305,6 +304,4 @@ def pass_licm(unit: Unit, stats: dict) -> None:
             licm_loop(blocks, body, header, pre, allowed, stats, readonly)
             if stats.get("licm.removed", 0) > before:
                 stats["licm.loops"] = stats.get("licm.loops", 0) + 1
-        if readonly:
-            remove_dead(blocks, stats, "licm")           # las direcciones que solo servian de base a lo que se saco
         function.body = [line for block in blocks for line in block.lines]

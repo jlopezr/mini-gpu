@@ -988,7 +988,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   base no cambia en él. El filtro no puede demostrar que lo que el kernel escribe por un puntero de sus
   argumentos no pisa ese símbolo (lcc no tiene `restrict` ni hay información de tipos en el `.s`), así que es una
   suposición del programador y está apagada por defecto. `examples/c/build.py` la enciende para los
-  ejemplos de la 32; `MINI_OPT_NOALIAS=0` la apaga. Con ella, `licm` borra después el código que queda muerto.
+  ejemplos de la 32; `MINI_OPT_NOALIAS=0` la apaga. Las direcciones que solo servían de base a lo que sale del bucle quedan muertas:
+  las borra el `dce` que viene detrás en el pipeline.
 - **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene
   su porción a 512 bytes de la siguiente (un acceso de un warp son 8 transacciones). Los huecos de pila
   que son una palabra a un desplazamiento fijo de `R30`, a los que solo se accede con `LOAD`/`STORE` de

@@ -1037,7 +1037,8 @@ class StackSlotsTest(unittest.TestCase):
     def run_pass(self, body: str, name: str = "f"):
         stats = {}
         end = "\nEXIT\n" if name.startswith("__kernel_") else "\nJR R31\n"
-        out = lines_of(optimize(f".text\n.globl {name}\n{name}:\n" + body + end, ["stackslots"], stats=stats))
+        # con `dce` detras, como en el pipeline: el pase deja las copias y la preparacion de pila que ya no se leen
+        out = lines_of(optimize(f".text\n.globl {name}\n{name}:\n" + body + end, ["stackslots", "dce"], stats=stats))
         return out[out.index(f"{name}:") + 1:], stats
 
     def test_a_kernel_loop_counter_goes_to_a_register_and_the_stack_setup_disappears(self):
@@ -1362,6 +1363,37 @@ class TailCallsTest(unittest.TestCase):
     def test_a_pointer_into_the_current_frame_is_not_passed_after_releasing_it(self):
         out, stats = self.optimize_wrapper(before_call="ADDI R1, R30, 12")
         self.assertIn("JAL R31, g", out)
+        self.assertNotIn("tailcalls", stats)
+
+    def test_a_caller_that_takes_any_frame_address_is_rejected_even_if_it_does_not_pass_it(self):
+        for before in ("ADDI R14, R30, 8\nSTORE R14, R15, 0\nMOVI R1, 7",      # la guarda en memoria
+                       "ADD R14, R30, R9\nSTORE R14, R15, 0\nMOVI R1, 7",      # offset variable
+                       "STORE R30, R15, 0\nMOVI R1, 7"):                       # guarda el propio R30
+            with self.subTest(before=before):
+                out, stats = self.optimize_wrapper(before_call=before)
+                self.assertIn("JAL R31, g", out)
+                self.assertNotIn("tailcalls", stats)
+
+    def test_a_local_whose_address_went_to_memory_survives_a_call_to_a_callee_that_overlaps_it(self):
+        """f guarda &a en una global y llama a g; g guarda R31 justo donde esta `a` si f ya cerro su frame
+        y lee `*gp`. El resultado tiene que ser 5, no la direccion de retorno."""
+        source = (".text\n.globl main\nmain:\nMOVI R30, 0x4000\nJAL R31, f\nHALT\n"
+                  ".globl g\ng:\nADDI R30, R30, -48\nSTORE R31, R30, 24\nLI R14, gp\nLOAD R14, R14, 0\n"
+                  "LOAD R1, R14, 0\nL.1:\nLOAD R31, R30, 24\nADDI R30, R30, 48\nJR R31\n"
+                  ".globl f\nf:\nADDI R30, R30, -32\nSTORE R31, R30, 16\nMOVI R15, 5\nSTORE R15, R30, 8\n"
+                  "LI R15, gp\nADDI R14, R30, 8\nSTORE R14, R15, 0\nJAL R31, g\n"
+                  "L.2:\nLOAD R31, R30, 16\nADDI R30, R30, 32\nJR R31\n.comm gp,4\n")
+        stats = {}
+        optimized = optimize(source, ["tailcalls", "unreachable"], stats=stats)
+
+        def result(text):
+            cpu = CPU(memory_size=1 << 16)
+            cpu.load_program(assemble_bytes(text))
+            cpu.run(10_000)
+            return cpu.regs[1]
+
+        self.assertEqual(result(source), 5)
+        self.assertEqual(result(optimized), 5)
         self.assertNotIn("tailcalls", stats)
 
     def test_a_shared_epilogue_is_kept_for_its_other_predecessor(self):

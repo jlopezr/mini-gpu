@@ -8,9 +8,9 @@ transacciones y no una; en el cubo, la fila, la lane y el paso del bucle de fila
     LOAD Rd, R30, k     ->   ADD Rd, Rp, R0
     STORE Rs, R30, k    ->   ADD Rp, Rs, R0
 
-y deja que `constprop` y `copyprop` (que van despues) quiten las copias. Cuando ya no queda ningun
-acceso a la pila, tambien desaparece el marco: los `ADDI R30, R30, +-n` y, en un kernel, la
-preparacion de la pila de la lane.
+y deja que `constprop`, `copyprop` y `dce` (que van despues) quiten las copias. Cuando ya no queda
+ningun acceso a la pila, tambien desaparece el marco: los `ADDI R30, R30, +-n` y, en un kernel, la
+preparacion de la pila de la lane (lo que queda de ella, `GETTID` y compania, lo borra `dce`).
 
 Un hueco se puede promocionar si es una palabra a un desplazamiento fijo de `R30` y todos sus
 accesos son `LOAD`/`STORE` de palabra con `R30` de base (nadie le toma la direccion), y si alguno esta
@@ -22,7 +22,6 @@ de la funcion menciona: en un funcion normal solo los de llamante (R1..R15) y si
 kernel, tambien R31 y los R16..R29 que sobren (a un kernel no le hace falta preservarlos)."""
 from __future__ import annotations
 
-from ..dead import remove_dead
 from ..flow import Block, build_cfg, dominators, natural_loops
 from ..isa import LOADS, STACK, STORES, defs_uses, number, reg_of
 from ..model import Function, Line, Unit
@@ -159,7 +158,6 @@ def promote(function: Function, stats: dict) -> None:
             stats["stackslots.accesses"] = stats.get("stackslots.accesses", 0) + 1
         stats["stackslots.slots"] = stats.get("stackslots.slots", 0) + 1
     remove_frame(blocks, at, kernel, stats)
-    remove_dead(blocks, stats, "stackslots")
     function.body = [line for block in blocks for line in block.lines]
 
 

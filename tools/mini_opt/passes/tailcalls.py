@@ -2,11 +2,13 @@
 
 Solo se acepta el epilogo canonico de LCC y un destino definido en la misma
 unidad que no recibe argumentos por pila. Asi se puede restaurar el frame del
-llamador antes del `BRA` sin tener que recolocar argumentos 5+.
+llamador antes del `BRA` sin tener que recolocar argumentos 5+. Ni el llamador
+ni el destino pueden calcular direcciones de su propio frame (`takes_frame_address`):
+adonde van no se sabe, y con el frame ya cerrado el destino podria pisarlas.
 """
 from __future__ import annotations
 
-from ..isa import ARG_REGS, CALLEE_SAVED, LOADS, LINK, STACK, defs_uses, number, reg_of
+from ..isa import CALLEE_SAVED, LOADS, LINK, STACK, STORES, defs_uses, number, reg_of
 from ..model import Function, Line, Unit
 from ..registry import register_pass
 
@@ -29,6 +31,29 @@ def frame_size(function: Function) -> int | None:
     return 0
 
 
+def takes_frame_address(function: Function) -> bool:
+    """La funcion usa R30 de otra forma que como base de un LOAD/STORE o en el ajuste del marco
+    (`ADDI R30, R30, n`): calcula la direccion de algo de su frame, o guarda el propio R30.
+
+    Esa direccion puede acabar en cualquier sitio (un registro de argumento, una global, otro objeto):
+    si despues se libera el frame para hacer un salto de cola, el destino la lee con el frame cerrado y su
+    propio frame puede solapar el hueco. Sin tipos ni metadatos no se sigue a donde va, asi que se rechaza
+    la funcion entera, tanto como origen de un salto de cola como destino."""
+    for line in instruction_lines(function):
+        if line.op in ("JR", "EXIT", "HALT", "TRAP"):
+            continue                                    # leen R30 por convenio, no por una direccion
+        if STACK not in defs_uses(line)[1]:
+            continue
+        if (line.op in LOADS | STORES and len(line.args) == 3 and reg_of(line.args[1]) == STACK
+                and reg_of(line.args[0]) != STACK):
+            continue                                    # acceso a un hueco; STORE R30, ... guarda el propio R30
+        if (line.op == "ADDI" and len(line.args) == 3 and reg_of(line.args[0]) == STACK
+                and reg_of(line.args[1]) == STACK):
+            continue                                    # ajuste del marco
+        return True
+    return False
+
+
 def has_stack_arguments(function: Function) -> bool:
     """Detecta lecturas o toma de direccion de argumentos 5+ de MiniABI."""
     size = frame_size(function)
@@ -40,27 +65,8 @@ def has_stack_arguments(function: Function) -> bool:
             offset = number(line.args[2])
             if offset is not None and offset >= first_stack_argument:
                 return True
-        # `va_start` y agregados pueden tomar la direccion y cargar de forma
-        # indirecta. Sin tipos/metadatos no se distingue de un local: rechazar
-        # cualquier direccion derivada del frame del destino es conservador.
-        if (line.op == "ADDI" and len(line.args) == 3 and reg_of(line.args[1]) == STACK
-                and reg_of(line.args[0]) != STACK):
-            return True
-    return False
-
-
-def passes_current_frame_address(body: list[Line], call_index: int) -> bool:
-    """Comprueba si R1-R4 contienen una direccion derivada del R30 actual."""
-    tainted = {STACK}
-    for line in body[:call_index]:
-        if line.kind != "instr":
-            continue
-        definitions, uses = defs_uses(line)
-        derived = bool(uses & tainted) and line.op not in LOADS
-        tainted.difference_update(definitions)
-        if derived:
-            tainted.update(definitions)
-    return bool(set(ARG_REGS) & tainted)
+    # `va_start` y agregados pueden tomar la direccion y cargar de forma indirecta.
+    return takes_frame_address(function)
 
 
 def saved_by_prologue(function: Function) -> set[tuple[int, int]]:
@@ -129,14 +135,12 @@ def pass_tailcalls(unit: Unit, stats: dict) -> None:
         if not function.opaque and not has_stack_arguments(function)
     }
     for function in functions.values():
-        if function.opaque:
+        if function.opaque or takes_frame_address(function):
             continue
         body = function.body
         for index, line in enumerate(body):
             if (line.kind != "instr" or line.op != "JAL" or len(line.args) != 2
                     or reg_of(line.args[0]) != LINK or line.args[1] not in safe_targets):
-                continue
-            if passes_current_frame_address(body, index):
                 continue
             movable = canonical_epilogue(function, index)
             if movable is None:
