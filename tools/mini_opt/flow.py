@@ -69,20 +69,30 @@ def build_cfg(function: Function) -> list[Block]:
 
 def liveness(blocks: list[Block]) -> list[set[int]]:
     """Registros vivos a la salida de cada bloque (analisis hacia atras)."""
-    live_in = [set() for _ in blocks]
+    # lo que cada bloque lee antes de escribirlo (gen) y lo que escribe (kill), una sola vez
+    gen: list[frozenset[int]] = []
+    kill: list[frozenset[int]] = []
+    for block in blocks:
+        read: set[int] = set()
+        written: set[int] = set()
+        for line in reversed(block.lines):
+            if line.kind == "instr":
+                defs, uses = defs_uses(line)
+                read = (read - defs) | uses
+                written |= defs
+        gen.append(frozenset(read))
+        kill.append(frozenset(written))
+    live_in = [set(g) for g in gen]
     live_out = [set() for _ in blocks]
     changed = True
     while changed:
         changed = False
         for block in reversed(blocks):
+            index = block.index
             out = set().union(*(live_in[s] for s in block.succ)) if block.succ else set()
-            live = set(out)
-            for line in reversed(block.lines):
-                if line.kind == "instr":
-                    defs, uses = defs_uses(line)
-                    live = (live - defs) | uses
-            if out != live_out[block.index] or live != live_in[block.index]:
-                live_out[block.index], live_in[block.index] = out, live
+            live = gen[index] | (out - kill[index])
+            if out != live_out[index] or live != live_in[index]:
+                live_out[index], live_in[index] = out, live
                 changed = True
     return live_out
 

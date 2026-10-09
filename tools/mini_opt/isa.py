@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from .model import Line, OptError
 
@@ -48,11 +49,19 @@ def reg(arg: str) -> int:
     return number_
 
 
-def defs_uses(line: Line) -> tuple[set[int], set[int]]:
+def defs_uses(line: Line) -> tuple[frozenset[int], frozenset[int]]:
     """(escribe, lee) de una instruccion. Una llamada lee los argumentos y
-    destruye los caller-saved; un `JR` (retorno) lee lo que el llamador espera."""
-    op = line.op
-    regs = [reg_of(a) for a in line.args]       # None donde el operando no es un registro
+    destruye los caller-saved; un `JR` (retorno) lee lo que el llamador espera.
+
+    Se calcula una vez por (mnemonico, operandos): los pases piden esto millones de veces sobre las
+    mismas instrucciones y cambian `args` en el sitio, asi que la clave son los valores de ahora. Los
+    conjuntos son `frozenset`, compartidos entre llamadas."""
+    return _defs_uses(line.op, tuple(line.args))
+
+
+@lru_cache(maxsize=None)
+def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozenset[int]]:
+    regs = [reg_of(a) for a in args]            # None donde el operando no es un registro
     defs: set[int] = set()
     uses: set[int] = set()
 
@@ -81,7 +90,7 @@ def defs_uses(line: Line) -> tuple[set[int], set[int]]:
     elif op in ("HALT", "TRAP"):
         uses.update((STACK, *CALLEE_SAVED))
     defs.discard(0); uses.discard(0)            # R0 es la constante cero
-    return defs, uses
+    return frozenset(defs), frozenset(uses)
 
 
 def number(text: str) -> int | None:
