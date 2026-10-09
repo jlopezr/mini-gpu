@@ -388,6 +388,30 @@ Seguridad propuesta:
 - descartar todos los metadatos de la función ante contradicción;
 - asm manual o editado sin metadatos sigue por el camino conservador actual.
 
+**Helpers del backend (`__mini_*`): hoy no se transfiere nada.** Lo único que
+cruza por el `.s` es el hecho `volatile`. Los helpers que añade mini-lcc
+(`__mini_memcpy`, `__mini_divfx`, `__mini_udivmod64` y los de soft-float)
+usan un convenio privado (entradas en R5–R9, retorno en R7–R10, enlace por R15
+o R31), así que `Function.opaque` (`model.py`) los marca **por el prefijo del
+nombre** y todos los pases los saltan. El efecto es más amplio que el helper:
+una función que hace `JAL` a un `__mini_*`, o cualquier `JAL`/`JR` con enlace
+distinto de R31, también es opaca y no se optimiza en absoluto. Es la vía
+conservadora correcta mientras no haya un contrato explícito; sería el segundo
+metadato justificado, después de `volatile`, por ejemplo
+`; @miniopt helper NOMBRE in=R5,R6,R7 out=R7 clobbers=R5-R15 link=R31`, que
+permitiría tratar el `JAL` como una llamada con clobbers conocidos en lugar de
+descartar la función entera. Sin medir cuántas funciones de mini-tst quedan
+opacas por esto, no hay cifra de ganancia.
+
+**Medido el 9 de octubre de 2026 y descartado por ahora.** En mini-tst, 34 de
+640 funciones son opacas (10 son los propios helpers, 24 de usuario), en 11 de
+166 ficheros: 760 de 22.930 instrucciones (3,3 %). En los ejemplos de
+`32.cpu-gpu-func-sim/examples/c` (cubo, rotación, `plane`, `diverge`, `memset`,
+kernels de sistema) no aparece ningún `__mini_*` y no hay ninguna función
+opaca. Con un uso real nulo, el metadato `helper` no compensa tocar `y.lcc` ni
+su submódulo; solo reabrirlo si algún programa nuevo usa soft-float, divisiones
+de 64 bits, `divfx` o copias de bloque grandes y el recuento sube.
+
 No se recomienda empezar por metadatos. Primero deben medirse transformaciones
 que los necesiten. Para copyprop, DCE, jumps y LICM pura, el ensamblador basta.
 
@@ -474,7 +498,7 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.551 → 20.384 instrucciones | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.459 instrucciones (−13,3 %, medida el 9 de octubre de 2026 con `y.lcc` en `63c0e1d`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
 | Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
@@ -494,9 +518,12 @@ historial de la auditoría.
    forma opt-in y correr mini-tst completo antes/después.~~ **Hecho:**
    `--optimize` y `--compare-optimizer`; 23.551 → 20.384 instrucciones
    (−13,4 %) tras integrar también `stackslots`, `sharebase` y la propagación
-   rica del trabajo paralelo. Estado actual: 166/166 casos simulados (+2 xfail)
-   y 155 tests del optimizador. Ese total no se ha vuelto a medir tras el
-   cambio de `mini.md:local`.
+   rica del trabajo paralelo. Remedido tras el cambio de `mini.md:local`
+   (`rcc` reconstruido, `--simulate --compare-optimizer`): 166/166 casos
+   simulados (+2 xfail), 23.601 → 20.459 instrucciones (−3.142, −13,3 %), y
+   155 tests del optimizador. El sin optimizar crece 50 y el optimizado 75
+   respecto a la medida anterior; no se ha desglosado cuánto es de los tests
+   nuevos y cuánto de `mini.md:local`.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
    con asm manual adversarial, volatile y llamadas indirectas. `tailcalls`
