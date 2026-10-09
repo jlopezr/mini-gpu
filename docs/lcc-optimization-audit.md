@@ -157,7 +157,7 @@ interprocedimental ni perfiles.
 | Liveness | Implementada, pero limitada | cadenas `lastuse/prevuse` solo en la lista lineal actual; CFG en `mini-opt` | No liveness pre-RA de función |
 | Coalescing | Ausente en LCC; limitado en mini-opt | `mini-opt:copyprop` elimina copias físicas seguras | No puede cambiar decisiones de spill ya tomadas |
 | Reutilización de slots | Implementada, pero limitada | `blockbeg/blockend` restaura `offset` por bloque léxico | Cada spill usa `newtemp(AUTO)`; sin coloreo por vida |
-| Leaf optimization | Implementada, pero limitada | `mini_es_hoja`; parámetros a R7–R15 | Copia todos los parámetros usados; no resuelve retorno/argumento en sitio |
+| Leaf optimization | Implementada, pero limitada | `mini_is_leaf`; parámetros a R7–R15 | Copia todos los parámetros usados; no resuelve retorno/argumento en sitio |
 | Frame cero | Implementada y efectiva | `function()` emite ajustes solo si `framesize>0` | Cualquier local mínimo redondea a 16 |
 | Prólogo/epílogo | Implementada, pero limitada | guarda solo R16–R29 usados y R31 si llama; `mini-opt:tailcalls` elimina casos finales seguros | No hay shrink wrapping |
 | Saltos | Implementada, pero limitada | folding frontend; `mini-opt:jumps` y `branches` resuelven cadenas y branches constantes/idénticos | No hay threading general ni análisis interprocedimental |
