@@ -1608,6 +1608,103 @@ class InvertTest(unittest.TestCase):
         self.assertGreater(inverted, 0, "el generador nunca ejercita el pase")
 
 
+def boolean_block(op: str, a: str, b: str, dest: str, first: int, second: int, base: int = 1,
+                  zero: str = "ADD {d}, R0, R0") -> str:
+    """`Bcc a,b,Lf ; MOVI dest,first ; BRA Le ; Lf: ; dest = second ; Le:` como lo escribe lcc."""
+    def load(value: int) -> str:
+        return zero.format(d=dest) if value == 0 else f"MOVI {dest}, {value}"
+    return (f"{op} {a}, {b}, L.{base}\n{load(first)}\nBRA L.{base + 1}\nL.{base}:\n{load(second)}\nL.{base + 1}:")
+
+
+class BooleanTest(unittest.TestCase):
+    def run_pass(self, body: str):
+        stats: dict = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        return lines_of(optimize(source, ["boolean"], stats=stats)), stats
+
+    def test_each_comparison_becomes_the_shortest_sequence(self):
+        slt, sltu, xori = "SLT R7, R8, R9", "SLTU R7, R8, R9", "XORI R7, R7, 1"
+        ne = ["SUB R7, R8, R9", "SLTU R7, R0, R7"]               # a != b
+        cases = {                                                 # (rama, valor que carga al tomarse)
+            ("BLT", 1): [slt], ("BLT", 0): [slt, xori],
+            ("BGE", 1): [slt, xori], ("BGE", 0): [slt],
+            ("BLTU", 1): [sltu], ("BLTU", 0): [sltu, xori],
+            ("BGEU", 1): [sltu, xori], ("BGEU", 0): [sltu],
+            ("BNE", 1): ne, ("BNE", 0): ne + [xori],
+            ("BEQ", 1): ne + [xori], ("BEQ", 0): ne,
+        }
+        for (op, taken), expected in cases.items():
+            with self.subTest(op=op, taken=taken):
+                out, stats = self.run_pass(boolean_block(op, "R8", "R9", "R7", 1 - taken, taken))
+                out = out[3:]                                     # sin `.text`, `.globl` ni `f:`
+                self.assertEqual(out[:len(expected)], expected)
+                self.assertEqual(stats["boolean.converted"], 1)
+                self.assertNotIn("BRA L.2", out)
+                self.assertNotIn("L.1:", out)
+                self.assertIn("L.2:", out)
+
+    def test_a_zero_operand_skips_the_subtraction(self):
+        out, _ = self.run_pass(boolean_block("BNE", "R8", "R0", "R7", 0, 1))
+        self.assertEqual(out[3], "SLTU R7, R0, R8")
+        self.assertNotIn("SUB R7, R8, R0", out)
+
+    def test_the_other_ways_of_writing_a_zero_are_accepted(self):
+        for zero in ("MOVI {d}, 0", "ADDI {d}, R0, 0"):
+            with self.subTest(zero=zero):
+                out, stats = self.run_pass(boolean_block("BLT", "R8", "R9", "R7", 1, 0, zero=zero))
+                self.assertEqual(stats["boolean.converted"], 1)
+                self.assertEqual(out[3], "SLT R7, R8, R9")
+
+    def test_it_is_left_alone_when_something_else_jumps_to_the_false_label(self):
+        out, stats = self.run_pass(boolean_block("BLT", "R8", "R9", "R7", 1, 0) + "\nBEQ R3, R4, L.1")
+        self.assertNotIn("boolean.converted", stats)
+        self.assertIn("BLT R8, R9, L.1", out)
+
+    def test_other_jumps_to_the_end_label_are_fine(self):
+        out, stats = self.run_pass("BEQ R3, R4, L.2\n" + boolean_block("BLT", "R8", "R9", "R7", 1, 0))
+        self.assertEqual(stats["boolean.converted"], 1)
+        self.assertIn("BEQ R3, R4, L.2", out)
+        self.assertIn("L.2:", out)
+
+    def test_it_needs_two_different_values_in_the_same_register(self):
+        for first, second, dest_second in ((1, 1, "R7"), (0, 0, "R7"), (1, 0, "R10")):
+            with self.subTest(first=first, second=second, dest=dest_second):
+                body = (f"BLT R8, R9, L.1\nMOVI R7, {first}\nBRA L.2\nL.1:\n"
+                        f"MOVI {dest_second}, {second}\nL.2:")
+                _, stats = self.run_pass(body)
+                self.assertNotIn("boolean.converted", stats)
+
+    def test_other_values_than_zero_and_one_are_left_alone(self):
+        _, stats = self.run_pass("BLT R8, R9, L.1\nMOVI R7, 5\nBRA L.2\nL.1:\nMOVI R7, 0\nL.2:")
+        self.assertNotIn("boolean.converted", stats)
+
+    def test_it_runs_by_default_before_constprop(self):
+        from tools.mini_opt import DEFAULT_PASSES
+        self.assertLess(DEFAULT_PASSES.index("boolean"), DEFAULT_PASSES.index("constprop"))
+
+    def test_programs_give_the_same_registers_before_and_after(self):
+        """Todas las comparaciones, con el destino a veces igual a un operando, en el simulador."""
+        converted = 0
+        for seed in range(300):
+            rng = random.Random(seed)
+            lines = [f"LI R{r}, {rng.choice(POOL)}" for r in range(16, 20)]
+            for n in range(6):
+                dest = f"R{rng.randrange(16, 24)}"
+                operands = [f"R{rng.randrange(16, 20)}" for _ in range(2)]
+                if rng.random() < 0.2:
+                    operands[rng.randrange(2)] = "R0"
+                first = rng.randrange(2)
+                lines.append(boolean_block(rng.choice(("BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU")),
+                                           operands[0], operands[1], dest, first, 1 - first, base=2 * n + 1))
+            source = ".text\n.globl f\nf:\n" + "\n".join(lines) + "\nHALT\n"
+            stats: dict = {}
+            optimized = optimize(source, ["boolean"], stats=stats)
+            converted += stats.get("boolean.converted", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(converted, 0, "el generador nunca ejercita el pase")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"

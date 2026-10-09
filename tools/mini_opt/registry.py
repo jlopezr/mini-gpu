@@ -14,7 +14,7 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # DCE limpia entre fases; `licm` se queda primero con los registros que necesita y `sharebase`
 # usa los restantes; `ssy` ve al final el CFG definitivo.
 DEFAULT_PASSES = [
-    "intrinsics", "kernels", "stackslots", "jumps", "constprop", "dce",
+    "intrinsics", "kernels", "stackslots", "jumps", "boolean", "constprop", "dce",
     "copyprop", "dce", "branches", "unreachable", "licm", "dce",
     "sharebase", "tailcalls", "unreachable", "invert", "ssy",
 ]

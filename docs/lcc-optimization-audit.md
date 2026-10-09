@@ -167,7 +167,7 @@ interprocedimental ni perfiles.
 | Inlining | Ausente | No hay infraestructura interprocedimental | Fuera de la filosofía/objetivo inmediato |
 | Tail calls | Implementada post-RA, restringida | `mini-opt:tailcalls` restaura el epílogo y cambia `JAL` por `BRA` | Rechaza stack args, varargs, punteros al frame, destinos externos/privados e indirectos |
 | Argument optimization | Implementada, pero limitada | R1–R4; `argreg`, `doarg`, `rtarget` | >4 argumentos van a memoria; área mínima 16 con llamadas C |
-| Peephole | Implementada fuera de LCC | `mini-opt` hace jumps/constprop/copyprop/branches/unreachable/DCE/LICM/tailcalls | Integrado opt-in en mini-tst, no por defecto en toda compilación C |
+| Peephole | Implementada fuera de LCC | `mini-opt` hace jumps/constprop/copyprop/branches/unreachable/DCE/LICM/tailcalls/invert/boolean | Integrado opt-in en mini-tst, no por defecto en toda compilación C |
 | Instruction selection | Implementada y efectiva | BURG en `mini.md`, ADDI/ANDI/etc., 64-bit y helpers | Scratch R5/R6 reduce temporales asignables a nueve |
 
 No se debe equiparar «no hay pasada llamada CSE/DCE» con ausencia: el DAG y la
@@ -336,7 +336,7 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 
 `tools/mini_opt` ya separa funciones, construye basic blocks y CFG, calcula
 liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
-son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
+son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `boolean`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `licm`, `dce`, `sharebase`,
 `tailcalls`, `unreachable`, `invert`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
@@ -498,7 +498,7 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.420 instrucciones (−13,5 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y el pase `invert`) | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.242 instrucciones (−14,2 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert` y `boolean`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
 | Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
@@ -525,7 +525,11 @@ historial de la auditoría.
    respecto a la medida anterior; no se ha desglosado cuánto es de los tests
    nuevos y cuánto de `mini.md:local`. Con el pase `invert` (rama invertida,
    `Bcc ; BRA ; L1:`): 23.601 → 20.420 (−3.181, −13,5 %), 165 tests del
-   optimizador, y en `z.tui` −71 instrucciones (−0,6 %).
+   optimizador, y en `z.tui` −71 instrucciones (−0,6 %). Y con `boolean`
+   (booleano como valor, `SLT`/`SLTU`): 23.601 → 20.242 (−3.359, −14,2 %),
+   174 tests del optimizador, 134 de simulación CPU+GPU, y en `z.tui` −70
+   instrucciones más (29 de 40 casos; los demás comparten la etiqueta con otro
+   salto). La tabla de instrucciones ejecutadas de `examples/c` no cambia.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
    con asm manual adversarial, volatile y llamadas indirectas. `tailcalls`
@@ -572,7 +576,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 165 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 174 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.

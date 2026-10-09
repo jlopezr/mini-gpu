@@ -958,7 +958,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `branches`, `unreachable`, `licm`, `sharebase`, `tailcalls`, `invert`, `ssy`) y,
+  `copyprop`, `boolean`, `branches`, `unreachable`, `licm`, `sharebase`, `tailcalls`, `invert`,
+  `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1050,6 +1051,11 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   salta a `L2` y si no, cae en `L1`, que se queda por si tiene otras referencias). Solo si `L2` es una
   etiqueta de la misma función y esta tiene menos de 32.000 instrucciones, porque un branch
   condicional alcanza ±128 KiB y `BRA` mucho más. Va el último antes de `ssy`.
+- **Pase `boolean`:** un branch que decide entre cargar 1 y cargar 0 (`Bcc a,b,Lf ; MOVI r,1 ; BRA Le ;
+  Lf: ; ADD r,R0,R0 ; Le:`, como lcc evalúa `x = a < b`) pasa a `SLT`/`SLTU`: BLT/BGE/BLTU/BGEU en una
+  instrucción (más un `XORI r,r,1` si el sentido es el contrario) y BEQ/BNE en `SUB` + `SLTU r,R0,r` (sin
+  el `SUB` si un operando es R0). No necesita liveness: `r` se escribe por los dos caminos y la secuencia
+  nueva no toca nada más. Solo actúa si nadie más salta a `Lf`; `Le` y las demás etiquetas se quedan.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores
   (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/examples/c/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.
