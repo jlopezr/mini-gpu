@@ -553,7 +553,7 @@ historial de la auditoría.
 | ~~LICM de memoria~~ | **Hecho, ahora demostrado en lugar de supuesto:** en un kernel, la carga de una global que el kernel solo lee sale del bucle si ningún puntero puede alcanzarla. `mini-opt` mira la unidad entera (la dirección no escapa de ninguna función: solo base de `LOAD`/`STORE`, directa o por un puntero calculado a partir de ella; no está en un `.word`), lcc le dice qué símbolos son `volatile` con `; @miniopt volatile NOMBRE`, y `build.py` le pasa el arranque, el runtime y la otra unidad (`--extern-refs`). `--assume-noalias` queda como suposición explícita, apagada por defecto | Mismo resultado que con la suposición en el cubo (~2 %, 1,326 M ciclos), sin ella. Supuestos que no se pueden comprobar desde el texto: que nadie escriba el símbolo mientras el kernel corre y que no se fabrique un puntero desde un entero | Media | mini-opt + hecho de lcc |
 | Relajar frame a 4 | Ausente | Memoria, no instrucciones | Baja, cambio ABI | backend/ABI |
 | 6/8 args | ABI actual 4 | 4/8 instrucciones en sum8 (estimado) | Alta por scratch/compatibilidad | ABI+backend |
-| Metadatos slot/virtual | Ausente | Habilitador, no beneficio directo | Media | backend comments |
+| Metadatos slot/virtual | **Parcial:** el mecanismo existe y lleva un solo hecho, `; @miniopt volatile NOMBRE` (lcc lo escribe en un comentario, `parse_unit` lo lee). Ausentes los de slot/spill/escape/virtual y las salvaguardas propuestas en la sección 9 (cabecera versionada, hash de la secuencia, validación) | `volatile` habilita la LICM de cargas demostrada. Los de slot y virtual: habilitador, no beneficio directo | Media | backend comments |
 
 ## 13. Plan incremental sugerido
 
@@ -601,8 +601,10 @@ historial de la auditoría.
    de argumentos y profundidad de pila; entonces decidir alineación 4 y quizá
    más registros de argumentos. No combinar ambos cambios para conservar una
    atribución clara.
-7. **Metadatos:** añadir solo si una transformación demostrada necesita
-   identidad de spill/escape. Versionar y validar desde el primer formato.
+7. **Metadatos:** ~~primer hecho, `volatile`~~ **(hecho)**. Añadir más solo si
+   una transformación demostrada necesita identidad de spill/escape. El hecho
+   `volatile` no lleva todavía versión ni hash; al añadir el segundo formato
+   hay que versionar y validar desde el principio.
 
 Cada fase es independiente salvo que el análisis de spills se beneficia de la
 promoción anterior. No hace falta esperar a cambios ABI para integrar mini-opt,
@@ -619,8 +621,9 @@ promover locales o ampliar prudentemente las tail calls.
   (~~rama invertida~~, ~~booleano como valor~~) también está hecho.
 - **¿Cambiar MiniABI ya?** No. Solo considerar alineación por memoria como cambio
   separado; 6/8 argumentos requiere antes resolver scratch y medir corpus.
-- **¿Metadatos?** Útiles solo para slots/virtuales/escape; innecesarios para los
-  pases actuales. No priorizarlos.
+- **¿Metadatos?** Ya hay uno, `volatile`, porque la LICM de cargas no puede
+  decidir sin él. Los de slots/virtuales/escape siguen siendo innecesarios para
+  los pases actuales: no priorizarlos.
 - **¿Hace falta mini-opt?** Ya existe y sí aporta; no sustituye mejoras pre-RA.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
