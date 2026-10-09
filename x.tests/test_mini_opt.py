@@ -2085,6 +2085,153 @@ class DeadStoresTest(unittest.TestCase):
         self.assertGreater(removed, 0, "el generador nunca ejercita el pase")
 
 
+class StrengthTest(unittest.TestCase):
+    # un bucle `for (i = 0; i < n; i++)` con tres vecinas de la fila `row`: row + i - 1, row + i, row + i + 1
+    NEIGHBOURS = """\
+.text
+.globl f
+f:
+LI R10, L.9
+MOVI R12, 8
+MOVI R13, 6
+MOVI R14, 0
+MOVI R16, 0
+L.1:
+ADDI R5, R14, -1
+ADD R5, R5, R12
+SHLI R5, R5, 2
+ADD R5, R5, R10
+LOAD R6, R5, 0
+ADD R16, R16, R6
+ADD R5, R14, R12
+SHLI R5, R5, 2
+ADD R5, R5, R10
+LOAD R6, R5, 0
+ADD R16, R16, R6
+ADDI R5, R14, 1
+ADD R5, R5, R12
+SHLI R5, R5, 2
+ADD R5, R5, R10
+LOAD R6, R5, 0
+ADD R16, R16, R6
+ADDI R14, R14, 1
+BLT R14, R13, L.1
+HALT
+L.9:
+.word 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
+"""
+
+    def loop_of(self, text: str) -> list[str]:
+        out = lines_of(text)
+        return out[out.index("L.1:") + 1:out.index("BLT R14, R13, L.1") + 1]
+
+    def test_neighbours_share_one_pointer_that_advances(self):
+        stats: dict = {}
+        out = self.loop_of(optimize(self.NEIGHBOURS, ["strength"], stats=stats))
+        loads = [l for l in out if l.startswith("LOAD")]
+        self.assertEqual(len(loads), 3)
+        pointers = {l.split(", ")[1] for l in loads}
+        self.assertEqual(len(pointers), 1)
+        self.assertEqual(sorted(int(l.split(", ")[2]) for l in loads), [0, 4, 8])
+        self.assertFalse([l for l in out if l.startswith("SHLI")])
+        self.assertEqual(stats["strength.pointers"], 1)
+        # ADDI del puntero (4 bytes por vuelta) y la del contador, dos LOAD... : 3 LOAD + 3 ADD + 2 ADDI + BLT
+        self.assertEqual(len(out), 3 + 3 + 2 + 1)
+
+    def test_the_pointer_is_set_up_in_the_preheader(self):
+        text = optimize(self.NEIGHBOURS, ["strength"])
+        before = lines_of(text)[:lines_of(text).index("L.1:")]
+        self.assertGreater(len(before), len(lines_of(self.NEIGHBOURS)[:lines_of(self.NEIGHBOURS).index("L.1:")]))
+
+    def test_the_result_is_the_same(self):
+        optimized = optimize(self.NEIGHBOURS, ["strength"])
+        self.assertEqual(final_registers(optimized, 0), final_registers(self.NEIGHBOURS, 0))
+        self.assertNotEqual(final_registers(self.NEIGHBOURS, 0)[0], 0)
+
+    def test_running_twice_does_nothing_more(self):
+        once = optimize(self.NEIGHBOURS, ["strength"])
+        stats: dict = {}
+        self.assertEqual(optimize(once, ["strength"], stats=stats), once)
+        self.assertEqual(stats.get("strength.pointers", 0), 0)
+
+    def test_a_loop_with_a_call_is_left_alone(self):
+        source = self.NEIGHBOURS.replace("ADDI R14, R14, 1\nBLT", "JAL R31, g\nADDI R14, R14, 1\nBLT") + "g:\nJR R31\n"
+        stats: dict = {}
+        optimize(source, ["strength"], stats=stats)
+        self.assertEqual(stats.get("strength.pointers", 0), 0)
+
+    def test_an_induction_variable_stepped_by_a_register_is_left_alone(self):
+        source = self.NEIGHBOURS.replace("ADDI R14, R14, 1\nBLT", "ADD R14, R14, R15\nBLT")
+        stats: dict = {}
+        optimize(source, ["strength"], stats=stats)
+        self.assertEqual(stats.get("strength.pointers", 0), 0)
+
+    def test_an_index_that_comes_from_memory_is_left_alone(self):
+        source = self.NEIGHBOURS.replace("ADDI R5, R14, 1\nADD R5, R5, R12", "LOAD R5, R10, 0\nADD R5, R5, R12")
+        stats: dict = {}
+        optimize(source, ["strength"], stats=stats)
+        self.assertEqual(stats.get("strength.pointers", 0), 1)         # las dos vecinas que quedan afines
+        optimized = optimize(source, ["strength"])
+        self.assertEqual(final_registers(optimized, 0), final_registers(source, 0))
+
+    def test_a_use_after_the_induction_update_is_still_exact(self):
+        # el contador se actualiza antes del ultimo acceso del bloque: ese acceso ve i + 1
+        source = self.NEIGHBOURS.replace(
+            "ADDI R14, R14, 1\nBLT",
+            "ADDI R14, R14, 1\nADD R5, R14, R12\nSHLI R5, R5, 2\nADD R5, R5, R10\nLOAD R6, R5, 0\nADD R16, R16, R6\nBLT")
+        optimized = optimize(source, ["strength"])
+        self.assertEqual(final_registers(optimized, 0), final_registers(source, 0))
+
+
+def loop_program(rng: random.Random) -> str:
+    """Un bucle con accesos indexados al azar: `base + ((fila + i * paso + k) << 2)` (o `i * c` con MUL), cargas y
+    stores, y despues una suma de la zona escrita. Los resultados quedan en R16..R19."""
+    step = rng.choice((1, 1, 2, 3))
+    count = rng.randint(1, 6)
+    lines = ["LI R10, L.9", "LI R11, 8192", f"MOVI R12, {rng.randint(0, 12)}", f"MOVI R13, {count * step}",
+             "MOVI R14, 0", "MOVI R16, 0", f"MOVI R15, {rng.randint(1, 4)}"]
+    body = []
+    for n in range(rng.randint(1, 5)):
+        form = rng.choice(("add", "mul", "sub", "mulk"))
+        k = rng.randint(0, 3)
+        if form == "add":
+            body += [f"ADDI R5, R14, {k}", "ADD R5, R5, R12"]
+        elif form == "mulk":                                # (i + k) * c: la constante tambien se multiplica
+            body += [f"ADDI R5, R14, {k}", f"MOVI R7, {rng.randint(1, 3)}", "MUL R5, R5, R7"]
+        elif form == "sub":
+            body += ["SUB R5, R12, R14", f"ADDI R5, R5, {k + 24}"]
+        else:
+            body += [f"MOVI R7, {rng.randint(1, 3)}", "MUL R5, R14, R7", f"ADDI R5, R5, {k}"]
+        shift = rng.choice(("SHLI R5, R5, 2", "MOVI R8, 2\nSHL R5, R5, R8"))
+        if rng.random() < 0.5:
+            body += [shift, "ADD R5, R5, R10", f"LOAD R6, R5, {rng.choice((0, 4))}", "ADD R16, R16, R6"]
+        else:
+            body += [shift, "ADD R5, R5, R11", f"STORE R16, R5, {rng.choice((0, 4))}"]
+    lines += ["L.1:"] + body
+    if rng.random() < 0.3:                                  # un acceso despues de la actualizacion del contador
+        lines += [f"ADDI R14, R14, {step}", "ADD R5, R14, R12", "SHLI R5, R5, 2", "ADD R5, R5, R10",
+                  "LOAD R6, R5, 0", "ADD R16, R16, R6"]
+    else:
+        lines.append(f"ADDI R14, R14, {step}")
+    lines += ["BLT R14, R13, L.1", "MOVI R17, 0", "MOVI R5, 0", "L.2:", "SHLI R6, R5, 2", "ADD R6, R6, R11",
+              "LOAD R6, R6, 0", "ADD R17, R17, R6", "ADDI R5, R5, 1", "MOVI R7, 160", "BLT R5, R7, L.2"]
+    table = ", ".join(str(rng.randint(0, 1000)) for _ in range(80))
+    return ".text\n.globl f\nf:\n" + "\n".join(lines) + f"\nHALT\nL.9:\n.word {table}\n"
+
+
+class StrengthSemanticsTest(unittest.TestCase):
+    def test_programs_give_the_same_registers_before_and_after(self):
+        pointers = 0
+        for seed in range(300):
+            source = loop_program(random.Random(seed))
+            stats: dict = {}
+            optimized = optimize(source, ["strength"], stats=stats)
+            pointers += stats.get("strength.pointers", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(pointers, 100, "el generador apenas ejercita el pase")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"

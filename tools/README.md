@@ -958,7 +958,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `strength`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
   `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1063,6 +1063,16 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   área saliente, que lee el destino de la llamada, además de los guardados y los locales. Si R30 cambia
   de otra forma que el ajuste canónico, o se usa de una forma que no se sigue, no toca la función.
   Es una condición de toda la función, sin CFG ni liveness.
+- **Pase `strength`:** reducción de fuerza de los accesos indexados de un bucle. lcc compila `a[(y + 1) * 168 + 8 + x + k]` con la
+  cuenta entera de cada acceso (`ADD`, `SHL`, `ADD` de la base y el `LOAD`, 4 instrucciones donde a mano es una). Si el bucle tiene una
+  variable de inducción (`ADDI i, i, c`, su única escritura, en el único bloque con arista de vuelta) y la dirección es una suma de
+  registros invariantes, `i` y una constante (`ADD`, `ADDI`, `SUB`, `SHL`/`SHLI` y `MUL` por constante, evaluados dentro de un bloque), los
+  accesos con los mismos invariantes y coeficientes (las vecinas `x - 1`, `x`, `x + 1`) comparten un puntero: el preheader lo deja en
+  `sum(...) + coef * i0 + const_minimo` y el último bloque lo avanza `coef * c`; cada acceso pasa a `LOAD v, P, const - const_minimo`, y el DCE
+  borra las cuentas que quedan sin uso. Cada grupo se prueba sobre una copia y se acepta solo si el bucle queda más corto (con doble peso
+  en los bloques que se ejecutan en cada vuelta); necesita un registro libre para el puntero (y otro de apoyo para el preheader), por eso va
+  antes de `licm`, que se queda con los que sobran. No toca bucles con llamadas ni con más de una arista de vuelta. En la vida de Conway en C
+  con índices: 2,30× → 1,13× el ensamblador.
 - **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
   no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
   borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no
