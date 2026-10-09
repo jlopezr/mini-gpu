@@ -300,6 +300,93 @@ class SeparateCommandsTest(unittest.TestCase):
         self.assertEqual(code, 0)
         upload.assert_called_once_with(self.prototype_dir)
 
+    # -- board-upload --bitstream: un build archivado, no el de _build --
+
+    def _archived(self, summary=None):
+        folder = self.prototype_dir / "reports" / "20260101-000000-base"
+        folder.mkdir(parents=True)
+        (folder / "hardware.bit").write_bytes(b"bits")
+        if summary is not None:
+            (folder / "summary.txt").write_text(summary, encoding="utf-8")
+        return folder
+
+    def test_bitstream_programs_the_archived_file_and_checks_identity(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("$glbnet$clk: 83.6 MHz; required 80.0 MHz\n")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 16)), \
+             mock.patch.object(board, "upload_archived") as archived, \
+             mock.patch.object(board, "upload") as upload:
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                          "--bitstream", str(folder)])
+        self.assertEqual(code, 0)
+        archived.assert_called_once_with(self.prototype_dir, (folder / "hardware.bit").resolve())
+        upload.assert_not_called()
+
+    def test_bitstream_wrong_identity_returns_nonzero(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 1)), \
+             mock.patch.object(board, "upload_archived"):
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                          "--bitstream", str(folder / "hardware.bit")])
+        self.assertEqual(code, 1)
+
+    def test_bitstream_relative_to_the_prototype_folder(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 16)), \
+             mock.patch.object(board, "upload_archived") as archived:
+            run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                   "--bitstream", "reports/20260101-000000-base"])
+        archived.assert_called_once_with(self.prototype_dir, (folder / "hardware.bit").resolve())
+
+    def test_bitstream_missing_stops_before_touching_the_board(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "upload_archived") as archived:
+            with self.assertRaises(SystemExit) as caught:
+                run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                       "--bitstream", "reports/no-existe"])
+        self.assertIn("no encuentro", str(caught.exception))
+        archived.assert_not_called()
+
+    def test_bitstream_warns_when_that_build_did_not_close_timing(self):
+        folder = self._archived("$glbnet$clk: 67.1 MHz; required 80.0 MHz\n"
+                                "$glbnet$sdram_clk: 104.4 MHz; required 100.0 MHz\n")
+        warnings = run_board._timing_warnings(folder / "hardware.bit")
+        self.assertEqual(["$glbnet$clk: 67.1 MHz de 80.0 MHz exigidos"], warnings)
+
+    def test_bitstream_without_summary_says_it_does_not_know(self):
+        folder = self._archived(None)
+        warnings = run_board._timing_warnings(folder / "hardware.bit")
+        self.assertEqual(1, len(warnings))
+        self.assertIn("sin summary.txt", warnings[0])
+
+    def test_bitstream_conflicts_with_rebuild_and_no_upload(self):
+        folder = self._archived("")
+        for extra in ("--rebuild", "--no-upload"):
+            with self.subTest(extra=extra), mock.patch.object(run_board, "_capabilities", return_value={}):
+                with self.assertRaises(SystemExit) as caught:
+                    run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                           "--bitstream", str(folder), extra])
+                self.assertIn("incompatibles", str(caught.exception))
+
+    def test_archived_upload_does_not_stamp_and_clears_the_old_stamp(self):
+        build = self.prototype_dir / "_build" / "default"
+        build.mkdir(parents=True)
+        (build / "hardware.bit").write_bytes(b"current")
+        stamp = build / ".uploaded"
+        stamp.write_text("123", encoding="utf-8")
+        folder = self._archived("")
+        completed = SimpleNamespace(returncode=0)
+        with mock.patch("subprocess.run", return_value=completed), \
+             mock.patch("time.sleep"):
+            board.upload_archived(self.prototype_dir, folder / "hardware.bit")
+        self.assertFalse(stamp.exists())
+        self.assertTrue(board.bitstream_newer_than_upload(self.prototype_dir))
+
     # -- board-load: nunca toca la identidad del bitstream --------------
 
     def test_load_does_not_check_bitstream_identity(self):

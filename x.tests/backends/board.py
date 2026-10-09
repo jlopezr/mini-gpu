@@ -221,8 +221,12 @@ def bitstream_newer_than_upload(project: Path) -> bool:
     return bitstream.stat().st_mtime_ns > uploaded_at
 
 
-def _program_bitstream(project: Path, bitstream: Path) -> None:
-    """Program an already validated bitstream without rebuilding it."""
+def _program_bitstream(project: Path, bitstream: Path, mark: bool = True) -> None:
+    """Program an already validated bitstream without rebuilding it.
+
+    `mark=False` es para un bitstream que NO es el de `_build/default` (uno
+    archivado en `reports/`): no se sella como subido, y se borra el sello viejo,
+    para que la siguiente subida normal vuelva a programar el del proyecto."""
     print(f"--- `fujprog` directo con {bitstream} ---", flush=True)
     try:
         completed = subprocess.run(
@@ -239,7 +243,16 @@ def _program_bitstream(project: Path, bitstream: Path) -> None:
             f"{completed.returncode}; revisa su salida más arriba."
         )
     time.sleep(1.5)
-    _mark_uploaded(project)
+    if mark:
+        _mark_uploaded(project)
+    else:
+        _upload_stamp(project).unlink(missing_ok=True)
+
+
+def upload_archived(project: Path, bitstream: Path) -> None:
+    """Programa un bitstream ya construido y archivado (p. ej. el de un build
+    viejo de `reports/`), sin tocar `_build/default`."""
+    _program_bitstream(project, bitstream, mark=False)
 
 
 def upload(project: Path) -> None:

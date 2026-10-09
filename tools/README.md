@@ -1726,6 +1726,26 @@ defecto, con `--rebuild`/`--no-upload`/`-y`. `board-load` **no comprueba la
 identidad del bitstream** — asume que ya es el correcto y va directo a
 ensamblar/cargar/ejecutar; combínalo con `board-upload` si no estás seguro.
 
+**Subir un build archivado (`board-upload --bitstream`).** `board-upload` normal
+programa `_build/default/hardware.bit`, que es el del *último intento*, aunque
+ese intento no haya cerrado timing o haya muerto antes de generar bitstream (en
+ese caso el fichero que queda es el de un intento anterior). Para volver a un
+build bueno del histórico:
+
+```bash
+$ board-upload -p 37 --bitstream 37.fpga-cpu-gpu-mk2/reports/20261008-160636-738467-base -y
+$ board-upload -p 37 --bitstream reports/20261008-160636-738467-base/hardware.bit -y
+```
+
+Acepta un `hardware.bit` o la carpeta de `reports/` que lo contiene (una ruta
+relativa se busca desde el directorio actual y desde la carpeta del prototipo).
+Lee el `summary.txt` de esa carpeta y **avisa** de los relojes que no cumplían
+(o de que no hay resumen), pero no lo impide. Programa con `fujprog` directo,
+comprueba la identidad con `board-info` al terminar, y **no sella** la subida:
+borra el sello de `_build/default/.uploaded`, así que el siguiente `run-board`
+o `board-upload` sin `--bitstream` vuelve a programar el bitstream actual del
+proyecto. Es incompatible con `--rebuild` y `--no-upload`.
+
 ### Cambiar la fuente de la consola sin resintetizar (`font-patch`)
 
 La fuente de `text_console.v` es contenido inicial de cuatro EBR: cambiarla no

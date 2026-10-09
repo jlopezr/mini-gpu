@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import subprocess
 import sys
 import time
@@ -214,6 +215,58 @@ def ensure_uploaded(target: Target, port: str, serial_timeout: float,
     return 0
 
 
+def _archived_bitstream(source: str, target: Target) -> Path:
+    """Un `hardware.bit`, o la carpeta de `reports/` que lo contiene. Una ruta
+    relativa se busca primero desde el directorio actual y luego desde la
+    carpeta del prototipo (`reports/<build>`)."""
+    given = Path(source)
+    candidates = [given] if given.is_absolute() else [Path.cwd() / given, target.prototype_dir / given]
+    for candidate in candidates:
+        path = candidate / "hardware.bit" if candidate.is_dir() else candidate
+        if path.is_file():
+            return path.resolve()
+    raise SystemExit(f"error: no encuentro ningun bitstream en {source!r} "
+                     f"(busque en {', '.join(str(c) for c in candidates)}).")
+
+
+def _timing_warnings(bitstream: Path) -> list[str]:
+    """Relojes que no cumplian al construir ese bitstream, si la carpeta lleva el
+    `summary.txt` del build. Un bitstream que no cerro timing puede funcionar a
+    medias o fallar de forma intermitente: se avisa, no se impide."""
+    summary = bitstream.parent / "summary.txt"
+    if not summary.is_file():
+        return [f"{bitstream.parent.name}: sin summary.txt, no se sabe si cerro timing."]
+    failing = []
+    for line in summary.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"(\S+): ([\d.]+) MHz; required ([\d.]+) MHz", line)
+        if match and float(match.group(2)) < float(match.group(3)):
+            failing.append(f"{match.group(1)}: {match.group(2)} MHz de {match.group(3)} MHz exigidos")
+    return failing
+
+
+def upload_archived(target: Target, port: str, serial_timeout: float,
+                    source: str, policy) -> int:
+    """Programa un bitstream archivado (`board-upload --bitstream`) en lugar del
+    de `_build/default`, y comprueba que la placa contesta con la identidad del
+    prototipo. No sella la subida: la siguiente subida normal volvera a
+    programar el bitstream actual del proyecto."""
+    bitstream = _archived_bitstream(source, target)
+    print(f"bitstream archivado: {bitstream}")
+    warnings = _timing_warnings(bitstream)
+    for warning in warnings:
+        print(f"AVISO: no cerro timing -> {warning}" if " MHz de " in warning else f"AVISO: {warning}",
+              file=sys.stderr)
+    try:
+        if not policy.confirm(f"¿Programar {bitstream} en la placa ({target.prototype_dir.name})?"):
+            print("Carga cancelada.", file=sys.stderr)
+            return 1
+        board.upload_archived(target.prototype_dir, bitstream)
+    except board.BitstreamMismatch as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return check_identity(target, port, serial_timeout)
+
+
 def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose: bool) -> int:
     """Ensambla si hace falta, carga y (salvo --no-run) ejecuta un programa.
     No comprueba el bitstream: quien llama decide si hace falta. Para
@@ -336,10 +389,20 @@ def main_upload(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-upload", dest="upload", action="store_false", default=None,
                         help="falla en vez de subir si el bitstream no coincide")
     parser.add_argument("-y", "--yes", action="store_true", help="autoriza la carga sin preguntar")
+    parser.add_argument("--bitstream", metavar="RUTA",
+                        help="programa ESTE bitstream archivado (un hardware.bit o la carpeta "
+                             "de reports/ que lo contiene) en lugar del de _build/default, y "
+                             "comprueba la identidad. Avisa si ese build no cerro timing")
     args = parser.parse_args(argv)
     port = _resolve_port(args)
     target = resolve_target(args.prototype)
     policy = board.UploadPolicy(allowed=args.upload is not False, assume_yes=args.yes)
+    if args.bitstream:
+        if args.rebuild:
+            raise SystemExit("error: --bitstream y --rebuild son incompatibles")
+        if args.upload is False:
+            raise SystemExit("error: --bitstream y --no-upload son incompatibles")
+        return upload_archived(target, port, args.serial_timeout, args.bitstream, policy)
     return ensure_uploaded(target, port, args.serial_timeout, policy, args.rebuild)
 
 
