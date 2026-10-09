@@ -1062,6 +1062,51 @@ class StackSlotsTest(unittest.TestCase):
         copies = [l for l in loop if l.startswith("ADD") and l.endswith("R0")]
         self.assertEqual(copies, ["ADD R31, R14, R0"], loop)       # queda la del contador, ninguna sobre si misma
 
+    def test_the_row_variables_of_the_cube_kernel_as_old_lcc_left_them(self):
+        # Forma del `__kernel_cube_good` cuando lcc dejaba `y`, `cstart` y `rstep` en la pila porque las 14
+        # variables del bucle interno se quedaban R16-R29. lcc ya las pone en temporales (mini.md:local), asi
+        # que este .s es lo unico que mantiene probado el pase para ese patron si lcc deja de hacerlo.
+        inner = "\n".join(f"ADDI R{r}, R{r}, 1" for r in range(16, 30))
+        body = f"""GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+512
+ADD R30, R30, R5
+ADDI R30, R30, -80
+LI R14, __gpu_lane
+LOAD R14, R14, 0
+STORE R14, R30, -8+80
+MOVI R14, 8
+STORE R14, R30, -12+80
+GETLWARP R14
+STORE R14, R30, -4+80
+BRA L.130
+L.127:
+LOAD R14, R30, -4+80
+LOAD R13, R30, -8+80
+ADD R26, R13, R0
+BRA L.164
+L.161:
+{inner}
+L.162:
+ADDI R26, R26, 8
+L.164:
+MOVI R14, 160
+BLT R26, R14, L.161
+LOAD R14, R30, -4+80
+LOAD R13, R30, -12+80
+ADD R14, R14, R13
+STORE R14, R30, -4+80
+L.130:
+LOAD R14, R30, -4+80
+MOVI R13, 104
+BLT R14, R13, L.127
+ADDI R30, R30, 80"""
+        out, stats = self.run_pass(body, "__kernel_cube_good")
+        self.assertFalse(any("R30" in l for l in out), out)
+        self.assertEqual((stats["stackslots.slots"], stats["stackslots.frames"]), (3, 1))
+        self.assertEqual(stats["stackslots.accesses"], 9)
+
     def test_a_slot_that_is_only_touched_outside_loops_stays_if_it_does_not_fit_with_the_others(self):
         busy = "\n".join(f"ADDI R{r}, R{r}, 0" for r in (3, *range(5, 13), 15))
         body = ("ADDI R30, R30, -16\nSTORE R9, R30, -8+16\n" + busy + "\nMOVI R14, 0\nSTORE R14, R30, -4+16\nBRA L.2\n"

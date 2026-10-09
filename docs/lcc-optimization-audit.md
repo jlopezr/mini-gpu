@@ -335,8 +335,10 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 ### Estado real
 
 `tools/mini_opt` ya separa funciones, construye basic blocks y CFG, calcula
-liveness, dominadores/postdominadores y bucles. Sus pases por defecto son:
-`intrinsics`, `kernels`, `jumps`, `constprop`, `copyprop`, `licm`, `ssy`.
+liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
+son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
+`copyprop`, `dce`, `branches`, `unreachable`, `licm`, `dce`, `sharebase`,
+`tailcalls`, `unreachable`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
 crear desde cero un optimizador externo, sino si ampliar/integrar el existente.
 
@@ -468,13 +470,15 @@ historial de la auditoría.
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
 | ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.551 → 20.384 instrucciones | Baja | mini-opt + runner LCC |
-| Promoción de AUTO/store-to-load forwarding | Ausente global | Muy alto en locals/pressure/main | Media | LCC pre-RA |
+| ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
+| Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
 | Slot coloring de spills | Ausente | Frame/memoria; depende de presión | Media | pre-emisión |
 | ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros | 36 instrucciones adicionales en mini-tst | Baja-media | mini-opt |
 | ~~Unreachable asm~~ | **Hecho:** branches conocidos + poda por CFG | 27 instrucciones adicionales frente al pipeline anterior | Baja | mini-opt |
+| ~~Plegado de constantes ampliado y base compartida de `LI`~~ | **Hecho:** `constprop` (evaluación de dos constantes, identidades, fusión MUL+SHL; las copias no se evalúan para no dejar sin trabajo a `copyprop`) y `sharebase` | `sharebase` ~1–2 % en el cubo en placa | Baja | mini-opt |
 | LICM aritmética | Existente limitada | Medido por caso; seguro sin calls | Baja | mini-opt |
-| LICM de memoria | Ausente | Potencial en bucles | Alta por alias | LCC |
+| ~~LICM de memoria~~ | **Hecho, acotado:** con `--assume-noalias`, solo en kernels y para símbolos cuya dirección solo se usa como base de `LOAD`. lcc 4.x es C89 y no tiene `restrict`, así que la suposición no se puede demostrar; `examples/c/build.py` lo activa y `MINI_OPT_NOALIAS=0` lo apaga | ~2 % más en el cubo (1,326 M ciclos). Propuesta: apagarlo por defecto por esa ganancia y por ser inseguro con `volatile` | Alta por alias | mini-opt (opt-in) |
 | Relajar frame a 4 | Ausente | Memoria, no instrucciones | Baja, cambio ABI | backend/ABI |
 | 6/8 args | ABI actual 4 | 4/8 instrucciones en sum8 (estimado) | Alta por scratch/compatibilidad | ABI+backend |
 | Metadatos slot/virtual | Ausente | Habilitador, no beneficio directo | Media | backend comments |
@@ -483,16 +487,25 @@ historial de la auditoría.
 
 1. ~~**Integración medida, sin ABI:** aplicar `mini-opt` al pipeline C de CPU de
    forma opt-in y correr mini-tst completo antes/después.~~ **Hecho:**
-   `--optimize` y `--compare-optimizer`; 164/164 casos simulados (+2 xfail),
-   131 tests del optimizador y 23.551 → 20.384 instrucciones (−13,4 %) tras
-   integrar también `stackslots`, `sharebase` y la propagación rica del trabajo paralelo.
+   `--optimize` y `--compare-optimizer`; 23.551 → 20.384 instrucciones
+   (−13,4 %) tras integrar también `stackslots`, `sharebase` y la propagación
+   rica del trabajo paralelo. Estado actual: 165/165 casos simulados (+2 xfail)
+   y 134 tests del optimizador. Ese total no se ha vuelto a medir tras el
+   cambio de `mini.md:local`.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
-   con asm manual adversarial, volatile y llamadas indirectas.
-3. **Promoción local pre-RA:** prototipo pequeño que mantenga escalares no
-   addressed en temporales aunque `ref<3`, con store-to-load forwarding y DSE
-   dentro de regiones sin alias. Casos `constprop`, `copyprop`, `deadstore`,
-   `pressure` y toda mini-tst.
+   con asm manual adversarial, volatile y llamadas indirectas. `tailcalls`
+   rechaza ahora cualquier función (origen o destino) que calcule una
+   dirección de su marco (`takes_frame_address`): con el marco ya cerrado el
+   destino podía pisarla. Con un caso reproducido en el simulador de CPU.
+3. **Promoción local pre-RA:** ~~mantener escalares no addressed en
+   temporales aunque `ref<3`~~ **(hecho, `mini.md:local`)**: en una hoja, un
+   escalar de 4 bytes sin dirección tomada va a un temporal R7–R15 si `ref<3`
+   o si no caben en R16–R29 (dejando 5 temporales para expresiones). El
+   `__kernel_cube_good` ya no toca la pila sin `stackslots`; este pase queda
+   como red de seguridad (test con el `.s` de antes en `StackSlotsTest`).
+   Pendiente: store-to-load forwarding y DSE entre bloques, y la misma idea
+   para funciones con llamadas (necesita R16–R29 y su coste de save).
 4. **Calls/spills:** asignar valores que cruzan llamadas a R16–R29 comparando el
    coste save/restore con stores por call. Medir `calls`, `recursive`, soft-float
    y 64-bit helpers.
@@ -511,8 +524,9 @@ promover locales o ampliar prudentemente las tail calls.
 
 ## 14. Conclusiones para decisión
 
-- **Tres de mayor beneficio probable:** promoción/DSE de escalares; asignación
-  consciente de llamadas; copyprop/DCE post-RA ya existente.
+- **Tres de mayor beneficio probable:** ~~promoción de escalares~~ **(hecha)**
+  y DSE/forwarding entre bloques; asignación consciente de llamadas;
+  copyprop/DCE post-RA ya existente.
 - **Tres más fáciles:** ~~integrar copyprop/DCE existente~~ **(hecho)**;
   ~~unreachable/branch cleanup~~ **(hecho)**; ~~tail-call directo restringido~~ **(hecho)** (la alineación a 4 es aún más simple,
   pero no mejora instrucciones).
@@ -524,13 +538,15 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 131 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 134 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.
 
-Esta fase no modifica el compilador ni MiniABI. Ya implementa la integración
-opt-in de `mini-opt`, DCE físico independiente, simplificación de branches
-constantes/idénticos, eliminación de bloques inalcanzables y tail calls directas
-restringidas; el resto de
-oportunidades permanece abierto.
+Esta fase no modifica MiniABI. Implementa la integración opt-in de `mini-opt`,
+DCE físico independiente, simplificación de branches constantes/idénticos,
+eliminación de bloques inalcanzables, tail calls directas restringidas,
+`stackslots`, `sharebase`, plegado ampliado y LICM de loads opt-in. En el
+compilador, un único cambio: en hojas, los locales que no caben en R16–R29 o
+tienen `ref<3` van a temporales (`mini.md:local`). El resto de oportunidades
+permanece abierto.
