@@ -1971,6 +1971,120 @@ class ForwardTest(unittest.TestCase):
         self.assertGreater(copied, 0, "el generador nunca ejercita la copia")
 
 
+class DeadStoresTest(unittest.TestCase):
+    def run_pass(self, body: str, name: str = "f", frame: int = 32, prologue: bool = True):
+        stats: dict = {}
+        head = f"ADDI R30, R30, -{frame}\n" if prologue else ""
+        tail = f"\nADDI R30, R30, {frame}" if prologue else ""
+        source = f".text\n.globl {name}\n{name}:\n{head}{body}{tail}\nJR R31\n"
+        return lines_of(optimize(source, ["deadstores"], stats=stats))[3:], stats
+
+    def test_stores_to_unread_incoming_slots_are_removed(self):
+        out, stats = self.run_pass("STORE R1, R30, 32\nSTORE R2, R30, 36\nADD R5, R1, R2")
+        self.assertNotIn("STORE R1, R30, 32", out)
+        self.assertNotIn("STORE R2, R30, 36", out)
+        self.assertEqual(stats["deadstores.removed"], 2)
+
+    def test_a_slot_that_is_read_keeps_its_store(self):
+        for load in ("LOAD R5, R30, 36", "LOADB R5, R30, 37", "LOADUH R5, R30, 38", "LOAD R5, R30, 4+32"):
+            with self.subTest(load=load):
+                out, stats = self.run_pass(f"STORE R1, R30, 32\nSTORE R2, R30, 36\n{load}")
+                self.assertIn("STORE R2, R30, 36", out)
+                self.assertNotIn("STORE R1, R30, 32", out)
+                self.assertEqual(stats["deadstores.removed"], 1)
+
+    def test_nothing_below_the_frame_is_touched(self):
+        out, stats = self.run_pass("STORE R1, R30, 0\nSTORE R2, R30, 16\nSTORE R3, R30, 28")
+        self.assertEqual([l for l in out if l.startswith("STORE")],
+                         ["STORE R1, R30, 0", "STORE R2, R30, 16", "STORE R3, R30, 28"])
+        self.assertNotIn("deadstores.removed", stats)
+
+    def test_taking_the_address_of_a_parameter_keeps_it_and_the_ones_above(self):
+        body = "ADDI R5, R30, 40\nSTORE R1, R30, 32\nSTORE R2, R30, 36\nSTORE R3, R30, 40\nSTORE R4, R30, 44"
+        out, stats = self.run_pass(body)
+        self.assertNotIn("STORE R1, R30, 32", out)
+        self.assertNotIn("STORE R2, R30, 36", out)
+        self.assertIn("STORE R3, R30, 40", out)
+        self.assertIn("STORE R4, R30, 44", out)
+        self.assertEqual(stats["deadstores.removed"], 2)
+
+    def test_the_address_of_a_local_does_not_matter(self):
+        out, _ = self.run_pass("ADDI R5, R30, 24\nSTORE R1, R30, 32")
+        self.assertNotIn("STORE R1, R30, 32", out)
+
+    def test_using_the_stack_pointer_in_an_unfollowed_way_leaves_the_function_alone(self):
+        for use in ("ADD R5, R30, R4", "STORE R30, R6, 0", "LOAD R5, R30, here", "STORE R4, R30, here"):
+            with self.subTest(use=use):
+                out, stats = self.run_pass(f"STORE R1, R30, 32\n{use}")
+                self.assertIn("STORE R1, R30, 32", out)
+                self.assertNotIn("deadstores.removed", stats)
+
+    def test_another_change_of_the_stack_pointer_leaves_the_function_alone(self):
+        out, stats = self.run_pass("STORE R1, R30, 32\nADDI R30, R30, -16\nADDI R30, R30, 16")
+        self.assertIn("STORE R1, R30, 32", out)
+
+    def test_a_function_without_a_frame_owns_the_slots_from_zero(self):
+        out, stats = self.run_pass("STORE R1, R30, 0\nSTORE R2, R30, 4\nLOAD R5, R30, 4", prologue=False, frame=0)
+        self.assertNotIn("STORE R1, R30, 0", out)
+        self.assertIn("STORE R2, R30, 4", out)
+
+    def test_narrow_stores_and_other_registers_are_left_alone(self):
+        out, _ = self.run_pass("STOREB R1, R30, 32\nSTOREH R2, R30, 36")
+        self.assertIn("STOREB R1, R30, 32", out)
+        self.assertIn("STOREH R2, R30, 36", out)
+
+    def test_private_abi_helpers_are_not_touched(self):
+        out, _ = self.run_pass("STORE R1, R30, 32", name="__mini_helper")
+        self.assertIn("STORE R1, R30, 32", out)
+
+    def test_it_runs_by_default_after_forward_and_before_the_cleanups(self):
+        from tools.mini_opt import DEFAULT_PASSES
+        self.assertLess(DEFAULT_PASSES.index("forward"), DEFAULT_PASSES.index("deadstores"))
+        self.assertLess(DEFAULT_PASSES.index("deadstores"), DEFAULT_PASSES.index("copyprop"))
+
+    def test_with_forward_the_arguments_spilled_and_reloaded_leave_no_memory_traffic(self):
+        source = (".text\n.globl f\nf:\nADDI R30, R30, -32\nSTORE R1, R30, 32\nSTORE R2, R30, 36\n"
+                  "LOAD R1, R30, 32\nLOAD R2, R30, 36\nADD R1, R1, R2\nADDI R30, R30, 32\nJR R31\n")
+        out = lines_of(optimize(source, ["forward", "deadstores"]))
+        self.assertEqual([l for l in out if l.split()[0] in ("LOAD", "STORE")], [])
+
+    def test_programs_give_the_same_registers_before_and_after(self):
+        """Funciones al azar que vuelcan sus argumentos a los huecos entrantes, leen algunos y los usan en
+        calculos; las llaman varios llamadores con valores distintos. La memoria de esos huecos puede cambiar
+        (es el punto), los registros no."""
+        removed = 0
+        for seed in range(300):
+            rng = random.Random(seed)
+            frame = rng.choice((0, 16, 32))
+            regs = ["R1", "R2", "R3", "R4"]
+            body = []
+            stored = [r for r in regs if rng.random() < 0.8]
+            for n, r in enumerate(regs):
+                if r in stored:
+                    body.append(f"STORE {r}, R30, {frame + 4 * n}")
+            if rng.random() < 0.3:
+                body.append(f"ADDI R9, R30, {frame + 4 * rng.randrange(0, 4)}")     # dir. de un parametro
+                body.append("STORE R5, R9, 0")
+                body += [f"LOAD R8, R9, {4 * rng.randrange(0, 4)}", "ADD R6, R6, R8"]      # lee por el puntero
+            for _ in range(rng.randrange(2, 8)):
+                n = rng.randrange(0, 4)
+                body.append(rng.choice((f"LOAD R{5 + rng.randrange(0, 3)}, R30, {frame + 4 * n}",
+                                        f"ADDI R{1 + rng.randrange(0, 4)}, R{1 + rng.randrange(0, 4)}, {rng.randrange(1, 9)}",
+                                        f"ADD R6, R{1 + rng.randrange(0, 4)}, R{5 + rng.randrange(0, 3)}")))
+            adjust = f"ADDI R30, R30, -{frame}\n" if frame else ""
+            restore = f"\nADDI R30, R30, {frame}" if frame else ""
+            callee = (f".globl f\nf:\n{adjust}" + "\n".join(body) + f"{restore}\nADD R1, R6, R7\nJR R31\n")
+            caller = "".join(f"LI R{1 + k}, {rng.randrange(1, 100)}\n" for k in range(4)) + "LI R5, 77\nLI R7, 3\n"
+            source = (".text\n.globl main\nmain:\n" + caller + "JAL R31, f\nADD R16, R1, R0\nADD R17, R5, R0\n"
+                      "ADD R18, R6, R0\nADD R19, R7, R0\nHALT\n" + callee)
+            stats: dict = {}
+            optimized = optimize(source, ["deadstores"], stats=stats)
+            removed += stats.get("deadstores.removed", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(removed, 0, "el generador nunca ejercita el pase")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"
@@ -2227,11 +2341,11 @@ class TuiDemoTest(unittest.TestCase):
 
     def test_it_executes_clearly_fewer_instructions(self):
         raw, optimized = self.runs["raw"][0], self.runs["opt"][0]
-        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -15,2 %
+        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -16,0 %
 
     def test_the_binary_is_smaller(self):
         raw, optimized = self.runs["raw"][2], self.runs["opt"][2]
-        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -5,1 %
+        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -5,6 %
 
 
 if __name__ == "__main__":

@@ -958,7 +958,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `branches`, `unreachable`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
   `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1055,6 +1055,14 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   cualquier llamada, un cambio de R30, y un store por puntero si el hueco está en o por encima de la dirección
   de marco más baja que la función calcula (si calcula R30 de otra forma, caen todos). Solo palabras con
   desplazamiento numérico múltiplo de 4. Va antes de `constprop` y `copyprop`, que limpian las copias.
+- **Pase `deadstores`:** tras `forward`, el `STORE R1, R30, 32` con que lcc vuelca un argumento a su hueco
+  deja de leerse. Se borra un `STORE` de palabra a un hueco por encima del marco (desplazamiento ≥ n, con
+  `ADDI R30, R30, -n` al entrar: el área de parámetros del llamador, que el destino puede pisar) cuando
+  ninguna instrucción de la función lee esa palabra con ningún ancho y nadie calcula la dirección de ese
+  hueco ni de uno anterior del área (`va_start`, `&param`). Por debajo del marco no toca nada: ahí está el
+  área saliente, que lee el destino de la llamada, además de los guardados y los locales. Si R30 cambia
+  de otra forma que el ajuste canónico, o se usa de una forma que no se sigue, no toca la función.
+  Es una condición de toda la función, sin CFG ni liveness.
 - **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
   no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
   borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no
@@ -1076,8 +1084,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
-con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−15,2 % medido) y un
-binario menor (−5,1 %).
+con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−16,0 % medido) y un
+binario menor (−5,6 %).
 
 ## Build con historial de timing, en segundo plano, estado, logs
 
