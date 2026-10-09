@@ -46,7 +46,9 @@ class Loop:
     pre: int
     latch: int
     written: set[int]
-    ivs: dict[int, int]                     # registro -> paso de su ADDI, la unica escritura en el ultimo bloque
+    # registro -> su paso, la unica escritura en el ultimo bloque: una constante (`ADDI i, i, c`) o un
+    # registro que el bucle no escribe (`ADD i, i, s`, escrito ("R", s))
+    ivs: dict[int, int | tuple[str, int]]
 
 
 def analyze(blocks: list[Block], header: int, body: set[int]) -> Loop | None:
@@ -68,13 +70,20 @@ def analyze(blocks: list[Block], header: int, body: set[int]) -> Loop | None:
             for r in defs_uses(line)[0]:
                 written.add(r)
                 count[r] += 1
-    ivs: dict[int, int] = {}
+    ivs: dict[int, int | tuple[str, int]] = {}
     for line in blocks[latch].lines:
-        if line.kind == "instr" and line.op == "ADDI" and len(line.args) == 3:
-            r = reg_of(line.args[0])
-            step = number(line.args[2])
-            if r and r == reg_of(line.args[1]) and count[r] == 1 and step:
-                ivs[r] = step
+        if line.kind != "instr" or len(line.args) != 3:
+            continue
+        r = reg_of(line.args[0])
+        if not r or count[r] != 1:
+            continue
+        first, second = reg_of(line.args[1]), reg_of(line.args[2])
+        if line.op == "ADDI" and r == first and number(line.args[2]):
+            ivs[r] = number(line.args[2])
+        elif line.op == "ADD" and r in (first, second):
+            step = second if r == first else first
+            if step and step != r and step not in written:      # el paso es otro registro que el bucle no escribe
+                ivs[r] = ("R", step)
     return Loop(header, body, pre.index, latch, written, ivs)
 
 
@@ -177,6 +186,16 @@ def collect(blocks: list[Block], loop: Loop, created: set[int]) -> dict[tuple, l
     return groups
 
 
+def scaled(dest: int, r: int, c: int) -> list | None:
+    """`dest = c * r`, con `c != 1`: sumas consigo misma si es potencia de dos, `MUL` si no."""
+    if c > 1 and not c & (c - 1):
+        return ([instr("ADD", f"R{dest}", f"R{r}", f"R{r}")]
+                + [instr("ADD", f"R{dest}", f"R{dest}", f"R{dest}") for _ in range(c.bit_length() - 2)])
+    if not -32768 <= c <= 32767:
+        return None
+    return [instr("MOVI", f"R{dest}", str(c)), instr("MUL", f"R{dest}", f"R{dest}", f"R{r}")]
+
+
 def prelude(key: tuple, const0: int, pointer: int, scratch: int | None) -> list | None:
     """Las instrucciones del preheader que dejan en `pointer` la direccion del primer acceso."""
     iv, coef, others = key
@@ -189,16 +208,10 @@ def prelude(key: tuple, const0: int, pointer: int, scratch: int | None) -> list 
                          else instr("ADD", f"R{pointer}", f"R{pointer}", f"R{r}"))
             first = False
             continue
-        if dest is None:
+        product = scaled(dest, r, c) if dest is not None else None
+        if product is None:
             return None
-        if c > 1 and not c & (c - 1):                           # potencia de dos: sumas consigo misma
-            lines.append(instr("ADD", f"R{dest}", f"R{r}", f"R{r}"))
-            lines.extend(instr("ADD", f"R{dest}", f"R{dest}", f"R{dest}") for _ in range(c.bit_length() - 2))
-        else:
-            if not -32768 <= c <= 32767:
-                return None
-            lines.append(instr("MOVI", f"R{dest}", str(c)))
-            lines.append(instr("MUL", f"R{dest}", f"R{dest}", f"R{r}"))
+        lines.extend(product)
         if not first:
             lines.append(instr("ADD", f"R{pointer}", f"R{pointer}", f"R{scratch}"))
         first = False
@@ -209,14 +222,31 @@ def prelude(key: tuple, const0: int, pointer: int, scratch: int | None) -> list 
     return lines
 
 
-def apply(blocks: list[Block], loop: Loop, key: tuple, members: list, pointer: int, scratch: int | None) -> bool:
+def apply(blocks: list[Block], loop: Loop, key: tuple, members: list, pointer: int, scratch: int | None,
+          spare: int | None, steps: dict) -> bool:
+    """Deja el puntero en el preheader, reescribe los accesos y avanza el puntero en el ultimo bloque. `steps`
+    guarda los registros que ya valen `coef * paso` (cuando el paso es un registro) para compartirlos; `spare`
+    es un registro libre para uno nuevo."""
     const0 = min(m[2] for m in members)
-    step = key[1] * loop.ivs[key[0]]
     lines = prelude(key, const0, pointer, scratch)
-    if lines is None or not -32768 <= step <= 32767:
+    if lines is None or any(not -32768 <= m[2] - const0 <= 32767 for m in members):
         return False
-    if any(not -32768 <= m[2] - const0 <= 32767 for m in members):
-        return False
+    step = loop.ivs[key[0]]
+    if isinstance(step, int):
+        amount = key[1] * step
+        if not -32768 <= amount <= 32767:
+            return False
+        advance = instr("ADDI", f"R{pointer}", f"R{pointer}", str(amount))
+    elif key[1] == 1:
+        advance = instr("ADD", f"R{pointer}", f"R{pointer}", f"R{step[1]}")
+    else:
+        if (step[1], key[1]) not in steps:
+            product = scaled(spare, step[1], key[1]) if spare is not None else None
+            if product is None:
+                return False
+            lines += product
+            steps[(step[1], key[1])] = spare
+        advance = instr("ADD", f"R{pointer}", f"R{pointer}", f"R{steps[(step[1], key[1])]}")
     for b, position, const in members:
         access = blocks[b].lines[position]
         access.args[1], access.args[2] = f"R{pointer}", str(const - const0)
@@ -230,7 +260,7 @@ def apply(blocks: list[Block], loop: Loop, key: tuple, members: list, pointer: i
             if last.op in BRANCHES or last.op in ("BRA", "JR"):
                 at = index
             break
-    latch.lines.insert(at, instr("ADDI", f"R{pointer}", f"R{pointer}", str(step)))
+    latch.lines.insert(at, advance)
     return True
 
 
@@ -243,6 +273,7 @@ def weight(blocks: list[Block], loop: Loop, dom_latch: set[int]) -> int:
 def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[int], stats: dict) -> None:
     created: set[int] = set()
     rejected: set = set()
+    steps: dict[tuple[int, int], int] = {}                  # (registro del paso, coeficiente) -> registro con el producto
     while True:
         loop = analyze(blocks, header, body)
         if loop is None or not loop.ivs:
@@ -257,18 +288,19 @@ def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[
         for key in sorted((k for k in groups if k not in rejected), key=lambda k: (-len(groups[k]), k)):
             trial = copy.deepcopy(blocks)
             scratch = free[1] if len(free) > 1 else None
-            if not apply(trial, loop, key, groups[key], free[0], scratch):
+            spare = free[2] if len(free) > 2 else None
+            if not apply(trial, loop, key, groups[key], free[0], scratch, spare, dict(steps)):
                 rejected.add(key)
                 continue
             remove_dead(trial, {}, "strength")
             if weight(trial, loop, dom_latch) < weight(blocks, loop, dom_latch):
-                chosen = (key, free[0], scratch)
+                chosen = (key, free[0], scratch, spare)
                 break
             rejected.add(key)
         if chosen is None:
             return
-        key, pointer, scratch = chosen
-        apply(blocks, loop, key, groups[key], pointer, scratch)
+        key, pointer, scratch, spare = chosen
+        apply(blocks, loop, key, groups[key], pointer, scratch, spare, steps)
         remove_dead(blocks, stats, "strength")
         created.add(pointer)
         stats["strength.pointers"] = stats.get("strength.pointers", 0) + 1

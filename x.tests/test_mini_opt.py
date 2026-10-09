@@ -2168,8 +2168,22 @@ L.9:
         optimize(source, ["strength"], stats=stats)
         self.assertEqual(stats.get("strength.pointers", 0), 0)
 
-    def test_an_induction_variable_stepped_by_a_register_is_left_alone(self):
-        source = self.NEIGHBOURS.replace("ADDI R14, R14, 1\nBLT", "ADD R14, R14, R15\nBLT")
+    def register_step(self, step: int) -> str:
+        return (self.NEIGHBOURS.replace("ADDI R14, R14, 1\nBLT", "ADD R14, R14, R15\nBLT")
+                .replace("MOVI R16, 0\nL.1:", f"MOVI R16, 0\nMOVI R15, {step}\nL.1:"))
+
+    def test_an_induction_variable_stepped_by_a_register_advances_the_pointer_by_that_register(self):
+        for step in (1, 2, 3):
+            with self.subTest(step=step):
+                source = self.register_step(step)
+                stats: dict = {}
+                optimized = optimize(source, ["strength"], stats=stats)
+                self.assertEqual(stats["strength.pointers"], 1)
+                self.assertFalse([l for l in self.loop_of(optimized) if l.startswith("SHLI")])
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0))
+
+    def test_a_step_register_that_the_loop_writes_is_left_alone(self):
+        source = self.register_step(1).replace("ADD R14, R14, R15\nBLT", "ADDI R15, R15, 0\nADD R14, R14, R15\nBLT")
         stats: dict = {}
         optimize(source, ["strength"], stats=stats)
         self.assertEqual(stats.get("strength.pointers", 0), 0)
@@ -2196,8 +2210,9 @@ def loop_program(rng: random.Random) -> str:
     stores, y despues una suma de la zona escrita. Los resultados quedan en R16..R19."""
     step = rng.choice((1, 1, 2, 3))
     count = rng.randint(1, 6)
+    by_register = rng.random() < 0.4                        # `ADD i, i, R15` en vez de `ADDI i, i, paso`
     lines = ["LI R10, L.9", "LI R11, 8192", f"MOVI R12, {rng.randint(0, 12)}", f"MOVI R13, {count * step}",
-             "MOVI R14, 0", "MOVI R16, 0", f"MOVI R15, {rng.randint(1, 4)}"]
+             "MOVI R14, 0", "MOVI R16, 0", f"MOVI R15, {step}"]
     body = []
     for n in range(rng.randint(1, 5)):
         form = rng.choice(("add", "mul", "sub", "mulk"))
@@ -2216,11 +2231,12 @@ def loop_program(rng: random.Random) -> str:
         else:
             body += [shift, "ADD R5, R5, R11", f"STORE R16, R5, {rng.choice((0, 4))}"]
     lines += ["L.1:"] + body
+    update = "ADD R14, R14, R15" if by_register else f"ADDI R14, R14, {step}"
     if rng.random() < 0.3:                                  # un acceso despues de la actualizacion del contador
-        lines += [f"ADDI R14, R14, {step}", "ADD R5, R14, R12", "SHLI R5, R5, 2", "ADD R5, R5, R10",
+        lines += [update, "ADD R5, R14, R12", "SHLI R5, R5, 2", "ADD R5, R5, R10",
                   "LOAD R6, R5, 0", "ADD R16, R16, R6"]
     else:
-        lines.append(f"ADDI R14, R14, {step}")
+        lines.append(update)
     lines += ["BLT R14, R13, L.1", "MOVI R17, 0", "MOVI R5, 0", "L.2:", "SHLI R6, R5, 2", "ADD R6, R6, R11",
               "LOAD R6, R6, 0", "ADD R17, R17, R6", "ADDI R5, R5, 1", "MOVI R7, 160", "BLT R5, R7, L.2"]
     table = ", ".join(str(rng.randint(0, 1000)) for _ in range(80))

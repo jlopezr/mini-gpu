@@ -1071,8 +1071,10 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `sum(...) + coef * i0 + const_minimo` y el último bloque lo avanza `coef * c`; cada acceso pasa a `LOAD v, P, const - const_minimo`, y el DCE
   borra las cuentas que quedan sin uso. Cada grupo se prueba sobre una copia y se acepta solo si el bucle queda más corto (con doble peso
   en los bloques que se ejecutan en cada vuelta); necesita un registro libre para el puntero (y otro de apoyo para el preheader), por eso va
-  antes de `licm`, que se queda con los que sobran. No toca bucles con llamadas ni con más de una arista de vuelta. En la vida de Conway en C
-  con índices: 2,30× → 1,13× el ensamblador.
+  antes de `licm`, que se queda con los que sobran. El paso de la variable puede ser una constante (`ADDI i, i, c`) o un registro que el
+  bucle no escribe (`ADD i, i, s`, el `x += nlanes` de un kernel): el puntero avanza entonces `coef * s`, un registro que se calcula una vez en
+  el preheader y se comparte entre grupos. No toca bucles con llamadas ni con más de una arista de vuelta. En la vida de Conway en C
+  con índices: 2,30× → 1,13× el ensamblador en la CPU.
 - **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
   no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
   borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no
