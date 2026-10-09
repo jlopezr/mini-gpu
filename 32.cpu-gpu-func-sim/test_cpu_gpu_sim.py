@@ -1767,6 +1767,120 @@ class CRotateTest(unittest.TestCase):
         self.assertLess(abs(counts["GPU buena"] - counts["GPU inocente"]), counts["GPU inocente"] * 0.2)
 
 
+PLANE_SIN = [round(128 * math.sin(2 * math.pi * k / 64)) for k in range(64)]
+PLANE_MASK = 0x07E0F81F
+
+
+def plane_background():
+    """El degradado de `plane_setup` (plane.c): el fondo de cada fila, en RGB565 abierto."""
+    rows = []
+    for y in range(104):
+        r, g, b = 24 + 176 * y // 103, 40 + 80 * y // 103, 96 - 48 * y // 103
+        c = (r >> 3) << 11 | (g >> 2) << 5 | b >> 3
+        rows.append((c | c << 16) & PLANE_MASK)
+    return rows
+
+
+def plane_image(frame: int, textures, background) -> bytes:
+    """Lo que `plane_prepare` y `plane_body.h` dibujan en el fotograma `frame`: 208 lineas de 160 palabras."""
+    c = PLANE_SIN[((frame & 63) + 16) & 63]
+    tex = textures[16384 if c < 0 else 0:][:16384]
+    u00, ux = 0x40000000, 0
+    if abs(c) >= 8:
+        ux = 170 * 128 // abs(c)
+        u00 = 64 * 128 - 80 * ux
+    v00 = 64 * 128 - 52 * 170
+    out = bytearray()
+    for y in range(104):
+        bgx = background[y]
+        bg16 = (bgx | bgx >> 16) & 0xFFFF
+        row = []
+        v = v00 + y * 170
+        for x in range(160):
+            u = u00 + x * ux
+            if 0 <= v < 16384 and 0 <= u < 16384:
+                t = tex[(v & 0x3F80) + (u >> 7)]
+                a = t >> 5 & 63
+                r = (((((t & PLANE_MASK) - bgx) & 0xFFFFFFFF) * a & 0xFFFFFFFF) >> 5) + bgx & PLANE_MASK
+                pixel = (r | r >> 16) & 0xFFFF
+            else:
+                pixel = bg16
+            row.append(pixel * 65537)
+        out += struct.pack("<160I", *row) * 2
+    return bytes(out)
+
+
+class CPlaneRaceTest(unittest.TestCase):
+    """`examples/c/race/plane.c`: el plano con un logo por cara y alfa sobre un degradado. Los tres métodos (CPU,
+    GPU inocente y GPU buena, un solo cuerpo) tienen que dibujar, fotograma a fotograma, lo mismo que el modelo."""
+
+    FRAMES = 7
+
+    @classmethod
+    def setUpClass(cls):
+        image, labels = build_c_example("race/plane")
+        blob = (C_EXAMPLES / "_build" / "plane_tex.bin").read_bytes()
+        cls.textures = struct.unpack("<%dI" % (len(blob) // 4), blob)
+        cls.background = plane_background()
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def model(self, frame: int) -> bytes:
+        return plane_image(frame, self.textures, self.background)
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_and_the_previous_frame_are_the_modelled_ones(self):
+        self.assertEqual(self.screen(self.video.fb_front), self.model(self.FRAMES - 1))
+        self.assertEqual(self.screen(self.video.fb_back), self.model(self.FRAMES - 2))
+
+    def test_the_logo_is_blended_over_the_gradient(self):
+        words = struct.unpack("<%dI" % (208 * 160), self.model(self.FRAMES - 1))
+        background = {(b | b >> 16) & 0xFFFF for b in self.background}
+        covered = sum(1 for w in words if (w & 0xFFFF) not in background)
+        self.assertGreater(covered, 2000)               # el logo
+        self.assertLess(covered, len(words) * 0.5)      # y se ve fondo alrededor
+        self.assertGreater(len(set(words)), 100)        # colores del logo y del degradado, mezclados
+
+    def test_the_gpu_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+    def test_front_and_back_show_different_logos_and_edge_on_shows_none(self):
+        front, back, edge = (plane_image(f, self.textures, self.background) for f in (0, 32, 16))
+        gradient = plane_image(48, [0] * 32768, self.background)       # sin texeles: solo el fondo
+        self.assertNotEqual(front, back)
+        self.assertEqual(edge, gradient)
+
+    def test_the_blend_matches_a_channel_by_channel_blend(self):
+        # el truco de la multiplicacion unica no se desvia de la mezcla exacta mas de 1 por canal
+        for t, bgx in ((0xFFFF, 0x0000), (0x0000, 0xFFFF), (0xF800, 0x07E0), (0x8410, 0x1234)):
+            for alpha in (0, 1, 7, 16, 31, 32):
+                s = (t | t << 16) & PLANE_MASK
+                b = (bgx | bgx << 16) & PLANE_MASK
+                r = (((s - b) & 0xFFFFFFFF) * alpha & 0xFFFFFFFF) >> 5
+                r = (r + b) & PLANE_MASK
+                got = ((r | r >> 16) & 0xFFFF)
+                for shift, bits in ((11, 5), (5, 6), (0, 5)):
+                    x, y = t >> shift & (1 << bits) - 1, bgx >> shift & (1 << bits) - 1
+                    self.assertLessEqual(abs((got >> shift & (1 << bits) - 1) - (y + (x - y) * alpha // 32)), 1,
+                                         (hex(t), hex(bgx), alpha, shift))
+
+
 class CDivergenceTest(unittest.TestCase):
     """`examples/c/simt/diverge.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
     `ssy` de mini-opt. Cada resultado se compara con el mismo cálculo en Python."""

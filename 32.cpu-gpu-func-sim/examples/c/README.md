@@ -255,13 +255,36 @@ ensamblador, pero quedan una copia `ADD Rd, Rs, R0` por cada coordenada que se c
 cast a `unsigned`), la carga de la base de la textura en cada acierto (el ensamblador la tiene en un
 registro) y un `SHL` donde el ensamblador suma el valor a sí mismo.
 
+## El plano con logos y alfa
+
+`race/plane.c` es el mismo anfitrión que el cubo con otro dibujo: un plano que gira sobre el eje vertical,
+los Autobots delante, los Decepticons detrás, mezclados con alfa sobre un degradado vertical. El cuerpo
+(`race/plane_body.h`) se incluye tres veces, como los otros. Como el plano solo gira sobre un eje, `v` no
+depende de la columna: cada fila lee una sola fila de textura y solo `u` avanza.
+
+```text
+python examples/c/build.py examples/c/race/plane.c --board        # -> _build/plane_board.bin
+```
+
+Las texturas salen de `race/plane/logos.png` con `race/plane_tex.py` (dos de 128 × 128 palabras, 128 KiB), que
+`build.py` ejecuta y deja tras el código con la etiqueta `plane_tex` (tabla `DATA`; el C la declara `extern`).
+Cada palabra es un texel con su alfa: el RGB565 «abierto» (rojo y azul abajo, verde arriba, con huecos) y el
+alfa de 0 a 32 en el hueco entre azul y rojo. Así `texel & 0x07E0F81F` ya está abierto y la mezcla con el
+fondo de la fila es **una sola multiplicación** para los tres canales. El alfa sale del fondo negro de la
+imagen (relleno desde el borde, suavizado al reducir). `python examples/c/race/plane_tex.py --preview v.png`
+deja las dos texturas sobre el degradado. La imagen entra completa en el programa: el `.bin` pasa de 170 KiB.
+
+`CPlaneRaceTest` comprueba en el simulador que los tres métodos dibujan, fotograma a fotograma, lo que el
+modelo en Python.
+
 ## Límites de hoy
 
 - **Hasta 4 parámetros** de 32 bits por kernel (`R1`–`R4`); con más, un puntero a estructura.
 - **Un kernel no se puede llamar desde la CPU** (empieza con `GETTID` y acaba con `EXIT`).
 - **Sin llamadas dentro de un kernel** (la GPU de la 36 no tiene `JAL`), ni `long long`,
   ni `float`, ni división sin signo.
-- **Placa:** solo está probado el cubo (`--board`, runtime con `RUN`, la 36 no tiene `WARP_START`).
+- **Placa:** solo está probado el cubo (`--board`, runtime con `RUN`, la 36 no tiene `WARP_START`). El plano
+  compila y pasa en el simulador, pero no se ha probado en la placa.
 
 Las pruebas son `CKernelTest` y `CDivergenceTest` en `test_cpu_gpu_sim.py` (se omite si no hay compilador: necesita
 `y.lcc/build/rcc` y MSVC).

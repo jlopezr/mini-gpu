@@ -34,6 +34,11 @@ RUNTIMES = {False: (ASM / "dma" / "gpu_runtime.inc", ASM / "race" / "bench_sim.i
             True: (ASM / "dma" / "gpu_runtime_board.inc", ASM / "race" / "bench_board.inc")}
 
 
+# programa -> (etiqueta, generador): datos binarios que se insertan tras el codigo con `.incbin`
+# (el generador recibe `-o` y deja el .bin en _build/); el C los declara con `extern unsigned etiqueta[]`
+DATA = {"plane": ("plane_tex", HERE / "race" / "plane_tex.py")}
+
+
 class BuildError(RuntimeError):
     pass
 
@@ -62,11 +67,17 @@ def build(program: Path, output: Path | None = None, board: bool = False) -> Pat
     runtime, bench = RUNTIMES[board]
     parts = [compile_c(program), compile_c(SYSTEM / "gpu.c")]
     BUILD.mkdir(exist_ok=True)
+    data = ""
+    if program.stem in DATA:
+        label, generator = DATA[program.stem]
+        blob = BUILD / f"{label}.bin"
+        run(generator, "-o", blob)
+        data = f'.align 4\n{label}:\n.incbin "{blob.as_posix()}"\n'
     wrapper = BUILD / f"{name}.asm"
     wrapper.write_text(
         f'; generado por build.py\n.include "mmio.inc"\n.include "{CRT0.as_posix()}"\n'
         + "".join(f'.include "{part.as_posix()}"\n' for part in parts)
-        + f'.include "{runtime.as_posix()}"\n.include "{bench.as_posix()}"\n', encoding="utf-8")
+        + f'.include "{runtime.as_posix()}"\n.include "{bench.as_posix()}"\n' + data, encoding="utf-8")
     image = assemble_bytes(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                            INCLUDE_DIRS)
     output.write_bytes(image)
