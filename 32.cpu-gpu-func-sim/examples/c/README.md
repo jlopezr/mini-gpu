@@ -232,6 +232,12 @@ C): con él, la CPU salía a 1,12 del ensamblador, y no era el método sino el a
 salen redondos porque un fotograma acaba en un cambio de buffer, cada 1.000 instrucciones (±0,3 %). Con
 todos los pases, el cubo queda a 1,00 / 1,00 / 1,01 veces el ensamblador (CPU, GPU inocente, GPU buena).
 
+No todo C llega a eso. `compare_life.py` mide el juego de la vida en la CPU (una generación de 160 x 104) contra
+`life.inc`, con dos C del mismo algoritmo: con índices de la rejilla `(y + 1) * 168 + 8 + x` (`race/life.c`) sale a 2,30
+veces el ensamblador (1.148.051 frente a 499.839 instrucciones), y con punteros que avanzan y desplazamientos constantes
+(`race/life_ptr.c`), a 1,05 (526.289). La diferencia es que lcc y mini-opt no reducen la fuerza de los índices: cada acceso a
+una vecina cuesta 4 instrucciones en vez de 1. Los números de arriba valen para C escrito con ese cuidado.
+
 En los kernels de sistema el C ya ejecuta menos instrucciones que el ensamblador a mano (el ensamblador
 del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que sea menos no quiere decir
 que tarde menos: son instrucciones, no ciclos, y la mezcla de cargas y ALU es la misma.
