@@ -527,7 +527,7 @@ historial de la auditoría.
    `Bcc ; BRA ; L1:`): 23.601 → 20.420 (−3.181, −13,5 %), 165 tests del
    optimizador, y en `z.tui` −71 instrucciones (−0,6 %). Y con `boolean`
    (booleano como valor, `SLT`/`SLTU`): 23.601 → 20.242 (−3.359, −14,2 %),
-   174 tests del optimizador, 134 de simulación CPU+GPU, y en `z.tui` −70
+   177 tests del optimizador (3 compilan la demo de `z.tui`), 134 de simulación CPU+GPU, y en `z.tui` −70
    instrucciones más (29 de 40 casos; los demás comparten la etiqueta con otro
    salto). La tabla de instrucciones ejecutadas de `examples/c` no cambia.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
@@ -576,7 +576,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 174 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 177 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.

@@ -12,6 +12,8 @@ falta MSVC para correr la suite. Se comprueba:
 """
 
 import random
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1912,6 +1914,60 @@ class FilterTest(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
             self.assertIn("intrinsics", done.stderr)
+
+
+TUI = ROOT / "z.tui"
+RCC = ROOT / "y.lcc" / "build" / ("rcc.exe" if sys.platform == "win32" else "rcc")
+
+
+@unittest.skipUnless((TUI / "tui_unity_mini.c").exists() and RCC.exists()
+                     and (shutil.which("cl") or sys.platform != "win32"),
+                     "hace falta el submodulo z.tui, y.lcc/build/rcc y un preprocesador de C (cl en el PATH)")
+class TuiDemoTest(unittest.TestCase):
+    """La demo de z.tui (unas 12.000 instrucciones de C que nadie escribio para `mini-opt`) compilada con
+    y sin los pases: tiene que dibujar la misma pantalla, ocupar menos y ejecutar menos."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        temp = Path(cls.temp.name)
+        (temp / "keys.bin").write_bytes(b"\x1b")
+        cls.runs = {}
+        cls.run_tool("mini-lcc", "tui_unity_mini.c", "-o", str(temp / "raw.s"), cwd=TUI)
+        cls.run_tool("mini-opt", str(temp / "raw.s"), "-o", str(temp / "opt.s"))
+        for name in ("raw", "opt"):
+            cls.run_tool("mini-asm", str(temp / f"{name}.s"), "-o", str(temp / f"{name}.bin"))
+            done = cls.run_tool("minicpu", str(temp / f"{name}.bin"), "--serial-input", str(temp / "keys.bin"),
+                                "--console-output", str(temp / f"{name}.txt"), "--run-limit", "50000000")
+            cls.runs[name] = (int(re.search(r"HALT tras (\d+) instrucciones", done.stdout).group(1)),
+                              (temp / f"{name}.txt").read_text(encoding="utf-8"),
+                              (temp / f"{name}.bin").stat().st_size)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    @classmethod
+    def run_tool(cls, tool: str, *args: str, cwd: Path = ROOT):
+        script = ROOT / "2.cpu-sim-func" / "minicpu_sim.py" if tool == "minicpu" else ROOT / "tools" / tool
+        done = subprocess.run([sys.executable, str(script), *args], cwd=cwd, capture_output=True, text=True)
+        if done.returncode != 0:
+            raise AssertionError(f"{tool} {' '.join(args)}\n{done.stdout}\n{done.stderr}")
+        return done
+
+    def test_the_screen_is_the_same_with_and_without_the_passes(self):
+        raw, optimized = self.runs["raw"][1], self.runs["opt"][1]
+        self.assertIn("File", raw.splitlines()[0])
+        self.assertIn("F1 Help", raw.splitlines()[29])
+        self.assertEqual(optimized, raw)
+
+    def test_it_executes_clearly_fewer_instructions(self):
+        raw, optimized = self.runs["raw"][0], self.runs["opt"][0]
+        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -12,7 %
+
+    def test_the_binary_is_smaller(self):
+        raw, optimized = self.runs["raw"][2], self.runs["opt"][2]
+        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -3,5 %
 
 
 if __name__ == "__main__":

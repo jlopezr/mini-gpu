@@ -1061,7 +1061,9 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   instrucciones ejecutadas en el simulador, con y sin los pases.
 
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
-necesita MSVC y se omite sin él).
+necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
+con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−12,7 % medido) y un
+binario menor (−3,5 %).
 
 ## Build con historial de timing, en segundo plano, estado, logs
 
