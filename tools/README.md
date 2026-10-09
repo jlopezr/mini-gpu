@@ -958,7 +958,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `branches`, `unreachable`, `licm`, `sharebase`, `tailcalls`, `ssy`) y,
+  `copyprop`, `branches`, `unreachable`, `licm`, `sharebase`, `tailcalls`, `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1046,6 +1046,10 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   indirectas quedan fuera.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
+- **Pase `invert`:** `Bcc a,b,L1 ; BRA L2 ; L1:` pasa a `B!cc a,b,L2 ; L1:` (la condición contraria
+  salta a `L2` y si no, cae en `L1`, que se queda por si tiene otras referencias). Solo si `L2` es una
+  etiqueta de la misma función y esta tiene menos de 32.000 instrucciones, porque un branch
+  condicional alcanza ±128 KiB y `BRA` mucho más. Va el último antes de `ssy`.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores
   (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/examples/c/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.

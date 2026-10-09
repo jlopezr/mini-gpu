@@ -16,7 +16,7 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 DEFAULT_PASSES = [
     "intrinsics", "kernels", "stackslots", "jumps", "constprop", "dce",
     "copyprop", "dce", "branches", "unreachable", "licm", "dce",
-    "sharebase", "tailcalls", "unreachable", "ssy",
+    "sharebase", "tailcalls", "unreachable", "invert", "ssy",
 ]
 
 

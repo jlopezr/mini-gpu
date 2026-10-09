@@ -338,7 +338,7 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
 son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `licm`, `dce`, `sharebase`,
-`tailcalls`, `unreachable`, `ssy`.
+`tailcalls`, `unreachable`, `invert`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
 crear desde cero un optimizador externo, sino si ampliar/integrar el existente.
 
@@ -498,7 +498,7 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.459 instrucciones (−13,3 %, medida el 9 de octubre de 2026 con `y.lcc` en `63c0e1d`) | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.420 instrucciones (−13,5 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y el pase `invert`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
 | Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
@@ -523,7 +523,9 @@ historial de la auditoría.
    simulados (+2 xfail), 23.601 → 20.459 instrucciones (−3.142, −13,3 %), y
    155 tests del optimizador. El sin optimizar crece 50 y el optimizado 75
    respecto a la medida anterior; no se ha desglosado cuánto es de los tests
-   nuevos y cuánto de `mini.md:local`.
+   nuevos y cuánto de `mini.md:local`. Con el pase `invert` (rama invertida,
+   `Bcc ; BRA ; L1:`): 23.601 → 20.420 (−3.181, −13,5 %), 165 tests del
+   optimizador, y en `z.tui` −71 instrucciones (−0,6 %).
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
    con asm manual adversarial, volatile y llamadas indirectas. `tailcalls`
@@ -570,7 +572,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 155 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 165 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.

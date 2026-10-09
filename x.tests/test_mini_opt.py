@@ -1529,6 +1529,85 @@ class BranchesTest(unittest.TestCase):
         self.assertEqual(stats["branches.removed"], 1)
 
 
+class InvertTest(unittest.TestCase):
+    def run_pass(self, body: str, pass_name: str = "invert"):
+        stats: dict = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        return lines_of(optimize(source, [pass_name], stats=stats)), stats
+
+    def test_a_branch_over_a_jump_becomes_the_opposite_branch(self):
+        for op, opposite in (("BEQ", "BNE"), ("BNE", "BEQ"), ("BLT", "BGE"),
+                             ("BGE", "BLT"), ("BLTU", "BGEU"), ("BGEU", "BLTU")):
+            with self.subTest(op=op):
+                out, stats = self.run_pass(f"{op} R7, R8, L.1\nBRA L.2\nL.1:\nMOVI R1, 1\nL.2:")
+                self.assertIn(f"{opposite} R7, R8, L.2", out)
+                self.assertNotIn("BRA L.2", out)
+                self.assertNotIn(f"{op} R7, R8, L.1", out)
+                self.assertEqual(stats["invert.inverted"], 1)
+
+    def test_the_skipped_label_stays_for_other_references(self):
+        out, _ = self.run_pass("BEQ R7, R8, L.1\nBRA L.2\nL.1:\nMOVI R1, 1\nBNE R9, R0, L.1\nL.2:")
+        self.assertIn("L.1:", out)
+        self.assertIn("BNE R9, R0, L.1", out)
+
+    def test_other_labels_between_are_fine_as_long_as_the_skipped_one_follows_the_jump(self):
+        out, stats = self.run_pass("BEQ R7, R8, L.1\nBRA L.2\nL.3:\nL.1:\nMOVI R1, 1\nL.2:")
+        self.assertIn("BNE R7, R8, L.2", out)
+        self.assertEqual(stats["invert.inverted"], 1)
+
+    def test_a_label_between_the_branch_and_the_jump_makes_the_jump_reachable_on_its_own(self):
+        out, stats = self.run_pass("BEQ R7, R8, L.1\nL.3:\nBRA L.2\nL.1:\nMOVI R1, 1\nL.2:")
+        self.assertIn("BRA L.2", out)
+        self.assertNotIn("invert.inverted", stats)
+
+    def test_a_branch_that_does_not_skip_the_jump_is_left_alone(self):
+        out, stats = self.run_pass("BEQ R7, R8, L.4\nBRA L.2\nL.1:\nMOVI R1, 1\nL.2:\nL.4:")
+        self.assertIn("BEQ R7, R8, L.4", out)
+        self.assertNotIn("invert.inverted", stats)
+
+    def test_a_jump_to_where_it_falls_is_left_to_the_jumps_pass(self):
+        out, stats = self.run_pass("BEQ R7, R8, L.1\nBRA L.1\nL.1:\nMOVI R1, 1")
+        self.assertIn("BEQ R7, R8, L.1", out)
+        self.assertNotIn("invert.inverted", stats)
+
+    def test_a_target_outside_the_function_is_not_inverted(self):
+        out, stats = self.run_pass("BEQ R7, R8, L.1\nBRA elsewhere\nL.1:\nMOVI R1, 1")
+        self.assertIn("BRA elsewhere", out)
+        self.assertNotIn("invert.inverted", stats)
+
+    def test_a_function_too_big_for_a_16_bit_branch_is_not_inverted(self):
+        body = "BEQ R7, R8, L.1\nBRA L.2\nL.1:\n" + "ADDI R1, R1, 1\n" * 33000 + "L.2:"
+        out, stats = self.run_pass(body)
+        self.assertIn("BRA L.2", out)
+        self.assertNotIn("invert.inverted", stats)
+
+    def test_it_runs_by_default_and_before_ssy(self):
+        from tools.mini_opt import DEFAULT_PASSES
+        self.assertIn("invert", DEFAULT_PASSES)
+        self.assertLess(DEFAULT_PASSES.index("invert"), DEFAULT_PASSES.index("ssy"))
+
+    def test_programs_give_the_same_registers_before_and_after(self):
+        """Ramas sobre un `BRA` entre valores al azar, ejecutadas en el simulador con y sin el pase."""
+        inverted = 0
+        for seed in range(200):
+            rng = random.Random(seed)
+            lines = []
+            for n in range(6):
+                op = rng.choice(sorted(("BEQ", "BNE", "BLT", "BGE", "BLTU", "BGEU")))
+                a, b = rng.choice((0, 5, 6, 7)), rng.choice((0, 5, 6, 7))
+                lines += [f"{op} R{a}, R{b}, L.{2 * n + 1}", f"BRA L.{2 * n + 2}", f"L.{2 * n + 1}:",
+                          f"ADDI R{16 + n}, R{16 + n}, {rng.randint(1, 9)}", f"L.{2 * n + 2}:",
+                          f"ADDI R{16 + n}, R{16 + n}, {rng.randint(10, 99)}"]
+            init = [f"LI R{r}, {rng.choice(POOL)}" for r in (5, 6, 7)]
+            source = ".text\n.globl f\nf:\n" + "\n".join(init + lines) + "\nHALT\n"
+            stats: dict = {}
+            optimized = optimize(source, ["invert"], stats=stats)
+            inverted += stats.get("invert.inverted", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(inverted, 0, "el generador nunca ejercita el pase")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"
