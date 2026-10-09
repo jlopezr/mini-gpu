@@ -1,6 +1,6 @@
 /* life_ptr.c - lo mismo que life.c, pero escrito pensando en el compilador: punteros que avanzan
  * y desplazamientos constantes en vez de indices (y + 1) * STRIDE + 8 + x. Es el C que haria quien
- * sabe que lcc no reduce la fuerza de los indices. Ver compare_life.py.
+ * sabe que lcc no reduce la fuerza de los indices. Ver compare_race.py.
  */
 #include "gpu.h"
 

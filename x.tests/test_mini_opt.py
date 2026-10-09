@@ -1645,6 +1645,14 @@ class BooleanTest(unittest.TestCase):
                 self.assertNotIn("L.1:", out)
                 self.assertIn("L.2:", out)
 
+    def test_a_gpu_kernel_is_left_alone_because_the_gpu_has_no_compare_extension(self):
+        source = (".text\n.globl __kernel_k\n__kernel_k:\n" + boolean_block("BNE", "R8", "R9", "R7", 0, 1)
+                  + "\nJR R31\n")
+        stats: dict = {}
+        out = optimize(source, ["boolean"], stats=stats)
+        self.assertEqual(out, source)
+        self.assertEqual(stats.get("boolean.converted", 0), 0)
+
     def test_a_zero_operand_skips_the_subtraction(self):
         out, _ = self.run_pass(boolean_block("BNE", "R8", "R0", "R7", 0, 1))
         self.assertEqual(out[3], "SLTU R7, R0, R8")

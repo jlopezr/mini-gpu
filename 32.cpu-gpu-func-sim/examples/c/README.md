@@ -39,7 +39,7 @@ nombre en la misma carpeta, para encontrar rápido la otra versión:
 
 En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`, `mmio.h`); `build.py` pasa esa carpeta a
 `mini-lcc -I`, así que los ejemplos solo escriben `#include "gpu.h"`. En `c/` quedan las herramientas
-(`build.py`, `compare.py`, `compare_rotate.py`) y las salidas de la compilación van a `c/_build/`.
+(`build.py`, `compare.py`, `compare_race.py`) y las salidas de la compilación van a `c/_build/`.
 
 ## Cómo funciona
 
@@ -126,7 +126,7 @@ plantilla por `#include`.
 
 ## C frente a ensamblador: la rotación de textura
 
-`compare_rotate.py` ejecuta los seis (tres métodos × C y ensamblador) con los mismos datos y comprueba
+`compare_race.py rotate` ejecuta los seis (tres métodos × C y ensamblador) con los mismos datos y comprueba
 que cada uno dibuja la imagen del modelo en Python. Los kernels de GPU se lanzan sin programa de CPU y
 la CPU se ejecuta hasta `HALT`:
 
@@ -232,7 +232,7 @@ C): con él, la CPU salía a 1,12 del ensamblador, y no era el método sino el a
 salen redondos porque un fotograma acaba en un cambio de buffer, cada 1.000 instrucciones (±0,3 %). Con
 todos los pases, el cubo queda a 1,00 / 1,00 / 1,01 veces el ensamblador (CPU, GPU inocente, GPU buena).
 
-No todo C llega a eso. `compare_life.py` mide el juego de la vida en la CPU (una generación de 160 x 104) contra
+No todo C llega a eso. `compare_race.py life` mide el juego de la vida en la CPU (una generación de 160 x 104) contra
 `life.inc`, con dos C del mismo algoritmo: con índices de la rejilla `(y + 1) * 168 + 8 + x` (`race/life.c`) sale a 2,30
 veces el ensamblador (1.148.051 frente a 499.839 instrucciones), y con punteros que avanzan y desplazamientos constantes
 (`race/life_ptr.c`), a 1,05 (526.289). Sin el pase `strength` era la diferencia entre 2,30 y 1,05: cada acceso a una vecina

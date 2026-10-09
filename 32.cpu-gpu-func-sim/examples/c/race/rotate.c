@@ -1,6 +1,6 @@
 /* rotate.c - la rotacion de textura de examples/asm/race/rotate.inc, en C: CPU, GPU inocente y GPU buena
  *
- *   python examples/c/compare_rotate.py
+ *   python examples/c/compare_race.py rotate
  *
  * El cuerpo esta en rotate_body.h, una sola vez; este fichero lo incluye tres veces con otro
  * reparto de trabajo entre hilos (ver la tabla de rotate_body.h). Bloque de argumentos: el de
@@ -11,7 +11,7 @@
 #define ROT_COLS 160
 #define ROT_ROWS 104
 #define ROT_TEX 0x010A0000          /* 128 x 128 palabras, como en rotate.inc */
-#define ROT_BLOCK 0x001F0000        /* donde compare_rotate.py deja el bloque para la CPU */
+#define ROT_BLOCK 0x001F0000        /* donde compare_race.py deja el bloque para la CPU */
 
 typedef struct {
     int nwarps, nlanes;

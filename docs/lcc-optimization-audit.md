@@ -513,7 +513,7 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   texturas, sí es más caro en C (unas 670.000 instrucciones frente a 530.000),
   pero ocurre una sola vez; una medida anterior de 1,12 en CPU era ese arranque
   y no el método.
-- **Vida de Conway en la CPU, C natural frente a ensamblador** (`compare_life.py`, una generación de 160 × 104; misma
+- **Vida de Conway en la CPU, C natural frente a ensamblador** (`compare_race.py life`, una generación de 160 × 104; misma
   rejilla y mismo framebuffer que el modelo en Python): el ensamblador de `life.inc` ejecuta 499.839 instrucciones; el C con
   índices `(y + 1) * 168 + 8 + x` (`life.c`), 1.148.051 (**2,30×**, 69 instrucciones por celda frente a 30); el mismo
   algoritmo con punteros que avanzan y desplazamientos constantes (`life_ptr.c`), 526.289 (**1,05×**). Cada acceso a una

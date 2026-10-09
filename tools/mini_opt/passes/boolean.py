@@ -23,6 +23,7 @@ from ..isa import BRANCHES, reg_of
 from ..model import SYMBOL_RE, Line, Unit
 from ..registry import register_pass
 from .constprop import constant_of
+from .kernels import KERNEL_PREFIX
 
 COMPARE = {"BLT": "SLT", "BGE": "SLT", "BLTU": "SLTU", "BGEU": "SLTU"}
 
@@ -72,8 +73,8 @@ def pass_boolean(unit: Unit, stats: dict) -> None:
         elif line.kind == "directive":
             references.update(SYMBOL_RE.findall(line.text))
     for function in unit.functions():
-        if function.opaque:
-            continue
+        if function.opaque or function.name.startswith(KERNEL_PREFIX):
+            continue                        # la GPU no tiene `compare` (SLT/SLTU): seria un opcode invalido
         body = function.body
         result: list[Line] = []
         i = 0

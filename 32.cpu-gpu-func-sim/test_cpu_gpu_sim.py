@@ -1742,10 +1742,10 @@ class CRotateTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(C_EXAMPLES))
-        import compare_rotate
+        import compare_race
         try:
-            cls.rows = compare_rotate.compare(5)
-        except compare_rotate.c_build.BuildError as error:
+            cls.rows = compare_race.compare("rotate", 5)
+        except compare_race.c_build.BuildError as error:
             if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
                 raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
             raise
