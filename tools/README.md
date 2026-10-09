@@ -1063,6 +1063,10 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   área saliente, que lee el destino de la llamada, además de los guardados y los locales. Si R30 cambia
   de otra forma que el ajuste canónico, o se usa de una forma que no se sigue, no toca la función.
   Es una condición de toda la función, sin CFG ni liveness.
+- **Hechos de lcc (`; @miniopt volatile NOMBRE`, `; @miniopt const NOMBRE`):** comentarios que el ensamblador no ve y `parse_unit` lee en
+  `Unit.volatile` y `Unit.const`. Un objeto `const` (o un array de const; un struct solo si lo es entero) no lo escribe nadie, así que `licm`
+  saca de un bucle, en cualquier función, su lectura a una dirección fija; si es además `volatile`, gana `volatile`. Un puntero a `const`
+  no se exporta: otro puntero puede escribir en el objeto.
 - **Pase `argblock`:** contrato de los kernels: el bloque de argumentos (lo que devuelve `GETARG`) no se escribe mientras el kernel
   corre, como la memoria constante de CUDA. Así, `GETARG` y cada `LOAD` cuya base sale de él son invariantes de un bucle aunque haya
   `STORE` por punteros dentro (el compilador no puede demostrar que no escriben en el bloque: los punteros de salida salen del propio

@@ -406,15 +406,18 @@ def hoist(unit: Unit, stats: dict, only_args: bool) -> None:
             continue
         loops = natural_loops(blocks, dominators(blocks))
         kernel = function.name.startswith(KERNEL_PREFIX)
-        readonly = frozenset()
+        # los objetos `const` (lcc: `; @miniopt const`) no los escribe nadie, en cualquier funcion: escribirlos es
+        # comportamiento indefinido. Un `volatile` nunca se saca.
+        readonly = frozenset() if only_args else frozenset(unit.const - unit.volatile)
         if kernel and not only_args:
             # los que el propio kernel solo lee, y que ningun puntero puede alcanzar (o, con `--assume-noalias`, sin
-            # demostrarlo: basta que el kernel no los escriba). Un `volatile` nunca se saca.
+            # demostrarlo: basta que el kernel no los escriba).
             if provable is None:
                 provable = provable_symbols(unit)
-            readonly = frozenset(readonly_symbols(blocks)) - unit.volatile
+            proved = frozenset(readonly_symbols(blocks)) - unit.volatile
             if not NOALIAS:
-                readonly &= provable
+                proved &= provable
+            readonly = readonly | proved
         # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
         # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])

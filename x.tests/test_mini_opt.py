@@ -714,6 +714,61 @@ cube_faces:
 """
 
 
+CONST_UNIT = """\
+{facts}.text
+.globl f
+f:
+MOVI R10, 0
+MOVI R11, 8
+BRA L.2
+L.1:
+LI R6, {symbol}+4
+LOAD R7, R6, 0
+ADD R16, R16, R7
+ADDI R10, R10, 1
+L.2:
+BLT R10, R11, L.1
+JR R31
+.data
+{symbol}:
+.word 1, 2
+"""
+
+
+class ConstFactTest(unittest.TestCase):
+    """`; @miniopt const NOMBRE` (lcc, de un objeto const): nadie lo escribe, y su lectura a una direccion fija sale
+    del bucle en cualquier funcion, no solo en los kernels."""
+
+    def loop(self, facts: str, symbol: str = "tbl") -> list[str]:
+        out = lines_of(optimize(CONST_UNIT.format(facts=facts, symbol=symbol), ["licm"]))
+        return out[out.index("L.1:"):out.index("BLT R10, R11, L.1")]
+
+    def test_the_fact_is_read_into_the_unit(self):
+        unit = parse_unit(CONST_UNIT.format(facts="; @miniopt const tbl\n; @miniopt volatile reg\n", symbol="tbl"), "x")
+        self.assertEqual((unit.const, unit.volatile), ({"tbl"}, {"reg"}))
+
+    def test_a_load_from_a_const_object_leaves_the_loop_in_a_normal_function(self):
+        inside = self.loop("; @miniopt const tbl\n")
+        self.assertFalse([l for l in inside if l.startswith("LOAD")], inside)
+
+    def test_without_the_fact_the_load_stays(self):
+        inside = self.loop("")
+        self.assertTrue([l for l in inside if l.startswith("LOAD")], inside)
+
+    def test_volatile_wins_over_const(self):
+        inside = self.loop("; @miniopt const tbl\n; @miniopt volatile tbl\n")
+        self.assertTrue([l for l in inside if l.startswith("LOAD")], inside)
+
+    def test_another_symbol_being_const_changes_nothing(self):
+        inside = self.loop("; @miniopt const other\n")
+        self.assertTrue([l for l in inside if l.startswith("LOAD")], inside)
+
+    def test_the_result_is_the_same(self):
+        facts = "; @miniopt const tbl\n"
+        source = CONST_UNIT.format(facts=facts, symbol="tbl").replace("JR R31", "HALT")
+        self.assertEqual(final_registers(optimize(source, ["licm"]), 0), final_registers(source, 0))
+
+
 class LicmProvedLoadsTest(unittest.TestCase):
     """Sin `--assume-noalias`, una carga sale del bucle de un kernel si el simbolo es de la unidad, su direccion no
     escapa de ella, no es `volatile` y ningun fichero ajeno lo nombra: ningun puntero puede alcanzarlo."""
