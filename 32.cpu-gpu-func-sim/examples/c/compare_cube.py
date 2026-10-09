@@ -6,8 +6,9 @@
 Se ejecuta el demo completo (anfitrion de video, doble buffer) con `race_period = 1`, asi que cada
 fotograma usa un metodo distinto: CPU, GPU inocente y GPU buena, por turno. Entre dos cambios de buffer
 se cuentan las instrucciones de CPU y de warp; de cada metodo se da la que hace el trabajo (CPU para el
-metodo de CPU, warp para los dos de GPU: la CPU de esos solo espera). Se comprueba ademas que C y
-ensamblador dejan la misma imagen en pantalla.
+metodo de CPU, warp para los dos de GPU: la CPU de esos solo espera). Se mide el segundo giro de los
+tres metodos (fotogramas 3 a 5), no el primero, que lleva el arranque del demo. Se comprueba ademas que
+C y ensamblador dejan la misma imagen en pantalla.
 """
 from __future__ import annotations
 
@@ -63,13 +64,16 @@ def run(image, labels, frames: int):
 
 
 def compare(frames: int = 6):
+    """Un giro de tres metodos por cada tres fotogramas; el primero se descarta, porque el fotograma 0
+    lleva el arranque del demo (generar las texturas, unas 500.000 a 650.000 instrucciones de CPU que no
+    son del metodo) y falsearia el de CPU."""
     a_counts, a_screen = run(*asm_program(), frames)
     c_counts, c_screen = run(*c_program(), frames)
     rows = []
     for index, (name, unit) in enumerate(METHODS):
         column = 0 if index == 0 else 1
-        a = sum(frame[column] for frame in a_counts[index::3])
-        c = sum(frame[column] for frame in c_counts[index::3])
+        a = sum(frame[column] for frame in a_counts[3 + index::3])
+        c = sum(frame[column] for frame in c_counts[3 + index::3])
         rows.append((name, unit, a, c, a_screen == c_screen))
     return rows
 
@@ -83,7 +87,8 @@ def table(rows) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--frames", type=int, default=6, help="multiplo de 3 (por defecto 6: dos por metodo)")
+    parser.add_argument("--frames", type=int, default=6,
+                        help="multiplo de 3, al menos 6 (por defecto 6: se mide el segundo giro de metodos)")
     args = parser.parse_args()
     rows = compare(args.frames)
     print(table(rows))

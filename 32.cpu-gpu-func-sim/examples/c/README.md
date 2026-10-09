@@ -220,15 +220,17 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 | rotación, CPU | 233.806 | 285.125 | 234.577 | 1,22 | 1,00 | 1,22x |
 | rotación, GPU inocente (warp) | 29.426 | 42.112 | 29.528 | 1,43 | 1,00 | 1,43x |
 | rotación, GPU buena (warp) | 30.864 | 44.272 | 31.024 | 1,43 | 1,01 | 1,43x |
-| cubo, CPU | 1.171.000 | 1.715.000 | 1.310.000 | 1,46 | 1,12 | 1,31x |
-| cubo, GPU inocente (warp) | 89.250 | 138.868 | 88.326 | 1,56 | 0,99 | 1,57x |
-| cubo, GPU buena (warp) | 98.786 | 150.631 | 99.300 | 1,52 | 1,01 | 1,52x |
+| cubo, CPU | 322.000 | 482.000 | 321.000 | 1,50 | 1,00 | 1,50x |
+| cubo, GPU inocente (warp) | 46.170 | 71.449 | 46.000 | 1,55 | 1,00 | 1,55x |
+| cubo, GPU buena (warp) | 50.758 | 77.328 | 51.274 | 1,52 | 1,01 | 1,51x |
 
-El cubo (`compare_cube.py`) corre el demo entero con `race_period = 1`, un método por fotograma, y suma
-dos fotogramas de cada uno: la CPU en su método y los warps en los de GPU (la CPU de esos solo espera).
-Los números de CPU salen redondos porque un fotograma acaba en un cambio de buffer, cada 1.000
-instrucciones (±0,2 %). Es la única fila que sigue claramente por encima del ensamblador (1,12): el resto
-de cargas está entre 0,84 y 1,01.
+El cubo (`compare_cube.py`) corre el demo entero con `race_period = 1`, un método por fotograma, y mide
+un fotograma de cada método del segundo giro (fotogramas 3 a 5): la CPU en su método y los warps en los
+de GPU (la CPU de esos solo espera). El primer giro se descarta porque el fotograma 0 lleva el arranque
+del demo, la generación de las texturas (unas 530.000 instrucciones de CPU en ensamblador y 670.000 en
+C): con él, la CPU salía a 1,12 del ensamblador, y no era el método sino el arranque. Los números de CPU
+salen redondos porque un fotograma acaba en un cambio de buffer, cada 1.000 instrucciones (±0,3 %). Con
+todos los pases, el cubo queda a 1,00 / 1,00 / 1,01 veces el ensamblador (CPU, GPU inocente, GPU buena).
 
 En los kernels de sistema el C ya ejecuta menos instrucciones que el ensamblador a mano (el ensamblador
 del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que sea menos no quiere decir
