@@ -985,14 +985,21 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
   viene solo de esa definición. Va de dentro afuera: lo que el bucle interior deja en su preheader está en el
   cuerpo del exterior y, si tampoco cambia allí, sube otra vez (en la rotación y el cubo, lo que no depende de
-  la fila: el reparto por `lane`, `4 * lane`, los límites). Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`, salvo con
-  `--assume-noalias`: en un kernel, una carga cuya base es la dirección de un símbolo que el kernel solo lee
-  (todos los usos de `LI base, símbolo+K` en la función son `LOAD`, por cualquier camino) sale del bucle si la
-  base no cambia en él. El filtro no puede demostrar que lo que el kernel escribe por un puntero de sus
-  argumentos no pisa ese símbolo (lcc no tiene `restrict` ni hay información de tipos en el `.s`), así que es una
-  suposición del programador y está apagada por defecto. `examples/c/build.py` la enciende para los
-  ejemplos de la 32; `MINI_OPT_NOALIAS=0` la apaga. Las direcciones que solo servían de base a lo que sale del bucle quedan muertas:
-  las borra el `dce` que viene detrás en el pipeline.
+  la fila: el reparto por `lane`, `4 * lane`, los límites). Un cero pasa a `R0`. No toca `DIV`/`REM`. Las cargas, solo en un kernel y solo si la base es la
+  dirección de un símbolo que el kernel solo lee (todos los usos de `LI base, símbolo+K` en la función son
+  `LOAD`, por cualquier camino) y que **ningún puntero puede alcanzar**, lo que se demuestra con la unidad entera:
+  el símbolo está definido en ella, su dirección no escapa de ninguna función (solo se usa como base de
+  `LOAD`/`STORE`, directamente o en un puntero calculado a partir de ella, `&tabla[i]`, que a su vez solo
+  se usa así o se compara; no se suma a otra cosa, ni se guarda, ni se pasa, ni se devuelve, ni está en un
+  `.word`), no es `volatile` y ningún fichero ajeno a la unidad lo nombra (`--extern-refs FICHERO`, repetible: el
+  arranque, el runtime de ensamblador, la otra unidad). `volatile` es un hecho que lcc escribe en un comentario
+  (`; @miniopt volatile NOMBRE`, que el ensamblador no ve), porque el `.s` ya no lo dice. Quedan dos supuestos que
+  ningún análisis del texto puede comprobar: que nadie escriba el símbolo mientras el kernel corre (la CPU, el DMA,
+  otro agente) y que no se fabrique un puntero a partir de un entero. Con `--assume-noalias` basta que el kernel no
+  escriba el símbolo, aunque su dirección escape o lo nombre código ajeno; un `volatile` no se saca nunca.
+  `examples/c/build.py` pasa `--extern-refs` con el arranque, el runtime y la otra unidad, y deja la suposición
+  apagada (`MINI_OPT_NOALIAS=1` la enciende). Las direcciones que solo servían de base a lo que sale del bucle
+  quedan muertas: las borra el `dce` que viene detrás en el pipeline.
 - **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene
   su porción a 512 bytes de la siguiente (un acceso de un warp son 8 transacciones). Los huecos de pila
   que son una palabra a un desplazamiento fijo de `R30`, a los que solo se accede con `LOAD`/`STORE` de

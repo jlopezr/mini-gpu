@@ -49,16 +49,25 @@ def run(*command: str) -> None:
         raise BuildError(f"{' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
 
 
-def compile_c(source: Path) -> Path:
-    """C -> .s sin arranque -> .s con los pases de mini-opt."""
+def lower_c(source: Path) -> Path:
+    """C -> .s sin arranque."""
     BUILD.mkdir(exist_ok=True)
     plain = BUILD / f"{source.stem}.s"
-    optimized = BUILD / f"{source.stem}.opt.s"
     run(TOOLS / "mini-lcc", source, "--no-crt", "-I", SYSTEM, "-o", plain)
+    return plain
+
+
+def optimize_s(plain: Path, foreign: list[Path]) -> Path:
+    """.s -> .s con los pases de mini-opt. `foreign`: lo que se ensambla aparte y puede nombrar sus simbolos (el
+    arranque, el runtime, la otra unidad): un simbolo que nombran no se da por privado de esta."""
+    optimized = plain.with_suffix(".opt.s")
     passes = os.environ.get("MINI_OPT_PASSES")       # para comparar (opt_stats.py); por defecto, todos
-    # los kernels no escriben por sus punteros de argumento lo que leen por el nombre de una global (MINI_OPT_NOALIAS=0 lo apaga)
-    noalias = [] if os.environ.get("MINI_OPT_NOALIAS") == "0" else ["--assume-noalias"]
-    run(TOOLS / "mini-opt", plain, "-o", optimized, *noalias, *(["--passes", passes] if passes is not None else []))
+    # por defecto, mini-opt solo saca de un bucle la carga de una global que ningun puntero puede alcanzar. Con
+    # MINI_OPT_NOALIAS=1 basta que el kernel no la escriba (--assume-noalias), aunque su direccion escape
+    noalias = ["--assume-noalias"] if os.environ.get("MINI_OPT_NOALIAS") == "1" else []
+    refs = [arg for path in foreign for arg in ("--extern-refs", path)]
+    run(TOOLS / "mini-opt", plain, "-o", optimized, *noalias, *refs,
+        *(["--passes", passes] if passes is not None else []))
     return optimized
 
 
@@ -67,7 +76,9 @@ def build(program: Path, output: Path | None = None, board: bool = False) -> Pat
     name = program.stem + ("_board" if board else "")
     output = output or BUILD / f"{name}.bin"
     runtime, bench = RUNTIMES[board]
-    parts = [compile_c(program), compile_c(SYSTEM / "gpu.c")]
+    plains = [lower_c(program), lower_c(SYSTEM / "gpu.c")]
+    fixed = [CRT0, runtime, bench]
+    parts = [optimize_s(plain, fixed + [other for other in plains if other != plain]) for plain in plains]
     BUILD.mkdir(exist_ok=True)
     data = ""
     if program.stem in DATA:

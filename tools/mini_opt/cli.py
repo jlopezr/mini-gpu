@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .model import OptError, Unit, parse_unit, render_unit
+from .model import SYMBOL_RE, OptError, Unit, parse_unit, render_unit
 from .passes import licm, ssy
 from .registry import DEFAULT_PASSES, PASSES
 
@@ -54,8 +54,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ssy-all", action="store_true",
                         help="pase ssy: tratar todo salto condicional como divergente")
     parser.add_argument("--assume-noalias", action="store_true",
-                        help="pase licm: en un kernel, lo que escribe un puntero de los argumentos no pisa lo que el "
-                             "propio kernel lee por el nombre de una global; permite sacar esas cargas del bucle")
+                        help="pase licm: en un kernel saca del bucle las cargas de una global que el kernel solo lee "
+                             "aunque su direccion escape de la unidad o la nombre codigo ajeno (sin esto, solo las de "
+                             "globales que ningun puntero puede alcanzar). Un `volatile` nunca se saca")
+    parser.add_argument("--extern-refs", action="append", default=[], type=Path, metavar="FICHERO",
+                        help="fichero ensamblado aparte (arranque, runtime...): los simbolos que nombra no se dan por "
+                             "privados de la unidad (se puede repetir)")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -70,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     licm.NOALIAS = args.assume_noalias
     stats: dict = {}
     try:
+        licm.EXTERNAL = frozenset(name for path in args.extern_refs
+                                  for name in SYMBOL_RE.findall(path.read_text(encoding="utf-8")))
         text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)
     except OptError as error:
         print(f"mini-opt: {error}", file=sys.stderr)

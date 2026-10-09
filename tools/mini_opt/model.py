@@ -14,6 +14,9 @@ COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
+# Un hecho que lcc sabe y el `.s` ya no dice, en un comentario (el ensamblador no lo ve):
+#     ; @miniopt volatile NOMBRE
+FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile)\s+(\S+)\s*$")
 
 class OptError(ValueError):
     """Entrada mala (un intrinseco mal usado...)."""
@@ -88,6 +91,7 @@ class Function:
 class Unit:
     path: str
     chunks: list = field(default_factory=list)   # Line o Function, en orden
+    volatile: set[str] = field(default_factory=set)     # simbolos que lcc declaro `volatile` (`; @miniopt volatile`)
 
     def functions(self) -> list[Function]:
         return [c for c in self.chunks if isinstance(c, Function)]
@@ -125,6 +129,10 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
         pending.clear()
 
     for raw in source.splitlines():
+        fact = FACT_RE.match(raw)
+        if fact:
+            unit.volatile.add(fact.group(2))
+            continue
         for line in parse_line(raw):
             word = line.text.split(None, 1)[0].lower() if line.kind == "directive" else ""
             if word in SECTION_WORDS:

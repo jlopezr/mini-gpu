@@ -291,12 +291,14 @@ variante da lo mismo a un 1 %). «Antes» es el pipeline anterior a esos dos pas
 
 Casi toda la mejora de la GPU buena (1,24 → 1,07 veces el ensamblador, de 1,56 M a 1,34 M ciclos) viene de
 `stackslots`: la fila, la lane y el paso dejan de leerse de la pila de la lane. `sharebase` aporta un 1-2 %,
-que está al nivel del ruido. Después se añadió `--assume-noalias` en `licm` (los kernels no escriben por sus
-punteros de argumento lo que leen por el nombre de una global; `build.py` la enciende, `MINI_OPT_NOALIAS=0` la
-apaga), que saca del bucle de celdas la carga de la base de la textura. Medido igual (dos rondas, cada variante
+que está al nivel del ruido. Después se añadió en `licm` la carga de globales que el kernel solo lee, que saca del bucle de celdas la carga
+de la base de la textura. Al medirlo era la suposición `--assume-noalias` (los kernels no escriben por sus
+punteros de argumento lo que leen por el nombre de una global); ahora `mini-opt` lo demuestra solo, mirando
+las dos unidades, el arranque y el runtime: `cube_faces` no tiene la dirección escapada ni es `volatile`, y
+sale lo mismo sin flag (`MINI_OPT_NOALIAS=1` conserva la suposición). Medido igual (dos rondas, cada variante
 con el ensamblador intercalado): GPU inocente 2.260.000 → 2.211.000 ciclos y GPU buena 1.351.600 → 1.326.200, un
 2 % cada una, y la CPU no cambia. Con eso la GPU buena queda en 1,06 veces el ensamblador (1,07 antes) y la
-inocente en 1,01. Es poco para una suposición que el filtro no puede comprobar. Para medirlo: `halt`, `read-block` de `race_cycles` y `run` con el `monitor.py`
+inocente en 1,01. Para medirlo: `halt`, `read-block` de `race_cycles` y `run` con el `monitor.py`
 de la 36 (no lee memoria con la CPU en marcha); la dirección sale de las etiquetas del ensamblado.
 
 ## El plano con logos y alfa

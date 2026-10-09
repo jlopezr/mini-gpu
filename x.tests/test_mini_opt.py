@@ -27,6 +27,7 @@ from minicpu_sim import CPU  # noqa: E402
 from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
+from tools.mini_opt.cli import main as optimize_main  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
 RUNTIME = ROOT / "1.isa" / "runtime"
@@ -684,6 +685,125 @@ class LicmLoadsTest(unittest.TestCase):
     def test_a_load_whose_base_changes_in_the_loop_stays(self):
         out, _ = self.run_pass("LOAD R12, R7, 4\nADDI R7, R7, 4\nADD R9, R16, R12\nSTORE R9, R1, 0")
         self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+
+PROVED_UNIT = """{facts}.text
+.globl __kernel_k
+__kernel_k:
+LI R7, cube_faces
+MOVI R16, 0
+BRA L.2
+L.1:
+LOAD R12, R7, 4
+ADD R9, R16, R12
+STORE R9, R1, 0
+ADDI R16, R16, 1
+L.2:
+MOVI R10, 10
+BLT R16, R10, L.1
+EXIT
+{other}
+.data
+.align 4
+cube_faces:
+.word 1
+.word 2
+{data}
+"""
+
+
+class LicmProvedLoadsTest(unittest.TestCase):
+    """Sin `--assume-noalias`, una carga sale del bucle de un kernel si el simbolo es de la unidad, su direccion no
+    escapa de ella, no es `volatile` y ningun fichero ajeno lo nombra: ningun puntero puede alcanzarlo."""
+
+    def hoisted(self, other: str = "", data: str = "", facts: str = "", noalias: bool = False,
+                external: tuple[str, ...] = ()) -> bool:
+        source = PROVED_UNIT.format(facts=facts, other=other, data=data)
+        licm_module.NOALIAS, licm_module.EXTERNAL = noalias, frozenset(external)
+        try:
+            out = lines_of(optimize(source, ["licm"]))
+        finally:
+            licm_module.NOALIAS, licm_module.EXTERNAL = False, frozenset()
+        return "LOAD R12, R7, 4" not in out[out.index("L.1:"):out.index("EXIT")]
+
+    def test_a_symbol_nobody_takes_the_address_of_is_hoisted_without_any_option(self):
+        self.assertTrue(self.hoisted())
+
+    def test_another_function_that_writes_or_reads_it_directly_does_not_stop_it(self):
+        other = ".globl g\ng:\nLI R8, cube_faces\nSTORE R9, R8, 4\nLOAD R10, R8, 0\nJR R31"
+        self.assertTrue(self.hoisted(other))
+
+    def test_a_load_that_overwrites_its_own_base_is_not_an_escape(self):
+        # el patron de lcc: `LI R9, sim+12 ; LOAD R9, R9, 0`
+        other = ".globl g\ng:\nLI R9, cube_faces+12\nLOAD R9, R9, 0\nJR R31"
+        self.assertTrue(self.hoisted(other))
+
+    def test_a_pointer_computed_from_the_address_and_used_only_as_a_base_is_not_an_escape(self):
+        # `&tabla[i]` en C: `ADD p, base, offset` y accesos por p
+        other = ".globl g\ng:\nLI R8, cube_faces\nADD R9, R8, R2\nADDI R9, R9, 8\nLOAD R10, R9, 0\nSTORE R10, R9, 4\nJR R31"
+        self.assertTrue(self.hoisted(other))
+
+    def test_a_computed_pointer_that_is_stored_passed_or_returned_is_an_escape(self):
+        for other in (".globl g\ng:\nLI R8, cube_faces\nADD R9, R8, R2\nSTORE R9, R3, 0\nJR R31",
+                      ".globl g\ng:\nLI R8, cube_faces\nADDI R9, R8, 4\nADD R1, R9, R0\nJR R31",
+                      ".globl g\ng:\nLI R8, cube_faces\nADD R9, R8, R2\nADDI R4, R9, 4\nJAL R31, h\nJR R31",
+                      ".globl g\ng:\nLI R8, cube_faces\nSHL R9, R8, R2\nLOAD R10, R9, 0\nJR R31"):
+            with self.subTest(other=other):
+                self.assertFalse(self.hoisted(other))
+
+    def test_storing_the_address_itself_is_an_escape(self):
+        other = ".globl g\ng:\nLI R9, cube_faces\nSTORE R9, R9, 0\nJR R31"
+        self.assertFalse(self.hoisted(other))
+
+    def test_a_symbol_this_unit_does_not_define_is_not_hoisted(self):
+        source = PROVED_UNIT.format(facts="", other="", data="").replace("cube_faces:\n", "other_name:\n")
+        out = lines_of(optimize(source, ["licm"]))
+        self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+    def test_the_address_passed_to_a_function_or_returned_makes_it_escape(self):
+        for other in (".globl g\ng:\nLI R1, cube_faces\nJR R31",
+                      ".globl g\ng:\nLI R1, cube_faces\nADDI R2, R1, 8\nSTORE R3, R2, 0\nJR R31",
+                      ".globl g\ng:\nLI R4, cube_faces\nJAL R31, h\nJR R31"):
+            with self.subTest(other=other):
+                self.assertFalse(self.hoisted(other))
+
+    def test_an_address_in_a_data_table_makes_it_escape(self):
+        self.assertFalse(self.hoisted(data="table:\n.word cube_faces"))
+
+    def test_a_volatile_symbol_is_never_hoisted_not_even_with_the_option(self):
+        facts = "; @miniopt volatile cube_faces\n"
+        self.assertFalse(self.hoisted(facts=facts))
+        self.assertFalse(self.hoisted(facts=facts, noalias=True))
+
+    def test_a_symbol_that_foreign_code_names_is_not_provable(self):
+        self.assertFalse(self.hoisted(external=("cube_faces",)))
+
+    def test_the_option_assumes_what_the_analysis_cannot_prove(self):
+        other = ".globl g\ng:\nLI R1, cube_faces\nJR R31"
+        self.assertFalse(self.hoisted(other))
+        self.assertTrue(self.hoisted(other, noalias=True))
+        self.assertTrue(self.hoisted(external=("cube_faces",), noalias=True))
+
+    def test_the_command_line_takes_the_files_that_are_assembled_apart(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            source, foreign = Path(folder, "k.s"), Path(folder, "crt.s")
+            source.write_text(PROVED_UNIT.format(facts="", other="", data=""), encoding="utf-8")
+            foreign.write_text("start:\nLI R1, cube_faces\nJR R31\n", encoding="utf-8")
+            for refs, hoisted in (([], True), (["--extern-refs", str(foreign)], False)):
+                with self.subTest(refs=refs):
+                    target = Path(folder, "out.s")
+                    try:
+                        self.assertEqual(optimize_main([str(source), "-o", str(target), "--passes", "licm", *refs]), 0)
+                    finally:
+                        licm_module.EXTERNAL = frozenset()
+                    out = lines_of(target.read_text(encoding="utf-8"))
+                    self.assertEqual("LOAD R12, R7, 4" not in out[out.index("L.1:"):out.index("EXIT")], hoisted)
+
+    def test_the_fact_comment_does_not_reach_the_output(self):
+        source = PROVED_UNIT.format(facts="; @miniopt volatile cube_faces\n", other="", data="")
+        self.assertNotIn("@miniopt", optimize(source, ["licm"]))
 
 
 class CopyPropTest(unittest.TestCase):

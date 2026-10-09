@@ -35,8 +35,8 @@ from ..isa import (
     reg_of,
     use_slots,
 )
-from ..isa import LOADS
-from ..model import Line, Unit
+from ..isa import BRANCHES, LOADS, STORES
+from ..model import SYMBOL_RE, Line, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
 from .sharebase import split_address
@@ -47,6 +47,10 @@ ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
 # propio kernel lee por el nombre de una variable global. No se puede demostrar desde el ensamblador, asi que no
 # es el comportamiento por defecto (ver `readonly_symbols`).
 NOALIAS = False
+
+# Nombres que mencionan ficheros ajenos a la unidad (el arranque, el runtime de ensamblador, el anfitrion a mano): sus
+# accesos no se ven, asi que un simbolo que nombran no se puede dar por privado de la unidad.
+EXTERNAL: frozenset[str] = frozenset()
 
 Key = tuple[str, tuple[str, ...]]           # (mnemonico, operandos tras el destino): lo que se calcula
 Candidate = tuple[Block, Line]
@@ -179,6 +183,88 @@ def readonly_symbols(blocks: list[Block]) -> set[str]:
     return seen - bad
 
 
+DATA_WORDS = (".word", ".long", ".half", ".short", ".dword")
+
+
+def escaped_symbols(unit: Unit) -> set[str]:
+    """Simbolos cuya direccion puede acabar en un puntero, en cualquier funcion de la unidad: la direccion (`LI r,
+    simbolo+K`) se usa para algo que no es la base de un `LOAD`/`STORE` (sumarla, copiarla, pasarla, devolverla), el
+    nombre aparece en otra instruccion, o esta en una tabla de datos (`.word simbolo`). Sin eso, ningun puntero
+    derivado puede apuntarle; solo uno fabricado a partir de un entero, que C no garantiza."""
+    escaped: set[str] = set()
+    for line in unit.lines():
+        if line.kind == "directive" and line.text.split(None, 1)[0].lower() in DATA_WORDS:
+            escaped.update(SYMBOL_RE.findall(line.text.split(None, 1)[1] if " " in line.text else ""))
+    for function in unit.functions():
+        blocks = build_cfg(function)
+        where = {id(line): (b, position) for b, block in enumerate(blocks) for position, line in enumerate(block.lines)}
+        for b, block in enumerate(blocks):
+            for position, line in enumerate(block.lines):
+                if line.kind != "instr":
+                    continue
+                if line.op != "LI" or len(line.args) != 2:
+                    for arg in line.args:
+                        escaped.update(SYMBOL_RE.findall(arg))     # un nombre fuera de un `LI`: etiquetas y registros tambien
+                    continue
+                address, register = split_address(line.args[1]), reg_of(line.args[0])
+                if address is None or not register:
+                    continue
+                if not stays_local(blocks, where, b, position, register, set()):
+                    escaped.add(address[0])
+    return escaped
+
+
+def derived_register(use: Line, register: int) -> int | None:
+    """El registro que recibe `register` mas o menos algo (`ADD d, r, x`, `ADDI d, r, k`, `SUB d, r, x`, una copia):
+    un puntero calculado a partir de otro, que sigue apuntando al mismo objeto."""
+    if len(use.args) != 3:
+        return None
+    sources = [reg_of(a) for a in use.args[1:]]
+    if use.op in ("ADD", "ADDI") and register in sources or use.op == "SUB" and sources[0] == register:
+        return reg_of(use.args[0])
+    return None
+
+
+def stays_local(blocks: list[Block], where: dict[int, tuple[int, int]], b: int, position: int, register: int,
+                seen: set[int]) -> bool:
+    """La direccion que deja `blocks[b].lines[position]` en `register`, y las que se calculan a partir de ella, solo
+    se usan como base de un `LOAD`/`STORE` o se comparan: no se guardan, ni se pasan, ni se devuelven. Un
+    `LOAD r, r, k` sobre su propia base es el patron normal de lcc; `STORE r, ...` con la direccion como valor la
+    guarda en memoria."""
+    for use in uses_of_definition(blocks, b, position + 1, register):
+        if (use.op in LOADS | STORES and len(use.args) == 3 and reg_of(use.args[1]) == register
+                and (use.op in LOADS or reg_of(use.args[0]) != register)):
+            continue
+        if use.op in BRANCHES:
+            continue
+        derived = derived_register(use, register)
+        if derived is None:
+            return False
+        if id(use) in seen:
+            continue
+        seen.add(id(use))
+        if not stays_local(blocks, where, *where[id(use)], derived, seen):
+            return False
+    return True
+
+
+def defined_symbols(unit: Unit) -> set[str]:
+    """Los simbolos que esta unidad define: etiquetas de datos y `.comm`."""
+    names: set[str] = set()
+    for line in unit.lines():
+        if line.kind == "label":
+            names.add(line.name)
+        elif line.kind == "directive" and line.text.split(None, 1)[0].lower() == ".comm":
+            names.update(SYMBOL_RE.findall(line.text.split(None, 1)[1].split(",")[0]))
+    return names
+
+
+def provable_symbols(unit: Unit) -> set[str]:
+    """Simbolos que ningun puntero puede alcanzar: los define la unidad, su direccion no escapa de ella, no son
+    `volatile` (lcc lo dice con `; @miniopt volatile`) y ningun codigo ajeno a la unidad los nombra (`EXTERNAL`)."""
+    return defined_symbols(unit) - escaped_symbols(unit) - unit.volatile - EXTERNAL
+
+
 def invariant_load_ok(line: Line, pre: Block, readonly: set[str]) -> bool:
     """Una carga cuya base es la direccion de un simbolo que el kernel solo lee (la ultima definicion de la base en
     el preheader es `LI base, simbolo+K`) es invariante mientras la base no cambie en el bucle."""
@@ -290,6 +376,7 @@ def preheader(blocks: list[Block], header: int, body: set[int]) -> Block | None:
 
 @register_pass("licm", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
 def pass_licm(unit: Unit, stats: dict) -> None:
+    provable = None
     for function in unit.functions():
         if function.opaque:
             continue
@@ -298,7 +385,15 @@ def pass_licm(unit: Unit, stats: dict) -> None:
             continue
         loops = natural_loops(blocks, dominators(blocks))
         kernel = function.name.startswith(KERNEL_PREFIX)
-        readonly = frozenset(readonly_symbols(blocks)) if NOALIAS and kernel else frozenset()
+        readonly = frozenset()
+        if kernel:
+            # los que el propio kernel solo lee, y que ningun puntero puede alcanzar (o, con `--assume-noalias`, sin
+            # demostrarlo: basta que el kernel no los escriba). Un `volatile` nunca se saca.
+            if provable is None:
+                provable = provable_symbols(unit)
+            readonly = frozenset(readonly_symbols(blocks)) - unit.volatile
+            if not NOALIAS:
+                readonly &= provable
         # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
         # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
