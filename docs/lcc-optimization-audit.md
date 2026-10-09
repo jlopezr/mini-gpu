@@ -517,6 +517,24 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   `copyprop` y `dce` hay 65 (53 funciones de 332), porque esos pases borran el último uso de
   un registro y no su guardado. `deadsaves` los quita: −130 instrucciones estáticas y −5.000
   ejecutadas en la demo (−1,6 %).
+- **Tráfico de pila que queda en la demo de `z.tui`** (35.505 accesos, 11,7 % de las
+  instrucciones ejecutadas, clasificados por región del marco y por causa):
+
+  | Región / causa | Accesos | % instr. |
+  |---|---:|---:|
+  | Guardados y restauraciones de R16–R31 que se usan | 16.798 | 5,5 % |
+  | Volcado de R1–R4 a su hueco entrante (`STORE`) | 5.754 | 1,9 % |
+  | Recarga de un hueco entrante después de una llamada (valor vivo a través de ella) | 3.355 | 1,1 % |
+  | Argumentos de pila 5+ leídos por el destino (`LOAD`) | 3.858 | 1,3 % |
+  | Área saliente escrita por el llamante (`STORE`; los lee el destino) | 2.593 | 0,9 % |
+  | Locales y derrames | 3.131 | 1,0 % |
+
+  Lo que se puede deducir: (1) los guardados que se usan son la ABI. (2) Los valores que cruzan
+  llamadas (volcado + recarga, ≈ 3 % como cota superior) no ganan nada si se asignan a R16–R29:
+  guardarlos y restaurarlos por llamada de la función cuesta lo mismo que volcarlos y recargarlos
+  si se usan una o dos veces tras la llamada, que es justo el umbral `ref >= 3` con el que lcc ya
+  decide. (3) Los argumentos de pila 5+ cuestan 3.858 + 2.593 = 6.451 accesos (2,1 %), y es lo
+  único estructural que queda: lo evitarían más registros de argumento.
 - **Guardados de R16–R29 en `cube_cpu`** (14 `STORE` y 14 `LOAD` por llamada):
   `mini-opt:kernels` ya los quita en los kernels de GPU, donde no hay a quién
   devolver. En una función de CPU la ABI los exige y lcc ya guarda solo los
@@ -547,7 +565,7 @@ historial de la auditoría.
 | ~~Store-to-load forwarding~~ | **Hecho:** pase `forward`, con `forward_must` sobre el CFG. El estado es `{hueco: registro con su valor}`; lo invalidan la reescritura del registro, otro store sobre la palabra, las llamadas, los cambios de R30 y los stores por puntero a partir de la dirección de marco más baja que la función calcula. Un `LOAD` pasa a copia (o sobra) | `z.tui`: −89 `LOAD` y 136 copias, y −4.000 instrucciones ejecutadas en la demo (−1,3 %); suite 20.080 → 19.980 (−100) | Media | mini-opt |
 | ~~DSE de los huecos de argumentos entrantes~~ | **Hecho:** pase `deadstores`. Tras `forward`, el `STORE R1, R30, 32` de un argumento ya no se lee; se borra si nada en la función lee esa palabra ni toma su dirección (ni la de un hueco anterior del área), y R30 solo cambia con el ajuste canónico. Solo por encima del marco: el área saliente la lee el destino de la llamada, y guardados y locales no se distinguen sin metadatos | `z.tui`: −100 `STORE` y −3.000 instrucciones ejecutadas en la demo; tráfico de pila 12,7 % → 11,7 %; suite 19.980 → 19.923 (−57) | Media | mini-opt |
 | DSE de guardados y locales (por debajo del marco) | Pendiente: exigiría saber qué huecos son área saliente (los lee el destino de la llamada), guardados o locales; hoy no se puede distinguir desde el `.s` | Sin medir; el 11,7 % restante son sobre todo guardados de R16–R29 que se usan, derrames y área saliente | Media-alta | metadatos de slot o pre-RA |
-| Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
+| Valores vivos a través de calls | Limitado. **Medido en `z.tui`:** 3.355 recargas tras llamada y hasta 5.754 volcados (≈ 3 % como cota superior); asignarlos a R16–R29 cuesta lo mismo en guardados cuando se usan una o dos veces tras la llamada, que es lo que `ref >= 3` ya decide | Bajo: ganancia esperada ≈ 0 salvo valores con muchos usos tras una llamada. Sin medir en recursión ni soft-float | Media-alta | RA/backend |
 | Slot coloring de spills | Ausente | Frame/memoria; depende de presión | Media | pre-emisión |
 | ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros. Decidido dejarlo así | 36 instrucciones adicionales en mini-tst. En `z.tui`: +99 instrucciones estáticas (+0,8 %) y −6 ejecutadas en la demo; ahorra 1 instrucción y 1 salto tomado por ejecución, y pila en recursión (sección 11) | Baja-media | mini-opt |
 | ~~Unreachable asm~~ | **Hecho:** branches conocidos + poda por CFG | 27 instrucciones adicionales frente al pipeline anterior | Baja | mini-opt |
@@ -560,7 +578,7 @@ historial de la auditoría.
 | ~~LICM aritmética~~ | **Hecho, también en bucles anidados:** de dentro afuera, lo que sube del bucle interior sube del exterior si no depende de él. Un fallo del análisis de definiciones que alcanzan (una `ENTRY` falsa atrapada en el ciclo) lo impedía y se corrigió | Rotación GPU buena 1,04× → 1,01× el ASM; CPU 1,00×; `fill_rect`/`blit` −1,5 % a −2 % | Baja | mini-opt |
 | ~~LICM de memoria~~ | **Hecho, ahora demostrado en lugar de supuesto:** en un kernel, la carga de una global que el kernel solo lee sale del bucle si ningún puntero puede alcanzarla. `mini-opt` mira la unidad entera (la dirección no escapa de ninguna función: solo base de `LOAD`/`STORE`, directa o por un puntero calculado a partir de ella; no está en un `.word`), lcc le dice qué símbolos son `volatile` con `; @miniopt volatile NOMBRE`, y `build.py` le pasa el arranque, el runtime y la otra unidad (`--extern-refs`). `--assume-noalias` queda como suposición explícita, apagada por defecto | Mismo resultado que con la suposición en el cubo (~2 %, 1,326 M ciclos), sin ella. Supuestos que no se pueden comprobar desde el texto: que nadie escriba el símbolo mientras el kernel corre y que no se fabrique un puntero desde un entero | Media | mini-opt + hecho de lcc |
 | Relajar frame a 4 | Ausente | Memoria, no instrucciones | Baja, cambio ABI | backend/ABI |
-| 6/8 args | ABI actual 4 | 4/8 instrucciones en sum8 (estimado) | Alta por scratch/compatibilidad | ABI+backend |
+| 6/8 args | ABI actual 4. **Medido en `z.tui`:** los argumentos de pila 5+ son 6.451 accesos (3.858 `LOAD` + 2.593 `STORE` en el área saliente), el 2,1 % de las instrucciones ejecutadas | 4/8 instrucciones en sum8 (estimado); ≈ 2 % en la demo de `z.tui`, un solo programa | Alta por scratch/compatibilidad | ABI+backend |
 | Metadatos slot/virtual | **Parcial:** el mecanismo existe y lleva un solo hecho, `; @miniopt volatile NOMBRE` (lcc lo escribe en un comentario, `parse_unit` lo lee). Ausentes los de slot/spill/escape/virtual y las salvaguardas propuestas en la sección 9 (cabecera versionada, hash de la secuencia, validación) | `volatile` habilita la LICM de cargas demostrada. Los de slot y virtual: habilitador, no beneficio directo | Media | backend comments |
 
 ## 13. Plan incremental sugerido
