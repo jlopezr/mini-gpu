@@ -14,10 +14,10 @@ Un modulo por cosa:
     model.py      el `.s` troceado: lineas, funciones, unidades (parse_unit / render_unit)
     isa.py        que lee y escribe cada instruccion (defs_uses) y los conjuntos de mnemonicos
     flow.py       bloques basicos, vida de registros, dominadores y bucles
-    dead.py       codigo muerto (lo usan constprop y copyprop)
+    dead.py       motor de eliminacion de codigo muerto usado por el pase dce
     registry.py   el registro de pases (`@register_pass`) y el orden por defecto
     cli.py        `optimize`, `--stats` y la linea de ordenes
-    passes/       un fichero por pase: intrinsics, kernels, jumps, constprop, copyprop, licm, ssy
+    passes/       un fichero por pase, incluido branches, unreachable, dce y tailcalls
 
 El pase `intrinsics` es el equivalente a `threadIdx`/`__syncthreads` de CUDA sin tocar `rcc`:
 el C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte el
@@ -45,18 +45,23 @@ from .isa import defs_uses, number, reg_of
 from .model import Function, Line, OptError, Unit, directive_parts, parse_unit, render_unit
 from .passes.constprop import pass_constprop
 from .passes.copyprop import pass_copyprop
+from .passes.branches import pass_branches
+from .passes.dce import pass_dce
 from .passes.intrinsics import pass_intrinsics
 from .passes.jumps import pass_jumps
 from .passes.kernels import pass_kernels
 from .passes.licm import pass_licm
 from .passes.ssy import pass_ssy
+from .passes.tailcalls import pass_tailcalls
+from .passes.unreachable import pass_unreachable
 from .registry import DEFAULT_PASSES, PASSES, register_pass
 
 __all__ = [
     "Block", "DEFAULT_PASSES", "Function", "Line", "OptError", "PASSES", "Unit", "build_cfg",
     "count_instructions", "defs_uses", "directive_parts", "dominators", "immediate_postdominator",
     "live_after", "live_in_entry", "liveness", "main", "natural_loops", "number", "optimize",
-    "parse_unit", "pass_constprop", "pass_copyprop", "pass_intrinsics", "pass_jumps", "pass_kernels",
-    "pass_licm", "pass_ssy", "passes", "postdominators", "print_stats", "reg_of", "register_pass",
+    "parse_unit", "pass_branches", "pass_constprop", "pass_copyprop", "pass_dce", "pass_intrinsics",
+    "pass_jumps", "pass_kernels", "pass_licm", "pass_ssy", "pass_tailcalls", "pass_unreachable", "passes",
+    "postdominators", "print_stats", "reg_of", "register_pass",
     "remove_dead", "render_unit",
 ]

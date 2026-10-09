@@ -10,10 +10,12 @@ Pass = Callable[[Unit, dict], None]
 
 PASSES: dict[str, tuple[Pass, str]] = {}
 
-# El orden importa: `kernels` deja los desplazamientos con registro; `jumps` y `constprop` simplifican
-# antes de que `copyprop` y `licm` decidan que se repite y que registros sobran; `ssy` va al final,
-# con el codigo ya definitivo.
-DEFAULT_PASSES = ["intrinsics", "kernels", "jumps", "constprop", "copyprop", "licm", "ssy"]
+# El orden importa: las propagaciones descubren branches constantes; al podarlos aparecen bloques
+# inalcanzables y mas codigo muerto; `ssy` va al final, con el CFG ya definitivo.
+DEFAULT_PASSES = [
+    "intrinsics", "kernels", "jumps", "constprop", "dce", "copyprop", "dce",
+    "branches", "unreachable", "licm", "dce", "tailcalls", "unreachable", "ssy",
+]
 
 
 def register_pass(name: str, doc: str) -> Callable[[Pass], Pass]:

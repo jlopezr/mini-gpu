@@ -7,7 +7,6 @@ una suma: `SHL d, a, R9` con R9 = 1 -> `ADD d, a, a`. La constante deja de ocupa
 (la GPU no tiene saltos ni desplazamientos con inmediato, asi que no todas se van)."""
 from __future__ import annotations
 
-from ..dead import remove_dead
 from ..flow import build_cfg, forward_must
 from ..isa import R3, defs_uses, number, reg_of
 from ..model import Line, Unit
@@ -73,6 +72,8 @@ def fold_constant(line: Line, state: dict[int, int]) -> bool:
 @register_pass("constprop", "constantes conocidas: ADD/SUB/AND/OR/XOR a su forma con inmediato, SHL por 1 a ADD")
 def pass_constprop(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
+        if function.opaque:
+            continue
         blocks = build_cfg(function)
         if not blocks:
             continue
@@ -84,5 +85,4 @@ def pass_constprop(unit: Unit, stats: dict) -> None:
                 if fold_constant(line, state):
                     stats["constprop.folded"] = stats.get("constprop.folded", 0) + 1
                 track_constants(state, line)
-        remove_dead(blocks, stats, "constprop")
         function.body = [line for block in blocks for line in block.lines]

@@ -1,0 +1,47 @@
+.text
+.globl _start
+_start:
+LI R30, __stack+8192
+JAL R31, main
+HALT
+.globl sum8
+.text
+.align 4
+sum8:
+ADD R11, R1, R2
+ADD R11, R11, R3
+ADD R11, R11, R4
+LOAD R10, R30, 16+0
+ADD R11, R11, R10
+LOAD R10, R30, 20+0
+ADD R11, R11, R10
+LOAD R10, R30, 24+0
+ADD R11, R11, R10
+LOAD R10, R30, 28+0
+ADD R1, R11, R10
+L.1:
+JR R31
+.globl main
+.align 4
+main:
+ADDI R30, R30, -48
+STORE R31, R30, 32
+MOVI R1, 1
+MOVI R2, 2
+MOVI R3, 3
+MOVI R4, 4
+MOVI R15, 5
+STORE R15, R30, 16
+MOVI R15, 6
+STORE R15, R30, 20
+MOVI R15, 7
+STORE R15, R30, 24
+MOVI R15, 8
+STORE R15, R30, 28
+JAL R31, sum8
+L.2:
+LOAD R31, R30, 32
+ADDI R30, R30, 48
+JR R31
+.bss
+.comm __stack,8192

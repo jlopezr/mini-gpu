@@ -55,6 +55,8 @@ def drop_jumps_to_next_line(body: list[Line], stats: dict) -> list[Line]:
 @register_pass("jumps", "BRA a una etiqueta que solo salta: salta al destino final; quita el BRA a la linea siguiente")
 def pass_jumps(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
+        if function.opaque:
+            continue
         forward = jump_only_labels(function.body)
         for line in function.body:
             if line.kind == "instr" and (line.op in BRANCHES or line.op == "BRA"):

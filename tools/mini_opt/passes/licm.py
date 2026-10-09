@@ -214,6 +214,8 @@ def preheader(blocks: list[Block], header: int, body: set[int]) -> Block | None:
 @register_pass("licm", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
 def pass_licm(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
+        if function.opaque:
+            continue
         blocks = build_cfg(function)
         if len(blocks) < 2:
             continue

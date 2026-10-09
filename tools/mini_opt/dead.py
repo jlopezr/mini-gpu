@@ -1,4 +1,4 @@
-"""Codigo muerto: instrucciones puras cuyo resultado nadie lee (lo usan `constprop` y `copyprop`)."""
+"""Motor de codigo muerto para el pase independiente `dce`."""
 from __future__ import annotations
 
 from .flow import Block, live_after, liveness

@@ -23,7 +23,8 @@ def run(command: list[str], cwd: Path) -> int:
     return subprocess.call(command, cwd=str(cwd))
 
 
-def generate_lcc_outputs(tests: list[str], simulate: bool) -> int:
+def generate_lcc_outputs(tests: list[str], simulate: bool, optimize: bool,
+                         compare_optimizer: bool, mini_opt: Path | None) -> int:
     script = MINI_LCC / "run-mini-tst.py"
     if not script.exists():
         print("error: falta el submodulo y.lcc", file=sys.stderr)
@@ -33,6 +34,12 @@ def generate_lcc_outputs(tests: list[str], simulate: bool) -> int:
     command = [sys.executable, str(script), *tests]
     if simulate:
         command.insert(2, "--simulate")
+    if optimize:
+        command.insert(2, "--optimize")
+    if compare_optimizer:
+        command.insert(2, "--compare-optimizer")
+    if mini_opt is not None:
+        command[2:2] = ["--mini-opt", str(mini_opt)]
     return run(command, MINI_LCC)
 
 
@@ -78,6 +85,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port")
     parser.add_argument("--simulate-lcc", action="store_true",
                         help="tambien ejecuta la simulacion propia de y.lcc al generar")
+    optimizer_mode = parser.add_mutually_exclusive_group()
+    optimizer_mode.add_argument("--optimize", action="store_true",
+                                help="pasa el ensamblador de mini-lcc por mini-opt antes de x.tests")
+    optimizer_mode.add_argument("--compare-optimizer", action="store_true",
+                                help="genera ambas formas; x.tests usa la optimizada y mini-lcc compara tamanos")
+    parser.add_argument("--mini-opt", type=Path,
+                        help="ruta explicita a mini-opt (si no esta en tools/mini-opt)")
     parser.add_argument("--include-xfail", action="store_true",
                         help="incluye los xfail conocidos de mini-lcc como fallos normales de x.tests")
     parser.add_argument("--durations", type=int, nargs="?", const=10, default=0)
@@ -85,7 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-upload", action="store_true")
     args = parser.parse_args(argv)
 
-    code = generate_lcc_outputs(args.tests, args.simulate_lcc)
+    code = generate_lcc_outputs(
+        args.tests, args.simulate_lcc, args.optimize, args.compare_optimizer,
+        args.mini_opt.resolve() if args.mini_opt else None,
+    )
     if code != 0:
         return code
 

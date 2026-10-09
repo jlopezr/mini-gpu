@@ -106,6 +106,25 @@ dumps esperados generados en `y.lcc/mini-tst-out/`, y crea casos temporales en
 `x.tests/generated/mini-lcc/`. Esa carpeta esta ignorada porque se regenera a
 partir de los `.c`.
 
+Para pasar opcionalmente el ensamblador generado por `mini-opt` antes de crear
+los casos de `x.tests`:
+
+```powershell
+python run-mini-lcc-tests.py --backend cpusim --optimize
+```
+
+`--compare-optimizer` conserva y ensambla las dos formas, muestra el recuento
+antes/después y hace que `x.tests` valide la optimizada. Si se combina con
+`--simulate-lcc`, el runner propio de Mini-LCC simula y comprueba también ambas:
+
+```powershell
+python run-mini-lcc-tests.py --backend cpusim --compare-optimizer --simulate-lcc
+```
+
+Por defecto no se invoca el optimizador. Tanto el `.s` original como el
+`.opt.s` se conservan bajo `y.lcc/mini-tst-out/`. Fuera de un checkout de
+Mini-GPU se puede indicar el ejecutable con `--mini-opt RUTA`.
+
 Por defecto se omiten los `xfail` conocidos de `mini-lcc` que generan
 manifiesto, ya que `x.tests` no tiene semantica de fallo esperado. Para
 investigarlos como fallos normales:

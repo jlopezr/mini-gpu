@@ -902,7 +902,16 @@ La validacion propia del compilador se puede lanzar directamente:
 ```bash
 $ mkdir -p y.lcc/build
 $ python3 y.lcc/run-mini-tst.py --simulate
+$ python3 y.lcc/run-mini-tst.py --simulate --optimize
+$ python3 y.lcc/run-mini-tst.py --simulate --compare-optimizer
 ```
+
+`--optimize` conserva el `.s` original, genera además un `.opt.s` con
+`tools/mini-opt` y valida la forma optimizada. `--compare-optimizer` genera las
+dos y, con `--simulate`, valida ambas contra las mismas expectativas, además de
+mostrar el total de instrucciones antes y después. Sin ninguna de esas opciones
+el comportamiento sigue siendo el histórico. Se puede pasar otra ubicación con
+`--mini-opt RUTA`.
 
 O mediante el wrapper global:
 
@@ -948,7 +957,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
-  por pase en `passes/` (`intrinsics`, `kernels`, `jumps`, `constprop`, `copyprop`, `licm`, `ssy`) y,
+  por pase en `passes/` (`intrinsics`, `kernels`, `jumps`, `constprop`, `copyprop`, `branches`,
+  `unreachable`, `licm`, `dce`, `tailcalls`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -975,9 +985,20 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
 - **Pase `constprop`:** donde un registro vale una constante por todos los caminos, `ADD`, `SUB`, `AND`,
   `OR` y `XOR` pasan a su forma con inmediato, y `SHL` por 1 a `ADD d, a, a`; la constante, si ya nadie la
-  lee, se borra.
+  lee, la elimina después el pase `dce`.
 - **Pase `copyprop`:** propagación de copias (`ADD d, s, R0`: donde llega por todos los caminos, los
-  usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones.
+  usos de `d` leen `s`) en todas las funciones.
+- **Pase `branches`:** resuelve branches cuyos operandos son constantes o el mismo registro; los que
+  siempre se toman pasan a `BRA` y los que nunca se toman desaparecen.
+- **Pase `unreachable`:** elimina bloques que dejan de ser alcanzables, en particular tras simplificar
+  branches. Las funciones con saltos indirectos se dejan intactas.
+- **Pase `dce`:** elimina a punto fijo instrucciones puras cuyo resultado ya no está vivo. Es un pase
+  independiente y el pipeline por defecto lo intercala entre fases para que una limpieza abra nuevas
+  oportunidades a la siguiente; `--passes` permite colocarlo donde convenga.
+- **Pase `tailcalls`:** una `JAL` directa en posición final pasa a restaurar el epílogo y hacer `BRA`
+  al destino. Solo actúa sobre el epílogo canónico de LCC, con destino definido en la misma unidad,
+  sin argumentos de pila, varargs ni punteros al frame actual; helpers de ABI privada y llamadas
+  indirectas quedan fuera.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores

@@ -25,13 +25,16 @@ def optimize(source: str, passes: list[str] | None = None, path: str = "<entrada
             raise OptError(f"pase desconocido '{name}' (--list-passes)")
         before = count_instructions(unit)
         PASSES[name][0](unit, stats)
-        stats[f"{name}.instrs"] = count_instructions(unit) - before
+        key = f"{name}.instrs"
+        stats[key] = stats.get(key, 0) + count_instructions(unit) - before
     return render_unit(unit)
 
 
 def print_stats(stats: dict, passes: list[str] | None) -> None:
     """Una linea por pase: instrucciones estaticas que anade (+) o quita (-) y sus contadores."""
-    names = DEFAULT_PASSES if passes is None else passes
+    # Un pase puede aparecer varias veces en el pipeline (DCE limpia entre fases). Sus
+    # contadores se acumulan y se muestran una sola vez.
+    names = list(dict.fromkeys(DEFAULT_PASSES if passes is None else passes))
     total = 0
     for name in names:
         delta = stats.get(f"{name}.instrs", 0)

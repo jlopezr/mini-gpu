@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 
 LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 
-COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")     # las etiquetas internas de lcc
+# `runtime/gen_softfloat.py` renombra las `L.n` de los bloques embebidos a
+# `__sf.n` para que no choquen con las del programa. Siguen siendo etiquetas de
+# bloque, no comienzos de funcion: separarlas rompe el CFG y permite que DCE
+# borre los valores que llegan a esos bloques.
+COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
@@ -57,6 +61,27 @@ class Function:
     name: str
     header: list[Line]              # `.text`, `.globl f`, `.align 4` que la preceden
     body: list[Line]                # desde la etiqueta de la funcion inclusive
+
+    @property
+    def opaque(self) -> bool:
+        """Helper ensamblado del backend con convenio privado, no MiniABI C.
+
+        Los `__mini_*` pueden devolver valores en R7-R10, enlazar por R15 o
+        reservar R5-R9 como entradas. Optimizar su interior con el contrato C
+        de `defs_uses()` no es seguro sin metadatos específicos.
+        """
+        if self.name.startswith("__mini_"):
+            return True
+        for line in self.body:
+            if (line.kind == "instr" and line.op == "JR" and line.args
+                    and line.args[0].strip().upper() != "R31"):
+                return True
+            if line.kind != "instr" or line.op != "JAL" or len(line.args) != 2:
+                continue
+            link, target = (arg.strip() for arg in line.args)
+            if link.upper() != "R31" or target.startswith("__mini_"):
+                return True
+        return False
 
 
 @dataclass

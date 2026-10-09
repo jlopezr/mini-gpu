@@ -8,7 +8,6 @@ disponibles: la interseccion de lo que llega por cada camino. Una llamada destru
 registros que no se conservan, asi que corta las copias de temporales."""
 from __future__ import annotations
 
-from ..dead import remove_dead
 from ..flow import build_cfg, forward_must
 from ..isa import defs_uses, number, reg_of, use_slots
 from ..model import Line, Unit
@@ -41,9 +40,11 @@ def track_copies(state: dict[int, int], line: Line) -> None:
         state[pair[0]] = pair[1]
 
 
-@register_pass("copyprop", "propagacion de copias (ADD d, s, R0) y borrado de lo que ya nadie lee")
+@register_pass("copyprop", "propagacion de copias (ADD d, s, R0)")
 def pass_copyprop(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
+        if function.opaque:
+            continue
         blocks = build_cfg(function)
         if not blocks:
             continue
@@ -58,5 +59,4 @@ def pass_copyprop(unit: Unit, stats: dict) -> None:
                         line.args[slot] = f"R{origin}"
                         stats["copyprop.rewritten"] = stats.get("copyprop.rewritten", 0) + 1
                 track_copies(state, line)
-        remove_dead(blocks, stats, "copyprop")
         function.body = [line for block in blocks for line in block.lines]

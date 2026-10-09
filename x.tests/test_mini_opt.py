@@ -111,6 +111,52 @@ class ParseTest(unittest.TestCase):
         last = functions(unit)["k_max"].body[-1]
         self.assertEqual(last.render(), "JR R31")
 
+    def test_softfloat_renamed_local_labels_stay_in_the_function(self):
+        source = """\
+.text
+.globl __addsf3
+__addsf3:
+BEQ R1, R0, __sf.2
+MOVI R1, 42
+BRA __sf.1
+__sf.2:
+MOVI R1, 7
+__sf.1:
+JR R31
+"""
+        unit = parse_unit(source, "softfloat.s")
+        fns = functions(unit)
+        self.assertEqual(list(fns), ["__addsf3"])
+        labels = [line.name for line in fns["__addsf3"].body if line.kind == "label"]
+        self.assertEqual(labels, ["__addsf3", "__sf.2", "__sf.1"])
+        optimized = optimize(source, ["constprop", "copyprop"])
+        self.assertIn("MOVI R1, 42", optimized)
+        self.assertIn("MOVI R1, 7", optimized)
+
+    def test_backend_at_labels_stay_inside_opaque_helper(self):
+        source = """\
+.text
+__mini_memcpy:
+BEQ R7, R0, @fin
+@bucle:
+ADDI R7, R7, -1
+BNE R7, R0, @bucle
+@fin:
+JR R31
+"""
+        unit = parse_unit(source, "runtime.s")
+        fns = functions(unit)
+        self.assertEqual(list(fns), ["__mini_memcpy"])
+        self.assertTrue(fns["__mini_memcpy"].opaque)
+        self.assertEqual(optimize(source), source)
+
+    def test_private_abi_call_makes_the_caller_opaque(self):
+        for call in ("JAL R31, __mini_memcpy", "JAL R15, __mini_udivmod64"):
+            source = f".text\nf:\nMOVI R7, 12\n{call}\nADD R1, R7, R0\nJR R31\n"
+            fn = functions(parse_unit(source, "runtime-caller.s"))["f"]
+            self.assertTrue(fn.opaque)
+            self.assertEqual(optimize(source), source)
+
     def test_reassembling_the_split_unit_gives_the_same_image(self):
         # autocontenido: sin la variable especial, que solo el pase resuelve
         source = KERNELS.replace("LI R12, __gpu_tid", "LI R12, k_max").replace(
@@ -510,13 +556,13 @@ class CopyPropTest(unittest.TestCase):
     def run_pass(self, body: str):
         stats = {}
         source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
-        return lines_of(optimize(source, ["copyprop"], stats=stats)), stats
+        return lines_of(optimize(source, ["copyprop", "dce"], stats=stats)), stats
 
     def test_a_use_reads_the_original_and_the_copy_disappears(self):
         out, stats = self.run_pass("ADD R13, R28, R0\nBGEU R13, R6, L.1\nL.1:")
         self.assertIn("BGEU R28, R6, L.1", out)
         self.assertNotIn("ADD R13, R28, R0", out)
-        self.assertEqual(stats["copyprop.removed"], 1)
+        self.assertEqual(stats["dce.removed"], 1)
 
     def test_if_the_original_changes_in_between_the_copy_stays(self):
         out, _ = self.run_pass("ADD R13, R28, R0\nADDI R28, R28, 1\nSTORE R13, R1, 0")
@@ -546,7 +592,7 @@ class ConstPropTest(unittest.TestCase):
     def run_pass(self, body: str):
         stats = {}
         source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
-        return lines_of(optimize(source, ["constprop"], stats=stats)), stats
+        return lines_of(optimize(source, ["constprop", "dce"], stats=stats)), stats
 
     def test_a_subtraction_of_a_constant_becomes_an_addi(self):
         out, stats = self.run_pass("MOVI R7, 256\nSUB R13, R28, R7\nSTORE R13, R1, 0")
@@ -576,6 +622,124 @@ class ConstPropTest(unittest.TestCase):
     def test_a_copy_from_r0_is_left_as_a_copy(self):
         out, _ = self.run_pass("ADD R13, R28, R0\nSTORE R13, R1, 0")
         self.assertIn("ADD R13, R28, R0", out)
+
+
+class DceTest(unittest.TestCase):
+    def test_it_is_an_independent_pass_and_keeps_effects_and_the_return_value(self):
+        source = ".text\n.globl f\nf:\nMOVI R8, 5\nLOAD R9, R2, 0\nADD R1, R7, R0\nJR R31\n"
+        stats = {}
+        out = lines_of(optimize(source, ["dce"], stats=stats))
+        self.assertNotIn("MOVI R8, 5", out)
+        self.assertIn("LOAD R9, R2, 0", out)
+        self.assertIn("ADD R1, R7, R0", out)
+        self.assertEqual(stats["dce.removed"], 1)
+
+
+class BranchesTest(unittest.TestCase):
+    def run_pass(self, body: str):
+        stats = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        return lines_of(optimize(source, ["branches"], stats=stats)), stats
+
+    def test_identical_operands_make_the_result_known(self):
+        out, stats = self.run_pass("BEQ R7, R7, L.1\nL.1:\nBNE R8, R8, L.2\nL.2:")
+        self.assertIn("BRA L.1", out)
+        self.assertNotIn("BNE R8, R8, L.2", out)
+        self.assertEqual(stats["branches.taken"], 1)
+        self.assertEqual(stats["branches.removed"], 1)
+
+    def test_signed_and_unsigned_comparisons_are_distinct(self):
+        out, stats = self.run_pass(
+            "MOVI R7, -1\nMOVI R8, 1\nBLT R7, R8, L.1\nL.1:\nBLTU R7, R8, L.2\nL.2:"
+        )
+        self.assertIn("BRA L.1", out)
+        self.assertNotIn("BLTU R7, R8, L.2", out)
+        self.assertEqual(stats["branches.taken"], 1)
+        self.assertEqual(stats["branches.removed"], 1)
+
+
+class UnreachableTest(unittest.TestCase):
+    def test_blocks_after_an_unconditional_jump_are_removed(self):
+        source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"
+                  "L.2:\nMOVI R1, 7\nJR R31\n")
+        stats = {}
+        out = lines_of(optimize(source, ["unreachable"], stats=stats))
+        self.assertNotIn("MOVI R1, 99", out)
+        self.assertIn("MOVI R1, 7", out)
+        self.assertEqual(stats["unreachable.blocks"], 1)
+
+    def test_it_consumes_a_branch_simplified_by_the_previous_pass(self):
+        source = (".text\n.globl f\nf:\nBEQ R5, R5, L.2\nMOVI R1, 99\nJR R31\n"
+                  "L.2:\nMOVI R1, 7\nJR R31\n")
+        out = lines_of(optimize(source, ["branches", "unreachable"]))
+        self.assertIn("BRA L.2", out)
+        self.assertNotIn("MOVI R1, 99", out)
+
+
+class TailCallsTest(unittest.TestCase):
+    CALLEE = ".globl g\ng:\nADDI R1, R1, 1\nJR R31\n"
+
+    def optimize_wrapper(self, before_call: str = "MOVI R1, 7", target: str = "g",
+                         after_call: str = "") -> tuple[list[str], dict]:
+        source = (".text\n" + self.CALLEE + ".globl f\nf:\nADDI R30, R30, -32\n"
+                  "STORE R28, R30, 0\nSTORE R31, R30, 16\n" + before_call + "\n"
+                  f"JAL R31, {target}\n" + after_call + "L.1:\nLOAD R28, R30, 0\n"
+                  "LOAD R31, R30, 16\nADDI R30, R30, 32\nJR R31\n")
+        stats = {}
+        return lines_of(optimize(source, ["tailcalls", "unreachable"], stats=stats)), stats
+
+    def test_direct_final_call_restores_the_frame_and_becomes_a_jump(self):
+        out, stats = self.optimize_wrapper()
+        start = out.index("f:")
+        tail = out[start:]
+        self.assertNotIn("JAL R31, g", tail)
+        self.assertNotIn("JR R31", tail)
+        self.assertLess(tail.index("LOAD R28, R30, 0"), tail.index("ADDI R30, R30, 32"))
+        self.assertLess(tail.index("LOAD R31, R30, 16"), tail.index("ADDI R30, R30, 32"))
+        self.assertLess(tail.index("ADDI R30, R30, 32"), tail.index("BRA g"))
+        self.assertEqual(stats["tailcalls"], 1)
+
+    def test_a_real_operation_after_the_call_prevents_it(self):
+        out, stats = self.optimize_wrapper(after_call="ADDI R1, R1, 2\n")
+        self.assertIn("JAL R31, g", out)
+        self.assertNotIn("tailcalls", stats)
+
+    def test_an_external_or_private_target_is_not_assumed_safe(self):
+        for target in ("external", "__mini_helper"):
+            out, stats = self.optimize_wrapper(target=target)
+            self.assertIn(f"JAL R31, {target}", out)
+            self.assertNotIn("tailcalls", stats)
+
+    def test_a_callee_with_stack_arguments_is_rejected(self):
+        source = (".text\n.globl g\ng:\nLOAD R5, R30, 16\nADD R1, R1, R5\nJR R31\n"
+                  ".globl f\nf:\nADDI R30, R30, -32\nSTORE R31, R30, 16\n"
+                  "JAL R31, g\nLOAD R31, R30, 16\nADDI R30, R30, 32\nJR R31\n")
+        stats = {}
+        out = lines_of(optimize(source, ["tailcalls"], stats=stats))
+        self.assertIn("JAL R31, g", out)
+        self.assertNotIn("tailcalls", stats)
+
+    def test_a_callee_that_takes_a_frame_address_is_rejected(self):
+        source = (".text\n.globl g\ng:\nADDI R7, R30, 20\nLOAD R1, R7, 0\nJR R31\n"
+                  ".globl f\nf:\nADDI R30, R30, -32\nSTORE R31, R30, 16\n"
+                  "JAL R31, g\nLOAD R31, R30, 16\nADDI R30, R30, 32\nJR R31\n")
+        stats = {}
+        out = lines_of(optimize(source, ["tailcalls"], stats=stats))
+        self.assertIn("JAL R31, g", out)
+        self.assertNotIn("tailcalls", stats)
+
+    def test_a_pointer_into_the_current_frame_is_not_passed_after_releasing_it(self):
+        out, stats = self.optimize_wrapper(before_call="ADDI R1, R30, 12")
+        self.assertIn("JAL R31, g", out)
+        self.assertNotIn("tailcalls", stats)
+
+    def test_a_shared_epilogue_is_kept_for_its_other_predecessor(self):
+        out, stats = self.optimize_wrapper(before_call="BEQ R2, R0, L.1\nMOVI R1, 7")
+        tail = out[out.index("f:"):]
+        self.assertIn("BRA g", tail)
+        self.assertIn("JR R31", tail)
+        self.assertEqual(tail.count("ADDI R30, R30, 32"), 2)
+        self.assertEqual(stats["tailcalls"], 1)
 
 
 FREE_REGISTERS_LOOP = """.text
