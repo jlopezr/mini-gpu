@@ -1707,6 +1707,109 @@ class BooleanTest(unittest.TestCase):
         self.assertGreater(converted, 0, "el generador nunca ejercita el pase")
 
 
+class DeadSavesTest(unittest.TestCase):
+    PROLOGUE = "ADDI R30, R30, -32\nSTORE R27, R30, 16\nSTORE R28, R30, 20\nSTORE R31, R30, 28\n"
+    EPILOGUE = "LOAD R27, R30, 16\nLOAD R28, R30, 20\nLOAD R31, R30, 28\nADDI R30, R30, 32\nJR R31\n"
+
+    def run_pass(self, body: str, prologue: str = PROLOGUE, epilogue: str = EPILOGUE, name: str = "f"):
+        stats: dict = {}
+        source = f".text\n.globl {name}\n{name}:\n" + prologue + body + "\n" + epilogue
+        return lines_of(optimize(source, ["deadsaves"], stats=stats)), stats
+
+    def test_a_register_the_function_never_touches_loses_its_save_and_restore(self):
+        out, stats = self.run_pass("ADDI R27, R1, 1\nADD R1, R27, R0")       # R28 no se usa
+        self.assertNotIn("STORE R28, R30, 20", out)
+        self.assertNotIn("LOAD R28, R30, 20", out)
+        self.assertIn("STORE R27, R30, 16", out)
+        self.assertIn("LOAD R27, R30, 16", out)
+        self.assertEqual(stats["deadsaves.registers"], 1)
+
+    def test_every_restore_goes_when_there_are_several_epilogues(self):
+        body = "BEQ R1, R0, L.1\nADDI R27, R1, 1\n" + self.EPILOGUE + "L.1:\nADDI R27, R1, 2"
+        out, _ = self.run_pass(body)
+        self.assertNotIn("LOAD R28, R30, 20", out)
+        self.assertEqual(out.count("LOAD R27, R30, 16"), 2)
+
+    def test_a_register_that_is_written_or_read_keeps_its_save(self):
+        for use in ("ADDI R28, R1, 1", "ADD R1, R28, R0", "STORE R28, R2, 0", "BEQ R28, R0, L.1\nL.1:",
+                    "JALR R31, R28"):
+            with self.subTest(use=use):
+                out, stats = self.run_pass("ADDI R27, R1, 1\n" + use)
+                self.assertIn("STORE R28, R30, 20", out)
+                self.assertIn("LOAD R28, R30, 20", out)
+
+    def test_returning_reads_the_register_by_convention_and_does_not_count_as_a_use(self):
+        out, stats = self.run_pass("ADDI R27, R1, 1")
+        self.assertNotIn("STORE R28, R30, 20", out)
+
+    def test_a_call_does_not_make_a_preserved_register_used(self):
+        out, stats = self.run_pass("ADDI R27, R1, 1\nJAL R31, g")
+        self.assertNotIn("STORE R28, R30, 20", out)
+
+    def test_the_link_register_and_the_frame_adjust_are_left_alone(self):
+        out, _ = self.run_pass("ADDI R27, R1, 1")
+        self.assertIn("STORE R31, R30, 28", out)
+        self.assertIn("LOAD R31, R30, 28", out)
+        self.assertIn("ADDI R30, R30, -32", out)
+        self.assertIn("ADDI R30, R30, 32", out)
+
+    def test_a_slot_reused_for_something_else_or_addressed_is_kept(self):
+        for body in ("LOAD R5, R30, 20", "STORE R5, R30, 20", "ADDI R5, R30, 20"):
+            with self.subTest(body=body):
+                out, _ = self.run_pass("ADDI R27, R1, 1\n" + body)
+                self.assertIn("STORE R28, R30, 20", out)
+
+    def test_a_symbolic_stack_offset_makes_the_function_untouched(self):
+        out, _ = self.run_pass("ADDI R27, R1, 1\nLOAD R5, R30, here")
+        self.assertIn("STORE R28, R30, 20", out)
+
+    def test_private_abi_helpers_are_not_touched(self):
+        out, _ = self.run_pass("ADDI R27, R1, 1", name="__mini_helper")
+        self.assertIn("STORE R28, R30, 20", out)
+
+    def test_it_runs_by_default_before_tailcalls(self):
+        from tools.mini_opt import DEFAULT_PASSES
+        self.assertLess(DEFAULT_PASSES.index("deadsaves"), DEFAULT_PASSES.index("tailcalls"))
+
+    def test_the_callers_register_survives_the_call(self):
+        """El llamador guarda un valor en R20; `f` salvaba R20 sin usarlo. Sin guardado, R20 sigue intacto,
+        y R21, que `f` si usa, se restaura."""
+        source = (".text\n.globl main\nmain:\nLI R20, 77\nLI R21, 5\nJAL R31, f\n"
+                  "ADD R16, R20, R0\nADD R17, R21, R0\nADD R18, R22, R0\nHALT\n"
+                  ".globl f\nf:\nADDI R30, R30, -16\nSTORE R20, R30, 0\nSTORE R21, R30, 4\nSTORE R22, R30, 8\n"
+                  "STORE R31, R30, 12\nMOVI R21, 9\nADD R1, R21, R0\n"
+                  "LOAD R20, R30, 0\nLOAD R21, R30, 4\nLOAD R22, R30, 8\nLOAD R31, R30, 12\n"
+                  "ADDI R30, R30, 16\nJR R31\n")
+        stats: dict = {}
+        optimized = optimize(source, ["deadsaves"], stats=stats)
+        self.assertEqual(stats["deadsaves.registers"], 2)                    # R20 y R22
+        self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), optimized)
+        self.assertEqual(final_registers(optimized, 0)[:3], [77, 5, 0])      # R16, R17, R18
+
+    def test_programs_give_the_same_registers_before_and_after(self):
+        """Funciones al azar que usan algunos de R16..R25 y llaman a otras: los valores del llamador sobreviven."""
+        removed = 0
+        for seed in range(200):
+            rng = random.Random(seed)
+            registers = list(range(16, 26))
+            callee_uses = rng.sample(registers, rng.randrange(0, 5))
+            saves = rng.sample(registers, rng.randrange(1, 7))
+            lines = [f"LI R{r}, {rng.randrange(1, 1000)}" for r in registers]
+            lines += ["JAL R31, f", "HALT", ".globl f", "f:", f"ADDI R30, R30, {-4 * (len(saves) + 1)}"]
+            lines += [f"STORE R{r}, R30, {4 * n}" for n, r in enumerate(saves)]
+            lines += [f"STORE R31, R30, {4 * len(saves)}"]
+            lines += [f"ADDI R{r}, R{r}, {rng.randrange(1, 9)}" for r in callee_uses if r in saves]
+            lines += [f"LOAD R{r}, R30, {4 * n}" for n, r in enumerate(saves)]
+            lines += [f"LOAD R31, R30, {4 * len(saves)}", f"ADDI R30, R30, {4 * (len(saves) + 1)}", "JR R31"]
+            source = ".text\n.globl main\nmain:\n" + "\n".join(lines) + "\n"
+            stats: dict = {}
+            optimized = optimize(source, ["deadsaves"], stats=stats)
+            removed += stats.get("deadsaves.registers", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(removed, 0, "el generador nunca ejercita el pase")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"
@@ -1963,11 +2066,11 @@ class TuiDemoTest(unittest.TestCase):
 
     def test_it_executes_clearly_fewer_instructions(self):
         raw, optimized = self.runs["raw"][0], self.runs["opt"][0]
-        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -12,7 %
+        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -14,1 %
 
     def test_the_binary_is_smaller(self):
         raw, optimized = self.runs["raw"][2], self.runs["opt"][2]
-        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -3,5 %
+        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -4,1 %
 
 
 if __name__ == "__main__":

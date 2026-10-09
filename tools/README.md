@@ -958,8 +958,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `branches`, `unreachable`, `licm`, `sharebase`, `tailcalls`, `invert`,
-  `ssy`) y,
+  `copyprop`, `boolean`, `branches`, `unreachable`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
+  `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1047,6 +1047,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   indirectas quedan fuera.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
+- **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
+  no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
+  borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no
+  hace falta liveness. Respeta el hueco: si otra instrucción lo lee, lo escribe o calcula su dirección, o hay
+  un desplazamiento simbólico de pila, no toca nada. El marco no se encoge. Va antes de `tailcalls`, que así
+  copia epílogos más cortos.
 - **Pase `invert`:** `Bcc a,b,L1 ; BRA L2 ; L1:` pasa a `B!cc a,b,L2 ; L1:` (la condición contraria
   salta a `L2` y si no, cae en `L1`, que se queda por si tiene otras referencias). Solo si `L2` es una
   etiqueta de la misma función y esta tiene menos de 32.000 instrucciones, porque un branch
@@ -1062,8 +1068,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
-con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−12,7 % medido) y un
-binario menor (−3,5 %).
+con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−14,1 % medido) y un
+binario menor (−4,1 %).
 
 ## Build con historial de timing, en segundo plano, estado, logs
 

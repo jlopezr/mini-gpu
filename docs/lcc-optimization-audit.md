@@ -33,8 +33,8 @@ Hallazgos prioritarios:
    retorno `ADD R15,R1,R0`, copias de parámetros y muchas copias alrededor de
    comparaciones son sistemáticas. El `mini-opt` ya confirmado elimina una parte
    con análisis de CFG y obtuvo −11,4 % estático y −7,7 % dinámico en el corpus
-   de esta auditoría. **Estado:** hecho; con todos los pases actuales, −14,2 %
-   estático en los 166 casos de mini-tst y −12,7 % de instrucciones ejecutadas
+   de esta auditoría. **Estado:** hecho; con todos los pases actuales, −14,9 %
+   estático en los 166 casos de mini-tst y −14,1 % de instrucciones ejecutadas
    en la demo de `z.tui` (sección 13).
 3. **Mejorar valores vivos a través de llamadas.** El asignador solo puede
    conservarlos en variables REGISTER preasignadas R16–R29; los demás
@@ -345,7 +345,7 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
 son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `boolean`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `licm`, `dce`, `sharebase`,
-`tailcalls`, `unreachable`, `invert`, `ssy`.
+`deadsaves`, `tailcalls`, `unreachable`, `invert`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
 crear desde cero un optimizador externo, sino si ampliar/integrar el existente.
 
@@ -504,14 +504,18 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
 
 - **Demo de `z.tui`** (`tui_unity_mini.c`, unas 12.400 instrucciones, ejecutada
   en el simulador con ESC; la pantalla es idéntica con y sin pases):
-  362.017 → 316.008 instrucciones ejecutadas (−12,7 %) y binario de 83.640 →
-  80.748 B (−3,5 %). `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
+  362.017 → 311.008 instrucciones ejecutadas (−14,1 %) y binario de 83.640 →
+  80.180 B (−4,1 %). `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
 - **Cubo** (`examples/c/race/cube.c`, un fotograma de cada método en estado
   estable; `compare_cube.py`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las
   texturas, sí es más caro en C (unas 670.000 instrucciones frente a 530.000),
   pero ocurre una sola vez; una medida anterior de 1,12 en CPU era ese arranque
   y no el método.
+- **Guardados muertos de R16–R29 en `z.tui`:** el `.s` crudo de lcc no tiene ninguno; tras
+  `copyprop` y `dce` hay 65 (53 funciones de 332), porque esos pases borran el último uso de
+  un registro y no su guardado. `deadsaves` los quita: −130 instrucciones estáticas y −5.000
+  ejecutadas en la demo (−1,6 %).
 - **Guardados de R16–R29 en `cube_cpu`** (14 `STORE` y 14 `LOAD` por llamada):
   `mini-opt:kernels` ya los quita en los kernels de GPU, donde no hay a quién
   devolver. En una función de CPU la ABI los exige y lcc ya guarda solo los
@@ -537,7 +541,7 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.242 instrucciones (−14,2 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert` y `boolean`) | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.080 instrucciones (−14,9 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert`, `boolean` y `deadsaves`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
 | Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
@@ -546,7 +550,8 @@ historial de la auditoría.
 | ~~Unreachable asm~~ | **Hecho:** branches conocidos + poda por CFG | 27 instrucciones adicionales frente al pipeline anterior | Baja | mini-opt |
 | ~~Rama invertida~~ | **Hecho:** pase `invert`, `Bcc a,b,L1 ; BRA L2 ; L1:` → `B!cc a,b,L2 ; L1:`; solo con `L2` en la misma función y menos de 32.000 instrucciones (el branch condicional lleva 16 bits) | Suite 20.459 → 20.420 (−39); `z.tui` −71 instrucciones (−0,6 %) | Baja | mini-opt |
 | ~~Booleano como valor~~ | **Hecho:** pase `boolean`, `Bcc ; MOVI r,1 ; BRA ; Lf: ; r=0 ; Le:` → `SLT`/`SLTU` (+ `XORI`; `SUB` para `BEQ`/`BNE`); sin liveness, solo si nadie más salta a `Lf` | Suite 20.420 → 20.242 (−178); `z.tui` −70 instrucciones (29 de 40 casos); cubo y rotación sin cambios | Baja | mini-opt |
-| Guardados de R16–R29 en funciones de CPU | **Sin acción:** en kernels de GPU ya los quita `mini-opt:kernels`; en CPU los exige la ABI y lcc guarda solo los usados | `cube_cpu`: 28 accesos por fotograma de ~321.000 instrucciones (0,009 %). Solo importaría en una función pequeña y muy llamada | Alta (interprocedural o shrink wrapping) | RA/backend |
+| ~~Guardados de R16–R29 que ya no se usan~~ | **Hecho:** pase `deadsaves`. `copyprop` y `dce` borran el último uso de un R16–R29 y dejan su `STORE` del prólogo y su `LOAD` del epílogo; el `.s` crudo de lcc no tiene ninguno. Se borran cuando el registro no aparece en nada más (el `JR` lo lee por convenio y no cuenta) | `z.tui`: 65 guardados muertos en 53 de 332 funciones, −130 instrucciones y −5.000 ejecutadas (−1,6 %); suite 20.242 → 20.080 (−162) | Baja | mini-opt |
+| Guardados de R16–R29 que sí se usan en funciones de CPU | **Sin acción:** en kernels de GPU ya los quita `mini-opt:kernels`; en CPU los exige la ABI y lcc guarda solo los usados | `cube_cpu`: 28 accesos por fotograma de ~321.000 instrucciones (0,009 %). Solo importaría en una función pequeña y muy llamada | Alta (interprocedural o shrink wrapping) | RA/backend |
 | Helpers `__mini_*` opacos para `mini-opt` | **Medido y descartado por ahora:** 3,3 % de las instrucciones de mini-tst y ninguna en los ejemplos (sección 9) | Reabrir si un programa usa soft-float, `divfx` o `memcpy` grande | Media | lcc + mini-opt |
 | ~~Plegado de constantes ampliado y base compartida de `LI`~~ | **Hecho:** `constprop` (evaluación de dos constantes, identidades, fusión MUL+SHL; las copias no se evalúan para no dejar sin trabajo a `copyprop`) y `sharebase` | `sharebase` ~1–2 % en el cubo en placa | Baja | mini-opt |
 | ~~LICM aritmética~~ | **Hecho, también en bucles anidados:** de dentro afuera, lo que sube del bucle interior sube del exterior si no depende de él. Un fallo del análisis de definiciones que alcanzan (una `ENTRY` falsa atrapada en el ciclo) lo impedía y se corrigió | Rotación GPU buena 1,04× → 1,01× el ASM; CPU 1,00×; `fill_rect`/`blit` −1,5 % a −2 % | Baja | mini-opt |
@@ -568,11 +573,12 @@ historial de la auditoría.
    |---|---:|---:|
    | Tras `mini.md:local` | 23.601 → 20.459 (−13,3 %) | 155 |
    | + `invert` | 23.601 → 20.420 (−13,5 %) | 165 |
-   | + `boolean` (actual) | 23.601 → 20.242 (−14,2 %) | 177 |
+   | + `boolean` | 23.601 → 20.242 (−14,2 %) | 177 |
+   | + `deadsaves` (actual) | 23.601 → 20.080 (−14,9 %) | 189 |
 
    El sin optimizar creció 50 y el optimizado 75 respecto a la medida anterior
    a `mini.md:local`; no se ha desglosado cuánto es de los tests nuevos y
-   cuánto de ese cambio. Los 177 tests incluyen 3 que compilan la demo de
+   cuánto de ese cambio. Los 189 tests incluyen 3 que compilan la demo de
    `z.tui` (se omiten sin MSVC); además hay 134 de simulación CPU+GPU. La tabla
    de instrucciones ejecutadas de `examples/c` no cambia con `invert` ni
    `boolean`.
@@ -628,7 +634,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 177 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 189 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.
@@ -637,7 +643,8 @@ Esta fase no modifica MiniABI. Implementa la integración opt-in de `mini-opt`,
 DCE físico independiente, simplificación de branches constantes/idénticos,
 eliminación de bloques inalcanzables, tail calls directas restringidas,
 `stackslots`, `sharebase`, plegado ampliado, LICM de loads opt-in, rama
-invertida (`invert`) y booleano como valor (`boolean`). En el
+invertida (`invert`), booleano como valor (`boolean`) y guardados muertos de R16–R29
+(`deadsaves`). En el
 compilador, un único cambio: en hojas, los locales que no caben en R16–R29 o
 tienen `ref<3` van a temporales (`mini.md:local`). El resto de oportunidades
 permanece abierto.
