@@ -1810,6 +1810,167 @@ class DeadSavesTest(unittest.TestCase):
         self.assertGreater(removed, 0, "el generador nunca ejercita el pase")
 
 
+def stack_run(source: str):
+    """Registros R16..R25 y los 128 bytes de la pila al terminar: lo que ve el programa, no el texto."""
+    cpu = CPU(memory_size=1 << 16)
+    cpu.load_program(assemble_bytes(source))
+    cpu.regs[30] = 0x8000
+    cpu.run(10_000)
+    return cpu.regs[16:26], bytes(cpu.memory[0x8000:0x8080])
+
+
+class ForwardTest(unittest.TestCase):
+    def run_pass(self, body: str, name: str = "f", frame: int = 32):
+        stats: dict = {}
+        source = (f".text\n.globl {name}\n{name}:\nADDI R30, R30, -{frame}\n" + body
+                  + f"\nADDI R30, R30, {frame}\nJR R31\n")
+        return lines_of(optimize(source, ["forward"], stats=stats))[3:], stats
+
+    def test_a_reload_of_the_register_just_stored_is_removed(self):
+        out, stats = self.run_pass("STORE R1, R30, 40\nLOAD R1, R30, 40\nADDI R2, R1, 1")
+        self.assertEqual(out[:3], ["ADDI R30, R30, -32", "STORE R1, R30, 40", "ADDI R2, R1, 1"])
+        self.assertEqual(stats["forward.removed"], 1)
+
+    def test_a_load_into_another_register_becomes_a_copy(self):
+        out, stats = self.run_pass("STORE R1, R30, 40\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R1, R0", out)
+        self.assertNotIn("LOAD R5, R30, 40", out)
+        self.assertEqual(stats["forward.copied"], 1)
+
+    def test_storing_zero_gives_a_zero_copy(self):
+        out, _ = self.run_pass("STORE R0, R30, 40\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R0, R0", out)
+
+    def test_a_second_load_of_the_same_slot_copies_the_first(self):
+        out, _ = self.run_pass("LOAD R5, R30, 40\nLOAD R6, R30, 40")
+        self.assertIn("LOAD R5, R30, 40", out)
+        self.assertIn("ADD R6, R5, R0", out)
+
+    def test_an_offset_written_as_an_expression_is_understood(self):
+        out, _ = self.run_pass("STORE R1, R30, 8+32\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R1, R0", out)
+
+    def test_it_is_left_alone_when_the_register_was_rewritten_in_between(self):
+        for rewrite in ("ADDI R1, R1, 1", "MOVI R1, 7", "LOAD R1, R2, 0"):
+            with self.subTest(rewrite=rewrite):
+                out, stats = self.run_pass(f"STORE R1, R30, 40\n{rewrite}\nLOAD R5, R30, 40")
+                self.assertIn("LOAD R5, R30, 40", out)
+                self.assertNotIn("forward.copied", stats)
+
+    def test_a_call_in_between_makes_it_forget_everything(self):
+        out, _ = self.run_pass("STORE R20, R30, 40\nJAL R31, g\nLOAD R5, R30, 40")
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_a_newer_store_replaces_the_register_that_holds_the_slot(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nSTORE R2, R30, 40\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R2, R0", out)
+
+    def test_a_narrow_store_over_the_word_makes_it_forget(self):
+        for store in ("STOREB R2, R30, 41", "STOREH R2, R30, 42"):
+            with self.subTest(store=store):
+                out, _ = self.run_pass(f"STORE R1, R30, 40\n{store}\nLOAD R5, R30, 40")
+                self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_a_store_to_another_slot_does_not_matter(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nSTORE R2, R30, 44\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R1, R0", out)
+
+    def test_a_symbolic_stack_offset_makes_it_forget(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nSTORE R2, R30, here\nLOAD R5, R30, 40")
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_a_pointer_store_only_forgets_slots_at_or_above_the_lowest_frame_address(self):
+        body = ("ADDI R9, R30, 24\nSTORE R1, R30, 16\nSTORE R2, R30, 40\nSTORE R3, R9, 0\n"
+                "LOAD R5, R30, 16\nLOAD R6, R30, 40")
+        out, _ = self.run_pass(body)
+        self.assertIn("ADD R5, R1, R0", out)                  # por debajo de 24: nadie lo alcanza
+        self.assertIn("LOAD R6, R30, 40", out)                # por encima: puede haberse pisado
+
+    def test_a_pointer_store_is_harmless_when_no_frame_address_is_computed(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nSTORE R3, R9, 0\nLOAD R5, R30, 40")
+        self.assertIn("ADD R5, R1, R0", out)
+
+    def test_using_the_stack_pointer_in_an_unfollowed_way_forgets_on_pointer_stores(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nADD R9, R30, R4\nSTORE R3, R9, 0\nLOAD R5, R30, 40")
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_at_a_join_the_slot_must_be_held_by_the_same_register_on_both_paths(self):
+        same = "BEQ R4, R0, L.1\nSTORE R1, R30, 40\nBRA L.2\nL.1:\nSTORE R1, R30, 40\nL.2:\nLOAD R5, R30, 40"
+        out, _ = self.run_pass(same)
+        self.assertIn("ADD R5, R1, R0", out)
+        different = "BEQ R4, R0, L.1\nSTORE R1, R30, 40\nBRA L.2\nL.1:\nSTORE R2, R30, 40\nL.2:\nLOAD R5, R30, 40"
+        out, _ = self.run_pass(different)
+        self.assertIn("LOAD R5, R30, 40", out)
+        one_side = "BEQ R4, R0, L.1\nSTORE R1, R30, 40\nL.1:\nLOAD R5, R30, 40"
+        out, _ = self.run_pass(one_side)
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_changing_the_stack_pointer_forgets(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nADDI R30, R30, -16\nLOAD R5, R30, 40")
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_loads_of_other_widths_are_not_touched(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nLOADB R5, R30, 40\nLOADUH R6, R30, 40")
+        self.assertIn("LOADB R5, R30, 40", out)
+        self.assertIn("LOADUH R6, R30, 40", out)
+
+    def test_private_abi_helpers_are_not_touched(self):
+        out, _ = self.run_pass("STORE R1, R30, 40\nLOAD R5, R30, 40", name="__mini_helper")
+        self.assertIn("LOAD R5, R30, 40", out)
+
+    def test_it_runs_by_default_before_constprop_and_copyprop(self):
+        from tools.mini_opt import DEFAULT_PASSES
+        self.assertLess(DEFAULT_PASSES.index("forward"), DEFAULT_PASSES.index("constprop"))
+        self.assertLess(DEFAULT_PASSES.index("forward"), DEFAULT_PASSES.index("copyprop"))
+
+    def test_programs_leave_the_same_registers_and_stack_before_and_after(self):
+        """Programas al azar con stores y loads de pila de varios anchos, stores por un puntero al marco,
+        llamadas y saltos: el simulador da los mismos registros y la misma memoria con y sin el pase."""
+        removed = copied = 0
+        for seed in range(400):
+            rng = random.Random(seed)
+            regs = [f"R{r}" for r in range(16, 26)]
+            slots = list(range(0, 64, 4))
+            lines = [f"LI {r}, {rng.randrange(1, 1000)}" for r in regs]
+            if rng.random() < 0.7:
+                lines.append("ADDI R9, R30, 24")                       # direccion de marco: floor = 24
+            label = 0
+            for _ in range(rng.randrange(8, 40)):
+                kind = rng.random()
+                r, s = rng.choice(regs), rng.choice(regs)
+                off = rng.choice(slots)
+                if kind < 0.28:
+                    lines.append(f"STORE {r}, R30, {off}")
+                elif kind < 0.55:
+                    lines.append(f"LOAD {r}, R30, {off}")
+                elif kind < 0.65:
+                    lines.append(f"ADDI {r}, {r}, {rng.randrange(1, 50)}")
+                elif kind < 0.72:
+                    lines.append(f"ADD {r}, {s}, R0")
+                elif kind < 0.78:
+                    lines.append(rng.choice((f"STOREB {r}, R30, {off + rng.randrange(0, 4)}",
+                                            f"STOREH {r}, R30, {off + rng.choice((0, 2))}")))
+                elif kind < 0.84 and any(l == "ADDI R9, R30, 24" for l in lines):
+                    lines.append(f"STORE {r}, R9, {rng.choice(range(0, 40, 4))}")
+                elif kind < 0.90:
+                    lines.append("JAL R31, g")
+                else:
+                    label += 1
+                    lines += [f"BEQ {r}, {s}, L.{label}", f"STORE {s}, R30, {off}", f"LOAD {r}, R30, {rng.choice(slots)}",
+                              f"L.{label}:"]
+            lines += [f"LOAD {r}, R30, {off}" for r, off in zip(regs[:4], rng.sample(slots, 4))]
+            source = (".text\n.globl main\nmain:\n" + "\n".join(lines) + "\nHALT\n"
+                      ".globl g\ng:\nADDI R5, R5, 1\nSTORE R5, R30, 8\nJR R31\n")      # g pisa el area de argumentos
+            stats: dict = {}
+            optimized = optimize(source, ["forward"], stats=stats)
+            removed += stats.get("forward.removed", 0)
+            copied += stats.get("forward.copied", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(stack_run(optimized), stack_run(source), source + "\n---\n" + optimized)
+        self.assertGreater(removed, 0, "el generador nunca ejercita el borrado")
+        self.assertGreater(copied, 0, "el generador nunca ejercita la copia")
+
+
 class UnreachableTest(unittest.TestCase):
     def test_blocks_after_an_unconditional_jump_are_removed(self):
         source = (".text\n.globl f\nf:\nBRA L.2\nL.1:\nMOVI R1, 99\nJR R31\n"
@@ -2066,11 +2227,11 @@ class TuiDemoTest(unittest.TestCase):
 
     def test_it_executes_clearly_fewer_instructions(self):
         raw, optimized = self.runs["raw"][0], self.runs["opt"][0]
-        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -14,1 %
+        self.assertLess(optimized, raw * 0.95, f"{raw} -> {optimized}")      # medido: -15,2 %
 
     def test_the_binary_is_smaller(self):
         raw, optimized = self.runs["raw"][2], self.runs["opt"][2]
-        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -4,1 %
+        self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -5,1 %
 
 
 if __name__ == "__main__":

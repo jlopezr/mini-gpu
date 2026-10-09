@@ -43,4 +43,4 @@ la vez la auditoría.
 
 La medida del compilador actual sobre toda la suite (166 casos) no sale de
 aquí sino de `tools/mini-lcc-test.ps1 --simulate --compare-optimizer`:
-23.601 → 20.080 instrucciones (−14,9 %, con `invert`, `boolean` y `deadsaves`).
+23.601 → 19.980 instrucciones (−15,3 %, con `invert`, `boolean`, `deadsaves` y `forward`).

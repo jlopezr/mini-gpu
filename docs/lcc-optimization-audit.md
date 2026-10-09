@@ -33,8 +33,8 @@ Hallazgos prioritarios:
    retorno `ADD R15,R1,R0`, copias de parámetros y muchas copias alrededor de
    comparaciones son sistemáticas. El `mini-opt` ya confirmado elimina una parte
    con análisis de CFG y obtuvo −11,4 % estático y −7,7 % dinámico en el corpus
-   de esta auditoría. **Estado:** hecho; con todos los pases actuales, −14,9 %
-   estático en los 166 casos de mini-tst y −14,1 % de instrucciones ejecutadas
+   de esta auditoría. **Estado:** hecho; con todos los pases actuales, −15,3 %
+   estático en los 166 casos de mini-tst y −15,2 % de instrucciones ejecutadas
    en la demo de `z.tui` (sección 13).
 3. **Mejorar valores vivos a través de llamadas.** El asignador solo puede
    conservarlos en variables REGISTER preasignadas R16–R29; los demás
@@ -343,7 +343,7 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 
 `tools/mini_opt` ya separa funciones, construye basic blocks y CFG, calcula
 liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
-son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `boolean`, `constprop`, `dce`,
+son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `boolean`, `forward`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `licm`, `dce`, `sharebase`,
 `deadsaves`, `tailcalls`, `unreachable`, `invert`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
@@ -504,8 +504,9 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
 
 - **Demo de `z.tui`** (`tui_unity_mini.c`, unas 12.400 instrucciones, ejecutada
   en el simulador con ESC; la pantalla es idéntica con y sin pases):
-  362.017 → 311.008 instrucciones ejecutadas (−14,1 %) y binario de 83.640 →
-  80.180 B (−4,1 %). `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
+  362.017 → 307.009 instrucciones ejecutadas (−15,2 %) y binario de 83.640 →
+  79.340 B (−5,1 %). Los accesos a pila ejecutados pasan de 47.805 (15,1 % de las
+  instrucciones) a 38.891 (12,7 %) con `forward`. `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
 - **Cubo** (`examples/c/race/cube.c`, un fotograma de cada método en estado
   estable; `compare_cube.py`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las
@@ -541,9 +542,10 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 20.080 instrucciones (−14,9 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert`, `boolean` y `deadsaves`) | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 19.980 instrucciones (−15,3 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert`, `boolean`, `deadsaves` y `forward`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
-| Store-to-load forwarding / DSE entre bloques | Ausente (lcc lo hace dentro de un bloque con el DAG) | Funciones con llamadas y huecos fríos que `stackslots` no cubre | Media | mini-opt (huecos privados: sin aliasing) |
+| ~~Store-to-load forwarding~~ | **Hecho:** pase `forward`, con `forward_must` sobre el CFG. El estado es `{hueco: registro con su valor}`; lo invalidan la reescritura del registro, otro store sobre la palabra, las llamadas, los cambios de R30 y los stores por puntero a partir de la dirección de marco más baja que la función calcula. Un `LOAD` pasa a copia (o sobra) | `z.tui`: −89 `LOAD` y 136 copias, y −4.000 instrucciones ejecutadas en la demo (−1,3 %); suite 20.080 → 19.980 (−100) | Media | mini-opt |
+| DSE (stores que nadie lee) | Pendiente: tras `forward`, muchos `STORE` de los huecos de argumentos (`STORE R1, R30, 32`) ya no se leen. Solo es seguro en el área de argumentos entrantes (por encima del marco) sin dirección tomada; no en el área saliente, que lee el destino de la llamada | Sin medir; el tráfico de pila de la demo sigue siendo el 12,7 % | Media | mini-opt |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
 | Slot coloring de spills | Ausente | Frame/memoria; depende de presión | Media | pre-emisión |
 | ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros. Decidido dejarlo así | 36 instrucciones adicionales en mini-tst. En `z.tui`: +99 instrucciones estáticas (+0,8 %) y −6 ejecutadas en la demo; ahorra 1 instrucción y 1 salto tomado por ejecución, y pila en recursión (sección 11) | Baja-media | mini-opt |
@@ -574,11 +576,12 @@ historial de la auditoría.
    | Tras `mini.md:local` | 23.601 → 20.459 (−13,3 %) | 155 |
    | + `invert` | 23.601 → 20.420 (−13,5 %) | 165 |
    | + `boolean` | 23.601 → 20.242 (−14,2 %) | 177 |
-   | + `deadsaves` (actual) | 23.601 → 20.080 (−14,9 %) | 189 |
+   | + `deadsaves` | 23.601 → 20.080 (−14,9 %) | 189 |
+   | + `forward` (actual) | 23.601 → 19.980 (−15,3 %) | 209 |
 
    El sin optimizar creció 50 y el optimizado 75 respecto a la medida anterior
    a `mini.md:local`; no se ha desglosado cuánto es de los tests nuevos y
-   cuánto de ese cambio. Los 189 tests incluyen 3 que compilan la demo de
+   cuánto de ese cambio. Los 209 tests incluyen 3 que compilan la demo de
    `z.tui` (se omiten sin MSVC); además hay 134 de simulación CPU+GPU. La tabla
    de instrucciones ejecutadas de `examples/c` no cambia con `invert` ni
    `boolean`.
@@ -596,7 +599,8 @@ historial de la auditoría.
    o si no caben en R16–R29 (dejando 5 temporales para expresiones). El
    `__kernel_cube_good` ya no toca la pila sin `stackslots`; este pase queda
    como red de seguridad (test con el `.s` de antes en `StackSlotsTest`).
-   Pendiente: store-to-load forwarding y DSE entre bloques, y la misma idea
+   Hecho después: store-to-load forwarding (`forward`). Pendiente: DSE de stores que
+   nadie lee, y la misma idea
    para funciones con llamadas (necesita R16–R29 y su coste de save).
 4. **Calls/spills:** asignar valores que cruzan llamadas a R16–R29 comparando el
    coste save/restore con stores por call. Medir `calls`, `recursive`, soft-float
@@ -619,7 +623,7 @@ promover locales o ampliar prudentemente las tail calls.
 ## 14. Conclusiones para decisión
 
 - **Tres de mayor beneficio probable:** ~~promoción de escalares~~ **(hecha)**
-  y DSE/forwarding entre bloques; asignación consciente de llamadas;
+  y ~~forwarding~~ **(hecho)**/DSE; asignación consciente de llamadas;
   copyprop/DCE post-RA ya existente.
 - **Tres más fáciles:** ~~integrar copyprop/DCE existente~~ **(hecho)**;
   ~~unreachable/branch cleanup~~ **(hecho)**; ~~tail-call directo restringido~~ **(hecho)** (la alineación a 4 es aún más simple,
@@ -634,7 +638,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 189 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 209 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.
@@ -644,7 +648,7 @@ DCE físico independiente, simplificación de branches constantes/idénticos,
 eliminación de bloques inalcanzables, tail calls directas restringidas,
 `stackslots`, `sharebase`, plegado ampliado, LICM de loads opt-in, rama
 invertida (`invert`), booleano como valor (`boolean`) y guardados muertos de R16–R29
-(`deadsaves`). En el
+(`deadsaves`) y store-to-load forwarding (`forward`). En el
 compilador, un único cambio: en hojas, los locales que no caben en R16–R29 o
 tienen `ref<3` van a temporales (`mini.md:local`). El resto de oportunidades
 permanece abierto.

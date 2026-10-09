@@ -217,7 +217,7 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 | blit 64x64 | 4.796 | 4.800 | 4.292 | 1,00 | 0,89 | 1,12x |
 | fill_rect 7x13 (3 warps) | 182 | 182 | 171 | 1,00 | 0,94 | 1,06x |
 | blit 7x13 (5 warps) | 257 | 262 | 253 | 1,02 | 0,98 | 1,04x |
-| rotación, CPU | 233.806 | 285.125 | 234.565 | 1,22 | 1,00 | 1,22x |
+| rotación, CPU | 233.806 | 285.125 | 234.564 | 1,22 | 1,00 | 1,22x |
 | rotación, GPU inocente (warp) | 29.426 | 42.112 | 29.528 | 1,43 | 1,00 | 1,43x |
 | rotación, GPU buena (warp) | 30.864 | 44.272 | 31.024 | 1,43 | 1,01 | 1,43x |
 | cubo, CPU | 322.000 | 482.000 | 321.000 | 1,50 | 1,00 | 1,50x |
