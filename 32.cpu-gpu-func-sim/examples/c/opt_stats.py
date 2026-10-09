@@ -21,6 +21,7 @@ ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 import build as c_build  # noqa: E402
 import compare  # noqa: E402
+import compare_cube  # noqa: E402
 import compare_rotate  # noqa: E402
 
 BEFORE = "intrinsics,kernels,ssy"
@@ -41,7 +42,7 @@ def run_with(passes: str | None):
         os.environ.pop("MINI_OPT_PASSES", None)
     else:
         os.environ["MINI_OPT_PASSES"] = passes
-    return compare.compare(), compare_rotate.compare(5)
+    return compare.compare(), compare_rotate.compare(5), compare_cube.compare()
 
 
 def main() -> int:
@@ -51,8 +52,8 @@ def main() -> int:
     out: list[str] = ["## Texto: lo que añade (+) o quita (-) cada pase\n"]
     for name in SOURCES:
         out += [f"`{name}`", "```text", static_stats(HERE / name), "```", ""]
-    before_sys, before_rot = run_with(BEFORE)
-    after_sys, after_rot = run_with(None)
+    before_sys, before_rot, before_cube = run_with(BEFORE)
+    after_sys, after_rot, after_cube = run_with(None)
     out.append("## Instrucciones ejecutadas (simulador), C frente a ensamblador\n")
     out += ["| Carga | Ensamblador | C antes | C ahora | antes / ens. | ahora / ens. | mejora |",
             "|---|---:|---:|---:|---:|---:|---:|"]
@@ -60,6 +61,9 @@ def main() -> int:
         out.append(f"| {w.name} | {a:,} | {c0:,} | {c1:,} | {c0 / a:.2f} | {c1 / a:.2f} | {c0 / c1:.2f}x |")
     for (name, unit, a, c0, _), (_, _, _, c1, _) in zip(before_rot, after_rot):
         out.append(f"| rotación, {name} ({unit.split()[-1]}) | {a:,} | {c0:,} | {c1:,} | {c0 / a:.2f} | "
+                   f"{c1 / a:.2f} | {c0 / c1:.2f}x |")
+    for (name, unit, a, c0, _), (_, _, _, c1, _) in zip(before_cube, after_cube):
+        out.append(f"| cubo, {name} ({unit.split()[-1]}) | {a:,} | {c0:,} | {c1:,} | {c0 / a:.2f} | "
                    f"{c1 / a:.2f} | {c0 / c1:.2f}x |")
     text = "\n".join(out)
     print(text)
