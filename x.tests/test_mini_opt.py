@@ -2205,6 +2205,117 @@ L.9:
         self.assertEqual(final_registers(optimized, 0), final_registers(source, 0))
 
 
+class ArgBlockTest(unittest.TestCase):
+    """Contrato de los kernels: el bloque de argumentos (`GETARG`) no se escribe mientras corre el kernel, asi que
+    leerlo es invariante aunque el bucle haga stores por punteros."""
+
+    LOOP = """\
+.text
+.globl {name}
+{name}:
+MOVI R10, 0
+MOVI R11, 8
+BRA L.2
+L.1:
+GETARG R5
+LOAD R6, R5, 4
+STORE R6, R12, 0
+ADD R10, R10, R6
+L.2:
+BLT R10, R11, L.1
+{end}
+"""
+
+    def split(self, text: str):
+        out = lines_of(text)
+        return out[:out.index("L.1:")], out[out.index("L.1:") + 1:out.index("L.2:")]
+
+    def test_a_kernel_reads_the_block_once_before_the_loop_even_with_stores_inside(self):
+        stats: dict = {}
+        before, inside = self.split(optimize(self.LOOP.format(name="__kernel_k", end="EXIT"), ["argblock"], stats=stats))
+        self.assertTrue([l for l in before if l.startswith("GETARG")])
+        self.assertTrue([l for l in before if l.startswith("LOAD")])
+        self.assertFalse([l for l in inside if l.startswith(("GETARG", "LOAD"))])
+        self.assertEqual(stats["licm.removed"], 2)
+
+    def test_the_store_is_kept_in_the_loop(self):
+        _, inside = self.split(optimize(self.LOOP.format(name="__kernel_k", end="EXIT"), ["argblock"]))
+        self.assertEqual([l.split()[0] for l in inside], ["STORE", "ADD"])
+
+    def test_a_normal_function_is_left_alone(self):
+        source = self.LOOP.format(name="f", end="JR R31")
+        self.assertEqual(optimize(source, ["argblock"]), source)
+        _, inside = self.split(optimize(source, ["licm"]))       # ni `licm`: el contrato es de los kernels
+        self.assertTrue([l for l in inside if l.startswith("LOAD")])
+
+    def test_only_the_block_is_hoisted_not_other_invariants(self):
+        source = self.LOOP.format(name="__kernel_k", end="EXIT").replace("ADD R10, R10, R6", "MOVI R7, 3\nADD R10, R10, R7")
+        _, inside = self.split(optimize(source, ["argblock"]))
+        self.assertIn("MOVI R7, 3", inside)                      # eso es cosa de `licm`
+
+    def test_two_pointers_with_the_same_register_step_share_the_scaled_step(self):
+        source = """\
+.text
+.globl f
+f:
+LI R13, 4096
+LI R14, 8192
+MOVI R6, 2
+MOVI R10, 0
+MOVI R11, 40
+MOVI R12, 0
+BRA L.2
+L.1:
+SHLI R7, R10, 2
+ADD R7, R7, R13
+LOAD R8, R7, 0
+SHLI R9, R10, 2
+ADD R9, R9, R14
+LOAD R15, R9, 0
+ADD R12, R12, R8
+ADD R12, R12, R15
+ADD R10, R10, R6
+L.2:
+BLT R10, R11, L.1
+JR R31
+"""
+        stats: dict = {}
+        out = lines_of(optimize(source, ["strength"], stats=stats))
+        self.assertEqual(stats["strength.pointers"], 2)
+        before = out[:out.index("L.1:")]
+        doubled = [l for l in before if re.fullmatch(r"ADD R(\d+), R6, R6", l)]
+        self.assertEqual(len(doubled), 1, before)                # un solo `2 * paso`, compartido
+
+    def test_default_pipeline_turns_a_register_step_into_a_pointer_for_a_kernel(self):
+        # for (x = lane; x < n; x += nlanes) sum += a[x]: el paso sale del bloque, que `argblock` ya saco
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETLANE R10
+MOVI R11, 100
+MOVI R12, 0
+LI R13, 4096
+BRA L.2
+L.1:
+GETARG R5
+LOAD R6, R5, 4
+SHLI R7, R10, 2
+ADD R7, R7, R13
+LOAD R8, R7, 0
+ADD R12, R12, R8
+ADD R10, R10, R6
+L.2:
+BLT R10, R11, L.1
+EXIT
+"""
+        stats: dict = {}
+        out = optimize(source, ["argblock", "dce", "strength", "dce"], stats=stats)
+        self.assertEqual(stats["strength.pointers"], 1)
+        _, inside = self.split(out)
+        self.assertFalse([l for l in inside if l.startswith(("GETARG", "SHLI"))])
+
+
 def loop_program(rng: random.Random) -> str:
     """Un bucle con accesos indexados al azar: `base + ((fila + i * paso + k) << 2)` (o `i * c` con MUL), cargas y
     stores, y despues una suma de la zona escrita. Los resultados quedan en R16..R19."""

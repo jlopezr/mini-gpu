@@ -958,7 +958,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `strength`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
   `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1063,6 +1063,13 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   área saliente, que lee el destino de la llamada, además de los guardados y los locales. Si R30 cambia
   de otra forma que el ajuste canónico, o se usa de una forma que no se sigue, no toca la función.
   Es una condición de toda la función, sin CFG ni liveness.
+- **Pase `argblock`:** contrato de los kernels: el bloque de argumentos (lo que devuelve `GETARG`) no se escribe mientras el kernel
+  corre, como la memoria constante de CUDA. Así, `GETARG` y cada `LOAD` cuya base sale de él son invariantes de un bucle aunque haya
+  `STORE` por punteros dentro (el compilador no puede demostrar que no escriben en el bloque: los punteros de salida salen del propio
+  bloque y todo es `int`). Se suben al preheader solo ellos. Va antes de `strength` porque el paso `x += nlanes` se releía en cada vuelta
+  y mientras no sale del bucle no es invariante, y porque `licm`, que sube lo demás, se queda con los registros libres. `licm` aplica
+  el mismo contrato después. Solo en funciones `__kernel_*`. Cuidado con un kernel que escriba resultados en su bloque: el contrato
+  lo prohíbe.
 - **Pase `strength`:** reducción de fuerza de los accesos indexados de un bucle. lcc compila `a[(y + 1) * 168 + 8 + x + k]` con la
   cuenta entera de cada acceso (`ADD`, `SHL`, `ADD` de la base y el `LOAD`, 4 instrucciones donde a mano es una). Si el bucle tiene una
   variable de inducción (`ADDI i, i, c`, su única escritura, en el único bloque con arista de vuelta) y la dirección es una suma de

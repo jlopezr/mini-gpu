@@ -265,14 +265,18 @@ def provable_symbols(unit: Unit) -> set[str]:
     return defined_symbols(unit) - escaped_symbols(unit) - unit.volatile - EXTERNAL
 
 
-def invariant_load_ok(line: Line, pre: Block, readonly: set[str]) -> bool:
+def invariant_load_ok(line: Line, pre: Block, readonly: set[str], arg_block: bool = False) -> bool:
     """Una carga cuya base es la direccion de un simbolo que el kernel solo lee (la ultima definicion de la base en
-    el preheader es `LI base, simbolo+K`) es invariante mientras la base no cambie en el bucle."""
+    el preheader es `LI base, simbolo+K`) es invariante mientras la base no cambie en el bucle. Con `arg_block`
+    (los kernels), tambien la que lee el bloque de argumentos (`GETARG base`): por contrato, el bloque no se
+    escribe mientras el kernel corre, como la memoria constante de CUDA."""
     if line.op not in LOADS or len(line.args) != 3:
         return False
     base = reg_of(line.args[1])
     for previous in reversed(pre.lines):
         if previous.kind == "instr" and base in defs_uses(previous)[0]:
+            if previous.op == "GETARG":
+                return arg_block
             address = split_address(previous.args[1]) if previous.op == "LI" and len(previous.args) == 2 else None
             return address is not None and address[0] in readonly
     return False
@@ -289,8 +293,9 @@ def invariant_groups(blocks: list[Block], body: set[int], facts: Reaching,
     groups: dict[Key, list[Candidate]] = {}
     for b in sorted(body):
         for line in blocks[b].lines:
-            if line.kind != "instr" or (line.op not in PURE_OPS and not (loads_ok and loads_ok(line))):
-                continue
+            if line.kind != "instr" or (line.op not in PURE_OPS and line.op != "GETARG"
+                                        and not (loads_ok and loads_ok(line))):
+                continue                        # GETARG: la direccion del bloque de argumentos no cambia en el kernel
             defs, uses = defs_uses(line)
             if len(defs) != 1 or uses & written:
                 continue
@@ -352,13 +357,18 @@ def move_group(key: Key, members: list[Candidate], facts: Reaching, pre: Block, 
 
 
 def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
-              stats: dict, readonly: frozenset[str] = frozenset()) -> None:
-    """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros."""
-    loads_ok = (lambda line: invariant_load_ok(line, pre, readonly)) if readonly else None
+              stats: dict, readonly: frozenset[str] = frozenset(), arg_block: bool = False,
+              only_args: bool = False) -> None:
+    """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros. Con `only_args`, solo el
+    bloque de argumentos: `GETARG` y las cargas que lo leen."""
+    loads_ok = ((lambda line: invariant_load_ok(line, pre, readonly, arg_block))
+                if readonly or arg_block else None)
     while True:
         live_in = live_in_blocks(blocks, liveness(blocks))
         facts = reaching_in_loop(blocks, body)
         groups = invariant_groups(blocks, body, facts, live_in, loads_ok)
+        if only_args:
+            groups = {k: v for k, v in groups.items() if k[0] == "GETARG" or k[0] in LOADS}
         free = free_registers(blocks, body, header, allowed, live_in)
         key = choose_group(groups, free)
         if key is None:
@@ -376,9 +386,20 @@ def preheader(blocks: list[Block], header: int, body: set[int]) -> Block | None:
 
 @register_pass("licm", "saca de los bucles lo que no cambia en ellos (constantes y cuentas con valores fijos)")
 def pass_licm(unit: Unit, stats: dict) -> None:
+    hoist(unit, stats, only_args=False)
+
+
+@register_pass("argblock", "saca de los bucles de un kernel la lectura del bloque de argumentos (solo lectura por contrato)")
+def pass_argblock(unit: Unit, stats: dict) -> None:
+    """Va antes de `strength`: el paso de un bucle (`x += nlanes`) se relee del bloque en cada vuelta, y mientras no
+    salga del bucle no es invariante. Como `licm` luego gastaria los registros libres, se hace aparte y primero."""
+    hoist(unit, stats, only_args=True)
+
+
+def hoist(unit: Unit, stats: dict, only_args: bool) -> None:
     provable = None
     for function in unit.functions():
-        if function.opaque:
+        if function.opaque or (only_args and not function.name.startswith(KERNEL_PREFIX)):
             continue
         blocks = build_cfg(function)
         if len(blocks) < 2:
@@ -386,7 +407,7 @@ def pass_licm(unit: Unit, stats: dict) -> None:
         loops = natural_loops(blocks, dominators(blocks))
         kernel = function.name.startswith(KERNEL_PREFIX)
         readonly = frozenset()
-        if kernel:
+        if kernel and not only_args:
             # los que el propio kernel solo lee, y que ningun puntero puede alcanzar (o, con `--assume-noalias`, sin
             # demostrarlo: basta que el kernel no los escriba). Un `volatile` nunca se saca.
             if provable is None:
@@ -406,7 +427,8 @@ def pass_licm(unit: Unit, stats: dict) -> None:
             if pre is None:
                 continue
             before = stats.get("licm.removed", 0)
-            licm_loop(blocks, body, header, pre, allowed, stats, readonly)
+            licm_loop(blocks, body, header, pre, allowed, stats, frozenset() if only_args else readonly,
+                      arg_block=kernel, only_args=only_args)
             if stats.get("licm.removed", 0) > before:
                 stats["licm.loops"] = stats.get("licm.loops", 0) + 1
         function.body = [line for block in blocks for line in block.lines]

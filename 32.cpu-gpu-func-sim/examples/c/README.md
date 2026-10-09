@@ -47,7 +47,9 @@ En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`, `mmio.h`); `
   `mini-opt`: lcc no tiene atributos.
 - **`mini-opt`** (pases `intrinsics` y `kernels`, ver `tools/README.md`) convierte esa función en
   el punto de entrada de una lane: carga los parámetros que el kernel lee desde el bloque de
-  argumentos (`GETARG`) y sustituye el `JR R31` final por `EXIT`. Quita además el marco de
+  argumentos (`GETARG`) y sustituye el `JR R31` final por `EXIT`. Un kernel no escribe en ese bloque mientras corre (como la
+  memoria constante de CUDA): `mini-opt` se apoya en eso para no releerlo en cada vuelta de un bucle (pase `argblock`).
+  Quien necesite devolver resultados lo hace por un puntero que reciba en el bloque, no en el bloque. Quita además el marco de
   pila que lcc monta para guardar y restaurar registros preservados, que a un kernel no le
   sirve (nadie recibe esos registros de vuelta). Solo si el kernel usa la pila de verdad (un
   array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata

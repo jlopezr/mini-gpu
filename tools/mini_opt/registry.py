@@ -15,7 +15,7 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # usa los restantes; `ssy` ve al final el CFG definitivo.
 DEFAULT_PASSES = [
     "intrinsics", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
-    "copyprop", "dce", "branches", "unreachable", "strength", "dce", "licm", "dce",
+    "copyprop", "dce", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce",
     "sharebase", "deadsaves", "tailcalls", "unreachable", "invert", "ssy",
 ]
 
