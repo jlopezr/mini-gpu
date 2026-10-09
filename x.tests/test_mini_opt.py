@@ -556,6 +556,68 @@ class LicmTest(unittest.TestCase):
         self.assertNotIn("licm.loops", stats)
 
 
+NESTED_LOOP = """.text
+.globl f
+f:
+MOVI R16, 0
+BRA L.4
+L.1:
+{outer}
+MOVI R17, 0
+BRA L.3
+L.2:
+STORE R10, R1, 0
+ADDI R17, R17, 1
+L.3:
+BLT R17, R8, L.2
+ADDI R16, R16, 1
+L.4:
+MOVI R11, 10
+BLT R16, R11, L.1
+JR R31
+"""
+
+
+class LicmNestedTest(unittest.TestCase):
+    """Un bucle que tiene otro dentro tambien saca lo suyo: lo que el interior deja en su preheader sigue siendo
+    invariante para el exterior si nada de lo que lo calcula cambia en el."""
+
+    def licm(self, outer: str):
+        stats = {}
+        out = lines_of(optimize(NESTED_LOOP.format(outer=outer), ["licm"], stats=stats))
+        return out, stats
+
+    def test_what_does_not_depend_on_the_outer_variable_leaves_both_loops(self):
+        out, stats = self.licm("MOVI R8, 160\nMUL R9, R2, R3\nADD R10, R9, R16")
+        before = out[:out.index("BRA L.4")]
+        loop = out[out.index("L.1:"):]
+        self.assertTrue(any(l.startswith("MUL") for l in before), out)        # el producto, una vez
+        self.assertFalse(any(l.startswith(("MUL", "MOVI R8")) for l in loop), loop)
+        self.assertEqual(stats["licm.loops"], 1)                              # el interior no tiene nada propio
+
+    def test_what_depends_on_the_outer_variable_stays_in_the_outer_loop(self):
+        out, _ = self.licm("MOVI R8, 160\nMUL R9, R2, R3\nADD R10, R9, R16")
+        loop = out[out.index("L.1:"):out.index("L.2:")]
+        self.assertTrue(any(l.startswith("ADD R10") for l in loop), loop)      # lleva R16 (y)
+
+    def test_a_value_carried_from_one_iteration_to_the_next_is_not_invariant(self):
+        # R12 se lee antes de escribirse: cada vuelta ve lo de la anterior
+        out, _ = self.licm("MOVI R8, 160\nADD R12, R12, R3\nMOVI R9, 0\nADD R10, R12, R9")
+        self.assertIn("ADD R12, R12, R3", out[out.index("L.1:"):])
+
+    def test_a_constant_defined_in_the_loop_and_redefined_later_in_it_is_not_merged(self):
+        # R8 vale 160 en el interior y 5 al acabar la vuelta: la del final no puede ocupar el lugar de la primera
+        out, _ = self.licm("MOVI R8, 160\nADD R10, R16, R8")
+        self.assertFalse(any(l.startswith("MOVI R8, 160") for l in out[out.index("L.1:"):]), out)
+
+    def test_an_inner_loop_that_runs_zero_times_still_reads_the_right_bound(self):
+        out, _ = self.licm("MOVI R8, 160\nADD R10, R16, R16")
+        hoisted = [l for l in out[:out.index("BRA L.4")] if l.startswith("MOVI")]
+        self.assertTrue(any(l.endswith(", 160") for l in hoisted), out)
+        compare = next(l for l in out if l.startswith("BLT R17,"))
+        self.assertNotEqual(compare, "BLT R17, R8, L.2")                       # lee el registro nuevo
+
+
 LOAD_LOOP = """.text
 .globl {name}
 {name}:

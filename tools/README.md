@@ -979,10 +979,13 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
   además el `SSY` que cae siempre después de otro con el mismo destino.
 
-- **Pase `licm`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
-  las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
+- **Pase `licm`** (todas las funciones): en cada bucle sin llamadas saca al preheader
+  las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`, productos como
+  `MUL t, lane, dux`...), en un
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
-  viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`, salvo con
+  viene solo de esa definición. Va de dentro afuera: lo que el bucle interior deja en su preheader está en el
+  cuerpo del exterior y, si tampoco cambia allí, sube otra vez (en la rotación y el cubo, lo que no depende de
+  la fila: el reparto por `lane`, `4 * lane`, los límites). Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`, salvo con
   `--assume-noalias`: en un kernel, una carga cuya base es la dirección de un símbolo que el kernel solo lee
   (todos los usos de `LI base, símbolo+K` en la función son `LOAD`, por cualquier camino) sale del bucle si la
   base no cambia en él. El filtro no puede demostrar que lo que el kernel escribe por un puntero de sus

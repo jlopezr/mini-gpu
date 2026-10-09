@@ -477,7 +477,7 @@ historial de la auditoría.
 | ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros | 36 instrucciones adicionales en mini-tst | Baja-media | mini-opt |
 | ~~Unreachable asm~~ | **Hecho:** branches conocidos + poda por CFG | 27 instrucciones adicionales frente al pipeline anterior | Baja | mini-opt |
 | ~~Plegado de constantes ampliado y base compartida de `LI`~~ | **Hecho:** `constprop` (evaluación de dos constantes, identidades, fusión MUL+SHL; las copias no se evalúan para no dejar sin trabajo a `copyprop`) y `sharebase` | `sharebase` ~1–2 % en el cubo en placa | Baja | mini-opt |
-| LICM aritmética | Existente limitada | Medido por caso; seguro sin calls | Baja | mini-opt |
+| ~~LICM aritmética~~ | **Hecho, también en bucles anidados:** de dentro afuera, lo que sube del bucle interior sube del exterior si no depende de él. Un fallo del análisis de definiciones que alcanzan (una `ENTRY` falsa atrapada en el ciclo) lo impedía y se corrigió | Rotación GPU buena 1,04× → 1,01× el ASM; CPU 1,00×; `fill_rect`/`blit` −1,5 % a −2 % | Baja | mini-opt |
 | ~~LICM de memoria~~ | **Hecho, acotado:** con `--assume-noalias`, solo en kernels y para símbolos cuya dirección solo se usa como base de `LOAD`. lcc 4.x es C89 y no tiene `restrict`, así que la suposición no se puede demostrar; `examples/c/build.py` lo activa y `MINI_OPT_NOALIAS=0` lo apaga | ~2 % más en el cubo (1,326 M ciclos). Propuesta: apagarlo por defecto por esa ganancia y por ser inseguro con `volatile` | Alta por alias | mini-opt (opt-in) |
 | Relajar frame a 4 | Ausente | Memoria, no instrucciones | Baja, cambio ABI | backend/ABI |
 | 6/8 args | ABI actual 4 | 4/8 instrucciones en sum8 (estimado) | Alta por scratch/compatibilidad | ABI+backend |
@@ -490,7 +490,7 @@ historial de la auditoría.
    `--optimize` y `--compare-optimizer`; 23.551 → 20.384 instrucciones
    (−13,4 %) tras integrar también `stackslots`, `sharebase` y la propagación
    rica del trabajo paralelo. Estado actual: 165/165 casos simulados (+2 xfail)
-   y 134 tests del optimizador. Ese total no se ha vuelto a medir tras el
+   y 141 tests del optimizador. Ese total no se ha vuelto a medir tras el
    cambio de `mini.md:local`.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
@@ -538,7 +538,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 134 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 141 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.

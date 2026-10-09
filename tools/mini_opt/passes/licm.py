@@ -63,10 +63,12 @@ class Reaching:
 def reaching_in_loop(blocks: list[Block], body: set[int]) -> Reaching:
     """Definiciones que alcanzan cada uso dentro del bucle (ENTRY = la de antes del bucle)."""
     preds = predecessors(blocks)
-    out: dict[int, dict[int, frozenset]] = {b: {} for b in body}
+    # None = aun sin calcular: no aporta nada. Empezar con {} (todo ENTRY) dejaria una ENTRY falsa atrapada en
+    # cada ciclo cuando la definicion esta dentro del bucle (un bucle interior dentro del exterior).
+    out: dict[int, dict[int, frozenset] | None] = {b: None for b in body}
 
     def entering(b: int) -> dict[int, frozenset]:
-        states = [out[p] for p in preds[b] if p in body]
+        states = [out[p] for p in preds[b] if p in body and out[p] is not None]
         states += [{} for p in preds[b] if p not in body]       # desde fuera: todo viene de ENTRY
         keys = set().union(*(s.keys() for s in states)) if states else set()
         return {k: frozenset().union(*(s.get(k, ENTRY) for s in states)) for k in keys}
@@ -78,13 +80,21 @@ def reaching_in_loop(blocks: list[Block], body: set[int]) -> Reaching:
                     state[written] = frozenset({id(line)})
         return state
 
+    def ready(b: int) -> bool:
+        return any(p not in body or out[p] is not None for p in preds[b])
+
     changed = True
     while changed:
         changed = False
         for b in sorted(body):
+            if not ready(b):
+                continue
             new = run(dict(entering(b)), blocks[b])
             if new != out[b]:
                 out[b], changed = new, True
+    for b in body:
+        if out[b] is None:
+            out[b] = {}                     # no lo alcanza ningun camino desde fuera del bucle
     uses_of: dict[int, list[tuple[Line, int]]] = {}
     reach: dict[tuple[int, int], frozenset] = {}
     for b in sorted(body):
@@ -292,9 +302,9 @@ def pass_licm(unit: Unit, stats: dict) -> None:
         # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
         # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
-        for header, body in sorted(loops.items()):
-            if any(h != header and h in body for h in loops):         # tiene un bucle dentro
-                continue
+        # de dentro afuera: lo que el bucle interior deja en su preheader esta en el cuerpo del exterior, y si
+        # tampoco cambia alli (las constantes, la base de una tabla, 4 * lane) sube otra vez
+        for header, body in sorted(loops.items(), key=lambda item: (len(item[1]), item[0])):
             if any(l.kind == "instr" and l.op in ("JAL", "JALR") for b in body for l in blocks[b].lines):
                 continue
             pre = preheader(blocks, header, body)

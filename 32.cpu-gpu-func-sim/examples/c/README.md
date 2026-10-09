@@ -157,7 +157,7 @@ Dos cosas que importan de cara a escribir C para esta máquina:
   restauraciones de registros preservados aunque el kernel tenga locales, pero no los locales.
 
 Esa brecha es la que cierra el pase `licm` de `mini-opt` (sección siguiente): los números de arriba son
-los de antes de él, y con todos los pases la rotación queda en 1,00 / 1,01 / 1,04 veces el ensamblador
+los de antes de él, y con todos los pases la rotación queda en 1,00 / 1,00 / 1,01 veces el ensamblador
 (CPU, GPU inocente, GPU buena; tabla más abajo).
 
 ## Los pases de `mini-opt`, medidos
@@ -169,7 +169,8 @@ pases nuevos son:
 - **`jumps`**: un `BRA` o salto condicional a una etiqueta que solo salta, va directo al destino, y un
   `BRA` a la línea siguiente se quita. En estos ejemplos no encontró nada que hacer (lcc ya no deja esas
   cadenas): se queda por seguridad, pero no hay medida a su favor.
-- **`licm`**: en cada bucle sin bucles dentro ni llamadas, saca al preheader lo que no cambia: las
+- **`licm`**: en cada bucle sin llamadas (de dentro afuera: lo que sube del bucle de celdas sube otra vez
+  del de filas si tampoco cambia con la fila), saca al preheader lo que no cambia: las
   constantes (`MOVI`/`LI`, el `MOVI` previo a cada desplazamiento de la GPU, los límites de las
   comparaciones) y las cuentas cuyos operandos son fijos (`SHL p, cstep, 2`). Usa un registro que el
   bucle no toque y que la vida de registros diga libre (R5..R15, R1..R4, R31, y en un kernel también los
@@ -212,13 +213,13 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 |---|---:|---:|---:|---:|---:|---:|
 | memset 4096 | 3.132 | 3.136 | 2.616 | 1,00 | 0,84 | 1,20x |
 | memcpy 4096 | 4.156 | 4.160 | 3.640 | 1,00 | 0,88 | 1,14x |
-| fill_rect 64x64 | 3.640 | 3.640 | 3.192 | 1,00 | 0,88 | 1,14x |
-| blit 64x64 | 4.796 | 4.800 | 4.352 | 1,00 | 0,91 | 1,10x |
-| fill_rect 7x13 (3 warps) | 182 | 182 | 175 | 1,00 | 0,96 | 1,04x |
-| blit 7x13 (5 warps) | 257 | 262 | 255 | 1,02 | 0,99 | 1,03x |
-| rotación, CPU | 233.806 | 285.125 | 234.886 | 1,22 | 1,00 | 1,21x |
-| rotación, GPU inocente (warp) | 29.426 | 42.112 | 29.574 | 1,43 | 1,01 | 1,42x |
-| rotación, GPU buena (warp) | 30.864 | 44.272 | 32.000 | 1,43 | 1,04 | 1,38x |
+| fill_rect 64x64 | 3.640 | 3.640 | 3.132 | 1,00 | 0,86 | 1,16x |
+| blit 64x64 | 4.796 | 4.800 | 4.292 | 1,00 | 0,89 | 1,12x |
+| fill_rect 7x13 (3 warps) | 182 | 182 | 171 | 1,00 | 0,94 | 1,06x |
+| blit 7x13 (5 warps) | 257 | 262 | 253 | 1,02 | 0,98 | 1,04x |
+| rotación, CPU | 233.806 | 285.125 | 234.577 | 1,22 | 1,00 | 1,22x |
+| rotación, GPU inocente (warp) | 29.426 | 42.112 | 29.528 | 1,43 | 1,00 | 1,43x |
+| rotación, GPU buena (warp) | 30.864 | 44.272 | 31.024 | 1,43 | 1,01 | 1,43x |
 
 En los kernels de sistema el C ya ejecuta menos instrucciones que el ensamblador a mano (el ensamblador
 del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que sea menos no quiere decir
