@@ -76,7 +76,9 @@ def defs_uses(line: Line) -> tuple[set[int], set[int]]:
     elif op == "JR":
         add(uses, *regs)
         uses.update((1, 2, STACK, *CALLEE_SAVED))
-    elif op in ("EXIT", "HALT", "TRAP"):
+    elif op == "EXIT":
+        uses.add(STACK)             # el hilo desaparece: nadie recibe los R16..R29, como un `JR` recibiria
+    elif op in ("HALT", "TRAP"):
         uses.update((STACK, *CALLEE_SAVED))
     defs.discard(0); uses.discard(0)            # R0 es la constante cero
     return defs, uses

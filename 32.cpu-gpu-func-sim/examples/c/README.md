@@ -157,7 +157,8 @@ Dos cosas que importan de cara a escribir C para esta máquina:
   restauraciones de registros preservados aunque el kernel tenga locales, pero no los locales.
 
 Esa brecha es la que cierra el pase `licm` de `mini-opt` (sección siguiente): los números de arriba son
-los de antes de él, y con él la rotación queda en 1,08 / 1,08 / 1,12 veces el ensamblador.
+los de antes de él, y con todos los pases la rotación queda en 1,00 / 1,01 / 1,04 veces el ensamblador
+(CPU, GPU inocente, GPU buena; tabla más abajo).
 
 ## Los pases de `mini-opt`, medidos
 
@@ -198,7 +199,10 @@ pases nuevos son:
   en ciclos solo se sabe midiéndolo en la placa.
 - **`copyprop`**: propagación de copias y código muerto. Donde `ADD d, s, R0` llega a un uso de `d` por todos
   los caminos sin que `d` ni `s` se reescriban, el uso lee `s`; las copias y cualquier instrucción pura
-  cuyo resultado nadie lee se borran. lcc copia a un temporal casi todo lo que compara o indexa.
+  cuyo resultado nadie lee se borran. lcc copia a un temporal casi todo lo que compara o indexa. Un `EXIT`
+  no cuenta como lector de R16..R29 (el hilo desaparece), así que también se va la copia al `texel` de la
+  rotación, que nadie lee y que costaba una instrucción por celda: de 1,08 / 1,10 a 1,01 / 1,04 veces el
+  ensamblador. `JR`, `HALT` y `TRAP` sí siguen conservándolos.
 - **`ssy`** ahora quita el `SSY` que cae siempre después de otro con el mismo destino (la región ya está
   abierta; la GPU deja divergir más de un salto dentro de ella, como en el `if / else if` del cubo).
 
@@ -212,9 +216,9 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 | blit 64x64 | 4.796 | 4.800 | 4.352 | 1,00 | 0,91 | 1,10x |
 | fill_rect 7x13 (3 warps) | 182 | 182 | 175 | 1,00 | 0,96 | 1,04x |
 | blit 7x13 (5 warps) | 257 | 262 | 255 | 1,02 | 0,99 | 1,03x |
-| rotación, CPU | 233.806 | 285.439 | 234.888 | 1,22 | 1,00 | 1,22x |
-| rotación, GPU inocente (warp) | 29.426 | 42.231 | 31.694 | 1,44 | 1,08 | 1,33x |
-| rotación, GPU buena (warp) | 30.864 | 44.664 | 34.088 | 1,45 | 1,10 | 1,31x |
+| rotación, CPU | 233.806 | 285.125 | 234.886 | 1,22 | 1,00 | 1,21x |
+| rotación, GPU inocente (warp) | 29.426 | 42.112 | 29.574 | 1,43 | 1,01 | 1,42x |
+| rotación, GPU buena (warp) | 30.864 | 44.272 | 32.000 | 1,43 | 1,04 | 1,38x |
 
 En los kernels de sistema el C ya ejecuta menos instrucciones que el ensamblador a mano (el ensamblador
 del bucle de `gpu_kernels.inc` no saca de él el `MOVI` del desplazamiento). Que sea menos no quiere decir

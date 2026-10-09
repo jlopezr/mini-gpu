@@ -1311,6 +1311,18 @@ class DceTest(unittest.TestCase):
         self.assertIn("ADD R1, R7, R0", out)
         self.assertEqual(stats["dce.removed"], 1)
 
+    def test_a_write_to_a_preserved_register_is_dead_before_exit_but_not_before_a_return_or_halt(self):
+        # el hilo de un kernel desaparece en EXIT: nadie lee R16..R29 despues (la copia a `texel` de la rotacion)
+        for end, kept in (("EXIT", False), ("JR R31", True), ("HALT", True)):
+            with self.subTest(end=end):
+                source = f".text\n.globl f\nf:\nLOAD R11, R2, 0\nADD R28, R11, R0\nSTORE R11, R3, 0\n{end}\n"
+                out = lines_of(optimize(source, ["dce"]))
+                self.assertEqual("ADD R28, R11, R0" in out, kept, out)
+
+    def test_exit_keeps_the_stack_pointer_alive(self):
+        source = ".text\n.globl f\nf:\nADDI R30, R30, -16\nEXIT\n"
+        self.assertIn("ADDI R30, R30, -16", lines_of(optimize(source, ["dce"])))
+
 
 class BranchesTest(unittest.TestCase):
     def run_pass(self, body: str):
