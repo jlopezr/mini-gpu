@@ -79,13 +79,17 @@ class BuildRunnerTest(unittest.TestCase):
         now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
         entries = [
             {"id": "20261008-110314-927410-mmio-rd-stage", "state": "failed",
-             "started_at": "2026-10-08T11:00:00Z", "label": "mmio-rd-stage"},
+             "started_at": "2026-10-08T11:00:00Z", "label": "mmio-rd-stage",
+             "prototype": "36.fpga-gpu"},
             {"id": "20261008-095531-931064-sweep", "state": "success",
              "started_at": "2026-10-08T09:55:00Z", "label": "sweep"},
         ]
         lines = format_build_list(entries, now)
         starts = {"STATE": lines[0].index("STATE"), "AGE": lines[0].index("AGE"),
+                  "PROTOTYPE": lines[0].index("PROTOTYPE"),
                   "LABEL": lines[0].index("LABEL")}
+        self.assertEqual(lines[1].index("36.fpga-gpu"), starts["PROTOTYPE"])
+        self.assertEqual(lines[2][starts["PROTOTYPE"]], "-")
         # STATE empieza tras el ID mas largo, y cada columna en el mismo sitio.
         self.assertEqual(starts["STATE"], len(entries[0]["id"]) + 2)
         self.assertEqual(lines[1].index("FAILED"), starts["STATE"])

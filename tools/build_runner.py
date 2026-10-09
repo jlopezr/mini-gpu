@@ -350,15 +350,18 @@ def format_build_list(entries: list[dict], now: datetime) -> list[str]:
         age = f"{hours // 24}d" if hours >= 24 else f"{hours:02d}:{minutes:02d}"
         rows.append((str(entry.get("id", "unknown")),
                      str(entry.get("state", "unknown")).upper(), age,
+                     str(entry.get("prototype") or "-"),
                      str(entry.get("label", ""))))
     width_id = max([len("ID"), *(len(row[0]) for row in rows)])
     width_state = max([len("STATE"), *(len(row[1]) for row in rows)])
     width_age = max([len("AGE"), *(len(row[2]) for row in rows)])
+    width_proto = max([len("PROTOTYPE"), *(len(row[3]) for row in rows)])
     lines = [COLUMN_GAP.join((f"{'ID':<{width_id}}", f"{'STATE':<{width_state}}",
-                              f"{'AGE':<{width_age}}", "LABEL"))]
+                              f"{'AGE':<{width_age}}", f"{'PROTOTYPE':<{width_proto}}",
+                              "LABEL"))]
     lines += [COLUMN_GAP.join((f"{i:<{width_id}}", f"{s:<{width_state}}",
-                               f"{a:<{width_age}}", label))
-              for i, s, a, label in rows]
+                               f"{a:<{width_age}}", f"{p:<{width_proto}}", label))
+              for i, s, a, p, label in rows]
     return lines
 
 
@@ -905,7 +908,9 @@ def _main() -> int:
             return 0
         entries = list_builds(report_root)
         if args.prototype:
-            entries = [entry for entry in entries if entry.get("prototype") == args.prototype]
+            wanted = normalize_prototype(args.prototype)
+            entries = [entry for entry in entries
+                       if normalize_prototype(entry.get("prototype")) == wanted]
         if not entries:
             print("No builds found")
             return 0
