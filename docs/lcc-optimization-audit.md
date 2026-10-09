@@ -467,7 +467,7 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite completa actual: 23.551 → 21.642 instrucciones | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.551 → 20.384 instrucciones | Baja | mini-opt + runner LCC |
 | Promoción de AUTO/store-to-load forwarding | Ausente global | Muy alto en locals/pressure/main | Media | LCC pre-RA |
 | Valores vivos a través de calls | Limitado | Alto en calls/recursión/softfloat | Media-alta | RA/backend |
 | Slot coloring de spills | Ausente | Frame/memoria; depende de presión | Media | pre-emisión |
@@ -484,7 +484,8 @@ historial de la auditoría.
 1. ~~**Integración medida, sin ABI:** aplicar `mini-opt` al pipeline C de CPU de
    forma opt-in y correr mini-tst completo antes/después.~~ **Hecho:**
    `--optimize` y `--compare-optimizer`; 164/164 casos simulados (+2 xfail),
-   71 tests del optimizador y 23.551 → 21.642 instrucciones (−8,1 %).
+   131 tests del optimizador y 23.551 → 20.384 instrucciones (−13,4 %) tras
+   integrar también `stackslots`, `sharebase` y la propagación rica del trabajo paralelo.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**; ampliar peepholes solo con liveness/CFG. Verificar cada uno
    con asm manual adversarial, volatile y llamadas indirectas.
@@ -523,7 +524,7 @@ promover locales o ampliar prudentemente las tail calls.
   La arquitectura adecuada es híbrida.
 - **Cambios independientes:** integración mini-opt, promotion/DSE, tail calls,
   slot coloring y alineación pueden evaluarse por separado.
-- **Validación:** mini-tst simulada completa, 71 tests de mini-opt, corpus de
+- **Validación:** mini-tst simulada completa, 131 tests de mini-opt, corpus de
   probes, volatile/MMIO, 64 bits, recursión, >4 args, y comparación dinámica en
   simulador. Para ciclos reales, usar después `test-board --measure`; esta
   auditoría no inventa equivalencia entre instrucciones y ciclos.

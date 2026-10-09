@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from .flow import Block, live_after, liveness
-from .isa import PURE_OPS, defs_uses
+from .isa import GETID, PURE_OPS, defs_uses
 from .model import Line
 
-DEAD_OK = PURE_OPS
+DEAD_OK = PURE_OPS | GETID        # leer el id del hilo o el bloque de argumentos no tiene efectos
 
 
 def remove_dead(blocks: list[Block], stats: dict, name: str) -> None:

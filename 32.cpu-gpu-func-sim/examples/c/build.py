@@ -56,7 +56,9 @@ def compile_c(source: Path) -> Path:
     optimized = BUILD / f"{source.stem}.opt.s"
     run(TOOLS / "mini-lcc", source, "--no-crt", "-I", SYSTEM, "-o", plain)
     passes = os.environ.get("MINI_OPT_PASSES")       # para comparar (opt_stats.py); por defecto, todos
-    run(TOOLS / "mini-opt", plain, "-o", optimized, *(["--passes", passes] if passes is not None else []))
+    # los kernels no escriben por sus punteros de argumento lo que leen por el nombre de una global (MINI_OPT_NOALIAS=0 lo apaga)
+    noalias = [] if os.environ.get("MINI_OPT_NOALIAS") == "0" else ["--assume-noalias"]
+    run(TOOLS / "mini-opt", plain, "-o", optimized, *noalias, *(["--passes", passes] if passes is not None else []))
     return optimized
 
 

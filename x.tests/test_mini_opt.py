@@ -11,6 +11,7 @@ falta MSVC para correr la suite. Se comprueba:
   - el filtro entero y su salida junto al `crt0` y un anfitrion, por `.include`.
 """
 
+import random
 import subprocess
 import sys
 import tempfile
@@ -19,11 +20,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "1.isa"))
+sys.path.insert(0, str(ROOT / "2.cpu-sim-func"))
 
 from mini_asm import assemble_bytes  # noqa: E402
+from minicpu_sim import CPU  # noqa: E402
 from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
+from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
 RUNTIME = ROOT / "1.isa" / "runtime"
 
@@ -552,6 +556,74 @@ class LicmTest(unittest.TestCase):
         self.assertNotIn("licm.loops", stats)
 
 
+LOAD_LOOP = """.text
+.globl {name}
+{name}:
+LI R7, cube_faces
+MOVI R16, 0
+BRA L.2
+L.1:
+{body}
+ADDI R16, R16, 1
+L.2:
+MOVI R10, 10
+BLT R16, R10, L.1
+{end}
+"""
+
+
+class LicmLoadsTest(unittest.TestCase):
+    """Con `--assume-noalias`, en un kernel, las cargas por la direccion de un simbolo que el kernel solo lee salen del bucle."""
+
+    def run_pass(self, body: str, noalias: bool = True, name: str = "__kernel_k"):
+        stats = {}
+        source = LOAD_LOOP.format(name=name, body=body, end="EXIT" if name.startswith("__kernel_") else "JR R31")
+        licm_module.NOALIAS = noalias
+        try:
+            out = lines_of(optimize(source, ["licm"], stats=stats))
+        finally:
+            licm_module.NOALIAS = False
+        return out, stats
+
+    BODY = "LOAD R12, R7, 4\nADD R9, R16, R12\nSTORE R9, R1, 0"
+
+    def test_a_load_through_a_symbol_the_kernel_only_reads_leaves_the_loop(self):
+        out, _ = self.run_pass(self.BODY)
+        before = out[:out.index("BRA L.2")]
+        self.assertTrue(any(l.startswith("LOAD") and l.endswith("R7, 4") for l in before), out)
+        self.assertFalse(any(l.startswith("LOAD") for l in out[out.index("L.1:"):]), out)
+
+    def test_the_hoisted_load_comes_after_its_base_and_the_loop_no_longer_reads_it(self):
+        out, stats = self.run_pass(self.BODY)
+        load = next(i for i, l in enumerate(out) if l.startswith("LOAD"))
+        self.assertLess(out.index("LI R7, cube_faces"), load)
+        self.assertLess(load, out.index("BRA L.2"))
+        self.assertFalse(any("R7" in l for l in out[out.index("L.1:"):]), out)
+        self.assertEqual(stats["licm.registers"], 2)                 # la carga y el `10` de la comparacion
+
+    def test_without_the_option_the_load_stays(self):
+        out, _ = self.run_pass(self.BODY, noalias=False)
+        self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+    def test_a_function_that_is_not_a_kernel_keeps_its_loads(self):
+        out, _ = self.run_pass(self.BODY, name="f")
+        self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+    def test_the_load_stays_if_the_symbol_address_is_used_for_anything_else(self):
+        for use in ("ADD R9, R7, R16", "STORE R9, R7, 8", "STORE R7, R1, 4", "ADDI R13, R7, 8"):
+            with self.subTest(use=use):
+                out, _ = self.run_pass(f"{use}\n{self.BODY}")
+                self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+    def test_a_load_through_another_pointer_stays(self):
+        out, _ = self.run_pass("LOAD R12, R2, 4\nADD R9, R16, R12\nSTORE R9, R1, 0")
+        self.assertIn("LOAD R12, R2, 4", out[out.index("L.1:"):])
+
+    def test_a_load_whose_base_changes_in_the_loop_stays(self):
+        out, _ = self.run_pass("LOAD R12, R7, 4\nADDI R7, R7, 4\nADD R9, R16, R12\nSTORE R9, R1, 0")
+        self.assertIn("LOAD R12, R7, 4", out[out.index("L.1:"):])
+
+
 class CopyPropTest(unittest.TestCase):
     def run_pass(self, body: str):
         stats = {}
@@ -577,6 +649,12 @@ class CopyPropTest(unittest.TestCase):
     def test_a_call_cuts_the_copies_of_temporaries(self):
         out, _ = self.run_pass("ADD R13, R7, R0\nJAL R31, g\nSTORE R13, R2, 0")
         self.assertIn("STORE R13, R2, 0", out)
+
+    def test_a_copy_that_ends_up_copying_a_register_to_itself_goes(self):
+        out, stats = self.run_pass("ADD R31, R14, R0\nADD R14, R31, R0\nSTORE R14, R1, 0")
+        self.assertNotIn("ADD R14, R14, R0", out)
+        self.assertIn("STORE R14, R1, 0", out)
+        self.assertEqual(stats["copyprop.removed"], 1)
 
     def test_dead_pure_code_goes_but_a_load_stays(self):
         out, _ = self.run_pass("MOVI R8, 5\nLOAD R9, R1, 0")
@@ -620,8 +698,561 @@ class ConstPropTest(unittest.TestCase):
         self.assertIn("SUB R13, R28, R7", out)
 
     def test_a_copy_from_r0_is_left_as_a_copy(self):
-        out, _ = self.run_pass("ADD R13, R28, R0\nSTORE R13, R1, 0")
+        out, stats = self.run_pass("ADD R13, R28, R0\nSTORE R13, R1, 0")
         self.assertIn("ADD R13, R28, R0", out)
+        self.assertNotIn("constprop.identities", stats)            # una copia ya es la forma canonica
+
+    # -- cargas que ya estan hechas --------------------------------------------------------------
+
+    def test_a_constant_load_that_is_already_there_goes(self):
+        body = "MOVI R5, 3\nSHL R21, R14, R5\nMOVI R5, 3\nSHL R20, R15, R5\nSTORE R21, R1, 0\nSTORE R20, R1, 4"
+        out, stats = self.run_pass(body)
+        self.assertEqual(out.count("MOVI R5, 3"), 1)
+        self.assertEqual(stats["constprop.redundant"], 1)
+
+    def test_a_constant_load_stays_if_the_value_differs_on_one_path(self):
+        body = "MOVI R5, 3\nBEQ R1, R0, L.2\nMOVI R5, 4\nL.2:\nMOVI R5, 3\nSHL R21, R14, R5\nSTORE R21, R2, 0"
+        out, _ = self.run_pass(body)
+        self.assertIn("MOVI R5, 3", out[out.index("L.2:"):])
+
+    def test_a_call_makes_the_caller_saved_constants_unknown(self):
+        out, _ = self.run_pass("MOVI R5, 3\nJAL R31, g\nMOVI R5, 3\nSHL R21, R14, R5\nSTORE R21, R2, 0")
+        self.assertIn("MOVI R5, 3", out[out.index("JAL R31, g"):])
+
+    # -- los dos operandos son constantes --------------------------------------------------------
+
+    def test_an_operation_on_two_constants_is_done_here(self):
+        cases = [("MUL", 6, 7, "MOVI R9, 42"),
+                 ("MUL", 300, 300, "LI R9, 90000"),                    # no cabe en 16 bits: LI
+                 ("SUB", 0, 1, "MOVI R9, -1"),
+                 ("ADD", 0x7FFFFFFF, 1, "LI R9, -2147483648"),           # se da la vuelta, como en la maquina
+                 ("AND", 0xFF00, 0x0FF0, "MOVI R9, 3840"),
+                 ("SHR", -1, 28, "MOVI R9, 15"),                       # logico
+                 ("SAR", -16, 2, "MOVI R9, -4"),                       # aritmetico
+                 ("SHL", 1, 33, "MOVI R9, 2"),                         # la cantidad usa 5 bits
+                 ("SLT", -1, 1, "MOVI R9, 1"),
+                 ("SLTU", -1, 1, "MOVI R9, 0")]
+        for op, a, b, expected in cases:
+            with self.subTest(op=op, a=a, b=b):
+                stats = {}
+                out, stats = self.run_pass(f"LI R7, {a}\nLI R8, {b}\n{op} R9, R7, R8\nSTORE R9, R1, 0")
+                self.assertIn(expected, out)
+                self.assertFalse(any(l.startswith(op) for l in out), out)
+                self.assertEqual(stats["constprop.evaluated"], 1)
+
+    def test_an_immediate_operation_on_a_constant_is_done_here(self):
+        cases = [("ADDI R9, R7, 5", "MOVI R9, 15"), ("ADDI R9, R7, -20", "MOVI R9, -10"),
+                 ("ANDI R9, R7, 6", "MOVI R9, 2"), ("SHLI R9, R7, 4", "MOVI R9, 160"),
+                 ("XORI R9, R7, 0xFFFF", "LI R9, 65525")]
+        for instruction, expected in cases:
+            with self.subTest(instruction=instruction):
+                out, _ = self.run_pass(f"MOVI R7, 10\n{instruction}\nSTORE R9, R1, 0")
+                self.assertIn(expected, out)
+
+    def test_the_logic_immediate_is_zero_extended(self):
+        out, _ = self.run_pass("MOVI R7, -1\nANDI R9, R7, 255\nSTORE R9, R1, 0")
+        self.assertIn("MOVI R9, 255", out)
+
+    def test_a_copy_of_a_constant_is_a_constant_for_the_uses_but_stays(self):
+        out, stats = self.run_pass("MOVI R7, 8\nADD R9, R7, R0\nADD R14, R14, R9\nSTORE R14, R1, 0")
+        self.assertIn("ADDI R14, R14, 8", out)
+        self.assertNotIn("ADD R9, R7, R0", out)                  # nadie la lee ya: se va con el codigo muerto
+        out, _ = self.run_pass("ADD R9, R0, R0\nADD R14, R14, R9\nSTORE R14, R1, 0\nSTORE R9, R1, 4")
+        self.assertIn("ADD R9, R0, R0", out)                     # un cero copiado de R0 sigue siendo esa copia
+        self.assertNotIn("ADD R14, R14, R9", out)                # y su uso ya no hace falta
+
+    def test_a_copy_is_left_for_copyprop_even_if_its_source_is_a_constant(self):
+        """lcc escribe un cero como `ADD d, R0, R0` y copia un cero con `ADD d, s, R0`: convertirlos en
+        `MOVI d, 0` le quita a `copyprop` los usos que ya podian leer R0 (diverge.c perdia 5 instrucciones)."""
+        out, stats = self.run_pass("ADD R28, R0, R0\nMOVI R15, 0\nADD R4, R15, R0\nSTORE R28, R1, 0\nSTORE R4, R1, 4")
+        self.assertIn("ADD R28, R0, R0", out)
+        self.assertIn("ADD R4, R15, R0", out)
+        self.assertNotIn("constprop.evaluated", stats)
+
+    def test_an_operation_with_one_unknown_operand_is_not_evaluated(self):
+        out, stats = self.run_pass("MOVI R7, 6\nMUL R9, R7, R28\nSTORE R9, R1, 0")
+        self.assertIn("MUL R9, R7, R28", out)
+        self.assertNotIn("constprop.evaluated", stats)
+
+    # -- identidades -----------------------------------------------------------------------------
+
+    def test_an_identity_becomes_a_copy_and_a_zero_a_zero(self):
+        cases = [("MOVI R7, 0", "ADD R9, R28, R7", "ADD R9, R28, R0"),
+                 ("MOVI R7, 0", "SUB R9, R28, R7", "ADD R9, R28, R0"),
+                 ("MOVI R7, 0", "OR R9, R7, R28", "ADD R9, R28, R0"),
+                 ("MOVI R7, 0", "XOR R9, R28, R7", "ADD R9, R28, R0"),
+                 ("MOVI R7, 1", "MUL R9, R28, R7", "ADD R9, R28, R0"),
+                 ("MOVI R7, 1", "MUL R9, R7, R28", "ADD R9, R28, R0"),
+                 ("MOVI R7, 32", "SHL R9, R28, R7", "ADD R9, R28, R0"),         # 32 son 0 bits
+                 ("MOVI R7, -1", "AND R9, R28, R7", "ADD R9, R28, R0"),
+                 ("", "ADDI R9, R28, 0", "ADD R9, R28, R0"),
+                 ("", "ORI R9, R28, 0", "ADD R9, R28, R0"),
+                 ("", "SHLI R9, R28, 0", "ADD R9, R28, R0"),
+                 ("MOVI R7, 0", "MUL R9, R28, R7", "MOVI R9, 0"),
+                 ("MOVI R7, 0", "AND R9, R7, R28", "MOVI R9, 0"),
+                 ("", "SUB R9, R28, R28", "MOVI R9, 0"),
+                 ("", "XOR R9, R28, R28", "MOVI R9, 0"),
+                 ("", "ANDI R9, R28, 0", "MOVI R9, 0")]
+        for setup, instruction, expected in cases:
+            with self.subTest(instruction=instruction, setup=setup):
+                out, stats = self.run_pass(f"{setup}\n{instruction}\nSTORE R9, R1, 0")
+                self.assertIn(expected, out)
+                self.assertNotIn(instruction, out)
+                self.assertEqual(stats["constprop.identities"], 1)
+
+    def test_an_identity_that_copies_a_register_to_itself_disappears(self):
+        for instruction in ("ADD R28, R28, R7", "ADDI R28, R28, 0", "SHL R28, R28, R7"):
+            with self.subTest(instruction=instruction):
+                out, _ = self.run_pass(f"MOVI R7, 0\n{instruction}\nSTORE R28, R1, 0")
+                self.assertEqual([l for l in out if l.startswith(("ADD", "SHL"))], [])
+
+    def test_a_value_that_is_not_the_identity_is_left_alone(self):
+        for setup, instruction in (("MOVI R7, 2", "MUL R9, R28, R7"), ("MOVI R7, 1", "SUB R9, R7, R28"),
+                                   ("MOVI R7, 1", "SHL R9, R7, R28"), ("MOVI R7, 255", "AND R9, R28, R7")):
+            with self.subTest(instruction=instruction):
+                out, stats = self.run_pass(f"{setup}\n{instruction}\nSTORE R9, R1, 0")
+                self.assertNotIn("constprop.identities", stats)
+                self.assertNotIn("constprop.evaluated", stats)
+
+    # -- MUL por una constante seguido de SHL por otra -------------------------------------------
+
+    MUL_SHL = "MOVI R11, 320\nMUL R14, R11, R14\nMOVI R5, 2\nSHL R14, R14, R5\nADD R14, R14, R1\nSTORE R14, R2, 0"
+
+    def test_a_mul_followed_by_a_shift_multiplies_by_the_shifted_constant(self):
+        out, stats = self.run_pass(self.MUL_SHL)
+        self.assertEqual(out[out.index("f:") + 1:],
+                         ["MOVI R11, 1280", "MUL R14, R11, R14", "ADD R14, R14, R1", "STORE R14, R2, 0", "JR R31"])
+        self.assertEqual(stats["constprop.fused"], 1)
+
+    def test_it_also_works_with_the_constant_as_the_first_operand(self):
+        out, _ = self.run_pass(self.MUL_SHL.replace("MUL R14, R11, R14", "MUL R14, R14, R11"))
+        self.assertIn("MOVI R11, 1280", out)
+        self.assertIn("MUL R14, R14, R11", out)
+        self.assertFalse(any(l.startswith("SHL") for l in out))
+
+    def test_the_constant_is_wrapped_to_32_bits(self):
+        out, _ = self.run_pass(self.MUL_SHL.replace("MOVI R11, 320", "MOVI R11, 3").replace("MOVI R5, 2", "MOVI R5, 31"))
+        self.assertIn("LI R11, -2147483648", out)                         # 3 << 31 = 0x80000000
+
+    def test_the_mul_is_not_touched_if_the_constant_is_read_afterwards(self):
+        out, stats = self.run_pass(self.MUL_SHL + "\nSTORE R11, R2, 4")
+        self.assertIn("MOVI R11, 320", out)
+        self.assertIn("SHL R14, R14, R5", out)
+        self.assertNotIn("constprop.fused", stats)
+
+    def test_the_mul_is_not_touched_if_its_result_is_read_before_the_shift(self):
+        body = "MOVI R11, 320\nMUL R14, R11, R14\nSTORE R14, R2, 8\nMOVI R5, 2\nSHL R14, R14, R5\nSTORE R14, R2, 0"
+        out, stats = self.run_pass(body)
+        self.assertIn("SHL R14, R14, R5", out)
+        self.assertNotIn("constprop.fused", stats)
+
+    def test_the_mul_is_not_touched_if_the_shift_amount_is_unknown(self):
+        out, stats = self.run_pass(self.MUL_SHL.replace("MOVI R5, 2\n", "").replace("SHL R14, R14, R5", "SHL R14, R14, R6"))
+        self.assertIn("SHL R14, R14, R6", out)
+        self.assertNotIn("constprop.fused", stats)
+
+    def test_the_shift_of_another_register_is_not_fused(self):
+        body = "MOVI R11, 320\nMUL R14, R11, R14\nMOVI R5, 2\nSHL R15, R14, R5\nSTORE R15, R2, 0\nSTORE R14, R2, 4"
+        out, stats = self.run_pass(body)
+        self.assertNotIn("constprop.fused", stats)
+        self.assertIn("MOVI R11, 320", out)
+
+
+class HandwrittenAsmTest(unittest.TestCase):
+    """Trozos del ensamblador a mano (`examples/asm/race/cube.inc`, con etiquetas `L.n` para que el
+    filtro los trate como una sola funcion). Lo que ya esta bien escrito no debe cambiar, y las
+    formas que lcc no genera pero a mano se escriben tienen que entenderse."""
+
+    def run_pass(self, body: str):
+        stats = {}
+        source = ".text\n.globl f\nf:\n" + body + "\nJR R31\n"
+        out = lines_of(optimize(source, ["constprop"], stats=stats))
+        return out[out.index("f:") + 1:], stats                   # solo la funcion, sin la cabecera
+
+    def test_constants_multiplied_by_a_shared_register_are_left_alone(self):
+        body = ("MOVI R31, 8\nLOAD R13, R6, 12\nMUL R13, R13, R31\nLOAD R14, R6, 16\nMUL R14, R14, R31\n"
+                "STORE R13, R2, 0\nSTORE R14, R2, 4")
+        out, stats = self.run_pass(body)
+        self.assertEqual(out[:-1], lines_of(body))
+        self.assertEqual({k: v for k, v in stats.items() if v}, {})
+
+    def test_a_row_address_with_the_shift_already_folded_is_left_alone(self):
+        body = "MOVI R28, 1280\nMUL R23, R25, R28\nADD R23, R23, R5\nADD R23, R23, R2\nSTORE R23, R1, 0"
+        out, stats = self.run_pass(body)
+        self.assertEqual(out[:-1], lines_of(body))
+        self.assertEqual({k: v for k, v in stats.items() if v}, {})
+
+    def test_the_hand_written_cell_loop_is_left_alone(self):
+        body = """MOVI R27, 5
+MOVI R22, 8704
+MOVI R24, 20
+L.1:
+BGEU R7, R22, L.2
+BGEU R8, R22, L.2
+ADDI R28, R8, -256
+ADD R28, R28, R28
+ANDI R28, R28, 0x3F00
+ADDI R29, R7, -256
+SHR R29, R29, R27
+ANDI R29, R29, 0xFC
+ADD R28, R28, R29
+ADD R28, R28, R19
+LOAD R29, R28, 0
+STORE R29, R23, 0
+L.2:
+ADDI R23, R23, 32
+ADDI R24, R24, -1
+BNE R24, R0, L.1"""
+        out, stats = self.run_pass(body)
+        self.assertEqual(out[:-1], lines_of(body))
+        self.assertEqual({k: v for k, v in stats.items() if v}, {})
+
+    def test_addi_with_a_zero_is_a_copy(self):
+        out, _ = self.run_pass("ADDI R29, R30, 0\nSTORE R29, R1, 0")
+        self.assertIn("ADD R29, R30, R0", out)
+
+
+class SharebaseTest(unittest.TestCase):
+    def run_pass(self, body: str, name: str = "f"):
+        stats = {}
+        source = f".text\n.globl {name}\n{name}:\n" + body + ("\nEXIT\n" if name.startswith("__kernel_") else "\nJR R31\n")
+        out = lines_of(optimize(source, ["sharebase"], stats=stats))
+        return out[out.index(f"{name}:") + 1:], stats
+
+    PAIRS = ("LI R12, cube_faces+4\nLOAD R12, R12, 0\nLI R11, cube_faces+20\nLOAD R11, R11, 0\n"
+             "MUL R11, R12, R11\nLI R12, cube_faces+12\nLOAD R12, R12, 0\nADD R11, R11, R12\nSTORE R11, R1, 0")
+
+    def test_the_loads_of_one_table_share_a_base_and_add_the_offset_themselves(self):
+        out, stats = self.run_pass(self.PAIRS)
+        self.assertEqual(out, ["LI R5, cube_faces", "LOAD R12, R5, 4", "LOAD R11, R5, 20", "MUL R11, R12, R11",
+                               "LOAD R12, R5, 12", "ADD R11, R11, R12", "STORE R11, R1, 0", "JR R31"])
+        self.assertEqual(stats["sharebase.groups"], 1)
+        self.assertEqual(stats["sharebase.removed"], 3)
+
+    def test_a_single_address_is_left_alone(self):
+        out, stats = self.run_pass("LI R12, cube_faces+4\nLOAD R12, R12, 0\nSTORE R12, R1, 0")
+        self.assertIn("LI R12, cube_faces+4", out)
+        self.assertNotIn("sharebase.groups", stats)
+
+    def test_the_existing_offset_of_the_access_is_added(self):
+        body = "LI R12, t+4\nLOAD R9, R12, 8\nLI R11, t+16\nLOAD R10, R11, 0\nSTORE R9, R1, 0\nSTORE R10, R1, 4"
+        out, _ = self.run_pass(body)
+        self.assertIn("LOAD R9, R5, 12", out)
+        self.assertIn("LOAD R10, R5, 16", out)
+
+    def test_a_store_through_the_address_is_rewritten_too(self):
+        out, _ = self.run_pass("LI R12, t+4\nSTORE R9, R12, 0\nLI R11, t+8\nSTORE R9, R11, 0")
+        self.assertIn("STORE R9, R5, 4", out)
+        self.assertIn("STORE R9, R5, 8", out)
+
+    def test_two_tables_get_a_base_each(self):
+        body = ("LI R12, a+4\nLOAD R9, R12, 0\nLI R11, b+4\nLOAD R10, R11, 0\n"
+                "LI R12, a+8\nLOAD R13, R12, 0\nLI R11, b+8\nLOAD R14, R11, 0\n"
+                "ADD R9, R9, R10\nADD R13, R13, R14\nSTORE R9, R1, 0\nSTORE R13, R1, 4")
+        out, stats = self.run_pass(body)
+        self.assertEqual(stats["sharebase.groups"], 2)
+        self.assertEqual(sum(l.startswith("LI") for l in out), 2)
+
+    def test_an_address_that_is_used_for_anything_else_stays(self):
+        for use in ("ADD R9, R12, R1", "STORE R12, R1, 0", "STORE R12, R12, 0", "JAL R31, g"):
+            with self.subTest(use=use):
+                body = f"LI R12, t+4\n{use}\nLI R11, t+8\nLOAD R10, R11, 0\nSTORE R10, R1, 4"
+                out, stats = self.run_pass(body)
+                self.assertIn("LI R12, t+4", out)
+                self.assertNotIn("sharebase.groups", stats)
+
+    def test_an_address_that_is_still_live_at_the_end_of_the_block_stays(self):
+        body = "LI R12, t+4\nLOAD R9, R12, 0\nLI R11, t+8\nLOAD R10, R11, 0\nBEQ R1, R0, L.2\nL.2:\nSTORE R12, R2, 0"
+        out, stats = self.run_pass(body)
+        self.assertIn("LI R12, t+4", out)
+        self.assertNotIn("sharebase.groups", stats)
+
+    def test_a_number_or_an_offset_that_does_not_fit_is_not_an_address(self):
+        body = "LI R12, 100000\nLOAD R9, R12, 0\nLI R11, t+40000\nLOAD R10, R11, 0\nLI R8, t+4\nLOAD R7, R8, 0"
+        out, stats = self.run_pass(body)
+        self.assertIn("LI R12, 100000", out)
+        self.assertIn("LI R11, t+40000", out)
+        self.assertNotIn("sharebase.groups", stats)
+
+    def test_without_a_free_register_in_the_stretch_nothing_changes(self):
+        busy = "\n".join(f"ADD R{a}, R{a}, R{b}" for a, b in ((1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (13, 14), (15, 15)))
+        body = f"LI R12, t+4\nLOAD R12, R12, 0\n{busy}\nLI R11, t+8\nLOAD R11, R11, 0\nSTORE R11, R2, 0\nSTORE R12, R2, 4"
+        out, stats = self.run_pass(body)
+        self.assertIn("LI R12, t+4", out)
+        self.assertNotIn("sharebase.groups", stats)
+
+    def test_the_base_register_is_not_one_that_is_alive_around_the_stretch(self):
+        out, _ = self.run_pass("MOVI R5, 7\n" + self.PAIRS + "\nSTORE R5, R2, 0")
+        self.assertIn("LI R6, cube_faces", out)                 # R5 vale 7 y se lee despues
+
+    def test_a_kernel_may_use_its_unused_preserved_registers(self):
+        body = "GETTID R16\n" + self.PAIRS + "\nSTORE R16, R2, 0"
+        out, stats = self.run_pass(body, name="__kernel_k")
+        self.assertEqual(stats["sharebase.groups"], 1)
+
+    def test_a_table_loaded_once_by_hand_is_left_alone(self):
+        body = "LI R6, cube_faces\nLOAD R19, R6, 0\nLOAD R20, R6, 32\nLOAD R13, R6, 12\nSTORE R13, R2, 0"
+        out, stats = self.run_pass(body)
+        self.assertEqual(out[:-1], lines_of(body))
+        self.assertNotIn("sharebase.groups", stats)
+
+
+KERNEL_STACK = """GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+512
+ADD R30, R30, R5
+ADDI R30, R30, -16
+GETLWARP R14
+STORE R14, R30, -4+16
+BRA L.2
+L.1:
+LOAD R14, R30, -4+16
+STORE R14, R1, 0
+ADDI R14, R14, 1
+STORE R14, R30, -4+16
+L.2:
+LOAD R14, R30, -4+16
+MOVI R13, 100
+BLT R14, R13, L.1
+ADDI R30, R30, 16"""
+
+LEAF_STACK = """ADDI R30, R30, -16
+MOVI R14, 0
+STORE R14, R30, -4+16
+BRA L.2
+L.1:
+LOAD R14, R30, -4+16
+ADDI R14, R14, 1
+STORE R14, R30, -4+16
+L.2:
+LOAD R14, R30, -4+16
+MOVI R13, 100
+BLT R14, R13, L.1
+LOAD R1, R30, -4+16
+ADDI R30, R30, 16"""
+
+
+class StackSlotsTest(unittest.TestCase):
+    def run_pass(self, body: str, name: str = "f"):
+        stats = {}
+        end = "\nEXIT\n" if name.startswith("__kernel_") else "\nJR R31\n"
+        out = lines_of(optimize(f".text\n.globl {name}\n{name}:\n" + body + end, ["stackslots"], stats=stats))
+        return out[out.index(f"{name}:") + 1:], stats
+
+    def test_a_kernel_loop_counter_goes_to_a_register_and_the_stack_setup_disappears(self):
+        out, stats = self.run_pass(KERNEL_STACK, "__kernel_k")
+        self.assertFalse(any("R30" in l for l in out), out)                      # ni accesos ni preparacion
+        self.assertFalse(any(l.startswith(("GETTID", "MUL")) for l in out), out)
+        self.assertIn("ADD R31, R14, R0", out)                                   # el STORE de la fila
+        self.assertIn("ADD R14, R31, R0", out)
+        self.assertEqual((stats["stackslots.slots"], stats["stackslots.frames"]), (1, 1))
+
+    def test_a_normal_function_uses_a_caller_saved_register_and_loses_only_the_frame_adjusts(self):
+        out, stats = self.run_pass(LEAF_STACK)
+        self.assertFalse(any("R30" in l for l in out), out)
+        self.assertIn("ADD R4, R14, R0", out)                                    # R4: el primer libre
+        self.assertEqual(stats["stackslots.frames"], 1)
+
+    def test_the_whole_pipeline_cleans_up_the_copies(self):
+        out = lines_of(optimize(f".text\n.globl __kernel_k\n__kernel_k:\n{KERNEL_STACK}\nEXIT\n"))
+        loop = out[out.index("L.1:"):]
+        self.assertFalse(any("R30" in l for l in loop), loop)
+        copies = [l for l in loop if l.startswith("ADD") and l.endswith("R0")]
+        self.assertEqual(copies, ["ADD R31, R14, R0"], loop)       # queda la del contador, ninguna sobre si misma
+
+    def test_a_slot_that_is_only_touched_outside_loops_stays_if_it_does_not_fit_with_the_others(self):
+        busy = "\n".join(f"ADDI R{r}, R{r}, 0" for r in (3, *range(5, 13), 15))
+        body = ("ADDI R30, R30, -16\nSTORE R9, R30, -8+16\n" + busy + "\nMOVI R14, 0\nSTORE R14, R30, -4+16\nBRA L.2\n"
+                "L.1:\nLOAD R14, R30, -4+16\nADDI R14, R14, 1\nSTORE R14, R30, -4+16\nL.2:\nLOAD R14, R30, -4+16\n"
+                "MOVI R13, 100\nBLT R14, R13, L.1\nLOAD R1, R30, -8+16\nADDI R30, R30, 16")
+        out, stats = self.run_pass(body)
+        self.assertEqual(stats["stackslots.slots"], 1)                          # solo el del bucle: R4 es el unico libre
+        self.assertIn("STORE R9, R30, -8+16", out)
+        self.assertNotIn("stackslots.frames", stats)
+
+    def test_the_hotter_slot_gets_the_only_free_register(self):
+        busy = "\n".join(f"ADDI R{r}, R{r}, 0" for r in (3, *range(5, 13), 15))
+        body = ("ADDI R30, R30, -16\nSTORE R9, R30, -8+16\nSTORE R9, R30, -4+16\n" + busy + "\nBRA L.2\nL.1:\n"
+                "LOAD R14, R30, -4+16\nLOAD R12, R30, -4+16\nADD R14, R14, R12\nSTORE R14, R30, -4+16\n"
+                "LOAD R13, R30, -8+16\nL.2:\nLOAD R14, R30, -4+16\nMOVI R13, 100\nBLT R14, R13, L.1\n"
+                "LOAD R1, R30, -8+16\nADDI R30, R30, 16")
+        out, stats = self.run_pass(body)
+        self.assertEqual(stats["stackslots.slots"], 1)
+        self.assertIn("ADD R4, R14, R0", out)                                    # la de -4: 5 accesos en el bucle contra 1
+        self.assertIn("LOAD R13, R30, -8+16", out)
+
+    def test_nothing_changes_if_the_address_of_a_slot_is_taken(self):
+        for use in ("ADDI R7, R30, -4+16", "LOADB R7, R30, -3+16", "STORE R30, R1, 0", "LOAD R7, R30, -3+16"):
+            with self.subTest(use=use):
+                out, stats = self.run_pass(KERNEL_STACK.replace("ADDI R14, R14, 1", f"{use}\nADDI R14, R14, 1"), "__kernel_k")
+                self.assertTrue(any("R30" in l for l in out), out)
+                self.assertNotIn("stackslots.slots", stats)
+
+    def test_nothing_changes_if_there_is_no_register_left(self):
+        busy = "\n".join(f"ADDI R{r}, R{r}, 0" for r in (*range(1, 16), *range(16, 30), 31))
+        out, stats = self.run_pass(busy + "\n" + KERNEL_STACK, "__kernel_k")
+        self.assertNotIn("stackslots.slots", stats)
+
+    def test_a_function_with_calls_is_left_alone(self):
+        out, stats = self.run_pass(LEAF_STACK.replace("ADDI R14, R14, 1", "JAL R31, g\nADDI R14, R14, 1"))
+        self.assertNotIn("stackslots.slots", stats)
+
+    def test_two_paths_that_disagree_on_the_frame_leave_the_function_alone(self):
+        body = ("BEQ R1, R0, L.3\nADDI R30, R30, -8\nL.3:\n" + LEAF_STACK)
+        out, stats = self.run_pass(body)
+        self.assertNotIn("stackslots.slots", stats)
+
+    def test_a_slot_outside_loops_goes_too_if_everything_fits_and_the_frame_vanishes(self):
+        body = LEAF_STACK.replace("ADDI R30, R30, 16", "STORE R9, R30, -8+16\nLOAD R2, R30, -8+16\nADDI R30, R30, 16")
+        body = body.replace("MOVI R14, 0", "MOVI R14, 0\nSTORE R9, R30, -8+16")
+        out, stats = self.run_pass(body)
+        self.assertEqual(stats["stackslots.slots"], 2)
+        self.assertFalse(any("R30" in l for l in out), out)
+
+    def test_an_unused_preserved_register_can_hold_a_slot_in_a_kernel(self):
+        busy = "\n".join(f"ADDI R{r}, R{r}, 0" for r in (*range(1, 16), 31, *range(17, 30)))
+        out, stats = self.run_pass(busy + "\n" + KERNEL_STACK, "__kernel_k")          # solo R16 queda
+        self.assertIn("ADD R16, R14, R0", out)
+
+    def test_a_function_without_a_stack_is_untouched(self):
+        out, stats = self.run_pass("ADD R9, R1, R2\nSTORE R9, R1, 0")
+        self.assertEqual(out, ["ADD R9, R1, R2", "STORE R9, R1, 0", "JR R31"])
+        self.assertNotIn("stackslots.slots", stats)
+
+    def test_the_fifth_argument_is_not_a_private_stack_slot(self):
+        out, stats = self.run_pass("LOAD R10, R30, 16\nADD R1, R1, R10")
+        self.assertIn("LOAD R10, R30, 16", out)
+        self.assertNotIn("stackslots.slots", stats)
+
+    def test_a_fifth_argument_after_allocating_a_frame_is_not_promoted(self):
+        body = "ADDI R30, R30, -32\nLOAD R10, R30, 48\nADD R1, R1, R10\nADDI R30, R30, 32"
+        out, stats = self.run_pass(body)
+        self.assertIn("LOAD R10, R30, 48", out)
+        self.assertNotIn("stackslots.slots", stats)
+
+
+def stack_program(rng: random.Random) -> str:
+    """Un bucle que lleva un contador y varios acumuladores en la pila (a veces tambien uno fuera del bucle),
+    con registros ocupados al azar para variar cuantos huecos caben. Los resultados quedan en R16..R20."""
+    slots = rng.randint(1, 4)
+    lines = ["ADDI R30, R30, -32"]
+    lines += [f"MOVI R5, {rng.randint(0, 50)}\nSTORE R5, R30, {4 * s}" for s in range(slots)]
+    lines += [f"MOVI R{r}, 0" for r in range(17, 21)]
+    lines += [f"ADDI R{r}, R{r}, 0" for r in rng.sample(range(7, 16), rng.randint(0, 9))]     # ocupa registros
+    lines += ["BRA L.2", "L.1:"]
+    for s in range(1, slots):
+        lines += [f"LOAD R6, R30, {4 * s}", f"ADDI R6, R6, {rng.randint(1, 5)}", f"STORE R6, R30, {4 * s}",
+                  f"LOAD R6, R30, {4 * s}", f"ADD R{16 + s}, R{16 + s}, R6"]
+    lines += ["LOAD R5, R30, 0", "ADDI R5, R5, 1", "STORE R5, R30, 0", "L.2:", "LOAD R5, R30, 0",
+              f"MOVI R8, {rng.randint(1, 20)}", "BLT R5, R8, L.1"]
+    lines += [f"LOAD R{16 + s}, R30, {4 * s}" if s == 0 else f"LOAD R20, R30, {4 * s}" for s in range(slots)]
+    lines += ["ADDI R30, R30, 32", "HALT"]
+    return ".text\n.globl f\nf:\n" + "\n".join(lines) + "\n"
+
+
+class StackSlotsSemanticsTest(unittest.TestCase):
+    def test_programs_give_the_same_registers_before_and_after(self):
+        promoted = 0
+        for seed in range(200):
+            source = stack_program(random.Random(seed))
+            stats: dict = {}
+            alone = optimize(source, ["stackslots"], stats=stats)
+            promoted += stats.get("stackslots.slots", 0)
+            expected = final_registers(source, 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(alone, 0), expected, source + "\n---\n" + alone)
+                everything = optimize(source)
+                self.assertEqual(final_registers(everything, 0), expected, source + "\n---\n" + everything)
+        self.assertGreater(promoted, 0, "el generador nunca ejercita el pase")
+
+
+def table_program(rng: random.Random) -> str:
+    """Cargas desde una tabla (`L.9`, tras el `HALT`) por direcciones `L.9+K` repartidas con calculos en
+    medio. Los resultados quedan en R16..R25."""
+    lines = []
+    for n in range(10):
+        address, base = rng.randrange(0, 15) * 4, rng.choice((8, 9, 10, 11, 12, 13))
+        lines += [f"LI R{base}, L.9+{address}", f"LOAD R{16 + n}, R{base}, {rng.choice((0, 4, 8))}"]
+        if rng.random() < 0.4:
+            lines.append(f"ADD R{16 + n}, R{16 + n}, R{rng.choice((16, 17, 18))}")
+        if rng.random() < 0.2:
+            lines.append(f"MOVI R{rng.choice((5, 6, 7))}, {rng.randint(0, 99)}")
+    table = ", ".join(str(rng.randint(0, 1000)) for _ in range(32))
+    return ".text\n.globl f\nf:\n" + "\n".join(lines) + f"\nHALT\nL.9:\n.word {table}\n"
+
+
+class SharebaseSemanticsTest(unittest.TestCase):
+    def test_programs_read_the_same_values_before_and_after(self):
+        groups = 0
+        for seed in range(200):
+            source = table_program(random.Random(seed))
+            stats: dict = {}
+            optimized = optimize(source, ["sharebase"], stats=stats)
+            groups += stats.get("sharebase.groups", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(groups, 0, "el generador nunca ejercita el pase")
+
+
+POOL = [0, 1, 2, 3, 7, 31, 32, 33, 255, 256, 320, 1280, 32767, -32768, 65535, 65536, 100000,
+        -1, -2, 2**31 - 1, -2**31]
+R3_OPS = ["ADD", "SUB", "MUL", "AND", "OR", "XOR", "SHL", "SHR", "SAR", "SLT", "SLTU"]
+
+
+def random_program(rng: random.Random) -> str:
+    """Instrucciones de calculo al azar entre constantes (R5..R7), un registro desconocido (R1) y R0.
+    Los resultados quedan en R16..R25, que `HALT` da por leidos."""
+    values = {r: rng.choice(POOL) for r in (5, 6, 7)}
+    lines = [f"LI R{r}, {value}" for r, value in values.items()]
+    sources = ["R0", "R1", "R1", "R5", "R6", "R7"]
+    for n in range(10):
+        dest = f"R{16 + n}"
+        kind = rng.random()
+        if kind < 0.10:
+            r = rng.choice((5, 6, 7))                        # recarga una constante, a veces la misma
+            values[r] = values[r] if rng.random() < 0.5 else rng.choice(POOL)
+            lines.append(f"LI R{r}, {values[r]}")
+        if kind < 0.20:
+            k, s = rng.choice((5, 6, 7)), rng.choice((5, 6, 7))
+            lines += [f"MUL {dest}, {rng.choice([x for x in sources if x != dest])}, R{k}", f"SHL {dest}, {dest}, R{s}"]
+        elif kind < 0.65:
+            lines.append(f"{rng.choice(R3_OPS)} {dest}, {rng.choice(sources)}, {rng.choice(sources)}")
+        else:
+            op = rng.choice(["ADDI", "ANDI", "ORI", "XORI", "SHLI", "SHRI", "SARI"])
+            imm = {"ADDI": rng.randint(-32768, 32767), "ANDI": rng.randint(0, 65535),
+                   "ORI": rng.choice((0, rng.randint(0, 65535))), "XORI": rng.randint(0, 65535)}.get(op, rng.choice((0, rng.randint(0, 31))))
+            lines.append(f"{op} {dest}, {rng.choice(sources)}, {imm}")
+        sources.append(dest)
+    return ".text\n.globl f\nf:\n" + "\n".join(lines) + "\nHALT\n"
+
+
+def final_registers(source: str, r1: int) -> list[int]:
+    cpu = CPU(memory_size=1 << 16)
+    cpu.load_program(assemble_bytes(source))
+    cpu.regs[1] = r1 & 0xFFFFFFFF
+    cpu.regs[30] = 0x8000                                  # la pila, para los programas que la usan
+    cpu.run(10_000)
+    return cpu.regs[16:26]
+
+
+class ConstPropSemanticsTest(unittest.TestCase):
+    def test_programs_give_the_same_registers_before_and_after(self):
+        """Programas de calculo al azar, ejecutados en el simulador de la CPU con y sin el pase: el
+        resultado de la maquina, no el texto."""
+        totals: dict[str, int] = {}
+        for seed in range(400):
+            rng = random.Random(seed)
+            source = random_program(rng)
+            stats: dict = {}
+            optimized = optimize(source, ["constprop"], stats=stats)
+            for key, value in stats.items():
+                totals[key] = totals.get(key, 0) + value
+            r1 = rng.choice(POOL)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, r1), final_registers(source, r1), source + "\n---\n" + optimized)
+        for key in ("constprop.evaluated", "constprop.identities", "constprop.fused", "constprop.redundant"):
+            self.assertGreater(totals.get(key, 0), 0, f"el generador nunca ejercita {key}: {totals}")
 
 
 class DceTest(unittest.TestCase):
