@@ -224,7 +224,7 @@ Instrucciones ejecutadas (simulador) en C frente a ensamblador, antes y después
 | cubo, GPU inocente (warp) | 46.170 | 71.449 | 46.000 | 1,55 | 1,00 | 1,55x |
 | cubo, GPU buena (warp) | 50.758 | 77.328 | 51.274 | 1,52 | 1,01 | 1,51x |
 
-El cubo (`compare_cube.py`) corre el demo entero con `race_period = 1`, un método por fotograma, y mide
+El cubo (`compare_race.py cube`) corre el demo entero con `race_period = 1`, un método por fotograma, y mide
 un fotograma de cada método del segundo giro (fotogramas 3 a 5): la CPU en su método y los warps en los
 de GPU (la CPU de esos solo espera). El primer giro se descarta porque el fotograma 0 lleva el arranque
 del demo, la generación de las texturas (unas 530.000 instrucciones de CPU en ensamblador y 670.000 en

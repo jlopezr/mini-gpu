@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Las cargas de `race` (rotacion, vida, difusion de calor) en C frente a ensamblador, en los tres metodos.
+"""Las cargas de `race` (rotacion, vida, difusion de calor, cubo) en C frente a ensamblador, en los tres metodos.
 
-    python examples/c/compare_race.py [rotate|life|blur|all] [--frame 5]
+    python examples/c/compare_race.py [rotate|life|blur|cube|all] [--frame 5]
 
 CPU, GPU inocente (un hilo por fila) y GPU buena (un warp por fila), cada uno en C (c/race/<carga>.c) y en
 ensamblador (asm/race/<carga>.inc). Las dos GPU se lanzan sin programa de CPU, con los mismos datos que
@@ -10,7 +10,8 @@ warp) y se comprueba que cada version deja las salidas del modelo en Python.
 
 Una carga es un `Workload`: sus ficheros, los nombres de sus kernels y una funcion que da los datos de
 entrada (`Case`: memoria, bloque de argumentos y lo que hay que leer al terminar con su valor esperado).
-Para anadir una, un `Workload` en WORKLOADS. El cubo (compare_cube.py) corre el demo entero y es otro caso.
+Para anadir una, un `Workload` en WORKLOADS. Un `Workload` con `demo` (el cubo) corre el programa entero con
+el anfitrion de video, `race_period = 1` y un metodo por fotograma, y mide uno de cada metodo en el segundo giro.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import compare as base  # noqa: E402
 from compare import CpuGpuSystem, assemble_bytes, c_build, first_pass, launch  # noqa: E402
+import cpu_gpu_sim as sim  # noqa: E402
 
 MEMORY = 32 * 1024 * 1024
 BLOCK = 0x001F0000          # donde se deja el bloque para la GPU y para la CPU en C
@@ -51,10 +53,11 @@ class Workload:
     stem: str                                       # c/race/<stem>.c y asm/race/<stem>.inc
     asm_kernels: tuple[str, str]                    # etiquetas de la inocente y la buena en el .inc
     c_kernels: tuple[str, str]
-    case: Callable[[int], Case]                     # el parametro (fotograma, semilla...)
+    case: Callable[[int], Case] | None              # el parametro (fotograma, semilla...); None en un demo
     default: int = 0
     extra_cpu: tuple[tuple[str, str], ...] = ()     # (nombre de la fila, fuente C) de otras formas de escribir la CPU
     asm_block_label: str = "job_args"               # donde el .inc espera el bloque en la CPU
+    demo: str | None = None                         # programa completo en asm/race/ que corre el demo entero (el cubo)
 
 
 # ---- rotacion de textura ----
@@ -146,7 +149,53 @@ WORKLOADS = {w.name: w for w in (
              life_case, default=7, extra_cpu=(("CPU, C con punteros", "life_ptr"),)),
     Workload("blur", "blur", ("blur_k_naive", "blur_k_good"), ("__kernel_blur_naive", "__kernel_blur_good"),
              blur_case, default=11),
+    Workload("cube", "cube", (), (), None, default=6, demo="cube.asm"),
 )}
+
+# ---- demos: el programa entero, un metodo por fotograma ----
+DEMO_METHODS = (("CPU", "instrucciones de CPU"), ("GPU inocente", "instrucciones de warp"),
+                ("GPU buena", "instrucciones de warp"))
+
+
+def run_demo(image, labels, frames: int):
+    """([(CPU, warp) por fotograma], pantalla visible al terminar): el anfitrion de video con doble buffer y
+    `race_period = 1`, asi que cada fotograma usa un metodo distinto, por turno. Entre dos cambios de buffer se
+    cuentan las instrucciones de CPU y de warp."""
+    video = sim.VideoDevice(frame_instructions=1000)
+    video.stop_after_swaps = frames
+    system = CpuGpuSystem(MEMORY, video=video)
+    system.load_cpu_program(image)
+    system.load_memory(struct.pack("<I", 1), labels["race_period"])
+    counts, swaps, last = [], 0, (0, 0)
+    while not system.finished:
+        system.step_round()
+        if video.swap_count != swaps:
+            swaps = video.swap_count
+            now = (system.cpu.instructions_executed, system.gpu.retired)
+            counts.append((now[0] - last[0], now[1] - last[1]))
+            last = now
+    start = video.fb_front + 32 * 640
+    return counts, bytes(system.memory[start:start + 208 * 640])
+
+
+def compare_demo(work: Workload, frames: int):
+    """Se mide el segundo giro de los tres metodos (fotogramas 3 a 5), no el primero, que lleva el arranque del
+    demo (generar las texturas, unas 500.000 a 650.000 instrucciones de CPU que no son del metodo) y falsearia
+    el de CPU. De cada metodo se da la cuenta de quien hace el trabajo: la CPU en el suyo, los warps en los de
+    GPU (la CPU de esos solo espera). Se comprueba ademas que C y ensamblador dejan la misma imagen."""
+    source_path = RACE / work.demo
+    source = source_path.read_text(encoding="utf-8")
+    a_labels = first_pass(source, RACE, work.demo, (base.INC,))[1]
+    a_counts, a_screen = run_demo(assemble_bytes(source, RACE, work.demo, (base.INC,)), a_labels, frames)
+    c_image, c_labels = c_program(work.stem)
+    c_counts, c_screen = run_demo(c_image, c_labels, frames)
+    rows = []
+    for index, (name, unit) in enumerate(DEMO_METHODS):
+        column = 0 if index == 0 else 1
+        a = sum(frame[column] for frame in a_counts[3 + index::3])
+        c = sum(frame[column] for frame in c_counts[3 + index::3])
+        rows.append((name, unit, a, c, a_screen == c_screen))
+    return rows
 
 
 def asm_program(work: Workload):
@@ -191,6 +240,8 @@ def run_gpu(image, entry: int, case: Case):
 def compare(name: str, parameter: int | None = None):
     """[(metodo, cuenta, ensamblador, C, correcto)] de la carga `name`."""
     work = WORKLOADS[name]
+    if work.demo:
+        return compare_demo(work, work.default if parameter is None else parameter)
     case = work.case(work.default if parameter is None else parameter)
     a_image, a_labels = asm_program(work)
     c_image, c_labels = c_program(work.stem)
@@ -217,7 +268,8 @@ def table(rows) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("workload", nargs="?", default="all", choices=[*WORKLOADS, "all"])
-    parser.add_argument("--frame", type=int, help="el parametro de la carga (fotograma de la rotacion, semilla de la rejilla)")
+    parser.add_argument("--frame", type=int, help="el parametro de la carga: fotograma de la rotacion, semilla de "
+                                                  "la rejilla o, en el cubo, los fotogramas a simular (multiplo de 3, al menos 6)")
     args = parser.parse_args()
     ok = True
     for name in (WORKLOADS if args.workload == "all" else [args.workload]):

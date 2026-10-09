@@ -508,7 +508,7 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   78.940 B (−5,6 %). Los accesos a pila ejecutados pasan de 47.805 (15,1 % de las
   instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
 - **Cubo** (`examples/c/race/cube.c`, un fotograma de cada método en estado
-  estable; `compare_cube.py`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
+  estable; `compare_race.py cube`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las
   texturas, sí es más caro en C (unas 670.000 instrucciones frente a 530.000),
   pero ocurre una sola vez; una medida anterior de 1,12 en CPU era ese arranque
