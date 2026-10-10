@@ -7,7 +7,6 @@ la misma forma. Lo que cambia es la máquina y qué se observa de ella.
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -15,37 +14,9 @@ from types import ModuleType
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.sim_peripherals import video_result  # noqa: E402,F401  (se reexporta)
 
-
-def load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"No se puede cargar el módulo {path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def expand_for(names) -> frozenset:
-    """Expande las capacidades implicadas.
-
-    El import va dentro para no crear una dependencia circular: `run_tests`
-    importa los backends al arrancar.
-    """
-    from run_tests import expand_capabilities
-
-    return expand_capabilities(names)
-
-
-def capabilities_of(versions: dict, version: str) -> frozenset:
-    """Lo que tiene una versión de simulador, con las implicaciones ya expandidas."""
-    return expand_for(versions[version]["capabilities"])
-
-
-def missing_capabilities(case: dict, available: frozenset) -> list[str]:
-    """Las capacidades que el caso pide y el simulador no declara."""
-    return [name for name in case.get("requires", []) if name not in available]
+from .common import (  # noqa: E402,F401  (se reexportan)
+    capabilities_of, expand_for, load_module, missing_capabilities,
+)
 
 
 def input_device(script: str | None):

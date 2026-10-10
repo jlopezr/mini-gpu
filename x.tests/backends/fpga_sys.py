@@ -24,18 +24,16 @@ nunca se sustituye una observación por el valor esperado. Ver
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 import time
 from pathlib import Path
 
 from . import board
-from .fpga_gpu import _load_module, architectural_size, expand_for
-
-_REPOSITORY = Path(__file__).resolve().parents[2]
-if str(_REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(_REPOSITORY))
+from .common import capabilities_of, load_module as _load_module
+from .fpga_common import (
+    REPOSITORY as _REPOSITORY, MonitorBackend, architectural_size, build_versions,
+)
 
 from tools.mmio_map import (  # noqa: E402
     MMIO_GPU_BASE,
@@ -61,10 +59,6 @@ from tools.rtl_facts import (  # noqa: E402
     capabilities_from_rtl,
     capability_architectures,
     capability_files,
-    clock_hz_from_rtl,
-    load_capability_signals,
-    monitor_version_from_rtl,
-    readme_title,
 )
 
 # GPU_CONTROL (mmio.md §14.1): comandos, no estado.
@@ -130,53 +124,20 @@ def gpu_capabilities(directory: Path, signals: dict) -> tuple[str, ...]:
     return capabilities_from_rtl(directory, restringidas)
 
 
-def _prototype_number(directory: Path) -> int:
-    match = re.match(r"(\d+)", directory.name)
-    return int(match.group(1)) if match else 0
+def _select(directory: Path) -> bool:
+    """Solo las carpetas con CPU y GPU a la vez, y con el puente que cruza el
+    bus de la CPU al de la GPU: sin él el host tampoco llega a GPU CORE."""
+    return (backends_from_rtl(directory) == ("cpu", "gpu")
+            and (directory / "gpu_mmio_bridge.v").exists())
 
-
-def _build_versions() -> dict:
-    signals = load_capability_signals(_REPOSITORY)
-    manifests = sorted(
-        _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
-    )
-    versions = {}
-    for manifest_path in manifests:
-        directory = manifest_path.parent
-        # Solo las carpetas con CPU y GPU a la vez, y con el puente que cruza el
-        # bus de la CPU al de la GPU: sin él el host tampoco llega a GPU CORE.
-        if backends_from_rtl(directory) != ("cpu", "gpu"):
-            continue
-        if not (directory / "gpu_mmio_bridge.v").exists():
-            continue
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        monitor_version = monitor_version_from_rtl(directory)
-        if monitor_version is None:
-            raise RuntimeError(
-                f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
-                f"{directory / 'monitor.v'}"
-            )
-        entry = {
-            "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
-            "monitor_version": monitor_version,
-            "description": manifest.get("description") or readme_title(directory),
-            "capabilities": gpu_capabilities(directory, signals),
-        }
-        clock_hz = clock_hz_from_rtl(directory)
-        if clock_hz is not None:
-            entry["clock_hz"] = clock_hz
-        versions[manifest["alias"]] = entry
-    return versions
-
-
-VERSIONS = _build_versions()
+VERSIONS = build_versions(_select, gpu_capabilities)
 # La más reciente: es la que tiene más contrato de GPU CORE.
 DEFAULT_VERSION = next(reversed(VERSIONS), "")
 
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene la GPU de esta versión, con las implicaciones expandidas."""
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 _MODELO = {}
@@ -340,43 +301,14 @@ def read_observations(client, estado: int, requested: set[str]) -> tuple[dict, i
     return resultado, codigo
 
 
-class FpgaSysBackend:
+class FpgaSysBackend(MonitorBackend):
     """Carga, lanza e inspecciona un caso GPU en la GPU de una CPU+GPU."""
 
     ARCHITECTURE = "gpu"
-
-    def __init__(
-        self,
-        repository: Path,
-        port: str,
-        serial_timeout: float,
-        version: str = DEFAULT_VERSION,
-        upload_policy: board.UploadPolicy | None = None,
-    ):
-        try:
-            self.configuration = VERSIONS[version]
-        except KeyError as error:
-            choices = ", ".join(sorted(VERSIONS))
-            raise ValueError(
-                f"Versión del backend fpga-sys desconocida {version!r}; "
-                f"opciones: {choices}"
-            ) from error
-
-        self.version = version
-        self.monitor = _load_module(
-            f"gpu_core_monitor_{version}_for_tests",
-            repository / self.configuration["monitor_path"],
-        )
-        self.port = port
-        self.serial_timeout = serial_timeout
-        board.ensure_bitstream(
-            self.monitor, port, serial_timeout,
-            self.configuration["monitor_version"],
-            repository / self.configuration["monitor_path"].parent,
-            "fpga-sys", version, upload_policy or board.UploadPolicy(),
-        )
-
-    def run(
+    NAME = "fpga-sys"
+    VERSIONS = VERSIONS
+    DEFAULT_VERSION = DEFAULT_VERSION
+    def _run_una_vez(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -394,30 +326,7 @@ class FpgaSysBackend:
         if video is not None:
             raise ValueError("fpga-sys no ejecuta casos de vídeo")
 
-        serial = self.monitor.serial
-        with serial.Serial(
-            port=self.port,
-            baudrate=self.monitor.BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=self.serial_timeout,
-            write_timeout=self.serial_timeout,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        ) as connection:
-            client = self.monitor.MonitorClient(connection)
-            actual = client.get_version()
-            esperado = self.configuration["monitor_version"]
-            if (actual.major, actual.minor) != esperado:
-                raise RuntimeError(
-                    f"La FPGA conectada responde con monitor {actual}, "
-                    f"pero --version fpga-sys={self.version} requiere "
-                    f"{'.'.join(map(str, esperado))}. Carga el bitstream "
-                    "correspondiente."
-                )
-
+        with self.connect() as client:
             # La CPU no corre nunca: el host hace de CPU. Parada, y con ella la
             # RAM es del monitor.
             client.halt_cpu()

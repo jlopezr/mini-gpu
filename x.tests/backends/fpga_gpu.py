@@ -10,8 +10,6 @@ misma arquitectura (`ebr` y `sdram` son ambas CPU), igual que `sim_cpu.py` y
 
 from __future__ import annotations
 
-import importlib.util
-import json
 import re
 import sys
 import time
@@ -19,18 +17,15 @@ from pathlib import Path
 from types import ModuleType
 
 from . import board, frame_capture
+from .common import capabilities_of, load_module as _load_module
+from .fpga_common import (
+    REPOSITORY as _REPOSITORY, MonitorBackend, architectural_size, build_versions,
+    missing_with_hint, write_register as _write_register,
+)
 
-_REPOSITORY = Path(__file__).resolve().parents[2]
-if str(_REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(_REPOSITORY))
-
-from tools.rtl_facts import (  # noqa: E402
+from tools.rtl_facts import (  # noqa: E402 (fpga_common ya puso REPOSITORY en sys.path)
     backend_from_rtl,
     capabilities_from_rtl,
-    clock_hz_from_rtl,
-    load_capability_signals,
-    monitor_version_from_rtl,
-    readme_title,
 )
 
 
@@ -57,13 +52,6 @@ REGISTROS_VIDEO = frame_capture.Registros(
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
 FRAME_BYTES = 320 * 240 * 2
-
-
-def _write_register(client, address: int, value: int) -> None:
-    """Byte a byte: los registros de video viven fuera de las regiones de
-    memoria que valida `write_memory`, y el monitor solo los atiende asi."""
-    for offset, byte in enumerate(value.to_bytes(4, "little")):
-        client.write_byte(address + offset, byte)
 
 
 # Modo de VIDEO_CTRL tras el reset de la placa: patron de prueba, el barrido no
@@ -94,75 +82,15 @@ def _read_register(client, address: int) -> int:
 # silencio. 14 y 17 siguen compartiendo numero, como antes: son funcionalmente
 # identicas y solo se diferencian en el camino critico -y por eso 17 no tiene
 # `version.json`: no es un target de test soportado, aunque tenga RTL-.
-def _prototype_number(directory: Path) -> int:
-    match = re.match(r"(\d+)", directory.name)
-    return int(match.group(1)) if match else 0
-
-
-def _build_versions() -> dict:
-    signals = load_capability_signals(_REPOSITORY)
-    manifests = sorted(
-        _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
-    )
-    versions = {}
-    for manifest_path in manifests:
-        directory = manifest_path.parent
-        if backend_from_rtl(directory) != "gpu":
-            continue
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        monitor_version = monitor_version_from_rtl(directory)
-        if monitor_version is None:
-            raise RuntimeError(
-                f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
-                f"{directory / 'monitor.v'}"
-            )
-        entry = {
-            "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
-            "monitor_version": monitor_version,
-            "description": manifest.get("description") or readme_title(directory),
-            "capabilities": capabilities_from_rtl(directory, signals),
-        }
-        clock_hz = clock_hz_from_rtl(directory)
-        if clock_hz is not None:
-            entry["clock_hz"] = clock_hz
-        versions[manifest["alias"]] = entry
-    return versions
-
-
-VERSIONS = _build_versions()
+VERSIONS = build_versions(
+    lambda directory: backend_from_rtl(directory) == "gpu",
+    lambda directory, signals: capabilities_from_rtl(directory, signals))
 DEFAULT_VERSION = "bram"
-
-
-def _load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"No se puede cargar el módulo {path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def architectural_size(monitor: ModuleType) -> int:
-    """Tamaño del espacio arquitectónico que declara un monitor."""
-    return max(end for _, end in monitor.ARCHITECTURAL_REGIONS)
-
-
-def expand_for(names) -> frozenset:
-    """Expande las capacidades implicadas.
-
-    El import va dentro para no crear una dependencia circular: `run_tests`
-    importa los backends al arrancar.
-    """
-    from run_tests import expand_capabilities
-
-    return expand_capabilities(names)
 
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene esta version, con las implicaciones ya expandidas."""
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
@@ -180,15 +108,9 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     # hueco no daba la cara. Con `cases-shared` si: `shared-double-buffer`
     # pide `video`, y la 12 --que no lo tiene-- lo ejecutaba hasta que la
     # placa contestaba `ff`, o sea un ERROR donde tocaba un SKIP.
-    disponibles = capabilities(version)
-    faltan = [name for name in case.get('requires', []) if name not in disponibles]
+    faltan = missing_with_hint(case, VERSIONS, version)
     if faltan:
-        con_ello = sorted(
-            name for name, other in VERSIONS.items()
-            if set(faltan) <= expand_for(other['capabilities'])
-        )
-        sugerencia = f" (la tienen: {', '.join(con_ello)})" if con_ello else ""
-        return f"sin {', '.join(faltan)}{sugerencia}"
+        return faltan
     # El mapa lo declara el monitor de esta versión, que es quien lo implementa.
     monitor = _load_module(
         f'gpu_fpga_monitor_{version}_for_regions',
@@ -286,48 +208,13 @@ def read_observations(client, status, requested: set[str], config_base: int,
     return result
 
 
-class FpgaGpuBackend:
+class FpgaGpuBackend(MonitorBackend):
     """Carga, ejecuta e inspecciona un caso GPU en la FPGA real."""
 
     ARCHITECTURE = "gpu"
-
-    def __init__(
-        self,
-        repository: Path,
-        port: str,
-        serial_timeout: float,
-        version: str = DEFAULT_VERSION,
-        upload_policy: board.UploadPolicy | None = None,
-    ):
-        try:
-            self.configuration = VERSIONS[version]
-        except KeyError as error:
-            choices = ", ".join(sorted(VERSIONS))
-            raise ValueError(
-                f"Versión del backend GPU FPGA desconocida {version!r}; "
-                f"opciones: {choices}"
-            ) from error
-
-        self.version = version
-        self.monitor = _load_module(
-            f"gpu_fpga_monitor_{version}_for_tests",
-            repository / self.configuration["monitor_path"],
-        )
-        self.port = port
-        self.serial_timeout = serial_timeout
-        # Una sola comprobación por ejecución, antes de correr ningún caso.
-        board.ensure_bitstream(
-            self.monitor, port, serial_timeout,
-            self.configuration["monitor_version"],
-            repository / self.configuration["monitor_path"].parent,
-            "fpga-gpu", version, upload_policy or board.UploadPolicy(),
-        )
-
-    def run(self, *args, **kwargs) -> dict:
-        # Si la parada por intercambios sale imprecisa, el caso se repite: ver
-        # `frame_capture`. Sin `run_until` no hay parada que pueda serlo.
-        return frame_capture.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
-
+    NAME = "fpga-gpu"
+    VERSIONS = VERSIONS
+    DEFAULT_VERSION = DEFAULT_VERSION
     def _run_una_vez(
         self,
         program: bytes,
@@ -343,31 +230,7 @@ class FpgaGpuBackend:
         # La FPGA se limita por timeout de pared, no por instrucciones.
         del max_instructions, register_numbers
 
-        serial = self.monitor.serial
-        with serial.Serial(
-            port=self.port,
-            baudrate=self.monitor.BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=self.serial_timeout,
-            write_timeout=self.serial_timeout,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        ) as connection:
-            client = self.monitor.MonitorClient(connection)
-            actual_version = client.get_version()
-            expected_version = self.configuration["monitor_version"]
-            actual_tuple = (actual_version.major, actual_version.minor)
-            if actual_tuple != expected_version:
-                expected_text = ".".join(map(str, expected_version))
-                raise RuntimeError(
-                    f"La FPGA conectada responde con monitor {actual_version}, "
-                    f"pero --version fpga-gpu={self.version} requiere "
-                    f"{expected_text}. Carga el bitstream correspondiente."
-                )
-
+        with self.connect() as client:
             client.reset_cpu()
             client.write_memory(0, program)
 

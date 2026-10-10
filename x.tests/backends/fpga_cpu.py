@@ -2,93 +2,47 @@
 
 from __future__ import annotations
 
-import importlib.util
-import json
-import re
-import sys
 import time
 from pathlib import Path
-from types import ModuleType
 
 from . import board, frame_capture
+from .common import capabilities_of
+from .fpga_common import (
+    REPOSITORY as _REPOSITORY, MonitorBackend, build_versions, missing_with_hint,
+    region_reason, write_register as _write_register,
+)
 
-_REPOSITORY = Path(__file__).resolve().parents[2]
-if str(_REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(_REPOSITORY))
-
-from tools.rtl_facts import (  # noqa: E402 (necesita _REPOSITORY en sys.path)
+from tools.rtl_facts import (  # noqa: E402 (fpga_common ya puso REPOSITORY en sys.path)
     backend_from_rtl,
     capabilities_from_rtl,
-    clock_hz_from_rtl,
-    load_capability_signals,
-    monitor_version_from_rtl,
     monitor_cycle_counters_from_rtl,
-    readme_title,
 )
 
 
-# Ni siquiera la lista de versiones se declara aquí: cada versión es una
-# carpeta de prototipo con un `version.json` (`{"alias": ...}`, y opcionalmente
-# `"description"` si el título del README no basta). Eso es lo único que se
-# elige a mano; todo lo demás --`monitor_version`, `capabilities`, `clock_hz`,
-# `monitor_cycle_counters`, y la descripción por defecto-- se lee de esa carpeta
-# al importar este módulo, con las mismas funciones que usa
-# `tools/prototype_report.py` (`tools/rtl_facts.py`).
-#
-# Registrar una versión nueva es soltar `version.json` en su carpeta: no hace
-# falta tocar este fichero. Un `cpu.v`/`monitor.v` sin `version.json` NO
-# cuenta -es la señal de "esto es un target de test soportado", no solo "hay
-# RTL sintetizable ahí": `17.fpga-gpu-ram-v2` tiene ambos y no es un target,
-# es un camino crítico alternativo de la 14.
+# La lista de versiones no se declara aquí: sale de los `version.json` de las
+# carpetas (ver `fpga_common.build_versions`). Registrar una versión nueva es
+# soltar `version.json` en su carpeta; no hace falta tocar este fichero.
 #
 # `R0` CABLEADO A CERO NO ES UNA CAPACIDAD. Lo fue mientras solo lo tenia la 21;
 # con el backport hecho lo tienen las seis versiones, asi que paso a ser una
 # regla de la MiniISA --1.isa/isa.md seccion 1-- y dejo de ser algo que un
 # backend pueda o no tener. La capacidad `zero_register` ya no existe.
-def _prototype_number(directory: Path) -> int:
-    match = re.match(r"(\d+)", directory.name)
-    return int(match.group(1)) if match else 0
+def _capabilities(directory: Path, signals: dict) -> tuple:
+    capabilities = capabilities_from_rtl(directory, signals)
+    # `input_device` (el RTL tiene INPUT) implica `input` (el arnes sabe
+    # alimentarlo): el guion se reproduce por el monitor, conservando el
+    # orden de los eventos y no su instante. Ver `play_on_board`.
+    if "input_device" in capabilities and "input" not in capabilities:
+        capabilities = capabilities + ("input",)
+    return capabilities
 
 
-def _build_versions() -> dict:
-    signals = load_capability_signals(_REPOSITORY)
-    manifests = sorted(
-        _REPOSITORY.glob("*/version.json"), key=lambda p: _prototype_number(p.parent)
-    )
-    versions = {}
-    for manifest_path in manifests:
-        directory = manifest_path.parent
-        if backend_from_rtl(directory) != "cpu":
-            continue
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        monitor_version = monitor_version_from_rtl(directory)
-        if monitor_version is None:
-            raise RuntimeError(
-                f"no se pudo leer VERSION_MAJOR/VERSION_MINOR de "
-                f"{directory / 'monitor.v'}"
-            )
-        capabilities = capabilities_from_rtl(directory, signals)
-        # `input_device` (el RTL tiene INPUT) implica `input` (el arnes sabe
-        # alimentarlo): el guion se reproduce por el monitor, conservando el
-        # orden de los eventos y no su instante. Ver `play_on_board`.
-        if "input_device" in capabilities and "input" not in capabilities:
-            capabilities = capabilities + ("input",)
-        entry = {
-            "monitor_path": directory.relative_to(_REPOSITORY) / "monitor.py",
-            "monitor_version": monitor_version,
-            "description": manifest.get("description") or readme_title(directory),
-            "capabilities": capabilities,
-        }
-        clock_hz = clock_hz_from_rtl(directory)
-        if clock_hz is not None:
-            entry["clock_hz"] = clock_hz
-        if monitor_cycle_counters_from_rtl(directory):
-            entry["monitor_cycle_counters"] = True
-        versions[manifest["alias"]] = entry
-    return versions
+def _extra(directory: Path, entry: dict) -> None:
+    if monitor_cycle_counters_from_rtl(directory):
+        entry["monitor_cycle_counters"] = True
 
-
-VERSIONS = _build_versions()
+VERSIONS = build_versions(
+    lambda directory: backend_from_rtl(directory) == "cpu", _capabilities, _extra)
 DEFAULT_VERSION = "alu"
 
 # Registros de video, en direcciones de byte. Solo los usan las versiones que
@@ -153,31 +107,8 @@ REGISTROS_VIDEO = frame_capture.Registros(
 FRAME_BYTES = 320 * 240 * 2
 
 
-def _load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"No se puede cargar el módulo {path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 # Los registros de video son de 32 bits, pero el monitor accede byte a byte:
-# una palabra son cuatro comandos. Se usa `write_memory`/`read_memory` porque
-# son los mismos que ya atraviesan el adaptador y la ventana MMIO.
-def _write_register(client, address: int, value: int) -> None:
-    """Byte a byte, no por bloque.
-
-    Los registros de video no son memoria: viven fuera de las regiones que
-    `write_memory` valida, y el monitor solo los atiende con WRITE_BYTE. Por
-    bloque el cliente lo rechaza antes de enviar nada.
-    """
-    for offset, byte in enumerate(value.to_bytes(4, "little")):
-        client.write_byte(address + offset, byte)
-
-
+# una palabra son cuatro comandos (`write_register`, en fpga_common).
 def _read_register(client, address: int, palabra: bool = False) -> int:
     """Con READ_WORD cuando el monitor lo tiene; si no, cuatro READ_BYTE.
 
@@ -198,20 +129,9 @@ def _read_register(client, address: int, palabra: bool = False) -> int:
         "little")
 
 
-def expand_for(names) -> frozenset:
-    """Expande las capacidades implicadas.
-
-    El import va dentro para no crear una dependencia circular: `run_tests`
-    importa los backends al arrancar.
-    """
-    from run_tests import expand_capabilities
-
-    return expand_capabilities(names)
-
-
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene esta versión, con las implicaciones ya expandidas."""
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
@@ -220,67 +140,17 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     El mapa lo declara el `monitor.py` de cada versión, que es quien lo
     implementa; aquí solo se lee su constante, sin abrir el puerto.
     """
-    disponibles = capabilities(version)
-    faltan = [name for name in case.get("requires", []) if name not in disponibles]
-    if faltan:
-        # El motivo dice qué versión sí lo tiene, que es lo que uno quiere
-        # saber cuando ve el SKIP. La versión que falla ya sale en el
-        # prefijo "[version]" del SKIP, así que no se repite aquí.
-        con_ello = sorted(
-            name for name, config in VERSIONS.items()
-            if set(faltan) <= expand_for(config["capabilities"])
-        )
-        sugerencia = f" (la tienen: {', '.join(con_ello)})" if con_ello else ""
-        return f"sin {', '.join(faltan)}{sugerencia}"
-
-    monitor = _load_module(
-        f"fpga_monitor_{version}_for_regions",
-        Path(__file__).resolve().parents[2] / VERSIONS[version]["monitor_path"],
-    )
-    return board.region_incompatibility(case, monitor.ARCHITECTURAL_REGIONS)
+    return (missing_with_hint(case, VERSIONS, version)
+            or region_reason(case, VERSIONS, version, "fpga-cpu"))
 
 
-class FpgaCpuBackend:
+class FpgaCpuBackend(MonitorBackend):
     """Carga, ejecuta e inspecciona un caso en la FPGA real."""
 
     ARCHITECTURE = "cpu"
-
-    def __init__(
-        self,
-        repository: Path,
-        port: str,
-        serial_timeout: float,
-        version: str = DEFAULT_VERSION,
-        upload_policy: board.UploadPolicy | None = None,
-    ):
-        try:
-            self.configuration = VERSIONS[version]
-        except KeyError as error:
-            choices = ", ".join(sorted(VERSIONS))
-            raise ValueError(
-                f"Versión del backend FPGA desconocida {version!r}; "
-                f"opciones: {choices}"
-            ) from error
-
-        self.version = version
-        self.monitor = _load_module(
-            f"fpga_monitor_{version}_for_tests",
-            repository / self.configuration["monitor_path"],
-        )
-        self.port = port
-        self.serial_timeout = serial_timeout
-        # Una sola comprobación por ejecución, antes de correr ningún caso.
-        board.ensure_bitstream(
-            self.monitor, port, serial_timeout,
-            self.configuration["monitor_version"],
-            repository / self.configuration["monitor_path"].parent,
-            "fpga-cpu", version, upload_policy or board.UploadPolicy(),
-        )
-
-    def run(self, *args, **kwargs) -> dict:
-        # Si la parada por intercambios sale imprecisa, el caso se repite: ver
-        # `frame_capture`. Sin `run_until` no hay parada que pueda serlo.
-        return frame_capture.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+    NAME = "fpga-cpu"
+    VERSIONS = VERSIONS
+    DEFAULT_VERSION = DEFAULT_VERSION
 
     def _run_una_vez(
         self,
@@ -302,34 +172,9 @@ class FpgaCpuBackend:
         # lleva el contador de frames, que avanza aunque el nucleo este parado.
         tiene_palabra = "read_word" in capacidades
 
-        serial = self.monitor.serial
-        with serial.Serial(
-            port=self.port,
-            baudrate=self.monitor.BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=self.serial_timeout,
-            write_timeout=self.serial_timeout,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        ) as connection:
-            client = self.monitor.MonitorClient(connection)
-
+        with self.connect() as client:
             def leer_registro(direccion: int) -> int:
                 return _read_register(client, direccion, tiene_palabra)
-
-            actual_version = client.get_version()
-            expected_version = self.configuration["monitor_version"]
-            actual_tuple = (actual_version.major, actual_version.minor)
-            if actual_tuple != expected_version:
-                expected_text = ".".join(map(str, expected_version))
-                raise RuntimeError(
-                    f"La FPGA conectada responde con monitor {actual_version}, "
-                    f"pero --version fpga-cpu={self.version} requiere "
-                    f"{expected_text}. Carga el bitstream correspondiente."
-                )
 
             client.reset_cpu()
 
