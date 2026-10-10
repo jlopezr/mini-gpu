@@ -477,9 +477,9 @@ por su duración:
 
 ```powershell
 ./.venv/Scripts/python.exe -m unittest discover -s 11.gpu-sim-func -v
-$env:RUN_SLOW_SIMT = '1'
+$env:RUN_SLOW = '1'
 ./.venv/Scripts/python.exe -m unittest discover -s 11.gpu-sim-func -p test_simt_regions.py -v
-Remove-Item Env:RUN_SLOW_SIMT
+Remove-Item Env:RUN_SLOW
 ```
 
 Los RTL citados al principio ya implementan REGION/PATH y reutilización de SSY.

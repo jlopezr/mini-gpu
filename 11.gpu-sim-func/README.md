@@ -225,4 +225,4 @@ Ejecutar pruebas desde la raíz del repositorio:
 ```
 
 `test_simt_regions.py` incluye regresiones de ambos Mandelbrot. Activar
-`RUN_SLOW_SIMT=1` añade la comparación de los framebuffers completos.
+`RUN_SLOW=1` añade la comparación de los framebuffers completos.

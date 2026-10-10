@@ -409,7 +409,7 @@ class MandelbrotRegionTest(unittest.TestCase):
                 with self.subTest(name=name, group=group):
                     self.check_image(name, base, group)
 
-    @unittest.skipUnless(os.environ.get('RUN_SLOW_SIMT') == '1', 'full framebuffers: RUN_SLOW_SIMT=1')
+    @unittest.skipUnless(os.environ.get('RUN_SLOW') == '1', 'full framebuffers: RUN_SLOW=1')
     def test_full_original_and_packed_framebuffers(self):
         for name, base in (('mandelbrot', 0x100000), ('mandelbrot-packed', 0x4000)):
             with self.subTest(name=name):
