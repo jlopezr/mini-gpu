@@ -1,4 +1,4 @@
-"""Backend `gpu-core` (la GPU de la 36 y la 37), sin placa."""
+"""Backend `fpga-sys` (la GPU de la 36 y la 37), sin placa."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -184,7 +184,7 @@ class VersionesTest(unittest.TestCase):
         self.assertEqual(set(gpu_core.VERSIONS), {"cpugpu", "mk2"})
 
     def test_la_36_y_la_37_siguen_siendo_cpu_para_cpu_fpga(self):
-        """`gpu-core` es ADEMAS: no las saca de `cpu-fpga` ni de `gpu-fpga`."""
+        """`fpga-sys` es ADEMAS: no las saca de `fpga-cpu` ni de `fpga-gpu`."""
         from backends import fpga, gpu_fpga
         self.assertIn("cpugpu", fpga.VERSIONS)
         self.assertIn("mk2", fpga.VERSIONS)
@@ -260,21 +260,21 @@ class IncompatibilidadTest(unittest.TestCase):
 
 class RegistroEnElRunnerTest(unittest.TestCase):
     def test_el_backend_esta_registrado_con_arquitectura_gpu(self):
-        definicion = runner.BACKEND_DEFINITIONS["gpu-core"]
+        definicion = runner.BACKEND_DEFINITIONS["fpga-sys"]
         self.assertEqual(definicion["architecture"], "gpu")
-        self.assertIn("gpu-core", runner.BACKENDS_DE_PLACA)
+        self.assertIn("fpga-sys", runner.BACKENDS_DE_PLACA)
 
     def test_prototype_36_resuelve_a_cada_familia(self):
-        self.assertEqual(runner.version_for_prototype("36", ("gpu-core",)),
-                         ("gpu-core", "cpugpu"))
-        self.assertEqual(runner.version_for_prototype("36", ("cpu-fpga",)),
-                         ("cpu-fpga", "cpugpu"))
-        self.assertEqual(runner.version_for_prototype("37", ("gpusim", "gpu-core")),
-                         ("gpu-core", "mk2"))
+        self.assertEqual(runner.version_for_prototype("36", ("fpga-sys",)),
+                         ("fpga-sys", "cpugpu"))
+        self.assertEqual(runner.version_for_prototype("36", ("fpga-cpu",)),
+                         ("fpga-cpu", "cpugpu"))
+        self.assertEqual(runner.version_for_prototype("37", ("sim-gpu", "fpga-sys")),
+                         ("fpga-sys", "mk2"))
 
     def test_gpu_fpga_sigue_sin_conocer_la_36(self):
         with self.assertRaises(ValueError):
-            runner.version_for_prototype("36", ("gpu-fpga",))
+            runner.version_for_prototype("36", ("fpga-gpu",))
 
 
 class TodosLosProtosTest(unittest.TestCase):
@@ -287,16 +287,16 @@ class TodosLosProtosTest(unittest.TestCase):
         self.assertLessEqual({36, 37}, cpu)
 
     def test_sin_core_bench_no_cambia(self):
-        """`bench` mide, y gpu-core todavia no admite --measure."""
+        """`bench` mide, y fpga-sys todavia no admite --measure."""
         gpu = {n for f, n, _ in bench_all.prototypes("gpu")}
         self.assertFalse({36, 37} & gpu)
 
     def test_backend_de_cada_familia(self):
-        self.assertEqual(bench_all.board_backend("gpu", 36), "gpu-core")
-        self.assertEqual(bench_all.board_backend("gpu", 37), "gpu-core")
-        self.assertEqual(bench_all.board_backend("cpu", 36), "cpu-fpga")
-        self.assertEqual(bench_all.board_backend("gpu", 29), "gpu-fpga")
-        self.assertEqual(bench_all.board_backend("cpu", 21), "cpu-fpga")
+        self.assertEqual(bench_all.board_backend("gpu", 36), "fpga-sys")
+        self.assertEqual(bench_all.board_backend("gpu", 37), "fpga-sys")
+        self.assertEqual(bench_all.board_backend("cpu", 36), "fpga-cpu")
+        self.assertEqual(bench_all.board_backend("gpu", 29), "fpga-gpu")
+        self.assertEqual(bench_all.board_backend("cpu", 21), "fpga-cpu")
 
 
 if __name__ == "__main__":

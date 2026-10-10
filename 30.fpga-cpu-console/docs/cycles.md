@@ -197,7 +197,7 @@ Y para comparar programas y versiones, `x.tests` lo mide por caso (tercera tabla
 «Reparto de los ciclos»):
 
 ```powershell
-..\x.tests\run_tests.py --backend cpu-fpga --measure medidas.md --port COM3 ..\x.tests\cases
+..\x.tests\run_tests.py --backend fpga-cpu --measure medidas.md --port COM3 ..\x.tests\cases
 ```
 
 Un ejemplo, en simulación, con el bucle interior de `cpu_burst_system_tb.v`

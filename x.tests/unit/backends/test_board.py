@@ -60,7 +60,7 @@ PROJECT = Path("6.fpga-cpu")
 
 def ensure(monitor, policy):
     board.ensure_bitstream(monitor, "COM3", 1.0, (1, 6), PROJECT,
-                           "cpu-fpga", "ebr", policy)
+                           "fpga-cpu", "ebr", policy)
 
 
 class BoardTest(unittest.TestCase):

@@ -4,7 +4,7 @@ En la 36 y la 37 el monitor gobierna la CPU, no la GPU: la GPU es un
 coprocesador que lanza la CPU escribiendo `GPU_CONTROL` y los descriptores de
 warp por MMIO (mmio.md §14). `gpu_fpga.py` no sirve ahí --solo registra las
 carpetas sin `cpu.v`--, y no debe: esas dos carpetas siguen siendo CPU para
-`cpu-fpga`, el SYS_ID y los informes. Este backend las trata como lo que también
+`fpga-cpu`, el SYS_ID y los informes. Este backend las trata como lo que también
 son, una GPU.
 
 No ejecuta ningún programa de CPU. El host hace de CPU: con la CPU parada
@@ -358,7 +358,7 @@ class GpuCoreBackend:
         except KeyError as error:
             choices = ", ".join(sorted(VERSIONS))
             raise ValueError(
-                f"Versión del backend gpu-core desconocida {version!r}; "
+                f"Versión del backend fpga-sys desconocida {version!r}; "
                 f"opciones: {choices}"
             ) from error
 
@@ -373,7 +373,7 @@ class GpuCoreBackend:
             self.monitor, port, serial_timeout,
             self.configuration["monitor_version"],
             repository / self.configuration["monitor_path"].parent,
-            "gpu-core", version, upload_policy or board.UploadPolicy(),
+            "fpga-sys", version, upload_policy or board.UploadPolicy(),
         )
 
     def run(
@@ -392,7 +392,7 @@ class GpuCoreBackend:
         # registros de las lanes no se leen (ver el docstring del módulo).
         del max_instructions, register_numbers
         if video is not None:
-            raise ValueError("gpu-core no ejecuta casos de vídeo")
+            raise ValueError("fpga-sys no ejecuta casos de vídeo")
 
         serial = self.monitor.serial
         with serial.Serial(
@@ -413,7 +413,7 @@ class GpuCoreBackend:
             if (actual.major, actual.minor) != esperado:
                 raise RuntimeError(
                     f"La FPGA conectada responde con monitor {actual}, "
-                    f"pero --version gpu-core={self.version} requiere "
+                    f"pero --version fpga-sys={self.version} requiere "
                     f"{'.'.join(map(str, esperado))}. Carga el bitstream "
                     "correspondiente."
                 )

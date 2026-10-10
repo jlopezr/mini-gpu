@@ -43,7 +43,7 @@ SIMULATOR_OPTIONS = ("simt_region_depth", "simt_path_depth")
 # A partir de aquí se anota el tiempo junto al resultado del caso.
 SLOW_CASE_SECONDS = 1.0
 BACKEND_DEFINITIONS = {
-    "gpusim": {
+    "sim-gpu": {
         "class": GpuBackend,
         "module": gpu_backend,
         "architecture": GpuBackend.ARCHITECTURE,
@@ -52,31 +52,31 @@ BACKEND_DEFINITIONS = {
     },
     # El modelo de ciclos es un BACKEND y no una `--version` del funcional,
     # aunque comparta clase: son dos simuladores distintos de la misma ISA, con
-    # su propio lanzador (`tools/gpusim-cycle`) y su propio `SYS_ID`. Tenerlo
+    # su propio lanzador (`tools/sim-gpu-cycle`) y su propio `SYS_ID`. Tenerlo
     # escondido detrás de `--version cycle` hacía que pareciera una variante de
     # otra cosa.
-    "gpusim-cycle": {
+    "sim-gpu-cycle": {
         "class": GpuBackend,
         "module": gpu_backend,
         "architecture": GpuBackend.ARCHITECTURE,
         "versions": gpu_backend.VERSIONS,
         "default_version": "cycle",
     },
-    "cpusim": {
+    "sim-cpu": {
         "class": SimulatorBackend,
         "module": simulator_backend,
         "architecture": SimulatorBackend.ARCHITECTURE,
         "versions": simulator_backend.VERSIONS,
         "default_version": simulator_backend.DEFAULT_VERSION,
     },
-    "cpu-fpga": {
+    "fpga-cpu": {
         "class": FpgaBackend,
         "module": fpga_backend,
         "architecture": FpgaBackend.ARCHITECTURE,
         "versions": fpga_backend.VERSIONS,
         "default_version": fpga_backend.DEFAULT_VERSION,
     },
-    "gpu-fpga": {
+    "fpga-gpu": {
         "class": GpuFpgaBackend,
         "module": gpu_fpga_backend,
         "architecture": GpuFpgaBackend.ARCHITECTURE,
@@ -84,9 +84,9 @@ BACKEND_DEFINITIONS = {
         "default_version": gpu_fpga_backend.DEFAULT_VERSION,
     },
     # La GPU de un prototipo CPU+GPU (36 y 37), lanzada por el host por GPU CORE.
-    # Es un backend propio y no versiones de `gpu-fpga`: esas carpetas siguen
-    # siendo CPU para `cpu-fpga`, y el monitor gobierna la CPU, no la GPU.
-    "gpu-core": {
+    # Es un backend propio y no versiones de `fpga-gpu`: esas carpetas siguen
+    # siendo CPU para `fpga-cpu`, y el monitor gobierna la CPU, no la GPU.
+    "fpga-sys": {
         "class": GpuCoreBackend,
         "module": gpu_core_backend,
         "architecture": GpuCoreBackend.ARCHITECTURE,
@@ -97,18 +97,18 @@ BACKEND_DEFINITIONS = {
 
 # Los backends que hablan con la placa. Se declara aqui, como SIMULADORES, y no
 # se repite la lista en cada sitio que la necesita.
-BACKENDS_DE_PLACA = ("cpu-fpga", "gpu-fpga", "gpu-core")
+BACKENDS_DE_PLACA = ("fpga-cpu", "fpga-gpu", "fpga-sys")
 
 # Qué backends son modelos y cuáles son hardware. Se declara, en vez de
 # deducirse del nombre: mientras se llamaron `*-simulator` había código que los
 # reconocía por el sufijo, y al renombrarlos dejó de encontrarlos **en
 # silencio** -- el reparto en procesos se apagó sin decir nada, y un backend sin
 # construir daba «1 caso, 0 fallos» sin ejecutar nada.
-SIMULADORES = frozenset({"cpusim", "gpusim", "gpusim-cycle"})
+SIMULADORES = frozenset({"sim-cpu", "sim-gpu", "sim-gpu-cycle"})
 # Los dos modelos de GPU. Hay cosas que valen para cualquiera de los dos --las
 # profundidades SIMT son parámetros del MODELO, no del hardware-- y escribirlas
-# como `== "gpusim"` dejaba fuera al de ciclos.
-SIMULADORES_GPU = frozenset({"gpusim", "gpusim-cycle"})
+# como `== "sim-gpu"` dejaba fuera al de ciclos.
+SIMULADORES_GPU = frozenset({"sim-gpu", "sim-gpu-cycle"})
 assert SIMULADORES_GPU <= SIMULADORES
 assert SIMULADORES <= set(BACKEND_DEFINITIONS)
 
@@ -157,7 +157,7 @@ def version_for_prototype(
     if not hardware_names:
         raise ValueError(
             "--prototype solo se puede usar con un backend FPGA "
-            "(cpu-fpga, gpu-fpga, gpu-core, both, gpu-both o gpu-core-both)"
+            "(fpga-cpu, fpga-gpu, fpga-sys, both, gpu-both o gpu-sys-both)"
         )
 
     try:
@@ -642,7 +642,7 @@ def video_timing_suffix(resultado: dict, case: dict, backend_name: str) -> str:
     instrucciones y no por tiempo de barrido. Mostrarlo alli con el mismo
     aspecto que en placa sugeriria una medida fisica que no existe.
     """
-    if backend_name != "cpu-fpga" or not case.get("run_until"):
+    if backend_name != "fpga-cpu" or not case.get("run_until"):
         return ""
     video = resultado.get("video") or {}
     frames = video.get("frames")
@@ -825,7 +825,7 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
     if gpu and ("pc" in expected_raw or "registers" in expected_raw):
         raise ValueError("GPU: PC y registros deben estar dentro de expect.warps")
     if not gpu and any(field in expected_raw for field in ("warps", "instructions_executed", "fault")):
-        raise ValueError("warps e instructions_executed requieren --backend gpusim")
+        raise ValueError("warps e instructions_executed requieren --backend sim-gpu")
     registers = {
         parse_register(name): parse_integer(value, name)
         for name, value in expected_raw.get("registers", {}).items()
@@ -1284,8 +1284,8 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     # Una tabla compara una familia: los casos de CPU y los de GPU no se
     # mezclan. Los de las dos familias se miden como la que se pida.
     familia = "gpu" if args.backend.startswith("gpu") else "cpu"
-    nombre_sim, nombre_fpga = (("gpusim", "gpu-fpga") if familia == "gpu"
-                               else ("cpusim", "cpu-fpga"))
+    nombre_sim, nombre_fpga = (("sim-gpu", "fpga-gpu") if familia == "gpu"
+                               else ("sim-cpu", "fpga-cpu"))
     fpga_versions = (gpu_fpga_backend if familia == "gpu" else fpga_backend).VERSIONS
     casos = []
     for path in case_paths:
@@ -1471,15 +1471,15 @@ def backend_arguments(case: dict, backend_name: str, args) -> dict:
         **({"warp_config": case["warp_config"]}
            if case["architecture"] == "gpu" else {}),
         **({"observation_fields": set(case["expected"]["observations"])}
-           if backend_name in ("gpu-fpga", "gpu-core") else {}),
+           if backend_name in ("fpga-gpu", "fpga-sys") else {}),
         # Solo se pasa cuando el caso lo pide: asi un caso normal no paga las
         # lecturas de registros ni el volcado del frame. HALT_AT existe en los
         # tres simuladores; el backend GPU FPGA sigue sin implementarlo.
         **({"video": {
             "run_until_swap": (case["run_until"] or {}).get("swap"),
             "capture_frame": case["expected"]["frame"] is not None,
-        }} if backend_name in ("cpu-fpga", "cpusim", "gpusim",
-                               "gpusim-cycle", "gpu-fpga") and (
+        }} if backend_name in ("fpga-cpu", "sim-cpu", "sim-gpu",
+                               "sim-gpu-cycle", "fpga-gpu") and (
             case["run_until"] or case["expected"]["video"]
             or case["expected"]["frame"] is not None) else {}),
         **({
@@ -1591,11 +1591,11 @@ def main() -> int:
     parser.add_argument(
         "--backend",
         choices=(
-            "cpusim", "cpu-fpga", "both",
-            "gpusim", "gpusim-cycle", "gpu-fpga", "gpu-both",
-            "gpu-core", "gpu-core-both",
+            "sim-cpu", "fpga-cpu", "both",
+            "sim-gpu", "sim-gpu-cycle", "fpga-gpu", "gpu-both",
+            "fpga-sys", "gpu-sys-both",
         ),
-        default="gpusim",
+        default="sim-gpu",
     )
     parser.add_argument("--port", default=None,
                         help="por defecto, detecta el primer adaptador FTDI conectado")
@@ -1650,8 +1650,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.trace_limit is not None and args.trace_limit < 0:
         parser.error("--trace-limit no puede ser negativo")
-    if (args.trace or args.trace_detail or args.trace_limit is not None or args.trace_file is not None) and args.backend != "gpusim":
-        parser.error("las opciones --trace solo están disponibles con --backend gpusim")
+    if (args.trace or args.trace_detail or args.trace_limit is not None or args.trace_file is not None) and args.backend != "sim-gpu":
+        parser.error("las opciones --trace solo están disponibles con --backend sim-gpu")
     if args.yes and args.no_upload:
         parser.error("--yes y --no-upload se contradicen")
     if args.durations < 0:
@@ -1668,10 +1668,10 @@ def main() -> int:
 
     if args.measure is not None:
         gpu_measure = args.backend.startswith("gpu")
-        if args.backend in ("both", "gpu-both", "gpu-core-both"):
-            parser.error("--measure mide una familia: usa --backend cpu-fpga o gpu-fpga")
-        if args.backend == "gpu-core":
-            parser.error("--measure todavia no admite gpu-core")
+        if args.backend in ("both", "gpu-both", "gpu-sys-both"):
+            parser.error("--measure mide una familia: usa --backend fpga-cpu o fpga-gpu")
+        if args.backend == "fpga-sys":
+            parser.error("--measure todavia no admite fpga-sys")
         medibles = (gpu_fpga_backend if gpu_measure else fpga_backend).VERSIONS
         # Las versiones a medir: las que se pidan con --version, o todas las
         # del backend FPGA mas el simulador, que aporta las instrucciones de
@@ -1682,7 +1682,7 @@ def main() -> int:
         if args.prototype is not None:
             try:
                 _, version = version_for_prototype(
-                    args.prototype, ("gpu-fpga",) if gpu_measure else ("cpu-fpga",)
+                    args.prototype, ("fpga-gpu",) if gpu_measure else ("fpga-cpu",)
                 )
             except ValueError as error:
                 parser.error(str(error))
@@ -1700,9 +1700,9 @@ def main() -> int:
         )
 
     backend_groups = {
-        "both": ("cpusim", "cpu-fpga"),
-        "gpu-both": ("gpusim", "gpu-fpga"),
-        "gpu-core-both": ("gpusim", "gpu-core"),
+        "both": ("sim-cpu", "fpga-cpu"),
+        "gpu-both": ("sim-gpu", "fpga-gpu"),
+        "gpu-sys-both": ("sim-gpu", "fpga-sys"),
     }
     backend_names = backend_groups.get(args.backend, (args.backend,))
     try:
@@ -1750,7 +1750,7 @@ def main() -> int:
                     skipped += 1
                     continue
                 raise ValueError(
-                    "simulator_options requiere --backend gpusim o gpusim-cycle")
+                    "simulator_options requiere --backend sim-gpu o sim-gpu-cycle")
             case = load_case(path, architecture)
             # Cada backend decide si el caso cabe en su mapa; los que no
             # publican `incompatibility` aceptan todo lo que valide load_case.
@@ -1778,7 +1778,7 @@ def main() -> int:
 
     backends = {}
     # Los de simulador se construyen desde la definición, y no con un `if` por
-    # nombre: al añadir `gpusim-cycle` su `if` se olvidó, así que corría con
+    # nombre: al añadir `sim-gpu-cycle` su `if` se olvidó, así que corría con
     # CERO backends y decía «1 caso, 0 fallos» sin ejecutar nada. Un verde
     # vacío es peor que un rojo.
     for name in backend_names:
@@ -1795,28 +1795,28 @@ def main() -> int:
     # autoriza, carga el bitstream. Es el fallo más habitual del flujo con
     # hardware, así que merece un mensaje y no un volcado de pila.
     try:
-        if "cpu-fpga" in backend_names:
-            backends["cpu-fpga"] = FpgaBackend(
+        if "fpga-cpu" in backend_names:
+            backends["fpga-cpu"] = FpgaBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,
-                version=backend_versions["cpu-fpga"],
+                version=backend_versions["fpga-cpu"],
                 upload_policy=upload_policy,
             )
-        if "gpu-fpga" in backend_names:
-            backends["gpu-fpga"] = GpuFpgaBackend(
+        if "fpga-gpu" in backend_names:
+            backends["fpga-gpu"] = GpuFpgaBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,
-                version=backend_versions["gpu-fpga"],
+                version=backend_versions["fpga-gpu"],
                 upload_policy=upload_policy,
             )
-        if "gpu-core" in backend_names:
-            backends["gpu-core"] = GpuCoreBackend(
+        if "fpga-sys" in backend_names:
+            backends["fpga-sys"] = GpuCoreBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,
-                version=backend_versions["gpu-core"],
+                version=backend_versions["fpga-sys"],
                 upload_policy=upload_policy,
             )
     except (board.BoardNotConnected, board.MonitorSilent,
@@ -1826,7 +1826,7 @@ def main() -> int:
 
     # Sin esto, un backend que no se llegue a construir no ejecuta nada y la
     # suite informa «N caso(s), 0 fallo(s)»: un verde que no ha probado nada.
-    # Paso de verdad al añadir `gpusim-cycle`, cuyo `if` de construcción se
+    # Paso de verdad al añadir `sim-gpu-cycle`, cuyo `if` de construcción se
     # olvidó.
     faltan = [n for n in backend_names if n not in backends]
     if faltan:
@@ -1881,9 +1881,9 @@ def main() -> int:
                     print(f"PASS {case['name']} [{backend_name}]"
                           f"{slow}{video_timing}")
 
-            if args.backend in ('gpu-both', 'gpu-core-both'):
-                left = results['gpusim']
-                right = results['gpu-fpga' if args.backend == 'gpu-both' else 'gpu-core']
+            if args.backend in ('gpu-both', 'gpu-sys-both'):
+                left = results['sim-gpu']
+                right = results['fpga-gpu' if args.backend == 'gpu-both' else 'fpga-sys']
                 fields = case['expected']['observations']
                 mismatch = any(left[field] != right[field] for field in ('halted', 'error', 'error_code', 'memory'))
                 mismatch |= any(left['observations'].get(key, '<ausente>') != right['observations'].get(key, '<ausente>') for key in fields)
@@ -1892,13 +1892,13 @@ def main() -> int:
                     print(f"FAIL {case['name']} [diferencial GPU]: los estados observados no coinciden")
             observado = {nombre: comparable(resultado, case)
                          for nombre, resultado in results.items()}
-            if args.backend == 'both' and observado["cpusim"] != observado["cpu-fpga"]:
+            if args.backend == 'both' and observado["sim-cpu"] != observado["fpga-cpu"]:
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
                 # Decir QUE campo difiere, y no solo que algo difiere. Sin esto
                 # el fallo obligaba a reproducir el caso a mano en los dos
                 # backends para averiguar por donde iba la diferencia.
-                simulador, fpga = observado["cpusim"], observado["cpu-fpga"]
+                simulador, fpga = observado["sim-cpu"], observado["fpga-cpu"]
                 for clave in sorted(set(simulador) | set(fpga)):
                     izquierda = simulador.get(clave, "<ausente>")
                     derecha = fpga.get(clave, "<ausente>")

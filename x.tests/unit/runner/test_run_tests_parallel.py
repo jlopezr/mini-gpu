@@ -1,6 +1,6 @@
 """El reparto de casos entre procesos, y las cuatro cosas que lo limitan.
 
-Paralelizar los casos de simulador baja `gpusim` de 184,8 s a 96,2 s.
+Paralelizar los casos de simulador baja `sim-gpu` de 184,8 s a 96,2 s.
 El techo es bajo y conviene saberlo: dos casos --`gpu-mandelbrot` y
 `gpu-mandelbrot-packed`, 89 y 95 s-- son el 99,9 % del tiempo, así que ningún
 reparto baja del más lento. Es un 1,9x, no un 24x.
@@ -81,8 +81,8 @@ class NombresDeBackendTest(unittest.TestCase):
 
     Los backends de simulador se llamaban `cpu-simulator` y `gpu-simulator`, y
     había código que los reconocía por terminar en «simulator». Al renombrarlos
-    a `cpusim`/`gpusim` --para que coincidan con `tools/cpusim` y
-    `tools/gpusim`, que ya existían-- ese código dejó de encontrarlos **sin
+    a `sim-cpu`/`sim-gpu` --para que coincidan con `tools/sim-cpu` y
+    `tools/sim-gpu`, que ya existían-- ese código dejó de encontrarlos **sin
     decir nada**: el reparto en procesos se apagó, y un backend que no se
     construye no ejecuta nada y la suite informa «N caso(s), 0 fallo(s)».
 
@@ -97,14 +97,14 @@ class NombresDeBackendTest(unittest.TestCase):
     def test_los_tres_simuladores_estan(self):
         """Los mismos tres que tienen lanzador en tools/."""
         self.assertEqual(run_tests.SIMULADORES,
-                         {"cpusim", "gpusim", "gpusim-cycle"})
-        for nombre in ("cpusim", "gpusim", "gpusim-cycle"):
+                         {"sim-cpu", "sim-gpu", "sim-gpu-cycle"})
+        for nombre in ("sim-cpu", "sim-gpu", "sim-gpu-cycle"):
             with self.subTest(backend=nombre):
                 self.assertTrue((ROOT.parent / "tools" / nombre).exists(),
                                 f"tools/{nombre} no existe")
 
     def test_ningun_backend_se_queda_sin_construir(self):
-        """El fallo concreto: `gpusim-cycle` se añadió a las definiciones y su
+        """El fallo concreto: `sim-gpu-cycle` se añadió a las definiciones y su
         `if` de construcción se olvidó, así que corría con cero backends."""
         for nombre in run_tests.SIMULADORES:
             with self.subTest(backend=nombre):
@@ -114,9 +114,9 @@ class NombresDeBackendTest(unittest.TestCase):
                               f"{nombre}: su versión por defecto no existe")
 
     def test_el_modelo_de_ciclos_es_un_backend_y_no_una_version(self):
-        ciclos = run_tests.BACKEND_DEFINITIONS["gpusim-cycle"]
+        ciclos = run_tests.BACKEND_DEFINITIONS["sim-gpu-cycle"]
         self.assertEqual(ciclos["default_version"], "cycle")
-        self.assertIn("gpusim-cycle", run_tests.SIMULADORES_GPU)
+        self.assertIn("sim-gpu-cycle", run_tests.SIMULADORES_GPU)
 
 
 class BackendArgumentsTest(unittest.TestCase):
@@ -141,22 +141,22 @@ class BackendArgumentsTest(unittest.TestCase):
         return base
 
     def test_el_serie_va_a_cpu_y_simuladores_gpu(self):
-        cpu = run_tests.backend_arguments(self.caso(), "cpusim", opciones())
+        cpu = run_tests.backend_arguments(self.caso(), "sim-cpu", opciones())
         self.assertIn("stdin", cpu)
         gpu = run_tests.backend_arguments(
-            self.caso(architecture="gpu"), "gpusim", opciones())
+            self.caso(architecture="gpu"), "sim-gpu", opciones())
         self.assertIn("stdin", gpu)
         self.assertIn("warp_config", gpu)
         hardware = run_tests.backend_arguments(
-            self.caso(architecture="gpu"), "gpu-fpga", opciones())
+            self.caso(architecture="gpu"), "fpga-gpu", opciones())
         self.assertNotIn("stdin", hardware)
 
     def test_el_video_solo_se_pasa_si_el_caso_lo_pide(self):
         """Un caso normal no paga las lecturas de registros ni el frame."""
-        sin = run_tests.backend_arguments(self.caso(), "cpusim", opciones())
+        sin = run_tests.backend_arguments(self.caso(), "sim-cpu", opciones())
         self.assertNotIn("video", sin)
         con = run_tests.backend_arguments(
-            self.caso(run_until={"swap": 2}), "cpusim", opciones())
+            self.caso(run_until={"swap": 2}), "sim-cpu", opciones())
         self.assertEqual(con["video"]["run_until_swap"], 2)
 
 
@@ -165,27 +165,27 @@ class VideoTimingOutputTest(unittest.TestCase):
         case = {"run_until": {"swap": 300}}
         result = {"video": {"frames": 318, "swaps": 300}}
         self.assertEqual(
-            run_tests.video_timing_suffix(result, case, "cpu-fpga"),
+            run_tests.video_timing_suffix(result, case, "fpga-cpu"),
             " (318 refrescos, 300 swaps, 18 sin swap, ~56.6 FPS @ 60 Hz)")
 
     def test_no_calcula_fps_con_una_muestra_demasiado_corta(self):
         case = {"run_until": {"swap": 1}}
         result = {"video": {"frames": 3, "swaps": 1}}
         self.assertEqual(
-            run_tests.video_timing_suffix(result, case, "cpu-fpga"),
+            run_tests.video_timing_suffix(result, case, "fpga-cpu"),
             " (3 refrescos, 1 swap, 2 sin swap)")
 
     def test_no_presenta_frames_sinteticos_como_medida_fisica(self):
         case = {"run_until": {"swap": 300}}
         result = {"video": {"frames": 318, "swaps": 300}}
         self.assertEqual(
-            run_tests.video_timing_suffix(result, case, "cpusim"), "")
+            run_tests.video_timing_suffix(result, case, "sim-cpu"), "")
 
     def test_sin_run_until_no_hay_resumen(self):
         result = {"video": {"frames": 10, "swaps": 0}}
         self.assertEqual(
             run_tests.video_timing_suffix(result, {"run_until": None},
-                                          "cpu-fpga"), "")
+                                          "fpga-cpu"), "")
 
 
 if __name__ == "__main__":

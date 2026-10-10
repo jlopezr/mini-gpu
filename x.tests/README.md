@@ -1,6 +1,6 @@
 # Tests de MiniCPU y MiniGPU
 
-También incluye el backend funcional MiniGPU (`--backend gpusim`), con casos en
+También incluye el backend funcional MiniGPU (`--backend sim-gpu`), con casos en
 `cases-gpu`. Los casos CPU están en `cases-cpu` y el modo `both` sigue comparando
 exclusivamente el simulador CPU con la FPGA. `cases-shared` tiene los que
 declaran las dos arquitecturas.
@@ -49,8 +49,8 @@ para tres intercambios, no son casos.
 Desde `x.tests`:
 
 ```powershell
-python run_tests.py --backend gpusim
-python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpusim
+python run_tests.py --backend sim-gpu
+python run_tests.py cases-gpu/memory/vecsum/test.json --backend sim-gpu
 python -m unittest unit.runner.test_gpu_runner -v
 ```
 
@@ -104,7 +104,7 @@ lcc. Para aprovecharlos desde esta infraestructura sin duplicar manifiestos
 derivados en git:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpusim
+python run-mini-lcc-tests.py --backend sim-cpu
 ```
 
 El adaptador ejecuta `y.lcc/run-mini-tst.py`, reutiliza los `.bin`, `.json` y
@@ -116,7 +116,7 @@ Para pasar opcionalmente el ensamblador generado por `mini-opt` antes de crear
 los casos de `x.tests`:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpusim --optimize
+python run-mini-lcc-tests.py --backend sim-cpu --optimize
 ```
 
 `--compare-optimizer` conserva y ensambla las dos formas, muestra el recuento
@@ -124,7 +124,7 @@ antes/después y hace que `x.tests` valide la optimizada. Si se combina con
 `--simulate-lcc`, el runner propio de Mini-LCC simula y comprueba también ambas:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpusim --compare-optimizer --simulate-lcc
+python run-mini-lcc-tests.py --backend sim-cpu --compare-optimizer --simulate-lcc
 ```
 
 Por defecto no se invoca el optimizador. Tanto el `.s` original como el
@@ -136,7 +136,7 @@ manifiesto, ya que `x.tests` no tiene semantica de fallo esperado. Para
 investigarlos como fallos normales:
 
 ```powershell
-python run-mini-lcc-tests.py --backend cpusim --include-xfail
+python run-mini-lcc-tests.py --backend sim-cpu --include-xfail
 ```
 
 Desde `x.tests`. `--port` es opcional: sin él, detecta el primer adaptador
@@ -145,25 +145,25 @@ FTDI conectado; solo hace falta si hay varios o para forzar uno en concreto
 
 ```powershell
 # 1. CPU sobre el simulador funcional
-python run_tests.py --backend cpusim
+python run_tests.py --backend sim-cpu
 
 # 2. CPU sobre FPGA, versión EBR
-python run_tests.py --backend cpu-fpga --version ebr --port COM3
+python run_tests.py --backend fpga-cpu --version ebr --port COM3
 
 # 3. CPU sobre FPGA, versión SDRAM
-python run_tests.py --backend cpu-fpga --version sdram --port COM3
+python run_tests.py --backend fpga-cpu --version sdram --port COM3
 
 # 4. CPU sobre FPGA, versión con vídeo, sub-palabra y llamadas
-python run_tests.py --backend cpu-fpga --version subword --port COM3
+python run_tests.py --backend fpga-cpu --version subword --port COM3
 
 # 4b. CPU sobre FPGA, además con la ALU completa, shifts inmediatos y R0 a cero
-python run_tests.py --backend cpu-fpga -p 21 --port COM3
+python run_tests.py --backend fpga-cpu -p 21 --port COM3
 
 # 5. GPU sobre el simulador funcional
-python run_tests.py --backend gpusim
+python run_tests.py --backend sim-gpu
 
 # 6. GPU sobre FPGA, versión BRAM
-python run_tests.py --backend gpu-fpga --version bram --port COM3
+python run_tests.py --backend fpga-gpu --version bram --port COM3
 ```
 
 En los backends FPGA, `-p`/`--prototype` permite seleccionar la versión por
@@ -174,30 +174,30 @@ Qué necesita y qué ejecuta cada una:
 
 | # | Backend y versión | Bitstream | Monitor | Casos |
 |---:|---|---|---:|---|
-| 1 | `cpusim` | ninguno | — | todos los de `cases-cpu/` y `cases-shared/` |
-| 2 | `cpu-fpga --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
-| 3 | `cpu-fpga --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
-| 4 | `cpu-fpga --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 28; 10 omitidos por capacidades |
-| 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | todos los de `cases-cpu/` y `cases-shared/` |
-| 5 | `gpusim` | ninguno | — | los 34 de `cases-gpu/` |
-| 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
-| 7 | `gpu-core --version cpugpu` (o `mk2`) | [36.fpga-cpu-gpu](../36.fpga-cpu-gpu/) (o la 37) | 5.36 (5.37) | la GPU de una CPU+GPU: pocos casos, ver abajo |
+| 1 | `sim-cpu` | ninguno | — | todos los de `cases-cpu/` y `cases-shared/` |
+| 2 | `fpga-cpu --version ebr` | [6.fpga-cpu](../6.fpga-cpu/) | 1.16 | 13; 21 omitidos por capacidades |
+| 3 | `fpga-cpu --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
+| 4 | `fpga-cpu --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 28; 10 omitidos por capacidades |
+| 4b | `fpga-cpu --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | todos los de `cases-cpu/` y `cases-shared/` |
+| 5 | `sim-gpu` | ninguno | — | los 34 de `cases-gpu/` |
+| 6 | `fpga-gpu --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
+| 7 | `fpga-sys --version cpugpu` (o `mk2`) | [36.fpga-cpu-gpu](../36.fpga-cpu-gpu/) (o la 37) | 5.36 (5.37) | la GPU de una CPU+GPU: pocos casos, ver abajo |
 
-**La 36 y la 37 son CPU y GPU a la vez.** Como CPU se prueban con `cpu-fpga`
+**La 36 y la 37 son CPU y GPU a la vez.** Como CPU se prueban con `fpga-cpu`
 (`--version cpugpu` o `mk2`) y no han dejado de serlo. Su GPU la lanza la CPU por
-MMIO (GPU CORE) y el monitor gobierna la CPU, no la GPU, así que `gpu-fpga` no
-las conoce; las prueba `gpu-core`, que hace de CPU desde el host (escribe los
+MMIO (GPU CORE) y el monitor gobierna la CPU, no la GPU, así que `fpga-gpu` no
+las conoce; las prueba `fpga-sys`, que hace de CPU desde el host (escribe los
 descriptores y `GPU_CONTROL` por `write_word` con la CPU parada). `test-board -p 37`
 lanza las dos, una tras otra (`--family cpu|gpu` elige una). De los 78 casos de
 `cases-gpu/` solo corren los que no piden el PC, la máscara de lanes ni los
 registros de los warps, porque el RTL no los expone por MMIO: hoy dos más los
 compartidos que no dependen de ello. Los demás salen como `SKIP` con motivo. El
 diseño, qué falta y cómo desbloquearlos: [backend-gpu-core.md](backend-gpu-core.md).
-`--measure` todavía no admite `gpu-core`.
+`--measure` todavía no admite `fpga-sys`.
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
-Solo `cpusim` y `cpu-fpga --version alu` ejecutan los 38 casos: son los
+Solo `sim-cpu` y `fpga-cpu --version alu` ejecutan los 38 casos: son los
 dos únicos que tienen las ocho capacidades.
 
 **`sdram` no tiene `mul_div`, y esa capacidad es distinta de las demás.**
@@ -214,7 +214,7 @@ semillas al +2,4 %; el detalle está en
 10 implemente las tres, la capacidad desaparece entera en lugar de extenderse a
 más backends.
 
-La selección automática para `gpu-fpga` y `gpu-both` omite con un mensaje
+La selección automática para `fpga-gpu` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
 
 - Cuatro casos de `simt/capacity` fijan profundidades mediante `simulator_options`.
@@ -238,7 +238,7 @@ Desde la raíz del repositorio, para actualizar una placa con otro bitstream y
 probar todos los casos compatibles:
 
 ```powershell
-.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
+.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend fpga-gpu --version bram --port COM3 --yes --durations
 ```
 
 El backend exige monitor **3.12** y ofrece cargar `12.fpga-gpu` si responde otra
@@ -248,12 +248,12 @@ recarga si ya responde 3.12; para cargar otra compilación de la misma revisión
 ```powershell
 .\.venv\Scripts\apio.exe upload -p .\12.fpga-gpu
 if ($LASTEXITCODE -ne 0) { throw "Falló la carga" }
-.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --no-upload --durations
+.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend fpga-gpu --version bram --port COM3 --no-upload --durations
 ```
 
 `apio` se busca junto al ejecutable de Python y, si no está allí, en PATH.
 La carga recibe salida en vivo. Para comparar también con el simulador, usa
-`--backend gpu-both --version gpu-fpga=bram`; se comparan estados, memoria y
+`--backend gpu-both --version fpga-gpu=bram`; se comparan estados, memoria y
 observaciones exigidas por el caso, excluyendo la duración de ejecución.
 
 Los tres backends de FPGA comprueban la placa al arrancar y, si hace falta,
@@ -263,7 +263,7 @@ Además, `--backend both` ejecuta cada caso CPU en el simulador **y** en la FPGA
 y compara los dos estados observados entre sí:
 
 ```powershell
-python run_tests.py --backend both --version cpu-fpga=sdram --port COM3
+python run_tests.py --backend both --version fpga-cpu=sdram --port COM3
 ```
 
 Sin rutas explícitas se descubren todos los ficheros `cases-cpu/**/test.json`. Los
@@ -284,7 +284,7 @@ backends; ver [Capacidades](#capacidades).
 También se puede ejecutar uno o varios casos concretos:
 
 ```powershell
-python run_tests.py cases-cpu/basics/smoke/test.json --backend cpusim
+python run_tests.py cases-cpu/basics/smoke/test.json --backend sim-cpu
 ```
 
 Los casos GPU admiten traza del scheduler. `--trace-limit` limita los eventos
@@ -292,7 +292,7 @@ mostrados, pero no la ejecución ni las comprobaciones del caso; `--trace-file`
 los guarda en vez de escribirlos en stderr:
 
 ```powershell
-python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpusim `
+python run_tests.py cases-gpu/memory/vecsum/test.json --backend sim-gpu `
     --trace --trace-limit 100 --trace-file ejecucion.log
 ```
 
@@ -305,7 +305,7 @@ segundo. `--durations N` lista además las N ejecuciones más lentas al terminar
 (10 si se omite el número):
 
 ```powershell
-python run_tests.py --backend gpusim --durations 5
+python run_tests.py --backend sim-gpu --durations 5
 ```
 
 Es la forma de decidir un `timeout_seconds` con criterio en vez de a ojo. Los
@@ -318,7 +318,7 @@ puede usar directamente `--version VERSION`; con varios se usa
 
 ```powershell
 python run_tests.py --backend both `
-    --version cpusim=current --version cpu-fpga=sdram --port COM3
+    --version sim-cpu=current --version fpga-cpu=sdram --port COM3
 ```
 
 Cada backend declara internamente todas sus versiones y cuál es la
@@ -356,7 +356,7 @@ Desde que el menor **es** el número de carpeta, esa unicidad ya no hay que
 vigilarla a mano. Antes sí, y llegó a fallar: la 14 y la 17 compartieron número
 siendo hardware distinto.
 
-La versión predeterminada de `cpu-fpga` es `alu` (21, la más completa; antes
+La versión predeterminada de `fpga-cpu` es `alu` (21, la más completa; antes
 era `ebr`). La comprobación ocurre **una sola vez al construir el backend**,
 antes de ejecutar ningún caso, y distingue tres situaciones:
 
@@ -367,9 +367,9 @@ antes de ejecutar ningún caso, y distingue tres situaciones:
 | Contesta con otra versión | Está cargado el bitstream de otro proyecto | Ofrece cargar el que toca |
 
 ```powershell
-python run_tests.py --backend cpu-fpga --port COM3              # pregunta
-python run_tests.py --backend cpu-fpga --port COM3 --yes        # carga sin preguntar
-python run_tests.py --backend cpu-fpga --port COM3 --no-upload  # nunca carga
+python run_tests.py --backend fpga-cpu --port COM3              # pregunta
+python run_tests.py --backend fpga-cpu --port COM3 --yes        # carga sin preguntar
+python run_tests.py --backend fpga-cpu --port COM3 --no-upload  # nunca carga
 ```
 
 La carga se hace con `apio upload` en el directorio del proyecto, y su salida se
@@ -454,7 +454,7 @@ opcional `simulator_options`:
 Equivalen a `--simt-region-depth` y `--simt-path-depth` de `minigpu_sim.py` y
 permiten provocar overflow de las pilas SIMT sin programas enormes. Como son
 parámetros del simulador, la FPGA no puede reproducirlos: un caso que las use se
-omite en el descubrimiento automático si el backend no es `gpusim`, y se
+omite en el descubrimiento automático si el backend no es `sim-gpu`, y se
 rechaza si se pide explícitamente. Los casos CPU no las admiten.
 
 ## Direcciones de datos
@@ -500,14 +500,14 @@ instrucciones, tiempo y CPI.
 
 ```bash
 # Todas las versiones de placa, más el simulador
-python run_tests.py --backend cpu-fpga --measure medidas.md --port COM3 cases
+python run_tests.py --backend fpga-cpu --measure medidas.md --port COM3 cases
 
 # Solo dos versiones, y sin nombre de fichero: solo se archiva en reports/
-python run_tests.py --backend cpu-fpga --version hdmi --version bl8 \
+python run_tests.py --backend fpga-cpu --version hdmi --version bl8 \
     --measure --measure-label antes-de-segmentar --port COM3 cases-cpu/programs
 
 # Sin placa: solo cuenta instrucciones, que es la mitad de la tabla
-python run_tests.py --backend cpusim --version sim --measure cases
+python run_tests.py --backend sim-cpu --version sim --measure cases
 ```
 
 Cambiar de versión recarga el bitstream, así que el bucle exterior es la versión
@@ -663,10 +663,10 @@ Todos los casos declaran explícitamente `"architecture": "cpu"` o
 `"architecture": "gpu"`. No se deduce la arquitectura del nombre del archivo
 ni de su carpeta. GPU exige `warp_config`; CPU lo rechaza.
 
-Los backends declaran `ARCHITECTURE`: `cpusim` y `cpu-fpga` son CPU;
-`gpusim` es GPU y es el backend predeterminado de `run_tests.py`.
+Los backends declaran `ARCHITECTURE`: `sim-cpu` y `fpga-cpu` son CPU;
+`sim-gpu` es GPU y es el backend predeterminado de `run_tests.py`.
 `both` sigue seleccionando los dos backends CPU. Las versiones se seleccionan,
-por ejemplo, con `--version gpusim=current`.
+por ejemplo, con `--version sim-gpu=current`.
 
 El descubrimiento automático omite casos de otra arquitectura y muestra cuántos.
 Una ruta solicitada explícitamente con arquitectura incompatible produce código
@@ -688,17 +688,17 @@ declara lo que necesita:
 | Capacidad | Qué significa | Quién la tiene |
 |---|---|---|
 | `atomic_warp_faults` | Un fallo de warp no deja efectos parciales | solo el simulador GPU |
-| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `cpusim`, `gpusim`, `hdmi`, `bl8`, `subword`, `alu`, `console`, y las GPU `22` y `29` |
+| `video` | Registros en `0x80000000` y un framebuffer que se muestra | `sim-cpu`, `sim-gpu`, `hdmi`, `bl8`, `subword`, `alu`, `console`, y las GPU `22` y `29` |
 | `frame_capture` | Parar tras N intercambios y capturar el frame: hace falta `SWAP_COUNT` (se detecta de `video_registers.v` o `gpu_video_regs.v`), no `HALT_AT` | los mismos que `video` |
 | `halt_on_swap` | `HALT_AT` cuenta intercambios: el arnés lo arma en vez de sondear. Implica `frame_capture`; un caso no lo pide, lo elige el backend | todas las que tienen vídeo: las CPU (`hdmi`, `bl8`, `subword`, `alu`, `console`) y las GPU 22 y 29 |
-| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D`. En una CPU se detecta en `cpu.v`; en una GPU, en `gpu_sm.v`, que es quien despacha la memoria | `cpusim`, `subword`, `alu`, `gpusim`, `gpusim-cycle` y la GPU 29 (`smpipe`) |
-| `gpu_ids` | La familia `GETID` (`GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`, opcode `0x30` con `type` 1 a 4) y los campos `logical_warp_id` y `arg` de cada warp en `warps.json` (`LOGICAL_WARP_ID[n]` y `WARP_ARG[n]`, `mmio.md` §14.2). Un caso que los use en `warps.json` **tiene que declararla**: el runner lo rechaza al cargarlo. Se detecta en `gpu_lane.v`; una GPU sin ella solo tiene `GETTID` y un `type` ≠ 0 para con `0x05`, así que sus casos se omiten allí | `gpusim`, `gpusim-cycle` y la GPU 29 (`smpipe`) |
-| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `cpusim`, `subword`, `alu` |
-| `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `cpusim`, `subword`, `alu` |
-| `input` | INPUT, teclado y ratón (`mmio.md` §25, `0x80600000`). El caso lo alimenta con `"input": [líneas de guion]` (`tools/input_script.py`; `@N`/`+N` en instrucciones completadas), que se comprueba al cargar el caso. Es **que el arnés sabe alimentarlo**, no que el RTL lo tenga (eso es `input_device`): la placa recibe eventos del monitor, no tiempo en instrucciones, así que solo lo declaran los simuladores y en la placa el caso se omite | `cpusim`, `gpusim`, `gpusim-cycle` |
+| `subword_memory` | `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`, opcodes `0x18–0x1D`. En una CPU se detecta en `cpu.v`; en una GPU, en `gpu_sm.v`, que es quien despacha la memoria | `sim-cpu`, `subword`, `alu`, `sim-gpu`, `sim-gpu-cycle` y la GPU 29 (`smpipe`) |
+| `gpu_ids` | La familia `GETID` (`GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`, opcode `0x30` con `type` 1 a 4) y los campos `logical_warp_id` y `arg` de cada warp en `warps.json` (`LOGICAL_WARP_ID[n]` y `WARP_ARG[n]`, `mmio.md` §14.2). Un caso que los use en `warps.json` **tiene que declararla**: el runner lo rechaza al cargarlo. Se detecta en `gpu_lane.v`; una GPU sin ella solo tiene `GETTID` y un `type` ≠ 0 para con `0x05`, así que sus casos se omiten allí | `sim-gpu`, `sim-gpu-cycle` y la GPU 29 (`smpipe`) |
+| `calls` | `JAL`/`JALR`/`JR`, opcodes `0x2C–0x2E` | `sim-cpu`, `subword`, `alu` |
+| `serial` | Puerto serie en `0x80000200`, y los comandos que lo alimentan | `sim-cpu`, `subword`, `alu` |
+| `input` | INPUT, teclado y ratón (`mmio.md` §25, `0x80600000`). El caso lo alimenta con `"input": [líneas de guion]` (`tools/input_script.py`; `@N`/`+N` en instrucciones completadas), que se comprueba al cargar el caso. Es **que el arnés sabe alimentarlo**, no que el RTL lo tenga (eso es `input_device`): la placa recibe eventos del monitor, no tiempo en instrucciones, así que solo lo declaran los simuladores y en la placa el caso se omite | `sim-cpu`, `sim-gpu`, `sim-gpu-cycle` |
 | `input_device` | El RTL tiene el bloque INPUT (`input_registers.v`), alimentado por `INPUT_EVENTS`/`INPUT_PRESENCE` del monitor. Da el bit INPUT de `DEVICES` (`mmio.md` §5.4). **No implica `input`**: tener el dispositivo no significa poder reproducir un guion con tiempo | `console` |
-| `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `cpusim`, `alu` |
-| `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `cpusim`, `alu` |
+| `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `sim-cpu`, `alu` |
+| `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `sim-cpu`, `alu` |
 | `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |
 | `perf_counters` | `CYCLES` y `RETIRED` de CPU PERFORMANCE (`0x81010000`): dan el CPI de `--measure` | `hdmi`, `bl8`, `subword`, `alu`, `console` |
 | `perf_stalls` | Además las ranuras 2 a 7 (`IMEM_HITS`, `IMEM_MISSES`, `MEM_TX`, `STALL_MEM`, `STALL_FETCH`, `STALL_MMIO`): `--measure` reparte los ciclos entre cálculo, búsqueda, datos y MMIO | `console` |
@@ -758,7 +758,7 @@ que no lo modela.
 
 ### El simulador tiene vídeo, pero no tiene tiempo
 
-`cpusim` declara las dos capacidades de video desde que `minicpu_sim.py` tiene un
+`sim-cpu` declara las dos capacidades de video desde que `minicpu_sim.py` tiene un
 `VideoDevice`, así que los casos de vídeo corren sin placa. **Conviene entender
 qué significa un verde suyo y qué no.**
 
@@ -804,8 +804,8 @@ no haber hardware no es un caso roto, y mezclarlos haría inútil el recuento.
 El motivo dice dónde sí está:
 
 ```text
-SKIP video-band [cpusim]: el simulador no tiene frame_capture:
-    no hay barrido ni framebuffer, use --backend cpu-fpga --version bl8
+SKIP video-band [sim-cpu]: el simulador no tiene frame_capture:
+    no hay barrido ni framebuffer, use --backend fpga-cpu --version bl8
 ```
 
 Si el caso se pide **por ruta explícita**, en cambio, no se omite: se considera

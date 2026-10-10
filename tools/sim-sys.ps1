@@ -1,7 +1,7 @@
-# Lanzador Windows; toda la lógica vive en el simulador.
+# Lanzador Windows de tools/sim-sys; usa el python de .venv si existe.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $python = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { $python = 'python' }
-& $python (Join-Path $PSScriptRoot 'gpusim-cycle') @args
+& $python (Join-Path $PSScriptRoot 'sim-sys') @args
 exit $LASTEXITCODE

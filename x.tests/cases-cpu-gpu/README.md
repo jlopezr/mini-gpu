@@ -22,7 +22,7 @@ informe. Lo que comparten varios programas del mismo tema va en la carpeta del t
 ## Cómo se ejecutan
 
 ```bash
-cpugpusim x.tests/cases-cpu-gpu/launch/launch.asm                        # simulador
+sim-sys x.tests/cases-cpu-gpu/launch/launch.asm                        # simulador
 mini-dbg --gpu x.tests/cases-cpu-gpu/race/cube/cube.asm --window         # depurado
 run-board --prototype 36 --program x.tests/cases-cpu-gpu/race/cube/cube.asm   # placa 36
 build-c x.tests/cases-cpu-gpu/dma/memset/memset.c                        # los de C: ver programas-en-c.md

@@ -130,7 +130,7 @@ Ejecutar todos los casos sobre el simulador:
 
 ```powershell
 cd x.tests
-python run_tests.py --backend cpusim
+python run_tests.py --backend sim-cpu
 ```
 
 Inicializar el compilador C experimental MiniISA/lcc:
@@ -155,19 +155,19 @@ La ABI canonica de Mini-GPU esta en [`1.isa/abi.md`](1.isa/abi.md).
 Para ejecutar esos casos desde la infraestructura de `x.tests`:
 
 ```bash
-python3 x.tests/run-mini-lcc-tests.py --backend cpusim
+python3 x.tests/run-mini-lcc-tests.py --backend sim-cpu
 ```
 
 Ejecutarlos sobre la CPU con EBR de la carpeta 6:
 
 ```powershell
-python run_tests.py --backend cpu-fpga --version ebr --port COM3
+python run_tests.py --backend fpga-cpu --version ebr --port COM3
 ```
 
 Ejecutarlos sobre la CPU con SDRAM de la carpeta 10:
 
 ```powershell
-python run_tests.py --backend cpu-fpga --version sdram --port COM3
+python run_tests.py --backend fpga-cpu --version sdram --port COM3
 ```
 
 El backend consulta `GET_VERSION` antes de modificar la memoria. La versión EBR

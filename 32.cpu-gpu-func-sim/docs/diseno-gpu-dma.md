@@ -326,7 +326,7 @@ Se quiere averiguar:
 - El ensamblador de `1.isa/NEW-ASSM`, que tiene su propia tabla de instrucciones: hay que decidir si es el vigente.
 - El RTL de la GPU que falta para el protocolo completo: **GPU CORE** (`GPU_STATUS`, `GPU_CONTROL`, `WARP_START`, `WARP_LIVE`, `WARP_DONE`), escribir descriptores con la GPU en marcha, y un sistema con CPU y GPU a la vez sobre una RAM compartida. `GETID`, los arrays de warp y los accesos de 8 y 16 bits ya están en la 29. Ver también N10 de las notas (un warp no llega a SYSTEM en la 29).
 - El runtime en C (cola, ids con generación, política CPU/GPU, kernels 2D), sobre el protocolo que ya valida el arnés. No hay linker: el compilador genera un `.asm` y el runtime y los kernels se incluyen con `.include`, como aquí.
-- Re-ejecutar las familias `programs` y `demos` de `gpusim` tras el cambio de `GETID` (no se han repetido).
+- Re-ejecutar las familias `programs` y `demos` de `sim-gpu` tras el cambio de `GETID` (no se han repetido).
 
 ## 10. Extensiones previstas
 

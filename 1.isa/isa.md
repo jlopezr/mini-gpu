@@ -39,7 +39,7 @@ Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 | `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                  | —         |
 | `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                  | —         |
 | `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                 | Sí        |
-| `2.cpu-sim-func` / `cpusim` | Sí               | Sí      | Sí             | Sí                 | Sí        |
+| `2.cpu-sim-func` / `sim-cpu` | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
 (`gpu_lane.v`) y el SM añade las SIMT:
@@ -49,7 +49,7 @@ Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
 | `12`, `14`, `17`, `22` (GPU)            | —                | —       | —              | —                  | —         |
 | `29.fpga-gpu-sm-pipeline`               | Sí               | —       | —              | —                  | —         |
 | `37.fpga-cpu-gpu-mk2` (GPU)             | Sí               | Sí      | Sí             | Sí                 | Sí        |
-| `11.gpu-sim-func` / `gpusim` (`current`)| Sí               | —       | —              | —                  | —         |
+| `11.gpu-sim-func` / `sim-gpu` (`current`)| Sí               | —       | —              | —                  | —         |
 | `25.gpu-sim-cycle-uarch` (`cycle`)      | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 En la GPU, `JALR` y `JR` sacan el destino de un registro por lane, y un warp solo

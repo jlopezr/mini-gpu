@@ -10,14 +10,14 @@ from tools import test_all  # noqa: E402
 
 SALIDA = """\
 Puerto detectado: COM3 (USB Serial Port (COM3))
-SKIP demo-plasma [gpu-fpga]: sin frame_capture
-SKIP ssy-region-overflow [gpu-fpga]: las profundidades SIMT del caso requieren el simulador
+SKIP demo-plasma [fpga-gpu]: sin frame_capture
+SKIP ssy-region-overflow [fpga-gpu]: las profundidades SIMT del caso requieren el simulador
 SKIP gpu-mandelbrot: dump esperado fuera del mapa de memoria: 0x100000
-PASS demo-smoke [gpu-fpga] (0.3s)
-FAIL gpu-vecsum [gpu-fpga]
+PASS demo-smoke [fpga-gpu] (0.3s)
+FAIL gpu-vecsum [fpga-gpu]
   warp 0 pc: esperado 32, obtenido 28
   memoria 0x180: distinta
-PASS gpu-vecsum-partial [gpu-fpga]
+PASS gpu-vecsum-partial [fpga-gpu]
 4 caso(s), 1 fallo(s), 3 omitido(s) por arquitectura o capacidades, 2.0s
 """
 
@@ -88,7 +88,7 @@ class PasadaIncompletaTest(unittest.TestCase):
 
     def test_codigo_distinto_de_cero_sin_fail_es_incompleto(self):
         # Solo SKIP y luego una excepcion del arnes: ni un PASS ni un FAIL.
-        salida = ("SKIP calls-jump-table [cpu-fpga]: sin calls\n"
+        salida = ("SKIP calls-jump-table [fpga-cpu]: sin calls\n"
                   "ERROR x/test.json: [Errno 5] puerto desaparecido\n")
         informe, codigo = self._informe(salida, 2)
         self.assertEqual(codigo, 1)
@@ -96,14 +96,14 @@ class PasadaIncompletaTest(unittest.TestCase):
         self.assertNotIn("| OK |", informe)
 
     def test_una_pasada_limpia_sigue_siendo_ok(self):
-        salida = ("PASS smoke [cpu-fpga]\n"
+        salida = ("PASS smoke [fpga-cpu]\n"
                   "1 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1s\n")
         informe, codigo = self._informe(salida, 0)
         self.assertEqual(codigo, 0)
         self.assertIn("| OK |", informe)
 
     def test_los_resultados_parciales_se_conservan_en_la_matriz(self):
-        salida = ("PASS smoke [cpu-fpga]\n"
+        salida = ("PASS smoke [fpga-cpu]\n"
                   "ERROR x/test.json: se cayo\n")
         informe, _ = self._informe(salida, 2)
         self.assertIn("| smoke | PASS |", informe)

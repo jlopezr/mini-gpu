@@ -8,13 +8,13 @@ un load mantiene su respuesta e `in_flight` hasta escribir el banco.
 ```powershell
 # Desde la raíz del repositorio:
 .\tools\test.ps1 --prototype 25 --quick
-.\tools\gpusim-cycle.ps1 x.tests/cases-gpu/demos/load-store/load_store.asm `
+.\tools\sim-gpu-cycle.ps1 x.tests/cases-gpu/demos/load-store/load_store.asm `
   --report 25.gpu-sim-cycle-uarch/reports/load_store.json `
   --trace 25.gpu-sim-cycle-uarch/reports/load_store.jsonl --trace-cycles 100
-.\.venv\Scripts\python.exe x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu/memory
+.\.venv\Scripts\python.exe x.tests/run_tests.py --backend sim-gpu --version cycle x.tests/cases-gpu/memory
 ```
 
-En Linux/macOS: `python tools/gpusim-cycle programa.asm`; el lanzador admite
+En Linux/macOS: `python tools/sim-gpu-cycle programa.asm`; el lanzador admite
 `.asm`, `.bin`, `.hex`, configuración JSON de warps, límites de ciclos e
 instrucciones, volcado de memoria y estado arquitectónico. `--help` muestra
 las latencias configurables. `--imem-lines 0` activa fetch ideal.
@@ -23,7 +23,7 @@ Para ejecuciones largas sin comprobaciones internas de depuración, usa el
 modo optimizado de Python con el mismo lanzador y los mismos argumentos:
 
 ```powershell
-.\.venv\Scripts\python.exe -O tools/gpusim-cycle programa.asm
+.\.venv\Scripts\python.exe -O tools/sim-gpu-cycle programa.asm
 ```
 
 `-O` omite los asserts y los recorridos de validación de invariantes de cada

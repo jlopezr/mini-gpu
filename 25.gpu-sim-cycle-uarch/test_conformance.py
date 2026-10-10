@@ -41,7 +41,7 @@ class ConformanceTests(unittest.TestCase):
                 # declara honestamente que no implementa.
                 if incompatibility(case, 'cycle') is not None:
                     continue
-                result = backend.run(**backend_arguments(case, 'gpusim-cycle', args))
+                result = backend.run(**backend_arguments(case, 'sim-gpu-cycle', args))
                 self.assertEqual(compare_result(case, result, 'gpu'), [])
 
 

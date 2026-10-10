@@ -312,7 +312,7 @@ clk_25mhz ─┬─ pll_cpu ──── 100 MHz ── CPU + monitor UART + SDR
 La mitad de CPU es byte a byte la de 10: mismo mapa de memoria unificado de
 32 MiB, mismos comandos de monitor, mismos cinco bancos de prueba. Lo único que
 cambia es la **versión del monitor**, hoy **1.10**, para que
-`run_tests.py --backend cpu-fpga --version hdmi` distinga este bitstream del
+`run_tests.py --backend fpga-cpu --version hdmi` distinga este bitstream del
 1.5 de 10 y del 1.6 de 6. (Fue 1.7 durante los hitos A y B; el cambio de reloj
 y baudio del hito C la subió a 1.8, y dos correcciones posteriores a 1.9 y
 1.10; el propio `monitor.v` lleva la lista.)
@@ -956,7 +956,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga --version bl8 --port COM3
+..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu --version bl8 --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
@@ -975,7 +975,7 @@ Para comparar esta versión con las anteriores en los mismos programas, el runne
 tiene `--measure`, que saca una tabla en Markdown:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend cpu-fpga `
+..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu `
     --measure medidas.md --port COM3 ..\x.tests\cases
 ```
 
@@ -987,7 +987,7 @@ El porqué de los dos contadores, y qué miden exactamente, está en
 Hasta hace poco pasaban 11 de 12: fallaba `multiply`, porque esta CPU declaraba
 `MUL` y lo validaba, pero no tenía rama de ejecución. Caía en el `default` y
 respondía `ERROR_INVALID_OPCODE`. El simulador sí lo implementaba, así que el
-mismo caso pasaba con `--backend cpusim` y fallaba en la FPGA.
+mismo caso pasaba con `--backend sim-cpu` y fallaba en la FPGA.
 
 Las tres instrucciones vienen de [`../6.fpga-cpu`](../6.fpga-cpu), que las tenía
 desde antes: `MUL` conserva los 32 bits bajos, `MULFX` es signed Q16.16 con

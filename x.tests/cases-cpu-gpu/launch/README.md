@@ -5,7 +5,7 @@ lanza los warps con la etiqueta `kernel` en el descriptor: no hay ninguna direcc
 resultados también van en una etiqueta (`out`).
 
 ```bash
-cpugpusim x.tests/cases-cpu-gpu/launch/launch.asm
+sim-sys x.tests/cases-cpu-gpu/launch/launch.asm
 mini-dbg --gpu x.tests/cases-cpu-gpu/launch/launch.asm
 ```
 

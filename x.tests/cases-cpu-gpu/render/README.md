@@ -6,7 +6,7 @@ Un programa gráfico, en tres versiones.
 plasma que pinta la GPU y cuyo bucle de frames lleva la CPU.
 
 ```bash
-cpugpusim x.tests/cases-cpu-gpu/render/render/render.asm --window
+sim-sys x.tests/cases-cpu-gpu/render/render/render.asm --window
 mini-dbg --gpu x.tests/cases-cpu-gpu/render/render/render.asm --window     # depurado
 ```
 
@@ -34,7 +34,7 @@ imagen con **las escrituras coalescidas**: en vez de un hilo por fila de celdas
 lanes escriben 8 palabras consecutivas, 32 bytes seguidos. Solo cambia el reparto;
 la aritmética es idéntica y los tests exigen la misma imagen.
 
-Medido con el simulador de ciclos (`gpusim-cycle`, carpeta 25) sobre el kernel de
+Medido con el simulador de ciclos (`sim-gpu-cycle`, carpeta 25) sobre el kernel de
 cada versión, un frame:
 
 | | instr. de warp | transacciones LSU | ciclos | a 25 MHz | X ocupada |

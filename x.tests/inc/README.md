@@ -66,7 +66,7 @@ se comprueba con la suite entera, no sólo con el programa que se estaba
 tocando:
 
 ```bash
-python x.tests/run_tests.py --backend cpusim cases-cpu/video cases-cpu/programs
+python x.tests/run_tests.py --backend sim-cpu cases-cpu/video cases-cpu/programs
 test-board --prototype 21 -y x.tests/cases-cpu/video
 ```
 

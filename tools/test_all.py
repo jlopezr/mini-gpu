@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Ejecuta la suite de casos en TODOS los prototipos con placa y saca una matriz.
 
-Para cada prototipo lanza `run_tests.py --backend <familia>-fpga -p N` (o
-`gpu-core` para la GPU de la 36 y la 37, que son CPU y GPU a la vez), que sube
+Para cada prototipo lanza `run_tests.py --backend fpga-<familia> -p N` (o
+`fpga-sys` para la GPU de la 36 y la 37, que son CPU y GPU a la vez), que sube
 su bitstream y corre cada caso comparando con lo esperado, y junta el resultado
 en una tabla: una fila por caso, una columna por prototipo, con PASS, FAIL o el
 motivo del SKIP. Es el equivalente de conformidad de `bench-all` (que mide).

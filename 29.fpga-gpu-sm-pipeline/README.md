@@ -106,7 +106,7 @@ cauce — sin bypass en ningún punto — más que por el trabajo real).
    `gpu_perf_counters.v` (`CYCLES`/`RETIRED`). Objetivo del primer paso: bajar
    hacia ~4,75 ciclos/instrucción.
 3. Contraste de cordura, no automatizado, contra trazas de
-   `tools/gpusim-cycle` (25) en programas pequeños — no hay cosimulación
+   `tools/sim-gpu-cycle` (25) en programas pequeños — no hay cosimulación
    ciclo a ciclo hoy entre este RTL y el simulador Python.
 4. Síntesis temprana (`build --prototype 29 --background`) en cuanto el
    cauce compile, para vigilar pronto si el Fmax se resiente (el crítico

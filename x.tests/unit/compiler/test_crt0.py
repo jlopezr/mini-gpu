@@ -83,7 +83,7 @@ class CompiledProgramTest(unittest.TestCase):
                                    "-I", str(RUNTIME), "-o", str(temp / "prog.bin")],
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
-            done = subprocess.run([sys.executable, str(ROOT / "tools" / "cpusim"), str(temp / "prog.bin"),
+            done = subprocess.run([sys.executable, str(ROOT / "tools" / "sim-cpu"), str(temp / "prog.bin"),
                                    "--run-limit", "100000"], capture_output=True, text=True)
             self.assertRegex(done.stdout, r"HALT tras \d+ instrucciones")
             self.assertEqual(int(re.search(r"R01 = 0x([0-9A-Fa-f]+)", done.stdout).group(1), 16), 55)

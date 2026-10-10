@@ -73,8 +73,8 @@ def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
     `backend_from_rtl` devuelve una sola porque casi todas las carpetas tienen
     una. La 36 y la 37 tienen las dos: una CPU que lanza una GPU de 8 lanes por
     MMIO (GPU CORE). Allí `backend_from_rtl` sigue diciendo `cpu` --es la que
-    gobierna el monitor, y de ella cuelgan `cpu-fpga`, el SYS_ID y los informes--,
-    y esta dice además `gpu`, que es lo que habilita el backend `gpu-core`.
+    gobierna el monitor, y de ella cuelgan `fpga-cpu`, el SYS_ID y los informes--,
+    y esta dice además `gpu`, que es lo que habilita el backend `fpga-sys`.
     """
     familias = []
     if (prototype_dir / "cpu.v").exists():

@@ -21,7 +21,7 @@ Uso: run-tests [--quick] [--verbose] [--hardware] [-- <args para run_tests.py>]
 
   --quick      solo los tests unitarios de la infraestructura (sin simular casos)
   --verbose    salida detallada
-  --hardware   la suite de casos contra placa real (backend gpu-fpga por defecto)
+  --hardware   la suite de casos contra placa real (backend fpga-gpu por defecto)
   --           pasa el resto de argumentos directamente a run_tests.py
 """
 
@@ -92,7 +92,7 @@ def main(argv: list[str]) -> int:
     # Sin argumentos, --hardware elige el backend de placa; con ellos manda lo
     # que haya pedido quien llama.
     if hardware and not extra:
-        extra = ["--backend", "gpu-fpga"]
+        extra = ["--backend", "fpga-gpu"]
 
     print("== Suite de casos (run_tests.py) ==")
     return subprocess.call([python, str(TESTS / "run_tests.py"), *extra],

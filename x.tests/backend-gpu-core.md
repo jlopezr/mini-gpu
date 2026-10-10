@@ -1,4 +1,4 @@
-# Backend `gpu-core` (los casos GPU en la 36 y la 37)
+# Backend `fpga-sys` (los casos GPU en la 36 y la 37)
 
 Estado (2026-10-10): **fase 1 implementada** ([`backends/gpu_core.py`](backends/gpu_core.py),
 registrada en `run_tests.py`; tests en `test_gpu_core.py`). La fase 2 (ampliar GPU
@@ -8,11 +8,11 @@ fase 1».
 
 ## 1. Problema
 
-Los casos de `cases-gpu/` solo corren en placa con `--backend gpu-fpga`, y ese
+Los casos de `cases-gpu/` solo corren en placa con `--backend fpga-gpu`, y ese
 backend solo conoce las carpetas que `backend_from_rtl` clasifica como `gpu`
 (12, 14, 22, 29: tienen `gpu_sm.v` o `gpu_system.v` y **no** `cpu.v`). La 36 y la
 37 tienen `cpu.v`, así que se clasifican como `cpu`, y `-p 36` da «no es una
-versión registrada para gpu-fpga». Es a propósito: ahí la GPU es un coprocesador
+versión registrada para fpga-gpu». Es a propósito: ahí la GPU es un coprocesador
 que lanza la CPU por MMIO (GPU CORE, `mmio.md` §14.1), y el monitor gobierna la
 CPU, no la GPU.
 
@@ -27,7 +27,7 @@ Hoy la única prueba de la GPU real en esas dos placas es
   acepta escritura y se relee. (`top.v` de la 37 enlaza `mon_mmio_*` al mismo
   mux que la CPU.)
 - **El kernel y los datos van en la SDRAM compartida** (`write_memory`, con la CPU
-  parada), como en `gpu-fpga`.
+  parada), como en `fpga-gpu`.
 - **Lo que el RTL deja observar** (`gpu_system.v` de la 37, §14.3/§14.4):
   `GPU_STATUS` (RUNNING/HALTED/IDLE/ERROR), `WARP_LIVE`, `WARP_DONE`,
   `FIRST_ERROR` y `FIRST_ERROR_PC`, `WARP_RETIRED` por warp (con `CONTEXT`) y el
@@ -54,9 +54,9 @@ RTL (fase 2).
 
 ### 3.1 Qué es y qué no toca
 
-Un backend nuevo, `x.tests/backends/gpu_core.py`, con nombre `gpu-core` (y
-`gpu-core-both` contra el simulador GPU, como `gpu-both`). **No cambia**
-`gpu-fpga`, `cpu-fpga`, `backend_from_rtl` ni la clasificación de la 36 y la 37:
+Un backend nuevo, `x.tests/backends/gpu_core.py`, con nombre `fpga-sys` (y
+`gpu-sys-both` contra el simulador GPU, como `gpu-both`). **No cambia**
+`fpga-gpu`, `fpga-cpu`, `backend_from_rtl` ni la clasificación de la 36 y la 37:
 estas siguen siendo `cpu` para los casos de CPU. Se selecciona por capacidad:
 carpetas con `cpu.v` **y** capacidad `gpu_core` (`tools/capabilities.json`,
 hoy 36 y 37). Las versiones salen de `version.json` (`cpugpu`, `mk2`), igual
@@ -86,7 +86,7 @@ El monitor es el de la carpeta (`monitor.py` de la 36/37) y no hereda
    plazo de `timeout_seconds`. Si se agota, `GPU_CONTROL.HALT` y `TimeoutError`.
 8. Observar (ver 3.3) y leer `memory_dumps` con `read_memory`.
 
-### 3.3 Correspondencia con el resultado de `gpu-fpga`
+### 3.3 Correspondencia con el resultado de `fpga-gpu`
 
 El diccionario que devuelve `run()` es el mismo que el de `GpuFpgaBackend`, para
 que `run_tests.py` compare sin cambios.
@@ -105,7 +105,7 @@ que `run_tests.py` compare sin cambios.
 | `fault.address` | no disponible (ningún prototipo lo guarda) | — |
 
 Los casos que piden algo no disponible se **omiten con motivo** antes de abrir el
-puerto, como hace `gpu-fpga` con sus casos incompatibles; nunca se sustituye una
+puerto, como hace `fpga-gpu` con sus casos incompatibles; nunca se sustituye una
 observación por el valor esperado.
 
 Fuera de alcance al principio: los casos con `video`/`run_until` (la GPU de la 36
@@ -149,7 +149,7 @@ motivo sin abrir el puerto.
 
 - **El PC final de un warp** que da el simulador al terminar (`EXIT`) puede no
   coincidir con `pc[w]` del SM. **Sigue sin saberse**: ningún caso aceptado en la
-  fase 1 lee el PC, así que `gpu-core-both` no lo ha podido contrastar. Es lo
+  fase 1 lee el PC, así que `gpu-sys-both` no lo ha podido contrastar. Es lo
   primero que dirá la fase 2.
 - **Hito 1 vs 2**: el hito 1 (36) hace `live = ACTIVE` al escribir el
   descriptor. Comprobado en la 36 el 2026-10-10: la secuencia de `launch-run`
@@ -165,12 +165,12 @@ motivo sin abrir el puerto.
 
 ## 6. Resultado de la fase 1
 
-**Cómo se usa** (la 36 y la 37 son CPU **y** GPU; `gpu-core` es *además* de
-`cpu-fpga`, no en su lugar):
+**Cómo se usa** (la 36 y la 37 son CPU **y** GPU; `fpga-sys` es *además* de
+`fpga-cpu`, no en su lugar):
 
 ```powershell
-python run_tests.py --backend gpu-core -p 36 --port COM3     # solo la GPU
-python run_tests.py --backend gpu-core-both -p 36             # contra el simulador
+python run_tests.py --backend fpga-sys -p 36 --port COM3     # solo la GPU
+python run_tests.py --backend gpu-sys-both -p 36             # contra el simulador
 test-board -p 37 -y                                           # CPU y GPU, una tras otra
 test-board -p 37 --family gpu -y                              # solo la GPU
 test-all --family gpu -y                                      # 12, 14, 22, 29, 36 y 37
@@ -179,18 +179,18 @@ test-all --family gpu -y                                      # 12, 14, 22, 29, 
 **Qué cambió respecto al diseño:**
 
 - `backend_from_rtl` **no cambia**: la 36 y la 37 siguen siendo `cpu` para
-  `cpu-fpga`, el SYS_ID y los informes. `rtl_facts.backends_from_rtl` es la nueva,
-  y devuelve `("cpu", "gpu")` para ellas; la usan `gpu-core`, `test-board`,
+  `fpga-cpu`, el SYS_ID y los informes. `rtl_facts.backends_from_rtl` es la nueva,
+  y devuelve `("cpu", "gpu")` para ellas; la usan `fpga-sys`, `test-board`,
   `test-all` y `prototype-report`.
 - Las **capacidades** de la GPU se detectan solo en los ficheros `gpu_*.v`
   (`gpu_core.gpu_capabilities`). Con la detección normal, `alu_extended`, `calls`
   o `subword_memory` se habrían atribuido a la GPU al casar en `cpu.v`. El vídeo,
   el puerto serie y el INPUT no son capacidades de esta GPU (no es maestro de MMIO).
-- `gpu-core` **no admite `--measure`** todavía.
+- `fpga-sys` **no admite `--measure`** todavía.
 
 **Qué se comprobó en la placa** (2026-10-10):
 
-| | `gpu-core` | diferencial `gpu-core-both` |
+| | `fpga-sys` | diferencial `gpu-sys-both` |
 |---|---|---|
 | 36 (bitstream actual) | 6 casos, 0 fallos | 6 casos, 0 fallos |
 | 37 con el bitstream `isa-ext` | 13 casos, 1 fallo (ver abajo) | — |
@@ -213,7 +213,7 @@ capacidades del RTL *actual*, así que con ese bitstream:
 - con `isa-ext`: pasan todos salvo `shared-shift-immediate-shli-shri-sari`
   (código 5): el `gpu_lane.v` de ese build no tiene los desplazamientos
   inmediatos, que se añadieron después. Tampoco pasa `gpu-launch-start`
-  (`cpu-fpga`): WARP_START es del hito 2.
+  (`fpga-cpu`): WARP_START es del hito 2.
 
 Ningún fallo viene del backend. Hay que repetir la 37 cuando exista un bitstream
 del RTL actual.
@@ -223,5 +223,5 @@ del RTL actual.
 1. Fase 1: `gpu_core.py` + registro en `run_tests.py` + `test_gpu_core.py`.
    Valida el flujo con los 3 casos sin observaciones de estado y `launch-run`.
 2. Fase 2 en la 37 (RTL + `mmio.md` §14.3 + `capabilities.json`), re-barrido de
-   semillas y primera pasada con `gpu-core-both` para descubrir diferencias.
+   semillas y primera pasada con `gpu-sys-both` para descubrir diferencias.
 3. Decidir qué hacer con los casos de vídeo y la 36.

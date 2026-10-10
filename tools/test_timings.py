@@ -307,17 +307,17 @@ def main(argv: list[str] | None = None) -> int:
                 for prototype in rtl_prototypes:
                     suites.append(rtl_suite(python, prototype, args.full, args.quiet))
             if not args.skip_x_tests:
-                for backend in ("cpusim", "gpusim", "gpusim-cycle"):
+                for backend in ("sim-cpu", "sim-gpu", "sim-gpu-cycle"):
                     skip_slow = (not args.full_x_tests
-                                 and backend in ("gpusim", "gpusim-cycle"))
+                                 and backend in ("sim-gpu", "sim-gpu-cycle"))
                     suites.append(x_suite(python, backend, temp, None, args.cases,
                                           args.jobs, args.quiet, skip_slow))
                 if args.cpu_prototype:
-                    suites.append(x_suite(python, "cpu-fpga", temp, args.cpu_prototype,
+                    suites.append(x_suite(python, "fpga-cpu", temp, args.cpu_prototype,
                                           args.cases, 1, args.quiet,
                                           upload=automatic_hardware, port=hardware_port))
                 if args.gpu_prototype:
-                    suites.append(x_suite(python, "gpu-fpga", temp, args.gpu_prototype,
+                    suites.append(x_suite(python, "fpga-gpu", temp, args.gpu_prototype,
                                           args.cases, 1, args.quiet,
                                           upload=automatic_hardware, port=hardware_port))
     except (PrototypeResolutionError, FileNotFoundError) as exc:

@@ -79,8 +79,8 @@ def is_xfail(manifest: Path) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tests", nargs="*", help="tests de mini-lcc por nombre o fichero .c")
-    parser.add_argument("--backend", default="cpusim",
-                        choices=("cpusim", "cpu-fpga", "both"))
+    parser.add_argument("--backend", default="sim-cpu",
+                        choices=("sim-cpu", "fpga-cpu", "both"))
     parser.add_argument("--version", action="append", default=[])
     parser.add_argument("--port")
     parser.add_argument("--simulate-lcc", action="store_true",

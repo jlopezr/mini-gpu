@@ -47,9 +47,9 @@ def _number(directory: Path) -> int:
 def prototypes(family: str, core: bool = False):
     """`[(familia, numero, carpeta)]` de los prototipos con backend de placa.
 
-    Con `core=True` la 36 y la 37 salen ADEMÁS como GPU (backend `gpu-core`): son
+    Con `core=True` la 36 y la 37 salen ADEMÁS como GPU (backend `fpga-sys`): son
     CPU y GPU a la vez, y salen siempre como CPU. Por defecto no, porque `bench`
-    mide y `gpu-core` todavía no admite `--measure`.
+    mide y `fpga-sys` todavía no admite `--measure`.
     """
     found = []
     for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", gpu_fpga.VERSIONS)):
@@ -68,19 +68,19 @@ def prototypes(family: str, core: bool = False):
 def board_backend(family: str, number: int) -> str:
     """El `--backend` de `run_tests.py` para este prototipo y esta familia.
 
-    Casi siempre `<familia>-fpga`. Una GPU que cuelga de una CPU (36 y 37) se
-    prueba con `gpu-core`, porque `gpu-fpga` solo conoce las carpetas sin `cpu.v`.
+    Casi siempre `fpga-<familia>`. Una GPU que cuelga de una CPU (36 y 37) se
+    prueba con `fpga-sys`, porque `fpga-gpu` solo conoce las carpetas sin `cpu.v`.
     """
     if family == "gpu" and any(
             _number(v["monitor_path"].parent) == number
             for v in gpu_core.VERSIONS.values()):
-        return "gpu-core"
-    return f"{family}-fpga"
+        return "fpga-sys"
+    return f"fpga-{family}"
 
 
 def measure(family: str, number: int, label: str, assume_yes: bool, extra: list[str]) -> int:
     command = [sys.executable, str(ROOT / "x.tests" / "run_tests.py"), "--measure",
-               "--backend", f"{family}-fpga", "-p", str(number), "--measure-label", label]
+               "--backend", f"fpga-{family}", "-p", str(number), "--measure-label", label]
     if assume_yes:
         command.append("-y")
     command += extra

@@ -1523,7 +1523,7 @@ def load_program_bytes(path) -> bytes:
 
     Vive aqui, y no en cada simulador, porque los tres la necesitan igual y
     tenerla repetida ya costo caro: `tools/README.md` documentaba
-    `gpusim examples/vector.asm`, pero minigpu_sim.py hacia `read_bytes()` a
+    `sim-gpu examples/vector.asm`, pero minigpu_sim.py hacia `read_bytes()` a
     secas y con un .asm delante fallaba con "el programa debe contener
     instrucciones completas" -- que describe el sintoma (el texto fuente no mide
     un multiplo de 4) y no la causa. minigpu_cycle.py si sabia ensamblar, asi

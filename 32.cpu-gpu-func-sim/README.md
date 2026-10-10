@@ -10,7 +10,7 @@ que les falta para convivir. Un arreglo en cualquiera de los dos simuladores
 llega aquí sin tocar nada.
 
 ```bash
-cpugpusim x.tests/cases-cpu-gpu/launch/launch.asm
+sim-sys x.tests/cases-cpu-gpu/launch/launch.asm
 python -m unittest test_cpu_gpu_sim        # desde esta carpeta: 14 s, sin las clases lentas
 RUN_SLOW=1 python -m unittest test_cpu_gpu_sim   # todo: unos 110 s (en PowerShell, $env:RUN_SLOW = "1")
 ```

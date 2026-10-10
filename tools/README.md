@@ -309,10 +309,10 @@ una reimplementación.
 
 ```bash
 > mini-asm ../x.tests/cases-gpu/demos/vector/vector.asm           # -> 1.isa/mini_asm.py
-> cpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
-> gpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
-> gpusim-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
-> cpugpusim ../x.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
+> sim-cpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
+> sim-gpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+> sim-gpu-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
+> sim-sys ../x.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -345,7 +345,7 @@ dice y hay que regenerarlo. La imagen del listado coincide con el `.bin`.
 Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
 hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py`, una
 sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
-`.asm` solo funcionaban en `gpusim-cycle` — los otros dos leían el fichero como
+`.asm` solo funcionaban en `sim-gpu-cycle` — los otros dos leían el fichero como
 binario y morían con «el programa debe contener instrucciones completas», que
 es el síntoma (el texto fuente no mide un múltiplo de 4) y no la causa.
 
@@ -354,7 +354,7 @@ con `--config`, o el simulador lanza los 8 warps por defecto en vez de los que
 el caso espera.
 
 ```bash
-$ gpusim x.tests/cases-gpu/memory/memory-copy/program.asm \
+$ sim-gpu x.tests/cases-gpu/memory/memory-copy/program.asm \
          --config x.tests/cases-gpu/memory/memory-copy/warps.json --trace
 ```
 
@@ -362,11 +362,11 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
 Los casos existentes también se ejecutan con
-`python x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu`.
+`python x.tests/run_tests.py --backend sim-gpu --version cycle x.tests/cases-gpu`.
 
 ### Periféricos comunes de los tres simuladores
 
-`cpusim`, `gpusim` y `gpusim-cycle` comparten `tools/sim_devices.py` y las
+`sim-cpu`, `sim-gpu` y `sim-gpu-cycle` comparten `tools/sim_devices.py` y las
 opciones de `tools/sim_peripherals.py`:
 
 | Opción | Efecto |
@@ -390,15 +390,15 @@ opciones de `tools/sim_peripherals.py`:
 Por ejemplo, las mismas opciones sirven con cualquiera de los tres lanzadores:
 
 ```powershell
-.\tools\cpusim.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
-.\tools\gpusim-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
-.\tools\cpusim.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
+.\tools\sim-cpu.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
+.\tools\sim-gpu-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
+.\tools\sim-cpu.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
 ```
 
 #### Ventana (`--window`)
 
 ```powershell
-.\tools\cpusim.ps1 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
+.\tools\sim-cpu.ps1 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
 ```
 
 El pintor de `2.cpu-sim-func/examples/input_paint.asm` dibuja con el ratón
@@ -673,7 +673,7 @@ devolvería el propio magic con pinta de dirección de framebuffer.
 Los programas de vídeo escriben sus propias bases `FB_FRONT` y `FB_BACK`; el
 depurador no las prepara desde fuera. Hay que habilitar el dispositivo con
 `--video`. Si un fuente usa símbolos `MMIO_VIDEO_*` sin esa opción, `mini-dbg`
-y `cpusim` muestran un aviso antes de ejecutarlo:
+y `sim-cpu` muestran un aviso antes de ejecutarlo:
 
 ```bash
 > mini-dbg x.tests/cases-cpu/video/fire/fire.asm --video -x "run 400000"
@@ -717,7 +717,7 @@ Suite: `python -m unittest discover -s x.tests/unit/debugger -t x.tests -p "test
 
 Monta el simulador de `32.cpu-gpu-func-sim` (CPU y GPU sobre la misma RAM): el
 programa lleva el código de la CPU y el kernel en una imagen, como en
-`cpugpusim`. Solo existe en el simulador; la placa no lo tiene porque el
+`sim-sys`. Solo existe en el simulador; la placa no lo tiene porque el
 monitor de las carpetas con GPU no da los registros de lane (hace falta un
 comando de selección de contexto en `monitor.v`).
 
@@ -843,15 +843,15 @@ $ run-tests
 ...
 
 $ run-tests --quick              # solo los test_*.py, sin simular casos (rápido)
-$ run-tests --hardware           # casos contra placa real, backend gpu-fpga
-$ run-tests -- --backend cpu-fpga               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
+$ run-tests --hardware           # casos contra placa real, backend fpga-gpu
+$ run-tests -- --backend fpga-cpu               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
 ```
 
 ### Informe de tiempos de todas las suites (`test-timings`)
 
 `test-timings` ejecuta y ordena de mayor a menor todos los tests unitarios
 Python del repositorio (por método y con subtotal por carpeta), los bancos RTL de un prototipo (por banco) y los casos de
-`x.tests` para `cpusim`, `gpusim` y `gpusim-cycle`. Escribe por defecto
+`x.tests` para `sim-cpu`, `sim-gpu` y `sim-gpu-cycle`. Escribe por defecto
 `reports/test-timings.md`. Usa `--jobs 1` por defecto para que el total y los
 tiempos individuales no se solapen:
 
@@ -874,7 +874,7 @@ placa. Al indicar `--cpu-prototype`/`--gpu-prototype` manualmente no carga nada
 `TEST-LENTO` solo entran con `--full`.
 
 Los casos cuyo `test.json` declara `"slow": "motivo"` se omiten por defecto
-en `gpusim` y `gpusim-cycle`: hoy son las dos imágenes completas, `mandelbrot`
+en `sim-gpu` y `sim-gpu-cycle`: hoy son las dos imágenes completas, `mandelbrot`
 y `mandelbrot-packed`, que dominan el tiempo del informe y ocultan el coste del
 resto de la suite. `--full-x-tests` los incluye. Esta
 exclusión no se aplica a las placas CPU/GPU, cuyo coste y comportamiento interesa
@@ -1928,7 +1928,7 @@ bitstream, byte a byte, que una síntesis completa (comprobado en la 30).
 
 ### Suite de casos contra placa real (`test-board`)
 
-`x.tests/run_tests.py` necesita `--backend cpu-fpga`/`gpu-fpga` y `--version`
+`x.tests/run_tests.py` necesita `--backend fpga-cpu`/`fpga-gpu` y `--version`
 (el nombre corto de `x.tests/backends/{fpga,gpu_fpga}.py`), que hay que saber
 a mano. `test-board` los infiere del mismo sitio que `board-info`/`run-board`
 (el RTL, vía `_capabilities()`), detecta el puerto igual que el resto de
@@ -1939,9 +1939,9 @@ comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
 $ test-board --prototype 21 -y cases-cpu/basics
 Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
 Using prototype: 21.fpga-cpu-hdmi-alu
-$ .../run_tests.py --backend cpu-fpga -p 21 --port /dev/... -y cases-cpu/basics
-PASS smoke [cpu-fpga]
-PASS zero-register [cpu-fpga]
+$ .../run_tests.py --backend fpga-cpu -p 21 --port /dev/... -y cases-cpu/basics
+PASS smoke [fpga-cpu]
+PASS zero-register [fpga-cpu]
 2 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1.7s
 ```
 
@@ -1951,8 +1951,8 @@ de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
 `--backend`/`--version` a mano.
 
 **La 36 y la 37 son CPU y GPU.** `test-board -p 37 -y` lanza `run_tests.py` dos
-veces, una por familia y en este orden: `--backend cpu-fpga` y `--backend
-gpu-core` (la GPU, que lanza el host por GPU CORE; `gpu-fpga` no las conoce). Un
+veces, una por familia y en este orden: `--backend fpga-cpu` y `--backend
+fpga-sys` (la GPU, que lanza el host por GPU CORE; `fpga-gpu` no las conoce). Un
 fallo de la primera no impide la segunda y el código de salida es el peor de los
 dos. `--family cpu|gpu` prueba una sola, y los demás argumentos (casos, `-y`...)
 se reenvían a las dos: con casos concretos en un prototipo CPU+GPU, usa
@@ -2017,7 +2017,7 @@ $ test-all --list
 
 #### Medir todos los prototipos y comparar (`bench-all`, `perf-report`)
 
-`--measure` funciona con `--backend cpu-fpga` y con `--backend gpu-fpga`. En GPU
+`--measure` funciona con `--backend fpga-cpu` y con `--backend fpga-gpu`. En GPU
 el CPI son ciclos por instrucción **de warp**, y solo salen ciclos donde el RTL
 tiene el bloque GPU PERFORMANCE (22 y 29; en 12 y 14 sale `sin contadores`).
 

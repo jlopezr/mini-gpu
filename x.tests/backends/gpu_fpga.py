@@ -320,7 +320,7 @@ class GpuFpgaBackend:
             self.monitor, port, serial_timeout,
             self.configuration["monitor_version"],
             repository / self.configuration["monitor_path"].parent,
-            "gpu-fpga", version, upload_policy or board.UploadPolicy(),
+            "fpga-gpu", version, upload_policy or board.UploadPolicy(),
         )
 
     def run(self, *args, **kwargs) -> dict:
@@ -364,7 +364,7 @@ class GpuFpgaBackend:
                 expected_text = ".".join(map(str, expected_version))
                 raise RuntimeError(
                     f"La FPGA conectada responde con monitor {actual_version}, "
-                    f"pero --version gpu-fpga={self.version} requiere "
+                    f"pero --version fpga-gpu={self.version} requiere "
                     f"{expected_text}. Carga el bitstream correspondiente."
                 )
 

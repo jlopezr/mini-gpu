@@ -443,7 +443,7 @@ class MainTestTest(unittest.TestCase):
         run.assert_called_once()
         command = run.call_args.args[0]
         self.assertIn("--backend", command)
-        self.assertEqual(command[command.index("--backend") + 1], "cpu-fpga")
+        self.assertEqual(command[command.index("--backend") + 1], "fpga-cpu")
         self.assertIn("--version", command)
         self.assertEqual(command[command.index("--version") + 1], "alu")
         self.assertIn("--port", command)
@@ -477,22 +477,22 @@ class MainTestTest(unittest.TestCase):
     def test_un_prototipo_cpu_y_gpu_prueba_las_dos_familias(self):
         code, backends, comandos = self._backends_lanzados("-y")
         self.assertEqual(code, 0)
-        self.assertEqual(backends, ["cpu-fpga", "gpu-core"])
+        self.assertEqual(backends, ["fpga-cpu", "fpga-sys"])
         for comando in comandos:
             self.assertEqual(comando[comando.index("--version") + 1], "cpugpu")
             self.assertIn("-y", comando)
 
     def test_family_elige_una_sola(self):
         _, backends, _ = self._backends_lanzados("--family", "gpu", codigos=(0,))
-        self.assertEqual(backends, ["gpu-core"])
+        self.assertEqual(backends, ["fpga-sys"])
         _, backends, comandos = self._backends_lanzados("--family", "cpu", codigos=(0,))
-        self.assertEqual(backends, ["cpu-fpga"])
+        self.assertEqual(backends, ["fpga-cpu"])
         # `--family` es de test-board: run_tests.py no lo conoce.
         self.assertNotIn("--family", comandos[0])
 
     def test_un_fallo_de_la_primera_familia_no_impide_la_segunda(self):
         code, backends, _ = self._backends_lanzados(codigos=(1, 0))
-        self.assertEqual(backends, ["cpu-fpga", "gpu-core"])
+        self.assertEqual(backends, ["fpga-cpu", "fpga-sys"])
         self.assertEqual(code, 1)
 
     def test_family_gpu_en_un_prototipo_sin_gpu_falla_sin_lanzar_nada(self):

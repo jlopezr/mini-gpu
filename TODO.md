@@ -576,7 +576,7 @@ de portarle nada.
 
 ### 16.8. Tres comprobaciones que no se han hecho
 
-- **Las familias `programs` y `demos` de `gpusim` y `gpusim-cycle` no se han
+- **Las familias `programs` y `demos` de `sim-gpu` y `sim-gpu-cycle` no se han
   vuelto a pasar** tras el cambio de `GETID` en 11 y 25. Se pasaron alu, faults,
   memory, scheduling, simt y extensions (mandelbrot tarda unos 100 s por
   simulador). En la placa sí pasan todas, así que el riesgo es del simulador.
@@ -613,8 +613,8 @@ en `iverilog` con `a={0x104,0x100}`, `imm=-4`: la lane 1 daba `0x101`. Entró en
 **Qué se hizo.** Arreglo en `29.../gpu_sm.v` y en la 36 (rama `gpu-36-bram`,
 commits `1668af4` y `5728e81`), `gpu_barrier_tb` en la 36 (con el `gpu_sm` anterior
 acaba en error; con solo el sumador arreglado pasa) y el caso
-`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `gpusim` y
-`gpusim-cycle`.
+`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `sim-gpu` y
+`sim-gpu-cycle`.
 
 **Qué falta.**
 - **Pasar el caso en placa con la 29 antes y después del arreglo.** No se ha visto

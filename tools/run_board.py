@@ -425,7 +425,7 @@ def main_load(argv: list[str] | None = None) -> int:
 def main_test(argv: list[str] | None = None) -> int:
     """Resuelve backend y versión de x.tests/run_tests.py a partir del RTL
     (igual que board-info/board-upload) y reenvía el resto de argumentos.
-    Evita tener que saber a mano si un prototipo es cpu-fpga o gpu-fpga."""
+    Evita tener que saber a mano si un prototipo es fpga-cpu o fpga-gpu."""
     parser = argparse.ArgumentParser(
         description="Ejecuta x.tests/run_tests.py contra placa real, "
                     "infiriendo --backend/--version del prototipo.",
@@ -461,9 +461,9 @@ def main_test(argv: list[str] | None = None) -> int:
     resultado = 0
     for familia in familias:
         # Una familia que no es la primaria cuelga de la otra: la GPU de la 36
-        # y la 37 la lanza el host por GPU CORE, y la prueba `gpu-core`, no
-        # `gpu-fpga` (que solo conoce las carpetas sin cpu.v).
-        backend = f"{familia}-fpga" if familia == primaria else f"{familia}-core"
+        # y la 37 la lanza el host por GPU CORE, y la prueba `fpga-sys`, no
+        # `fpga-gpu` (que solo conoce las carpetas sin cpu.v).
+        backend = f"fpga-{familia}" if familia == primaria else "fpga-sys"
         command = [
             sys.executable, str(target.root / "x.tests" / "run_tests.py"),
             "--backend", backend, "--version", version, "--port", port,

@@ -173,7 +173,7 @@ class GpuFpgaTest(unittest.TestCase):
 
     def test_explicit_incompatible_case_rejected_before_hardware(self):
         path = runner.ROOT / 'cases-gpu/programs/mandelbrot/test.json'
-        with patch('sys.argv', ['runner', '--backend', 'gpu-fpga', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, patch('sys.stderr'):
+        with patch('sys.argv', ['runner', '--backend', 'fpga-gpu', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, patch('sys.stderr'):
             self.assertEqual(runner.main(), 2)
             factory.assert_not_called()
 
@@ -202,7 +202,7 @@ class GpuFpgaTest(unittest.TestCase):
         expected = gpu_fpga.VERSIONS['bram']['monitor_version']
         monitor = fake_monitor([(2, 0), expected])
         with patch.object(board, 'upload') as upload:
-            board.ensure_bitstream(monitor, 'COM3', 1, expected, runner.REPOSITORY / '12.fpga-gpu', 'gpu-fpga', 'bram', board.UploadPolicy(assume_yes=True))
+            board.ensure_bitstream(monitor, 'COM3', 1, expected, runner.REPOSITORY / '12.fpga-gpu', 'fpga-gpu', 'bram', board.UploadPolicy(assume_yes=True))
         upload.assert_called_once()
 
 
