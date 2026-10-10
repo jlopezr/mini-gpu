@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from .sim_cpu import _load_module, input_device, video_result
+from .sim_common import (
+    capabilities_of, input_device, load_initial_memory, load_module as _load_module,
+    make_serial, make_video, missing_capabilities, video_result,
+)
 
 VERSIONS = {
     "cycle": {
@@ -26,9 +29,7 @@ DEFAULT_VERSION = "current"
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene este simulador, con las implicaciones ya expandidas."""
-    from .sim_cpu import expand_for
-
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
@@ -46,8 +47,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     «aqui esta roto». Confundirlos es justamente lo que esta maquinaria existe
     para evitar.
     """
-    disponibles = capabilities(version)
-    faltan = [name for name in case.get("requires", []) if name not in disponibles]
+    faltan = missing_capabilities(case, capabilities(version))
     if faltan:
         return f"el simulador de GPU {version!r} no tiene {', '.join(faltan)}"
     return None
@@ -77,34 +77,15 @@ class SimGpuBackend:
             input_script: str | None = None) -> dict:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
-        dispositivo = None
-        if video is not None:
-            video_class = getattr(self.module, "VideoDevice", None)
-            if video_class is None:
-                raise RuntimeError(
-                    f"el simulador de GPU {self.version!r} no tiene VideoDevice")
-            dispositivo = video_class()
-            if video.get("run_until_swap"):
-                # Parada del arnes, no por HALT_AT: es un registro del contrato
-                # y necesita HALT_TARGET. Lo que el caso pide --capturar el
-                # frame tras el intercambio N-- es una condicion de
-                # observacion, no un registro. Misma razon que en
-                # backends/sim_cpu.py.
-                dispositivo.stop_after_swaps = video["run_until_swap"]
-            # Igual que en los otros dos backends: las bases arrancan a cero,
-            # como el hardware, y se quedan asi. Donde vive el framebuffer lo
-            # elige el PROGRAMA, que es quien lo va a dibujar.
+        what = f"el simulador de GPU {self.version!r}"
+        dispositivo = make_video(self.module, video, what)
         size = self.module.config_warp_size(warp_config)
-        serie = self.module.SerialDevice(stdin=stdin)
-        serie.attach_host()
+        serie = make_serial(self.module, stdin, what)
         gpu = self.module.System(warp_size=size, video=dispositivo, serial=serie,
                                  input_device=input_device(input_script),
                                  **(simulator_options or {}))
         gpu.load_program(program, launch=False)
-        for address, data in initial_memory:
-            if address < 0 or address + len(data) > len(gpu.memory):
-                raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
-            gpu.memory[address:address + len(data)] = data
+        load_initial_memory(gpu.memory, initial_memory)
         gpu.configure_warps(warp_config)
         trace_stream = None
         try:

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
-from types import ModuleType
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.sim_peripherals import video_result
+from .sim_common import (
+    capabilities_of, input_device, load_initial_memory, load_module,
+    make_serial, make_video, missing_capabilities, video_result,
+)
 
 
 VERSIONS = {
@@ -30,21 +29,9 @@ VERSIONS = {
 DEFAULT_VERSION = "current"
 
 
-
-def expand_for(names) -> frozenset:
-    """Expande las capacidades implicadas.
-
-    El import va dentro para no crear una dependencia circular: `run_tests`
-    importa los backends al arrancar.
-    """
-    from run_tests import expand_capabilities
-
-    return expand_capabilities(names)
-
-
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene este simulador, con las implicaciones ya expandidas."""
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
@@ -66,46 +53,17 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     la ISA, el simulador la tendrá antes que el RTL y un `requires` sin
     respaldo tiene que dar SKIP, no un error de opcode inválido a medio caso.
     """
-    disponibles = capabilities(version)
-    faltan = [name for name in case.get("requires", []) if name not in disponibles]
+    faltan = missing_capabilities(case, capabilities(version))
     if faltan:
         return f"el simulador {version!r} no tiene {', '.join(faltan)}"
     return None
-
-
-def input_device(script: str | None):
-    """El INPUT de un caso, o None si no declara `input`.
-
-    El guion tiene que conectar lo que use: aquí no hay `--keyboard` ni
-    `--mouse`, así que un caso describe el comportamiento entero.
-    """
-    if script is None:
-        return None
-    from tools import input_script
-    from tools.sim_devices import InputDevice
-
-    device = InputDevice()
-    actions = input_script.parse(script)
-    input_script.check(actions)
-    device.attach_script(actions)
-    return device
-
-
-def _load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"No se puede cargar el módulo {path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class SimCpuBackend:
     """Ejecuta un caso sobre ``2.cpu-sim-func/minicpu_sim.py``."""
 
     ARCHITECTURE = "cpu"
+    VERSIONS = VERSIONS
 
     def __init__(
         self,
@@ -114,22 +72,29 @@ class SimCpuBackend:
         memory_size: int | None = None,
     ):
         try:
-            configuration = VERSIONS[version]
+            configuration = self.VERSIONS[version]
         except KeyError as error:
-            choices = ", ".join(sorted(VERSIONS))
+            choices = ", ".join(sorted(self.VERSIONS))
             raise ValueError(
                 f"Versión del simulador desconocida {version!r}; opciones: {choices}"
             ) from error
 
         self.version = version
-        module = _load_module(
-            f"minicpu_sim_{version}_for_tests",
+        self.module = load_module(
+            f"{self.MODULE_PREFIX}_{version}_for_tests",
             repository / configuration["simulator_path"],
         )
-        self.cpu_class = module.CPU
-        self.video_class = getattr(module, "VideoDevice", None)
-        self.serial_class = getattr(module, "SerialDevice", None)
         self.memory_size = memory_size or configuration["memory_size"]
+        # Dónde están `VideoDevice` y `SerialDevice`: en el propio simulador.
+        self.devices = self.module
+
+    MODULE_PREFIX = "minicpu_sim"
+
+    def _build(self, video, serial, input_dev):
+        """La máquina y su CPU. Aquí son lo mismo; `sim_sys` añade la GPU."""
+        cpu = self.module.CPU(self.memory_size, video=video, serial=serial,
+                              input_device=input_dev)
+        return cpu, cpu
 
     def run(
         self,
@@ -145,51 +110,16 @@ class SimCpuBackend:
     ) -> dict:
         del timeout_seconds  # El simulador usa un límite de instrucciones.
 
-        dispositivo = None
-        if video is not None:
-            if self.video_class is None:
-                raise RuntimeError(
-                    f"el simulador {self.version!r} no tiene VideoDevice")
-            dispositivo = self.video_class()
-            # Las bases arrancan a cero, como el hardware, y ahí se quedan: el
-            # framebuffer lo elige el PROGRAMA, no el arnés. El arnés preparaba
-            # las dos bases por `band` y `bounce`, que eran los únicos que las
-            # heredaban; desde que se las ponen ellos, los once programas de
-            # vídeo del repositorio se configuran solos y esto sobra.
-            swap = video.get("run_until_swap")
-            if swap:
-                # Parada del arnes, NO por HALT_AT. `run_until: {swap: N}` es
-                # una condicion de observacion del banco de pruebas --captura
-                # el frame tras el intercambio N-- y no un registro que el
-                # programa vea: armar HALT_AT, ademas de HALT_TARGET, seria
-                # escribir en el dispositivo del programa. Cuentan lo mismo
-                # desde que §9.6 volvio a contar intercambios, pero el arnes
-                # no toca los registros del contrato.
-                dispositivo.stop_after_swaps = swap
-
-        # El puerto serie se construye SIEMPRE que el caso lo pida, aunque
-        # `stdin` este vacio: un programa puede escribir sin haber leido nada.
-        serie = None
-        if stdin or self.serial_class is not None:
-            if self.serial_class is None:
-                raise RuntimeError(
-                    f"el simulador {self.version!r} no tiene SerialDevice")
-            serie = self.serial_class(stdin=stdin)
-            serie.attach_host()
-
-        cpu = self.cpu_class(self.memory_size, video=dispositivo, serial=serie,
-                             input_device=input_device(input_script))
+        what = f"el simulador {self.version!r}"
+        dispositivo = make_video(self.devices, video, what)
+        serie = make_serial(self.devices, stdin, what)
+        machine, cpu = self._build(dispositivo, serie, input_device(input_script))
         cpu.load_program(program)
+        load_initial_memory(machine.memory, initial_memory)
 
-        for address, data in initial_memory:
-            end = address + len(data)
-            if address < 0 or end > len(cpu.memory):
-                raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
-            cpu.memory[address:end] = data
+        machine.run(max_instructions)
 
-        cpu.run(max_instructions)
-
-        resultado_video = video_result(cpu, bool(video and video.get("capture_frame")))
+        resultado_video = video_result(machine, bool(video and video.get("capture_frame")))
         return {
             # El simulador cuenta instrucciones pero no ciclos: no modela el
             # tiempo, asi que `cycles` es None a proposito y el CPI de una fila
@@ -205,7 +135,7 @@ class SimCpuBackend:
             "pc": cpu.pc,
             "registers": {number: cpu.regs[number] for number in register_numbers},
             "memory": {
-                (address, size): bytes(cpu.memory[address:address + size])
+                (address, size): bytes(machine.memory[address:address + size])
                 for address, size in memory_ranges
             },
             "video": resultado_video,

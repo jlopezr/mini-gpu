@@ -12,13 +12,10 @@ programa de CPU, y su pareja de simulador es `sim-gpu`.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.sim_peripherals import video_result
-
-from backends.sim_cpu import _load_module, expand_for, input_device
+from .sim_common import capabilities_of, missing_capabilities
+from .sim_cpu import SimCpuBackend
 
 
 VERSIONS = {
@@ -38,100 +35,36 @@ DEFAULT_VERSION = "current"
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene este simulador, con las implicaciones ya expandidas."""
-    return expand_for(VERSIONS[version]["capabilities"])
+    return capabilities_of(VERSIONS, version)
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Qué casos no caben aquí: los que piden algo que el simulador no declara."""
-    faltan = [name for name in case.get("requires", [])
-              if name not in capabilities(version)]
+    faltan = missing_capabilities(case, capabilities(version))
     if faltan:
         return f"el simulador {version!r} no tiene {', '.join(faltan)}"
     return None
 
 
-class SimSysBackend:
-    """Ejecuta un caso de CPU sobre ``32.cpu-gpu-func-sim/cpu_gpu_sim.py``."""
+class SimSysBackend(SimCpuBackend):
+    """Ejecuta un caso de CPU sobre ``32.cpu-gpu-func-sim/cpu_gpu_sim.py``.
 
-    ARCHITECTURE = "cpu"
+    Todo es el de `SimCpuBackend` salvo la máquina: un `CpuGpuSystem` en vez de
+    una CPU sola. Los registros, el PC y el contador de instrucciones son los de
+    su CPU, que es lo que `fpga-cpu` observa en la 36 y la 37.
+    """
 
-    def __init__(
-        self,
-        repository: Path,
-        version: str = DEFAULT_VERSION,
-        memory_size: int | None = None,
-    ):
-        try:
-            configuration = VERSIONS[version]
-        except KeyError as error:
-            choices = ", ".join(sorted(VERSIONS))
-            raise ValueError(
-                f"Versión del simulador desconocida {version!r}; opciones: {choices}"
-            ) from error
+    VERSIONS = VERSIONS
+    MODULE_PREFIX = "cpu_gpu_sim"
 
-        self.version = version
-        module = _load_module(
-            f"cpu_gpu_sim_{version}_for_tests",
-            repository / configuration["simulator_path"],
-        )
-        self.system_class = module.CpuGpuSystem
-        self.video_class = module.VideoDevice
-        from tools.sim_devices import SerialDevice
-        self.serial_class = SerialDevice
-        self.memory_size = memory_size or configuration["memory_size"]
+    def __init__(self, repository: Path, version: str = DEFAULT_VERSION,
+                 memory_size: int | None = None):
+        super().__init__(repository, version, memory_size)
+        # `cpu_gpu_sim.py` no define los periféricos: usa los de `tools`.
+        from tools import sim_devices
+        self.devices = sim_devices
 
-    def run(
-        self,
-        program: bytes,
-        initial_memory: list[tuple[int, bytes]],
-        register_numbers: set[int],
-        memory_ranges: list[tuple[int, int]],
-        max_instructions: int,
-        timeout_seconds: float,
-        video: dict | None = None,
-        stdin: bytes = b"",
-        input_script: str | None = None,
-    ) -> dict:
-        del timeout_seconds  # El simulador usa un límite de instrucciones.
-
-        dispositivo = None
-        if video is not None:
-            dispositivo = self.video_class()
-            swap = video.get("run_until_swap")
-            if swap:
-                # Parada del arnés, que detiene CPU y GPU: ver `sim-cpu`.
-                dispositivo.stop_after_swaps = swap
-
-        serie = self.serial_class(stdin=stdin)
-        serie.attach_host()
-
-        system = self.system_class(
-            self.memory_size, video=dispositivo, serial=serie,
-            input_device=input_device(input_script))
-        system.load_cpu_program(program)
-
-        for address, data in initial_memory:
-            end = address + len(data)
-            if address < 0 or end > len(system.memory):
-                raise ValueError(f"Inicialización fuera de memoria: 0x{address:08x}")
-            system.memory[address:end] = data
-
-        system.run(max_instructions)
-
-        cpu = system.cpu
-        return {
-            "cycles": None,
-            "instructions": cpu.instructions_executed,
-            "clock_hz": None,
-            "halted": cpu.halted,
-            "error": cpu.error,
-            "error_code": cpu.error_code,
-            "pc": cpu.pc,
-            "registers": {number: cpu.regs[number] for number in register_numbers},
-            "memory": {
-                (address, size): bytes(system.memory[address:address + size])
-                for address, size in memory_ranges
-            },
-            "video": video_result(system, bool(video and video.get("capture_frame"))),
-            "stdout": serie.output(),
-        }
+    def _build(self, video, serial, input_dev):
+        system = self.module.CpuGpuSystem(
+            self.memory_size, video=video, serial=serial, input_device=input_dev)
+        return system, system.cpu
