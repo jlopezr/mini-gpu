@@ -206,6 +206,13 @@ class MonitorBackend:
                     f"{'.'.join(map(str, expected))}. Carga el bitstream "
                     "correspondiente."
                 )
+            # Ajustes que el prototipo fija en su `version.json` (la fase de la PLL
+            # de la 35): tras programar la FPGA vuelven a su valor de arranque, y el
+            # monitor del prototipo sabe ponerlos. Los monitores que no tienen
+            # ninguno no definen el método.
+            apply_settings = getattr(client, "apply_version_settings", None)
+            if apply_settings is not None:
+                apply_settings()
             yield client
 
     def run(self, *args, **kwargs) -> dict:

@@ -16,11 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import serial
-from monitor import BAUDRATE, MonitorClient, detect_port
-
-PHASE_CTRL = 0x8002_0000
-PHASE_STATUS = 0x8002_0004
-PHASES = 48
+from monitor import BAUDRATE, PHASES, MonitorClient, detect_port
 STEP_PS = 625 / 3
 ROOT = Path(__file__).resolve().parents[1]
 BOARD_UPLOAD = ROOT / "tools" / "board-upload"
@@ -57,33 +53,11 @@ def phases_arg(value: str) -> list[int]:
 
 
 def phase_status(client: MonitorClient) -> dict[str, int | bool]:
-    value = client.read_word(PHASE_STATUS)
-    return {"busy": bool(value & 1), "err": bool(value & 2),
-            "locked": bool(value & 4), "init_done": bool(value & 8),
-            "pos": (value >> 8) & 0x3F}
+    return client.phase_status()
 
 
 def move(client: MonitorClient, steps: int, timeout: float = 2.0) -> dict:
-    if not 1 <= steps <= PHASES:
-        raise ValueError("steps debe estar entre 1 y 48")
-    before = phase_status(client)
-    expected_pos = (int(before["pos"]) + steps) % PHASES
-    client.write_word(PHASE_CTRL, 1 | (steps << 8))
-    deadline = time.monotonic() + timeout
-    saw_busy = False
-    while time.monotonic() < deadline:
-        current = phase_status(client)
-        saw_busy |= bool(current["busy"])
-        # Un movimiento dura microsegundos y una consulta por UART tarda mucho
-        # mas: es normal no llegar a observar BUSY=1. POS es Gray en el CDC y
-        # solo cambia al completar cada paso, asi que tambien sirve de ack.
-        completed = (saw_busy or int(current["pos"]) == expected_pos)
-        if completed and not current["busy"]:
-            if current["err"] or not current["locked"] or not current["init_done"]:
-                raise RuntimeError(f"fallo al mover fase: {current}")
-            return current
-        time.sleep(0.002)
-    raise TimeoutError("el cambio de fase no termino")
+    return client.phase_move(steps, timeout)
 
 
 def restore(client: MonitorClient, target: int) -> None:
@@ -98,11 +72,7 @@ def restore(client: MonitorClient, target: int) -> None:
 
 
 def move_to(client: MonitorClient, target: int) -> dict:
-    current = phase_status(client)
-    if current["busy"] or current["err"] or not current["locked"]:
-        raise RuntimeError(f"estado de fase no valido: {current}")
-    delta = (target - int(current["pos"])) % PHASES
-    return move(client, delta) if delta else current
+    return client.set_sdram_phase(target)
 
 
 def test_patterns(address: int, length: int):

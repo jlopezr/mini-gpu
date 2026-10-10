@@ -119,7 +119,73 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 _REGIONES = MEMORY_REGIONS
 
 
-class MonitorClient(InputMixin, SerialMixin, PerfMixin, protocolo.MonitorClient):
+# SDRAM PHASE (experimental, solo prototipo 35): el bloque MMIO que mueve la fase de
+# `sdram_clk` en la PLL (`phase_mmio.v`). La posicion arranca en 0 tras programar
+# la FPGA y solo avanza, dando la vuelta a las 48 posiciones (208,3 ps cada una).
+PHASE_CTRL = 0x8002_0000
+PHASE_STATUS = 0x8002_0004
+PHASES = 48
+VERSION_JSON = Path(__file__).with_name("version.json")
+
+
+class PhaseMixin:
+    """Fase del reloj de la SDRAM, y el valor por defecto de `version.json`."""
+
+    def phase_status(self) -> dict:
+        value = self.read_word(PHASE_STATUS)
+        return {"busy": bool(value & 1), "err": bool(value & 2),
+                "locked": bool(value & 4), "init_done": bool(value & 8),
+                "pos": (value >> 8) & 0x3F}
+
+    def phase_move(self, steps: int, timeout: float = 2.0) -> dict:
+        """Avanza `steps` posiciones (1..48) y espera a que el controlador acabe."""
+        if not 1 <= steps <= PHASES:
+            raise MonitorError("steps debe estar entre 1 y 48")
+        before = self.phase_status()
+        expected_pos = (before["pos"] + steps) % PHASES
+        self.write_word(PHASE_CTRL, 1 | (steps << 8))
+        deadline = time.monotonic() + timeout
+        saw_busy = False
+        while time.monotonic() < deadline:
+            current = self.phase_status()
+            saw_busy |= current["busy"]
+            # Un movimiento dura microsegundos y una consulta por UART tarda mucho
+            # mas: es normal no llegar a observar BUSY=1. POS es Gray en el CDC y
+            # solo cambia al completar cada paso, asi que tambien sirve de ack.
+            if (saw_busy or current["pos"] == expected_pos) and not current["busy"]:
+                if current["err"] or not current["locked"] or not current["init_done"]:
+                    raise MonitorError(f"fallo al mover la fase: {current}")
+                return current
+            time.sleep(0.002)
+        raise MonitorError("el cambio de fase no termino")
+
+    def set_sdram_phase(self, target: int) -> dict:
+        """Deja la fase en `target` (0..47). Si ya esta ahi, no escribe nada."""
+        if not 0 <= target < PHASES:
+            raise MonitorError(f"la fase debe estar entre 0 y {PHASES - 1}")
+        current = self.phase_status()
+        if current["busy"] or current["err"] or not current["locked"]:
+            raise MonitorError(f"estado de fase no valido: {current}")
+        delta = (target - current["pos"]) % PHASES
+        return self.phase_move(delta) if delta else current
+
+    def apply_version_settings(self, path: Path = VERSION_JSON) -> int | None:
+        """Pone la fase que fija `version.json` (`"sdram_phase"`), si la hay.
+
+        Tras programar la FPGA la fase vuelve a 0, que en esta placa no es buena.
+        El valor sale de un barrido (`phase_sweep.py`): el centro de la ventana de
+        fases que pasan. Devuelve la fase aplicada, o None si no hay ninguna.
+        """
+        import json
+
+        phase = json.loads(path.read_text(encoding="utf-8")).get("sdram_phase")
+        if phase is None:
+            return None
+        self.set_sdram_phase(phase)
+        return phase
+
+
+class MonitorClient(PhaseMixin, InputMixin, SerialMixin, PerfMixin, protocolo.MonitorClient):
     MEMORY_REGIONS = _REGIONES
 
 
@@ -300,6 +366,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "memory-test",
             "phase-status",
             "phase-step",
+            "phase-set",
             "run",
             "halt",
             "step",
@@ -493,6 +560,7 @@ def main() -> int:
             "memory-test": 2,
             "phase-status": 0,
             "phase-step": 1,
+            "phase-set": 1,
             "run": 0,
             "halt": 0,
             "step": 0,
@@ -529,6 +597,13 @@ def main() -> int:
             dsrdtr=False,
         ) as connection:
             client = MonitorClient(connection)
+
+            # La fase de `version.json` se aplica al abrir, salvo que el comando
+            # sea justo de manejar la fase (un barrido no puede pelearse con ella).
+            if not args.command.startswith("phase-"):
+                applied = client.apply_version_settings()
+                if applied is not None:
+                    print(f"SDRAM phase: {applied} (version.json)", file=sys.stderr)
 
             # Antes de nada, y una sola vez: si el comando toca memoria y la
             # CPU sigue corriendo, decirlo con esas palabras en vez de dejar
@@ -614,6 +689,11 @@ def main() -> int:
                 if status & 2:
                     raise MonitorError("el controlador de fase rechazo la peticion")
                 print(f"Cambio solicitado: {steps} paso(s) de retraso")
+            elif args.command == "phase-set":
+                target = parse_integer(args.arguments[0], PHASES - 1, "phase")
+                status = client.set_sdram_phase(target)
+                print(f"Fase SDRAM: {status['pos']} "
+                      f"({status['pos'] * 625 / 3:.1f} ps de retraso)")
             elif args.command == "run":
                 client.run_cpu()
                 print("CPU started")
