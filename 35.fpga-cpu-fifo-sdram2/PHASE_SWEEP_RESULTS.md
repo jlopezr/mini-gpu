@@ -31,6 +31,48 @@ retrasos (`PHASEDIR=0`), porque el avance puede introducir glitches.
 
 No se modificó la lógica interna de `sdram_controller_128.v`.
 
+## Relación con la matriz DQ anterior
+
+La prueba `sdram_dq_matrix.py` utilizada en prototipos anteriores no cambiaba
+la fase del reloj ni aplicaba un retardo distinto a cada señal DQ. Era un
+instrumento de diagnóstico: escribía un único bit activo en cada una de las
+128 posiciones de una ráfaga (8 beats por 16 bits DQ), la leía y señalaba las
+combinaciones `(beat, DQ)` incorrectas en varias direcciones. Que las celdas
+defectuosas cambiasen con la semilla era una pista de margen de captura y
+enrutado, mientras que un patrón fijo habría apuntado a un bit defectuoso o a
+un desplazamiento completo de beat.
+
+La matriz no añadía ciclos por sí misma. Sus resultados motivaron ajustes
+posteriores en el controlador de lectura:
+
+- `READ_DELAY_CYCLES` seleccionaba, con resolución de un ciclo completo
+  (10 ns a 100 MHz), en qué ciclo se aceptaban los datos devueltos por la
+  SDRAM.
+- La captura mediante `dq_negedge` desplazaba el muestreo medio ciclo (5 ns a
+  100 MHz) respecto al flanco positivo.
+
+Estos ajustes corregían el alineamiento funcional entre la latencia de la
+SDRAM, los beats de la ráfaga y el instante de captura. No estaban destinados
+a hacer que `nextpnr` cerrase la temporización interna ni constituían un
+ajuste fino de fase.
+
+El barrido dinámico actual completa aquel diagnóstico. En vez de elegir solo
+un ciclo o medio ciclo, desplaza `sdram_clk` respecto al reloj interno en pasos
+de unos 208,33 ps, aproximadamente 24 veces más pequeños que el cambio a
+`negedge`. Esto permite recorrer la ventana temporal externa, medir sus bordes
+y escoger una posición centrada. Además, al mover el reloj entregado a la
+SDRAM cambia la relación temporal tanto de lectura como de escritura; la
+matriz DQ y los ajustes de captura anteriores estaban orientados principalmente
+a localizar y corregir la lectura.
+
+La secuencia histórica queda, por tanto, así:
+
+1. `sdram_dq_matrix.py` localizó los fallos por beat y DQ.
+2. `READ_DELAY_CYCLES` corrigió el alineamiento por ciclos completos.
+3. `dq_negedge` desplazó la captura medio ciclo.
+4. El barrido dinámico midió el margen restante con resolución subnanosegundo
+   y mostró que la fase original estaba cerca del borde de la ventana válida.
+
 ## Metodología
 
 Se probaron las semillas 1, 2, 3, 4 y 10. Las cinco cumplen timing con las
