@@ -1,6 +1,7 @@
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
     build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+                       [--load [PROTOTIPO]] [--no-run]
 
 Por cada .c (el programa y x.tests/runtime/gpu/gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y
 kernels). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de la GPU
@@ -9,6 +10,8 @@ Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los cicl
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
 --data pega un fichero binario tras el codigo, con `.incbin`, bajo una etiqueta que el C declara con
 `extern unsigned etiqueta[]`. Quien lo genera es quien llama, no esta herramienta.
+--load sube la imagen a la placa (implica --board; PROTOTIPO por defecto 36) con la misma carga que
+`board-load`: no comprueba el bitstream. --no-run la carga sin arrancarla.
 Necesita y.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini-lcc).
 """
 from __future__ import annotations
@@ -116,14 +119,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data", action="append", type=parse_data, default=[], metavar="ETIQUETA=FICHERO",
                         help="pega un binario tras el codigo con esa etiqueta (repetible)")
     parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")
+    parser.add_argument("--load", nargs="?", const="36", metavar="PROTOTIPO",
+                        help="sube la imagen a la placa tras compilar (implica --board; por defecto la 36)")
+    parser.add_argument("--no-run", action="store_true", help="con --load, la carga pero no la arranca")
     args = parser.parse_args(argv)
+    board = args.board or args.load is not None
     try:
-        out = build(args.program, args.output, args.board, args.outdir, tuple(args.includes), tuple(args.data))
+        out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data))
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1
     print(f"{out} ({out.stat().st_size} bytes)")
-    return 0
+    if args.load is None:
+        return 0
+    sys.path.insert(0, str(TOOLS))
+    import run_board
+    return run_board.main_load(["-p", args.load, "--program", str(out)] + (["--no-run"] if args.no_run else []))
 
 
 if __name__ == "__main__":

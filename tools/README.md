@@ -938,6 +938,8 @@ Para un programa con CPU y kernels de GPU en C, `build-c` encadena `mini-lcc`, `
 ```bash
 $ build-c programa.c                          # -> _build/c/programa.bin (simulador)
 $ build-c programa.c --board                  # -> _build/c/programa_board.bin (placa 36)
+$ build-c programa.c --load                   # compila con --board y lo sube a la 36 (como board-load)
+$ build-c programa.c --load 37 --no-run      # a la 37, sin arrancarlo
 $ build-c programa.c --outdir out -I inc --data tex=tex.bin
 ```
 
