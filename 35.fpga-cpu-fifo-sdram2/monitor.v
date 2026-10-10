@@ -139,7 +139,10 @@ module monitor #(
     parameter [32:0] WINDOW3_BASE = 33'h1_ffff_ffff,
     parameter [32:0] WINDOW3_END  = 33'h1_ffff_ffff,
     parameter [32:0] WINDOW4_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW4_END  = 33'h1_ffff_ffff
+    parameter [32:0] WINDOW4_END  = 33'h1_ffff_ffff,
+    // Sexta ventana usada solo por experimentos locales de la carpeta 35.
+    parameter [32:0] WINDOW5_BASE = 33'h1_ffff_ffff,
+    parameter [32:0] WINDOW5_END  = 33'h1_ffff_ffff
 ) (
     input clk,
     input reset,
@@ -402,7 +405,8 @@ module monitor #(
           in_window(start_address, end_address, WINDOW1_BASE, WINDOW1_END) ||
           in_window(start_address, end_address, WINDOW2_BASE, WINDOW2_END) ||
           in_window(start_address, end_address, WINDOW3_BASE, WINDOW3_END) ||
-          in_window(start_address, end_address, WINDOW4_BASE, WINDOW4_END);
+          in_window(start_address, end_address, WINDOW4_BASE, WINDOW4_END) ||
+          in_window(start_address, end_address, WINDOW5_BASE, WINDOW5_END);
     end
   endfunction
 

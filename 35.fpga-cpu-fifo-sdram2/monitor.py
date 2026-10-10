@@ -24,6 +24,7 @@ MAX_ADDRESS = 0x01FF_FFFF
 #   0x80100000  SERIAL
 #   0x80200000  VIDEO
 #   0x81010000  CPU PERFORMANCE
+#   0x80020000  SDRAM PHASE (experimental, solo prototipo 35)
 #
 # Las constantes salen del mapa generado y NO se escriben aqui: eran una
 # gemela del decodificador Verilog, y §20 existe para quitarla. El mapa lo
@@ -80,6 +81,7 @@ ARCHITECTURAL_REGIONS = (
 # contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
 MONITOR_REGIONS = (
     (0x8000_0000, 0x8001_0000),     # SYSTEM
+    (0x8002_0000, 0x8003_0000),     # SDRAM PHASE, experimental local
     (0x8010_0000, 0x8011_0000),     # SERIAL
     (0x8020_0000, 0x8021_0000),     # VIDEO
     (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
@@ -296,6 +298,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "read-block",
             "verify",
             "memory-test",
+            "phase-status",
+            "phase-step",
             "run",
             "halt",
             "step",
@@ -487,6 +491,8 @@ def main() -> int:
             "read-block": 3,
             "verify": 2,
             "memory-test": 2,
+            "phase-status": 0,
+            "phase-step": 1,
             "run": 0,
             "halt": 0,
             "step": 0,
@@ -591,6 +597,23 @@ def main() -> int:
                 address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 memory_test(client, address, length)
+            elif args.command == "phase-status":
+                status = client.read_word(0x8002_0004)
+                print(
+                    f"busy={bool(status & 1)} err={bool(status & 2)} "
+                    f"locked={bool(status & 4)} init_done={bool(status & 8)} "
+                    f"pos={(status >> 8) & 0x3f} "
+                    f"delay_ps={((status >> 8) & 0x3f) * 625 / 3:.1f}"
+                )
+            elif args.command == "phase-step":
+                steps = parse_integer(args.arguments[0], 48, "steps")
+                if steps == 0:
+                    raise MonitorError("steps debe estar entre 1 y 48")
+                client.write_word(0x8002_0000, 1 | (steps << 8))
+                status = client.read_word(0x8002_0004)
+                if status & 2:
+                    raise MonitorError("el controlador de fase rechazo la peticion")
+                print(f"Cambio solicitado: {steps} paso(s) de retraso")
             elif args.command == "run":
                 client.run_cpu()
                 print("CPU started")

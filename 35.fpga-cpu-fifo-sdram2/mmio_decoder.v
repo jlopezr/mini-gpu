@@ -7,6 +7,7 @@
  * bloque se elige con `address[26:16]` y el registro con `address[15:0]`:
  *
  *   0x8000_0000   SYSTEM            identificacion, memoria, version
+ *   0x8002_0000   SDRAM PHASE       EXPERIMENTAL, solo carpeta 35
  *   0x8010_0000   SERIAL
  *   0x8020_0000   VIDEO
  *   0x8060_0000   INPUT           teclado y raton (§25)
@@ -125,12 +126,18 @@ module mmio_decoder #(
     output wire        perf_select,
     input  wire [31:0] perf_read_data,
 
+    // Experimento local de margen SDRAM. No forma parte del contrato global.
+    output wire        phase_select,
+    input  wire [31:0] phase_read_data,
+    input  wire        phase_error,
+
     output reg  [31:0] read_data,
     output reg         error
 );
   // El bloque: bits [26:16] de la direccion. Once bits cubren de 0x8000_0000
   // a 0x87FF_0000, de sobra para todo lo que el contrato asigna (§2).
   localparam [10:0] BLK_SYSTEM   = 11'h000;   // 0x8000_0000
+  localparam [10:0] BLK_PHASE    = 11'h002;   // 0x8002_0000, experimental
   localparam [10:0] BLK_SERIAL   = 11'h010;   // 0x8010_0000
   localparam [10:0] BLK_VIDEO    = 11'h020;   // 0x8020_0000
   localparam [10:0] BLK_INPUT    = 11'h060;   // 0x8060_0000
@@ -145,12 +152,13 @@ module mmio_decoder #(
   // que hay aguas abajo usa `es_*`, ya en registros; solo `error_direccion`, que
   // se calcula aqui mismo, mira las `_d`.
   wire es_system_d = !fuera && (block == BLK_SYSTEM);
+  wire es_phase_d  = !fuera && (block == BLK_PHASE);
   wire es_serial_d = !fuera && (block == BLK_SERIAL) && (HAS_SERIAL != 0);
   wire es_video_d  = !fuera && (block == BLK_VIDEO);
   wire es_perf_d   = !fuera && (block == BLK_CPU_PERF);
   wire es_input_d  = !fuera && (block == BLK_INPUT) && (HAS_INPUT != 0);
 
-  reg es_system, es_serial, es_video, es_perf, es_input;
+  reg es_system, es_phase, es_serial, es_video, es_perf, es_input;
   reg select_q;
   reg error_direccion_q;
 
@@ -183,6 +191,7 @@ module mmio_decoder #(
   // viaja hacia el nucleo por `error`.
   always @(posedge clk) begin
     es_system <= es_system_d;
+    es_phase  <= es_phase_d;
     es_serial <= es_serial_d;
     es_video  <= es_video_d;
     es_perf   <= es_perf_d;
@@ -195,6 +204,7 @@ module mmio_decoder #(
   assign serial_select = select_q && !error_direccion_q && es_serial;
   assign perf_select   = select_q && !error_direccion_q && es_perf;
   assign input_select  = select_q && !error_direccion_q && es_input;
+  assign phase_select  = select_q && !error_direccion_q && es_phase;
 
   // DEUDA CONOCIDA, y merece leerse entera.
   //
@@ -231,6 +241,9 @@ module mmio_decoder #(
   // Solo lectura, y solo las siete palabras. El resto del bloque da error: no
   // devuelve cero ni repite las palabras por alias (§5).
   wire e_system = write || offset_alto || (offset[7:2] > 6'd6) || !word_aligned;
+  // El dispositivo valida permisos, mascara y valor. Aqui solo existen CTRL
+  // (+0) y STATUS (+4), ambos alineados.
+  wire e_phase = offset_alto || !word_aligned || (palabra > 6'd1);
   wire e_serial = offset_alto || (palabra > 6'd2);
 
   // Registros de control bajos y ventanas de consola 2D v0.4.
@@ -264,15 +277,16 @@ module mmio_decoder #(
   //   +0x000..+0x0FC  array: solo las ranuras con contador (PERF_SLOTS)
   //   +0x100..+0x108  PERF_CTRL, PERF_OVF0, PERF_OVF1
   wire e_perf = !offset_alto
-      ? (palabra >= PERF_SLOTS)
+      ? (palabra >= PERF_SLOTS[5:0])
       : ((offset > 16'h0108) || !word_aligned || (offset[15:8] != 8'h01));
 
-  wire hay_bloque = es_system_d || es_serial_d || es_video_d || es_perf_d
+  wire hay_bloque = es_system_d || es_phase_d || es_serial_d || es_video_d || es_perf_d
                     || es_input_d;
 
   always @* begin
     error_direccion = fuera || !hay_bloque
         || (es_system_d && e_system)
+        || (es_phase_d  && e_phase)
         || (es_serial_d && e_serial)
         || (es_video_d  && e_video)
         || (es_input_d  && e_input)
@@ -286,9 +300,10 @@ module mmio_decoder #(
   // registros, un ciclo despues de que el dispositivo recibiera su `select`.
   always @(posedge clk) begin
     error <= error_direccion_q || (es_video && video_error)
-             || (es_input && input_error);
+             || (es_input && input_error) || (es_phase && phase_error);
 
     if (es_system)      read_data <= system_read_data;
+    else if (es_phase)  read_data <= phase_read_data;
     else if (es_serial) read_data <= serial_read_data;
     else if (es_video)  read_data <= video_read_data;
     else if (es_perf)   read_data <= perf_read_data;
