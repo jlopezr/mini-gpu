@@ -1,6 +1,5 @@
 ; ============================================================
 ; cube.asm - un cubo sólido con texturas, una carrera entre la CPU y la GPU
-;            (simulador)
 ;
 ;   mini-dbg --gpu examples\asm\race\cube.asm --window
 ;
@@ -8,11 +7,12 @@
 ; píxeles los pintan tres métodos que se turnan cada 60 fotogramas: la CPU sola, la
 ; GPU "ingenua" y la GPU "bien puesta". Mira race_host.inc para el anfitrión y
 ; cube.inc para la geometría y los tres métodos.
-; Para la placa, cube_board.asm.
+; En la placa 36 (run-board define BOARD: runtime con RUN y medida con el contador de la CPU):
+;   run-board --prototype 36 --program 32.cpu-gpu-func-sim\examples\asm\race\cube.asm
 ; ============================================================
 
 .include "mmio.inc"
 .include "race_host.inc"
 .include "cube.inc"
-.include "../dma/gpu_runtime.inc"
-.include "bench_sim.inc"
+.include "gpu_runtime.inc"
+.include "bench.inc"

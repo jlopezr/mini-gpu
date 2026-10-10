@@ -18,8 +18,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
-import build as c_build  # noqa: E402
+from tools import build_c as c_build  # noqa: E402
 import compare  # noqa: E402
 import compare_race  # noqa: E402
 
@@ -28,9 +29,9 @@ SOURCES = ["dma/gpu_kernels.c", "race/rotate.c", "race/life.c", "race/blur.c", "
 
 
 def static_stats(source: Path) -> str:
-    plain = c_build.BUILD / f"{source.stem}.stats.s"
-    c_build.BUILD.mkdir(exist_ok=True)
-    c_build.run(c_build.TOOLS / "mini-lcc", source, "--no-crt", "-I", c_build.SYSTEM, "-o", plain)
+    plain = c_build.DEFAULT_OUTDIR / f"{source.stem}.stats.s"
+    c_build.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
+    c_build.run(c_build.TOOLS / "mini-lcc", source, "--no-crt", "-I", c_build.INC, "-o", plain)
     done = subprocess.run([sys.executable, str(c_build.TOOLS / "mini-opt"), str(plain), "-o", os.devnull,
                            "--stats"], capture_output=True, text=True)
     return done.stderr.rstrip()

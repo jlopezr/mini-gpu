@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Lee de la placa los resultados de bench_dma_board.asm y los presenta en tablas.
+"""Lee de la placa los resultados de bench_dma.asm y los presenta en tablas.
 
 Hay que haber corrido antes el benchmark y que la CPU esté parada (acaba con HALT):
 
-    run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/bench_dma_board.asm
+    run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/bench_dma.asm
     python 32.cpu-gpu-func-sim/examples/asm/dma/bench_dma_report.py [--out tabla.md]
 
 Lee 808 bytes desde `bench_done` con `monitor.py read-block` (la dirección sale de
@@ -37,7 +37,7 @@ def size_name(size: int) -> str:
 def read_results(program: Path, port: str | None):
     source = program.read_text(encoding="utf-8")
     labels = first_pass(source, program.parent, program.name,
-                        (ROOT / "x.tests" / "inc",))[1]
+                        (ROOT / "x.tests" / "inc",), frozenset({"BOARD"}))[1]
     address = labels["bench_done"]
     with tempfile.TemporaryDirectory() as temp:
         block = Path(temp) / "bench.bin"
@@ -69,7 +69,7 @@ def table(cycles, operation: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--program", type=Path, default=HERE / "bench_dma_board.asm")
+    parser.add_argument("--program", type=Path, default=HERE / "bench_dma.asm")
     parser.add_argument("--port")
     parser.add_argument("--out", type=Path, help="guarda además las tablas en este fichero")
     args = parser.parse_args()

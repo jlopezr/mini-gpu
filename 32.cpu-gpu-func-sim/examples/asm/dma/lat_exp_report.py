@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Lee de la placa los resultados de lat_exp_board.asm: la latencia de un acceso.
+"""Lee de la placa los resultados de lat_exp.asm: la latencia de un acceso.
 
-    run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/lat_exp_board.asm
+    run-board --prototype 36 --port COM3 --program 32.cpu-gpu-func-sim/examples/asm/dma/lat_exp.asm
     python 32.cpu-gpu-func-sim/examples/asm/dma/lat_exp_report.py [--out tabla.md]
 
 La CPU tiene que estar parada (el programa acaba con HALT). Lee 484 bytes desde
@@ -30,7 +30,7 @@ STRIDES = (0, 16, 64, 256, 1024, 4096, 16384, 65536)
 def read_results(program: Path, port: str | None):
     source = program.read_text(encoding="utf-8")
     labels = first_pass(source, program.parent, program.name,
-                        (ROOT / "x.tests" / "inc",))[1]
+                        (ROOT / "x.tests" / "inc",), frozenset({"BOARD"}))[1]
     with tempfile.TemporaryDirectory() as temp:
         block = Path(temp) / "lat.bin"
         command = [sys.executable, "-X", "utf8", str(ROOT / "36.fpga-cpu-gpu" / "monitor.py")]
@@ -66,7 +66,7 @@ def table(rows) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--program", type=Path, default=HERE / "lat_exp_board.asm")
+    parser.add_argument("--program", type=Path, default=HERE / "lat_exp.asm")
     parser.add_argument("--port")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()

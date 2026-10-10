@@ -21,7 +21,7 @@ dirección escrita a mano. Los resultados también van en una etiqueta (`out`).
 
 [`examples/asm/dma/`](examples/asm/dma/dma.asm) es el arnés del diseño de
 [`docs/diseno-gpu-dma.md`](docs/diseno-gpu-dma.md): la GPU como `memset` y
-`memcpy`, lanzada por polling desde un runtime de CPU (`gpu_runtime.inc`) con los
+`memcpy`, lanzada por polling desde un runtime de CPU (`x.tests/inc/gpu_runtime.inc`) con los
 kernels en `gpu_kernels.inc`, todo en una sola imagen. Incluye un job que falla,
 uno que no termina y la recuperación de la GPU.
 
@@ -74,18 +74,18 @@ ciclos del modelo), así que 8,4 ms es una cota inferior, no una predicción.
 
 ### Medido en la placa (36, hito 1)
 
-Las variantes `*_board.asm` (con `gpu_runtime_board.inc`, que lanza con `RUN` porque
-la 36 aún no tiene `WARP_START`) cuentan sus propios ciclos con el `CYCLES` de la
-CPU (80 MHz). Se leen con `monitor.py halt` y `read-register`: `R22` ciclos de
+En la placa, `run-board` ensambla con `-D BOARD`: `gpu_runtime.inc` lanza con `RUN` porque la 36 aún no tiene
+`WARP_START`, y los programas cuentan sus propios ciclos con el `CYCLES` de la CPU (80 MHz). Es el mismo `.asm`
+que en el simulador: los de `render` llevan la medición entre `.ifdef BOARD` y `.endif`. Se leen con `monitor.py halt` y `read-register`: `R22` ciclos de
 pintado, `R29` ciclos del frame entero, `R19` frames válidos (los que cruzan una
 parada del monitor se descartan: sin eso salen cifras que dependen de cuánto se
 tarda en leer). Vídeo a 59,5 Hz.
 
 | | pintado | frame entero | fps |
 |---|---:|---:|---:|
-| `render_cpu_board.asm` | 54,2 ms | 67,2 ms (4 periodos) | 14,8 |
-| `render_board.asm` (v1) | 27,2 ms | 33,6 ms (2 periodos) | 29,8 |
-| `render_v2_board.asm` | 19,6 ms | 33,6 ms (2 periodos) | 29,8 |
+| `render_cpu.asm` | 54,2 ms | 67,2 ms (4 periodos) | 14,8 |
+| `render.asm` (v1) | 27,2 ms | 33,6 ms (2 periodos) | 29,8 |
+| `render_v2.asm` | 19,6 ms | 33,6 ms (2 periodos) | 29,8 |
 
 El frame entero es siempre un número entero de periodos de vídeo (16,8 ms) porque
 el swap espera al siguiente frame. La v2 pinta en 19,6 ms: 3 ms por encima de un
@@ -114,8 +114,8 @@ simulador sale plana: los simuladores cuentan instrucciones, no ciclos.
 | `rotate` | una textura que gira y se acerca (un gather por celda) | 1 lectura, 2 escrituras |
 | `cube` | un cubo sólido con una textura por cara, girando sobre dos ejes (ortográfico) | 1 lectura, 2 escrituras, mucho cálculo y divergencia |
 
-Cada uno tiene su versión para el simulador (`life.asm`) y para la placa
-(`life_board.asm`: runtime con `RUN` y `CYCLES`). El anfitrión es `race_host.inc`
+Cada uno es un solo `.asm` (`life.asm`) para el simulador y para la placa: `run-board` lo ensambla con
+`-D BOARD` (runtime con `RUN` y `CYCLES`). El anfitrión es `race_host.inc`
 y el trabajo de cada demo, `life.inc`, `blur.inc` o `rotate.inc`. Los tests
 comprueban los tres métodos contra una referencia en Python con la imagen entera, y
 el cambio de método en cada fotograma hace que un solo método que calcule algo
@@ -149,13 +149,13 @@ Medido en la placa (80 MHz), tiempo por fotograma:
 `gpu_kernels.inc` tiene los kernels de `docs/diseno-gpu-dma.md` §7: `memset`, `memcpy`,
 `fill_rect` y `blit` (falta `convert`). `rect.asm` ejercita `fill_rect` y `blit` con
 geometrías incómodas y `bench_dma.asm` los cuatro, con todas las configuraciones,
-comprobando el resultado. En la placa, `bench_dma_board.asm` y `bench_dma_report.py`
+comprobando el resultado. En la placa, `bench_dma.asm` (con `run-board`) y `bench_dma_report.py`
 miden cada operación con cada tamaño (32 B a 1 MiB) en la CPU y en la GPU con 1, 2, 4
 y 8 warps. Las tablas y lo que se deduce de ellas están en [docs/bench-dma.md](docs/bench-dma.md):
 la GPU solo gana en `memcpy` y `blit` (1,2 a 1,3 x, desde unos 4 KiB) y pierde siempre en
 `memset` y `fill_rect`. Cada transacción de 16 B cuesta unos 38 ciclos de GPU (30 en
 `memcpy`), el doble de lo que suponía el simulador de ciclos, y no es por el sondeo de la
-CPU: `poll_exp_board.asm` lo descarta midiendo con los contadores de la propia GPU.
+CPU: `poll_exp.asm` en la placa lo descarta midiendo con los contadores de la propia GPU.
 
 ## Qué se comparte
 

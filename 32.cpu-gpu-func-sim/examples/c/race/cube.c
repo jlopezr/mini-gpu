@@ -1,9 +1,9 @@
 /* cube.c - el cubo con texturas de examples/asm/race/cube.inc, en C: CPU, GPU inocente y GPU buena
  * y el anfitrion de race_host.inc (video con doble buffer, método que toca, grafica de tiempos)
  *
- *   python examples/c/build.py examples/c/race/cube.c --board     # -> _build/cube_board.bin
- *   run-board --prototype 36 --program 32.cpu-gpu-func-sim/examples/c/_build/cube_board.bin
- *   python examples/c/build.py examples/c/race/cube.c             # simulador (mini-dbg --gpu)
+ *   build-c 32.cpu-gpu-func-sim/examples/c/race/cube.c --board     # -> _build/c/cube_board.bin
+ *   run-board --prototype 36 --program _build/c/cube_board.bin
+ *   build-c 32.cpu-gpu-func-sim/examples/c/race/cube.c             # simulador (mini-dbg --gpu)
  *
  * La geometria esta en cube.inc (proyeccion ortografica, tres caras visibles, una division por
  * cara y eje); aqui `cube_prepare` la calcula igual. El cuerpo de la celda esta en
@@ -86,7 +86,7 @@ static const unsigned race_pixels[3] = { 0x07E007E0, 0xFD20FD20, 0x07FF07FF };
 int race_period = 60;                   /* fotogramas por metodo */
 int race_shift = 18;                    /* ciclos -> altura de la grafica */
 int race_cycles[3];                     /* ciclos del ultimo trabajo de cada metodo */
-extern int gpu_timeout_polls;           /* gpu_runtime*.inc */
+extern int gpu_timeout_polls;           /* gpu_runtime.inc */
 
 /* ---- CPU: las seis texturas, una vez ---- */
 static void cube_setup(void) {

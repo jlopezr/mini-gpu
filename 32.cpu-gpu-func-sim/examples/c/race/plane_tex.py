@@ -126,6 +126,7 @@ def main() -> int:
     args = parser.parse_args()
     image = Image.open(args.source).convert("RGB")
     textures = [texture(image, True), texture(image, False)]
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(b"".join(struct.pack(f"<{len(t)}I", *t) for t in textures))
     if args.preview:
         preview(textures, args.preview)

@@ -19,8 +19,8 @@ int main(void) {                                           /* CPU */
 ```
 
 ```text
-python examples/c/build.py examples/c/dma/memset.c        # -> examples/c/_build/memset.bin
-python cpu_gpu_sim.py examples/c/_build/memset.bin
+build-c examples/c/dma/memset.c                           # -> _build/c/memset.bin (en la raíz del repo)
+python cpu_gpu_sim.py ../_build/c/memset.bin
 ```
 
 ## Dónde está cada cosa
@@ -33,13 +33,27 @@ nombre en la misma carpeta, para encontrar rápido la otra versión:
 | `dma` | `asm/dma/gpu_kernels.inc` (memset, memcpy, fill_rect, blit) | `c/dma/gpu_kernels.c` |
 | `dma` | (dentro de `gpu_kernels.inc`) | `c/dma/memset.c`: programa completo con CPU y GPU |
 | `race` | `asm/race/rotate.inc` (+ `rotate.asm`) | `c/race/rotate.c` (+ `rotate_body.h`) |
-| `race` | `asm/race/cube.inc` + `race_host.inc` (+ `cube_board.asm`) | `c/race/cube.c` (+ `cube_body.h`): el demo entero, anfitrión incluido |
+| `race` | `asm/race/cube.inc` + `race_host.inc` (+ `cube.asm`) | `c/race/cube.c` (+ `cube_body.h`): el demo entero, anfitrión incluido |
 | `simt` | | `c/simt/diverge.c` (solo en C) |
 | `render`, `launch.asm`, `race/{life,blur}` | sí | aún no |
 
-En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`, `mmio.h`); `build.py` pasa esa carpeta a
-`mini-lcc -I`, así que los ejemplos solo escriben `#include "gpu.h"`. En `c/` quedan las herramientas
-(`build.py`, `compare.py`, `compare_race.py`) y las salidas de la compilación van a `c/_build/`.
+El sistema no está en los ejemplos sino en `x.tests`: las cabeceras `gpu.h` y `mmio.h` en `x.tests/inc/` (junto a
+`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `x.tests/runtime/gpu/`. `build-c`
+(`tools/build_c.py`) pasa esa carpeta de cabeceras a `mini-lcc -I`, así que los ejemplos solo escriben
+`#include "gpu.h"`, y compila `gpu.c` junto a cada programa. En `c/` quedan las herramientas de comparación
+(`compare.py`, `compare_race.py`, `opt_stats.py`). Las salidas de la compilación van a `_build/c/` en la raíz del
+repo (ignorada por git) o a donde diga `--outdir`.
+
+`build-c` acepta cualquier `.c`, no solo los de esta carpeta:
+
+```text
+build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+```
+
+`--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
+etiqueta[]`. `build-c` no genera datos: quien llama los prepara antes (ver el plano, abajo). `--board` define
+`BOARD` para el ensamblador (`.define BOARD`), que activa en `gpu_runtime.inc` y `bench.inc` las ramas de la
+placa 36 (lanzar con `RUN`, ciclos de CPU reales).
 
 ## Cómo funciona
 
@@ -56,10 +70,10 @@ En `c/system/` están las librerías del sistema (`gpu.h`, `gpu.c`, `mmio.h`); `
   array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
-- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`system/gpu.c`), que rellena el
-  bloque de argumentos y llama a `gpu_run` de `examples/asm/dma/gpu_runtime.inc` (el runtime de
+- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`x.tests/runtime/gpu/gpu.c`), que rellena el
+  bloque de argumentos y llama a `gpu_run` de `x.tests/inc/gpu_runtime.inc` (el runtime de
   ensamblador de siempre). Lanza y espera.
-- **El arranque** es `1.isa/runtime/crt0.s`; `build.py` compila con `mini-lcc --no-crt`.
+- **El arranque** es `1.isa/runtime/crt0.s`; `build-c` compila con `mini-lcc --no-crt`.
 - **La divergencia no se escribe:** un `if`, un `while` o un `break` cuyas lanes tomen
   caminos distintos necesita una región abierta con `SSY` (si no, `ERROR_SIMT`). Los pone
   el pase `ssy` de `mini-opt`: delante de cada salto que puede divergir, con el punto donde
@@ -265,8 +279,8 @@ buffer, método que toca cada 60 fotogramas y gráfica de tiempos. Se compila pa
 `--board` (runtime con `RUN` y `bench_now()` con los ciclos de CPU reales):
 
 ```text
-python examples/c/build.py examples/c/race/cube.c --board        # -> _build/cube_board.bin
-run-board --prototype 36 --program 32.cpu-gpu-func-sim/examples/c/_build/cube_board.bin
+build-c 32.cpu-gpu-func-sim/examples/c/race/cube.c --board        # -> _build/c/cube_board.bin
+run-board --prototype 36 --program _build/c/cube_board.bin
 ```
 
 `CCubeRaceTest` comprueba en el simulador que dibuja, método a método, lo mismo que `cube.asm`.
@@ -330,11 +344,14 @@ los Autobots delante, los Decepticons detrás, mezclados con alfa sobre un degra
 depende de la columna: cada fila lee una sola fila de textura y solo `u` avanza.
 
 ```text
-python examples/c/build.py examples/c/race/plane.c --board        # -> _build/plane_board.bin
+python 32.cpu-gpu-func-sim/examples/c/race/plane_tex.py -o _build/c/plane_tex.bin
+build-c 32.cpu-gpu-func-sim/examples/c/race/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+                                                                  # -> _build/c/plane_board.bin
 ```
 
-Las texturas salen de `race/plane/logos.png` con `race/plane_tex.py` (dos de 128 × 128 palabras, 128 KiB), que
-`build.py` ejecuta y deja tras el código con la etiqueta `plane_tex` (tabla `DATA`; el C la declara `extern`).
+Las texturas salen de `race/plane/logos.png` con `race/plane_tex.py` (dos de 128 × 128 palabras, 128 KiB). Es un
+paso aparte porque `build-c` no ejecuta generadores: `--data` solo las deja tras el código con la etiqueta
+`plane_tex`, que el C declara `extern`.
 Cada palabra es un texel con su alfa: el RGB565 «abierto» (rojo y azul abajo, verde arriba, con huecos) y el
 alfa de 0 a 32 en el hueco entre azul y rojo. Así `texel & 0x07E0F81F` ya está abierto y la mezcla con el
 fondo de la fila es **una sola multiplicación** para los tres canales. El alfa sale del fondo negro de la

@@ -38,6 +38,16 @@
 ; por línea durante 4 líneas (una línea son 640 bytes).
 ; ============================================================
 
+; En la placa 36, `run-board` ensambla con -D BOARD: runtime con RUN (la 36 no tiene WARP_START)
+; y la medicion de ciclos de CPU de abajo (las lineas entre .ifdef BOARD y .endif).
+
+; ---- SOLO PLACA: mide los ciclos de CPU que tarda en pintarse cada frame ----
+; Con la CPU parada (monitor.py halt): R21 = frames, R22 = ciclos acumulados de
+; pintado (sin contar la espera al swap), R24 = base del PERF de la CPU.
+; R29 = ciclos del frame entero (pintado + espera al swap), R19 = frames validos.
+; Los frames que cruzan una parada del monitor (> 200 ms) no se acumulan.
+; Media por frame = (R22b - R22a) / (R19b - R19a); a 80 MHz, 80000 ciclos = 1 ms.
+
 .include "mmio.inc"
 
 .equ FB_A,    0x01000000
@@ -59,13 +69,30 @@ start:
 
     ; Un frame son decenas de miles de instrucciones de warp: el límite de
     ; sondeos por defecto del runtime se queda corto si se sube --cpu-steps.
+.ifdef BOARD
+    ; La placa conserva el estado de la GPU entre ejecuciones: RESET antes del primer job.
+    LI    R4, MMIO_GPU_BASE
+    MOVI  R5, GPU_CTRL_RESET
+    STORE R5, R4, MMIO_GPU_CONTROL_OFF
+
+.endif
     LI    R4, gpu_timeout_polls
     LI    R5, 1000000
     STORE R5, R4, 0
 
     MOVI  R21, 0
+.ifdef BOARD
+    MOVI  R22, 0
+    MOVI  R29, 0
+    MOVI  R19, 0
+    LI    R30, 16000000                     ; 200 ms: mas que cualquier frame
+    LI    R24, MMIO_CPU_PERF_BASE
+.endif
 
 frame:
+.ifdef BOARD
+    LOAD  R23, R24, MMIO_PERF_CYCLES_OFF    ; inicio del pintado
+.endif
     LI    R3, job_args
     LOAD  R4, R20, MMIO_VIDEO_FB_BACK_OFF   ; cambia en cada swap
     STORE R4, R3, 8                         ; p0 = framebuffer donde pintar
@@ -75,12 +102,25 @@ frame:
     JAL   R31, gpu_run
     BNE   R1, R0, failed                    ; GPU_OK = 0
 
+.ifdef BOARD
+    LOAD  R28, R24, MMIO_PERF_CYCLES_OFF    ; fin del pintado
+    SUB   R18, R28, R23                     ; ciclos de pintado de este frame
+.endif
 present:
     MOVI  R7, 1
     STORE R7, R20, MMIO_VIDEO_SWAP_OFF      ; pedir el intercambio
 wait_swap:
     LOAD  R8, R20, MMIO_VIDEO_SWAP_OFF      ; se aplica al empezar un frame
     BNE   R8, R0, wait_swap
+.ifdef BOARD
+    LOAD  R28, R24, MMIO_PERF_CYCLES_OFF    ; fin del frame entero (tras el swap)
+    SUB   R28, R28, R23
+    BGEU  R28, R30, skip_acc                ; cruzo una parada del monitor: no vale
+    ADD   R29, R29, R28                     ; R29 = ciclos de frame entero
+    ADD   R22, R22, R18                     ; R22 = ciclos de pintado
+    ADDI  R19, R19, 1                       ; R19 = frames validos
+skip_acc:
+.endif
     ADDI  R21, R21, 1
     BRA   frame
 
@@ -185,7 +225,7 @@ render_end:
     EXIT
 
 ; ---- el runtime de CPU (detrás de su HALT: no hay linker) ----
-.include "../dma/gpu_runtime.inc"
+.include "gpu_runtime.inc"
 
 ; ---- datos ----
 job_args:

@@ -26,7 +26,7 @@
 ;     bench_errors    comprobaciones fallidas
 ;     bench_results   (operación * 10 + tamaño) * 5 + configuración, en ciclos
 ;
-; Quién cuenta los ciclos, en bench_sim.inc / bench_board.inc: el simulador devuelve
+; Quién cuenta los ciclos, en bench.inc (con y sin BOARD): el simulador devuelve
 ; cero (solo sirve para comprobar que todo funciona) y la placa lee el CYCLES de la CPU.
 ; ============================================================
 

@@ -1,5 +1,5 @@
 ; ============================================================
-; blur.asm - difusión de calor, una carrera entre la CPU y la GPU (simulador)
+; blur.asm - difusión de calor, una carrera entre la CPU y la GPU
 ;
 ;   mini-dbg --gpu examples\asm\race\blur.asm --window
 ;
@@ -7,11 +7,12 @@
 ; los va extendiendo y apagando. El trabajo lo hacen tres métodos que se turnan
 ; cada 60 fotogramas: la CPU sola, la GPU "ingenua" y la GPU "bien puesta".
 ; Mira race_host.inc para el anfitrión y blur.inc para el cálculo.
-; Para la placa, blur_board.asm.
+; En la placa 36 (run-board define BOARD: runtime con RUN y medida con el contador de la CPU):
+;   run-board --prototype 36 --program 32.cpu-gpu-func-sim\examples\asm\race\blur.asm
 ; ============================================================
 
 .include "mmio.inc"
 .include "race_host.inc"
 .include "blur.inc"
-.include "../dma/gpu_runtime.inc"
-.include "bench_sim.inc"
+.include "gpu_runtime.inc"
+.include "bench.inc"

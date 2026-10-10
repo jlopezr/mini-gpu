@@ -17,7 +17,7 @@
 ; y su color, el método: verde la CPU, naranja la GPU ingenua, cian la GPU bien
 ; puesta. En la gráfica se ve el escalón al cambiar de método; en la animación de
 ; debajo, que ese fotograma tarda más o menos. En el simulador la altura es cero
-; (ver bench_sim.inc): los ciclos solo existen en la placa.
+; (ver bench.inc): los ciclos solo existen en la placa.
 ;
 ; ---- Lo que tiene que poner el demo ----
 ;

@@ -930,6 +930,34 @@ Por ahora esta validacion comprueba compilacion y simulacion dentro de
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
 las suites de `x.tests`.
 
+## Un programa entero en C: `build-c`
+
+Para un programa con CPU y kernels de GPU en C, `build-c` encadena `mini-lcc`, `mini-opt` y `mini-asm`
+(las tres piezas se explican en la sección siguiente) y añade el runtime de la GPU:
+
+```bash
+$ build-c programa.c                          # -> _build/c/programa.bin (simulador)
+$ build-c programa.c --board                  # -> _build/c/programa_board.bin (placa 36)
+$ build-c programa.c --outdir out -I inc --data tex=tex.bin
+```
+
+Compila el programa y `x.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
+y ensambla un `.asm` generado con el arranque (`1.isa/runtime/crt0.s`), los dos `.s` y el runtime
+(`x.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `x.tests/inc` entran siempre en
+el `-I`.
+
+- **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
+  `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
+- **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
+  `extern unsigned etiqueta[]`. `build-c` no ejecuta generadores: los datos los prepara quien llama.
+- **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
+  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `x.tests/inc`.
+- La lógica es `tools/build_c.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
+
+El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
+así `gpu_runtime.inc` y `bench.inc` sirven al simulador y a la placa con un solo fichero.
+Ejemplos y números en `32.cpu-gpu-func-sim/examples/c/README.md`.
+
 ## Compilar C para la CPU y la GPU: `mini-lcc --no-crt`, `crt0` y `mini-opt`
 
 Tres piezas pequeñas entre el compilador y el ensamblador:
@@ -966,7 +994,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `passes/__init__.py`.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
-  `32.cpu-gpu-func-sim/examples/c/system/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  `x.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
   carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
@@ -998,7 +1026,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   ningún análisis del texto puede comprobar: que nadie escriba el símbolo mientras el kernel corre (la CPU, el DMA,
   otro agente) y que no se fabrique un puntero a partir de un entero. Con `--assume-noalias` basta que el kernel no
   escriba el símbolo, aunque su dirección escape o lo nombre código ajeno; un `volatile` no se saca nunca.
-  `examples/c/build.py` pasa `--extern-refs` con el arranque, el runtime y la otra unidad, y deja la suposición
+  `build-c` pasa `--extern-refs` con el arranque, el runtime y la otra unidad, y deja la suposición
   apagada (`MINI_OPT_NOALIAS=1` la enciende). Las direcciones que solo servían de base a lo que sale del bucle
   quedan muertas: las borra el `dce` que viene detrás en el pipeline.
 - **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene

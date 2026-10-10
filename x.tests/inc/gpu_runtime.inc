@@ -27,6 +27,16 @@
 ;
 ; Orden de §18 y §5.1: la CPU escribe los datos y los descriptores, y solo
 ; entonces WARP_START. Nunca RUN: arrancaria tambien los descriptores viejos.
+;
+; ---- BOARD ------------------------------------------------------------------
+;
+; Con `.define BOARD` (o `-D BOARD`) antes del `.include`: la placa 36 con el
+; RTL del hito 1, que no tiene WARP_START (da error) y se lanza con RUN. RUN
+; reanuda lo que dejan los descriptores: el runtime los reescribe todos los de
+; este job, y un warp ya terminado no esta vivo, asi que no se relanza. Ademas,
+; RESET en la 36 tambien borra los descriptores (el contrato dice que no).
+; Cuando llegue el hito 2, la rama BOARD sobra.
+;
 ; Orden de §5.2: leer WARP_DONE, limpiar con W1C EXACTAMENTE lo leido, y solo
 ; entonces mirar si el job ha terminado. Tras un error, WARP_DONE se lee antes
 ; de RESET (§6), que conserva los descriptores y los arrays de configuracion.
@@ -37,6 +47,9 @@
 .equ GPU_ST_ERROR, 0x00000008
 
 ; GPU_CONTROL (mmio.md §14.1): son comandos, de uno en uno
+.ifdef BOARD
+.equ GPU_CTRL_RUN,   0x00000001
+.endif
 .equ GPU_CTRL_HALT,  0x00000002
 .equ GPU_CTRL_RESET, 0x00000010
 
@@ -102,7 +115,12 @@ gpu_run_desc:
     ADDI  R13, R13, 4
     BLTU  R9, R2, gpu_run_desc
 
+.ifdef BOARD
+    MOVI  R14, GPU_CTRL_RUN                 ; hito 1: no hay WARP_START, se lanza con RUN
+    STORE R14, R10, MMIO_GPU_CONTROL_OFF
+.else
     STORE R7, R10, MMIO_GPU_WARP_START_OFF  ; lanza: solo estos warps
+.endif
 
     ; ---- esperar (§5.2). R7 = warps pendientes, R4 = sondeos que quedan ----
     LI    R14, gpu_timeout_polls

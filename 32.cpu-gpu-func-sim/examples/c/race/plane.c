@@ -1,12 +1,13 @@
 /* plane.c - un plano que gira con un logo en cada cara y alfa sobre un fondo degradado: CPU, GPU
  * inocente y GPU buena, con el anfitrion de cube.c (video con doble buffer, metodo que toca, grafica)
  *
- *   python examples/c/build.py examples/c/race/plane.c --board     # -> _build/plane_board.bin
- *   run-board --prototype 36 --program 32.cpu-gpu-func-sim/examples/c/_build/plane_board.bin
- *   python examples/c/build.py examples/c/race/plane.c             # simulador (mini-dbg --gpu)
+ *   python 32.cpu-gpu-func-sim/examples/c/race/plane_tex.py -o _build/c/plane_tex.bin
+ *   build-c 32.cpu-gpu-func-sim/examples/c/race/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+ *   run-board --prototype 36 --program _build/c/plane_board.bin
+ *   build-c 32.cpu-gpu-func-sim/examples/c/race/plane.c --data plane_tex=_build/c/plane_tex.bin   # simulador
  *
  * Delante, los Autobots; detras, los Decepticons (plane_tex.py los saca de plane/logos.png, con
- * su alfa, y build.py los deja detras del codigo con la etiqueta `plane_tex`). Proyeccion
+ * su alfa, y `--data` los deja detras del codigo con la etiqueta `plane_tex`). Proyeccion
  * ortografica sobre el eje vertical: u = x / |cos|, v = y, de modo que cada fila lee una sola fila de
  * la textura (ver plane_body.h). Se ve la cara delantera con cos > 0 y la trasera con cos < 0; de canto
  * (|cos| pequeno) el plano no se dibuja.
@@ -34,7 +35,7 @@ typedef struct {
 
 Plane plane_cfg;
 unsigned plane_bg[PLANE_ROWS];          /* el fondo de cada fila, en RGB565 abierto (ver plane_body.h) */
-extern unsigned plane_tex[];            /* 2 texturas, build.py */
+extern unsigned plane_tex[];            /* 2 texturas, build-c --data */
 
 /* ---- la CPU ---- */
 #define NAME plane_cpu
@@ -87,7 +88,7 @@ static const unsigned race_pixels[3] = { 0x07E007E0, 0xFD20FD20, 0x07FF07FF };
 int race_period = 60;                   /* fotogramas por metodo */
 int race_shift = 18;                    /* ciclos -> altura de la grafica */
 int race_cycles[3];                     /* ciclos del ultimo trabajo de cada metodo */
-extern int gpu_timeout_polls;           /* gpu_runtime*.inc */
+extern int gpu_timeout_polls;           /* gpu_runtime.inc */
 
 /* ---- CPU: el degradado de fondo, una vez (azul oscuro arriba, naranja apagado abajo) ---- */
 static void plane_setup(void) {

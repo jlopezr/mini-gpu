@@ -21,9 +21,10 @@ SIM = HERE.parents[1]
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(SIM))
 sys.path.insert(0, str(ROOT / "1.isa"))
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
-import build as c_build  # noqa: E402
+from tools import build_c as c_build  # noqa: E402
 import cpu_gpu_sim as sim  # noqa: E402
 from cpu_gpu_sim import CpuGpuSystem, mm  # noqa: E402
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
@@ -62,8 +63,9 @@ def asm_image():
 
 
 def c_image():
-    binary = c_build.build(HERE / "dma" / "gpu_kernels.c")
-    wrapper = HERE / "_build" / "gpu_kernels.asm"
+    program = HERE / "dma" / "gpu_kernels.c"
+    binary = c_build.build(program)
+    wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), {k: labels[f"__kernel_{k}"] for k in ("memset", "memcpy", "fill_rect", "blit")}

@@ -2,6 +2,7 @@ import contextlib
 import io
 import math
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -989,7 +990,7 @@ class LifeRaceStripTest(unittest.TestCase):
 .include "mmio.inc"
 .include "race_host.inc"
 .include "life.inc"
-.include "../dma/gpu_runtime.inc"
+.include "gpu_runtime.inc"
 bench_init:
     RET
 bench_now:
@@ -1632,18 +1633,20 @@ class CommandLineTest(unittest.TestCase):
 C_EXAMPLES = HERE / "examples" / "c"
 
 
-def build_c_example(name: str):
+def build_c_example(name: str, data=()):
     """Compila `examples/c/<name>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
+    `data`: (etiqueta, fichero) de los binarios que `build-c --data` pega tras el codigo.
     Se omite la prueba si no hay compilador (rcc de y.lcc y MSVC); cualquier otro fallo es un error."""
-    sys.path.insert(0, str(C_EXAMPLES))
-    import build as c_build
+    sys.path.insert(0, str(sim.ROOT))
+    from tools import build_c as c_build
+    program = C_EXAMPLES / f"{name}.c"
     try:
-        binary = c_build.build(C_EXAMPLES / f"{name}.c")
+        binary = c_build.build(program, data=tuple(data))
     except c_build.BuildError as error:
         if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
             raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
         raise
-    wrapper = (C_EXAMPLES / "_build" / f"{Path(name).name}.asm")
+    wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels
@@ -1819,8 +1822,14 @@ class CPlaneRaceTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        image, labels = build_c_example("race/plane")
-        blob = (C_EXAMPLES / "_build" / "plane_tex.bin").read_bytes()
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import build_c
+        build_c.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
+        textures = build_c.DEFAULT_OUTDIR / "plane_tex.bin"
+        subprocess.run([sys.executable, str(C_EXAMPLES / "race" / "plane_tex.py"), "-o", str(textures)],
+                       check=True, capture_output=True)
+        image, labels = build_c_example("race/plane", data=[("plane_tex", textures)])
+        blob = textures.read_bytes()
         cls.textures = struct.unpack("<%dI" % (len(blob) // 4), blob)
         cls.background = plane_background()
         video = sim.VideoDevice(frame_instructions=1000)

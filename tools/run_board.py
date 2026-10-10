@@ -67,8 +67,10 @@ def assemble(root: Path, source: Path, verbose: bool) -> Path:
     # `-I x.tests/inc` da acceso a la biblioteca de `.include` compartida. La
     # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
     # un trozo local con el mismo nombre sigue ganando.
+    # `-D BOARD` elige la rama de la placa 36 de `gpu_runtime.inc`, `bench.inc`...:
+    # este lanzador solo corre en la placa, así que un .asm no repite el `.define`.
     command = [sys.executable, str(root / "1.isa" / "mini_asm.py"), str(source),
-               "-o", str(binary), "-I", str(root / "x.tests" / "inc")]
+               "-o", str(binary), "-I", str(root / "x.tests" / "inc"), "-D", "BOARD"]
     if verbose:
         print(f"$ {' '.join(command)}")
     completed = subprocess.run(command)

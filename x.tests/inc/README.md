@@ -1,6 +1,6 @@
 # Biblioteca de `.include`
 
-Trozos de ensamblador compartidos entre programas. Existe porque `drawline` y
+Trozos de ensamblador (y cabeceras de C) compartidos entre programas. Existe porque `drawline` y
 `putpixel` estaban copiados **literalmente en tres sitios** —
 `bresenham_lines.asm`, `bresenham_circles.asm` y `cube.asm` — y una corrección
 en Bresenham había que hacerla tres veces. El riesgo real no era el trabajo,
@@ -12,6 +12,14 @@ cubo se quedaba con la versión vieja.
 | [`putpixel.inc`](putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
 | [`drawline.inc`](drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc`, que incluye él solo |
 | [`sin256.inc`](sin256.inc) | `sin_table`, 256 entradas Q16.16 en `.rodata` | — |
+| [`gpu_runtime.inc`](gpu_runtime.inc) | `gpu_run`: la CPU lanza un job en la GPU y lo espera | `mmio.inc`; con `BOARD`, la placa 36 |
+| [`bench.inc`](bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
+| [`gpu.h`](gpu.h), [`mmio.h`](mmio.h) | Cabeceras de C: `KERNEL`, `GPU_RUN`, `NOALIAS`; el mapa MMIO | las usa `build-c`; `gpu.c` está en `../runtime/gpu/` |
+
+`gpu_runtime.inc` y `bench.inc` tienen una rama para la placa 36 y otra para los simuladores. Se elige con el
+símbolo `BOARD`, antes del `.include`: `-D BOARD` en la línea de órdenes del ensamblador (así lo hacen `run-board`, siempre, y `build-c --board`) o
+`.define BOARD` en el propio `.asm`. Un `.asm` que valga para el simulador y para la placa no necesita variante
+`_board`: usa `.ifdef BOARD` para lo que sea solo de la placa y no repite el `.define`.
 
 ## Cómo se buscan
 

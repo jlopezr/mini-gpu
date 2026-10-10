@@ -206,8 +206,9 @@ def asm_program(work: Workload):
 
 
 def c_program(stem: str):
-    binary = c_build.build(HERE / "race" / f"{stem}.c")
-    wrapper = HERE / "_build" / f"{stem}.asm"
+    program = HERE / "race" / f"{stem}.c"
+    binary = c_build.build(program)
+    wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name, c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels
 
