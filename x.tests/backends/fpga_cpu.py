@@ -100,7 +100,7 @@ PERF_STALL_COUNTERS = {
     "stall_fetch": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_FETCH_OFF,
     "stall_mmio": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MMIO_OFF,
 }
-REGISTROS_VIDEO = frame_capture.Registros(
+VIDEO_REGISTERS = frame_capture.Registers(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
@@ -109,7 +109,7 @@ FRAME_BYTES = 320 * 240 * 2
 
 # Los registros de video son de 32 bits, pero el monitor accede byte a byte:
 # una palabra son cuatro comandos (`write_register`, en fpga_common).
-def _read_register(client, address: int, palabra: bool = False) -> int:
+def _read_register(client, address: int, word: bool = False) -> int:
     """Con READ_WORD cuando el monitor lo tiene; si no, cuatro READ_BYTE.
 
     La diferencia no es de velocidad sino de coherencia: hay registros que
@@ -122,7 +122,7 @@ def _read_register(client, address: int, palabra: bool = False) -> int:
     El camino de bytes se queda porque no todos los prototipos tienen el
     comando: la capacidad se detecta del RTL, no se supone.
     """
-    if palabra:
+    if word:
         return client.read_word(address)
     return int.from_bytes(
         bytes(client.read_byte(address + offset) for offset in range(4)),
@@ -152,7 +152,7 @@ class FpgaCpuBackend(MonitorBackend):
     VERSIONS = VERSIONS
     DEFAULT_VERSION = DEFAULT_VERSION
 
-    def _run_una_vez(
+    def _run_once(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -165,16 +165,16 @@ class FpgaCpuBackend(MonitorBackend):
         input_script: str | None = None,
     ) -> dict:
         del max_instructions  # La FPGA se limita mediante timeout de pared.
-        capacidades = capabilities(self.version)
-        tiene_captura = "frame_capture" in capacidades
-        tiene_video = "video" in capacidades
+        device_caps = capabilities(self.version)
+        has_capture = "frame_capture" in device_caps
+        has_video = "video" in device_caps
         # Los registros de video se leen de una pieza donde se pueda: STATUS
         # lleva el contador de frames, que avanza aunque el nucleo este parado.
-        tiene_palabra = "read_word" in capacidades
+        has_word = "read_word" in device_caps
 
         with self.connect() as client:
-            def leer_registro(direccion: int) -> int:
-                return _read_register(client, direccion, tiene_palabra)
+            def read_register(address: int) -> int:
+                return _read_register(client, address, has_word)
 
             client.reset_cpu()
 
@@ -211,8 +211,8 @@ class FpgaCpuBackend(MonitorBackend):
             # Parada del ARNES tras N intercambios. Cero = no se usa. Se arma
             # mas abajo solo si el caso pide `run_until: {swap: N}` y la carpeta
             # tiene `frame_capture`.
-            parar_tras_swaps = 0
-            por_hardware = False
+            stop_after_swaps = 0
+            by_hardware = False
             # SWAP_COUNT y FRAME_COUNT son del DISPOSITIVO DE VIDEO, no de la
             # CPU: `reset_cpu` no los toca y solo el reset de la placa los pone a
             # cero. Asi que llevan la cuenta acumulada de toda la sesion --se han
@@ -263,7 +263,7 @@ class FpgaCpuBackend(MonitorBackend):
                 # decodifican la pagina MMIO entera y un registro que no existe
                 # lee cero y se traga la escritura-- pero armar una parada que
                 # nadie va a atender seria mentirle al caso.
-                if tiene_captura:
+                if has_capture:
                     # `run_until: {swap: N}` es una condicion de OBSERVACION del
                     # arnes --«captura el frame tras el intercambio N»-- y hay
                     # dos formas de pararla, segun lo que declare el RTL:
@@ -282,9 +282,9 @@ class FpgaCpuBackend(MonitorBackend):
                     # HALT_TARGET arranca a cero, asi que no paraba a nadie. El
                     # sintoma era un timeout de 20-30 s por caso de video, que
                     # no se parece a la causa.
-                    parar_tras_swaps = video.get("run_until_swap") or 0
-                    por_hardware = bool(
-                        parar_tras_swaps and "halt_on_swap" in capacidades)
+                    stop_after_swaps = video.get("run_until_swap") or 0
+                    by_hardware = bool(
+                        stop_after_swaps and "halt_on_swap" in device_caps)
                     # Los dos a cero, siempre, tambien cuando el caso no usa la
                     # alarma: solo el reset de la placa los reinicia y un caso
                     # heredaria la alarma del anterior.
@@ -297,17 +297,17 @@ class FpgaCpuBackend(MonitorBackend):
                     # fallan en el pixel 0. Con la alarma de hardware sirve
                     # para el informe: armar no toca SWAP_COUNT.
                     swaps_base = _read_register(client, VIDEO_SWAP_COUNT,
-                                                tiene_palabra)
+                                                has_word)
                     frames_base = _read_register(client, VIDEO_FRAME_COUNT,
-                                                 tiene_palabra)
-                    if por_hardware:
+                                                 has_word)
+                    if by_hardware:
                         # HALT_TARGET primero: arranca a cero y sin el bit de
                         # CPU la alarma se consume sin parar a nadie. Y lo
                         # ultimo antes de arrancar, porque armar pone a cero la
                         # cuenta de la alarma.
                         _write_register(client, VIDEO_HALT_TARGET,
                                         VIDEO_HALT_TARGET_CPU)
-                        _write_register(client, VIDEO_HALT_AT, parar_tras_swaps)
+                        _write_register(client, VIDEO_HALT_AT, stop_after_swaps)
 
             # Un caso que NO usa video no puede heredar el scanout encendido de
             # uno que si. El modo de VIDEO_CTRL sobrevive a `reset_cpu` --solo
@@ -319,7 +319,7 @@ class FpgaCpuBackend(MonitorBackend):
             # estado de reset: modo PATTERN, que no lee memoria, y underflow
             # limpio. Va aqui y no en cada caso de video porque lo que hay que
             # garantizar es el punto de partida del SIGUIENTE, sea cual sea.
-            if tiene_video and not video:
+            if has_video and not video:
                 _write_register(client, VIDEO_STATUS, 1)
                 _write_register(client, VIDEO_CTRL, MODE_PATTERN)
 
@@ -338,8 +338,8 @@ class FpgaCpuBackend(MonitorBackend):
                 if stdin:
                     client.send_all(stdin)
 
-            hay_serie = hasattr(client, "recv_bytes")
-            salida_serie = b"" if hay_serie else None
+            has_serial = hasattr(client, "recv_bytes")
+            serial_output = b"" if has_serial else None
 
             client.run_cpu()
             deadline = time.monotonic() + timeout_seconds
@@ -368,10 +368,10 @@ class FpgaCpuBackend(MonitorBackend):
                 # en marcha --el que no responde es la MEMORIA, que el monitor
                 # solo posee con la CPU parada-- asi que esto es leer un contador,
                 # no tocar el programa.
-                if parar_tras_swaps and not por_hardware:
-                    if frame_capture.hay_que_parar(leer_registro, REGISTROS_VIDEO,
-                                                swaps_base, parar_tras_swaps):
-                        status = frame_capture.parar(client)
+                if stop_after_swaps and not by_hardware:
+                    if frame_capture.should_stop(read_register, VIDEO_REGISTERS,
+                                                swaps_base, stop_after_swaps):
+                        status = frame_capture.stop(client)
                         break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
@@ -384,19 +384,19 @@ class FpgaCpuBackend(MonitorBackend):
                 # caso muere por timeout en vez de por lo que estuviera
                 # probando. Esto no cambia el flujo de bytes, solo cuando se
                 # recogen, asi que sigue siendo comparable con el simulador.
-                if hay_serie:
-                    salida_serie += client.recv_bytes(255)
+                if has_serial:
+                    serial_output += client.recv_bytes(255)
                 else:
                     time.sleep(0.01)
 
             # Se vacia lo que quede: lo que la CPU escribiera al final esta ahi
             # desde que paro, y un solo RECV_BYTES se queda en 255.
-            if hay_serie:
+            if has_serial:
                 while True:
-                    trozo = client.recv_bytes(255)
-                    if not trozo:
+                    chunk = client.recv_bytes(255)
+                    if not chunk:
                         break
-                    salida_serie += trozo
+                    serial_output += chunk
 
             registers = {
                 number: client.read_register(number)
@@ -421,16 +421,16 @@ class FpgaCpuBackend(MonitorBackend):
             # son un dispositivo como los demas --ver cpu_perf_counters.v-- y la
             # capacidad se detecta del RTL igual que el resto.
             cycles = instructions = None
-            esperas = None
-            if "perf_counters" in capacidades:
-                cycles = _read_register(client, PERF_CYCLES, tiene_palabra)
-                instructions = _read_register(client, PERF_RETIRED, tiene_palabra)
+            waits = None
+            if "perf_counters" in device_caps:
+                cycles = _read_register(client, PERF_CYCLES, has_word)
+                instructions = _read_register(client, PERF_RETIRED, has_word)
             # Los de espera solo donde el RTL los tiene: leer una ranura sin
             # contador da error de MMIO, no un cero.
-            if "perf_stalls" in capacidades:
-                esperas = {
-                    nombre: _read_register(client, direccion, tiene_palabra)
-                    for nombre, direccion in PERF_STALL_COUNTERS.items()
+            if "perf_stalls" in device_caps:
+                waits = {
+                    name: _read_register(client, address, has_word)
+                    for name, address in PERF_STALL_COUNTERS.items()
                 }
 
             video_result = None
@@ -453,16 +453,16 @@ class FpgaCpuBackend(MonitorBackend):
                 # son 16,7 ms; 200 ms es margen de sobra y no se agota nunca
                 # salvo que el barrido este detenido, en cuyo caso seguir
                 # esperando tampoco arreglaria nada.
-                if tiene_captura:
-                    frame_capture.esperar_sin_pendiente(leer_registro,
-                                                     REGISTROS_VIDEO)
+                if has_capture:
+                    frame_capture.wait_no_pending(read_register,
+                                                     VIDEO_REGISTERS)
 
                 # Se lee DESPUES de que la CPU haya parado. Los registros
                 # responden tambien con la CPU en marcha, pero el frame no: el
                 # monitor solo posee la memoria con la CPU parada.
-                estado = _read_register(client, VIDEO_STATUS, tiene_palabra)
+                state = _read_register(client, VIDEO_STATUS, has_word)
                 video_result = {
-                    "underflow": bool(estado & 1),
+                    "underflow": bool(state & 1),
                     # De FRAME_COUNT, no de STATUS[31:16]. En v1 los frames
                     # vivian en la mitad alta de STATUS y daban la vuelta a los
                     # 65536 --unos 18 minutos--; en v2 tienen registro propio de
@@ -472,14 +472,14 @@ class FpgaCpuBackend(MonitorBackend):
                     # comentario de `swaps_base`: son contadores del dispositivo
                     # de video y sobreviven a `reset_cpu`.
                     "frames": ((_read_register(client, VIDEO_FRAME_COUNT,
-                                               tiene_palabra)
+                                               has_word)
                                 - frames_base) & 0xFFFFFFFF
-                               if tiene_captura else estado >> 16),
+                               if has_capture else state >> 16),
                     "swaps": ((_read_register(client, VIDEO_SWAP_COUNT,
-                                              tiene_palabra)
+                                              has_word)
                                - swaps_base) & 0xFFFFFFFF
-                              if tiene_captura else None),
-                    "fb_front": _read_register(client, VIDEO_FB_FRONT, tiene_palabra),
+                              if has_capture else None),
+                    "fb_front": _read_register(client, VIDEO_FB_FRONT, has_word),
                     "frame": None,
                 }
                 if video.get("capture_frame"):
@@ -511,12 +511,12 @@ class FpgaCpuBackend(MonitorBackend):
                     # La corrección vive en `frame_capture.frame_tras_swap`, que
                     # además falla con `ParadaImprecisa` si se pasó de largo en
                     # dos o más: antes se corregía por paridad sin mirar cuánto.
-                    pedidos = parar_tras_swaps if (
-                        parar_tras_swaps
+                    requested = stop_after_swaps if (
+                        stop_after_swaps
                         and video_result["swaps"] is not None) else None
-                    video_result["frame"] = frame_capture.frame_tras_swap(
-                        client, leer_registro, REGISTROS_VIDEO,
-                        video_result["swaps"], pedidos, FRAME_BYTES)
+                    video_result["frame"] = frame_capture.frame_after_swap(
+                        client, read_register, VIDEO_REGISTERS,
+                        video_result["swaps"], requested, FRAME_BYTES)
 
         return {
             "halted": status.halted,
@@ -526,10 +526,10 @@ class FpgaCpuBackend(MonitorBackend):
             "registers": registers,
             "memory": memory,
             "video": video_result,
-            "stdout": salida_serie,
+            "stdout": serial_output,
             "cycles": cycles,
             "instructions": instructions,
             # `None` en las versiones sin contadores de espera.
-            "stalls": esperas,
+            "stalls": waits,
             "clock_hz": self.configuration.get("clock_hz"),
         }

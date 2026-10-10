@@ -40,9 +40,9 @@ def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Qué casos no caben aquí: los que piden algo que el simulador no declara."""
-    faltan = missing_capabilities(case, capabilities(version))
-    if faltan:
-        return f"el simulador {version!r} no tiene {', '.join(faltan)}"
+    missing = missing_capabilities(case, capabilities(version))
+    if missing:
+        return f"el simulador {version!r} no tiene {', '.join(missing)}"
     return None
 
 

@@ -53,10 +53,10 @@ def make_video(module: ModuleType, video: dict | None, what: str):
     video_class = getattr(module, "VideoDevice", None)
     if video_class is None:
         raise RuntimeError(f"{what} no tiene VideoDevice")
-    dispositivo = video_class()
+    device = video_class()
     if video.get("run_until_swap"):
-        dispositivo.stop_after_swaps = video["run_until_swap"]
-    return dispositivo
+        device.stop_after_swaps = video["run_until_swap"]
+    return device
 
 
 def make_serial(module: ModuleType, stdin: bytes, what: str):
@@ -70,9 +70,9 @@ def make_serial(module: ModuleType, stdin: bytes, what: str):
         if stdin:
             raise RuntimeError(f"{what} no tiene SerialDevice")
         return None
-    serie = serial_class(stdin=stdin)
-    serie.attach_host()
-    return serie
+    serial_device = serial_class(stdin=stdin)
+    serial_device.attach_host()
+    return serial_device
 
 
 def load_initial_memory(memory: bytearray, initial_memory: list[tuple[int, bytes]]) -> None:

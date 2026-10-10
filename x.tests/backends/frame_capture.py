@@ -42,18 +42,18 @@ from typing import Callable, NamedTuple
 FB_FRONT = 0x0100_0000
 FB_BACK = 0x0102_5800
 
-MASCARA = 0xFFFFFFFF
+MASK = 0xFFFFFFFF
 # Un frame son 16,7 ms: 200 ms de espera no se agotan salvo que el barrido esté
 # detenido, y entonces seguir esperando tampoco arreglaría nada.
-ESPERA_PENDIENTE_SEGUNDOS = 0.2
-INTENTOS = 3
+PENDING_WAIT_SECONDS = 0.2
+ATTEMPTS = 3
 
 
-class ParadaImprecisa(RuntimeError):
+class ImpreciseStop(RuntimeError):
     """La parada se pasó de largo y el frame pedido ya no existe."""
 
 
-class Registros(NamedTuple):
+class Registers(NamedTuple):
     """Direcciones de byte de los registros de vídeo que usa la parada."""
 
     status: int
@@ -62,16 +62,16 @@ class Registros(NamedTuple):
     fb_back: int
 
 
-def swaps_desde(leer: Callable[[int], int], registros: Registros, base: int) -> int:
-    return (leer(registros.swap_count) - base) & MASCARA
+def swaps_since(read: Callable[[int], int], registers: Registers, base: int) -> int:
+    return (read(registers.swap_count) - base) & MASK
 
 
-def hay_que_parar(leer: Callable[[int], int], registros: Registros,
-                  base: int, objetivo: int) -> bool:
-    return swaps_desde(leer, registros, base) >= objetivo
+def should_stop(read: Callable[[int], int], registers: Registers,
+                  base: int, target: int) -> bool:
+    return swaps_since(read, registers, base) >= target
 
 
-def parar(client, timeout_seconds: float = 1.0):
+def stop(client, timeout_seconds: float = 1.0):
     """Para el núcleo y espera a que lo esté; devuelve su estado.
 
     `halt_cpu` no es instantáneo en todas las versiones: leer el estado justo
@@ -80,14 +80,14 @@ def parar(client, timeout_seconds: float = 1.0):
     tiene pipeline).
     """
     client.halt_cpu()
-    limite = time.monotonic() + timeout_seconds
+    limit = time.monotonic() + timeout_seconds
     while True:
-        estado = client.get_status()
-        if estado.halted or time.monotonic() >= limite:
-            return estado
+        state = client.get_status()
+        if state.halted or time.monotonic() >= limit:
+            return state
 
 
-def esperar_sin_pendiente(leer: Callable[[int], int], registros: Registros) -> None:
+def wait_no_pending(read: Callable[[int], int], registers: Registers) -> None:
     """Espera a que no quede un intercambio pendiente.
 
     Parar el núcleo no para el doble buffer: una petición de SWAP se atiende en
@@ -95,14 +95,14 @@ def esperar_sin_pendiente(leer: Callable[[int], int], registros: Registros) -> N
     pendiente, SWAP_COUNT y FB_FRONT pueden cambiar entre dos lecturas, y la
     cuenta y la base que se leen serían de instantes distintos.
     """
-    limite = time.monotonic() + ESPERA_PENDIENTE_SEGUNDOS
-    while time.monotonic() < limite:
-        if not leer(registros.status) & 2:
+    limit = time.monotonic() + PENDING_WAIT_SECONDS
+    while time.monotonic() < limit:
+        if not read(registers.status) & 2:
             return
 
 
-def frame_tras_swap(client, leer: Callable[[int], int], registros: Registros,
-                    swaps: int, objetivo: int | None, frame_bytes: int) -> bytes:
+def frame_after_swap(client, read: Callable[[int], int], registers: Registers,
+                    swaps: int, target: int | None, frame_bytes: int) -> bytes:
     """El frame completo que dejó el intercambio `objetivo`.
 
     Con `de_mas == 1` el buffer buscado ha pasado a ser el trasero, porque cada
@@ -110,20 +110,20 @@ def frame_tras_swap(client, leer: Callable[[int], int], registros: Registros,
     parada y su contenido ya no cambia, así que es una corrección de paridad,
     no una heurística. Con más no hay corrección posible.
     """
-    de_mas = 0 if objetivo is None else swaps - objetivo
-    if de_mas < 0 or de_mas > 1:
-        raise ParadaImprecisa(
-            f"la parada pedía {objetivo} intercambios y salieron {swaps}")
-    direccion = registros.fb_back if de_mas else registros.fb_front
-    return client.read_memory(leer(direccion), frame_bytes)
+    extra = 0 if target is None else swaps - target
+    if extra < 0 or extra > 1:
+        raise ImpreciseStop(
+            f"la parada pedía {target} intercambios y salieron {swaps}")
+    address = registers.fb_back if extra else registers.fb_front
+    return client.read_memory(read(address), frame_bytes)
 
 
-def con_reintentos(ejecutar: Callable[[], dict], intentos: int = INTENTOS) -> dict:
+def with_retries(execute: Callable[[], dict], attempts: int = ATTEMPTS) -> dict:
     """Repite un caso cuya parada salió imprecisa; el último intento propaga."""
-    for intento in range(intentos):
+    for attempt in range(attempts):
         try:
-            return ejecutar()
-        except ParadaImprecisa:
-            if intento == intentos - 1:
+            return execute()
+        except ImpreciseStop:
+            if attempt == attempts - 1:
                 raise
     raise AssertionError("inalcanzable")

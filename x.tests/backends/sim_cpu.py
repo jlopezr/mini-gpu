@@ -53,9 +53,9 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     la ISA, el simulador la tendrá antes que el RTL y un `requires` sin
     respaldo tiene que dar SKIP, no un error de opcode inválido a medio caso.
     """
-    faltan = missing_capabilities(case, capabilities(version))
-    if faltan:
-        return f"el simulador {version!r} no tiene {', '.join(faltan)}"
+    missing = missing_capabilities(case, capabilities(version))
+    if missing:
+        return f"el simulador {version!r} no tiene {', '.join(missing)}"
     return None
 
 
@@ -111,15 +111,15 @@ class SimCpuBackend:
         del timeout_seconds  # El simulador usa un límite de instrucciones.
 
         what = f"el simulador {self.version!r}"
-        dispositivo = make_video(self.devices, video, what)
-        serie = make_serial(self.devices, stdin, what)
-        machine, cpu = self._build(dispositivo, serie, input_device(input_script))
+        device = make_video(self.devices, video, what)
+        serial_device = make_serial(self.devices, stdin, what)
+        machine, cpu = self._build(device, serial_device, input_device(input_script))
         cpu.load_program(program)
         load_initial_memory(machine.memory, initial_memory)
 
         machine.run(max_instructions)
 
-        resultado_video = video_result(machine, bool(video and video.get("capture_frame")))
+        video_info = video_result(machine, bool(video and video.get("capture_frame")))
         return {
             # El simulador cuenta instrucciones pero no ciclos: no modela el
             # tiempo, asi que `cycles` es None a proposito y el CPI de una fila
@@ -138,9 +138,9 @@ class SimCpuBackend:
                 (address, size): bytes(machine.memory[address:address + size])
                 for address, size in memory_ranges
             },
-            "video": resultado_video,
+            "video": video_info,
             # Lo que el programa dejo en la cola de salida. Es el campo que el
             # diferencial puede comparar contra la placa byte a byte: a
             # diferencia del video, un flujo de bytes no depende del tiempo.
-            "stdout": serie.output() if serie is not None else None,
+            "stdout": serial_device.output() if serial_device is not None else None,
         }

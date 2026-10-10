@@ -89,7 +89,7 @@ PERF_CYCLES = MMIO_GPU_PERF_BASE
 PERF_RETIRED = MMIO_GPU_PERF_BASE + 0x04
 
 # Observaciones que el RTL de hoy no deja leer, y cómo se llaman para el motivo.
-_NO_OBSERVABLES = (
+_UNOBSERVABLE = (
     (re.compile(r"^warp\[\d+\]\.pc$"), "el PC final de los warps"),
     (re.compile(r"^warp\[\d+\]\.active_mask$"), "la máscara de lanes viva de los warps"),
     (re.compile(r"^warp\[\d+\]\.lane\[\d+\]\.R\d+$"), "los registros de las lanes"),
@@ -110,18 +110,18 @@ def _is_gpu_file(name: str) -> bool:
 
 def gpu_capabilities(directory: Path, signals: dict) -> tuple[str, ...]:
     """Las capacidades de la GPU de una carpeta CPU+GPU, sin las de su CPU."""
-    restringidas = {}
+    restricted = {}
     for name, spec in signals.items():
         if "gpu" not in capability_architectures(spec):
             continue
-        ficheros = [f for f in capability_files(spec) if _is_gpu_file(f)]
+        files = [f for f in capability_files(spec) if _is_gpu_file(f)]
         # La memoria grande es de todo el sistema: la GPU direcciona la misma
         # SDRAM que la CPU, y su controlador no se llama `gpu_*`.
         if name == "large_memory":
-            ficheros = list(capability_files(spec))
-        if ficheros:
-            restringidas[name] = dict(spec, file=ficheros)
-    return capabilities_from_rtl(directory, restringidas)
+            files = list(capability_files(spec))
+        if files:
+            restricted[name] = dict(spec, file=files)
+    return capabilities_from_rtl(directory, restricted)
 
 
 def _select(directory: Path) -> bool:
@@ -140,24 +140,24 @@ def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     return capabilities_of(VERSIONS, version)
 
 
-_MODELO = {}
+_MODEL = {}
 
 
-def _modelo():
+def _model():
     """El simulador funcional, solo para validar el lanzamiento como el monitor."""
-    if "modulo" not in _MODELO:
-        ruta = _REPOSITORY / "11.gpu-sim-func" / "minigpu_sim.py"
+    if "modulo" not in _MODEL:
+        path = _REPOSITORY / "11.gpu-sim-func" / "minigpu_sim.py"
         if "gpu_trace" not in sys.modules:
-            _load_module("gpu_trace", ruta.with_name("gpu_trace.py"))
-        _MODELO["modulo"] = _load_module("gpu_core_launch_validation", ruta)
-    return _MODELO["modulo"]
+            _load_module("gpu_trace", path.with_name("gpu_trace.py"))
+        _MODEL["modulo"] = _load_module("gpu_core_launch_validation", path)
+    return _MODEL["modulo"]
 
 
-def _warps_del_caso(warp_config, memory_size: int):
+def _case_warps(warp_config, memory_size: int):
     """Los warps ya normalizados por el modelo, que es quien valida el JSON."""
-    modelo = _modelo().System(memory_size, 8, 8)
-    modelo.configure_warps(warp_config)
-    return modelo.streaming_multiprocessor.warps
+    model = _model().System(memory_size, 8, 8)
+    model.configure_warps(warp_config)
+    return model.streaming_multiprocessor.warps
 
 
 def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
@@ -167,10 +167,10 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
         return "las profundidades SIMT del caso requieren el simulador"
     if "atomic_warp_faults" in case.get("requires", []):
         return "el caso exige fallos atómicos por warp; el RTL permite efectos parciales"
-    disponibles = capabilities(version)
-    faltan = [name for name in case.get("requires", []) if name not in disponibles]
-    if faltan:
-        return f"sin {', '.join(faltan)}"
+    available = capabilities(version)
+    missing = [name for name in case.get("requires", []) if name not in available]
+    if missing:
+        return f"sin {', '.join(missing)}"
     # El vídeo es de la CPU: la GPU de esta carpeta no es maestro de MMIO.
     if (case.get("run_until") or case["expected"].get("video") is not None
             or case["expected"].get("frame") is not None):
@@ -180,21 +180,21 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     reason = board.region_incompatibility(case, monitor.ARCHITECTURAL_REGIONS)
     if reason:
         return reason
-    observaciones = case["expected"].get("observations", {})
-    if observaciones.get("fault.address") is not None or (
-        "fault.address" in observaciones
+    observations = case["expected"].get("observations", {})
+    if observations.get("fault.address") is not None or (
+        "fault.address" in observations
         and case["expected"]["error_code"] == ERROR_MEMORY_ACCESS
     ):
         return "el monitor no expone la dirección efectiva de un fallo"
-    ausentes = []
-    for patron, nombre in _NO_OBSERVABLES:
-        if any(patron.match(clave) for clave in observaciones) and nombre not in ausentes:
-            ausentes.append(nombre)
-    if ausentes:
-        return (f"el RTL de {version} no expone {' ni '.join(ausentes)} "
+    unavailable = []
+    for pattern, name in _UNOBSERVABLE:
+        if any(pattern.match(key) for key in observations) and name not in unavailable:
+            unavailable.append(name)
+    if unavailable:
+        return (f"el RTL de {version} no expone {' ni '.join(unavailable)} "
                 "(GPU SIMT DEBUG solo da instrucciones retiradas y el primer fallo)")
     try:
-        warps = _warps_del_caso(case["warp_config"], architectural_size(monitor))
+        warps = _case_warps(case["warp_config"], architectural_size(monitor))
         if any(w.workgroup_id > 0xFFFF_FFFF for w in warps):
             return "workgroup_id no cabe en 32 bits"
     except (ValueError, TypeError) as error:
@@ -218,31 +218,31 @@ def configure_and_launch(client, warps) -> int:
         vivo al warp, y escribir un descriptor de un warp vivo es un error.
     """
     client.write_word(GPU_CONTROL, CTRL_RESET)
-    por_id = {w.warp_id: w for w in warps}
-    lanzados = 0
+    by_id = {w.warp_id: w for w in warps}
+    launched = 0
     for warp_id in range(WARPS):
         base = MMIO_GPU_WARPS_BASE + warp_id * MMIO_GPU_WARPS_STRIDE
-        warp = por_id.get(warp_id)
+        warp = by_id.get(warp_id)
         pc = warp.pc if warp else 0
-        grupo = warp.workgroup_id if warp else 0
-        activo = warp.active_mask if warp else 0
-        logico = (warp.logical_warp_id or 0) if warp else 0
-        argumento = (warp.arg or 0) if warp else 0
+        group = warp.workgroup_id if warp else 0
+        active = warp.active_mask if warp else 0
+        logical = (warp.logical_warp_id or 0) if warp else 0
+        argument = (warp.arg or 0) if warp else 0
         client.write_word(base + MMIO_GPU_WARPS_PC_OFF, pc)
-        client.write_word(base + MMIO_GPU_WARPS_GROUP_OFF, grupo)
+        client.write_word(base + MMIO_GPU_WARPS_GROUP_OFF, group)
         client.write_word(MMIO_GPU_WARPS_BASE + MMIO_GPU_WARPS_LOGICAL_ID_OFF
-                          + warp_id * 4, logico)
+                          + warp_id * 4, logical)
         client.write_word(MMIO_GPU_WARPS_BASE + MMIO_GPU_WARPS_ARG_OFF
-                          + warp_id * 4, argumento)
-        client.write_word(base + MMIO_GPU_WARPS_ACTIVE_OFF, activo)
-        if activo:
-            lanzados |= 1 << warp_id
-    if lanzados:
+                          + warp_id * 4, argument)
+        client.write_word(base + MMIO_GPU_WARPS_ACTIVE_OFF, active)
+        if active:
+            launched |= 1 << warp_id
+    if launched:
         client.write_word(GPU_CONTROL, CTRL_RUN)
-    return lanzados
+    return launched
 
 
-def wait_for_kernel(client, lanzados: int, timeout_seconds: float,
+def wait_for_kernel(client, launched: int, timeout_seconds: float,
                     clock=time.monotonic, sleep=time.sleep) -> int:
     """Espera a que acaben los warps lanzados o a que la GPU falle.
 
@@ -251,54 +251,54 @@ def wait_for_kernel(client, lanzados: int, timeout_seconds: float,
     `WARP_DONE` es pegajoso, así que el evento no se pierde aunque se tarde en
     mirarlo. Devuelve el último `GPU_STATUS`.
     """
-    limite = clock() + timeout_seconds
+    limit = clock() + timeout_seconds
     while True:
-        hechos = client.read_word(WARP_DONE) & 0xFF
-        estado = client.read_word(GPU_STATUS)
-        if estado & STATUS_ERROR:
-            return estado
-        if lanzados == 0 or (hechos & lanzados) == lanzados:
+        done = client.read_word(WARP_DONE) & 0xFF
+        state = client.read_word(GPU_STATUS)
+        if state & STATUS_ERROR:
+            return state
+        if launched == 0 or (done & launched) == launched:
             # Los warps han acabado; falta que la GPU se pare del todo antes de
             # que el host lea la memoria.
-            if not estado & STATUS_RUNNING:
-                return estado
-        if clock() >= limite:
+            if not state & STATUS_RUNNING:
+                return state
+        if clock() >= limit:
             client.write_word(GPU_CONTROL, CTRL_HALT)
             raise TimeoutError(
                 f"La GPU no terminó en {timeout_seconds:g} segundos")
         sleep(POLL_SECONDS)
 
 
-def read_observations(client, estado: int, requested: set[str]) -> tuple[dict, int]:
+def read_observations(client, state: int, requested: set[str]) -> tuple[dict, int]:
     """`(observaciones, error_code)`: lo que el RTL deja leer.
 
     Solo se paga por serie lo pedido: los contadores por warp cuestan una
     escritura de CONTEXT y una lectura cada uno.
     """
-    error = bool(estado & STATUS_ERROR)
-    resultado = {
+    error = bool(state & STATUS_ERROR)
+    result = {
         "fault.present": error,
         "instructions_executed": client.read_word(PERF_RETIRED),
     }
-    codigo = 0
+    code = 0
     if error:
-        diagnostico = client.read_word(SIMT_FIRST_ERROR)
-        codigo = (diagnostico >> 8) & 0xFF
-        resultado.update({
+        diagnostic = client.read_word(SIMT_FIRST_ERROR)
+        code = (diagnostic >> 8) & 0xFF
+        result.update({
             "fault.pc": client.read_word(SIMT_FIRST_ERROR_PC),
-            "fault.warp_id": (diagnostico >> 3) & 7,
-            "fault.core_id": diagnostico & 7 if diagnostico & 0x40 else None,
+            "fault.warp_id": (diagnostic >> 3) & 7,
+            "fault.core_id": diagnostic & 7 if diagnostic & 0x40 else None,
         })
         # Solo los fallos que no son de dirección tienen una dirección efectiva
         # arquitectónicamente nula. Nunca se inventa una que el RTL no guarda.
-        if codigo != ERROR_MEMORY_ACCESS:
-            resultado["fault.address"] = None
+        if code != ERROR_MEMORY_ACCESS:
+            result["fault.address"] = None
     for warp in range(WARPS):
         if f"warp[{warp}].instructions_executed" in requested:
             client.write_word(SIMT_CONTEXT, warp << 3)
-            resultado[f"warp[{warp}].instructions_executed"] = client.read_word(
+            result[f"warp[{warp}].instructions_executed"] = client.read_word(
                 SIMT_WARP_RETIRED)
-    return resultado, codigo
+    return result, code
 
 
 class FpgaSysBackend(MonitorBackend):
@@ -308,7 +308,7 @@ class FpgaSysBackend(MonitorBackend):
     NAME = "fpga-sys"
     VERSIONS = VERSIONS
     DEFAULT_VERSION = DEFAULT_VERSION
-    def _run_una_vez(
+    def _run_once(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -334,36 +334,36 @@ class FpgaSysBackend(MonitorBackend):
             for address, data in initial_memory:
                 client.write_memory(address, data)
 
-            warps = _warps_del_caso(
+            warps = _case_warps(
                 warp_config, architectural_size(self.monitor))
-            lanzados = configure_and_launch(client, warps)
+            launched = configure_and_launch(client, warps)
             started = time.monotonic()
-            estado = wait_for_kernel(client, lanzados, timeout_seconds)
+            state = wait_for_kernel(client, launched, timeout_seconds)
             elapsed = time.monotonic() - started
-            if lanzados:
+            if launched:
                 # W1C: los warps ya consumidos, como hace launch-run.
-                client.write_word(WARP_DONE, lanzados)
+                client.write_word(WARP_DONE, launched)
 
-            observaciones, codigo_error = read_observations(
-                client, estado, observation_fields or set())
-            observaciones["duration_seconds"] = elapsed
-            ciclos = client.read_word(PERF_CYCLES)
-            memoria = {
+            observations, error_code = read_observations(
+                client, state, observation_fields or set())
+            observations["duration_seconds"] = elapsed
+            cycles = client.read_word(PERF_CYCLES)
+            memory = {
                 (address, size): client.read_memory(address, size)
                 for address, size in memory_ranges
             }
 
         return {
-            "halted": not estado & STATUS_RUNNING,
-            "error": bool(estado & STATUS_ERROR),
-            "error_code": codigo_error,
-            "pc": observaciones.get("fault.pc", 0),
+            "halted": not state & STATUS_RUNNING,
+            "error": bool(state & STATUS_ERROR),
+            "error_code": error_code,
+            "pc": observations.get("fault.pc", 0),
             "registers": {},
-            "cycles": ciclos,
-            "instructions": observaciones["instructions_executed"],
+            "cycles": cycles,
+            "instructions": observations["instructions_executed"],
             "clock_hz": self.configuration.get("clock_hz"),
             "stalls": None,
             "video": None,
-            "observations": observaciones,
-            "memory": memoria,
+            "observations": observations,
+            "memory": memory,
         }

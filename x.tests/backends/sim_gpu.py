@@ -47,9 +47,9 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     «aqui esta roto». Confundirlos es justamente lo que esta maquinaria existe
     para evitar.
     """
-    faltan = missing_capabilities(case, capabilities(version))
-    if faltan:
-        return f"el simulador de GPU {version!r} no tiene {', '.join(faltan)}"
+    missing = missing_capabilities(case, capabilities(version))
+    if missing:
+        return f"el simulador de GPU {version!r} no tiene {', '.join(missing)}"
     return None
 
 
@@ -78,10 +78,10 @@ class SimGpuBackend:
         # Como el backend CPU funcional, se limita por instrucciones, no por tiempo.
         del register_numbers, timeout_seconds
         what = f"el simulador de GPU {self.version!r}"
-        dispositivo = make_video(self.module, video, what)
+        device = make_video(self.module, video, what)
         size = self.module.config_warp_size(warp_config)
-        serie = make_serial(self.module, stdin, what)
-        gpu = self.module.System(warp_size=size, video=dispositivo, serial=serie,
+        serial_device = make_serial(self.module, stdin, what)
+        gpu = self.module.System(warp_size=size, video=device, serial=serial_device,
                                  input_device=input_device(input_script),
                                  **(simulator_options or {}))
         gpu.load_program(program, launch=False)
@@ -115,14 +115,14 @@ class SimGpuBackend:
             for lane in warp.processors:
                 for number, value in enumerate(lane.regs):
                     observations[f"{prefix}.lane[{lane.core_id}].R{number}"] = value
-        resultado_video = video_result(gpu, bool(video and video.get("capture_frame")))
+        video_info = video_result(gpu, bool(video and video.get("capture_frame")))
         return {
             "halted": gpu.halted,
             "error": gpu.error,
             "error_code": gpu.error_code,
             "registers": {},
-            "video": resultado_video,
-            "stdout": serie.output(),
+            "video": video_info,
+            "stdout": serial_device.output(),
             "observations": observations,
             "memory": {(address, size): bytes(gpu.memory[address:address + size])
                        for address, size in memory_ranges},

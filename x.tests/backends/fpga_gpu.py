@@ -47,7 +47,7 @@ VIDEO_CTRL = 0x8020_0000
 VIDEO_HALT_AT = 0x8020_001C
 VIDEO_HALT_TARGET = 0x8020_0020
 VIDEO_HALT_TARGET_GPU = 1 << 1
-REGISTROS_VIDEO = frame_capture.Registros(
+VIDEO_REGISTERS = frame_capture.Registers(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
@@ -108,9 +108,9 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     # hueco no daba la cara. Con `cases-shared` si: `shared-double-buffer`
     # pide `video`, y la 12 --que no lo tiene-- lo ejecutaba hasta que la
     # placa contestaba `ff`, o sea un ERROR donde tocaba un SKIP.
-    faltan = missing_with_hint(case, VERSIONS, version)
-    if faltan:
-        return faltan
+    missing = missing_with_hint(case, VERSIONS, version)
+    if missing:
+        return missing
     # El mapa lo declara el monitor de esta versión, que es quien lo implementa.
     monitor = _load_module(
         f'gpu_fpga_monitor_{version}_for_regions',
@@ -215,7 +215,7 @@ class FpgaGpuBackend(MonitorBackend):
     NAME = "fpga-gpu"
     VERSIONS = VERSIONS
     DEFAULT_VERSION = DEFAULT_VERSION
-    def _run_una_vez(
+    def _run_once(
         self,
         program: bytes,
         initial_memory: list[tuple[int, bytes]],
@@ -249,35 +249,35 @@ class FpgaGpuBackend(MonitorBackend):
             # `shared-video-*` que corrian despues, y solo pasaban con la placa
             # recien cargada. Es propiedad del arnes, como en `fpga_cpu.py`: el caso
             # declara lo que espera, no como dejar la placa preparada.
-            capacidades = self.configuration["capabilities"]
-            if "video" in capacidades:
+            device_caps = self.configuration["capabilities"]
+            if "video" in device_caps:
                 _write_register(client, VIDEO_STATUS, 1)
                 _write_register(client, VIDEO_CTRL, VIDEO_MODE_PATTERN)
             # Y la alarma desarmada: solo el reset de la placa la reinicia, y un
             # caso que se quedara sin consumirla --un timeout-- se la pasaria al
             # siguiente.
-            if "halt_on_swap" in capacidades:
+            if "halt_on_swap" in device_caps:
                 _write_register(client, VIDEO_HALT_AT, 0)
                 _write_register(client, VIDEO_HALT_TARGET, 0)
 
-            def leer_registro(direccion: int) -> int:
-                return _read_register(client, direccion)
+            def read_register(address: int) -> int:
+                return _read_register(client, address)
 
             # SWAP_COUNT es del dispositivo de vídeo y sobrevive a `reset_cpu`:
             # la parada y el informe lo miden contra la base de ESTE caso.
-            parar_tras_swaps = (video or {}).get("run_until_swap") or 0
+            stop_after_swaps = (video or {}).get("run_until_swap") or 0
             # Dos formas de parar, igual que en `fpga_cpu.py`: con `halt_on_swap`
             # `HALT_AT` cuenta intercambios (§9.6) y se arma; sin ella se sondea
             # SWAP_COUNT desde el host (frame_capture.py).
-            por_hardware = bool(parar_tras_swaps and "halt_on_swap" in capacidades)
+            by_hardware = bool(stop_after_swaps and "halt_on_swap" in device_caps)
             swaps_base = (_read_register(client, VIDEO_SWAP_COUNT)
                           if video is not None else 0)
-            if por_hardware:
+            if by_hardware:
                 # HALT_TARGET primero: arranca a cero y sin el bit de GPU la
                 # alarma se consume sin parar a nadie. Y HALT_AT lo ultimo antes
                 # de arrancar, porque armar pone a cero la cuenta de la alarma.
                 _write_register(client, VIDEO_HALT_TARGET, VIDEO_HALT_TARGET_GPU)
-                _write_register(client, VIDEO_HALT_AT, parar_tras_swaps)
+                _write_register(client, VIDEO_HALT_AT, stop_after_swaps)
 
             started = time.monotonic()
             client.run_cpu()
@@ -290,18 +290,18 @@ class FpgaGpuBackend(MonitorBackend):
                 # La parada del arnés, igual que en `fpga_cpu.py`: un programa de
                 # vídeo no termina solo. Con la alarma de hardware se espera a
                 # que pare sola; sin ella se sondea SWAP_COUNT.
-                sondeando = bool(parar_tras_swaps and not por_hardware)
-                if sondeando:
-                    if frame_capture.hay_que_parar(leer_registro, REGISTROS_VIDEO,
-                                                swaps_base, parar_tras_swaps):
-                        status = frame_capture.parar(client)
+                polling = bool(stop_after_swaps and not by_hardware)
+                if polling:
+                    if frame_capture.should_stop(read_register, VIDEO_REGISTERS,
+                                                swaps_base, stop_after_swaps):
+                        status = frame_capture.stop(client)
                         break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
                     raise TimeoutError(
                         f"La GPU no terminó en {timeout_seconds:g} segundos"
                     )
-                if not sondeando:
+                if not polling:
                     time.sleep(0.01)
 
             elapsed = time.monotonic() - started
@@ -332,24 +332,24 @@ class FpgaGpuBackend(MonitorBackend):
                 # detenido.
                 # Parar el núcleo no para el doble buffer: se espera a que no
                 # quede un intercambio pendiente antes de leer nada.
-                frame_capture.esperar_sin_pendiente(leer_registro, REGISTROS_VIDEO)
-                estado = _read_register(client, VIDEO_STATUS)
+                frame_capture.wait_no_pending(read_register, VIDEO_REGISTERS)
+                state = _read_register(client, VIDEO_STATUS)
                 video_result = {
-                    "underflow": bool(estado & 1),
-                    "frames": estado >> 16,
+                    "underflow": bool(state & 1),
+                    "frames": state >> 16,
                     # HALT_AT no existe aqui, pero SWAP_COUNT si: esta dentro de
                     # la ventana en las cuatro GPU.
-                    "swaps": frame_capture.swaps_desde(
-                        leer_registro, REGISTROS_VIDEO, swaps_base),
+                    "swaps": frame_capture.swaps_since(
+                        read_register, VIDEO_REGISTERS, swaps_base),
                     "fb_front": _read_register(client, VIDEO_FB_FRONT),
                     "frame": None,
                 }
                 if video.get("capture_frame"):
                     # Desde FB_FRONT, no desde una direccion fija: tras el
                     # intercambio N el buffer visible alterna segun la paridad.
-                    video_result["frame"] = frame_capture.frame_tras_swap(
-                        client, leer_registro, REGISTROS_VIDEO,
-                        video_result["swaps"], parar_tras_swaps or None,
+                    video_result["frame"] = frame_capture.frame_after_swap(
+                        client, read_register, VIDEO_REGISTERS,
+                        video_result["swaps"], stop_after_swaps or None,
                         FRAME_BYTES)
 
         return {

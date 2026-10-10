@@ -94,16 +94,16 @@ def missing_with_hint(case: dict, versions: dict, version: str) -> str | None:
     El motivo dice qué versión sí lo tiene, que es lo que uno quiere saber
     cuando ve el SKIP. La que falla ya sale en el prefijo `[version]` del SKIP.
     """
-    disponibles = expand_for(versions[version]["capabilities"])
-    faltan = missing_capabilities(case, disponibles)
-    if not faltan:
+    available = expand_for(versions[version]["capabilities"])
+    missing = missing_capabilities(case, available)
+    if not missing:
         return None
-    con_ello = sorted(
+    having_it = sorted(
         name for name, config in versions.items()
-        if set(faltan) <= expand_for(config["capabilities"])
+        if set(missing) <= expand_for(config["capabilities"])
     )
-    sugerencia = f" (la tienen: {', '.join(con_ello)})" if con_ello else ""
-    return f"sin {', '.join(faltan)}{sugerencia}"
+    hint = f" (la tienen: {', '.join(having_it)})" if having_it else ""
+    return f"sin {', '.join(missing)}{hint}"
 
 
 def region_reason(case: dict, versions: dict, version: str, backend_name: str):
@@ -198,12 +198,12 @@ class MonitorBackend:
         ) as connection:
             client = self.monitor.MonitorClient(connection)
             actual = client.get_version()
-            esperado = self.configuration["monitor_version"]
-            if (actual.major, actual.minor) != esperado:
+            expected = self.configuration["monitor_version"]
+            if (actual.major, actual.minor) != expected:
                 raise RuntimeError(
                     f"La FPGA conectada responde con monitor {actual}, "
                     f"pero --version {self.NAME}={self.version} requiere "
-                    f"{'.'.join(map(str, esperado))}. Carga el bitstream "
+                    f"{'.'.join(map(str, expected))}. Carga el bitstream "
                     "correspondiente."
                 )
             yield client
@@ -211,7 +211,7 @@ class MonitorBackend:
     def run(self, *args, **kwargs) -> dict:
         # Si la parada por intercambios sale imprecisa, el caso se repite: ver
         # `frame_capture`. Sin `run_until` no hay parada que pueda serlo.
-        return frame_capture.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+        return frame_capture.with_retries(lambda: self._run_once(*args, **kwargs))
 
-    def _run_una_vez(self, *args, **kwargs) -> dict:
+    def _run_once(self, *args, **kwargs) -> dict:
         raise NotImplementedError
