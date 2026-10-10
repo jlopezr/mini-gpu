@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT / "x.tests"))
 
 from mini_asm import assemble_bytes
-from backends.simulator import SimulatorBackend
+from backends.sim_cpu import SimulatorBackend
 
 
 def load_fire_model():

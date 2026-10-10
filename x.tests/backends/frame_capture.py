@@ -1,6 +1,18 @@
-"""Parar un programa de vídeo tras N intercambios y capturar su frame.
+"""Capturar el frame de un programa de vídeo: dónde está y cómo parar tras N intercambios.
 
-Es lo que comparten `fpga.py` y `gpu_fpga.py`. Antes lo hacía solo el de CPU y
+**Dónde está.** Los programas de vídeo del repositorio ponen el framebuffer ellos
+mismos al arrancar, con `STORE` a `FB_FRONT` y `FB_BACK`: las bases arrancan a
+cero y el arnés ya no las prepara. Durante un tiempo lo hizo, solo por dos casos
+(`band` y `bounce`), y tapaba un problema de verdad --solo el reset de la placa
+reinicia las bases, así que un caso con un número impar de intercambios se las
+pasaba cruzadas al siguiente--. Lo que queda son las dos direcciones que los
+programas usan de hecho (`FB_FRONT` y `FB_BACK`, abajo), para que las pruebas que
+necesitan mirar el framebuffer no dupliquen el número. Están separadas por
+0x25800, justo un frame de 320x240 en RGB565, y alineadas a 16 como exige §9.2.
+Si un programa elige otra dirección no pasa nada: los backends capturan el frame
+leyendo `FB_FRONT` de la placa o del dispositivo, nunca una dirección fija.
+
+**Cómo parar.** Es lo que comparten `fpga_cpu.py` y `fpga_gpu.py`. Antes lo hacía solo el de CPU y
 la GPU esperaba a un HALT que un programa de vídeo no ejecuta nunca, así que
 los casos `run_until: {swap: N}` se omitían en placa.
 
@@ -8,7 +20,7 @@ Hay dos formas de parar, según lo que declare el RTL (`tools/capabilities.json`
 
   - `halt_on_swap`: `HALT_AT` cuenta intercambios (mmio.md §9.6), así que el
     backend lo arma y el núcleo se para solo, en el ciclo del intercambio N.
-    Lo tienen las CPU con vídeo; esa rama vive en `fpga.py`.
+    Lo tienen las CPU con vídeo; esa rama vive en `fpga_cpu.py`.
   - sin ella, que es hoy el caso de las GPU --donde `HALT_AT` ni existe--: el
     host sondea SWAP_COUNT y manda parar al llegar a N. Es lo que hay en este
     módulo (`hay_que_parar`, `parar`).
@@ -26,6 +38,9 @@ from __future__ import annotations
 
 import time
 from typing import Callable, NamedTuple
+
+FB_FRONT = 0x0100_0000
+FB_BACK = 0x0102_5800
 
 MASCARA = 0xFFFFFFFF
 # Un frame son 16,7 ms: 200 ms de espera no se agotan salvo que el barrido esté

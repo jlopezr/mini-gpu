@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backends.gpu_simulator import GpuBackend
+from backends.sim_gpu import GpuBackend
 from run_tests import (ROOT, REPOSITORY, load_case, compare_result,
                        discover_cases, exclude_cases, slow_reason)
 
@@ -76,7 +76,7 @@ class GpuRunnerTest(unittest.TestCase):
             self.assertEqual(load_case(directory / 'test.json')['requires'], [])
 
     def test_getid_case_runs_on_both_simulators(self):
-        from backends.gpu_simulator import incompatibility
+        from backends.sim_gpu import incompatibility
         case = load_case(ROOT / 'cases-gpu/extensions/gpu-ids/getid-family/test.json')
         for version in ('current', 'cycle'):
             with self.subTest(version=version):

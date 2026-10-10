@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'x.tests'))
-from backends.gpu_simulator import GpuBackend, incompatibility
+from backends.sim_gpu import GpuBackend, incompatibility
 from run_tests import backend_arguments, load_case, compare_result
 
 

@@ -193,7 +193,7 @@ lanza las dos, una tras otra (`--family cpu|gpu` elige una). De los 78 casos de
 `cases-gpu/` solo corren los que no piden el PC, la máscara de lanes ni los
 registros de los warps, porque el RTL no los expone por MMIO: hoy dos más los
 compartidos que no dependen de ello. Los demás salen como `SKIP` con motivo. El
-diseño, qué falta y cómo desbloquearlos: [backend-gpu-core.md](backend-gpu-core.md).
+diseño, qué falta y cómo desbloquearlos: [backend-fpga-sys.md](backend-fpga-sys.md).
 `--measure` todavía no admite `fpga-sys`.
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
@@ -677,7 +677,7 @@ ejecuta:
 | `sim-cpu` | [2.cpu-sim-func](../2.cpu-sim-func/) | `fpga-cpu` |
 | `sim-gpu`, `sim-gpu-cycle` | [11.gpu-sim-func](../11.gpu-sim-func/) y [25.gpu-sim-cycle-uarch](../25.gpu-sim-cycle-uarch/) | `fpga-gpu` |
 | `sim-sys` | [32.cpu-gpu-func-sim](../32.cpu-gpu-func-sim/): la CPU y la GPU sobre la misma RAM; ejecuta casos de CPU, con la capacidad `gpu_core` | `fpga-cpu` sobre la 36 o la 37 |
-| `fpga-sys` | la GPU de la 36 o la 37, lanzada por el host con la CPU parada ([backend-gpu-core.md](backend-gpu-core.md)); ejecuta casos de GPU | `sim-gpu` (`gpu-sys-both`) |
+| `fpga-sys` | la GPU de la 36 o la 37, lanzada por el host con la CPU parada ([backend-fpga-sys.md](backend-fpga-sys.md)); ejecuta casos de GPU | `sim-gpu` (`gpu-sys-both`) |
 
 Los lanzadores de `tools/` se llaman igual que los simuladores (`sim-cpu`,
 `sim-gpu`, `sim-gpu-cycle`, `sim-sys`). Los diferenciales son `both`
@@ -859,7 +859,7 @@ N-ésimo intercambio completado el frame está entero por construcción.
   termina la instrucción en vuelo, como con cualquier parada.
 - **Sin ella**, que hoy no le toca a ninguna placa con vídeo. El host sondea
   `SWAP_COUNT` mientras el programa corre y manda parar al llegar a N. Es lo que
-  hace `backends/video_stop.py`, y queda como respaldo para una versión nueva
+  hace `backends/frame_capture.py`, y queda como respaldo para una versión nueva
   que tuviera `SWAP_COUNT` pero no la alarma.
 
 El sondeo llega tarde lo que tarda el viaje por el puerto serie, y la alarma de

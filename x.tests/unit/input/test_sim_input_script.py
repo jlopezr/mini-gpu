@@ -256,8 +256,8 @@ HALT"""
     def test_los_tres_motores(self):
         sys.path.insert(0, str(ROOT / "x.tests"))
         from mini_asm import assemble_bytes
-        from backends.simulator import SimulatorBackend
-        from backends.gpu_simulator import GpuBackend
+        from backends.sim_cpu import SimulatorBackend
+        from backends.sim_gpu import GpuBackend
         backends = [SimulatorBackend(ROOT), GpuBackend(ROOT), GpuBackend(ROOT, "cycle")]
         for backend in backends:
             with self.subTest(backend=backend.version, architecture=backend.ARCHITECTURE):

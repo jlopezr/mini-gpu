@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.sim_peripherals import video_result
 
-from backends.simulator import _load_module, expand_for, input_device
+from backends.sim_cpu import _load_module, expand_for, input_device
 
 
 VERSIONS = {

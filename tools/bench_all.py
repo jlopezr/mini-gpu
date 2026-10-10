@@ -34,9 +34,9 @@ for extra in (ROOT, ROOT / "x.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from backends import fpga as cpu_fpga  # noqa: E402
-from backends import gpu_core  # noqa: E402
-from backends import gpu_fpga  # noqa: E402
+from backends import fpga_cpu as cpu_fpga  # noqa: E402
+from backends import fpga_sys  # noqa: E402
+from backends import fpga_gpu  # noqa: E402
 
 
 def _number(directory: Path) -> int:
@@ -52,14 +52,14 @@ def prototypes(family: str, core: bool = False):
     mide y `fpga-sys` todavía no admite `--measure`.
     """
     found = []
-    for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", gpu_fpga.VERSIONS)):
+    for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", fpga_gpu.VERSIONS)):
         if family not in ("all", name):
             continue
         for version in versions.values():
             directory = version["monitor_path"].parent
             found.append((name, _number(directory), directory.name))
     if core and family in ("all", "gpu"):
-        for version in gpu_core.VERSIONS.values():
+        for version in fpga_sys.VERSIONS.values():
             directory = version["monitor_path"].parent
             found.append(("gpu", _number(directory), directory.name))
     return sorted(found, key=lambda item: (item[0], item[1]))
@@ -73,7 +73,7 @@ def board_backend(family: str, number: int) -> str:
     """
     if family == "gpu" and any(
             _number(v["monitor_path"].parent) == number
-            for v in gpu_core.VERSIONS.values()):
+            for v in fpga_sys.VERSIONS.values()):
         return "fpga-sys"
     return f"fpga-{family}"
 

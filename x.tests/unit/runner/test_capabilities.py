@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backends import fpga, gpu_fpga, simulator
+from backends import fpga_cpu, fpga_gpu, sim_cpu
 from run_tests import (
     CAPABILITIES,
     expand_capabilities,
@@ -91,11 +91,11 @@ class CapabilitiesTest(unittest.TestCase):
         # WRITE_WORD convergio en las diez copias de monitor.v; empezo solo en
         # la 19, como prueba, y ver aqui que ya no falta en ninguna es lo que
         # dice que el experimento se cerro.
-        self.assertEqual(fpga.capabilities("ebr"),
+        self.assertEqual(fpga_cpu.capabilities("ebr"),
                          {"mul_div", "read_word", "write_word"})
         # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
         # `large_memory` es la SDRAM: la tienen todas menos la 6 (EBR).
-        self.assertEqual(fpga.capabilities("sdram"),
+        self.assertEqual(fpga_cpu.capabilities("sdram"),
                          {"read_word", "write_word", "large_memory"})
         # La 16 tiene video Y con que capturar, desde que migro a MMIO v2.
         # Antes tenia cinco registros de video --sin FRAME_COUNT, SWAP_COUNT,
@@ -107,18 +107,18 @@ class CapabilitiesTest(unittest.TestCase):
         # pasaron a ser un dispositivo.
         # `halt_on_swap`: la alarma HALT_AT cuenta intercambios (§9.6), asi que
         # el arnes la arma en vez de sondear SWAP_COUNT.
-        self.assertEqual(fpga.capabilities("hdmi"),
+        self.assertEqual(fpga_cpu.capabilities("hdmi"),
                          {"video", "frame_capture", "halt_on_swap", "mul_div",
                           "read_word", "write_word", "perf_counters",
                           "large_memory"})
         # La 18 tiene las dos.
         self.assertEqual(
-            fpga.capabilities("bl8"),
+            fpga_cpu.capabilities("bl8"),
             {"video", "frame_capture", "halt_on_swap", "mul_div", "read_word",
              "write_word", "perf_counters", "large_memory"})
         # Y la 19 anade las extensiones de ISA y el puerto serie.
         self.assertEqual(
-            fpga.capabilities("subword"),
+            fpga_cpu.capabilities("subword"),
             {"video", "frame_capture", "halt_on_swap", "subword_memory",
              "calls", "serial", "mul_div", "read_word", "write_word",
              "perf_counters", "large_memory"})
@@ -139,9 +139,9 @@ class CapabilitiesTest(unittest.TestCase):
         from tools.rtl_facts import monitor_cycle_counters_from_rtl
 
         con_comando = [
-            nombre for nombre in fpga.VERSIONS
+            nombre for nombre in fpga_cpu.VERSIONS
             if monitor_cycle_counters_from_rtl(
-                REPOSITORY / fpga.VERSIONS[nombre]["monitor_path"].parent)]
+                REPOSITORY / fpga_cpu.VERSIONS[nombre]["monitor_path"].parent)]
         self.assertEqual(con_comando, [])
 
     def test_los_contadores_de_espera_solo_los_tiene_la_familia_de_la_30(self):
@@ -151,15 +151,15 @@ class CapabilitiesTest(unittest.TestCase):
         Las demas CPU tienen el bloque de dos contadores: leerles esas ranuras
         da error de MMIO, no ceros, asi que `--measure` no debe intentarlo."""
         con_esperas = sorted(
-            nombre for nombre, version in fpga.VERSIONS.items()
+            nombre for nombre, version in fpga_cpu.VERSIONS.items()
             if "perf_stalls" in version["capabilities"])
         self.assertEqual(con_esperas,
                          ["console", "cpugpu", "fifo", "mk2", "sdram2"])
         # Quien los tiene declara tambien los de ciclos e instrucciones: sin
         # CYCLES y RETIRED no hay con que repartir nada.
         for nombre in con_esperas:
-            self.assertIn("perf_counters", fpga.capabilities(nombre), nombre)
-        self.assertNotIn("perf_stalls", fpga.capabilities("alu"))
+            self.assertIn("perf_counters", fpga_cpu.capabilities(nombre), nombre)
+        self.assertNotIn("perf_stalls", fpga_cpu.capabilities("alu"))
 
     def test_read_word_en_todas(self):
         """READ_WORD no es una extension: es parte del contrato del monitor.
@@ -167,12 +167,12 @@ class CapabilitiesTest(unittest.TestCase):
         Se detecta del RTL y no se supone por version porque la numeracion no
         es comparable entre familias -la 6 va por 1.x y la 22 por 2.x-, asi que
         "version >= N" no significa nada fuera de una carpeta. Si alguna se
-        quedara sin el, `fpga._read_register` volveria a los cuatro READ_BYTE y
+        quedara sin el, `fpga_cpu._read_register` volveria a los cuatro READ_BYTE y
         el contador de frames podria salir desgarrado, en silencio; aqui sale
         con nombre.
         """
-        sin_ella = [nombre for nombre in fpga.VERSIONS
-                    if "read_word" not in fpga.capabilities(nombre)]
+        sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
+                    if "read_word" not in fpga_cpu.capabilities(nombre)]
         self.assertEqual(sin_ella, [])
 
     def test_solo_la_10_no_tiene_mul_div(self):
@@ -184,10 +184,10 @@ class CapabilitiesTest(unittest.TestCase):
         extenderse a mas backends, que es lo contrario de lo que le pasa a una
         extension.
         """
-        sin_ella = [nombre for nombre in fpga.VERSIONS
-                    if "mul_div" not in fpga.capabilities(nombre)]
+        sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
+                    if "mul_div" not in fpga_cpu.capabilities(nombre)]
         self.assertEqual(sin_ella, ["sdram"])
-        self.assertIn("mul_div", simulator.capabilities())
+        self.assertIn("mul_div", sim_cpu.capabilities())
 
     def test_alu_extended_implica_mul_div(self):
         """MULHI sale del mismo multiplicador que MUL, y REM del divisor de DIV.
@@ -222,19 +222,19 @@ class CapabilitiesTest(unittest.TestCase):
         for capacidad in ("calls", "subword_memory"):
             caso = self._caso([capacidad])
             for version in ("ebr", "sdram", "hdmi", "bl8"):
-                motivo = fpga.incompatibility(caso, version)
+                motivo = fpga_cpu.incompatibility(caso, version)
                 self.assertIsNotNone(motivo, f"{capacidad} en {version}")
                 self.assertIn(capacidad, motivo)
                 self.assertIn("subword", motivo)
-            self.assertIsNone(fpga.incompatibility(caso, "subword"))
+            self.assertIsNone(fpga_cpu.incompatibility(caso, "subword"))
 
     def test_el_serie_se_omite_en_los_bitstreams_anteriores(self):
         caso = self._caso(["serial"])
         for version in ("ebr", "sdram", "hdmi", "bl8"):
-            motivo = fpga.incompatibility(caso, version)
+            motivo = fpga_cpu.incompatibility(caso, version)
             self.assertIsNotNone(motivo, f"serial en {version}")
             self.assertIn("serial", motivo)
-        self.assertIsNone(fpga.incompatibility(caso, "subword"))
+        self.assertIsNone(fpga_cpu.incompatibility(caso, "subword"))
 
     def test_stdin_y_stdout_exigen_la_capacidad(self):
         """Sin `requires: ["serial"]` el caso se rechaza al CARGAR.
@@ -284,7 +284,7 @@ class CapabilitiesTest(unittest.TestCase):
         """Va por delante del RTL, como debe: es donde se prueban primero."""
         for capacidad in ("calls", "subword_memory"):
             self.assertIsNone(
-                simulator.incompatibility({"requires": [capacidad]}))
+                sim_cpu.incompatibility({"requires": [capacidad]}))
 
     def test_el_simulador_tambien_puede_omitir(self):
         """La comprobacion es real, no un `return None`.
@@ -294,7 +294,7 @@ class CapabilitiesTest(unittest.TestCase):
         inventada para que el dia que se anada una capacidad que el simulador
         no tenga, el SKIP funcione en vez de dejar correr el caso a medias.
         """
-        motivo = simulator.incompatibility({"requires": ["inventada"]})
+        motivo = sim_cpu.incompatibility({"requires": ["inventada"]})
         self.assertIsNotNone(motivo)
         self.assertIn("inventada", motivo)
 
@@ -312,13 +312,13 @@ class CapabilitiesTest(unittest.TestCase):
     def test_un_caso_de_video_se_omite_donde_no_lo_hay(self):
         caso = self._caso(["video"])
         for version in ("ebr", "sdram"):
-            motivo = fpga.incompatibility(caso, version)
+            motivo = fpga_cpu.incompatibility(caso, version)
             self.assertIsNotNone(motivo)
             self.assertIn("video", motivo)
         # Donde si lo hay, la capacidad no puede ser el motivo. Podria haberlo
         # por otra cosa, asi que se comprueba que no habla de capacidades.
         for version in ("hdmi", "bl8"):
-            motivo = fpga.incompatibility(caso, version)
+            motivo = fpga_cpu.incompatibility(caso, version)
             if motivo is not None:
                 self.assertNotIn("sin video", motivo)
 
@@ -337,7 +337,7 @@ class CapabilitiesTest(unittest.TestCase):
         """
         caso = self._caso(["frame_capture"])
         for version in ("ebr", "sdram"):
-            motivo = fpga.incompatibility(caso, version)
+            motivo = fpga_cpu.incompatibility(caso, version)
             with self.subTest(version=version):
                 self.assertIsNotNone(motivo)
                 self.assertIn("frame_capture", motivo)
@@ -346,7 +346,7 @@ class CapabilitiesTest(unittest.TestCase):
                 self.assertIn("bl8", motivo)
         # Y donde si la hay, la capacidad no puede ser el motivo.
         for version in ("hdmi", "bl8"):
-            motivo = fpga.incompatibility(caso, version)
+            motivo = fpga_cpu.incompatibility(caso, version)
             with self.subTest(version=version):
                 if motivo is not None:
                     self.assertNotIn("frame_capture", motivo)
@@ -456,12 +456,12 @@ class CapabilitiesTest(unittest.TestCase):
 
         Las GPU la ganaron cuando `gpu_video_regs.v` dejo de tener HALT_AT como
         un hueco que leia cero. Las que no tienen video --12 y 14-- no tienen
-        alarma, y paran por sondeo si algun dia se les pide (video_stop.py).
+        alarma, y paran por sondeo si algun dia se les pide (frame_capture.py).
         """
         for version in ("hdmi", "bl8", "subword", "alu", "console"):
             with self.subTest(familia="cpu", version=version):
-                self.assertIn("halt_on_swap", fpga.capabilities(version))
-        for version, configuracion in gpu_fpga.VERSIONS.items():
+                self.assertIn("halt_on_swap", fpga_cpu.capabilities(version))
+        for version, configuracion in fpga_gpu.VERSIONS.items():
             capacidades = configuracion["capabilities"]
             with self.subTest(familia="gpu", version=version):
                 self.assertEqual("halt_on_swap" in capacidades,
@@ -475,8 +475,8 @@ class CapabilitiesTest(unittest.TestCase):
         """
         for capacidad in ("video", "frame_capture"):
             self.assertIsNone(
-                simulator.incompatibility({"requires": [capacidad]}))
-        self.assertIsNone(simulator.incompatibility({"requires": []}))
+                sim_cpu.incompatibility({"requires": [capacidad]}))
+        self.assertIsNone(sim_cpu.incompatibility({"requires": []}))
 
     def test_el_simulador_no_modela_el_tiempo(self):
         """Y esto es la letra pequena de lo anterior.
@@ -512,7 +512,7 @@ class CapabilitiesTest(unittest.TestCase):
         # Las bases se dan aqui, y no se heredan del encendido: desde la fase
         # 3.5 el dispositivo arranca con las dos a cero --igual que el RTL-- y
         # con ceros esta prueba no distinguiria un intercambio de no hacer
-        # nada. Los valores son los que usa el arnes, ver video_layout.py.
+        # nada. Los valores son los que usa el arnes, ver frame_capture.py.
         FRENTE, FONDO = 0x0100_0000, 0x0102_5800
         for periodo in (1, 7, 1000):
             video = modulo.VideoDevice(fb_front=FRENTE, fb_back=FONDO,
@@ -614,10 +614,10 @@ class CapabilitiesTest(unittest.TestCase):
         juntas en cada version: una version sin el bloque INPUT omite el caso en
         vez de intentar correrlo.
         """
-        self.assertIn("input_device", fpga.capabilities("console"))
-        for nombre in fpga.VERSIONS:
-            self.assertEqual("input" in fpga.capabilities(nombre),
-                             "input_device" in fpga.capabilities(nombre), nombre)
+        self.assertIn("input_device", fpga_cpu.capabilities("console"))
+        for nombre in fpga_cpu.VERSIONS:
+            self.assertEqual("input" in fpga_cpu.capabilities(nombre),
+                             "input_device" in fpga_cpu.capabilities(nombre), nombre)
         self.assertIn("input", CAPABILITIES)
 
     def test_todas_las_capacidades_tienen_arquitectura(self):

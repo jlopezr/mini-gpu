@@ -14,18 +14,18 @@ from pathlib import Path
 from types import ModuleType
 
 from backends import board
-from backends import cpu_gpu_simulator as cpu_gpu_simulator_backend
-from backends import fpga as fpga_backend
-from backends import gpu_core as gpu_core_backend
-from backends import gpu_fpga as gpu_fpga_backend
-from backends import simulator as simulator_backend
-from backends import gpu_simulator as gpu_backend
-from backends.gpu_simulator import GpuBackend
-from backends.cpu_gpu_simulator import CpuGpuSimulatorBackend
-from backends.fpga import FpgaBackend
-from backends.gpu_core import GpuCoreBackend
-from backends.gpu_fpga import GpuFpgaBackend
-from backends.simulator import SimulatorBackend
+from backends import sim_sys as sim_sys_backend
+from backends import fpga_cpu as fpga_backend
+from backends import fpga_sys as gpu_core_backend
+from backends import fpga_gpu as gpu_fpga_backend
+from backends import sim_cpu as simulator_backend
+from backends import sim_gpu as gpu_backend
+from backends.sim_gpu import GpuBackend
+from backends.sim_sys import CpuGpuSimulatorBackend
+from backends.fpga_cpu import FpgaBackend
+from backends.fpga_sys import GpuCoreBackend
+from backends.fpga_gpu import GpuFpgaBackend
+from backends.sim_cpu import SimulatorBackend
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
@@ -75,10 +75,10 @@ BACKEND_DEFINITIONS = {
     # hardware, y por eso su pareja es `fpga-cpu` sobre ellas, no `fpga-sys`.
     "sim-sys": {
         "class": CpuGpuSimulatorBackend,
-        "module": cpu_gpu_simulator_backend,
+        "module": sim_sys_backend,
         "architecture": CpuGpuSimulatorBackend.ARCHITECTURE,
-        "versions": cpu_gpu_simulator_backend.VERSIONS,
-        "default_version": cpu_gpu_simulator_backend.DEFAULT_VERSION,
+        "versions": sim_sys_backend.VERSIONS,
+        "default_version": sim_sys_backend.DEFAULT_VERSION,
     },
     "fpga-cpu": {
         "class": FpgaBackend,
@@ -491,7 +491,7 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 #                  registros en 0x80000000.
 #   frame_capture  ademas hay SWAP_COUNT, o sea se puede parar en un
 #                  intercambio concreto y leer el frame de forma repetible
-#                  (el arnes sondea el contador: backends/video_stop.py). Se
+#                  (el arnes sondea el contador: backends/frame_capture.py). Se
 #                  escribio cuando solo la 18 tenia con que capturar; hoy la
 #                  tienen todas las que tienen video, CPU y GPU.
 #
@@ -557,7 +557,7 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # el dia que la 10 implemente las tres, esta entrada desaparece.
 # `CAPABILITIES` (arquitectura de cada una) y `CAPABILITY_IMPLIES` ya no se
 # escriben aqui: se derivan de tools/capabilities.json, que es el mismo
-# fichero de donde `backends/fpga.py` y `tools/prototype_report.py` leen que
+# fichero de donde `backends/fpga_cpu.py` y `tools/prototype_report.py` leen que
 # buscar en el RTL. Una tabla, no tres. `implies` alli documenta lo mismo que
 # el parrafo anterior --`frame_capture` implica `video`, `alu_extended`
 # implica `mul_div`-- pero como metadato, para que un caso pueda declarar solo
@@ -594,7 +594,7 @@ CAPABILITY_IMPLIES = {
 # dice si las dos implementaciones hacen lo mismo: `swaps` esta anclado al
 # intercambio y no al tiempo, `fb_front` y `frame` son el resultado visible, y
 # `underflow` es la excepcion consciente --el simulador siempre da False, asi
-# que coincidir ahi no demuestra nada; ver backends/simulator.py--.
+# que coincidir ahi no demuestra nada; ver backends/sim_cpu.py--.
 #
 # Y `pc` se excluye, pero solo en los casos con `run_until`: esa parada es
 # asincrona y deja el PC donde pille a la CPU. Es exactamente el motivo por el

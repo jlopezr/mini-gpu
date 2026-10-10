@@ -59,8 +59,8 @@ apilar en la pila de divergencia. Un warp convergente, o con lanes enmascaradas
 que coinciden, funciona como en la CPU.
 
 Las declaraciones del runner están en
-[`backends/fpga.py`](../x.tests/backends/fpga.py) y
-[`backends/simulator.py`](../x.tests/backends/simulator.py); los casos usan
+[`backends/fpga_cpu.py`](../x.tests/backends/fpga_cpu.py) y
+[`backends/sim_cpu.py`](../x.tests/backends/sim_cpu.py); los casos usan
 `requires` para indicar las capabilities necesarias y se omiten si faltan.
 La versión de monitor identifica el bitstream y permite comprobarlo contra la
 configuración del backend; no existe aquí una instrucción para consultar capabilities.

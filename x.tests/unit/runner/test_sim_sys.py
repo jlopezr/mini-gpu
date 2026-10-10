@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import run_tests  # noqa: E402
-from backends import cpu_gpu_simulator, simulator  # noqa: E402
+from backends import sim_sys, sim_cpu  # noqa: E402
 
 CASOS_GPU = ROOT / "cases-cpu" / "gpu"
 
@@ -28,10 +28,10 @@ class DefinicionTest(unittest.TestCase):
         self.assertNotIn("sim-sys", run_tests.SIMULADORES_GPU)
 
     def test_tiene_las_capacidades_de_sim_cpu_y_las_de_gpu_core(self):
-        propias = cpu_gpu_simulator.capabilities()
-        self.assertLessEqual(simulator.capabilities(), propias)
+        propias = sim_sys.capabilities()
+        self.assertLessEqual(sim_cpu.capabilities(), propias)
         self.assertLessEqual({"gpu_core", "gpu_warp_start"}, propias)
-        self.assertNotIn("gpu_core", simulator.capabilities())
+        self.assertNotIn("gpu_core", sim_cpu.capabilities())
 
     def test_su_pareja_en_placa_es_fpga_cpu_y_no_fpga_sys(self):
         self.assertEqual(run_tests.BACKEND_DEFINITIONS["fpga-sys"]["architecture"], "gpu")
@@ -41,8 +41,8 @@ class DefinicionTest(unittest.TestCase):
 class IncompatibilidadTest(unittest.TestCase):
     def test_un_caso_de_gpu_core_solo_cabe_en_sim_sys(self):
         caso = {"requires": ["gpu_core"]}
-        self.assertIsNone(cpu_gpu_simulator.incompatibility(caso))
-        self.assertIn("gpu_core", simulator.incompatibility(caso))
+        self.assertIsNone(sim_sys.incompatibility(caso))
+        self.assertIn("gpu_core", sim_cpu.incompatibility(caso))
 
 
 class EjecucionTest(unittest.TestCase):
@@ -50,7 +50,7 @@ class EjecucionTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.backend = cpu_gpu_simulator.CpuGpuSimulatorBackend(ROOT.parent)
+        cls.backend = sim_sys.CpuGpuSimulatorBackend(ROOT.parent)
 
     def ejecutar(self, nombre):
         args = type("Args", (), dict(trace=False, trace_detail=False,

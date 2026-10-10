@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .simulator import _load_module, input_device, video_result
+from .sim_cpu import _load_module, input_device, video_result
 
 VERSIONS = {
     "cycle": {
@@ -26,7 +26,7 @@ DEFAULT_VERSION = "current"
 
 def capabilities(version: str = DEFAULT_VERSION) -> frozenset:
     """Lo que tiene este simulador, con las implicaciones ya expandidas."""
-    from .simulator import expand_for
+    from .sim_cpu import expand_for
 
     return expand_for(VERSIONS[version]["capabilities"])
 
@@ -89,7 +89,7 @@ class GpuBackend:
                 # y necesita HALT_TARGET. Lo que el caso pide --capturar el
                 # frame tras el intercambio N-- es una condicion de
                 # observacion, no un registro. Misma razon que en
-                # backends/simulator.py.
+                # backends/sim_cpu.py.
                 dispositivo.stop_after_swaps = video["run_until_swap"]
             # Igual que en los otros dos backends: las bases arrancan a cero,
             # como el hardware, y se quedan asi. Donde vive el framebuffer lo

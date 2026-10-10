@@ -178,7 +178,7 @@ def _capabilities(prototype_dir: Path, root: Path) -> dict:
     return result
 
 
-_SIMULATOR_BACKENDS = (("cpu", "simulator.py"), ("gpu", "gpu_simulator.py"))
+_SIMULATOR_BACKENDS = (("cpu", "sim_cpu.py"), ("gpu", "sim_gpu.py"))
 
 
 def _simulator_entry(node: ast.Dict, architecture: str) -> dict:

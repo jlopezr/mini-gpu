@@ -13,7 +13,7 @@ Dos formas de decidir cuándo capturar:
 
 Siempre usa 2.cpu-sim-func/minicpu_sim.py: es el único modelo de CPU
 funcional que hay (implementa la ISA entera, por delante del RTL de
-cualquier prototipo concreto — ver VERSIONS en x.tests/backends/simulator.py).
+cualquier prototipo concreto — ver VERSIONS en x.tests/backends/sim_cpu.py).
 
 El formato de salida lo decide la extensión de SALIDA:
 

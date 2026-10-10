@@ -1,7 +1,7 @@
 # Backend `fpga-sys` (los casos GPU en la 36 y la 37)
 
-Estado (2026-10-10): **fase 1 implementada** ([`backends/gpu_core.py`](backends/gpu_core.py),
-registrada en `run_tests.py`; tests en `test_gpu_core.py`). La fase 2 (ampliar GPU
+Estado (2026-10-10): **fase 1 implementada** ([`backends/fpga_sys.py`](backends/fpga_sys.py),
+registrada en `run_tests.py`; tests en `test_fpga_sys.py`). La fase 2 (ampliar GPU
 SIMT DEBUG en el RTL de la 37) **sigue siendo diseño**. Las secciones 1 a 3 son el
 diseño original; lo que cambia al implementarlo está al final, en «Resultado de la
 fase 1».
@@ -54,7 +54,7 @@ RTL (fase 2).
 
 ### 3.1 Qué es y qué no toca
 
-Un backend nuevo, `x.tests/backends/gpu_core.py`, con nombre `fpga-sys` (y
+Un backend nuevo, `x.tests/backends/fpga_sys.py`, con nombre `fpga-sys` (y
 `gpu-sys-both` contra el simulador GPU, como `gpu-both`). **No cambia**
 `fpga-gpu`, `fpga-cpu`, `backend_from_rtl` ni la clasificación de la 36 y la 37:
 estas siguen siendo `cpu` para los casos de CPU. Se selecciona por capacidad:
@@ -139,7 +139,7 @@ backport; no se propone.
 
 ## 4. Pruebas sin placa
 
-Un `FakeMonitorClient` en `test_gpu_core.py` (igual que `test_gpu_fpga.py`) que
+Un `FakeMonitorClient` en `test_fpga_sys.py` (igual que `test_fpga_gpu.py`) que
 registre los accesos y compruebe: el orden RESET → descriptores → RUN → sondeo,
 las direcciones y valores escritos, el plazo, el mapeo de `GPU_STATUS` a
 `halted`/`error`, y que un caso con expectativas no disponibles se omite con
@@ -220,7 +220,7 @@ del RTL actual.
 
 ## 7. Orden de trabajo propuesto
 
-1. Fase 1: `gpu_core.py` + registro en `run_tests.py` + `test_gpu_core.py`.
+1. Fase 1: `fpga_sys.py` + registro en `run_tests.py` + `test_fpga_sys.py`.
    Valida el flujo con los 3 casos sin observaciones de estado y `launch-run`.
 2. Fase 2 en la 37 (RTL + `mmio.md` §14.3 + `capabilities.json`), re-barrido de
    semillas y primera pasada con `gpu-sys-both` para descubrir diferencias.

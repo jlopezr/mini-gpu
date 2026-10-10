@@ -11,7 +11,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(ROOT / "x.tests"))
 
-from backends.gpu_simulator import GpuBackend
+from backends.sim_gpu import GpuBackend
 from run_tests import load_case, compare_result
 
 # La referencia escalar vive en reference.py; aquí solo se reutiliza.

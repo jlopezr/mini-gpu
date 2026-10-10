@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_tests as runner
-from backends import gpu_fpga
-from backends.gpu_simulator import GpuBackend
+from backends import fpga_gpu
+from backends.sim_gpu import GpuBackend
 
 
 # MMIO v2 (1.isa/mmio.md §14). Las tres bases viajan como argumento y no
@@ -51,7 +51,7 @@ class GpuFpgaTest(unittest.TestCase):
     def test_read_actual_warp_state_and_only_requested_registers(self):
         client = SnapshotClient()
         fields = {'warp[3].lane[5].R7', 'warp[0].lane[2].R1', 'warp[3].lane[5].R9'}
-        got = gpu_fpga.read_observations(
+        got = fpga_gpu.read_observations(
             client, SimpleNamespace(error=False), fields, WARPS, SIMT, PERF)
         self.assertEqual(got['instructions_executed'], 123)
         self.assertFalse(got['fault.present'])
@@ -69,7 +69,7 @@ class GpuFpgaTest(unittest.TestCase):
         vieja deja de existir, y eso ya paso al cerrar v2."""
         inventada = 0x8209_0000
         client = SnapshotClient(config_base=inventada)
-        got = gpu_fpga.read_observations(
+        got = fpga_gpu.read_observations(
             client, SimpleNamespace(error=False), set(), inventada, SIMT, PERF)
         self.assertEqual(got['warp[3].pc'], 12)
         self.assertEqual(got['warp[3].active_mask'], 3)
@@ -78,21 +78,21 @@ class GpuFpgaTest(unittest.TestCase):
         declarado = SimpleNamespace(WARP_CONFIG_BASE=0x8209_0000,
                                     SIMT_DEBUG_BASE=0x820a_0000,
                                     GPU_PERF_BASE=0x820b_0000)
-        self.assertEqual(gpu_fpga.warp_config_base(declarado), 0x8209_0000)
-        self.assertEqual(gpu_fpga.simt_debug_base(declarado), 0x820a_0000)
-        self.assertEqual(gpu_fpga.gpu_perf_base(declarado), 0x820b_0000)
+        self.assertEqual(fpga_gpu.warp_config_base(declarado), 0x8209_0000)
+        self.assertEqual(fpga_gpu.simt_debug_base(declarado), 0x820a_0000)
+        self.assertEqual(fpga_gpu.gpu_perf_base(declarado), 0x820b_0000)
         # Un monitor que no las declare cae en las de v2, no en las de v1: si
         # un prototipo nuevo se olvida, que falle apuntando al mapa vigente.
         vacio = SimpleNamespace()
-        self.assertEqual(gpu_fpga.warp_config_base(vacio), WARPS)
-        self.assertEqual(gpu_fpga.simt_debug_base(vacio), SIMT)
-        self.assertEqual(gpu_fpga.gpu_perf_base(vacio), PERF)
+        self.assertEqual(fpga_gpu.warp_config_base(vacio), WARPS)
+        self.assertEqual(fpga_gpu.simt_debug_base(vacio), SIMT)
+        self.assertEqual(fpga_gpu.gpu_perf_base(vacio), PERF)
 
     def test_fault_lane_valid_and_unavailable_memory_address(self):
         for code, valid in [(4, True), (6, False), (2, True)]:
             with self.subTest(code=code):
                 client = SnapshotClient((0x40 if valid else 0) | (3 << 3) | 5)
-                got = gpu_fpga.read_observations(
+                got = fpga_gpu.read_observations(
                     client, SimpleNamespace(error=True, error_code=code),
                     set(), WARPS, SIMT, PERF)
                 self.assertEqual(got['fault.pc'], 44)
@@ -108,7 +108,7 @@ class GpuFpgaTest(unittest.TestCase):
         accepted = []
         for path in (runner.ROOT / 'cases-gpu').rglob('test.json'):
             case = runner.load_case(path)
-            reason = gpu_fpga.incompatibility(case)
+            reason = fpga_gpu.incompatibility(case)
             if reason:
                 skipped[case['name']] = reason
             else:
@@ -128,7 +128,7 @@ class GpuFpgaTest(unittest.TestCase):
             runner.ROOT / 'cases-gpu/demos/warp-lane-bands/test.json')
         for version in ('sdram', 'lsu2', 'smpipe'):
             with self.subTest(version=version):
-                self.assertIsNone(gpu_fpga.incompatibility(bands, version))
+                self.assertIsNone(fpga_gpu.incompatibility(bands, version))
         # Las demos de vídeo se omiten por lo que les falta a la placa, no por
         # accidente: sin ventana de vídeo, o sin captura de frame.
         self.assertIn('video', skipped['demo-mmio-selftest'])
@@ -148,28 +148,28 @@ class GpuFpgaTest(unittest.TestCase):
         """`gpu_ids` y `subword_memory` salen del RTL de la 29, y solo de el:
         ninguna otra GPU los tiene todavia."""
         self.assertLessEqual({'gpu_ids', 'subword_memory'},
-                             gpu_fpga.capabilities('smpipe'))
+                             fpga_gpu.capabilities('smpipe'))
         for version in ('bram', 'sdram', 'lsu2'):
             with self.subTest(version=version):
                 self.assertFalse({'gpu_ids', 'subword_memory'} &
-                                 gpu_fpga.capabilities(version))
+                                 fpga_gpu.capabilities(version))
         for nombre in ('gpu-ids/getid-8warps', 'gpu-ids/getid-reserved-type',
                        'subword/lane-bytes-halves'):
             case = runner.load_case(
                 runner.ROOT / f'cases-gpu/extensions/{nombre}/test.json')
             with self.subTest(case=nombre):
-                self.assertIsNone(gpu_fpga.incompatibility(case, 'smpipe'))
+                self.assertIsNone(fpga_gpu.incompatibility(case, 'smpipe'))
         # getid-family lanza warps de 4 lanes y el RTL tiene 8: solo simulador.
         familia = runner.load_case(
             runner.ROOT / 'cases-gpu/extensions/gpu-ids/getid-family/test.json')
-        self.assertIn('warp_size', gpu_fpga.incompatibility(familia, 'smpipe'))
+        self.assertIn('warp_size', fpga_gpu.incompatibility(familia, 'smpipe'))
         # Los dos de fallo de memoria declaran la direccion, y el monitor no la
         # expone: se omiten por eso, no por una capacidad que falte.
         for nombre in ('subword/misaligned-halfword', 'subword/mmio-byte'):
             case = runner.load_case(
                 runner.ROOT / f'cases-gpu/extensions/{nombre}/test.json')
             with self.subTest(case=nombre):
-                self.assertIn('dirección', gpu_fpga.incompatibility(case, 'smpipe'))
+                self.assertIn('dirección', fpga_gpu.incompatibility(case, 'smpipe'))
 
     def test_explicit_incompatible_case_rejected_before_hardware(self):
         path = runner.ROOT / 'cases-gpu/programs/mandelbrot/test.json'
@@ -199,7 +199,7 @@ class GpuFpgaTest(unittest.TestCase):
     def test_monitor_revision_requires_update_from_20(self):
         from backends import board
         from unit.backends.test_board import fake_monitor
-        expected = gpu_fpga.VERSIONS['bram']['monitor_version']
+        expected = fpga_gpu.VERSIONS['bram']['monitor_version']
         monitor = fake_monitor([(2, 0), expected])
         with patch.object(board, 'upload') as upload:
             board.ensure_bitstream(monitor, 'COM3', 1, expected, runner.REPOSITORY / '12.fpga-gpu', 'fpga-gpu', 'bram', board.UploadPolicy(assume_yes=True))

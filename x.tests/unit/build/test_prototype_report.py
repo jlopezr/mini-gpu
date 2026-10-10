@@ -70,7 +70,7 @@ class PrototypeReportTest(unittest.TestCase):
             root = Path(tmp)
             backends = root / "x.tests" / "backends"
             backends.mkdir(parents=True)
-            (backends / "simulator.py").write_text(textwrap.dedent("""
+            (backends / "sim_cpu.py").write_text(textwrap.dedent("""
                 from pathlib import Path
                 VERSIONS = {
                     "current": {
@@ -81,7 +81,7 @@ class PrototypeReportTest(unittest.TestCase):
                     },
                 }
             """), encoding="utf-8")
-            (backends / "gpu_simulator.py").write_text(textwrap.dedent("""
+            (backends / "sim_gpu.py").write_text(textwrap.dedent("""
                 from pathlib import Path
                 VERSIONS = {
                     "current": {

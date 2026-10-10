@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import assemble_bytes
-from backends.simulator import SimulatorBackend
-from backends.gpu_simulator import GpuBackend, capabilities
-from backends.video_layout import FB_BACK
+from backends.sim_cpu import SimulatorBackend
+from backends.sim_gpu import GpuBackend, capabilities
+from backends.frame_capture import FB_BACK
 from tools.sim_devices import VideoDevice, SerialDevice
 
 

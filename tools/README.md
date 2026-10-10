@@ -1659,7 +1659,7 @@ $ prototype-report --prototype 21 --json | jq .capabilities
 ```
 
 El nombre corto de versión (`alu`, `ebr`, `sdram`...) es lo único que sigue
-viniendo de `x.tests/backends/{fpga,gpu_fpga}.py` — es una etiqueta elegida a
+viniendo de `x.tests/backends/{fpga_cpu,fpga_gpu}.py` — es una etiqueta elegida a
 mano, no algo verificable en el RTL. Si un prototipo no está registrado ahí
 (como le pasaba a `17.fpga-gpu-ram-v2`), cae al nombre de la carpeta en vez
 de dejar todo en blanco.
@@ -1761,7 +1761,7 @@ específica por generador.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
-del `VERSIONS` de `x.tests/backends/{simulator,gpu_simulator}.py`, que es donde
+del `VERSIONS` de `x.tests/backends/{sim_cpu,sim_gpu}.py`, que es donde
 están declaradas y lo que usa `incompatibility()` para decidir qué casos corren.
 Fmax y LUT/FF salen del `summary.json` archivado en `reports/` y, si esa carpeta
 no tiene ninguno, del `_build/*/hardware.pnr` local.
@@ -1929,7 +1929,7 @@ bitstream, byte a byte, que una síntesis completa (comprobado en la 30).
 ### Suite de casos contra placa real (`test-board`)
 
 `x.tests/run_tests.py` necesita `--backend fpga-cpu`/`fpga-gpu` y `--version`
-(el nombre corto de `x.tests/backends/{fpga,gpu_fpga}.py`), que hay que saber
+(el nombre corto de `x.tests/backends/{fpga_cpu,fpga_gpu}.py`), que hay que saber
 a mano. `test-board` los infiere del mismo sitio que `board-info`/`run-board`
 (el RTL, vía `_capabilities()`), detecta el puerto igual que el resto de
 comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
@@ -2046,7 +2046,7 @@ sale `corto`: el arranque pesa más que el ritmo). Los prototipos sin contadores
 (6, 10, 12 y 14) no entran en el CPI común, y la evolución compara cada medida con
 la anterior solo sobre los casos que ambas tienen. Los casos de vídeo de GPU (`demo-plasma`)
 corren en placa en la 22 y la 29: paran tras N intercambios sondeando
-`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/video_stop.py`).
+`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/frame_capture.py`).
 
 ## Herramientas de vídeo/HDMI
 

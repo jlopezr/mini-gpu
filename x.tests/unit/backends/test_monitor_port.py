@@ -510,7 +510,7 @@ class BasesDeFramebufferTest(unittest.TestCase):
     Esto es lo que impide que se separen.
 
     La direccion que elige el ARNES para los casos es otra cosa y sigue viva,
-    en `backends/video_layout.py`: ahi es una decision de las pruebas, no un
+    en `backends/frame_capture.py`: ahi es una decision de las pruebas, no un
     valor de encendido del hardware.
     """
 

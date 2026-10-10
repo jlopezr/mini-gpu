@@ -39,8 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "x.tests")]
 
 import run_tests as rt  # noqa: E402
-from backends.gpu_simulator import GpuBackend  # noqa: E402
-from backends.simulator import SimulatorBackend  # noqa: E402
+from backends.sim_gpu import GpuBackend  # noqa: E402
+from backends.sim_cpu import SimulatorBackend  # noqa: E402
 
 CPU_REGISTERS = range(1, 32)
 

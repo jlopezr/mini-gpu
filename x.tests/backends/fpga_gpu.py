@@ -1,11 +1,11 @@
 """Backend de MiniGPU en FPGA, sobre el cliente del monitor UART 2.1.
 
-Es un backend propio y no una versión de `fpga.py` porque el runner lee
+Es un backend propio y no una versión de `fpga_cpu.py` porque el runner lee
 `ARCHITECTURE` del atributo de clase al construir `BACKEND_DEFINITIONS`, antes
 de que exista una versión seleccionada: la arquitectura no puede depender de
 `--version`. En este repositorio "versión" significa revisión de hardware de la
-misma arquitectura (`ebr` y `sdram` son ambas CPU), igual que `simulator.py` y
-`gpu_simulator.py` ya están separados por la misma razón.
+misma arquitectura (`ebr` y `sdram` son ambas CPU), igual que `sim_cpu.py` y
+`sim_gpu.py` ya están separados por la misma razón.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from types import ModuleType
 
-from . import board, video_stop
+from . import board, frame_capture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -35,7 +35,7 @@ from tools.rtl_facts import (  # noqa: E402
 
 
 # Registros de video, en direcciones de byte. LOS MISMOS OFFSETS que en
-# `fpga.py`: ese es el contrato compartido, ahora MMIO v2 §9, y si algun dia
+# `fpga_cpu.py`: ese es el contrato compartido, ahora MMIO v2 §9, y si algun dia
 # dejaran de coincidir, el caso de `cases-shared` lo dice. Aqui no aparecen las
 # bases de reset: el backend de CPU las restaura antes de cada caso, y un kernel
 # de GPU se configura solo.
@@ -52,7 +52,7 @@ VIDEO_CTRL = 0x8020_0000
 VIDEO_HALT_AT = 0x8020_001C
 VIDEO_HALT_TARGET = 0x8020_0020
 VIDEO_HALT_TARGET_GPU = 1 << 1
-REGISTROS_VIDEO = video_stop.Registros(
+REGISTROS_VIDEO = frame_capture.Registros(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
@@ -74,7 +74,7 @@ VIDEO_MODE_PATTERN = 1
 def _read_register(client, address: int) -> int:
     """Una palabra de 32 bits, en una sola transaccion.
 
-    Aqui no hay camino de bytes de repuesto --a diferencia de `fpga.py`, que
+    Aqui no hay camino de bytes de repuesto --a diferencia de `fpga_cpu.py`, que
     cubre seis versiones de CPU y alguna podria no tener READ_WORD-- porque las
     cuatro GPU lo tienen desde la fase 3.4. Y hace falta: STATUS lleva el
     contador de frames en los bits altos, y el barrido cuelga de `reset`, no de
@@ -84,7 +84,7 @@ def _read_register(client, address: int) -> int:
     return client.read_word(address)
 
 
-# Igual que en fpga.py: cada versión es una carpeta de prototipo con
+# Igual que en fpga_cpu.py: cada versión es una carpeta de prototipo con
 # `version.json` (`{"alias": ...}`, y opcionalmente `"description"` si el
 # título del README no basta); eso es lo único a mano. `monitor_version` se
 # lee del RTL --ver tools/rtl_facts.py--. El backport de R0 cableado a cero
@@ -175,7 +175,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     # el caso general diria "sin atomic_warp_faults" sin decir por que.
     if 'atomic_warp_faults' in case.get('requires', []):
         return 'el caso exige fallos atómicos por warp; el RTL permite efectos parciales'
-    # Igual que en `fpga.py`. Faltaba aqui: mientras `cases-gpu` fue el unico
+    # Igual que en `fpga_cpu.py`. Faltaba aqui: mientras `cases-gpu` fue el unico
     # origen de casos para placa, ninguno pedia una capacidad opcional y el
     # hueco no daba la cara. Con `cases-shared` si: `shared-double-buffer`
     # pide `video`, y la 12 --que no lo tiene-- lo ejecutaba hasta que la
@@ -325,8 +325,8 @@ class GpuFpgaBackend:
 
     def run(self, *args, **kwargs) -> dict:
         # Si la parada por intercambios sale imprecisa, el caso se repite: ver
-        # `video_stop`. Sin `run_until` no hay parada que pueda serlo.
-        return video_stop.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+        # `frame_capture`. Sin `run_until` no hay parada que pueda serlo.
+        return frame_capture.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
 
     def _run_una_vez(
         self,
@@ -384,7 +384,7 @@ class GpuFpgaBackend:
             # caso que deja SCANOUT encendido o el underflow pegado se lo pasa al
             # siguiente: `demo-mmio-selftest` hacia fallar a los dos casos
             # `shared-video-*` que corrian despues, y solo pasaban con la placa
-            # recien cargada. Es propiedad del arnes, como en `fpga.py`: el caso
+            # recien cargada. Es propiedad del arnes, como en `fpga_cpu.py`: el caso
             # declara lo que espera, no como dejar la placa preparada.
             capacidades = self.configuration["capabilities"]
             if "video" in capacidades:
@@ -403,9 +403,9 @@ class GpuFpgaBackend:
             # SWAP_COUNT es del dispositivo de vídeo y sobrevive a `reset_cpu`:
             # la parada y el informe lo miden contra la base de ESTE caso.
             parar_tras_swaps = (video or {}).get("run_until_swap") or 0
-            # Dos formas de parar, igual que en `fpga.py`: con `halt_on_swap`
+            # Dos formas de parar, igual que en `fpga_cpu.py`: con `halt_on_swap`
             # `HALT_AT` cuenta intercambios (§9.6) y se arma; sin ella se sondea
-            # SWAP_COUNT desde el host (video_stop.py).
+            # SWAP_COUNT desde el host (frame_capture.py).
             por_hardware = bool(parar_tras_swaps and "halt_on_swap" in capacidades)
             swaps_base = (_read_register(client, VIDEO_SWAP_COUNT)
                           if video is not None else 0)
@@ -424,14 +424,14 @@ class GpuFpgaBackend:
                 status = client.get_status()
                 if status.halted:
                     break
-                # La parada del arnés, igual que en `fpga.py`: un programa de
+                # La parada del arnés, igual que en `fpga_cpu.py`: un programa de
                 # vídeo no termina solo. Con la alarma de hardware se espera a
                 # que pare sola; sin ella se sondea SWAP_COUNT.
                 sondeando = bool(parar_tras_swaps and not por_hardware)
                 if sondeando:
-                    if video_stop.hay_que_parar(leer_registro, REGISTROS_VIDEO,
+                    if frame_capture.hay_que_parar(leer_registro, REGISTROS_VIDEO,
                                                 swaps_base, parar_tras_swaps):
-                        status = video_stop.parar(client)
+                        status = frame_capture.parar(client)
                         break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
@@ -469,14 +469,14 @@ class GpuFpgaBackend:
                 # detenido.
                 # Parar el núcleo no para el doble buffer: se espera a que no
                 # quede un intercambio pendiente antes de leer nada.
-                video_stop.esperar_sin_pendiente(leer_registro, REGISTROS_VIDEO)
+                frame_capture.esperar_sin_pendiente(leer_registro, REGISTROS_VIDEO)
                 estado = _read_register(client, VIDEO_STATUS)
                 video_result = {
                     "underflow": bool(estado & 1),
                     "frames": estado >> 16,
                     # HALT_AT no existe aqui, pero SWAP_COUNT si: esta dentro de
                     # la ventana en las cuatro GPU.
-                    "swaps": video_stop.swaps_desde(
+                    "swaps": frame_capture.swaps_desde(
                         leer_registro, REGISTROS_VIDEO, swaps_base),
                     "fb_front": _read_register(client, VIDEO_FB_FRONT),
                     "frame": None,
@@ -484,7 +484,7 @@ class GpuFpgaBackend:
                 if video.get("capture_frame"):
                     # Desde FB_FRONT, no desde una direccion fija: tras el
                     # intercambio N el buffer visible alterna segun la paridad.
-                    video_result["frame"] = video_stop.frame_tras_swap(
+                    video_result["frame"] = frame_capture.frame_tras_swap(
                         client, leer_registro, REGISTROS_VIDEO,
                         video_result["swaps"], parar_tras_swaps or None,
                         FRAME_BYTES)

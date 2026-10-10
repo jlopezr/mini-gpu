@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from types import ModuleType
 
-from . import board, video_stop
+from . import board, frame_capture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:
@@ -146,7 +146,7 @@ PERF_STALL_COUNTERS = {
     "stall_fetch": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_FETCH_OFF,
     "stall_mmio": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MMIO_OFF,
 }
-REGISTROS_VIDEO = video_stop.Registros(
+REGISTROS_VIDEO = frame_capture.Registros(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
 # RGB565 de 320x240.
@@ -279,8 +279,8 @@ class FpgaBackend:
 
     def run(self, *args, **kwargs) -> dict:
         # Si la parada por intercambios sale imprecisa, el caso se repite: ver
-        # `video_stop`. Sin `run_until` no hay parada que pueda serlo.
-        return video_stop.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
+        # `frame_capture`. Sin `run_until` no hay parada que pueda serlo.
+        return frame_capture.con_reintentos(lambda: self._run_una_vez(*args, **kwargs))
 
     def _run_una_vez(
         self,
@@ -430,7 +430,7 @@ class FpgaBackend:
                     #                 v2--, que no es lo mismo: el numero de
                     #                 swaps al disparar depende de lo rapido
                     #                 que dibuje el programa. Se sondea
-                    #                 SWAP_COUNT desde el host (video_stop.py).
+                    #                 SWAP_COUNT desde el host (frame_capture.py).
                     #
                     # Por el segundo camino escribir los swaps en HALT_AT era
                     # ademas incorrecto por partida doble: contaba frames, y
@@ -524,9 +524,9 @@ class FpgaBackend:
                 # solo posee con la CPU parada-- asi que esto es leer un contador,
                 # no tocar el programa.
                 if parar_tras_swaps and not por_hardware:
-                    if video_stop.hay_que_parar(leer_registro, REGISTROS_VIDEO,
+                    if frame_capture.hay_que_parar(leer_registro, REGISTROS_VIDEO,
                                                 swaps_base, parar_tras_swaps):
-                        status = video_stop.parar(client)
+                        status = frame_capture.parar(client)
                         break
                 if time.monotonic() >= deadline:
                     client.halt_cpu()
@@ -609,7 +609,7 @@ class FpgaBackend:
                 # salvo que el barrido este detenido, en cuyo caso seguir
                 # esperando tampoco arreglaria nada.
                 if tiene_captura:
-                    video_stop.esperar_sin_pendiente(leer_registro,
+                    frame_capture.esperar_sin_pendiente(leer_registro,
                                                      REGISTROS_VIDEO)
 
                 # Se lee DESPUES de que la CPU haya parado. Los registros
@@ -663,13 +663,13 @@ class FpgaBackend:
                     # que es el que quedo completo tras el intercambio N. La CPU
                     # esta parada, asi que su contenido ya no cambia.
                     #
-                    # La corrección vive en `video_stop.frame_tras_swap`, que
+                    # La corrección vive en `frame_capture.frame_tras_swap`, que
                     # además falla con `ParadaImprecisa` si se pasó de largo en
                     # dos o más: antes se corregía por paridad sin mirar cuánto.
                     pedidos = parar_tras_swaps if (
                         parar_tras_swaps
                         and video_result["swaps"] is not None) else None
-                    video_result["frame"] = video_stop.frame_tras_swap(
+                    video_result["frame"] = frame_capture.frame_tras_swap(
                         client, leer_registro, REGISTROS_VIDEO,
                         video_result["swaps"], pedidos, FRAME_BYTES)
 

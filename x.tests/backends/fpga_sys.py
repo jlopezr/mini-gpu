@@ -2,7 +2,7 @@
 
 En la 36 y la 37 el monitor gobierna la CPU, no la GPU: la GPU es un
 coprocesador que lanza la CPU escribiendo `GPU_CONTROL` y los descriptores de
-warp por MMIO (mmio.md §14). `gpu_fpga.py` no sirve ahí --solo registra las
+warp por MMIO (mmio.md §14). `fpga_gpu.py` no sirve ahí --solo registra las
 carpetas sin `cpu.v`--, y no debe: esas dos carpetas siguen siendo CPU para
 `fpga-cpu`, el SYS_ID y los informes. Este backend las trata como lo que también
 son, una GPU.
@@ -19,7 +19,7 @@ memoria. NO se expone el PC de ejecución de cada warp (`PC` en el descriptor es
 lo que se escribió, no el actual), ni su máscara de lanes viva, ni los registros
 de las lanes. Un caso que los pide se omite con motivo en `incompatibility`;
 nunca se sustituye una observación por el valor esperado. Ver
-`x.tests/backend-gpu-core.md`.
+`x.tests/backend-fpga-sys.md`.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 from . import board
-from .gpu_fpga import _load_module, architectural_size, expand_for
+from .fpga_gpu import _load_module, architectural_size, expand_for
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY) not in sys.path:

@@ -2,8 +2,8 @@
 mano en ningún sitio.
 
 `monitor_version`, `clock_hz` y `capabilities` salen del RTL; `readme_title`
-sale del primer encabezado de su README.md. `x.tests/backends/{fpga,
-gpu_fpga}.py` y `tools/prototype_report.py` llaman a las mismas funciones, así
+sale del primer encabezado de su README.md. `x.tests/backends/{fpga_cpu,
+fpga_gpu}.py` y `tools/prototype_report.py` llaman a las mismas funciones, así
 que un cambio en el RTL -- añadir una instrucción, subir el reloj -- o en el
 README se refleja solo tocando ese fichero. Lo único que sigue siendo una
 etiqueta elegida a mano es el alias corto (`ebr`, `alu`...) y, si el README no

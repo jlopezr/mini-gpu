@@ -473,7 +473,7 @@ diseño están en
 ### 16.1. `fault.address` obligatorio deja fuera de la placa los casos de fallo de memoria
 
 **Qué falta.** El esquema de `x.tests` exige `fault.address` y el monitor no la
-expone, así que `gpu_fpga.incompatibility` omite todo caso que la declare. Dos de
+expone, así que `fpga_gpu.incompatibility` omite todo caso que la declare. Dos de
 los casos nuevos (`subword/misaligned-halfword` y `subword/mmio-byte`) se omiten
 por eso, aunque el RTL los hace bien: se comprobaron a mano contra la placa con la
 dirección a `null` y coinciden en todo menos en ella (N11).
@@ -782,7 +782,7 @@ aparece, se cierra sin hacer nada.
     `x.tests/inc/mmio_v1.inc`, `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la
     clase `MapaV1Test`. Se había borrado antes de tiempo una vez, al cerrar la
     21, y hubo que rehacerlo entero para la 19.
-  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga.py`
+  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga_cpu.py`
     lleva en v2 desde el 20/09 y las diez carpetas ya están en v2, así que no
     queda ninguna con los tests de placa rotos por el mapa.
   - **Los diez `sysid.v` idénticos**, con el grupo de v1 vacío:

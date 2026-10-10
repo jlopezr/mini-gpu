@@ -7,7 +7,7 @@ generadores, casi todas sin placa. Los tests de cada simulador viven junto a él
 
 | Carpeta | Qué prueba | Tests |
 |---|---|---|
-| [backends](backends/) | Los backends de placa (`board`, `fpga-sys`, `fpga-gpu`), la parada por vídeo, `run-board`, el puerto serie y el protocolo del monitor | `board`, `gpu_core`, `gpu_fpga`, `video_stop`, `run_board`, `monitor_port`, `monitor_protocol` |
+| [backends](backends/) | Los backends de placa (`board`, `fpga-sys`, `fpga-gpu`), la parada por vídeo, `run-board`, el puerto serie y el protocolo del monitor | `board`, `fpga_sys`, `fpga_gpu`, `frame_capture`, `run_board`, `monitor_port`, `monitor_protocol` |
 | [runner](runner/) | `run_tests.py`: capacidades, el modo diferencial, los generadores de datos, el reparto en procesos, la selección de versiones y `record_case.py` | `capabilities`, `differential`, `data_generators`, `gpu_runner`, `run_tests_parallel`, `run_tests_prototype`, `record_case` |
 | [input](input/) | INPUT (teclado y ratón, mmio §25): el dispositivo, los guiones, el adaptador y su reproducción en placa | `sim_input`, `sim_input_script`, `board_input`, `board_script`, `input_adapter`, `input_board_script`, `host_input`, `input_vectors` |
 | [sim](sim/) | Los simuladores funcionales: consola, pantalla, periféricos, `HALT_AT`, identidad (`SYSTEM_ID`) | `sim_console`, `sim_display`, `sim_interactive`, `sim_peripherals`, `sim_peripheral_cli`, `sim_video_halt`, `sysid_device` |
