@@ -42,7 +42,7 @@ def detect_port() -> str:
             "Indica --port a mano."
         )
     port = candidates[0]
-    print(f"Puerto detectado: {port.device} ({port.description})")
+    print(f"Detected port: {port.device} ({port.description})")
     return port.device
 
 

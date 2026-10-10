@@ -38,6 +38,29 @@ ensamblador (`compare.py`, `compare_race.py`, `opt_stats.py`) están en
 build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
 ```
 
+Las carpetas de programa que contienen C tienen además un `Makefile` fino. Desde la carpeta del programa,
+con GNU Make y el entorno Python del repositorio activo:
+
+```text
+make          # construye la imagen para el simulador
+make sim      # ejecuta el programa en el simulador apropiado
+make debug    # abre el programa en mini-dbg
+make compare  # ejecuta su comparativa o validacion contra el modelo
+make run      # construye para BOARD y carga la imagen en la placa 36
+```
+
+Los `Makefile` solo declaran el nombre, los datos generados y las opciones particulares; las recetas comunes
+están en `tools/c-program.mk` y llaman a los lanzadores Python directamente. No dependen de Bash, PowerShell ni
+de extensiones `.ps1`, por lo que el mismo fichero sirve con GNU Make en Windows y Linux. `PYTHON` y `PROTOTYPE`
+se pueden sustituir en la invocación (`make PYTHON=python3`, `make run PROTOTYPE=37`). Cada Makefile obtiene
+`BASE` con `git rev-parse --show-toplevel`; también puede indicarse expresamente con `make BASE=/ruta/mini-gpu`.
+
+`blur.c`, `life.c` y `rotate.c` no son aplicaciones autónomas: son cargas a las que el comparador inyecta datos.
+En ellas `make compare` llama a `compare_race.py` para comprobar la implementación C; `make sim`, `make debug`
+y `make run` usan el demo `.asm` completo de la misma carpeta, que aporta el anfitrión de vídeo y prepara la
+memoria. No cargan directamente el binario C con punteros sin inicializar, que terminaría en
+`ERROR_MEMORY_ACCESS`.
+
 `--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
 etiqueta[]`. `build-c` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `--board` define
 `BOARD` para el ensamblador (`.define BOARD`), que activa en `gpu_runtime.inc` y `bench.inc` las ramas de la

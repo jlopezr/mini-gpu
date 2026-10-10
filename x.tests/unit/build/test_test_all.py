@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 from tools import test_all  # noqa: E402
 
 SALIDA = """\
-Puerto detectado: COM3 (USB Serial Port (COM3))
+Detected port: COM3 (USB Serial Port (COM3))
 SKIP demo-plasma [fpga-gpu]: sin frame_capture
 SKIP ssy-region-overflow [fpga-gpu]: las profundidades SIMT del caso requieren el simulador
 SKIP gpu-mandelbrot: dump esperado fuera del mapa de memoria: 0x100000

@@ -1812,8 +1812,8 @@ prototipos:
 $ run-board --prototype 6 --program fpga_smoke_test.asm --port COM3
 Using prototype: 6.fpga-cpu
 Bitstream correcto: monitor 3.6.
-== cargando fpga_smoke_test.bin en 0x00000000
-== arrancando
+== loading fpga_smoke_test.bin at 0x00000000
+== starting
 CPU halted=True error=False ...
 
 $ run-board --prototype 6 --port COM3                    # solo comprueba identidad
@@ -1878,8 +1878,8 @@ Bitstream correcto: monitor 3.6.
 
 $ board-load --prototype 6 --port COM3 --program fpga_smoke_test.asm
 Using prototype: 6.fpga-cpu
-== cargando fpga_smoke_test.bin (32 bytes) en 0x00000000
-== arrancando
+== loading fpga_smoke_test.bin (32 bytes) at 0x00000000
+== starting
 CPU halted=True error=False ...
 ```
 
@@ -1939,7 +1939,7 @@ comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
 
 ```bash
 $ test-board --prototype 21 -y cases-cpu/basics
-Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
+Detected port: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
 Using prototype: 21.fpga-cpu-hdmi-alu
 $ .../run_tests.py --backend fpga-cpu -p 21 --port /dev/... -y cases-cpu/basics
 PASS smoke [fpga-cpu]

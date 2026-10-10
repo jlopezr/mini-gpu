@@ -277,20 +277,20 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
     source = resolve_program(prototype_dir, program, root)
     binary = assemble(root, source, verbose) if source.suffix == ".asm" else source
 
-    print(f"== cargando {binary.name} ({binary.stat().st_size} bytes) en 0x00000000")
+    print(f"== loading {binary.name} ({binary.stat().st_size} bytes) at 0x00000000")
     run_monitor_cli(prototype_dir, port, "reset")
     run_monitor_cli(prototype_dir, port, "write-block", "0", str(binary))
 
     if no_run:
-        print("== cargado; la CPU sigue parada (--no-run)")
+        print("== loaded; CPU remains halted (--no-run)")
         return 0
 
-    print("== arrancando")
+    print("== starting")
     run_monitor_cli(prototype_dir, port, "run")
     time.sleep(0.3)
     status = run_monitor_cli(prototype_dir, port, "status")
     if "error=True" in status:
-        print("!! la CPU se ha detenido con error", file=sys.stderr)
+        print("!! CPU halted with an error", file=sys.stderr)
     if target.capability and "video" in target.capability.get("capabilities", ()):
         # Se pregunta SIEMPRE, corriendo o parado. Hubo aqui una excepcion para
         # la GPU --su puerto host rechazaba toda transaccion en marcha, asi que

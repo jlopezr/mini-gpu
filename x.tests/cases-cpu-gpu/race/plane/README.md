@@ -11,6 +11,10 @@ build-c x.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build
                                                                   # -> _build/c/plane_board.bin
 ```
 
+Desde esta carpeta, `make`, `make sim`, `make debug`, `make compare` y `make run` construyen o ejecutan la
+acción correspondiente. En particular, `make` regenera automáticamente `plane_tex.bin` cuando cambian
+`logos.png` o `plane_tex.py`.
+
 Las texturas salen de `logos.png` con `plane_tex.py` (dos de 128 × 128 palabras, 128 KiB). Es un
 paso aparte porque `build-c` no ejecuta generadores: `--data` solo las deja tras el código con la etiqueta
 `plane_tex`, que el C declara `extern`.
