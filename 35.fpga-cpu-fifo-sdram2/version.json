@@ -1,4 +1,5 @@
 {
   "alias": "sdram2",
-  "description": "CPU y scanout sobre fabric FIFO de seis puertos con controlador SDRAM de cuatro bancos en paralelo"
+  "description": "CPU y scanout sobre fabric FIFO de seis puertos con controlador SDRAM de cuatro bancos en paralelo",
+  "sdram_phase": 10
 }

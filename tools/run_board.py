@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import subprocess
 import sys
 import time
@@ -66,8 +67,10 @@ def assemble(root: Path, source: Path, verbose: bool) -> Path:
     # `-I x.tests/inc` da acceso a la biblioteca de `.include` compartida. La
     # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
     # un trozo local con el mismo nombre sigue ganando.
+    # `-D BOARD` elige la rama de la placa 36 de `gpu_runtime.inc`, `bench.inc`...:
+    # este lanzador solo corre en la placa, así que un .asm no repite el `.define`.
     command = [sys.executable, str(root / "1.isa" / "mini_asm.py"), str(source),
-               "-o", str(binary), "-I", str(root / "x.tests" / "inc")]
+               "-o", str(binary), "-I", str(root / "x.tests" / "inc"), "-D", "BOARD"]
     if verbose:
         print(f"$ {' '.join(command)}")
     completed = subprocess.run(command)
@@ -214,6 +217,58 @@ def ensure_uploaded(target: Target, port: str, serial_timeout: float,
     return 0
 
 
+def _archived_bitstream(source: str, target: Target) -> Path:
+    """Un `hardware.bit`, o la carpeta de `reports/` que lo contiene. Una ruta
+    relativa se busca primero desde el directorio actual y luego desde la
+    carpeta del prototipo (`reports/<build>`)."""
+    given = Path(source)
+    candidates = [given] if given.is_absolute() else [Path.cwd() / given, target.prototype_dir / given]
+    for candidate in candidates:
+        path = candidate / "hardware.bit" if candidate.is_dir() else candidate
+        if path.is_file():
+            return path.resolve()
+    raise SystemExit(f"error: no encuentro ningun bitstream en {source!r} "
+                     f"(busque en {', '.join(str(c) for c in candidates)}).")
+
+
+def _timing_warnings(bitstream: Path) -> list[str]:
+    """Relojes que no cumplian al construir ese bitstream, si la carpeta lleva el
+    `summary.txt` del build. Un bitstream que no cerro timing puede funcionar a
+    medias o fallar de forma intermitente: se avisa, no se impide."""
+    summary = bitstream.parent / "summary.txt"
+    if not summary.is_file():
+        return [f"{bitstream.parent.name}: sin summary.txt, no se sabe si cerro timing."]
+    failing = []
+    for line in summary.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"(\S+): ([\d.]+) MHz; required ([\d.]+) MHz", line)
+        if match and float(match.group(2)) < float(match.group(3)):
+            failing.append(f"{match.group(1)}: {match.group(2)} MHz de {match.group(3)} MHz exigidos")
+    return failing
+
+
+def upload_archived(target: Target, port: str, serial_timeout: float,
+                    source: str, policy) -> int:
+    """Programa un bitstream archivado (`board-upload --bitstream`) en lugar del
+    de `_build/default`, y comprueba que la placa contesta con la identidad del
+    prototipo. No sella la subida: la siguiente subida normal volvera a
+    programar el bitstream actual del proyecto."""
+    bitstream = _archived_bitstream(source, target)
+    print(f"bitstream archivado: {bitstream}")
+    warnings = _timing_warnings(bitstream)
+    for warning in warnings:
+        print(f"AVISO: no cerro timing -> {warning}" if " MHz de " in warning else f"AVISO: {warning}",
+              file=sys.stderr)
+    try:
+        if not policy.confirm(f"¿Programar {bitstream} en la placa ({target.prototype_dir.name})?"):
+            print("Carga cancelada.", file=sys.stderr)
+            return 1
+        board.upload_archived(target.prototype_dir, bitstream)
+    except board.BitstreamMismatch as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return check_identity(target, port, serial_timeout)
+
+
 def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose: bool) -> int:
     """Ensambla si hace falta, carga y (salvo --no-run) ejecuta un programa.
     No comprueba el bitstream: quien llama decide si hace falta. Para
@@ -222,20 +277,20 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
     source = resolve_program(prototype_dir, program, root)
     binary = assemble(root, source, verbose) if source.suffix == ".asm" else source
 
-    print(f"== cargando {binary.name} ({binary.stat().st_size} bytes) en 0x00000000")
+    print(f"== loading {binary.name} ({binary.stat().st_size} bytes) at 0x00000000")
     run_monitor_cli(prototype_dir, port, "reset")
     run_monitor_cli(prototype_dir, port, "write-block", "0", str(binary))
 
     if no_run:
-        print("== cargado; la CPU sigue parada (--no-run)")
+        print("== loaded; CPU remains halted (--no-run)")
         return 0
 
-    print("== arrancando")
+    print("== starting")
     run_monitor_cli(prototype_dir, port, "run")
     time.sleep(0.3)
     status = run_monitor_cli(prototype_dir, port, "status")
     if "error=True" in status:
-        print("!! la CPU se ha detenido con error", file=sys.stderr)
+        print("!! CPU halted with an error", file=sys.stderr)
     if target.capability and "video" in target.capability.get("capabilities", ()):
         # Se pregunta SIEMPRE, corriendo o parado. Hubo aqui una excepcion para
         # la GPU --su puerto host rechazaba toda transaccion en marcha, asi que
@@ -336,10 +391,20 @@ def main_upload(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-upload", dest="upload", action="store_false", default=None,
                         help="falla en vez de subir si el bitstream no coincide")
     parser.add_argument("-y", "--yes", action="store_true", help="autoriza la carga sin preguntar")
+    parser.add_argument("--bitstream", metavar="RUTA",
+                        help="programa ESTE bitstream archivado (un hardware.bit o la carpeta "
+                             "de reports/ que lo contiene) en lugar del de _build/default, y "
+                             "comprueba la identidad. Avisa si ese build no cerro timing")
     args = parser.parse_args(argv)
     port = _resolve_port(args)
     target = resolve_target(args.prototype)
     policy = board.UploadPolicy(allowed=args.upload is not False, assume_yes=args.yes)
+    if args.bitstream:
+        if args.rebuild:
+            raise SystemExit("error: --bitstream y --rebuild son incompatibles")
+        if args.upload is False:
+            raise SystemExit("error: --bitstream y --no-upload son incompatibles")
+        return upload_archived(target, port, args.serial_timeout, args.bitstream, policy)
     return ensure_uploaded(target, port, args.serial_timeout, policy, args.rebuild)
 
 
@@ -360,7 +425,7 @@ def main_load(argv: list[str] | None = None) -> int:
 def main_test(argv: list[str] | None = None) -> int:
     """Resuelve backend y versión de x.tests/run_tests.py a partir del RTL
     (igual que board-info/board-upload) y reenvía el resto de argumentos.
-    Evita tener que saber a mano si un prototipo es cpu-fpga o gpu-fpga."""
+    Evita tener que saber a mano si un prototipo es fpga-cpu o fpga-gpu."""
     parser = argparse.ArgumentParser(
         description="Ejecuta x.tests/run_tests.py contra placa real, "
                     "infiriendo --backend/--version del prototipo.",
@@ -369,6 +434,9 @@ def main_test(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-p", "--prototype", required=True)
     parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
+    parser.add_argument("--family", choices=("cpu", "gpu", "all"), default="all",
+                        help="en un prototipo CPU+GPU (36 y 37), qué familia probar; "
+                             "por defecto las dos, una detrás de otra")
     args, extra = parser.parse_known_args(argv)
 
     port = args.port if args.port is not None else detect_port()
@@ -380,15 +448,30 @@ def main_test(argv: list[str] | None = None) -> int:
             "--backend/--version. Usa x.tests/run_tests.py directamente."
         )
 
-    backend = f"{target.capability['backend']}-fpga"
+    primaria = target.capability["backend"]
+    familias = list(target.capability.get("backends") or [primaria])
+    if args.family != "all":
+        if args.family not in familias:
+            raise SystemExit(
+                f"error: {target.prototype_dir.name} no tiene familia "
+                f"{args.family} (tiene {'+'.join(familias)}).")
+        familias = [args.family]
+
     version = target.capability["version_name"]
-    command = [
-        sys.executable, str(target.root / "x.tests" / "run_tests.py"),
-        "--backend", backend, "--version", version, "--port", port,
-        *extra,
-    ]
-    print(f"$ {' '.join(command)}")
-    return subprocess.run(command).returncode
+    resultado = 0
+    for familia in familias:
+        # Una familia que no es la primaria cuelga de la otra: la GPU de la 36
+        # y la 37 la lanza el host por GPU CORE, y la prueba `fpga-sys`, no
+        # `fpga-gpu` (que solo conoce las carpetas sin cpu.v).
+        backend = f"fpga-{familia}" if familia == primaria else "fpga-sys"
+        command = [
+            sys.executable, str(target.root / "x.tests" / "run_tests.py"),
+            "--backend", backend, "--version", version, "--port", port,
+            *extra,
+        ]
+        print(f"$ {' '.join(command)}")
+        resultado = max(resultado, subprocess.run(command).returncode)
+    return resultado
 
 
 if __name__ == "__main__":

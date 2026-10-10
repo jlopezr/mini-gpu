@@ -51,9 +51,15 @@ module top (
   wire clk, pll_locked;
   pll_cpu pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
 
-  wire clk_mem, pll_mem_locked;
+  wire clk_mem, clk_sdram, pll_mem_locked;
+  wire pll_phasestep, pll_phasedir, pll_phaseloadreg;
+  wire [1:0] pll_phasesel;
   pll_mem pll_mem_i(
-      .clkin(clk_25mhz), .clkout0(clk_mem), .locked(pll_mem_locked));
+      .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
+      .locked(pll_mem_locked));
+  assign sdram_clk = clk_sdram;
 
   // Shifted reset avoids a counter terminal-count path on the high-fanout
   // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then
@@ -162,7 +168,8 @@ module top (
       .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
       .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
       .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000),  // CPU PERF
-      .WINDOW4_BASE(33'h0_8060_0000),.WINDOW4_END(33'h0_8061_0000))  // INPUT
+      .WINDOW4_BASE(33'h0_8060_0000),.WINDOW4_END(33'h0_8061_0000),  // INPUT
+      .WINDOW5_BASE(33'h0_8002_0000),.WINDOW5_END(33'h0_8003_0000))  // SDRAM PHASE experimental
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),
@@ -277,11 +284,14 @@ module top (
   wire [31:0] mmio_write_data, mmio_read_data;
   wire mmio_error;
   wire mmio_video_select, mmio_serial_select, mmio_input_select;
+  wire mmio_phase_select;
   wire [31:0] mmio_video_read_data, mmio_video_core_read_data;
   wire [31:0] mmio_console_read_data, mmio_serial_read_data, mmio_input_read_data;
   wire mmio_input_error;
   wire mmio_video_error, mmio_video_core_error, mmio_console_error;
   wire mmio_perf_select;
+  wire [31:0] mmio_phase_read_data;
+  wire mmio_phase_error;
   assign mmio_video_read_data = mmio_video_core_read_data
                                 | mmio_console_read_data;
   assign mmio_video_error = mmio_video_core_error | mmio_console_error;
@@ -310,16 +320,38 @@ module top (
   // `sdram_system_adapter`, que siguen siendo la linea base contra la que se
   // compara este camino, y los bancos que los miden siguen pasando.
   // ===========================================================================
-  wire init_done, sdram_busy;
+  wire init_done, init_done_mem, sdram_busy;
   // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
   wire wb_dirty;
 
   // Puerto comun del arbitro hacia el controlador.
   wire fab_req_valid, fab_req_ready, fab_req_write;
+  wire controller_req_valid, controller_req_ready;
   wire [23:0] fab_req_addr;
   wire [127:0] fab_req_wdata, fab_rdata;
   wire [15:0] fab_req_wmask;
   wire fab_done, fabric_busy;
+
+  // Peticion MMIO (clk) -> controlador de fase (clk_mem), con bus agrupado y
+  // handshake por toggle. `phase_quiesce` frena clientes nuevos mientras las
+  // colas previas se drenan; `phase_traffic_block` se activa solo al quedar
+  // todo vacio, para no congelar una peticion a medio aceptar.
+  wire phase_req_toggle, phase_ack_toggle;
+  wire [5:0] phase_req_steps, phase_pos_gray;
+  wire phase_quiesce, phase_busy_mem, phase_err_mem;
+  wire phase_controller_reset, phase_traffic_block;
+
+  phase_mmio phase_mmio_i(
+      .clk(clk), .reset(reset), .select(mmio_phase_select),
+      .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_phase_read_data), .error(mmio_phase_error),
+      .req_toggle(phase_req_toggle), .req_steps(phase_req_steps),
+      .ack_toggle_async(phase_ack_toggle),
+      .phase_busy_async(phase_busy_mem), .phase_err_async(phase_err_mem),
+      .phase_pos_gray_async(phase_pos_gray),
+      .pll_locked_async(pll_mem_locked), .init_done_async(init_done_mem),
+      .quiesce(phase_quiesce));
 
   // Puerto 0: datos de la CPU.
   wire p0_valid, p0_ready, p0_write, p0_rsp_valid, p0_rsp_ready, p0_rsp_error;
@@ -517,6 +549,7 @@ module top (
   assign p3_rsp_error = m_rsp_error[3];
 
   wire [5:0] req_empty, req_rd_en, req_rd_valid;
+  wire [5:0] bridge_req_ready;
   wire [177:0] req_data [0:5];
   wire [5:0] rsp_full, rsp_wr_en;
   wire [128:0] rsp_data [0:5];
@@ -525,7 +558,8 @@ module top (
     for (bridge_index = 0; bridge_index < 6; bridge_index = bridge_index + 1) begin : g_bridge
       fabric_fifo_bridge #(.FIFO_ADDR_WIDTH(2)) bridge_i(
           .master_clk(clk), .master_reset(reset),
-          .req_valid(m_req_valid[bridge_index]), .req_ready(m_req_ready[bridge_index]),
+          .req_valid(m_req_valid[bridge_index] && !phase_quiesce),
+          .req_ready(bridge_req_ready[bridge_index]),
           .req_urgent(m_req_urgent[bridge_index]), .req_write(m_req_write[bridge_index]),
           .req_addr(m_req_addr[bridge_index]), .req_wdata(m_req_wdata[bridge_index]),
           .req_wmask(m_req_wmask[bridge_index]),
@@ -542,6 +576,8 @@ module top (
     end
   endgenerate
 
+  assign m_req_ready = bridge_req_ready & {6{!phase_quiesce}};
+
   memory_fabric_fifo_6 fabric_i(
       .clk(clk_mem), .reset(reset_mem),
       .p0_req_empty(req_empty[0]), .p0_req_rd_en(req_rd_en[0]), .p0_req_rd_valid(req_rd_valid[0]), .p0_req_data(req_data[0]), .p0_rsp_full(rsp_full[0]), .p0_rsp_wr_en(rsp_wr_en[0]), .p0_rsp_data(rsp_data[0]),
@@ -555,7 +591,6 @@ module top (
       .sdram_req_wdata(fab_req_wdata), .sdram_req_wmask(fab_req_wmask),
       .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy));
 
-  wire init_done_mem;
   reg init_done_sync1, init_done_sync2;
   always @(posedge clk) begin
     if (reset) begin
@@ -568,13 +603,30 @@ module top (
   end
   assign init_done = init_done_sync2;
 
-  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
+  wire phase_safe_idle = !fabric_busy && (&req_empty) && !sdram_busy
+                         && !fab_req_valid;
+  pll_phase_ctl phase_ctl_i(
       .clk(clk_mem), .reset(reset_mem),
-      .req_valid(fab_req_valid), .req_write(fab_req_write),
+      .req_toggle_async(phase_req_toggle), .req_steps_async(phase_req_steps),
+      .ack_toggle(phase_ack_toggle), .safe_idle(phase_safe_idle),
+      .controller_init_done(init_done_mem), .pll_locked(pll_mem_locked),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phasesel(pll_phasesel), .phaseloadreg(pll_phaseloadreg),
+      .controller_reset(phase_controller_reset),
+      .traffic_block(phase_traffic_block),
+      .busy(phase_busy_mem), .err(phase_err_mem),
+      .phase_pos(), .phase_pos_gray(phase_pos_gray));
+
+  assign controller_req_valid = fab_req_valid && !phase_traffic_block;
+  assign fab_req_ready = controller_req_ready && !phase_traffic_block;
+
+  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
+      .clk(clk_mem), .reset(reset_mem || phase_controller_reset),
+      .req_valid(controller_req_valid), .req_write(fab_req_write),
       .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),
-      .req_wmask(fab_req_wmask), .req_ready(fab_req_ready),
+      .req_wmask(fab_req_wmask), .req_ready(controller_req_ready),
       .done(fab_done), .rdata(fab_rdata),
-      .init_done(init_done_mem), .busy(sdram_busy), .sdram_clk(sdram_clk),
+      .init_done(init_done_mem), .busy(sdram_busy), .sdram_clk(),
       .sdram_cke(sdram_cke), .sdram_csn(sdram_csn), .sdram_rasn(sdram_rasn),
       .sdram_casn(sdram_casn), .sdram_wen(sdram_wen), .sdram_a(sdram_a),
       .sdram_ba(sdram_ba), .sdram_dqm(sdram_dqm), .sdram_d(sdram_d));
@@ -735,6 +787,8 @@ module top (
       .input_select(mmio_input_select), .input_read_data(mmio_input_read_data),
       .input_error(mmio_input_error),
       .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
+      .phase_select(mmio_phase_select), .phase_read_data(mmio_phase_read_data),
+      .phase_error(mmio_phase_error),
       .read_data(mmio_read_data), .error(mmio_error));
 
   // Contadores de rendimiento en 0x81010000 (CPU PERFORMANCE, mmio.md §13.2).

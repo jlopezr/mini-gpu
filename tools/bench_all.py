@@ -34,8 +34,9 @@ for extra in (ROOT, ROOT / "x.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from backends import fpga as cpu_fpga  # noqa: E402
-from backends import gpu_fpga  # noqa: E402
+from backends import fpga_cpu  # noqa: E402
+from backends import fpga_sys  # noqa: E402
+from backends import fpga_gpu  # noqa: E402
 
 
 def _number(directory: Path) -> int:
@@ -43,21 +44,43 @@ def _number(directory: Path) -> int:
     return int(match.group(1)) if match else 0
 
 
-def prototypes(family: str):
-    """`[(familia, numero, carpeta)]` de los prototipos con backend de placa."""
+def prototypes(family: str, core: bool = False):
+    """`[(familia, numero, carpeta)]` de los prototipos con backend de placa.
+
+    Con `core=True` la 36 y la 37 salen ADEMÁS como GPU (backend `fpga-sys`): son
+    CPU y GPU a la vez, y salen siempre como CPU. Por defecto no, porque `bench`
+    mide y `fpga-sys` todavía no admite `--measure`.
+    """
     found = []
-    for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", gpu_fpga.VERSIONS)):
+    for name, versions in (("cpu", fpga_cpu.VERSIONS), ("gpu", fpga_gpu.VERSIONS)):
         if family not in ("all", name):
             continue
         for version in versions.values():
             directory = version["monitor_path"].parent
             found.append((name, _number(directory), directory.name))
+    if core and family in ("all", "gpu"):
+        for version in fpga_sys.VERSIONS.values():
+            directory = version["monitor_path"].parent
+            found.append(("gpu", _number(directory), directory.name))
     return sorted(found, key=lambda item: (item[0], item[1]))
+
+
+def board_backend(family: str, number: int) -> str:
+    """El `--backend` de `run_tests.py` para este prototipo y esta familia.
+
+    Casi siempre `fpga-<familia>`. Una GPU que cuelga de una CPU (36 y 37) se
+    prueba con `fpga-sys`, porque `fpga-gpu` solo conoce las carpetas sin `cpu.v`.
+    """
+    if family == "gpu" and any(
+            _number(v["monitor_path"].parent) == number
+            for v in fpga_sys.VERSIONS.values()):
+        return "fpga-sys"
+    return f"fpga-{family}"
 
 
 def measure(family: str, number: int, label: str, assume_yes: bool, extra: list[str]) -> int:
     command = [sys.executable, str(ROOT / "x.tests" / "run_tests.py"), "--measure",
-               "--backend", f"{family}-fpga", "-p", str(number), "--measure-label", label]
+               "--backend", f"fpga-{family}", "-p", str(number), "--measure-label", label]
     if assume_yes:
         command.append("-y")
     command += extra

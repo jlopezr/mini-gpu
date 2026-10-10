@@ -1,0 +1,55 @@
+.text
+.globl _start
+_start:
+LI R30, __stack+8192
+JAL R31, main
+HALT
+.globl inc
+.text
+.align 4
+inc:
+ADD R15, R1, R0
+ADDI R1, R15, 1
+L.1:
+JR R31
+.globl mix
+.align 4
+mix:
+ADDI R30, R30, -32
+STORE R31, R30, 16
+STORE R1, R30, 32
+STORE R2, R30, 36
+LOAD R1, R30, 0+32
+JAL R31, inc
+STORE R1, R30, -4+32
+LOAD R1, R30, 4+32
+JAL R31, inc
+STORE R1, R30, -8+32
+LOAD R15, R30, 0+32
+LOAD R14, R30, 4+32
+ADD R1, R15, R14
+JAL R31, inc
+ADD R15, R1, R0
+LOAD R14, R30, -4+32
+LOAD R13, R30, -8+32
+ADD R14, R14, R13
+ADD R1, R14, R15
+L.2:
+LOAD R31, R30, 16
+ADDI R30, R30, 32
+JR R31
+.globl main
+.align 4
+main:
+ADDI R30, R30, -32
+STORE R31, R30, 16
+MOVI R1, 3
+MOVI R2, 4
+JAL R31, mix
+ADD R15, R1, R0
+L.3:
+LOAD R31, R30, 16
+ADDI R30, R30, 32
+JR R31
+.bss
+.comm __stack,8192

@@ -1,0 +1,24 @@
+{
+  "name": "cpu-gpu/race/plane-c",
+  "architecture": "cpu",
+  "build": {"command": ["make", "case"]},
+  "program": "../../../../_build/c/plane_test.bin",
+  "requires": [
+    "gpu_core",
+    "frame_capture",
+    "large_memory",
+    "calls",
+    "subword_memory",
+    "mul_div"
+  ],
+  "run_until": {"swap": 3},
+  "max_instructions": 10000000,
+  "timeout_seconds": 30,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "memory_dumps": [
+      {"address": "0x0102a800", "file": "_build/expected.bin"}
+    ]
+  }
+}

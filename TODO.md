@@ -442,7 +442,7 @@ Y estaba la 22.
 
 > **Resuelto el 8/10/2026.** `prototype_build_summary` (`build-list --prototypes`)
 > ignora los registros de etiqueta `test` al elegir el último build, salvo los que
-> siguen en marcha. Test en `x.tests/test_build_runner.py`. El texto de abajo se
+> siguen en marcha. Test en `x.tests/unit/build/test_build_runner.py`. El texto de abajo se
 > conserva como historia; el aviso de ancho que provocó el último `FAILED` de la 34
 > (`mmio_decoder.v:257`, `palabra >= PERF_SLOTS`) sigue sin limpiar.
 
@@ -473,7 +473,7 @@ diseño están en
 ### 16.1. `fault.address` obligatorio deja fuera de la placa los casos de fallo de memoria
 
 **Qué falta.** El esquema de `x.tests` exige `fault.address` y el monitor no la
-expone, así que `gpu_fpga.incompatibility` omite todo caso que la declare. Dos de
+expone, así que `fpga_gpu.incompatibility` omite todo caso que la declare. Dos de
 los casos nuevos (`subword/misaligned-halfword` y `subword/mmio-byte`) se omiten
 por eso, aunque el RTL los hace bien: se comprobaron a mano contra la placa con la
 dirección a `null` y coinciden en todo menos en ella (N11).
@@ -576,7 +576,7 @@ de portarle nada.
 
 ### 16.8. Tres comprobaciones que no se han hecho
 
-- **Las familias `programs` y `demos` de `gpusim` y `gpusim-cycle` no se han
+- **Las familias `programs` y `demos` de `sim-gpu` y `sim-gpu-cycle` no se han
   vuelto a pasar** tras el cambio de `GETID` en 11 y 25. Se pasaron alu, faults,
   memory, scheduling, simt y extensions (mandelbrot tarda unos 100 s por
   simulador). En la placa sí pasan todas, así que el riesgo es del simulador.
@@ -595,7 +595,7 @@ de portarle nada.
 
 El protocolo de `32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md` (runtime de CPU con
 `WARP_START`/`WARP_DONE`, ids de job con generación, kernels `memset`/`memcpy`)
-está validado en simulador con el arnés de `32.cpu-gpu-func-sim/examples/asm/dma`. En
+está validado en simulador con el arnés de `x.tests/cases-cpu-gpu/dma`. En
 placa **no hay prototipo con CPU y GPU a la vez** ni GPU CORE, así que es lo último
 de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
 último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera
@@ -613,8 +613,8 @@ en `iverilog` con `a={0x104,0x100}`, `imm=-4`: la lane 1 daba `0x101`. Entró en
 **Qué se hizo.** Arreglo en `29.../gpu_sm.v` y en la 36 (rama `gpu-36-bram`,
 commits `1668af4` y `5728e81`), `gpu_barrier_tb` en la 36 (con el `gpu_sm` anterior
 acaba en error; con solo el sumador arreglado pasa) y el caso
-`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `gpusim` y
-`gpusim-cycle`.
+`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `sim-gpu` y
+`sim-gpu-cycle`.
 
 **Qué falta.**
 - **Pasar el caso en placa con la 29 antes y después del arreglo.** No se ha visto
@@ -769,7 +769,7 @@ aparece, se cierra sin hacer nada.
     que es el sitio que el repo tiene para decir qué buscar en el RTL. No mueve
     la selección de casos: los 47 de `x.tests/cases-cpu` declaran
     `architecture: cpu` y ese filtro va antes que las capacidades.
-  - Lo vigila `x.tests/test_sysid_params.py` (sincronía, conformidad contra
+  - Lo vigila `x.tests/unit/build/test_sysid_params.py` (sincronía, conformidad contra
     números a mano, y que nadie vuelva a poner un literal en el RTL), más
     `test_monitor_port.SysIdTest`, que deriva el perfil de los rasgos del RTL
     por un camino distinto al del generador. Fue ese contraste el que cazó lo
@@ -782,7 +782,7 @@ aparece, se cierra sin hacer nada.
     `x.tests/inc/mmio_v1.inc`, `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la
     clase `MapaV1Test`. Se había borrado antes de tiempo una vez, al cerrar la
     21, y hubo que rehacerlo entero para la 19.
-  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga.py`
+  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga_cpu.py`
     lleva en v2 desde el 20/09 y las diez carpetas ya están en v2, así que no
     queda ninguna con los tests de placa rotos por el mapa.
   - **Los diez `sysid.v` idénticos**, con el grupo de v1 vacío:

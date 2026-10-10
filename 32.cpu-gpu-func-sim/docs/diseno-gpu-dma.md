@@ -1,6 +1,6 @@
 # Diseño: la GPU como motor DMA/blitter
 
-> Borrador v1, 2026-10-06. Parte de [`integracion cpu-gpu.md`](../examples/integracion%20cpu-gpu.md) y recoge las decisiones y necesidades de [`necesidades-detectadas.md`](../examples/necesidades-detectadas.md). Supone conocidos la ISA y [`mmio.md`](../../1.isa/mmio.md); las referencias `§n` son de este último salvo que se diga otra cosa.
+> Borrador v1, 2026-10-06. Parte de [`integracion cpu-gpu.md`](integracion%20cpu-gpu.md) y recoge las decisiones y necesidades de [`necesidades-detectadas.md`](necesidades-detectadas.md). Supone conocidos la ISA y [`mmio.md`](../../1.isa/mmio.md); las referencias `§n` son de este último salvo que se diga otra cosa.
 
 ## 1. Objetivo y alcance
 
@@ -237,7 +237,7 @@ Todos los kernels de la v1 trabajan **por palabras**. La CPU resuelve en el env�
 
 `memcpy` por palabras exige que `src` y `dst` sean congruentes módulo 4. Si no lo son, la operación va por la CPU en la v1.
 
-**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `examples/asm/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
+**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `x.tests/cases-cpu-gpu/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
 
 Estructura de `MEMSET` (el resto es variante de este esquema):
 
@@ -317,16 +317,16 @@ Se quiere averiguar:
 4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `x.tests/inc/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
 5. `25.gpu-sim-cycle-uarch`: `GETID` con `type` 0 a 4, con el mismo diferencial contra `11`.
 6. `x.tests`: la capability `gpu_ids` (`tools/capabilities.json`, sin `file`: solo los simuladores), `logical_warp_id` y `arg` en `warps.json` (el runner exige declararla) y el caso `cases-gpu/extensions/gpu-ids/getid-family`.
-7. `examples/asm/dma/`: el arnés mínimo en ensamblador (ver abajo).
+7. `x.tests/cases-cpu-gpu/dma/`: el arnés mínimo en ensamblador (ver abajo).
 
-**El arnés mínimo** (`examples/asm/dma/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
+**El arnés mínimo** (`x.tests/cases-cpu-gpu/dma/harness/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
 
 **Pendiente, sin bloquear el resto:**
 
 - El ensamblador de `1.isa/NEW-ASSM`, que tiene su propia tabla de instrucciones: hay que decidir si es el vigente.
 - El RTL de la GPU que falta para el protocolo completo: **GPU CORE** (`GPU_STATUS`, `GPU_CONTROL`, `WARP_START`, `WARP_LIVE`, `WARP_DONE`), escribir descriptores con la GPU en marcha, y un sistema con CPU y GPU a la vez sobre una RAM compartida. `GETID`, los arrays de warp y los accesos de 8 y 16 bits ya están en la 29. Ver también N10 de las notas (un warp no llega a SYSTEM en la 29).
 - El runtime en C (cola, ids con generación, política CPU/GPU, kernels 2D), sobre el protocolo que ya valida el arnés. No hay linker: el compilador genera un `.asm` y el runtime y los kernels se incluyen con `.include`, como aquí.
-- Re-ejecutar las familias `programs` y `demos` de `gpusim` tras el cambio de `GETID` (no se han repetido).
+- Re-ejecutar las familias `programs` y `demos` de `sim-gpu` tras el cambio de `GETID` (no se han repetido).
 
 ## 10. Extensiones previstas
 

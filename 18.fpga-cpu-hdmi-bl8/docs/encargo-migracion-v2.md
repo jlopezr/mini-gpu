@@ -94,11 +94,11 @@ sus versiones ya migradas sirven. Los que difieren y hay que mirar a mano:
    en verde y el reparto de lint. Si algo ya está rojo, dímelo.
 2. **Los `.asm`**, contra `mmio_v1.inc` primero, **sin mover ninguna
    dirección**, y añade `18.fpga-cpu-hdmi-bl8/examples` a `CARPETAS` en
-   `x.tests/test_mmio_map.py` **antes** de tocar ningún fichero, para que la
+   `x.tests/unit/tools/test_mmio_map.py` **antes** de tocar ningún fichero, para que la
    guarda haga de lista de trabajo. Valida comparando el binario ensamblado
    palabra a palabra: simbolizar mal **no cambia el tamaño** del programa, así
    que comprobar el `pc` final o la longitud no prueba nada.
-3. **El camino de dirección.** Corre `x.tests/test_top_wiring.py` **antes** de
+3. **El camino de dirección.** Corre `x.tests/unit/build/test_top_wiring.py` **antes** de
    tocar la anchura. Ya mira los bancos además de `top.v`, y la 18 tiene dos
    desajustes suyos anotados en `DEUDA_EN_BANCOS`: **vacía esa lista de tus
    entradas antes de darte por terminado.** Hay tres más, de `perf_probe_tb.v`,
@@ -159,7 +159,7 @@ violaciones JEDEC*, que en realidad eran 60 009 accesos a una fila inexistente
 contados por la misma función de error. **Antes de regenerar una fixture,
 comprueba de qué fuente sale de verdad y en qué formato la lee su consumidor.**
 
-`x.tests/test_fullframe_fixture.py` ya **descubre solo** las carpetas con el
+`x.tests/unit/build/test_fullframe_fixture.py` ya **descubre solo** las carpetas con el
 trío completo, así que cubrirá la 18 el día que crees su `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` —
 pero **no antes**, y ése es justo el momento en que hace falta. Créalo pronto.
 

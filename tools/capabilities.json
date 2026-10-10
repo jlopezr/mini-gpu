@@ -42,7 +42,7 @@
   },
   "_comment_patrones": "Un 'pattern' se busca en el TEXTO del fichero, comentarios incluidos. Por eso apuntan a la IMPLEMENTACION y no al nombre a secas: 'HALT_AT' casaba con un comentario de la 16 que decia que ese registro NO existe alli, y la 16 pasaba a declarar 'frame_capture' -- con lo que habria aceptado casos con run_until.swap que no puede detener. 'REG_SWAP_COUNT =' solo casa con el localparam que lo define.",
 
-  "_comment_frame_capture": "Poder parar el programa tras N intercambios y capturar su frame (`run_until: {swap: N}`). Lo hace el arnes sondeando SWAP_COUNT (x.tests/backends/video_stop.py), asi que lo que hace falta es ese registro, que esta en las dos familias: no HALT_AT, que cuenta frames y en la GPU no existe. Cuando HALT_AT cuente intercambios el arnes podra armarlo en lugar de sondear, pero la capacidad seguira siendo esta.",
+  "_comment_frame_capture": "Poder parar el programa tras N intercambios y capturar su frame (`run_until: {swap: N}`). Lo hace el arnes sondeando SWAP_COUNT (x.tests/backends/frame_capture.py), asi que lo que hace falta es ese registro, que esta en las dos familias: no HALT_AT, que cuenta frames y en la GPU no existe. Cuando HALT_AT cuente intercambios el arnes podra armarlo en lugar de sondear, pero la capacidad seguira siendo esta.",
   "frame_capture": {
     "architecture": ["cpu", "gpu"],
     "file": ["video_registers.v", "gpu_video_regs.v"],
@@ -118,6 +118,12 @@
     "implies": ["gpu_core"]
   },
 
+  "_comment_sdram_phase": "Control de fase del reloj de la SDRAM (PHASE_CTRL y PHASE_STATUS en SDRAM, mmio.md §7.1): una PLL con fase dinamica desplaza sdram_clk sin reconstruir el bitstream. Opcional; se detecta por el modulo phase_mmio.v. Tras programar la FPGA la fase vuelve a 0, y el monitor del prototipo aplica el `sdram_phase` de su version.json al conectar. Ningun caso lo necesita: es del host.",
+  "sdram_phase": {
+    "architecture": "cpu",
+    "file": "phase_mmio.v"
+  },
+
   "_comment_gpu_ids": "La familia GETID entera (isa.md, opcode 0x30): GETLANE, GETWARP, GETLWARP y GETARG, ademas de GETTID, y los campos `logical_warp_id` y `arg` de cada warp en `warps.json` (LOGICAL_WARP_ID[n] y WARP_ARG[n] de GPU WARPS, mmio.md §14.2). La declaran los simuladores (11 y 25) y el RTL que la implementa, que se detecta en la lane: el `case` de GETID escribe `warp_arg`. Una GPU sin ella solo tiene GETTID, y un `type` distinto de 0 para con ERROR_INVALID_ENCODING (0x05) --que es lo mismo que produce un ensamblador roto--, asi que sus casos se omiten alli en vez de fallar. El runner exige declararla si un `warps.json` usa `logical_warp_id` o `arg`.",
   "gpu_ids": {
     "architecture": "gpu",
@@ -125,7 +131,7 @@
     "pattern": "register_write_data\\s*<=\\s*warp_arg"
   },
 
-  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores, y las placas con el dispositivo (`input_device`, mas abajo) lo reciben de ella: x.tests/backends/fpga.py anade `input` a toda version con `input_device`. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
+  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores, y las placas con el dispositivo (`input_device`, mas abajo) lo reciben de ella: x.tests/backends/fpga_cpu.py anade `input` a toda version con `input_device`. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
   "input": {
     "architecture": ["cpu", "gpu"]
   },

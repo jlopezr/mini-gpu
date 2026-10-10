@@ -1,7 +1,9 @@
 import contextlib
 import io
 import math
+import os
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,11 +17,17 @@ from mini_asm import assemble_bytes, first_pass  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 INC = sim.ROOT / "x.tests" / "inc"
+CASES = sim.ROOT / "x.tests" / "cases-cpu-gpu"      # los programas: una carpeta por programa
 MEMORY = 1 << 20            # 1 MiB
 KERNEL = 0x10000
 OUT = 0x20000
 ERROR_MEMORY_ACCESS = 0x02
 ERROR_EXPLICIT_TRAP = 0x03
+
+# Las clases cuyo `setUpClass` simula varios fotogramas de un demo (entre 5 y 22 s cada una, unos 100 s en total).
+# Por defecto se omiten; `RUN_SLOW=1` las ejecuta. Antes de dar por bueno un cambio en el compilador, en mini-opt
+# o en un demo, hay que correrlas.
+slow = unittest.skipUnless(os.environ.get("RUN_SLOW") == "1", "lenta: RUN_SLOW=1")
 
 
 def asm(source: str) -> bytes:
@@ -82,7 +90,7 @@ def word(system, address):
     return struct.unpack_from("<I", system.memory, address)[0]
 
 
-LAUNCH = HERE / "examples" / "asm" / "launch.asm"
+LAUNCH = CASES / "launch" / "launch.asm"
 
 
 def demo(**kwargs):
@@ -197,7 +205,7 @@ class LaunchTest(unittest.TestCase):
             write(s, base + mm.MMIO_GPU_WARPS_SIMT_OFF, 0)
 
 
-DMA = HERE / "examples" / "asm" / "dma" / "dma.asm"
+DMA = CASES / "dma" / "harness" / "dma.asm"
 GPU_OK, GPU_ERR_FAULT, GPU_ERR_TIMEOUT = 0, 1, 2
 GUARD = 0xDEADBEEF
 DMA_WORDS = 100
@@ -217,7 +225,7 @@ def dma_system(**kwargs):
 
 
 class DmaHarnessTest(unittest.TestCase):
-    """El runtime y los kernels de `examples/asm/dma`: el protocolo del §5 entero."""
+    """El runtime y los kernels de `x.tests/cases-cpu-gpu/dma`: el protocolo del §5 entero."""
 
     def setUp(self):
         self.system, self.results, self.buf_b = dma_system()
@@ -254,7 +262,7 @@ class DmaHarnessTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
-RECT = HERE / "examples" / "asm" / "dma" / "rect.asm"
+RECT = CASES / "dma" / "rect" / "rect.asm"
 
 
 class RectKernelsTest(unittest.TestCase):
@@ -314,9 +322,10 @@ class RectKernelsTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
-BENCH_DMA = HERE / "examples" / "asm" / "dma" / "bench_dma.asm"
+BENCH_DMA = CASES / "dma" / "bench-dma" / "bench_dma.asm"
 
 
+@slow
 class BenchDmaTest(unittest.TestCase):
     """`bench_dma.asm` con tamaños hasta 4 KiB y una repetición: 4 operaciones x 5
     configuraciones x 6 tamaños, y cada una tiene que dar el resultado correcto."""
@@ -350,9 +359,10 @@ class BenchDmaTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
-POLL_EXP = HERE / "examples" / "asm" / "dma" / "poll_exp.asm"
+POLL_EXP = CASES / "dma" / "poll-exp" / "poll_exp.asm"
 
 
+@slow
 class PollExperimentTest(unittest.TestCase):
     """`poll_exp.asm`: los 24 trabajos (memset y memcpy, 1 a 8 warps, 3 maneras de
     esperar) salen bien. Los ciclos no existen en el simulador: solo se comprueba
@@ -384,7 +394,7 @@ class PollExperimentTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
-LAT_EXP = HERE / "examples" / "asm" / "dma" / "lat_exp.asm"
+LAT_EXP = CASES / "dma" / "lat-exp" / "lat_exp.asm"
 
 
 class LatencyExperimentTest(unittest.TestCase):
@@ -416,7 +426,7 @@ class LatencyExperimentTest(unittest.TestCase):
         self.assertEqual((gpu.live, gpu.done), (0, 0))
 
 
-RENDER = HERE / "examples" / "asm" / "render" / "render.asm"
+RENDER = CASES / "render" / "render" / "render.asm"
 
 
 def plasma_reference(frame: int) -> bytes:
@@ -442,11 +452,11 @@ def plasma_reference(frame: int) -> bytes:
     return bytes(out)
 
 
-RENDER_V2 = HERE / "examples" / "asm" / "render" / "render_v2.asm"
+RENDER_V2 = CASES / "render" / "render-v2" / "render_v2.asm"
 
 
 class RenderExampleTest(unittest.TestCase):
-    """`examples/asm/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
+    """`x.tests/cases-cpu-gpu/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
 
     PROGRAM = RENDER
 
@@ -500,7 +510,7 @@ class RenderV2ExampleTest(RenderExampleTest):
         self.assertAlmostEqual(per_frame, 46_500, delta=1_500)
 
 
-RENDER_CPU = HERE / "examples" / "asm" / "render" / "render_cpu.asm"
+RENDER_CPU = CASES / "render" / "render-cpu" / "render_cpu.asm"
 
 
 class RenderCpuExampleTest(unittest.TestCase):
@@ -533,12 +543,12 @@ class RenderCpuExampleTest(unittest.TestCase):
         self.assertAlmostEqual(per_frame / (80 * 60), 42, delta=0.5)
 
 
-RACE = HERE / "examples" / "asm" / "race"
+RACE = CASES / "race"
 RACE_COLORS = (0x07E0, 0xFD20, 0x07FF)      # CPU, GPU ingenua, GPU bien puesta
 
 
 def race_image(path: Path):
-    """(imagen, etiquetas) de un demo de `examples/asm/race`."""
+    """(imagen, etiquetas) de un demo de `x.tests/cases-cpu-gpu/race`."""
     source = path.read_text(encoding="utf-8")
     labels = first_pass(source, path.parent, path.name, (INC,))[1]
     return assemble_bytes(source, path.parent, path.name, (INC,)), labels
@@ -580,8 +590,9 @@ def life_pixels(grid, color: int) -> bytes:
     return bytes(out)
 
 
+@slow
 class LifeRaceTest(unittest.TestCase):
-    """`examples/asm/race/life.asm`: los tres métodos tienen que dar la misma vida.
+    """`cases-cpu-gpu/race/life/life.asm`: los tres métodos tienen que dar la misma vida.
 
     Con `race_period` a 1 el método cambia en cada fotograma (CPU, GPU ingenua,
     GPU bien puesta, CPU...) y la rejilla pasa de uno a otro sin ningún arreglo: si
@@ -589,7 +600,7 @@ class LifeRaceTest(unittest.TestCase):
     """
 
     FRAMES = 7
-    PROGRAM = RACE / "life.asm"
+    PROGRAM = RACE / "life" / "life.asm"
 
     @classmethod
     def setUpClass(cls):
@@ -677,11 +688,12 @@ def blur_pixels(grid) -> bytes:
     return bytes(out)
 
 
+@slow
 class BlurRaceTest(unittest.TestCase):
-    """`examples/asm/race/blur.asm`: los tres métodos tienen que dar el mismo calor."""
+    """`cases-cpu-gpu/race/blur/blur.asm`: los tres métodos tienen que dar el mismo calor."""
 
     FRAMES = 7
-    PROGRAM = RACE / "blur.asm"
+    PROGRAM = RACE / "blur" / "blur.asm"
 
     @classmethod
     def setUpClass(cls):
@@ -764,11 +776,12 @@ def rotate_image(frame: int, texture) -> bytes:
     return bytes(out)
 
 
+@slow
 class RotateRaceTest(unittest.TestCase):
-    """`examples/asm/race/rotate.asm`: los tres métodos tienen que dar la misma imagen."""
+    """`cases-cpu-gpu/race/rotate/rotate.asm`: los tres métodos tienen que dar la misma imagen."""
 
     FRAMES = 7
-    PROGRAM = RACE / "rotate.asm"
+    PROGRAM = RACE / "rotate" / "rotate.asm"
 
     @classmethod
     def setUpClass(cls):
@@ -901,11 +914,12 @@ def cube_image(frame: int, textures) -> bytes:
     return bytes(out)
 
 
+@slow
 class CubeRaceTest(unittest.TestCase):
-    """`examples/asm/race/cube.asm`: los tres métodos tienen que dibujar el mismo cubo."""
+    """`cases-cpu-gpu/race/cube/cube.asm`: los tres métodos tienen que dibujar el mismo cubo."""
 
     FRAMES = 7
-    PROGRAM = RACE / "cube.asm"
+    PROGRAM = RACE / "cube" / "cube.asm"
 
     @classmethod
     def image(cls):
@@ -966,8 +980,9 @@ class CubeRaceTest(unittest.TestCase):
                     self.assertEqual(face[1], 0x40000000, frame)
 
 
+@slow
 class CCubeRaceTest(CubeRaceTest):
-    """`examples/c/race/cube.c`: el cubo en C (el anfitrión también) dibuja lo mismo que cube.asm: los tres
+    """`cases-cpu-gpu/race/cube/cube.c`: el cubo en C (el anfitrión también) dibuja lo mismo que cube.asm: los tres
     métodos, fotograma a fotograma, contra el mismo modelo en Python."""
 
     @classmethod
@@ -975,6 +990,7 @@ class CCubeRaceTest(CubeRaceTest):
         return build_c_example("race/cube")
 
 
+@slow
 class LifeRaceStripTest(unittest.TestCase):
     """La gráfica de tiempos: una columna por fotograma, color por método."""
 
@@ -983,13 +999,13 @@ class LifeRaceStripTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # un reloj falso que avanza 7 líneas de gráfica en cada lectura
-        real, real_labels = race_image(RACE / "life.asm")
+        real, real_labels = race_image(RACE / "life" / "life.asm")
         shift = struct.unpack_from("<I", real, real_labels["race_shift"])[0]
         source = f"""
 .include "mmio.inc"
-.include "race_host.inc"
+.include "../race_host.inc"
 .include "life.inc"
-.include "../dma/gpu_runtime.inc"
+.include "gpu_runtime.inc"
 bench_init:
     RET
 bench_now:
@@ -1002,8 +1018,8 @@ bench_now:
 fake_clock:
     .word 0
 """
-        image = assemble_bytes(source, RACE, "strip.asm", (INC,))
-        labels = first_pass(source, RACE, "strip.asm", (INC,))[1]
+        image = assemble_bytes(source, RACE / "life", "strip.asm", (INC,))
+        labels = first_pass(source, RACE / "life", "strip.asm", (INC,))[1]
         video = sim.VideoDevice(frame_instructions=1000)
         video.stop_after_swaps = cls.FRAMES
         cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
@@ -1629,28 +1645,30 @@ class CommandLineTest(unittest.TestCase):
                            "tras el primer warp aún hay líneas de CPU: se intercalan")
 
 
-C_EXAMPLES = HERE / "examples" / "c"
+COMPARE = HERE / "compare"      # compare.py, compare_race.py, opt_stats.py
 
 
-def build_c_example(name: str):
-    """Compila `examples/c/<name>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
+def build_c_example(name: str, data=()):
+    """Compila `cases-cpu-gpu/<name>/<nombre>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
+    `data`: (etiqueta, fichero) de los binarios que `build-c --data` pega tras el codigo.
     Se omite la prueba si no hay compilador (rcc de y.lcc y MSVC); cualquier otro fallo es un error."""
-    sys.path.insert(0, str(C_EXAMPLES))
-    import build as c_build
+    sys.path.insert(0, str(sim.ROOT))
+    from tools import build_c as c_build
+    program = CASES / name / f"{Path(name).name}.c"
     try:
-        binary = c_build.build(C_EXAMPLES / f"{name}.c")
+        binary = c_build.build(program, data=tuple(data))
     except c_build.BuildError as error:
         if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
             raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
         raise
-    wrapper = (C_EXAMPLES / "_build" / f"{Path(name).name}.asm")
+    wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels
 
 
 class CKernelTest(unittest.TestCase):
-    """`examples/c/dma/memset.c`: un programa en C con la CPU y un kernel de GPU en el mismo fichero,
+    """`cases-cpu-gpu/dma/memset/memset.c`: un programa en C con la CPU y un kernel de GPU en el mismo fichero,
     compilado con mini-lcc y mini-opt."""
 
     @classmethod
@@ -1674,12 +1692,13 @@ class CKernelTest(unittest.TestCase):
         self.assertEqual(buffer[4096:], [0] * 16)
 
     def test_every_lane_of_four_warps_ran(self):
-        # 4 warps x 8 lanes sobre 4096 palabras: 128 vueltas por lane
-        self.assertGreater(self.system.gpu.retired, 128 * 4 * 5)
+        # 4 warps x 8 lanes sobre 4096 palabras: 128 vueltas por lane. Con la reduccion de fuerza de mini-opt el
+        # bucle es un STORE, el avance del puntero y el salto (menos de 5 instrucciones de warp por vuelta)
+        self.assertGreater(self.system.gpu.retired, 128 * 4 * 3)
 
 
 class CSystemKernelsTest(unittest.TestCase):
-    """`examples/c/dma/gpu_kernels.c` frente a `asm/dma/gpu_kernels.inc`: los kernels de sistema en C dejan la misma
+    """`cases-cpu-gpu/dma/gpu_kernels.c` frente a `gpu_kernels.inc`: los kernels de sistema en C dejan la misma
     memoria que los de ensamblador (y la que dice un modelo en Python) con casi las mismas
     instrucciones de warp. La proporción tiene un tope para que un cambio en mini-lcc o mini-opt que
     empeore el código se note."""
@@ -1688,7 +1707,7 @@ class CSystemKernelsTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(C_EXAMPLES))
+        sys.path.insert(0, str(COMPARE))
         import compare
         cls.compare = compare
         try:
@@ -1730,22 +1749,23 @@ class CSystemKernelsTest(unittest.TestCase):
                 self.assertLessEqual(c_count, asm_count * self.MAX_RATIO)
 
 
+@slow
 class CRotateTest(unittest.TestCase):
-    """`examples/c/race/rotate.c`: la rotación de textura en C (CPU, GPU inocente y GPU buena, el mismo
+    """`cases-cpu-gpu/race/rotate/rotate.c`: la rotación de textura en C (CPU, GPU inocente y GPU buena, el mismo
     cuerpo con otro reparto de trabajo) frente a `rotate.inc`. Las seis versiones dejan la imagen del
     modelo; el coste de C frente al ensamblador tiene un tope (el pase `licm` de mini-opt saca del bucle lo
-    invariante; ver el README de examples/c)."""
+    invariante; ver el README de 32.cpu-gpu-func-sim/compare)."""
 
     # medido: CPU 1,01, GPU inocente 1,08, GPU buena 1,12 (antes de `licm` y `copyprop`: 1,22, 1,44, 1,45)
     MAX_RATIO = {"CPU": 1.05, "GPU inocente": 1.2, "GPU buena": 1.2}
 
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(C_EXAMPLES))
-        import compare_rotate
+        sys.path.insert(0, str(COMPARE))
+        import compare_race
         try:
-            cls.rows = compare_rotate.compare(5)
-        except compare_rotate.c_build.BuildError as error:
+            cls.rows = compare_race.compare("rotate", 5)
+        except compare_race.c_build.BuildError as error:
             if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
                 raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
             raise
@@ -1767,8 +1787,129 @@ class CRotateTest(unittest.TestCase):
         self.assertLess(abs(counts["GPU buena"] - counts["GPU inocente"]), counts["GPU inocente"] * 0.2)
 
 
+PLANE_SIN = [round(128 * math.sin(2 * math.pi * k / 64)) for k in range(64)]
+PLANE_MASK = 0x07E0F81F
+
+
+def plane_background():
+    """El degradado de `plane_setup` (plane.c): el fondo de cada fila, en RGB565 abierto."""
+    rows = []
+    for y in range(104):
+        r, g, b = 24 + 176 * y // 103, 40 + 80 * y // 103, 96 - 48 * y // 103
+        c = (r >> 3) << 11 | (g >> 2) << 5 | b >> 3
+        rows.append((c | c << 16) & PLANE_MASK)
+    return rows
+
+
+def plane_image(frame: int, textures, background) -> bytes:
+    """Lo que `plane_prepare` y `plane_body.h` dibujan en el fotograma `frame`: 208 lineas de 160 palabras."""
+    c = PLANE_SIN[((frame & 63) + 16) & 63]
+    tex = textures[16384 if c < 0 else 0:][:16384]
+    u00, ux = 0x40000000, 0
+    if abs(c) >= 8:
+        ux = 170 * 128 // abs(c)
+        u00 = 64 * 128 - 80 * ux
+    v00 = 64 * 128 - 52 * 170
+    out = bytearray()
+    for y in range(104):
+        bgx = background[y]
+        bg16 = (bgx | bgx >> 16) & 0xFFFF
+        row = []
+        v = v00 + y * 170
+        for x in range(160):
+            u = u00 + x * ux
+            if 0 <= v < 16384 and 0 <= u < 16384:
+                t = tex[(v & 0x3F80) + (u >> 7)]
+                a = t >> 5 & 63
+                r = (((((t & PLANE_MASK) - bgx) & 0xFFFFFFFF) * a & 0xFFFFFFFF) >> 5) + bgx & PLANE_MASK
+                pixel = (r | r >> 16) & 0xFFFF
+            else:
+                pixel = bg16
+            row.append(pixel * 65537)
+        out += struct.pack("<160I", *row) * 2
+    return bytes(out)
+
+
+@slow
+class CPlaneRaceTest(unittest.TestCase):
+    """`cases-cpu-gpu/race/plane/plane.c`: el plano con un logo por cara y alfa sobre un degradado. Los tres métodos (CPU,
+    GPU inocente y GPU buena, un solo cuerpo) tienen que dibujar, fotograma a fotograma, lo mismo que el modelo."""
+
+    FRAMES = 7
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import build_c
+        build_c.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
+        textures = build_c.DEFAULT_OUTDIR / "plane_tex.bin"
+        subprocess.run([sys.executable, str(CASES / "race" / "plane" / "plane_tex.py"), "-o", str(textures)],
+                       check=True, capture_output=True)
+        image, labels = build_c_example("race/plane", data=[("plane_tex", textures)])
+        blob = textures.read_bytes()
+        cls.textures = struct.unpack("<%dI" % (len(blob) // 4), blob)
+        cls.background = plane_background()
+        video = sim.VideoDevice(frame_instructions=1000)
+        video.stop_after_swaps = cls.FRAMES
+        cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)
+        cls.system.load_cpu_program(image)
+        cls.system.load_memory(struct.pack("<I", 1), labels["race_period"])
+        cls.outcome = cls.system.run()
+        cls.video = video
+
+    def screen(self, base: int) -> bytes:
+        start = base + 32 * 640
+        return bytes(self.system.memory[start:start + 208 * 640])
+
+    def model(self, frame: int) -> bytes:
+        return plane_image(frame, self.textures, self.background)
+
+    def test_it_stops_after_the_swaps_with_both_cores_healthy(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.video.swap_count, self.FRAMES)
+        self.assertFalse(self.system.cpu.error)
+        self.assertIsNone(self.system.gpu.fault)
+
+    def test_the_displayed_and_the_previous_frame_are_the_modelled_ones(self):
+        self.assertEqual(self.screen(self.video.fb_front), self.model(self.FRAMES - 1))
+        self.assertEqual(self.screen(self.video.fb_back), self.model(self.FRAMES - 2))
+
+    def test_the_logo_is_blended_over_the_gradient(self):
+        words = struct.unpack("<%dI" % (208 * 160), self.model(self.FRAMES - 1))
+        background = {(b | b >> 16) & 0xFFFF for b in self.background}
+        covered = sum(1 for w in words if (w & 0xFFFF) not in background)
+        self.assertGreater(covered, 2000)               # el logo
+        self.assertLess(covered, len(words) * 0.5)      # y se ve fondo alrededor
+        self.assertGreater(len(set(words)), 100)        # colores del logo y del degradado, mezclados
+
+    def test_the_gpu_ran_and_nothing_is_left_pending(self):
+        gpu = self.system.gpu
+        self.assertEqual((gpu.live, gpu.done), (0, 0))
+        self.assertTrue(all(warp.instructions_executed > 0 for warp in gpu.warps))
+
+    def test_front_and_back_show_different_logos_and_edge_on_shows_none(self):
+        front, back, edge = (plane_image(f, self.textures, self.background) for f in (0, 32, 16))
+        gradient = plane_image(48, [0] * 32768, self.background)       # sin texeles: solo el fondo
+        self.assertNotEqual(front, back)
+        self.assertEqual(edge, gradient)
+
+    def test_the_blend_matches_a_channel_by_channel_blend(self):
+        # el truco de la multiplicacion unica no se desvia de la mezcla exacta mas de 1 por canal
+        for t, bgx in ((0xFFFF, 0x0000), (0x0000, 0xFFFF), (0xF800, 0x07E0), (0x8410, 0x1234)):
+            for alpha in (0, 1, 7, 16, 31, 32):
+                s = (t | t << 16) & PLANE_MASK
+                b = (bgx | bgx << 16) & PLANE_MASK
+                r = (((s - b) & 0xFFFFFFFF) * alpha & 0xFFFFFFFF) >> 5
+                r = (r + b) & PLANE_MASK
+                got = ((r | r >> 16) & 0xFFFF)
+                for shift, bits in ((11, 5), (5, 6), (0, 5)):
+                    x, y = t >> shift & (1 << bits) - 1, bgx >> shift & (1 << bits) - 1
+                    self.assertLessEqual(abs((got >> shift & (1 << bits) - 1) - (y + (x - y) * alpha // 32)), 1,
+                                         (hex(t), hex(bgx), alpha, shift))
+
+
 class CDivergenceTest(unittest.TestCase):
-    """`examples/c/simt/diverge.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
+    """`cases-cpu-gpu/simt/diverge/diverge.c`: cinco kernels en C cuyas lanes divergen; los `SSY` los pone el pase
     `ssy` de mini-opt. Cada resultado se compara con el mismo cálculo en Python."""
 
     THREADS = 32

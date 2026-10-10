@@ -1,0 +1,637 @@
+"""Pruebas del mecanismo de capacidades.
+
+Un caso declara en `requires` lo que necesita del sistema; cada backend publica
+lo que tiene. Esto se puede probar entero sin placa y sin simulador, que es
+justo lo que lo hace merecer un fichero propio: el resto de la suite necesita
+hardware o al menos construir un backend.
+
+Lo que se comprueba, y por que importa cada cosa:
+
+  - que una capacidad desconocida se rechaza al CARGAR el caso, no al
+    ejecutarlo. Un `requires: ["vidio"]` mal escrito que se ignorara en
+    silencio haria que el caso pasara en sitios donde no deberia correr;
+  - que las capacidades tienen arquitectura, y mezclarlas es un error;
+  - que `frame_capture` implica `video`, para que un backend solo declare lo
+    que de verdad implementa;
+  - que cada bitstream declara lo suyo y el simulador rechaza las graficas;
+  - que `run_until.swap` exige `frame_capture`, porque es quien declara que
+    existe el registro HALT_AT.
+"""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from backends import fpga_cpu, fpga_gpu, sim_cpu
+from run_tests import (
+    CAPABILITIES,
+    expand_capabilities,
+    load_case,
+    parse_requires,
+    parse_run_until,
+)
+
+
+def _cargar_simulador():
+    """El simulador se carga por ruta, como hace el backend."""
+    import importlib.util
+    from run_tests import REPOSITORY
+
+    ruta = REPOSITORY / "2.cpu-sim-func" / "minicpu_sim.py"
+    spec = importlib.util.spec_from_file_location("minicpu_sim_for_caps", ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+class CapabilitiesTest(unittest.TestCase):
+
+    def test_capacidad_desconocida_se_rechaza_al_cargar(self):
+        with self.assertRaises(ValueError) as error:
+            parse_requires({"requires": ["vidio"]}, "cpu")
+        self.assertIn("vidio", str(error.exception))
+        # Y el mensaje dice cuales hay, que es lo unico util cuando te has
+        # equivocado escribiendo una.
+        self.assertIn("video", str(error.exception))
+
+    def test_capacidad_de_otra_arquitectura(self):
+        # `atomic_warp_faults` es de GPU; pedirla en un caso de CPU no es que
+        # falte, es que no tiene sentido.
+        with self.assertRaises(ValueError):
+            parse_requires({"requires": ["atomic_warp_faults"]}, "cpu")
+        # `serial` solo lo tiene la CPU (19 y 21); en un caso GPU no es que
+        # falte, es que no existe el dispositivo en esa familia.
+        with self.assertRaises(ValueError):
+            parse_requires({"requires": ["serial"]}, "gpu")
+
+    def test_capacidad_de_las_dos_arquitecturas(self):
+        # `video` lo tienen las dos familias, y por eso un caso GPU puede
+        # declararlo. Es la condicion para que el mismo programa de video valga
+        # en la 21 y en la 22 -- ver docs/unificacion-mmio.md.
+        self.assertEqual(parse_requires({"requires": ["video"]}, "cpu"), ["video"])
+        self.assertEqual(parse_requires({"requires": ["video"]}, "gpu"), ["video"])
+
+    def test_repetidas(self):
+        with self.assertRaises(ValueError):
+            parse_requires({"requires": ["video", "video"]}, "cpu")
+
+    def test_sin_requires(self):
+        self.assertEqual(parse_requires({}, "cpu"), [])
+
+    def test_frame_capture_implica_video(self):
+        self.assertEqual(
+            expand_capabilities(["frame_capture"]), {"frame_capture", "video"})
+        # Y no al reves: tener video no da la captura.
+        self.assertEqual(expand_capabilities(["video"]), {"video"})
+
+    def test_capacidades_por_bitstream(self):
+        # `read_word` esta en las seis desde la fase 3.4 -- ver
+        # test_read_word_en_todas. `write_word` esta en las seis desde que
+        # WRITE_WORD convergio en las diez copias de monitor.v; empezo solo en
+        # la 19, como prueba, y ver aqui que ya no falta en ninguna es lo que
+        # dice que el experimento se cerro.
+        self.assertEqual(fpga_cpu.capabilities("ebr"),
+                         {"mul_div", "read_word", "write_word"})
+        # La 6 y la 10 no tienen video en absoluto, y la 10 tampoco MUL/DIV.
+        # `large_memory` es la SDRAM: la tienen todas menos la 6 (EBR).
+        self.assertEqual(fpga_cpu.capabilities("sdram"),
+                         {"read_word", "write_word", "large_memory"})
+        # La 16 tiene video Y con que capturar, desde que migro a MMIO v2.
+        # Antes tenia cinco registros de video --sin FRAME_COUNT, SWAP_COUNT,
+        # HALT_AT, HALT_TARGET ni VIDEO_TX-- y por eso no capturaba; al migrar
+        # adopto el `video_registers.v` compartido, que es byte a byte el de la
+        # 18, la 19 y la 21. Ver 16.fpga-cpu-hdmi/docs/migracion-v2.md.
+        # `perf_counters` lo tienen las cuatro con ventana MMIO desde la fase
+        # 3.5, cuando los contadores dejaron de ser comandos de monitor y
+        # pasaron a ser un dispositivo.
+        # `halt_on_swap`: la alarma HALT_AT cuenta intercambios (§9.6), asi que
+        # el arnes la arma en vez de sondear SWAP_COUNT.
+        self.assertEqual(fpga_cpu.capabilities("hdmi"),
+                         {"video", "frame_capture", "halt_on_swap", "mul_div",
+                          "read_word", "write_word", "perf_counters",
+                          "large_memory"})
+        # La 18 tiene las dos.
+        self.assertEqual(
+            fpga_cpu.capabilities("bl8"),
+            {"video", "frame_capture", "halt_on_swap", "mul_div", "read_word",
+             "write_word", "perf_counters", "large_memory"})
+        # Y la 19 anade las extensiones de ISA y el puerto serie.
+        self.assertEqual(
+            fpga_cpu.capabilities("subword"),
+            {"video", "frame_capture", "halt_on_swap", "subword_memory",
+             "calls", "serial", "mul_div", "read_word", "write_word",
+             "perf_counters", "large_memory"})
+
+    def test_los_contadores_ya_no_son_comandos_de_monitor(self):
+        """El juego "+contadores" del mapa anterior ya no existe.
+
+        `monitor_cycle_counters_from_rtl` detecta el comando 0x36, que se
+        retiro en la fase 3.5. Que no quede NINGUNO es el objetivo, no un
+        efecto secundario: de tres juegos de comandos se pasa a dos, y ninguno
+        es ya "el que tiene contadores", porque los contadores son un
+        dispositivo MMIO como los demas.
+
+        Si alguien reintrodujera el comando en una carpeta, volveria a haber un
+        tercer juego y esto lo dice.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import monitor_cycle_counters_from_rtl
+
+        con_comando = [
+            nombre for nombre in fpga_cpu.VERSIONS
+            if monitor_cycle_counters_from_rtl(
+                REPOSITORY / fpga_cpu.VERSIONS[nombre]["monitor_path"].parent)]
+        self.assertEqual(con_comando, [])
+
+    def test_los_contadores_de_espera_solo_los_tiene_la_familia_de_la_30(self):
+        """`perf_stalls` (ranuras 2 a 7 de CPU PERFORMANCE, mmio.md §13.2) se
+        detecta del RTL: esta en `cpu_perf_counters.v` de la 30 y de las
+        carpetas que la heredan (34 `fifo`, 35 `sdram2`, 36 `cpugpu`, 37 `mk2`
+        y 38 `pipelined`).
+        Las demas CPU tienen el bloque de dos contadores: leerles esas ranuras
+        da error de MMIO, no ceros, asi que `--measure` no debe intentarlo."""
+        con_esperas = sorted(
+            nombre for nombre, version in fpga_cpu.VERSIONS.items()
+            if "perf_stalls" in version["capabilities"])
+        self.assertEqual(con_esperas,
+                         ["console", "cpugpu", "fifo", "mk2", "pipelined", "sdram2"])
+        # Quien los tiene declara tambien los de ciclos e instrucciones: sin
+        # CYCLES y RETIRED no hay con que repartir nada.
+        for nombre in con_esperas:
+            self.assertIn("perf_counters", fpga_cpu.capabilities(nombre), nombre)
+        self.assertNotIn("perf_stalls", fpga_cpu.capabilities("alu"))
+
+    def test_read_word_en_todas(self):
+        """READ_WORD no es una extension: es parte del contrato del monitor.
+
+        Se detecta del RTL y no se supone por version porque la numeracion no
+        es comparable entre familias -la 6 va por 1.x y la 22 por 2.x-, asi que
+        "version >= N" no significa nada fuera de una carpeta. Si alguna se
+        quedara sin el, `fpga_cpu._read_register` volveria a los cuatro READ_BYTE y
+        el contador de frames podria salir desgarrado, en silencio; aqui sale
+        con nombre.
+        """
+        sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
+                    if "read_word" not in fpga_cpu.capabilities(nombre)]
+        self.assertEqual(sin_ella, [])
+
+    def test_solo_la_10_no_tiene_mul_div(self):
+        """`mul_div` es un HUECO, no una extension, y es el unico de la tabla.
+
+        MUL, MULFX y DIV son instrucciones base de la MiniISA. La 10 se quedo
+        sin ellas por temporizacion --ver 10.fpga-cpu-ram/cpu.v-- y es la unica.
+        Si algun dia las implementa, esta capacidad desaparece entera en vez de
+        extenderse a mas backends, que es lo contrario de lo que le pasa a una
+        extension.
+        """
+        sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
+                    if "mul_div" not in fpga_cpu.capabilities(nombre)]
+        self.assertEqual(sin_ella, ["sdram"])
+        self.assertIn("mul_div", sim_cpu.capabilities())
+
+    def test_alu_extended_implica_mul_div(self):
+        """MULHI sale del mismo multiplicador que MUL, y REM del divisor de DIV.
+
+        Un backend con MULHI pero sin MUL no puede existir, asi que declarar
+        `alu_extended` basta.
+        """
+        self.assertEqual(expand_capabilities(["alu_extended"]),
+                         {"alu_extended", "mul_div"})
+        # Y no al reves: tener MUL no da MULHI.
+        self.assertEqual(expand_capabilities(["mul_div"]), {"mul_div"})
+
+    def test_las_extensiones_de_isa_no_se_implican(self):
+        """`calls` y `subword_memory` son independientes a proposito.
+
+        Llegaron juntas en la 19, pero son extensiones separadas del mapa de
+        opcodes: `0x18..0x1D` una y `0x2C..0x2E` la otra. Un backport a las
+        versiones anteriores no tiene por que traer las dos, y encadenarlas
+        aqui obligaria a mentir al bitstream que solo tuviera una.
+        """
+        self.assertEqual(expand_capabilities(["calls"]), {"calls"})
+        self.assertEqual(
+            expand_capabilities(["subword_memory"]), {"subword_memory"})
+
+    def test_las_extensiones_se_omiten_en_los_bitstreams_anteriores(self):
+        """Y el motivo tiene que decir donde SI estan.
+
+        Sin el SKIP, estos casos no fallarian con un diagnostico util en un
+        bitstream anterior: pararian con error 0x01, opcode invalido, que es lo
+        mismo que produce un ensamblador roto o un salto a datos.
+        """
+        for capacidad in ("calls", "subword_memory"):
+            caso = self._caso([capacidad])
+            for version in ("ebr", "sdram", "hdmi", "bl8"):
+                motivo = fpga_cpu.incompatibility(caso, version)
+                self.assertIsNotNone(motivo, f"{capacidad} en {version}")
+                self.assertIn(capacidad, motivo)
+                self.assertIn("subword", motivo)
+            self.assertIsNone(fpga_cpu.incompatibility(caso, "subword"))
+
+    def test_el_serie_se_omite_en_los_bitstreams_anteriores(self):
+        caso = self._caso(["serial"])
+        for version in ("ebr", "sdram", "hdmi", "bl8"):
+            motivo = fpga_cpu.incompatibility(caso, version)
+            self.assertIsNotNone(motivo, f"serial en {version}")
+            self.assertIn("serial", motivo)
+        self.assertIsNone(fpga_cpu.incompatibility(caso, "subword"))
+
+    def test_stdin_y_stdout_exigen_la_capacidad(self):
+        """Sin `requires: ["serial"]` el caso se rechaza al CARGAR.
+
+        Si no, un caso de consola pasaria en un backend sin puerto serie
+        "comprobando" que no salio nada, que es lo mismo que no comprobar.
+        """
+        for extra in ({"stdin": "hola"}, {"expect": {"stdout": "hola"}}):
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as tmp:
+                    directorio = Path(tmp)
+                    (directorio / "p.bin").write_bytes(b"\x00\x00\x00\xfc")
+                    caso = {
+                        "architecture": "cpu",
+                        "name": "consola",
+                        "program": "p.bin",
+                        "expect": {"pc": "0x00000004"},
+                    }
+                    caso.update(extra)
+                    if "expect" in extra:
+                        caso["expect"]["pc"] = "0x00000004"
+                    (directorio / "test.json").write_text(
+                        json.dumps(caso), encoding="utf-8")
+                    with self.assertRaises(ValueError) as error:
+                        load_case(directorio / "test.json")
+                self.assertIn("serial", str(error.exception))
+
+    def test_stdin_no_puede_pasar_de_la_cola(self):
+        """Mas de 64 bytes exigiria alimentar la cola con la CPU corriendo, y
+        entonces lo que se capture depende de lo rapido que vaya."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directorio = Path(tmp)
+            (directorio / "p.bin").write_bytes(b"\x00\x00\x00\xfc")
+            (directorio / "test.json").write_text(json.dumps({
+                "architecture": "cpu",
+                "name": "consola-larga",
+                "program": "p.bin",
+                "requires": ["serial"],
+                "stdin": "x" * 65,
+                "expect": {"pc": "0x00000004"},
+            }), encoding="utf-8")
+            with self.assertRaises(ValueError) as error:
+                load_case(directorio / "test.json")
+        self.assertIn("determinista", str(error.exception))
+
+    def test_el_simulador_tiene_las_extensiones(self):
+        """Va por delante del RTL, como debe: es donde se prueban primero."""
+        for capacidad in ("calls", "subword_memory"):
+            self.assertIsNone(
+                sim_cpu.incompatibility({"requires": [capacidad]}))
+
+    def test_el_simulador_tambien_puede_omitir(self):
+        """La comprobacion es real, no un `return None`.
+
+        Hoy el simulador tiene todas las capacidades declaradas, asi que este
+        camino no se ejercita con ninguna de ellas. Se comprueba con una
+        inventada para que el dia que se anada una capacidad que el simulador
+        no tenga, el SKIP funcione en vez de dejar correr el caso a medias.
+        """
+        motivo = sim_cpu.incompatibility({"requires": ["inventada"]})
+        self.assertIsNotNone(motivo)
+        self.assertIn("inventada", motivo)
+
+    # `incompatibility` mira tambien si el caso cabe en el mapa de memoria, asi
+    # que necesita un caso con forma, no solo el `requires`.
+    @staticmethod
+    def _caso(requires):
+        return {
+            "requires": requires,
+            "program": b"\x00\x00\x00\xfc",
+            "initial_memory": [],
+            "expected": {"memory": {}},
+        }
+
+    def test_un_caso_de_video_se_omite_donde_no_lo_hay(self):
+        caso = self._caso(["video"])
+        for version in ("ebr", "sdram"):
+            motivo = fpga_cpu.incompatibility(caso, version)
+            self.assertIsNotNone(motivo)
+            self.assertIn("video", motivo)
+        # Donde si lo hay, la capacidad no puede ser el motivo. Podria haberlo
+        # por otra cosa, asi que se comprueba que no habla de capacidades.
+        for version in ("hdmi", "bl8"):
+            motivo = fpga_cpu.incompatibility(caso, version)
+            if motivo is not None:
+                self.assertNotIn("sin video", motivo)
+
+    def test_captura_donde_hay_los_registros_que_la_hacen(self):
+        """Se llamaba `test_captura_solo_en_la_18` y usaba la 16 de contraste.
+
+        Dejo de valer cuando la 16 migro a MMIO v2 y adopto los diez registros
+        de video, o sea que GANO `frame_capture`. El contraste se mueve a las
+        carpetas que de verdad no tienen video --la 6 y la 10--, que es donde
+        la ausencia no depende de una version del contrato.
+
+        Lo que el test protege no cambia: que un caso que pide capturar un
+        frame se OMITA donde no se puede capturar, y que el motivo diga donde
+        si. Un caso de captura que no se omite no falla limpio: se cuelga
+        esperando una parada que nadie va a provocar.
+        """
+        caso = self._caso(["frame_capture"])
+        for version in ("ebr", "sdram"):
+            motivo = fpga_cpu.incompatibility(caso, version)
+            with self.subTest(version=version):
+                self.assertIsNotNone(motivo)
+                self.assertIn("frame_capture", motivo)
+                # El motivo tiene que decir donde SI esta, que es lo que uno
+                # quiere saber al leer el SKIP.
+                self.assertIn("bl8", motivo)
+        # Y donde si la hay, la capacidad no puede ser el motivo.
+        for version in ("hdmi", "bl8"):
+            motivo = fpga_cpu.incompatibility(caso, version)
+            with self.subTest(version=version):
+                if motivo is not None:
+                    self.assertNotIn("frame_capture", motivo)
+
+    def test_una_capacidad_no_se_declara_por_nombrarla_en_un_comentario(self):
+        """Los patrones se buscan en el TEXTO, comentarios incluidos.
+
+        Paso de verdad: un comentario en 16/video_registers.v que decia que
+        HALT_AT *no* existe alli hacia que el patron `HALT_AT` casara, y la 16
+        declaraba `frame_capture`. La consecuencia no era cosmetica -- habria
+        aceptado casos con `run_until.swap`, que necesitan ese registro para
+        parar la CPU, y se habrian colgado esperando una parada que nadie iba a
+        provocar.
+
+        Por eso los patrones apuntan a la IMPLEMENTACION.
+
+        POR QUE ESTO YA NO SE ANCLA EN LA 16, que es lo que hacia antes. Al
+        migrar esa carpeta a MMIO v2 adopto el `video_registers.v` compartido,
+        o sea que ahora tiene HALT_AT de verdad y declara `frame_capture` con
+        razon. El sujeto del control negativo dejo de ser negativo.
+
+        Eso no se arregla buscando otra carpeta: cualquiera que se elija puede
+        ganar la capacidad manana por el mismo camino, y el test volveria a
+        romperse por una razon que no es la suya. Se reconstruye la FORMA del
+        fallo en un fichero sintetico, que es lo unico que no caduca: un
+        modulo que menciona el registro solo en un comentario, y que por tanto
+        no debe declarar nada.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import capabilities_from_rtl, load_capability_signals
+
+        senales = load_capability_signals(REPOSITORY)
+
+        # El comentario es el del fallo real, palabra por palabra en su forma:
+        # explica que el registro NO esta, y al hacerlo lo nombra.
+        senuelo = (
+            "`default_nettype none\n"
+            "// Esta carpeta no implementa SWAP_COUNT ni HALT_TARGET: no hay\n"
+            "// frame_capture aqui, y por eso el bloque acaba en STATUS.\n"
+            "module video_registers(input wire clk);\n"
+            "endmodule\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            carpeta = Path(tmp)
+            (carpeta / "video_registers.v").write_text(senuelo, encoding="utf-8")
+            detectadas = capabilities_from_rtl(carpeta, senales)
+
+        self.assertNotIn(
+            "frame_capture", detectadas,
+            "un comentario que NIEGA el registro lo estaria declarando: el "
+            "patron casa contra el texto en vez de contra la implementacion. "
+            "La consecuencia no es cosmetica -- esa carpeta aceptaria casos "
+            "con `run_until.swap`, que necesitan ese registro para parar la "
+            "CPU, y se colgarian esperando una parada que nadie va a provocar.")
+        # Y la otra mitad, para que el test no pase por no mirar nada: el
+        # mismo fichero CON la implementacion si la declara.
+        with tempfile.TemporaryDirectory() as tmp:
+            carpeta = Path(tmp)
+            (carpeta / "video_registers.v").write_text(
+                senuelo.replace("module video_registers(input wire clk);",
+                                "module video_registers(input wire clk);\n"
+                                "  localparam [5:0] REG_SWAP_COUNT = 6'd6;\n"
+                                "  reg [31:0] swap_count;"),
+                encoding="utf-8")
+            self.assertIn("frame_capture",
+                          capabilities_from_rtl(carpeta, senales),
+                          "con la implementacion delante si tiene que "
+                          "declararla; si no, este test pasaria por no ver")
+
+    def test_halt_on_swap_solo_donde_la_alarma_cuenta_intercambios(self):
+        """La capacidad la da el contador interno `halt_swaps`, no el registro.
+
+        `REG_HALT_AT` existe tambien en las GPU, donde solo ocupa el hueco y lee
+        cero; y en las CPU existia antes de que la alarma contara intercambios.
+        Detectar el registro declararia la capacidad donde la alarma no hace lo
+        que el arnes espera.
+        """
+        from run_tests import REPOSITORY
+        from tools.rtl_facts import capabilities_from_rtl, load_capability_signals
+
+        senales = load_capability_signals(REPOSITORY)
+
+        def detectadas(texto):
+            with tempfile.TemporaryDirectory() as tmp:
+                carpeta = Path(tmp)
+                (carpeta / "video_registers.v").write_text(texto, encoding="utf-8")
+                return capabilities_from_rtl(carpeta, senales)
+
+        solo_registro = (
+            "module video_registers(input wire clk);\n"
+            "  localparam [5:0] REG_HALT_AT = 6'd7;\n"
+            "  reg [31:0] halt_at;\n"
+            "endmodule\n")
+        self.assertNotIn("halt_on_swap", detectadas(solo_registro))
+
+        # El nombre en un comentario tampoco: los patrones miran el texto.
+        comentario = solo_registro.replace(
+            "endmodule", "// la alarma cuenta con halt_swaps\nendmodule")
+        self.assertNotIn("halt_on_swap", detectadas(comentario))
+
+        con_contador = solo_registro.replace(
+            "endmodule", "  reg [31:0] halt_swaps;\nendmodule")
+        self.assertIn("halt_on_swap", detectadas(con_contador))
+
+    def test_todo_lo_que_tiene_video_arma_la_alarma(self):
+        """CPU y GPU: la alarma HALT_AT cuenta intercambios en las dos familias.
+
+        Las GPU la ganaron cuando `gpu_video_regs.v` dejo de tener HALT_AT como
+        un hueco que leia cero. Las que no tienen video --12 y 14-- no tienen
+        alarma, y paran por sondeo si algun dia se les pide (frame_capture.py).
+        """
+        for version in ("hdmi", "bl8", "subword", "alu", "console"):
+            with self.subTest(familia="cpu", version=version):
+                self.assertIn("halt_on_swap", fpga_cpu.capabilities(version))
+        for version, configuracion in fpga_gpu.VERSIONS.items():
+            capacidades = configuracion["capabilities"]
+            with self.subTest(familia="gpu", version=version):
+                self.assertEqual("halt_on_swap" in capacidades,
+                                 "video" in capacidades)
+
+    def test_el_simulador_acepta_video(self):
+        """Desde que `minicpu_sim.py` tiene `VideoDevice`, los acepta.
+
+        Antes los rechazaba, y este test comprobaba el rechazo. Ahora comprueba
+        lo contrario, que es lo que permite correr los casos de video sin placa.
+        """
+        for capacidad in ("video", "frame_capture"):
+            self.assertIsNone(
+                sim_cpu.incompatibility({"requires": [capacidad]}))
+        self.assertIsNone(sim_cpu.incompatibility({"requires": []}))
+
+    def test_el_simulador_no_modela_el_tiempo(self):
+        """Y esto es la letra pequena de lo anterior.
+
+        El simulador valida QUE dibuja un programa, no CUANDO. No hay barrido
+        leyendo la memoria por su cuenta, asi que `underflow` no puede ocurrir:
+        es siempre cero, pase lo que pase.
+
+        Se comprueba explicitamente para que quede constancia de que un verde
+        del simulador en `expect.video.underflow` no significa que eso se haya
+        probado. Solo significa algo en hardware.
+        """
+        modulo = _cargar_simulador()
+        video = modulo.VideoDevice()
+        # Ni siquiera pidiendo intercambios sin parar.
+        for _ in range(10):
+            video.write(video.SWAP, 1)
+            for _ in range(video.frame_instructions):
+                video.tick()
+        self.assertEqual(video.swap_count, 10)
+        self.assertEqual(video.read(video.STATUS) & 1, 0)
+
+    def test_el_reloj_de_frames_es_sintetico_pero_coherente(self):
+        """El periodo no cambia lo que ve un programa que SINCRONIZA.
+
+        Es la propiedad que hace legitimo que el simulador declare
+        `frame_capture`: un programa que espera a que su intercambio se aplique
+        --todos los de cases-cpu/video-- nunca dibuja con uno pendiente, asi que la
+        secuencia de frames es la misma sea cual sea el periodo. Lo unico que
+        cambia es cuantas vueltas da el bucle de espera.
+        """
+        modulo = _cargar_simulador()
+        # Las bases se dan aqui, y no se heredan del encendido: desde la fase
+        # 3.5 el dispositivo arranca con las dos a cero --igual que el RTL-- y
+        # con ceros esta prueba no distinguiria un intercambio de no hacer
+        # nada. Los valores son los que usa el arnes, ver frame_capture.py.
+        FRENTE, FONDO = 0x0100_0000, 0x0102_5800
+        for periodo in (1, 7, 1000):
+            video = modulo.VideoDevice(fb_front=FRENTE, fb_back=FONDO,
+                                       frame_instructions=periodo)
+            frentes = []
+            for _ in range(4):
+                video.write(video.SWAP, 1)
+                # Como haria el programa: esperar a que se aplique.
+                guarda = 0
+                while video.read(video.SWAP) and guarda < 10000:
+                    video.tick()
+                    guarda += 1
+                frentes.append(video.fb_front)
+            self.assertEqual(video.swap_count, 4, f"periodo {periodo}")
+            # La secuencia de buffers visibles es la misma con cualquier periodo.
+            self.assertEqual(
+                frentes,
+                [FONDO, FRENTE, FONDO, FRENTE],
+                f"periodo {periodo}")
+
+    def test_run_until_exige_frame_capture(self):
+        with self.assertRaises(ValueError) as error:
+            parse_run_until({"run_until": {"swap": 4}}, ["video"])
+        self.assertIn("frame_capture", str(error.exception))
+        self.assertEqual(
+            parse_run_until({"run_until": {"swap": 4}}, ["frame_capture"]),
+            {"swap": 4})
+
+    def test_run_until_mal_formado(self):
+        for malo in ({"swap": 0}, {"swap": "4"}, {"frame": 4}, {"swap": 4, "x": 1}):
+            with self.assertRaises(ValueError):
+                parse_run_until({"run_until": malo}, ["frame_capture"])
+        self.assertIsNone(parse_run_until({}, []))
+
+    @staticmethod
+    def _escribir_caso(directorio, **extra):
+        (directorio / "p.bin").write_bytes(b"\x00\x00\x00\xfc")
+        caso = {
+            "architecture": "cpu",
+            "name": "video-demo",
+            "program": "p.bin",
+            "requires": ["frame_capture"],
+            "run_until": {"swap": 4},
+            "expect": {},
+        }
+        caso.update(extra)
+        (directorio / "test.json").write_text(
+            json.dumps(caso), encoding="utf-8")
+        return directorio / "test.json"
+
+    def test_caso_completo_de_video(self):
+        """Un caso de verdad, cargado desde disco como lo hace el runner."""
+        with tempfile.TemporaryDirectory() as tmp:
+            caso = load_case(self._escribir_caso(Path(tmp)))
+        self.assertEqual(caso["requires"], ["frame_capture"])
+        self.assertEqual(caso["run_until"], {"swap": 4})
+        # Sin `run_until`, el PC es obligatorio para un caso de CPU; con el, no
+        # puede estar. Aqui se comprueba que efectivamente no quedo puesto.
+        self.assertNotIn("pc", caso["expected"])
+
+    def test_run_until_prohibe_declarar_pc(self):
+        """La parada de HALT_AT es asincrona: el PC queda donde pille.
+
+        Aceptar un `expect.pc` junto a `run_until` daria un caso que pasa o
+        falla segun lo rapido que vaya la CPU ese dia. Es mejor rechazarlo al
+        cargar que dejar que alguien persiga un fallo intermitente.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = self._escribir_caso(
+                Path(tmp), expect={"pc": "0x00000004"})
+            with self.assertRaises(ValueError) as error:
+                load_case(ruta)
+        self.assertIn("asincrona", str(error.exception))
+
+    def test_expectativas_de_video_exigen_la_capacidad(self):
+        """Pedir `underflow` sin declarar `video` seria un caso que no prueba
+        nada allí donde no hay vídeo: se rechaza al cargar."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = self._escribir_caso(
+                Path(tmp),
+                requires=[],
+                run_until=None,
+                expect={"pc": "0x00000004", "video": {"underflow": False}})
+            # `run_until: null` no es valido; se quita del JSON.
+            datos = json.loads(ruta.read_text(encoding="utf-8"))
+            del datos["run_until"]
+            ruta.write_text(json.dumps(datos), encoding="utf-8")
+            with self.assertRaises(ValueError) as error:
+                load_case(ruta)
+        self.assertIn("video", str(error.exception))
+
+    def test_input_device_implica_input(self):
+        """Donde el RTL tiene INPUT, la placa reproduce los guiones por el monitor.
+
+        `input_device` dice que existe input_registers.v; `input` que el arnes
+        puede ALIMENTAR el dispositivo con un guion. La placa recibe eventos del
+        monitor, asi que se conserva el orden y no el instante en instrucciones
+        (`tools.input_script.play_on_board`). Por eso las dos capacidades van
+        juntas en cada version: una version sin el bloque INPUT omite el caso en
+        vez de intentar correrlo.
+        """
+        self.assertIn("input_device", fpga_cpu.capabilities("console"))
+        for nombre in fpga_cpu.VERSIONS:
+            self.assertEqual("input" in fpga_cpu.capabilities(nombre),
+                             "input_device" in fpga_cpu.capabilities(nombre), nombre)
+        self.assertIn("input", CAPABILITIES)
+
+    def test_todas_las_capacidades_tienen_arquitectura(self):
+        # Una capacidad nueva sin arquitectura declarada se colaria en casos de
+        # las dos, que es justo lo que este diccionario existe para impedir.
+        # Ahora el valor es una tupla -- declarar las dos es legitimo (`video`),
+        # pero declarar ninguna o una desconocida sigue sin serlo.
+        for nombre, arquitecturas in CAPABILITIES.items():
+            self.assertIsInstance(arquitecturas, tuple, nombre)
+            self.assertTrue(arquitecturas, nombre)
+            for arquitectura in arquitecturas:
+                self.assertIn(arquitectura, ("cpu", "gpu"), nombre)
+
+
+if __name__ == "__main__":
+    unittest.main()

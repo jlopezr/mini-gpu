@@ -39,7 +39,7 @@ Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 | `18.fpga-cpu-hdmi-bl8` / `bl8`     | —                | —       | —              | —                  | —         |
 | `19.fpga-cpu-hdmi-ls` / `subword`  | Sí               | Sí      | —              | —                  | —         |
 | `21.fpga-cpu-hdmi-alu` / `alu`     | Sí               | Sí      | Sí             | Sí                 | Sí        |
-| `2.cpu-sim-func` / `cpusim` | Sí               | Sí      | Sí             | Sí                 | Sí        |
+| `2.cpu-sim-func` / `sim-cpu` | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
 (`gpu_lane.v`) y el SM añade las SIMT:
@@ -49,7 +49,7 @@ Y en MiniGPU, donde cada **lane** ejecuta las mismas instrucciones que la CPU
 | `12`, `14`, `17`, `22` (GPU)            | —                | —       | —              | —                  | —         |
 | `29.fpga-gpu-sm-pipeline`               | Sí               | —       | —              | —                  | —         |
 | `37.fpga-cpu-gpu-mk2` (GPU)             | Sí               | Sí      | Sí             | Sí                 | Sí        |
-| `11.gpu-sim-func` / `gpusim` (`current`)| Sí               | —       | —              | —                  | —         |
+| `11.gpu-sim-func` / `sim-gpu` (`current`)| Sí               | —       | —              | —                  | —         |
 | `25.gpu-sim-cycle-uarch` (`cycle`)      | Sí               | Sí      | Sí             | Sí                 | Sí        |
 
 En la GPU, `JALR` y `JR` sacan el destino de un registro por lane, y un warp solo
@@ -59,8 +59,8 @@ apilar en la pila de divergencia. Un warp convergente, o con lanes enmascaradas
 que coinciden, funciona como en la CPU.
 
 Las declaraciones del runner están en
-[`backends/fpga.py`](../x.tests/backends/fpga.py) y
-[`backends/simulator.py`](../x.tests/backends/simulator.py); los casos usan
+[`backends/fpga_cpu.py`](../x.tests/backends/fpga_cpu.py) y
+[`backends/sim_cpu.py`](../x.tests/backends/sim_cpu.py); los casos usan
 `requires` para indicar las capabilities necesarias y se omiten si faltan.
 La versión de monitor identifica el bitstream y permite comprobarlo contra la
 configuración del backend; no existe aquí una instrucción para consultar capabilities.

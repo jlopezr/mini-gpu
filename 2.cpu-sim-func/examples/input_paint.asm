@@ -17,7 +17,7 @@
 ;
 ; Se ejecuta con ventana, y como no acaba solo, con un limite generoso:
 ;
-;   cpusim 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
+;   sim-cpu 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
 ;
 ; Registros:
 ;   R20 base de VIDEO     R21 base de INPUT     R22 framebuffer (0x00100000)

@@ -65,7 +65,7 @@ nmake /f Makefile.msvc mini-run   # la sube a la placa
 en una unidad (mini-lcc no enlaza). El `.bin` ocupa unos 149 KB, sobre todo por
 los buffers estáticos (que van como ceros dentro del fichero), y la RAM de la 30
 sobra. El teclado es el de INPUT (`monitor.py input`): por la UART no llegan
-F5/F6/F10. `test/mini_input_guess.txt` es un guion para `cpusim --keyboard
+F5/F6/F10. `test/mini_input_guess.txt` es un guion para `sim-cpu --keyboard
 --input-script` que pulsa F5 y responde al `INPUT`; en el simulador el programa
 de ejemplo se ejecuta entero, con el scroll de la ventana de salida.
 

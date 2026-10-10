@@ -253,7 +253,7 @@ Apio puede permitir un fallo de timing durante place-and-route.
 Desde la raíz del repositorio:
 
 ```powershell
-.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend gpu-fpga --version bram --port COM3 --yes --durations
+.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend fpga-gpu --version bram --port COM3 --yes --durations
 ```
 
 El runner requiere monitor 3.12 y carga el proyecto cuando la placa responde con

@@ -1,0 +1,509 @@
+"""run-board: composición de board.py + resolución de prototipos, sin hardware."""
+
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from tools import run_board
+from backends import board
+
+
+def fake_port(device, description="USB Serial", vid=run_board.FTDI_VENDOR_ID):
+    return SimpleNamespace(device=device, description=description, vid=vid)
+
+
+class DetectPortTest(unittest.TestCase):
+    def test_picks_the_only_ftdi_port(self):
+        ports = [fake_port("/dev/cu.usbserial-A", vid=run_board.FTDI_VENDOR_ID)]
+        with mock.patch("serial.tools.list_ports.comports", return_value=ports):
+            self.assertEqual(run_board.detect_port(), "/dev/cu.usbserial-A")
+
+    def test_ignores_non_ftdi_ports(self):
+        ports = [
+            fake_port("/dev/cu.Bluetooth-Incoming-Port", vid=0x05AC),
+            fake_port("/dev/cu.usbserial-B", vid=run_board.FTDI_VENDOR_ID),
+        ]
+        with mock.patch("serial.tools.list_ports.comports", return_value=ports):
+            self.assertEqual(run_board.detect_port(), "/dev/cu.usbserial-B")
+
+    def test_no_ftdi_ports_raises_clear_error(self):
+        ports = [fake_port("/dev/cu.Bluetooth-Incoming-Port", vid=0x05AC)]
+        with mock.patch("serial.tools.list_ports.comports", return_value=ports):
+            with self.assertRaises(SystemExit):
+                run_board.detect_port()
+
+    def test_multiple_ftdi_ports_raises_clear_error(self):
+        ports = [
+            fake_port("/dev/cu.usbserial-A", vid=run_board.FTDI_VENDOR_ID),
+            fake_port("/dev/cu.usbserial-B", vid=run_board.FTDI_VENDOR_ID),
+        ]
+        with mock.patch("serial.tools.list_ports.comports", return_value=ports):
+            with self.assertRaises(SystemExit):
+                run_board.detect_port()
+
+
+class ResolveProgramTest(unittest.TestCase):
+    def test_finds_program_in_examples_without_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prototype_dir = Path(tmp)
+            (prototype_dir / "examples").mkdir()
+            program = prototype_dir / "examples" / "demo.asm"
+            program.write_text("HALT\n", encoding="utf-8")
+            found = run_board.resolve_program(prototype_dir, "demo")
+            self.assertEqual(found, program.resolve())
+
+    def test_absolute_path_is_used_directly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            program = Path(tmp) / "somewhere.asm"
+            program.write_text("HALT\n", encoding="utf-8")
+            found = run_board.resolve_program(Path(tmp), str(program))
+            self.assertEqual(found, program.resolve())
+
+    def test_missing_program_raises_clear_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                run_board.resolve_program(Path(tmp), "no-existe")
+
+    def test_bare_name_falls_back_to_repo_wide_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype_dir = root / "6.fpga-cpu"
+            prototype_dir.mkdir()
+            other_dir = root / "x.tests" / "cases-cpu" / "basics"
+            other_dir.mkdir(parents=True)
+            program = other_dir / "vector.asm"
+            program.write_text("HALT\n", encoding="utf-8")
+
+            found = run_board.resolve_program(prototype_dir, "vector", root)
+            self.assertEqual(found, program.resolve())
+
+    def test_bare_name_without_root_does_not_search_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype_dir = root / "6.fpga-cpu"
+            prototype_dir.mkdir()
+            (root / "elsewhere.asm").write_text("HALT\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                run_board.resolve_program(prototype_dir, "elsewhere")
+
+    def test_ambiguous_bare_name_raises_clear_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype_dir = root / "6.fpga-cpu"
+            prototype_dir.mkdir()
+            (root / "a").mkdir()
+            (root / "b").mkdir()
+            (root / "a" / "dup.asm").write_text("HALT\n", encoding="utf-8")
+            (root / "b" / "dup.asm").write_text("HALT\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                run_board.resolve_program(prototype_dir, "dup", root)
+
+    def test_repo_wide_search_skips_venv_and_build_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype_dir = root / "6.fpga-cpu"
+            prototype_dir.mkdir()
+            ignored = root / ".venv" / "site-packages"
+            ignored.mkdir(parents=True)
+            (ignored / "noise.asm").write_text("HALT\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                run_board.resolve_program(prototype_dir, "noise", root)
+
+
+class MainFlowTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prototype_dir = Path(self.tmp.name) / "6.fpga-cpu"
+        self.prototype_dir.mkdir()
+        (self.prototype_dir / "monitor.py").write_text("", encoding="utf-8")
+
+        patcher_repo = mock.patch.object(run_board, "find_repo_root", return_value=Path(self.tmp.name))
+        patcher_resolve = mock.patch.object(run_board, "resolve_prototype", return_value=self.prototype_dir)
+        patcher_monitor = mock.patch.object(run_board, "load_monitor", return_value=SimpleNamespace())
+        self.addCleanup(patcher_repo.stop)
+        self.addCleanup(patcher_resolve.stop)
+        self.addCleanup(patcher_monitor.stop)
+        patcher_repo.start()
+        patcher_resolve.start()
+        patcher_monitor.start()
+
+    def test_board_not_connected_reports_error_and_exits_nonzero(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "read_monitor_version",
+                               side_effect=board.BoardNotConnected("no hay placa")):
+            code = run_board.main(["--prototype", "6", "--port", "COM3"])
+        self.assertEqual(code, 1)
+
+    def test_undeclared_prototype_warns_but_still_checks_connection(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "read_monitor_version") as read_version:
+            code = run_board.main(["--prototype", "6", "--port", "COM3"])
+        read_version.assert_called_once()
+        self.assertEqual(code, 0)
+
+    def test_declared_prototype_calls_ensure_bitstream_with_its_version(self):
+        capability = {
+            "monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga",
+            "capabilities": ("mul_div",),
+        }
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream") as ensure:
+            code = run_board.main(["--prototype", "6", "--port", "COM3"])
+        ensure.assert_called_once()
+        called_args = ensure.call_args.args
+        self.assertEqual(called_args[3], (1, 16))  # expected version
+        self.assertEqual(called_args[5], "fpga")   # backend
+        self.assertEqual(called_args[6], "ebr")    # version_name
+        self.assertEqual(code, 0)
+
+    def test_bitstream_mismatch_reports_error_and_exits_nonzero(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream",
+                               side_effect=board.BitstreamMismatch("otra version")):
+            code = run_board.main(["--prototype", "6", "--port", "COM3"])
+        self.assertEqual(code, 1)
+
+    def test_program_flow_resets_writes_and_runs_in_order(self):
+        binary = self.prototype_dir / "prog.bin"
+        binary.write_bytes(b"\x00")
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        calls = []
+
+        def fake_cli(prototype_dir, port, *cli_args):
+            calls.append(cli_args)
+            return "CPU halted=True error=False"
+
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream"), \
+             mock.patch.object(run_board, "run_monitor_cli", side_effect=fake_cli):
+            code = run_board.main([
+                "--prototype", "6", "--port", "COM3", "--program", str(binary),
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [
+            ("reset",),
+            ("write-block", "0", str(binary.resolve())),
+            ("run",),
+            ("status",),
+        ])
+
+    def test_no_run_stops_before_the_run_command(self):
+        binary = self.prototype_dir / "prog.bin"
+        binary.write_bytes(b"\x00")
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        calls = []
+
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream"), \
+             mock.patch.object(run_board, "run_monitor_cli", side_effect=lambda p, port, *a: calls.append(a)):
+            code = run_board.main([
+                "--prototype", "6", "--port", "COM3", "--program", str(binary), "--no-run",
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [("reset",), ("write-block", "0", str(binary.resolve()))])
+
+    def test_reset_flag_only_resets(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        calls = []
+
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream"), \
+             mock.patch.object(run_board, "run_monitor_cli", side_effect=lambda p, port, *a: calls.append(a)):
+            code = run_board.main(["--prototype", "6", "--port", "COM3", "--reset"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [("reset",)])
+
+
+class SeparateCommandsTest(unittest.TestCase):
+    """board-info/board-upload/board-load: los mismos tres pasos que
+    run-board, pero expuestos por separado (main_info/main_upload/main_load)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prototype_dir = Path(self.tmp.name) / "6.fpga-cpu"
+        self.prototype_dir.mkdir()
+        (self.prototype_dir / "monitor.py").write_text("", encoding="utf-8")
+
+        patcher_repo = mock.patch.object(run_board, "find_repo_root", return_value=Path(self.tmp.name))
+        patcher_resolve = mock.patch.object(run_board, "resolve_prototype", return_value=self.prototype_dir)
+        patcher_monitor = mock.patch.object(run_board, "load_monitor", return_value=SimpleNamespace())
+        self.addCleanup(patcher_repo.stop)
+        self.addCleanup(patcher_resolve.stop)
+        self.addCleanup(patcher_monitor.stop)
+        patcher_repo.start()
+        patcher_resolve.start()
+        patcher_monitor.start()
+
+    # -- board-info: nunca debe subir nada -----------------------------
+
+    def test_info_matching_version_reports_ok_without_uploading(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 16)), \
+             mock.patch.object(board, "upload") as upload, \
+             mock.patch.object(board, "ensure_bitstream") as ensure:
+            code = run_board.main_info(["--prototype", "6", "--port", "COM3"])
+        self.assertEqual(code, 0)
+        upload.assert_not_called()
+        ensure.assert_not_called()
+
+    def test_info_mismatch_reports_nonzero_without_uploading(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 1)), \
+             mock.patch.object(board, "upload") as upload:
+            code = run_board.main_info(["--prototype", "6", "--port", "COM3"])
+        self.assertEqual(code, 1)
+        upload.assert_not_called()
+
+    def test_info_board_not_connected_reports_error(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "read_monitor_version",
+                               side_effect=board.BoardNotConnected("no hay placa")):
+            code = run_board.main_info(["--prototype", "6", "--port", "COM3"])
+        self.assertEqual(code, 1)
+
+    # -- board-upload: mismo comportamiento que el chequeo de run-board -
+
+    def test_upload_calls_ensure_bitstream_with_declared_version(self):
+        capability = {
+            "monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga",
+            "capabilities": ("mul_div",),
+        }
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "ensure_bitstream") as ensure:
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y"])
+        self.assertEqual(code, 0)
+        ensure.assert_called_once()
+        called_args = ensure.call_args.args
+        self.assertEqual(called_args[3], (1, 16))
+        policy = ensure.call_args.args[-1]
+        self.assertTrue(policy.assume_yes)
+
+    def test_upload_rebuild_forces_apio_upload_first(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "upload") as upload, \
+             mock.patch.object(board, "ensure_bitstream"):
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "--rebuild"])
+        self.assertEqual(code, 0)
+        upload.assert_called_once_with(self.prototype_dir)
+
+    # -- board-upload --bitstream: un build archivado, no el de _build --
+
+    def _archived(self, summary=None):
+        folder = self.prototype_dir / "reports" / "20260101-000000-base"
+        folder.mkdir(parents=True)
+        (folder / "hardware.bit").write_bytes(b"bits")
+        if summary is not None:
+            (folder / "summary.txt").write_text(summary, encoding="utf-8")
+        return folder
+
+    def test_bitstream_programs_the_archived_file_and_checks_identity(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("$glbnet$clk: 83.6 MHz; required 80.0 MHz\n")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 16)), \
+             mock.patch.object(board, "upload_archived") as archived, \
+             mock.patch.object(board, "upload") as upload:
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                          "--bitstream", str(folder)])
+        self.assertEqual(code, 0)
+        archived.assert_called_once_with(self.prototype_dir, (folder / "hardware.bit").resolve())
+        upload.assert_not_called()
+
+    def test_bitstream_wrong_identity_returns_nonzero(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 1)), \
+             mock.patch.object(board, "upload_archived"):
+            code = run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                          "--bitstream", str(folder / "hardware.bit")])
+        self.assertEqual(code, 1)
+
+    def test_bitstream_relative_to_the_prototype_folder(self):
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}
+        folder = self._archived("")
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(board, "read_monitor_version", return_value=(1, 16)), \
+             mock.patch.object(board, "upload_archived") as archived:
+            run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                   "--bitstream", "reports/20260101-000000-base"])
+        archived.assert_called_once_with(self.prototype_dir, (folder / "hardware.bit").resolve())
+
+    def test_bitstream_missing_stops_before_touching_the_board(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "upload_archived") as archived:
+            with self.assertRaises(SystemExit) as caught:
+                run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                       "--bitstream", "reports/no-existe"])
+        self.assertIn("no encuentro", str(caught.exception))
+        archived.assert_not_called()
+
+    def test_bitstream_warns_when_that_build_did_not_close_timing(self):
+        folder = self._archived("$glbnet$clk: 67.1 MHz; required 80.0 MHz\n"
+                                "$glbnet$sdram_clk: 104.4 MHz; required 100.0 MHz\n")
+        warnings = run_board._timing_warnings(folder / "hardware.bit")
+        self.assertEqual(["$glbnet$clk: 67.1 MHz de 80.0 MHz exigidos"], warnings)
+
+    def test_bitstream_without_summary_says_it_does_not_know(self):
+        folder = self._archived(None)
+        warnings = run_board._timing_warnings(folder / "hardware.bit")
+        self.assertEqual(1, len(warnings))
+        self.assertIn("sin summary.txt", warnings[0])
+
+    def test_bitstream_conflicts_with_rebuild_and_no_upload(self):
+        folder = self._archived("")
+        for extra in ("--rebuild", "--no-upload"):
+            with self.subTest(extra=extra), mock.patch.object(run_board, "_capabilities", return_value={}):
+                with self.assertRaises(SystemExit) as caught:
+                    run_board.main_upload(["--prototype", "6", "--port", "COM3", "-y",
+                                           "--bitstream", str(folder), extra])
+                self.assertIn("incompatibles", str(caught.exception))
+
+    def test_archived_upload_does_not_stamp_and_clears_the_old_stamp(self):
+        build = self.prototype_dir / "_build" / "default"
+        build.mkdir(parents=True)
+        (build / "hardware.bit").write_bytes(b"current")
+        stamp = build / ".uploaded"
+        stamp.write_text("123", encoding="utf-8")
+        folder = self._archived("")
+        completed = SimpleNamespace(returncode=0)
+        with mock.patch("subprocess.run", return_value=completed), \
+             mock.patch("time.sleep"):
+            board.upload_archived(self.prototype_dir, folder / "hardware.bit")
+        self.assertFalse(stamp.exists())
+        self.assertTrue(board.bitstream_newer_than_upload(self.prototype_dir))
+
+    # -- board-load: nunca toca la identidad del bitstream --------------
+
+    def test_load_does_not_check_bitstream_identity(self):
+        binary = self.prototype_dir / "prog.bin"
+        binary.write_bytes(b"\x00")
+        calls = []
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(board, "ensure_bitstream") as ensure, \
+             mock.patch.object(board, "read_monitor_version") as read_version, \
+             mock.patch.object(run_board, "run_monitor_cli", side_effect=lambda p, port, *a: calls.append(a)):
+            code = run_board.main_load([
+                "--prototype", "6", "--port", "COM3", "--program", str(binary), "--no-run",
+            ])
+        self.assertEqual(code, 0)
+        ensure.assert_not_called()
+        read_version.assert_not_called()
+        self.assertEqual(calls, [("reset",), ("write-block", "0", str(binary.resolve()))])
+
+
+class MainTestTest(unittest.TestCase):
+    """test-board: infiere --backend/--version del RTL y reenvía el resto a
+    x.tests/run_tests.py, en vez de tener que saber a mano cpu-fpga/gpu-fpga."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.prototype_dir = self.root / "21.fpga-cpu-hdmi-alu"
+        self.prototype_dir.mkdir()
+        (self.prototype_dir / "monitor.py").write_text("", encoding="utf-8")
+
+        patcher_repo = mock.patch.object(run_board, "find_repo_root", return_value=self.root)
+        patcher_resolve = mock.patch.object(run_board, "resolve_prototype", return_value=self.prototype_dir)
+        patcher_monitor = mock.patch.object(run_board, "load_monitor", return_value=SimpleNamespace())
+        self.addCleanup(patcher_repo.stop)
+        self.addCleanup(patcher_resolve.stop)
+        self.addCleanup(patcher_monitor.stop)
+        patcher_repo.start()
+        patcher_resolve.start()
+        patcher_monitor.start()
+
+    def test_infers_backend_and_version_and_forwards_extra_args(self):
+        capability = {
+            "monitor_version": (1, 15), "version_name": "alu", "backend": "cpu",
+            "capabilities": ("mul_div",),
+        }
+        with mock.patch.object(run_board, "_capabilities", return_value=capability), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.return_value = SimpleNamespace(returncode=0)
+            code = run_board.main_test([
+                "--prototype", "21", "--port", "COM3", "-y", "cases-cpu/basics",
+            ])
+        self.assertEqual(code, 0)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertIn("--backend", command)
+        self.assertEqual(command[command.index("--backend") + 1], "fpga-cpu")
+        self.assertIn("--version", command)
+        self.assertEqual(command[command.index("--version") + 1], "alu")
+        self.assertIn("--port", command)
+        self.assertEqual(command[command.index("--port") + 1], "COM3")
+        self.assertIn("-y", command)
+        self.assertIn("cases-cpu/basics", command)
+
+    def test_without_inferable_identity_fails_without_running_anything(self):
+        with mock.patch.object(run_board, "_capabilities", return_value={}), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            with self.assertRaises(SystemExit):
+                run_board.main_test(["--prototype", "21", "--port", "COM3"])
+        run.assert_not_called()
+
+    # La 36 y la 37 son CPU y GPU: `test-board` prueba las dos familias, una
+    # detrás de otra, y no solo la que gobierna el monitor.
+    CPU_Y_GPU = {
+        "monitor_version": (5, 36), "version_name": "cpugpu", "backend": "cpu",
+        "backends": ["cpu", "gpu"], "capabilities": (),
+    }
+
+    def _backends_lanzados(self, *argumentos, codigos=(0, 0)):
+        with mock.patch.object(run_board, "_capabilities", return_value=self.CPU_Y_GPU), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.side_effect = [SimpleNamespace(returncode=c) for c in codigos]
+            code = run_board.main_test(
+                ["--prototype", "36", "--port", "COM3", *argumentos])
+        comandos = [call.args[0] for call in run.call_args_list]
+        return code, [c[c.index("--backend") + 1] for c in comandos], comandos
+
+    def test_un_prototipo_cpu_y_gpu_prueba_las_dos_familias(self):
+        code, backends, comandos = self._backends_lanzados("-y")
+        self.assertEqual(code, 0)
+        self.assertEqual(backends, ["fpga-cpu", "fpga-sys"])
+        for comando in comandos:
+            self.assertEqual(comando[comando.index("--version") + 1], "cpugpu")
+            self.assertIn("-y", comando)
+
+    def test_family_elige_una_sola(self):
+        _, backends, _ = self._backends_lanzados("--family", "gpu", codigos=(0,))
+        self.assertEqual(backends, ["fpga-sys"])
+        _, backends, comandos = self._backends_lanzados("--family", "cpu", codigos=(0,))
+        self.assertEqual(backends, ["fpga-cpu"])
+        # `--family` es de test-board: run_tests.py no lo conoce.
+        self.assertNotIn("--family", comandos[0])
+
+    def test_un_fallo_de_la_primera_familia_no_impide_la_segunda(self):
+        code, backends, _ = self._backends_lanzados(codigos=(1, 0))
+        self.assertEqual(backends, ["fpga-cpu", "fpga-sys"])
+        self.assertEqual(code, 1)
+
+    def test_family_gpu_en_un_prototipo_sin_gpu_falla_sin_lanzar_nada(self):
+        solo_cpu = dict(self.CPU_Y_GPU, backends=["cpu"])
+        with mock.patch.object(run_board, "_capabilities", return_value=solo_cpu), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            with self.assertRaises(SystemExit):
+                run_board.main_test(
+                    ["--prototype", "21", "--port", "COM3", "--family", "gpu"])
+        run.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

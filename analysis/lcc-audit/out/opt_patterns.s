@@ -1,0 +1,159 @@
+.text
+.globl _start
+_start:
+LI R30, __stack+8192
+JAL R31, main
+HALT
+.globl constprop
+.text
+.align 4
+constprop:
+ADDI R30, R30, -16
+ADD R15, R1, R0
+MOVI R14, 7
+STORE R14, R30, -4+16
+LOAD R14, R30, -4+16
+ADD R1, R14, R15
+L.1:
+ADDI R30, R30, 16
+JR R31
+.globl copyprop
+.align 4
+copyprop:
+ADDI R30, R30, -16
+ADD R15, R1, R0
+STORE R15, R30, -4+16
+LOAD R14, R30, -4+16
+STORE R14, R30, -8+16
+LOAD R14, R30, -8+16
+ADDI R1, R14, 1
+L.2:
+ADDI R30, R30, 16
+JR R31
+.globl deadstore
+.align 4
+deadstore:
+ADDI R30, R30, -16
+ADD R15, R1, R0
+ADDI R14, R15, 1
+STORE R14, R30, -4+16
+ADDI R14, R15, 2
+STORE R14, R30, -4+16
+ADD R1, R15, R0
+L.3:
+ADDI R30, R30, 16
+JR R31
+.globl cse
+.align 4
+cse:
+ADD R15, R1, R0
+ADD R14, R2, R0
+ADD R13, R15, R14
+MUL R1, R13, R13
+L.4:
+JR R31
+.globl unreachable
+.align 4
+unreachable:
+ADD R15, R1, R0
+BEQ R15, R0, L.6
+MOVI R1, 1
+BRA L.5
+L.6:
+MOVI R1, 2
+BRA L.5
+MOVI R1, 99
+L.5:
+JR R31
+.globl invariant
+.align 4
+invariant:
+ADDI R30, R30, -16
+STORE R28, R30, 0
+STORE R29, R30, 4
+ADD R15, R1, R0
+ADD R14, R2, R0
+ADD R28, R0, R0
+ADD R29, R0, R0
+BRA L.12
+L.9:
+LOAD R13, R15, 0
+ADDI R13, R13, 3
+ADD R28, R28, R13
+L.10:
+ADDI R29, R29, 1
+L.12:
+BLT R29, R14, L.9
+ADD R1, R28, R0
+L.8:
+LOAD R28, R30, 0
+LOAD R29, R30, 4
+ADDI R30, R30, 16
+JR R31
+.globl tail
+.align 4
+tail:
+ADDI R30, R30, -32
+STORE R31, R30, 16
+STORE R1, R30, 32
+LOAD R1, R30, 0+32
+JAL R31, constprop
+ADD R15, R1, R0
+L.13:
+LOAD R31, R30, 16
+ADDI R30, R30, 32
+JR R31
+.globl main
+.align 4
+main:
+ADDI R30, R30, -48
+STORE R31, R30, 16
+MOVI R15, 3
+STORE R15, R30, -4+48
+LOAD R1, R30, -4+48
+JAL R31, constprop
+ADD R15, R1, R0
+STORE R15, R30, -8+48
+LOAD R1, R30, -4+48
+JAL R31, copyprop
+ADD R15, R1, R0
+STORE R15, R30, -12+48
+LOAD R1, R30, -4+48
+JAL R31, deadstore
+ADD R15, R1, R0
+STORE R15, R30, -16+48
+LOAD R1, R30, -4+48
+MOVI R2, 2
+JAL R31, cse
+ADD R15, R1, R0
+STORE R15, R30, -20+48
+LOAD R1, R30, -4+48
+JAL R31, unreachable
+ADD R15, R1, R0
+STORE R15, R30, -24+48
+ADDI R1, R30, -4+48
+MOVI R2, 2
+JAL R31, invariant
+ADD R15, R1, R0
+STORE R15, R30, -28+48
+LOAD R1, R30, -4+48
+JAL R31, tail
+ADD R15, R1, R0
+LOAD R14, R30, -8+48
+LOAD R13, R30, -12+48
+ADD R14, R14, R13
+LOAD R13, R30, -16+48
+ADD R14, R14, R13
+LOAD R13, R30, -20+48
+ADD R14, R14, R13
+LOAD R13, R30, -24+48
+ADD R14, R14, R13
+LOAD R13, R30, -28+48
+ADD R14, R14, R13
+ADD R1, R14, R15
+L.14:
+LOAD R31, R30, 16
+ADDI R30, R30, 48
+JR R31
+.bss
+.comm __stack,8192

@@ -1,0 +1,20 @@
+{
+  "name": "cpu-gpu/dma/latency-accesses",
+  "architecture": "cpu",
+  "program": "lat_exp.asm",
+  "requires": ["gpu_core", "calls", "large_memory", "mul_div"],
+  "max_instructions": 2000000,
+  "timeout_seconds": 20,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "registers": {"R1": 1},
+    "memory_dumps": [
+      {"address": "0x00600000", "file": "expected.hex"},
+      {"address": "0x00600004", "file": "zero.hex"},
+      {"address": "0x00610000", "file": "expected.hex"},
+      {"address": "0x00a00000", "file": "expected.hex"},
+      {"address": "0x00df0000", "file": "expected.hex"}
+    ]
+  }
+}

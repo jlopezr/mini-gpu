@@ -1,0 +1,5 @@
+# Salida de measure.py (necesita MSVC `cl` y y.lcc/build/rcc.exe para regenerarse).
+# Los .s se conservan: son lo que cita docs/lcc-optimization-audit.md y se leen sin compilar nada.
+# Los binarios y los preprocesados salen de ellos.
+out/*.bin
+out/*.i

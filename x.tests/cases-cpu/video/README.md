@@ -236,20 +236,20 @@ python ../../tools/compare-frames.py --rgb565 320x240 \
 
 ```bash
 # Los tres casos base, en la 18
-python run_tests.py --backend cpu-fpga --version bl8 --port COM3 cases-cpu/video
+python run_tests.py --backend fpga-cpu --version bl8 --port COM3 cases-cpu/video
 
 # Los ocho, incluida la ISA que necesitan los Bresenham, en la 21
-python run_tests.py --backend cpu-fpga --version alu --port COM3 cases-cpu/video
+python run_tests.py --backend fpga-cpu --version alu --port COM3 cases-cpu/video
 
 # Solo el que corre en la 16
-python run_tests.py --backend cpu-fpga --version hdmi --port COM3 \
+python run_tests.py --backend fpga-cpu --version hdmi --port COM3 \
     cases-cpu/video/registers/test.json
 ```
 
 Los once corren también en el simulador, sin placa:
 
 ```bash
-python run_tests.py --backend cpusim cases-cpu/video
+python run_tests.py --backend sim-cpu cases-cpu/video
 ```
 
 Pero el simulador **no modela el tiempo**: allí `underflow` es siempre cero y el

@@ -38,7 +38,7 @@
 ; filas, la fila sale de los bits [23:11] de la direccion de palabra, y
 ; 0x01000000 pide la fila 4096 --que el modelo denuncia como violacion, una
 ; por acceso, asi que el sintoma es «60000 violaciones JEDEC» y no «direccion
-; mala»--. `x.tests/test_fullframe_fixture.py` obliga a que el cuerpo de los
+; mala»--. `x.tests/unit/build/test_fullframe_fixture.py` obliga a que el cuerpo de los
 ; dos ficheros sea identico y a que `fullframe.hex` salga de ESTE.
 .equ FB_FRONT_ADDR, 0x00010000
 .equ FB_BACK_ADDR, 0x00035800      ; FB_FRONT + 320*240*2

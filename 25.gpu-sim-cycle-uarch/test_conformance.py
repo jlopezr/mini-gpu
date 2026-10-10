@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'x.tests'))
-from backends.gpu_simulator import GpuBackend, incompatibility
+from backends.sim_gpu import SimGpuBackend, incompatibility
 from run_tests import backend_arguments, load_case, compare_result
 
 
@@ -21,7 +21,7 @@ class ConformanceTests(unittest.TestCase):
         self.run_cases(True)
 
     def run_cases(self, programs):
-        backend = GpuBackend(ROOT, 'cycle')
+        backend = SimGpuBackend(ROOT, 'cycle')
         # La conformidad debe preparar cada caso igual que el runner público.
         # En particular, backend_arguments conecta vídeo/serie y transmite las
         # opciones del modelo; construir esta lista a mano fue lo que dejó
@@ -41,7 +41,7 @@ class ConformanceTests(unittest.TestCase):
                 # declara honestamente que no implementa.
                 if incompatibility(case, 'cycle') is not None:
                     continue
-                result = backend.run(**backend_arguments(case, 'gpusim-cycle', args))
+                result = backend.run(**backend_arguments(case, 'sim-gpu-cycle', args))
                 self.assertEqual(compare_result(case, result, 'gpu'), [])
 
 

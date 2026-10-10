@@ -153,7 +153,8 @@ module cpu_tb;
       reset = 1'b1;
       repeat (2) @(negedge clk);
       reset = 1'b0;
-      @(negedge clk);
+      // Wait for the distributed register bank's 32-cycle clear sweep.
+      repeat (40) @(negedge clk);
     end
   endtask
 

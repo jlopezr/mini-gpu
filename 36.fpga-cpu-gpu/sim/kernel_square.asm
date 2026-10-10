@@ -1,5 +1,5 @@
 ; Kernel de prueba de la 36: out[tid] = tid*tid + 1, tid = warp*8 + lane.
-; Mismo kernel que 32.cpu-gpu-func-sim/examples/asm/launch.asm, pero solo la parte
+; Mismo kernel que x.tests/cases-cpu-gpu/launch/launch.asm, pero solo la parte
 ; de la GPU: el banco carga esta imagen en RAM y lanza los warps por MMIO.
 kernel:
     GETTID R1

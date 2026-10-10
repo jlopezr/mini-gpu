@@ -37,7 +37,7 @@ escribía cada palabra en cuatro `write-byte`, lo que rearma `HALT_AT` cuatro
 veces con valores intermedios y dispara la captura donde no toca. Lo segundo
 está descrito en `mmio_decoder.v`, que nombra a esta herramienta.
 
-Los tests de `x.tests/test_video_tools.py` no lo cogieron porque prueban el
+Los tests de `x.tests/unit/measure/test_video_tools.py` no lo cogieron porque prueban el
 parseo de las respuestas con el monitor simulado, y ahí una dirección
 equivocada da una respuesta igual de válida.
 """

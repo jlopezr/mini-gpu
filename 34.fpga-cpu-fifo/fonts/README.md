@@ -57,7 +57,7 @@ El script imprime de dónde sale cada glifo (`ttf`, `bdf`, `unscii`, `hand`, `bl
 
 Para probar una u otra en la placa sin resintetizar, `tools/font-patch`
 (`font-patch -p 30 tamzen --upload`), o en el simulador con
-`cpusim ... --console-image pantalla.png --console-font tamzen`.
+`sim-cpu ... --console-image pantalla.png --console-font tamzen`.
 [`previews/`](previews) tiene la demo del TUI de z.tui dibujada con cada una:
 [CPC464](previews/tui-cpc464.png), [PC](previews/tui-pc.png) y
 [Tamzen](previews/tui-tamzen.png).

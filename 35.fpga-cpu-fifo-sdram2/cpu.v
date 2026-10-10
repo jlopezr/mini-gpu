@@ -527,9 +527,13 @@ module cpu (
 
   assign debug_pc = pc;
 
+  // El banco barre sus 32 registros tras cada reset (register_file.v): mientras
+  // `rf_busy`, la CPU se mantiene en reset.
+  wire rf_busy;
   register_file register_file_i (
       .clk(clk),
       .reset(reset),
+      .busy(rf_busy),
       .read_address_a(register_a_address),
       .read_data_a(register_a),
       .read_address_b(register_b_address),
@@ -545,7 +549,7 @@ module cpu (
     register_write_enable <= 1'b0;
     instruction_retired <= 1'b0;
 
-    if (reset) begin
+    if (reset || rf_busy) begin
       state <= STATE_HALTED;
       pc <= 32'h0000_0000;
       instruction <= 32'h0000_0000;

@@ -117,6 +117,47 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire [7:0] lsu_mask, lsu_rsp_error, occupied;
     wire [255:0] lsu_address, lsu_data, lsu_rsp_data;
 
+    // Cola elastica de una entrada entre el SM y la LSU. Registra el paquete
+    // ancho despues de los ocho sumadores de direccion y antes de los arrays
+    // internos de la LSU, para cortar esa frontera de routing. Puede consumir
+    // y reemplazar la entrada en el mismo ciclo, por lo que conserva una
+    // peticion por ciclo aunque anade un ciclo de latencia a cada operacion.
+    reg lsu_req_valid_q, lsu_req_write_q, lsu_req_signed_q;
+    reg [1:0] lsu_req_size_q;
+    reg [2:0] lsu_req_tag_q;
+    reg [7:0] lsu_req_mask_q;
+    reg [255:0] lsu_req_address_q, lsu_req_data_q;
+    wire lsu_core_ready;
+    wire [7:0] lsu_core_occupied;
+
+    assign lsu_ready = !lsu_req_valid_q || lsu_core_ready;
+    assign occupied = lsu_core_occupied |
+                      (lsu_req_valid_q ? (8'b1 << lsu_req_tag_q) : 8'b0);
+
+    always @(posedge clk) begin
+        if(core_reset) begin
+            lsu_req_valid_q <= 1'b0;
+            lsu_req_write_q <= 1'b0;
+            lsu_req_signed_q <= 1'b0;
+            lsu_req_size_q <= 2'b0;
+            lsu_req_tag_q <= 3'b0;
+            lsu_req_mask_q <= 8'b0;
+            lsu_req_address_q <= 256'b0;
+            lsu_req_data_q <= 256'b0;
+        end else if(lsu_ready) begin
+            lsu_req_valid_q <= lsu_valid;
+            if(lsu_valid) begin
+                lsu_req_write_q <= lsu_write;
+                lsu_req_signed_q <= lsu_signed;
+                lsu_req_size_q <= lsu_size;
+                lsu_req_tag_q <= lsu_tag;
+                lsu_req_mask_q <= lsu_mask;
+                lsu_req_address_q <= lsu_address;
+                lsu_req_data_q <= lsu_data;
+            end
+        end
+    end
+
     // ------------------------------------------------------------------
     // Transaccion del host: se captura, se evalua con los registros ya
     // estables y se contesta con h_done.
@@ -389,12 +430,12 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     end
 
     gpu_lsu2 lsu (
-        .clk(clk), .reset(core_reset), .req_valid(lsu_valid), .req_ready(lsu_ready),
-        .req_tag(lsu_tag), .req_mask(lsu_mask), .req_write(lsu_write),
-        .req_size(lsu_size), .req_signed(lsu_signed),
-        .req_address(lsu_address), .req_data(lsu_data), .rsp_valid(lsu_rsp_valid),
+        .clk(clk), .reset(core_reset), .req_valid(lsu_req_valid_q), .req_ready(lsu_core_ready),
+        .req_tag(lsu_req_tag_q), .req_mask(lsu_req_mask_q), .req_write(lsu_req_write_q),
+        .req_size(lsu_req_size_q), .req_signed(lsu_req_signed_q),
+        .req_address(lsu_req_address_q), .req_data(lsu_req_data_q), .rsp_valid(lsu_rsp_valid),
         .rsp_ready(lsu_rsp_ready), .rsp_tag(lsu_rsp_tag), .rsp_data(lsu_rsp_data),
-        .rsp_error(lsu_rsp_error), .occupied(occupied),
+        .rsp_error(lsu_rsp_error), .occupied(lsu_core_occupied),
         .mem_req_valid(p0_req_valid), .mem_req_ready(p0_req_ready), .mem_req_write(p0_req_write),
         .mem_req_addr(p0_req_addr), .mem_req_wdata(p0_req_wdata), .mem_req_wmask(p0_req_wmask),
         .mem_rsp_valid(p0_rsp_valid), .mem_rsp_ready(p0_rsp_ready),

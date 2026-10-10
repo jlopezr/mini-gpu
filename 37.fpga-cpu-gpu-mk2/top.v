@@ -105,6 +105,15 @@ module top (
       reset_ctl <= reset_mem_shift[14]; reset_fab <= reset_mem_shift[14];
     end
   end
+  // Aun con una copia propia, en la 37 la red `reset_ctl` tardo 10,1 ns (distancia
+  // 182) hasta el controlador SDRAM: el placer deja el registro lejos de el.
+  // Dos registros mas, a su lado, parten esa red en tres saltos de un ciclo cada
+  // uno. El reset dura cientos de ciclos, asi que dos de retraso no cambian nada.
+  (* keep = "true" *) reg reset_ctl_a = 1'b1, reset_ctl_b = 1'b1;
+  always @(posedge clk_mem) begin
+    reset_ctl_a <= reset_ctl;
+    reset_ctl_b <= reset_ctl_a;
+  end
   assign wifi_gpio0 = 1'b1;
 
   wire [7:0] uart_rx_data, uart_tx_data;
@@ -666,7 +675,7 @@ module top (
   assign init_done = init_done_sync2;
 
   sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
-      .clk(clk_mem), .reset(reset_ctl),
+      .clk(clk_mem), .reset(reset_ctl_b),
       .req_valid(fab_req_valid), .req_write(fab_req_write),
       .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),
       .req_wmask(fab_req_wmask), .req_ready(fab_req_ready),

@@ -103,6 +103,28 @@ Los caminos críticos cambian de semilla a semilla y son casi todo ruteo (75 a
 decodificador MMIO; reloj de memoria, el candidato de ACTIVE del controlador.
 `timing-wall --path` los enseña salto a salto.
 
+## Banco de registros en RAM distribuida (experimento del 9 de octubre de 2026)
+
+`register_file.v` de esta carpeta **no es el de las demás**. Ponía a cero los 32
+registros en el ciclo del reset, y eso obligaba a la síntesis a usar
+flip-flops: 1.061 FF y 2.589 LUT4 de multiplexores para tres lecturas. Ahora es
+una RAM distribuida (3 copias de 16 `DPR16X4`: 48 celdas, 43 FF y 141 LUT4) y
+el reset arranca un barrido de 32 ciclos que escribe cero en cada dirección.
+Con la misma semilla (17) y opciones: 18.456 → 16.367 LUT4, 11.607 → 10.589 FF,
+97.746 → 88.278 arcos a rutar; cierra timing (CPU 81,7 / 80 MHz, SDRAM 114 / 100).
+No se ve alivio en los tiles más cargados (p99 de arcos por tile 76 → 75): la 35
+está al 19 % de LUT y no tiene congestión que aliviar.
+
+**Efecto del reset.** `register_file` da una señal `busy` y `cpu.v` se mantiene
+en reset mientras `reset || busy`. Tras cualquier reset (arranque, botón,
+`RESET_CPU` del monitor, que es un pulso de un ciclo) la CPU tarda **32 ciclos
+más** (0,4 µs a 80 MHz) en poder arrancar; un `RUN` o `STEP` que llegue en ese
+intervalo se ignora. El monitor tarda cientos de microsegundos en responder, así
+que no se nota, pero un banco de pruebas que dé `run` justo después del reset
+tiene que esperar (`cpu_tb.v` espera 40 ciclos).
+
+No probado en la placa. El resto de carpetas siguen con el banco antiguo.
+
 ## Validación
 
 - `sdram_bank_parallel_tb.v` (nuevo): peticiones sin esperar respuesta contra el

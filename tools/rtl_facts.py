@@ -2,8 +2,8 @@
 mano en ningún sitio.
 
 `monitor_version`, `clock_hz` y `capabilities` salen del RTL; `readme_title`
-sale del primer encabezado de su README.md. `x.tests/backends/{fpga,
-gpu_fpga}.py` y `tools/prototype_report.py` llaman a las mismas funciones, así
+sale del primer encabezado de su README.md. `x.tests/backends/{fpga_cpu,
+fpga_gpu}.py` y `tools/prototype_report.py` llaman a las mismas funciones, así
 que un cambio en el RTL -- añadir una instrucción, subir el reloj -- o en el
 README se refleja solo tocando ese fichero. Lo único que sigue siendo una
 etiqueta elegida a mano es el alias corto (`ebr`, `alu`...) y, si el README no
@@ -35,7 +35,7 @@ def sin_comentarios(source: str) -> str:
     mirando y a esquivarlo. Los saltos de línea se conservan para que las
     posiciones sigan cuadrando.
 
-    `x.tests/test_monitor_port.py` importa esta misma función en vez de tener su
+    `x.tests/unit/backends/test_monitor_port.py` importa esta misma función en vez de tener su
     copia, porque tuvo exactamente este fallo el mismo día y en su propio
     parser. Dos copias de un analizador son dos sitios donde arreglarlo, y sólo
     uno falla ruidosamente.
@@ -65,6 +65,23 @@ def backend_from_rtl(prototype_dir: Path) -> str | None:
     if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
         return "gpu"
     return None
+
+
+def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
+    """TODAS las familias de núcleo que hay en la carpeta, en orden CPU, GPU.
+
+    `backend_from_rtl` devuelve una sola porque casi todas las carpetas tienen
+    una. La 36 y la 37 tienen las dos: una CPU que lanza una GPU de 8 lanes por
+    MMIO (GPU CORE). Allí `backend_from_rtl` sigue diciendo `cpu` --es la que
+    gobierna el monitor, y de ella cuelgan `fpga-cpu`, el SYS_ID y los informes--,
+    y esta dice además `gpu`, que es lo que habilita el backend `fpga-sys`.
+    """
+    familias = []
+    if (prototype_dir / "cpu.v").exists():
+        familias.append("cpu")
+    if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
+        familias.append("gpu")
+    return tuple(familias)
 
 
 def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:

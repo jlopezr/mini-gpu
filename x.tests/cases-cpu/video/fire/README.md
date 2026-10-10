@@ -22,7 +22,7 @@ La referencia secuencial del efecto de fuego, en MiniISA.
 
 ## Por qué no hay `test.json`
 
-La comprobación vive en [`x.tests/test_fire_reference.py`](../../../test_fire_reference.py),
+La comprobación vive en [`x.tests/unit/tools/test_fire_reference.py`](../../../unit/tools/test_fire_reference.py),
 una regresión cruzada: el modelo Python contra la MiniISA ejecutada en el
 simulador (la paleta en sus fronteras y el frame 3). No corre contra la placa.
 

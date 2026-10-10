@@ -85,6 +85,14 @@
 `define MMIO_DEV_GPU_BIT           32'h0000_000A
 `define MMIO_DEV_INPUT_BIT         32'h0000_000B
 
+// ==== SDRAM (mmio.md §7) =================================================
+
+// Control de fase del reloj de la SDRAM. OPCIONAL, pero si existe es aqui.
+`define MMIO_SDRAM_PHASE_CTRL_OFF  32'h0000_0000
+`define MMIO_SDRAM_PHASE_STATUS_OFF 32'h0000_0004
+// Posiciones de fase (la posicion 48 es la 0).
+`define MMIO_SDRAM_PHASES          32'h0000_0030
+
 // ==== SERIAL (mmio.md §8) ================================================
 
 `define MMIO_SERIAL_DATA_OFF       32'h0000_0000

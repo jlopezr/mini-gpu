@@ -309,10 +309,10 @@ una reimplementación.
 
 ```bash
 > mini-asm ../x.tests/cases-gpu/demos/vector/vector.asm           # -> 1.isa/mini_asm.py
-> cpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
-> gpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
-> gpusim-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
-> cpugpusim ../32.cpu-gpu-func-sim/examples/asm/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
+> sim-cpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
+> sim-gpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+> sim-gpu-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
+> sim-sys ../x.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -345,7 +345,7 @@ dice y hay que regenerarlo. La imagen del listado coincide con el `.bin`.
 Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
 hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py`, una
 sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
-`.asm` solo funcionaban en `gpusim-cycle` — los otros dos leían el fichero como
+`.asm` solo funcionaban en `sim-gpu-cycle` — los otros dos leían el fichero como
 binario y morían con «el programa debe contener instrucciones completas», que
 es el síntoma (el texto fuente no mide un múltiplo de 4) y no la causa.
 
@@ -354,7 +354,7 @@ con `--config`, o el simulador lanza los 8 warps por defecto en vez de los que
 el caso espera.
 
 ```bash
-$ gpusim x.tests/cases-gpu/memory/memory-copy/program.asm \
+$ sim-gpu x.tests/cases-gpu/memory/memory-copy/program.asm \
          --config x.tests/cases-gpu/memory/memory-copy/warps.json --trace
 ```
 
@@ -362,11 +362,11 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
 Los casos existentes también se ejecutan con
-`python x.tests/run_tests.py --backend gpusim --version cycle x.tests/cases-gpu`.
+`python x.tests/run_tests.py --backend sim-gpu --version cycle x.tests/cases-gpu`.
 
 ### Periféricos comunes de los tres simuladores
 
-`cpusim`, `gpusim` y `gpusim-cycle` comparten `tools/sim_devices.py` y las
+`sim-cpu`, `sim-gpu` y `sim-gpu-cycle` comparten `tools/sim_devices.py` y las
 opciones de `tools/sim_peripherals.py`:
 
 | Opción | Efecto |
@@ -390,15 +390,15 @@ opciones de `tools/sim_peripherals.py`:
 Por ejemplo, las mismas opciones sirven con cualquiera de los tres lanzadores:
 
 ```powershell
-.\tools\cpusim.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
-.\tools\gpusim-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
-.\tools\cpusim.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
+.\tools\sim-cpu.ps1 programa.asm --serial-input entrada.bin --serial-output salida.bin
+.\tools\sim-gpu-cycle.ps1 dibujo.asm --video --halt-after-swaps 2 --frame-output frame.bin
+.\tools\sim-cpu.ps1 leer_teclas.asm --input-script entrada.txt --serial-output salida.bin
 ```
 
 #### Ventana (`--window`)
 
 ```powershell
-.\tools\cpusim.ps1 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
+.\tools\sim-cpu.ps1 2.cpu-sim-func\examples\input_paint.asm --window --run-limit 2000000000
 ```
 
 El pintor de `2.cpu-sim-func/examples/input_paint.asm` dibuja con el ratón
@@ -439,7 +439,7 @@ que la ventana del simulador. **F12** sale, y al salir manda las liberaciones de
 lo que siguiera pulsado y la presencia a cero. La lógica —qué palabras salen, el
 control de flujo con los huecos libres de la FIFO, que el movimiento se funda
 mientras no hay sitio— está en `tools/input_adapter.py` y se prueba sin placa
-(`x.tests/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
+(`x.tests/unit/input/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
 timer del FTDI, así que se manda un comando por vuelta con todo lo que cabe.
 
 **El puntero se resincroniza al conectar.** El ratón de INPUT es relativo y el
@@ -504,7 +504,7 @@ más baja a la más alta:
 Qué usar: para la lógica (teclado español, repintado, controles) el simulador con
 `--input-script`, que es determinista y no necesita placa; para comprobar la placa
 de verdad (latencia, FIFO, repintado real), estos. Se prueban sin placa en
-`x.tests/test_board_input.py` y `x.tests/test_board_script.py`, con una FPGA y una
+`x.tests/unit/input/test_board_input.py` y `x.tests/unit/input/test_board_script.py`, con una FPGA y una
 aplicación simuladas.
 
 #### Guiones de entrada (`--input-script`)
@@ -673,7 +673,7 @@ devolvería el propio magic con pinta de dirección de framebuffer.
 Los programas de vídeo escriben sus propias bases `FB_FRONT` y `FB_BACK`; el
 depurador no las prepara desde fuera. Hay que habilitar el dispositivo con
 `--video`. Si un fuente usa símbolos `MMIO_VIDEO_*` sin esa opción, `mini-dbg`
-y `cpusim` muestran un aviso antes de ejecutarlo:
+y `sim-cpu` muestran un aviso antes de ejecutarlo:
 
 ```bash
 > mini-dbg x.tests/cases-cpu/video/fire/fire.asm --video -x "run 400000"
@@ -706,18 +706,18 @@ paneles lo que el núcleo devuelve. En medio, `tools/debug_target.py` define qu�
 necesita el depurador de la máquina que depura, con una implementación para el
 simulador y otra (`tools/debug_board.py`) para el monitor. CPU y GPU juntas son
 un tercer objetivo, `tools/debug_system.py` (siguiente apartado).
-Suite: `python -m unittest discover -s x.tests -p "test_debugger*.py"`.
+Suite: `python -m unittest discover -s x.tests/unit/debugger -t x.tests -p "test_debugger*.py"`.
 
 ### Depurar CPU + GPU (`mini-dbg --gpu`)
 
 ```bash
-> mini-dbg --gpu 32.cpu-gpu-func-sim/examples/asm/launch.asm
+> mini-dbg --gpu x.tests/cases-cpu-gpu/launch/launch.asm
 > mini-dbg --gpu programa.asm --num-warps 4 --warp-size 8 --cpu-steps 2 --gpu-steps 1
 ```
 
 Monta el simulador de `32.cpu-gpu-func-sim` (CPU y GPU sobre la misma RAM): el
 programa lleva el código de la CPU y el kernel en una imagen, como en
-`cpugpusim`. Solo existe en el simulador; la placa no lo tiene porque el
+`sim-sys`. Solo existe en el simulador; la placa no lo tiene porque el
 monitor de las carpetas con GPU no da los registros de lane (hace falta un
 comando de selección de contexto en `monitor.v`).
 
@@ -843,15 +843,15 @@ $ run-tests
 ...
 
 $ run-tests --quick              # solo los test_*.py, sin simular casos (rápido)
-$ run-tests --hardware           # casos contra placa real, backend gpu-fpga
-$ run-tests -- --backend cpu-fpga               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
+$ run-tests --hardware           # casos contra placa real, backend fpga-gpu
+$ run-tests -- --backend fpga-cpu               # passthrough directo a run_tests.py; detecta el puerto FTDI si no pasas --port
 ```
 
 ### Informe de tiempos de todas las suites (`test-timings`)
 
 `test-timings` ejecuta y ordena de mayor a menor todos los tests unitarios
 Python del repositorio (por método y con subtotal por carpeta), los bancos RTL de un prototipo (por banco) y los casos de
-`x.tests` para `cpusim`, `gpusim` y `gpusim-cycle`. Escribe por defecto
+`x.tests` para `sim-cpu`, `sim-gpu` y `sim-gpu-cycle`. Escribe por defecto
 `reports/test-timings.md`. Usa `--jobs 1` por defecto para que el total y los
 tiempos individuales no se solapen:
 
@@ -874,7 +874,7 @@ placa. Al indicar `--cpu-prototype`/`--gpu-prototype` manualmente no carga nada
 `TEST-LENTO` solo entran con `--full`.
 
 Los casos cuyo `test.json` declara `"slow": "motivo"` se omiten por defecto
-en `gpusim` y `gpusim-cycle`: hoy son las dos imágenes completas, `mandelbrot`
+en `sim-gpu` y `sim-gpu-cycle`: hoy son las dos imágenes completas, `mandelbrot`
 y `mandelbrot-packed`, que dominan el tiempo del informe y ocultan el coste del
 resto de la suite. `--full-x-tests` los incluye. Esta
 exclusión no se aplica a las placas CPU/GPU, cuyo coste y comportamiento interesa
@@ -902,7 +902,16 @@ La validacion propia del compilador se puede lanzar directamente:
 ```bash
 $ mkdir -p y.lcc/build
 $ python3 y.lcc/run-mini-tst.py --simulate
+$ python3 y.lcc/run-mini-tst.py --simulate --optimize
+$ python3 y.lcc/run-mini-tst.py --simulate --compare-optimizer
 ```
+
+`--optimize` conserva el `.s` original, genera además un `.opt.s` con
+`tools/mini-opt` y valida la forma optimizada. `--compare-optimizer` genera las
+dos y, con `--simulate`, valida ambas contra las mismas expectativas, además de
+mostrar el total de instrucciones antes y después. Sin ninguna de esas opciones
+el comportamiento sigue siendo el histórico. Se puede pasar otra ubicación con
+`--mini-opt RUTA`.
 
 O mediante el wrapper global:
 
@@ -920,6 +929,36 @@ Por ahora esta validacion comprueba compilacion y simulacion dentro de
 `mini-lcc`. El siguiente paso sera usarlo para producir `.asm`, `.bin` o
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
 las suites de `x.tests`.
+
+## Un programa entero en C: `build-c`
+
+Para un programa con CPU y kernels de GPU en C, `build-c` encadena `mini-lcc`, `mini-opt` y `mini-asm`
+(las tres piezas se explican en la sección siguiente) y añade el runtime de la GPU:
+
+```bash
+$ build-c programa.c                          # -> _build/c/programa.bin (simulador)
+$ build-c programa.c --board                  # -> _build/c/programa_board.bin (placa 36)
+$ build-c programa.c --load                   # compila con --board y lo sube a la 36 (como board-load)
+$ build-c programa.c --load 37 --no-run      # a la 37, sin arrancarlo
+$ build-c programa.c --outdir out -I inc --data tex=tex.bin
+```
+
+Compila el programa y `x.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
+y ensambla un `.asm` generado con el arranque (`1.isa/runtime/crt0.s`), los dos `.s` y el runtime
+(`x.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `x.tests/inc` entran siempre en
+el `-I`.
+
+- **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
+  `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
+- **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
+  `extern unsigned etiqueta[]`. `build-c` no ejecuta generadores: los datos los prepara quien llama.
+- **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
+  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `x.tests/inc`.
+- La lógica es `tools/build_c.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
+
+El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
+así `gpu_runtime.inc` y `bench.inc` sirven al simulador y a la placa con un solo fichero.
+Ejemplos en `x.tests/cases-cpu-gpu/programas-en-c.md`; los números, en `32.cpu-gpu-func-sim/compare/README.md`.
 
 ## Compilar C para la CPU y la GPU: `mini-lcc --no-crt`, `crt0` y `mini-opt`
 
@@ -947,18 +986,23 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
-  intrínseco o un temporal que siga vivo. Para añadir una transformación: una función con
-  `@register_pass` en `tools/mini_opt.py`, con troceado en funciones, grafo de flujo
-  (`build_cfg`) y vida de registros (`liveness`).
+  intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
+  por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
+  `invert`, `ssy`) y,
+  aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
+  grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
+  transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
+  `passes/__init__.py`.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
-  `32.cpu-gpu-func-sim/examples/c/system/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  `x.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
   carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
   si el kernel usa una instrucción que la GPU del prototipo no ejecuta o pide más de 4
   parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
-  Ejemplo completo en `32.cpu-gpu-func-sim/examples/c/`.
+  Ejemplo completo en `x.tests/cases-cpu-gpu/`.
 
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
@@ -966,23 +1010,145 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
   además el `SSY` que cae siempre después de otro con el mismo destino.
 
-- **Pase `licm`** (todas las funciones): en cada bucle sin bucles dentro ni llamadas saca al preheader
-  las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`...), en un
+- **Pase `licm`** (todas las funciones): en cada bucle sin llamadas saca al preheader
+  las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`, productos como
+  `MUL t, lane, dux`...), en un
   registro que el bucle no usa (R5..R15; en un kernel también los R16..R29 libres) y cuando cada uso
-  viene solo de esa definición. Un cero pasa a `R0`. No toca cargas, ni `DIV`/`REM`.
+  viene solo de esa definición. Va de dentro afuera: lo que el bucle interior deja en su preheader está en el
+  cuerpo del exterior y, si tampoco cambia allí, sube otra vez (en la rotación y el cubo, lo que no depende de
+  la fila: el reparto por `lane`, `4 * lane`, los límites). Un cero pasa a `R0`. No toca `DIV`/`REM`. Las cargas, solo en un kernel y solo si la base es la
+  dirección de un símbolo que el kernel solo lee (todos los usos de `LI base, símbolo+K` en la función son
+  `LOAD`, por cualquier camino) y que **ningún puntero puede alcanzar**, lo que se demuestra con la unidad entera:
+  el símbolo está definido en ella, su dirección no escapa de ninguna función (solo se usa como base de
+  `LOAD`/`STORE`, directamente o en un puntero calculado a partir de ella, `&tabla[i]`, que a su vez solo
+  se usa así o se compara; no se suma a otra cosa, ni se guarda, ni se pasa, ni se devuelve, ni está en un
+  `.word`), no es `volatile` y ningún fichero ajeno a la unidad lo nombra (`--extern-refs FICHERO`, repetible: el
+  arranque, el runtime de ensamblador, la otra unidad). `volatile` es un hecho que lcc escribe en un comentario
+  (`; @miniopt volatile NOMBRE`, que el ensamblador no ve), porque el `.s` ya no lo dice. Quedan dos supuestos que
+  ningún análisis del texto puede comprobar: que nadie escriba el símbolo mientras el kernel corre (la CPU, el DMA,
+  otro agente) y que no se fabrique un puntero a partir de un entero. Con `--assume-noalias` basta que el kernel no
+  escriba el símbolo, aunque su dirección escape o lo nombre código ajeno; un `volatile` no se saca nunca.
+  `build-c` pasa `--extern-refs` con el arranque, el runtime y la otra unidad, y deja la suposición
+  apagada (`MINI_OPT_NOALIAS=1` la enciende). Las direcciones que solo servían de base a lo que sale del bucle
+  quedan muertas: las borra el `dce` que viene detrás en el pipeline.
+- **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene
+  su porción a 512 bytes de la siguiente (un acceso de un warp son 8 transacciones). Los huecos de pila
+  que son una palabra a un desplazamiento fijo de `R30`, a los que solo se accede con `LOAD`/`STORE` de
+  palabra y de los que nadie toma la dirección, y alguno de cuyos accesos está en un bucle, pasan a un
+  registro que ninguna instrucción de la función menciona (`LOAD Rd, R30, k` es `ADD Rd, Rp, R0`; `STORE
+  Rs, R30, k` es `ADD Rp, Rs, R0`); `constprop` y `copyprop`, que van después, quitan las copias. Si caben
+  también los huecos que no están en bucles, se llevan todos y desaparece el marco entero (los `ADDI R30,
+  R30, ±n` y, en un kernel, la preparación de la pila de la lane). Para saber a qué hueco apunta un acceso
+  sigue cuánto vale `R30` por el grafo de flujo; si dos caminos no coinciden, o `R30` se toca de otra forma
+  que en la preparación del principio, no hace nada. Registros: en una función normal solo R1..R15 y sin
+  llamadas; en un kernel también R31 y los R16..R29 que sobren. Los huecos más calientes (los accesos
+  dentro de bucles pesan 10 por nivel de anidamiento) se llevan primero. El área desde `R30` de
+  entrada +16, reservada por MiniABI para los argumentos 5+, nunca se promociona: pertenece al
+  llamador y no es un slot privado inicializado por la función.
+- **Pase `sharebase`:** lcc carga cada campo de una tabla con su propio `LI` (`LI R12, cube_faces+4 ; LOAD
+  R12, R12, 0`). Dentro de un bloque, los `LI simbolo+K` del mismo símbolo cuyo registro solo se lee como
+  base de `LOAD`/`STORE` (y no sale vivo del bloque) se cambian por un único `LI base, simbolo` en un
+  registro que nadie toca durante el tramo, y cada acceso suma su `K` al desplazamiento. Necesita al
+  menos dos `LI` del mismo símbolo y un registro libre (los mismos que `licm`; en un kernel también los
+  R16..R29 sin uso); si no lo hay, no hace nada. Va después de `licm`, que se queda primero con los
+  registros que necesita para sacar cosas de los bucles.
 - **Pase `constprop`:** donde un registro vale una constante por todos los caminos, `ADD`, `SUB`, `AND`,
   `OR` y `XOR` pasan a su forma con inmediato, y `SHL` por 1 a `ADD d, a, a`; la constante, si ya nadie la
-  lee, se borra.
+  lee, la elimina después el pase `dce`. Con la misma información: se quita un `MOVI`/`LI` que carga lo que el registro ya vale
+  (`redundant`); si los dos operandos son constantes la operación se hace en el filtro y queda un
+  `MOVI`/`LI` (`evaluated`, con la aritmética de 32 bits de la máquina; una copia `ADD d, x, R0` no se
+  evalúa, es lo que sigue `copyprop`); `x+0`, `x-0`, `x|0`, `x^0`, `x<<0`, `x*1` y `x&-1` pasan a una
+  copia (o se borran si `d` es `x`) y `x*0`, `x&0`, `x-x` y `x^x` a un cero (`identities`); y
+  `MUL d, a, K` seguido de `SHL d, d, S` queda `MUL d, a, K<<S`, con la constante recargada ya
+  desplazada antes del `MUL` (`fused`; solo si ese registro no se lee después).
 - **Pase `copyprop`:** propagación de copias (`ADD d, s, R0`: donde llega por todos los caminos, los
-  usos de `d` leen `s`) y borrado de lo que ya nadie lee, en todas las funciones.
+  usos de `d` leen `s`) en todas las funciones. Una copia que queda de un registro sobre sí mismo
+  también se borra; la DCE general queda en su pase propio.
+- **Pase `branches`:** resuelve branches cuyos operandos son constantes o el mismo registro; los que
+  siempre se toman pasan a `BRA` y los que nunca se toman desaparecen.
+- **Pase `unreachable`:** elimina bloques que dejan de ser alcanzables, en particular tras simplificar
+  branches. Las funciones con saltos indirectos se dejan intactas.
+- **Pase `dce`:** elimina a punto fijo instrucciones puras cuyo resultado ya no está vivo. Es un pase
+  independiente y el pipeline por defecto lo intercala entre fases para que una limpieza abra nuevas
+  oportunidades a la siguiente; `--passes` permite colocarlo donde convenga.
+- **Pase `tailcalls`:** una `JAL` directa en posición final pasa a restaurar el epílogo y hacer `BRA`
+  al destino. Solo actúa sobre el epílogo canónico de LCC, con destino definido en la misma unidad,
+  sin argumentos de pila, varargs ni punteros al frame actual; helpers de ABI privada y llamadas
+  indirectas quedan fuera.
 - **Pase `jumps`:** `BRA` a una etiqueta que solo salta, va al destino final; `BRA` a la línea
   siguiente se quita.
+- **Pase `forward`:** reenvío de store a load sobre huecos de la pila. `STORE R1, R30, 32 ... LOAD R1, R30, 32`
+  deja de leer la memoria (el `LOAD` sobra) y `LOAD R5, R30, 32` pasa a `ADD R5, R1, R0`; una segunda carga
+  del mismo hueco copia a la primera. Es el análisis `forward_must` sobre el CFG con el estado
+  `{desplazamiento: registro con el mismo valor}`, válido solo si lo es por todos los caminos. Lo invalidan:
+  que se reescriba el registro, otro store sobre esa palabra (o de otro ancho, o con desplazamiento simbólico),
+  cualquier llamada, un cambio de R30, y un store por puntero si el hueco está en o por encima de la dirección
+  de marco más baja que la función calcula (si calcula R30 de otra forma, caen todos). Solo palabras con
+  desplazamiento numérico múltiplo de 4. Va antes de `constprop` y `copyprop`, que limpian las copias.
+- **Pase `deadstores`:** tras `forward`, el `STORE R1, R30, 32` con que lcc vuelca un argumento a su hueco
+  deja de leerse. Se borra un `STORE` de palabra a un hueco por encima del marco (desplazamiento ≥ n, con
+  `ADDI R30, R30, -n` al entrar: el área de parámetros del llamador, que el destino puede pisar) cuando
+  ninguna instrucción de la función lee esa palabra con ningún ancho y nadie calcula la dirección de ese
+  hueco ni de uno anterior del área (`va_start`, `&param`). Por debajo del marco no toca nada: ahí está el
+  área saliente, que lee el destino de la llamada, además de los guardados y los locales. Si R30 cambia
+  de otra forma que el ajuste canónico, o se usa de una forma que no se sigue, no toca la función.
+  Es una condición de toda la función, sin CFG ni liveness.
+- **Hechos de lcc (`; @miniopt volatile NOMBRE`, `; @miniopt const NOMBRE`):** comentarios que el ensamblador no ve y `parse_unit` lee en
+  `Unit.volatile` y `Unit.const`. Un objeto `const` (o un array de const; un struct solo si lo es entero) no lo escribe nadie, así que `licm`
+  saca de un bucle, en cualquier función, su lectura a una dirección fija; si es además `volatile`, gana `volatile`. Un puntero a `const`
+  no se exporta: otro puntero puede escribir en el objeto.
+- **Intrínseco `NOALIAS(p)` y pase `noalias`:** `restrict` no existe en C89, así que `gpu.h` define `NOALIAS(p)` como
+  `__noalias_mark = (int)(p)`. `intrinsics` lo convierte en una marca interna `NOALIAS Rp` (que lee `p`, así que sigue vivo hasta ella) y el
+  pase `noalias` las borra al final (`optimize` las borra aunque no se pida el pase). Es la promesa de `restrict`: lo que se accede por `p`
+  o por un puntero calculado a partir de él no se accede por ningún otro mientras dure la función. El análisis de procedencia
+  (`passes/noalias.py`) da a cada registro el conjunto de regiones marcadas de las que puede derivar: la marca vale para el *valor* (todas
+  sus copias, aunque lcc use el registro original), `p + índice` deriva de `p`, y lo que se guarda en memoria, se pasa a una llamada y se
+  vuelve a cargar conserva la región. Dos accesos no se estorban si sus procedencias no comparten región y alguna no está vacía. `licm` lo
+  usa para sacar de un bucle una carga invariante por un puntero marcado o por un símbolo que no sea `volatile` cuando ningún store del
+  bucle (salvo los del marco) puede tocar lo mismo; sin marca ni símbolo no se toca (podría ser un dispositivo). Si se marca mal el
+  resultado es incorrecto sin aviso. Solo con mini-opt, que es quien borra la escritura.
+- **Pase `argblock`:** contrato de los kernels: el bloque de argumentos (lo que devuelve `GETARG`) no se escribe mientras el kernel
+  corre, como la memoria constante de CUDA. Así, `GETARG` y cada `LOAD` cuya base sale de él son invariantes de un bucle aunque haya
+  `STORE` por punteros dentro (el compilador no puede demostrar que no escriben en el bloque: los punteros de salida salen del propio
+  bloque y todo es `int`). Se suben al preheader solo ellos. Va antes de `strength` porque el paso `x += nlanes` se releía en cada vuelta
+  y mientras no sale del bucle no es invariante, y porque `licm`, que sube lo demás, se queda con los registros libres. `licm` aplica
+  el mismo contrato después. Solo en funciones `__kernel_*`. Cuidado con un kernel que escriba resultados en su bloque: el contrato
+  lo prohíbe.
+- **Pase `strength`:** reducción de fuerza de los accesos indexados de un bucle. lcc compila `a[(y + 1) * 168 + 8 + x + k]` con la
+  cuenta entera de cada acceso (`ADD`, `SHL`, `ADD` de la base y el `LOAD`, 4 instrucciones donde a mano es una). Si el bucle tiene una
+  variable de inducción (`ADDI i, i, c`, su única escritura, en el único bloque con arista de vuelta) y la dirección es una suma de
+  registros invariantes, `i` y una constante (`ADD`, `ADDI`, `SUB`, `SHL`/`SHLI` y `MUL` por constante, evaluados dentro de un bloque), los
+  accesos con los mismos invariantes y coeficientes (las vecinas `x - 1`, `x`, `x + 1`) comparten un puntero: el preheader lo deja en
+  `sum(...) + coef * i0 + const_minimo` y el último bloque lo avanza `coef * c`; cada acceso pasa a `LOAD v, P, const - const_minimo`, y el DCE
+  borra las cuentas que quedan sin uso. Cada grupo se prueba sobre una copia y se acepta solo si el bucle queda más corto (con doble peso
+  en los bloques que se ejecutan en cada vuelta); necesita un registro libre para el puntero (y otro de apoyo para el preheader), por eso va
+  antes de `licm`, que se queda con los que sobran. El paso de la variable puede ser una constante (`ADDI i, i, c`) o un registro que el
+  bucle no escribe (`ADD i, i, s`, el `x += nlanes` de un kernel): el puntero avanza entonces `coef * s`, un registro que se calcula una vez en
+  el preheader y se comparte entre grupos. No toca bucles con llamadas ni con más de una arista de vuelta. En la vida de Conway en C
+  con índices: 2,30× → 1,13× el ensamblador en la CPU.
+- **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
+  no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
+  borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no
+  hace falta liveness. Respeta el hueco: si otra instrucción lo lee, lo escribe o calcula su dirección, o hay
+  un desplazamiento simbólico de pila, no toca nada. El marco no se encoge. Va antes de `tailcalls`, que así
+  copia epílogos más cortos.
+- **Pase `invert`:** `Bcc a,b,L1 ; BRA L2 ; L1:` pasa a `B!cc a,b,L2 ; L1:` (la condición contraria
+  salta a `L2` y si no, cae en `L1`, que se queda por si tiene otras referencias). Solo si `L2` es una
+  etiqueta de la misma función y esta tiene menos de 32.000 instrucciones, porque un branch
+  condicional alcanza ±128 KiB y `BRA` mucho más. Va el último antes de `ssy`.
+- **Pase `boolean`:** un branch que decide entre cargar 1 y cargar 0 (`Bcc a,b,Lf ; MOVI r,1 ; BRA Le ;
+  Lf: ; ADD r,R0,R0 ; Le:`, como lcc evalúa `x = a < b`) pasa a `SLT`/`SLTU`: BLT/BGE/BLTU/BGEU en una
+  instrucción (más un `XORI r,r,1` si el sentido es el contrario) y BEQ/BNE en `SUB` + `SLTU r,R0,r` (sin
+  el `SUB` si un operando es R0). No necesita liveness: `r` se escribe por los dos caminos y la secuencia
+  nueva no toca nada más. Solo actúa si nadie más salta a `Lf`; `Le` y las demás etiquetas se quedan.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores
-  (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/examples/c/opt_stats.py` lo junta con las
+  (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/compare/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.
 
-Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
-necesita MSVC y se omite sin él).
+Pruebas: `x.tests/unit/compiler/test_mini_opt.py` y `x.tests/unit/compiler/test_crt0.py` (la parte que pasa por `rcc`
+necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
+con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−16,0 % medido) y un
+binario menor (−5,6 %).
 
 ## Build con historial de timing, en segundo plano, estado, logs
 
@@ -1495,7 +1661,7 @@ $ prototype-report --prototype 21 --json | jq .capabilities
 ```
 
 El nombre corto de versión (`alu`, `ebr`, `sdram`...) es lo único que sigue
-viniendo de `x.tests/backends/{fpga,gpu_fpga}.py` — es una etiqueta elegida a
+viniendo de `x.tests/backends/{fpga_cpu,fpga_gpu}.py` — es una etiqueta elegida a
 mano, no algo verificable en el RTL. Si un prototipo no está registrado ahí
 (como le pasaba a `17.fpga-gpu-ram-v2`), cae al nombre de la carpeta en vez
 de dejar todo en blanco.
@@ -1506,6 +1672,7 @@ de dejar todo en blanco.
 $ generate-mmio
 escrito: x.tests/inc/mmio.inc
 escrito: tools/mmio_map.py
+escrito: x.tests/inc/mmio_map.h
 
 $ generate-mmio --check     # no escribe; exit code 1 si algo cambiaría (para CI)
 ```
@@ -1533,7 +1700,7 @@ que llamarse igual que su `_BASE`** — `MMIO_GPU_WARPS_PC_OFF` cuelga de
 El generador comprueba que no haya dos registros en la misma dirección y falla
 si los hay, que es como se caza ese error.
 
-`x.tests/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
+`x.tests/unit/tools/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
 al día, que las direcciones son las que dice el contrato (con los números
 escritos a mano, para que un `.vh` mal editado no pase), y que el generador
 rechaza lo que no debe aceptar.
@@ -1597,7 +1764,7 @@ específica por generador.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
-del `VERSIONS` de `x.tests/backends/{simulator,gpu_simulator}.py`, que es donde
+del `VERSIONS` de `x.tests/backends/{sim_cpu,sim_gpu}.py`, que es donde
 están declaradas y lo que usa `incompatibility()` para decidir qué casos corren.
 Fmax y LUT/FF salen del `summary.json` archivado en `reports/` y, si esa carpeta
 no tiene ninguno, del `_build/*/hardware.pnr` local.
@@ -1646,8 +1813,8 @@ prototipos:
 $ run-board --prototype 6 --program fpga_smoke_test.asm --port COM3
 Using prototype: 6.fpga-cpu
 Bitstream correcto: monitor 3.6.
-== cargando fpga_smoke_test.bin en 0x00000000
-== arrancando
+== loading fpga_smoke_test.bin at 0x00000000
+== starting
 CPU halted=True error=False ...
 
 $ run-board --prototype 6 --port COM3                    # solo comprueba identidad
@@ -1694,7 +1861,7 @@ Available ports: COM3 (FTDI), COM1, COM6, COM8
 no depende de `tools/` (la dependencia va en el otro sentido) y `board.py`
 recibe el `monitor.py` del prototipo como módulo, así que importar desde el
 monitor haría un ciclo. Son dos copias en vez de trece, y
-`x.tests/test_monitor_port.py` comprueba que no divergen.
+`x.tests/unit/backends/test_monitor_port.py` comprueba que no divergen.
 
 ### Las tres operaciones por separado
 
@@ -1712,8 +1879,8 @@ Bitstream correcto: monitor 3.6.
 
 $ board-load --prototype 6 --port COM3 --program fpga_smoke_test.asm
 Using prototype: 6.fpga-cpu
-== cargando fpga_smoke_test.bin (32 bytes) en 0x00000000
-== arrancando
+== loading fpga_smoke_test.bin (32 bytes) at 0x00000000
+== starting
 CPU halted=True error=False ...
 ```
 
@@ -1722,6 +1889,26 @@ monitor). `board-upload` es el mismo chequeo que hace `run-board` por
 defecto, con `--rebuild`/`--no-upload`/`-y`. `board-load` **no comprueba la
 identidad del bitstream** — asume que ya es el correcto y va directo a
 ensamblar/cargar/ejecutar; combínalo con `board-upload` si no estás seguro.
+
+**Subir un build archivado (`board-upload --bitstream`).** `board-upload` normal
+programa `_build/default/hardware.bit`, que es el del *último intento*, aunque
+ese intento no haya cerrado timing o haya muerto antes de generar bitstream (en
+ese caso el fichero que queda es el de un intento anterior). Para volver a un
+build bueno del histórico:
+
+```bash
+$ board-upload -p 37 --bitstream 37.fpga-cpu-gpu-mk2/reports/20261008-160636-738467-base -y
+$ board-upload -p 37 --bitstream reports/20261008-160636-738467-base/hardware.bit -y
+```
+
+Acepta un `hardware.bit` o la carpeta de `reports/` que lo contiene (una ruta
+relativa se busca desde el directorio actual y desde la carpeta del prototipo).
+Lee el `summary.txt` de esa carpeta y **avisa** de los relojes que no cumplían
+(o de que no hay resumen), pero no lo impide. Programa con `fujprog` directo,
+comprueba la identidad con `board-info` al terminar, y **no sella** la subida:
+borra el sello de `_build/default/.uploaded`, así que el siguiente `run-board`
+o `board-upload` sin `--bitstream` vuelve a programar el bitstream actual del
+proyecto. Es incompatible con `--rebuild` y `--no-upload`.
 
 ### Cambiar la fuente de la consola sin resintetizar (`font-patch`)
 
@@ -1744,8 +1931,8 @@ bitstream, byte a byte, que una síntesis completa (comprobado en la 30).
 
 ### Suite de casos contra placa real (`test-board`)
 
-`x.tests/run_tests.py` necesita `--backend cpu-fpga`/`gpu-fpga` y `--version`
-(el nombre corto de `x.tests/backends/{fpga,gpu_fpga}.py`), que hay que saber
+`x.tests/run_tests.py` necesita `--backend fpga-cpu`/`fpga-gpu` y `--version`
+(el nombre corto de `x.tests/backends/{fpga_cpu,fpga_gpu}.py`), que hay que saber
 a mano. `test-board` los infiere del mismo sitio que `board-info`/`run-board`
 (el RTL, vía `_capabilities()`), detecta el puerto igual que el resto de
 comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
@@ -1753,11 +1940,11 @@ comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
 
 ```bash
 $ test-board --prototype 21 -y cases-cpu/basics
-Puerto detectado: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
+Detected port: /dev/cu.usbserial-D00688 (ULX3S FPGA 85K v3.0.8)
 Using prototype: 21.fpga-cpu-hdmi-alu
-$ .../run_tests.py --backend cpu-fpga -p 21 --port /dev/... -y cases-cpu/basics
-PASS smoke [cpu-fpga]
-PASS zero-register [cpu-fpga]
+$ .../run_tests.py --backend fpga-cpu -p 21 --port /dev/... -y cases-cpu/basics
+PASS smoke [fpga-cpu]
+PASS zero-register [fpga-cpu]
 2 caso(s), 0 fallo(s), 0 omitido(s) por arquitectura o capacidades, 1.7s
 ```
 
@@ -1765,6 +1952,15 @@ Si el prototipo no tiene identidad inferible (sin `cpu.v`/`gpu_sm.v`/
 `gpu_system.v` + `monitor.v` con versión), falla con un mensaje claro en vez
 de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
 `--backend`/`--version` a mano.
+
+**La 36 y la 37 son CPU y GPU.** `test-board -p 37 -y` lanza `run_tests.py` dos
+veces, una por familia y en este orden: `--backend fpga-cpu` y `--backend
+fpga-sys` (la GPU, que lanza el host por GPU CORE; `fpga-gpu` no las conoce). Un
+fallo de la primera no impide la segunda y el código de salida es el peor de los
+dos. `--family cpu|gpu` prueba una sola, y los demás argumentos (casos, `-y`...)
+se reenvían a las dos: con casos concretos en un prototipo CPU+GPU, usa
+`--family` para no mandar un caso de CPU al backend de GPU. `test-all --family
+gpu` incluye también la GPU de la 36 y la 37.
 
 ### CPI y reparto de los ciclos (`--measure`)
 
@@ -1816,7 +2012,7 @@ columna Estado, con lo ya ejecutado en la matriz: antes salía como `OK` con med
 informe.
 
 ```bash
-$ test-all --family gpu --yes          # 12, 14, 22 y 29
+$ test-all --family gpu --yes          # 12, 14, 22, 29 y la GPU de la 36 y la 37
 $ test-all --family cpu --yes
 $ test-all -p 22 -p 29 --yes           # solo esos
 $ test-all --list
@@ -1824,7 +2020,7 @@ $ test-all --list
 
 #### Medir todos los prototipos y comparar (`bench-all`, `perf-report`)
 
-`--measure` funciona con `--backend cpu-fpga` y con `--backend gpu-fpga`. En GPU
+`--measure` funciona con `--backend fpga-cpu` y con `--backend fpga-gpu`. En GPU
 el CPI son ciclos por instrucción **de warp**, y solo salen ciclos donde el RTL
 tiene el bloque GPU PERFORMANCE (22 y 29; en 12 y 14 sale `sin contadores`).
 
@@ -1853,7 +2049,7 @@ sale `corto`: el arranque pesa más que el ritmo). Los prototipos sin contadores
 (6, 10, 12 y 14) no entran en el CPI común, y la evolución compara cada medida con
 la anterior solo sobre los casos que ambas tienen. Los casos de vídeo de GPU (`demo-plasma`)
 corren en placa en la 22 y la 29: paran tras N intercambios sondeando
-`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/video_stop.py`).
+`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/frame_capture.py`).
 
 ## Herramientas de vídeo/HDMI
 
