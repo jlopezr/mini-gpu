@@ -1922,6 +1922,15 @@ Si el prototipo no tiene identidad inferible (sin `cpu.v`/`gpu_sm.v`/
 de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
 `--backend`/`--version` a mano.
 
+**La 36 y la 37 son CPU y GPU.** `test-board -p 37 -y` lanza `run_tests.py` dos
+veces, una por familia y en este orden: `--backend cpu-fpga` y `--backend
+gpu-core` (la GPU, que lanza el host por GPU CORE; `gpu-fpga` no las conoce). Un
+fallo de la primera no impide la segunda y el código de salida es el peor de los
+dos. `--family cpu|gpu` prueba una sola, y los demás argumentos (casos, `-y`...)
+se reenvían a las dos: con casos concretos en un prototipo CPU+GPU, usa
+`--family` para no mandar un caso de CPU al backend de GPU. `test-all --family
+gpu` incluye también la GPU de la 36 y la 37.
+
 ### CPI y reparto de los ciclos (`--measure`)
 
 `test-board --prototype 30 --measure medidas.md <casos>` ejecuta cada caso y
@@ -1972,7 +1981,7 @@ columna Estado, con lo ya ejecutado en la matriz: antes salía como `OK` con med
 informe.
 
 ```bash
-$ test-all --family gpu --yes          # 12, 14, 22 y 29
+$ test-all --family gpu --yes          # 12, 14, 22, 29 y la GPU de la 36 y la 37
 $ test-all --family cpu --yes
 $ test-all -p 22 -p 29 --yes           # solo esos
 $ test-all --list

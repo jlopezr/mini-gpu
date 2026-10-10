@@ -15,11 +15,13 @@ from types import ModuleType
 
 from backends import board
 from backends import fpga as fpga_backend
+from backends import gpu_core as gpu_core_backend
 from backends import gpu_fpga as gpu_fpga_backend
 from backends import simulator as simulator_backend
 from backends import gpu_simulator as gpu_backend
 from backends.gpu_simulator import GpuBackend
 from backends.fpga import FpgaBackend
+from backends.gpu_core import GpuCoreBackend
 from backends.gpu_fpga import GpuFpgaBackend
 from backends.simulator import SimulatorBackend
 
@@ -81,7 +83,21 @@ BACKEND_DEFINITIONS = {
         "versions": gpu_fpga_backend.VERSIONS,
         "default_version": gpu_fpga_backend.DEFAULT_VERSION,
     },
+    # La GPU de un prototipo CPU+GPU (36 y 37), lanzada por el host por GPU CORE.
+    # Es un backend propio y no versiones de `gpu-fpga`: esas carpetas siguen
+    # siendo CPU para `cpu-fpga`, y el monitor gobierna la CPU, no la GPU.
+    "gpu-core": {
+        "class": GpuCoreBackend,
+        "module": gpu_core_backend,
+        "architecture": GpuCoreBackend.ARCHITECTURE,
+        "versions": gpu_core_backend.VERSIONS,
+        "default_version": gpu_core_backend.DEFAULT_VERSION,
+    },
 }
+
+# Los backends que hablan con la placa. Se declara aqui, como SIMULADORES, y no
+# se repite la lista en cada sitio que la necesita.
+BACKENDS_DE_PLACA = ("cpu-fpga", "gpu-fpga", "gpu-core")
 
 # Qué backends son modelos y cuáles son hardware. Se declara, en vez de
 # deducirse del nombre: mientras se llamaron `*-simulator` había código que los
@@ -136,12 +152,12 @@ def version_for_prototype(
 ) -> tuple[str, str]:
     """Devuelve ``(backend FPGA, versión)`` para un prototipo registrado."""
     hardware_names = tuple(
-        name for name in backend_names if name in ("cpu-fpga", "gpu-fpga")
+        name for name in backend_names if name in BACKENDS_DE_PLACA
     )
     if not hardware_names:
         raise ValueError(
             "--prototype solo se puede usar con un backend FPGA "
-            "(cpu-fpga, gpu-fpga, both o gpu-both)"
+            "(cpu-fpga, gpu-fpga, gpu-core, both, gpu-both o gpu-core-both)"
         )
 
     try:
@@ -1455,7 +1471,7 @@ def backend_arguments(case: dict, backend_name: str, args) -> dict:
         **({"warp_config": case["warp_config"]}
            if case["architecture"] == "gpu" else {}),
         **({"observation_fields": set(case["expected"]["observations"])}
-           if backend_name == "gpu-fpga" else {}),
+           if backend_name in ("gpu-fpga", "gpu-core") else {}),
         # Solo se pasa cuando el caso lo pide: asi un caso normal no paga las
         # lecturas de registros ni el volcado del frame. HALT_AT existe en los
         # tres simuladores; el backend GPU FPGA sigue sin implementarlo.
@@ -1577,6 +1593,7 @@ def main() -> int:
         choices=(
             "cpusim", "cpu-fpga", "both",
             "gpusim", "gpusim-cycle", "gpu-fpga", "gpu-both",
+            "gpu-core", "gpu-core-both",
         ),
         default="gpusim",
     )
@@ -1651,8 +1668,10 @@ def main() -> int:
 
     if args.measure is not None:
         gpu_measure = args.backend.startswith("gpu")
-        if args.backend in ("both", "gpu-both"):
+        if args.backend in ("both", "gpu-both", "gpu-core-both"):
             parser.error("--measure mide una familia: usa --backend cpu-fpga o gpu-fpga")
+        if args.backend == "gpu-core":
+            parser.error("--measure todavia no admite gpu-core")
         medibles = (gpu_fpga_backend if gpu_measure else fpga_backend).VERSIONS
         # Las versiones a medir: las que se pidan con --version, o todas las
         # del backend FPGA mas el simulador, que aporta las instrucciones de
@@ -1683,6 +1702,7 @@ def main() -> int:
     backend_groups = {
         "both": ("cpusim", "cpu-fpga"),
         "gpu-both": ("gpusim", "gpu-fpga"),
+        "gpu-core-both": ("gpusim", "gpu-core"),
     }
     backend_names = backend_groups.get(args.backend, (args.backend,))
     try:
@@ -1769,7 +1789,7 @@ def main() -> int:
         allowed=not args.no_upload, assume_yes=args.yes
     )
     port = args.port
-    if port is None and ("cpu-fpga" in backend_names or "gpu-fpga" in backend_names):
+    if port is None and any(name in BACKENDS_DE_PLACA for name in backend_names):
         port = board.detect_port()
     # Construir un backend FPGA comprueba la placa y, si hace falta y se
     # autoriza, carga el bitstream. Es el fallo más habitual del flujo con
@@ -1789,6 +1809,14 @@ def main() -> int:
                 port=port,
                 serial_timeout=args.serial_timeout,
                 version=backend_versions["gpu-fpga"],
+                upload_policy=upload_policy,
+            )
+        if "gpu-core" in backend_names:
+            backends["gpu-core"] = GpuCoreBackend(
+                REPOSITORY,
+                port=port,
+                serial_timeout=args.serial_timeout,
+                version=backend_versions["gpu-core"],
                 upload_policy=upload_policy,
             )
     except (board.BoardNotConnected, board.MonitorSilent,
@@ -1853,8 +1881,9 @@ def main() -> int:
                     print(f"PASS {case['name']} [{backend_name}]"
                           f"{slow}{video_timing}")
 
-            if args.backend == 'gpu-both':
-                left, right = results['gpusim'], results['gpu-fpga']
+            if args.backend in ('gpu-both', 'gpu-core-both'):
+                left = results['gpusim']
+                right = results['gpu-fpga' if args.backend == 'gpu-both' else 'gpu-core']
                 fields = case['expected']['observations']
                 mismatch = any(left[field] != right[field] for field in ('halted', 'error', 'error_code', 'memory'))
                 mismatch |= any(left['observations'].get(key, '<ausente>') != right['observations'].get(key, '<ausente>') for key in fields)

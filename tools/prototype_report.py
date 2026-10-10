@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
 from tools.rtl_facts import (
     backend_from_rtl as _backend_from_rtl,
+    backends_from_rtl as _backends_from_rtl,
     capabilities_from_rtl as _capabilities_from_rtl,
     clock_hz_from_rtl as _clock_hz_from_rtl,
     load_capability_signals as _load_capability_signals,
@@ -160,6 +161,9 @@ def _capabilities(prototype_dir: Path, root: Path) -> dict:
         return {}
     result = {
         "backend": backend,
+        # Todas las familias de núcleo de la carpeta. `backend` es la primaria
+        # (la que gobierna el monitor); la 36 y la 37 son `cpu` y `gpu`.
+        "backends": list(_backends_from_rtl(prototype_dir)),
         "monitor_version": monitor_version,
         "capabilities": _capabilities_from_rtl(prototype_dir, _load_capability_signals(root)),
     }
@@ -270,7 +274,8 @@ def format_text(report: dict) -> str:
 
     cap = report["capabilities"]
     if cap:
-        lines.append(f"Backend: {cap['backend']} — {cap['version_name']} "
+        lines.append(f"Backend: {'+'.join(cap.get('backends') or [cap['backend']])} — "
+                     f"{cap['version_name']} "
                      f"(monitor {'.'.join(map(str, cap.get('monitor_version', ())))})")
         if cap.get("description"):
             lines.append(f"Description: {cap['description']}")

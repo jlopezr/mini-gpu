@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Ejecuta la suite de casos en TODOS los prototipos con placa y saca una matriz.
 
-Para cada prototipo lanza `run_tests.py --backend <familia>-fpga -p N`, que sube
+Para cada prototipo lanza `run_tests.py --backend <familia>-fpga -p N` (o
+`gpu-core` para la GPU de la 36 y la 37, que son CPU y GPU a la vez), que sube
 su bitstream y corre cada caso comparando con lo esperado, y junta el resultado
 en una tabla: una fila por caso, una columna por prototipo, con PASS, FAIL o el
 motivo del SKIP. Es el equivalente de conformidad de `bench-all` (que mide).
 
-  test-all --family gpu --yes          las GPU: 12, 14, 22 y 29
+  test-all --family gpu --yes          las GPU: 12, 14, 22, 29, y la de la 36 y la 37
   test-all --family cpu --yes          las CPU
   test-all -p 22 -p 29 --yes           solo esos
   test-all --list                      que prototipos probaria, sin tocar la placa
@@ -31,7 +32,7 @@ for extra in (ROOT, ROOT / "x.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from tools.bench_all import prototypes  # noqa: E402
+from tools.bench_all import board_backend, prototypes  # noqa: E402
 
 RESULT = re.compile(r"^(PASS|FAIL) (\S+) \[[^\]]+\]")
 SKIP = re.compile(r"^SKIP ([^\s:\[]+)(?: \[[^\]]+\])?:? ?(.*)$")
@@ -41,7 +42,7 @@ SUMMARY = re.compile(r"(\d+) caso\(s\), (\d+) fallo\(s\), (\d+) omitido")
 def run_prototype(family: str, number: int, assume_yes: bool, extra: list[str]):
     """`(resultados, resumen, salida)`; `resultados[caso] = (estado, detalle)`."""
     command = [sys.executable, str(ROOT / "x.tests" / "run_tests.py"),
-               "--backend", f"{family}-fpga", "-p", str(number)]
+               "--backend", board_backend(family, number), "-p", str(number)]
     if assume_yes:
         command.append("-y")
     command += extra
@@ -130,7 +131,7 @@ def main(argv=None) -> int:
     parser.add_argument("cases", nargs="*", help="casos o directorios (por defecto, todos)")
     args = parser.parse_args(argv)
 
-    chosen = [item for item in prototypes(args.family)
+    chosen = [item for item in prototypes(args.family, core=True)
               if not args.prototype or item[1] in args.prototype]
     if args.list:
         for _family, _number, name in chosen:

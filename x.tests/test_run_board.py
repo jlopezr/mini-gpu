@@ -458,6 +458,52 @@ class MainTestTest(unittest.TestCase):
                 run_board.main_test(["--prototype", "21", "--port", "COM3"])
         run.assert_not_called()
 
+    # La 36 y la 37 son CPU y GPU: `test-board` prueba las dos familias, una
+    # detrás de otra, y no solo la que gobierna el monitor.
+    CPU_Y_GPU = {
+        "monitor_version": (5, 36), "version_name": "cpugpu", "backend": "cpu",
+        "backends": ["cpu", "gpu"], "capabilities": (),
+    }
+
+    def _backends_lanzados(self, *argumentos, codigos=(0, 0)):
+        with mock.patch.object(run_board, "_capabilities", return_value=self.CPU_Y_GPU), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.side_effect = [SimpleNamespace(returncode=c) for c in codigos]
+            code = run_board.main_test(
+                ["--prototype", "36", "--port", "COM3", *argumentos])
+        comandos = [call.args[0] for call in run.call_args_list]
+        return code, [c[c.index("--backend") + 1] for c in comandos], comandos
+
+    def test_un_prototipo_cpu_y_gpu_prueba_las_dos_familias(self):
+        code, backends, comandos = self._backends_lanzados("-y")
+        self.assertEqual(code, 0)
+        self.assertEqual(backends, ["cpu-fpga", "gpu-core"])
+        for comando in comandos:
+            self.assertEqual(comando[comando.index("--version") + 1], "cpugpu")
+            self.assertIn("-y", comando)
+
+    def test_family_elige_una_sola(self):
+        _, backends, _ = self._backends_lanzados("--family", "gpu", codigos=(0,))
+        self.assertEqual(backends, ["gpu-core"])
+        _, backends, comandos = self._backends_lanzados("--family", "cpu", codigos=(0,))
+        self.assertEqual(backends, ["cpu-fpga"])
+        # `--family` es de test-board: run_tests.py no lo conoce.
+        self.assertNotIn("--family", comandos[0])
+
+    def test_un_fallo_de_la_primera_familia_no_impide_la_segunda(self):
+        code, backends, _ = self._backends_lanzados(codigos=(1, 0))
+        self.assertEqual(backends, ["cpu-fpga", "gpu-core"])
+        self.assertEqual(code, 1)
+
+    def test_family_gpu_en_un_prototipo_sin_gpu_falla_sin_lanzar_nada(self):
+        solo_cpu = dict(self.CPU_Y_GPU, backends=["cpu"])
+        with mock.patch.object(run_board, "_capabilities", return_value=solo_cpu), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            with self.assertRaises(SystemExit):
+                run_board.main_test(
+                    ["--prototype", "21", "--port", "COM3", "--family", "gpu"])
+        run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

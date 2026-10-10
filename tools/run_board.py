@@ -432,6 +432,9 @@ def main_test(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-p", "--prototype", required=True)
     parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
+    parser.add_argument("--family", choices=("cpu", "gpu", "all"), default="all",
+                        help="en un prototipo CPU+GPU (36 y 37), qué familia probar; "
+                             "por defecto las dos, una detrás de otra")
     args, extra = parser.parse_known_args(argv)
 
     port = args.port if args.port is not None else detect_port()
@@ -443,15 +446,30 @@ def main_test(argv: list[str] | None = None) -> int:
             "--backend/--version. Usa x.tests/run_tests.py directamente."
         )
 
-    backend = f"{target.capability['backend']}-fpga"
+    primaria = target.capability["backend"]
+    familias = list(target.capability.get("backends") or [primaria])
+    if args.family != "all":
+        if args.family not in familias:
+            raise SystemExit(
+                f"error: {target.prototype_dir.name} no tiene familia "
+                f"{args.family} (tiene {'+'.join(familias)}).")
+        familias = [args.family]
+
     version = target.capability["version_name"]
-    command = [
-        sys.executable, str(target.root / "x.tests" / "run_tests.py"),
-        "--backend", backend, "--version", version, "--port", port,
-        *extra,
-    ]
-    print(f"$ {' '.join(command)}")
-    return subprocess.run(command).returncode
+    resultado = 0
+    for familia in familias:
+        # Una familia que no es la primaria cuelga de la otra: la GPU de la 36
+        # y la 37 la lanza el host por GPU CORE, y la prueba `gpu-core`, no
+        # `gpu-fpga` (que solo conoce las carpetas sin cpu.v).
+        backend = f"{familia}-fpga" if familia == primaria else f"{familia}-core"
+        command = [
+            sys.executable, str(target.root / "x.tests" / "run_tests.py"),
+            "--backend", backend, "--version", version, "--port", port,
+            *extra,
+        ]
+        print(f"$ {' '.join(command)}")
+        resultado = max(resultado, subprocess.run(command).returncode)
+    return resultado
 
 
 if __name__ == "__main__":

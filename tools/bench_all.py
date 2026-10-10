@@ -35,6 +35,7 @@ for extra in (ROOT, ROOT / "x.tests"):
         sys.path.insert(0, str(extra))
 
 from backends import fpga as cpu_fpga  # noqa: E402
+from backends import gpu_core  # noqa: E402
 from backends import gpu_fpga  # noqa: E402
 
 
@@ -43,8 +44,13 @@ def _number(directory: Path) -> int:
     return int(match.group(1)) if match else 0
 
 
-def prototypes(family: str):
-    """`[(familia, numero, carpeta)]` de los prototipos con backend de placa."""
+def prototypes(family: str, core: bool = False):
+    """`[(familia, numero, carpeta)]` de los prototipos con backend de placa.
+
+    Con `core=True` la 36 y la 37 salen ADEMÁS como GPU (backend `gpu-core`): son
+    CPU y GPU a la vez, y salen siempre como CPU. Por defecto no, porque `bench`
+    mide y `gpu-core` todavía no admite `--measure`.
+    """
     found = []
     for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", gpu_fpga.VERSIONS)):
         if family not in ("all", name):
@@ -52,7 +58,24 @@ def prototypes(family: str):
         for version in versions.values():
             directory = version["monitor_path"].parent
             found.append((name, _number(directory), directory.name))
+    if core and family in ("all", "gpu"):
+        for version in gpu_core.VERSIONS.values():
+            directory = version["monitor_path"].parent
+            found.append(("gpu", _number(directory), directory.name))
     return sorted(found, key=lambda item: (item[0], item[1]))
+
+
+def board_backend(family: str, number: int) -> str:
+    """El `--backend` de `run_tests.py` para este prototipo y esta familia.
+
+    Casi siempre `<familia>-fpga`. Una GPU que cuelga de una CPU (36 y 37) se
+    prueba con `gpu-core`, porque `gpu-fpga` solo conoce las carpetas sin `cpu.v`.
+    """
+    if family == "gpu" and any(
+            _number(v["monitor_path"].parent) == number
+            for v in gpu_core.VERSIONS.values()):
+        return "gpu-core"
+    return f"{family}-fpga"
 
 
 def measure(family: str, number: int, label: str, assume_yes: bool, extra: list[str]) -> int:

@@ -67,6 +67,23 @@ def backend_from_rtl(prototype_dir: Path) -> str | None:
     return None
 
 
+def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
+    """TODAS las familias de núcleo que hay en la carpeta, en orden CPU, GPU.
+
+    `backend_from_rtl` devuelve una sola porque casi todas las carpetas tienen
+    una. La 36 y la 37 tienen las dos: una CPU que lanza una GPU de 8 lanes por
+    MMIO (GPU CORE). Allí `backend_from_rtl` sigue diciendo `cpu` --es la que
+    gobierna el monitor, y de ella cuelgan `cpu-fpga`, el SYS_ID y los informes--,
+    y esta dice además `gpu`, que es lo que habilita el backend `gpu-core`.
+    """
+    familias = []
+    if (prototype_dir / "cpu.v").exists():
+        familias.append("cpu")
+    if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
+        familias.append("gpu")
+    return tuple(familias)
+
+
 def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:
     """Los parámetros con los que un top instancia `monitor`, si los pone.
 

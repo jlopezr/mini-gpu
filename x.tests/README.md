@@ -175,6 +175,19 @@ Qué necesita y qué ejecuta cada una:
 | 4b | `cpu-fpga --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | todos los de `cases-cpu/` y `cases-shared/` |
 | 5 | `gpusim` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `gpu-fpga --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
+| 7 | `gpu-core --version cpugpu` (o `mk2`) | [36.fpga-cpu-gpu](../36.fpga-cpu-gpu/) (o la 37) | 5.36 (5.37) | la GPU de una CPU+GPU: pocos casos, ver abajo |
+
+**La 36 y la 37 son CPU y GPU a la vez.** Como CPU se prueban con `cpu-fpga`
+(`--version cpugpu` o `mk2`) y no han dejado de serlo. Su GPU la lanza la CPU por
+MMIO (GPU CORE) y el monitor gobierna la CPU, no la GPU, así que `gpu-fpga` no
+las conoce; las prueba `gpu-core`, que hace de CPU desde el host (escribe los
+descriptores y `GPU_CONTROL` por `write_word` con la CPU parada). `test-board -p 37`
+lanza las dos, una tras otra (`--family cpu|gpu` elige una). De los 78 casos de
+`cases-gpu/` solo corren los que no piden el PC, la máscara de lanes ni los
+registros de los warps, porque el RTL no los expone por MMIO: hoy dos más los
+compartidos que no dependen de ello. Los demás salen como `SKIP` con motivo. El
+diseño, qué falta y cómo desbloquearlos: [backend-gpu-core.md](backend-gpu-core.md).
+`--measure` todavía no admite `gpu-core`.
 
 `ebr`, `sdram`, `hdmi`, `bl8`, `subword` y `alu` son versiones del backend
 **CPU**; `bram` lo es del backend **GPU**. No hay ninguna versión `ebr` de GPU.
