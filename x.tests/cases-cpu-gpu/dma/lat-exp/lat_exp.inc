@@ -50,6 +50,7 @@ lat_stride:
     LI    R4, lat_done
     MOVI  R5, 1
     STORE R5, R4, 0
+    ADDI  R1, R5, 0                         ; resumen para test.json
     HALT
 
 ; ---- el kernel, el bloque de argumentos y N para (R24, R25) ----

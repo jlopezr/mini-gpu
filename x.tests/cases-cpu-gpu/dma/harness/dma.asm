@@ -124,6 +124,17 @@ start:
     MOVI  R3, 0
     JAL   R31, check_fill
     STORE R1, R20, 40
+
+    ; Resumen observable por test.json sin depender de la dirección de `results`.
+    LOAD  R1, R20, 0
+    LOAD  R2, R20, 4
+    LOAD  R3, R20, 8
+    LOAD  R4, R20, 12
+    LOAD  R5, R20, 16
+    LOAD  R6, R20, 20
+    LOAD  R7, R20, 32
+    LOAD  R8, R20, 36
+    LOAD  R9, R20, 40
     HALT
 
 ; ---- check_fill: R1 = ptr, R2 = nwords, R3 = valor -> R1 = palabras distintas ----

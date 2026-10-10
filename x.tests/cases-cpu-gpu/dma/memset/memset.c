@@ -24,6 +24,16 @@ void KERNEL(memset)(int *dst, int value, int n) {
 }
 
 int main(void) {
+    int i;
+
     status = GPU_RUN(memset, 4, buffer, VALUE, N);
-    return status;
+    if (status != GPU_OK)
+        return status;
+    for (i = 0; i < N; i++)
+        if (buffer[i] != VALUE)
+            return 10;
+    for (; i < N + 16; i++)
+        if (buffer[i] != 0)
+            return 11;
+    return 0;
 }

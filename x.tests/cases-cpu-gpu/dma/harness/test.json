@@ -1,0 +1,23 @@
+{
+  "name": "cpu-gpu/dma/runtime-recovery",
+  "architecture": "cpu",
+  "program": "dma.asm",
+  "requires": ["gpu_core", "calls"],
+  "max_instructions": 1000000,
+  "timeout_seconds": 15,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "registers": {
+      "R1": 0,
+      "R2": 0,
+      "R3": 0,
+      "R4": 0,
+      "R5": "0xdeadbeef",
+      "R6": 1,
+      "R7": 2,
+      "R8": 0,
+      "R9": 0
+    }
+  }
+}

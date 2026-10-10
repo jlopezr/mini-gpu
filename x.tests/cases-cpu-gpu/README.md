@@ -30,8 +30,9 @@ build-c x.tests/cases-cpu-gpu/dma/memset/memset.c                        # los d
 ```
 
 Las carpetas con C ofrecen además `make`, `make sim`, `make debug`, `make compare` y `make run`. En `blur`,
-`life` y `rotate`, el Makefile genera un ejecutable C autocontenido con la entrada incrustada; no hace falta
-cargar memoria aparte. Su objetivo `make case` genera además los dumps esperados que consumen los `test.json`.
+`life` y `rotate`, el Makefile genera un ejecutable C autocontenido con la entrada incrustada; la CPU lanza
+la versión GPU coalescida y no hace falta cargar memoria aparte. Su objetivo `make case` genera además los
+dumps esperados que consumen los `test.json`.
 
 `run-board` ensambla con `-D BOARD`, y los `.inc` compartidos eligen la rama de la placa. Es el mismo `.asm` para el
 simulador y para la placa. Los programas en C se explican en [programas-en-c.md](programas-en-c.md); lo que

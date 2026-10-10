@@ -1,7 +1,8 @@
 # Backend `fpga-sys` (los casos GPU en la 36 y la 37)
 
-Estado (2026-10-10): **fase 1 implementada** ([`backends/fpga_sys.py`](backends/fpga_sys.py),
-registrada en `run_tests.py`; tests en `test_fpga_sys.py`). La fase 2 (ampliar GPU
+Estado (2026-10-10): ~~**fase 1**: implementar el backend, registrarlo y cubrirlo
+con tests~~ **hecha** ([`backends/fpga_sys.py`](backends/fpga_sys.py),
+`run_tests.py` y `test_fpga_sys.py`). La fase 2 (ampliar GPU
 SIMT DEBUG en el RTL de la 37) **sigue siendo diseño**. Las secciones 1 a 3 son el
 diseño original; lo que cambia al implementarlo está al final, en «Resultado de la
 fase 1».
@@ -16,8 +17,48 @@ versión registrada para fpga-gpu». Es a propósito: ahí la GPU es un coproces
 que lanza la CPU por MMIO (GPU CORE, `mmio.md` §14.1), y el monitor gobierna la
 CPU, no la GPU.
 
-Hoy la única prueba de la GPU real en esas dos placas es
-`cases-cpu/gpu/launch-run` (y `launch-start` en la 37, que tiene el hito 2).
+~~La única prueba de la GPU real en esas dos placas era
+`cases-cpu/gpu/launch-run` (y `launch-start` en la 37, que tiene el hito 2).~~
+`fpga-sys` ejecuta ahora también los casos GPU compatibles directamente desde el
+host.
+
+### Dos formas distintas de probar el sistema CPU+GPU
+
+Sí se pueden ejecutar tests que combinan CPU y GPU con `sim-sys`. Son dos caminos
+complementarios que no deben confundirse:
+
+| Camino | Arquitectura del `test.json` | Quién lanza la GPU | Simulador | Placa equivalente |
+|---|---|---|---|---|
+| Programa CPU+GPU | `cpu` | el programa de CPU mediante GPU CORE | `sim-sys` | `fpga-cpu` sobre la 36/37 |
+| Caso GPU aislado | `gpu` | el runner, con la CPU parada | `sim-gpu` | `fpga-sys` sobre la 36/37 |
+
+El primer camino es el que usan `cases-cpu/gpu/launch-run` y `launch-start`:
+
+```powershell
+python run_tests.py --backend sim-sys cases-cpu/gpu
+python run_tests.py --backend sys-both -p 37 cases-cpu/gpu
+```
+
+`sys-both` compara `sim-sys` con `fpga-cpu`: en ambos lados se ejecuta el mismo
+programa de CPU, que configura, lanza y espera a la GPU. En cambio,
+`gpu-sys-both` compara `sim-gpu` con `fpga-sys`: en ambos lados el runner carga
+y lanza directamente el kernel GPU. No tendría sentido comparar `sim-sys` con
+`fpga-sys`, porque no ejecutan el mismo programa ni observan la misma
+arquitectura.
+
+Las demos `cases-cpu-gpu/race/cube`, `race/plane` y `render/*` pertenecen
+también al primer camino y ya se pueden ejecutar manualmente con `sim-sys` (sus
+Makefiles ofrecen `make sim`). Lo que todavía no tienen es un `test.json`
+automático: sus programas son bucles de vídeo infinitos, por lo que el caso debe
+declarar `run_until.swap`, generar un frame esperado y elegir suficientes
+intercambios para alcanzar los métodos GPU. Esto es trabajo del manifiesto y de
+sus datos de referencia, no una limitación de `sim-sys`.
+
+Los `test.json` de `race/blur`, `race/life` y `race/rotate` prueban también ese
+camino combinado: sus anfitriones autocontenidos preparan la entrada, lanzan la
+distribución GPU coalescida mediante `GPU_RUN`, esperan desde la CPU y terminan
+con `HALT`. No son todavía las demos de vídeo completas —no alternan los tres
+métodos ni presentan frames—, pero sí son casos CPU→GPU reales.
 
 ## 2. Hechos comprobados
 
@@ -46,9 +87,9 @@ Hoy la única prueba de la GPU real en esas dos placas es
   Todos usan además `memory_dumps`, `halted`, `error`, `error_code` o
   `instructions_executed` total, que sí se pueden leer.
 
-La consecuencia es que un backend que solo use lo que el RTL expone corre ~3 de
-78 casos. Para que valga la pena hace falta, además, una pequeña ampliación del
-RTL (fase 2).
+~~Implementar primero un backend que use solo lo que el RTL ya expone.~~ Hecho en
+la fase 1; corre los pocos casos que no piden estado interno. Para ampliar la
+cobertura sigue haciendo falta la ampliación del RTL de la fase 2.
 
 ## 3. Diseño
 
@@ -137,13 +178,13 @@ STALE). Además, la 37 tiene ahora mismo un build en marcha de otra sesión
 (`rf-distribuida`), así que habría que coordinarlo. Para la 36 sería un
 backport; no se propone.
 
-## 4. Pruebas sin placa
+## 4. ~~Pruebas sin placa~~ Hecho
 
-Un `FakeMonitorClient` en `test_fpga_sys.py` (igual que `test_fpga_gpu.py`) que
+~~Un `FakeMonitorClient` en `test_fpga_sys.py` (igual que `test_fpga_gpu.py`) que
 registre los accesos y compruebe: el orden RESET → descriptores → RUN → sondeo,
 las direcciones y valores escritos, el plazo, el mapeo de `GPU_STATUS` a
 `halted`/`error`, y que un caso con expectativas no disponibles se omite con
-motivo sin abrir el puerto.
+motivo sin abrir el puerto.~~
 
 ## 5. Incertidumbres (no verificadas)
 
@@ -151,10 +192,10 @@ motivo sin abrir el puerto.
   coincidir con `pc[w]` del SM. **Sigue sin saberse**: ningún caso aceptado en la
   fase 1 lee el PC, así que `gpu-sys-both` no lo ha podido contrastar. Es lo
   primero que dirá la fase 2.
-- **Hito 1 vs 2**: el hito 1 (36) hace `live = ACTIVE` al escribir el
+- ~~**Hito 1 vs 2**: el hito 1 (36) hace `live = ACTIVE` al escribir el
   descriptor. Comprobado en la 36 el 2026-10-10: la secuencia de `launch-run`
   (RESET, descriptores con ACTIVE al final, RUN, esperar `WARP_DONE`) funciona
-  tal cual desde el host.
+  tal cual desde el host.~~
 - **Latencia de MMIO por el monitor**: cada `write_word`/`read_word` son unos
   milisegundos de serie. Un caso con 8 warps son ~40 escrituras; despreciable,
   pero el sondeo de `GPU_STATUS` conviene espaciarlo.
@@ -220,8 +261,9 @@ del RTL actual.
 
 ## 7. Orden de trabajo propuesto
 
-1. Fase 1: `fpga_sys.py` + registro en `run_tests.py` + `test_fpga_sys.py`.
-   Valida el flujo con los 3 casos sin observaciones de estado y `launch-run`.
+1. ~~Fase 1: `fpga_sys.py` + registro en `run_tests.py` + `test_fpga_sys.py`.
+   Validar el flujo con los casos sin observaciones de estado y `launch-run`.~~
+   **Hecha.**
 2. Fase 2 en la 37 (RTL + `mmio.md` §14.3 + `capabilities.json`), re-barrido de
    semillas y primera pasada con `gpu-sys-both` para descubrir diferencias.
 3. Decidir qué hacer con los casos de vídeo y la 36.

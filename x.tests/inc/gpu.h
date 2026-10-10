@@ -2,6 +2,9 @@
  *
  *   #include "gpu.h"
  *
+ *   #define N 4096
+ *   int buffer[N];
+ *
  *   void KERNEL(memset)(int *dst, int value, int n) {      -- GPU
  *       int i, step = __gpu_nthreads;
  *       GRID_FOR(i, n, step)
@@ -9,7 +12,7 @@
  *   }
  *
  *   int main(void) {                                       -- CPU
- *       return GPU_RUN(memset, 4, buffer, 7, 4096);        -- kernel, warps, parametros
+ *       return GPU_RUN(memset, 4, buffer, 7, N);           -- kernel, warps, parametros
  *   }
  *
  * Un kernel es una funcion que se llama `__kernel_<nombre>` (la macro KERNEL lo pone).

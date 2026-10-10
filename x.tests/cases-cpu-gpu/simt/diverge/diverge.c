@@ -81,7 +81,7 @@ void KERNEL(nested)(int *out) {
 }
 
 int main(void) {
-    int i;
+    int i, a, b, x, count, expected;
 
     status[0] = GPU_RUN(tail, 4, tail, 0xABCD, N);
     status[1] = GPU_RUN(parity, 4, parity);
@@ -90,5 +90,43 @@ int main(void) {
         guard[i] = 0x5555;
     status[3] = GPU_RUN(guard, 4, guard, 21);
     status[4] = GPU_RUN(nested, 4, nested);
+    for (i = 0; i < 5; i++)
+        if (status[i] != GPU_OK)
+            return 10 + i;
+    for (i = 0; i < N; i++)
+        if (tail[i] != 0xABCD)
+            return 20;
+    for (; i < N + 16; i++)
+        if (tail[i] != 0)
+            return 21;
+    for (i = 0; i < THREADS; i++) {
+        expected = (i & 1) ? i * 3 : i + 100;
+        if (parity[i] != expected)
+            return 22;
+        x = i + 1;
+        count = 0;
+        while (x > 1) {
+            x = (x & 1) ? x + 1 : x >> 1;
+            count++;
+        }
+        if (steps[i] != count)
+            return 23;
+        expected = i < 21 ? i * i + 1 : 0x5555;
+        if (guard[i] != expected)
+            return 24;
+        count = 0;
+        for (a = 0; a < (i & 7) + 1; a++) {
+            for (b = 0; b < 6; b++) {
+                if (a * b >= 10)
+                    break;
+                count++;
+            }
+        }
+        if (nested[i] != count)
+            return 25;
+    }
+    for (; i < THREADS + 8; i++)
+        if (guard[i] != 0x5555)
+            return 26;
     return 0;
 }

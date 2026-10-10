@@ -1,0 +1,15 @@
+{
+  "name": "cpu-gpu/dma/memset-c",
+  "architecture": "cpu",
+  "build": {"command": ["make", "case"]},
+  "program": "../../../../_build/c/memset.bin",
+  "requires": ["gpu_core", "calls"],
+  "max_instructions": 1000000,
+  "timeout_seconds": 10,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "pc": "0x0000000c",
+    "registers": {"R1": 0}
+  }
+}

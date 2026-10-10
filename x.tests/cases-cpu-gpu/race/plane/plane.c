@@ -85,7 +85,10 @@ static const int plane_sin[64] = {      /* 128 * sin(2 pi k / 64) */
 };
 static const unsigned race_pixels[3] = { 0x07E007E0, 0xFD20FD20, 0x07FF07FF };
 
-int race_period = 60;                   /* fotogramas por metodo */
+#ifndef RACE_PERIOD_VALUE
+#define RACE_PERIOD_VALUE 60
+#endif
+int race_period = RACE_PERIOD_VALUE;    /* fotogramas por metodo */
 int race_shift = 18;                    /* ciclos -> altura de la grafica */
 int race_cycles[3];                     /* ciclos del ultimo trabajo de cada metodo */
 extern int gpu_timeout_polls;           /* gpu_runtime.inc */

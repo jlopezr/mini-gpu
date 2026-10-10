@@ -5,7 +5,7 @@
   "program": "../../../../_build/c/blur_app.bin",
   "max_instructions": 750000,
   "timeout_seconds": 15,
-  "requires": ["large_memory", "mul_div"],
+  "requires": ["gpu_core", "large_memory", "mul_div"],
   "expect": {
     "halted": true,
     "error": false,

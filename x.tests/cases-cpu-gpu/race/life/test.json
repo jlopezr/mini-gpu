@@ -5,7 +5,7 @@
   "program": "../../../../_build/c/life_app.bin",
   "max_instructions": 1000000,
   "timeout_seconds": 15,
-  "requires": ["large_memory"],
+  "requires": ["gpu_core", "large_memory"],
   "expect": {
     "halted": true,
     "error": false,

@@ -6,6 +6,10 @@ lleva el código de la CPU (`main`) y los kernels de la GPU:
 ```c
 #include "gpu.h"
 
+#define N 4096
+
+int buffer[N];
+
 void KERNEL(memset)(int *dst, int value, int n) {          /* GPU */
     int i, step = __gpu_nthreads;
     GRID_FOR(i, n, step)
@@ -13,7 +17,7 @@ void KERNEL(memset)(int *dst, int value, int n) {          /* GPU */
 }
 
 int main(void) {                                           /* CPU */
-    return GPU_RUN(memset, 4, buffer, 7, 4096);            /* kernel, warps, parámetros */
+    return GPU_RUN(memset, 4, buffer, 7, N);               /* kernel, warps, parámetros */
 }
 ```
 
@@ -58,7 +62,8 @@ se pueden sustituir en la invocación (`make PYTHON=python3`, `make run PROTOTYP
 `blur.c`, `life.c` y `rotate.c` siguen siendo las cargas puras que usa `compare_race.py`, pero sus Makefiles
 construyen por defecto un anfitrión C autocontenido (`*_standalone.c`). `tools/race_case_data.py` reutiliza el
 modelo del comparador para generar un blob compacto con el bloque de argumentos y la entrada; `build-c --data`
-lo incorpora al ejecutable. Por tanto `make sim`, `make debug` y `make run` usan ahora el binario C
+lo incorpora al ejecutable. La CPU de ese anfitrión lanza con `GPU_RUN` la distribución GPU coalescida y
+espera a que termine. Por tanto `make sim`, `make debug`, `make run` y los `test.json` usan el binario CPU+GPU
 autocontenido, mientras que `make compare` conserva la comparación C/ensamblador de la carga original.
 
 `--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
