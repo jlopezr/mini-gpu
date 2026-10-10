@@ -14,12 +14,14 @@ from pathlib import Path
 from types import ModuleType
 
 from backends import board
+from backends import cpu_gpu_simulator as cpu_gpu_simulator_backend
 from backends import fpga as fpga_backend
 from backends import gpu_core as gpu_core_backend
 from backends import gpu_fpga as gpu_fpga_backend
 from backends import simulator as simulator_backend
 from backends import gpu_simulator as gpu_backend
 from backends.gpu_simulator import GpuBackend
+from backends.cpu_gpu_simulator import CpuGpuSimulatorBackend
 from backends.fpga import FpgaBackend
 from backends.gpu_core import GpuCoreBackend
 from backends.gpu_fpga import GpuFpgaBackend
@@ -69,6 +71,15 @@ BACKEND_DEFINITIONS = {
         "versions": simulator_backend.VERSIONS,
         "default_version": simulator_backend.DEFAULT_VERSION,
     },
+    # La CPU con una GPU colgada del bus (carpeta 32): lo que la 36 y la 37 son en
+    # hardware, y por eso su pareja es `fpga-cpu` sobre ellas, no `fpga-sys`.
+    "sim-sys": {
+        "class": CpuGpuSimulatorBackend,
+        "module": cpu_gpu_simulator_backend,
+        "architecture": CpuGpuSimulatorBackend.ARCHITECTURE,
+        "versions": cpu_gpu_simulator_backend.VERSIONS,
+        "default_version": cpu_gpu_simulator_backend.DEFAULT_VERSION,
+    },
     "fpga-cpu": {
         "class": FpgaBackend,
         "module": fpga_backend,
@@ -104,7 +115,7 @@ BACKENDS_DE_PLACA = ("fpga-cpu", "fpga-gpu", "fpga-sys")
 # reconocía por el sufijo, y al renombrarlos dejó de encontrarlos **en
 # silencio** -- el reparto en procesos se apagó sin decir nada, y un backend sin
 # construir daba «1 caso, 0 fallos» sin ejecutar nada.
-SIMULADORES = frozenset({"sim-cpu", "sim-gpu", "sim-gpu-cycle"})
+SIMULADORES = frozenset({"sim-cpu", "sim-gpu", "sim-gpu-cycle", "sim-sys"})
 # Los dos modelos de GPU. Hay cosas que valen para cualquiera de los dos --las
 # profundidades SIMT son parámetros del MODELO, no del hardware-- y escribirlas
 # como `== "sim-gpu"` dejaba fuera al de ciclos.
@@ -157,7 +168,7 @@ def version_for_prototype(
     if not hardware_names:
         raise ValueError(
             "--prototype solo se puede usar con un backend FPGA "
-            "(fpga-cpu, fpga-gpu, fpga-sys, both, gpu-both o gpu-sys-both)"
+            "(fpga-cpu, fpga-gpu, fpga-sys, both, sys-both, gpu-both o gpu-sys-both)"
         )
 
     try:
@@ -1478,7 +1489,7 @@ def backend_arguments(case: dict, backend_name: str, args) -> dict:
         **({"video": {
             "run_until_swap": (case["run_until"] or {}).get("swap"),
             "capture_frame": case["expected"]["frame"] is not None,
-        }} if backend_name in ("fpga-cpu", "sim-cpu", "sim-gpu",
+        }} if backend_name in ("fpga-cpu", "sim-cpu", "sim-gpu", "sim-sys",
                                "sim-gpu-cycle", "fpga-gpu") and (
             case["run_until"] or case["expected"]["video"]
             or case["expected"]["frame"] is not None) else {}),
@@ -1591,7 +1602,7 @@ def main() -> int:
     parser.add_argument(
         "--backend",
         choices=(
-            "sim-cpu", "fpga-cpu", "both",
+            "sim-cpu", "fpga-cpu", "both", "sim-sys", "sys-both",
             "sim-gpu", "sim-gpu-cycle", "fpga-gpu", "gpu-both",
             "fpga-sys", "gpu-sys-both",
         ),
@@ -1701,6 +1712,7 @@ def main() -> int:
 
     backend_groups = {
         "both": ("sim-cpu", "fpga-cpu"),
+        "sys-both": ("sim-sys", "fpga-cpu"),
         "gpu-both": ("sim-gpu", "fpga-gpu"),
         "gpu-sys-both": ("sim-gpu", "fpga-sys"),
     }
@@ -1892,13 +1904,16 @@ def main() -> int:
                     print(f"FAIL {case['name']} [diferencial GPU]: los estados observados no coinciden")
             observado = {nombre: comparable(resultado, case)
                          for nombre, resultado in results.items()}
-            if args.backend == 'both' and observado["sim-cpu"] != observado["fpga-cpu"]:
+            if args.backend in ('both', 'sys-both'):
+                sim_name = 'sim-cpu' if args.backend == 'both' else 'sim-sys'
+            if (args.backend in ('both', 'sys-both')
+                    and observado[sim_name] != observado["fpga-cpu"]):
                 failures += 1
                 print(f"FAIL {case['name']} [diferencial]")
                 # Decir QUE campo difiere, y no solo que algo difiere. Sin esto
                 # el fallo obligaba a reproducir el caso a mano en los dos
                 # backends para averiguar por donde iba la diferencia.
-                simulador, fpga = observado["sim-cpu"], observado["fpga-cpu"]
+                simulador, fpga = observado[sim_name], observado["fpga-cpu"]
                 for clave in sorted(set(simulador) | set(fpga)):
                     izquierda = simulador.get(clave, "<ausente>")
                     derecha = fpga.get(clave, "<ausente>")

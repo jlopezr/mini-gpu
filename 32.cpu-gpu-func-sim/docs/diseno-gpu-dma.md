@@ -1,6 +1,6 @@
 # Diseño: la GPU como motor DMA/blitter
 
-> Borrador v1, 2026-10-06. Parte de [`integracion cpu-gpu.md`](../examples/integracion%20cpu-gpu.md) y recoge las decisiones y necesidades de [`necesidades-detectadas.md`](../examples/necesidades-detectadas.md). Supone conocidos la ISA y [`mmio.md`](../../1.isa/mmio.md); las referencias `§n` son de este último salvo que se diga otra cosa.
+> Borrador v1, 2026-10-06. Parte de [`integracion cpu-gpu.md`](integracion%20cpu-gpu.md) y recoge las decisiones y necesidades de [`necesidades-detectadas.md`](necesidades-detectadas.md). Supone conocidos la ISA y [`mmio.md`](../../1.isa/mmio.md); las referencias `§n` son de este último salvo que se diga otra cosa.
 
 ## 1. Objetivo y alcance
 

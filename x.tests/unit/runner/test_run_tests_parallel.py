@@ -94,11 +94,11 @@ class NombresDeBackendTest(unittest.TestCase):
         self.assertTrue(
             run_tests.SIMULADORES <= set(run_tests.BACKEND_DEFINITIONS))
 
-    def test_los_tres_simuladores_estan(self):
-        """Los mismos tres que tienen lanzador en tools/."""
+    def test_los_cuatro_simuladores_estan(self):
+        """Los mismos cuatro que tienen lanzador en tools/."""
         self.assertEqual(run_tests.SIMULADORES,
-                         {"sim-cpu", "sim-gpu", "sim-gpu-cycle"})
-        for nombre in ("sim-cpu", "sim-gpu", "sim-gpu-cycle"):
+                         {"sim-cpu", "sim-gpu", "sim-gpu-cycle", "sim-sys"})
+        for nombre in ("sim-cpu", "sim-gpu", "sim-gpu-cycle", "sim-sys"):
             with self.subTest(backend=nombre):
                 self.assertTrue((ROOT.parent / "tools" / nombre).exists(),
                                 f"tools/{nombre} no existe")

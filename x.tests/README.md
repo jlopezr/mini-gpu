@@ -179,6 +179,7 @@ Qué necesita y qué ejecuta cada una:
 | 3 | `fpga-cpu --version sdram` | [10.fpga-cpu-ram](../10.fpga-cpu-ram/) | 1.17 | 12; 22 omitidos. Sin `mul_div`: ver abajo |
 | 4 | `fpga-cpu --version subword` | [19.fpga-cpu-hdmi-ls](../19.fpga-cpu-hdmi-ls/) | 1.20 | 28; 10 omitidos por capacidades |
 | 4b | `fpga-cpu --version alu` | [21.fpga-cpu-hdmi-alu](../21.fpga-cpu-hdmi-alu/) | 1.15 | todos los de `cases-cpu/` y `cases-shared/` |
+| 4c | `sim-sys` | ninguno | — | los de `cases-cpu/` y `cases-shared/` más `cases-cpu/gpu/` (los que piden `gpu_core`) |
 | 5 | `sim-gpu` | ninguno | — | los 34 de `cases-gpu/` |
 | 6 | `fpga-gpu --version bram` | [12.fpga-gpu](../12.fpga-gpu/) | 2.3 | 26 compatibles; 8 omitidos con motivo |
 | 7 | `fpga-sys --version cpugpu` (o `mk2`) | [36.fpga-cpu-gpu](../36.fpga-cpu-gpu/) (o la 37) | 5.36 (5.37) | la GPU de una CPU+GPU: pocos casos, ver abajo |
@@ -663,10 +664,26 @@ Todos los casos declaran explícitamente `"architecture": "cpu"` o
 `"architecture": "gpu"`. No se deduce la arquitectura del nombre del archivo
 ni de su carpeta. GPU exige `warp_config`; CPU lo rechaza.
 
-Los backends declaran `ARCHITECTURE`: `sim-cpu` y `fpga-cpu` son CPU;
-`sim-gpu` es GPU y es el backend predeterminado de `run_tests.py`.
-`both` sigue seleccionando los dos backends CPU. Las versiones se seleccionan,
+Los backends declaran `ARCHITECTURE`: `sim-cpu`, `sim-sys` y `fpga-cpu` son
+CPU; `sim-gpu`, `sim-gpu-cycle`, `fpga-gpu` y `fpga-sys` son GPU. El
+predeterminado de `run_tests.py` es `sim-gpu`. Las versiones se seleccionan,
 por ejemplo, con `--version sim-gpu=current`.
+
+Los nombres llevan la plataforma delante (`sim-` o `fpga-`) y detrás lo que se
+ejecuta:
+
+| Backend | Qué es | Pareja en placa |
+|---|---|---|
+| `sim-cpu` | [2.cpu-sim-func](../2.cpu-sim-func/) | `fpga-cpu` |
+| `sim-gpu`, `sim-gpu-cycle` | [11.gpu-sim-func](../11.gpu-sim-func/) y [25.gpu-sim-cycle-uarch](../25.gpu-sim-cycle-uarch/) | `fpga-gpu` |
+| `sim-sys` | [32.cpu-gpu-func-sim](../32.cpu-gpu-func-sim/): la CPU y la GPU sobre la misma RAM; ejecuta casos de CPU, con la capacidad `gpu_core` | `fpga-cpu` sobre la 36 o la 37 |
+| `fpga-sys` | la GPU de la 36 o la 37, lanzada por el host con la CPU parada ([backend-gpu-core.md](backend-gpu-core.md)); ejecuta casos de GPU | `sim-gpu` (`gpu-sys-both`) |
+
+Los lanzadores de `tools/` se llaman igual que los simuladores (`sim-cpu`,
+`sim-gpu`, `sim-gpu-cycle`, `sim-sys`). Los diferenciales son `both`
+(`sim-cpu` contra `fpga-cpu`), `sys-both` (`sim-sys` contra `fpga-cpu`),
+`gpu-both` (`sim-gpu` contra `fpga-gpu`) y `gpu-sys-both` (`sim-gpu` contra
+`fpga-sys`).
 
 El descubrimiento automático omite casos de otra arquitectura y muestra cuántos.
 Una ruta solicitada explícitamente con arquitectura incompatible produce código
