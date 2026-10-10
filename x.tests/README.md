@@ -22,6 +22,8 @@ versiona).
   CPU y la GPU a la vez, en ensamblador y en C, uno por carpeta con su README. No llevan `test.json`: no hay
   backend que corra CPU y GPU juntas por `run_tests.py`, y los comprueba `32.cpu-gpu-func-sim/test_cpu_gpu_sim.py`.
   `run_tests.py` no los descubre.
+- [`unit/`](unit/README.md) — los tests de Python de la infraestructura (`test_*.py`), agrupados por tema. Los
+  lanzadores (`run_tests.py`, `record_case.py`, `test`) se quedan en esta carpeta.
 
 ### Convertir una demo en un caso
 
@@ -49,7 +51,7 @@ Desde `x.tests`:
 ```powershell
 python run_tests.py --backend gpusim
 python run_tests.py cases-gpu/memory/vecsum/test.json --backend gpusim
-python -m unittest discover -s . -p test_gpu_runner.py -v
+python -m unittest unit.runner.test_gpu_runner -v
 ```
 
 El runner ensambla `vecsum.asm`, carga `a.hex` en 0x100 y `b.hex` en 0x140,
@@ -486,7 +488,7 @@ dos implementaciones hacen lo mismo: el frame capturado byte a byte, `swaps`
 —anclado al intercambio, no al tiempo— y `fb_front`. Y `pc` sí se compara en los
 casos sin `run_until`, donde la parada es determinista.
 
-[`test_differential.py`](test_differential.py) fija este recorte. Hasta que se
+[`test_differential.py`](unit/runner/test_differential.py) fija este recorte. Hasta que se
 aplicó, **los casos de vídeo fallaban siempre el diferencial** aunque
 pasaran en los dos backends por separado.
 

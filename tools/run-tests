@@ -80,7 +80,9 @@ def main(argv: list[str]) -> int:
     variables = entorno()
 
     print("== Tests unitarios de infraestructura ==")
-    orden = [python, "-m", "unittest", "discover", "-s", ".", "-p", "test_*.py"]
+    # Los tests viven en x.tests/unit/<tema>/ (paquetes): `-t .` pone x.tests en el path, de donde salen
+    # `run_tests` y `backends`.
+    orden = [python, "-m", "unittest", "discover", "-s", "unit", "-t", ".", "-p", "test_*.py"]
     if detallado:
         orden.append("-v")
     codigo = subprocess.call(orden, cwd=str(TESTS), env=variables)

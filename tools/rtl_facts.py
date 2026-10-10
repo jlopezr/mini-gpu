@@ -35,7 +35,7 @@ def sin_comentarios(source: str) -> str:
     mirando y a esquivarlo. Los saltos de línea se conservan para que las
     posiciones sigan cuadrando.
 
-    `x.tests/test_monitor_port.py` importa esta misma función en vez de tener su
+    `x.tests/unit/backends/test_monitor_port.py` importa esta misma función en vez de tener su
     copia, porque tuvo exactamente este fallo el mismo día y en su propio
     parser. Dos copias de un analizador son dos sitios donde arreglarlo, y sólo
     uno falla ruidosamente.

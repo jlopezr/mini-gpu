@@ -29,7 +29,7 @@ Regenerar:
 
     python -m tools.gen_input_vectors
 
-`x.tests/test_input_vectors.py` comprueba que el fichero versionado coincide.
+`x.tests/unit/input/test_input_vectors.py` comprueba que el fichero versionado coincide.
 """
 from __future__ import annotations
 

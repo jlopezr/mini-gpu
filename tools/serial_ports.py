@@ -19,7 +19,7 @@ Alli vive la misma logica, y se queda. `x.tests` NO depende de `tools/` a
 proposito (la dependencia va de aqui hacia alla, ver `tools/run_board.py`), y
 ademas `board.py` recibe el `monitor.py` del prototipo como modulo: si el
 monitor importara de x.tests habria un ciclo. Son dos copias de quince lineas
-en vez de trece, y `x.tests/test_monitor_port.py` comprueba que no divergen.
+en vez de trece, y `x.tests/unit/backends/test_monitor_port.py` comprueba que no divergen.
 """
 from __future__ import annotations
 

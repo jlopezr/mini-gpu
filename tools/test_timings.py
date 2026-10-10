@@ -88,7 +88,10 @@ def python_worker(start: Path, pattern: str, output: Path, verbose: bool) -> int
     # `x.tests` contiene un punto y no es un paquete importable. Descubrir desde
     # dentro reproduce exactamente `run-tests` y evita inventar nombres de módulo.
     os.chdir(start)
-    suite = loader.discover(".", pattern=pattern)
+    if (start / "unit").is_dir():           # x.tests: los tests son paquetes en unit/<tema>/ (ver tools/run-tests)
+        suite = loader.discover("unit", pattern=pattern, top_level_dir=".")
+    else:
+        suite = loader.discover(".", pattern=pattern)
     runner = unittest.TextTestRunner(verbosity=2 if verbose else 1, resultclass=TimedResult)
     # resultclass no permite pasar estado en el constructor; se inicializa al crear el resultado.
     original = runner._makeResult
@@ -122,7 +125,12 @@ def run(command: list[str], cwd: Path, quiet: bool = False) -> tuple[int, float]
 
 def python_suite(python: str, temp: Path, verbose: bool, quiet: bool) -> dict:
     ignored = {".git", ".venv", "_build", "reports", "y.lcc"}
-    directories = sorted({path.parent for path in ROOT.rglob("test_*.py")
+    unit = ROOT / "x.tests" / "unit"
+
+    def group(folder: Path) -> Path:        # todos los temas de x.tests/unit se descubren juntos desde x.tests
+        return ROOT / "x.tests" if unit in (folder, *folder.parents) else folder
+
+    directories = sorted({group(path.parent) for path in ROOT.rglob("test_*.py")
                           if not ignored.intersection(path.relative_to(ROOT).parts)
                           and path.parent != ROOT / "tools"})
     tests = []

@@ -92,7 +92,7 @@ Se ejecutó la suite completa con simulación funcional:
 ```
 
 Los dos `xfail` son los inicializadores designados C99 (`97` y `98`). También se
-ejecutaron las 56 pruebas de `x.tests/test_mini_opt.py`: todas correctas. Pytest
+ejecutaron las 56 pruebas de `x.tests/unit/compiler/test_mini_opt.py`: todas correctas. Pytest
 no estaba instalado en el entorno; la suite se ejecutó directamente con
 `unittest`.
 
@@ -506,7 +506,7 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   en el simulador con ESC; la pantalla es idéntica con y sin pases):
   362.017 → 304.009 instrucciones ejecutadas (−16,0 %) y binario de 83.640 →
   78.940 B (−5,6 %). Los accesos a pila ejecutados pasan de 47.805 (15,1 % de las
-  instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
+  instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`x.tests/unit/compiler/test_mini_opt.py`) lo comprueba.
 - **Cubo** (`x.tests/cases-cpu-gpu/race/cube/cube.c`, un fotograma de cada método en estado
   estable; `compare_race.py cube`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las

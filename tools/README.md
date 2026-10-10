@@ -439,7 +439,7 @@ que la ventana del simulador. **F12** sale, y al salir manda las liberaciones de
 lo que siguiera pulsado y la presencia a cero. La lógica —qué palabras salen, el
 control de flujo con los huecos libres de la FIFO, que el movimiento se funda
 mientras no hay sitio— está en `tools/input_adapter.py` y se prueba sin placa
-(`x.tests/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
+(`x.tests/unit/input/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
 timer del FTDI, así que se manda un comando por vuelta con todo lo que cabe.
 
 **El puntero se resincroniza al conectar.** El ratón de INPUT es relativo y el
@@ -504,7 +504,7 @@ más baja a la más alta:
 Qué usar: para la lógica (teclado español, repintado, controles) el simulador con
 `--input-script`, que es determinista y no necesita placa; para comprobar la placa
 de verdad (latencia, FIFO, repintado real), estos. Se prueban sin placa en
-`x.tests/test_board_input.py` y `x.tests/test_board_script.py`, con una FPGA y una
+`x.tests/unit/input/test_board_input.py` y `x.tests/unit/input/test_board_script.py`, con una FPGA y una
 aplicación simuladas.
 
 #### Guiones de entrada (`--input-script`)
@@ -706,7 +706,7 @@ paneles lo que el núcleo devuelve. En medio, `tools/debug_target.py` define qu�
 necesita el depurador de la máquina que depura, con una implementación para el
 simulador y otra (`tools/debug_board.py`) para el monitor. CPU y GPU juntas son
 un tercer objetivo, `tools/debug_system.py` (siguiente apartado).
-Suite: `python -m unittest discover -s x.tests -p "test_debugger*.py"`.
+Suite: `python -m unittest discover -s x.tests/unit/debugger -t x.tests -p "test_debugger*.py"`.
 
 ### Depurar CPU + GPU (`mini-dbg --gpu`)
 
@@ -1143,7 +1143,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/compare/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.
 
-Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`
+Pruebas: `x.tests/unit/compiler/test_mini_opt.py` y `x.tests/unit/compiler/test_crt0.py` (la parte que pasa por `rcc`
 necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
 con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−16,0 % medido) y un
 binario menor (−5,6 %).
@@ -1697,7 +1697,7 @@ que llamarse igual que su `_BASE`** — `MMIO_GPU_WARPS_PC_OFF` cuelga de
 El generador comprueba que no haya dos registros en la misma dirección y falla
 si los hay, que es como se caza ese error.
 
-`x.tests/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
+`x.tests/unit/tools/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
 al día, que las direcciones son las que dice el contrato (con los números
 escritos a mano, para que un `.vh` mal editado no pase), y que el generador
 rechaza lo que no debe aceptar.
@@ -1858,7 +1858,7 @@ Available ports: COM3 (FTDI), COM1, COM6, COM8
 no depende de `tools/` (la dependencia va en el otro sentido) y `board.py`
 recibe el `monitor.py` del prototipo como módulo, así que importar desde el
 monitor haría un ciclo. Son dos copias en vez de trece, y
-`x.tests/test_monitor_port.py` comprueba que no divergen.
+`x.tests/unit/backends/test_monitor_port.py` comprueba que no divergen.
 
 ### Las tres operaciones por separado
 

@@ -442,7 +442,7 @@ Y estaba la 22.
 
 > **Resuelto el 8/10/2026.** `prototype_build_summary` (`build-list --prototypes`)
 > ignora los registros de etiqueta `test` al elegir el último build, salvo los que
-> siguen en marcha. Test en `x.tests/test_build_runner.py`. El texto de abajo se
+> siguen en marcha. Test en `x.tests/unit/build/test_build_runner.py`. El texto de abajo se
 > conserva como historia; el aviso de ancho que provocó el último `FAILED` de la 34
 > (`mmio_decoder.v:257`, `palabra >= PERF_SLOTS`) sigue sin limpiar.
 
@@ -769,7 +769,7 @@ aparece, se cierra sin hacer nada.
     que es el sitio que el repo tiene para decir qué buscar en el RTL. No mueve
     la selección de casos: los 47 de `x.tests/cases-cpu` declaran
     `architecture: cpu` y ese filtro va antes que las capacidades.
-  - Lo vigila `x.tests/test_sysid_params.py` (sincronía, conformidad contra
+  - Lo vigila `x.tests/unit/build/test_sysid_params.py` (sincronía, conformidad contra
     números a mano, y que nadie vuelva a poner un literal en el RTL), más
     `test_monitor_port.SysIdTest`, que deriva el perfil de los rasgos del RTL
     por un camino distinto al del generador. Fue ese contraste el que cazó lo
