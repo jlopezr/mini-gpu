@@ -53,7 +53,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     return None
 
 
-class GpuBackend:
+class SimGpuBackend:
     ARCHITECTURE = "gpu"
 
     def __init__(self, repository: Path, version: str = DEFAULT_VERSION):

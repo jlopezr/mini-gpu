@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import assemble_bytes
-from backends.sim_cpu import SimulatorBackend
-from backends.sim_gpu import GpuBackend, capabilities
+from backends.sim_cpu import SimCpuBackend
+from backends.sim_gpu import SimGpuBackend, capabilities
 from backends.frame_capture import FB_BACK
 from tools.sim_devices import VideoDevice, SerialDevice
 
@@ -22,12 +22,12 @@ from tools.sim_devices import VideoDevice, SerialDevice
 class PeripheralParityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.backends = [SimulatorBackend(ROOT), GpuBackend(ROOT), GpuBackend(ROOT, "cycle")]
+        cls.backends = [SimCpuBackend(ROOT), SimGpuBackend(ROOT), SimGpuBackend(ROOT, "cycle")]
 
     def run_program(self, backend, source, **kwargs):
         args = dict(program=assemble_bytes(source), initial_memory=[], register_numbers=set(),
                     memory_ranges=[(0x100, 16)], max_instructions=10000, timeout_seconds=10)
-        if isinstance(backend, GpuBackend):
+        if isinstance(backend, SimGpuBackend):
             args["warp_config"] = {"warp_size": 1, "warps": [{"id": 0, "pc": 0, "active_mask": 1}]}
         args.update(kwargs)
         return backend.run(**args)

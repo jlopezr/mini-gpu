@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import run_tests as runner
 from backends import fpga_gpu
-from backends.sim_gpu import GpuBackend
+from backends.sim_gpu import SimGpuBackend
 
 
 # MMIO v2 (1.isa/mmio.md §14). Las tres bases viajan como argumento y no
@@ -173,13 +173,13 @@ class GpuFpgaTest(unittest.TestCase):
 
     def test_explicit_incompatible_case_rejected_before_hardware(self):
         path = runner.ROOT / 'cases-gpu/programs/mandelbrot/test.json'
-        with patch('sys.argv', ['runner', '--backend', 'fpga-gpu', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, patch('sys.stderr'):
+        with patch('sys.argv', ['runner', '--backend', 'fpga-gpu', str(path)]), patch.object(runner, 'FpgaGpuBackend') as factory, patch('sys.stderr'):
             self.assertEqual(runner.main(), 2)
             factory.assert_not_called()
 
     def test_gpu_both_compares_gpu_keys_and_detects_mismatch(self):
         path = runner.ROOT / 'cases-gpu/scheduling/independent-pcs/test.json'
-        model = GpuBackend(runner.REPOSITORY)
+        model = SimGpuBackend(runner.REPOSITORY)
         def execute(**kwargs):
             fields = kwargs.pop('observation_fields')
             self.assertIn('warp[3].lane[7].R1', fields)
@@ -190,7 +190,7 @@ class GpuFpgaTest(unittest.TestCase):
                 if broken:  # noqa: B023 (se usa dentro de la misma iteracion)
                     result['observations']['warp[3].lane[7].R1'] = 0
                 return result
-            with self.subTest(broken=broken), patch('sys.argv', ['runner', '--backend', 'gpu-both', '--port', 'COM3', str(path)]), patch.object(runner, 'GpuFpgaBackend') as factory, redirect_stdout(io.StringIO()) as output:
+            with self.subTest(broken=broken), patch('sys.argv', ['runner', '--backend', 'gpu-both', '--port', 'COM3', str(path)]), patch.object(runner, 'FpgaGpuBackend') as factory, redirect_stdout(io.StringIO()) as output:
                 factory.return_value.run.side_effect = execute_variant
                 self.assertEqual(runner.main(), 1 if broken else 0)
                 self.assertNotIn('ERROR', output.getvalue())

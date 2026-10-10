@@ -340,7 +340,7 @@ def read_observations(client, estado: int, requested: set[str]) -> tuple[dict, i
     return resultado, codigo
 
 
-class GpuCoreBackend:
+class FpgaSysBackend:
     """Carga, lanza e inspecciona un caso GPU en la GPU de una CPU+GPU."""
 
     ARCHITECTURE = "gpu"

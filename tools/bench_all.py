@@ -34,7 +34,7 @@ for extra in (ROOT, ROOT / "x.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from backends import fpga_cpu as cpu_fpga  # noqa: E402
+from backends import fpga_cpu  # noqa: E402
 from backends import fpga_sys  # noqa: E402
 from backends import fpga_gpu  # noqa: E402
 
@@ -52,7 +52,7 @@ def prototypes(family: str, core: bool = False):
     mide y `fpga-sys` todavía no admite `--measure`.
     """
     found = []
-    for name, versions in (("cpu", cpu_fpga.VERSIONS), ("gpu", fpga_gpu.VERSIONS)):
+    for name, versions in (("cpu", fpga_cpu.VERSIONS), ("gpu", fpga_gpu.VERSIONS)):
         if family not in ("all", name):
             continue
         for version in versions.values():

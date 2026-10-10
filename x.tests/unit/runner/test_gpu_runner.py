@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backends.sim_gpu import GpuBackend
+from backends.sim_gpu import SimGpuBackend
 from run_tests import (ROOT, REPOSITORY, load_case, compare_result,
                        discover_cases, exclude_cases, slow_reason)
 
@@ -14,7 +14,7 @@ class GpuRunnerTest(unittest.TestCase):
     def setUp(self):
         self.path = ROOT / 'cases-gpu/memory/vecsum/test.json'
         self.case = load_case(self.path)
-        self.backend = GpuBackend(REPOSITORY)
+        self.backend = SimGpuBackend(REPOSITORY)
 
     def run_case(self, case):
         return self.backend.run(
@@ -81,7 +81,7 @@ class GpuRunnerTest(unittest.TestCase):
         for version in ('current', 'cycle'):
             with self.subTest(version=version):
                 self.assertIsNone(incompatibility(case, version))
-                result = GpuBackend(REPOSITORY, version).run(
+                result = SimGpuBackend(REPOSITORY, version).run(
                     program=case['program'], initial_memory=case['initial_memory'],
                     register_numbers=set(), memory_ranges=[],
                     max_instructions=case['max_instructions'], timeout_seconds=1,
@@ -125,8 +125,8 @@ class GpuRunnerTest(unittest.TestCase):
     def test_mixed_explicit_selection_rejected_before_backend_construction(self):
         import run_tests as runner
         for backend, paths, constructor in (
-            ('sim-gpu', [self.path, ROOT / 'cases-cpu/basics/smoke/test.json'], 'GpuBackend'),
-            ('fpga-cpu', [ROOT / 'cases-cpu/basics/smoke/test.json', self.path], 'FpgaBackend'),
+            ('sim-gpu', [self.path, ROOT / 'cases-cpu/basics/smoke/test.json'], 'SimGpuBackend'),
+            ('fpga-cpu', [ROOT / 'cases-cpu/basics/smoke/test.json', self.path], 'FpgaCpuBackend'),
         ):
             with self.subTest(backend=backend), patch(
                 'sys.argv', ['run_tests.py', '--backend', backend, *map(str, paths)]

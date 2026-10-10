@@ -102,7 +102,7 @@ def _load_module(name: str, path: Path) -> ModuleType:
     return module
 
 
-class SimulatorBackend:
+class SimCpuBackend:
     """Ejecuta un caso sobre ``2.cpu-sim-func/minicpu_sim.py``."""
 
     ARCHITECTURE = "cpu"

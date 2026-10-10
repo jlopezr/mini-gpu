@@ -39,8 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "x.tests")]
 
 import run_tests as rt  # noqa: E402
-from backends.sim_gpu import GpuBackend  # noqa: E402
-from backends.sim_cpu import SimulatorBackend  # noqa: E402
+from backends.sim_gpu import SimGpuBackend  # noqa: E402
+from backends.sim_cpu import SimCpuBackend  # noqa: E402
 
 CPU_REGISTERS = range(1, 32)
 
@@ -66,7 +66,7 @@ def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = F
     expect = dict(raw["expect"])
 
     if architecture == "cpu":
-        result = SimulatorBackend(ROOT).run(
+        result = SimCpuBackend(ROOT).run(
             program=case["program"], initial_memory=case["initial_memory"],
             register_numbers=set(CPU_REGISTERS), memory_ranges=[],
             max_instructions=case["max_instructions"],
@@ -89,7 +89,7 @@ def record(path: Path, frame: bool, tighten: bool = False, allow_error: bool = F
     else:
         warps = case["warp_config"]["warps"]
         lanes = case["warp_config"].get("warp_size", 8)
-        result = GpuBackend(ROOT).run(
+        result = SimGpuBackend(ROOT).run(
             program=case["program"], initial_memory=case["initial_memory"],
             register_numbers=set(), memory_ranges=[],
             max_instructions=case["max_instructions"],

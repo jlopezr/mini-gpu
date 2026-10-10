@@ -240,7 +240,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     return board.region_incompatibility(case, monitor.ARCHITECTURAL_REGIONS)
 
 
-class FpgaBackend:
+class FpgaCpuBackend:
     """Carga, ejecuta e inspecciona un caso en la FPGA real."""
 
     ARCHITECTURE = "cpu"

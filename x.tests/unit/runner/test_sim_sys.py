@@ -50,7 +50,7 @@ class EjecucionTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.backend = sim_sys.CpuGpuSimulatorBackend(ROOT.parent)
+        cls.backend = sim_sys.SimSysBackend(ROOT.parent)
 
     def ejecutar(self, nombre):
         args = type("Args", (), dict(trace=False, trace_detail=False,

@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT / "x.tests"))
 
 from mini_asm import assemble_bytes
-from backends.sim_cpu import SimulatorBackend
+from backends.sim_cpu import SimCpuBackend
 
 
 def load_fire_model():
@@ -44,7 +44,7 @@ class FireReferenceTest(unittest.TestCase):
             "fire.asm",
             (ROOT / "x.tests" / "inc",),
         )
-        result = SimulatorBackend(ROOT).run(
+        result = SimCpuBackend(ROOT).run(
             program=program,
             initial_memory=[],
             register_numbers=set(),

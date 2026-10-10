@@ -11,7 +11,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(ROOT / "x.tests"))
 
-from backends.sim_gpu import GpuBackend
+from backends.sim_gpu import SimGpuBackend
 from run_tests import load_case, compare_result
 
 # La referencia escalar vive en reference.py; aquí solo se reutiliza.
@@ -34,7 +34,7 @@ def main():
     from PIL import Image
 
     case = load_case(HERE / "test.json")
-    backend = GpuBackend(ROOT)
+    backend = SimGpuBackend(ROOT)
     print("Ejecutando 320x240, 256 iteraciones, 8 warps x 8 lanes...", flush=True)
     start = time.monotonic()
     result = backend.run(

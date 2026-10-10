@@ -15,17 +15,17 @@ from types import ModuleType
 
 from backends import board
 from backends import sim_sys as sim_sys_backend
-from backends import fpga_cpu as fpga_backend
-from backends import fpga_sys as gpu_core_backend
-from backends import fpga_gpu as gpu_fpga_backend
-from backends import sim_cpu as simulator_backend
-from backends import sim_gpu as gpu_backend
-from backends.sim_gpu import GpuBackend
-from backends.sim_sys import CpuGpuSimulatorBackend
-from backends.fpga_cpu import FpgaBackend
-from backends.fpga_sys import GpuCoreBackend
-from backends.fpga_gpu import GpuFpgaBackend
-from backends.sim_cpu import SimulatorBackend
+from backends import fpga_cpu as fpga_cpu_backend
+from backends import fpga_sys as fpga_sys_backend
+from backends import fpga_gpu as fpga_gpu_backend
+from backends import sim_cpu as sim_cpu_backend
+from backends import sim_gpu as sim_gpu_backend
+from backends.sim_gpu import SimGpuBackend
+from backends.sim_sys import SimSysBackend
+from backends.fpga_cpu import FpgaCpuBackend
+from backends.fpga_sys import FpgaSysBackend
+from backends.fpga_gpu import FpgaGpuBackend
+from backends.sim_cpu import SimCpuBackend
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parent
@@ -46,11 +46,11 @@ SIMULATOR_OPTIONS = ("simt_region_depth", "simt_path_depth")
 SLOW_CASE_SECONDS = 1.0
 BACKEND_DEFINITIONS = {
     "sim-gpu": {
-        "class": GpuBackend,
-        "module": gpu_backend,
-        "architecture": GpuBackend.ARCHITECTURE,
-        "versions": gpu_backend.VERSIONS,
-        "default_version": gpu_backend.DEFAULT_VERSION,
+        "class": SimGpuBackend,
+        "module": sim_gpu_backend,
+        "architecture": SimGpuBackend.ARCHITECTURE,
+        "versions": sim_gpu_backend.VERSIONS,
+        "default_version": sim_gpu_backend.DEFAULT_VERSION,
     },
     # El modelo de ciclos es un BACKEND y no una `--version` del funcional,
     # aunque comparta clase: son dos simuladores distintos de la misma ISA, con
@@ -58,51 +58,51 @@ BACKEND_DEFINITIONS = {
     # escondido detrás de `--version cycle` hacía que pareciera una variante de
     # otra cosa.
     "sim-gpu-cycle": {
-        "class": GpuBackend,
-        "module": gpu_backend,
-        "architecture": GpuBackend.ARCHITECTURE,
-        "versions": gpu_backend.VERSIONS,
+        "class": SimGpuBackend,
+        "module": sim_gpu_backend,
+        "architecture": SimGpuBackend.ARCHITECTURE,
+        "versions": sim_gpu_backend.VERSIONS,
         "default_version": "cycle",
     },
     "sim-cpu": {
-        "class": SimulatorBackend,
-        "module": simulator_backend,
-        "architecture": SimulatorBackend.ARCHITECTURE,
-        "versions": simulator_backend.VERSIONS,
-        "default_version": simulator_backend.DEFAULT_VERSION,
+        "class": SimCpuBackend,
+        "module": sim_cpu_backend,
+        "architecture": SimCpuBackend.ARCHITECTURE,
+        "versions": sim_cpu_backend.VERSIONS,
+        "default_version": sim_cpu_backend.DEFAULT_VERSION,
     },
     # La CPU con una GPU colgada del bus (carpeta 32): lo que la 36 y la 37 son en
     # hardware, y por eso su pareja es `fpga-cpu` sobre ellas, no `fpga-sys`.
     "sim-sys": {
-        "class": CpuGpuSimulatorBackend,
+        "class": SimSysBackend,
         "module": sim_sys_backend,
-        "architecture": CpuGpuSimulatorBackend.ARCHITECTURE,
+        "architecture": SimSysBackend.ARCHITECTURE,
         "versions": sim_sys_backend.VERSIONS,
         "default_version": sim_sys_backend.DEFAULT_VERSION,
     },
     "fpga-cpu": {
-        "class": FpgaBackend,
-        "module": fpga_backend,
-        "architecture": FpgaBackend.ARCHITECTURE,
-        "versions": fpga_backend.VERSIONS,
-        "default_version": fpga_backend.DEFAULT_VERSION,
+        "class": FpgaCpuBackend,
+        "module": fpga_cpu_backend,
+        "architecture": FpgaCpuBackend.ARCHITECTURE,
+        "versions": fpga_cpu_backend.VERSIONS,
+        "default_version": fpga_cpu_backend.DEFAULT_VERSION,
     },
     "fpga-gpu": {
-        "class": GpuFpgaBackend,
-        "module": gpu_fpga_backend,
-        "architecture": GpuFpgaBackend.ARCHITECTURE,
-        "versions": gpu_fpga_backend.VERSIONS,
-        "default_version": gpu_fpga_backend.DEFAULT_VERSION,
+        "class": FpgaGpuBackend,
+        "module": fpga_gpu_backend,
+        "architecture": FpgaGpuBackend.ARCHITECTURE,
+        "versions": fpga_gpu_backend.VERSIONS,
+        "default_version": fpga_gpu_backend.DEFAULT_VERSION,
     },
     # La GPU de un prototipo CPU+GPU (36 y 37), lanzada por el host por GPU CORE.
     # Es un backend propio y no versiones de `fpga-gpu`: esas carpetas siguen
     # siendo CPU para `fpga-cpu`, y el monitor gobierna la CPU, no la GPU.
     "fpga-sys": {
-        "class": GpuCoreBackend,
-        "module": gpu_core_backend,
-        "architecture": GpuCoreBackend.ARCHITECTURE,
-        "versions": gpu_core_backend.VERSIONS,
-        "default_version": gpu_core_backend.DEFAULT_VERSION,
+        "class": FpgaSysBackend,
+        "module": fpga_sys_backend,
+        "architecture": FpgaSysBackend.ARCHITECTURE,
+        "versions": fpga_sys_backend.VERSIONS,
+        "default_version": fpga_sys_backend.DEFAULT_VERSION,
     },
 }
 
@@ -1297,7 +1297,7 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     familia = "gpu" if args.backend.startswith("gpu") else "cpu"
     nombre_sim, nombre_fpga = (("sim-gpu", "fpga-gpu") if familia == "gpu"
                                else ("sim-cpu", "fpga-cpu"))
-    fpga_versions = (gpu_fpga_backend if familia == "gpu" else fpga_backend).VERSIONS
+    fpga_versions = (fpga_gpu_backend if familia == "gpu" else fpga_cpu_backend).VERSIONS
     casos = []
     for path in case_paths:
         try:
@@ -1322,10 +1322,10 @@ def run_measurements(case_paths, versiones, args, upload_policy) -> int:
     for version in versiones:
         simulador = version == "sim"
         if simulador:
-            backend = (GpuBackend if familia == "gpu" else SimulatorBackend)(REPOSITORY)
+            backend = (SimGpuBackend if familia == "gpu" else SimCpuBackend)(REPOSITORY)
         else:
             try:
-                backend = (GpuFpgaBackend if familia == "gpu" else FpgaBackend)(
+                backend = (FpgaGpuBackend if familia == "gpu" else FpgaCpuBackend)(
                     REPOSITORY, port=port,
                     serial_timeout=args.serial_timeout, version=version,
                     upload_policy=upload_policy,
@@ -1683,7 +1683,7 @@ def main() -> int:
             parser.error("--measure mide una familia: usa --backend fpga-cpu o fpga-gpu")
         if args.backend == "fpga-sys":
             parser.error("--measure todavia no admite fpga-sys")
-        medibles = (gpu_fpga_backend if gpu_measure else fpga_backend).VERSIONS
+        medibles = (fpga_gpu_backend if gpu_measure else fpga_cpu_backend).VERSIONS
         # Las versiones a medir: las que se pidan con --version, o todas las
         # del backend FPGA mas el simulador, que aporta las instrucciones de
         # los casos que ninguna placa puede contar.
@@ -1808,7 +1808,7 @@ def main() -> int:
     # hardware, así que merece un mensaje y no un volcado de pila.
     try:
         if "fpga-cpu" in backend_names:
-            backends["fpga-cpu"] = FpgaBackend(
+            backends["fpga-cpu"] = FpgaCpuBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,
@@ -1816,7 +1816,7 @@ def main() -> int:
                 upload_policy=upload_policy,
             )
         if "fpga-gpu" in backend_names:
-            backends["fpga-gpu"] = GpuFpgaBackend(
+            backends["fpga-gpu"] = FpgaGpuBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,
@@ -1824,7 +1824,7 @@ def main() -> int:
                 upload_policy=upload_policy,
             )
         if "fpga-sys" in backend_names:
-            backends["fpga-sys"] = GpuCoreBackend(
+            backends["fpga-sys"] = FpgaSysBackend(
                 REPOSITORY,
                 port=port,
                 serial_timeout=args.serial_timeout,

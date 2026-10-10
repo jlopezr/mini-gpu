@@ -256,16 +256,16 @@ HALT"""
     def test_los_tres_motores(self):
         sys.path.insert(0, str(ROOT / "x.tests"))
         from mini_asm import assemble_bytes
-        from backends.sim_cpu import SimulatorBackend
-        from backends.sim_gpu import GpuBackend
-        backends = [SimulatorBackend(ROOT), GpuBackend(ROOT), GpuBackend(ROOT, "cycle")]
+        from backends.sim_cpu import SimCpuBackend
+        from backends.sim_gpu import SimGpuBackend
+        backends = [SimCpuBackend(ROOT), SimGpuBackend(ROOT), SimGpuBackend(ROOT, "cycle")]
         for backend in backends:
             with self.subTest(backend=backend.version, architecture=backend.ARCHITECTURE):
                 args = dict(program=assemble_bytes(self.PROGRAM), initial_memory=[],
                             register_numbers=set(), memory_ranges=[(256, 8)],
                             max_instructions=10000, timeout_seconds=10,
                             input_script=self.SCRIPT)
-                if isinstance(backend, GpuBackend):
+                if isinstance(backend, SimGpuBackend):
                     args["warp_config"] = {"warp_size": 1, "warps": [
                         {"id": 0, "pc": 0, "active_mask": 1}]}
                 result = backend.run(**args)

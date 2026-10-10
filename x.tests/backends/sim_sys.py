@@ -50,7 +50,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     return None
 
 
-class CpuGpuSimulatorBackend:
+class SimSysBackend:
     """Ejecuta un caso de CPU sobre ``32.cpu-gpu-func-sim/cpu_gpu_sim.py``."""
 
     ARCHITECTURE = "cpu"

@@ -286,7 +286,7 @@ def read_observations(client, status, requested: set[str], config_base: int,
     return result
 
 
-class GpuFpgaBackend:
+class FpgaGpuBackend:
     """Carga, ejecuta e inspecciona un caso GPU en la FPGA real."""
 
     ARCHITECTURE = "gpu"

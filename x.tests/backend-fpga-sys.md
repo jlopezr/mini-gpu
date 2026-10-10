@@ -88,7 +88,7 @@ El monitor es el de la carpeta (`monitor.py` de la 36/37) y no hereda
 
 ### 3.3 Correspondencia con el resultado de `fpga-gpu`
 
-El diccionario que devuelve `run()` es el mismo que el de `GpuFpgaBackend`, para
+El diccionario que devuelve `run()` es el mismo que el de `FpgaGpuBackend`, para
 que `run_tests.py` compare sin cambios.
 
 | Campo | De dónde | Fase |
