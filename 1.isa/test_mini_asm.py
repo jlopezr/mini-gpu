@@ -625,6 +625,171 @@ class IncludeTest(unittest.TestCase):
         self.assertEqual(palabras[0] & 0xFFFF, 8)
 
 
+class ConditionalTest(unittest.TestCase):
+    """`.ifdef`/`.ifndef`/`.else`/`.endif`, con los simbolos de `-D`.
+
+    Se comprueba lo que cada rama emite (el numero de palabras) y, sobre todo,
+    que los errores digan donde esta la directiva mal puesta.
+    """
+
+    PROGRAMA = (".ifdef BOARD\n    NOP\n    NOP\n.else\n    NOP\n.endif\n    HALT\n")
+
+    def palabras(self, texto, *defines):
+        return len(assemble(texto, defines=frozenset(defines)))
+
+    def test_ifdef_con_y_sin_simbolo(self):
+        self.assertEqual(self.palabras(self.PROGRAMA, "BOARD"), 3)
+        self.assertEqual(self.palabras(self.PROGRAMA), 2)
+
+    def test_ifndef_es_el_contrario(self):
+        texto = ".ifndef BOARD\n    NOP\n.endif\n    HALT\n"
+        self.assertEqual(self.palabras(texto), 2)
+        self.assertEqual(self.palabras(texto, "BOARD"), 1)
+
+    def test_sin_else(self):
+        texto = ".ifdef BOARD\n    NOP\n.endif\n    HALT\n"
+        self.assertEqual(self.palabras(texto, "BOARD"), 2)
+        self.assertEqual(self.palabras(texto), 1)
+
+    def test_anidados(self):
+        texto = (".ifdef A\n    NOP\n.ifdef B\n    NOP\n    NOP\n.else\n    NOP\n    NOP\n    NOP\n"
+                 ".endif\n.else\n.ifdef B\n    NOP\n    NOP\n    NOP\n    NOP\n.endif\n.endif\n    HALT\n")
+        self.assertEqual(self.palabras(texto, "A", "B"), 4)
+        self.assertEqual(self.palabras(texto, "A"), 5)
+        self.assertEqual(self.palabras(texto, "B"), 5)
+        self.assertEqual(self.palabras(texto), 1)
+
+    def test_rama_descartada_no_se_ensambla(self):
+        """Ni una instruccion invalida ni una etiqueta repetida en la rama muerta."""
+        texto = (".ifdef BOARD\n    INVENTADA R1\nx:\nx:\n.endif\n    HALT\n")
+        self.assertEqual(self.palabras(texto), 1)
+
+    def test_etiquetas_distintas_por_rama(self):
+        """El caso de gpu_runtime: la misma etiqueta definida en las dos ramas."""
+        texto = ("f:\n.ifdef BOARD\n    NOP\n    BRA f\n.else\n    HALT\n    BRA f\n.endif\n")
+        self.assertEqual(self.palabras(texto, "BOARD"), 2)
+        self.assertEqual(self.palabras(texto), 2)
+
+    def test_rama_descartada_no_lee_sus_include(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            texto = ".ifdef BOARD\n.include \"no_existe.inc\"\n.endif\n    HALT\n"
+            palabras = assemble(texto, Path(tmp), "prog.asm")
+        self.assertEqual(len(palabras), 1)
+
+    def test_include_dentro_de_una_rama_activa(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "trozo.inc").write_text("    NOP\n    NOP\n", encoding="utf-8")
+            texto = ".ifdef BOARD\n.include \"trozo.inc\"\n.endif\n    HALT\n"
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm",
+                                          defines=frozenset({"BOARD"}))), 3)
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm")), 1)
+
+    def test_el_incluido_ve_los_mismos_simbolos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "trozo.inc").write_text(
+                ".ifdef BOARD\n    NOP\n.else\n    NOP\n    NOP\n.endif\n", encoding="utf-8")
+            texto = '.include "trozo.inc"\n    HALT\n'
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm",
+                                          defines=frozenset({"BOARD"}))), 2)
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm")), 3)
+
+    def test_las_lineas_conservan_su_numero_original(self):
+        """Un error tras una rama descartada cita la linea real del fuente."""
+        texto = ".ifdef BOARD\n    NOP\n.endif\n    INVENTADA R1\n"
+        with self.assertRaisesRegex(AsmError, "línea 4"):
+            assemble(texto)
+
+    def test_once_en_rama_descartada_no_marca_el_fichero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "trozo.inc").write_text(
+                ".ifdef BOARD\n    .once\n.endif\n    NOP\n", encoding="utf-8")
+            texto = '.include "trozo.inc"\n.include "trozo.inc"\n'
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm")), 2)
+            self.assertEqual(len(assemble(texto, Path(tmp), "prog.asm",
+                                          defines=frozenset({"BOARD"}))), 1)
+
+    def test_endif_sin_ifdef(self):
+        with self.assertRaisesRegex(AsmError, "línea 1: .endif sin .ifdef"):
+            assemble(".endif\n")
+
+    def test_else_sin_ifdef(self):
+        with self.assertRaisesRegex(AsmError, "línea 1: .else sin .ifdef"):
+            assemble(".else\n")
+
+    def test_else_repetido(self):
+        with self.assertRaisesRegex(AsmError, "línea 4: .else repetido"):
+            assemble(".ifdef A\n.else\n    NOP\n.else\n.endif\n")
+
+    def test_ifdef_sin_endif_cita_donde_se_abrio(self):
+        with self.assertRaisesRegex(AsmError, "línea 2: .ifdef sin .endif"):
+            assemble("    NOP\n.ifdef A\n    NOP\n")
+
+    def test_ifdef_sin_endif_dentro_de_un_include(self):
+        """Cada .ifdef se cierra en el fichero que lo abre."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "trozo.inc").write_text(".ifdef A\n    NOP\n", encoding="utf-8")
+            with self.assertRaisesRegex(AsmError, r"trozo\.inc:1: .ifdef sin .endif"):
+                assemble('.include "trozo.inc"\n.endif\n', Path(tmp), "prog.asm")
+
+    def test_ifdef_sin_nombre_o_con_nombre_invalido(self):
+        with self.assertRaisesRegex(AsmError, "línea 1: nombre de simbolo invalido"):
+            assemble(".ifdef\n.endif\n")
+        with self.assertRaisesRegex(AsmError, "línea 1: nombre de simbolo invalido"):
+            assemble(".ifdef 1A\n.endif\n")
+
+    def test_endif_y_else_no_admiten_operandos(self):
+        with self.assertRaisesRegex(AsmError, "línea 2: .endif no admite operandos"):
+            assemble(".ifdef A\n.endif A\n")
+
+    def test_comentario_tras_la_directiva(self):
+        texto = ".ifdef BOARD   ; solo en la placa\n    NOP\n.endif   # fin\n    HALT\n"
+        self.assertEqual(self.palabras(texto, "BOARD"), 2)
+
+    def test_directivas_en_minuscula_o_mayuscula(self):
+        texto = ".IFDEF BOARD\n    NOP\n.ELSE\n    HALT\n.ENDIF\n"
+        self.assertEqual(self.palabras(texto, "BOARD"), 1)
+
+    def test_el_nombre_distingue_mayusculas(self):
+        texto = ".ifdef board\n    NOP\n.endif\n    HALT\n"
+        self.assertEqual(self.palabras(texto, "BOARD"), 1)
+
+    def test_define_en_el_fuente(self):
+        texto = ".define BOARD\n.ifdef BOARD\n    NOP\n.endif\n    HALT\n"
+        self.assertEqual(self.palabras(texto), 2)
+
+    def test_define_lo_ve_lo_que_se_incluye_despues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "trozo.inc").write_text(
+                ".ifdef BOARD\n    NOP\n.else\n    NOP\n    NOP\n.endif\n", encoding="utf-8")
+            con = '.define BOARD\n.include "trozo.inc"\n    HALT\n'
+            sin = '.include "trozo.inc"\n    HALT\n'
+            self.assertEqual(len(assemble(con, Path(tmp), "prog.asm")), 2)
+            self.assertEqual(len(assemble(sin, Path(tmp), "prog.asm")), 3)
+
+    def test_define_no_afecta_a_lo_anterior(self):
+        texto = ".ifdef BOARD\n    NOP\n.endif\n.define BOARD\n    HALT\n"
+        self.assertEqual(self.palabras(texto), 1)
+
+    def test_define_en_rama_descartada_no_define(self):
+        texto = ".ifdef A\n.define BOARD\n.endif\n.ifdef BOARD\n    NOP\n.endif\n    HALT\n"
+        self.assertEqual(self.palabras(texto), 1)
+
+    def test_define_repetido_o_ya_dado_por_linea_de_ordenes_es_inocuo(self):
+        texto = ".define BOARD\n.define BOARD\n.ifdef BOARD\n    NOP\n.endif\n"
+        self.assertEqual(self.palabras(texto, "BOARD"), 1)
+
+    def test_define_sin_nombre_o_con_nombre_invalido(self):
+        with self.assertRaisesRegex(AsmError, "línea 1: .define requiere un nombre"):
+            assemble(".define\n")
+        with self.assertRaisesRegex(AsmError, "línea 1: nombre de simbolo invalido"):
+            assemble(".define 1A\n")
+
+    def test_listado_y_assemble_bytes_aceptan_defines(self):
+        listado = format_listing(self.PROGRAMA, defines=frozenset({"BOARD"}))
+        self.assertEqual(listado.count("NOP"), 2)
+        self.assertEqual(len(assemble_bytes(self.PROGRAMA, defines=frozenset({"BOARD"}))), 12)
+
+
 class EquTest(unittest.TestCase):
     """`.equ` es la pieza sobre la que se apoya el generador de constantes de
     MMIO v2 (`1.isa/mmio.md` §20): sin ella un `.inc` generado no puede dar

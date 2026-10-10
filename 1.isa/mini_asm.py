@@ -52,6 +52,22 @@ Inclusion de otros ficheros:
     que permite que un .inc arrastre sus dependencias. Sin `.once`, incluir
     dos veces emite el contenido dos veces, que a veces es lo que se quiere.
 
+Ensamblado condicional:
+    .ifdef BOARD            ; tambien .ifndef
+        ...
+    .else                   ; opcional
+        ...
+    .endif
+
+    El simbolo se define desde la linea de ordenes con `-D BOARD` (repetible)
+    o en el propio fuente con `.define BOARD`, que vale para todo lo que se
+    lea despues (tambien los `.include`). Solo existen esos simbolos: una
+    constante de `.equ` no cuenta, porque las condiciones se resuelven antes
+    de la pasada 1, igual que los `.include`.
+    Las lineas de la rama descartada no se ensamblan --ni siquiera se leen sus
+    `.include`--, y pueden anidarse. Cada `.ifdef` se cierra en el fichero en
+    que se abre.
+
 Salida:
     binario little-endian, una palabra de 32 bits por instrucción.
 """
@@ -652,9 +668,21 @@ def scope_compiler_labels(raw: str, tag: int) -> str:
     return "".join(pieces)
 
 
+CONDITIONAL_DIRECTIVES = {".IFDEF", ".IFNDEF", ".ELSE", ".ENDIF"}
+DEFINE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+
+
+def parse_define_name(name: str) -> str:
+    """Un nombre valido para `-D` y para `.ifdef`/`.ifndef`."""
+    if not DEFINE_NAME_RE.fullmatch(name):
+        raise AsmError(f"nombre de simbolo invalido: {name!r}")
+    return name
+
+
 def expand_includes(source: str, base_dir: Path | None = None,
                     origin: str = ENTRADA,
                     include_dirs: tuple[Path, ...] = (),
+                    defines: frozenset[str] = frozenset(),
                     _stack: tuple[Path, ...] = (),
                     _once: set[Path] | None = None,
                     _counter: list[int] | None = None,
@@ -679,15 +707,59 @@ def expand_includes(source: str, base_dir: Path | None = None,
         _once = set()
     if _counter is None:
         _counter = [0]
+        # Un conjunto por expansion, no por fichero: un `.define` en un .asm
+        # tiene que verlo el .inc que se incluya despues, y `-D` no se muta.
+        defines = set(defines)
+
+    # Un `.ifdef` abierto por nivel: [rama del padre activa, condicion cumplida,
+    # ya en el `.else`, linea del `.ifdef`]. Vive en esta llamada, no en la
+    # expansion entera, porque cada `.ifdef` se cierra en el fichero que lo abre.
+    condiciones: list[list] = []
+    activa = True
 
     for number, raw in enumerate(source.splitlines(), 1):
         text = strip_comment(raw)
+        partes = text.split(None, 1) if text and is_directive(text) else []
+        mnemonic = partes[0].upper() if partes else ""
+
+        if mnemonic in CONDITIONAL_DIRECTIVES:
+            try:
+                if mnemonic in {".IFDEF", ".IFNDEF"}:
+                    nombre = parse_define_name(partes[1].strip() if len(partes) > 1 else "")
+                    cumple = (nombre in defines) == (mnemonic == ".IFDEF")
+                    condiciones.append([activa, cumple, False, number])
+                    activa = activa and cumple
+                    continue
+                if not condiciones:
+                    raise AsmError(f"{mnemonic.lower()} sin .ifdef/.ifndef")
+                if len(partes) > 1:
+                    raise AsmError(f"{mnemonic.lower()} no admite operandos")
+                if mnemonic == ".ELSE":
+                    if condiciones[-1][2]:
+                        raise AsmError(".else repetido")
+                    condiciones[-1][2] = True
+                    activa = condiciones[-1][0] and not condiciones[-1][1]
+                else:
+                    activa = condiciones.pop()[0]
+            except AsmError as error:
+                raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
+            continue
+
+        if not activa:
+            continue
+
         if not text or not is_directive(text):
             filas.append((origin, number, scope_compiler_labels(raw, _tag)))
             continue
 
-        partes = text.split(None, 1)
-        mnemonic = partes[0].upper()
+        if mnemonic == ".DEFINE":
+            try:
+                if len(partes) < 2:
+                    raise AsmError(".define requiere un nombre")
+                defines.add(parse_define_name(partes[1].strip()))
+            except AsmError as error:
+                raise AsmError(f"{ubicacion(origin, number)}: {error}") from None
+            continue
 
         if mnemonic == ".ONCE":
             # El fichero se declara idempotente. Se aprende al incluirlo la
@@ -768,8 +840,13 @@ def expand_includes(source: str, base_dir: Path | None = None,
         _counter[0] += 1
         filas.extend(expand_includes(
             incluido, resuelto.parent, resuelto.name,
-            include_dirs, _stack + (resuelto,), _once, _counter, _counter[0]
+            include_dirs, defines, _stack + (resuelto,), _once, _counter,
+            _counter[0]
         ))
+
+    if condiciones:
+        raise AsmError(
+            f"{ubicacion(origin, condiciones[-1][3])}: .ifdef sin .endif")
 
     return filas
 
@@ -861,9 +938,10 @@ def first_pass(source: str,
                base_dir: Path | None = None,
                origin: str = ENTRADA,
                include_dirs: tuple[Path, ...] = (),
+               defines: frozenset[str] = frozenset(),
                ) -> tuple[list[SourceLine], dict[str, int], int, dict[str, int]]:
     lines, labels, image_size, equates, _ = layout_pass(
-        source, base_dir, origin, include_dirs)
+        source, base_dir, origin, include_dirs, defines)
     return lines, labels, image_size, equates
 
 
@@ -871,6 +949,7 @@ def layout_pass(source: str,
                 base_dir: Path | None = None,
                 origin: str = ENTRADA,
                 include_dirs: tuple[Path, ...] = (),
+                defines: frozenset[str] = frozenset(),
                 ) -> tuple[list[SourceLine], dict[str, int], int,
                            dict[str, int], Layout]:
     """Pasada 1 con relajación de `LI Rd, etiqueta`.
@@ -887,7 +966,7 @@ def layout_pass(source: str,
     shrunk: set[int] | None = None      # None: todos los candidatos, primera vez
     while True:
         lines, labels, image_size, equates, info, candidates = _layout_once(
-            source, base_dir, origin, include_dirs, shrunk)
+            source, base_dir, origin, include_dirs, defines, shrunk)
         actual = set(range(len(candidates))) if shrunk is None else shrunk
         keep = {i for i in actual if li_label_fits(candidates[i], labels)}
         if keep == actual:
@@ -914,6 +993,7 @@ def _layout_once(source: str,
                  base_dir: Path | None,
                  origin: str,
                  include_dirs: tuple[Path, ...],
+                 defines: frozenset[str],
                  shrunk: set[int] | None,
                  ) -> tuple[list[SourceLine], dict[str, int], int,
                             dict[str, int], Layout, list[str]]:
@@ -935,7 +1015,7 @@ def _layout_once(source: str,
     section = ".text"
     scope = ""          # ultima etiqueta global; a ella pertenecen las `@`
 
-    for origin, number, raw in expand_includes(source, base_dir, origin, include_dirs):
+    for origin, number, raw in expand_includes(source, base_dir, origin, include_dirs, defines):
         text = strip_comment(raw)
         if not text:
             continue
@@ -1389,12 +1469,15 @@ def assemble_text(line: SourceLine, labels: dict[str, int]) -> bytes:
 
 def assemble_bytes(source: str, base_dir: Path | None = None,
                    origin: str = ENTRADA,
-                   include_dirs: tuple[Path, ...] = ()) -> bytes:
+                   include_dirs: tuple[Path, ...] = (),
+                   defines: frozenset[str] = frozenset()) -> bytes:
     """`base_dir`, `origin` e `include_dirs` solo importan si el fuente usa
     `.include`: la carpeta del propio fichero, el nombre con el que citarlo en
     los errores, y las carpetas extra de busqueda. Ensamblar una cadena suelta
-    sigue funcionando igual que antes de que existiera la directiva."""
-    lines, labels, image_size, _ = first_pass(source, base_dir, origin, include_dirs)
+    sigue funcionando igual que antes de que existiera la directiva.
+    `defines` son los simbolos de `-D` para `.ifdef`/`.ifndef`."""
+    lines, labels, image_size, _ = first_pass(
+        source, base_dir, origin, include_dirs, defines)
     image = bytearray()
 
     for line in lines:
@@ -1426,8 +1509,9 @@ def assemble_bytes(source: str, base_dir: Path | None = None,
 
 def assemble(source: str, base_dir: Path | None = None,
              origin: str = ENTRADA,
-             include_dirs: tuple[Path, ...] = ()) -> list[int]:
-    image = assemble_bytes(source, base_dir, origin, include_dirs)
+             include_dirs: tuple[Path, ...] = (),
+             defines: frozenset[str] = frozenset()) -> list[int]:
+    image = assemble_bytes(source, base_dir, origin, include_dirs, defines)
     return [
         int.from_bytes(image[index:index + 4], "little")
         for index in range(0, len(image), 4)
@@ -1499,7 +1583,8 @@ def write_hex(image: bytes, path: Path) -> None:
 
 def format_listing(source: str, base_dir: Path | None = None,
                    origin: str = ENTRADA,
-                   include_dirs: tuple[Path, ...] = ()) -> str:
+                   include_dirs: tuple[Path, ...] = (),
+                   defines: frozenset[str] = frozenset()) -> str:
     """Listado PC -> palabra -> fuente, mas la tabla de etiquetas.
 
     No es un desensamblador: no decodifica la imagen, sino que empareja cada
@@ -1509,8 +1594,8 @@ def format_listing(source: str, base_dir: Path | None = None,
     mantener una tabla de decodificacion en paralelo a `OPCODES`.
     """
     lines, labels, _, equates, info = layout_pass(
-        source, base_dir, origin, include_dirs)
-    image = assemble_bytes(source, base_dir, origin, include_dirs)
+        source, base_dir, origin, include_dirs, defines)
+    image = assemble_bytes(source, base_dir, origin, include_dirs, defines)
 
     # Las constantes de `.equ` comparten espacio de nombres con las etiquetas
     # pero no son posiciones del programa: anotarlas en el listado llenaria
@@ -1578,6 +1663,10 @@ def main() -> None:
                         help="donde buscar los .include, ademas de la carpeta "
                              "del propio fuente (que se mira siempre primero). "
                              "Se puede repetir; se prueban en orden")
+    parser.add_argument("-D", "--define", action="append", default=[],
+                        metavar="SIMBOLO",
+                        help="define un simbolo para .ifdef/.ifndef. Se puede "
+                             "repetir")
     parser.add_argument("--listing", type=Path, nargs="?", const=Path("-"),
                         metavar="FICHERO",
                         help="listado PC / palabra / fuente y tabla de "
@@ -1587,8 +1676,9 @@ def main() -> None:
     source = args.input.read_text(encoding="utf-8")
 
     try:
+        defines = frozenset(parse_define_name(name) for name in args.define)
         image = assemble_bytes(source, args.input.parent, args.input.name,
-                               tuple(args.include_dir))
+                               tuple(args.include_dir), defines)
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 
@@ -1601,7 +1691,7 @@ def main() -> None:
     if args.listing:
         try:
             listing = format_listing(source, args.input.parent, args.input.name,
-                                     tuple(args.include_dir))
+                                     tuple(args.include_dir), defines)
         except AsmError as e:                       # no deberia: ya ensamblo
             raise SystemExit(f"error: {e}")
         if str(args.listing) == "-":
