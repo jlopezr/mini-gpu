@@ -9,16 +9,12 @@
  * - One registered read-only debug port.
  *
  * R0 IS HARDWIRED TO ZERO: writes are dropped, reads always return zero. It is
- * a rule of the ISA, not of this implementation, so this file is byte for byte
- * the same in every MiniCPU folder. See 1.isa/isa.md section 1.
+ * a rule of the ISA, not of this implementation. See 1.isa/isa.md section 1.
  *
- * The write port is the only place that knows about R0. The read path is
- * deliberately untouched: reset clears all 32 entries and nothing ever writes
- * entry 0, so `registers[0]` is zero by construction and yosys propagates it as
- * a constant, removing the flops and the mux input on its own. An explicit
- * `(addr == 0) ? 0 : ...` would add a mux to the combinational read path, which
- * is the critical path this design has spent effort keeping short: it is what
- * forced STATE_DECODE to exist. See timing.md.
+ * This implementation uses distributed RAM. A 32-cycle sweep clears every
+ * address after reset; while it runs, `busy` keeps the CPU stopped and reads
+ * are not valid. Address zero remains hardwired by construction because the
+ * sweep clears it and normal writes to it are discarded.
  */
 module register_file (
     input clk,
@@ -34,11 +30,17 @@ module register_file (
     input [31:0] write_data,
 
     input [4:0] debug_address,
-    output reg [31:0] debug_data
+    output reg [31:0] debug_data,
+
+    output busy
 );
 
   reg [31:0] registers[0:31];
-  integer index;
+
+  // 0..31 sweep the bank; value 32 (bit 5 set) means initialization complete.
+  reg [5:0] sweep = 6'd0;
+  wire sweeping = !sweep[5];
+  assign busy = reset || sweeping;
 
   /*
    * Debug is intentionally two cycles deep: first capture the requested
@@ -50,21 +52,23 @@ module register_file (
 
   assign read_data_a = registers[read_address_a];
   assign read_data_b = registers[read_address_b];
+
+  wire normal_write = write_enable && write_address != 5'd0;
+  wire [4:0] waddr = sweeping ? sweep[4:0] : write_address;
+  wire [31:0] wdata = sweeping ? 32'h0000_0000 : write_data;
+
   always @(posedge clk) begin
+    if (reset) sweep <= 6'd0;
+    else if (sweeping) sweep <= sweep + 6'd1;
+
+    if (sweeping || normal_write) registers[waddr] <= wdata;
+
     if (reset) begin
       debug_address_registered <= 5'd0;
       debug_data <= 32'h0000_0000;
-
-      for (index = 0; index < 32; index = index + 1) begin
-        registers[index] <= 32'h0000_0000;
-      end
     end else begin
       debug_address_registered <= debug_address;
       debug_data <= registers[debug_address_registered];
-
-      if (write_enable && write_address != 5'd0) begin
-        registers[write_address] <= write_data;
-      end
     end
   end
 endmodule
