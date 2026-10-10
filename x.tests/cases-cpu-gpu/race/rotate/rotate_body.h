@@ -39,7 +39,9 @@ void NAME DECLARE_ARGS {
     v00 = blk->p[2];
     dux = blk->p[3];
     dvx = blk->p[4];
-    tex = (unsigned *)ROT_TEX;
+    /* p5 permite que el anfitrion autocontenido incruste la textura junto al
+       codigo; el comparador historico deja p5 a cero y conserva ROT_TEX. */
+    tex = (unsigned *)(blk->p[5] ? blk->p[5] : ROT_TEX);
     cstart = COL_FIRST;
     cstep = COL_STEP;
     rstep = ROW_STEP;

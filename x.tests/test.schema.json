@@ -19,6 +19,19 @@
       "type": "string",
       "pattern": "\\.(asm|bin|hex)$"
     },
+    "build": {
+      "description": "Comando explicito que materializa el programa y los datos generados antes de cargar el caso. Se ejecuta en la carpeta de test.json.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "max_instructions": {
       "type": "integer",
       "minimum": 1,
@@ -206,6 +219,9 @@
           "video",
           "frame_capture",
           "subword_memory",
+          "large_memory",
+          "mul_div",
+          "gpu_core",
           "gpu_ids",
           "calls",
           "serial"

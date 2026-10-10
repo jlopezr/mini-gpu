@@ -55,11 +55,11 @@ de extensiones `.ps1`, por lo que el mismo fichero sirve con GNU Make en Windows
 se pueden sustituir en la invocación (`make PYTHON=python3`, `make run PROTOTYPE=37`). Cada Makefile obtiene
 `BASE` con `git rev-parse --show-toplevel`; también puede indicarse expresamente con `make BASE=/ruta/mini-gpu`.
 
-`blur.c`, `life.c` y `rotate.c` no son aplicaciones autónomas: son cargas a las que el comparador inyecta datos.
-En ellas `make compare` llama a `compare_race.py` para comprobar la implementación C; `make sim`, `make debug`
-y `make run` usan el demo `.asm` completo de la misma carpeta, que aporta el anfitrión de vídeo y prepara la
-memoria. No cargan directamente el binario C con punteros sin inicializar, que terminaría en
-`ERROR_MEMORY_ACCESS`.
+`blur.c`, `life.c` y `rotate.c` siguen siendo las cargas puras que usa `compare_race.py`, pero sus Makefiles
+construyen por defecto un anfitrión C autocontenido (`*_standalone.c`). `tools/race_case_data.py` reutiliza el
+modelo del comparador para generar un blob compacto con el bloque de argumentos y la entrada; `build-c --data`
+lo incorpora al ejecutable. Por tanto `make sim`, `make debug` y `make run` usan ahora el binario C
+autocontenido, mientras que `make compare` conserva la comparación C/ensamblador de la carga original.
 
 `--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
 etiqueta[]`. `build-c` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `--board` define

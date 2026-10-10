@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backends.sim_gpu import SimGpuBackend
-from run_tests import (ROOT, REPOSITORY, load_case, compare_result,
+from run_tests import (ROOT, REPOSITORY, build_case_artifacts, load_case, compare_result,
                        discover_cases, exclude_cases, slow_reason)
 
 
@@ -105,6 +105,24 @@ class GpuRunnerTest(unittest.TestCase):
                 case_architecture(raw)
         self.assertIn(self.path, discover_cases([]))
         self.assertIn(ROOT / 'cases-cpu/basics/smoke/test.json', discover_cases([]))
+        self.assertIn(
+            ROOT / 'cases-cpu-gpu/race/blur/test.json', discover_cases([]))
+
+    @patch('run_tests.subprocess.run')
+    def test_explicit_case_build_uses_the_runner_python(self, run):
+        run.return_value.returncode = 0
+        build_case_artifacts(
+            {'build': {'command': ['make', 'case']}}, self.path.parent)
+        command, = run.call_args.args
+        self.assertEqual(command, ['make', 'case'])
+        self.assertEqual(run.call_args.kwargs['cwd'], self.path.parent)
+        self.assertEqual(
+            run.call_args.kwargs['env']['PYTHON'], Path(__import__('sys').executable).as_posix())
+
+    def test_explicit_case_build_is_strict(self):
+        for build in ({}, {'command': []}, {'command': ['make'], 'other': True}):
+            with self.subTest(build=build), self.assertRaises(ValueError):
+                build_case_artifacts({'build': build}, self.path.parent)
 
     def test_exclusion_accepts_a_case_or_a_whole_directory(self):
         smoke = ROOT / 'cases-cpu/basics/smoke/test.json'

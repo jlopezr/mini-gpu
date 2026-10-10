@@ -19,7 +19,7 @@ versiona).
   Las variantes para ISAs anteriores llevan `.legacy-<prototipos>.asm` y no se
   ejecutan: son para las placas viejas (16/18/19, 12/14/17).
 - [`cases-cpu-gpu/`](cases-cpu-gpu/README.md) — las antiguas `examples/` del prototipo 32: programas que usan la
-  CPU y la GPU a la vez, en ensamblador y en C, uno por carpeta con su README. No llevan `test.json`: no hay
+  CPU y la GPU a la vez, en ensamblador y en C, uno por carpeta con su README. Algunos llevan `test.json`; el resto no: no hay
   backend que corra CPU y GPU juntas por `run_tests.py`, y los comprueba `32.cpu-gpu-func-sim/test_cpu_gpu_sim.py`.
   `run_tests.py` no los descubre.
 - [`unit/`](unit/README.md) — los tests de Python de la infraestructura (`test_*.py`), agrupados por tema. Los
@@ -267,7 +267,9 @@ y compara los dos estados observados entre sí:
 python run_tests.py --backend both --version fpga-cpu=sdram --port COM3
 ```
 
-Sin rutas explícitas se descubren todos los ficheros `cases-cpu/**/test.json`. Los
+Sin rutas explícitas se descubren todos los ficheros `cases-cpu/**/test.json`,
+`cases-gpu/**/test.json`, `cases-shared/**/test.json` y los que ya existen en
+`cases-cpu-gpu/**/test.json`. Los
 casos CPU se agrupan igual que los GPU:
 
 | Grupo | Qué valida |
@@ -425,6 +427,17 @@ directorio que contiene cada `test.json`.
 
 Los programas pueden ser `.asm`, `.bin` o `.hex`. El runner los convierte en
 memoria a palabras little-endian sin generar artefactos intermedios.
+
+Si el programa o sus datos se generan, el caso puede declarar un build
+explícito. Se ejecuta en la carpeta del `test.json`, antes de abrir cualquiera
+de sus artefactos; el runner exporta `PYTHON` con su propio intérprete:
+
+```json
+"build": {"command": ["make", "case"]}
+```
+
+No se autodetectan Makefiles: así abrir un caso declarativo no ejecuta comandos
+que este no haya solicitado y cada dependencia queda visible en el manifiesto.
 
 La longitud de cada región se deduce del tamaño del fichero binario. La
 comparación informa de la primera dirección y offset distintos.

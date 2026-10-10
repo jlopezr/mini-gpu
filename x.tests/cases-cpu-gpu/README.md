@@ -1,10 +1,11 @@
 # Programas de CPU + GPU
 
 Programas que usan la CPU y la GPU a la vez, cada uno en su carpeta con su README. Son las antiguas `examples/` del
-prototipo [32](../../32.cpu-gpu-func-sim/README.md), que es el simulador que los ejecuta. A diferencia de los casos
-de `cases-cpu` y `cases-gpu`, no llevan `expected` ni `test.json`: se comprueban con
-[`test_cpu_gpu_sim.py`](../../32.cpu-gpu-func-sim/test_cpu_gpu_sim.py), que compara la imagen o la memoria con un
-modelo en Python, y los de la placa se miden con `run-board`.
+prototipo [32](../../32.cpu-gpu-func-sim/README.md), que es el simulador que los ejecuta. Los ejecutables C
+autocontenidos de `race/blur`, `race/life` y `race/rotate` llevan `test.json`: el runner llama a su build
+declarado antes de cargar el binario y compara la memoria con los datos generados por el modelo Python. Las
+demás comparativas siguen en [`test_cpu_gpu_sim.py`](../../32.cpu-gpu-func-sim/test_cpu_gpu_sim.py), y los de la
+placa se miden con `run-board`.
 
 | Carpeta | Programas |
 |---|---|
@@ -27,6 +28,10 @@ mini-dbg --gpu x.tests/cases-cpu-gpu/race/cube/cube.asm --window         # depur
 run-board --prototype 36 --program x.tests/cases-cpu-gpu/race/cube/cube.asm   # placa 36
 build-c x.tests/cases-cpu-gpu/dma/memset/memset.c                        # los de C: ver programas-en-c.md
 ```
+
+Las carpetas con C ofrecen además `make`, `make sim`, `make debug`, `make compare` y `make run`. En `blur`,
+`life` y `rotate`, el Makefile genera un ejecutable C autocontenido con la entrada incrustada; no hace falta
+cargar memoria aparte. Su objetivo `make case` genera además los dumps esperados que consumen los `test.json`.
 
 `run-board` ensambla con `-D BOARD`, y los `.inc` compartidos eligen la rama de la placa. Es el mismo `.asm` para el
 simulador y para la placa. Los programas en C se explican en [programas-en-c.md](programas-en-c.md); lo que

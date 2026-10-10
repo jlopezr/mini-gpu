@@ -37,10 +37,10 @@ RUN_DEPS ?= $(BOARD_IMAGE)
 all: $(IMAGE)
 
 $(IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" $(BUILD_ARGS)
+	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" -o "$(IMAGE)" $(BUILD_ARGS)
 
 $(BOARD_IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" --board $(BUILD_ARGS) $(BOARD_ARGS)
+	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" -o "$(BOARD_IMAGE)" --board $(BUILD_ARGS) $(BOARD_ARGS)
 
 sim: $(SIM_DEPS)
 	$(SIM_COMMAND)

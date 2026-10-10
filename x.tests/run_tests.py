@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -807,9 +808,41 @@ def slow_reason(raw: dict) -> str | None:
     return value.strip()
 
 
+def build_case_artifacts(raw: dict, directory: Path) -> None:
+    """Ejecuta el build declarado por el caso antes de abrir sus artefactos."""
+    build = raw.get("build")
+    if build is None:
+        return
+    if not isinstance(build, dict) or set(build) != {"command"}:
+        raise ValueError("build solo admite command")
+    command = build["command"]
+    if not (isinstance(command, list) and command
+            and all(isinstance(arg, str) and arg for arg in command)):
+        raise ValueError("build.command debe ser una lista de cadenas no vacias")
+    print(f"  build: {' '.join(command)}")
+    environment = os.environ.copy()
+    # GNU Make para Windows ejecuta las recetas con bash; las barras inversas
+    # de una ruta heredada en PYTHON se interpretarían como escapes.
+    environment["PYTHON"] = Path(sys.executable).as_posix()
+    try:
+        completed = subprocess.run(
+            command, cwd=directory, env=environment,
+            capture_output=True, text=True,
+        )
+    except OSError as error:
+        raise ValueError(f"no se pudo ejecutar el build: {error}") from error
+    if completed.returncode:
+        raise ValueError(
+            f"el build termino con codigo {completed.returncode}:\n"
+            f"{completed.stdout}{completed.stderr}"
+        )
+
+
 def load_case(path: Path, architecture: str | None = None) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     directory = path.parent
+
+    build_case_artifacts(raw, directory)
 
     architectures = case_architectures(raw)
     if architecture is None:
@@ -1044,7 +1077,7 @@ def discover_cases(arguments: list[Path]) -> list[Path]:
     # binario y las mismas expectativas en las dos familias. Tienen carpeta
     # propia porque ahi esta su valor -- si viven mezclados con los de CPU, el
     # dia que uno deje de correr como GPU nadie lo nota.
-    return sorted(path for folder in ("cases-cpu", "cases-gpu", "cases-shared")
+    return sorted(path for folder in ("cases-cpu", "cases-gpu", "cases-shared", "cases-cpu-gpu")
                   for path in (ROOT / folder).glob("**/test.json"))
 
 
