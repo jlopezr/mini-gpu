@@ -69,7 +69,7 @@ como se hizo con `5fc229f` antes de la 18.
 > distintos y sólo el primero tiene quien lo recuerde. `[TODAS]`
 
 **2. La base de `x.tests` es 284, no 279.** No es una contradicción: el fichero
-sin versionar `x.tests/test_run_tests_prototype.py` aporta exactamente cinco, y
+sin versionar `x.tests/unit/runner/test_run_tests_prototype.py` aporta exactamente cinco, y
 el encargo se escribió antes. El número a no empeorar es **284**.
 
 **3. El atajo de copiar llega a la 16 mucho más lejos de lo que dice el

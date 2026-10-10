@@ -28,7 +28,7 @@ encargo. La mayoría se sostiene; tres no, y una de ellas cambia el plan.
 | `sysid.v`: 4 palabras en `0x80000F00` | correcto |
 | `sim_devices.py`: `BASE = 0x8000_0000` y `0x8000_0200` | correcto (líneas 21, 166) |
 | `apio.ini`: `--seed 13`, 87,09 MHz, +8,9 % | correcto |
-| `x.tests/test_top_wiring.py` y `test_monitor_port.py` existen | correcto |
+| `x.tests/unit/build/test_top_wiring.py` y `test_monitor_port.py` existen | correcto |
 | `monitor.v` idéntico byte a byte | correcto, y son **exactamente** las 10 carpetas de prototipo (mismo MD5 `170E0AB3…`) |
 | `tools/lint --prototype 21` da 38 diagnósticos | correcto: **38 `%Warning-PINMISSING`, 0 errores**. Éste es el número base a no empeorar |
 
@@ -208,7 +208,7 @@ que más se amortiza.
 | `tools/generate-mmio`, `.ps1` | **nuevos**. Lanzadores, sin lógica, como manda `AGENTS.md` |
 | `x.tests/inc/mmio.inc` | **generado**. El include del ensamblador, con `.once` |
 | `tools/mmio_map.py` | **generado**. Las mismas constantes para monitor y simuladores |
-| `x.tests/test_mmio_map.py` | **nuevo**. 25 tests en cuatro grupos |
+| `x.tests/unit/tools/test_mmio_map.py` | **nuevo**. 25 tests en cuatro grupos |
 | `tools/README.md` | apartado nuevo del lanzador |
 
 ### La decisión que quedaba pendiente: lo generado se versiona
@@ -341,7 +341,7 @@ El generador pasó de un mapa a una tabla de mapas, unas 20 líneas.
 | 5 `.asm` de `x.tests/cases-cpu` | `.include "mmio_v1.inc"`, `LI Rn, MMIO_*_BASE`, offsets por símbolo |
 | 14 `.asm` de `examples/` | lo mismo; 84 offsets en total |
 | `x.tests/cases-cpu/video/registers/test.json` | `pc` de `0x44` a `0x48` |
-| `x.tests/test_mmio_map.py` | clase del mapa v1, y la guarda de «ningún `.asm` cableado» |
+| `x.tests/unit/tools/test_mmio_map.py` | clase del mapa v1, y la guarda de «ningún `.asm` cableado» |
 
 ### Qué se rompió
 
@@ -753,7 +753,7 @@ Arreglo, en tres piezas que valen para cualquier carpeta:
    diferencia de `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`.
 2. El banco lee **palabras de 32 bits** y las parte en dos celdas de SDRAM. Un
    formato, una orden, y la orden está escrita en la cabecera del banco.
-3. `x.tests/test_fullframe_fixture.py` comprueba las tres cosas: que el `.hex`
+3. `x.tests/unit/build/test_fullframe_fixture.py` comprueba las tres cosas: que el `.hex`
    sale de ese fuente, que los dos programas sólo difieren en las `.equ`, y
    que las bases del banco caben en las filas que el modelo tiene —esta última
    leyendo `ROWS` del propio banco, no copiándolo—.
@@ -844,7 +844,7 @@ donde una dirección o un offset de v1 vivía fuera de los `.asm` y del RTL.
 | Dónde | Qué llevaba | Cómo se vio |
 | --- | --- | --- |
 | `video_registers_tb.v` | los diez offsets en v1, entero | «FB_FRONT tras reset: 00000001» — leía CTRL, que arranca en PATTERN |
-| `x.tests/test_sim_peripherals.py` | `STORE R0, R1, 8` como SWAP, y +0x1C como offset «reservado» | límite de instrucciones: nunca pedía el intercambio |
+| `x.tests/unit/sim/test_sim_peripherals.py` | `STORE R0, R1, 8` como SWAP, y +0x1C como offset «reservado» | límite de instrucciones: nunca pedía el intercambio |
 | `2.cpu-sim-func/test_serial_device.py` | ventana de 256 bytes en 0x80000200, y ejecutaba el ejemplo de la 19 | fallo de acceso |
 | `11.gpu-sim-func/test_minigpu_sim.py` | MMIO en 0x80000000 y FB_BACK en +4 | el 0x80000000 «sin dispositivo» ahora es SYSTEM, y la lectura tenía éxito |
 

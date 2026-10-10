@@ -215,7 +215,7 @@ framebuffer: en la placa están en `0x01000000`, y ahí no caben en el modelo de
 SDRAM del banco. Esta frase decía lo contrario y era falsa; regenerar
 `fullframe.hex` «como ponía aquí» hace que el banco cuente 60 000 violaciones
 JEDEC, que en realidad son 60 000 accesos a una fila que no existe.
-[`x.tests/test_fullframe_fixture.py`](../x.tests/test_fullframe_fixture.py)
+[`x.tests/unit/build/test_fullframe_fixture.py`](../x.tests/unit/build/test_fullframe_fixture.py)
 comprueba las tres cosas para que no vuelva a quedarse vieja.
 
 ## La combinación de escrituras

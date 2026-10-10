@@ -289,7 +289,7 @@ vuelve a decir 3.6 y **sólo falla el test nuevo**, que es el que cubre el
 segundo caso. Las dos mitades hacen falta y ninguna sustituye a la otra.
 
 Y lo que evita la cuarta copia: `sin_comentarios` vive ahora **una sola vez**,
-en `tools/rtl_facts.py`, y `x.tests/test_monitor_port.py` la importa en vez de
+en `tools/rtl_facts.py`, y `x.tests/unit/backends/test_monitor_port.py` la importa en vez de
 tener la suya, que es lo que `AGENTS.md` lleva pidiendo desde el principio.
 
 > Tres analizadores con el mismo fallo en el mismo día, y **el que importaba era

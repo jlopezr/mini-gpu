@@ -21,7 +21,7 @@ ARCHITECTURAL_REGIONS = (
 # Gemela de las ventanas que top.v y top_bl8.v pasan al monitor: las tres tienen
 # que decir lo mismo. Desde que monitor.v es copia identica en 12, 14, 17 y 22,
 # la lista ya no esta cableada en `block_range_valid`, sino en los parametros de
-# cada instancia. Lo comprueba x.tests/test_monitor_port.py.
+# cada instancia. Lo comprueba x.tests/unit/backends/test_monitor_port.py.
 # La primera página es de periféricos compartidos con la CPU y la segunda, de
 # control exclusivo de la GPU. Ver docs/resumen-prototipos.md.
 # Son la GEMELA de los parámetros WINDOWn_* del `monitor` que instancia

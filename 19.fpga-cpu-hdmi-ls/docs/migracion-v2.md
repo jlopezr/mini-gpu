@@ -200,7 +200,7 @@ fichero se borró al terminar y aquí hizo falta otra vez.
 | `tools/generate_mmio.py` | segunda entrada en `MAPAS`; el soporte de varios mapas ya estaba |
 | `x.tests/inc/mmio_v1.inc` | **generado** |
 | `tools/mmio_map_v1.py` | **generado** |
-| `x.tests/test_mmio_map.py` | clase `MapaV1Test`, 5 tests; y el destino nuevo en la guarda de salidas |
+| `x.tests/unit/tools/test_mmio_map.py` | clase `MapaV1Test`, 5 tests; y el destino nuevo en la guarda de salidas |
 
 Los números salen del **RTL de la 19**, no del fichero borrado de la 21 ni de
 un documento: `mmio_decoder.v` para las ranuras (`device = address[11:8]` sobre
@@ -700,7 +700,7 @@ Se aplicaron las tres piezas de la 21:
 Confirmación fuerte: el `fullframe.hex` regenerado sale **byte a byte igual al
 de la 21**.
 
-`x.tests/test_fullframe_fixture.py` pasa de mirar una carpeta cableada a
+`x.tests/unit/build/test_fullframe_fixture.py` pasa de mirar una carpeta cableada a
 **descubrir sola** las que tienen el trío completo. No es cosmético:
 
 > Con la carpeta escrita a mano arriba, cubrir la 19 dependía de que alguien se
