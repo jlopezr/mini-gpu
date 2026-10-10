@@ -385,13 +385,22 @@ class FpgaBackend:
                 # sabe cual fue. En las versiones sin `frame_capture` STATUS es
                 # de solo lectura y la escritura se ignora, que es inofensivo.
                 _write_register(client, VIDEO_STATUS, 1)
-                # Las bases NO se tocan: el framebuffer lo elige el programa.
-                # Esto las ponia por `band` y `bounce`, los dos unicos que las
-                # heredaban, y de paso tapaba que solo el reset de la placa las
-                # reinicia --un caso que dejara un numero IMPAR de intercambios
-                # se las pasaba cruzadas al siguiente--. Eso ya no importa:
-                # cada programa escribe las suyas al arrancar, asi que ninguno
-                # depende de lo que dejara el anterior.
+                # Las bases vuelven a CERO, que es su valor de reset, y no a
+                # una direccion util: el framebuffer lo elige el programa. Antes
+                # las ponia en las del arnes, por `band` y `bounce`, los dos
+                # unicos que las heredaban, y eso tapaba que los programas
+                # dependian de ellas. Cero no tapa nada. Hace falta porque solo
+                # el reset de la placa las reinicia --un caso que dejara un
+                # numero IMPAR de intercambios se las pasaba cruzadas al
+                # siguiente-- y el simulador, que construye un dispositivo nuevo
+                # por caso, siempre arranca en cero. Los casos que no escriben
+                # las bases (`double-buffer`, `fb-desalineada`) las leen y
+                # acaban con `fb_front` heredado: sin esto el diferencial lo
+                # comparaba contra 0 y fallaba aunque cada backend pasara solo.
+                # Va antes de encender el scanout, para que el barrido no lea de
+                # una base a medio escribir.
+                _write_register(client, VIDEO_FB_FRONT, 0)
+                _write_register(client, VIDEO_FB_BACK, 0)
                 # Y encender el scanout, porque tras el reset el modo es
                 # PATTERN. No es cosmetica: en PATTERN el barrido NO lee la
                 # memoria, asi que no puede haber underflow y un
