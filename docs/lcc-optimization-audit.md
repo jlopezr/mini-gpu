@@ -413,7 +413,7 @@ opacas por esto, no hay cifra de ganancia.
 **Medido el 9 de octubre de 2026 y descartado por ahora.** En mini-tst, 34 de
 640 funciones son opacas (10 son los propios helpers, 24 de usuario), en 11 de
 166 ficheros: 760 de 22.930 instrucciones (3,3 %). En los ejemplos de
-`32.cpu-gpu-func-sim/examples/c` (cubo, rotación, `plane`, `diverge`, `memset`,
+`x.tests/cases-cpu-gpu` (cubo, rotación, `plane`, `diverge`, `memset`,
 kernels de sistema) no aparece ningún `__mini_*` y no hay ninguna función
 opaca. Con un uso real nulo, el metadato `helper` no compensa tocar `y.lcc` ni
 su submódulo; solo reabrirlo si algún programa nuevo usa soft-float, divisiones
@@ -507,7 +507,7 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   362.017 → 304.009 instrucciones ejecutadas (−16,0 %) y binario de 83.640 →
   78.940 B (−5,6 %). Los accesos a pila ejecutados pasan de 47.805 (15,1 % de las
   instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`x.tests/test_mini_opt.py`) lo comprueba.
-- **Cubo** (`examples/c/race/cube.c`, un fotograma de cada método en estado
+- **Cubo** (`x.tests/cases-cpu-gpu/race/cube/cube.c`, un fotograma de cada método en estado
   estable; `compare_race.py cube`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las
   texturas, sí es más caro en C (unas 670.000 instrucciones frente a 530.000),
@@ -635,7 +635,7 @@ historial de la auditoría.
    a `mini.md:local`; no se ha desglosado cuánto es de los tests nuevos y
    cuánto de ese cambio. Los 222 tests incluyen 3 que compilan la demo de
    `z.tui` (se omiten sin MSVC); además hay 134 de simulación CPU+GPU. La tabla
-   de instrucciones ejecutadas de `examples/c` no cambia con `invert` ni
+   de instrucciones ejecutadas de `x.tests/cases-cpu-gpu` no cambia con `invert` ni
    `boolean`.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**, y los dos peepholes que

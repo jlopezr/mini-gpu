@@ -1272,7 +1272,7 @@ class ConstPropTest(unittest.TestCase):
 
 
 class HandwrittenAsmTest(unittest.TestCase):
-    """Trozos del ensamblador a mano (`examples/asm/race/cube.inc`, con etiquetas `L.n` para que el
+    """Trozos del ensamblador a mano (`x.tests/cases-cpu-gpu/race/cube/cube.inc`, con etiquetas `L.n` para que el
     filtro los trate como una sola funcion). Lo que ya esta bien escrito no debe cambiar, y las
     formas que lcc no genera pero a mano se escriben tienen que entenderse."""
 

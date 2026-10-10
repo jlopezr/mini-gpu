@@ -18,6 +18,10 @@ versiona).
   programa tiene su carpeta, con `test.json` si es comprobable de forma barata.
   Las variantes para ISAs anteriores llevan `.legacy-<prototipos>.asm` y no se
   ejecutan: son para las placas viejas (16/18/19, 12/14/17).
+- [`cases-cpu-gpu/`](cases-cpu-gpu/README.md) — las antiguas `examples/` del prototipo 32: programas que usan la
+  CPU y la GPU a la vez, en ensamblador y en C, uno por carpeta con su README. No llevan `test.json`: no hay
+  backend que corra CPU y GPU juntas por `run_tests.py`, y los comprueba `32.cpu-gpu-func-sim/test_cpu_gpu_sim.py`.
+  `run_tests.py` no los descubre.
 
 ### Convertir una demo en un caso
 

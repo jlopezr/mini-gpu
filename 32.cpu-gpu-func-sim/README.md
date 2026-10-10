@@ -10,152 +10,27 @@ que les falta para convivir. Un arreglo en cualquiera de los dos simuladores
 llega aquí sin tocar nada.
 
 ```bash
-cpugpusim examples/asm/launch.asm
+cpugpusim x.tests/cases-cpu-gpu/launch/launch.asm
 python -m unittest test_cpu_gpu_sim        # desde esta carpeta
 ```
 
-[`examples/asm/launch.asm`](examples/asm/launch.asm) es un solo fichero con el código de
-la CPU y el kernel de la GPU. Se carga entero en la dirección 0, y la CPU
-lanza los warps con la etiqueta `kernel` en el descriptor: no hay ninguna
-dirección escrita a mano. Los resultados también van en una etiqueta (`out`).
+## Programas
 
-[`examples/asm/dma/`](examples/asm/dma/dma.asm) es el arnés del diseño de
-[`docs/diseno-gpu-dma.md`](docs/diseno-gpu-dma.md): la GPU como `memset` y
-`memcpy`, lanzada por polling desde un runtime de CPU (`x.tests/inc/gpu_runtime.inc`) con los
-kernels en `gpu_kernels.inc`, todo en una sola imagen. Incluye un job que falla,
-uno que no termina y la recuperación de la GPU.
+Los programas que corren en este simulador (y los de la placa 36) están en
+[`x.tests/cases-cpu-gpu`](../x.tests/cases-cpu-gpu/README.md), uno por carpeta y cada uno con su README:
 
-[`examples/asm/render/`](examples/asm/render/render.asm) es un programa gráfico: un
-plasma que pinta la GPU y cuyo bucle de frames lleva la CPU.
+| Programa | Qué es |
+|---|---|
+| [launch](../x.tests/cases-cpu-gpu/launch/) | CPU y kernel en un solo fichero, sin ninguna dirección escrita a mano |
+| [dma](../x.tests/cases-cpu-gpu/dma/) | El arnés del [diseño de GPU/DMA](docs/diseno-gpu-dma.md), los kernels de sistema y su [benchmark](docs/bench-dma.md) |
+| [race](../x.tests/cases-cpu-gpu/race/) | Demos de «carrera»: el mismo trabajo con CPU, GPU inocente y GPU buena |
+| [render](../x.tests/cases-cpu-gpu/render/) | Un plasma que pinta la GPU, con el bucle de frames en la CPU |
+| [simt](../x.tests/cases-cpu-gpu/simt/) | Kernels en C con divergencia |
 
-```bash
-cpugpusim examples/asm/render/render.asm --window
-mini-dbg --gpu examples/asm/render/render.asm --window     # depurado
-```
-
-`--window` abre la ventana y ya implica el vídeo. Sin ventana, `--video` da los
-registros de vídeo (en `mini-dbg`, `fb` abre una ventana con el framebuffer).
-
-La CPU configura el vídeo, y en cada frame escribe los argumentos, lanza 8 warps
-con el runtime de `examples/asm/dma`, espera, pide el `SWAP` y espera a que se
-aplique. Cada uno de los 64 hilos pinta una fila de un mosaico de 80 × 60 celdas
-de 4 × 4 píxeles, con tres ondas triangulares (una por canal RGB565) calculadas
-sin ramas; solo diverge al principio, en los 4 hilos que sobran. Un frame son
-unas 27 000 instrucciones de warp. `test_cpu_gpu_sim.py` lo compara píxel a píxel
-con un modelo en Python. Con `mini-dbg`, `break gpu_k_render` para en cada warp
-(ocho veces por frame): `until present` o `watch` sobre el framebuffer trasero
-dan una vista más tranquila.
-
-[`examples/asm/render/render_cpu.asm`](examples/asm/render/render_cpu.asm) pinta **la misma
-imagen byte a byte** solo con la CPU (el test lo exige), para tener con qué
-comparar lo que aporta la GPU: 42 instrucciones por celda, unas 203 000 por
-frame, frente a las 27 000 de warp de la versión con GPU.
-
-[`examples/asm/render/render_v2.asm`](examples/asm/render/render_v2.asm) es la misma
-imagen con **las escrituras coalescidas**: en vez de un hilo por fila de celdas
-(8 lanes escribiendo en 8 filas distintas), un warp pinta una fila entera y sus 8
-lanes escriben 8 palabras consecutivas, 32 bytes seguidos. Solo cambia el reparto;
-la aritmética es idéntica y los tests exigen la misma imagen.
-
-Medido con el simulador de ciclos (`gpusim-cycle`, carpeta 25) sobre el kernel de
-cada versión, un frame:
-
-| | instr. de warp | transacciones LSU | ciclos | a 25 MHz | X ocupada |
-|---|---:|---:|---:|---:|---:|
-| `render.asm` (v1) | 27 072 | 38 400 | 654 550 | 26,2 ms | 16 % |
-| `render_v2.asm` | 46 564 | 9 600 | 209 999 | 8,4 ms | 95 % |
-
-La v1 es de la memoria (cada transacción son ~17 ciclos y no se juntan nunca); la
-v2 hace casi el doble de instrucciones pero cuatro veces menos transacciones, y
-pasa a ser del cálculo: el 85 % del tiempo de X son los desplazamientos, que son
-iterativos (un bit por ciclo, `SAR` por 31 cuesta 31). Son cifras del **modelo**:
-en la placa el mismo código tarda más (en `demo-bench` la placa midió 1,55× los
-ciclos del modelo), así que 8,4 ms es una cota inferior, no una predicción.
-
-### Medido en la placa (36, hito 1)
-
-En la placa, `run-board` ensambla con `-D BOARD`: `gpu_runtime.inc` lanza con `RUN` porque la 36 aún no tiene
-`WARP_START`, y los programas cuentan sus propios ciclos con el `CYCLES` de la CPU (80 MHz). Es el mismo `.asm`
-que en el simulador: los de `render` llevan la medición entre `.ifdef BOARD` y `.endif`. Se leen con `monitor.py halt` y `read-register`: `R22` ciclos de
-pintado, `R29` ciclos del frame entero, `R19` frames válidos (los que cruzan una
-parada del monitor se descartan: sin eso salen cifras que dependen de cuánto se
-tarda en leer). Vídeo a 59,5 Hz.
-
-| | pintado | frame entero | fps |
-|---|---:|---:|---:|
-| `render_cpu.asm` | 54,2 ms | 67,2 ms (4 periodos) | 14,8 |
-| `render.asm` (v1) | 27,2 ms | 33,6 ms (2 periodos) | 29,8 |
-| `render_v2.asm` | 19,6 ms | 33,6 ms (2 periodos) | 29,8 |
-
-El frame entero es siempre un número entero de periodos de vídeo (16,8 ms) porque
-el swap espera al siguiente frame. La v2 pinta en 19,6 ms: 3 ms por encima de un
-periodo, y por eso va a 30 fps y no a 60. Frente al modelo, la v1 sale como se
-esperaba (27,2 ms medidos contra 26,2) y la v2 no (19,6 contra 8,4): el modelo
-subestima el código limitado por cálculo.
-
-## Demos "carrera" (`examples/asm/race`)
-
-Tres demos que hacen **el mismo trabajo con tres métodos** y los turnan cada 60
-fotogramas: la CPU sola, la GPU "ingenua" (un hilo por fila: las 8 lanes de un warp
-tocan 8 filas distintas) y la GPU "bien puesta" (un warp por fila, con las lanes en
-columnas seguidas: 8 palabras contiguas por instrucción). El estado se pasa de un
-método al otro sin tocarlo, así que la animación sigue donde estaba y solo cambia lo
-deprisa que va.
-
-Las 32 primeras líneas de la pantalla son una **gráfica de tiempos**: una columna por
-fotograma, tan alta como lo que tardó el trabajo (en la placa, con `CYCLES` de la
-CPU) y de color verde (CPU), naranja (GPU ingenua) o cian (GPU bien puesta). En el
-simulador sale plana: los simuladores cuentan instrucciones, no ciclos.
-
-| Demo | Qué hace | Memoria por celda |
-|---|---|---|
-| `life` | juego de la vida, 160 x 104 celdas | 9 lecturas, 3 escrituras |
-| `blur` | difusión de calor: 3 puntos que se mueven y un desenfoque 3 x 3 | 9 lecturas, 3 escrituras, algo más de cálculo |
-| `rotate` | una textura que gira y se acerca (un gather por celda) | 1 lectura, 2 escrituras |
-| `cube` | un cubo sólido con una textura por cara, girando sobre dos ejes (ortográfico) | 1 lectura, 2 escrituras, mucho cálculo y divergencia |
-
-Cada uno es un solo `.asm` (`life.asm`) para el simulador y para la placa: `run-board` lo ensambla con
-`-D BOARD` (runtime con `RUN` y `CYCLES`). El anfitrión es `race_host.inc`
-y el trabajo de cada demo, `life.inc`, `blur.inc` o `rotate.inc`. Los tests
-comprueban los tres métodos contra una referencia en Python con la imagen entera, y
-el cambio de método en cada fotograma hace que un solo método que calcule algo
-distinto rompa la comparación.
-
-Medido en la placa (80 MHz), tiempo por fotograma:
-
-| Demo | CPU | GPU ingenua | GPU bien puesta | bien puesta frente a ingenua |
-|---|---:|---:|---:|---:|
-| `life` | 172,7 ms | 138,7 ms | 45,1 ms | 3,1 x |
-| `blur` | 190,9 ms | 138,7 ms | 45,4 ms | 3,1 x |
-| `rotate` | 42,0 ms | 29,5 ms | 12,2 ms | 2,4 x |
-| `cube` | 89,6 ms | 27,4 ms | 15,6 ms | 1,8 x |
-
-- **La GPU ingenua apenas gana a la CPU** (1,3 x a 1,4 x): sus lecturas y escrituras
-  no se pueden juntar, y la GPU, que va a 25 MHz, se pasa el tiempo en la memoria.
-- **Colocar las lanes bien es lo que mueve la aguja**: 3,1 x en los dos demos de
-  rejilla, donde las 9 lecturas y las 3 escrituras se coalescen, y 2,4 x en la
-  rotación, donde solo se junta la escritura y la lectura es un gather.
-- **`cube` es el que más gana la GPU a la CPU** (3,3 x la ingenua, 5,7 x la bien puesta)
-  porque tiene mucho cálculo por celda y lo reparte entre las lanes, pero la
-  diferencia entre las dos GPU es la menor (1,8 x): el cálculo pesa más y la lectura
-  de textura es un gather. Las lanes de un warp pueden tomar caminos distintos en
-  cada celda (tres caras y el fondo), y ahí la ingenua pierde más.
-- **`life` y `blur` dan lo mismo en la GPU** (138,7 y 45,1 / 45,4 ms): la memoria
-  manda y el cálculo de más del desenfoque queda tapado. En la CPU, que sí paga el
-  cálculo, `blur` tarda un 10 % más.
-
-## Kernels de sistema y su benchmark (`examples/asm/dma`)
-
-`gpu_kernels.inc` tiene los kernels de `docs/diseno-gpu-dma.md` §7: `memset`, `memcpy`,
-`fill_rect` y `blit` (falta `convert`). `rect.asm` ejercita `fill_rect` y `blit` con
-geometrías incómodas y `bench_dma.asm` los cuatro, con todas las configuraciones,
-comprobando el resultado. En la placa, `bench_dma.asm` (con `run-board`) y `bench_dma_report.py`
-miden cada operación con cada tamaño (32 B a 1 MiB) en la CPU y en la GPU con 1, 2, 4
-y 8 warps. Las tablas y lo que se deduce de ellas están en [docs/bench-dma.md](docs/bench-dma.md):
-la GPU solo gana en `memcpy` y `blit` (1,2 a 1,3 x, desde unos 4 KiB) y pierde siempre en
-`memset` y `fill_rect`. Cada transacción de 16 B cuesta unos 38 ciclos de GPU (30 en
-`memcpy`), el doble de lo que suponía el simulador de ciclos, y no es por el sondeo de la
-CPU: `poll_exp.asm` en la placa lo descarta midiendo con los contadores de la propia GPU.
+[`compare/`](compare/README.md) tiene las herramientas que miden el C frente al ensamblador en este simulador.
+`test_cpu_gpu_sim.py` comprueba los programas contra modelos en Python.
+`--window` abre la ventana y ya implica el vídeo; sin ventana, `--video` da los registros de vídeo (en `mini-dbg`,
+`fb` abre una ventana con el framebuffer).
 
 ## Qué se comparte
 

@@ -312,7 +312,7 @@ una reimplementación.
 > cpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
 > gpusim ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
 > gpusim-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
-> cpugpusim ../32.cpu-gpu-func-sim/examples/asm/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
+> cpugpusim ../x.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -711,7 +711,7 @@ Suite: `python -m unittest discover -s x.tests -p "test_debugger*.py"`.
 ### Depurar CPU + GPU (`mini-dbg --gpu`)
 
 ```bash
-> mini-dbg --gpu 32.cpu-gpu-func-sim/examples/asm/launch.asm
+> mini-dbg --gpu x.tests/cases-cpu-gpu/launch/launch.asm
 > mini-dbg --gpu programa.asm --num-warps 4 --warp-size 8 --cpu-steps 2 --gpu-steps 1
 ```
 
@@ -956,7 +956,7 @@ el `-I`.
 
 El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
 así `gpu_runtime.inc` y `bench.inc` sirven al simulador y a la placa con un solo fichero.
-Ejemplos y números en `32.cpu-gpu-func-sim/examples/c/README.md`.
+Ejemplos en `x.tests/cases-cpu-gpu/programas-en-c.md`; los números, en `32.cpu-gpu-func-sim/compare/README.md`.
 
 ## Compilar C para la CPU y la GPU: `mini-lcc --no-crt`, `crt0` y `mini-opt`
 
@@ -1000,7 +1000,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
   si el kernel usa una instrucción que la GPU del prototipo no ejecuta o pide más de 4
   parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
-  Ejemplo completo en `32.cpu-gpu-func-sim/examples/c/`.
+  Ejemplo completo en `x.tests/cases-cpu-gpu/`.
 
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
@@ -1140,7 +1140,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   el `SUB` si un operando es R0). No necesita liveness: `r` se escribe por los dos caminos y la secuencia
   nueva no toca nada más. Solo actúa si nadie más salta a `Lf`; `Le` y las demás etiquetas se quedan.
 - **`--stats`:** una línea por pase con las instrucciones que añade o quita y sus contadores
-  (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/examples/c/opt_stats.py` lo junta con las
+  (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/compare/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.
 
 Pruebas: `x.tests/test_mini_opt.py` y `x.tests/test_crt0.py` (la parte que pasa por `rcc`

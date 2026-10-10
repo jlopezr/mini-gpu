@@ -1,7 +1,7 @@
 /* gpu.c - el runtime de C del lado de la CPU: gpu_launch y la pila de las lanes.
  *
  * gpu_launch rellena el bloque de argumentos y llama a `gpu_run` de gpu_runtime.inc
- * (ensamblador, examples/asm/dma): descriptores, WARP_START y espera. gpu_run recibe R1 = PC
+ * (ensamblador, x.tests/cases-cpu-gpu/dma): descriptores, WARP_START y espera. gpu_run recibe R1 = PC
  * del kernel, R2 = nwarps, R3 = bloque, que son los tres primeros argumentos de C, asi
  * que se llama como cualquier otra funcion.
  */
