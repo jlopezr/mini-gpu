@@ -36,7 +36,11 @@ COMPOSITE_LOADS = {"__gpu_nthreads"}
 # Escrituras: `LI r,sim ; STORE v,r,0` => `OP` (el valor se descarta).
 INTRINSIC_STORES = {
     "__gpu_bar": "BAR",
+    "__noalias_mark": "NOALIAS",            # `__noalias_mark = (int)p;` -> `NOALIAS Rp` (lo gasta y borra el pase noalias)
 }
+
+# Las escrituras que llevan el valor escrito como operando de la instruccion que las sustituye.
+STORES_WITH_VALUE = {"__noalias_mark"}
 
 INTRINSIC_NAMES = set(INTRINSIC_LOADS) | set(INTRINSIC_STORES) | COMPOSITE_LOADS
 
@@ -74,6 +78,8 @@ def replacement(line: Line, symbol: str, state: dict[int, str], block: Block, li
         return [instr("GETARG", d), instr("LOAD", f"R{t}", d, "0"),
                 instr("LOAD", d, d, "4"), instr("MUL", d, d, f"R{t}")]
     if line.op == "STORE" and symbol in INTRINSIC_STORES and reg_of(line.args[0]) not in state:
+        if symbol in STORES_WITH_VALUE:
+            return [instr(INTRINSIC_STORES[symbol], line.args[0])]
         return [instr(INTRINSIC_STORES[symbol])]
     return None
 

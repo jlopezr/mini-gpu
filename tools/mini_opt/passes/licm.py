@@ -39,6 +39,7 @@ from ..isa import BRANCHES, LOADS, STORES
 from ..model import SYMBOL_RE, Line, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
+from .noalias import access_tag, loop_stores_apart, provenance
 from .sharebase import split_address
 
 ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
@@ -356,16 +357,42 @@ def move_group(key: Key, members: list[Candidate], facts: Reaching, pre: Block, 
         stats["licm.removed"] = stats.get("licm.removed", 0) + 1
 
 
+def marked_load_ok(line: Line, found: tuple, blocks: list[Block], body: set[int], pre: Block,
+                   volatile: frozenset[str]) -> bool:
+    """Una carga que `__noalias_mark` deja fuera del alcance de los stores del bucle: va por un puntero marcado, o por
+    la direccion de un simbolo que no es `volatile` (lo que se accede por un puntero marcado no se accede por nadie mas,
+    tampoco por el nombre de una global), y ningun store del bucle puede tocar lo mismo. Sin marca ni simbolo no se
+    sabria si lo que se lee es un registro de un dispositivo."""
+    if line.op not in LOADS or len(line.args) != 3 or id(line) not in found[0]:
+        return False
+    if not access_tag(found, line):
+        base = reg_of(line.args[1])
+        for previous in reversed(pre.lines):
+            if previous.kind == "instr" and base in defs_uses(previous)[0]:
+                address = split_address(previous.args[1]) if previous.op == "LI" and len(previous.args) == 2 else None
+                if address is None or address[0] in volatile:
+                    return False
+                break
+        else:
+            return False
+    return loop_stores_apart(blocks, body, found, line)
+
+
 def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
               stats: dict, readonly: frozenset[str] = frozenset(), arg_block: bool = False,
-              only_args: bool = False) -> None:
+              only_args: bool = False, volatile: frozenset[str] = frozenset()) -> None:
     """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros. Con `only_args`, solo el
     bloque de argumentos: `GETARG` y las cargas que lo leen."""
-    loads_ok = ((lambda line: invariant_load_ok(line, pre, readonly, arg_block))
-                if readonly or arg_block else None)
+    base_loads_ok = ((lambda line: invariant_load_ok(line, pre, readonly, arg_block))
+                     if readonly or arg_block else None)
     while True:
         live_in = live_in_blocks(blocks, liveness(blocks))
         facts = reaching_in_loop(blocks, body)
+        found = None if only_args else provenance(blocks)           # None sin `__noalias_mark` en la funcion
+        loads_ok = base_loads_ok
+        if found is not None:
+            loads_ok = (lambda line, found=found, first=base_loads_ok:
+                        bool(first and first(line)) or marked_load_ok(line, found, blocks, body, pre, volatile))
         groups = invariant_groups(blocks, body, facts, live_in, loads_ok)
         if only_args:
             groups = {k: v for k, v in groups.items() if k[0] == "GETARG" or k[0] in LOADS}
@@ -431,7 +458,7 @@ def hoist(unit: Unit, stats: dict, only_args: bool) -> None:
                 continue
             before = stats.get("licm.removed", 0)
             licm_loop(blocks, body, header, pre, allowed, stats, frozenset() if only_args else readonly,
-                      arg_block=kernel, only_args=only_args)
+                      arg_block=kernel, only_args=only_args, volatile=frozenset(unit.volatile))
             if stats.get("licm.removed", 0) > before:
                 stats["licm.loops"] = stats.get("licm.loops", 0) + 1
         function.body = [line for block in blocks for line in block.lines]

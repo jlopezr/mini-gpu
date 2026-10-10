@@ -38,6 +38,13 @@ extern volatile int __gpu_lwarp;     /* id logico del warp en el lanzamiento (GE
 extern volatile int __gpu_arg;       /* puntero al bloque de argumentos (GETARG)         */
 extern volatile int __gpu_bar;       /* `__gpu_bar = 0;` es una barrera (BAR)            */
 
+/* NOALIAS(p): p no tiene alias, como `restrict` (que C89 no tiene). Lo que se accede por p, o por un puntero que
+   se calcule a partir de el, no se accede por ningun otro mientras dure la funcion; mini-opt (pase `noalias`) lo
+   usa para sacar de un bucle lecturas que ningun store puede tocar. Se pone una vez, tras dar valor a p. Si se
+   marca mal, el resultado es incorrecto sin aviso. Solo vale con mini-opt (la escritura se borra). */
+extern volatile int __noalias_mark;
+#define NOALIAS(p) (__noalias_mark = (int)(p))
+
 /* Un bucle de rejilla: cada hilo salta `step` elementos, asi que los hilos consecutivos de
    un warp tocan palabras consecutivas (accesos coalescidos). `step` se calcula una vez antes
    del bucle, porque leer __gpu_nthreads son cuatro instrucciones. */

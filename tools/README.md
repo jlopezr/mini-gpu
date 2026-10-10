@@ -958,7 +958,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `sharebase`, `deadsaves`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
   `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1067,6 +1067,16 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `Unit.volatile` y `Unit.const`. Un objeto `const` (o un array de const; un struct solo si lo es entero) no lo escribe nadie, así que `licm`
   saca de un bucle, en cualquier función, su lectura a una dirección fija; si es además `volatile`, gana `volatile`. Un puntero a `const`
   no se exporta: otro puntero puede escribir en el objeto.
+- **Intrínseco `NOALIAS(p)` y pase `noalias`:** `restrict` no existe en C89, así que `gpu.h` define `NOALIAS(p)` como
+  `__noalias_mark = (int)(p)`. `intrinsics` lo convierte en una marca interna `NOALIAS Rp` (que lee `p`, así que sigue vivo hasta ella) y el
+  pase `noalias` las borra al final (`optimize` las borra aunque no se pida el pase). Es la promesa de `restrict`: lo que se accede por `p`
+  o por un puntero calculado a partir de él no se accede por ningún otro mientras dure la función. El análisis de procedencia
+  (`passes/noalias.py`) da a cada registro el conjunto de regiones marcadas de las que puede derivar: la marca vale para el *valor* (todas
+  sus copias, aunque lcc use el registro original), `p + índice` deriva de `p`, y lo que se guarda en memoria, se pasa a una llamada y se
+  vuelve a cargar conserva la región. Dos accesos no se estorban si sus procedencias no comparten región y alguna no está vacía. `licm` lo
+  usa para sacar de un bucle una carga invariante por un puntero marcado o por un símbolo que no sea `volatile` cuando ningún store del
+  bucle (salvo los del marco) puede tocar lo mismo; sin marca ni símbolo no se toca (podría ser un dispositivo). Si se marca mal el
+  resultado es incorrecto sin aviso. Solo con mini-opt, que es quien borra la escritura.
 - **Pase `argblock`:** contrato de los kernels: el bloque de argumentos (lo que devuelve `GETARG`) no se escribe mientras el kernel
   corre, como la memoria constante de CUDA. Así, `GETARG` y cada `LOAD` cuya base sale de él son invariantes de un bucle aunque haya
   `STORE` por punteros dentro (el compilador no puede demostrar que no escriben en el bloque: los punteros de salida salen del propio

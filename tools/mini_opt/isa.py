@@ -85,6 +85,8 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
     elif op == "JR":
         add(uses, *regs)
         uses.update((1, 2, STACK, *CALLEE_SAVED))
+    elif op == "NOALIAS":
+        add(uses, regs[0])          # marca interna (`__noalias_mark = p`): lee el puntero para que siga vivo hasta ella
     elif op == "EXIT":
         uses.add(STACK)             # el hilo desaparece: nadie recibe los R16..R29, como un `JR` recibiria
     elif op in ("HALT", "TRAP"):

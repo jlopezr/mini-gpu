@@ -769,6 +769,180 @@ class ConstFactTest(unittest.TestCase):
         self.assertEqual(final_registers(optimize(source, ["licm"]), 0), final_registers(source, 0))
 
 
+NOALIAS_UNIT = """\
+{facts}.text
+.globl f
+f:
+LI R20, 4096
+LI R21, 8192
+MOVI R10, 0
+MOVI R11, 32
+MOVI R16, 0
+{marks}BRA L.2
+L.1:
+{read}
+{write}
+ADD R16, R16, R7
+ADDI R10, R10, 4
+L.2:
+BLT R10, R11, L.1
+HALT
+.data
+tbl:
+.word 1, 2, 3, 4, 5, 6, 7, 8
+"""
+
+SYMBOL_READ = "LI R6, tbl+4\nLOAD R7, R6, 0"
+STORE_P = "ADD R8, R20, R10\nSTORE R10, R8, 0"
+
+
+class NoAliasTest(unittest.TestCase):
+    """`__noalias_mark` (gpu.h: `NOALIAS(p)`): lo que se accede por un puntero marcado no se accede por ninguno que no
+    derive de el. `licm` saca de un bucle una carga invariante que ningun store del bucle puede tocar."""
+
+    def loop(self, read=SYMBOL_READ, write=STORE_P, marks="NOALIAS R20\n", facts="") -> list[str]:
+        source = NOALIAS_UNIT.format(read=read, write=write, marks=marks, facts=facts)
+        out = lines_of(optimize(source, ["licm"]))
+        return out[out.index("L.1:"):out.index("BLT R10, R11, L.1")]
+
+    def loads_inside(self, **kwargs) -> bool:
+        """La lectura que se prueba (siempre al registro R7) sigue dentro del bucle."""
+        return any(line.startswith("LOAD R7,") for line in self.loop(**kwargs))
+
+    def test_a_symbol_load_leaves_the_loop_when_the_stores_go_through_a_marked_pointer(self):
+        self.assertFalse(self.loads_inside())
+
+    def test_without_the_mark_it_stays(self):
+        self.assertTrue(self.loads_inside(marks=""))
+
+    def test_a_volatile_symbol_is_never_taken_out(self):
+        self.assertTrue(self.loads_inside(facts="; @miniopt volatile tbl\n"))
+
+    def test_a_load_through_the_same_marked_pointer_as_the_store_stays(self):
+        self.assertTrue(self.loads_inside(read="ADDI R6, R20, 4\nLOAD R7, R6, 0"))
+
+    def test_a_load_through_another_marked_pointer_leaves(self):
+        self.assertFalse(self.loads_inside(read="ADDI R6, R21, 4\nLOAD R7, R6, 0", marks="NOALIAS R20\nNOALIAS R21\n"))
+
+    def test_a_load_through_an_unmarked_pointer_that_is_not_a_symbol_stays(self):
+        # podria ser un registro de un dispositivo: sin marca ni simbolo no se sabe que se lee
+        self.assertTrue(self.loads_inside(read="ADDI R6, R21, 4\nLOAD R7, R6, 0"))
+
+    def test_a_store_through_an_unmarked_pointer_stops_it(self):
+        self.assertTrue(self.loads_inside(write="ADD R8, R21, R10\nSTORE R10, R8, 0"))
+
+    def test_the_stack_frame_does_not_stop_it(self):
+        self.assertFalse(self.loads_inside(write=STORE_P + "\nSTORE R10, R30, 8"))
+
+    def test_a_marked_pointer_that_is_stored_and_read_back_is_the_same_object(self):
+        # R20 sale a memoria: lo que se cargue puede ser el mismo puntero, y el store por el choca con la carga por R20
+        write = "STORE R20, R30, 0\nLOAD R9, R30, 0\nADD R8, R9, R10\nSTORE R10, R8, 0"
+        self.assertTrue(self.loads_inside(read="ADDI R6, R20, 4\nLOAD R7, R6, 0", write=write))
+
+    def test_a_marked_pointer_passed_to_a_call_may_be_what_a_later_load_returns(self):
+        source = """\
+.text
+.globl f
+f:
+LI R20, 4096
+NOALIAS R20
+ADD R1, R20, R0
+JAL R31, g
+LI R12, 12288
+LOAD R9, R12, 0
+MOVI R10, 0
+MOVI R11, 32
+BRA L.2
+L.1:
+ADDI R6, R20, 4
+LOAD R7, R6, 0
+ADD R16, R16, R7
+ADD R8, R9, R10
+STORE R10, R8, 0
+ADDI R10, R10, 4
+L.2:
+BLT R10, R11, L.1
+JR R31
+"""
+        def loads_in_loop(text: str) -> bool:
+            out = lines_of(optimize(text, ["licm"]))
+            return any(l.startswith("LOAD") for l in out[out.index("L.1:"):out.index("BLT R10, R11, L.1")])
+
+        self.assertTrue(loads_in_loop(source))
+        # sin pasarlo a la llamada, el puntero cargado es otro objeto
+        self.assertFalse(loads_in_loop(source.replace("ADD R1, R20, R0", "ADD R1, R0, R0")))
+
+    ARG_UNIT = """\
+.text
+.globl f
+f:
+ADDI R30, R30, -16
+{homing}{start}
+NOALIAS R10
+MOVI R11, 0
+MOVI R12, 32
+MOVI R16, 0
+BRA L.2
+L.1:
+LI R6, tbl+4
+LOAD R7, R6, 0
+ADD R16, R16, R7
+{pointer}
+ADD R8, R9, R11
+STORE R11, R8, 0
+ADDI R11, R11, 4
+L.2:
+BLT R11, R12, L.1
+ADDI R30, R30, 16
+JR R31
+.data
+tbl:
+.word 1, 2, 3, 4, 5, 6, 7, 8
+"""
+
+    def argument_loop(self, homing: str, pointer: str, start: str = "ADD R10, R1, R0") -> bool:
+        out = lines_of(optimize(self.ARG_UNIT.format(homing=homing, pointer=pointer, start=start), ["licm"]))
+        return any(l.startswith("LOAD R7,") for l in out[out.index("L.1:"):out.index("BLT R11, R12, L.1")])
+
+    def test_the_mark_covers_every_copy_of_the_value(self):
+        # lcc deja el argumento en R1 y en R10: se marca R10 y los stores van por R1
+        self.assertFalse(self.argument_loop("", "ADD R9, R1, R0"))
+
+    def test_the_mark_covers_the_copy_in_the_frame_slot(self):
+        # el prologo volco R1 a su hueco y el bucle lo recarga: sigue siendo el mismo puntero
+        self.assertFalse(self.argument_loop("STORE R1, R30, 0\n", "LOAD R9, R30, 0"))
+
+    def test_another_argument_is_not_the_marked_value(self):
+        # R1 y R2 son argumentos distintos: marcar la copia de R1 no marca a R2
+        self.assertTrue(self.argument_loop("", "ADD R9, R2, R0"))
+
+    def test_an_unrelated_value_in_the_slot_is_not_marked(self):
+        # la marca es de un puntero local y el hueco guarda otro valor: el store va por un puntero sin marca,
+        # y sin marca no se sabe nada
+        self.assertTrue(self.argument_loop("STORE R2, R30, 0\n", "LOAD R9, R30, 0", start="LI R10, 4096"))
+
+    def test_a_pointer_created_in_the_function_does_not_make_every_load_a_marked_one(self):
+        # sin que el valor marcado haya estado en memoria, lo que se carga no deriva de la marca
+        self.assertTrue(self.argument_loop("", "LOAD R9, R30, 4", start="LI R10, 4096"))
+
+    def test_the_marks_are_removed_from_the_output(self):
+        source = NOALIAS_UNIT.format(read=SYMBOL_READ, write=STORE_P, marks="NOALIAS R20\n", facts="")
+        self.assertNotIn("NOALIAS", optimize(source))
+        self.assertNotIn("NOALIAS", optimize(source, ["dce"]))          # aunque no se pida el pase
+
+    def test_the_intrinsic_becomes_a_mark_that_licm_uses(self):
+        marks = "LI R9, __noalias_mark\nSTORE R20, R9, 0\n"
+        source = NOALIAS_UNIT.format(read=SYMBOL_READ, write=STORE_P, marks=marks, facts="") + ".extern __noalias_mark 4\n"
+        out = lines_of(optimize(source, ["intrinsics", "licm", "noalias"]))
+        inside = out[out.index("L.1:"):out.index("BLT R10, R11, L.1")]
+        self.assertFalse([l for l in inside if l.startswith("LOAD")])
+        self.assertFalse([l for l in out if "__noalias_mark" in l or "NOALIAS" in l])
+
+    def test_the_result_is_the_same(self):
+        source = NOALIAS_UNIT.format(read=SYMBOL_READ, write=STORE_P, marks="NOALIAS R20\n", facts="")
+        self.assertEqual(final_registers(optimize(source, ["licm"]), 0), final_registers(source.replace("NOALIAS R20\n", ""), 0))
+
+
 class LicmProvedLoadsTest(unittest.TestCase):
     """Sin `--assume-noalias`, una carga sale del bucle de un kernel si el simbolo es de la unidad, su direccion no
     escapa de ella, no es `volatile` y ningun fichero ajeno lo nombra: ningun puntero puede alcanzarlo."""

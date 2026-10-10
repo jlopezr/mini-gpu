@@ -27,6 +27,8 @@ def optimize(source: str, passes: list[str] | None = None, path: str = "<entrada
         PASSES[name][0](unit, stats)
         key = f"{name}.instrs"
         stats[key] = stats.get(key, 0) + count_instructions(unit) - before
+    if "noalias" not in passes:
+        PASSES["noalias"][0](unit, {})              # las marcas de `__noalias_mark` no son del ensamblador
     return render_unit(unit)
 
 

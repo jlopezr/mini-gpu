@@ -1674,8 +1674,9 @@ class CKernelTest(unittest.TestCase):
         self.assertEqual(buffer[4096:], [0] * 16)
 
     def test_every_lane_of_four_warps_ran(self):
-        # 4 warps x 8 lanes sobre 4096 palabras: 128 vueltas por lane
-        self.assertGreater(self.system.gpu.retired, 128 * 4 * 5)
+        # 4 warps x 8 lanes sobre 4096 palabras: 128 vueltas por lane. Con la reduccion de fuerza de mini-opt el
+        # bucle es un STORE, el avance del puntero y el salto (menos de 5 instrucciones de warp por vuelta)
+        self.assertGreater(self.system.gpu.retired, 128 * 4 * 3)
 
 
 class CSystemKernelsTest(unittest.TestCase):

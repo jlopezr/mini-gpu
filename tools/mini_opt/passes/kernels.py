@@ -123,7 +123,7 @@ def expand_immediate_shifts(blocks: list[Block], where: str, stats: dict) -> Non
 def check_isa(function: Function, where: str) -> None:
     allowed = GPU_ISAS[GPU_ISA]
     for line in function.body:
-        if line.kind == "instr" and line.op not in allowed:
+        if line.kind == "instr" and line.op not in allowed and line.op != "NOALIAS":    # NOALIAS: marca interna, la borra `noalias`
             raise OptError(f"{where}: la GPU del prototipo {GPU_ISA} no ejecuta {line.op} "
                            f"({line.render()})")
 
