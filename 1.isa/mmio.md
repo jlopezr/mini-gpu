@@ -420,8 +420,86 @@ utilización, congestión y stalls.
 Bloque propio para información, configuración e instrumentación del controlador
 de SDRAM. Existe solo con `DEVICES.SDRAM = 1`.
 
-Su contenido **no se congela todavía**. Posibles métricas futuras: lecturas,
-escrituras, ráfagas, ciclos ocupado, stalls y comportamiento de filas y bancos.
+SDRAM es del **sistema**. Lo usa el monitor y, si hace falta, la CPU: no tiene
+sentido que una GPU toque la fase del reloj de la memoria que comparte con todos.
+
+| Offset | Registro | Acceso | Función |
+|---:|---|---|---|
+| `+0x00` | `PHASE_CTRL` | W | Mover la fase del reloj de la SDRAM (**opcional**) |
+| `+0x04` | `PHASE_STATUS` | R | Estado y posición de la fase (**opcional**) |
+
+Los demás offsets del bloque están reservados: leerlos o escribirlos da error. Sus
+contadores (lecturas, escrituras, ráfagas, ciclos ocupado, stalls, filas y bancos)
+**no se congelan todavía**.
+
+### 7.1. Control de fase (opcional)
+
+La interfaz entre el controlador y los pines de la SDRAM tiene poco margen, y ese
+margen depende de la colocación que salga del place & route. Una PLL con fase
+dinámica permite desplazar `sdram_clk` respecto al reloj del controlador **sin
+reconstruir el bitstream**: se barren las posiciones, se ve cuáles dan memoria
+limpia y se fija una en el centro de esa ventana.
+
+**Es opcional.** Un sistema con SDRAM no tiene por qué incorporarlo, y el bit
+`DEVICES.SDRAM` no dice si está. Pero **quien quiera controlar la fase debe usar
+estos registros, en estos offsets y con estos significados**: no hay otra forma
+legítima de hacerlo. Un sistema sin el control responde con **error** a `PHASE_CTRL` y
+a `PHASE_STATUS`, que es como el host sabe que no existe; la capacidad
+`sdram_phase` de `tools/capabilities.json` lo declara por prototipo.
+
+```text
+PHASE_CTRL   (W)
+  bit 0        START     escribir 1 inicia el movimiento
+  bit 1        DIR       debe ser 0 (solo se avanza); 1 genera error
+  bits 7:2     cero
+  bits 13:8    STEPS     pasos a avanzar, 1..48
+  bits 31:14   cero
+
+PHASE_STATUS (R)
+  bit 0        BUSY      movimiento en curso
+  bit 1        ERR       la última petición fue rechazada
+  bit 2        LOCKED    la PLL está enganchada
+  bit 3        INIT_DONE el controlador de SDRAM ha terminado su inicialización
+  bits 7:4     cero
+  bits 13:8    POS       posición actual, 0..47
+  bits 31:14   cero
+```
+
+**La fase solo avanza.** Un paso mueve `sdram_clk` 1/(8·VCO): 208,3 ps con el VCO
+a 600 MHz de la 35. Hay `PHASES = 48` posiciones, que son una vuelta entera del
+periodo del reloj de la memoria (100 MHz): tras la 47 se vuelve a la 0. Para llegar
+a una posición anterior se avanza el resto de la vuelta. Solo se retrasa: adelantar
+puede producir glitches.
+
+**Errores.** Genera error, y no mueve nada:
+
+- escribir `PHASE_CTRL` con `START = 0`, con `DIR = 1`, con bits reservados a uno
+  o con `STEPS = 0` o mayor que 48;
+- escribir `PHASE_CTRL` con un movimiento ya en curso (`BUSY = 1`);
+- escribir `PHASE_STATUS`;
+- cualquier acceso a otro offset del bloque, o que no sea de palabra completa.
+
+`ERR` en `PHASE_STATUS` recuerda el último error de `PHASE_CTRL` y el del
+controlador de fase.
+
+**Reglas**
+
+- La posición vale 0 tras programar la FPGA y tras el reset de la placa. **El reset
+  de la CPU no la cambia**: es del reloj de la memoria, no del núcleo. Por eso el
+  valor de trabajo no puede darlo el programa y lo fija el host al conectar (§16).
+- Mientras dura un movimiento (`BUSY = 1`) el sistema no acepta peticiones nuevas
+  de memoria, espera a que se vacíen las colas y, al terminar, **reinicia el
+  controlador de SDRAM** y espera `INIT_DONE`. El contrato no garantiza el
+  contenido de la RAM a través de ese reinicio: la fase se fija **antes** de cargar
+  el programa, no con uno en marcha.
+- Un movimiento dura microsegundos, mucho menos que una consulta por el monitor. Es
+  normal no llegar a ver `BUSY = 1`: quien espera debe comprobar también que `POS`
+  haya llegado a la posición esperada.
+- Al terminar hay que comprobar `ERR = 0`, `LOCKED = 1` e `INIT_DONE = 1`.
+**Valor por defecto.** El prototipo lo declara en su `version.json` como
+`"sdram_phase": N` (0..47). Es un dato del prototipo, no del contrato: sale de un
+barrido y cambia con la colocación. El monitor lo aplica al abrir cada conexión
+(§16).
 
 ---
 
@@ -1270,6 +1348,22 @@ cambia.
 
 Cliente: `InputMixin` en `tools/monitor_protocol.py` (el codec),
 `tools/input_adapter.py` (el adaptador) y `monitor.py input` en la 30.
+### 16.6. Ajustes por prototipo al conectar
+
+Hay valores que el RTL no puede fijar y que se pierden al programar la FPGA. El
+caso de hoy es la fase del reloj de la SDRAM (§7.1): vuelve a 0, y 0 puede no ser
+una posición que funcione.
+
+El valor de trabajo es un dato **del prototipo**, no del contrato, y vive en su
+`version.json` (`"sdram_phase": N`). El **cliente** del monitor del prototipo lo
+aplica al abrir cada conexión, antes de cualquier otra operación, y no hace nada
+si ya está puesto o si el prototipo no declara ninguno. Los comandos que manejan
+la propia fase son la excepción: un barrido no puede pelearse con el valor por
+defecto.
+
+Esto es política del host, no un comando del protocolo: no cambia
+`MONITOR_VERSION` ni añade nada al RTL.
+
 ---
 
 ## 17. Simuladores
@@ -1512,7 +1606,7 @@ exista el hardware correspondiente:
           ══ sistema ═════════════════════════════════
 8000_0000 │ SYSTEM    MAGIC · VERSION · ID · DEVICES  │
 8001_0000 │ FABRIC                        [reservado] │
-8002_0000 │ SDRAM                         [reservado] │
+8002_0000 │ SDRAM     PHASE_CTRL · PHASE_STATUS       │
 
           ══ periféricos compartidos ═════════════════
 8010_0000 │ SERIAL    DATA · STATUS · PEEK            │

@@ -24,7 +24,7 @@ MAX_ADDRESS = 0x01FF_FFFF
 #   0x80100000  SERIAL
 #   0x80200000  VIDEO
 #   0x81010000  CPU PERFORMANCE
-#   0x80020000  SDRAM PHASE (experimental, solo prototipo 35)
+#   0x80020000  SDRAM (PHASE_CTRL, PHASE_STATUS: mmio.md §7.1, opcional)
 #
 # Las constantes salen del mapa generado y NO se escriben aqui: eran una
 # gemela del decodificador Verilog, y §20 existe para quitarla. El mapa lo
@@ -42,7 +42,8 @@ if str(_RAIZ) not in sys.path:
 
 from tools.mmio_map import (  # noqa: E402
     MMIO_SYSTEM_BASE, MMIO_SERIAL_BASE, MMIO_VIDEO_BASE, MMIO_CPU_PERF_BASE,
-    MMIO_BLOCK_SIZE,
+    MMIO_BLOCK_SIZE, MMIO_SDRAM_BASE, MMIO_SDRAM_PHASE_CTRL_OFF,
+    MMIO_SDRAM_PHASE_STATUS_OFF, MMIO_SDRAM_PHASES,
 )
 
 MMIO_BASE = MMIO_SYSTEM_BASE
@@ -81,7 +82,7 @@ ARCHITECTURAL_REGIONS = (
 # contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
 MONITOR_REGIONS = (
     (0x8000_0000, 0x8001_0000),     # SYSTEM
-    (0x8002_0000, 0x8003_0000),     # SDRAM PHASE, experimental local
+    (0x8002_0000, 0x8003_0000),     # SDRAM
     (0x8010_0000, 0x8011_0000),     # SERIAL
     (0x8020_0000, 0x8021_0000),     # VIDEO
     (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
@@ -119,12 +120,12 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 _REGIONES = MEMORY_REGIONS
 
 
-# SDRAM PHASE (experimental, solo prototipo 35): el bloque MMIO que mueve la fase de
-# `sdram_clk` en la PLL (`phase_mmio.v`). La posicion arranca en 0 tras programar
-# la FPGA y solo avanza, dando la vuelta a las 48 posiciones (208,3 ps cada una).
-PHASE_CTRL = 0x8002_0000
-PHASE_STATUS = 0x8002_0004
-PHASES = 48
+# Control de fase del reloj de la SDRAM (mmio.md §7.1, opcional): mueve `sdram_clk` en
+# la PLL (`phase_mmio.v`). La posicion arranca en 0 tras programar la FPGA y solo
+# avanza, dando la vuelta a las 48 posiciones (208,3 ps cada una en la 35).
+PHASE_CTRL = MMIO_SDRAM_BASE + MMIO_SDRAM_PHASE_CTRL_OFF
+PHASE_STATUS = MMIO_SDRAM_BASE + MMIO_SDRAM_PHASE_STATUS_OFF
+PHASES = MMIO_SDRAM_PHASES
 VERSION_JSON = Path(__file__).with_name("version.json")
 
 
@@ -673,7 +674,7 @@ def main() -> int:
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 memory_test(client, address, length)
             elif args.command == "phase-status":
-                status = client.read_word(0x8002_0004)
+                status = client.read_word(PHASE_STATUS)
                 print(
                     f"busy={bool(status & 1)} err={bool(status & 2)} "
                     f"locked={bool(status & 4)} init_done={bool(status & 8)} "
@@ -684,8 +685,8 @@ def main() -> int:
                 steps = parse_integer(args.arguments[0], 48, "steps")
                 if steps == 0:
                     raise MonitorError("steps debe estar entre 1 y 48")
-                client.write_word(0x8002_0000, 1 | (steps << 8))
-                status = client.read_word(0x8002_0004)
+                client.write_word(PHASE_CTRL, 1 | (steps << 8))
+                status = client.read_word(PHASE_STATUS)
                 if status & 2:
                     raise MonitorError("el controlador de fase rechazo la peticion")
                 print(f"Cambio solicitado: {steps} paso(s) de retraso")
