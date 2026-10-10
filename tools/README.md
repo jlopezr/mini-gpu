@@ -1672,6 +1672,7 @@ de dejar todo en blanco.
 $ generate-mmio
 escrito: x.tests/inc/mmio.inc
 escrito: tools/mmio_map.py
+escrito: x.tests/inc/mmio_map.h
 
 $ generate-mmio --check     # no escribe; exit code 1 si algo cambiaría (para CI)
 ```

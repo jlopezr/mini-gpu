@@ -61,7 +61,7 @@ class SincroniaTest(unittest.TestCase):
         haberlo borrado, y al borrarlo definitivamente al cerrar la 22. Es el
         único test de este fichero que ha saltado por su cuenta."""
         destinos = {p.name for p in generar()}
-        self.assertEqual({"mmio.inc", "mmio_map.py"}, destinos)
+        self.assertEqual({"mmio.inc", "mmio_map.py", "mmio_map.h"}, destinos)
 
 
 class ConformidadTest(unittest.TestCase):

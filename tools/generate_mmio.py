@@ -3,6 +3,7 @@
 Salidas:
 
     x.tests/inc/mmio.inc    para el ensamblador (`.equ`)
+    x.tests/inc/mmio_map.h  para C (`#define`); `mmio.h` lo incluye y le pone los nombres cortos
     tools/mmio_map.py       para monitor.py, sim_devices.py y los simuladores
 
 POR QUE ESTO Y NO TRES LISTAS A MANO. `1.isa/mmio.md` §20 lo pide, y la razon
@@ -33,9 +34,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "1.isa" / "mmio_map.vh"
 INC_OUTPUT = ROOT / "x.tests" / "inc" / "mmio.inc"
+H_OUTPUT = ROOT / "x.tests" / "inc" / "mmio_map.h"
 PY_OUTPUT = ROOT / "tools" / "mmio_map.py"
 
-#: (fuente, .inc, modulo .py). Un solo mapa: el contrato.
+#: (fuente, .inc, modulo .py, cabecera .h). Un solo mapa: el contrato.
 #:
 #: Hubo un segundo, `1.isa/mmio_map_v1.vh`, con las mismas constantes y los
 #: valores de v1, para que los programas de una carpeta pudieran pasar a
@@ -52,7 +54,7 @@ PY_OUTPUT = ROOT / "tools" / "mmio_map.py"
 #: Si algun dia hace falta otra transicion, esta en el historial y el patron
 #: esta contado en `19.fpga-cpu-hdmi-ls/docs/migracion-v2.md`.
 MAPAS = (
-    (SOURCE, INC_OUTPUT, PY_OUTPUT),
+    (SOURCE, INC_OUTPUT, PY_OUTPUT, H_OUTPUT),
 )
 
 # `define NOMBRE 32'hXXXX_XXXX`, y nada mas. Cualquier otra forma se rechaza
@@ -135,6 +137,38 @@ def render_inc(valores: dict[str, int],
     return "\n".join(lineas) + "\n"
 
 
+def render_h(valores: dict[str, int],
+             nombre_fuente: str = "mmio_map.vh") -> str:
+    """La cabecera de C. Mismos nombres que el .inc, incluidas las `_ADDR`."""
+    lineas = [
+        f"/* GENERADO por tools/generate-mmio desde 1.isa/{nombre_fuente}. No editar.",
+        " *",
+        " * Los nombres son los de mmio.inc. Los programas en C usan mmio.h, que los",
+        " * incluye y les pone los nombres cortos (REG(VIDEO_SWAP)...).",
+        " */",
+        "#ifndef MMIO_MAP_H",
+        "#define MMIO_MAP_H",
+        "",
+    ]
+    for nombre, valor in valores.items():
+        lineas.append(f"#define {nombre} 0x{valor:08X}u")
+
+    absolutas = []
+    for nombre, valor in valores.items():
+        if not nombre.endswith("_OFF"):
+            continue
+        base = base_de(nombre, valores)
+        if base is not None:
+            absolutas.append((nombre[:-len("_OFF")], base, valor))
+    comprobar_colisiones(absolutas, valores)
+    if absolutas:
+        lineas += ["", "/* Direcciones absolutas: base + offset. */", ""]
+        for nombre, base, offset in absolutas:
+            lineas.append(f"#define {nombre}_ADDR ({base} + 0x{offset:08X}u)")
+    lineas += ["", "#endif", ""]
+    return "\n".join(lineas)
+
+
 def comprobar_colisiones(absolutas: list[tuple[str, str, int]],
                          valores: dict[str, int]) -> None:
     """Dos registros distintos no pueden caer en la misma direccion.
@@ -206,10 +240,11 @@ def render_py(valores: dict[str, int],
 def generar() -> dict[Path, str]:
     """Lo que DEBERIA haber en disco, para los dos mapas. No escribe."""
     salidas: dict[Path, str] = {}
-    for fuente, destino_inc, destino_py in MAPAS:
+    for fuente, destino_inc, destino_py, destino_h in MAPAS:
         valores = parse_map(fuente.read_text(encoding="utf-8"), fuente.name)
         salidas[destino_inc] = render_inc(valores, fuente.name)
         salidas[destino_py] = render_py(valores, fuente.name)
+        salidas[destino_h] = render_h(valores, fuente.name)
     return salidas
 
 
