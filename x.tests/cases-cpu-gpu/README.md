@@ -32,4 +32,5 @@ build-c x.tests/cases-cpu-gpu/dma/memset/memset.c                        # los d
 simulador y para la placa. Los programas en C se explican en [programas-en-c.md](programas-en-c.md); lo que
 comparan el C y el ensamblador, en [`32.cpu-gpu-func-sim/compare`](../../32.cpu-gpu-func-sim/compare/README.md).
 
-Las pruebas: `python -m unittest test_cpu_gpu_sim` desde `32.cpu-gpu-func-sim`.
+Las pruebas: `python -m unittest test_cpu_gpu_sim` desde `32.cpu-gpu-func-sim` (14 s). Las de los demos de `race`, `dma`
+y `render` que simulan varios fotogramas son lentas y se omiten salvo con `RUN_SLOW=1` (unos 110 s en total).

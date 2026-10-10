@@ -1,6 +1,7 @@
 import contextlib
 import io
 import math
+import os
 import struct
 import subprocess
 import sys
@@ -22,6 +23,11 @@ KERNEL = 0x10000
 OUT = 0x20000
 ERROR_MEMORY_ACCESS = 0x02
 ERROR_EXPLICIT_TRAP = 0x03
+
+# Las clases cuyo `setUpClass` simula varios fotogramas de un demo (entre 5 y 22 s cada una, unos 100 s en total).
+# Por defecto se omiten; `RUN_SLOW=1` las ejecuta. Antes de dar por bueno un cambio en el compilador, en mini-opt
+# o en un demo, hay que correrlas.
+slow = unittest.skipUnless(os.environ.get("RUN_SLOW") == "1", "lenta: RUN_SLOW=1")
 
 
 def asm(source: str) -> bytes:
@@ -319,6 +325,7 @@ class RectKernelsTest(unittest.TestCase):
 BENCH_DMA = CASES / "dma" / "bench-dma" / "bench_dma.asm"
 
 
+@slow
 class BenchDmaTest(unittest.TestCase):
     """`bench_dma.asm` con tamaños hasta 4 KiB y una repetición: 4 operaciones x 5
     configuraciones x 6 tamaños, y cada una tiene que dar el resultado correcto."""
@@ -355,6 +362,7 @@ class BenchDmaTest(unittest.TestCase):
 POLL_EXP = CASES / "dma" / "poll-exp" / "poll_exp.asm"
 
 
+@slow
 class PollExperimentTest(unittest.TestCase):
     """`poll_exp.asm`: los 24 trabajos (memset y memcpy, 1 a 8 warps, 3 maneras de
     esperar) salen bien. Los ciclos no existen en el simulador: solo se comprueba
@@ -582,6 +590,7 @@ def life_pixels(grid, color: int) -> bytes:
     return bytes(out)
 
 
+@slow
 class LifeRaceTest(unittest.TestCase):
     """`cases-cpu-gpu/race/life/life.asm`: los tres métodos tienen que dar la misma vida.
 
@@ -679,6 +688,7 @@ def blur_pixels(grid) -> bytes:
     return bytes(out)
 
 
+@slow
 class BlurRaceTest(unittest.TestCase):
     """`cases-cpu-gpu/race/blur/blur.asm`: los tres métodos tienen que dar el mismo calor."""
 
@@ -766,6 +776,7 @@ def rotate_image(frame: int, texture) -> bytes:
     return bytes(out)
 
 
+@slow
 class RotateRaceTest(unittest.TestCase):
     """`cases-cpu-gpu/race/rotate/rotate.asm`: los tres métodos tienen que dar la misma imagen."""
 
@@ -903,6 +914,7 @@ def cube_image(frame: int, textures) -> bytes:
     return bytes(out)
 
 
+@slow
 class CubeRaceTest(unittest.TestCase):
     """`cases-cpu-gpu/race/cube/cube.asm`: los tres métodos tienen que dibujar el mismo cubo."""
 
@@ -968,6 +980,7 @@ class CubeRaceTest(unittest.TestCase):
                     self.assertEqual(face[1], 0x40000000, frame)
 
 
+@slow
 class CCubeRaceTest(CubeRaceTest):
     """`cases-cpu-gpu/race/cube/cube.c`: el cubo en C (el anfitrión también) dibuja lo mismo que cube.asm: los tres
     métodos, fotograma a fotograma, contra el mismo modelo en Python."""
@@ -977,6 +990,7 @@ class CCubeRaceTest(CubeRaceTest):
         return build_c_example("race/cube")
 
 
+@slow
 class LifeRaceStripTest(unittest.TestCase):
     """La gráfica de tiempos: una columna por fotograma, color por método."""
 
@@ -1735,6 +1749,7 @@ class CSystemKernelsTest(unittest.TestCase):
                 self.assertLessEqual(c_count, asm_count * self.MAX_RATIO)
 
 
+@slow
 class CRotateTest(unittest.TestCase):
     """`cases-cpu-gpu/race/rotate/rotate.c`: la rotación de textura en C (CPU, GPU inocente y GPU buena, el mismo
     cuerpo con otro reparto de trabajo) frente a `rotate.inc`. Las seis versiones dejan la imagen del
@@ -1815,6 +1830,7 @@ def plane_image(frame: int, textures, background) -> bytes:
     return bytes(out)
 
 
+@slow
 class CPlaneRaceTest(unittest.TestCase):
     """`cases-cpu-gpu/race/plane/plane.c`: el plano con un logo por cara y alfa sobre un degradado. Los tres métodos (CPU,
     GPU inocente y GPU buena, un solo cuerpo) tienen que dibujar, fotograma a fotograma, lo mismo que el modelo."""

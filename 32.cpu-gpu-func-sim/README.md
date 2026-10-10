@@ -11,8 +11,14 @@ llega aquí sin tocar nada.
 
 ```bash
 cpugpusim x.tests/cases-cpu-gpu/launch/launch.asm
-python -m unittest test_cpu_gpu_sim        # desde esta carpeta
+python -m unittest test_cpu_gpu_sim        # desde esta carpeta: 14 s, sin las clases lentas
+RUN_SLOW=1 python -m unittest test_cpu_gpu_sim   # todo: unos 110 s (en PowerShell, $env:RUN_SLOW = "1")
 ```
+
+Las clases lentas (`@slow` en el test) simulan varios fotogramas de un demo en su `setUpClass`: `PollExperimentTest`,
+`BenchDmaTest` y los de `race` (`LifeRaceTest`, `BlurRaceTest`, `RotateRaceTest`, `CubeRaceTest`, `CCubeRaceTest`,
+`LifeRaceStripTest`, `CRotateTest`, `CPlaneRaceTest`). Por defecto salen como omitidas; hay que correrlas antes de dar por
+bueno un cambio en el compilador, en `mini-opt` o en un demo.
 
 ## Programas
 
