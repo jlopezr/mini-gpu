@@ -60,8 +60,8 @@ completas— y **está medido en placa**, no deducido de los estados:
 
 | Programa | Instrucciones | Ciclos | CPI |
 |---|---:|---:|---:|
-| [`../../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
-| [`../../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+| [`../../t.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../../t.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`../../t.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../../t.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
 
 Los dos programas son el mismo fichero con un carácter distinto: el `REM` lee
 `R2` o `R3`, que valen lo mismo. Mismo trabajo aritmético, mismas 4 005
@@ -75,7 +75,7 @@ ciclos limpios sino lo que tarde el fetch. Así la resta **es** el ahorro.
 Para repetirlo:
 
 ```powershell
-python ..\1.isa\mini_asm.py ..\x.tests\cases-cpu\demos\fastpath-hit\fastpath_hit.asm -o fastpath_hit.bin
+python ..\1.isa\mini_asm.py ..\t.tests\cases-cpu\demos\fastpath-hit\fastpath_hit.asm -o fastpath_hit.bin
 python monitor.py --port COM3 reset
 python monitor.py --port COM3 write-block 0x00000000 fastpath_hit.bin
 python monitor.py --port COM3 run
@@ -162,7 +162,7 @@ python monitor.py perf --port COM3   # cycles=... instructions=... CPI=...
 
 ### Medido en placa
 
-Nueve programas de `x.tests`, con el vídeo corriendo:
+Nueve programas de `t.tests`, con el vídeo corriendo:
 
 | Programa                 | Instr. | CPI   |
 |--------------------------|-------:|------:|
@@ -188,7 +188,7 @@ comparar los mismos programas entre versiones, además del coste por opcode.
 
 ### Los casos de las extensiones, medidos igual
 
-Los siete de [`cases-cpu/extensions`](../../x.tests/cases-cpu/extensions), en la
+Los siete de [`cases-cpu/extensions`](../../t.tests/cases-cpu/extensions), en la
 misma placa y con el vídeo corriendo:
 
 | Programa                      | Instr. | CPI   |
@@ -222,6 +222,6 @@ El contador de instrucciones se contrasta con el del simulador en la tabla de
 `--measure`: coinciden exactamente en los nueve. Ese contraste ya encontró un
 fallo —ver el README—, así que no es decorativo.
 
-Para comparar versiones enteras, [`x.tests`](../../x.tests/README.md)
+Para comparar versiones enteras, [`t.tests`](../../t.tests/README.md)
 tiene `--measure`, que ejecuta cada caso en cada versión aplicable y saca la
 tabla en Markdown.

@@ -17,7 +17,7 @@ export PATH="$PWD/tools:$PATH"
 - Para builds largos (síntesis FPGA), usa `build --prototype N --background` + `build-status`/`build-log --follow`
   en vez de bloquear una llamada a herramienta esperando a que termine. `build`/`build-sweep`/`test`
   son genéricos (cualquier prototipo con `apio.ini`), no hace falta copiar nada a su carpeta.
-- `x.tests` (antes `x.cpu-tests`) tiene los backends de placa/simulador y el runner de casos
+- `t.tests` (antes `x.cpu-tests`) tiene los backends de placa/simulador y el runner de casos
   (`run_tests.py`, antes `run_gpu_tests.py`); no dupliques esa lógica en `tools/`, solo añade
   lanzadores finos que la invoquen.
 - `docs/resumen-prototipos.md` está escrito a mano salvo sus tres bloques generados: edítalo como

@@ -930,7 +930,7 @@ instantes distintos con el programa corriendo entre medias. Un programa que
 lleva más de 53 s a 80 MHz ya ha dado la vuelta en `CYCLES` (y en unos siete
 minutos en `RETIRED`, con un CPI de 8): sus valores absolutos no significan nada
 —`PERF_OVF0` lo dice—, pero la resta de dos lecturas sigue valiendo (§12.2). En
-el PC, `monitor.py perf [segundos]` y `x.tests/run_tests.py --measure` hacen todo
+el PC, `monitor.py perf [segundos]` y `t.tests/run_tests.py --measure` hacen todo
 esto.
 
 ### 13.3. CPU DEBUG — `0x81020000`

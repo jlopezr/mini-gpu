@@ -67,7 +67,7 @@ module sysid #(
 );
 
   // El magic de v2, palabra entera. En el mapa unico se llama
-  // MMIO_MAGIC_VALUE, y `x.tests/test_mmio_map.py` comprueba que coinciden.
+  // MMIO_MAGIC_VALUE, y `t.tests/test_mmio_map.py` comprueba que coinciden.
   localparam [31:0] MAGIC = 32'h4D47_4155;
 
   localparam [7:0] VERSION_MAJOR = 8'd2;

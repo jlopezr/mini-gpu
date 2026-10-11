@@ -3,16 +3,16 @@
     build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
                        [--load [PROTOTIPO]] [--no-run]
 
-Por cada .c (el programa y x.tests/runtime/gpu/gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y
+Por cada .c (el programa y t.tests/runtime/gpu/gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y
 kernels). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de la GPU
-(x.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
+(t.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
 --data pega un fichero binario tras el codigo, con `.incbin`, bajo una etiqueta que el C declara con
 `extern unsigned etiqueta[]`. Quien lo genera es quien llama, no esta herramienta.
 --load sube la imagen a la placa (implica --board; PROTOTIPO por defecto 36) con la misma carga que
 `board-load`: no comprueba el bitstream. --no-run la carga sin arrancarla.
-Necesita y.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini-lcc).
+Necesita u.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini-lcc).
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ TOOLS = ROOT / "tools"
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import assemble_bytes, write_hex  # noqa: E402
 
-INC = ROOT / "x.tests" / "inc"                 # gpu.h, mmio.h, mmio.inc, gpu_runtime.inc, bench.inc
-GPU_C = ROOT / "x.tests" / "runtime" / "gpu" / "gpu.c"
+INC = ROOT / "t.tests" / "inc"                 # gpu.h, mmio.h, mmio.inc, gpu_runtime.inc, bench.inc
+GPU_C = ROOT / "t.tests" / "runtime" / "gpu" / "gpu.c"
 CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
 INCLUDE_DIRS = (INC,)
 DEFAULT_OUTDIR = ROOT / "_build" / "c"
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--outdir", type=Path, help=f"carpeta de los intermedios (por defecto {DEFAULT_OUTDIR})")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
-                        help="carpeta extra para #include (repetible); x.tests/inc va siempre")
+                        help="carpeta extra para #include (repetible); t.tests/inc va siempre")
     parser.add_argument("--data", action="append", type=parse_data, default=[], metavar="ETIQUETA=FICHERO",
                         help="pega un binario tras el codigo con esa etiqueta (repetible)")
     parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")

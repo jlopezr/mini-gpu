@@ -10,7 +10,7 @@ que les falta para convivir. Un arreglo en cualquiera de los dos simuladores
 llega aquí sin tocar nada.
 
 ```bash
-sim-sys x.tests/cases-cpu-gpu/launch/launch.asm
+sim-sys t.tests/cases-cpu-gpu/launch/launch.asm
 python -m unittest test_cpu_gpu_sim        # desde esta carpeta: 14 s, sin las clases lentas
 RUN_SLOW=1 python -m unittest test_cpu_gpu_sim   # todo: unos 110 s (en PowerShell, $env:RUN_SLOW = "1")
 ```
@@ -23,15 +23,15 @@ bueno un cambio en el compilador, en `mini-opt` o en un demo.
 ## Programas
 
 Los programas que corren en este simulador (y los de la placa 36) están en
-[`x.tests/cases-cpu-gpu`](../x.tests/cases-cpu-gpu/README.md), uno por carpeta y cada uno con su README:
+[`t.tests/cases-cpu-gpu`](../t.tests/cases-cpu-gpu/README.md), uno por carpeta y cada uno con su README:
 
 | Programa | Qué es |
 |---|---|
-| [launch](../x.tests/cases-cpu-gpu/launch/) | CPU y kernel en un solo fichero, sin ninguna dirección escrita a mano |
-| [dma](../x.tests/cases-cpu-gpu/dma/) | El arnés del [diseño de GPU/DMA](docs/diseno-gpu-dma.md), los kernels de sistema y su [benchmark](docs/bench-dma.md) |
-| [race](../x.tests/cases-cpu-gpu/race/) | Demos de «carrera»: el mismo trabajo con CPU, GPU inocente y GPU buena |
-| [render](../x.tests/cases-cpu-gpu/render/) | Un plasma que pinta la GPU, con el bucle de frames en la CPU |
-| [simt](../x.tests/cases-cpu-gpu/simt/) | Kernels en C con divergencia |
+| [launch](../t.tests/cases-cpu-gpu/launch/) | CPU y kernel en un solo fichero, sin ninguna dirección escrita a mano |
+| [dma](../t.tests/cases-cpu-gpu/dma/) | El arnés del [diseño de GPU/DMA](docs/diseno-gpu-dma.md), los kernels de sistema y su [benchmark](docs/bench-dma.md) |
+| [race](../t.tests/cases-cpu-gpu/race/) | Demos de «carrera»: el mismo trabajo con CPU, GPU inocente y GPU buena |
+| [render](../t.tests/cases-cpu-gpu/render/) | Un plasma que pinta la GPU, con el bucle de frames en la CPU |
+| [simt](../t.tests/cases-cpu-gpu/simt/) | Kernels en C con divergencia |
 
 [`compare/`](compare/README.md) tiene las herramientas que miden el C frente al ensamblador en este simulador.
 `test_cpu_gpu_sim.py` comprueba los programas contra modelos en Python.

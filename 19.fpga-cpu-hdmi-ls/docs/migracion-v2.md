@@ -35,7 +35,7 @@ no cuadra son dos estimaciones de coste y un exit code.
 | `check-links.py` | 614 enlaces en 175 `.md`, ninguno roto |
 | `generate-docs --check` | al día |
 | `generate_mmio.py --check` | al día |
-| `unittest discover -s x.tests` | **269 tests OK** |
+| `unittest discover -s t.tests` | **269 tests OK** |
 
 Nada estaba rojo antes de tocar nada. Éstos son los números base.
 
@@ -116,9 +116,9 @@ De los tres `.hex` de la raíz:
 
 `fullframe.hex` es el caso exacto de la trampa 3. En la 19:
 
-- **no existe `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`.** La 21 lo creó al arreglar el rojo número 1;
+- **no existe `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`.** La 21 lo creó al arreglar el rojo número 1;
   aquí el banco sigue leyendo un `.hex` sin fuente declarada al lado.
-- `README.md:208` dice «El programa es `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`». Es la misma
+- `README.md:208` dice «El programa es `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm`». Es la misma
   frase falsa que tenía la 21: ese programa pone el framebuffer en
   `0x01000000`, y el modelo de SDRAM del banco no llega.
 - La cabecera del banco, en cambio, **sí** documenta bien las bases bajas
@@ -198,9 +198,9 @@ fichero se borró al terminar y aquí hizo falta otra vez.
 |---|---|
 | `1.isa/mmio_map_v1.vh` | **nuevo** (rehecho). El mapa de hoy, con los nombres de v2 |
 | `tools/generate_mmio.py` | segunda entrada en `MAPAS`; el soporte de varios mapas ya estaba |
-| `x.tests/inc/mmio_v1.inc` | **generado** |
+| `t.tests/inc/mmio_v1.inc` | **generado** |
 | `tools/mmio_map_v1.py` | **generado** |
-| `x.tests/unit/tools/test_mmio_map.py` | clase `MapaV1Test`, 5 tests; y el destino nuevo en la guarda de salidas |
+| `t.tests/unit/tools/test_mmio_map.py` | clase `MapaV1Test`, 5 tests; y el destino nuevo en la guarda de salidas |
 
 Los números salen del **RTL de la 19**, no del fichero borrado de la 21 ni de
 un documento: `mmio_decoder.v` para las ranuras (`device = address[11:8]` sobre
@@ -324,7 +324,7 @@ simuladores siguen intactos.
 
 | Qué | Antes | Ahora |
 |---|---|---|
-| `unittest` de `x.tests` | 269 OK | **274 OK** |
+| `unittest` de `t.tests` | 269 OK | **274 OK** |
 | `unittest` de `1.isa` | 61 OK | 61 OK |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 | `check-links` | 614 | 618 (los de este log) |
@@ -365,7 +365,7 @@ cuando deja de fallar, la fase está hecha.
 `19/examples` no estaba en la lista, sí. Pero la causa de fondo es más
 incómoda:
 
-> **Ningún `test.json` de `x.tests` apunta a los `examples` de la 19.** Los
+> **Ningún `test.json` de `t.tests` apunta a los `examples` de la 19.** Los
 > casos de vídeo y de serie usan los de la **21**. Los de la 19 sólo los
 > consumen la placa y las personas.
 
@@ -435,13 +435,13 @@ ejecuta ningún caso.
 
 ### Lo que se rompió
 
-Nada, y esta vez era la predicción. Ningún caso de `x.tests` fija un `pc`
+Nada, y esta vez era la predicción. Ningún caso de `t.tests` fija un `pc`
 contra estos programas porque ninguno los usa, así que el `+1` de `LI` no
 rompió nada. En la 21 sí hubo que tocar un `pc` esperado.
 
 | Qué | Resultado |
 |---|---|
-| `unittest` de `x.tests` | **274 OK** (la guarda ya no salta) |
+| `unittest` de `t.tests` | **274 OK** (la guarda ya no salta) |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos |
 | `tools/test --prototype 19` | **SUCCESS**, 44 s |
 
@@ -689,24 +689,24 @@ migraciones independientes convergieron al mismo texto.
 
 Se aplicaron las tres piezas de la 21:
 
-1. **`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe**, al lado del banco. Es `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`
+1. **`../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe**, al lado del banco. Es `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm`
    con las dos bases del framebuffer como `.equ`, bajas para que quepan en las
    128 filas del modelo de SDRAM.
 2. **`fullframe.hex` regenerado desde ahí**, en palabras de 32 bits, con la
    orden escrita en la cabecera del banco.
-3. **El README corregido.** Decía que el programa era `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`
+3. **El README corregido.** Decía que el programa era `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm`
    y era falso, la misma frase que tenía la 21.
 
 Confirmación fuerte: el `fullframe.hex` regenerado sale **byte a byte igual al
 de la 21**.
 
-`x.tests/unit/build/test_fullframe_fixture.py` pasa de mirar una carpeta cableada a
+`t.tests/unit/build/test_fullframe_fixture.py` pasa de mirar una carpeta cableada a
 **descubrir sola** las que tienen el trío completo. No es cosmético:
 
 > Con la carpeta escrita a mano arriba, cubrir la 19 dependía de que alguien se
 > acordara de añadirla — que es exactamente cómo la cabecera del banco de la 21
 > llegó a mentir durante meses. Un test que se descubre solo cubre la 18 el día
-> que cree su `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`, sin que nadie lo recuerde. `[TODAS]`
+> que cree su `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`, sin que nadie lo recuerde. `[TODAS]`
 
 Control negativo: regenerado el `.hex` desde el programa de la placa —la
 mutación que de verdad ocurrió en la 21— el test falla, nombra la carpeta y da
@@ -719,7 +719,7 @@ Menos de lo esperado, y nada por sorpresa. Los fallos que hubo fueron todos
 ponerse verde.
 
 Lo único que no vio ningún test automático fue el **lado host**: los dos fallos
-finales de `x.tests` fueron `MONITOR_REGIONS` de `monitor.py`, que seguía con
+finales de `t.tests` fueron `MONITOR_REGIONS` de `monitor.py`, que seguía con
 la ventana única. Eso sí lo cazaron sus dos gemelas.
 
 ---
@@ -731,7 +731,7 @@ la ventana única. Eso sí lo cazaron sus dos gemelas.
 | `tools/test --prototype 19` | SUCCESS, 44 s | **SUCCESS, 125 s**, 24 bancos |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 | `tools/lint --prototype 19` | 36 PINMISSING, 0 anchura | **34 PINMISSING, 0 anchura** |
-| `unittest` de `x.tests` | 269 OK | **278 OK** |
+| `unittest` de `t.tests` | 269 OK | **278 OK** |
 | `unittest` de `1.isa` / `2.cpu-sim-func` / `11.gpu-sim-func` | 61 / 44 / 62 | 61 / 44 / 62 OK |
 | `check-links` | 614 | 625, ninguno roto |
 | `generate-docs --check` / `generate-mmio --check` | al día | al día |

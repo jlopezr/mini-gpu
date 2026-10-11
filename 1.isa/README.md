@@ -11,7 +11,8 @@ cada prototipo hoy está en
 [`../docs/resumen-prototipos.md`](../docs/resumen-prototipos.md), y **ninguno lo
 cumple todavía**.
 
-`mini_asm.py` ensambla una palabra little-endian de 32 bits por instrucción:
+`asm2/mini-asm.py` es el ensamblador actual y emite una palabra little-endian
+de 32 bits por instrucción. `mini_asm.py` queda como entrada de compatibilidad:
 
 ```powershell
 python mini_asm.py minimal.asm -o minimal.bin

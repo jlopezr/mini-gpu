@@ -1,7 +1,7 @@
 # mini-basic
 
 Un BASIC con interfaz tipo QBasic: el intérprete de `../28.basic` y la TUI de
-`../z.tui`, sin copiar nada de ellos.
+`../v.tui`, sin copiar nada de ellos.
 
 ```text
  File  Run

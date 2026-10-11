@@ -22,7 +22,7 @@ en lugar de los ocho bancos EBR de 128 KiB. Destino: ULX3S-85F,
 
 Comparte todos los comandos con la 12, que responde 3.12: el mayor es igual
 porque el juego de comandos es el mismo, y el menor los distingue porque **es el
-número de carpeta**. Eso es lo que permite a `x.tests --version sdram` saber que
+número de carpeta**. Eso es lo que permite a `t.tests --version sdram` saber que
 no tiene delante el bitstream de BRAM. Antes esos números se elegían a mano, y
 14 y 17 llegaron a compartir el mismo.
 

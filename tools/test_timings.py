@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "x.tests"))
+sys.path.insert(0, str(ROOT / "t.tests"))
 
 from tools import stage_programs  # noqa: E402
 from tools.prototype import (  # noqa: E402
@@ -85,10 +85,10 @@ class TimedResult(unittest.TextTestResult):
 
 def python_worker(start: Path, pattern: str, output: Path, verbose: bool) -> int:
     loader = unittest.TestLoader()
-    # `x.tests` contiene un punto y no es un paquete importable. Descubrir desde
+    # `t.tests` contiene un punto y no es un paquete importable. Descubrir desde
     # dentro reproduce exactamente `run-tests` y evita inventar nombres de módulo.
     os.chdir(start)
-    if (start / "unit").is_dir():           # x.tests: los tests son paquetes en unit/<tema>/ (ver tools/run-tests)
+    if (start / "unit").is_dir():           # t.tests: los tests son paquetes en unit/<tema>/ (ver tools/run-tests)
         suite = loader.discover("unit", pattern=pattern, top_level_dir=".")
     else:
         suite = loader.discover(".", pattern=pattern)
@@ -124,11 +124,11 @@ def run(command: list[str], cwd: Path, quiet: bool = False) -> tuple[int, float]
 
 
 def python_suite(python: str, temp: Path, verbose: bool, quiet: bool) -> dict:
-    ignored = {".git", ".venv", "_build", "reports", "y.lcc"}
-    unit = ROOT / "x.tests" / "unit"
+    ignored = {".git", ".venv", "_build", "reports", "u.lcc"}
+    unit = ROOT / "t.tests" / "unit"
 
-    def group(folder: Path) -> Path:        # todos los temas de x.tests/unit se descubren juntos desde x.tests
-        return ROOT / "x.tests" if unit in (folder, *folder.parents) else folder
+    def group(folder: Path) -> Path:        # todos los temas de t.tests/unit se descubren juntos desde t.tests
+        return ROOT / "t.tests" if unit in (folder, *folder.parents) else folder
 
     directories = sorted({group(path.parent) for path in ROOT.rglob("test_*.py")
                           if not ignored.intersection(path.relative_to(ROOT).parts)
@@ -191,7 +191,7 @@ def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
             skip_slow: bool = False, upload: bool = False,
             port: str | None = None) -> dict:
     output = temp / f"{backend}.json"
-    command = [python, str(ROOT / "x.tests" / "run_tests.py"), "--backend", backend,
+    command = [python, str(ROOT / "t.tests" / "run_tests.py"), "--backend", backend,
                "--jobs", str(jobs), "--timings-json", str(output)]
     if prototype:
         command += ["--prototype", prototype, "--yes" if upload else "--no-upload"]
@@ -200,11 +200,11 @@ def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
     if skip_slow:
         command.append("--skip-slow")
     command += cases
-    code, wall = run(command, ROOT / "x.tests", quiet)
+    code, wall = run(command, ROOT / "t.tests", quiet)
     data = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
     executions = data.pop("executions", [])
-    return {"name": f"x.tests [{backend}]" + (f" ({prototype})" if prototype else ""),
-            "kind": "x.tests", "total_seconds": data.get("total_seconds", wall),
+    return {"name": f"t.tests [{backend}]" + (f" ({prototype})" if prototype else ""),
+            "kind": "t.tests", "total_seconds": data.get("total_seconds", wall),
             "wall_seconds": wall, "exit_code": code, "tests": [
                 {"name": f'{item["case"]} [{item["backend"]}]', "seconds": item["seconds"]}
                 for item in executions], "slow_cases_omitted": skip_slow, **data}
@@ -220,7 +220,7 @@ def duration(value: float) -> str:
 
 def markdown(suites: list[dict], started: str, command: str) -> str:
     lines = ["# Tiempos de tests", "", f"Generado: {started}", "", f"Comando: `{command}`", "",
-             "Los tiempos son de pared. En `x.tests`, `--jobs > 1` solapa casos: la suma de filas no coincide con el total.", "",
+             "Los tiempos son de pared. En `t.tests`, `--jobs > 1` solapa casos: la suma de filas no coincide con el total.", "",
              "## Resumen", "", "| Suite | Total | Estado |", "|---|---:|---|"]
     for suite in suites:
         lines.append(f'| {suite["name"]} | {duration(suite.get("total_seconds", 0))} | '
@@ -250,14 +250,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prototype", action="append",
                         help="prototipo para bancos RTL; repetible (CPU y GPU más nuevas si se omite)")
-    parser.add_argument("--cpu-prototype", help="añade x.tests en una placa CPU (sin cargar bitstream)")
-    parser.add_argument("--gpu-prototype", help="añade x.tests en una placa GPU (sin cargar bitstream)")
+    parser.add_argument("--cpu-prototype", help="añade t.tests en una placa CPU (sin cargar bitstream)")
+    parser.add_argument("--gpu-prototype", help="añade t.tests en una placa GPU (sin cargar bitstream)")
     parser.add_argument("--skip-hardware", action="store_true",
                         help="no detecta ni modifica la placa")
     parser.add_argument("--cases", action="append", default=[], metavar="RUTA",
-                        help="limita los casos x.tests; se puede repetir")
+                        help="limita los casos t.tests; se puede repetir")
     parser.add_argument("--jobs", type=int, default=1,
-                        help="procesos para x.tests (1 da tiempos y total comparables)")
+                        help="procesos para t.tests (1 da tiempos y total comparables)")
     parser.add_argument("--full", action="store_true", help="incluye bancos RTL TEST-LENTO")
     parser.add_argument("--full-x-tests", action="store_true",
                         help="incluye en los simuladores GPU los casos marcados slow")

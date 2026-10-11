@@ -28,14 +28,14 @@ encargo. La mayoría se sostiene; tres no, y una de ellas cambia el plan.
 | `sysid.v`: 4 palabras en `0x80000F00` | correcto |
 | `sim_devices.py`: `BASE = 0x8000_0000` y `0x8000_0200` | correcto (líneas 21, 166) |
 | `apio.ini`: `--seed 13`, 87,09 MHz, +8,9 % | correcto |
-| `x.tests/unit/build/test_top_wiring.py` y `test_monitor_port.py` existen | correcto |
+| `t.tests/unit/build/test_top_wiring.py` y `test_monitor_port.py` existen | correcto |
 | `monitor.v` idéntico byte a byte | correcto, y son **exactamente** las 10 carpetas de prototipo (mismo MD5 `170E0AB3…`) |
 | `tools/lint --prototype 21` da 38 diagnósticos | correcto: **38 `%Warning-PINMISSING`, 0 errores**. Éste es el número base a no empeorar |
 
 ### Lo que no cuadró
 
 **1. El reparto de los 19 `.asm` es otro.** El total sí es 19, pero son **5 en
-`x.tests/cases-cpu/` y 14 en `examples/`**, no 7 y 12.
+`t.tests/cases-cpu/` y 14 en `examples/`**, no 7 y 12.
 
 - Casos: `video/registers`, `video/bounce`, `video/band`,
   `extensions/serial/uppercase`, `extensions/serial/empty-input`.
@@ -81,7 +81,7 @@ ya resuelve símbolos y expande a `MOVHI` + `ORI`.
 
 **Consecuencia que hay que tener presente:** `LI` emite **dos palabras** donde
 `MOVHI` emitía una. Los 19 programas cambian de tamaño y de cuenta de ciclos.
-Cualquier caso de `x.tests` que compruebe un PC final, un tamaño de imagen o un
+Cualquier caso de `t.tests` que compruebe un PC final, un tamaño de imagen o un
 número de ciclos se romperá por esto y **no** por un error de dirección. `[TODAS]`
 
 Trabajo añadido al plan, antes del generador:
@@ -206,9 +206,9 @@ que más se amortiza.
 | `1.isa/mmio_map.vh` | **nuevo**. La fuente maestra de §20: bases, offsets, bits de `DEVICES`, el magic. Sólo `define`, sin una expresión |
 | `tools/generate_mmio.py` | **nuevo**. Parser de tres líneas + dos renderizadores + `--check` |
 | `tools/generate-mmio`, `.ps1` | **nuevos**. Lanzadores, sin lógica, como manda `AGENTS.md` |
-| `x.tests/inc/mmio.inc` | **generado**. El include del ensamblador, con `.once` |
+| `t.tests/inc/mmio.inc` | **generado**. El include del ensamblador, con `.once` |
 | `tools/mmio_map.py` | **generado**. Las mismas constantes para monitor y simuladores |
-| `x.tests/unit/tools/test_mmio_map.py` | **nuevo**. 25 tests en cuatro grupos |
+| `t.tests/unit/tools/test_mmio_map.py` | **nuevo**. 25 tests en cuatro grupos |
 | `tools/README.md` | apartado nuevo del lanzador |
 
 ### La decisión que quedaba pendiente: lo generado se versiona
@@ -292,7 +292,7 @@ trata el fichero ausente igual que uno distinto.)
 
 ### Lo que se rompió
 
-Nada. 260 tests de `x.tests` (25 nuevos), 61 del ensamblador, 52 casos de
+Nada. 260 tests de `t.tests` (25 nuevos), 61 del ensamblador, 52 casos de
 `cpusim` con 0 fallos, `check-links` con 610 enlaces y `generate-docs --check`
 al día.
 
@@ -338,10 +338,10 @@ El generador pasó de un mapa a una tabla de mapas, unas 20 líneas.
 |---|---|
 | `1.isa/mmio_map_v1.vh` | **nuevo**, temporal. El mapa de hoy |
 | `tools/generate_mmio.py` | tabla `MAPAS` en vez de una fuente; `parse_map`/`render_*` reciben el nombre de la fuente |
-| 5 `.asm` de `x.tests/cases-cpu` | `.include "mmio_v1.inc"`, `LI Rn, MMIO_*_BASE`, offsets por símbolo |
+| 5 `.asm` de `t.tests/cases-cpu` | `.include "mmio_v1.inc"`, `LI Rn, MMIO_*_BASE`, offsets por símbolo |
 | 14 `.asm` de `examples/` | lo mismo; 84 offsets en total |
-| `x.tests/cases-cpu/video/registers/test.json` | `pc` de `0x44` a `0x48` |
-| `x.tests/unit/tools/test_mmio_map.py` | clase del mapa v1, y la guarda de «ningún `.asm` cableado» |
+| `t.tests/cases-cpu/video/registers/test.json` | `pc` de `0x44` a `0x48` |
+| `t.tests/unit/tools/test_mmio_map.py` | clase del mapa v1, y la guarda de «ningún `.asm` cableado» |
 
 ### Qué se rompió
 
@@ -514,7 +514,7 @@ queda invalidado. `[TODAS]`
 
 ### Lo que se rompió
 
-Nada. 262 tests de `x.tests`, 61 del ensamblador, 52 casos de `cpusim`.
+Nada. 262 tests de `t.tests`, 61 del ensamblador, 52 casos de `cpusim`.
 `lint --prototype 21` sigue en **38**, como debe, porque no se ha tocado RTL.
 
 La semilla 13 sigue siendo válida.
@@ -595,7 +595,7 @@ verificado. `[TODAS]`
 | `tools/sim_devices.py` | bases v2, bloques de 64 KiB |
 | `tools/sysid_device.py` | gemelo Python de SYSTEM, siete palabras |
 | `21/monitor.py` | regiones desde el mapa generado |
-| `x.tests/backends/fpga.py` | direcciones desde el mapa generado |
+| `t.tests/backends/fpga.py` | direcciones desde el mapa generado |
 | 6 `.asm` más | `20.forth`, `cases-shared/video` y los 4 de `cases-shared/mmio` |
 
 **La detección de MMIO pasa de veinte bits a uno.** `address[31:12] == 20'h80000`
@@ -635,12 +635,12 @@ miré». Se listan porque el **patrón** es lo que se repite:
 
 ### El alcance de la guarda estaba mal
 
-`test_ningun_asm_carga_una_base_mmio_a_mano` sólo miraba `x.tests/cases-cpu` y
+`test_ningun_asm_carga_una_base_mmio_a_mano` sólo miraba `t.tests/cases-cpu` y
 `21/examples`. Los seis `.asm` de los puntos 6 y 7 aparecieron **corriendo el
 simulador**, que es tarde: el sentido de esa guarda es que salte barato.
 
 Ampliada a `cases-shared` y `20.forth`. La lección no es de patrón sino de
-alcance: **los programas de este repo no viven todos bajo `x.tests/cases-cpu`**. Al
+alcance: **los programas de este repo no viven todos bajo `t.tests/cases-cpu`**. Al
 migrar la siguiente carpeta, lo primero es listar dónde hay `.asm`. `[TODAS]`
 
 ### Una gemela que mejoró por el camino
@@ -668,7 +668,7 @@ Escribir a mano es obligatorio; dejarlo sin comprobar, no. `[TODAS]`
 ### Verificación
 
 - **30 bancos RTL de la 21: SUCCESS.**
-- 273 tests de `x.tests`, 61 del ensamblador.
+- 273 tests de `t.tests`, 61 del ensamblador.
 - 52 casos de `cpusim`, 0 fallos, incluidos los siete que comparan frame.
 - `lint --prototype 21`: **38**, exactamente la línea base.
 - 612 enlaces, `generate-docs --check` y `generate-mmio --check` al día.
@@ -736,7 +736,7 @@ JEDEC. El banco modela 4 bancos × **128** filas, la fila sale de los bits
 
 Y la causa de fondo era mía, con un agravante documental:
 
-- Regeneré `fullframe.hex` desde `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`, **que es el
+- Regeneré `fullframe.hex` desde `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm`, **que es el
   programa de la placa** y pone el framebuffer en 0x01000000.
 - La cabecera del banco y el README decían que el `.hex` salía justamente de
   ahí. **Llevaban tiempo mintiendo**: el `.hex` versionado usaba bases bajas,
@@ -748,12 +748,12 @@ Y la causa de fondo era mía, con un agravante documental:
 
 Arreglo, en tres piezas que valen para cualquier carpeta:
 
-1. `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe de verdad, al lado del banco, y es el programa
+1. `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` existe de verdad, al lado del banco, y es el programa
    del banco. Las dos bases son `.equ` al principio, y es **lo único** que lo
-   diferencia de `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm`.
+   diferencia de `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm`.
 2. El banco lee **palabras de 32 bits** y las parte en dos celdas de SDRAM. Un
    formato, una orden, y la orden está escrita en la cabecera del banco.
-3. `x.tests/unit/build/test_fullframe_fixture.py` comprueba las tres cosas: que el `.hex`
+3. `t.tests/unit/build/test_fullframe_fixture.py` comprueba las tres cosas: que el `.hex`
    sale de ese fuente, que los dos programas sólo difieren en las `.equ`, y
    que las bases del banco caben en las filas que el modelo tiene —esta última
    leyendo `ROWS` del propio banco, no copiándolo—.
@@ -844,7 +844,7 @@ donde una dirección o un offset de v1 vivía fuera de los `.asm` y del RTL.
 | Dónde | Qué llevaba | Cómo se vio |
 | --- | --- | --- |
 | `video_registers_tb.v` | los diez offsets en v1, entero | «FB_FRONT tras reset: 00000001» — leía CTRL, que arranca en PATTERN |
-| `x.tests/unit/sim/test_sim_peripherals.py` | `STORE R0, R1, 8` como SWAP, y +0x1C como offset «reservado» | límite de instrucciones: nunca pedía el intercambio |
+| `t.tests/unit/sim/test_sim_peripherals.py` | `STORE R0, R1, 8` como SWAP, y +0x1C como offset «reservado» | límite de instrucciones: nunca pedía el intercambio |
 | `2.cpu-sim-func/test_serial_device.py` | ventana de 256 bytes en 0x80000200, y ejecutaba el ejemplo de la 19 | fallo de acceso |
 | `11.gpu-sim-func/test_minigpu_sim.py` | MMIO en 0x80000000 y FB_BACK en +4 | el 0x80000000 «sin dispositivo» ahora es SYSTEM, y la lectura tenía éxito |
 
@@ -885,7 +885,7 @@ pague la deuda, ese test falla y le dice exactamente qué contrato cambia.
 | `run_tests --backend cpusim` | 53 casos, 0 fallos |
 | `run_tests --backend gpusim` | 40 casos, 0 fallos |
 | `run_tests --backend gpusim-cycle` | 40 casos, 0 fallos (15 min) |
-| `unittest` de `x.tests` | 269 tests OK |
+| `unittest` de `t.tests` | 269 tests OK |
 | `unittest` de `1.isa`, `2.cpu-sim-func`, `11.gpu-sim-func` | 61 / 44 / 62 OK |
 | `tools/lint --prototype 21` | 36 diagnósticos (base: 38) |
 | `check-links` + `generate-docs --check` | 610 enlaces OK, docs al día |

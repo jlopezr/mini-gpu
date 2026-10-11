@@ -59,8 +59,8 @@ apilar en la pila de divergencia. Un warp convergente, o con lanes enmascaradas
 que coinciden, funciona como en la CPU.
 
 Las declaraciones del runner están en
-[`backends/fpga_cpu.py`](../x.tests/backends/fpga_cpu.py) y
-[`backends/sim_cpu.py`](../x.tests/backends/sim_cpu.py); los casos usan
+[`backends/fpga_cpu.py`](../t.tests/backends/fpga_cpu.py) y
+[`backends/sim_cpu.py`](../t.tests/backends/sim_cpu.py); los casos usan
 `requires` para indicar las capabilities necesarias y se omiten si faltan.
 La versión de monitor identifica el bitstream y permite comprobarlo contra la
 configuración del backend; no existe aquí una instrucción para consultar capabilities.
@@ -424,9 +424,8 @@ lanes del warp, y solo escriben las lanes activas.
 se renombró porque `GETWID` se leía como «workgroup id», que es otra cosa
 (`WORKGROUP_ID` solo agrupa warps para `BAR`). `GETARG` es nueva.
 
-**Estado:** el ensamblador (`mini_asm.py`), el simulador funcional de `11` y el de
-`32` los implementan. **Faltan** el modelo de ciclos de `25`, el ensamblador de
-`NEW-ASSM` y el RTL.
+**Estado:** el ensamblador (`asm2/mini-asm.py`), el simulador funcional de `11`
+y el de `32` los implementan. **Faltan** el modelo de ciclos de `25` y el RTL.
 
 `HALT` detiene la MiniCPU. En la MiniGPU actual retira las lanes activas con
 la misma semántica que `EXIT`.

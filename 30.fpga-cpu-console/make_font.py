@@ -1,7 +1,7 @@
 """Genera una imagen EBR de 256 glifos 8x16 con la asignacion CP437.
 
 Los dos perfiles dan la misma asignacion de codigos (la de `text_console.v` y
-la de `console_mini.c` de z.tui); solo cambia el dibujo:
+la de `console_mini.c` de v.tui); solo cambia el dibujo:
 
   pc       todo desde Unscii-16 (`unscii-16.hex`, dominio publico).
   cpc464   texto desde CPC464-Mode1.ttf (8x8, cada fila duplicada a 8x16). El

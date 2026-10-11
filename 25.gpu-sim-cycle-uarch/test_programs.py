@@ -35,22 +35,22 @@ class ProgramTests(unittest.TestCase):
         return report
 
     def test_load_store_kernel(self):
-        source = (ROOT / 'x.tests/cases-gpu/demos/load-store/load_store.asm').read_text(encoding='utf-8')
+        source = (ROOT / 't.tests/cases-gpu/demos/load-store/load_store.asm').read_text(encoding='utf-8')
         self.compare(source, 'load_store')
 
     def test_mixed_writeback_kernel(self):
-        source = (ROOT / 'x.tests/cases-gpu/demos/mixed-writeback/mixed_writeback.asm').read_text(encoding='utf-8')
+        source = (ROOT / 't.tests/cases-gpu/demos/mixed-writeback/mixed_writeback.asm').read_text(encoding='utf-8')
         report = self.compare(source, 'mixed_writeback')
         self.assertGreater(report['writeback_collisions'], 0)
 
     def test_plasma_short(self):
-        source = (ROOT / 'x.tests/cases-gpu/demos/plasma/plasma_nommio.asm').read_text(encoding='utf-8')
+        source = (ROOT / 't.tests/cases-gpu/demos/plasma/plasma_nommio.asm').read_text(encoding='utf-8')
         source, count = re.subn(r'MOVI\s+R6,\s*600', 'MOVI R6, 6', source)
         self.assertEqual(count, 1)
         self.compare(source, 'plasma_short')
 
     def test_mandelbrot_small(self):
-        source = (ROOT / 'x.tests/cases-gpu/programs/mandelbrot/mandelbrot.asm').read_text(encoding='utf-8')
+        source = (ROOT / 't.tests/cases-gpu/programs/mandelbrot/mandelbrot.asm').read_text(encoding='utf-8')
         for pattern, replacement in ((r'MOVI\s+R1,\s*320', 'MOVI R1, 16'),
                                      (r'MOVI\s+R2,\s*240', 'MOVI R2, 8'),
                                      (r'MOVHI\s+R3,\s*0x0001', 'MOVHI R3, 0'),
@@ -63,7 +63,7 @@ class ProgramTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('MINIGPU_FULL_PLASMA') == '1',
                          'full plasma frame: set MINIGPU_FULL_PLASMA=1')
     def test_plasma_full(self):
-        source = (ROOT / 'x.tests/cases-gpu/demos/plasma/plasma_nommio.asm').read_text(encoding='utf-8')
+        source = (ROOT / 't.tests/cases-gpu/demos/plasma/plasma_nommio.asm').read_text(encoding='utf-8')
         report = self.compare(source, 'plasma_full')
         self.assertEqual(report['retired'], 151880)
 

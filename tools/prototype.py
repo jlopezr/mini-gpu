@@ -50,7 +50,7 @@ def find_toolchain_binary(name: str) -> Path:
 
 def find_apio_binary(root: Path) -> str:
     """Resuelve el ejecutable de apio, multiplataforma: prueba `.venv` antes
-    de confiar en el PATH, igual que hace x.tests/backends/board.py."""
+    de confiar en el PATH, igual que hace t.tests/backends/board.py."""
     filename = "apio.exe" if os.name == "nt" else "apio"
     candidates = (root / ".venv" / "Scripts" / filename, root / ".venv" / "bin" / filename)
     for candidate in candidates:
@@ -96,7 +96,7 @@ def find_repo_root(start: Path | None = None) -> Path:
         if candidate in seen:
             continue
         seen.add(candidate)
-        marker_files = [candidate / "README.md", candidate / "x.tests", candidate / "tools"]
+        marker_files = [candidate / "README.md", candidate / "t.tests", candidate / "tools"]
         if all(path.exists() for path in marker_files[:2]) and (candidate / "tools").exists():
             return candidate
         if (candidate / "README.md").exists() and (candidate / "tools").exists():

@@ -152,7 +152,7 @@ def patch(prototype_dir: Path, target: str) -> tuple[Path, str]:
 
 
 def upload(bitstream: Path, project: Path) -> None:
-    sys.path.insert(0, str(ROOT / "x.tests"))
+    sys.path.insert(0, str(ROOT / "t.tests"))
     from backends import board  # noqa: E402  (necesita pyserial)
     print(f"--- `fujprog` directo con {bitstream} ---", flush=True)
     completed = subprocess.run([board._find_fujprog(), "-l", "2", str(bitstream)], cwd=project)

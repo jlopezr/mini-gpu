@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lanzador global de run_board.py; prefiere el python de .venv porque necesita
-# pyserial, igual que x.tests/test.
+# pyserial, igual que t.tests/test.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PY="$ROOT/.venv/bin/python3"

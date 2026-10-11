@@ -288,17 +288,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](../x.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](../t.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](../t.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](../t.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](../t.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
@@ -576,7 +576,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu --version hdmi --port COM3
+..\.venv\Scripts\python.exe ..\t.tests\run_tests.py --backend fpga-cpu --version hdmi --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.

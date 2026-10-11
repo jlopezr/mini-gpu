@@ -22,7 +22,7 @@
 //     ./tools/generate-mmio
 //
 // Y hay un test que comprueba que lo generado esta al dia
-// (`x.tests/test_mmio_map.py`), porque un fichero generado se desincroniza en
+// (`t.tests/test_mmio_map.py`), porque un fichero generado se desincroniza en
 // silencio y un test que compara falla a gritos.
 // -------------------------------------------------------------------------
 

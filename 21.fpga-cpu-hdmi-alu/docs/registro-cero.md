@@ -61,7 +61,7 @@ haga falta, se recupera cambiando el alias del ensamblador y reensamblando.
 ## Qué se rompió, y la regla que lo hace reversible
 
 Los programas que usan `R0` como registro general. Eran dos, `20.forth/forth.asm`
-y `../../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`, y están **portados**; el detalle está en el
+y `../../t.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`, y están **portados**; el detalle está en el
 [README de esta carpeta](../README.md#qué-se-rompió-con-r0-a-cero-y-cómo-quedó).
 
 La regla que conviene retener, porque decide qué se puede cambiar antes del
@@ -73,7 +73,7 @@ backport y qué no:
 Un programa que nunca escribe `R0` lee cero en cualquier versión: donde está
 cableado por construcción, y donde no porque el reset deja el banco a cero y
 nadie lo toca. Por eso los dos programas portados siguen corriendo en la 19, y
-por eso los cinco casos de `x.tests` que comparan contra `R0` pasan en
+por eso los cinco casos de `t.tests` que comparan contra `R0` pasan en
 todos los backends.
 
 Lo que **solo** vale aquí es lo contrario: comprobar que una escritura a `R0` se

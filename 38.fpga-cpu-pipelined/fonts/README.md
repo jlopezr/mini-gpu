@@ -1,7 +1,7 @@
 # Fuentes iniciales
 
 Las dos fuentes usan la **asignación CP437** completa (la que espera
-`z.tui/console_mini.c` y decodifica `tools/sim_devices.py`): ASCII en
+`v.tui/console_mini.c` y decodifica `tools/sim_devices.py`): ASCII en
 0x20..0x7E, los glifos gráficos de PC en 0x01..0x1F y 0x7F, y en 0xB0..0xDF
 las sombras, los bloques y las cajas simples, dobles y mixtas. Los códigos 0x00,
 0x20 y 0xFF (NUL, espacio y NBSP) quedan en blanco.
@@ -58,7 +58,7 @@ El script imprime de dónde sale cada glifo (`ttf`, `bdf`, `unscii`, `hand`, `bl
 Para probar una u otra en la placa sin resintetizar, `tools/font-patch`
 (`font-patch -p 30 tamzen --upload`), o en el simulador con
 `cpusim ... --console-image pantalla.png --console-font tamzen`.
-[`previews/`](previews) tiene la demo del TUI de z.tui dibujada con cada una:
+[`previews/`](previews) tiene la demo del TUI de v.tui dibujada con cada una:
 [CPC464](previews/tui-cpc464.png), [PC](previews/tui-pc.png) y
 [Tamzen](previews/tui-tamzen.png).
 

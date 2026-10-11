@@ -221,7 +221,7 @@ def simulator_capabilities(root: Path) -> list[dict]:
     """
     results = []
     for architecture, filename in _SIMULATOR_BACKENDS:
-        path = root / "x.tests" / "backends" / filename
+        path = root / "t.tests" / "backends" / filename
         if not path.exists():
             continue
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), filename=str(path))

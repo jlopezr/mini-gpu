@@ -48,7 +48,7 @@
  * parecidos, y "parecidos" es justo lo que hace que un arreglo se aplique en
  * nueve.
  *
- * Lo comprueba `x.tests/test_monitor_port.py`: si dos copias dejan de ser
+ * Lo comprueba `t.tests/test_monitor_port.py`: si dos copias dejan de ser
  * identicas, falla.
  *
  * TRES JUEGOS DE COMANDOS, y el mayor de la version dice cual: 3 es el juego

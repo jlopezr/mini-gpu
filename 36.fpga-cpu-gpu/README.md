@@ -40,7 +40,7 @@ barreras. Dos cambios respecto a la 29, ambos por area y por correctitud:
 - **El sumador de direcciones es uno por carril.** `d_rf_a + {8{d_immediate}}`
   era un único sumador de 256 bits, y con un desplazamiento negativo el acarreo
   de un carril contaminaba al siguiente. Está arreglado también en la 29; el
-  caso `x.tests/cases-gpu/memory/negative-offset` lo cubre.
+  caso `t.tests/cases-gpu/memory/negative-offset` lo cubre.
 - **Menos lógica de selección.** Comparadores de grupo (`same_group`) calculados
   una vez por pareja, `generation` de 1 bit, detección de reconvergencia por
   warp y elección del siguiente warp con una máscara de elegibilidad rotada:
@@ -149,7 +149,7 @@ deja el bitstream en STALE y obliga a re-barrer
   simulada. La barrera es un test propio de la 36.
 - `sdram_bank_parallel_tb.v`, `sdram_controller_128_tb.v` y
   `memory_fabric_fifo_6_tb.v`: como en la 35.
-- `x.tests/cases-cpu/gpu/launch-run` (capacidad `gpu_core`): la CPU lanza un
+- `t.tests/cases-cpu/gpu/launch-run` (capacidad `gpu_core`): la CPU lanza un
   kernel y comprueba los registros al terminar.
 
 ## Placa

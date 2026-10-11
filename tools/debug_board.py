@@ -25,8 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-if str(ROOT / "x.tests") not in sys.path:
-    sys.path.insert(0, str(ROOT / "x.tests"))
+if str(ROOT / "t.tests") not in sys.path:
+    sys.path.insert(0, str(ROOT / "t.tests"))
 
 from tools.debug_target import (  # noqa: E402
     CAPS_FREE_RUN, CAPS_RESET, CAPS_WRITE_MEMORY,

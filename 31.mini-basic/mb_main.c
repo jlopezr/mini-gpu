@@ -6,7 +6,7 @@
  * The interpreter (28.basic) runs in slices of a few statements between two looks
  * at the keyboard, so the screen stays alive and Esc stops a program.
  */
-#include "../z.tui/tui.h"
+#include "../v.tui/tui.h"
 #include "../28.basic/basic.h"
 
 #define SRC_CAP        8192   /* program text */
@@ -692,7 +692,7 @@ static void build_screen(App *app)
     app->about_window.control.attr = TUI_ATTR(TUI_BLACK, TUI_LIGHTGRAY);
     tui_label_init(&app->about_title, 1, 1, "mini-basic");
     tui_label_init(&app->about_line1, 1, 3, "A QBasic-like BASIC for the MiniCPU.");
-    tui_label_init(&app->about_line2, 1, 4, "Interpreter: 28.basic    TUI: z.tui");
+    tui_label_init(&app->about_line2, 1, 4, "Interpreter: 28.basic    TUI: v.tui");
     tui_label_init(&app->about_line3, 1, 6, "F5 run   Esc stop   F6 switch window");
     tui_button_init(&app->about_ok, 17, 8, 8, "OK", CMD_ABOUT_OK);
     tui_add(&app->about_window.control, &app->about_title.control);

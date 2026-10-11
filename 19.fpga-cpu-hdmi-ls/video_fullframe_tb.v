@@ -53,9 +53,9 @@
  * realidad 60 000 accesos a una fila que no existe--.
  *
  *   python ..\1.isa\mini_asm.py fullframe_tb.asm --hex fullframe.hex \
- *       -I ..\x.tests\inc
+ *       -I ..\t.tests\inc
  *
- * `x.tests/test_fullframe_fixture.py` comprueba que el .hex sale de ahi.
+ * `t.tests/test_fullframe_fixture.py` comprueba que el .hex sale de ahi.
  */
 module video_fullframe_tb;
   localparam integer SRC_W = 320;

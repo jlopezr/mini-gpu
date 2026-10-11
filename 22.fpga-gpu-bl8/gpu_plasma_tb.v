@@ -1,6 +1,6 @@
 `default_nettype none
 `timescale 1ns/1ps
-// Corre x.tests/cases-gpu/demos/plasma/plasma.asm con el scanout encendido, comprueba que el
+// Corre t.tests/cases-gpu/demos/plasma/plasma.asm con el scanout encendido, comprueba que el
 // framebuffer queda bien y mide cuanto cuesta un frame.
 //
 // TEST-LENTO: 463 s, cuatro frames completos de 320x240. Es la mitad del

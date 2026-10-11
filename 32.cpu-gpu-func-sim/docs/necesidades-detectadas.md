@@ -108,9 +108,9 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 
 ### N9. `ANDI`, `ORI` y `XORI` no admitían símbolos `.equ` — resuelto en `1.isa/mini_asm.py`
 
-- Salió al escribir `x.tests/inc/gpu_runtime.inc`: `ANDI R7, R4, GPU_ST_ERROR` daba «entero inválido». `MOVI`, `ADDI`, `LOAD`, `STORE` y los saltos resuelven etiquetas y `.equ` (`resolve_target`), pero el grupo sin signo (`I3_UNSIGNED_OPS`) llamaba a `parse_int` y solo aceptaba literales.
+- Salió al escribir `t.tests/inc/gpu_runtime.inc`: `ANDI R7, R4, GPU_ST_ERROR` daba «entero inválido». `MOVI`, `ADDI`, `LOAD`, `STORE` y los saltos resuelven etiquetas y `.equ` (`resolve_target`), pero el grupo sin signo (`I3_UNSIGNED_OPS`) llamaba a `parse_int` y solo aceptaba literales.
 - Arreglado: ahora usa `resolve_target`, con el mismo rango sin signo de 16 bits (un `.equ` de `0x10000` o negativo sigue siendo error). Test en `test_mini_asm.py`.
-- Queda por decidir si `NEW-ASSM` lo hereda, junto con N4.
+- `asm2` lo hereda, junto con N4; `asm1` queda como referencia legacy.
 
 ### N10. Un warp no puede leer SYSTEM en el RTL de la 29 — discrepancia con mmio.md §15, sin tocar
 

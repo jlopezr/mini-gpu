@@ -69,7 +69,7 @@ module gpu_smoke_tb;
 
     initial begin
         for(i=0;i<256;i=i+1) program_words[i]=32'h0;
-        // Las mismas tres palabras que ensambla x.tests/cases-gpu/demos/smoke/smoke.asm.
+        // Las mismas tres palabras que ensambla t.tests/cases-gpu/demos/smoke/smoke.asm.
         program_words[0]=32'h4020_0007;  // MOVI R1, 7
         program_words[1]=32'hc800_0000;  // BAR
         program_words[2]=32'hfc00_0000;  // HALT

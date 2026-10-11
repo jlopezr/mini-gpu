@@ -7,10 +7,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 if __name__ == "__main__":
-    source = ROOT / "1.isa" / "mini_asm.py"
+    source = ROOT / "1.isa" / "asm2" / "mini-asm.py"
     if not source.exists():
         print(f"error: no existe {source}", file=sys.stderr)
         raise SystemExit(2)
-    sys.path.insert(0, str(ROOT / "1.isa"))
-    os.environ.setdefault("PYTHONPATH", str(ROOT / "1.isa"))
+    sys.path.insert(0, str(source.parent))
+    os.environ.setdefault("PYTHONPATH", str(source.parent))
     runpy.run_path(str(source), run_name="__main__")

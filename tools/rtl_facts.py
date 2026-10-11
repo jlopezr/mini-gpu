@@ -2,7 +2,7 @@
 mano en ningún sitio.
 
 `monitor_version`, `clock_hz` y `capabilities` salen del RTL; `readme_title`
-sale del primer encabezado de su README.md. `x.tests/backends/{fpga_cpu,
+sale del primer encabezado de su README.md. `t.tests/backends/{fpga_cpu,
 fpga_gpu}.py` y `tools/prototype_report.py` llaman a las mismas funciones, así
 que un cambio en el RTL -- añadir una instrucción, subir el reloj -- o en el
 README se refleja solo tocando ese fichero. Lo único que sigue siendo una
@@ -35,7 +35,7 @@ def sin_comentarios(source: str) -> str:
     mirando y a esquivarlo. Los saltos de línea se conservan para que las
     posiciones sigan cuadrando.
 
-    `x.tests/unit/backends/test_monitor_port.py` importa esta misma función en vez de tener su
+    `t.tests/unit/backends/test_monitor_port.py` importa esta misma función en vez de tener su
     copia, porque tuvo exactamente este fallo el mismo día y en su propio
     parser. Dos copias de un analizador son dos sitios donde arreglarlo, y sólo
     uno falla ruidosamente.

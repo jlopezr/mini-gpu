@@ -15,6 +15,28 @@ Todo lo de aquí abajo funciona igual si lo lanzas desde la raíz del repo, desd
 repositorio solo (por `MINI_GPU_ROOT`, por su propia ruta, o buscando
 `tools/` + `README.md`).
 
+## Validar VOBJ con vlink
+
+`vlink` vive como submódulo opcional en `w.vlink`. Para inicializarlo
+y compilarlo:
+
+```bash
+git submodule update --init w.vlink
+build-vlink
+```
+
+`check-vobj` genera un smoke test MiniISA, lo ensambla a `.vobj`, lo enlaza con
+`vlink` a rawbin y compara el resultado con el `.bin` directo de `mini-asm`:
+
+```bash
+check-vobj
+check-vobj programa.asm
+check-vobj programa.vobj
+```
+
+Si `vlink` no está en `PATH` ni compilado en `w.vlink`, el comando
+sale con código 77 y lo reporta como skip. También acepta `--vlink /ruta/a/vlink`.
+
 ## Comprobar la trazabilidad documental
 
 `trace check` construye un Project Model conforme al metamodelo v0.3. Un fichero
@@ -308,11 +330,11 @@ Lanzadores finos: ejecutan el script real de la carpeta correspondiente, no
 una reimplementación.
 
 ```bash
-> mini-asm ../x.tests/cases-gpu/demos/vector/vector.asm           # -> 1.isa/mini_asm.py
-> sim-cpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
-> sim-gpu ../x.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
-> sim-gpu-cycle ../x.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
-> sim-sys ../x.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
+> mini-asm ../t.tests/cases-gpu/demos/vector/vector.asm           # -> 1.isa/asm2/mini-asm.py
+> sim-cpu ../t.tests/cases-gpu/demos/vector/vector.asm             # -> 2.cpu-sim-func/minicpu_sim.py
+> sim-gpu ../t.tests/cases-gpu/demos/vector/vector.asm             # -> 11.gpu-sim-func/minigpu_sim.py
+> sim-gpu-cycle ../t.tests/cases-gpu/demos/vector/vector.asm       # -> 25.gpu-sim-cycle-uarch/minigpu_cycle.py
+> sim-sys ../t.tests/cases-cpu-gpu/launch/launch.asm              # -> 32.cpu-gpu-func-sim/cpu_gpu_sim.py
 ```
 
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
@@ -335,7 +357,7 @@ bloques `Secciones:` y `Simbolos:` de ese listado (los calcula el ensamblador)
 y da el tamaño de cada función y de cada dato, con el reparto por sección:
 
 ```text
-> mini-asm z.tui/_build/tui_mini.s --listing tui_mini.lst -o tui_mini.bin
+> mini-asm v.tui/_build/tui_mini.s --listing tui_mini.lst -o tui_mini.bin
 > asm-sizes tui_mini.lst --top 15 --datos
 ```
 
@@ -343,26 +365,26 @@ Solo necesita el `.lst`. Si es de un `mini-asm` anterior a esos bloques, lo
 dice y hay que regenerarlo. La imagen del listado coincide con el `.bin`.
 
 Los tres simuladores aceptan **`.asm`, `.bin` o `.hex`**, y ensamblan solos si
-hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py`, una
-sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
+hace falta. La carga es `load_program_bytes()` de `1.isa/mini_asm.py` (fachada
+de compatibilidad hacia `asm2`), una sola para los tres: antes cada simulador hacía lo suyo, y estos ejemplos con
 `.asm` solo funcionaban en `sim-gpu-cycle` — los otros dos leían el fichero como
 binario y morían con «el programa debe contener instrucciones completas», que
 es el síntoma (el texto fuente no mide un múltiplo de 4) y no la causa.
 
-Ojo con los casos de `x.tests`: muchos traen un `warps.json` que hay que pasar
+Ojo con los casos de `t.tests`: muchos traen un `warps.json` que hay que pasar
 con `--config`, o el simulador lanza los 8 warps por defecto en vez de los que
 el caso espera.
 
 ```bash
-$ sim-gpu x.tests/cases-gpu/memory/memory-copy/program.asm \
-         --config x.tests/cases-gpu/memory/memory-copy/warps.json --trace
+$ sim-gpu t.tests/cases-gpu/memory/memory-copy/program.asm \
+         --config t.tests/cases-gpu/memory/memory-copy/warps.json --trace
 ```
 
 El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--trace ciclos.jsonl`, `--report perfil.json`, latencias parametrizables y
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
 Los casos existentes también se ejecutan con
-`python x.tests/run_tests.py --backend sim-gpu --version cycle x.tests/cases-gpu`.
+`python t.tests/run_tests.py --backend sim-gpu --version cycle t.tests/cases-gpu`.
 
 ### Periféricos comunes de los tres simuladores
 
@@ -439,7 +461,7 @@ que la ventana del simulador. **F12** sale, y al salir manda las liberaciones de
 lo que siguiera pulsado y la presencia a cero. La lógica —qué palabras salen, el
 control de flujo con los huecos libres de la FIFO, que el movimiento se funda
 mientras no hay sitio— está en `tools/input_adapter.py` y se prueba sin placa
-(`x.tests/unit/input/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
+(`t.tests/unit/input/test_input_adapter.py`). Cada ida y vuelta cuesta ~16 ms por el latency
 timer del FTDI, así que se manda un comando por vuelta con todo lo que cabe.
 
 **El puntero se resincroniza al conectar.** El ratón de INPUT es relativo y el
@@ -499,12 +521,12 @@ más baja a la más alta:
   aplicación (justo tras `board-load`) se espera con un `wait`, no con un `+300` y un
   sueño. `--settle-ms` (150 por defecto) es el tiempo que se deja a la aplicación
   para repintar; `--keep-pointer` desactiva la resincronización del puntero.
-  Ejemplo: `z.tui/test/board_controls.txt`.
+  Ejemplo: `v.tui/test/board_controls.txt`.
 
 Qué usar: para la lógica (teclado español, repintado, controles) el simulador con
 `--input-script`, que es determinista y no necesita placa; para comprobar la placa
 de verdad (latencia, FIFO, repintado real), estos. Se prueban sin placa en
-`x.tests/unit/input/test_board_input.py` y `x.tests/unit/input/test_board_script.py`, con una FPGA y una
+`t.tests/unit/input/test_board_input.py` y `t.tests/unit/input/test_board_script.py`, con una FPGA y una
 aplicación simuladas.
 
 #### Guiones de entrada (`--input-script`)
@@ -535,7 +557,7 @@ que el programa los lea los pierde igual que la FPGA.
 
 `SYS_ID` siempre está disponible, también mediante LOAD en la 25. Vídeo y serie
 son opcionales en la API (`video=VideoDevice()`, `serial=SerialDevice()`). El
-runner `x.tests` conecta serie en los tres modelos y vídeo cuando lo pide el
+runner `t.tests` conecta serie en los tres modelos y vídeo cuando lo pide el
 caso; los tres declaran `video`, `frame_capture` y `serial`.
 
 El contrato funcional de vídeo incluye `SWAP_COUNT`, `HALT_AT` y `VIDEO_CTRL`.
@@ -676,11 +698,11 @@ depurador no las prepara desde fuera. Hay que habilitar el dispositivo con
 y `sim-cpu` muestran un aviso antes de ejecutarlo:
 
 ```bash
-> mini-dbg x.tests/cases-cpu/video/fire/fire.asm --video -x "run 400000"
+> mini-dbg t.tests/cases-cpu/video/fire/fire.asm --video -x "run 400000"
 ```
 
 Direcciones y valores aceptan etiquetas del programa, `0x...`, decimal y `pc`.
-Los `.include` se buscan en `x.tests/inc` siempre —es donde vive `mmio.inc`—
+Los `.include` se buscan en `t.tests/inc` siempre —es donde vive `mmio.inc`—
 más lo que se añada con `-I`.
 Para tuberías, `ssh` o una máquina sin `textual`, `--no-tui` da el mismo
 depurador en modo línea. Se puede arrancar con trabajo hecho:
@@ -706,12 +728,12 @@ paneles lo que el núcleo devuelve. En medio, `tools/debug_target.py` define qu�
 necesita el depurador de la máquina que depura, con una implementación para el
 simulador y otra (`tools/debug_board.py`) para el monitor. CPU y GPU juntas son
 un tercer objetivo, `tools/debug_system.py` (siguiente apartado).
-Suite: `python -m unittest discover -s x.tests/unit/debugger -t x.tests -p "test_debugger*.py"`.
+Suite: `python -m unittest discover -s t.tests/unit/debugger -t t.tests -p "test_debugger*.py"`.
 
 ### Depurar CPU + GPU (`mini-dbg --gpu`)
 
 ```bash
-> mini-dbg --gpu x.tests/cases-cpu-gpu/launch/launch.asm
+> mini-dbg --gpu t.tests/cases-cpu-gpu/launch/launch.asm
 > mini-dbg --gpu programa.asm --num-warps 4 --warp-size 8 --cpu-steps 2 --gpu-steps 1
 ```
 
@@ -832,7 +854,7 @@ normal que se enseña en la consola; no para ningún núcleo.
 
 ## Ejecutar la suite de tests
 
-`x.tests` (backends de placa/simulador, casos, runner) tiene su propio
+`t.tests` (backends de placa/simulador, casos, runner) tiene su propio
 `./test` local; `run-tests` es el mismo script accesible desde cualquier sitio:
 
 ```bash
@@ -851,7 +873,7 @@ $ run-tests -- --backend fpga-cpu               # passthrough directo a run_test
 
 `test-timings` ejecuta y ordena de mayor a menor todos los tests unitarios
 Python del repositorio (por método y con subtotal por carpeta), los bancos RTL de un prototipo (por banco) y los casos de
-`x.tests` para `sim-cpu`, `sim-gpu` y `sim-gpu-cycle`. Escribe por defecto
+`t.tests` para `sim-cpu`, `sim-gpu` y `sim-gpu-cycle`. Escribe por defecto
 `reports/test-timings.md`. Usa `--jobs 1` por defecto para que el total y los
 tiempos individuales no se solapen:
 
@@ -884,26 +906,26 @@ medir por separado. El runner general ofrece también `--exclude-case RUTA`
 
 No incluye síntesis, lint ni checks de documentación: son validaciones, pero no
 tests de ejecución comparables. Tampoco incluye la suite propia opcional de
-`y.lcc` ni `13.hdmi/check_timing.ps1`; ambas son proyectos/pruebas independientes
+`u.lcc` ni `13.hdmi/check_timing.ps1`; ambas son proyectos/pruebas independientes
 y requieren dependencias o entornos distintos.
 
 ## Compilador C experimental (`mini-lcc`)
 
 El fork de lcc con backend MiniISA se integra como submodulo en
-`y.lcc`, no dentro de `tools/`: `tools/` conserva solo los lanzadores y la
+`u.lcc`, no dentro de `tools/`: `tools/` conserva solo los lanzadores y la
 infraestructura propia del repo. Para inicializarlo:
 
 ```bash
-$ git submodule update --init --recursive y.lcc
+$ git submodule update --init --recursive u.lcc
 ```
 
 La validacion propia del compilador se puede lanzar directamente:
 
 ```bash
-$ mkdir -p y.lcc/build
-$ python3 y.lcc/run-mini-tst.py --simulate
-$ python3 y.lcc/run-mini-tst.py --simulate --optimize
-$ python3 y.lcc/run-mini-tst.py --simulate --compare-optimizer
+$ mkdir -p u.lcc/build
+$ python3 u.lcc/run-mini-tst.py --simulate
+$ python3 u.lcc/run-mini-tst.py --simulate --optimize
+$ python3 u.lcc/run-mini-tst.py --simulate --compare-optimizer
 ```
 
 `--optimize` conserva el `.s` original, genera además un `.opt.s` con
@@ -928,7 +950,7 @@ $ mini-lcc programa.c -o programa.s
 Por ahora esta validacion comprueba compilacion y simulacion dentro de
 `mini-lcc`. El siguiente paso sera usarlo para producir `.asm`, `.bin` o
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
-las suites de `x.tests`.
+las suites de `t.tests`.
 
 ## Un programa entero en C: `build-c`
 
@@ -943,9 +965,9 @@ $ build-c programa.c --load 37 --no-run      # a la 37, sin arrancarlo
 $ build-c programa.c --outdir out -I inc --data tex=tex.bin
 ```
 
-Compila el programa y `x.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
+Compila el programa y `t.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
 y ensambla un `.asm` generado con el arranque (`1.isa/runtime/crt0.s`), los dos `.s` y el runtime
-(`x.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `x.tests/inc` entran siempre en
+(`t.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en
 el `-I`.
 
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
@@ -953,12 +975,12 @@ el `-I`.
 - **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
   `extern unsigned etiqueta[]`. `build-c` no ejecuta generadores: los datos los prepara quien llama.
 - **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
-  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `x.tests/inc`.
+  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `t.tests/inc`.
 - La lógica es `tools/build_c.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
 
 El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
 así `gpu_runtime.inc` y `bench.inc` sirven al simulador y a la placa con un solo fichero.
-Ejemplos en `x.tests/cases-cpu-gpu/programas-en-c.md`; los números, en `32.cpu-gpu-func-sim/compare/README.md`.
+Ejemplos en `t.tests/cases-cpu-gpu/programas-en-c.md`; los números, en `32.cpu-gpu-func-sim/compare/README.md`.
 
 ## Compilar C para la CPU y la GPU: `mini-lcc --no-crt`, `crt0` y `mini-opt`
 
@@ -996,13 +1018,13 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `passes/__init__.py`.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
-  `x.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  `t.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
   carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
   si el kernel usa una instrucción que la GPU del prototipo no ejecuta o pide más de 4
   parámetros. `__gpu_nthreads` (nwarps × nlanes del lanzamiento) es un intrínseco compuesto.
-  Ejemplo completo en `x.tests/cases-cpu-gpu/`.
+  Ejemplo completo en `t.tests/cases-cpu-gpu/`.
 
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
@@ -1145,8 +1167,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   (`mini-opt k.s --stats`); `32.cpu-gpu-func-sim/compare/opt_stats.py` lo junta con las
   instrucciones ejecutadas en el simulador, con y sin los pases.
 
-Pruebas: `x.tests/unit/compiler/test_mini_opt.py` y `x.tests/unit/compiler/test_crt0.py` (la parte que pasa por `rcc`
-necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `z.tui`
+Pruebas: `t.tests/unit/compiler/test_mini_opt.py` y `t.tests/unit/compiler/test_crt0.py` (la parte que pasa por `rcc`
+necesita MSVC y se omite sin él). `TuiDemoTest`, en `test_mini_opt.py`, compila la demo de `v.tui`
 con y sin los pases y exige la misma pantalla, menos instrucciones ejecutadas (−16,0 % medido) y un
 binario menor (−5,6 %).
 
@@ -1311,7 +1333,7 @@ la vez. Cada grupo es **una** invocación de `apio test` sobre su **propia copia
 de la carpeta del prototipo, y no sobre la real: apio/scons guardan estado en el
 proyecto y dos `apio test` sobre la misma carpeta se pisarían. Las copias son
 hermanas de la carpeta (`_tmp_test_<k>_<prototipo>`, para que rutas como
-`..\x.tests\inc` sigan valiendo), no llevan `reports/` ni `_build/`, y se borran
+`..\t.tests\inc` sigan valiendo), no llevan `reports/` ni `_build/`, y se borran
 al terminar, también si algo falla.
 
 - El reparto es por turnos, sin más. Sirve cuando un banco pesa más que todos los
@@ -1346,7 +1368,7 @@ regresión RTL, aunque el prototipo los tenga.
 simulador funcional, programa a programa. Lo que lee está en `<prototipo>/fixtures/` (`NN.program.hex`,
 `NN.regs.hex`, `NN.memory.hex`, `NN.config.hex`, `NN.counts.hex`, `NN.state.hex`, `manifest.json` y
 `count.vh`). **No se versiona**: lo genera un único script para los cinco prototipos de GPU (12, 14, 17,
-22 y 29), a partir de los casos de `x.tests/cases-gpu`.
+22 y 29), a partir de los casos de `t.tests/cases-gpu`.
 
 ```bash
 python tools/make_rtl_fixtures.py --prototype 22        # escribe 22.fpga-gpu-bl8/fixtures/
@@ -1358,7 +1380,7 @@ lo usa; si no, su `make_fixtures.py` propio, si lo tiene), así que a mano solo 
 suelto: `apio test -p 22.fpga-gpu-bl8 gpu_system_tb.v` necesita las fixtures ya generadas.
 
 Qué casos entran y por qué lo decide el propio caso, en su `test.json`
-(ver [x.tests/README.md](../x.tests/README.md#casos-para-el-diferencial-de-rtl)). Un caso entra en un
+(ver [t.tests/README.md](../t.tests/README.md#casos-para-el-diferencial-de-rtl)). Un caso entra en un
 prototipo solo si todo su `requires` está entre las capacidades que `rtl_facts` lee de su RTL; los
 casos van por ruta ordenada, así que el `NN` de un caso puede ser distinto en cada prototipo.
 
@@ -1380,13 +1402,13 @@ $ fixtures-report --prototype 22     # una sola columna
 La matriz lleva el `NN` de cada caso o `-` si el prototipo lo omite, con el motivo debajo. Después
 comprueba tres cosas y sale con 1 si alguna falla:
 
-1. un banco pide `generated/programs/X.hex` y no hay `X.asm` en `x.tests` (el banco no tendría programa);
+1. un banco pide `generated/programs/X.hex` y no hay `X.asm` en `t.tests` (el banco no tendría programa);
 2. un caso marcado `rtl.differential` que ningún prototipo usa (marca que no hace nada);
 3. un programa que un banco pide por nombre y que ni un caso (que lo ejecute) ni un README de su
    carpeta documentan: corre en la regresión sin que nadie diga qué prueba.
 
 Los bancos que piden su programa por nombre (`gpu_smoke_tb`, `gpu_plasma_tb`, `gpu_bench_tb`...) no
-usan `fixtures/`: los resuelve `stage_programs.py` desde `x.tests`, y `fixtures-report` solo los vigila.
+usan `fixtures/`: los resuelve `stage_programs.py` desde `t.tests`, y `fixtures-report` solo los vigila.
 
 ## Barrido de semillas de placement (`build-sweep`)
 
@@ -1661,7 +1683,7 @@ $ prototype-report --prototype 21 --json | jq .capabilities
 ```
 
 El nombre corto de versión (`alu`, `ebr`, `sdram`...) es lo único que sigue
-viniendo de `x.tests/backends/{fpga_cpu,fpga_gpu}.py` — es una etiqueta elegida a
+viniendo de `t.tests/backends/{fpga_cpu,fpga_gpu}.py` — es una etiqueta elegida a
 mano, no algo verificable en el RTL. Si un prototipo no está registrado ahí
 (como le pasaba a `17.fpga-gpu-ram-v2`), cae al nombre de la carpeta en vez
 de dejar todo en blanco.
@@ -1670,9 +1692,9 @@ de dejar todo en blanco.
 
 ```bash
 $ generate-mmio
-escrito: x.tests/inc/mmio.inc
+escrito: t.tests/inc/mmio.inc
 escrito: tools/mmio_map.py
-escrito: x.tests/inc/mmio_map.h
+escrito: t.tests/inc/mmio_map.h
 
 $ generate-mmio --check     # no escribe; exit code 1 si algo cambiaría (para CI)
 ```
@@ -1683,7 +1705,7 @@ una sola expresión. De ahí salen el include del ensamblador y el módulo Pytho
 que usan el monitor y los simuladores. **No edites lo generado**: toca el `.vh`
 y vuelve a ejecutar esto.
 
-El include se usa así, y `x.tests/inc` ya va en el `-I` tanto de
+El include se usa así, y `t.tests/inc` ya va en el `-I` tanto de
 `run_tests.py` como de `tools/run_board.py`, así que no hay que pasar nada:
 
 ```asm
@@ -1700,7 +1722,7 @@ que llamarse igual que su `_BASE`** — `MMIO_GPU_WARPS_PC_OFF` cuelga de
 El generador comprueba que no haya dos registros en la misma dirección y falla
 si los hay, que es como se caza ese error.
 
-`x.tests/unit/tools/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
+`t.tests/unit/tools/test_mmio_map.py` comprueba tres cosas distintas: que lo generado está
 al día, que las direcciones son las que dice el contrato (con los números
 escritos a mano, para que un `.vh` mal editado no pase), y que el generador
 rechaza lo que no debe aceptar.
@@ -1764,7 +1786,7 @@ específica por generador.
 
 Las matrices llevan una columna por simulador además de las de bitstream. Las
 capacidades del RTL se detectan leyendo los `.v`; las de los simuladores se leen
-del `VERSIONS` de `x.tests/backends/{sim_cpu,sim_gpu}.py`, que es donde
+del `VERSIONS` de `t.tests/backends/{sim_cpu,sim_gpu}.py`, que es donde
 están declaradas y lo que usa `incompatibility()` para decidir qué casos corren.
 Fmax y LUT/FF salen del `summary.json` archivado en `reports/` y, si esa carpeta
 no tiene ninguno, del `_build/*/hardware.pnr` local.
@@ -1804,7 +1826,7 @@ que elemento de la cadena desaparecio primero.
 ## Ejecutar un programa en una placa real (`run-board`)
 
 Resuelve el prototipo, comprueba (y si hace falta sube) el bitstream
-correcto, carga el programa y lo ejecuta. Reutiliza `x.tests/backends/board.py`
+correcto, carga el programa y lo ejecuta. Reutiliza `t.tests/backends/board.py`
 para todo lo que habla con la placa — no es un segundo sistema de
 programación FPGA, es la composición de esas piezas con resolución de
 prototipos:
@@ -1857,11 +1879,11 @@ marca cuál es la placa:
 Available ports: COM3 (FTDI), COM1, COM6, COM8
 ```
 
-`x.tests/backends/board.py` mantiene su propia copia a propósito: `x.tests`
+`t.tests/backends/board.py` mantiene su propia copia a propósito: `t.tests`
 no depende de `tools/` (la dependencia va en el otro sentido) y `board.py`
 recibe el `monitor.py` del prototipo como módulo, así que importar desde el
 monitor haría un ciclo. Son dos copias en vez de trece, y
-`x.tests/unit/backends/test_monitor_port.py` comprueba que no divergen.
+`t.tests/unit/backends/test_monitor_port.py` comprueba que no divergen.
 
 ### Las tres operaciones por separado
 
@@ -1931,8 +1953,8 @@ bitstream, byte a byte, que una síntesis completa (comprobado en la 30).
 
 ### Suite de casos contra placa real (`test-board`)
 
-`x.tests/run_tests.py` necesita `--backend fpga-cpu`/`fpga-gpu` y `--version`
-(el nombre corto de `x.tests/backends/{fpga_cpu,fpga_gpu}.py`), que hay que saber
+`t.tests/run_tests.py` necesita `--backend fpga-cpu`/`fpga-gpu` y `--version`
+(el nombre corto de `t.tests/backends/{fpga_cpu,fpga_gpu}.py`), que hay que saber
 a mano. `test-board` los infiere del mismo sitio que `board-info`/`run-board`
 (el RTL, vía `_capabilities()`), detecta el puerto igual que el resto de
 comandos de placa, y reenvía todo lo demás (`TEST_JSON`, `--trace`, `-y`,
@@ -1950,7 +1972,7 @@ PASS zero-register [fpga-cpu]
 
 Si el prototipo no tiene identidad inferible (sin `cpu.v`/`gpu_sm.v`/
 `gpu_system.v` + `monitor.v` con versión), falla con un mensaje claro en vez
-de adivinar — en ese caso usa `x.tests/run_tests.py` directamente con
+de adivinar — en ese caso usa `t.tests/run_tests.py` directamente con
 `--backend`/`--version` a mano.
 
 **La 36 y la 37 son CPU y GPU.** `test-board -p 37 -y` lanza `run_tests.py` dos
@@ -2049,7 +2071,7 @@ sale `corto`: el arranque pesa más que el ritmo). Los prototipos sin contadores
 (6, 10, 12 y 14) no entran en el CPI común, y la evolución compara cada medida con
 la anterior solo sobre los casos que ambas tienen. Los casos de vídeo de GPU (`demo-plasma`)
 corren en placa en la 22 y la 29: paran tras N intercambios sondeando
-`SWAP_COUNT`, igual que los de CPU (`x.tests/backends/frame_capture.py`).
+`SWAP_COUNT`, igual que los de CPU (`t.tests/backends/frame_capture.py`).
 
 ## Herramientas de vídeo/HDMI
 

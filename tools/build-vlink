@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Compila el submodulo w.vlink y deja el binario en su carpeta.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VLINK_DIR="$ROOT/w.vlink"
+
+if [[ ! -f "$VLINK_DIR/Makefile" ]]; then
+  echo "error: no existe $VLINK_DIR/Makefile" >&2
+  echo "Inicializa el submodulo con:" >&2
+  echo "  git submodule update --init w.vlink" >&2
+  exit 2
+fi
+
+mkdir -p "$VLINK_DIR/objects"
+exec make -C "$VLINK_DIR" "$@"

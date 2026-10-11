@@ -93,7 +93,7 @@ def run_rtl_parallel(apio: str, prototype_dir: Path, benches: list[Path], jobs: 
     """`apio test` sobre `jobs` grupos de bancos a la vez. Devuelve los fallos.
 
     Cada grupo corre en su propia copia (hermana de la carpeta, para que las
-    rutas relativas `..\\x.tests\\...` sigan valiendo): apio/scons guardan estado
+    rutas relativas `..\\t.tests\\...` sigan valiendo): apio/scons guardan estado
     en el proyecto, y dos `apio test` sobre la misma carpeta se pisarian. Es UNA
     invocacion de apio por grupo, no una por banco, para no pagar el arranque de
     scons en cada uno.
@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     ran_something = False
     failures: list[str] = []
 
-    # Los bancos leen `generated/programs/<x>.hex`; el fuente vive en x.tests. Sin esto, un
+    # Los bancos leen `generated/programs/<x>.hex`; el fuente vive en t.tests. Sin esto, un
     # clon limpio no tiene con que correr `gpu_plasma_tb` y compania.
     if not args.lint_only and stage_programs.stage(prototype_dir) != 0:
         failures.append("programas")

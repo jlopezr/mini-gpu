@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for extra in (ROOT, ROOT / "x.tests"):
+for extra in (ROOT, ROOT / "t.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
@@ -41,7 +41,7 @@ SUMMARY = re.compile(r"(\d+) caso\(s\), (\d+) fallo\(s\), (\d+) omitido")
 
 def run_prototype(family: str, number: int, assume_yes: bool, extra: list[str]):
     """`(resultados, resumen, salida)`; `resultados[caso] = (estado, detalle)`."""
-    command = [sys.executable, str(ROOT / "x.tests" / "run_tests.py"),
+    command = [sys.executable, str(ROOT / "t.tests" / "run_tests.py"),
                "--backend", board_backend(family, number), "-p", str(number)]
     if assume_yes:
         command.append("-y")

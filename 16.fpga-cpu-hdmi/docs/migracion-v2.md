@@ -289,7 +289,7 @@ vuelve a decir 3.6 y **sólo falla el test nuevo**, que es el que cubre el
 segundo caso. Las dos mitades hacen falta y ninguna sustituye a la otra.
 
 Y lo que evita la cuarta copia: `sin_comentarios` vive ahora **una sola vez**,
-en `tools/rtl_facts.py`, y `x.tests/unit/backends/test_monitor_port.py` la importa en vez de
+en `tools/rtl_facts.py`, y `t.tests/unit/backends/test_monitor_port.py` la importa en vez de
 tener la suya, que es lo que `AGENTS.md` lleva pidiendo desde el principio.
 
 > Tres analizadores con el mismo fallo en el mismo día, y **el que importaba era
@@ -472,7 +472,7 @@ casi veinte por debajo del número real.
 |---|---|---|
 | `tools/test --prototype 16` | SUCCESS, 12 bancos | **SUCCESS**, 12 bancos |
 | `tools/lint --prototype 16` | 35 PIN / 29 WIDTH / 1 CASE / 1 MISINDENT | **idéntico por tipo** |
-| `unittest` de `x.tests` | 284 OK | **284 OK** |
+| `unittest` de `t.tests` | 284 OK | **284 OK** |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 | `unittest` de `1.isa` / `2` / `11` | 61 / 44 / 62 | 61 / 44 / 62 OK |
 | `generate-mmio --check` | al día | al día |

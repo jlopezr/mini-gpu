@@ -7,7 +7,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-LCC = ROOT / "y.lcc"
+LCC = ROOT / "u.lcc"
 RCC = LCC / "build" / "rcc.exe"
 ASM = ROOT / "1.isa" / "mini_asm.py"
 SIM = ROOT / "2.cpu-sim-func" / "minicpu_sim.py"

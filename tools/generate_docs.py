@@ -30,7 +30,7 @@ MARKDOWN_FENCE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})", re.MULTILINE)
 def _capabilities_table(reports: list[dict]) -> str:
     rows = [r for r in reports if r["capabilities"]]
     if not rows:
-        return "_Ningún prototipo tiene capacidades declaradas en `x.tests/backends/`._"
+        return "_Ningún prototipo tiene capacidades declaradas en `t.tests/backends/`._"
     lines = [
         "| Prototype | Version | Monitor | Clock | Capabilities |",
         "|---|---|---|---|---|",

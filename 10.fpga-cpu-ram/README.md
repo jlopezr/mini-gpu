@@ -32,7 +32,7 @@
 >
 > Lo que si se hizo fue **quitar los tres `localparam`**: el `cpu.v` los
 > declaraba y validaba su encoding sin implementarlos, o sea que aparentaba
-> soportarlos. `x.tests` lo declara ahora como la capacidad `mul_div`, que
+> soportarlos. `t.tests` lo declara ahora como la capacidad `mul_div`, que
 > esta es la unica version en no tener, y `cases-cpu/alu/multiply` se omite aqui con
 > un SKIP en vez de fallar.
 
@@ -42,7 +42,7 @@ Este proyecto integra la MiniCPU de `6.fpga-cpu` con el controlador SDRAM de
 [`pll_100.v`](pll_100.v)—. El monitor UART conserva los comandos de ejecución y
 depuración de la carpeta 6, responde como versión **1.5** y trabaja a **1
 Mbaud**. Esa versión
-permite que `x.tests --version sdram` distinga este bitstream SDRAM del
+permite que `t.tests --version sdram` distinga este bitstream SDRAM del
 bitstream EBR 1.4.
 
 ## Mapa de memoria

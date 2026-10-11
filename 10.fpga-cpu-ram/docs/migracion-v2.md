@@ -155,7 +155,7 @@ semillas cumplen.
 |---|---|---|
 | `tools/test --prototype 10` | SUCCESS, 7 bancos | **SUCCESS**, 7 bancos |
 | `tools/lint --prototype 10` | 20 `PINMISSING`, 21 `WIDTHEXPAND` | **igual, por tipo** |
-| `unittest` de `x.tests` | 284 OK | **284 OK** |
+| `unittest` de `t.tests` | 284 OK | **284 OK** |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 | `unittest` de `1.isa` / `2` / `11` | 61 / 44 / 62 | 61 / 44 / 62 OK |
 | `generate-mmio --check` | al día | al día |

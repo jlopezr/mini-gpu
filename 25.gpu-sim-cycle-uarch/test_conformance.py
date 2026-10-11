@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'x.tests'))
+sys.path.insert(0, str(ROOT / 't.tests'))
 from backends.sim_gpu import SimGpuBackend, incompatibility
 from run_tests import backend_arguments, load_case, compare_result
 
@@ -32,7 +32,7 @@ class ConformanceTests(unittest.TestCase):
             trace_limit=None,
             trace_file=None,
         )
-        for path in sorted((ROOT / 'x.tests/cases-gpu').rglob('test.json')):
+        for path in sorted((ROOT / 't.tests/cases-gpu').rglob('test.json')):
             if ('programs' in path.parts) != programs: continue
             with self.subTest(case=str(path.relative_to(ROOT))):
                 case = load_case(path)

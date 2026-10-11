@@ -1,9 +1,9 @@
 # Auditoría de optimización de LCC / MiniISA
 
 Fecha de la auditoría: 9 de octubre de 2026. Línea base del superproyecto:
-`192dca5`; submódulo `y.lcc`: `895f564`.
+`192dca5`; submódulo `u.lcc`: `895f564`.
 
-Última actualización: 9 de octubre de 2026, con `y.lcc` en `d7d2523` y el
+Última actualización: 9 de octubre de 2026, con `u.lcc` en `d7d2523` y el
 superproyecto a partir de `59908b5`. Los datos de la sección 11 siguen siendo los de la
 línea base; el estado y las cifras actuales están en las secciones 12 a 14.
 
@@ -35,7 +35,7 @@ Hallazgos prioritarios:
    con análisis de CFG y obtuvo −11,4 % estático y −7,7 % dinámico en el corpus
    de esta auditoría. **Estado:** hecho; con todos los pases actuales, −15,6 %
    estático en los 166 casos de mini-tst y −16,0 % de instrucciones ejecutadas
-   en la demo de `z.tui` (sección 13).
+   en la demo de `v.tui` (sección 13).
 3. **Mejorar valores vivos a través de llamadas.** El asignador solo puede
    conservarlos en variables REGISTER preasignadas R16–R29; los demás
    temporales R7–R15 se vuelcan al llegar a una llamada. El caso `mix` guarda
@@ -72,7 +72,7 @@ corregir dentro del backend/LCC la promoción, los spills y los frames.
 - El original tenía cambios locales, incluidos cambios no confirmados en
   `tools/mini_opt`; quedaron fuera de esta auditoría.
 
-El superproyecto fija `y.lcc` a `895f564ea47552c8b5df1a778eb9394f8f0232ab`,
+El superproyecto fija `u.lcc` a `895f564ea47552c8b5df1a778eb9394f8f0232ab`,
 pero `origin` del submódulo no contiene ese objeto (`upload-pack: not our ref`).
 El objeto solo estaba en la copia local limpia, un commit por delante de
 `origin/main` (`f55d490`). Se importó desde esa copia local al clon aislado y se
@@ -92,7 +92,7 @@ Se ejecutó la suite completa con simulación funcional:
 ```
 
 Los dos `xfail` son los inicializadores designados C99 (`97` y `98`). También se
-ejecutaron las 56 pruebas de `x.tests/unit/compiler/test_mini_opt.py`: todas correctas. Pytest
+ejecutaron las 56 pruebas de `t.tests/unit/compiler/test_mini_opt.py`: todas correctas. Pytest
 no estaba instalado en el entorno; la suite se ejecutó directamente con
 `unittest`.
 
@@ -100,7 +100,7 @@ no estaba instalado en el entorno; la suite se ejecutó directamente con
 
 ### Versión y modificaciones locales
 
-`y.lcc/README` identifica la distribución como **LCC 4.2**. El backend MiniISA
+`u.lcc/README` identifica la distribución como **LCC 4.2**. El backend MiniISA
 se introdujo en `67db371` sobre el padre `2b5cf35`. Comparado con ese padre, el
 fork modifica solo diez fuentes preexistentes del frontend/núcleo
 (`bind.c`, `c.h`, `dag.c`, `enode.c`, `lex.c`, `simp.c`, `stmt.c`, `sym.c`,
@@ -413,9 +413,9 @@ opacas por esto, no hay cifra de ganancia.
 **Medido el 9 de octubre de 2026 y descartado por ahora.** En mini-tst, 34 de
 640 funciones son opacas (10 son los propios helpers, 24 de usuario), en 11 de
 166 ficheros: 760 de 22.930 instrucciones (3,3 %). En los ejemplos de
-`x.tests/cases-cpu-gpu` (cubo, rotación, `plane`, `diverge`, `memset`,
+`t.tests/cases-cpu-gpu` (cubo, rotación, `plane`, `diverge`, `memset`,
 kernels de sistema) no aparece ningún `__mini_*` y no hay ninguna función
-opaca. Con un uso real nulo, el metadato `helper` no compensa tocar `y.lcc` ni
+opaca. Con un uso real nulo, el metadato `helper` no compensa tocar `u.lcc` ni
 su submódulo; solo reabrirlo si algún programa nuevo usa soft-float, divisiones
 de 64 bits, `divfx` o copias de bloque grandes y el recuento sube.
 
@@ -497,17 +497,17 @@ La prueba `volatile` conserva tres accesos a la global como exige C; cualquier
 pase de memoria debe mantener esa barrera. `arrays_escape` separa locales
 addressed obligatorios de spills evitables. `wide` cubre pares de 64 bits.
 
-### Código real: `z.tui` y el cubo
+### Código real: `v.tui` y el cubo
 
 Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
 2026, con todos los pases por defecto):
 
-- **Demo de `z.tui`** (`tui_unity_mini.c`, unas 12.400 instrucciones, ejecutada
+- **Demo de `v.tui`** (`tui_unity_mini.c`, unas 12.400 instrucciones, ejecutada
   en el simulador con ESC; la pantalla es idéntica con y sin pases):
   362.017 → 304.009 instrucciones ejecutadas (−16,0 %) y binario de 83.640 →
   78.940 B (−5,6 %). Los accesos a pila ejecutados pasan de 47.805 (15,1 % de las
-  instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`x.tests/unit/compiler/test_mini_opt.py`) lo comprueba.
-- **Cubo** (`x.tests/cases-cpu-gpu/race/cube/cube.c`, un fotograma de cada método en estado
+  instrucciones) a 38.891 (12,7 %) con `forward` y a 35.505 (11,7 %) con `deadstores`. `TuiDemoTest` (`t.tests/unit/compiler/test_mini_opt.py`) lo comprueba.
+- **Cubo** (`t.tests/cases-cpu-gpu/race/cube/cube.c`, un fotograma de cada método en estado
   estable; `compare_race.py cube`): C frente a ensamblador a mano, 1,00 (CPU), 1,00
   (GPU inocente) y 1,01 (GPU buena). El arranque del demo, que genera las
   texturas, sí es más caro en C (unas 670.000 instrucciones frente a 530.000),
@@ -520,7 +520,7 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   vecina cuesta 4 instrucciones (`ADD` del índice, `SHL`, `ADD` de la base, `LOAD`) en vez de 1: lcc saca del bucle la parte de
   la fila, pero nadie convierte `base + (x + k) * 4` en un puntero que avanza. Era la mayor brecha medida entre C y ensamblador.
   El pase `strength` la cierra casi del todo: el C con índices baja a 565.761 instrucciones (**1,13×**; 3 punteros, los
-  registros libres que hay antes de `licm`), con el mismo resultado. En la demo de `z.tui` quita 1.001 instrucciones
+  registros libres que hay antes de `licm`), con el mismo resultado. En la demo de `v.tui` quita 1.001 instrucciones
   ejecutadas (−0,33 %) y añade 48 B de binario; el cubo y la rotación no cambian.
 - **Vida de Conway y blur en C natural, las tres versiones** (`compare_race.py life|blur`, relación C / ensamblador de instrucciones
   ejecutadas; el cuerpo es el mismo en la CPU y en los dos repartos de GPU, escrito sin pensar en el compilador, y todas las salidas
@@ -539,11 +539,11 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   de oportunidades) lo consigue sin tocar el fuente. **Pendiente:** lo que queda a ~1,6× en la vida, que son ramas divergentes.
   También salió un fallo de `boolean`, que generaba `SLT`/`SLTU` en los kernels y la GPU no tiene la extensión `compare`: arreglado, los
   `__kernel_*` no se tocan.
-- **Guardados muertos de R16–R29 en `z.tui`:** el `.s` crudo de lcc no tiene ninguno; tras
+- **Guardados muertos de R16–R29 en `v.tui`:** el `.s` crudo de lcc no tiene ninguno; tras
   `copyprop` y `dce` hay 65 (53 funciones de 332), porque esos pases borran el último uso de
   un registro y no su guardado. `deadsaves` los quita: −130 instrucciones estáticas y −5.000
   ejecutadas en la demo (−1,6 %).
-- **Tráfico de pila que queda en la demo de `z.tui`** (35.505 accesos, 11,7 % de las
+- **Tráfico de pila que queda en la demo de `v.tui`** (35.505 accesos, 11,7 % de las
   instrucciones ejecutadas, clasificados por región del marco y por causa):
 
   | Región / causa | Accesos | % instr. |
@@ -568,12 +568,12 @@ Los probes son casos mínimos. Con programas reales (medido el 9 de octubre de
   instrucciones (0,009 %), así que no hay nada que ganar; evitarlos en una
   función llamada muchas veces pediría análisis interprocedural o shrink
   wrapping.
-- **`tailcalls` en `z.tui`:** 66 saltos de cola convertidos; en 33 el epílogo
+- **`tailcalls` en `v.tui`:** 66 saltos de cola convertidos; en 33 el epílogo
   original queda sin uso (−1 instrucción cada uno) y en 33 está compartido con
   otro `return` y se duplica (≈ +4 cada uno): neto +99 instrucciones estáticas
   (+0,8 %) frente a −6 instrucciones ejecutadas en la demo. Un salto de cola
   ahorra una instrucción y un salto tomado por ejecución; su ventaja real es la
-  pila en recursión, que `z.tui` no tiene. Se deja como está; si más adelante
+  pila en recursión, que `v.tui` no tiene. Se deja como está; si más adelante
   una medida en la placa muestra un camino caliente que lo justifique, o al
   contrario, se puede restringir a epílogos que mueren y recursión propia
   (parámetro `--tailcalls`).
@@ -586,31 +586,31 @@ historial de la auditoría.
 
 | Optimización | Estado actual | Beneficio observado/probable | Complejidad | Ubicación |
 |---|---|---|---|---|
-| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 19.923 instrucciones (−15,6 %, medida el 9 de octubre de 2026 con `y.lcc` en `87ef9cf` y los pases `invert`, `boolean`, `deadsaves`, `forward` y `deadstores`) | Baja | mini-opt + runner LCC |
+| ~~Copyprop + DCE físico~~ | **Hecho:** DCE independiente e integración opt-in en mini-tst | Suite unificada actual: 23.601 → 19.923 instrucciones (−15,6 %, medida el 9 de octubre de 2026 con `u.lcc` en `87ef9cf` y los pases `invert`, `boolean`, `deadsaves`, `forward` y `deadstores`) | Baja | mini-opt + runner LCC |
 | ~~Promoción de AUTO a registro~~ | **Hecho en dos capas:** `mini.md:local` (hojas: escalares de `ref<3` o que no caben en R16–R29 van a temporales R7–R15, dejando 5 libres) y `stackslots` en mini-opt como red de seguridad (huecos de pila a registros libres, con su marco) | Cubo GPU «buena» en placa: 1,56 M → 1,34 M ciclos (ASM: 1,257 M); casi todo lo aportó `stackslots`. Con el cambio en lcc, `__kernel_cube_good` ya sale sin pila aunque se apague el pase | Media | LCC pre-RA + mini-opt |
-| ~~Store-to-load forwarding~~ | **Hecho:** pase `forward`, con `forward_must` sobre el CFG. El estado es `{hueco: registro con su valor}`; lo invalidan la reescritura del registro, otro store sobre la palabra, las llamadas, los cambios de R30 y los stores por puntero a partir de la dirección de marco más baja que la función calcula. Un `LOAD` pasa a copia (o sobra) | `z.tui`: −89 `LOAD` y 136 copias, y −4.000 instrucciones ejecutadas en la demo (−1,3 %); suite 20.080 → 19.980 (−100) | Media | mini-opt |
-| ~~DSE de los huecos de argumentos entrantes~~ | **Hecho:** pase `deadstores`. Tras `forward`, el `STORE R1, R30, 32` de un argumento ya no se lee; se borra si nada en la función lee esa palabra ni toma su dirección (ni la de un hueco anterior del área), y R30 solo cambia con el ajuste canónico. Solo por encima del marco: el área saliente la lee el destino de la llamada, y guardados y locales no se distinguen sin metadatos | `z.tui`: −100 `STORE` y −3.000 instrucciones ejecutadas en la demo; tráfico de pila 12,7 % → 11,7 %; suite 19.980 → 19.923 (−57) | Media | mini-opt |
-| DSE de guardados y locales (por debajo del marco) | **Descartado por ahora.** Exigiría saber qué huecos son área saliente (los lee el destino de la llamada), guardados o locales, y desde el `.s` no se distingue. mini-lcc podría emitirlo: en `function()` conoce `framesize`, `maxargoffset` (área saliente), `sizeisave` (guardados) y `maxoffset` (locales y derrames, con `offset`, `size` y `addressed` por símbolo), y bastaría una línea `; @miniopt frame ...` por función con el mecanismo de `volatile` (~25 líneas en lcc, más parseo y tests, y las salvaguardas de la sección 9) | **Estimación (`z.tui`, 35.505 accesos a pila, 11,7 % de las instrucciones):** los guardados que se usan (16.798, 5,5 %) son la ABI y el área saliente (2.593 `STORE`, 0,9 %) la lee el destino, así que no se pueden borrar; solo quedan los `STORE` de locales y derrames, 525 (0,2 %), y casi todos se leen después. Ganancia esperada por debajo del 0,2 % | Media | metadatos de slot o pre-RA |
-| Valores vivos a través de calls | Limitado. **Medido en `z.tui`:** 3.355 recargas tras llamada y hasta 5.754 volcados (≈ 3 % como cota superior); asignarlos a R16–R29 cuesta lo mismo en guardados cuando se usan una o dos veces tras la llamada, que es lo que `ref >= 3` ya decide | Bajo: ganancia esperada ≈ 0 salvo valores con muchos usos tras una llamada. Sin medir en recursión ni soft-float | Media-alta | RA/backend |
+| ~~Store-to-load forwarding~~ | **Hecho:** pase `forward`, con `forward_must` sobre el CFG. El estado es `{hueco: registro con su valor}`; lo invalidan la reescritura del registro, otro store sobre la palabra, las llamadas, los cambios de R30 y los stores por puntero a partir de la dirección de marco más baja que la función calcula. Un `LOAD` pasa a copia (o sobra) | `v.tui`: −89 `LOAD` y 136 copias, y −4.000 instrucciones ejecutadas en la demo (−1,3 %); suite 20.080 → 19.980 (−100) | Media | mini-opt |
+| ~~DSE de los huecos de argumentos entrantes~~ | **Hecho:** pase `deadstores`. Tras `forward`, el `STORE R1, R30, 32` de un argumento ya no se lee; se borra si nada en la función lee esa palabra ni toma su dirección (ni la de un hueco anterior del área), y R30 solo cambia con el ajuste canónico. Solo por encima del marco: el área saliente la lee el destino de la llamada, y guardados y locales no se distinguen sin metadatos | `v.tui`: −100 `STORE` y −3.000 instrucciones ejecutadas en la demo; tráfico de pila 12,7 % → 11,7 %; suite 19.980 → 19.923 (−57) | Media | mini-opt |
+| DSE de guardados y locales (por debajo del marco) | **Descartado por ahora.** Exigiría saber qué huecos son área saliente (los lee el destino de la llamada), guardados o locales, y desde el `.s` no se distingue. mini-lcc podría emitirlo: en `function()` conoce `framesize`, `maxargoffset` (área saliente), `sizeisave` (guardados) y `maxoffset` (locales y derrames, con `offset`, `size` y `addressed` por símbolo), y bastaría una línea `; @miniopt frame ...` por función con el mecanismo de `volatile` (~25 líneas en lcc, más parseo y tests, y las salvaguardas de la sección 9) | **Estimación (`v.tui`, 35.505 accesos a pila, 11,7 % de las instrucciones):** los guardados que se usan (16.798, 5,5 %) son la ABI y el área saliente (2.593 `STORE`, 0,9 %) la lee el destino, así que no se pueden borrar; solo quedan los `STORE` de locales y derrames, 525 (0,2 %), y casi todos se leen después. Ganancia esperada por debajo del 0,2 % | Media | metadatos de slot o pre-RA |
+| Valores vivos a través de calls | Limitado. **Medido en `v.tui`:** 3.355 recargas tras llamada y hasta 5.754 volcados (≈ 3 % como cota superior); asignarlos a R16–R29 cuesta lo mismo en guardados cuando se usan una o dos veces tras la llamada, que es lo que `ref >= 3` ya decide | Bajo: ganancia esperada ≈ 0 salvo valores con muchos usos tras una llamada. Sin medir en recursión ni soft-float | Media-alta | RA/backend |
 | Análisis de alias por tipos y LICM de cargas | **Idea, sin hacer.** mini-opt solo saca de un bucle un `LOAD` invariante cuando la base es un símbolo que demuestra privado de la unidad (`provable_symbols`, solo en kernels); en el resto no puede descartar que un `STORE` del bucle escriba en esa dirección, y lcc no emite información de tipos ni de alias en el `.s`. Caso medido en el cubo (`cube_body.h`): `LOAD R9,R6,0` con `R6 = &cube_faces[n].tex` invariante, ejecutado 6.211 veces por fotograma de CPU, porque los `STORE` de píxeles (`int *`) podrían solaparse con `cube_faces` (también `int`) | En el cubo, 6.211 de 321.000 instrucciones de CPU (1,9 %); con las bases en locales (a mano, en el C) la CPU baja a 315.000, 0,98 del ensamblador. Con tipos distintos (o `restrict`) un pase podría hacerlo solo; con `int` contra `int` ni eso | Alta (metadatos de tipo/objeto desde lcc, más un LICM de cargas con su prueba de no-alias) | lcc + mini-opt |
-| ~~Reducción de fuerza de variables de inducción~~ | **Hecho:** pase `strength` (antes de `licm`). Reescribir `base + (x + k) * 4` en un bucle como un puntero que avanza con desplazamientos constantes (`LOAD r, p, 4*k`); el pase reconoce la variable de inducción (`ADDI i, i, c`, única escritura, en el último bloque del bucle), evalúa cada dirección como suma de invariantes, `i` y una constante (`ADD`, `ADDI`, `SUB`, `SHL`/`SHLI` y `MUL` por constante, dentro de un bloque) y agrupa los accesos con los mismos invariantes bajo un puntero; el preheader lo deja listo y el último bloque lo avanza. Solo se aplica si el bucle queda más corto (con doble peso en los bloques que se ejecutan cada vuelta) y hay registros libres; el paso puede ser una constante o un registro que el bucle no escribe (el `x += nlanes` de un kernel); no toca bucles con llamadas ni con más de una arista de vuelta | Vida de Conway: el C con índices pasa de 2,30× a 1,13× el ensamblador (los de punteros, 1,05×, no cambian); `z.tui` −0,33 %; suite mini-tst 19.923 → 19.921 | Media-alta | mini-opt |
-| ~~Bloque de argumentos del kernel de solo lectura (`GETARG`)~~ | **Hecho:** pase `argblock` (antes de `strength`) y `licm` en los kernels. Antes se decidió. Un análisis de alias por sí solo no lo resuelve: los punteros de salida (`next`, `fb`) se cargan del propio bloque y todo es `int`, así que no se puede demostrar que un `STORE` no escribe en `blk->nlanes`. Haría falta un contrato (el bloque no se escribe mientras corre el kernel, como la memoria constante de CUDA, o `restrict`/`const` que lcc exportase en el `.s`). Con el contrato se trata como invariante todo `LOAD` cuya base sale de `GETARG`, sin análisis. Se hace en un pase aparte y antes de `strength` porque `licm` gasta los registros libres, y `strength` necesita que el paso del bucle (`x += nlanes`) ya esté fuera | Vida y blur en la GPU buena sin tocar el fuente: 2,78× → 1,65× y 2,02× → 1,05×; `z.tui` pasa de −0,33 % a −2,0 % con los cambios que lo acompañaron | Baja (`licm`) más el contrato | mini-opt + ABI de kernels |
-| ~~Objetos globales `const` exportados a mini-opt~~ | **Hecho:** lcc escribe `; @miniopt const NOMBRE` (test `167` de mini-tst) y `licm` saca de un bucle, en cualquier función, la lectura de un objeto `const` a una dirección fija. lcc es C89: tiene `const` y `volatile`, no `restrict`. Es correcto en C, porque escribir un objeto `const` es comportamiento indefinido; si es además `volatile`, gana `volatile`. Un puntero a `const` no sirve: lcc descarta el calificador al construir el árbol, y no garantiza nada, porque otro puntero puede escribir en el mismo objeto | Cargas invariantes de tablas de solo lectura en cualquier función, no solo en kernels. **Medido:** ningún efecto en los programas actuales (rotación, vida, blur, cubo, `z.tui`, mini-tst): sus tablas const se indexan con la variable del bucle, no a una dirección fija. Se deja por corrección y para el C futuro | Baja | lcc + mini-opt |
+| ~~Reducción de fuerza de variables de inducción~~ | **Hecho:** pase `strength` (antes de `licm`). Reescribir `base + (x + k) * 4` en un bucle como un puntero que avanza con desplazamientos constantes (`LOAD r, p, 4*k`); el pase reconoce la variable de inducción (`ADDI i, i, c`, única escritura, en el último bloque del bucle), evalúa cada dirección como suma de invariantes, `i` y una constante (`ADD`, `ADDI`, `SUB`, `SHL`/`SHLI` y `MUL` por constante, dentro de un bloque) y agrupa los accesos con los mismos invariantes bajo un puntero; el preheader lo deja listo y el último bloque lo avanza. Solo se aplica si el bucle queda más corto (con doble peso en los bloques que se ejecutan cada vuelta) y hay registros libres; el paso puede ser una constante o un registro que el bucle no escribe (el `x += nlanes` de un kernel); no toca bucles con llamadas ni con más de una arista de vuelta | Vida de Conway: el C con índices pasa de 2,30× a 1,13× el ensamblador (los de punteros, 1,05×, no cambian); `v.tui` −0,33 %; suite mini-tst 19.923 → 19.921 | Media-alta | mini-opt |
+| ~~Bloque de argumentos del kernel de solo lectura (`GETARG`)~~ | **Hecho:** pase `argblock` (antes de `strength`) y `licm` en los kernels. Antes se decidió. Un análisis de alias por sí solo no lo resuelve: los punteros de salida (`next`, `fb`) se cargan del propio bloque y todo es `int`, así que no se puede demostrar que un `STORE` no escribe en `blk->nlanes`. Haría falta un contrato (el bloque no se escribe mientras corre el kernel, como la memoria constante de CUDA, o `restrict`/`const` que lcc exportase en el `.s`). Con el contrato se trata como invariante todo `LOAD` cuya base sale de `GETARG`, sin análisis. Se hace en un pase aparte y antes de `strength` porque `licm` gasta los registros libres, y `strength` necesita que el paso del bucle (`x += nlanes`) ya esté fuera | Vida y blur en la GPU buena sin tocar el fuente: 2,78× → 1,65× y 2,02× → 1,05×; `v.tui` pasa de −0,33 % a −2,0 % con los cambios que lo acompañaron | Baja (`licm`) más el contrato | mini-opt + ABI de kernels |
+| ~~Objetos globales `const` exportados a mini-opt~~ | **Hecho:** lcc escribe `; @miniopt const NOMBRE` (test `167` de mini-tst) y `licm` saca de un bucle, en cualquier función, la lectura de un objeto `const` a una dirección fija. lcc es C89: tiene `const` y `volatile`, no `restrict`. Es correcto en C, porque escribir un objeto `const` es comportamiento indefinido; si es además `volatile`, gana `volatile`. Un puntero a `const` no sirve: lcc descarta el calificador al construir el árbol, y no garantiza nada, porque otro puntero puede escribir en el mismo objeto | Cargas invariantes de tablas de solo lectura en cualquier función, no solo en kernels. **Medido:** ningún efecto en los programas actuales (rotación, vida, blur, cubo, `v.tui`, mini-tst): sus tablas const se indexan con la variable del bucle, no a una dirección fija. Se deja por corrección y para el C futuro | Baja | lcc + mini-opt |
 | ~~Intrínseco `__noalias`~~ | **Hecho (primera versión):** `NOALIAS(p);` en `gpu.h` (la escritura `__noalias_mark = (int)p` que `intrinsics` convierte en una marca interna `NOALIAS Rp`; el pase `noalias` las borra al final). El análisis de procedencia (`passes/noalias.py`) numera los valores: la marca vale para el valor del puntero, no para el registro (lcc deja el argumento en R1 y en la copia que se marca), y la región llega por copias, `ADD`/`ADDI`/`SHL`... y lo que se guarda en memoria y se vuelve a cargar. `licm` saca una carga invariante si va por un puntero marcado o por un símbolo que no es `volatile` y ningún store del bucle (salvo los del marco) puede tocar lo mismo: sus procedencias no comparten región y alguna no está vacía. Sin marca ni símbolo no se toca nada (podría ser un registro de un dispositivo). Si el programador marca mal, el resultado es incorrecto sin aviso | **Cubo en la CPU: 1,00 → 0,98 poniendo `NOALIAS(fb);` al empezar `cube_cpu`** (la carga de la base de textura, 6.211 por fotograma, sale del bucle; misma imagen). No se ha dejado puesto en `cube_body.h`. El resto de las cargas miden igual | Media-alta | lcc (solo el `.h`) + mini-opt |
 | If-conversion por máscara de ramas divergentes en kernels | **Idea, sin hacer.** `ssy` ya distingue las ramas que pueden divergir; un rombo o triángulo con brazos puros y cortos (`ADD`, `MOVI`, `AND`...) y condición de igualdad o de cero se puede dejar sin rama y sin `SSY`: máscara `-(x != 0)` con `SUB t,R0,x ; OR t,t,x ; SAR t,t,31` (la GPU no tiene `SLT`) y `AND`/`XOR` para elegir. Las comparaciones `<` no valen sin `compare` | Vida en la GPU buena: unas 20 instrucciones por vuelta de más sobre el ensamblador, en tres regiones divergentes; las dos `alive ? color : 0` son rombos simples (de ~5 a ~3 cada una con la máscara compartida); la regla `if/else` anidada no. Estimación 1,64× → ~1,4× | Media (como `boolean`, con liveness y cuidado con los efectos) | mini-opt |
 | Slot coloring de spills | Ausente | Frame/memoria; depende de presión | Media | pre-emisión |
-| ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros. Decidido dejarlo así | 36 instrucciones adicionales en mini-tst. En `z.tui`: +99 instrucciones estáticas (+0,8 %) y −6 ejecutadas en la demo; ahorra 1 instrucción y 1 salto tomado por ejecución, y pila en recursión (sección 11) | Baja-media | mini-opt |
+| ~~Tail calls directas~~ | **Hecho, restringido:** solo epílogos y destinos demostrablemente seguros. Decidido dejarlo así | 36 instrucciones adicionales en mini-tst. En `v.tui`: +99 instrucciones estáticas (+0,8 %) y −6 ejecutadas en la demo; ahorra 1 instrucción y 1 salto tomado por ejecución, y pila en recursión (sección 11) | Baja-media | mini-opt |
 | ~~Unreachable asm~~ | **Hecho:** branches conocidos + poda por CFG | 27 instrucciones adicionales frente al pipeline anterior | Baja | mini-opt |
-| ~~Rama invertida~~ | **Hecho:** pase `invert`, `Bcc a,b,L1 ; BRA L2 ; L1:` → `B!cc a,b,L2 ; L1:`; solo con `L2` en la misma función y menos de 32.000 instrucciones (el branch condicional lleva 16 bits) | Suite 20.459 → 20.420 (−39); `z.tui` −71 instrucciones (−0,6 %) | Baja | mini-opt |
-| ~~Booleano como valor~~ | **Hecho:** pase `boolean`, `Bcc ; MOVI r,1 ; BRA ; Lf: ; r=0 ; Le:` → `SLT`/`SLTU` (+ `XORI`; `SUB` para `BEQ`/`BNE`); sin liveness, solo si nadie más salta a `Lf` | Suite 20.420 → 20.242 (−178); `z.tui` −70 instrucciones (29 de 40 casos); cubo y rotación sin cambios | Baja | mini-opt |
-| ~~Guardados de R16–R29 que ya no se usan~~ | **Hecho:** pase `deadsaves`. `copyprop` y `dce` borran el último uso de un R16–R29 y dejan su `STORE` del prólogo y su `LOAD` del epílogo; el `.s` crudo de lcc no tiene ninguno. Se borran cuando el registro no aparece en nada más (el `JR` lo lee por convenio y no cuenta) | `z.tui`: 65 guardados muertos en 53 de 332 funciones, −130 instrucciones y −5.000 ejecutadas (−1,6 %); suite 20.242 → 20.080 (−162) | Baja | mini-opt |
+| ~~Rama invertida~~ | **Hecho:** pase `invert`, `Bcc a,b,L1 ; BRA L2 ; L1:` → `B!cc a,b,L2 ; L1:`; solo con `L2` en la misma función y menos de 32.000 instrucciones (el branch condicional lleva 16 bits) | Suite 20.459 → 20.420 (−39); `v.tui` −71 instrucciones (−0,6 %) | Baja | mini-opt |
+| ~~Booleano como valor~~ | **Hecho:** pase `boolean`, `Bcc ; MOVI r,1 ; BRA ; Lf: ; r=0 ; Le:` → `SLT`/`SLTU` (+ `XORI`; `SUB` para `BEQ`/`BNE`); sin liveness, solo si nadie más salta a `Lf` | Suite 20.420 → 20.242 (−178); `v.tui` −70 instrucciones (29 de 40 casos); cubo y rotación sin cambios | Baja | mini-opt |
+| ~~Guardados de R16–R29 que ya no se usan~~ | **Hecho:** pase `deadsaves`. `copyprop` y `dce` borran el último uso de un R16–R29 y dejan su `STORE` del prólogo y su `LOAD` del epílogo; el `.s` crudo de lcc no tiene ninguno. Se borran cuando el registro no aparece en nada más (el `JR` lo lee por convenio y no cuenta) | `v.tui`: 65 guardados muertos en 53 de 332 funciones, −130 instrucciones y −5.000 ejecutadas (−1,6 %); suite 20.242 → 20.080 (−162) | Baja | mini-opt |
 | Guardados de R16–R29 que sí se usan en funciones de CPU | **Sin acción:** en kernels de GPU ya los quita `mini-opt:kernels`; en CPU los exige la ABI y lcc guarda solo los usados | `cube_cpu`: 28 accesos por fotograma de ~321.000 instrucciones (0,009 %). Solo importaría en una función pequeña y muy llamada | Alta (interprocedural o shrink wrapping) | RA/backend |
 | Helpers `__mini_*` opacos para `mini-opt` | **Medido y descartado por ahora:** 3,3 % de las instrucciones de mini-tst y ninguna en los ejemplos (sección 9) | Reabrir si un programa usa soft-float, `divfx` o `memcpy` grande | Media | lcc + mini-opt |
 | ~~Plegado de constantes ampliado y base compartida de `LI`~~ | **Hecho:** `constprop` (evaluación de dos constantes, identidades, fusión MUL+SHL; las copias no se evalúan para no dejar sin trabajo a `copyprop`) y `sharebase` | `sharebase` ~1–2 % en el cubo en placa | Baja | mini-opt |
 | ~~LICM aritmética~~ | **Hecho, también en bucles anidados:** de dentro afuera, lo que sube del bucle interior sube del exterior si no depende de él. Un fallo del análisis de definiciones que alcanzan (una `ENTRY` falsa atrapada en el ciclo) lo impedía y se corrigió | Rotación GPU buena 1,04× → 1,01× el ASM; CPU 1,00×; `fill_rect`/`blit` −1,5 % a −2 % | Baja | mini-opt |
 | ~~LICM de memoria~~ | **Hecho, ahora demostrado en lugar de supuesto:** en un kernel, la carga de una global que el kernel solo lee sale del bucle si ningún puntero puede alcanzarla. `mini-opt` mira la unidad entera (la dirección no escapa de ninguna función: solo base de `LOAD`/`STORE`, directa o por un puntero calculado a partir de ella; no está en un `.word`), lcc le dice qué símbolos son `volatile` con `; @miniopt volatile NOMBRE`, y `build.py` le pasa el arranque, el runtime y la otra unidad (`--extern-refs`). `--assume-noalias` queda como suposición explícita, apagada por defecto | Mismo resultado que con la suposición en el cubo (~2 %, 1,326 M ciclos), sin ella. Supuestos que no se pueden comprobar desde el texto: que nadie escriba el símbolo mientras el kernel corre y que no se fabrique un puntero desde un entero | Media | mini-opt + hecho de lcc |
 | Relajar frame a 4 | Ausente | Memoria, no instrucciones | Baja, cambio ABI | backend/ABI |
-| 6/8 args | ABI actual 4. **Medido en `z.tui`:** los argumentos de pila 5+ son 6.451 accesos (3.858 `LOAD` + 2.593 `STORE` en el área saliente), el 2,1 % de las instrucciones ejecutadas | 4/8 instrucciones en sum8 (estimado); ≈ 2 % en la demo de `z.tui`, un solo programa | Alta por scratch/compatibilidad | ABI+backend |
+| 6/8 args | ABI actual 4. **Medido en `v.tui`:** los argumentos de pila 5+ son 6.451 accesos (3.858 `LOAD` + 2.593 `STORE` en el área saliente), el 2,1 % de las instrucciones ejecutadas | 4/8 instrucciones en sum8 (estimado); ≈ 2 % en la demo de `v.tui`, un solo programa | Alta por scratch/compatibilidad | ABI+backend |
 | Metadatos slot/virtual | **Parcial:** el mecanismo existe y lleva un solo hecho, `; @miniopt volatile NOMBRE` (lcc lo escribe en un comentario, `parse_unit` lo lee). Ausentes los de slot/spill/escape/virtual y las salvaguardas propuestas en la sección 9 (cabecera versionada, hash de la secuencia, validación) | `volatile` habilita la LICM de cargas demostrada. Los de slot y virtual: habilitador, no beneficio directo | Media | backend comments |
 
 ## 13. Plan incremental sugerido
@@ -634,8 +634,8 @@ historial de la auditoría.
    El sin optimizar creció 50 y el optimizado 75 respecto a la medida anterior
    a `mini.md:local`; no se ha desglosado cuánto es de los tests nuevos y
    cuánto de ese cambio. Los 222 tests incluyen 3 que compilan la demo de
-   `z.tui` (se omiten sin MSVC); además hay 134 de simulación CPU+GPU. La tabla
-   de instrucciones ejecutadas de `x.tests/cases-cpu-gpu` no cambia con `invert` ni
+   `v.tui` (se omiten sin MSVC); además hay 134 de simulación CPU+GPU. La tabla
+   de instrucciones ejecutadas de `t.tests/cases-cpu-gpu` no cambia con `invert` ni
    `boolean`.
 2. **Quick wins post-RA:** ~~eliminar inalcanzables tras branches conocidos~~ y
    ~~tail-call directo muy restringido~~ **(hechos)**, y los dos peepholes que

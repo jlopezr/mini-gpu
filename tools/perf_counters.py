@@ -4,7 +4,7 @@ Contrato: `1.isa/mmio.md` §12 y §13.2. El bloque esta en `MMIO_CPU_PERF_BASE`,
 contador `n` en `+4n`, y `PERF_CTRL` y `PERF_OVF0` detras del array.
 
 Sirve a dos sitios que hasta ahora no compartian nada: `monitor.py perf`, que
-lee la placa en directo, y `x.tests/run_tests.py --measure`, que lee una vez por
+lee la placa en directo, y `t.tests/run_tests.py --measure`, que lee una vez por
 caso y monta una tabla. Los dos necesitan lo mismo --que ranuras existen y como
 se reparten los ciclos-- y una copia en cada uno seria la forma de que la tabla
 y el comando dijeran cosas distintas del mismo programa.

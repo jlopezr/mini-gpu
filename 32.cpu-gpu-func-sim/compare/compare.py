@@ -19,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SIM = HERE.parent
 ROOT = HERE.parents[1]
-DMA = ROOT / "x.tests" / "cases-cpu-gpu" / "dma"
+DMA = ROOT / "t.tests" / "cases-cpu-gpu" / "dma"
 sys.path.insert(0, str(SIM))
 sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT))
@@ -32,7 +32,7 @@ from mini_asm import assemble_bytes, first_pass  # noqa: E402
 
 MEMORY = 1 << 21
 SRC, DST, BLOCK = 0x100000, 0x140000, 0x1F0000
-INC = ROOT / "x.tests" / "inc"
+INC = ROOT / "t.tests" / "inc"
 LANES = 8
 
 

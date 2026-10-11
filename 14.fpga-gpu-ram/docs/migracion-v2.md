@@ -81,6 +81,6 @@ Ocho megahercios y medio de diferencia. En v1 esta misma carpeta daba
 - `sysid.v` de la 14 ya es byte a byte el de las seis de CPU. Quedan **dos** en
   el grupo de v1 (la 12 —migrada después de escribir esto— y la 22).
 - Los otros cinco ficheros compartidos siguen idénticos en las cuatro.
-- `x.tests`: 285 tests, sólo falla la guarda de `.asm` de la 22.
+- `t.tests`: 285 tests, sólo falla la guarda de `.asm` de la 22.
 - Semilla: **no se fija**, y se conserva el párrafo que lo argumenta. Ver
   [la bitácora de la 17](../../17.fpga-gpu-ram-v2/docs/migracion-v2.md).

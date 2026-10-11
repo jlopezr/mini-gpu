@@ -107,7 +107,7 @@ de esa carpeta.
 | 4 | Camino rápido | `MULHI`/`REM` reutilizan el medio resultado | [§4](#4-el-medio-resultado-que-la-cpu-tiraba) |
 
 Se pueden leer, romper y probar por separado, y sus suites de test están
-separadas a propósito: `x.tests` declara tres capacidades distintas
+separadas a propósito: `t.tests` declara tres capacidades distintas
 —`shift_immediate`, `alu_extended` y `zero_register`— en vez de una.
 
 **El 3 es incompatible con la v0.1**; los otros tres son aditivos. Un programa
@@ -122,7 +122,7 @@ de cargar un programa— y con un motivo más que las anteriores no tenían: con
 la única defensa.
 
 **Sintetizada, pero sin placa.** Simulador, testbenches y
-`x.tests --backend sim-cpu` están en verde, y el bitstream existe:
+`t.tests --backend sim-cpu` están en verde, y el bitstream existe:
 **las ocho semillas cumplen los 80 MHz**, entre 84,04 y 91,80, y se fija la 6
 con **+14,8 %**. Lo que falta es la ULX3S, que no estaba disponible: nada de
 esto se ha visto correr en hardware.
@@ -201,14 +201,14 @@ válido; con cualquier bit de `extra[9:0]` puesto sigue dando
 
 Eso deja un agujero fácil de abrir sin enterarse: si alguien quita la
 comprobación entera, nada se queja. Lo tapa
-[`cases-cpu/extensions/shift-immediate/reserved-fields`](../x.tests/cases-cpu/extensions/shift-immediate/reserved-fields/),
+[`cases-cpu/extensions/shift-immediate/reserved-fields`](../t.tests/cases-cpu/extensions/shift-immediate/reserved-fields/),
 que es la mitad negativa del cambio. El caso `errors/invalid-encoding` de
 siempre no servía: usa un `NOP`, cuya regla no ha cambiado.
 
 Verificación: [`shift_immediate_tb.v`](shift_immediate_tb.v), la clase
 `ShiftInmediatoTest` de
 [`../1.isa/test_mini_asm.py`](../1.isa/test_mini_asm.py), y el caso
-[`shift-immediate/bounds`](../x.tests/cases-cpu/extensions/shift-immediate/bounds/).
+[`shift-immediate/bounds`](../t.tests/cases-cpu/extensions/shift-immediate/bounds/).
 
 El testbench tiene un detalle que merece copiarse: en cada caso, el registro
 **cuyo número coincide con la cantidad** recibe un valor distinto de la
@@ -250,8 +250,8 @@ El razonamiento completo, y el del signo del resto, están en
 Verificación: [`alu_extended_tb.v`](alu_extended_tb.v), con veintidós vectores
 —la mitad con operandos negativos— y las cuatro divisiones por cero, más los
 casos
-[`alu-extended/`](../x.tests/cases-cpu/extensions/alu-extended/) de
-`x.tests`.
+[`alu-extended/`](../t.tests/cases-cpu/extensions/alu-extended/) de
+`t.tests`.
 
 ---
 
@@ -279,7 +279,7 @@ comprobó expresamente.
 Detalles en [`docs/registro-cero.md`](../21.fpga-cpu-hdmi-alu/docs/registro-cero.md). Verificación:
 [`zero_register_tb.v`](zero_register_tb.v), que recorre los seis caminos por los
 que la CPU escribe el banco, y el caso
-[`basics/zero-register`](../x.tests/cases-cpu/basics/zero-register/).
+[`basics/zero-register`](../t.tests/cases-cpu/basics/zero-register/).
 
 > **Esto ya no es exclusivo de la 21.** El cambio se llevó después a las otras
 > ocho implementaciones —cinco de CPU, tres de GPU— y `R0` a cero pasó a ser una
@@ -300,9 +300,9 @@ port es un intercambio, no un parche:
 | Programa | Antes | Ahora |
 |---|---|---|
 | [`../20.forth/forth.asm`](../20.forth/forth.asm) | `R0` = `BASE`, `R3` = cero (59 usos) | `R0` = cero, `R3` = `BASE`; sobra el `MOVI R3, 0` |
-| [`../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`](../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | `R0` = 5, `R3` = cero, `R25` = 11 | `R0` = cero; `R3` y `R25` libres, y los dos `SHL` pasan a `SHLI` |
+| [`../t.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm`](../t.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | `R0` = 5, `R3` = cero, `R25` = 11 | `R0` = cero; `R3` y `R25` libres, y los dos `SHL` pasan a `SHLI` |
 
-De propina, [`../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm`](../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm)
+De propina, [`../t.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm`](../t.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm)
 —que no estaba roto, solo desperdiciaba `R3`— va igual, y los tres programas
 salen **más cortos**: `forth.asm` pierde una instrucción y `bresenham_lines`
 tres.
@@ -314,7 +314,7 @@ donde está cableado como donde el reset lo deja a cero y nadie lo toca. «No us
 de que las escrituras se descarten, no.
 
 El resto de apariciones de `R0` en el repositorio son **lecturas esperando
-cero**: cinco casos de `x.tests` —`shift-multiply`, `memory-copy`,
+cero**: cinco casos de `t.tests` —`shift-multiply`, `memory-copy`,
 `fibonacci`, `array-sum` y `video/registers`— que comparan contra `R0` y pasan
 igual, ahora por construcción en vez de por casualidad.
 
@@ -353,8 +353,8 @@ instrucciones y lo único que cambia es si la etiqueta acierta:
 
 | Programa | Instrucciones | Ciclos | CPI |
 |---|---:|---:|---:|
-| [`../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
-| [`../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../x.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
+| [`../t.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm`](../t.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm) | 4 005 | 63 108 | 15,76 |
+| [`../t.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm`](../t.tests/cases-cpu/demos/fastpath-miss/fastpath_miss.asm) | 4 005 | 95 093 | 23,74 |
 
 **31 985 ciclos de diferencia en 1 000 vueltas: 31,99 por acierto**, que son
 exactamente las 32 iteraciones del divisor. El CPI baja un 33 %.
@@ -370,7 +370,7 @@ de 5 bits** en vez de valores de 32. Son trece flops y comparadores de 5 bits.
 
 Es **invisible para la arquitectura, sin excepciones**: acierto y fallo dan
 exactamente el mismo número. No hay error por usar `MULHI` sin `MUL` previo, ni
-instrucción para leer la etiqueta, ni capacidad que declarar en `x.tests`.
+instrucción para leer la etiqueta, ni capacidad que declarar en `t.tests`.
 El simulador funcional no modela nada de esto y no debe.
 
 El riesgo que justifica tanto cuidado: un acierto indebido no da un fallo
@@ -452,10 +452,10 @@ y los dos están entre los vectores de
 Verificación: [`compare_tb.v`](compare_tb.v), con el discriminante que separa
 las dos instrucciones —mismo par de bits, respuesta distinta según se lea con
 signo o sin él, comprobado en los dos órdenes— y el caso
-[`compare/signed-unsigned`](../x.tests/cases-cpu/extensions/compare/signed-unsigned/)
-de `x.tests`. La mitad negativa del encoding, que quitar la comprobación de
+[`compare/signed-unsigned`](../t.tests/cases-cpu/extensions/compare/signed-unsigned/)
+de `t.tests`. La mitad negativa del encoding, que quitar la comprobación de
 `extra[10:0]` no rompería nada, la cubre
-[`compare/reserved-fields`](../x.tests/cases-cpu/extensions/compare/reserved-fields/).
+[`compare/reserved-fields`](../t.tests/cases-cpu/extensions/compare/reserved-fields/).
 
 | Mutación | La detecta |
 |---|---|
@@ -491,7 +491,7 @@ es [`subword_ls_tb.v`](subword_ls_tb.v), sobre el sistema completo, y la clase
 `SubwordAccessTest` de
 [`../2.cpu-sim-func/test_minicpu_sim.py`](../2.cpu-sim-func/test_minicpu_sim.py)
 sobre el simulador funcional. El demo que las justifica es
-[`../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm`](../x.tests/cases-cpu/demos/subword-demo/subword_demo.asm): un degradado RGB565
+[`../t.tests/cases-cpu/demos/subword-demo/subword_demo.asm`](../t.tests/cases-cpu/demos/subword-demo/subword_demo.asm): un degradado RGB565
 pixel a pixel, que con solo `STORE` de 32 bits costaría una lectura y una mezcla
 por pixel.
 
@@ -505,7 +505,7 @@ diseño y por qué `JR` sigue teniendo opcode propio están en
 nuevas viven enteras dentro de la CPU y el protocolo es idéntico al 1.12 de la
 18. Sube igual porque `GET_VERSION` es lo único que el PC puede preguntar antes
 de cargar un programa: con las dos respondiendo 1.12,
-[`x.tests`](../x.tests) daría por bueno un bitstream de la 18 y los casos
+[`t.tests`](../t.tests) daría por bueno un bitstream de la 18 y los casos
 que usan estas instrucciones pararían con opcode inválido en vez de cargar el
 que toca. Es el mismo criterio que separa 2.1 de 2.2 en las dos MiniGPU.
 
@@ -652,7 +652,7 @@ Dos cosas difieren de la placa y conviene saberlas:
   la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
   resolución reducida, donde es barata.
 
-El programa es [`../x.tests/cases-cpu/demos/fullframe/fullframe.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe.asm), que pinta una
+El programa es [`../t.tests/cases-cpu/demos/fullframe/fullframe.asm`](../t.tests/cases-cpu/demos/fullframe/fullframe.asm), que pinta una
 «L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un marco
 completo se ve igual si alguien intercambia los ejes; una línea arriba y una
 columna a la izquierda, no.
@@ -733,7 +733,7 @@ de `imem` tal cual; del lado de la memoria es un puerto de 128 bits.
 
 Son **cuatro líneas de 16 bytes**, mapeo directo, 512 biestables de datos. El
 tamaño no es arbitrario: 16 bytes son exactamente las cuatro instrucciones del
-bucle interior de [`swap_demo_fast`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
+bucle interior de [`swap_demo_fast`](../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
 la segunda iteración el bucle entero vive dentro y el `BLT` salta dentro del
 propio búfer.
 
@@ -1066,17 +1066,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](../x.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](../t.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](../t.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](../t.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](../t.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
@@ -1090,10 +1090,10 @@ figuras de verdad, píxel a píxel:
 
 | Programa | Qué dibuja | Qué enseña |
 |---|---|---|
-| [`bresenham_lines.asm`](../x.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
-| [`bresenham_circles.asm`](../x.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
-| [`cube.asm`](../x.tests/cases-cpu/video/cube/cube.asm) | Cubo en alambre con perspectiva | Rotaciones Q16.16, `MULFX`, `DIV` y tabla de senos |
-| [`cube_solid.asm`](../x.tests/cases-cpu/demos/cube-solid/cube_solid.asm) | Cubo de caras sólidas | Back-face culling y triángulos con funciones de borde incrementales, sin z-buffer |
+| [`bresenham_lines.asm`](../t.tests/cases-cpu/video/bresenham-lines/bresenham_lines.asm) | 36 rectas desde el centro a puntos del borde, girando | Bresenham de rectas en los ocho octantes; dos niveles de llamada |
+| [`bresenham_circles.asm`](../t.tests/cases-cpu/video/bresenham-circles/bresenham_circles.asm) | 6 circunferencias concéntricas que crecen | Algoritmo del punto medio y simetría de ocho; tres niveles de llamada |
+| [`cube.asm`](../t.tests/cases-cpu/video/cube/cube.asm) | Cubo en alambre con perspectiva | Rotaciones Q16.16, `MULFX`, `DIV` y tabla de senos |
+| [`cube_solid.asm`](../t.tests/cases-cpu/demos/cube-solid/cube_solid.asm) | Cubo de caras sólidas | Back-face culling y triángulos con funciones de borde incrementales, sin z-buffer |
 
 Las operaciones que este último deja como candidatas para evolucionar la ISA
 —y las optimizaciones que no necesitan tocarla— se analizan en
@@ -1109,7 +1109,7 @@ más `R29` en las circunferencias— en lugar de salvarlo en memoria. Funciona
 porque `JAL` nombra su registro de enlace explícitamente, y es barato con dos o
 tres niveles, pero **no escala**: con recursión no vale de ninguna manera. Los
 propios ficheros lo explican y apuntan a [`docs/llamadas.md`](../21.fpga-cpu-hdmi-alu/docs/llamadas.md);
-el caso `calls-link-and-return` de [`x.tests`](../x.tests) hace la
+el caso `calls-link-and-return` de [`t.tests`](../t.tests) hace la
 versión con pila.
 
 **Verificados píxel a píxel contra un modelo independiente**: el mismo
@@ -1502,7 +1502,7 @@ en ninguna parte:
 Eso tenía una consecuencia que no se veía: con la ventana de 16 bytes,
 **`SWAP_COUNT` (`+0x10`) y `HALT_AT` (`+0x14`) quedan fuera**. Los dos
 registros que sostienen la captura determinista de frames —y con ellos la
-capacidad `frame_capture` de `x.tests`— no los podía tocar ningún banco de
+capacidad `frame_capture` de `t.tests`— no los podía tocar ningún banco de
 RTL: solo estaban probados en placa y en el simulador funcional.
 
 `cpu_video_tb.v` está ahora sobre el camino real y los cubre: arma `HALT_AT`,
@@ -1529,7 +1529,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu --version bl8 --port COM3
+..\.venv\Scripts\python.exe ..\t.tests\run_tests.py --backend fpga-cpu --version bl8 --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
@@ -1563,8 +1563,8 @@ y, para las versiones que tienen los contadores de espera —hoy solo esta—, u
 tercera con el reparto de los ciclos de cada caso:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu `
-    --measure medidas.md --port COM3 ..\x.tests\cases
+..\.venv\Scripts\python.exe ..\t.tests\run_tests.py --backend fpga-cpu `
+    --measure medidas.md --port COM3 ..\t.tests\cases
 ```
 
 Qué cuenta exactamente cada contador, cómo leerlos, un ejemplo y por qué dan la

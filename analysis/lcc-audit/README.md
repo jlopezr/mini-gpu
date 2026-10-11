@@ -19,11 +19,11 @@ cifras de ciclos.
 
 ## Regenerar
 
-Necesita `cl` y el `rcc` de 32 bits (`y.lcc/build/rcc.exe`), en la misma
-llamada, como la suite de `y.lcc`:
+Necesita `cl` y el `rcc` de 32 bits (`u.lcc/build/rcc.exe`), en la misma
+llamada, como la suite de `u.lcc`:
 
 ```powershell
-.\y.lcc\build-mini.ps1 rebuild          # dentro de vcvars32.bat
+.\u.lcc\build-mini.ps1 rebuild          # dentro de vcvars32.bat
 python analysis\lcc-audit\measure.py
 ```
 
@@ -33,7 +33,7 @@ optimizada cambia el resultado.
 ## Estado de los datos
 
 `metrics.csv` y `out/*.s` son la **línea base de la auditoría** (9 de octubre
-de 2026, superproyecto `192dca5`, `y.lcc` `895f564`), anterior a la promoción
+de 2026, superproyecto `192dca5`, `u.lcc` `895f564`), anterior a la promoción
 de locales a temporales en hojas (`mini.md:local`) y a la LICM de cargas.
 Volver a ejecutar `measure.py` sobrescribe esa línea base con lo que genera el
 compilador actual: las cifras de la sección 11 de la auditoría y los

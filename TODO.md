@@ -422,10 +422,10 @@ solo; restaurar, probablemente no.
 ## 12. Board-upload no controla que protipo esta cargado
 
 ```text
-(tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases-cpu\video\pacman> board-load -p 21 --program .\pacman.asm
+(tools) (.venv) PS C:\Users\j_lop\Documents\repos\mini-gpu\t.tests\cases-cpu\video\pacman> board-load -p 21 --program .\pacman.asm
 Puerto detectado: COM3 (USB Serial Port (COM3))
 Using prototype: 21.fpga-cpu-hdmi-alu
-38425 palabras -> C:\Users\j_lop\Documents\repos\mini-gpu\x.tests\cases-cpu\video\pacman\pacman.bin
+38425 palabras -> C:\Users\j_lop\Documents\repos\mini-gpu\t.tests\cases-cpu\video\pacman\pacman.bin
 == cargando pacman.bin (153700 bytes) en 0x00000000
 error: `monitor.py reset` falló:
 Error: Invalid RESET_CPU response: f8
@@ -442,7 +442,7 @@ Y estaba la 22.
 
 > **Resuelto el 8/10/2026.** `prototype_build_summary` (`build-list --prototypes`)
 > ignora los registros de etiqueta `test` al elegir el último build, salvo los que
-> siguen en marcha. Test en `x.tests/unit/build/test_build_runner.py`. El texto de abajo se
+> siguen en marcha. Test en `t.tests/unit/build/test_build_runner.py`. El texto de abajo se
 > conserva como historia; el aviso de ancho que provocó el último `FAILED` de la 34
 > (`mmio_decoder.v:257`, `palabra >= PERF_SLOTS`) sigue sin limpiar.
 
@@ -472,7 +472,7 @@ diseño están en
 
 ### 16.1. `fault.address` obligatorio deja fuera de la placa los casos de fallo de memoria
 
-**Qué falta.** El esquema de `x.tests` exige `fault.address` y el monitor no la
+**Qué falta.** El esquema de `t.tests` exige `fault.address` y el monitor no la
 expone, así que `fpga_gpu.incompatibility` omite todo caso que la declare. Dos de
 los casos nuevos (`subword/misaligned-halfword` y `subword/mmio-byte`) se omiten
 por eso, aunque el RTL los hace bien: se comprobaron a mano contra la placa con la
@@ -567,12 +567,11 @@ kernel que los use solo corre en la 29 y en los simuladores. `gpu_lane.v` y
 sigue siendo la línea base de comparación de ciclos (`profiling.md`), conviene que
 no se mueva.
 
-### 16.7. `NEW-ASSM` y el ensamblador vigente
+### 16.7. `asm2` como ensamblador vigente
 
-**Qué falta.** `1.isa/NEW-ASSM` tiene su propia tabla de instrucciones y no
-conoce la familia `GETID` ni que `ANDI`/`ORI`/`XORI` aceptan `.equ`. Es el punto 13
-de este archivo, hoy vacío: decidir si `NEW-ASSM` es el ensamblador vigente antes
-de portarle nada.
+**Estado.** La implementación nueva vive en `1.isa/asm2`; la antigua queda en
+`1.isa/asm1` para comparación. `asm2` ya conoce la familia `GETID` y que
+`ANDI`/`ORI`/`XORI` aceptan `.equ`.
 
 ### 16.8. Tres comprobaciones que no se han hecho
 
@@ -595,7 +594,7 @@ de portarle nada.
 
 El protocolo de `32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md` (runtime de CPU con
 `WARP_START`/`WARP_DONE`, ids de job con generación, kernels `memset`/`memcpy`)
-está validado en simulador con el arnés de `x.tests/cases-cpu-gpu/dma`. En
+está validado en simulador con el arnés de `t.tests/cases-cpu-gpu/dma`. En
 placa **no hay prototipo con CPU y GPU a la vez** ni GPU CORE, así que es lo último
 de la cadena: primero 2.2 y 16.2, después el sistema con RAM compartida, y por
 último el runtime en C sobre el mismo protocolo (sin linker: el compilador genera
@@ -613,7 +612,7 @@ en `iverilog` con `a={0x104,0x100}`, `imm=-4`: la lane 1 daba `0x101`. Entró en
 **Qué se hizo.** Arreglo en `29.../gpu_sm.v` y en la 36 (rama `gpu-36-bram`,
 commits `1668af4` y `5728e81`), `gpu_barrier_tb` en la 36 (con el `gpu_sm` anterior
 acaba en error; con solo el sumador arreglado pasa) y el caso
-`x.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `sim-gpu` y
+`t.tests/cases-gpu/memory/negative-offset` (`0dc8307`), que pasa en `sim-gpu` y
 `sim-gpu-cycle`.
 
 **Qué falta.**
@@ -767,9 +766,9 @@ aparece, se cierra sin hacer nada.
   - `mul_div` estaba declarada `"architecture": "cpu"` en `capabilities.json`
     aunque `gpu_lane.v` tiene `OPCODE_MUL:` y `OPCODE_DIV:`. Corregido allí,
     que es el sitio que el repo tiene para decir qué buscar en el RTL. No mueve
-    la selección de casos: los 47 de `x.tests/cases-cpu` declaran
+    la selección de casos: los 47 de `t.tests/cases-cpu` declaran
     `architecture: cpu` y ese filtro va antes que las capacidades.
-  - Lo vigila `x.tests/unit/build/test_sysid_params.py` (sincronía, conformidad contra
+  - Lo vigila `t.tests/unit/build/test_sysid_params.py` (sincronía, conformidad contra
     números a mano, y que nadie vuelva a poner un literal en el RTL), más
     `test_monitor_port.SysIdTest`, que deriva el perfil de los rasgos del RTL
     por un camino distinto al del generador. Fue ese contraste el que cazó lo
@@ -779,10 +778,10 @@ aparece, se cierra sin hacer nada.
   Con ello se cierran también:
   - **El mapa de transición `1.isa/mmio_map_v1.vh`**, borrado por fin cumpliendo
     su propio criterio —«sobra cuando lo suelta la ÚLTIMA carpeta»—, junto con
-    `x.tests/inc/mmio_v1.inc`, `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la
+    `t.tests/inc/mmio_v1.inc`, `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la
     clase `MapaV1Test`. Se había borrado antes de tiempo una vez, al cerrar la
     21, y hubo que rehacerlo entero para la 19.
-  - **La deuda del backend de placa compartido.** `x.tests/backends/fpga_cpu.py`
+  - **La deuda del backend de placa compartido.** `t.tests/backends/fpga_cpu.py`
     lleva en v2 desde el 20/09 y las diez carpetas ya están en v2, así que no
     queda ninguna con los tests de placa rotos por el mapa.
   - **Los diez `sysid.v` idénticos**, con el grupo de v1 vacío:
@@ -830,13 +829,13 @@ aparece, se cierra sin hacer nada.
   (`0x80000000–0x80001000`) en 16, 18, 19 y 21, no a los 24 bytes que este
   fichero llegó a decir: `perf` lee `0x80000300` y con la ventana estrecha se
   rechazaba en el cliente.
-- **Tests de capacidad en `x.tests`.** El mecanismo está sano (34 `test.json` con
+- **Tests de capacidad en `t.tests`.** El mecanismo está sano (34 `test.json` con
   `requires`). El smoke test es `cases-cpu/basics/smoke`, y `swap_demo`/
   `swap_demo_fast` son `cases-cpu/video/swap-demo` y `cases-cpu/video/swap-demo-fast`,
   apuntando al `.asm` de la 21 sin copiarlo. `tear_demo` **no se puede convertir
   en caso** y no es una tarea pendiente: no pide `SWAP` nunca —es justo lo que
   demuestra—, así que `run_until.swap` no se dispara, y lo que enseña es una
   carrera que el simulador no modela. Razonado en
-  [`x.tests/cases-cpu/video/README.md`](x.tests/cases-cpu/video/README.md).
+  [`t.tests/cases-cpu/video/README.md`](t.tests/cases-cpu/video/README.md).
 - **«¿VVP qué ejecuta?»** Sí, el RTL: `vvp` corre el binario que compila
   `iverilog` a partir del RTL y su testbench.

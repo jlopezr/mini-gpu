@@ -38,7 +38,7 @@
  * cinco en su `top.v`, Verilog trunco al conectar el puerto sin decir nada, y
  * los dieciseis dispositivos cayeron todos sobre el de video --pedir `SYS_ID`
  * devolvia `FB_FRONT`--. No lo vio ningun banco porque ninguno instancia
- * `top`. Hoy lo vigila `x.tests/test_top_wiring.py`.
+ * `top`. Hoy lo vigila `t.tests/test_top_wiring.py`.
  *
  * El select se filtra antes del periferico para que un acceso rechazado no
  * tenga efectos. El error acompana al dato hasta el ack del nucleo o del

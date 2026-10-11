@@ -16,8 +16,8 @@ sys.path.insert(0, str(sim.ROOT / "1.isa"))
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-INC = sim.ROOT / "x.tests" / "inc"
-CASES = sim.ROOT / "x.tests" / "cases-cpu-gpu"      # los programas: una carpeta por programa
+INC = sim.ROOT / "t.tests" / "inc"
+CASES = sim.ROOT / "t.tests" / "cases-cpu-gpu"      # los programas: una carpeta por programa
 MEMORY = 1 << 20            # 1 MiB
 KERNEL = 0x10000
 OUT = 0x20000
@@ -225,7 +225,7 @@ def dma_system(**kwargs):
 
 
 class DmaHarnessTest(unittest.TestCase):
-    """El runtime y los kernels de `x.tests/cases-cpu-gpu/dma`: el protocolo del §5 entero."""
+    """El runtime y los kernels de `t.tests/cases-cpu-gpu/dma`: el protocolo del §5 entero."""
 
     def setUp(self):
         self.system, self.results, self.buf_b = dma_system()
@@ -456,7 +456,7 @@ RENDER_V2 = CASES / "render" / "render-v2" / "render_v2.asm"
 
 
 class RenderExampleTest(unittest.TestCase):
-    """`x.tests/cases-cpu-gpu/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
+    """`t.tests/cases-cpu-gpu/render`: la CPU lleva el bucle y la GPU pinta cada fotograma."""
 
     PROGRAM = RENDER
 
@@ -548,7 +548,7 @@ RACE_COLORS = (0x07E0, 0xFD20, 0x07FF)      # CPU, GPU ingenua, GPU bien puesta
 
 
 def race_image(path: Path):
-    """(imagen, etiquetas) de un demo de `x.tests/cases-cpu-gpu/race`."""
+    """(imagen, etiquetas) de un demo de `t.tests/cases-cpu-gpu/race`."""
     source = path.read_text(encoding="utf-8")
     labels = first_pass(source, path.parent, path.name, (INC,))[1]
     return assemble_bytes(source, path.parent, path.name, (INC,)), labels
@@ -1651,7 +1651,7 @@ COMPARE = HERE / "compare"      # compare.py, compare_race.py, opt_stats.py
 def build_c_example(name: str, data=()):
     """Compila `cases-cpu-gpu/<name>/<nombre>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
     `data`: (etiqueta, fichero) de los binarios que `build-c --data` pega tras el codigo.
-    Se omite la prueba si no hay compilador (rcc de y.lcc y MSVC); cualquier otro fallo es un error."""
+    Se omite la prueba si no hay compilador (rcc de u.lcc y MSVC); cualquier otro fallo es un error."""
     sys.path.insert(0, str(sim.ROOT))
     from tools import build_c as c_build
     program = CASES / name / f"{Path(name).name}.c"
@@ -1659,7 +1659,7 @@ def build_c_example(name: str, data=()):
         binary = c_build.build(program, data=tuple(data))
     except c_build.BuildError as error:
         if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
-            raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+            raise unittest.SkipTest("sin compilador de C para MiniISA (u.lcc/build/rcc y MSVC)")
         raise
     wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
@@ -1714,7 +1714,7 @@ class CSystemKernelsTest(unittest.TestCase):
             cls.rows = compare.compare()
         except compare.c_build.BuildError as error:
             if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
-                raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+                raise unittest.SkipTest("sin compilador de C para MiniISA (u.lcc/build/rcc y MSVC)")
             raise
 
     def model(self, work):
@@ -1767,7 +1767,7 @@ class CRotateTest(unittest.TestCase):
             cls.rows = compare_race.compare("rotate", 5)
         except compare_race.c_build.BuildError as error:
             if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
-                raise unittest.SkipTest("sin compilador de C para MiniISA (y.lcc/build/rcc y MSVC)")
+                raise unittest.SkipTest("sin compilador de C para MiniISA (u.lcc/build/rcc y MSVC)")
             raise
 
     def test_every_version_draws_the_modelled_image(self):

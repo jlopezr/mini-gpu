@@ -162,7 +162,7 @@ Desde esta carpeta, con el bitstream de esta versión cargado:
 
 El ejemplo escribe los valores `100..163` en las 64 palabras desde `0x1000`,
 y cada thread lee de vuelta su valor en R5. Warp 3/lane 5 devuelve 129.
-`x.tests/cases-gpu/demos/simt/simt.asm` ejercita divergencia anidada y BAR; en R3 quedan
+`t.tests/cases-gpu/demos/simt/simt.asm` ejercita divergencia anidada y BAR; en R3 quedan
 `12,12,22,22,31,31,31,31` por warp.
 
 Para un lanzamiento específico, cargar primero el programa y después:
@@ -229,7 +229,7 @@ para ello usar `configure`, que valida el JSON antes de escribir.
 `Tests` regenera las referencias con el simulador funcional y ejecuta Apio.
 Los testbenches tienen watchdog y `$fatal` ante discrepancias:
 
-- `gpu_system_tb.v`: 34 programas diferenciales (los casos de `x.tests/cases-gpu` marcados
+- `gpu_system_tb.v`: 34 programas diferenciales (los casos de `t.tests/cases-gpu` marcados
   `rtl.differential`, ver `fixtures-report`), todos los 2048 registros,
   PC finales y 512 palabras de datos por caso. Incluye memoria unificada y código
   modificado tras BAR, límites de RAM, conflictos, aritmética y SIMT.
@@ -253,9 +253,9 @@ Apio puede permitir un fallo de timing durante place-and-route.
 Desde la raíz del repositorio:
 
 ```powershell
-.\.venv\Scripts\python.exe .\x.tests\run_tests.py --backend fpga-gpu --version bram --port COM3 --yes --durations
+.\.venv\Scripts\python.exe .\t.tests\run_tests.py --backend fpga-gpu --version bram --port COM3 --yes --durations
 ```
 
 El runner requiere monitor 3.12 y carga el proyecto cuando la placa responde con
 otra versión. Ejecuta 26 casos GPU compatibles y explica los 8 omitidos por
-capacidades; véase [el runner](../x.tests/README.md).
+capacidades; véase [el runner](../t.tests/README.md).

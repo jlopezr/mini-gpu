@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 # implementa v2 (§17) y la 21 es de momento la unica carpeta migrada, asi que
 # el programa de la 19 aqui daria un fallo de acceso. Cuando la 19 se migre da
 # igual cual se use; hasta entonces, esta linea marca cual va por delante.
-UPPER_ASM = REPO / "x.tests" / "cases-cpu" / "demos" / "serial-upper" / "serial_upper.asm"
+UPPER_ASM = REPO / "t.tests" / "cases-cpu" / "demos" / "serial-upper" / "serial_upper.asm"
 
 
 def assemble(path: Path) -> bytes:
@@ -30,13 +30,13 @@ def assemble(path: Path) -> bytes:
     modulo = importlib.util.module_from_spec(spec)
     sys.modules["mini_asm_para_tests"] = modulo
     spec.loader.exec_module(modulo)
-    # Con `-I x.tests/inc`, que es donde vive `mmio.inc` generado: desde MMIO
+    # Con `-I t.tests/inc`, que es donde vive `mmio.inc` generado: desde MMIO
     # v2 los ejemplos no llevan la direccion cableada, la incluyen.
     palabras = modulo.assemble(
         path.read_text(encoding="utf-8"),
         base_dir=path.parent,
         origin=str(path),
-        include_dirs=(REPO / "x.tests" / "inc",))
+        include_dirs=(REPO / "t.tests" / "inc",))
     return b"".join(struct.pack("<I", w) for w in palabras)
 
 

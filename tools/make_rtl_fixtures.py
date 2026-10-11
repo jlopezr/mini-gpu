@@ -2,7 +2,7 @@
 """Generador compartido de fixtures diferenciales de RTL para los prototipos de GPU.
 
 Sustituye a los `make_fixtures.py` que había copiados en cada prototipo. Toma los
-casos de `x.tests/cases-gpu` marcados con `"rtl": {"differential": true}`, los
+casos de `t.tests/cases-gpu` marcados con `"rtl": {"differential": true}`, los
 ensambla con `1.isa/mini_asm.py`, los ejecuta en el simulador funcional
 (`11.gpu-sim-func`) y escribe en `<prototipo>/fixtures/` el estado que
 `gpu_system_tb.v` compara contra el del RTL.
@@ -45,7 +45,7 @@ from typing import NamedTuple
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / '1.isa'), str(ROOT / '11.gpu-sim-func')]
 
-CASES_DIR = ROOT / 'x.tests' / 'cases-gpu'
+CASES_DIR = ROOT / 't.tests' / 'cases-gpu'
 SIM_MEMORY_BYTES = 128 * 1024
 MAX_STEPS = 10000
 WARP_SIZE = 8
@@ -112,7 +112,7 @@ def load_marked_cases(cases_dir=CASES_DIR):
 
 
 def all_cases(cases_dir=CASES_DIR):
-    """Todos los casos diferenciales, ordenados por su ruta en x.tests."""
+    """Todos los casos diferenciales, ordenados por su ruta en t.tests."""
     return load_marked_cases(cases_dir)
 
 

@@ -5,7 +5,7 @@ Este es el fichero que decide si el modelo sirve para algo. Mientras no
 reproduzca el diseño ACTUAL dentro de una tolerancia razonable, cualquier
 predicción suya sobre el cauce segmentado es ficción.
 
-Referencia: 22.fpga-gpu-bl8/profiling.md, un frame de plasma.asm (x.tests/cases-gpu/demos/plasma) con
+Referencia: 22.fpga-gpu-bl8/profiling.md, un frame de plasma.asm (t.tests/cases-gpu/demos/plasma) con
 el scanout encendido, medido con gpu_profile_tb.v sobre el RTL.
 """
 from __future__ import annotations
@@ -44,13 +44,13 @@ REFERENCE = {
     "lsu_tx": 9_600,
 }
 
-PROGRAM = ROOT / "x.tests" / "cases-gpu" / "demos" / "plasma" / "plasma_nommio.asm"
+PROGRAM = ROOT / "t.tests" / "cases-gpu" / "demos" / "plasma" / "plasma_nommio.asm"
 
 
 def build_system(program: Path) -> func.System:
     system = func.System()
     data = assemble_bytes(program.read_text(encoding="utf-8"), program.parent, str(program),
-                          (ROOT / "x.tests" / "inc",))
+                          (ROOT / "t.tests" / "inc",))
     system.memory[0:len(data)] = data
     system.configure_warps({"warps": [{"id": i, "enabled": True, "pc": 0, "active_mask": 0xFF}
                                  for i in range(8)]})

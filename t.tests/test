@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Punto de entrada local de t.tests. La logica esta en tools/run-tests, que es
+# Python y por tanto funciona igual en las tres plataformas; esto solo existe
+# para poder escribir `./test` desde esta carpeta. Ver el comentario de cabecera
+# de tools/run-tests: antes eran dos implementaciones y en Windows solo servia
+# una.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$(dirname "$DIR")/tools/run-tests" "$@"

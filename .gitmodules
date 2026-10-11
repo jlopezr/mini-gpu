@@ -1,6 +1,9 @@
-[submodule "y.lcc"]
-	path = y.lcc
+[submodule "u.lcc"]
+	path = u.lcc
 	url = git@github.com:jlopezr/mini-lcc.git
-[submodule "z.tui"]
-	path = z.tui
+[submodule "v.tui"]
+	path = v.tui
 	url = git@github.com:jlopezr/tui.git
+[submodule "w.vlink"]
+	path = w.vlink
+	url = https://github.com/jlopezr/vlink.git

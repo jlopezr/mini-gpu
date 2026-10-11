@@ -115,8 +115,8 @@ Dos cosas difieren de la placa y conviene saberlas:
   la comparación píxel a píxel la hace [`video_frame_tb.v`](video_frame_tb.v) a
   resolución reducida, donde es barata.
 
-El programa es [`../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm) —**no**
-[`../x.tests/cases-cpu/demos/fullframe/fullframe.asm`](../x.tests/cases-cpu/demos/fullframe/fullframe.asm), que es el de la placa—, y
+El programa es [`../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`](../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm) —**no**
+[`../t.tests/cases-cpu/demos/fullframe/fullframe.asm`](../t.tests/cases-cpu/demos/fullframe/fullframe.asm), que es el de la placa—, y
 pinta una «L» azul y un cuadrado blanco. La «L» no es simétrica a propósito: un
 marco completo se ve igual si alguien intercambia los ejes; una línea arriba y
 una columna a la izquierda, no.
@@ -126,7 +126,7 @@ framebuffer: en la placa están en `0x01000000`, y ahí no caben en el modelo de
 SDRAM del banco. Esta frase decía lo contrario y era falsa; regenerar
 `fullframe.hex` «como ponía aquí» hace que el banco cuente 60 000 violaciones
 JEDEC, que en realidad son 60 000 accesos a una fila que no existe.
-[`x.tests/unit/build/test_fullframe_fixture.py`](../x.tests/unit/build/test_fullframe_fixture.py)
+[`t.tests/unit/build/test_fullframe_fixture.py`](../t.tests/unit/build/test_fullframe_fixture.py)
 comprueba las tres cosas para que no vuelva a quedarse vieja.
 
 ## La combinación de escrituras
@@ -205,7 +205,7 @@ de `imem` tal cual; del lado de la memoria es un puerto de 128 bits.
 
 Son **cuatro líneas de 16 bytes**, mapeo directo, 512 biestables de datos. El
 tamaño no es arbitrario: 16 bytes son exactamente las cuatro instrucciones del
-bucle interior de [`swap_demo_fast`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
+bucle interior de [`swap_demo_fast`](../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm), así que desde
 la segunda iteración el bucle entero vive dentro y el `BLT` salta dentro del
 propio búfer.
 
@@ -566,17 +566,17 @@ vertical enseña para qué sirve el doble buffer, el horizontal lo que cuesta.
 
 | Programa                                   | Escribe en | Repinta    | Dibujo  | En pantalla                     |
 |--------------------------------------------|------------|------------|---------|---------------------------------|
-| [`swap_demo.asm`](../x.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
-| [`swap_demo_fast.asm`](../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
-| [`tear_demo.asm`](../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
-| [`tear_demo_fast.asm`](../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
+| [`swap_demo.asm`](../t.tests/cases-cpu/video/swap-demo/swap_demo.asm)           | `FB_BACK`  | 240 líneas | 96,6 ms | 9,8 fps, limpio                 |
+| [`swap_demo_fast.asm`](../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm) | `FB_BACK`  | 32 líneas  | 13,2 ms | 59,3 fps, limpio                |
+| [`tear_demo.asm`](../t.tests/cases-cpu/demos/tear-demo/tear_demo.asm)           | `FB_FRONT` | 240 líneas | 96,6 ms | 10,3 fps, frente de repintado   |
+| [`tear_demo_fast.asm`](../t.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm) | `FB_FRONT` | 32 líneas  | 13,2 ms | 75,7 fps, costura cada 63 ms    |
 
 Las dos últimas columnas dicen cosas distintas y conviene no confundirlas. «Dibujo»
 es lo que tarda la CPU en pintar un frame; «en pantalla» es a qué ritmo se ve
 cambiar la imagen. En los `swap_` no coinciden porque la espera al intercambio
 redondea cada frame a un número entero de frames de vídeo.
 
-Y aparte, [`swap_smoke.asm`](../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
+Y aparte, [`swap_smoke.asm`](../t.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm), que no dibuja: lee los dos
 registros, pide un intercambio, espera a que ocurra y comprueba que se
 intercambiaron. Es el que ejecuta `cpu_video_tb.v`, así que es el único cuyo
 comportamiento **está verificado en simulación RTL con instrucciones reales**.
@@ -956,7 +956,7 @@ temporización JEDEC.
 La suite completa de CPU contra esta placa:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu --version bl8 --port COM3
+..\.venv\Scripts\python.exe ..\t.tests\run_tests.py --backend fpga-cpu --version bl8 --port COM3
 ```
 
 Es la comprobación que de verdad importa: que meter el vídeo no ha roto la CPU.
@@ -975,8 +975,8 @@ Para comparar esta versión con las anteriores en los mismos programas, el runne
 tiene `--measure`, que saca una tabla en Markdown:
 
 ```powershell
-..\.venv\Scripts\python.exe ..\x.tests\run_tests.py --backend fpga-cpu `
-    --measure medidas.md --port COM3 ..\x.tests\cases
+..\.venv\Scripts\python.exe ..\t.tests\run_tests.py --backend fpga-cpu `
+    --measure medidas.md --port COM3 ..\t.tests\cases
 ```
 
 El porqué de los dos contadores, y qué miden exactamente, está en

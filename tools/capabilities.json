@@ -42,7 +42,7 @@
   },
   "_comment_patrones": "Un 'pattern' se busca en el TEXTO del fichero, comentarios incluidos. Por eso apuntan a la IMPLEMENTACION y no al nombre a secas: 'HALT_AT' casaba con un comentario de la 16 que decia que ese registro NO existe alli, y la 16 pasaba a declarar 'frame_capture' -- con lo que habria aceptado casos con run_until.swap que no puede detener. 'REG_SWAP_COUNT =' solo casa con el localparam que lo define.",
 
-  "_comment_frame_capture": "Poder parar el programa tras N intercambios y capturar su frame (`run_until: {swap: N}`). Lo hace el arnes sondeando SWAP_COUNT (x.tests/backends/frame_capture.py), asi que lo que hace falta es ese registro, que esta en las dos familias: no HALT_AT, que cuenta frames y en la GPU no existe. Cuando HALT_AT cuente intercambios el arnes podra armarlo en lugar de sondear, pero la capacidad seguira siendo esta.",
+  "_comment_frame_capture": "Poder parar el programa tras N intercambios y capturar su frame (`run_until: {swap: N}`). Lo hace el arnes sondeando SWAP_COUNT (t.tests/backends/frame_capture.py), asi que lo que hace falta es ese registro, que esta en las dos familias: no HALT_AT, que cuenta frames y en la GPU no existe. Cuando HALT_AT cuente intercambios el arnes podra armarlo en lugar de sondear, pero la capacidad seguira siendo esta.",
   "frame_capture": {
     "architecture": ["cpu", "gpu"],
     "file": ["video_registers.v", "gpu_video_regs.v"],
@@ -71,7 +71,7 @@
     "pattern": "CMD_READ_WORD"
   },
 
-  "_comment_write_word": "Nacio para saber quien tenia WRITE_WORD cuando solo lo tenia la 19 y la version del monitor no lo reflejaba. Ya esta en las diez y la version SI lo dice (mayor 3 o 4), asi que hoy no distingue prototipos: se queda porque un caso de x.tests puede pedirlo en 'requires', igual que read_word, y porque sigue siendo la respuesta correcta a 'que sabe hacer este RTL' sin encender la placa.",
+  "_comment_write_word": "Nacio para saber quien tenia WRITE_WORD cuando solo lo tenia la 19 y la version del monitor no lo reflejaba. Ya esta en las diez y la version SI lo dice (mayor 3 o 4), asi que hoy no distingue prototipos: se queda porque un caso de t.tests puede pedirlo en 'requires', igual que read_word, y porque sigue siendo la respuesta correcta a 'que sabe hacer este RTL' sin encender la placa.",
   "write_word": {
     "architecture": ["cpu", "gpu"],
     "file": "monitor.v",
@@ -131,7 +131,7 @@
     "pattern": "register_write_data\\s*<=\\s*warp_arg"
   },
 
-  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores, y las placas con el dispositivo (`input_device`, mas abajo) lo reciben de ella: x.tests/backends/fpga_cpu.py anade `input` a toda version con `input_device`. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
+  "_comment_input": "INPUT, teclado y raton (mmio.md §25). Sin 'file' A PROPOSITO: lo declaran los simuladores, y las placas con el dispositivo (`input_device`, mas abajo) lo reciben de ella: t.tests/backends/fpga_cpu.py anade `input` a toda version con `input_device`. Un caso lo alimenta con `input`, una lista de lineas de guion (tools/input_script.py).",
   "input": {
     "architecture": ["cpu", "gpu"]
   },

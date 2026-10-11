@@ -8,10 +8,10 @@ un load mantiene su respuesta e `in_flight` hasta escribir el banco.
 ```powershell
 # Desde la raíz del repositorio:
 .\tools\test.ps1 --prototype 25 --quick
-.\tools\sim-gpu-cycle.ps1 x.tests/cases-gpu/demos/load-store/load_store.asm `
+.\tools\sim-gpu-cycle.ps1 t.tests/cases-gpu/demos/load-store/load_store.asm `
   --report 25.gpu-sim-cycle-uarch/reports/load_store.json `
   --trace 25.gpu-sim-cycle-uarch/reports/load_store.jsonl --trace-cycles 100
-.\.venv\Scripts\python.exe x.tests/run_tests.py --backend sim-gpu --version cycle x.tests/cases-gpu/memory
+.\.venv\Scripts\python.exe t.tests/run_tests.py --backend sim-gpu --version cycle t.tests/cases-gpu/memory
 ```
 
 En Linux/macOS: `python tools/sim-gpu-cycle programa.asm`; el lanzador admite

@@ -175,7 +175,7 @@ decidir a dónde va. La regla del encargo —«con mux o sin mux»— predecía 
 ## Verificación
 
 - `./tools/test --prototype 22`: **26 bancos RTL** y 8 tests Python, todos OK.
-- `x.tests`: 285 tests, **todos en verde**. La guarda de `.asm` ya pasa con las
+- `t.tests`: 285 tests, **todos en verde**. La guarda de `.asm` ya pasa con las
   ocho rutas y los 152 programas versionados.
 - `sysid.v` de la 22 ya es byte a byte el de las otras nueve: **los diez son
   idénticos y el grupo de v1 está vacío**.
@@ -192,8 +192,8 @@ decidir a dónde va. La regla del encargo —«con mux o sin mux»— predecía 
 Los 26 bancos y los 280 tests estaban en verde **antes** de la primera ronda de
 placa, y la placa dio **18 fallos de 33**. Los dos motivos:
 
-**1. `x.tests/backends/gpu_fpga.py` seguía entero en v1.** El encargo decía que
-«el backend de placa es único y compartido, `x.tests/backends/fpga.py`, y está
+**1. `t.tests/backends/gpu_fpga.py` seguía entero en v1.** El encargo decía que
+«el backend de placa es único y compartido, `t.tests/backends/fpga.py`, y está
 en v2». Cierto — pero `gpu_fpga.py` **es otro fichero** y no lo estaba: llevaba
 los cinco registros de vídeo en la página de v1 y cuatro direcciones de
 depuración cableadas (`0x80000108`, `0x10c`, `0x110`, `0x114`).
@@ -234,14 +234,14 @@ se cerró: `gpu_video_regs.v` rechaza la palabra entera y no guarda nada.
 ## Y con esto se borra el andamio
 
 `1.isa/mmio_map_v1.vh` cumplía por fin su criterio de borrado —«sobra cuando lo
-suelta la ÚLTIMA carpeta»— y se ha ido, con `x.tests/inc/mmio_v1.inc`,
+suelta la ÚLTIMA carpeta»— y se ha ido, con `t.tests/inc/mmio_v1.inc`,
 `tools/mmio_map_v1.py`, su entrada en `MAPAS` y la clase `MapaV1Test`.
 
 Antes de borrarlo se comprobó que **ningún `.asm` del repo incluye
 `mmio_v1.inc`**. Quedaban dos referencias y las dos eran comentarios rancios en
 ficheros que ya incluían `mmio.inc`: `20.forth/forth.asm`, que decía «SERIAL
 (MMIO v2, ver mmio_v1.inc)» —contradiciéndose a sí mismo en la misma línea— y
-`x.tests/cases-cpu/extensions/serial/uppercase/program.asm`. Corregidos.
+`t.tests/cases-cpu/extensions/serial/uppercase/program.asm`. Corregidos.
 
-La suite de `x.tests` pasa de 285 a **280** tests: los cinco que faltan son los
+La suite de `t.tests` pasa de 285 a **280** tests: los cinco que faltan son los
 de `MapaV1Test`, borrados a propósito con el andamio que vigilaban.

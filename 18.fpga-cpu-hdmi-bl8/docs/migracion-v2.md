@@ -32,7 +32,7 @@ cambian el estado del repo, no sólo el plan.
 | `tools/test --prototype 18` | **SUCCESS**, 42,13 s, 21 bancos | sí, clavado |
 | `tools/lint --prototype 18` | **40 `%Warning-PINMISSING`, 0 de anchura** (exit 1) | sí, y el reparto es de un solo tipo |
 | `run_tests.py --backend cpusim` | 53 casos, 0 fallos, 34 omitidos, 17,3 s | — |
-| `unittest` de `x.tests` | **278 OK** | — |
+| `unittest` de `t.tests` | **278 OK** | — |
 | `unittest` de `1.isa` / `2.cpu-sim-func` / `11.gpu-sim-func` | 61 / 44 / 62 OK | — |
 | `check-links.py` | 628 enlaces en 180 `.md`, ninguno roto | — |
 | `generate-mmio --check` | al día, los cuatro destinos | — |
@@ -54,7 +54,7 @@ por tipo.
 - `monitor.py:39` tiene `MONITOR_REGIONS` con **una sola** ventana,
   `(0x8000_0000, 0x8000_1000)`. Exacto.
 - Los siete ficheros generados de la raíz están los siete, y **no existe
-  `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**. Exacto.
+  `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**. Exacto.
 - `video_registers.v:241` usa `>=` con el comentario que lo declara defensa
   deliberada. **La corrección que el encargo le hace al log de la 21 es
   correcta**: no hay ningún bug de `==` que arreglar aquí.
@@ -82,7 +82,7 @@ y 21 **hoy**, o sea que la migración no lo ha tocado en ninguna.
 |---|---:|
 | `21.fpga-cpu-hdmi-alu` | 35 |
 | `19.fpga-cpu-hdmi-ls` | 33 |
-| `x.tests` | 23 |
+| `t.tests` | 23 |
 | `tools` | 8 |
 | resto (`1.isa`, `11.gpu-sim-func`, `18`, `2.cpu-sim-func`, `20.forth`, `25`, `docs`, `TODO.md`) | 10 |
 
@@ -96,7 +96,7 @@ una consecuencia práctica inmediata y una de riesgo:
   texto, que engaña por los finales de línea (el repo es CRLF en disco y LF en
   el índice: `git diff` lo avisa en cada invocación).
 - **De riesgo:** tres migraciones sin un solo punto de restauración. Si algo de
-  esta tercera rompe una pieza compartida —y toca `x.tests`, `tools` y `1.isa`,
+  esta tercera rompe una pieza compartida —y toca `t.tests`, `tools` y `1.isa`,
   que es donde vive todo lo compartido— no hay a dónde volver que no se lleve
   por delante las otras dos. `[TODAS]`
 
@@ -239,12 +239,12 @@ en `test_mmio_map.py`. Falló al instante nombrando **los seis ficheros**, ni un
 más ni uno menos, lo que confirma de paso el inventario de la fase 0:
 
 ```text
-18\../../x.tests/cases-cpu/demos/fullframe/fullframe.asm:34:       MOVHI R20, 0x8000
-18\../../x.tests/cases-cpu/video/swap-demo/swap_demo.asm:32:       MOVHI R20, 0x8000   ; registros de video en 0x80000000
-18\../../x.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm:55:  MOVHI R20, 0x8000
-18\../../x.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm:21:      MOVHI R20, 0x8000
-18\../../x.tests/cases-cpu/demos/tear-demo/tear_demo.asm:32:       MOVHI R20, 0x8000
-18\../../x.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm:50:  MOVHI R20, 0x8000
+18\../../t.tests/cases-cpu/demos/fullframe/fullframe.asm:34:       MOVHI R20, 0x8000
+18\../../t.tests/cases-cpu/video/swap-demo/swap_demo.asm:32:       MOVHI R20, 0x8000   ; registros de video en 0x80000000
+18\../../t.tests/cases-cpu/video/swap-demo-fast/swap_demo_fast.asm:55:  MOVHI R20, 0x8000
+18\../../t.tests/cases-cpu/demos/swap-smoke/swap_smoke.asm:21:      MOVHI R20, 0x8000
+18\../../t.tests/cases-cpu/demos/tear-demo/tear_demo.asm:32:       MOVHI R20, 0x8000
+18\../../t.tests/cases-cpu/demos/tear-demo-fast/tear_demo_fast.asm:50:  MOVHI R20, 0x8000
 ```
 
 Es todavía **más homogéneo que la 19**: una sola base (`R20`), un solo
@@ -279,12 +279,12 @@ necesita más justificación que el hash.
 
 `fullframe.asm` no creció +1 como los otros cinco, sino **+2**, y el verificador
 lo cazó. No era un error: la 19, al arreglar su fixture, sacó además **las dos
-bases del framebuffer** a `.equ` para que su `../../x.tests/cases-cpu/demos/fullframe/fullframe.asm` y su
-`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` sólo se diferencien en ese bloque —que es justo lo que
+bases del framebuffer** a `.equ` para que su `../../t.tests/cases-cpu/demos/fullframe/fullframe.asm` y su
+`../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` sólo se diferencien en ese bloque —que es justo lo que
 `test_fullframe_fixture.py` exige—.
 
 Eso llega a la 18 con la copia, y es deseable, porque la 18 va a necesitar su
-propio `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`. Pero deja el fichero **hablando de un hermano que
+propio `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`. Pero deja el fichero **hablando de un hermano que
 todavía no existe**: el comentario nuevo dice «la unica diferencia con
 `../fullframe_tb.asm`». Queda pendiente para la fase de la fixture.
 
@@ -309,7 +309,7 @@ con un `MOVHI` suelto, que aquí son los seis. El `+2` de `fullframe` son la bas
 MMIO más la de `FB_FRONT`, que también iba en un `MOVHI` solo; la de `FB_BACK`
 ya hacía `MOVHI` + `ORI` y no creció.
 
-**Ningún caso de `x.tests` fija un `pc` contra estos programas**, igual que en la
+**Ningún caso de `t.tests` fija un `pc` contra estos programas**, igual que en la
 19 y por la misma razón: ningún `test.json` apunta a los `examples` de la 18.
 
 ### El control negativo, y sale clavado el de la 19
@@ -330,7 +330,7 @@ Nada.
 
 | Qué | Antes | Ahora |
 |---|---|---|
-| `unittest` de `x.tests` | 278 OK | **278 OK** (la guarda ya no salta) |
+| `unittest` de `t.tests` | 278 OK | **278 OK** (la guarda ya no salta) |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 
 ### Estado
@@ -499,11 +499,11 @@ tres carpetas. Lo mismo vale para `mmio_monitor_tb.v` y su `0x80000f00`.
 Con el RTL en v2, los seis programas pasaron de `mmio_v1.inc` a `mmio.inc`.
 **Una línea por fichero**, que es exactamente lo que el andamio compra.
 
-### La fixture: `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` creado, y el `.hex` coincide con los otros dos
+### La fixture: `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` creado, y el `.hex` coincide con los otros dos
 
 El banco ya migrado falló con «la CPU paró con error 05 en pc=00000004»: el
 `fullframe.hex` versionado seguía siendo el de v1. Se aplicaron las tres piezas:
-`../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` copiado de la 19 (los cuerpos son idénticos, sólo cambian las
+`../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` copiado de la 19 (los cuerpos son idénticos, sólo cambian las
 dos `.equ`), el `.hex` regenerado **desde ahí** con la orden escrita en la
 cabecera del banco, y el README corregido.
 
@@ -518,7 +518,7 @@ sin tocar el test — que es exactamente lo que la 19 dijo que pasaría.
 
 ### El lado host, y son los dos últimos rojos otra vez
 
-Exactamente como en la 19: los dos únicos fallos de `x.tests` al final fueron
+Exactamente como en la 19: los dos únicos fallos de `t.tests` al final fueron
 `MONITOR_REGIONS` de `monitor.py`, que seguía con la ventana única. Lo cazaron
 sus dos gemelas (`test_monitor_port` y `test_monitor_protocol`).
 
@@ -585,7 +585,7 @@ propósito: los dos se cazan ahora en un test que tarda menos de un segundo.
 |---|---|---|
 | `tools/test --prototype 18` | SUCCESS, 42 s, 21 bancos | **SUCCESS, 123 s**, 21 bancos |
 | `tools/lint --prototype 18` | 40 PINMISSING, 0 anchura | **39 PINMISSING, 0 anchura** |
-| `unittest` de `x.tests` | 278 OK | 278 OK |
+| `unittest` de `t.tests` | 278 OK | 278 OK |
 | `run_tests --backend cpusim` | 53 casos, 0 fallos | 53 casos, 0 fallos |
 | `unittest` de `1.isa` / `2.cpu-sim-func` / `11.gpu-sim-func` | 61 / 44 / 62 | 61 / 44 / 62 OK |
 | `check-links` | 628 en 180 `.md` | 639 en 181, ninguno roto |

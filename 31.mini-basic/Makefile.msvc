@@ -3,11 +3,11 @@
 #   nmake /f Makefile.msvc          compila mini-basic.exe
 #   nmake /f Makefile.msvc clean
 #
-# Lo de 28.basic y z.tui se compila desde sus carpetas, sin copiarlo aqui.
+# Lo de 28.basic y v.tui se compila desde sus carpetas, sin copiarlo aqui.
 CC = cl
 OBJDIR = _build\obj
 BASIC = ..\28.basic
-TUI = ..\z.tui
+TUI = ..\v.tui
 CFLAGS = /nologo /Fo$(OBJDIR)\ /TC /W4 /D_CRT_SECURE_NO_WARNINGS /I$(BASIC) /I$(TUI)
 TARGET = mini-basic.exe
 

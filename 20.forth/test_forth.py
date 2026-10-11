@@ -35,7 +35,7 @@ PROGRAM = b"".join(
     struct.pack("<I", w)
     for w in asm.assemble(FORTH.read_text(encoding="utf-8"),
                           base_dir=FORTH.parent, origin=FORTH.name,
-                          include_dirs=(REPO / "x.tests" / "inc",)))
+                          include_dirs=(REPO / "t.tests" / "inc",)))
 
 
 def run_forth(lineas: str, max_instructions: int = 4_000_000) -> str:

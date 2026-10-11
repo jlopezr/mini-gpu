@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Validate MiniGPU VOBJ output with vlink when it is available."""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ASM = ROOT / "1.isa" / "asm2" / "mini-asm.py"
+LOCAL_VLINK = ROOT / "w.vlink" / "vlink"
+
+SMOKE_SOURCE = """\
+start:
+    LA R1, table+4
+    BNE R1, R0, start
+table:
+    .word start
+"""
+
+
+def run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def assemble(source: Path, vobj: Path, binary: Path) -> None:
+    result = run([
+        sys.executable,
+        str(ASM),
+        str(source),
+        "-o",
+        str(binary),
+        "--vobj",
+        str(vobj),
+    ])
+    if result.returncode:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+
+
+def link_with_vlink(vlink: str, vobj: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    attempts = [
+        [vlink, "-brawbin1", "-o", str(output), str(vobj)],
+        [vlink, "-b", "rawbin1", "-o", str(output), str(vobj)],
+        [vlink, "-brawbin", "-o", str(output), str(vobj)],
+        [vlink, "-b", "rawbin", "-o", str(output), str(vobj)],
+    ]
+    failures: list[str] = []
+    for command in attempts:
+        output.unlink(missing_ok=True)
+        result = run(command)
+        if result.returncode == 0 and output.exists():
+            return result
+        failures.append(
+            "$ " + " ".join(command) + "\n" + result.stdout + result.stderr
+        )
+    sys.stderr.write("\n".join(failures))
+    raise SystemExit(1)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Genera/valida un .vobj MiniGPU pasando por vlink.")
+    parser.add_argument("input", nargs="?", type=Path,
+                        help="fichero .asm o .vobj; sin argumento usa un smoke test")
+    parser.add_argument("--vlink", help="ruta a vlink si no esta en PATH")
+    parser.add_argument("--keep", action="store_true",
+                        help="conserva el directorio temporal")
+    args = parser.parse_args()
+
+    vlink = args.vlink or shutil.which("vlink")
+    if not vlink and LOCAL_VLINK.exists():
+        vlink = str(LOCAL_VLINK)
+    if not vlink:
+        print(
+            "skip: vlink no esta en PATH ni compilado en w.vlink; "
+            "ejecuta tools/build-vlink o usa --vlink /ruta/a/vlink",
+            file=sys.stderr,
+        )
+        return 77
+
+    with tempfile.TemporaryDirectory(prefix="minigpu-vobj-") as tmp:
+        work = Path(tmp)
+        if args.keep:
+            keep = Path(tempfile.mkdtemp(prefix="minigpu-vobj-keep-"))
+            work = keep
+            print(f"workdir: {work}")
+
+        expected: Path | None = None
+        if args.input is None:
+            source = work / "smoke.asm"
+            source.write_text(SMOKE_SOURCE, encoding="utf-8")
+            vobj = work / "smoke.vobj"
+            expected = work / "smoke.bin"
+            assemble(source, vobj, expected)
+        elif args.input.suffix.lower() == ".asm":
+            source = args.input.resolve()
+            vobj = work / (source.stem + ".vobj")
+            expected = work / (source.stem + ".bin")
+            assemble(source, vobj, expected)
+        else:
+            vobj = args.input.resolve()
+
+        linked = work / "linked.bin"
+        result = link_with_vlink(vlink, vobj, linked)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+
+        if expected is not None:
+            expected_bytes = expected.read_bytes()
+            linked_bytes = linked.read_bytes()
+            if linked_bytes != expected_bytes:
+                print(
+                    f"error: vlink genero {len(linked_bytes)} bytes, "
+                    f"pero mini-asm genero {len(expected_bytes)} bytes",
+                    file=sys.stderr,
+                )
+                return 1
+
+        print(f"ok: {vobj} -> {linked}")
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

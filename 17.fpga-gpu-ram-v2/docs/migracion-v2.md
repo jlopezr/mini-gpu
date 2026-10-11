@@ -234,7 +234,7 @@ decodificador rechaza, y el NACK vendría del bus en vez del monitor.
 - `./tools/test --prototype 17`: nueve bancos RTL y 8 tests Python, todos OK.
 - `./tools/lint --prototype 17`: **17 `PINMISSING`**, el mismo reparto por tipo
   que la 12 y la 14 sin tocar. No ha empeorado. (La 22 parte de 31.)
-- `x.tests`: 285 tests; sólo falla la guarda de `.asm`, que es la lista de
+- `t.tests`: 285 tests; sólo falla la guarda de `.asm`, que es la lista de
   trabajo de la 22 y está pendiente a propósito.
 - `sysid.v` de la 17 ya es byte a byte el de las seis de CPU
   (`70696acd…`). Quedan tres en el grupo de v1.

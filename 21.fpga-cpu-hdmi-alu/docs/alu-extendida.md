@@ -112,7 +112,7 @@ división de **32 ciclos**. Medido en `alu_fast_path_tb.v`: 87 ciclos en lugar d
 119. Un `MULHI` detrás de su `MUL` se ahorra tres.
 
 **En la placa son 31,99 ciclos por acierto**, medidos con los contadores de
-rendimiento sobre `../../x.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm` y `fastpath_miss.asm`: 63 108
+rendimiento sobre `../../t.tests/cases-cpu/demos/fastpath-hit/fastpath_hit.asm` y `fastpath_miss.asm`: 63 108
 frente a 95 093 ciclos para las mismas 4 005 instrucciones, o sea 31 985 en
 1 000 vueltas, y un CPI que baja de 23,74 a 15,76. Los dos programas son el
 mismo fichero con un carácter distinto —el `REM` lee `R2` o `R3`, que valen lo
@@ -172,10 +172,10 @@ programador emiten siempre `MULHI` pegado a su `MUL`.
 `MULHI`, `REM` y `REMU` dan exactamente el mismo número haya acierto o no. Lo
 único que cambia es el número de ciclos. No existe ningún «error por usar
 `MULHI` sin `MUL` previo», ni ninguna instrucción para leer ese registro, ni
-ninguna capacidad que declarar en `x.tests`: un caso no puede depender de
+ninguna capacidad que declarar en `t.tests`: un caso no puede depender de
 algo que no puede observar.
 
-El simulador funcional no modela nada de esto, y no debe. `x.tests` ya
+El simulador funcional no modela nada de esto, y no debe. `t.tests` ya
 excluye `cycles` de la comparación diferencial, así que `--backend both` sigue
 valiendo tal cual.
 

@@ -1,6 +1,6 @@
 # Último informe de síntesis por prototipo
 
-_La tabla la genera `generate-docs` a partir de `x.tests/backends/` y `reports/`; el texto exterior al bloque puede editarse a mano._
+_La tabla la genera `generate-docs` a partir de `t.tests/backends/` y `reports/`; el texto exterior al bloque puede editarse a mano._
 
 <!-- gendoc:begin synthesis-table
 generator: synthesis-table

@@ -94,11 +94,11 @@ sus versiones ya migradas sirven. Los que difieren y hay que mirar a mano:
    en verde y el reparto de lint. Si algo ya está rojo, dímelo.
 2. **Los `.asm`**, contra `mmio_v1.inc` primero, **sin mover ninguna
    dirección**, y añade `18.fpga-cpu-hdmi-bl8/examples` a `CARPETAS` en
-   `x.tests/unit/tools/test_mmio_map.py` **antes** de tocar ningún fichero, para que la
+   `t.tests/unit/tools/test_mmio_map.py` **antes** de tocar ningún fichero, para que la
    guarda haga de lista de trabajo. Valida comparando el binario ensamblado
    palabra a palabra: simbolizar mal **no cambia el tamaño** del programa, así
    que comprobar el `pc` final o la longitud no prueba nada.
-3. **El camino de dirección.** Corre `x.tests/unit/build/test_top_wiring.py` **antes** de
+3. **El camino de dirección.** Corre `t.tests/unit/build/test_top_wiring.py` **antes** de
    tocar la anchura. Ya mira los bancos además de `top.v`, y la 18 tiene dos
    desajustes suyos anotados en `DEUDA_EN_BANCOS`: **vacía esa lista de tus
    entradas antes de darte por terminado.** Hay tres más, de `perf_probe_tb.v`,
@@ -151,7 +151,7 @@ de 2 a 6.
 **3. Las fixtures versionadas mienten sobre su origen.** La 18 tiene siete
 ficheros generados en la raíz: `fullframe.hex`, `perf_loop.hex`,
 `frame_full.hex`, `frame_full.bin`, `fb_bars.bin`, `fb_checker.bin` y
-`fb_frame.bin`. **No tiene `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**, igual que le pasaba a la 19, y
+`fb_frame.bin`. **No tiene `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm`**, igual que le pasaba a la 19, y
 su README dice de dónde sale `fullframe.hex`.
 
 En la 21 esa frase era falsa y regenerar el `.hex` «como ponía ahí» dio *60 009
@@ -159,8 +159,8 @@ violaciones JEDEC*, que en realidad eran 60 009 accesos a una fila inexistente
 contados por la misma función de error. **Antes de regenerar una fixture,
 comprueba de qué fuente sale de verdad y en qué formato la lee su consumidor.**
 
-`x.tests/unit/build/test_fullframe_fixture.py` ya **descubre solo** las carpetas con el
-trío completo, así que cubrirá la 18 el día que crees su `../../x.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` —
+`t.tests/unit/build/test_fullframe_fixture.py` ya **descubre solo** las carpetas con el
+trío completo, así que cubrirá la 18 el día que crees su `../../t.tests/cases-cpu/demos/fullframe/fullframe_tb.asm` —
 pero **no antes**, y ése es justo el momento en que hace falta. Créalo pronto.
 
 **4. `monitor.v` es copia idéntica en las diez carpetas** y hay un test que lo
@@ -200,11 +200,11 @@ Dos avisos de método que costaron tiempo antes:
 
 ```bash
 ./tools/test --prototype 18
-python x.tests/run_tests.py --backend cpusim
+python t.tests/run_tests.py --backend cpusim
 ./tools/lint --prototype 18          # compara el reparto por tipo, no el total
 python tools/check-links.py && ./tools/generate-docs --check
 ./tools/generate-mmio --check
-python -m unittest discover -s x.tests -p "test_*.py"
+python -m unittest discover -s t.tests -p "test_*.py"
 ```
 
 Y las suites de `1.isa`, `2.cpu-sim-func` y `11.gpu-sim-func`.

@@ -34,7 +34,7 @@ Floating point has no hardware: `mini-lcc` implements `float` and `double`
 (IEEE-754 binary32/binary64) in software. A `float` travels in one integer
 register and a `double` in a register pair, with the same argument slots and
 return registers as `int` and `long long`. The convention is the compiler's, not
-yet a stable ABI feature; see `y.lcc/README-miniisa.md`.
+yet a stable ABI feature; see `u.lcc/README-miniisa.md`.
 
 ---
 
@@ -921,7 +921,7 @@ The 64-bit lowering now has dedicated tests of its own, the `long_long` ones in
 the `117`-`139` range: returns, arguments, memory words, add with carry,
 subtract with borrow, multiplication, division — signed, unsigned and by
 zero — shifts, bitwise operations, negation, signed and unsigned comparison,
-and spilling a pair across a call. See `y.lcc/README-miniisa.md` for what the
+and spilling a pair across a call. See `u.lcc/README-miniisa.md` for what the
 backend covers.
 
 ---

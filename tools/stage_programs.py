@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Ensambla en `<prototipo>/generated/programs/` lo que leen los bancos Verilog.
 
-Los fuentes `.asm` viven una sola vez, bajo `x.tests/cases-cpu*/`. Los testbenches
+Los fuentes `.asm` viven una sola vez, bajo `t.tests/cases-cpu*/`. Los testbenches
 `.v`, en cambio, hacen `$readmemh("generated/programs/plasma.hex")` con una ruta relativa
 a su carpeta; en vez de tocar cada banco, este paso deja ahí el `.bin`/`.hex`
 que piden. No hay lista que mantener: se leen las llamadas a `$readmemh` de
-los `.v` del prototipo y se busca el `<x>.asm` correspondiente bajo `x.tests`.
+los `.v` del prototipo y se busca el `<x>.asm` correspondiente bajo `t.tests`.
 
 Lo generado no se versiona (`generated/` está en el `.gitignore` del prototipo).
 
@@ -26,12 +26,12 @@ from mini_asm import assemble_bytes, write_hex
 REFERENCIA = re.compile(
     r"""\$readmemh\(\s*[\"']generated/programs/([A-Za-z0-9_\-]+)\.(hex)[\"']"""
 )
-FUENTES = ROOT / "x.tests"
+FUENTES = ROOT / "t.tests"
 INCLUDES = (FUENTES / "inc",)
 
 
 def buscar_fuente(nombre: str) -> Path | None:
-    """`plasma` -> `x.tests/.../plasma.asm`. Dos coincidencias es un error.
+    """`plasma` -> `t.tests/.../plasma.asm`. Dos coincidencias es un error.
 
     Se busca por nombre solo lo que un banco pide, no se indexa todo: los casos
     se llaman casi todos `program.asm`, y ahi el nombre no identifica nada.
@@ -75,7 +75,7 @@ def stage(prototipo: Path) -> int:
             write_hex(imagen, destino / f"{nombre}.hex")
         print(f"  {fuente.relative_to(ROOT)} -> {destino.relative_to(ROOT)}/{nombre}.hex")
     if faltan:
-        print(f"error: sin fuente en x.tests: {', '.join(faltan)}", file=sys.stderr)
+        print(f"error: sin fuente en t.tests: {', '.join(faltan)}", file=sys.stderr)
         return 1
     return 0
 

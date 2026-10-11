@@ -2,8 +2,8 @@
 
 Salidas:
 
-    x.tests/inc/mmio.inc    para el ensamblador (`.equ`)
-    x.tests/inc/mmio_map.h  para C (`#define`); `mmio.h` lo incluye y le pone los nombres cortos
+    t.tests/inc/mmio.inc    para el ensamblador (`.equ`)
+    t.tests/inc/mmio_map.h  para C (`#define`); `mmio.h` lo incluye y le pone los nombres cortos
     tools/mmio_map.py       para monitor.py, sim_devices.py y los simuladores
 
 POR QUE ESTO Y NO TRES LISTAS A MANO. `1.isa/mmio.md` §20 lo pide, y la razon
@@ -33,8 +33,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "1.isa" / "mmio_map.vh"
-INC_OUTPUT = ROOT / "x.tests" / "inc" / "mmio.inc"
-H_OUTPUT = ROOT / "x.tests" / "inc" / "mmio_map.h"
+INC_OUTPUT = ROOT / "t.tests" / "inc" / "mmio.inc"
+H_OUTPUT = ROOT / "t.tests" / "inc" / "mmio_map.h"
 PY_OUTPUT = ROOT / "tools" / "mmio_map.py"
 
 #: (fuente, .inc, modulo .py, cabecera .h). Un solo mapa: el contrato.
@@ -108,7 +108,7 @@ def render_inc(valores: dict[str, int],
     lineas = [
         f"; GENERADO por tools/generate-mmio desde 1.isa/{nombre_fuente}. No editar.",
         ";",
-        "; La carpeta x.tests/inc ya va en el -I de run_tests.py y run_board.py,",
+        "; La carpeta t.tests/inc ya va en el -I de run_tests.py y run_board.py,",
         "; asi que basta con `.include` y el nombre.",
         ".once",
         "",

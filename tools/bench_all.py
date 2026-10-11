@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for extra in (ROOT, ROOT / "x.tests"):
+for extra in (ROOT, ROOT / "t.tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
@@ -79,7 +79,7 @@ def board_backend(family: str, number: int) -> str:
 
 
 def measure(family: str, number: int, label: str, assume_yes: bool, extra: list[str]) -> int:
-    command = [sys.executable, str(ROOT / "x.tests" / "run_tests.py"), "--measure",
+    command = [sys.executable, str(ROOT / "t.tests" / "run_tests.py"), "--measure",
                "--backend", f"fpga-{family}", "-p", str(number), "--measure-label", label]
     if assume_yes:
         command.append("-y")

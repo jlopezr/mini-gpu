@@ -30,7 +30,7 @@ dice qué le falta a cada prototipo.
 - **Memoria** es `ARCHITECTURAL_REGIONS` del `monitor.py` de cada carpeta: lo
   que un programa puede direccionar, no lo que ocupa el bitstream.
 - Las capacidades de CPU son las que declaran los backends de
-  [`x.tests`](../x.tests), y son las mismas que un caso pide con
+  [`t.tests`](../t.tests), y son las mismas que un caso pide con
   `requires`.
 
 **Cuidado con el Fmax.** Mide caminos dentro del chip y no dice nada de lo que
@@ -108,7 +108,7 @@ revalidar una carpeta entera.
 Lo que sí se hizo: **quitar de su `cpu.v` los tres `localparam`**. Estaban
 declarados y validados en el `case` de encoding pero sin rama en el EXECUTE, así
 que el resultado era correcto —`ERROR_INVALID_OPCODE`— y el código mentía:
-aparentaba soportarlas. Ahora el fichero dice la verdad. `x.tests` lo declara
+aparentaba soportarlas. Ahora el fichero dice la verdad. `t.tests` lo declara
 como la capacidad **`mul_div`**, y `cases-cpu/alu/multiply` se omite ahí con un
 `SKIP` en vez de fallar.
 
@@ -272,7 +272,7 @@ generator: prototype-summary
 <!-- gendoc:end prototype-summary -->
 
 La 17 no aparece con alias corto porque no está registrada en los backends de
-`x.tests`; cae al nombre de la carpeta. Es deliberado: tampoco es un target de
+`t.tests`; cae al nombre de la carpeta. Es deliberado: tampoco es un target de
 `test-board`, porque no tiene `version.json`.
 
 ---

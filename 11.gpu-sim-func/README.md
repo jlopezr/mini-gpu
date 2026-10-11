@@ -13,18 +13,18 @@ Desde la raíz del repositorio puede usarse `.venv/Scripts/python.exe`.
 
 ## Los programas de ejemplo
 
-Los fuentes `.asm` no viven aquí sino en `x.tests/cases-gpu/` (uno por carpeta,
+Los fuentes `.asm` no viven aquí sino en `t.tests/cases-gpu/` (uno por carpeta,
 con su README). Esta carpeta solo los ejecuta: se ensamblan con `mini_asm.py` a
 un `.bin` cuando hace falta, como en los comandos de más abajo. No se versiona
 ningún binario ensamblado.
 
-- **`x.tests/cases-gpu/memory/vecsum/vecsum.asm`** es el más sencillo que
+- **`t.tests/cases-gpu/memory/vecsum/vecsum.asm`** es el más sencillo que
   ejercita SIMT de verdad: cada lane suma un elemento de dos vectores de 16
   palabras y guarda el resultado. La dirección sale de `GETTID` y un
   desplazamiento, así que las 16 lanes escriben en sitios distintos sin
   coordinarse. Los vectores viven en `0x0100` y `0x0140`, y el resultado en
   `0x0180`.
-- **`x.tests/cases-gpu/demos/simt-demo/simt_demo.asm`** ejercita divergencia
+- **`t.tests/cases-gpu/demos/simt-demo/simt_demo.asm`** ejercita divergencia
   simple y `BAR`. Es el que usa la sección de extensiones SIMT, más abajo.
 
 ### De dónde sale `memoria.bin`
@@ -193,7 +193,7 @@ defecto 0), que leen `GETLWARP` y `GETARG`.
 Prueba de divergencia, reconvergencia y barrera entre dos warps:
 
 ```powershell
-python ../1.isa/mini_asm.py x.tests/cases-gpu/demos/simt-demo/simt_demo.asm -o examples/simt_demo.bin
+python ../1.isa/mini_asm.py t.tests/cases-gpu/demos/simt-demo/simt_demo.asm -o examples/simt_demo.bin
 python minigpu_sim.py examples/simt_demo.bin --num-warps 2 --trace-detail
 ```
 

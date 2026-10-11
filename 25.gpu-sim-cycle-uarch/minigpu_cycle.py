@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI and x.tests backend API for the cycle-accurate MiniGPU model.
+"""CLI and t.tests backend API for the cycle-accurate MiniGPU model.
 
 The command-line interface keeps the architectural tracing options of the
 functional simulator and adds separate cycle/microarchitectural tracing.

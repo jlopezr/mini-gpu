@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compila C a ensamblador MiniISA usando el submodulo y.lcc."""
+"""Compila C a ensamblador MiniISA usando el submodulo u.lcc."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MINI_LCC = ROOT / "y.lcc"
+MINI_LCC = ROOT / "u.lcc"
 WINDOWS = sys.platform == "win32"
 RCC = MINI_LCC / "build" / ("rcc.exe" if WINDOWS else "rcc")
 INCLUDE = MINI_LCC / "include" / "mini" / "none"
@@ -94,8 +94,8 @@ def main(argv: list[str] | None = None) -> int:
 
     script = MINI_LCC / "run-mini-tst.py"
     if not script.exists():
-        print("error: falta el submodulo y.lcc", file=sys.stderr)
-        print("Inicializalo con: git submodule update --init --recursive y.lcc", file=sys.stderr)
+        print("error: falta el submodulo u.lcc", file=sys.stderr)
+        print("Inicializalo con: git submodule update --init --recursive u.lcc", file=sys.stderr)
         return 2
     if not args.source.exists():
         print(f"error: no existe {args.source}", file=sys.stderr)

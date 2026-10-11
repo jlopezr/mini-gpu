@@ -2,7 +2,7 @@
 """Ejecuta un programa en una FPGA real: resuelve el prototipo, comprueba (y si
 hace falta sube) el bitstream correcto, carga el programa y lo ejecuta.
 
-Reutiliza x.tests/backends/board.py para todo lo que habla con la placa: este
+Reutiliza t.tests/backends/board.py para todo lo que habla con la placa: este
 módulo no es un segundo sistema de programación FPGA, solo la composición de
 esas piezas con resolución de prototipos."""
 from __future__ import annotations
@@ -23,12 +23,12 @@ from tools.mmio_map import MMIO_VIDEO_BASE, MMIO_VIDEO_STATUS_OFF
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
 from tools.prototype_report import _capabilities
 
-sys.path.insert(0, str(ROOT / "x.tests"))
+sys.path.insert(0, str(ROOT / "t.tests"))
 from backends import board  # noqa: E402
 
 
 # Reexportados desde backends.board, que es donde vive la lógica compartida
-# con run_tests.py (x.tests no depende de tools/, así que la dirección de la
+# con run_tests.py (t.tests no depende de tools/, así que la dirección de la
 # dependencia solo puede ir de aquí hacia allá).
 FTDI_VENDOR_ID = board.FTDI_VENDOR_ID
 detect_port = board.detect_port
@@ -64,13 +64,13 @@ def assemble(root: Path, source: Path, verbose: bool) -> Path:
     # `_build/` junto al fuente, igual que el valor por defecto de mini_asm.py:
     # el binario se regenera siempre y no debe parecer una entrada del caso.
     binary = source.parent / "_build" / source.with_suffix(".bin").name
-    # `-I x.tests/inc` da acceso a la biblioteca de `.include` compartida. La
+    # `-I t.tests/inc` da acceso a la biblioteca de `.include` compartida. La
     # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
     # un trozo local con el mismo nombre sigue ganando.
     # `-D BOARD` elige la rama de la placa 36 de `gpu_runtime.inc`, `bench.inc`...:
     # este lanzador solo corre en la placa, así que un .asm no repite el `.define`.
     command = [sys.executable, str(root / "1.isa" / "mini_asm.py"), str(source),
-               "-o", str(binary), "-I", str(root / "x.tests" / "inc"), "-D", "BOARD"]
+               "-o", str(binary), "-I", str(root / "t.tests" / "inc"), "-D", "BOARD"]
     if verbose:
         print(f"$ {' '.join(command)}")
     completed = subprocess.run(command)
@@ -93,7 +93,7 @@ def resolve_program(prototype_dir: Path, program: str, root: Path | None = None)
                 return found.resolve()
 
     # Nombre suelto, sin ruta: como run-demo.ps1, busca en todo el repo antes
-    # de rendirse (útil para programas de otra carpeta, ej. un caso de x.tests).
+    # de rendirse (útil para programas de otra carpeta, ej. un caso de t.tests).
     if root is not None and "/" not in program and "\\" not in program:
         name = program if program.endswith((".asm", ".bin")) else f"{program}.asm"
         matches = sorted(
@@ -423,11 +423,11 @@ def main_load(argv: list[str] | None = None) -> int:
 
 
 def main_test(argv: list[str] | None = None) -> int:
-    """Resuelve backend y versión de x.tests/run_tests.py a partir del RTL
+    """Resuelve backend y versión de t.tests/run_tests.py a partir del RTL
     (igual que board-info/board-upload) y reenvía el resto de argumentos.
     Evita tener que saber a mano si un prototipo es fpga-cpu o fpga-gpu."""
     parser = argparse.ArgumentParser(
-        description="Ejecuta x.tests/run_tests.py contra placa real, "
+        description="Ejecuta t.tests/run_tests.py contra placa real, "
                     "infiriendo --backend/--version del prototipo.",
         epilog="El resto de opciones (TEST_JSON, --trace, -y, --measure...) "
               "se reenvían tal cual a run_tests.py.",
@@ -445,7 +445,7 @@ def main_test(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"error: {target.prototype_dir.name} no tiene cpu.v/gpu_sm.v/"
             "gpu_system.v + monitor.v con versión; no se puede inferir "
-            "--backend/--version. Usa x.tests/run_tests.py directamente."
+            "--backend/--version. Usa t.tests/run_tests.py directamente."
         )
 
     primaria = target.capability["backend"]
@@ -465,7 +465,7 @@ def main_test(argv: list[str] | None = None) -> int:
         # `fpga-gpu` (que solo conoce las carpetas sin cpu.v).
         backend = f"fpga-{familia}" if familia == primaria else "fpga-sys"
         command = [
-            sys.executable, str(target.root / "x.tests" / "run_tests.py"),
+            sys.executable, str(target.root / "t.tests" / "run_tests.py"),
             "--backend", backend, "--version", version, "--port", port,
             *extra,
         ]

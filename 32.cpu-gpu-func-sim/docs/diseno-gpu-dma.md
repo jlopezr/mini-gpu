@@ -237,7 +237,7 @@ Todos los kernels de la v1 trabajan **por palabras**. La CPU resuelve en el env�
 
 `memcpy` por palabras exige que `src` y `dst` sean congruentes módulo 4. Si no lo son, la operación va por la CPU en la v1.
 
-**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `x.tests/cases-cpu-gpu/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
+**Estado.** `MEMSET`, `MEMCPY`, `FILL_RECT` y `BLIT` están hechos en `t.tests/cases-cpu-gpu/dma/gpu_kernels.inc`, con sus pruebas (`DmaHarnessTest` y `RectKernelsTest`, que incluye filas parciales y menos filas que warps). `CONVERT` no.
 
 Estructura de `MEMSET` (el resto es variante de este esquema):
 
@@ -303,7 +303,7 @@ Se quiere averiguar:
 |---|---|---|
 | N1 | Interrupciones: IRQ con `WARP_DONE != 0` y espera tipo `WFI`. Requiere definir el INTC. | pospuesto |
 | N3 | `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280` de GPU WARPS (§14.2, regla §1.4). Lectura y escritura; error si el warp está vivo. | contrato y simulador de `32` hechos; RTL de la 29 hecho (con el núcleo parado) y probado en placa |
-| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de las propuestas v0.2 a v0.4b. | ensamblador, `isa.md` y simuladores de `11` y `25` hechos; RTL de la 29 hecho y probado en placa; falta `NEW-ASSM` |
+| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de las propuestas v0.2 a v0.4b. | ensamblador, `asm2`, `isa.md` y simuladores de `11` y `25` hechos; RTL de la 29 hecho y probado en placa |
 | N5 | `RESET` conserva `LOGICAL_WARP_ID` y `WARP_ARG`; solo el reset físico los pone a cero. | contrato y simulador de `32` hechos; el RTL de la 29 los pone a cero con el único reset que tiene (ver N5 de las notas) |
 | N6 | Accesos de 8 y 16 bits en la GPU. Simulador de `11` hecho; RTL de la 29 con su LSU. | simulador y RTL de la 29 hechos y probados en placa; las demás GPU no los tienen |
 | N7 | Errores por warp, en lugar de un fallo que para toda la GPU. Delicado, no caro en área; efecto en Fmax sin medir. | pospuesto |
@@ -314,16 +314,16 @@ Se quiere averiguar:
 1. `1.isa/mini_asm.py`: mnemónicos `GETLANE`, `GETWARP`, `GETLWARP` y `GETARG` (`GETID_TYPES`).
 2. `11.gpu-sim-func`: decodificación de `GETID` con `type` 0 a 4, estado `logical_warp_id` y `arg` por warp, campos en `--config`, nombres en `gpu_trace.py`. También los accesos de 8 y 16 bits (N6).
 3. `32.cpu-gpu-func-sim`: los dos arrays en `GpuWarpsDevice`, copiados al warp al lanzar, con `RESET` que los conserva.
-4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `x.tests/inc/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
+4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `t.tests/inc/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
 5. `25.gpu-sim-cycle-uarch`: `GETID` con `type` 0 a 4, con el mismo diferencial contra `11`.
-6. `x.tests`: la capability `gpu_ids` (`tools/capabilities.json`, sin `file`: solo los simuladores), `logical_warp_id` y `arg` en `warps.json` (el runner exige declararla) y el caso `cases-gpu/extensions/gpu-ids/getid-family`.
-7. `x.tests/cases-cpu-gpu/dma/`: el arnés mínimo en ensamblador (ver abajo).
+6. `t.tests`: la capability `gpu_ids` (`tools/capabilities.json`, sin `file`: solo los simuladores), `logical_warp_id` y `arg` en `warps.json` (el runner exige declararla) y el caso `cases-gpu/extensions/gpu-ids/getid-family`.
+7. `t.tests/cases-cpu-gpu/dma/`: el arnés mínimo en ensamblador (ver abajo).
 
-**El arnés mínimo** (`x.tests/cases-cpu-gpu/dma/harness/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
+**El arnés mínimo** (`t.tests/cases-cpu-gpu/dma/harness/dma.asm`, con `gpu_runtime.inc` y `gpu_kernels.inc` incluidos en una sola imagen) implementa el protocolo de §4 a §6 con un job en vuelo y por polling: validar, escribir el bloque de argumentos y los cinco campos por warp, `WARP_START`, sondear con W1C de lo leído, y en el error o el timeout leer `FIRST_ERROR` y `WARP_DONE` antes de `RESET`. `gpu_run` es la rutina de CPU; `gpu_k_memset` y `gpu_k_memcpy` los kernels. Cinco jobs lo ejercitan: memset y memcpy con 100 palabras (la última pasada es parcial y las lanes divergen), un fallo de memoria, un kernel que no termina y la recuperación posterior. Lo comprueba `DmaHarnessTest`. Lo que **no** hace todavía: cola de jobs, ids con generación, selección CPU/GPU, cabeza y cola desalineadas, ni los kernels 2D.
 
 **Pendiente, sin bloquear el resto:**
 
-- El ensamblador de `1.isa/NEW-ASSM`, que tiene su propia tabla de instrucciones: hay que decidir si es el vigente.
+- El ensamblador vigente es `1.isa/asm2`; `1.isa/asm1` queda como referencia legacy mientras dure la transición.
 - El RTL de la GPU que falta para el protocolo completo: **GPU CORE** (`GPU_STATUS`, `GPU_CONTROL`, `WARP_START`, `WARP_LIVE`, `WARP_DONE`), escribir descriptores con la GPU en marcha, y un sistema con CPU y GPU a la vez sobre una RAM compartida. `GETID`, los arrays de warp y los accesos de 8 y 16 bits ya están en la 29. Ver también N10 de las notas (un warp no llega a SYSTEM en la 29).
 - El runtime en C (cola, ids con generación, política CPU/GPU, kernels 2D), sobre el protocolo que ya valida el arnés. No hay linker: el compilador genera un `.asm` y el runtime y los kernels se incluyen con `.include`, como aquí.
 - Re-ejecutar las familias `programs` y `demos` de `sim-gpu` tras el cambio de `GETID` (no se han repetido).

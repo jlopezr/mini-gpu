@@ -4,7 +4,7 @@
     python 32.cpu-gpu-func-sim/compare/compare_race.py [rotate|life|blur|cube|all] [--frame 5]
 
 CPU, GPU inocente (un hilo por fila) y GPU buena (un warp por fila), cada uno en C (race/<carga>/<carga>.c) y en
-ensamblador (race/<carga>/<carga>.inc), en x.tests/cases-cpu-gpu. Las dos GPU se lanzan sin programa de CPU, con los mismos datos que
+ensamblador (race/<carga>/<carga>.inc), en t.tests/cases-cpu-gpu. Las dos GPU se lanzan sin programa de CPU, con los mismos datos que
 gpu_run (descriptores y WARP_START); la CPU se ejecuta hasta HALT. Se cuentan instrucciones (de CPU, o de
 warp) y se comprueba que cada version deja las salidas del modelo en Python.
 
@@ -33,7 +33,7 @@ import cpu_gpu_sim as sim  # noqa: E402
 MEMORY = 32 * 1024 * 1024
 BLOCK = 0x001F0000          # donde se deja el bloque para la GPU y para la CPU en C
 WARPS = 8
-RACE = HERE.parents[1] / "x.tests" / "cases-cpu-gpu" / "race"       # una carpeta por demo: cube/cube.asm, cube.inc, cube.c
+RACE = HERE.parents[1] / "t.tests" / "cases-cpu-gpu" / "race"       # una carpeta por demo: cube/cube.asm, cube.inc, cube.c
 GRID_A, GRID_B, FB = 0x01060000, 0x01080000, 0x01100000
 COLS, ROWS, STRIDE = 160, 104, 168
 

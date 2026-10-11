@@ -11,7 +11,7 @@ comparaciones de programas; el tamaño no altera sus latencias.
 - Suite propia: 28 tests; 27 pasan al activar Plasma completo. La prueba de los
   dos Mandelbrot a tamaño completo queda omitida explícitamente. La pasada
   normal omite también Plasma completo y tarda aproximadamente 1,5 segundos.
-- 32 casos cortos originales de `x.tests/cases-gpu` se ejecutan dentro del test
+- 32 casos cortos originales de `t.tests/cases-gpu` se ejecutan dentro del test
   de conformidad, conservando sus expectativas de registros, memoria, errores,
   PC, máscaras y número de instrucciones.
 - Datapath: 1.280 combinaciones deterministas de opcode/operandos frente a

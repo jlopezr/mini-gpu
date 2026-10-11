@@ -1,7 +1,7 @@
 # compare
 
 Herramientas que miden el C frente al ensamblador con el simulador de la 32. Los programas están en
-[`x.tests/cases-cpu-gpu`](../../x.tests/cases-cpu-gpu/README.md).
+[`t.tests/cases-cpu-gpu`](../../t.tests/cases-cpu-gpu/README.md).
 
 ```text
 python 32.cpu-gpu-func-sim/compare/compare.py [--out tabla.md]            # kernels de sistema

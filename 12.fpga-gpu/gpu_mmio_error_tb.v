@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // La identidad se contrasta contra el fichero generado, no contra un numero
 // escrito aqui: este banco comprueba que el valor LLEGA al registro. Que el
-// valor sea el correcto lo comprueba `x.tests/test_sysid_params.py`, contra
+// valor sea el correcto lo comprueba `t.tests/test_sysid_params.py`, contra
 // numeros a mano, igual que `test_mmio_map.py` hace con el mapa.
 `include "sysid_params.vh"
 module gpu_mmio_error_tb;

@@ -8,7 +8,7 @@ Imprime una matriz con el número `NN` que cada caso tiene en cada prototipo (el
 de `fixtures/NN.*`) o `-` si ese prototipo lo omite, y debajo el motivo de cada
 omisión. Después comprueba tres cosas y sale con 1 si alguna falla:
 
-1. Un banco pide `generated/programs/X.hex` y no hay `X.asm` en `x.tests`.
+1. Un banco pide `generated/programs/X.hex` y no hay `X.asm` en `t.tests`.
 2. Un caso marcado `rtl.differential` que ningún prototipo usa.
 3. Un programa que un banco pide por nombre y que ni un caso ni un README
    documentan: se ejecuta en la regresión pero nadie dice qué prueba.
@@ -103,7 +103,7 @@ def check(root: Path, rows, prototypes: list[Path]) -> list[str]:
                 source = _source_of(name)
                 where = f'{proto.name}/{bench}'
                 if source is None:
-                    problems.append(f'{where} pide generated/programs/{name}.hex y no hay {name}.asm en x.tests')
+                    problems.append(f'{where} pide generated/programs/{name}.hex y no hay {name}.asm en t.tests')
                 elif isinstance(source, str):
                     problems.append(f'{where} pide generated/programs/{name}.hex: {source}')
                 elif not documented(source):
