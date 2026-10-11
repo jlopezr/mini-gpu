@@ -57,7 +57,7 @@ ESPERADO = {
     # CPU y GPU a la vez (bits 9 y 10); el perfil ISA es el de la CPU.
     "36.fpga-cpu-gpu":   (0x0E37, 0x7, 0x0200_0000),
     "37.fpga-cpu-gpu-mk2": (0x0E37, 0x7, 0x0200_0000),
-    "38.fpga-cpu-pipelined": (0x0A37, 0x7, 0x0200_0000),
+    "38.fpga-cpu-pipelined": (0x0A37, 0x4, 0x0200_0000),
 }
 
 DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",

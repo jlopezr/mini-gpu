@@ -12,8 +12,9 @@
 ;
 ;   entrada   R1  PC del kernel (una etiqueta)
 ;             R2  nwarps (1 .. NUM_WARPS de GPU_CAPS)
-;             R3  direccion del bloque de argumentos; el llamador rellena los
-;                 parametros p[0..5] (+8 .. +28), gpu_run pone nwarps y nlanes
+;             R3  direccion del bloque de argumentos; gpu_run pone nwarps y
+;                 nlanes. El runtime C rellena p[0..3]; los programas en asm o
+;                 los que pasan su propio bloque pueden usar tambien p[4..5].
 ;   llamada   JAL R31, gpu_run
 ;   salida    R1  estado: GPU_OK, GPU_ERR_FAULT, GPU_ERR_TIMEOUT, GPU_ERR_ARGS
 ;                 o GPU_ERR_STATE
@@ -21,9 +22,14 @@
 ;             R3  FIRST_ERROR_PC  (idem)
 ;   destruye  R1 .. R15 y R31. El resto de registros no se toca.
 ;
-; Bloque de argumentos (32 bytes, alineado a 4):
+; Bloque de argumentos estandar (32 bytes, alineado a 4):
 ;
 ;   +0 nwarps   +4 nlanes   +8 p0   +12 p1   +16 p2   +20 p3   +24 p4   +28 p5
+;
+; El hardware no pasa p0..p5 por registros: cada warp tiene WARP_ARG, y el
+; kernel lo lee con GETARG. mini-opt carga R1..R4 desde p0..p3 para que un
+; kernel C parezca una funcion normal. Para mas parametros, usa un puntero a
+; una estructura o un bloque propio.
 ;
 ; Orden de §18 y §5.1: la CPU escribe los datos y los descriptores, y solo
 ; entonces WARP_START. Nunca RUN: arrancaria tambien los descriptores viejos.

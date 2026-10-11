@@ -16,11 +16,13 @@
  *   }
  *
  * Un kernel es una funcion que se llama `__kernel_<nombre>` (la macro KERNEL lo pone).
- * `mini-opt` la convierte en el punto de entrada de una lane: fija su pila, carga sus
- * parametros del bloque de argumentos y termina con EXIT. Por eso la direccion del
- * kernel es la que se lanza, y un kernel no se puede llamar desde la CPU.
+ * `mini-opt` la convierte en el punto de entrada de una lane: fija su pila, hace
+ * GETARG y carga desde el bloque de argumentos los parametros C que use. Termina
+ * con EXIT. Por eso la direccion del kernel es la que se lanza, y un kernel no se
+ * puede llamar desde la CPU.
  *
- * Hasta cuatro parametros de 32 bits (R1..R4); con mas, un puntero a una estructura.
+ * La GPU solo recibe el puntero GETARG. El ABI C expone hasta cuatro parametros
+ * directos de 32 bits (R1..R4); con mas, pasa un puntero a una estructura.
  * Las variables `__gpu_*` son intrinsecos: `mini-opt` las sustituye por la instruccion
  * (GETTID, ...). Solo valen dentro de un kernel.
  */
@@ -56,10 +58,11 @@ extern volatile int __noalias_mark;
 #define GPU_OK 0
 
 /* gpu_launch(kernel, nwarps, p0, p1, p2, p3): lanza y espera. Devuelve GPU_OK o un error
-   del runtime (gpu_runtime.inc). Lee siempre cuatro parametros. */
+   del runtime (gpu_runtime.inc). Lee siempre cuatro parametros directos; para mas,
+   usa uno de ellos como puntero a una estructura. */
 int gpu_launch(int kernel, int nwarps, ...);
 
-/* GPU_RUN(nombre, warps, parametros...): hasta cuatro; los que falten valen 0. */
+/* GPU_RUN(nombre, warps, parametros...): hasta cuatro directos; los que falten valen 0. */
 #define GPU_RUN(name, warps, ...) \
     gpu_launch((int)KERNEL(name), (warps), __VA_ARGS__, 0, 0, 0, 0)
 

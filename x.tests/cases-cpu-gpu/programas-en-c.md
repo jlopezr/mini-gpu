@@ -76,8 +76,9 @@ placa 36 (lanzar con `RUN`, ciclos de CPU reales).
 - **`KERNEL(nombre)`** pone `__kernel_nombre` al nombre de la función. Es la marca que lee
   `mini-opt`: lcc no tiene atributos.
 - **`mini-opt`** (pases `intrinsics` y `kernels`, ver `tools/README.md`) convierte esa función en
-  el punto de entrada de una lane: carga los parámetros que el kernel lee desde el bloque de
-  argumentos (`GETARG`) y sustituye el `JR R31` final por `EXIT`. Un kernel no escribe en ese bloque mientras corre (como la
+  el punto de entrada de una lane. La GPU solo entrega `WARP_ARG`; el kernel lo lee con
+  `GETARG`, y `mini-opt` carga desde ese bloque los parámetros C directos que use (`R1`–`R4`).
+  Después sustituye el `JR R31` final por `EXIT`. Un kernel no escribe en ese bloque mientras corre (como la
   memoria constante de CUDA): `mini-opt` se apoya en eso para no releerlo en cada vuelta de un bucle (pase `argblock`).
   Quien necesite devolver resultados lo hace por un puntero que reciba en el bloque, no en el bloque.
   Para decirle además que un puntero no tiene alias (lo que en C99 sería `restrict`) está `NOALIAS(p);` en `gpu.h`. Quita además el marco de
@@ -86,9 +87,10 @@ placa 36 (lanzar con `RUN`, ciclos de CPU reales).
   array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
-- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`x.tests/runtime/gpu/gpu.c`), que rellena el
-  bloque de argumentos y llama a `gpu_run` de `x.tests/inc/gpu_runtime.inc` (el runtime de
-  ensamblador de siempre). Lanza y espera.
+- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`x.tests/runtime/gpu/gpu.c`), que rellena
+  `p0`–`p3` del bloque de argumentos y llama a `gpu_run` de `x.tests/inc/gpu_runtime.inc` (el runtime de
+  ensamblador de siempre). Lanza y espera. El bloque estándar tiene sitio para `p0`–`p5`, pero el
+  ABI C cómodo solo materializa cuatro parámetros directos; para más, pasa un puntero a una estructura.
 - **El arranque** es `1.isa/runtime/crt0.s`; `build-c` compila con `mini-lcc --no-crt`.
 - **La divergencia no se escribe:** un `if`, un `while` o un `break` cuyas lanes tomen
   caminos distintos necesita una región abierta con `SSY` (si no, `ERROR_SIMT`). Los pone
@@ -120,7 +122,9 @@ plantilla por `#include`.
 
 ## Límites de hoy
 
-- **Hasta 4 parámetros** de 32 bits por kernel (`R1`–`R4`); con más, un puntero a estructura.
+- **Hasta 4 parámetros directos** de 32 bits por kernel C (`R1`–`R4`). La GPU realmente recibe un
+  puntero (`GETARG`) al bloque de argumentos; puedes pasar N valores usando uno de esos parámetros
+  como puntero a una estructura, o escribiendo un kernel asm que lea el bloque que necesite.
 - **Un kernel no se puede llamar desde la CPU** (empieza con `GETTID` y acaba con `EXIT`).
 - **Sin llamadas dentro de un kernel** (la GPU de la 36 no tiene `JAL`), ni `long long`,
   ni `float`, ni división sin signo.

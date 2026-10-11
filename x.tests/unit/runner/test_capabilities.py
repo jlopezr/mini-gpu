@@ -180,14 +180,15 @@ class CapabilitiesTest(unittest.TestCase):
         """`mul_div` es un HUECO, no una extension, y es el unico de la tabla.
 
         MUL, MULFX y DIV son instrucciones base de la MiniISA. La 10 se quedo
-        sin ellas por temporizacion --ver 10.fpga-cpu-ram/cpu.v-- y es la unica.
+        sin ellas por temporizacion --ver 10.fpga-cpu-ram/cpu.v--. La 38 las
+        quita otra vez como experimento de timing del pipeline.
         Si algun dia las implementa, esta capacidad desaparece entera en vez de
         extenderse a mas backends, que es lo contrario de lo que le pasa a una
         extension.
         """
         sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
                     if "mul_div" not in fpga_cpu.capabilities(nombre)]
-        self.assertEqual(sin_ella, ["sdram"])
+        self.assertEqual(sin_ella, ["sdram", "pipelined"])
         self.assertIn("mul_div", sim_cpu.capabilities())
 
     def test_alu_extended_implica_mul_div(self):

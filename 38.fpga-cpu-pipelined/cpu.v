@@ -108,6 +108,8 @@ module cpu (
   reg running;
   reg step_active;
   reg halt_pending;
+  reg start_pending;
+  reg start_step_pending;
   reg [31:0] architectural_pc;
   reg [31:0] fetch_request_pc;
 
@@ -115,6 +117,7 @@ module cpu (
 
   wire [31:0] register_a;
   wire [31:0] register_b;
+  wire register_file_busy;
   reg [4:0] register_a_address;
   reg [4:0] register_b_address;
   reg register_write_enable;
@@ -132,7 +135,8 @@ module cpu (
       .write_address(register_write_address),
       .write_data(register_write_data),
       .debug_address(debug_register_address),
-      .debug_data(debug_register_data)
+      .debug_data(debug_register_data),
+      .busy(register_file_busy)
   );
 
   reg if_valid;
@@ -324,14 +328,6 @@ module cpu (
   reg exec_branch_taken;
   reg [2:0] exec_class;
   reg [7:0] exec_error_code;
-  reg [63:0] exec_product;
-  reg signed [31:0] signed_a;
-  reg signed [31:0] signed_b;
-  reg [31:0] abs_a;
-  reg [31:0] abs_b;
-  reg signed [63:0] signed_product;
-  reg signed [31:0] signed_quotient;
-  reg signed [31:0] signed_remainder;
   reg [32:0] compare_difference;
   reg compare_signed_less;
 
@@ -343,14 +339,6 @@ module cpu (
     exec_branch_taken = 1'b0;
     exec_class = OPCLASS_NORMAL;
     exec_error_code = ERROR_NONE;
-    exec_product = 64'h0000_0000_0000_0000;
-    signed_a = id_live_operand_a;
-    signed_b = id_live_operand_b;
-    abs_a = id_live_operand_a[31] ? (~id_live_operand_a + 1'b1) : id_live_operand_a;
-    abs_b = id_live_operand_b[31] ? (~id_live_operand_b + 1'b1) : id_live_operand_b;
-    signed_product = signed_a * signed_b;
-    signed_quotient = 32'sd0;
-    signed_remainder = 32'sd0;
     compare_difference = {1'b0, id_live_operand_a} - {1'b0, id_live_operand_b};
     compare_signed_less =
         id_live_operand_a[31] != id_live_operand_b[31] ? id_live_operand_a[31] :
@@ -396,38 +384,10 @@ module cpu (
         OPCODE_SLT: begin exec_result = {31'd0, compare_signed_less}; exec_reg_write = 1'b1; end
         OPCODE_SLTU: begin exec_result = {31'd0, compare_difference[32]}; exec_reg_write = 1'b1; end
 
-        OPCODE_MUL: begin
-          exec_product = id_live_operand_a * id_live_operand_b;
-          exec_result = exec_product[31:0];
-          exec_reg_write = 1'b1;
-        end
-        OPCODE_MULHI: begin
-          exec_result = signed_product[63:32];
-          exec_reg_write = 1'b1;
-        end
-        OPCODE_MULFX: begin
-          exec_product = abs_a * abs_b;
-          exec_result = (id_live_operand_a[31] ^ id_live_operand_b[31]) ?
-              (~exec_product[47:16] + (exec_product[15:0] == 16'h0000)) :
-              exec_product[47:16];
-          exec_reg_write = 1'b1;
-        end
-
+        OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX,
         OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
-          if (id_live_operand_b == 0) begin
-            exec_class = OPCLASS_ERROR;
-            exec_error_code = ERROR_DIVISION_BY_ZERO;
-          end else begin
-            signed_quotient = signed_a / signed_b;
-            signed_remainder = signed_a % signed_b;
-            case (id_opcode)
-              OPCODE_DIV:  exec_result = signed_quotient;
-              OPCODE_DIVU: exec_result = id_live_operand_a / id_live_operand_b;
-              OPCODE_REM:  exec_result = signed_remainder;
-              default:     exec_result = id_live_operand_a % id_live_operand_b;
-            endcase
-            exec_reg_write = 1'b1;
-          end
+          exec_class = OPCLASS_ERROR;
+          exec_error_code = ERROR_INVALID_OPCODE;
         end
 
         OPCODE_LOAD, OPCODE_LOADB, OPCODE_LOADUB, OPCODE_LOADH, OPCODE_LOADUH: begin
@@ -538,6 +498,8 @@ module cpu (
       running <= 1'b0;
       step_active <= 1'b0;
       halt_pending <= 1'b0;
+      start_pending <= 1'b0;
+      start_step_pending <= 1'b0;
       halted <= 1'b1;
       error <= 1'b0;
       error_code <= ERROR_NONE;
@@ -595,9 +557,16 @@ module cpu (
         halt_pending <= 1'b0;
 
         if (run_request || step_request) begin
+          start_pending <= 1'b1;
+          start_step_pending <= step_request;
+        end
+
+        if ((start_pending || run_request || step_request) && !register_file_busy) begin
           halted <= 1'b0;
           running <= 1'b1;
-          step_active <= step_request;
+          step_active <= start_pending ? start_step_pending : step_request;
+          start_pending <= 1'b0;
+          start_step_pending <= 1'b0;
           imem_address <= architectural_pc;
           fetch_request_pc <= architectural_pc;
           imem_valid <= 1'b1;
@@ -608,6 +577,8 @@ module cpu (
           running <= 1'b0;
           step_active <= 1'b0;
           halt_pending <= 1'b0;
+          start_pending <= 1'b0;
+          start_step_pending <= 1'b0;
           fetch_request_pc <= architectural_pc;
           if_valid <= 1'b0;
           id_valid <= 1'b0;

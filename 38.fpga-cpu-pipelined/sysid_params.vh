@@ -15,7 +15,7 @@
 `define SYSID_PARAMS_VH
 
 `define SYSID_FOLDER             32'h0000_0026
-`define SYSID_ISA_PROFILE        32'h0000_0007
+`define SYSID_ISA_PROFILE        32'h0000_0004
 `define SYSID_DEVICES            32'h0000_0A37
 `define SYSID_MEM_BASE           32'h0000_0000
 `define SYSID_MEM_SIZE           32'h0200_0000

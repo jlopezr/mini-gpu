@@ -160,7 +160,11 @@ def monitor_version_from_rtl(prototype_dir: Path) -> tuple[int, int] | None:
 def clock_hz_from_rtl(prototype_dir: Path) -> int | None:
     """Reloj al que corre el núcleo del prototipo.
 
-    Primero, `FREQUENCY_PIN_CLKOP` en el fichero del PLL (su nombre varía:
+    Primero, `CLK_FREQ_HZ` en el top: es la constante que usan UART, monitor y
+    contadores para describir el dominio de CPU/monitor. Esto importa cuando el
+    prototipo tiene ademas una PLL de memoria o video mas rapida.
+
+    Despues, `FREQUENCY_PIN_CLKOP` en el fichero del PLL (su nombre varia:
     pll_120.v, pll_cpu.v...): es el atributo que nextpnr usa de verdad para
     timing. Los cores de CPU lo tienen porque suben el reloj a 80/100/120 MHz.
 
@@ -172,6 +176,14 @@ def clock_hz_from_rtl(prototype_dir: Path) -> int | None:
     Los dominios de pixel no salen aquí: están desglosados, con su fmax, en
     `docs/synthesis-report.md`.
     """
+    for top_file in sorted(prototype_dir.glob("top*.v")):
+        text = top_file.read_text(encoding="utf-8", errors="replace")
+        freq = re.search(
+            r"localparam\s+(?:integer\s+)?CLK_FREQ_HZ\s*=\s*([0-9_]+)\s*;",
+            text,
+        )
+        if freq:
+            return int(freq.group(1).replace("_", ""))
     for pll_file in sorted(prototype_dir.glob("pll*.v")):
         text = pll_file.read_text(encoding="utf-8", errors="replace")
         match = re.search(r'FREQUENCY_PIN_CLKOP\s*=\s*"(\d+(?:\.\d+)?)"', text)
