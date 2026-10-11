@@ -1699,7 +1699,7 @@ def main() -> None:
         else:
             args.listing.write_text(listing, encoding="utf-8")
 
-    print(f"{len(image) // 4} palabras -> {output}")
+    print(f"{len(image) // 4} words -> {output}")
 
 
 if __name__ == "__main__":

@@ -172,7 +172,7 @@ class OutputWriterTest(unittest.TestCase):
                 ".text": Section(".text", bytearray(bytes.fromhex("00000000 000000fc"))),
             },
             symbols={
-                "start": Symbol("start", ".text", 0),
+                "start": Symbol("start", ".text", 0, binding="global"),
                 "table": Symbol("table", ".text", 4),
             },
             relocations=[
@@ -193,8 +193,26 @@ class OutputWriterTest(unittest.TestCase):
         self.assertEqual(summary["magic"], b"VOBJ")
         self.assertEqual(summary["cpu"], "minigpu")
         self.assertEqual(summary["sections"][0]["relocs"][0]["type"], 1)
+        self.assertEqual(summary["symbols"][0]["flags"], 8)
         self.assertEqual(summary["sections"][0]["relocs"][0]["symbol"], 1)
         self.assertEqual(summary["sections"][0]["relocs"][1]["addend"], 12)
+
+    def test_writes_vobj_import_symbols(self):
+        result = Result(
+            image=bytes.fromhex("00000000"),
+            sections={".text": Section(".text", bytearray(bytes.fromhex("00000000")))},
+            symbols={"external": Symbol("external", None, 0, kind="extern", defined=False)},
+            relocations=[Relocation(".text", 0, "external", "ABS32", addend=4)],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "program.vobj"
+            asm_output.write_output(result, path, "vobj")
+            summary = read_vobj_summary(path.read_bytes())
+
+        self.assertEqual(summary["symbols"][0]["name"], "external")
+        self.assertEqual(summary["symbols"][0]["type"], 2)
+        self.assertEqual(summary["sections"][0]["relocs"][0]["symbol"], 1)
+        self.assertEqual(summary["sections"][0]["relocs"][0]["addend"], 4)
 
     def test_writes_json_object_with_relocations(self):
         result = Result(

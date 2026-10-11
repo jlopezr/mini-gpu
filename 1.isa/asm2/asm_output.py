@@ -61,7 +61,9 @@ VOBJ_CPU = "minigpu"
 VOBJ_BITS_PER_BYTE = 8
 VOBJ_BYTES_PER_ADDR = 4
 VOBJ_LABSYM = 1
+VOBJ_IMPORT = 2
 VOBJ_EXPRESSION = 3
+VOBJ_EXPORT = 8
 VOBJ_REL_ABS = 1
 VOBJ_REL_PC = 2
 
@@ -128,13 +130,18 @@ def _signed_taddr(value: int) -> int:
 
 def _write_vobj_symbol(stream: BytesIO, symbol: Any, section_indexes: dict[str, int]) -> None:
     _write_vobj_string(stream, symbol.name)
-    if symbol.section is None or getattr(symbol, "kind", "") == "absolute":
-        _write_vobj_number(stream, VOBJ_EXPRESSION)
+    flags = VOBJ_EXPORT if getattr(symbol, "binding", "") == "global" else 0
+    if not getattr(symbol, "defined", True) or getattr(symbol, "kind", "") == "extern":
+        _write_vobj_number(stream, VOBJ_IMPORT)
+        _write_vobj_number(stream, flags)
         _write_vobj_number(stream, 0)
+    elif symbol.section is None or getattr(symbol, "kind", "") == "absolute":
+        _write_vobj_number(stream, VOBJ_EXPRESSION)
+        _write_vobj_number(stream, flags)
         _write_vobj_number(stream, 0)
     else:
         _write_vobj_number(stream, VOBJ_LABSYM)
-        _write_vobj_number(stream, 0)
+        _write_vobj_number(stream, flags)
         _write_vobj_number(stream, section_indexes[symbol.section])
     _write_vobj_number(stream, int(symbol.offset), signed=True)
     _write_vobj_number(stream, 0)
@@ -156,11 +163,14 @@ def _write_vobj_relocation(stream: BytesIO, relocation: Any,
         raise ValueError(
             f"relocation references unknown VOBJ symbol: {relocation.symbol}"
         ) from None
-    if symbol.section is None:
+    if not getattr(symbol, "defined", True) or getattr(symbol, "kind", "") == "extern":
+        addend = int(getattr(relocation, "addend", 0))
+    elif symbol.section is None:
         raise ValueError(
             f"VOBJ relocation cannot reference absolute symbol: {relocation.symbol}"
         )
-    addend = int(getattr(symbol, "offset", 0)) + int(getattr(relocation, "addend", 0))
+    else:
+        addend = int(getattr(symbol, "offset", 0)) + int(getattr(relocation, "addend", 0))
     _write_vobj_number(stream, _vobj_relocation_type(relocation))
     _write_vobj_number(stream, int(relocation.offset))
     _write_vobj_number(stream, int(getattr(relocation, "bit_offset", 0)))
@@ -174,7 +184,10 @@ def _write_vobj_relocation(stream: BytesIO, relocation: Any,
 def encode_vobj(result: HasImage) -> bytes:
     sections = list(result.sections.values())
     section_indexes = {section.name: index for index, section in enumerate(sections, start=1)}
-    symbols = [symbol for symbol in result.symbols.values() if getattr(symbol, "defined", True)]
+    symbols = [
+        symbol for symbol in result.symbols.values()
+        if getattr(symbol, "defined", True) or getattr(symbol, "kind", "") == "extern"
+    ]
     symbol_indexes = {symbol.name: index for index, symbol in enumerate(symbols, start=1)}
     symbols_by_name = {symbol.name: symbol for symbol in symbols}
     relocs_by_section: dict[str, list[Any]] = {section.name: [] for section in sections}

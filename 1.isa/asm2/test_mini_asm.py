@@ -204,6 +204,27 @@ class IncludeAndMetadataTest(unittest.TestCase):
         self.assertIn(("PCREL_WORD", 8, "start", -4, 16, 0x0003FFFC), relocs)
         self.assertIn(("ABS32", 12, "start", 0, 32, 0xFFFFFFFF), relocs)
 
+    def test_extern_symbols_are_imported_for_object_output(self):
+        source = ".extern target\nstart:\n    LA R1, target\n    .word target+4\n"
+        result = new_asm.assemble_program(source)
+
+        self.assertFalse(result.symbols["target"].defined)
+        self.assertEqual(result.symbols["target"].kind, "extern")
+        self.assertEqual(len(result.image), 12)
+        self.assertEqual(
+            [(reloc.kind, reloc.offset, reloc.symbol, reloc.addend)
+             for reloc in result.relocations],
+            [
+                ("HI16", 0, "target", 0),
+                ("LO16", 4, "target", 0),
+                ("ABS32", 8, "target", 4),
+            ],
+        )
+
+    def test_global_marks_symbol_binding(self):
+        result = new_asm.assemble_program(".global helper\nhelper:\nRET\n")
+        self.assertEqual(result.symbols["helper"].binding, "global")
+
 
 class ApiAndCliSurfaceTest(unittest.TestCase):
     def test_public_api_shapes(self):

@@ -890,6 +890,8 @@ class Layout:
     section_base: dict[str, int]       # sección -> dirección inicial
     section_size: dict[str, int]       # sección -> bytes que ocupa
     symbol_sources: dict[str, SourceLocation]
+    externs: set[str]                  # símbolos importados de otro objeto
+    globals: set[str]                  # símbolos exportados para el linker
 
 
 def first_pass(source: str,
@@ -926,13 +928,15 @@ def layout_pass(source: str,
         lines, labels, image_size, equates, info, candidates = _layout_once(
             source, base_dir, origin, include_dirs, defines, shrunk)
         actual = set(range(len(candidates))) if shrunk is None else shrunk
-        keep = {i for i in actual if li_label_fits(candidates[i], labels)}
+        keep = {i for i in actual if li_label_fits(candidates[i], labels,
+                                                   info.externs)}
         if keep == actual:
             return lines, labels, image_size, equates, info
         shrunk = keep
 
 
-def li_label_fits(operand: str, labels: dict[str, int]) -> bool:
+def li_label_fits(operand: str, labels: dict[str, int],
+                  externs: set[str] | None = None) -> bool:
     """¿Cabe el valor de `LI Rd, operand` en una sola palabra?
 
     Rango de `LI_SHORT_MIN`..`LI_SHORT_MAX`: de -32768 a 32767 sale un `MOVI`
@@ -940,6 +944,9 @@ def li_label_fits(operand: str, labels: dict[str, int]) -> bool:
     ceros). Un nombre sin resolver no cabe: se queda en dos palabras y el
     error de «etiqueta no definida» salta en la pasada 2, como antes.
     """
+    if externs and any(part.strip("+- ") in externs
+                       for part in re.findall(r"[+-]?[^+-]+", operand)):
+        return False
     try:
         value = resolve_target(operand, labels)
     except AsmError:
@@ -963,6 +970,8 @@ def _layout_once(source: str,
     label_offsets: dict[str, tuple[str, int]] = {}
     label_origins: dict[str, str] = {}
     symbol_sources: dict[str, SourceLocation] = {}
+    externs: set[str] = set()
+    globals_: set[str] = set()
     # Constantes de `.equ`. Van aparte de `label_offsets` porque no pertenecen a
     # ninguna seccion: su valor es absoluto y no se desplaza al colocar la
     # imagen. Se funden con las etiquetas al final, en un unico espacio de
@@ -999,6 +1008,12 @@ def _layout_once(source: str,
                 raise AsmError(
                     f"{ubicacion(origin, number)}: {label} ya es una constante "
                     f".equ (definida en {label_origins[label]})"
+                )
+
+            if label in externs:
+                raise AsmError(
+                    f"{ubicacion(origin, number)}: label duplicado: {label} "
+                    f"(declarado .extern en {label_origins[label]})"
                 )
 
             if label in label_offsets:
@@ -1061,6 +1076,11 @@ def _layout_once(source: str,
                             f"{name} ya es una etiqueta "
                             f"(definida en {label_origins[name]})"
                         )
+                    if name in externs:
+                        raise AsmError(
+                            f"{name} ya es un simbolo .extern "
+                            f"(declarado en {label_origins[name]})"
+                        )
                     # El valor se resuelve AQUI, contra las constantes ya
                     # definidas y nada mas. Una `.equ` no puede referirse a una
                     # etiqueta ni a una constante posterior: en la pasada 1 las
@@ -1081,6 +1101,40 @@ def _layout_once(source: str,
                     symbol_sources[name] = SourceLocation(origin, number)
                     continue
 
+                if mnemonic == ".EXTERN":
+                    ops = split_operands(operand_text)
+                    if not ops:
+                        raise AsmError(".extern requiere al menos un simbolo")
+                    for name in ops:
+                        if not LABEL_RE.match(name) or es_local(name):
+                            raise AsmError(f"simbolo .extern invalido: {name}")
+                        if name in label_offsets or name in equates:
+                            raise AsmError(
+                                f"{name} ya esta definido "
+                                f"(definido en {label_origins[name]})"
+                            )
+                        if name in externs:
+                            continue
+                        externs.add(name)
+                        label_origins[name] = ubicacion(origin, number)
+                        symbol_sources[name] = SourceLocation(origin, number)
+                    continue
+
+                if mnemonic in {".GLOBAL", ".GLOBL"}:
+                    ops = split_operands(operand_text)
+                    if not ops:
+                        raise AsmError(f"{mnemonic.lower()} requiere al menos un simbolo")
+                    for name in ops:
+                        if not LABEL_RE.match(name) or es_local(name):
+                            raise AsmError(f"simbolo {mnemonic.lower()} invalido: {name}")
+                        if name in externs:
+                            raise AsmError(
+                                f"{name} ya es un simbolo .extern "
+                                f"(declarado en {label_origins[name]})"
+                            )
+                        globals_.add(name)
+                    continue
+
                 if mnemonic == ".COMM":
                     ops = split_operands(operand_text)
                     if len(ops) not in (2, 3):
@@ -1092,6 +1146,11 @@ def _layout_once(source: str,
                         raise AsmError(
                             f"label duplicado: {name} "
                             f"(ya definido en {label_origins[name]})"
+                        )
+                    if name in externs:
+                        raise AsmError(
+                            f"{name} ya es un simbolo .extern "
+                            f"(declarado en {label_origins[name]})"
                         )
                     size = parse_int(ops[1])
                     alignment = parse_int(ops[2]) if len(ops) == 3 else 4
@@ -1135,9 +1194,13 @@ def _layout_once(source: str,
         name: bases[section_name] + offset
         for name, (section_name, offset) in label_offsets.items()
     }
+    labels.update({name: 0 for name in externs})
     # Un solo espacio de nombres. Las colisiones ya se rechazaron en las dos
     # direcciones mas arriba, asi que aqui no puede pisarse nada.
     labels.update(equates)
+    for name in sorted(globals_):
+        if name not in labels:
+            raise AsmError(f"simbolo .global sin definir: {name}")
     laid_out_lines = [
         SourceLine(line.number, line.text,
                    bases[line.section] + line.pc, line.section, line.origin,
@@ -1155,6 +1218,8 @@ def _layout_once(source: str,
         section_base=bases,
         section_size=dict(offsets),
         symbol_sources=symbol_sources,
+        externs=externs,
+        globals=globals_,
     )
     return laid_out_lines, labels, image_size, equates, info, candidates
 
@@ -1385,11 +1450,23 @@ def build_symbols(labels: dict[str, int], equates: dict[str, int],
                   info: Layout) -> dict[str, Symbol]:
     symbols: dict[str, Symbol] = {}
     for name, value in labels.items():
+        if name in info.externs:
+            symbols[name] = Symbol(
+                name=name,
+                section=None,
+                offset=0,
+                binding="global",
+                source=info.symbol_sources.get(name),
+                kind="extern",
+                defined=False,
+            )
+            continue
         if name in equates:
             symbols[name] = Symbol(
                 name=name,
                 section=None,
                 offset=value,
+                binding="global" if name in info.globals else "local",
                 source=info.symbol_sources.get(name),
                 kind="absolute",
             )
@@ -1399,6 +1476,7 @@ def build_symbols(labels: dict[str, int], equates: dict[str, int],
             name=name,
             section=section,
             offset=value - info.section_base[section],
+            binding="global" if name in info.globals else "local",
             source=info.symbol_sources.get(name),
             kind="comm" if name in info.comm_sizes else "label",
         )
@@ -1744,30 +1822,30 @@ def format_listing(source: str, base_dir: Path | None = None,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MiniISA assembler v0.1")
-    parser.add_argument("input", type=Path, help="fichero .asm")
+    parser = argparse.ArgumentParser(description="MiniISA assembler v0.2")
+    parser.add_argument("input", type=Path, help=".asm file to assemble")
     parser.add_argument("-o", "--output", type=Path,
-                        help="salida .bin (por defecto _build/<nombre>.bin junto "
-                             "al fuente: carpeta ignorada por git, para que el "
-                             "binario regenerable no se confunda con una entrada)")
-    parser.add_argument("--hex", dest="hex_output", type=Path, help="salida hexadecimal textual")
+                        help=".bin output file (by default _build/<name>.bin next to "
+                             "the source: folder ignored by git, so that the "
+                             "regenerable binary does not get confused with an input)")
+    parser.add_argument("--hex", dest="hex_output", type=Path, help="hexadecimal textual output")
     parser.add_argument("--vobj", dest="vobj_output", type=Path,
-                        help="salida objeto VOBJ con simbolos y relocations")
+                        help="VOBJ output file (with symbols and relocations)")
     parser.add_argument("--json", dest="json_output", type=Path,
-                        help="salida objeto MiniGPU en JSON con simbolos y relocations")
+                        help="JSON output file (with symbols and relocations)")
     parser.add_argument("-I", "--include-dir", type=Path, action="append", default=[],
-                        metavar="CARPETA",
-                        help="donde buscar los .include, ademas de la carpeta "
-                             "del propio fuente (que se mira siempre primero). "
-                             "Se puede repetir; se prueban en orden")
+                        metavar="FOLDER",
+                        help="Where to look for .include files, in addition to the folder "
+                             "of the source file (which is always checked first). "
+                             "Can be repeated; they are tried in order")
     parser.add_argument("-D", "--define", action="append", default=[],
-                        metavar="SIMBOLO",
-                        help="define un simbolo para .ifdef/.ifndef. Se puede "
-                             "repetir")
+                        metavar="SYMBOL",
+                        help="Defines a symbol for .ifdef/.ifndef. Can be "
+                             "repeated")
     parser.add_argument("--listing", type=Path, nargs="?", const=Path("-"),
-                        metavar="FICHERO",
-                        help="listado PC / palabra / fuente y tabla de "
-                             "etiquetas. Sin argumento sale por pantalla")
+                        metavar="FILE",
+                        help="Listing of PC / word / source and symbol table. "
+                             "Without argument, it goes to the screen")
     args = parser.parse_args()
 
     source = args.input.read_text(encoding="utf-8")
@@ -1779,10 +1857,26 @@ def main() -> None:
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 
+    unresolved = [name for name, symbol in result.symbols.items()
+                  if not symbol.defined]
+    object_only = (args.vobj_output or args.json_output) and args.output is None
     output = args.output or default_output(args.input)
-    asm_output.write_output(result, output, "bin")
+    wrote_bin = False
+    if not object_only:
+        if unresolved:
+            names = ", ".join(sorted(unresolved))
+            raise SystemExit(
+                f"error: no puedo escribir .bin con simbolos externos sin resolver: {names}"
+            )
+        asm_output.write_output(result, output, "bin")
+        wrote_bin = True
 
     if args.hex_output:
+        if unresolved:
+            names = ", ".join(sorted(unresolved))
+            raise SystemExit(
+                f"error: no puedo escribir .hex con simbolos externos sin resolver: {names}"
+            )
         asm_output.write_output(result, args.hex_output, "hex")
 
     if args.vobj_output:
@@ -1802,7 +1896,11 @@ def main() -> None:
         else:
             args.listing.write_text(listing, encoding="utf-8")
 
-    print(f"{len(result.image) // 4} palabras -> {output}")
+    if wrote_bin:
+        print(f"{len(result.image) // 4} words -> {output}")
+    elif args.vobj_output or args.json_output:
+        targets = [str(path) for path in (args.vobj_output, args.json_output) if path]
+        print(f"{len(result.image) // 4} words -> {', '.join(targets)}")
 
 
 if __name__ == "__main__":

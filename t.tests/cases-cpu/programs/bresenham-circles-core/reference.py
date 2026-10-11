@@ -30,4 +30,4 @@ for radius in RADII:
 
 target = Path(__file__).parent / "expected.hex"
 target.write_text("".join(f"{word:08x}\n" for word in words), encoding="ascii")
-print(f"{len(words)} palabras -> {target}")
+print(f"{len(words)} words -> {target}")
