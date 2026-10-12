@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("mini_objdump", HERE / "mini-objdump.py")
 mini_objdump = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
+# Registrado antes de ejecutarlo: sus dataclass buscan su modulo en sys.modules.
+sys.modules[spec.name] = mini_objdump
 spec.loader.exec_module(mini_objdump)
 
 
