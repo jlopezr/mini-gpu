@@ -29,7 +29,7 @@ class TraceabilityTest(unittest.TestCase):
 
     def test_plain_markdown_is_only_a_resource(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()      # el modelo da rutas resueltas
             path = self.write(root, "README.md", "# Documento\n[Otro](other.md)\n")
             result = MarkdownAdapter().read(path, root)
             self.assertEqual(result.resource.path, path)
@@ -797,7 +797,7 @@ def custom(graph):
 
     def test_trace_yaml_controls_scan_and_exclude(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()      # el modelo da rutas resueltas
             self.write(root, "trace.yaml", """project: demo
 version: 1
 scan: [docs/**/*.md]

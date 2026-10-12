@@ -283,6 +283,9 @@ def generate_synthesis_table(context: GenerationContext, options: dict) -> str:
 
 
 def update_trace_docs(root: Path, check: bool, values=None) -> tuple[bool, list[str]]:
+    # El modelo trabaja con rutas resueltas: la raiz tambien, o `relative_to`
+    # falla cuando llega por un enlace (en macOS, /var -> /private/var).
+    root = root.resolve()
     model = ModelBuilder().build(root)
     graph = Graph(model)
     if graph.resolution.diagnostics:
