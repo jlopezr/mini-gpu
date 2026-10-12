@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 from typing import Iterable
 
-import isa
+import minigpu_isa as isa
 
 
 class DisasmError(ValueError):

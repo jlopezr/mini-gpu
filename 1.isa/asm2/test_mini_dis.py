@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import isa
+import minigpu_isa as isa
 
 
 HERE = Path(__file__).resolve().parent

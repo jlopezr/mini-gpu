@@ -9,7 +9,7 @@ import sys
 import unittest
 from pathlib import Path
 
-import isa
+import minigpu_isa as isa
 from isa_core import ISAEncodingError
 
 

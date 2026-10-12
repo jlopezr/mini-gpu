@@ -4,7 +4,7 @@ MiniISA assembler.
 
 Este modulo conserva el lenguaje del ensamblador actual: parser, directivas,
 secciones, includes, simbolos, relajacion y pseudoinstrucciones. La codificacion
-de instrucciones reales se delega en isa.py.
+de instrucciones reales se delega en minigpu_isa.py.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import asm_output
-import isa
+import minigpu_isa as isa
 from isa_core import ISAEncodingError
 
 # ---------------------------------------------------------------------------
@@ -1762,7 +1762,7 @@ def format_listing(source: str, base_dir: Path | None = None,
     linea del fuente ya expandido con el PC que le asigno la pasada 1 y con la
     palabra que salio de la 2. Para saber que hay en una direccion concreta
     -- tipicamente el `pc` que reporta la placa -- es lo mismo, y no obliga a
-    mantener una tabla de decodificacion en paralelo a `isa.py`.
+    mantener una tabla de decodificacion en paralelo a `minigpu_isa.py`.
     """
     lines, labels, _, equates, info = layout_pass(
         source, base_dir, origin, include_dirs, defines)

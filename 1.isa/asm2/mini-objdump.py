@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
-import isa
+import minigpu_isa as isa
 
 
 class VobjError(ValueError):

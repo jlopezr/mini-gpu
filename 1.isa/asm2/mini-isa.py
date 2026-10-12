@@ -2,7 +2,7 @@
 """
 mini-isa - Generador de documentación de MiniISA.
 
-La definición de la arquitectura vive exclusivamente en isa.py.
+La definición de la arquitectura vive exclusivamente en minigpu_isa.py.
 
 Ejemplos:
 
@@ -21,7 +21,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from isa import (
+from minigpu_isa import (
     INSTRUCTIONS,
     instruction,
     markdown,
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="mini-isa",
         description=(
             "Documentación de la arquitectura MiniISA "
-            "generada desde isa.py"
+            "generada desde minigpu_isa.py"
         ),
     )
 
