@@ -910,6 +910,7 @@ def layout_pass(source: str,
                 origin: str = ENTRADA,
                 include_dirs: tuple[Path, ...] = (),
                 defines: frozenset[str] = frozenset(),
+                relocatable: bool = False,
                 ) -> tuple[list[SourceLine], dict[str, int], int,
                            dict[str, int], Layout]:
     """Pasada 1 con relajación de `LI Rd, etiqueta`.
@@ -922,14 +923,23 @@ def layout_pass(source: str,
     Termina, y en el mínimo, porque alargar un `LI` solo empuja las
     direcciones hacia arriba (el relleno de `.align` también es monótono en la
     posición): uno que no cabe ya no puede volver a caber.
+
+    Con `relocatable` (se va a escribir un objeto para el linker) las
+    direcciones de las etiquetas no son las finales: el linker mueve cada
+    sección. Un `LI` que nombra una etiqueta se queda entonces en dos palabras,
+    como uno que nombra un `.extern`; si no, una etiqueta que hoy vale 12 se
+    codificaria en un MOVI de 16 bits y, enlazada por encima de 0x7FFF,
+    quedaria con el signo extendido. Las constantes de `.equ` no se mueven y se
+    siguen relajando.
     """
     shrunk: set[int] | None = None      # None: todos los candidatos, primera vez
     while True:
         lines, labels, image_size, equates, info, candidates = _layout_once(
             source, base_dir, origin, include_dirs, defines, shrunk)
         actual = set(range(len(candidates))) if shrunk is None else shrunk
+        movable = info.externs | set(info.label_section) if relocatable else info.externs
         keep = {i for i in actual if li_label_fits(candidates[i], labels,
-                                                   info.externs)}
+                                                   movable)}
         if keep == actual:
             return lines, labels, image_size, equates, info
         shrunk = keep
@@ -942,7 +952,8 @@ def li_label_fits(operand: str, labels: dict[str, int],
     Rango de `LI_SHORT_MIN`..`LI_SHORT_MAX`: de -32768 a 32767 sale un `MOVI`
     (extiende el signo) y de 32768 a 65535 un `ORI Rd, R0, v` (rellena con
     ceros). Un nombre sin resolver no cabe: se queda en dos palabras y el
-    error de «etiqueta no definida» salta en la pasada 2, como antes.
+    error de «etiqueta no definida» salta en la pasada 2, como antes. Tampoco
+    cabe uno de `externs`: los nombres cuyo valor fija el linker.
     """
     if externs and any(part.strip("+- ") in externs
                        for part in re.findall(r"[+-]?[^+-]+", operand)):
@@ -1010,12 +1021,6 @@ def _layout_once(source: str,
                     f".equ (definida en {label_origins[label]})"
                 )
 
-            if label in externs:
-                raise AsmError(
-                    f"{ubicacion(origin, number)}: label duplicado: {label} "
-                    f"(declarado .extern en {label_origins[label]})"
-                )
-
             if label in label_offsets:
                 # Con `.include`, el duplicado suele estar en OTRO fichero, y
                 # decir solo "label duplicado" obliga a buscarlo a mano. Es el
@@ -1076,11 +1081,6 @@ def _layout_once(source: str,
                             f"{name} ya es una etiqueta "
                             f"(definida en {label_origins[name]})"
                         )
-                    if name in externs:
-                        raise AsmError(
-                            f"{name} ya es un simbolo .extern "
-                            f"(declarado en {label_origins[name]})"
-                        )
                     # El valor se resuelve AQUI, contra las constantes ya
                     # definidas y nada mas. Una `.equ` no puede referirse a una
                     # etiqueta ni a una constante posterior: en la pasada 1 las
@@ -1102,18 +1102,25 @@ def _layout_once(source: str,
                     continue
 
                 if mnemonic == ".EXTERN":
+                    # `.extern` dice que el simbolo puede venir de fuera, como en
+                    # GNU as: si este mismo ensamblado lo define (antes o
+                    # despues), gana la definicion y no se importa. build-c junta
+                    # todas las unidades en un ensamblado, y lcc declara asi los
+                    # datos que usa sin definir: `.extern nombre tamano`. El
+                    # tamano no hace falta para nada y se ignora.
                     ops = split_operands(operand_text)
                     if not ops:
                         raise AsmError(".extern requiere al menos un simbolo")
-                    for name in ops:
-                        if not LABEL_RE.match(name) or es_local(name):
-                            raise AsmError(f"simbolo .extern invalido: {name}")
-                        if name in label_offsets or name in equates:
-                            raise AsmError(
-                                f"{name} ya esta definido "
-                                f"(definido en {label_origins[name]})"
-                            )
-                        if name in externs:
+                    for op in ops:
+                        name, *size = op.split()
+                        if not LABEL_RE.match(name) or es_local(name) or len(size) > 1:
+                            raise AsmError(f"simbolo .extern invalido: {op}")
+                        if size:
+                            try:
+                                parse_int(size[0])
+                            except AsmError:
+                                raise AsmError(f"simbolo .extern invalido: {op}") from None
+                        if name in externs or name in label_offsets or name in equates:
                             continue
                         externs.add(name)
                         label_origins[name] = ubicacion(origin, number)
@@ -1127,11 +1134,6 @@ def _layout_once(source: str,
                     for name in ops:
                         if not LABEL_RE.match(name) or es_local(name):
                             raise AsmError(f"simbolo {mnemonic.lower()} invalido: {name}")
-                        if name in externs:
-                            raise AsmError(
-                                f"{name} ya es un simbolo .extern "
-                                f"(declarado en {label_origins[name]})"
-                            )
                         globals_.add(name)
                     continue
 
@@ -1146,11 +1148,6 @@ def _layout_once(source: str,
                         raise AsmError(
                             f"label duplicado: {name} "
                             f"(ya definido en {label_origins[name]})"
-                        )
-                    if name in externs:
-                        raise AsmError(
-                            f"{name} ya es un simbolo .extern "
-                            f"(declarado en {label_origins[name]})"
                         )
                     size = parse_int(ops[1])
                     alignment = parse_int(ops[2]) if len(ops) == 3 else 4
@@ -1194,6 +1191,8 @@ def _layout_once(source: str,
         name: bases[section_name] + offset
         for name, (section_name, offset) in label_offsets.items()
     }
+    # Solo se importa lo que nadie definio aqui (ver `.extern`).
+    externs -= set(label_offsets) | set(equates)
     labels.update({name: 0 for name in externs})
     # Un solo espacio de nombres. Las colisiones ya se rechazaron en las dos
     # direcciones mas arriba, asi que aqui no puede pisarse nada.
@@ -1656,10 +1655,14 @@ def build_relocations(lines: list[SourceLine],
 def assemble_program(source: str, base_dir: Path | None = None,
                      origin: str = ENTRADA,
                      include_dirs: tuple[Path, ...] = (),
-                     defines: frozenset[str] = frozenset()) -> AssemblyResult:
-    """Assemble source and return binary plus internal assembly metadata."""
+                     defines: frozenset[str] = frozenset(),
+                     relocatable: bool = False) -> AssemblyResult:
+    """Assemble source and return binary plus internal assembly metadata.
+
+    `relocatable`: the result is going to a linker (VOBJ/JSON object), so no
+    `LI` that names a label is relaxed to one word (see `layout_pass`)."""
     lines, labels, image_size, equates, info = layout_pass(
-        source, base_dir, origin, include_dirs, defines)
+        source, base_dir, origin, include_dirs, defines, relocatable)
     image = emit_image(lines, labels, image_size)
     return AssemblyResult(
         sections=build_sections(image, info),
@@ -1671,6 +1674,16 @@ def assemble_program(source: str, base_dir: Path | None = None,
     )
 
 
+def unresolved_references(result: AssemblyResult) -> list[str]:
+    """Los `.extern` que el codigo usa y nadie define, ordenados.
+
+    En un objeto los resuelve el linker. En una imagen no hay quien: valdrian 0
+    sin avisar. Uno declarado y sin usar no estorba (lcc declara todo `extern`
+    que ve, lo use o no)."""
+    return sorted({reloc.symbol for reloc in result.relocations
+                   if not result.symbols[reloc.symbol].defined})
+
+
 def assemble_bytes(source: str, base_dir: Path | None = None,
                    origin: str = ENTRADA,
                    include_dirs: tuple[Path, ...] = (),
@@ -1680,7 +1693,11 @@ def assemble_bytes(source: str, base_dir: Path | None = None,
     los errores, y las carpetas extra de busqueda. Ensamblar una cadena suelta
     sigue funcionando igual que antes de que existiera la directiva.
     `defines` son los simbolos de `-D` para `.ifdef`/`.ifndef`."""
-    return assemble_program(source, base_dir, origin, include_dirs, defines).image
+    result = assemble_program(source, base_dir, origin, include_dirs, defines)
+    unresolved = unresolved_references(result)
+    if unresolved:
+        raise AsmError(f"simbolos .extern usados y sin definir: {', '.join(unresolved)}")
+    return result.image
 
 
 def assemble(source: str, base_dir: Path | None = None,
@@ -1717,7 +1734,7 @@ def load_program_bytes(path) -> bytes:
         # `t.tests/inc` se busca siempre, como en el depurador: es donde vive
         # `mmio.inc`, y sin esto un programa que lo incluye solo se podia
         # ensamblar desde el runner de tests o desde `mini-dbg`.
-        shared = Path(__file__).resolve().parents[1] / "t.tests" / "inc"
+        shared = Path(__file__).resolve().parents[2] / "t.tests" / "inc"   # 1.isa/asm2/ -> raiz
         return assemble_bytes(path.read_text(encoding="utf-8"),
                               path.parent, path.name, (shared,))
 
@@ -1755,7 +1772,8 @@ def write_hex(image: bytes, path: Path) -> None:
 def format_listing(source: str, base_dir: Path | None = None,
                    origin: str = ENTRADA,
                    include_dirs: tuple[Path, ...] = (),
-                   defines: frozenset[str] = frozenset()) -> str:
+                   defines: frozenset[str] = frozenset(),
+                   relocatable: bool = False) -> str:
     """Listado PC -> palabra -> fuente, mas la tabla de etiquetas.
 
     No es un desensamblador: no decodifica la imagen, sino que empareja cada
@@ -1765,8 +1783,9 @@ def format_listing(source: str, base_dir: Path | None = None,
     mantener una tabla de decodificacion en paralelo a `minigpu_isa.py`.
     """
     lines, labels, _, equates, info = layout_pass(
-        source, base_dir, origin, include_dirs, defines)
-    image = assemble_bytes(source, base_dir, origin, include_dirs, defines)
+        source, base_dir, origin, include_dirs, defines, relocatable)
+    image = assemble_program(source, base_dir, origin, include_dirs, defines,
+                             relocatable).image
 
     # Las constantes de `.equ` comparten espacio de nombres con las etiquetas
     # pero no son posiciones del programa: anotarlas en el listado llenaria
@@ -1852,19 +1871,21 @@ def main() -> None:
 
     try:
         defines = frozenset(parse_define_name(name) for name in args.define)
+        # Si sale un objeto, el .bin/.hex/listado de esta llamada usan su misma
+        # colocacion (LI con etiqueta en dos palabras), para que coincidan.
+        relocatable = bool(args.vobj_output or args.json_output)
         result = assemble_program(source, args.input.parent, args.input.name,
-                                  tuple(args.include_dir), defines)
+                                  tuple(args.include_dir), defines, relocatable)
     except AsmError as e:
         raise SystemExit(f"error: {e}")
 
-    unresolved = [name for name, symbol in result.symbols.items()
-                  if not symbol.defined]
+    unresolved = unresolved_references(result)
     object_only = (args.vobj_output or args.json_output) and args.output is None
     output = args.output or default_output(args.input)
     wrote_bin = False
     if not object_only:
         if unresolved:
-            names = ", ".join(sorted(unresolved))
+            names = ", ".join(unresolved)
             raise SystemExit(
                 f"error: no puedo escribir .bin con simbolos externos sin resolver: {names}"
             )
@@ -1873,7 +1894,7 @@ def main() -> None:
 
     if args.hex_output:
         if unresolved:
-            names = ", ".join(sorted(unresolved))
+            names = ", ".join(unresolved)
             raise SystemExit(
                 f"error: no puedo escribir .hex con simbolos externos sin resolver: {names}"
             )
@@ -1888,7 +1909,7 @@ def main() -> None:
     if args.listing:
         try:
             listing = format_listing(source, args.input.parent, args.input.name,
-                                     tuple(args.include_dir), defines)
+                                     tuple(args.include_dir), defines, relocatable)
         except AsmError as e:                       # no deberia: ya ensamblo
             raise SystemExit(f"error: {e}")
         if str(args.listing) == "-":

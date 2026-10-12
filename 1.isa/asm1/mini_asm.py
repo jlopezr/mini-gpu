@@ -1541,7 +1541,7 @@ def load_program_bytes(path) -> bytes:
         # `t.tests/inc` se busca siempre, como en el depurador: es donde vive
         # `mmio.inc`, y sin esto un programa que lo incluye solo se podia
         # ensamblar desde el runner de tests o desde `mini-dbg`.
-        shared = Path(__file__).resolve().parents[1] / "t.tests" / "inc"
+        shared = Path(__file__).resolve().parents[2] / "t.tests" / "inc"   # 1.isa/asm1/ -> raiz
         return assemble_bytes(path.read_text(encoding="utf-8"),
                               path.parent, path.name, (shared,))
 

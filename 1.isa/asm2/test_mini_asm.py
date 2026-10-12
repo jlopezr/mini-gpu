@@ -221,6 +221,68 @@ class IncludeAndMetadataTest(unittest.TestCase):
             ],
         )
 
+    def test_extern_accepts_lcc_size_operand(self):
+        # lcc escribe `.extern nombre tamano` para los datos que usa y no define.
+        result = new_asm.assemble_program(".extern counter 4\n    LA R1, counter\n")
+        self.assertEqual(result.symbols["counter"].kind, "extern")
+        with self.assertRaises(new_asm.AsmError):
+            new_asm.assemble_program(".extern counter big\n")
+
+    def test_image_rejects_used_extern_that_nobody_defines(self):
+        # Sin linker, un .extern usado y sin definir quedaria en la direccion 0.
+        with self.assertRaises(new_asm.AsmError) as raised:
+            new_asm.assemble_bytes(".extern ghost\n    LA R1, ghost\n    HALT\n")
+        self.assertIn("ghost", str(raised.exception))
+        # Para un objeto si vale: lo resuelve el linker.
+        self.assertEqual(new_asm.assemble_program(
+            ".extern ghost\n    LA R1, ghost\n", relocatable=True).relocations[0].symbol, "ghost")
+
+    def test_image_ignores_declared_but_unused_extern(self):
+        # lcc declara todo `extern` que ve, aunque no lo use.
+        image = new_asm.assemble_bytes(".extern unused 4\n    HALT\n")
+        self.assertEqual(image, new_asm.assemble_bytes("HALT\n"))
+
+    def test_extern_defined_in_same_assembly_resolves_locally(self):
+        # build-c junta todas las unidades en un ensamblado: el `.extern` de una
+        # puede nombrar lo que define otra, antes o despues.
+        source = "\n".join([
+            ".extern counter 4, helper",
+            "start:",
+            "    LA R1, counter",
+            "    JAL R31, helper",
+            "helper:",
+            "    RET",
+            ".bss",
+            ".comm counter, 4",
+            ".extern helper",
+            "",
+        ])
+        result = new_asm.assemble_program(source)
+        self.assertTrue(result.symbols["counter"].defined)
+        self.assertTrue(result.symbols["helper"].defined)
+        self.assertNotEqual(result.symbols["counter"].kind, "extern")
+
+    def test_object_li_to_label_keeps_two_words(self):
+        # En un objeto, `counter` vale 4 solo hasta enlazar: el linker puede
+        # llevarlo por encima de 0x7FFF, donde un MOVI extenderia el signo.
+        source = "start:\n    LI R1, counter\n    HALT\n.bss\n.comm counter, 4\n"
+        image = new_asm.assemble_program(source)
+        self.assertEqual(image.image[:4], new_asm.assemble_bytes("MOVI R1, 8\n"))  # imagen: una palabra
+        result = new_asm.assemble_program(source, relocatable=True)
+        self.assertEqual(
+            [(reloc.kind, reloc.offset, reloc.symbol)
+             for reloc in result.relocations],
+            [("HI16", 0, "counter"), ("LO16", 4, "counter")],
+        )
+        self.assertEqual(result.symbols["counter"].offset, 0)
+
+    def test_object_li_to_equate_still_relaxes(self):
+        # Una constante de .equ no se mueve al enlazar: un MOVI le sigue valiendo.
+        source = ".equ SIZE, 100\n    LI R1, SIZE\n    LI R2, SIZE+1\n    HALT\n"
+        result = new_asm.assemble_program(source, relocatable=True)
+        self.assertEqual(len(result.image), 12)
+        self.assertEqual(result.relocations, [])
+
     def test_global_marks_symbol_binding(self):
         result = new_asm.assemble_program(".global helper\nhelper:\nRET\n")
         self.assertEqual(result.symbols["helper"].binding, "global")
