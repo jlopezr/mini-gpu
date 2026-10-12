@@ -1,6 +1,8 @@
 """Regresiones de integración del runner GPU sin hardware."""
 
 import copy
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -151,6 +153,41 @@ class GpuRunnerTest(unittest.TestCase):
             ), patch.object(runner, constructor) as factory, patch('sys.stderr'):
                 self.assertEqual(runner.main(), 2)
                 factory.assert_not_called()
+
+    def run_main(self, *arguments):
+        import io
+        import run_tests as runner
+        out = io.StringIO()
+        with patch('sys.argv', ['run_tests.py', *map(str, arguments)]), \
+                patch('sys.stdout', out), patch('sys.stderr', out):
+            code = runner.main()
+        return code, out.getvalue()
+
+    def test_folder_selection_skips_incompatible_cases(self):
+        # Una carpeta no nombra sus casos: uno de CPU bajo ella se omite con
+        # sim-gpu, igual que sin argumentos, en vez de abortar la ejecucion.
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(ROOT / 'cases-gpu/memory/vecsum', Path(tmp) / 'vecsum')
+            shutil.copytree(ROOT / 'cases-cpu/basics/smoke', Path(tmp) / 'smoke')
+            code, out = self.run_main('--backend', 'sim-gpu', tmp)
+        self.assertEqual(code, 0, out)
+        self.assertIn('PASS', out)
+        self.assertIn('1 caso(s), 0 fallo(s), 1 omitido(s)', out)
+
+    def test_unpreparable_case_fails_without_stopping_the_rest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(ROOT / 'cases-cpu/basics/smoke', Path(tmp) / 'smoke')
+            broken = Path(tmp) / 'broken'
+            broken.mkdir()
+            (broken / 'test.json').write_text(
+                '{"name": "broken", "architecture": "cpu", "build": {"command": ["false"]},'
+                ' "program": "x.bin", "expect": {"halted": true, "error": false}}',
+                encoding='utf-8')
+            code, out = self.run_main('--backend', 'sim-cpu', tmp)
+        self.assertEqual(code, 1, out)
+        self.assertIn('ERROR', out)
+        self.assertIn('PASS smoke [sim-cpu]', out)
+        self.assertIn('2 caso(s), 1 fallo(s)', out)
 
     def test_fault_diagnostics_detect_wrong_and_missing_fields(self):
         case = load_case(ROOT / 'cases-gpu/faults/division-by-zero/test.json')

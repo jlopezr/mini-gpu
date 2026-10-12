@@ -1061,6 +1061,11 @@ def load_case(path: Path, architecture: str | None = None) -> dict:
     return case
 
 
+class SelectionError(ValueError):
+    """Un caso nombrado en la linea de ordenes que el backend pedido no puede
+    ejecutar: error de uso, no un fallo del caso."""
+
+
 def discover_cases(arguments: list[Path]) -> list[Path]:
     if arguments:
         # Un directorio vale por todos los casos que cuelgan de el, que es como
@@ -1764,10 +1769,19 @@ def main() -> int:
         parser.error(str(error))
 
     # Valida todos los casos antes de construir backends o contactar hardware.
+    # Un caso nombrado (su test.json en la linea de ordenes) que no case con el
+    # backend es un error de uso: se para sin construir backends. Uno que llega
+    # por una carpeta o por el descubrimiento se omite, igual que sin
+    # argumentos. Un caso que no se puede preparar (JSON invalido, build que
+    # falla) cuenta como fallo y no detiene a los demas: antes uno solo dejaba
+    # la suite entera sin ejecutar.
+    named = {path.resolve() for path in args.cases if not path.is_dir()}
     cases = []
     skipped = 0
-    try:
-        for path in case_paths:
+    unprepared = 0
+    for path in case_paths:
+        explicit = path.resolve() in named
+        try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             reason_slow = slow_reason(raw)
             if args.skip_slow and reason_slow:
@@ -1775,7 +1789,7 @@ def main() -> int:
                 skipped += 1
                 continue
             architectures = case_architectures(raw)
-            if not args.cases and any(
+            if not explicit and any(
                 BACKEND_DEFINITIONS[name]["architecture"] not in architectures
                 for name in backend_names
             ):
@@ -1784,17 +1798,20 @@ def main() -> int:
             # La familia la elige el backend, no el caso: uno que declare las
             # dos se carga como CPU contra un backend de CPU y como GPU contra
             # uno de GPU, con el mismo binario.
-            architecture = resolve_architecture(architectures, backend_names)
+            try:
+                architecture = resolve_architecture(architectures, backend_names)
+            except ValueError as error:
+                raise SelectionError(str(error)) from None
             # Las profundidades SIMT son parámetros del simulador: la FPGA las
             # tiene fijadas en el hardware y no puede reproducir el caso.
             if (simulator_options(raw, architecture)
                     and set(backend_names) - SIMULADORES_GPU):
-                if not args.cases:
+                if not explicit:
                     print(f"SKIP {raw.get('name', path)}: simulator_options "
                           f"requiere un simulador de GPU")
                     skipped += 1
                     continue
-                raise ValueError(
+                raise SelectionError(
                     "simulator_options requiere --backend sim-gpu o sim-gpu-cycle")
             case = load_case(path, architecture)
             # Cada backend decide si el caso cabe en su mapa; los que no
@@ -1808,17 +1825,21 @@ def main() -> int:
                     reason = f"[{name}]: {reason}"
                     break
             if reason:
-                if args.cases:
-                    raise ValueError(reason)
+                if explicit:
+                    raise SelectionError(reason)
                 print(f"SKIP {case['name']} {reason}")
                 skipped += 1
                 continue
             cases.append((path, case))
-    except (OSError, ValueError, TypeError, KeyError) as error:
-        print(f"ERROR {path}: {error}", file=sys.stderr)
-        return 2
+        except SelectionError as error:
+            print(f"ERROR {path}: {error}", file=sys.stderr)
+            return 2
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            print(f"ERROR {path}: {error}", file=sys.stderr)
+            unprepared += 1
     if not cases:
-        print("No se encontraron casos compatibles", file=sys.stderr)
+        print("Ningun caso se pudo preparar" if unprepared
+              else "No se encontraron casos compatibles", file=sys.stderr)
         return 2
 
     backends = {}
@@ -1879,7 +1900,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    failures = 0
+    failures = unprepared
     durations: list[tuple[float, str, str]] = []
     started = time.monotonic()
 
@@ -1966,7 +1987,7 @@ def main() -> int:
         payload = {
             "backend": args.backend,
             "total_seconds": total,
-            "case_count": len(cases),
+            "case_count": len(cases) + unprepared,
             "failures": failures,
             "skipped": skipped,
             "executions": [
@@ -1976,7 +1997,7 @@ def main() -> int:
         }
         args.timings_json.parent.mkdir(parents=True, exist_ok=True)
         args.timings_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"{len(cases)} caso(s), {failures} fallo(s), "
+    print(f"{len(cases) + unprepared} caso(s), {failures} fallo(s), "
           f"{skipped} omitido(s) por arquitectura, capacidades o selección, {total:.1f}s")
     return 1 if failures else 0
 
