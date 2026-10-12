@@ -7,6 +7,7 @@
 #   make test   test-scheduler.c en el anfitrion (C99, ASan y UBSan)
 #   make case   test-scheduler.c + scheduler.c para MiniISA, con build-c (lo usa test.json)
 #   make sim    ese binario en sim-sys: R1 = 0 si pasa, o la linea del primer fallo
+#   make demo-sim  demo.c: el scheduler lanza un job en la GPU de sim-sys (R1 = 0 si va bien)
 #   make clean
 #
 # mini-lcc es C89 y usa las cabeceras de t.tests/inc (stdint.h, stdbool.h).
@@ -38,10 +39,11 @@ TEST_SOURCE := test-scheduler.c
 TEST_HOST_BIN := $(OUTDIR)/test-scheduler-host
 CASE_OUTDIR := $(OUTDIR)/case
 TEST_IMAGE := $(CASE_OUTDIR)/test-scheduler.bin
+DEMO_IMAGE := $(CASE_OUTDIR)/demo.bin
 # El test usa printf: va con las cabeceras del sistema, no con las de t.tests/inc.
 TEST_CFLAGS := -std=c99 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DTEST_HOST
 
-.PHONY: all host lcc test case sim clean
+.PHONY: all host lcc test case sim demo demo-sim clean
 
 all: host lcc
 
@@ -79,6 +81,14 @@ $(TEST_IMAGE): $(TEST_SOURCE) $(DEPS)
 
 sim: $(TEST_IMAGE)
 	$(SIM_SYS) "$(TEST_IMAGE)"
+
+demo: $(DEMO_IMAGE)
+
+$(DEMO_IMAGE): demo.c $(DEPS)
+	$(BUILD_C) demo.c $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
+
+demo-sim: $(DEMO_IMAGE)
+	$(SIM_SYS) "$(DEMO_IMAGE)"
 
 clean:
 	rm -rf "$(OUTDIR)"

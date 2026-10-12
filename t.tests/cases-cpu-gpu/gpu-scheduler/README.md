@@ -37,3 +37,20 @@ No hay libc, así que el código no llama a `memset` ni a ninguna otra función 
 - **`make test`**: lo ejecuta en el anfitrión, en C99 con ASan y UBSan. Imprime cada `CHECK` que falla.
 - **`make sim`**: lo compila para MiniISA (`build-c test-scheduler.c scheduler.c`) y lo ejecuta en `sim-sys`. `main` deja en `R1` un 0 si todo pasa, o la línea del primer fallo. Son unos 6,4 millones de instrucciones.
 - **`test.json`**: el mismo caso para `run_tests.py --backend sim-sys`. Está marcado como `slow`.
+
+## Demo con la GPU de verdad: `demo.c`
+
+[`demo.c`](demo.c) es lo mínimo para usar el scheduler con la GPU real. Los callbacks hablan con ella por MMIO:
+
+- `launch` rellena el descriptor del slot (`PC`, `ACTIVE`, `GROUP`, `LOGICAL_ID`, `ARG`) y lo arranca con `WARP_START`.
+- `slot_available` comprueba que el slot no esté vivo ni tenga una terminación sin recoger.
+- `pop_done` toma un bit de `WARP_DONE` y lo limpia (W1C).
+
+`main` configura la GPU a partir de `GPU_CAPS` y del bloque de argumentos, envía un job de 4 warps con el kernel `fill` y llama a `gpu_scheduler_poll` hasta que el job acaba. Al final comprueba lo que han escrito los warps.
+
+- **`make demo-sim`**: lo compila y lo ejecuta en `sim-sys`. `R1` vale 0 si todo va bien.
+
+Hay dos cosas a tener en cuenta:
+
+- **El kernel debe usar `__gpu_lwarp` (el warp lógico)**, no `__gpu_tid`. El scheduler elige el slot físico, y `GETTID` se basa en el físico.
+- **`launch` no recibe el bloque de argumentos del job**, así que el demo lo pasa por `ctx`. Eso vale para un job; con varios jobs en vuelo, cada uno necesitaría el suyo, y habría que añadirlo a `gpu_job_desc` y a `launch`.
