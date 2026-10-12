@@ -1,0 +1,16 @@
+{
+  "name": "cpu-gpu/gpu-scheduler/test-scheduler-c",
+  "architecture": "cpu",
+  "build": {"command": ["make", "case"]},
+  "program": "../../../_build/c/gpu-scheduler/case/test-scheduler.bin",
+  "requires": ["calls", "mul_div", "subword_memory", "shift_immediate", "compare"],
+  "slow": "pruebas completas del scheduler en la CPU; unos 6 millones de instrucciones",
+  "max_instructions": 30000000,
+  "timeout_seconds": 120,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "pc": "0x0000000c",
+    "registers": {"R1": 0}
+  }
+}
