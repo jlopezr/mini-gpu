@@ -15,6 +15,7 @@ cubo se quedaba con la versión vieja.
 | [`gpu_runtime.inc`](gpu_runtime.inc) | `gpu_run`: la CPU lanza un job en la GPU y lo espera | `mmio.inc`; con `BOARD`, la placa 36 |
 | [`bench.inc`](bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
 | [`gpu.h`](gpu.h), [`mmio.h`](mmio.h) | Cabeceras de C: `KERNEL`, `GPU_RUN`, `NOALIAS`; `mmio.h` pone los nombres cortos del mapa MMIO (`VIDEO_SWAP`…) sobre `mmio_map.h`, que se genera (`generate-mmio`) | las usa `build-c`; `gpu.c` está en `../runtime/gpu/` |
+| [`stdint.h`](stdint.h), [`stdbool.h`](stdbool.h) | Tipos de anchura fija y `bool` para `mini-lcc`. La librería de lcc no los trae, y sin ellos `cc -E` cogería los del sistema, que lcc no entiende. Aquí `bool` es un `int`, porque C89 no tiene `_Bool` | — |
 
 `gpu_runtime.inc` y `bench.inc` tienen una rama para la placa 36 y otra para los simuladores. Se elige con el
 símbolo `BOARD`, antes del `.include`: `-D BOARD` en la línea de órdenes del ensamblador (así lo hacen `run-board`, siempre, y `build-c --board`) o
