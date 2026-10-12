@@ -963,6 +963,7 @@ $ build-c programa.c --board                  # -> _build/c/programa_board.bin (
 $ build-c programa.c --load                   # compila con --board y lo sube a la 36 (como board-load)
 $ build-c programa.c --load 37 --no-run      # a la 37, sin arrancarlo
 $ build-c programa.c --outdir out -I inc --data tex=tex.bin
+$ build-c test.c biblioteca.c                # varias unidades: la primera lleva main y da el nombre
 ```
 
 Compila el programa y `t.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades

@@ -1,10 +1,10 @@
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
-    build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+    build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
                        [--load [PROTOTIPO]] [--no-run]
 
-Por cada .c (el programa y t.tests/runtime/gpu/gpu.c): mini-lcc --no-crt, y mini-opt (intrinsecos y
-kernels). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los dos .s y el runtime de la GPU
+Por cada .c (el programa, las otras unidades que se le pasen y t.tests/runtime/gpu/gpu.c): mini-lcc --no-crt,
+y mini-opt (intrinsecos y kernels). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los .s y el runtime de la GPU
 (t.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
@@ -78,14 +78,19 @@ def wrapper_path(program: Path, board: bool = False, outdir: Path | None = None)
 
 def build(program: Path, output: Path | None = None, board: bool = False,
           outdir: Path | None = None, includes: tuple[Path, ...] = (),
-          data: tuple[tuple[str, Path], ...] = ()) -> Path:
-    """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo."""
+          data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = ()) -> Path:
+    """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo. `sources`: otras unidades .c
+    del programa, ademas de `program` (que da el nombre a la imagen y lleva `main`)."""
     program = program.resolve()
     outdir = (outdir or DEFAULT_OUTDIR).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     output = output or outdir / f"{image_name(program, board)}.bin"
     runtime, bench = INC / "gpu_runtime.inc", INC / "bench.inc"
-    plains = [lower_c(program, outdir, includes), lower_c(GPU_C, outdir, includes)]
+    units = (program, *map(Path.resolve, sources), GPU_C)
+    stems = [unit.stem for unit in units]
+    if len(set(stems)) != len(stems):     # cada unidad deja <stem>.s en outdir: no pueden repetirse
+        raise BuildError(f"dos unidades con el mismo nombre: {', '.join(map(str, units))}")
+    plains = [lower_c(unit, outdir, includes) for unit in units]
     fixed = [CRT0, runtime, bench]
     parts = [optimize_s(plain, fixed + [other for other in plains if other != plain]) for plain in plains]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
@@ -112,6 +117,8 @@ def parse_data(text: str) -> tuple[str, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("program", type=Path, help="el .c con main y los kernels")
+    parser.add_argument("sources", nargs="*", type=Path, metavar="otra.c",
+                        help="otras unidades del programa (bibliotecas sin main)")
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--outdir", type=Path, help=f"carpeta de los intermedios (por defecto {DEFAULT_OUTDIR})")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
@@ -125,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     board = args.board or args.load is not None
     try:
-        out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data))
+        out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data),
+                    tuple(args.sources))
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1

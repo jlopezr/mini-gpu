@@ -39,7 +39,7 @@ ensamblador (`compare.py`, `compare_race.py`, `opt_stats.py`) están en
 `build-c` acepta cualquier `.c`, no solo los de esta carpeta:
 
 ```text
-build-c programa.c [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
 ```
 
 Las carpetas de programa que contienen C tienen además un `Makefile` fino. Desde la carpeta del programa,
