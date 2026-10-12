@@ -49,13 +49,16 @@ from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for _folder in (ROOT, ROOT / "2.cpu-sim-func", ROOT / "11.gpu-sim-func"):
+for _folder in (ROOT, ROOT / "2.cpu-sim-func", ROOT / "11.gpu-sim-func", ROOT / "1.isa" / "asm2"):
     if str(_folder) not in sys.path:
         sys.path.insert(0, str(_folder))
 
 import minicpu_sim as cpu_sim  # noqa: E402
 import minigpu_sim as gpu_sim  # noqa: E402
-from gpu_trace import TextTrace, instruction_text  # noqa: E402
+from gpu_trace import TextTrace  # noqa: E402
+# La linea de CPU de la traza se desensambla con la ISA completa: la tabla de
+# gpu_trace es la de la GPU y daba `.word` en JAL, JR, JALR...
+from minigpu_isa import disassemble_word  # noqa: E402
 from tools import mmio_map as mm  # noqa: E402
 from tools import sim_peripherals  # noqa: E402
 from tools.sim_devices import VideoDevice  # noqa: E402
@@ -810,7 +813,8 @@ class CpuGpuSystem:
             outcome = f"ERROR 0x{cpu.error_code:02X}" if cpu.error else (
                 "HALT" if cpu.halted else "")
             if self.trace_has_room():
-                print(f"CPU     0x{pc:08X}  {instruction_text(word):<28} {outcome}",
+                text = "<FETCH>" if word is None else disassemble_word(word, pc)
+                print(f"CPU     0x{pc:08X}  {text:<28} {outcome}",
                       file=self.trace_stream)
         if retired:
             self.cpu_instructions += 1

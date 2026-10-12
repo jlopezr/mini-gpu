@@ -1644,6 +1644,21 @@ class CommandLineTest(unittest.TestCase):
         self.assertGreater(len(owners) - owners.index("GPU"), owners.count("GPU"),
                            "tras el primer warp aún hay líneas de CPU: se intercalan")
 
+    def test_trace_names_cpu_calls(self):
+        # La CPU tiene llamadas y la GPU no: la línea de CPU no puede desensamblarse
+        # con la tabla de la GPU, que daba `.word` en JAL y JR.
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "calls.asm"
+            program.write_text("    JAL R31, f\n    HALT\nf:\n    JR R31\n", encoding="utf-8")
+            trace = Path(folder) / "trace.txt"
+            with contextlib.redirect_stdout(io.StringIO()):
+                sim.main([str(program), "--memory-size", hex(MEMORY),
+                          "--trace-file", str(trace)])
+            text = trace.read_text(encoding="utf-8")
+        self.assertIn("JAL R31, 0x00000008", text)
+        self.assertIn("JR R31", text)
+        self.assertNotIn(".word", text)
+
 
 COMPARE = HERE / "compare"      # compare.py, compare_race.py, opt_stats.py
 
