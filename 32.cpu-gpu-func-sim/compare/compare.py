@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
-from tools import build_c as c_build  # noqa: E402
+from tools import mini_cc as c_build  # noqa: E402
 import cpu_gpu_sim as sim  # noqa: E402
 from cpu_gpu_sim import CpuGpuSystem, mm  # noqa: E402
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
@@ -65,7 +65,7 @@ def asm_image():
 
 def c_image():
     program = DMA / "gpu_kernels.c"
-    binary = c_build.build(program)
+    binary = c_build.build(program, sources=c_build.GPU_RUNTIME)
     wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]

@@ -952,32 +952,36 @@ Por ahora esta validacion comprueba compilacion y simulacion dentro de
 manifiestos `.json` desde programas C y alimentar con ellos los simuladores y
 las suites de `t.tests`.
 
-## Un programa entero en C: `build-c`
+## Un programa entero en C: `mini-cc`
 
-Para un programa con CPU y kernels de GPU en C, `build-c` encadena `mini-lcc`, `mini-opt` y `mini-asm`
+Para un programa con CPU y kernels de GPU en C, `mini-cc` encadena `mini-lcc`, `mini-opt` y `mini-asm`
 (las tres piezas se explican en la sección siguiente) y añade el runtime de la GPU:
 
 ```bash
-$ build-c programa.c                          # -> _build/c/programa.bin (simulador)
-$ build-c programa.c --board                  # -> _build/c/programa_board.bin (placa 36)
-$ build-c programa.c --load                   # compila con --board y lo sube a la 36 (como board-load)
-$ build-c programa.c --load 37 --no-run      # a la 37, sin arrancarlo
-$ build-c programa.c --outdir out -I inc --data tex=tex.bin
-$ build-c test.c biblioteca.c                # varias unidades: la primera lleva main y da el nombre
+$ mini-cc programa.c                          # -> _build/c/programa.bin (simulador); sin GPU
+$ mini-cc programa.c t.tests/runtime/gpu/gpu.c t.tests/inc/gpu_runtime.inc t.tests/inc/bench.inc   # con el runtime de la GPU
+$ mini-cc programa.c ... --board              # -> _build/c/programa_board.bin (placa 36)
+$ mini-cc programa.c ... --load               # compila con --board y lo sube a la 36 (como board-load)
+$ mini-cc programa.c ... --load 37 --no-run  # a la 37, sin arrancarlo
+$ mini-cc programa.c ... --outdir out -I inc --data tex=tex.bin
+$ mini-cc test.c biblioteca.c                # varias unidades: la primera lleva main y da el nombre
 ```
 
-Compila el programa y `t.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
-y ensambla un `.asm` generado con el arranque (`1.isa/runtime/crt0.s`), los dos `.s` y el runtime
-(`t.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en
-el `-I`.
+Compila lo que se le pide y nada más: cada `.c` con `mini-lcc --no-crt`, y una sola llamada a `mini-opt` con todos
+los `.s`, que los junta y optimiza el programa entero. Los demás ficheros (`.s`, `.asm`, `.inc`) no se optimizan: se
+`.include`n tal cual tras el código, en el orden dado. Lo único que se pone solo es el arranque
+(`1.isa/runtime/crt0.s`), primero, cuando hay algún `.c`. El runtime de la GPU se pide explícitamente: `gpu.c`
+(`gpu_launch` y `__gpu_stack`, los 32 KiB de pila de los kernels), `gpu_runtime.inc` y `bench.inc`; los Makefile que
+usan `tools/c-program.mk` lo pasan con `$(GPU_RUNTIME)`. Un programa que no lanza la GPU desde C no lo necesita
+(el scheduler y su demo ocupan la mitad). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en el `-I`.
 
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
   `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
 - **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
-  `extern unsigned etiqueta[]`. `build-c` no ejecuta generadores: los datos los prepara quien llama.
+  `extern unsigned etiqueta[]`. `mini-cc` no ejecuta generadores: los datos los prepara quien llama.
 - **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
   en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `t.tests/inc`.
-- La lógica es `tools/build_c.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
+- La lógica es `tools/mini_cc.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
 
 El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
 así `gpu_runtime.inc` y `bench.inc` sirven al simulador y a la placa con un solo fichero.
@@ -1005,12 +1009,24 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 - **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
   compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
   que dos `.s` no chocan.
+- **Varios `.s` en `mini-opt`:** `mini-opt a.s b.s -o todo.s` los junta en ese orden (renumera
+  las `L.n` y `__sf.n` de los siguientes, empieza cada uno en `.text`) y optimiza la unión
+  como un programa. Si dos `.s` definen el mismo símbolo, error. `mini-cc` lo hace así con
+  todas las unidades `.c` y deja un solo `<programa>.opt.s`; los `--extern-refs` son solo el
+  arranque y los ficheros a mano (`.s`, `.inc`).
+- **`--whole-program` y el pase `deadfuncs`:** dice que los `.s` de entrada son todo el programa. Entonces
+  `deadfuncs`, el primero del pipeline, borra las funciones que no alcanza ninguna raíz: `main` y `_start`, lo que
+  nombran los `--extern-refs` (sin contar sus comentarios), los kernels (`__kernel_*`, que los lanza el anfitrión
+  por su etiqueta) y lo que un dato mencione (`.word f`), y lo que esas funciones llamen o cuya dirección tomen.
+  Los datos no se tocan, porque los anfitriones leen globales por su etiqueta. Sin la bandera no hace nada, porque
+  en un `.s` suelto cualquier función pública puede llamarla otra unidad. `mini-cc` la pone siempre. Con el
+  scheduler, la demo ahorra 156 instrucciones (`gpu_cancel`...).
 - **`mini-opt`** transforma un `.s` en otro con pases (`--list-passes`). Hoy `intrinsics`: el
   C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
-  por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
+  por pase en `passes/` (`deadfuncs`, `intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
   `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
   `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
@@ -1051,7 +1067,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   ningún análisis del texto puede comprobar: que nadie escriba el símbolo mientras el kernel corre (la CPU, el DMA,
   otro agente) y que no se fabrique un puntero a partir de un entero. Con `--assume-noalias` basta que el kernel no
   escriba el símbolo, aunque su dirección escape o lo nombre código ajeno; un `volatile` no se saca nunca.
-  `build-c` pasa `--extern-refs` con el arranque, el runtime y la otra unidad, y deja la suposición
+  `mini-cc` pasa `--extern-refs` con el arranque y los ficheros a mano (las unidades `.c` ya están juntas), y deja la suposición
   apagada (`MINI_OPT_NOALIAS=1` la enciende). Las direcciones que solo servían de base a lo que sale del bucle
   quedan muertas: las borra el `dce` que viene detrás en el pipeline.
 - **Pase `stackslots`:** lcc deja en la pila lo que no cabe en los registros, y en un kernel cada lane tiene

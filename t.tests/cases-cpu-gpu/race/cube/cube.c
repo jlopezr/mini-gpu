@@ -1,9 +1,9 @@
 /* cube.c - el cubo con texturas de t.tests/cases-cpu-gpu/race/cube/cube.inc, en C: CPU, GPU inocente y GPU buena
  * y el anfitrion de race_host.inc (video con doble buffer, método que toca, grafica de tiempos)
  *
- *   build-c t.tests/cases-cpu-gpu/race/cube/cube.c --board     # -> _build/c/cube_board.bin
+ *   mini-cc t.tests/cases-cpu-gpu/race/cube/cube.c --board     # -> _build/c/cube_board.bin
  *   run-board --prototype 36 --program _build/c/cube_board.bin
- *   build-c t.tests/cases-cpu-gpu/race/cube/cube.c             # simulador (mini-dbg --gpu)
+ *   mini-cc t.tests/cases-cpu-gpu/race/cube/cube.c             # simulador (mini-dbg --gpu)
  *
  * La geometria esta en cube.inc (proyeccion ortografica, tres caras visibles, una division por
  * cara y eje); aqui `cube_prepare` la calcula igual. El cuerpo de la celda esta en

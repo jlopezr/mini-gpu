@@ -18,7 +18,7 @@ $(TEXTURE): plane_tex.py logos.png
 case: $(TEST_IMAGE) $(TEST_EXPECTED)
 
 $(TEST_IMAGE): plane_test.c plane.c plane_body.h $(TEXTURE)
-	$(BUILD_C) "$(CURDIR)/plane_test.c" --outdir "$(OUTDIR)" -o "$(TEST_IMAGE)" --data "plane_tex=$(TEXTURE)"
+	$(MINI_CC) "$(CURDIR)/plane_test.c" $(GPU_RUNTIME) --outdir "$(OUTDIR)" -o "$(TEST_IMAGE)" --data "plane_tex=$(TEXTURE)"
 
 $(TEST_EXPECTED): reference.py $(TEXTURE)
 	$(PYTHON) reference.py

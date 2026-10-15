@@ -22,24 +22,25 @@ int main(void) {                                           /* CPU */
 ```
 
 ```text
-build-c t.tests/cases-cpu-gpu/dma/memset/memset.c          # -> _build/c/memset.bin (en la raíz del repo)
+mini-cc t.tests/cases-cpu-gpu/dma/memset/memset.c          # -> _build/c/memset.bin (en la raíz del repo)
 python 32.cpu-gpu-func-sim/cpu_gpu_sim.py _build/c/memset.bin
 ```
 
-## El sistema y `build-c`
+## El sistema y `mini-cc`
 
 El sistema no está en los ejemplos sino en `t.tests`: las cabeceras `gpu.h` y `mmio.h` en `t.tests/inc/` (junto a
-`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `t.tests/runtime/gpu/`. `build-c`
-(`tools/build_c.py`) pasa esa carpeta de cabeceras a `mini-lcc -I`, así que los ejemplos solo escriben
-`#include "gpu.h"`, y compila `gpu.c` junto a cada programa. Las herramientas que comparan el C con el
+`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `t.tests/runtime/gpu/`. `mini-cc`
+(`tools/mini_cc.py`) pasa esa carpeta de cabeceras a `mini-lcc -I`, así que los ejemplos solo escriben
+`#include "gpu.h"`. Los programas que lanzan trabajos en la GPU desde C piden además `gpu.c`, `gpu_runtime.inc` y
+`bench.inc` en la línea de órdenes (los Makefile lo hacen con `$(GPU_RUNTIME)`); `mini-cc` solo pone el `crt0`. Las herramientas que comparan el C con el
 ensamblador (`compare.py`, `compare_race.py`, `opt_stats.py`) están en
 [`32.cpu-gpu-func-sim/compare`](../../32.cpu-gpu-func-sim/compare/README.md). Las salidas de la compilación van a
 `_build/c/` en la raíz del repo (ignorada por git) o a donde diga `--outdir`.
 
-`build-c` acepta cualquier `.c`, no solo los de esta carpeta:
+`mini-cc` acepta cualquier `.c`, no solo los de esta carpeta:
 
 ```text
-build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
 ```
 
 Las carpetas de programa que contienen C tienen además un `Makefile` fino. Desde la carpeta del programa,
@@ -61,13 +62,13 @@ se pueden sustituir en la invocación (`make PYTHON=python3`, `make run PROTOTYP
 
 `blur.c`, `life.c` y `rotate.c` siguen siendo las cargas puras que usa `compare_race.py`, pero sus Makefiles
 construyen por defecto un anfitrión C autocontenido (`*_standalone.c`). `tools/race_case_data.py` reutiliza el
-modelo del comparador para generar un blob compacto con el bloque de argumentos y la entrada; `build-c --data`
+modelo del comparador para generar un blob compacto con el bloque de argumentos y la entrada; `mini-cc --data`
 lo incorpora al ejecutable. La CPU de ese anfitrión lanza con `GPU_RUN` la distribución GPU coalescida y
 espera a que termine. Por tanto `make sim`, `make debug`, `make run` y los `test.json` usan el binario CPU+GPU
 autocontenido, mientras que `make compare` conserva la comparación C/ensamblador de la carga original.
 
 `--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
-etiqueta[]`. `build-c` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `--board` define
+etiqueta[]`. `mini-cc` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `--board` define
 `BOARD` para el ensamblador (`.define BOARD`), que activa en `gpu_runtime.inc` y `bench.inc` las ramas de la
 placa 36 (lanzar con `RUN`, ciclos de CPU reales).
 
@@ -91,7 +92,7 @@ placa 36 (lanzar con `RUN`, ciclos de CPU reales).
   `p0`–`p3` del bloque de argumentos y llama a `gpu_run` de `t.tests/inc/gpu_runtime.inc` (el runtime de
   ensamblador de siempre). Lanza y espera. El bloque estándar tiene sitio para `p0`–`p5`, pero el
   ABI C cómodo solo materializa cuatro parámetros directos; para más, pasa un puntero a una estructura.
-- **El arranque** es `1.isa/runtime/crt0.s`; `build-c` compila con `mini-lcc --no-crt`.
+- **El arranque** es `1.isa/runtime/crt0.s`; `mini-cc` compila con `mini-lcc --no-crt`.
 - **La divergencia no se escribe:** un `if`, un `while` o un `break` cuyas lanes tomen
   caminos distintos necesita una región abierta con `SSY` (si no, `ERROR_SIMT`). Los pone
   el pase `ssy` de `mini-opt`: delante de cada salto que puede divergir, con el punto donde

@@ -22,7 +22,7 @@ MINI_ASM := $(PYTHON) "$(ROOT)/tools/mini-asm"
 SIM_SYS := $(PYTHON) "$(ROOT)/tools/sim-sys"
 
 # Funciones que main.c llama sin definir. lcc solo declara `.extern` para datos,
-# no para funciones (en build-c todo se ensambla junto), asi que se anaden aqui.
+# no para funciones (en mini-cc todo se ensambla junto), asi que se anaden aqui.
 MAIN_EXTERNS := doble
 
 ARRANQUE := $(OUTDIR)/arranque.o

@@ -243,7 +243,7 @@ class IncludeAndMetadataTest(unittest.TestCase):
         self.assertEqual(image, new_asm.assemble_bytes("HALT\n"))
 
     def test_extern_defined_in_same_assembly_resolves_locally(self):
-        # build-c junta todas las unidades en un ensamblado: el `.extern` de una
+        # mini-cc junta todas las unidades en un ensamblado: el `.extern` de una
         # puede nombrar lo que define otra, antes o despues.
         source = "\n".join([
             ".extern counter 4, helper",

@@ -1665,13 +1665,13 @@ COMPARE = HERE / "compare"      # compare.py, compare_race.py, opt_stats.py
 
 def build_c_example(name: str, data=()):
     """Compila `cases-cpu-gpu/<name>/<nombre>.c` (con el tema, p. ej. `dma/memset`) (mini-lcc + mini-opt) y devuelve (imagen, etiquetas).
-    `data`: (etiqueta, fichero) de los binarios que `build-c --data` pega tras el codigo.
+    `data`: (etiqueta, fichero) de los binarios que `mini-cc --data` pega tras el codigo.
     Se omite la prueba si no hay compilador (rcc de u.lcc y MSVC); cualquier otro fallo es un error."""
     sys.path.insert(0, str(sim.ROOT))
-    from tools import build_c as c_build
+    from tools import mini_cc as c_build
     program = CASES / name / f"{Path(name).name}.c"
     try:
-        binary = c_build.build(program, data=tuple(data))
+        binary = c_build.build(program, data=tuple(data), sources=c_build.GPU_RUNTIME)
     except c_build.BuildError as error:
         if "MSVC" in str(error) or "submodulo" in str(error) or "rcc" in str(error):
             raise unittest.SkipTest("sin compilador de C para MiniISA (u.lcc/build/rcc y MSVC)")
@@ -1855,9 +1855,9 @@ class CPlaneRaceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(sim.ROOT))
-        from tools import build_c
-        build_c.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
-        textures = build_c.DEFAULT_OUTDIR / "plane_tex.bin"
+        from tools import mini_cc
+        mini_cc.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
+        textures = mini_cc.DEFAULT_OUTDIR / "plane_tex.bin"
         subprocess.run([sys.executable, str(CASES / "race" / "plane" / "plane_tex.py"), "-o", str(textures)],
                        check=True, capture_output=True)
         image, labels = build_c_example("race/plane", data=[("plane_tex", textures)])

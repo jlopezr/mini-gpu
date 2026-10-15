@@ -26,7 +26,7 @@ informe. Lo que comparten varios programas del mismo tema va en la carpeta del t
 sim-sys t.tests/cases-cpu-gpu/launch/launch.asm                        # simulador
 mini-dbg --gpu t.tests/cases-cpu-gpu/race/cube/cube.asm --window         # depurado
 run-board --prototype 36 --program t.tests/cases-cpu-gpu/race/cube/cube.asm   # placa 36
-build-c t.tests/cases-cpu-gpu/dma/memset/memset.c                        # los de C: ver programas-en-c.md
+mini-cc t.tests/cases-cpu-gpu/dma/memset/memset.c                        # los de C: ver programas-en-c.md
 ```
 
 Las carpetas con C ofrecen además `make`, `make sim`, `make debug`, `make compare` y `make run`. En `blur`,

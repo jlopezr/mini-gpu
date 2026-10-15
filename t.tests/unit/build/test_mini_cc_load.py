@@ -1,4 +1,4 @@
-"""`build-c --load`: compila para la placa y delega la carga en `run_board.main_load`.
+"""`mini-cc --load`: compila para la placa y delega la carga en `run_board.main_load`.
 
 Sin compilador ni placa: `build` y `main_load` se sustituyen por dobles. Lo que se
 fija es qué se le pide a cada uno.
@@ -12,7 +12,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools"))
 
-import build_c  # noqa: E402
+import mini_cc  # noqa: E402
 import run_board  # noqa: E402
 
 
@@ -21,9 +21,9 @@ class LoadTest(unittest.TestCase):
         image = mock.Mock(spec=Path)
         image.stat.return_value.st_size = 4
         image.__str__ = lambda self: "img.bin"
-        with mock.patch.object(build_c, "build", return_value=image) as build, \
+        with mock.patch.object(mini_cc, "build", return_value=image) as build, \
                 mock.patch.object(run_board, "main_load", return_value=0) as load:
-            code = build_c.main(["prog.c", *args])
+            code = mini_cc.main(["prog.c", *args])
         return code, build, load
 
     def test_sin_load_no_toca_la_placa(self):

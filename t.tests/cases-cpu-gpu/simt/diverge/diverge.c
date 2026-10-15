@@ -1,6 +1,6 @@
 /* diverge.c - kernels en C cuyas lanes toman caminos distintos
  *
- *   build-c t.tests/cases-cpu-gpu/simt/diverge/diverge.c
+ *   mini-cc t.tests/cases-cpu-gpu/simt/diverge/diverge.c
  *   python cpu_gpu_sim.py ../_build/c/diverge.bin
  *
  * Lo que comprueba el pase `ssy` de mini-opt: el compilador no sabe de lanes, asi que es

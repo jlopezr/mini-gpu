@@ -1,11 +1,12 @@
 # Scheduler de jobs de GPU: biblioteca sin `main`, asi que no usa
-# tools/c-program.mk (build-c enlaza crt0 y espera un programa entero).
+# tools/c-program.mk (mini-cc pone el crt0 y espera un programa entero). Ni el test ni la demo usan el
+# runtime de la GPU (gpu.c, gpu_runtime.inc): la demo programa la GPU por MMIO, asi que no se piden.
 #
 #   make        comprueba C89 con el compilador anfitrion y compila con mini-lcc
 #   make host   solo la comprobacion C89 con $(CC)
 #   make lcc    solo mini-lcc + mini-opt + mini-asm
 #   make test   test-scheduler.c en el anfitrion (C99, ASan y UBSan)
-#   make case   test-scheduler.c + scheduler.c para MiniISA, con build-c (lo usa test.json)
+#   make case   test-scheduler.c + scheduler.c para MiniISA, con mini-cc (lo usa test.json)
 #   make sim    ese binario en sim-sys: R1 = 0 si pasa, o la linea del primer fallo
 #   make demo-sim  demo.c: el scheduler lanza un job en la GPU de sim-sys (R1 = 0 si va bien)
 #   make clean
@@ -24,7 +25,7 @@ OUTDIR ?= $(MINI_GPU_ROOT)/_build/c/gpu-scheduler
 MINI_LCC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-lcc"
 MINI_OPT := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-opt"
 MINI_ASM := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-asm"
-BUILD_C := $(PYTHON) "$(MINI_GPU_ROOT)/tools/build-c"
+MINI_CC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-cc"
 SIM_SYS := $(PYTHON) "$(MINI_GPU_ROOT)/tools/sim-sys"
 
 HOST_CFLAGS := -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -Wdeclaration-after-statement
@@ -77,7 +78,7 @@ test: $(TEST_HOST_BIN)
 case: $(TEST_IMAGE)
 
 $(TEST_IMAGE): $(TEST_SOURCE) $(DEPS)
-	$(BUILD_C) $(TEST_SOURCE) $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
+	$(MINI_CC) $(TEST_SOURCE) $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
 
 sim: $(TEST_IMAGE)
 	$(SIM_SYS) "$(TEST_IMAGE)"
@@ -85,7 +86,7 @@ sim: $(TEST_IMAGE)
 demo: $(DEMO_IMAGE)
 
 $(DEMO_IMAGE): demo.c $(DEPS)
-	$(BUILD_C) demo.c $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
+	$(MINI_CC) demo.c $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
 
 demo-sim: $(DEMO_IMAGE)
 	$(SIM_SYS) "$(DEMO_IMAGE)"

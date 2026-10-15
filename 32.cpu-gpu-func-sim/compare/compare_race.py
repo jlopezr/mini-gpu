@@ -206,10 +206,15 @@ def asm_program(work: Workload):
     return assemble_bytes(source, folder, name, (base.INC,)), first_pass(source, folder, name, (base.INC,))[1]
 
 
+# Solo definen los kernels: este script los lanza por MMIO (como gpu_run) y los encuentra por etiqueta, asi que
+# no llevan el runtime de la GPU (gpu.c, gpu_runtime.inc, bench.inc), que ocupa unos 33 KiB de imagen.
+WITHOUT_RUNTIME = {"blur", "life", "life_ptr"}
+
+
 def c_program(stem: str):
     program = next(RACE.glob(f"*/{stem}.c"))            # life_ptr.c vive en life/
 
-    binary = c_build.build(program)
+    binary = c_build.build(program, sources=() if stem in WITHOUT_RUNTIME else c_build.GPU_RUNTIME)
     wrapper = c_build.wrapper_path(program)
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name, c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels

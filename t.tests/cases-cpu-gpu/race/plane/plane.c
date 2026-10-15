@@ -2,9 +2,9 @@
  * inocente y GPU buena, con el anfitrion de cube.c (video con doble buffer, metodo que toca, grafica)
  *
  *   python t.tests/cases-cpu-gpu/race/plane/plane_tex.py -o _build/c/plane_tex.bin
- *   build-c t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+ *   mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
  *   run-board --prototype 36 --program _build/c/plane_board.bin
- *   build-c t.tests/cases-cpu-gpu/race/plane/plane.c --data plane_tex=_build/c/plane_tex.bin   # simulador
+ *   mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --data plane_tex=_build/c/plane_tex.bin   # simulador
  *
  * Delante, los Autobots; detras, los Decepticons (plane_tex.py los saca de plane/logos.png, con
  * su alfa, y `--data` los deja detras del codigo con la etiqueta `plane_tex`). Proyeccion
@@ -35,7 +35,7 @@ typedef struct {
 
 Plane plane_cfg;
 unsigned plane_bg[PLANE_ROWS];          /* el fondo de cada fila, en RGB565 abierto (ver plane_body.h) */
-extern unsigned plane_tex[];            /* 2 texturas, build-c --data */
+extern unsigned plane_tex[];            /* 2 texturas, mini-cc --data */
 
 /* ---- la CPU ---- */
 #define NAME plane_cpu

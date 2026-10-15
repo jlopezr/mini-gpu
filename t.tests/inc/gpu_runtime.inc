@@ -48,6 +48,8 @@
 ; de RESET (§6), que conserva los descriptores y los arrays de configuracion.
 ; ============================================================
 
+.include "mmio.inc"             ; lleva `.once`: da igual que lo incluya tambien quien llama
+
 ; GPU_STATUS (mmio.md §14.1)
 .equ GPU_ST_IDLE,  0x00000004
 .equ GPU_ST_ERROR, 0x00000008

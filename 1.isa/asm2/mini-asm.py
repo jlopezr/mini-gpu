@@ -1104,7 +1104,7 @@ def _layout_once(source: str,
                 if mnemonic == ".EXTERN":
                     # `.extern` dice que el simbolo puede venir de fuera, como en
                     # GNU as: si este mismo ensamblado lo define (antes o
-                    # despues), gana la definicion y no se importa. build-c junta
+                    # despues), gana la definicion y no se importa. mini-cc junta
                     # todas las unidades en un ensamblado, y lcc declara asi los
                     # datos que usa sin definir: `.extern nombre tamano`. El
                     # tamano no hace falta para nada y se ignora.

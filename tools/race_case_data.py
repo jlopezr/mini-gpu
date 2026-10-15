@@ -2,7 +2,7 @@
 
 El blob contiene primero el bloque GPU (nwarps, nlanes y p[6]) y después la
 única región de entrada del caso. El anfitrión C sustituye el puntero de esa
-región por la etiqueta donde ``build-c --data`` haya colocado el blob.
+región por la etiqueta donde ``mini-cc --data`` haya colocado el blob.
 """
 from __future__ import annotations
 

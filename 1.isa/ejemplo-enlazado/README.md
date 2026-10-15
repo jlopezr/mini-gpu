@@ -52,7 +52,7 @@ $ mini-objdump _build/ejemplo-enlazado/main.o
 Es el `JAL R31, doble` de `main`. El desplazamiento se rellena al enlazar.
 
 Hay un detalle con lcc. Declara `.extern` para los datos que usa sin definirlos,
-pero no para las funciones, porque en `build-c` todas las unidades se ensamblan
+pero no para las funciones, porque en `mini-cc` todas las unidades se ensamblan
 juntas y nunca le hizo falta. Si se ensambla `main.s` tal cual, sale
 `etiqueta no definida: doble`. El Makefile resuelve esto con un `main.ext.s`
 que pone las declaraciones antes del código (la lista está en `MAIN_EXTERNS`):
@@ -125,4 +125,4 @@ hoy no existen:
 - La extensión `.o` es solo un nombre. Por dentro el fichero es VOBJ, y vlink
   reconoce el formato por el contenido. `mini-objdump` también lo lee.
 - Este flujo no lleva el runtime de GPU ni `mini-opt`. Para programas CPU+GPU
-  completos se sigue usando `build-c`, que ensambla todo de una vez.
+  completos se sigue usando `mini-cc`, que ensambla todo de una vez.

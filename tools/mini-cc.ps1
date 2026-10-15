@@ -1,7 +1,7 @@
-# Lanzador Windows de tools/build-c; usa el python de .venv si existe.
+# Lanzador Windows de tools/mini-cc; usa el python de .venv si existe.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $python = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { $python = 'python' }
-& $python (Join-Path $PSScriptRoot 'build-c') @args
+& $python (Join-Path $PSScriptRoot 'mini-cc') @args
 exit $LASTEXITCODE

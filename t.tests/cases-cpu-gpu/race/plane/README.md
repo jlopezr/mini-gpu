@@ -7,7 +7,7 @@ depende de la columna: cada fila lee una sola fila de textura y solo `u` avanza.
 
 ```text
 python t.tests/cases-cpu-gpu/race/plane/plane_tex.py -o _build/c/plane_tex.bin
-build-c t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
                                                                   # -> _build/c/plane_board.bin
 ```
 
@@ -16,7 +16,7 @@ acción correspondiente. En particular, `make` regenera automáticamente `plane_
 `logos.png` o `plane_tex.py`.
 
 Las texturas salen de `logos.png` con `plane_tex.py` (dos de 128 × 128 palabras, 128 KiB). Es un
-paso aparte porque `build-c` no ejecuta generadores: `--data` solo las deja tras el código con la etiqueta
+paso aparte porque `mini-cc` no ejecuta generadores: `--data` solo las deja tras el código con la etiqueta
 `plane_tex`, que el C declara `extern`.
 Cada palabra es un texel con su alfa: el RGB565 «abierto» (rojo y azul abajo, verde arriba, con huecos) y el
 alfa de 0 a 32 en el hueco entre azul y rojo. Así `texel & 0x07E0F81F` ya está abierto y la mezcla con el

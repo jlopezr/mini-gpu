@@ -35,7 +35,7 @@ No hay libc, así que el código no llama a `memset` ni a ninguna otra función 
 [`test-scheduler.c`](test-scheduler.c) sirve de ejemplo de uso y de batería de pruebas. Trae una GPU simulada (`fake_gpu`) que implementa los tres callbacks con el contrato de arriba. `example_frame()` es el ejemplo: encadena tres jobs (física, escena y post-proceso), espera a que acaben y libera sus entradas. Las demás funciones prueban la prioridad, el reparto de slots, las dependencias, los jobs vacíos, los errores de `gpu_submit`, la capacidad de aristas, la cancelación (en árbol, todo o nada, y con 63 capas de diamantes), la reutilización de IDs y los fallos del hardware.
 
 - **`make test`**: lo ejecuta en el anfitrión, en C99 con ASan y UBSan. Imprime cada `CHECK` que falla.
-- **`make sim`**: lo compila para MiniISA (`build-c test-scheduler.c scheduler.c`) y lo ejecuta en `sim-sys`. `main` deja en `R1` un 0 si todo pasa, o la línea del primer fallo. Son unos 6,4 millones de instrucciones.
+- **`make sim`**: lo compila para MiniISA (`mini-cc test-scheduler.c scheduler.c`) y lo ejecuta en `sim-sys`. `main` deja en `R1` un 0 si todo pasa, o la línea del primer fallo. Son unos 6,4 millones de instrucciones.
 - **`test.json`**: el mismo caso para `run_tests.py --backend sim-sys`. Está marcado como `slow`.
 
 ## Demo con la GPU de verdad: `demo.c`

@@ -14,7 +14,7 @@ buffer, método que toca cada 60 fotogramas y gráfica de tiempos. Se compila pa
 `--board` (runtime con `RUN` y `bench_now()` con los ciclos de CPU reales):
 
 ```text
-build-c t.tests/cases-cpu-gpu/race/cube/cube.c --board        # -> _build/c/cube_board.bin
+mini-cc t.tests/cases-cpu-gpu/race/cube/cube.c --board        # -> _build/c/cube_board.bin
 run-board --prototype 36 --program _build/c/cube_board.bin
 ```
 

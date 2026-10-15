@@ -17,7 +17,11 @@ OUTDIR ?= $(MINI_GPU_ROOT)/_build/c
 IMAGE := $(OUTDIR)/$(PROGRAM).bin
 BOARD_IMAGE := $(OUTDIR)/$(PROGRAM)_board.bin
 
-BUILD_C := $(PYTHON) "$(MINI_GPU_ROOT)/tools/build-c"
+MINI_CC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-cc"
+# mini-cc compila solo lo que se le pide (y pone el crt0): el runtime de la GPU se pide aqui. Un programa que no
+# lance trabajos en la GPU desde C puede poner `GPU_RUNTIME :=` antes del include y ahorrarse sus 32 KiB de pila.
+GPU_RUNTIME ?= "$(MINI_GPU_ROOT)/t.tests/runtime/gpu/gpu.c" "$(MINI_GPU_ROOT)/t.tests/inc/gpu_runtime.inc" \
+               "$(MINI_GPU_ROOT)/t.tests/inc/bench.inc"
 SIM_SYS := $(PYTHON) "$(MINI_GPU_ROOT)/tools/sim-sys"
 MINI_DBG := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-dbg"
 RUN_BOARD := $(PYTHON) "$(MINI_GPU_ROOT)/tools/run_board.py"
@@ -37,10 +41,10 @@ RUN_DEPS ?= $(BOARD_IMAGE)
 all: $(IMAGE)
 
 $(IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" -o "$(IMAGE)" $(BUILD_ARGS)
+	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) --outdir "$(OUTDIR)" -o "$(IMAGE)" $(BUILD_ARGS)
 
 $(BOARD_IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(BUILD_C) "$(SOURCE)" --outdir "$(OUTDIR)" -o "$(BOARD_IMAGE)" --board $(BUILD_ARGS) $(BOARD_ARGS)
+	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) --outdir "$(OUTDIR)" -o "$(BOARD_IMAGE)" --board $(BUILD_ARGS) $(BOARD_ARGS)
 
 sim: $(SIM_DEPS)
 	$(SIM_COMMAND)

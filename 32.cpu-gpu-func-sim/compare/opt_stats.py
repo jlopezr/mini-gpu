@@ -21,7 +21,7 @@ ROOT = HERE.parents[1]
 CASES = ROOT / "t.tests" / "cases-cpu-gpu"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
-from tools import build_c as c_build  # noqa: E402
+from tools import mini_cc as c_build  # noqa: E402
 import compare  # noqa: E402
 import compare_race  # noqa: E402
 

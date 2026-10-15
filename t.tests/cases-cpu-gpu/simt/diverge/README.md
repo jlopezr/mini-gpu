@@ -5,7 +5,7 @@ Cinco kernels con divergencia: un bucle cuyas lanes salen en vueltas distintas, 
 comprueban contra un modelo en Python (`CDivergenceTest`).
 
 ```text
-build-c t.tests/cases-cpu-gpu/simt/diverge/diverge.c
+mini-cc t.tests/cases-cpu-gpu/simt/diverge/diverge.c
 python 32.cpu-gpu-func-sim/cpu_gpu_sim.py _build/c/diverge.bin
 ```
 

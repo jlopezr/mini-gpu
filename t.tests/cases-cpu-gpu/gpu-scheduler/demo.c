@@ -1,6 +1,6 @@
 /* demo.c - el scheduler sobre la GPU de verdad: un job de 4 warps
  *
- *   make demo-sim     compila con build-c y lo ejecuta en sim-sys (R1 = 0 si todo va bien)
+ *   make demo-sim     compila con mini-cc y lo ejecuta en sim-sys (R1 = 0 si todo va bien)
  *
  * Los tres callbacks de gpu_hw_ops hablan con la GPU por MMIO (mmio.md §14):
  *

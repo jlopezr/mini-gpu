@@ -1,11 +1,11 @@
 /* memset.c - el primer programa en C con CPU y GPU en el mismo fichero
  *
- *   build-c t.tests/cases-cpu-gpu/dma/memset/memset.c
+ *   mini-cc t.tests/cases-cpu-gpu/dma/memset/memset.c
  *   python cpu_gpu_sim.py ../_build/c/memset.bin
  *
  * El kernel rellena `buffer` con un valor desde 4 warps de la GPU; la CPU lo lanza con una
  * sola llamada. A diferencia de los demas programas de t.tests/cases-cpu-gpu, que estan en
- * ensamblador, esto es C compilado con mini-lcc (ver tools/build_c.py). La comprobacion esta en
+ * ensamblador, esto es C compilado con mini-lcc (ver tools/mini_cc.py). La comprobacion esta en
  * CKernelTest (test_cpu_gpu_sim.py).
  */
 #include "gpu.h"

@@ -13,6 +13,8 @@
 ; tiempo de pared del trabajo. Una lectura de 32 bits da vueltas cada 53 s; la
 ; resta de dos lecturas sigue siendo buena aunque de la vuelta entre medias.
 ; ============================================================
+.include "mmio.inc"             ; lleva `.once`: da igual que lo incluya tambien quien llama
+
 bench_init:
     RET
 bench_now:
