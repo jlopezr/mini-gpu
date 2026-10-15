@@ -5,9 +5,25 @@ import argparse
 import sys
 from pathlib import Path
 
+from .merge import merge_sources, split_strings
 from .model import SYMBOL_RE, OptError, Unit, parse_unit, render_unit
-from .passes import licm, ssy
+from .passes import deadfuncs, licm, ssy
 from .registry import DEFAULT_PASSES, PASSES
+
+
+def strip_comments(text: str) -> str:
+    """El texto sin los `;` hasta el fin de linea (los de dentro de una cadena no cuentan): una palabra de un
+    comentario no es un simbolo que el fichero use."""
+    lines = []
+    for line in text.splitlines():
+        kept = []
+        for piece, is_string in split_strings(line):
+            if not is_string and ";" in piece:
+                kept.append(piece.split(";", 1)[0])
+                break
+            kept.append(piece)
+        lines.append("".join(kept))
+    return "\n".join(lines)
 
 
 def count_instructions(unit: Unit) -> int:
@@ -49,7 +65,8 @@ def print_stats(stats: dict, passes: list[str] | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Filtro entre el `.s` del compilador y `mini-asm`: aplica pases a un `.s`.")
-    parser.add_argument("input", nargs="?", type=Path, help=".s de entrada")
+    parser.add_argument("input", nargs="*", type=Path,
+                        help=".s de entrada; con varios, se juntan en uno (en este orden) y salen como un solo .s")
     parser.add_argument("-o", "--output", type=Path, help="`.s` de salida (por defecto stdout)")
     parser.add_argument("--passes", help="pases separados por coma, en orden "
                         f"(por defecto {','.join(DEFAULT_PASSES)}; vacio = ninguno)")
@@ -62,6 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extern-refs", action="append", default=[], type=Path, metavar="FICHERO",
                         help="fichero ensamblado aparte (arranque, runtime...): los simbolos que nombra no se dan por "
                              "privados de la unidad (se puede repetir)")
+    parser.add_argument("--whole-program", action="store_true",
+                        help="los .s de entrada son todo el programa: el pase deadfuncs borra las funciones que no "
+                             "alcanzan main, lo que nombran los --extern-refs ni un kernel (sin esto no hace nada)")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -69,16 +89,18 @@ def main(argv: list[str] | None = None) -> int:
         for name, (_, doc) in PASSES.items():
             print(f"{name:12s} {doc}")
         return 0
-    if args.input is None:
+    if not args.input:
         parser.error("hace falta un .s de entrada")
     passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
     ssy.SSY_ALL = args.ssy_all
     licm.NOALIAS = args.assume_noalias
+    deadfuncs.WHOLE_PROGRAM = args.whole_program
     stats: dict = {}
     try:
         licm.EXTERNAL = frozenset(name for path in args.extern_refs
-                                  for name in SYMBOL_RE.findall(path.read_text(encoding="utf-8")))
-        text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)
+                                  for name in SYMBOL_RE.findall(strip_comments(path.read_text(encoding="utf-8"))))
+        source = merge_sources([(str(path), path.read_text(encoding="utf-8")) for path in args.input])
+        text = optimize(source, passes, ", ".join(map(str, args.input)), stats)
     except OptError as error:
         print(f"mini-opt: {error}", file=sys.stderr)
         return 1

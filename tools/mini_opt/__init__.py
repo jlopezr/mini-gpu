@@ -4,13 +4,16 @@
     mini-opt kernels.s -o kernels.opt.s --stats
     mini-asm programa.asm -o programa.bin       # con `.include "kernels.opt.s"`
 
-Juntar unidades lo hace el ensamblador con `.include` (y desde que las `L.n` de lcc
+Juntar unidades lo puede hacer el ensamblador con `.include` (y desde que las `L.n` de lcc
 son privadas de cada fichero, dos `.s` no chocan); el arranque, `1.isa/runtime/crt0.s`.
-Este filtro solo transforma un `.s` en otro: lo trocea en funciones, calcula su grafo de
+Tambien se le pueden pasar varios `.s` a la vez (`mini-opt a.s b.s -o todo.s`): `merge.py` los
+junta en uno, en ese orden, y los pases ven el programa entero. Es lo que hace `mini-cc`.
+Este filtro transforma `.s` en un `.s`: lo trocea en funciones, calcula su grafo de
 flujo y la vida de sus registros, y aplica los pases pedidos (`--list-passes`).
 
 Un modulo por cosa:
 
+    merge.py      juntar varios `.s` en uno (renumera las `L.n`; error si un simbolo se define dos veces)
     model.py      el `.s` troceado: lineas, funciones, unidades (parse_unit / render_unit)
     isa.py        que lee y escribe cada instruccion (defs_uses) y los conjuntos de mnemonicos
     flow.py       bloques basicos, vida de registros, dominadores y bucles

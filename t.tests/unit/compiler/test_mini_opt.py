@@ -30,6 +30,8 @@ from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 from tools.mini_opt.cli import main as optimize_main  # noqa: E402
+from tools.mini_opt.merge import merge_sources  # noqa: E402
+from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
 RUNTIME = ROOT / "1.isa" / "runtime"
@@ -2803,6 +2805,170 @@ class FilterTest(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
             self.assertIn("intrinsics", done.stderr)
+
+
+PROGRAM = """\
+.text
+.globl main
+.align 4
+main:
+JAL R31, used
+JAL R31, helper
+LI R1, table
+HALT
+.globl used
+.align 4
+used:
+JAL R31, deep
+JR R31
+.globl helper
+.align 4
+helper:
+JR R31
+.globl deep
+.align 4
+deep:
+JR R31
+.globl unused
+.align 4
+unused:
+JAL R31, only_from_unused
+JR R31
+.globl only_from_unused
+.align 4
+only_from_unused:
+LI R2, victim_data
+JR R31
+.globl __kernel_k
+.align 4
+__kernel_k:
+JR R31
+.globl by_table
+.align 4
+by_table:
+JR R31
+.globl by_runtime
+.align 4
+by_runtime:
+JR R31
+.data
+table:
+.word by_table
+victim_data:
+.word 7
+"""
+
+
+class DeadFuncsTest(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, deadfuncs_module, "WHOLE_PROGRAM", deadfuncs_module.WHOLE_PROGRAM)
+        self.addCleanup(setattr, licm_module, "EXTERNAL", licm_module.EXTERNAL)
+
+    def names(self, text):
+        return [function.name for function in parse_unit(text).functions()]
+
+    def test_it_does_nothing_without_the_flag(self):
+        self.assertEqual(self.names(optimize(PROGRAM, ["deadfuncs"])), self.names(PROGRAM))
+
+    def test_it_removes_what_no_root_reaches_and_what_only_that_calls(self):
+        deadfuncs_module.WHOLE_PROGRAM = True
+        stats = {}
+        kept = self.names(optimize(PROGRAM, ["deadfuncs"], stats=stats))
+        self.assertNotIn("unused", kept)
+        self.assertNotIn("only_from_unused", kept)
+        self.assertEqual(stats["deadfuncs.removed"], 3)           # tambien by_runtime: nadie la nombra
+        self.assertEqual(kept, ["main", "used", "helper", "deep", "__kernel_k", "by_table"])
+
+    def test_kernels_and_what_data_names_stay(self):
+        deadfuncs_module.WHOLE_PROGRAM = True
+        kept = self.names(optimize(PROGRAM, ["deadfuncs"]))
+        self.assertIn("__kernel_k", kept)           # lo lanza el anfitrion por su etiqueta
+        self.assertIn("by_table", kept)             # un `.word` la nombra
+
+    def test_what_extern_refs_name_stays(self):
+        deadfuncs_module.WHOLE_PROGRAM = True
+        licm_module.EXTERNAL = frozenset({"by_runtime"})
+        self.assertIn("by_runtime", self.names(optimize(PROGRAM, ["deadfuncs"])))
+
+    def test_data_is_never_removed(self):
+        deadfuncs_module.WHOLE_PROGRAM = True
+        self.assertIn("victim_data:", optimize(PROGRAM, ["deadfuncs"]))
+
+    def test_a_removed_function_takes_its_header_with_it(self):
+        deadfuncs_module.WHOLE_PROGRAM = True
+        text = optimize(PROGRAM, ["deadfuncs"])
+        self.assertNotIn(".globl unused", text)
+
+    def test_the_flag_on_the_command_line(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            (temp / "p.s").write_text(PROGRAM, encoding="utf-8")
+            (temp / "crt.s").write_text("_start:\nJAL R31, by_runtime\nHALT\n", encoding="utf-8")
+            self.assertEqual(optimize_main([str(temp / "p.s"), "--whole-program", "--passes", "deadfuncs",
+                                            "--extern-refs", str(temp / "crt.s"), "-o", str(temp / "o.s")]), 0)
+            kept = self.names((temp / "o.s").read_text(encoding="utf-8"))
+        self.assertIn("by_runtime", kept)
+        self.assertNotIn("unused", kept)
+
+    def test_words_in_comments_of_extern_refs_are_not_roots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            (temp / "p.s").write_text(PROGRAM, encoding="utf-8")
+            (temp / "crt.s").write_text("_start:\nHALT   ; ni by_runtime ni unused\n"
+                                        "; helper tampoco\n", encoding="utf-8")
+            self.assertEqual(optimize_main([str(temp / "p.s"), "--whole-program", "--passes", "deadfuncs",
+                                            "--extern-refs", str(temp / "crt.s"), "-o", str(temp / "o.s")]), 0)
+            kept = self.names((temp / "o.s").read_text(encoding="utf-8"))
+        self.assertNotIn("by_runtime", kept)
+        self.assertIn("helper", kept)               # main lo llama: se queda por eso
+
+
+class MergeTest(unittest.TestCase):
+    """Varios `.s` de entrada salen como uno solo."""
+
+    def test_one_source_is_returned_unchanged(self):
+        self.assertEqual(merge_sources([("k.s", KERNELS)]), KERNELS)
+
+    def test_compiler_labels_of_the_second_unit_do_not_clash_with_the_first(self):
+        merged = merge_sources([("host.s", HOST), ("kernels.s", KERNELS)])
+        labels = [line.name for line in parse_unit(merged).lines() if line.kind == "label"]
+        self.assertEqual(len(labels), len(set(labels)))
+
+    def test_merged_image_equals_the_units_included_one_after_the_other(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            passes = ["intrinsics"]         # sin el, `__gpu_tid` queda sin definir
+            (temp / "host.s").write_text(optimize(HOST, passes), encoding="utf-8")
+            (temp / "kernels.s").write_text(optimize(KERNELS, passes), encoding="utf-8")
+            (temp / "all.s").write_text(
+                optimize(merge_sources([("host.s", HOST), ("kernels.s", KERNELS)]), passes), encoding="utf-8")
+            separate = assemble_bytes('.include "crt0.s"\n.include "host.s"\n.include "kernels.s"\n',
+                                      temp, "a.asm", (RUNTIME,))
+            together = assemble_bytes('.include "crt0.s"\n.include "all.s"\n', temp, "b.asm", (RUNTIME,))
+        self.assertEqual(separate, together)
+
+    def test_numbers_inside_strings_are_left_alone(self):
+        first = '.text\nmain:\nBRA L.1\nL.1:\nJR R31\n'
+        second = '.text\nf:\nBRA L.1\nL.1:\nJR R31\n.data\ns:\n.asciz "L.1 y __sf.2"\n'
+        merged = merge_sources([("a.s", first), ("b.s", second)])
+        self.assertIn('"L.1 y __sf.2"', merged)
+        self.assertIn("BRA L.2", merged)
+
+    def test_a_symbol_defined_in_two_units_is_an_error(self):
+        unit = ".text\nf:\nJR R31\n"
+        with self.assertRaisesRegex(OptError, "'f' definido en a.s y en b.s"):
+            merge_sources([("a.s", unit), ("b.s", unit)])
+
+    def test_command_line_merges_several_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            (temp / "host.s").write_text(HOST, encoding="utf-8")
+            (temp / "kernels.s").write_text(KERNELS, encoding="utf-8")
+            self.assertEqual(optimize_main([str(temp / "host.s"), str(temp / "kernels.s"),
+                                            "-o", str(temp / "all.s")]), 0)
+            text = (temp / "all.s").read_text(encoding="utf-8")
+        self.assertIn("GETTID R29", text)
+        self.assertEqual(text.count("main:"), 1)
 
 
 TUI = ROOT / "v.tui"

@@ -10,11 +10,12 @@ Pass = Callable[[Unit, dict], None]
 
 PASSES: dict[str, tuple[Pass, str]] = {}
 
-# El orden importa: `stackslots` deja copias; las propagaciones descubren branches constantes;
+# El orden importa: `deadfuncs` va antes de todo, para que `licm` y los demas no vean las direcciones y las
+# escrituras del codigo muerto; `stackslots` deja copias; las propagaciones descubren branches constantes;
 # DCE limpia entre fases; `licm` se queda primero con los registros que necesita y `sharebase`
 # usa los restantes; `ssy` ve al final el CFG definitivo.
 DEFAULT_PASSES = [
-    "intrinsics", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
+    "deadfuncs", "intrinsics", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
     "copyprop", "dce", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
     "sharebase", "deadsaves", "tailcalls", "unreachable", "invert", "ssy",
 ]
