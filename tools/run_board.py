@@ -64,13 +64,14 @@ def assemble(root: Path, source: Path, verbose: bool) -> Path:
     # `_build/` junto al fuente, igual que el valor por defecto de mini_asm.py:
     # el binario se regenera siempre y no debe parecer una entrada del caso.
     binary = source.parent / "_build" / source.with_suffix(".bin").name
-    # `-I t.tests/inc` da acceso a la biblioteca de `.include` compartida. La
+    # `-I runtime/include -I runtime/src` da acceso a la biblioteca de `.include` compartida. La
     # carpeta del propio .asm se mira siempre primero y antes que esta, asi que
     # un trozo local con el mismo nombre sigue ganando.
     # `-D BOARD` elige la rama de la placa 36 de `gpu_runtime.inc`, `bench.inc`...:
     # este lanzador solo corre en la placa, así que un .asm no repite el `.define`.
     command = [sys.executable, str(root / "1.isa" / "mini_asm.py"), str(source),
-               "-o", str(binary), "-I", str(root / "t.tests" / "inc"), "-D", "BOARD"]
+               "-o", str(binary), "-I", str(root / "runtime" / "include"), "-I", str(root / "runtime" / "src"),
+               "-D", "BOARD"]
     if verbose:
         print(f"$ {' '.join(command)}")
     completed = subprocess.run(command)

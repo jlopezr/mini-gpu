@@ -29,10 +29,10 @@ from tools import mini_cc as c_build  # noqa: E402
 import cpu_gpu_sim as sim  # noqa: E402
 from cpu_gpu_sim import CpuGpuSystem, mm  # noqa: E402
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 MEMORY = 1 << 21
 SRC, DST, BLOCK = 0x100000, 0x140000, 0x1F0000
-INC = ROOT / "t.tests" / "inc"
 LANES = 8
 
 
@@ -58,8 +58,8 @@ WORKLOADS = [
 def asm_image():
     source = '.include "mmio.inc"\n.include "gpu_kernels.inc"\n'
     folder = DMA
-    image = assemble_bytes(source, folder, "kernels.asm", (INC,))
-    labels = first_pass(source, folder, "kernels.asm", (INC,))[1]
+    image = assemble_bytes(source, folder, "kernels.asm", ASM_INCLUDE_DIRS)
+    labels = first_pass(source, folder, "kernels.asm", ASM_INCLUDE_DIRS)[1]
     return image, {k: labels[f"gpu_k_{k}"] for k in ("memset", "memcpy", "fill_rect", "blit")}
 
 

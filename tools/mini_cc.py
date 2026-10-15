@@ -5,10 +5,10 @@
 
 Se compila lo que se pide y nada mas. Cada .c pasa por mini-lcc --no-crt; luego una sola llamada a mini-opt con
 todos los .s, que los junta en `<programa>.opt.s` y optimiza el programa entero (intrinsecos, kernels...). Los demas
-ficheros (.s, .asm, .inc: el runtime de la GPU `t.tests/inc/gpu_runtime.inc` y `bench.inc`, ensamblador a mano) no
+ficheros (.s, .asm, .inc: el runtime de la GPU `runtime/src/gpu_runtime.inc` y `bench.inc`, ensamblador a mano) no
 se optimizan: se `.include`n tal cual detras del codigo, en el orden de la linea de ordenes, y sus simbolos cuentan
 como usados desde fuera. `gpu.c` (que lleva `gpu_launch` y la pila de los kernels, `__gpu_stack`) es un .c mas.
-Lo unico que se pone solo es el arranque (1.isa/runtime/crt0.s), primero, cuando hay algun .c. Todo se ensambla con
+Lo unico que se pone solo es el arranque (runtime/src/crt0.s), primero, cuando hay algun .c. Todo se ensambla con
 mini-asm y queda en `--outdir`.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
@@ -30,13 +30,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import assemble_bytes, write_hex  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS, C_INCLUDE_DIRS, SRC  # noqa: E402
 
-INC = ROOT / "t.tests" / "inc"                 # gpu.h, mmio.h, mmio.inc, gpu_runtime.inc, bench.inc
-GPU_C = ROOT / "t.tests" / "runtime" / "gpu" / "gpu.c"
-CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
+CRT0 = SRC / "crt0.s"
+GPU_C = SRC / "gpu.c"
 # El runtime de la GPU, para quien llama desde Python: se pasa en `sources` como cualquier otro fichero.
-GPU_RUNTIME = (GPU_C, INC / "gpu_runtime.inc", INC / "bench.inc")
-INCLUDE_DIRS = (INC,)
+GPU_RUNTIME = (GPU_C, SRC / "gpu_runtime.inc", SRC / "bench.inc")
+INCLUDE_DIRS = ASM_INCLUDE_DIRS                 # para ensamblar: runtime/include y runtime/src
 DEFAULT_OUTDIR = ROOT / "_build" / "c"
 
 
@@ -54,7 +54,7 @@ def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = ()) -> Path
     """C -> .s sin arranque."""
     outdir.mkdir(parents=True, exist_ok=True)
     plain = outdir / f"{source.stem}.s"
-    flags = [arg for folder in (INC, *includes) for arg in ("-I", folder)]
+    flags = [arg for folder in (*C_INCLUDE_DIRS, *includes) for arg in ("-I", folder)]
     run(TOOLS / "mini-lcc", source, "--no-crt", *flags, "-o", plain)
     return plain
 
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--outdir", type=Path, help=f"carpeta de los intermedios (por defecto {DEFAULT_OUTDIR})")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
-                        help="carpeta extra para #include (repetible); t.tests/inc va siempre")
+                        help="carpeta extra para #include (repetible); runtime/include va siempre")
     parser.add_argument("--data", action="append", type=parse_data, default=[], metavar="ETIQUETA=FICHERO",
                         help="pega un binario tras el codigo con esa etiqueta (repetible)")
     parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")

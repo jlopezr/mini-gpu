@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="carpeta extra para #include (repetible)")
     parser.add_argument("--no-crt", action="store_true",
                         help="no emite `_start` ni `.comm __stack`: el arranque lo pone un crt0 "
-                             "(1.isa/runtime/crt0.s) o, en una unidad sin `main`, nadie")
+                             "(runtime/src/crt0.s) o, en una unidad sin `main`, nadie")
     args = parser.parse_args(argv)
     rcc_flags = ["-crt=none"] if args.no_crt else []
 

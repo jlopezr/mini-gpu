@@ -14,9 +14,9 @@ from cpu_gpu_sim import AccessFault, CpuGpuSystem, InstructionLimitExceeded, mm
 
 sys.path.insert(0, str(sim.ROOT / "1.isa"))
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-INC = sim.ROOT / "t.tests" / "inc"
 CASES = sim.ROOT / "t.tests" / "cases-cpu-gpu"      # los programas: una carpeta por programa
 MEMORY = 1 << 20            # 1 MiB
 KERNEL = 0x10000
@@ -31,7 +31,7 @@ slow = unittest.skipUnless(os.environ.get("RUN_SLOW") == "1", "lenta: RUN_SLOW=1
 
 
 def asm(source: str) -> bytes:
-    return assemble_bytes('.include "mmio.inc"\n' + source, None, "test.asm", (INC,))
+    return assemble_bytes('.include "mmio.inc"\n' + source, None, "test.asm", ASM_INCLUDE_DIRS)
 
 
 # out[tid] = tid*tid + 1, con out en OUT.
@@ -550,8 +550,8 @@ RACE_COLORS = (0x07E0, 0xFD20, 0x07FF)      # CPU, GPU ingenua, GPU bien puesta
 def race_image(path: Path):
     """(imagen, etiquetas) de un demo de `t.tests/cases-cpu-gpu/race`."""
     source = path.read_text(encoding="utf-8")
-    labels = first_pass(source, path.parent, path.name, (INC,))[1]
-    return assemble_bytes(source, path.parent, path.name, (INC,)), labels
+    labels = first_pass(source, path.parent, path.name, ASM_INCLUDE_DIRS)[1]
+    return assemble_bytes(source, path.parent, path.name, ASM_INCLUDE_DIRS), labels
 
 
 def life_soup(seed: int = 12345):
@@ -1018,8 +1018,8 @@ bench_now:
 fake_clock:
     .word 0
 """
-        image = assemble_bytes(source, RACE / "life", "strip.asm", (INC,))
-        labels = first_pass(source, RACE / "life", "strip.asm", (INC,))[1]
+        image = assemble_bytes(source, RACE / "life", "strip.asm", ASM_INCLUDE_DIRS)
+        labels = first_pass(source, RACE / "life", "strip.asm", ASM_INCLUDE_DIRS)[1]
         video = sim.VideoDevice(frame_instructions=1000)
         video.stop_after_swaps = cls.FRAMES
         cls.system = CpuGpuSystem(32 * 1024 * 1024, video=video)

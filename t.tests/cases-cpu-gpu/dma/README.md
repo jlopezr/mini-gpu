@@ -2,7 +2,7 @@
 
 [`harness/dma.asm`](harness/dma.asm) es el arnés del diseño de
 [`diseno-gpu-dma.md`](../../../32.cpu-gpu-func-sim/docs/diseno-gpu-dma.md): la GPU como `memset` y
-`memcpy`, lanzada por polling desde un runtime de CPU (`t.tests/inc/gpu_runtime.inc`) con los
+`memcpy`, lanzada por polling desde un runtime de CPU (`runtime/src/gpu_runtime.inc`) con los
 kernels en `gpu_kernels.inc`, todo en una sola imagen. Incluye un job que falla,
 uno que no termina y la recuperación de la GPU.
 

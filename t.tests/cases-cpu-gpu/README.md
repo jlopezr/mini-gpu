@@ -17,8 +17,8 @@ placa se miden con `run-board`.
 
 Cada programa tiene su carpeta con todo lo suyo: el `.asm` y su `.inc`, el `.c` y su `*_body.h`, los datos y el
 informe. Lo que comparten varios programas del mismo tema va en la carpeta del tema (`race/race_host.inc`,
-`dma/gpu_kernels.inc`). Lo que comparte todo el repo está en [`t.tests/inc`](../inc/README.md) (`gpu_runtime.inc`,
-`bench.inc`, `gpu.h`, `mmio.h`) y [`t.tests/runtime/gpu`](../runtime/gpu/gpu.c).
+`dma/gpu_kernels.inc`). Lo que comparte todo el repo está en [`runtime/`](../../runtime/README.md): las cabeceras (`gpu.h`, `mmio.h`) en
+`include/` y el código (`gpu_runtime.inc`, `bench.inc`, `gpu.c`, `crt0.s`) en `src/`.
 
 ## Cómo se ejecutan
 

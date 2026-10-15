@@ -23,11 +23,11 @@ Llamar a `gpu_scheduler_poll()` periódicamente desde la CPU. `gpu_submit()` adm
 
 El código es C89, que es lo que acepta `mini-lcc`. `make` hace dos cosas:
 
-- **`make host`**: compila con `cc -std=c89 -pedantic -Wno-long-long -Werror`, usando las cabeceras de `t.tests/inc`.
+- **`make host`**: compila con `cc -std=c89 -pedantic -Wno-long-long -Werror`, usando las cabeceras de `runtime/include`.
 - **`make lcc`**: pasa el código por `mini-lcc --no-crt`, `mini-opt` y `mini-asm`.
 
 Todo lo que genera va a `_build/c/gpu-scheduler/`. El `.bin` sirve solo para comprobar que el `.s` ensambla: es una biblioteca sin `main` y no se ejecuta por sí sola.
-`stdint.h` y `stdbool.h` salen de `t.tests/inc`, porque la librería de lcc no las trae. Allí `bool` es un `int`.
+`stdint.h` y `stdbool.h` salen de `runtime/include`, porque la librería de lcc no las trae. Allí `bool` es un `int`.
 No hay libc, así que el código no llama a `memset` ni a ninguna otra función de biblioteca.
 
 ## Ejemplo y pruebas: `test-scheduler.c`

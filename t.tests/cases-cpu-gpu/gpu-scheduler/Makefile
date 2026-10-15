@@ -11,7 +11,7 @@
 #   make demo-sim  demo.c: el scheduler lanza un job en la GPU de sim-sys (R1 = 0 si va bien)
 #   make clean
 #
-# mini-lcc es C89 y usa las cabeceras de t.tests/inc (stdint.h, stdbool.h).
+# mini-lcc es C89 y usa las cabeceras de runtime/include (stdint.h, stdbool.h).
 
 PYTHON ?= python
 CC ?= cc
@@ -19,7 +19,7 @@ CC ?= cc
 
 BASE ?= $(shell git rev-parse --show-toplevel)
 MINI_GPU_ROOT := $(BASE)
-INC := $(MINI_GPU_ROOT)/t.tests/inc
+INC := $(MINI_GPU_ROOT)/runtime/include
 OUTDIR ?= $(MINI_GPU_ROOT)/_build/c/gpu-scheduler
 
 MINI_LCC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-lcc"
@@ -41,7 +41,7 @@ TEST_HOST_BIN := $(OUTDIR)/test-scheduler-host
 CASE_OUTDIR := $(OUTDIR)/case
 TEST_IMAGE := $(CASE_OUTDIR)/test-scheduler.bin
 DEMO_IMAGE := $(CASE_OUTDIR)/demo.bin
-# El test usa printf: va con las cabeceras del sistema, no con las de t.tests/inc.
+# El test usa printf: va con las cabeceras del sistema, no con las de runtime/include.
 TEST_CFLAGS := -std=c99 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DTEST_HOST
 
 .PHONY: all host lcc test case sim demo demo-sim clean

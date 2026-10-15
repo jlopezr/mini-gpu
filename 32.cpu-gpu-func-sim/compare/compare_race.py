@@ -185,8 +185,8 @@ def compare_demo(work: Workload, frames: int):
     GPU (la CPU de esos solo espera). Se comprueba ademas que C y ensamblador dejan la misma imagen."""
     source_path = RACE / work.stem / work.demo
     source = source_path.read_text(encoding="utf-8")
-    a_labels = first_pass(source, source_path.parent, work.demo, (base.INC,))[1]
-    a_counts, a_screen = run_demo(assemble_bytes(source, source_path.parent, work.demo, (base.INC,)), a_labels, frames)
+    a_labels = first_pass(source, source_path.parent, work.demo, base.ASM_INCLUDE_DIRS)[1]
+    a_counts, a_screen = run_demo(assemble_bytes(source, source_path.parent, work.demo, base.ASM_INCLUDE_DIRS), a_labels, frames)
     c_image, c_labels = c_program(work.stem)
     c_counts, c_screen = run_demo(c_image, c_labels, frames)
     rows = []
@@ -203,7 +203,7 @@ def asm_program(work: Workload):
     source = (f'.include "mmio.inc"\nstart:\n    JAL R31, demo_cpu\n    HALT\n'
               f'.include "{(folder / (work.stem + ".inc")).as_posix()}"\n')
     name = f"{work.stem}_cpu.asm"
-    return assemble_bytes(source, folder, name, (base.INC,)), first_pass(source, folder, name, (base.INC,))[1]
+    return assemble_bytes(source, folder, name, base.ASM_INCLUDE_DIRS), first_pass(source, folder, name, base.ASM_INCLUDE_DIRS)[1]
 
 
 # Solo definen los kernels: este script los lanza por MMIO (como gpu_run) y los encuentra por etiqueta, asi que

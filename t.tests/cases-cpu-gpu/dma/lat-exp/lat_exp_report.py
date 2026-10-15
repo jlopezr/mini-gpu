@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import first_pass  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 GPU_HZ = 25_000_000
 KERNELS = ("sin acceso (línea base)", "load", "store")
@@ -30,7 +31,7 @@ STRIDES = (0, 16, 64, 256, 1024, 4096, 16384, 65536)
 def read_results(program: Path, port: str | None):
     source = program.read_text(encoding="utf-8")
     labels = first_pass(source, program.parent, program.name,
-                        (ROOT / "t.tests" / "inc",), frozenset({"BOARD"}))[1]
+                        ASM_INCLUDE_DIRS, frozenset({"BOARD"}))[1]
     with tempfile.TemporaryDirectory() as temp:
         block = Path(temp) / "lat.bin"
         command = [sys.executable, "-X", "utf8", str(ROOT / "36.fpga-cpu-gpu" / "monitor.py")]

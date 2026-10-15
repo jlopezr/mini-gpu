@@ -702,7 +702,7 @@ y `sim-cpu` muestran un aviso antes de ejecutarlo:
 ```
 
 Direcciones y valores aceptan etiquetas del programa, `0x...`, decimal y `pc`.
-Los `.include` se buscan en `t.tests/inc` siempre —es donde vive `mmio.inc`—
+Los `.include` se buscan siempre en `runtime/include` y `runtime/src` —ahí vive `mmio.inc`—
 más lo que se añada con `-I`.
 Para tuberías, `ssh` o una máquina sin `textual`, `--no-tui` da el mismo
 depurador en modo línea. Se puede arrancar con trabajo hecho:
@@ -959,7 +959,7 @@ Para un programa con CPU y kernels de GPU en C, `mini-cc` encadena `mini-lcc`, `
 
 ```bash
 $ mini-cc programa.c                          # -> _build/c/programa.bin (simulador); sin GPU
-$ mini-cc programa.c t.tests/runtime/gpu/gpu.c t.tests/inc/gpu_runtime.inc t.tests/inc/bench.inc   # con el runtime de la GPU
+$ mini-cc programa.c runtime/src/gpu.c runtime/src/gpu_runtime.inc runtime/src/bench.inc   # con el runtime de la GPU
 $ mini-cc programa.c ... --board              # -> _build/c/programa_board.bin (placa 36)
 $ mini-cc programa.c ... --load               # compila con --board y lo sube a la 36 (como board-load)
 $ mini-cc programa.c ... --load 37 --no-run  # a la 37, sin arrancarlo
@@ -970,17 +970,17 @@ $ mini-cc test.c biblioteca.c                # varias unidades: la primera lleva
 Compila lo que se le pide y nada más: cada `.c` con `mini-lcc --no-crt`, y una sola llamada a `mini-opt` con todos
 los `.s`, que los junta y optimiza el programa entero. Los demás ficheros (`.s`, `.asm`, `.inc`) no se optimizan: se
 `.include`n tal cual tras el código, en el orden dado. Lo único que se pone solo es el arranque
-(`1.isa/runtime/crt0.s`), primero, cuando hay algún `.c`. El runtime de la GPU se pide explícitamente: `gpu.c`
+(`runtime/src/crt0.s`), primero, cuando hay algún `.c`. El runtime de la GPU se pide explícitamente: `gpu.c`
 (`gpu_launch` y `__gpu_stack`, los 32 KiB de pila de los kernels), `gpu_runtime.inc` y `bench.inc`; los Makefile que
 usan `tools/c-program.mk` lo pasan con `$(GPU_RUNTIME)`. Un programa que no lanza la GPU desde C no lo necesita
-(el scheduler y su demo ocupan la mitad). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en el `-I`.
+(el scheduler y su demo ocupan la mitad). Las cabeceras `gpu.h` y `mmio.h` de `runtime/include` entran siempre en el `-I`.
 
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
   `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
 - **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
   `extern unsigned etiqueta[]`. `mini-cc` no ejecuta generadores: los datos los prepara quien llama.
 - **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
-  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `t.tests/inc`.
+  en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `runtime/include`.
 - La lógica es `tools/mini_cc.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
 
 El ensamblador acepta `.ifdef`/`.ifndef`/`.else`/`.endif`, `.define SIMBOLO` y `-D SIMBOLO` (ver `1.isa/mini_asm.py`);
@@ -999,12 +999,12 @@ $ cat programa.asm
     .include "crt0.s"                         # primero: _start en la direccion 0
     .include "host.s"
     .include "kernels.opt.s"
-$ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
+$ mini-asm programa.asm -I runtime/src -o programa.bin
 ```
 
 - **`-I DIR`** (repetible): carpeta extra para `#include "..."`, además de la del propio fuente.
 - **`--no-crt`** (`rcc -crt=none`): el compilador no emite `_start` ni `.comm __stack`. El
-  arranque es `1.isa/runtime/crt0.s` (pone la pila, llama a `main`, para). Sin la opción el
+  arranque es `runtime/src/crt0.s` (pone la pila, llama a `main`, para). Sin la opción el
   compilador sigue emitiéndolo como siempre.
 - **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
   compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
@@ -1035,7 +1035,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `passes/__init__.py`.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
-  `t.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
+  `runtime/include/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
   carga desde `GETARG` los parámetros `R1`–`R4` que el cuerpo lee, cambia `SHLI`/`SHRI`/`SARI`
   por los desplazamientos con registro que tiene la GPU, y sustituye `JR R31` por `EXIT`. Da error
@@ -1350,7 +1350,7 @@ la vez. Cada grupo es **una** invocación de `apio test` sobre su **propia copia
 de la carpeta del prototipo, y no sobre la real: apio/scons guardan estado en el
 proyecto y dos `apio test` sobre la misma carpeta se pisarían. Las copias son
 hermanas de la carpeta (`_tmp_test_<k>_<prototipo>`, para que rutas como
-`..\t.tests\inc` sigan valiendo), no llevan `reports/` ni `_build/`, y se borran
+`..\runtime\include` sigan valiendo), no llevan `reports/` ni `_build/`, y se borran
 al terminar, también si algo falla.
 
 - El reparto es por turnos, sin más. Sirve cuando un banco pesa más que todos los
@@ -1709,9 +1709,9 @@ de dejar todo en blanco.
 
 ```bash
 $ generate-mmio
-escrito: t.tests/inc/mmio.inc
+escrito: runtime/include/mmio.inc
 escrito: tools/mmio_map.py
-escrito: t.tests/inc/mmio_map.h
+escrito: runtime/include/mmio_map.h
 
 $ generate-mmio --check     # no escribe; exit code 1 si algo cambiaría (para CI)
 ```
@@ -1722,7 +1722,7 @@ una sola expresión. De ahí salen el include del ensamblador y el módulo Pytho
 que usan el monitor y los simuladores. **No edites lo generado**: toca el `.vh`
 y vuelve a ejecutar esto.
 
-El include se usa así, y `t.tests/inc` ya va en el `-I` tanto de
+El include se usa así, y `runtime/include` y `runtime/src` ya van en el `-I` tanto de
 `run_tests.py` como de `tools/run_board.py`, así que no hay que pasar nada:
 
 ```asm

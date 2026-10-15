@@ -21,14 +21,14 @@ La salida es una **imagen plana** little-endian que se carga en `0x00000000`. No
 python 1.isa/mini_asm.py programa.asm                  # -> programa.bin
 python 1.isa/mini_asm.py programa.asm -o otro.bin
 python 1.isa/mini_asm.py programa.asm --hex salida.hex
-python 1.isa/mini_asm.py programa.asm -I t.tests/inc   # dónde buscar .include
+python 1.isa/mini_asm.py programa.asm -I runtime/include -I runtime/src   # dónde buscar .include
 python 1.isa/mini_asm.py programa.asm --listing        # listado por pantalla
 python 1.isa/mini_asm.py programa.asm --listing p.lst  # listado a fichero
 ```
 
 `-I` puede repetirse. Los directorios se consultan en el orden indicado.
 
-Los lanzadores del repositorio (`run-board`, `capture-frame-sim`, `run_tests.py`) ya incluyen `t.tests/inc`, por lo que los `.asm` ejecutados mediante ellos no necesitan añadirlo explícitamente.
+Los lanzadores del repositorio (`run-board`, `capture-frame-sim`, `run_tests.py`) ya incluyen `runtime/include` y `runtime/src`, por lo que los `.asm` ejecutados mediante ellos no necesitan añadirlo explícitamente.
 
 ### API de Python
 

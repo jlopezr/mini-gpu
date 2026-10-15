@@ -358,7 +358,7 @@ lo pasa por `mini-opt` y lo ejecuta en el simulador.
 **Uso:**
 ```bash
 python tools/mini-opt input.s -o output.s
-python tools/mini-opt a.s b.s -o todo.s --whole-program --extern-refs 1.isa/runtime/crt0.s
+python tools/mini-opt a.s b.s -o todo.s --whole-program --extern-refs runtime/src/crt0.s
 ```
 
 Con varios `.s` los junta en ese orden (`merge.py`: renumera las `L.n` y `__sf.n` de los siguientes y da error si
@@ -456,8 +456,8 @@ Los siguientes directorios contienen **solo ensamblador (`.asm`)** o **solo Pyth
 | `t.tests/cases-shared/*/` | Solo `.asm` (tests compartidos) |
 | `32.cpu-gpu-func-sim/` | Python (`test_cpu_gpu_sim.py`) |
 | `t.tests/unit/*/` | Python (`test_*.py`) |
-| `t.tests/runtime/gpu/gpu.c` | Runtime GPU en C (`gpu_launch` y `__gpu_stack`; se pasa a `mini-cc` con `GPU_RUNTIME`) |
-| `1.isa/runtime/crt0.s` | Arranque en ensamblador |
+| `runtime/src/gpu.c` | Runtime GPU en C (`gpu_launch` y `__gpu_stack`; se pasa a `mini-cc` con `GPU_RUNTIME`) |
+| `runtime/src/crt0.s` | Arranque en ensamblador |
 
 ---
 

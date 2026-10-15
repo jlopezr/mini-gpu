@@ -1,6 +1,6 @@
 ; GENERADO por tools/generate-mmio desde 1.isa/mmio_map.vh. No editar.
 ;
-; La carpeta t.tests/inc ya va en el -I de run_tests.py y run_board.py,
+; Las carpetas runtime/include y runtime/src ya van en el -I de run_tests.py y run_board.py,
 ; asi que basta con `.include` y el nombre.
 .once
 

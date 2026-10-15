@@ -314,7 +314,7 @@ Se quiere averiguar:
 1. `1.isa/mini_asm.py`: mnemónicos `GETLANE`, `GETWARP`, `GETLWARP` y `GETARG` (`GETID_TYPES`).
 2. `11.gpu-sim-func`: decodificación de `GETID` con `type` 0 a 4, estado `logical_warp_id` y `arg` por warp, campos en `--config`, nombres en `gpu_trace.py`. También los accesos de 8 y 16 bits (N6).
 3. `32.cpu-gpu-func-sim`: los dos arrays en `GpuWarpsDevice`, copiados al warp al lanzar, con `RESET` que los conserva.
-4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `t.tests/inc/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
+4. `1.isa/mmio_map.vh` y los ficheros generados (`tools/mmio_map.py`, `runtime/include/mmio.inc`), `mmio.md` §14.2 y `isa.md`.
 5. `25.gpu-sim-cycle-uarch`: `GETID` con `type` 0 a 4, con el mismo diferencial contra `11`.
 6. `t.tests`: la capability `gpu_ids` (`tools/capabilities.json`, sin `file`: solo los simuladores), `logical_warp_id` y `arg` en `warps.json` (el runner exige declararla) y el caso `cases-gpu/extensions/gpu-ids/getid-family`.
 7. `t.tests/cases-cpu-gpu/dma/`: el arnés mínimo en ensamblador (ver abajo).

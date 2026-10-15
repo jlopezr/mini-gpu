@@ -196,7 +196,7 @@ edge_bottom:
     MOVI  R12, 239
     RET
 
-; Las dos rutinas viven ahora en t.tests/inc, en una sola copia. Estaban
+; Las dos rutinas viven ahora en runtime/src, en una sola copia. Estaban
 ; duplicadas aqui y en cube.asm; putpixel, ademas, en bresenham_circles.asm.
 ; El contrato es que R1 tenga la base del buffer trasero y R24 valga 640.
     .include "drawline.inc"     ; arrastra putpixel.inc, los dos con .once

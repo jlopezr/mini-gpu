@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 sys.path.insert(0, str(ROOT / "t.tests"))
 
 from mini_asm import assemble_bytes
+from runtime_dirs import ASM_INCLUDE_DIRS
 from backends.sim_cpu import SimCpuBackend
 
 
@@ -42,7 +43,7 @@ class FireReferenceTest(unittest.TestCase):
             source,
             FIRE_DIR,
             "fire.asm",
-            (ROOT / "t.tests" / "inc",),
+            ASM_INCLUDE_DIRS,
         )
         result = SimCpuBackend(ROOT).run(
             program=program,

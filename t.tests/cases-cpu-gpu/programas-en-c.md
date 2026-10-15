@@ -28,8 +28,8 @@ python 32.cpu-gpu-func-sim/cpu_gpu_sim.py _build/c/memset.bin
 
 ## El sistema y `mini-cc`
 
-El sistema no está en los ejemplos sino en `t.tests`: las cabeceras `gpu.h` y `mmio.h` en `t.tests/inc/` (junto a
-`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `t.tests/runtime/gpu/`. `mini-cc`
+El sistema no está en los ejemplos sino en [`runtime/`](../../runtime/README.md): las cabeceras `gpu.h` y `mmio.h` en
+`runtime/include/` (junto a `mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `runtime/src/`. `mini-cc`
 (`tools/mini_cc.py`) pasa esa carpeta de cabeceras a `mini-lcc -I`, así que los ejemplos solo escriben
 `#include "gpu.h"`. Los programas que lanzan trabajos en la GPU desde C piden además `gpu.c`, `gpu_runtime.inc` y
 `bench.inc` en la línea de órdenes (los Makefile lo hacen con `$(GPU_RUNTIME)`); `mini-cc` solo pone el `crt0`. Las herramientas que comparan el C con el
@@ -88,11 +88,11 @@ placa 36 (lanzar con `RUN`, ciclos de CPU reales).
   array local, un derrame) fija la de su lane (`__gpu_stack`, 512 bytes por lane). Además cambia los desplazamientos con cantidad inmediata
   (`SHLI`) por los de registro, que son los únicos que tiene la GPU, y da un error si el
   kernel usa una instrucción que la GPU no ejecuta.
-- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`t.tests/runtime/gpu/gpu.c`), que rellena
-  `p0`–`p3` del bloque de argumentos y llama a `gpu_run` de `t.tests/inc/gpu_runtime.inc` (el runtime de
+- **`GPU_RUN(nombre, warps, parámetros...)`** llama a `gpu_launch` (`runtime/src/gpu.c`), que rellena
+  `p0`–`p3` del bloque de argumentos y llama a `gpu_run` de `runtime/src/gpu_runtime.inc` (el runtime de
   ensamblador de siempre). Lanza y espera. El bloque estándar tiene sitio para `p0`–`p5`, pero el
   ABI C cómodo solo materializa cuatro parámetros directos; para más, pasa un puntero a una estructura.
-- **El arranque** es `1.isa/runtime/crt0.s`; `mini-cc` compila con `mini-lcc --no-crt`.
+- **El arranque** es `runtime/src/crt0.s`; `mini-cc` compila con `mini-lcc --no-crt`.
 - **La divergencia no se escribe:** un `if`, un `while` o un `break` cuyas lanes tomen
   caminos distintos necesita una región abierta con `SSY` (si no, `ERROR_SIMT`). Los pone
   el pase `ssy` de `mini-opt`: delante de cada salto que puede divergir, con el punto donde

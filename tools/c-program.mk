@@ -20,8 +20,8 @@ BOARD_IMAGE := $(OUTDIR)/$(PROGRAM)_board.bin
 MINI_CC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-cc"
 # mini-cc compila solo lo que se le pide (y pone el crt0): el runtime de la GPU se pide aqui. Un programa que no
 # lance trabajos en la GPU desde C puede poner `GPU_RUNTIME :=` antes del include y ahorrarse sus 32 KiB de pila.
-GPU_RUNTIME ?= "$(MINI_GPU_ROOT)/t.tests/runtime/gpu/gpu.c" "$(MINI_GPU_ROOT)/t.tests/inc/gpu_runtime.inc" \
-               "$(MINI_GPU_ROOT)/t.tests/inc/bench.inc"
+GPU_RUNTIME ?= "$(MINI_GPU_ROOT)/runtime/src/gpu.c" "$(MINI_GPU_ROOT)/runtime/src/gpu_runtime.inc" \
+               "$(MINI_GPU_ROOT)/runtime/src/bench.inc"
 SIM_SYS := $(PYTHON) "$(MINI_GPU_ROOT)/tools/sim-sys"
 MINI_DBG := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-dbg"
 RUN_BOARD := $(PYTHON) "$(MINI_GPU_ROOT)/tools/run_board.py"

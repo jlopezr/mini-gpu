@@ -238,7 +238,7 @@ def load_program(path: Path) -> bytes:
         # diga de que fichero viene.
         words = assembler.assemble(
             path.read_text(encoding="utf-8"), path.parent, path.name,
-            (REPOSITORY / "t.tests" / "inc",),
+            (REPOSITORY / "runtime" / "include", REPOSITORY / "runtime" / "src"),
         )
         data = b"".join(struct.pack("<I", word) for word in words)
     else:

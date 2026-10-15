@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(ROOT / "1.isa"))
 from mini_asm import first_pass  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 CLOCK_HZ = 80_000_000
 OPERATIONS = ("memset", "memcpy", "fill_rect", "blit")
@@ -37,7 +38,7 @@ def size_name(size: int) -> str:
 def read_results(program: Path, port: str | None):
     source = program.read_text(encoding="utf-8")
     labels = first_pass(source, program.parent, program.name,
-                        (ROOT / "t.tests" / "inc",), frozenset({"BOARD"}))[1]
+                        ASM_INCLUDE_DIRS, frozenset({"BOARD"}))[1]
     address = labels["bench_done"]
     with tempfile.TemporaryDirectory() as temp:
         block = Path(temp) / "bench.bin"

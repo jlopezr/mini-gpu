@@ -106,7 +106,7 @@ The initial stack top is therefore:
 ```
 
 The startup sequence now also exists as a separate file,
-`1.isa/runtime/crt0.s`, and `mini-lcc --no-crt` (`rcc -crt=none`) leaves it out
+`runtime/src/crt0.s`, and `mini-lcc --no-crt` (`rcc -crt=none`) leaves it out
 of the compiler output (no `_start`, no `.comm __stack`). A program is then
 assembled as `.include "crt0.s"` first (`_start` must sit at address 0) followed
 by the compiled `.s`; a unit without `main`, such as a set of GPU kernels, is

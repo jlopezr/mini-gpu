@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 
 import minigpu_sim as func  # noqa: E402
 from mini_asm import assemble_bytes  # noqa: E402
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 from uarch import Config, Model  # noqa: E402
 
@@ -50,7 +51,7 @@ PROGRAM = ROOT / "t.tests" / "cases-gpu" / "demos" / "plasma" / "plasma_nommio.a
 def build_system(program: Path) -> func.System:
     system = func.System()
     data = assemble_bytes(program.read_text(encoding="utf-8"), program.parent, str(program),
-                          (ROOT / "t.tests" / "inc",))
+                          ASM_INCLUDE_DIRS)
     system.memory[0:len(data)] = data
     system.configure_warps({"warps": [{"id": i, "enabled": True, "pc": 0, "active_mask": 0xFF}
                                  for i in range(8)]})

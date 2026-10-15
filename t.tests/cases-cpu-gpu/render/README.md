@@ -14,7 +14,7 @@ mini-dbg --gpu t.tests/cases-cpu-gpu/render/render/render.asm --window     # dep
 registros de vídeo (en `mini-dbg`, `fb` abre una ventana con el framebuffer).
 
 La CPU configura el vídeo, y en cada frame escribe los argumentos, lanza 8 warps
-con el runtime de `t.tests/inc/gpu_runtime.inc`, espera, pide el `SWAP` y espera a que se
+con el runtime de `runtime/src/gpu_runtime.inc`, espera, pide el `SWAP` y espera a que se
 aplique. Cada uno de los 64 hilos pinta una fila de un mosaico de 80 × 60 celdas
 de 4 × 4 píxeles, con tres ondas triangulares (una por canal RGB565) calculadas
 sin ramas; solo diverge al principio, en los 4 hilos que sobran. Un frame son

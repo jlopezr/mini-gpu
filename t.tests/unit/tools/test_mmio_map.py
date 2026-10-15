@@ -36,6 +36,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 if str(ROOT / "1.isa") not in sys.path:
     sys.path.insert(0, str(ROOT / "1.isa"))
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
 
 from tools.generate_mmio import (  # noqa: E402
     MmioMapError, SOURCE, base_de, desincronizados, generar,
@@ -425,7 +426,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
             ".word MMIO_SERIAL_DATA_ADDR\n"
             ".word MMIO_GPU_SIMT_CONTEXT_ADDR\n"
             ".word MMIO_MAGIC_VALUE\n",
-            include_dirs=(ROOT / "t.tests" / "inc",))
+            include_dirs=ASM_INCLUDE_DIRS)
         self.assertEqual(
             [0x80200004, 0x80100000, 0x82020000, 0x4D474155], palabras)
 
@@ -434,7 +435,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
 
         palabras = assemble(
             '.include "mmio.inc"\nLI R2, MMIO_VIDEO_BASE\n',
-            include_dirs=(ROOT / "t.tests" / "inc",))
+            include_dirs=ASM_INCLUDE_DIRS)
         self.assertEqual(2, len(palabras))
         self.assertEqual(0x8020, palabras[0] & 0xFFFF)
         self.assertEqual(0x0000, palabras[1] & 0xFFFF)
@@ -447,7 +448,7 @@ class EnsamblaDeVerdadTest(unittest.TestCase):
         palabras = assemble(
             '.include "mmio.inc"\n.include "mmio.inc"\n'
             ".word MMIO_VIDEO_BASE\n",
-            include_dirs=(ROOT / "t.tests" / "inc",))
+            include_dirs=ASM_INCLUDE_DIRS)
         self.assertEqual([0x80200000], palabras)
 
 if __name__ == "__main__":

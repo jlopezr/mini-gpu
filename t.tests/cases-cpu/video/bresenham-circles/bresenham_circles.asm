@@ -214,7 +214,7 @@ plot8:
     JAL   R30, putpixel        ; ( y, -x)
     JR    R29
 
-; putpixel vive ahora en t.tests/inc, en una sola copia: estaba duplicado
+; putpixel vive ahora en runtime/src, en una sola copia: estaba duplicado
 ; aqui, en bresenham_lines.asm y en cube.asm. Este programa no usa drawline,
 ; asi que no incluye drawline.inc y no se lleva codigo muerto.
     .include "putpixel.inc"

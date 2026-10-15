@@ -34,7 +34,7 @@ from tools.mini_opt.merge import merge_sources  # noqa: E402
 from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
-RUNTIME = ROOT / "1.isa" / "runtime"
+RUNTIME = ROOT / "runtime" / "src"
 
 # Salida real de `mini-lcc --no-crt` para:
 #   extern volatile int __gpu_tid;

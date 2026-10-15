@@ -61,8 +61,8 @@ $(MATES): $(OUTDIR)/mates.s
 $(RUTINAS): rutinas.asm | $(OUTDIR)
 	$(MINI_ASM) $< --vobj "$@"
 
-$(ARRANQUE): arranque.asm $(ROOT)/1.isa/runtime/crt0.s | $(OUTDIR)
-	$(MINI_ASM) $< -I "$(ROOT)/1.isa/runtime" --vobj "$@"
+$(ARRANQUE): arranque.asm $(ROOT)/runtime/src/crt0.s | $(OUTDIR)
+	$(MINI_ASM) $< -I "$(ROOT)/runtime/src" --vobj "$@"
 
 # --- 3. Biblioteca: los objetos que se enlazan solo si alguien los pide ------
 $(LIB): $(MATES) $(RUTINAS)

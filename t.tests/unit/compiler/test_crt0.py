@@ -1,4 +1,4 @@
-"""El arranque (crt0) fuera del compilador: `mini-lcc --no-crt` + `1.isa/runtime/crt0.s`.
+"""El arranque (crt0) fuera del compilador: `mini-lcc --no-crt` + `runtime/src/crt0.s`.
 
 Sin compilador (la prueba de `crt0.s` con un `main` escrito a mano) siempre corre. La que
 pasa por `rcc` necesita el `build/rcc.exe` de `u.lcc` y MSVC para preprocesar, y se omite
@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "1.isa"))
 
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
 
-RUNTIME = ROOT / "1.isa" / "runtime"
+RUNTIME = ROOT / "runtime" / "src"
 RCC = ROOT / "u.lcc" / "build" / ("rcc.exe" if sys.platform == "win32" else "rcc")
 
 MAIN = """\

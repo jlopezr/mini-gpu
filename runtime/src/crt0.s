@@ -4,7 +4,7 @@
 ;     .include "crt0.s"        ; primero: `_start` tiene que quedar en la direccion 0
 ;     .include "programa.s"    ; el .s de mini-lcc, con `main`
 ;
-; `.include "crt0.s"` desde una carpeta distinta pide `-I 1.isa/runtime`.
+; `.include "crt0.s"` desde una carpeta distinta pide `-I runtime/src`.
 ;
 ; Pone la pila al final de `__stack`, llama a `main` y para cuando vuelve. La pila
 ; va en .bss, despues de todo lo demas; cambiar `CRT_STACK_SIZE` cambia el tamano

@@ -5,7 +5,7 @@
     mini-asm programa.asm -o programa.bin       # con `.include "kernels.opt.s"`
 
 Juntar unidades lo puede hacer el ensamblador con `.include` (y desde que las `L.n` de lcc
-son privadas de cada fichero, dos `.s` no chocan); el arranque, `1.isa/runtime/crt0.s`.
+son privadas de cada fichero, dos `.s` no chocan); el arranque, `runtime/src/crt0.s`.
 Tambien se le pueden pasar varios `.s` a la vez (`mini-opt a.s b.s -o todo.s`): `merge.py` los
 junta en uno, en ese orden, y los pases ven el programa entero. Es lo que hace `mini-cc`.
 Este filtro transforma `.s` en un `.s`: lo trocea en funciones, calcula su grafo de

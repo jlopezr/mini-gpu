@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--include", "-I", action="append", default=[],
                         type=Path, metavar="DIR",
                         help="carpeta extra para los .include; repetible. "
-                             "t.tests/inc se busca siempre")
+                             "runtime/include y runtime/src se buscan siempre")
     parser.add_argument("--gpu", action="store_true",
                         help="simula CPU + GPU sobre la misma RAM "
                              "(32.cpu-gpu-func-sim); el programa lleva el "
@@ -79,10 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def include_dirs(args) -> tuple[Path, ...]:
-    """Dónde buscar los `.include`. `t.tests/inc` va siempre, como en
-    `run-board`: es donde vive `mmio.inc` y casi todo caso de `t.tests` lo
+    """Dónde buscar los `.include`. `runtime/include` y `runtime/src` van siempre,
+    como en `run-board`: ahí vive `mmio.inc` y casi todo caso de `t.tests` lo
     incluye, así que sin esto la mitad de los programas del repo no cargan."""
-    return tuple(args.include) + (ROOT / "t.tests" / "inc",)
+    sys.path.insert(0, str(ROOT / "1.isa"))
+    from runtime_dirs import ASM_INCLUDE_DIRS
+    return tuple(args.include) + ASM_INCLUDE_DIRS
 
 
 def load_program(path: Path, includes: tuple[Path, ...]) -> bytes:

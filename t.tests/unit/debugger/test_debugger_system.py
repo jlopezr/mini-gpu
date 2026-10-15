@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "2.cpu-sim-func"))
 sys.path.insert(0, str(ROOT / "32.cpu-gpu-func-sim"))
+sys.path.insert(0, str(ROOT / "1.isa"))
 
 from cpu_gpu_sim import CpuGpuSystem  # noqa: E402
 from minicpu_sim import CPU  # noqa: E402
@@ -96,7 +97,9 @@ KERNEL_FAULT = """
     HALT
 """
 
-INCLUDES = (ROOT / "t.tests" / "inc",)
+from runtime_dirs import ASM_INCLUDE_DIRS  # noqa: E402
+
+INCLUDES = ASM_INCLUDE_DIRS
 
 
 def build(kernel: str = KERNEL_SIMPLE, **options) -> DebugSession:

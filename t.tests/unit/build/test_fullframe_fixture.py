@@ -31,7 +31,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-INC = ROOT / "t.tests" / "inc"
+INCLUDE_DIRS = (ROOT / "runtime" / "include", ROOT / "runtime" / "src")
 FUENTES = ROOT / "t.tests" / "cases-cpu" / "demos" / "fullframe"
 
 
@@ -94,7 +94,7 @@ class FullframeFixtureTest(unittest.TestCase):
                 imagen = asm.assemble_bytes(
                     banco.read_text(encoding="utf-8"),
                     base_dir=banco.parent, origin=str(banco),
-                    include_dirs=(INC,))
+                    include_dirs=INCLUDE_DIRS)
                 esperado = "".join(
                     f"{int.from_bytes(imagen[i:i + 4], 'little'):08X}\n"
                     for i in range(0, len(imagen), 4))
@@ -106,7 +106,7 @@ class FullframeFixtureTest(unittest.TestCase):
                     f"regeneralo desde esa carpeta:\n"
                     "  python ..\\1.isa\\mini_asm.py "
                     "..\\t.tests\\cases-cpu\\demos\\fullframe\\fullframe_tb.asm "
-                    "--hex fullframe.hex -I ..\\t.tests\\inc")
+                    "--hex fullframe.hex -I ..\\runtime\\include -I ..\\runtime\\src")
 
     def test_los_dos_programas_solo_difieren_en_las_bases(self):
         for nombre, placa, banco, _hex, _bench in CARPETAS:

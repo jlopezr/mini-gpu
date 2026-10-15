@@ -22,12 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "1.isa"), str(ROOT)]
 
 from mini_asm import assemble_bytes, write_hex
+from runtime_dirs import ASM_INCLUDE_DIRS
 
 REFERENCIA = re.compile(
     r"""\$readmemh\(\s*[\"']generated/programs/([A-Za-z0-9_\-]+)\.(hex)[\"']"""
 )
 FUENTES = ROOT / "t.tests"
-INCLUDES = (FUENTES / "inc",)
+INCLUDES = ASM_INCLUDE_DIRS
 
 
 def buscar_fuente(nombre: str) -> Path | None:

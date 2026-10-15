@@ -33,7 +33,8 @@ SOURCES = ["dma/gpu_kernels.c", "race/rotate/rotate.c", "race/life/life.c", "rac
 def static_stats(source: Path) -> str:
     plain = c_build.DEFAULT_OUTDIR / f"{source.stem}.stats.s"
     c_build.DEFAULT_OUTDIR.mkdir(parents=True, exist_ok=True)
-    c_build.run(c_build.TOOLS / "mini-lcc", source, "--no-crt", "-I", c_build.INC, "-o", plain)
+    c_build.run(c_build.TOOLS / "mini-lcc", source, "--no-crt",
+                 *[arg for folder in c_build.C_INCLUDE_DIRS for arg in ("-I", folder)], "-o", plain)
     done = subprocess.run([sys.executable, str(c_build.TOOLS / "mini-opt"), str(plain), "-o", os.devnull,
                            "--stats"], capture_output=True, text=True)
     return done.stderr.rstrip()

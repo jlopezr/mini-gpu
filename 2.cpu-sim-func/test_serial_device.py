@@ -30,13 +30,13 @@ def assemble(path: Path) -> bytes:
     modulo = importlib.util.module_from_spec(spec)
     sys.modules["mini_asm_para_tests"] = modulo
     spec.loader.exec_module(modulo)
-    # Con `-I t.tests/inc`, que es donde vive `mmio.inc` generado: desde MMIO
+    # Con `-I runtime/include`, que es donde vive `mmio.inc` generado: desde MMIO
     # v2 los ejemplos no llevan la direccion cableada, la incluyen.
     palabras = modulo.assemble(
         path.read_text(encoding="utf-8"),
         base_dir=path.parent,
         origin=str(path),
-        include_dirs=(REPO / "t.tests" / "inc",))
+        include_dirs=(REPO / "runtime" / "include", REPO / "runtime" / "src"))
     return b"".join(struct.pack("<I", w) for w in palabras)
 
 
