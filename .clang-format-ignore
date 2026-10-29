@@ -1,0 +1,5 @@
+# Submódulos de terceros (lcc, tui, vlink): VS Code no los reformatea
+u.lcc/**
+v.tui/**
+w.vlink/**
+.venv/**
