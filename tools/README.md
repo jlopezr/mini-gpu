@@ -37,6 +37,18 @@ check-vobj programa.vobj
 Si `vlink` no está en `PATH` ni compilado en `w.vlink`, el comando
 sale con código 77 y lo reporta como skip. También acepta `--vlink /ruta/a/vlink`.
 
+Para inspeccionar un objeto sin enlazar:
+
+```bash
+mini-objdump programa.vobj
+mini-objdump --disassemble programa.vobj
+mini-objdump --json programa.vobj
+```
+
+Un ejemplo completo de compilación separada (dos `.c` y un `.asm` a objetos
+VOBJ, una biblioteca `.a` y vlink descartando lo que no se usa) está en
+[`1.isa/ejemplo-enlazado/`](../1.isa/ejemplo-enlazado/README.md).
+
 ## Comprobar la trazabilidad documental
 
 `trace check` construye un Project Model conforme al metamodelo v0.3. Un fichero
