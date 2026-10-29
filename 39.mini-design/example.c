@@ -14,10 +14,10 @@ static int build_text(const MfFont *font,const char *text,int x,int baseline,Gfx
         if(n>=256)return -1;
         MfGlyph g;
         if(mf_find_glyph(font,*p,&g)){
-            if(*p==' '){pen+=font->pixel_size/2;continue;}
+            if(*p==' '){pen+=font->pixel_size/2+font->font_spacing;continue;}
             return -1;
         }
-        out[n++]=(GfxPositionedGlyph){*p,pen,baseline};pen+=g.advance_x;
+        out[n++]=(GfxPositionedGlyph){*p,pen,baseline};pen+=g.advance_x+font->font_spacing;
     }
     *count=n;return 0;
 }

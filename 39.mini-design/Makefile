@@ -8,7 +8,7 @@ FLB ?= $(RES)/NEWS.FLB
 FONT_DIR = build/fonts
 FONTS_STAMP = $(FONT_DIR)/.stamp
 OBJS = example.o display_list.o renderer_cpu.o minifont.o
-.PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing
+.PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing run-spacing
 .PHONY: shapes icons test-extractors check
 all: example flb-fonts
 example: $(OBJS)
@@ -18,7 +18,7 @@ example: $(OBJS)
 run: example $(FONTS_STAMP)
 	./example $(FONT_DIR)/park10.mf
 clean:
-	rm -f example $(OBJS) demo-320x240.ppm demo-640x480.ppm blit_demo blit_demo.o blit-*.ppm
+	rm -f example $(OBJS) demo-320x240.ppm demo-640x480.ppm blit_demo blit_demo.o blit-*.ppm spacing_demo spacing_demo.o spacing.ppm spacing.png
 	rm -f demo-*.png blit-*.png
 	rm -rf build
 LIB_OBJS = display_list.o renderer_cpu.o minifont.o
@@ -33,6 +33,11 @@ blit_demo: blit_demo.o display_list.o renderer_cpu.o minifont.o
 	$(CC) $(CFLAGS) -o $@ $^
 run-blit: blit_demo
 	./blit_demo
+spacing_demo: spacing_demo.o $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+# Comparación visual: azul = solo advance_x, negro = advance_x + font_spacing.
+run-spacing: spacing_demo $(FONTS_STAMP)
+	./spacing_demo $(FONT_DIR) spacing.ppm
 check-blit: build/test_blit
 	./build/test_blit
 

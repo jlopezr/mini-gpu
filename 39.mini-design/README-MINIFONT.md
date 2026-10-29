@@ -55,10 +55,12 @@ cabecera `.mf` (+28, con el bit 0 de flags). Es **específico de cada fuente**:
 Park 10 = 2, News 10 = 1, Twig = 3 (`flb2mf.py --list` muestra todos). Su
 significado no está confirmado del todo.
 
-`glyph.advance_x` no cambia; la capa de layout puede sumar `font.font_spacing`.
-`GLYPH_RUN` y el renderer no lo aplican. Los `.mf` antiguos (flags=0) siguen
+`glyph.advance_x` no cambia; el layout suma `font.font_spacing` a cada avance
+(`example.c` y `minifont_demo.c` ya lo hacen). `GLYPH_RUN` y el renderer no lo
+aplican: reciben posiciones ya calculadas. Los `.mf` antiguos (flags=0) siguen
 siendo válidos y dan `font_spacing=0`.
 
 ```sh
 make test-flb-spacing
+make run-spacing           # spacing.ppm: sin (azul) y con (negro) font_spacing
 ```
