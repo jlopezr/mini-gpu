@@ -2,8 +2,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-int main(void) {
- FILE *fp=fopen("park10.mf","rb");assert(fp);assert(!fseek(fp,0,SEEK_END));long len=ftell(fp);assert(len>0);rewind(fp);
+int main(int argc,char **argv) {
+ FILE *fp=fopen(argc>1?argv[1]:"build/fonts/park10.mf","rb");assert(fp);assert(!fseek(fp,0,SEEK_END));long len=ftell(fp);assert(len>0);rewind(fp);
  unsigned char *data=malloc((size_t)len);assert(data);assert(fread(data,1,(size_t)len,fp)==(size_t)len);fclose(fp);
  MfFont font;assert(mf_open(&font,data,(size_t)len)==0);MfGlyph g;assert(mf_find_glyph(&font,'A',&g)==0);
  uint16_t frame[32*32]={0};GfxSurface surface={frame,32,32,32};

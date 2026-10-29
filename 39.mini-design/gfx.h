@@ -1,5 +1,5 @@
-#ifndef MINIMASTER_GFX_H
-#define MINIMASTER_GFX_H
+#ifndef MINIDESIGN_GFX_H
+#define MINIDESIGN_GFX_H
 
 #include <stdint.h>
 #include "minifont.h"

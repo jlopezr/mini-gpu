@@ -1,4 +1,4 @@
-# MiniMaster BLIT (CPU reference)
+# MiniDesign BLIT (CPU reference)
 
 `GFX_BLIT` now supports 1bpp MSB-first bitmaps through `GfxResources.bitmaps`. The source rectangle must be wholly inside the bitmap, destination can lie off-screen. Nearest-neighbor resampling, half-open clip, opaque black/white mapping or transparent zero. Source (1) maps to foreground; source (0) maps to background in opaque mode or skips in transparent mode.
 

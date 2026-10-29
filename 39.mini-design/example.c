@@ -51,7 +51,7 @@ static int demo(const MfFont *font,int w,int h,const char *path){
     return fail;
 }
 int main(int argc,char **argv){
-    const char *path=argc>1?argv[1]:"park10.mf";
+    const char *path=argc>1?argv[1]:"build/fonts/park10.mf";
     size_t n=0;uint8_t *data=load(path,&n);MfFont font;
     if(!data||mf_open(&font,data,n)){fprintf(stderr,"Cannot open MFNT font: %s\n",path);free(data);return 1;}
     int rc=demo(&font,320,240,"demo-320x240.ppm")||demo(&font,640,480,"demo-640x480.ppm");free(data);return rc?1:0;

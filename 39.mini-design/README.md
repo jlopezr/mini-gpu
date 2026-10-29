@@ -1,6 +1,9 @@
-# MiniMaster GFX — GLYPH_RUN + MiniFont
+# MiniDesign GFX — GLYPH_RUN + MiniFont
 
 Integración C11 del motor GFX con MiniFont (MFNT v1) y el renderer RGB565 de referencia.
+
+MiniDesign se inspira en NewsMaster 1.5 (de ahí las fuentes `NEWS.FLB` y los
+extractores de recursos de `tools/`), pero es un proyecto propio.
 
 ## Uso
 
@@ -20,7 +23,7 @@ Las coordenadas están en píxeles de la superficie. GLYPH_RUN es transparente, 
 
 `gfx_execute_cpu` original sigue disponible para listas sin recursos. Para glifos se utiliza `gfx_execute_cpu_resources`.
 
-`park10.mf` se incluye solo en este paquete de prueba, extraído del NEWS.FLB proporcionado; comprobar derechos antes de redistribuirlo.
+Las fuentes no se guardan sueltas: `make` (o `make flb-fonts`) extrae las 30 fuentes normales de `resources/NEWS.FLB` a `build/fonts/<nombre>.mf` (`park10.mf`, `news12bold.mf`, …). Fuentes originales de NewsMaster: comprobar derechos antes de redistribuirlas.
 
 ## NewsMaster graphic extractors (v0.3)
 
@@ -40,6 +43,8 @@ comandos. Las coordenadas ya están en píxeles del framebuffer. SET_CLIP
 reemplaza el clip actual; CLEAR rellena toda la superficie. La lista de
 comandos no incluye el destino.
 
-El subdirectorio `minifont/` contiene el proyecto MiniFont completo (formato,
-conversores `bdf2mf.py`/`flb2mf.py`, fuentes y tests). El `Makefile` compila
-directamente `minifont/src/minifont.c` con `-Iminifont/include`.
+MiniFont (lector `.mf`, conversores `tools/bdf2mf.py` y `tools/flb2mf.py`,
+fuentes en `fonts/`) está integrado en este directorio: ver
+[`README-MINIFONT.md`](README-MINIFONT.md) y
+[`MINIFONT-FORMAT.md`](MINIFONT-FORMAT.md). Sus objetivos de make son
+`test-minifont`, `run-minifont`, `flb-park10` y `test-flb`; salida en `build/`.

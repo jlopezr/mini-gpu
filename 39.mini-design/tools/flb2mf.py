@@ -118,10 +118,20 @@ def main():
     p.add_argument('--output',help='MiniFont .mf output');p.add_argument('--sheet',help='PNG contact sheet')
     p.add_argument('--sheet-scale',type=int,default=3,help='pixel scale in sheet (default: 3)')
     p.add_argument('--sheet-cols',type=int,default=10,help='sheet columns (default: 10)')
+    p.add_argument('--all',metavar='DIR',help="export every regular font to DIR/<name>.mf ('glyphs' libraries are skipped)")
+    p.add_argument('--sheets',action='store_true',help='with --all, also write DIR/<name>.png')
     a=p.parse_args();data=Path(a.flb).read_bytes(); fonts=catalogue(data)
     if a.list:
         for f in fonts:print(f"{f['index']:2d}: {f['name']:18} ASCII {f['first']}..{f['last']}")
         return
+    if a.all:
+        out=Path(a.all);out.mkdir(parents=True,exist_ok=True);n=0
+        for f in fonts:
+            if f['name'].startswith('glyphs'):continue
+            glyphs=decode(data,f);stem=f['name'].replace(' ','')
+            export_mf(glyphs,out/f'{stem}.mf');n+=1
+            if a.sheets:sheet(glyphs,out/f'{stem}.png',a.sheet_scale,a.sheet_cols)
+        print(f"Extracted {n} fonts -> {out}/");return
     matches=[f for f in fonts if f['name'].lower()==a.font.lower()]
     if len(matches)!=1:raise SystemExit('font not found or ambiguous; use --list')
     glyphs=decode(data,matches[0]);out=a.output or f"{a.font.replace(' ','_')}.mf"

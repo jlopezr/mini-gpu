@@ -29,6 +29,6 @@ No native C struct packing requirements. One fixed raster size per file.
 
 **Bitmap region:** each glyph is 1 bpp, rows top-down, MSB-left, byte-aligned per row. A bitmap of width w and height h occupies `ceil(w/8) * h` bytes. Unused low bits in the final byte of each row are zero. Blank glyphs (e.g., space) may have zero width/height, positive advance.
 
-**Drawing:** top-left corner `(pen_x+bearing_x, baseline_y-bearing_y)`; pixel 1 draws the foreground color, 0 is transparent. All coordinates here are *raster pixel units*, while MiniMaster document layout retains its own resolution-independent physical units.
+**Drawing:** top-left corner `(pen_x+bearing_x, baseline_y-bearing_y)`; pixel 1 draws the foreground color, 0 is transparent. All coordinates here are *raster pixel units*, while MiniDesign document layout retains its own resolution-independent physical units.
 
 Version 1 deliberately lacks kerning, color, alpha, compression, font-family metadata and multiple strikes. Those belong to a higher-level catalog or later formats. Font data is read-only and owned by the caller.
