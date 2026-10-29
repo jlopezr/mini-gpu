@@ -23,7 +23,8 @@ def catalogue(data):
         a,t,b,first,last=struct.unpack_from('<IIIHH',data,p+52)
         if first>last or t!=(last-first+1)*16 or pos+a+t+b>len(data):
             raise ValueError(f'bad font record {i}')
-        entries.append(dict(index=i,name=name,base=pos,atlas=a,table=t,bitmap=b,first=first,last=last))
+        spacing=struct.unpack_from('<H',data,p+80)[0]
+        entries.append(dict(index=i,name=name,base=pos,atlas=a,table=t,bitmap=b,first=first,last=last,spacing=spacing))
         pos+=a+t+b
     if pos!=len(data): raise ValueError('trailing or missing bytes')
     return entries
@@ -49,7 +50,9 @@ def decode(data,font):
         decoded.append(dict(cp=cp,w=w,h=h,bx=bx,by=by,advance=adv,rows=rows,raw_descriptor=values))
     return decoded
 
-def export_mf(glyphs,path):
+def export_mf(glyphs,path,font_spacing=0):
+    if not 0 <= font_spacing <= 65535:
+        raise ValueError("font_spacing out of range")
     table=bytearray(); bitmaps=bytearray()
     for g in glyphs:
         stride=(g['w']+7)//8; blob=bytearray()
@@ -63,7 +66,7 @@ def export_mf(glyphs,path):
     ascent=max((g['by'] for g in glyphs),default=0)
     descent=max((g['h']-g['by'] for g in glyphs),default=0)
     nominal=ascent+descent
-    header=struct.pack(HEADER,b'MFNT',1,0,len(glyphs),32,32+len(table),ascent,descent,0,nominal,b'\0'*4)
+    header=struct.pack(HEADER,b'MFNT',1,1,len(glyphs),32,32+len(table),ascent,descent,0,nominal,struct.pack('<HH',font_spacing,0))
     Path(path).parent.mkdir(parents=True,exist_ok=True)
     Path(path).write_bytes(header+table+bitmaps)
 
@@ -122,19 +125,19 @@ def main():
     p.add_argument('--sheets',action='store_true',help='with --all, also write DIR/<name>.png')
     a=p.parse_args();data=Path(a.flb).read_bytes(); fonts=catalogue(data)
     if a.list:
-        for f in fonts:print(f"{f['index']:2d}: {f['name']:18} ASCII {f['first']}..{f['last']}")
+        for f in fonts:print(f"{f['index']:2d}: {f['name']:18} ASCII {f['first']}..{f['last']} spacing?={f['spacing']}")
         return
     if a.all:
         out=Path(a.all);out.mkdir(parents=True,exist_ok=True);n=0
         for f in fonts:
             if f['name'].startswith('glyphs'):continue
             glyphs=decode(data,f);stem=f['name'].replace(' ','')
-            export_mf(glyphs,out/f'{stem}.mf');n+=1
+            export_mf(glyphs,out/f'{stem}.mf',f['spacing']);n+=1
             if a.sheets:sheet(glyphs,out/f'{stem}.png',a.sheet_scale,a.sheet_cols)
         print(f"Extracted {n} fonts -> {out}/");return
     matches=[f for f in fonts if f['name'].lower()==a.font.lower()]
     if len(matches)!=1:raise SystemExit('font not found or ambiguous; use --list')
     glyphs=decode(data,matches[0]);out=a.output or f"{a.font.replace(' ','_')}.mf"
-    export_mf(glyphs,out);print(f"Extracted {len(glyphs)} glifos: {a.font} -> {out}")
+    export_mf(glyphs,out,matches[0]['spacing']);print(f"Extracted {len(glyphs)} glifos: {a.font} -> {out} (font_spacing?={matches[0]['spacing']})")
     if a.sheet:sheet(glyphs,a.sheet,a.sheet_scale,a.sheet_cols);print('Contact sheet:',a.sheet)
 if __name__=='__main__':main()

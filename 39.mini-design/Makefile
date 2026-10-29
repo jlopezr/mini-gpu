@@ -8,7 +8,7 @@ FLB ?= $(RES)/NEWS.FLB
 FONT_DIR = build/fonts
 FONTS_STAMP = $(FONT_DIR)/.stamp
 OBJS = example.o display_list.o renderer_cpu.o minifont.o
-.PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb
+.PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing
 .PHONY: shapes icons test-extractors check
 all: example flb-fonts
 example: $(OBJS)
@@ -45,6 +45,8 @@ build/test_minifont: minifont.c tests/test_minifont.c minifont.h | build
 	$(CC) $(CFLAGS) -I. minifont.c tests/test_minifont.c -o $@
 build/test.mf: fonts/test.bdf tools/bdf2mf.py | build
 	$(PYTHON) tools/bdf2mf.py fonts/test.bdf $@
+build/test_spacing: minifont.c tests/test_spacing.c minifont.h | build
+	$(CC) $(CFLAGS) -I. minifont.c tests/test_spacing.c -o $@
 test-minifont: build/test_minifont build/test.mf
 	./build/test_minifont build/test.mf
 run-minifont: test-minifont build/minifont_demo
@@ -63,6 +65,9 @@ flb-sheets:
 	@touch $(FONTS_STAMP)
 test-flb:
 	$(PYTHON) tests/test_flb.py "$(FLB)"
+# font_spacing de Park 10 (=2) y compatibilidad con cabeceras antiguas (flags=0).
+test-flb-spacing: build/test_spacing $(FONTS_STAMP)
+	./build/test_spacing $(FONT_DIR)/park10.mf
 
 # Clipart e iconos de NewsMaster (NEWS.SHP/SDX/SDR/ICN en $(RES)); requiere Pillow.
 shapes:
@@ -72,4 +77,4 @@ icons:
 test-extractors:
 	$(PYTHON) tests/test_extractors.py --resources $(RES)
 
-check: test check-blit test-minifont test-flb test-extractors
+check: test check-blit test-minifont test-flb test-flb-spacing test-extractors

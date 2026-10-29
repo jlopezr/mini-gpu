@@ -15,7 +15,10 @@ assert [''.join('#' if x else '.' for x in row) for row in a['rows']] == [
  '....###....','...##.##...','..##...##..','..##...##..',
  '.##.....##.','.#########.','##.......##','##.......##']
 assert sum(1 for f in fonts if not f['name'].startswith('glyphs'))==30
+# font_spacing (+80, provisional) es por fuente, no global
+spacing={f['name']:f['spacing'] for f in fonts}
+assert (spacing['park 10'],spacing['news 10'],spacing['twig'])==(2,1,3)
 for f in fonts:
  if f['name'].startswith('glyphs'):continue
  assert len(flb2mf.decode(data,f))==f['last']-f['first']+1
-print('FLB checks passed: 30 regular fonts, Park 10 A verified')
+print('FLB checks passed: 30 regular fonts, Park 10 A verified, spacing per font')

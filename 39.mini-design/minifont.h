@@ -15,6 +15,7 @@ typedef struct {
  uint32_t glyph_count, glyph_table_offset, bitmap_offset;
  int16_t ascent, descent, line_gap;
  uint16_t pixel_size;
+ uint16_t font_spacing; /* optional font-level advance spacing (MF flag 0x0001) */
 } MfFont;
 /* All functions return 0 on success. Memory remains owned by caller. */
 int mf_open(MfFont *font, const void *data, size_t size);

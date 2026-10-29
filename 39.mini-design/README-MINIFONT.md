@@ -46,3 +46,19 @@ como ASCII para 33..126 (127 para Bremen). No hay glifo para el espacio (32),
 que debe ser sintetizado por la capa de texto con una anchura adecuada.
 La tabla 'atlas' preliminar no se utiliza. Fuentes originales sujetas a
 los derechos correspondientes: no redistribuir sin autorización.
+
+## Espaciado por fuente de NewsMaster (provisional)
+
+`tools/flb2mf.py` lee el campo u16 little-endian en el offset +80 de cada
+registro de fuente de `NEWS.FLB` y lo guarda como `font_spacing` en la
+cabecera `.mf` (+28, con el bit 0 de flags). Es **específico de cada fuente**:
+Park 10 = 2, News 10 = 1, Twig = 3 (`flb2mf.py --list` muestra todos). Su
+significado no está confirmado del todo.
+
+`glyph.advance_x` no cambia; la capa de layout puede sumar `font.font_spacing`.
+`GLYPH_RUN` y el renderer no lo aplican. Los `.mf` antiguos (flags=0) siguen
+siendo válidos y dan `font_spacing=0`.
+
+```sh
+make test-flb-spacing
+```

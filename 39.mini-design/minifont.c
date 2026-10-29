@@ -13,11 +13,13 @@ static int glyph_at(const MfFont*f,uint32_t ix,MfGlyph*g){
 int mf_open(MfFont *f,const void*data,size_t size){
  if(!f||!data||size<32)return -1;
  memset(f,0,sizeof(*f));const uint8_t*p=(const uint8_t*)data;
- if(memcmp(p,"MFNT",4)||u16(p+4)!=1||u16(p+6)!=0||u32(p+28)!=0||u16(p+18)==0xffff)return -1;
+ uint16_t flags=u16(p+6);
+ if(memcmp(p,"MFNT",4)||u16(p+4)!=1||(flags&~1u)!=0||u16(p+30)!=0||(!(flags&1u)&&u16(p+28)!=0)||u16(p+18)==0xffff)return -1;
  uint32_t n=u32(p+8),to=u32(p+12),bo=u32(p+16);
  if(!range(size,to,(uint64_t)n*24)||bo<to+(uint64_t)n*24||bo>size)return -1;
  f->data=p;f->size=size;f->glyph_count=n;f->glyph_table_offset=to;f->bitmap_offset=bo;
  f->ascent=i16(p+20);f->descent=i16(p+22);f->line_gap=i16(p+24);f->pixel_size=u16(p+26);
+ f->font_spacing=(flags&1u)?u16(p+28):0;
  uint32_t prev=0;
  for(uint32_t i=0;i<n;i++){
   MfGlyph g;glyph_at(f,i,&g);
