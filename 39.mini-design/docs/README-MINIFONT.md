@@ -56,7 +56,7 @@ Park 10 = 2, News 10 = 1, Twig = 3 (`flb2mf.py --list` muestra todos). Su
 significado no está confirmado del todo.
 
 `glyph.advance_x` no cambia; el layout suma `font.font_spacing` a cada avance
-(`example.c` y `minifont_demo.c` ya lo hacen). `GLYPH_RUN` y el renderer no lo
+(`examples/example.c` y `examples/minifont_demo.c` ya lo hacen). `GLYPH_RUN` y el renderer no lo
 aplican: reciben posiciones ya calculadas. Los `.mf` antiguos (flags=0) siguen
 siendo válidos y dan `font_spacing=0`.
 

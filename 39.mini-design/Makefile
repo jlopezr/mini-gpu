@@ -1,5 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wpedantic
+CPPFLAGS += -Isrc
 PYTHON ?= python3
 # Originales de NewsMaster (NEWS.FLB/SHP/SDX/SDR/ICN). Las fuentes se extraen
 # de NEWS.FLB en el build, no se guardan sueltas.
@@ -7,51 +8,65 @@ RES ?= resources
 FLB ?= $(RES)/NEWS.FLB
 FONT_DIR = build/fonts
 FONTS_STAMP = $(FONT_DIR)/.stamp
-OBJS = example.o display_list.o renderer_cpu.o minifont.o
+
+# src/: librería (GFX, MiniFont, MiniDesign). examples/: demos. Todo se compila en build/.
+HDRS = $(wildcard src/*.h)
+GFX_OBJS = build/display_list.o build/renderer_cpu.o build/minifont.o
+DOC_OBJS = build/document.o build/layout.o build/viewport.o build/document_render.o
+DEMOS = build/example build/blit_demo build/spacing_demo build/page_demo build/minifont_demo
+
 .PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing run-spacing
-.PHONY: shapes icons test-extractors check
-all: example flb-fonts
-example: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
-%.o: %.c gfx.h minifont.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-run: example $(FONTS_STAMP)
-	./example $(FONT_DIR)/park10.mf
-clean:
-	rm -f example $(OBJS) demo-320x240.ppm demo-640x480.ppm blit_demo blit_demo.o blit-*.ppm spacing_demo spacing_demo.o spacing.ppm spacing.png
-	rm -f demo-*.png blit-*.png
-	rm -rf build
-LIB_OBJS = display_list.o renderer_cpu.o minifont.o
-build/test_gfx: tests/test_gfx.c $(LIB_OBJS) gfx.h minifont.h | build
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_gfx.c $(LIB_OBJS)
-build/test_blit: tests/test_blit.c $(LIB_OBJS) gfx.h minifont.h | build
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_blit.c $(LIB_OBJS)
-test: build/test_gfx $(FONTS_STAMP)
-	./build/test_gfx $(FONT_DIR)/park10.mf
+.PHONY: shapes icons test-extractors check run-page test-document test-layout test-viewport test-design
+all: $(DEMOS) flb-fonts
 
-blit_demo: blit_demo.o display_list.o renderer_cpu.o minifont.o
-	$(CC) $(CFLAGS) -o $@ $^
-run-blit: blit_demo
-	./blit_demo
-spacing_demo: spacing_demo.o $(LIB_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
-# Comparación visual: azul = solo advance_x, negro = advance_x + font_spacing.
-run-spacing: spacing_demo $(FONTS_STAMP)
-	./spacing_demo $(FONT_DIR) spacing.ppm
-check-blit: build/test_blit
-	./build/test_blit
-
-# MiniFont: lector .mf, conversores y tests. Salida en build/.
 build:
 	mkdir -p build
-build/minifont_demo: minifont.c minifont_demo.c minifont.h | build
-	$(CC) $(CFLAGS) minifont.c minifont_demo.c -o $@
-build/test_minifont: minifont.c tests/test_minifont.c minifont.h | build
-	$(CC) $(CFLAGS) -I. minifont.c tests/test_minifont.c -o $@
+build/%.o: src/%.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+build/%.o: examples/%.c $(HDRS) examples/demo_icons.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+build/example build/blit_demo build/spacing_demo: build/%: build/%.o $(GFX_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+build/page_demo: build/page_demo.o $(DOC_OBJS) $(GFX_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+build/minifont_demo: build/minifont_demo.o build/minifont.o
+	$(CC) $(CFLAGS) -o $@ $^
+build/test_%: tests/test_%.c tests/test_fonts.h $(HDRS) $(DOC_OBJS) $(GFX_OBJS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(DOC_OBJS) $(GFX_OBJS)
+
+clean:
+	rm -rf build
+	rm -f demo-*.ppm blit-*.ppm spacing.ppm page*.ppm demo-*.png blit-*.png spacing.png page*.png
+
+# GFX: GLYPH_RUN, BLIT y espaciado por fuente.
+run: build/example $(FONTS_STAMP)
+	./build/example $(FONT_DIR)/park10.mf
+test: build/test_gfx $(FONTS_STAMP)
+	./build/test_gfx $(FONT_DIR)/park10.mf
+run-blit: build/blit_demo
+	./build/blit_demo
+check-blit: build/test_blit
+	./build/test_blit
+# Comparación visual: azul = solo advance_x, negro = advance_x + font_spacing.
+run-spacing: build/spacing_demo $(FONTS_STAMP)
+	./build/spacing_demo $(FONT_DIR) spacing.ppm
+
+# MiniDesign v0.4: modelo de documento, layout, viewport y render a display list.
+# page1-320x240, page1-640x480, page1-100 (100 %) y page2-* si hay segunda página.
+# Opcional: make run-page PAGE_ARGS="250 20 3"  (imagen en %, nº de párrafos, nº de columnas)
+run-page: build/page_demo $(FONTS_STAMP)
+	./build/page_demo $(FONT_DIR) $(RES) $(PAGE_ARGS)
+test-document: build/test_document
+	./build/test_document
+test-layout: build/test_layout
+	./build/test_layout
+test-viewport: build/test_viewport
+	./build/test_viewport
+test-design: test-document test-layout test-viewport
+
+# MiniFont: lector .mf, conversores y tests.
 build/test.mf: fonts/test.bdf tools/bdf2mf.py | build
 	$(PYTHON) tools/bdf2mf.py fonts/test.bdf $@
-build/test_spacing: minifont.c tests/test_spacing.c minifont.h | build
-	$(CC) $(CFLAGS) -I. minifont.c tests/test_spacing.c -o $@
 test-minifont: build/test_minifont build/test.mf
 	./build/test_minifont build/test.mf
 run-minifont: test-minifont build/minifont_demo
@@ -82,4 +97,4 @@ icons:
 test-extractors:
 	$(PYTHON) tests/test_extractors.py --resources $(RES)
 
-check: test check-blit test-minifont test-flb test-flb-spacing test-extractors
+check: test check-blit test-minifont test-flb test-flb-spacing test-design test-extractors

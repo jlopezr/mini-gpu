@@ -27,7 +27,7 @@ Implementar un primer modelo de documento y un motor de composición (*layout*) 
 
 - Tamaño de papel A4.
 - Márgenes configurables.
-- Dos columnas de texto.
+- Dos o más columnas de texto.
 - Título y párrafos.
 - Una ilustración bitmap insertada en el documento.
 - Flujo automático del texto alrededor de la ilustración.

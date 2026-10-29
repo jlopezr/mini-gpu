@@ -5,12 +5,15 @@ Integración C11 del motor GFX con MiniFont (MFNT v1) y el renderer RGB565 de re
 MiniDesign se inspira en NewsMaster 1.5 (de ahí las fuentes `NEWS.FLB` y los
 extractores de recursos de `tools/`), pero es un proyecto propio.
 
+Modelo de documento, composición en columnas y páginas y viewport (v0.4):
+ver [`docs/README-DESIGN.md`](docs/README-DESIGN.md) (`make run-page`, `make test-design`).
+
 ## Uso
 
 ```sh
 make run
-# Con otra fuente .mf (debe contener los glifos ASCII usados por example.c):
-./example /ruta/a/otra_fuente.mf
+# Con otra fuente .mf (debe contener los glifos ASCII usados por examples/example.c):
+./build/example /ruta/a/otra_fuente.mf
 ```
 
 Genera `demo-320x240.ppm` y `demo-640x480.ppm`. En macOS puedes convertir con `sips -s format png demo-320x240.ppm --out demo-320x240.png`.
@@ -45,6 +48,6 @@ comandos no incluye el destino.
 
 MiniFont (lector `.mf`, conversores `tools/bdf2mf.py` y `tools/flb2mf.py`,
 fuentes en `fonts/`) está integrado en este directorio: ver
-[`README-MINIFONT.md`](README-MINIFONT.md) y
-[`MINIFONT-FORMAT.md`](MINIFONT-FORMAT.md). Sus objetivos de make son
+[`docs/README-MINIFONT.md`](docs/README-MINIFONT.md) y
+[`docs/MINIFONT-FORMAT.md`](docs/MINIFONT-FORMAT.md). Sus objetivos de make son
 `test-minifont`, `run-minifont`, `flb-park10` y `test-flb`; salida en `build/`.
