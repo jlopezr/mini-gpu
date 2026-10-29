@@ -70,6 +70,7 @@ typedef struct {
         struct {
             uint32_t run_id;
             uint16_t color;
+            uint16_t scale; /* integer pixel scale; 0 and 1 = 1x */
         } glyph_run;
         struct {
             GfxRect rect;
@@ -92,7 +93,10 @@ int gfx_list_add(GfxDisplayList *list, GfxCommand command);
 /* CPU reference renderer. All clip rectangles are half-open; SET_CLIP resets
    the current clip to its intersection with the surface (not the prior clip).
    Lines are one pixel wide. BLIT samples nearest neighbor at destination pixel
-   centers, without smoothing. Unimplemented commands return an error. */
+   centers, without smoothing. GLYPH_RUN with scale k draws every glyph pixel
+   as a k x k block; positions stay in surface pixels and bearings are scaled
+   (k <= GFX_GLYPH_MAX_SCALE). Unimplemented commands return an error. */
+#define GFX_GLYPH_MAX_SCALE 64
 int gfx_execute_cpu(const GfxDisplayList *list, GfxSurface *surface);
 int gfx_execute_cpu_resources(const GfxDisplayList *list, GfxSurface *surface, const GfxResources *resources);
 

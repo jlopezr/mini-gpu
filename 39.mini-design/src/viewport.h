@@ -20,7 +20,12 @@ int md_viewport_fit_page(MdViewport *vp, int32_t screen_w, int32_t screen_h, MdP
 int md_viewport_zoom(MdViewport *vp, int32_t screen_w, int32_t screen_h, uint32_t num, uint32_t den, MdUnit scroll_x, MdUnit scroll_y);
 /* 100 %: one font pixel is one screen pixel. */
 int md_viewport_actual_size(MdViewport *vp, int32_t screen_w, int32_t screen_h, MdUnit scroll_x, MdUnit scroll_y);
-/* Glyph bitmaps can only be drawn at this scale (GLYPH_RUN does not scale). */
+/* Integer zoom: one font pixel is `factor` screen pixels (200 % = 2). */
+int md_viewport_text_zoom(MdViewport *vp, int32_t screen_w, int32_t screen_h, uint32_t factor, MdUnit scroll_x, MdUnit scroll_y);
+/* Screen pixels per font pixel if it is a whole number usable by GLYPH_RUN
+   (1..GFX_GLYPH_MAX_SCALE), otherwise 0: text is then drawn greeked. */
+uint32_t md_viewport_text_scale(const MdViewport *vp);
+/* Same as md_viewport_text_scale(vp) == 1. */
 int md_viewport_native_text(const MdViewport *vp);
 
 int32_t md_viewport_x(const MdViewport *vp, MdUnit x);

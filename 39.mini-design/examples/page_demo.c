@@ -1,5 +1,9 @@
-/* MiniDesign v0.4 demo: an A4 page built programmatically, composed by the
-   layout engine and rendered through MiniGFX.
+/* Page demo: an A4 MiniDesign document built programmatically, composed by
+   the layout engine and rendered through MiniGFX. Headline and kicker span
+   all columns, the body is justified with italic runs, the first picture
+   straddles the column gap and the second one has text on both sides.
+   Output: page1-320x240, page1-640x480, page1-100, page1-200, page2-320x240,
+           page2-640x480, page2-100 (.ppm)
    Usage: page_demo [font_dir] [resource_dir] [image_percent] [paragraphs] [columns]
    Changing any of the numbers recomposes lines, columns and pages. */
 #include "document_render.h"
@@ -10,9 +14,10 @@
 enum { FONT_BODY,
     FONT_TITLE,
     FONT_KICKER,
+    FONT_ITALIC,
     FONT_COUNT };
-static const char *font_files[FONT_COUNT] = {"news10.mf", "news24bold.mf", "park10bold.mf"};
-#define SHAPE_INDEX 130 /* "Newspaper" in NEWS.SHP */
+static const char *font_files[FONT_COUNT] = {"news10.mf", "news24bold.mf", "park10bold.mf", "news10italic.mf"};
+static const uint32_t shapes[2] = {130, 127}; /* "Newspaper" and "Antique Clock" in NEWS.SHP */
 
 static const char *paragraphs[] = {
     "MiniDesign is a desktop publishing program for the MiniCPU and MiniGPU, inspired by NewsMaster 1.5. "
@@ -38,6 +43,16 @@ static const char *paragraphs[] = {
     "justification are left for later versions.",
 };
 #define PARAGRAPH_POOL (sizeof(paragraphs) / sizeof(paragraphs[0]))
+/* Words set in italic, one per paragraph of the pool. */
+static const char *emphasis[PARAGRAPH_POOL] = {"MiniDesign", "1/720 inch", "story", "a new page is created", "exclusion rectangle",
+    "full page view", "plain C11"};
+
+static int emphasize(MdDocument *doc, uint32_t story, uint32_t paragraph, const char *words, uint32_t style) {
+    const char *text = doc->stories[story].paragraphs[paragraph].text, *at = strstr(text, words);
+    if (!at) return -1;
+    uint32_t start = (uint32_t)(at - text);
+    return md_paragraph_add_run(doc, story, paragraph, start, start + (uint32_t)strlen(words), style);
+}
 
 static uint8_t *load(const char *dir, const char *name, size_t *n) {
     char path[1024];
@@ -104,13 +119,14 @@ int main(int argc, char **argv) {
         font_table[i] = &fonts[i];
     }
     size_t shp_n = 0, sdx_n = 0;
-    GfxBitmap picture;
+    GfxBitmap pictures[2];
     shp = load(res_dir, "NEWS.SHP", &shp_n);
     sdx = load(res_dir, "NEWS.SDX", &sdx_n);
-    if (!shp || !sdx || shape_bitmap(shp, shp_n, sdx, sdx_n, SHAPE_INDEX, &picture)) {
-        fprintf(stderr, "Cannot read shape %d from %s/NEWS.SHP and NEWS.SDX\n", SHAPE_INDEX, res_dir);
-        goto done;
-    }
+    for (int i = 0; i < 2; i++)
+        if (!shp || !sdx || shape_bitmap(shp, shp_n, sdx, sdx_n, shapes[i], &pictures[i])) {
+            fprintf(stderr, "Cannot read shape %u from %s/NEWS.SHP and NEWS.SDX\n", shapes[i], res_dir);
+            goto done;
+        }
 
     MdDocument doc;
     MdPageSettings settings = md_page_settings_a4();
@@ -119,23 +135,34 @@ int main(int argc, char **argv) {
     uint32_t c_body = md_add_character_style(&doc, (MdCharacterStyle){FONT_BODY, 0, 0x0000});
     uint32_t c_title = md_add_character_style(&doc, (MdCharacterStyle){FONT_TITLE, 0, 0x0000});
     uint32_t c_kicker = md_add_character_style(&doc, (MdCharacterStyle){FONT_KICKER, 0, 0x8000});
-    uint32_t p_kicker = md_add_paragraph_style(&doc, (MdParagraphStyle){c_kicker, 0, 100, 0, md_units_from_pt(4), 0, MD_ALIGN_LEFT});
-    uint32_t p_title = md_add_paragraph_style(&doc, (MdParagraphStyle){c_title, 0, 100, 0, md_units_from_pt(10), 0, MD_ALIGN_LEFT});
-    uint32_t p_body = md_add_paragraph_style(&doc,
-        (MdParagraphStyle){c_body, 0, 115, 0, md_units_from_pt(5), md_units_from_pt(12), MD_ALIGN_LEFT});
+    uint32_t c_italic = md_add_character_style(&doc, (MdCharacterStyle){FONT_ITALIC, 0, 0x0000});
+    MdUnit pt = md_units_from_pt(1);
+    uint32_t p_kicker = md_add_paragraph_style(&doc, (MdParagraphStyle){c_kicker, 0, 100, 0, 4 * pt, 0, MD_ALIGN_CENTER, MD_SPAN_ALL});
+    uint32_t p_title = md_add_paragraph_style(&doc, (MdParagraphStyle){c_title, 0, 100, 0, 2 * pt, 0, MD_ALIGN_CENTER, MD_SPAN_ALL});
+    uint32_t p_byline = md_add_paragraph_style(&doc, (MdParagraphStyle){c_italic, 0, 100, 0, 14 * pt, 0, MD_ALIGN_CENTER, MD_SPAN_ALL});
+    uint32_t p_body = md_add_paragraph_style(&doc, (MdParagraphStyle){c_body, 0, 115, 0, 5 * pt, 12 * pt, MD_ALIGN_JUSTIFY, MD_SPAN_COLUMN});
     uint32_t story = md_add_story(&doc);
-    int fail = c_body == UINT32_MAX || c_title == UINT32_MAX || c_kicker == UINT32_MAX || p_kicker == UINT32_MAX ||
-        p_title == UINT32_MAX || p_body == UINT32_MAX || story == UINT32_MAX;
-    fail |= md_story_add_paragraph(&doc, story, p_kicker, "THE MINIGPU TIMES - VOLUME 0.4") == UINT32_MAX;
+    int fail = c_body == UINT32_MAX || c_title == UINT32_MAX || c_kicker == UINT32_MAX || c_italic == UINT32_MAX || p_kicker == UINT32_MAX ||
+        p_title == UINT32_MAX || p_byline == UINT32_MAX || p_body == UINT32_MAX || story == UINT32_MAX;
+    fail |= md_story_add_paragraph(&doc, story, p_kicker, "THE MINIGPU TIMES - VOLUME 0.5") == UINT32_MAX;
     fail |= md_story_add_paragraph(&doc, story, p_title, "Pages that compose themselves") == UINT32_MAX;
-    for (int i = 0; i < count; i++)
-        fail |= md_story_add_paragraph(&doc, story, p_body, paragraphs[(size_t)i % PARAGRAPH_POOL]) == UINT32_MAX;
-    /* Centred picture: with two columns it straddles the gap and both wrap around it. */
-    MdUnit w = (MdUnit)((int64_t)picture.width * MD_UNITS_PER_FONT_PX * image_percent / 100);
-    MdUnit h = (MdUnit)((int64_t)picture.height * MD_UNITS_PER_FONT_PX * image_percent / 100);
-    MdUnit top = md_page_content(&doc.page).y + md_units_from_mm10(700);
-    fail |= md_add_graphic(&doc, (MdGraphicObject){0, {(doc.page.paper.width - w) / 2, top, w, h}, 0, md_units_from_pt(6), 1, 0x0000}) ==
+    fail |= md_story_add_paragraph(&doc, story, p_byline, "Justified columns, headlines across the page and text on both sides of a picture") ==
         UINT32_MAX;
+    for (int i = 0; !fail && i < count; i++) {
+        uint32_t id = md_story_add_paragraph(&doc, story, p_body, paragraphs[(size_t)i % PARAGRAPH_POOL]);
+        fail |= id == UINT32_MAX || emphasize(&doc, story, id, emphasis[(size_t)i % PARAGRAPH_POOL], c_italic);
+    }
+    /* Page 1: centred picture; with two columns it straddles the gap and both columns wrap around it. */
+    MdUnit w = (MdUnit)((int64_t)pictures[0].width * MD_UNITS_PER_FONT_PX * image_percent / 100);
+    MdUnit h = (MdUnit)((int64_t)pictures[0].height * MD_UNITS_PER_FONT_PX * image_percent / 100);
+    MdUnit top = md_page_content(&doc.page).y + md_units_from_mm10(800);
+    fail |= md_add_graphic(&doc, (MdGraphicObject){0, {(doc.page.paper.width - w) / 2, top, w, h}, 0, 6 * pt, MD_WRAP_LARGEST, 0x0000}) ==
+        UINT32_MAX;
+    /* Page 2: picture in the middle of the first column, text on both sides. */
+    MdRect col = md_page_column(&doc.page, 0);
+    MdUnit w2 = (MdUnit)pictures[1].width * MD_UNITS_PER_FONT_PX, h2 = (MdUnit)pictures[1].height * MD_UNITS_PER_FONT_PX;
+    MdUnit top2 = col.y + md_units_from_mm10(1200);
+    fail |= md_add_graphic(&doc, (MdGraphicObject){1, {col.x + (col.w - w2) / 2, top2, w2, h2}, 1, 4 * pt, MD_WRAP_BOTH, 0x0010}) == UINT32_MAX;
 
     MdLayout layout;
     if (fail || md_layout_story(&doc, story, font_table, FONT_COUNT, &layout)) {
@@ -146,7 +173,7 @@ int main(int argc, char **argv) {
     printf("Layout: %u page(s), %u lines, %u glyphs, %u overflow line(s)\n", layout.page_count, layout.line_count, layout.glyph_count,
         layout.overflow_count);
 
-    GfxResources res = {.fonts = font_table, .font_count = FONT_COUNT, .bitmaps = &picture, .bitmap_count = 1};
+    GfxResources res = {.fonts = font_table, .font_count = FONT_COUNT, .bitmaps = pictures, .bitmap_count = 2};
     MdRenderOptions opt = md_render_default_options(), guides = opt;
     guides.show_guides = 1;
     MdViewport vp;
@@ -160,12 +187,18 @@ int main(int argc, char **argv) {
                 write_page(&doc, &layout, p, &vp, &res, &opt, path);
         }
     }
-    /* 100 %: real glyphs around the picture, with column and exclusion guides. */
-    if (!rc) {
-        MdUnit page_px = doc.page.paper.width / MD_UNITS_PER_FONT_PX;
-        rc = md_viewport_actual_size(&vp, 640, 480, -((640 - page_px) / 2) * MD_UNITS_PER_FONT_PX, top - md_units_from_mm10(400)) ||
+    /* 100 %: real glyphs around the pictures, with column and exclusion guides. */
+    MdUnit page_px = doc.page.paper.width / MD_UNITS_PER_FONT_PX, left = -((640 - page_px) / 2) * MD_UNITS_PER_FONT_PX;
+    if (!rc)
+        rc = md_viewport_actual_size(&vp, 640, 480, left, top - md_units_from_mm10(400)) ||
             write_page(&doc, &layout, 0, &vp, &res, &guides, "page1-100.ppm");
-    }
+    if (!rc && layout.page_count > 1)
+        rc = md_viewport_actual_size(&vp, 640, 480, left, top2 - md_units_from_mm10(250)) ||
+            write_page(&doc, &layout, 1, &vp, &res, &guides, "page2-100.ppm");
+    /* 200 %: the headline and the start of the first column, glyphs scaled by GLYPH_RUN. */
+    if (!rc)
+        rc = md_viewport_text_zoom(&vp, 640, 480, 2, doc.page.margin_left - md_units_from_mm10(50), doc.page.margin_top - md_units_from_mm10(50)) ||
+            write_page(&doc, &layout, 0, &vp, &res, &opt, "page1-200.ppm");
     md_layout_free(&layout);
     md_document_free(&doc);
     rc = rc ? 1 : 0;

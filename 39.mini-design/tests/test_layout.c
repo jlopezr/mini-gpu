@@ -6,9 +6,9 @@
 #include <string.h>
 
 /* Small page: 2 columns of 900 x 1200 units = 12 lines of 100 units each. */
-static uint8_t buf0[TF_SIZE], buf1[TF_SIZE];
-static MfFont font0, font1; /* font1 has font_spacing = 1 */
-static const MfFont *fonts[2] = {&font0, &font1};
+static uint8_t buf0[TF_SIZE], buf1[TF_SIZE], buf2[TF_SIZE];
+static MfFont font0, font1, font2; /* font1: font_spacing = 1; font2: ascent 12 (15 px line) */
+static const MfFont *fonts[3] = {&font0, &font1, &font2};
 
 static void make_doc(MdDocument *d, MdParagraphStyle ps, MdUnit letter_spacing, uint32_t font_id) {
     MdPageSettings page = {{2200, 1400}, 100, 100, 100, 100, 2, 200};
@@ -18,7 +18,9 @@ static void make_doc(MdDocument *d, MdParagraphStyle ps, MdUnit letter_spacing, 
     assert(md_add_story(d) == 0);
 }
 static void add(MdDocument *d, const char *text) { assert(md_story_add_paragraph(d, 0, 0, text) != UINT32_MAX); }
-static void layout(const MdDocument *d, MdLayout *l) { assert(md_layout_story(d, 0, fonts, 2, l) == 0); }
+static void layout(const MdDocument *d, MdLayout *l) { assert(md_layout_story(d, 0, fonts, 3, l) == 0); }
+static uint32_t add_style(MdDocument *d, MdParagraphStyle ps) { return md_add_paragraph_style(d, ps); }
+static void add_p(MdDocument *d, uint32_t style, const char *text) { assert(md_story_add_paragraph(d, 0, style, text) != UINT32_MAX); }
 static char *repeat(const char *word, int n) {
     size_t w = strlen(word);
     char *s = malloc((w + 1) * (size_t)n + 1);
@@ -52,7 +54,10 @@ static void check_bounds(const MdLayout *l) {
 int main(void) {
     tf_open(&font0, buf0, 0);
     tf_open(&font1, buf1, 1);
-    MdParagraphStyle body = {0, 0, 0, 0, 0, 0, MD_ALIGN_LEFT};
+    tf_build(buf2, 0);
+    buf2[20] = 12;
+    assert(mf_open(&font2, buf2, TF_SIZE) == 0);
+    MdParagraphStyle body = {0, 0, 0, 0, 0, 0, MD_ALIGN_LEFT, MD_SPAN_COLUMN};
     MdDocument d;
     MdLayout l;
 
@@ -192,6 +197,121 @@ int main(void) {
     check_bounds(&l);
     md_layout_free(&l);
     md_document_free(&d);
+
+    /* Alignment on "aaaa" x 10: natural widths 890, 890, 430 in a 900-unit column. */
+    MdParagraphStyle al = body;
+    al.align = MD_ALIGN_RIGHT;
+    make_doc(&d, al, 0, 0);
+    add(&d, ten);
+    layout(&d, &l);
+    for (uint32_t i = 0; i < 3; i++) assert(l.lines[i].x + l.lines[i].width == 1000);
+    check_bounds(&l);
+    md_layout_free(&l);
+    md_document_free(&d);
+    al.align = MD_ALIGN_CENTER;
+    make_doc(&d, al, 0, 0);
+    add(&d, ten);
+    layout(&d, &l);
+    assert(l.lines[0].x == 105 && l.lines[2].x == 335 && l.lines[2].width == 430);
+    md_layout_free(&l);
+    md_document_free(&d);
+    al.align = MD_ALIGN_JUSTIFY;
+    make_doc(&d, al, 0, 0);
+    add(&d, ten);
+    add(&d, "aaaaaaaaaaaaaaaa aaaa"); /* 800 + 30 + 200: one word per line */
+    layout(&d, &l);
+    assert(l.lines[0].x == 100 && l.lines[0].width == 900 && l.lines[1].width == 900);
+    assert(l.glyphs[4].x == 100 + 200 + 30 + 4 && l.glyphs[8].x == 100 + 460 + 4 + 3 && l.glyphs[12].x == 100 + 690 + 10);
+    assert(l.lines[2].x == 100 && l.lines[2].width == 430); /* last line of the paragraph */
+    assert(l.lines[3].width == 800 && l.lines[4].width == 200); /* single word, then last line */
+    assert(l.glyph_count == 40 + 16 + 4);
+    check_bounds(&l);
+    md_layout_free(&l);
+    md_document_free(&d);
+
+    /* MD_SPAN_ALL headline: one frame across both columns, text below it in columns. */
+    MdParagraphStyle head = body;
+    head.span = MD_SPAN_ALL;
+    make_doc(&d, body, 0, 0);
+    uint32_t p_head = add_style(&d, head);
+    add_p(&d, p_head, ten);
+    add(&d, long_text);
+    layout(&d, &l);
+    const MdTextFrame *hf = &l.frames[l.lines[0].frame];
+    assert(hf->span == 2 && hf->rect.x == 100 && hf->rect.w == 2000 && hf->rect.h == 200);
+    assert(l.lines[0].glyph_count == 32 && l.lines[1].frame == l.lines[0].frame && l.lines[2].top == 300);
+    assert(l.frames[l.lines[2].frame].rect.y == 300 && l.frames[l.lines[2].frame].rect.h == 1000);
+    uint32_t c1 = 0;
+    while (l.frames[l.lines[c1].frame].column != 1) c1++;
+    assert(c1 == 2 + 10 && l.lines[c1].top == 300 && l.lines[c1].x == 1200); /* 10 lines fit below the headline */
+    assert(l.pages[0].frame_count == 3);
+    check_bounds(&l);
+    md_layout_free(&l);
+    md_document_free(&d);
+    /* Mid-column headline: the band above is cut, columns restart below it. */
+    make_doc(&d, body, 0, 0);
+    p_head = add_style(&d, head);
+    char *five = repeat("aaaa", 4 * 5);
+    add(&d, five);
+    add_p(&d, p_head, "aaaa");
+    add(&d, long_text);
+    layout(&d, &l);
+    assert(l.lines[5].top == 600 && l.frames[l.lines[5].frame].span == 2);
+    assert(l.frames[1].rect.y == 100 && l.frames[1].rect.h == 500); /* column 1 of the first band */
+    assert(l.lines[6].top == 700 && l.frames[l.lines[6].frame].rect.y == 700);
+    check_bounds(&l);
+    md_layout_free(&l);
+    md_document_free(&d);
+    /* Headline after the text moved to column 1: next page. */
+    make_doc(&d, body, 0, 0);
+    p_head = add_style(&d, head);
+    char *fifteen = repeat("aaaa", 4 * 15);
+    add(&d, fifteen);
+    add_p(&d, p_head, "aaaa");
+    layout(&d, &l);
+    assert(l.lines[15].page == 1 && l.lines[15].top == 100 && l.frames[l.lines[15].frame].span == 2);
+    md_layout_free(&l);
+    md_document_free(&d);
+
+    /* Character style runs: glyph styles, advances and the largest line metrics. */
+    make_doc(&d, body, 0, 0);
+    uint32_t cs_spaced = md_add_character_style(&d, (MdCharacterStyle){1, 0, 0});
+    uint32_t cs_tall = md_add_character_style(&d, (MdCharacterStyle){2, 0, 0});
+    add(&d, "aaaa aaaa");
+    add(&d, "aaaa aaaa");
+    add(&d, "aaaa");
+    assert(md_paragraph_add_run(&d, 0, 0, 5, 9, cs_spaced) == 0);
+    assert(md_paragraph_add_run(&d, 0, 1, 0, 2, cs_tall) == 0);
+    layout(&d, &l);
+    assert(l.glyphs[3].character_style == 0 && l.glyphs[4].character_style == cs_spaced);
+    assert(l.glyphs[4].x == 100 + 200 + 30 && l.glyphs[5].x - l.glyphs[4].x == 60 && l.lines[0].width == 200 + 30 + 240);
+    assert(l.lines[1].top == 200 && l.lines[1].height == 150 && l.lines[1].baseline == 200 + 120);
+    assert(l.lines[2].top == 350 && l.lines[2].height == 100);
+    md_layout_free(&l);
+    md_document_free(&d);
+
+    /* MD_WRAP_BOTH: text on both sides of a graphic in the middle of column 0. */
+    make_doc(&d, body, 0, 0);
+    add(&d, long_text);
+    assert(md_add_graphic(&d, (MdGraphicObject){0, {475, 300, 150, 300}, 0, 0, MD_WRAP_BOTH, 0}) == 0);
+    layout(&d, &l);
+    assert(l.lines[2].top == 300 && l.lines[2].x == 100 && l.lines[3].top == 300 && l.lines[3].x == 625);
+    assert(l.lines[4].top == 400 && l.lines[5].top == 400 && l.lines[8].top == 600 && l.lines[8].width == 890);
+    for (uint32_t i = 2; i < 8; i++) assert(l.lines[i].glyph_count == 4);
+    check_order(&l, long_text);
+    check_bounds(&l);
+    md_layout_free(&l);
+    d.graphics[0].wrap = MD_WRAP_LARGEST; /* same picture: only the left piece (tie) */
+    layout(&d, &l);
+    assert(l.lines[2].top == 300 && l.lines[2].x == 100 && l.lines[3].top == 400);
+    md_layout_free(&l);
+    d.graphics[0].wrap = MD_WRAP_NONE;
+    layout(&d, &l);
+    assert(l.lines[2].top == 300 && l.lines[2].width == 890);
+    md_layout_free(&l);
+    md_document_free(&d);
+    free(five);
+    free(fifteen);
 
     /* Errors: unknown font id, line taller than a column. */
     make_doc(&d, body, 0, 7);

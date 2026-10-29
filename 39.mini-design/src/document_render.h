@@ -24,13 +24,13 @@ typedef struct {
     GfxGlyphRun *runs;
     uint32_t run_count, run_capacity;
     GfxResources resources;
-    int greeked; /* text drawn as bars because the zoom is not 100 % */
+    int greeked; /* text drawn as bars because the zoom is not a whole multiple of 100 % */
 } MdRenderList;
 
 MdRenderOptions md_render_default_options(void);
-/* At 100 % zoom text becomes one GLYPH_RUN per line; at any other zoom each
-   word becomes a FILL_RECT bar ("greeking"), because glyph bitmaps cannot be
-   scaled. Graphics are drawn with BLIT at any zoom. */
+/* At 100 %, 200 %, 300 %... text becomes one GLYPH_RUN (with that integer
+   scale) per line and character style; at any other zoom each word becomes a
+   FILL_RECT bar ("greeking"). Graphics are drawn with BLIT at any zoom. */
 int md_render_page(const MdDocument *doc, const MdLayout *layout, uint32_t page, const MdViewport *vp, const GfxResources *base,
     const MdRenderOptions *options, MdRenderList *out);
 void md_render_list_free(MdRenderList *out);

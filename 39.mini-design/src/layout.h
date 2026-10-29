@@ -11,18 +11,23 @@ typedef struct {
     uint32_t glyph_id; /* codepoint, as MiniFont v1 indexes glyphs */
     MdUnit x, y; /* pen position on the baseline, page coordinates */
     MdUnit advance;
+    uint32_t character_style;
 } MdGlyph;
 
+/* One line of text in one free piece of a frame. Text on both sides of a
+   graphic gives two lines with the same top. x and width include alignment. */
 typedef struct {
-    uint32_t page, frame, paragraph, character_style;
+    uint32_t page, frame, paragraph, character_style; /* paragraph's base style */
     MdUnit x, top, baseline, width, height;
     uint32_t first_glyph, glyph_count;
     int overflow; /* a single glyph wider than its column: drawn anyway */
 } MdLine;
 
-/* Region where the story flows: one per column and page. */
+/* Region where the story flows. Columns are grouped in bands: a paragraph
+   with MD_SPAN_ALL gets one frame across all columns, and the text after it
+   starts a new band of columns below. */
 typedef struct {
-    uint32_t page, column;
+    uint32_t page, column, span; /* first column and number of columns covered */
     MdRect rect;
 } MdTextFrame;
 
@@ -53,7 +58,8 @@ typedef struct {
 int md_layout_story(const MdDocument *doc, uint32_t story, const MfFont *const *fonts, uint32_t font_count, MdLayout *out);
 void md_layout_free(MdLayout *layout);
 
-/* Metrics used by the layout, in document units. */
+/* Metrics used by the layout, in document units. A paragraph's line height
+   and ascent are the largest among the character styles it uses. */
 MdUnit md_glyph_advance(const MfFont *font, const MdCharacterStyle *style, const MfGlyph *glyph);
 MdUnit md_space_advance(const MfFont *font, const MdCharacterStyle *style);
 MdUnit md_line_height(const MfFont *font, const MdParagraphStyle *style);

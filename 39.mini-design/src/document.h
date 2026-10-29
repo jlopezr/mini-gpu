@@ -36,7 +36,16 @@ typedef struct {
     uint16_t color; /* RGB565 */
 } MdCharacterStyle;
 
-typedef enum { MD_ALIGN_LEFT = 0 } MdAlign;
+/* JUSTIFY spreads the free space over the gaps between words; the last line of
+   a paragraph, single-word lines and overflowing lines stay left aligned. */
+typedef enum { MD_ALIGN_LEFT = 0,
+    MD_ALIGN_RIGHT = 1,
+    MD_ALIGN_CENTER = 2,
+    MD_ALIGN_JUSTIFY = 3 } MdAlign;
+/* MD_SPAN_ALL: the paragraph runs across all columns (headlines); the
+   following text continues in columns below it. */
+typedef enum { MD_SPAN_COLUMN = 0,
+    MD_SPAN_ALL = 1 } MdSpan;
 
 typedef struct {
     uint32_t character_style;
@@ -44,12 +53,21 @@ typedef struct {
     uint16_t leading_percent; /* applied to automatic leading; 0 = 100 */
     MdUnit space_before, space_after, first_indent;
     MdAlign align;
+    MdSpan span;
 } MdParagraphStyle;
+
+/* Bytes [start, end) of a paragraph use another character style. */
+typedef struct {
+    uint32_t start, end;
+    uint32_t character_style;
+} MdStyleRun;
 
 typedef struct {
     char *text; /* owned, NUL-terminated; words are separated by spaces */
     uint32_t length;
     uint32_t paragraph_style;
+    MdStyleRun *runs; /* sorted, non-overlapping; the rest uses the paragraph style */
+    uint32_t run_count, run_capacity;
 } MdParagraph;
 
 typedef struct {
@@ -57,13 +75,19 @@ typedef struct {
     uint32_t count, capacity;
 } MdTextStory;
 
+/* NONE: text ignores the graphic. LARGEST: text uses only the widest free
+   piece beside it. BOTH: text fills every free piece, left to right. */
+typedef enum { MD_WRAP_NONE = 0,
+    MD_WRAP_LARGEST = 1,
+    MD_WRAP_BOTH = 2 } MdWrap;
+
 /* A bitmap placed on a page. The bitmap is a GfxResources.bitmaps entry. */
 typedef struct {
     uint32_t page;
     MdRect bounds; /* page coordinates */
     uint32_t bitmap_id;
     MdUnit text_margin; /* extra space kept free around bounds */
-    int wrap; /* nonzero: text flows around the exclusion rectangle */
+    MdWrap wrap;
     uint16_t color; /* RGB565 for 1 bits */
 } MdGraphicObject;
 
@@ -91,6 +115,11 @@ uint32_t md_add_paragraph_style(MdDocument *doc, MdParagraphStyle style);
 uint32_t md_add_story(MdDocument *doc);
 uint32_t md_story_add_paragraph(MdDocument *doc, uint32_t story, uint32_t paragraph_style, const char *text);
 uint32_t md_add_graphic(MdDocument *doc, MdGraphicObject graphic);
+/* Applies character_style to bytes [start, end) of a paragraph. Runs may not
+   overlap. Returns 0 on success. */
+int md_paragraph_add_run(MdDocument *doc, uint32_t story, uint32_t paragraph, uint32_t start, uint32_t end, uint32_t character_style);
+/* Character style of byte `index`, honouring the runs. */
+uint32_t md_paragraph_style_at(const MdDocument *doc, const MdParagraph *paragraph, uint32_t index);
 
 /* Exclusion rectangle = bounds grown by text_margin on every side. */
 MdRect md_graphic_exclusion(const MdGraphicObject *graphic);

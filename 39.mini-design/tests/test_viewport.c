@@ -42,6 +42,13 @@ int main(void) {
     assert(a.x + a.w == b.x);
     for (MdUnit x = -500; x < 500; x++) assert(md_viewport_x(&vp, x) <= md_viewport_x(&vp, x + 1));
     assert(md_viewport_zoom(&vp, 0, 240, 1, 1, 0, 0) != 0);
+    /* Integer text zoom: GLYPH_RUN scale; anything else is greeked. */
+    assert(md_viewport_actual_size(&vp, 640, 480, 0, 0) == 0 && md_viewport_text_scale(&vp) == 1);
+    assert(md_viewport_text_zoom(&vp, 640, 480, 3, 0, 0) == 0 && md_viewport_text_scale(&vp) == 3 && !md_viewport_native_text(&vp));
+    assert(md_viewport_zoom(&vp, 640, 480, 15, 100, 0, 0) == 0 && md_viewport_text_scale(&vp) == 0); /* 150 % */
+    assert(md_viewport_zoom(&vp, 640, 480, 4, 20, 0, 0) == 0 && md_viewport_text_scale(&vp) == 2); /* 200 % as 4/20 */
+    assert(md_viewport_text_zoom(&vp, 640, 480, GFX_GLYPH_MAX_SCALE + 1, 0, 0) == 0 && md_viewport_text_scale(&vp) == 0);
+    assert(md_viewport_fit_page(&vp, 640, 480, MD_PAPER_A4, 6) == 0 && md_viewport_text_scale(&vp) == 0);
 
     /* Document with text and one picture, laid out once. */
     tf_open(&font, font_buf, 0);
@@ -49,7 +56,7 @@ int main(void) {
     MdDocument d;
     md_document_init(&d, md_page_settings_a4());
     uint32_t cs = md_add_character_style(&d, (MdCharacterStyle){0, 0, 0x001F});
-    assert(md_add_paragraph_style(&d, (MdParagraphStyle){cs, 0, 0, 0, 0, 0, MD_ALIGN_LEFT}) == 0);
+    assert(md_add_paragraph_style(&d, (MdParagraphStyle){cs, 0, 0, 0, 0, 0, MD_ALIGN_LEFT, MD_SPAN_COLUMN}) == 0);
     assert(md_add_story(&d) == 0);
     for (int i = 0; i < 40; i++) assert(md_story_add_paragraph(&d, 0, 0, "Some words of Text in a column, many words.") != UINT32_MAX);
     static const uint8_t bits[2 * 8] = {0xFF, 0xFF, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0xFF, 0xFF};
@@ -76,6 +83,19 @@ int main(void) {
     assert(pg->x == md_viewport_x(&vp, l.glyphs[0].x) && pg->y == md_viewport_y(&vp, first->baseline));
     assert(gfx_execute_cpu_resources(&rl.list, &s640, &rl.resources) == 0);
     assert(px[(size_t)(pg->y - TF_H) * 640 + (size_t)pg->x] == 0x001F); /* top-left pixel of the first glyph */
+    md_render_list_free(&rl);
+
+    /* 200 %: same layout, GLYPH_RUN with scale 2, glyph pixels as 2x2 blocks. */
+    assert(md_viewport_text_zoom(&vp, 640, 480, 2, 0, 0) == 0);
+    memset(px, 0, 640 * 480 * sizeof(uint16_t));
+    assert(md_render_page(&d, &l, 0, &vp, &base, NULL, &rl) == 0 && !rl.greeked);
+    for (uint32_t i = 0; i < rl.list.count; i++)
+        if (rl.list.commands[i].opcode == GFX_GLYPH_RUN) assert(rl.list.commands[i].data.glyph_run.scale == 2);
+    pg = &rl.runs[0].glyphs[0];
+    assert(pg->x == 2 * 567 / 10 && pg->y == md_viewport_y(&vp, first->baseline));
+    assert(gfx_execute_cpu_resources(&rl.list, &s640, &rl.resources) == 0);
+    for (int dy = 0; dy < 2; dy++)
+        for (int dx = 0; dx < 2; dx++) assert(px[(size_t)(pg->y - 2 * TF_H + dy) * 640 + (size_t)(pg->x + dx)] == 0x001F);
     md_render_list_free(&rl);
 
     /* Fit page at both resolutions: greeking, bars inside the page, layout untouched. */

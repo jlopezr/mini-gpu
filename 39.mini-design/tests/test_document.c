@@ -32,7 +32,7 @@ int main(void) {
     md_document_init(&doc, a4);
     assert(md_add_paragraph_style(&doc, (MdParagraphStyle){0}) == UINT32_MAX); /* unknown character style */
     uint32_t cs = md_add_character_style(&doc, (MdCharacterStyle){0, 5, 0});
-    uint32_t ps = md_add_paragraph_style(&doc, (MdParagraphStyle){cs, 0, 120, 0, 0, 0, MD_ALIGN_LEFT});
+    uint32_t ps = md_add_paragraph_style(&doc, (MdParagraphStyle){cs, 0, 120, 0, 0, 0, MD_ALIGN_LEFT, MD_SPAN_COLUMN});
     uint32_t story = md_add_story(&doc);
     assert(cs == 0 && ps == 0 && story == 0);
     char text[] = "Hello world";
@@ -43,12 +43,29 @@ int main(void) {
     assert(md_story_add_paragraph(&doc, 3, ps, "x") == UINT32_MAX);
     for (int i = 0; i < 100; i++) assert(md_story_add_paragraph(&doc, story, ps, "more") == (uint32_t)i + 1);
 
+    /* Character style runs: sorted, no overlap, inside the text. */
+    uint32_t cs2 = md_add_character_style(&doc, (MdCharacterStyle){1, 0, 0});
+    assert(md_paragraph_add_run(&doc, 0, 0, 6, 11, cs2) == 0);
+    assert(md_paragraph_add_run(&doc, 0, 0, 0, 2, cs2) == 0);
+    assert(md_paragraph_add_run(&doc, 0, 0, 1, 3, cs2) != 0); /* overlap */
+    assert(md_paragraph_add_run(&doc, 0, 0, 5, 7, cs2) != 0); /* overlap */
+    assert(md_paragraph_add_run(&doc, 0, 0, 9, 12, cs2) != 0); /* past the end */
+    assert(md_paragraph_add_run(&doc, 0, 0, 3, 3, cs2) != 0); /* empty */
+    assert(md_paragraph_add_run(&doc, 0, 0, 3, 5, 9) != 0); /* unknown style */
+    const MdParagraph *hp = &doc.stories[0].paragraphs[0];
+    assert(hp->run_count == 2 && hp->runs[0].start == 0 && hp->runs[1].start == 6);
+    assert(md_paragraph_style_at(&doc, hp, 1) == cs2 && md_paragraph_style_at(&doc, hp, 2) == cs);
+    assert(md_paragraph_style_at(&doc, hp, 5) == cs && md_paragraph_style_at(&doc, hp, 10) == cs2);
+
     /* Graphics: exclusion rectangle grows bounds by the text margin. */
     MdGraphicObject g = {0, {1000, 2000, 300, 200}, 0, 50, 1, 0};
     assert(md_add_graphic(&doc, g) == 0);
     MdRect e = md_graphic_exclusion(&doc.graphics[0]);
     assert(e.x == 950 && e.y == 1950 && e.w == 400 && e.h == 300);
     g.bounds.w = 0;
+    assert(md_add_graphic(&doc, g) == UINT32_MAX);
+    g.bounds.w = 10;
+    g.wrap = (MdWrap)3;
     assert(md_add_graphic(&doc, g) == UINT32_MAX);
     md_document_free(&doc);
     assert(doc.story_count == 0 && doc.graphics == NULL);

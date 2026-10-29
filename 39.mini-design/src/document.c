@@ -38,7 +38,10 @@ void md_document_init(MdDocument *doc, MdPageSettings page) {
 void md_document_free(MdDocument *doc) {
     if (!doc) return;
     for (uint32_t s = 0; s < doc->story_count; s++) {
-        for (uint32_t i = 0; i < doc->stories[s].count; i++) free(doc->stories[s].paragraphs[i].text);
+        for (uint32_t i = 0; i < doc->stories[s].count; i++) {
+            free(doc->stories[s].paragraphs[i].text);
+            free(doc->stories[s].paragraphs[i].runs);
+        }
         free(doc->stories[s].paragraphs);
     }
     free(doc->stories);
@@ -67,12 +70,12 @@ uint32_t md_story_add_paragraph(MdDocument *doc, uint32_t story, uint32_t paragr
     if (!copy) return UINT32_MAX;
     memcpy(copy, text, n + 1);
     MdTextStory *s = &doc->stories[story];
-    uint32_t id = PUSH(s->paragraphs, s->count, s->capacity, ((MdParagraph){copy, (uint32_t)n, paragraph_style}));
+    uint32_t id = PUSH(s->paragraphs, s->count, s->capacity, ((MdParagraph){copy, (uint32_t)n, paragraph_style, NULL, 0, 0}));
     if (id == UINT32_MAX) free(copy);
     return id;
 }
 uint32_t md_add_graphic(MdDocument *doc, MdGraphicObject graphic) {
-    if (graphic.bounds.w <= 0 || graphic.bounds.h <= 0 || graphic.text_margin < 0) return UINT32_MAX;
+    if (graphic.bounds.w <= 0 || graphic.bounds.h <= 0 || graphic.text_margin < 0 || graphic.wrap > MD_WRAP_BOTH) return UINT32_MAX;
     return PUSH(doc->graphics, doc->graphic_count, doc->graphic_capacity, graphic);
 }
 
@@ -89,4 +92,23 @@ MdRect md_page_column(const MdPageSettings *p, uint32_t column) {
     uint32_t n = p->columns ? p->columns : 1;
     MdUnit w = (MdUnit)((c.w - (MdUnit)(n - 1) * p->column_gap) / (MdUnit)n);
     return (MdRect){c.x + (MdUnit)column * (w + p->column_gap), c.y, w, c.h};
+}
+
+int md_paragraph_add_run(MdDocument *doc, uint32_t story, uint32_t paragraph, uint32_t start, uint32_t end, uint32_t character_style) {
+    if (story >= doc->story_count || paragraph >= doc->stories[story].count || character_style >= doc->character_style_count) return -1;
+    MdParagraph *p = &doc->stories[story].paragraphs[paragraph];
+    if (start >= end || end > p->length) return -1;
+    uint32_t at = 0;
+    while (at < p->run_count && p->runs[at].start < start) at++;
+    if ((at > 0 && p->runs[at - 1].end > start) || (at < p->run_count && p->runs[at].start < end)) return -1;
+    if (reserve((void **)&p->runs, &p->run_capacity, p->run_count, sizeof(MdStyleRun))) return -1;
+    memmove(&p->runs[at + 1], &p->runs[at], sizeof(MdStyleRun) * (p->run_count - at));
+    p->runs[at] = (MdStyleRun){start, end, character_style};
+    p->run_count++;
+    return 0;
+}
+uint32_t md_paragraph_style_at(const MdDocument *doc, const MdParagraph *p, uint32_t index) {
+    for (uint32_t i = 0; i < p->run_count && p->runs[i].start <= index; i++)
+        if (index < p->runs[i].end) return p->runs[i].character_style;
+    return doc->paragraph_styles[p->paragraph_style].character_style;
 }

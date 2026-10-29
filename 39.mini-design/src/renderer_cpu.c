@@ -45,8 +45,10 @@ static void line(GfxSurface *s, GfxRect clip, int64_t x0, int64_t y0, int64_t x1
         }
     }
 }
-static int draw_run(GfxSurface *s, GfxRect clip, const GfxResources *resources, uint32_t run_id, uint16_t color) {
+static int draw_run(GfxSurface *s, GfxRect clip, const GfxResources *resources, uint32_t run_id, uint16_t color, uint32_t scale) {
     if (!resources || run_id >= resources->run_count || !resources->runs) return -1;
+    const int64_t k = scale ? scale : 1;
+    if (k > GFX_GLYPH_MAX_SCALE) return -1;
     const GfxGlyphRun *run = &resources->runs[run_id];
     if (!resources->fonts || run->font_id >= resources->font_count || !run->glyphs) return -1;
     const MfFont *font = resources->fonts[run->font_id];
@@ -55,15 +57,16 @@ static int draw_run(GfxSurface *s, GfxRect clip, const GfxResources *resources, 
         const GfxPositionedGlyph *pg = &run->glyphs[i];
         MfGlyph glyph;
         if (mf_find_glyph(font, pg->glyph_id, &glyph)) return -1;
-        int64_t x0 = (int64_t)pg->x + glyph.bearing_x;
-        int64_t y0 = (int64_t)pg->y - glyph.bearing_y;
+        int64_t x0 = (int64_t)pg->x + glyph.bearing_x * k;
+        int64_t y0 = (int64_t)pg->y - glyph.bearing_y * k;
         for (uint32_t gy = 0; gy < glyph.height; gy++) {
-            int64_t y = y0 + gy;
-            if (y < clip.y || y >= (int64_t)clip.y + clip.h) continue;
             for (uint32_t gx = 0; gx < glyph.width; gx++) {
-                int64_t x = x0 + gx;
-                if (x >= clip.x && x < (int64_t)clip.x + clip.w && mf_glyph_pixel(font, &glyph, gx, gy))
-                    s->pixels[(size_t)y * s->stride + (size_t)x] = color;
+                if (!mf_glyph_pixel(font, &glyph, gx, gy)) continue;
+                for (int64_t y = y0 + gy * k; y < y0 + (gy + 1) * k; y++) {
+                    if (y < clip.y || y >= (int64_t)clip.y + clip.h) continue;
+                    for (int64_t x = x0 + gx * k; x < x0 + (gx + 1) * k; x++)
+                        if (x >= clip.x && x < (int64_t)clip.x + clip.w) s->pixels[(size_t)y * s->stride + (size_t)x] = color;
+                }
             }
         }
     }
@@ -118,7 +121,7 @@ int gfx_execute_cpu_resources(const GfxDisplayList *list, GfxSurface *s, const G
                 if (draw_blit(s, clip, resources, c)) return -3;
                 break;
             case GFX_GLYPH_RUN:
-                if (draw_run(s, clip, resources, c->data.glyph_run.run_id, c->data.glyph_run.color)) return -3;
+                if (draw_run(s, clip, resources, c->data.glyph_run.run_id, c->data.glyph_run.color, c->data.glyph_run.scale)) return -3;
                 break;
             default: return -2; /* planned commands, not silently ignored */
         }

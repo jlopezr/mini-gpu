@@ -24,9 +24,16 @@ int md_viewport_fit_page(MdViewport *vp, int32_t w, int32_t h, MdPaperSize paper
     vp->origin_y = (h - (int32_t)floor_div((int64_t)paper.height * num, den)) / 2;
     return 0;
 }
-int md_viewport_native_text(const MdViewport *vp) {
-    return (uint64_t)vp->scale_num * MD_UNITS_PER_FONT_PX == vp->scale_den;
+int md_viewport_text_zoom(MdViewport *vp, int32_t w, int32_t h, uint32_t factor, MdUnit sx, MdUnit sy) {
+    return md_viewport_zoom(vp, w, h, factor, MD_UNITS_PER_FONT_PX, sx, sy);
 }
+uint32_t md_viewport_text_scale(const MdViewport *vp) {
+    uint64_t px = (uint64_t)vp->scale_num * MD_UNITS_PER_FONT_PX;
+    if (px % vp->scale_den) return 0;
+    px /= vp->scale_den;
+    return px >= 1 && px <= GFX_GLYPH_MAX_SCALE ? (uint32_t)px : 0;
+}
+int md_viewport_native_text(const MdViewport *vp) { return md_viewport_text_scale(vp) == 1; }
 int32_t md_viewport_x(const MdViewport *vp, MdUnit x) {
     return vp->origin_x + (int32_t)floor_div((int64_t)(x - vp->scroll_x) * vp->scale_num, vp->scale_den);
 }
