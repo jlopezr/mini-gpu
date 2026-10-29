@@ -1,53 +1,49 @@
-# MiniDesign GFX — GLYPH_RUN + MiniFont
+# MiniDesign
 
-Integración C11 del motor GFX con MiniFont (MFNT v1) y el renderer RGB565 de referencia.
+Programa de autoedición para el ecosistema MiniCPU/MiniGPU, inspirado en
+NewsMaster 1.5. Está escrito en C11, sin dependencias externas. Se divide en
+tres capas:
 
-MiniDesign se inspira en NewsMaster 1.5 (de ahí las fuentes `NEWS.FLB` y los
-extractores de recursos de `tools/`), pero es un proyecto propio.
-
-Modelo de documento, composición en columnas y páginas y viewport (v0.4):
-ver [`docs/README-DESIGN.md`](docs/README-DESIGN.md) (`make run-page`, `make test-design`).
+- **[MiniDesign](docs/design.md):** el documento y el motor de composición en
+  columnas y páginas, con alineación, titulares, estilos e imágenes rodeadas
+  de texto.
+- **[MiniGFX](docs/gfx.md):** la display list y el renderer CPU RGB565, que
+  más adelante tendrá un backend para la MiniGPU.
+- **[MiniFont](docs/minifont.md):** las fuentes bitmap, con conversores desde
+  BDF y desde las fuentes originales de NewsMaster.
 
 ## Uso
 
 ```sh
-make run
-# Con otra fuente .mf (debe contener los glifos ASCII usados por examples/example.c):
-./build/example /ruta/a/otra_fuente.mf
+make            # compila todo y extrae las fuentes de resources/NEWS.FLB
+make run        # todas las demos -> *.ppm en esta carpeta
+make run-page   # solo la página A4 de MiniDesign
+make check      # todas las pruebas
+make clean
 ```
 
-Genera `demo-320x240.ppm` y `demo-640x480.ppm`. En macOS puedes convertir con `sips -s format png demo-320x240.ppm --out demo-320x240.png`.
+Las imágenes son PPM. En macOS se abren con `open page1-640x480.ppm`, o se
+convierten con `sips -s format png page1-640x480.ppm --out page1-640x480.png`.
+La lista de demos está en [`examples/README.md`](examples/README.md).
 
-## Diseño
+**Requisitos:**
 
-`GFX_GLYPH_RUN` referencia por `run_id` un `GfxGlyphRun` en `GfxResources`; cada run contiene ID de fuente y glifos preposicionados (ID de glifo, x, y de la línea base). El backend resuelve `font_id` mediante una tabla de `MfFont`. Por ahora el ID del glifo es el codepoint Unicode, porque MiniFont v1 lo indexa así; otra implementación puede adoptar IDs internos si proporciona la resolución correspondiente.
+- `cc`, `make` y `python3`.
+- Pillow, solo para generar PNG desde Python: `make flb-sheets`, `shapes`,
+  `icons` y `test-extractors`. Este último forma parte de `make check`.
 
-Las coordenadas están en píxeles de la superficie. GLYPH_RUN es transparente, respeta `SET_CLIP` y conserva orden de composición. Las métricas vienen de la fuente; el backend no parte líneas ni calcula kerning. El comando puede seguir funcionando con un font manager distinto en el futuro; la implementación actual solo admite MFNT monocromo.
+## Estructura
 
-`gfx_execute_cpu` original sigue disponible para listas sin recursos. Para glifos se utiliza `gfx_execute_cpu_resources`.
+```text
+src/        librería: MiniGFX, MiniFont y MiniDesign (.c y .h)
+examples/   demos (<tema>_demo.c)
+tests/      pruebas en C y Python
+tools/      conversores de recursos en Python
+docs/       documentación (índice en docs/README.md)
+fonts/      fuentes BDF de prueba
+resources/  originales de NewsMaster (NEWS.FLB, .SHP, .SDX, .SDR, .ICN)
+build/      objetos, binarios y fuentes .mf generadas (make clean lo borra)
+```
 
-Las fuentes no se guardan sueltas: `make` (o `make flb-fonts`) extrae las 30 fuentes normales de `resources/NEWS.FLB` a `build/fonts/<nombre>.mf` (`park10.mf`, `news12bold.mf`, …). Fuentes originales de NewsMaster: comprobar derechos antes de redistribuirlas.
-
-## NewsMaster graphic extractors (v0.3)
-
-See [`tools/README.md`](tools/README.md). Both scripts are independent of `BLIT`, which remains format-agnostic.
-
-## Notas del prototipo original
-
-Display list portable en C11 + renderer CPU RGB565 de referencia. PPM P6 se
-puede ver con la mayoría de visores y convertir a PNG.
-
-Implementados: CLEAR, SET_CLIP, FILL_RECT, DRAW_LINE (1px), BLIT y GLYPH_RUN.
-FILL_PATTERN está declarado pero **todavía no implementado**: devuelve error en
-lugar de desaparecer silenciosamente.
-
-La superficie es dueña de sus píxeles; la lista es dueña de su array de
-comandos. Las coordenadas ya están en píxeles del framebuffer. SET_CLIP
-reemplaza el clip actual; CLEAR rellena toda la superficie. La lista de
-comandos no incluye el destino.
-
-MiniFont (lector `.mf`, conversores `tools/bdf2mf.py` y `tools/flb2mf.py`,
-fuentes en `fonts/`) está integrado en este directorio: ver
-[`docs/README-MINIFONT.md`](docs/README-MINIFONT.md) y
-[`docs/MINIFONT-FORMAT.md`](docs/MINIFONT-FORMAT.md). Sus objetivos de make son
-`test-minifont`, `run-minifont`, `flb-park10` y `test-flb`; salida en `build/`.
+Los originales de NewsMaster están aquí solo para estudio; ver
+[docs/newsmaster.md](docs/newsmaster.md).
