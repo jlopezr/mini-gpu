@@ -1,0 +1,25 @@
+# Estilo de MiniDesign (referencia: renderer_cpu.c). La extensión C/C++ de
+# VS Code lo usa en lugar de su estilo por defecto ("Visual Studio", llaves en
+# línea propia).
+BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+BreakBeforeBraces: Attach
+ColumnLimit: 0
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+AlignAfterOpenBracket: DontAlign
+AlignOperands: DontAlign
+AlignTrailingComments: false
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+SortIncludes: Never
+IndentCaseLabels: true
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+ReflowComments: false
+MaxEmptyLinesToKeep: 1
+AllowShortRecordOnASingleLine: Always
