@@ -1,3 +1,7 @@
+/* MiniFont demo: draws "MiniFont ABC 123" with the MiniFont reader alone,
+   without MiniGFX, applying the font's font_spacing.
+   Output: the PPM given as second argument (make: minifont.ppm, minifont-park10.ppm)
+   Usage: minifont_demo font.mf output.ppm */
 #include "minifont.h"
 #include <stdio.h>
 #include <stdlib.h>

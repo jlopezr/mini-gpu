@@ -1,5 +1,9 @@
+/* BLIT demo: NewsMaster icons (40x20, 1 bpp) scaled to correct their 1:2
+   pixel aspect, with transparency, colour and clipping.
+   Output: blit-320x240.ppm, blit-640x480.ppm
+   Usage: blit_demo */
 #include "gfx.h"
-#include "demo_icons.h"
+#include "blit_icons.h"
 #include <stdio.h>
 #include <stdlib.h>
 

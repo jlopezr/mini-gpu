@@ -1,7 +1,7 @@
-/* Compara visualmente el layout con y sin font_spacing para varias fuentes.
-   Por cada fuente: etiqueta, línea con solo advance_x (azul) y línea con
-   advance_x + font_spacing (negro). GLYPH_RUN no cambia: el espaciado lo
-   aplica este layout. Uso: spacing_demo [dir_fuentes] [salida.ppm] */
+/* Spacing demo: 12 NewsMaster fonts laid out with advance_x only (blue) and
+   with advance_x + font_spacing (black), to check the spacing visually.
+   Output: spacing.ppm (2x scaled)
+   Usage: spacing_demo [font_dir] [output.ppm]   (defaults build/fonts, spacing.ppm) */
 #include "gfx.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
     for (uint32_t r = 0; r < MAXF * 3; r++) {
         uint16_t color = r % 3 == 0 ? 0x8410 : r % 3 == 1 ? 0x0016
                                                           : 0x0000; /* etiqueta gris, sin spacing azul, con spacing negro */
-        fail |= gfx_list_add(&dl, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {r, color}});
+        fail |= gfx_list_add(&dl, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {.run_id = r, .color = color}});
     }
     if (!fail) fail = gfx_execute_cpu_resources(&dl, &surface, &res);
     if (!fail) fail = write_scaled(outp, &surface);

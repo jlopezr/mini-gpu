@@ -1,3 +1,7 @@
+/* GLYPH_RUN demo: three lines of NewsMaster text laid out by hand, with
+   clipping, at 320x240 and 640x480.
+   Output: glyph-320x240.ppm, glyph-640x480.ppm
+   Usage: glyph_demo [font.mf]   (default build/fonts/park10.mf) */
 #include "gfx.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,7 +10,7 @@
 static int add(GfxDisplayList *l, GfxCommand c) { return gfx_list_add(l, c); }
 static int rect(GfxDisplayList *l, int x, int y, int w, int h, uint16_t c) { return add(l, (GfxCommand){.opcode = GFX_FILL_RECT, .data.fill_rect = {{x, y, w, h}, c}}); }
 static int clip(GfxDisplayList *l, int x, int y, int w, int h) { return add(l, (GfxCommand){.opcode = GFX_SET_CLIP, .data.clip = {{x, y, w, h}}}); }
-static int run_cmd(GfxDisplayList *l, uint32_t id, uint16_t color) { return add(l, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {id, color}}); }
+static int run_cmd(GfxDisplayList *l, uint32_t id, uint16_t color) { return add(l, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {.run_id = id, .color = color}}); }
 static uint8_t *load(const char *file, size_t *n) {
     FILE *f = fopen(file, "rb");
     if (!f) return NULL;
@@ -101,7 +105,7 @@ int main(int argc, char **argv) {
         free(data);
         return 1;
     }
-    int rc = demo(&font, 320, 240, "demo-320x240.ppm") || demo(&font, 640, 480, "demo-640x480.ppm");
+    int rc = demo(&font, 320, 240, "glyph-320x240.ppm") || demo(&font, 640, 480, "glyph-640x480.ppm");
     free(data);
     return rc ? 1 : 0;
 }

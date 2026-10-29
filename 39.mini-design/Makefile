@@ -13,9 +13,9 @@ FONTS_STAMP = $(FONT_DIR)/.stamp
 HDRS = $(wildcard src/*.h)
 GFX_OBJS = build/display_list.o build/renderer_cpu.o build/minifont.o
 DOC_OBJS = build/document.o build/layout.o build/viewport.o build/document_render.o
-DEMOS = build/example build/blit_demo build/spacing_demo build/page_demo build/minifont_demo
+DEMOS = build/glyph_demo build/blit_demo build/spacing_demo build/page_demo build/minifont_demo
 
-.PHONY: all run clean test run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing run-spacing
+.PHONY: all run clean test run-glyph run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing run-spacing
 .PHONY: shapes icons test-extractors check run-page test-document test-layout test-viewport test-design
 all: $(DEMOS) flb-fonts
 
@@ -23,9 +23,9 @@ build:
 	mkdir -p build
 build/%.o: src/%.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: examples/%.c $(HDRS) examples/demo_icons.h | build
+build/%.o: examples/%.c $(HDRS) $(wildcard examples/*.h) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/example build/blit_demo build/spacing_demo: build/%: build/%.o $(GFX_OBJS)
+build/glyph_demo build/blit_demo build/spacing_demo: build/%: build/%.o $(GFX_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 build/page_demo: build/page_demo.o $(DOC_OBJS) $(GFX_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -36,11 +36,12 @@ build/test_%: tests/test_%.c tests/test_fonts.h $(HDRS) $(DOC_OBJS) $(GFX_OBJS) 
 
 clean:
 	rm -rf build
-	rm -f demo-*.ppm blit-*.ppm spacing.ppm page*.ppm demo-*.png blit-*.png spacing.png page*.png
+	rm -f glyph-*.ppm blit-*.ppm spacing.ppm minifont*.ppm page*.ppm glyph-*.png blit-*.png spacing.png minifont*.png page*.png
 
-# GFX: GLYPH_RUN, BLIT y espaciado por fuente.
-run: build/example $(FONTS_STAMP)
-	./build/example $(FONT_DIR)/park10.mf
+# Demos (examples/README.md): make run-<tema>; make run las lanza todas.
+run: run-glyph run-blit run-spacing run-minifont run-page
+run-glyph: build/glyph_demo $(FONTS_STAMP)
+	./build/glyph_demo $(FONT_DIR)/park10.mf
 test: build/test_gfx $(FONTS_STAMP)
 	./build/test_gfx $(FONT_DIR)/park10.mf
 run-blit: build/blit_demo
@@ -52,7 +53,7 @@ run-spacing: build/spacing_demo $(FONTS_STAMP)
 	./build/spacing_demo $(FONT_DIR) spacing.ppm
 
 # MiniDesign v0.4: modelo de documento, layout, viewport y render a display list.
-# page1-320x240, page1-640x480, page1-100 (100 %) y page2-* si hay segunda página.
+# page1-320x240, page1-640x480, page1-100 (100 %), page1-200 (200 %), page2-* y page2-100.
 # Opcional: make run-page PAGE_ARGS="250 20 3"  (imagen en %, nº de párrafos, nº de columnas)
 run-page: build/page_demo $(FONTS_STAMP)
 	./build/page_demo $(FONT_DIR) $(RES) $(PAGE_ARGS)
@@ -70,7 +71,7 @@ build/test.mf: fonts/test.bdf tools/bdf2mf.py | build
 test-minifont: build/test_minifont build/test.mf
 	./build/test_minifont build/test.mf
 run-minifont: test-minifont build/minifont_demo
-	./build/minifont_demo build/test.mf build/minifont_demo.ppm
+	./build/minifont_demo build/test.mf minifont.ppm
 
 # Las 30 fuentes normales de NEWS.FLB -> build/fonts/<nombre>.mf (o FLB=/ruta/a/NEWS.FLB).
 $(FONTS_STAMP): $(FLB) tools/flb2mf.py
@@ -78,7 +79,7 @@ $(FONTS_STAMP): $(FLB) tools/flb2mf.py
 	@touch $@
 flb-fonts: $(FONTS_STAMP)
 flb-park10: build/minifont_demo $(FONTS_STAMP)
-	./build/minifont_demo $(FONT_DIR)/park10.mf build/park10.ppm
+	./build/minifont_demo $(FONT_DIR)/park10.mf minifont-park10.ppm
 # Además hojas de muestra build/fonts/<nombre>.png; requiere Pillow.
 flb-sheets:
 	$(PYTHON) tools/flb2mf.py "$(FLB)" --all $(FONT_DIR) --sheets
