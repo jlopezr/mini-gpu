@@ -6,21 +6,29 @@
 
 typedef struct { int32_t x, y, w, h; } GfxRect;
 typedef struct {
-    uint16_t *pixels;            /* RGB565 */
+    uint16_t *pixels; /* RGB565 */
     uint32_t width, height;
-    uint32_t stride;             /* pixels, not bytes */
+    uint32_t stride; /* pixels, not bytes */
 } GfxSurface;
 
-typedef struct { uint32_t glyph_id; int32_t x, y; } GfxPositionedGlyph;
-typedef struct { const GfxPositionedGlyph *glyphs; uint32_t count; uint32_t font_id; } GfxGlyphRun;
+typedef struct {
+    uint32_t glyph_id;
+    int32_t x, y;
+} GfxPositionedGlyph;
+typedef struct {
+    const GfxPositionedGlyph *glyphs;
+    uint32_t count;
+    uint32_t font_id;
+} GfxGlyphRun;
 typedef enum { GFX_BITMAP_MONO1 = 1 } GfxBitmapFormat;
 typedef struct {
-    const uint8_t *pixels;       /* row-major 1bpp, MSB first */
+    const uint8_t *pixels; /* row-major 1bpp, MSB first */
     uint32_t width, height;
-    uint32_t stride_bytes;       /* >= ceil(width/8) */
+    uint32_t stride_bytes; /* >= ceil(width/8) */
     GfxBitmapFormat format;
 } GfxBitmap;
-typedef enum { GFX_BLIT_OPAQUE = 0, GFX_BLIT_TRANSPARENT_ZERO = 1 } GfxBlitMode;
+typedef enum { GFX_BLIT_OPAQUE = 0,
+    GFX_BLIT_TRANSPARENT_ZERO = 1 } GfxBlitMode;
 typedef struct {
     const MfFont *const *fonts;
     uint32_t font_count;
@@ -45,16 +53,29 @@ typedef struct {
     union {
         struct { uint16_t color; } clear;
         struct { GfxRect rect; } clip;
-        struct { GfxRect rect; uint16_t color; } fill_rect;
-        struct { int32_t x0, y0, x1, y1; uint16_t color; } line;
+        struct {
+            GfxRect rect;
+            uint16_t color;
+        } fill_rect;
+        struct {
+            int32_t x0, y0, x1, y1;
+            uint16_t color;
+        } line;
         struct {
             uint32_t resource_id;
             GfxRect src, dst;
             uint16_t foreground, background;
             GfxBlitMode mode;
         } blit;
-        struct { uint32_t run_id; uint16_t color; } glyph_run;
-        struct { GfxRect rect; uint32_t pattern_id; uint16_t foreground, background; } pattern;
+        struct {
+            uint32_t run_id;
+            uint16_t color;
+        } glyph_run;
+        struct {
+            GfxRect rect;
+            uint32_t pattern_id;
+            uint16_t foreground, background;
+        } pattern;
     } data;
 } GfxCommand;
 
