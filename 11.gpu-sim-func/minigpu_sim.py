@@ -13,6 +13,10 @@ arquitectónico de error:
   LOADH, LOADUH y STOREH. Solo a RAM: un acceso sub-palabra a MMIO es error
   (mmio.md §4.1), igual que uno desalineado.
 - Control: BEQ, BNE, BLT, BGE, BLTU, BGEU y BRA.
+- Llamadas: JAL, JALR y JR, como en la CPU y en la GPU de la 37. JAL salta a un
+  destino fijo; JALR y JR lo sacan de un registro por lane, y si las lanes
+  activas no coinciden el warp para con ERROR_SIMT: no hay un destino que
+  apilar en la pila de divergencia (isa.md, "Disponibilidad").
 
 El estado consta de PC y 32 registros de 32 bits, de los que **R0 está cableado
 a cero**: las escrituras se descartan y las lecturas valen siempre cero, igual
@@ -89,6 +93,10 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         return ((instr >> 16) & 0x1F) == 0
     if opcode == 0x30:  # GETID: Y es el `type` (0..4) e imm16 = 0
         return (instr & 0xFFFF) == 0 and ((instr >> 16) & 0x1F) <= GETID_LAST_TYPE
+    if opcode == 0x2C:  # JAL no tiene registro fuente
+        return ((instr >> 16) & 0x1F) == 0
+    if opcode == 0x2E:  # JR no tiene ni destino ni inmediato
+        return ((instr >> 21) & 0x1F) == 0 and (instr & 0xFFFF) == 0
     return True
 
 
@@ -552,7 +560,7 @@ class Warp:
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                 0x09, 0x0A, 0x0C, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
                 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
-                0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2F,
+                0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2C, 0x2D, 0x2E, 0x2F,
                 0x30, 0x31, 0x32, 0x33, 0x3E, 0x3F,
             }:
                 raise ExecutionFault(ERROR_INVALID_OPCODE)
@@ -606,7 +614,9 @@ class Warp:
 
         next_pcs = {result.next_pc for _, result in results}
         if len(next_pcs) != 1:
-            if not self.region_stack:
+            # JALR/JR con destinos distintos por lane: no hay uno que apilar (como en
+            # gpu_sm.v de la 37 y en el simulador de ciclos 25).
+            if opcode in (0x2D, 0x2E) or not self.region_stack:
                 self.sm.system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
                 return False
             region = self.region_stack[-1]
@@ -928,6 +938,19 @@ class CPU:
             imm16 = sign_extend(instr & 0xFFFF, 16)
             if regs[ra] >= regs[rb]:
                 next_pc = u32(next_pc + (imm16 << 2))
+
+        elif opcode == 0x2C:  # JAL: enlace en PC+4 y offset en palabras
+            link = next_pc
+            next_pc = u32(next_pc + (sign_extend(instr & 0xFFFF, 16) << 2))
+            regs[(instr >> 21) & 0x1F] = link
+
+        elif opcode == 0x2D:  # JALR: Ra se lee antes de escribir el enlace
+            link = next_pc
+            next_pc = u32(regs[(instr >> 16) & 0x1F] + (sign_extend(instr & 0xFFFF, 16) << 2)) & ~3
+            regs[(instr >> 21) & 0x1F] = link
+
+        elif opcode == 0x2E:  # JR
+            next_pc = u32(regs[(instr >> 16) & 0x1F]) & ~3
 
         elif opcode == 0x2F:  # BRA
             # BRA dispone de un offset signed de 26 bits porque no usa

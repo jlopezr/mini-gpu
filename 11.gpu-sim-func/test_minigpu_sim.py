@@ -309,6 +309,82 @@ class MiniGpuTest(unittest.TestCase):
                 self.assertIn(message, result.stdout + result.stderr)
 
 
+class CallsTest(unittest.TestCase):
+    """JAL, JALR y JR, como en la CPU y en la GPU de la 37: JALR y JR con destinos distintos por lane paran el
+    warp con ERROR_SIMT."""
+
+    JAL, JALR, JR, ADDI, BEQ = 0x2C, 0x2D, 0x2E, 0x11, 0x20
+
+    def make(self, *words, lanes=4):
+        gpu = System(256, 1, lanes)
+        gpu.load_program(program(*words), 0)
+        return gpu
+
+    def lanes(self, gpu):
+        return gpu.streaming_multiprocessor.warps[0].processors
+
+    def test_a_call_returns_with_the_link_in_every_lane(self):
+        gpu = self.make(
+            imm(self.JAL, 31, 0, 2),        # 0: llama a 12, enlace 4
+            imm(self.ADDI, 2, 1, 100),      # 4: tras volver
+            HALT,                           # 8
+            imm(self.ADDI, 1, 1, 7),        # 12: la funcion
+            reg(self.JR, 0, 31, 0))         # 16: vuelve
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        for lane in self.lanes(gpu):
+            self.assertEqual((lane.regs[31], lane.regs[1], lane.regs[2]), (4, 7, 107))
+
+    def test_jalr_reads_its_register_before_writing_the_link(self):
+        gpu = self.make(
+            imm(self.JALR, 5, 5, 1),        # 0: a R5 + 4, enlace en el mismo R5
+            HALT,                           # 4
+            HALT,                           # 8
+            imm(self.ADDI, 6, 0, 1),        # 12
+            HALT)
+        for lane in self.lanes(gpu):
+            lane.regs[5] = 8                # destino 8 + 4 = 12
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual([(lane.regs[5], lane.regs[6]) for lane in self.lanes(gpu)], [(4, 1)] * 4)
+
+    def test_a_call_inside_a_divergent_region_only_touches_the_active_lanes(self):
+        SSY = 0x31
+        gpu = self.make(
+            SSY << 26 | 5,                  # 0: region hasta 24
+            imm(self.BEQ, 1, 0, 2),         # 4: las lanes con R1 == 0 saltan a 16
+            imm(self.JAL, 31, 0, 3),        # 8: las demas llaman a 24 + ... (la funcion en 24)
+            0x2F << 26 | 1,                 # 12: BRA 20
+            imm(self.ADDI, 3, 0, 9),        # 16: las que saltaron
+            0x2F << 26 | 2,                 # 20: BRA 32 (fin)
+            imm(self.ADDI, 2, 0, 5),        # 24: la funcion
+            reg(self.JR, 0, 31, 0),         # 28
+            HALT)                           # 32
+        for number, lane in enumerate(self.lanes(gpu)):
+            lane.regs[1] = number & 1
+        gpu.run()
+        self.assertFalse(gpu.error, gpu.fault)
+        self.assertEqual([(lane.regs[2], lane.regs[3], lane.regs[31]) for lane in self.lanes(gpu)],
+                         [(0, 9, 0), (5, 0, 12), (0, 9, 0), (5, 0, 12)])
+
+    def test_indirect_jumps_to_different_places_stop_with_simt(self):
+        for word in (reg(self.JR, 0, 5, 0), imm(self.JALR, 31, 5, 0)):
+            with self.subTest(hex(word)):
+                gpu = self.make(word, HALT, HALT, HALT)
+                for number, lane in enumerate(self.lanes(gpu)):
+                    lane.regs[5] = 4 + 4 * (number & 1)
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_SIMT)
+                self.assertEqual(self.lanes(gpu)[0].regs[31], 0)       # sin efectos parciales
+
+    def test_reserved_fields_are_encoding_errors(self):
+        for word in (imm(self.JAL, 31, 1, 1), reg(self.JR, 1, 31, 0), imm(self.JR, 0, 31, 1)):
+            with self.subTest(hex(word)):
+                gpu = self.make(word, HALT)
+                gpu.run()
+                self.assertEqual(gpu.error_code, ERROR_INVALID_ENCODING)
+
+
 class VideoDeviceTest(unittest.TestCase):
     """La ventana de video, y sobre todo en que se aparta de la de la CPU.
 

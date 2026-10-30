@@ -52,9 +52,13 @@ Cada hito añade pruebas al lanzador común `tools/test --prototype 25 --quick`.
 2. `sm-pipeline.md` mezcla propuestas históricas (X de 4, 2 o 1 ciclos). La
    dirección de 25 sustituye las FSM de lane: D captura operandos, X simple
    dura 1 y W escribe. No se importan `exec_base` ni los CPI de 23/24.
-3. El funcional GPU solo soporta el repertorio antiguo. Aquí se añaden
-   `alu_extended`, `compare`, `shift_immediate` y `subword_memory`, contrastados
-   con CPU. `calls` queda fuera: la ISA no define soporte SIMT para llamadas.
+3. Cuando se escribió, el funcional GPU (11) solo soportaba el repertorio
+   antiguo. Aquí están `alu_extended`, `compare`, `shift_immediate`,
+   `subword_memory` y `calls`, contrastados con CPU (`isa.py`). Las llamadas
+   siguen la regla de la 37 (`37.fpga-cpu-gpu-mk2`, `gpu_sm.v`): `JAL` salta a
+   un destino fijo, y en `JALR`/`JR`, que lo sacan de un registro por lane,
+   todas las lanes activas tienen que coincidir o el warp para con
+   `ERROR_SIMT` (0x06): no hay un destino que apilar (`simt.py`).
 4. Las referencias documentales a un RTL con semántica antigua estaban
    desactualizadas y se han corregido: los RTL de 12/14/17/22 contienen
    REGION/PATH separados y reutilización por `ssy_pc`, igual que los modelos

@@ -166,6 +166,12 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
   palabra exige dirección par. En el RTL los tienen el SM de la 29 y las placas
   36 y 37 (capability `subword_memory`); las GPU anteriores (12, 14, 17, 22) no.
 
+- Llamadas: `JAL`, `JALR` y `JR`, como en la CPU (capability `calls`). En el RTL
+  solo las tiene la GPU de la 37; la 29 (y por tanto la 36) no. `JAL` salta a un
+  destino fijo; `JALR` y `JR` lo sacan de un registro por lane, y si las lanes
+  activas no coinciden el warp para con `ERROR_SIMT` (0x06), igual que en
+  `gpu_sm.v` de la 37: no hay un destino que apilar en la pila de divergencia.
+
 - Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](docs/opcodes.md).
   `EXIT` retira lanes permanentemente y `BAR` sincroniza un workgroup.
 
