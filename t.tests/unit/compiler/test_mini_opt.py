@@ -203,7 +203,7 @@ class IntrinsicsTest(unittest.TestCase):
         pass_intrinsics(unit, stats)
         text = render_unit(unit)
         self.assertEqual(stats["intrinsics"], 1)
-        self.assertIn("GETTID R29", text)
+        self.assertRegex(text, r"\nGETTID R\d+\n")          # el registro lo decide `leafregs` (R29 sin el)
         self.assertNotIn("__gpu_tid", text)         # tampoco el `.extern`
 
     def test_each_getid_and_bar(self):
@@ -2861,7 +2861,7 @@ class FilterTest(unittest.TestCase):
         stats = {}
         text = optimize(KERNELS, stats=stats)
         self.assertEqual(stats["intrinsics"], 1)
-        self.assertIn("GETTID R29", text)
+        self.assertRegex(text, r"\nGETTID R\d+\n")          # el registro lo decide `leafregs` (R29 sin el)
 
     def test_no_passes_leaves_the_text_alone(self):
         text = optimize(KERNELS, passes=[])
@@ -2890,7 +2890,7 @@ class FilterTest(unittest.TestCase):
                                    "-o", str(temp / "k.opt.s"), "--stats"],
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
+            self.assertRegex((temp / "k.opt.s").read_text(encoding="utf-8"), r"\nGETTID R\d+\n")
             self.assertIn("intrinsics", done.stderr)
 
 
@@ -2972,6 +2972,81 @@ class InlineTest(unittest.TestCase):
             with self.subTest(seed=seed):
                 self.assertNotIn("JAL", optimized)
                 self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), optimized)
+
+
+def leaf_program(rng: random.Random, frame: bool) -> str:
+    """`main` llama a una hoja `f` que usa preservados (de R17..R25) y los guarda en la pila o en copias, como los
+    deja lcc y `stackslots`. Tras la llamada, R16 es el resultado y R17..R25 tienen que seguir como estaban."""
+    kept = rng.sample(range(17, 26), rng.randint(1, 4))
+    main = [f"LI R{r}, {rng.choice(POOL)}" for r in range(17, 26)]
+    main += [f"LI R1, {rng.choice(POOL)}", f"LI R2, {rng.choice(POOL)}", "JAL R31, f", "ADD R16, R1, R0", "HALT"]
+    if frame:
+        enter = ["ADDI R30, R30, -48", *(f"STORE R{r}, R30, {4 * i}" for i, r in enumerate(kept)),
+                 f"STORE R31, R30, {4 * len(kept)}"]
+        leave = [*(f"LOAD R{r}, R30, {4 * i}" for i, r in enumerate(kept)), f"LOAD R31, R30, {4 * len(kept)}",
+                 "ADDI R30, R30, 48"]
+    else:
+        enter = [f"ADD R{5 + i}, R{r}, R0" for i, r in enumerate(kept)]
+        leave = [f"ADD R{r}, R{5 + i}, R0" for i, r in enumerate(kept)]
+    body = [f"{rng.choice(('ADD', 'SUB', 'XOR'))} R{r}, R{rng.choice((1, 2))}, R{rng.choice((1, 2))}" for r in kept]
+    sources = [1, 2, *kept]
+    for _ in range(8):
+        dest = rng.choice([*kept, 11, 12, 13])
+        body.append(f"{rng.choice(R3_OPS)} R{dest}, R{rng.choice(sources)}, R{rng.choice(sources)}")
+        sources.append(dest)
+    body += [f"BEQ R{kept[0]}, R0, L.1", f"ADD R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "BRA L.2",
+             "L.1:", f"SUB R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "L.2:"]
+    return ".text\nmain:\n" + "\n".join(main) + "\nf:\n" + "\n".join(enter + body + leave) + "\nJR R31\n"
+
+
+class LeafRegsTest(unittest.TestCase):
+    """`leafregs`: en una funcion sin llamadas, los preservados que guarda pasan a registros libres."""
+
+    def run_pass(self, source):
+        stats = {}
+        return lines_of(optimize(source, ["leafregs"], stats=stats)), stats
+
+    def test_a_register_saved_in_a_copy_becomes_the_copy(self):
+        out, stats = self.run_pass(".text\nf:\nADD R5, R29, R0\nADD R29, R1, R2\nADD R1, R29, R29\n"
+                                   "ADD R29, R5, R0\nJR R31\n")
+        self.assertEqual(out[out.index("f:") + 1:], ["ADD R5, R1, R2", "ADD R1, R5, R5", "JR R31"])
+        self.assertEqual(stats["leafregs.registers"], 1)
+
+    def test_registers_saved_on_the_stack_move_to_free_ones_and_the_frame_goes(self):
+        out, stats = self.run_pass(".text\nf:\nADDI R30, R30, -16\nSTORE R28, R30, 0\nSTORE R29, R30, 4\n"
+                                   "STORE R31, R30, 8\nADD R29, R1, R2\nADD R28, R29, R1\nADD R1, R28, R29\n"
+                                   "LOAD R28, R30, 0\nLOAD R29, R30, 4\nLOAD R31, R30, 8\nADDI R30, R30, 16\nJR R31\n")
+        self.assertFalse(any(re.search(r"R(2[89]|30)\b", line) for line in out), out)
+        self.assertEqual(stats["leafregs.registers"], 3)                       # R28, R29 y R31
+
+    def test_what_is_left_alone(self):
+        cases = {
+            "calls": "ADD R5, R29, R0\nADD R29, R1, R0\nJAL R31, g\nADD R1, R29, R0\nADD R29, R5, R0\nJR R31\n",
+            "reads the incoming value": "ADD R5, R29, R0\nADD R1, R29, R1\nADD R29, R5, R0\nJR R31\n",
+            "holder used elsewhere": "ADD R5, R29, R0\nADD R29, R1, R0\nADD R1, R5, R29\nADD R29, R5, R0\nJR R31\n",
+            "slot address": "ADDI R30, R30, -16\nSTORE R29, R30, 0\nADDI R1, R30, 0\nADD R29, R1, R0\n"
+                            "LOAD R29, R30, 0\nADDI R30, R30, 16\nJR R31\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                out, stats = self.run_pass(f".text\nf:\n{body}")
+                self.assertIn("R29", " ".join(out))
+                self.assertNotIn("leafregs.registers", stats)
+        out, stats = self.run_pass(".text\n__kernel_k:\nADD R5, R29, R0\nADD R29, R1, R0\nADD R29, R5, R0\nEXIT\n")
+        self.assertNotIn("leafregs.registers", stats)
+
+    def test_programs_give_the_same_result_and_keep_the_preserved_registers(self):
+        """En el simulador de la CPU: el resultado (R16) y los preservados (R17..R25) tras la llamada."""
+        renamed = 0
+        for seed in range(200):
+            rng = random.Random(seed)
+            source = leaf_program(rng, frame=seed % 2 == 0)
+            stats: dict = {}
+            optimized = optimize(source, ["leafregs"], stats=stats)
+            renamed += stats.get("leafregs.registers", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(renamed, 200)
 
 TUI = ROOT / "v.tui"
 RCC = ROOT / "u.lcc" / "build" / ("rcc.exe" if sys.platform == "win32" else "rcc")

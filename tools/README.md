@@ -1043,7 +1043,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline`, `leafregs`, `tailcalls`,
   `deadfuncs`, `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1056,6 +1056,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   nuevas y cada `JR R31` saltando detrás de la llamada; luego `copyprop`, `dce`, `jumps` y
   `deadsaves` limpian. Recupera menos que escribir una macro: llega después de que lcc haya
   repartido los registros contando con la llamada (valores en R16–R29, guardados en la pila).
+  Eso lo arregla en parte `leafregs`.
+- **Pase `leafregs`:** en una función sin llamadas (nunca las tuvo o `inline` las expandió),
+  los R16–R29 que guarda pasan a un R3–R15 que no interfiera con ellos (la vida de registros dice
+  que nunca llevan valores a la vez) y se borran el guardado y la restauración, sea una copia
+  (`stackslots`) o un `STORE`/`LOAD` en la pila; el guardado de R31 se borra sin más y, si nada
+  más lee la pila, el marco también.
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `t.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
