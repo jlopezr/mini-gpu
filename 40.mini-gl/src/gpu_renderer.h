@@ -20,7 +20,7 @@ typedef struct {
 int mgl_gpu_render(const mgl_gpu_job_t *job);
 /* Host-only functional test adapter: call with lanes 0..7 per command. */
 int mgl_gpu_render_host(const mgl_gpu_job_t *job);
-/* Host adapter for V0's local sprite registry; descriptors must outlive execution. */
-int mgl_gpu_sprites_from_v0(const mgl_cmd_buffer_t *src,
+/* Host adapter for the command buffer's local sprite registry (V1); descriptors must outlive execution. */
+int mgl_gpu_sprites_from_cmd(const mgl_cmd_buffer_t *src,
                             mgl_gpu_sprite_t *dst, unsigned int capacity);
 #endif

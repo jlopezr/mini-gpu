@@ -27,7 +27,7 @@ int main(void) {
     if(mgl_cmd_status(&cmd)) return 2;
     result=mgl_cmd_render_cpu(&cmd); if(result) return 3;
     if(memcmp(direct,deferred,sizeof(direct))) { puts("DIFFERENT"); return 4; }
-    printf("PASS direct == deferred, bytes=%u\n",(unsigned)cmd.used);
+    printf("PASS: V0 direct == V1 deferred CPU, bytes=%u\n",(unsigned)cmd.used);
     mgl_set_deferred(0);
     return 0;
 }

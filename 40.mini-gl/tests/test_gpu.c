@@ -37,9 +37,9 @@ int main(void) {
     mgl_bind(deferred,W,H,W);
     result=mgl_cmd_render_cpu(&cmd); if(result) return 3;
     if(memcmp(reference,deferred,sizeof(reference))) {
-        puts("FAIL: V0 direct != V0 deferred"); return 6;
+        puts("FAIL: V0 direct != V1 deferred CPU"); return 6;
     }
-    result=mgl_gpu_sprites_from_v0(&cmd,sprites,MGL_GPU_MAX_SPRITES); if(result) return 3;
+    result=mgl_gpu_sprites_from_cmd(&cmd,sprites,MGL_GPU_MAX_SPRITES); if(result) return 3;
     job.commands=cmd.bytes; job.command_bytes=cmd.used;
     job.framebuffer=gpu; job.width=W; job.height=H; job.pitch=W;
     job.sprites=sprites; job.sprite_count=cmd.sprite_count;
@@ -50,6 +50,6 @@ int main(void) {
                    (unsigned)reference[y*W+x],(unsigned)gpu[y*W+x]); return 5;
         }
     }
-    printf("PASS: V0 direct == V0 deferred == V1 host 8 lanes, %u command bytes\n",(unsigned)cmd.used);
+    printf("PASS: V0 direct == V1 deferred CPU == V2 GPU host 8 lanes, %u command bytes\n",(unsigned)cmd.used);
     return 0;
 }

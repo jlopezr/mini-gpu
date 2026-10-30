@@ -2,12 +2,14 @@
 
 | Fase | Enfoque | Estado |
 |---|---|---|
-| V0 directa | CPU rasteriza al invocar Processing/MiniGL | Implementada; prueba host |
-| V0 diferida | CPU interpreta command buffer y reutiliza rasterizador | Implementada; prueba host |
-| V1 | GPU interpreta comandos y rasteriza con 8 lanes SIMT, un warp | Código C89 y emulación funcional host; sin validación MiniGPU |
-| V2 | CPU convierte geometría a triángulos; GPU rasteriza triángulos | Diseño, pendiente |
-| V3 | Shaders GPU especializados por primitiva | Diseño, pendiente |
-| V4 | Renderer GPU por tiles, explota localidad de memoria | Diseño, pendiente |
+| V0 | Directo: la CPU rasteriza al invocar Processing/MiniGL | Implementada; prueba host |
+| V1 | Diferido: command buffer interpretado por la CPU, que reutiliza el rasterizador de V0 | Implementada; prueba host |
+| V2 | La GPU interpreta el mismo command buffer y rasteriza con 8 lanes SIMT, un warp | Código C89 y emulación funcional host; sin validación MiniGPU |
+| V3 | CPU convierte geometría a triángulos; GPU rasteriza triángulos | Diseño, pendiente |
+| V4 | Shaders GPU especializados por primitiva | Diseño, pendiente |
+| V5 | Renderer GPU por tiles, explota localidad de memoria | Diseño, pendiente |
+
+Cada versión añade una sola idea. Las entregas de `archive/` usan la numeración antigua: `minigl_v0_direct` = V0, `minigl_v0_deferred` = V1, `minigl_v1_gpu` = V2 (y las fases antiguas V2–V4 son las actuales V3–V5).
 
 ## Principios de comparación
 Mantener la API Processing, las escenas de prueba y una referencia V0 CPU píxel a píxel. Medir tiempo de frame, ciclos CPU/GPU, bytes y transacciones SDRAM, ocupación de warps, stalls y tamaño del código. Distinguir coste de generar comandos, interpretar comandos y rasterizar.
@@ -17,9 +19,9 @@ Mantener la API Processing, las escenas de prueba y una referencia V0 CPU píxel
 2. Fijar ABI de entrada GPU y direcciones compartidas reales para framebuffer, comandos y sprites.
 3. Integrar arranque de un warp, sincronización CPU/GPU y presentación de frame.
 4. Comparar resultados en simulador MiniGPU y FPGA con V0 CPU.
-5. Mejorar batching y evaluar estrategias de distribución de píxeles; más adelante V2–V4.
+5. Mejorar batching y evaluar estrategias de distribución de píxeles; más adelante V3–V5.
 
 ## Alternativas deliberadas
-- V0 directa elimina coste del buffer; V0 diferida permite grabar/reproducir y delegar a GPU.
-- V1 interpreta y rasteriza en GPU; V2 mueve conversión a triángulos a CPU; V3 especializa shaders; V4 agrupa por tiles. Ninguna opción sustituye automáticamente a las otras: se conservan como benchmarks.
+- V0 (directo) elimina coste del buffer; V1 (diferido) permite grabar/reproducir y delegar a GPU.
+- V2 interpreta y rasteriza en GPU; V3 mueve conversión a triángulos a CPU; V4 especializa shaders; V5 agrupa por tiles. Ninguna opción sustituye automáticamente a las otras: se conservan como benchmarks.
 - Un warp inicialmente reduce complejidad de orden; múltiples warps exigirán sincronización si hay primitivas solapadas.

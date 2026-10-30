@@ -198,7 +198,7 @@ int mgl_gpu_render(const mgl_gpu_job_t *j) {
     }
     return MGL_OK;
 }
-int mgl_gpu_sprites_from_v0(const mgl_cmd_buffer_t *src,
+int mgl_gpu_sprites_from_cmd(const mgl_cmd_buffer_t *src,
                             mgl_gpu_sprite_t *dst,unsigned int capacity) {
     unsigned int i;
     if(!src || (src->sprite_count && !dst) || capacity<src->sprite_count)

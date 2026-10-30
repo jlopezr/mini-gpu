@@ -1,25 +1,39 @@
 # MiniGL — paquete consolidado
 
-Este paquete reúne **cinco ZIP históricos** (sin modificarlos), una copia de trabajo basada en V1 con nombres `mgl_` / `MGL_`, el scheduler con ejemplo y documentación de decisiones y roadmap.
+Este paquete reúne **cinco ZIP históricos** (sin modificarlos), una copia de trabajo con nombres `mgl_` / `MGL_`, el scheduler con ejemplo, sketches de ejemplo y documentación de decisiones y roadmap.
+
+## Versiones
+
+| Versión | Qué hace | Entrega original en `archive/` |
+|---|---|---|
+| V0 | Directo: la CPU rasteriza al llamar | `minigl_v0_direct` |
+| V1 | Diferido: command buffer interpretado por la CPU | `minigl_v0_deferred` |
+| V2 | Diferido: command buffer interpretado por la GPU (8 lanes, un warp) | `minigl_v1_gpu` |
+| V3–V5 | Triángulos, shaders, tiles (diseño) | — |
+
+Los nombres de `archive/` conservan la numeración antigua; ver [docs/roadmap.md](docs/roadmap.md).
 
 ## Estructura
-- `src/`: versión de trabajo (V0 directa + diferida + renderer V1), con prefijos `mgl_`/`MGL_`. API Processing conserva los nombres originales.
+
+- `src/`: versión de trabajo (V0 + V1 + renderer V2), con prefijos `mgl_`/`MGL_`. La API Processing conserva sus nombres originales. `platform_host.c` es la plataforma host para los sketches.
+- `examples/`: sketches Processing (`setup()`/`draw()`) que se ejecutan en el host con cualquier versión. Ver [examples/README.md](examples/README.md).
+- `tests/`: comparación píxel a píxel V0/V1/V2 sobre escenas fijas.
 - `scheduler/`: última entrega del scheduler con ejemplo, sin modificaciones.
 - `archive/`: las cinco versiones originales extraídas y sus ZIP exactos, sin renombrar símbolos.
 - `docs/arquitectura.md`: capas, primitivas, memoria, toolchain y decisiones.
 - `docs/command-buffer.md`: formato actual frente a diseño propuesto.
-- `docs/roadmap.md`: V0–V4 y tareas pendientes.
+- `docs/roadmap.md`: V0–V5 y tareas pendientes.
 
-## Prueba de host
-Desde `src/`:
+## Uso en el host
 
 ```sh
-gcc -std=c89 -pedantic -Wall -Wextra -O2 -DMGL_GPU_HOST_TEST \
-  minigl.c processing.c raster.c gpu_renderer.c gpu_host.c test_gpu.c -o test_gpu
-./test_gpu
+make                    # todo en build/
+make test               # V0 == V1 == V2 en las escenas de tests/
+make run                # todos los ejemplos con las tres versiones
+make run-shapes V=2     # un ejemplo con una versión concreta
 ```
 
-El test compara V0 directa, V0 diferida y V1 host sobre la misma escena. `gpu_host.c` simula ocho lanes de forma funcional; no simula el hardware SIMT real.
+`gpu_host.c` simula las ocho lanes de forma funcional; no simula el hardware SIMT real.
 
 ## Alcance
 No se incluyen ejecutables de MiniGPU ni se afirma validación con LCC/mini-opt, simulador de GPU o FPGA. La conversión `mg_` → `mgl_` es mecánica; se debe revisar cualquier código externo que llame a la API antigua.

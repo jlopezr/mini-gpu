@@ -11,3 +11,7 @@ void rect(int x,int y,int w,int h) { mgl_rect(x,y,w,h); }
 void circle(int x,int y,int r) { mgl_circle(x,y,r); }
 void triangle(int x0,int y0,int x1,int y1,int x2,int y2) { mgl_triangle(x0,y0,x1,y1,x2,y2); }
 void image(const mgl_sprite_t *s,int x,int y) { mgl_image(s,x,y); }
+mgl_color_t color(int r,int g,int b) {
+    r=r<0?0:r>255?255:r; g=g<0?0:g>255?255:g; b=b<0?0:b>255?255:b;
+    return (mgl_color_t)(((unsigned int)r>>3)<<11 | ((unsigned int)g>>2)<<5 | ((unsigned int)b>>3));
+}
