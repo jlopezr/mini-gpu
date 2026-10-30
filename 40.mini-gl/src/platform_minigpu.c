@@ -55,8 +55,13 @@ void size(int w, int h) {
 
 static void clear(unsigned address) {
     unsigned *p = (unsigned *)address;
-    int i;
-    for (i = 0; i < FB_WORDS; i++) p[i] = 0;
+    int n;
+    for (n = FB_WORDS; n > 0; n -= 4, p += 4) { /* FB_WORDS es multiplo de 4; lcc no desenrolla */
+        p[0] = 0;
+        p[1] = 0;
+        p[2] = 0;
+        p[3] = 0;
+    }
 }
 
 static int has_input;
