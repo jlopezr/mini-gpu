@@ -16,13 +16,31 @@ renombran a `L.n` nuevas y cada `JR R31` salta detras de la llamada. La funcion 
 
 Va despues de `deadsaves`, cuando las hojas ya no tienen marco (lcc les pone uno para guardar R29 aunque luego no
 haga falta), y antes de los pases que limpian lo que deja (`copyprop`, `dce`, `jumps`...).
+
+`kernelcalls` usa la misma expansion con otra politica: en un kernel se expande TODO, porque es obligatorio, y pronto
+(antes de `kernels`):
+Un kernel no llama a nada: cada `JAL` de un `__kernel_*` pasa a ser el cuerpo entero de la funcion llamada.
+
+La GPU del simulador funcional (11) y la de la 36 no tienen `JAL` (la 37 si), asi que un kernel escrito con funciones
+auxiliares (`min2`, `put`, una primitiva entera...) no se podria ejecutar. Este pase las expande todas, sin limite de
+tamano y tambien las que llaman a otras (se expanden a su vez), antes de `kernels`.
+
+El cuerpo se copia tal cual, marco incluido: `JAL` no cambia R30, asi que el `ADDI R30, R30, -n` de la funcion, sus
+accesos a la pila (los argumentos 5+ del llamador incluidos) y los guardados de R16..R29 que restaura hacen en el
+kernel lo mismo que llamada. Las etiquetas se renombran y cada `JR R31` salta detras de la llamada (`inline`). Como
+al final no queda ninguna llamada, nadie lee R31: se borran sus guardados en la pila (`STORE R31` / `LOAD R31`), que
+en la GPU son accesos por lane sin coalescer.
+
+Es un error, con el nombre de la funcion, que un kernel llame (directa o indirectamente) a algo que no se puede
+expandir: una funcion de otra unidad (`memcpy`...), una recursiva, un helper de ABI privada (`__mini_*`) o una que
+salta fuera de si misma o por un puntero (`JALR`).
 """
 from __future__ import annotations
 
 import re
 
 from ..isa import BRANCHES, IMM2, LINK, LOADS, R3, STACK, STORES, WRITE_ONLY1, reg_of
-from ..model import COMPILER_LOCAL_RE, SYMBOL_RE, Function, Line, Unit
+from ..model import COMPILER_LOCAL_RE, SYMBOL_RE, Function, Line, OptError, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
 
@@ -120,3 +138,92 @@ def pass_inline(unit: Unit, stats: dict) -> None:
             else:
                 body.append(line)
         function.body = body
+
+
+def whole_body(function: Function) -> list[Line] | str:
+    """El cuerpo que se copia (sin la etiqueta de la funcion), o por que no se puede."""
+    if function.opaque:
+        return "es un helper de ABI privada"
+    body = function.body[1:]
+    labels = {line.name for line in body if line.kind == "label"}
+    instructions = [line for line in body if line.kind == "instr"]
+    if not instructions or instructions[-1].op != "JR":
+        return "no acaba en JR R31"
+    for line in body:
+        if line.kind == "directive" or (line.kind == "label" and not COMPILER_LOCAL_RE.match(line.name)):
+            return f"tiene `{line.render()}` en medio"
+        if line.kind != "instr":
+            continue
+        if line.op == "JR" and (len(line.args) != 1 or reg_of(line.args[0]) != LINK):
+            return f"salta por un registro ({line.render()})"
+        if line.op == "JALR":
+            return f"llama por un puntero ({line.render()})"
+        if (line.op == "BRA" or line.op in BRANCHES) and line.args[-1] not in labels:
+            return f"salta fuera de si misma ({line.render()})"
+    return body
+
+
+def callees(function: Function) -> list[str]:
+    return [line.args[1] for line in function.body
+            if line.kind == "instr" and line.op == "JAL" and len(line.args) == 2 and reg_of(line.args[0]) == LINK]
+
+
+def check_no_recursion(kernel: Function, functions: dict[str, Function], where: str) -> None:
+    """Un ciclo de llamadas alcanzable desde el kernel no se puede expandir: error con la cadena."""
+    def visit(name: str, chain: list[str]) -> None:
+        if name in chain:
+            cycle = " -> ".join(chain[chain.index(name):] + [name])
+            raise OptError(f"{where}: un kernel no puede llamar a una funcion recursiva ({cycle})")
+        function = functions.get(name)
+        if function is not None:
+            for callee in callees(function):
+                visit(callee, chain + [name])
+    for callee in callees(kernel):
+        visit(callee, [kernel.name])
+
+
+def drop_link_saves(kernel: Function, stats: dict) -> None:
+    """Sin llamadas nadie lee R31: fuera los `STORE R31` / `LOAD R31` de la pila (el retorno pasa a EXIT)."""
+    def is_link_save(line: Line) -> bool:
+        return (line.kind == "instr" and line.op in ("STORE", "LOAD") and len(line.args) == 3
+                and reg_of(line.args[0]) == LINK and reg_of(line.args[1]) == STACK)
+    before = len(kernel.body)
+    kernel.body = [line for line in kernel.body if not is_link_save(line)]
+    if len(kernel.body) != before:
+        stats["kernelcalls.link_saves"] = stats.get("kernelcalls.link_saves", 0) + before - len(kernel.body)
+
+
+@register_pass("kernelcalls", "__kernel_*: cada JAL pasa a ser el cuerpo entero de la funcion (la GPU no tiene JAL)")
+def pass_kernelcalls(unit: Unit, stats: dict) -> None:
+    functions = {function.name: function for function in unit.functions()}
+    kernels = [function for function in unit.functions() if function.name.startswith(KERNEL_PREFIX)]
+    if not any(callees(kernel) for kernel in kernels):
+        return
+    bodies: dict[str, list[Line]] = {}
+    labels = fresh_labels(unit)
+    for kernel in kernels:
+        if not callees(kernel):
+            continue
+        where = f"{unit.path}: {kernel.name}"
+        check_no_recursion(kernel, functions, where)
+        while callees(kernel):                  # termina: no hay ciclos
+            body: list[Line] = []
+            for line in kernel.body:
+                if not (line.kind == "instr" and line.op == "JAL" and len(line.args) == 2
+                        and reg_of(line.args[0]) == LINK):
+                    body.append(line)
+                    continue
+                name = line.args[1]
+                callee = functions.get(name)
+                if callee is None:
+                    raise OptError(f"{where}: un kernel no puede llamar a {name}: no esta en la unidad "
+                                   "(la GPU no tiene JAL)")
+                if name not in bodies:
+                    found = whole_body(callee)
+                    if isinstance(found, str):
+                        raise OptError(f"{where}: no se puede expandir {name}, a la que llama: {found}")
+                    bodies[name] = found
+                body += expansion(bodies[name], labels)
+                stats["kernelcalls.expanded"] = stats.get("kernelcalls.expanded", 0) + 1
+            kernel.body = body
+        drop_link_saves(kernel, stats)

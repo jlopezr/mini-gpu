@@ -1044,7 +1044,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline`, `leafregs`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
   `deadfuncs`, `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1064,6 +1064,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   (`stackslots`) o un `STORE`/`LOAD` en la pila; el guardado de R31 se borra sin más y, si nada
   más lee la pila, el marco también.
 
+- **Pase `kernelcalls`:** en un kernel, cada `JAL R31, f` pasa a ser el cuerpo entero de `f` (marco
+  incluido: `JAL` no cambia R30, así que hace lo mismo que llamada), y lo que este llame, a su vez; la
+  GPU del simulador y de la 36 no tiene `JAL`. Sin llamadas, nadie lee R31: se borran sus guardados.
+  Error si `f` es de otra unidad, recursiva, de ABI privada o salta por un puntero. Va antes de
+  `kernels`, que sigue el valor de R30 por cada instrucción para no confundir los marcos expandidos con
+  el del kernel, y reserva en la pila de la lane los 16 bytes donde lcc guarda R1–R4.
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `t.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),

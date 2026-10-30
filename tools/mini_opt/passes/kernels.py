@@ -29,6 +29,10 @@ GPU_STACK_PER_LANE = 512
 GPU_STACK_SYMBOL = "__gpu_stack"
 
 KERNEL_PARAMS = 4                       # R1..R4, del bloque de argumentos +8, +12, +16, +20
+# Los 16 bytes justo encima del R30 de entrada son de quien llama, para que la funcion guarde ahi R1..R4 (lcc lo hace
+# con un parametro que tiene que sobrevivir a una llamada). Un kernel no tiene quien llame: su pila empieza 16 bytes
+# por debajo del tope de la de su lane, y ese hueco es suyo; si no, caeria en la pila de la lane siguiente.
+HOME_AREA = 16
 
 SHIFT_IMMEDIATE = {"SHLI": "SHL", "SHRI": "SHR", "SARI": "SAR"}
 
@@ -51,6 +55,15 @@ def stack_adjust(line: Line) -> int | None:
     return None
 
 
+def stack_levels(function: Function) -> dict[int, int] | None:
+    """Cuanto vale R30 antes de cada instruccion respecto a la entrada (`id(linea) -> desplazamiento`), o None si
+    no se sabe. Hace falta porque, con funciones expandidas (`kernelcalls`), hay marcos dentro del kernel: un
+    `LOAD R29, R30, 0` de una de ellas no es la restauracion del R29 del kernel aunque se le parezca."""
+    from .stackslots import frame_offsets      # aqui: stackslots importa este modulo
+    blocks = build_cfg(function)
+    return frame_offsets(blocks) if blocks else None
+
+
 def drop_frame(function: Function, stats: dict) -> bool:
     """Quita de un kernel lo que lcc guarda y restaura de los registros preservados.
 
@@ -59,7 +72,8 @@ def drop_frame(function: Function, stats: dict) -> bool:
     llamo. Un kernel no vuelve a nadie: acaba con EXIT. Siempre se borran esos guardados y
     restauraciones (en la GPU cada uno es un acceso a la pila de la lane, con direcciones
     separadas por lane, es decir sin coalescer). Si tras eso NADA mas toca R30 (ni un local ni un
-    derrame), se borra tambien el marco y el kernel no necesita pila.
+    derrame), se borra tambien el marco y el kernel no necesita pila. Solo cuenta lo que esta al
+    nivel del marco del kernel: los marcos de las funciones expandidas son suyos.
 
     Devuelve True si ya no queda ninguna referencia a R30, y False si el kernel usa la pila de
     verdad (y se queda con su marco para los locales)."""
@@ -71,10 +85,17 @@ def drop_frame(function: Function, stats: dict) -> bool:
     opening = stack_adjust(first)
     if opening is None or opening >= 0:
         return False
+    level = stack_levels(function)
+    if level is None or level.get(id(first)) != 0:
+        return False                            # no se sabe donde esta cada acceso: no se toca
     size = -opening
+
+    def in_frame(line: Line) -> bool:           # al nivel del marco del kernel
+        return level.get(id(line)) == -size
+
     saves: dict[int, int] = {}                  # desplazamiento -> registro preservado
     for line in refs[1:]:
-        if line.op != "STORE" or reg_of(line.args[1]) != STACK:
+        if line.op != "STORE" or reg_of(line.args[1]) != STACK or not in_frame(line):
             break
         register, offset = reg_of(line.args[0]), number(line.args[2])
         if (register is None or not 16 <= register <= 29 or offset is None or offset in saves
@@ -84,11 +105,11 @@ def drop_frame(function: Function, stats: dict) -> bool:
     remove = list(refs[1:1 + len(saves)])
     for line in refs[1 + len(saves):]:
         offset = number(line.args[2]) if len(line.args) == 3 else None
-        if (line.op == "LOAD" and reg_of(line.args[1]) == STACK and offset is not None
+        if (line.op == "LOAD" and reg_of(line.args[1]) == STACK and offset is not None and in_frame(line)
                 and saves.get(offset) == reg_of(line.args[0])):
             remove.append(line)
     rest = [l for l in refs[1:] if all(l is not r for r in remove)]
-    epilogue = [l for l in rest if stack_adjust(l) == size]
+    epilogue = [l for l in rest if stack_adjust(l) == size and in_frame(l)]
     only_frame = len(rest) == len(epilogue)
     if only_frame:
         remove += [first] + epilogue
@@ -129,12 +150,17 @@ def check_isa(function: Function, where: str) -> None:
 
 
 def check_parameter_count(function: Function, where: str) -> None:
-    """Los parametros son R1..R4. Mas de cuatro irian a la pila del llamador, que un kernel no tiene."""
+    """Los parametros son R1..R4. Mas de cuatro irian a la pila del llamador, que un kernel no tiene: un `LOAD` de
+    R30 de entrada + 16 o mas (con funciones expandidas, contando sus marcos). De +0 a +15 esta el hueco donde lcc
+    guarda R1..R4 si los necesita tras una llamada: la entrada del kernel lo reserva (`HOME_AREA`)."""
+    level = stack_levels(function)
     frame = next((-(stack_adjust(l) or 0) for l in function.body if stack_adjust(l) is not None), 0)
     for line in function.body:
         if line.kind == "instr" and line.op in LOADS and reg_of(line.args[1]) == STACK:
             offset = number(line.args[2]) or 0
-            if offset >= frame > 0:
+            above = (level[id(line)] + offset >= HOME_AREA if level is not None and id(line) in level
+                     else offset >= frame + HOME_AREA > HOME_AREA)
+            if above:
                 raise OptError(f"{where}: un kernel admite {KERNEL_PARAMS} parametros como maximo "
                                "(pasa un puntero a una estructura)")
 
@@ -145,7 +171,7 @@ def entry_code(function: Function, uses_stack: bool) -> list[Line]:
     params = sorted(r for r in live_in_entry(blocks, liveness(blocks)) if r in ARG_REGS)
     size = GPU_STACK_PER_LANE
     entry = ([instr("GETTID", "R5"), instr("MOVI", "R6", str(size)), instr("MUL", "R5", "R5", "R6"),
-              instr("LI", "R30", f"{GPU_STACK_SYMBOL}+{size}"), instr("ADD", "R30", "R30", "R5")]
+              instr("LI", "R30", f"{GPU_STACK_SYMBOL}+{size - HOME_AREA}"), instr("ADD", "R30", "R30", "R5")]
              if uses_stack else [])
     if params:
         entry.append(instr("GETARG", "R5"))

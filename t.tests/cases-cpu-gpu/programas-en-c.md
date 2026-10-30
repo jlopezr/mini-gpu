@@ -118,9 +118,10 @@ expresiones distintas, la fila y la columna por la que empieza el hilo y de cuá
 `GRID_FOR(i, n, step)` de arriba es el caso unidimensional de la GPU buena: primera = `__gpu_tid`,
 paso = `__gpu_nthreads`. Para una imagen se aplican dos veces, una por la fila y otra por la columna.
 
-El cuerpo no puede ser una función que llame a otra: la GPU de la 36 no tiene `JAL`, así que lcc no
-puede enlazar la llamada dentro de un kernel, y lcc no expande funciones en línea. De ahí la
-plantilla por `#include`.
+Cuando se escribió, el cuerpo no podía ser una función que llamara a otra: la GPU de la 36 no tiene
+`JAL`, y lcc no expande funciones en línea. De ahí la plantilla por `#include`. Ahora el pase
+`kernelcalls` de mini-opt expande en el kernel cada llamada a una función de la misma unidad (ver
+abajo), así que también se puede escribir con funciones.
 
 ## Límites de hoy
 
@@ -128,8 +129,11 @@ plantilla por `#include`.
   puntero (`GETARG`) al bloque de argumentos; puedes pasar N valores usando uno de esos parámetros
   como puntero a una estructura, o escribiendo un kernel asm que lea el bloque que necesite.
 - **Un kernel no se puede llamar desde la CPU** (empieza con `GETTID` y acaba con `EXIT`).
-- **Sin llamadas dentro de un kernel** (la GPU de la 36 no tiene `JAL`), ni `long long`,
-  ni `float`, ni división sin signo.
+- **Llamadas dentro de un kernel, solo a funciones de la misma unidad** (`static` o no): la GPU de la
+  36 no tiene `JAL`, y el pase `kernelcalls` de mini-opt expande cada llamada con el cuerpo entero de
+  la función, marco incluido. Es un error, con su nombre, llamar a una de otra unidad (`memcpy`), a una
+  recursiva o por un puntero ([`simt/calls`](simt/calls/calls.c) prueba lo que sí se puede). Sin
+  `long long`, ni `float`, ni división sin signo, ni `%` (es `REM`: con `a - a / b * b`).
 - **Placa:** solo está probado el cubo (`--board`, runtime con `RUN`, la 36 no tiene `WARP_START`). El plano
   compila y pasa en el simulador, pero no se ha probado en la placa.
 

@@ -32,6 +32,7 @@ from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 from tools.mini_opt.cli import main as optimize_main  # noqa: E402
+from tools.mini_opt.registry import PASSES  # noqa: E402
 from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
@@ -313,7 +314,7 @@ ADD R15, R1, R0
 """).replace("JR R31", "ADDI R30, R30, 16\nJR R31")
         body = kernel_body(source)
         self.assertEqual(body[:5], ["GETTID R5", "MOVI R6, 512", "MUL R5, R5, R6",
-                                    "LI R30, __gpu_stack+512", "ADD R30, R30, R5"])
+                                    "LI R30, __gpu_stack+496", "ADD R30, R30, R5"])   # 512 - 16 del hueco de R1..R4
         self.assertIn("ADDI R30, R30, -16", body)
         self.assertEqual(body[-1], "EXIT")
 
@@ -349,12 +350,13 @@ ADD R15, R1, R0
 __kernel_k:
 ADDI R30, R30, -16
 STORE R29, R30, 0
-LOAD R5, R30, 16
+LOAD R5, R30, 16+16
 STORE R5, R1, 0
 LOAD R29, R30, 0
 ADDI R30, R30, 16
 JR R31
 """
+        # el quinto parametro, en la entrada + 16 (de +0 a +15 esta el hueco de R1..R4, que si es del kernel)
         with self.assertRaisesRegex(OptError, "parametros como maximo"):
             pass_kernels(parse_unit(source, "k.s"), {})
 
@@ -2997,6 +2999,60 @@ def leaf_program(rng: random.Random, frame: bool) -> str:
     body += [f"BEQ R{kept[0]}, R0, L.1", f"ADD R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "BRA L.2",
              "L.1:", f"SUB R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "L.2:"]
     return ".text\nmain:\n" + "\n".join(main) + "\nf:\n" + "\n".join(enter + body + leave) + "\nJR R31\n"
+
+
+class KernelCallsTest(unittest.TestCase):
+    """`kernelcalls`: en un kernel, cada JAL pasa a ser el cuerpo entero de la funcion (la GPU no tiene JAL)."""
+
+    HELPERS = """\
+.text
+leaf:
+ADDI R1, R1, 1
+JR R31
+framed:
+ADDI R30, R30, -16
+STORE R31, R30, 8
+STORE R29, R30, 0
+ADD R29, R1, R0
+JAL R31, leaf
+ADD R1, R1, R29
+LOAD R29, R30, 0
+LOAD R31, R30, 8
+ADDI R30, R30, 16
+JR R31
+"""
+
+    def run_pass(self, kernel_body, helpers=HELPERS):
+        stats = {}
+        source = helpers + f".globl __kernel_k\n__kernel_k:\n{kernel_body}\nJR R31\n"
+        unit = parse_unit(source, "k.s")
+        PASSES["kernelcalls"][0](unit, stats)
+        kernel = next(f for f in unit.functions() if f.name == "__kernel_k")
+        return [line.render() for line in kernel.body], stats
+
+    def test_nested_calls_with_frames_are_expanded_and_the_link_saves_go(self):
+        body, stats = self.run_pass("JAL R31, framed\nJAL R31, leaf")
+        self.assertFalse([line for line in body if line.startswith("JAL")], body)
+        self.assertFalse([line for line in body if "R31" in line and line != "JR R31"], body)   # sin guardados de R31
+        self.assertIn("STORE R29, R30, 0", body)                                  # los de R29, si
+        self.assertEqual(stats["kernelcalls.expanded"], 3)                       # framed, su leaf y la otra leaf
+
+    def test_what_cannot_be_expanded_is_an_error_with_the_name(self):
+        cases = {
+            "otra unidad": ("JAL R31, memcpy", "", "memcpy: no esta en la unidad"),
+            "recursion": ("JAL R31, ping", "ping:\nJAL R31, pong\nJR R31\npong:\nJAL R31, ping\nJR R31\n",
+                          "recursiva \\(ping -> pong -> ping\\)"),
+            "puntero": ("JAL R31, f", "f:\nJALR R31, R5, 0\nJR R31\n", "llama por un puntero"),
+            "helper privado": ("JAL R31, __mini_f", "__mini_f:\nJR R31\n", "ABI privada"),
+        }
+        for name, (call, helpers, message) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(OptError, message):
+                self.run_pass(call, ".text\n" + helpers)
+
+    def test_functions_that_are_not_kernels_keep_their_calls(self):
+        unit = parse_unit(self.HELPERS, "k.s")
+        PASSES["kernelcalls"][0](unit, {})
+        self.assertIn("JAL R31, leaf", [line.render() for line in unit.lines()])
 
 
 class LeafRegsTest(unittest.TestCase):
