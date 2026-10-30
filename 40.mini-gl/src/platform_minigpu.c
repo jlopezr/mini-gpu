@@ -3,7 +3,18 @@
    Corre igual en el simulador (sim-sys) y en las placas 36/37. Se compila con
    build-c (mini-lcc), no con el compilador del host.
 
-   De momento solo V0: la CPU rasteriza al llamar.
+   La version se elige al compilar con MGL_VERSION (build-c -D, make V=):
+     0  directo: la CPU rasteriza al llamar (por defecto)
+     1  diferido: draw() se graba en un command buffer y la CPU lo interpreta
+        (mgl_cmd_render_cpu) antes del swap
+   V2 (la GPU interpreta el buffer) todavia no.
+
+   La entrada sale de INPUT (mmio.md §25), si existe: en el simulador con
+   --window (o --keyboard, --mouse, --input-script); sin él se queda a cero.
+   El raton es relativo, asi que la posicion arranca en el centro y se lleva en
+   medios pixeles: la ventana del simulador ensena el framebuffer a doble
+   tamano, y asi sigue al puntero a su velocidad (como input_paint.asm).
+   El teclado se traduce de USB HID a ASCII con la distribucion US.
 
    Se dibuja directamente en el buffer trasero. Processing conserva el lienzo de
    un frame al siguiente, pero el trasero tiene lo de hace dos frames: tras cada
@@ -18,12 +29,22 @@
 #define FB_H 240
 #define FB_WORDS (FB_W * FB_H / 2)
 
+#ifndef MGL_VERSION
+#define MGL_VERSION 0
+#endif
+#if MGL_VERSION != 0 && MGL_VERSION != 1
+#error "MiniGPU: MGL_VERSION 0 o 1 (V2 todavia no)"
+#endif
+
 /* En RAM, lejos del programa (como render.asm); alineados a 16 bytes. */
 #define FB_A 0x01000000u
-#define FB_B 0x01025800u /* FB_A + 320*240*2 */
+#define FB_B 0x01025800u     /* FB_A + 320*240*2 */
+#define COMMANDS 0x0104B000u /* FB_B + 320*240*2: el command buffer de V1 */
+#define COMMAND_BYTES 0x10000u
 
 int width = FB_W, height = FB_H;
-int frameCount, mouseX, mouseY, mousePressed;
+int frameCount, mouseX, mouseY, pmouseX, pmouseY, mousePressed;
+int keyPressed, key, keyCode;
 
 static int bad_size;
 
@@ -37,6 +58,75 @@ static void clear(unsigned address) {
     int i;
     for (i = 0; i < FB_WORDS; i++) p[i] = 0;
 }
+
+static int has_input;
+static int half_x = FB_W, half_y = FB_H; /* el raton, en medios pixeles */
+
+/* USB HID (Usage Page 0x07) a ASCII, distribucion US: de 0x1E (1) a 0x38 (/),
+   sin y con Shift. 0x32 es la tecla de fuera de EE. UU.: no da caracter. */
+static const char hid_plain[] = "1234567890\n\033\b\t -=[]\\\0;'`,./";
+static const char hid_shift[] = "!@#$%^&*()\n\033\b\t _+{}|\0:\"~<>?";
+
+#define HID_SHIFT 0x22 /* Shift izquierdo y derecho en el bitmap de modificadores */
+
+static void key_down(int usage, int modifiers) {
+    int shift = modifiers & HID_SHIFT, c = 0;
+    if (usage >= 0x4F && usage <= 0x52) { /* derecha, izquierda, abajo, arriba */
+        key = CODED;
+        keyCode = usage == 0x4F ? RIGHT : usage == 0x50 ? LEFT : usage == 0x51 ? DOWN : UP;
+        return;
+    }
+    if (usage >= 0x04 && usage <= 0x1D)
+        c = (shift ? 'A' : 'a') + usage - 0x04;
+    else if (usage >= 0x1E && usage <= 0x38)
+        c = (shift ? hid_shift : hid_plain)[usage - 0x1E];
+    else if (usage == 0x4C)
+        c = DELETE;
+    if (c) {
+        key = c;
+        keyCode = 0;
+    }
+}
+
+/* Antes de cada draw(): vacia la cola de eventos y lee el estado. */
+static void poll_input(void) {
+    unsigned event, type;
+    int i;
+    pmouseX = mouseX;
+    pmouseY = mouseY;
+    if (!has_input) return;
+    while (REG(INPUT_STATUS) & MMIO_INPUT_STATUS_COUNT_MASK) {
+        event = REG(INPUT_EVENT_DATA);
+        type = event >> 24;
+        if (type == MMIO_INPUT_TYPE_MOUSE_MOVE) {
+            half_x += (int)(event << 20) >> 20; /* DX y DY: 12 bits con signo */
+            half_y += (int)(event << 8) >> 20;
+            if (half_x < 0) half_x = 0;
+            if (half_x > 2 * FB_W - 1) half_x = 2 * FB_W - 1;
+            if (half_y < 0) half_y = 0;
+            if (half_y > 2 * FB_H - 1) half_y = 2 * FB_H - 1;
+        } else if (type == MMIO_INPUT_TYPE_KEY && (event & 0x1FF) > 0x100) /* KEY != 0 y DOWN */
+            key_down(event & 0xFF, (event >> 16) & 0xFF);
+    }
+    mouseX = half_x / 2;
+    mouseY = half_y / 2;
+    mousePressed = REG(INPUT_MOUSE_BUTTONS) != 0;
+    keyPressed = 0;
+    for (i = 0; i < 8; i++)
+        if (REG(INPUT_KEY_STATE0 + 4 * i)) keyPressed = 1;
+}
+
+#if MGL_VERSION == 1
+static mgl_cmd_buffer_t commands;
+
+/* Interpreta lo grabado desde la ultima vez y vacia el buffer. 0 si va bien. */
+static int render_commands(void) {
+    int status = mgl_cmd_status(&commands);
+    if (status == MGL_OK) status = mgl_cmd_render_cpu(&commands);
+    mgl_cmd_reset(&commands);
+    return status;
+}
+#endif
 
 /* Termina el frame en el buffer trasero, pide el swap, espera a que se aplique
    y pasa a dibujar en el nuevo trasero. */
@@ -58,12 +148,27 @@ int main(void) {
 
     mgl_bind((mgl_color_t *)FB_B, FB_W, FB_H, FB_W);
     mgl_set_target((mgl_color_t *)FB_B, (const mgl_color_t *)FB_A);
+#if MGL_VERSION == 1
+    if (mgl_cmd_init(&commands, (void *)COMMANDS, COMMAND_BYTES) != MGL_OK) return 2;
+    mgl_set_deferred(&commands);
+#else
     mgl_set_deferred(0);
+#endif
+    has_input = (REG(SYSTEM_DEVICES) & DEV_INPUT) != 0;
+    mouseX = pmouseX = FB_W / 2;
+    mouseY = pmouseY = FB_H / 2;
     setup();
     if (bad_size) return 1;
+#if MGL_VERSION == 1
+    if (render_commands() != MGL_OK) return 2;
+#endif
     for (;;) {
         frameCount++;
+        poll_input();
         draw();
+#if MGL_VERSION == 1
+        if (render_commands() != MGL_OK) return 2; /* buffer lleno o comando malo */
+#endif
         present();
     }
 }

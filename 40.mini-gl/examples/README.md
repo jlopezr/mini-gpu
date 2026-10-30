@@ -8,7 +8,7 @@ Cada sketch se compila para tres:
 |---|---|---|
 | Host ([platform_host.c](../src/platform_host.c)) | `build/<nombre>` | `setup()` y un solo `draw()`; guarda el frame como PPM |
 | SDL ([platform_sdl.c](../src/platform_sdl.c)) | `build/<nombre>-sdl` | Ventana: `setup()` y `draw()` en bucle a 60 fps |
-| MiniGPU ([platform_minigpu.c](../src/platform_minigpu.c)) | `build/minigpu/<nombre>.bin` | La máquina del repo (CPU + GPU, vídeo 320×240): en su simulador o en las placas 36/37. De momento solo V0 |
+| MiniGPU ([platform_minigpu.c](../src/platform_minigpu.c)) | `build/minigpu/v<N>/<nombre>.bin` | La máquina del repo (CPU + GPU, vídeo 320×240): en su simulador o en las placas 36/37. De momento V0 y V1 |
 
 Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 [platform.c](../src/platform.c).
@@ -19,6 +19,7 @@ Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 | [`pattern.c`](pattern.c) | Rejilla de figuras con bucles: muchas primitivas, command buffer más grande |
 | [`bounce.c`](bounce.c) | Animación: pelotas que rebotan, círculo que sigue al ratón (más grande al pulsar) |
 | [`trail.c`](trail.c) | Estela: `draw()` no borra y dibuja encima de los frames anteriores |
+| [`paint.c`](paint.c) | Pintar con el ratón; colores, grosor y borrar con el teclado |
 
 ## Host: imágenes PPM
 
@@ -48,8 +49,8 @@ make sdl                 # solo compilar todos
 ./build/bounce-sdl -v 1 -s 4         # a mano: versión y escala (por defecto 3)
 ```
 
-En la ventana, las teclas **0**, **1** y **2** cambian de versión en marcha y
-**Esc** cierra. El título muestra la versión, los fps y los bytes de comandos
+En la ventana, **F1**, **F2** y **F3** cambian a V0, V1 y V2 en marcha y **Esc**
+cierra; el resto de teclas y el ratón son del sketch. El título muestra la versión, los fps y los bytes de comandos
 de cada frame.
 
 ## MiniGPU: simulador (y placa)
@@ -59,9 +60,14 @@ simulador de CPU + GPU (`32.cpu-gpu-func-sim`). Es un simulador funcional en
 Python: un frame son millones de instrucciones, varios segundos.
 
 ```sh
-make minigpu                         # build/minigpu/<nombre>.bin
-make sim-bounce                      # en la ventana del simulador
-make check-minigpu                   # cada ejemplo, píxel a píxel contra V0 en el host
+make minigpu                         # V0: build/minigpu/v0/<nombre>.bin
+make minigpu V=1                     # V1: build/minigpu/v1/<nombre>.bin (todos los objetivos aceptan V)
+make sim-bounce                      # en la ventana del simulador (con su ratón y teclado)
+
+# entrada de un guion (tools/input_script.py) en vez de la ventana; deja el frame 40 en paint.bin
+../tools/sim-sys build/minigpu/v0/paint.bin --input-script examples/paint.input \
+    --halt-after-swaps 40 --frame-output paint.bin --run-limit 100000000000
+make check-minigpu                   # cada ejemplo, píxel a píxel contra la misma versión en el host
 make check-minigpu-bounce FRAMES=5   # el frame 5 de uno solo
 make profile-minigpu-shapes          # instrucciones por función C hasta el frame FRAMES
 ```
@@ -73,13 +79,21 @@ make profile-minigpu-shapes          # instrucciones por función C hasta el fra
 simulador (`--halt-after-swaps FRAMES --frame-output`) en RGB565 crudo y los
 compara con `tools/compare-frames.py`, que dice dónde están las diferencias.
 
-Por ahora solo hay V0 (la CPU rasteriza al llamar): no hay ratón ni teclado, y
-`size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja directamente en el
+La versión se elige al compilar (`V=0`, la de por defecto, o `V=1`; V2 todavía no): en V1, cada
+`draw()` se graba en un command buffer en RAM y la CPU lo interpreta antes del swap. `size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja directamente en el
 buffer trasero, que tiene lo de hace dos frames. Para que, como en Processing, el
 lienzo se conserve de un frame al siguiente, tras cada swap `mgl_set_target`
 cambia de buffer sin tocar el estado de dibujo y deja pendiente copiar el
 delantero. MiniGL solo hace la copia si se dibuja algo antes de un `background()`:
 en los sketches que borran cada frame no se copia nunca. `trail` es el que no borra.
+
+El ratón y el teclado salen del periférico INPUT (`1.isa/mmio.md` §25), que en el
+simulador dan la ventana (`--window`, lo pone `make sim-*`) o un guion
+(`--input-script`, como [`paint.input`](paint.input)); sin ninguno, la entrada no
+cambia. El ratón de INPUT es relativo: empieza en el centro (igual que en las otras
+plataformas, para que `check-minigpu` coincida) y se mueve en medios píxeles, porque
+la ventana enseña el framebuffer a doble tamaño. Las teclas se traducen de USB HID
+a ASCII con la distribución US.
 
 ## Añadir un ejemplo
 
@@ -94,8 +108,14 @@ Notas sobre la API:
 - Colores como en Arduino TFT: `background`, `fill` y `stroke` reciben
   `(r, g, b)` de 0 a 255. Para RGB565 directo están `background565`, `fill565`
   y `stroke565`, y `color565(r, g, b)` convierte (como en Adafruit_GFX).
-- `frameCount` vale 0 en `setup()` y 1, 2, 3… en cada `draw()`. `mouseX`,
-  `mouseY` y `mousePressed` solo cambian en SDL; en el host valen 0.
+- `frameCount` vale 0 en `setup()` y 1, 2, 3… en cada `draw()`.
+- Entrada como en Processing, actualizada antes de cada `draw()` en SDL y
+  MiniGPU (en el host no cambia): `mouseX`, `mouseY` (empiezan en el centro),
+  `pmouseX`, `pmouseY` (los del frame anterior) y `mousePressed`; `keyPressed`
+  mientras haya una tecla pulsada, y `key`, la última: su carácter, o `CODED` y
+  entonces `keyCode` es `UP`, `DOWN`, `LEFT` o `RIGHT`. No hay funciones de
+  evento (`keyPressed()` chocaría en C con la variable): un sketch mira si `key`
+  ha cambiado, como `paint`.
 - Como en Processing, el framebuffer no se borra entre frames: si quieres
   borrarlo, empieza `draw()` con `background()`.
 - No hay teclado (`key`, `keyPressed`) ni `frameRate()`: SDL va fijo a 60 fps.

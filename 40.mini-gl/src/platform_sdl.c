@@ -3,7 +3,7 @@
 
    Uso: sketch-sdl [-v 0|1|2] [-s escala]
      -v N    versión de MiniGL (por defecto 0); también se cambia en marcha
-             con las teclas 0, 1 y 2
+             con F1, F2 y F3 (las demás teclas son del sketch)
      -s N    píxeles de pantalla por píxel del framebuffer (por defecto 3)
    El título muestra la versión, los fps y los bytes de comandos. Esc cierra. */
 
@@ -27,6 +27,33 @@ static int usage(const char *prog) {
 static void update_mouse(int x, int y) {
     mouseX = x;
     mouseY = y;
+}
+
+/* Las teclas sin carácter de texto: los que tienen los da SDL_TEXTINPUT, ya
+   con la distribución del teclado y las mayúsculas. */
+static void key_down(SDL_Keycode k) {
+    static const SDL_Keycode coded[] = {SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT};
+    static const int codes[] = {UP, DOWN, LEFT, RIGHT};
+    static const SDL_Keycode plain[] = {SDLK_RETURN, SDLK_BACKSPACE, SDLK_TAB, SDLK_DELETE};
+    static const int chars[] = {ENTER, BACKSPACE, TAB, DELETE};
+    int i;
+    for (i = 0; i < 4; i++)
+        if (k == coded[i]) {
+            key = CODED;
+            keyCode = codes[i];
+        } else if (k == plain[i]) {
+            key = chars[i];
+            keyCode = 0;
+        }
+}
+
+/* keyPressed: alguna tecla pulsada ahora. */
+static int any_key(void) {
+    int i, n;
+    const Uint8 *state = SDL_GetKeyboardState(&n);
+    for (i = 0; i < n; i++)
+        if (state[i]) return 1;
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -76,6 +103,8 @@ int main(int argc, char **argv) {
 
     next = fps_start = SDL_GetTicks();
     while (running) {
+        pmouseX = mouseX;
+        pmouseY = mouseY;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = 0;
@@ -83,8 +112,15 @@ int main(int argc, char **argv) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (k == SDLK_ESCAPE)
                     running = 0;
-                else if (k >= SDLK_0 && k < SDLK_0 + PLATFORM_VERSIONS)
-                    version = k - SDLK_0;
+                else if (k >= SDLK_F1 && k < SDLK_F1 + PLATFORM_VERSIONS)
+                    version = k - SDLK_F1;
+                else
+                    key_down(k);
+            } else if (e.type == SDL_TEXTINPUT) {
+                if ((unsigned char)e.text.text[0] < 128) { /* solo ASCII, como en el resto de plataformas */
+                    key = e.text.text[0];
+                    keyCode = 0;
+                }
             } else if (e.type == SDL_MOUSEMOTION)
                 update_mouse(e.motion.x, e.motion.y);
             else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
@@ -93,6 +129,7 @@ int main(int argc, char **argv) {
             }
         }
 
+        keyPressed = any_key();
         frameCount++;
         if (platform_begin(version) != MGL_OK) break;
         draw();

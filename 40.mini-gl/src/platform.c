@@ -6,7 +6,8 @@
 #define CMD_BYTES 65536U
 
 int width, height;
-int frameCount, mouseX, mouseY, mousePressed;
+int frameCount, mouseX, mouseY, pmouseX, pmouseY, mousePressed;
+int keyPressed, key, keyCode;
 mgl_color_t *platform_frame;
 
 static unsigned char cmd_memory[CMD_BYTES];
@@ -30,11 +31,14 @@ void size(int w, int h) {
     platform_frame = p;
     width = w;
     height = h;
+    mouseX = pmouseX = w / 2; /* el ratón empieza en el centro, como en MiniGPU */
+    mouseY = pmouseY = h / 2;
     mgl_bind(platform_frame, w, h, w);
 }
 
 void platform_reset(void) {
-    frameCount = mouseX = mouseY = mousePressed = 0;
+    frameCount = mouseX = mouseY = pmouseX = pmouseY = mousePressed = 0;
+    keyPressed = key = keyCode = 0;
     mgl_set_deferred(0);
     size(PLATFORM_DEFAULT_W, PLATFORM_DEFAULT_H);
 }

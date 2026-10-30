@@ -27,13 +27,16 @@ SIM_ARGS ?=
 HDRS = $(wildcard src/*.h)
 LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o build/gpu_host.o \
     build/platform.o
-SKETCHES = shapes pattern bounce trail
+SKETCHES = shapes pattern bounce trail paint
 EXAMPLES = $(SKETCHES:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
-MINIGPU_EXAMPLES = $(SKETCHES:%=build/minigpu/%.bin)
 TESTS = build/test_cpu build/test_gpu
-# Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2).
+# Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2). En MiniGPU se elige
+# al compilar (0 o 1; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
 V ?= all
+MV := $(if $(filter all,$(V)),0,$(V))
+MG := build/minigpu/v$(MV)
+MINIGPU_EXAMPLES = $(SKETCHES:%=$(MG)/%.bin)
 
 .PHONY: all run test sdl minigpu check-minigpu clean
 all: $(EXAMPLES) $(TESTS) compile_commands.json
@@ -73,30 +76,30 @@ run: $(EXAMPLES:build/%=run-%)
 run-%: build/%
 	./$< -v $(V)
 
-# Ventana SDL: make sdl-bounce, make sdl-shapes V=2 (teclas 0/1/2 cambian de versión).
+# Ventana SDL: make sdl-bounce, make sdl-shapes V=2 (F1/F2/F3 cambian de versión).
 sdl-%: build/%-sdl
 	./$< $(if $(filter all,$(V)),,-v $(V))
 
 # MiniGPU: platform_minigpu.c va primero porque lleva main.
-build/minigpu/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)
-	$(BUILD_C) src/platform_minigpu.c $< $(MINIGPU_SRCS) -I src --outdir build/minigpu/$* -o $@
+$(MG)/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)
+	$(BUILD_C) src/platform_minigpu.c $< $(MINIGPU_SRCS) -I src -D MGL_VERSION=$(MV) --outdir $(MG)/$* -o $@
 
 # Ventana del simulador: make sim-bounce. Cada frame son millones de instrucciones (varios segundos).
-sim-%: build/minigpu/%.bin
+sim-%: $(MG)/%.bin
 	$(SIM_SYS) $< --window --run-limit 100000000000 $(SIM_ARGS)
 
 # Instrucciones por función C (y del runtime) hasta el frame FRAMES: make profile-minigpu-shapes.
-profile-minigpu-%: build/minigpu/%.bin
+profile-minigpu-%: $(MG)/%.bin
 	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --run-limit 100000000000 \
-	    --profile --symbols build/minigpu/$*/platform_minigpu.asm | sed -n '/^Perfil/,$$p'
+	    --profile --symbols $(MG)/$*/platform_minigpu.asm | sed -n '/^Perfil/,$$p'
 
-# El frame FRAMES de cada sketch en el simulador, píxel a píxel contra V0 en el host.
+# El frame FRAMES de cada sketch en el simulador, píxel a píxel contra la misma versión en el host.
 check-minigpu: $(SKETCHES:%=check-minigpu-%)
-check-minigpu-%: build/minigpu/%.bin build/%
-	./build/$* -v 0 -f $(FRAMES) -o build/minigpu/$*-host.bin > /dev/null
-	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --frame-output build/minigpu/$*-sim.bin \
+check-minigpu-%: $(MG)/%.bin build/%
+	./build/$* -v $(MV) -f $(FRAMES) -o $(MG)/$*-host.bin > /dev/null
+	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --frame-output $(MG)/$*-sim.bin \
 	    --run-limit 100000000000 > /dev/null
-	$(COMPARE_FRAMES) --rgb565 320x240 build/minigpu/$*-host.bin build/minigpu/$*-sim.bin
+	$(COMPARE_FRAMES) --rgb565 320x240 $(MG)/$*-host.bin $(MG)/$*-sim.bin
 
 test: $(TESTS)
 	./build/test_cpu

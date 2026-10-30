@@ -15,7 +15,7 @@ Cada versión añade una sola idea. Las entregas de `archive/` usan la numeraci�
 Mantener la API Processing, las escenas de prueba y una referencia V0 CPU píxel a píxel. Medir tiempo de frame, ciclos CPU/GPU, bytes y transacciones SDRAM, ocupación de warps, stalls y tamaño del código. Distinguir coste de generar comandos, interpretar comandos y rasterizar.
 
 ## Trabajo pendiente priorizado
-1. Validar C89 de `src/` con LCC y mini-opt, incluyendo divergencia/SSY y tamaños de tipos. Hecho para V0 en la CPU (`platform_minigpu.c`, `make check-minigpu`); falta V1/V2, y el kernel de V2 no puede llamar a funciones (la GPU del simulador y de la 36 no tiene `JAL`).
+1. Validar C89 de `src/` con LCC y mini-opt, incluyendo divergencia/SSY y tamaños de tipos. Hecho para V0 y V1 en la CPU (`platform_minigpu.c`, `make check-minigpu V=0|1`); falta V2, y el kernel de V2 no puede llamar a funciones (la GPU del simulador y de la 36 no tiene `JAL`).
 2. Fijar ABI de entrada GPU y direcciones compartidas reales para framebuffer, comandos y sprites.
 3. Integrar arranque de un warp, sincronización CPU/GPU y presentación de frame.
 4. Comparar resultados en simulador MiniGPU y FPGA con V0 CPU.
