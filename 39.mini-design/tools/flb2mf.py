@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""NewsMaster 1.5 FLB -> MiniFont v1 and PNG glyph contact sheet.
+"""NewsMaster 1.5 FLB -> MiniFont v2 and PNG glyph contact sheet.
 Only covers the confirmed 34-font library layout; character mapping is assumed
 ASCII for table indices 33..126 (127 in Bremen). Originals are not bundled.
+
+Font record (92 bytes from offset 10): name (52), atlas/table/bitmap sizes
+(u32), first/last (u16), then u16 fields: +68 res_x, +70 res_y (120 x 72 dpi),
++72 ascent, +74 descent, +76 size, +78 x-height, +80 spacing, +82 extra
+leading, +84 space width. Checked against NewsMaster screenshots.
 """
 import argparse
 import struct
 from pathlib import Path
 
-HEADER = '<4sHHIIIhhhH4s'
+HEADER = '<4sHHIIIhhhHhHH6s'  # 40 bytes, MiniFont v2
+HEADER_SIZE = 40
 GLYPH = '<IIhhHHhHI'
 
 def catalogue(data):
@@ -23,8 +29,10 @@ def catalogue(data):
         a,t,b,first,last=struct.unpack_from('<IIIHH',data,p+52)
         if first>last or t!=(last-first+1)*16 or pos+a+t+b>len(data):
             raise ValueError(f'bad font record {i}')
-        spacing=struct.unpack_from('<H',data,p+80)[0]
-        entries.append(dict(index=i,name=name,base=pos,atlas=a,table=t,bitmap=b,first=first,last=last,spacing=spacing))
+        res_x,res_y,ascent,descent,size,x_height,spacing,leading,space=struct.unpack_from('<9H',data,p+68)
+        entries.append(dict(index=i,name=name,base=pos,atlas=a,table=t,bitmap=b,first=first,last=last,
+                            res_x=res_x,res_y=res_y,ascent=ascent,descent=descent,size=size,x_height=x_height,
+                            spacing=spacing,leading=leading,space=space))
         pos+=a+t+b
     if pos!=len(data): raise ValueError('trailing or missing bytes')
     return entries
@@ -50,9 +58,13 @@ def decode(data,font):
         decoded.append(dict(cp=cp,w=w,h=h,bx=bx,by=by,advance=adv,rows=rows,raw_descriptor=values))
     return decoded
 
-def export_mf(glyphs,path,font_spacing=0):
-    if not 0 <= font_spacing <= 65535:
-        raise ValueError("font_spacing out of range")
+def export_mf(glyphs,path,font):
+    """Writes MiniFont v2 with the record's resolution, spacing and leading.
+    NewsMaster has no space glyph: an empty glyph 32 carries the space width."""
+    if not -32768 <= font['spacing'] <= 32767 or not font['res_x'] or not font['res_y']:
+        raise ValueError("bad font metrics")
+    if all(g['cp']!=32 for g in glyphs):
+        glyphs=[dict(cp=32,w=0,h=0,bx=0,by=0,advance=font['space'],rows=[])]+glyphs
     table=bytearray(); bitmaps=bytearray()
     for g in glyphs:
         stride=(g['w']+7)//8; blob=bytearray()
@@ -65,8 +77,10 @@ def export_mf(glyphs,path,font_spacing=0):
         bitmaps.extend(blob)
     ascent=max((g['by'] for g in glyphs),default=0)
     descent=max((g['h']-g['by'] for g in glyphs),default=0)
-    nominal=ascent+descent
-    header=struct.pack(HEADER,b'MFNT',1,1,len(glyphs),32,32+len(table),ascent,descent,0,nominal,struct.pack('<HH',font_spacing,0))
+    if (ascent,descent)!=(font['ascent'],font['descent']):
+        raise ValueError(f"{font['name']}: glyph extents {ascent}/{descent} differ from the record")
+    header=struct.pack(HEADER,b'MFNT',2,0,len(glyphs),HEADER_SIZE,HEADER_SIZE+len(table),ascent,descent,font['leading'],
+                       font['size'],font['spacing'],font['res_x'],font['res_y'],b'\0'*6)
     Path(path).parent.mkdir(parents=True,exist_ok=True)
     Path(path).write_bytes(header+table+bitmaps)
 
@@ -125,19 +139,20 @@ def main():
     p.add_argument('--sheets',action='store_true',help='with --all, also write DIR/<name>.png')
     a=p.parse_args();data=Path(a.flb).read_bytes(); fonts=catalogue(data)
     if a.list:
-        for f in fonts:print(f"{f['index']:2d}: {f['name']:18} ASCII {f['first']}..{f['last']} spacing?={f['spacing']}")
+        for f in fonts:print(f"{f['index']:2d}: {f['name']:18} ASCII {f['first']}..{f['last']} {f['res_x']}x{f['res_y']} dpi "
+                             f"spacing={f['spacing']} leading={f['leading']} space={f['space']}")
         return
     if a.all:
         out=Path(a.all);out.mkdir(parents=True,exist_ok=True);n=0
         for f in fonts:
             if f['name'].startswith('glyphs'):continue
             glyphs=decode(data,f);stem=f['name'].replace(' ','')
-            export_mf(glyphs,out/f'{stem}.mf',f['spacing']);n+=1
+            export_mf(glyphs,out/f'{stem}.mf',f);n+=1
             if a.sheets:sheet(glyphs,out/f'{stem}.png',a.sheet_scale,a.sheet_cols)
         print(f"Extracted {n} fonts -> {out}/");return
     matches=[f for f in fonts if f['name'].lower()==a.font.lower()]
     if len(matches)!=1:raise SystemExit('font not found or ambiguous; use --list')
     glyphs=decode(data,matches[0]);out=a.output or f"{a.font.replace(' ','_')}.mf"
-    export_mf(glyphs,out,matches[0]['spacing']);print(f"Extracted {len(glyphs)} glifos: {a.font} -> {out} (font_spacing?={matches[0]['spacing']})")
+    export_mf(glyphs,out,matches[0]);print(f"Extracted {len(glyphs)} glifos: {a.font} -> {out} (font_spacing={matches[0]['spacing']})")
     if a.sheet:sheet(glyphs,a.sheet,a.sheet_scale,a.sheet_cols);print('Contact sheet:',a.sheet)
 if __name__=='__main__':main()

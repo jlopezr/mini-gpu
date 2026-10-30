@@ -2,6 +2,9 @@
 #define MINIFONT_H
 #include <stdint.h>
 #include <stddef.h>
+/* MiniFont v2: 40-byte header, see docs/minifont-format.md. */
+#define MF_VERSION 2
+#define MF_HEADER_SIZE 40
 typedef struct
 {
     uint32_t codepoint, bitmap_offset;
@@ -17,7 +20,8 @@ typedef struct
     uint32_t glyph_count, glyph_table_offset, bitmap_offset;
     int16_t ascent, descent, line_gap;
     uint16_t pixel_size;
-    uint16_t font_spacing; /* optional font-level advance spacing (MF flag 0x0001) */
+    int16_t font_spacing; /* pixels added to every advance, not included in advance_x */
+    uint16_t res_x, res_y; /* dots per inch of the raster: 120 x 72 in NewsMaster */
 } MfFont;
 /* All functions return 0 on success. Memory remains owned by caller. */
 int mf_open(MfFont *font, const void *data, size_t size);

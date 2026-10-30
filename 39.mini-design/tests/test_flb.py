@@ -15,10 +15,16 @@ assert [''.join('#' if x else '.' for x in row) for row in a['rows']] == [
  '....###....','...##.##...','..##...##..','..##...##..',
  '.##.....##.','.#########.','##.......##','##.......##']
 assert sum(1 for f in fonts if not f['name'].startswith('glyphs'))==30
-# font_spacing (+80, provisional) es por fuente, no global
-spacing={f['name']:f['spacing'] for f in fonts}
-assert (spacing['park 10'],spacing['news 10'],spacing['twig'])==(2,1,3)
+# Campos del registro, medidos en capturas de NewsMaster: espaciado (+80),
+# interlineado extra (+82) y ancho del espacio (+84) son por fuente.
+by_name={f['name']:f for f in fonts}
+assert [by_name['park 10'][k] for k in ('spacing','leading','space','size','x_height')]==[2,1,5,10,6]
+assert [by_name['park 24'][k] for k in ('spacing','leading','space','size')]==[2,3,11,24]
+assert (by_name['news 10']['spacing'],by_name['twig']['spacing'])==(1,3)
 for f in fonts:
  if f['name'].startswith('glyphs'):continue
- assert len(flb2mf.decode(data,f))==f['last']-f['first']+1
-print('FLB checks passed: 30 regular fonts, Park 10 A verified, spacing per font')
+ assert (f['res_x'],f['res_y'])==(120,72)
+ glyphs=flb2mf.decode(data,f)
+ assert len(glyphs)==f['last']-f['first']+1
+ assert f['size']==f['ascent']+f['descent']==max(g['by'] for g in glyphs)+max(g['h']-g['by'] for g in glyphs)
+print('FLB checks passed: 30 regular fonts at 120x72 dpi, Park 10 A verified, metrics per font')

@@ -67,6 +67,18 @@ int main(void) {
     layout(&d, &l);
     assert(l.glyph_count == 3 && l.glyphs[0].x == 100 && l.glyphs[1].x == 120 && l.glyphs[2].x == 140 && l.glyphs[2].advance == 80);
     assert(md_space_advance(&font0, &d.character_styles[0]) == 30); /* half of 'n' (5 px), rounded up */
+    /* Resolution: at 120 x 72 dpi (NewsMaster) a pixel is 6 units across and 10 down. */
+    {
+        static uint8_t nm_buf[TF_SIZE];
+        MfFont nm;
+        tf_build_res(nm_buf, 2, 120, 72);
+        assert(mf_open(&nm, nm_buf, TF_SIZE) == 0);
+        MfGlyph g;
+        assert(mf_find_glyph(&nm, 'm', &g) == 0);
+        assert(md_glyph_advance(&nm, &d.character_styles[0], &g) == (8 + 2) * 6);
+        assert(md_space_advance(&nm, &d.character_styles[0]) == (3 + 2) * 6);
+        assert(md_line_height(&nm, &body) == 10 * 10 && md_font_x(&nm, 7) == 42 && md_font_y(&nm, 7) == 70);
+    }
     md_layout_free(&l);
     md_document_free(&d);
     make_doc(&d, body, 3, 1);

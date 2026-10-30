@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static uint8_t font_buf[TF_SIZE];
-static MfFont font;
+static uint8_t font_buf[TF_SIZE], nm_buf[TF_SIZE];
+static MfFont font, nm; /* 72 x 72 dpi and 120 x 72 dpi (NewsMaster) */
 
 /* Page proportions survive the transform within one pixel. */
 static void check_fit(int32_t w, int32_t h, MdPaperSize paper) {
@@ -18,7 +18,7 @@ static void check_fit(int32_t w, int32_t h, MdPaperSize paper) {
     int64_t err = (int64_t)r.w * paper.height - (int64_t)r.h * paper.width;
     assert(llabs(err) <= paper.height || llabs(err) <= paper.width);
     assert(abs((r.x - 0) - (w - (r.x + r.w))) <= 1); /* centred */
-    assert(!md_viewport_native_text(&vp));
+    assert(!md_viewport_native_text(&vp, &font) && !md_viewport_native_text(&vp, &nm));
 }
 
 static uint32_t count_ops(const GfxDisplayList *dl, GfxOpcode op) {
@@ -28,30 +28,43 @@ static uint32_t count_ops(const GfxDisplayList *dl, GfxOpcode op) {
 }
 
 int main(void) {
+    tf_open(&font, font_buf, 0);
+    tf_build_res(nm_buf, 0, 120, 72);
+    assert(mf_open(&nm, nm_buf, TF_SIZE) == 0);
     check_fit(320, 240, MD_PAPER_A4);
     check_fit(640, 480, MD_PAPER_A4);
     check_fit(240, 320, (MdPaperSize){8419, 5953}); /* limited by width */
 
     /* Transform: scroll maps to origin, floor rounding, adjacent rects stay adjacent. */
     MdViewport vp;
-    assert(md_viewport_actual_size(&vp, 640, 480, 1000, 2000) == 0 && md_viewport_native_text(&vp));
+    assert(md_viewport_actual_size(&vp, 640, 480, 72, 72, 1000, 2000) == 0 && md_viewport_native_text(&vp, &font));
     assert(md_viewport_x(&vp, 1000) == 0 && md_viewport_x(&vp, 1010) == 1 && md_viewport_x(&vp, 1009) == 0);
     assert(md_viewport_x(&vp, 999) == -1 && md_viewport_y(&vp, 2100) == 10);
-    assert(md_viewport_zoom(&vp, 320, 240, 3, 70, 0, 0) == 0 && !md_viewport_native_text(&vp));
+    assert(md_viewport_zoom(&vp, 320, 240, 3, 70, 0, 0) == 0 && !md_viewport_native_text(&vp, &font));
     GfxRect a = md_viewport_rect(&vp, (MdRect){0, 0, 333, 50}), b = md_viewport_rect(&vp, (MdRect){333, 0, 333, 50});
     assert(a.x + a.w == b.x);
     for (MdUnit x = -500; x < 500; x++) assert(md_viewport_x(&vp, x) <= md_viewport_x(&vp, x + 1));
     assert(md_viewport_zoom(&vp, 0, 240, 1, 1, 0, 0) != 0);
     /* Integer text zoom: GLYPH_RUN scale; anything else is greeked. */
-    assert(md_viewport_actual_size(&vp, 640, 480, 0, 0) == 0 && md_viewport_text_scale(&vp) == 1);
-    assert(md_viewport_text_zoom(&vp, 640, 480, 3, 0, 0) == 0 && md_viewport_text_scale(&vp) == 3 && !md_viewport_native_text(&vp));
-    assert(md_viewport_zoom(&vp, 640, 480, 15, 100, 0, 0) == 0 && md_viewport_text_scale(&vp) == 0); /* 150 % */
-    assert(md_viewport_zoom(&vp, 640, 480, 4, 20, 0, 0) == 0 && md_viewport_text_scale(&vp) == 2); /* 200 % as 4/20 */
-    assert(md_viewport_text_zoom(&vp, 640, 480, GFX_GLYPH_MAX_SCALE + 1, 0, 0) == 0 && md_viewport_text_scale(&vp) == 0);
-    assert(md_viewport_fit_page(&vp, 640, 480, MD_PAPER_A4, 6) == 0 && md_viewport_text_scale(&vp) == 0);
+    assert(md_viewport_actual_size(&vp, 640, 480, 72, 72, 0, 0) == 0 && md_viewport_text_scale(&vp, &font) == 1);
+    assert(md_viewport_text_zoom(&vp, 640, 480, 72, 72, 3, 0, 0) == 0 && md_viewport_text_scale(&vp, &font) == 3 &&
+        !md_viewport_native_text(&vp, &font));
+    assert(md_viewport_zoom(&vp, 640, 480, 15, 100, 0, 0) == 0 && md_viewport_text_scale(&vp, &font) == 0); /* 150 % */
+    assert(md_viewport_zoom(&vp, 640, 480, 4, 20, 0, 0) == 0 && md_viewport_text_scale(&vp, &font) == 2); /* 200 % as 4/20 */
+    assert(md_viewport_text_zoom(&vp, 640, 480, 72, 72, GFX_GLYPH_MAX_SCALE + 1, 0, 0) == 0 && md_viewport_text_scale(&vp, &font) == 0);
+    assert(md_viewport_fit_page(&vp, 640, 480, MD_PAPER_A4, 6) == 0 && md_viewport_text_scale(&vp, &font) == 0);
+    assert(md_viewport_text_zoom(&vp, 640, 480, 72, 72, 0, 0, 0) != 0 && md_viewport_text_zoom(&vp, 640, 480, 0, 72, 1, 0, 0) != 0);
+    /* 120 x 72 dpi (NewsMaster Normal and Zoom views): 6 units per pixel across, 10 down. */
+    assert(md_viewport_actual_size(&vp, 640, 480, 120, 72, 600, 1000) == 0);
+    assert(md_viewport_x(&vp, 606) == 1 && md_viewport_x(&vp, 605) == 0 && md_viewport_y(&vp, 1010) == 1 && md_viewport_y(&vp, 1009) == 0);
+    assert(md_viewport_text_scale(&vp, &nm) == 1 && md_viewport_text_scale(&vp, &font) == 0);
+    assert(md_viewport_text_zoom(&vp, 640, 480, 120, 72, 2, 0, 0) == 0 && md_viewport_text_scale(&vp, &nm) == 2);
+    assert(md_viewport_x(&vp, 6) == 2 && md_viewport_y(&vp, 10) == 2);
+    /* A uniform zoom never gives whole pixels of a 120 x 72 font on both axes. */
+    assert(md_viewport_zoom(&vp, 640, 480, 1, 6, 0, 0) == 0 && md_viewport_text_scale(&vp, &nm) == 0);
+    assert(md_viewport_zoom(&vp, 640, 480, 1, 10, 0, 0) == 0 && md_viewport_text_scale(&vp, &nm) == 0);
 
     /* Document with text and one picture, laid out once. */
-    tf_open(&font, font_buf, 0);
     const MfFont *fonts[1] = {&font};
     MdDocument d;
     md_document_init(&d, md_page_settings_a4());
@@ -71,7 +84,7 @@ int main(void) {
     /* 100 %: one GLYPH_RUN per non-empty line, positions = transformed layout. */
     uint16_t *px = calloc(640 * 480, sizeof(uint16_t));
     GfxSurface s640 = {px, 640, 480, 640};
-    assert(md_viewport_actual_size(&vp, 640, 480, 0, 0) == 0);
+    assert(md_viewport_actual_size(&vp, 640, 480, 72, 72, 0, 0) == 0);
     MdRenderList rl;
     assert(md_render_page(&d, &l, 0, &vp, &base, NULL, &rl) == 0 && !rl.greeked);
     uint32_t text_lines = 0;
@@ -86,7 +99,7 @@ int main(void) {
     md_render_list_free(&rl);
 
     /* 200 %: same layout, GLYPH_RUN with scale 2, glyph pixels as 2x2 blocks. */
-    assert(md_viewport_text_zoom(&vp, 640, 480, 2, 0, 0) == 0);
+    assert(md_viewport_text_zoom(&vp, 640, 480, 72, 72, 2, 0, 0) == 0);
     memset(px, 0, 640 * 480 * sizeof(uint16_t));
     assert(md_render_page(&d, &l, 0, &vp, &base, NULL, &rl) == 0 && !rl.greeked);
     for (uint32_t i = 0; i < rl.list.count; i++)
@@ -119,6 +132,32 @@ int main(void) {
         md_render_list_free(&rl);
     }
     assert(!memcmp(before, l.glyphs, sizeof(MdGlyph) * l.glyph_count));
+
+    /* Mixed resolutions: at the 120 x 72 Normal view the NewsMaster run is a
+       GLYPH_RUN and the 72 dpi run in the same line is greeked. */
+    {
+        const MfFont *mixed[2] = {&font, &nm};
+        MdDocument m;
+        md_document_init(&m, md_page_settings_a4());
+        uint32_t c72 = md_add_character_style(&m, (MdCharacterStyle){0, 0, 0}), c120 = md_add_character_style(&m, (MdCharacterStyle){1, 0, 0});
+        assert(md_add_paragraph_style(&m, (MdParagraphStyle){c120, 0, 0, 0, 0, 0, MD_ALIGN_LEFT, MD_SPAN_COLUMN}) == 0);
+        assert(md_add_story(&m) == 0 && md_story_add_paragraph(&m, 0, 0, "abc def") == 0);
+        assert(md_paragraph_add_run(&m, 0, 0, 4, 7, c72) == 0);
+        MdLayout ml;
+        assert(md_layout_story(&m, 0, mixed, 2, &ml) == 0 && ml.line_count == 1 && ml.glyph_count == 6);
+        assert(ml.glyphs[1].x - ml.glyphs[0].x == 30); /* 'a': 5 px at 120 dpi */
+        GfxResources mb = {.fonts = mixed, .font_count = 2};
+        assert(md_viewport_actual_size(&vp, 640, 480, 120, 72, 0, 0) == 0);
+        assert(md_render_page(&m, &ml, 0, &vp, &mb, NULL, &rl) == 0 && rl.greeked);
+        assert(count_ops(&rl.list, GFX_GLYPH_RUN) == 1 && rl.run_count == 1 && rl.runs[0].count == 3 && rl.runs[0].font_id == 1);
+        assert(rl.runs[0].glyphs[1].x - rl.runs[0].glyphs[0].x == 5);
+        md_render_list_free(&rl);
+        assert(md_viewport_actual_size(&vp, 640, 480, 72, 72, 0, 0) == 0);
+        assert(md_render_page(&m, &ml, 0, &vp, &mb, NULL, &rl) == 0 && rl.greeked && rl.run_count == 1 && rl.runs[0].font_id == 0);
+        md_render_list_free(&rl);
+        md_layout_free(&ml);
+        md_document_free(&m);
+    }
 
     /* Errors: page out of range, missing bitmap. */
     assert(md_render_page(&d, &l, l.page_count, &vp, &base, NULL, &rl) != 0);

@@ -17,7 +17,7 @@ make flb-fonts             # las 30 fuentes de NEWS.FLB -> build/fonts/*.mf (mak
 make flb-park10            # minifont-park10.ppm con build/fonts/park10.mf
 make flb-sheets            # además una hoja de muestra por fuente, build/fonts/*.png (Pillow)
 make test-flb              # regresión del conversor FLB
-make test-flb-spacing      # font_spacing y compatibilidad con .mf antiguos
+make test-flb-spacing      # métricas de park10.mf: espaciado, espacio, interlineado, 120x72 ppp
 make run-spacing           # spacing.ppm: sin (azul) y con (negro) font_spacing
 ```
 
@@ -33,6 +33,8 @@ python3 tools/bdf2mf.py /ruta/a/6x13.bdf build/fixed13.mf
 
 - **Métricas:** `BBX width height xoff yoff` de BDF pasa a ser
   `bearing_x = xoff` y `bearing_y = yoff + height`.
+- **Resolución:** sale de `RESOLUTION_X`/`RESOLUTION_Y` o de `SIZE puntos
+  res_x res_y`; si no hay ninguna, 72×72. `fonts/test.bdf` es de 75×75.
 - **Comprobaciones:** el conversor conserva las filas del bitmap, ordena por
   codepoint y rechaza glifos con altura o relleno de fila incorrectos.
 - **`fonts/test.bdf`:** es una fuente de prueba mínima hecha a mano. No es la
@@ -60,27 +62,37 @@ python3 tools/flb2mf.py resources/NEWS.FLB --all build/fonts [--sheets]
 - **Hojas de muestra:** `--sheet` y `--sheets` generan PNG y necesitan Pillow
   (`python3 -m pip install pillow`).
 
-## Espaciado por fuente (`font_spacing`)
+## Métricas de NewsMaster
 
-`flb2mf.py` lee el campo u16 little-endian del offset +80 de cada fuente y lo
-guarda como `font_spacing` en la cabecera `.mf`.
+Cada registro de fuente de `NEWS.FLB` (92 bytes) termina con campos u16 que
+`flb2mf.py` copia al `.mf`. Se han comprobado con capturas de NewsMaster en
+DOSBox-X ([newsmaster.md](newsmaster.md)).
 
-- **Valor por fuente:** cada una tiene el suyo. Park 10 = 2, News 10 = 1 y
-  Twig = 3; `flb2mf.py --list` los muestra todos.
-- **No toca `advance_x`:** es quien coloca los glifos quien suma
-  `font_spacing` a cada avance. Lo hacen el layout de MiniDesign,
-  `glyph_demo` y `minifont_demo`; GLYPH_RUN y el renderer no, porque reciben
-  las posiciones ya calculadas.
-- **Compatibilidad:** los `.mf` antiguos, sin el flag, siguen siendo válidos y
-  dan `font_spacing = 0`.
+| Offset | Campo | Park 10 | Park 24 | En el `.mf` |
+|---|---|---|---|---|
+| +68, +70 | resolución | 120×72 | 120×72 | `res_x`, `res_y` |
+| +72, +74 | ascent, descent | 8, 2 | 19, 5 | `ascent`, `descent` (el conversor comprueba que coinciden con los glifos) |
+| +76 | tamaño = ascent + descent | 10 | 24 | `pixel_size` |
+| +78 | altura de la x | 6 | 14 | no se usa |
+| +80 | espaciado entre letras | 2 | 2 | `font_spacing` |
+| +82 | interlineado extra | 1 | 3 | `line_gap` |
+| +84 | ancho del espacio | 5 | 11 | `advance_x` del glifo 32, vacío |
+
+- **Valores por fuente:** cada una tiene los suyos; `flb2mf.py --list` los
+  muestra todos.
+- **`font_spacing` no toca `advance_x`:** es quien coloca los glifos quien lo
+  suma a cada avance, también al del espacio. Lo hacen el layout de
+  MiniDesign, `glyph_demo` y `minifont_demo`; GLYPH_RUN y el renderer no,
+  porque reciben las posiciones ya calculadas.
+- **Comprobado en pantalla:** con estas métricas, un párrafo en Park 10 se
+  corta en las mismas siete líneas que en NewsMaster, con los mismos anchos y
+  el mismo paso de línea (`make test-newsmaster`). Comparado a mano con la
+  captura de la vista Normal, el render coincide píxel a píxel en Park 10 y
+  en Park 24.
 
 ## Limitaciones
 
-- **Métricas:** aún no se han comparado todas con el programa original. Que el
-  campo +80 sea el espaciado es una interpretación provisional, aunque la
-  comparación visual (`run-spacing`) la respalda.
-- **Espacio:** las fuentes no tienen glifo de espacio (32). Lo tiene que
-  sintetizar la capa de texto.
 - **Tabla "atlas":** la tabla preliminar del FLB no se utiliza.
+- **Bibliotecas `glyphs`:** las cuatro siguen sin interpretar.
 - **Derechos:** las fuentes originales de NewsMaster están sujetas a sus
   derechos y no se deben redistribuir sin autorización.

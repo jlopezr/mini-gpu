@@ -1,4 +1,4 @@
-# Formato MiniFont (`.mf`) v1
+# Formato MiniFont (`.mf`) v2
 
 Fichero binario con una fuente bitmap monocroma de un solo tamaño.
 
@@ -10,22 +10,31 @@ Fichero binario con una fuente bitmap monocroma de un solo tamaño.
 Lo leen [`src/minifont.c`](../src/minifont.c) y lo escriben
 [`tools/bdf2mf.py`](../tools/bdf2mf.py) y [`tools/flb2mf.py`](../tools/flb2mf.py).
 
-## Cabecera (32 bytes)
+## Cabecera (40 bytes)
 
 | Offset | Tipo | Campo |
 |---|---|---|
 | +0 | 4 bytes | magic `MFNT` |
-| +4 | u16 | versión = 1 |
-| +6 | u16 | flags: bit 0 (0x0001) = hay `font_spacing`; el resto, reservados a 0 |
+| +4 | u16 | versión = 2 |
+| +6 | u16 | flags = 0 (reservado) |
 | +8 | u32 | glyph_count |
-| +12 | u32 | glyph_table_offset (normalmente 32) |
+| +12 | u32 | glyph_table_offset (normalmente 40) |
 | +16 | u32 | bitmap_offset |
 | +20 | i16 | ascent (píxeles) |
 | +22 | i16 | descent (píxeles, no negativo) |
-| +24 | i16 | line_gap |
+| +24 | i16 | line_gap: interlineado extra entre líneas (píxeles) |
 | +26 | u16 | pixel_size |
-| +28 | u16 | `font_spacing` si el flag 0x0001 está activo; si no, 0 (en píxeles; provisional, viene del FLB) |
-| +30 | u16 | reservado = 0 |
+| +28 | i16 | `font_spacing`: píxeles que se suman a cada avance |
+| +30 | u16 | res_x: puntos por pulgada en horizontal (> 0) |
+| +32 | u16 | res_y: puntos por pulgada en vertical (> 0) |
+| +34 | 6 bytes | reservado = 0 |
+
+- **Resolución:** dice qué tamaño físico tiene un píxel de la fuente. Las
+  fuentes de NewsMaster son de 120×72 ppp: un píxel es más estrecho que alto.
+  `bdf2mf` la toma de `RESOLUTION_X`/`RESOLUTION_Y` o de la línea `SIZE` del
+  BDF (72×72 si no hay ninguna).
+- **Interlineado:** la distancia entre líneas base es
+  `ascent + descent + line_gap`.
 
 ## Tabla de glifos (24 bytes por glifo)
 
@@ -50,7 +59,8 @@ Ordenada por codepoint Unicode.
 - **Tamaño:** un glifo de w×h ocupa `ceil(w/8) * h` bytes. Los bits sobrantes
   al final de cada fila valen 0.
 - **Glifos vacíos:** un glifo como el espacio puede tener ancho y alto 0 y un
-  avance positivo.
+  avance positivo. `flb2mf` añade así el espacio (32) de las fuentes de
+  NewsMaster, que no lo tienen como glifo.
 
 ## Dibujo y avance
 
@@ -59,23 +69,23 @@ Ordenada por codepoint Unicode.
 - **Colores:** el bit 1 se pinta con el color del texto y el 0 es
   transparente.
 - **Unidades:** todo está en píxeles de raster. El layout de MiniDesign
-  trabaja en sus propias unidades físicas, independientes de la resolución.
+  trabaja en sus propias unidades físicas y las convierte con `res_x` y
+  `res_y`.
 - **Avance:** `advance_x` no incluye `font_spacing`. Quien hace el layout
   calcula `advance_x + font_spacing + tracking`. Ni `mf_draw_glyph_rgb565` ni
   `GLYPH_RUN` aplican `font_spacing`.
 
-## Compatibilidad
+## Versiones
 
-- **Ficheros antiguos:** los v1 con flags = 0 y los bytes reservados a cero
-  se leen con `font_spacing = 0`.
-- **Ficheros nuevos con lectores antiguos:** un lector anterior al flag
-  rechaza los ficheros que lo tienen activo.
+- **Solo la v2:** el lector rechaza cualquier otra versión, flags distintos de
+  0, una resolución 0 o bytes reservados distintos de 0.
+- **v1:** tenía una cabecera de 32 bytes, sin resolución, y `font_spacing`
+  dependía de un flag. Ya no se lee: todos los `.mf` se generan en el build
+  desde BDF o `NEWS.FLB`, así que no quedan ficheros v1 que conservar.
 
 ## Limitaciones
 
-- **Fuera del formato:** la v1 no tiene kerning, color, alfa, compresión,
-  datos de familia ni varios tamaños por fichero. Eso corresponde a un
-  catálogo de nivel superior o a versiones posteriores del formato.
+- **Fuera del formato:** no hay kerning, color, alfa, compresión, datos de
+  familia ni varios tamaños por fichero. Eso corresponde a un catálogo de
+  nivel superior o a versiones posteriores del formato.
 - **Datos:** la fuente es de solo lectura y su memoria es del llamador.
-- **`font_spacing`:** que el campo +80 del FLB sea el espaciado es una
-  interpretación provisional, pendiente de más verificación.

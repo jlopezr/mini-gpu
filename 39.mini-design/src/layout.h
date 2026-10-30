@@ -8,7 +8,7 @@
 #include "minifont.h"
 
 typedef struct {
-    uint32_t glyph_id; /* codepoint, as MiniFont v1 indexes glyphs */
+    uint32_t glyph_id; /* codepoint, as MiniFont indexes glyphs */
     MdUnit x, y; /* pen position on the baseline, page coordinates */
     MdUnit advance;
     uint32_t character_style;
@@ -60,6 +60,9 @@ void md_layout_free(MdLayout *layout);
 
 /* Metrics used by the layout, in document units. A paragraph's line height
    and ascent are the largest among the character styles it uses. */
+/* Font pixels -> units with the font's resolution (Park 10: x 6, y 10). */
+MdUnit md_font_x(const MfFont *font, int32_t px);
+MdUnit md_font_y(const MfFont *font, int32_t px);
 MdUnit md_glyph_advance(const MfFont *font, const MdCharacterStyle *style, const MfGlyph *glyph);
 MdUnit md_space_advance(const MfFont *font, const MdCharacterStyle *style);
 MdUnit md_line_height(const MfFont *font, const MdParagraphStyle *style);

@@ -152,15 +152,17 @@ int main(int argc, char **argv) {
         uint32_t id = md_story_add_paragraph(&doc, story, p_body, paragraphs[(size_t)i % PARAGRAPH_POOL]);
         fail |= id == UINT32_MAX || emphasize(&doc, story, id, emphasis[(size_t)i % PARAGRAPH_POOL], c_italic);
     }
-    /* Page 1: centred picture; with two columns it straddles the gap and both columns wrap around it. */
-    MdUnit w = (MdUnit)((int64_t)pictures[0].width * MD_UNITS_PER_FONT_PX * image_percent / 100);
-    MdUnit h = (MdUnit)((int64_t)pictures[0].height * MD_UNITS_PER_FONT_PX * image_percent / 100);
+    /* Page 1: centred picture; with two columns it straddles the gap and both columns wrap around it.
+       NEWS.SHP pictures are 120 x 72 dpi, like the fonts. */
+    MdUnit w = (MdUnit)((int64_t)md_units_from_pixels((int32_t)pictures[0].width, MD_NEWSMASTER_DPI_X) * image_percent / 100);
+    MdUnit h = (MdUnit)((int64_t)md_units_from_pixels((int32_t)pictures[0].height, MD_NEWSMASTER_DPI_Y) * image_percent / 100);
     MdUnit top = md_page_content(&doc.page).y + md_units_from_mm10(800);
     fail |= md_add_graphic(&doc, (MdGraphicObject){0, {(doc.page.paper.width - w) / 2, top, w, h}, 0, 6 * pt, MD_WRAP_LARGEST, 0x0000}) ==
         UINT32_MAX;
     /* Page 2: picture in the middle of the first column, text on both sides. */
     MdRect col = md_page_column(&doc.page, 0);
-    MdUnit w2 = (MdUnit)pictures[1].width * MD_UNITS_PER_FONT_PX, h2 = (MdUnit)pictures[1].height * MD_UNITS_PER_FONT_PX;
+    MdUnit w2 = md_units_from_pixels((int32_t)pictures[1].width, MD_NEWSMASTER_DPI_X);
+    MdUnit h2 = md_units_from_pixels((int32_t)pictures[1].height, MD_NEWSMASTER_DPI_Y);
     MdUnit top2 = col.y + md_units_from_mm10(1200);
     fail |= md_add_graphic(&doc, (MdGraphicObject){1, {col.x + (col.w - w2) / 2, top2, w2, h2}, 1, 4 * pt, MD_WRAP_BOTH, 0x0010}) == UINT32_MAX;
 
@@ -187,17 +189,21 @@ int main(int argc, char **argv) {
                 write_page(&doc, &layout, p, &vp, &res, &opt, path);
         }
     }
-    /* 100 %: real glyphs around the pictures, with column and exclusion guides. */
-    MdUnit page_px = doc.page.paper.width / MD_UNITS_PER_FONT_PX, left = -((640 - page_px) / 2) * MD_UNITS_PER_FONT_PX;
+    /* 100 % (NewsMaster's Normal view): one font pixel per screen pixel on each
+       axis, real glyphs around the pictures, with column and exclusion guides.
+       The page is 992 px wide at 120 dpi, so the view is centred on it. */
+    const uint32_t dx = MD_NEWSMASTER_DPI_X, dy = MD_NEWSMASTER_DPI_Y;
+    MdUnit left = (doc.page.paper.width - md_units_from_pixels(640, dx)) / 2;
     if (!rc)
-        rc = md_viewport_actual_size(&vp, 640, 480, left, top - md_units_from_mm10(400)) ||
+        rc = md_viewport_actual_size(&vp, 640, 480, dx, dy, left, top - md_units_from_mm10(400)) ||
             write_page(&doc, &layout, 0, &vp, &res, &guides, "page1-100.ppm");
     if (!rc && layout.page_count > 1)
-        rc = md_viewport_actual_size(&vp, 640, 480, left, top2 - md_units_from_mm10(250)) ||
+        rc = md_viewport_actual_size(&vp, 640, 480, dx, dy, col.x - md_units_from_pixels(40, dx), top2 - md_units_from_mm10(250)) ||
             write_page(&doc, &layout, 1, &vp, &res, &guides, "page2-100.ppm");
-    /* 200 %: the headline and the start of the first column, glyphs scaled by GLYPH_RUN. */
+    /* 200 % (Zoom view): the headline and the start of the first column, glyphs scaled by GLYPH_RUN. */
     if (!rc)
-        rc = md_viewport_text_zoom(&vp, 640, 480, 2, doc.page.margin_left - md_units_from_mm10(50), doc.page.margin_top - md_units_from_mm10(50)) ||
+        rc = md_viewport_text_zoom(&vp, 640, 480, dx, dy, 2, doc.page.margin_left - md_units_from_mm10(50),
+                 doc.page.margin_top - md_units_from_mm10(50)) ||
             write_page(&doc, &layout, 0, &vp, &res, &opt, "page1-200.ppm");
     md_layout_free(&layout);
     md_document_free(&doc);

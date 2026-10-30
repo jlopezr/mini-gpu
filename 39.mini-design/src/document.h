@@ -10,14 +10,17 @@
 typedef int32_t MdUnit;
 #define MD_UNITS_PER_INCH 720
 #define MD_UNITS_PER_POINT 10
-/* Bitmap fonts are screen fonts: one font pixel is taken as 1/72 inch
-   (Park 10 is then 10 pt). Layout converts font metrics with this factor. */
-#define MD_UNITS_PER_FONT_PX 10
+/* Bitmaps carry their own resolution: NewsMaster fonts and illustrations are
+   120 x 72 dpi, so one pixel is 6 units wide and 10 units tall. */
+#define MD_NEWSMASTER_DPI_X 120
+#define MD_NEWSMASTER_DPI_Y 72
 
 /* Rounded to the nearest unit (half away from zero). */
 MdUnit md_units_from_mm10(int32_t tenths_of_mm);
 MdUnit md_units_from_pt(int32_t points);
 MdUnit md_units_from_inch(int32_t inches);
+/* Pixels of a raster with `dpi` dots per inch (dpi > 0). */
+MdUnit md_units_from_pixels(int32_t pixels, uint32_t dpi);
 
 typedef struct { MdUnit x, y, w, h; } MdRect;
 typedef struct { MdUnit width, height; } MdPaperSize;

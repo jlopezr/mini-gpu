@@ -34,14 +34,16 @@ static int outline(MdRenderList *o, GfxRect r, uint16_t color) {
     return fail;
 }
 
-/* One bar per word: glyphs whose advances touch belong to the same word. */
-static int greek_line(MdRenderList *o, const MdLayout *l, const MdLine *line, const MdViewport *vp, MdUnit bar, uint16_t color) {
-    const MdGlyph *g = &l->glyphs[line->first_glyph];
-    for (uint32_t i = 0; i < line->glyph_count;) {
+/* Glyphs [first, first + count) as one bar per word: glyphs whose advances
+   touch belong to the same word. */
+static int greek_run(MdRenderList *o, const MdLayout *l, uint32_t first, uint32_t count, MdUnit baseline, const MdViewport *vp, MdUnit bar,
+    uint16_t color) {
+    const MdGlyph *g = &l->glyphs[first];
+    for (uint32_t i = 0; i < count;) {
         uint32_t j = i + 1;
-        while (j < line->glyph_count && g[j].x == g[j - 1].x + g[j - 1].advance) j++;
+        while (j < count && g[j].x == g[j - 1].x + g[j - 1].advance) j++;
         MdUnit x0 = g[i].x, x1 = g[j - 1].x + g[j - 1].advance;
-        GfxRect r = md_viewport_rect(vp, (MdRect){x0, line->baseline - bar, x1 - x0, bar});
+        GfxRect r = md_viewport_rect(vp, (MdRect){x0, baseline - bar, x1 - x0, bar});
         if (r.h <= 0) r.h = 1;
         if (r.w <= 0) r.w = 1;
         if (fill(o, r, color)) return -1;
@@ -69,8 +71,6 @@ int md_render_page(const MdDocument *doc, const MdLayout *l, uint32_t page, cons
     gfx_list_init(&o->list);
     if (!doc || !l || !vp || !base || page >= l->page_count) return -1;
     MdRenderOptions opt = options ? *options : md_render_default_options();
-    uint32_t text_scale = md_viewport_text_scale(vp);
-    o->greeked = text_scale == 0;
     GfxRect paper = md_viewport_rect(vp, (MdRect){0, 0, doc->page.paper.width, doc->page.paper.height});
     int fail = 0;
     fail |= cmd(o, (GfxCommand){.opcode = GFX_CLEAR, .data.clear = {opt.desk}});
@@ -90,26 +90,24 @@ int md_render_page(const MdDocument *doc, const MdLayout *l, uint32_t page, cons
     }
     for (uint32_t i = 0; !fail && i < pg->line_count; i++) {
         const MdLine *line = &l->lines[pg->first_line + i];
-        if (!text_scale) {
-            if (!line->glyph_count) continue;
-            if (line->character_style >= doc->character_style_count) return -1;
-            const MdCharacterStyle *cs = &doc->character_styles[line->character_style];
-            if (cs->font_id >= base->font_count || !base->fonts) return -1;
-            /* Bar of roughly x-height: 3/5 of the ascent of the paragraph style. */
-            MdUnit bar = (MdUnit)base->fonts[cs->font_id]->ascent * MD_UNITS_PER_FONT_PX * 3 / 5;
-            fail |= greek_line(o, l, line, vp, bar, opt.greek);
-            continue;
-        }
-        /* One GLYPH_RUN per stretch of glyphs in the same character style. */
+        /* One GLYPH_RUN, or one set of bars, per stretch of glyphs in the same character style. */
         for (uint32_t a = line->first_glyph, end = line->first_glyph + line->glyph_count; !fail && a < end;) {
             uint32_t st = l->glyphs[a].character_style, b = a + 1;
             while (b < end && l->glyphs[b].character_style == st) b++;
             if (st >= doc->character_style_count) return -1;
             const MdCharacterStyle *cs = &doc->character_styles[st];
-            if (cs->font_id >= base->font_count || !base->fonts) return -1;
-            uint32_t run_id = o->run_count;
-            fail |= text_run(o, l, a, b - a, vp, cs->font_id);
-            fail |= cmd(o, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {.run_id = run_id, .color = cs->color, .scale = (uint16_t)text_scale}});
+            if (cs->font_id >= base->font_count || !base->fonts || !base->fonts[cs->font_id]) return -1;
+            const MfFont *font = base->fonts[cs->font_id];
+            uint32_t text_scale = md_viewport_text_scale(vp, font);
+            if (!text_scale) {
+                /* Bar of roughly x-height: 3/5 of the ascent. */
+                fail |= greek_run(o, l, a, b - a, line->baseline, vp, md_font_y(font, font->ascent) * 3 / 5, opt.greek);
+                o->greeked = 1;
+            } else {
+                uint32_t run_id = o->run_count;
+                fail |= text_run(o, l, a, b - a, vp, cs->font_id);
+                fail |= cmd(o, (GfxCommand){.opcode = GFX_GLYPH_RUN, .data.glyph_run = {.run_id = run_id, .color = cs->color, .scale = (uint16_t)text_scale}});
+            }
             a = b;
         }
     }

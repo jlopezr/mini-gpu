@@ -55,10 +55,34 @@ python3 tests/test_extractors.py --resources resources
   MiniDesign usa siempre los originales de 40x20 y corrige la proporción al
   dibujarlos, como hace `blit_demo`.
 
+## Proporción de píxel: 120×72 ppp
+
+Las fuentes y las ilustraciones de NewsMaster están dibujadas a 120 ppp en
+horizontal y 72 ppp en vertical: un píxel mide 1/120" × 1/72". Cada registro
+de `NEWS.FLB` lo declara (campos +68 y +70; ver [MiniFont](minifont.md)), y
+coincide con lo medido en NewsMaster 1.5 en DOSBox-X:
+
+- **Página:** la vista Full Width mide unos 1020 px de ancho, una página
+  Letter de 8,5" a 120 ppp. La Full Page tiene la proporción de 8,5"×11" a
+  120×72 ppp.
+- **Vista Normal:** cada píxel de fuente o de ilustración es un píxel de la
+  pantalla CGA de 640×200, sin corregir la proporción. Por eso la diana sale
+  ovalada en pantalla. La vista Zoom usa 2×2 píxeles.
+- **Texto:** en capturas sin escalar de la vista Normal, el render de
+  MiniDesign coincide píxel a píxel con el de NewsMaster, en Park 10 y en
+  Park 24: mismos glifos, espaciado, ancho del espacio y paso de línea.
+
+MiniDesign hace lo mismo:
+
+- el layout convierte con 6 unidades por píxel en horizontal y 10 en vertical;
+- en la vista de página completa, todo conserva su forma en papel;
+- la vista al 100 % (`md_viewport_actual_size` a 120×72) reproduce la vista
+  Normal ([MiniDesign](design.md)).
+
 ## Limitaciones
 
 - **Derechos:** los originales de NewsMaster están en el repositorio solo para
   estudio. Están sujetos a sus derechos y no se deben redistribuir sin
   autorización.
-- **Proporción de píxel:** la de las ilustraciones se toma como cuadrada,
-  porque visualmente lo parece; no se ha comprobado con el programa original.
+- **Iconos:** son de la interfaz, no del documento. Su proporción 2:1
+  corresponde a la pantalla CGA, no a los 120×72 ppp.

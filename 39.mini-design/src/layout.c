@@ -15,21 +15,23 @@ static int reserve(void **items, uint32_t *capacity, uint32_t count, size_t size
 #define PUSH(arr, count, cap, value) \
     (reserve((void **)&(arr), &(cap), (count), sizeof(*(arr))) ? -1 : ((arr)[(count)++] = (value), 0))
 
+MdUnit md_font_x(const MfFont *font, int32_t px) { return md_units_from_pixels(px, font->res_x); }
+MdUnit md_font_y(const MfFont *font, int32_t px) { return md_units_from_pixels(px, font->res_y); }
 MdUnit md_glyph_advance(const MfFont *font, const MdCharacterStyle *style, const MfGlyph *glyph) {
-    return (MdUnit)(glyph->advance_x + font->font_spacing) * MD_UNITS_PER_FONT_PX + style->letter_spacing;
+    return md_font_x(font, glyph->advance_x + font->font_spacing) + style->letter_spacing;
 }
-/* MiniFont/NewsMaster fonts have no space glyph: use it if present, otherwise
+/* flb2mf writes NewsMaster's space width as glyph 32; fonts without one get
    half the advance of 'n' (at least 2 px). */
 MdUnit md_space_advance(const MfFont *font, const MdCharacterStyle *style) {
     MfGlyph g;
     if (!mf_find_glyph(font, ' ', &g)) return md_glyph_advance(font, style, &g);
     int32_t px = mf_find_glyph(font, 'n', &g) ? font->pixel_size / 3 : (g.advance_x + 1) / 2;
     if (px < 2) px = 2;
-    return (MdUnit)(px + font->font_spacing) * MD_UNITS_PER_FONT_PX + style->letter_spacing;
+    return md_font_x(font, px + font->font_spacing) + style->letter_spacing;
 }
 MdUnit md_line_height(const MfFont *font, const MdParagraphStyle *style) {
     if (style->leading > 0) return style->leading;
-    MdUnit h = (MdUnit)(font->ascent + font->descent + font->line_gap) * MD_UNITS_PER_FONT_PX;
+    MdUnit h = md_font_y(font, font->ascent + font->descent + font->line_gap);
     uint32_t pct = style->leading_percent ? style->leading_percent : 100;
     return (MdUnit)(((int64_t)h * pct + 50) / 100);
 }
@@ -86,7 +88,7 @@ static int para_init(Para *t, const MdDocument *doc, const MdParagraph *p, const
         if (st >= doc->character_style_count) return -1;
         uint32_t id = doc->character_styles[st].font_id;
         if (id >= font_count || !fonts[id]) return -1;
-        MdUnit lh = md_line_height(fonts[id], t->ps), asc = (MdUnit)fonts[id]->ascent * MD_UNITS_PER_FONT_PX;
+        MdUnit lh = md_line_height(fonts[id], t->ps), asc = md_font_y(fonts[id], fonts[id]->ascent);
         if (lh > t->line_height) t->line_height = lh;
         if (asc > t->ascent) t->ascent = asc;
     }

@@ -16,7 +16,7 @@ DOC_OBJS = build/document.o build/layout.o build/viewport.o build/document_rende
 DEMOS = build/glyph_demo build/blit_demo build/spacing_demo build/page_demo build/minifont_demo
 
 .PHONY: all run clean test run-glyph run-blit check-blit test-minifont run-minifont flb-park10 flb-fonts flb-sheets test-flb test-flb-spacing run-spacing
-.PHONY: shapes icons test-extractors check run-page test-document test-layout test-viewport test-design
+.PHONY: shapes icons test-extractors check run-page test-document test-layout test-viewport test-design test-newsmaster
 all: $(DEMOS) flb-fonts
 
 build:
@@ -64,6 +64,9 @@ test-layout: build/test_layout
 test-viewport: build/test_viewport
 	./build/test_viewport
 test-design: test-document test-layout test-viewport
+# Cortes de línea de un párrafo compuesto en NewsMaster, con el park10.mf real.
+test-newsmaster: build/test_newsmaster $(FONTS_STAMP)
+	./build/test_newsmaster $(FONT_DIR)/park10.mf
 
 # MiniFont: lector .mf, conversores y tests.
 build/test.mf: fonts/test.bdf tools/bdf2mf.py | build
@@ -86,7 +89,7 @@ flb-sheets:
 	@touch $(FONTS_STAMP)
 test-flb:
 	$(PYTHON) tests/test_flb.py "$(FLB)"
-# font_spacing de Park 10 (=2) y compatibilidad con cabeceras antiguas (flags=0).
+# Métricas de Park 10 en el .mf: font_spacing 2, espacio 5, interlineado 1, 120x72 ppp.
 test-flb-spacing: build/test_spacing $(FONTS_STAMP)
 	./build/test_spacing $(FONT_DIR)/park10.mf
 
@@ -98,4 +101,4 @@ icons:
 test-extractors:
 	$(PYTHON) tests/test_extractors.py --resources $(RES)
 
-check: test check-blit test-minifont test-flb test-flb-spacing test-design test-extractors
+check: test check-blit test-minifont test-flb test-flb-spacing test-design test-newsmaster test-extractors

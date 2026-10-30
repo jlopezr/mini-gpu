@@ -10,6 +10,7 @@ static MdUnit round_div(int64_t num, int64_t den) {
 MdUnit md_units_from_mm10(int32_t tenths_of_mm) { return round_div((int64_t)tenths_of_mm * MD_UNITS_PER_INCH, 254); }
 MdUnit md_units_from_pt(int32_t points) { return points * MD_UNITS_PER_POINT; }
 MdUnit md_units_from_inch(int32_t inches) { return inches * MD_UNITS_PER_INCH; }
+MdUnit md_units_from_pixels(int32_t pixels, uint32_t dpi) { return round_div((int64_t)pixels * MD_UNITS_PER_INCH, dpi); }
 
 MdPageSettings md_page_settings_a4(void) {
     MdUnit m = md_units_from_mm10(200);

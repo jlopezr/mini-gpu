@@ -21,6 +21,7 @@ make run-page          # page1-320x240, page1-640x480, page1-100, page1-200, pag
 make run-page PAGE_ARGS="300 20 3"   # imagen al 300 %, 20 párrafos, 3 columnas
 make run-page PAGE_ARGS="175 14 1"   # una columna: texto a los dos lados del reloj (page2-100)
 make test-design       # test-document, test-layout, test-viewport
+make test-newsmaster   # los cortes de línea de un párrafo compuesto en NewsMaster
 make check             # todas las pruebas
 sips -s format png page1-640x480.ppm --out page1-640x480.png   # macOS
 ```
@@ -67,8 +68,8 @@ MiniGFX (src/gfx.h, src/display_list.c, src/renderer_cpu.c)
 
   Las páginas las crea el layout a medida que el texto las necesita; el
   documento solo ancla los gráficos a un número de página.
-- **Viewport** (`MdViewport`): `px = origen + (unidad - scroll) * num / den`,
-  con redondeo hacia abajo. Cada borde de un rectángulo se transforma por
+- **Viewport** (`MdViewport`): `px = origen + (unidad - scroll) * num / den`
+  en cada eje, con redondeo hacia abajo. Cada borde de un rectángulo se transforma por
   separado, así que los rectángulos contiguos siguen siendo contiguos.
 - **Render:** MiniGFX no conoce páginas, párrafos ni columnas. El único cambio
   en MiniGFX es el campo `scale` de `GLYPH_RUN`; 0 y 1 equivalen a 1x, así que
@@ -78,15 +79,20 @@ MiniGFX (src/gfx.h, src/display_list.c, src/renderer_cpu.c)
 
 - **Unidad de documento:** 1/720 de pulgada. 1 pt son 10 unidades y A4 son
   5953 × 8419 unidades. `md_units_from_mm10()` redondea al entero más cercano.
-- **Fuentes:** las de NewsMaster son de pantalla. Se toma 1 px de fuente como
-  1/72" (`MD_UNITS_PER_FONT_PX` = 10), así que Park 10 mide 10 pt.
+- **Píxeles:** cada fuente `.mf` lleva su resolución, y `md_font_x()` y
+  `md_font_y()` convierten sus píxeles a unidades (`720 / res`). Las de
+  NewsMaster son de 120×72 ppp ([newsmaster.md](newsmaster.md)): un píxel son
+  6 unidades de ancho y 10 de alto. Las ilustraciones de `NEWS.SHP` también,
+  y la demo las convierte con `md_units_from_pixels()`.
 - **Avance de cada glifo:**
-  `(advance_x + font_spacing) × 10 + letter_spacing`, con la fuente y el
+  `md_font_x(advance_x + font_spacing) + letter_spacing`, con la fuente y el
   estilo del propio carácter.
-- **Espacio:** las fuentes no tienen glifo de espacio. Se usa la mitad del
-  avance de `n` (mínimo 2 px), más el espaciado.
-- **Interlineado:** automático, `(ascent + descent + line_gap) × 10 ×
-  leading_percent / 100`, o fijo con `leading`.
+- **Espacio:** el glifo 32 de la fuente, que en las de NewsMaster lleva el
+  ancho del espacio del FLB, más el espaciado. Si la fuente no tiene, se usa
+  la mitad del avance de `n` (mínimo 2 px).
+- **Interlineado:** automático, `md_font_y(ascent + descent + line_gap) ×
+  leading_percent / 100`, o fijo con `leading`. En Park 10 son 11 px, como en
+  NewsMaster.
   - Si el párrafo usa varios estilos, la altura de línea y el ascent son los
     mayores de entre todos ellos. Se calculan una vez por párrafo, porque la
     altura de la línea se necesita antes de saber qué palabras caben en ella.
@@ -129,16 +135,22 @@ columnas recompone todo de nuevo, sin tocar ninguna coordenada.
 
 ## Viewport y render
 
-- **Página completa** (`md_viewport_fit_page`): la página se centra y conserva
-  sus proporciones. Los píxeles se consideran cuadrados (320×240 y 640×480).
-- **Zoom entero** (`md_viewport_actual_size` para el 100 %,
-  `md_viewport_text_zoom` para 200 %, 300 %…): `md_viewport_text_scale()`
-  devuelve k.
-  - Cada tramo de línea con el mismo estilo de carácter se dibuja como un
-    `GLYPH_RUN` con escala k: cada píxel del glifo es un bloque de k×k y las
-    posiciones vienen del layout.
-- **Cualquier otro zoom:** cada palabra se dibuja como una barra gris
-  (`FILL_RECT`). Es el mismo "greeking" que el Full Page View de NewsMaster.
+- **Página completa** (`md_viewport_fit_page`) y zoom libre
+  (`md_viewport_zoom`): la misma escala en los dos ejes. La pantalla tiene
+  píxeles cuadrados (320×240 y 640×480), así que todo conserva su forma en
+  papel: la diana sale redonda.
+- **Vistas de texto** (`md_viewport_actual_size` para el 100 %,
+  `md_viewport_text_zoom` para 200 %, 300 %…): reciben la resolución de las
+  fuentes, y un píxel de fuente pasa a ser k×k píxeles de pantalla. Son las
+  vistas Normal y Zoom de NewsMaster: a 120×72 ppp, el texto y las imágenes
+  salen más anchos que en papel, como en el original.
+- **Cada tramo de línea** con el mismo estilo de carácter:
+  - si `md_viewport_text_scale(vp, fuente)` da un k entero, igual en los dos
+    ejes, se dibuja como un `GLYPH_RUN` con escala k. Cada píxel del glifo es
+    un bloque de k×k y las posiciones vienen del layout;
+  - si no, cada palabra se dibuja como una barra gris (`FILL_RECT`). Es el
+    mismo "greeking" que el Full Page View de NewsMaster. Una escala uniforme
+    nunca da píxeles enteros a una fuente de 120×72 ppp.
 - **Ilustraciones:** se dibujan con `BLIT` (vecino más próximo) a cualquier
   zoom.
 - **Guías** (`show_guides`): dibujan con `DRAW_LINE` el contorno de los marcos
@@ -153,17 +165,21 @@ modifica.
 
 - **Tipografía:** no hay kerning ni silabeo. Sin silabeo, la justificación en
   columnas estrechas deja huecos grandes entre palabras.
-- **Texto junto a las imágenes:** en dos columnas A4, con las fuentes de
-  NewsMaster, los huecos junto a una imagen se quedan en unos 95 px. Una
+- **Texto junto a las imágenes:** en dos columnas A4, los huecos junto a una
+  imagen son estrechos (unos 170 px de fuente de NewsMaster), y la
+  justificación deja huecos grandes entre las pocas palabras que caben. Una
   palabra que no cabe en ningún hueco baja de línea y deja la franja vacía. El
-  rodeo por los dos lados luce con marcos anchos (`PAGE_ARGS="175 14 1"`).
+  rodeo por los dos lados luce más con marcos anchos (`PAGE_ARGS="175 14 1"`).
 - **Titulares:** un titular a mitad de página solo se coloca debajo de la
   primera columna. Si el texto ya llegó a la segunda, pasa a la página
   siguiente, porque no hay equilibrado de columnas. Y ocupa todas las
   columnas, no un número intermedio.
-- **Zoom:** el texto real solo se ve a zoom entero. A 50 % o 150 % hay
-  greeking. Para que fuera legible haría falta reducir los glifos, o tener
-  varias resoluciones de cada fuente.
+- **Zoom:** el texto real solo se ve en las vistas de texto, a zoom entero. En
+  la página completa, a 50 % o a 150 % hay greeking. Para que fuera legible
+  haría falta reducir los glifos, o tener varias resoluciones de cada fuente.
+- **Varias resoluciones:** en una vista de texto solo se leen las fuentes de
+  la resolución elegida; las demás salen en greeking. Una resolución que no
+  divide 720 (por ejemplo 75 o 96 ppp) redondea cada avance a la unidad.
 - **Exclusiones:** solo rectangulares.
 - **Historias:** cada llamada al layout compone una historia
   (`md_layout_story`). No hay marcos encadenados ni varias historias en la
@@ -182,4 +198,5 @@ modifica.
 | `src/document_render.h`, `src/document_render.c` | Generación de la display list |
 | `examples/page_demo.c` | Demostración A4 |
 | `tests/test_document.c`, `tests/test_layout.c`, `tests/test_viewport.c` | Pruebas |
+| `tests/test_newsmaster.c` | Regresión contra NewsMaster con el `park10.mf` real |
 | `tests/test_fonts.h` | Fuente MiniFont sintética para las pruebas |

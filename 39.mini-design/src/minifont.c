@@ -22,15 +22,17 @@ static int glyph_at(const MfFont *f, uint32_t ix, MfGlyph *g) {
     return 0;
 }
 int mf_open(MfFont *f, const void *data, size_t size) {
-    if (!f || !data || size < 32)
+    if (!f || !data || size < MF_HEADER_SIZE)
         return -1;
     memset(f, 0, sizeof(*f));
     const uint8_t *p = (const uint8_t *)data;
-    uint16_t flags = u16(p + 6);
-    if (memcmp(p, "MFNT", 4) || u16(p + 4) != 1 || (flags & ~1u) != 0 || u16(p + 30) != 0 || (!(flags & 1u) && u16(p + 28) != 0) || u16(p + 18) == 0xffff)
+    if (memcmp(p, "MFNT", 4) || u16(p + 4) != MF_VERSION || u16(p + 6) != 0 || u16(p + 18) == 0xffff || !u16(p + 30) || !u16(p + 32))
         return -1;
+    for (int i = 34; i < MF_HEADER_SIZE; i++)
+        if (p[i])
+            return -1;
     uint32_t n = u32(p + 8), to = u32(p + 12), bo = u32(p + 16);
-    if (!range(size, to, (uint64_t)n * 24) || bo < to + (uint64_t)n * 24 || bo > size)
+    if (to < MF_HEADER_SIZE || !range(size, to, (uint64_t)n * 24) || bo < to + (uint64_t)n * 24 || bo > size)
         return -1;
     f->data = p;
     f->size = size;
@@ -41,7 +43,9 @@ int mf_open(MfFont *f, const void *data, size_t size) {
     f->descent = i16(p + 22);
     f->line_gap = i16(p + 24);
     f->pixel_size = u16(p + 26);
-    f->font_spacing = (flags & 1u) ? u16(p + 28) : 0;
+    f->font_spacing = i16(p + 28);
+    f->res_x = u16(p + 30);
+    f->res_y = u16(p + 32);
     uint32_t prev = 0;
     for (uint32_t i = 0; i < n; i++) {
         MfGlyph g;

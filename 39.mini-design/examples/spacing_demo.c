@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     int y = 6, lh = fonts[0].ascent + fonts[0].descent;
     for (int i = 0; i < MAXF; i++) {
         int h = fonts[i].ascent + fonts[i].descent + 3;
-        snprintf(labels[i], sizeof labels[i], "%s   font_spacing=%u", names[i], fonts[i].font_spacing);
+        snprintf(labels[i], sizeof labels[i], "%s   font_spacing=%d", names[i], fonts[i].font_spacing);
         y += fonts[0].ascent;
         runs[3 * i] = (GfxGlyphRun){glyphs[3 * i], layout(&fonts[0], labels[i], 8, y, fonts[0].font_spacing, glyphs[3 * i]), 0};
         y += fonts[0].descent + 2;

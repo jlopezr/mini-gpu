@@ -59,7 +59,7 @@ gfx_list_destroy(&dl);
 `font_id` (índice en la tabla de `MfFont`) y una lista de glifos, cada uno con
 su ID y su posición `(x, y)` sobre la línea base.
 
-- **ID de glifo:** de momento es el codepoint Unicode, porque MiniFont v1
+- **ID de glifo:** de momento es el codepoint Unicode, porque MiniFont
   indexa así los glifos. Otro gestor de fuentes podría usar IDs internos,
   siempre que los resuelva él.
 - **Dibujo:** es transparente, respeta `SET_CLIP` y mantiene el orden de la
