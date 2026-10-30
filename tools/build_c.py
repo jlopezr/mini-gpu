@@ -1,6 +1,7 @@
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
-    build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+    build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [-D NOMBRE[=VALOR]]...
+                       [--data ETIQUETA=FICHERO]... [--board]
                        [--load [PROTOTIPO]] [--no-run]
 
 Por cada .c (el programa, las otras unidades que se le pasen, t.tests/runtime/gpu/gpu.c y la biblioteca C minima de
@@ -8,6 +9,7 @@ t.tests/runtime/libc): mini-lcc --no-crt, y mini-opt (intrinsecos, kernels...; c
 todo lo demas, borra las funciones que nadie usa). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los .s y el
 runtime de la GPU
 (t.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
+-D define una macro en todas las unidades (tambien en gpu.c y la libc); mini-lcc ya define __LCC__ y __MINIGPU__.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
 --data pega un fichero binario tras el codigo, con `.incbin`, bajo una etiqueta que el C declara con
@@ -47,11 +49,12 @@ def run(*command: str) -> None:
         raise BuildError(f"{' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
 
 
-def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = ()) -> Path:
+def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines: tuple[str, ...] = ()) -> Path:
     """C -> .s sin arranque."""
     outdir.mkdir(parents=True, exist_ok=True)
     plain = outdir / f"{source.stem}.s"
     flags = [arg for folder in (INC, *includes) for arg in ("-I", folder)]
+    flags += [arg for define in defines for arg in ("-D", define)]
     run(TOOLS / "mini-lcc", source, "--no-crt", *flags, "-o", plain)
     return plain
 
@@ -82,7 +85,8 @@ def wrapper_path(program: Path, board: bool = False, outdir: Path | None = None)
 
 def build(program: Path, output: Path | None = None, board: bool = False,
           outdir: Path | None = None, includes: tuple[Path, ...] = (),
-          data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = ()) -> Path:
+          data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = (),
+          defines: tuple[str, ...] = ()) -> Path:
     """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo. `sources`: otras unidades .c
     del programa, ademas de `program` (que da el nombre a la imagen y lleva `main`)."""
     program = program.resolve()
@@ -94,7 +98,7 @@ def build(program: Path, output: Path | None = None, board: bool = False,
     stems = [unit.stem for unit in units]
     if len(set(stems)) != len(stems):     # cada unidad deja <stem>.s en outdir: no pueden repetirse
         raise BuildError(f"dos unidades con el mismo nombre: {', '.join(map(str, units))}")
-    plains = [lower_c(unit, outdir, includes) for unit in units]
+    plains = [lower_c(unit, outdir, includes, defines) for unit in units]
     fixed = [CRT0, runtime, bench]
     parts = [optimize_s(plain, fixed + [other for other in plains if other != plain]) for plain in plains]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
@@ -127,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--outdir", type=Path, help=f"carpeta de los intermedios (por defecto {DEFAULT_OUTDIR})")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
                         help="carpeta extra para #include (repetible); t.tests/inc va siempre")
+    parser.add_argument("-D", dest="defines", action="append", default=[], metavar="NOMBRE[=VALOR]",
+                        help="define una macro en todas las unidades (repetible)")
     parser.add_argument("--data", action="append", type=parse_data, default=[], metavar="ETIQUETA=FICHERO",
                         help="pega un binario tras el codigo con esa etiqueta (repetible)")
     parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")
@@ -137,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     board = args.board or args.load is not None
     try:
         out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data),
-                    tuple(args.sources))
+                    tuple(args.sources), tuple(args.defines))
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1
