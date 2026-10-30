@@ -9,6 +9,7 @@ t.tests/runtime/libc): mini-lcc --no-crt, y mini-opt (intrinsecos, kernels...; c
 todo lo demas, borra las funciones que nadie usa). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los .s y el
 runtime de la GPU
 (t.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
+Los `static` de cada unidad pasan a `<nombre>.<unidad>` (`scope_statics`): dos unidades pueden tener el mismo.
 -D define una macro en todas las unidades (tambien en gpu.c y la libc); mini-lcc ya define __LCC__ y __MINIGPU__.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +58,56 @@ def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines
     flags = [arg for folder in (INC, *includes) for arg in ("-I", folder)]
     flags += [arg for define in defines for arg in ("-D", define)]
     run(TOOLS / "mini-lcc", source, "--no-crt", *flags, "-o", plain)
+    scope_statics(plain)
     return plain
+
+
+SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
+LABEL_RE = re.compile(r"^\s*([A-Za-z_.$@][A-Za-z0-9_.$@]*):")
+COMMON_RE = re.compile(r"^\s*\.(?:l?comm)\s+([A-Za-z_.$@][A-Za-z0-9_.$@]*)", re.IGNORECASE)
+COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")
+
+
+def scope_statics(plain: Path) -> None:
+    """Los `static` de C de una unidad pasan a `<nombre>.<unidad>`.
+
+    El ensamblador junta los `.s` con `.include` y solo hace privadas de cada fichero las `L.n` de lcc: dos
+    unidades con un `static` del mismo nombre (`min2`, `weight`...) chocarian, o en el caso de un `.comm`, se
+    fundirian sin aviso. En C, lo que lcc no marca con `.globl` es `static`, y por tanto de la unidad: se le pone
+    el nombre de la unidad, que es unico (`build` lo comprueba). El ensamblador escrito a mano no pasa por aqui:
+    alli una etiqueta sin `.globl` si se usa desde otros ficheros."""
+    lines = plain.read_text(encoding="utf-8").splitlines()
+    exported, defined = set(), set()
+    for line in lines:
+        code = line.split(";", 1)[0]
+        words = code.split()
+        if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+            exported.update(name.strip() for name in " ".join(words[1:]).split(","))
+        match = LABEL_RE.match(code) or COMMON_RE.match(code)
+        if match and not COMPILER_LOCAL_RE.match(match.group(1)):
+            defined.add(match.group(1))
+    private = defined - exported
+    if not private:
+        return
+    tag = re.sub(r"[^A-Za-z0-9_]", "_", plain.stem)
+
+    def rename(text: str) -> str:
+        return SYMBOL_RE.sub(lambda m: f"{m.group(0)}.{tag}" if m.group(0) in private else m.group(0), text)
+
+    out = []
+    for line in lines:
+        code, sep, comment = line.partition(";")
+        label = LABEL_RE.match(code)
+        head = ""
+        if label:                                       # `nombre:` y lo que siga en la linea
+            head, code = rename(code[:label.end()]), code[label.end():]
+        stripped = code.lstrip()
+        if stripped:                                    # la instruccion o directiva no se toca; sus operandos si
+            word = stripped.split(None, 1)[0]
+            start = len(code) - len(stripped) + len(word)
+            code = code[:start] + rename(code[start:])
+        out.append(head + code + sep + comment)
+    plain.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def optimize_s(plain: Path, foreign: list[Path]) -> Path:

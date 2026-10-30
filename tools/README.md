@@ -1036,7 +1036,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   compilador sigue emitiéndolo como siempre.
 - **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
   compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
-  que dos `.s` no chocan.
+  que dos `.s` no chocan. Los `static` de C sí chocarían (el ensamblador no sabe de ellos): `build-c`
+  los renombra a `<nombre>.<unidad>` en cada unidad (lo que lcc no marca con `.globl`).
 - **`mini-opt`** transforma un `.s` en otro con pases (`--list-passes`). Hoy `intrinsics`: el
   C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
