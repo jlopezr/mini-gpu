@@ -67,6 +67,19 @@ static void span(int y, int x0, int x1, mgl_color_t c) {
     for (; n > 0; n--) *p++ = c;
 }
 
+/* El rectángulo de x0 a x1 - 1 y de y0 a y1 - 1, recortado: un span por fila,
+   o si es de una columna, bajando por ella. */
+static void box(int x0, int y0, int x1, int y1, mgl_color_t c) {
+    mgl_color_t *p;
+    if (y0 < 0) y0 = 0;
+    if (y1 > fh) y1 = fh;
+    if (x1 - x0 == 1) {
+        if (x0 < 0 || x0 >= fw) return;
+        for (p = fb + y0 * pitch + x0; y0 < y1; y0++, p += pitch) *p = c;
+    } else
+        for (; y0 < y1; y0++) span(y0, x0, x1, c);
+}
+
 static void brush(int x, int y, mgl_color_t c) {
     int j, lo = -(sw / 2), hi = lo + sw;
     if (sw == 1)
@@ -75,21 +88,83 @@ static void brush(int x, int y, mgl_color_t c) {
         for (j = lo; j < hi; j++) span(y + j, x + lo, x + hi, c);
 }
 
-static void segment(int x0, int y0, int x1, int y1, mgl_color_t c) {
-    int dx = abs2(x1 - x0), dy = abs2(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-    int err = dx - dy, e;
+/* Una línea de Bresenham recorrida por tramos: los puntos seguidos con la misma
+   y. Los puntos son los de siempre (avanza igual); solo se agrupan. */
+typedef struct {
+    int x, y, x1, y1, dx, dy, sx, sy, err;
+} walk_t;
+
+static void walk_start(walk_t *w, int x0, int y0, int x1, int y1) {
+    w->x = x0;
+    w->y = y0;
+    w->x1 = x1;
+    w->y1 = y1;
+    w->dx = abs2(x1 - x0);
+    w->dy = abs2(y1 - y0);
+    w->sx = x0 < x1 ? 1 : -1;
+    w->sy = y0 < y1 ? 1 : -1;
+    w->err = w->dx - w->dy;
+}
+
+/* El tramo siguiente: la x de su primer punto en *f y la del último en *l. */
+static void walk_run(walk_t *w, int *f, int *l) {
+    int e, y = w->y;
+    *f = w->x;
     for (;;) {
-        brush(x0, y0, c);
-        if (x0 == x1 && y0 == y1) break;
-        e = 2 * err;
-        if (e > -dy) {
-            err -= dy;
-            x0 += sx;
+        *l = w->x;
+        if (w->x == w->x1 && w->y == w->y1) return;
+        e = 2 * w->err;
+        if (e > -w->dy) {
+            w->err -= w->dy;
+            w->x += w->sx;
         }
-        if (e < dx) {
-            err += dx;
-            y0 += sy;
+        if (e < w->dx) {
+            w->err += w->dx;
+            w->y += w->sy;
         }
+        if (w->y != y) return;
+    }
+}
+
+/* Una línea con el pincel en cada punto: el cuadrado de sw x sw (filas y
+   columnas de lo a hi - 1 alrededor). La fila r la tocan los puntos con y entre
+   r - (hi - 1) y r - lo: unos tramos seguidos de la línea, que como avanza
+   siempre hacia el mismo lado en x cubren de la x del primero a la del último.
+   Cada fila es un span; dos recorridos de la línea dan el primer tramo y el
+   último de la ventana. Mismos píxeles que un cuadrado por punto, una vez cada
+   uno. */
+static void segment(int x0, int y0, int x1, int y1, mgl_color_t c) {
+    walk_t first, last;
+    int lo = -(sw / 2), hi = lo + sw, runs = abs2(y1 - y0) + 1, sy = y0 < y1 ? 1 : -1;
+    int before, after, t, k_first = 0, k_last = 0, f_first, l_first, f_last, l_last, left, right;
+    if (x0 == x1 || y0 == y1) { /* horizontal o vertical (los bordes de rect): un rectángulo */
+        box(min2(x0, x1) + lo, min2(y0, y1) + lo, max2(x0, x1) + hi, max2(y0, y1) + hi, c);
+        return;
+    }
+    walk_start(&first, x0, y0, x1, y1);
+    walk_run(&first, &f_first, &l_first);
+    if (sw == 1) { /* la ventana es un tramo; de un punto en las líneas empinadas */
+        for (t = 0;; t++) {
+            if (f_first == l_first)
+                put(f_first, y0 + sy * t, c); /* más barato que un span */
+            else
+                span(y0 + sy * t, min2(f_first, l_first), max2(f_first, l_first) + 1, c);
+            if (t == runs - 1) return;
+            walk_run(&first, &f_first, &l_first);
+        }
+    }
+    /* La ventana de la fila y0 + sy * t, en tramos (el tramo k está en y0 + sy * k). */
+    before = sy > 0 ? hi - 1 : -lo;
+    after = sy > 0 ? -lo : hi - 1;
+    last = first;
+    f_last = f_first;
+    l_last = l_first;
+    for (t = -after; t <= runs - 1 + before; t++) {
+        for (; k_first < t - before; k_first++) walk_run(&first, &f_first, &l_first);
+        for (; k_last < t + after && k_last < runs - 1; k_last++) walk_run(&last, &f_last, &l_last);
+        left = min2(f_first, l_last);
+        right = max2(f_first, l_last);
+        span(y0 + sy * t, left + lo, right + hi, c);
     }
 }
 
@@ -156,12 +231,8 @@ void sw_line(int x0, int y0, int x1, int y1) {
 }
 
 void sw_rect(int x, int y, int w, int h) {
-    int yy, y0, y1;
     if (w <= 0 || h <= 0 || !fb) return;
-    y0 = max2(0, y);
-    y1 = min2(fh, y + h);
-    if (fill_on)
-        for (yy = y0; yy < y1; yy++) span(yy, x, x + w, fc);
+    if (fill_on) box(x, y, x + w, y + h, fc);
     if (stroke_on) {
         segment(x, y, x + w - 1, y, sc);
         segment(x + w - 1, y, x + w - 1, y + h - 1, sc);
@@ -209,15 +280,34 @@ void sw_circle(int cx, int cy, int r) {
     }
 }
 
+/* Recorta [*from, *to] a las x (desde left) en que una arista que vale v en
+   left y crece d por x da >= 0. Con divisiones exactas, sin recorrer la fila. */
+static void clip_edge(long v, long d, int left, int *from, int *to) {
+    long x;
+    if (d > 0) {
+        if (v >= 0) return;
+        x = left + (-v + d - 1) / d; /* la primera x con v + d * (x - left) >= 0 */
+        if (x > *from) *from = x > *to ? *to + 1 : (int)x;
+    } else if (d < 0) {
+        if (v < 0) {
+            *to = *from - 1;
+            return;
+        }
+        x = left + v / -d; /* la última */
+        if (x < *to) *to = (int)x;
+    } else if (v < 0)
+        *to = *from - 1;
+}
+
 void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
-    int x, y, left, right, top, bottom, start, bx = x1, by = y1, cx = x2, cy = y2;
-    long area = edge(x0, y0, x1, y1, x2, y2), a, b, c, da, db, dc;
+    int y, left, right, top, bottom, from, to, bx = x1, by = y1, cx = x2, cy = y2;
+    long area = edge(x0, y0, x1, y1, x2, y2), a, b, c;
     if (!fb) return;
     if (fill_on && area != 0) {
         /* Con el triángulo en sentido positivo (area > 0), un píxel está dentro si
            las tres aristas dan >= 0: como a + b + c = area, nunca dan las tres <= 0.
-           Cada arista crece en una cantidad fija por x, y lo de dentro de una fila
-           es un tramo (el triángulo es convexo): se busca dónde empieza y acaba. */
+           Cada arista es lineal en x, así que en cada fila lo de dentro es un
+           tramo (el triángulo es convexo) que sale de recortar con las tres. */
         if (area < 0) { /* b y c son copias: el contorno va en el orden de la llamada */
             bx = x2, by = y2;
             cx = x1, cy = y1;
@@ -226,24 +316,19 @@ void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
         right = min2(fw - 1, max2(x0, max2(x1, x2)));
         top = max2(0, min2(y0, min2(y1, y2)));
         bottom = min2(fh - 1, max2(y0, max2(y1, y2)));
-        da = by - y0;
-        db = cy - by;
-        dc = y0 - cy;
+        a = edge(x0, y0, bx, by, left, top);
+        b = edge(bx, by, cx, cy, left, top);
+        c = edge(cx, cy, x0, y0, left, top);
         for (y = top; y <= bottom; y++) {
-            a = edge(x0, y0, bx, by, left, y);
-            b = edge(bx, by, cx, cy, left, y);
-            c = edge(cx, cy, x0, y0, left, y);
-            for (x = left; x <= right && (a < 0 || b < 0 || c < 0); x++) {
-                a += da;
-                b += db;
-                c += dc;
-            }
-            for (start = x; x <= right && a >= 0 && b >= 0 && c >= 0; x++) {
-                a += da;
-                b += db;
-                c += dc;
-            }
-            span(y, start, x, fc);
+            from = left;
+            to = right;
+            clip_edge(a, by - y0, left, &from, &to);
+            clip_edge(b, cy - by, left, &from, &to);
+            clip_edge(c, y0 - cy, left, &from, &to);
+            span(y, from, to + 1, fc);
+            a -= bx - x0; /* cada arista cambia en una cantidad fija por y */
+            b -= cx - bx;
+            c -= x0 - cx;
         }
     }
     if (stroke_on) {
