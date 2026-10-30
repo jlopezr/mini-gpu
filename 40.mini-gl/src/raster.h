@@ -1,6 +1,8 @@
 #ifndef RASTER_H
 #define RASTER_H
+
 #include "minigl.h"
+
 void sw_bind(mgl_color_t *,int,int,int);
 void sw_clear(mgl_color_t);
 void sw_fill(mgl_color_t);
@@ -14,4 +16,5 @@ void sw_rect(int,int,int,int);
 void sw_circle(int,int,int);
 void sw_triangle(int,int,int,int,int,int);
 void sw_image(const mgl_sprite_t *,int,int);
+
 #endif
