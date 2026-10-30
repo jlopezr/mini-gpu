@@ -21,10 +21,36 @@ static void put(int x, int y, mgl_color_t c) {
     if (fb && x >= 0 && y >= 0 && x < fw && y < fh) fb[y * pitch + x] = c;
 }
 
+/* La fila y de x0 a x1 - 1, recortada. Píxel a píxel (escribir dos con un
+   unsigned rompería el strict aliasing en el host), desenrollado porque lcc no
+   lo hace. */
+static void span(int y, int x0, int x1, mgl_color_t c) {
+    mgl_color_t *p, *end;
+    if (y < 0 || y >= fh) return;
+    if (x0 < 0) x0 = 0; /* sin min2/max2: span es caliente y lcc no expande en línea */
+    if (x1 > fw) x1 = fw;
+    if (x0 >= x1) return;
+    p = fb + y * pitch + x0;
+    end = p + (x1 - x0);
+    for (; end - p >= 8; p += 8) {
+        p[0] = c;
+        p[1] = c;
+        p[2] = c;
+        p[3] = c;
+        p[4] = c;
+        p[5] = c;
+        p[6] = c;
+        p[7] = c;
+    }
+    while (p < end) *p++ = c;
+}
+
 static void brush(int x, int y, mgl_color_t c) {
-    int i, j, lo = -(sw / 2), hi = lo + sw;
-    for (j = lo; j < hi; j++)
-        for (i = lo; i < hi; i++) put(x + i, y + j, c);
+    int j, lo = -(sw / 2), hi = lo + sw;
+    if (sw == 1)
+        put(x, y, c);
+    else
+        for (j = lo; j < hi; j++) span(y + j, x + lo, x + hi, c);
 }
 
 static void segment(int x0, int y0, int x1, int y1, mgl_color_t c) {
@@ -72,10 +98,9 @@ void sw_set_target(mgl_color_t *pixels) {
 }
 
 void sw_clear(mgl_color_t c) {
-    int x, y;
+    int y;
     if (!fb) return;
-    for (y = 0; y < fh; y++)
-        for (x = 0; x < fw; x++) fb[y * pitch + x] = c;
+    for (y = 0; y < fh; y++) span(y, 0, fw, c);
 }
 
 void sw_fill(mgl_color_t c) {
@@ -109,15 +134,12 @@ void sw_line(int x0, int y0, int x1, int y1) {
 }
 
 void sw_rect(int x, int y, int w, int h) {
-    int xx, yy, x0, x1, y0, y1;
+    int yy, y0, y1;
     if (w <= 0 || h <= 0 || !fb) return;
-    x0 = max2(0, x);
     y0 = max2(0, y);
-    x1 = min2(fw, x + w);
     y1 = min2(fh, y + h);
     if (fill_on)
-        for (yy = y0; yy < y1; yy++)
-            for (xx = x0; xx < x1; xx++) put(xx, yy, fc);
+        for (yy = y0; yy < y1; yy++) span(yy, x, x + w, fc);
     if (stroke_on) {
         segment(x, y, x + w - 1, y, sc);
         segment(x + w - 1, y, x + w - 1, y + h - 1, sc);
@@ -128,17 +150,18 @@ void sw_rect(int x, int y, int w, int h) {
 
 void sw_circle(int cx, int cy, int r) {
     int x, y, xx;
-    long rr;
+    long rr, dx, dy;
     if (r < 0 || !fb) return;
     rr = (long)r * r;
     if (fill_on) {
-        int x0 = max2(0, cx - r), x1 = min2(fw - 1, cx + r);
-        int y0 = max2(0, cy - r), y1 = min2(fh - 1, cy + r);
-        for (y = y0; y <= y1; y++)
-            for (x = x0; x <= x1; x++) {
-                long dx = x - cx, dy = y - cy;
-                if (dx * dx + dy * dy <= rr) put(x, y, fc);
-            }
+        /* Cada fila es un tramo: los dx con dx*dx + dy*dy <= rr van de -dx a dx.
+           dx crece hasta el centro y luego decrece: se ajusta desde la fila anterior. */
+        dx = 0;
+        for (dy = -r; dy <= r; dy++) {
+            while ((dx + 1) * (dx + 1) + dy * dy <= rr) dx++;
+            while (dx * dx + dy * dy > rr) dx--;
+            span(cy + (int)dy, cx - (int)dx, cx + (int)dx + 1, fc);
+        }
     }
     if (stroke_on) {
         x = r;
@@ -165,21 +188,41 @@ void sw_circle(int cx, int cy, int r) {
 }
 
 void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
-    int x, y, left, right, top, bottom;
-    long area = edge(x0, y0, x1, y1, x2, y2), a, b, c;
+    int x, y, left, right, top, bottom, start, bx = x1, by = y1, cx = x2, cy = y2;
+    long area = edge(x0, y0, x1, y1, x2, y2), a, b, c, da, db, dc;
     if (!fb) return;
     if (fill_on && area != 0) {
+        /* Con el triángulo en sentido positivo (area > 0), un píxel está dentro si
+           las tres aristas dan >= 0: como a + b + c = area, nunca dan las tres <= 0.
+           Cada arista crece en una cantidad fija por x, y lo de dentro de una fila
+           es un tramo (el triángulo es convexo): se busca dónde empieza y acaba. */
+        if (area < 0) { /* b y c son copias: el contorno va en el orden de la llamada */
+            bx = x2, by = y2;
+            cx = x1, cy = y1;
+        }
         left = max2(0, min2(x0, min2(x1, x2)));
         right = min2(fw - 1, max2(x0, max2(x1, x2)));
         top = max2(0, min2(y0, min2(y1, y2)));
         bottom = min2(fh - 1, max2(y0, max2(y1, y2)));
-        for (y = top; y <= bottom; y++)
-            for (x = left; x <= right; x++) {
-                a = edge(x0, y0, x1, y1, x, y);
-                b = edge(x1, y1, x2, y2, x, y);
-                c = edge(x2, y2, x0, y0, x, y);
-                if ((a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0)) put(x, y, fc);
+        da = by - y0;
+        db = cy - by;
+        dc = y0 - cy;
+        for (y = top; y <= bottom; y++) {
+            a = edge(x0, y0, bx, by, left, y);
+            b = edge(bx, by, cx, cy, left, y);
+            c = edge(cx, cy, x0, y0, left, y);
+            for (x = left; x <= right && (a < 0 || b < 0 || c < 0); x++) {
+                a += da;
+                b += db;
+                c += dc;
             }
+            for (start = x; x <= right && a >= 0 && b >= 0 && c >= 0; x++) {
+                a += da;
+                b += db;
+                c += dc;
+            }
+            span(y, start, x, fc);
+        }
     }
     if (stroke_on) {
         segment(x0, y0, x1, y1, sc);
