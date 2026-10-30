@@ -4,6 +4,7 @@
 #include "minigl.h"
 
 void sw_bind(mgl_color_t *,int,int,int);
+void sw_set_target(mgl_color_t *);
 void sw_clear(mgl_color_t);
 void sw_fill(mgl_color_t);
 void sw_no_fill(void);

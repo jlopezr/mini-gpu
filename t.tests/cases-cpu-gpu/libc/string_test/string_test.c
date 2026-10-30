@@ -1,9 +1,11 @@
 /* La biblioteca C mínima (t.tests/inc/string.h, t.tests/runtime/libc/string.c):
-   memset, memcpy y memcmp, con tamaños y desplazamientos que no son múltiplos de 4.
+   memset, memcpy y memcmp, con tamaños y desplazamientos que no son múltiplos de 4
+   y con punteros alineados (memcpy por palabras).
    main devuelve un bit por comprobación que falla: 0 si todo va bien. */
 #include <string.h>
 
 unsigned char a[37], b[37];
+unsigned w[10], v[10];
 
 int main(void) {
     int errors = 0, i;
@@ -18,5 +20,12 @@ int main(void) {
     if (memcmp(b, a, 1) >= 0) errors |= 32;
     if (memcmp(a, b, 0) != 0) errors |= 64;
     if (memset(b, 0, 0) != b || b[0] != 0 || b[1] != 1) errors |= 128;
+    /* Alineados: dos veces 4 palabras, una palabra suelta y 3 bytes. */
+    for (i = 0; i < 10; i++) {
+        v[i] = 0x01020304U * (unsigned)(i + 1);
+        w[i] = 0;
+    }
+    memcpy(w, v, 4 * 9 + 3);
+    if (memcmp(w, v, 4 * 9 + 3) != 0 || ((unsigned char *)w)[39] != 0) errors |= 256;
     return errors;
 }

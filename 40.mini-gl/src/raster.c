@@ -66,6 +66,11 @@ void sw_bind(mgl_color_t *pixels, int width, int height, int stride) {
     sw = 1;
 }
 
+/* Otro framebuffer del mismo tamaño, con el mismo estado. */
+void sw_set_target(mgl_color_t *pixels) {
+    if (fb && pixels) fb = pixels;
+}
+
 void sw_clear(mgl_color_t c) {
     int x, y;
     if (!fb) return;

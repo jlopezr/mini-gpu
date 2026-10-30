@@ -5,11 +5,11 @@
 
    De momento solo V0: la CPU rasteriza al llamar.
 
-   Processing conserva el lienzo de un frame al siguiente, pero con doble buffer
-   el trasero tiene lo de hace dos frames, y cambiar de buffer con mgl_bind
-   reiniciaría el estado de dibujo (fill, stroke...). Por eso se dibuja en un
-   lienzo fijo que se enlaza una sola vez, y se copia al buffer trasero antes de
-   cada swap. */
+   Se dibuja directamente en el buffer trasero. Processing conserva el lienzo de
+   un frame al siguiente, pero el trasero tiene lo de hace dos frames: tras cada
+   swap, mgl_set_target le apunta y deja pendiente copiarle el delantero. MiniGL
+   solo copia si se dibuja algo antes de un background(), que lo tapa todo: en
+   los sketches que borran cada frame no se copia nunca. */
 
 #include "processing.h"
 #include "mmio.h"
@@ -20,8 +20,7 @@
 
 /* En RAM, lejos del programa (como render.asm); alineados a 16 bytes. */
 #define FB_A 0x01000000u
-#define FB_B 0x01025800u   /* FB_A + 320*240*2 */
-#define CANVAS 0x0104B000u /* FB_B + 320*240*2 */
+#define FB_B 0x01025800u /* FB_A + 320*240*2 */
 
 int width = FB_W, height = FB_H;
 int frameCount, mouseX, mouseY, mousePressed;
@@ -39,26 +38,26 @@ static void clear(unsigned address) {
     for (i = 0; i < FB_WORDS; i++) p[i] = 0;
 }
 
-/* Copia el lienzo al buffer trasero, pide el swap y espera a que se aplique. */
+/* Termina el frame en el buffer trasero, pide el swap, espera a que se aplique
+   y pasa a dibujar en el nuevo trasero. */
 static void present(void) {
-    unsigned *back = (unsigned *)REG(VIDEO_FB_BACK);
-    const unsigned *canvas = (const unsigned *)CANVAS;
-    int i;
-    for (i = 0; i < FB_WORDS; i++) back[i] = canvas[i];
+    mgl_finish();
     REG(VIDEO_SWAP) = 1;
     while (REG(VIDEO_SWAP))
         ;
+    mgl_set_target((mgl_color_t *)REG(VIDEO_FB_BACK), (const mgl_color_t *)REG(VIDEO_FB_FRONT));
 }
 
 int main(void) {
-    /* En la placa la SDRAM no empieza a cero: el lienzo empieza negro, como en el host (calloc). */
-    clear(CANVAS);
+    /* En la placa la SDRAM no empieza a cero: el lienzo empieza negro, como en el
+       host (calloc). Basta con el delantero: el trasero lo copia de él. */
     clear(FB_A);
     REG(VIDEO_FB_FRONT) = FB_A;
     REG(VIDEO_FB_BACK) = FB_B;
     REG(VIDEO_CTRL) = VIDEO_MODE_SCANOUT;
 
-    mgl_bind((mgl_color_t *)CANVAS, FB_W, FB_H, FB_W);
+    mgl_bind((mgl_color_t *)FB_B, FB_W, FB_H, FB_W);
+    mgl_set_target((mgl_color_t *)FB_B, (const mgl_color_t *)FB_A);
     mgl_set_deferred(0);
     setup();
     if (bad_size) return 1;

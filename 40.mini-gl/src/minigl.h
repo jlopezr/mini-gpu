@@ -39,6 +39,12 @@ typedef struct {
 
 void mgl_bind(mgl_color_t *pixels,int width,int height,int stride);
 void mgl_set_deferred(mgl_cmd_buffer_t *buffer); /* NULL => directo */
+/* Cambia el framebuffer de mgl_bind por otro del mismo tamaño sin tocar el
+   estado de dibujo. Con previous != NULL, pixels no tiene el lienzo: lo tiene
+   previous, y se copia antes de dibujar encima, salvo que antes llegue un
+   mgl_clear (que lo tapa todo). mgl_finish hace la copia si sigue pendiente. */
+void mgl_set_target(mgl_color_t *pixels,const mgl_color_t *previous);
+void mgl_finish(void);
 int mgl_cmd_init(mgl_cmd_buffer_t *buffer,void *memory,mgl_u32 capacity);
 int mgl_cmd_reset(mgl_cmd_buffer_t *buffer);
 int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *buffer);

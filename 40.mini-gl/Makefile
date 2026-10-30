@@ -15,6 +15,8 @@ PYTHON ?= python3
 BUILD_C = $(PYTHON) $(REPO)/tools/build-c
 SIM_SYS = $(PYTHON) $(REPO)/32.cpu-gpu-func-sim/cpu_gpu_sim.py
 COMPARE_FRAMES = $(PYTHON) $(REPO)/tools/compare-frames.py
+# La biblioteca C mínima que build-c añade a cada programa.
+LIBC = $(wildcard $(REPO)/t.tests/runtime/libc/*.c $(REPO)/t.tests/inc/*.h)
 MINIGPU_SRCS = src/minigl.c src/processing.c src/raster.c
 # Frames que compara check-minigpu, y argumentos extra para sim-<sketch>.
 FRAMES ?= 1
@@ -25,7 +27,7 @@ SIM_ARGS ?=
 HDRS = $(wildcard src/*.h)
 LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o build/gpu_host.o \
     build/platform.o
-SKETCHES = shapes pattern bounce
+SKETCHES = shapes pattern bounce trail
 EXAMPLES = $(SKETCHES:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
 MINIGPU_EXAMPLES = $(SKETCHES:%=build/minigpu/%.bin)
@@ -76,7 +78,7 @@ sdl-%: build/%-sdl
 	./$< $(if $(filter all,$(V)),,-v $(V))
 
 # MiniGPU: platform_minigpu.c va primero porque lleva main.
-build/minigpu/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS)
+build/minigpu/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)
 	$(BUILD_C) src/platform_minigpu.c $< $(MINIGPU_SRCS) -I src --outdir build/minigpu/$* -o $@
 
 # Ventana del simulador: make sim-bounce. Cada frame son millones de instrucciones (varios segundos).

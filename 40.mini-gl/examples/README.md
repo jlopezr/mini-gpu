@@ -18,6 +18,7 @@ Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 | [`shapes.c`](shapes.c) | Todas las primitivas: relleno, contorno, grosores, recorte en los bordes y un sprite |
 | [`pattern.c`](pattern.c) | Rejilla de figuras con bucles: muchas primitivas, command buffer más grande |
 | [`bounce.c`](bounce.c) | Animación: pelotas que rebotan, círculo que sigue al ratón (más grande al pulsar) |
+| [`trail.c`](trail.c) | Estela: `draw()` no borra y dibuja encima de los frames anteriores |
 
 ## Host: imágenes PPM
 
@@ -73,9 +74,12 @@ simulador (`--halt-after-swaps FRAMES --frame-output`) en RGB565 crudo y los
 compara con `tools/compare-frames.py`, que dice dónde están las diferencias.
 
 Por ahora solo hay V0 (la CPU rasteriza al llamar): no hay ratón ni teclado, y
-`size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja en un lienzo fijo
-que se copia al buffer trasero antes de cada swap, para que, como en Processing,
-el lienzo y el estado de dibujo se conserven de un frame al siguiente.
+`size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja directamente en el
+buffer trasero, que tiene lo de hace dos frames. Para que, como en Processing, el
+lienzo se conserve de un frame al siguiente, tras cada swap `mgl_set_target`
+cambia de buffer sin tocar el estado de dibujo y deja pendiente copiar el
+delantero. MiniGL solo hace la copia si se dibuja algo antes de un `background()`:
+en los sketches que borran cada frame no se copia nunca. `trail` es el que no borra.
 
 ## Añadir un ejemplo
 
