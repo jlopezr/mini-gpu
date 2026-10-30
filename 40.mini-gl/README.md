@@ -32,11 +32,11 @@ make test               # V0 == V1 == V2 en las escenas de tests/
 make run                # todos los ejemplos con las tres versiones
 make run-shapes V=2     # un ejemplo con una versión concreta
 make sdl-bounce         # en una ventana SDL (teclas 0/1/2: versión)
-make sim-bounce         # en el simulador de MiniGPU (solo V0 por ahora)
-make check-minigpu      # MiniGPU frente al host, píxel a píxel
+make sim-bounce V=2     # en el simulador de MiniGPU (V=0, 1 o 2; por defecto 0)
+make check-minigpu V=2  # MiniGPU frente al host, píxel a píxel
 ```
 
-`gpu_host.c` simula las ocho lanes de forma funcional; no simula el hardware SIMT real.
+En el host, `mgl_gpu_render` ejecuta las ocho lanes una tras otra en la CPU: es una emulación funcional, no SIMT. En MiniGPU lanza `KERNEL(mgl_render)` en un warp de la GPU.
 
 ## Alcance
-V0 está validado en MiniGPU: compilado con LCC/mini-opt (`build-c`) y ejecutado en el simulador de CPU + GPU da los mismos píxeles que en el host (`make check-minigpu`). V1 y V2 en MiniGPU y la FPGA están pendientes. La conversión `mg_` → `mgl_` es mecánica; se debe revisar cualquier código externo que llame a la API antigua.
+V0, V1 y V2 están validados en MiniGPU: compilados con LCC/mini-opt (`build-c`) y ejecutados en el simulador de CPU + GPU dan los mismos píxeles que en el host (`make check-minigpu V=0|1|2`). El renderer de V2 aún no está optimizado (en instrucciones es más lento que V0), y la FPGA está pendiente. La conversión `mg_` → `mgl_` es mecánica; se debe revisar cualquier código externo que llame a la API antigua.

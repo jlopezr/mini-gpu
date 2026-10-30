@@ -355,6 +355,13 @@ static mgl_u32 last_clear(const mgl_cmd_buffer_t *b) {
     return last;
 }
 
+void mgl_cmd_ready(const mgl_cmd_buffer_t *b) {
+    if (b && b->used >= 16U && last_clear(b))
+        previous = 0; /* el CLEAR lo tapa todo: lo de antes da igual sobre qué se pinte */
+    else
+        ready();
+}
+
 int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *b) {
     mgl_u32 off, op, size, t, p0, p1, p2, first, colors, style, last_colors = 0, last_style = 0;
     int applied = 0; /* los atributos (dos palabras) solo se aplican si cambian */

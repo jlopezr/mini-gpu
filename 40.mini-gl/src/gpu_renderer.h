@@ -19,11 +19,9 @@ typedef struct {
     unsigned int sprite_count;
 } mgl_gpu_job_t;
 
-/* Entry point: invoked by all 8 lanes of ONE warp, getlane intrinsic on target. */
+/* Valida el trabajo y lo ejecuta: en MiniGPU, un warp de 8 lanes (KERNEL(mgl_render), compilado con mini-lcc);
+   en el host, las 8 lanes una tras otra en la CPU (emulacion funcional, no SIMT). MGL_OK o MGL_ERR_ARGUMENT. */
 int mgl_gpu_render(const mgl_gpu_job_t *job);
-
-/* Host-only functional test adapter: call with lanes 0..7 per command. */
-int mgl_gpu_render_host(const mgl_gpu_job_t *job);
 
 /* Host adapter for the command buffer's local sprite registry (V1); descriptors must outlive execution. */
 int mgl_gpu_sprites_from_cmd(

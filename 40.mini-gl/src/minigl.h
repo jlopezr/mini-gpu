@@ -51,6 +51,9 @@ int mgl_cmd_init(mgl_cmd_buffer_t *buffer,void *memory,mgl_u32 capacity);
 int mgl_cmd_reset(mgl_cmd_buffer_t *buffer);
 int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *buffer);
 int mgl_cmd_status(const mgl_cmd_buffer_t *buffer);
+/* Antes de que otro (la GPU) interprete buffer en el framebuffer actual: copia
+   el lienzo pendiente de mgl_set_target, salvo que buffer tenga un CLEAR. */
+void mgl_cmd_ready(const mgl_cmd_buffer_t *buffer);
 
 void mgl_clear(mgl_color_t color);
 void mgl_fill(mgl_color_t color);

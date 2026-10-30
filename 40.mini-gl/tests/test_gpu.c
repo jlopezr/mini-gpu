@@ -43,7 +43,7 @@ int main(void) {
     job.commands=cmd.bytes; job.command_bytes=cmd.used;
     job.framebuffer=gpu; job.width=W; job.height=H; job.pitch=W;
     job.sprites=sprites; job.sprite_count=cmd.sprite_count;
-    result=mgl_gpu_render_host(&job); if(result) return 4;
+    result=mgl_gpu_render(&job); if(result) return 4;
     if(memcmp(reference,gpu,sizeof(gpu))) {
         for(y=0;y<H;y++) for(x=0;x<W;x++) if(reference[y*W+x]!=gpu[y*W+x]) {
             printf("FAIL at %d,%d: expected %04x got %04x\n",x,y,

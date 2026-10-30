@@ -1,7 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c89 -pedantic -Wall -Wextra -O2
-# MGL_GPU_HOST_TEST: el renderer GPU (V2) se ejecuta emulado en el host.
-CPPFLAGS += -Isrc -DMGL_GPU_HOST_TEST
+CPPFLAGS += -Isrc
 
 # SDL2 solo para la plataforma con ventana (make sdl, make sdl-<sketch>).
 SDL_CONFIG ?= sdl2-config
@@ -17,7 +16,7 @@ SIM_SYS = $(PYTHON) $(REPO)/32.cpu-gpu-func-sim/cpu_gpu_sim.py
 COMPARE_FRAMES = $(PYTHON) $(REPO)/tools/compare-frames.py
 # La biblioteca C mínima que build-c añade a cada programa.
 LIBC = $(wildcard $(REPO)/t.tests/runtime/libc/*.c $(REPO)/t.tests/inc/*.h)
-MINIGPU_SRCS = src/minigl.c src/processing.c src/raster.c
+MINIGPU_SRCS = src/minigl.c src/processing.c src/raster.c $(if $(filter 2,$(MV)),src/gpu_renderer.c)
 # Frames que compara check-minigpu, y argumentos extra para sim-<sketch>.
 FRAMES ?= 1
 SIM_ARGS ?=
@@ -25,14 +24,14 @@ SIM_ARGS ?=
 # src/: MiniGL + API Processing + plataformas (host PPM, SDL y MiniGPU). examples/:
 # sketches. tests/: comparaciones V0/V1/V2. Todo se compila en build/.
 HDRS = $(wildcard src/*.h)
-LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o build/gpu_host.o \
+LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
     build/platform.o
 SKETCHES = shapes pattern bounce trail paint
 EXAMPLES = $(SKETCHES:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
 TESTS = build/test_cpu build/test_gpu
 # Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2). En MiniGPU se elige
-# al compilar (0 o 1; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
+# al compilar (0, 1 o 2; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
 V ?= all
 MV := $(if $(filter all,$(V)),0,$(V))
 MG := build/minigpu/v$(MV)

@@ -79,7 +79,7 @@ int platform_end(int version) {
             job.pitch = width;
             job.sprites = gpu_sprites;
             job.sprite_count = cmd.sprite_count;
-            r = mgl_gpu_render_host(&job);
+            r = mgl_gpu_render(&job);
         }
     }
     if (r != MGL_OK) fprintf(stderr, "V%d: error %d al renderizar\n", version, r);

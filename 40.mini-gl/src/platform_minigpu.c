@@ -7,7 +7,8 @@
      0  directo: la CPU rasteriza al llamar (por defecto)
      1  diferido: draw() se graba en un command buffer y la CPU lo interpreta
         (mgl_cmd_render_cpu) antes del swap
-   V2 (la GPU interpreta el buffer) todavia no.
+     2  GPU: el mismo buffer lo interpreta un warp de la GPU (mgl_gpu_render,
+        gpu_renderer.c), que la CPU lanza y espera antes del swap
 
    La entrada sale de INPUT (mmio.md §25), si existe: en el simulador con
    --window (o --keyboard, --mouse, --input-script); sin él se queda a cero.
@@ -32,14 +33,17 @@
 #ifndef MGL_VERSION
 #define MGL_VERSION 0
 #endif
-#if MGL_VERSION != 0 && MGL_VERSION != 1
-#error "MiniGPU: MGL_VERSION 0 o 1 (V2 todavia no)"
+#if MGL_VERSION < 0 || MGL_VERSION > 2
+#error "MiniGPU: MGL_VERSION 0, 1 o 2"
+#endif
+#if MGL_VERSION == 2
+#include "gpu_renderer.h"
 #endif
 
 /* En RAM, lejos del programa (como render.asm); alineados a 16 bytes. */
 #define FB_A 0x01000000u
 #define FB_B 0x01025800u     /* FB_A + 320*240*2 */
-#define COMMANDS 0x0104B000u /* FB_B + 320*240*2: el command buffer de V1 */
+#define COMMANDS 0x0104B000u /* FB_B + 320*240*2: el command buffer de V1 y V2 */
 #define COMMAND_BYTES 0x10000u
 
 int width = FB_W, height = FB_H;
@@ -121,13 +125,41 @@ static void poll_input(void) {
         if (REG(INPUT_KEY_STATE0 + 4 * i)) keyPressed = 1;
 }
 
-#if MGL_VERSION == 1
-static mgl_cmd_buffer_t commands;
+static mgl_color_t *back = (mgl_color_t *)FB_B; /* donde se dibuja */
 
+#if MGL_VERSION != 0
+static mgl_cmd_buffer_t commands;
+#endif
+#if MGL_VERSION == 2
+static mgl_gpu_sprite_t sprites[MGL_GPU_MAX_SPRITES];
+static mgl_gpu_job_t job;
+extern int gpu_timeout_polls; /* gpu_runtime.inc: 20000 sondeos no dan para un frame */
+
+/* La GPU lo dibuja en el trasero; antes, la CPU le trae el lienzo si hace falta. */
+static int render_gpu(void) {
+    int status = mgl_gpu_sprites_from_cmd(&commands, sprites, MGL_GPU_MAX_SPRITES);
+    if (status != MGL_OK) return status;
+    mgl_cmd_ready(&commands);
+    job.commands = commands.bytes;
+    job.command_bytes = commands.used;
+    job.framebuffer = back;
+    job.width = FB_W;
+    job.height = FB_H;
+    job.pitch = FB_W;
+    job.sprites = sprites;
+    job.sprite_count = commands.sprite_count;
+    return mgl_gpu_render(&job);
+}
+#endif
+#if MGL_VERSION != 0
 /* Interpreta lo grabado desde la ultima vez y vacia el buffer. 0 si va bien. */
 static int render_commands(void) {
     int status = mgl_cmd_status(&commands);
+#if MGL_VERSION == 1
     if (status == MGL_OK) status = mgl_cmd_render_cpu(&commands);
+#else
+    if (status == MGL_OK) status = render_gpu();
+#endif
     mgl_cmd_reset(&commands);
     return status;
 }
@@ -140,7 +172,8 @@ static void present(void) {
     REG(VIDEO_SWAP) = 1;
     while (REG(VIDEO_SWAP))
         ;
-    mgl_set_target((mgl_color_t *)REG(VIDEO_FB_BACK), (const mgl_color_t *)REG(VIDEO_FB_FRONT));
+    back = (mgl_color_t *)REG(VIDEO_FB_BACK);
+    mgl_set_target(back, (const mgl_color_t *)REG(VIDEO_FB_FRONT));
 }
 
 int main(void) {
@@ -153,10 +186,14 @@ int main(void) {
 
     mgl_bind((mgl_color_t *)FB_B, FB_W, FB_H, FB_W);
     mgl_set_target((mgl_color_t *)FB_B, (const mgl_color_t *)FB_A);
-#if MGL_VERSION == 1
+#if MGL_VERSION != 0
     if (mgl_cmd_init(&commands, (void *)COMMANDS, COMMAND_BYTES) != MGL_OK) return 2;
     mgl_set_deferred(&commands);
-#else
+#endif
+#if MGL_VERSION == 2
+    gpu_timeout_polls = 100000000;
+#endif
+#if MGL_VERSION == 0
     mgl_set_deferred(0);
 #endif
     has_input = (REG(SYSTEM_DEVICES) & DEV_INPUT) != 0;
@@ -164,14 +201,14 @@ int main(void) {
     mouseY = pmouseY = FB_H / 2;
     setup();
     if (bad_size) return 1;
-#if MGL_VERSION == 1
+#if MGL_VERSION != 0
     if (render_commands() != MGL_OK) return 2;
 #endif
     for (;;) {
         frameCount++;
         poll_input();
         draw();
-#if MGL_VERSION == 1
+#if MGL_VERSION != 0
         if (render_commands() != MGL_OK) return 2; /* buffer lleno o comando malo */
 #endif
         present();

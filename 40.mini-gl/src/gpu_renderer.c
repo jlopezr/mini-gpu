@@ -17,15 +17,8 @@ typedef char mgl_gpu_check_u16[(sizeof(mgl_color_t) == 2) ? 1 : -1];
 #define FLAG_FILL 1U
 #define FLAG_STROKE 2U
 
-#ifndef MGL_GPU_HOST_TEST
-/* Provided by mini-opt intrinsic expansion, not a regular external function. */
-extern int getlane(void);
-#else
-extern int mgl_test_lane;
-
-static int getlane(void) {
-    return mgl_test_lane;
-}
+#ifdef __MINIGPU__
+#include "gpu.h"
 #endif
 
 static mgl_u32 rd32(const unsigned char *p) {
@@ -234,22 +227,20 @@ static int validate(const mgl_gpu_job_t *j) {
     return MGL_OK;
 }
 
-/* A single warp executes this routine with lanes in lockstep. */
-int mgl_gpu_render(const mgl_gpu_job_t *j) {
+/* Lo que hace una lane: todos los comandos, cada uno en las columnas que son suyas. Las lanes no comparten
+   pixeles, asi que da igual que vayan a la vez (un warp en la GPU) o una tras otra (el host). */
+static void render(const mgl_gpu_job_t *j, int lane) {
     mgl_u32 off, op, size, p0, p1, p2;
     const unsigned char *p;
-    int lane = getlane(), x, y, start;
-    if (lane < 0 || lane >= MGL_GPU_LANES) return MGL_ERR_ARGUMENT;
-    if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
+    int x, y;
     for (off = 16; off < j->command_bytes; off += size) {
         p = j->commands + off;
         op = rd32(p);
         size = rd32(p + 4);
         if (op == OP_CLEAR) {
             mgl_color_t color = (mgl_color_t)rd32(p + 8);
-            start = lane;
             for (y = 0; y < j->height; y++)
-                for (x = start; x < j->width; x += MGL_GPU_LANES)
+                for (x = lane; x < j->width; x += MGL_GPU_LANES)
                     j->framebuffer[y * j->pitch + x] = color;
         } else {
             p0 = rd32(p + 20);
@@ -259,8 +250,26 @@ int mgl_gpu_render(const mgl_gpu_job_t *j) {
                 (mgl_color_t)rd16(p + 34), rd16(p + 36), (int)rd16(p + 38));
         }
     }
+}
+
+#ifdef __MINIGPU__
+/* Un warp de 8 lanes; el trabajo ya esta validado por la CPU. */
+void KERNEL(mgl_render)(const mgl_gpu_job_t *j) {
+    render(j, __gpu_lane);
+}
+
+int mgl_gpu_render(const mgl_gpu_job_t *j) {
+    if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
+    return GPU_RUN(mgl_render, 1, j) == GPU_OK ? MGL_OK : MGL_ERR_ARGUMENT;
+}
+#else
+int mgl_gpu_render(const mgl_gpu_job_t *j) {
+    int lane;
+    if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
+    for (lane = 0; lane < MGL_GPU_LANES; lane++) render(j, lane);
     return MGL_OK;
 }
+#endif
 
 int mgl_gpu_sprites_from_cmd(
     const mgl_cmd_buffer_t *src, mgl_gpu_sprite_t *dst, unsigned int capacity) {
@@ -276,31 +285,3 @@ int mgl_gpu_sprites_from_cmd(
     }
     return MGL_OK;
 }
-#ifdef MGL_GPU_HOST_TEST
-int mgl_gpu_render_host_commands(const mgl_gpu_job_t *j) {
-    mgl_u32 off, op, size, p0, p1, p2;
-    const unsigned char *p;
-    int lane, x, y;
-    if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
-    for (off = 16; off < j->command_bytes; off += size) {
-        p = j->commands + off;
-        op = rd32(p);
-        size = rd32(p + 4);
-        for (lane = 0; lane < MGL_GPU_LANES; lane++) {
-            if (op == OP_CLEAR) {
-                mgl_color_t color = (mgl_color_t)rd32(p + 8);
-                for (y = 0; y < j->height; y++)
-                    for (x = lane; x < j->width; x += MGL_GPU_LANES)
-                        j->framebuffer[y * j->pitch + x] = color;
-            } else {
-                p0 = rd32(p + 20);
-                p1 = rd32(p + 24);
-                p2 = rd32(p + 28);
-                primitive(j, lane, rd32(p + 16), p0, p1, p2, (mgl_color_t)rd16(p + 32),
-                    (mgl_color_t)rd16(p + 34), rd16(p + 36), (int)rd16(p + 38));
-            }
-        }
-    }
-    return MGL_OK;
-}
-#endif
