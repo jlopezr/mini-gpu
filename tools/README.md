@@ -398,6 +398,26 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 Los casos existentes también se ejecutan con
 `python t.tests/run_tests.py --backend sim-gpu --version cycle t.tests/cases-gpu`.
 
+### Perfil por función (`--profile`)
+
+`sim-sys`, `sim-cpu` y `sim-gpu` cuentan, si se les pide, las instrucciones de CPU y de warp de cada función del
+programa (`tools/sim_profile.py`, compartido como las opciones de periféricos; `sim-gpu-cycle` todavía no lo tiene):
+
+```bash
+$ sim-sys programa.asm --profile                        # tabla al terminar (las 25 primeras)
+$ sim-sys programa.bin --profile --symbols programa.asm # un .bin no lleva nombres: el .asm que lo dio
+$ sim-sys programa.asm --profile perfil.txt             # todas, en un fichero
+```
+
+Las funciones son las etiquetas de código que no son de bloque (`L.n`, que el ensamblador renombra a
+`L.<fichero>.n`). lcc da a cada función del `.asm` el nombre que tiene en C y no expande en línea, así que en un
+programa de `build-c` son las funciones C (`build-c` deja el `.asm` que ensambla junto a los intermedios: es el
+de `--symbols`). En la CPU salen las instrucciones **propias**, las **llamadas** (`JAL`/`JALR`) y el **total**
+con todo lo que llama; la pila se sigue por la dirección de retorno, así que una llamada final que `mini-opt`
+convirtió en `BRA` cuenta dentro de quien salta, y la recursión no se cuenta dos veces. En la GPU, las
+instrucciones de warp de cada kernel (`__kernel_x` sale como `x (kernel)`). El código antes de la primera
+etiqueta (o de un programa sin ninguna) sale como `(sin nombre)`. Funciona junto a `--trace`.
+
 ### Periféricos comunes de los tres simuladores
 
 `sim-cpu`, `sim-gpu` y `sim-gpu-cycle` comparten `tools/sim_devices.py` y las

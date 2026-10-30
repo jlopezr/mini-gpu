@@ -61,6 +61,7 @@ from gpu_trace import TextTrace  # noqa: E402
 from minigpu_isa import disassemble_word  # noqa: E402
 from tools import mmio_map as mm  # noqa: E402
 from tools import sim_peripherals  # noqa: E402
+from tools import sim_profile  # noqa: E402
 from tools.sim_devices import VideoDevice  # noqa: E402
 from tools.sysid_device import SysIdDevice, declared_devices  # noqa: E402
 
@@ -673,6 +674,7 @@ class CpuGpuSystem:
         self.trace_stream = None    # la salida sin prefijo, donde escribe la CPU
         self.trace_limit = None     # líneas de traza, de CPU y de warp juntas
         self.trace_lines = 0
+        self.profile = None         # sim_profile.Profile, con --profile
         self._limits = (None, None)     # (CPU, warp), los fija `run`
         self.bus = MmioBus()
         self.cpu = _SystemCpu(memory_size, self.bus)
@@ -739,15 +741,28 @@ class CpuGpuSystem:
         self.trace_limit = limit
         self.trace_lines = 0
         self.trace = _GatedTrace(_LinePrefix(stream, "GPU     "), self)
-        self.gpu.system.trace = self.trace
+        self._attach_gpu_events()
+
+    def enable_profile(self, profile) -> None:
+        """Perfil por función (`tools/sim_profile.py`): cuenta cada instrucción de CPU y de warp."""
+        self.profile = profile
+        self._attach_gpu_events()
+
+    def _attach_gpu_events(self) -> None:
+        """La GPU entrega cada instrucción de warp a un solo consumidor: la traza, el perfil o los dos."""
+        if self.profile is None:
+            self.gpu.system.trace = self.trace
+        else:
+            self.gpu.system.trace = sim_profile.GpuEvents(self.profile, lambda: self.trace)
 
     def trace_has_room(self) -> bool:
         """Cuenta una línea de traza; False (y apaga la traza) al pasar del límite."""
         if self.trace_limit is not None and self.trace_lines >= self.trace_limit:
             print(f"... traza limitada a {self.trace_limit} líneas; la ejecución continúa",
                   file=self.trace_stream)
-            # Apagarla del todo evita construir eventos que nadie va a imprimir.
-            self.trace = self.gpu.system.trace = None
+            # Apagarla del todo evita construir eventos que nadie va a imprimir (salvo el perfil).
+            self.trace = None
+            self._attach_gpu_events()
             return False
         self.trace_lines += 1
         return True
@@ -818,6 +833,12 @@ class CpuGpuSystem:
                       file=self.trace_stream)
         if retired:
             self.cpu_instructions += 1
+            if self.profile is not None:
+                try:
+                    word = cpu.read_u32(pc)
+                except RuntimeError:
+                    word = None
+                self.profile.cpu(pc, word, cpu.pc)
             self.tick_devices()
         return retired
 
@@ -921,6 +942,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trace-file", type=Path,
                         help="como --trace, pero en un fichero UTF-8")
     sim_peripherals.add_arguments(parser)
+    sim_profile.add_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
@@ -929,6 +951,9 @@ def main(argv: list[str] | None = None) -> int:
             cpu_steps=args.cpu_steps, gpu_steps=args.gpu_steps,
             **sim_peripherals.from_arguments(args))
         system.load_cpu_program(load_program_file(args.program))
+        profile = sim_profile.from_arguments(args)
+        if profile is not None:
+            system.enable_profile(profile)
         sim_peripherals.start_display(system)
         tracing = (args.trace or args.trace_file is not None
                    or args.trace_limit is not None)
@@ -975,6 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dump:
         address, size, filename = args.dump
         system.dump_memory(int(address, 0), int(size, 0), Path(filename))
+    sim_profile.write_report(args, profile)
     sys.stdout.flush()
     sim_peripherals.finish_display(system)
     if limited or stalled:

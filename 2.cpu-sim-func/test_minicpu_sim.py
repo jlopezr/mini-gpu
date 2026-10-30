@@ -387,6 +387,61 @@ class ExtendedAluTest(unittest.TestCase):
                 self.assertEqual(cpu.error_code, 0x05)
 
 
+class ProfileCommandLineTest(unittest.TestCase):
+    """`--profile` (tools/sim_profile.py): instrucciones por función, llamadas y total con lo que llama."""
+
+    PROGRAM = """start:
+    MOVI  R30, 4096
+    JAL   R31, main
+    HALT
+main:
+    ADD   R20, R31, R0
+    JAL   R31, leaf
+    JAL   R31, leaf
+    ADD   R31, R20, R0
+    JR    R31
+leaf:
+    ADDI  R2, R2, 1
+    JR    R31
+"""
+
+    def run_cli(self, *args):
+        import subprocess
+        import sys
+        from pathlib import Path
+        command = [sys.executable, str(Path(__file__).with_name("minicpu_sim.py")), *args]
+        return subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+
+    def test_the_table_has_own_calls_and_total(self):
+        import re
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            result = self.run_cli(str(program), "--profile")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Perfil de CPU: 12 instrucciones", result.stdout)
+            rows = {m.group(1): m.group(2, 3, 4) for m in re.finditer(
+                r"^  (\w+) +(\d+) +[\d.]+% +(\d+) +(\d+)", result.stdout, re.M)}
+            self.assertEqual(rows, {"main": ("5", "1", "9"), "leaf": ("4", "2", "4"), "start": ("3", "0", "12")})
+
+    def test_a_binary_needs_the_names(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            binary = Path(folder) / "p.bin"
+            self.assertEqual(self.run_cli(str(program), "--dump", "0", "48", str(binary)).returncode, 0)
+            result = self.run_cli(str(binary), "--profile")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--symbols", result.stderr)
+            result = self.run_cli(str(binary), "--profile", "--symbols", str(program))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Perfil de CPU: 12 instrucciones", result.stdout)
+
+
 class ZeroRegisterTest(unittest.TestCase):
     """R0 cableado a cero: escrituras descartadas, lecturas siempre cero."""
 

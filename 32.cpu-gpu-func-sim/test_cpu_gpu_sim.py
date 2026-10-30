@@ -1682,6 +1682,116 @@ def build_c_example(name: str, data=()):
     return binary.read_bytes(), labels
 
 
+class ProfileTest(unittest.TestCase):
+    """`--profile` (tools/sim_profile.py): instrucciones de CPU y de warp por función."""
+
+    # _start llama a main; main llama dos veces a leaf, a tail (que salta con BRA a leaf, como una llamada final de
+    # mini-opt) y a rec con n = 2 (recursiva). L.1 es una etiqueta de bloque, no una función.
+    PROGRAM = """
+        start:
+            MOVI  R30, 4096
+            JAL   R31, main
+            HALT
+        main:
+            ADD   R20, R31, R0
+            JAL   R31, leaf
+            JAL   R31, leaf
+            JAL   R31, tail
+            MOVI  R1, 2
+            JAL   R31, rec
+            ADD   R31, R20, R0
+            JR    R31
+        leaf:
+            ADDI  R2, R2, 1
+            JR    R31
+        tail:
+            ADDI  R3, R3, 1
+            BRA   leaf
+        rec:
+            BEQ   R1, R0, L.1
+            ADDI  R30, R30, -4
+            STORE R31, R30, 0
+            ADDI  R1, R1, -1
+            JAL   R31, rec
+            LOAD  R31, R30, 0
+            ADDI  R30, R30, 4
+        L.1:
+            JR    R31
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import sim_profile
+        cls.sim_profile = sim_profile
+        labels = first_pass(cls.PROGRAM, HERE, "<profile>")[1]
+        cls.profile = sim_profile.Profile(sim_profile.Symbols(labels))
+        system = CpuGpuSystem(MEMORY)
+        system.load_cpu_program(asm(cls.PROGRAM))
+        system.enable_profile(cls.profile)
+        cls.outcome = system.run()
+        cls.executed = system.cpu.instructions_executed
+        cls.profile.finish()
+
+    def test_every_instruction_counts_once_in_its_function(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.profile.executed, self.executed)
+        self.assertEqual(sum(self.profile.own.values()), self.executed)
+        self.assertEqual(dict(self.profile.own), {"start": 3, "main": 8, "leaf": 6, "tail": 2, "rec": 18})
+
+    def test_a_block_label_is_not_a_function(self):
+        self.assertNotIn("L.1", self.profile.own)
+        self.assertEqual(self.sim_profile.Symbols({"f": 0, "L.3.12": 8, "L.4": 12}).function(16), "f")
+
+    def test_calls_and_the_total_with_what_a_function_calls(self):
+        self.assertEqual(self.profile.calls["leaf"], 2)          # la de tail es un BRA, no una llamada
+        self.assertEqual(self.profile.total["main"], 8 + 6 + 2 + 18)
+        self.assertEqual(self.profile.total["start"], self.executed)  # el punto de entrada: todo
+
+    def test_a_tail_call_counts_inside_the_function_that_jumps(self):
+        self.assertEqual(self.profile.total["tail"], 2 + 2)       # sus dos y las dos de leaf tras el BRA
+
+    def test_recursion_is_not_counted_twice(self):
+        self.assertEqual(self.profile.calls["rec"], 3)
+        self.assertEqual(self.profile.total["rec"], self.profile.own["rec"])
+
+    def test_a_c_kernel_is_counted_in_warp_instructions_with_its_c_name(self):
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import build_c as c_build
+        image, _ = build_c_example("dma/memset")
+        wrapper = c_build.wrapper_path(CASES / "dma" / "memset" / "memset.c")
+        profile = self.sim_profile.Profile(self.sim_profile.Symbols.from_program(Path("memset.bin"), wrapper))
+        system = CpuGpuSystem(MEMORY)
+        system.load_cpu_program(image)
+        system.enable_profile(profile)
+        self.assertEqual(system.run(), "halt")
+        self.assertEqual(dict(profile.gpu), {"__kernel_memset": system.gpu.retired})
+        self.assertGreater(profile.calls["gpu_launch"], 0)
+        out = io.StringIO()
+        profile.report(out)
+        self.assertIn("memset (kernel)", out.getvalue())
+
+    def test_the_command_line_needs_the_names(self):
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            binary = Path(folder) / "p.bin"
+            binary.write_bytes(asm(self.PROGRAM))
+            for args in ([str(binary), "--profile"], [str(program), "--symbols", str(program)]):
+                with self.subTest(args=args), contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(sim.main([*args, "--memory-size", hex(MEMORY)]), 2)
+            for args in ([str(program), "--profile"], [str(binary), "--profile", "--symbols", str(program)]):
+                stdout = io.StringIO()
+                with self.subTest(args=args), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(sim.main([*args, "--memory-size", hex(MEMORY)]), 0)
+                self.assertIn("Perfil de CPU: 37 instrucciones", stdout.getvalue())
+            report = Path(folder) / "perfil.txt"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sim.main([str(program), "--profile", str(report), "--memory-size", hex(MEMORY)]), 0)
+            self.assertIn("rec", report.read_text(encoding="utf-8"))
+
+
 class CKernelTest(unittest.TestCase):
     """`cases-cpu-gpu/dma/memset/memset.c`: un programa en C con la CPU y un kernel de GPU en el mismo fichero,
     compilado con mini-lcc y mini-opt."""

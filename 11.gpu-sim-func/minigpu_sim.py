@@ -997,8 +997,9 @@ def main() -> int:
     parser.add_argument("--trace-detail", action="store_true", help="incluye registros y memoria por hilo")
     parser.add_argument("--trace-limit", type=int, help="máximo de pasos mostrados; no limita la ejecución")
     parser.add_argument("--trace-file", type=Path, help="guarda la traza en UTF-8 en vez de stderr")
-    from tools import sim_peripherals
+    from tools import sim_peripherals, sim_profile
     sim_peripherals.add_arguments(parser)
+    sim_profile.add_arguments(parser)
     args = parser.parse_args()
     try:
         config = None
@@ -1022,6 +1023,7 @@ def main() -> int:
                 system.configure_warps(config)
             except TypeError as exc:
                 raise ValueError(str(exc)) from exc
+        profile = sim_profile.from_arguments(args)
         sim_peripherals.start_display(system)
         tracing = args.trace or args.trace_detail or args.trace_file is not None or args.trace_limit is not None
         if args.trace_limit is not None and args.trace_limit < 0:
@@ -1035,7 +1037,8 @@ def main() -> int:
                     raise ValueError('trace-file debe ser distinto del programa, configuración y dump')
             output = args.trace_file.open('w', encoding='utf-8') if args.trace_file else nullcontext(sys.stderr)
             with output as stream:
-                system.trace = TextTrace(stream, detail=args.trace_detail, limit=args.trace_limit)
+                text = TextTrace(stream, detail=args.trace_detail, limit=args.trace_limit)
+                system.trace = text if profile is None else sim_profile.GpuEvents(profile, lambda: text)
                 try:
                     system.run(args.run_limit)
                 except SimulationError as exc:
@@ -1047,7 +1050,10 @@ def main() -> int:
                 finally:
                     system.trace = None
         else:
+            if profile is not None:
+                system.trace = sim_profile.GpuEvents(profile)
             system.run(args.run_limit)
+            system.trace = None
         sim_peripherals.write_outputs(args, system)
         if system.fault:
             fault = system.fault
@@ -1060,6 +1066,7 @@ def main() -> int:
         if args.dump:
             address, size, filename = args.dump
             system.dump_memory(int(address, 0), int(size, 0), Path(filename))
+        sim_profile.write_report(args, profile)
         sys.stdout.flush()
         sim_peripherals.finish_display(system)
         return 1 if system.error else 0

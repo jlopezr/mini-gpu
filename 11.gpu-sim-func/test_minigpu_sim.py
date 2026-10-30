@@ -97,6 +97,21 @@ class MiniGpuTest(unittest.TestCase):
         self.assertEqual(gpu.instructions_executed, 0)
         self.assertEqual(gpu.memory[:4], program(TRAP))
 
+    def test_profile_cli_counts_warp_instructions_per_function(self):
+        import re
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'p.asm'
+            source.write_text('start:\nGETTID R1\nBRA work\nwork:\nADDI R2, R1, 1\nHALT\n', encoding='utf-8')
+            command = [sys.executable, str(Path(__file__).with_name('minigpu_sim.py')), str(source), '--profile']
+            for extra in ([], ['--trace-limit', '1']):        # con traza, el perfil sigue contando
+                with self.subTest(extra=extra):
+                    result = subprocess.run(command + extra, capture_output=True, text=True, timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    rows = dict(re.findall(r'^  (\w+) +(\d+) ', result.stdout, re.M))
+                    self.assertEqual(rows, {'start': '16', 'work': '16'})     # 8 warps x 2 instrucciones
+                    if extra:
+                        self.assertIn('FIN: HALT', result.stderr)
+
     def test_config_cli(self):
         with tempfile.TemporaryDirectory() as folder:
             binary = Path(folder) / 'memory.bin'

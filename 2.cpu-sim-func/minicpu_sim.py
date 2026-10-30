@@ -131,6 +131,9 @@ class InstructionLimitExceeded(RuntimeError):
 class CPU:
     """Estado y ejecución secuencial de una MiniCPU escalar."""
 
+    #: `tools/sim_profile.Profile` (con --profile): `run` le pasa cada instrucción retirada.
+    profile = None
+
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  video: "VideoDevice | None" = None,
                  serial: "SerialDevice | None" = None,
@@ -619,7 +622,17 @@ class CPU:
                     f"límite de instrucciones alcanzado "
                     f"en PC=0x{self.pc:08X}"
                 )
+            if self.profile is None:
+                self.step()
+                continue
+            pc, before = self.pc, self.instructions_executed
             self.step()
+            if self.instructions_executed != before:
+                try:
+                    word = self.read_u32(pc)
+                except RuntimeError:
+                    word = None
+                self.profile.cpu(pc, word, self.pc)
 
     def dump_memory(self, address: int, size: int, filename: Path) -> None:
         """Guarda una región de memoria exactamente como una secuencia de bytes."""
@@ -661,14 +674,16 @@ def main() -> None:
         metavar=("ADDRESS", "SIZE", "FILE"),
         help="vuelca una región de memoria después de ejecutar el programa",
     )
-    from tools import sim_peripherals
+    from tools import sim_peripherals, sim_profile
     sim_peripherals.add_arguments(parser)
+    sim_profile.add_arguments(parser)
     args = parser.parse_args()
 
     try:
         sim_peripherals.warn_missing_video(args.program, args)
         cpu = CPU(args.memory_size, **sim_peripherals.from_arguments(args))
         program = load_program_file(args.program)
+        cpu.profile = sim_profile.from_arguments(args)
     except (ValueError, OSError) as exc:
         # Una entrada mala no es un fallo del simulador, asi que no sale como
         # traceback. AsmError hereda de ValueError y cae aqui con linea y motivo.
@@ -713,6 +728,7 @@ def main() -> None:
             f"a {filename}"
         )
 
+    sim_profile.write_report(args, cpu.profile)
     sys.stdout.flush()
     sim_peripherals.finish_display(cpu)
     if limited:
