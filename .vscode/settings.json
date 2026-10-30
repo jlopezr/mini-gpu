@@ -1,6 +1,16 @@
 {
     "python.analysis.extraPaths": ["1.isa"],
     "markdownlint.ignore": ["u.lcc/src/**"],
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modificationsIfAvailable"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modificationsIfAvailable"
+    },
     "chat.tools.terminal.autoApprove": {
         "/^python x\\.tests\\\\run_tests\\.py --help$/": {
             "approve": true,
