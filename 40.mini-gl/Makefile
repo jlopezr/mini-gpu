@@ -13,7 +13,17 @@ TESTS = build/test_cpu build/test_gpu
 V ?= all
 
 .PHONY: all run test clean
-all: $(EXAMPLES) $(TESTS)
+all: $(EXAMPLES) $(TESTS) compile_commands.json
+
+# Para IntelliSense de VS Code (C_Cpp.default.compileCommands en
+# .vscode/settings.json): cómo se compila cada fichero, con los mismos flags.
+SRCS = $(wildcard src/*.c examples/*.c tests/*.c)
+compile_commands.json: Makefile $(SRCS)
+	@echo '[' > $@; first=1; for f in $(SRCS); do \
+	    [ $$first = 1 ] || echo ',' >> $@; first=0; \
+	    printf '  {"directory": "%s", "file": "%s", "command": "%s %s %s -c %s"}' \
+	        "$(CURDIR)" "$$f" "$(CC)" "$(CPPFLAGS)" "$(CFLAGS)" "$$f" >> $@; \
+	done; printf '\n]\n' >> $@
 
 build:
 	mkdir -p build
