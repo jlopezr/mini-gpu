@@ -1043,12 +1043,19 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline`, `tailcalls`,
   `deadfuncs`, `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
   `passes/__init__.py`.
+
+- **Pase `inline`:** lcc no expande nada en línea. Tras `deadsaves`, cuando las hojas ya no
+  tienen marco, cada `JAL R31, f` a una hoja de la unidad de hasta 8 instrucciones (sin llamadas,
+  sin tocar R30 ni R31 y que solo salta a sus etiquetas) pasa a ser su cuerpo, con etiquetas `L.n`
+  nuevas y cada `JR R31` saltando detrás de la llamada; luego `copyprop`, `dce`, `jumps` y
+  `deadsaves` limpian. Recupera menos que escribir una macro: llega después de que lcc haya
+  repartido los registros contando con la llamada (valores en R16–R29, guardados en la pila).
 
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `t.tests/inc/gpu.h`) pasa a ser el punto de entrada de una lane: fija su

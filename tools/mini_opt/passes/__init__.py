@@ -1,11 +1,11 @@
 """Carga todos los pases para registrarlos con `@register_pass`."""
 
 from . import (
-    boolean, branches, constprop, copyprop, dce, deadfuncs, deadsaves, deadstores, forward, intrinsics, invert,
-    jumps, kernels, licm, noalias, sharebase, ssy, stackslots, strength, tailcalls, unreachable,
+    boolean, branches, constprop, copyprop, dce, deadfuncs, deadsaves, deadstores, forward, inline, intrinsics,
+    invert, jumps, kernels, licm, noalias, sharebase, ssy, stackslots, strength, tailcalls, unreachable,
 )
 
 __all__ = [
-    "boolean", "branches", "constprop", "copyprop", "dce", "deadfuncs", "deadsaves", "deadstores", "forward", "intrinsics", "invert",
+    "boolean", "branches", "constprop", "copyprop", "dce", "deadfuncs", "deadsaves", "deadstores", "forward", "inline", "intrinsics", "invert",
     "jumps", "kernels", "licm", "noalias", "sharebase", "ssy", "stackslots", "strength", "tailcalls", "unreachable",
 ]

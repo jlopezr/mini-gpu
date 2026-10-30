@@ -1476,7 +1476,7 @@ class StackSlotsTest(unittest.TestCase):
         loop = out[out.index("L.1:"):]
         self.assertFalse(any("R30" in l for l in loop), loop)
         copies = [l for l in loop if l.startswith("ADD") and l.endswith("R0")]
-        self.assertEqual(copies, ["ADD R31, R14, R0"], loop)       # queda la del contador, ninguna sobre si misma
+        self.assertEqual(copies, [], loop)       # ni la del contador: la segunda ronda de `copyprop` (tras `inline`) la quita
 
     def test_the_row_variables_of_the_cube_kernel_as_old_lcc_left_them(self):
         # Forma del `__kernel_cube_good` cuando lcc dejaba `y`, `cstart` y `rstep` en la pila porque las 14
@@ -2893,6 +2893,85 @@ class FilterTest(unittest.TestCase):
             self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
             self.assertIn("intrinsics", done.stderr)
 
+
+# Hojas como las deja el pipeline antes de `inline` (sin marco: `deadsaves` cambio el guardado de R29 por una copia).
+INLINE_LEAVES = """\
+.text
+.align 4
+min2:
+ADD R4, R29, R0
+BGE R1, R2, L.8
+ADD R29, R1, R0
+BRA L.9
+L.8:
+ADD R29, R2, R0
+L.9:
+ADD R1, R29, R0
+ADD R29, R4, R0
+JR R31
+.align 4
+abs2:
+BGE R1, R0, L.16
+SUB R1, R0, R1
+JR R31
+L.16:
+JR R31
+"""
+
+
+class InlineTest(unittest.TestCase):
+    """`inline`: las llamadas a hojas pequenas de la unidad pasan a ser su cuerpo."""
+
+    def run_pass(self, source):
+        stats = {}
+        return lines_of(optimize(source, ["inline"], stats=stats)), stats
+
+    def test_a_small_leaf_is_copied_with_new_labels_and_the_returns_jump_behind_the_call(self):
+        out, stats = self.run_pass(INLINE_LEAVES + ".globl f\n.align 4\nf:\nJAL R31, abs2\nJAL R31, abs2\nHALT\n")
+        body = out[out.index("f:") + 1:]
+        self.assertEqual(stats["inline.expanded"], 2)
+        self.assertNotIn("JAL R31, abs2", body)
+        self.assertNotIn("JR R31", body)
+        labels = [line for line in body if line.endswith(":")]
+        self.assertEqual(len(labels), len(set(labels)), body)                  # cada copia con las suyas
+        self.assertNotIn("L.16:", body)
+        # el JR del medio salta detras de la llamada; el ultimo cae ahi
+        first_after = labels[1]
+        self.assertIn(f"BRA {first_after[:-1]}", body)
+
+    def test_what_cannot_be_copied_is_still_called(self):
+        cases = {
+            "calls": "g:\nJAL R31, min2\nJR R31\n",
+            "frame": "g:\nADDI R30, R30, -16\nADDI R30, R30, 16\nJR R31\n",
+            "link": "g:\nADD R5, R31, R0\nJR R5\n",
+            "big": "g:\n" + "ADDI R1, R1, 1\n" * 9 + "JR R31\n",
+            "falls": "g:\nADDI R1, R1, 1\n",
+            "foreign label": "g:\nBRA min2\n",
+            "opaque": "__mini_g:\nJR R31\n",
+        }
+        for name, callee in cases.items():
+            target = callee.split(":", 1)[0]
+            with self.subTest(name):
+                out, stats = self.run_pass(INLINE_LEAVES + ".align 4\n" + callee
+                                           + f".align 4\nf:\nJAL R31, {target}\nHALT\n")
+                self.assertIn(f"JAL R31, {target}", out[out.index("f:"):])
+        out, _ = self.run_pass(".text\nf:\nJAL R31, elsewhere\nHALT\n")       # de otra unidad
+        self.assertIn("JAL R31, elsewhere", out)
+
+    def test_programs_give_the_same_registers_with_and_without_the_pass(self):
+        """Cadenas de llamadas a `min2`/`abs2` con valores al azar, en el simulador de la CPU: el resultado de la
+        maquina, no el texto. R29 lo pisa `min2` por dentro y tiene que volver como estaba."""
+        for seed in range(100):
+            rng = random.Random(seed)
+            lines = ["LI R29, 1234"]
+            for n in range(9):
+                lines += [f"LI R1, {rng.choice(POOL)}", f"LI R2, {rng.choice(POOL)}",
+                          f"JAL R31, {rng.choice(('min2', 'abs2'))}", f"ADD R{16 + n}, R1, R0"]
+            source = ".text\n.globl f\nf:\n" + "\n".join(lines) + "\nADD R25, R29, R0\nHALT\n" + INLINE_LEAVES
+            optimized = optimize(source, ["inline"])
+            with self.subTest(seed=seed):
+                self.assertNotIn("JAL", optimized)
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), optimized)
 
 TUI = ROOT / "v.tui"
 RCC = ROOT / "u.lcc" / "build" / ("rcc.exe" if sys.platform == "win32" else "rcc")

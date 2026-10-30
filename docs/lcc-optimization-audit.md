@@ -345,7 +345,8 @@ linker/versionado de objetos no hay detección automática de mezcla de ABI.
 liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
 son: `intrinsics`, `kernels`, `stackslots`, `jumps`, `boolean`, `forward`, `deadstores`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `argblock`, `dce`, `strength`, `dce`, `licm`, `dce`, `strength`, `dce`, `noalias`, `sharebase`,
-`deadsaves`, `tailcalls`, `unreachable`, `invert`, `ssy`.
+`deadsaves`, `inline`, `copyprop`, `dce`, `jumps`, `unreachable`, `deadsaves`, `tailcalls`, `unreachable`,
+`deadfuncs`, `invert`, `ssy`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
 crear desde cero un optimizador externo, sino si ampliar/integrar el existente.
 
