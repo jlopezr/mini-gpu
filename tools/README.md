@@ -1081,8 +1081,11 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
 
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
-  Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, la pila, y lo definido
-  bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
+  Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, y lo definido bajo un
+  salto divergente) evita marcar los saltos uniformes. De la pila sigue cada hueco: lo que se lee
+  varía solo si lo que se guardó variaba (si una dirección de la pila se escapa, varía todo lo que se
+  lee de ella); así los parámetros por la pila de una función expandida por `kernelcalls` no abren
+  regiones. `--ssy-all` los marca todos. Quita
   además el `SSY` que cae siempre después de otro con el mismo destino.
 
 - **Pase `licm`** (todas las funciones): en cada bucle sin llamadas saca al preheader

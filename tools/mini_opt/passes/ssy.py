@@ -8,8 +8,14 @@ una vez antes del bucle (en el preheader), con el punto de salida como join; asi
 valen tanto el salto de vuelta como cualquier `break`.
 
 Solo hace falta para los saltos que PUEDEN divergir. Un valor varia entre lanes si
-viene de GETTID o GETLANE (o de una pila, que es de cada lane) y se propaga por la
-aritmetica y las cargas; lo que se define bajo un salto divergente tambien varia.
+viene de GETTID o GETLANE y se propaga por la aritmetica y las cargas; lo que se
+define bajo un salto divergente tambien varia. La pila es de cada lane, pero lo que
+se guarda en un hueco y se vuelve a leer no varia si no variaba al guardarlo: se
+siguen los huecos (por su posicion respecto al origen de la pila de la lane, como
+`stackslots`) mientras ninguna direccion de la pila se escape a un registro; si se
+escapa, toda carga de la pila varia. Importa con las funciones expandidas
+(`kernelcalls`): lcc les pasa por la pila los parametros a partir del quinto y
+guarda en ella los que derrama, y sin esto cada `if` sobre ellos abriria una region.
 Con `SSY_ALL` se trata todo salto condicional como divergente.
 
 Un `SSY` que cae siempre despues de otro con el mismo destino sobra: la region ya esta
@@ -29,10 +35,11 @@ from ..flow import (
     postdominators,
     predecessors,
 )
-from ..isa import BRANCHES, LOADS, STACK, defs_uses, instr, reg_of
+from ..isa import BRANCHES, LOADS, STACK, STORES, defs_uses, instr, number, reg_of
 from ..model import Function, Line, OptError, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
+from .stackslots import frame_offsets
 
 SSY_ALL = False
 
@@ -45,8 +52,44 @@ UNIFORM_SOURCES = {"MOVI", "MOVHI", "LI", "GETWARP", "GETLWARP", "GETARG"}
 # Que saltos pueden divergir
 # ---------------------------------------------------------------------------
 
-def step_variance(var: set[int], line: Line, under_divergence: bool) -> set[int]:
-    """Registros que varian entre lanes tras `line`. Lo que se define bajo un salto divergente varia."""
+# Lo que varia entre lanes: registros (int) y bytes de la pila (("pila", posicion)).
+Varying = set
+
+WIDTH = {"LOAD": 4, "STORE": 4, "LOADH": 2, "LOADUH": 2, "STOREH": 2, "LOADB": 1, "LOADUB": 1, "STOREB": 1}
+
+
+def stack_bytes(blocks: list[Block]) -> dict[int, list[tuple[str, int]]] | None:
+    """Los bytes de la pila que toca cada `LOAD`/`STORE` con base R30 (`id(linea) -> claves`), o None si la
+    pila se usa de otra forma: R30 no se sabe, o la direccion de un hueco pasa a otro registro."""
+    at = frame_offsets(blocks)
+    if at is None:
+        return None
+    touched: dict[int, list[tuple[str, int]]] = {}
+    for block in blocks:
+        for line in block.lines:
+            if line.kind != "instr" or line.op in ("EXIT", "HALT", "TRAP", "JR"):
+                continue
+            defs, uses = defs_uses(line)
+            if STACK in defs or STACK not in uses:
+                continue                                 # preparacion y ajustes del marco, u otra cosa
+            offset = number(line.args[2]) if len(line.args) == 3 else None
+            if (line.op not in LOADS | STORES or reg_of(line.args[1]) != STACK
+                    or reg_of(line.args[0]) == STACK or offset is None):
+                return None
+            start = at[id(line)] + offset
+            touched[id(line)] = [("pila", start + k) for k in range(WIDTH[line.op])]
+    return touched
+
+
+def step_variance(var: Varying, line: Line, under_divergence: bool,
+                  stack: dict[int, list[tuple[str, int]]] | None = None) -> Varying:
+    """Lo que varia entre lanes tras `line`. Lo que se define bajo un salto divergente varia."""
+    keys = stack.get(id(line)) if stack is not None else None
+    if line.op in STORES:
+        if keys is None:
+            return var
+        value = reg_of(line.args[0])
+        return var | set(keys) if under_divergence or value in var else var - set(keys)
     defs, uses = defs_uses(line)
     if not defs:
         return var
@@ -56,15 +99,19 @@ def step_variance(var: set[int], line: Line, under_divergence: bool) -> set[int]
         varying = False
     elif line.op in LOADS:
         base = reg_of(line.args[1])
-        varying = base == STACK or (base is not None and base in var)    # direccion distinta = dato distinto
+        if keys is not None:
+            varying = any(k in var for k in keys)                       # lo que se guardo en el hueco
+        else:
+            varying = base == STACK or (base is not None and base in var)  # direccion distinta = dato distinto
     else:
         varying = bool(uses & var)
     return (var | defs) if varying else (var - defs)
 
 
-def varying_on_entry(blocks: list[Block], tainted: set[int]) -> list[set[int]]:
-    """Registros que varian entre lanes a la entrada de cada bloque (punto fijo)."""
-    var_in: list[set[int]] = [set() for _ in blocks]
+def varying_on_entry(blocks: list[Block], tainted: set[int],
+                     stack: dict[int, list[tuple[str, int]]] | None = None) -> list[Varying]:
+    """Lo que varia entre lanes a la entrada de cada bloque (punto fijo)."""
+    var_in: list[Varying] = [set() for _ in blocks]
     changed = True
     while changed:
         changed = False
@@ -72,7 +119,7 @@ def varying_on_entry(blocks: list[Block], tainted: set[int]) -> list[set[int]]:
             var = set(var_in[block.index])
             for line in block.lines:
                 if line.kind == "instr":
-                    var = step_variance(var, line, block.index in tainted)
+                    var = step_variance(var, line, block.index in tainted, stack)
             for s in block.succ:
                 if not var <= var_in[s]:
                     var_in[s] |= var
@@ -104,9 +151,10 @@ def divergent_branches(blocks: list[Block], pdom: list[set[int]]) -> set[int]:
             branch_of[block.index] = last
     if SSY_ALL:
         return set(branch_of)
+    stack = stack_bytes(blocks)
     tainted: set[int] = set()
     while True:
-        var_in = varying_on_entry(blocks, tainted)
+        var_in = varying_on_entry(blocks, tainted, stack)
         found: set[int] = set()
         for block in blocks:
             branch = branch_of.get(block.index)
@@ -115,7 +163,7 @@ def divergent_branches(blocks: list[Block], pdom: list[set[int]]) -> set[int]:
             var = set(var_in[block.index])
             for line in block.lines[:-1]:
                 if line.kind == "instr":
-                    var = step_variance(var, line, block.index in tainted)
+                    var = step_variance(var, line, block.index in tainted, stack)
             if any(r in var for r in map(reg_of, branch.args[:2]) if r is not None):
                 found.add(block.index)
         region = blocks_under(blocks, pdom, found)

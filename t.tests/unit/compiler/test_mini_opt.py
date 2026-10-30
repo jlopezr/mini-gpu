@@ -468,6 +468,54 @@ class SsyTest(unittest.TestCase):
         body = ssy_body(source)
         self.assertEqual(sum(l.startswith("SSY") for l in body), 2)
 
+    def test_a_stack_slot_varies_only_if_what_was_stored_varies(self):
+        # Como un parametro de una funcion expandida: se guarda en un hueco y se lee al otro lado de un marco.
+        # El hueco es el mismo (-8 + 4 respecto al origen) aunque R30 se mueva entre el STORE y el LOAD.
+        template = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+496
+ADD R30, R30, R5
+{value}
+STORE R7, R30, -4
+ADDI R30, R30, -8
+LOAD R8, R30, 4
+ADDI R30, R30, 8
+BEQ R8, R0, L.1
+STORE R8, R5, 0
+L.1:
+EXIT
+"""
+        uniform = ssy_body(template.format(value="GETARG R7"))
+        self.assertFalse(any(l.startswith("SSY") for l in uniform))
+        varying = ssy_body(template.format(value="GETLANE R7"))
+        self.assertEqual(sum(l.startswith("SSY") for l in varying), 1)
+
+    def test_if_a_stack_address_escapes_every_stack_load_varies(self):
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+496
+ADD R30, R30, R5
+GETARG R7
+STORE R7, R30, -4
+ADDI R9, R30, -4
+LOAD R8, R30, -4
+BEQ R8, R0, L.1
+STORE R8, R9, 0
+L.1:
+EXIT
+"""
+        self.assertEqual(sum(l.startswith("SSY") for l in ssy_body(source)), 1)
+
     def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
         from tools.mini_opt.passes import ssy as opt
         source = LOOP.replace("GETTID R5", "MOVI R5, 0")
