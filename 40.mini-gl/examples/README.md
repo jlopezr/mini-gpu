@@ -2,14 +2,15 @@
 
 Cada ejemplo es un sketch Processing, `examples/<nombre>.c`, que solo define
 `setup()` y `draw()`. El `main()`, `size()` y el bucle los pone la plataforma.
-Cada sketch se compila con dos:
+Cada sketch se compila para tres:
 
 | Plataforma | Binario | Qué hace |
 |---|---|---|
 | Host ([platform_host.c](../src/platform_host.c)) | `build/<nombre>` | `setup()` y un solo `draw()`; guarda el frame como PPM |
 | SDL ([platform_sdl.c](../src/platform_sdl.c)) | `build/<nombre>-sdl` | Ventana: `setup()` y `draw()` en bucle a 60 fps |
+| MiniGPU ([platform_minigpu.c](../src/platform_minigpu.c)) | `build/minigpu/<nombre>.bin` | La máquina del repo (CPU + GPU, vídeo 320×240): en su simulador o en las placas 36/37. De momento solo V0 |
 
-Las dos ejecutan MiniGL con la versión elegida; la parte común está en
+Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 [platform.c](../src/platform.c).
 
 | Ejemplo | Qué muestra |
@@ -50,11 +51,37 @@ En la ventana, las teclas **0**, **1** y **2** cambian de versión en marcha y
 **Esc** cierra. El título muestra la versión, los fps y los bytes de comandos
 de cada frame.
 
+## MiniGPU: simulador (y placa)
+
+Se compila con `build-c` (`mini-lcc` y `mini-opt` del repo) y se ejecuta en el
+simulador de CPU + GPU (`32.cpu-gpu-func-sim`). Es un simulador funcional en
+Python: un frame son millones de instrucciones, varios segundos.
+
+```sh
+make minigpu                         # build/minigpu/<nombre>.bin
+make sim-bounce                      # en la ventana del simulador
+make check-minigpu                   # cada ejemplo, píxel a píxel contra V0 en el host
+make check-minigpu-bounce FRAMES=5   # el frame 5 de uno solo
+make profile-minigpu-shapes          # instrucciones por función C hasta el frame FRAMES
+```
+
+`profile-minigpu-<nombre>` usa `--profile` del simulador: instrucciones propias de cada función C (`put`,
+`sw_clear`, `edge`...), llamadas y total con lo que llama.
+
+`check-minigpu` guarda el frame del host (`-f FRAMES -o x.bin`) y el del
+simulador (`--halt-after-swaps FRAMES --frame-output`) en RGB565 crudo y los
+compara con `tools/compare-frames.py`, que dice dónde están las diferencias.
+
+Por ahora solo hay V0 (la CPU rasteriza al llamar): no hay ratón ni teclado, y
+`size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja en un lienzo fijo
+que se copia al buffer trasero antes de cada swap, para que, como en Processing,
+el lienzo y el estado de dibujo se conserven de un frame al siguiente.
+
 ## Añadir un ejemplo
 
 1. Crea `examples/<nombre>.c` con `setup()` (empieza por `size(w, h)`) y `draw()`.
 2. Añade `<nombre>` a `SKETCHES` en el [Makefile](../Makefile).
-3. `make run-<nombre>` o `make sdl-<nombre>`.
+3. `make run-<nombre>`, `make sdl-<nombre>` o `make sim-<nombre>`.
 
 Notas sobre la API:
 
