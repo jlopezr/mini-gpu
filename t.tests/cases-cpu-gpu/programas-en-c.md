@@ -29,7 +29,9 @@ python 32.cpu-gpu-func-sim/cpu_gpu_sim.py _build/c/memset.bin
 ## El sistema y `build-c`
 
 El sistema no está en los ejemplos sino en `t.tests`: las cabeceras `gpu.h` y `mmio.h` en `t.tests/inc/` (junto a
-`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `t.tests/runtime/gpu/`. `build-c`
+`mmio.inc`, el mismo mapa MMIO para el ensamblador) y `gpu.c` en `t.tests/runtime/gpu/`. La biblioteca C es mínima:
+`string.h` (`memset`, `memcpy`, `memcmp`) en `t.tests/inc/` y su implementación en `t.tests/runtime/libc/`, que
+`build-c` compila con cada programa; no hay `stdio.h` ni `malloc`. `build-c`
 (`tools/build_c.py`) pasa esa carpeta de cabeceras a `mini-lcc -I`, así que los ejemplos solo escriben
 `#include "gpu.h"`, y compila `gpu.c` junto a cada programa. Las herramientas que comparan el C con el
 ensamblador (`compare.py`, `compare_race.py`, `opt_stats.py`) están en

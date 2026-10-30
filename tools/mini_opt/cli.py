@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .model import SYMBOL_RE, OptError, Unit, parse_unit, render_unit
-from .passes import licm, ssy
+from .passes import deadfuncs, licm, ssy
 from .registry import DEFAULT_PASSES, PASSES
 
 
@@ -62,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extern-refs", action="append", default=[], type=Path, metavar="FICHERO",
                         help="fichero ensamblado aparte (arranque, runtime...): los simbolos que nombra no se dan por "
                              "privados de la unidad (se puede repetir)")
+    parser.add_argument("--whole-program", action="store_true",
+                        help="los --extern-refs son todo el resto del programa: el pase deadfuncs borra las funciones "
+                             "que no nombra nadie (ni la unidad ni esos ficheros). Sin esto no se borra ninguna"),
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -74,10 +77,14 @@ def main(argv: list[str] | None = None) -> int:
     passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
     ssy.SSY_ALL = args.ssy_all
     licm.NOALIAS = args.assume_noalias
+    if args.whole_program and not args.extern_refs:
+        parser.error("--whole-program necesita --extern-refs: al menos el arranque, que llama a main")
+    deadfuncs.WHOLE_PROGRAM = args.whole_program
     stats: dict = {}
     try:
-        licm.EXTERNAL = frozenset(name for path in args.extern_refs
-                                  for name in SYMBOL_RE.findall(path.read_text(encoding="utf-8")))
+        foreign = [path.read_text(encoding="utf-8") for path in args.extern_refs]
+        licm.EXTERNAL = frozenset(name for text in foreign for name in SYMBOL_RE.findall(text))
+        deadfuncs.EXTERNAL = frozenset(name for text in foreign for name in deadfuncs.external_names(text))
         text = optimize(args.input.read_text(encoding="utf-8"), passes, str(args.input), stats)
     except OptError as error:
         print(f"mini-opt: {error}", file=sys.stderr)

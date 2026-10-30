@@ -11,6 +11,8 @@ falta MSVC para correr la suite. Se comprueba:
   - el filtro entero y su salida junto al `crt0` y un anfitrion, por `.include`.
 """
 
+import contextlib
+import io
 import random
 import re
 import shutil
@@ -30,6 +32,7 @@ from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 from tools.mini_opt.cli import main as optimize_main  # noqa: E402
+from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
 RUNTIME = ROOT / "1.isa" / "runtime"
@@ -2612,6 +2615,92 @@ class UnreachableTest(unittest.TestCase):
         out = lines_of(optimize(source, ["branches", "unreachable"]))
         self.assertIn("BRA L.2", out)
         self.assertNotIn("MOVI R1, 99", out)
+
+
+class DeadFuncsTest(unittest.TestCase):
+    """`deadfuncs`: con `--whole-program`, borra lo que no se alcanza desde fuera de las funciones de la unidad."""
+
+    # Como lo emite lcc: el `.globl main` cae en `.data`, antes del `.text` de main.
+    UNIT = (".text\n.globl unused\n.align 4\nunused:\nJR R31\n"
+            ".globl leaf\n.align 4\nleaf:\nJR R31\n"
+            ".globl caller\n.align 4\ncaller:\nJAL R31, leaf\nJR R31\n"
+            ".globl ping\n.align 4\nping:\nJAL R31, pong\nJR R31\n"
+            ".globl pong\n.align 4\npong:\nJAL R31, ping\nJR R31\n"
+            ".globl in_table\n.align 4\nin_table:\nJR R31\n"
+            ".data\n.globl table\n.align 4\ntable:\n.word in_table\n.globl main\n"
+            ".text\n.align 4\nmain:\nJAL R31, used\nJR R31\n"
+            ".globl used\n.align 4\nused:\nJR R31\n")
+
+    def run_pass(self, external=("main",), whole=True, source=None):
+        stats = {}
+        deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = whole, frozenset(external)
+        try:
+            out = lines_of(optimize(source or self.UNIT, ["deadfuncs"], stats=stats))
+        finally:
+            deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = False, frozenset()
+        return out, stats
+
+    @staticmethod
+    def functions(out):
+        return [line[:-1] for line in out if line.endswith(":") and not line.startswith("L.")]
+
+    def test_without_the_whole_program_nothing_is_removed(self):
+        out, _ = self.run_pass(whole=False)
+        self.assertEqual(self.functions(out),
+                         ["unused", "leaf", "caller", "ping", "pong", "in_table", "table", "main", "used"])
+
+    def test_what_is_not_reached_from_outside_is_removed_with_its_globl(self):
+        out, stats = self.run_pass()
+        self.assertEqual(self.functions(out), ["in_table", "table", "main", "used"])
+        self.assertEqual(stats["deadfuncs.removed"], 5)
+        for name in ("unused", "leaf", "caller", "ping", "pong"):
+            self.assertNotIn(f".globl {name}", out)
+        self.assertIn(".globl main", out)
+
+    def test_a_chain_and_a_cycle_that_nobody_reaches_go_together(self):
+        out, _ = self.run_pass(external=("main", "caller"))
+        self.assertIn("leaf", self.functions(out))
+        out, _ = self.run_pass(external=("main", "ping"))
+        self.assertIn("pong", self.functions(out))
+
+    def test_a_function_named_only_by_a_data_table_stays(self):
+        out, _ = self.run_pass(external=())
+        self.assertEqual(self.functions(out), ["in_table", "table"])
+
+    def test_a_kernel_is_an_entry_point_even_if_nobody_launches_it_here(self):
+        source = ".text\n.globl __kernel_fill\n__kernel_fill:\nJR R31\n.globl helper\nhelper:\nJR R31\n"
+        out, _ = self.run_pass(external=(), source=source)
+        self.assertEqual(self.functions(out), ["__kernel_fill"])
+
+    def test_the_section_of_the_next_function_survives(self):
+        source = (".data\nx:\n.word 0\n.text\n.globl dead\ndead:\nJR R31\n.globl main\nmain:\nJR R31\n")
+        out, _ = self.run_pass(source=source)
+        self.assertNotIn("dead:", out)
+        self.assertLess(out.index(".text"), out.index("main:"))
+
+    def test_comments_of_foreign_files_are_not_uses(self):
+        self.assertEqual(deadfuncs_module.external_names("JAL R31, main ; no llama a unused\n"),
+                         {"JAL", "R31", "main"})
+
+    def test_the_command_line_needs_the_rest_of_the_program(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, crt, target = Path(folder, "u.s"), Path(folder, "crt0.s"), Path(folder, "out.s")
+            source.write_text(self.UNIT, encoding="utf-8")
+            crt.write_text("_start:\nJAL R31, main ; unused no\nHALT\n", encoding="utf-8")
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                optimize_main([str(source), "-o", str(target), "--whole-program"])
+            try:
+                self.assertEqual(optimize_main([str(source), "-o", str(target), "--passes", "deadfuncs",
+                                                "--whole-program", "--extern-refs", str(crt)]), 0)
+            finally:
+                deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = False, frozenset()
+                licm_module.EXTERNAL = frozenset()
+            self.assertEqual(self.functions(lines_of(target.read_text(encoding="utf-8"))),
+                             ["in_table", "table", "main", "used"])
+            self.assertEqual(optimize_main([str(source), "-o", str(target), "--passes", "deadfuncs",
+                                            "--extern-refs", str(crt)]), 0)
+            licm_module.EXTERNAL = frozenset()
+            self.assertIn("unused:", lines_of(target.read_text(encoding="utf-8")))
 
 
 class TailCallsTest(unittest.TestCase):

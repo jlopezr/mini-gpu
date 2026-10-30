@@ -978,9 +978,9 @@ $ build-c programa.c --outdir out -I inc --data tex=tex.bin
 $ build-c test.c biblioteca.c                # varias unidades: la primera lleva main y da el nombre
 ```
 
-Compila el programa y `t.tests/runtime/gpu/gpu.c` con `mini-lcc --no-crt`, pasa `mini-opt` a las dos unidades
-y ensambla un `.asm` generado con el arranque (`1.isa/runtime/crt0.s`), los dos `.s` y el runtime
-(`t.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en
+Compila el programa, `t.tests/runtime/gpu/gpu.c` y la biblioteca C mínima (`t.tests/runtime/libc/string.c`,
+cabecera `string.h`) con `mini-lcc --no-crt`, pasa `mini-opt` a cada unidad y ensambla un `.asm` generado con
+el arranque (`1.isa/runtime/crt0.s`), los `.s` y el runtime (`t.tests/inc/gpu_runtime.inc` y `bench.inc`). Las cabeceras `gpu.h` y `mmio.h` de `t.tests/inc` entran siempre en
 el `-I`.
 
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
@@ -1024,7 +1024,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
   `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
-  `invert`, `ssy`) y,
+  `deadfuncs`, `invert`, `ssy`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1103,6 +1103,17 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   siempre se toman pasan a `BRA` y los que nunca se toman desaparecen.
 - **Pase `unreachable`:** elimina bloques que dejan de ser alcanzables, en particular tras simplificar
   branches. Las funciones con saltos indirectos se dejan intactas.
+- **Pase `deadfuncs`:** solo con `--whole-program`, que promete que los `--extern-refs` son todo el resto del
+  programa (el arranque, el runtime y las otras unidades); sin esa promesa no borra nada, porque que un fichero
+  pasado no nombre una función no demuestra que no la use otro que no se ha pasado. Como un enlazador: las raíces
+  son lo que se nombra fuera de las funciones de la unidad (`main` en el arranque, un `.word f` en una tabla de
+  datos) y los kernels (`__kernel_*`), que son puntos de entrada aunque los lance alguien de fuera del programa
+  (los arneses de `32.cpu-gpu-func-sim/compare` los lanzan desde Python), y se borran las funciones que no se alcanzan desde ellas siguiendo lo que nombra cada cuerpo, aunque se
+  llamen entre ellas. Las declaraciones (`.globl`, `.extern`) y los comentarios no cuentan como uso; al borrar
+  una función se va su `.globl`, esté donde esté, y se quedan sus cambios de sección. Las referencias ajenas son
+  los `.s` de las otras unidades sin optimizar, así que puede sobrar algo, pero nunca se borra código vivo.
+  `build-c` pasa siempre `--whole-program`: la biblioteca C mínima (`t.tests/runtime/libc`) entra en todos los
+  programas y solo se queda lo que se usa.
 - **Pase `dce`:** elimina a punto fijo instrucciones puras cuyo resultado ya no está vivo. Es un pase
   independiente y el pipeline por defecto lo intercala entre fases para que una limpieza abra nuevas
   oportunidades a la siguiente; `--passes` permite colocarlo donde convenga.

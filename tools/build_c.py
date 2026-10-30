@@ -3,8 +3,10 @@
     build-c programa.c [otra.c ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
                        [--load [PROTOTIPO]] [--no-run]
 
-Por cada .c (el programa, las otras unidades que se le pasen y t.tests/runtime/gpu/gpu.c): mini-lcc --no-crt,
-y mini-opt (intrinsecos y kernels). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los .s y el runtime de la GPU
+Por cada .c (el programa, las otras unidades que se le pasen, t.tests/runtime/gpu/gpu.c y la biblioteca C minima de
+t.tests/runtime/libc): mini-lcc --no-crt, y mini-opt (intrinsecos, kernels...; con --whole-program, porque se le pasa
+todo lo demas, borra las funciones que nadie usa). Luego un .asm con el arranque (1.isa/runtime/crt0.s), los .s y el
+runtime de la GPU
 (t.tests/inc/gpu_runtime.inc y bench.inc), ensamblado con mini-asm. Todo queda en `--outdir`.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
 `bench_now()`; la salida se llama `<nombre>_board.bin`.
@@ -29,6 +31,7 @@ from mini_asm import assemble_bytes, write_hex  # noqa: E402
 
 INC = ROOT / "t.tests" / "inc"                 # gpu.h, mmio.h, mmio.inc, gpu_runtime.inc, bench.inc
 GPU_C = ROOT / "t.tests" / "runtime" / "gpu" / "gpu.c"
+LIBC_C = (ROOT / "t.tests" / "runtime" / "libc" / "string.c",)   # string.h y lo que se vaya necesitando
 CRT0 = ROOT / "1.isa" / "runtime" / "crt0.s"
 INCLUDE_DIRS = (INC,)
 DEFAULT_OUTDIR = ROOT / "_build" / "c"
@@ -62,7 +65,8 @@ def optimize_s(plain: Path, foreign: list[Path]) -> Path:
     # MINI_OPT_NOALIAS=1 basta que el kernel no la escriba (--assume-noalias), aunque su direccion escape
     noalias = ["--assume-noalias"] if os.environ.get("MINI_OPT_NOALIAS") == "1" else []
     refs = [arg for path in foreign for arg in ("--extern-refs", path)]
-    run(TOOLS / "mini-opt", plain, "-o", optimized, *noalias, *refs,
+    # `foreign` es todo lo demas que se ensambla con la unidad: --whole-program deja borrar lo que nadie nombra
+    run(TOOLS / "mini-opt", plain, "-o", optimized, "--whole-program", *noalias, *refs,
         *(["--passes", passes] if passes is not None else []))
     return optimized
 
@@ -86,7 +90,7 @@ def build(program: Path, output: Path | None = None, board: bool = False,
     outdir.mkdir(parents=True, exist_ok=True)
     output = output or outdir / f"{image_name(program, board)}.bin"
     runtime, bench = INC / "gpu_runtime.inc", INC / "bench.inc"
-    units = (program, *map(Path.resolve, sources), GPU_C)
+    units = (program, *map(Path.resolve, sources), GPU_C, *LIBC_C)
     stems = [unit.stem for unit in units]
     if len(set(stems)) != len(stems):     # cada unidad deja <stem>.s en outdir: no pueden repetirse
         raise BuildError(f"dos unidades con el mismo nombre: {', '.join(map(str, units))}")

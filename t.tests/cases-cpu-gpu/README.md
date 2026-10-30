@@ -14,11 +14,12 @@ placa se miden con `run-board`.
 | [race](race/) | Demos que hacen lo mismo con tres métodos (CPU, GPU inocente, GPU buena): `life`, `blur`, `rotate`, `cube`, `plane` |
 | [render](render/) | Un plasma que pinta la GPU, en tres versiones |
 | [simt](simt/) | `diverge`: kernels en C cuyas lanes divergen |
+| [libc](libc/) | `string_test`: la biblioteca C mínima de `t.tests/inc` y `t.tests/runtime/libc` |
 
 Cada programa tiene su carpeta con todo lo suyo: el `.asm` y su `.inc`, el `.c` y su `*_body.h`, los datos y el
 informe. Lo que comparten varios programas del mismo tema va en la carpeta del tema (`race/race_host.inc`,
 `dma/gpu_kernels.inc`). Lo que comparte todo el repo está en [`t.tests/inc`](../inc/README.md) (`gpu_runtime.inc`,
-`bench.inc`, `gpu.h`, `mmio.h`) y [`t.tests/runtime/gpu`](../runtime/gpu/gpu.c).
+`bench.inc`, `gpu.h`, `mmio.h`) y [`t.tests/runtime`](../runtime/) (`gpu/gpu.c` y la biblioteca C mínima, `libc/string.c`).
 
 ## Cómo se ejecutan
 
