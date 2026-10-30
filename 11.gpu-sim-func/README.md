@@ -163,7 +163,8 @@ SIZE FILE` permite inspeccionar memoria tras HALT o fallo arquitectónico.
 
 - Accesos de 8 y 16 bits: `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH` y
   `STOREH`, solo contra RAM. Un acceso sub-palabra a MMIO es error, y una media
-  palabra exige dirección par. El RTL de las GPU todavía no los tiene.
+  palabra exige dirección par. En el RTL los tienen el SM de la 29 y las placas
+  36 y 37 (capability `subword_memory`); las GPU anteriores (12, 14, 17, 22) no.
 
 - Los saltos divergentes usan `SSY` y dos pilas SIMT (regiones y caminos); véase [opcodes.md](docs/opcodes.md).
   `EXIT` retira lanes permanentemente y `BAR` sincroniza un workgroup.

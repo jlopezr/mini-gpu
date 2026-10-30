@@ -180,8 +180,9 @@ progreso o entrada inválida.
 - **Accesos de 8 y 16 bits en la GPU:** el simulador de `11` los tiene (se
   retroportaron de la CPU y del modelo de ciclos de la 25), así que los kernels de
   este simulador pueden usar `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`
-  sobre RAM. **El RTL de la GPU (29) todavía no los tiene** y declara un perfil de
-  ISA sin ese bit: un kernel que los use corre aquí y no en la placa hasta que se
-  añadan a la LSU. Contra MMIO son error, como manda §4.1.
+  sobre RAM. El RTL también: el SM de la 29, y con él las placas 36 y 37, los
+  decodifica y la LSU escribe con máscara por byte (capability `subword_memory`).
+  Las GPU anteriores (12, 14, 17, 22) no los tienen. Contra MMIO son error, como
+  manda §4.1.
 - La GPU de `11` no tiene `JAL`/`JR`; el kernel solo puede usar su ISA, y la CPU
   la suya.
