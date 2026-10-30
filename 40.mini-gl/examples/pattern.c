@@ -11,13 +11,13 @@ void setup(void) {
 
 void draw(void) {
     int i,j,cx,cy;
-    background(color(10,10,20));
+    background(10,10,20);
     strokeWeight(1);
     for(j=0;j<height/CELL;j++) for(i=0;i<width/CELL;i++) {
         cx=i*CELL+CELL/2; cy=j*CELL+CELL/2;
-        fill(color(i*255/(width/CELL),j*255/(height/CELL),160));
-        if((i+j)%3==0) { noStroke(); circle(cx,cy,CELL/2-2); }
-        else if((i+j)%3==1) { stroke(color(255,255,255)); rect(cx-7,cy-7,14,14); }
+        fill(i*255/(width/CELL),j*255/(height/CELL),160);
+        if((i+j)%3==0) { noStroke(); circle(cx,cy,CELL-4); }
+        else if((i+j)%3==1) { stroke(255,255,255); rect(cx-7,cy-7,14,14); }
         else { noStroke(); triangle(cx,cy-8,cx-8,cy+7,cx+8,cy+7); }
     }
 }

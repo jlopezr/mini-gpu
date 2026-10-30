@@ -32,6 +32,9 @@ Las imágenes quedan en la carpeta del proyecto como `<nombre>-v<N>.ppm`.
 3. `make run-<nombre>`.
 
 Notas sobre la API:
-- `circle(cx, cy, r)` recibe el **radio**.
-- Los colores son RGB565; usa `color(r, g, b)` con canales de 0 a 255.
+- `circle(cx, cy, d)` recibe el diámetro, como en Processing. Los círculos
+  quedan centrados en un píxel, así que un diámetro par sale un píxel más ancho.
+- Colores como en Arduino TFT: `background`, `fill` y `stroke` reciben
+  `(r, g, b)` de 0 a 255. Para RGB565 directo están `background565`, `fill565`
+  y `stroke565`, y `color565(r, g, b)` convierte (como en Adafruit_GFX).
 - Por ahora se dibuja un único frame: no hay animación (`frameCount`) ni eventos.
