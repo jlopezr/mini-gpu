@@ -29,6 +29,19 @@ static mgl_color_t *target;
 static int target_w, target_h, target_stride;
 static const mgl_color_t *previous;
 
+/* El formato es little-endian. En el host se lee y escribe byte a byte, que vale
+   en cualquier máquina y con cualquier alineación. En MiniGPU, que es
+   little-endian, con accesos de 16 y 32 bits: los campos están alineados (la
+   memoria del buffer también, lo pide mgl_cmd_init) y lcc no aplica strict
+   aliasing ni expande funciones en línea, por eso son macros. */
+#ifdef __MINIGPU__
+#define WR16(p, v) (*(unsigned short *)(p) = (unsigned short)(v))
+#define WR32(p, v) (*(mgl_u32 *)(p) = (mgl_u32)(v))
+#define RD16(p) ((unsigned int)*(const unsigned short *)(p))
+#define RD32(p) (*(const mgl_u32 *)(p))
+#define LOW(p) ((int)((p) << 16) >> 16) /* lcc desplaza un int con signo */
+#define HIGH(p) ((int)(p) >> 16)
+#else
 static void wr16(unsigned char *p, unsigned int v) {
     p[0] = (unsigned char)v;
     p[1] = (unsigned char)(v >> 8);
@@ -49,10 +62,6 @@ static mgl_u32 rd32(const unsigned char *p) {
     return (mgl_u32)p[0] | ((mgl_u32)p[1] << 8) | ((mgl_u32)p[2] << 16) | ((mgl_u32)p[3] << 24);
 }
 
-static mgl_u32 pack(int a, int b) {
-    return (mgl_u32)((unsigned int)a & 65535U) | ((mgl_u32)((unsigned int)b & 65535U) << 16);
-}
-
 static int low(mgl_u32 p) {
     unsigned int v = (unsigned int)(p & 65535U);
     return v >= 32768U ? (int)v - 65536 : (int)v;
@@ -62,19 +71,31 @@ static int high(mgl_u32 p) {
     return low(p >> 16);
 }
 
-static int fit(int v) {
-    return v >= -32768 && v <= 32767;
-}
+#define WR16 wr16
+#define WR32 wr32
+#define RD16 rd16
+#define RD32 rd32
+#define LOW low
+#define HIGH high
+#endif
+
+
+/* Macros y no funciones: se usan por cada coordenada y lcc no expande en línea. */
+#define PACK(a, b) ((mgl_u32)((unsigned int)(a) & 65535U) | ((mgl_u32)((unsigned int)(b) & 65535U) << 16))
+#define FIT(v) ((v) >= -32768 && (v) <= 32767)
 
 static void header(mgl_cmd_buffer_t *b) {
-    wr32(b->bytes, MGL_BUFFER_MAGIC);
-    wr32(b->bytes + 4, MGL_BUFFER_VERSION);
-    wr32(b->bytes + 8, b->used);
-    wr32(b->bytes + 12, b->capacity);
+    WR32(b->bytes, MGL_BUFFER_MAGIC);
+    WR32(b->bytes + 4, MGL_BUFFER_VERSION);
+    WR32(b->bytes + 8, b->used);
+    WR32(b->bytes + 12, b->capacity);
 }
 
 int mgl_cmd_init(mgl_cmd_buffer_t *b, void *memory, mgl_u32 capacity) {
     if (!b || !memory || capacity < 16U) return MGL_ERR_ARGUMENT;
+#ifdef __MINIGPU__
+    if ((unsigned)memory & 3U) return MGL_ERR_ARGUMENT; /* se accede por palabras */
+#endif
     memset(b, 0, sizeof(*b));
     b->bytes = (unsigned char *)memory;
     b->capacity = capacity;
@@ -154,12 +175,12 @@ static void emit_clear(mgl_color_t color) {
         return;
     }
     p = b->bytes + b->used;
-    wr32(p, OP_CLEAR);
-    wr32(p + 4, 16);
-    wr32(p + 8, color);
-    wr32(p + 12, 0);
+    WR32(p, OP_CLEAR);
+    WR32(p + 4, 16);
+    WR32(p + 8, color);
+    WR32(p + 12, 0);
     b->used += 16;
-    header(b);
+    WR32(b->bytes + 8, b->used); /* de la cabecera solo cambia used */
 }
 
 static void emit(mgl_u32 type, mgl_u32 p0, mgl_u32 p1, mgl_u32 p2) {
@@ -171,20 +192,20 @@ static void emit(mgl_u32 type, mgl_u32 p0, mgl_u32 p1, mgl_u32 p2) {
         return;
     }
     p = b->bytes + b->used;
-    wr32(p, OP_BATCH);
-    wr32(p + 4, 40);
-    wr32(p + 8, 1);
-    wr32(p + 12, 0);
-    wr32(p + 16, type);
-    wr32(p + 20, p0);
-    wr32(p + 24, p1);
-    wr32(p + 28, p2);
-    wr16(p + 32, fill_color);
-    wr16(p + 34, stroke_color);
-    wr16(p + 36, flags);
-    wr16(p + 38, weight);
+    WR32(p, OP_BATCH);
+    WR32(p + 4, 40);
+    WR32(p + 8, 1);
+    WR32(p + 12, 0);
+    WR32(p + 16, type);
+    WR32(p + 20, p0);
+    WR32(p + 24, p1);
+    WR32(p + 28, p2);
+    WR16(p + 32, fill_color);
+    WR16(p + 34, stroke_color);
+    WR16(p + 36, flags);
+    WR16(p + 38, weight);
     b->used += 40;
-    header(b);
+    WR32(b->bytes + 8, b->used);
 }
 
 void mgl_clear(mgl_color_t c) {
@@ -226,8 +247,8 @@ void mgl_stroke_weight(int w) {
 
 void mgl_point(int x, int y) {
     if (current) {
-        if (fit(x) && fit(y))
-            emit(PR_POINT, pack(x, y), 0, 0);
+        if (FIT(x) && FIT(y))
+            emit(PR_POINT, PACK(x, y), 0, 0);
         else
             current->error = MGL_ERR_ARGUMENT;
     } else {
@@ -238,8 +259,8 @@ void mgl_point(int x, int y) {
 
 void mgl_line(int x, int y, int a, int b) {
     if (current) {
-        if (fit(x) && fit(y) && fit(a) && fit(b))
-            emit(PR_LINE, pack(x, y), pack(a, b), 0);
+        if (FIT(x) && FIT(y) && FIT(a) && FIT(b))
+            emit(PR_LINE, PACK(x, y), PACK(a, b), 0);
         else
             current->error = MGL_ERR_ARGUMENT;
     } else {
@@ -250,8 +271,8 @@ void mgl_line(int x, int y, int a, int b) {
 
 void mgl_rect(int x, int y, int w, int h) {
     if (current) {
-        if (fit(x) && fit(y) && fit(w) && fit(h))
-            emit(PR_RECT, pack(x, y), pack(w, h), 0);
+        if (FIT(x) && FIT(y) && FIT(w) && FIT(h))
+            emit(PR_RECT, PACK(x, y), PACK(w, h), 0);
         else
             current->error = MGL_ERR_ARGUMENT;
     } else {
@@ -262,8 +283,8 @@ void mgl_rect(int x, int y, int w, int h) {
 
 void mgl_circle(int x, int y, int r) {
     if (current) {
-        if (fit(x) && fit(y) && fit(r))
-            emit(PR_CIRCLE, pack(x, y), pack(r, 0), 0);
+        if (FIT(x) && FIT(y) && FIT(r))
+            emit(PR_CIRCLE, PACK(x, y), PACK(r, 0), 0);
         else
             current->error = MGL_ERR_ARGUMENT;
     } else {
@@ -274,8 +295,8 @@ void mgl_circle(int x, int y, int r) {
 
 void mgl_triangle(int x, int y, int a, int b, int c, int d) {
     if (current) {
-        if (fit(x) && fit(y) && fit(a) && fit(b) && fit(c) && fit(d))
-            emit(PR_TRIANGLE, pack(x, y), pack(a, b), pack(c, d));
+        if (FIT(x) && FIT(y) && FIT(a) && FIT(b) && FIT(c) && FIT(d))
+            emit(PR_TRIANGLE, PACK(x, y), PACK(a, b), PACK(c, d));
         else
             current->error = MGL_ERR_ARGUMENT;
     } else {
@@ -293,7 +314,7 @@ void mgl_image(const mgl_sprite_t *s, int x, int y) {
         return;
     }
     if (b->error) return;
-    if (!s || !fit(x) || !fit(y)) {
+    if (!s || !FIT(x) || !FIT(y)) {
         b->error = MGL_ERR_ARGUMENT;
         return;
     }
@@ -307,7 +328,7 @@ void mgl_image(const mgl_sprite_t *s, int x, int y) {
         b->sprites[i] = s;
         b->sprite_count++;
     }
-    emit(PR_IMAGE, pack(x, y), (mgl_u32)i, 0);
+    emit(PR_IMAGE, PACK(x, y), (mgl_u32)i, 0);
 }
 
 static void apply(unsigned int f, mgl_color_t fc, mgl_color_t sc, int w) {
@@ -327,9 +348,9 @@ static void apply(unsigned int f, mgl_color_t fc, mgl_color_t sc, int w) {
 static mgl_u32 last_clear(const mgl_cmd_buffer_t *b) {
     mgl_u32 off, size, last = 0;
     for (off = 16; b->used - off >= 16U; off += size) {
-        size = rd32(b->bytes + off + 4);
+        size = RD32(b->bytes + off + 4);
         if (size < 16U || size > b->used - off) break;
-        if (rd32(b->bytes + off) == OP_CLEAR) last = off;
+        if (RD32(b->bytes + off) == OP_CLEAR) last = off;
     }
     return last;
 }
@@ -340,8 +361,8 @@ int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *b) {
     mgl_cmd_buffer_t *saved = current;
     if (!b || !b->bytes || b->used < 16U || b->used > b->capacity || b->error)
         return MGL_ERR_ARGUMENT;
-    if (rd32(b->bytes) != MGL_BUFFER_MAGIC || rd32(b->bytes + 4) != MGL_BUFFER_VERSION ||
-        rd32(b->bytes + 8) != b->used || rd32(b->bytes + 12) != b->capacity)
+    if (RD32(b->bytes) != MGL_BUFFER_MAGIC || RD32(b->bytes + 4) != MGL_BUFFER_VERSION ||
+        RD32(b->bytes + 8) != b->used || RD32(b->bytes + 12) != b->capacity)
         return MGL_ERR_ARGUMENT;
     first = last_clear(b);
     current = 0;
@@ -351,8 +372,8 @@ int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *b) {
             return MGL_ERR_ARGUMENT;
         }
         p = b->bytes + off;
-        op = rd32(p);
-        size = rd32(p + 4);
+        op = RD32(p);
+        size = RD32(p + 4);
         if (size < 16U || size > b->used - off) {
             current = saved;
             return MGL_ERR_ARGUMENT;
@@ -364,36 +385,36 @@ int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *b) {
             }
             if (off < first) continue;
             previous = 0;
-            sw_clear((mgl_color_t)rd32(p + 8));
+            sw_clear((mgl_color_t)RD32(p + 8));
         } else if (op == OP_BATCH) {
-            if (size != 40U || rd32(p + 8) != 1U) {
+            if (size != 40U || RD32(p + 8) != 1U) {
                 current = saved;
                 return MGL_ERR_ARGUMENT;
             }
-            t = rd32(p + 16);
-            p0 = rd32(p + 20);
-            p1 = rd32(p + 24);
-            p2 = rd32(p + 28);
+            t = RD32(p + 16);
+            p0 = RD32(p + 20);
+            p1 = RD32(p + 24);
+            p2 = RD32(p + 28);
             if (t < PR_POINT || t > PR_IMAGE || (t == PR_IMAGE && p1 >= b->sprite_count)) {
                 current = saved;
                 return MGL_ERR_ARGUMENT;
             }
             if (off < first) continue;
-            apply(rd16(p + 36), (mgl_color_t)rd16(p + 32), (mgl_color_t)rd16(p + 34),
-                (int)rd16(p + 38));
+            apply(RD16(p + 36), (mgl_color_t)RD16(p + 32), (mgl_color_t)RD16(p + 34),
+                (int)RD16(p + 38));
             ready();
             if (t == PR_POINT)
-                sw_point(low(p0), high(p0));
+                sw_point(LOW(p0), HIGH(p0));
             else if (t == PR_LINE)
-                sw_line(low(p0), high(p0), low(p1), high(p1));
+                sw_line(LOW(p0), HIGH(p0), LOW(p1), HIGH(p1));
             else if (t == PR_RECT)
-                sw_rect(low(p0), high(p0), low(p1), high(p1));
+                sw_rect(LOW(p0), HIGH(p0), LOW(p1), HIGH(p1));
             else if (t == PR_CIRCLE)
-                sw_circle(low(p0), high(p0), low(p1));
+                sw_circle(LOW(p0), HIGH(p0), LOW(p1));
             else if (t == PR_TRIANGLE)
-                sw_triangle(low(p0), high(p0), low(p1), high(p1), low(p2), high(p2));
+                sw_triangle(LOW(p0), HIGH(p0), LOW(p1), HIGH(p1), LOW(p2), HIGH(p2));
             else
-                sw_image(b->sprites[p1], low(p0), high(p0));
+                sw_image(b->sprites[p1], LOW(p0), HIGH(p0));
         } else {
             current = saved;
             return MGL_ERR_ARGUMENT;

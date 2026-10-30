@@ -45,6 +45,7 @@ void mgl_set_deferred(mgl_cmd_buffer_t *buffer); /* NULL => directo */
    mgl_clear (que lo tapa todo). mgl_finish hace la copia si sigue pendiente. */
 void mgl_set_target(mgl_color_t *pixels,const mgl_color_t *previous);
 void mgl_finish(void);
+/* En MiniGPU, memory alineada a 4: se lee y escribe por palabras. */
 int mgl_cmd_init(mgl_cmd_buffer_t *buffer,void *memory,mgl_u32 capacity);
 int mgl_cmd_reset(mgl_cmd_buffer_t *buffer);
 int mgl_cmd_render_cpu(const mgl_cmd_buffer_t *buffer);
