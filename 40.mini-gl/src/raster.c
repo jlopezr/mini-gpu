@@ -21,18 +21,39 @@ static void put(int x, int y, mgl_color_t c) {
     if (fb && x >= 0 && y >= 0 && x < fw && y < fh) fb[y * pitch + x] = c;
 }
 
-/* La fila y de x0 a x1 - 1, recortada. Píxel a píxel (escribir dos con un
-   unsigned rompería el strict aliasing en el host), desenrollado porque lcc no
-   lo hace. */
+/* La fila y de x0 a x1 - 1, recortada, desenrollado porque lcc no lo hace.
+   En MiniGPU, de dos en dos píxeles con escrituras de 32 bits: lcc no aplica
+   strict aliasing. En el host no se puede (escribir un mgl_color_t con un
+   unsigned no está definido y -O2 lo aprovecha), y el compilador ya vectoriza
+   el bucle de píxeles. */
 static void span(int y, int x0, int x1, mgl_color_t c) {
-    mgl_color_t *p, *end;
+    mgl_color_t *p;
+    int n; /* un contador y no restas de punteros: lcc las divide en cada vuelta */
     if (y < 0 || y >= fh) return;
     if (x0 < 0) x0 = 0; /* sin min2/max2: span es caliente y lcc no expande en línea */
     if (x1 > fw) x1 = fw;
-    if (x0 >= x1) return;
+    n = x1 - x0;
+    if (n <= 0) return;
     p = fb + y * pitch + x0;
-    end = p + (x1 - x0);
-    for (; end - p >= 8; p += 8) {
+#ifdef __MINIGPU__
+    if (n >= 8) { /* con menos, preparar las palabras cuesta más que lo que ahorra */
+        unsigned pair = c | (unsigned)c << 16, *w;
+        if ((unsigned)p & 2) { /* hasta alinear a 4 */
+            *p++ = c;
+            n--;
+        }
+        w = (unsigned *)p;
+        for (; n >= 8; n -= 8, w += 4) {
+            w[0] = pair;
+            w[1] = pair;
+            w[2] = pair;
+            w[3] = pair;
+        }
+        for (; n >= 2; n -= 2) *w++ = pair;
+        p = (mgl_color_t *)w;
+    }
+#else
+    for (; n >= 8; n -= 8, p += 8) {
         p[0] = c;
         p[1] = c;
         p[2] = c;
@@ -42,7 +63,8 @@ static void span(int y, int x0, int x1, mgl_color_t c) {
         p[6] = c;
         p[7] = c;
     }
-    while (p < end) *p++ = c;
+#endif
+    for (; n > 0; n--) *p++ = c;
 }
 
 static void brush(int x, int y, mgl_color_t c) {
