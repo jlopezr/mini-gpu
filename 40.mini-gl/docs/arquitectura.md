@@ -22,7 +22,7 @@ Se adoptó `mgl_` para funciones y tipos y `MGL_` para macros y constantes. Proc
 
 API actual: `mgl_bind`, `mgl_set_deferred`, `mgl_cmd_init`, `mgl_cmd_reset`, `mgl_cmd_render_cpu`, `mgl_cmd_status`, `mgl_clear`, `mgl_fill`, `mgl_no_fill`, `mgl_stroke`, `mgl_no_stroke`, `mgl_stroke_weight`, `mgl_point`, `mgl_line`, `mgl_rect`, `mgl_circle`, `mgl_triangle`, `mgl_image`. Renderer GPU: `mgl_gpu_render`, adaptador host `mgl_gpu_render_host` y `mgl_gpu_sprites_from_cmd`.
 
-API Processing: `size`, `background`/`fill`/`stroke` con `(r, g, b)` 0–255 (como Arduino TFT), sus variantes RGB565 `background565`/`fill565`/`stroke565`, `color565` (como Adafruit_GFX), `noFill`, `noStroke`, `strokeWeight`, `point`, `line`, `rect`, `circle` (diámetro, como en Processing; `mgl_circle` usa radio), `triangle`, `image`, y `width`/`height`. La aplicación define `setup()`/`draw()`; `size()`, `width`/`height` y el bucle los da la plataforma (en el host, `src/platform_host.c`).
+API Processing: `size`, `background`/`fill`/`stroke` con `(r, g, b)` 0–255 (como Arduino TFT), sus variantes RGB565 `background565`/`fill565`/`stroke565`, `color565` (como Adafruit_GFX), `noFill`, `noStroke`, `strokeWeight`, `point`, `line`, `rect`, `circle` (diámetro, como en Processing; `mgl_circle` usa radio), `triangle`, `image`, `width`/`height`, `frameCount`, `mouseX`/`mouseY` y `mousePressed`. La aplicación define `setup()`/`draw()`; `size()`, esas variables y el bucle los da la plataforma: `src/platform_host.c` (un frame a PPM) o `src/platform_sdl.c` (ventana SDL2, `draw()` a 60 fps). Lo común, incluida la ejecución de un frame con V0, V1 o V2, está en `src/platform.c`.
 
 ## Algoritmos y opciones
 - CLEAR: rellenar framebuffer RGB565.

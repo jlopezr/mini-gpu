@@ -15,8 +15,8 @@ Los nombres de `archive/` conservan la numeración antigua; ver [docs/roadmap.md
 
 ## Estructura
 
-- `src/`: versión de trabajo (V0 + V1 + renderer V2), con prefijos `mgl_`/`MGL_`. La API Processing conserva sus nombres originales. `platform_host.c` es la plataforma host para los sketches.
-- `examples/`: sketches Processing (`setup()`/`draw()`) que se ejecutan en el host con cualquier versión. Ver [examples/README.md](examples/README.md).
+- `src/`: versión de trabajo (V0 + V1 + renderer V2), con prefijos `mgl_`/`MGL_`. La API Processing conserva sus nombres originales. Plataformas para los sketches: `platform_host.c` (imagen PPM) y `platform_sdl.c` (ventana SDL2), con la parte común en `platform.c`.
+- `examples/`: sketches Processing (`setup()`/`draw()`) que se ejecutan con cualquier versión, como imagen o en una ventana SDL. Ver [examples/README.md](examples/README.md).
 - `tests/`: comparación píxel a píxel V0/V1/V2 sobre escenas fijas.
 - `scheduler/`: última entrega del scheduler con ejemplo, sin modificaciones.
 - `archive/`: las cinco versiones originales extraídas y sus ZIP exactos, sin renombrar símbolos.
@@ -31,6 +31,7 @@ make                    # todo en build/
 make test               # V0 == V1 == V2 en las escenas de tests/
 make run                # todos los ejemplos con las tres versiones
 make run-shapes V=2     # un ejemplo con una versión concreta
+make sdl-bounce         # en una ventana SDL (teclas 0/1/2: versión)
 ```
 
 `gpu_host.c` simula las ocho lanes de forma funcional; no simula el hardware SIMT real.

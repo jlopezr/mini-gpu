@@ -1,6 +1,6 @@
-/* Plataforma host para sketches Processing: proporciona main(), size() y el
-   bucle setup()/draw() (un solo frame), ejecuta la version de MiniGL elegida
-   y guarda el framebuffer RGB565 como PPM.
+/* Plataforma host para sketches Processing: proporciona main() y ejecuta
+   setup() y un solo draw() con la version de MiniGL elegida, y guarda el
+   framebuffer RGB565 como PPM.
 
    Uso: sketch [-v 0|1|2|all] [-o salida.ppm]
      -v 0    V0: directo, la CPU rasteriza al llamar
@@ -9,79 +9,19 @@
      -v all  las tres; comprueba que los framebuffers son identicos (por defecto)
    Salida por defecto: <sketch>-v<N>.ppm en el directorio actual. */
 
-#include "processing.h"
-#include "gpu_renderer.h"
+#include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define DEFAULT_W 320
-#define DEFAULT_H 240
-#define CMD_BYTES 65536U
-
-int width, height;
-static mgl_color_t *frame;
-static unsigned char cmd_memory[CMD_BYTES];
-static mgl_cmd_buffer_t cmd;
-static mgl_gpu_sprite_t gpu_sprites[MGL_GPU_MAX_SPRITES];
-
-void size(int w, int h) {
-    mgl_color_t *p;
-    if (w <= 0 || h <= 0) {
-        fprintf(stderr, "size(%d,%d): tamaño invalido\n", w, h);
-        exit(1);
-    }
-    p = (mgl_color_t *)calloc((size_t)w * (size_t)h, sizeof *p);
-    if (!p) {
-        fputs("size: sin memoria\n", stderr);
-        exit(1);
-    }
-    free(frame);
-    frame = p;
-    width = w;
-    height = h;
-    mgl_bind(frame, w, h, w);
-}
-
-/* Ejecuta setup()+draw() con la version v; deja el resultado en frame. */
+/* Ejecuta setup()+draw() con la version v; deja el resultado en platform_frame. */
 static int run(int v) {
-    mgl_gpu_job_t job;
-    int r;
-    if (v == 0) {
-        mgl_set_deferred(0);
-        size(DEFAULT_W, DEFAULT_H);
-        setup();
-        draw();
-        return 0;
-    }
-    if (mgl_cmd_init(&cmd, cmd_memory, CMD_BYTES) != MGL_OK) return -1;
-    mgl_set_deferred(&cmd);
-    size(DEFAULT_W, DEFAULT_H);
+    platform_reset();
+    if (platform_begin(v) != MGL_OK) return -1;
     setup();
+    frameCount = 1;
     draw();
-    mgl_set_deferred(0);
-    if ((r = mgl_cmd_status(&cmd)) != MGL_OK) {
-        fprintf(stderr, "V%d: error %d al grabar el command buffer\n", v, r);
-        return -1;
-    }
-    if (v == 1)
-        r = mgl_cmd_render_cpu(&cmd);
-    else {
-        r = mgl_gpu_sprites_from_cmd(&cmd, gpu_sprites, MGL_GPU_MAX_SPRITES);
-        if (r == MGL_OK) {
-            job.commands = cmd.bytes;
-            job.command_bytes = cmd.used;
-            job.framebuffer = frame;
-            job.width = width;
-            job.height = height;
-            job.pitch = width;
-            job.sprites = gpu_sprites;
-            job.sprite_count = cmd.sprite_count;
-            r = mgl_gpu_render_host(&job);
-        }
-    }
-    if (r != MGL_OK) fprintf(stderr, "V%d: error %d al renderizar\n", v, r);
-    return r;
+    return platform_end(v);
 }
 
 static int write_ppm(const char *path) {
@@ -93,7 +33,7 @@ static int write_ppm(const char *path) {
     }
     fprintf(f, "P6\n%d %d\n255\n", width, height);
     for (i = 0; i < n; i++) {
-        unsigned int c = frame[i], r = (c >> 11) & 31U, g = (c >> 5) & 63U, b = c & 31U;
+        unsigned int c = platform_frame[i], r = (c >> 11) & 31U, g = (c >> 5) & 63U, b = c & 31U;
         putc((int)((r << 3) | (r >> 2)), f);
         putc((int)((g << 2) | (g >> 4)), f);
         putc((int)((b << 3) | (b >> 2)), f);
@@ -126,10 +66,8 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(version, "all")) {
         first = 0;
-        last = 2;
-    } else if (strlen(version) == 1 && version[0] >= '0' && version[0] <= '2')
-        first = last = version[0] - '0';
-    else
+        last = PLATFORM_VERSIONS - 1;
+    } else if ((first = last = platform_parse_version(version)) < 0)
         return usage(argv[0]);
     if (out && first != last) {
         fputs("-o solo con una version concreta\n", stderr);
@@ -145,7 +83,7 @@ int main(int argc, char **argv) {
         path[sizeof path - 1] = 0;
         if (write_ppm(path)) return 1;
         printf("V%d %dx%d -> %s", v, width, height, path);
-        if (v > 0) printf(" (%u bytes de comandos)", (unsigned)cmd.used);
+        if (v > 0) printf(" (%u bytes de comandos)", platform_command_bytes());
         putchar('\n');
         if (first == last) continue;
         if (!reference) {
@@ -154,19 +92,19 @@ int main(int argc, char **argv) {
                 fputs("sin memoria\n", stderr);
                 return 1;
             }
-            memcpy(reference, frame, (size_t)width * height * sizeof *reference);
+            memcpy(reference, platform_frame, (size_t)width * height * sizeof *reference);
             continue;
         }
         for (y = 0; y < height; y++)
             for (x = 0; x < width; x++)
-                if (reference[y * width + x] != frame[y * width + x]) {
+                if (reference[y * width + x] != platform_frame[y * width + x]) {
                     printf("FAIL: V%d distinto de V0 en (%d,%d): %04x frente a %04x\n", v, x, y,
-                        (unsigned)frame[y * width + x], (unsigned)reference[y * width + x]);
+                        (unsigned)platform_frame[y * width + x],
+                        (unsigned)reference[y * width + x]);
                     return 1;
                 }
     }
     if (first != last) printf("PASS: V0 == V1 == V2\n");
     free(reference);
-    free(frame);
     return 0;
 }

@@ -27,10 +27,14 @@ void image(const mgl_sprite_t *sprite, int x, int y);
 
 /* La aplicacion define setup() y draw(); el bucle lo proporciona la plataforma.
    La plataforma tambien proporciona size(), que se llama al principio de
-   setup() como en Processing, y width/height con el tamano actual. */
+   setup() como en Processing, y width/height con el tamano actual.
+   frameCount vale 0 en setup() y 1, 2, 3... en cada draw(). mouseX/mouseY y
+   mousePressed solo cambian en plataformas con ventana (SDL). */
 void setup(void);
 void draw(void);
 void size(int w, int h);
 extern int width, height;
+extern int frameCount;
+extern int mouseX, mouseY, mousePressed;
 
 #endif
