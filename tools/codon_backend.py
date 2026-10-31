@@ -115,7 +115,7 @@ def run_cli(argv: list[str]) -> int:
 _LINKS = {"memory", "bus", "hooks", "video", "serial", "input", "sysid", "system",
           "cpu", "gpu", "streaming_multiprocessor", "warps", "processors",
           "trace", "trace_stream", "trace_limit", "trace_lines", "profile",
-          "_cpu_limit", "_gpu_limit", "_batching", "_ticks_pending", "_ticks_quiet",
+          "_cpu_limit", "_gpu_limit", "_limit_slack", "_batching", "_ticks_pending", "_ticks_quiet",
           "_serial_wait", "_input_wait", "_video_wait"}
 #: En las lanes de la GPU, además, el resultado de la última `evaluate`, que el
 #: warp ya ha confirmado.

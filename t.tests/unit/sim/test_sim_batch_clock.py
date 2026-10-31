@@ -64,7 +64,18 @@ class BatchClockTest(unittest.TestCase):
             return video
         video = self.compare(make)
         self.assertGreater(video.frame_count, 50)
+        # Sin nada pendiente, las fronteras de frame no son eventos...
+        self.assertGreater(video.ticks_until_event(), 1 << 40)
+        # ...y con un intercambio pendiente, la siguiente sí.
+        video.write(video.SWAP, 1)
         self.assertEqual(video.ticks_until_event(), 37 - video._since_frame)
+
+    def test_video_idle_frames_in_one_jump(self):
+        one, batch = VideoDevice(frame_instructions=37), VideoDevice(frame_instructions=37)
+        for _ in range(10_000):
+            one.tick()
+        batch.advance(10_000)
+        self.assertEqual(state(one), state(batch))
 
     def test_serial_host_and_tty(self):
         for with_tty in (False, True):

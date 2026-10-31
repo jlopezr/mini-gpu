@@ -183,12 +183,28 @@ class VideoDevice(MmioDevice):
         return self.BASE <= address < self.BASE + self.SIZE
 
     def ticks_until_event(self) -> int:
-        """Ticks hasta la próxima frontera de frame, incluida (ver «Reloj por lotes»)."""
-        return self.frame_instructions - self._since_frame
+        """Ticks hasta la próxima frontera de frame con algo pendiente, incluida.
+
+        Sin intercambio ni cambio de configuración pendientes, una frontera solo
+        cuenta frames (`FRAME_COUNT`, `VIDEO_TX`), y eso `advance` lo hace de una
+        vez: no hay evento. Escribir `SWAP` o la configuración lo cambia, y quien
+        avanza por lotes vuelve a preguntar tras cada escritura (ver «Reloj por
+        lotes»). Sin esto, `boxes` llamaba a `advance` cada mil instrucciones.
+        """
+        if self.swap_pending or self.state_commit_pending:
+            return self.frame_instructions - self._since_frame
+        return NEVER
 
     def advance(self, ticks: int) -> None:
-        """`ticks` llamadas a `tick()`; no pueden pasar de la frontera de frame."""
-        self._since_frame += ticks - 1
+        """`ticks` llamadas a `tick()`, sin pasar de `ticks_until_event()`.
+
+        Las fronteras antes del último tick no tienen nada pendiente: solo
+        cuentan frames.
+        """
+        frames, self._since_frame = divmod(self._since_frame + ticks - 1,
+                                           self.frame_instructions)
+        self.frame_count = u32(self.frame_count + frames)
+        self.video_tx = u32(self.video_tx + frames)
         self.tick()
 
     def tick(self) -> None:

@@ -26,8 +26,8 @@ Medidas actuales (2026-10-31, macOS ARM64, Codon 0.20.5, PyPy 3.11):
 
 | Carga | PyPy | Codon |
 |---|---:|---:|
-| `boxes.bin`, 12 swaps | 2,6 s | 0,75 s |
-| `dma-bench` | 8,4 s | 1,6 s |
+| `boxes.bin`, 12 swaps | 2,5 s | 0,57 s |
+| `dma-bench` | 8,3 s | 1,4 s |
 
 ## Cómo perfilar el motor
 
@@ -51,31 +51,27 @@ lo que sale como `main` es sobre todo el bucle de `run` con el paso de la CPU.
 
 ## Pendiente
 
-### 1. El bucle de la CPU: unos 85 M instrucciones/s
+### 1. El bucle de la CPU: unos 135 M instrucciones/s
 
-El generador que reescribía los simuladores por AST (ya borrado) llegaba a unos
-120 M con su bucle propio. Ya se ha quitado del planificador lo más caro (ver
-«Hecho»). Perfil actual de `boxes` (2026-10-31):
+Ya por encima de los unos 120 M del generador que reescribía los simuladores por
+AST (ya borrado). Perfil actual de `boxes` (2026-10-31):
 
 | Función | Muestras |
 |---|---:|
-| `main` (bucle de `run` y paso de la CPU, en línea) | 44 % |
-| `_check_limits` | 18 % |
-| sin símbolo | 12 % |
-| `CPU.read_u32` (lectura de la instrucción) | 10 % |
-| recolector (`GC_*`) | 7 % |
-| `list.__getitem__` | 3 % |
+| `main` (bucle de `run` y paso de la CPU, en línea) | 71 % |
+| `CPU.read_u32` (sobre todo leer la instrucción) | 24 % |
+| `list.__getitem__` (registros) | 5 % |
 
 Pistas:
 
-- `_check_limits` son dos comparaciones (unas 20 instrucciones de máquina) y aun
-  así se lleva el 18 %. Puede ser la espera de las cargas (`self.cpu`,
-  `self.gpu`) o que el perfil le atribuya código vecino. Una idea es comprobarlo
-  una vez por lote de instrucciones: cuántas faltan para el límite.
-- El recolector trabaja, así que algo reserva memoria en el bucle. Hay que
-  buscarlo en el paso de la CPU (`minicpu_core.CPU.step`).
-- `read_u32` pasa por `device_for` del bus antes de leer la RAM. El bus ya
-  descarta pronto las direcciones bajas (`_lowest`), pero la llamada sigue.
+- Leer la instrucción directamente de la RAM cuando el PC está por debajo de
+  `MMIO_SYSTEM_BASE`, sin pasar por `_device`, no se notó (1,58–1,63 s frente a
+  1,60 s con 60 swaps), y se descartó. El 24 % puede ser la espera de la propia
+  carga de memoria más que el código de alrededor.
+- `list.__getitem__` es la comprobación de límites de `self.regs[r]`. Los
+  índices salen de campos de 5 bits, así que nunca falla, pero Codon no lo sabe.
+  Quitarla exigiría algo propio de Codon en los núcleos, que tienen que seguir
+  siendo Python.
 
 ### 2. Llamadas de los proxies a Python en cada acceso MMIO
 
@@ -105,6 +101,24 @@ Solo una vez por cada cambio en las fuentes (queda en caché en
 el tiempo.
 
 ## Hecho
+
+### Sin llamadas a Python por frame, límites por lotes y RAM por puntero (2026-10-31)
+
+- **Fronteras de frame ociosas** (`tools/sim_devices.py`): sin intercambio ni
+  cambio de configuración pendientes, el vídeo no tiene evento
+  (`ticks_until_event` da `NEVER`) y `advance(n)` cuenta de una vez los frames
+  que pasan. Antes, `boxes` llamaba a Python dos veces cada 1000 instrucciones,
+  y eran esas llamadas las que hacían trabajar al recolector de Codon.
+- **Límites por lotes** (`CpuGpuSystem._check_limits`): un margen,
+  `_limit_slack`, cuenta cuántas instrucciones pueden retirarse antes de que un
+  límite pueda alcanzarse, y la comprobación solo se hace cuando llega a cero.
+  Comprobar en cada instrucción costaba casi un 20 %.
+- **`load_u32`/`store_u32` por puntero** en `tools/codon_compat.codon`: una sola
+  lectura de 32 bits, sin comprobar límites, porque quien llama ya lo ha hecho.
+
+`boxes.bin` hasta 60 swaps con Codon: de 2,6 a 1,6 s (de 85 a 135 M
+instrucciones/s). Hasta 12 swaps, de 0,75 a 0,57 s; `dma-bench`, de 1,6 a 1,4 s.
+En PyPy no se nota.
 
 ### El planificador de `CpuGpuSystem` (2026-10-31)
 

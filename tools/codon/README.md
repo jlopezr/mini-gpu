@@ -71,8 +71,8 @@ limitaciones documentadas siguen vigentes.
 
 | Carga | PyPy 3.11 | Codon |
 |---|---:|---:|
-| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 2,6 s | 0,75 s |
-| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 8,4 s | 1,6 s |
+| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 2,5 s | 0,57 s |
+| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 8,3 s | 1,4 s |
 
 Proceso completo, con el motor ya compilado; unos 0,23 s son arranque fijo
 (CPython embebido y el anfitrión). Framebuffer y estado idénticos a Python.

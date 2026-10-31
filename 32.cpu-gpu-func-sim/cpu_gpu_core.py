@@ -692,9 +692,12 @@ class CpuGpuSystem(MachineHooks):
         self.trace_limit = None     # líneas de traza, de CPU y de warp juntas
         self.trace_lines = 0
         self.profile = None         # sim_profile.Profile, con --profile
-        # Los fija `run`; NO_LIMIT fuera de él.
+        # Los fija `run`; NO_LIMIT fuera de él. `_limit_slack`: cuántas
+        # instrucciones, de cualquier núcleo, pueden retirarse antes de que un
+        # límite pueda alcanzarse (ver `_check_limits`).
         self._cpu_limit = NO_LIMIT
         self._gpu_limit = NO_LIMIT
+        self._limit_slack = 0
         # Reloj por lotes de los periféricos (`tick_devices`): ticks que aún no
         # se les han pasado y, por periférico, cuántos faltan para su próximo
         # evento. Solo dentro de `run`; fuera, tick a tick.
@@ -819,6 +822,7 @@ class CpuGpuSystem(MachineHooks):
 
     def on_retire(self) -> None:
         """Instrucción de warp retirada: también avanza el reloj de los dispositivos."""
+        self._limit_slack -= 1
         self.tick_devices()
 
     def request_stop(self) -> None:
@@ -917,6 +921,7 @@ class CpuGpuSystem(MachineHooks):
                       file=self.trace_stream)
         if retired:
             self.cpu_instructions += 1
+            self._limit_slack -= 1
             if self.profile is not None:
                 try:
                     word = cpu.read_u32(pc)
@@ -934,23 +939,31 @@ class CpuGpuSystem(MachineHooks):
         """
         progressed = False
         for _ in range(self.cpu_steps):
-            self._check_limits()
+            if self._limit_slack <= 0:
+                self._check_limits()
             progressed |= self.step_cpu()
         if self.gpu.halted:
             # `gpu.step` no haría nada y nada cambiaría entre una comprobación y
             # la siguiente: basta una. Con la GPU ociosa, que es lo habitual
             # mientras la CPU prepara un frame, ahorra un 8 % del tiempo.
-            self._check_limits()
+            if self._limit_slack <= 0:
+                self._check_limits()
             return progressed
         for _ in range(self.gpu_steps):
-            self._check_limits()
+            if self._limit_slack <= 0:
+                self._check_limits()
             progressed |= self.gpu.step()
         return progressed
 
     def _check_limits(self) -> None:
-        # Un límite solo salta si ese núcleo aún podía ejecutar: con la CPU ya
-        # parada, haber llegado a su tope no es un fallo. La comparación va
-        # primero porque casi nunca se cumple.
+        """Salta si un núcleo que aún puede ejecutar ha llegado a su límite.
+
+        Se comprueba antes de cada instrucción, pero quien llama solo entra
+        cuando `_limit_slack` llega a cero: cada instrucción retirada lo resta, y
+        acercarse a un límite cuesta al menos una instrucción. Comprobar siempre
+        se llevaba casi una quinta parte del tiempo en el motor Codon.
+        """
+        # Con la CPU ya parada, haber llegado a su tope no es un fallo.
         if self.cpu_instructions >= self._cpu_limit and not self.cpu.halted:
             raise InstructionLimitExceeded(
                 f"límite de {self._cpu_limit} instrucciones de CPU alcanzado "
@@ -958,6 +971,10 @@ class CpuGpuSystem(MachineHooks):
         if self.gpu.retired >= self._gpu_limit and not self.gpu.halted:
             raise InstructionLimitExceeded(
                 f"límite de {self._gpu_limit} instrucciones de warp alcanzado")
+        # Un núcleo parado en su límite deja el margen a cero: se vuelve a
+        # comprobar en cada instrucción, como antes.
+        self._limit_slack = min(self._cpu_limit - self.cpu_instructions,
+                                self._gpu_limit - self.gpu.retired)
 
     def run(self, max_instructions: int | None = 100_000_000, *,
             max_cpu_instructions: int | None = None,
@@ -978,6 +995,7 @@ class CpuGpuSystem(MachineHooks):
             raise ValueError("el límite de instrucciones no puede ser negativo")
         self._cpu_limit = NO_LIMIT if cpu_limit is None else cpu_limit
         self._gpu_limit = NO_LIMIT if gpu_limit is None else gpu_limit
+        self._limit_slack = 0
         self._batching = True
         self.devices_changed()
         try:
@@ -988,6 +1006,7 @@ class CpuGpuSystem(MachineHooks):
         finally:
             self._cpu_limit = NO_LIMIT
             self._gpu_limit = NO_LIMIT
+            self._limit_slack = 0
             # Los ticks que quedan no llegan a ningún evento: no paran nada.
             self.sync_devices()
             self._batching = False
