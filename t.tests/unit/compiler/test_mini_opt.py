@@ -893,6 +893,16 @@ class NoAliasTest(unittest.TestCase):
         write = "STORE R20, R30, 0\nLOAD R9, R30, 0\nADD R8, R9, R10\nSTORE R10, R8, 0"
         self.assertTrue(self.loads_inside(read="ADDI R6, R20, 4\nLOAD R7, R6, 0", write=write))
 
+    def test_spilling_the_marked_pointer_to_the_stack_does_not_make_it_escape(self):
+        # Como el trabajo de mini-gl V2: lcc vuelca j a su hueco, y el bucle escribe por un puntero que lee de *j
+        # (el framebuffer). Ese puntero no es j: la carga por j sale del bucle.
+        spill = "NOALIAS R20\nSTORE R20, R30, 0\n"
+        write = "LOAD R9, R20, 8\nADD R8, R9, R10\nSTORE R10, R8, 0"
+        self.assertFalse(self.loads_inside(read="LOAD R7, R20, 4", write=write, marks=spill))
+        # Si la direccion de un hueco se escapa, la pila no se sigue: volcar j lo hace escapar, como antes.
+        escaped = spill + "ADDI R5, R30, 4\n"
+        self.assertTrue(self.loads_inside(read="LOAD R7, R20, 4", write=write, marks=escaped))
+
     def test_a_marked_pointer_passed_to_a_call_may_be_what_a_later_load_returns(self):
         source = """\
 .text

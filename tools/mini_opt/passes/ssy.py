@@ -35,11 +35,11 @@ from ..flow import (
     postdominators,
     predecessors,
 )
-from ..isa import BRANCHES, LOADS, STACK, STORES, defs_uses, instr, number, reg_of
+from ..isa import BRANCHES, LOADS, STACK, STORES, defs_uses, instr, reg_of
 from ..model import Function, Line, OptError, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
-from .stackslots import frame_offsets
+from .stackslots import WIDTH, stack_positions
 
 SSY_ALL = False
 
@@ -55,30 +55,14 @@ UNIFORM_SOURCES = {"MOVI", "MOVHI", "LI", "GETWARP", "GETLWARP", "GETARG"}
 # Lo que varia entre lanes: registros (int) y bytes de la pila (("pila", posicion)).
 Varying = set
 
-WIDTH = {"LOAD": 4, "STORE": 4, "LOADH": 2, "LOADUH": 2, "STOREH": 2, "LOADB": 1, "LOADUB": 1, "STOREB": 1}
-
-
 def stack_bytes(blocks: list[Block]) -> dict[int, list[tuple[str, int]]] | None:
     """Los bytes de la pila que toca cada `LOAD`/`STORE` con base R30 (`id(linea) -> claves`), o None si la
-    pila se usa de otra forma: R30 no se sabe, o la direccion de un hueco pasa a otro registro."""
-    at = frame_offsets(blocks)
-    if at is None:
+    pila se usa de otra forma (`stack_positions`)."""
+    positions = stack_positions(blocks)
+    if positions is None:
         return None
-    touched: dict[int, list[tuple[str, int]]] = {}
-    for block in blocks:
-        for line in block.lines:
-            if line.kind != "instr" or line.op in ("EXIT", "HALT", "TRAP", "JR"):
-                continue
-            defs, uses = defs_uses(line)
-            if STACK in defs or STACK not in uses:
-                continue                                 # preparacion y ajustes del marco, u otra cosa
-            offset = number(line.args[2]) if len(line.args) == 3 else None
-            if (line.op not in LOADS | STORES or reg_of(line.args[1]) != STACK
-                    or reg_of(line.args[0]) == STACK or offset is None):
-                return None
-            start = at[id(line)] + offset
-            touched[id(line)] = [("pila", start + k) for k in range(WIDTH[line.op])]
-    return touched
+    lines = {id(line): line for block in blocks for line in block.lines}
+    return {key: [("pila", start + k) for k in range(WIDTH[lines[key].op])] for key, start in positions.items()}
 
 
 def step_variance(var: Varying, line: Line, under_divergence: bool,

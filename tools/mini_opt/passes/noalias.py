@@ -19,9 +19,13 @@ La procedencia de un registro es un conjunto de marcas (cada `NOALIAS` es una re
   - lo que se carga de memoria deriva de las regiones que se hayan guardado en memoria, pasado a una llamada o
     devuelto (se "escapan"): un puntero marcado que se guarda y se vuelve a leer sigue siendo el mismo objeto;
   - lo que devuelve una llamada, igual.
-Los huecos de la pila se tratan como propios de la funcion: ningun puntero los pisa. Un puntero que se carga de
-memoria sin haber pasado por la marca (otra lectura del mismo sitio) es un puntero distinto, aunque valga lo mismo:
-usarlo para tocar el objeto marcado es una promesa rota, como en `restrict`.
+Los huecos de la pila se tratan como propios de la funcion: ningun puntero los pisa. Si se sabe donde cae cada
+acceso a la pila (`stack_positions`: R30 se sigue y ninguna direccion de un hueco pasa a otro registro), guardar en
+un hueco no hace escapar nada: el hueco apunta la procedencia y el numero de valor de lo guardado, y cargarlo los
+devuelve (el puntero que lcc vuelca y recarga sigue siendo el mismo). Una llamada olvida los huecos (el destino
+puede escribir en el area de argumentos). Si no se sabe, guardar en la pila es como guardar en cualquier sitio.
+Un puntero que se carga de memoria sin haber pasado por la marca (otra lectura del mismo sitio) es un puntero
+distinto, aunque valga lo mismo: usarlo para tocar el objeto marcado es una promesa rota, como en `restrict`.
 
 Dos accesos no se estorban si sus procedencias no comparten ninguna region y al menos una no esta vacia: dos
 accesos sin marca no dicen nada el uno del otro.
@@ -34,11 +38,13 @@ from ..flow import Block, predecessors
 from ..isa import IMM2, LOADS, R3, STORES, WRITE_ONLY1, defs_uses, number, reg, reg_of
 from ..model import Unit
 from ..registry import register_pass
+from .stackslots import stack_positions
 
 MARK = "NOALIAS"
 Tags = dict[int, frozenset]
 EMPTY: frozenset = frozenset()
-# Claves del estado, ademas de 0..31 (procedencia del registro): VALUE + r = numero de valor de Rr.
+# Claves del estado, ademas de 0..31 (procedencia del registro): VALUE + r = numero de valor de Rr; ("hueco", p) y
+# ("valor", p): procedencia y numero de valor de lo que hay en la palabra de la pila en la posicion p.
 VALUE = 100
 
 
@@ -49,8 +55,9 @@ def marks(blocks: list[Block]) -> list:
 class Context:
     """Lo que el analisis supone y va descubriendo: las regiones escapadas y los valores marcados."""
 
-    def __init__(self, numbered: dict[int, int]) -> None:
+    def __init__(self, numbered: dict[int, int], positions: dict[int, int] | None = None) -> None:
         self.numbered = numbered
+        self.positions = positions                          # `stack_positions`, o None si la pila no se sigue
         self.escaped: frozenset = EMPTY
         self.region_of: dict[int, frozenset] = {}           # numero de valor -> regiones
         self.leaked: set = set()                            # lo que esta pasada ve salir a memoria o a una llamada
@@ -100,10 +107,28 @@ def step(state: Tags, line, ctx: Context) -> None:
         state[v] = state.get(v, EMPTY) | region
         return
     defs, _ = defs_uses(line)
+    at = ctx.positions.get(id(line)) if ctx.positions is not None else None
     if op in STORES and len(args) == 3:
-        ctx.leaked |= tag_of(state, reg_of(args[0]), ctx)       # el valor que se guarda
+        if at is None:
+            ctx.leaked |= tag_of(state, reg_of(args[0]), ctx)   # el valor que se guarda
+            return
+        for word in {at & ~3, (at + 3) & ~3}:                   # lo que habia en las palabras que toca
+            state.pop(("hueco", word), None)
+            state.pop(("valor", word), None)
+        if op == "STORE" and at % 4 == 0:
+            value = reg_of(args[0])
+            state[("hueco", at)] = tag_of(state, value, ctx)
+            if value and VALUE + value in state:
+                state[("valor", at)] = state[VALUE + value]
+        return
+    if op in LOADS and at is not None and op == "LOAD" and ("hueco", at) in state:
+        for d in defs:
+            state[d] = state[("hueco", at)]
+            state[VALUE + d] = state.get(("valor", at), frozenset({id(line)}))
         return
     if op in ("JAL", "JALR"):
+        for key in [key for key in state if isinstance(key, tuple)]:
+            del state[key]                              # el destino puede escribir en el area de argumentos
         for r in (1, 2, 3, 4):
             ctx.leaked |= tag_of(state, r, ctx)         # los argumentos de la llamada
     if op in R3 or op in IMM2:
@@ -181,7 +206,7 @@ def provenance(blocks: list[Block]) -> Found | None:
     numbered = {id(line): n for n, line in enumerate(marks(blocks))}
     if not numbered:
         return None
-    ctx = Context(numbered)
+    ctx = Context(numbered, stack_positions(blocks))
     while True:
         snapshot = analyse(blocks, ctx)
         escaped = ctx.escaped | frozenset(ctx.leaked)

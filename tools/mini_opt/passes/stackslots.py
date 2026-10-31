@@ -68,6 +68,33 @@ def frame_offsets(blocks: list[Block]) -> dict[int, int] | None:
     return at
 
 
+# Bytes que toca cada acceso a memoria.
+WIDTH = {"LOAD": 4, "STORE": 4, "LOADH": 2, "LOADUH": 2, "STOREH": 2, "LOADB": 1, "LOADUB": 1, "STOREB": 1}
+
+
+def stack_positions(blocks: list[Block]) -> dict[int, int] | None:
+    """Donde cae cada `LOAD`/`STORE` con base R30, respecto al origen de la pila (`id(linea) -> posicion`), aunque
+    R30 se mueva entre medias (marcos de funciones expandidas en un kernel). None si R30 no se sabe o si la
+    direccion de un hueco pasa a otro registro: entonces un acceso por un puntero podria tocar la pila."""
+    at = frame_offsets(blocks)
+    if at is None:
+        return None
+    positions: dict[int, int] = {}
+    for block in blocks:
+        for line in block.lines:
+            if line.kind != "instr" or line.op in ("EXIT", "HALT", "TRAP", "JR"):
+                continue
+            defs, uses = defs_uses(line)
+            if STACK in defs or STACK not in uses:
+                continue                                 # preparacion y ajustes del marco, u otra cosa
+            offset = number(line.args[2]) if len(line.args) == 3 else None
+            if (line.op not in LOADS | STORES or reg_of(line.args[1]) != STACK
+                    or reg_of(line.args[0]) == STACK or offset is None):
+                return None
+            positions[id(line)] = at[id(line)] + offset
+    return positions
+
+
 def slot_accesses(blocks: list[Block], at: dict[int, int]) -> dict[int, list[tuple[Block, Line]]] | None:
     """Accesos a cada hueco (por su posicion respecto al origen). None si algo toca la pila de otra forma."""
     slots: dict[int, list[tuple[Block, Line]]] = {}
