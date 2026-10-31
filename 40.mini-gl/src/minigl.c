@@ -2,22 +2,21 @@
 #include "raster.h"
 #include <string.h>
 
-/* Evita depender de stdint.h (C99). */
-typedef char check_u32[(sizeof(mgl_u32) == 4) ? 1 : -1];
-typedef char check_u16[(sizeof(mgl_color_t) == 2) ? 1 : -1];
+#include "mgl_bytes.h"
+#include "mgl_internal.h"
 
-#define OP_CLEAR 1U
-#define OP_BATCH 2U
+#define OP_CLEAR MGL_CMD_CLEAR
+#define OP_BATCH MGL_CMD_BATCH
 
-#define PR_POINT 1U
-#define PR_LINE 2U
-#define PR_RECT 3U
-#define PR_CIRCLE 4U
-#define PR_TRIANGLE 5U
-#define PR_IMAGE 6U
+#define PR_POINT MGL_PRIM_POINT
+#define PR_LINE MGL_PRIM_LINE
+#define PR_RECT MGL_PRIM_RECT
+#define PR_CIRCLE MGL_PRIM_CIRCLE
+#define PR_TRIANGLE MGL_PRIM_TRIANGLE
+#define PR_IMAGE MGL_PRIM_IMAGE
 
-#define FLAG_FILL 1U
-#define FLAG_STROKE 2U
+#define FLAG_FILL MGL_BATCH_FILL
+#define FLAG_STROKE MGL_BATCH_STROKE
 
 static mgl_cmd_buffer_t *current;
 static mgl_color_t fill_color = 0xffff, stroke_color = 0xffff;
@@ -28,61 +27,6 @@ static unsigned int flags = FLAG_FILL, weight = 1;
 static mgl_color_t *target;
 static int target_w, target_h, target_stride;
 static const mgl_color_t *previous;
-
-/* El formato es little-endian. En el host se lee y escribe byte a byte, que vale
-   en cualquier máquina y con cualquier alineación. En MiniGPU, que es
-   little-endian, con accesos de 16 y 32 bits: los campos están alineados (la
-   memoria del buffer también, lo pide mgl_cmd_init) y lcc no aplica strict
-   aliasing ni expande funciones en línea, por eso son macros. */
-#ifdef __MINIGPU__
-#define WR16(p, v) (*(unsigned short *)(p) = (unsigned short)(v))
-#define WR32(p, v) (*(mgl_u32 *)(p) = (mgl_u32)(v))
-#define RD16(p) ((unsigned int)*(const unsigned short *)(p))
-#define RD32(p) (*(const mgl_u32 *)(p))
-#define LOW(p) ((int)((p) << 16) >> 16) /* lcc desplaza un int con signo */
-#define HIGH(p) ((int)(p) >> 16)
-#else
-static void wr16(unsigned char *p, unsigned int v) {
-    p[0] = (unsigned char)v;
-    p[1] = (unsigned char)(v >> 8);
-}
-
-static void wr32(unsigned char *p, mgl_u32 v) {
-    p[0] = (unsigned char)v;
-    p[1] = (unsigned char)(v >> 8);
-    p[2] = (unsigned char)(v >> 16);
-    p[3] = (unsigned char)(v >> 24);
-}
-
-static unsigned int rd16(const unsigned char *p) {
-    return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
-}
-
-static mgl_u32 rd32(const unsigned char *p) {
-    return (mgl_u32)p[0] | ((mgl_u32)p[1] << 8) | ((mgl_u32)p[2] << 16) | ((mgl_u32)p[3] << 24);
-}
-
-static int low(mgl_u32 p) {
-    unsigned int v = (unsigned int)(p & 65535U);
-    return v >= 32768U ? (int)v - 65536 : (int)v;
-}
-
-static int high(mgl_u32 p) {
-    return low(p >> 16);
-}
-
-#define WR16 wr16
-#define WR32 wr32
-#define RD16 rd16
-#define RD32 rd32
-#define LOW low
-#define HIGH high
-#endif
-
-
-/* Macros y no funciones: se usan por cada coordenada y lcc no expande en línea. */
-#define PACK(a, b) ((mgl_u32)((unsigned int)(a) & 65535U) | ((mgl_u32)((unsigned int)(b) & 65535U) << 16))
-#define FIT(v) ((v) >= -32768 && (v) <= 32767)
 
 static void header(mgl_cmd_buffer_t *b) {
     WR32(b->bytes, MGL_BUFFER_MAGIC);
@@ -113,6 +57,28 @@ int mgl_cmd_reset(mgl_cmd_buffer_t *b) {
 
 int mgl_cmd_status(const mgl_cmd_buffer_t *b) {
     return b ? b->error : MGL_ERR_ARGUMENT;
+}
+
+/* Para mgl_3d.c (mgl_internal.h). */
+mgl_u32 mgl_clear_flags_, mgl_clear_depth_;
+
+mgl_cmd_buffer_t *mgl_deferred_(void) {
+    return current;
+}
+
+unsigned char *mgl_reserve3d_(mgl_u32 bytes) {
+    unsigned char *p;
+    mgl_cmd_buffer_t *b = current;
+    if (!b || b->error) return 0;
+    if (b->capacity - b->used < bytes) {
+        b->error = MGL_ERR_SPACE;
+        return 0;
+    }
+    p = b->bytes + b->used;
+    b->used += bytes;
+    WR32(b->bytes + 4, MGL_BUFFER_VERSION_3D);
+    WR32(b->bytes + 8, b->used);
+    return p;
 }
 
 void mgl_set_deferred(mgl_cmd_buffer_t *b) {
@@ -175,10 +141,10 @@ static void emit_clear(mgl_color_t color) {
         return;
     }
     p = b->bytes + b->used;
-    WR32(p, OP_CLEAR);
+    WR32(p, OP_CLEAR | mgl_clear_flags_ << 16); /* flags: solo en un frame 3D con profundidad */
     WR32(p + 4, 16);
     WR32(p + 8, color);
-    WR32(p + 12, 0);
+    WR32(p + 12, mgl_clear_depth_);
     b->used += 16;
     WR32(b->bytes + 8, b->used); /* de la cabecera solo cambia used */
 }
@@ -221,6 +187,11 @@ void mgl_fill(mgl_color_t c) {
     fill_color = c;
     flags |= FLAG_FILL;
     if (!current) sw_fill(c);
+}
+
+int mgl_get_fill(mgl_color_t *c) {
+    if (c) *c = fill_color;
+    return (flags & FLAG_FILL) != 0;
 }
 
 void mgl_no_fill(void) {

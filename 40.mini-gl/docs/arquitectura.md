@@ -3,6 +3,9 @@
 ## Objetivo
 API Processing sencilla y desacoplada del hardware, implementada sobre MiniGL. MiniGL dispone de un backend CPU directo (V0), otro CPU diferido (V1) y un prototipo GPU SIMT (V2). Todos escriben en un framebuffer RGB565 (16 bits/píxel). Se persigue comparar alternativas con el mismo programa y, cuando procede, el mismo command buffer.
 
+El 3D (MiniGL 3D, command buffer versión 2 y renderer de referencia) está en
+[3d-arquitectura.md](3d-arquitectura.md).
+
 ## Capas
 
 ```text

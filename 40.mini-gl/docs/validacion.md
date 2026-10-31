@@ -32,3 +32,16 @@ V0 y V1 salen redondeados a miles: el simulador para por lotes. En instrucciones
 la CPU de V0; en tiempo es más lenta porque va a menos de un tercio de la frecuencia y hoy usa un solo warp.
 
 No se ha validado nada en la FPGA.
+
+## 3D
+
+`make test3d` (host, `-std=c89 -pedantic -Wall -Wextra`, sin avisos): `test_commands`, `test_matrices`,
+`test_clipping`, `test_raster`, `test_resources` y `test_cube` dan PASS, y `mgl-replay` reproduce la captura
+del frame 40 del cubo con el mismo PPM que el sketch. Qué comprueba cada una: [3d-arquitectura.md](3d-arquitectura.md#validación).
+
+`make check-minigpu3d FRAMES=3`: `rotating_cube` y `boxes` dan los 76 800 píxeles idénticos en el simulador de
+MiniGPU (el renderer en su CPU, compilado con `build-c`) y en el host; `rotating_cube` también en el frame 60.
+Tras los arreglos de toolchain que hizo falta (mini-lcc, mini-opt, build-c), `make check-minigpu V=0|1|2
+FRAMES=3` sigue dando los cinco sketches 2D idénticos, y `u.lcc/run-mini-tst.py --simulate` pasa los 168 tests.
+
+No se ha probado el 3D en la FPGA.

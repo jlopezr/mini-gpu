@@ -1,9 +1,9 @@
 #ifndef MINIGL_H
 #define MINIGL_H
 
-/* C89; RGB565; el host debe tener unsigned short=16 y unsigned int=32 bits. */
-typedef unsigned short mgl_color_t;
-typedef unsigned int mgl_u32;
+/* C89; RGB565. Tipos de tamaño fijo en mgl_types.h; el formato binario, en mgl_commands.h. */
+#include "mgl_types.h"
+#include "mgl_commands.h"
 
 typedef struct {
     const mgl_color_t *pixels;
@@ -19,13 +19,14 @@ typedef struct { mgl_u32 opcode, size_bytes, arg0, arg1; } mgl_command_t;
 
 typedef struct { mgl_u32 type, p0, p1, p2; } mgl_primitive_t;
 
-#define MGL_BUFFER_MAGIC 0x4D474C30U
-#define MGL_BUFFER_VERSION 1U
-
 #define MGL_OK 0
 #define MGL_ERR_SPACE (-1)
 #define MGL_ERR_ARGUMENT (-2)
 #define MGL_ERR_SPRITES (-3)
+#define MGL_ERR_UNSUPPORTED (-4) /* formato reservado o sin implementar */
+#define MGL_ERR_HANDLE (-5)      /* handle de recurso que no existe */
+#define MGL_ERR_MEMORY (-6)      /* dirección fuera de la RAM compartida o sin espacio */
+#define MGL_ERR_STATE (-7)       /* fuera de un frame, sin destino, en modo directo... */
 
 /* El command buffer contiene solo bytes; el registro de sprites pertenece al
    contexto y resuelve handles para el renderer CPU. */
@@ -55,9 +56,13 @@ int mgl_cmd_status(const mgl_cmd_buffer_t *buffer);
    el lienzo pendiente de mgl_set_target, salvo que buffer tenga un CLEAR. */
 void mgl_cmd_ready(const mgl_cmd_buffer_t *buffer);
 
+/* Borra el destino. Dentro de un frame 3D con profundidad (minigl3d.h) borra
+   también la profundidad, a lejos: así background() vale en 2D y en 3D. */
 void mgl_clear(mgl_color_t color);
 void mgl_fill(mgl_color_t color);
 void mgl_no_fill(void);
+/* 1 si hay relleno, y su color en *color. */
+int mgl_get_fill(mgl_color_t *color);
 void mgl_stroke(mgl_color_t color);
 void mgl_no_stroke(void);
 void mgl_stroke_weight(int width);

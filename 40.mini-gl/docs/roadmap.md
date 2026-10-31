@@ -8,6 +8,7 @@
 | V3 | CPU convierte geometría a triángulos; GPU rasteriza triángulos | Diseño, pendiente |
 | V4 | Shaders GPU especializados por primitiva | Diseño, pendiente |
 | V5 | Renderer GPU por tiles, explota localidad de memoria | Diseño, pendiente |
+| 3D | MiniGL 3D: command buffer versión 2 (matrices, mallas por dirección) y renderer software de referencia | Implementado; host y CPU de MiniGPU dan los mismos píxeles ([3d-arquitectura.md](3d-arquitectura.md)). Renderer SIMT pendiente |
 
 Cada versión añade una sola idea. Las entregas de `archive/` usan la numeración antigua: `minigl_v0_direct` = V0, `minigl_v0_deferred` = V1, `minigl_v1_gpu` = V2 (y las fases antiguas V2–V4 son las actuales V3–V5).
 

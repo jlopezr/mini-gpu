@@ -13,6 +13,7 @@
    para compararlos con tools/compare-frames.py. */
 
 #include "platform.h"
+#include "ppm.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,43 +31,6 @@ static int run(int v, int frames) {
         if (platform_end(v) != MGL_OK) return -1;
     }
     return MGL_OK;
-}
-
-static int write_ppm(const char *path) {
-    FILE *f = fopen(path, "wb");
-    long i, n = (long)width * height;
-    if (!f) {
-        perror(path);
-        return -1;
-    }
-    fprintf(f, "P6\n%d %d\n255\n", width, height);
-    for (i = 0; i < n; i++) {
-        unsigned int c = platform_frame[i], r = (c >> 11) & 31U, g = (c >> 5) & 63U, b = c & 31U;
-        putc((int)((r << 3) | (r >> 2)), f);
-        putc((int)((g << 2) | (g >> 4)), f);
-        putc((int)((b << 3) | (b >> 2)), f);
-    }
-    return fclose(f) == 0 ? 0 : -1;
-}
-
-/* RGB565 crudo, little-endian, como `sim-sys --frame-output`. */
-static int write_rgb565(const char *path) {
-    FILE *f = fopen(path, "wb");
-    long i, n = (long)width * height;
-    if (!f) {
-        perror(path);
-        return -1;
-    }
-    for (i = 0; i < n; i++) {
-        putc((int)(platform_frame[i] & 0xffU), f);
-        putc((int)(platform_frame[i] >> 8), f);
-    }
-    return fclose(f) == 0 ? 0 : -1;
-}
-
-static int is_bin(const char *path) {
-    size_t n = strlen(path);
-    return n > 4 && !strcmp(path + n - 4, ".bin");
 }
 
 static const char *base_name(const char *path) {
@@ -111,7 +75,7 @@ int main(int argc, char **argv) {
         else
             sprintf(path, "%.200s-v%d.ppm", base_name(argv[0]), v);
         path[sizeof path - 1] = 0;
-        if (is_bin(path) ? write_rgb565(path) : write_ppm(path)) return 1;
+        if ((ppm_is_raw(path) ? ppm_write_raw : ppm_write)(path, platform_frame, width, height, width)) return 1;
         printf("V%d %dx%d -> %s", v, width, height, path);
         if (v > 0) printf(" (%u bytes de comandos)", platform_command_bytes());
         putchar('\n');

@@ -21,6 +21,22 @@ Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 | [`trail.c`](trail.c) | Estela: `draw()` no borra y dibuja encima de los frames anteriores |
 | [`paint.c`](paint.c) | Pintar con el ratón; colores, grosor y borrar con el teclado |
 
+Sketches 3D (incluyen `processing3d.h`, `size(320, 240, P3D)`), con su propia plataforma: el host
+([platform3d_host.c](../src/platform3d_host.c)) graba cada frame con MiniGL 3D y lo ejecuta con el renderer
+de referencia sobre RAM emulada; en MiniGPU ([platform3d_minigpu.c](../src/platform3d_minigpu.c)) el mismo
+renderer corre en la CPU. No tienen versiones ni ventana SDL.
+
+| Ejemplo | Qué muestra |
+|---|---|
+| [`rotating_cube.c`](rotating_cube.c) | Cubo giratorio con perspectiva y Z-buffer; sin luces, una silueta de un color, como en Processing |
+| [`boxes.c`](boxes.c) | Dos cubos de colores que se cortan (lo dibuja el Z-buffer) y una barra 2D encima |
+
+```sh
+make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15
+./build/boxes -f 90 -e 30 -o boxes.ppm     # a mano: frames, cada cuántos guardar, salida
+make check-minigpu-rotating_cube FRAMES=60 # el frame 60 en el simulador de MiniGPU, frente al host
+```
+
 ## Host: imágenes PPM
 
 ```sh
