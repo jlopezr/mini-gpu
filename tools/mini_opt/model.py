@@ -11,7 +11,9 @@ LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 # bloque, no comienzos de funcion: separarlas rompe el CFG y permite que DCE
 # borre los valores que llegan a esos bloques. Las `__inl$...` del pase `marks`
 # tampoco: marcan codigo expandido dentro de una funcion (al releer un `.opt.s`).
-COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@|^__inl\$|^__ssy_")
+# build-c da a las `__sf.n` el sufijo de su unidad (`__sf.n.<unidad>`, ver `scope_statics`): siguen siendo
+# de bloque.
+COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$|^__sf\.\d+(?:\.\w+)?$|^@|^__inl\$|^__ssy_")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 

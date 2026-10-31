@@ -110,6 +110,46 @@ def scope_statics(plain: Path) -> None:
     plain.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
+def share_runtime(plains: list[Path]) -> None:
+    """Una sola copia del runtime del compilador entre todas las unidades.
+
+    mini-lcc pega al final de cada `.s` las rutinas de runtime que usa (soft-float, 64 bits...) con `.globl`:
+    con dos unidades que usan `float`, `__mulsf3` quedaria definido dos veces. Se queda la primera definicion;
+    en las demas unidades la etiqueta pasa a `<nombre>.dup.<unidad>`, sin `.globl`, y las llamadas de esa
+    unidad van a la primera. La copia ya no la nombra nadie y `mini-opt --whole-program` la borra. Solo los
+    nombres que empiezan por `__`, reservados a la implementacion en C: dos unidades con la misma funcion de
+    usuario siguen siendo un error del ensamblador."""
+    seen: set[str] = set()
+    for plain in plains:
+        lines = plain.read_text(encoding="utf-8").splitlines()
+        exported = set()
+        for line in lines:
+            words = line.split(";", 1)[0].split()
+            if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+                exported.update(name.strip() for name in " ".join(words[1:]).split(","))
+        runtime = {name for name in exported if name.startswith("__")}
+        repeated = runtime & seen
+        seen |= runtime
+        if not repeated:
+            continue
+        tag = re.sub(r"[^A-Za-z0-9_]", "_", plain.stem)
+        out = []
+        for line in lines:
+            code = line.split(";", 1)[0]
+            words = code.split()
+            if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+                names = [name.strip() for name in " ".join(words[1:]).split(",")]
+                kept = [name for name in names if name not in repeated]
+                if kept:
+                    out.append(f"{words[0]} {', '.join(kept)}")
+                continue
+            label = LABEL_RE.match(code)
+            if label and label.group(1) in repeated:
+                line = line.replace(f"{label.group(1)}:", f"{label.group(1)}.dup.{tag}:", 1)
+            out.append(line)
+        plain.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def optimize_s(plain: Path, foreign: list[Path]) -> Path:
     """.s -> .s con los pases de mini-opt. `foreign`: lo que se ensambla aparte y puede nombrar sus simbolos (el
     arranque, el runtime, la otra unidad): un simbolo que nombran no se da por privado de esta."""
@@ -150,6 +190,7 @@ def build(program: Path, output: Path | None = None, board: bool = False,
     if len(set(stems)) != len(stems):     # cada unidad deja <stem>.s en outdir: no pueden repetirse
         raise BuildError(f"dos unidades con el mismo nombre: {', '.join(map(str, units))}")
     plains = [lower_c(unit, outdir, includes, defines) for unit in units]
+    share_runtime(plains)
     fixed = [CRT0, runtime, bench]
     parts = [optimize_s(plain, fixed + [other for other in plains if other != plain]) for plain in plains]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
