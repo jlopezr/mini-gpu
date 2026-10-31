@@ -1065,7 +1065,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
   `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
-  `deadfuncs`, `invert`, `ssy`, `marks`) y,
+  `deadfuncs`, `invert`, `ssy`, `lanestack`, `marks`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1109,7 +1109,14 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   además el `SSY` que cae siempre después de otro con el mismo destino. Si se entra en un bucle divergente
   desde un salto condicional (`if (...) ... else for (...)`), el `SSY` no puede ir delante del salto, porque
   abriría la región también en el camino que no entra: va en un trampolín (`SSY join; BRA cabecera`) al final
-  de la función, al que se redirige el salto.
+  de la función, al que se redirige el salto. Al final comprueba que ningún `SSY` puede abrir su región con
+  la pila de regiones llena (8 niveles en la 36, la 37 y los simuladores): una cota de las regiones que lo
+  contienen. Pasarse es un error al compilar, con la función expandida de la que viene el salto.
+
+- **Pase `lanestack`** (kernels, al final): error si los marcos de las funciones expandidas por `kernelcalls`
+  hacen bajar R30 más de lo que tiene la pila de la lane (512 bytes menos los 16 del hueco de R1..R4), o si un
+  acceso a la pila cae fuera de ella. Sin la comprobación, una lane escribiría en la pila de la siguiente sin
+  aviso. Si R30 no se puede seguir, no comprueba nada (`lanestack.unknown` en `--stats`).
 
 - **Pase `marks`** (el último): `inline` y `kernelcalls` apuntan en cada línea que copian de qué funciones viene
   (`Line.origin`), y este pase pone una etiqueta `__inl$<unidad>$<función>$<n>$<f1>$<f2>...` donde cambia (sin

@@ -19,7 +19,12 @@ guarda en ella los que derrama, y sin esto cada `if` sobre ellos abriria una reg
 Con `SSY_ALL` se trata todo salto condicional como divergente.
 
 Un `SSY` que cae siempre despues de otro con el mismo destino sobra: la region ya esta
-abierta, y dentro de ella pueden divergir varios saltos (un `if / else if`)."""
+abierta, y dentro de ella pueden divergir varios saltos (un `if / else if`).
+
+La GPU guarda las regiones abiertas en una pila de `MAX_REGIONS` niveles; con una mas, para con
+ERROR_SIMT. Al final se comprueba que ningun `SSY` puede abrir su region con la pila llena: su
+profundidad es 1 mas las regiones de los otros `SSY` que lo contienen (lo que se alcanza desde
+cada uno antes de su destino). Es una cota por arriba, y pasarse es un error al compilar."""
 from __future__ import annotations
 
 import itertools
@@ -42,6 +47,9 @@ from .kernels import KERNEL_PREFIX
 from .stackslots import WIDTH, stack_positions
 
 SSY_ALL = False
+
+# La pila de regiones SIMT: SIMT_REGION_DEPTH de gpu_sm.v (36, 37) y MAX_SIMT_REGIONS de los simuladores 11 y 25.
+MAX_REGIONS = 8
 
 VARYING_SOURCES = {"GETTID", "GETLANE"}
 
@@ -306,6 +314,38 @@ def apply_edits(function: Function, blocks: list[Block], edits: list[Edit], stat
         stats["ssy"] = stats.get("ssy", 0) + 1
 
 
+def deepest_region(function: Function) -> tuple[int, Line | None]:
+    """(profundidad, SSY) del `SSY` que abre su region con mas regiones abiertas por debajo, como mucho."""
+    blocks = build_cfg(function)
+    block_of = {line.name: block.index for block in blocks for line in block.lines if line.kind == "label"}
+    forward = [list(block.succ) for block in blocks]
+    ssys = [(block.index, i, line) for block in blocks for i, line in enumerate(block.lines)
+            if line.kind == "instr" and line.op == "SSY"]
+    regions = []
+    for b, i, line in ssys:
+        join = block_of.get(line.args[0]) if line.args else None
+        regions.append((b, i, reach(set(blocks[b].succ), {join} if join is not None else set(), forward)))
+    deepest: tuple[int, Line | None] = (0, None)
+    for k, (b, i, line) in enumerate(ssys):
+        depth = 1 + sum(1 for m, (rb, ri, inside) in enumerate(regions)
+                        if m != k and (b in inside or (b == rb and i > ri)))
+        if depth > deepest[0]:
+            deepest = (depth, line)
+    return deepest
+
+
+def check_depth(function: Function, where: str) -> None:
+    depth, ssy = deepest_region(function)
+    if depth <= MAX_REGIONS or ssy is None:
+        return
+    body = function.body
+    after = next((line for line in body[body.index(ssy) + 1:] if line.kind == "instr"), None)
+    origin = " > ".join(after.origin) if after is not None and after.origin else function.name
+    raise OptError(f"{where}: hasta {depth} regiones SIMT anidadas y la GPU tiene {MAX_REGIONS} "
+                   f"(el salto divergente de {origin}): hay demasiados saltos o bucles que dependen de la lane "
+                   "uno dentro de otro")
+
+
 @register_pass("ssy", "SSY delante de los saltos que pueden divergir (en bucles, antes del bucle)")
 def pass_ssy(unit: Unit, stats: dict) -> None:
     for function in unit.functions():
@@ -324,3 +364,4 @@ def pass_ssy(unit: Unit, stats: dict) -> None:
         blocks.extend(trampolines)
         apply_edits(function, blocks, merge_redundant(edits, blocks, stats), stats)
         function.body = [line for block in blocks for line in block.lines]
+        check_depth(function, where)

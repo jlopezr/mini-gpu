@@ -346,7 +346,7 @@ liveness, dominadores/postdominadores y bucles. Sus pases por defecto, en orden,
 son: `intrinsics`, `kernelcalls`, `kernels`, `stackslots`, `jumps`, `boolean`, `forward`, `deadstores`, `constprop`, `dce`,
 `copyprop`, `dce`, `branches`, `unreachable`, `argblock`, `dce`, `strength`, `dce`, `licm`, `dce`, `strength`, `dce`, `noalias`, `sharebase`,
 `deadsaves`, `inline`, `stackslots`, `leafregs`, `copyprop`, `dce`, `jumps`, `unreachable`, `deadsaves`, `tailcalls`, `unreachable`,
-`deadfuncs`, `invert`, `ssy`, `marks`.
+`deadfuncs`, `invert`, `ssy`, `lanestack`, `marks`.
 Esto cambia la conclusión del planteamiento inicial: no hay que decidir si
 crear desde cero un optimizador externo, sino si ampliar/integrar el existente.
 

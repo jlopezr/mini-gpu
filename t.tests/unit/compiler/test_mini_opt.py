@@ -546,6 +546,17 @@ EXIT
         self.assertEqual(sum(l.startswith("SSY") for l in body), 1)
         assemble_bytes("\n".join(body) + "\n")
 
+    def test_more_nested_regions_than_the_gpu_has_is_an_error(self):
+        def nested(n: int) -> str:
+            ifs = "".join(f"MOVI R6, {k}\nBLT R5, R6, L.{k}\n" for k in range(1, n + 1))
+            ends = "".join(f"L.{k}:\nADDI R7, R7, 1\n" for k in range(n, 0, -1))
+            return f".text\n.globl __kernel_k\n__kernel_k:\nGETLANE R5\n{ifs}STORE R5, R5, 0\n{ends}EXIT\n"
+        from tools.mini_opt.passes.ssy import MAX_REGIONS
+        body = ssy_body(nested(MAX_REGIONS))
+        self.assertEqual(sum(l.startswith("SSY") for l in body), MAX_REGIONS)
+        with self.assertRaisesRegex(OptError, f"hasta {MAX_REGIONS + 1} regiones SIMT anidadas"):
+            ssy_body(nested(MAX_REGIONS + 1))
+
     def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
         from tools.mini_opt.passes import ssy as opt
         source = LOOP.replace("GETTID R5", "MOVI R5, 0")
@@ -3141,6 +3152,32 @@ JR R31
         unit = parse_unit(self.HELPERS, "k.s")
         PASSES["kernelcalls"][0](unit, {})
         self.assertIn("JAL R31, leaf", [line.render() for line in unit.lines()])
+
+
+class LaneStackTest(unittest.TestCase):
+    """`lanestack`: un kernel no puede salirse de los 512 bytes de pila de su lane."""
+
+    def run_pass(self, body: str) -> dict:
+        source = (".text\n.globl __kernel_k\n__kernel_k:\nGETTID R5\nMOVI R6, 512\nMUL R5, R5, R6\n"
+                  f"LI R30, __gpu_stack+496\nADD R30, R30, R5\n{body}\nEXIT\n")
+        stats = {}
+        PASSES["lanestack"][0](parse_unit(source, "k.s"), stats)
+        return stats
+
+    def test_frames_that_fit_pass(self):
+        self.run_pass("ADDI R30, R30, -480\nSTORE R1, R30, 0\nSTORE R2, R30, 480+12\nADDI R30, R30, 480")
+
+    def test_a_frame_deeper_than_the_lane_stack_is_an_error(self):
+        with self.assertRaisesRegex(OptError, "los marcos llegan a 600 bytes de pila y cada lane tiene 496"):
+            self.run_pass("ADDI R30, R30, -200\nADDI R30, R30, -400\nSTORE R1, R30, 0\nADDI R30, R30, 600")
+
+    def test_an_access_above_the_home_area_is_an_error(self):
+        with self.assertRaisesRegex(OptError, "STORE R1, R30, 16 cae fuera de la pila de la lane"):
+            self.run_pass("STORE R1, R30, 16")
+
+    def test_unknown_stack_is_counted_not_checked(self):
+        stats = self.run_pass("BEQ R1, R0, L.1\nADDI R30, R30, -8\nL.1:\nSTORE R1, R30, 0")
+        self.assertEqual(stats["lanestack.unknown"], 1)
 
 
 class MarksTest(unittest.TestCase):
