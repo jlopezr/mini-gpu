@@ -24,7 +24,8 @@ Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 Sketches 3D (incluyen `processing3d.h`, `size(320, 240, P3D)`), con su propia plataforma: el host
 ([platform3d_host.c](../src/platform3d_host.c)) graba cada frame con MiniGL 3D y lo ejecuta con el renderer
 de referencia sobre RAM emulada; en MiniGPU ([platform3d_minigpu.c](../src/platform3d_minigpu.c)) el mismo
-renderer corre en la CPU. No tienen versiones ni ventana SDL.
+renderer corre en la CPU. En una ventana, [platform3d_sdl.c](../src/platform3d_sdl.c): `make sdl-rotating_cube`
+(SDL solo muestra el framebuffer; rasteriza el renderer). No tienen versiones.
 
 | Ejemplo | Qué muestra |
 |---|---|
@@ -35,6 +36,7 @@ renderer corre en la CPU. No tienen versiones ni ventana SDL.
 make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15
 ./build/boxes -f 90 -e 30 -o boxes.ppm     # a mano: frames, cada cuántos guardar, salida
 make check-minigpu-rotating_cube FRAMES=60 # el frame 60 en el simulador de MiniGPU, frente al host
+make sdl-rotating_cube                     # en una ventana SDL a 60 fps (SCALE=4: otra escala; Esc cierra)
 ```
 
 ## Host: imágenes PPM

@@ -49,6 +49,7 @@ FRAMES_EVERY ?= 15
 SKETCHES = shapes pattern bounce trail paint
 EXAMPLES = $(SKETCHES:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
+SDL_EXAMPLES3D = $(SKETCHES3D:%=build/%-sdl)
 TESTS = build/test_cpu build/test_gpu build/test_fuzz_v2
 # Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2). En MiniGPU se elige
 # al compilar (0, 1 o 2; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
@@ -59,7 +60,7 @@ MINIGPU_EXAMPLES = $(SKETCHES:%=$(MG)/%.bin)
 
 .PHONY: all run test test3d sdl minigpu minigpu3d check-minigpu check-minigpu3d clean
 all: $(EXAMPLES) $(TESTS) $(EXAMPLES3D) $(TESTS3D) build/mgl-replay compile_commands.json
-sdl: $(SDL_EXAMPLES)
+sdl: $(SDL_EXAMPLES) $(SDL_EXAMPLES3D)
 minigpu: $(MINIGPU_EXAMPLES)
 
 # Para IntelliSense de VS Code (C_Cpp.default.compileCommands en
@@ -68,7 +69,7 @@ SRCS = $(wildcard src/*.c renderer/*.c examples/*.c tests/*.c)
 compile_commands.json: Makefile $(SRCS)
 	@echo '[' > $@; first=1; for f in $(SRCS); do \
 	    [ $$first = 1 ] || echo ',' >> $@; first=0; \
-	    extra=; [ $$f = src/platform_sdl.c ] && extra="$(SDL_CFLAGS)"; \
+	    extra=; case $$f in src/platform_sdl.c|src/platform3d_sdl.c) extra="$(SDL_CFLAGS)";; esac; \
 	    case $$f in src/platform_minigpu.c|src/platform3d_minigpu.c) extra="-I$(REPO)/t.tests/inc";; esac; \
 	    printf '  {"directory": "%s", "file": "%s", "command": "%s %s %s %s -c %s"}' \
 	        "$(CURDIR)" "$$f" "$(CC)" "$(CPPFLAGS)" "$$extra" "$(CFLAGS)" "$$f" >> $@; \
@@ -93,9 +94,11 @@ $(TESTS3D): build/%: build/%.o build/fixture3d.o $(LIB3D)
 # Reproduce una captura (-c de un sketch 3D) solo con el renderer: no enlaza MiniGL.
 build/mgl-replay: build/replay_host.o $(RENDERER) build/mgl_capture.o build/ppm.o
 	$(CC) $(CFLAGS) -o $@ $(sort $^)
-build/platform_sdl.o: CPPFLAGS += $(SDL_CFLAGS)
+build/platform_sdl.o build/platform3d_sdl.o: CPPFLAGS += $(SDL_CFLAGS)
 $(SDL_EXAMPLES): build/%-sdl: build/%.o build/platform_sdl.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ $^ $(SDL_LIBS)
+$(SDL_EXAMPLES3D): build/%-sdl: build/%.o build/platform3d_sdl.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $(sort $^) $(SDL_LIBS)
 $(TESTS): build/%: build/%.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ $^
 
@@ -110,6 +113,9 @@ $(SKETCHES3D:%=run-%): run-%: build/%
 # Ventana SDL: make sdl-bounce, make sdl-shapes V=2 (F1/F2/F3 cambian de versión).
 sdl-%: build/%-sdl
 	./$< $(if $(filter all,$(V)),,-v $(V))
+# Los 3D no tienen versiones: make sdl-rotating_cube (SCALE=4 para otra escala).
+$(SKETCHES3D:%=sdl-%): sdl-%: build/%-sdl
+	./$< $(if $(SCALE),-s $(SCALE))
 
 # MiniGPU: platform_minigpu.c va primero porque lleva main.
 $(MG)/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)

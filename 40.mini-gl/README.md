@@ -52,11 +52,12 @@ make run-boxes FRAMES3D=120 FRAMES_EVERY=30
 ./build/rotating_cube -f 40 -o cubo.ppm -c cubo.mglx   # el frame 40 y su captura
 ./build/mgl-replay cubo.mglx otra.ppm                  # la reproduce solo con el renderer
 make check-minigpu3d FRAMES=3        # el renderer en la CPU de MiniGPU (simulador) frente al host
+make sdl-rotating_cube               # en una ventana SDL, a 60 fps (Esc cierra)
 make sim-rotating_cube               # en la ventana del simulador (unos 0,8 s por frame a 4,5 MIPS)
 ```
 
-`make test` incluye `test3d`. Las plataformas 3D son `src/platform3d_host.c` (RAM emulada, PPM) y
-`src/platform3d_minigpu.c`; los sketches 3D incluyen `processing3d.h` y llaman a `size(w, h, P3D)`.
+`make test` incluye `test3d`. Las plataformas 3D son `src/platform3d_host.c` (RAM emulada, PPM), `src/platform3d_sdl.c` (la misma, en una
+ventana) y `src/platform3d_minigpu.c`; los sketches 3D incluyen `processing3d.h` y llaman a `size(w, h, P3D)`.
 
 En el host, `mgl_gpu_render` ejecuta las ocho lanes una tras otra en la CPU: es una emulación funcional, no SIMT. En MiniGPU lanza `KERNEL(mgl_render)` en un warp de la GPU.
 
