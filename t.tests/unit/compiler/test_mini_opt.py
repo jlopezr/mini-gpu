@@ -517,6 +517,35 @@ EXIT
 """
         self.assertEqual(sum(l.startswith("SSY") for l in ssy_body(source)), 1)
 
+    def test_a_loop_entered_by_a_conditional_branch_gets_a_trampoline(self):
+        # Como `if (x1 - x0 == 1) ... else for (...)` en box: el BNE salta a la cabecera de un bucle divergente. El
+        # SSY no puede ir delante del BNE (abriria la region tambien en el camino que no entra): va en un bloque
+        # nuevo al final, al que salta el BNE, y que sigue a la cabecera.
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETLANE R5
+MOVI R7, 3
+BNE R7, R0, L.2
+STORE R0, R5, 0
+EXIT
+L.1:
+ADDI R5, R5, 1
+L.2:
+BLT R5, R7, L.1
+STORE R5, R5, 0
+EXIT
+"""
+        body = ssy_body(source)
+        self.assertIn("BNE R7, R0, __ssy___kernel_k_pre1", body)
+        start = body.index("__ssy___kernel_k_pre1:")
+        self.assertTrue(body[start + 1].startswith("SSY "))
+        self.assertEqual(body[start + 2], "BRA L.2")
+        self.assertEqual(body[start - 1], "EXIT")                             # detras del ultimo salto
+        self.assertEqual(sum(l.startswith("SSY") for l in body), 1)
+        assemble_bytes("\n".join(body) + "\n")
+
     def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
         from tools.mini_opt.passes import ssy as opt
         source = LOOP.replace("GETTID R5", "MOVI R5, 0")

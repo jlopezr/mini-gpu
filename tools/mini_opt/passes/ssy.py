@@ -174,16 +174,22 @@ def common_postdominator(targets: list[int], pdom: list[set[int]], where: str) -
     return max(common, key=lambda p: len(pdom[p]))
 
 
-def loop_edits(blocks: list[Block], div: set[int], pdom: list[set[int]], where: str) -> tuple[list[Edit], set[int]]:
-    """Un SSY en el preheader de cada bucle cuyas salidas divergen. Devuelve (edits, saltos cubiertos)."""
+def loop_edits(blocks: list[Block], div: set[int], pdom: list[set[int]], where: str,
+               name: str = "") -> tuple[list[Edit], set[int], list[Block]]:
+    """Un SSY en el preheader de cada bucle cuyas salidas divergen. Devuelve (edits, saltos cubiertos, bloques
+    nuevos). Si se entra al bucle desde un salto condicional, el SSY no puede ir delante del salto (abriria la
+    region tambien por el otro camino): va en un trampolin nuevo, `pre: SSY join; BRA cabecera`, al que se
+    redirige el salto. Los trampolines se anaden al final de la funcion (detras de su ultimo salto)."""
     preds = predecessors(blocks)
+    succ = [list(block.succ) for block in blocks]       # los de antes de los trampolines (pdom es de estos)
     edits: list[Edit] = []
     handled: set[int] = set()
+    trampolines: list[Block] = []
     for header, body in sorted(natural_loops(blocks, dominators(blocks)).items()):
-        exits = [b for b in body if b in div and any(s not in body for s in blocks[b].succ)]
+        exits = [b for b in body if b in div and any(s not in body for s in succ[b])]
         if not exits:
             continue
-        targets = sorted({s for b in exits for s in blocks[b].succ if s not in body})
+        targets = sorted({s for b in exits for s in succ[b] if s not in body})
         join = targets[0] if len(targets) == 1 else common_postdominator(targets, pdom, where)
         handled |= {b for b in exits if immediate_postdominator(pdom, b) == join}
         if not any(b in handled for b in exits):
@@ -195,11 +201,31 @@ def loop_edits(blocks: list[Block], div: set[int], pdom: list[set[int]], where: 
             position = None
             if term is not None and term.op == "BRA":
                 position = max(i for i, l in enumerate(blocks[p].lines) if l is term)
-            elif term is not None and (term.op in BRANCHES or term.op in ("EXIT", "HALT", "JR")):
+            elif term is not None and term.op in BRANCHES:
+                labels = {l.name for l in blocks[header].lines if l.kind == "label"}
+                if term.args[-1] in labels:                     # entra saltando: trampolin
+                    if p + 1 == header:
+                        raise OptError(f"{where}: un salto condicional entra dos veces en un bucle con "
+                                       "divergencia; no se sabe donde abrir su region")
+                    last = blocks[-1].last_instr()
+                    if last is None or last.op not in ("BRA", "EXIT", "HALT", "JR"):
+                        raise OptError(f"{where}: la funcion no acaba en un salto; no hay sitio para el "
+                                       "trampolin de un bucle con divergencia")
+                    label = f"__ssy_{name}_pre{len(trampolines) + 1}"
+                    jump = Line("instr", "", op="BRA", args=[term.args[-1]])
+                    trampoline = Block(len(blocks) + len(trampolines), [Line("label", "", name=label), jump],
+                                       [header])
+                    term.args[-1] = label
+                    blocks[p].succ = [trampoline.index if s == header else s for s in blocks[p].succ]
+                    trampolines.append(trampoline)
+                    edits.append(Edit(trampoline, 1, join))
+                    continue
+                # cae en el bucle: el SSY va detras del salto, en el camino que entra
+            elif term is not None and term.op in ("EXIT", "HALT", "JR"):
                 raise OptError(f"{where}: la entrada a un bucle con divergencia sale de un salto "
                                "condicional; no se sabe donde abrir su region")
             edits.append(Edit(blocks[p], position, join))
-    return edits, handled
+    return edits, handled, trampolines
 
 
 def branch_edits(blocks: list[Block], branches: set[int], pdom: list[set[int]], where: str) -> list[Edit]:
@@ -293,7 +319,8 @@ def pass_ssy(unit: Unit, stats: dict) -> None:
         div = divergent_branches(blocks, pdom)
         if not div:
             continue
-        edits, handled = loop_edits(blocks, div, pdom, where)
+        edits, handled, trampolines = loop_edits(blocks, div, pdom, where, function.name)
         edits += branch_edits(blocks, div - handled, pdom, where)
+        blocks.extend(trampolines)
         apply_edits(function, blocks, merge_redundant(edits, blocks, stats), stats)
         function.body = [line for block in blocks for line in block.lines]

@@ -1106,7 +1106,10 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   varía solo si lo que se guardó variaba (si una dirección de la pila se escapa, varía todo lo que se
   lee de ella); así los parámetros por la pila de una función expandida por `kernelcalls` no abren
   regiones. `--ssy-all` los marca todos. Quita
-  además el `SSY` que cae siempre después de otro con el mismo destino.
+  además el `SSY` que cae siempre después de otro con el mismo destino. Si se entra en un bucle divergente
+  desde un salto condicional (`if (...) ... else for (...)`), el `SSY` no puede ir delante del salto, porque
+  abriría la región también en el camino que no entra: va en un trampolín (`SSY join; BRA cabecera`) al final
+  de la función, al que se redirige el salto.
 
 - **Pase `marks`** (el último): `inline` y `kernelcalls` apuntan en cada línea que copian de qué funciones viene
   (`Line.origin`), y este pase pone una etiqueta `__inl$<unidad>$<función>$<n>$<f1>$<f2>...` donde cambia (sin
