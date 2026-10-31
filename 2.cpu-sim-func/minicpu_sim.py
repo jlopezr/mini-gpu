@@ -39,11 +39,18 @@ import argparse
 import sys
 from pathlib import Path
 
+# Antes de los imports de abajo: `tools/` está en la raíz, `mini_asm` en `1.isa/`
+# y el núcleo aquí, y el fichero se lanza también suelto.
 HERE = Path(__file__).resolve().parent
-for _folder in (HERE.parent, HERE):
+for _folder in (HERE.parent / "1.isa", HERE.parent, HERE):
     if str(_folder) not in sys.path:
         sys.path.insert(0, str(_folder))
-# El modelo está en minicpu_core.py, que también compila el backend Codon.
+
+from mini_asm import load_program_bytes  # noqa: E402
+from tools import sim_peripherals, sim_profile  # noqa: E402
+# El modelo está en minicpu_core.py, que también compila el backend Codon. Lo que
+# usa esta CLI, por su nombre; el resto se reexporta para quien importe este módulo.
+from minicpu_core import CPU, InstructionLimitExceeded  # noqa: E402
 from minicpu_core import *  # noqa: E402,F401,F403
 
 
@@ -66,9 +73,6 @@ def load_program_file(path: Path) -> bytes:
     minigpu_cycle.py: vive en 1.isa/mini_asm.py para que los tres carguen
     igual y `sim-cpu programa.asm` signifique lo mismo que `sim-gpu programa.asm`.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "1.isa"))
-    from mini_asm import load_program_bytes
-
     return load_program_bytes(path)
 
 
@@ -90,7 +94,6 @@ def main() -> None:
         metavar=("ADDRESS", "SIZE", "FILE"),
         help="vuelca una región de memoria después de ejecutar el programa",
     )
-    from tools import sim_peripherals, sim_profile
     sim_peripherals.add_arguments(parser)
     sim_profile.add_arguments(parser)
     args = parser.parse_args()

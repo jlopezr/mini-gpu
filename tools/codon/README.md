@@ -7,17 +7,26 @@ Qué queda por mirar de rendimiento: [RENDIMIENTO.md](RENDIMIENTO.md).
 ## Motor CPU+GPU integrado
 
 ```sh
-tools/sim-sys t.tests/cases-cpu-gpu/launch/launch.asm --backend codon
-make -C 40.mini-gl sim-boxes SIM_ARGS="--backend codon"
+tools/sim-sys t.tests/cases-cpu-gpu/launch/launch.asm     # Codon si está instalado
+make -C 40.mini-gl sim-boxes
+tools/sim-sys programa.asm --backend python               # forzar un motor
+MINIGPU_SIM_BACKEND=python make -C 40.mini-gl sim-boxes   # o para todo lo que se lance
 RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --quick
 RUN_SLOW=1 RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --full
 ```
 
-Python sigue siendo el backend predeterminado. Codon es opcional: se busca en
-`MINIGPU_CODON`, el PATH o `_build/codon-sdk/bin/codon`. Hace falta la biblioteca
-compartida de CPython (se detecta sola, o `CODON_PYTHON=/ruta/a/libpython`). Se
-puede lanzar también desde PyPy. No descarga nada. Traza y perfil usan el motor
-Python, con un aviso.
+`sim-sys` elige motor con `--backend auto`, el valor por defecto:
+- Codon, si está instalado: se busca en `MINIGPU_CODON`, el PATH o
+  `_build/codon-sdk/bin/codon`, y hace falta la biblioteca compartida de CPython
+  (se detecta sola, o `CODON_PYTHON=/ruta/a/libpython`).
+- Python, si no (en Windows, siempre), sin avisar; y también con traza o perfil,
+  que son solo de Python.
+- Si Codon está pero no se puede compilar el motor, avisa en una línea y sigue con
+  Python; `--backend codon` muestra el error completo.
+
+`--backend python` o `codon` fuerza uno, y `MINIGPU_SIM_BACKEND` cambia el valor
+por defecto. Se puede lanzar también desde PyPy. No descarga nada. Las pruebas de
+la línea de órdenes de `test_cpu_gpu_sim.py` fijan Python.
 
 ### El mismo código en los dos lenguajes
 

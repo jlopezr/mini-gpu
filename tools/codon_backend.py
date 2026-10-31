@@ -75,6 +75,21 @@ def library() -> str:
     return path
 
 
+def available() -> bool:
+    """Si `--backend auto` puede usar Codon: hay compilador y libpython de CPython.
+
+    En Windows no: Codon no se publica para él.
+    """
+    if sys.platform == "win32":
+        return False
+    try:
+        compiler()
+        library()
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
 def prepare() -> tuple[Path, dict]:
     """El ejecutable del motor (compilándolo si sus fuentes han cambiado) y su entorno."""
     codon = compiler()

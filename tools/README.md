@@ -451,19 +451,21 @@ Perfil de GPU: 336488 instrucciones de warp; ocupación 97% (lanes activas de la
 `--profile-annotate FICHERO` escribe el `.asm` de las funciones que se han ejecutado con, en cada instrucción, las
 veces que la ha ejecutado la CPU, las de la GPU (instrucciones de warp) y su ocupación.
 
-### Backend opcional Codon para CPU+GPU
+### Backend Codon para CPU+GPU
 
-`sim-sys programa.bin --backend codon` ejecuta el sistema en un motor nativo
-compilado con Codon a partir de los mismos núcleos Python
-(`minicpu_core.py`, `minigpu_core.py`, `cpu_gpu_core.py`), sin traducirlos.
-Conserva los periféricos Python y las opciones de ventana, entrada, serie y
-volcados; traza y perfil usan el motor Python con un aviso. Python sigue siendo el
-backend por defecto.
+Si Codon está instalado, `sim-sys` ejecuta el sistema en un motor nativo compilado
+con Codon a partir de los mismos núcleos Python (`minicpu_core.py`,
+`minigpu_core.py`, `cpu_gpu_core.py`), sin traducirlos. Es `--backend auto`, el
+valor por defecto; sin Codon (en Windows, siempre) usa Python, y si Codon falla al
+compilar, avisa y sigue con Python. `--backend python|codon` fuerza uno y
+`MINIGPU_SIM_BACKEND` cambia el valor por defecto. Conserva los periféricos Python
+y las opciones de ventana, entrada, serie y volcados; traza y perfil usan siempre
+el motor Python.
 
 Se necesita Codon (`MINIGPU_CODON`, PATH o `_build/codon-sdk/bin/codon`) y la
 libpython de CPython (`CODON_PYTHON` permite indicar la ruta). La compilación
 queda en `_build/codon-engine/` y se rehace al cambiar cualquier fuente del motor.
-Para MiniGL: `make -C 40.mini-gl sim-boxes SIM_ARGS="--backend codon"`.
+Para MiniGL, `make -C 40.mini-gl sim-boxes` ya lo usa.
 Regresión diferencial: `RUN_CODON=1 tools/test --prototype 32 --quick`.
 Cómo está montado: [codon/README.md](codon/README.md). Qué no admite Codon y qué
 rodeos llevan por ello los núcleos: [codon/LIMITACIONES.md](codon/LIMITACIONES.md).

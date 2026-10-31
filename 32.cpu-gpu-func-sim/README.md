@@ -53,18 +53,18 @@ Para reproducir, desde la raíz del repositorio y con el binario ya compilado:
     --halt-after-swaps 12 --run-limit 1000000000 --frame-output /tmp/boxes.bin
 ```
 
-## Backend opcional Codon
+## Backend Codon
 
-`--backend codon` ejecuta CPU y GPU SIMT en un motor nativo compilado con Codon a
-partir de `cpu_gpu_core.py` y de los núcleos de 2 y 11, **los mismos ficheros**
-que usa Python: el modelo está en `cpu_gpu_core.py` y `cpu_gpu_sim.py` añade la
-línea de órdenes. Python sigue siendo el backend por defecto. Vídeo, entrada,
-serie y ventana son los periféricos Python; traza y profiling vuelven
-automáticamente a Python, con un aviso.
+Si Codon está instalado, `sim-sys` ejecuta CPU y GPU SIMT en un motor nativo
+compilado con Codon a partir de `cpu_gpu_core.py` y de los núcleos de 2 y 11,
+**los mismos ficheros** que usa Python: el modelo está en `cpu_gpu_core.py` y
+`cpu_gpu_sim.py` añade la línea de órdenes. Es `--backend auto`, el valor por
+defecto; sin Codon (en Windows, siempre) usa Python. Vídeo, entrada, serie y
+ventana son los periféricos Python; traza y profiling usan siempre el motor Python.
 
 ```sh
-sim-sys t.tests/cases-cpu-gpu/launch/launch.asm --backend codon
-make -C 40.mini-gl sim-boxes SIM_ARGS="--backend codon"
+sim-sys t.tests/cases-cpu-gpu/launch/launch.asm                  # Codon si está
+sim-sys t.tests/cases-cpu-gpu/launch/launch.asm --backend python # forzar Python
 RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --quick
 ```
 

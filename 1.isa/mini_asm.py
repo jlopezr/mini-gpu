@@ -12,6 +12,33 @@ import importlib.util
 import runpy
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    # Lo que se copia de asm2/mini-asm.py al importar (abajo), declarado para los
+    # editores: Pylance no puede seguir esa copia y daba «símbolo de importación
+    # desconocido». Son los nombres que se importan de aquí en el repositorio;
+    # las firmas, las de asm2.
+    class AsmError(ValueError): ...
+
+    def first_pass(source: str, base_dir: Path | None = ..., origin: str = ...,
+                   include_dirs: tuple[Path, ...] = ...,
+                   defines: frozenset[str] = ...) -> tuple[list[Any], dict[str, int], int, dict[str, int]]: ...
+
+    def assemble_bytes(source: str, base_dir: Path | None = ..., origin: str = ...,
+                       include_dirs: tuple[Path, ...] = ...,
+                       defines: frozenset[str] = ...) -> bytes: ...
+
+    def assemble(source: str, base_dir: Path | None = ..., origin: str = ...,
+                 include_dirs: tuple[Path, ...] = ...,
+                 defines: frozenset[str] = ...) -> list[int]: ...
+
+    def load_program_bytes(path) -> bytes: ...
+
+    def default_output(source: Path) -> Path: ...
+
+    def write_hex(image: bytes, path: Path) -> None: ...
 
 
 HERE = Path(__file__).resolve().parent

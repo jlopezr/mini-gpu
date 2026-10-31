@@ -70,8 +70,8 @@ No son carencias que se espere que Codon resuelva, sino consecuencia de que
 compila con tipos estáticos:
 
 - **Ganchos dinámicos**: la traza (`system.trace`, `TraceEvent` con una tupla de
-  longitud variable) y el perfil (`cpu.profile`) son `None` o un objeto Python. El
-  backend Codon los rechaza y usa el motor Python (con un aviso).
+  longitud variable) y el perfil (`cpu.profile`) son `None` o un objeto Python. Con
+  ellos, `sim-sys` usa el motor Python (con un aviso si se pidió `--backend codon`).
 - **Validación de configuración**: `configure_warps` valida JSON con `isinstance`
   sobre objetos arbitrarios.
 - **Periféricos y anfitrión**: vídeo, serie y entrada (con ventana Tk, terminal,

@@ -13,6 +13,10 @@ from pathlib import Path
 import cpu_gpu_sim as sim
 from cpu_gpu_sim import AccessFault, CpuGpuSystem, InstructionLimitExceeded, mm
 
+# Las pruebas de la línea de órdenes (`sim.main`) son del motor Python y leen su
+# salida en el proceso; las del motor Codon están en test_codon_backend.py.
+os.environ["MINIGPU_SIM_BACKEND"] = "python"
+
 sys.path.insert(0, str(sim.ROOT / "1.isa"))
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
 

@@ -44,6 +44,7 @@ lane activa en un acceso MMIO desde SIMT— tampoco la comprueba `11`.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -54,7 +55,9 @@ for _folder in (ROOT, Path(__file__).resolve().parent, ROOT / "2.cpu-sim-func",
     if str(_folder) not in sys.path:
         sys.path.insert(0, str(_folder))
 
-# El modelo está en cpu_gpu_core.py, que también compila el backend Codon.
+# El modelo está en cpu_gpu_core.py, que también compila el backend Codon. Lo que
+# usa esta CLI, por su nombre; el resto se reexporta para quien importe este módulo.
+from cpu_gpu_core import CpuGpuSystem, InstructionLimitExceeded  # noqa: E402
 from cpu_gpu_core import *  # noqa: E402,F401,F403
 import minicpu_sim as cpu_sim  # noqa: E402
 import minigpu_sim as gpu_sim  # noqa: E402
@@ -70,11 +73,25 @@ def _hex(value: str) -> int:
     return int(value, 0)
 
 
+BACKENDS = ("auto", "python", "codon")
+
+
+def default_backend() -> str:
+    """`auto`, salvo que `MINIGPU_SIM_BACKEND` diga otro de `BACKENDS`."""
+    backend = os.environ.get("MINIGPU_SIM_BACKEND", "auto")
+    if backend not in BACKENDS:
+        raise SystemExit(f"MINIGPU_SIM_BACKEND={backend!r}: tiene que ser uno de "
+                         f"{', '.join(BACKENDS)}")
+    return backend
+
+
 def parse_arguments(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
         description="Simulador funcional de MiniCPU + MiniGPU sobre una RAM compartida")
-    parser.add_argument("--backend", choices=("python", "codon"), default="python",
-                        help="motor de ejecución (python por defecto; codon es opcional)")
+    parser.add_argument("--backend", choices=BACKENDS, default=default_backend(),
+                        help="motor de ejecución: auto (por defecto) usa Codon si está "
+                             "instalado y, si no, Python; MINIGPU_SIM_BACKEND cambia "
+                             "el valor por defecto")
     parser.add_argument("program", type=Path,
                         help=".asm, .bin o .hex con el programa de la CPU y el kernel "
                              "de la GPU en una sola imagen, cargada en 0")
@@ -125,17 +142,26 @@ def build_system(args) -> CpuGpuSystem:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_arguments(argv)
-    if args.backend == "codon":
+    if args.backend != "python":
+        # `auto` usa Codon si está instalado (macOS y Linux) y, si no, Python sin
+        # decir nada; si Codon está pero falla, avisa y sigue con Python. Con
+        # `codon`, el fallo es un error. Traza y perfil son solo de Python.
         tracing = args.trace or args.trace_file is not None or args.trace_limit is not None
         if tracing or args.profile is not None or args.profile_annotate is not None:
-            print("Codon: traza/profiling usan el motor Python de referencia", file=sys.stderr)
+            if args.backend == "codon":
+                print("Codon: traza/profiling usan el motor Python de referencia",
+                      file=sys.stderr)
         else:
-            from tools.codon_backend import run_cli
-            try:
-                return run_cli(list(sys.argv[1:] if argv is None else argv))
-            except (OSError, ValueError, RuntimeError) as exc:
-                print(f"Codon: {exc}", file=sys.stderr)
-                return 2
+            from tools import codon_backend
+            if args.backend == "codon" or codon_backend.available():
+                try:
+                    return codon_backend.run_cli(list(sys.argv[1:] if argv is None else argv))
+                except (OSError, ValueError, RuntimeError) as exc:
+                    if args.backend == "codon":
+                        print(f"Codon: {exc}", file=sys.stderr)
+                        return 2
+                    print(f"Codon: {str(exc).splitlines()[0].rstrip(':')}; sigo con el motor Python "
+                          "(--backend codon para ver el error)", file=sys.stderr)
     try:
         system = build_system(args)
         profile = sim_profile.from_arguments(args)
