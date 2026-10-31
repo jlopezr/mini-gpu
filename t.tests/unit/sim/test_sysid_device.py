@@ -34,8 +34,8 @@ from tools.sysid_device import (  # noqa: E402
 
 # Simulador -> (carpeta, módulo, fichero donde se decodifican los opcodes).
 SIMULADORES = {
-    "cpu": (2, "minicpu_sim", ROOT / "2.cpu-sim-func" / "minicpu_sim.py"),
-    "gpu": (11, "minigpu_sim", ROOT / "11.gpu-sim-func" / "minigpu_sim.py"),
+    "cpu": (2, "minicpu_sim", ROOT / "2.cpu-sim-func" / "minicpu_core.py"),
+    "gpu": (11, "minigpu_sim", ROOT / "11.gpu-sim-func" / "minigpu_core.py"),
 }
 
 # Bit -> cómo se reconoce en el fuente que el modelo lo EJECUTA. Los opcodes

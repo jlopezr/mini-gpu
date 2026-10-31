@@ -4,11 +4,28 @@ El reloj de video es sintetico; no simula contienda ni temporizacion fisica.
 HALT_AT y serie estan disponibles en los tres modelos, aunque no en toda FPGA.
 """
 
+from tools.mmio_device import MmioDevice
+
+
 def u32(value):
     return value & 0xFFFFFFFF
 
 
-class VideoDevice:
+#: `ticks_until_event` de un dispositivo sin nada pendiente.
+NEVER = 1 << 62
+
+# Reloj por lotes
+# ---------------
+# Cada dispositivo avanza con `tick()`, una vez por instrucción retirada. Casi
+# todos esos ticks solo cuentan; de vez en cuando uno hace algo visible (frontera
+# de frame, vaciado de TX, una acción del guion, la mano al anfitrión).
+# `ticks_until_event()` dice cuántos ticks pueden pasar hasta el próximo de esos,
+# incluido, y `advance(n)` equivale a `n` llamadas a `tick()` con
+# `n <= ticks_until_event()`. El motor Codon los usa para no llamar a Python en
+# cada instrucción; un acceso MMIO al dispositivo los vacía antes.
+
+
+class VideoDevice(MmioDevice):
     """Vídeo funcional común, en un slot de 256 bytes.
 
     Modela framebuffer, swaps, HALT_AT y VIDEO_CTRL. Un frame transcurre cada
@@ -164,6 +181,15 @@ class VideoDevice:
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
 
+    def ticks_until_event(self) -> int:
+        """Ticks hasta la próxima frontera de frame, incluida (ver «Reloj por lotes»)."""
+        return self.frame_instructions - self._since_frame
+
+    def advance(self, ticks: int) -> None:
+        """`ticks` llamadas a `tick()`; no pueden pasar de la frontera de frame."""
+        self._since_frame += ticks - 1
+        self.tick()
+
     def tick(self) -> None:
         """Avanza el reloj de frames sintético una instrucción CPU/de warp.
 
@@ -314,7 +340,7 @@ class VideoDevice:
         # FRAME_COUNT, SWAP_COUNT y VIDEO_TX son de solo lectura.
 
 
-class SerialDevice:
+class SerialDevice(MmioDevice):
     """Puerto serie de la CPU, en 0x80000200. Dos colas y nada mas.
 
     Modela `19.fpga-cpu-hdmi-ls/serial_port.v`, incluidas las dos cosas que
@@ -357,6 +383,23 @@ class SerialDevice:
         self.tty = None
         self.tty_every = 200
         self._tty_ticks = 0
+
+    def ticks_until_event(self) -> int:
+        """Ticks hasta el próximo vaciado de TX o sondeo del terminal, incluido."""
+        until = NEVER
+        if self.host_output is not None:
+            until = 32 - self._host_ticks
+        if self.tty is not None:
+            until = min(until, self.tty_every - self._tty_ticks)
+        return until
+
+    def advance(self, ticks: int) -> None:
+        """`ticks` llamadas a `tick()`, sin pasar de `ticks_until_event()`."""
+        if self.host_output is not None:
+            self._host_ticks += ticks - 1
+        if self.tty is not None:
+            self._tty_ticks += ticks - 1
+        self.tick()
 
     def tick(self):
         if self.host_output is not None:
@@ -438,7 +481,7 @@ class SerialDevice:
             self.overrun = False
 
 
-class InputDevice:
+class InputDevice(MmioDevice):
     """Teclado y ratón normalizados (`1.isa/mmio.md` §25), en 0x80600000.
 
     Modela INPUT, no USB: la entrada llega como *reports* de estado completo
@@ -526,6 +569,20 @@ class InputDevice:
 
     def contains(self, address: int) -> bool:
         return self.BASE <= address < self.BASE + self.SIZE
+
+    def ticks_until_event(self) -> int:
+        """Ticks hasta la próxima acción del guion o mano al anfitrión, incluida."""
+        until = NEVER
+        if self.script:
+            until = max(1, self.script[0].at - self.ticks)
+        if self.host is not None:
+            until = min(until, self.host_every - self.ticks % self.host_every)
+        return until
+
+    def advance(self, ticks: int) -> None:
+        """`ticks` llamadas a `tick()`, sin pasar de `ticks_until_event()`."""
+        self.ticks += ticks - 1
+        self.tick()
 
     def tick(self) -> None:
         """Una instrucción completada: aplica las acciones del guion que toquen."""

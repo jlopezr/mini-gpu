@@ -26,16 +26,16 @@ def normalize_one(w):
         w.pc, w.active_mask = region.join_pc, region.entry_mask & w.live_mask
 
 
-def control_result(w, d, results, warps, memory_size):
+def control_result(w, d, results, warps, system):
     """Validate on a private copy. The caller publishes only on successful retire."""
     n = copy(w)
     n.region_stack, n.path_stack = w.region_stack.copy(), w.path_stack.copy()
     if d.op == 0x31:
-        check_access(memory_size, d.target, 4)
+        check_access(len(system.memory), d.target, 4)
         if n.region_stack and n.region_stack[-1].ssy_pc == w.pc:
             if n.region_stack[-1].join_pc != d.target: raise ISAError(6)
         else:
-            if len(n.region_stack) >= w.sm.system.simt_region_depth: raise ISAError(6)
+            if len(n.region_stack) >= system.simt_region_depth: raise ISAError(6)
             n.region_stack.append(functional.SimtRegion(w.pc, d.target, w.active_mask, len(w.path_stack)))
         n.pc = d.seq
     elif d.op == 0x32:
@@ -71,7 +71,7 @@ def control_result(w, d, results, warps, memory_size):
                 n.active_mask = taken
                 n.pc = d.target
             else:
-                if len(n.path_stack) >= w.sm.system.simt_path_depth: raise ISAError(6)
+                if len(n.path_stack) >= system.simt_path_depth: raise ISAError(6)
                 n.path_stack.append(functional.SimtPath(d.target, taken))
                 n.active_mask &= ~taken
                 n.pc = d.seq

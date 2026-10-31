@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import cpu_gpu_sim as sim
@@ -1447,6 +1448,95 @@ class VideoSharedTest(unittest.TestCase):
         self.arm(s, sim.VideoDevice.HALT_TARGET_CPU)
         self.assertTrue(s.cpu.halted)
         self.assertFalse(s.gpu.halted_by_control)
+
+
+class StopMachineTest(unittest.TestCase):
+    """Cerrar la ventana, F12 o Ctrl+C (`stop_machine`) paran los dos núcleos.
+
+    Antes `stop_machine` ponía `system.halted`, que nadie leía: la simulación
+    seguía hasta el HALT del programa o el límite.
+    """
+
+    def test_stops_a_cpu_spinning_forever(self):
+        from tools.sim_host import stop_machine
+        s = make("loop: BRA loop")
+        stop_machine(s)
+        self.assertEqual(s.run(1000), "halt")
+        self.assertEqual(s.cpu_instructions, 0)
+
+    def test_stops_a_running_gpu(self):
+        from tools.sim_host import stop_machine
+        s = make("loop: BRA loop", kernel=asm("spin: BRA spin"))
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.step_round()
+        stop_machine(s)
+        self.assertEqual(s.run(1000), "halt")
+        self.assertTrue(s.gpu.halted_by_control)
+
+
+class IdleGpuTest(unittest.TestCase):
+    def test_idle_cpu_run_does_not_consult_the_warp_vm(self):
+        s = make("MOVI R1, 7\nHALT")
+
+        def no_scan(_):
+            self.fail("una GPU ociosa no necesita recorrer los warps")
+
+        with patch.object(type(s.gpu.system), "halted", property(no_scan)):
+            self.assertEqual(s.run(max_gpu_instructions=0), "halt")
+        self.assertEqual((s.cpu.regs[1], s.cpu_instructions, s.gpu.retired), (7, 2, 0))
+
+    def test_cpu_launch_runs_the_gpu_in_the_same_round(self):
+        s = make("STORE R1, R10, MMIO_GPU_WARP_START_OFF\nHALT", kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        s.cpu.regs[1] = 1
+        s.cpu.regs[10] = mm.MMIO_GPU_BASE
+        self.assertTrue(s.gpu.halted)
+        s.step_round()
+        self.assertFalse(s.gpu.halted)
+        self.assertEqual((s.cpu_instructions, s.gpu.retired), (1, 1))
+        self.assertEqual(s.run(), "halt")
+        self.assertEqual(s.gpu.done, 1)
+
+    def test_idle_state_tracks_relaunch_control_and_reset(self):
+        s = make(kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        for _ in range(2):
+            self.assertTrue(s.gpu.halted)
+            s.gpu.warp_start(1)
+            self.assertFalse(s.gpu.halted)
+            s.gpu.halt()
+            self.assertTrue(s.gpu.halted)
+            self.assertFalse(s.gpu.step())
+            self.assertEqual(s.gpu.live, 1)
+            s.gpu.resume()
+            self.assertFalse(s.gpu.halted)
+            while s.gpu.step():
+                pass
+            self.assertTrue(s.gpu.halted)
+            self.assertEqual((s.gpu.live, s.gpu.done), (0, 1))
+        s.gpu.reset()
+        self.assertTrue(s.gpu.halted)
+        self.assertEqual(s.gpu.done, 0)
+
+    def test_faulted_live_warp_is_stopped_for_run_and_limits(self):
+        s = make(kernel=TRAP)
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.gpu.step()
+        self.assertIsNotNone(s.gpu.fault)
+        self.assertTrue(s.gpu.halted)
+        self.assertEqual(s.gpu.live, 1)
+        self.assertEqual(s.run(max_gpu_instructions=0), "halt")
+
+    def test_waiting_warp_is_stalled_not_idle(self):
+        s = make(kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.gpu.warps[0].state = "WAIT_BAR"
+        self.assertFalse(s.gpu.halted)
+        self.assertEqual(s.run(), "stalled")
+        self.assertEqual(s.gpu.live, 1)
 
 
 class SchedulingTest(unittest.TestCase):

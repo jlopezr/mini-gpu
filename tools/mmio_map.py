@@ -1,8 +1,6 @@
 """GENERADO por tools/generate-mmio desde 1.isa/mmio_map.vh. No editar.
 """
 
-from __future__ import annotations
-
 MMIO_MEM_BASE = 0x00000000
 MMIO_MEM_SIZE_SDRAM = 0x02000000
 MMIO_MEM_SIZE_EBR = 0x00008000

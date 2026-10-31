@@ -235,7 +235,7 @@ class GpuRunnerTest(unittest.TestCase):
         count = gpu.instructions_executed
         self.assertFalse(gpu.step())
         for warp in gpu.streaming_multiprocessor.warps:
-            self.assertFalse(warp.step())
+            self.assertFalse(warp.step(gpu))
         gpu.stop_with_error(self.backend.module.Fault(3, 0, 1, None))
         self.assertIs(gpu.fault, first)
         self.assertEqual([w.pc for w in gpu.streaming_multiprocessor.warps], pcs)

@@ -36,7 +36,9 @@ def stop_machine(machine) -> None:
     """Pide que `machine` pare en su próxima instrucción."""
     if machine is None:
         return
-    if hasattr(machine, "peripheral_halted"):
+    if hasattr(machine, "request_stop"):
+        machine.request_stop()                  # CPU+GPU: los dos núcleos
+    elif hasattr(machine, "peripheral_halted"):
         machine.peripheral_halted = True        # GPU
     else:
         machine.halted = True                   # CPU

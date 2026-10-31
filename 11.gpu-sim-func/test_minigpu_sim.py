@@ -147,7 +147,7 @@ class MiniGpuTest(unittest.TestCase):
         for warp in gpu.streaming_multiprocessor.warps:
             self.assertEqual((warp.pc, warp.instructions_executed, warp.active_mask), (8, 2, 0))
             self.assertTrue(all(c.regs[1] == 7 for c in warp.processors))
-            self.assertFalse(warp.step())
+            self.assertFalse(warp.step(gpu))
         self.assertFalse(gpu.step())
 
     def test_exact_limit_across_warps_and_resume(self):
@@ -182,7 +182,7 @@ class MiniGpuTest(unittest.TestCase):
                 first = gpu.fault
                 gpu.stop_with_error(Fault(99, 99, 1, 1))
                 self.assertIs(gpu.fault, first)
-                self.assertFalse(gpu.streaming_multiprocessor.warps[1].step())
+                self.assertFalse(gpu.streaming_multiprocessor.warps[1].step(gpu))
                 self.assertEqual(gpu.streaming_multiprocessor.warps[1].pc, 16)
 
     def test_late_lane_division_fault_is_atomic(self):

@@ -1,0 +1,153 @@
+# Gemelo Codon de `sim_devices.py`: los periféricos del motor compilado son los
+# de Python, vistos a través de un proxy.
+#
+# Vídeo, serie y entrada tienen ventana, terminal y guiones: se quedan en Python
+# (tools/codon/LIMITACIONES.md, «Lo que se queda en Python»). Cada proxy hereda de
+# MmioDevice, así que los núcleos lo usan como cualquier otro dispositivo, y lleva
+# el objeto Python de verdad (`py`).
+#
+# Llamar a Python en cada instrucción sería muy lento. Los proxies cuentan los
+# ticks y llaman a `advance(n)` solo en el siguiente que hace algo
+# (`ticks_until_event`, el «reloj por lotes» de sim_devices.py), y antes de
+# cualquier acceso MMIO, para que el dispositivo esté al día cuando se le lee.
+from internal.python import pyobj
+from .mmio_device import MachineHooks, MmioDevice
+
+
+class Bridge:
+    """Lo común a los proxies: el anfitrión Python y a qué máquina pedir que pare.
+
+    Tras cada llamada a Python pregunta al anfitrión si se ha pedido parar
+    (ventana cerrada, F12, Ctrl+C en el terminal serie) y, si es así, se lo pide
+    al sistema nativo. `machine` es la base común y no `CpuGpuSystem`: el sistema
+    tiene los proxies y los proxies el puente, y Codon no admite ese ciclo de
+    tipos (l08).
+    """
+
+    host: pyobj
+    machine: MachineHooks
+
+    def __init__(self, host: pyobj):
+        self.host = host
+        self.machine = MachineHooks()
+
+    def check_stop(self) -> None:
+        if bool(self.host.stop_requested()):
+            self.machine.request_stop()
+
+
+class _Peripheral(MmioDevice):
+    """Un periférico Python visto desde el motor nativo."""
+
+    py: pyobj
+    bridge: Bridge
+    pending: int
+    until: int
+
+    def __init__(self, py: pyobj, bridge: Bridge):
+        super().__init__(int(py.BASE), int(py.SIZE))
+        self.py = py
+        self.bridge = bridge
+        self.pending = 0
+        self.until = int(py.ticks_until_event())
+
+    def tick(self) -> None:
+        self.pending += 1
+        if self.pending >= self.until:
+            self.sync()
+
+    def sync(self) -> None:
+        """Pasa a Python los ticks pendientes y mira cuándo le toca otra vez."""
+        if self.pending:
+            self.py.advance(self.pending)
+            self.pending = 0
+            self.synced()
+            self.bridge.check_stop()
+        self.until = int(self.py.ticks_until_event())
+
+    def synced(self) -> None:
+        """Tras avanzar el dispositivo Python: copiar lo que el núcleo lee aquí."""
+        pass
+
+    def validate(self, offset: int, writing: bool = False) -> None:
+        self.sync()
+        try:
+            self.py.validate(offset, writing)
+        except PyError as exc:
+            raise RuntimeError(exc.message)
+
+    def read(self, offset: int) -> int:
+        self.sync()
+        try:
+            return int(self.py.read(offset))
+        except PyError as exc:
+            raise RuntimeError(exc.message)
+
+    def write(self, offset: int, value: int) -> None:
+        self.sync()
+        try:
+            self.py.write(offset, value)
+        except PyError as exc:
+            raise RuntimeError(exc.message)
+        self.until = int(self.py.ticks_until_event())
+
+
+class VideoDevice(_Peripheral):
+    """El vídeo: además, la petición de parada por HALT_AT o por el arnés."""
+
+    # Los valores de sim_devices.VideoDevice; el constructor lo comprueba.
+    HALT_TARGET_CPU: ClassVar[int] = 1
+    HALT_TARGET_GPU: ClassVar[int] = 2
+
+    _halt_request: bool
+    # Lo fija `CpuGpuSystem` al construirse, como en Python; el `VideoDevice` de
+    # Python ya lo tiene, porque el anfitrión construye su espejo con él.
+    halt_owner: int
+
+    def __init__(self, py: pyobj, bridge: Bridge):
+        super().__init__(py, bridge)
+        if (int(py.HALT_TARGET_CPU) != VideoDevice.HALT_TARGET_CPU
+                or int(py.HALT_TARGET_GPU) != VideoDevice.HALT_TARGET_GPU):
+            raise ValueError("HALT_TARGET distinto en sim_devices.py y sim_devices.codon")
+        self._halt_request = False
+        self.halt_owner = 0
+
+    def tick(self) -> None:
+        # Como `VideoDevice.tick`: cada tick empieza sin petición de parada.
+        self._halt_request = False
+        super().tick()
+
+    def synced(self) -> None:
+        self._halt_request = bool(self.py.halt_request)
+
+    @property
+    def halt_request(self) -> bool:
+        return self._halt_request
+
+    @halt_request.setter
+    def halt_request(self, value: bool):
+        # Solo lo escribe `CpuGpuSystem._apply_video_halt`, al atender la
+        # petición: el dispositivo Python tiene que verlo también.
+        self._halt_request = value
+        self.py.halt_request = value
+
+    # Solo los lee `CpuGpuSystem._apply_video_halt`, al parar: se preguntan a Python.
+    @property
+    def halt_target(self) -> int:
+        return int(self.py.halt_target)
+
+    @property
+    def stop_after_swaps(self) -> int:
+        return int(self.py.stop_after_swaps or 0)
+
+    @property
+    def swap_count(self) -> int:
+        return int(self.py.swap_count)
+
+
+class SerialDevice(_Peripheral):
+    pass
+
+
+class InputDevice(_Peripheral):
+    pass

@@ -1,0 +1,36 @@
+# Gemelo de `codon_compat.py` para Codon: mismos nombres, sin la biblioteca
+# estándar que le falta. Cada función es el rodeo de una limitación de
+# `tools/codon/LIMITACIONES.md`; cuando Codon la resuelva, se borra aquí y en
+# `codon_compat.py`.
+
+
+# l03: no hay módulo `dataclasses`. Las clases con campos declarados ya tienen
+# `__init__` (con valores por defecto); no se usan `__eq__` ni `__repr__`.
+def dataclass(cls):
+    return cls
+
+
+# l01: sin `struct`.
+def load_u32(memory: bytearray, address: int) -> int:
+    return (memory[address] | memory[address + 1] << 8
+            | memory[address + 2] << 16 | memory[address + 3] << 24)
+
+
+def store_u32(memory: bytearray, address: int, value: int) -> None:
+    memory[address] = value & 0xFF
+    memory[address + 1] = (value >> 8) & 0xFF
+    memory[address + 2] = (value >> 16) & 0xFF
+    memory[address + 3] = (value >> 24) & 0xFF
+
+
+# l02: sin `int.from_bytes` ni `int.to_bytes`.
+def load_le(memory: bytearray, address: int, size: int) -> int:
+    value = 0
+    for i in range(size):
+        value |= memory[address + i] << (8 * i)
+    return value
+
+
+def store_le(memory: bytearray, address: int, size: int, value: int) -> None:
+    for i in range(size):
+        memory[address + i] = (value >> (8 * i)) & 0xFF

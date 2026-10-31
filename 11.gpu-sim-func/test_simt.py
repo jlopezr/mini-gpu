@@ -138,7 +138,7 @@ class SimtTest(unittest.TestCase):
         gpu.trace = TextTrace(stream)
         gpu.step()
         self.assertEqual((w0.state, w0.pc, w0.processors[0].regs[1]), ('WAIT_BAR', 0, 0))
-        self.assertFalse(w0.step())
+        self.assertFalse(w0.step(gpu))
         gpu.step()
         self.assertEqual((w0.state, w1.state, w0.pc, w1.pc), ('READY', 'READY', 4, 4))
         gpu.run(8)

@@ -153,7 +153,7 @@ class Pipeline:
                 addrs = [a for a in addrs if a < len(self.system.memory)]
                 tx = coalesced_transactions(addrs) if addrs else 0
                 pkt.mask = warp.active_mask
-                if warp.step():
+                if warp.step(self.system):
                     done_at = self.mem.issue(self.now, tx) if tx else self.now
                     self.wait_until[pkt.warp_id] = done_at
                     # Un acceso a memoria no ocupa X: sale del cauce y el warp
@@ -165,7 +165,7 @@ class Pipeline:
             else:
                 pkt.mask = warp.active_mask
                 pkt.exec_left = self.exec_cycles(pkt.instr, pkt.opcode, warp)
-                if warp.step():
+                if warp.step(self.system):
                     st["X"], st["D"] = pkt, None
                 else:
                     # Barrera o halt: el warp no avanza, suelta el hueco.
