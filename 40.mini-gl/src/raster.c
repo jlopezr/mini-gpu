@@ -120,11 +120,11 @@ static void box(int x0, int y0, int x1, int y1, mgl_color_t c) {
 }
 
 static void brush(int x, int y, mgl_color_t c) {
-    int j, lo = -(sw / 2), hi = lo + sw;
+    int lo = -(sw / 2), hi = lo + sw;
     if (sw == 1)
         put(x, y, c);
     else
-        for (j = lo; j < hi; j++) span(y + j, x + lo, x + hi, c);
+        box(x + lo, y + lo, x + hi, y + hi, c);
 }
 
 /* Una línea de Bresenham recorrida por tramos: los puntos seguidos con la misma
