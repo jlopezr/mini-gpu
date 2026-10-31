@@ -97,12 +97,13 @@ exactamente lo mismo:
 - las sumas de las matrices van siempre en el mismo orden.
 
 Resultado: `make check-minigpu3d` da los 76 800 píxeles idénticos (frames 3 y 60 del cubo, frame 3 de
-`boxes`).
+`boxes`, frames 3 y 40 de `colored_cube`).
 
 ## MiniProcessing 3D
 
-[processing3d.h](../src/processing3d.h). Solo lo que usa el cubo: `size(w, h, P3D)`, `translate`, `rotateX`,
-`rotateY` y `box`. Como C89 no tiene sobrecarga, `size` con tres argumentos es una macro de
+[processing3d.h](../src/processing3d.h). Lo que usa el cubo: `size(w, h, P3D)`, `translate`, `rotateX`,
+`rotateY` y `box`; y `beginShape(QUADS | TRIANGLES)`, `vertex(x, y, z)` y `endShape()` para figuras dadas
+vértice a vértice, como el cubo de una cara de cada color (`colored_cube.c`). Como C89 no tiene sobrecarga, `size` con tres argumentos es una macro de
 `processing3d.h` (`size_renderer`); los sketches 2D siguen con `size(w, h)`. `background(20)` de Processing se
 escribe `background(20, 20, 20)`, como en el resto de MiniProcessing.
 
@@ -114,6 +115,14 @@ identidad al empezar cada `draw()`.
 
 Sin `lights()` Processing pinta un `box` de un solo color, y aquí igual: el cubo de `rotating_cube` es una
 silueta naranja con perspectiva. Para ver la profundidad, `boxes.c` dibuja dos cubos de colores que se cortan.
+
+`box()` es de un solo color, también en Processing. Para un color por cara, Processing da las caras con
+`beginShape(QUADS)` y un `fill()` antes de cada una, y aquí se hace igual. `endShape` copia los vértices a la
+**memoria de frame** de MiniGL (`mgl_create_mesh_frame`, que se vacía en cada `mgl_begin_frame`) y dibuja la
+malla por tramos de primitivas seguidas del mismo color: un `SET_COLOR` y un `DRAW_INDEXED` por tramo
+(`mgl_draw_mesh_range`, que desplaza la dirección de los índices). El contrato binario no cambia. El color es
+plano por primitiva (el del primer vértice): Processing interpola si los vértices de una cara tienen colores
+distintos, y eso pediría un atributo de color en el formato de vértice.
 
 ## Etapas del renderer
 
@@ -182,7 +191,7 @@ comparar o sumar con ellos pasa por el runtime de `double`. En `mgl_math.c` y `r
 | `test_clipping` | plano cercano con 1, 2 y 3 vértices fuera, `w < 0`, aristas compartidas bit a bit, varios planos, un suelo que pasa por detrás de la cámara |
 | `test_raster` | top-left con aristas sobre centros de píxel, estanqueidad de un abanico, viewport, profundidad (orden, sin prueba, sin escritura, borrado a 0, plano inclinado), culling, 2D/3D intercalados |
 | `test_resources` | memoria de la aplicación y de MiniGL, formato serializado, handles inválidos y viejos, formatos rechazados, heap agotado, tabla llena |
-| `test_cube` | el cubo en 6 ángulos frente a una proyección independiente en double (área y caja), el command buffer de un frame de Processing, reproducir un buffer guardado |
+| `test_cube` | el cubo en 6 ángulos frente a una proyección independiente en double (área y caja), el command buffer de un frame de Processing, reproducir un buffer guardado, y el cubo de caras de colores: cada cara visible con su color en su sitio y las ocultas tapadas |
 | `mgl-replay` | una captura (RAM + buffer) reproducida solo con el renderer da el mismo PPM que el sketch |
 | `check-minigpu3d` | MiniGPU frente al host, píxel a píxel |
 
@@ -195,7 +204,11 @@ comparar o sumar con ellos pasa por el runtime de `double`. En `mgl_math.c` y `r
   de vértice además de la posición.
 - **IMAGE (sprites 2D)** en el renderer 3D: rechazado, porque lleva un handle de V1 y no una dirección.
 - **MiniProcessing**: sin `pushMatrix`/`popMatrix`, `rotateZ`, `scale`, `box(w, h, d)`, `stroke` en 3D,
-  `background(gris)` de un argumento, `lights()` ni cámara configurable.
+  `background(gris)` de un argumento, `lights()` ni cámara configurable. `beginShape` solo con `TRIANGLES` y
+  `QUADS`, hasta 256 vértices, color plano por primitiva.
+- **Aristas compartidas entre caras delanteras y traseras**: sin culling, en la arista de la silueta las dos
+  tienen la misma profundidad y con `LESS` gana la primera que se dibuja; puede asomar algún píxel suelto de
+  una cara oculta (lo mismo que OpenGL sin culling).
 - **Recursos**: el heap de MiniGL no libera piezas; no hay fences ni ejecución asíncrona; sin operaciones de
   coherencia de caché.
 - **Plataforma MiniGPU 3D**: solo 320×240, sin entrada; el trasero no recibe copia del delantero (un sketch 3D

@@ -31,6 +31,7 @@ renderer corre en la CPU. En una ventana, [platform3d_sdl.c](../src/platform3d_s
 |---|---|
 | [`rotating_cube.c`](rotating_cube.c) | Cubo giratorio con perspectiva y Z-buffer; sin luces, una silueta de un color, como en Processing |
 | [`boxes.c`](boxes.c) | Dos cubos de colores que se cortan (lo dibuja el Z-buffer) y una barra 2D encima |
+| [`colored_cube.c`](colored_cube.c) | Cubo con una cara de cada color, como en Processing: `beginShape(QUADS)` y un `fill()` por cara |
 
 ```sh
 make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15

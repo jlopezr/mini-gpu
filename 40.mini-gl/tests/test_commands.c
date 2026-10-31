@@ -200,6 +200,34 @@ static void test_capacity(void) {
     CHECK(RD32(t_cmd.bytes + 4) == MGL_BUFFER_VERSION);
 }
 
+/* mgl_draw_mesh_range: la dirección de los índices desplazada y solo los del tramo. */
+static void test_draw_range(void) {
+    static const float quad_xyz[12] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+    static const unsigned short quad_idx[6] = {0, 1, 2, 0, 2, 3};
+    mgl_mesh_t mesh;
+    const unsigned char *p;
+    t_init(4096);
+    mesh = t_mesh(0, quad_xyz, 4, quad_idx, 6);
+    t_begin();
+    mgl_draw_mesh_range(mesh, 3, 3);
+    mgl_draw_mesh_range(mesh, 0, 0); /* vacío: no emite nada */
+    CHECK(mgl_cmd_status(&t_cmd) == MGL_OK);
+    p = t_find(MGL_CMD_DRAW_INDEXED, 0);
+    CHECK(p && RD32(p + 8) == T_APP_ADDR && RD32(p + 12) == T_APP_ADDR + 48U + 6U);
+    CHECK(p && RD32(p + 16) == 4U && RD32(p + 20) == 3U);
+    CHECK(t_find(MGL_CMD_DRAW_INDEXED, 1) == 0);
+    CHECK(t_end_and_run() == MGR_OK && t_rnd.stats.triangles == 1U);
+    t_begin();
+    mgl_draw_mesh_range(mesh, 3, 6); /* se sale */
+    CHECK(mgl_cmd_status(&t_cmd) == MGL_ERR_ARGUMENT);
+    mgl_end_frame();
+    t_begin();
+    mgl_draw_mesh_range(mesh, 1, 3); /* no empieza en un triángulo */
+    CHECK(mgl_cmd_status(&t_cmd) == MGL_ERR_ARGUMENT);
+    mgl_end_frame();
+    mgl_set_deferred(0);
+}
+
 /* Errores de uso en MiniGL. */
 static void test_api_errors(void) {
     mgl_mat4_t m;
@@ -358,6 +386,7 @@ int main(void) {
     test_matrix_roundtrip();
     test_redundant_state();
     test_capacity();
+    test_draw_range();
     test_api_errors();
     test_renderer_rejects();
     return t_report("test_commands: cabeceras, SET_MATRIX, DRAW_INDEXED, estado, capacidad y rechazos");

@@ -103,6 +103,7 @@ void mgl_begin_frame(void) {
     if (in_frame) fail(MGL_ERR_STATE);
     in_frame = 1;
     frame_number++;
+    mgl_frame_reset_();
     forget_sent();
     ensure_matrices();
     if (has_target)
@@ -227,7 +228,10 @@ static void flush_state(void) {
     }
 }
 
-void mgl_draw_mesh(mgl_mesh_t mesh) {
+/* Un tramo [first, first + count) de los índices: la misma malla, con la
+   dirección de los índices desplazada. Así se dibuja cada parte de una malla
+   con su propio estado (un color por cara) sin cambiar DRAW_INDEXED. */
+void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
     mgl_mesh_desc_t d;
     unsigned char *p;
     if (!mgl_deferred_()) return;
@@ -239,13 +243,24 @@ void mgl_draw_mesh(mgl_mesh_t mesh) {
         fail(MGL_ERR_HANDLE);
         return;
     }
+    if (first % 3U || count % 3U || first > d.index_count || count > d.index_count - first) {
+        fail(MGL_ERR_ARGUMENT);
+        return;
+    }
+    if (!count) return;
     flush_state();
-    p = command(MGL_CMD_DRAW_INDEXED, 0, MGL_DRAW_INDEXED_BYTES, d.vertex_addr, d.index_addr);
+    p = command(MGL_CMD_DRAW_INDEXED, 0, MGL_DRAW_INDEXED_BYTES, d.vertex_addr, d.index_addr + first * 2U);
     if (!p) return;
     WR32(p + 16, d.vertex_count);
-    WR32(p + 20, d.index_count);
+    WR32(p + 20, count);
     WR16(p + 24, d.vertex_format);
     WR16(p + 26, d.index_format);
     WR16(p + 28, d.vertex_stride);
     WR16(p + 30, MGL_TOPOLOGY_TRIANGLES);
+}
+
+void mgl_draw_mesh(mgl_mesh_t mesh) {
+    mgl_mesh_desc_t d;
+    if (mgl_mesh_info(mesh, &d) != MGL_OK) d.index_count = 0; /* el error lo da mgl_draw_mesh_range */
+    mgl_draw_mesh_range(mesh, 0, d.index_count);
 }

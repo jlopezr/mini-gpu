@@ -39,7 +39,7 @@ RENDERER = $(RENDERER_SRCS:renderer/%.c=build/%.o) build/mgl_math.o build/mgl_me
 MGL3D = build/minigl.o build/mgl_3d.o build/mgl_resources.o build/mgl_math.o build/mgl_memory.o
 LIB3D = $(MGL3D) $(RENDERER) build/processing.o build/processing3d.o build/platform3d.o \
     build/mgl_capture.o build/ppm.o
-SKETCHES3D = rotating_cube boxes
+SKETCHES3D = rotating_cube boxes colored_cube
 EXAMPLES3D = $(SKETCHES3D:%=build/%)
 TESTS3D = build/test_commands build/test_matrices build/test_clipping build/test_raster \
     build/test_resources build/test_cube

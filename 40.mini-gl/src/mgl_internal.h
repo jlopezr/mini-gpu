@@ -16,4 +16,7 @@ unsigned char *mgl_reserve3d_(mgl_u32 bytes);
    3D con profundidad (MGL_CLEAR_DEPTH y lejos); fuera, 0 y 0. */
 extern mgl_u32 mgl_clear_flags_, mgl_clear_depth_;
 
+/* Vacía la memoria de frame (mgl_resources.c); la llama mgl_begin_frame. */
+void mgl_frame_reset_(void);
+
 #endif

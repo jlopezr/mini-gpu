@@ -42,7 +42,9 @@ int platform3d_init(void *ram) {
     if (mgl_memory_init(&platform3d_memory, ram, P3D_RAM_BASE, P3D_RAM_SIZE)) return 1;
     commands = mgl_memory_ptr(&platform3d_memory, P3D_COMMANDS, P3D_COMMAND_BYTES, 4);
     if (!commands || mgl_cmd_init(&platform3d_commands, commands, P3D_COMMAND_BYTES) != MGL_OK) return 1;
-    if (mgl_resources_init(&platform3d_memory, P3D_HEAP, P3D_HEAP_BYTES) != MGL_OK) return 1;
+    if (mgl_resources_init(&platform3d_memory, P3D_HEAP, P3D_HEAP_BYTES) != MGL_OK ||
+        mgl_frame_memory_init(P3D_FRAME_HEAP, P3D_FRAME_HEAP_BYTES) != MGL_OK)
+        return 1;
     if (mgr_init(&platform3d_renderer, &platform3d_memory) != MGR_OK) return 1;
     mgl_reset_state3d();
     frameCount = 0;

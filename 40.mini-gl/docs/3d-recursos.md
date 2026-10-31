@@ -35,6 +35,12 @@ que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay
 MiniProcessing crea el cubo con la segunda: una vez, en el primer `box()`; el tamaño va en la matriz del
 modelo.
 
+Para lo que solo vale un frame (las figuras de `beginShape`/`endShape`) hay una tercera zona, la **memoria
+de frame**: `mgl_frame_memory_init(addr, size)` y `mgl_frame_alloc`, o `mgl_create_mesh_frame` para copiar
+una malla ahí. `mgl_begin_frame` la vacía entera, así que lo del frame anterior tiene que estar ya ejecutado;
+hoy lo está (ejecución síncrona). El handle se puede destruir en cuanto se ha dibujado: el command buffer ya
+tiene las direcciones.
+
 ## Memoria compartida y su emulación
 
 CPU y GPU de MiniGPU comparten la SDRAM. Un programa la ve a través de un `mgl_memory_t`
@@ -56,6 +62,7 @@ Las dos plataformas usan **las mismas direcciones** ([platform3d.h](../src/platf
 | `0x0104B000` | command buffer | 64 KB |
 | `0x0105B000` | profundidad (U16) | 320×240×2 |
 | `0x01080800` | heap de MiniGL | 64 KB |
+| `0x01090800` | memoria de frame de MiniGL | 64 KB |
 
 El host emula 1 MB desde `0x01000000`; una captura (`-c`) guarda esa ventana entera.
 

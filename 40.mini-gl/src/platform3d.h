@@ -22,6 +22,8 @@
 #define P3D_DEPTH 0x0105B000u       /* 320 * 240 * 2 bytes, U16 */
 #define P3D_HEAP 0x01080800u        /* recursos de MiniGL (la malla del cubo) */
 #define P3D_HEAP_BYTES 0x10000u
+#define P3D_FRAME_HEAP 0x01090800u  /* memoria de frame de MiniGL (beginShape/endShape) */
+#define P3D_FRAME_HEAP_BYTES 0x10000u
 #define P3D_MAX_W 320
 #define P3D_MAX_H 240
 

@@ -1,5 +1,6 @@
 #include "minigl3d.h"
 #include "mgl_bytes.h"
+#include "mgl_internal.h"
 
 /* Tabla de mallas: el handle es (generación << 16) | (hueco + 1). La generación
    cambia al destruir, así que un handle viejo no resuelve a la malla que ocupe
@@ -14,6 +15,17 @@ static mesh_slot meshes[MGL_MAX_MESHES];
 static mgl_memory_t memory;
 static int has_memory;
 static mgl_u32 heap_addr, heap_size, heap_used;
+static mgl_u32 frame_addr, frame_size, frame_used;
+
+/* Reparto lineal en [base, base + size), con *used lo ya repartido. */
+static mgl_u32 bump(mgl_u32 base, mgl_u32 size, mgl_u32 *used, mgl_u32 bytes, mgl_u32 align) {
+    mgl_u32 start;
+    if (!bytes || !align || (align & (align - 1U)) || !size) return 0;
+    start = (base + *used + align - 1U) & ~(align - 1U);
+    if (start - base > size || bytes > size - (start - base)) return 0;
+    *used = start - base + bytes;
+    return start;
+}
 
 int mgl_resources_init(const mgl_memory_t *m, mgl_u32 addr, mgl_u32 size) {
     int i;
@@ -23,6 +35,7 @@ int mgl_resources_init(const mgl_memory_t *m, mgl_u32 addr, mgl_u32 size) {
     }
     has_memory = 0;
     heap_addr = heap_size = heap_used = 0;
+    frame_addr = frame_size = frame_used = 0;
     if (!m) return MGL_ERR_ARGUMENT;
     if (size && !mgl_memory_ptr(m, addr, size, 4)) return MGL_ERR_MEMORY;
     memory = *m;
@@ -33,12 +46,23 @@ int mgl_resources_init(const mgl_memory_t *m, mgl_u32 addr, mgl_u32 size) {
 }
 
 mgl_u32 mgl_alloc(mgl_u32 bytes, mgl_u32 align) {
-    mgl_u32 start;
-    if (!bytes || !align || (align & (align - 1U))) return 0;
-    start = (heap_addr + heap_used + align - 1U) & ~(align - 1U);
-    if (start - heap_addr > heap_size || bytes > heap_size - (start - heap_addr)) return 0;
-    heap_used = start - heap_addr + bytes;
-    return start;
+    return bump(heap_addr, heap_size, &heap_used, bytes, align);
+}
+
+int mgl_frame_memory_init(mgl_u32 addr, mgl_u32 size) {
+    frame_addr = frame_size = frame_used = 0;
+    if (!has_memory || !size || !mgl_memory_ptr(&memory, addr, size, 4)) return MGL_ERR_MEMORY;
+    frame_addr = addr;
+    frame_size = size;
+    return MGL_OK;
+}
+
+mgl_u32 mgl_frame_alloc(mgl_u32 bytes, mgl_u32 align) {
+    return bump(frame_addr, frame_size, &frame_used, bytes, align);
+}
+
+void mgl_frame_reset_(void) {
+    frame_used = 0;
 }
 
 /* Lo que el renderer de referencia sabe leer; el resto se rechaza aquí, antes
@@ -84,11 +108,13 @@ mgl_mesh_t mgl_create_mesh(const mgl_mesh_desc_t *d) {
     return check(d) == MGL_OK ? add(d) : 0;
 }
 
-mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
-    const unsigned short *indices, mgl_u32 index_count) {
+/* Copia posiciones e índices a [base, base + size) y crea la malla. Si algo
+   no cabe o no vale, *used vuelve a como estaba. */
+static mgl_mesh_t copy_mesh(mgl_u32 base, mgl_u32 size, mgl_u32 *used, const float *positions,
+    mgl_u32 vertex_count, const unsigned short *indices, mgl_u32 index_count) {
     mgl_mesh_desc_t d;
     unsigned char *p;
-    mgl_u32 i, mark = heap_used;
+    mgl_u32 i, mark = *used;
     mgl_mesh_t h;
     if (!positions || !indices || !vertex_count || vertex_count > 65536U || !index_count ||
         index_count > 0x10000000U)
@@ -98,10 +124,10 @@ mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
     d.vertex_stride = 12;
     d.vertex_count = vertex_count;
     d.index_count = index_count;
-    d.vertex_addr = mgl_alloc(vertex_count * 12U, 16);
-    d.index_addr = mgl_alloc(index_count * 2U, 4);
+    d.vertex_addr = bump(base, size, used, vertex_count * 12U, 16);
+    d.index_addr = bump(base, size, used, index_count * 2U, 4);
     if (!d.vertex_addr || !d.index_addr || check(&d) != MGL_OK) {
-        heap_used = mark;
+        *used = mark;
         return 0;
     }
     /* Se escribe el formato serializado (little-endian), no la representación del host. */
@@ -110,8 +136,18 @@ mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
     p = (unsigned char *)mgl_memory_ptr(&memory, d.index_addr, index_count * 2U, 2);
     for (i = 0; i < index_count; i++, p += 2) WR16(p, indices[i]);
     h = add(&d);
-    if (!h) heap_used = mark;
+    if (!h) *used = mark;
     return h;
+}
+
+mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
+    const unsigned short *indices, mgl_u32 index_count) {
+    return copy_mesh(heap_addr, heap_size, &heap_used, positions, vertex_count, indices, index_count);
+}
+
+mgl_mesh_t mgl_create_mesh_frame(const float *positions, mgl_u32 vertex_count,
+    const unsigned short *indices, mgl_u32 index_count) {
+    return copy_mesh(frame_addr, frame_size, &frame_used, positions, vertex_count, indices, index_count);
 }
 
 int mgl_destroy_mesh(mgl_mesh_t h) {

@@ -19,6 +19,7 @@ void t_init(mgl_u32 capacity) {
     if (mgl_memory_init(&t_mem, t_ram, T_RAM_ADDR, T_RAM_SIZE) ||
         mgl_cmd_init(&t_cmd, mgl_memory_ptr(&t_mem, T_CMD_ADDR, capacity, 4), capacity) != MGL_OK ||
         mgl_resources_init(&t_mem, T_HEAP_ADDR, T_HEAP_BYTES) != MGL_OK ||
+        mgl_frame_memory_init(T_FRAME_ADDR, T_FRAME_BYTES) != MGL_OK ||
         mgr_init(&t_rnd, &t_mem) != MGR_OK) {
         puts("FAIL: no se pudo preparar el entorno");
         exit(1);

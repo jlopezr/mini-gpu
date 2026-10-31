@@ -35,6 +35,22 @@ void rotateX(float angle);
 void rotateY(float angle);
 void box(float side);
 
+/* Figuras con los vértices uno a uno, como en Processing:
+     beginShape(QUADS); fill(...); vertex(x, y, z); ... endShape();
+   TRIANGLES: cada 3 vértices un triángulo; QUADS: cada 4 un cuadrilátero
+   (convexo y plano). El color de cada primitiva es el fill() de su primer
+   vértice: plano, sin interpolar entre vértices como Processing (con el mismo
+   color en todos los vértices de la cara, que es lo habitual, da lo mismo).
+   Un vértice con noFill() deja su primitiva sin dibujar. Como mucho
+   P3D_SHAPE_VERTICES vértices por figura; los que sobren se ignoran. */
+#define TRIANGLES 9 /* los valores de Processing */
+#define QUADS 17
+#define P3D_SHAPE_VERTICES 256
+
+void beginShape(int kind);
+void vertex(float x, float y, float z);
+void endShape(void);
+
 /* Para la plataforma: al principio de cada draw() (y de setup()). */
 void processing3d_begin_draw(void);
 /* Para la plataforma: tras size_renderer, con el tamaño ya fijado. */

@@ -58,6 +58,15 @@ int mgl_resources_init(const mgl_memory_t *memory, mgl_u32 heap_addr, mgl_u32 he
    (mgl_resources_init la vacía entera). Devuelve la dirección o 0. */
 mgl_u32 mgl_alloc(mgl_u32 bytes, mgl_u32 align);
 
+/* Memoria de frame: para datos que solo valen un frame (las figuras de
+   beginShape/endShape). [addr, addr + size) dentro de la RAM de
+   mgl_resources_init, que hay que llamar antes. mgl_frame_alloc reparte como
+   mgl_alloc, y cada mgl_begin_frame la vacía entera: lo que el frame anterior
+   dejó ahí tiene que estar ya ejecutado (hoy lo está: la ejecución es
+   síncrona; con frames en vuelo, hará falta una zona por frame y su fence). */
+int mgl_frame_memory_init(mgl_u32 addr, mgl_u32 size);
+mgl_u32 mgl_frame_alloc(mgl_u32 bytes, mgl_u32 align);
+
 /* Malla sobre memoria de la aplicación: MiniGL no copia nada y solo guarda la
    descripción; la aplicación mantiene los datos válidos y sin cambios mientras
    haya un command buffer pendiente que la use. 0 si la descripción no vale. */
@@ -67,6 +76,12 @@ mgl_mesh_t mgl_create_mesh(const mgl_mesh_desc_t *desc);
    POSITION_F32_XYZ con stride 12 y los índices como UINT16. 0 si no vale o no
    cabe. */
 mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
+    const unsigned short *indices, mgl_u32 index_count);
+
+/* Lo mismo en memoria de frame: los datos valen hasta el siguiente
+   mgl_begin_frame. El handle hay que destruirlo igual (se puede en cuanto se
+   ha dibujado: el command buffer ya tiene las direcciones). */
+mgl_mesh_t mgl_create_mesh_frame(const float *positions, mgl_u32 vertex_count,
     const unsigned short *indices, mgl_u32 index_count);
 
 /* Libera el handle (los siguientes usos dan MGL_ERR_HANDLE). La memoria de
@@ -107,6 +122,9 @@ void mgl_set_cull(int mode);
 void mgl_set_color(mgl_color_t color);
 
 void mgl_draw_mesh(mgl_mesh_t mesh);
+/* Solo los índices [first, first + count) (múltiplos de 3): para dibujar
+   partes de una malla con estado distinto, como un color por cara. */
+void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count);
 
 #define MGL_CULL_NONE 0
 #define MGL_CULL_BACK 1

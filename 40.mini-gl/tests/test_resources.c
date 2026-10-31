@@ -140,11 +140,42 @@ static void test_limits(void) {
     CHECK(made == MGL_MAX_MESHES);
 }
 
+/* Memoria de frame: mallas que valen un frame; mgl_begin_frame la vacía. */
+static void test_frame_memory(void) {
+    mgl_mesh_desc_t d;
+    mgl_mesh_t a, b;
+    mgl_u32 first;
+    t_init(4096);
+    t_begin();
+    a = mgl_create_mesh_frame(xyz, 3, idx, 3);
+    CHECK(a && mgl_mesh_info(a, &d) == MGL_OK);
+    CHECK(d.vertex_addr >= T_FRAME_ADDR && d.index_addr + 6U <= T_FRAME_ADDR + T_FRAME_BYTES);
+    first = d.vertex_addr;
+    mgl_clear(0);
+    mgl_draw_mesh(a);
+    CHECK(mgl_destroy_mesh(a) == MGL_OK); /* en cuanto se ha dibujado */
+    b = mgl_create_mesh_frame(xyz, 3, idx, 3);
+    CHECK(mgl_mesh_info(b, &d) == MGL_OK && d.vertex_addr > first); /* el mismo frame: más adelante */
+    mgl_destroy_mesh(b);
+    CHECK(t_end_and_run() == MGR_OK && t_count(0xffff) > 0);
+    t_begin(); /* frame nuevo: vuelve a empezar */
+    a = mgl_create_mesh_frame(xyz, 3, idx, 3);
+    CHECK(mgl_mesh_info(a, &d) == MGL_OK && d.vertex_addr == first);
+    mgl_destroy_mesh(a);
+    mgl_end_frame();
+    mgl_set_deferred(0);
+    /* No cabe: 0, y no se queda nada a medias */
+    CHECK(mgl_frame_alloc(T_FRAME_BYTES + 4U, 4) == 0);
+    CHECK(mgl_frame_memory_init(T_RAM_ADDR + T_RAM_SIZE - 16U, 64U) == MGL_ERR_MEMORY);
+    CHECK(mgl_create_mesh_frame(xyz, 3, idx, 3) == 0); /* sin memoria de frame */
+}
+
 int main(void) {
     test_app_memory();
     test_managed_memory();
     test_handles();
     test_rejected();
     test_limits();
-    return t_report("test_resources: memoria de la aplicación y de MiniGL, handles y límites");
+    test_frame_memory();
+    return t_report("test_resources: memoria de la aplicación, de MiniGL y de frame, handles y límites");
 }

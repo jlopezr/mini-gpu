@@ -20,6 +20,8 @@
 #define T_HEAP_ADDR 0x01008000u  /* 32 KB de MiniGL */
 #define T_HEAP_BYTES 0x8000u
 #define T_APP_ADDR 0x01010000u   /* mallas de la aplicación */
+#define T_FRAME_ADDR 0x01018000u /* 32 KB de memoria de frame de MiniGL */
+#define T_FRAME_BYTES 0x8000u
 
 extern unsigned char *t_ram;
 extern mgl_memory_t t_mem;

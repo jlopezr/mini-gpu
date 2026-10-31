@@ -56,6 +56,16 @@ void rotateY(float angle) {
     mgl_mat4_rotate_y_by(&model, angle);
 }
 
+/* Cámara, modelo y profundidad para dibujar en 3D. */
+static void prepare(const mgl_mat4_t *m) {
+    mgl_set_viewport(0, 0, view_w, view_h);
+    mgl_set_matrix(MGL_MATRIX_PROJECTION, &projection);
+    mgl_set_matrix(MGL_MATRIX_VIEW, &view);
+    mgl_set_matrix(MGL_MATRIX_MODEL, m);
+    mgl_set_depth_test(1);
+    mgl_set_depth_write(1);
+}
+
 /* La malla se crea la primera vez y se reutiliza; el tamaño va en la matriz. */
 void box(float side) {
     mgl_mat4_t m;
@@ -65,12 +75,69 @@ void box(float side) {
         cube = mgl_create_mesh_copy(cube_positions, 8, cube_indices, 36);
     m = model;
     mgl_mat4_scale_by(&m, side, side, side);
-    mgl_set_viewport(0, 0, view_w, view_h);
-    mgl_set_matrix(MGL_MATRIX_PROJECTION, &projection);
-    mgl_set_matrix(MGL_MATRIX_VIEW, &view);
-    mgl_set_matrix(MGL_MATRIX_MODEL, &m);
-    mgl_set_depth_test(1);
-    mgl_set_depth_write(1);
+    prepare(&m);
     mgl_set_color(c);
     mgl_draw_mesh(cube); /* con cube == 0, MGL_ERR_HANDLE en el buffer */
+}
+
+/* beginShape/vertex/endShape: los vértices se guardan aquí y endShape los
+   copia a memoria de frame como una malla, que se dibuja por tramos de
+   primitivas seguidas del mismo color (un SET_COLOR y un DRAW_INDEXED por
+   tramo), en el orden en que se dieron. */
+static float shape_xyz[P3D_SHAPE_VERTICES * 3];
+static mgl_color_t shape_color[P3D_SHAPE_VERTICES];
+static unsigned char shape_filled[P3D_SHAPE_VERTICES];
+static unsigned short shape_indices[P3D_SHAPE_VERTICES / 4 * 6 + P3D_SHAPE_VERTICES];
+static int shape_kind, shape_n, in_shape;
+
+void beginShape(int kind) {
+    in_shape = kind == TRIANGLES || kind == QUADS;
+    shape_kind = kind;
+    shape_n = 0;
+}
+
+void vertex(float x, float y, float z) {
+    if (!in_shape || shape_n >= P3D_SHAPE_VERTICES) return;
+    shape_xyz[3 * shape_n] = x;
+    shape_xyz[3 * shape_n + 1] = y;
+    shape_xyz[3 * shape_n + 2] = z;
+    shape_filled[shape_n] = (unsigned char)mgl_get_fill(&shape_color[shape_n]);
+    shape_n++;
+}
+
+void endShape(void) {
+    int per = shape_kind == QUADS ? 4 : 3, prims, p, v, m = 0, run, k;
+    mgl_color_t color[P3D_SHAPE_VERTICES / 3];
+    int start[P3D_SHAPE_VERTICES / 3 + 1], runs = 0;
+    mgl_mesh_t mesh;
+    if (!in_shape) return;
+    in_shape = 0;
+    prims = shape_n / per;
+    /* Índices de las primitivas con relleno; un tramo nuevo cuando cambia el color. */
+    for (p = 0; p < prims; p++) {
+        v = p * per;
+        if (!shape_filled[v]) continue;
+        if (!runs || shape_color[v] != color[runs - 1]) {
+            color[runs] = shape_color[v];
+            start[runs++] = m;
+        }
+        shape_indices[m++] = (unsigned short)v; /* el cuadrilátero, en dos triángulos */
+        shape_indices[m++] = (unsigned short)(v + 1);
+        shape_indices[m++] = (unsigned short)(v + 2);
+        if (per == 4) {
+            shape_indices[m++] = (unsigned short)v;
+            shape_indices[m++] = (unsigned short)(v + 2);
+            shape_indices[m++] = (unsigned short)(v + 3);
+        }
+    }
+    if (!m) return;
+    start[runs] = m;
+    mesh = mgl_create_mesh_frame(shape_xyz, (mgl_u32)(prims * per), shape_indices, (mgl_u32)m);
+    prepare(&model);
+    for (run = 0; run < runs; run++) {
+        k = start[run + 1] - start[run];
+        mgl_set_color(color[run]);
+        mgl_draw_mesh_range(mesh, (mgl_u32)start[run], (mgl_u32)k); /* mesh == 0: MGL_ERR_HANDLE */
+    }
+    mgl_destroy_mesh(mesh); /* el buffer ya tiene las direcciones; los datos valen hasta el próximo frame */
 }
