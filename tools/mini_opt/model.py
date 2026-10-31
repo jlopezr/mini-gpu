@@ -9,8 +9,9 @@ LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 # `runtime/gen_softfloat.py` renombra las `L.n` de los bloques embebidos a
 # `__sf.n` para que no choquen con las del programa. Siguen siendo etiquetas de
 # bloque, no comienzos de funcion: separarlas rompe el CFG y permite que DCE
-# borre los valores que llegan a esos bloques.
-COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@")
+# borre los valores que llegan a esos bloques. Las `__inl$...` del pase `marks`
+# tampoco: marcan codigo expandido dentro de una funcion (al releer un `.opt.s`).
+COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@|^__inl\$")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
@@ -31,6 +32,10 @@ class Line:
     op: str = ""                    # mnemonico en mayusculas (instr)
     args: list[str] = field(default_factory=list)
     name: str = ""                  # etiqueta (label)
+    # De que funciones expandidas viene (`inline`, `kernelcalls`), de fuera a dentro; `marks` lo pasa a etiquetas
+    # para el perfil. () es de la propia funcion (lo pone `parse_line`); None, una linea que ha creado un pase:
+    # `marks` le da el de sus vecinas.
+    origin: tuple[str, ...] | None = field(default=None, compare=False)
 
     def render(self) -> str:
         if self.kind == "label":
@@ -47,16 +52,16 @@ def parse_line(raw: str) -> list[Line]:
     out: list[Line] = []
     match = LABEL_RE.match(text)
     if match and not text.startswith("."):
-        out.append(Line("label", "", name=match.group(1)))
+        out.append(Line("label", "", name=match.group(1), origin=()))
         text = match.group(2).strip()
         if not text:
             return out
     if text.startswith("."):
-        out.append(Line("directive", text))
+        out.append(Line("directive", text, origin=()))
         return out
     op, _, rest = text.partition(" ")
     args = [a.strip() for a in rest.split(",")] if rest.strip() else []
-    out.append(Line("instr", text, op=op.upper(), args=args))
+    out.append(Line("instr", text, op=op.upper(), args=args, origin=()))
     return out
 
 

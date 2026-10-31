@@ -16,12 +16,13 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # usa los restantes; `inline` va cuando las hojas ya no tienen marco (`deadsaves`); tras el, `stackslots`
 # pasa a copias los guardados de las funciones que se han quedado sin llamadas y `leafregs` les da a los
 # R16..R29 el registro de la copia; las de detras limpian; `deadfuncs` (solo con --whole-program) va cuando las demas ya han quitado las llamadas que
-# sobraban; `ssy` ve al final el CFG definitivo.
+# sobraban; `ssy` ve al final el CFG definitivo, y `marks` (etiquetas del codigo expandido, para el perfil) va
+# detras de todo porque una etiqueta parte un bloque.
 DEFAULT_PASSES = [
     "intrinsics", "kernelcalls", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
     "copyprop", "dce", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
     "sharebase", "deadsaves", "inline", "stackslots", "leafregs", "copyprop", "dce", "jumps", "unreachable", "deadsaves",
-    "tailcalls", "unreachable", "deadfuncs", "invert", "ssy",
+    "tailcalls", "unreachable", "deadfuncs", "invert", "ssy", "marks",
 ]
 
 

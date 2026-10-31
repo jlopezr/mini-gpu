@@ -2,10 +2,10 @@
 
 from . import (
     boolean, branches, constprop, copyprop, dce, deadfuncs, deadsaves, deadstores, forward, inline, intrinsics,
-    invert, jumps, kernels, leafregs, licm, noalias, sharebase, ssy, stackslots, strength, tailcalls, unreachable,
+    invert, jumps, kernels, leafregs, licm, marks, noalias, sharebase, ssy, stackslots, strength, tailcalls, unreachable,
 )
 
 __all__ = [
     "boolean", "branches", "constprop", "copyprop", "dce", "deadfuncs", "deadsaves", "deadstores", "forward", "inline", "intrinsics", "invert",
-    "jumps", "kernels", "leafregs", "licm", "noalias", "sharebase", "ssy", "stackslots", "strength", "tailcalls", "unreachable",
+    "jumps", "kernels", "leafregs", "licm", "marks", "noalias", "sharebase", "ssy", "stackslots", "strength", "tailcalls", "unreachable",
 ]

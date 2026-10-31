@@ -97,8 +97,9 @@ def fresh_labels(unit: Unit):
         yield f"L.{number}"
 
 
-def expansion(body: list[Line], labels) -> list[Line]:
-    """El cuerpo con etiquetas nuevas y cada `JR R31` saltando detras; el ultimo cae ahi."""
+def expansion(body: list[Line], labels, call: Line, callee: str) -> list[Line]:
+    """El cuerpo con etiquetas nuevas y cada `JR R31` saltando detras; el ultimo cae ahi. Cada linea lleva en
+    `origin` la cadena de expansiones (la de la llamada, `callee` y la que ya tuviera)."""
     renamed = {line.name: next(labels) for line in body if line.kind == "label"}
     after = next(labels)
 
@@ -108,14 +109,15 @@ def expansion(body: list[Line], labels) -> list[Line]:
     last = max(index for index, line in enumerate(body) if line.kind == "instr")
     out: list[Line] = []
     for index, line in enumerate(body):
+        origin = (*(call.origin or ()), callee, *(line.origin or ()))
         if line.kind == "label":
-            out.append(Line("label", "", name=renamed[line.name]))
+            out.append(Line("label", "", name=renamed[line.name], origin=origin))
         elif line.op == "JR":
             if index != last:           # el ultimo (detras solo hay etiquetas) cae detras de la llamada
-                out.append(Line("instr", "", op="BRA", args=[after]))
+                out.append(Line("instr", "", op="BRA", args=[after], origin=origin))
         else:
-            out.append(Line("instr", "", op=line.op, args=[rename(arg) for arg in line.args]))
-    out.append(Line("label", "", name=after))
+            out.append(Line("instr", "", op=line.op, args=[rename(arg) for arg in line.args], origin=origin))
+    out.append(Line("label", "", name=after, origin=call.origin or ()))
     return out
 
 
@@ -133,7 +135,7 @@ def pass_inline(unit: Unit, stats: dict) -> None:
         for line in function.body:
             if (line.kind == "instr" and line.op == "JAL" and len(line.args) == 2
                     and reg_of(line.args[0]) == LINK and line.args[1] in bodies and line.args[1] != function.name):
-                body += expansion(bodies[line.args[1]], labels)
+                body += expansion(bodies[line.args[1]], labels, line, line.args[1])
                 stats["inline.expanded"] = stats.get("inline.expanded", 0) + 1
             else:
                 body.append(line)
@@ -223,7 +225,7 @@ def pass_kernelcalls(unit: Unit, stats: dict) -> None:
                     if isinstance(found, str):
                         raise OptError(f"{where}: no se puede expandir {name}, a la que llama: {found}")
                     bodies[name] = found
-                body += expansion(bodies[name], labels)
+                body += expansion(bodies[name], labels, line, name)
                 stats["kernelcalls.expanded"] = stats.get("kernelcalls.expanded", 0) + 1
             kernel.body = body
         drop_link_saves(kernel, stats)

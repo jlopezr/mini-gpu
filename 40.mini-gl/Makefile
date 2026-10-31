@@ -87,10 +87,12 @@ $(MG)/%.bin: examples/%.c src/platform_minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)
 sim-%: $(MG)/%.bin
 	$(SIM_SYS) $< --window --run-limit 100000000000 $(SIM_ARGS)
 
-# Instrucciones por función C (y del runtime) hasta el frame FRAMES: make profile-minigpu-shapes.
+# Instrucciones por función C (y del runtime) hasta el frame FRAMES: make profile-minigpu-shapes. Deja
+# además el .asm con la cuenta de cada instrucción en $(MG)/<sketch>-anotado.txt.
 profile-minigpu-%: $(MG)/%.bin
 	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --run-limit 100000000000 \
-	    --profile --symbols $(MG)/$*/platform_minigpu.asm | sed -n '/^Perfil/,$$p'
+	    --profile --symbols $(MG)/$*/platform_minigpu.asm \
+	    --profile-annotate $(MG)/$*-anotado.txt | sed -n '/^Perfil/,$$p'
 
 # El frame FRAMES de cada sketch en el simulador, píxel a píxel contra la misma versión en el host.
 check-minigpu: $(SKETCHES:%=check-minigpu-%)

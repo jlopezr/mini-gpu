@@ -407,6 +407,7 @@ programa (`tools/sim_profile.py`, compartido como las opciones de periféricos; 
 $ sim-sys programa.asm --profile                        # tabla al terminar (las 25 primeras)
 $ sim-sys programa.bin --profile --symbols programa.asm # un .bin no lleva nombres: el .asm que lo dio
 $ sim-sys programa.asm --profile perfil.txt             # todas, en un fichero
+$ sim-sys programa.asm --profile --profile-annotate anotado.txt  # y el .asm con la cuenta de cada instrucción
 ```
 
 Las funciones son las etiquetas de código que no son de bloque (`L.n`, que el ensamblador renombra a
@@ -417,6 +418,25 @@ con todo lo que llama; la pila se sigue por la dirección de retorno, así que u
 convirtió en `BRA` cuenta dentro de quien salta, y la recursión no se cuenta dos veces. En la GPU, las
 instrucciones de warp de cada kernel (`__kernel_x` sale como `x (kernel)`). El código antes de la primera
 etiqueta (o de un programa sin ninguna) sale como `(sin nombre)`. Funciona junto a `--trace`.
+
+Un kernel no llama a nada (`kernelcalls` expande sus llamadas), pero el pase `marks` de `mini-opt` deja etiquetas
+`__inl$...` donde cambia la función expandida, y con ellas la GPU sale como un árbol: el kernel y, dentro, cada
+función expandida con sus instrucciones **propias**, el **total** con lo que tiene dentro y la **ocupación**
+(lanes activas de las vivas, de media: en SIMT una instrucción con una lane activa cuesta lo mismo que con ocho):
+
+```text
+Perfil de GPU: 1222652 instrucciones de warp; ocupación 84% (lanes activas de las vivas)
+  función                                         propias      %      total      %  ocup.
+  mgl_render (kernel)                                 110   0.0%    1222652 100.0%    84%
+    render.gpu_renderer                            196882  16.1%    1222542 100.0%    84%
+      primitive.gpu_renderer                       148434  12.1%    1023302  83.7%    81%
+        segment.gpu_renderer                        29386   2.4%     582884  47.7%    77%
+          brush.gpu_renderer                       188800  15.4%     553324  45.3%    76%
+            put.gpu_renderer                       364524  29.8%     364524  29.8%    63%
+```
+
+`--profile-annotate FICHERO` escribe el `.asm` de las funciones que se han ejecutado con, en cada instrucción, las
+veces que la ha ejecutado la CPU, las de la GPU (instrucciones de warp) y su ocupación.
 
 ### Periféricos comunes de los tres simuladores
 
@@ -1045,7 +1065,7 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
   `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
-  `deadfuncs`, `invert`, `ssy`) y,
+  `deadfuncs`, `invert`, `ssy`, `marks`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
@@ -1087,6 +1107,12 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   lee de ella); así los parámetros por la pila de una función expandida por `kernelcalls` no abren
   regiones. `--ssy-all` los marca todos. Quita
   además el `SSY` que cae siempre después de otro con el mismo destino.
+
+- **Pase `marks`** (el último): `inline` y `kernelcalls` apuntan en cada línea que copian de qué funciones viene
+  (`Line.origin`), y este pase pone una etiqueta `__inl$<unidad>$<función>$<n>$<f1>$<f2>...` donde cambia (sin
+  funciones detrás de `<n>`, de vuelta en la propia). Es para el perfil (`--profile` de los simuladores). Va al
+  final porque una etiqueta parte un bloque básico, y no cambia el binario. Una línea que ha creado un pase no
+  trae origen: toma el de sus vecinas si coinciden.
 
 - **Pase `licm`** (todas las funciones): en cada bucle sin llamadas saca al preheader
   las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`, productos como

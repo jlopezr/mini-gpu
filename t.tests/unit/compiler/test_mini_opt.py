@@ -32,7 +32,8 @@ from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 from tools.mini_opt.cli import main as optimize_main  # noqa: E402
-from tools.mini_opt.registry import PASSES  # noqa: E402
+from tools.mini_opt.isa import instr  # noqa: E402
+from tools.mini_opt.registry import DEFAULT_PASSES, PASSES  # noqa: E402
 from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
@@ -3101,6 +3102,66 @@ JR R31
         unit = parse_unit(self.HELPERS, "k.s")
         PASSES["kernelcalls"][0](unit, {})
         self.assertIn("JAL R31, leaf", [line.render() for line in unit.lines()])
+
+
+class MarksTest(unittest.TestCase):
+    """`marks`: etiquetas `__inl$...` donde cambia la funcion expandida en linea, para el perfil."""
+
+    def marked(self, kernel_body):
+        source = KernelCallsTest.HELPERS + f".globl __kernel_k\n__kernel_k:\n{kernel_body}\nJR R31\n"
+        unit = parse_unit(source, "dir/k-1.s")
+        PASSES["kernelcalls"][0](unit, {})
+        return unit, next(f for f in unit.functions() if f.name == "__kernel_k")
+
+    def run_marks(self, unit, kernel):
+        PASSES["marks"][0](unit, {})
+        return [line.render() for line in kernel.body]
+
+    def test_each_change_of_expanded_function_gets_a_label_with_its_path(self):
+        unit, kernel = self.marked("ADDI R1, R1, 2\nJAL R31, framed\nADDI R1, R1, 3")
+        body = self.run_marks(unit, kernel)
+        marks = [line for line in body if line.startswith("__inl$")]
+        self.assertEqual(marks, ["__inl$k_1$__kernel_k$1$framed:",            # la unidad, sin caracteres raros
+                                 "__inl$k_1$__kernel_k$2$framed$leaf:",
+                                 "__inl$k_1$__kernel_k$3$framed:",
+                                 "__inl$k_1$__kernel_k$4:"])                   # de vuelta en el kernel
+        self.assertLess(body.index("ADDI R1, R1, 2"), body.index(marks[0]))
+        self.assertGreater(body.index("ADDI R1, R1, 3"), body.index(marks[3]))
+        self.assertEqual(body[body.index(marks[1]) + 1], "ADDI R1, R1, 1")    # el cuerpo de leaf
+
+    def test_a_line_a_pass_creates_takes_its_neighbours_origin_only_if_they_agree(self):
+        unit, kernel = self.marked("JAL R31, leaf\nJAL R31, leaf")
+        first = next(i for i, line in enumerate(kernel.body) if line.kind == "instr" and line.origin == ("leaf",))
+        kernel.body.insert(first + 1, instr("ADDI", "R2", "R2", "1"))         # nueva (sin origen), dentro de leaf
+        body = self.run_marks(unit, kernel)
+        # Las dos leaf van seguidas (sin nada del kernel entre ellas): una marca para las dos y otra a la vuelta.
+        self.assertEqual(sum(line.startswith("__inl$") for line in body), 2)
+        added = body.index("ADDI R2, R2, 1")
+        self.assertTrue(body[added - 2].startswith("__inl$") and body[added - 2].endswith("$leaf:"))
+        # Entre dos expansiones de leaf, una linea del propio kernel sigue siendo del kernel.
+        unit, kernel = self.marked("JAL R31, leaf\nADDI R3, R3, 1\nJAL R31, leaf")
+        body = self.run_marks(unit, kernel)
+        own = body.index("ADDI R3, R3, 1")
+        self.assertTrue(re.fullmatch(r"__inl\$k_1\$__kernel_k\$\d+:", next(
+            line for line in reversed(body[:own]) if line.startswith("__inl$"))))
+
+    def test_functions_without_expanded_code_are_left_alone(self):
+        unit = parse_unit(KernelCallsTest.HELPERS, "k.s")
+        before = [line.render() for line in unit.lines()]
+        PASSES["marks"][0](unit, {})
+        self.assertEqual([line.render() for line in unit.lines()], before)
+
+    def test_rereading_the_output_keeps_the_marks_inside_their_function(self):
+        unit, kernel = self.marked("JAL R31, framed")
+        self.run_marks(unit, kernel)
+        names = [function.name for function in parse_unit(render_unit(unit), "k.s").functions()]
+        self.assertEqual(names, ["leaf", "framed", "__kernel_k"])
+
+    def test_the_marks_assemble_and_are_the_last_pass(self):
+        unit, kernel = self.marked("JAL R31, framed")
+        self.run_marks(unit, kernel)
+        assemble_bytes(render_unit(unit).replace("JAL R31, leaf", "ADDI R1, R1, 1"))
+        self.assertEqual(DEFAULT_PASSES[-1], "marks")
 
 
 class LeafRegsTest(unittest.TestCase):

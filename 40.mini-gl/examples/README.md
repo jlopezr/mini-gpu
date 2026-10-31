@@ -73,14 +73,17 @@ make profile-minigpu-shapes          # instrucciones por función C hasta el fra
 ```
 
 `profile-minigpu-<nombre>` usa `--profile` del simulador: instrucciones propias de cada función C (`put`,
-`sw_clear`, `edge`...), llamadas y total con lo que llama.
+`sw_clear`, `edge`...), llamadas y total con lo que llama. En V2, el kernel sale como un árbol de las funciones
+expandidas en él (`render` > `primitive` > `segment` > `brush` > `put`), con la ocupación de lanes de cada una.
+Deja además `<sketch>-anotado.txt` en la carpeta de la versión: el `.asm` con la cuenta de cada instrucción.
 
 `check-minigpu` guarda el frame del host (`-f FRAMES -o x.bin`) y el del
 simulador (`--halt-after-swaps FRAMES --frame-output`) en RGB565 crudo y los
 compara con `tools/compare-frames.py`, que dice dónde están las diferencias.
 
-La versión se elige al compilar (`V=0`, la de por defecto, o `V=1`; V2 todavía no): en V1, cada
-`draw()` se graba en un command buffer en RAM y la CPU lo interpreta antes del swap. `size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja directamente en el
+La versión se elige al compilar (`V=0`, la de por defecto, `V=1` o `V=2`): en V1, cada
+`draw()` se graba en un command buffer en RAM y la CPU lo interpreta antes del swap; en V2 lo interpreta un warp
+de la GPU (`KERNEL(mgl_render)`), que la CPU lanza y espera. `size()` solo acepta 320×240, el tamaño del vídeo. Se dibuja directamente en el
 buffer trasero, que tiene lo de hace dos frames. Para que, como en Processing, el
 lienzo se conserve de un frame al siguiente, tras cada swap `mgl_set_target`
 cambia de buffer sin tocar el estado de dibujo y deja pendiente copiar el

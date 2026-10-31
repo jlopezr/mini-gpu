@@ -1771,6 +1771,51 @@ class ProfileTest(unittest.TestCase):
         profile.report(out)
         self.assertIn("memset (kernel)", out.getvalue())
 
+    def test_inline_marks_give_the_path_of_expanded_functions(self):
+        symbols = self.sim_profile.Symbols({
+            "__kernel_k": 0, "__inl$u$__kernel_k$1$a": 8, "__inl$u$__kernel_k$2$a$b": 16,
+            "__inl$u$__kernel_k$3": 24, "__inl$u$__kernel_k$4$c": 24, "L.2": 28, "g": 32})
+        self.assertEqual(symbols.function(20), "__kernel_k")                      # una marca no es una funcion
+        self.assertEqual([symbols.path(pc) for pc in (4, 8, 20, 24, 28, 32)], [
+            ("__kernel_k",), ("__kernel_k", "a"), ("__kernel_k", "a", "b"),
+            ("__kernel_k", "c"),                       # dos marcas en la misma direccion: la ultima (n mayor)
+            ("__kernel_k", "c"), ("g",)])                 # una marca no pasa a la funcion siguiente
+
+    def test_the_gpu_report_is_a_tree_with_own_total_and_occupancy(self):
+        from types import SimpleNamespace
+        symbols = self.sim_profile.Symbols({"__kernel_k": 0, "__inl$u$__kernel_k$1$a": 8,
+                                            "__inl$u$__kernel_k$2$a$b": 12})
+        profile = self.sim_profile.Profile(symbols)
+        for pc, mask, times in ((0, 0xFF, 2), (8, 0xFF, 1), (12, 0x01, 4)):       # b: una lane de ocho
+            for _ in range(times):
+                profile.gpu_event(SimpleNamespace(pc=pc, mask=mask, live_mask=0xFF, instruction=0))
+        tree = profile.gpu_tree()
+        self.assertEqual(tree[("__kernel_k",)][:2], [2, 7])
+        self.assertEqual(tree[("__kernel_k", "a")][:2], [1, 5])
+        self.assertEqual(tree[("__kernel_k", "a", "b")], [4, 4, 4, 32])
+        out = io.StringIO()
+        profile.report(out)
+        lines = out.getvalue().splitlines()
+        self.assertIn("7 instrucciones de warp; ocupación 50%", lines[1])           # (16 + 8 + 4) / (7 * 8)
+        rows = [line for line in lines if line.lstrip().startswith(("k (kernel)", "a ", "b "))]
+        self.assertEqual([len(row) - len(row.lstrip()) for row in rows], [2, 4, 6])  # sangrado por nivel
+        self.assertTrue(rows[2].endswith("12%"))                                   # 4 de 32
+
+    def test_annotate_writes_the_executed_assembly_with_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            annotated = Path(folder) / "anotado.txt"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sim.main([str(program), "--profile", "--profile-annotate", str(annotated),
+                                           "--memory-size", hex(MEMORY)]), 0)
+            text = annotated.read_text(encoding="utf-8")
+        self.assertIn("rec:", text)
+        self.assertRegex(text, r"\n\s+3\s+0000002c\s+ADDI\s+R2, R2, 1")         # leaf: dos llamadas y el BRA
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(sim.main([str(program), "--profile-annotate", str(annotated),
+                                       "--memory-size", hex(MEMORY)]), 2)        # sin --profile
+
     def test_the_command_line_needs_the_names(self):
         with tempfile.TemporaryDirectory() as folder:
             program = Path(folder) / "p.asm"
