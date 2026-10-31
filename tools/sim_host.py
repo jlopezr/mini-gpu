@@ -7,13 +7,29 @@
   que el programa escribe en `SERIAL.DATA` sale por stdout y lo que se teclea
   entra por RX, como `run-board --interactive` hace con la placa. Es la forma
   de probar en el simulador un programa que habla por UART.
+* `gui_python`: el intérprete para las ventanas Tk, que van en otro proceso.
 """
 from __future__ import annotations
 
 import atexit
+import os
+import shutil
 import sys
+from pathlib import Path
 
 CTRL_C = b"\x03"
+
+
+def gui_python() -> str:
+    """El Python con el que abrir una ventana (`screen_window.py`, `fb_window.py`): el mismo que corre, salvo en
+    PyPy, que acelera el simulador pero no trae Tk ni PIL. Entonces, `MINIGPU_GUI_PYTHON`, el del `.venv` del repo
+    (como `prototype.py` con apio) o el `python3` del PATH."""
+    if sys.implementation.name != "pypy":
+        return sys.executable
+    root = Path(__file__).resolve().parents[1]
+    venv = [root / ".venv" / "Scripts" / "python.exe", root / ".venv" / "bin" / "python3"]
+    return (os.environ.get("MINIGPU_GUI_PYTHON") or next((str(p) for p in venv if p.exists()), None)
+            or shutil.which("python3") or sys.executable)
 
 
 def stop_machine(machine) -> None:

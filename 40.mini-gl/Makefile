@@ -12,7 +12,12 @@ SDL_LIBS := $(shell $(SDL_CONFIG) --libs 2>/dev/null)
 REPO := $(abspath ..)
 PYTHON ?= python3
 BUILD_C = $(PYTHON) $(REPO)/tools/build-c
-SIM_SYS = $(PYTHON) $(REPO)/32.cpu-gpu-func-sim/cpu_gpu_sim.py
+# El simulador va de 4 a 10 veces más rápido con PyPy (uv python install pypy@3.11): se usa si está, y si no,
+# PYTHON. La ventana se abre igualmente con CPython (gui_python, en tools/sim_host.py). SIM_PYTHON=python3 lo evita.
+ifndef SIM_PYTHON
+SIM_PYTHON := $(or $(shell uv python find pypy 2>/dev/null),$(PYTHON))
+endif
+SIM_SYS = $(SIM_PYTHON) $(REPO)/32.cpu-gpu-func-sim/cpu_gpu_sim.py
 COMPARE_FRAMES = $(PYTHON) $(REPO)/tools/compare-frames.py
 # La biblioteca C mínima que build-c añade a cada programa.
 LIBC = $(wildcard $(REPO)/t.tests/runtime/libc/*.c $(REPO)/t.tests/inc/*.h)

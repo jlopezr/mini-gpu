@@ -21,7 +21,10 @@ from __future__ import annotations
 import struct
 from typing import Any
 
-from PIL import Image, ImageDraw
+try:
+    from PIL import Image, ImageDraw
+except ImportError:     # el simulador en PyPy, que solo usa snapshot; el Renderer va en la ventana, con CPython
+    Image = ImageDraw = None
 
 from tools import console_render as cr
 

@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from tools import screen
-from tools.sim_host import stop_machine
+from tools.sim_host import gui_python, stop_machine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,7 +68,7 @@ class SimDisplay:
         self.closed = False
         self.interrupted = False
         self._last_snapshot = None
-        command = [sys.executable, str(ROOT / "tools" / "screen_window.py"), str(self.font),
+        command = [gui_python(), str(ROOT / "tools" / "screen_window.py"), str(self.font),
                    "--scale", str(self.scale)]
         if device is not None:
             command.append("--input")

@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.sim_devices import InputDevice  # noqa: E402
+from tools.sim_host import gui_python  # noqa: E402
 
 # Huecos que el movimiento del ratón deja libres para teclas y botones, que no
 # se pueden perder. El movimiento solo entra si sobra más que esto.
@@ -223,7 +224,7 @@ class WindowSource:
         from tools.screen import SCREEN_SIZE
         # Donde la ventana supone el ratón al empezar: su centro (screen_window.py).
         self.origin = (SCREEN_SIZE[0] * scale // 2, SCREEN_SIZE[1] * scale // 2)
-        command = [sys.executable, str(ROOT / "tools" / "screen_window.py"),
+        command = [gui_python(), str(ROOT / "tools" / "screen_window.py"),
                    "--panel", "--input", "--scale", str(scale)]
         self.process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
