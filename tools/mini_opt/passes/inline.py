@@ -21,9 +21,10 @@ haga falta), y antes de los pases que limpian lo que deja (`copyprop`, `dce`, `j
 (antes de `kernels`):
 Un kernel no llama a nada: cada `JAL` de un `__kernel_*` pasa a ser el cuerpo entero de la funcion llamada.
 
-La GPU del simulador funcional (11) y la de la 36 no tienen `JAL` (la 37 si), asi que un kernel escrito con funciones
-auxiliares (`min2`, `put`, una primitiva entera...) no se podria ejecutar. Este pase las expande todas, sin limite de
-tamano y tambien las que llaman a otras (se expanden a su vez), antes de `kernels`.
+La GPU de la 36, para la que se compilan los kernels (`GPU_ISA`), no tiene `JAL` (la 37 y el simulador funcional 11
+si), asi que un kernel escrito con funciones auxiliares (`min2`, `put`, una primitiva entera...) no se podria ejecutar
+en ella. Este pase las expande todas, sin limite de tamano y tambien las que llaman a otras (se expanden a su vez),
+antes de `kernels`.
 
 El cuerpo se copia tal cual, marco incluido: `JAL` no cambia R30, asi que el `ADDI R30, R30, -n` de la funcion, sus
 accesos a la pila (los argumentos 5+ del llamador incluidos) y los guardados de R16..R29 que restaura hacen en el
