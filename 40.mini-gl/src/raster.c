@@ -1,5 +1,20 @@
 #include "minigl.h"
 
+/* El renderer de V2 (gpu_renderer.c) incluye este fichero con MGL_RASTER_LANES y RASTER_LANE (la lane que lo
+   ejecuta): cada lane dibuja lo mismo que V0 pero solo en sus columnas (x & 7 == RASTER_LANE), y las funciones
+   sw_* son static de esa unidad. Cambian los cuatro sitios que escriben píxeles: put, row_fill, la columna de box
+   y sw_image. El estado de aquí es global: todas las lanes escriben los mismos valores.
+   La GPU no tiene JAL y mini-opt (kernelcalls) copia el cuerpo de cada función en cada sitio que la llama: con
+   segment llamado desde ocho sitios, el kernel pasaba de 8000 instrucciones. Por eso, con MGL_RASTER_LANES,
+   sw_line, sw_rect y sw_triangle solo rellenan (los bordes los dibuja el renderer con un único bucle que llama
+   una vez a segment, mismos lados y en el mismo orden) y el borde del círculo es un bucle con un solo brush. */
+#ifdef MGL_RASTER_LANES
+#define RASTER_API static
+#define OWNS(x) ((((x) - RASTER_LANE) & 7) == 0)
+#else
+#define RASTER_API
+#endif
+
 static mgl_color_t *fb;
 static int fw, fh, pitch;
 static mgl_color_t fc = 0xffff, sc = 0xffff;
@@ -18,6 +33,9 @@ static int abs2(int a) {
 }
 
 static void put(int x, int y, mgl_color_t c) {
+#ifdef MGL_RASTER_LANES
+    if (!OWNS(x)) return;
+#endif
     if (fb && x >= 0 && y >= 0 && x < fw && y < fh) fb[y * pitch + x] = c;
 }
 
@@ -28,6 +46,15 @@ static void put(int x, int y, mgl_color_t c) {
    strict aliasing. En el host no se puede (escribir un mgl_color_t con un
    unsigned no está definido y -O2 lo aprovecha), y el compilador ya vectoriza
    el bucle de píxeles. */
+#ifdef MGL_RASTER_LANES
+static void row_fill(mgl_color_t *row, int x0, int x1, mgl_color_t c) {
+    mgl_color_t *p, *end;
+    if (x0 < 0) x0 = 0;
+    if (x1 > fw) x1 = fw;
+    end = row + x1;
+    for (p = row + x0 + ((RASTER_LANE - x0) & 7); p < end; p += 8) *p = c; /* desde la primera columna suya */
+}
+#else
 static void row_fill(mgl_color_t *row, int x0, int x1, mgl_color_t c) {
     mgl_color_t *p;
     int n; /* un contador y no restas de punteros: lcc las divide en cada vuelta */
@@ -67,6 +94,7 @@ static void row_fill(mgl_color_t *row, int x0, int x1, mgl_color_t c) {
 #endif
     for (; n > 0; n--) *p++ = c;
 }
+#endif
 
 /* La fila y de x0 a x1 - 1, recortada (las líneas, que no van por filas seguidas). */
 static void span(int y, int x0, int x1, mgl_color_t c) {
@@ -83,6 +111,9 @@ static void box(int x0, int y0, int x1, int y1, mgl_color_t c) {
     p = fb + y0 * pitch;
     if (x1 - x0 == 1) {
         if (x0 < 0 || x0 >= fw) return;
+#ifdef MGL_RASTER_LANES
+        if (!OWNS(x0)) return;
+#endif
         for (p += x0; y0 < y1; y0++, p += pitch) *p = c;
     } else
         for (; y0 < y1; y0++, p += pitch) row_fill(p, x0, x1, c);
@@ -169,7 +200,7 @@ static long edge(int ax, int ay, int bx, int by, int px, int py) {
     return (long)(px - ax) * (by - ay) - (long)(py - ay) * (bx - ax);
 }
 
-void sw_bind(mgl_color_t *pixels, int width, int height, int stride) {
+RASTER_API void sw_bind(mgl_color_t *pixels, int width, int height, int stride) {
     if (!pixels || width <= 0 || height <= 0 || stride < width) {
         fb = 0;
         fw = fh = pitch = 0;
@@ -186,57 +217,63 @@ void sw_bind(mgl_color_t *pixels, int width, int height, int stride) {
     sw = 1;
 }
 
+#ifndef MGL_RASTER_LANES
 /* Otro framebuffer del mismo tamaño, con el mismo estado. */
-void sw_set_target(mgl_color_t *pixels) {
+RASTER_API void sw_set_target(mgl_color_t *pixels) {
     if (fb && pixels) fb = pixels;
 }
+#endif
 
-void sw_clear(mgl_color_t c) {
+RASTER_API void sw_clear(mgl_color_t c) {
     if (fb) box(0, 0, fw, fh, c);
 }
 
-void sw_fill(mgl_color_t c) {
+RASTER_API void sw_fill(mgl_color_t c) {
     fc = c;
     fill_on = 1;
 }
 
-void sw_no_fill(void) {
+RASTER_API void sw_no_fill(void) {
     fill_on = 0;
 }
 
-void sw_stroke(mgl_color_t c) {
+RASTER_API void sw_stroke(mgl_color_t c) {
     sc = c;
     stroke_on = 1;
 }
 
-void sw_no_stroke(void) {
+RASTER_API void sw_no_stroke(void) {
     stroke_on = 0;
 }
 
-void sw_stroke_weight(int w) {
+RASTER_API void sw_stroke_weight(int w) {
     sw = w > 0 ? w : 1;
 }
 
-void sw_point(int x, int y) {
+RASTER_API void sw_point(int x, int y) {
     if (stroke_on) brush(x, y, sc);
 }
 
-void sw_line(int x0, int y0, int x1, int y1) {
+#ifndef MGL_RASTER_LANES
+RASTER_API void sw_line(int x0, int y0, int x1, int y1) {
     if (stroke_on) segment(x0, y0, x1, y1, sc);
 }
+#endif
 
-void sw_rect(int x, int y, int w, int h) {
+RASTER_API void sw_rect(int x, int y, int w, int h) {
     if (w <= 0 || h <= 0 || !fb) return;
     if (fill_on) box(x, y, x + w, y + h, fc);
+#ifndef MGL_RASTER_LANES
     if (stroke_on) {
         segment(x, y, x + w - 1, y, sc);
         segment(x + w - 1, y, x + w - 1, y + h - 1, sc);
         segment(x + w - 1, y + h - 1, x, y + h - 1, sc);
         segment(x, y + h - 1, x, y, sc);
     }
+#endif
 }
 
-void sw_circle(int cx, int cy, int r) {
+RASTER_API void sw_circle(int cx, int cy, int r) {
     int x, y, xx, last, dx;
     long dy, g, up, down;
     mgl_color_t *row;
@@ -276,6 +313,14 @@ void sw_circle(int cx, int cy, int r) {
         y = 0;
         xx = 1 - r;
         while (x >= y) {
+#ifdef MGL_RASTER_LANES
+            int k, a, b;
+            for (k = 0; k < 8; k++) { /* los ocho octantes, en el orden de V0: (x,y) (y,x) (-y,x) (-x,y)... */
+                a = k == 0 || k == 3 || k == 4 || k == 7 ? x : y;
+                b = k == 0 || k == 3 || k == 4 || k == 7 ? y : x;
+                brush(cx + (k == 2 || k == 3 || k == 4 || k == 5 ? -a : a), cy + (k >= 4 ? -b : b), sc);
+            }
+#else
             brush(cx + x, cy + y, sc);
             brush(cx + y, cy + x, sc);
             brush(cx - y, cy + x, sc);
@@ -284,6 +329,7 @@ void sw_circle(int cx, int cy, int r) {
             brush(cx - y, cy - x, sc);
             brush(cx + y, cy - x, sc);
             brush(cx + x, cy - y, sc);
+#endif
             y++;
             if (xx < 0)
                 xx += 2 * y + 1;
@@ -295,28 +341,31 @@ void sw_circle(int cx, int cy, int r) {
     }
 }
 
-/* Recorta [*from, *to] a las x (desde left) en que una arista que vale v en
-   left y crece d por x da >= 0. Con divisiones exactas, sin recorrer la fila.
-   (Llevar cociente y resto por sumas cuesta más instrucciones que las tres
-   divisiones por fila; solo compensaría con un divisor mucho más lento.) */
-static void clip_edge(long v, long d, int left, int *from, int *to) {
-    long x;
-    if (d > 0) {
-        if (v >= 0) return;
-        x = left + (-v + d - 1) / d; /* la primera x con v + d * (x - left) >= 0 */
-        if (x > *from) *from = x > *to ? *to + 1 : (int)x;
-    } else if (d < 0) {
-        if (v < 0) {
-            *to = *from - 1;
-            return;
-        }
-        x = left + v / -d; /* la última */
-        if (x < *to) *to = (int)x;
-    } else if (v < 0)
-        *to = *from - 1;
-}
+/* Recorta [FROM, TO] a las x (desde LEFT) en que una arista que vale V en LEFT y crece D por x da >= 0. Con
+   divisiones exactas, sin recorrer la fila. (Llevar cociente y resto por sumas cuesta más instrucciones que las
+   tres divisiones por fila; solo compensaría con un divisor mucho más lento.) Es una macro sobre las variables
+   de quien la llama, como WALK_RUN, y no una función con punteros a ellas: con su dirección tomada, lcc las
+   deja en la pila, y en V2 mini-opt ya no puede seguir la pila del kernel (ssy daría todo por divergente). */
+#define CLIP_EDGE(V, D, LEFT, FROM, TO)                           \
+    do {                                                          \
+        long v_ = (V), d_ = (D), x_;                              \
+        if (d_ > 0) {                                             \
+            if (v_ < 0) {                                         \
+                x_ = (LEFT) + (-v_ + d_ - 1) / d_; /* la primera */ \
+                if (x_ > (FROM)) (FROM) = x_ > (TO) ? (TO) + 1 : (int)x_; \
+            }                                                     \
+        } else if (d_ < 0) {                                      \
+            if (v_ < 0)                                           \
+                (TO) = (FROM) - 1;                                \
+            else {                                                \
+                x_ = (LEFT) + v_ / -d_; /* la última */           \
+                if (x_ < (TO)) (TO) = (int)x_;                    \
+            }                                                     \
+        } else if (v_ < 0)                                        \
+            (TO) = (FROM) - 1;                                    \
+    } while (0)
 
-void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
+RASTER_API void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
     int y, left, right, top, bottom, from, to, bx = x1, by = y1, cx = x2, cy = y2;
     long area = edge(x0, y0, x1, y1, x2, y2), a, b, c;
     mgl_color_t *row;
@@ -341,29 +390,37 @@ void sw_triangle(int x0, int y0, int x1, int y1, int x2, int y2) {
         for (y = top; y <= bottom; y++, row += pitch) {
             from = left;
             to = right;
-            clip_edge(a, by - y0, left, &from, &to);
-            clip_edge(b, cy - by, left, &from, &to);
-            clip_edge(c, y0 - cy, left, &from, &to);
+            CLIP_EDGE(a, by - y0, left, from, to);
+            CLIP_EDGE(b, cy - by, left, from, to);
+            CLIP_EDGE(c, y0 - cy, left, from, to);
             row_fill(row, from, to + 1, fc);
             a -= bx - x0; /* cada arista cambia en una cantidad fija por y */
             b -= cx - bx;
             c -= x0 - cx;
         }
     }
+#ifndef MGL_RASTER_LANES
     if (stroke_on) {
         segment(x0, y0, x1, y1, sc);
         segment(x1, y1, x2, y2, sc);
         segment(x2, y2, x0, y0, sc);
     }
+#endif
 }
 
-void sw_image(const mgl_sprite_t *s, int x, int y) {
+RASTER_API void sw_image(const mgl_sprite_t *s, int x, int y) {
     int i, j, x0, y0, x1, y1;
     if (!fb || !s || !s->pixels || s->width <= 0 || s->height <= 0 || s->stride < s->width) return;
     x0 = max2(0, x);
     y0 = max2(0, y);
     x1 = min2(fw, x + s->width);
     y1 = min2(fh, y + s->height);
+#ifdef MGL_RASTER_LANES
+    x0 += (RASTER_LANE - x0) & 7; /* solo las columnas de la lane */
+    for (j = y0; j < y1; j++)
+        for (i = x0; i < x1; i += 8) fb[j * pitch + i] = s->pixels[(j - y) * s->stride + (i - x)];
+#else
     for (j = y0; j < y1; j++)
         for (i = x0; i < x1; i++) put(i, j, s->pixels[(j - y) * s->stride + (i - x)]);
+#endif
 }

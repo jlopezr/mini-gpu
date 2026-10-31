@@ -29,7 +29,7 @@ LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
 SKETCHES = shapes pattern bounce trail paint
 EXAMPLES = $(SKETCHES:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
-TESTS = build/test_cpu build/test_gpu
+TESTS = build/test_cpu build/test_gpu build/test_fuzz_v2
 # Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2). En MiniGPU se elige
 # al compilar (0, 1 o 2; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
 V ?= all
@@ -105,6 +105,7 @@ check-minigpu-%: $(MG)/%.bin build/%
 test: $(TESTS)
 	./build/test_cpu
 	./build/test_gpu
+	./build/test_fuzz_v2
 
 clean:
 	rm -rf build

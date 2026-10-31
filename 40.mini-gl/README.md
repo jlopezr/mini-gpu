@@ -17,7 +17,7 @@ Los nombres de `archive/` conservan la numeración antigua; ver [docs/roadmap.md
 
 - `src/`: versión de trabajo (V0 + V1 + renderer V2), con prefijos `mgl_`/`MGL_`. La API Processing conserva sus nombres originales. Plataformas para los sketches: `platform_host.c` (imagen PPM), `platform_sdl.c` (ventana SDL2), con la parte común en `platform.c`, y `platform_minigpu.c` (la máquina del repo, compilada con `build-c`).
 - `examples/`: sketches Processing (`setup()`/`draw()`) que se ejecutan con cualquier versión, como imagen o en una ventana SDL. Ver [examples/README.md](examples/README.md).
-- `tests/`: comparación píxel a píxel V0/V1/V2 sobre escenas fijas.
+- `tests/`: comparación píxel a píxel V0/V1/V2 sobre escenas fijas, y V2 contra V0 en escenas al azar (`test_fuzz_v2`).
 - `scheduler/`: última entrega del scheduler con ejemplo, sin modificaciones.
 - `archive/`: las cinco versiones originales extraídas y sus ZIP exactos, sin renombrar símbolos.
 - `docs/arquitectura.md`: capas, primitivas, memoria, toolchain y decisiones.

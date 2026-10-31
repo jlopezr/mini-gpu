@@ -4,11 +4,9 @@
 #define MGL_GPU_LANES 8
 #define MGL_GPU_MAX_SPRITES 256
 
-/* GPU-visible sprite descriptors: on target, all pointers must reference shared RAM. */
-typedef struct {
-    const mgl_color_t *pixels;
-    int width, height, stride;
-} mgl_gpu_sprite_t;
+/* GPU-visible sprite descriptors: on target, all pointers must reference shared RAM. Son los mismos campos que
+   mgl_sprite_t: el renderer los pasa tal cual a sw_image. */
+typedef mgl_sprite_t mgl_gpu_sprite_t;
 
 typedef struct {
     const unsigned char *commands;
