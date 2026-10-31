@@ -21,8 +21,9 @@ NEVER = 1 << 62
 # de frame, vaciado de TX, una acción del guion, la mano al anfitrión).
 # `ticks_until_event()` dice cuántos ticks pueden pasar hasta el próximo de esos,
 # incluido, y `advance(n)` equivale a `n` llamadas a `tick()` con
-# `n <= ticks_until_event()`. El motor Codon los usa para no llamar a Python en
-# cada instrucción; un acceso MMIO al dispositivo los vacía antes.
+# `n <= ticks_until_event()`. El sistema CPU+GPU (32) los usa para no llamar a
+# cada dispositivo en cada instrucción (en el motor Codon, además, a Python); un
+# acceso MMIO al dispositivo los vacía antes (`CpuGpuSystem.tick_devices`).
 
 
 class VideoDevice(MmioDevice):

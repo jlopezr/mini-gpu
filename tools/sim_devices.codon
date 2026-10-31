@@ -6,10 +6,11 @@
 # MmioDevice, así que los núcleos lo usan como cualquier otro dispositivo, y lleva
 # el objeto Python de verdad (`py`).
 #
-# Llamar a Python en cada instrucción sería muy lento. Los proxies cuentan los
-# ticks y llaman a `advance(n)` solo en el siguiente que hace algo
-# (`ticks_until_event`, el «reloj por lotes» de sim_devices.py), y antes de
-# cualquier acceso MMIO, para que el dispositivo esté al día cuando se le lee.
+# Llamar a Python en cada instrucción sería muy lento. No hace falta: el sistema
+# cuenta los ticks y llama a `advance(n)` solo en el primero en el que algún
+# periférico hace algo (`ticks_until_event`, el «reloj por lotes» de
+# sim_devices.py), y antes de que el bus acceda a uno de ellos
+# (`CpuGpuSystem.tick_devices`).
 from internal.python import pyobj
 from .mmio_device import MachineHooks, MmioDevice
 
@@ -41,55 +42,44 @@ class _Peripheral(MmioDevice):
 
     py: pyobj
     bridge: Bridge
-    pending: int
-    until: int
 
     def __init__(self, py: pyobj, bridge: Bridge):
         super().__init__(int(py.BASE), int(py.SIZE))
         self.py = py
         self.bridge = bridge
-        self.pending = 0
-        self.until = int(py.ticks_until_event())
+
+    def ticks_until_event(self) -> int:
+        return int(self.py.ticks_until_event())
+
+    def advance(self, ticks: int) -> None:
+        self.py.advance(ticks)
+        self.synced()
+        self.bridge.check_stop()
 
     def tick(self) -> None:
-        self.pending += 1
-        if self.pending >= self.until:
-            self.sync()
-
-    def sync(self) -> None:
-        """Pasa a Python los ticks pendientes y mira cuándo le toca otra vez."""
-        if self.pending:
-            self.py.advance(self.pending)
-            self.pending = 0
-            self.synced()
-            self.bridge.check_stop()
-        self.until = int(self.py.ticks_until_event())
+        self.advance(1)
 
     def synced(self) -> None:
         """Tras avanzar el dispositivo Python: copiar lo que el núcleo lee aquí."""
         pass
 
     def validate(self, offset: int, writing: bool = False) -> None:
-        self.sync()
         try:
             self.py.validate(offset, writing)
         except PyError as exc:
             raise RuntimeError(exc.message)
 
     def read(self, offset: int) -> int:
-        self.sync()
         try:
             return int(self.py.read(offset))
         except PyError as exc:
             raise RuntimeError(exc.message)
 
     def write(self, offset: int, value: int) -> None:
-        self.sync()
         try:
             self.py.write(offset, value)
         except PyError as exc:
             raise RuntimeError(exc.message)
-        self.until = int(self.py.ticks_until_event())
 
 
 class VideoDevice(_Peripheral):
@@ -111,11 +101,6 @@ class VideoDevice(_Peripheral):
             raise ValueError("HALT_TARGET distinto en sim_devices.py y sim_devices.codon")
         self._halt_request = False
         self.halt_owner = 0
-
-    def tick(self) -> None:
-        # Como `VideoDevice.tick`: cada tick empieza sin petición de parada.
-        self._halt_request = False
-        super().tick()
 
     def synced(self) -> None:
         self._halt_request = bool(self.py.halt_request)

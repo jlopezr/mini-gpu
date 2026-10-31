@@ -26,37 +26,67 @@ Medidas actuales (2026-10-31, macOS ARM64, Codon 0.20.5, PyPy 3.11):
 
 | Carga | PyPy | Codon |
 |---|---:|---:|
-| `boxes.bin`, 12 swaps | 2,6 s | 1,0 s |
-| `dma-bench` | 8,2 s | 1,7 s |
+| `boxes.bin`, 12 swaps | 2,6 s | 0,75 s |
+| `dma-bench` | 8,4 s | 1,6 s |
+
+## Cómo perfilar el motor
+
+`codon build -release` no deja símbolos, y `-o x.o` sí, pero con el prefijo
+`l_`, que el enlazador de macOS descarta. Se compila a objeto, se enlaza a mano y
+las direcciones se traducen con el desplazamiento de `__text`:
+
+```sh
+D=$(python3 -c "from tools.codon_backend import prepare; print(prepare()[0].parent)")
+export CODON_PYTHON=$(python3 -c "from tools.codon_backend import library; print(library())")
+L=$PWD/_build/codon-sdk/lib/codon
+_build/codon-sdk/bin/codon build -release -o _build/codon-prof/engine.o $D/src/engine.codon
+clang _build/codon-prof/engine.o -L$L -lcodonrt -lomp -Wl,-rpath,$L -o _build/codon-prof/engine-prof
+otool -l _build/codon-prof/engine-prof | grep -A2 "sectname __text"   # addr 0x1000006e8
+```
+
+Se lanza `engine-prof` con el entorno de `prepare()` y se muestrea con
+`sample <pid> 4`. Cada dirección de «Sort by top of stack», menos el desplazamiento
+de `__text` (0x6e8), se busca en `nm -n engine.o`. Codon mete mucho en línea:
+lo que sale como `main` es sobre todo el bucle de `run` con el paso de la CPU.
 
 ## Pendiente
 
-### 1. El motor va a la mitad que el generador que había antes
+### 1. El bucle de la CPU: unos 85 M instrucciones/s
 
-Con la CPU hace unos 60 M instrucciones/s; el generador que reescribía los
-simuladores por AST (ya borrado) llegaba a unos 120 M con su bucle propio. No se
-ha perfilado. Sospechosos:
+El generador que reescribía los simuladores por AST (ya borrado) llegaba a unos
+120 M con su bucle propio. Ya se ha quitado del planificador lo más caro (ver
+«Hecho»). Perfil actual de `boxes` (2026-10-31):
 
-- `load_u32`/`store_u32` de `tools/codon_compat` en cada acceso a memoria;
-- `device_for`, que mira los dispositivos MMIO uno por uno en cada LOAD/STORE
-  (l11 en [LIMITACIONES.md](LIMITACIONES.md));
-- `CpuGpuSystem.run` comprueba límites y llama a `tick_devices` (y por tanto a
-  los proxies) en cada instrucción.
+| Función | Muestras |
+|---|---:|
+| `main` (bucle de `run` y paso de la CPU, en línea) | 44 % |
+| `_check_limits` | 18 % |
+| sin símbolo | 12 % |
+| `CPU.read_u32` (lectura de la instrucción) | 10 % |
+| recolector (`GC_*`) | 7 % |
+| `list.__getitem__` | 3 % |
 
-Por dónde empezar: perfilar con Instruments (macOS) o `perf` (Linux) el binario
-`_build/codon-engine/<hash>/sim-sys-codon` con `boxes.bin`. Para lanzarlo a mano
-necesita el entorno que monta `tools/codon_backend.prepare`.
+Pistas:
+
+- `_check_limits` son dos comparaciones (unas 20 instrucciones de máquina) y aun
+  así se lleva el 18 %. Puede ser la espera de las cargas (`self.cpu`,
+  `self.gpu`) o que el perfil le atribuya código vecino. Una idea es comprobarlo
+  una vez por lote de instrucciones: cuántas faltan para el límite.
+- El recolector trabaja, así que algo reserva memoria en el bucle. Hay que
+  buscarlo en el paso de la CPU (`minicpu_core.CPU.step`).
+- `read_u32` pasa por `device_for` del bus antes de leer la RAM. El bus ya
+  descarta pronto las direcciones bajas (`_lowest`), pero la llamada sigue.
 
 ### 2. Llamadas de los proxies a Python en cada acceso MMIO
 
-[`tools/sim_devices.codon`](../sim_devices.codon): el reloj por lotes evita casi
-todas las llamadas por tick, pero cada `read`/`write`/`validate` de vídeo, serie o
-entrada hace `sync()` y además pregunta `ticks_until_event()` a Python. Un programa
-que sondea en bucle un registro de estado paga dos llamadas a CPython por
+Con el reloj por lotes en el sistema, un `read` de vídeo, serie o entrada cuesta
+una llamada a CPython (más un `advance` si había ticks pendientes), y un `write`,
+además, las de `devices_changed` (`ticks_until_event()` de cada periférico). Un
+programa que sondea en bucle un registro de estado paga una llamada por
 iteración. No se ha medido: `boxes` y `dma-bench` apenas sondean. Haría falta un
 caso que sondee (por ejemplo, esperar `VSYNC` en bucle) para saber si importa.
-Ideas: no preguntar `ticks_until_event()` tras un `read` si `pending` era 0, o
-copiar al proxy los registros de estado que no tienen efectos al leerse.
+Una idea es copiar al proxy (`tools/sim_devices.codon`) los registros de estado
+que no tienen efectos al leerse.
 
 ### 3. Lo que cuesta el código común en Python
 
@@ -75,6 +105,24 @@ Solo una vez por cada cambio en las fuentes (queda en caché en
 el tiempo.
 
 ## Hecho
+
+### El planificador de `CpuGpuSystem` (2026-10-31)
+
+Tres cambios en `32.cpu-gpu-func-sim/cpu_gpu_core.py`, sin cambiar el resultado:
+
+- **Reloj por lotes en el sistema.** `tick_devices` solo cuenta; los periféricos
+  avanzan de una vez (`advance(n)`) en el primer tick en que alguno tiene un
+  evento (`ticks_until_event`), y antes de cada acceso del bus a uno de ellos
+  (`_Port` llama a `MachineHooks.sync_devices`). Fuera de `run`, tick a tick, como
+  antes. Los proxies de Codon ya no cuentan ticks; solo reenvían.
+- **GPU ociosa.** Con la GPU detenida, `step_round` hace una comprobación de
+  límites en vez de `gpu_steps` pasos que no harían nada.
+- **Límites sin `Optional`.** `NO_LIMIT` en vez de `None`, y la comparación
+  primero.
+
+`boxes.bin` hasta 60 swaps (219 M instrucciones de CPU) con Codon: de 3,9 a
+2,6 s. Hasta 12 swaps, de 1,0 a 0,75 s; `dma-bench`, de 1,7 a 1,6 s. En PyPy no se
+nota.
 
 ### El paso del warp de la GPU ya no reserva memoria por lane (2026-10-31)
 

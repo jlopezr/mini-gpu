@@ -104,13 +104,6 @@ except SimulationError as exc:
 except ValueError as exc:
     h.fail(exc.message)
     sys.exit(int(h.result()))
-# Los ticks que los proxies aún no habían pasado a Python, antes del informe.
-if video is not None:
-    video.sync()
-if serial is not None:
-    serial.sync()
-if input_device is not None:
-    input_device.sync()
 export(h, system)
 h.finish(status, limited)
 sys.exit(int(h.result()))

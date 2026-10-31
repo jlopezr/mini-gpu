@@ -22,6 +22,9 @@ from tools.sysid_device import SysIdDevice, declared_devices
 FOLDER = 32
 MAX_LANES = 8       # NUM_LANES son ocho bits en GPU_CAPS, pero CONTEXT.lane son tres
 MAX_WARPS = 8       # el simulador de 11 admite como máximo ocho
+# «Sin límite» en `run`: un número que ningún contador alcanza, para que
+# `_check_limits`, que va antes de cada instrucción, sea solo una comparación.
+NO_LIMIT = 1 << 62
 
 # Valores provisionales: mmio.md §22 pospone los bits de CPU_ISA, CPU_FEATURES,
 # GPU_ISA y GPU_FEATURES "junto a MiniISA", y no define el formato de VERSION.
@@ -75,12 +78,19 @@ class _Port(MmioDevice):
     device: MmioDevice
     master: str
     mode: str
+    # Periférico con reloj (vídeo, serie, entrada): antes de cada acceso, el
+    # sistema le pasa los ticks pendientes (`MachineHooks.sync_devices`).
+    clocked: bool
+    hooks: MachineHooks
 
-    def __init__(self, device: MmioDevice, master: str, mode: str):
+    def __init__(self, device: MmioDevice, master: str, mode: str, clocked: bool,
+                 hooks: MachineHooks):
         super().__init__(device.BASE, device.SIZE)
         self.device = device
         self.master = master
         self.mode = mode
+        self.clocked = clocked
+        self.hooks = hooks
 
     def contains(self, address: int) -> bool:
         return self.device.contains(address)
@@ -96,15 +106,23 @@ class _Port(MmioDevice):
 
     def validate(self, offset: int, writing: bool = False) -> None:
         self._check(offset, writing)
+        if self.clocked:
+            self.hooks.sync_devices()
         self.device.validate(offset, writing=writing)
 
     def read(self, offset: int) -> int:
         self._check(offset, False)
+        if self.clocked:
+            self.hooks.sync_devices()
         return self.device.read(offset)
 
     def write(self, offset: int, value: int) -> None:
         self._check(offset, True)
+        if self.clocked:
+            self.hooks.sync_devices()
         self.device.write(offset, value)
+        if self.clocked:
+            self.hooks.devices_changed()
 
 
 class MmioBus:
@@ -113,8 +131,11 @@ class MmioBus:
     # Declarados (l19), como en `_Port`.
     _ports: dict[str, list[_Port]]
     _lowest: int
+    _hooks: MachineHooks
 
-    def __init__(self):
+    def __init__(self, hooks: MachineHooks):
+        #: El sistema, al que los puertos de los periféricos piden sincronizar.
+        self._hooks = hooks
         #: Por master, un puerto por dispositivo, en orden de conexión. Solo
         #: puertos, sin el dispositivo: una tupla con dispositivos de clases
         #: distintas no tiene tipo en Codon (tools/codon/LIMITACIONES.md, l11).
@@ -124,11 +145,12 @@ class MmioBus:
         #: preguntan en cada acceso, también al leer cada instrucción de la RAM.
         self._lowest = 1 << 32
 
-    def attach(self, device: MmioDevice | None, *, cpu: str, gpu: str) -> None:
+    def attach(self, device: MmioDevice | None, *, cpu: str, gpu: str,
+               clocked: bool = False) -> None:
         if device is None:
             return
-        self._ports["cpu"].append(_Port(device, "cpu", cpu))
-        self._ports["gpu"].append(_Port(device, "gpu", gpu))
+        self._ports["cpu"].append(_Port(device, "cpu", cpu, clocked, self._hooks))
+        self._ports["gpu"].append(_Port(device, "gpu", gpu, clocked, self._hooks))
         self._lowest = min(self._lowest, device.BASE)
 
     def device_for(self, master: str, address: int) -> _Port | None:
@@ -670,10 +692,19 @@ class CpuGpuSystem(MachineHooks):
         self.trace_limit = None     # líneas de traza, de CPU y de warp juntas
         self.trace_lines = 0
         self.profile = None         # sim_profile.Profile, con --profile
-        # (CPU, warp), los fija `run`. Anotado: Codon fija el tipo del campo con
-        # la primera asignación, y `(None, None)` no admitiría números.
-        self._limits: tuple[int | None, int | None] = (None, None)
-        self.bus = MmioBus()
+        # Los fija `run`; NO_LIMIT fuera de él.
+        self._cpu_limit = NO_LIMIT
+        self._gpu_limit = NO_LIMIT
+        # Reloj por lotes de los periféricos (`tick_devices`): ticks que aún no
+        # se les han pasado y, por periférico, cuántos faltan para su próximo
+        # evento. Solo dentro de `run`; fuera, tick a tick.
+        self._batching = False
+        self._ticks_pending = 0
+        self._ticks_quiet = 1
+        self._serial_wait = NO_LIMIT
+        self._input_wait = NO_LIMIT
+        self._video_wait = NO_LIMIT
+        self.bus = MmioBus(self)
         self.cpu = _SystemCpu(memory_size, self.bus)
         self.memory = self.cpu.memory
         self.gpu = GpuUnit(self.memory, self.bus, num_warps, warp_size,
@@ -693,9 +724,9 @@ class CpuGpuSystem(MachineHooks):
             mem_base=0, mem_size=memory_size)
         self.bus.attach(self.sysid, cpu="r", gpu="r")
         # Uno por uno: son clases distintas (tools/codon/LIMITACIONES.md, l11).
-        self.bus.attach(serial, cpu="rw", gpu="rw")
-        self.bus.attach(video, cpu="rw", gpu="rw")
-        self.bus.attach(input_device, cpu="rw", gpu="rw")
+        self.bus.attach(serial, cpu="rw", gpu="rw", clocked=True)
+        self.bus.attach(video, cpu="rw", gpu="rw", clocked=True)
+        self.bus.attach(input_device, cpu="rw", gpu="rw", clocked=True)
         self.bus.attach(CpuCoreDevice(self.cpu), cpu="r", gpu="")
         self.bus.attach(GpuCoreDevice(self.gpu), cpu="rw", gpu="r")
         self.bus.attach(GpuWarpsDevice(self.gpu), cpu="rw", gpu="")
@@ -796,15 +827,60 @@ class CpuGpuSystem(MachineHooks):
         self.gpu.halt()
 
     def tick_devices(self) -> None:
-        """Un paso del reloj sintético, por instrucción retirada de cualquier núcleo."""
+        """Un paso del reloj sintético, por instrucción retirada de cualquier núcleo.
+
+        Dentro de `run` solo cuenta: los periféricos avanzan de una vez
+        (`advance`) en el primer tick en el que alguno hace algo
+        (`ticks_until_event`) o antes de que el bus acceda a uno de ellos. Es el
+        «reloj por lotes» de tools/sim_devices.py, y da lo mismo que un `tick`
+        por instrucción. Llamar a cada periférico en cada instrucción costaba
+        una quinta parte del tiempo, y en el motor Codon, que los ve a través de
+        un proxy, una llamada a Python en cada evento.
+        """
+        self._ticks_pending += 1
+        if self._ticks_pending >= self._ticks_quiet:
+            self.sync_devices()
+
+    def sync_devices(self) -> None:
+        """Pasa a los periféricos los ticks pendientes (ver `tick_devices`)."""
+        ticks = self._ticks_pending
+        if not ticks:
+            return
+        self._ticks_pending = 0
         if self.serial is not None:
-            self.serial.tick()
+            self.serial.advance(ticks)
+            self._serial_wait -= ticks
+            if self._serial_wait <= 0:
+                self._serial_wait = self.serial.ticks_until_event()
         if self.input is not None:
-            self.input.tick()
+            self.input.advance(ticks)
+            self._input_wait -= ticks
+            if self._input_wait <= 0:
+                self._input_wait = self.input.ticks_until_event()
         if self.video is not None:
-            self.video.tick()
+            self.video.advance(ticks)
+            self._video_wait -= ticks
+            if self._video_wait <= 0:
+                self._video_wait = self.video.ticks_until_event()
             if self.video.halt_request:
                 self._apply_video_halt()
+        self._update_quiet()
+
+    def devices_changed(self) -> None:
+        """Vuelve a preguntar a los periféricos cuándo es su próximo evento."""
+        if self.serial is not None:
+            self._serial_wait = self.serial.ticks_until_event()
+        if self.input is not None:
+            self._input_wait = self.input.ticks_until_event()
+        if self.video is not None:
+            self._video_wait = self.video.ticks_until_event()
+        self._update_quiet()
+
+    def _update_quiet(self) -> None:
+        if self._batching:
+            self._ticks_quiet = min(self._serial_wait, self._input_wait, self._video_wait)
+        else:
+            self._ticks_quiet = 1
 
     def _apply_video_halt(self) -> None:
         video = self.video
@@ -860,24 +936,28 @@ class CpuGpuSystem(MachineHooks):
         for _ in range(self.cpu_steps):
             self._check_limits()
             progressed |= self.step_cpu()
+        if self.gpu.halted:
+            # `gpu.step` no haría nada y nada cambiaría entre una comprobación y
+            # la siguiente: basta una. Con la GPU ociosa, que es lo habitual
+            # mientras la CPU prepara un frame, ahorra un 8 % del tiempo.
+            self._check_limits()
+            return progressed
         for _ in range(self.gpu_steps):
             self._check_limits()
             progressed |= self.gpu.step()
         return progressed
 
     def _check_limits(self) -> None:
-        cpu_limit, gpu_limit = self._limits
         # Un límite solo salta si ese núcleo aún podía ejecutar: con la CPU ya
-        # parada, haber llegado a su tope no es un fallo.
-        if (cpu_limit is not None and not self.cpu.halted
-                and self.cpu_instructions >= cpu_limit):
+        # parada, haber llegado a su tope no es un fallo. La comparación va
+        # primero porque casi nunca se cumple.
+        if self.cpu_instructions >= self._cpu_limit and not self.cpu.halted:
             raise InstructionLimitExceeded(
-                f"límite de {cpu_limit} instrucciones de CPU alcanzado "
+                f"límite de {self._cpu_limit} instrucciones de CPU alcanzado "
                 f"en PC=0x{self.cpu.pc:08X}")
-        if (gpu_limit is not None and not self.gpu.halted
-                and self.gpu.retired >= gpu_limit):
+        if self.gpu.retired >= self._gpu_limit and not self.gpu.halted:
             raise InstructionLimitExceeded(
-                f"límite de {gpu_limit} instrucciones de warp alcanzado")
+                f"límite de {self._gpu_limit} instrucciones de warp alcanzado")
 
     def run(self, max_instructions: int | None = 100_000_000, *,
             max_cpu_instructions: int | None = None,
@@ -896,14 +976,22 @@ class CpuGpuSystem(MachineHooks):
         gpu_limit = max_instructions if max_gpu_instructions is None else max_gpu_instructions
         if any(limit is not None and limit < 0 for limit in (cpu_limit, gpu_limit)):
             raise ValueError("el límite de instrucciones no puede ser negativo")
-        self._limits = (cpu_limit, gpu_limit)
+        self._cpu_limit = NO_LIMIT if cpu_limit is None else cpu_limit
+        self._gpu_limit = NO_LIMIT if gpu_limit is None else gpu_limit
+        self._batching = True
+        self.devices_changed()
         try:
             while not self.finished:
                 if not self.step_round() and self.cpu.halted:
                     return "stalled"
             return "halt"
         finally:
-            self._limits = (None, None)
+            self._cpu_limit = NO_LIMIT
+            self._gpu_limit = NO_LIMIT
+            # Los ticks que quedan no llegan a ningún evento: no paran nada.
+            self.sync_devices()
+            self._batching = False
+            self._update_quiet()
 
     def dump_memory(self, address: int, size: int, filename) -> None:
         # `filename` es un `Path` (sin anotar: el núcleo no importa pathlib).

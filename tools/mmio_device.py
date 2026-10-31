@@ -48,6 +48,10 @@ class MachineHooks:
     `on_retire`: la GPU avisa tras cada instrucción de warp retirada.
     `request_stop`: parar en la próxima instrucción (cerrar la ventana, F12,
     Ctrl+C; ver `tools/sim_host.stop_machine`).
+    `sync_devices`: el bus va a acceder a un periférico; antes, pasarle los
+    ticks que el sistema aún no le ha dado (el reloj por lotes).
+    `devices_changed`: se ha escrito en un periférico, y eso puede adelantar o
+    retrasar su próximo evento (`ticks_until_event`).
 
     Por defecto no hacen nada; `CpuGpuSystem` (32) los implementa. Es una clase y
     no funciones guardadas en campos porque Codon no admite esto último, y la base
@@ -60,4 +64,10 @@ class MachineHooks:
         pass
 
     def request_stop(self) -> None:
+        pass
+
+    def sync_devices(self) -> None:
+        pass
+
+    def devices_changed(self) -> None:
         pass

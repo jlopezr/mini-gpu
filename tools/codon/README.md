@@ -52,11 +52,13 @@ la versión y ruta del compilador y la libpython: un cambio en un núcleo recomp
   con `cpu_gpu_sim.build_system` un sistema espejo (periféricos y programa), le da
   como RAM la del motor (una vista sin copia, que es lo que ve la ventana) y cierra
   con el mismo `finish_run` que el backend Python.
-- Los proxies de `tools/sim_devices.codon` cuentan los ticks en nativo y llaman a
-  Python solo en el siguiente que hace algo (`ticks_until_event`/`advance`, el
-  reloj por lotes de `sim_devices.py`) y antes de cada acceso MMIO. Tras cada
-  llamada preguntan si se ha pedido parar (ventana, F12, Ctrl+C) y, si es así,
-  llaman a `request_stop` del sistema nativo.
+- Los proxies de `tools/sim_devices.codon` reenvían a Python cada `advance`, cada
+  acceso MMIO y cada `ticks_until_event`. Llamadas por instrucción no hay: el
+  sistema cuenta los ticks y avanza los periféricos solo en el primero que tiene
+  un evento o antes de un acceso del bus (`CpuGpuSystem.tick_devices`, el reloj
+  por lotes de `sim_devices.py`). Tras cada `advance` preguntan si se ha pedido
+  parar (ventana, F12, Ctrl+C) y, si es así, llaman a `request_stop` del sistema
+  nativo.
 
 Las pruebas diferenciales (`RUN_CODON=1`) comparan con Python el estado
 **completo** del sistema (todos los campos de CPU, GPU, warps y lanes, recorridos
@@ -69,8 +71,8 @@ limitaciones documentadas siguen vigentes.
 
 | Carga | PyPy 3.11 | Codon |
 |---|---:|---:|
-| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 2,6 s | 1,0 s |
-| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 8,2 s | 1,7 s |
+| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 2,6 s | 0,75 s |
+| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 8,4 s | 1,6 s |
 
 Proceso completo, con el motor ya compilado; unos 0,23 s son arranque fijo
 (CPython embebido y el anfitrión). Framebuffer y estado idénticos a Python.
