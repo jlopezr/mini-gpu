@@ -19,6 +19,8 @@ typedef char mgl_gpu_check_u16[(sizeof(mgl_color_t) == 2) ? 1 : -1];
 
 #ifdef __MINIGPU__
 #include "gpu.h"
+#else
+#define NOALIAS(p) ((void)0)
 #endif
 
 static mgl_u32 rd32(const unsigned char *p) {
@@ -55,19 +57,19 @@ static int abs2(int a) {
 }
 
 /* A framebuffer pixel is owned by exactly one lane, even with thick strokes. */
-static void put(const mgl_gpu_job_t *j, int lane, int x, int y, mgl_color_t c) {
+static void put(const mgl_gpu_job_t *j, int lane, int x, int y, unsigned int c) {
     if (x >= 0 && x < j->width && y >= 0 && y < j->height && (x & (MGL_GPU_LANES - 1)) == lane)
-        j->framebuffer[y * j->pitch + x] = c;
+        j->framebuffer[y * j->pitch + x] = (mgl_color_t)c;
 }
 
-static void brush(const mgl_gpu_job_t *j, int lane, int x, int y, int weight, mgl_color_t c) {
+static void brush(const mgl_gpu_job_t *j, int lane, int x, int y, int weight, unsigned int c) {
     int a, b, low = -(weight / 2), high = low + weight;
     for (b = low; b < high; b++)
         for (a = low; a < high; a++) put(j, lane, x + a, y + b, c);
 }
 
 static void segment(
-    const mgl_gpu_job_t *j, int lane, int x0, int y0, int x1, int y1, int weight, mgl_color_t c) {
+    const mgl_gpu_job_t *j, int lane, int x0, int y0, int x1, int y1, int weight, unsigned int c) {
     int dx = abs2(x1 - x0), dy = abs2(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
     int err = dx - dy, e;
     for (;;) {
@@ -90,7 +92,7 @@ static long edge(int ax, int ay, int bx, int by, int px, int py) {
 }
 
 static void primitive(const mgl_gpu_job_t *j, int lane, mgl_u32 type, mgl_u32 p0, mgl_u32 p1,
-    mgl_u32 p2, mgl_color_t fc, mgl_color_t sc, unsigned int flags, int weight) {
+    mgl_u32 p2, unsigned int fc, unsigned int sc, unsigned int flags, int weight) {
     int x, y, a, b, c, d, i, k, x0, x1, y0, y1, r, xx, yy, dd;
     long rr, aa, bb, cc, area;
     const mgl_gpu_sprite_t *s;
@@ -112,7 +114,7 @@ static void primitive(const mgl_gpu_job_t *j, int lane, mgl_u32 type, mgl_u32 p0
             /* Start at first owned column; every iteration writes one pixel. */
             i = x0 + ((lane - (x0 & 7) + 8) & 7);
             for (k = y0; k < y1; k++)
-                for (dd = i; dd < x1; dd += MGL_GPU_LANES) j->framebuffer[k * j->pitch + dd] = fc;
+                for (dd = i; dd < x1; dd += MGL_GPU_LANES) j->framebuffer[k * j->pitch + dd] = (mgl_color_t)fc;
         }
         if (flags & FLAG_STROKE) {
             segment(j, lane, x, y, x + a - 1, y, weight, sc);
@@ -233,6 +235,7 @@ static void render(const mgl_gpu_job_t *j, int lane) {
     mgl_u32 off, op, size, p0, p1, p2;
     const unsigned char *p;
     int x, y;
+    NOALIAS(j); /* nadie escribe el trabajo: mini-opt saca de los bucles lo que se lee de el */
     for (off = 16; off < j->command_bytes; off += size) {
         p = j->commands + off;
         op = rd32(p);
@@ -246,8 +249,8 @@ static void render(const mgl_gpu_job_t *j, int lane) {
             p0 = rd32(p + 20);
             p1 = rd32(p + 24);
             p2 = rd32(p + 28);
-            primitive(j, lane, rd32(p + 16), p0, p1, p2, (mgl_color_t)rd16(p + 32),
-                (mgl_color_t)rd16(p + 34), rd16(p + 36), (int)rd16(p + 38));
+            primitive(j, lane, rd32(p + 16), p0, p1, p2, rd16(p + 32), rd16(p + 34), rd16(p + 36),
+                (int)rd16(p + 38));
         }
     }
 }
