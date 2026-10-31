@@ -1,3 +1,15 @@
+# MiniGL: la API de MiniGL + Processing, sus sketches y sus pruebas, en tres
+# plataformas: host (PPM), ventana SDL y MiniGPU (simulador CPU+GPU del repo).
+# `make help` lista los objetivos. Todo se compila en build/.
+#
+#   src/                MiniGL, API Processing y plataformas (host, SDL, MiniGPU)
+#   src/render/2d, 3d   renderers 2D y 3D de referencia
+#   examples/           sketches          tests/   pruebas (V0/V1/V2 y 3D)
+
+# ---------------------------------------------------------------------------
+# Configuración
+# ---------------------------------------------------------------------------
+
 CC ?= cc
 # -ffp-contract=off: sin fusionar multiplicación y suma en float, para que el 3D dé en el host los mismos bits
 # que en MiniGPU (soft-float IEEE, una operación cada vez).
@@ -11,59 +23,156 @@ SDL_CONFIG ?= sdl2-config
 SDL_CFLAGS := $(shell $(SDL_CONFIG) --cflags 2>/dev/null)
 SDL_LIBS := $(shell $(SDL_CONFIG) --libs 2>/dev/null)
 
-# Plataforma MiniGPU (make minigpu, sim-<sketch>, check-minigpu): se compila con build-c (mini-lcc)
-# del repo y se ejecuta en su simulador de CPU + GPU.
+# MiniGPU: se compila con build-c (mini-lcc) del repo y se ejecuta en su simulador CPU+GPU, `sim-sys`.
+# sim-sys usa su motor Codon si está instalado; si no, el de Python, que con PyPy (uv python install
+# pypy@3.11) va de 4 a 10 veces más rápido: se usa PyPy si está. La ventana se abre igualmente con
+# CPython (gui_python, en tools/sim_host.py). SIM_PYTHON=python3 evita PyPy.
 REPO := $(abspath ..)
 PYTHON ?= python3
-BUILD_C = $(PYTHON) $(REPO)/tools/build-c
-# El simulador va de 4 a 10 veces más rápido con PyPy (uv python install pypy@3.11): se usa si está, y si no,
-# PYTHON. La ventana se abre igualmente con CPython (gui_python, en tools/sim_host.py). SIM_PYTHON=python3 lo evita.
 ifndef SIM_PYTHON
 SIM_PYTHON := $(or $(shell uv python find pypy 2>/dev/null),$(PYTHON))
 endif
-SIM_SYS = $(SIM_PYTHON) $(REPO)/32.cpu-gpu-func-sim/cpu_gpu_sim.py
+BUILD_C = $(PYTHON) $(REPO)/tools/build-c
+SIM_SYS = $(SIM_PYTHON) $(REPO)/tools/sim-sys
 COMPARE_FRAMES = $(PYTHON) $(REPO)/tools/compare-frames.py
+# Límite de instrucciones del simulador: en la práctica, ninguno.
+SIM_LIMIT = 100000000000
 # La biblioteca C mínima que build-c añade a cada programa.
 LIBC = $(wildcard $(REPO)/t.tests/runtime/libc/*.c $(REPO)/t.tests/inc/*.h)
-MINIGPU_SRCS = src/platform/platform.c src/render/context2d.c src/minigl.c src/processing/processing.c src/render/2d/raster.c $(if $(filter 2,$(MV)),src/render/2d/gpu_renderer.c)
-# Frames que compara check-minigpu, y argumentos extra para sim-<sketch>.
-FRAMES ?= 1
-SIM_ARGS ?=
 
-# src/: MiniGL + API Processing + plataformas (host PPM, SDL y MiniGPU). src/render/3d/: el renderer 3D de
-# referencia. examples/: sketches. tests/: comparaciones V0/V1/V2 y pruebas 3D. Todo se compila en build/.
-HDRS = $(foreach dir,$(INCLUDE_DIRS),$(wildcard $(dir)/*.h))
-LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
-    build/platform.o build/context2d.o
-# 3D: MiniGL, pipeline independiente y contexto usado por los drivers comunes.
-RENDERER_SRCS = $(wildcard src/render/3d/*.c)
-RENDERER = $(RENDERER_SRCS:src/render/3d/%.c=build/%.o) build/mgl_math.o build/mgl_memory.o build/raster.o
-MGL3D = build/minigl.o build/mgl_3d.o build/mgl_resources.o build/mgl_math.o build/mgl_memory.o
-LIB3D = $(MGL3D) $(RENDERER) build/processing.o build/processing3d.o build/context3d.o build/platform.o \
-    build/mgl_capture.o build/ppm.o
-SKETCHES3D = rotating_cube boxes colored_cube
-EXAMPLES3D = $(SKETCHES3D:%=build/%)
-TESTS3D = build/test_commands build/test_matrices build/test_clipping build/test_raster \
-    build/test_resources build/test_cube build/test_clear build/test_fragment build/test_platform3d
-# Frames de make run-<sketch 3D>: el último va a <sketch>.ppm y uno de cada FRAMES_EVERY a <sketch>-NNNN.ppm.
+# Variables de la línea de órdenes (ver `make help`).
+# Versión 2D: 0, 1, 2 o all (run-<sketch>); en sdl-<sketch>, 0, 1 o 2.
+V ?= all
+# Frame que comparan check-minigpu* y hasta el que perfilan profile-minigpu-*.
+FRAMES ?= 1
+# Frames de run-<sketch 3D>: el último va a <sketch>.ppm y uno de cada FRAMES_EVERY a <sketch>-NNNN.ppm.
 FRAMES3D ?= 60
 FRAMES_EVERY ?= 15
+# Argumentos extra para sim-<sketch>.
+SIM_ARGS ?=
+# En MiniGPU la versión 2D se elige al compilar (all es 0) y cada una va a su carpeta.
+MV := $(if $(filter all,$(V)),0,$(V))
+MG := build/minigpu/v$(MV)
+MG3 := build/minigpu/3d
+
+# ---------------------------------------------------------------------------
+# Fuentes, objetos y programas
+# ---------------------------------------------------------------------------
+
+HDRS = $(foreach dir,$(INCLUDE_DIRS),$(wildcard $(dir)/*.h))
+
 SKETCHES = shapes pattern bounce trail paint
+SKETCHES3D = rotating_cube boxes colored_cube
+
+# 2D: MiniGL + Processing + raster, con los renderers de las tres versiones.
+LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
+    build/platform.o build/context2d.o
+# 3D: el renderer de referencia (independiente de MiniGL), MiniGL 3D encima y el contexto que usan los
+# drivers comunes.
+RENDERER_SRCS = $(wildcard src/render/3d/*.c)
+RENDERER = $(RENDERER_SRCS:src/render/3d/%.c=build/%.o) build/mgl_math.o build/mgl_memory.o build/raster.o
+LIB3D = build/minigl.o build/mgl_3d.o build/mgl_resources.o $(RENDERER) \
+    build/processing.o build/processing3d.o build/context3d.o build/platform.o build/mgl_capture.o build/ppm.o
+
 EXAMPLES = $(SKETCHES:%=build/%)
+EXAMPLES3D = $(SKETCHES3D:%=build/%)
 SDL_EXAMPLES = $(SKETCHES:%=build/%-sdl)
 SDL_EXAMPLES3D = $(SKETCHES3D:%=build/%-sdl)
 TESTS = build/test_cpu build/test_gpu build/test_fuzz_v2 build/test_platform2d
-# Version a ejecutar con make run-<sketch> (0, 1, 2 o all) y sdl-<sketch> (0, 1 o 2). En MiniGPU se elige
-# al compilar (0, 1 o 2; all es 0) y cada una va a su carpeta: make sim-bounce V=1, check-minigpu V=1...
-V ?= all
-MV := $(if $(filter all,$(V)),0,$(V))
-MG := build/minigpu/v$(MV)
-MINIGPU_EXAMPLES = $(SKETCHES:%=$(MG)/%.bin)
+TESTS3D = build/test_commands build/test_matrices build/test_clipping build/test_raster \
+    build/test_resources build/test_cube build/test_clear build/test_fragment build/test_platform3d
 
-.PHONY: all run test test3d sdl minigpu minigpu3d check-minigpu check-minigpu3d clean
+# Lo que compila build-c para MiniGPU, además del sketch y del driver src/platform/minigpu.c.
+MINIGPU_SRCS = src/platform/platform.c src/render/context2d.c src/minigl.c src/processing/processing.c \
+    src/render/2d/raster.c $(if $(filter 2,$(MV)),src/render/2d/gpu_renderer.c)
+MINIGPU3D_SRCS = src/platform/platform.c src/render/context3d.c src/processing/processing3d.c \
+    src/processing/processing.c src/minigl.c src/mgl_3d.c src/mgl_resources.c src/mgl_math.c \
+    src/mgl_memory.c src/render/2d/raster.c $(RENDERER_SRCS)
+
+.PHONY: all help run test test3d sdl minigpu minigpu3d check-minigpu check-minigpu3d clean
 all: $(EXAMPLES) $(TESTS) $(EXAMPLES3D) $(TESTS3D) build/mgl-replay compile_commands.json
 sdl: $(SDL_EXAMPLES) $(SDL_EXAMPLES3D)
-minigpu: $(MINIGPU_EXAMPLES)
+minigpu: $(SKETCHES:%=$(MG)/%.bin)
+minigpu3d: $(SKETCHES3D:%=$(MG3)/%.bin)
+
+help:
+	@echo 'Host (PPM):'
+	@echo '  make / make all          compila sketches, pruebas y mgl-replay'
+	@echo '  make run-<sketch>        2D: $(SKETCHES) (V=0|1|2|all)'
+	@echo '  make run-<sketch 3D>     3D: $(SKETCHES3D) (FRAMES3D, FRAMES_EVERY)'
+	@echo '  make run                 todos'
+	@echo '  make test                pruebas 2D y 3D'
+	@echo 'Ventana SDL:'
+	@echo '  make sdl-<sketch>        V=0|1|2 (F1/F2/F3 cambian de versión); 3D con SCALE=n'
+	@echo 'MiniGPU (simulador CPU+GPU):'
+	@echo '  make sim-<sketch>        ventana del simulador, 2D (V=0|1|2) o 3D; SIM_ARGS extra'
+	@echo '  make check-minigpu       frame FRAMES de cada sketch 2D contra el host (V=0|1|2)'
+	@echo '  make check-minigpu3d     lo mismo con los sketches 3D'
+	@echo '  make profile-minigpu-<sketch>  instrucciones por función hasta el frame FRAMES'
+	@echo '  make minigpu / minigpu3d solo compilar los .bin'
+	@echo 'Otros:'
+	@echo '  make clean               borra build/ y los .ppm'
+
+# ---------------------------------------------------------------------------
+# Compilación en el host
+# ---------------------------------------------------------------------------
+
+# Un .o por .c, venga de la carpeta que venga (no hay dos .c con el mismo nombre).
+vpath %.c $(INCLUDE_DIRS) apps examples tests
+
+build:
+	mkdir -p build
+build/%.o: %.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+build/sdl.o: CPPFLAGS += $(SDL_CFLAGS)
+# tests/test_platform.c prueba el contexto 2D o, con TEST_CONTEXT_3D, el 3D.
+build/test_platform2d.o: tests/test_platform.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+build/test_platform3d.o: tests/test_platform.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DTEST_CONTEXT_3D=1 -c -o $@ $<
+
+# Sketches.
+$(EXAMPLES): build/%: build/%.o build/host.o build/ppm.o build/mgl_capture.o $(LIB)
+	$(CC) $(CFLAGS) -o $@ $^
+$(EXAMPLES3D): build/%: build/%.o build/host.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^
+$(SDL_EXAMPLES): build/%-sdl: build/%.o build/sdl.o $(LIB)
+	$(CC) $(CFLAGS) -o $@ $^ $(SDL_LIBS)
+$(SDL_EXAMPLES3D): build/%-sdl: build/%.o build/sdl.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^ $(SDL_LIBS)
+
+# Pruebas.
+$(filter-out build/test_platform2d,$(TESTS)): build/%: build/%.o $(LIB)
+	$(CC) $(CFLAGS) -o $@ $^
+build/test_platform2d: build/test_platform2d.o $(LIB)
+	$(CC) $(CFLAGS) -o $@ $^
+$(filter-out build/test_platform3d,$(TESTS3D)): build/%: build/%.o build/fixture3d.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^ -lm
+build/test_platform3d: build/test_platform3d.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Las pruebas de profundidad comparan el raster 3D actual, con profundidad incremental, con la variante
+# float anterior: el mismo raster3d.c, draw.c y commands.c compilados otra vez con las funciones
+# renombradas (*_reference), para que las dos convivan en un mismo programa.
+build/raster3d_reference.o: src/render/3d/raster3d.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DMGR_INCREMENTAL_DEPTH=0 \
+	    -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
+build/draw_reference.o: src/render/3d/draw.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_draw_indexed=mgr_draw_indexed_reference \
+	    -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
+build/commands_reference.o: src/render/3d/commands.c $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_execute=mgr_execute_reference \
+	    -Dmgr_draw_indexed=mgr_draw_indexed_reference -Dmgr_init=mgr_init_reference \
+	    -Dmgr_reset_stats=mgr_reset_stats_reference -c -o $@ $<
+REFERENCE_OBJS = build/raster3d_reference.o build/draw_reference.o build/commands_reference.o
+$(SKETCHES3D:%=build/test_depth_%): build/test_depth_%: build/test_depth_scenes.o build/%.o $(REFERENCE_OBJS) $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^
+build/test_depth_triangles: build/test_depth_triangles.o build/raster3d_reference.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Reproduce una captura (-c de un sketch 3D) solo con el renderer: no enlaza MiniGL.
+build/mgl-replay: build/replay.o $(RENDERER) build/mgl_capture.o build/ppm.o
+	$(CC) $(CFLAGS) -o $@ $^
 
 # Para IntelliSense de VS Code (C_Cpp.default.compileCommands en
 # .vscode/settings.json): cómo se compila cada fichero, con los mismos flags.
@@ -77,120 +186,70 @@ compile_commands.json: Makefile $(SRCS)
 	        "$(CURDIR)" "$$f" "$(CC)" "$(CPPFLAGS)" "$$extra" "$(CFLAGS)" "$$f" >> $@; \
 	done; printf '\n]\n' >> $@
 
-build:
-	mkdir -p build
-build/%.o: src/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: src/render/3d/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: src/render/2d/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: src/render/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: src/processing/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: src/platform/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: apps/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: examples/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/%.o: tests/%.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-# Variante float anterior, separada de los objetos incrementales por defecto.
-build/raster3d_reference.o: src/render/3d/raster3d.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DMGR_INCREMENTAL_DEPTH=0 -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
-build/draw_reference.o: src/render/3d/draw.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_draw_indexed=mgr_draw_indexed_reference -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
-build/commands_reference.o: src/render/3d/commands.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_execute=mgr_execute_reference -Dmgr_draw_indexed=mgr_draw_indexed_reference -Dmgr_init=mgr_init_reference -Dmgr_reset_stats=mgr_reset_stats_reference -c -o $@ $<
-$(SKETCHES3D:%=build/test_depth_%): build/test_depth_%: build/test_depth_scenes.o build/%.o build/raster3d_reference.o build/draw_reference.o build/commands_reference.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^)
-build/test_depth_triangles: build/test_depth_triangles.o build/raster3d_reference.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^)
-$(EXAMPLES): build/%: build/%.o build/host.o build/ppm.o build/mgl_capture.o $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-$(EXAMPLES3D): build/%: build/%.o build/host.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^)
-$(filter-out build/test_platform3d,$(TESTS3D)): build/%: build/%.o build/fixture3d.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^) -lm
-build/test_platform2d.o: tests/test_platform.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-build/test_platform3d.o: tests/test_platform.c $(HDRS) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DTEST_CONTEXT_3D=1 -c -o $@ $<
-build/test_platform2d: build/test_platform2d.o $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-build/test_platform3d: build/test_platform3d.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^)
-# Reproduce una captura (-c de un sketch 3D) solo con el renderer: no enlaza MiniGL.
-build/mgl-replay: build/replay.o $(RENDERER) build/mgl_capture.o build/ppm.o
-	$(CC) $(CFLAGS) -o $@ $(sort $^)
-build/sdl.o: CPPFLAGS += $(SDL_CFLAGS)
-$(SDL_EXAMPLES): build/%-sdl: build/%.o build/sdl.o $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^ $(SDL_LIBS)
-$(SDL_EXAMPLES3D): build/%-sdl: build/%.o build/sdl.o $(LIB3D)
-	$(CC) $(CFLAGS) -o $@ $(sort $^) $(SDL_LIBS)
-$(filter-out build/test_platform2d,$(TESTS)): build/%: build/%.o $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
+# ---------------------------------------------------------------------------
+# Ejecutar en el host y en SDL
+# ---------------------------------------------------------------------------
 
-# make run-shapes, make run-pattern V=2 ...; make run las lanza todas.
-run: $(EXAMPLES:build/%=run-%) $(EXAMPLES3D:build/%=run-%)
+run: $(SKETCHES:%=run-%) $(SKETCHES3D:%=run-%)
 run-%: build/%
 	./$< -v $(V)
-# Los sketches 3D no tienen versiones: varios frames (make run-rotating_cube FRAMES3D=120).
+# Los 3D no tienen versiones: varios frames (make run-rotating_cube FRAMES3D=120).
 $(SKETCHES3D:%=run-%): run-%: build/%
 	./$< -f $(FRAMES3D) -e $(FRAMES_EVERY)
 
-# Ventana SDL: make sdl-bounce, make sdl-shapes V=2 (F1/F2/F3 cambian de versión).
 sdl-%: build/%-sdl
 	./$< $(if $(filter all,$(V)),,-v $(V))
-# Los 3D no tienen versiones: make sdl-rotating_cube (SCALE=4 para otra escala).
 $(SKETCHES3D:%=sdl-%): sdl-%: build/%-sdl
 	./$< $(if $(SCALE),-s $(SCALE))
 
-# MiniGPU: el driver minigpu.c va primero porque lleva main.
+# ---------------------------------------------------------------------------
+# MiniGPU
+# ---------------------------------------------------------------------------
+
+# El driver minigpu.c va primero porque lleva main.
 $(MG)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC)
 	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU_SRCS) $(INCLUDES) -D MGL_VERSION=$(MV) --outdir $(MG)/$* -o $@
-
-# MiniGPU 3D: el renderer de referencia en la CPU de MiniGPU, con las mismas fuentes que en el host.
-MG3 := build/minigpu/3d
-MINIGPU3D_SRCS = src/platform/platform.c src/render/context3d.c src/processing/processing3d.c src/processing/processing.c src/minigl.c src/mgl_3d.c \
-    src/mgl_resources.c src/mgl_math.c src/mgl_memory.c src/render/2d/raster.c $(RENDERER_SRCS)
-minigpu3d: $(SKETCHES3D:%=$(MG3)/%.bin)
+# 3D: el renderer de referencia en la CPU de MiniGPU, con las mismas fuentes que en el host.
 $(MG3)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU3D_SRCS) $(HDRS) $(LIBC)
 	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU3D_SRCS) $(INCLUDES) --outdir $(MG3)/$* -o $@
-$(SKETCHES3D:%=sim-%): sim-%: $(MG3)/%.bin
-	$(SIM_SYS) $< --window --run-limit 100000000000 $(SIM_ARGS)
-$(SKETCHES3D:%=profile-minigpu-%): profile-minigpu-%: $(MG3)/%.bin
-	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --run-limit 100000000000 \
-	    --profile --symbols $(MG3)/$*/minigpu.asm \
-	    --profile-annotate $(MG3)/$*-anotado.txt | sed -n '/^Perfil/,$$p'
-# El frame FRAMES de cada sketch 3D en el simulador, píxel a píxel contra el host.
-check-minigpu3d: $(SKETCHES3D:%=check-minigpu-%)
-$(SKETCHES3D:%=check-minigpu-%): check-minigpu-%: $(MG3)/%.bin build/%
-	./build/$* -f $(FRAMES) -o $(MG3)/$*-host.bin -q
-	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --frame-output $(MG3)/$*-sim.bin \
-	    --run-limit 100000000000 > /dev/null
-	$(COMPARE_FRAMES) --rgb565 320x240 $(MG3)/$*-host.bin $(MG3)/$*-sim.bin
 
-# Ventana del simulador: make sim-bounce. Cada frame son millones de instrucciones (varios segundos).
+# Las mismas tres órdenes para 2D ($(MG)) y 3D ($(MG3)); $(1) es la carpeta.
+# Ventana del simulador. Cada frame son millones de instrucciones.
+SIM_WINDOW = $(SIM_SYS) $< --window --run-limit $(SIM_LIMIT) $(SIM_ARGS)
+# Instrucciones por función C (y del runtime) hasta el frame FRAMES; deja además el .asm con la cuenta de
+# cada instrucción en <carpeta>/<sketch>-anotado.txt.
+define SIM_PROFILE
+$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --run-limit $(SIM_LIMIT) \
+    --profile --symbols $(1)/$*/minigpu.asm \
+    --profile-annotate $(1)/$*-anotado.txt | sed -n '/^Perfil/,$$p'
+endef
+# El frame FRAMES en el simulador, píxel a píxel contra el host. $(2): opciones del sketch en el host.
+define SIM_CHECK
+./build/$* -f $(FRAMES) -o $(1)/$*-host.bin $(2)
+$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --frame-output $(1)/$*-sim.bin \
+    --run-limit $(SIM_LIMIT) > /dev/null
+$(COMPARE_FRAMES) --rgb565 320x240 $(1)/$*-host.bin $(1)/$*-sim.bin
+endef
+
 sim-%: $(MG)/%.bin
-	$(SIM_SYS) $< --window --run-limit 100000000000 $(SIM_ARGS)
-
-# Instrucciones por función C (y del runtime) hasta el frame FRAMES: make profile-minigpu-shapes. Deja
-# además el .asm con la cuenta de cada instrucción en $(MG)/<sketch>-anotado.txt.
+	$(SIM_WINDOW)
 profile-minigpu-%: $(MG)/%.bin
-	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --run-limit 100000000000 \
-	    --profile --symbols $(MG)/$*/minigpu.asm \
-	    --profile-annotate $(MG)/$*-anotado.txt | sed -n '/^Perfil/,$$p'
-
-# El frame FRAMES de cada sketch en el simulador, píxel a píxel contra la misma versión en el host.
+	$(call SIM_PROFILE,$(MG))
 check-minigpu: $(SKETCHES:%=check-minigpu-%)
 check-minigpu-%: $(MG)/%.bin build/%
-	./build/$* -v $(MV) -f $(FRAMES) -o $(MG)/$*-host.bin > /dev/null
-	$(SIM_SYS) $< --halt-after-swaps $(FRAMES) --frame-output $(MG)/$*-sim.bin \
-	    --run-limit 100000000000 > /dev/null
-	$(COMPARE_FRAMES) --rgb565 320x240 $(MG)/$*-host.bin $(MG)/$*-sim.bin
+	$(call SIM_CHECK,$(MG),-v $(MV) > /dev/null)
+
+$(SKETCHES3D:%=sim-%): sim-%: $(MG3)/%.bin
+	$(SIM_WINDOW)
+$(SKETCHES3D:%=profile-minigpu-%): profile-minigpu-%: $(MG3)/%.bin
+	$(call SIM_PROFILE,$(MG3))
+check-minigpu3d: $(SKETCHES3D:%=check-minigpu-%)
+$(SKETCHES3D:%=check-minigpu-%): check-minigpu-%: $(MG3)/%.bin build/%
+	$(call SIM_CHECK,$(MG3),-q)
+
+# ---------------------------------------------------------------------------
+# Pruebas y limpieza
+# ---------------------------------------------------------------------------
 
 test: $(TESTS) test3d
 	./build/test_cpu
