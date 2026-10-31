@@ -49,11 +49,11 @@ en el proceso.
 
 | Plataforma | Ventana | Traducción |
 |---|---|---|
-| MiniGPU (`platform3d_minigpu.c`) | la SDRAM real | `base = (unsigned char *)addr`: identidad |
-| Host (`platform3d_host.c`, tests) | un bloque de `calloc` | `base + (dirección - addr)` |
+| MiniGPU (`minigpu.c`) | la SDRAM real | `base = (unsigned char *)addr`: identidad |
+| Host (`host.c`, tests) | un bloque de `calloc` | `base + (dirección - addr)` |
 
-Las dos plataformas usan **las mismas direcciones** ([platform3d.h](../src/platform3d.h)), las de
-`platform_minigpu.c` para los framebuffers y el command buffer:
+Las dos plataformas usan **las mismas direcciones** ([context3d.h](../src/render/context3d.h)), las de
+`minigpu.c` para los framebuffers y el command buffer:
 
 | Dirección | Qué | Tamaño |
 |---|---|---|
@@ -79,7 +79,7 @@ big-endian.
 
 Un recurso que use un command buffer tiene que seguir válido **y sin cambios** hasta que ese buffer se haya
 ejecutado. Hoy la ejecución es síncrona (`mgr_execute` vuelve con el trabajo hecho), así que basta con no
-tocar los datos entre `mgl_draw_mesh` y el final de `platform3d_end`. Con mallas de la aplicación es
+tocar los datos entre `mgl_draw_mesh` y el final de `context3d_end`. Con mallas de la aplicación es
 responsabilidad suya; destruir el handle no libera ni invalida la memoria, solo el handle.
 
 No hay seguimiento automático de dependencias. Lo previsto para cuando haga falta:
@@ -87,7 +87,7 @@ No hay seguimiento automático de dependencias. Lo previsto para cuando haga fal
 - **Ejecución asíncrona y fences.** `mgr_execute` devolverá el control antes de terminar; `END_FRAME` ya lleva
   el número de frame, que puede ser el valor de la fence que se señaliza al acabar.
 - **Varios frames en vuelo.** Varios command buffers (uno por frame en vuelo) en lugar del único de
-  `platform3d.c`, y no reutilizar uno hasta que su fence se haya señalizado.
+  `context3d.c`, y no reutilizar uno hasta que su fence se haya señalizado.
 - **Reutilizar buffers de vértices.** Lo mismo con los recursos: la aplicación espera a la fence del último
   frame que los usó, o usa memoria nueva (el bump allocator encaja bien con un heap por frame que se vacía al
   señalizar).
@@ -99,7 +99,7 @@ la GPU lea los comandos:
 
 1. Antes de lanzar el trabajo, la CPU tiene que hacer visibles en la SDRAM el command buffer y los recursos
    que haya escrito (volcar sus líneas de caché, si las hay). Los sitios son `mgl_create_mesh_copy` (al
-   copiar) y `platform3d_end` (antes de `mgr_execute`).
+   copiar) y `context3d_end` (antes de `mgr_execute`).
 2. Antes de que la CPU lea algo que escribió la GPU (el framebuffer para copiarlo, una captura), tiene que
    invalidar lo que tenga en caché de esa zona.
 3. La presentación (swap en vblank) tiene que esperar a la fence del frame.

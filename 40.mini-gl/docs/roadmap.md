@@ -16,7 +16,7 @@ Cada versión añade una sola idea. Las entregas de `archive/` usan la numeraci�
 Mantener la API Processing, las escenas de prueba y una referencia V0 CPU píxel a píxel. Medir tiempo de frame, ciclos CPU/GPU, bytes y transacciones SDRAM, ocupación de warps, stalls y tamaño del código. Distinguir coste de generar comandos, interpretar comandos y rasterizar.
 
 ## Trabajo pendiente priorizado
-1. Hecho: validar C89 de `src/` con LCC y mini-opt, incluyendo divergencia/SSY y tamaños de tipos, para V0, V1 y V2 (`platform_minigpu.c`, `make check-minigpu V=0|1|2`). El kernel de V2 (`KERNEL(mgl_render)`) llama a funciones de su unidad, y `kernelcalls` de mini-opt las expande (la GPU de la 36 no tiene `JAL`).
+1. Hecho: validar C89 de `src/` con LCC y mini-opt, incluyendo divergencia/SSY y tamaños de tipos, para V0, V1 y V2 (`minigpu.c`, `make check-minigpu V=0|1|2`). El kernel de V2 (`KERNEL(mgl_render)`) llama a funciones de su unidad, y `kernelcalls` de mini-opt las expande (la GPU de la 36 no tiene `JAL`).
 2. Hecho en el simulador: la entrada de la GPU (el trabajo, por `GETARG`), un warp lanzado por la CPU, que espera a que acabe antes del swap, y el framebuffer, los comandos y los sprites en la memoria compartida.
 3. Hecho: el kernel de V2 dibuja con el `raster.c` de V0 por lanes, por spans y no filtrando cada píxel. En instrucciones, la GPU dibuja con menos que la CPU de V0; en tiempo aún es más lenta (ver [validacion.md](validacion.md)). Escribir dos píxeles por acceso se probó y no compensa (ver [v2-dos-pixeles.md](v2-dos-pixeles.md)).
 4. Varios warps (hoy uno de 8 lanes); con varios, las primitivas solapadas exigen sincronización. Solapar la CPU con la GPU ganaría poco mientras la CPU haga tan poco por frame en V2.

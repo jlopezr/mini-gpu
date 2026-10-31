@@ -16,8 +16,13 @@ Los nombres de `archive/` conservan la numeración antigua; ver [docs/roadmap.md
 
 ## Estructura
 
-- `src/`: versión de trabajo (V0 + V1 + renderer V2 y MiniGL 3D), con prefijos `mgl_`/`MGL_`. La API Processing conserva sus nombres originales. Plataformas para los sketches: `platform_host.c` (imagen PPM), `platform_sdl.c` (ventana SDL2), con la parte común en `platform.c`, y `platform_minigpu.c` (la máquina del repo, compilada con `build-c`).
-- `renderer/`: renderer 3D de referencia (C89, escalar), independiente de MiniGL: ejecuta un command buffer de versión 2 leyendo comandos y recursos por su dirección en la RAM compartida. El mismo código corre en el host y en la CPU de MiniGPU.
+- `src/`: API MiniGL, command buffer, recursos, tipos, memoria y matemáticas (`mgl_`/`MGL_`).
+- `src/processing/`: API Processing 2D y 3D, con sus nombres habituales (`setup`, `draw`, `rect`, `box`...).
+- `src/render/2d/`: raster CPU compartido por V0/V1/V2 y renderer GPU SIMT.
+- `src/render/3d/`: pipeline C89 de comandos, transformación, clipping, raster y fragmentos. Ejecuta también comandos 2D mediante el raster compartido.
+- `src/render/context.h`: contrato común de render; `context2d.c` administra V0/V1/V2 y la conservación del lienzo; `context3d.c` administra RAM, matrices, profundidad y ejecución del pipeline 3D.
+- `src/platform/`: un driver por entorno (`host.c`, `sdl.c`, `minigpu.c`) para ambos contextos, con estado y ciclo comunes en `platform.c`. Aquí viven presentación, entrada, bucle y salida PPM.
+- `apps/replay.c`: aplicación `mgl-replay`, que reproduce capturas usando solo el renderer.
 - `examples/`: sketches Processing (`setup()`/`draw()`) que se ejecutan con cualquier versión, como imagen o en una ventana SDL. Ver [examples/README.md](examples/README.md).
 - `tests/`: comparación píxel a píxel V0/V1/V2 sobre escenas fijas, y V2 contra V0 en escenas al azar (`test_fuzz_v2`).
 - `scheduler/`: última entrega del scheduler con ejemplo, sin modificaciones.
@@ -56,8 +61,13 @@ make sdl-rotating_cube               # en una ventana SDL, a 60 fps (Esc cierra)
 make sim-rotating_cube               # en la ventana del simulador (unos 0,8 s por frame a 4,5 MIPS)
 ```
 
-`make test` incluye `test3d`. Las plataformas 3D son `src/platform3d_host.c` (RAM emulada, PPM), `src/platform3d_sdl.c` (la misma, en una
-ventana) y `src/platform3d_minigpu.c`; los sketches 3D incluyen `processing3d.h` y llaman a `size(w, h, P3D)`.
+`make test` incluye `test3d`. Los drivers `src/platform/host.c`, `sdl.c` y `minigpu.c` sirven tanto para 2D como para 3D.
+Cada sketch se enlaza con su contexto de render; los sketches 3D incluyen `processing3d.h` y llaman a
+`size(w, h, P3D)`. No hay un segundo juego de plataformas para 3D.
+
+El renderer usa profundidad incremental en punto fijo por defecto, con vuelta al cálculo float por fila para
+pendientes extremas. `MGR_INCREMENTAL_DEPTH=0` al compilar conserva la variante float anterior para comparación.
+Las diferencias de redondeo aceptadas y las medidas están en [docs/validacion.md](docs/validacion.md#profundidad-incremental-por-defecto).
 
 En el host, `mgl_gpu_render` ejecuta las ocho lanes una tras otra en la CPU: es una emulación funcional, no SIMT. En MiniGPU lanza `KERNEL(mgl_render)` en un warp de la GPU.
 

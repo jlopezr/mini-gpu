@@ -7,27 +7,29 @@ renderer SIMT está por hacer.
 ```text
 sketch (setup/draw)                       examples/rotating_cube.c, boxes.c
    │
-MiniProcessing 3D                         src/processing3d.c  (+ processing.c para lo 2D)
+MiniProcessing 3D                         src/processing/processing3d.c  (+ processing.c para lo 2D)
    │  size(w, h, P3D), translate, rotateX/Y, box
 MiniGL 3D                                 src/mgl_3d.c, mgl_resources.c  (+ minigl.c para lo 2D)
    │  estado, matrices por valor, handles -> direcciones
 command buffer (versión 2)                src/mgl_commands.h, docs/command-buffer.md
    │
-renderer de referencia                    renderer/  (no incluye minigl.h ni processing.h)
-   ├── host: RAM emulada                  src/platform3d_host.c
-   └── CPU de MiniGPU: SDRAM real         src/platform3d_minigpu.c
+renderer de referencia                    src/render/3d/  (no incluye minigl.h ni processing.h)
+   ├── host: RAM emulada                  src/platform/host.c
+   └── CPU de MiniGPU: SDRAM real         src/platform/minigpu.c
 ```
 
-Lo común a las dos plataformas (mapa de memoria, frame, ejecución) está en
-[platform3d.c](../src/platform3d.c).
+El contexto 3D (mapa de memoria, comandos y ejecución) está en
+[context3d.c](../src/render/context3d.c). Los drivers de host, SDL y MiniGPU son
+los mismos que en 2D; el ciclo común está en [platform.c](../src/platform/platform.c),
+que usa el contrato [context.h](../src/render/context.h).
 
 ## Qué se reutiliza del 2D
 
 - **El command buffer**: el mismo `mgl_cmd_buffer_t`, `mgl_cmd_init`/`reset`/`status` y la misma cabecera.
   Los comandos 2D (`CLEAR`, `BATCH`) son los de siempre, byte a byte; el 3D añade opcodes. Un frame puede
   mezclar 2D y 3D y se ejecuta en orden (`boxes.c` dibuja una barra 2D sobre los cubos).
-- **El raster 2D**: el renderer ejecuta los `BATCH` con `src/raster.c`, el de V0, V1 y V2
-  ([raster2d.c](../renderer/raster2d.c)), así que dan los mismos píxeles.
+- **El raster 2D**: el renderer ejecuta los `BATCH` con `src/render/2d/raster.c`, el de V0, V1 y V2
+  ([raster2d.c](../src/render/3d/raster2d.c)), así que dan los mismos píxeles.
 - **Processing**: `background`, `fill`, `noStroke`... son los de `processing.c`. En un frame 3D,
   `mgl_clear` (y por tanto `background`) borra además la profundidad.
 
@@ -37,7 +39,7 @@ Cambios en lo existente (sin cambiar el formato 2D ni los resultados de V0/V1/V2
   `RD`/`WR` de `minigl.c` pasan a `mgl_bytes.h`.
 - `minigl.c` expone a `mgl_3d.c` el buffer actual y una reserva de bytes para comandos 3D
   (`mgl_internal.h`), y la API gana `mgl_get_fill`.
-- `platform_host.c` usa `ppm.c`, compartido con la plataforma 3D.
+- `host.c` usa `ppm.c`, compartido con la plataforma 3D.
 
 ## API de MiniGL 3D
 
@@ -101,7 +103,7 @@ Resultado: `make check-minigpu3d` da los 76 800 píxeles idénticos (frames 3 y 
 
 ## MiniProcessing 3D
 
-[processing3d.h](../src/processing3d.h). Lo que usa el cubo: `size(w, h, P3D)`, `translate`, `rotateX`,
+[processing3d.h](../src/processing/processing3d.h). Lo que usa el cubo: `size(w, h, P3D)`, `translate`, `rotateX`,
 `rotateY` y `box`; y `beginShape(QUADS | TRIANGLES)`, `vertex(x, y, z)` y `endShape()` para figuras dadas
 vértice a vértice, como el cubo de una cara de cada color (`colored_cube.c`). Como C89 no tiene sobrecarga, `size` con tres argumentos es una macro de
 `processing3d.h` (`size_renderer`); los sketches 2D siguen con `size(w, h)`. `background(20)` de Processing se
@@ -126,7 +128,7 @@ distintos, y eso pediría un atributo de color en el formato de vértice.
 
 ## Etapas del renderer
 
-[renderer/mgr_stages.h](../renderer/mgr_stages.h) declara la interfaz de cada etapa. Un triángulo pasa por
+[src/render/3d/mgr_stages.h](../src/render/3d/mgr_stages.h) declara la interfaz de cada etapa. Un triángulo pasa por
 todas antes de leer el siguiente; ninguna guarda listas completas de la anterior y no hay memoria dinámica.
 
 | Fichero | Etapa | Recibe | Entrega |
@@ -139,7 +141,7 @@ todas antes de leer el siguiente; ninguna guarda listas completas de la anterior
 | `viewport.c` | viewport | vértice de recorte | x, y en 1/16 de píxel (enteros), z en [0, 1] |
 | `raster3d.c` | rasterización | 3 vértices de ventana + rectángulo + fragmento | spans: `mgr_fragment_span` por fila |
 | `fragment.c` | fragmentos | un span (fila, x0..x1, z y dz en punto fijo) | profundidad y color escritos |
-| `raster2d.c` | 2D | un `BATCH` | lo dibuja `src/raster.c` |
+| `raster2d.c` | 2D | un `BATCH` | lo dibuja `src/render/2d/raster.c` |
 
 Detalles:
 
@@ -152,8 +154,12 @@ Detalles:
   regla top-left (la de Direct3D, también con y hacia abajo): sin huecos ni píxeles dobles en aristas
   compartidas. Al recortar contra todos los planos, las coordenadas quedan dentro del viewport (≤ 1024
   píxeles) y las funciones de borde caben en 32 bits.
-- **Profundidad**: plano `z(x, y)` con gradientes en float por triángulo, valor inicial en float por fila y,
-  dentro del span, suma en punto fijo (unidades de 16 bits con 8 de fracción). Buffer `U16`, prueba `LESS`.
+- **Profundidad**: plano `z(x, y)` con gradientes en float por triángulo e inicios de fila
+  incrementales en punto fijo (unidades U16 con 12 bits de fracción); dentro del span,
+  suma con 8 bits de fracción. Buffer `U16`, prueba `LESS`. Las pendientes que exceden
+  las cotas enteras usan el cálculo float por fila. `MGR_INCREMENTAL_DEPTH=0` recupera
+  la variante anterior; los cambios de redondeo aceptados se detallan en
+  [validacion.md](validacion.md#profundidad-incremental-por-defecto).
 - **Fragmentos**: prueba y escritura de profundidad, color uniforme. Sin blending.
 
 Lo que podría pasar a hardware son `transform`, `viewport`, `raster3d` y `fragment`: reciben lotes pequeños,
@@ -211,8 +217,10 @@ comparar o sumar con ellos pasa por el runtime de `double`. En `mgl_math.c` y `r
   una cara oculta (lo mismo que OpenGL sin culling).
 - **Recursos**: el heap de MiniGL no libera piezas; no hay fences ni ejecución asíncrona; sin operaciones de
   coherencia de caché.
-- **Plataforma MiniGPU 3D**: solo 320×240, sin entrada; el trasero no recibe copia del delantero (un sketch 3D
+- **Plataforma MiniGPU 3D**: solo 320×240; teclado y ratón mediante el driver común,
+  si existe INPUT. El trasero no recibe copia del delantero (un sketch 3D
   tiene que borrar en cada `draw()`). No probado en la FPGA.
-- **Rendimiento**: sin optimizar (es la referencia). En MiniGPU, los candidatos son la profundidad por fila en
-  float, el recorrido de la caja del triángulo píxel a píxel y los borrados de 16 bits.
+- **Rendimiento**: borrados de 32 bits en MiniGPU, bucles especializados de profundidad y
+  profundidad incremental por defecto. Quedan como candidatos el seguimiento de bordes
+  y la reutilización de vértices transformados. Medidas en [validacion.md](validacion.md).
 - Límites: destino y viewport de hasta 1024 píxeles, `MGL_MAX_MESHES` = 32, 65 536 vértices por malla.

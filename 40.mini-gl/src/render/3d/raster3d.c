@@ -17,8 +17,10 @@
    unidades más el redondeo, y E < 2 * 16400^2 < 2^31.
 
    La profundidad es un plano z = z0 + a (x - x0) + b (y - y0). Los gradientes
-   se calculan en float por triángulo, el valor al principio de cada span en
-   float por fila y, dentro del span, en punto fijo por suma (fragment.c). */
+   se calculan en float por triángulo y los inicios de fila avanzan en punto
+   fijo. Dentro del span se suma también en punto fijo (fragment.c).
+   MGR_INCREMENTAL_DEPTH=0 conserva la variante anterior, con inicio en float
+   por fila y distinto redondeo, para comparación. */
 
 #define DEPTH_SCALE 16776960.0f /* 65535 << MGR_DEPTH_FRAC */
 
@@ -48,6 +50,14 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     mgl_s32 area, minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
     mgl_s32 w0, w1, w2, covered = 0, zi, dzi;
     mgl_real_t fa, ga, gb, dz1, dz2, zrow, zf;
+#if MGR_INCREMENTAL_DEPTH
+    /* Q12 en unidades U16, cuatro bits más que los spans.
+       Acotar todo el recorrido de la caja evita desbordar incluso cuando
+       sus esquinas quedan muy lejos del interior de un triángulo estrecho. */
+    mgl_real_t gx, gy, extent, origin;
+    mgl_s32 depth_row = 0, depth_dx = 0, depth_dy = 0, depth_start;
+    int incremental = 0;
+#endif
     edge_t e0, e1, e2;
 
     /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
@@ -102,6 +112,24 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     if (-zf > 33553920.0f) zf = -33553920.0f; /* -zf: mini-lcc deja los literales negativos en double */
     dzi = mgl_round(zf);
 
+#if MGR_INCREMENTAL_DEPTH
+    gx = ga * (mgl_real_t)MGR_SUBPIXEL * DEPTH_SCALE * 16.0f;
+    gy = gb * (mgl_real_t)MGR_SUBPIXEL * DEPTH_SCALE * 16.0f;
+    zrow = a->z + gb * (mgl_real_t)(py - a->y);
+    origin = ((zrow + ga * (mgl_real_t)(px - a->x)) * DEPTH_SCALE) * 16.0f;
+    extent = (gx < 0.0f ? -gx : gx) * (mgl_real_t)(x1 - x0) +
+        (gy < 0.0f ? -gy : gy) * (mgl_real_t)(y1 - y0);
+    /* |origin| <= 2^29 y recorrido <= 2^28: queda margen para el
+       redondeo de los incrementos y de la conversión final (+8). NaN e
+       infinitos tampoco pasan estas comparaciones. */
+    if (extent <= 268435456.0f && origin <= 536870912.0f && -origin <= 536870912.0f) {
+        depth_row = mgl_round(origin);
+        depth_dx = mgl_round(gx);
+        depth_dy = mgl_round(gy);
+        incremental = 1;
+    }
+#endif
+
     for (y = y0; y < y1; y++, py += MGR_SUBPIXEL) {
         w0 = e0.w;
         w1 = e1.w;
@@ -118,15 +146,28 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
             w2 -= step2;
         }
         if (x > start) {
+#if MGR_INCREMENTAL_DEPTH
+            if (incremental) {
+                depth_start = depth_row + depth_dx * (start - x0);
+                zi = depth_start <= 0 ? 0 : depth_start >= MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
+                    (depth_start + 8) >> 4;
+            } else {
+#endif
             zrow = a->z + gb * (mgl_real_t)(py - a->y);
             zf = (zrow + ga * (mgl_real_t)(start * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->x)) * DEPTH_SCALE;
             zi = zf <= 0.0f ? 0 : zf >= DEPTH_SCALE ? MGR_DEPTH_MAX : mgl_round(zf);
+#if MGR_INCREMENTAL_DEPTH
+            }
+#endif
             mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
             covered += x - start;
         }
         e0.w += e0.dx * MGR_SUBPIXEL;
         e1.w += e1.dx * MGR_SUBPIXEL;
         e2.w += e2.dx * MGR_SUBPIXEL;
+#if MGR_INCREMENTAL_DEPTH
+        if (incremental) depth_row += depth_dy;
+#endif
     }
     return covered;
 }

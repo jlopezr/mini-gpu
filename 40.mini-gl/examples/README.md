@@ -1,17 +1,17 @@
 # Ejemplos
 
 Cada ejemplo es un sketch Processing, `examples/<nombre>.c`, que solo define
-`setup()` y `draw()`. El `main()`, `size()` y el bucle los pone la plataforma.
+`setup()` y `draw()`. El `main()` y el bucle los pone el driver de plataforma; `size()` configura el contexto de render.
 Cada sketch se compila para tres:
 
 | Plataforma | Binario | Qué hace |
 |---|---|---|
-| Host ([platform_host.c](../src/platform_host.c)) | `build/<nombre>` | `setup()` y un solo `draw()`; guarda el frame como PPM |
-| SDL ([platform_sdl.c](../src/platform_sdl.c)) | `build/<nombre>-sdl` | Ventana: `setup()` y `draw()` en bucle a 60 fps |
-| MiniGPU ([platform_minigpu.c](../src/platform_minigpu.c)) | `build/minigpu/v<N>/<nombre>.bin` | La máquina del repo (CPU + GPU, vídeo 320×240): en su simulador o en las placas 36/37. De momento V0 y V1 |
+| Host ([host.c](../src/platform/host.c)) | `build/<nombre>` | `setup()` y un solo `draw()`; guarda el frame como PPM |
+| SDL ([sdl.c](../src/platform/sdl.c)) | `build/<nombre>-sdl` | Ventana: `setup()` y `draw()` en bucle a 60 fps |
+| MiniGPU ([minigpu.c](../src/platform/minigpu.c)) | `build/minigpu/v<N>/<nombre>.bin` | La máquina del repo (CPU + GPU, vídeo 320×240): en su simulador o en las placas 36/37. V0, V1 y V2 |
 
 Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
-[platform.c](../src/platform.c).
+[platform.c](../src/platform/platform.c).
 
 | Ejemplo | Qué muestra |
 |---|---|
@@ -21,10 +21,10 @@ Host y SDL ejecutan MiniGL con la versión elegida; su parte común está en
 | [`trail.c`](trail.c) | Estela: `draw()` no borra y dibuja encima de los frames anteriores |
 | [`paint.c`](paint.c) | Pintar con el ratón; colores, grosor y borrar con el teclado |
 
-Sketches 3D (incluyen `processing3d.h`, `size(320, 240, P3D)`), con su propia plataforma: el host
-([platform3d_host.c](../src/platform3d_host.c)) graba cada frame con MiniGL 3D y lo ejecuta con el renderer
-de referencia sobre RAM emulada; en MiniGPU ([platform3d_minigpu.c](../src/platform3d_minigpu.c)) el mismo
-renderer corre en la CPU. En una ventana, [platform3d_sdl.c](../src/platform3d_sdl.c): `make sdl-rotating_cube`
+Sketches 3D (incluyen `processing3d.h`, `size(320, 240, P3D)`), con los mismos drivers y el contexto 3D: el host
+([host.c](../src/platform/host.c)) graba cada frame con MiniGL 3D y lo ejecuta con el renderer
+de referencia sobre RAM emulada; en MiniGPU ([minigpu.c](../src/platform/minigpu.c)) el mismo
+renderer corre en la CPU. En una ventana, [sdl.c](../src/platform/sdl.c): `make sdl-rotating_cube`
 (SDL solo muestra el framebuffer; rasteriza el renderer). No tienen versiones.
 
 | Ejemplo | Qué muestra |

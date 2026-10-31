@@ -2,7 +2,7 @@
 #include "mgl_bytes.h"
 #include "raster.h"
 
-/* Los comandos 2D con el raster de V0 (src/raster.c): los mismos píxeles que
+/* Los comandos 2D con el raster de V0 (src/render/2d/raster.c): los mismos píxeles que
    V0, V1 y V2. Solo escribe color; no mira ni cambia la profundidad. */
 
 void mgr_raster2d_target(const mgr_state_t *s) {

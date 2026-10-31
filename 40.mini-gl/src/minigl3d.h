@@ -3,7 +3,7 @@
 
 /* MiniGL 3D: estado gráfico, recursos y generación de comandos. No transforma
    vértices, no recorta ni rasteriza: eso lo hace quien ejecute el command
-   buffer (renderer/, y en el futuro la GPU).
+   buffer (src/render/3d/, y en el futuro la GPU).
 
    Usa el mismo command buffer que MiniGL 2D (mgl_cmd_init, mgl_set_deferred) y
    solo en modo diferido: en modo directo las funciones 3D no hacen nada y

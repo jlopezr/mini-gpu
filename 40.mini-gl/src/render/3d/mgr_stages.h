@@ -13,7 +13,7 @@
      viewport.c   división de perspectiva y paso a píxeles (punto fijo)
      raster3d.c   cobertura con funciones de borde enteras; entrega spans
      fragment.c   profundidad y color de un span; también los CLEAR
-     raster2d.c   comandos 2D (BATCH) con el raster de V0 (src/raster.c)
+     raster2d.c   comandos 2D (BATCH) con el raster de V0 (src/render/2d/raster.c)
 
    Las candidatas a hardware son transform, viewport, raster3d y fragment: cada
    una recibe un lote de trabajo pequeño y sin punteros a estado ajeno. */
@@ -87,6 +87,12 @@ typedef struct {
 /* La profundidad interpolada: unidades del buffer (0..65535) con 8 bits de fracción. */
 #define MGR_DEPTH_FRAC 8
 #define MGR_DEPTH_MAX ((mgl_s32)65535 << MGR_DEPTH_FRAC)
+
+/* Plano incremental por defecto. Definir a 0 al compilar recupera el inicio
+   float por fila anterior para diagnósticos de precisión y rendimiento. */
+#ifndef MGR_INCREMENTAL_DEPTH
+#define MGR_INCREMENTAL_DEPTH 1
+#endif
 
 /* Los píxeles de x0 a x1 - 1 de la fila y (ya dentro del destino). z es la
    profundidad en x0 y dz lo que cambia por píxel. */

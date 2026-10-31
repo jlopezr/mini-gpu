@@ -2,7 +2,7 @@
 #define MGL_COMMANDS_H
 
 /* Contrato binario del command buffer: lo que escribe MiniGL y leen los
-   renderers (V1 y V2 en 2D, renderer/ en 3D). Descripción completa, con
+   renderers (V1 y V2 en 2D, src/render/3d/ en 3D). Descripción completa, con
    ejemplos, en docs/command-buffer.md.
 
    Reglas de serialización:

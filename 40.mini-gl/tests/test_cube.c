@@ -2,7 +2,7 @@
    MiniGL + renderer) en varios ángulos, contra una proyección independiente en
    double; el command buffer de un frame de Processing; y reproducción de un
    command buffer guardado. */
-#include "platform3d.h"
+#include "context3d.h"
 #include "mgl_bytes.h"
 #include <math.h>
 #include <stdio.h>
@@ -34,9 +34,9 @@ static void draw_cube(float angle) {
 }
 
 static int render(float angle) {
-    if (platform3d_begin(P3D_FB_A) != MGL_OK) return -1;
+    if (context3d_begin(P3D_FB_A) != MGL_OK) return -1;
     draw_cube(angle);
-    return platform3d_end(0);
+    return context3d_end(0);
 }
 
 /* La silueta esperada: los 8 vértices con la cámara de Processing, en double.
@@ -81,7 +81,7 @@ static void test_angles(void) {
     int a, i, n, x, y, count, other, fminx, fmaxx, fminy, fmaxy;
     for (a = 0; a < (int)(sizeof angles / sizeof angles[0]); a++) {
         CHECK(render(angles[a]) == MGL_OK);
-        fb = platform3d_pixels(P3D_FB_A);
+        fb = context3d_pixels(P3D_FB_A);
         count = other = 0;
         fminx = fminy = 10000;
         fmaxx = fmaxy = -1;
@@ -123,7 +123,7 @@ static void test_angles(void) {
     }
     /* De frente: la cara de delante (z = 50) es un cuadrado de 100 * e / (e - 50) = 131.7 píxeles */
     CHECK(render(0.0f) == MGL_OK);
-    fb = platform3d_pixels(P3D_FB_A);
+    fb = context3d_pixels(P3D_FB_A);
     count = 0;
     for (x = 0; x < W; x++)
         if (fb[120 * W + x] == ORANGE) count++;
@@ -135,11 +135,11 @@ static void test_frame_commands(void) {
     static const unsigned int expected[] = {MGL_CMD_SET_RENDER_TARGET, MGL_CMD_CLEAR,
         MGL_CMD_SET_VIEWPORT, MGL_CMD_SET_MATRIX, MGL_CMD_SET_MATRIX, MGL_CMD_SET_MATRIX,
         MGL_CMD_SET_RENDER_STATE, MGL_CMD_SET_COLOR, MGL_CMD_DRAW_INDEXED, MGL_CMD_END_FRAME};
-    const unsigned char *b = platform3d_commands.bytes, *p;
+    const unsigned char *b = context3d_commands.bytes, *p;
     mgl_u32 off;
     int i = 0;
     CHECK(render(1.0f) == MGL_OK);
-    for (off = 16; off < platform3d_commands.used; off += RD32(b + off + 4), i++) {
+    for (off = 16; off < context3d_commands.used; off += RD32(b + off + 4), i++) {
         p = b + off;
         CHECK(i < 10 && RD16(p) == expected[i]);
         if (RD16(p) == MGL_CMD_SET_RENDER_TARGET)
@@ -160,22 +160,22 @@ static void test_replay(void) {
     static mgl_color_t first[W * H];
     mgl_u32 used;
     mgr_renderer_t fresh;
-    mgl_color_t *fb = platform3d_pixels(P3D_FB_A);
-    unsigned char *commands = platform3d_commands.bytes;
+    mgl_color_t *fb = context3d_pixels(P3D_FB_A);
+    unsigned char *commands = context3d_commands.bytes;
     CHECK(render(1.0f) == MGL_OK);
-    used = platform3d_commands.used;
+    used = context3d_commands.used;
     CHECK(used <= sizeof saved);
     memcpy(saved, commands, used);
     memcpy(first, fb, sizeof first);
     CHECK(render(2.2f) == MGL_OK);
     CHECK(memcmp(first, fb, sizeof first) != 0);
     memcpy(commands, saved, used);
-    CHECK(mgr_execute(&platform3d_renderer, P3D_COMMANDS) == MGR_OK);
+    CHECK(mgr_execute(&context3d_renderer, P3D_COMMANDS) == MGR_OK);
     CHECK(memcmp(first, fb, sizeof first) == 0);
-    CHECK(mgr_execute(&platform3d_renderer, P3D_COMMANDS) == MGR_OK);
+    CHECK(mgr_execute(&context3d_renderer, P3D_COMMANDS) == MGR_OK);
     CHECK(memcmp(first, fb, sizeof first) == 0);
     memset(fb, 0, sizeof first);
-    CHECK(mgr_init(&fresh, &platform3d_memory) == MGR_OK);
+    CHECK(mgr_init(&fresh, &context3d_memory) == MGR_OK);
     CHECK(mgr_execute(&fresh, P3D_COMMANDS) == MGR_OK);
     CHECK(memcmp(first, fb, sizeof first) == 0);
 }
@@ -228,15 +228,15 @@ static void test_colored_faces(void) {
     static const float angles[] = {0.0f, 0.4f, 1.0f, 2.2f, 3.3f, 5.0f};
     double e = 120.0 / tan(3.14159265358979 / 6.0), w[4][3], cx, cy, n[3], c[3], area;
     mgl_color_t colors[6], *fb;
-    const unsigned char *b = platform3d_commands.bytes, *p;
+    const unsigned char *b = context3d_commands.bytes, *p;
     mgl_u32 off, last_index = 0;
     int a, f, v, k, count[6], visible, seen, draws, sets;
     for (f = 0; f < 6; f++) colors[f] = color565(face_rgb[f][0], face_rgb[f][1], face_rgb[f][2]);
     for (a = 0; a < (int)(sizeof angles / sizeof angles[0]); a++) {
-        if (platform3d_begin(P3D_FB_A) != MGL_OK) break;
+        if (context3d_begin(P3D_FB_A) != MGL_OK) break;
         draw_colored_cube(angles[a]);
-        CHECK(platform3d_end(0) == MGL_OK);
-        fb = platform3d_pixels(P3D_FB_A);
+        CHECK(context3d_end(0) == MGL_OK);
+        fb = context3d_pixels(P3D_FB_A);
         for (f = 0; f < 6; f++) count[f] = 0;
         for (k = 0; k < W * H; k++)
             for (f = 0; f < 6; f++)
@@ -280,7 +280,7 @@ static void test_colored_faces(void) {
     }
     /* Un SET_COLOR y un DRAW_INDEXED de 6 índices por cara, seguidos en la misma malla */
     draws = sets = 0;
-    for (off = 16; off < platform3d_commands.used; off += RD32(b + off + 4)) {
+    for (off = 16; off < context3d_commands.used; off += RD32(b + off + 4)) {
         p = b + off;
         if (RD16(p) == MGL_CMD_SET_COLOR) CHECK(RD32(p + 8) == colors[sets++ % 6]);
         if (RD16(p) == MGL_CMD_DRAW_INDEXED) {
@@ -295,8 +295,8 @@ static void test_colored_faces(void) {
 
 int main(void) {
     unsigned char *ram = (unsigned char *)calloc(P3D_RAM_SIZE, 1);
-    if (!ram || platform3d_init(ram)) {
-        puts("FAIL: platform3d_init");
+    if (!ram || context3d_init(ram)) {
+        puts("FAIL: context3d_init");
         return 1;
     }
     test_angles();

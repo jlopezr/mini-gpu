@@ -1,8 +1,8 @@
-/* Plataforma SDL2 para sketches Processing: ventana con el framebuffer RGB565
+/* Driver SDL2 común a los contextos 2D y 3D: ventana con el framebuffer RGB565
    escalado, setup() una vez y draw() en bucle a 60 fps, como en Processing.
 
    Uso: sketch-sdl [-v 0|1|2] [-s escala]
-     -v N    versión de MiniGL (por defecto 0); también se cambia en marcha
+     -v N    versión de MiniGL 2D (por defecto 0); también se cambia en marcha
              con F1, F2 y F3 (las demás teclas son del sketch)
      -s N    píxeles de pantalla por píxel del framebuffer (por defecto 3)
    El título muestra la versión, los fps y los bytes de comandos. Esc cierra. */
@@ -62,11 +62,15 @@ int main(int argc, char **argv) {
     SDL_Texture *texture;
     SDL_Event e;
     Uint32 next, fps_start;
-    int i, version = 0, scale = 3, running = 1, frames = 0;
+    int i, version = 0, scale = 3, running = 1, frames = 0, status = 0;
+    unsigned char *ram = 0;
+    mgl_u32 ram_size = mgl_context_ram_size();
+    mgl_context_info_t info;
     char title[128];
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-v") && i + 1 < argc) {
+            if (mgl_context_is3d()) return usage(argv[0]);
             if ((version = platform_parse_version(argv[++i])) < 0) return usage(argv[0]);
         } else if (!strcmp(argv[i], "-s") && i + 1 < argc) {
             if ((scale = atoi(argv[++i])) < 1) return usage(argv[0]);
@@ -75,10 +79,9 @@ int main(int argc, char **argv) {
     }
 
     /* setup() fija el tamaño con size(): primero se ejecuta y luego se abre la ventana. */
-    platform_reset();
-    if (platform_begin(version) != MGL_OK) return 1;
-    setup();
-    if (platform_end(version) != MGL_OK) return 1;
+    if (ram_size) ram = (unsigned char *)calloc(ram_size, 1);
+    if ((ram_size && !ram) || platform_init(ram, version) != MGL_OK) return 1;
+    if (platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, frameCount ? draw : setup, 0) != MGL_OK) return 1;
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -112,8 +115,8 @@ int main(int argc, char **argv) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (k == SDLK_ESCAPE)
                     running = 0;
-                else if (k >= SDLK_F1 && k < SDLK_F1 + PLATFORM_VERSIONS)
-                    version = k - SDLK_F1;
+                else if (!mgl_context_is3d() && k >= SDLK_F1 && k < SDLK_F1 + PLATFORM_VERSIONS)
+                    mgl_context_set_version(version = k - SDLK_F1);
                 else
                     key_down(k);
             } else if (e.type == SDL_TEXTINPUT) {
@@ -131,11 +134,12 @@ int main(int argc, char **argv) {
 
         keyPressed = any_key();
         frameCount++;
-        if (platform_begin(version) != MGL_OK) break;
-        draw();
-        if (platform_end(version) != MGL_OK) break;
+        if (platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, frameCount ? draw : setup, 0) != MGL_OK) {
+            status = 1;
+            break;
+        }
 
-        SDL_UpdateTexture(texture, 0, platform_frame, width * (int)sizeof *platform_frame);
+        SDL_UpdateTexture(texture, 0, mgl_context_pixels(), width * (int)sizeof(mgl_color_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, 0, 0);
         SDL_RenderPresent(renderer);
@@ -143,8 +147,11 @@ int main(int argc, char **argv) {
         /* Título con fps medidos cada segundo. */
         frames++;
         if (SDL_GetTicks() - fps_start >= 1000) {
-            sprintf(title, "MiniGL V%d - %d fps - %u bytes de comandos", version, frames,
-                platform_command_bytes());
+            mgl_context_info(&info);
+            if (mgl_context_is3d())
+                sprintf(title, "MiniGL 3D - %d fps - %u bytes de comandos", frames, (unsigned)info.command_bytes);
+            else
+                sprintf(title, "MiniGL V%d - %d fps - %u bytes de comandos", version, frames, (unsigned)info.command_bytes);
             SDL_SetWindowTitle(window, title);
             frames = 0;
             fps_start = SDL_GetTicks();
@@ -161,5 +168,7 @@ int main(int argc, char **argv) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    return 0;
+    platform_shutdown();
+    free(ram);
+    return status;
 }

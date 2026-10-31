@@ -46,7 +46,7 @@ La versión 1 usaba `opcode` de 32 bits. Con `flags = 0` es el mismo byte a byte
 no cambian**: un buffer sin 3D sigue saliendo idéntico al de antes, con versión 1, y lo siguen ejecutando V1
 (`mgl_cmd_render_cpu`) y V2 (`mgl_gpu_render`). El primer comando 3D sube la cabecera a la versión 2;
 `mgl_cmd_reset` la devuelve a 1. V1 y V2 solo aceptan la versión 1, así que rechazan un buffer 3D en vez de
-interpretarlo mal; el renderer 3D ([renderer/](../renderer/)) solo acepta la 2.
+interpretarlo mal; el renderer 3D ([src/render/3d/](../src/render/3d/)) solo acepta la 2.
 
 ## Comandos
 
