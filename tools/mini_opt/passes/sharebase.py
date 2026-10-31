@@ -148,7 +148,8 @@ def pass_sharebase(unit: Unit, stats: dict) -> None:
             continue
         kernel = function.name.startswith(KERNEL_PREFIX)
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
+        live_out = liveness(blocks)
         for block in blocks:
-            while share(block, liveness(blocks)[block.index], allowed, stats):
-                pass
+            while share(block, live_out[block.index], allowed, stats):
+                live_out = liveness(blocks)          # solo cambia cuando se ha cambiado algo
         function.body = [line for block in blocks for line in block.lines]

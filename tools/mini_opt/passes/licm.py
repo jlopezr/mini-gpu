@@ -39,7 +39,7 @@ from ..isa import BRANCHES, LOADS, STORES
 from ..model import SYMBOL_RE, Line, Unit
 from ..registry import register_pass
 from .kernels import KERNEL_PREFIX
-from .noalias import access_tag, loop_stores_apart, provenance
+from .noalias import Tags, access_tags, loop_stores_apart
 from .sharebase import split_address
 
 ENTRY = frozenset({0})                      # "la definicion de fuera del bucle"
@@ -338,15 +338,19 @@ def insert_in_preheader(pre: Block, line: Line) -> None:
 
 
 def move_group(key: Key, members: list[Candidate], facts: Reaching, pre: Block, free: list[int],
-               stats: dict) -> None:
-    """Calcula una vez en el preheader y hace que los usos lean el resultado; borra las originales."""
+               stats: dict, tags: Tags | None = None) -> None:
+    """Calcula una vez en el preheader y hace que los usos lean el resultado; borra las originales. Una carga sacada
+    lleva la procedencia de las que sustituye (`tags`), para poder salir tambien del bucle de fuera."""
     if is_zero(key):
         name = "R0"
         stats["licm.zeros"] = stats.get("licm.zeros", 0) + 1
     else:
         name = f"R{free[0]}"
         stats["licm.registers"] = stats.get("licm.registers", 0) + 1
-        insert_in_preheader(pre, instr(key[0], name, *members[0][1].args[1:]))
+        hoisted = instr(key[0], name, *members[0][1].args[1:])
+        if tags is not None and all(id(line) in tags for _, line in members):
+            tags[id(hoisted)] = frozenset().union(*(tags[id(line)] for _, line in members))
+        insert_in_preheader(pre, hoisted)
     for block, line in members:
         t = reg(line.args[0])
         for use, _ in facts.uses_of[id(line)]:
@@ -357,15 +361,15 @@ def move_group(key: Key, members: list[Candidate], facts: Reaching, pre: Block, 
         stats["licm.removed"] = stats.get("licm.removed", 0) + 1
 
 
-def marked_load_ok(line: Line, found: tuple, blocks: list[Block], body: set[int], pre: Block,
+def marked_load_ok(line: Line, tags: Tags, blocks: list[Block], body: set[int], pre: Block,
                    volatile: frozenset[str]) -> bool:
     """Una carga que `__noalias_mark` deja fuera del alcance de los stores del bucle: va por un puntero marcado, o por
     la direccion de un simbolo que no es `volatile` (lo que se accede por un puntero marcado no se accede por nadie mas,
     tampoco por el nombre de una global), y ningun store del bucle puede tocar lo mismo. Sin marca ni simbolo no se
     sabria si lo que se lee es un registro de un dispositivo."""
-    if line.op not in LOADS or len(line.args) != 3 or id(line) not in found[0]:
+    if line.op not in LOADS or len(line.args) != 3 or id(line) not in tags:
         return False
-    if not access_tag(found, line):
+    if not tags[id(line)]:
         base = reg_of(line.args[1])
         for previous in reversed(pre.lines):
             if previous.kind == "instr" and base in defs_uses(previous)[0]:
@@ -375,24 +379,24 @@ def marked_load_ok(line: Line, found: tuple, blocks: list[Block], body: set[int]
                 break
         else:
             return False
-    return loop_stores_apart(blocks, body, found, line)
+    return loop_stores_apart(blocks, body, tags, line)
 
 
 def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allowed: list[int],
               stats: dict, readonly: frozenset[str] = frozenset(), arg_block: bool = False,
-              only_args: bool = False, volatile: frozenset[str] = frozenset()) -> None:
+              only_args: bool = False, volatile: frozenset[str] = frozenset(), tags: Tags | None = None) -> None:
     """Saca lo invariante de un bucle hasta que no quede nada que sacar o registros. Con `only_args`, solo el
-    bloque de argumentos: `GETARG` y las cargas que lo leen."""
+    bloque de argumentos: `GETARG` y las cargas que lo leen. `tags`: la procedencia de cada acceso (`access_tags`,
+    una vez por funcion), o None si no hay `__noalias_mark`."""
     base_loads_ok = ((lambda line: invariant_load_ok(line, pre, readonly, arg_block))
                      if readonly or arg_block else None)
     while True:
         live_in = live_in_blocks(blocks, liveness(blocks))
         facts = reaching_in_loop(blocks, body)
-        found = None if only_args else provenance(blocks)           # None sin `__noalias_mark` en la funcion
         loads_ok = base_loads_ok
-        if found is not None:
-            loads_ok = (lambda line, found=found, first=base_loads_ok:
-                        bool(first and first(line)) or marked_load_ok(line, found, blocks, body, pre, volatile))
+        if tags is not None and not only_args:
+            loads_ok = (lambda line, tags=tags, first=base_loads_ok:
+                        bool(first and first(line)) or marked_load_ok(line, tags, blocks, body, pre, volatile))
         groups = invariant_groups(blocks, body, facts, live_in, loads_ok)
         if only_args:
             groups = {k: v for k, v in groups.items() if k[0] == "GETARG" or k[0] in LOADS}
@@ -400,7 +404,7 @@ def licm_loop(blocks: list[Block], body: set[int], header: int, pre: Block, allo
         key = choose_group(groups, free)
         if key is None:
             return
-        move_group(key, groups[key], facts, pre, free, stats)
+        move_group(key, groups[key], facts, pre, free, stats, tags)
 
 
 def preheader(blocks: list[Block], header: int, body: set[int]) -> Block | None:
@@ -448,6 +452,7 @@ def hoist(unit: Unit, stats: dict, only_args: bool) -> None:
         # primero los temporales, luego los de argumentos y el enlace (la vida de registros dice cuando
         # estan libres: R1/R2 al retornar, R31 hasta su `JR`), y en un kernel los preservados sin uso
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
+        tags = None if only_args else access_tags(blocks)
         # de dentro afuera: lo que el bucle interior deja en su preheader esta en el cuerpo del exterior, y si
         # tampoco cambia alli (las constantes, la base de una tabla, 4 * lane) sube otra vez
         for header, body in sorted(loops.items(), key=lambda item: (len(item[1]), item[0])):
@@ -458,7 +463,7 @@ def hoist(unit: Unit, stats: dict, only_args: bool) -> None:
                 continue
             before = stats.get("licm.removed", 0)
             licm_loop(blocks, body, header, pre, allowed, stats, frozenset() if only_args else readonly,
-                      arg_block=kernel, only_args=only_args, volatile=frozenset(unit.volatile))
+                      arg_block=kernel, only_args=only_args, volatile=frozenset(unit.volatile), tags=tags)
             if stats.get("licm.removed", 0) > before:
                 stats["licm.loops"] = stats.get("licm.loops", 0) + 1
         function.body = [line for block in blocks for line in block.lines]

@@ -169,10 +169,12 @@ def analyse(blocks: list[Block], ctx: Context) -> dict[int, Tags]:
             states.append(entry_state())
         return join(states) if states else None
 
-    changed = True
-    while changed:
-        changed = False
+    dirty = [True] * len(blocks)                        # bloques con algun predecesor cambiado desde la ultima vez
+    while any(dirty):
         for block in blocks:
+            if not dirty[block.index]:
+                continue
+            dirty[block.index] = False
             state = entering(block)
             if state is None:
                 continue
@@ -181,7 +183,8 @@ def analyse(blocks: list[Block], ctx: Context) -> dict[int, Tags]:
                     step(state, line, ctx)
             if state != out[block.index]:
                 out[block.index] = state
-                changed = True
+                for s in block.succ:
+                    dirty[s] = True
     ctx.leaked = set()
     ctx.marked = {}
     snapshot: dict[int, Tags] = {}
@@ -228,16 +231,34 @@ def access_tag(found: Found, line) -> frozenset:
     return tag_of(snapshot[id(line)], reg_of(line.args[1]), ctx)
 
 
-def loop_stores_apart(blocks: list[Block], body: set[int], found: Found, load) -> bool:
+Tags = dict[int, frozenset]
+
+
+def access_tags(blocks: list[Block]) -> Tags | None:
+    """La procedencia de la direccion de cada `LOAD`/`STORE` (`id(linea) -> regiones`), o None sin marcas.
+
+    Es la del valor de la direccion, no la del registro que la lleva: sigue valiendo aunque despues se muevan
+    instrucciones puras o se renombren registros (`licm`), asi que se calcula una vez por funcion. Una carga o un
+    store que no esta (lo ha creado un pase despues) no se sabe de donde lee o escribe."""
+    found = provenance(blocks)
+    if found is None:
+        return None
+    snapshot, _ = found
+    return {id(line): access_tag(found, line) for block in blocks for line in block.lines
+            if line.kind == "instr" and id(line) in snapshot and len(line.args) == 3}
+
+
+def loop_stores_apart(blocks: list[Block], body: set[int], tags: Tags, load) -> bool:
     """Ningun store del bucle puede tocar lo que lee `load` (que va por un puntero marcado o por un simbolo)."""
-    wanted = access_tag(found, load)
+    wanted = tags[id(load)]
     for b in body:
         for line in blocks[b].lines:
             if line.kind != "instr" or line.op not in STORES or len(line.args) != 3:
                 continue
             if reg_of(line.args[1]) == 30:
                 continue                    # el marco de la funcion no es de nadie mas
-            if not no_alias(wanted, access_tag(found, line)):
+            tag = tags.get(id(line))
+            if tag is None or not no_alias(wanted, tag):
                 return False
     return True
 
