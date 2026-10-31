@@ -2,6 +2,7 @@
 
 Qué no admite Codon, qué rodeos llevan por ello los núcleos de los simuladores y
 cómo comprobar si una versión nueva los resuelve: [LIMITACIONES.md](LIMITACIONES.md).
+Qué queda por mirar de rendimiento: [RENDIMIENTO.md](RENDIMIENTO.md).
 
 ## Motor CPU+GPU integrado
 
@@ -68,16 +69,11 @@ limitaciones documentadas siguen vigentes.
 
 | Carga | PyPy 3.11 | Codon |
 |---|---:|---:|
-| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 4,7 s | 1,0 s |
-| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 12,4 s | 8,6 s |
+| `boxes.bin`, 12 swaps, 42 190 000 instrucciones CPU, GPU ociosa | 2,6 s | 1,0 s |
+| `dma-bench`, 27,7 M instrucciones CPU y 15,9 M de warp | 8,2 s | 1,7 s |
 
 Proceso completo, con el motor ya compilado; unos 0,23 s son arranque fijo
 (CPython embebido y el anfitrión). Framebuffer y estado idénticos a Python.
 
-Con la CPU, unos 60 millones de instrucciones por segundo. El motor anterior, un
-generador que reescribía los simuladores por AST, era el doble de rápido con su
-bucle propio; el actual usa el planificador de verdad (límites, `tick_devices` y
-proxies en cada instrucción). Con la GPU la mejora es pequeña: el modelo funcional
-copia los 32 registros de cada lane y crea un `LaneResult` en cada instrucción, y
-el recolector de Codon lo lleva peor que el de PyPy. Mejorarlo es cambiar cómo está
-escrito el modelo de la GPU, no el motor.
+Cómo medir, lo que queda por mejorar y lo ya hecho:
+[RENDIMIENTO.md](RENDIMIENTO.md).

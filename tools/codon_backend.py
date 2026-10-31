@@ -114,10 +114,14 @@ def run_cli(argv: list[str]) -> int:
 _LINKS = {"memory", "bus", "hooks", "video", "serial", "input", "sysid", "system",
           "cpu", "gpu", "streaming_multiprocessor", "warps", "processors",
           "trace", "trace_stream", "trace_limit", "trace_lines", "profile", "_limits"}
+#: En las lanes de la GPU, además, el resultado de la última `evaluate`, que el
+#: warp ya ha confirmado.
+_LANE_SCRATCH = {"rd", "value", "next_pc", "halted", "store_size", "store_address",
+                 "store_value"}
 
 
-def _fields(obj) -> dict:
-    return {k: v for k, v in vars(obj).items() if k not in _LINKS}
+def _fields(obj, skip: set[str] = _LINKS) -> dict:
+    return {k: v for k, v in vars(obj).items() if k not in skip}
 
 
 def _plain(value):
@@ -143,7 +147,8 @@ def snapshot(system) -> dict:
         "system": _fields(system), "cpu": _fields(system.cpu), "gpu": _fields(gpu),
         "gpu.system": _fields(gpu.system), "sm": _fields(sm),
         "warps": [_fields(w) for w in sm.warps],
-        "lanes": [[_fields(lane) for lane in w.processors] for w in sm.warps],
+        "lanes": [[_fields(lane, _LINKS | _LANE_SCRATCH) for lane in w.processors]
+                  for w in sm.warps],
         "ram": hashlib.sha256(system.memory).hexdigest(),
     }
     if system.video is not None:

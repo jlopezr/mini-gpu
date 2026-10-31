@@ -150,13 +150,6 @@ def read_u32(memory: bytearray, address: int) -> int:
     return load_u32(memory, address)
 
 
-@dataclass
-class LaneResult:
-    regs: list[int]
-    next_pc: int
-    halted: bool
-    #: (dirección, valor, tamaño en bytes: 1, 2 o 4). El valor ya viene recortado.
-    store: tuple[int, int, int] | None
 
 
 def config_integer(value: object, field: str) -> int:
@@ -214,6 +207,17 @@ class CPU:
     memory: bytearray
     core_id: int
     regs: list[int]
+    # El resultado de `evaluate`, que el warp confirma después. No es estado
+    # arquitectónico: vale lo que dejó la última instrucción. Va en campos de la
+    # lane, y no en un objeto nuevo con una copia de los registros, porque se
+    # evalúa una vez por lane e instrucción (tools/codon/RENDIMIENTO.md).
+    rd: int             # registro que escribe; 0 = ninguno (R0 está cableado a cero)
+    value: int
+    next_pc: int
+    halted: bool
+    store_size: int     # 0 = sin STORE; si no, 1, 2 o 4 bytes
+    store_address: int
+    store_value: int    # ya recortado al tamaño
 
     def __init__(self, memory: bytearray, core_id: int):
         self.memory = memory
@@ -222,6 +226,13 @@ class CPU:
 
     def reset(self) -> None:
         self.regs = [0] * 32
+        self.rd = 0
+        self.value = 0
+        self.next_pc = 0
+        self.halted = False
+        self.store_size = 0
+        self.store_address = 0
+        self.store_value = 0
 
     def read_word(self, address: int, system) -> int:
         """LOAD de 32 bits, por memoria o por un dispositivo MMIO.
@@ -265,11 +276,19 @@ class CPU:
             except RuntimeError as exc:
                 raise ExecutionFault(ERROR_MEMORY_ACCESS, address) from exc
 
-    def evaluate(self, instr: int, pc: int, warp, system) -> LaneResult:
-        regs = self.regs.copy()
+    def evaluate(self, instr: int, pc: int, warp, system) -> None:
+        """Ejecuta `instr` sin tocar los registros: deja el resultado en `rd`,
+        `value`, `next_pc`, `halted` y `store_*`, y el warp lo confirma cuando han
+        terminado todas sus lanes (un fallo en una no deja a las otras a medias).
+        """
+        regs = self.regs
+        rd = 0
+        value = 0
         next_pc = u32(pc + 4)
         halted = False
-        store = None
+        store_size = 0
+        store_address = 0
+        store_value = 0
         opcode = instr >> 26
 
         if opcode == 0x00:  # NOP
@@ -278,73 +297,73 @@ class CPU:
         elif opcode == 0x10:  # MOVI
             rd = (instr >> 21) & 0x1F
             imm16 = instr & 0xFFFF
-            regs[rd] = u32(sign_extend(imm16, 16))
+            value = u32(sign_extend(imm16, 16))
 
         elif opcode == 0x17:  # MOVHI
             rd = (instr >> 21) & 0x1F
             imm16 = instr & 0xFFFF
-            regs[rd] = u32(imm16 << 16)
+            value = u32(imm16 << 16)
 
         elif opcode == 0x13:  # ORI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = instr & 0xFFFF
-            regs[rd] = u32(regs[ra] | imm16)
+            value = u32(regs[ra] | imm16)
 
         elif opcode == 0x01:  # ADD
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = u32(regs[ra] + regs[rb])
+            value = u32(regs[ra] + regs[rb])
 
         elif opcode == 0x11:  # ADDI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = sign_extend(instr & 0xFFFF, 16)
-            regs[rd] = u32(regs[ra] + imm16)
+            value = u32(regs[ra] + imm16)
 
         elif opcode == 0x02:  # SUB
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = u32(regs[ra] - regs[rb])
+            value = u32(regs[ra] - regs[rb])
 
         elif opcode == 0x04:  # AND
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = regs[ra] & regs[rb]
+            value = regs[ra] & regs[rb]
 
         elif opcode == 0x05:  # OR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = regs[ra] | regs[rb]
+            value = regs[ra] | regs[rb]
 
         elif opcode == 0x06:  # XOR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = regs[ra] ^ regs[rb]
+            value = regs[ra] ^ regs[rb]
 
         elif opcode == 0x07:  # SHL
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
             # MiniISA usa únicamente los cinco bits bajos de la cantidad.
-            regs[rd] = u32(regs[ra] << (regs[rb] & 0x1F))
+            value = u32(regs[ra] << (regs[rb] & 0x1F))
 
         elif opcode == 0x08:  # SHR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = regs[ra] >> (regs[rb] & 0x1F)
+            value = regs[ra] >> (regs[rb] & 0x1F)
 
         elif opcode == 0x09:  # SAR
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            regs[rd] = u32(s32(regs[ra]) >> (regs[rb] & 0x1F))
+            value = u32(s32(regs[ra]) >> (regs[rb] & 0x1F))
 
         elif opcode == 0x0A:  # MUL
             rd = (instr >> 21) & 0x1F
@@ -352,7 +371,7 @@ class CPU:
             rb = (instr >> 11) & 0x1F
 
             # Producto 32 x 32; conservamos los 32 bits bajos.
-            regs[rd] = u32(regs[ra] * regs[rb])
+            value = u32(regs[ra] * regs[rb])
 
         elif opcode == 0x03:  # MULFX signed Q16.16
             rd = (instr >> 21) & 0x1F
@@ -362,7 +381,7 @@ class CPU:
             # Q16.16 x Q16.16 produce Q32.32. El desplazamiento aritmético
             # restaura la escala Q16.16 antes del wrap final a 32 bits.
             product = s32(regs[ra]) * s32(regs[rb])
-            regs[rd] = u32(product >> 16)
+            value = u32(product >> 16)
 
         elif opcode == 0x0C:  # DIV signed
             rd = (instr >> 21) & 0x1F
@@ -373,20 +392,20 @@ class CPU:
             divisor = s32(regs[rb])
             if divisor == 0:
                 raise ExecutionFault(ERROR_DIVISION_BY_ZERO)
-            regs[rd] = u32(signed_divide(dividend, divisor))
+            value = u32(signed_divide(dividend, divisor))
 
         elif opcode == 0x12:  # ANDI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             # Los inmediatos lógicos se extienden con ceros, no con signo.
             imm16 = instr & 0xFFFF
-            regs[rd] = regs[ra] & imm16
+            value = regs[ra] & imm16
 
         elif opcode == 0x14:  # XORI
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             imm16 = instr & 0xFFFF
-            regs[rd] = regs[ra] ^ imm16
+            value = regs[ra] ^ imm16
 
         elif opcode == 0x15:  # LOAD
             rd = (instr >> 21) & 0x1F
@@ -394,7 +413,7 @@ class CPU:
             imm16 = sign_extend(instr & 0xFFFF, 16)
 
             address = u32(regs[ra] + imm16)
-            regs[rd] = self.read_word(address, system)
+            value = self.read_word(address, system)
 
         elif opcode == 0x16:  # STORE
             # En STORE, el campo Rd contiene el registro fuente.
@@ -404,7 +423,9 @@ class CPU:
 
             address = u32(regs[ra] + imm16)
             self.check_store(address, system)
-            store = (address, u32(regs[source]), 4)
+            store_size = 4
+            store_address = address
+            store_value = u32(regs[source])
 
         elif opcode in (0x18, 0x19, 0x1B, 0x1C):  # LOADB/LOADUB/LOADH/LOADUH
             rd = (instr >> 21) & 0x1F
@@ -416,7 +437,7 @@ class CPU:
             address = u32(regs[ra] + imm16)
             self.check_subword(address, size, system)
             raw = load_le(self.memory, address, size)
-            regs[rd] = u32(sign_extend(raw, 8 * size)) if is_signed else raw
+            value = u32(sign_extend(raw, 8 * size)) if is_signed else raw
 
         elif opcode in (0x1A, 0x1D):  # STOREB / STOREH
             # Como en STORE, el campo Rd contiene el registro fuente.
@@ -427,7 +448,9 @@ class CPU:
 
             address = u32(regs[ra] + imm16)
             self.check_subword(address, size, system)
-            store = (address, regs[source] & ((1 << (8 * size)) - 1), size)
+            store_size = size
+            store_address = address
+            store_value = regs[source] & ((1 << (8 * size)) - 1)
 
         elif opcode == 0x20:  # BEQ
             ra = (instr >> 21) & 0x1F
@@ -472,14 +495,14 @@ class CPU:
                 next_pc = u32(next_pc + (imm16 << 2))
 
         elif opcode == 0x2C:  # JAL: enlace en PC+4 y offset en palabras
-            link = next_pc
+            rd = (instr >> 21) & 0x1F
+            value = next_pc
             next_pc = u32(next_pc + (sign_extend(instr & 0xFFFF, 16) << 2))
-            regs[(instr >> 21) & 0x1F] = link
 
         elif opcode == 0x2D:  # JALR: Ra se lee antes de escribir el enlace
-            link = next_pc
+            rd = (instr >> 21) & 0x1F
+            value = next_pc
             next_pc = u32(regs[(instr >> 16) & 0x1F] + (sign_extend(instr & 0xFFFF, 16) << 2)) & ~3
-            regs[(instr >> 21) & 0x1F] = link
 
         elif opcode == 0x2E:  # JR
             next_pc = u32(regs[(instr >> 16) & 0x1F]) & ~3
@@ -493,7 +516,7 @@ class CPU:
         elif opcode == 0x30:  # GETID: GETTID/GETLANE/GETWARP/GETLWARP/GETARG
             rd = (instr >> 21) & 0x1F
             # `valid_encoding` ya garantizó type <= GETID_LAST_TYPE.
-            regs[rd] = (warp.warp_id * warp.num_threads + self.core_id,
+            value = (warp.warp_id * warp.num_threads + self.core_id,
                         self.core_id,
                         warp.warp_id,
                         warp.logical_warp_id,
@@ -508,18 +531,18 @@ class CPU:
         else:
             raise ExecutionFault(ERROR_INVALID_OPCODE)
 
-        # R0 esta cableado a cero: las escrituras se descartan y las lecturas
-        # valen siempre cero. Ver 1.isa/isa.md seccion 1.
-        #
-        # El descarte va aqui, en el commit, y no repartido por las treinta
-        # ramas del `case`: `regs` es una copia privada de la lane que solo se
-        # publica al devolver el LaneResult, asi que borrar la entrada 0 justo
-        # antes equivale exactamente a no haberla escrito. Las lecturas de esta
-        # misma instruccion ya ocurrieron sobre el valor de entrada, que era
-        # cero por la misma razon.
-        regs[0] = 0
-
-        return LaneResult(regs, next_pc, halted, store)
+        # Nada ha escrito todavía en `regs`: cada instrucción escribe como mucho
+        # un registro, y lo hace el warp al confirmar (`Warp.step`). R0 está
+        # cableado a cero (1.isa/isa.md, sección 1): `rd == 0` es «no escribe»,
+        # así que el descarte queda en un solo sitio y no repartido por las
+        # ramas, y las lecturas de R0 valen siempre cero.
+        self.rd = rd
+        self.value = value
+        self.next_pc = next_pc
+        self.halted = halted
+        self.store_size = store_size
+        self.store_address = store_address
+        self.store_value = store_value
 
 class Warp:
     """PC compartido; valida todos los hilos antes de confirmar resultados.
@@ -650,46 +673,69 @@ class Warp:
                         address = u32(processor.regs[(instr >> 16) & 31]
                                       + sign_extend(instr & 0xFFFF, 16))
                         processor.check_store(address, system, writing=False)
-            results = []
             for processor in self.processors:
                 if self.active_mask & (1 << processor.core_id):
                     core_id = processor.core_id
-                    results.append((processor, processor.evaluate(instr, self.pc, self, system)))
+                    processor.evaluate(instr, self.pc, self, system)
         except ExecutionFault as exc:
             system.stop_with_error(
                 Fault(exc.code, self.pc, self.warp_id, core_id, exc.address)
             )
             return False
 
-        next_pcs = {result.next_pc for _, result in results}
-        if len(next_pcs) != 1:
+        # Las lanes evaluadas, que son las que confirman: la divergencia puede
+        # cambiar `active_mask` antes.
+        evaluated = self.active_mask
+        next_pc = -1
+        diverged = False
+        for processor in self.processors:
+            if evaluated & (1 << processor.core_id):
+                if next_pc < 0:
+                    next_pc = processor.next_pc
+                elif processor.next_pc != next_pc:
+                    diverged = True
+        if next_pc < 0:
+            # Ninguna lane activa: reconverge ya lo trata como error SIMT.
+            system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
+            return False
+        if diverged:
             # JALR/JR con destinos distintos por lane: no hay uno que apilar (como en
             # gpu_sm.v de la 37 y en el simulador de ciclos 25).
             if opcode in (0x2D, 0x2E) or not self.region_stack:
                 system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
                 return False
+            # Un salto condicional: unas lanes siguen y otras saltan, al mismo
+            # destino.
             region = self.region_stack[-1]
             fallthrough = u32(self.pc + 4)
-            target = next(pc for pc in next_pcs if pc != fallthrough)
-            taken = sum(1 << lane.core_id for lane, result in results
-                        if result.next_pc != fallthrough)
+            target = fallthrough
+            taken = 0
+            for processor in self.processors:
+                if evaluated & (1 << processor.core_id) and processor.next_pc != fallthrough:
+                    target = processor.next_pc
+                    taken |= 1 << processor.core_id
             if target == region.join_pc:
                 self.active_mask &= ~taken
-                next_pcs = {fallthrough}
+                next_pc = fallthrough
             elif fallthrough == region.join_pc:
                 self.active_mask = taken
-                next_pcs = {target}
+                next_pc = target
             else:
                 if len(self.path_stack) >= system.simt_path_depth:
                     system.stop_with_error(Fault(ERROR_SIMT, self.pc, self.warp_id, None))
                     return False
                 self.path_stack.append(SimtPath(target, taken))
                 self.active_mask &= ~taken
-                next_pcs = {fallthrough}
-        for processor, result in results:
-            processor.regs[:] = result.regs
-            if result.store is not None:
-                address, value, size = result.store
+                next_pc = fallthrough
+        for processor in self.processors:
+            if not evaluated & (1 << processor.core_id):
+                continue
+            if processor.rd:
+                processor.regs[processor.rd] = processor.value
+            size = processor.store_size
+            if size:
+                address = processor.store_address
+                value = processor.store_value
                 # Las escrituras se aplican en orden de lane. Si varios lanes
                 # escriben el MISMO registro MMIO en la misma instruccion, gana
                 # el ultimo, que es una de las ordenes posibles: el hardware las
@@ -718,10 +764,10 @@ class Warp:
                     # lo que hace el `wstrb` en el fabric. Si escriben el mismo
                     # byte gana la ultima en orden de lane.
                     store_le(self.memory, address, size, value)
-            if result.halted:
+            if processor.halted:
                 self.active_mask &= ~(1 << processor.core_id)
                 self.live_mask &= ~(1 << processor.core_id)
-        self.pc = next_pcs.pop()
+        self.pc = next_pc
         self.instructions_executed += 1
         self.reconverge(system)
         system.streaming_multiprocessor.release_barriers(system)
