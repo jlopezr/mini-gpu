@@ -2,7 +2,7 @@
     "python.analysis.extraPaths": ["1.isa"],
     "markdownlint.ignore": ["u.lcc/src/**"],
     "C_Cpp.default.compileCommands": [
-        "${workspaceFolder}/40.mini-gl/compile_commands.json"
+        "${workspaceFolder}/39.mini-gl/compile_commands.json"
     ],
     "[c]": {
         "editor.defaultFormatter": "ms-vscode.cpptools",

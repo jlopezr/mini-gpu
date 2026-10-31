@@ -9,7 +9,7 @@ dónde empezar. Al resolver uno, muévelo a «Hecho» con las medidas.
 Dos cargas, con el motor ya compilado (la primera vez tarda unos 15 s más):
 
 ```sh
-B=40.mini-gl/build/minigpu/3d/boxes.bin              # sobre todo CPU, GPU ociosa
+B=39.mini-gl/build/minigpu/3d/boxes.bin              # sobre todo CPU, GPU ociosa
 D=t.tests/cases-cpu-gpu/dma/bench-dma/bench_dma.asm  # CPU y GPU, 15,9 M instrucciones de warp
 /usr/bin/time -p python3 tools/sim-sys $B --backend codon --halt-after-swaps 12 \
     --run-limit 1000000000 --frame-output /tmp/boxes.bin

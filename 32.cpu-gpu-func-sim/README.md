@@ -31,7 +31,7 @@ vivos conserva la detección de `stalled` cuando la CPU ya ha parado, y no se
 considera GPU ociosa.
 
 Medida local con PyPy 3.11, sin ventana ni profiling, del binario MiniGL
-`40.mini-gl/build/minigpu/3d/boxes.bin`, hasta 12 swaps:
+`39.mini-gl/build/minigpu/3d/boxes.bin`, hasta 12 swaps:
 
 | | Antes | GPU ociosa optimizada |
 |---|---:|---:|
@@ -49,7 +49,7 @@ el programa `launch`, con repartos CPU/GPU 1:1, 5:1, 1:5 y 3:7: idénticos.
 Para reproducir, desde la raíz del repositorio y con el binario ya compilado:
 
 ```sh
-"$(uv python find pypy)" tools/sim-sys 40.mini-gl/build/minigpu/3d/boxes.bin \
+"$(uv python find pypy)" tools/sim-sys 39.mini-gl/build/minigpu/3d/boxes.bin \
     --halt-after-swaps 12 --run-limit 1000000000 --frame-output /tmp/boxes.bin
 ```
 

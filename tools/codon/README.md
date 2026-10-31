@@ -8,9 +8,9 @@ Qué queda por mirar de rendimiento: [RENDIMIENTO.md](RENDIMIENTO.md).
 
 ```sh
 tools/sim-sys t.tests/cases-cpu-gpu/launch/launch.asm     # Codon si está instalado
-make -C 40.mini-gl sim-boxes
+make -C 39.mini-gl sim-boxes
 tools/sim-sys programa.asm --backend python               # forzar un motor
-MINIGPU_SIM_BACKEND=python make -C 40.mini-gl sim-boxes   # o para todo lo que se lance
+MINIGPU_SIM_BACKEND=python make -C 39.mini-gl sim-boxes   # o para todo lo que se lance
 RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --quick
 RUN_SLOW=1 RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --full
 ```

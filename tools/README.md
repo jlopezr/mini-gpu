@@ -355,7 +355,7 @@ Cada uno acepta los mismos argumentos que el script al que llama (pásale
 Los simuladores son Python puro y van de 4 a 10 veces más rápido con PyPy, sin cambiar nada: basta con lanzarlos
 con él (`uv python install pypy@3.11` lo instala). Las ventanas Tk (`--window`) no van en PyPy, pero se abren en
 otro proceso, y `gui_python()` de `tools/sim_host.py` las lanza con `MINIGPU_GUI_PYTHON`, el `.venv` del repo o el
-`python3` del PATH. El Makefile de `40.mini-gl` ya usa PyPy si está (`SIM_PYTHON`). Para `mini-opt` no compensa:
+`python3` del PATH. El Makefile de `39.mini-gl` ya usa PyPy si está (`SIM_PYTHON`). Para `mini-opt` no compensa:
 tarda poco y el JIT no llega a amortizarse.
 
 ```bash
@@ -465,7 +465,7 @@ el motor Python.
 Se necesita Codon (`MINIGPU_CODON`, PATH o `_build/codon-sdk/bin/codon`) y la
 libpython de CPython (`CODON_PYTHON` permite indicar la ruta). La compilación
 queda en `_build/codon-engine/` y se rehace al cambiar cualquier fuente del motor.
-Para MiniGL, `make -C 40.mini-gl sim-boxes` ya lo usa.
+Para MiniGL, `make -C 39.mini-gl sim-boxes` ya lo usa.
 Regresión diferencial: `RUN_CODON=1 tools/test --prototype 32 --quick`.
 Cómo está montado: [codon/README.md](codon/README.md). Qué no admite Codon y qué
 rodeos llevan por ello los núcleos: [codon/LIMITACIONES.md](codon/LIMITACIONES.md).

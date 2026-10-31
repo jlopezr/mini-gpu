@@ -1,4 +1,4 @@
-# Estilo común del repo (referencia: 40.mini-gl/src/processing.c). La extensión
+# Estilo común del repo (referencia: 39.mini-gl/src/processing.c). La extensión
 # C/C++ de VS Code lo usa al guardar, solo en las líneas modificadas: el código
 # antiguo se va adaptando a medida que se toca. Funciones siempre desplegadas y
 # separadas por una línea en blanco; límite de 100 columnas.
