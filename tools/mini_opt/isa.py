@@ -90,7 +90,9 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
     elif op == "EXIT":
         uses.add(STACK)             # el hilo desaparece: nadie recibe los R16..R29, como un `JR` recibiria
     elif op in ("HALT", "TRAP"):
-        uses.update((STACK, *CALLEE_SAVED))
+        # el resultado del programa se queda en R1 (R1:R2 si es de 64 bits): lo leen quien lo para (el
+        # simulador, la placa, los tests de u.lcc), como `JR` se lo da al llamante
+        uses.update((1, 2, STACK, *CALLEE_SAVED))
     defs.discard(0); uses.discard(0)            # R0 es la constante cero
     return frozenset(defs), frozenset(uses)
 

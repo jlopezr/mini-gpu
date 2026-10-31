@@ -1836,6 +1836,16 @@ class DceTest(unittest.TestCase):
                 out = lines_of(optimize(source, ["dce"]))
                 self.assertEqual("ADD R28, R11, R0" in out, kept, out)
 
+    def test_halt_keeps_the_result_in_r1_and_r2(self):
+        # el arranque de los tests de u.lcc (`_start`, en el mismo .s): `inline` expande `main` y su
+        # `MOVI R1, 7` llega justo antes del HALT. Quien para la CPU lee el resultado en R1 (R1:R2 si es de
+        # 64 bits); sin contarlos como leidos, dce lo borraba y los tests daban 0
+        source = ".text\n.globl f\nf:\nMOVI R1, 7\nMOVI R2, 1\nMOVI R3, 9\nHALT\n"
+        out = lines_of(optimize(source, ["dce"]))
+        self.assertIn("MOVI R1, 7", out)
+        self.assertIn("MOVI R2, 1", out)
+        self.assertNotIn("MOVI R3, 9", out)
+
     def test_exit_keeps_the_stack_pointer_alive(self):
         source = ".text\n.globl f\nf:\nADDI R30, R30, -16\nEXIT\n"
         self.assertIn("ADDI R30, R30, -16", lines_of(optimize(source, ["dce"])))
