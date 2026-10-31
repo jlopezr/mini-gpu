@@ -352,6 +352,16 @@ una reimplementación.
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
 
+Los simuladores son Python puro y van de 4 a 10 veces más rápido con PyPy, sin cambiar nada: basta con lanzarlos
+con él (`uv python install pypy@3.11` lo instala). Las ventanas Tk (`--window`) no van en PyPy, pero se abren en
+otro proceso, y `gui_python()` de `tools/sim_host.py` las lanza con `MINIGPU_GUI_PYTHON`, el `.venv` del repo o el
+`python3` del PATH. El Makefile de `40.mini-gl` ya usa PyPy si está (`SIM_PYTHON`). Para `mini-opt` no compensa:
+tarda poco y el JIT no llega a amortizarse.
+
+```bash
+$ $(uv python find pypy) tools/sim-sys programa.bin --halt-after-swaps 2
+```
+
 Sin `-o`, `mini-asm` deja el binario en `_build/<nombre>.bin` junto al fuente
 (carpeta ignorada por git), no al lado del `.asm`. `board-load` y `run-board`
 ensamblan ahí mismo, así que `vector.asm` acaba en `vector/_build/vector.bin`.
@@ -411,8 +421,9 @@ $ sim-sys programa.asm --profile --profile-annotate anotado.txt  # y el .asm con
 ```
 
 Las funciones son las etiquetas de código que no son de bloque (`L.n`, que el ensamblador renombra a
-`L.<fichero>.n`). lcc da a cada función del `.asm` el nombre que tiene en C y no expande en línea, así que en un
-programa de `build-c` son las funciones C (`build-c` deja el `.asm` que ensambla junto a los intermedios: es el
+`L.<fichero>.n`) ni las que añade `mini-opt` (`__inl$...` de `marks` y los puntos de reunión `__ssy_...` de
+`ssy`). lcc da a cada función del `.asm` el nombre que tiene en C y no expande en línea, así que en un programa de
+`build-c` son las funciones C (`build-c` deja el `.asm` que ensambla junto a los intermedios: es el
 de `--symbols`). En la CPU salen las instrucciones **propias**, las **llamadas** (`JAL`/`JALR`) y el **total**
 con todo lo que llama; la pila se sigue por la dirección de retorno, así que una llamada final que `mini-opt`
 convirtió en `BRA` cuenta dentro de quien salta, y la recursión no se cuenta dos veces. En la GPU, las
@@ -425,14 +436,16 @@ función expandida con sus instrucciones **propias**, el **total** con lo que ti
 (lanes activas de las vivas, de media: en SIMT una instrucción con una lane activa cuesta lo mismo que con ocho):
 
 ```text
-Perfil de GPU: 1222652 instrucciones de warp; ocupación 84% (lanes activas de las vivas)
+Perfil de GPU: 336488 instrucciones de warp; ocupación 97% (lanes activas de las vivas)
   función                                         propias      %      total      %  ocup.
-  mgl_render (kernel)                                 110   0.0%    1222652 100.0%    84%
-    render.gpu_renderer                            196882  16.1%    1222542 100.0%    84%
-      primitive.gpu_renderer                       148434  12.1%    1023302  83.7%    81%
-        segment.gpu_renderer                        29386   2.4%     582884  47.7%    77%
-          brush.gpu_renderer                       188800  15.4%     553324  45.3%    76%
-            put.gpu_renderer                       364524  29.8%     364524  29.8%    63%
+  mgl_render (kernel)                                  33   0.0%     336488 100.0%    97%
+    render.gpu_renderer                              2604   0.8%     336455 100.0%    97%
+      segment.gpu_renderer                          60562  18.0%     118076  35.1%    95%
+        span.gpu_renderer                           10276   3.1%      26924   8.0%    97%
+          row_fill.gpu_renderer                     16648   4.9%      16648   4.9%    96%
+        box.gpu_renderer                             2988   0.9%      14136   4.2%    96%
+          row_fill.gpu_renderer                     11148   3.3%      11148   3.3%    95%
+        put.gpu_renderer                             6400   1.9%       6400   1.9%    34%
 ```
 
 `--profile-annotate FICHERO` escribe el `.asm` de las funciones que se han ejecutado con, en cada instrucción, las
@@ -826,7 +839,7 @@ vivos (se ve la tabla entera moverse), y `sched` da el paso que daría el
 hardware, eligiendo el planificador y llevándose el foco con él. Los dos paran si
 un warp falla (parada total, con el foco en el que falló). Un `step` explícito
 ignora los breakpoints. `over`
-y `finish` actúan sobre el núcleo con foco; la GPU no tiene `JAL`/`JR`.
+y `finish` actúan sobre el núcleo con foco; un kernel de `build-c` no tiene llamadas (`kernelcalls` las expande).
 
 **Ejecutar con parte del sistema quieta.** `run` y `until` avanzan CPU y GPU a la
 vez. Con un ámbito, solo avanza una parte y el resto queda congelado:
@@ -1085,8 +1098,8 @@ $ mini-asm programa.asm -I 1.isa/runtime -o programa.bin
   más lee la pila, el marco también.
 
 - **Pase `kernelcalls`:** en un kernel, cada `JAL R31, f` pasa a ser el cuerpo entero de `f` (marco
-  incluido: `JAL` no cambia R30, así que hace lo mismo que llamada), y lo que este llame, a su vez; la
-  GPU del simulador y de la 36 no tiene `JAL`. Sin llamadas, nadie lee R31: se borran sus guardados.
+  incluido: `JAL` no cambia R30, así que hace lo mismo que llamada), y lo que este llame, a su vez; los
+  kernels se compilan para la GPU de la 36, que no tiene `JAL` (el simulador 11 y la 37 sí). Sin llamadas, nadie lee R31: se borran sus guardados.
   Error si `f` es de otra unidad, recursiva, de ABI privada o salta por un puntero. Va antes de
   `kernels`, que sigue el valor de R30 por cada instrucción para no confundir los marcos expandidos con
   el del kernel, y reserva en la pila de la lane los 16 bytes donde lcc guarda R1–R4.

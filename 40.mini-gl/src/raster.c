@@ -4,8 +4,8 @@
    ejecuta): cada lane dibuja lo mismo que V0 pero solo en sus columnas (x & 7 == RASTER_LANE), y las funciones
    sw_* son static de esa unidad. Cambian los cuatro sitios que escriben píxeles: put, row_fill, la columna de box
    y sw_image. El estado de aquí es global: todas las lanes escriben los mismos valores.
-   La GPU no tiene JAL y mini-opt (kernelcalls) copia el cuerpo de cada función en cada sitio que la llama: con
-   segment llamado desde ocho sitios, el kernel pasaba de 8000 instrucciones. Por eso, con MGL_RASTER_LANES,
+   La GPU de la 36 no tiene JAL y mini-opt (kernelcalls) copia el cuerpo de cada función en cada sitio que la
+   llama: con segment llamado desde ocho sitios, el kernel pasaba de 8000 instrucciones. Por eso, con MGL_RASTER_LANES,
    sw_line, sw_rect y sw_triangle solo rellenan (los bordes los dibuja el renderer con un único bucle que llama
    una vez a segment, mismos lados y en el mismo orden) y el borde del círculo es un bucle con un solo brush. */
 #ifdef MGL_RASTER_LANES

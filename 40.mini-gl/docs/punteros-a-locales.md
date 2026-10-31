@@ -51,9 +51,10 @@ El problema no son los punteros en general (`j`, `j->framebuffer` o el de un spr
    divergencia SIMT: da por variable entre lanes todo lo que se lee de la pila. Como lcc guarda en la pila
    parámetros, derrames y registros preservados, casi cualquier salto del kernel parece depender de la lane.
 
-3. **Expandir la llamada no lo arregla.** La GPU no tiene `JAL`, y el pase `kernelcalls` copia el cuerpo de
-   `clip_edge` dentro del kernel. Pero `&from` sigue ahí: se calcula con `ADDI` y se usa como base de los accesos.
-   mini-opt no tiene ningún pase que vea que ese puntero solo apunta a un hueco fijo.
+3. **Expandir la llamada no lo arregla.** La GPU de la 36, para la que se compilan los kernels, no tiene `JAL`, y
+   el pase `kernelcalls` copia el cuerpo de `clip_edge` dentro del kernel. Pero `&from` sigue ahí: se calcula con
+   `ADDI` y se usa como base de los accesos. mini-opt no tiene ningún pase que vea que ese puntero solo apunta a un
+   hueco fijo.
 
 Como el kernel incluye todo el raster expandido, el efecto de un solo `&local` alcanza a **todo el kernel**:
 
