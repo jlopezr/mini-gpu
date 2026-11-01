@@ -52,6 +52,10 @@ primer `shape()`, como el cubo de `box()`, y cada frame es un `SET_COLOR` y un `
   (`--texture`) o uno fijo (`--color r,g,b`), y esos colores se reducen a `--colors` (8) por k-means.
 - El modelo se centra, se escala a [-1, 1] (en el sketch, `scale()`) y pasa de y hacia arriba a y hacia
   abajo como en Processing, girándolo 180° en x.
+- `--cull`: el `PShape` no dibuja sus caras traseras, la mitad de triángulos y fragmentos. El conversor
+  comprueba que la orientación de las caras es coherente; que los huecos de la malla no se vean desde fuera
+  hay que mirarlo (en el caza TIE, `test_cube` compara con y sin culling: un píxel de grieta en 1 de 1000
+  frames girando en los tres ejes, ninguno en el del sketch).
 - Solo la biblioteca estándar de Python (el PNG se decodifica en el propio script). `make` regenera
   `tie_fighter_shape.h` si cambian el OBJ, la textura o el conversor.
 

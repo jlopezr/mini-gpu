@@ -4,6 +4,7 @@
    command buffer guardado. */
 #include "context3d.h"
 #include "mgl_bytes.h"
+#include "../examples/tie_fighter_shape.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -293,6 +294,48 @@ static void test_colored_faces(void) {
     CHECK(draws == 6 && sets == 6);
 }
 
+/* Un PShape con cull: el caza TIE, de malla abierta pero con los huecos tapados por otras piezas, da la
+   misma imagen sin las caras traseras desde cualquier lado, rasterizando la mitad. Casi: alguna costura
+   entre piezas deja una grieta de un píxel que tapaba una cara trasera (girando en x, y y z, un píxel en
+   1 de 1000 frames, el del ángulo 5.3). Si se descartaran las de delante (el convenio de la y invertida
+   al revés), cambiarían miles. */
+static mgl_u32 draw_tie(const PShape *s, float angle, mgl_color_t *out) {
+    mgl_u32 rasterized;
+    mgr_reset_stats(&context3d_renderer);
+    if (context3d_begin(P3D_FB_A) != MGL_OK) return 0;
+    background(150, 170, 200);
+    translate(160, 120, 0);
+    rotateX(angle * 0.7f);
+    rotateY(angle);
+    rotateZ(angle * 0.45f);
+    scale(80);
+    shape(s);
+    CHECK(context3d_end(0) == MGL_OK);
+    rasterized = context3d_renderer.stats.rasterized;
+    memcpy(out, context3d_pixels(P3D_FB_A), W * H * sizeof *out);
+    return rasterized;
+}
+
+static void test_shape_cull(void) {
+    static const float angles[] = {0.0f, 0.9f, 1.7f, 2.6f, 3.4f, 4.4f, 5.3f};
+    static mgl_color_t culled[W * H], full[W * H];
+    PShape both = tie_fighter;
+    mgl_u32 n_culled, n_full, i, k, ship, diff;
+    CHECK(tie_fighter.cull);
+    both.cull = 0;
+    for (i = 0; i < sizeof angles / sizeof angles[0]; i++) {
+        n_culled = draw_tie(&tie_fighter, angles[i], culled);
+        n_full = draw_tie(&both, angles[i], full);
+        for (k = diff = 0; k < W * H; k++)
+            diff += culled[k] != full[k];
+        CHECK(diff <= 4U);
+        CHECK(n_culled * 10U < n_full * 6U); /* menos del 60 % */
+        for (k = ship = 0; k < W * H; k++)
+            ship += full[k] != color565(150, 170, 200);
+        CHECK(ship > 2000U);
+    }
+}
+
 int main(void) {
     unsigned char *ram = (unsigned char *)calloc(P3D_RAM_SIZE, 1);
     if (!ram || context3d_init(ram)) {
@@ -303,11 +346,12 @@ int main(void) {
     test_frame_commands();
     test_replay();
     test_colored_faces();
+    test_shape_cull();
     free(ram);
     if (failures) {
         printf("FAIL: test_cube, %d comprobaciones fallidas\n", failures);
         return 1;
     }
-    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción y caras de colores");
+    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción, caras de colores y PShape con cull");
     return 0;
 }

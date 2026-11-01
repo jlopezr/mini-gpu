@@ -105,12 +105,17 @@ void shape(const PShape *s) {
     if (!shape_mesh[slot] || mgl_mesh_info(shape_mesh[slot], 0) != MGL_OK) /* como el cubo */
         shape_mesh[slot] = mgl_create_mesh_copy(s->positions, s->vertex_count, s->indices, s->index_count);
     prepare(&model);
+    /* Las caras traseras: con la y invertida de la proyección, una cara de
+       frente (antihoraria en el OBJ) queda horaria en pantalla, y para MiniGL
+       es la de detrás (ver processing3d_size). */
+    if (s->cull) mgl_set_cull(MGL_CULL_FRONT);
     for (i = 0; i < s->group_count; i++) {
         const PShapeGroup *g = &s->groups[i];
         mgl_set_color(color565(g->r, g->g, g->b));
         mgl_draw_mesh_range(shape_mesh[slot], first, g->end - first); /* malla 0: MGL_ERR_HANDLE */
         first = g->end;
     }
+    if (s->cull) mgl_set_cull(MGL_CULL_NONE); /* box() y beginShape no descartan nada */
 }
 
 /* beginShape/vertex/endShape: los vértices se guardan aquí y endShape los

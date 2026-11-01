@@ -1799,6 +1799,6 @@ static const PShapeGroup tie_fighter_groups[4] = {
     {255, 78, 0, 3768},
     {104, 116, 134, 6450},
 };
-static const PShape tie_fighter = {tie_fighter_positions, 1424, tie_fighter_indices, 6450, tie_fighter_groups, 4};
+static const PShape tie_fighter = {tie_fighter_positions, 1424, tie_fighter_indices, 6450, tie_fighter_groups, 4, 1};
 
 #endif

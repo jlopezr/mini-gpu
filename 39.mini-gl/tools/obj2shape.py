@@ -173,6 +173,8 @@ def main():
     ap.add_argument("--color", default="200,200,200", help="r,g,b de todas las caras si no hay textura")
     ap.add_argument("--colors", type=int, default=8, help="como mucho tantos colores (grupos)")
     ap.add_argument("--credit", help="autor y licencia del modelo, para el comentario del .h")
+    ap.add_argument("--cull", action="store_true",
+                    help="no dibujar las caras traseras (comprueba que la orientación es coherente)")
     ap.add_argument("--name", help="nombre del PShape en C (por defecto, el del fichero)")
     ap.add_argument("-o", "--output", required=True)
     args = ap.parse_args()
@@ -205,6 +207,18 @@ def main():
             colors.append(color)
             weights.append(area(*(pos[v] for v in tri)))
 
+    if args.cull:
+        # Coherente: dos triángulos que comparten una arista la recorren en sentidos opuestos. Se
+        # comparan posiciones, no índices, porque el OBJ repite vértices en las costuras de la UV.
+        weld, seen = {}, set()
+        ids = [weld.setdefault(tuple(round(c, 5) for c in p), len(weld)) for p in pos]
+        for a, b, c in tris:
+            for e in ((ids[a], ids[b]), (ids[b], ids[c]), (ids[c], ids[a])):
+                if e in seen:
+                    sys.exit(f"{args.obj}: orientación incoherente (arista {e} dos veces en el mismo "
+                             "sentido): --cull dejaría caras sin dibujar")
+                seen.add(e)
+
     palette, label = kmeans(colors, weights, args.colors)
     # Grupos de más oscuro a más claro; dentro de cada uno, el orden del OBJ.
     order = sorted(range(len(palette)), key=lambda m: sum(palette[m]))
@@ -236,7 +250,7 @@ def main():
         out.append(f"    {{{r}, {g}, {b}, {end}}},")
     out.append("};")
     out.append(f"static const PShape {name} = {{{name}_positions, {len(pos)}, {name}_indices, "
-               f"{3 * len(tris)}, {name}_groups, {len(palette)}}};")
+               f"{3 * len(tris)}, {name}_groups, {len(palette)}, {int(args.cull)}}};")
     out += ["", "#endif", ""]
     Path(args.output).write_text("\n".join(out))
     print(f"{args.output}: {len(pos)} vértices, {len(tris)} triángulos, colores:",

@@ -44,7 +44,12 @@ void box(float side);
    de triángulos agrupados por color: el grupo i son los índices desde el
    final del anterior (0 para el primero) hasta end. shape(s) lo dibuja con sus
    colores, sin mirar fill(); la malla se crea en el primer shape() y se
-   reutiliza, como la de box(). Como mucho P3D_SHAPES modelos distintos. */
+   reutiliza, como la de box(). Como mucho P3D_SHAPES modelos distintos.
+   Con cull no se rasterizan las caras traseras (las que se ven en sentido
+   horario, con los vértices del OBJ en sentido antihorario de frente): la
+   mitad de triángulos y fragmentos, y la misma imagen si la malla tiene una
+   orientación coherente y sus huecos no se ven desde fuera (obj2shape.py
+   --cull comprueba lo primero; lo segundo, mirándolo). */
 typedef struct {
     unsigned char r, g, b;
     unsigned short end;
@@ -57,6 +62,7 @@ typedef struct {
     unsigned int index_count;
     const PShapeGroup *groups;
     unsigned int group_count;
+    int cull;
 } PShape;
 
 #define P3D_SHAPES 8

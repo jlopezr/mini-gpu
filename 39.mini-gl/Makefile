@@ -145,7 +145,7 @@ $(SDL_EXAMPLES3D): build/%-sdl: build/%.o build/sdl.o $(LIB3D)
 # sin regenerarlo; se rehace si cambian el modelo, la textura o el conversor.
 TIE = examples/low-poly-tie-fighter
 examples/tie_fighter_shape.h: $(TIE)/source/TIE.obj $(TIE)/textures/TIETexture.png tools/obj2shape.py
-	$(PYTHON) tools/obj2shape.py $< --texture $(TIE)/textures/TIETexture.png --name tie_fighter -o $@ \
+	$(PYTHON) tools/obj2shape.py $< --texture $(TIE)/textures/TIETexture.png --name tie_fighter --cull -o $@ \
 	    --credit '"Low Poly Tie Fighter Star Wars", de tolotedesign (Sketchfab), CC BY 4.0.'
 build/tie_fighter.o $(MG3)/tie_fighter.bin: examples/tie_fighter_shape.h
 
