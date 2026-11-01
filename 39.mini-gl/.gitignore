@@ -3,3 +3,4 @@
 *.png
 .DS_Store
 compile_commands.json
+!examples/low-poly-tie-fighter/textures/*.png

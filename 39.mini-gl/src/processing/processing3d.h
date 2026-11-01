@@ -1,10 +1,11 @@
 #ifndef PROCESSING3D_H
 #define PROCESSING3D_H
 
-/* MiniProcessing 3D: lo justo para el cubo (size con P3D, translate, rotateX,
-   rotateY y box), como capa fina sobre MiniGL 3D. El resto (background, fill,
-   noStroke, y todo lo 2D) es lo de processing.h: en un sketch 3D lo 2D se
-   dibuja encima, en el orden en que se llama, sin profundidad.
+/* MiniProcessing 3D: lo justo para el cubo y los modelos (size con P3D,
+   translate, rotate*, scale, box, beginShape y shape), como capa fina sobre
+   MiniGL 3D. El resto (background, fill, noStroke, y todo lo 2D) es lo de
+   processing.h: en un sketch 3D lo 2D se dibuja encima, en el orden en que se
+   llama, sin profundidad.
 
    Como en Processing:
    - y hacia abajo y z hacia el espectador, en píxeles; el origen arriba a la
@@ -33,7 +34,34 @@ void size_renderer(int w, int h, int renderer);
 void translate(float x, float y, float z);
 void rotateX(float angle);
 void rotateY(float angle);
+void rotateZ(float angle);
+void scale(float s);
 void box(float side);
+
+/* Un modelo ya convertido (tools/obj2shape.py lo genera a partir de un OBJ):
+   como el PShape de loadShape("modelo.obj") en Processing, pero en un .h,
+   porque en MiniGPU no hay ficheros. Posiciones x, y, z por vértice e índices
+   de triángulos agrupados por color: el grupo i son los índices desde el
+   final del anterior (0 para el primero) hasta end. shape(s) lo dibuja con sus
+   colores, sin mirar fill(); la malla se crea en el primer shape() y se
+   reutiliza, como la de box(). Como mucho P3D_SHAPES modelos distintos. */
+typedef struct {
+    unsigned char r, g, b;
+    unsigned short end;
+} PShapeGroup;
+
+typedef struct {
+    const float *positions;
+    unsigned int vertex_count;
+    const unsigned short *indices;
+    unsigned int index_count;
+    const PShapeGroup *groups;
+    unsigned int group_count;
+} PShape;
+
+#define P3D_SHAPES 8
+
+void shape(const PShape *s);
 
 /* Figuras con los vértices uno a uno, como en Processing:
      beginShape(QUADS); fill(...); vertex(x, y, z); ... endShape();

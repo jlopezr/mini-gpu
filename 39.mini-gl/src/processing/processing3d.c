@@ -56,6 +56,14 @@ void rotateY(float angle) {
     mgl_mat4_rotate_y_by(&model, angle);
 }
 
+void rotateZ(float angle) {
+    mgl_mat4_rotate_z_by(&model, angle);
+}
+
+void scale(float s) {
+    mgl_mat4_scale_by(&model, s, s, s);
+}
+
 /* Cámara, modelo y profundidad para dibujar en 3D. */
 static void prepare(const mgl_mat4_t *m) {
     mgl_set_viewport(0, 0, view_w, view_h);
@@ -78,6 +86,31 @@ void box(float side) {
     prepare(&m);
     mgl_set_color(c);
     mgl_draw_mesh(cube); /* con cube == 0, MGL_ERR_HANDLE en el buffer */
+}
+
+/* Las mallas de los PShape ya dibujados, por dirección del PShape. */
+static const PShape *shape_key[P3D_SHAPES];
+static mgl_mesh_t shape_mesh[P3D_SHAPES];
+
+void shape(const PShape *s) {
+    unsigned int i, first = 0;
+    int slot = -1;
+    for (i = 0; i < P3D_SHAPES && shape_key[i]; i++)
+        if (shape_key[i] == s) slot = (int)i;
+    if (slot < 0) {
+        if (i == P3D_SHAPES) return;
+        slot = (int)i;
+        shape_key[slot] = s;
+    }
+    if (!shape_mesh[slot] || mgl_mesh_info(shape_mesh[slot], 0) != MGL_OK) /* como el cubo */
+        shape_mesh[slot] = mgl_create_mesh_copy(s->positions, s->vertex_count, s->indices, s->index_count);
+    prepare(&model);
+    for (i = 0; i < s->group_count; i++) {
+        const PShapeGroup *g = &s->groups[i];
+        mgl_set_color(color565(g->r, g->g, g->b));
+        mgl_draw_mesh_range(shape_mesh[slot], first, g->end - first); /* malla 0: MGL_ERR_HANDLE */
+        first = g->end;
+    }
 }
 
 /* beginShape/vertex/endShape: los vértices se guardan aquí y endShape los

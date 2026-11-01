@@ -32,12 +32,31 @@ renderer corre en la CPU. En una ventana, [sdl.c](../src/platform/sdl.c): `make 
 | [`rotating_cube.c`](rotating_cube.c) | Cubo giratorio con perspectiva y Z-buffer; sin luces, una silueta de un color, como en Processing |
 | [`boxes.c`](boxes.c) | Dos cubos de colores que se cortan (lo dibuja el Z-buffer) y una barra 2D encima |
 | [`colored_cube.c`](colored_cube.c) | Cubo con una cara de cada color, como en Processing: `beginShape(QUADS)` y un `fill()` por cara |
+| [`tie_fighter.c`](tie_fighter.c) | Un modelo OBJ ([`low-poly-tie-fighter/`](low-poly-tie-fighter/)) convertido a `PShape` con `tools/obj2shape.py`: 2150 triángulos, un color por cara sacado de la textura. Modelo de tolotedesign, CC BY 4.0 ([créditos](low-poly-tie-fighter/README.md)) |
 
 ```sh
 make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15
 ./build/boxes -f 90 -e 30 -o boxes.ppm     # a mano: frames, cada cuántos guardar, salida
 make check-minigpu-rotating_cube FRAMES=60 # el frame 60 en el simulador de MiniGPU, frente al host
 make sdl-rotating_cube                     # en una ventana SDL a 60 fps (SCALE=4: otra escala; Esc cierra)
+```
+
+### Modelos OBJ
+
+No hay `loadShape()`: en MiniGPU no hay ficheros. [`tools/obj2shape.py`](../tools/obj2shape.py) convierte el
+OBJ en un `.h` con un `PShape` (posiciones `float` x, y, z, índices `u16` y grupos de triángulos del mismo
+color), y el sketch lo incluye y lo dibuja con `shape(&modelo)`. La malla se copia al heap de MiniGL en el
+primer `shape()`, como el cubo de `box()`, y cada frame es un `SET_COLOR` y un `DRAW_INDEXED` por grupo.
+
+- El renderer no tiene texturas ni luces: cada cara toma el color medio de la textura bajo su polígono UV
+  (`--texture`) o uno fijo (`--color r,g,b`), y esos colores se reducen a `--colors` (8) por k-means.
+- El modelo se centra, se escala a [-1, 1] (en el sketch, `scale()`) y pasa de y hacia arriba a y hacia
+  abajo como en Processing, girándolo 180° en x.
+- Solo la biblioteca estándar de Python (el PNG se decodifica en el propio script). `make` regenera
+  `tie_fighter_shape.h` si cambian el OBJ, la textura o el conversor.
+
+```sh
+python3 tools/obj2shape.py modelo.obj --texture textura.png --colors 8 --name modelo -o examples/modelo_shape.h
 ```
 
 ## Host: imágenes PPM
