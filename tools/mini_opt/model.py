@@ -13,14 +13,18 @@ LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 # tampoco: marcan codigo expandido dentro de una funcion (al releer un `.opt.s`).
 # build-c da a las `__sf.n` el sufijo de su unidad (`__sf.n.<unidad>`, ver `scope_statics`): siguen siendo
 # de bloque.
-COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$|^__sf\.\d+(?:\.\w+)?$|^@|^__inl\$|^__ssy_")
+# Las `__sfa.<...>` son las del runtime escrito a mano (u.lcc/runtime/softfloat_mini.s), tambien de bloque.
+COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$|^__sf\.\d+(?:\.\w+)?$|^__sfa\.[\w.]+$|^@|^__inl\$|^__ssy_")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
 # Un hecho que lcc sabe y el `.s` ya no dice, en un comentario (el ensamblador no lo ve):
 #     ; @miniopt volatile NOMBRE      a NOMBRE no se le puede ahorrar ninguna lectura
 #     ; @miniopt const NOMBRE         nadie escribe NOMBRE (escribir un objeto const es comportamiento indefinido)
-FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile|const)\s+(\S+)\s*$")
+#     ; @miniopt leafcall NOMBRE      un `JAL` a NOMBRE solo escribe R1-R6 (y el enlace): rutina de runtime escrita
+#                                     a mano, sin pila (u.lcc/runtime/softfloat_mini.s); quien la llama deja vivos
+#                                     sus temporales R7-R15 a traves de la llamada
+FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile|const|leafcall)\s+(\S+)\s*$")
 
 class OptError(ValueError):
     """Entrada mala (un intrinseco mal usado...)."""
@@ -83,6 +87,12 @@ class Function:
         """
         if self.name.startswith("__mini_"):
             return True
+        # El runtime escrito a mano (u.lcc/runtime/softfloat_mini.s): lo declarado `leafcall` y sus bloques
+        # privados `__sfa*`. Se encadenan con `BRA` y dejan valores en R5-R6 de un bloque a otro, y el modelo
+        # de una funcion C no lo sabe. build-c llama `<nombre>.dup.<unidad>` a las copias repetidas.
+        from .isa import LEAF_CALLS
+        if self.name.startswith("__sfa") or self.name.split(".dup.", 1)[0] in LEAF_CALLS:
+            return True
         for line in self.body:
             if (line.kind == "instr" and line.op == "JR" and line.args
                     and line.args[0].strip().upper() != "R31"):
@@ -140,7 +150,11 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
     for raw in source.splitlines():
         fact = FACT_RE.match(raw)
         if fact:
-            (unit.volatile if fact.group(1) == "volatile" else unit.const).add(fact.group(2))
+            if fact.group(1) == "leafcall":
+                from .isa import declare_leaf_call
+                declare_leaf_call(fact.group(2))
+            else:
+                (unit.volatile if fact.group(1) == "volatile" else unit.const).add(fact.group(2))
             continue
         for line in parse_line(raw):
             word = line.text.split(None, 1)[0].lower() if line.kind == "directive" else ""

@@ -49,8 +49,8 @@ KERNEL_PREFIX = "__kernel_"
 # Etiquetas de bloque, no de función: las de lcc (`L.n`, que el ensamblador renombra a `L.<fichero>.n` al
 # incluir varios `.s`), las del softfloat embebido, las anónimas y las que añade mini-opt (`__inl$`, de `marks`;
 # `__ssy_`, los puntos de reunión y trampolines de `ssy`). build-c añade a las del softfloat el nombre de su
-# unidad (`__sf.n.<unidad>`).
-LOCAL_RE = re.compile(r"^(?:L|__sf)(?:\.\d+)+$|^__sf\.\d+\.\w+$|^@|^__inl\$|^__ssy_")
+# unidad (`__sf.n.<unidad>`). Las `__sfa.<...>` son las del softfloat escrito a mano (softfloat_mini.s).
+LOCAL_RE = re.compile(r"^(?:L|__sf)(?:\.\d+)+$|^__sf\.\d+\.\w+$|^__sfa\.[\w.]+$|^@|^__inl\$|^__ssy_")
 # Las marcas de mini-opt (`marks`): __inl$<unidad>$<funcion>$<n>$<f1>$<f2>... = desde aqui, codigo de f1 > f2...
 # expandido en <funcion>; sin funciones detras de <n>, de vuelta en <funcion>.
 INLINE_PREFIX = "__inl$"

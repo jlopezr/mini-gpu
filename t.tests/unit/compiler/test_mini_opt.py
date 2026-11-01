@@ -1851,6 +1851,36 @@ class DceTest(unittest.TestCase):
         self.assertIn("ADDI R30, R30, -16", lines_of(optimize(source, ["dce"])))
 
 
+class LeafCallTest(unittest.TestCase):
+    """`; @miniopt leafcall NOMBRE`: el runtime de float escrito a mano (u.lcc/runtime/softfloat_mini.s) solo
+    toca R1-R6, y mini-lcc deja vivos sus temporales R7-R15 a traves de la llamada. Sin el hecho, un `JAL` los
+    destruye y lo que se calculo antes en ellos estaria muerto. Cada prueba usa su nombre: los hechos son
+    globales (el runtime es uno para todas las unidades)."""
+
+    CALLER = ".text\n.globl f\nf:\nADDI R9, R2, 5\nJAL R31, {name}\nADD R1, R1, R9\nJR R31\n"
+
+    def test_a_temporary_lives_across_a_leaf_call(self):
+        source = "; @miniopt leafcall __leaf_kept\n" + self.CALLER.format(name="__leaf_kept")
+        self.assertIn("ADDI R9, R2, 5", lines_of(optimize(source, ["dce"])))
+
+    def test_without_the_fact_a_call_destroys_the_temporaries(self):
+        source = self.CALLER.format(name="__not_declared")
+        self.assertNotIn("ADDI R9, R2, 5", lines_of(optimize(source, ["dce"])))
+
+    def test_the_hand_written_routine_is_left_alone(self):
+        # Etiquetas internas `__sfa.*` (de bloque, no funciones), un valor en R5 que cruza un salto y una entrada
+        # que solo prepara R6 y salta a otro bloque: el modelo C borraria el ADDI R6 y partiria la funcion.
+        hand = ("ADDI R5, R0, 3\n__sfa.t.loop:\nSHLI R1, R1, 1\nADDI R5, R5, -1\nBNE R5, R0, __sfa.t.loop\n"
+                "ADD R1, R1, R6\nJR R31")
+        source = ("; @miniopt leafcall __hand_t\n; @miniopt leafcall __hand_entry\n"
+                  ".text\n.globl __hand_entry\n__hand_entry:\nADDI R6, R0, 2\nBRA __hand_t\n"
+                  ".text\n.globl __hand_t\n__hand_t:\n" + hand + "\n")
+        out = lines_of(optimize(source, list(DEFAULT_PASSES)))
+        start = out.index("__hand_t:") + 1
+        self.assertEqual(out[start:start + len(lines_of(hand))], lines_of(hand))
+        self.assertIn("ADDI R6, R0, 2", out)
+
+
 class BranchesTest(unittest.TestCase):
     def run_pass(self, body: str):
         stats = {}
