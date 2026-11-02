@@ -27,7 +27,15 @@ typedef struct {
 
 static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
-    mgl_s32 covered = mgr_raster_triangle(a, b, c, clip, f);
+    /* Lo que mgr_raster_triangle descartaría al empezar (área nula o cara descartada), sin llamarla: con
+       culling es la mitad de los triángulos, y ella guarda y restaura catorce registros. */
+    mgl_s32 covered = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+    if (covered == 0 || ((f->flags & MGL_STATE_CULL_BACK) && covered > 0) ||
+        ((f->flags & MGL_STATE_CULL_FRONT) && covered < 0)) {
+        st->culled++;
+        return;
+    }
+    covered = mgr_raster_triangle(a, b, c, clip, f);
     if (covered < 0) {
         st->culled++;
         return;

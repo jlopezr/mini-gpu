@@ -23,42 +23,52 @@
    por fila y distinto redondeo, para comparación. */
 
 #define DEPTH_SCALE 16776960.0f /* 65535 << MGR_DEPTH_FRAC */
+/* MGR_SUBPIXEL * DEPTH_SCALE, exacto en float (65535 << 12). Multiplicar por 16 no redondea, así que
+   g * 16 * DEPTH_SCALE y g * DEPTH_SCALE16 dan los mismos bits con una multiplicación menos. */
+#define DEPTH_SCALE16 268431360.0f
 
 static mgl_s32 floor16(mgl_s32 v) {
     return v >= 0 ? v / MGR_SUBPIXEL : -((-v + MGR_SUBPIXEL - 1) / MGR_SUBPIXEL);
 }
 
-typedef struct {
-    mgl_s32 dx, dy; /* B - A */
-    mgl_s32 w;      /* E en el centro del píxel actual, con el sesgo de la regla top-left */
-} edge_t;
+/* E de la arista de a a b en el centro (px, py), en 1/16, con el sesgo de la regla top-left: dentro si E > 0,
+   o E == 0 en una arista top-left, es decir, si el resultado es >= 0. */
+#define EDGE(a, b, px, py) \
+    (((b)->x - (a)->x) * ((py) - (a)->y) - ((b)->y - (a)->y) * ((px) - (a)->x) - \
+        ((((b)->y == (a)->y && (b)->x > (a)->x) || (b)->y < (a)->y) ? 0 : 1))
 
-/* Prepara la arista de a a b para empezar en el centro (px, py) en 1/16. */
-static void edge_setup(edge_t *e, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
-    mgl_s32 px, mgl_s32 py) {
-    int top_left;
-    e->dx = b->x - a->x;
-    e->dy = b->y - a->y;
-    top_left = (e->dy == 0 && e->dx > 0) || e->dy < 0;
-    /* Dentro si E > 0, o E == 0 en una arista top-left: w = E - 1 (+1) >= 0. */
-    e->w = e->dx * (py - a->y) - e->dy * (px - a->x) - (top_left ? 0 : 1);
-}
+/* Los píxeles de una fila dentro de una arista, sin recorrerlos: con w su E en el primer píxel (x0) y s lo que
+   baja E de un píxel al siguiente, w - s n >= 0 se cumple para n >= lo (s < 0) o n <= hi (s > 0). La división
+   es exacta (enteros), así que salen los mismos píxeles que probándolos uno a uno. */
+#define EDGE_SPAN(w, s)                                  \
+    do {                                                 \
+        if ((s) < 0) {                                   \
+            if ((w) < 0) {                               \
+                n = (-(w) - (s) - 1) / -(s); /* techo */ \
+                if (n > lo) lo = n;                      \
+            }                                            \
+        } else if ((s) > 0) {                            \
+            n = (w) < 0 ? -1 : (w) / (s);                \
+            if (n < hi) hi = n;                          \
+        } else if ((w) < 0)                              \
+            hi = -1;                                     \
+    } while (0)
 
 mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
     const mgr_window_vertex_t *t;
     mgl_s32 area, minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
-    mgl_s32 w0, w1, w2, covered = 0, zi, dzi;
+    mgl_s32 w0, w1, w2, row0, row1, row2, lo, hi, n, covered = 0, zi, dzi = 0;
+    int ready = 0;
     mgl_real_t fa, ga, gb, dz1, dz2, zrow, zf;
 #if MGR_INCREMENTAL_DEPTH
     /* Q12 en unidades U16, cuatro bits más que los spans.
        Acotar todo el recorrido de la caja evita desbordar incluso cuando
        sus esquinas quedan muy lejos del interior de un triángulo estrecho. */
     mgl_real_t gx, gy, extent, origin;
-    mgl_s32 depth_row = 0, depth_dx = 0, depth_dy = 0, depth_start;
+    mgl_s32 depth_row = 0, depth_dx = 0, depth_dy = 0, depth_start, py0;
     int incremental = 0;
 #endif
-    edge_t e0, e1, e2;
 
     /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
     area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
@@ -93,59 +103,68 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
 
     px = x0 * MGR_SUBPIXEL + MGR_SUBPIXEL / 2;
     py = y0 * MGR_SUBPIXEL + MGR_SUBPIXEL / 2;
-    edge_setup(&e0, b, c, px, py);
-    edge_setup(&e1, c, a, px, py);
-    edge_setup(&e2, a, b, px, py);
-    step0 = e0.dy * MGR_SUBPIXEL;
-    step1 = e1.dy * MGR_SUBPIXEL;
-    step2 = e2.dy * MGR_SUBPIXEL;
-
-    /* Gradientes de z por unidad de 1/16 de píxel. */
-    fa = (mgl_real_t)area;
-    dz1 = b->z - a->z;
-    dz2 = c->z - a->z;
-    ga = (dz1 * (mgl_real_t)(c->y - a->y) - dz2 * (mgl_real_t)(b->y - a->y)) / fa;
-    gb = (dz2 * (mgl_real_t)(b->x - a->x) - dz1 * (mgl_real_t)(c->x - a->x)) / fa;
-    zf = ga * (mgl_real_t)(MGR_SUBPIXEL) * DEPTH_SCALE;
-    /* Acotado: en un span z no sale de [0, 1] salvo por redondeo, y así z + dz no desborda. */
-    if (zf > 33553920.0f) zf = 33553920.0f;
-    if (-zf > 33553920.0f) zf = -33553920.0f; /* -zf: mini-lcc deja los literales negativos en double */
-    dzi = mgl_round(zf);
-
 #if MGR_INCREMENTAL_DEPTH
-    gx = ga * (mgl_real_t)MGR_SUBPIXEL * DEPTH_SCALE * 16.0f;
-    gy = gb * (mgl_real_t)MGR_SUBPIXEL * DEPTH_SCALE * 16.0f;
-    zrow = a->z + gb * (mgl_real_t)(py - a->y);
-    origin = ((zrow + ga * (mgl_real_t)(px - a->x)) * DEPTH_SCALE) * 16.0f;
-    extent = (gx < 0.0f ? -gx : gx) * (mgl_real_t)(x1 - x0) +
-        (gy < 0.0f ? -gy : gy) * (mgl_real_t)(y1 - y0);
-    /* |origin| <= 2^29 y recorrido <= 2^28: queda margen para el
-       redondeo de los incrementos y de la conversión final (+8). NaN e
-       infinitos tampoco pasan estas comparaciones. */
-    if (extent <= 268435456.0f && origin <= 536870912.0f && -origin <= 536870912.0f) {
-        depth_row = mgl_round(origin);
-        depth_dx = mgl_round(gx);
-        depth_dy = mgl_round(gy);
-        incremental = 1;
-    }
+    py0 = py;
 #endif
+    /* Las tres aristas: E en el primer píxel de la fila, lo que baja de un píxel al siguiente (step) y lo que
+       sube de una fila a la siguiente (row). */
+    w0 = EDGE(b, c, px, py);
+    w1 = EDGE(c, a, px, py);
+    w2 = EDGE(a, b, px, py);
+    step0 = (c->y - b->y) * MGR_SUBPIXEL;
+    step1 = (a->y - c->y) * MGR_SUBPIXEL;
+    step2 = (b->y - a->y) * MGR_SUBPIXEL;
+    row0 = (c->x - b->x) * MGR_SUBPIXEL;
+    row1 = (a->x - c->x) * MGR_SUBPIXEL;
+    row2 = (b->x - a->x) * MGR_SUBPIXEL;
 
     for (y = y0; y < y1; y++, py += MGR_SUBPIXEL) {
-        w0 = e0.w;
-        w1 = e1.w;
-        w2 = e2.w;
-        for (x = x0; x < x1 && (w0 | w1 | w2) < 0; x++) {
-            w0 -= step0;
-            w1 -= step1;
-            w2 -= step2;
-        }
-        start = x;
-        for (; x < x1 && (w0 | w1 | w2) >= 0; x++) {
-            w0 -= step0;
-            w1 -= step1;
-            w2 -= step2;
-        }
+        /* Dentro de las tres a la vez: un tramo, porque el triángulo es convexo. */
+        lo = 0;
+        hi = x1 - x0 - 1;
+        EDGE_SPAN(w0, step0);
+        EDGE_SPAN(w1, step1);
+        EDGE_SPAN(w2, step2);
+        start = x0 + lo;
+        x = x0 + hi + 1;
         if (x > start) {
+            if (!ready) {
+                /* La profundidad, al encontrar el primer píxel: un triángulo que no cubre ningún centro (muchos
+                   de un modelo pequeño en pantalla) se la ahorra. Mismos cálculos que antes del bucle. */
+                ready = 1;
+                /* Gradientes de z por unidad de 1/16 de píxel. */
+                fa = (mgl_real_t)area;
+                dz1 = b->z - a->z;
+                dz2 = c->z - a->z;
+                ga = (dz1 * (mgl_real_t)(c->y - a->y) - dz2 * (mgl_real_t)(b->y - a->y)) / fa;
+                gb = (dz2 * (mgl_real_t)(b->x - a->x) - dz1 * (mgl_real_t)(c->x - a->x)) / fa;
+                zf = ga * DEPTH_SCALE16;
+#if MGR_INCREMENTAL_DEPTH
+                gx = zf * 16.0f; /* antes de acotar zf */
+#endif
+                /* Acotado: en un span z no sale de [0, 1] salvo por redondeo, y así z + dz no desborda. */
+                if (zf > 33553920.0f) zf = 33553920.0f;
+                if (-zf > 33553920.0f) zf = -33553920.0f;
+                dzi = mgl_round(zf);
+
+#if MGR_INCREMENTAL_DEPTH
+                gy = gb * DEPTH_SCALE16 * 16.0f;
+                zrow = a->z + gb * (mgl_real_t)(py0 - a->y);
+                origin = ((zrow + ga * (mgl_real_t)(px - a->x)) * DEPTH_SCALE) * 16.0f;
+                extent = (gx < 0.0f ? -gx : gx) * (mgl_real_t)(x1 - x0) +
+                    (gy < 0.0f ? -gy : gy) * (mgl_real_t)(y1 - y0);
+                /* |origin| <= 2^29 y recorrido <= 2^28: queda margen para el
+                   redondeo de los incrementos y de la conversión final (+8). NaN e
+                   infinitos tampoco pasan estas comparaciones. */
+                if (extent <= 268435456.0f && origin <= 536870912.0f && -origin <= 536870912.0f) {
+                    depth_row = mgl_round(origin);
+                    depth_dx = mgl_round(gx);
+                    depth_dy = mgl_round(gy);
+                    incremental = 1;
+                    depth_row += depth_dy * (y - y0); /* lo que habrían sumado las filas anteriores */
+                }
+#endif
+            }
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {
                 depth_start = depth_row + depth_dx * (start - x0);
@@ -162,9 +181,9 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
             mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
             covered += x - start;
         }
-        e0.w += e0.dx * MGR_SUBPIXEL;
-        e1.w += e1.dx * MGR_SUBPIXEL;
-        e2.w += e2.dx * MGR_SUBPIXEL;
+        w0 += row0;
+        w1 += row1;
+        w2 += row2;
 #if MGR_INCREMENTAL_DEPTH
         if (incremental) depth_row += depth_dy;
 #endif

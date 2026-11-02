@@ -2,10 +2,9 @@
 
 /* Constantes con 9 cifras: el literal se redondea a float igual en los dos
    compiladores. Nada de 1.0f / 6.0f: lcc y el host podrían plegarlo distinto.
-   Ni literales negativos en operaciones: mini-lcc deja -1.5f como double, y
-   comparar o sumar con él pasa por el runtime de double (lento). Por eso
-   -v >= k en vez de v <= -k, y el polinomio con restas: en IEEE a + (-b) es
-   exactamente a - b, así que el resultado es el mismo bit a bit. */
+   El polinomio va con restas, de cuando mini-lcc dejaba -1.5f como double (ya
+   no: u.lcc test 169); en IEEE a + (-b) es exactamente a - b, así que da lo
+   mismo bit a bit. */
 #define TWO_PI 6.28318531f
 #define INV_TWO_PI 0.159154943f
 #define HALF_PI 1.57079633f
@@ -27,13 +26,16 @@ mgl_real_t mgl_real_from_f32(mgl_u32 bits) {
     return b.f;
 }
 
-/* Lo positivo primero: es lo habitual (coordenadas y profundidad), y la cota
-   de los negativos le cuesta a mini-lcc una comparación en double (pliega
-   -v >= k en v <= -k, y el literal negativo es double). */
+/* (int)(v + 0.5f) para v >= 0, -(int)(-v + 0.5f) para v < 0, y saturado desde |v| >= 2147483520 (el float
+   anterior a 2^31). Las comparaciones van sobre los bits, en enteros: fuera del NaN, el orden de |v| es el de
+   sus bits, 2147483520.0f es 0x4effffff, y -0 da 0 por los dos lados. Con float por software, dos
+   comparaciones menos en cada redondeo. El NaN sigue el camino de los negativos, como con v >= 0.0f. */
 mgl_s32 mgl_round(mgl_real_t v) {
-    if (v >= 0.0f) return v >= 2147483520.0f ? 2147483647 : (mgl_s32)(v + 0.5f);
-    v = -v;
-    return v >= 2147483520.0f ? -2147483647 : -(mgl_s32)(v + 0.5f);
+    mgl_u32 bits = mgl_real_to_f32(v), mag = bits & 0x7fffffffU;
+    if (mag > 0x7f800000U) return -(mgl_s32)(-v + 0.5f); /* NaN */
+    if (mag >= 0x4effffffU) return bits >> 31 ? -2147483647 : 2147483647;
+    if (!(bits >> 31)) return (mgl_s32)(v + 0.5f);
+    return -(mgl_s32)(-v + 0.5f);
 }
 
 /* Reduce a [-pi, pi] restando vueltas enteras, lleva a [-pi/2, pi/2] con

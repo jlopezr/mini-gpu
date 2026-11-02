@@ -10,37 +10,37 @@
 void mgr_fragment_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z, mgl_s32 dz) {
     mgl_color_t *c = f->color + y * f->color_stride + x0, fill = f->fill;
     mgl_u16 *d;
-    mgl_s32 n = x1 - x0;
-    unsigned int v;
-    int test, write;
+    /* z y dz, a locales: son el quinto y sexto argumento, llegan por la pila, y mini-lcc los leía de memoria en
+       cada píxel. Los spans de un modelo pequeño son de pocos píxeles: lo que cuesta es lo de fuera del bucle. */
+    mgl_s32 n = x1 - x0, zz = z, step = dz;
+    unsigned int v, mode;
     if (n <= 0) return;
-    test = f->depth && (f->flags & MGL_STATE_DEPTH_TEST);
-    write = f->depth && (f->flags & MGL_STATE_DEPTH_WRITE);
-    if (!test && !write) {
+    mode = f->depth ? f->flags & (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE) : 0U;
+    if (!mode) {
         for (; n > 0; n--) *c++ = fill;
         return;
     }
     d = f->depth + y * f->depth_stride + x0;
     /* El modo es constante en todo el span: decidir fuera del bucle evita
        comprobar test/write en cada píxel, también en mini-lcc. */
-    if (test && write) {
-        for (; n > 0; n--, c++, d++, z += dz) {
-            v = z <= 0 ? 0U : z >= MGR_DEPTH_MAX ? 65535U : (unsigned int)z >> MGR_DEPTH_FRAC;
+    if (mode == (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE)) {
+        for (; n > 0; n--, c++, d++, zz += step) {
+            v = zz <= 0 ? 0U : zz >= MGR_DEPTH_MAX ? 65535U : (unsigned int)zz >> MGR_DEPTH_FRAC;
             if (v >= *d) continue;
             *d = (mgl_u16)v;
             *c = fill;
         }
         return;
     }
-    if (test) {
-        for (; n > 0; n--, c++, d++, z += dz) {
-            v = z <= 0 ? 0U : z >= MGR_DEPTH_MAX ? 65535U : (unsigned int)z >> MGR_DEPTH_FRAC;
+    if (mode == MGL_STATE_DEPTH_TEST) {
+        for (; n > 0; n--, c++, d++, zz += step) {
+            v = zz <= 0 ? 0U : zz >= MGR_DEPTH_MAX ? 65535U : (unsigned int)zz >> MGR_DEPTH_FRAC;
             if (v < *d) *c = fill;
         }
         return;
     }
-    for (; n > 0; n--, c++, d++, z += dz) {
-        v = z <= 0 ? 0U : z >= MGR_DEPTH_MAX ? 65535U : (unsigned int)z >> MGR_DEPTH_FRAC;
+    for (; n > 0; n--, c++, d++, zz += step) {
+        v = zz <= 0 ? 0U : zz >= MGR_DEPTH_MAX ? 65535U : (unsigned int)zz >> MGR_DEPTH_FRAC;
         *d = (mgl_u16)v;
         *c = fill;
     }

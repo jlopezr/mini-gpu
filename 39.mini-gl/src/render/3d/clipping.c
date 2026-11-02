@@ -24,11 +24,19 @@ static mgl_real_t dist(int k, const mgl_vec4_t *v) {
     }
 }
 
+/* dist(k, v) < 0 sin calcular dist: w + c < 0 es c < -w, y w - c < 0 es w < c. Dan lo mismo porque una suma
+   redondeada tiene el signo de la exacta (una suma de floats distinta de cero es múltiplo de 2^-149 y no se
+   redondea a 0; x + -x da +0; el desbordamiento conserva el signo), y con un NaN las dos son falsas. Una
+   comparación en vez de una suma y una comparación: con float por software es lo más caro del vértice. */
 unsigned int mgr_outcode(const mgl_vec4_t *v) {
+    mgl_real_t w = v->w, nw = -v->w;
     unsigned int code = 0;
-    int k;
-    for (k = 0; k < PLANES; k++)
-        if (dist(k, v) < 0.0f) code |= 1U << k;
+    if (v->z < nw) code |= 1U;  /* cercano */
+    if (w < v->z) code |= 2U;   /* lejano */
+    if (v->x < nw) code |= 4U;  /* izquierdo */
+    if (w < v->x) code |= 8U;   /* derecho */
+    if (v->y < nw) code |= 16U; /* inferior */
+    if (w < v->y) code |= 32U;  /* superior */
     return code;
 }
 
