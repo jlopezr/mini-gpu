@@ -62,7 +62,7 @@ MG3 := build/minigpu/3d
 HDRS = $(foreach dir,$(INCLUDE_DIRS),$(wildcard $(dir)/*.h))
 
 SKETCHES = shapes pattern bounce trail paint
-SKETCHES3D = rotating_cube boxes colored_cube tie_fighter
+SKETCHES3D = rotating_cube boxes colored_cube tie_fighter x_wing
 
 # 2D: MiniGL + Processing + raster, con los renderers de las tres versiones.
 LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
@@ -148,6 +148,11 @@ examples/tie_fighter_shape.h: $(TIE)/source/TIE.obj $(TIE)/textures/TIETexture.p
 	$(PYTHON) tools/obj2shape.py $< --texture $(TIE)/textures/TIETexture.png --name tie_fighter --cull -o $@ \
 	    --credit '"Low Poly Tie Fighter Star Wars", de tolotedesign (Sketchfab), CC BY 4.0.'
 build/tie_fighter.o $(MG3)/tie_fighter.bin: examples/tie_fighter_shape.h
+XWING = examples/low-poly-xwing
+examples/x_wing_shape.h: $(XWING)/Xwing_Lowpoly.obj $(XWING)/Xwing_color.png tools/obj2shape.py
+	$(PYTHON) tools/obj2shape.py $< --texture $(XWING)/Xwing_color.png --face-color mayoria --name x_wing -o $@ \
+	    --credit '"Xwing", de metalmorag (Sketchfab), CC BY 4.0.'
+build/x_wing.o $(MG3)/x_wing.bin: examples/x_wing_shape.h
 
 # Pruebas.
 $(filter-out build/test_platform2d,$(TESTS)): build/%: build/%.o $(LIB)

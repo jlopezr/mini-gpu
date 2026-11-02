@@ -33,6 +33,7 @@ renderer corre en la CPU. En una ventana, [sdl.c](../src/platform/sdl.c): `make 
 | [`boxes.c`](boxes.c) | Dos cubos de colores que se cortan (lo dibuja el Z-buffer) y una barra 2D encima |
 | [`colored_cube.c`](colored_cube.c) | Cubo con una cara de cada color, como en Processing: `beginShape(QUADS)` y un `fill()` por cara |
 | [`tie_fighter.c`](tie_fighter.c) | Un modelo OBJ ([`low-poly-tie-fighter/`](low-poly-tie-fighter/)) convertido a `PShape` con `tools/obj2shape.py`: 2150 triángulos, un color por cara sacado de la textura. Modelo de tolotedesign, CC BY 4.0 ([créditos](low-poly-tie-fighter/README.md)) |
+| [`x_wing.c`](x_wing.c) | Otro modelo OBJ ([`low-poly-xwing/`](low-poly-xwing/)): 1382 triángulos y 8 colores (el más frecuente de cada cara, `--face-color mayoria`), sin culling (la malla no tiene una orientación coherente). Modelo de metalmorag, CC BY 4.0 ([créditos](low-poly-xwing/README.md)) |
 
 ```sh
 make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15
@@ -48,8 +49,10 @@ OBJ en un `.h` con un `PShape` (posiciones `float` x, y, z, índices `u16` y gru
 color), y el sketch lo incluye y lo dibuja con `shape(&modelo)`. La malla se copia al heap de MiniGL en el
 primer `shape()`, como el cubo de `box()`, y cada frame es un `SET_COLOR` y un `DRAW_INDEXED` por grupo.
 
-- El renderer no tiene texturas ni luces: cada cara toma el color medio de la textura bajo su polígono UV
-  (`--texture`) o uno fijo (`--color r,g,b`), y esos colores se reducen a `--colors` (8) por k-means.
+- El renderer no tiene texturas ni luces: cada cara toma el color de la textura bajo su polígono UV
+  (`--texture`) o uno fijo (`--color r,g,b`), y esos colores se reducen a `--colors` (8) por k-means. El de
+  la cara es el medio, o con `--face-color mayoria` el más frecuente: mejor si la textura tiene detalles
+  pequeños de otro color (las franjas rojas del X-Wing se perdían mezcladas con el blanco).
 - El modelo se centra, se escala a [-1, 1] (en el sketch, `scale()`) y pasa de y hacia arriba a y hacia
   abajo como en Processing, girándolo 180° en x.
 - `--cull`: el `PShape` no dibuja sus caras traseras, la mitad de triángulos y fragmentos. El conversor

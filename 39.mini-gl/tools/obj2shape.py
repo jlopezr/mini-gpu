@@ -92,9 +92,11 @@ def read_obj(path):
     return vs, vts, faces
 
 
-def face_color(uvs, tex, samples=24):
-    """Color medio de la textura dentro del polígono UV: una rejilla de hasta samples x samples puntos
-    sobre su caja (solo los que caen dentro); si no cae ninguno, el del centroide."""
+def face_color(uvs, tex, mode="media", samples=24):
+    """Color de la textura dentro del polígono UV, con una rejilla de hasta samples x samples puntos sobre su
+    caja (solo los que caen dentro); si no cae ninguno, el del centroide. "media": el color medio. "mayoria": el
+    más frecuente (las muestras en cubos de 32 niveles por canal, y la media del cubo con más), para que un
+    detalle de un color no se pierda mezclado con lo que lo rodea."""
     w, h, rows = tex
     pts = [(u * w, (1.0 - v) * h) for u, v in uvs]  # v hacia arriba en OBJ, fila 0 arriba en el PNG
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
@@ -113,18 +115,21 @@ def face_color(uvs, tex, samples=24):
 
     nx = max(1, min(samples, int(x1 - x0)))
     ny = max(1, min(samples, int(y1 - y0)))
-    acc, n = [0, 0, 0], 0
+    picked = []
     for j in range(ny):
         y = y0 + (j + 0.5) * (y1 - y0) / ny
         for i in range(nx):
             x = x0 + (i + 0.5) * (x1 - x0) / nx
             if inside(x, y):
-                for k, c in enumerate(texel(x, y)):
-                    acc[k] += c
-                n += 1
-    if not n:
+                picked.append(texel(x, y))
+    if not picked:
         return texel(sum(xs) / len(xs), sum(ys) / len(ys))
-    return tuple(round(c / n) for c in acc)
+    if mode == "mayoria":
+        buckets = {}
+        for c in picked:
+            buckets.setdefault(tuple(v >> 3 for v in c), []).append(c)
+        picked = max(buckets.values(), key=len)
+    return tuple(round(sum(c[k] for c in picked) / len(picked)) for k in range(3))
 
 
 def kmeans(colors, weights, k, rounds=30):
@@ -172,6 +177,8 @@ def main():
     ap.add_argument("--texture", help="PNG del que sacar el color de cada cara (por su UV)")
     ap.add_argument("--color", default="200,200,200", help="r,g,b de todas las caras si no hay textura")
     ap.add_argument("--colors", type=int, default=8, help="como mucho tantos colores (grupos)")
+    ap.add_argument("--face-color", choices=("media", "mayoria"), default="media",
+                    help="color de cada cara: el medio de la textura bajo ella o el más frecuente")
     ap.add_argument("--credit", help="autor y licencia del modelo, para el comentario del .h")
     ap.add_argument("--cull", action="store_true",
                     help="no dibujar las caras traseras (comprueba que la orientación es coherente)")
@@ -198,7 +205,7 @@ def main():
         if len(face) < 3:
             continue
         if tex and all(t is not None for _, t in face):
-            color = face_color([vts[t] for _, t in face], tex)
+            color = face_color([vts[t] for _, t in face], tex, args.face_color)
         else:
             color = fixed
         for i in range(1, len(face) - 1):
