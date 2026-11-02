@@ -99,6 +99,48 @@ Las reglas están en `mmio.md` §14.1, «Reglas de lanzamiento». En el RTL:
 Costo estimado: unos 70 FF por warp (los tres descriptores) y su mux de lectura.
 Bancos: `gpu_core_tb.v` (siete bloques) y el caso `cases-cpu/gpu/launch-start`.
 
+### LSU: escrituras fusionadas por bytes (37)
+
+`gpu_lsu2.v` agrupa las lanes de un warp cuya dirección cae en la misma línea de
+16 bytes y hace una transacción de 128 bits por grupo. En una escritura, la 36
+admitía **una lane por palabra**: dos `STOREH` a las dos mitades de una palabra
+iban en transacciones distintas aunque no se pisaran. Con píxeles RGB565, 8
+lanes que escriben 8 píxeles seguidos (lo que hace el renderer 2D por columnas)
+costaban 2 transacciones por línea en vez de 1.
+
+Ahora la unidad es el **byte**: entra en la transacción toda lane del grupo
+cuyos bytes no toca ninguna lane anterior del grupo (misma palabra y máscaras
+que se solapan, 28 comparaciones de pareja en paralelo), y cada byte de la
+línea sale de la única lane incluida que lo cubre. Si dos lanes escriben de
+verdad el mismo byte, la mayor espera otra vuelta, así que el orden sigue
+siendo el de siempre (la de menor lane primero). Una palabra entera solapa
+siempre con otra en su palabra: ahí no cambia nada, ni en las cargas.
+
+- `gpu_lsu2_tb.v` (de la 22, con `req_size`): los casos de antes y siete
+  nuevos de bytes y medias palabras, con y sin solape. La LSU anterior da los
+  mismos datos con más transacciones (2, 4, 4 y 5 donde la nueva da 1, 2, 1 y 2).
+- Comparada con la anterior en 60.000 peticiones aleatorias (cargas y
+  escrituras de 1, 2 y 4 bytes, máscaras parciales, pocas líneas para que
+  choquen): misma memoria y mismas respuestas tras cada una.
+- Área de la LSU sola (yosys, `-nowidelut`): 4.232 → 4.399 LUT4, mismos FF.
+
+Efecto en el renderer 2D de `39.mini-gl` (V2, 2 frames, contando en el
+simulador funcional las transacciones de escritura de cada instrucción de
+warp con las dos reglas):
+
+| Sketch | Escrituras al framebuffer | Resto (pilas de lane) |
+|---|---|---|
+| shapes | 66.326 → 34.268 (−48 %) | 229.576 |
+| pattern | 75.648 → 42.624 (−44 %) | 623.928 |
+| bounce | 42.551 → 21.619 (−49 %) | 46.856 |
+| trail | 19.310 → 9.663 (−50 %) | 5.904 |
+| paint | 19.434 → 9.720 (−50 %) | 6.256 |
+
+El resto son guardados de registros en la pila de cada lane. Cada lane tiene
+la suya en un bloque propio (`GPU_STACK_PER_LANE`, 512 bytes), así que un
+`STORE R16, R30, 24` del warp toca 8 líneas: 8 transacciones, se fusione o no.
+En `shapes` y `pattern` pesan más que los píxeles; ver «Pendiente».
+
 ### Limitaciones
 
 - La GPU **no es maestro de MMIO**: un warp que toque una dirección MMIO recibe
@@ -214,3 +256,14 @@ visible.
 - Un registro de fin de la parte gráfica (`wait_graphics`), cuando exista el
   rasterizador, y los registros de identidad del hito 2.
 - Reutilizar filas abiertas (página abierta), como en la 35.
+- **Pilas de lane entrelazadas.** Con la pila de cada lane en un bloque propio,
+  cada guardado o recarga de registros de un warp son 8 transacciones. Si la
+  palabra k de la pila de la lane l estuviera en `base + (8k + l) * 4`, serían 2
+  (una línea por cada 4 lanes). Es un cambio de software: `mini-opt` tendría que
+  multiplicar por 8 los desplazamientos sobre R30 en los kernels y empezar cada
+  pila en `base + 4 * lane`; los kernels ya no toman la dirección de una local
+  (`39.mini-gl/docs/punteros-a-locales.md`), que es lo que lo haría difícil.
+- Medir en placa la fusión de escrituras por bytes con `LSU_TX` (0x82030010).
+- Timing de la fusión por bytes: el 2 de noviembre de 2026 ni este cambio ni
+  main sin él terminaron el rutado con la semilla 7 (el netlist ya no es el
+  del 8 de octubre). Falta buscar semilla y comparar `clk_25mhz` y `sdram_clk`.
