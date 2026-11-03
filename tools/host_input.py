@@ -87,6 +87,20 @@ KEYSYM_TO_NAME = {
 }
 
 
+# Keysyms de Tk de los signos ASCII: sin scancodes (fuera de Windows) llegan por
+# su carácter, y la tecla es la que lo da en un teclado US (`hid_keys.ASCII_US`).
+# Así un `+` que en otra distribución tiene tecla propia (en la española, junto
+# a la P) llega como la del `+` US, que es lo que espera un programa que mire
+# teclas por su carácter.
+KEYSYM_CHARS = {
+    "exclam": "!", "quotedbl": '"', "numbersign": "#", "dollar": "$",
+    "percent": "%", "ampersand": "&", "parenleft": "(", "parenright": ")",
+    "asterisk": "*", "plus": "+", "colon": ":", "less": "<", "greater": ">",
+    "question": "?", "at": "@", "asciicircum": "^", "underscore": "_",
+    "braceleft": "{", "bar": "|", "braceright": "}", "asciitilde": "~",
+}
+
+
 def usage_from_scancode(scancode: int, extended: bool) -> int | None:
     return SCAN_TO_HID.get((extended, scancode))
 
@@ -94,6 +108,10 @@ def usage_from_scancode(scancode: int, extended: bool) -> int | None:
 def usage_from_keysym(keysym: str) -> int | None:
     """Respaldo sin scancodes: por nombre de keysym (letras, dígitos, F1-F12...)."""
     name = KEYSYM_TO_NAME.get(keysym.lower())
+    if name is None and keysym in KEYSYM_CHARS:
+        name = hid_keys.ASCII_US[KEYSYM_CHARS[keysym]][0]
+    if name is None and len(keysym) == 1 and keysym in hid_keys.ASCII_US:
+        name = hid_keys.ASCII_US[keysym][0]     # Tk en macOS: el keysym es el carácter
     if name is None:
         candidate = keysym.upper()
         name = candidate if candidate in hid_keys.KEY_NAMES else None
@@ -136,6 +154,19 @@ def host_usage(keycode: int, state: int, keysym: str, *,
     return usage_from_keysym(keysym)
 
 
+def physical_key(keycode: int) -> int:
+    """Lo que identifica la tecla física de un evento de Tk, igual al pulsar y al soltar.
+
+    En X11 el `keycode` ya es la tecla. En macOS Tk pone el código de tecla del
+    Mac en el byte alto y el carácter abajo, y el carácter cambia con Shift: se
+    usa solo el byte alto (la `A` del Mac es el código 0; entonces, todo). En
+    Windows la tecla ya sale del scancode y esto no hace falta.
+    """
+    if sys.platform == "darwin" and keycode >> 24:
+        return keycode >> 24
+    return keycode
+
+
 class HostKeyboard:
     """Teclas pulsadas del anfitrión -> reports de estado completo.
 
@@ -150,6 +181,8 @@ class HostKeyboard:
         self.emit = emit
         self.pressed: set[int] = set()
         self._since: dict[int, int] = {}
+        # La tecla que mandó cada tecla física al pulsarse (press_key).
+        self._by_key: dict[int, int] = {}
         # AltGr retirado: mientras dure, el Control_L falso que el SO sigue
         # contando como pulsado no vuelve a entrar.
         self._altgr = False
@@ -177,6 +210,26 @@ class HostKeyboard:
         self.pressed.discard(usage)
         self._changed(before)
 
+    def press_key(self, key: int, usage: int, time_ms: int = 0) -> None:
+        """Pulsa `usage` y recuerda que lo pulsó la tecla física `key`.
+
+        Sin scancodes, la tecla sale del carácter, que depende de Shift: con
+        Shift el `7` español es `/`. Al soltar después Shift que la tecla, el
+        release diría `7` y la `/` se quedaría pulsada. Por eso se suelta lo
+        que la tecla pulsó, no lo que diga al soltarse.
+        """
+        previous = self._by_key.get(key)
+        if previous is not None and previous != usage:
+            self.release(previous)              # cambió con la tecla aún pulsada
+        self._by_key[key] = usage
+        self.press(usage, time_ms)
+
+    def release_key(self, key: int, usage: int | None) -> None:
+        """Suelta lo que pulsó `key`; si no se sabe, `usage` (lo de ahora)."""
+        usage = self._by_key.pop(key, usage)
+        if usage is not None:
+            self.release(usage)
+
     def set_modifiers(self, modifiers: set[int]) -> None:
         """Sustituye los modificadores pulsados por los que se leen del SO."""
         before = set(self.pressed)
@@ -200,6 +253,7 @@ class HostKeyboard:
         """Pérdida de foco: lo que estuviera pulsado ya no llegará a soltarse."""
         before = set(self.pressed)
         self.pressed.clear()
+        self._by_key.clear()
         self._changed(before)
 
 

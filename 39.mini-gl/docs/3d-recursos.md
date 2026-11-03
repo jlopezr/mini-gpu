@@ -14,7 +14,7 @@ Así el renderer de referencia, la CPU de MiniGPU o (en el futuro) la GPU ejecut
 la tabla de handles de MiniGL. `mgl_mesh_info(mesh, &desc)` devuelve la resolución (lo usan los tests).
 
 El handle es `(generación << 16) | (hueco + 1)`. Al destruir una malla su hueco cambia de generación, así
-que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay `MGL_MAX_MESHES` (32) huecos.
+que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay `MGL_MAX_MESHES` (96) huecos.
 `0` no es nunca un handle válido.
 
 ## Dos modelos de memoria
@@ -33,7 +33,9 @@ que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay
   little-endian, índices `u16`), no la representación del host. Si la malla no cabe, no queda nada a medias.
 
 MiniProcessing crea el cubo con la segunda: una vez, en el primer `box()`; el tamaño va en la matriz del
-modelo.
+modelo. Lo mismo cada `PShape` en su primer `shape()`. Para cambiar de modelos (otro nivel de un juego),
+`resetShapes()` vuelve a llamar a `mgl_resources_init` y a `mgl_frame_memory_init` desde el contexto: se
+olvidan todas las mallas y el heap vuelve a estar libre. Va antes de dibujar nada en el frame.
 
 Para lo que solo vale un frame (las figuras de `beginShape`/`endShape`) hay una tercera zona, la **memoria
 de frame**: `mgl_frame_memory_init(addr, size)` y `mgl_frame_alloc`, o `mgl_create_mesh_frame` para copiar
@@ -61,8 +63,8 @@ Las dos plataformas usan **las mismas direcciones** ([context3d.h](../src/render
 | `0x01025800` | framebuffer B | 320×240×2 |
 | `0x0104B000` | command buffer | 64 KB |
 | `0x0105B000` | profundidad (U16) | 320×240×2 |
-| `0x01080800` | heap de MiniGL | 64 KB |
-| `0x01090800` | memoria de frame de MiniGL | 64 KB |
+| `0x01080800` | heap de MiniGL (mallas de `box()` y `shape()`) | 256 KB |
+| `0x010C0800` | memoria de frame de MiniGL | 64 KB |
 
 El host emula 1 MB desde `0x01000000`; una captura (`-c`) guarda esa ventana entera.
 

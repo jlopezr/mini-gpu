@@ -21,6 +21,10 @@ int platform_parse_version(const char *s);
    u >> 5. Lo rellena la plataforma antes de cada draw(); keyIsDown() lo lee. */
 extern mgl_u32 platform_keys[8];
 
+/* La tecla (Usage ID) que da el caracter o keyCode k en un teclado US, o -1:
+   la que mira keyIsDown(k). */
+int platform_hid_usage(int k);
+
 /* HID 0x1E (1) a 0x38 (/) en ASCII, distribucion US, sin y con Shift. */
 extern const char platform_hid_plain[], platform_hid_shift[];
 

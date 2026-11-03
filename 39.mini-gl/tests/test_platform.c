@@ -59,7 +59,10 @@ int main(void) {
         platform_keys[0x2C >> 5] |= 1u << (0x2C & 31); /* espacio */
         platform_keys[0x1E >> 5] |= 1u << (0x1E & 31); /* 1 */
         CHECK(keyIsDown('w') && keyIsDown('W') && keyIsDown(UP) && keyIsDown(' ') && keyIsDown('!'));
-        CHECK(!keyIsDown('s') && !keyIsDown(DOWN) && !keyIsDown(CODED) && !keyIsDown(0));
+        CHECK(!keyIsDown('s') && !keyIsDown(DOWN) && !keyIsDown(CODED) && !keyIsDown(0) && !keyIsDown(SHIFT));
+        platform_keys[0xE5 >> 5] |= 1u << (0xE5 & 31); /* Shift derecho */
+        CHECK(keyIsDown(SHIFT));
+        CHECK(platform_hid_usage('-') == 0x2D && platform_hid_usage('+') == 0x2E && platform_hid_usage('~') == 0x35);
         CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, prepare, capture) == MGL_OK);
         pixels = mgl_context_pixels();
         CHECK(pixels[0] == 0x1234);

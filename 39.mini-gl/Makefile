@@ -62,7 +62,7 @@ MG3 := build/minigpu/3d
 HDRS = $(foreach dir,$(INCLUDE_DIRS),$(wildcard $(dir)/*.h))
 
 SKETCHES = shapes pattern bounce trail paint
-SKETCHES3D = rotating_cube boxes colored_cube tie_fighter x_wing tanks skimmer
+SKETCHES3D = rotating_cube boxes colored_cube tie_fighter x_wing tanks skimmer racer
 
 # 2D: MiniGL + Processing + raster, con los renderers de las tres versiones.
 LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \
@@ -89,7 +89,7 @@ MINIGPU3D_SRCS = src/platform/platform.c src/render/context3d.c src/processing/p
     src/processing/processing.c src/minigl.c src/mgl_3d.c src/mgl_resources.c src/mgl_math.c \
     src/mgl_memory.c src/render/2d/raster.c $(RENDERER_SRCS)
 
-.PHONY: all help run test test3d sdl minigpu minigpu3d check-minigpu check-minigpu3d clean
+.PHONY: all help run racer-scene test test3d sdl minigpu minigpu3d check-minigpu check-minigpu3d clean
 all: $(EXAMPLES) $(TESTS) $(EXAMPLES3D) $(TESTS3D) build/mgl-replay compile_commands.json
 sdl: $(SDL_EXAMPLES) $(SDL_EXAMPLES3D)
 minigpu: $(SKETCHES:%=$(MG)/%.bin)
@@ -101,6 +101,7 @@ help:
 	@echo '  make run-<sketch>        2D: $(SKETCHES) (V=0|1|2|all)'
 	@echo '  make run-<sketch 3D>     3D: $(SKETCHES3D) (FRAMES3D, FRAMES_EVERY)'
 	@echo '  make run                 todos'
+	@echo '  make racer-scene SCENE=  una escena de racer congelada con G, otra vez (CAPTURE=x.mglx)'
 	@echo '  make test                pruebas 2D y 3D'
 	@echo 'Ventana SDL:'
 	@echo '  make sdl-<sketch>        V=0|1|2 (F1/F2/F3 cambian de versión); 3D con SCALE=n'
@@ -182,6 +183,16 @@ $(SKETCHES3D:%=build/test_depth_%): build/test_depth_%: build/test_depth_scenes.
 	$(CC) $(CFLAGS) -o $@ $^
 build/test_depth_triangles: build/test_depth_triangles.o build/raster3d_reference.o $(LIB3D)
 	$(CC) $(CFLAGS) -o $@ $^
+
+# racer: los niveles están en examples/racer/*.h. Una escena congelada con G (modo debug), otra vez
+# en el host: make racer-scene SCENE="<el texto del panel>" [CAPTURE=escena.mglx].
+build/racer.o $(MG3)/racer.bin: $(wildcard examples/racer/*.h)
+build/racer_scene.o: examples/racer/scene.c examples/racer.c $(wildcard examples/racer/*.h) $(HDRS) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+build/racer_scene: build/racer_scene.o build/host.o $(LIB3D)
+	$(CC) $(CFLAGS) -o $@ $^
+racer-scene: build/racer_scene
+	./$< -o racer-scene.ppm $(if $(CAPTURE),-c $(CAPTURE))
 
 # Reproduce una captura (-c de un sketch 3D) solo con el renderer: no enlaza MiniGL.
 build/mgl-replay: build/replay.o $(RENDERER) build/mgl_capture.o build/ppm.o

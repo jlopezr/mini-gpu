@@ -1,6 +1,15 @@
 #include "mgr_stages.h"
 #include "mgl_bytes.h"
 
+/* Lo que mgr_viewport_map necesita del viewport, calculado una vez cuando
+   cambia y no en cada vértice (con las mismas operaciones: el mismo resultado). */
+static void viewport_changed(mgr_state_t *s) {
+    s->view_x = (mgl_s32)(s->vx * MGR_SUBPIXEL);
+    s->view_y = (mgl_s32)(s->vy * MGR_SUBPIXEL);
+    s->view_sx = (mgl_real_t)(s->vw * MGR_SUBPIXEL) * 0.5f;
+    s->view_sy = (mgl_real_t)(s->vh * MGR_SUBPIXEL) * 0.5f;
+}
+
 /* Estado inicial, al empezar cada ejecución y tras cada END_FRAME: sin destino,
    matrices identidad, MGL_STATE_DEFAULT (solo escritura de profundidad, como
    OpenGL) y color blanco. */
@@ -9,6 +18,7 @@ void mgr_state_reset(mgr_state_t *s) {
     s->depth = 0;
     s->width = s->height = s->color_stride = s->depth_stride = 0;
     s->vx = s->vy = s->vw = s->vh = 0;
+    viewport_changed(s);
     mgl_mat4_identity(&s->matrix[0]);
     mgl_mat4_identity(&s->matrix[1]);
     mgl_mat4_identity(&s->matrix[2]);
@@ -43,6 +53,7 @@ int mgr_state_target(mgr_state_t *s, const mgl_memory_t *m, const unsigned char 
     s->vx = s->vy = 0;
     s->vw = w;
     s->vh = h;
+    viewport_changed(s);
     return MGR_OK;
 }
 
@@ -57,6 +68,7 @@ int mgr_state_viewport(mgr_state_t *s, const unsigned char *p) {
     s->vy = y;
     s->vw = w;
     s->vh = h;
+    viewport_changed(s);
     return MGR_OK;
 }
 

@@ -9,14 +9,15 @@ mgl_u32 platform_keys[8];
 const char platform_hid_plain[] = "1234567890\n\033\b\t -=[]\\\0;'`,./";
 const char platform_hid_shift[] = "!@#$%^&*()\n\033\b\t _+{}|\0:\"~<>?";
 
-/* El Usage ID HID de la tecla que da k, o -1. */
-static int hid_usage(int k) {
+/* El Usage ID HID de la tecla que da k en un teclado US, o -1. */
+int platform_hid_usage(int k) {
     int i;
     if (k == RIGHT) return 0x4F; /* antes que los caracteres: 37..40 son tambien % & ' ( */
     if (k == LEFT) return 0x50;
     if (k == DOWN) return 0x51;
     if (k == UP) return 0x52;
     if (k == DELETE) return 0x4C;
+    if (k == SHIFT) return 0xE1; /* el izquierdo; keyIsDown mira también el derecho */
     if (k >= 'a' && k <= 'z') return 0x04 + k - 'a';
     if (k >= 'A' && k <= 'Z') return 0x04 + k - 'A';
     for (i = 0; i <= 0x38 - 0x1E; i++)
@@ -25,7 +26,8 @@ static int hid_usage(int k) {
 }
 
 int keyIsDown(int k) {
-    int u = hid_usage(k);
+    int u = platform_hid_usage(k);
+    if (k == SHIFT && (platform_keys[0xE5 >> 5] >> (0xE5 & 31) & 1)) return 1;
     return u >= 0 && (platform_keys[u >> 5] >> (u & 31) & 1);
 }
 
