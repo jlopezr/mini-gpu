@@ -36,7 +36,12 @@ void image(const mgl_sprite_t *sprite, int x, int y);
    pmouseX/pmouseY son mouseX/mouseY del frame anterior. keyPressed vale 1 mientras haya alguna tecla pulsada; key es la
    ultima pulsada: su caracter ASCII (con mayusculas si va con Shift; ENTER,
    BACKSPACE, TAB, ESC y DELETE tambien), o CODED, y entonces keyCode dice
-   cual (UP, DOWN, LEFT, RIGHT). */
+   cual (UP, DOWN, LEFT, RIGHT).
+   keyIsDown(k), como el de p5.js, dice si la tecla k esta pulsada ahora, para
+   mirar varias a la vez (juegos): k es un caracter ('w' y 'W' son la misma
+   tecla, '1' y '!' tambien), ENTER, BACKSPACE, TAB, ESC, DELETE o UP, DOWN,
+   LEFT, RIGHT (que tapan a '%', '&', '\'' y '('). Distribucion US; en la host,
+   siempre 0. */
 void setup(void);
 void draw(void);
 void size(int w, int h);
@@ -44,6 +49,7 @@ extern int width, height;
 extern int frameCount;
 extern int mouseX, mouseY, pmouseX, pmouseY, mousePressed;
 extern int keyPressed, key, keyCode;
+int keyIsDown(int k);
 
 #define CODED 0xFFFF
 #define UP 38 /* los keyCode de Processing (los de Java) */

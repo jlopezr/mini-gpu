@@ -47,13 +47,18 @@ static void key_down(SDL_Keycode k) {
         }
 }
 
-/* keyPressed: alguna tecla pulsada ahora. */
-static int any_key(void) {
+/* platform_keys y keyPressed. Los SDL_Scancode hasta 0xE7 son los Usage ID de
+   USB HID; los de más arriba son de SDL, y solo cuentan para keyPressed. */
+static void read_keys(void) {
     int i, n;
     const Uint8 *state = SDL_GetKeyboardState(&n);
+    keyPressed = 0;
+    for (i = 0; i < 8; i++) platform_keys[i] = 0;
     for (i = 0; i < n; i++)
-        if (state[i]) return 1;
-    return 0;
+        if (state[i]) {
+            keyPressed = 1;
+            if (i < 256) platform_keys[i >> 5] |= 1u << (i & 31);
+        }
 }
 
 int main(int argc, char **argv) {
@@ -132,7 +137,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        keyPressed = any_key();
+        read_keys();
         frameCount++;
         if (platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, frameCount ? draw : setup, 0) != MGL_OK) {
             status = 1;

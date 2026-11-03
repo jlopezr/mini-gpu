@@ -29,11 +29,6 @@ static void clear(unsigned address) {
 static int has_input;
 static int half_x = FB_W, half_y = FB_H; /* el raton, en medios pixeles */
 
-/* USB HID (Usage Page 0x07) a ASCII, distribucion US: de 0x1E (1) a 0x38 (/),
-   sin y con Shift. 0x32 es la tecla de fuera de EE. UU.: no da caracter. */
-static const char hid_plain[] = "1234567890\n\033\b\t -=[]\\\0;'`,./";
-static const char hid_shift[] = "!@#$%^&*()\n\033\b\t _+{}|\0:\"~<>?";
-
 #define HID_SHIFT 0x22 /* Shift izquierdo y derecho en el bitmap de modificadores */
 
 static void key_down(int usage, int modifiers) {
@@ -46,7 +41,7 @@ static void key_down(int usage, int modifiers) {
     if (usage >= 0x04 && usage <= 0x1D)
         c = (shift ? 'A' : 'a') + usage - 0x04;
     else if (usage >= 0x1E && usage <= 0x38)
-        c = (shift ? hid_shift : hid_plain)[usage - 0x1E];
+        c = (shift ? platform_hid_shift : platform_hid_plain)[usage - 0x1E];
     else if (usage == 0x4C)
         c = DELETE;
     if (c) {
@@ -80,7 +75,7 @@ static void poll_input(void) {
     mousePressed = REG(INPUT_MOUSE_BUTTONS) != 0;
     keyPressed = 0;
     for (i = 0; i < 8; i++)
-        if (REG(INPUT_KEY_STATE0 + 4 * i)) keyPressed = 1;
+        if ((platform_keys[i] = REG(INPUT_KEY_STATE0 + 4 * i))) keyPressed = 1;
 }
 
 /* Presentación compartida: el contexto decide si conserva el lienzo. */

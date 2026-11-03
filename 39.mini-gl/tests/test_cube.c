@@ -131,6 +131,26 @@ static void test_angles(void) {
     CHECK(count == 131 || count == 132);
 }
 
+/* pushMatrix/popMatrix: tras volver de una pila más honda que P3D_MATRIX_STACK
+   la matriz es la de antes, y el cubo sale igual que sin tocarla. */
+static void test_matrix_stack(void) {
+    static mgl_color_t expected[W * H];
+    int i;
+    CHECK(render(1.0f) == MGL_OK);
+    memcpy(expected, context3d_pixels(P3D_FB_A), sizeof expected);
+    CHECK(context3d_begin(P3D_FB_A) == MGL_OK);
+    pushMatrix();
+    translate(400, 0, 0);
+    for (i = 0; i < P3D_MATRIX_STACK + 1; i++) pushMatrix();
+    rotateX(1.0f);
+    for (i = 0; i < P3D_MATRIX_STACK + 1; i++) popMatrix();
+    popMatrix();
+    popMatrix(); /* de más: no hace nada */
+    draw_cube(1.0f);
+    CHECK(context3d_end(0) == MGL_OK);
+    CHECK(!memcmp(expected, context3d_pixels(P3D_FB_A), sizeof expected));
+}
+
 /* El frame de un sketch: el command buffer de docs/3d.md §12. */
 static void test_frame_commands(void) {
     static const unsigned int expected[] = {MGL_CMD_SET_RENDER_TARGET, MGL_CMD_CLEAR,
@@ -343,6 +363,7 @@ int main(void) {
         return 1;
     }
     test_angles();
+    test_matrix_stack();
     test_frame_commands();
     test_replay();
     test_colored_faces();
@@ -352,6 +373,6 @@ int main(void) {
         printf("FAIL: test_cube, %d comprobaciones fallidas\n", failures);
         return 1;
     }
-    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción, caras de colores y PShape con cull");
+    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción, caras de colores, PShape con cull y pila de matrices");
     return 0;
 }

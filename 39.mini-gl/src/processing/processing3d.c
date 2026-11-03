@@ -4,6 +4,8 @@
 /* Matrices de la cámara (fijas para un tamaño) y del modelo (cambia con
    translate y rotate*, y vuelve a la identidad en cada draw). */
 static mgl_mat4_t projection, view, model;
+static mgl_mat4_t stack[P3D_MATRIX_STACK];
+static int depth;
 static int view_w, view_h;
 static mgl_mesh_t cube;
 
@@ -42,6 +44,17 @@ void processing3d_size(int w, int h) {
 
 void processing3d_begin_draw(void) {
     mgl_mat4_identity(&model);
+    depth = 0;
+}
+
+void pushMatrix(void) {
+    if (depth < P3D_MATRIX_STACK) stack[depth] = model;
+    depth++;
+}
+
+void popMatrix(void) {
+    if (depth == 0) return;
+    if (--depth < P3D_MATRIX_STACK) model = stack[depth];
 }
 
 void translate(float x, float y, float z) {

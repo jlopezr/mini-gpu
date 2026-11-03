@@ -62,7 +62,7 @@ MG3 := build/minigpu/3d
 HDRS = $(foreach dir,$(INCLUDE_DIRS),$(wildcard $(dir)/*.h))
 
 SKETCHES = shapes pattern bounce trail paint
-SKETCHES3D = rotating_cube boxes colored_cube tie_fighter x_wing
+SKETCHES3D = rotating_cube boxes colored_cube tie_fighter x_wing tanks skimmer
 
 # 2D: MiniGL + Processing + raster, con los renderers de las tres versiones.
 LIB = build/minigl.o build/processing.o build/raster.o build/gpu_renderer.o \

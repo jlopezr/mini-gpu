@@ -2,8 +2,8 @@
 #define PROCESSING3D_H
 
 /* MiniProcessing 3D: lo justo para el cubo y los modelos (size con P3D,
-   translate, rotate*, scale, box, beginShape y shape), como capa fina sobre
-   MiniGL 3D. El resto (background, fill, noStroke, y todo lo 2D) es lo de
+   translate, rotate*, scale, pushMatrix/popMatrix, box, beginShape y shape),
+   como capa fina sobre MiniGL 3D. El resto (background, fill, noStroke, y todo lo 2D) es lo de
    processing.h: en un sketch 3D lo 2D se dibuja encima, en el orden en que se
    llama, sin profundidad.
 
@@ -36,6 +36,14 @@ void rotateX(float angle);
 void rotateY(float angle);
 void rotateZ(float angle);
 void scale(float s);
+/* Guardan y recuperan la matriz del modelo, como en Processing: para colocar
+   varios objetos a partir de la misma (la de la cámara de un juego, por
+   ejemplo). Como mucho P3D_MATRIX_STACK guardadas; las que no caben no se
+   guardan, pero cada popMatrix() sigue emparejado con su pushMatrix(). La pila
+   se vacía al empezar cada draw(). */
+#define P3D_MATRIX_STACK 8
+void pushMatrix(void);
+void popMatrix(void);
 void box(float side);
 
 /* Un modelo ya convertido (tools/obj2shape.py lo genera a partir de un OBJ):
