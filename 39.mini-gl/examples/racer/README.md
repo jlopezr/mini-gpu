@@ -7,9 +7,10 @@ de 24 × 24 casillas, una letra por casilla, como en un editor de circuitos por 
 | Fichero | Nivel |
 |---|---|
 | [`coast.h`](coast.h) | COAST: el primero; monte al norte, puente sobre el canal del sur, faro |
-| [`sierra.h`](sierra.h) | SIERRA: rampas hasta la cresta, puente alto sobre el fiordo |
+| [`sierra.h`](sierra.h) | SIERRA: rampas hasta la cresta, puente alto sobre el fiordo, curva grande en cuesta |
 | [`delta.h`](delta.h) | DELTA: llano y rápido, entre canales, seis pares de puentes |
 | [`knot.h`](knot.h) | KNOT: tres lazos, curvas grandes, un paso elevado y un cruce |
+| [`zigzag.h`](zigzag.h) | ZIGZAG: un monte todo en cuesta menos la cumbre; baja en zigzag con horquillas en cuesta y se sube de un tirón |
 
 ## El fichero
 
@@ -82,8 +83,8 @@ El circuito es **un único recorrido cerrado**: se sigue desde la salida y tiene
 | 2 × 2 | un cuadrado de 2 × 2 con la misma letra | 60 | unos 100 km/h |
 | 3 × 3 | un cuadrado de 3 × 3 con la misma letra | 100 | unos 150 km/h |
 
-La curva gira alrededor de la esquina del cuadrado que queda por dentro. Ocupa el bloque entero, que es
-plano, a la altura a la que se entra. **Se entra y se sale por las casillas del borde que están a un radio
+La curva gira alrededor de la esquina del cuadrado que queda por dentro y ocupa el bloque entero (llano,
+o en cuesta si la hay: ver [Alturas de la carretera](#alturas-de-la-carretera)). **Se entra y se sale por las casillas del borde que están a un radio
 de esa esquina**: las que siguen a las rectas. Por ejemplo, una `r` de 2 × 2 a la que se llega subiendo y
 de la que se sale hacia el este:
 
@@ -105,6 +106,16 @@ la **fila de arriba**. Una de 3 × 3, igual, con las rectas en la columna y la f
 
 Si una recta llega a otra casilla del bloque, el circuito se corta ahí.
 
+Dos de 2 × 2 una encima de otra hacen una **horquilla**: se da la vuelta entre dos rectas a tres filas.
+Como en ZIGZAG, entrando hacia el este por la fila de arriba:
+
+```
+---77
+...77
+...JJ
+---JJ
+```
+
 Dos curvas iguales pegadas forman un bloque si hacen un cuadrado. Con una curva de 1 × 1 eso no puede pasar
 en un circuito bien hecho: dos `r` vecinas no se pueden unir entre sí.
 
@@ -118,8 +129,13 @@ Si quieres una cuesta en un sitio concreto, márcala con `^` (ver [más abajo](#
 - **Puentes `=` y cruces `+`**: siguen a la altura a la que se llega; su cifra es lo que hay debajo (agua,
   un barranco, la otra carretera).
 - **Donde cambia la altura**, la carretera hace una cuesta en línea recta centrada en el cambio. Por cada
-  lado ocupa **la mitad de lo que dura esa altura, como mucho 3 casillas**. Nunca entra en una curva, un
-  puente, un cruce ni la salida: siguen planos, y la cuesta se hace solo por el otro lado.
+  lado ocupa **la mitad de lo que dura esa altura, como mucho 3 casillas** (una curva cuenta lo que mide
+  su arco). Nunca entra en un puente, un cruce ni la salida: siguen planos, y la cuesta se hace solo por
+  el otro lado.
+- **Las curvas también pueden ir en cuesta**: si la cuesta entra en una curva, la curva sube o baja con
+  el ángulo. Para que una curva grande suba entera, ponle una cifra intermedia entre la de antes y la de
+  después: con `1`, la curva a `2` y `3` después, sube de 1 a 3 a lo largo de la curva y de lo que la
+  rodea.
 
 Así **la pendiente sale de cómo pongas las cifras**: el cambio de altura entre lo que ocupa la cuesta.
 
@@ -131,13 +147,13 @@ Así **la pendiente sale de cómo pongas las cifras**: el cambio de altura entre
 | `1 1 1 1 1 1 2 2 2 2 2 2` | 6 casillas (3 y 3), con llano a los dos lados | 0.042 |
 | `1 3` | 1 casilla | 0.5: empinada |
 | `1 1 3 3` | 2 casillas | 0.25 |
-| (curva a 1) `2 2 2 2` | 2 casillas, todas después de la curva | 0.125 |
+| `1 1` (curva 2×2 a `2`) `2 2` | 2 casillas y media curva | unos 0.08 |
 
 Bajar es lo mismo al revés. Un llano largo entre dos cuestas queda llano en medio: la mitad de cada lado
 como mucho 3 casillas.
 
-- **Entre dos curvas (o una curva y un puente) no cabe una cuesta automática**: si la cifra cambia ahí,
-  queda un escalón, un muro en la carretera. Pon al menos una recta entre ellas, o una `^`.
+- **Entre dos puentes o cruces no cabe una cuesta automática**: si la cifra cambia ahí, queda un escalón,
+  un muro en la carretera. Pon al menos una recta o una curva entre ellos, o una `^`.
 - Al final de una cuesta empinada, a toda velocidad, el coche salta. Una curva justo después es difícil.
 - Más de 0.5 de pendiente apenas se puede subir: el coche pierde velocidad cuesta arriba.
 

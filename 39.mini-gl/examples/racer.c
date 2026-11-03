@@ -1,5 +1,5 @@
 /* Carreras en islas: circuitos con saltos, puentes y faro. Cada nivel es un
-   fichero en racer/ (coast.h, sierra.h, delta.h, knot.h) con su nombre y tres mapas de
+   fichero en racer/ (coast.h, sierra.h, zigzag.h...) con su nombre y tres mapas de
    texto de GW x GH, una letra por casilla, como un editor de circuitos por
    casillas:
    - ground_map: el terreno. Una cifra por casilla, la altura en niveles de
@@ -80,8 +80,11 @@ typedef struct {
 #include "racer/sierra.h"
 #include "racer/delta.h"
 #include "racer/knot.h"
+#include "racer/chequilla.h"
+#include "racer/zigzag.h"
 
-static const Level *const levels[] = {&level_coast, &level_sierra, &level_delta, &level_knot};
+static const Level *const levels[] = {
+    &level_coast, &level_sierra, &level_delta, &level_knot, &level_chequilla, &level_zigzag};
 #define LEVELS (int)(sizeof levels / sizeof levels[0])
 static int level;
 static const char *const *ground_map, *const *track_map, *const *scenery_map;
@@ -564,11 +567,11 @@ static int accepts(int i, int j, int d) {
    las rectas y las curvas, a la de la suya (una curva, la de la casilla por
    la que se entra); los puentes y los cruces siguen a la de antes. Donde
    cambia, una cuesta centrada en el cambio, que ocupa por cada lado la mitad
-   de lo que dura esa altura, como mucho SLOPE_HALF, y nunca entra en una
-   curva, un puente o un cruce (planos). La pendiente es, así, el cambio de
+   de lo que dura esa altura, como mucho SLOPE_HALF, y nunca entra en un
+   puente o un cruce (planos); en una curva, sí: sube con el ángulo. La pendiente es, así, el cambio de
    altura entre lo que dura la cuesta: 1 2 3, 0.25; 1 1 2 2, 0.125; 1 1 1 2 2 2,
    0.083... La salida también es plana. Sin sitio a ningún lado (entre dos
-   curvas), queda un escalón. Una racha de '^' es la excepción: el cambio
+   puentes), queda un escalón. Una racha de '^' es la excepción: el cambio
    entre lo de antes y lo de después se hace entero en ella, en línea recta,
    sin mirar sus cifras; las cuestas automáticas no entran en ella.
    Las alturas de cada pieza se miden en sus extremos. */
@@ -579,7 +582,7 @@ static float target_h[MAX_PATH];
 static float piece_len(int k) { return path_kind[k] == CURVE ? path_r[k] * PI * 0.5f : TILE; }
 
 static int fixed_piece(int k) {
-    return !k || path_kind[k] == CURVE || path_kind[k] == BRIDGE || path_cross[k] || path_ramp[k];
+    return !k || path_kind[k] == BRIDGE || path_cross[k] || path_ramp[k];
 }
 
 /* La cuesta del cambio de altura al empezar la pieza k: cuánto entra hacia
@@ -646,8 +649,6 @@ static void road_heights(void) {
     for (k = 0; k < n_path; k++) {
         path_hin[k] = road_h_at(k, path_s[k] + 0.01f);
         path_hout[k] = road_h_at(k, path_s[k] + piece_len(k) - 0.01f);
-        if (path_kind[k] == CURVE) /* los extremos de una curva, en una cuesta: los de la pieza de al lado */
-            path_hin[k] = path_hout[k] = target_h[k];
     }
     for (k = 1; k < n_path; k = q) { /* cada racha de '^', en línea recta de lo de antes a lo de después */
         for (q = k; q < n_path && path_ramp[q]; q++) {
@@ -740,6 +741,93 @@ static void side_corners(int i, int j, int d, float h) {
     else CORNER(i, j) = CORNER(i, j + 1) = h;
 }
 
+/* Lo recorrido de la curva k en (x, z): su ángulo desde la entrada, de 0 a 1. */
+static float curve_t(int k, float x, float z) {
+    int from = (path_din[k] + 2) & 3, dout = path_dout[k];
+    float ox = x - path_px[k], oz = z - path_pz[k];
+    return clampf(
+        atan2_(-(ox * step_x[from] + oz * step_z[from]), -(ox * step_x[dout] + oz * step_z[dout])) /
+            (PI * 0.5f),
+        0.0f, 1.0f);
+}
+
+/* La altura de la curva k a ángulo t: en una cuesta, sube o baja con el ángulo. */
+static float arc_h(int k, float t) {
+    return path_hin[k] + (path_hout[k] - path_hin[k]) * t;
+}
+
+/* La de (x, z), en el bloque de la curva k; en la esquina de giro, la del medio. */
+/* El centro de la curva, a media cuesta; en una horquilla de dos curvas con el mismo
+   centro, el mismo para las dos. */
+static float center_h(int k) {
+    float h = arc_h(k, 0.5f);
+    int n = 1, d, q;
+    for (d = -1; d <= 1; d += 2) {
+        q = (k + d + n_path) % n_path;
+        if (path_kind[q] == CURVE && absf(path_px[q] - path_px[k]) < 0.5f && absf(path_pz[q] - path_pz[k]) < 0.5f) {
+            h += arc_h(q, 0.5f);
+            n++;
+        }
+    }
+    return h / n;
+}
+static void arc_point(int k, float t, float radius, float *x, float *z);
+
+/* En una escalera de curvas de 1 x 1, la punta de la curva k por su lado end (0 o 1)
+   es el centro de la de al lado: cuánto más alto está ese centro que su asfalto. */
+static float end_rise(int k, int end) {
+    int q = (k + (end ? 1 : -1) + n_path) % n_path;
+    float x, z;
+    if (path_kind[q] != CURVE || path_r[q] >= TILE) return 0.0f;
+    arc_point(k, (float)end, TILE, &x, &z);
+    if (absf(x - path_px[q]) > 0.5f || absf(z - path_pz[q]) > 0.5f) return 0.0f;
+    return center_h(q) - arc_h(k, (float)end);
+}
+
+/* La altura del bloque de la curva a radio r en t: la del ángulo, y la hierba de
+   dentro va en línea recta desde el centro: en las grandes, hasta una casilla menos
+   que el bloque, como el terreno de al lado entre sus esquinas; en las de 1 x 1, hasta
+   el bordillo, como la hierba de las rectas de los lados (strip_corner), y la de fuera,
+   hacia el centro de la curva de al lado si es una escalera. Así casan sin rendijas. */
+/* La altura de la esquina (ci, cj) del borde del bloque de la curva k. */
+static float edge_corner(int k, int ci, int cj) {
+    float t = curve_t(k, ci * (float)TILE, cj * (float)TILE);
+    if (block_n[path_j[k]][path_i[k]] > 1) return arc_h(k, t);
+    return arc_h(k, t) + end_rise(k, 0) * (1.0f - t) + end_rise(k, 1) * t;
+}
+
+static float arc_surface(int k, float t, float r) {
+    int n = block_n[path_j[k]][path_i[k]], g;
+    float rho = n > 1 ? (n - 1) * (float)TILE : path_r[k] - ROAD_W * 0.5f - KERB, c, e, rout, co, si, x, z, u, edge;
+    if (r < rho) {
+        c = center_h(k);
+        return c + (arc_h(k, t) - c) * r / rho;
+    }
+    rout = path_r[k] + ROAD_W * 0.5f + KERB;
+    if (r <= rout) return arc_h(k, t);
+    /* fuera: hacia el borde del bloque, en línea recta entre sus esquinas, como el terreno */
+    co = mgl_cos(t * PI * 0.5f);
+    si = mgl_sin(t * PI * 0.5f);
+    e = n * TILE / (co > si ? co : si);
+    arc_point(k, t, e, &x, &z);
+    x /= TILE;
+    z /= TILE;
+    if (absf(x - (int)(x + 0.5f)) < absf(z - (int)(z + 0.5f))) { /* en una línea x = cte */
+        g = (int)(z + 0.001f);
+        u = z - g;
+        edge = edge_corner(k, (int)(x + 0.5f), g) * (1.0f - u) + edge_corner(k, (int)(x + 0.5f), g + 1) * u;
+    } else {
+        g = (int)(x + 0.001f);
+        u = x - g;
+        edge = edge_corner(k, g, (int)(z + 0.5f)) * (1.0f - u) + edge_corner(k, g + 1, (int)(z + 0.5f)) * u;
+    }
+    return arc_h(k, t) + (edge - arc_h(k, t)) * clampf((r - rout) / (e - rout), 0.0f, 1.0f);
+}
+static float curve_h(int k, float x, float z) {
+    float ox = x - path_px[k], oz = z - path_pz[k], r2 = ox * ox + oz * oz;
+    return r2 < 0.01f ? center_h(k) : arc_surface(k, curve_t(k, x, z), mgl_sqrt(r2));
+}
+
 static void build_corners(void) {
     int ci, cj, i, j, n, k;
     float sum;
@@ -755,18 +843,19 @@ static void build_corners(void) {
                     }
             CORNER(ci, cj) = sum / n;
         }
-    for (k = 0; k < n_path; k++) {
-        if (path_kind[k] == BRIDGE) continue;
-        if (path_kind[k] == CURVE) { /* todo el bloque a la misma altura */
+    for (k = 0; k < n_path; k++)
+        if (path_kind[k] != BRIDGE && path_kind[k] != CURVE) {
+            side_corners(path_i[k], path_j[k], (path_din[k] + 2) & 3, path_hin[k]);
+            side_corners(path_i[k], path_j[k], path_dout[k], path_hout[k]);
+        }
+    for (k = 0; k < n_path; k++) /* las curvas después: el centro de una de 1 x 1 es suyo */
+        if (path_kind[k] == CURVE) { /* el bloque, a la altura de la curva en cada esquina */
             i = block_i[path_j[k]][path_i[k]];
             j = block_j[path_j[k]][path_i[k]];
             for (cj = j; cj <= j + block_n[path_j[k]][path_i[k]]; cj++)
-                for (ci = i; ci <= i + block_n[path_j[k]][path_i[k]]; ci++) CORNER(ci, cj) = path_hin[k];
-            continue;
+                for (ci = i; ci <= i + block_n[path_j[k]][path_i[k]]; ci++)
+                    CORNER(ci, cj) = curve_h(k, ci * TILE, cj * TILE);
         }
-        side_corners(path_i[k], path_j[k], (path_din[k] + 2) & 3, path_hin[k]);
-        side_corners(path_i[k], path_j[k], path_dout[k], path_hout[k]);
-    }
 }
 
 /* La altura del terreno en (x, z): dos triángulos por casilla, con la
@@ -792,12 +881,22 @@ static void piece_local(int k, float x, float z, float *along, float *lat) {
     if (path_kind[k] == CURVE) { /* alrededor de la esquina de giro; lat, hacia fuera */
         ox = x - path_px[k];
         oz = z - path_pz[k];
-        *along = 0.5f;
+        *along = curve_t(k, x, z);
         *lat = mgl_sqrt(ox * ox + oz * oz) - path_r[k];
         return;
     }
     *along = ((x - cx) * step_x[din] + (z - cz) * step_z[din]) / TILE + 0.5f;
     *lat = (x - cx) * -step_z[din] + (z - cz) * step_x[din];
+}
+
+static float straight_h(int k, float along, float lat);
+
+/* La altura de la pieza k (no un puente) en (x, z). */
+static float road_h(int k, float x, float z) {
+    float along, lat;
+    if (path_kind[k] == CURVE) return curve_h(k, x, z);
+    piece_local(k, x, z, &along, &lat);
+    return straight_h(k, along, lat);
 }
 
 /* La altura del suelo bajo (x, z) para algo que está a altura h: en un
@@ -822,7 +921,7 @@ static float surface(float x, float z, float h, int *road) {
         piece_local(k, x, z, &along, &lat);
         if (path_kind[k] != BRIDGE) {
             *road |= absf(lat) < ROAD_W * 0.5f;
-            return path_hin[k] + (path_hout[k] - path_hin[k]) * clampf(along, 0.0f, 1.0f);
+            return road_h(k, x, z);
         }
         if (absf(lat) < ROAD_W * 0.5f + 1.0f && h > path_hin[k] - 4.0f) {
             *road = 1;
@@ -936,20 +1035,67 @@ static void piece_quad(int k, float t0, float t1, float lat0, float lat1, float 
     face(4, p, r, g, b);
 }
 
+/* La esquina de fuera de la hierba de la recta k, en la punta end (0 o 1) del lado
+   side (-1 izquierda, 1 derecha). Si es el centro de una curva de 1 x 1 en cuesta,
+   a la altura de ese centro: las rectas de antes y de después llegan ahí a alturas
+   distintas, y el terreno de dentro de la curva solo tiene una esquina. */
+static float strip_corner(int k, int end, int side) {
+    int q = (k + (end ? 1 : -1) + n_path) % n_path;
+    float x, z;
+    if (path_kind[q] == CURVE && path_r[q] < TILE) {
+        piece_point(k, (float)end, side * TILE * 0.5f, &x, &z);
+        if (absf(x - path_px[q]) < 0.5f && absf(z - path_pz[q]) < 0.5f) return center_h(q);
+    }
+    return end ? path_hout[k] : path_hin[k];
+}
+
+/* La altura de la recta k a lo largo y a lat: la del eje, y en la hierba, hacia
+   las esquinas de fuera. */
+static float straight_h(int k, float along, float lat) {
+    float a = clampf(along, 0.0f, 1.0f), h = path_hin[k] + (path_hout[k] - path_hin[k]) * a;
+    float u = (absf(lat) - ROAD_W * 0.5f - KERB) / (TILE * 0.5f - ROAD_W * 0.5f - KERB);
+    int side = lat < 0.0f ? -1 : 1;
+    if (u <= 0.0f) return h;
+    return h + clampf(u, 0.0f, 1.0f) * ((strip_corner(k, 0, side) - path_hin[k]) * (1.0f - a) +
+                                           (strip_corner(k, 1, side) - path_hout[k]) * a);
+}
+
+/* La hierba de un lado de la recta k: si va hacia el centro de una curva en cuesta,
+   llana hasta el ancho del bordillo de la curva y luego inclinada, como ella. */
+static void grass_strip(int k, int side) {
+    float p[12], x, z, w = ROAD_W * 0.5f, half = TILE * 0.5f, lat0, lat1;
+    if (strip_corner(k, 0, side) != path_hin[k] || strip_corner(k, 1, side) != path_hout[k]) {
+        piece_quad(k, 0.0f, 1.0f, side < 0 ? -w - KERB : w, side < 0 ? -w : w + KERB, path_hin[k], path_hout[k], GRASS);
+        w += KERB;
+    }
+    lat0 = side < 0 ? -half : w;
+    lat1 = side < 0 ? -w : half;
+    piece_point(k, 0.0f, lat0, &x, &z);
+    set_point(p, 0, x, straight_h(k, 0.0f, lat0), z);
+    piece_point(k, 0.0f, lat1, &x, &z);
+    set_point(p, 1, x, straight_h(k, 0.0f, lat1), z);
+    piece_point(k, 1.0f, lat1, &x, &z);
+    set_point(p, 2, x, straight_h(k, 1.0f, lat1), z);
+    piece_point(k, 1.0f, lat0, &x, &z);
+    set_point(p, 3, x, straight_h(k, 1.0f, lat0), z);
+    face(4, p, GRASS);
+}
+
 #define CURVE_SEGMENTS 4 /* por cada casilla de lado del bloque */
 
 /* Un trozo de la curva k: de t0 a t1 y de radio r0 a r1 (r0 = 0: un triángulo). */
-static void arc_quad(int k, float t0, float t1, float r0, float r1, float h, int r, int g, int b) {
+static void arc_quad(int k, float t0, float t1, float r0, float r1, int r, int g, int b) {
     float p[12], x, z;
+    int fan = r0 <= 0.0f; /* el centro, un punto: un triángulo */
     arc_point(k, t0, r0, &x, &z);
-    set_point(p, 0, x, h, z);
+    set_point(p, 0, x, fan ? center_h(k) : arc_surface(k, t0, r0), z);
     arc_point(k, t0, r1, &x, &z);
-    set_point(p, 1, x, h, z);
+    set_point(p, 1, x, arc_surface(k, t0, r1), z);
     arc_point(k, t1, r1, &x, &z);
-    set_point(p, 2, x, h, z);
+    set_point(p, 2, x, arc_surface(k, t1, r1), z);
     arc_point(k, t1, r0, &x, &z);
-    set_point(p, 3, x, h, z);
-    face(r0 > 0.0f ? 4 : 3, p, r, g, b);
+    set_point(p, 3, x, arc_surface(k, t1, r0), z);
+    face(fan ? 3 : 4, p, r, g, b);
 }
 
 /* Una casilla de carretera, entera: arcenes de hierba y asfalto; en una
@@ -972,8 +1118,8 @@ static void road_tile(int k) {
         return;
     }
     if (path_kind[k] != CURVE) {
-        piece_quad(k, 0.0f, 1.0f, -half, -w, h0, h1, GRASS);
-        piece_quad(k, 0.0f, 1.0f, w, half, h0, h1, GRASS);
+        grass_strip(k, -1);
+        grass_strip(k, 1);
         if (k == 0) { /* la línea de salida, a cuadros */
             for (n = 0; n < 12; n++)
                 piece_quad(k, 0.08f * (n / 6), 0.08f * (n / 6 + 1), -w + ROAD_W * (n % 6) / 6.0f,
@@ -993,10 +1139,10 @@ static void road_tile(int k) {
         t1 = (float)(seg + 1) / segs;
         red = seg & 1;
         for (band = 0; band < bands; band++) /* la hierba de dentro, desde la esquina */
-            arc_quad(k, t0, t1, rin * band / bands, rin * (band + 1) / bands, h0, GRASS);
-        arc_quad(k, t0, t1, rin, path_r[k] - w, h0, 230, red ? 40 : 230, red ? 40 : 230);
-        arc_quad(k, t0, t1, path_r[k] - w, path_r[k] + w, h0, 78 + shade, 78 + shade, 84 + shade);
-        arc_quad(k, t0, t1, path_r[k] + w, rout, h0, 230, red ? 230 : 40, red ? 230 : 40);
+            arc_quad(k, t0, t1, rin * band / bands, rin * (band + 1) / bands, GRASS);
+        arc_quad(k, t0, t1, rin, path_r[k] - w, 230, red ? 40 : 230, red ? 40 : 230);
+        arc_quad(k, t0, t1, path_r[k] - w, path_r[k] + w, 78 + shade, 78 + shade, 84 + shade);
+        arc_quad(k, t0, t1, path_r[k] + w, rout, 230, red ? 230 : 40, red ? 230 : 40);
         /* la de fuera llega al borde del bloque: radio lado / max(cos, sin) */
         c = mgl_cos(t0 * PI * 0.5f);
         s = mgl_sin(t0 * PI * 0.5f);
@@ -1006,13 +1152,13 @@ static void road_tile(int k) {
         e1 = bands * TILE / (c > s ? c : s);
         for (band = 0; band < bands; band++) {
             arc_point(k, t0, rout + (e0 - rout) * band / bands, &x, &z);
-            set_point(p, 0, x, h0, z);
+            set_point(p, 0, x, arc_surface(k, t0, rout + (e0 - rout) * band / bands), z);
             arc_point(k, t0, rout + (e0 - rout) * (band + 1) / bands, &x, &z);
-            set_point(p, 1, x, h0, z);
+            set_point(p, 1, x, arc_surface(k, t0, rout + (e0 - rout) * (band + 1) / bands), z);
             arc_point(k, t1, rout + (e1 - rout) * (band + 1) / bands, &x, &z);
-            set_point(p, 2, x, h0, z);
+            set_point(p, 2, x, arc_surface(k, t1, rout + (e1 - rout) * (band + 1) / bands), z);
             arc_point(k, t1, rout + (e1 - rout) * band / bands, &x, &z);
-            set_point(p, 3, x, h0, z);
+            set_point(p, 3, x, arc_surface(k, t1, rout + (e1 - rout) * band / bands), z);
             face(4, p, GRASS);
         }
     }
@@ -1071,13 +1217,9 @@ static void water_run(int i0, int i1, int j) {
    borde: su carretera o su terreno (leído un poco hacia dentro). */
 static float tile_top(int i, int j, float x, float z) {
     int k = tile_path[j][i];
-    float along, lat;
     x += ((i + 0.5f) * TILE - x) * 0.001f;
     z += ((j + 0.5f) * TILE - z) * 0.001f;
-    if (k >= 0 && path_kind[k] != BRIDGE) {
-        piece_local(k, x, z, &along, &lat);
-        return path_hin[k] + (path_hout[k] - path_hin[k]) * clampf(along, 0.0f, 1.0f);
-    }
+    if (k >= 0 && path_kind[k] != BRIDGE) return road_h(k, x, z);
     return terrain_h(x, z);
 }
 
@@ -1409,9 +1551,15 @@ static float pos_ahead(float pos, float dist) {
 
 /* Lo más deprisa que se toma la curva k sin salirse del asfalto, con la
    dirección del coche (update_car): el radio de giro a velocidad v es
-   v (1 + 0.08 v) / 0.065; con 8 de margen hacia fuera del eje. */
+   v (1 + 0.08 v) / 0.065; con 8 de margen hacia fuera del eje. En una
+   horquilla (dos curvas seguidas al mismo lado) el margen se sumaría: sin él. */
+static int same_turn(int k, int q) {
+    q = (q + n_path) % n_path;
+    return path_kind[q] == CURVE && turns_left(q) == turns_left(k);
+}
 static float curve_speed(int k) {
-    return (mgl_sqrt(1.0f + 4.0f * 0.08f * 0.065f * (path_r[k] + 8.0f)) - 1.0f) / (2.0f * 0.08f);
+    float margin = same_turn(k, k - 1) || same_turn(k, k + 1) ? 0.0f : 8.0f;
+    return (mgl_sqrt(1.0f + 4.0f * 0.08f * 0.065f * (path_r[k] + margin)) - 1.0f) / (2.0f * 0.08f);
 }
 
 /* El punto del centro de la carretera en pos (pieza + lo recorrido de ella). */
