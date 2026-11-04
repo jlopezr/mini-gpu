@@ -44,6 +44,7 @@ typedef struct {
     int vx, vy, vw, vh;
     mgl_s32 view_x, view_y;
     mgl_real_t view_sx, view_sy;
+    mgl_s32 view_sxi, view_syi; /* lo mismo en entero (1/16 de píxel), para MGR_FIXED_GEOMETRY */
     /* SET_MATRIX (índice MGL_MATRIX_* - 1) y Projection * View * Model */
     mgl_mat4_t matrix[3];
     mgl_mat4_t mvp;

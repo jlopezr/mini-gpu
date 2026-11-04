@@ -27,9 +27,9 @@
    g * 16 * DEPTH_SCALE y g * DEPTH_SCALE16 dan los mismos bits con una multiplicación menos. */
 #define DEPTH_SCALE16 268431360.0f
 
-static mgl_s32 floor16(mgl_s32 v) {
-    return v >= 0 ? v / MGR_SUBPIXEL : -((-v + MGR_SUBPIXEL - 1) / MGR_SUBPIXEL);
-}
+/* División entera hacia -infinito entre MGR_SUBPIXEL, que es el desplazamiento aritmético: una instrucción y no
+   una llamada (con su prólogo y sus divisiones) en MiniGPU. */
+#define floor16(v) ((v) >> MGR_SUBPIXEL_BITS)
 
 /* E de la arista de a a b en el centro (px, py), en 1/16, con el sesgo de la regla top-left: dentro si E > 0,
    o E == 0 en una arista top-left, es decir, si el resultado es >= 0. */
@@ -60,6 +60,13 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     mgl_s32 area, minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
     mgl_s32 w0, w1, w2, row0, row1, row2, lo, hi, n, covered = 0, zi, dzi = 0;
     int ready = 0;
+#if MGR_FIXED_DEPTH
+    /* El plano de profundidad en enteros (fixed.c); el recorrido de filas es el mismo de abajo. */
+    mgr_depth_plane_t plane;
+    mgl_s32 depth_row = 0, depth_dx = 0, depth_dy = 0, depth_start, py0;
+    long long depth_wide;
+    int incremental = 0;
+#else
     mgl_real_t fa, ga, gb, dz1, dz2, zrow, zf;
 #if MGR_INCREMENTAL_DEPTH
     /* Q12 en unidades U16, cuatro bits más que los spans.
@@ -68,6 +75,7 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     mgl_real_t gx, gy, extent, origin;
     mgl_s32 depth_row = 0, depth_dx = 0, depth_dy = 0, depth_start, py0;
     int incremental = 0;
+#endif
 #endif
 
     /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
@@ -83,14 +91,17 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     }
 
     /* Píxeles cuyo centro (16 i + 8) cae en la caja del triángulo, dentro de clip. */
-    minx = a->x < b->x ? a->x : b->x;
-    minx = c->x < minx ? c->x : minx;
-    maxx = a->x > b->x ? a->x : b->x;
-    maxx = c->x > maxx ? c->x : maxx;
-    miny = a->y < b->y ? a->y : b->y;
-    miny = c->y < miny ? c->y : miny;
-    maxy = a->y > b->y ? a->y : b->y;
-    maxy = c->y > maxy ? c->y : maxy;
+    /* Con if sobre la propia variable y no con ?: , que mini-lcc pasa por una variable temporal en la pila. */
+    minx = maxx = a->x;
+    if (b->x < minx) minx = b->x;
+    if (b->x > maxx) maxx = b->x;
+    if (c->x < minx) minx = c->x;
+    if (c->x > maxx) maxx = c->x;
+    miny = maxy = a->y;
+    if (b->y < miny) miny = b->y;
+    if (b->y > maxy) maxy = b->y;
+    if (c->y < miny) miny = c->y;
+    if (c->y > maxy) maxy = c->y;
     x0 = floor16(minx + MGR_SUBPIXEL / 2 - 1);
     x1 = floor16(maxx - MGR_SUBPIXEL / 2) + 1;
     y0 = floor16(miny + MGR_SUBPIXEL / 2 - 1);
@@ -132,6 +143,17 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
                 /* La profundidad, al encontrar el primer píxel: un triángulo que no cubre ningún centro (muchos
                    de un modelo pequeño en pantalla) se la ahorra. Mismos cálculos que antes del bucle. */
                 ready = 1;
+#if MGR_FIXED_DEPTH
+                mgr_depth_plane(a, b, c, area, px, py0, x1 - x0, y1 - y0, &plane);
+                dzi = plane.dzi;
+                if (plane.incremental) {
+                    depth_row = plane.row;
+                    depth_dx = plane.dx;
+                    depth_dy = plane.dy;
+                    incremental = 1;
+                    depth_row += depth_dy * (y - y0); /* lo que habrían sumado las filas anteriores */
+                }
+#else
                 /* Gradientes de z por unidad de 1/16 de píxel. */
                 fa = (mgl_real_t)area;
                 dz1 = b->z - a->z;
@@ -164,6 +186,7 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
                     depth_row += depth_dy * (y - y0); /* lo que habrían sumado las filas anteriores */
                 }
 #endif
+#endif /* MGR_FIXED_DEPTH */
             }
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {
@@ -172,9 +195,15 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
                     (depth_start + 8) >> 4;
             } else {
 #endif
+#if MGR_FIXED_DEPTH
+            depth_wide = plane.origin + plane.dx64 * (start - x0) + plane.dy64 * (y - y0);
+            zi = depth_wide <= 0 ? 0 : depth_wide >= (long long)MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
+                (mgl_s32)((depth_wide + 8) >> 4);
+#else
             zrow = a->z + gb * (mgl_real_t)(py - a->y);
             zf = (zrow + ga * (mgl_real_t)(start * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->x)) * DEPTH_SCALE;
             zi = zf <= 0.0f ? 0 : zf >= DEPTH_SCALE ? MGR_DEPTH_MAX : mgl_round(zf);
+#endif
 #if MGR_INCREMENTAL_DEPTH
             }
 #endif

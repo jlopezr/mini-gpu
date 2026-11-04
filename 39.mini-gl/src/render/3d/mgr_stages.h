@@ -69,10 +69,56 @@ int mgr_clip_triangle(const mgl_vec4_t in[3], mgl_vec4_t out[MGR_CLIP_MAX]);
 typedef struct {
     mgl_s32 x, y;
     mgl_real_t z;
+    mgl_s32 zq; /* z en Q16.16 (0..65536), solo con MGR_FIXED_DEPTH */
 } mgr_window_vertex_t;
+
+/* Profundidad del triángulo en enteros (fixed.c) en vez de float por triángulo (raster3d.c). Necesita
+   MGR_INCREMENTAL_DEPTH=1. Experimental: los redondeos difieren de float. */
+#ifndef MGR_FIXED_DEPTH
+#define MGR_FIXED_DEPTH 0
+#endif
 
 /* División de perspectiva y viewport. v debe estar dentro del volumen (w > 0). */
 void mgr_viewport_map(const mgr_state_t *s, const mgl_vec4_t *v, mgr_window_vertex_t *out);
+
+/* ---- fixed.c ------------------------------------------------------------ */
+/* Geometría en Q16.16 en vez de float (transformar, outcode y viewport de los triángulos sin recortar);
+   el recorte sigue en float. Experimental: no da los mismos bits que float. */
+#ifndef MGR_FIXED_GEOMETRY
+#define MGR_FIXED_GEOMETRY 0
+#endif
+
+#if MGR_FIXED_GEOMETRY
+typedef struct {
+    mgl_s32 x, y, z, w;
+} mgr_vec4q_t;
+
+typedef struct {
+    mgl_s32 m[16];
+} mgr_mat4q_t;
+
+void mgr_mat4q_from_float(const mgl_mat4_t *f, mgr_mat4q_t *q);
+void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
+    mgr_vec4q_t *clip);
+unsigned int mgr_outcode_q(const mgr_vec4q_t *v);
+void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_vertex_t *out);
+void mgr_vec4q_to_float(const mgr_vec4q_t *q, mgl_vec4_t *f);
+#endif
+
+#if MGR_FIXED_DEPTH
+/* El plano de profundidad de un triángulo, en las unidades de raster3d.c: row es la profundidad (Q12 sobre
+   MGR_DEPTH_FRAC) en el píxel (px, py), dx y dy lo que cambia por píxel y por fila, y dzi lo que cambia por píxel
+   dentro de un span (acotado). incremental: dx * w + dy * h y row caben en 32 bits; si no, solo vale origin. */
+typedef struct {
+    mgl_s32 dzi, row, dx, dy;
+    int incremental;
+    long long origin, dx64, dy64;
+} mgr_depth_plane_t;
+
+/* area > 0 (de raster3d.c), (px, py) en 1/16 de píxel y w, h el tamaño en píxeles de la caja del triángulo. */
+void mgr_depth_plane(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b, const mgr_window_vertex_t *c,
+    mgl_s32 area, mgl_s32 px, mgl_s32 py, int w, int h, mgr_depth_plane_t *out);
+#endif
 
 /* ---- fragment.c --------------------------------------------------------- */
 /* Lo que necesita la etapa de fragmentos para un dibujo: destino, estado y color. */

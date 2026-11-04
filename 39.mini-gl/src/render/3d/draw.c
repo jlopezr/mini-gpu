@@ -15,9 +15,27 @@
    dura un DRAW_INDEXED. */
 #define MGR_VCACHE 64
 
+/* Con MGR_FIXED_GEOMETRY los vértices transformados, el outcode y el viewport son Q16.16 (fixed.c); el recorte
+   sigue en float y recibe los tres vértices convertidos. */
+#if MGR_FIXED_GEOMETRY
+typedef mgr_vec4q_t mgr_clipv_t;
+typedef mgr_mat4q_t mgr_mvp_t;
+#define TRANSFORM_VERTEX mgr_transform_vertex_q
+#define OUTCODE mgr_outcode_q
+#define VIEWPORT_MAP mgr_viewport_map_q
+#define W_POSITIVE(v) ((v)->w > 0)
+#else
+typedef mgl_vec4_t mgr_clipv_t;
+typedef mgl_mat4_t mgr_mvp_t;
+#define TRANSFORM_VERTEX mgr_transform_vertex
+#define OUTCODE mgr_outcode
+#define VIEWPORT_MAP mgr_viewport_map
+#define W_POSITIVE(v) ((v)->w > 0.0f)
+#endif
+
 typedef struct {
     mgl_u32 index; /* MGR_VCACHE_EMPTY: libre */
-    mgl_vec4_t clip;
+    mgr_clipv_t clip;
     unsigned int out;
     int mapped; /* window ya calculado */
     mgr_window_vertex_t window;
@@ -60,11 +78,16 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     mgr_vertices_t verts;
     mgr_fragment_t f;
     mgr_rect_t clip;
-    const mgl_mat4_t *mvp;
+    const mgr_mvp_t *mvp;
+#if MGR_FIXED_GEOMETRY
+    mgr_mvp_t mvp_q;
+    mgl_vec4_t clip_in[3];
+#endif
     const unsigned char *indices;
     mgr_vcache_t cache[MGR_VCACHE], *c;
     mgr_window_vertex_t w[3];
-    mgl_vec4_t tri[3], poly[MGR_CLIP_MAX];
+    mgr_clipv_t tri[3];
+    mgl_vec4_t poly[MGR_CLIP_MAX];
     mgl_u32 vaddr = RD32(p + MGL_CMD_ARG0), iaddr = RD32(p + MGL_CMD_ARG1);
     mgl_u32 vcount = RD32(p + 16), icount = RD32(p + 20), stride = RD16(p + 28), i, k, index;
     unsigned int vformat = RD16(p + 24), iformat = RD16(p + 26), topology = RD16(p + 30);
@@ -97,7 +120,12 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     clip.y0 = s->vy > 0 ? s->vy : 0;
     clip.x1 = s->vx + s->vw < s->width ? s->vx + s->vw : s->width;
     clip.y1 = s->vy + s->vh < s->height ? s->vy + s->vh : s->height;
+#if MGR_FIXED_GEOMETRY
+    mgr_mat4q_from_float(mgr_state_mvp(s), &mvp_q);
+    mvp = &mvp_q;
+#else
     mvp = mgr_state_mvp(s);
+#endif
     for (k = 0; k < MGR_VCACHE; k++)
         cache[k].index = MGR_VCACHE_EMPTY;
 
@@ -108,8 +136,8 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
             c = &cache[index & (MGR_VCACHE - 1U)];
             if (c->index != index) {
                 c->index = index;
-                mgr_transform_vertex(&verts, index, mvp, &c->clip);
-                c->out = mgr_outcode(&c->clip);
+                TRANSFORM_VERTEX(&verts, index, mvp, &c->clip);
+                c->out = OUTCODE(&c->clip);
                 c->mapped = 0;
             }
             tri[k] = c->clip; /* copias: otro vértice del triángulo puede caer en la misma entrada */
@@ -122,15 +150,15 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
         }
         if (!(out[0] | out[1] | out[2])) { /* dentro de todos: sin recortar */
             for (k = 0; k < 3; k++) {
-                if (!(tri[k].w > 0.0f)) break; /* como en fan */
+                if (!W_POSITIVE(&tri[k])) break; /* como en fan */
                 index = RD16(indices + 2U * (i + k));
                 c = &cache[index & (MGR_VCACHE - 1U)];
                 if (c->index != index) { /* lo echó otro vértice de este triángulo */
-                    mgr_viewport_map(s, &tri[k], &w[k]);
+                    VIEWPORT_MAP(s, &tri[k], &w[k]);
                     continue;
                 }
                 if (!c->mapped) {
-                    mgr_viewport_map(s, &c->clip, &c->window);
+                    VIEWPORT_MAP(s, &c->clip, &c->window);
                     c->mapped = 1;
                 }
                 w[k] = c->window;
@@ -139,7 +167,13 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
             continue;
         }
         st->clipped++;
+#if MGR_FIXED_GEOMETRY
+        for (k = 0; k < 3; k++)
+            mgr_vec4q_to_float(&tri[k], &clip_in[k]);
+        n = mgr_clip_triangle(clip_in, poly);
+#else
         n = mgr_clip_triangle(tri, poly);
+#endif
         if (n) fan(s, st, poly, n, &clip, &f);
     }
     return MGR_OK;

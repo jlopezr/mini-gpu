@@ -8,6 +8,8 @@ static void viewport_changed(mgr_state_t *s) {
     s->view_y = (mgl_s32)(s->vy * MGR_SUBPIXEL);
     s->view_sx = (mgl_real_t)(s->vw * MGR_SUBPIXEL) * 0.5f;
     s->view_sy = (mgl_real_t)(s->vh * MGR_SUBPIXEL) * 0.5f;
+    s->view_sxi = (mgl_s32)(s->vw * MGR_SUBPIXEL / 2);
+    s->view_syi = (mgl_s32)(s->vh * MGR_SUBPIXEL / 2);
 }
 
 /* Estado inicial, al empezar cada ejecución y tras cada END_FRAME: sin destino,
