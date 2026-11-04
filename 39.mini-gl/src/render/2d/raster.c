@@ -10,7 +10,11 @@
    una vez a segment, mismos lados y en el mismo orden) y el borde del círculo es un bucle con un solo brush. */
 #ifdef MGL_RASTER_LANES
 #define RASTER_API static
-#define OWNS(x) ((((x) - RASTER_LANE) & 7) == 0)
+/* Las columnas se reparten cada RASTER_STRIDE (potencia de dos): 8 con un warp, 8 por warp con varios. */
+#ifndef RASTER_STRIDE
+#define RASTER_STRIDE 8
+#endif
+#define OWNS(x) ((((x) - RASTER_LANE) & (RASTER_STRIDE - 1)) == 0)
 #else
 #define RASTER_API
 #endif
@@ -52,7 +56,8 @@ static void row_fill(mgl_color_t *row, int x0, int x1, mgl_color_t c) {
     if (x0 < 0) x0 = 0;
     if (x1 > fw) x1 = fw;
     end = row + x1;
-    for (p = row + x0 + ((RASTER_LANE - x0) & 7); p < end; p += 8) *p = c; /* desde la primera columna suya */
+    for (p = row + x0 + ((RASTER_LANE - x0) & (RASTER_STRIDE - 1)); p < end; p += RASTER_STRIDE)
+        *p = c; /* desde la primera columna suya */
 }
 #else
 static void row_fill(mgl_color_t *row, int x0, int x1, mgl_color_t c) {
@@ -416,9 +421,9 @@ RASTER_API void sw_image(const mgl_sprite_t *s, int x, int y) {
     x1 = min2(fw, x + s->width);
     y1 = min2(fh, y + s->height);
 #ifdef MGL_RASTER_LANES
-    x0 += (RASTER_LANE - x0) & 7; /* solo las columnas de la lane */
+    x0 += (RASTER_LANE - x0) & (RASTER_STRIDE - 1); /* solo las columnas de la lane */
     for (j = y0; j < y1; j++)
-        for (i = x0; i < x1; i += 8) fb[j * pitch + i] = s->pixels[(j - y) * s->stride + (i - x)];
+        for (i = x0; i < x1; i += RASTER_STRIDE) fb[j * pitch + i] = s->pixels[(j - y) * s->stride + (i - x)];
 #else
     for (j = y0; j < y1; j++)
         for (i = x0; i < x1; i++) put(i, j, s->pixels[(j - y) * s->stride + (i - x)]);

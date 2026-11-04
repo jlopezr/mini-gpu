@@ -20,9 +20,14 @@ typedef char mgl_gpu_check_u16[(sizeof(mgl_color_t) == 2) ? 1 : -1];
 /* El raster de V0, compilado aqui por lanes: cada lane dibuja solo sus columnas (raster.c). En la GPU, la lane
    es __gpu_lane; en el host las lanes van una tras otra y es una variable. */
 #define MGL_RASTER_LANES
+/* Warps del lanzamiento (potencia de dos, hasta 8): las columnas se reparten entre 8 * MGL_GPU_WARPS hilos. */
+#ifndef MGL_GPU_WARPS
+#define MGL_GPU_WARPS 1
+#endif
+#define RASTER_STRIDE (8 * MGL_GPU_WARPS)
 #ifdef __MINIGPU__
 #include "gpu.h"
-#define RASTER_LANE __gpu_lane
+#define RASTER_LANE __gpu_tid
 #else
 #define NOALIAS(p) ((void)0)
 static int host_lane;
@@ -89,6 +94,10 @@ static void render(const mgl_gpu_job_t *j) {
     NOALIAS(j); /* nadie escribe el trabajo: mini-opt saca de los bucles lo que se lee de el */
     sw_bind(j->framebuffer, j->width, j->height, j->pitch);
     for (off = 16; off < j->command_bytes; off += size) {
+#if defined(__MINIGPU__) && MGL_GPU_WARPS > 1 && !defined(MGL_GPU_NO_BARRIER)
+        /* El estado del raster es global: ningún warp lo cambia hasta que todos han acabado la primitiva anterior. */
+        __gpu_bar = 0;
+#endif
         p = j->commands + off;
         op = rd32(p);
         size = rd32(p + 4);
@@ -165,14 +174,43 @@ void KERNEL(mgl_render)(const mgl_gpu_job_t *j) {
 }
 
 int mgl_gpu_render(const mgl_gpu_job_t *j) {
+    int r;
+#ifdef MGL_GPU_PERF_SNAPSHOT
+    static unsigned int last_end;
+    unsigned int t0, t1;
+#endif
     if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
-    return GPU_RUN(mgl_render, 1, j) == GPU_OK ? MGL_OK : MGL_ERR_ARGUMENT;
+#ifdef MGL_GPU_PERF_SNAPSHOT
+    t0 = *(volatile unsigned int *)0x81010000u; /* CPU CYCLES */
+#endif
+    r = GPU_RUN(mgl_render, MGL_GPU_WARPS, j);
+#ifdef MGL_GPU_PERF_SNAPSHOT
+    /* Diagnóstico: tras cada lanzamiento copia los siete contadores de GPU PERFORMANCE (0x82030000), un contador
+       de lanzamientos y los ciclos de CPU dentro del lanzamiento (o[8]) y fuera de él, entre dos lanzamientos
+       (o[9]) a SDRAM, donde el monitor sí llega (read-block 0x00F00000 40). */
+    t1 = *(volatile unsigned int *)0x81010000u;
+    {
+        volatile unsigned int *c = (volatile unsigned int *)0x82030000u;
+        volatile unsigned int *o = (volatile unsigned int *)0x00F00000u;
+        unsigned int i, n = o[7];
+        for (i = 0; i < 7; i++)
+            o[i] = c[i];
+        o[7] = n + 1;
+        o[10] = (unsigned int)r;                                    /* GPU_OK, GPU_ERR_* */
+        o[11] = *(volatile unsigned int *)0x82020008u;              /* SIMT FIRST_ERROR */
+        o[12] = *(volatile unsigned int *)0x8202000cu;              /* SIMT FIRST_ERROR_PC */
+        o[8] += t1 - t0;
+        o[9] += last_end ? t0 - last_end : 0;
+        last_end = t1;
+    }
+#endif
+    return r == GPU_OK ? MGL_OK : MGL_ERR_ARGUMENT;
 }
 #else
 int mgl_gpu_render(const mgl_gpu_job_t *j) {
     int lane;
     if (validate(j) != MGL_OK) return MGL_ERR_ARGUMENT;
-    for (lane = 0; lane < MGL_GPU_LANES; lane++) {
+    for (lane = 0; lane < RASTER_STRIDE; lane++) {
         host_lane = lane;
         render(j);
     }
