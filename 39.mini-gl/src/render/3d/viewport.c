@@ -6,8 +6,7 @@
    El borde izquierdo del píxel 0 es x = 0, así que su centro es 0.5 (8/16). */
 void mgr_viewport_map(const mgr_state_t *s, const mgl_vec4_t *v, mgr_window_vertex_t *out) {
     mgl_real_t inv_w = 1.0f / v->w, xn = v->x * inv_w, yn = v->y * inv_w, zn = v->z * inv_w;
-    mgl_real_t sx = (mgl_real_t)(s->vw * MGR_SUBPIXEL) * 0.5f, sy = (mgl_real_t)(s->vh * MGR_SUBPIXEL) * 0.5f;
-    out->x = (mgl_s32)(s->vx * MGR_SUBPIXEL) + mgl_round((xn + 1.0f) * sx);
-    out->y = (mgl_s32)(s->vy * MGR_SUBPIXEL) + mgl_round((1.0f - yn) * sy);
+    out->x = s->view_x + mgl_round((xn + 1.0f) * s->view_sx); /* view_*: del viewport, state.c */
+    out->y = s->view_y + mgl_round((1.0f - yn) * s->view_sy);
     out->z = zn * 0.5f + 0.5f;
 }

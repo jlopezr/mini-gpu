@@ -34,6 +34,9 @@ renderer corre en la CPU. En una ventana, [sdl.c](../src/platform/sdl.c): `make 
 | [`colored_cube.c`](colored_cube.c) | Cubo con una cara de cada color, como en Processing: `beginShape(QUADS)` y un `fill()` por cara |
 | [`tie_fighter.c`](tie_fighter.c) | Un modelo OBJ ([`low-poly-tie-fighter/`](low-poly-tie-fighter/)) convertido a `PShape` con `tools/obj2shape.py`: 2150 triángulos, un color por cara sacado de la textura. Modelo de tolotedesign, CC BY 4.0 ([créditos](low-poly-tie-fighter/README.md)) |
 | [`x_wing.c`](x_wing.c) | Otro modelo OBJ ([`low-poly-xwing/`](low-poly-xwing/)): 1382 triángulos y 8 colores (el más frecuente de cada cara, `--face-color mayoria`), sin culling (la malla no tiene una orientación coherente). Modelo de metalmorag, CC BY 4.0 ([créditos](low-poly-xwing/README.md)) |
+| [`tanks.c`](tanks.c) | Un juego de tanques en primera persona: W/S o flechas para avanzar, A/D para girar, espacio para disparar. Varias teclas a la vez con `keyIsDown()`, la escena con `pushMatrix`/`popMatrix` y modelos hechos en `setup()` como `PShape` con caras sombreadas; cielo, montañas, radar y marcador en 2D. `make sdl-tanks` o `make sim-tanks` |
+| [`skimmer.c`](skimmer.c) | Un deslizador sobre un planeta al atardecer: recoger balizas entre drones y torretas, pasando bajo arcos. Altura y cabeceo (`rotateX` en la cámara; el horizonte 2D se mueve con él), sombras en el suelo para ver la altura y panel con radar, barras y horizonte artificial. A/D girar, flechas arriba/abajo morro, W/S velocidad, espacio disparar. `make sdl-skimmer` o `make sim-skimmer` |
+| [`racer.c`](racer.c) | Carreras en islas, con varios niveles, cada uno en su fichero de [`racer/`](racer) (`coast.h`, `sierra.h`, `delta.h`, `knot.h`, `zigzag.h`; el formato, en [`racer/README.md`](racer/README.md)): el circuito, el terreno y el decorado son tres mapas de texto, una letra por casilla (rectas, curvas de 1×1, 2×2 y 3×3, cuestas que salen de las alturas del terreno, puentes, cruces al mismo nivel y pasos elevados; alturas con laderas; árboles, casas, señales, gasolineras, vacas pastando y un faro con su haz; ciervos que cruzan). El terreno y la carretera se construyen al cargar el nivel en trozos de `PShape` agrupados por color (`resetShapes()` libera los del anterior). Saltos, agua, tráfico, tres vueltas con cronómetro. C cambia de cámara (detrás, dentro, alta, TV), N de nivel, P piloto automático, R vuelve a la carretera. G congela la escena y luego enseña sus datos: `make racer-scene SCENE="..."` la vuelve a dibujar en el host. `make sdl-racer` o `make sim-racer` |
 
 ```sh
 make run-rotating_cube                     # 60 frames; guarda el último y uno de cada 15
@@ -164,6 +167,10 @@ Notas sobre la API:
   entonces `keyCode` es `UP`, `DOWN`, `LEFT` o `RIGHT`. No hay funciones de
   evento (`keyPressed()` chocaría en C con la variable): un sketch mira si `key`
   ha cambiado, como `paint`.
+- Para varias teclas a la vez (juegos), `keyIsDown(k)`, como en p5.js: `k` es un
+  carácter (`'w'` y `'W'` son la misma tecla), `ENTER`, `ESC`… o `UP`, `DOWN`,
+  `LEFT`, `RIGHT`. En MiniGPU lee el bitmap `KEY_STATE0..7` de INPUT; en SDL,
+  `SDL_GetKeyboardState`.
 - Como en Processing, el framebuffer no se borra entre frames: si quieres
   borrarlo, empieza `draw()` con `background()`.
-- No hay teclado (`key`, `keyPressed`) ni `frameRate()`: SDL va fijo a 60 fps.
+- No hay `frameRate()`: SDL va fijo a 60 fps.

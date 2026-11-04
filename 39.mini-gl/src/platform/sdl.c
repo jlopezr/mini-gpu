@@ -47,13 +47,42 @@ static void key_down(SDL_Keycode k) {
         }
 }
 
-/* keyPressed: alguna tecla pulsada ahora. */
-static int any_key(void) {
-    int i, n;
+/* platform_keys y keyPressed. Los SDL_Scancode hasta 0xE7 son los Usage ID de
+   USB HID, la posición de la tecla; los de más arriba son de SDL, y solo
+   cuentan para keyPressed. Una tecla que da un carácter marca la posición que
+   tiene ese carácter en un teclado US, que es lo que mira keyIsDown(): así
+   keyIsDown('-') funciona con cualquier distribución (en la española el - está
+   donde el / en la US). */
+static int key_usage(int scancode) {
+    SDL_Keycode k = SDL_GetKeyFromScancode((SDL_Scancode)scancode);
+    int u = k > ' ' && k < 127 ? platform_hid_usage((int)k) : -1;
+    return u < 0 ? scancode : u; /* sin carácter (flechas, espacio, Shift...): la posición */
+}
+
+/* Las teclas pulsadas desde el último read_keys(), aunque ya se hayan soltado:
+   una pulsación corta entre dos frames cuenta en el siguiente, como en MiniGPU. */
+static mgl_u32 tapped[8];
+
+static void key_tapped(int scancode) {
+    int u = key_usage(scancode);
+    if (u < 256) tapped[u >> 5] |= 1u << (u & 31);
+}
+
+static void read_keys(void) {
+    int i, n, u;
     const Uint8 *state = SDL_GetKeyboardState(&n);
+    keyPressed = 0;
+    for (i = 0; i < 8; i++) {
+        platform_keys[i] = tapped[i];
+        if (tapped[i]) keyPressed = 1;
+        tapped[i] = 0;
+    }
     for (i = 0; i < n; i++)
-        if (state[i]) return 1;
-    return 0;
+        if (state[i]) {
+            keyPressed = 1;
+            u = key_usage(i);
+            if (u < 256) platform_keys[u >> 5] |= 1u << (u & 31);
+        }
 }
 
 int main(int argc, char **argv) {
@@ -113,6 +142,7 @@ int main(int argc, char **argv) {
                 running = 0;
             else if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
+                key_tapped(e.key.keysym.scancode);
                 if (k == SDLK_ESCAPE)
                     running = 0;
                 else if (!mgl_context_is3d() && k >= SDLK_F1 && k < SDLK_F1 + PLATFORM_VERSIONS)
@@ -132,7 +162,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        keyPressed = any_key();
+        read_keys();
         frameCount++;
         if (platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, frameCount ? draw : setup, 0) != MGL_OK) {
             status = 1;

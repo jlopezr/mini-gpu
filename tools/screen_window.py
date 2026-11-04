@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import queue
 import signal
 import sys
@@ -168,6 +169,18 @@ def main() -> int:
             if sys.platform == "win32":
                 keyboard.set_modifiers(host_input.windows_modifiers())
 
+        # MINIGPU_KEYLOG=1: cada tecla, como llega de Tk y en qué se traduce, a
+        # stderr. Para ver qué da un teclado o una distribución que no traduce bien.
+        keylog = os.environ.get("MINIGPU_KEYLOG")
+
+        def log_key(down: bool, event, usage) -> None:
+            if keylog:
+                print(f"tecla {'down' if down else 'up  '} keysym={event.keysym!r} "
+                      f"keycode=0x{event.keycode:x} char={event.char!r} state=0x{event.state:x} "
+                      f"-> usage={'-' if usage is None else hex(usage)} "
+                      f"fisica={host_input.physical_key(event.keycode)}",
+                      file=sys.stderr, flush=True)
+
         def key_event(down: bool):
             def handler(event):
                 if event.keysym == "F12":
@@ -175,6 +188,7 @@ def main() -> int:
                         emit({"event": "interrupt"})
                     return "break"
                 if event.keycode in host_input.MODIFIER_VKS:
+                    log_key(down, event, None)
                     if sys.platform == "win32":
                         sync_modifiers()
                     else:
@@ -185,8 +199,12 @@ def main() -> int:
                     return "break"
                 usage = host_input.host_usage(event.keycode, event.state, event.keysym,
                                               scancode_of=scancode_of)
-                if usage is not None:
-                    keyboard.press(usage, event.time) if down else keyboard.release(usage)
+                key = host_input.physical_key(event.keycode)
+                log_key(down, event, usage)
+                if not down:
+                    keyboard.release_key(key, usage)
+                elif usage is not None:
+                    keyboard.press_key(key, usage, event.time)
                 return "break"
             return handler
 

@@ -131,6 +131,30 @@ static void test_angles(void) {
     CHECK(count == 131 || count == 132);
 }
 
+/* pushMatrix/popMatrix: tras volver de una pila más honda que P3D_MATRIX_STACK
+   la matriz es la de antes, y el cubo sale igual que sin tocarla. */
+static void test_matrix_stack(void) {
+    static mgl_color_t expected[W * H];
+    int i;
+    CHECK(render(1.0f) == MGL_OK);
+    memcpy(expected, context3d_pixels(P3D_FB_A), sizeof expected);
+    CHECK(context3d_begin(P3D_FB_A) == MGL_OK);
+    pushMatrix();
+    translate(400, 0, 0);
+    for (i = 0; i < P3D_MATRIX_STACK + 1; i++) pushMatrix();
+    rotateX(1.0f);
+    for (i = 0; i < P3D_MATRIX_STACK + 1; i++) popMatrix();
+    popMatrix();
+    popMatrix(); /* de más: no hace nada */
+    draw_cube(1.0f);
+    CHECK(context3d_end(0) == MGL_OK);
+    CHECK(!memcmp(expected, context3d_pixels(P3D_FB_A), sizeof expected));
+    /* perspective() con los valores de size() deja la misma proyección */
+    perspective(3.14159265f / 3.0f, (float)W / H, 120.0f * 1.7320508f / 10.0f, 120.0f * 1.7320508f * 10.0f);
+    CHECK(render(1.0f) == MGL_OK);
+    CHECK(!memcmp(expected, context3d_pixels(P3D_FB_A), sizeof expected));
+}
+
 /* El frame de un sketch: el command buffer de docs/3d.md §12. */
 static void test_frame_commands(void) {
     static const unsigned int expected[] = {MGL_CMD_SET_RENDER_TARGET, MGL_CMD_CLEAR,
@@ -336,6 +360,54 @@ static void test_shape_cull(void) {
     }
 }
 
+/* resetShapes: cuatro PShape de 84 KB no caben a la vez en la memoria de MiniGL
+   (256 KB); vaciándola antes de cada uno, sí, y el mismo PShape con otros
+   datos se dibuja con los nuevos. */
+#define BIG_VERTICES 7000
+static float big_xyz[BIG_VERTICES * 3];
+static const unsigned short big_indices[3] = {0, 1, 2};
+static const PShapeGroup big_group = {255, 0, 0, 3};
+
+static int draw_big(const PShape *s, int reset) {
+    if (context3d_begin(P3D_FB_A) != MGL_OK) return -1;
+    if (reset) resetShapes();
+    background(0, 0, 0);
+    shape(s);
+    return context3d_end(0);
+}
+
+static void test_reset_shapes(void) {
+    PShape s[4];
+    mgl_color_t *px;
+    int i;
+    big_xyz[0] = 100.0f; /* un triángulo rojo en el centro; el resto, en (0, 0, 0) */
+    big_xyz[1] = 100.0f;
+    big_xyz[3] = 220.0f;
+    big_xyz[4] = 100.0f;
+    big_xyz[6] = 160.0f;
+    big_xyz[7] = 160.0f;
+    for (i = 0; i < 4; i++) {
+        s[i].positions = big_xyz;
+        s[i].vertex_count = BIG_VERTICES;
+        s[i].indices = big_indices;
+        s[i].index_count = 3;
+        s[i].groups = &big_group;
+        s[i].group_count = 1;
+        s[i].cull = 0;
+    }
+    resetShapes();
+    CHECK(draw_big(&s[0], 0) == MGL_OK && draw_big(&s[1], 0) == MGL_OK && draw_big(&s[2], 0) == MGL_OK);
+    CHECK(draw_big(&s[3], 0) != MGL_OK); /* ya no cabe */
+    for (i = 0; i < 4; i++) CHECK(draw_big(&s[i], 1) == MGL_OK);
+    px = context3d_pixels(P3D_FB_A);
+    CHECK(px[130 * W + 160] == color565(255, 0, 0));
+    big_xyz[6] = 160.0f; /* el mismo PShape, más abajo: sin resetShapes se vería el de antes */
+    big_xyz[7] = 220.0f;
+    CHECK(draw_big(&s[3], 0) == MGL_OK && px[190 * W + 160] != color565(255, 0, 0));
+    CHECK(draw_big(&s[3], 1) == MGL_OK && px[190 * W + 160] == color565(255, 0, 0));
+    resetShapes();
+}
+
 int main(void) {
     unsigned char *ram = (unsigned char *)calloc(P3D_RAM_SIZE, 1);
     if (!ram || context3d_init(ram)) {
@@ -343,15 +415,17 @@ int main(void) {
         return 1;
     }
     test_angles();
+    test_matrix_stack();
     test_frame_commands();
     test_replay();
     test_colored_faces();
     test_shape_cull();
+    test_reset_shapes();
     free(ram);
     if (failures) {
         printf("FAIL: test_cube, %d comprobaciones fallidas\n", failures);
         return 1;
     }
-    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción, caras de colores y PShape con cull");
+    puts("PASS: test_cube: cubo en 6 ángulos frente a la proyección en double, frame, reproducción, caras de colores, PShape con cull, resetShapes, pila de matrices y perspective");
     return 0;
 }

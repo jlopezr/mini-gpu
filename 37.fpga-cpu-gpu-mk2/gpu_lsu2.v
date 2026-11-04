@@ -135,36 +135,71 @@ module gpu_lsu2 (
     // Pertenencia al grupo: las 8 comparaciones contra la linea de la lider
     // salen a la vez, no una detras de otra.
     wire [7:0] match;
-    // Dedup de slot: solo cabe una lane por palabra de 32 bits. En STORE dos
-    // lanes en el mismo slot chocan (dos escrituras a la misma palabra), asi
-    // que gana la de menor indice y la otra espera a otra vuelta; en LOAD el
-    // duplicado es inofensivo y se sirve gratis. Son cuatro problemas
-    // INDEPENDIENTES, uno por slot, resueltos en paralelo con un prefix-OR de
-    // profundidad logaritmica -- no un acumulador slot_used recorriendo lanes.
-    wire [7:0] slot_lanes[0:3];
-    wire [7:0] slot_win[0:3];
-    wire [31:0] slot_data[0:3];
-    genvar s, k;
+    // Mascara de bytes de cada lane dentro de su palabra: las cuatro de una
+    // palabra entera, o el byte / la mitad que toca segun la direccion.
+    wire [3:0] lane_strb[0:7];
+    genvar s, k, j;
     generate
         for(k=0;k<8;k=k+1) begin: group_match
             assign match[k]=cand_lanes[k] && (sel_addr[k*32+4 +: 28]==grp_line);
+            assign lane_strb[k]=sel_size==2'd0 ? 4'b1111 :
+                sel_size==2'd1 ? (4'b0001 << sel_addr[k*32 +: 2]) :
+                (sel_addr[k*32+1] ? 4'b1100 : 4'b0011);
         end
-        for(s=0;s<4;s=s+1) begin: slots
-            for(k=0;k<8;k=k+1) begin: slot_bits
-                assign slot_lanes[s][k]=match[k] && (sel_addr[k*32+2 +: 2]==s);
-                if(k==0) assign slot_win[s][k]=slot_lanes[s][0];
-                else     assign slot_win[s][k]=slot_lanes[s][k] && !(|slot_lanes[s][k-1:0]);
+    endgenerate
+    // STORE: fusion por bytes. Entra en la transaccion toda lane del grupo
+    // cuyos bytes no toca ninguna lane anterior del grupo (misma palabra y
+    // mascaras que se solapan); si alguna los toca, espera otra vuelta. Asi dos
+    // STOREH a las dos mitades de una palabra (dos pixeles RGB565 de lanes
+    // vecinas) van en la misma transaccion, y cuando de verdad escriben el
+    // mismo byte el orden sigue siendo el de siempre, la de menor lane
+    // primero. Antes la unidad era la palabra: una lane por palabra aunque
+    // escribieran bytes distintos, y 8 pixeles seguidos costaban 2
+    // transacciones en vez de 1. Una palabra entera (STORE) solapa siempre con
+    // otra en su palabra: ahi no cambia nada. En LOAD el duplicado es
+    // inofensivo y se sirve gratis (match entero).
+    //
+    // Son 28 comparaciones de pareja, todas en paralelo: profundidad
+    // constante, no un acumulador que recorra las lanes.
+    wire [7:0] st_lanes;
+    generate
+        for(k=0;k<8;k=k+1) begin: store_lanes
+            wire [7:0] overlap;
+            for(j=0;j<8;j=j+1) begin: lower
+                if(j<k) begin: earlier
+                    assign overlap[j]=match[j] &&
+                        (sel_addr[j*32+2 +: 2]==sel_addr[k*32+2 +: 2]) &&
+                        |(lane_strb[j] & lane_strb[k]);
+                end else begin: later
+                    assign overlap[j]=1'b0;
+                end
             end
-            // Mux one-hot: slot_win[s] tiene como mucho un bit puesto.
-            assign slot_data[s]=
-                ({32{slot_win[s][0]}} & sel_value[0*32 +: 32]) |
-                ({32{slot_win[s][1]}} & sel_value[1*32 +: 32]) |
-                ({32{slot_win[s][2]}} & sel_value[2*32 +: 32]) |
-                ({32{slot_win[s][3]}} & sel_value[3*32 +: 32]) |
-                ({32{slot_win[s][4]}} & sel_value[4*32 +: 32]) |
-                ({32{slot_win[s][5]}} & sel_value[5*32 +: 32]) |
-                ({32{slot_win[s][6]}} & sel_value[6*32 +: 32]) |
-                ({32{slot_win[s][7]}} & sel_value[7*32 +: 32]);
+            assign st_lanes[k]=match[k] && !(|overlap);
+        end
+    endgenerate
+    // Cada byte de la linea, de la unica lane incluida que lo cubre (one-hot:
+    // dos que lo cubrieran se solaparian y la mayor no estaria incluida). El
+    // dato de un STOREB/STOREH llega replicado en la palabra, asi que el byte
+    // b de la linea es el byte b%4 del valor de su lane.
+    wire [127:0] n_wdata;
+    wire [15:0] n_wmask;
+    generate
+        for(s=0;s<16;s=s+1) begin: line_bytes
+            localparam integer WORD=s/4;
+            wire [7:0] owner;
+            for(k=0;k<8;k=k+1) begin: owners
+                assign owner[k]=st_lanes[k] && (sel_addr[k*32+2 +: 2]==WORD[1:0]) && lane_strb[k][s%4];
+            end
+            assign n_wmask[s]=|owner;
+            assign n_wdata[s*8 +: 8]=
+                ({8{owner[0]}} & sel_value[0*32+(s%4)*8 +: 8]) |
+                ({8{owner[1]}} & sel_value[1*32+(s%4)*8 +: 8]) |
+                ({8{owner[2]}} & sel_value[2*32+(s%4)*8 +: 8]) |
+                ({8{owner[3]}} & sel_value[3*32+(s%4)*8 +: 8]) |
+                ({8{owner[4]}} & sel_value[4*32+(s%4)*8 +: 8]) |
+                ({8{owner[5]}} & sel_value[5*32+(s%4)*8 +: 8]) |
+                ({8{owner[6]}} & sel_value[6*32+(s%4)*8 +: 8]) |
+                ({8{owner[7]}} & sel_value[7*32+(s%4)*8 +: 8]);
         end
     endgenerate
     // Si la lane lider apunta a MMIO, el grupo es ELLA SOLA: acceso escalar.
@@ -177,7 +212,7 @@ module gpu_lsu2 (
     wire [31:0] leader_addr=sel_addr[{leader_idx,5'b0} +: 32];
     wire [31:0] leader_value=sel_value[{leader_idx,5'b0} +: 32];
     wire [7:0] n_lanes=leader_is_mmio ? leader_onehot
-                     : sel_write ? (slot_win[0]|slot_win[1]|slot_win[2]|slot_win[3])
+                     : sel_write ? st_lanes
                                  : match;
     // Cada lane lee la palabra que le toca por su propia direccion: esto no
     // necesita ni lazo ni logica, es una concatenacion.
@@ -185,30 +220,6 @@ module gpu_lsu2 (
                        sel_addr[5*32+2 +: 2], sel_addr[4*32+2 +: 2],
                        sel_addr[3*32+2 +: 2], sel_addr[2*32+2 +: 2],
                        sel_addr[1*32+2 +: 2], sel_addr[0*32+2 +: 2]};
-    wire [127:0] n_wdata={slot_data[3],slot_data[2],slot_data[1],slot_data[0]};
-    // Mascara de bytes de la lane que gana cada palabra: las cuatro de una
-    // palabra entera, o el byte / la mitad que toca segun la direccion. Dos
-    // lanes en la MISMA palabra siguen sin ir juntas (el dedup de slot de
-    // arriba), aunque escriban bytes distintos: la que pierde espera otra
-    // vuelta. Es correcto y mas lento que fusionarlas, y el orden entre ellas
-    // es el de siempre, el de menor lane primero.
-    wire [3:0] lane_strb[0:7];
-    wire [3:0] slot_strb[0:3];
-    generate
-        for(k=0;k<8;k=k+1) begin: lane_strobes
-            assign lane_strb[k]=sel_size==2'd0 ? 4'b1111 :
-                sel_size==2'd1 ? (4'b0001 << sel_addr[k*32 +: 2]) :
-                (sel_addr[k*32+1] ? 4'b1100 : 4'b0011);
-        end
-        for(s=0;s<4;s=s+1) begin: slot_strobes
-            assign slot_strb[s]=
-                ({4{slot_win[s][0]}} & lane_strb[0]) | ({4{slot_win[s][1]}} & lane_strb[1]) |
-                ({4{slot_win[s][2]}} & lane_strb[2]) | ({4{slot_win[s][3]}} & lane_strb[3]) |
-                ({4{slot_win[s][4]}} & lane_strb[4]) | ({4{slot_win[s][5]}} & lane_strb[5]) |
-                ({4{slot_win[s][6]}} & lane_strb[6]) | ({4{slot_win[s][7]}} & lane_strb[7]);
-        end
-    endgenerate
-    wire [15:0] n_wmask={slot_strb[3],slot_strb[2],slot_strb[1],slot_strb[0]};
     // pending tras retirar lo que se cierra en cada punto.
     wire [7:0] pending_after_fault=sel_pending & ~fault_lanes;
     wire [7:0] pending_after_group=sel_pending & ~grp_lanes;

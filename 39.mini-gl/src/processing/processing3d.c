@@ -4,6 +4,8 @@
 /* Matrices de la cámara (fijas para un tamaño) y del modelo (cambia con
    translate y rotate*, y vuelve a la identidad en cada draw). */
 static mgl_mat4_t projection, view, model;
+static mgl_mat4_t stack[P3D_MATRIX_STACK];
+static int depth;
 static int view_w, view_h;
 static mgl_mesh_t cube;
 
@@ -26,15 +28,19 @@ static const unsigned short cube_indices[36] = {
 /* La cámara por defecto de Processing. La y hacia abajo de Processing es una
    simetría (no un giro): se hace invirtiendo y en la proyección, como el propio
    Processing. Por eso cambia el sentido de giro de las caras en pantalla. */
+void perspective(float fovy, float aspect, float z_near, float z_far) {
+    mgl_mat4_t flip;
+    mgl_mat4_perspective(&projection, fovy, aspect, z_near, z_far);
+    mgl_mat4_scaling(&flip, 1.0f, -1.0f, 1.0f);
+    mgl_mat4_mul(&projection, &flip, &projection);
+}
+
 void processing3d_size(int w, int h) {
     mgl_real_t fov = 1.04719755f, half = 0.523598776f; /* pi / 3 y pi / 6, sin plegar constantes */
     mgl_real_t eye_z = ((mgl_real_t)h * 0.5f) * mgl_cos(half) / mgl_sin(half);
-    mgl_mat4_t flip;
     view_w = w;
     view_h = h;
-    mgl_mat4_perspective(&projection, fov, (mgl_real_t)w / (mgl_real_t)h, eye_z * 0.1f, eye_z * 10.0f);
-    mgl_mat4_scaling(&flip, 1.0f, -1.0f, 1.0f);
-    mgl_mat4_mul(&projection, &flip, &projection);
+    perspective(fov, (mgl_real_t)w / (mgl_real_t)h, eye_z * 0.1f, eye_z * 10.0f);
     mgl_mat4_look_at(&view, (mgl_real_t)w * 0.5f, (mgl_real_t)h * 0.5f, eye_z, (mgl_real_t)w * 0.5f,
         (mgl_real_t)h * 0.5f, 0.0f, 0.0f, 1.0f, 0.0f);
     mgl_mat4_identity(&model);
@@ -42,6 +48,17 @@ void processing3d_size(int w, int h) {
 
 void processing3d_begin_draw(void) {
     mgl_mat4_identity(&model);
+    depth = 0;
+}
+
+void pushMatrix(void) {
+    if (depth < P3D_MATRIX_STACK) stack[depth] = model;
+    depth++;
+}
+
+void popMatrix(void) {
+    if (depth == 0) return;
+    if (--depth < P3D_MATRIX_STACK) model = stack[depth];
 }
 
 void translate(float x, float y, float z) {
@@ -116,6 +133,16 @@ void shape(const PShape *s) {
         first = g->end;
     }
     if (s->cull) mgl_set_cull(MGL_CULL_NONE); /* box() y beginShape no descartan nada */
+}
+
+void resetShapes(void) {
+    unsigned int i;
+    for (i = 0; i < P3D_SHAPES; i++) {
+        shape_key[i] = 0;
+        shape_mesh[i] = 0;
+    }
+    cube = 0;
+    processing3d_reset_memory();
 }
 
 /* beginShape/vertex/endShape: los vértices se guardan aquí y endShape los

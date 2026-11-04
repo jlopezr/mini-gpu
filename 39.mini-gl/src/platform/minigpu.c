@@ -29,11 +29,6 @@ static void clear(unsigned address) {
 static int has_input;
 static int half_x = FB_W, half_y = FB_H; /* el raton, en medios pixeles */
 
-/* USB HID (Usage Page 0x07) a ASCII, distribucion US: de 0x1E (1) a 0x38 (/),
-   sin y con Shift. 0x32 es la tecla de fuera de EE. UU.: no da caracter. */
-static const char hid_plain[] = "1234567890\n\033\b\t -=[]\\\0;'`,./";
-static const char hid_shift[] = "!@#$%^&*()\n\033\b\t _+{}|\0:\"~<>?";
-
 #define HID_SHIFT 0x22 /* Shift izquierdo y derecho en el bitmap de modificadores */
 
 static void key_down(int usage, int modifiers) {
@@ -46,7 +41,7 @@ static void key_down(int usage, int modifiers) {
     if (usage >= 0x04 && usage <= 0x1D)
         c = (shift ? 'A' : 'a') + usage - 0x04;
     else if (usage >= 0x1E && usage <= 0x38)
-        c = (shift ? hid_shift : hid_plain)[usage - 0x1E];
+        c = (shift ? platform_hid_shift : platform_hid_plain)[usage - 0x1E];
     else if (usage == 0x4C)
         c = DELETE;
     if (c) {
@@ -55,13 +50,18 @@ static void key_down(int usage, int modifiers) {
     }
 }
 
-/* Antes de cada draw(): vacia la cola de eventos y lee el estado. */
+/* Antes de cada draw(): vacia la cola de eventos y lee el estado. Una tecla
+   que se pulsó desde el frame anterior cuenta como pulsada aunque ya se haya
+   soltado: si no, una pulsación corta entre dos frames (en el simulador, un
+   frame puede durar una décima de segundo) no la vería keyIsDown(). */
 static void poll_input(void) {
-    unsigned event, type;
+    unsigned event, type, usage;
+    mgl_u32 tapped[8];
     int i;
     pmouseX = mouseX;
     pmouseY = mouseY;
     if (!has_input) return;
+    for (i = 0; i < 8; i++) tapped[i] = 0;
     while (REG(INPUT_STATUS) & MMIO_INPUT_STATUS_COUNT_MASK) {
         event = REG(INPUT_EVENT_DATA);
         type = event >> 24;
@@ -72,15 +72,18 @@ static void poll_input(void) {
             if (half_x > 2 * FB_W - 1) half_x = 2 * FB_W - 1;
             if (half_y < 0) half_y = 0;
             if (half_y > 2 * FB_H - 1) half_y = 2 * FB_H - 1;
-        } else if (type == MMIO_INPUT_TYPE_KEY && (event & 0x1FF) > 0x100) /* KEY != 0 y DOWN */
-            key_down(event & 0xFF, (event >> 16) & 0xFF);
+        } else if (type == MMIO_INPUT_TYPE_KEY && (event & 0x1FF) > 0x100) { /* KEY != 0 y DOWN */
+            usage = event & 0xFF;
+            tapped[usage >> 5] |= 1u << (usage & 31);
+            key_down((int)usage, (event >> 16) & 0xFF);
+        }
     }
     mouseX = half_x / 2;
     mouseY = half_y / 2;
     mousePressed = REG(INPUT_MOUSE_BUTTONS) != 0;
     keyPressed = 0;
     for (i = 0; i < 8; i++)
-        if (REG(INPUT_KEY_STATE0 + 4 * i)) keyPressed = 1;
+        if ((platform_keys[i] = REG(INPUT_KEY_STATE0 + 4 * i) | tapped[i])) keyPressed = 1;
 }
 
 /* Presentación compartida: el contexto decide si conserva el lienzo. */

@@ -223,4 +223,4 @@ comparar o sumar con ellos pasa por el runtime de `double`. En `mgl_math.c` y `r
 - **Rendimiento**: borrados de 32 bits en MiniGPU, bucles especializados de profundidad y
   profundidad incremental por defecto. Quedan como candidatos el seguimiento de bordes
   y la reutilización de vértices transformados. Medidas en [validacion.md](validacion.md).
-- Límites: destino y viewport de hasta 1024 píxeles, `MGL_MAX_MESHES` = 32, 65 536 vértices por malla.
+- Límites: destino y viewport de hasta 1024 píxeles, `MGL_MAX_MESHES` = 96, 65 536 vértices por malla.

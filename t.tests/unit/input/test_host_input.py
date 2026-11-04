@@ -5,6 +5,7 @@ El log de Tk en Windows (teclado español) está en el docstring de
 """
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -83,6 +84,20 @@ class HostUsageTest(unittest.TestCase):
         self.assertEqual(host_usage(27, 0, "Escape"), usage("ESC"))
         self.assertEqual(host_usage(37, 0, "Left"), usage("LEFT"))
         self.assertIsNone(host_usage(0, 0, "ntilde"))
+
+    def test_sin_scancodes_los_signos_van_a_su_tecla_us(self):
+        # En la distribución española el + tiene tecla propia y llega como `plus`.
+        self.assertEqual(host_usage(43, 0, "plus"), usage("EQUAL"))
+        self.assertEqual(host_usage(45, 0, "minus"), usage("MINUS"))
+        self.assertEqual(host_usage(33, 0, "exclam"), usage("1"))
+        self.assertEqual(host_usage(42, 0, "asterisk"), usage("8"))
+        self.assertEqual(host_usage(63, 0, "question"), usage("SLASH"))
+
+    def test_en_mac_el_keysym_es_el_caracter(self):
+        # Lo que da Tk en macOS con teclado español (MINIGPU_KEYLOG=1).
+        self.assertEqual(host_usage(0x2C00002D, 0, "-"), usage("MINUS"))
+        self.assertEqual(host_usage(0x1E00002B, 0, "+"), usage("EQUAL"))
+        self.assertEqual(host_usage(0x7B00F702, 0x60, "Left"), usage("LEFT"))
 
     @unittest.skipUnless(sys.platform == "win32", "MapVirtualKey solo existe en Windows")
     def test_map_virtual_key_real(self):
@@ -164,6 +179,34 @@ class HostKeyboardTest(unittest.TestCase):
         self.keyboard.press(usage("LCTRL"), time_ms=1000)
         self.keyboard.press(usage("RALT"), time_ms=1500)
         self.assertEqual(self.reports[-1], frozenset({0xE0, 0xE6}))
+
+    def test_se_suelta_lo_que_pulso_la_tecla_fisica(self):
+        # Shift + 7 español es `/`; si se suelta Shift antes, el release dice `7`.
+        self.keyboard.press_key(26, usage("SLASH"))
+        self.keyboard.release_key(26, usage("7"))
+        self.assertEqual(self.reports[-1], frozenset())
+
+    def test_release_de_tecla_desconocida_usa_lo_de_ahora(self):
+        self.keyboard.press(usage("A"))
+        self.keyboard.release_key(99, usage("A"))
+        self.assertEqual(self.reports[-1], frozenset())
+        self.keyboard.release_key(99, None)             # ni recordada ni traducible
+        self.assertEqual(len(self.reports), 2)
+
+    def test_si_la_tecla_cambia_mientras_esta_pulsada_no_queda_la_vieja(self):
+        self.keyboard.press_key(26, usage("7"))
+        self.keyboard.press_key(26, usage("SLASH"))     # autorepeat tras pulsar Shift
+        self.assertEqual(self.reports[-1], frozenset({usage("SLASH")}))
+        self.keyboard.release_key(26, usage("7"))
+        self.assertEqual(self.reports[-1], frozenset())
+
+    def test_physical_key_en_mac_es_el_byte_alto(self):
+        with mock.patch.object(host_input.sys, "platform", "darwin"):
+            self.assertEqual(host_input.physical_key((26 << 24) | ord("7")),
+                             host_input.physical_key((26 << 24) | ord("/")))
+            self.assertEqual(host_input.physical_key(ord("a")), ord("a"))
+        with mock.patch.object(host_input.sys, "platform", "linux"):
+            self.assertEqual(host_input.physical_key(38), 38)
 
     def test_perder_el_foco_suelta_todo(self):
         # La tecla Windows abre el menú Inicio y no entrega release.

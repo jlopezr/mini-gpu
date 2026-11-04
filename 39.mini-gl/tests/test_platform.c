@@ -53,7 +53,16 @@ int main(void) {
     CHECK(mgl_context_is3d() == TEST_CONTEXT_3D);
     for (v = 0; v <= last; v++) {
         CHECK(platform_init(ram, v) == MGL_OK);
-        CHECK(frameCount == 0 && !keyPressed && !mousePressed);
+        CHECK(frameCount == 0 && !keyPressed && !mousePressed && !keyIsDown('w') && !keyIsDown(UP));
+        platform_keys[0x1A >> 5] |= 1u << (0x1A & 31); /* W */
+        platform_keys[0x52 >> 5] |= 1u << (0x52 & 31); /* flecha arriba */
+        platform_keys[0x2C >> 5] |= 1u << (0x2C & 31); /* espacio */
+        platform_keys[0x1E >> 5] |= 1u << (0x1E & 31); /* 1 */
+        CHECK(keyIsDown('w') && keyIsDown('W') && keyIsDown(UP) && keyIsDown(' ') && keyIsDown('!'));
+        CHECK(!keyIsDown('s') && !keyIsDown(DOWN) && !keyIsDown(CODED) && !keyIsDown(0) && !keyIsDown(SHIFT));
+        platform_keys[0xE5 >> 5] |= 1u << (0xE5 & 31); /* Shift derecho */
+        CHECK(keyIsDown(SHIFT));
+        CHECK(platform_hid_usage('-') == 0x2D && platform_hid_usage('+') == 0x2E && platform_hid_usage('~') == 0x35);
         CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, prepare, capture) == MGL_OK);
         pixels = mgl_context_pixels();
         CHECK(pixels[0] == 0x1234);
@@ -73,6 +82,8 @@ int main(void) {
         CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, paint, 0) == MGL_OK);
         CHECK(pixels[0] == 0x1234); /* cambiar V no borra el lienzo */
 #endif
+        platform_shutdown();
+        CHECK(platform_init(ram, v) == MGL_OK && !keyIsDown('w'));
         platform_shutdown();
     }
     CHECK(captured == (last + 1) * 2);

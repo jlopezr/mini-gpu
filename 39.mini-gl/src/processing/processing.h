@@ -36,7 +36,15 @@ void image(const mgl_sprite_t *sprite, int x, int y);
    pmouseX/pmouseY son mouseX/mouseY del frame anterior. keyPressed vale 1 mientras haya alguna tecla pulsada; key es la
    ultima pulsada: su caracter ASCII (con mayusculas si va con Shift; ENTER,
    BACKSPACE, TAB, ESC y DELETE tambien), o CODED, y entonces keyCode dice
-   cual (UP, DOWN, LEFT, RIGHT). */
+   cual (UP, DOWN, LEFT, RIGHT).
+   keyIsDown(k), como el de p5.js, dice si la tecla k esta pulsada ahora, para
+   mirar varias a la vez (juegos); una pulsacion corta que empieza y acaba entre
+   dos frames cuenta en el siguiente. k es un caracter ('w' y 'W' son la misma
+   tecla, '1' y '!' tambien), ENTER, BACKSPACE, TAB, ESC, DELETE, SHIFT o UP,
+   DOWN, LEFT, RIGHT (que tapan a '%', '&', '\'' y '('). En SDL, con la
+   distribucion del teclado; en MiniGPU el periferico solo da la posicion de cada tecla y
+   se toma la US (en la española, '-' es la tecla del '/' US). En la host,
+   siempre 0. */
 void setup(void);
 void draw(void);
 void size(int w, int h);
@@ -44,6 +52,7 @@ extern int width, height;
 extern int frameCount;
 extern int mouseX, mouseY, pmouseX, pmouseY, mousePressed;
 extern int keyPressed, key, keyCode;
+int keyIsDown(int k);
 
 #define CODED 0xFFFF
 #define UP 38 /* los keyCode de Processing (los de Java) */
@@ -55,5 +64,6 @@ extern int keyPressed, key, keyCode;
 #define ENTER 10
 #define ESC 27
 #define DELETE 127
+#define SHIFT 16 /* solo para keyIsDown: cualquiera de los dos */
 
 #endif

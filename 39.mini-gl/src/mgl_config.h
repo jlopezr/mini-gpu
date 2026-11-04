@@ -25,7 +25,7 @@ typedef float mgl_real_t;
 MGL_STATIC_ASSERT(f32, sizeof(float) == 4);
 
 /* Límites de MiniGL y del renderer de referencia. */
-#define MGL_MAX_MESHES 32
+#define MGL_MAX_MESHES 96
 #define MGL_MAX_TARGET_DIM 1024 /* ancho, alto y stride; ver raster3d.c */
 #define MGL_MAX_VIEWPORT_POS 4096
 

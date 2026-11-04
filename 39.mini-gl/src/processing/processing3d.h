@@ -2,8 +2,9 @@
 #define PROCESSING3D_H
 
 /* MiniProcessing 3D: lo justo para el cubo y los modelos (size con P3D,
-   translate, rotate*, scale, box, beginShape y shape), como capa fina sobre
-   MiniGL 3D. El resto (background, fill, noStroke, y todo lo 2D) es lo de
+   translate, rotate*, scale, pushMatrix/popMatrix, perspective, box,
+   beginShape y shape),
+   como capa fina sobre MiniGL 3D. El resto (background, fill, noStroke, y todo lo 2D) es lo de
    processing.h: en un sketch 3D lo 2D se dibuja encima, en el orden en que se
    llama, sin profundidad.
 
@@ -11,7 +12,8 @@
    - y hacia abajo y z hacia el espectador, en píxeles; el origen arriba a la
      izquierda. La cámara está en (width/2, height/2, (height/2) / tan(30°))
      mirando a (width/2, height/2, 0), con 60° de campo vertical, así que en
-     z = 0 una unidad es un píxel. Cerca y lejos: z de la cámara / 10 y * 10.
+     z = 0 una unidad es un píxel. Cerca y lejos: z de la cámara / 10 y * 10
+     (perspective() los cambia).
    - La matriz del modelo vuelve a la identidad al empezar cada draw().
      translate() y rotate*() la componen por la derecha (mgl_math.h): lo último
      que se llama es lo primero que se aplica al objeto.
@@ -36,6 +38,19 @@ void rotateX(float angle);
 void rotateY(float angle);
 void rotateZ(float angle);
 void scale(float s);
+/* Guardan y recuperan la matriz del modelo, como en Processing: para colocar
+   varios objetos a partir de la misma (la de la cámara de un juego, por
+   ejemplo). Como mucho P3D_MATRIX_STACK guardadas; las que no caben no se
+   guardan, pero cada popMatrix() sigue emparejado con su pushMatrix(). La pila
+   se vacía al empezar cada draw(). */
+#define P3D_MATRIX_STACK 8
+void pushMatrix(void);
+void popMatrix(void);
+/* La proyección, como en Processing: campo vertical en radianes, ancho / alto
+   y los planos cercano y lejano (z de la cámara / 10 y * 10 por defecto, lo
+   que deja size()). Dura hasta otro perspective() o size(). Con el Z-buffer de
+   16 bits, cuanto más cerca el plano cercano, menos precisión a lo lejos. */
+void perspective(float fovy, float aspect, float z_near, float z_far);
 void box(float side);
 
 /* Un modelo ya convertido (tools/obj2shape.py lo genera a partir de un OBJ):
@@ -65,9 +80,16 @@ typedef struct {
     int cull;
 } PShape;
 
-#define P3D_SHAPES 8
+#define P3D_SHAPES 64
 
 void shape(const PShape *s);
+
+/* Olvida los modelos ya dibujados y vacía la memoria de MiniGL donde están
+   sus mallas (que no se libera de una en una), para hacer otros con los
+   mismos PShape o con otros (el siguiente nivel de un juego). Hay que
+   llamarlo antes de dibujar nada en el frame: lo de beginShape/endShape de
+   este frame también se pierde. */
+void resetShapes(void);
 
 /* Figuras con los vértices uno a uno, como en Processing:
      beginShape(QUADS); fill(...); vertex(x, y, z); ... endShape();
@@ -89,5 +111,7 @@ void endShape(void);
 void processing3d_begin_draw(void);
 /* Para la plataforma: tras size_renderer, con el tamaño ya fijado. */
 void processing3d_size(int w, int h);
+/* Lo pone el contexto: vacía la memoria de MiniGL (para resetShapes). */
+void processing3d_reset_memory(void);
 
 #endif

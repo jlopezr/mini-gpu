@@ -34,6 +34,12 @@ void size_renderer(int w, int h, int renderer) {
     set_target(); /* dentro del frame de setup(): emite SET_RENDER_TARGET */
 }
 
+/* resetShapes(): las mallas, la del cubo y la memoria de frame, desde cero. */
+void processing3d_reset_memory(void) {
+    mgl_resources_init(&context3d_memory, P3D_HEAP, P3D_HEAP_BYTES);
+    mgl_frame_memory_init(P3D_FRAME_HEAP, P3D_FRAME_HEAP_BYTES);
+}
+
 int context3d_init(void *ram) {
     void *commands;
     bad_size = 0;

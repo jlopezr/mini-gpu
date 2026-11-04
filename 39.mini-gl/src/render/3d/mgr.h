@@ -39,8 +39,11 @@ typedef struct {
     mgl_color_t *color;
     mgl_u16 *depth;
     int width, height, color_stride, depth_stride;
-    /* SET_VIEWPORT */
+    /* SET_VIEWPORT, y lo que de él usa mgr_viewport_map en cada vértice: la
+       esquina en 1/16 de píxel y la mitad del tamaño, en float */
     int vx, vy, vw, vh;
+    mgl_s32 view_x, view_y;
+    mgl_real_t view_sx, view_sy;
     /* SET_MATRIX (índice MGL_MATRIX_* - 1) y Projection * View * Model */
     mgl_mat4_t matrix[3];
     mgl_mat4_t mvp;
