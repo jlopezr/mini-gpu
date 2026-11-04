@@ -9,7 +9,11 @@
 // y 18 (100 -> 80), y por la misma razon.
 //
 // Los parametros son los de `16.fpga-cpu-hdmi/pll_cpu.v`, que es la misma
-// placa a la misma frecuencia y esta probado:
+// placa a la misma frecuencia y esta probado, salvo CLKOP_CPHASE: aqui es
+// CLKOP_DIV-1 (5) y alli DIV/2 (3). Con DIV/2 la salida queda 120 grados
+// desfasada de la entrada y Diamond >= 3.10 aborta en Map ("should not be used
+// as the feedback signal"); yosys/nextpnr lo aceptan sin avisar. Con DIV-1 la
+// fase es 0. Probado con Diamond 3.14.
 //
 //   fref  = 25 / CLKI_DIV(5)         =   5 MHz
 //   CLKOP = fref * CLKFB_DIV(20)     = 100 MHz
@@ -37,7 +41,7 @@ module pll_100 (
       .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"),
       .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
       .CLKI_DIV(5), .CLKOP_ENABLE("ENABLED"), .CLKOP_DIV(6),
-      .CLKOP_CPHASE(3), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
+      .CLKOP_CPHASE(5), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
       .CLKFB_DIV(20)
   ) pll_i (
       .RST(1'b0), .STDBY(1'b0), .CLKI(clkin), .CLKOP(clkout0),

@@ -1,7 +1,6 @@
-// diamond 3.7 accepts this PLL
-// diamond 3.8-3.9 is untested
-// diamond 3.10 or higher is likely to abort with error about unable to use feedback signal
-// cause of this could be from wrong CPHASE/FPHASE parameters
+// CLKOP_CPHASE = CLKOP_DIV-1 deja CLKOP en fase 0 respecto a CLKI. Con DIV/2 (lo que da
+// ecppll) Diamond >= 3.10 aborta en Map ("-144 degree phase shift should not be used as
+// the feedback signal"); yosys/nextpnr lo aceptan sin avisar. Probado con Diamond 3.14.
 `default_nettype none
 
 module pll_120 (
@@ -32,7 +31,7 @@ module pll_120 (
       .CLKI_DIV(5),
       .CLKOP_ENABLE("ENABLED"),
       .CLKOP_DIV(5),
-      .CLKOP_CPHASE(2),
+      .CLKOP_CPHASE(4),
       .CLKOP_FPHASE(0),
       .FEEDBK_PATH("CLKOP"),
       .CLKFB_DIV(24)
