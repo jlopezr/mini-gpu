@@ -19,7 +19,8 @@
      adapta; donde no puede (junto a un paso elevado), una pared tapa el
      desnivel.
    - scenery_map: el decorado. 'T' pino, 't' árbol, 'H' casa, 's' señal
-     (mira a la carretera de al lado) y 'F' el faro.
+     y 'E' gasolinera (miran a la carretera de al lado), 'V' vaca y 'F' el
+     faro. Los ciervos no van en el mapa: salen solos a cruzar.
    El agua está a WATER_H: lo que queda por debajo es mar, río o lago. Solo se
    dibuja en las casillas con alguna esquina por debajo (sin el terreno que
    tapa), y fuera del mapa sigue el mar en 2D bajo el horizonte, del mismo color.
@@ -91,7 +92,7 @@ static const char *const *ground_map, *const *track_map, *const *scenery_map;
 
 enum { COUNTDOWN, RACE, FINISHED };
 enum { STRAIGHT, CURVE, BRIDGE };
-enum { PROP_TREE, PROP_HOUSE, PROP_SIGN, PROP_LIGHTHOUSE };
+enum { PROP_TREE, PROP_HOUSE, PROP_SIGN, PROP_LIGHTHOUSE, PROP_STATION, PROP_COW };
 
 /* Direcciones N, E, S, O: N es -z (hacia arriba en el mapa), E es +x. */
 static const int step_x[4] = {0, 1, 0, -1}, step_z[4] = {-1, 0, 1, 0};
@@ -100,13 +101,20 @@ static const float dir_angle[4] = {0.0f, -PI / 2, PI, PI / 2};
 typedef struct {
     float x, z, h, a, s, r; /* posición, giro, escala y radio para chocar */
     const PShape *shape;
-    int kind;
+    int kind, phase; /* phase: una vaca no pasta al compás de las demás */
 } Prop;
 
 static PShape chunks[CHUNKS_Z][CHUNKS_X];
 static PShape car, pine, tree, house, sign, lighthouse;
 static PShape pine_far, tree_far; /* los árboles de lejos, más sencillos (LOD) */
 static PShape car_blue, car_yellow, truck;
+static PShape station, cow_down, cow_up, deer_shape;
+
+/* El ciervo: de vez en cuando cruza una recta por delante del coche, al trote. */
+static struct {
+    int on, wait;
+    float x, z, h, a, left; /* left: lo que le queda por andar */
+} deer;
 
 /* El tráfico: sigue el circuito por su carril, cada uno a su velocidad. */
 typedef struct {
@@ -428,7 +436,7 @@ static void build_truck(PShape *s) {
 
 static void build_models(void) {
     float p[12];
-    int i;
+    int i, j;
     build_car(&car, 215, 30, 30);
     build_car(&car_blue, 40, 90, 215);
     build_car(&car_yellow, 240, 195, 30);
@@ -480,6 +488,68 @@ static void build_models(void) {
     with_bottom = 1;
     frustum(0.0f, 0.0f, 11.0f, 1.2f, 11.0f, 1.2f, 0.0f, -9.0f, -16.0f, 245, 200, 40);
     with_bottom = 0;
+    end_model();
+
+    begin_model(&station); /* de cara a -z: marquesina con dos surtidores, la tienda detrás y el cartel */
+    for (i = 0; i < 4; i++)
+        frustum(i & 1 ? 12.0f : -12.0f, i & 2 ? -2.0f : -13.0f, 1.5f, 1.5f, 1.5f, 1.5f, 0.0f, 0.0f, -14.0f, 200, 200,
+            205);
+    frustum(0.0f, -7.5f, 18.0f, 4.0f, 18.0f, 4.0f, 0.0f, 0.0f, -0.8f, 170, 170, 170);
+    for (i = -1; i <= 1; i += 2) {
+        frustum(6.0f * i, -7.5f, 3.0f, 2.0f, 3.0f, 2.0f, 0.0f, -0.8f, -7.0f, 215, 40, 35);
+        frustum(6.0f * i, -7.5f, 3.4f, 2.4f, 3.4f, 2.4f, 0.0f, -7.0f, -8.0f, 240, 240, 240);
+    }
+    with_bottom = 1;
+    frustum(0.0f, -7.5f, 32.0f, 19.0f, 32.0f, 19.0f, 0.0f, -14.0f, -16.0f, 215, 40, 35);
+    with_bottom = 0;
+    frustum(0.0f, -7.5f, 31.0f, 18.0f, 31.0f, 18.0f, 0.0f, -16.0f, -17.0f, 245, 245, 245);
+    frustum(0.0f, 12.0f, 26.0f, 12.0f, 26.0f, 12.0f, 0.0f, 0.0f, -11.0f, 235, 225, 200);
+    frustum(0.0f, 5.9f, 18.0f, 0.4f, 18.0f, 0.4f, 0.0f, -3.0f, -8.0f, 70, 110, 150);
+    with_bottom = 1;
+    frustum(0.0f, 12.0f, 28.0f, 14.0f, 28.0f, 14.0f, 0.0f, -11.0f, -12.5f, 215, 40, 35);
+    with_bottom = 0;
+    frustum(16.0f, -14.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, -22.0f, 150, 150, 150);
+    with_bottom = 1;
+    frustum(16.0f, -14.0f, 7.0f, 1.2f, 7.0f, 1.2f, 0.0f, -22.0f, -30.0f, 245, 200, 40);
+    with_bottom = 0;
+    end_model();
+
+    for (i = 0; i < 2; i++) { /* la vaca, de cara a -z: pastando (cabeza abajo) o mirando */
+        begin_model(i ? &cow_up : &cow_down);
+        for (j = 0; j < 4; j++)
+            frustum(j & 1 ? 2.0f : -2.0f, j & 2 ? 4.0f : -4.0f, 1.3f, 1.3f, 1.2f, 1.2f, 0.0f, 0.0f, -4.5f, 70, 60,
+                55);
+        with_bottom = 1;
+        frustum(0.0f, 0.0f, 6.0f, 12.0f, 6.0f, 12.0f, 0.0f, -4.0f, -9.5f, 255, 255, 250);
+        with_bottom = 0;
+        frustum(0.0f, 2.0f, 6.3f, 4.0f, 6.3f, 4.0f, 0.0f, -5.0f, -8.8f, 35, 35, 35); /* las manchas */
+        frustum(0.0f, -3.0f, 6.3f, 2.5f, 6.3f, 2.5f, 0.0f, -6.5f, -9.2f, 35, 35, 35);
+        with_bottom = 1;
+        frustum(0.0f, -7.0f, 3.6f, 4.0f, 3.2f, 3.6f, 0.0f, i ? -8.0f : -1.5f, i ? -12.0f : -5.5f, 255, 255, 250);
+        with_bottom = 0;
+        frustum(0.0f, -9.3f, 3.0f, 1.0f, 3.0f, 1.0f, 0.0f, i ? -8.0f : -1.5f, i ? -10.0f : -3.5f, 230, 165, 155);
+        frustum(-1.6f, -6.0f, 1.2f, 0.8f, 0.6f, 0.5f, 0.0f, i ? -11.5f : -5.0f, i ? -13.0f : -6.5f, 225, 215, 190);
+        frustum(1.6f, -6.0f, 1.2f, 0.8f, 0.6f, 0.5f, 0.0f, i ? -11.5f : -5.0f, i ? -13.0f : -6.5f, 225, 215, 190);
+        end_model();
+    }
+
+    begin_model(&deer_shape); /* de cara a -z: patas largas, cuello, cuernas y la cola blanca */
+    for (j = 0; j < 4; j++)
+        frustum(j & 1 ? 1.5f : -1.5f, j & 2 ? 4.0f : -4.0f, 0.9f, 0.9f, 0.8f, 0.8f, 0.0f, 0.0f, -6.5f, 105, 70, 45);
+    with_bottom = 1;
+    frustum(0.0f, 0.0f, 4.0f, 11.0f, 4.0f, 10.0f, 0.0f, -6.0f, -10.5f, 155, 105, 60);
+    with_bottom = 0;
+    frustum(0.0f, 5.4f, 3.0f, 0.6f, 3.0f, 0.6f, 0.0f, -8.0f, -10.0f, 245, 240, 230);
+    frustum(0.0f, -4.5f, 2.2f, 2.6f, 1.6f, 2.0f, -2.0f, -9.0f, -14.5f, 155, 105, 60);
+    with_bottom = 1;
+    frustum(0.0f, -7.8f, 2.2f, 4.2f, 2.0f, 4.0f, 0.0f, -13.5f, -16.0f, 140, 92, 55);
+    with_bottom = 0;
+    frustum(0.0f, -10.0f, 1.4f, 0.4f, 1.4f, 0.4f, 0.0f, -13.8f, -15.0f, 40, 30, 25);
+    for (i = -1; i <= 1; i += 2) { /* las cuernas, con una punta hacia delante; las orejas */
+        frustum(1.0f * i, -6.6f, 0.5f, 0.5f, 0.3f, 0.3f, 2.5f, -16.0f, -22.0f, 215, 195, 155);
+        frustum(1.0f * i, -6.0f, 0.4f, 0.4f, 0.25f, 0.25f, -2.0f, -18.5f, -21.5f, 215, 195, 155);
+        frustum(1.9f * i, -5.8f, 1.4f, 0.4f, 0.4f, 0.3f, 0.0f, -15.0f, -17.0f, 140, 92, 55);
+    }
     end_model();
 
     begin_model(&lighthouse); /* franjas blancas y rojas, galería, linterna y techo */
@@ -1353,6 +1423,7 @@ static void add_prop(float x, float z, float a, float s, float r, const PShape *
     p->r = r;
     p->shape = shape;
     p->kind = kind;
+    p->phase = (int)(rnd() * 1000.0f);
 }
 
 static void build_props(void) {
@@ -1371,11 +1442,17 @@ static void build_props(void) {
                 add_prop(x, z, (float)(int)(rnd() * 4.0f) * PI * 0.5f, 1.0f, 13.0f, &house, PROP_HOUSE);
             else if (c == 'F')
                 add_prop(x, z, 0.0f, 1.0f, 9.0f, &lighthouse, PROP_LIGHTHOUSE);
-            else if (c == 's') /* junto a la carretera, de cara a ella */
+            else if (c == 'V')
+                add_prop(x + (rnd() - 0.5f) * 16.0f, z + (rnd() - 0.5f) * 16.0f, rnd() * 2.0f * PI, 1.0f, 7.0f,
+                    &cow_down, PROP_COW);
+            else if (c == 's' || c == 'E') /* junto a la carretera, de cara a ella */
                 for (d = 0; d < 4; d++)
                     if (is_road(i + step_x[d], j + step_z[d])) {
-                        add_prop(x + step_x[d] * 10.0f, z + step_z[d] * 10.0f, dir_angle[d], 1.0f, 2.0f, &sign,
-                            PROP_SIGN);
+                        if (c == 's')
+                            add_prop(x + step_x[d] * 10.0f, z + step_z[d] * 10.0f, dir_angle[d], 1.0f, 2.0f, &sign,
+                                PROP_SIGN);
+                        else
+                            add_prop(x, z, dir_angle[d], 1.0f, 15.0f, &station, PROP_STATION);
                         break;
                     }
         }
@@ -1422,6 +1499,8 @@ static void reset_race(void) {
     add_vehicle(1, n_path * 13 / 50, 4.0f, &car_yellow, 0);
     add_vehicle(2, n_path * 22 / 50, 3.0f, &truck, 1);
     place_car(0);
+    deer.on = 0;
+    deer.wait = 600;
     state = COUNTDOWN;
     timer = 180;
     race_time = lap_start = best_lap = 0;
@@ -1486,6 +1565,9 @@ static int blocked(float x, float z) {
     }
     for (i = 0; i < MAX_TRAFFIC; i++)
         if (hits_vehicle(&traffic[i], x, z, CAR_R) && absf(car_h - traffic[i].h) < 8.0f) return 1;
+    dx = deer.x - x;
+    dz = deer.z - z;
+    if (deer.on && dx * dx + dz * dz < (5.0f + CAR_R) * (5.0f + CAR_R) && absf(car_h - deer.h) < 8.0f) return 1;
     return 0;
 }
 
@@ -1595,6 +1677,16 @@ static void drive_auto(int *up, int *down, int *steer) {
         if (ahead > 0.0f && ahead < 40.0f && absf(lat) < 6.5f) {
             shift = lat > 0.0f ? -7.0f : 7.0f;
             if (ahead < 18.0f && traffic[n].v < want) want = traffic[n].v;
+        }
+    }
+    if (deer.on) { /* un ciervo en la carretera por delante: para hasta que pase */
+        dx = deer.x - car_x;
+        dz = deer.z - car_z;
+        ahead = dx * fx + dz * fz;
+        lat = -dx * fz + dz * fx;
+        if (ahead > 0.0f && ahead < 90.0f && absf(lat) < ROAD_W) {
+            d = ahead > 22.0f ? mgl_sqrt(2.0f * 0.12f * (ahead - 22.0f)) : 0.0f;
+            if (d < want) want = d;
         }
     }
     road_point(pos_ahead(pos, 24.0f), &tx, &tz);
@@ -1822,7 +1914,7 @@ static float give_way(const Vehicle *t, float want) {
 }
 
 static void update_traffic(void) {
-    float road_a, right, along, pos, heading, want, nx, nz, slow_right = 0.0f;
+    float road_a, right, along, pos, heading, want, nx, nz, slow_right = 0.0f, deer_right;
     Vehicle *t;
     int n, m, i, j, k, road, slow, busy;
     if (state == COUNTDOWN) return;
@@ -1859,6 +1951,8 @@ static void update_traffic(void) {
             if (m != n)
                 want = obstacle(t, pos, right, traffic[m].x, traffic[m].z, traffic[m].h, traffic[m].v, traffic[m].truck, want,
                     &slow, &slow_right);
+        if (deer.on) /* espera a que cruce: no adelanta */
+            want = obstacle(t, pos, right, deer.x, deer.z, deer.h, 0.0f, 0, want, &busy, &deer_right);
         if (slow) { /* por el otro lado del que estorba; si ya iba por ahí, sigue */
             t->pass_lane = slow_right > 0.0f ? -LANE : LANE;
             if (!t->passing) t->passing = 120;
@@ -1972,6 +2066,8 @@ static void load_level(int n) {
     level_shown = 180;
 }
 
+static void update_deer(void);
+
 static void update(void) {
     int c = keyIsDown('c'), r = keyIsDown('r'), space = keyIsDown(' '), less, more;
     if (keyIsDown('g') && !g_was_down) debug = (debug + 1) % 3;
@@ -2030,9 +2126,46 @@ static void update(void) {
     if (state == RACE) race_time++;
     update_car();
     update_traffic();
+    update_deer();
     if (sinking && --sinking == 0) place_car(progress);
     if (state == RACE) update_progress();
     update_camera();
+}
+
+static int visible(float x, float z, float r);
+
+/* El ciervo: cada 15 a 35 s, si hay una recta por delante con tierra a los dos lados,
+   la cruza de lado a lado al trote y se va por donde no se le vea. */
+static void update_deer(void) {
+    float x0, z0, x1, z1;
+    int k, side, road;
+    if (!deer.on) {
+        if (state != RACE || --deer.wait > 0) return;
+        deer.wait = 30; /* si no hay sitio, otra vez dentro de poco */
+        k = (progress + 4 + (int)(rnd() * 4.0f)) % n_path;
+        if (!k || path_kind[k] != STRAIGHT || path_cross[k] || path_ramp[k] || path_hin[k] != path_hout[k]) return;
+        side = rnd() < 0.5f ? -1 : 1;
+        piece_point(k, 0.5f, side * 34.0f, &x0, &z0);
+        piece_point(k, 0.5f, -side * 34.0f, &x1, &z1);
+        if (surface(x0, z0, 1000.0f, &road) < WATER_H + 2.0f || surface(x1, z1, 1000.0f, &road) < WATER_H + 2.0f ||
+            absf(surface(x0, z0, 1000.0f, &road) - path_hin[k]) > 6.0f ||
+            absf(surface(x1, z1, 1000.0f, &road) - path_hin[k]) > 6.0f)
+            return;
+        deer.on = 1;
+        deer.x = x0;
+        deer.z = z0;
+        deer.a = atan2_(-(x1 - x0), -(z1 - z0)); /* de cara a donde va */
+        deer.left = 68.0f + 60.0f;
+    }
+    deer.x += dir_x(deer.a) * 0.9f;
+    deer.z += dir_z(deer.a) * 0.9f;
+    deer.left -= 0.9f;
+    deer.h = surface(deer.x, deer.z, deer.h + 4.0f, &road);
+    if ((deer.left < 60.0f && !visible(deer.x, deer.z, 15.0f)) || deer.left < -400.0f ||
+        deer.h < WATER_H) { /* ya cruzó y no se le ve: se ha ido */
+        deer.on = 0;
+        deer.wait = 900 + (int)(rnd() * 1200.0f);
+    }
 }
 
 /* ---- Dibujo ---- */
@@ -2087,6 +2220,12 @@ static void draw_world(void) {
               (p->x - cam_x) * (p->x - cam_x) + (p->z - cam_z) * (p->z - cam_z) > LOD_FAR * LOD_FAR;
         pushMatrix();
         translate(p->x, -p->h, p->z);
+        if (p->kind == PROP_COW) { /* pasta y de vez en cuando levanta la cabeza; se va girando */
+            rotateY(p->a + 0.6f * mgl_sin((anim + p->phase) * 0.004f));
+            shape((anim + p->phase) % 500 < 380 ? &cow_down : &cow_up);
+            popMatrix();
+            continue;
+        }
         rotateY(p->a);
         scale(p->s);
         shape(!far ? p->shape : p->shape == &pine ? &pine_far : &tree_far);
@@ -2102,6 +2241,13 @@ static void draw_world(void) {
             vertex(-14.0f, -52.0f, 160.0f);
             endShape();
         }
+        popMatrix();
+    }
+    if (deer.on && visible(deer.x, deer.z, 15.0f)) { /* al trote: da saltitos */
+        pushMatrix();
+        translate(deer.x, -deer.h - 1.5f * absf(mgl_sin(anim * 0.25f)), deer.z);
+        rotateY(deer.a);
+        shape(&deer_shape);
         popMatrix();
     }
     for (i = 0; i < MAX_TRAFFIC; i++) {

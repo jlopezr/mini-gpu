@@ -212,11 +212,18 @@ el desnivel. Sale sola.
 | `t` | árbol |
 | `H` | casa |
 | `s` | señal: tiene que estar **junto a una casilla con carretera**, y la mira |
+| `E` | gasolinera: marquesina con dos surtidores, la tienda detrás y el cartel. Como la señal, **junto a una casilla con carretera** (mejor una recta), de cara a ella; ocupa su casilla entera |
+| `V` | vaca: pasta, levanta la cabeza de vez en cuando y se va girando |
 | `F` | el faro, con su haz girando |
 | `.` | nada |
 
 No pongas nada sobre la carretera ni en el agua. Cada árbol sale un poco desplazado, girado y de un tamaño
-al azar, siempre igual en cada nivel. Los árboles, las casas y el faro son obstáculos.
+al azar, siempre igual en cada nivel, y cada vaca, igual. Los árboles, las casas, la gasolinera, las
+vacas y el faro son obstáculos.
+
+Los **ciervos** no van en el mapa: cada 15 a 35 segundos, uno cruza al trote una recta que el coche
+tiene por delante, si hay tierra llana a los dos lados. Se choca con ellos; el tráfico y el piloto
+automático frenan hasta que pasan.
 
 Como mucho 200 objetos por nivel (`MAX_PROPS`).
 
