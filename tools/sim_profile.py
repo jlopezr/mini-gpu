@@ -42,7 +42,8 @@ from pathlib import Path
 from tools.debug_source import from_program
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE_DIRS = (ROOT / "t.tests" / "inc", ROOT / "1.isa" / "runtime")
+sys.path.insert(0, str(ROOT / "1.isa"))
+from runtime_dirs import ASM_INCLUDE_DIRS as INCLUDE_DIRS  # noqa: E402
 
 OPCODE_JAL, OPCODE_JALR, OPCODE_JR = 0x2C, 0x2D, 0x2E
 KERNEL_PREFIX = "__kernel_"

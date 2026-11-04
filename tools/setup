@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Prepara el entorno: dependencias de requirements.txt y, si hay `uv`, PyPy para el simulador.
+
+Se ejecuta con el Python del entorno virtual activo (es el que recibe los paquetes). PyPy es opcional: sin él
+el simulador va con CPython, de 4 a 10 veces más lento, y el Makefile lo detecta solo (`uv python find pypy`).
+"""
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PYPY = "pypy@3.11"
+
+
+def run(*command: str) -> int:
+    print("$", " ".join(command), flush=True)
+    return subprocess.call(command)
+
+
+def has_pypy(uv: str) -> bool:
+    done = subprocess.run([uv, "python", "find", "pypy"], capture_output=True, text=True)
+    return done.returncode == 0
+
+
+def main() -> int:
+    if run(sys.executable, "-m", "pip", "install", "-r", str(ROOT / "requirements.txt")) != 0:
+        return 1
+    uv = shutil.which("uv")
+    if uv is None:
+        print("aviso: sin `uv` no se instala PyPy; el simulador irá con CPython (más lento).", file=sys.stderr)
+    elif has_pypy(uv):
+        print("PyPy ya instalado.")
+    elif run(uv, "python", "install", PYPY) != 0:
+        print("aviso: no se pudo instalar PyPy; el simulador irá con CPython.", file=sys.stderr)
+    print("Falta `apio install` para la toolchain FPGA, si vas a sintetizar.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

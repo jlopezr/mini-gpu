@@ -120,9 +120,12 @@ Preparación habitual en PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python tools/setup
 apio install
 ```
+
+`tools/setup` instala `requirements.txt` y, si `uv` está disponible, PyPy (`uv python install pypy@3.11`), que
+acelera el simulador.
 
 ## Primeros pasos
 
