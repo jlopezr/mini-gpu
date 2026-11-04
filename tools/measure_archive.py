@@ -59,8 +59,9 @@ def matching_build(prototype_dir):
     con otro RTL el Fmax no es el de lo que se ha medido.
     """
     current = synthesizable_source_hashes(prototype_dir)
-    for metadata_path in sorted((prototype_dir / 'reports').glob('*/metadata.json'),
-                                reverse=True):
+    from tools.build_report import apio_report_metadata
+
+    for metadata_path in apio_report_metadata(prototype_dir):
         folder = metadata_path.parent
         try:
             metadata = json.loads(metadata_path.read_text(encoding='utf-8'))

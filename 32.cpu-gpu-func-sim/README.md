@@ -20,6 +20,61 @@ Las clases lentas (`@slow` en el test) simulan varios fotogramas de un demo en s
 `LifeRaceStripTest`, `CRotateTest`, `CPlaneRaceTest`). Por defecto salen como omitidas; hay que correrlas antes de dar por
 bueno un cambio en el compilador, en `mini-opt` o en un demo.
 
+## GPU ociosa y rendimiento del anfitrión
+
+El planificador conserva el reparto CPU/GPU por ronda y comprueba los límites
+antes de cada instrucción. Cuando no hay warps vivos, `GpuUnit.halted` usa
+`WARP_LIVE` y `GpuUnit.step()` devuelve sin entrar en la máquina SIMT. La misma
+consulta barata se usa al comprobar el límite GPU y el fin de ejecución.
+`HALT` y los errores también detienen la GPU; una espera en barrera con warps
+vivos conserva la detección de `stalled` cuando la CPU ya ha parado, y no se
+considera GPU ociosa.
+
+Medida local con PyPy 3.11, sin ventana ni profiling, del binario MiniGL
+`39.mini-gl/build/minigpu/3d/boxes.bin`, hasta 12 swaps:
+
+| | Antes | GPU ociosa optimizada |
+|---|---:|---:|
+| Tiempo de pared, dos ejecuciones | 13,007 / 13,300 s | 4,580 / 4,580 s |
+| Instrucciones CPU, cada ejecución | 42 190 000 | 42 190 000 |
+| Instrucciones GPU | 0 | 0 |
+
+Unas **2,87 veces más rápido** (65% menos tiempo) en esta medición, incluido
+el arranque y calentamiento del JIT. Los framebuffers finales de ambos ensayos
+son idénticos. No es una medida de la velocidad de la FPGA ni incluye ventana.
+Regresión: los 150 tests, incluidos los lentos, pasan con CPython mediante
+`RUN_SLOW=1 PYTHON=python3 tools/test --prototype 32 --full`. Se compararon
+también trazas, registros, RAM y contadores con la implementación anterior en
+el programa `launch`, con repartos CPU/GPU 1:1, 5:1, 1:5 y 3:7: idénticos.
+Para reproducir, desde la raíz del repositorio y con el binario ya compilado:
+
+```sh
+"$(uv python find pypy)" tools/sim-sys 39.mini-gl/build/minigpu/3d/boxes.bin \
+    --halt-after-swaps 12 --run-limit 1000000000 --frame-output /tmp/boxes.bin
+```
+
+## Backend Codon
+
+Si Codon está instalado, `sim-sys` ejecuta CPU y GPU SIMT en un motor nativo
+compilado con Codon a partir de `cpu_gpu_core.py` y de los núcleos de 2 y 11,
+**los mismos ficheros** que usa Python: el modelo está en `cpu_gpu_core.py` y
+`cpu_gpu_sim.py` añade la línea de órdenes. Es `--backend auto`, el valor por
+defecto; sin Codon (en Windows, siempre) usa Python. Vídeo, entrada, serie y
+ventana son los periféricos Python; traza y profiling usan siempre el motor Python.
+
+```sh
+sim-sys t.tests/cases-cpu-gpu/launch/launch.asm                  # Codon si está
+sim-sys t.tests/cases-cpu-gpu/launch/launch.asm --backend python # forzar Python
+RUN_CODON=1 PYTHON=python3 tools/test --prototype 32 --quick
+```
+
+Requiere Codon y una biblioteca compartida de CPython. La primera ejecución
+compila el motor; las siguientes reutilizan la caché de `_build/codon-engine/`.
+Al tocar `cpu_gpu_core.py` hay que respetar lo que Codon no admite
+([`tools/codon/LIMITACIONES.md`](../tools/codon/LIMITACIONES.md)); las pruebas
+con `RUN_CODON=1` lo comprueban. Detalles y mediciones en
+[`tools/codon/README.md`](../tools/codon/README.md).
+
 ## Programas
 
 Los programas que corren en este simulador (y los de la placa 36) están en
@@ -180,8 +235,9 @@ progreso o entrada inválida.
 - **Accesos de 8 y 16 bits en la GPU:** el simulador de `11` los tiene (se
   retroportaron de la CPU y del modelo de ciclos de la 25), así que los kernels de
   este simulador pueden usar `LOADB`/`LOADUB`/`STOREB`/`LOADH`/`LOADUH`/`STOREH`
-  sobre RAM. **El RTL de la GPU (29) todavía no los tiene** y declara un perfil de
-  ISA sin ese bit: un kernel que los use corre aquí y no en la placa hasta que se
-  añadan a la LSU. Contra MMIO son error, como manda §4.1.
+  sobre RAM. El RTL también: el SM de la 29, y con él las placas 36 y 37, los
+  decodifica y la LSU escribe con máscara por byte (capability `subword_memory`).
+  Las GPU anteriores (12, 14, 17, 22) no los tienen. Contra MMIO son error, como
+  manda §4.1.
 - La GPU de `11` no tiene `JAL`/`JR`; el kernel solo puede usar su ISA, y la CPU
   la suya.

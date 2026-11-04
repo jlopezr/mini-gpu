@@ -219,8 +219,6 @@ def render_py(valores: dict[str, int],
         + ". No editar.",
         '"""',
         "",
-        "from __future__ import annotations",
-        "",
     ]
     for nombre, valor in valores.items():
         lineas.append(f"{nombre} = 0x{valor:08X}")

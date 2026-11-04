@@ -22,9 +22,8 @@ de un bloque; un registro definido en otro bloque del bucle que no sea la variab
 Un bucle con llamadas, o con mas de una arista de vuelta, no se toca."""
 from __future__ import annotations
 
-import copy
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..dead import remove_dead
 from ..flow import Block, build_cfg, dominators, live_in_blocks, liveness, natural_loops, predecessors
@@ -52,7 +51,7 @@ class Loop:
     dom: list[set[int]]                     # dominadores de cada bloque
 
 
-def analyze(blocks: list[Block], header: int, body: set[int]) -> Loop | None:
+def analyze(blocks: list[Block], header: int, body: set[int], dom: list[set[int]]) -> Loop | None:
     pre = preheader(blocks, header, body)
     latches = [b for b in body if header in blocks[b].succ]
     if pre is None or len(latches) != 1:
@@ -85,7 +84,7 @@ def analyze(blocks: list[Block], header: int, body: set[int]) -> Loop | None:
             step = second if r == first else first
             if step and step != r and step not in written:      # el paso es otro registro que el bucle no escribe
                 ivs[r] = ("R", step)
-    return Loop(header, body, pre.index, latch, written, ivs, dominators(blocks))
+    return Loop(header, body, pre.index, latch, written, ivs, dom)
 
 
 def constant(blocks: list[Block], loop: Loop, b: int, j: int, r: int) -> int | None:
@@ -324,12 +323,24 @@ def weight(blocks: list[Block], loop: Loop, dom_latch: set[int]) -> int:
                for b in loop.body)
 
 
-def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[int], stats: dict) -> None:
+def trial_copy(blocks: list[Block], members: list) -> list[Block]:
+    """Una copia de `blocks` para probar `apply`: listas de lineas nuevas, y copia solo de los accesos que cambia
+    (las demas lineas se comparten: `apply` y `remove_dead` las insertan o quitan, no las modifican)."""
+    trial = [Block(block.index, list(block.lines), block.succ) for block in blocks]
+    for b, position, _ in members:
+        line = trial[b].lines[position]
+        trial[b].lines[position] = replace(line, args=list(line.args))
+    return trial
+
+
+def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[int], dom: list[set[int]],
+                stats: dict) -> None:
+    """`dom` vale para todo el pase: solo se insertan y borran instrucciones, el grafo no cambia."""
     created: set[int] = set()
     rejected: set = set()
     steps: dict[tuple[int, int], int] = {}                  # (registro del paso, coeficiente) -> registro con el producto
     while True:
-        loop = analyze(blocks, header, body)
+        loop = analyze(blocks, header, body, dom)
         if loop is None or not loop.ivs:
             return
         groups = collect(blocks, loop, created)
@@ -337,10 +348,10 @@ def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[
         free = free_registers(blocks, body, header, allowed, live_in)
         if not free:
             return
-        dom_latch = dominators(blocks)[loop.latch] & body
+        dom_latch = dom[loop.latch] & body
         chosen = None
         for key in sorted((k for k in groups if k not in rejected), key=lambda k: (-len(groups[k]), k)):
-            trial = copy.deepcopy(blocks)
+            trial = trial_copy(blocks, groups[key])
             scratch = free[1] if len(free) > 1 else None
             spare = free[2] if len(free) > 2 else None
             outcome = apply(trial, loop, key, groups[key], free[0], scratch, spare, dict(steps))
@@ -373,9 +384,10 @@ def pass_strength(unit: Unit, stats: dict) -> None:
         before = stats.get("strength.pointers", 0)
         kernel = function.name.startswith(KERNEL_PREFIX)
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
-        loops = natural_loops(blocks, dominators(blocks))
+        dom = dominators(blocks)
+        loops = natural_loops(blocks, dom)
         for header, body in sorted(loops.items(), key=lambda item: (len(item[1]), item[0])):
-            reduce_loop(blocks, header, body, allowed, stats)
+            reduce_loop(blocks, header, body, allowed, dom, stats)
         if stats.get("strength.pointers", 0) > before:
             stats["strength.functions"] = stats.get("strength.functions", 0) + 1
             function.body = [line for block in blocks for line in block.lines]

@@ -1,6 +1,19 @@
 {
     "python.analysis.extraPaths": ["1.isa"],
     "markdownlint.ignore": ["u.lcc/src/**"],
+    "C_Cpp.default.compileCommands": [
+        "${workspaceFolder}/39.mini-gl/compile_commands.json"
+    ],
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modificationsIfAvailable"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "modificationsIfAvailable"
+    },
     "chat.tools.terminal.autoApprove": {
         "/^python x\\.tests\\\\run_tests\\.py --help$/": {
             "approve": true,

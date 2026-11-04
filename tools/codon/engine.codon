@@ -1,0 +1,109 @@
+# Motor Codon de `sim-sys --backend codon`.
+#
+# Compila los núcleos de verdad (minicpu_core, minigpu_core y cpu_gpu_core, sin
+# cambios: el backend los copia tal cual) y los ejecuta con `CpuGpuSystem.run`, el
+# mismo planificador que en Python. Lo que no se compila lo pone `host.py`: la
+# línea de órdenes, el programa, los periféricos (a través de los proxies de
+# `tools/sim_devices.codon`) y el informe final.
+import sys
+from python import host as pyhost
+from cpu_gpu_core import CpuGpuSystem, InstructionLimitExceeded
+from cpu_gpu_core import MAX_LANES
+from minigpu_core import SimulationError
+from tools.sim_devices import Bridge, InputDevice, SerialDevice, VideoDevice
+
+
+def limit(limits, index: int) -> Optional[int]:
+    """Uno de los tres límites de `host.limits()`, que da (hay límite, valor)."""
+    present, value = limits[index]
+    return int(value) if bool(present) else None
+
+
+def export(h, s: CpuGpuSystem) -> None:
+    """Copia en el espejo Python el estado que lee el informe (`finish_run`).
+
+    Es la única lista de campos del motor. `tools/codon_backend.snapshot`
+    compara el estado completo del espejo con el de Python, así que un campo
+    que falte aquí lo detectan las pruebas (RUN_CODON=1).
+    """
+    c = s.cpu
+    h.set("system", 0, "cpu_instructions", s.cpu_instructions)
+    h.set("cpu", 0, "pc", c.pc)
+    h.set("cpu", 0, "regs", c.regs)
+    h.set("cpu", 0, "halted", c.halted)
+    h.set("cpu", 0, "error", c.error)
+    h.set("cpu", 0, "error_code", c.error_code)
+    h.set("cpu", 0, "error_pc", c.error_pc)
+    h.set("cpu", 0, "instructions_executed", c.instructions_executed)
+    g = s.gpu
+    h.set("gpu", 0, "live", g.live)
+    h.set("gpu", 0, "done", g.done)
+    h.set("gpu", 0, "retired", g.retired)
+    h.set("gpu", 0, "context_warp", g.context_warp)
+    h.set("gpu", 0, "context_lane", g.context_lane)
+    h.set("gpu", 0, "descriptors", g.descriptors)
+    h.set("gpu.system", 0, "peripheral_halted", g.system.peripheral_halted)
+    fault = g.system.fault
+    if fault is None:
+        h.set("gpu.system", 0, "fault", None)
+    else:
+        h.set("gpu.system", 0, "fault",
+              (fault.code, fault.pc, fault.warp_id, fault.core_id, fault.address))
+    h.set("sm", 0, "next_warp", g.system.streaming_multiprocessor.next_warp)
+    for number, w in enumerate(g.warps):
+        h.set("warp", number, "pc", w.pc)
+        h.set("warp", number, "active_mask", w.active_mask)
+        h.set("warp", number, "live_mask", w.live_mask)
+        h.set("warp", number, "state", w.state)
+        h.set("warp", number, "workgroup_id", w.workgroup_id)
+        h.set("warp", number, "logical_warp_id", w.logical_warp_id)
+        h.set("warp", number, "arg", w.arg)
+        h.set("warp", number, "barrier_generation", w.barrier_generation)
+        h.set("warp", number, "barrier_key", w.barrier_key)
+        h.set("warp", number, "instructions_executed", w.instructions_executed)
+        h.set("warp", number, "region_stack",
+              [(r.ssy_pc, r.join_pc, r.entry_mask, r.path_base) for r in w.region_stack])
+        h.set("warp", number, "path_stack",
+              [(p.pending_pc, p.pending_mask) for p in w.path_stack])
+        for lane in w.processors:
+            h.set("lane", number * MAX_LANES + lane.core_id, "regs", lane.regs)
+
+
+h = pyhost.create(sys.argv[1:])
+if not bool(pyhost.valid(h)):
+    sys.exit(2)
+
+bridge = Bridge(h)
+video: Optional[VideoDevice] = None
+serial: Optional[SerialDevice] = None
+input_device: Optional[InputDevice] = None
+if bool(h.has_device("video")):
+    video = VideoDevice(h.device("video"), bridge)
+if bool(h.has_device("serial")):
+    serial = SerialDevice(h.device("serial"), bridge)
+if bool(h.has_device("input")):
+    input_device = InputDevice(h.device("input"), bridge)
+
+system = CpuGpuSystem(int(h.memory_size()), int(h.num_warps()), int(h.warp_size()),
+                      cpu_steps=int(h.cpu_steps()), gpu_steps=int(h.gpu_steps()),
+                      video=video, serial=serial, input_device=input_device)
+bridge.machine = system
+h.bind_memory(int(system.memory._ptr), len(system.memory))
+system.cpu.pc = int(h.start_pc())
+
+limits = h.limits()
+status = ""
+limited = ""
+try:
+    status = system.run(limit(limits, 0), max_cpu_instructions=limit(limits, 1),
+                        max_gpu_instructions=limit(limits, 2))
+except InstructionLimitExceeded as exc:
+    limited = exc.message
+except SimulationError as exc:
+    limited = exc.message
+except ValueError as exc:
+    h.fail(exc.message)
+    sys.exit(int(h.result()))
+export(h, system)
+h.finish(status, limited)
+sys.exit(int(h.result()))

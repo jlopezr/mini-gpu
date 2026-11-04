@@ -1,13 +1,16 @@
 """Compila un programa en C con CPU y GPU a una imagen para el simulador (y la placa).
 
     mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--outdir DIR] [-I DIR]...
-                       [--data ETIQUETA=FICHERO]... [--board] [--load [PROTOTIPO]] [--no-run]
+                       [-D NOMBRE[=VALOR]]... [--data ETIQUETA=FICHERO]... [--board] [--load [PROTOTIPO]] [--no-run]
 
 Se compila lo que se pide y nada mas. Cada .c pasa por mini-lcc --no-crt; luego una sola llamada a mini-opt con
 todos los .s, que los junta en `<programa>.opt.s` y optimiza el programa entero (intrinsecos, kernels...). Los demas
 ficheros (.s, .asm, .inc: el runtime de la GPU `runtime/src/gpu_runtime.inc` y `bench.inc`, ensamblador a mano) no
 se optimizan: se `.include`n tal cual detras del codigo, en el orden de la linea de ordenes, y sus simbolos cuentan
-como usados desde fuera. `gpu.c` (que lleva `gpu_launch` y la pila de los kernels, `__gpu_stack`) es un .c mas.
+como usados desde fuera. `gpu.c` (que lleva `gpu_launch` y la pila de los kernels, `__gpu_stack`) y `string.c` (la biblioteca C minima,
+`runtime/src/string.c`) son .c como los demas: se piden.
+Los `static` de cada unidad pasan a `<nombre>.<unidad>` (`scope_statics`): dos unidades pueden tener el mismo.
+-D define una macro en todas las unidades; mini-lcc ya define __LCC__ y __MINIGPU__.
 Lo unico que se pone solo es el arranque (runtime/src/crt0.s), primero, cuando hay algun .c. Todo se ensambla con
 mini-asm y queda en `--outdir`.
 Con --board: el runtime que lanza con RUN (la 36 no tiene WARP_START) y los ciclos de CPU reales en
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -50,13 +54,103 @@ def run(*command: str) -> None:
         raise BuildError(f"{' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
 
 
-def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = ()) -> Path:
+def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines: tuple[str, ...] = ()) -> Path:
     """C -> .s sin arranque."""
     outdir.mkdir(parents=True, exist_ok=True)
     plain = outdir / f"{source.stem}.s"
     flags = [arg for folder in (*C_INCLUDE_DIRS, *includes) for arg in ("-I", folder)]
+    flags += [arg for define in defines for arg in ("-D", define)]
     run(TOOLS / "mini-lcc", source, "--no-crt", *flags, "-o", plain)
+    scope_statics(plain)
     return plain
+
+
+SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
+LABEL_RE = re.compile(r"^\s*([A-Za-z_.$@][A-Za-z0-9_.$@]*):")
+COMMON_RE = re.compile(r"^\s*\.(?:l?comm)\s+([A-Za-z_.$@][A-Za-z0-9_.$@]*)", re.IGNORECASE)
+COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$")
+
+
+def scope_statics(plain: Path) -> None:
+    """Los `static` de C de una unidad pasan a `<nombre>.<unidad>`.
+
+    El ensamblador junta los `.s` con `.include` y solo hace privadas de cada fichero las `L.n` de lcc: dos
+    unidades con un `static` del mismo nombre (`min2`, `weight`...) chocarian, o en el caso de un `.comm`, se
+    fundirian sin aviso. En C, lo que lcc no marca con `.globl` es `static`, y por tanto de la unidad: se le pone
+    el nombre de la unidad, que es unico (`build` lo comprueba). El ensamblador escrito a mano no pasa por aqui:
+    alli una etiqueta sin `.globl` si se usa desde otros ficheros."""
+    lines = plain.read_text(encoding="utf-8").splitlines()
+    exported, defined = set(), set()
+    for line in lines:
+        code = line.split(";", 1)[0]
+        words = code.split()
+        if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+            exported.update(name.strip() for name in " ".join(words[1:]).split(","))
+        match = LABEL_RE.match(code) or COMMON_RE.match(code)
+        if match and not COMPILER_LOCAL_RE.match(match.group(1)):
+            defined.add(match.group(1))
+    private = defined - exported
+    if not private:
+        return
+    tag = re.sub(r"[^A-Za-z0-9_]", "_", plain.stem)
+
+    def rename(text: str) -> str:
+        return SYMBOL_RE.sub(lambda m: f"{m.group(0)}.{tag}" if m.group(0) in private else m.group(0), text)
+
+    out = []
+    for line in lines:
+        code, sep, comment = line.partition(";")
+        label = LABEL_RE.match(code)
+        head = ""
+        if label:                                       # `nombre:` y lo que siga en la linea
+            head, code = rename(code[:label.end()]), code[label.end():]
+        stripped = code.lstrip()
+        if stripped:                                    # la instruccion o directiva no se toca; sus operandos si
+            word = stripped.split(None, 1)[0]
+            start = len(code) - len(stripped) + len(word)
+            code = code[:start] + rename(code[start:])
+        out.append(head + code + sep + comment)
+    plain.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def share_runtime(plains: list[Path]) -> None:
+    """Una sola copia del runtime del compilador entre todas las unidades.
+
+    mini-lcc pega al final de cada `.s` las rutinas de runtime que usa (soft-float, 64 bits...) con `.globl`:
+    con dos unidades que usan `float`, `__mulsf3` quedaria definido dos veces. Se queda la primera definicion;
+    en las demas unidades la etiqueta pasa a `<nombre>.dup.<unidad>`, sin `.globl`, y las llamadas de esa
+    unidad van a la primera. La copia ya no la nombra nadie y `mini-opt --whole-program` la borra. Solo los
+    nombres que empiezan por `__`, reservados a la implementacion en C: dos unidades con la misma funcion de
+    usuario siguen siendo un error del ensamblador."""
+    seen: set[str] = set()
+    for plain in plains:
+        lines = plain.read_text(encoding="utf-8").splitlines()
+        exported = set()
+        for line in lines:
+            words = line.split(";", 1)[0].split()
+            if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+                exported.update(name.strip() for name in " ".join(words[1:]).split(","))
+        runtime = {name for name in exported if name.startswith("__")}
+        repeated = runtime & seen
+        seen |= runtime
+        if not repeated:
+            continue
+        tag = re.sub(r"[^A-Za-z0-9_]", "_", plain.stem)
+        out = []
+        for line in lines:
+            code = line.split(";", 1)[0]
+            words = code.split()
+            if len(words) >= 2 and words[0].lower() in (".globl", ".global"):
+                names = [name.strip() for name in " ".join(words[1:]).split(",")]
+                kept = [name for name in names if name not in repeated]
+                if kept:
+                    out.append(f"{words[0]} {', '.join(kept)}")
+                continue
+            label = LABEL_RE.match(code)
+            if label and label.group(1) in repeated:
+                line = line.replace(f"{label.group(1)}:", f"{label.group(1)}.dup.{tag}:", 1)
+            out.append(line)
+        plain.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def optimize_s(plains: list[Path], foreign: list[Path], optimized: Path) -> Path:
@@ -84,7 +178,8 @@ def wrapper_path(program: Path, board: bool = False, outdir: Path | None = None)
 
 def build(program: Path, output: Path | None = None, board: bool = False,
           outdir: Path | None = None, includes: tuple[Path, ...] = (),
-          data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = ()) -> Path:
+          data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = (),
+          defines: tuple[str, ...] = ()) -> Path:
     """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo. `program` da el nombre a la
     imagen y suele llevar `main`. `sources`: el resto de ficheros, en orden: los .c se compilan y optimizan
     juntos, los demas (.s, .asm, .inc) se incluyen sin tocar tras el codigo. Con algun .c se pone el arranque."""
@@ -101,7 +196,8 @@ def build(program: Path, output: Path | None = None, board: bool = False,
     startup = [CRT0] if units else []
     compiled = []
     if units:
-        plains = [lower_c(unit, outdir, includes) for unit in units]
+        plains = [lower_c(unit, outdir, includes, defines) for unit in units]
+        share_runtime(plains)
         compiled = [optimize_s(plains, startup + by_hand, outdir / f"{program.stem}.opt.s")]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
     wrapper = wrapper_path(program, board, outdir)
@@ -133,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--outdir", type=Path, help=f"carpeta de los intermedios (por defecto {DEFAULT_OUTDIR})")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
                         help="carpeta extra para #include (repetible); runtime/include va siempre")
+    parser.add_argument("-D", dest="defines", action="append", default=[], metavar="NOMBRE[=VALOR]",
+                        help="define una macro en todas las unidades (repetible)")
     parser.add_argument("--data", action="append", type=parse_data, default=[], metavar="ETIQUETA=FICHERO",
                         help="pega un binario tras el codigo con esa etiqueta (repetible)")
     parser.add_argument("--board", action="store_true", help="para la placa 36 (RUN y ciclos reales)")
@@ -143,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     board = args.board or args.load is not None
     try:
         out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data),
-                    tuple(args.sources))
+                    tuple(args.sources), tuple(args.defines))
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1

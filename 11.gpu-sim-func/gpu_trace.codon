@@ -1,0 +1,23 @@
+# Gemelo Codon de `gpu_trace.py`: la traza no existe en el motor compilado.
+#
+# El backend Codon rechaza --trace y usa el motor Python, así que `system.trace`
+# es siempre None aquí. Estas clases solo dan nombre y forma a lo que el núcleo
+# menciona (ver tools/codon/LIMITACIONES.md, «Lo que se queda en Python»).
+
+
+class TraceEvent:
+    def __init__(self, warp: int, pc: int, mask: int, live: int, word: Optional[int],
+                 next_pc: int, outcome: str, details: tuple = ()):
+        pass
+
+
+class TextTrace:
+    detail: bool
+    recording: bool
+
+    def __init__(self, stream, detail: bool = False, limit: Optional[int] = None):
+        self.detail = detail
+        self.recording = False
+
+    def __call__(self, event: TraceEvent) -> None:
+        pass

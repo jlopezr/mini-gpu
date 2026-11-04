@@ -9,15 +9,22 @@ LABEL_RE = re.compile(r"^([A-Za-z_.$@][A-Za-z0-9_.$@]*):\s*(.*)$")
 # `runtime/gen_softfloat.py` renombra las `L.n` de los bloques embebidos a
 # `__sf.n` para que no choquen con las del programa. Siguen siendo etiquetas de
 # bloque, no comienzos de funcion: separarlas rompe el CFG y permite que DCE
-# borre los valores que llegan a esos bloques.
-COMPILER_LOCAL_RE = re.compile(r"^(?:L|__sf)\.\d+$|^@")
+# borre los valores que llegan a esos bloques. Las `__inl$...` del pase `marks`
+# tampoco: marcan codigo expandido dentro de una funcion (al releer un `.opt.s`).
+# build-c da a las `__sf.n` el sufijo de su unidad (`__sf.n.<unidad>`, ver `scope_statics`): siguen siendo
+# de bloque.
+# Las `__sfa.<...>` son las del runtime escrito a mano (u.lcc/runtime/softfloat_mini.s), tambien de bloque.
+COMPILER_LOCAL_RE = re.compile(r"^L\.\d+$|^__sf\.\d+(?:\.\w+)?$|^__sfa\.[\w.]+$|^@|^__inl\$|^__ssy_")
 
 SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 
 # Un hecho que lcc sabe y el `.s` ya no dice, en un comentario (el ensamblador no lo ve):
 #     ; @miniopt volatile NOMBRE      a NOMBRE no se le puede ahorrar ninguna lectura
 #     ; @miniopt const NOMBRE         nadie escribe NOMBRE (escribir un objeto const es comportamiento indefinido)
-FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile|const)\s+(\S+)\s*$")
+#     ; @miniopt leafcall NOMBRE      un `JAL` a NOMBRE solo escribe R1-R6 (y el enlace): rutina de runtime escrita
+#                                     a mano, sin pila (u.lcc/runtime/softfloat_mini.s); quien la llama deja vivos
+#                                     sus temporales R7-R15 a traves de la llamada
+FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile|const|leafcall)\s+(\S+)\s*$")
 
 class OptError(ValueError):
     """Entrada mala (un intrinseco mal usado...)."""
@@ -31,6 +38,10 @@ class Line:
     op: str = ""                    # mnemonico en mayusculas (instr)
     args: list[str] = field(default_factory=list)
     name: str = ""                  # etiqueta (label)
+    # De que funciones expandidas viene (`inline`, `kernelcalls`), de fuera a dentro; `marks` lo pasa a etiquetas
+    # para el perfil. () es de la propia funcion (lo pone `parse_line`); None, una linea que ha creado un pase:
+    # `marks` le da el de sus vecinas.
+    origin: tuple[str, ...] | None = field(default=None, compare=False)
 
     def render(self) -> str:
         if self.kind == "label":
@@ -47,16 +58,16 @@ def parse_line(raw: str) -> list[Line]:
     out: list[Line] = []
     match = LABEL_RE.match(text)
     if match and not text.startswith("."):
-        out.append(Line("label", "", name=match.group(1)))
+        out.append(Line("label", "", name=match.group(1), origin=()))
         text = match.group(2).strip()
         if not text:
             return out
     if text.startswith("."):
-        out.append(Line("directive", text))
+        out.append(Line("directive", text, origin=()))
         return out
     op, _, rest = text.partition(" ")
     args = [a.strip() for a in rest.split(",")] if rest.strip() else []
-    out.append(Line("instr", text, op=op.upper(), args=args))
+    out.append(Line("instr", text, op=op.upper(), args=args, origin=()))
     return out
 
 
@@ -75,6 +86,12 @@ class Function:
         de `defs_uses()` no es seguro sin metadatos específicos.
         """
         if self.name.startswith("__mini_"):
+            return True
+        # El runtime escrito a mano (u.lcc/runtime/softfloat_mini.s): lo declarado `leafcall` y sus bloques
+        # privados `__sfa*`. Se encadenan con `BRA` y dejan valores en R5-R6 de un bloque a otro, y el modelo
+        # de una funcion C no lo sabe. build-c llama `<nombre>.dup.<unidad>` a las copias repetidas.
+        from .isa import LEAF_CALLS
+        if self.name.startswith("__sfa") or self.name.split(".dup.", 1)[0] in LEAF_CALLS:
             return True
         for line in self.body:
             if (line.kind == "instr" and line.op == "JR" and line.args
@@ -133,7 +150,11 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
     for raw in source.splitlines():
         fact = FACT_RE.match(raw)
         if fact:
-            (unit.volatile if fact.group(1) == "volatile" else unit.const).add(fact.group(2))
+            if fact.group(1) == "leafcall":
+                from .isa import declare_leaf_call
+                declare_leaf_call(fact.group(2))
+            else:
+                (unit.volatile if fact.group(1) == "volatile" else unit.const).add(fact.group(2))
             continue
         for line in parse_line(raw):
             word = line.text.split(None, 1)[0].lower() if line.kind == "directive" else ""

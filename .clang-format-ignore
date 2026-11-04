@@ -1,0 +1,6 @@
+# Submódulos con código de terceros (lcc, vlink): conservan su estilo original
+# y VS Code no los reformatea. v.tui no está aquí: es propio y tiene su
+# .clang-format en su repositorio.
+u.lcc/**
+w.vlink/**
+.venv/**

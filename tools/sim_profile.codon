@@ -1,0 +1,7 @@
+# Gemelo Codon de `sim_profile.py`: el perfil se queda en Python (el backend
+# Codon rechaza --profile; ver tools/codon/LIMITACIONES.md).
+
+
+class GpuEvents:
+    def __init__(self, profile, trace):
+        pass

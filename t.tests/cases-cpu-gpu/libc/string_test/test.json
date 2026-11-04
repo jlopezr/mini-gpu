@@ -1,0 +1,15 @@
+{
+  "name": "cpu-gpu/libc/string-c",
+  "architecture": "cpu",
+  "build": {"command": ["make", "case"]},
+  "program": "../../../../_build/c/string_test.bin",
+  "requires": ["calls", "subword_memory"],
+  "max_instructions": 100000,
+  "timeout_seconds": 10,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "pc": "0x0000000c",
+    "registers": {"R1": 0}
+  }
+}

@@ -24,6 +24,7 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`mmio.h`](include/mmio.h) | Pone los nombres cortos (`VIDEO_SWAP`…) sobre `mmio_map.h` |
 | [`gpu.h`](include/gpu.h) | `KERNEL`, `GPU_RUN`, `NOALIAS`, las variables `__gpu_*` |
 | [`stdint.h`](include/stdint.h), [`stdbool.h`](include/stdbool.h) | Tipos de anchura fija y `bool` para `mini-lcc`. La librería de lcc no los trae, y sin ellos `cc -E` cogería los del sistema, que lcc no entiende. Aquí `bool` es un `int`, porque C89 no tiene `_Bool` |
+| [`string.h`](include/string.h) | La biblioteca C mínima: `memset`, `memcpy`, `memcmp`. Se añade lo que algún programa vaya necesitando. La implementación es [`string.c`](src/string.c) |
 
 ## `src/`
 
@@ -33,6 +34,7 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`gpu.c`](src/gpu.c) | `gpu_launch` y `__gpu_stack`, los 32 KiB de pila de las lanes de los kernels | `gpu.h`, `gpu_runtime.inc` |
 | [`gpu_runtime.inc`](src/gpu_runtime.inc) | `gpu_run`: la CPU lanza un job en la GPU y lo espera | `mmio.inc`; con `BOARD`, la placa 36 |
 | [`bench.inc`](src/bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
+| [`string.c`](src/string.c) | `memset`, `memcpy`, `memcmp` (cabecera `string.h`). Código de CPU | `string.h` |
 | [`putpixel.inc`](src/putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
 | [`drawline.inc`](src/drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc`, que incluye él solo |
 | [`sin256.inc`](src/sin256.inc) | `sin_table`, 256 entradas Q16.16 en `.rodata` | — |

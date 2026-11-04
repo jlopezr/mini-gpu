@@ -37,6 +37,18 @@ check-vobj programa.vobj
 Si `vlink` no está en `PATH` ni compilado en `w.vlink`, el comando
 sale con código 77 y lo reporta como skip. También acepta `--vlink /ruta/a/vlink`.
 
+Para inspeccionar un objeto sin enlazar:
+
+```bash
+mini-objdump programa.vobj
+mini-objdump --disassemble programa.vobj
+mini-objdump --json programa.vobj
+```
+
+Un ejemplo completo de compilación separada (dos `.c` y un `.asm` a objetos
+VOBJ, una biblioteca `.a` y vlink descartando lo que no se usa) está en
+[`1.isa/ejemplo-enlazado/`](../1.isa/ejemplo-enlazado/README.md).
+
 ## Comprobar la trazabilidad documental
 
 `trace check` construye un Project Model conforme al metamodelo v0.3. Un fichero
@@ -340,6 +352,16 @@ una reimplementación.
 Cada uno acepta los mismos argumentos que el script al que llama (pásale
 `--help` para verlos).
 
+Los simuladores son Python puro y van de 4 a 10 veces más rápido con PyPy, sin cambiar nada: basta con lanzarlos
+con él (`uv python install pypy@3.11` lo instala). Las ventanas Tk (`--window`) no van en PyPy, pero se abren en
+otro proceso, y `gui_python()` de `tools/sim_host.py` las lanza con `MINIGPU_GUI_PYTHON`, el `.venv` del repo o el
+`python3` del PATH. El Makefile de `39.mini-gl` ya usa PyPy si está (`SIM_PYTHON`). Para `mini-opt` no compensa:
+tarda poco y el JIT no llega a amortizarse.
+
+```bash
+$ $(uv python find pypy) tools/sim-sys programa.bin --halt-after-swaps 2
+```
+
 Sin `-o`, `mini-asm` deja el binario en `_build/<nombre>.bin` junto al fuente
 (carpeta ignorada por git), no al lado del `.asm`. `board-load` y `run-board`
 ensamblan ahí mismo, así que `vector.asm` acaba en `vector/_build/vector.bin`.
@@ -385,6 +407,68 @@ El modelo 25 ejecuta la futura microarquitectura S/F/I/D/X/W. Acepta
 `--imem-lines 0` para fetch ideal. Tests: `test --prototype 25 --quick`.
 Los casos existentes también se ejecutan con
 `python t.tests/run_tests.py --backend sim-gpu --version cycle t.tests/cases-gpu`.
+
+### Perfil por función (`--profile`)
+
+`sim-sys`, `sim-cpu` y `sim-gpu` cuentan, si se les pide, las instrucciones de CPU y de warp de cada función del
+programa (`tools/sim_profile.py`, compartido como las opciones de periféricos; `sim-gpu-cycle` todavía no lo tiene):
+
+```bash
+$ sim-sys programa.asm --profile                        # tabla al terminar (las 25 primeras)
+$ sim-sys programa.bin --profile --symbols programa.asm # un .bin no lleva nombres: el .asm que lo dio
+$ sim-sys programa.asm --profile perfil.txt             # todas, en un fichero
+$ sim-sys programa.asm --profile --profile-annotate anotado.txt  # y el .asm con la cuenta de cada instrucción
+```
+
+Las funciones son las etiquetas de código que no son de bloque (`L.n`, que el ensamblador renombra a
+`L.<fichero>.n`) ni las que añade `mini-opt` (`__inl$...` de `marks` y los puntos de reunión `__ssy_...` de
+`ssy`). lcc da a cada función del `.asm` el nombre que tiene en C y no expande en línea, así que en un programa de
+`build-c` son las funciones C (`build-c` deja el `.asm` que ensambla junto a los intermedios: es el
+de `--symbols`). En la CPU salen las instrucciones **propias**, las **llamadas** (`JAL`/`JALR`) y el **total**
+con todo lo que llama; la pila se sigue por la dirección de retorno, así que una llamada final que `mini-opt`
+convirtió en `BRA` cuenta dentro de quien salta, y la recursión no se cuenta dos veces. En la GPU, las
+instrucciones de warp de cada kernel (`__kernel_x` sale como `x (kernel)`). El código antes de la primera
+etiqueta (o de un programa sin ninguna) sale como `(sin nombre)`. Funciona junto a `--trace`.
+
+Un kernel no llama a nada (`kernelcalls` expande sus llamadas), pero el pase `marks` de `mini-opt` deja etiquetas
+`__inl$...` donde cambia la función expandida, y con ellas la GPU sale como un árbol: el kernel y, dentro, cada
+función expandida con sus instrucciones **propias**, el **total** con lo que tiene dentro y la **ocupación**
+(lanes activas de las vivas, de media: en SIMT una instrucción con una lane activa cuesta lo mismo que con ocho):
+
+```text
+Perfil de GPU: 336488 instrucciones de warp; ocupación 97% (lanes activas de las vivas)
+  función                                         propias      %      total      %  ocup.
+  mgl_render (kernel)                                  33   0.0%     336488 100.0%    97%
+    render.gpu_renderer                              2604   0.8%     336455 100.0%    97%
+      segment.gpu_renderer                          60562  18.0%     118076  35.1%    95%
+        span.gpu_renderer                           10276   3.1%      26924   8.0%    97%
+          row_fill.gpu_renderer                     16648   4.9%      16648   4.9%    96%
+        box.gpu_renderer                             2988   0.9%      14136   4.2%    96%
+          row_fill.gpu_renderer                     11148   3.3%      11148   3.3%    95%
+        put.gpu_renderer                             6400   1.9%       6400   1.9%    34%
+```
+
+`--profile-annotate FICHERO` escribe el `.asm` de las funciones que se han ejecutado con, en cada instrucción, las
+veces que la ha ejecutado la CPU, las de la GPU (instrucciones de warp) y su ocupación.
+
+### Backend Codon para CPU+GPU
+
+Si Codon está instalado, `sim-sys` ejecuta el sistema en un motor nativo compilado
+con Codon a partir de los mismos núcleos Python (`minicpu_core.py`,
+`minigpu_core.py`, `cpu_gpu_core.py`), sin traducirlos. Es `--backend auto`, el
+valor por defecto; sin Codon (en Windows, siempre) usa Python, y si Codon falla al
+compilar, avisa y sigue con Python. `--backend python|codon` fuerza uno y
+`MINIGPU_SIM_BACKEND` cambia el valor por defecto. Conserva los periféricos Python
+y las opciones de ventana, entrada, serie y volcados; traza y perfil usan siempre
+el motor Python.
+
+Se necesita Codon (`MINIGPU_CODON`, PATH o `_build/codon-sdk/bin/codon`) y la
+libpython de CPython (`CODON_PYTHON` permite indicar la ruta). La compilación
+queda en `_build/codon-engine/` y se rehace al cambiar cualquier fuente del motor.
+Para MiniGL, `make -C 39.mini-gl sim-boxes` ya lo usa.
+Regresión diferencial: `RUN_CODON=1 tools/test --prototype 32 --quick`.
+Cómo está montado: [codon/README.md](codon/README.md). Qué no admite Codon y qué
+rodeos llevan por ello los núcleos: [codon/LIMITACIONES.md](codon/LIMITACIONES.md).
 
 ### Periféricos comunes de los tres simuladores
 
@@ -774,7 +858,7 @@ vivos (se ve la tabla entera moverse), y `sched` da el paso que daría el
 hardware, eligiendo el planificador y llevándose el foco con él. Los dos paran si
 un warp falla (parada total, con el foco en el que falló). Un `step` explícito
 ignora los breakpoints. `over`
-y `finish` actúan sobre el núcleo con foco; la GPU no tiene `JAL`/`JR`.
+y `finish` actúan sobre el núcleo con foco; un kernel de `build-c` no tiene llamadas (`kernelcalls` las expande).
 
 **Ejecutar con parte del sistema quieta.** `run` y `until` avanzan CPU y GPU a la
 vez. Con un ámbito, solo avanza una parte y el resto queda congelado:
@@ -973,7 +1057,9 @@ los `.s`, que los junta y optimiza el programa entero. Los demás ficheros (`.s`
 (`runtime/src/crt0.s`), primero, cuando hay algún `.c`. El runtime de la GPU se pide explícitamente: `gpu.c`
 (`gpu_launch` y `__gpu_stack`, los 32 KiB de pila de los kernels), `gpu_runtime.inc` y `bench.inc`; los Makefile que
 usan `tools/c-program.mk` lo pasan con `$(GPU_RUNTIME)`. Un programa que no lanza la GPU desde C no lo necesita
-(el scheduler y su demo ocupan la mitad). Las cabeceras `gpu.h` y `mmio.h` de `runtime/include` entran siempre en el `-I`.
+(el scheduler y su demo ocupan la mitad). La biblioteca C mínima es `string.c` (`runtime/src`, cabecera `string.h`), que
+también se pide. Las cabeceras `gpu.h`, `mmio.h` y `string.h` de `runtime/include` entran siempre en el `-I`; `-D NOMBRE[=VALOR]`
+define una macro en todas las unidades.
 
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
   `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
@@ -1008,32 +1094,53 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
   compilador sigue emitiéndolo como siempre.
 - **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
   compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
-  que dos `.s` no chocan.
+  que dos `.s` no chocan. Los `static` de C sí chocarían (el ensamblador no sabe de ellos): `mini-cc`
+  los renombra a `<nombre>.<unidad>` en cada unidad (lo que lcc no marca con `.globl`).
 - **Varios `.s` en `mini-opt`:** `mini-opt a.s b.s -o todo.s` los junta en ese orden (renumera
   las `L.n` y `__sf.n` de los siguientes, empieza cada uno en `.text`) y optimiza la unión
   como un programa. Si dos `.s` definen el mismo símbolo, error. `mini-cc` lo hace así con
   todas las unidades `.c` y deja un solo `<programa>.opt.s`; los `--extern-refs` son solo el
   arranque y los ficheros a mano (`.s`, `.inc`).
 - **`--whole-program` y el pase `deadfuncs`:** dice que los `.s` de entrada son todo el programa. Entonces
-  `deadfuncs`, el primero del pipeline, borra las funciones que no alcanza ninguna raíz: `main` y `_start`, lo que
-  nombran los `--extern-refs` (sin contar sus comentarios), los kernels (`__kernel_*`, que los lanza el anfitrión
-  por su etiqueta) y lo que un dato mencione (`.word f`), y lo que esas funciones llamen o cuya dirección tomen.
-  Los datos no se tocan, porque los anfitriones leen globales por su etiqueta. Sin la bandera no hace nada, porque
-  en un `.s` suelto cualquier función pública puede llamarla otra unidad. `mini-cc` la pone siempre. Con el
-  scheduler, la demo ahorra 156 instrucciones (`gpu_cancel`...).
+  `deadfuncs` (primero del pipeline y otra vez tras `tailcalls`, cuando el `inline` ha dejado funciones sin llamadas)
+  borra las funciones que no alcanza ninguna raíz: lo que nombran los `--extern-refs` (el arranque llama a `main`; sin contar
+  sus comentarios), los kernels (`__kernel_*`, que los lanza el anfitrión por su etiqueta) y lo que un dato mencione
+  (`.word f`), y lo que esas funciones llamen o cuya dirección tomen. Los datos no se tocan, porque los anfitriones
+  leen globales por su etiqueta. Sin la bandera no hace nada, porque en un `.s` suelto cualquier función pública
+  puede llamarla otra unidad. `mini-cc` la pone siempre. Con el scheduler, la demo ahorra 156 instrucciones
+  (`gpu_cancel`...).
 - **`mini-opt`** transforma un `.s` en otro con pases (`--list-passes`). Hoy `intrinsics`: el
   C declara `extern volatile int __gpu_tid;` y lo lee como una variable; el pase convierte
   `LI r,__gpu_tid ; LOAD d,r,0` en `GETTID d` (también `__gpu_lane`, `__gpu_warp`,
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
-  por pase en `passes/` (`deadfuncs`, `intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `tailcalls`,
-  `invert`, `ssy`) y,
+  por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
+  `deadfuncs`, `invert`, `ssy`, `lanestack`, `marks`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
   transformación: un fichero en `passes/` con una función `@register_pass` y su `import` en
   `passes/__init__.py`.
 
+- **Pase `inline`:** lcc no expande nada en línea. Tras `deadsaves`, cuando las hojas ya no
+  tienen marco, cada `JAL R31, f` a una hoja de la unidad de hasta 8 instrucciones (sin llamadas,
+  sin tocar R30 ni R31 y que solo salta a sus etiquetas) pasa a ser su cuerpo, con etiquetas `L.n`
+  nuevas y cada `JR R31` saltando detrás de la llamada; luego `copyprop`, `dce`, `jumps` y
+  `deadsaves` limpian. Recupera menos que escribir una macro: llega después de que lcc haya
+  repartido los registros contando con la llamada (valores en R16–R29, guardados en la pila).
+  Eso lo arregla en parte `leafregs`.
+- **Pase `leafregs`:** en una función sin llamadas (nunca las tuvo o `inline` las expandió),
+  los R16–R29 que guarda pasan a un R3–R15 que no interfiera con ellos (la vida de registros dice
+  que nunca llevan valores a la vez) y se borran el guardado y la restauración, sea una copia
+  (`stackslots`) o un `STORE`/`LOAD` en la pila; el guardado de R31 se borra sin más y, si nada
+  más lee la pila, el marco también.
+
+- **Pase `kernelcalls`:** en un kernel, cada `JAL R31, f` pasa a ser el cuerpo entero de `f` (marco
+  incluido: `JAL` no cambia R30, así que hace lo mismo que llamada), y lo que este llame, a su vez; los
+  kernels se compilan para la GPU de la 36, que no tiene `JAL` (el simulador 11 y la 37 sí). Sin llamadas, nadie lee R31: se borran sus guardados.
+  Error si `f` es de otra unidad, recursiva, de ABI privada o salta por un puntero. Va antes de
+  `kernels`, que sigue el valor de R30 por cada instrucción para no confundir los marcos expandidos con
+  el del kernel, y reserva en la pila de la lane los 16 bytes donde lcc guarda R1–R4.
 - **Pase `kernels`:** una función `__kernel_<nombre>` (la macro `KERNEL` de
   `runtime/include/gpu.h`) pasa a ser el punto de entrada de una lane: fija su
   pila (solo si la usa: el marco que solo guarda y restaura registros preservados se quita),
@@ -1045,9 +1152,28 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
 
 - **Pase `ssy`:** pone `SSY` delante de los saltos de un kernel que pueden divergir, con su
   postdominador inmediato como punto de reconvergencia; en un bucle, una sola vez antes de él.
-  Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, la pila, y lo definido
-  bajo un salto divergente) evita marcar los saltos uniformes. `--ssy-all` los marca todos. Quita
-  además el `SSY` que cae siempre después de otro con el mismo destino.
+  Un análisis de qué registros varían entre lanes (`GETTID`, `GETLANE`, y lo definido bajo un
+  salto divergente) evita marcar los saltos uniformes. De la pila sigue cada hueco: lo que se lee
+  varía solo si lo que se guardó variaba (si una dirección de la pila se escapa, varía todo lo que se
+  lee de ella); así los parámetros por la pila de una función expandida por `kernelcalls` no abren
+  regiones. `--ssy-all` los marca todos. Quita
+  además el `SSY` que cae siempre después de otro con el mismo destino. Si se entra en un bucle divergente
+  desde un salto condicional (`if (...) ... else for (...)`), el `SSY` no puede ir delante del salto, porque
+  abriría la región también en el camino que no entra: va en un trampolín (`SSY join; BRA cabecera`) al final
+  de la función, al que se redirige el salto. Al final comprueba que ningún `SSY` puede abrir su región con
+  la pila de regiones llena (8 niveles en la 36, la 37 y los simuladores): una cota de las regiones que lo
+  contienen. Pasarse es un error al compilar, con la función expandida de la que viene el salto.
+
+- **Pase `lanestack`** (kernels, al final): error si los marcos de las funciones expandidas por `kernelcalls`
+  hacen bajar R30 más de lo que tiene la pila de la lane (512 bytes menos los 16 del hueco de R1..R4), o si un
+  acceso a la pila cae fuera de ella. Sin la comprobación, una lane escribiría en la pila de la siguiente sin
+  aviso. Si R30 no se puede seguir, no comprueba nada (`lanestack.unknown` en `--stats`).
+
+- **Pase `marks`** (el último): `inline` y `kernelcalls` apuntan en cada línea que copian de qué funciones viene
+  (`Line.origin`), y este pase pone una etiqueta `__inl$<unidad>$<función>$<n>$<f1>$<f2>...` donde cambia (sin
+  funciones detrás de `<n>`, de vuelta en la propia). Es para el perfil (`--profile` de los simuladores). Va al
+  final porque una etiqueta parte un bloque básico, y no cambia el binario. Una línea que ha creado un pase no
+  trae origen: toma el de sus vecinas si coinciden.
 
 - **Pase `licm`** (todas las funciones): en cada bucle sin llamadas saca al preheader
   las instrucciones puras cuyos operandos no cambian en él (constantes, `SHL p, cstep, c`, productos como
@@ -1107,6 +1233,16 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
   siempre se toman pasan a `BRA` y los que nunca se toman desaparecen.
 - **Pase `unreachable`:** elimina bloques que dejan de ser alcanzables, en particular tras simplificar
   branches. Las funciones con saltos indirectos se dejan intactas.
+- **Pase `deadfuncs`:** solo con `--whole-program`, que promete que los `--extern-refs` son todo el resto del
+  programa (el arranque, el runtime y las otras unidades); sin esa promesa no borra nada, porque que un fichero
+  pasado no nombre una función no demuestra que no la use otro que no se ha pasado. Como un enlazador: las raíces
+  son lo que se nombra fuera de las funciones de la unidad (`main` en el arranque, un `.word f` en una tabla de
+  datos) y los kernels (`__kernel_*`), que son puntos de entrada aunque los lance alguien de fuera del programa
+  (los arneses de `32.cpu-gpu-func-sim/compare` los lanzan desde Python), y se borran las funciones que no se alcanzan desde ellas siguiendo lo que nombra cada cuerpo, aunque se
+  llamen entre ellas. Las declaraciones (`.globl`, `.extern`) y los comentarios no cuentan como uso; al borrar
+  una función se va su `.globl`, esté donde esté, y se quedan sus cambios de sección. Las referencias ajenas son
+  los `.s` de las otras unidades sin optimizar, así que puede sobrar algo, pero nunca se borra código vivo.
+  `mini-cc` pasa siempre `--whole-program`: de la biblioteca C mínima (`runtime/src/string.c`) solo se queda lo que\n  el programa usa.
 - **Pase `dce`:** elimina a punto fijo instrucciones puras cuyo resultado ya no está vivo. Es un pase
   independiente y el pipeline por defecto lo intercala entre fases para que una limpieza abra nuevas
   oportunidades a la siguiente; `--passes` permite colocarlo donde convenga.

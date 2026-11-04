@@ -158,7 +158,7 @@ class Pipeline:
                     stores.append((address, (value & ((1 << (size * 8)) - 1)).to_bytes(size, 'little')))
             results.append((lane, result))
         try:
-            n = control_result(w, packet.decoded, results, self.warps, len(self.system.memory))
+            n = control_result(w, packet.decoded, results, self.warps, self.system)
         except ISAError as exc:
             fault = self.fault(exc, packet)
             self.system.stop_with_error(fault)

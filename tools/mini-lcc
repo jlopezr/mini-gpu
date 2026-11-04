@@ -15,6 +15,10 @@ MINI_LCC = ROOT / "u.lcc"
 WINDOWS = sys.platform == "win32"
 RCC = MINI_LCC / "build" / ("rcc.exe" if WINDOWS else "rcc")
 INCLUDE = MINI_LCC / "include" / "mini" / "none"
+# El preprocesador es el del host (cc o cl), no el de lcc: sin sus macros (-undef, /u), que harian creer al
+# codigo que se compila para el host (__GNUC__, __APPLE__, __SIZEOF_LONG__ == 8...), y con las de la maquina.
+# __LCC__ es la que pone el driver original de lcc; __MINIGPU__, que el destino es MiniGPU.
+PREDEFINED = ("__LCC__", "__MINIGPU__")
 
 
 def run(command: list[str], cwd: Path = MINI_LCC) -> int:
@@ -86,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="guarda tambien el C preprocesado")
     parser.add_argument("-I", dest="includes", action="append", type=Path, default=[], metavar="DIR",
                         help="carpeta extra para #include (repetible)")
+    parser.add_argument("-D", dest="defines", action="append", default=[], metavar="NOMBRE[=VALOR]",
+                        help="define una macro al preprocesar (repetible)")
     parser.add_argument("--no-crt", action="store_true",
                         help="no emite `_start` ni `.comm __stack`: el arranque lo pone un crt0 "
                              "(runtime/src/crt0.s) o, en una unidad sin `main`, nadie")
@@ -117,12 +123,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("error: no encuentro MSVC con el toolset de C++ para preprocesar", file=sys.stderr)
                 return 2
             command = [
-                "cl", "/nologo", "/EP", "/P", f"/I{INCLUDE}", *[f"/I{d.resolve()}" for d in args.includes],
+                "cl", "/nologo", "/EP", "/P", "/u", *[f"/D{d}" for d in (*PREDEFINED, *args.defines)],
+                f"/I{INCLUDE}", *[f"/I{d.resolve()}" for d in args.includes],
                 f"/Fi:{preprocessed}", str(source),
             ]
         else:
             command = [
-                "cc", "-E", "-P", "-I", str(INCLUDE), *[x for d in args.includes for x in ("-I", str(d.resolve()))], str(source),
+                "cc", "-E", "-P", "-undef", *[f"-D{d}" for d in (*PREDEFINED, *args.defines)],
+                "-I", str(INCLUDE), *[x for d in args.includes for x in ("-I", str(d.resolve()))], str(source),
                 "-o", str(preprocessed),
             ]
         code = subprocess.call(command)

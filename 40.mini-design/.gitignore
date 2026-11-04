@@ -1,0 +1,18 @@
+*.png
+*.ppm
+
+# Build (incluye fuentes .mf y hojas generadas por los conversores)
+/build/
+*.o
+*.dSYM/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# macOS / editores
+.DS_Store
+._*
+*~
+*.swp

@@ -80,8 +80,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="fichero ensamblado aparte (arranque, runtime...): los simbolos que nombra no se dan por "
                              "privados de la unidad (se puede repetir)")
     parser.add_argument("--whole-program", action="store_true",
-                        help="los .s de entrada son todo el programa: el pase deadfuncs borra las funciones que no "
-                             "alcanzan main, lo que nombran los --extern-refs ni un kernel (sin esto no hace nada)")
+                        help="los .s de entrada y los --extern-refs (al menos el arranque, que llama a main) son todo "
+                             "el programa: el pase deadfuncs borra las funciones que no nombra nadie, ni la unidad ni "
+                             "esos ficheros, y no es un kernel. Sin esto no se borra ninguna")
     parser.add_argument("--stats", action="store_true", help="resumen de lo que hizo cada pase")
     parser.add_argument("--list-passes", action="store_true")
     args = parser.parse_args(argv)
@@ -94,11 +95,14 @@ def main(argv: list[str] | None = None) -> int:
     passes = None if args.passes is None else [p for p in args.passes.split(",") if p]
     ssy.SSY_ALL = args.ssy_all
     licm.NOALIAS = args.assume_noalias
+    if args.whole_program and not args.extern_refs:
+        parser.error("--whole-program necesita --extern-refs: al menos el arranque, que llama a main")
     deadfuncs.WHOLE_PROGRAM = args.whole_program
     stats: dict = {}
     try:
-        licm.EXTERNAL = frozenset(name for path in args.extern_refs
-                                  for name in SYMBOL_RE.findall(strip_comments(path.read_text(encoding="utf-8"))))
+        foreign = [path.read_text(encoding="utf-8") for path in args.extern_refs]
+        licm.EXTERNAL = frozenset(name for text in foreign for name in SYMBOL_RE.findall(strip_comments(text)))
+        deadfuncs.EXTERNAL = frozenset(name for text in foreign for name in deadfuncs.external_names(text))
         source = merge_sources([(str(path), path.read_text(encoding="utf-8")) for path in args.input])
         text = optimize(source, passes, ", ".join(map(str, args.input)), stats)
     except OptError as error:

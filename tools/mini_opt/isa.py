@@ -59,6 +59,18 @@ def defs_uses(line: Line) -> tuple[frozenset[int], frozenset[int]]:
     return _defs_uses(line.op, tuple(line.args))
 
 
+# Rutinas a las que un `JAL` solo les cuesta R1-R6 (`; @miniopt leafcall NOMBRE`, ver model.FACT_RE). Los nombres
+# son del runtime del compilador, globales: un mismo nombre es la misma rutina en todas las unidades.
+LEAF_CALLS: set[str] = set()
+LEAF_SAVED = tuple(range(1, 7))
+
+
+def declare_leaf_call(name: str) -> None:
+    if name not in LEAF_CALLS:
+        LEAF_CALLS.add(name)
+        _defs_uses.cache_clear()
+
+
 @lru_cache(maxsize=None)
 def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozenset[int]]:
     regs = [reg_of(a) for a in args]            # None donde el operando no es un registro
@@ -77,7 +89,8 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
     elif op in STORES or op in BRANCHES:
         add(uses, *regs[:2])
     elif op == "JAL":
-        defs.update(CALLER_SAVED); defs.add(LINK); add(defs, regs[0])
+        defs.update(LEAF_SAVED if args and args[-1].strip() in LEAF_CALLS else CALLER_SAVED)
+        defs.add(LINK); add(defs, regs[0])
         uses.update(ARG_REGS)
     elif op == "JALR":
         defs.update(CALLER_SAVED); defs.add(LINK)
@@ -90,7 +103,9 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
     elif op == "EXIT":
         uses.add(STACK)             # el hilo desaparece: nadie recibe los R16..R29, como un `JR` recibiria
     elif op in ("HALT", "TRAP"):
-        uses.update((STACK, *CALLEE_SAVED))
+        # el resultado del programa se queda en R1 (R1:R2 si es de 64 bits): lo leen quien lo para (el
+        # simulador, la placa, los tests de u.lcc), como `JR` se lo da al llamante
+        uses.update((1, 2, STACK, *CALLEE_SAVED))
     defs.discard(0); uses.discard(0)            # R0 es la constante cero
     return frozenset(defs), frozenset(uses)
 

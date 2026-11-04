@@ -201,6 +201,33 @@ def synthesizable_source_hashes(prototype_dir):
     }
 
 
+def is_diamond_report(folder):
+    """Si una carpeta de `reports/` es de Diamond y no de apio (ver diamond_report.py)."""
+    try:
+        metadata = json.loads((Path(folder) / 'metadata.json').read_text(encoding='utf-8'))
+        return metadata.get('tool', 'apio') == 'diamond'
+    except (OSError, json.JSONDecodeError):
+        return Path(folder).name.endswith('-diamond')
+
+
+def apio_report_metadata(prototype_dir):
+    """`reports/*/metadata.json` de los builds de apio, el mas nuevo primero.
+
+    Los informes de Diamond (`"tool": "diamond"`, ver diamond_report.py) comparten
+    carpeta pero no describen `_build/`: contarlos haria pasar por CURRENT un
+    bitstream de apio viejo solo porque Diamond se ejecuto despues con el RTL actual.
+    """
+    paths = []
+    for path in sorted((prototype_dir / 'reports').glob('*/metadata.json'), reverse=True):
+        try:
+            if json.loads(path.read_text(encoding='utf-8')).get('tool', 'apio') != 'apio':
+                continue
+        except (OSError, json.JSONDecodeError):
+            pass
+        paths.append(path)
+    return paths
+
+
 def bitstream_is_current(prototype_dir):
     """Whether hardware.bit represents the current synthesizable sources.
 
@@ -211,7 +238,7 @@ def bitstream_is_current(prototype_dir):
     bitstream = prototype_dir / '_build' / default_env(prototype_dir) / 'hardware.bit'
     if not bitstream.is_file():
         return False
-    reports = sorted((prototype_dir / 'reports').glob('*/metadata.json'), reverse=True)
+    reports = apio_report_metadata(prototype_dir)
     if reports:
         try:
             metadata = json.loads(reports[0].read_text(encoding='utf-8'))
@@ -246,8 +273,7 @@ def reusable_detailed_report(prototype_dir):
     if not bitstream_is_current(prototype_dir):
         return None
     current = synthesizable_source_hashes(prototype_dir)
-    for metadata_path in sorted(
-            (prototype_dir / 'reports').glob('*/metadata.json'), reverse=True):
+    for metadata_path in apio_report_metadata(prototype_dir):
         folder = metadata_path.parent
         try:
             metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
@@ -309,7 +335,8 @@ def main():
     label = re.sub(r'[^A-Za-z0-9_-]', '_', args.label)
     # Apio clean removes all of _build. Keep the history outside that tree.
     history = ROOT / 'reports'
-    previous = sorted(history.glob('*/summary.json'))
+    previous = sorted(p for p in history.glob('*/summary.json')
+                      if not is_diamond_report(p.parent))
     if not args.archive_only and args.incremental is None:
         reusable = reusable_detailed_report(ROOT)
         if reusable is not None:

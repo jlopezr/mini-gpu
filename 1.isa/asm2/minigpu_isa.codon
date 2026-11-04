@@ -1,0 +1,6 @@
+# Gemelo Codon de `minigpu_isa.py`: el motor compilado no desensambla (solo lo
+# usa la traza, que se queda en Python; ver tools/codon/LIMITACIONES.md).
+
+
+def disassemble_word(word: int, pc: int) -> str:
+    return ""

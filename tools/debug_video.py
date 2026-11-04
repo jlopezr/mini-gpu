@@ -25,13 +25,13 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from tools.debug_target import DebugTarget, TargetError
+from tools.sim_host import gui_python
 
 ROOT = Path(__file__).resolve().parents[1]
 BUFFERS = ("front", "back")
@@ -154,7 +154,7 @@ class VideoViewer:
         layout = self.layout()
         try:
             self.process = subprocess.Popen(
-                [sys.executable, str(ROOT / "tools" / "fb_window.py"),
+                [gui_python(), str(ROOT / "tools" / "fb_window.py"),
                  f"{layout.width}x{layout.height}"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

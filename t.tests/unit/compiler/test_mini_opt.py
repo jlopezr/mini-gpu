@@ -11,6 +11,8 @@ falta MSVC para correr la suite. Se comprueba:
   - el filtro entero y su salida junto al `crt0` y un anfitrion, por `.include`.
 """
 
+import contextlib
+import io
 import random
 import re
 import shutil
@@ -30,7 +32,9 @@ from tools.mini_opt import (  # noqa: E402
     OptError, build_cfg, liveness, optimize, parse_unit, pass_intrinsics, pass_kernels, pass_ssy,
     render_unit)
 from tools.mini_opt.cli import main as optimize_main  # noqa: E402
+from tools.mini_opt.isa import instr  # noqa: E402
 from tools.mini_opt.merge import merge_sources  # noqa: E402
+from tools.mini_opt.registry import DEFAULT_PASSES, PASSES  # noqa: E402
 from tools.mini_opt.passes import deadfuncs as deadfuncs_module  # noqa: E402
 from tools.mini_opt.passes import licm as licm_module  # noqa: E402
 
@@ -202,7 +206,7 @@ class IntrinsicsTest(unittest.TestCase):
         pass_intrinsics(unit, stats)
         text = render_unit(unit)
         self.assertEqual(stats["intrinsics"], 1)
-        self.assertIn("GETTID R29", text)
+        self.assertRegex(text, r"\nGETTID R\d+\n")          # el registro lo decide `leafregs` (R29 sin el)
         self.assertNotIn("__gpu_tid", text)         # tampoco el `.extern`
 
     def test_each_getid_and_bar(self):
@@ -312,7 +316,7 @@ ADD R15, R1, R0
 """).replace("JR R31", "ADDI R30, R30, 16\nJR R31")
         body = kernel_body(source)
         self.assertEqual(body[:5], ["GETTID R5", "MOVI R6, 512", "MUL R5, R5, R6",
-                                    "LI R30, __gpu_stack+512", "ADD R30, R30, R5"])
+                                    "LI R30, __gpu_stack+496", "ADD R30, R30, R5"])   # 512 - 16 del hueco de R1..R4
         self.assertIn("ADDI R30, R30, -16", body)
         self.assertEqual(body[-1], "EXIT")
 
@@ -348,12 +352,13 @@ ADD R15, R1, R0
 __kernel_k:
 ADDI R30, R30, -16
 STORE R29, R30, 0
-LOAD R5, R30, 16
+LOAD R5, R30, 16+16
 STORE R5, R1, 0
 LOAD R29, R30, 0
 ADDI R30, R30, 16
 JR R31
 """
+        # el quinto parametro, en la entrada + 16 (de +0 a +15 esta el hueco de R1..R4, que si es del kernel)
         with self.assertRaisesRegex(OptError, "parametros como maximo"):
             pass_kernels(parse_unit(source, "k.s"), {})
 
@@ -464,6 +469,94 @@ class SsyTest(unittest.TestCase):
         source = IF_ELSE.replace("STORE R7, R5, 0", "BEQ R7, R0, L.3\nSTORE R7, R5, 0\nL.3:")
         body = ssy_body(source)
         self.assertEqual(sum(l.startswith("SSY") for l in body), 2)
+
+    def test_a_stack_slot_varies_only_if_what_was_stored_varies(self):
+        # Como un parametro de una funcion expandida: se guarda en un hueco y se lee al otro lado de un marco.
+        # El hueco es el mismo (-8 + 4 respecto al origen) aunque R30 se mueva entre el STORE y el LOAD.
+        template = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+496
+ADD R30, R30, R5
+{value}
+STORE R7, R30, -4
+ADDI R30, R30, -8
+LOAD R8, R30, 4
+ADDI R30, R30, 8
+BEQ R8, R0, L.1
+STORE R8, R5, 0
+L.1:
+EXIT
+"""
+        uniform = ssy_body(template.format(value="GETARG R7"))
+        self.assertFalse(any(l.startswith("SSY") for l in uniform))
+        varying = ssy_body(template.format(value="GETLANE R7"))
+        self.assertEqual(sum(l.startswith("SSY") for l in varying), 1)
+
+    def test_if_a_stack_address_escapes_every_stack_load_varies(self):
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETTID R5
+MOVI R6, 512
+MUL R5, R5, R6
+LI R30, __gpu_stack+496
+ADD R30, R30, R5
+GETARG R7
+STORE R7, R30, -4
+ADDI R9, R30, -4
+LOAD R8, R30, -4
+BEQ R8, R0, L.1
+STORE R8, R9, 0
+L.1:
+EXIT
+"""
+        self.assertEqual(sum(l.startswith("SSY") for l in ssy_body(source)), 1)
+
+    def test_a_loop_entered_by_a_conditional_branch_gets_a_trampoline(self):
+        # Como `if (x1 - x0 == 1) ... else for (...)` en box: el BNE salta a la cabecera de un bucle divergente. El
+        # SSY no puede ir delante del BNE (abriria la region tambien en el camino que no entra): va en un bloque
+        # nuevo al final, al que salta el BNE, y que sigue a la cabecera.
+        source = """\
+.text
+.globl __kernel_k
+__kernel_k:
+GETLANE R5
+MOVI R7, 3
+BNE R7, R0, L.2
+STORE R0, R5, 0
+EXIT
+L.1:
+ADDI R5, R5, 1
+L.2:
+BLT R5, R7, L.1
+STORE R5, R5, 0
+EXIT
+"""
+        body = ssy_body(source)
+        self.assertIn("BNE R7, R0, __ssy___kernel_k_pre1", body)
+        start = body.index("__ssy___kernel_k_pre1:")
+        self.assertTrue(body[start + 1].startswith("SSY "))
+        self.assertEqual(body[start + 2], "BRA L.2")
+        self.assertEqual(body[start - 1], "EXIT")                             # detras del ultimo salto
+        self.assertEqual(sum(l.startswith("SSY") for l in body), 1)
+        assemble_bytes("\n".join(body) + "\n")
+
+    def test_more_nested_regions_than_the_gpu_has_is_an_error(self):
+        def nested(n: int) -> str:
+            ifs = "".join(f"MOVI R6, {k}\nBLT R5, R6, L.{k}\n" for k in range(1, n + 1))
+            ends = "".join(f"L.{k}:\nADDI R7, R7, 1\n" for k in range(n, 0, -1))
+            return f".text\n.globl __kernel_k\n__kernel_k:\nGETLANE R5\n{ifs}STORE R5, R5, 0\n{ends}EXIT\n"
+        from tools.mini_opt.passes.ssy import MAX_REGIONS
+        body = ssy_body(nested(MAX_REGIONS))
+        self.assertEqual(sum(l.startswith("SSY") for l in body), MAX_REGIONS)
+        with self.assertRaisesRegex(OptError, f"hasta {MAX_REGIONS + 1} regiones SIMT anidadas"):
+            ssy_body(nested(MAX_REGIONS + 1))
 
     def test_ssy_all_treats_every_conditional_branch_as_divergent(self):
         from tools.mini_opt.passes import ssy as opt
@@ -840,6 +933,16 @@ class NoAliasTest(unittest.TestCase):
         # R20 sale a memoria: lo que se cargue puede ser el mismo puntero, y el store por el choca con la carga por R20
         write = "STORE R20, R30, 0\nLOAD R9, R30, 0\nADD R8, R9, R10\nSTORE R10, R8, 0"
         self.assertTrue(self.loads_inside(read="ADDI R6, R20, 4\nLOAD R7, R6, 0", write=write))
+
+    def test_spilling_the_marked_pointer_to_the_stack_does_not_make_it_escape(self):
+        # Como el trabajo de mini-gl V2: lcc vuelca j a su hueco, y el bucle escribe por un puntero que lee de *j
+        # (el framebuffer). Ese puntero no es j: la carga por j sale del bucle.
+        spill = "NOALIAS R20\nSTORE R20, R30, 0\n"
+        write = "LOAD R9, R20, 8\nADD R8, R9, R10\nSTORE R10, R8, 0"
+        self.assertFalse(self.loads_inside(read="LOAD R7, R20, 4", write=write, marks=spill))
+        # Si la direccion de un hueco se escapa, la pila no se sigue: volcar j lo hace escapar, como antes.
+        escaped = spill + "ADDI R5, R30, 4\n"
+        self.assertTrue(self.loads_inside(read="LOAD R7, R20, 4", write=write, marks=escaped))
 
     def test_a_marked_pointer_passed_to_a_call_may_be_what_a_later_load_returns(self):
         source = """\
@@ -1475,7 +1578,7 @@ class StackSlotsTest(unittest.TestCase):
         loop = out[out.index("L.1:"):]
         self.assertFalse(any("R30" in l for l in loop), loop)
         copies = [l for l in loop if l.startswith("ADD") and l.endswith("R0")]
-        self.assertEqual(copies, ["ADD R31, R14, R0"], loop)       # queda la del contador, ninguna sobre si misma
+        self.assertEqual(copies, [], loop)       # ni la del contador: la segunda ronda de `copyprop` (tras `inline`) la quita
 
     def test_the_row_variables_of_the_cube_kernel_as_old_lcc_left_them(self):
         # Forma del `__kernel_cube_good` cuando lcc dejaba `y`, `cstart` y `rstep` en la pila porque las 14
@@ -1734,9 +1837,49 @@ class DceTest(unittest.TestCase):
                 out = lines_of(optimize(source, ["dce"]))
                 self.assertEqual("ADD R28, R11, R0" in out, kept, out)
 
+    def test_halt_keeps_the_result_in_r1_and_r2(self):
+        # el arranque de los tests de u.lcc (`_start`, en el mismo .s): `inline` expande `main` y su
+        # `MOVI R1, 7` llega justo antes del HALT. Quien para la CPU lee el resultado en R1 (R1:R2 si es de
+        # 64 bits); sin contarlos como leidos, dce lo borraba y los tests daban 0
+        source = ".text\n.globl f\nf:\nMOVI R1, 7\nMOVI R2, 1\nMOVI R3, 9\nHALT\n"
+        out = lines_of(optimize(source, ["dce"]))
+        self.assertIn("MOVI R1, 7", out)
+        self.assertIn("MOVI R2, 1", out)
+        self.assertNotIn("MOVI R3, 9", out)
+
     def test_exit_keeps_the_stack_pointer_alive(self):
         source = ".text\n.globl f\nf:\nADDI R30, R30, -16\nEXIT\n"
         self.assertIn("ADDI R30, R30, -16", lines_of(optimize(source, ["dce"])))
+
+
+class LeafCallTest(unittest.TestCase):
+    """`; @miniopt leafcall NOMBRE`: el runtime de float escrito a mano (u.lcc/runtime/softfloat_mini.s) solo
+    toca R1-R6, y mini-lcc deja vivos sus temporales R7-R15 a traves de la llamada. Sin el hecho, un `JAL` los
+    destruye y lo que se calculo antes en ellos estaria muerto. Cada prueba usa su nombre: los hechos son
+    globales (el runtime es uno para todas las unidades)."""
+
+    CALLER = ".text\n.globl f\nf:\nADDI R9, R2, 5\nJAL R31, {name}\nADD R1, R1, R9\nJR R31\n"
+
+    def test_a_temporary_lives_across_a_leaf_call(self):
+        source = "; @miniopt leafcall __leaf_kept\n" + self.CALLER.format(name="__leaf_kept")
+        self.assertIn("ADDI R9, R2, 5", lines_of(optimize(source, ["dce"])))
+
+    def test_without_the_fact_a_call_destroys_the_temporaries(self):
+        source = self.CALLER.format(name="__not_declared")
+        self.assertNotIn("ADDI R9, R2, 5", lines_of(optimize(source, ["dce"])))
+
+    def test_the_hand_written_routine_is_left_alone(self):
+        # Etiquetas internas `__sfa.*` (de bloque, no funciones), un valor en R5 que cruza un salto y una entrada
+        # que solo prepara R6 y salta a otro bloque: el modelo C borraria el ADDI R6 y partiria la funcion.
+        hand = ("ADDI R5, R0, 3\n__sfa.t.loop:\nSHLI R1, R1, 1\nADDI R5, R5, -1\nBNE R5, R0, __sfa.t.loop\n"
+                "ADD R1, R1, R6\nJR R31")
+        source = ("; @miniopt leafcall __hand_t\n; @miniopt leafcall __hand_entry\n"
+                  ".text\n.globl __hand_entry\n__hand_entry:\nADDI R6, R0, 2\nBRA __hand_t\n"
+                  ".text\n.globl __hand_t\n__hand_t:\n" + hand + "\n")
+        out = lines_of(optimize(source, list(DEFAULT_PASSES)))
+        start = out.index("__hand_t:") + 1
+        self.assertEqual(out[start:start + len(lines_of(hand))], lines_of(hand))
+        self.assertIn("ADDI R6, R0, 2", out)
 
 
 class BranchesTest(unittest.TestCase):
@@ -2616,6 +2759,92 @@ class UnreachableTest(unittest.TestCase):
         self.assertNotIn("MOVI R1, 99", out)
 
 
+class DeadFuncsTest(unittest.TestCase):
+    """`deadfuncs`: con `--whole-program`, borra lo que no se alcanza desde fuera de las funciones de la unidad."""
+
+    # Como lo emite lcc: el `.globl main` cae en `.data`, antes del `.text` de main.
+    UNIT = (".text\n.globl unused\n.align 4\nunused:\nJR R31\n"
+            ".globl leaf\n.align 4\nleaf:\nJR R31\n"
+            ".globl caller\n.align 4\ncaller:\nJAL R31, leaf\nJR R31\n"
+            ".globl ping\n.align 4\nping:\nJAL R31, pong\nJR R31\n"
+            ".globl pong\n.align 4\npong:\nJAL R31, ping\nJR R31\n"
+            ".globl in_table\n.align 4\nin_table:\nJR R31\n"
+            ".data\n.globl table\n.align 4\ntable:\n.word in_table\n.globl main\n"
+            ".text\n.align 4\nmain:\nJAL R31, used\nJR R31\n"
+            ".globl used\n.align 4\nused:\nJR R31\n")
+
+    def run_pass(self, external=("main",), whole=True, source=None):
+        stats = {}
+        deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = whole, frozenset(external)
+        try:
+            out = lines_of(optimize(source or self.UNIT, ["deadfuncs"], stats=stats))
+        finally:
+            deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = False, frozenset()
+        return out, stats
+
+    @staticmethod
+    def functions(out):
+        return [line[:-1] for line in out if line.endswith(":") and not line.startswith("L.")]
+
+    def test_without_the_whole_program_nothing_is_removed(self):
+        out, _ = self.run_pass(whole=False)
+        self.assertEqual(self.functions(out),
+                         ["unused", "leaf", "caller", "ping", "pong", "in_table", "table", "main", "used"])
+
+    def test_what_is_not_reached_from_outside_is_removed_with_its_globl(self):
+        out, stats = self.run_pass()
+        self.assertEqual(self.functions(out), ["in_table", "table", "main", "used"])
+        self.assertEqual(stats["deadfuncs.removed"], 5)
+        for name in ("unused", "leaf", "caller", "ping", "pong"):
+            self.assertNotIn(f".globl {name}", out)
+        self.assertIn(".globl main", out)
+
+    def test_a_chain_and_a_cycle_that_nobody_reaches_go_together(self):
+        out, _ = self.run_pass(external=("main", "caller"))
+        self.assertIn("leaf", self.functions(out))
+        out, _ = self.run_pass(external=("main", "ping"))
+        self.assertIn("pong", self.functions(out))
+
+    def test_a_function_named_only_by_a_data_table_stays(self):
+        out, _ = self.run_pass(external=())
+        self.assertEqual(self.functions(out), ["in_table", "table"])
+
+    def test_a_kernel_is_an_entry_point_even_if_nobody_launches_it_here(self):
+        source = ".text\n.globl __kernel_fill\n__kernel_fill:\nJR R31\n.globl helper\nhelper:\nJR R31\n"
+        out, _ = self.run_pass(external=(), source=source)
+        self.assertEqual(self.functions(out), ["__kernel_fill"])
+
+    def test_the_section_of_the_next_function_survives(self):
+        source = (".data\nx:\n.word 0\n.text\n.globl dead\ndead:\nJR R31\n.globl main\nmain:\nJR R31\n")
+        out, _ = self.run_pass(source=source)
+        self.assertNotIn("dead:", out)
+        self.assertLess(out.index(".text"), out.index("main:"))
+
+    def test_comments_of_foreign_files_are_not_uses(self):
+        self.assertEqual(deadfuncs_module.external_names("JAL R31, main ; no llama a unused\n"),
+                         {"JAL", "R31", "main"})
+
+    def test_the_command_line_needs_the_rest_of_the_program(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, crt, target = Path(folder, "u.s"), Path(folder, "crt0.s"), Path(folder, "out.s")
+            source.write_text(self.UNIT, encoding="utf-8")
+            crt.write_text("_start:\nJAL R31, main ; unused no\nHALT\n", encoding="utf-8")
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                optimize_main([str(source), "-o", str(target), "--whole-program"])
+            try:
+                self.assertEqual(optimize_main([str(source), "-o", str(target), "--passes", "deadfuncs",
+                                                "--whole-program", "--extern-refs", str(crt)]), 0)
+            finally:
+                deadfuncs_module.WHOLE_PROGRAM, deadfuncs_module.EXTERNAL = False, frozenset()
+                licm_module.EXTERNAL = frozenset()
+            self.assertEqual(self.functions(lines_of(target.read_text(encoding="utf-8"))),
+                             ["in_table", "table", "main", "used"])
+            self.assertEqual(optimize_main([str(source), "-o", str(target), "--passes", "deadfuncs",
+                                            "--extern-refs", str(crt)]), 0)
+            licm_module.EXTERNAL = frozenset()
+            self.assertIn("unused:", lines_of(target.read_text(encoding="utf-8")))
+
+
 class TailCallsTest(unittest.TestCase):
     CALLEE = ".globl g\ng:\nADDI R1, R1, 1\nJR R31\n"
 
@@ -2774,7 +3003,7 @@ class FilterTest(unittest.TestCase):
         stats = {}
         text = optimize(KERNELS, stats=stats)
         self.assertEqual(stats["intrinsics"], 1)
-        self.assertIn("GETTID R29", text)
+        self.assertRegex(text, r"\nGETTID R\d+\n")          # el registro lo decide `leafregs` (R29 sin el)
 
     def test_no_passes_leaves_the_text_alone(self):
         text = optimize(KERNELS, passes=[])
@@ -2803,124 +3032,8 @@ class FilterTest(unittest.TestCase):
                                    "-o", str(temp / "k.opt.s"), "--stats"],
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("GETTID R29", (temp / "k.opt.s").read_text(encoding="utf-8"))
+            self.assertRegex((temp / "k.opt.s").read_text(encoding="utf-8"), r"\nGETTID R\d+\n")
             self.assertIn("intrinsics", done.stderr)
-
-
-PROGRAM = """\
-.text
-.globl main
-.align 4
-main:
-JAL R31, used
-JAL R31, helper
-LI R1, table
-HALT
-.globl used
-.align 4
-used:
-JAL R31, deep
-JR R31
-.globl helper
-.align 4
-helper:
-JR R31
-.globl deep
-.align 4
-deep:
-JR R31
-.globl unused
-.align 4
-unused:
-JAL R31, only_from_unused
-JR R31
-.globl only_from_unused
-.align 4
-only_from_unused:
-LI R2, victim_data
-JR R31
-.globl __kernel_k
-.align 4
-__kernel_k:
-JR R31
-.globl by_table
-.align 4
-by_table:
-JR R31
-.globl by_runtime
-.align 4
-by_runtime:
-JR R31
-.data
-table:
-.word by_table
-victim_data:
-.word 7
-"""
-
-
-class DeadFuncsTest(unittest.TestCase):
-    def setUp(self):
-        self.addCleanup(setattr, deadfuncs_module, "WHOLE_PROGRAM", deadfuncs_module.WHOLE_PROGRAM)
-        self.addCleanup(setattr, licm_module, "EXTERNAL", licm_module.EXTERNAL)
-
-    def names(self, text):
-        return [function.name for function in parse_unit(text).functions()]
-
-    def test_it_does_nothing_without_the_flag(self):
-        self.assertEqual(self.names(optimize(PROGRAM, ["deadfuncs"])), self.names(PROGRAM))
-
-    def test_it_removes_what_no_root_reaches_and_what_only_that_calls(self):
-        deadfuncs_module.WHOLE_PROGRAM = True
-        stats = {}
-        kept = self.names(optimize(PROGRAM, ["deadfuncs"], stats=stats))
-        self.assertNotIn("unused", kept)
-        self.assertNotIn("only_from_unused", kept)
-        self.assertEqual(stats["deadfuncs.removed"], 3)           # tambien by_runtime: nadie la nombra
-        self.assertEqual(kept, ["main", "used", "helper", "deep", "__kernel_k", "by_table"])
-
-    def test_kernels_and_what_data_names_stay(self):
-        deadfuncs_module.WHOLE_PROGRAM = True
-        kept = self.names(optimize(PROGRAM, ["deadfuncs"]))
-        self.assertIn("__kernel_k", kept)           # lo lanza el anfitrion por su etiqueta
-        self.assertIn("by_table", kept)             # un `.word` la nombra
-
-    def test_what_extern_refs_name_stays(self):
-        deadfuncs_module.WHOLE_PROGRAM = True
-        licm_module.EXTERNAL = frozenset({"by_runtime"})
-        self.assertIn("by_runtime", self.names(optimize(PROGRAM, ["deadfuncs"])))
-
-    def test_data_is_never_removed(self):
-        deadfuncs_module.WHOLE_PROGRAM = True
-        self.assertIn("victim_data:", optimize(PROGRAM, ["deadfuncs"]))
-
-    def test_a_removed_function_takes_its_header_with_it(self):
-        deadfuncs_module.WHOLE_PROGRAM = True
-        text = optimize(PROGRAM, ["deadfuncs"])
-        self.assertNotIn(".globl unused", text)
-
-    def test_the_flag_on_the_command_line(self):
-        with tempfile.TemporaryDirectory() as temp:
-            temp = Path(temp)
-            (temp / "p.s").write_text(PROGRAM, encoding="utf-8")
-            (temp / "crt.s").write_text("_start:\nJAL R31, by_runtime\nHALT\n", encoding="utf-8")
-            self.assertEqual(optimize_main([str(temp / "p.s"), "--whole-program", "--passes", "deadfuncs",
-                                            "--extern-refs", str(temp / "crt.s"), "-o", str(temp / "o.s")]), 0)
-            kept = self.names((temp / "o.s").read_text(encoding="utf-8"))
-        self.assertIn("by_runtime", kept)
-        self.assertNotIn("unused", kept)
-
-    def test_words_in_comments_of_extern_refs_are_not_roots(self):
-        with tempfile.TemporaryDirectory() as temp:
-            temp = Path(temp)
-            (temp / "p.s").write_text(PROGRAM, encoding="utf-8")
-            (temp / "crt.s").write_text("_start:\nHALT   ; ni by_runtime ni unused\n"
-                                        "; helper tampoco\n", encoding="utf-8")
-            self.assertEqual(optimize_main([str(temp / "p.s"), "--whole-program", "--passes", "deadfuncs",
-                                            "--extern-refs", str(temp / "crt.s"), "-o", str(temp / "o.s")]), 0)
-            kept = self.names((temp / "o.s").read_text(encoding="utf-8"))
-        self.assertNotIn("by_runtime", kept)
-        self.assertIn("helper", kept)               # main lo llama: se queda por eso
 
 
 class MergeTest(unittest.TestCase):
@@ -2967,9 +3080,303 @@ class MergeTest(unittest.TestCase):
             self.assertEqual(optimize_main([str(temp / "host.s"), str(temp / "kernels.s"),
                                             "-o", str(temp / "all.s")]), 0)
             text = (temp / "all.s").read_text(encoding="utf-8")
-        self.assertIn("GETTID R29", text)
+        self.assertRegex(text, r"\nGETTID R\d+\n")      # el pipeline completo puede cambiar de registro (leafregs)
         self.assertEqual(text.count("main:"), 1)
 
+
+# Hojas como las deja el pipeline antes de `inline` (sin marco: `deadsaves` cambio el guardado de R29 por una copia).
+INLINE_LEAVES = """\
+.text
+.align 4
+min2:
+ADD R4, R29, R0
+BGE R1, R2, L.8
+ADD R29, R1, R0
+BRA L.9
+L.8:
+ADD R29, R2, R0
+L.9:
+ADD R1, R29, R0
+ADD R29, R4, R0
+JR R31
+.align 4
+abs2:
+BGE R1, R0, L.16
+SUB R1, R0, R1
+JR R31
+L.16:
+JR R31
+"""
+
+
+class InlineTest(unittest.TestCase):
+    """`inline`: las llamadas a hojas pequenas de la unidad pasan a ser su cuerpo."""
+
+    def run_pass(self, source):
+        stats = {}
+        return lines_of(optimize(source, ["inline"], stats=stats)), stats
+
+    def test_a_small_leaf_is_copied_with_new_labels_and_the_returns_jump_behind_the_call(self):
+        out, stats = self.run_pass(INLINE_LEAVES + ".globl f\n.align 4\nf:\nJAL R31, abs2\nJAL R31, abs2\nHALT\n")
+        body = out[out.index("f:") + 1:]
+        self.assertEqual(stats["inline.expanded"], 2)
+        self.assertNotIn("JAL R31, abs2", body)
+        self.assertNotIn("JR R31", body)
+        labels = [line for line in body if line.endswith(":")]
+        self.assertEqual(len(labels), len(set(labels)), body)                  # cada copia con las suyas
+        self.assertNotIn("L.16:", body)
+        # el JR del medio salta detras de la llamada; el ultimo cae ahi
+        first_after = labels[1]
+        self.assertIn(f"BRA {first_after[:-1]}", body)
+
+    def test_what_cannot_be_copied_is_still_called(self):
+        cases = {
+            "calls": "g:\nJAL R31, min2\nJR R31\n",
+            "frame": "g:\nADDI R30, R30, -16\nADDI R30, R30, 16\nJR R31\n",
+            "link": "g:\nADD R5, R31, R0\nJR R5\n",
+            "big": "g:\n" + "ADDI R1, R1, 1\n" * 9 + "JR R31\n",
+            "falls": "g:\nADDI R1, R1, 1\n",
+            "foreign label": "g:\nBRA min2\n",
+            "opaque": "__mini_g:\nJR R31\n",
+        }
+        for name, callee in cases.items():
+            target = callee.split(":", 1)[0]
+            with self.subTest(name):
+                out, stats = self.run_pass(INLINE_LEAVES + ".align 4\n" + callee
+                                           + f".align 4\nf:\nJAL R31, {target}\nHALT\n")
+                self.assertIn(f"JAL R31, {target}", out[out.index("f:"):])
+        out, _ = self.run_pass(".text\nf:\nJAL R31, elsewhere\nHALT\n")       # de otra unidad
+        self.assertIn("JAL R31, elsewhere", out)
+
+    def test_programs_give_the_same_registers_with_and_without_the_pass(self):
+        """Cadenas de llamadas a `min2`/`abs2` con valores al azar, en el simulador de la CPU: el resultado de la
+        maquina, no el texto. R29 lo pisa `min2` por dentro y tiene que volver como estaba."""
+        for seed in range(100):
+            rng = random.Random(seed)
+            lines = ["LI R29, 1234"]
+            for n in range(9):
+                lines += [f"LI R1, {rng.choice(POOL)}", f"LI R2, {rng.choice(POOL)}",
+                          f"JAL R31, {rng.choice(('min2', 'abs2'))}", f"ADD R{16 + n}, R1, R0"]
+            source = ".text\n.globl f\nf:\n" + "\n".join(lines) + "\nADD R25, R29, R0\nHALT\n" + INLINE_LEAVES
+            optimized = optimize(source, ["inline"])
+            with self.subTest(seed=seed):
+                self.assertNotIn("JAL", optimized)
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), optimized)
+
+
+def leaf_program(rng: random.Random, frame: bool) -> str:
+    """`main` llama a una hoja `f` que usa preservados (de R17..R25) y los guarda en la pila o en copias, como los
+    deja lcc y `stackslots`. Tras la llamada, R16 es el resultado y R17..R25 tienen que seguir como estaban."""
+    kept = rng.sample(range(17, 26), rng.randint(1, 4))
+    main = [f"LI R{r}, {rng.choice(POOL)}" for r in range(17, 26)]
+    main += [f"LI R1, {rng.choice(POOL)}", f"LI R2, {rng.choice(POOL)}", "JAL R31, f", "ADD R16, R1, R0", "HALT"]
+    if frame:
+        enter = ["ADDI R30, R30, -48", *(f"STORE R{r}, R30, {4 * i}" for i, r in enumerate(kept)),
+                 f"STORE R31, R30, {4 * len(kept)}"]
+        leave = [*(f"LOAD R{r}, R30, {4 * i}" for i, r in enumerate(kept)), f"LOAD R31, R30, {4 * len(kept)}",
+                 "ADDI R30, R30, 48"]
+    else:
+        enter = [f"ADD R{5 + i}, R{r}, R0" for i, r in enumerate(kept)]
+        leave = [f"ADD R{r}, R{5 + i}, R0" for i, r in enumerate(kept)]
+    body = [f"{rng.choice(('ADD', 'SUB', 'XOR'))} R{r}, R{rng.choice((1, 2))}, R{rng.choice((1, 2))}" for r in kept]
+    sources = [1, 2, *kept]
+    for _ in range(8):
+        dest = rng.choice([*kept, 11, 12, 13])
+        body.append(f"{rng.choice(R3_OPS)} R{dest}, R{rng.choice(sources)}, R{rng.choice(sources)}")
+        sources.append(dest)
+    body += [f"BEQ R{kept[0]}, R0, L.1", f"ADD R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "BRA L.2",
+             "L.1:", f"SUB R1, R{rng.choice(sources)}, R{rng.choice(sources)}", "L.2:"]
+    return ".text\nmain:\n" + "\n".join(main) + "\nf:\n" + "\n".join(enter + body + leave) + "\nJR R31\n"
+
+
+class KernelCallsTest(unittest.TestCase):
+    """`kernelcalls`: en un kernel, cada JAL pasa a ser el cuerpo entero de la funcion (la GPU no tiene JAL)."""
+
+    HELPERS = """\
+.text
+leaf:
+ADDI R1, R1, 1
+JR R31
+framed:
+ADDI R30, R30, -16
+STORE R31, R30, 8
+STORE R29, R30, 0
+ADD R29, R1, R0
+JAL R31, leaf
+ADD R1, R1, R29
+LOAD R29, R30, 0
+LOAD R31, R30, 8
+ADDI R30, R30, 16
+JR R31
+"""
+
+    def run_pass(self, kernel_body, helpers=HELPERS):
+        stats = {}
+        source = helpers + f".globl __kernel_k\n__kernel_k:\n{kernel_body}\nJR R31\n"
+        unit = parse_unit(source, "k.s")
+        PASSES["kernelcalls"][0](unit, stats)
+        kernel = next(f for f in unit.functions() if f.name == "__kernel_k")
+        return [line.render() for line in kernel.body], stats
+
+    def test_nested_calls_with_frames_are_expanded_and_the_link_saves_go(self):
+        body, stats = self.run_pass("JAL R31, framed\nJAL R31, leaf")
+        self.assertFalse([line for line in body if line.startswith("JAL")], body)
+        self.assertFalse([line for line in body if "R31" in line and line != "JR R31"], body)   # sin guardados de R31
+        self.assertIn("STORE R29, R30, 0", body)                                  # los de R29, si
+        self.assertEqual(stats["kernelcalls.expanded"], 3)                       # framed, su leaf y la otra leaf
+
+    def test_what_cannot_be_expanded_is_an_error_with_the_name(self):
+        cases = {
+            "otra unidad": ("JAL R31, memcpy", "", "memcpy: no esta en la unidad"),
+            "recursion": ("JAL R31, ping", "ping:\nJAL R31, pong\nJR R31\npong:\nJAL R31, ping\nJR R31\n",
+                          "recursiva \\(ping -> pong -> ping\\)"),
+            "puntero": ("JAL R31, f", "f:\nJALR R31, R5, 0\nJR R31\n", "llama por un puntero"),
+            "helper privado": ("JAL R31, __mini_f", "__mini_f:\nJR R31\n", "ABI privada"),
+        }
+        for name, (call, helpers, message) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(OptError, message):
+                self.run_pass(call, ".text\n" + helpers)
+
+    def test_functions_that_are_not_kernels_keep_their_calls(self):
+        unit = parse_unit(self.HELPERS, "k.s")
+        PASSES["kernelcalls"][0](unit, {})
+        self.assertIn("JAL R31, leaf", [line.render() for line in unit.lines()])
+
+
+class LaneStackTest(unittest.TestCase):
+    """`lanestack`: un kernel no puede salirse de los 512 bytes de pila de su lane."""
+
+    def run_pass(self, body: str) -> dict:
+        source = (".text\n.globl __kernel_k\n__kernel_k:\nGETTID R5\nMOVI R6, 512\nMUL R5, R5, R6\n"
+                  f"LI R30, __gpu_stack+496\nADD R30, R30, R5\n{body}\nEXIT\n")
+        stats = {}
+        PASSES["lanestack"][0](parse_unit(source, "k.s"), stats)
+        return stats
+
+    def test_frames_that_fit_pass(self):
+        self.run_pass("ADDI R30, R30, -480\nSTORE R1, R30, 0\nSTORE R2, R30, 480+12\nADDI R30, R30, 480")
+
+    def test_a_frame_deeper_than_the_lane_stack_is_an_error(self):
+        with self.assertRaisesRegex(OptError, "los marcos llegan a 600 bytes de pila y cada lane tiene 496"):
+            self.run_pass("ADDI R30, R30, -200\nADDI R30, R30, -400\nSTORE R1, R30, 0\nADDI R30, R30, 600")
+
+    def test_an_access_above_the_home_area_is_an_error(self):
+        with self.assertRaisesRegex(OptError, "STORE R1, R30, 16 cae fuera de la pila de la lane"):
+            self.run_pass("STORE R1, R30, 16")
+
+    def test_unknown_stack_is_counted_not_checked(self):
+        stats = self.run_pass("BEQ R1, R0, L.1\nADDI R30, R30, -8\nL.1:\nSTORE R1, R30, 0")
+        self.assertEqual(stats["lanestack.unknown"], 1)
+
+
+class MarksTest(unittest.TestCase):
+    """`marks`: etiquetas `__inl$...` donde cambia la funcion expandida en linea, para el perfil."""
+
+    def marked(self, kernel_body):
+        source = KernelCallsTest.HELPERS + f".globl __kernel_k\n__kernel_k:\n{kernel_body}\nJR R31\n"
+        unit = parse_unit(source, "dir/k-1.s")
+        PASSES["kernelcalls"][0](unit, {})
+        return unit, next(f for f in unit.functions() if f.name == "__kernel_k")
+
+    def run_marks(self, unit, kernel):
+        PASSES["marks"][0](unit, {})
+        return [line.render() for line in kernel.body]
+
+    def test_each_change_of_expanded_function_gets_a_label_with_its_path(self):
+        unit, kernel = self.marked("ADDI R1, R1, 2\nJAL R31, framed\nADDI R1, R1, 3")
+        body = self.run_marks(unit, kernel)
+        marks = [line for line in body if line.startswith("__inl$")]
+        self.assertEqual(marks, ["__inl$k_1$__kernel_k$1$framed:",            # la unidad, sin caracteres raros
+                                 "__inl$k_1$__kernel_k$2$framed$leaf:",
+                                 "__inl$k_1$__kernel_k$3$framed:",
+                                 "__inl$k_1$__kernel_k$4:"])                   # de vuelta en el kernel
+        self.assertLess(body.index("ADDI R1, R1, 2"), body.index(marks[0]))
+        self.assertGreater(body.index("ADDI R1, R1, 3"), body.index(marks[3]))
+        self.assertEqual(body[body.index(marks[1]) + 1], "ADDI R1, R1, 1")    # el cuerpo de leaf
+
+    def test_a_line_a_pass_creates_takes_its_neighbours_origin_only_if_they_agree(self):
+        unit, kernel = self.marked("JAL R31, leaf\nJAL R31, leaf")
+        first = next(i for i, line in enumerate(kernel.body) if line.kind == "instr" and line.origin == ("leaf",))
+        kernel.body.insert(first + 1, instr("ADDI", "R2", "R2", "1"))         # nueva (sin origen), dentro de leaf
+        body = self.run_marks(unit, kernel)
+        # Las dos leaf van seguidas (sin nada del kernel entre ellas): una marca para las dos y otra a la vuelta.
+        self.assertEqual(sum(line.startswith("__inl$") for line in body), 2)
+        added = body.index("ADDI R2, R2, 1")
+        self.assertTrue(body[added - 2].startswith("__inl$") and body[added - 2].endswith("$leaf:"))
+        # Entre dos expansiones de leaf, una linea del propio kernel sigue siendo del kernel.
+        unit, kernel = self.marked("JAL R31, leaf\nADDI R3, R3, 1\nJAL R31, leaf")
+        body = self.run_marks(unit, kernel)
+        own = body.index("ADDI R3, R3, 1")
+        self.assertTrue(re.fullmatch(r"__inl\$k_1\$__kernel_k\$\d+:", next(
+            line for line in reversed(body[:own]) if line.startswith("__inl$"))))
+
+    def test_functions_without_expanded_code_are_left_alone(self):
+        unit = parse_unit(KernelCallsTest.HELPERS, "k.s")
+        before = [line.render() for line in unit.lines()]
+        PASSES["marks"][0](unit, {})
+        self.assertEqual([line.render() for line in unit.lines()], before)
+
+    def test_rereading_the_output_keeps_the_marks_inside_their_function(self):
+        unit, kernel = self.marked("JAL R31, framed")
+        self.run_marks(unit, kernel)
+        names = [function.name for function in parse_unit(render_unit(unit), "k.s").functions()]
+        self.assertEqual(names, ["leaf", "framed", "__kernel_k"])
+
+    def test_the_marks_assemble_and_are_the_last_pass(self):
+        unit, kernel = self.marked("JAL R31, framed")
+        self.run_marks(unit, kernel)
+        assemble_bytes(render_unit(unit).replace("JAL R31, leaf", "ADDI R1, R1, 1"))
+        self.assertEqual(DEFAULT_PASSES[-1], "marks")
+
+
+class LeafRegsTest(unittest.TestCase):
+    """`leafregs`: en una funcion sin llamadas, los preservados que guarda pasan a registros libres."""
+
+    def run_pass(self, source):
+        stats = {}
+        return lines_of(optimize(source, ["leafregs"], stats=stats)), stats
+
+    def test_a_register_saved_in_a_copy_becomes_the_copy(self):
+        out, stats = self.run_pass(".text\nf:\nADD R5, R29, R0\nADD R29, R1, R2\nADD R1, R29, R29\n"
+                                   "ADD R29, R5, R0\nJR R31\n")
+        self.assertEqual(out[out.index("f:") + 1:], ["ADD R5, R1, R2", "ADD R1, R5, R5", "JR R31"])
+        self.assertEqual(stats["leafregs.registers"], 1)
+
+    def test_registers_saved_on_the_stack_move_to_free_ones_and_the_frame_goes(self):
+        out, stats = self.run_pass(".text\nf:\nADDI R30, R30, -16\nSTORE R28, R30, 0\nSTORE R29, R30, 4\n"
+                                   "STORE R31, R30, 8\nADD R29, R1, R2\nADD R28, R29, R1\nADD R1, R28, R29\n"
+                                   "LOAD R28, R30, 0\nLOAD R29, R30, 4\nLOAD R31, R30, 8\nADDI R30, R30, 16\nJR R31\n")
+        self.assertFalse(any(re.search(r"R(2[89]|30)\b", line) for line in out), out)
+        self.assertEqual(stats["leafregs.registers"], 3)                       # R28, R29 y R31
+
+    def test_what_is_left_alone(self):
+        cases = {
+            "calls": "ADD R5, R29, R0\nADD R29, R1, R0\nJAL R31, g\nADD R1, R29, R0\nADD R29, R5, R0\nJR R31\n",
+            "reads the incoming value": "ADD R5, R29, R0\nADD R1, R29, R1\nADD R29, R5, R0\nJR R31\n",
+            "holder used elsewhere": "ADD R5, R29, R0\nADD R29, R1, R0\nADD R1, R5, R29\nADD R29, R5, R0\nJR R31\n",
+            "slot address": "ADDI R30, R30, -16\nSTORE R29, R30, 0\nADDI R1, R30, 0\nADD R29, R1, R0\n"
+                            "LOAD R29, R30, 0\nADDI R30, R30, 16\nJR R31\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                out, stats = self.run_pass(f".text\nf:\n{body}")
+                self.assertIn("R29", " ".join(out))
+                self.assertNotIn("leafregs.registers", stats)
+        out, stats = self.run_pass(".text\n__kernel_k:\nADD R5, R29, R0\nADD R29, R1, R0\nADD R29, R5, R0\nEXIT\n")
+        self.assertNotIn("leafregs.registers", stats)
+
+    def test_programs_give_the_same_result_and_keep_the_preserved_registers(self):
+        """En el simulador de la CPU: el resultado (R16) y los preservados (R17..R25) tras la llamada."""
+        renamed = 0
+        for seed in range(200):
+            rng = random.Random(seed)
+            source = leaf_program(rng, frame=seed % 2 == 0)
+            stats: dict = {}
+            optimized = optimize(source, ["leafregs"], stats=stats)
+            renamed += stats.get("leafregs.registers", 0)
+            with self.subTest(seed=seed):
+                self.assertEqual(final_registers(optimized, 0), final_registers(source, 0), source + "\n---\n" + optimized)
+        self.assertGreater(renamed, 200)
 
 TUI = ROOT / "v.tui"
 RCC = ROOT / "u.lcc" / "build" / ("rcc.exe" if sys.platform == "win32" else "rcc")

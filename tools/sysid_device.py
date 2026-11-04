@@ -48,6 +48,9 @@ VERSION_MINOR = 0
 BASE = 0x8000_0000
 SIZE = 0x1_0000         # bloque de 64 KiB
 
+# Relativo: Codon resuelve `tools.x` desde la carpeta de este fichero (l18).
+from .mmio_device import MmioDevice  # noqa: E402
+
 MAGIC_OFF = 0x00
 MMIO_VERSION = 0x04
 SYSTEM_ID = 0x08
@@ -93,11 +96,8 @@ def declared_devices(*, serial: bool = False, video: bool = False,
     return bits
 
 
-class SysIdDevice:
+class SysIdDevice(MmioDevice):
     """Siete palabras de solo lectura; el resto del bloque da error."""
-
-    BASE = BASE
-    SIZE = SIZE
 
     MAGIC_OFF = MAGIC_OFF
     MMIO_VERSION = MMIO_VERSION
@@ -110,11 +110,22 @@ class SysIdDevice:
     _REGISTROS = (MAGIC_OFF, MMIO_VERSION, SYSTEM_ID, DEVICES, MEM_BASE,
                   MEM_SIZE, MONITOR_VERSION)
 
+    # Con constantes en la clase, Codon no infiere los campos del constructor:
+    # hay que declararlos (tools/codon/LIMITACIONES.md, l09).
+    folder: int
+    isa_profile: int
+    contract: int
+    devices: int
+    mem_base: int
+    mem_size: int
+    monitor_version: int
+
     def __init__(self, folder: int, isa_profile: int, contract: int = 1,
                  devices: int = 0, mem_base: int = 0, mem_size: int = 0,
                  monitor_version: int = 0):
         if not 0 <= folder <= 0xFF:
             raise ValueError("el número de carpeta son ocho bits")
+        super().__init__(BASE, SIZE)
         self.folder = folder
         # ISA_PROFILE ya no se expone por este bloque --la identidad del
         # núcleo es de CPU CORE (§13.1)-- pero se conserva el atributo porque
@@ -125,9 +136,6 @@ class SysIdDevice:
         self.mem_base = mem_base
         self.mem_size = mem_size
         self.monitor_version = monitor_version
-
-    def contains(self, address: int) -> bool:
-        return self.BASE <= address < self.BASE + self.SIZE
 
     def validate(self, offset: int, writing: bool = False) -> None:
         # Las siete son de SOLO LECTURA y el resto del bloque no es alias:

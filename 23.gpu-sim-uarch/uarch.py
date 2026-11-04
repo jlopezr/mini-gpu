@@ -320,7 +320,7 @@ class Model:
                     exec_free_at = now + ex
                     self.busy_until[warp.warp_id] = now + cfg.pipe_front + ex + cfg.pipe_back
 
-            if not warp.step():
+            if not warp.step(self.system):
                 # El warp no avanzo (barrera, halt): no cobrar la instruccion.
                 now += 1
                 continue
@@ -329,7 +329,7 @@ class Model:
             self.counters.lane_ops += lanes
             self.cursor = (warp.warp_id + 1) % cfg.warps
             now += cost
-            self.sm.release_barriers() if hasattr(self.sm, "release_barriers") else None
+            self.sm.release_barriers(self.system) if hasattr(self.sm, "release_barriers") else None
 
         self.counters.cycles = now
         return self.counters

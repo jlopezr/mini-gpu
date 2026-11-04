@@ -7,10 +7,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import cpu_gpu_sim as sim
 from cpu_gpu_sim import AccessFault, CpuGpuSystem, InstructionLimitExceeded, mm
+
+# Las pruebas de la línea de órdenes (`sim.main`) son del motor Python y leen su
+# salida en el proceso; las del motor Codon están en test_codon_backend.py.
+os.environ["MINIGPU_SIM_BACKEND"] = "python"
 
 sys.path.insert(0, str(sim.ROOT / "1.isa"))
 from mini_asm import assemble_bytes, first_pass  # noqa: E402
@@ -1449,6 +1454,95 @@ class VideoSharedTest(unittest.TestCase):
         self.assertFalse(s.gpu.halted_by_control)
 
 
+class StopMachineTest(unittest.TestCase):
+    """Cerrar la ventana, F12 o Ctrl+C (`stop_machine`) paran los dos núcleos.
+
+    Antes `stop_machine` ponía `system.halted`, que nadie leía: la simulación
+    seguía hasta el HALT del programa o el límite.
+    """
+
+    def test_stops_a_cpu_spinning_forever(self):
+        from tools.sim_host import stop_machine
+        s = make("loop: BRA loop")
+        stop_machine(s)
+        self.assertEqual(s.run(1000), "halt")
+        self.assertEqual(s.cpu_instructions, 0)
+
+    def test_stops_a_running_gpu(self):
+        from tools.sim_host import stop_machine
+        s = make("loop: BRA loop", kernel=asm("spin: BRA spin"))
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.step_round()
+        stop_machine(s)
+        self.assertEqual(s.run(1000), "halt")
+        self.assertTrue(s.gpu.halted_by_control)
+
+
+class IdleGpuTest(unittest.TestCase):
+    def test_idle_cpu_run_does_not_consult_the_warp_vm(self):
+        s = make("MOVI R1, 7\nHALT")
+
+        def no_scan(_):
+            self.fail("una GPU ociosa no necesita recorrer los warps")
+
+        with patch.object(type(s.gpu.system), "halted", property(no_scan)):
+            self.assertEqual(s.run(max_gpu_instructions=0), "halt")
+        self.assertEqual((s.cpu.regs[1], s.cpu_instructions, s.gpu.retired), (7, 2, 0))
+
+    def test_cpu_launch_runs_the_gpu_in_the_same_round(self):
+        s = make("STORE R1, R10, MMIO_GPU_WARP_START_OFF\nHALT", kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        s.cpu.regs[1] = 1
+        s.cpu.regs[10] = mm.MMIO_GPU_BASE
+        self.assertTrue(s.gpu.halted)
+        s.step_round()
+        self.assertFalse(s.gpu.halted)
+        self.assertEqual((s.cpu_instructions, s.gpu.retired), (1, 1))
+        self.assertEqual(s.run(), "halt")
+        self.assertEqual(s.gpu.done, 1)
+
+    def test_idle_state_tracks_relaunch_control_and_reset(self):
+        s = make(kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        for _ in range(2):
+            self.assertTrue(s.gpu.halted)
+            s.gpu.warp_start(1)
+            self.assertFalse(s.gpu.halted)
+            s.gpu.halt()
+            self.assertTrue(s.gpu.halted)
+            self.assertFalse(s.gpu.step())
+            self.assertEqual(s.gpu.live, 1)
+            s.gpu.resume()
+            self.assertFalse(s.gpu.halted)
+            while s.gpu.step():
+                pass
+            self.assertTrue(s.gpu.halted)
+            self.assertEqual((s.gpu.live, s.gpu.done), (0, 1))
+        s.gpu.reset()
+        self.assertTrue(s.gpu.halted)
+        self.assertEqual(s.gpu.done, 0)
+
+    def test_faulted_live_warp_is_stopped_for_run_and_limits(self):
+        s = make(kernel=TRAP)
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.gpu.step()
+        self.assertIsNotNone(s.gpu.fault)
+        self.assertTrue(s.gpu.halted)
+        self.assertEqual(s.gpu.live, 1)
+        self.assertEqual(s.run(max_gpu_instructions=0), "halt")
+
+    def test_waiting_warp_is_stalled_not_idle(self):
+        s = make(kernel=THREE_ADDS)
+        set_warp(s, 0, active=1)
+        s.gpu.warp_start(1)
+        s.gpu.warps[0].state = "WAIT_BAR"
+        self.assertFalse(s.gpu.halted)
+        self.assertEqual(s.run(), "stalled")
+        self.assertEqual(s.gpu.live, 1)
+
+
 class SchedulingTest(unittest.TestCase):
     def outcome(self, **kwargs):
         s, out = demo(**kwargs)
@@ -1680,6 +1774,161 @@ def build_c_example(name: str, data=()):
     labels = first_pass(wrapper.read_text(encoding="utf-8"), wrapper.parent, wrapper.name,
                         c_build.INCLUDE_DIRS)[1]
     return binary.read_bytes(), labels
+
+
+class ProfileTest(unittest.TestCase):
+    """`--profile` (tools/sim_profile.py): instrucciones de CPU y de warp por función."""
+
+    # _start llama a main; main llama dos veces a leaf, a tail (que salta con BRA a leaf, como una llamada final de
+    # mini-opt) y a rec con n = 2 (recursiva). L.1 es una etiqueta de bloque, no una función.
+    PROGRAM = """
+        start:
+            MOVI  R30, 4096
+            JAL   R31, main
+            HALT
+        main:
+            ADD   R20, R31, R0
+            JAL   R31, leaf
+            JAL   R31, leaf
+            JAL   R31, tail
+            MOVI  R1, 2
+            JAL   R31, rec
+            ADD   R31, R20, R0
+            JR    R31
+        leaf:
+            ADDI  R2, R2, 1
+            JR    R31
+        tail:
+            ADDI  R3, R3, 1
+            BRA   leaf
+        rec:
+            BEQ   R1, R0, L.1
+            ADDI  R30, R30, -4
+            STORE R31, R30, 0
+            ADDI  R1, R1, -1
+            JAL   R31, rec
+            LOAD  R31, R30, 0
+            ADDI  R30, R30, 4
+        L.1:
+            JR    R31
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import sim_profile
+        cls.sim_profile = sim_profile
+        labels = first_pass(cls.PROGRAM, HERE, "<profile>")[1]
+        cls.profile = sim_profile.Profile(sim_profile.Symbols(labels))
+        system = CpuGpuSystem(MEMORY)
+        system.load_cpu_program(asm(cls.PROGRAM))
+        system.enable_profile(cls.profile)
+        cls.outcome = system.run()
+        cls.executed = system.cpu.instructions_executed
+        cls.profile.finish()
+
+    def test_every_instruction_counts_once_in_its_function(self):
+        self.assertEqual(self.outcome, "halt")
+        self.assertEqual(self.profile.executed, self.executed)
+        self.assertEqual(sum(self.profile.own.values()), self.executed)
+        self.assertEqual(dict(self.profile.own), {"start": 3, "main": 8, "leaf": 6, "tail": 2, "rec": 18})
+
+    def test_a_block_label_is_not_a_function(self):
+        self.assertNotIn("L.1", self.profile.own)
+        self.assertEqual(self.sim_profile.Symbols({"f": 0, "L.3.12": 8, "L.4": 12}).function(16), "f")
+
+    def test_calls_and_the_total_with_what_a_function_calls(self):
+        self.assertEqual(self.profile.calls["leaf"], 2)          # la de tail es un BRA, no una llamada
+        self.assertEqual(self.profile.total["main"], 8 + 6 + 2 + 18)
+        self.assertEqual(self.profile.total["start"], self.executed)  # el punto de entrada: todo
+
+    def test_a_tail_call_counts_inside_the_function_that_jumps(self):
+        self.assertEqual(self.profile.total["tail"], 2 + 2)       # sus dos y las dos de leaf tras el BRA
+
+    def test_recursion_is_not_counted_twice(self):
+        self.assertEqual(self.profile.calls["rec"], 3)
+        self.assertEqual(self.profile.total["rec"], self.profile.own["rec"])
+
+    def test_a_c_kernel_is_counted_in_warp_instructions_with_its_c_name(self):
+        sys.path.insert(0, str(sim.ROOT))
+        from tools import build_c as c_build
+        image, _ = build_c_example("dma/memset")
+        wrapper = c_build.wrapper_path(CASES / "dma" / "memset" / "memset.c")
+        profile = self.sim_profile.Profile(self.sim_profile.Symbols.from_program(Path("memset.bin"), wrapper))
+        system = CpuGpuSystem(MEMORY)
+        system.load_cpu_program(image)
+        system.enable_profile(profile)
+        self.assertEqual(system.run(), "halt")
+        self.assertEqual(dict(profile.gpu), {"__kernel_memset": system.gpu.retired})
+        self.assertGreater(profile.calls["gpu_launch"], 0)
+        out = io.StringIO()
+        profile.report(out)
+        self.assertIn("memset (kernel)", out.getvalue())
+
+    def test_inline_marks_give_the_path_of_expanded_functions(self):
+        symbols = self.sim_profile.Symbols({
+            "__kernel_k": 0, "__inl$u$__kernel_k$1$a": 8, "__inl$u$__kernel_k$2$a$b": 16,
+            "__inl$u$__kernel_k$3": 24, "__inl$u$__kernel_k$4$c": 24, "L.2": 28, "g": 32})
+        self.assertEqual(symbols.function(20), "__kernel_k")                      # una marca no es una funcion
+        self.assertEqual([symbols.path(pc) for pc in (4, 8, 20, 24, 28, 32)], [
+            ("__kernel_k",), ("__kernel_k", "a"), ("__kernel_k", "a", "b"),
+            ("__kernel_k", "c"),                       # dos marcas en la misma direccion: la ultima (n mayor)
+            ("__kernel_k", "c"), ("g",)])                 # una marca no pasa a la funcion siguiente
+
+    def test_the_gpu_report_is_a_tree_with_own_total_and_occupancy(self):
+        from types import SimpleNamespace
+        symbols = self.sim_profile.Symbols({"__kernel_k": 0, "__inl$u$__kernel_k$1$a": 8,
+                                            "__inl$u$__kernel_k$2$a$b": 12})
+        profile = self.sim_profile.Profile(symbols)
+        for pc, mask, times in ((0, 0xFF, 2), (8, 0xFF, 1), (12, 0x01, 4)):       # b: una lane de ocho
+            for _ in range(times):
+                profile.gpu_event(SimpleNamespace(pc=pc, mask=mask, live_mask=0xFF, instruction=0))
+        tree = profile.gpu_tree()
+        self.assertEqual(tree[("__kernel_k",)][:2], [2, 7])
+        self.assertEqual(tree[("__kernel_k", "a")][:2], [1, 5])
+        self.assertEqual(tree[("__kernel_k", "a", "b")], [4, 4, 4, 32])
+        out = io.StringIO()
+        profile.report(out)
+        lines = out.getvalue().splitlines()
+        self.assertIn("7 instrucciones de warp; ocupación 50%", lines[1])           # (16 + 8 + 4) / (7 * 8)
+        rows = [line for line in lines if line.lstrip().startswith(("k (kernel)", "a ", "b "))]
+        self.assertEqual([len(row) - len(row.lstrip()) for row in rows], [2, 4, 6])  # sangrado por nivel
+        self.assertTrue(rows[2].endswith("12%"))                                   # 4 de 32
+
+    def test_annotate_writes_the_executed_assembly_with_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            annotated = Path(folder) / "anotado.txt"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sim.main([str(program), "--profile", "--profile-annotate", str(annotated),
+                                           "--memory-size", hex(MEMORY)]), 0)
+            text = annotated.read_text(encoding="utf-8")
+        self.assertIn("rec:", text)
+        self.assertRegex(text, r"\n\s+3\s+0000002c\s+ADDI\s+R2, R2, 1")         # leaf: dos llamadas y el BRA
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(sim.main([str(program), "--profile-annotate", str(annotated),
+                                       "--memory-size", hex(MEMORY)]), 2)        # sin --profile
+
+    def test_the_command_line_needs_the_names(self):
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "p.asm"
+            program.write_text(self.PROGRAM, encoding="utf-8")
+            binary = Path(folder) / "p.bin"
+            binary.write_bytes(asm(self.PROGRAM))
+            for args in ([str(binary), "--profile"], [str(program), "--symbols", str(program)]):
+                with self.subTest(args=args), contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(sim.main([*args, "--memory-size", hex(MEMORY)]), 2)
+            for args in ([str(program), "--profile"], [str(binary), "--profile", "--symbols", str(program)]):
+                stdout = io.StringIO()
+                with self.subTest(args=args), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(sim.main([*args, "--memory-size", hex(MEMORY)]), 0)
+                self.assertIn("Perfil de CPU: 37 instrucciones", stdout.getvalue())
+            report = Path(folder) / "perfil.txt"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sim.main([str(program), "--profile", str(report), "--memory-size", hex(MEMORY)]), 0)
+            self.assertIn("rec", report.read_text(encoding="utf-8"))
 
 
 class CKernelTest(unittest.TestCase):

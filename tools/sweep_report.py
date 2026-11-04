@@ -51,9 +51,12 @@ from tools.prototype import (
 
 
 def latest_report_dir(prototype_dir: Path) -> Path:
+    from tools.build_report import is_diamond_report
+
     history = prototype_dir / 'reports'
     candidates = sorted(
-        (d for d in history.iterdir() if (d / 'summary.json').exists()),
+        (d for d in history.iterdir()
+         if (d / 'summary.json').exists() and not is_diamond_report(d)),
         reverse=True,
     ) if history.exists() else []
     if not candidates:

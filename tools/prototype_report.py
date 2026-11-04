@@ -47,8 +47,11 @@ def _latest_summary(prototype_dir: Path) -> dict:
     history = prototype_dir / "reports"
     if not history.exists():
         return {}
+    from tools.build_report import is_diamond_report
+
     candidates = sorted(
-        (d for d in history.iterdir() if (d / "summary.json").exists()),
+        (d for d in history.iterdir()
+         if (d / "summary.json").exists() and not is_diamond_report(d)),
         key=lambda d: d.name, reverse=True,
     )
     if not candidates:

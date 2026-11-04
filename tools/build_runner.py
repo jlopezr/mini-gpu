@@ -199,8 +199,10 @@ def _build_archive(record: dict, prototype: Path) -> Path | None:
         path = Path(archived)
         if path.exists():
             return path
-    archives = sorted((prototype / "reports").glob("*/metadata.json"))
-    return archives[-1].parent if archives else None
+    from tools.build_report import apio_report_metadata
+
+    archives = apio_report_metadata(prototype)  # sin los informes de Diamond
+    return archives[0].parent if archives else None
 
 
 def _record_from_archive(archive: Path, timing: str) -> dict:

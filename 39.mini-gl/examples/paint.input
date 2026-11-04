@@ -1,0 +1,25 @@
+# paint: un trazo blanco, rojo y más grueso, un trazo rojo, verde y otro trazo.
+@0       keyboard connect
+@0       mouse connect
+@400000  mouse button left down
++200000  mouse move 60 20
++200000  mouse move 60 20
++200000  mouse move 60 -40
++200000  mouse button left up
++100000  key down R
++400000  key up R
++100000  key down UP
++400000  key up UP
++100000  key down UP
++400000  key up UP
++100000  mouse move -100 120
++200000  mouse button left down
++200000  mouse move -80 60
++200000  mouse move 120 40
++200000  mouse button left up
++100000  key down G
++400000  key up G
++100000  mouse move 200 -200
++200000  mouse button left down
++200000  mouse move 100 0
++200000  mouse button left up
