@@ -28,7 +28,7 @@ SDL_LIBS := $(shell $(SDL_CONFIG) --libs 2>/dev/null)
 # pypy@3.11) va de 4 a 10 veces más rápido: se usa PyPy si está. La ventana se abre igualmente con
 # CPython (gui_python, en tools/sim_host.py). SIM_PYTHON=python3 evita PyPy.
 REPO := $(abspath ..)
-PYTHON ?= python3
+PYTHON ?= python
 ifndef SIM_PYTHON
 SIM_PYTHON := $(or $(shell uv python find pypy 2>/dev/null),$(PYTHON))
 endif

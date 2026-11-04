@@ -28,11 +28,14 @@ import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
 sys.path.insert(0, str(ROOT / "1.isa"))
+sys.path.insert(0, str(TOOLS))
+from msvc_env import ensure_msvc_environment  # noqa: E402
 from mini_asm import assemble_bytes, write_hex  # noqa: E402
 from runtime_dirs import ASM_INCLUDE_DIRS, C_INCLUDE_DIRS, SRC  # noqa: E402
 
@@ -196,7 +199,12 @@ def build(program: Path, output: Path | None = None, board: bool = False,
     startup = [CRT0] if units else []
     compiled = []
     if units:
-        plains = [lower_c(unit, outdir, includes, defines) for unit in units]
+        # Cada unidad es un proceso aparte (cl + rcc): en paralelo. En Windows el entorno de MSVC se carga
+        # aqui una vez; los mini-lcc hijos lo heredan en vez de lanzar vcvars32 cada uno (~1 s).
+        if sys.platform == "win32":
+            ensure_msvc_environment()
+        with ThreadPoolExecutor(max_workers=min(len(units), os.cpu_count() or 1)) as pool:
+            plains = list(pool.map(lambda unit: lower_c(unit, outdir, includes, defines), units))
         share_runtime(plains)
         compiled = [optimize_s(plains, startup + by_hand, outdir / f"{program.stem}.opt.s")]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)

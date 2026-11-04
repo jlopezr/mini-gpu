@@ -10,7 +10,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from msvc_env import ensure_msvc_environment  # noqa: E402
+
+ROOT =Path(__file__).resolve().parents[1]
 MINI_LCC = ROOT / "u.lcc"
 WINDOWS = sys.platform == "win32"
 RCC = MINI_LCC / "build" / ("rcc.exe" if WINDOWS else "rcc")
@@ -41,45 +44,6 @@ def ensure_rcc() -> int:
         "CFLAGS=-g -std=gnu89 -Wno-implicit-function-declaration",
         "rcc",
     ])
-
-
-def ensure_msvc_environment() -> bool:
-    """Carga el entorno x86 de MSVC cuando cl no esta ya en PATH."""
-    if shutil.which("cl"):
-        return True
-
-    program_files_x86 = os.environ.get("ProgramFiles(x86)", "")
-    program_files = os.environ.get("ProgramFiles", "")
-    candidates: list[Path] = []
-    vswhere = Path(program_files_x86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-    if vswhere.exists():
-        result = subprocess.run(
-            [str(vswhere), "-all", "-products", "*", "-property", "installationPath"],
-            capture_output=True, text=True, check=False
-        )
-        candidates.extend(Path(line.strip()) for line in result.stdout.splitlines() if line.strip())
-    candidates.extend([
-        Path(program_files) / "Microsoft Visual Studio" / "2022" / "Community",
-        Path(program_files) / "Microsoft Visual Studio" / "2022" / "BuildTools",
-        Path(program_files_x86) / "Microsoft Visual Studio" / "2019" / "BuildTools",
-    ])
-
-    vcvars = next((root / "VC" / "Auxiliary" / "Build" / "vcvars32.bat"
-                   for root in candidates
-                   if (root / "VC" / "Auxiliary" / "Build" / "vcvars32.bat").exists()), None)
-    if vcvars is None:
-        return False
-    result = subprocess.run(
-        f'call "{vcvars}" >nul 2>&1 && set',
-        shell=True, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        return False
-    for line in result.stdout.splitlines():
-        name, separator, value = line.partition("=")
-        if separator:
-            os.environ[name] = value
-    return shutil.which("cl") is not None
 
 
 def main(argv: list[str] | None = None) -> int:
