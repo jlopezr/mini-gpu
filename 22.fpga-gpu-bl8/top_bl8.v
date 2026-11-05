@@ -20,9 +20,13 @@ module top_bl8(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     localparam integer UART_CLOCKS_PER_BIT = 100;
     localparam integer UART_MAX_BAUD = 250_000;
     localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
-    reg [7:0] power_on=0;
-    wire reset=!(&power_on);
-    always @(posedge clk_25mhz) if(reset) power_on<=power_on+1'b1;
+    // Reset registrado: un registro de desplazamiento que arranca a unos y sale por un
+    // flip-flop, como en la 10 y la 12. Antes era `reset = !(&power_on)`, una decodificacion
+    // combinacional del contador, y con Diamond el monitor respondia 0x00 en la placa aunque
+    // la netlist post-PAR funcionaba en simulacion. Ver 12.fpga-gpu/top.v.
+    reg [15:0] reset_shift=16'hffff;
+    wire reset=reset_shift[15];
+    always @(posedge clk_25mhz) reset_shift<={reset_shift[14:0],1'b0};
     assign wifi_gpio0=1;
     wire [7:0] rx_data,tx_data,last_command;
     wire rx_strobe,tx_strobe,tx_ready,busy;
