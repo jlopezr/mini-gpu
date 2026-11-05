@@ -51,4 +51,20 @@ divergencia sea legal; los carriles que ya vieron la bandera esperarían reconve
 Cambiaría el programa (una instrucción más) y habría que ajustar los `pc` esperados del grupo 1.
 Se deja así a propósito por ahora.
 
+**Mejora de hardware posible: broadcast en el LSU.** El LSU no compara las direcciones de los
+carriles: cada uno es un candidato a su banco (`addr[4:2]`) y, si el banco ya está cogido en esa ola,
+espera a la siguiente ([`gpu_lsu.v`](../../../../12.fpga-gpu/gpu_lsu.v), bucle de `route_*`). Por eso
+ocho carriles que leen la misma palabra cuestan ocho olas. Con broadcast (leer una vez y repartir el
+dato a todos los carriles que piden esa misma palabra) la lectura de la bandera sería de una sola ola,
+atómica para el warp, y esta carrera no ocurriría en este caso. Los accesos uniformes (constantes,
+punteros base, límites de bucle, banderas) son comunes en un kernel, y es lo que hace la memoria
+compartida de las GPU reales. Matices:
+
+- Cuesta lógica: comparar las direcciones de los carriles que caen en cada banco y repartir el dato de
+  vuelta, en un camino (el del LSU) que ya es sensible al timing. No está medido.
+- No elimina el caso general: carriles con direcciones distintas del mismo banco se siguen
+  serializando, y una lectura de warp partida entre ciclos sigue siendo posible.
+- Falta saber cuántos `LOAD` de los kernels reales son uniformes; se podría contar en el simulador
+  (`gpu-vecsum`, `mandelbrot`...) antes de decidir. Es una decisión para las GPU más nuevas, no para la 12.
+
 Contexto: [README de la categoría](../README.md).
