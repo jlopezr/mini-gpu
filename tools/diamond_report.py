@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 IMPL = "impl1"
 PREFERENCE_RE = re.compile(r'^Preference:\s+FREQUENCY (?:NET|PORT) "([^"]+)"\s+([\d.]+)\s+MHz')
 REPORT_RE = re.compile(r"^Report:\s+([\d.]+)\s*MHz is the maximum frequency")
-ITEMS_RE = re.compile(r"^\s*(\d+) items scored, (\d+) timing errors detected")
+EXCEEDS_RE = re.compile(r"^Error:\s+The following path exceeds requirements by ([\d.]+)\s*ns")
+ITEMS_RE =re.compile(r"^\s*(\d+) items scored, (\d+) timing errors detected")
 SUMMARY_RE = re.compile(r"Timing errors:\s+(\d+) \(setup\), (\d+) \(hold\)")
 USAGE_RE = re.compile(r"^\s*Number of ([^:]+?):\s+(\d+) out of (\d+)")
 PAR_ROW_RE = re.compile(
@@ -46,11 +47,28 @@ def parse_twr(path: Path) -> tuple[dict, dict]:
     current = None
     scored = 0
     in_setup = True
+    # Una preferencia con errores no tiene linea "Report: ... MHz": TRACE lista los
+    # caminos que fallan. Sin esto el reloj desaparecia y salia PASS con errores.
+    # Se estima la Fmax desde el peor exceso: 1000 / (periodo exigido + exceso).
+    pending: list | None = None
+
+    def flush() -> None:
+        nonlocal pending
+        if pending and pending[2] is not None:
+            name, constraint, worst = pending
+            clocks[name] = {"achieved": 1000.0 / (1000.0 / constraint + worst),
+                            "constraint": constraint, "estimated": True}
+        pending = None
+
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         match = SUMMARY_RE.search(line)
         if match:
             errors = {"setup": int(match.group(1)), "hold": int(match.group(2))}
+        match = EXCEEDS_RE.match(line)
+        if match and pending is not None and pending[2] is None:
+            pending[2] = float(match.group(1))
         if line.startswith("Preference:"):
+            flush()
             match = PREFERENCE_RE.match(line)
             current = None
             scored = 0
@@ -67,11 +85,14 @@ def parse_twr(path: Path) -> tuple[dict, dict]:
         match = ITEMS_RE.match(line)
         if match and current:
             scored = int(match.group(1))
+            if int(match.group(2)) > 0:
+                pending = [current[0], current[1], None]
             continue
         match = REPORT_RE.match(line)
         if match and current and in_setup and scored:
             clocks[current[0]] = {"achieved": float(match.group(1)), "constraint": current[1]}
             current = None
+    flush()
     return clocks, errors
 
 
@@ -140,13 +161,16 @@ def summary_text(summary: dict, label: str, elapsed: float, strategy: list[str])
 
 
 def archive(proto: Path, out: Path, started: datetime, elapsed: float, exit_code: int,
-            command: list[str], strategy: list[str], label: str = "diamond") -> Path:
+            command: list[str], strategy: list[str], label: str = "diamond",
+            phases: dict | None = None) -> Path:
     """Copia lo relevante de `.diamond/` a `reports/<fecha>-<label>/` y escribe los resumenes."""
     from tools.build_report import synthesizable_source_hashes
 
     impl = out / IMPL
     summary = summarize(impl)
     summary.update(label=label, archive_only=False, elapsed_seconds=elapsed)
+    if phases:
+        summary["phases"] = phases
     folder = proto / "reports" / f"{started:%Y%m%d-%H%M%S-%f}-{label}"
     folder.mkdir(parents=True)
     metadata = {
@@ -155,6 +179,8 @@ def archive(proto: Path, out: Path, started: datetime, elapsed: float, exit_code
         "source_sha256": synthesizable_source_hashes(proto),
         "started": started.isoformat(), "exit_code": exit_code, "elapsed_seconds": elapsed,
     }
+    if phases:
+        metadata["phases"] = phases
     (folder / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     (folder / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (folder / "summary.txt").write_text(summary_text(summary, label, elapsed, strategy),

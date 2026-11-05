@@ -289,6 +289,37 @@ def _local_date_text(value: str | None) -> str:
     return f"{local:%Y-%m-%d %H:%M}"
 
 
+def _diamond_info(prototype: Path) -> dict | None:
+    """Fila de Diamond con las mismas columnas que la de apio, o None si no hay informe.
+
+    Diamond no pasa por `build`, asi que no hay estado de ejecucion: todo sale del
+    ultimo informe archivado en `reports/`. BITSTREAM es CURRENT/STALE segun las
+    fuentes con que se hizo ese informe (no mira si `.diamond/hardware.bit` existe)."""
+    from tools.build_compare import latest_reports
+    from tools.build_report import _metadata_source_hashes, synthesizable_source_hashes
+
+    folder = latest_reports(prototype)["diamond"]
+    if folder is None:
+        return None
+    timing, fmax = _timing_text(folder)
+    try:
+        metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        metadata = {}
+    current = _metadata_source_hashes(metadata) == synthesizable_source_hashes(prototype)
+    state = "SUCCESS" if metadata.get("exit_code") == 0 else "FAILED"
+    if state == "FAILED" and timing == "FAIL":
+        state = "TIMING_FAIL"
+    return {
+        "bitstream": "CURRENT" if current else "STALE",
+        "state": state, "timing": timing, "fmax": fmax,
+        "clocks": _clock_details(folder),
+        "elapsed": _elapsed_text({}, folder),
+        "date": _local_date_text(metadata.get("started")),
+        "label": metadata.get("label", "diamond"),
+    }
+
+
 def prototype_build_summary(repo_root: Path, report_root: Path,
                             prototype: str | None = None) -> list[dict]:
     """Aggregate build history and local artifacts without starting builds."""
@@ -329,6 +360,7 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
             "elapsed": _elapsed_text(record, archive) if record else "-",
             "date": _local_date_text(record.get("started_at")) if record else "-",
             "label": record.get("label", "-") if record else "-",
+            "diamond": _diamond_info(path),
         })
     return rows
 
@@ -374,6 +406,7 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         "STALE": "33", "INTERRUPTED": "33", "TIMING_FAIL": "33", "RUNNING": "36",
         "MISSING": "31", "FAILED": "31", "FAIL": "31",
         "NEVER": "2",
+        "apio": "34", "diamond": "35",  # columna TOOL
     }
 
     def field(value: str, width: int) -> str:
@@ -394,22 +427,32 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
     def fmax_text(row: dict, clock: tuple) -> str:
         return f"{clock[1]:.1f}/{clock[2]:.1f}"
 
-    w_proto = widest("PROTOTYPE", (row["prototype"] for row in rows))
-    w_bit = widest("BITSTREAM", (row["bitstream"] for row in rows))
-    w_state = widest("LAST BUILD", (row["state"] for row in rows))
-    w_timing = widest("TIMING", (row["timing"] for row in rows))
-    w_seed = widest("SEED", (row["seed"] for row in rows))
-    w_clock = widest("CLOCK", (clock[0] for row in rows for clock in row.get("clocks", [])))
+    # Una fila por herramienta: la de apio y, debajo, la de Diamond si hay informe.
+    entries = []
+    for row in rows:
+        entries.append(("apio", row))
+        if row.get("diamond"):
+            entries.append(("diamond", {**row["diamond"], "prototype": row["prototype"],
+                                        "seed": "-"}))
+    w_proto = widest("PROTOTYPE", (row["prototype"] for _, row in entries))
+    w_tool = widest("TOOL", (tool for tool, _ in entries))
+    w_bit = widest("BITSTREAM", (row["bitstream"] for _, row in entries))
+    w_state = widest("LAST BUILD", (row["state"] for _, row in entries))
+    w_timing = widest("TIMING", (row["timing"] for _, row in entries))
+    w_seed = widest("SEED", (row["seed"] for _, row in entries))
+    w_clock = widest("CLOCK", (clock[0] for _, row in entries for clock in row.get("clocks", [])))
     w_clock = max(w_clock, widest("CLOCK", ("-",)))
     w_fmax = widest("FMAX/REQ", (fmax_text(row, clock) if row.get("clocks") else row["fmax"]
-                                 for row in rows for clock in (row.get("clocks") or [None])[:1]))
-    w_elapsed = widest("ELAPSED", (row["elapsed"] for row in rows))
-    w_date = widest("DATE", (row["date"] for row in rows))
+                                 for _, row in entries
+                                 for clock in (row.get("clocks") or [None])[:1]))
+    w_elapsed = widest("ELAPSED", (row["elapsed"] for _, row in entries))
+    w_date = widest("DATE", (row["date"] for _, row in entries))
     print("  " + COLUMN_GAP.join((
-        f"{'PROTOTYPE':<{w_proto}}", f"{'BITSTREAM':<{w_bit}}", f"{'LAST BUILD':<{w_state}}",
-        f"{'TIMING':<{w_timing}}", f"{'SEED':<{w_seed}}", f"{'CLOCK':<{w_clock}}",
-        f"{'FMAX/REQ':<{w_fmax}}", f"{'ELAPSED':<{w_elapsed}}", f"{'DATE':<{w_date}}", "LABEL")))
-    for row in rows:
+        f"{'PROTOTYPE':<{w_proto}}", f"{'TOOL':<{w_tool}}", f"{'BITSTREAM':<{w_bit}}",
+        f"{'LAST BUILD':<{w_state}}", f"{'TIMING':<{w_timing}}", f"{'SEED':<{w_seed}}",
+        f"{'CLOCK':<{w_clock}}", f"{'FMAX/REQ':<{w_fmax}}", f"{'ELAPSED':<{w_elapsed}}",
+        f"{'DATE':<{w_date}}", "LABEL")))
+    for tool, row in entries:
         marker = "*" if row["state"] == "RUNNING" else " "
         # Un reloj por linea. El primero es el que limita (el de menos margen) y
         # va en la fila del prototipo, junto al PASS/FAIL general; el resto,
@@ -428,15 +471,14 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         else:
             clock_name, fmax = "-", f"{row['fmax']:<{w_fmax}}"
         print(f"{marker} " + COLUMN_GAP.join((
-            f"{row['prototype']:<{w_proto}}", field(row['bitstream'], w_bit),
+            f"{row['prototype']:<{w_proto}}", field(tool, w_tool), field(row['bitstream'], w_bit),
             field(row['state'], w_state), field(row['timing'], w_timing),
             f"{row['seed']:<{w_seed}}", f"{clock_name:<{w_clock}}", fmax,
             f"{row['elapsed']:<{w_elapsed}}", f"{row['date']:<{w_date}}", row['label'])))
         for name, achieved, required in clocks[1:]:
             print("  " + COLUMN_GAP.join((
-                " " * w_proto, " " * w_bit, " " * w_state, " " * w_timing, " " * w_seed,
-                f"{name:<{w_clock}}", clock_value(achieved, required, 0))))
-
+                " " * w_proto, " " * w_tool, " " * w_bit, " " * w_state, " " * w_timing,
+                " " * w_seed, f"{name:<{w_clock}}", clock_value(achieved, required, 0))))
 
 def build_all(repo_root: Path, *, label: str = "build", archive_only: bool = False,
               incremental: bool | None = None, run=subprocess.run) -> int:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +29,8 @@ from tools.build_report import (
 from tools.prototype import find_repo_root, list_prototypes, resolve_prototype
 
 # (apio, diamond): nombre del recurso en cada summary.json
-RESOURCES = {"LUT": ("TRELLIS_COMB", "LUT4s"), "EBR": ("DP16KD", "block RAMs")}
+RESOURCES = {"LUT": ("TRELLIS_COMB", "LUT4s"), "FF": ("TRELLIS_FF", "registers"),
+             "EBR": ("DP16KD", "block RAMs")}
 
 
 def _load(path: Path) -> dict:
@@ -65,9 +67,20 @@ def _resource(summary: dict, tool: str, key: str) -> str:
     return str(value["used"]) if value else "-"
 
 
+def _seconds(value) -> str:
+    return "-" if value is None else f"{float(value):.0f}"
+
+
+def _times(summary: dict, metadata: dict) -> list[str]:
+    """[TOTAL, SYNTH, PNR] en segundos; los informes antiguos no separan fases."""
+    total = summary.get("elapsed_seconds", metadata.get("elapsed_seconds"))
+    phases = summary.get("phases") or metadata.get("phases") or {}
+    return [_seconds(total), _seconds(phases.get("synthesis")), _seconds(phases.get("pnr"))]
+
+
 def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]:
     if folder is None:
-        return [proto.name, tool, "-", "-", "-", "-", "-", "-", "-", "-"]
+        return [proto.name, tool] + ["-"] * 12
     summary = _load(folder / "summary.json")
     metadata = _load(folder / "metadata.json")
     stale = "" if _metadata_source_hashes(metadata) == current else "*"
@@ -83,8 +96,9 @@ def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]
     return [proto.name, tool, clock, fmax, verdict,
             "n/a" if tool == "apio" else ("-" if hold is None else str(hold)),
             "-" if slack is None else f"{slack:+.3f}",
-            _resource(summary, tool, "LUT"), _resource(summary, tool, "EBR"),
-            folder.name[:15] + stale]
+            *_times(summary, metadata),
+            _resource(summary, tool, "LUT"), _resource(summary, tool, "FF"),
+            _resource(summary, tool, "EBR"), folder.name[:15] + stale]
 
 
 def main() -> int:
@@ -97,7 +111,7 @@ def main() -> int:
     protos = ([resolve_prototype(p, root) for p in args.prototype] if args.prototype
               else [p for p in list_prototypes(root) if (p / "reports").is_dir()])
     header = ["PROTOTYPE", "TOOL", "CLOCK", "FMAX/REQ", "TIMING", "HOLD", "SLACK(ns)",
-              "LUT", "EBR", "REPORT"]
+              "TOTAL(s)", "SYNTH(s)", "PNR(s)", "LUT", "FF", "EBR", "REPORT"]
     rows = []
     for proto in protos:
         reports = latest_reports(proto)
@@ -111,14 +125,22 @@ def main() -> int:
         return 1
     widths = [max(len(header[i]), *(len(r[i]) for r in rows)) for i in range(len(header))]
     print("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+    # Mismos colores de TOOL que `build-list --prototypes`; sin terminal o con NO_COLOR, sin ANSI.
+    use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    tool_colors = {"apio": "34", "diamond": "35"}
     last = None
     for r in rows:
         if last is not None and r[0] != last:
             print()
         last = r[0]
-        print("  ".join(c.ljust(w) for c, w in zip(r, widths)))
+        cells = [c.ljust(w) for c, w in zip(r, widths)]
+        if use_color and r[1] in tool_colors:
+            cells[1] = f"\033[{tool_colors[r[1]]}m{cells[1]}\033[0m"
+        print("  ".join(cells))
     print("\nHOLD n/a: nextpnr no analiza hold. SLACK es la holgura de setup de la iteracion "
-          "guardada por PAR (solo Diamond).\n* en REPORT: informe con fuentes distintas de las actuales.")
+          "guardada por PAR (solo Diamond).\nSYNTH es yosys / Synplify; PNR es todo lo que sigue "
+          "(nextpnr + ecppack / Translate..Bitgen). Los informes anteriores a esta medida solo "
+          "tienen TOTAL.\n* en REPORT: informe con fuentes distintas de las actuales.")
     return 0
 
 

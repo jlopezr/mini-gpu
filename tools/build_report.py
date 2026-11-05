@@ -288,6 +288,20 @@ def reusable_detailed_report(prototype_dir):
     return None
 
 
+# Primera linea de nextpnr en el log de apio (yosys ya termino). Con --verbose-pnr
+# o sin el, nextpnr empieza imprimiendo la utilizacion previa al empaquetado.
+NEXTPNR_START_RE = re.compile(r'\s*(Logic utilisation before packing|Packing IOs)')
+
+
+def phase_times(synthesis_seconds, total_seconds):
+    """Reparto comun a apio y Diamond: `synthesis` y `pnr` (todo lo que sigue, bitgen incluido).
+
+    Es tiempo de reloj medido al ejecutar, no lo que cada herramienta dice de si misma:
+    asi las dos cifras significan lo mismo. Los informes antiguos no lo tienen."""
+    synthesis = max(0.0, min(synthesis_seconds, total_seconds))
+    return {'synthesis': round(synthesis, 1), 'pnr': round(total_seconds - synthesis, 1)}
+
+
 def timing_passes(clocks):
     return bool(clocks) and all(v['achieved'] >= v['constraint']
                                for v in clocks.values())
@@ -371,12 +385,15 @@ def main():
     print(f'Reports: {folder}', flush=True)
     started = time.monotonic()
     result = 0
+    pnr_started = None
     if not args.archive_only:
         with (folder / 'build.log').open('w', encoding='utf-8') as log:
             process = subprocess.Popen(command, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, cwd=ROOT,
                                        text=True, encoding='utf-8', errors='replace')
             for line in process.stdout:
+                if pnr_started is None and NEXTPNR_START_RE.match(line):
+                    pnr_started = time.monotonic()
                 log.write(line)
                 log.flush()
                 print(line, end='', flush=True)
@@ -387,6 +404,9 @@ def main():
                hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != digest]
     metadata.update(exit_code=result, elapsed_seconds=time.monotonic() - started,
                     sources_changed_during_build=changed)
+    if pnr_started is not None:
+        # yosys (hasta la primera linea de nextpnr) y todo lo que sigue (nextpnr + ecppack).
+        metadata['phases'] = phase_times(pnr_started - started, metadata['elapsed_seconds'])
     (folder / 'metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     # Preserve outputs even on failure, but never present stale timing as success.
     for name in ('hardware.pnr', 'hardware.json', 'hardware.config', 'hardware.bit', 'scons.params'):
@@ -404,6 +424,8 @@ def main():
     summary = summarize(report)
     summary.update(label=args.label, archive_only=args.archive_only,
                    elapsed_seconds=metadata['elapsed_seconds'])
+    if 'phases' in metadata:
+        summary['phases'] = metadata['phases']
     (folder / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
     lines = [f'Label: {args.label}', f'Elapsed: {metadata["elapsed_seconds"]:.1f} s']
     if changed:

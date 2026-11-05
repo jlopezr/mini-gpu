@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -58,11 +59,22 @@ def stage_sources(files: list[Path], out: Path) -> list[Path]:
     return staged
 
 
-def read_apio(proto: Path) -> dict[str, str]:
+def read_apio(proto: Path, env: str | None = None) -> dict[str, str]:
+    """Opciones del `apio.ini`: `[common]` mas `[env:<env>]` (que sustituye a las de common).
+
+    Sin `env` se usa `default-env` de `[apio]`; un prototipo sin entornos usa su unica
+    seccion, como antes. El caso con entornos es 13.hdmi (tres tops en una carpeta)."""
     cfg = configparser.ConfigParser()
     cfg.read(proto / "apio.ini", encoding="utf-8")
-    section = cfg[cfg.sections()[0]]
-    return {k: v for k, v in section.items()}
+    env = env or (cfg["apio"].get("default-env") if cfg.has_section("apio") else None)
+    if env is None or not cfg.has_section(f"env:{env}"):
+        section = cfg[cfg.sections()[0]]
+        return {k: v for k, v in section.items()}
+    merged: dict[str, str] = {}
+    if cfg.has_section("common"):
+        merged.update(cfg["common"])
+    merged.update(cfg[f"env:{env}"])
+    return merged
 
 
 def tcl_path(path: Path) -> str:
@@ -119,13 +131,14 @@ def main() -> int:
     parser.add_argument("--strategy", action="append", default=[], metavar="CLAVE=VALOR",
                         help="propiedad de Strategy1 (repetible), p. ej. par_place_iterator=10; "
                              "los nombres son los tclid de Diamond (data/base.stf)")
+    parser.add_argument("--env", help="entorno del apio.ini (por defecto, su default-env)")
     parser.add_argument("--tcl-only", action="store_true", help="genera build.tcl y no lo lanza")
     parser.add_argument("--keep", action="store_true", help="no borrar .diamond/ antes de generar")
     args = parser.parse_args()
 
     root = find_repo_root()
     proto = resolve_prototype(args.prototype, root)
-    apio = read_apio(proto)
+    apio = read_apio(proto, args.env)
     board = apio.get("board", "")
     if board not in DEVICES:
         print(f"error: board '{board}' sin dispositivo Diamond conocido ({', '.join(DEVICES)})")
@@ -161,11 +174,15 @@ def main() -> int:
     env["PATH"] = str(args.diamond / "bin" / "nt64") + os.pathsep + env["PATH"]
     log = out / "diamond.log"
     started = datetime.now()
+    t0 = time.monotonic()
+    pnr_started = None  # el tcl imprime "== prj_run Translate" al acabar Synplify
     with log.open("w", encoding="utf-8") as fh:
         proc = subprocess.Popen([str(pnmainc), script.name], cwd=out, env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace")
         for line in proc.stdout:
+            if pnr_started is None and line.startswith("== prj_run Translate"):
+                pnr_started = time.monotonic()
             sys.stdout.write(line)
             fh.write(line)
         code = proc.wait()
@@ -175,6 +192,10 @@ def main() -> int:
         code = 1
 
     elapsed = (datetime.now() - started).total_seconds()
+    phases = None
+    if pnr_started is not None:
+        from tools.build_report import phase_times
+        phases = phase_times(pnr_started - t0, elapsed)
 
     bit = out / IMPL / f"{name}_{IMPL}.bit"
     if code == 0 and bit.is_file():
@@ -182,7 +203,7 @@ def main() -> int:
     if (out / IMPL).is_dir():
         from tools.diamond_report import archive
         folder = archive(proto, out, started, elapsed, code,
-                         [str(pnmainc), script.name], args.strategy)
+                         [str(pnmainc), script.name], args.strategy, phases=phases)
         print(f"Informe: {folder / 'summary.txt'}")
     if code == 0 and bit.is_file():
         print(f"OK: {out / 'hardware.bit'}")
