@@ -60,12 +60,15 @@ def readme_title(prototype_dir: Path) -> str:
 
 def backend_from_rtl(prototype_dir: Path) -> str | None:
     """CPU o GPU no es una etiqueta: es qué módulo de núcleo hay en la carpeta."""
-    if (prototype_dir / "cpu.v").exists():
+    cpu = (prototype_dir / "cpu.v").exists()
+    gpu = (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists()
+    if cpu and gpu:
+        return "cpu+gpu"
+    if cpu:
         return "cpu"
-    if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
+    if gpu:
         return "gpu"
-    return None
-
+    return "-"
 
 def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
     """TODAS las familias de núcleo que hay en la carpeta, en orden CPU, GPU.
