@@ -25,6 +25,15 @@ module clock2_gen #(
     (* MFG_ENABLE_FILTEROPAMP="1" *)
     (* MFG_GMCREF_SEL="2" *)
 
+    // Frecuencias para Synplify/Diamond, que no las deduce de los parametros: sin
+    // ellas TRACE no analiza los relojes del PLL y solo mide el de entrada. nextpnr
+    // no las necesita. Valen para las tres tops (CLKI_DIV 5, CLKFB_DIV 74, CLKOP_DIV 2,
+    // CLKOS_DIV 10): CLKOP = 25/5*74 = 370 MHz; CLKOS = 370*2/10 = 74 MHz.
+    // Si cambias los parametros de una top, cambia tambien estos tres.
+    (* FREQUENCY_PIN_CLKI="25" *)
+    (* FREQUENCY_PIN_CLKOP="370" *)
+    (* FREQUENCY_PIN_CLKOS="74" *)
+
     // El EHXPLLL tiene mas salidas de las que usamos (ENCLKOS, los CLKOS que no
     // se sacan...). No conectarlas es lo normal en una primitiva de Lattice, asi
     // que se silencia aqui y solo aqui: avisos fijos tapan los que si importan.
