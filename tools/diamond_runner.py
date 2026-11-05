@@ -185,20 +185,34 @@ def main() -> int:
     started = datetime.now()
     t0 = time.monotonic()
     pnr_started = None  # el tcl imprime "== prj_run Translate" al acabar Synplify
-    with log.open("w", encoding="utf-8") as fh:
-        proc = subprocess.Popen([str(pnmainc), script.name], cwd=out, env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace")
-        for line in proc.stdout:
-            if pnr_started is None and line.startswith("== prj_run Translate"):
-                pnr_started = time.monotonic()
-            sys.stdout.write(line)
-            fh.write(line)
-        code = proc.wait()
+    # Registro comun de builds (reports/<id>/status.json), el mismo que usa apio: asi
+    # `build-list` ve este run EN MARCHA. `tool: diamond` evita que la fila de apio lo tome
+    # por suyo. Si el proceso muere de golpe, `build-list` lo marca interrumpido al ver que el
+    # pid ya no existe.
+    from tools.build_runner import create_build_record, update_build_record
+    record = create_build_record(root / "reports", proto.name, "diamond",
+                                 [str(pnmainc), script.name])
+    update_build_record(record["status_path"], pid=os.getpid(), tool="diamond")
+    try:
+        with log.open("w", encoding="utf-8") as fh:
+            proc = subprocess.Popen([str(pnmainc), script.name], cwd=out, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace")
+            for line in proc.stdout:
+                if pnr_started is None and line.startswith("== prj_run Translate"):
+                    pnr_started = time.monotonic()
+                sys.stdout.write(line)
+                fh.write(line)
+            code = proc.wait()
+    except BaseException:
+        update_build_record(record["status_path"], state="interrupted", exit_code=1)
+        raise
     # pnmainc sale con 0 aunque un prj_* haya dado "ERROR - ..." sin lanzar excepcion.
     errors = [l for l in log.read_text(encoding="utf-8").splitlines() if l.startswith("ERROR")]
     if errors and code == 0:
         code = 1
+    update_build_record(record["status_path"], state="success" if code == 0 else "failed",
+                        exit_code=code)
 
     elapsed = (datetime.now() - started).total_seconds()
     phases = None

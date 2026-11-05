@@ -306,18 +306,23 @@ def diamond_effort(folder: Path) -> str:
     return table if table.isdigit() and int(table) > 1 else "-"
 
 
-def _diamond_info(prototype: Path) -> dict | None:
+def _diamond_info(prototype: Path, running: bool = False) -> dict | None:
     """Fila de Diamond con las mismas columnas que la de apio, o None si no hay informe.
 
-    Diamond no pasa por `build`, asi que no hay estado de ejecucion: todo sale del
-    ultimo informe archivado en `reports/`. BITSTREAM es CURRENT/STALE segun las
-    fuentes con que se hizo ese informe (no mira si `.diamond/hardware.bit` existe)."""
+    Lo que se mide sale del ultimo informe archivado en `reports/`. BITSTREAM es
+    CURRENT/STALE segun las fuentes con que se hizo ese informe (no mira si
+    `.diamond/hardware.bit` existe). Que haya un run EN MARCHA lo dice el registro que abre
+    diamond_runner (`running`): la fila pasa a RUNNING, y si no hay ningun informe previo
+    sale una fila minima, para que no desaparezca el primer run."""
     from tools.build_compare import latest_reports
     from tools.build_report import _metadata_source_hashes, synthesizable_source_hashes
 
     folder = latest_reports(prototype)["diamond"]
     if folder is None:
-        return None
+        if not running:
+            return None
+        return {"bitstream": "-", "state": "RUNNING", "timing": "-", "fmax": "-", "clocks": [],
+                "elapsed": "-", "date": "-", "label": "diamond", "seed": "-"}
     timing, fmax = _timing_text(folder)
     try:
         metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
@@ -329,7 +334,7 @@ def _diamond_info(prototype: Path) -> dict | None:
         state = "TIMING_FAIL"
     return {
         "bitstream": "CURRENT" if current else "STALE",
-        "state": state, "timing": timing, "fmax": fmax,
+        "state": "RUNNING" if running else state, "timing": timing, "fmax": fmax,
         "clocks": _clock_details(folder),
         "elapsed": _elapsed_text({}, folder),
         "date": _local_date_text(metadata.get("started")),
@@ -345,6 +350,13 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
 
     entries = list_builds(report_root)
     latest: dict[str, dict] = {}
+    # Los runs de Diamond (`tool: diamond`) se registran aqui para que se vean en marcha, pero
+    # no son builds de apio: la fila de apio no los toma como "el ultimo", y la de Diamond solo
+    # mira si hay uno en curso (lo demas sale del informe archivado).
+    diamond_running = {
+        normalize_prototype(entry.get("prototype")) for entry in entries
+        if entry.get("tool") == "diamond" and str(entry.get("state", "")).lower() == "running"}
+    entries = [entry for entry in entries if entry.get("tool") != "diamond"]
     for entry in entries:
         # LAST BUILD habla de sintesis, no de pruebas: un `test` (lint o suite)
         # que acaba FAILED no debe tapar un build bueno. Se mantiene si sigue
@@ -378,7 +390,7 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
             "elapsed": _elapsed_text(record, archive) if record else "-",
             "date": _local_date_text(record.get("started_at")) if record else "-",
             "label": record.get("label", "-") if record else "-",
-            "diamond": _diamond_info(path),
+            "diamond": _diamond_info(path, running=path.name in diamond_running),
         })
     return rows
 
@@ -433,6 +445,8 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         return f"\033[{code}m{padded}\033[0m" if use_color and code else padded
 
     active = [row["prototype"] for row in rows if row["state"] == "RUNNING"]
+    active += [f"{row['prototype']} (diamond)" for row in rows
+               if (row.get("diamond") or {}).get("state") == "RUNNING"]
     if active:
         message = "ACTIVE BUILD" if len(active) == 1 else "ACTIVE BUILDS"
         text = f"{message}: {', '.join(active)}"

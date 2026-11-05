@@ -170,6 +170,29 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(rows[0]["state"], "SUCCESS")
             self.assertEqual(rows[0]["label"], "build")
 
+    def test_a_running_diamond_build_is_shown_on_the_diamond_row_only(self):
+        # diamond_runner abre un registro con `tool: diamond`: la fila de Diamond pasa a
+        # RUNNING aunque no haya informe previo, y la de apio no lo toma por suyo.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype = root / "1.dia"
+            prototype.mkdir()
+            (prototype / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            reports = root / "reports"
+            record = create_build_record(reports, prototype.name, "diamond", ["pnmainc"])
+            update_build_record(record["status_path"], pid=os.getpid(), tool="diamond")
+
+            rows = prototype_build_summary(root, reports)
+
+            self.assertEqual(rows[0]["state"], "NEVER")           # apio: sin builds propios
+            self.assertEqual(rows[0]["diamond"]["state"], "RUNNING")
+
+            # Al acabar, vuelve a su informe archivado (aqui no hay ninguno: sin fila).
+            update_build_record(record["status_path"], state="success", exit_code=0)
+            rows = prototype_build_summary(root, reports)
+            self.assertEqual(rows[0]["state"], "NEVER")
+            self.assertIsNone(rows[0]["diamond"])
+
     def test_every_clock_is_listed_when_there_is_more_than_one(self):
         import io
         from contextlib import redirect_stdout
