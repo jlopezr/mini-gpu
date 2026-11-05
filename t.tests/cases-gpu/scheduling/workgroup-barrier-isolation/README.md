@@ -20,4 +20,35 @@ Comprueba que una `BAR` solo espera a los warps de **su** grupo de trabajo. Comp
   dependen del planificador.
 - No lleva `rtl.differential` por lo mismo: el diferencial compara contadores de instrucciones exactos.
 
+## Limitación conocida en la placa (`fpga-gpu`)
+
+**Con la suite completa sobre la FPGA este caso falla**: `error: True`, `error_code 0x06`
+(`ERROR_SIMT`), los warps 4..7 parados en el `BEQ` (`pc = 28`). **Solo, o en su carpeta, pasa.**
+En el simulador funcional y en el diferencial de RTL tampoco falla. Medido el 2026-11-05 con el
+bitstream de apio de la 12 (monitor 3.12) y también con el del 2026-10-08, así que no es una
+regresión reciente.
+
+Es una carrera del propio programa, no un fallo del hardware:
+
+- Un `LOAD` de warp son ocho lecturas separadas. Los ocho carriles leen la misma dirección (`4096`),
+  que cae en un solo banco, y el LSU sirve **un carril por banco y por ola**
+  ([`gpu_lsu.v`](../../../../12.fpga-gpu/gpu_lsu.v)): hacen falta ocho olas en ciclos distintos.
+- Si el `STORE` del grupo 0 cae en medio, unos carriles leen `0` y otros `7`. Volcando el warp 4 tras
+  el fallo: `R6 = 0` en los carriles 0..5 y `R6 = 7` en el 6 y el 7 (`R0 = 0` en todos).
+- El `BEQ R6, R0, wait` diverge dentro del warp y no hay región `SSY` abierta: el SM levanta
+  `ERROR_SIMT` (`gpu_sm.v`, rama `FINISH` con `sp == 0`).
+- En el simulador el `LOAD` es atómico, así que el warp ve la bandera entera a `0` o entera a `7`.
+
+Por qué solo falla en la suite: depende del ciclo exacto en que el `STORE` llega al banco, y eso
+cambia con lo que se ejecutó antes (el árbitro de bancos rota tras cada ola). Es determinista, pero
+muy sensible a la historia previa: `r0-hardwired-zero` ejecutado justo antes de este caso ya basta
+para reproducirlo.
+
+Descartado: memoria sucia en `4096` (con `initial_memory` a cero sigue fallando) y `R0` sin cablear.
+
+**Arreglo posible, no aplicado**: meter el bucle de espera en una región `SSY` para que la
+divergencia sea legal; los carriles que ya vieron la bandera esperarían reconvergidos en la `BAR`.
+Cambiaría el programa (una instrucción más) y habría que ajustar los `pc` esperados del grupo 1.
+Se deja así a propósito por ahora.
+
 Contexto: [README de la categoría](../README.md).
