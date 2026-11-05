@@ -51,7 +51,7 @@ module pll_cpu (
       .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"),
       .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
       .CLKI_DIV(5), .CLKOP_ENABLE("ENABLED"), .CLKOP_DIV(8),
-      .CLKOP_CPHASE(4), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
+      .CLKOP_CPHASE(7), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
       .CLKFB_DIV(16)
   ) pll_i (
       .RST(1'b0), .STDBY(1'b0), .CLKI(clkin), .CLKOP(clkout0),

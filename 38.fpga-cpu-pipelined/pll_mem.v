@@ -46,10 +46,10 @@ module pll_mem (
         // VCO = 100 * 6 = 600 MHz
         .CLKOP_DIV(6),
 
-        .CLKOP_CPHASE(3),
+        .CLKOP_CPHASE(5),
         .CLKOP_FPHASE(0),
         .CLKOS_DIV(6),
-        .CLKOS_CPHASE(3),
+        .CLKOS_CPHASE(5),
         .CLKOS_FPHASE(0),
 
         .FEEDBK_PATH("INT_OP")
