@@ -28,8 +28,18 @@ EXCEEDS_RE = re.compile(r"^Error:\s+The following path exceeds requirements by (
 ITEMS_RE =re.compile(r"^\s*(\d+) items scored, (\d+) timing errors detected")
 SUMMARY_RE = re.compile(r"Timing errors:\s+(\d+) \(setup\), (\d+) \(hold\)")
 USAGE_RE = re.compile(r"^\s*Number of ([^:]+?):\s+(\d+) out of (\d+)")
+# El tiempo de cada iteracion sale en segundos ("30") y, desde el minuto, como
+# "02:23" o "1:02:23": con solo \d+ la fila se descartaba y no quedaba iteracion guardada.
 PAR_ROW_RE = re.compile(
-    r"^(\d+_\d+)\s+(\*)?\s+(\d+)\s+(-?[\d.]+)\s+(\d+)\s+(-?[\d.]+)\s+(\d+)\s+(\d+)\s+(\S+)")
+    r"^(\d+_\d+)\s+(\*)?\s+(\d+)\s+(-?[\d.]+)\s+(\d+)\s+(-?[\d.]+)\s+(\d+)\s+(\d+(?::\d+)*)\s+(\S+)")
+
+
+def _seconds(text: str) -> int:
+    """'30' -> 30; '02:23' -> 143; '1:02:23' -> 3743."""
+    total = 0
+    for part in text.split(":"):
+        total = total * 60 + int(part)
+    return total
 
 
 def parse_twr(path: Path) -> tuple[dict, dict]:
@@ -107,7 +117,7 @@ def parse_par(path: Path) -> list[dict]:
                 "unrouted": int(match.group(3)),
                 "setup_slack": float(match.group(4)), "setup_score": int(match.group(5)),
                 "hold_slack": float(match.group(6)), "hold_score": int(match.group(7)),
-                "run_time_s": int(match.group(8)), "status": match.group(9),
+                "run_time_s": _seconds(match.group(8)), "status": match.group(9),
             })
     return rows
 

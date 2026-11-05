@@ -105,7 +105,10 @@ prj_src add {src}
 file copy -force "{tcl_path(lpf)}" "{tcl_path(lpf.parent / (name + '.lpf'))}"
 prj_impl option top "{top}"
 # apio define SYNTHESIZE (el RTL lo usa para elegir PLL real frente a modelo de simulacion).
-prj_impl option VERILOG_DIRECTIVES "SYNTHESIZE"
+# DIAMOND lo define solo este flujo: para el RTL que necesita una forma distinta con
+# Synplify (p. ej. RAM de doble puerto con dos escrituras). Se separan con un espacio;
+# con ';' o con '=1' Diamond ignora la segunda.
+prj_impl option VERILOG_DIRECTIVES "SYNTHESIZE DIAMOND"
 {strategy_cmds}
 prj_impl option {{include path}} "{tcl_path(proto)}"
 prj_project save
