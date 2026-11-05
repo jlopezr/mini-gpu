@@ -1,5 +1,8 @@
 `default_nettype none
 
+// CLKOP_CPHASE = CLKOP_DIV-1 (4) deja CLKOP en fase 0 respecto a CLKI. Con DIV/2
+// (2, lo que da ecppll) Diamond >= 3.10 aborta en Map ("should not be used as the
+// feedback signal"); yosys/nextpnr lo aceptan sin avisar. Igual que en 5.fpga-monitor.
 module pll_120 (
     input  wire clkin,
     output wire clkout0,
@@ -23,7 +26,7 @@ module pll_120 (
       .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"),
       .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
       .CLKI_DIV(5), .CLKOP_ENABLE("ENABLED"), .CLKOP_DIV(5),
-      .CLKOP_CPHASE(2), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
+      .CLKOP_CPHASE(4), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
       .CLKFB_DIV(24)
   ) pll_i (
       .RST(1'b0), .STDBY(1'b0), .CLKI(clkin), .CLKOP(clkout0),

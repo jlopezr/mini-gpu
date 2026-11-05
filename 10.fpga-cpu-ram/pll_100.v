@@ -17,6 +17,10 @@
 //   fref  = 25 / CLKI_DIV(5)         =   5 MHz
 //   CLKOP = fref * CLKFB_DIV(20)     = 100 MHz
 //   VCO   = CLKOP * CLKOP_DIV(6)     = 600 MHz, dentro del rango del ECP5
+//
+// CLKOP_CPHASE = CLKOP_DIV-1 (5) deja CLKOP en fase 0 respecto a CLKI. Con DIV/2
+// (3, lo que da ecppll) Diamond >= 3.10 aborta en Map ("should not be used as the
+// feedback signal"); yosys/nextpnr lo aceptan sin avisar. Igual que en 6.fpga-cpu.
 module pll_100 (
     input  wire clkin,    // 25 MHz, 0 deg
     output wire clkout0,  // 100 MHz, 0 deg
@@ -40,7 +44,7 @@ module pll_100 (
       .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"),
       .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
       .CLKI_DIV(5), .CLKOP_ENABLE("ENABLED"), .CLKOP_DIV(6),
-      .CLKOP_CPHASE(3), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
+      .CLKOP_CPHASE(5), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
       .CLKFB_DIV(20)
   ) pll_i (
       .RST(1'b0), .STDBY(1'b0), .CLKI(clkin), .CLKOP(clkout0),
