@@ -59,16 +59,19 @@ def readme_title(prototype_dir: Path) -> str:
 
 
 def backend_from_rtl(prototype_dir: Path) -> str | None:
-    """CPU o GPU no es una etiqueta: es qué módulo de núcleo hay en la carpeta."""
-    cpu = (prototype_dir / "cpu.v").exists()
-    gpu = (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists()
-    if cpu and gpu:
-        return "cpu+gpu"
-    if cpu:
+    """CPU o GPU no es una etiqueta: es qué módulo de núcleo hay en la carpeta.
+
+    UNA sola familia, la que gobierna el monitor: en la 36 y la 37, que tienen CPU
+    y GPU, es `cpu`. De ella cuelgan el selector de `fpga-cpu`, el SYS_ID y los
+    informes, así que esto es un dato y no un texto para mostrar: para el listado
+    está `backend_label`.
+    """
+    if (prototype_dir / "cpu.v").exists():
         return "cpu"
-    if gpu:
+    if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
         return "gpu"
-    return "-"
+    return None
+
 
 def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
     """TODAS las familias de núcleo que hay en la carpeta, en orden CPU, GPU.
@@ -85,6 +88,13 @@ def backends_from_rtl(prototype_dir: Path) -> tuple[str, ...]:
     if (prototype_dir / "gpu_sm.v").exists() or (prototype_dir / "gpu_system.v").exists():
         familias.append("gpu")
     return tuple(familias)
+
+
+def backend_label(prototype_dir: Path) -> str:
+    """Lo que se MUESTRA en los listados: las familias unidas con `+` (`cpu+gpu` en la
+    36 y la 37), o `-` si la carpeta no tiene núcleo. Solo para presentar; quien decide
+    algo usa `backend_from_rtl` o `backends_from_rtl`."""
+    return "+".join(backends_from_rtl(prototype_dir)) or "-"
 
 
 def _parameters_at_instantiation(prototype_dir: Path) -> dict | None:

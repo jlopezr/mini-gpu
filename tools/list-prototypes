@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.prototype import find_repo_root, list_prototypes
-from tools.prototype_report import _backend_from_rtl
+from tools.rtl_facts import backend_label
 
 
 def readme_title(prototype_dir: Path) -> str:
@@ -27,7 +27,7 @@ def describe(prototype_dir: Path) -> dict:
     return {
         "name": prototype_dir.name,
         "title": readme_title(prototype_dir),
-        "backend": _backend_from_rtl(prototype_dir) or "—",
+        "backend": backend_label(prototype_dir),
         # apio.ini es lo único que decide si build/test/lint/build-sweep
         # (genéricos para cualquier prototipo) tienen algo que hacer aquí.
         "apio": "sí" if (prototype_dir / "apio.ini").exists() else "no",
