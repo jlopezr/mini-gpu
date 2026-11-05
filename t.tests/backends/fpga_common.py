@@ -50,8 +50,10 @@ def build_versions(
 
     Un `cpu.v`/`monitor.v` sin `version.json` NO cuenta: es la señal de «esto es
     un target de test soportado», no solo «hay RTL sintetizable ahí».
-    `17.fpga-gpu-ram-v2` tiene ambos y no es un target: es un camino crítico
-    alternativo de la 14.
+    Un prototipo con RTL pero sin `version.json` es una variante que no se
+    prueba en placa; la 17 (camino crítico alternativo de la 14) lo tuvo así
+    hasta que se vio que sintetiza y que es justo el camino crítico lo que
+    habría que probar.
 
     `select(directory)` dice si la carpeta es de este backend,
     `capabilities(directory, signals)` devuelve sus capacidades y

@@ -1,0 +1,4 @@
+{
+  "alias": "sdram2",
+  "description": "MiniGPU con 32 MiB de SDRAM, 8 warps x 8 lanes, camino critico acortado respecto a la 14"
+}

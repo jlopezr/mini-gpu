@@ -79,9 +79,10 @@ def _read_register(client, address: int) -> int:
 # subio las tres versiones de GPU: 12 a 2.3, y
 # 14 y 17 a 2.4. No cambia ni un byte del protocolo; sube porque el cambio es
 # INCOMPATIBLE y un bitstream viejo no para con error, da otro resultado en
-# silencio. 14 y 17 siguen compartiendo numero, como antes: son funcionalmente
-# identicas y solo se diferencian en el camino critico -y por eso 17 no tiene
-# `version.json`: no es un target de test soportado, aunque tenga RTL-.
+# silencio. 14 y 17 comparten numero: son funcionalmente identicas y solo se
+# diferencian en el camino critico. Eso es una razon PARA probar la 17, no para
+# dejarla fuera: el camino critico es justo lo que cambia y donde podria haber un
+# bug propio. Tiene su `version.json` (`sdram2`) y pasa la misma suite.
 VERSIONS = build_versions(
     lambda directory: backend_from_rtl(directory) == "gpu",
     lambda directory, signals: capabilities_from_rtl(directory, signals))

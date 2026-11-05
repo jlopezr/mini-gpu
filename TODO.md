@@ -731,11 +731,13 @@ aparece, se cierra sin hacer nada.
 
 ## Cerrado — no reabrir sin motivo nuevo
 
-- **La 17 en la suite de placa.** Decidido el 01/10/2026 dejarla fuera: fue un
-  intento que no llegó a cerrarse y no merece alias propio ni `version.json`. Se
-  validó a mano: `SYSTEM` con los siete valores correctos, los cinco bloques
-  ausentes rechazados por la placa y un descriptor de warp escrito y releído en
-  `0x82010030`.
+- **La 17 en la suite de placa.** El 01/10/2026 se dejó fuera por considerarla un
+  intento sin cerrar. Reabierto el 05/11/2026 con motivo nuevo: sintetiza con apio
+  y con Diamond, cumple timing (apio 44,4 MHz frente a 30,3 de la 14) y responde en
+  placa, y su camino crítico distinto es justo lo que habría que probar. Ahora
+  tiene `version.json` (`sdram2`) y pasa la misma suite que la 14. Antes se validó
+  a mano: `SYSTEM` con los siete valores correctos, los cinco bloques ausentes
+  rechazados por la placa y un descriptor de warp escrito y releído en `0x82010030`.
 - **`DEV_BITMAP` como punto propio.** Era la fase 4b de la unificación y estuvo
   abierto sin consumidor. Ya no es un punto suelto: es `SYSTEM.DEVICES` en
   [`1.isa/mmio.md`](1.isa/mmio.md) §5.4, dentro del punto 2. Y la contradicción
