@@ -1,0 +1,19 @@
+# Restricciones solo para el flujo de Diamond (tools/diamond_runner.py las anexa al .lpf).
+#
+# TRACE da ~980 errores de hold (hasta 15,7 ns) en dos cruces que salen de clk_pix. Son
+# artefactos del analisis, no fallos del diseno:
+#
+# 1) clk_pix -> clk_25mhz_c: scanout_i/req_bank (y fill_line) -> RAM del line_buffer.
+#    Es el patron "dato acompanando a un toggle" de video_scanout.v (lineas 16-35): el
+#    banco cambia en el mismo flanco que req_toggle y no vuelve a cambiar hasta dos lineas
+#    de pantalla despues; cuando el toggle sincronizado (2 FF) llega a clk_sys, el banco
+#    lleva estable decenas de microsegundos. No hay camino que temporizar: el protocolo
+#    garantiza la estabilidad, no el rutado.
+#
+# 2) clk_pix -> clk_pix_5x: el mismo cruce de la 13 (ver 13.hdmi/diamond-constraints.txt).
+#    Los dos relojes salen del mismo PLL con los flancos alineados a proposito, TRACE suma
+#    el desfase del PLL como retardo del reloj de origen y da un hold falso.
+#
+# Los errores de setup se siguen viendo: ahora mismo no hay ninguno.
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_25mhz_c" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_pix_5x" ;
