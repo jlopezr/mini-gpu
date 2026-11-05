@@ -205,12 +205,16 @@ def main() -> int:
                 fh.write(line)
             code = proc.wait()
     except BaseException:
+        shutil.copyfile(log, record["folder"] / "build.log")
         update_build_record(record["status_path"], state="interrupted", exit_code=1)
         raise
     # pnmainc sale con 0 aunque un prj_* haya dado "ERROR - ..." sin lanzar excepcion.
     errors = [l for l in log.read_text(encoding="utf-8").splitlines() if l.startswith("ERROR")]
     if errors and code == 0:
         code = 1
+    # El registro abrio un build.log vacio: se le pone el log real, para que quien mire la
+    # lista por ID (o haga tail del build) vea lo que escribio Diamond.
+    shutil.copyfile(log, record["folder"] / "build.log")
     update_build_record(record["status_path"], state="success" if code == 0 else "failed",
                         exit_code=code)
 
