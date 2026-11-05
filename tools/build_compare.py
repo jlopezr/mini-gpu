@@ -133,6 +133,7 @@ def main() -> int:
     # Mismos colores de TOOL que `build-list --prototypes`; sin terminal o con NO_COLOR, sin ANSI.
     use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     tool_colors = {"apio": "34", "diamond": "35"}
+    timing_colors = {"PASS": "32", "WARN": "33", "FAIL": "31"}  # los de build-list
     last = None
     for r in rows:
         if last is not None and r[0] != last:
@@ -141,6 +142,8 @@ def main() -> int:
         cells = [c.ljust(w) for c, w in zip(r, widths)]
         if use_color and r[1] in tool_colors:
             cells[1] = f"\033[{tool_colors[r[1]]}m{cells[1]}\033[0m"
+        if use_color and r[4] in timing_colors:
+            cells[4] = f"\033[{timing_colors[r[4]]}m{cells[4]}\033[0m"
         print("  ".join(cells))
     print("\nHOLD n/a: nextpnr no analiza hold. SLACK es la holgura de setup de la iteracion "
           "guardada por PAR (solo Diamond).\nSYNTH es yosys / Synplify; PNR es todo lo que sigue "
