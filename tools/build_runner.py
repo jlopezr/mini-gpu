@@ -351,14 +351,6 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
         # en marcha, para que el aviso de ACTIVE BUILD lo siga mostrando.
         if entry.get("label") == "test" and str(entry.get("state", "")).lower() != "running":
             continue
-        # Un build INTERRUMPIDO (cortado a mano o por un cierre) no dice nada del
-        # resultado: no debe tapar el ultimo build que si termino. Si es el unico,
-        # se queda para que se vea.
-        if str(entry.get("state", "")).lower() == "interrupted" and any(
-                normalize_prototype(other.get("prototype")) == normalize_prototype(entry.get("prototype"))
-                and str(other.get("state", "")).lower() not in ("interrupted", "running")
-                for other in entries):
-            continue
         name = normalize_prototype(entry.get("prototype"))
         if name and (name not in latest or entry.get("started_at", "") > latest[name].get("started_at", "")):
             latest[name] = entry
