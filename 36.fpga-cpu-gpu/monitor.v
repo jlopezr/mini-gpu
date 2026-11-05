@@ -118,28 +118,8 @@ module monitor #(
     // El default es CERO --ninguna RAM-- por la misma razon que el de la
     // version: un `top` que se olvide del parametro rechaza todos los bloques
     // en el primer comando, en vez de aceptar callado un mapa que no es el suyo.
-    parameter [32:0] RAM_END = 33'h0_0000_0000,
+    parameter [32:0] RAM_END = 33'h0_0000_0000
 
-    // Ventanas MMIO que el monitor acepta ademas de la RAM. Una ranura sin usar
-    // se deja en su default: base 33'h1_ffff_ffff es inalcanzable para una
-    // direccion de 32 bits, asi que no casa nunca.
-    //
-    // Esta lista es la GEMELA de MONITOR_REGIONS en el monitor.py de la misma
-    // carpeta, y las dos tienen que decir lo mismo. Anadir una ventana en el
-    // decodificador no basta: si no se anade tambien aqui, el monitor rechaza
-    // el comando antes de que llegue al decodificador, y el sintoma es un NACK
-    // que parece un bitstream viejo o un mapa mal escrito. Asi se perdio un
-    // buen rato con 0x200/0x300.
-    parameter [32:0] WINDOW0_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW0_END  = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW1_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW1_END  = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW2_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW2_END  = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW3_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW3_END  = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW4_BASE = 33'h1_ffff_ffff,
-    parameter [32:0] WINDOW4_END  = 33'h1_ffff_ffff
 ) (
     input clk,
     input reset,
@@ -343,6 +323,11 @@ module monitor #(
   reg block_is_write;
   reg [15:0] block_length;
   reg [15:0] block_remaining;
+  // block_remaining == 1, REGISTRADO. Se calcula un ciclo antes, al cargar o decrementar el
+  // contador, para que la comparacion de 16 bits no caiga delante de los enables de state,
+  // de response_* y del incremento de mem_address: en Diamond ese era el camino critico de
+  // la 16 (17 niveles de LUT, 65 % de rutado). No anade ningun ciclo al protocolo.
+  reg        block_last;
   reg [32:0] block_end_address;
   // 1 si longitud y rango del bloque son validos (se calcula en CHECK_BLOCK).
   reg block_ok;
@@ -375,41 +360,38 @@ module monitor #(
   reg [7:0] serial_accepted;
 
   /*
-   * Valida el intervalo COMPLETO, no solo su primera direccion: asi
-   * WRITE_BLOCK y READ_BLOCK dicen lo mismo que el mapa que implementa el
-   * decodificador, y un bloque que se sale se rechaza entero en vez de
-   * escribirse a medias.
+   * Valida el intervalo COMPLETO de un bloque, antes de tocar nada. Solo dos cosas, las que el
+   * bus no puede saber a tiempo:
    *
-   * Las dos funciones son combinacionales, pero sus entradas estan
-   * REGISTRADAS: `mem_address`, `block_length` y `block_end_address` llevan un
-   * ciclo puestas cuando se evaluan (ver STATE_CALCULATE_BLOCK_END). Eso es lo
-   * que mantiene el sumador ancho fuera del camino del byte de UART, que es lo
-   * que no cumplia a 120 MHz.
+   *   - Un bloque que EMPIEZA en RAM tiene que acabar en RAM: se rechaza entero en vez de
+   *     escribirse a medias, y no se sale de RAM_END hacia lo que haya despues.
+   *   - Un bloque que empieza FUERA de la RAM solo vale si cae en la mitad alta del mapa, que es
+   *     el MMIO en todos los prototipos (direccion con el bit 31 a 1); el hueco entre RAM_END y
+   *     0x8000_0000 se rechaza entero. Y no puede dar la vuelta al espacio de 32 bits:
+   *     mem_address tiene 32 bits y se enrollaria sobre la direccion 0.
+   *
+   * Dentro del MMIO se le pasa todo al bus, igual que hacen WRITE_BYTE, READ_BYTE y las de palabra: que
+   * registro existe y cual no lo dice el decodificador, que es el unico que lo sabe, y
+   * contesta error a todo hueco. Antes habia hasta seis ventanas gemelas de las del
+   * decodificador y de MONITOR_REGIONS en monitor.py; anadir un registro sin anadirlo en las
+   * tres produjo un NACK que parecia un bitstream viejo.
+   *
+   * Coste: un bloque que empieza en un registro valido y se sale del mapa se escribe hasta
+   * donde llegue y luego da error, en vez de rechazarse entero. Solo pasa si el host pide
+   * mas bytes de los que tiene la region.
+   *
+   * La funcion es combinacional, pero sus entradas estan REGISTRADAS: mem_address y
+   * lock_end_address llevan un ciclo puestas cuando se evalua (ver STATE_CALCULATE_BLOCK_END).
+   * Eso mantiene el sumador ancho fuera del camino del byte de UART.
    */
-  function in_window;
-    input [32:0] start_address;
-    input [32:0] end_address;
-    input [32:0] window_base;
-    input [32:0] window_end;
-    begin
-      in_window = (start_address >= window_base) && (end_address <= window_end);
-    end
-  endfunction
-
   function block_range_valid;
     input [32:0] start_address;
     input [32:0] end_address;
     begin
-      block_range_valid =
-          (start_address < RAM_END && end_address <= RAM_END) ||
-          in_window(start_address, end_address, WINDOW0_BASE, WINDOW0_END) ||
-          in_window(start_address, end_address, WINDOW1_BASE, WINDOW1_END) ||
-          in_window(start_address, end_address, WINDOW2_BASE, WINDOW2_END) ||
-          in_window(start_address, end_address, WINDOW3_BASE, WINDOW3_END) ||
-          in_window(start_address, end_address, WINDOW4_BASE, WINDOW4_END);
+      block_range_valid = (start_address < RAM_END) ? (end_address <= RAM_END)
+                                                    : (start_address[31] && end_address <= 33'h1_0000_0000);
     end
   endfunction
-
   assign busy = (state != STATE_IDLE);
 
   always @(posedge clk) begin
@@ -450,6 +432,7 @@ module monitor #(
       block_index <= 8'd0;
       block_length <= 16'd0;
       block_remaining <= 16'd0;
+      block_last <= 1'b0;
       block_end_address <= 33'h000000000;
       block_ok <= 1'b0;
       mem_read_data_latched <= 8'h00;
@@ -823,6 +806,7 @@ module monitor #(
           if (rx_strobe) begin
             block_length[7:0] <= rx_data;
             block_remaining <= {block_length[15:8], rx_data};
+            block_last <= ({block_length[15:8], rx_data} == 16'd1);
             state <= STATE_CALCULATE_BLOCK_END;
           end
         end
@@ -869,7 +853,8 @@ module monitor #(
         STATE_BLOCK_DISCARD: begin
           if (rx_strobe) begin
             block_remaining <= block_remaining - 1'b1;
-            if (block_remaining == 1) state <= STATE_RESPOND;
+            block_last <= (block_remaining == 16'd2);
+            if (block_last) state <= STATE_RESPOND;
           end
         end
         STATE_BLOCK_WRITE_DATA: begin
@@ -887,8 +872,9 @@ module monitor #(
               response_index <= 3'd0;
               response_done_state <= STATE_IDLE;
               block_remaining <= block_remaining - 1'b1;
-              state <= (block_remaining == 1) ? STATE_RESPOND : STATE_BLOCK_DISCARD;
-            end else if (block_remaining == 1) begin
+            block_last <= (block_remaining == 16'd2);
+              state <= block_last ? STATE_RESPOND : STATE_BLOCK_DISCARD;
+            end else if (block_last) begin
               response_byte_0 <= RSP_WRITE_BLOCK;
               response_length <= 3'd1;
               response_index <= 3'd0;
@@ -897,6 +883,7 @@ module monitor #(
             end else begin
               mem_address <= mem_address + 1'b1;
               block_remaining <= block_remaining - 1'b1;
+            block_last <= (block_remaining == 16'd2);
               state <= STATE_BLOCK_WRITE_DATA;
             end
           end
@@ -923,16 +910,18 @@ module monitor #(
             state <= STATE_RESPOND;
           end else begin
             block_read_buffer[block_index] <= mem_read_data_latched;
-            if (block_remaining == 1) begin
+            if (block_last) begin
               response_byte_0 <= RSP_READ_BLOCK;
               response_done_state <= STATE_BLOCK_SEND_DATA;
               block_index <= 8'd0;
               block_remaining <= block_length;
+              block_last <= (block_length == 16'd1);
               state <= STATE_RESPOND;
             end else begin
               block_index <= block_index + 1'b1;
               mem_address <= mem_address + 1'b1;
               block_remaining <= block_remaining - 1'b1;
+            block_last <= (block_remaining == 16'd2);
               state <= STATE_BLOCK_READ_REQUEST;
             end
           end
@@ -942,9 +931,10 @@ module monitor #(
           response_from_block <= 1'b1;
           response_length <= 3'd1;
           response_index <= 3'd0;
-          response_done_state <= (block_remaining == 1) ? STATE_IDLE : STATE_BLOCK_SEND_DATA;
+          response_done_state <= block_last ? STATE_IDLE : STATE_BLOCK_SEND_DATA;
           block_index <= block_index + 1'b1;
           block_remaining <= block_remaining - 1'b1;
+            block_last <= (block_remaining == 16'd2);
           state <= STATE_RESPOND;
         end
 

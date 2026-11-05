@@ -133,52 +133,34 @@ class ProtocoloCompartidoTest(unittest.TestCase):
                 self.assertIn("ARCHITECTURAL_REGIONS = (", texto)
                 self.assertIn("MONITOR_REGIONS = (", texto)
 
-    def test_la_ventana_del_host_llega_a_donde_llega_el_rtl(self):
-        """La gemela que ya se quedó atrás una vez.
+    def test_el_host_abre_todo_el_mmio_y_el_rtl_no_tiene_ventanas(self):
+        """La gemela que se quedaba atras, ya sin gemela.
 
-        `MONITOR_REGIONS` terminaba en `0x8000_0018` con un comentario que
-        decía «llegará a `0x8000_001c` cuando la fase 3.5 añada `VIDEO_CTRL`».
-        La fase lo añadió, la constante se quedó, y el host pasó a rechazar un
-        bloque sobre el registro que acababa de existir -- `validate_block`
-        exige `address + length <= end`, y `0x1c > 0x18`.
+        `MONITOR_REGIONS` terminaba en `0x8000_0018` con un comentario que decia
+        «llegara a `0x8000_001c` cuando la fase 3.5 anada `VIDEO_CTRL`». La fase lo
+        anadio, la constante se quedo, y el host paso a rechazar un bloque sobre el registro
+        que acababa de existir. Se arreglo comparando contra los `WINDOWn_*` del `top.v`.
 
-        DE DÓNDE SE SACA LO QUE EL RTL ACEPTA. Antes, del `MMIO_PREFIX` de
-        20 bits del adaptador: con una sola página de 4 KiB, el prefijo ERA
-        la ventana. Con MMIO v2 el adaptador ya no lleva prefijo --mira un
-        bit-- y quien decide qué ventanas existen son los parámetros
-        `WINDOWn_BASE`/`WINDOWn_END` del `monitor #(...)` de cada `top.v`.
-
-        Ese cambio es una mejora, no un apaño: los `WINDOWn_*` son la gemela
-        DE VERDAD de `MONITOR_REGIONS` --el RTL filtra con unos y el host con
-        los otros-- mientras que el prefijo del adaptador sólo lo era por
-        casualidad, porque coincidían mientras todo cabía en una página.
+        El monitor ya no lleva esas ventanas: lo que existe en el MMIO lo dice el
+        decodificador, que contesta error a todo hueco. Por eso `MONITOR_REGIONS` es UNA
+        region, la mitad alta del mapa, y no hay RTL contra el que compararla. Lo que se
+        vigila es que siga siendo asi: ni el cliente vuelve a filtrar por dispositivo ni el
+        top vuelve a pasar parametros que el monitor no tiene.
         """
-        ventana = re.compile(
-            r"\.WINDOW(\d)_(BASE|END)\s*\(\s*\d+'h([0-9a-fA-F_]+)\s*\)")
+        ventana = re.compile(r"\.WINDOW\d_(?:BASE|END)")
         for prototipo in ("16.fpga-cpu-hdmi", "18.fpga-cpu-hdmi-bl8",
                           "19.fpga-cpu-hdmi-ls", "21.fpga-cpu-hdmi-alu"):
             monitor = cargar(prototipo)
             texto = (ROOT / prototipo / "top.v").read_text(encoding="utf8")
-            crudas: dict[str, dict[str, int]] = {}
-            for indice, extremo, digits in ventana.findall(texto):
-                crudas.setdefault(indice, {})[extremo] = int(
-                    digits.replace("_", ""), 16)
-
-            # Una ranura sin usar vale 0x1_ffff_ffff en las dos puntas.
-            rtl = {(v["BASE"], v["END"]) for v in crudas.values()
-                   if "BASE" in v and "END" in v
-                   and v["BASE"] != 0x1_FFFF_FFFF}
-
+            texto = re.sub(r"//[^\n]*", "", texto)
             with self.subTest(prototipo=prototipo):
-                self.assertTrue(rtl, f"{prototipo}: no encuentro WINDOWn_* "
-                                     f"en top.v")
                 self.assertEqual(
-                    rtl, set(monitor.MONITOR_REGIONS),
-                    f"{prototipo}: las ventanas del RTL y las de monitor.py no "
-                    f"coinciden. El síntoma de esto en la placa es un NACK que "
-                    f"parece un bitstream viejo.\n"
-                    f"  RTL:      {sorted(rtl)}\n"
-                    f"  monitor:  {sorted(monitor.MONITOR_REGIONS)}")
+                    tuple(monitor.MONITOR_REGIONS), ((0x8000_0000, 0x1_0000_0000),),
+                    f"{prototipo}: el cliente tiene que abrir el MMIO entero y dejar que "
+                    f"la placa conteste error a un hueco")
+                self.assertIsNone(
+                    ventana.search(texto),
+                    f"{prototipo}: top.v pasa WINDOWn al monitor, que ya no los tiene")
 
     # Un `sysid.v` declara a qué versión del contrato MMIO pertenece por el
     # magic que lleva dentro. Mismo criterio que

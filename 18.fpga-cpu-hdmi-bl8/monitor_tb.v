@@ -45,14 +45,7 @@ module monitor_tb;
   always #5 clk = ~clk;
 
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd18),
-      .RAM_END(33'h0_0200_0000),
-      // Las mismas TRES ventanas que `top.v`, una por bloque de MMIO v2 que
-      // esta carpeta tiene. Antes era una sola porque todos los dispositivos
-      // cabian en la pagina de 4 KiB; ahora estan a megabytes unos de otros.
-      // No hay ventana de SERIAL porque no hay puerto serie.
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
-      .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW2_BASE(33'h0_8101_0000),.WINDOW2_END(33'h0_8102_0000))  // CPU PERF
+      .RAM_END(33'h0_0200_0000))
     dut (
       .clk(clk),
       .reset(reset),

@@ -76,13 +76,20 @@ class LaunchTest(unittest.TestCase):
         # identificación, así que el caso negativo tuvo que cambiar de
         # dirección — si no, este test habría empezado a pasar por el motivo
         # equivocado.
+        # El MMIO es UNA region para el cliente: lo que existe y lo que no lo decide la placa
+        # (el decodificador contesta error a un hueco), no una lista que mantener aqui. Estos
+        # accesos se salen de un registro o caen en un bloque sin implementar y el cliente los
+        # deja pasar.
         for address,size in [
-                (131071,2),                   # cruza el final de la EBR
-                (0x100000,4),                 # más allá de la EBR
-                (WARP_CONFIG_BASE+0x7f,2),    # se sale del último descriptor
-                (SIMT_DEBUG_BASE+20,4),       # pasado el último de §14.3
-                (SYSID_BASE+28,4),            # pasada la séptima palabra
-                (0x82000000,4),               # GPU CORE: bloque no implementado
+                (WARP_CONFIG_BASE+0x7f,2),   # se sale del último descriptor
+                (SIMT_DEBUG_BASE+20,4),   # pasado el último de §14.3
+                (SYSID_BASE+28,4),   # pasada la séptima palabra
+                (0x82000000,4)]:   # GPU CORE: bloque no implementado
+            validate_transfer(address,size)
+        for address,size in [
+                (131071,2),   # cruza el final de la EBR
+                (0x100000,4),   # más allá de la EBR
+                (0xfffffff0,32),              # da la vuelta al espacio de 32 bits
                 (0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 

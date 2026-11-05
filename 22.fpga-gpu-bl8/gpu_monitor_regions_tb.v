@@ -1,24 +1,20 @@
 `timescale 1ns/1ps
-// Comprueba la LISTA BLANCA de direcciones de monitor.v (`block_range_valid`).
+// Comprueba el FILTRO DE BLOQUES de monitor.v (`block_range_valid`) y READ_WORD.
 //
 // Por que existe este banco
 // -------------------------
-// El monitor filtra por su propia tabla de ventanas validas, SEPARADA del mapa
-// que implementa gpu_system_bl8. Todos los demas bancos atacan el puerto del
-// host directamente, asi que se saltan esa tabla: ninguno la ejercitaba.
+// Todos los demas bancos atacan el puerto del host directamente, asi que se
+// saltan el filtro de bloques del monitor: ninguno lo ejercitaba.
 //
-// Desde que monitor.v es copia identica en 12, 14, 17 y 22, la tabla llega por
-// parametro: los de aqui abajo tienen que ser los mismos que pone top_bl8.v.
-//
-// El agujero se cobro una pieza. Al anadir los registros de video (0x200) y los
-// contadores (0x300) se actualizo el mapa del sistema y la lista del cliente en
-// monitor.py, pero no esta. En simulacion todo pasaba; en placa el monitor
-// contestaba NACK antes de que la direccion llegara al decodificador, y el
-// sintoma -- un comando rechazado -- se parece mucho mas a un bitstream viejo
-// que a lo que era.
+// El monitor ya no lleva una lista de ventanas MMIO. Un bloque solo se
+// rechaza ANTES del bus por tres motivos: empieza en RAM y se sale de ella,
+// empieza en el hueco entre la RAM y el MMIO, o da la vuelta al espacio de 32
+// bits. Cualquier direccion de la mitad alta del mapa pasa al bus, y es el
+// decodificador quien contesta error a un hueco (eso se prueba en los bancos
+// del sistema, no aqui).
 //
 // Aqui el DUT es `monitor` SOLA, con una memoria falsa que siempre acepta: si
-// algo rechaza, solo puede haber sido la lista blanca.
+// algo rechaza, solo puede haber sido el filtro.
 module gpu_monitor_regions_tb;
     reg clk=0; always #20 clk=~clk;
     reg reset=1;
@@ -47,19 +43,8 @@ module gpu_monitor_regions_tb;
         if(tx_strobe) tx_busy<=4'd8;
         else if(tx_busy!=0) tx_busy<=tx_busy-1'b1;
 
-    // Mismos parametros que top_bl8: este banco comprueba justo la lista blanca.
-    monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd22),
-        .RAM_END(33'h0_0200_0000),
-        // CUARTA copia de la misma lista, despues de `top.v`, `top_bl8.v` y
-        // `MONITOR_REGIONS` de `monitor.py`. Tiene que decir lo mismo que
-        // `top_bl8.v`, que es el bitstream de `default`. Que este banco
-        // exista para vigilar la gemela y sea EL MISMO a su vez tiene su
-        // gracia: si alguien mueve una ventana, aqui hay que tocarlo tambien.
-        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001C),
-        .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8020_0028),
-        .WINDOW2_BASE(33'h0_8203_0000),.WINDOW2_END(33'h0_8203_001C),
-        .WINDOW3_BASE(33'h0_8201_0000),.WINDOW3_END(33'h0_8201_0080),
-        .WINDOW4_BASE(33'h0_8202_0000),.WINDOW4_END(33'h0_8202_0014))
+        monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd22),
+        .RAM_END(33'h0_0200_0000))
       dut(.clk(clk),.reset(reset),
         .rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
@@ -150,41 +135,26 @@ module gpu_monitor_regions_tb;
         repeat(20) @(negedge clk); reset=0;
         repeat(20) @(negedge clk);
 
-        // Las cuatro ventanas del mapa. Tienen que coincidir una a una con
-        // MONITOR_REGIONS de monitor.py: si se anade una alli y no aqui (o al
-        // reves) el fallo aparece solo en placa.
+        // Pasan al bus: la RAM y toda la mitad alta del mapa. La memoria de este
+        // banco acepta todo, asi que lo que se comprueba es que el monitor NO
+        // se interpone (que registro existe lo dice el decodificador).
         read_block(32'h0000_0000, 16'd4, 1, "SDRAM baja");
         read_block(32'h01ff_fffc, 16'd4, 1, "SDRAM alta, ultima palabra");
         read_block(32'h8020_0004, 16'd4, 1, "FB_FRONT");
-        read_block(32'h8020_0000, 16'd4, 1, "VIDEO_CTRL");
-        // El bloque de video ENTERO de una vez, desde CTRL. Con 4 bytes no
-        // basta: los huecos de HALT_AT y HALT_TARGET quedan en medio, y si
-        // fallaran en vez de leer cero este bloque daria NACK justo ahi.
         read_block(32'h8020_0000, 16'd40, 1, "bloque de video completo");
         read_block(32'h8202_0000, 16'd4, 1, "depuracion");
         read_block(32'h8203_0000, 16'd4, 1, "CYCLES");
-        read_block(32'h8203_0018, 16'd4, 1, "LANE_OPS");
-        read_block(32'h8201_0000, 16'd4, 1, "configuracion de warps");
         read_block(32'h8201_007c, 16'd4, 1, "ultimo descriptor de warp");
         read_block(32'h8000_0000, 16'd28, 1, "bloque SYSTEM entero");
+        // Un hueco DENTRO del MMIO tambien pasa: el monitor ya no repite el mapa.
+        read_block(32'h8200_0000, 16'd4, 1, "GPU CORE: lo rechazaria el decodificador");
+        read_block(32'h8020_0028, 16'd4, 1, "tras el bloque de video: lo rechazaria el decodificador");
 
-        // Y los bordes: una ventana que acepta de mas es tan mala como una que
-        // rechaza de menos, porque el acceso acaba en un decodificador que no
-        // sabe que contestar.
+        // Y lo que SI rechaza el monitor antes del bus.
         read_block(32'h0200_0000, 16'd4, 0, "por encima de la SDRAM");
-        read_block(32'h8020_0028, 16'd4, 0, "justo despues del bloque de video");
-        read_block(32'h8203_001c, 16'd4, 0, "justo despues de los contadores");
-        // GPU CORE (§14.1) no se implementa en esta carpeta: es un bloque del
-        // mapa que no tiene nada detras, y la ventana no debe abrirlo. En v1
-        // este caso apuntaba al «hueco donde estaba el video antes», que era
-        // una direccion sin sentido en v2 -- un control negativo anclado a un
-        // accidente de la disposicion vieja en vez de a la forma.
-        read_block(32'h8200_0000, 16'd4, 0, "GPU CORE, bloque no implementado");
-        read_block(32'h8020_0020, 16'd16, 0, "bloque que desborda el video");
-        // Cada bloque abre solo lo que implementa: pedir mas tiene que fallar
-        // aunque la direccion caiga dentro de los 64 KiB del bloque.
-        read_block(32'h8201_0080, 16'd4, 0, "justo despues de los warps");
-        read_block(32'h8000_001c, 16'd4, 0, "justo despues de SYSTEM");
+        read_block(32'h01ff_fffc, 16'd8, 0, "empieza en la SDRAM y la cruza");
+        read_block(32'h4000_0000, 16'd4, 0, "hueco entre la SDRAM y el MMIO");
+        read_block(32'hffff_fff0, 16'd32, 0, "da la vuelta al espacio de 32 bits");
 
         // READ_WORD: cinco bytes de respuesta (92 + la palabra en little-endian)
         // en UNA transaccion de bus, que es lo que la hace atomica. La memoria de
@@ -197,7 +167,7 @@ module gpu_monitor_regions_tb;
         read_word(32'h8020_0012, 0, "VIDEO_STATUS desalineado");
         read_word(32'h8020_0005, 0, "FB_FRONT desalineado");
 
-        $display("PASS lista blanca del monitor (por parametro): 9 ventanas validas, 7 bordes rechazados");
+        $display("PASS filtro de bloques del monitor: 10 pasan al bus, 4 rechazados antes");
         $display("PASS READ_WORD: 2 lecturas alineadas, 2 desalineadas rechazadas");
         $finish;
     end

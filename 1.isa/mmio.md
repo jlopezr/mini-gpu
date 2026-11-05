@@ -1290,15 +1290,30 @@ un registro tiene los mismos comandos, los mismos dispositivos y las mismas
 capacidades — y da otro resultado. Para eso sirve una versión, y por eso no se
 sustituye por capabilities.
 
-### 16.4. La lista blanca se deriva, no se copia
+### 16.4. El monitor no lleva lista blanca de dispositivos
 
-Las ventanas que el monitor acepta **se derivan** de qué dispositivos declara
-`DEVICES`. No se escriben a mano en el RTL y otra vez en el cliente Python.
+Esta sección decía que las ventanas del monitor **se derivan** de `DEVICES`. Se
+resolvió por otro camino, más simple: **no hay lista que derivar.**
 
-Mantener dos listas gemelas a mano ya se cobró su precio: añadir una ventana en
-el RTL sin añadirla en la lista del monitor hace que éste rechace el comando
-antes de que llegue al decodificador, y el síntoma es un NACK que parece un
-bitstream viejo.
+Mantener la lista a mano (una ventana por dispositivo en el RTL del monitor, otra
+vez en `MONITOR_REGIONS` del cliente) se cobró su precio varias veces: añadir
+un dispositivo sin añadirlo en las tres listas hace que el monitor rechace el
+comando antes de que llegue al decodificador, y el síntoma es un NACK que parece
+un bitstream viejo.
+
+Ahora el único que sabe qué existe en el MMIO es el decodificador, que contesta
+error a todo hueco. El monitor solo comprueba, en los comandos de **bloque**, lo
+que el bus no puede saber a tiempo:
+
+- un bloque que empieza en RAM tiene que acabar en RAM (`RAM_END`);
+- un bloque que empieza fuera de la RAM solo vale si cae en la mitad alta del
+  mapa (bit 31 a 1, que es el MMIO en todos los prototipos), y no puede dar la
+  vuelta al espacio de 32 bits.
+
+Los accesos de byte, palabra y registro nunca tuvieron lista. `MONITOR_REGIONS`
+del cliente es una sola región, la mitad alta. **Coste aceptado:** un bloque que
+empieza en un registro válido y se sale del mapa se escribe hasta donde llegue y
+luego da error, en vez de rechazarse entero.
 
 ### 16.5. Alimentar INPUT desde el monitor
 
@@ -1524,7 +1539,7 @@ Markdown, nunca Verilog sintetizable.
     `SYSTEM`, `CPU CORE` y `GPU CORE`.
 38. `SYSTEM_ID` es el número de carpeta del prototipo.
 39. `DEVICES` tiene asignaciones de bit congeladas y se deriva del RTL.
-40. La lista blanca del monitor se deriva de `DEVICES`, no se copia a mano.
+40. El monitor no lleva lista blanca de dispositivos: el decodificador MMIO es el único que sabe qué existe (§16.4).
 41. Los prototipos con EBR mapean su memoria como una región contigua.
 42. Simuladores y RTL implementan el mismo contrato; no hay programas `_nommio`.
 43. Las constantes arquitectónicas parten de una fuente Verilog común.

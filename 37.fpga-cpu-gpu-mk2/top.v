@@ -181,26 +181,12 @@ module top (
   // programa que lo use como registro general da resultados distintos sin parar
   // con error-- asi que el runner tiene que poder distinguir los dos bitstreams.
   //
-  // Las ventanas que el monitor acepta, una por bloque de MMIO v2. Antes era
-  // UNA sola --la pagina de 4 KiB entera-- porque todos los dispositivos
-  // cabian dentro; ahora estan a megabytes unos de otros y hacen falta cuatro.
-  //
-  // `monitor.v` NO se toca: ya tenia cinco ranuras parametrizadas, y esa es la
-  // razon de que la migracion no necesite partir el fichero que las diez
-  // carpetas comparten byte a byte. Lo que cambia son los valores, que viven
-  // aqui.
-  //
-  // Siguen siendo gemelas de MONITOR_REGIONS en monitor.py, que es la lista
-  // que §16.4 quiere derivar de DEVICES en vez de mantener a mano. Eso es
-  // trabajo aparte; de momento las dos listas dicen lo mismo y hay un test.
+  // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+  // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+  // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
   monitor #(.VERSION_MAJOR(8'd5),.VERSION_MINOR(8'd37),
       .HAS_SERIAL(1), .HAS_INPUT(1),
-      .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
-      .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
-      .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000),  // CPU PERF
-      .WINDOW4_BASE(33'h0_8060_0000),.WINDOW4_END(33'h0_8061_0000))  // INPUT
+      .RAM_END(33'h0_0200_0000))
     monitor_i (
       .clk(clk), .reset(reset_mon), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),

@@ -42,8 +42,8 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_SYSTEM_BASE, MMIO_SERIAL_BASE, MMIO_CPU_PERF_BASE, MMIO_BLOCK_SIZE,
 )
 
-MMIO_BASE = MMIO_SYSTEM_BASE
-MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
+MMIO_BASE = 0x8000_0000
+MMIO_LIMIT = 0xFFFF_FFFF
 SERIAL_BASE = MMIO_SERIAL_BASE
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
@@ -71,10 +71,7 @@ ARCHITECTURAL_REGIONS = (
 # Escribirlos a mano es obligatorio; dejarlos sin comprobar, no: hay un test que
 # los contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8001_0000),     # SYSTEM
-    (0x8010_0000, 0x8011_0000),     # SERIAL
-    (0x8020_0000, 0x8021_0000),     # VIDEO
-    (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

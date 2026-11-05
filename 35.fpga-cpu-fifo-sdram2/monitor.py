@@ -46,47 +46,26 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_SDRAM_PHASE_STATUS_OFF, MMIO_SDRAM_PHASES,
 )
 
-MMIO_BASE = MMIO_SYSTEM_BASE
+MMIO_BASE = 0x8000_0000
 SERIAL_BASE = MMIO_SERIAL_BASE
-MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
+MMIO_LIMIT = 0xFFFF_FFFF
 # Espacio físico unificado: la CPU y el monitor ven las mismas direcciones.
 ARCHITECTURAL_REGIONS = (
     (0x0000_0000, 0x0200_0000),
 )
-# Las ventanas MMIO que el host acepta, una por bloque. Son GEMELAS de los
-# parametros WINDOW0..3 del `monitor #(...)` de top.v, y las dos tienen que
-# decir lo mismo: anadir una ventana en el RTL sin anadirla aqui hace que el
-# host rechace el comando antes de que llegue al decodificador, y el sintoma
-# es un NACK que parece un bitstream viejo.
+# El espacio MMIO que el host deja pasar: la mitad alta del mapa, de una sola pieza. Que
+# registro existe y cual no lo dice el decodificador (mmio_decoder.v), que es el unico que lo
+# sabe y contesta error a todo hueco; el monitor tampoco repite ya el mapa (solo comprueba
+# que un bloque que empieza en RAM acabe en RAM). Antes habia una ventana por dispositivo,
+# gemela de las del monitor.v, y anadir un registro sin anadirlo en los tres sitios producia
+# un NACK que parecia un bitstream viejo.
 #
-# §16.4 quiere que esta lista se DERIVE de DEVICES en vez de mantenerse a
-# mano. Todavia no se hace; lo que si esta hecho es que las direcciones salgan
-# del mapa generado, asi que mover un bloque ya no son dos ediciones.
-#
-# Cada ventana es el bloque ENTERO de 64 KiB, no el subconjunto de registros
-# que existen hoy. Un subconjunto seria una tercera gemela que mantener, y ya
-# se quedo atras una vez: estuvo en 0x8000_0018 con un comentario que decia
-# "llegara a 0x8000_001c cuando la fase 3.5 anada VIDEO_CTRL", la fase lo
-# anadio y la constante se quedo. Quien rechaza un offset sin registro es el
-# decodificador, que es el unico que lo sabe.
-#
-# Solo filtra bloques y transferencias (validate_block / validate_transfer);
-# los accesos byte a byte no pasan por aqui, que es por lo que esta lista pudo
-# estar vacia sin que se notara.
-# Los números van LITERALES y no derivados del mapa, aunque el mapa esté
-# importado justo arriba: `tools/prototype_report.py` lee esta asignación del
-# TEXTO del fichero, sin importar el módulo, y un `tuple(... for ...)` lo deja
-# ciego. Lo vigila `test_monitor_protocol.test_cada_carpeta_declara_su_propio_mapa`.
-#
-# Que estén escritos a mano no los deja sin comprobar: hay un test que los
-# contrasta contra el mapa generado y otro contra los WINDOWn_* del top.v.
+# Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
+# `tools/prototype_report.py` lee esta asignacion del TEXTO del fichero, sin
+# importar el modulo, y una comprension lo deja ciego. Hay un test que lo
+# exige.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8001_0000),     # SYSTEM
-    (0x8002_0000, 0x8003_0000),     # SDRAM
-    (0x8010_0000, 0x8011_0000),     # SERIAL
-    (0x8020_0000, 0x8021_0000),     # VIDEO
-    (0x8101_0000, 0x8102_0000),     # CPU PERFORMANCE
-    (0x8060_0000, 0x8061_0000),     # INPUT
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

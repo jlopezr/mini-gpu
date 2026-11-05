@@ -80,16 +80,23 @@ class LaunchTest(unittest.TestCase):
         validate_transfer(SIMT_DEBUG_BASE,20)     # los cinco de §14.3
         validate_transfer(SYSID_BASE,28)          # las siete de SYSTEM
         validate_transfer(GPU_PERF_BASE,28)       # los seis de §14.4 + LANE_OPS
+        # El MMIO es UNA region para el cliente: lo que existe y lo que no lo decide la placa
+        # (el decodificador contesta error a un hueco), no una lista que mantener aqui. Estos
+        # accesos se salen de un registro o caen en un bloque sin implementar y el cliente los
+        # deja pasar.
         for address,size in [
-                (33554431,2),                     # cruza el final de la SDRAM
-                (0x02000000,4),                   # justo detrás de la SDRAM
-                (WARP_CONFIG_BASE+0x29f,2),       # se sale de WARP_ARG[7], fin de la ventana
-                (WARP_CONFIG_BASE+0x2a0,4),       # justo detrás de la ventana de warps
-                (VIDEO_BASE+40,4),                # pasado VIDEO_TX
-                (SIMT_DEBUG_BASE+20,4),           # pasado el último de §14.3
-                (GPU_PERF_BASE+28,4),             # pasado LANE_OPS
-                (SYSID_BASE+28,4),                # pasada la séptima palabra
-                (0x82000000,4),                   # GPU CORE: no implementado
+                (WARP_CONFIG_BASE+0x29f,2),   # se sale de WARP_ARG[7], fin de la ventana
+                (WARP_CONFIG_BASE+0x2a0,4),   # justo detrás de la ventana de warps
+                (VIDEO_BASE+40,4),   # pasado VIDEO_TX
+                (SIMT_DEBUG_BASE+20,4),   # pasado el último de §14.3
+                (GPU_PERF_BASE+28,4),   # pasado LANE_OPS
+                (SYSID_BASE+28,4),   # pasada la séptima palabra
+                (0x82000000,4)]:   # GPU CORE: no implementado
+            validate_transfer(address,size)
+        for address,size in [
+                (33554431,2),   # cruza el final de la SDRAM
+                (0x02000000,4),   # justo detrás de la SDRAM
+                (0xfffffff0,32),              # da la vuelta al espacio de 32 bits
                 (0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 

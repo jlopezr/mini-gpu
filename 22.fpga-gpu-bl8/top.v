@@ -40,25 +40,11 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
       // WRITE_WORD: la palabra entera y su pulso, del monitor al puerto host.
       wire [31:0] write_word_w; wire we_word;
     wire [4:0] debug_register;
-    // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py, y las cuatro
-    // estan pobladas: esta es la unica de la familia con video y contadores.
+    // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+    // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+    // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
     monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd22),
-        .RAM_END(33'h0_0200_0000),
-        // IDENTICAS a las de `top_bl8.v`, y no las del `gpu_system` que este
-        // entorno monta. Parece un error y no lo es: las ventanas son del
-        // PROTOTIPO, no del entorno. El CLI es un solo programa hablando con el
-        // bitstream que haya puesto, y si los dos tops declararan cosas
-        // distintas se depuraria un mapa que no es el sintetizado --lo dice
-        // `test_todas_las_instancias_de_un_prototipo_coinciden`--.
-        //
-        // La consecuencia es que en `base-bl1` el monitor deja pasar VIDEO y
-        // los contadores, que ese sistema no tiene, y el NACK lo da el
-        // decodificador en vez del monitor. Es el mismo reparto que en v1.
-        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001C),
-        .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8020_0028),
-        .WINDOW2_BASE(33'h0_8203_0000),.WINDOW2_END(33'h0_8203_001C),
-        .WINDOW3_BASE(33'h0_8201_0000),.WINDOW3_END(33'h0_8201_0080),
-        .WINDOW4_BASE(33'h0_8202_0000),.WINDOW4_END(33'h0_8202_0014))
+        .RAM_END(33'h0_0200_0000))
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),

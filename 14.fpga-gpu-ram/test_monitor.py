@@ -78,13 +78,20 @@ class LaunchTest(unittest.TestCase):
         validate_transfer(WARP_CONFIG_BASE,128)      # los ocho descriptores
         validate_transfer(SIMT_DEBUG_BASE,20)        # los cinco de §14.3
         validate_transfer(SYSID_BASE,28)             # las siete de SYSTEM
+        # El MMIO es UNA region para el cliente: lo que existe y lo que no lo decide la placa
+        # (el decodificador contesta error a un hueco), no una lista que mantener aqui. Estos
+        # accesos se salen de un registro o caen en un bloque sin implementar y el cliente los
+        # deja pasar.
         for address,size in [
-                (33554431,2),                 # cruza el final de la RAM
-                (0x02000000,4),               # justo detrás de la RAM
-                (WARP_CONFIG_BASE+0x7f,2),    # se sale del último descriptor
-                (SIMT_DEBUG_BASE+20,4),       # pasado el último de §14.3
-                (SYSID_BASE+28,4),            # pasada la séptima palabra
-                (0x82000000,4),               # GPU CORE: bloque no implementado
+                (WARP_CONFIG_BASE+0x7f,2),   # se sale del último descriptor
+                (SIMT_DEBUG_BASE+20,4),   # pasado el último de §14.3
+                (SYSID_BASE+28,4),   # pasada la séptima palabra
+                (0x82000000,4)]:   # GPU CORE: bloque no implementado
+            validate_transfer(address,size)
+        for address,size in [
+                (33554431,2),   # cruza el final de la RAM
+                (0x02000000,4),   # justo detrás de la RAM
+                (0xfffffff0,32),              # da la vuelta al espacio de 32 bits
                 (0,0)]:
             with self.assertRaises(MonitorError): validate_transfer(address,size)
 

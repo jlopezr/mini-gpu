@@ -86,17 +86,11 @@ module top (
   // da otro resultado en silencio-- asi que sube la version aunque el protocolo
   // no cambie ni un byte. Ver 1.isa/isa.md seccion 1.
   //
-  // La unica ventana es la del bloque SYSTEM: esta carpeta tiene
-  // identificacion pero ningun otro MMIO. Gemela de MONITOR_REGIONS en
-  // monitor.py.
-  //
-  // La ventana es el BLOQUE ENTERO de 64 KiB, no las siete palabras que hay
-  // hoy, por la razon que las carpetas con decodificador ya dejaron escrita:
-  // un subconjunto seria una tercera gemela que mantener, y ya se quedo atras
-  // una vez.
+  // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+  // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+  // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd10),
-      .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000))  // SYSTEM
+      .RAM_END(33'h0_0200_0000))
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),

@@ -122,14 +122,6 @@ module top_fabric6 (
 
         .RAM_END (
             33'h0_0200_0000
-        ),
-
-        .WINDOW0_BASE (
-            33'h0_8120_0000
-        ),
-
-        .WINDOW0_END (
-            33'h0_8121_0000
         )
     ) monitor_i (
         .clk       (clk_25mhz),

@@ -97,21 +97,11 @@ module top (
   // 1.7 anadio el subsistema de video sobre el mapa unificado de la 10.
   // BACKPORT DE R0 CABLEADO A CERO: ver 1.isa/isa.md seccion 1.
   //
-  // La ventana es la PAGINA ENTERA de MMIO, los mismos 4 KiB que decodifica
-  // mmio_decoder.v (`address[31:12] == 20'h80000`, dieciseis dispositivos de
-  // 256 B). Declarar la pagina y no cada dispositivo es deliberado: el
-  // decodificador ya sabe cuales existen, y una lista por dispositivo seria una
-  // tercera gemela que mantener. Gemela de MONITOR_REGIONS en monitor.py.
+  // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+  // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+  // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd16),
-      .RAM_END(33'h0_0200_0000),
-      // Tres ventanas, no cuatro: esta carpeta no tiene puerto serie, y abrir
-      // la de SERIAL solo dejaria pasar accesos que el decodificador va a
-      // rechazar. Cada una es el bloque ENTERO de 64 KiB, no el subconjunto de
-      // registros que existen hoy: un subconjunto seria una tercera gemela que
-      // mantener, y ya se quedo atras una vez.
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
-      .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW2_BASE(33'h0_8101_0000),.WINDOW2_END(33'h0_8102_0000))  // CPU PERF
+      .RAM_END(33'h0_0200_0000))
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),

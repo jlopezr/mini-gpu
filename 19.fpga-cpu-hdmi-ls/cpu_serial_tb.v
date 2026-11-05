@@ -92,11 +92,7 @@ module cpu_serial_tb;
 
   monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd19),
       .HAS_SERIAL(1),
-      .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
-      .WINDOW1_BASE(33'h0_8010_0000),.WINDOW1_END(33'h0_8011_0000),  // SERIAL
-      .WINDOW2_BASE(33'h0_8020_0000),.WINDOW2_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW3_BASE(33'h0_8101_0000),.WINDOW3_END(33'h0_8102_0000))  // CPU PERF
+      .RAM_END(33'h0_0200_0000))
     monitor_i (
       .clk(clk), .reset(reset),
       .rx_data(rx_data), .rx_strobe(rx_strobe),

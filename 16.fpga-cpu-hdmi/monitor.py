@@ -48,30 +48,22 @@ from tools.mmio_map import (  # noqa: E402
 # en 0x80200000 el mismo fichero afirmaba dos cosas incompatibles. El síntoma
 # es `exit=1` con un `Error:`, que es exactamente lo que se espera al
 # comprobar que un bloque ausente da error. Hay un test que lo fija.
-MMIO_BASE = MMIO_SYSTEM_BASE
-MMIO_LIMIT = MMIO_CPU_PERF_BASE + MMIO_BLOCK_SIZE - 1
+MMIO_BASE = 0x8000_0000
+MMIO_LIMIT = 0xFFFF_FFFF
 
-# Las ventanas MMIO que el host acepta, una por bloque. Son GEMELAS de los
-# parámetros WINDOW0..2 del `monitor #(...)` de top.v, y las dos tienen que
-# decir lo mismo: añadir una ventana en el RTL sin añadirla aquí hace que el
-# host rechace el comando antes de que llegue al decodificador, y el síntoma es
-# un NACK que parece un bitstream viejo.
-#
-# Cada ventana es el bloque ENTERO de 64 KiB, no el subconjunto de registros
-# que existen hoy. Un subconjunto sería una tercera gemela que mantener, y ya
-# se quedó atrás una vez: estuvo en 0x8000_0018 con un comentario que decía
-# "llegará a 0x8000_001c cuando la fase 3.5 añada VIDEO_CTRL", la fase lo
-# añadió y la constante se quedó. Quien rechaza un offset sin registro es el
-# decodificador, que es el único que lo sabe.
+# El espacio MMIO que el host deja pasar: la mitad alta del mapa, de una sola pieza. Que
+# registro existe y cual no lo dice el decodificador (mmio_decoder.v), que es el unico que lo
+# sabe y contesta error a todo hueco; el monitor tampoco repite ya el mapa (solo comprueba
+# que un bloque que empieza en RAM acabe en RAM). Antes habia una ventana por dispositivo,
+# gemela de las del monitor.v, y anadir un registro sin anadirlo en los tres sitios producia
+# un NACK que parecia un bitstream viejo.
 #
 # Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
-# `tools/prototype_report.py` lee esta asignación del TEXTO del fichero, sin
-# importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
+# `tools/prototype_report.py` lee esta asignacion del TEXTO del fichero, sin
+# importar el modulo, y una comprension lo deja ciego. Hay un test que lo
 # exige.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8001_0000),   # SYSTEM
-    (0x8020_0000, 0x8021_0000),   # VIDEO
-    (0x8101_0000, 0x8102_0000),   # CPU PERFORMANCE
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

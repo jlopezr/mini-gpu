@@ -33,19 +33,9 @@ VIDEO_BASE = 0x8020_0000         # VIDEO (§9), diez registros
 WARP_CONFIG_BASE = 0x8201_0000   # GPU WARPS (§14.2), ocho descriptores
 SIMT_DEBUG_BASE = 0x8202_0000    # GPU SIMT DEBUG (§14.3), cinco registros
 GPU_PERF_BASE = 0x8203_0000      # GPU PERFORMANCE (§14.4) + LANE_OPS
+
 MONITOR_REGIONS = (
-    (SYSID_BASE, 0x8000_001c),
-    # Vídeo: CTRL, FB_FRONT/BACK, SWAP, STATUS, FRAME_COUNT, SWAP_COUNT,
-    # HALT_AT, HALT_TARGET y VIDEO_TX. En v1 CTRL estaba al final y ahora está
-    # al principio: el bloque no sólo cambia de base, se reordena entero.
-    (VIDEO_BASE, 0x8020_0028),
-    # Ocho descriptores de 16 B y, a partir de +0x200, LOGICAL_WARP_ID[n] y
-    # WARP_ARG[n]. Una sola ventana: los huecos de en medio contestan error.
-    (WARP_CONFIG_BASE, 0x8201_02A0),
-    (SIMT_DEBUG_BASE, 0x8202_0014),
-    # Siete contadores: los seis de §14.4 más LANE_OPS, que es extensión de
-    # esta carpeta. VIDEO_TX ya no está aquí, se fue a VIDEO (§9.7).
-    (GPU_PERF_BASE, 0x8203_001c),
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

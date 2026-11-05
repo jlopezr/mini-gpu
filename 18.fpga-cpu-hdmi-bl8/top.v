@@ -112,26 +112,11 @@ module top (
   // 80 sigue dando 1 Mbaud exacto, y por eso se eligio 80 MHz.
   // BACKPORT DE R0 CABLEADO A CERO: ver 1.isa/isa.md seccion 1.
   //
-  // Las ventanas que el monitor acepta, una por bloque de MMIO v2. Antes era
-  // UNA sola --la pagina de 4 KiB entera-- porque todos los dispositivos
-  // cabian dentro; ahora estan a megabytes unos de otros y hacen falta varias.
-  // `monitor.v` NO se toca: ya tenia cinco ranuras parametrizadas, y esa es la
-  // razon de que la migracion no necesite partir el fichero que las diez
-  // carpetas comparten byte a byte. Lo que cambia son los valores, que viven
-  // aqui.
-  //
-  // Son TRES y no cuatro: esta carpeta no tiene puerto serie (HAS_SERIAL(0)
-  // en el decodificador), asi que el bloque SERIAL no existe y abrirle una
-  // ventana solo dejaria pasar accesos que el decodificador va a rechazar.
-  //
-  // Siguen siendo gemelas de MONITOR_REGIONS en monitor.py, que es la lista
-  // que §16.4 quiere derivar de DEVICES en vez de mantener a mano. Eso es
-  // trabajo aparte; de momento las dos listas dicen lo mismo y hay un test.
+  // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+  // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+  // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
   monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd18),
-      .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8001_0000),  // SYSTEM
-      .WINDOW1_BASE(33'h0_8020_0000),.WINDOW1_END(33'h0_8021_0000),  // VIDEO
-      .WINDOW2_BASE(33'h0_8101_0000),.WINDOW2_END(33'h0_8102_0000))  // CPU PERF
+      .RAM_END(33'h0_0200_0000))
     monitor_i (
       .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
       .rx_strobe(monitor_rx_strobe),

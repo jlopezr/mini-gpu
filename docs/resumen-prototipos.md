@@ -554,9 +554,10 @@ pregunta distinta:
   errores.
 
 `ARCHITECTURAL_REGIONS` describe los intervalos de RAM usados para validar
-programas. En GPU, `MONITOR_REGIONS` añade las ventanas solo host. En las CPU con
-vídeo y serie está **vacío y los dispositivos existen igualmente**: no se puede
-inferir la ausencia de MMIO de que `MONITOR_REGIONS` esté vacío. Los intervalos
+programas. `MONITOR_REGIONS` es UNA región, la mitad alta del mapa (todo el MMIO): qué
+dispositivos existen lo dice el decodificador MMIO, que contesta error a todo hueco, y no
+hay una lista por dispositivo (`1.isa/mmio.md` §16.4). Por eso no se puede inferir los
+dispositivos de una carpeta de `MONITOR_REGIONS`; salen de `SYSTEM.DEVICES`. Los intervalos
 Python son normalmente semiabiertos.
 
 Referencias principales:

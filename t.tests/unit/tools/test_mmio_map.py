@@ -289,12 +289,14 @@ class GeneradorEstrictoTest(unittest.TestCase):
 
 
 class RegionesDelMonitorTest(unittest.TestCase):
-    """`MONITOR_REGIONS` de la 21 dice lo mismo que el mapa generado.
+    """`MONITOR_REGIONS` de la 21 abre el MMIO entero, y el mapa generado cabe dentro.
 
-    Van escritas a mano en `monitor.py` por una razón concreta:
-    `tools/prototype_report.py` las lee del TEXTO del fichero, sin importar el
-    módulo, así que una expresión las deja invisibles. Escribirlas a mano es
-    obligatorio; dejarlas sin contrastar, no.
+    Antes eran cuatro regiones, una por bloque, y este test las contrastaba con el
+    mapa. Ahora es UNA (la mitad alta): lo que existe y lo que no lo dice el
+    decodificador MMIO. Sigue escrita a mano en `monitor.py` porque
+    `tools/prototype_report.py` la lee del TEXTO del fichero, sin importar el módulo,
+    así que una expresión la deja invisible. Lo que se contrasta con el mapa generado
+    es que ningún bloque se quede fuera de ella.
     """
 
     def test_las_regiones_son_las_del_mapa(self):
@@ -305,12 +307,13 @@ class RegionesDelMonitorTest(unittest.TestCase):
             sys.path.pop(0)
         from tools import mmio_map as mapa  # noqa: PLC0415
 
-        esperado = {
-            (base, base + mapa.MMIO_BLOCK_SIZE)
-            for base in (mapa.MMIO_SYSTEM_BASE, mapa.MMIO_SERIAL_BASE,
-                         mapa.MMIO_VIDEO_BASE, mapa.MMIO_CPU_PERF_BASE)
-        }
-        self.assertEqual(esperado, set(monitor.MONITOR_REGIONS))
+        self.assertEqual(((0x8000_0000, 0x1_0000_0000),), tuple(monitor.MONITOR_REGIONS))
+        region_base, region_fin = monitor.MONITOR_REGIONS[0]
+        for base in (mapa.MMIO_SYSTEM_BASE, mapa.MMIO_SERIAL_BASE,
+                     mapa.MMIO_VIDEO_BASE, mapa.MMIO_CPU_PERF_BASE):
+            with self.subTest(base=f"{base:#010x}"):
+                self.assertTrue(region_base <= base
+                                and base + mapa.MMIO_BLOCK_SIZE <= region_fin)
 
 
 class NingunProgramaLlevaDireccionesCableadasTest(unittest.TestCase):

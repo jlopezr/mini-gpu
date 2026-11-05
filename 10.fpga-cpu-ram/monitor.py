@@ -29,8 +29,8 @@ ARCHITECTURAL_REGIONS = (
 #
 # Hay que declarar la región aunque `read_word` no valide: `read_memory` y
 # `read_block` sí, así que sin esta línea leer la identificación por bloque se
-# rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
-# top.v pasa al monitor.
+# rechazaría en el host antes de llegar al cable. Es una sola región, toda la
+# mitad alta del mapa, igual que el monitor.v (que ya no lleva ventanas).
 #
 # `MMIO_BASE`/`MMIO_LIMIT` son la ventana que `parse_address` acepta desde la
 # línea de órdenes, y aquí NO son cosmética: hasta ahora esta carpeta no las
@@ -48,13 +48,13 @@ ARCHITECTURAL_REGIONS = (
 #
 # La 6 no necesita esto porque su `MAX_ADDRESS` son los 32 bits enteros.
 MMIO_BASE = 0x8000_0000
-MMIO_LIMIT = 0x8000_FFFF
+MMIO_LIMIT = 0xFFFF_FFFF
 # Se escribe LITERAL y no derivada con un `tuple(... for ...)`:
 # `tools/prototype_report.py` lee esta asignación del TEXTO del fichero, sin
 # importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
 # exige.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8001_0000),   # SYSTEM: MAGIC, VERSION, ID, DEVICES, MEM…
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

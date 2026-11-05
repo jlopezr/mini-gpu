@@ -827,10 +827,9 @@ aparece, se cierra sin hacer nada.
   contestada en [`propuesta-v0.4.md`](1.isa/propuesta-v0.4.md): es el ancho
   del dividendo (48 bits, no 32), `ADD`/`SUB` funcionan tal cual, y las
   conversiones son un `SHLI`/`SARI`.
-- **Revisar `MONITOR_REGIONS`.** La ventana quedó abierta a la página entera
-  (`0x80000000–0x80001000`) en 16, 18, 19 y 21, no a los 24 bytes que este
-  fichero llegó a decir: `perf` lee `0x80000300` y con la ventana estrecha se
-  rechazaba en el cliente.
+- **`MONITOR_REGIONS` (resuelto el 05/11/2026).** Dejó de ser una lista: el monitor
+  ya no lleva ventanas y el cliente abre la mitad alta del mapa entera, de una
+  sola pieza (`1.isa/mmio.md` §16.4). Lo que existe lo dice el decodificador.
 - **Tests de capacidad en `t.tests`.** El mecanismo está sano (34 `test.json` con
   `requires`). El smoke test es `cases-cpu/basics/smoke`, y `swap_demo`/
   `swap_demo_fast` son `cases-cpu/video/swap-demo` y `cases-cpu/video/swap-demo-fast`,

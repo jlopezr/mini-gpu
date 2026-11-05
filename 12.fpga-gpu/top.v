@@ -44,21 +44,11 @@ module top(input clk_25mhz, output [7:0] led, output wifi_gpio0,
     // silencio. Sube la version aunque el protocolo no cambie ni un byte, por
     // lo mismo que subieron las cinco de MiniCPU. Ver 1.isa/isa.md seccion 1.
     //
-    // Las ventanas son la GEMELA de MONITOR_REGIONS en monitor.py. Esta no
-    // tiene video ni contadores, asi que esas dos ranuras van al centinela.
+    // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+    // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+    // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
     monitor #(.VERSION_MAJOR(8'd3),.VERSION_MINOR(8'd12),
-        .RAM_END(33'h0_0002_0000),
-        // MMIO v2: una ventana por bloque presente. El final es EXCLUSIVO y se
-        // ajusta a lo que el bloque implementa, no a sus 64 KiB del mapa.
-        // SYSTEM (§5): siete palabras.
-        .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_001C),
-        // GPU WARPS (§14.2): ocho descriptores de 16 B.
-        .WINDOW1_BASE(33'h0_8201_0000),.WINDOW1_END(33'h0_8201_0080),
-        // GPU SIMT DEBUG (§14.3): cinco registros.
-        .WINDOW2_BASE(33'h0_8202_0000),.WINDOW2_END(33'h0_8202_0014),
-        // GPU PERFORMANCE (§14.4): solo la ranura 1, RETIRED. No hay CYCLES.
-        .WINDOW3_BASE(33'h0_8203_0004),.WINDOW3_END(33'h0_8203_0008),
-        .WINDOW4_BASE(33'h1_ffff_ffff),.WINDOW4_END(33'h0_0000_0000))
+        .RAM_END(33'h0_0002_0000))
       monitor_i (.clk(clk_25mhz),.reset(reset),.rx_data(rx_data),.rx_strobe(rx_strobe),
         .tx_data(tx_data),.tx_strobe(tx_strobe),.tx_ready(tx_ready),
         .mem_address(address),.mem_write_data(write_data),.mem_write_enable(we),

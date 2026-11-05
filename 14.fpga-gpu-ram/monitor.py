@@ -29,13 +29,9 @@ SYSID_BASE = 0x8000_0000         # SYSTEM (mmio.md §5), siete palabras
 WARP_CONFIG_BASE = 0x8201_0000   # GPU WARPS (§14.2), ocho descriptores
 SIMT_DEBUG_BASE = 0x8202_0000    # GPU SIMT DEBUG (§14.3), cinco registros
 GPU_PERF_BASE = 0x8203_0000      # GPU PERFORMANCE (§14.4)
+
 MONITOR_REGIONS = (
-    (SYSID_BASE, 0x8000_001c),
-    (WARP_CONFIG_BASE, 0x8201_0080),
-    (SIMT_DEBUG_BASE, 0x8202_0014),
-    # Solo la ranura 1, RETIRED. Este prototipo no tiene contador de ciclos,
-    # así que la ranura 0 no se abre: contestaría error.
-    (GPU_PERF_BASE + 0x04, GPU_PERF_BASE + 0x08),
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 

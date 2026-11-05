@@ -138,9 +138,15 @@ COMMAND_PROTOTYPES = GPU_PROTOTYPES + CPU_CON_MMIO + (
     "6.fpga-cpu", "10.fpga-cpu-ram",
 )
 
-# Las copias de monitor.v son doce: las diez anteriores mas la 29 y la 30, que
-# tienen su propio juego de pruebas pero hablan el mismo protocolo.
-COPIAS_DE_MONITOR = COMMAND_PROTOTYPES + ("29.fpga-gpu-sm-pipeline", "30.fpga-cpu-console")
+# Las copias de monitor.v son TODAS las carpetas que hablan el protocolo: las de
+# COMMAND_PROTOTYPES, mas la 29 y la 30 (con sus propios juegos de pruebas) y de la 33 a la
+# 38, que habian divergido (STATE_CHECK_BLOCK en 36 y 37, una sexta ventana en 35 y 38) y
+# vuelven al fichero unico.
+COPIAS_DE_MONITOR = COMMAND_PROTOTYPES + (
+    "29.fpga-gpu-sm-pipeline", "30.fpga-cpu-console", "33.fifo-mem", "34.fpga-cpu-fifo",
+    "35.fpga-cpu-fifo-sdram2", "36.fpga-cpu-gpu", "37.fpga-cpu-gpu-mk2",
+    "38.fpga-cpu-pipelined",
+)
 
 PARAMETER = re.compile(r"\.(\w+)\(33'h([0-9a-fA-F_]+)\)")
 # La version tambien: divergio entre top_bl8.v y el banco de regiones sin que
@@ -182,27 +188,8 @@ def monitor_instantiations(prototype: Path):
             yield path, values
 
 
-def rtl_windows(values: dict) -> set:
-    # Resolver los parametros omitidos desde el RTL: las CPU solo declaran
-    # las ventanas activas, mientras las GPU explicitan tambien las vacias.
-    source = (ROOT / COMMAND_PROTOTYPES[0] / "monitor.v").read_text(encoding="utf8")
-    defaults = {
-        name: int(digits.replace("_", ""), 16)
-        for name, digits in re.findall(
-            r"parameter\s*\[32:0\]\s*(WINDOW\d+_(?:BASE|END))\s*=\s*33'h([0-9a-fA-F_]+)",
-            source)
-    }
-    values = defaults | values
-    windows = set()
-    for slot in range(5):
-        window = (values[f"WINDOW{slot}_BASE"], values[f"WINDOW{slot}_END"])
-        if window[0] < window[1] and window[0] < 0x1_0000_0000:
-            windows.add(window)
-    return windows
-
-
 class SharedMonitorTest(unittest.TestCase):
-    """Los doce monitor.v con juego de comandos son COPIA IDENTICA.
+    """Todos los monitor.v con juego de comandos son COPIA IDENTICA.
 
     Se decidio copia y no fichero compartido para que cada carpeta siga siendo
     autocontenida. Lo que antes los diferenciaba --version, tamano de RAM y la
@@ -211,13 +198,13 @@ class SharedMonitorTest(unittest.TestCase):
     salta aqui.
     """
 
-    def test_las_doce_copias_son_identicas(self):
+    def test_todas_las_copias_son_identicas(self):
         canonical = (ROOT / "22.fpga-gpu-bl8" / "monitor.v").read_bytes()
         for name in COPIAS_DE_MONITOR:
             with self.subTest(prototype=name):
                 self.assertEqual((ROOT / name / "monitor.v").read_bytes(), canonical)
 
-    def test_write_word_esta_en_las_doce(self):
+    def test_write_word_esta_en_todas(self):
         """WRITE_WORD entro por una sola carpeta y volvio a converger.
 
         Estuvo un tiempo solo en la 19, con una excepcion en el test de arriba
@@ -225,7 +212,7 @@ class SharedMonitorTest(unittest.TestCase):
         aquello: la comprobacion de que el experimento se cerro y no se quedo a
         medias en una carpeta. Si alguien vuelve a meter un comando en una sola
         copia, el test de igualdad lo caza; este dice ademas que el comando
-        sigue existiendo, para que no desaparezca de las diez a la vez sin que
+        sigue existiendo, para que no desaparezca de todas a la vez sin que
         nadie se entere.
         """
         for name in COPIAS_DE_MONITOR:
@@ -458,27 +445,43 @@ class SysIdObligatorioTest(unittest.TestCase):
 
 
 class MonitorRegionsTest(unittest.TestCase):
-    """Las ventanas del cliente tienen que ser las mismas que las del RTL.
+    """El monitor ya no lleva ventanas MMIO, y el cliente abre el MMIO entero.
 
-    La lista vive DOS veces: en Python (MONITOR_REGIONS) y en los parametros que
-    el top pasa al monitor. Anadir una ventana en un sitio y no en el otro es
-    exactamente lo que dejo 0x200 y 0x300 rechazados en placa mientras en
-    simulacion todo pasaba.
+    Antes la lista vivia DOS veces: en Python (MONITOR_REGIONS) y en los parametros
+    WINDOWn que el top pasaba al monitor. Anadir una ventana en un sitio y no en el otro
+    dejo 0x200 y 0x300 rechazados en placa mientras en simulacion todo pasaba, y volvio a
+    ocurrir en la 18 y en la 19. Ahora el monitor solo comprueba que un bloque que empieza
+    en RAM acabe en RAM y que ninguno de la vuelta a los 32 bits; que registro existe y
+    cual no lo dice el decodificador MMIO, que contesta error a todo hueco. Lo que hay que
+    vigilar es que nadie reintroduzca las ventanas, y que el cliente no vuelva a filtrar.
     """
 
-    def test_python_and_rtl_agree(self):
+    MMIO_ENTERO = ((0x8000_0000, 0x1_0000_0000),)
+
+    def test_ninguna_carpeta_pasa_ventanas_al_monitor(self):
+        for name in COPIAS_DE_MONITOR:
+            for path in sorted((ROOT / name).iterdir()):
+                if path.suffix not in (".v", ".sv") or path.name == "monitor.v":
+                    continue
+                texto = sin_comentarios(path.read_text(encoding="utf8"))
+                with self.subTest(prototype=name, fichero=path.name):
+                    self.assertIsNone(
+                        re.search(r"\.WINDOW\d_(?:BASE|END)", texto),
+                        f"{name}/{path.name} pasa un parametro WINDOWn al monitor, que ya no "
+                        f"los tiene: el decodificador MMIO es el unico que sabe que existe")
+
+    def test_el_cliente_abre_todo_el_mmio_y_la_ram_sale_del_top(self):
         for name in COMMAND_PROTOTYPES:
             prototype = ROOT / name
-            esperadas = set(load_monitor(prototype).MONITOR_REGIONS)
+            monitor = load_monitor(prototype)
+            with self.subTest(prototype=name, dato="MONITOR_REGIONS"):
+                self.assertEqual(tuple(monitor.MONITOR_REGIONS), self.MMIO_ENTERO)
             instancias = [(path, values) for path, values in monitor_instantiations(prototype)
                           if not path.name.endswith("_tb.v")]
             self.assertTrue(instancias, f"{name} no instancia monitor con parametros")
             for path, values in instancias:
                 with self.subTest(prototype=name, fichero=path.name):
-                    self.assertEqual(rtl_windows(values), esperadas)
-                    self.assertEqual(
-                        ((0, values["RAM_END"]),),
-                        load_monitor(prototype).ARCHITECTURAL_REGIONS)
+                    self.assertEqual(((0, values["RAM_END"]),), monitor.ARCHITECTURAL_REGIONS)
 
     def test_todas_las_instancias_de_un_prototipo_coinciden(self):
         """La 22 tiene dos tops y un banco de pruebas; los tres han de decir lo

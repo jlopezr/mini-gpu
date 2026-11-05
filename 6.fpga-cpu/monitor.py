@@ -37,8 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 #
 # Hay que declarar la región aunque `read_word` no valide: `read_memory` y
 # `read_block` sí, así que sin esta línea leer la identificación por bloque se
-# rechazaría en el host antes de llegar al cable. Gemela de las ventanas que
-# top.v pasa al monitor.
+# rechazaría en el host antes de llegar al cable. Es una sola región, toda la
+# mitad alta del mapa, igual que el monitor.v (que ya no lleva ventanas).
 #
 # NO hay aquí `MMIO_BASE`/`MMIO_LIMIT`, y es deliberado. En la 16, la 18, la
 # 19 y la 21 ese par es la ventana que `parse_address` acepta desde la línea de
@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # importar el módulo, y una comprensión lo deja ciego. Hay un test que lo
 # exige. Que sea literal es obligatorio; que no esté comprobada, no.
 MONITOR_REGIONS = (
-    (0x8000_0000, 0x8001_0000),   # SYSTEM: MAGIC, VERSION, ID, DEVICES, MEM…
+    (0x8000_0000, 0x1_0000_0000),   # todo el MMIO
 )
 MEMORY_REGIONS = ARCHITECTURAL_REGIONS + MONITOR_REGIONS
 # El protocolo del monitor vive UNA vez, en tools/monitor_protocol.py:

@@ -49,8 +49,7 @@ module monitor_tb;
 
   monitor #(.VERSION_MAJOR(8'd4),.VERSION_MINOR(8'd21),
       .HAS_SERIAL(1),
-      .RAM_END(33'h0_0200_0000),
-      .WINDOW0_BASE(33'h0_8000_0000),.WINDOW0_END(33'h0_8000_1000))
+      .RAM_END(33'h0_0200_0000))
     dut (
       .clk(clk),
       .reset(reset),
