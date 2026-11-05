@@ -27,6 +27,7 @@ module gpu_lsu2_tb;
     wire [15:0] mem_req_wmask;
     reg mem_req_ready=1, mem_rsp_valid=0, mem_rsp_error=0;
     reg [127:0] mem_rsp_rdata=0;
+    wire wr_pending, wr_error;
 
     // El camino escalar de MMIO (ver mmio.md). Estaba sin conectar, asi que
     // este banco no lo probaba: la cobertura del MMIO vivia entera en
@@ -37,7 +38,7 @@ module gpu_lsu2_tb;
     reg mmio_req_ready=1, mmio_rsp_valid=0, mmio_rsp_error=0;
     reg [31:0] mmio_rsp_rdata=0;
 
-    gpu_lsu2 dut(
+    gpu_lsu2 #(.MAX_POSTED(8)) dut(
         .clk(clk), .reset(reset),
         .req_valid(req_valid), .req_ready(req_ready), .req_tag(req_tag),
         .req_mask(req_mask), .req_write(req_write),
@@ -50,6 +51,7 @@ module gpu_lsu2_tb;
         .mem_req_wdata(mem_req_wdata), .mem_req_wmask(mem_req_wmask),
         .mem_rsp_valid(mem_rsp_valid), .mem_rsp_ready(mem_rsp_ready),
         .mem_rsp_rdata(mem_rsp_rdata), .mem_rsp_error(mem_rsp_error),
+        .wr_pending(wr_pending), .wr_error(wr_error),
         .mmio_req_valid(mmio_req_valid), .mmio_req_ready(mmio_req_ready),
         .mmio_req_write(mmio_req_write), .mmio_req_addr(mmio_req_addr),
         .mmio_req_wdata(mmio_req_wdata),
@@ -76,26 +78,51 @@ module gpu_lsu2_tb;
     end
 
     // ---- Modelo de memoria de 128 bits, mapeado por linea de 16 bytes ----
+    // Admite varias peticiones en vuelo, como el fabric de verdad: la escritura se
+    // aplica al aceptarla, y la respuesta (en orden) sale `latency` ciclos despues.
+    // `mem_req_ready` baja con 8 pendientes. `inject_err` marca como erronea la
+    // respuesta de la siguiente escritura.
     reg [127:0] mem[0:1023];
-    integer transactions=0, latency=6, errors=0;
+    integer transactions=0, latency=6, errors=0, cyc=0;
     integer j;
+    reg inject_err=0;
     reg [27:0] line;
     reg [127:0] cur;
+    reg [127:0] q_data[0:15];
+    integer     q_time[0:15];
+    reg         q_err[0:15];
+    integer qh=0, qt=0, qn=0, qlimit=8;
+    // La cuenta de escrituras sin confirmar nunca pasa de MAX_POSTED (8).
+    always @(posedge clk) if(!reset && dut.st_out > 4'd8) begin
+        $display("FAIL: st_out = %0d", dut.st_out); errors=errors+1;
+    end
     always @(posedge clk) begin
-        if(!reset && mem_req_valid && mem_req_ready && !mem_rsp_valid) begin
-            transactions=transactions+1;
-            line=mem_req_addr[31:4];
-            if(mem_req_write) begin
-                cur=mem[line[9:0]];
-                for(j=0;j<16;j=j+1)
-                    if(mem_req_wmask[j]) cur[j*8 +: 8]=mem_req_wdata[j*8 +: 8];
-                mem[line[9:0]]=cur;
-                mem_rsp_rdata<=128'd0;
-            end else mem_rsp_rdata<=mem[line[9:0]];
-            mem_rsp_error<=1'b0;
-            repeat(latency) @(posedge clk);
-            mem_rsp_valid<=1'b1;
-        end else if(mem_rsp_valid && mem_rsp_ready) mem_rsp_valid<=1'b0;
+        cyc=cyc+1;
+        if(reset) begin
+            qh=0; qt=0; qn=0; mem_rsp_valid<=1'b0; mem_req_ready<=1'b1;
+        end else begin
+            if(mem_rsp_valid && mem_rsp_ready) mem_rsp_valid<=1'b0;
+            if(mem_req_valid && mem_req_ready) begin
+                transactions=transactions+1;
+                line=mem_req_addr[31:4];
+                q_err[qt]=1'b0;
+                if(mem_req_write) begin
+                    cur=mem[line[9:0]];
+                    for(j=0;j<16;j=j+1)
+                        if(mem_req_wmask[j]) cur[j*8 +: 8]=mem_req_wdata[j*8 +: 8];
+                    mem[line[9:0]]=cur;
+                    q_data[qt]=128'd0;
+                    if(inject_err) begin q_err[qt]=1'b1; inject_err=1'b0; end
+                end else q_data[qt]=mem[line[9:0]];
+                q_time[qt]=cyc+latency;
+                qt=(qt+1)%16; qn=qn+1;
+            end
+            if(qn>0 && q_time[qh]<=cyc && (!mem_rsp_valid || mem_rsp_ready)) begin
+                mem_rsp_valid<=1'b1; mem_rsp_rdata<=q_data[qh]; mem_rsp_error<=q_err[qh];
+                qh=(qh+1)%16; qn=qn-1;
+            end
+            mem_req_ready<=(qn<qlimit);
+        end
     end
 
     task check_eq;
@@ -200,7 +227,9 @@ module gpu_lsu2_tb;
     reg [255:0] addr, data, got;
     reg [7:0] err;
     reg [2:0] tag;
-    integer base_tx;
+    integer base_tx, t0, t1, k, n, w;
+    reg [7:0] rmask;
+    reg [31:0] shadow[0:63];
 
     // Sin $dumpfile/$dumpvars a proposito: apio los rechaza porque el VCD lo
     // genera el -- `apio sim` lo vuelca solo. Ponerlos aqui dejaba el
@@ -430,6 +459,111 @@ module gpu_lsu2_tb;
         check_tx(transactions-base_tx, 1, "loadh 8 px");
         for(j=0;j<8;j=j+1)
             check_eq(got[j*32 +: 32], 32'h0000_A100+j, "loadh 8 px: dato");
+
+        // ---- 17. Escrituras posted: el warp se libera antes de que la memoria conteste ----
+        // Con latencia 20 una escritura de 2 lineas esperaba ~50 ciclos (2 x
+        // (ISSUE + WAIT + RETIRE)); ahora retira en cuanto el puerto acepta cada
+        // linea. `wr_pending` sigue alto hasta que lleguen las respuestas.
+        latency=20;
+        for(j=0;j<8;j=j+1) data[j*32 +: 32]=32'h5A5A_0000 + j;
+        base_tx=transactions;
+        t0=cyc;
+        issue(3'd0, 1'b1, 8'hff, consecutive(32'h0000_6400), data);
+        await_rsp(got, err, tag);
+        t1=cyc;
+        if(t1-t0 >= 25) begin
+            $display("FAIL posted: la respuesta del warp tardo %0d ciclos", t1-t0);
+            errors=errors+1;
+        end else $display("OK posted: el warp se libera en %0d ciclos", t1-t0);
+        check_eq(wr_pending, 1'b1, "wr_pending alto tras la respuesta del warp");
+        repeat(40) @(posedge clk);
+        check_eq(wr_pending, 1'b0, "wr_pending bajo tras drenar");
+        check_eq(wr_error, 1'b0, "wr_error bajo");
+        check_tx(transactions-base_tx, 2, "store posted: 2 transacciones");
+        check_eq(mem[576], {32'h5A5A_0003,32'h5A5A_0002,32'h5A5A_0001,32'h5A5A_0000}, "posted: linea 1");
+        check_eq(mem[577], {32'h5A5A_0007,32'h5A5A_0006,32'h5A5A_0005,32'h5A5A_0004}, "posted: linea 2");
+
+        // ---- 18. Una carga inmediatamente despues de la escritura ve el dato ----
+        // La carga no sale hasta que se confirman las escrituras pendientes.
+        for(j=0;j<8;j=j+1) data[j*32 +: 32]=32'hC0DE_0000 + j;
+        issue(3'd1, 1'b1, 8'hff, consecutive(32'h0000_6500), data);
+        await_rsp(got, err, tag);
+        issue(3'd2, 1'b0, 8'hff, consecutive(32'h0000_6500), 256'd0);
+        await_rsp(got, err, tag);
+        for(j=0;j<8;j=j+1)
+            check_eq(got[j*32 +: 32], 32'hC0DE_0000+j, "carga justo tras escritura");
+
+        // ---- 19. Ocho warps escribiendo a la vez, con la cuenta al limite ----
+        // Cada warp escribe 2 lineas: 16 escrituras con MAX_POSTED = 8. Latencia
+        // larga para que la cuenta llegue al tope y la LSU tenga que esperar.
+        latency=40;
+        qlimit=15;   // el fabric acepta mas de ocho: lo que limita es MAX_POSTED
+        base_tx=transactions;
+        for(k=0;k<8;k=k+1) begin
+            for(j=0;j<8;j=j+1) data[j*32 +: 32]=32'hE000_0000 + k*16 + j;
+            issue(k[2:0], 1'b1, 8'hff, consecutive(32'h0000_6600 + k*32), data);
+        end
+        for(k=0;k<8;k=k+1) await_rsp(got, err, tag);
+        repeat(120) @(posedge clk);
+        check_eq(wr_pending, 1'b0, "ocho warps: wr_pending bajo");
+        check_tx(transactions-base_tx, 16, "ocho warps: 16 transacciones");
+        for(k=0;k<8;k=k+1)
+            for(j=0;j<8;j=j+1)
+                check_eq(mem[(32'h0000_6600 + k*32)/16 - 32'h600 + 512 + (j/4)][(j%4)*32 +: 32],
+                         32'hE000_0000 + k*16 + j, "ocho warps: memoria");
+
+        qlimit=8;
+
+        // ---- 20. Error de memoria en una escritura posted: bandera pegajosa ----
+        latency=6;
+        inject_err=1'b1;
+        issue(3'd0, 1'b1, 8'h01, consecutive(32'h0000_6700), 256'd7);
+        await_rsp(got, err, tag);
+        repeat(30) @(posedge clk);
+        check_eq(wr_error, 1'b1, "wr_error tras un error de escritura");
+        check_eq(wr_pending, 1'b0, "wr_pending bajo tras el error");
+        reset=1; repeat(3) @(posedge clk); reset=0; repeat(3) @(posedge clk);
+        check_eq(wr_error, 1'b0, "reset borra wr_error");
+
+        // ---- 21. Aleatorio: cargas y escrituras de un warp contra un modelo ----
+        // Una peticion cada vez (se espera la respuesta), latencias de 1 a 12. Las
+        // cargas deben ver siempre la ultima escritura aunque las escrituras
+        // salgan sin esperar. Dentro de una escritura gana la lane mayor.
+        for(k=0;k<64;k=k+1) shadow[k]=32'd0;
+        for(k=0;k<16;k=k+1) mem[512+k]=128'd0;
+        for(n=0;n<1500;n=n+1) begin
+            latency=1+($urandom%12);
+            addr=0; data=0;
+            for(j=0;j<8;j=j+1) begin
+                addr[j*32 +: 32]=32'h0000_6000 + (($urandom%64)*4);
+                data[j*32 +: 32]=$urandom;
+            end
+            rmask=$urandom;
+            if(rmask==0) rmask=8'h01;
+            if(($urandom%3)==0) begin
+                issue(3'd5, 1'b0, rmask, addr, 256'd0);
+                await_rsp(got, err, tag);
+                for(j=0;j<8;j=j+1)
+                    if(rmask[j]) begin
+                        w=(addr[j*32 +: 32]-32'h0000_6000)/4;
+                        if(got[j*32 +: 32] !== shadow[w]) begin
+                            $display("FAIL aleatorio %0d: carga lane %0d palabra %0d: %h, esperado %h", n, j, w, got[j*32 +: 32], shadow[w]);
+                            errors=errors+1;
+                        end
+                    end
+            end else begin
+                issue(3'd5, 1'b1, rmask, addr, data);
+                await_rsp(got, err, tag);
+                for(j=0;j<8;j=j+1)
+                    if(rmask[j]) shadow[(addr[j*32 +: 32]-32'h0000_6000)/4]=data[j*32 +: 32];
+            end
+        end
+        repeat(60) @(posedge clk);
+        check_eq(wr_pending, 1'b0, "aleatorio: wr_pending bajo");
+        for(k=0;k<64;k=k+1)
+            check_eq(mem[512 + k/4][(k%4)*32 +: 32], shadow[k], "aleatorio: memoria final");
+        if(errors==0) $display("OK aleatorio: 1500 peticiones");
+        latency=6;
 
         repeat(20) @(posedge clk);
         if(errors==0) $display("gpu_lsu2_tb: TODAS LAS PRUEBAS PASAN");

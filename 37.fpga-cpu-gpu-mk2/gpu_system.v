@@ -97,8 +97,18 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire [31:0] debug_data, debug_pc;
     wire [31:0] cfg_read_data;
     reg cfg_write;
-    wire halted, sm_running, sm_error, instruction_retired, sm_no_warp_stall;
-    wire [7:0] live_warps;
+    wire halted, sm_running, sm_error_raw, instruction_retired, sm_no_warp_stall;
+    wire [7:0] sm_live_warps;
+    // Escrituras posted de la LSU (gpu_lsu2.v, MAX_POSTED): mientras quede alguna sin
+    // confirmar la GPU NO esta terminada. Un warp que acaba con escrituras en vuelo
+    // sigue contando como vivo (`live_hold`) hasta que se confirmen, para que
+    // WARP_DONE, GPU_STATUS y WARP_LIVE no digan "acabado" antes de que la memoria
+    // tenga los datos que la CPU va a leer. Un error de memoria tardio de una
+    // escritura cuenta como error de la GPU.
+    wire lsu_wr_pending, lsu_wr_error;
+    reg [7:0] live_hold, sm_live_prev;
+    wire [7:0] live_warps = sm_live_warps | live_hold;
+    wire sm_error = sm_error_raw || lsu_wr_error;
     // Warps con ACTIVE != 0 en su descriptor: los que RUN arranca y los unicos
     // que WARP_START acepta.
     wire [7:0] desc_enabled;
@@ -389,13 +399,20 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         end
     end
 
+    always @(posedge clk) begin
+        sm_live_prev <= sm_live_warps;
+        if (core_reset) live_hold <= 8'd0;
+        else if (lsu_wr_pending) live_hold <= live_hold | (sm_live_prev & ~sm_live_warps);
+        else live_hold <= 8'd0;
+    end
+
     gpu_sm #(.SIMT_DEPTH(SIMT_DEPTH), .SIMT_REGION_DEPTH(SIMT_REGION_DEPTH), .SIMT_PATH_DEPTH(SIMT_PATH_DEPTH)) sm (
         .clk(clk), .reset(reset), .soft_reset(gpu_reset), .run_request(run_request),
         .launch(launch), .launch_run(launch_run), .launch_all(launch_all),
         .launch_mask(launch_mask), .desc_enabled(desc_enabled),
         .halt_request(halt_request), .step_request(step_request),
-        .halted(halted), .sm_running(sm_running), .live_warps(live_warps),
-        .error(sm_error), .error_code(error_code),
+        .halted(halted), .sm_running(sm_running), .live_warps(sm_live_warps),
+        .error(sm_error_raw), .error_code(error_code),
         .error_warp(error_warp), .error_lane(error_lane), .error_lane_valid(error_lane_valid),
         .error_pc(error_pc), .instruction_retired(instruction_retired), .retired_count(retired_count),
         .debug_warp(debug_warp), .debug_lane(debug_lane), .debug_register(5'd0),
@@ -410,7 +427,8 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         .lsu_write(lsu_write), .lsu_size(lsu_size), .lsu_signed(lsu_signed),
         .lsu_address(lsu_address), .lsu_data(lsu_data),
         .lsu_rsp_valid(lsu_rsp_valid), .lsu_rsp_ready(lsu_rsp_ready), .lsu_rsp_tag(lsu_rsp_tag),
-        .lsu_rsp_data(lsu_rsp_data), .lsu_rsp_error(lsu_rsp_error), .lsu_occupied(occupied),
+        .lsu_rsp_data(lsu_rsp_data), .lsu_rsp_error(lsu_rsp_error),
+        .lsu_occupied(occupied | {8{lsu_wr_pending}}),
         .retired_lanes(sm_retired_lanes), .no_warp_stall(sm_no_warp_stall)
     );
 
@@ -440,6 +458,7 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         .mem_req_addr(p0_req_addr), .mem_req_wdata(p0_req_wdata), .mem_req_wmask(p0_req_wmask),
         .mem_rsp_valid(p0_rsp_valid), .mem_rsp_ready(p0_rsp_ready),
         .mem_rsp_rdata(p0_rsp_rdata), .mem_rsp_error(p0_rsp_error),
+        .wr_pending(lsu_wr_pending), .wr_error(lsu_wr_error),
         .mmio_req_valid(gm_valid), .mmio_req_ready(gm_ready),
         .mmio_req_write(gm_write), .mmio_req_addr(gm_addr),
         .mmio_req_wdata(gm_wdata),

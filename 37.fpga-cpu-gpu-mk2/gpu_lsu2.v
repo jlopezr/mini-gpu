@@ -3,7 +3,19 @@
 // memory_fabric_4 (128 bits, BL8). Ocho slots vectoriales; tras servir UN grupo
 // se vuelve a arbitrar. Sin puerto auxiliar: fetch y monitor van por sus
 // propios puertos del fabric. Sin segmentacion todavia (ver lsu-v2.md, v2.1).
-module gpu_lsu2 (
+//
+// ESCRITURAS POSTED (parametro MAX_POSTED, 0 = como antes). Una escritura a RAM
+// no espera su respuesta: al aceptarla el puerto, la LSU retira el grupo y sigue
+// con el siguiente, y cuenta la respuesta pendiente en `st_out` (hasta MAX_POSTED).
+// Las respuestas llegan en orden por puerto y se consumen aparte. Reglas:
+//   * una carga o un acceso MMIO no sale mientras haya escrituras sin confirmar
+//     (`st_out==0`), asi que el orden escritura -> lectura se conserva y la
+//     respuesta que llega en WAIT es siempre la de la carga;
+//   * `wr_pending` dice que quedan escrituras sin confirmar: quien declare
+//     terminada la GPU (halted, WARP_DONE) debe esperar a que baje;
+//   * un error de memoria en una escritura llega tarde, cuando la instruccion ya
+//     retiro: se anota en la bandera pegajosa `wr_error` (la borra `reset`).
+module gpu_lsu2 #(parameter integer MAX_POSTED=8) (
     input clk, reset,
     input req_valid, output req_ready,
     input [2:0] req_tag, input [7:0] req_mask, input req_write,
@@ -21,6 +33,7 @@ module gpu_lsu2 (
     output [127:0] mem_req_wdata, output [15:0] mem_req_wmask,
     input mem_rsp_valid, output mem_rsp_ready,
     input [127:0] mem_rsp_rdata, input mem_rsp_error,
+    output wr_pending, output reg wr_error,
 
     // Ventana MMIO (todo 0x8xxx_xxxx en v2). Antes era fault y solo la alcanzaba el host
     // con la GPU parada; ahora la GPU puede leerla y escribirla mientras corre,
@@ -52,6 +65,7 @@ module gpu_lsu2 (
     reg [127:0] grp_wdata, rsp_line;
     reg [15:0] grp_wmask;
     reg grp_write, line_error, grp_mmio;
+    reg [3:0] st_out;            // escrituras a RAM aceptadas y sin respuesta
     integer i;
 
     // Arbitraje de warp: identico al paso 7 de v1 (mascara plana rotada por
@@ -226,14 +240,21 @@ module gpu_lsu2 (
 
     assign occupied=busy;
     assign req_ready=!reset && !busy[req_tag];
-    assign mem_req_valid=!reset && state==ISSUE && !grp_mmio;
+    // Una escritura posted sale mientras quepa en la cuenta; todo lo demas, con la
+    // cuenta a cero (orden respecto a las escrituras anteriores).
+    wire post_this=MAX_POSTED>0 && grp_write && !grp_mmio;
+    assign mem_req_valid=!reset && state==ISSUE && !grp_mmio &&
+                         (post_this ? st_out<MAX_POSTED : st_out==4'd0);
     assign mem_req_write=grp_write;
     assign mem_req_addr=grp_addr;
     assign mem_req_wdata=grp_wdata;
     assign mem_req_wmask=grp_wmask;
-    assign mem_rsp_ready=state==WAIT && !grp_mmio;
+    assign mem_rsp_ready=(st_out!=4'd0) || (state==WAIT && !grp_mmio);
+    assign wr_pending=st_out!=4'd0;
+    wire st_inc=state==ISSUE && post_this && mem_req_valid && mem_req_ready;
+    wire st_dec=mem_rsp_valid && mem_rsp_ready && st_out!=4'd0;
 
-    assign mmio_req_valid=!reset && state==ISSUE && grp_mmio;
+    assign mmio_req_valid=!reset && state==ISSUE && grp_mmio && st_out==4'd0;
     assign mmio_req_write=grp_write;
     assign mmio_req_addr=grp_addr;
     assign mmio_req_wdata=grp_wdata[31:0];
@@ -267,8 +288,11 @@ module gpu_lsu2 (
             rsp_valid<=0; rsp_tag<=0; rsp_data<=0; rsp_error<=0;
             grp_lanes<=0; grp_sel<=0; grp_addr<=0; grp_wdata<=0; grp_wmask<=0;
             grp_write<=0; rsp_line<=0; line_error<=0; grp_mmio<=0;
+            st_out<=4'd0; wr_error<=1'b0;
             for(i=0;i<8;i=i+1) begin pending[i]<=0; errors[i]<=0; end
         end else begin
+            st_out<=st_out+{3'b0,st_inc}-{3'b0,st_dec};
+            if(st_dec && mem_rsp_error) wr_error<=1'b1;
             if(rsp_valid && rsp_ready) begin rsp_valid<=0; busy[rsp_tag]<=0; end
             if(req_valid && req_ready) begin
                 busy[req_tag]<=1; pending[req_tag]<=req_mask; has_pending[req_tag]<=|req_mask;
@@ -304,7 +328,11 @@ module gpu_lsu2 (
                         cursor<=selected+1'b1; state<=IDLE;
                     end
                 end
-                ISSUE: if(grp_mmio ? mmio_req_ready : mem_req_ready) state<=WAIT;
+                ISSUE: if(grp_mmio ? (mmio_req_valid && mmio_req_ready) : (mem_req_valid && mem_req_ready)) begin
+                    // Escritura posted: no hay respuesta que esperar aqui.
+                    if(post_this) begin line_error<=1'b0; state<=RETIRE; end
+                    else state<=WAIT;
+                end
                 WAIT: if(grp_mmio) begin
                     if(mmio_rsp_valid) begin
                         // Se replica el dato en las cuatro palabras de la linea

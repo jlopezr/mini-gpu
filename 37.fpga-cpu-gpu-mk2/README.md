@@ -141,6 +141,41 @@ la suya en un bloque propio (`GPU_STACK_PER_LANE`, 512 bytes), así que un
 `STORE R16, R30, 24` del warp toca 8 líneas: 8 transacciones, se fusione o no.
 En `shapes` y `pattern` pesan más que los píxeles; ver «Pendiente».
 
+### LSU: escrituras posted (37)
+
+Hasta ahora la LSU esperaba la respuesta de memoria tambien en las escrituras (`WAIT`),
+y servia un grupo cada vez: en la placa 36 una linea de 16 B escrita costaba unos 44
+ciclos de GPU (medido con `LSU_TX` y `CYCLES`, ver `36.fpga-cpu-gpu/propuesta-lanzamiento-gpu.md`).
+`gpu_lsu2` tiene ahora el parametro `MAX_POSTED` (8; **0 deja el comportamiento anterior**):
+
+- una escritura a RAM retira el grupo en cuanto el puerto la acepta y se anota en
+  `st_out` (escrituras sin confirmar, hasta `MAX_POSTED`); sus respuestas, en orden
+  por puerto, se consumen aparte;
+- una carga o un acceso MMIO no sale mientras `st_out != 0`, asi que el orden
+  escritura -> lectura se conserva y la respuesta que llega en `WAIT` es la de la carga;
+- `wr_pending` (hay escrituras sin confirmar) entra en `lsu_occupied`, de modo que
+  `halted` no se da hasta que drenen, y `gpu_system` mantiene vivo (`live_hold`) a un
+  warp que acaba con escrituras en vuelo: `WARP_DONE`, `GPU_STATUS` y `WARP_LIVE` no
+  dicen "acabado" antes de que la memoria tenga los datos que la CPU va a leer;
+- un error de memoria en una escritura llega tarde: bandera pegajosa `wr_error`,
+  que cuenta como `GPU_STATUS.ERROR` y se borra con `RESET`. Las direcciones
+  fuera de rango se rechazan antes, en `GROUP`, asi que esto solo cubre fallos de la
+  propia memoria.
+
+Bancos: `gpu_lsu2_tb.v` (casos 17 a 21: el warp se libera en 13 ciclos en vez de 55 con
+latencia 20, carga justo despues de escribir, ocho warps con la cuenta al tope, error
+tardio y 1500 peticiones aleatorias contra un modelo; el modelo de memoria admite
+varias peticiones en vuelo). Con `MAX_POSTED=0` el caso 17 falla, y quitar la espera
+de las cargas, el tope de la cuenta o `live_hold` hace fallar un banco. Pasan tambien
+`gpu_system_tb` (tambien con latencia 90), `gpu_core_tb`, `gpu_barrier_tb`, `gpu_alu_tb`
+y `gpu_jump_tb`.
+
+**No sintetizado ni probado en placa.** Cambia el netlist de la LSU y del sistema: la
+semilla y el timing de la fusion por bytes (ver «Pendiente») no valen. Un `RESET` de
+la GPU con escrituras en vuelo deja respuestas sueltas en el fabric que una carga
+posterior podria tomar por suyas (ya ocurria con cargas en vuelo); `RESET` se usa solo
+tras un fallo o un timeout.
+
 ### Limitaciones
 
 - La GPU **no es maestro de MMIO**: un warp que toque una dirección MMIO recibe
