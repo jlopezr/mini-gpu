@@ -88,6 +88,8 @@ def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]
     if limiting:
         clock, achieved, required = limiting
         verdict = "PASS" if achieved >= required else "FAIL"
+        if verdict == "PASS" and summary.get("pulse_width_errors"):
+            verdict = "WARN"  # solo falla el ancho minimo de pulso de un bloque de E/S (datasheet)
         fmax = f"{achieved:.1f}/{required:.1f}"
     else:
         clock, verdict, fmax = "-", "-", "-"
@@ -140,7 +142,9 @@ def main() -> int:
     print("\nHOLD n/a: nextpnr no analiza hold. SLACK es la holgura de setup de la iteracion "
           "guardada por PAR (solo Diamond).\nSYNTH es yosys / Synplify; PNR es todo lo que sigue "
           "(nextpnr + ecppack / Translate..Bitgen). Los informes anteriores a esta medida solo "
-          "tienen TOTAL.\n* en REPORT: informe con fuentes distintas de las actuales.")
+          "tienen TOTAL.\n* en REPORT: informe con fuentes distintas de las actuales.\n"
+          "WARN: los caminos cumplen y solo falla el ancho minimo de pulso de un bloque de E/S "
+          "(limite del datasheet que nextpnr no comprueba); FMAX es entonces el exigido, no medido.")
     return 0
 
 

@@ -25,7 +25,9 @@ IMPL = "impl1"
 PREFERENCE_RE = re.compile(r'^Preference:\s+FREQUENCY (?:NET|PORT) "([^"]+)"\s+([\d.]+)\s+MHz')
 REPORT_RE = re.compile(r"^Report:\s+([\d.]+)\s*MHz is the maximum frequency")
 EXCEEDS_RE = re.compile(r"^Error:\s+The following path exceeds requirements by ([\d.]+)\s*ns")
-ITEMS_RE =re.compile(r"^\s*(\d+) items scored, (\d+) timing errors detected")
+# "1 timing error detected" va en singular: con "errors" a secas, un unico error hacia
+# desaparecer el reloj de la tabla (y salia PASS).
+ITEMS_RE = re.compile(r"^\s*(\d+) items scored, (\d+) timing errors? detected")
 SUMMARY_RE = re.compile(r"Timing errors:\s+(\d+) \(setup\), (\d+) \(hold\)")
 USAGE_RE = re.compile(r"^\s*Number of ([^:]+?):\s+(\d+) out of (\d+)")
 # El tiempo de cada iteracion sale en segundos ("30") y, desde el minuto, como
@@ -60,14 +62,39 @@ def parse_twr(path: Path) -> tuple[dict, dict]:
     # Una preferencia con errores no tiene linea "Report: ... MHz": TRACE lista los
     # caminos que fallan. Sin esto el reloj desaparecia y salia PASS con errores.
     # Se estima la Fmax desde el peor exceso: 1000 / (periodo exigido + exceso).
+    #
+    # Los errores "Minimum Pulse Width" (ancho minimo de pulso del reloj de un bloque de
+    # E/S, p. ej. el SIOLOGIC del ODDRX1F a 370 MHz) NO son un camino: son un limite del
+    # datasheet que nextpnr no comprueba y que ninguna colocacion arregla. Se cuentan
+    # aparte, como aviso, y no entran en la Fmax estimada.
+    # pending = [reloj, exigido, peor exceso de un camino, errores de ancho de pulso]
     pending: list | None = None
+    block: list | None = None  # [exceso, es_ancho_de_pulso] del "Error:" que se esta leyendo
+    pulse_total = 0
+
+    def close_block() -> None:
+        nonlocal block
+        if block is not None and pending is not None:
+            if block[1]:
+                pending[3] += 1
+            else:
+                pending[2] = max(pending[2] or 0.0, block[0])
+        block = None
 
     def flush() -> None:
-        nonlocal pending
-        if pending and pending[2] is not None:
-            name, constraint, worst = pending
-            clocks[name] = {"achieved": 1000.0 / (1000.0 / constraint + worst),
-                            "constraint": constraint, "estimated": True}
+        nonlocal pending, pulse_total
+        close_block()
+        if pending:
+            name, constraint, worst, pulses = pending
+            pulse_total += pulses
+            if worst is not None:
+                clocks[name] = {"achieved": 1000.0 / (1000.0 / constraint + worst),
+                                "constraint": constraint, "estimated": True}
+            elif pulses:
+                # Todos los caminos cumplen y solo falla el ancho de pulso: no hay linea
+                # "Report", asi que se da el reloj por cumplido (estimado).
+                clocks[name] = {"achieved": constraint, "constraint": constraint,
+                                "estimated": True}
         pending = None
 
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -75,8 +102,13 @@ def parse_twr(path: Path) -> tuple[dict, dict]:
         if match:
             errors = {"setup": int(match.group(1)), "hold": int(match.group(2))}
         match = EXCEEDS_RE.match(line)
-        if match and pending is not None and pending[2] is None:
-            pending[2] = float(match.group(1))
+        if match:
+            close_block()
+            block = [float(match.group(1)), False]
+        elif line.startswith("Passed:"):
+            close_block()  # un ancho de pulso aprobado no es del "Error:" anterior
+        elif block is not None and "based on Minimum Pulse Width" in line:
+            block[1] = True
         if line.startswith("Preference:"):
             flush()
             match = PREFERENCE_RE.match(line)
@@ -96,13 +128,14 @@ def parse_twr(path: Path) -> tuple[dict, dict]:
         if match and current:
             scored = int(match.group(1))
             if int(match.group(2)) > 0:
-                pending = [current[0], current[1], None]
+                pending = [current[0], current[1], None, 0]
             continue
         match = REPORT_RE.match(line)
         if match and current and in_setup and scored:
             clocks[current[0]] = {"achieved": float(match.group(1)), "constraint": current[1]}
             current = None
     flush()
+    errors["pulse_width"] = pulse_total
     return clocks, errors
 
 
@@ -144,6 +177,7 @@ def summarize(impl: Path) -> dict:
         "clocks": clocks,
         "utilization": parse_mrp(mrp) if mrp else {},
         "setup_errors": errors["setup"], "hold_errors": errors["hold"],
+        "pulse_width_errors": errors.get("pulse_width", 0),
         "worst_setup_slack": saved["setup_slack"] if saved else None,
         "worst_hold_slack": saved["hold_slack"] if saved else None,
         "saved_iteration": saved["iteration"] if saved else None,
@@ -159,6 +193,10 @@ def summary_text(summary: dict, label: str, elapsed: float, strategy: list[str])
         verdict = "PASS" if values["achieved"] >= values["constraint"] else "FAIL"
         lines.append(f"{name}: {values['achieved']:.2f} MHz; required {values['constraint']:.2f} MHz; {verdict}")
     lines.append(f"TRACE errors: {summary['setup_errors']} setup, {summary['hold_errors']} hold")
+    if summary.get("pulse_width_errors"):
+        lines.append(f"WARNING: {summary['pulse_width_errors']} minimum-pulse-width error(s) counted in "
+                     "the setup errors above: datasheet limit of an I/O block clock (e.g. ODDRX1F "
+                     "above ~250 MHz). nextpnr does not check it; no placement fixes it.")
     lines.append(f"Saved PAR iteration {summary['saved_iteration']}: worst setup slack "
                  f"{summary['worst_setup_slack']} ns, worst hold slack {summary['worst_hold_slack']} ns")
     lines.append("PAR iterations (iteration, setup slack, hold slack, saved):")

@@ -254,6 +254,10 @@ def _timing_text(archive: Path | None) -> tuple[str, str]:
     limiting = min(clocks.values(), key=lambda values:
                    values.get("achieved", 0) / max(values.get("constraint", 0), 0.001))
     fmax = f"{limiting.get('achieved', 0):.1f}/{limiting.get('constraint', 0):.1f}"
+    if passes and summary.get("pulse_width_errors"):
+        # Los caminos cumplen y solo falla el ancho minimo de pulso de un bloque de E/S
+        # (limite del datasheet que nextpnr no comprueba): aviso, no fallo.
+        return "WARN", fmax
     return "PASS" if passes else "FAIL", fmax
 
 
@@ -403,7 +407,7 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
     use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     colors = {
         "CURRENT": "32", "SUCCESS": "32", "PASS": "32",
-        "STALE": "33", "INTERRUPTED": "33", "TIMING_FAIL": "33", "RUNNING": "36",
+        "STALE": "33", "INTERRUPTED": "33", "TIMING_FAIL": "33", "RUNNING": "36", "WARN": "33",
         "MISSING": "31", "FAILED": "31", "FAIL": "31",
         "NEVER": "2",
         "apio": "34", "diamond": "35",  # columna TOOL
