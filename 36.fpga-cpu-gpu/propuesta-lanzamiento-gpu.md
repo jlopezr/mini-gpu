@@ -221,3 +221,27 @@ Hecho en `37.fpga-cpu-gpu-mk2` (`gpu_lsu2.v`, `gpu_system.v`, `gpu_lsu2_tb.v`, R
 Verificado en simulación (iverilog): `gpu_lsu2_tb` con casos nuevos (17–21), `gpu_system_tb` (también con latencia 90), `gpu_core_tb`, `gpu_barrier_tb`, `gpu_alu_tb`, `gpu_jump_tb`. Se comprobó que los tests detectan fallos: con `MAX_POSTED=0` falla el caso de liberación del warp (55 ciclos frente a 13), y quitar la espera de las cargas, el tope de la cuenta o `live_hold` hace fallar un banco.
 
 **Pendiente:** síntesis (se prevé pasar a Diamond: ver el timing de `clk_25mhz` y de la LSU, que ya fue un camino crítico) y medida en placa con `glaunch4.c`/`glaunch5.c` para ver cuánto baja el coste por línea. La estimación de 2x o más sigue sin confirmar.
+
+## 11. Escrituras posted en el puente MMIO (7.2): análisis y medida
+
+Leído el camino completo de un acceso a la GPU en la 37 (`cpu_dmem_adapter.v`, `mmio_mux.v`, `gpu_mmio_bridge.v`, `top.v`): el adaptador vacía su buffer de escrituras y lanza `mmio_req`; `mmio_mux` espera 3 ciclos del decodificador, retiene dirección y dato hasta que `gpu_mmio_bridge` confirma (cruce a `gclk` y vuelta, un acceso en vuelo), espera otros 3 ciclos y recién entonces da `ack`. Eso suman los ~29 ciclos por escritura y ~38 por lectura.
+
+**Qué habría que cambiar para postear:** el puente tendría que capturar dirección y dato en su dominio (hoy los lee retenidos por `mmio_mux`) y `mmio_mux` dar `ack` al aceptarlos; el acceso siguiente a la GPU esperaría a que el puente quede libre (conserva el orden); y los errores de la escritura (`h_error`) dejarían de llegar al `STORE` que los causó.
+
+**Cuánto se ganaría, medido (placa 36, `glaunch7.c`):**
+
+| Escenario | `gpu_run_fast2` (2 lecturas por sondeo) | `gpu_run_fast3` (solo WARP_DONE) | Diferencia |
+|---|---:|---:|---:|
+| Kernel vacío, 1 warp | 1 408 | 1 441 | −33 |
+| Fill 64, 1 warp | 4 569 | 4 546 | 23 |
+| Kernel vacío, 2 warps | 1 756 | 1 735 | 21 |
+| Fill 64, 2 warps | 4 311 | 4 288 | 23 |
+| Fill 256, 1 warp | 11 377 | 11 360 | 17 |
+
+Quitar una de las dos lecturas del sondeo no cambia nada (±1 %): el sondeo no es lo que cuesta. Por cuenta de ese resultado y de las latencias medidas, lo que se podría postear son solo las escrituras de descriptor (2 por warp y lanzamiento, ~29 ciclos cada una): **60–120 ciclos, el 4–8 % de un lanzamiento vacío y menos del 3 % de un fill de 64.** Las demás escrituras (`WARP_START`, `GPU_CONTROL`, `WARP_DONE`) tienen que ser síncronas para ordenar y para devolver el error.
+
+En la 37 el hito 2 hace desaparecer incluso esas: `desc_pc`, `desc_active` y `desc_groups` persisten, de modo que relanzar el mismo kernel es un único `WARP_START`.
+
+**Conclusión: no merece la pena** cambiar RTL del puente por ahora. Un lanzamiento vacío de ~1 400 ciclos de CPU son ~580 de ejecución en la GPU (180 ciclos a 25 MHz), ~250 de accesos MMIO, y el resto instrucciones del runtime, la vuelta de la lectura y el comienzo del SM. Lo que sigue pesando de verdad es la ejecución del kernel, que es lo que atacan la LSU posted (hecha) y, si se pudiera, el reloj de la GPU.
+
+Se descarta también el registro de lectura bloqueante (sección 2.2): el bus MMIO es compartido con el monitor y `mmio_mux` no tiene tiempo máximo para la GPU (pendiente en el README de la 37), así que una GPU colgada colgaría el bus entero.
