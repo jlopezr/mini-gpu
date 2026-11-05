@@ -158,6 +158,12 @@ def main() -> int:
     out.mkdir(exist_ok=True)
     lpf = out / lpfs[0].name
     shutil.copyfile(lpfs[0], lpf)  # Diamond puede reescribir el .lpf: nunca el original
+    # Restricciones solo de Diamond (p. ej. BLOCK PATH entre relojes del mismo PLL). No puede
+    # llamarse .lpf: apio recoge todos los .lpf de la carpeta y fallaria con dos.
+    extra = proto / "diamond-constraints.txt"
+    if extra.exists():
+        with open(lpf, "a", encoding="utf-8") as f:
+            f.write("\n# --- diamond-constraints.txt ---\n" + extra.read_text(encoding="utf-8"))
 
     name = "hardware"
     staged = stage_sources(source_files(proto), out)

@@ -1,0 +1,15 @@
+# Restricciones solo para el flujo de Diamond (tools/diamond_runner.py las anexa al .lpf).
+#
+# clk_pix (74 MHz, CLKOS) -> clk_pix_5x (370 MHz, CLKOP): los registros de dvi_generator.sv
+# que pasan el pixel codificado al registro de desplazamiento. TRACE da 30 errores de hold
+# (hasta 5,15 ns) en este cruce, y es un artefacto del analisis:
+#   - Los dos relojes salen del mismo PLL con los flancos alineados a proposito: CLKOS_CPHASE 5
+#     y CLKOP_CPHASE 1 difieren en 4 ciclos del VCO = 2 periodos de 370 MHz exactos.
+#   - TRACE suma ese desfase (-5,405 ns) como retardo del reloj de origen, pero compara contra
+#     el flanco de captura sin desplazar; con flancos coincidentes el hold real es unos +0,25 ns
+#     (0,373 ns de camino - 0,119 ns de hold, con la misma ruta de reloj en ambos).
+#   - Ademas el registro de destino solo carga una vez cada 5 ciclos rapidos (shift5[4]).
+# MULTICYCLE no sirve: no cambia el hold. Medido sobre el mismo .ncd: 30 errores de hold sin
+# restriccion, 30 con MULTICYCLE 5X, 0 con BLOCK PATH.
+# Los errores de setup (8, dentro de clk_pix_5x) son reales y se siguen viendo.
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_pix_5x" ;
