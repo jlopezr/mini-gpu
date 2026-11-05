@@ -293,6 +293,19 @@ def _local_date_text(value: str | None) -> str:
     return f"{local:%Y-%m-%d %H:%M}"
 
 
+def diamond_effort(folder: Path) -> str:
+    """Esfuerzo de busqueda de Diamond, para la columna SEED: "-" si valio el primer
+    intento de PAR (cost table 1, la estrategia normal), o la cost table de la
+    iteracion guardada si hizo falta buscar (`5_8` -> "8"). Es el equivalente de la
+    semilla que apio fija en `apio.ini`: dice cuanto costo encontrar una sintesis buena."""
+    try:
+        saved = json.loads((folder / "summary.json").read_text(encoding="utf-8")).get("saved_iteration")
+    except (OSError, json.JSONDecodeError):
+        return "-"
+    table = str(saved or "").rpartition("_")[2]
+    return table if table.isdigit() and int(table) > 1 else "-"
+
+
 def _diamond_info(prototype: Path) -> dict | None:
     """Fila de Diamond con las mismas columnas que la de apio, o None si no hay informe.
 
@@ -321,6 +334,7 @@ def _diamond_info(prototype: Path) -> dict | None:
         "elapsed": _elapsed_text({}, folder),
         "date": _local_date_text(metadata.get("started")),
         "label": metadata.get("label", "diamond"),
+        "seed": diamond_effort(folder),
     }
 
 
@@ -436,8 +450,7 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
     for row in rows:
         entries.append(("apio", row))
         if row.get("diamond"):
-            entries.append(("diamond", {**row["diamond"], "prototype": row["prototype"],
-                                        "seed": "-"}))
+            entries.append(("diamond", {**row["diamond"], "prototype": row["prototype"]}))
     w_proto = widest("PROTOTYPE", (row["prototype"] for _, row in entries))
     w_tool = widest("TOOL", (tool for tool, _ in entries))
     w_bit = widest("BITSTREAM", (row["bitstream"] for _, row in entries))

@@ -80,7 +80,7 @@ def _times(summary: dict, metadata: dict) -> list[str]:
 
 def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]:
     if folder is None:
-        return [proto.name, tool] + ["-"] * 12
+        return [proto.name, tool] + ["-"] * 13
     summary = _load(folder / "summary.json")
     metadata = _load(folder / "metadata.json")
     stale = "" if _metadata_source_hashes(metadata) == current else "*"
@@ -95,9 +95,12 @@ def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]
         clock, verdict, fmax = "-", "-", "-"
     hold = summary.get("hold_errors")
     slack = summary.get("worst_setup_slack")
+    from tools.build_report import configured_seed
+    from tools.build_runner import diamond_effort
+    seed = str(configured_seed(proto) or "-") if tool == "apio" else diamond_effort(folder)
     return [proto.name, tool, clock, fmax, verdict,
             "n/a" if tool == "apio" else ("-" if hold is None else str(hold)),
-            "-" if slack is None else f"{slack:+.3f}",
+            "-" if slack is None else f"{slack:+.3f}", seed,
             *_times(summary, metadata),
             _resource(summary, tool, "LUT"), _resource(summary, tool, "FF"),
             _resource(summary, tool, "EBR"), folder.name[:15] + stale]
@@ -112,7 +115,7 @@ def main() -> int:
     root = find_repo_root()
     protos = ([resolve_prototype(p, root) for p in args.prototype] if args.prototype
               else [p for p in list_prototypes(root) if (p / "reports").is_dir()])
-    header = ["PROTOTYPE", "TOOL", "CLOCK", "FMAX/REQ", "TIMING", "HOLD", "SLACK(ns)",
+    header = ["PROTOTYPE", "TOOL", "CLOCK", "FMAX/REQ", "TIMING", "HOLD", "SLACK(ns)", "SEED",
               "TOTAL(s)", "SYNTH(s)", "PNR(s)", "LUT", "FF", "EBR", "REPORT"]
     rows = []
     for proto in protos:
@@ -143,6 +146,8 @@ def main() -> int:
           "guardada por PAR (solo Diamond).\nSYNTH es yosys / Synplify; PNR es todo lo que sigue "
           "(nextpnr + ecppack / Translate..Bitgen). Los informes anteriores a esta medida solo "
           "tienen TOTAL.\n* en REPORT: informe con fuentes distintas de las actuales.\n"
+          "SEED: apio, la semilla fijada en apio.ini; Diamond, la cost table de la iteracion de PAR "
+          "guardada ('-' si valio el primer intento: no hizo falta buscar).\n"
           "WARN: los caminos cumplen y solo falla el ancho minimo de pulso de un bloque de E/S "
           "(limite del datasheet que nextpnr no comprueba); FMAX es entonces el exigido, no medido.")
     return 0
