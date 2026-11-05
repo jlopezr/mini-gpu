@@ -170,6 +170,30 @@ class BuildRunnerTest(unittest.TestCase):
             self.assertEqual(rows[0]["state"], "SUCCESS")
             self.assertEqual(rows[0]["label"], "build")
 
+    def test_an_interrupted_build_does_not_hide_the_last_finished_one(self):
+        # Un auto-upload cortado a mano empezaba despues que un build bueno y lo tapaba.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prototype = root / "1.cut"
+            prototype.mkdir()
+            (prototype / "apio.ini").write_text("[apio]\n", encoding="utf-8")
+            reports = root / "reports"
+            good = create_build_record(reports, prototype.name, "build", ["build"])
+            update_build_record(good["status_path"], state="success", exit_code=0,
+                                started_at="2026-10-01T10:00:00Z")
+            cut = create_build_record(reports, prototype.name, "auto-upload", ["build"])
+            update_build_record(cut["status_path"], state="interrupted", exit_code=1,
+                                started_at="2026-10-01T11:00:00Z")
+
+            rows = prototype_build_summary(root, reports)
+            self.assertEqual(rows[0]["state"], "SUCCESS")
+
+            # Si es el unico, se ve tal cual.
+            alone = root / "reports2"
+            only = create_build_record(alone, prototype.name, "auto-upload", ["build"])
+            update_build_record(only["status_path"], state="interrupted", exit_code=1)
+            self.assertEqual(prototype_build_summary(root, alone)[0]["state"], "INTERRUPTED")
+
     def test_every_clock_is_listed_when_there_is_more_than_one(self):
         import io
         from contextlib import redirect_stdout
