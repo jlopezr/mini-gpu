@@ -203,6 +203,8 @@ module monitor_input_tb;
   initial begin
     repeat (3) @(negedge clk);
     reset = 1'b0;
+    // El barrido de `keys` dura 256 ciclos tras el reset.
+    repeat (260) @(negedge clk);
     repeat (2) @(negedge clk);
 
     // 1. Presencia de los dos: 3c 03 -> bc 10 (la FIFO esta vacia).

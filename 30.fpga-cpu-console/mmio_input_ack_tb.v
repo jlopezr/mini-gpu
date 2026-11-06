@@ -148,6 +148,8 @@ module mmio_input_ack_tb;
   initial begin
     repeat (4) @(posedge clk);
     reset = 0;
+    // El barrido de `keys` dura 256 ciclos tras el reset.
+    repeat (260) @(posedge clk);
     @(posedge clk);
 
     // Tres eventos en la FIFO, para que un FLUSH indebido se note.

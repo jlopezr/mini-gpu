@@ -114,7 +114,20 @@ module input_registers (
   wire ctrl_clear = ctrl_write && write_data[1];
 
   // ---- STATE ----------------------------------------------------------------
-  reg [255:0] keys;
+  // `keys` no tiene reset paralelo: un reset de 256 flip-flops cuelga de la
+  // red de reset de todo el diseno y su rutado (~15 ns) era el camino critico de
+  // `clk` en Diamond. En su lugar un barrido lo pone a cero: `clearing` se
+  // activa con el reset o cuando el host declara el teclado ausente, y
+  // `clear_idx` recorre las 256 teclas a una por ciclo (3,2 us a 80 MHz).
+  // Comparte con los eventos el unico decodificador de escritura.
+  //
+  // Mientras `clearing` los eventos de tecla no se aplican. Es inocuo: un evento
+  // llega por el monitor, a un byte cada decenas de us, y el barrido dura
+  // 256 ciclos. Tras un reset `keys` puede conservar teclas viejas ese tiempo;
+  // arranca a cero en la FPGA y en simulacion por el valor inicial.
+  reg [255:0] keys = 256'd0;
+  reg         clearing = 1'b1;
+  reg [7:0]   clear_idx = 8'd0;
   reg [31:0]  buttons;
   reg         keyboard_present, mouse_present;
 
@@ -123,17 +136,35 @@ module input_registers (
   wire       ev_down  = event_word[8];
   wire [7:0] ev_mods  = event_word[23:16];
 
+  wire key_event = event_valid && ev_type == TYPE_KEY && !clearing;
+  wire [7:0] key_wr_idx = clearing ? clear_idx : ev_usage;
+  wire       key_wr_en  = clearing || (key_event && ev_usage != 8'd0);
+  wire       key_wr_val = !clearing && ev_down;
+
   always @(posedge clk) begin
     if (reset) begin
-      keys <= 256'd0;
+      clearing <= 1'b1;
+      clear_idx <= 8'd0;
+    end else if (presence_write && !presence_keyboard) begin
+      clearing <= 1'b1;
+      clear_idx <= 8'd0;
+    end else if (clearing) begin
+      clear_idx <= clear_idx + 1'b1;
+      if (clear_idx == 8'hff) clearing <= 1'b0;
+    end
+  end
+
+  always @(posedge clk) begin
+    if (key_wr_en) keys[key_wr_idx] <= key_wr_val;
+    if (key_event && ev_usage == 8'd0) keys[231:224] <= ev_mods;  // Usage IDs 0xE0..0xE7
+  end
+
+  always @(posedge clk) begin
+    if (reset) begin
       buttons <= 32'd0;
       keyboard_present <= 1'b0;
       mouse_present <= 1'b0;
     end else begin
-      if (event_valid && ev_type == TYPE_KEY) begin
-        if (ev_usage != 8'd0) keys[ev_usage] <= ev_down;
-        else                  keys[231:224] <= ev_mods;   // Usage IDs 0xE0..0xE7
-      end
       if (event_valid && ev_type == TYPE_MOUSE_BUTTON && ev_usage[7:5] == 3'd0)
         buttons[ev_usage[4:0]] <= ev_down;
 
@@ -141,12 +172,10 @@ module input_registers (
       if (presence_write) begin
         keyboard_present <= presence_keyboard;
         mouse_present <= presence_mouse;
-        if (!presence_keyboard) keys <= 256'd0;
         if (!presence_mouse) buttons <= 32'd0;
       end
     end
   end
-
   // ---- EVENT FIFO -----------------------------------------------------------
   // 16 palabras. Lectura asincrona de la cabeza (LUT RAM en el ECP5): `head`
   // esta listo en el mismo ciclo que el `select`, como en serial_port.v.

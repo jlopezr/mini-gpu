@@ -92,7 +92,8 @@ module input_registers_tb;
     $readmemh("input_vectors.hex", vec);
     repeat (3) @(negedge clk);
     reset = 0;
-    @(negedge clk);
+    // El barrido de keys dura 256 ciclos tras el reset.
+    repeat (260) @(negedge clk);
 
     pc = 0;
     op = 8'hxx;
@@ -119,6 +120,7 @@ module input_registers_tb;
           presence_keyboard = arg[0]; presence_mouse = arg[1];
           @(negedge clk);
           presence_write = 1'b0;
+          if (!arg[0]) repeat (260) @(negedge clk);  // barrido de keys.
         end
         OP_READ: begin
           bus(1'b0, arg[7:0], 32'd0, 4'hF, 0, 32'd0, value);
