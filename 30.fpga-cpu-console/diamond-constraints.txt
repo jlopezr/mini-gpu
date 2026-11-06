@@ -1,0 +1,24 @@
+# Restricciones solo para el flujo de Diamond (tools/diamond_runner.py las anexa al .lpf).
+#
+# clk (CPU, pll_cpu), clk_pix y clk_pix_5x (clock2_gen) salen de dos PLL distintos. TRACE los
+# trata como relacionados y suma el desfase del PLL y la "feedback compensation" como skew
+# (13,7 ns y 2,8 ns en el peor caso), asi que da errores de setup y hold en los cruces entre
+# ellos que no existen en el chip. Los tres cruces son asincronos por diseno:
+#
+# 1) clk -> clk_pix: scanout_i/done_toggle_sys y clear_toggle_sys. Toggles que entran a
+#    clk_pix por 2 FF (done_sync_*, clr_sync_*), ver video_scanout.v.
+#
+# 2) clk_pix -> clk: scanout_i/req_toggle (por 2 FF, req_sync_*) y scanout_i/req_bank /
+#    fill_line, que NO se sincronizan: es el patron "dato acompanando a un toggle"
+#    (video_scanout.v, lineas 16-35). El banco cambia en el mismo flanco que req_toggle y no
+#    vuelve a cambiar hasta dos lineas de pantalla despues, asi que cuando el toggle
+#    sincronizado llega a clk el dato lleva estable decenas de microsegundos.
+#
+# 3) clk_pix -> clk_pix_5x: el mismo cruce de la 13 (ver 13.hdmi/diamond-constraints.txt).
+#    Los dos relojes salen del mismo PLL con los flancos alineados a proposito.
+#
+# 4) clk -> clk_pix en console_i (text_console.v): text_ram, font_ram, palette_ram y text_palette\n#    se escriben en clk y se leen en clk_pix. Las tres RAM son EBR de doble reloj; text_palette\n#    es un array de registros. No hay handshake: es una escritura de la CPU sin sincronizar con\n#    el barrido, asi que como mucho un pixel o un caracter sale con el dato viejo durante un\n#    cuadro (sin rotura de protocolo). nable entra por 2 FF (enable_sync0/1).\n#\n# Lo que NO se bloquea es clk -> clk: son los caminos de la CPU, y son los que de verdad
+# limitan la frecuencia (apio llega a 103 MHz).
+BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_pix" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_pix_5x" ;
