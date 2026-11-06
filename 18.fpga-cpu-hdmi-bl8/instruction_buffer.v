@@ -70,7 +70,15 @@ module instruction_buffer #(
     // igual de bien y no sirve de nada, y sin contadores no hay forma de
     // distinguirlo.
     output reg  [31:0] hit_count,
-    output reg  [31:0] miss_count
+    output reg  [31:0] miss_count,
+
+    // Lo mismo, para los contadores de rendimiento de la CPU (IMEM_HITS e
+    // IMEM_MISSES): un pulso de UN ciclo por busqueda cacheable, un ciclo
+    // despues de aceptarla. Salen registrados y no como `hit_now`, que es del
+    // camino critico de este modulo: una carga mas colgada de esa red costaba
+    // frecuencia.
+    output reg         hit_event,
+    output reg         miss_event
 );
   localparam integer TAG_LSB = 4 + INDEX_BITS;
   localparam integer TAG_BITS = 32 - TAG_LSB;
@@ -135,6 +143,8 @@ module instruction_buffer #(
 
   always @(posedge clk) begin
     cpu_imem_ready <= 1'b0;
+    hit_event <= 1'b0;
+    miss_event <= 1'b0;
 
     if (reset) begin
       state <= ST_IDLE;
@@ -168,8 +178,10 @@ module instruction_buffer #(
                   line_data[index][{word_sel, 5'b00000} +: 32];
               cpu_imem_ready <= 1'b1;
               hit_count <= hit_count + 1'b1;
+              hit_event <= 1'b1;
             end else begin
               miss_count <= miss_count + 1'b1;
+              miss_event <= 1'b1;
               state <= ST_ISSUE;
             end
           end
