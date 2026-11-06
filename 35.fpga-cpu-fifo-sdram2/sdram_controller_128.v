@@ -497,35 +497,49 @@ module sdram_controller_128 #(
     wire [3:0] rec_zn = {!rec_t[3*16 + 1], !rec_t[2*16 + 1],
                          !rec_t[1*16 + 1], !rec_t[0*16 + 1]};
 
-    reg       act_found;
-    reg [1:0] act_bank;
-    reg [1:0] act_pb;
-    integer   act_p;
+    // Elegibilidad, banco y fila de CADA posicion de la cola, en paralelo, y
+    // despues una seleccion one-hot de la primera elegible. Antes era un
+    // recorrido en serie (`!act_found` encadenaba las cuatro posiciones), de ahi
+    // salia `act_bank` y SOLO ENTONCES un mux 4:1 de 13 bits elegia la fila:
+    // 13 LUT hasta `sel_row`, 11,7 ns en la 36 con la GPU delante (sdram_clk
+    // 85,5 MHz). Ahora el mux de fila de cada posicion se calcula a la vez que
+    // la elegibilidad y la primera elegible solo lo selecciona.
+    wire [1:0]  act_pb0 = ord_q[1:0], act_pb1 = ord_q[3:2],
+                act_pb2 = ord_q[5:4], act_pb3 = ord_q[7:6];
 
-    always @* begin
-        act_found = 1'b0;
-        act_bank = 2'd0;
-        act_pb = 2'd0;
-        for (act_p = 0; act_p < 4; act_p = act_p + 1) begin
-            act_pb = ord_q[act_p*2 +: 2];
-            if (!act_found && ord_v[act_p] && !row_open[act_pb] &&
-                rec_zn[act_pb]) begin
-                act_found = 1'b1;
-                act_bank = act_pb;
-            end
+    function [12:0] row_of_bank;
+        input [1:0] b;
+        input [4*16-1:0] rows;
+        begin
+            case (b)
+                2'd0:    row_of_bank = rows[12:0];
+                2'd1:    row_of_bank = rows[28:16];
+                2'd2:    row_of_bank = rows[44:32];
+                default: row_of_bank = rows[60:48];
+            endcase
         end
-    end
+    endfunction
 
-    reg [12:0] act_row;
+    wire [3:0] act_e = {
+        ord_v[3] && !row_open[act_pb3] && rec_zn[act_pb3],
+        ord_v[2] && !row_open[act_pb2] && rec_zn[act_pb2],
+        ord_v[1] && !row_open[act_pb1] && rec_zn[act_pb1],
+        ord_v[0] && !row_open[act_pb0] && rec_zn[act_pb0]};
+    // La primera elegible, one-hot: cada posicion mira solo a las anteriores.
+    wire [3:0] act_f = {act_e[3] && !(|act_e[2:0]),
+                        act_e[2] && !(|act_e[1:0]),
+                        act_e[1] && !act_e[0],
+                        act_e[0]};
 
-    always @* begin
-        case (act_bank)
-            2'd0:    act_row = slot_row[12:0];
-            2'd1:    act_row = slot_row[28:16];
-            2'd2:    act_row = slot_row[44:32];
-            default: act_row = slot_row[60:48];
-        endcase
-    end
+    wire       act_found = |act_e;
+    // Sin candidata vale 0 (banco 0, fila 0); `sel_v` es 0 y nadie la usa.
+    wire [1:0] act_bank = ({2{act_f[0]}} & act_pb0) | ({2{act_f[1]}} & act_pb1) |
+                          ({2{act_f[2]}} & act_pb2) | ({2{act_f[3]}} & act_pb3);
+    wire [12:0] act_row =
+        ({13{act_f[0]}} & row_of_bank(act_pb0, slot_row)) |
+        ({13{act_f[1]}} & row_of_bank(act_pb1, slot_row)) |
+        ({13{act_f[2]}} & row_of_bank(act_pb2, slot_row)) |
+        ({13{act_f[3]}} & row_of_bank(act_pb3, slot_row));
 
     // La candidata se REGISTRA: elegirla (recorrer la cola de orden, mirar
     // fila abierta y recuperacion de cada banco) y ademas emitir el comando
