@@ -24,6 +24,7 @@ import os
 import platform
 import shutil
 import subprocess
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -113,19 +114,50 @@ def _relevant(name: str) -> bool:
         and not Path(name).name.endswith("_tb.v")
 
 
+def _lf(data: bytes) -> str:
+    """SHA-256 con saltos de linea LF: CRLF/LF/mezcla dan el mismo RTL."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def normalized_source_hashes(project: Path) -> dict[str, str]:
+    """Hashes (saltos de linea LF) de las fuentes sintetizables de un prototipo."""
+    from tools.build_report import synthesizable_source_hashes
+    project = Path(project)
+    return {name.replace("\\", "/"): _lf((project / name).read_bytes())
+            for name in synthesizable_source_hashes(project) if _relevant(name)}
+
+
 def sources_match(project: Path, build_folder: Path | None) -> bool | None:
-    """Si las fuentes sintetizables de AHORA son las de ese build."""
+    """Si las fuentes sintetizables de AHORA son las de ese build.
+
+    True/False solo cuando se puede decir en serio: el build guarda hashes con
+    saltos de linea LF (`source_sha256_lf`) o sus fuentes (`sources.zip`). Un
+    build antiguo solo tiene el hash de los bytes, y un checkout con autocrlf (otro
+    worktree) los cambia sin tocar el RTL: ahi un desacuerdo no prueba nada y se
+    devuelve None ("no verificable") en vez de dar una alarma falsa."""
     if build_folder is None:
         return None
     try:
-        from tools.build_report import synthesizable_source_hashes
+        current = normalized_source_hashes(project)
         metadata = json.loads((build_folder / "metadata.json").read_text(encoding="utf-8"))
-        archived = {k.replace("\\", "/"): v for k, v in metadata.get("source_sha256", {}).items() if _relevant(k)}
-        current = {k.replace("\\", "/"): v for k, v in synthesizable_source_hashes(Path(project)).items() if _relevant(k)}
+        archive = build_folder / "sources.zip"
+        if metadata.get("source_sha256_lf"):
+            archived = {k.replace("\\", "/"): v for k, v in metadata["source_sha256_lf"].items()
+                        if _relevant(k)}
+        elif archive.is_file():
+            with zipfile.ZipFile(archive) as bundle:
+                archived = {name.replace("\\", "/"): _lf(bundle.read(name))
+                            for name in bundle.namelist() if _relevant(name)}
+        else:
+            raw = {k.replace("\\", "/"): v for k, v in metadata.get("source_sha256", {}).items()
+                   if _relevant(k)}
+            from tools.build_report import synthesizable_source_hashes
+            now = {k.replace("\\", "/"): v for k, v in synthesizable_source_hashes(Path(project)).items()
+                   if _relevant(k)}
+            return True if raw == now else None
         return archived == current
-    except (OSError, json.JSONDecodeError, KeyError):
+    except (OSError, json.JSONDecodeError, KeyError, zipfile.BadZipFile):
         return None
-
 
 def git_info(root: Path) -> dict:
     git = shutil.which("git")

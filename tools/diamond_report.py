@@ -212,6 +212,7 @@ def archive(proto: Path, out: Path, started: datetime, elapsed: float, exit_code
             command: list[str], strategy: list[str], label: str = "diamond",
             phases: dict | None = None) -> Path:
     """Copia lo relevante de `.diamond/` a `reports/<fecha>-<label>/` y escribe los resumenes."""
+    from tools.board_record import normalized_source_hashes
     from tools.build_report import synthesizable_source_hashes
 
     impl = out / IMPL
@@ -225,6 +226,10 @@ def archive(proto: Path, out: Path, started: datetime, elapsed: float, exit_code
         "label": label, "tool": "diamond", "archive_only": False, "incremental": False,
         "command": command, "strategy": strategy,
         "source_sha256": synthesizable_source_hashes(proto),
+        # El mismo hash con saltos de linea LF: un checkout con autocrlf (otro
+        # worktree) cambia los bytes sin cambiar el RTL, y `test-board` lo usa para
+        # saber si las fuentes de ahora son las de este build.
+        "source_sha256_lf": normalized_source_hashes(proto),
         "started": started.isoformat(), "exit_code": exit_code, "elapsed_seconds": elapsed,
     }
     if phases:

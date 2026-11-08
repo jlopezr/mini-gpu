@@ -100,6 +100,24 @@ class BoardRecordTest(unittest.TestCase):
             self.project / "reports" / "build-a").startswith("2/5 "))
         self.assertIn("3 sin preparar", board_record.summary_line(record))
 
+    def test_sources_match_ignores_line_endings_and_detects_real_changes(self):
+        (self.project / "top.v").write_bytes(b"module top;\r\nendmodule\n")   # mezcla CRLF/LF
+        build = self.project / "reports" / "build-a"
+        lf = board_record.normalized_source_hashes(self.project)
+        (build / "metadata.json").write_text(json.dumps({"source_sha256_lf": lf}), encoding="utf-8")
+        self.assertTrue(board_record.sources_match(self.project, build))
+        (self.project / "top.v").write_bytes(b"module top;\r\nendmodule\r\n")  # solo saltos de linea
+        self.assertTrue(board_record.sources_match(self.project, build))
+        (self.project / "top.v").write_bytes(b"module top2;\nendmodule\n")     # RTL distinto
+        self.assertFalse(board_record.sources_match(self.project, build))
+
+    def test_legacy_build_with_different_bytes_is_not_verifiable_instead_of_false_alarm(self):
+        (self.project / "top.v").write_bytes(b"module top;\r\nendmodule\r\n")
+        build = self.project / "reports" / "build-a"
+        (build / "metadata.json").write_text(
+            json.dumps({"source_sha256": {"top.v": "0" * 64}}), encoding="utf-8")
+        self.assertIsNone(board_record.sources_match(self.project, build))
+
     def test_partial_runs_are_marked_in_the_status(self):
         board_record.record_upload(self.project, self.project / "reports" / "build-a" / "hardware.bit")
         record = board_record.build_record(
