@@ -285,7 +285,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         wire fetch_valid;
         // EXTERNAL_FETCH: el SM ya trae la instruccion, la lane no la busca.
         gpu_lane #(.EXTERNAL_FETCH(1)) alu (
-            .clk(clk), .reset(reset), .launch_pc(x_pc),
+            // GPU_CONTROL.RESET tambien limpia la lane: `error`/`error_code`
+            // de gpu_lane quedan enganchados tras una division por cero, y con
+            // solo `reset` el kernel siguiente fallaba en su primera instruccion
+            // (error 4 en PC 0, sin retirar nada) hasta reprogramar la placa.
+            .clk(clk), .reset(reset || soft_reset), .launch_pc(x_pc),
             .thread_id({26'b0,x_warp,l[2:0]}),
             .lane_id(l[2:0]), .warp_id(x_warp),
             .logical_warp_id(x_logical_id), .warp_arg(x_warp_arg),

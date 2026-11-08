@@ -156,6 +156,15 @@ module instruction_buffer #(
       fill_cacheable <= 1'b0;
       hit_count <= 32'd0;
       miss_count <= 32'd0;
+      // El reset tambien invalida las lineas. Hasta ahora solo las vaciaba
+      // `cpu_halted`, y la GPU no siempre llega a `halted`: tras un error el
+      // warp se queda vivo, sin RUNNING ni HALTED (GPU_STATUS = 0x108). Con el
+      // buffer sin vaciar, el kernel siguiente acertaba en una linea del
+      // anterior, ejecutaba esa instruccion vieja (division por cero, en la
+      // primera, sin retirar nada) y volvia a dejar el error, asi que un solo
+      // error envenenaba todos los kernels hasta reprogramar la placa. El
+      // GPU_CONTROL.RESET del arnes llega aqui por `core_reset` y no bastaba.
+      for (i = 0; i < LINES; i = i + 1) line_valid[i] <= 1'b0;
     end else begin
       case (state)
         // `cpu_imem_ready` alto significa que se acaba de servir: la CPU
