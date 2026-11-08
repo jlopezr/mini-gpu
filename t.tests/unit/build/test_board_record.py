@@ -28,6 +28,7 @@ class BoardRecordTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.project = self.root / "36.proto"
         (self.project / "reports" / "build-a").mkdir(parents=True)
+        (self.project / "cpu.v").write_text("module cpu; endmodule", encoding="utf-8")
         (self.project / "reports" / "build-a" / "hardware.bit").write_bytes(b"bitstream-A")
         (self.project / "reports" / "build-b").mkdir()
         (self.project / "reports" / "build-b" / "hardware.bit").write_bytes(b"bitstream-B")
@@ -57,7 +58,11 @@ class BoardRecordTest(unittest.TestCase):
         self.assertEqual(path, self.project / "reports" / "build-b" / "board-tests.json")
         self.assertEqual(board_record.board_status(self.project / "reports" / "build-b"),
                          f"1/2 {record['timestamp'][:10]}")
-        self.assertEqual(board_record.board_status(self.project / "reports" / "build-a"), "sin probar")
+        self.assertEqual(board_record.board_status(self.project / "reports" / "build-a"), "UNTESTED")
+
+    def test_prototype_without_cpu_or_gpu_is_not_applicable(self):
+        (self.project / "cpu.v").unlink()
+        self.assertEqual(board_record.board_status(self.project / "reports" / "build-a"), "-")
 
     def test_runs_accumulate_in_the_same_file(self):
         board_record.record_upload(self.project, self.project / "reports" / "build-a" / "hardware.bit")

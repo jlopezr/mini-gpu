@@ -185,14 +185,19 @@ def set_configured_seed(prototype_dir, seed, options=()):
     return previous
 
 
-def synthesizable_source_hashes(prototype_dir):
-    """Hashes used to decide whether the local bitstream matches the RTL."""
+def synthesizable_source_hashes(prototype_dir, diamond=False):
+    """Hashes used to decide whether the local bitstream matches the RTL.
+
+    `diamond=True` suma `diamond-constraints.txt`, que solo lee el flujo de Diamond:
+    un cambio ahi invalida los bitstreams de Diamond y no los de apio."""
     paths = [
         *prototype_dir.glob('*.v'), *prototype_dir.glob('*.sv'),
         *prototype_dir.glob('*.vh'), *prototype_dir.glob('*.lpf'),
         *prototype_dir.glob('sim/*.vh'), *prototype_dir.glob('fonts/*.hex'),
         prototype_dir / 'apio.ini',
     ]
+    if diamond:
+        paths.append(prototype_dir / 'diamond-constraints.txt')
     paths = [path for path in paths
              if path.is_file() and not path.name.endswith('_tb.v')]
     return {
@@ -245,7 +250,8 @@ def bitstream_is_current(prototype_dir):
             archived = metadata.get('source_sha256', {})
             relevant = {
                 name: digest for name, digest in archived.items()
-                if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
+                if (name in {'apio.ini', 'diamond-constraints.txt'}
+                    or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
                 and not Path(name).name.endswith('_tb.v')
             }
             if metadata.get('exit_code') == 0 and relevant:
@@ -263,9 +269,59 @@ def bitstream_is_current(prototype_dir):
 def _metadata_source_hashes(metadata):
     return {
         name: digest for name, digest in metadata.get('source_sha256', {}).items()
-        if (name == 'apio.ini' or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
+        if (name in {'apio.ini', 'diamond-constraints.txt'}
+            or Path(name).suffix in {'.v', '.sv', '.vh', '.lpf', '.hex'})
         and not Path(name).name.endswith('_tb.v')
     }
+
+
+def diamond_sources_current(metadata, prototype_dir):
+    """Si un informe de Diamond se hizo con las fuentes de ahora, restricciones incluidas.
+
+    Los informes anteriores a incluir `diamond-constraints.txt` en el hash no lo traen;
+    para ellos no se compara (no se sabe con que restricciones se hicieron)."""
+    archived = _metadata_source_hashes(metadata)
+    current = synthesizable_source_hashes(prototype_dir, diamond=True)
+    if 'diamond-constraints.txt' not in archived:
+        current.pop('diamond-constraints.txt', None)
+    # Diamond solo lee `board` y `top-module` de apio.ini: la semilla y demas opciones de
+    # nextpnr no cambian su resultado. Los informes nuevos guardan esas dos claves aparte.
+    ini_key = metadata.get('source_sha256', {}).get(DIAMOND_APIO_KEY)
+    ini_ok = True
+    if ini_key is not None:
+        archived.pop('apio.ini', None)
+        current.pop('apio.ini', None)
+        ini_ok = ini_key == diamond_apio_digest(prototype_dir)
+    if archived == current:
+        return ini_ok
+    # Mismo RTL con otros finales de linea (autocrlf en otro worktree): si el informe guarda
+    # los hashes con LF, se comparan esos.
+    stored_lf = metadata.get('source_sha256_lf')
+    if not stored_lf:
+        return False
+    from tools.board_record import normalized_source_hashes
+    archived_lf = {k.replace('\\', '/'): v for k, v in stored_lf.items()
+                   if k != 'diamond-constraints.txt'}
+    current_lf = normalized_source_hashes(prototype_dir)
+    if ini_key is not None:
+        archived_lf.pop('apio.ini', None)
+        current_lf.pop('apio.ini', None)
+    if archived_lf != current_lf:
+        return False
+    constraints = prototype_dir / 'diamond-constraints.txt'
+    same_constraints = (archived.get('diamond-constraints.txt') == current.get('diamond-constraints.txt'))
+    return ini_ok and (same_constraints or not constraints.exists())
+
+
+DIAMOND_APIO_KEY = '#diamond-apio'
+
+
+def diamond_apio_digest(prototype_dir):
+    """Hash de lo que Diamond lee de apio.ini (`board` y `top-module`)."""
+    from tools.diamond_runner import read_apio
+    options = read_apio(Path(prototype_dir))
+    text = f"board={options.get('board', '')};top-module={options.get('top-module', 'top')}"
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def reusable_detailed_report(prototype_dir):

@@ -84,7 +84,12 @@ def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]
     from tools.board_record import board_status
     summary = _load(folder / "summary.json")
     metadata = _load(folder / "metadata.json")
-    stale = "" if _metadata_source_hashes(metadata) == current else "*"
+    if tool == "diamond":
+        from tools.build_report import diamond_sources_current
+        fresh = diamond_sources_current(metadata, proto)
+    else:
+        fresh = _metadata_source_hashes(metadata) == current
+    stale = "" if fresh else "*"
     limiting = _limiting(summary.get("clocks", {}))
     if limiting:
         clock, achieved, required = limiting
@@ -156,7 +161,8 @@ def main() -> int:
           "(limite del datasheet que nextpnr no comprueba); FMAX es entonces el exigido, no medido.\n"
           "BOARD: casos PASS / ejecutados de la ultima suite de `test-board` hecha con el bitstream "
           "de ESE build (se asocia por el SHA-256 del .bit programado, no por fecha) y su dia; "
-          "'parcial' si no fue la suite entera; 'sin probar' si ninguna suite registro ese bitstream.")
+          "'parcial' si no fue la suite entera; 'UNTESTED' si ninguna suite registro ese bitstream;\n"
+          "'-' si el prototipo no tiene CPU ni GPU (no hay software que probar).")
     return 0
 
 

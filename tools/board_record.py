@@ -252,13 +252,18 @@ def summary_line(record: dict) -> str:
 
 
 def board_status(build_folder: Path) -> str:
-    """Texto corto para las tablas de builds: que se probo en placa con ESE bitstream."""
+    """Texto corto para las tablas de builds: que se probo en placa con ESE bitstream.
+
+    "-" si el prototipo no tiene CPU ni GPU (hardware puro, sin software que correr):
+    `test-board` no puede probarlo y "UNTESTED" daria a entender que falta una prueba."""
+    prototype = Path(build_folder).parent.parent
     try:
         runs = json.loads((Path(build_folder) / BOARD_TESTS_JSON).read_text(encoding="utf-8")).get("runs", [])
     except (OSError, json.JSONDecodeError):
-        return "sin probar"
+        runs = []
     if not runs:
-        return "sin probar"
+        has_software = any((prototype / name).is_file() for name in ("cpu.v", "gpu_sm.v"))
+        return "UNTESTED" if has_software else "-"
     full = [r for r in runs if r["selection"]["full_suite"]]
     last = (full or runs)[-1]
     totals = last["totals"]

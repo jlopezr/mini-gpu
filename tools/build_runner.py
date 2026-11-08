@@ -316,7 +316,7 @@ def _diamond_info(prototype: Path, running: bool = False) -> dict | None:
     diamond_runner (`running`): la fila pasa a RUNNING, y si no hay ningun informe previo
     sale una fila minima, para que no desaparezca el primer run."""
     from tools.build_compare import latest_reports
-    from tools.build_report import _metadata_source_hashes, synthesizable_source_hashes
+    from tools.build_report import diamond_sources_current
 
     folder = latest_reports(prototype)["diamond"]
     if folder is None:
@@ -329,7 +329,7 @@ def _diamond_info(prototype: Path, running: bool = False) -> dict | None:
         metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         metadata = {}
-    current = _metadata_source_hashes(metadata) == synthesizable_source_hashes(prototype)
+    current = diamond_sources_current(metadata, prototype)
     state = "SUCCESS" if metadata.get("exit_code") == 0 else "FAILED"
     if state == "FAILED" and timing == "FAIL":
         state = "TIMING_FAIL"
@@ -448,12 +448,14 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         return f"\033[{code}m{padded}\033[0m" if use_color and code else padded
 
     def board_field(value: str, width: int) -> str:
-        """Verde si toda la suite de placa paso, rojo si hubo fallos, atenuado si no se probo."""
+        """Verde si toda la suite de placa paso, rojo si hubo fallos, amarillo (UNTESTED) si no se probo, atenuado (-) si no aplica."""
         padded = f"{value:<{width}}"
         if not use_color:
             return padded
-        if value.startswith("sin probar"):
+        if value == "-":
             return f"\033[2m{padded}\033[0m"
+        if value == "UNTESTED":
+            return f"\033[33m{padded}\033[0m"
         fraction = value.split(" ")[0]
         try:
             passed, total = (int(part) for part in fraction.split("/"))
