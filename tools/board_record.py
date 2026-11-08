@@ -21,8 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import platform
 import shutil
+import socket
 import subprocess
 import zipfile
 from datetime import datetime
@@ -74,7 +74,7 @@ def record_upload(project: Path, bitstream: Path) -> None:
             "bitstream_size": bitstream.stat().st_size,
             "prototype": Path(project).name,
             "uploaded_at": datetime.now().isoformat(timespec="seconds"),
-            "host": platform.node(),
+            "host": socket.gethostname(),
         }
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")

@@ -6,8 +6,23 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from tools import run_board
+from tools import board_record, run_board
 from backends import board
+
+_state_dir = tempfile.TemporaryDirectory()
+_state_patch = mock.patch.object(
+    board_record, "STATE_FILE", Path(_state_dir.name) / "board-state.json")
+
+
+def setUpModule():
+    # Programar un bitstream anota su hash en el estado del usuario; los tests
+    # no deben escribir en el `~/.mini-gpu` real.
+    _state_patch.start()
+
+
+def tearDownModule():
+    _state_patch.stop()
+    _state_dir.cleanup()
 
 
 def fake_port(device, description="USB Serial", vid=run_board.FTDI_VENDOR_ID):
@@ -246,6 +261,29 @@ class SeparateCommandsTest(unittest.TestCase):
         patcher_monitor.start()
 
     # -- board-info: nunca debe subir nada -----------------------------
+
+    def test_load_reads_video_status_even_with_extra_lines_in_the_monitor_output(self):
+        # monitor.py imprime «SDRAM phase: 10 (version.json)» al conectar: la linea
+        # con el valor ya no es la ultima, y interpretar «lo que sigue al ultimo ':'»
+        # reventaba con un ValueError.
+        capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga",
+                      "capabilities": ("video",)}
+        target = run_board.Target(self.prototype_dir, Path(self.tmp.name), SimpleNamespace(), capability)
+        program = Path(self.tmp.name) / "prog.bin"
+        program.write_bytes(b"\x00" * 4)
+        outputs = {"status": "CPU halted=True error=False error_code=0x00 pc=0x00000004",
+                   "read-word": "Address 0x80200010: 0x00000001\nSDRAM phase: 10 (version.json)"}
+
+        def fake_cli(prototype_dir, port, command, *rest):
+            return outputs.get(command, "")
+
+        with mock.patch.object(run_board, "resolve_program", return_value=program), \
+             mock.patch.object(run_board, "run_monitor_cli", side_effect=fake_cli), \
+             mock.patch.object(run_board.time, "sleep"), \
+             mock.patch("sys.stderr") as stderr:
+            code = run_board.load_and_run(target, "prog.bin", "COM3", no_run=False, verbose=False)
+        self.assertEqual(code, 0)
+        self.assertIn("underflow", "".join(call.args[0] for call in stderr.write.call_args_list))
 
     def test_info_matching_version_reports_ok_without_uploading(self):
         capability = {"monitor_version": (1, 16), "version_name": "ebr", "backend": "fpga", "capabilities": ()}

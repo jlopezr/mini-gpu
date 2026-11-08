@@ -307,7 +307,11 @@ def load_and_run(target: Target, program: str, port: str, no_run: bool, verbose:
         status_address = MMIO_VIDEO_BASE + MMIO_VIDEO_STATUS_OFF
         video_status = run_monitor_cli(prototype_dir, port, "read-word",
                                        f"0x{status_address:08x}")
-        if ":" in video_status and int(video_status.rsplit(":", 1)[1].strip(), 16) & 1:
+        # La salida lleva otras lineas (p. ej. «SDRAM phase: 10 (version.json)», que
+        # imprime monitor.py al conectar): se busca la de la lectura, no «lo que
+        # haya tras el ultimo ":»», que ya revento con un ValueError.
+        value = re.search(r"Address\s+0x[0-9a-fA-F]+:\s*0x([0-9a-fA-F]+)", video_status)
+        if value and int(value.group(1), 16) & 1:
             print("!! underflow de video marcado (pegajoso: puede venir de antes)", file=sys.stderr)
     return 0
 
