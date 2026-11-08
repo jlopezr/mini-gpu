@@ -2,7 +2,7 @@
   "name": "cpu-gpu/dma/latency-accesses",
   "architecture": "cpu",
   "program": "lat_exp.asm",
-  "requires": ["gpu_core", "calls", "large_memory", "mul_div"],
+  "requires": ["gpu_core", "gpu_warp_start", "calls", "large_memory", "mul_div"],
   "max_instructions": 2000000,
   "timeout_seconds": 20,
   "expect": {

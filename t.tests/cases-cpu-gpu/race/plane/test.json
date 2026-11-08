@@ -4,7 +4,7 @@
   "build": {"command": ["make", "case"]},
   "program": "../../../../_build/c/plane_test.bin",
   "requires": [
-    "gpu_core",
+    "gpu_core", "gpu_warp_start",
     "frame_capture",
     "large_memory",
     "calls",

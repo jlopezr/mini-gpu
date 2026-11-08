@@ -2,7 +2,7 @@
   "name": "cpu-gpu/dma/rect",
   "architecture": "cpu",
   "program": "rect.asm",
-  "requires": ["gpu_core", "calls", "large_memory"],
+  "requires": ["gpu_core", "gpu_warp_start", "calls", "large_memory"],
   "max_instructions": 1000000,
   "timeout_seconds": 15,
   "initial_memory": [
