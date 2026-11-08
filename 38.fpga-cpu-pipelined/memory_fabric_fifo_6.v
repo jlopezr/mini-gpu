@@ -91,7 +91,34 @@ module memory_fabric_fifo_6 #(
     input  wire         sdram_done,
     input  wire [127:0] sdram_rdata,
 
-    output wire         busy
+    output wire         busy,
+
+    // Solo diagnostico: [5:0] head_valid, [11:6] prefetch_pending, [13:12]
+    // state, [14] grant_valid, [15] cmd_full.
+    output wire [15:0]  dbg,
+    // Solo diagnostico: [3:0] cmd_count, [7:4] outstanding, [11:8] meta_count,
+    // [15:12] rsp_count, [16] issue_valid, [17] rp_valid, [18] route_valid,
+    // [19] go_q.
+    output wire [19:0]  dbg2,
+    // Solo diagnostico: puerto (one-hot) al que apunta el router de respuestas.
+    output wire [5:0]   dbg3,
+    // Solo diagnostico: primer valor que pasa por cada etapa del puerto de
+    // destino. [2:0] cmd_master al primer cmd_pop, [8:3] backend_port al primer
+    // go_q, [14:9] rp_port al primer rp_valid, [20:15] route (rsp_port_mem) al
+    // primer rsp_pop, [21] cmd visto, [22] go visto, [23] rp visto, [24] route.
+    output wire [24:0]  dbg4,
+    // Solo diagnostico: foto del estado en el PRIMER ciclo tras soltar el reset.
+    // [0] foto tomada, [1] issue_valid, [2] route_valid, [3] rp_valid, [4] go_q,
+    // [6:5] state, [10:7] cmd_count, [14:11] outstanding, [15] 0.
+    output wire [15:0]  dbg5,
+    // Solo diagnostico: traza de los primeros 32 eventos tras el reset. Cada
+    // entrada: [37:30] ciclo (8 bits, modulo 256), [29] route_fire, [28] rsp_pop,
+    // [27] rsp_push, [26] complete, [25] go_q, [24] issue_go, [23] cmd_pop,
+    // [22] cmd_push, [21:16] backend_port, [15:10] route_port, [9] issue_valid,
+    // [8] route_valid, [7:4] cmd_count, [3:0] outstanding. Se congela al llenarse.
+    input  wire [4:0]   dbg_trace_idx,
+    output wire [37:0]  dbg_trace_data,
+    output wire [5:0]   dbg_trace_n
 );
 
     // ================================================================
@@ -110,6 +137,14 @@ module memory_fabric_fifo_6 #(
     //   [128]     error
     //   [127:0]   read data
     // ================================================================
+
+
+    // Reset LOCAL, registrado: la red `reset` que llega de top.v tiene mucho
+    // fanout y en Diamond (que fusiona las copias pese a `keep`) se suelta con
+    // desfase entre flops; con un registro propio, junto al fabric, todo su
+    // estado interno ve el mismo flanco de liberacion.
+    reg rst_q = 1'b1;
+    always @(posedge clk) rst_q <= reset;
 
     localparam MASTER_0 = 3'd0;
     localparam MASTER_1 = 3'd1;
@@ -179,18 +214,18 @@ module memory_fabric_fifo_6 #(
     // ================================================================
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head0_valid      <= 1'b0;
             prefetch0_pending <= 1'b0;
         end else begin
 
-            if (p0_req_rd_en)
-                prefetch0_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch0_pending <= p0_req_rd_en;
 
             if (p0_req_rd_valid) begin
                 head0_data         <= p0_req_data;
                 head0_valid        <= 1'b1;
-                prefetch0_pending  <= 1'b0;
             end
 
             if (state == ST_CAPTURE &&
@@ -200,18 +235,18 @@ module memory_fabric_fifo_6 #(
     end
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head1_valid       <= 1'b0;
             prefetch1_pending <= 1'b0;
         end else begin
 
-            if (p1_req_rd_en)
-                prefetch1_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch1_pending <= p1_req_rd_en;
 
             if (p1_req_rd_valid) begin
                 head1_data         <= p1_req_data;
                 head1_valid        <= 1'b1;
-                prefetch1_pending  <= 1'b0;
             end
 
             if (state == ST_CAPTURE &&
@@ -221,18 +256,18 @@ module memory_fabric_fifo_6 #(
     end
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head2_valid       <= 1'b0;
             prefetch2_pending <= 1'b0;
         end else begin
 
-            if (p2_req_rd_en)
-                prefetch2_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch2_pending <= p2_req_rd_en;
 
             if (p2_req_rd_valid) begin
                 head2_data         <= p2_req_data;
                 head2_valid        <= 1'b1;
-                prefetch2_pending  <= 1'b0;
             end
 
             if (state == ST_CAPTURE &&
@@ -242,18 +277,18 @@ module memory_fabric_fifo_6 #(
     end
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head3_valid       <= 1'b0;
             prefetch3_pending <= 1'b0;
         end else begin
 
-            if (p3_req_rd_en)
-                prefetch3_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch3_pending <= p3_req_rd_en;
 
             if (p3_req_rd_valid) begin
                 head3_data         <= p3_req_data;
                 head3_valid        <= 1'b1;
-                prefetch3_pending  <= 1'b0;
             end
 
             if (state == ST_CAPTURE &&
@@ -263,16 +298,16 @@ module memory_fabric_fifo_6 #(
     end
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head4_valid       <= 1'b0;
             prefetch4_pending <= 1'b0;
         end else begin
-            if (p4_req_rd_en)
-                prefetch4_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch4_pending <= p4_req_rd_en;
             if (p4_req_rd_valid) begin
                 head4_data        <= p4_req_data;
                 head4_valid       <= 1'b1;
-                prefetch4_pending <= 1'b0;
             end
             if (state == ST_CAPTURE && active_master == MASTER_4)
                 head4_valid <= 1'b0;
@@ -280,16 +315,16 @@ module memory_fabric_fifo_6 #(
     end
 
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             head5_valid       <= 1'b0;
             prefetch5_pending <= 1'b0;
         end else begin
-            if (p5_req_rd_en)
-                prefetch5_pending <= 1'b1;
+            // Bandera de UN ciclo (rd_en retrasado), no un flag que espere un
+            // rd_valid: asi no puede quedarse pegada a 1 y dejar el puerto sordo.
+            prefetch5_pending <= p5_req_rd_en;
             if (p5_req_rd_valid) begin
                 head5_data        <= p5_req_data;
                 head5_valid       <= 1'b1;
-                prefetch5_pending <= 1'b0;
             end
             if (state == ST_CAPTURE && active_master == MASTER_5)
                 head5_valid <= 1'b0;
@@ -378,12 +413,12 @@ module memory_fabric_fifo_6 #(
     localparam QUEUE_ADDR_WIDTH = 3;
     localparam QUEUE_DEPTH = (1 << QUEUE_ADDR_WIDTH);
 
-    reg [2:0]   cmd_master [0:QUEUE_DEPTH-1];
-    reg         cmd_write  [0:QUEUE_DEPTH-1];
-    reg [31:0]  cmd_addr   [0:QUEUE_DEPTH-1];
-    reg [127:0] cmd_wdata  [0:QUEUE_DEPTH-1];
-    reg [15:0]  cmd_wmask  [0:QUEUE_DEPTH-1];
-    reg         cmd_error  [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg [2:0]   cmd_master [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg         cmd_write  [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg [31:0]  cmd_addr   [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg [127:0] cmd_wdata  [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg [15:0]  cmd_wmask  [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg         cmd_error  [0:QUEUE_DEPTH-1];
 
     reg [QUEUE_ADDR_WIDTH-1:0] cmd_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] cmd_rd_ptr;
@@ -456,8 +491,8 @@ module memory_fabric_fifo_6 #(
     // peticiones: el controlador no admite una rafaga BL8 en menos de cuatro.
     wire cmd_pop = !issue_valid && !cmd_empty;
 
-    reg [5:0]  meta_port  [0:QUEUE_DEPTH-1];
-    reg        meta_error [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg [5:0]  meta_port  [0:QUEUE_DEPTH-1];
+    (* syn_ramstyle = "registers" *) reg        meta_error [0:QUEUE_DEPTH-1];
     reg [QUEUE_ADDR_WIDTH-1:0] meta_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] meta_rd_ptr;
     reg [QUEUE_ADDR_WIDTH:0]   meta_count;
@@ -473,8 +508,8 @@ module memory_fabric_fifo_6 #(
     // Global response queue and registered router
     // ================================================================
 
-    reg [5:0]   rsp_port_mem [0:QUEUE_DEPTH-1];
-    reg [128:0] rsp_data_mem [0:QUEUE_DEPTH-1];
+    // El puerto viaja en los bits [134:129], junto al dato.
+    (* syn_ramstyle = "registers" *) reg [134:0] rsp_data_mem [0:QUEUE_DEPTH-1];
     reg [QUEUE_ADDR_WIDTH-1:0] rsp_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] rsp_rd_ptr;
     reg [QUEUE_ADDR_WIDTH:0]   rsp_count;
@@ -494,7 +529,7 @@ module memory_fabric_fifo_6 #(
     reg [128:0] rp_data;
 
     always @(posedge clk) begin
-        rp_valid <= !reset && complete;
+        rp_valid <= !rst_q && complete;
         rp_port  <= meta_port[meta_rd_ptr];
         rp_data  <= meta_error[meta_rd_ptr] ? {1'b1, 128'd0}
                                             : {1'b0, sdram_rdata};
@@ -535,13 +570,23 @@ module memory_fabric_fifo_6 #(
     assign sdram_req_wdata = backend_wdata;
     assign sdram_req_wmask = backend_wmask;
 
+    assign dbg = {cmd_full, grant_valid, state,
+                  prefetch5_pending, prefetch4_pending, prefetch3_pending,
+                  prefetch2_pending, prefetch1_pending, prefetch0_pending,
+                  head5_valid, head4_valid, head3_valid,
+                  head2_valid, head1_valid, head0_valid};
+
+    assign dbg3 = route_port;
+    assign dbg2 = {go_q, route_valid, rp_valid, issue_valid,
+                   rsp_count, meta_count, outstanding, cmd_count};
+
     assign busy = (state != ST_IDLE) || !cmd_empty || issue_valid ||
                   (outstanding != 0) || go_q || rp_valid || route_valid;
 
     // Command and response queue storage/counts. Both queues support one push
     // and one pop in the same cycle without changing their occupancy.
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             cmd_wr_ptr <= 0;
             cmd_rd_ptr <= 0;
             cmd_count  <= 0;
@@ -569,8 +614,7 @@ module memory_fabric_fifo_6 #(
             endcase
 
             if (rsp_push) begin
-                rsp_port_mem[rsp_wr_ptr] <= rp_port;
-                rsp_data_mem[rsp_wr_ptr] <= rp_data;
+                rsp_data_mem[rsp_wr_ptr] <= {rp_port, rp_data};
                 rsp_wr_ptr <= rsp_wr_ptr + 1'b1;
             end
             if (rsp_pop)
@@ -585,7 +629,7 @@ module memory_fabric_fifo_6 #(
 
     // Frontend: arbitrate, capture and enqueue independently of SDRAM.
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             state         <= ST_IDLE;
             rr_next       <= MASTER_0;
             active_master <= MASTER_0;
@@ -628,7 +672,7 @@ module memory_fabric_fifo_6 #(
 
     // Issue stage: holds the next request until the controller takes it.
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             issue_valid   <= 1'b0;
             issue_error   <= 1'b0;
             backend_port  <= 6'b000001;
@@ -660,8 +704,11 @@ module memory_fabric_fifo_6 #(
     end
 
     // In-order completion FIFO and credit counter.
+    // El reset de esta etapa se alarga un ciclo mas que rst_q.
+    reg rst_qq = 1'b1;
+    always @(posedge clk) rst_qq <= rst_q;
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q || rst_qq) begin
             meta_wr_ptr <= 0;
             meta_rd_ptr <= 0;
             meta_count  <= 0;
@@ -694,25 +741,86 @@ module memory_fabric_fifo_6 #(
     // A completion without a pending request would mean the controller broke
     // the one-done-per-request contract.
     always @(posedge clk) begin
-        if (!reset && sdram_done && meta_empty)
+        if (!rst_q && sdram_done && meta_empty)
             $error("memory_fabric_fifo_6: sdram_done sin peticion pendiente");
-        if (!reset && sdram_done && !meta_empty && meta_error[meta_rd_ptr])
+        if (!rst_q && sdram_done && !meta_empty && meta_error[meta_rd_ptr])
             $error("memory_fabric_fifo_6: sdram_done con un error en cabeza");
     end
 `endif
 
+    // Diagnostico: captura el PRIMER valor de puerto en cada etapa.
+    reg [2:0] f_cmd_master = 3'd0;
+    reg [5:0] f_backend = 6'd0, f_rp = 6'd0, f_route = 6'd0;
+    reg f_cmd_seen = 1'b0, f_go_seen = 1'b0, f_rp_seen = 1'b0, f_route_seen = 1'b0;
+    always @(posedge clk) begin
+        if (cmd_pop && !f_cmd_seen) begin
+            f_cmd_master <= cmd_master[cmd_rd_ptr];
+            f_cmd_seen <= 1'b1;
+        end
+        if (go_q && !f_go_seen) begin
+            f_backend <= backend_port;
+            f_go_seen <= 1'b1;
+        end
+        if (rp_valid && !f_rp_seen) begin
+            f_rp <= rp_port;
+            f_rp_seen <= 1'b1;
+        end
+        if (rsp_pop && !f_route_seen) begin
+            f_route <= rsp_data_mem[rsp_rd_ptr][134:129];
+            f_route_seen <= 1'b1;
+        end
+    end
+    assign dbg4 = {f_route_seen, f_rp_seen, f_go_seen, f_cmd_seen,
+                   f_route, f_rp, f_backend, f_cmd_master};
+
+    // Foto del estado justo cuando `reset` pasa de 1 a 0 por primera vez.
+    reg prev_reset = 1'b1, rel_seen = 1'b0;
+    reg [14:0] rel_snap = 15'd0;
+    always @(posedge clk) begin
+        prev_reset <= rst_q;
+        if (prev_reset && !rst_q && !rel_seen) begin
+            rel_seen <= 1'b1;
+            rel_snap <= {outstanding, cmd_count, state, go_q, rp_valid,
+                         route_valid, issue_valid};
+        end
+    end
+    assign dbg5 = {rel_snap, rel_seen};
+
+    // Traza de los primeros 32 eventos tras el reset local.
+    // Traza corta (16 entradas) de la etapa meta: en cada go_q / complete /
+    // sdram_done guarda {ciclo[37:30], go_q[29], complete[28], sdram_done[27],
+    // meta_wr_ptr[26:24], meta_rd_ptr[23:21], meta_count[20:17],
+    // meta_port[rd_ptr][16:11], backend_port[10:5]}.
+    (* syn_ramstyle = "registers" *) reg [37:0] trace_mem [0:15];
+    reg [4:0] trace_n = 5'd0;
+    reg [7:0] trace_cyc = 8'd0;
+    wire trace_ev = go_q | complete | sdram_done;
+    // Sin reset: captura tambien durante el reset. Bits [4]=rst_q, [3]=rst_qq.
+    always @(posedge clk) begin
+        trace_cyc <= trace_cyc + 1'b1;
+        if (trace_ev && !trace_n[4]) begin
+            trace_mem[trace_n[3:0]] <= {trace_cyc, go_q, complete, sdram_done,
+                                        meta_wr_ptr, meta_rd_ptr, meta_count,
+                                        meta_port[meta_rd_ptr], backend_port,
+                                        rst_q, rst_qq, 3'd0};
+            trace_n <= trace_n + 1'b1;
+        end
+    end
+    assign dbg_trace_data = trace_mem[dbg_trace_idx[3:0]];
+    assign dbg_trace_n = {1'b0, trace_n};
+
     // Registered response router. A blocked destination cannot alter or lose
     // the staged response, while the global response queue absorbs later ones.
     always @(posedge clk) begin
-        if (reset) begin
+        if (rst_q) begin
             route_valid <= 1'b0;
             route_port  <= 6'b000001;
             route_data  <= 129'd0;
         end else begin
             if (rsp_pop) begin
                 route_valid <= 1'b1;
-                route_port  <= rsp_port_mem[rsp_rd_ptr];
-                route_data  <= rsp_data_mem[rsp_rd_ptr];
+                route_port  <= rsp_data_mem[rsp_rd_ptr][134:129];
+                route_data  <= rsp_data_mem[rsp_rd_ptr][128:0];
             end else if (route_fire) begin
                 route_valid <= 1'b0;
             end
