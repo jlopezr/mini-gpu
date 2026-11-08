@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.board_record import board_status
 from tools.prototype import (
     PrototypeResolutionError,
     find_repo_root,
@@ -340,6 +341,7 @@ def _diamond_info(prototype: Path, running: bool = False) -> dict | None:
         "date": _local_date_text(metadata.get("started")),
         "label": metadata.get("label", "diamond"),
         "seed": diamond_effort(folder),
+        "board": board_status(folder),
     }
 
 
@@ -390,6 +392,7 @@ def prototype_build_summary(repo_root: Path, report_root: Path,
             "elapsed": _elapsed_text(record, archive) if record else "-",
             "date": _local_date_text(record.get("started_at")) if record else "-",
             "label": record.get("label", "-") if record else "-",
+            "board": board_status(archive) if archive else "-",
             "diamond": _diamond_info(path, running=path.name in diamond_running),
         })
     return rows
@@ -444,6 +447,20 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
         code = colors.get(value)
         return f"\033[{code}m{padded}\033[0m" if use_color and code else padded
 
+    def board_field(value: str, width: int) -> str:
+        """Verde si toda la suite de placa paso, rojo si hubo fallos, atenuado si no se probo."""
+        padded = f"{value:<{width}}"
+        if not use_color:
+            return padded
+        if value.startswith("sin probar"):
+            return f"\033[2m{padded}\033[0m"
+        fraction = value.split(" ")[0]
+        try:
+            passed, total = (int(part) for part in fraction.split("/"))
+        except ValueError:
+            return padded
+        return f"\033[{'32' if passed == total else '31'}m{padded}\033[0m"
+
     active = [row["prototype"] for row in rows if row["state"] == "RUNNING"]
     active += [f"{row['prototype']} (diamond)" for row in rows
                if (row.get("diamond") or {}).get("state") == "RUNNING"]
@@ -478,11 +495,12 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
                                  for clock in (row.get("clocks") or [None])[:1]))
     w_elapsed = widest("ELAPSED", (row["elapsed"] for _, row in entries))
     w_date = widest("DATE", (row["date"] for _, row in entries))
+    w_board = widest("BOARD", (row.get("board", "-") for _, row in entries))
     print("  " + COLUMN_GAP.join((
         f"{'PROTOTYPE':<{w_proto}}", f"{'TOOL':<{w_tool}}", f"{'BITSTREAM':<{w_bit}}",
         f"{'LAST BUILD':<{w_state}}", f"{'TIMING':<{w_timing}}", f"{'SEED':<{w_seed}}",
         f"{'CLOCK':<{w_clock}}", f"{'FMAX/REQ':<{w_fmax}}", f"{'ELAPSED':<{w_elapsed}}",
-        f"{'DATE':<{w_date}}", "LABEL")))
+        f"{'DATE':<{w_date}}", f"{'BOARD':<{w_board}}", "LABEL")))
     for tool, row in entries:
         marker = "*" if row["state"] == "RUNNING" else " "
         # Un reloj por linea. El primero es el que limita (el de menos margen) y
@@ -505,7 +523,8 @@ def print_prototype_build_summary(rows: list[dict]) -> None:
             f"{row['prototype']:<{w_proto}}", field(tool, w_tool), field(row['bitstream'], w_bit),
             field(row['state'], w_state), field(row['timing'], w_timing),
             f"{row['seed']:<{w_seed}}", f"{clock_name:<{w_clock}}", fmax,
-            f"{row['elapsed']:<{w_elapsed}}", f"{row['date']:<{w_date}}", row['label'])))
+            f"{row['elapsed']:<{w_elapsed}}", f"{row['date']:<{w_date}}",
+            board_field(row.get("board", "-"), w_board), row['label'])))
         for name, achieved, required in clocks[1:]:
             print("  " + COLUMN_GAP.join((
                 " " * w_proto, " " * w_tool, " " * w_bit, " " * w_state, " " * w_timing,
