@@ -37,6 +37,7 @@ from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
+from tools.board_record import folder_sha256  # noqa: E402
 
 # Límite común a todos los casos: que quepan en un espacio de 32 bits. Si el
 # caso cabe en el mapa concreto de un backend lo decide `incompatibility()`.
@@ -1696,6 +1697,10 @@ def main() -> int:
     parser.add_argument("--timings-json", type=Path, metavar="FICHERO",
                         help="escribe tiempos de pared por caso y el total en JSON "
                              "(para herramientas; no cambia las comprobaciones)")
+    parser.add_argument("--results-json", type=Path, metavar="FICHERO",
+                        help="escribe el resultado de cada caso (PASS/FAIL, errores y el "
+                             "hash de su carpeta) en JSON; lo usa `test-board` para el "
+                             "registro de pruebas en placa")
     args = parser.parse_args()
     if args.trace_limit is not None and args.trace_limit < 0:
         parser.error("--trace-limit no puede ser negativo")
@@ -1902,6 +1907,7 @@ def main() -> int:
 
     failures = unprepared
     durations: list[tuple[float, str, str]] = []
+    case_results: list[dict] = []
     started = time.monotonic()
 
     # Los backends de simulador pueden repartirse entre procesos; los de placa
@@ -1937,6 +1943,14 @@ def main() -> int:
                 slow = f" ({elapsed:.1f}s)" if elapsed >= SLOW_CASE_SECONDS else ""
                 video_timing = video_timing_suffix(
                     result, case, backend_name)
+                case_results.append({
+                    "case": case["name"], "backend": backend_name,
+                    "path": str(Path(path).resolve().relative_to(REPOSITORY))
+                            if Path(path).resolve().is_relative_to(REPOSITORY) else str(path),
+                    "status": "fail" if errors else "pass",
+                    "errors": list(errors), "seconds": round(elapsed, 2),
+                    "case_sha256": folder_sha256(Path(path).parent),
+                })
                 if errors:
                     failures += 1
                     print(f"FAIL {case['name']} [{backend_name}]"
@@ -1976,6 +1990,22 @@ def main() -> int:
         except Exception as error:
             failures += 1
             print(f"ERROR {path}: {error}", file=sys.stderr)
+            case_results.append({
+                "case": case["name"], "backend": args.backend, "path": str(path),
+                "status": "error", "errors": [str(error)], "seconds": None,
+                "case_sha256": folder_sha256(Path(path).parent),
+            })
+
+    if args.results_json is not None:
+        payload = {
+            "backend": args.backend,
+            "failures": failures,
+            "skipped": skipped,
+            "unprepared": unprepared,
+            "results": case_results,
+        }
+        args.results_json.parent.mkdir(parents=True, exist_ok=True)
+        args.results_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     if args.durations and durations:
         print(f"\n{min(args.durations, len(durations))} ejecución(es) más lentas:")

@@ -243,6 +243,8 @@ def _program_bitstream(project: Path, bitstream: Path, mark: bool = True) -> Non
             f"{completed.returncode}; revisa su salida más arriba."
         )
     time.sleep(1.5)
+    from tools.board_record import record_upload
+    record_upload(project, bitstream)
     if mark:
         _mark_uploaded(project)
     else:

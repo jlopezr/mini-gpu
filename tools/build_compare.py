@@ -80,7 +80,8 @@ def _times(summary: dict, metadata: dict) -> list[str]:
 
 def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]:
     if folder is None:
-        return [proto.name, tool] + ["-"] * 13
+        return [proto.name, tool] + ["-"] * 14
+    from tools.board_record import board_status
     summary = _load(folder / "summary.json")
     metadata = _load(folder / "metadata.json")
     stale = "" if _metadata_source_hashes(metadata) == current else "*"
@@ -103,7 +104,7 @@ def row(proto: Path, tool: str, folder: Path | None, current: dict) -> list[str]
             "-" if slack is None else f"{slack:+.3f}", seed,
             *_times(summary, metadata),
             _resource(summary, tool, "LUT"), _resource(summary, tool, "FF"),
-            _resource(summary, tool, "EBR"), folder.name[:15] + stale]
+            _resource(summary, tool, "EBR"), board_status(folder), folder.name[:15] + stale]
 
 
 def main() -> int:
@@ -116,7 +117,7 @@ def main() -> int:
     protos = ([resolve_prototype(p, root) for p in args.prototype] if args.prototype
               else [p for p in list_prototypes(root) if (p / "reports").is_dir()])
     header = ["PROTOTYPE", "TOOL", "CLOCK", "FMAX/REQ", "TIMING", "HOLD", "SLACK(ns)", "SEED",
-              "TOTAL(s)", "SYNTH(s)", "PNR(s)", "LUT", "FF", "EBR", "REPORT"]
+              "TOTAL(s)", "SYNTH(s)", "PNR(s)", "LUT", "FF", "EBR", "BOARD", "REPORT"]
     rows = []
     for proto in protos:
         reports = latest_reports(proto)
@@ -152,7 +153,10 @@ def main() -> int:
           "SEED: apio, la semilla fijada en apio.ini; Diamond, la cost table de la iteracion de PAR "
           "guardada ('-' si valio el primer intento: no hizo falta buscar).\n"
           "WARN: los caminos cumplen y solo falla el ancho minimo de pulso de un bloque de E/S "
-          "(limite del datasheet que nextpnr no comprueba); FMAX es entonces el exigido, no medido.")
+          "(limite del datasheet que nextpnr no comprueba); FMAX es entonces el exigido, no medido.\n"
+          "BOARD: casos PASS / ejecutados de la ultima suite de `test-board` hecha con el bitstream "
+          "de ESE build (se asocia por el SHA-256 del .bit programado, no por fecha) y su dia; "
+          "'parcial' si no fue la suite entera; 'sin probar' si ninguna suite registro ese bitstream.")
     return 0
 
 

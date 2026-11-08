@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -438,6 +439,10 @@ def main_test(argv: list[str] | None = None) -> int:
     parser.add_argument("--family", choices=("cpu", "gpu", "all"), default="all",
                         help="en un prototipo CPU+GPU (36 y 37), qué familia probar; "
                              "por defecto las dos, una detrás de otra")
+    parser.add_argument("--no-record", dest="record", action="store_false", default=True,
+                        help="no guarda el registro de la prueba (por defecto se escribe "
+                             "reports/<build>/board-tests.json con el hash del bitstream, "
+                             "los casos y su resultado)")
     args, extra = parser.parse_known_args(argv)
 
     port = args.port if args.port is not None else detect_port()
@@ -448,6 +453,13 @@ def main_test(argv: list[str] | None = None) -> int:
             "gpu_system.v + monitor.v con versión; no se puede inferir "
             "--backend/--version. Usa t.tests/run_tests.py directamente."
         )
+    # Una suite "completa" es la que no recorta casos: sin TEST_JSON posicionales,
+    # sin --exclude-case ni --skip-slow. Una parcial tambien se registra, pero
+    # marcada, para que una tabla no la presente como la suite entera.
+    suite_completa = not any(
+        item.endswith(".json") or item in ("--skip-slow", "--exclude-case")
+        or item.startswith("--exclude-case=") or item.startswith("--measure")
+        for item in extra)
 
     primaria = target.capability["backend"]
     familias = list(target.capability.get("backends") or [primaria])
@@ -460,6 +472,20 @@ def main_test(argv: list[str] | None = None) -> int:
 
     version = target.capability["version_name"]
     resultado = 0
+    resultados: list[dict] = []
+    omitidos = 0
+    sin_preparar = 0
+    import json
+    import tempfile
+    from tools import board_record
+
+    def version_monitor():
+        try:
+            return board.read_monitor_version(target.monitor, port, 1.0)
+        except Exception:  # noqa: BLE001 - es solo informativo
+            return None
+
+    antes = version_monitor() if args.record else None
     for familia in familias:
         # Una familia que no es la primaria cuelga de la otra: la GPU de la 36
         # y la 37 la lanza el host por GPU CORE, y la prueba `fpga-sys`, no
@@ -470,8 +496,38 @@ def main_test(argv: list[str] | None = None) -> int:
             "--backend", backend, "--version", version, "--port", port,
             *extra,
         ]
+        results_file = None
+        if args.record:
+            handle, name = tempfile.mkstemp(prefix="board-results-", suffix=".json")
+            os.close(handle)
+            results_file = Path(name)
+            command += ["--results-json", str(results_file)]
         print(f"$ {' '.join(command)}")
         resultado = max(resultado, subprocess.run(command).returncode)
+        if results_file is not None:
+            try:
+                datos = json.loads(results_file.read_text(encoding="utf-8"))
+                resultados.extend(datos["results"])
+                omitidos += datos.get("skipped", 0)
+                sin_preparar += datos.get("unprepared", 0)
+            except (OSError, ValueError, KeyError):
+                print("aviso: run_tests no dejo resultados; no se registra esta familia.",
+                      file=sys.stderr)
+            finally:
+                results_file.unlink(missing_ok=True)
+
+    if args.record and resultados:
+        registro = board_record.build_record(
+            project=target.prototype_dir, root=target.root, port=port, family=familias,
+            arguments=extra, full_suite=suite_completa, results=resultados,
+            skipped=omitidos, unprepared=sin_preparar,
+            monitor_before=antes, monitor_after=version_monitor())
+        ruta = board_record.write_record(target.prototype_dir, registro)
+        print(f"\nRegistro de placa: {ruta}")
+        print(f"  {board_record.summary_line(registro)}")
+        bit = registro["bitstream"]
+        print(f"  bitstream {bit['sha256'][:16] if bit['sha256'] else '?'}... "
+              f"build={bit['build_folder'] or 'SIN BUILD ASOCIADO'}  ({bit['provenance']})")
     return resultado
 
 
