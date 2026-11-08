@@ -70,7 +70,7 @@
         }
       },
       "4": {
-        "pc": 44,
+        "pc": 52,
         "active_mask": 0,
         "registers": {
           "0": {
@@ -86,7 +86,7 @@
         }
       },
       "5": {
-        "pc": 44,
+        "pc": 52,
         "active_mask": 0,
         "registers": {
           "0": {
@@ -102,7 +102,7 @@
         }
       },
       "6": {
-        "pc": 44,
+        "pc": 52,
         "active_mask": 0,
         "registers": {
           "0": {
@@ -118,7 +118,7 @@
         }
       },
       "7": {
-        "pc": 44,
+        "pc": 52,
         "active_mask": 0,
         "registers": {
           "0": {
