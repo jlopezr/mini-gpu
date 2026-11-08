@@ -10,3 +10,4 @@ reports/
 diagrams/
 .DS_Store
 .diamond/
+.venv/
