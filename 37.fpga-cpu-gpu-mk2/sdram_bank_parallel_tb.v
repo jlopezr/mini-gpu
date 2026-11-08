@@ -56,7 +56,7 @@ module sdram_bank_unit #(
 
     sdram_controller_128 #(
         .CLK_FREQ_HZ(CLK_HZ), .POWERUP_DELAY_US(POWERUP_US),
-        .READ_DELAY_CYCLES(READ_DELAY)
+        .READ_DELAY_CYCLES(READ_DELAY + 2)   // +2: `dq_pos` y la etapa previa a los pines
     ) ctrl (
         .clk(clk), .reset(reset),
         .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),

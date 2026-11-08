@@ -141,12 +141,18 @@ module mmio_decoder #(
     input  wire [31:0] gpu_read_data,
     input  wire        gpu_error,
 
+    // SDRAM PHASE (0x8002_0000, mmio.md §7.1): fase del reloj de la SDRAM.
+    output wire        phase_select,
+    input  wire [31:0] phase_read_data,
+    input  wire        phase_error,
+
     output reg  [31:0] read_data,
     output reg         error
 );
   // El bloque: bits [26:16] de la direccion. Once bits cubren de 0x8000_0000
   // a 0x87FF_0000, de sobra para todo lo que el contrato asigna (§2).
   localparam [10:0] BLK_SYSTEM   = 11'h000;   // 0x8000_0000
+  localparam [10:0] BLK_PHASE    = 11'h002;   // 0x8002_0000
   localparam [10:0] BLK_SERIAL   = 11'h010;   // 0x8010_0000
   localparam [10:0] BLK_VIDEO    = 11'h020;   // 0x8020_0000
   localparam [10:0] BLK_INPUT    = 11'h060;   // 0x8060_0000
@@ -161,6 +167,7 @@ module mmio_decoder #(
   // que hay aguas abajo usa `es_*`, ya en registros; solo `error_direccion`, que
   // se calcula aqui mismo, mira las `_d`.
   wire es_system_d = !fuera && (block == BLK_SYSTEM);
+  wire es_phase_d  = !fuera && (block == BLK_PHASE);
   wire es_serial_d = !fuera && (block == BLK_SERIAL) && (HAS_SERIAL != 0);
   wire es_video_d  = !fuera && (block == BLK_VIDEO);
   wire es_perf_d   = !fuera && (block == BLK_CPU_PERF);
@@ -168,7 +175,7 @@ module mmio_decoder #(
   // Cuatro bloques seguidos: CORE, WARPS, SIMT y PERF de la GPU (§14).
   wire es_gpu_d    = !fuera && (block[10:2] == 9'h080) && (HAS_GPU != 0);
 
-  reg es_system, es_serial, es_video, es_perf, es_input, es_gpu;
+  reg es_system, es_phase, es_serial, es_video, es_perf, es_input, es_gpu;
   reg select_q;
   reg error_direccion_q;
 
@@ -201,6 +208,7 @@ module mmio_decoder #(
   // viaja hacia el nucleo por `error`.
   always @(posedge clk) begin
     es_system <= es_system_d;
+    es_phase  <= es_phase_d;
     es_serial <= es_serial_d;
     es_video  <= es_video_d;
     es_perf   <= es_perf_d;
@@ -215,6 +223,7 @@ module mmio_decoder #(
   assign perf_select   = select_q && !error_direccion_q && es_perf;
   assign input_select  = select_q && !error_direccion_q && es_input;
   assign gpu_select    = select_q && !error_direccion_q && es_gpu;
+  assign phase_select  = select_q && !error_direccion_q && es_phase;
 
   // DEUDA CONOCIDA, y merece leerse entera.
   //
@@ -291,12 +300,17 @@ module mmio_decoder #(
   // bloque los comprueba la propia GPU.
   wire e_gpu = !word_aligned || (write && (write_mask != 4'b1111));
 
-  wire hay_bloque = es_system_d || es_serial_d || es_video_d || es_perf_d
-                    || es_input_d || es_gpu_d;
+  // SDRAM PHASE: CTRL (+0), STATUS (+4) y, solo de diagnostico, DIAG2 (+8, +C),
+  // todos alineados. El dispositivo valida permisos, mascara y valor.
+  wire e_phase = offset_alto || !word_aligned || (palabra > 6'd13);
+
+  wire hay_bloque = es_system_d || es_phase_d || es_serial_d || es_video_d
+                    || es_perf_d || es_input_d || es_gpu_d;
 
   always @* begin
     error_direccion = fuera || !hay_bloque
         || (es_system_d && e_system)
+        || (es_phase_d  && e_phase)
         || (es_serial_d && e_serial)
         || (es_video_d  && e_video)
         || (es_input_d  && e_input)
@@ -320,10 +334,12 @@ module mmio_decoder #(
   // el latch de SWAP ya escrito, el tercer registro de la RAM de la consola); lo
   // unico que cambia es que `read_data` y `error` salen un ciclo despues, y por
   // eso `mmio_mux` espera uno mas (EXTRA_CYCLES = 3).
-  reg [31:0] system_rd_q, serial_rd_q, video_rd_q, perf_rd_q, input_rd_q, gpu_rd_q;
-  reg video_err_q, input_err_q, gpu_err_q;
+  reg [31:0] system_rd_q, phase_rd_q, serial_rd_q, video_rd_q, perf_rd_q, input_rd_q, gpu_rd_q;
+  reg video_err_q, input_err_q, gpu_err_q, phase_err_q;
   always @(posedge clk) begin
     system_rd_q <= system_read_data;
+    phase_rd_q  <= phase_read_data;
+    phase_err_q <= phase_error;
     serial_rd_q <= serial_read_data;
     video_rd_q  <= video_read_data;
     perf_rd_q   <= perf_read_data;
@@ -336,9 +352,11 @@ module mmio_decoder #(
 
   always @(posedge clk) begin
     error <= error_direccion_q || (es_video && video_err_q)
-             || (es_input && input_err_q) || (es_gpu && gpu_err_q);
+             || (es_input && input_err_q) || (es_gpu && gpu_err_q)
+             || (es_phase && phase_err_q);
 
     if (es_system)      read_data <= system_rd_q;
+    else if (es_phase)  read_data <= phase_rd_q;
     else if (es_serial) read_data <= serial_rd_q;
     else if (es_video)  read_data <= video_rd_q;
     else if (es_perf)   read_data <= perf_rd_q;

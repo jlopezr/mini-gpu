@@ -51,69 +51,105 @@ module top (
   wire clk, pll_locked;
   pll_cpu pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
 
-  wire clk_mem, pll_mem_locked;
+  // `clk_mem` (CLKOP) es el reloj interno y `clk_sdram` (CLKOS) el que sale a
+  // la SDRAM: el mismo 100 MHz, pero con la fase ajustable en marcha desde
+  // `pll_phase_ctl` (mmio.md §7.1). Con la fase fija en 0, como tenian antes
+  // la 36 y la 37, la captura de lectura estaba en el borde de la ventana
+  // valida (ver 35.../PHASE_SWEEP_RESULTS.md): la 35 solo la cerraba con una de
+  // cinco semillas.
+  wire clk_mem, clk_sdram, pll_mem_locked;
+  wire pll_phasestep, pll_phasedir, pll_phaseloadreg;
+  wire [1:0] pll_phasesel;
   pll_mem pll_mem_i(
-      .clkin(clk_25mhz), .clkout0(clk_mem), .locked(pll_mem_locked));
+      .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
+      .locked(pll_mem_locked));
+  assign sdram_clk = clk_sdram;
 
-  // Shifted reset avoids a counter terminal-count path on the high-fanout
-  // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then
-  // performs its own JEDEC power-up delay before asserting init_done.
-  reg [15:0] reset_shift = 16'hffff;
-  wire reset = reset_shift[15];
-  always @(posedge clk) begin
-    if (!pll_locked || !btn_pwr_n) begin
-      reset_shift <= 16'hffff;
-    end else begin
-      reset_shift <= {reset_shift[14:0], 1'b0};
+  // ---------------------------------------------------------------------------
+  // Resets: aserción asincrona y liberacion sincrona (`reset_sync.v`), una
+  // cadena por dominio de reloj. La entrada `arst_*` es asincrona (el `locked`
+  // del PLL y el boton); la salida baja siempre alineada con el reloj de su
+  // dominio y tras 16 flancos limpios, con lo que ningun flop del dominio ve la
+  // liberacion en un ciclo distinto de otro. El modulo SDRAM hace aparte su
+  // retardo de arranque JEDEC antes de `init_done`.
+  //
+  // Cada copia es una instancia propia (`syn_preserve` en el modulo) para repartir
+  // el fan-out sin red unica. Un atributo no garantiza que Synplify no fusione
+  // cadenas equivalentes: hay que comprobarlo en el EDIF tras cada sintesis.
+  // ---------------------------------------------------------------------------
+  wire arst_cpu = !pll_locked     || !btn_pwr_n;
+  wire arst_mem = !pll_mem_locked || !btn_pwr_n;
+
+  wire reset, reset_mon, reset_cpu, reset_bus, reset_vid;
+  reset_sync #(.STAGES(16)) rs_reset (.clk(clk), .arst(arst_cpu), .rst(reset));
+  reset_sync #(.STAGES(16)) rs_mon   (.clk(clk), .arst(arst_cpu), .rst(reset_mon));
+  reset_sync #(.STAGES(16)) rs_cpu   (.clk(clk), .arst(arst_cpu), .rst(reset_cpu));
+  reset_sync #(.STAGES(16)) rs_bus   (.clk(clk), .arst(arst_cpu), .rst(reset_bus));
+  reset_sync #(.STAGES(16)) rs_vid   (.clk(clk), .arst(arst_cpu), .rst(reset_vid));
+
+  wire reset_mem, reset_fab, reset_ctl_b;
+  reset_sync #(.STAGES(16)) rs_mem   (.clk(clk_mem), .arst(arst_mem), .rst(reset_mem));
+  reset_sync #(.STAGES(16)) rs_fab   (.clk(clk_mem), .arst(arst_mem), .rst(reset_fab));
+  reset_sync #(.STAGES(16)) rs_ctl   (.clk(clk_mem), .arst(arst_mem), .rst(reset_ctl_b));
+  // Diagnostico del reset del fabric (PHASE_DIAG4, ver phase_mmio.v). Si
+  // `saw_reset` vale 0 al leerlo, `reset_fab` no llego a verse a 1 en ningun
+  // flanco de clk_mem: el fabric arranca sin reset.
+  wire [19:0] fabric_dbg2;
+  wire [31:0] phase_diag4;
+  wire [31:0] phase_diag5;
+  wire [5:0] fabric_dbg3;
+  reg saw_reset = 1'b0, rst_len_done = 1'b0;
+  reg [7:0] rst_len = 8'd0;
+  always @(posedge clk_mem) begin
+    if (reset_fab) saw_reset <= 1'b1;
+    if (!rst_len_done) begin
+      if (reset_fab) begin
+        if (rst_len != 8'hff) rst_len <= rst_len + 1'b1;
+      end else if (saw_reset) begin
+        rst_len_done <= 1'b1;
+      end
     end
   end
+  assign phase_diag4 = {2'b00, rst_len, rst_len_done, saw_reset, fabric_dbg2};
 
-  // Copias del reset, una por bloque. Con un solo `reset` el fan-out llegaba a
-  // todo el chip, y en la 36 el camino critico de la CPU era esa red: 8,5 ns de
-  // ruteo, distancia 154, hasta el FSM de la CPU. Cada copia se registra con la
-  // misma condicion que `reset_shift[15]` --mismo instante, mismo valor-- y
-  // `keep` impide que la sintesis las vuelva a fusionar en una.
-  (* keep = "true" *) reg reset_mon = 1'b1, reset_cpu = 1'b1, reset_bus = 1'b1, reset_vid = 1'b1;
-  always @(posedge clk) begin
-    if (!pll_locked || !btn_pwr_n) begin
-      reset_mon <= 1'b1; reset_cpu <= 1'b1; reset_bus <= 1'b1; reset_vid <= 1'b1;
-    end else begin
-      reset_mon <= reset_shift[14]; reset_cpu <= reset_shift[14];
-      reset_bus <= reset_shift[14]; reset_vid <= reset_shift[14];
-    end
-  end
-
-  reg [15:0] reset_mem_shift = 16'hffff;
-  wire reset_mem = reset_mem_shift[15];
+  // Peticiones que acepta el controlador y pulsos de `done` que devuelve
+  // (PHASE_DIAG6 +0x1C = {done[15:0], aceptadas[15:0]}, PHASE_DIAG7 +0x20 =
+  // racha maxima de `done` a 1). Deben coincidir; si salen mas `done` que
+  // peticiones, el fabric completa de mas.
+  reg [15:0] diag_acc_cnt = 16'd0, diag_done_cnt = 16'd0;
+  reg [3:0] diag_done_run = 4'd0, diag_done_runmax = 4'd0;
+  wire [31:0] phase_diag6 = {diag_done_cnt, diag_acc_cnt};
+  wire [24:0] fabric_dbg4;
+  wire [15:0] fabric_dbg5;
+  wire [4:0]  trace_idx;
+  wire        fabric_rst_toggle;
+  wire [37:0] trace_data;
+  wire [5:0]  trace_n;
+  // Cuantas veces se suelta `reset_fab` y se desengancha cada PLL (flancos de
+  // bajada), para saber si el reset del fabric se repite. PHASE_DIAG8 +0x24 =
+  // {foto del fabric al soltar el reset [27:12], locks CPU [11:8], locks mem
+  // [7:4], sueltas de reset_fab [3:0]}.
+  reg [3:0] diag_rel_cnt = 4'd0, diag_memlock_fall = 4'd0, diag_cpulock_fall = 4'd0;
+  reg diag_prev_reset_fab = 1'b1, diag_prev_memlock = 1'b0;
+  reg diag_cpulock_m = 1'b0, diag_cpulock_s = 1'b0, diag_prev_cpulock = 1'b0;
   always @(posedge clk_mem) begin
-    if (!pll_mem_locked || !btn_pwr_n)
-      reset_mem_shift <= 16'hffff;
-    else
-      reset_mem_shift <= {reset_mem_shift[14:0], 1'b0};
+    diag_prev_reset_fab <= reset_fab;
+    if (diag_prev_reset_fab && !reset_fab && diag_rel_cnt != 4'hf)
+      diag_rel_cnt <= diag_rel_cnt + 1'b1;
+    diag_prev_memlock <= pll_mem_locked;
+    if (diag_prev_memlock && !pll_mem_locked && diag_memlock_fall != 4'hf)
+      diag_memlock_fall <= diag_memlock_fall + 1'b1;
+    diag_cpulock_m <= pll_locked;
+    diag_cpulock_s <= diag_cpulock_m;
+    diag_prev_cpulock <= diag_cpulock_s;
+    if (diag_prev_cpulock && !diag_cpulock_s && diag_cpulock_fall != 4'hf)
+      diag_cpulock_fall <= diag_cpulock_fall + 1'b1;
   end
-
-  // Dos copias de `reset_mem`, igual que las del reloj de la CPU: una red unica
-  // llegaba al controlador SDRAM y al fabric desde el otro lado del chip, y en la
-  // 36 el camino critico de sdram_clk era esa red (7,7 ns de ruteo, distancia
-  // 141, 94,7 MHz). Misma condicion que `reset_mem_shift[15]`, `keep` contra la
-  // fusion.
-  (* keep = "true" *) reg reset_ctl = 1'b1, reset_fab = 1'b1;
-  always @(posedge clk_mem) begin
-    if (!pll_mem_locked || !btn_pwr_n) begin
-      reset_ctl <= 1'b1; reset_fab <= 1'b1;
-    end else begin
-      reset_ctl <= reset_mem_shift[14]; reset_fab <= reset_mem_shift[14];
-    end
-  end
-  // Aun con una copia propia, en la 37 la red `reset_ctl` tardo 10,1 ns (distancia
-  // 182) hasta el controlador SDRAM: el placer deja el registro lejos de el.
-  // Dos registros mas, a su lado, parten esa red en tres saltos de un ciclo cada
-  // uno. El reset dura cientos de ciclos, asi que dos de retraso no cambian nada.
-  (* keep = "true" *) reg reset_ctl_a = 1'b1, reset_ctl_b = 1'b1;
-  always @(posedge clk_mem) begin
-    reset_ctl_a <= reset_ctl;
-    reset_ctl_b <= reset_ctl_a;
-  end
+  wire [31:0] phase_diag8 = {4'd0, fabric_dbg5[15:0], diag_cpulock_fall,
+                             diag_memlock_fall, diag_rel_cnt};
+  wire [31:0] phase_diag7 = {3'd0, fabric_dbg4, diag_done_runmax};
   assign wifi_gpio0 = 1'b1;
 
   wire [7:0] uart_rx_data, uart_tx_data;
@@ -308,6 +344,9 @@ module top (
   wire mmio_perf_select;
   // GPU: el bloque 0x8200_0000..0x8203_FFFF llega por `gpu_mmio_bridge`.
   wire mmio_gpu_select, gpu_bridge_done, gpu_bridge_error;
+  wire mmio_phase_select;
+  wire [31:0] mmio_phase_read_data;
+  wire mmio_phase_error;
   wire [31:0] gpu_bridge_read_data;
   assign mmio_video_read_data = mmio_video_core_read_data
                                 | mmio_console_read_data;
@@ -337,7 +376,53 @@ module top (
   // `sdram_system_adapter`, que siguen siendo la linea base contra la que se
   // compara este camino, y los bancos que los miden siguen pasando.
   // ===========================================================================
-  wire init_done, sdram_busy;
+  wire init_done, init_done_mem, sdram_busy;
+  wire controller_req_valid, controller_req_ready;
+
+  // Peticion MMIO (clk) -> controlador de fase (clk_mem), con bus agrupado y
+  // handshake por toggle. `phase_quiesce` frena clientes nuevos mientras las
+  // colas previas se drenan; `phase_traffic_block` se activa solo al quedar todo
+  // vacio, para no congelar una peticion a medio aceptar.
+  wire phase_req_toggle, phase_ack_toggle;
+  wire [5:0] phase_req_steps, phase_pos_gray;
+  wire phase_quiesce, phase_busy_mem, phase_err_mem;
+  wire phase_controller_reset, phase_traffic_block;
+  // Diagnostico de PHASE_STATUS (ver phase_mmio.v); se asigna donde ya estan
+  // declaradas las senales del fabric y del controlador.
+  wire [13:0] phase_diag;
+  // Punteros Gray {lectura, escritura} de la FIFO de peticion de cada puerto,
+  // seis bits por puerto (PHASE_DIAG2 +0x08/+0x0C).
+  wire [35:0] phase_diag2;
+  // Estado interno del fabric y del puerto de video (PHASE_DIAG3 +0x10).
+  wire [15:0] fabric_dbg;
+  wire [31:0] phase_diag3;
+  wire [3:0] phase_dbg_state;
+
+  phase_mmio phase_mmio_i(
+      .clk(clk), .reset(reset), .select(mmio_phase_select),
+      .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_phase_read_data), .error(mmio_phase_error),
+      .req_toggle(phase_req_toggle), .req_steps(phase_req_steps),
+      .ack_toggle_async(phase_ack_toggle),
+      .phase_busy_async(phase_busy_mem), .phase_err_async(phase_err_mem),
+      .phase_pos_gray_async(phase_pos_gray),
+      .pll_locked_async(pll_mem_locked), .init_done_async(init_done_mem),
+      .diag_async(phase_diag), .diag2_async(phase_diag2), .diag3_async(phase_diag3), .diag4_async(phase_diag4), .diag5_async(phase_diag5), .diag6_async(phase_diag6), .diag7_async(phase_diag7), .diag8_async(phase_diag8),
+      .trace_data_async(trace_data), .trace_n_async(trace_n), .trace_idx(trace_idx),
+      .fabric_rst_toggle(fabric_rst_toggle),
+      .quiesce(phase_quiesce));
+
+  // `phase_quiesce` es del reloj de la CPU; los puertos 4 y 5 del fabric son de
+  // la GPU (clk_gpu). Es un nivel lento --solo cambia al pedir un cambio de fase,
+  // con la maquina parada--, asi que basta un sincronizador de dos biestables.
+  (* async_reg = "true" *) reg phase_quiesce_g1 = 1'b0, phase_quiesce_g2 = 1'b0;
+  always @(posedge clk_25mhz) begin     // = clk_gpu, que se declara mas abajo
+    phase_quiesce_g1 <= phase_quiesce;
+    phase_quiesce_g2 <= phase_quiesce_g1;
+  end
+  wire [5:0] phase_quiesce_v = {{2{phase_quiesce_g2}}, {4{phase_quiesce}}};
+  wire [5:0] bridge_req_ready;
   // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
   wire wb_dirty;
 
@@ -475,12 +560,9 @@ module top (
   // (`gpu_mmio_bridge`). El kernel y los datos van en la RAM compartida.
   // ---------------------------------------------------------------------------
   wire clk_gpu = clk_25mhz;
-  reg [15:0] reset_gpu_shift = 16'hffff;
-  wire reset_gpu = reset_gpu_shift[15];
-  always @(posedge clk_gpu) begin
-    if (!btn_pwr_n) reset_gpu_shift <= 16'hffff;
-    else reset_gpu_shift <= {reset_gpu_shift[14:0], 1'b0};
-  end
+  wire arst_gpu = !btn_pwr_n;
+  wire reset_gpu;
+  reset_sync #(.STAGES(16)) rs_gpu (.clk(clk_gpu), .arst(arst_gpu), .rst(reset_gpu));
 
   // `init_done` nace en el dominio de la CPU; la GPU lo sincroniza.
   reg init_done_gpu1, init_done_gpu2;
@@ -608,8 +690,23 @@ module top (
 
   wire [5:0] req_empty, req_rd_en, req_rd_valid;
   wire [177:0] req_data [0:5];
+  wire [5:0] bridge_ptrs [0:5];
+  assign phase_diag2 = {bridge_ptrs[5], bridge_ptrs[4], bridge_ptrs[3],
+                        bridge_ptrs[2], bridge_ptrs[1], bridge_ptrs[0]};
+  wire [3:0] bridge_rsp [0:5];
+  assign phase_diag5 = {2'b00, fabric_dbg3,
+                        bridge_rsp[5], bridge_rsp[4], bridge_rsp[3],
+                        bridge_rsp[2], bridge_rsp[1], bridge_rsp[0]};
   wire [5:0] rsp_full, rsp_wr_en;
   wire [128:0] rsp_data [0:5];
+
+  // Reset del fabric y de la mitad de memoria de los bridges: el mismo
+  // `reset_fab` sincronizado de arriba, sin reset tardio ni espera a `init_done`
+  // (esos parches ya no hacen falta con `reset_sync`). Los nombres se conservan
+  // para el resto del codigo.
+  wire fabric_rst_r      = reset_fab;
+  wire fabric_core_rst_r = reset_fab;
+
   genvar bridge_index;
   generate
     for (bridge_index = 0; bridge_index < 6; bridge_index = bridge_index + 1) begin : g_bridge
@@ -617,25 +714,29 @@ module top (
       fabric_fifo_bridge #(.FIFO_ADDR_WIDTH(2)) bridge_i(
           .master_clk(bridge_index >= 4 ? clk_gpu : clk),
           .master_reset(bridge_index >= 4 ? reset_gpu : reset),
-          .req_valid(m_req_valid[bridge_index]), .req_ready(m_req_ready[bridge_index]),
+          .req_valid(m_req_valid[bridge_index] && !phase_quiesce_v[bridge_index]),
+          .req_ready(bridge_req_ready[bridge_index]),
           .req_urgent(m_req_urgent[bridge_index]), .req_write(m_req_write[bridge_index]),
           .req_addr(m_req_addr[bridge_index]), .req_wdata(m_req_wdata[bridge_index]),
           .req_wmask(m_req_wmask[bridge_index]),
           .rsp_valid(m_rsp_valid[bridge_index]), .rsp_ready(m_rsp_ready[bridge_index]),
           .rsp_rdata(m_rsp_rdata[bridge_index]), .rsp_error(m_rsp_error[bridge_index]),
-          .mem_clk(clk_mem), .mem_reset(reset_fab),
+          .mem_clk(clk_mem), .mem_reset(fabric_rst_r),
           .mem_req_empty(req_empty[bridge_index]),
           .mem_req_rd_en(req_rd_en[bridge_index]),
           .mem_req_rd_valid(req_rd_valid[bridge_index]),
           .mem_req_data(req_data[bridge_index]),
           .mem_rsp_full(rsp_full[bridge_index]),
           .mem_rsp_wr_en(rsp_wr_en[bridge_index]),
-          .mem_rsp_data(rsp_data[bridge_index]));
+          .mem_rsp_data(rsp_data[bridge_index]),
+          .dbg_req_ptrs(bridge_ptrs[bridge_index]),
+          .dbg_rsp(bridge_rsp[bridge_index]));
     end
   endgenerate
+  assign m_req_ready = bridge_req_ready & ~phase_quiesce_v;
 
   memory_fabric_fifo_6 fabric_i(
-      .clk(clk_mem), .reset(reset_fab),
+      .clk(clk_mem), .reset(fabric_core_rst_r),
       .p0_req_empty(req_empty[0]), .p0_req_rd_en(req_rd_en[0]), .p0_req_rd_valid(req_rd_valid[0]), .p0_req_data(req_data[0]), .p0_rsp_full(rsp_full[0]), .p0_rsp_wr_en(rsp_wr_en[0]), .p0_rsp_data(rsp_data[0]),
       .p1_req_empty(req_empty[1]), .p1_req_rd_en(req_rd_en[1]), .p1_req_rd_valid(req_rd_valid[1]), .p1_req_data(req_data[1]), .p1_rsp_full(rsp_full[1]), .p1_rsp_wr_en(rsp_wr_en[1]), .p1_rsp_data(rsp_data[1]),
       .p2_req_empty(req_empty[2]), .p2_req_rd_en(req_rd_en[2]), .p2_req_rd_valid(req_rd_valid[2]), .p2_req_data(req_data[2]), .p2_rsp_full(rsp_full[2]), .p2_rsp_wr_en(rsp_wr_en[2]), .p2_rsp_data(rsp_data[2]),
@@ -645,9 +746,10 @@ module top (
       .sdram_req_valid(fab_req_valid), .sdram_req_ready(fab_req_ready),
       .sdram_req_write(fab_req_write), .sdram_req_addr(fab_req_addr),
       .sdram_req_wdata(fab_req_wdata), .sdram_req_wmask(fab_req_wmask),
-      .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy));
+      .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy),
+      .dbg(fabric_dbg), .dbg2(fabric_dbg2), .dbg3(fabric_dbg3), .dbg4(fabric_dbg4), .dbg5(fabric_dbg5),
+      .dbg_trace_idx(trace_idx), .dbg_trace_data(trace_data), .dbg_trace_n(trace_n));
 
-  wire init_done_mem;
   reg init_done_sync1, init_done_sync2;
   always @(posedge clk) begin
     if (reset) begin
@@ -660,13 +762,48 @@ module top (
   end
   assign init_done = init_done_sync2;
 
-  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
-      .clk(clk_mem), .reset(reset_ctl_b),
-      .req_valid(fab_req_valid), .req_write(fab_req_write),
+  // Cambio de fase: solo con todo vacio (cola, fabric y controlador). Despues
+  // se reinicia unicamente el controlador y se espera de nuevo a `init_done`.
+  wire phase_safe_idle = !fabric_busy && (&req_empty) && !sdram_busy
+                         && !fab_req_valid;
+  pll_phase_ctl #(.INITIAL_POS(6'd10)) phase_ctl_i(
+      .clk(clk_mem), .reset(reset_mem),
+      .req_toggle_async(phase_req_toggle), .req_steps_async(phase_req_steps),
+      .ack_toggle(phase_ack_toggle), .safe_idle(phase_safe_idle),
+      .controller_init_done(init_done_mem), .pll_locked(pll_mem_locked),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phasesel(pll_phasesel), .phaseloadreg(pll_phaseloadreg),
+      .controller_reset(phase_controller_reset),
+      .traffic_block(phase_traffic_block),
+      .busy(phase_busy_mem), .err(phase_err_mem),
+      .phase_pos(), .phase_pos_gray(phase_pos_gray),
+      .dbg_state(phase_dbg_state));
+  assign phase_diag = {req_empty, fab_req_valid, sdram_busy, fabric_busy,
+                       phase_traffic_block, phase_dbg_state};
+
+  // Contadores de diagnostico de peticiones aceptadas y pulsos de `done`.
+  always @(posedge clk_mem) begin
+    if (fab_req_valid && fab_req_ready) diag_acc_cnt <= diag_acc_cnt + 1'b1;
+    if (fab_done) begin
+      diag_done_cnt <= diag_done_cnt + 1'b1;
+      if (diag_done_run != 4'hf) diag_done_run <= diag_done_run + 1'b1;
+      if (diag_done_run + 1'b1 > diag_done_runmax && diag_done_run != 4'hf)
+        diag_done_runmax <= diag_done_run + 1'b1;
+    end else begin
+      diag_done_run <= 4'd0;
+    end
+  end
+
+  assign controller_req_valid = fab_req_valid && !phase_traffic_block;
+  assign fab_req_ready = controller_req_ready && !phase_traffic_block;
+
+  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000), .READ_DELAY_CYCLES(2)) controller_i(
+      .clk(clk_mem), .reset(reset_ctl_b || phase_controller_reset),
+      .req_valid(controller_req_valid), .req_write(fab_req_write),
       .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),
-      .req_wmask(fab_req_wmask), .req_ready(fab_req_ready),
+      .req_wmask(fab_req_wmask), .req_ready(controller_req_ready),
       .done(fab_done), .rdata(fab_rdata),
-      .init_done(init_done_mem), .busy(sdram_busy), .sdram_clk(sdram_clk),
+      .init_done(init_done_mem), .busy(sdram_busy), .sdram_clk(),
       .sdram_cke(sdram_cke), .sdram_csn(sdram_csn), .sdram_rasn(sdram_rasn),
       .sdram_casn(sdram_casn), .sdram_wen(sdram_wen), .sdram_a(sdram_a),
       .sdram_ba(sdram_ba), .sdram_dqm(sdram_dqm), .sdram_d(sdram_d));
@@ -732,6 +869,8 @@ module top (
   // Modo de salida, de video_registers al mux de fuentes de linea. Se declara
   // aqui porque el bloque de registros se instancia mas abajo que el mux.
   wire [1:0] video_mode;
+  assign phase_diag3 = {10'd0, video_rsp_ready, p2_rsp_valid, video_mode,
+                        p2_ready, p2_valid, fabric_dbg};
   wire [7:0] fill_line;
   wire [23:0] fb_base;
   wire [8:0] fill_addr;
@@ -829,6 +968,8 @@ module top (
       .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .gpu_select(mmio_gpu_select), .gpu_read_data(gpu_bridge_read_data),
       .gpu_error(gpu_bridge_error),
+      .phase_select(mmio_phase_select), .phase_read_data(mmio_phase_read_data),
+      .phase_error(mmio_phase_error),
       .read_data(mmio_read_data), .error(mmio_error));
 
   // Contadores de rendimiento en 0x81010000 (CPU PERFORMANCE, mmio.md §13.2).

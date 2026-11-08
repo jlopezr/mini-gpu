@@ -24,6 +24,7 @@ MAX_ADDRESS = 0x01FF_FFFF
 #   0x80100000  SERIAL
 #   0x80200000  VIDEO
 #   0x81010000  CPU PERFORMANCE
+#   0x80020000  SDRAM (PHASE_CTRL, PHASE_STATUS: mmio.md §7.1, opcional)
 #
 # Las constantes salen del mapa generado y NO se escriben aqui: eran una
 # gemela del decodificador Verilog, y §20 existe para quitarla. El mapa lo
@@ -41,7 +42,8 @@ if str(_RAIZ) not in sys.path:
 
 from tools.mmio_map import (  # noqa: E402
     MMIO_SYSTEM_BASE, MMIO_SERIAL_BASE, MMIO_VIDEO_BASE, MMIO_CPU_PERF_BASE,
-    MMIO_BLOCK_SIZE,
+    MMIO_BLOCK_SIZE, MMIO_SDRAM_BASE, MMIO_SDRAM_PHASE_CTRL_OFF,
+    MMIO_SDRAM_PHASE_STATUS_OFF, MMIO_SDRAM_PHASES,
 )
 
 MMIO_BASE = 0x8000_0000
@@ -97,7 +99,81 @@ from tools.monitor_protocol import (  # noqa: E402,F401
 _REGIONES = MEMORY_REGIONS
 
 
-class MonitorClient(InputMixin, SerialMixin, PerfMixin, protocolo.MonitorClient):
+# Control de fase del reloj de la SDRAM (mmio.md §7.1, opcional): mueve `sdram_clk` en
+# la PLL (`phase_mmio.v`). La posicion arranca en 0 tras programar la FPGA y solo
+# avanza, dando la vuelta a las 48 posiciones (208,3 ps cada una).
+PHASE_CTRL = MMIO_SDRAM_BASE + MMIO_SDRAM_PHASE_CTRL_OFF
+PHASE_STATUS = MMIO_SDRAM_BASE + MMIO_SDRAM_PHASE_STATUS_OFF
+PHASES = MMIO_SDRAM_PHASES
+VERSION_JSON = Path(__file__).with_name("version.json")
+
+
+class PhaseMixin:
+    """Fase del reloj de la SDRAM, y el valor por defecto de `version.json`."""
+
+    def phase_status(self) -> dict:
+        value = self.read_word(PHASE_STATUS)
+        return {"busy": bool(value & 1), "err": bool(value & 2),
+                "locked": bool(value & 4), "init_done": bool(value & 8),
+                "pos": (value >> 8) & 0x3F}
+
+    def phase_move(self, steps: int, timeout: float = 2.0) -> dict:
+        """Avanza `steps` posiciones (1..48) y espera a que el controlador acabe."""
+        if not 1 <= steps <= PHASES:
+            raise MonitorError("steps debe estar entre 1 y 48")
+        before = self.phase_status()
+        expected_pos = (before["pos"] + steps) % PHASES
+        self.write_word(PHASE_CTRL, 1 | (steps << 8))
+        deadline = time.monotonic() + timeout
+        saw_busy = False
+        while time.monotonic() < deadline:
+            current = self.phase_status()
+            saw_busy |= current["busy"]
+            # Un movimiento dura microsegundos y una consulta por UART tarda mucho
+            # mas: es normal no llegar a observar BUSY=1. POS es Gray en el CDC y
+            # solo cambia al completar cada paso, asi que tambien sirve de ack.
+            if (saw_busy or current["pos"] == expected_pos) and not current["busy"]:
+                if current["err"] or not current["locked"] or not current["init_done"]:
+                    raise MonitorError(f"fallo al mover la fase: {current}")
+                return current
+            time.sleep(0.002)
+        raise MonitorError("el cambio de fase no termino")
+
+    def set_sdram_phase(self, target: int) -> dict:
+        """Deja la fase en `target` (0..47). Si ya esta ahi, no escribe nada."""
+        if not 0 <= target < PHASES:
+            raise MonitorError(f"la fase debe estar entre 0 y {PHASES - 1}")
+        # Justo despues de programar, el PLL de memoria y el controlador SDRAM
+        # aun estan arrancando: se espera un momento a que enganchen en vez de
+        # fallar con LOCKED=0.
+        deadline = time.monotonic() + 2.0
+        current = self.phase_status()
+        while (not current["locked"] or not current["init_done"]) \
+                and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = self.phase_status()
+        if current["busy"] or current["err"] or not current["locked"]:
+            raise MonitorError(f"estado de fase no valido: {current}")
+        delta = (target - current["pos"]) % PHASES
+        return self.phase_move(delta) if delta else current
+
+    def apply_version_settings(self, path: Path = VERSION_JSON) -> int | None:
+        """Pone la fase que fija `version.json` (`"sdram_phase"`), si la hay.
+
+        Tras programar la FPGA la fase vuelve a 0, que en esta placa no es buena.
+        El valor sale de un barrido (`phase_sweep.py`): el centro de la ventana de
+        fases que pasan. Devuelve la fase aplicada, o None si no hay ninguna.
+        """
+        import json
+
+        phase = json.loads(path.read_text(encoding="utf-8")).get("sdram_phase")
+        if phase is None:
+            return None
+        self.set_sdram_phase(phase)
+        return phase
+
+
+class MonitorClient(PhaseMixin, InputMixin, SerialMixin, PerfMixin, protocolo.MonitorClient):
     MEMORY_REGIONS = _REGIONES
 
 
@@ -276,6 +352,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "read-block",
             "verify",
             "memory-test",
+            "phase-status",
+            "phase-step",
+            "phase-set",
             "run",
             "halt",
             "step",
@@ -467,6 +546,9 @@ def main() -> int:
             "read-block": 3,
             "verify": 2,
             "memory-test": 2,
+            "phase-status": 0,
+            "phase-step": 1,
+            "phase-set": 1,
             "run": 0,
             "halt": 0,
             "step": 0,
@@ -503,6 +585,13 @@ def main() -> int:
             dsrdtr=False,
         ) as connection:
             client = MonitorClient(connection)
+
+            # La fase de `version.json` se aplica al abrir, salvo que el comando
+            # sea justo de manejar la fase (un barrido no puede pelearse con ella).
+            if not args.command.startswith("phase-"):
+                applied = client.apply_version_settings()
+                if applied is not None:
+                    print(f"SDRAM phase: {applied} (version.json)", file=sys.stderr)
 
             # Antes de nada, y una sola vez: si el comando toca memoria y la
             # CPU sigue corriendo, decirlo con esas palabras en vez de dejar
@@ -571,6 +660,100 @@ def main() -> int:
                 address = parse_address(args.arguments[0])
                 length = parse_integer(args.arguments[1], MAX_ADDRESS + 1, "length")
                 memory_test(client, address, length)
+            elif args.command == "phase-status":
+                status = client.read_word(PHASE_STATUS)
+                print(
+                    f"busy={bool(status & 1)} err={bool(status & 2)} "
+                    f"locked={bool(status & 4)} init_done={bool(status & 8)} "
+                    f"pos={(status >> 8) & 0x3f} "
+                    f"delay_ps={((status >> 8) & 0x3f) * 625 / 3:.1f}"
+                )
+                # Diagnostico de depuracion (clk_mem, sin garantias de captura
+                # atomica): estado del FSM de fase y lo que compone `safe_idle`.
+                print(
+                    f"  fsm_state={(status >> 4) & 0xf} "
+                    f"traffic_block={(status >> 14) & 1} "
+                    f"fabric_busy={(status >> 15) & 1} "
+                    f"sdram_busy={(status >> 16) & 1} "
+                    f"fab_req_valid={(status >> 17) & 1} "
+                    f"req_empty={(status >> 18) & 0x3f:06b}"
+                )
+                # Punteros Gray de la FIFO de peticion de cada puerto (PHASE_DIAG2).
+                ptrs = (client.read_word(PHASE_STATUS + 4)
+                        | (client.read_word(PHASE_STATUS + 8) << 32))
+                for port in range(6):
+                    field = (ptrs >> (6 * port)) & 0x3F
+                    wr, rd = field & 7, field >> 3
+                    print(f"  puerto {port}: wr_gray={wr:03b} rd_gray={rd:03b}"
+                          f"{'' if wr == rd else '   <-- distintos'}")
+                d3 = client.read_word(PHASE_STATUS + 12)
+                print(f"  fabric: head_valid={d3 & 0x3f:06b} "
+                      f"prefetch_pending={(d3 >> 6) & 0x3f:06b} "
+                      f"state={(d3 >> 12) & 3} grant_valid={(d3 >> 14) & 1} "
+                      f"cmd_full={(d3 >> 15) & 1}")
+                print(f"  video p2: valid={(d3 >> 16) & 1} ready={(d3 >> 17) & 1} "
+                      f"mode={(d3 >> 18) & 3} rsp_valid={(d3 >> 20) & 1} "
+                      f"rsp_ready={(d3 >> 21) & 1}")
+                d4 = client.read_word(PHASE_STATUS + 16)
+                print(f"  fabric cuentas: cmd={d4 & 0xf} outstanding={(d4 >> 4) & 0xf} "
+                      f"meta={(d4 >> 8) & 0xf} rsp={(d4 >> 12) & 0xf} "
+                      f"issue_valid={(d4 >> 16) & 1} rp_valid={(d4 >> 17) & 1} "
+                      f"route_valid={(d4 >> 18) & 1} go_q={(d4 >> 19) & 1}")
+                print(f"  reset fabric: visto={(d4 >> 20) & 1} soltado={(d4 >> 21) & 1} "
+                      f"ciclos={(d4 >> 22) & 0xff}")
+                d6 = client.read_word(PHASE_STATUS + 24)
+                d7 = client.read_word(PHASE_STATUS + 28)
+                acc, done = d6 & 0xffff, (d6 >> 16) & 0xffff
+                print(f"  controlador: aceptadas={acc} done={done} "
+                      f"(done-aceptadas mod 65536 = {(done - acc) & 0xffff}) "
+                      f"racha_max_done={d7 & 0xf}")
+                f = d7 >> 4
+                print("  primer puerto por etapa (visto/valor): "
+                      f"cmd_master={(f >> 21) & 1}/{f & 7} "
+                      f"backend_port={(f >> 22) & 1}/{(f >> 3) & 0x3f:06b} "
+                      f"rp_port={(f >> 23) & 1}/{(f >> 9) & 0x3f:06b} "
+                      f"route={(f >> 24) & 1}/{(f >> 15) & 0x3f:06b}")
+                d8 = client.read_word(PHASE_STATUS + 32)
+                s = d8 >> 12
+                print(f"  reset: sueltas reset_fab={d8 & 0xf} caidas lock_mem={(d8 >> 4) & 0xf} "
+                      f"lock_cpu={(d8 >> 8) & 0xf}")
+                print(f"  foto al soltar el reset (tomada={s & 1}): issue_valid={(s >> 1) & 1} "
+                      f"route_valid={(s >> 2) & 1} rp_valid={(s >> 3) & 1} go_q={(s >> 4) & 1} "
+                      f"state={(s >> 5) & 3} cmd_count={(s >> 7) & 0xf} outstanding={(s >> 11) & 0xf}")
+                hi0 = client.read_word(PHASE_STATUS + 44)
+                n_trace = (hi0 >> 8) & 0x3f
+                print(f"  traza del fabric: {n_trace} eventos")
+                for k in range(min(n_trace, 16)):
+                    client.write_word(PHASE_STATUS + 36, k)
+                    lo = client.read_word(PHASE_STATUS + 40)
+                    hi = client.read_word(PHASE_STATUS + 44) & 0x3f
+                    e = lo | (hi << 32)
+                    names = {29: "go_q", 28: "complete", 27: "sdram_done"}
+                    ev = ",".join(nm for b, nm in names.items() if (e >> b) & 1)
+                    print(f"   {k:2d} cic={(e >> 30) & 0xff:3d} {ev:24s} "
+                          f"wr={(e >> 24) & 7} rd={(e >> 21) & 7} count={(e >> 17) & 0xf} "
+                          f"meta_port[rd]={(e >> 11) & 0x3f:06b} backend={(e >> 5) & 0x3f:06b} "
+                          f"rst_q={(e >> 4) & 1} rst_qq={(e >> 3) & 1}")
+                d5 = client.read_word(PHASE_STATUS + 20)
+                print(f"  router: route_port={(d5 >> 24) & 0x3f:06b} (bit i = puerto i)")
+                for port in range(6):
+                    f = (d5 >> (4 * port)) & 0xf
+                    print(f"  puerto {port} rsp: full={(f >> 3) & 1} empty={(f >> 2) & 1} "
+                          f"hold_valid={(f >> 1) & 1} phantom_seen={f & 1}")
+            elif args.command == "phase-step":
+                steps = parse_integer(args.arguments[0], 48, "steps")
+                if steps == 0:
+                    raise MonitorError("steps debe estar entre 1 y 48")
+                client.write_word(PHASE_CTRL, 1 | (steps << 8))
+                status = client.read_word(PHASE_STATUS)
+                if status & 2:
+                    raise MonitorError("el controlador de fase rechazo la peticion")
+                print(f"Cambio solicitado: {steps} paso(s) de retraso")
+            elif args.command == "phase-set":
+                target = parse_integer(args.arguments[0], PHASES - 1, "phase")
+                status = client.set_sdram_phase(target)
+                print(f"Fase SDRAM: {status['pos']} "
+                      f"({status['pos'] * 625 / 3:.1f} ps de retraso)")
             elif args.command == "run":
                 client.run_cpu()
                 print("CPU started")

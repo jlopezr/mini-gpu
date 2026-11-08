@@ -69,7 +69,7 @@ module sdram_controller_128_tb;
 
   sdram_controller_128 #(
       .CLK_FREQ_HZ(CLK_HZ), .POWERUP_DELAY_US(POWERUP_US),
-      .READ_DELAY_CYCLES(0)
+      .READ_DELAY_CYCLES(2)   // modelo 0 + 2 (`dq_pos` y la etapa previa a los pines)
   ) ctrl_ideal (
       .clk(clk), .reset(reset),
       .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),
@@ -90,7 +90,7 @@ module sdram_controller_128_tb;
 
   sdram_controller_128 #(
       .CLK_FREQ_HZ(CLK_HZ), .POWERUP_DELAY_US(POWERUP_US),
-      .READ_DELAY_CYCLES(1)
+      .READ_DELAY_CYCLES(3)   // modelo 1 + 2 (`dq_pos` y la etapa previa a los pines)
   ) ctrl_placa (
       .clk(clk), .reset(reset),
       .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),
@@ -122,7 +122,7 @@ module sdram_controller_128_tb;
 
   sdram_controller_128 #(
       .CLK_FREQ_HZ(CLK_HZ), .POWERUP_DELAY_US(POWERUP_US),
-      .READ_DELAY_CYCLES(0)
+      .READ_DELAY_CYCLES(2)   // un ciclo menos que el modelo de placa (3)
   ) ctrl_malo (
       .clk(clk), .reset(reset),
       .req_valid(req_valid), .req_write(req_write), .req_addr(req_addr),
