@@ -353,6 +353,23 @@ module sdram_controller_128 #(
     reg        dq_oe;
     reg [15:0] dq_out;
 
+    // Etapa PREVIA a los pines. Estos registros llevan la logica (reset,
+    // habilitaciones, decision de comando) y se quedan en el tejido; los
+    // registros `*_q` de abajo solo copian y son los que Diamond empaqueta en la
+    // celda de IO. Antes la decision (6 niveles de LUT desde rcd_z/ord_q) acababa
+    // directamente en el registro del pin, que queda lejos de la logica: 11,4 ns
+    // de retardo para un ciclo de 10 ns, y con ello el cierre de clk_mem dependia
+    // de la semilla de colocacion (99,4 / 106,7 / 87,0 MHz con el mismo RTL).
+    // Cuesta UN ciclo en todo lo que sale hacia la SDRAM (comandos, direccion,
+    // mascara, dato y habilitacion), todo por igual, asi que el protocolo no
+    // cambia; el dato de lectura vuelve un ciclo mas tarde y por eso
+    // READ_DELAY_CYCLES sube de 1 a 2.
+    reg [3:0]  cmd_pre;
+    reg [12:0] a_pre;
+    reg [1:0]  ba_pre;
+    reg [1:0]  dqm_pre;
+    reg        dq_oe_pre;
+    reg [15:0] dq_out_pre;
     reg [127:0] wr_buf;
     reg [15:0]  wr_mask;
     reg [2:0]   wr_idx;
@@ -383,6 +400,17 @@ module sdram_controller_128 #(
     assign sdram_ba  = ba_q;
     assign sdram_dqm = dqm_q;
 
+    // Etapa de salida: copia pura, SIN reset ni habilitacion, para que el
+    // registro pueda vivir dentro de la celda de IO.
+    always @(posedge clk) begin
+        cmd_q  <= cmd_pre;
+        a_q    <= a_pre;
+        ba_q   <= ba_pre;
+        dqm_q  <= dqm_pre;
+        dq_oe  <= dq_oe_pre;
+        dq_out <= dq_out_pre;
+    end
+
     // ------------------------------------------------------------
     // Captura de DQ en el flanco de BAJADA
     // ------------------------------------------------------------
@@ -409,6 +437,16 @@ module sdram_controller_128 #(
     reg [15:0] dq_negedge;
     always @(negedge clk) begin
         dq_negedge <= sdram_d;
+    end
+
+    // Segunda etapa, en la SUBIDA: el registro de bajada (pegado al pin, en la
+    // celda de IO) solo alimenta a esta, con fanout 1. Antes alimentaba 8
+    // registros de `rdata` (uno por beat) y el rutado desde el IO se comia
+    // 4,65 ns de los 5 ns del medio ciclo (clk_mem 99,35 MHz, -0,13 ns).
+    // Cuesta un ciclo: READ_DELAY_CYCLES=1 en la instancia.
+    reg [15:0] dq_pos;
+    always @(posedge clk) begin
+        dq_pos <= dq_negedge;
     end
 
     // DQ solo lo maneja la FPGA durante las rafagas de escritura.
@@ -464,6 +502,17 @@ module sdram_controller_128 #(
             end
         endcase
     end
+
+    // Mascara DQM del beat 0 de la peticion mas antigua, registrada un ciclo
+    // antes. Calcularla en el ciclo del WRITE colgaba `dqm_q` de `col_issue`
+    // (row_open/rcd_z/gap indexados por `hb`) MAS el mux 4:1 de `hb_wmask`: 7
+    // niveles de LUT y el camino critico de `clk_mem` en las 35 y 37. Es seguro
+    // porque `hb` y los datos del slot llevan estables al menos un ciclo antes
+    // de cualquier `col_issue`: tras un `col_issue` los `gap_*_z` valen 0 el
+    // ciclo siguiente, y una peticion nueva necesita ACTIVE y tRCD antes de que
+    // `row_open` de su banco valga 1.
+    reg [1:0] hb_dqm_q;
+    always @(posedge clk) hb_dqm_q <= ~hb_wmask[1:0];
 
     // Palabra y mascara del beat que toca de la rafaga de escritura.
     reg [15:0] wr_word;
@@ -610,12 +659,12 @@ module sdram_controller_128 #(
             refresh_count <= 0;
             refresh_due <= 1'b0;
 
-            cmd_q <= CMD_NOP;
-            a_q <= 0;
-            ba_q <= 0;
-            dqm_q <= 2'b11;
-            dq_oe <= 1'b0;
-            dq_out <= 16'h0000;
+            cmd_pre <= CMD_NOP;
+            a_pre <= 0;
+            ba_pre <= 0;
+            dqm_pre <= 2'b11;
+            dq_oe_pre <= 1'b0;
+            dq_out_pre <= 16'h0000;
 
             slot_valid <= 0;
             slot_write <= 0;
@@ -655,11 +704,11 @@ module sdram_controller_128 #(
         end else begin
 
             // Por defecto, NOP y DQ suelto; lo que sigue lo sobreescribe.
-            cmd_q <= CMD_NOP;
-            a_q <= 13'd0;
-            ba_q <= 2'd0;
-            dqm_q <= 2'b00;
-            dq_oe <= 1'b0;
+            cmd_pre <= CMD_NOP;
+            a_pre <= 13'd0;
+            ba_pre <= 2'd0;
+            dqm_pre <= 2'b00;
+            dq_oe_pre <= 1'b0;
             done <= 1'b0;
 
             // ----------------------------------------------------
@@ -697,7 +746,7 @@ module sdram_controller_128 #(
                 case (ini_state)
 
                     I_WAIT: begin
-                        dqm_q <= 2'b11;
+                        dqm_pre <= 2'b11;
                         if (init_count + 1 >= POWERUP_DELAY_CYCLES) begin
                             init_count <= 0;
                             ini_state <= I_PRE;
@@ -707,8 +756,8 @@ module sdram_controller_128 #(
                     end
 
                     I_PRE: begin
-                        cmd_q <= CMD_PRECHARGE;
-                        a_q <= 13'h0400;    // A10=1 -> todos los bancos
+                        cmd_pre <= CMD_PRECHARGE;
+                        a_pre <= 13'h0400;    // A10=1 -> todos los bancos
                         timing_count <= 0;
                         ini_state <= I_PRE_WAIT;
                     end
@@ -723,7 +772,7 @@ module sdram_controller_128 #(
                     end
 
                     I_REF: begin
-                        cmd_q <= CMD_REFRESH;
+                        cmd_pre <= CMD_REFRESH;
                         timing_count <= 0;
                         ini_state <= I_REF_WAIT;
                     end
@@ -744,12 +793,12 @@ module sdram_controller_128 #(
                     end
 
                     I_MRS: begin
-                        cmd_q <= CMD_MRS;
+                        cmd_pre <= CMD_MRS;
                         // A2:A0 = 011 -> burst length 8
                         // A3    = 0   -> secuencial
                         // A6:A4 = 010 -> CAS latency 2
                         // A9    = 0   -> escritura con la longitud programada
-                        a_q <= 13'h023;
+                        a_pre <= 13'h023;
                         timing_count <= 0;
                         ini_state <= I_MRS_WAIT;
                     end
@@ -782,7 +831,7 @@ module sdram_controller_128 #(
 
                 R_DRAIN: begin
                     if (refresh_issue) begin
-                        cmd_q <= CMD_REFRESH;
+                        cmd_pre <= CMD_REFRESH;
                         refresh_count <= 0;
                         refresh_due <= 1'b0;
                         timing_count <= TRFC_CYCLES[15:0] - 16'd1;
@@ -836,9 +885,9 @@ module sdram_controller_128 #(
             // ---- ACTIVE ------------------------------------------
 
             if (act_issue) begin
-                cmd_q <= CMD_ACTIVE;
-                a_q <= sel_row;
-                ba_q <= sel_b;
+                cmd_pre <= CMD_ACTIVE;
+                a_pre <= sel_row;
+                ba_pre <= sel_b;
                 trrd_t <= T_TRRD;
                 trrd_z <= (TRRD_CYCLES - 1 == 0);
             end
@@ -870,11 +919,11 @@ module sdram_controller_128 #(
             end
 
             if (col_issue) begin
-                cmd_q <= hb_write ? CMD_WRITE : CMD_READ;
+                cmd_pre <= hb_write ? CMD_WRITE : CMD_READ;
 
                 // A10 = 1 -> auto-precarga. A9 = 0. A8:A0 = columna.
-                a_q <= {2'b00, 1'b1, 1'b0, hb_col, 3'b000};
-                ba_q <= hb;
+                a_pre <= {2'b00, 1'b1, 1'b0, hb_col, 3'b000};
+                ba_pre <= hb;
 
                 gap_rd_t <= T_GAP_SAME;
                 gap_wr_t <= hb_write ? T_GAP_SAME : T_GAP_RD_TO_WR;
@@ -884,19 +933,19 @@ module sdram_controller_128 #(
                 if (hb_write) begin
                     // El beat 0 sale junto con el comando. Los otros siete
                     // salen de wr_buf, asi que el slot queda libre ya.
-                    dq_oe <= 1'b1;
-                    dq_out <= hb_wdata[15:0];
+                    dq_oe_pre <= 1'b1;
+                    dq_out_pre <= hb_wdata[15:0];
 
                     // DQM = 1 enmascara el byte; nuestra mascara es 1 = escribir.
-                    dqm_q <= ~hb_wmask[1:0];
+                    dqm_pre <= ~hb_wmask[1:0];
 
                     wr_idx <= 3'd1;
                     wr_run <= 1'b1;
                 end
             end else if (wr_run) begin
-                dq_oe <= 1'b1;
-                dq_out <= wr_word;
-                dqm_q <= ~wr_msk2;
+                dq_oe_pre <= 1'b1;
+                dq_out_pre <= wr_word;
+                dqm_pre <= ~wr_msk2;
                 wr_idx <= wr_idx + 1'b1;
                 if (wr_idx == 3'd7)
                     wr_run <= 1'b0;
@@ -910,10 +959,10 @@ module sdram_controller_128 #(
             // Del registro de flanco de bajada, no de DQ directamente.
             // Ver `dq_negedge` arriba.
             if (cap0)
-                rdata[15:0] <= dq_negedge;
+                rdata[15:0] <= dq_pos;
             for (i = 1; i < 8; i = i + 1)
                 if (cap_oh[i])
-                    rdata[i*16 +: 16] <= dq_negedge;
+                    rdata[i*16 +: 16] <= dq_pos;
             cap_oh <= {cap_oh[6:1], cap0};
             cap_run <= cap0 || (|cap_oh[6:1]);
 

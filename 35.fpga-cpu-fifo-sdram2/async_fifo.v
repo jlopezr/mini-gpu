@@ -14,7 +14,11 @@ module async_fifo #(
     output reg  [DATA_WIDTH-1:0] data_out,
     output reg                   rd_valid,
     output reg                   full,
-    output reg                   empty
+    output reg                   empty,
+    // Solo diagnostico (se pueden dejar sin conectar): punteros en Gray, cada
+    // uno en su propio dominio de reloj.
+    output wire [ADDR_WIDTH:0]   dbg_wr_ptr_gray,
+    output wire [ADDR_WIDTH:0]   dbg_rd_ptr_gray
 );
 
     localparam PTR_WIDTH = ADDR_WIDTH + 1;
@@ -31,6 +35,9 @@ module async_fifo #(
     (* async_reg = "true" *) reg [PTR_WIDTH-1:0] rd_ptr_gray_sync2;
     (* async_reg = "true" *) reg [PTR_WIDTH-1:0] wr_ptr_gray_sync1;
     (* async_reg = "true" *) reg [PTR_WIDTH-1:0] wr_ptr_gray_sync2;
+
+    assign dbg_wr_ptr_gray = wr_ptr_gray;
+    assign dbg_rd_ptr_gray = rd_ptr_gray;
 
     function [PTR_WIDTH-1:0] bin_to_gray;
         input [PTR_WIDTH-1:0] bin;

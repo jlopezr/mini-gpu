@@ -61,27 +61,14 @@ module top (
       .locked(pll_mem_locked));
   assign sdram_clk = clk_sdram;
 
-  // Shifted reset avoids a counter terminal-count path on the high-fanout
-  // reset net. Sixteen clean clocks are sufficient; the SDRAM controller then
-  // performs its own JEDEC power-up delay before asserting init_done.
-  reg [15:0] reset_shift = 16'hffff;
-  wire reset = reset_shift[15];
-  always @(posedge clk) begin
-    if (!pll_locked || !btn_pwr_n) begin
-      reset_shift <= 16'hffff;
-    end else begin
-      reset_shift <= {reset_shift[14:0], 1'b0};
-    end
-  end
-
-  reg [15:0] reset_mem_shift = 16'hffff;
-  wire reset_mem = reset_mem_shift[15];
-  always @(posedge clk_mem) begin
-    if (!pll_mem_locked || !btn_pwr_n)
-      reset_mem_shift <= 16'hffff;
-    else
-      reset_mem_shift <= {reset_mem_shift[14:0], 1'b0};
-  end
+  // Resets: asercion asincrona y liberacion sincrona (`reset_sync.v`), una
+  // cadena por dominio de reloj (ver la 37). El modulo SDRAM hace aparte su
+  // retardo de arranque JEDEC antes de `init_done`.
+  wire arst_cpu = !pll_locked     || !btn_pwr_n;
+  wire arst_mem = !pll_mem_locked || !btn_pwr_n;
+  wire reset, reset_mem;
+  reset_sync #(.STAGES(16)) rs_reset (.clk(clk),     .arst(arst_cpu), .rst(reset));
+  reset_sync #(.STAGES(16)) rs_mem   (.clk(clk_mem), .arst(arst_mem), .rst(reset_mem));
   assign wifi_gpio0 = 1'b1;
 
   wire [7:0] uart_rx_data, uart_tx_data;
@@ -574,7 +561,8 @@ module top (
       .sdram_req_valid(fab_req_valid), .sdram_req_ready(fab_req_ready),
       .sdram_req_write(fab_req_write), .sdram_req_addr(fab_req_addr),
       .sdram_req_wdata(fab_req_wdata), .sdram_req_wmask(fab_req_wmask),
-      .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy));
+      .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy),
+      .dbg_trace_idx(5'd0));
 
   reg init_done_sync1, init_done_sync2;
   always @(posedge clk) begin
@@ -605,7 +593,7 @@ module top (
   assign controller_req_valid = fab_req_valid && !phase_traffic_block;
   assign fab_req_ready = controller_req_ready && !phase_traffic_block;
 
-  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000)) controller_i(
+  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000), .READ_DELAY_CYCLES(2)) controller_i(
       .clk(clk_mem), .reset(reset_mem || phase_controller_reset),
       .req_valid(controller_req_valid), .req_write(fab_req_write),
       .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),

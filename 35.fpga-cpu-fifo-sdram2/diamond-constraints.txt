@@ -1,0 +1,20 @@
+# Restricciones solo para el flujo de Diamond (tools/diamond_runner.py las anexa al .lpf).
+#
+# TRACE trata como relacionados los relojes que salen de PLL distintos (clk de pll_cpu,
+# clk_mem de pll_mem, clk_pix/clk_pix_5x de clock2_gen) y suma desfases de PLL como skew: da
+# errores en cruces que no existen en el chip. Los cruces entre dominios son asincronos por
+# diseno:
+#
+# 1) clk <-> clk_mem (CPU y video <-> SDRAM): fabric_fifo_bridge.v, que usa async_fifo.v
+#    (punteros Gray con 2 FF).
+#
+# 2) clk <-> clk_pix y clk_pix -> clk_pix_5x: video_scanout.v (toggles por 2 FF, banco con
+#    toggle) y consola; el mismo razonamiento que 30.fpga-cpu-console/diamond-constraints.txt.
+#
+# Lo que NO se bloquea es clk -> clk ni clk_mem -> clk_mem: son los caminos que de verdad
+# limitan la frecuencia. Mismo criterio que 36 y 37, sin el dominio de la GPU (la 35 no lo tiene).
+BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_mem" ;
+BLOCK PATH FROM CLKNET "clk_mem" TO CLKNET "clk" ;
+BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_pix" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_pix_5x" ;
