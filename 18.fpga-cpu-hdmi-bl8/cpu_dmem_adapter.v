@@ -139,7 +139,16 @@ module cpu_dmem_adapter #(
   reg wb_flushing;
   assign wb_dirty = wb_valid || wb_flushing;
   assign req_valid = (state == ST_ISSUE);
-  assign rsp_ready = (state == ST_WAIT);
+  // Solo en ST_ISSUE no se acepta: ahi una respuesta de rechazo por direccion
+  // ya puede estar valida un ciclo antes de que el adaptador pase a ST_WAIT. En
+  // cualquier otro estado distinto de WAIT la respuesta es huerfana y se
+  // descarta, para que la fabrica no se quede en RESP para siempre.
+  //
+  // En la placa, con Diamond, la fabrica aparece en RESP para el puerto 0 sin
+  // que el adaptador haya pedido nada, y el monitor se cuelga en su primer
+  // acceso a memoria. Causa no aclarada (ver docs/reset-y-diamond-lecciones.md);
+  // esto la tolera y la suite de la placa pasa.
+  assign rsp_ready = (state != ST_ISSUE);
 
   localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
   // La 18 NO tiene accesos sub-palabra --eso entra en la 19-- asi que aqui la
