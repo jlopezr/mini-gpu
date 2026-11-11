@@ -360,13 +360,39 @@ module top (
   wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
+  // Cache de datos entre la CPU y el adaptador, con el mismo protocolo a los
+  // dos lados (ver dcache.v). Escritura inmediata, asi que la SDRAM esta al
+  // dia salvo lo que guarde el bufer de combinacion, que se vacia como antes.
+  // Se invalida entera con `reset` y al parar la CPU: es cuando el monitor
+  // puede escribir en memoria por su cuenta.
+  wire ad_dmem_valid, ad_dmem_ready, ad_dmem_rvalid, ad_dmem_error;
+  wire [31:0] ad_dmem_address, ad_dmem_write_data, ad_dmem_read_data;
+  wire [3:0] ad_dmem_write_enable;
+  wire [127:0] ad_dmem_read_line;
+  wire dcache_hit, dcache_miss;
+  dcache dcache_i(
+      .clk(clk), .reset(reset), .invalidate(cpu_halted),
+      .cpu_valid(cpu_dmem_valid), .cpu_address(cpu_dmem_address),
+      .cpu_write_data(cpu_dmem_write_data),
+      .cpu_write_enable(cpu_dmem_write_enable),
+      .cpu_ready(cpu_dmem_ready), .cpu_read_data(cpu_dmem_read_data),
+      .cpu_rvalid(cpu_dmem_rvalid), .cpu_error(cpu_dmem_error),
+      .mem_valid(ad_dmem_valid), .mem_address(ad_dmem_address),
+      .mem_write_data(ad_dmem_write_data),
+      .mem_write_enable(ad_dmem_write_enable),
+      .mem_ready(ad_dmem_ready), .mem_read_data(ad_dmem_read_data),
+      .mem_read_line(ad_dmem_read_line),
+      .mem_rvalid(ad_dmem_rvalid), .mem_error(ad_dmem_error),
+      .hit_event(dcache_hit), .miss_event(dcache_miss));
+
   cpu_dmem_adapter dmem_adapter_i(
       .clk(clk), .reset(reset), .init_done(init_done),
-      .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
-      .dmem_write_data(cpu_dmem_write_data),
-      .dmem_write_enable(cpu_dmem_write_enable),
-      .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
+      .dmem_valid(ad_dmem_valid), .dmem_address(ad_dmem_address),
+      .dmem_write_data(ad_dmem_write_data),
+      .dmem_write_enable(ad_dmem_write_enable),
+      .dmem_read_data(ad_dmem_read_data), .dmem_read_line(ad_dmem_read_line),
+      .dmem_ready(ad_dmem_ready),
+      .dmem_rvalid(ad_dmem_rvalid), .dmem_error(ad_dmem_error),
       .cpu_halted(cpu_halted),
       // Los contadores son para los bancos; la sintesis los quita.
       .wb_dirty(wb_dirty), .merge_count(), .flush_count(),

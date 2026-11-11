@@ -77,6 +77,9 @@ module cpu_dmem_adapter #(
     input  wire [3:0]  dmem_write_enable,
     output wire        dmem_ready,
     output reg  [31:0] dmem_read_data,
+    // La linea entera de la ultima lectura de SDRAM, valida con `rvalid`.
+    // Solo la usa dcache.v, para guardarla al fallar.
+    output reg  [127:0] dmem_read_line,
     output reg         dmem_rvalid,
     output reg         dmem_error,
 
@@ -196,6 +199,7 @@ module cpu_dmem_adapter #(
       state <= ST_IDLE;
       pending <= PEND_NONE;
       dmem_read_data <= 32'h0000_0000;
+      dmem_read_line <= 128'd0;
       req_write <= 1'b0;
       req_addr <= 32'h0000_0000;
       req_wdata <= 128'd0;
@@ -352,6 +356,7 @@ module cpu_dmem_adapter #(
                 // Volcado suelto, el del `halt`. Nadie espera respuesta.
                 if (saved_read) begin
                   dmem_read_data <= rsp_rdata[{word_offset, 5'b00000} +: 32];
+                  dmem_read_line <= rsp_rdata;
                   dmem_rvalid <= 1'b1;
                   dmem_error <= rsp_error;
                   saved_read <= 1'b0;
