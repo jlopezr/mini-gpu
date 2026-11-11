@@ -182,17 +182,16 @@ module serial_port #(
 
   wire [7:0] tx_free = DEPTH[7:0] - {{(8 - ABITS - 1){1'b0}}, tx_count};
 
-  always @(posedge clk) begin
-    if (reset) begin
-      rx_overrun <= 1'b0;
-    end else begin
-      // El PC empujando en una cola llena: no deberia pasar nunca, porque
-      // `host_rx_free` viaja en cada respuesta de SEND_BYTES.
-      if (host_push && rx_count == DEPTH[ABITS:0]) rx_overrun <= 1'b1;
-      if (bus_write && selected == REG_STATUS && write_mask[2] && write_data[16])
-        rx_overrun <= 1'b0;
-    end
-  end
+  // El reset va DENTRO de la logica de datos, no como `if (reset)`: con la forma
+  // `if (reset) ... else ...` Synplify (Diamond) lleva el reset al LSR del flop y, junto con
+  // el CE que genera, el flop arrancaba a 1 y el reset no lo limpiaba (STATUS = 0x14000 al
+  // programar, `serial-empty-input` fallaba). Medido en la placa con la 36 y 35.
+  // El PC empujando en una cola llena no deberia pasar nunca, porque `host_rx_free` viaja
+  // en cada respuesta de SEND_BYTES. Borrar gana a poner.
+  wire overrun_clear = bus_write && selected == REG_STATUS && write_mask[2] && write_data[16];
+  wire overrun_set   = host_push && rx_count == DEPTH[ABITS:0];
+  always @(posedge clk)
+    rx_overrun <= !reset && (rx_overrun || overrun_set) && !overrun_clear;
 
   always @* begin
     case (selected)

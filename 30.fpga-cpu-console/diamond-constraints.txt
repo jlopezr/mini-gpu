@@ -17,7 +17,13 @@
 # 3) clk_pix -> clk_pix_5x: el mismo cruce de la 13 (ver 13.hdmi/diamond-constraints.txt).
 #    Los dos relojes salen del mismo PLL con los flancos alineados a proposito.
 #
-# 4) clk -> clk_pix en console_i (text_console.v): text_ram, font_ram, palette_ram y text_palette\n#    se escriben en clk y se leen en clk_pix. Las tres RAM son EBR de doble reloj; text_palette\n#    es un array de registros. No hay handshake: es una escritura de la CPU sin sincronizar con\n#    el barrido, asi que como mucho un pixel o un caracter sale con el dato viejo durante un\n#    cuadro (sin rotura de protocolo). nable entra por 2 FF (enable_sync0/1).\n#\n# Lo que NO se bloquea es clk -> clk: son los caminos de la CPU, y son los que de verdad
+# 4) clk -> clk_pix en console_i (text_console.v): text_ram, font_ram, palette_ram y text_palette
+#    se escriben en clk y se leen en clk_pix. Las tres RAM son EBR de doble reloj; text_palette
+#    es un array de registros. No hay handshake: es una escritura de la CPU sin sincronizar con
+#    el barrido, asi que como mucho un pixel o un caracter sale con el dato viejo durante un
+#    cuadro (sin rotura de protocolo). enable entra por 2 FF (enable_sync0/1).
+#
+# Lo que NO se bloquea es clk -> clk: son los caminos de la CPU, y son los que de verdad
 # limitan la frecuencia (apio llega a 103 MHz).
 BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_pix" ;
 BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk" ;
