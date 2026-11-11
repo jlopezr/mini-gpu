@@ -179,13 +179,57 @@ que la fábrica no se quede en `RESP`. En la placa con Diamond: 18 → 30/30, 19
 
 **Qué no resuelve:**
 
-- **La causa raíz.** El arreglo tolera el síntoma y no lo explica. Sigue abierto.
+- **La causa raíz.** El arreglo tolera el síntoma y no lo explica. Sigue abierto. Un experimento A/B en el 18
+  (sección 4.7) apunta a la promoción del reset a red primaria.
 - **La 34.** Falla 72/72 con y sin este arreglo (sección 4.6).
 - **La 22.** Usa la misma `memory_fabric_4.v` (mismo hash que el 18) y su `gpu_lsu2.v` tiene el mismo patrón
   (`mem_rsp_ready = state==WAIT && !grp_mmio`), pero pasa 70/70 y no se ha tocado. `gpu_lsu2` tiene seis estados y
   reparte las respuestas entre memoria y MMIO, así que tirar una respuesta allí podría perder datos de un grupo.
   Antes de cambiarlo habría que reproducir el cuelgue con otro build.
 - **35 a 38** no usan este adaptador: su protección es la cuenta de peticiones del bridge (sección 4.1).
+
+### 4.7 Experimento A/B del 10 de noviembre: el reset en red primaria (18)
+
+**Idea.** En el 18, Diamond promueve `reset_shift_iso[15]` (el `reset = reset_shift[15]` del RTL, el único net que
+llega a `memory_fabric_4` y a `cpu_dmem_adapter`) a recurso primario de reloj (PCLK): 1070 cargas `LSR` más el
+pin `GSR`. Se probó si el cuelgue de la sección 4.5 tiene que ver con eso.
+
+**Montaje.** Mismo RTL sin el drenaje defensivo (`rsp_ready = (state == ST_WAIT)`), misma tabla de PAR (3), mismas
+herramientas. Única diferencia: la línea `PROHIBIT PRIMARY NET "reset_shift_iso[15]" ;` en
+`18.fpga-cpu-hdmi-bl8/diamond-constraints.txt`. La sintaxis sale de la documentación instalada
+(`Constraints Ref\PROHIBIT_PRIMARY.htm`). Prueba de que se aplicó: la red desaparece de las `PRIMARY` del `.par` y la
+línea figura en el `.prf`. Se programó cada variante 5 veces alternando y se midió el acceso mínimo (`read-word 0x0`)
+antes de lanzar la suite.
+
+| Variante | Acceso mínimo | Suite | Timing |
+|---|---|---|---|
+| A: sin preferencia (reset primario) | 0/5 | 0/30 | cierra |
+| B: `PROHIBIT PRIMARY NET` | 5/5 | 30/30 | cierra por poco (`clk` 80,59 MHz, slack +0,092 ns) |
+| Control: drenaje defensivo, build del 10-nov | — | 30/30 (3/3) | cierra |
+
+**Lectura.** Apoya que el fallo participa de la promoción del reset a red primaria, y que se puede evitar sin lógica
+defensiva. No es una prueba: hay **una sola colocación por variante**, así que no se descarta suerte de placement,
+y el cierre de B es justo. Falta A′ y B′ con otra tabla de PAR.
+
+**Análisis de TRACE sobre los `.ncd` (sin placa).** No explica el fallo:
+
+- Quitar `BLOCK RESETPATHS` no cambia nada: los caminos del reset a los `LSR` síncronos ya se analizaban como
+  caminos normales. No sirve para "ver" el timing del reset.
+- Retardo del reset a los 1070 `LSR` (`MAXDELAY NET ... 0.1 ns` para forzar el listado): A, 5,66–5,76 ns, casi
+  uniforme; B, 0,63–5,99 ns. Pin `GSR`: 6,22 ns en A y 6,43 ns en B. Ninguna violación de setup ni de hold, con
+  12,5 ns de periodo.
+- La red de reset también alimenta el `GSR` del chip. Los únicos registros con `GSR:ENABLED` son 9 slices del
+  receptor de la UART (`uart_i/rx`: `state`, `shiftreg`, `data_strobe`), iguales en A y B. Es el único reset
+  asíncrono del diseño (`uart.v`: `always @(posedge clk or posedge reset)`). Su liberación no la mide TRACE.
+  **Pista sin verificar**, no causa.
+
+**Cuidado al interpretar.** `halted=False` justo tras programar **no** es firma de fallo: también lo da el build
+bueno con drenaje. Solo B arranca con `halted=True` (`cpu.v` dice que la CPU arranca parada tras el reset); por qué
+difiere es una pregunta abierta.
+
+**Cómo aplicarlo.** Si otro prototipo (19, 21, 30) vuelve a colgarse con Diamond, probar primero `PROHIBIT PRIMARY
+NET` sobre su net de reset (el nombre sale del `.par`) antes de añadir lógica defensiva. El experimento no se dejó
+en el repositorio: el 18 sigue con el drenaje y sin `PROHIBIT`, y su registro de build de Diamond quedó STALE.
 
 ### 4.6 La 34: no es este fallo
 
@@ -238,7 +282,9 @@ que ya es la 35 sin GPU.
 
 1. **Causa raíz de la respuesta huérfana** en 18, 19, 21 y 30 (sección 4.5). El arreglo defensivo los deja
    funcionando, pero no explica por qué la fábrica entra en `RESP` sin petición. Sospecha sin demostrar: los
-   varios drivers de `state_ns`.
+   varios drivers de `state_ns`. Pista más fuerte: el reset en red primaria (sección 4.7). Siguientes pasos:
+   A′/B′ con otra tabla de PAR para descartar suerte de placement; variante con el reset de `uart_i/rx` síncrono
+   (único consumidor del `GSR`); `PROHIBIT PRIMARY NET` en 19, 21 y 30.
 2. **22:** mismo patrón en `gpu_lsu2` y misma fábrica, validada 70/70 y sin tocar. Reproducir antes de arreglar.
 3. **34:** decidir entre portar la arquitectura de 35–38 o dejarla como no validada en la placa (sección 4.6).
 4. **`apio build` falla** desde el 8 de noviembre dentro de yosys, también en el 6. Causa sin aclarar.
