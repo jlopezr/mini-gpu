@@ -5,6 +5,7 @@ avanza, dando la vuelta a las 48 posiciones).
 """
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -97,9 +98,15 @@ class VersionJsonTest(unittest.TestCase):
             self.assertIsNone(client.apply_version_settings(path))
         self.assertEqual(client.moves, [])
 
-    def test_la_35_fija_una_fase_valida(self):
-        phase = json.loads((FOLDER / "version.json").read_text(encoding="utf-8"))["sdram_phase"]
-        self.assertTrue(0 <= phase < monitor.PHASES)
+    def test_la_35_lleva_la_fase_en_el_bitstream_y_no_en_version_json(self):
+        """La fase buena depende de la herramienta (Yosys o Diamond): la elige `top.v` al sintetizar."""
+        self.assertNotIn("sdram_phase", json.loads((FOLDER / "version.json").read_text(encoding="utf-8")))
+        top = (FOLDER / "top.v").read_text(encoding="utf-8")
+        phases = [int(x) for x in re.findall(r"localparam \[5:0\] SDRAM_PHASE = 6'd(\d+);", top)]
+        self.assertEqual(len(phases), 2)                   # una con `DIAMOND` y otra sin
+        self.assertTrue(all(0 <= phase < monitor.PHASES for phase in phases))
+        self.assertIn("pll_mem #(.CLKOS_POS(SDRAM_PHASE))", top)
+        self.assertIn("pll_phase_ctl #(.INITIAL_POS(SDRAM_PHASE))", top)
 
 
 class ConnectAppliesSettingsTest(unittest.TestCase):
@@ -131,9 +138,19 @@ class ConnectAppliesSettingsTest(unittest.TestCase):
 
     def test_aplica_la_fase_al_conectar(self):
         client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "version.json"
+            path.write_text(json.dumps({"sdram_phase": 10}), encoding="utf-8")
+            client.apply_version_settings = lambda: FakeClient.apply_version_settings(client, path)
+            with self.backend(client).connect():
+                pass
+        self.assertEqual(client.position, 10)
+
+    def test_la_35_ya_no_mueve_la_fase_al_conectar(self):
+        client = FakeClient(position=2)
         with self.backend(client).connect():
             pass
-        self.assertEqual(client.position, 10)
+        self.assertEqual(client.moves, [])
 
     def test_un_monitor_sin_ajustes_no_falla(self):
         client = SimpleNamespace()

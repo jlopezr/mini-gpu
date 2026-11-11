@@ -37,7 +37,16 @@ module top (
   wire clk_mem, clk_sdram, pll_mem_locked;
   wire pll_phasestep, pll_phasedir, pll_phaseloadreg;
   wire [1:0] pll_phasesel;
-  pll_mem pll_mem_i(
+  // Fase del reloj de la SDRAM con la que sale el bitstream, en pasos de 208 ps.
+  // Depende de la herramienta: la etapa de registros antes de los pines se
+  // implementa distinto y desplaza la ventana buena. Se mide con
+  // `tools/phase-sweep` y se cambia en caliente con `monitor.py phase-set`.
+`ifdef DIAMOND
+  localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
+`else
+  localparam [5:0] SDRAM_PHASE = 6'd2;   // phase-sweep de la 38, 2026-11-11: ventana 0-5
+`endif
+  pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
       .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
       .phasestep(pll_phasestep), .phasedir(pll_phasedir),
       .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
@@ -561,7 +570,7 @@ module top (
 
   wire phase_safe_idle = !fabric_busy && (&req_empty) && !sdram_busy
                          && !fab_req_valid;
-  pll_phase_ctl phase_ctl_i(
+  pll_phase_ctl #(.INITIAL_POS(SDRAM_PHASE)) phase_ctl_i(
       .clk(clk_mem), .reset(reset_mem),
       .req_toggle_async(phase_req_toggle), .req_steps_async(phase_req_steps),
       .ack_toggle(phase_ack_toggle), .safe_idle(phase_safe_idle),
