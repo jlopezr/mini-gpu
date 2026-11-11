@@ -104,8 +104,15 @@
   "perf_pipeline": {
     "architecture": "cpu",
     "file": "top.v",
-    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\)\\)",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\)",
     "implies": ["perf_stalls"]
+  },
+  "_comment_perf_dcache": "Los contadores de la cache de datos (mmio.md §13.2, ranuras 12 y 13: DMEM_HITS, DMEM_MISSES). Igual que perf_pipeline, se miran en el top.v que instancia cpu_perf_counters con DCACHE = 1.",
+  "perf_dcache": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\)\\)",
+    "implies": ["perf_pipeline"]
   },
   "atomic_warp_faults": {
     "architecture": "gpu"

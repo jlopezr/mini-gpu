@@ -35,7 +35,7 @@ if str(REPOSITORY) not in sys.path:
 
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
-from tools.perf_counters import pipeline_breakdown  # noqa: E402
+from tools.perf_counters import dcache_breakdown, pipeline_breakdown  # noqa: E402
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 from tools.board_record import folder_sha256  # noqa: E402
@@ -1292,6 +1292,35 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "ocupando EX; `Dependencia`: ID esperando un registro; `Salto`: ID vacio",
             "tras un salto tomado; `ID vacio`: fallo de busqueda o arranque. Ranuras",
             "8 a 11 de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # Los aciertos de la cache de datos (capacidad `perf_dcache`).
+    dcache = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                d = dcache_breakdown(medida.get("instructions"), medida.get("stalls"))
+                if d is not None:
+                    dcache.append((caso, v, d))
+    if dcache:
+        lineas += ["", "## Cache de datos", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Aciertos", "Fallos", "Acierto", "Fallos/instr."]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 4))
+        for caso, version, d in dcache:
+            mpi = d["misses_per_instruction"]
+            lineas.append(_markdown_row([
+                caso, version, f"{d['hits']:,}".replace(",", " "),
+                f"{d['misses']:,}".replace(",", " "),
+                "n/d" if d["hit_rate"] is None else _format_percent(d["hit_rate"]),
+                "n/d" if mpi is None else f"{mpi:.3f}"]))
+        lineas += [
+            "",
+            "Cada LOAD a memoria acierta o falla en la cache de datos; los STORE,",
+            "el MMIO y los accesos fuera de memoria no cuentan. `n/d`: el caso no",
+            "hace ningun LOAD a memoria. Ranuras 12 y 13 de CPU PERFORMANCE,",
+            "mmio.md §13.2.",
         ]
 
     # El ritmo de los casos de video: frames emitidos e intercambios hechos

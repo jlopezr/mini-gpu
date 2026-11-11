@@ -21,6 +21,8 @@ from tools.mmio_map import (
     MMIO_PERF_CTRL_ENABLE_BIT,
     MMIO_PERF_CTRL_OFF,
     MMIO_PERF_CYCLES_OFF,
+    MMIO_PERF_DMEM_HITS_OFF,
+    MMIO_PERF_DMEM_MISSES_OFF,
     MMIO_PERF_IMEM_HITS_OFF,
     MMIO_PERF_IMEM_MISSES_OFF,
     MMIO_PERF_MEM_TX_OFF,
@@ -57,8 +59,17 @@ PIPELINE_COUNTERS = {
 }
 
 
+# Los de la cache de datos (capacidad `perf_dcache`, ranuras 12 y 13): cada
+# LOAD a memoria acierta o falla. Tambien van con los de espera.
+DCACHE_COUNTERS = {
+    "dmem_hits": MMIO_PERF_DMEM_HITS_OFF,
+    "dmem_misses": MMIO_PERF_DMEM_MISSES_OFF,
+}
+
+
 def read_counters(read_word, write_word=None, stalls: bool = False,
-                  base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False) -> dict:
+                  base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False,
+                  dcache: bool = False) -> dict:
     """Todos los contadores de un mismo instante.
 
     `read_word(direccion)` y `write_word(direccion, valor)` son los del cliente
@@ -87,6 +98,9 @@ def read_counters(read_word, write_word=None, stalls: bool = False,
             if pipeline:
                 contadores["stalls"].update({nombre: read_word(base + offset)
                                              for nombre, offset in PIPELINE_COUNTERS.items()})
+            if dcache:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in DCACHE_COUNTERS.items()})
     finally:
         if write_word is not None:
             write_word(base + MMIO_PERF_CTRL_OFF, previo)
@@ -139,6 +153,24 @@ def breakdown(cycles, instructions, stalls) -> dict | None:
         "hit_rate": stalls["imem_hits"] / lookups if lookups else None,
         "tx_per_instruction": (stalls["mem_tx"] / instructions
                                if instructions else None),
+    }
+
+
+def dcache_breakdown(instructions, stalls) -> dict | None:
+    """Aciertos de la cache de datos (capacidad `perf_dcache`).
+
+    Devuelve `hits`, `misses`, `hit_rate` (None sin ningun LOAD a memoria) y
+    `misses_per_instruction`; None si la medida no trae esos contadores.
+    """
+    if not stalls or "dmem_hits" not in stalls or "dmem_misses" not in stalls:
+        return None
+    hits, misses = stalls["dmem_hits"], stalls["dmem_misses"]
+    loads = hits + misses
+    return {
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": hits / loads if loads else None,
+        "misses_per_instruction": misses / instructions if instructions else None,
     }
 
 

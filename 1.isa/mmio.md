@@ -887,6 +887,8 @@ Array según §12.6.
 | 9 | `+0x24` | `STALL_RAW` (extensión segmentada) |
 | 10 | `+0x28` | `STALL_BRANCH` (extensión segmentada) |
 | 11 | `+0x2C` | `STALL_ID_EMPTY` (extensión segmentada) |
+| 12 | `+0x30` | `DMEM_HITS` (extensión caché de datos) |
+| 13 | `+0x34` | `DMEM_MISSES` (extensión caché de datos) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
@@ -911,6 +913,8 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `STALL_RAW` | Solo CPU segmentada. Ciclos en que ID tiene una instrucción pero la para una dependencia con una instrucción anterior que aún no ha escrito su registro. |
 | `STALL_BRANCH` | Solo CPU segmentada. Ciclos con ID vacío desde un salto tomado hasta que llega la primera instrucción del destino. |
 | `STALL_ID_EMPTY` | Solo CPU segmentada. Ciclos con ID vacío por cualquier otro motivo: un fallo del búfer de instrucciones o el arranque. |
+| `DMEM_HITS` | Solo CPU con caché de datos. `LOAD` a memoria servidos por la caché, sin ir al fabric. |
+| `DMEM_MISSES` | Solo CPU con caché de datos. `LOAD` a memoria que tuvieron que leer una línea. Los `STORE`, el MMIO y los accesos fuera de memoria pasan de largo y no cuentan en ninguno de los dos. |
 
 **Identidades.** Con ellas se comprueba una implementación y se reparte el
 tiempo:
@@ -940,7 +944,7 @@ demás dan error (§12.6), no cero. Las CPU de las carpetas 16 a 21 implementan 
 ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
 detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
 RTL. La 38, segmentada, implementa además las ranuras 8 a 11 (capacidad
-`perf_pipeline`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+`perf_pipeline`) y, con su caché de datos, las 12 y 13 (capacidad `perf_dcache`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
 son bloques distintos y no chocan.
 
 **Cómo se leen.** Con el núcleo parado, o congelando el bloque con

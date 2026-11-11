@@ -29,6 +29,12 @@
 //   ranura 10 STALL_BRANCH    ID vacio tras un salto tomado
 //   ranura 11 STALL_ID_EMPTY  ID vacio por otro motivo (fallo de busqueda)
 //
+// Y solo con DCACHE = 1 (la 38 con dcache.v), que exige PIPELINE = 1 porque
+// las ranuras van seguidas:
+//
+//   ranura 12 DMEM_HITS    LOAD a memoria servidos por la cache de datos
+//   ranura 13 DMEM_MISSES  LOAD a memoria que tuvieron que leer una linea
+//
 // Con ellos, CYCLES se reparte en calculo, memoria y MMIO sin instrumentar
 // nada mas: CYCLES = calculo + STALL_MEM + STALL_MMIO, y de STALL_MEM se
 // separan la busqueda (STALL_FETCH) y los datos (STALL_MEM - STALL_FETCH).
@@ -70,7 +76,9 @@
 module cpu_perf_counters #(
     // 1 en las CPU segmentadas, que dan `pipe_stall`. Con 0 no existen las
     // ranuras 8 a 11 y la entrada no se usa: el circuito es el de siempre.
-    parameter integer PIPELINE = 0
+    parameter integer PIPELINE = 0,
+    // 1 con cache de datos, que da `dmem_hit`/`dmem_miss`. Exige PIPELINE = 1.
+    parameter integer DCACHE = 0
 ) (
     input wire clk,
     input wire reset,
@@ -112,10 +120,14 @@ module cpu_perf_counters #(
 
     // Motivo de no emitir, de cpu.v (`perf_stall`), ya registrado: [0] EX con
     // memoria, [1] dependencia, [2] salto, [3] ID vacio. Solo con PIPELINE.
-    input wire [3:0] pipe_stall
+    input wire [3:0] pipe_stall,
+
+    // Pulsos de dcache.v, uno por LOAD a memoria. Solo con DCACHE.
+    input wire dmem_hit,
+    input wire dmem_miss
 );
   // Cuantas ranuras del array existen de verdad. El resto dan error.
-  localparam integer NUM_COUNTERS = PIPELINE ? 12 : 8;
+  localparam integer NUM_COUNTERS = DCACHE ? 14 : (PIPELINE ? 12 : 8);
 
   localparam [5:0] SLOT_CYCLES      = 6'd0;
   localparam [5:0] SLOT_RETIRED     = 6'd1;
@@ -129,6 +141,8 @@ module cpu_perf_counters #(
   localparam [5:0] SLOT_STALL_RAW      = 6'd9;
   localparam [5:0] SLOT_STALL_BRANCH   = 6'd10;
   localparam [5:0] SLOT_STALL_ID_EMPTY = 6'd11;
+  localparam [5:0] SLOT_DMEM_HITS      = 6'd12;
+  localparam [5:0] SLOT_DMEM_MISSES    = 6'd13;
 
   // El mismo numero, en cinco bits, para indexar OVF0. La ranura son SEIS
   // bits porque §12.6 admite hasta 64 contadores, pero las banderas van en
@@ -149,6 +163,8 @@ module cpu_perf_counters #(
   localparam [4:0] BIT_STALL_RAW      = SLOT_STALL_RAW[4:0];
   localparam [4:0] BIT_STALL_BRANCH   = SLOT_STALL_BRANCH[4:0];
   localparam [4:0] BIT_STALL_ID_EMPTY = SLOT_STALL_ID_EMPTY[4:0];
+  localparam [4:0] BIT_DMEM_HITS      = SLOT_DMEM_HITS[4:0];
+  localparam [4:0] BIT_DMEM_MISSES    = SLOT_DMEM_MISSES[4:0];
 
   localparam [15:0] OFF_CTRL = 16'h0100;
   localparam [15:0] OFF_OVF0 = 16'h0104;
@@ -169,6 +185,8 @@ module cpu_perf_counters #(
   reg [31:0] stall_raw;
   reg [31:0] stall_branch;
   reg [31:0] stall_id_empty;
+  reg [31:0] dmem_hits;
+  reg [31:0] dmem_misses;
   // Una bandera por contador, en el bit `n mod 32` de PERF_OVF[n div 32].
   // Con ocho contadores sobran 24 bits de OVF0 y OVF1 entero, y se declaran
   // igual: anadir OVF1 despues obligaria a decidir donde con el control ya
@@ -184,6 +202,7 @@ module cpu_perf_counters #(
   wire tx1 = mem_req1 && !req1_prev;
 
   reg wait_fetch_q, wait_data_q, wait_mmio_q, hit_q, miss_q;
+  reg dhit_q, dmiss_q;
   reg [3:0] pipe_q;
   // Cero, una o dos peticiones nuevas en el mismo ciclo.
   reg [1:0] tx_q;
@@ -199,6 +218,8 @@ module cpu_perf_counters #(
       miss_q <= 1'b0;
       tx_q <= 2'd0;
       pipe_q <= 4'd0;
+      dhit_q <= 1'b0;
+      dmiss_q <= 1'b0;
     end else begin
       req0_prev <= mem_req0;
       req1_prev <= mem_req1;
@@ -209,6 +230,8 @@ module cpu_perf_counters #(
       miss_q <= imem_miss;
       tx_q <= {1'b0, tx0} + {1'b0, tx1};
       pipe_q <= PIPELINE ? pipe_stall : 4'd0;
+      dhit_q <= DCACHE ? dmem_hit : 1'b0;
+      dmiss_q <= DCACHE ? dmem_miss : 1'b0;
     end
   end
 
@@ -248,6 +271,8 @@ module cpu_perf_counters #(
       stall_raw <= 32'd0;
       stall_branch <= 32'd0;
       stall_id_empty <= 32'd0;
+      dmem_hits <= 32'd0;
+      dmem_misses <= 32'd0;
       ovf0 <= 32'd0;
       // Tras reset los contadores CUENTAN. Arrancar congelado obligaria a
       // todo programa existente a escribir PERF_CTRL antes de medir.
@@ -266,6 +291,8 @@ module cpu_perf_counters #(
         stall_raw <= 32'd0;
         stall_branch <= 32'd0;
         stall_id_empty <= 32'd0;
+        dmem_hits <= 32'd0;
+        dmem_misses <= 32'd0;
         ovf0 <= 32'd0;
       end else begin
         if (contando) begin
@@ -315,6 +342,14 @@ module cpu_perf_counters #(
             stall_id_empty <= stall_id_empty + 1'b1;
             if (&stall_id_empty) ovf0[BIT_STALL_ID_EMPTY] <= 1'b1;
           end
+          if (dhit_q) begin
+            dmem_hits <= dmem_hits + 1'b1;
+            if (&dmem_hits) ovf0[BIT_DMEM_HITS] <= 1'b1;
+          end
+          if (dmiss_q) begin
+            dmem_misses <= dmem_misses + 1'b1;
+            if (&dmem_misses) ovf0[BIT_DMEM_MISSES] <= 1'b1;
+          end
         end
         // RETIRED no se condiciona a `running`, y esa es la diferencia entre
         // contar bien y contar una de menos SIEMPRE: el HALT retira en el
@@ -360,6 +395,8 @@ module cpu_perf_counters #(
         SLOT_STALL_RAW:      read_value = stall_raw;
         SLOT_STALL_BRANCH:   read_value = stall_branch;
         SLOT_STALL_ID_EMPTY: read_value = stall_id_empty;
+        SLOT_DMEM_HITS:      read_value = dmem_hits;
+        SLOT_DMEM_MISSES:    read_value = dmem_misses;
         default:          read_value = 32'd0;   // ranura sin contador: da error
       endcase
     end else begin

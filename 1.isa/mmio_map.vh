@@ -192,6 +192,11 @@
 `define MMIO_PERF_STALL_BRANCH_OFF   32'h0000_0028
 `define MMIO_PERF_STALL_ID_EMPTY_OFF 32'h0000_002C
 
+// Extension de las CPU con cache de datos (mmio.md §13.2, capacidad
+// `perf_dcache`): consultas de LOAD a SDRAM que acierta o falla la cache.
+`define MMIO_PERF_DMEM_HITS_OFF      32'h0000_0030
+`define MMIO_PERF_DMEM_MISSES_OFF    32'h0000_0034
+
 // ==== CPU CORE (mmio.md §13.1) ===========================================
 
 `define MMIO_CPU_ID_OFF            32'h0000_0000

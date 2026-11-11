@@ -774,9 +774,10 @@ module top (
   // INPUT sale de la capacidad `input_device` (existe input_registers.v).
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
-      // Doce contadores en CPU PERFORMANCE: los ocho de siempre y los cuatro
-      // del pipeline. Los mismos que `cpu_perf_counters` con PIPELINE = 1.
-      .PERF_SLOTS(12),
+      // Catorce contadores en CPU PERFORMANCE: los ocho de siempre, los cuatro
+      // del pipeline y los dos de la cache de datos. Los mismos que
+      // `cpu_perf_counters` con PIPELINE = 1 y DCACHE = 1.
+      .PERF_SLOTS(14),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
@@ -801,7 +802,7 @@ module top (
   //
   // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
   // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
-  cpu_perf_counters #(.PIPELINE(1)) perf_i(
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1)) perf_i(
       .clk(clk), .reset(reset),
       .select(mmio_perf_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
@@ -819,7 +820,8 @@ module top (
       .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
       .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
       .mem_req0(p0_valid), .mem_req1(p1_valid),
-      .pipe_stall(cpu_perf_stall));
+      .pipe_stall(cpu_perf_stall),
+      .dmem_hit(dcache_hit), .dmem_miss(dcache_miss));
 
   wire text_enable;
 

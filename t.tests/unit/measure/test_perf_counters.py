@@ -6,7 +6,8 @@ lo que se lee, en que orden, y que el bloque vuelva a como estaba.
 import unittest
 
 from tools import monitor_protocol
-from tools.perf_counters import (PIPELINE_COUNTERS, STALL_COUNTERS, breakdown,
+from tools.perf_counters import (DCACHE_COUNTERS, PIPELINE_COUNTERS, STALL_COUNTERS,
+                                 breakdown, dcache_breakdown,
                                  difference, format_report, pipeline_breakdown,
                                  read_counters)
 
@@ -204,6 +205,32 @@ class PipelineTest(unittest.TestCase):
                         "stall_ex_mem": 100, "stall_raw": 250, "stall_branch": 75,
                         "stall_id_empty": 25}}
         self.assertIn("dependencia 2.00", "\n".join(format_report(c)))
+
+
+
+class DcacheTest(unittest.TestCase):
+    """Ranuras 12 y 13 de la cache de datos (capacidad `perf_dcache`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(DCACHE_COUNTERS, {"dmem_hits": 0x30, "dmem_misses": 0x34})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x30: 90, BASE + 0x34: 10})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("dmem_hits", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, dcache=True)
+        self.assertEqual((c["stalls"]["dmem_hits"], c["stalls"]["dmem_misses"]), (90, 10))
+
+    def test_tasa_de_aciertos_y_fallos_por_instruccion(self):
+        d = dcache_breakdown(200, {"dmem_hits": 90, "dmem_misses": 10})
+        self.assertEqual((d["hits"], d["misses"]), (90, 10))
+        self.assertAlmostEqual(d["hit_rate"], 0.9)
+        self.assertAlmostEqual(d["misses_per_instruction"], 0.05)
+
+    def test_sin_loads_no_hay_tasa_y_sin_ranuras_no_hay_nada(self):
+        self.assertIsNone(dcache_breakdown(200, {"dmem_hits": 0, "dmem_misses": 0})["hit_rate"])
+        self.assertIsNone(dcache_breakdown(200, {"stall_raw": 3}))
+        self.assertIsNone(dcache_breakdown(200, None))
 
 
 if __name__ == "__main__":
