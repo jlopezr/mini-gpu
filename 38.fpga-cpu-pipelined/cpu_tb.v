@@ -47,6 +47,7 @@ module cpu_tb;
       .dmem_write_enable(),
       .dmem_read_data(32'h0000_0000),
       .dmem_ready(1'b0),
+      .dmem_rvalid(1'b0),
       .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),

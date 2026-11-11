@@ -67,13 +67,17 @@ module cpu_dmem_adapter #(
     input  wire        init_done,
     input  wire        cpu_halted,
 
-    // Lado CPU: identico al puerto dmem de cpu.v.
+    // Lado CPU: el puerto dmem de cpu.v, con peticion y respuesta separadas,
+    // como imem. La peticion se acepta en el ciclo en que `valid` y `ready`
+    // estan altos; la respuesta llega despues con `rvalid` (y `error`), una
+    // por peticion y en orden. `ready` solo esta alto en ST_IDLE.
     input  wire        dmem_valid,
     input  wire [31:0] dmem_address,
     input  wire [31:0] dmem_write_data,
     input  wire [3:0]  dmem_write_enable,
+    output wire        dmem_ready,
     output reg  [31:0] dmem_read_data,
-    output reg         dmem_ready,
+    output reg         dmem_rvalid,
     output reg         dmem_error,
 
     // Alto mientras haya escrituras sin volcar. El adaptador del monitor lo
@@ -109,7 +113,7 @@ module cpu_dmem_adapter #(
     output reg  [31:0] flush_count
 );
   localparam [2:0] ST_IDLE = 3'd0, ST_ISSUE = 3'd1, ST_WAIT = 3'd2,
-                   ST_MMIO = 3'd3, ST_DONE = 3'd4;
+                   ST_MMIO = 3'd3;
 
   // Que hacer cuando termine un volcado.
   localparam [1:0] PEND_NONE = 2'd0, PEND_MMIO = 2'd1, PEND_READ = 2'd2,
@@ -140,6 +144,9 @@ module cpu_dmem_adapter #(
   assign wb_dirty = wb_valid || wb_flushing;
   assign req_valid = (state == ST_ISSUE);
   assign rsp_ready = (state == ST_WAIT);
+  // Sale del estado, que es un registro. El vaciado del `halt` tiene prioridad
+  // sobre una peticion, y entonces no se acepta.
+  assign dmem_ready = (state == ST_IDLE) && !(cpu_halted && wb_valid);
 
   localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
   // Cualquier byte del rango vale: desde que existen STOREB/LOADB la direccion
@@ -182,7 +189,7 @@ module cpu_dmem_adapter #(
   endtask
 
   always @(posedge clk) begin
-    dmem_ready <= 1'b0;
+    dmem_rvalid <= 1'b0;
     dmem_error <= 1'b0;
 
     if (reset) begin
@@ -212,9 +219,16 @@ module cpu_dmem_adapter #(
       flush_count <= 32'd0;
     end else begin
       case (state)
-        // `dmem_ready` alto significa que se acaba de responder: la CPU
-        // mantiene `valid` un ciclo mas antes de bajarlo.
+        // En ST_IDLE `dmem_ready` esta alto: `valid` es una peticion aceptada.
         ST_IDLE: begin
+          // `saved_read` limpio por defecto (lo pone abajo una lectura): el
+          // vaciado del `halt` pasa por la misma rama de ST_WAIT que una
+          // lectura suelta, y las distingue precisamente por esta senal. Si se
+          // quedara puesta de una lectura anterior, el volcado del halt
+          // contestaria a una CPU que no ha pedido nada. Antes lo hacia
+          // ST_DONE, que ya no existe: con `rvalid` aparte no hace falta
+          // esperar a que la CPU baje `valid`.
+          saved_read <= 1'b0;
           held_address <= dmem_address;
           held_wdata <= dmem_write_data;
           held_wen <= dmem_write_enable;
@@ -231,7 +245,7 @@ module cpu_dmem_adapter #(
             // memoria de verdad. `wb_dirty` lo hace esperar hasta que acabe.
             pending <= PEND_NONE;
             arrancar_volcado;
-          end else if (dmem_valid && !dmem_ready && !dmem_error) begin
+          end else if (dmem_valid) begin
             if (address_is_mmio) begin
               // Vaciado 1: ningun acceso MMIO se combina, y el volcado va
               // ANTES. Con SWAP el orden es justo lo que importa.
@@ -248,9 +262,9 @@ module cpu_dmem_adapter #(
                 state <= ST_MMIO;
               end
             end else if (!init_done || !address_in_sdram) begin
-              dmem_ready <= 1'b1;
+              dmem_rvalid <= 1'b1;
               dmem_error <= 1'b1;
-              state <= ST_DONE;
+              state <= ST_IDLE;
             end else if (is_write) begin
               if (!wb_valid) begin
                 // Linea nueva.
@@ -258,8 +272,8 @@ module cpu_dmem_adapter #(
                 wb_line <= dmem_address[31:4];
                 wb_data <= shifted_data;
                 wb_mask <= shifted_mask;
-                dmem_ready <= 1'b1;
-                state <= ST_DONE;
+                dmem_rvalid <= 1'b1;
+                state <= ST_IDLE;
               end else if (same_line) begin
                 // El caso que hace que esto valga la pena: se funde en el
                 // bufer y se contesta en un ciclo, sin tocar la memoria.
@@ -267,8 +281,8 @@ module cpu_dmem_adapter #(
                            (shifted_data & expand(shifted_mask));
                 wb_mask <= wb_mask | shifted_mask;
                 merge_count <= merge_count + 1'b1;
-                dmem_ready <= 1'b1;
-                state <= ST_DONE;
+                dmem_rvalid <= 1'b1;
+                state <= ST_IDLE;
               end else begin
                 // Otra linea: volcar la de antes y empezar la nueva.
                 pending <= PEND_WRITE;
@@ -319,9 +333,9 @@ module cpu_dmem_adapter #(
                 wb_line <= held_address[31:4];
                 wb_data <= {96'd0, held_wdata} << {held_address[3:2], 5'b00000};
                 wb_mask <= {12'd0, held_wen} << {held_address[3:2], 2'b00};
-                dmem_ready <= 1'b1;
+                dmem_rvalid <= 1'b1;
                 pending <= PEND_NONE;
-                state <= ST_DONE;
+                state <= ST_IDLE;
               end
 
               PEND_READ: begin
@@ -338,10 +352,10 @@ module cpu_dmem_adapter #(
                 // Volcado suelto, el del `halt`. Nadie espera respuesta.
                 if (saved_read) begin
                   dmem_read_data <= rsp_rdata[{word_offset, 5'b00000} +: 32];
-                  dmem_ready <= 1'b1;
+                  dmem_rvalid <= 1'b1;
                   dmem_error <= rsp_error;
                   saved_read <= 1'b0;
-                  state <= ST_DONE;
+                  state <= ST_IDLE;
                 end else begin
                   state <= ST_IDLE;
                 end
@@ -354,20 +368,9 @@ module cpu_dmem_adapter #(
             dmem_error <= mmio_error;
             mmio_req <= 1'b0;
             if (saved_read) dmem_read_data <= mmio_read_data;
-            dmem_ready <= 1'b1;
-            state <= ST_DONE;
+            dmem_rvalid <= 1'b1;
+            state <= ST_IDLE;
           end
-
-        // No aceptar la misma peticion dos veces mientras la CPU baja `valid`.
-        ST_DONE: begin
-          // Y dejar `saved_read` limpio: el vaciado del `halt` pasa por la
-          // misma rama de ST_WAIT que una lectura suelta, y las distingue
-          // precisamente por esta senal. Si se quedara puesta de una lectura
-          // anterior, el volcado del halt contestaria a una CPU que no ha
-          // pedido nada.
-          saved_read <= 1'b0;
-          if (!dmem_valid) state <= ST_IDLE;
-        end
 
         default: state <= ST_IDLE;
       endcase

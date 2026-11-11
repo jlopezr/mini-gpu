@@ -18,10 +18,10 @@
  * `rvalid`. Es lo que veria la CPU en la placa con un 100 % de aciertos; los
  * fallos no se modelan.
  *
- * La memoria de datos imita a cpu_dmem_adapter.v: un STORE a la linea de 16
- * bytes que guarda el bufer de combinacion se contesta al ciclo siguiente; uno
- * a otra linea espera el volcado (FLUSH_CYCLES); un LOAD espera la lectura
- * (READ_CYCLES). Despues de contestar espera a que baje `valid` (su ST_DONE).
+ * La memoria de datos imita a cpu_dmem_adapter.v: acepta una peticion cuando
+ * esta libre; un STORE a la linea de 16 bytes que guarda el bufer de
+ * combinacion se contesta al ciclo siguiente, uno a otra linea espera el volcado
+ * (FLUSH_CYCLES) y un LOAD espera la lectura (READ_CYCLES).
  * Las latencias de la SDRAM son una estimacion: lo que se mide de verdad aqui
  * es lo que cuesta el protocolo.
  *
@@ -42,7 +42,9 @@ module cpu_perf_tb;
   wire [31:0] dmem_address, dmem_write_data;
   wire [3:0] dmem_write_enable;
   reg [31:0] dmem_read_data = 32'h0000_0000;
-  reg dmem_ready = 1'b0;
+  reg dmem_rvalid = 1'b0;
+  wire dmem_ready;
+  wire dmem_waiting;
 
   wire halted;
   wire error;
@@ -85,7 +87,9 @@ module cpu_perf_tb;
       .dmem_write_enable(dmem_write_enable),
       .dmem_read_data(dmem_read_data),
       .dmem_ready(dmem_ready),
+      .dmem_rvalid(dmem_rvalid),
       .dmem_error(1'b0),
+      .dmem_waiting(dmem_waiting),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
       .debug_pc(debug_pc),
@@ -100,7 +104,7 @@ module cpu_perf_tb;
       .write_data(32'd0), .read_data(),
       .running(!halted), .retired(instruction_retired), .restart(run_request),
       .imem_valid(imem_valid), .imem_ready(1'b1),
-      .dmem_valid(dmem_valid), .dmem_ready(dmem_ready), .dmem_is_mmio(1'b0),
+      .dmem_valid(dmem_waiting), .dmem_ready(1'b0), .dmem_is_mmio(1'b0),
       .imem_hit(1'b0), .imem_miss(1'b0), .mem_req0(1'b0), .mem_req1(1'b0),
       .pipe_stall(perf_stall));
 
@@ -114,16 +118,17 @@ module cpu_perf_tb;
   // Memoria de datos: 1024 palabras, con el comportamiento de cpu_dmem_adapter.
   localparam integer FLUSH_CYCLES = 8;
   localparam integer READ_CYCLES = 8;
-  localparam [1:0] D_IDLE = 2'd0, D_BUSY = 2'd1, D_DONE = 2'd2;
+  localparam [1:0] D_IDLE = 2'd0, D_BUSY = 2'd1;
   reg [31:0] data_memory[0:1023];
   reg [1:0] d_state = D_IDLE;
+  assign dmem_ready = (d_state == D_IDLE);
   integer d_wait = 0;
   reg d_line_valid = 1'b0;
   reg [27:0] d_line = 28'd0;
   reg [31:0] stores = 0, loads = 0;
 
   always @(posedge clk) begin
-    dmem_ready <= 1'b0;
+    dmem_rvalid <= 1'b0;
     if (reset) begin
       d_state <= D_IDLE;
       d_line_valid <= 1'b0;
@@ -137,8 +142,7 @@ module cpu_perf_tb;
             if (dmem_write_enable[2]) data_memory[dmem_address[11:2]][23:16] <= dmem_write_data[23:16];
             if (dmem_write_enable[3]) data_memory[dmem_address[11:2]][31:24] <= dmem_write_data[31:24];
             if (!d_line_valid || d_line == dmem_address[31:4]) begin
-              dmem_ready <= 1'b1;
-              d_state <= D_DONE;
+              dmem_rvalid <= 1'b1;
             end else begin
               d_wait <= FLUSH_CYCLES;
               d_state <= D_BUSY;
@@ -154,13 +158,11 @@ module cpu_perf_tb;
         end
       D_BUSY:
         if (d_wait <= 1) begin
-          dmem_ready <= 1'b1;
-          d_state <= D_DONE;
+          dmem_rvalid <= 1'b1;
+          d_state <= D_IDLE;
         end else begin
           d_wait <= d_wait - 1;
         end
-      D_DONE:
-        if (!dmem_valid) d_state <= D_IDLE;
       default: d_state <= D_IDLE;
     endcase
   end

@@ -214,7 +214,8 @@ module top (
 
   wire cpu_imem_valid, cpu_imem_ready, cpu_imem_rvalid;
   wire [31:0] cpu_imem_address, cpu_imem_read_data;
-  wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_error;
+  wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_rvalid, cpu_dmem_error;
+  wire cpu_dmem_waiting;
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
   cpu cpu_i(
@@ -233,7 +234,8 @@ module top (
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
       .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_error(cpu_dmem_error),
+      .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
+      .dmem_waiting(cpu_dmem_waiting),
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
       .perf_stall(cpu_perf_stall));
@@ -361,7 +363,8 @@ module top (
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
       .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_error(cpu_dmem_error), .cpu_halted(cpu_halted),
+      .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
+      .cpu_halted(cpu_halted),
       // Los contadores son para los bancos; la sintesis los quita.
       .wb_dirty(wb_dirty), .merge_count(), .flush_count(),
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
@@ -781,7 +784,9 @@ module top (
       // `cpu_dmem_adapter` (`address_is_mmio`), y todo esto va a registros
       // dentro del bloque: ver la cabecera de cpu_perf_counters.v.
       .imem_valid(cpu_imem_valid), .imem_ready(cpu_imem_ready),
-      .dmem_valid(cpu_dmem_valid), .dmem_ready(cpu_dmem_ready),
+      // Con peticion y respuesta separadas, `valid && !ready` ya no es "esperando":
+      // la CPU dice si tiene un acceso a datos sin terminar.
+      .dmem_valid(cpu_dmem_waiting), .dmem_ready(1'b0),
       .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
       .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
       .mem_req0(p0_valid), .mem_req1(p1_valid),

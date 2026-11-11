@@ -30,13 +30,19 @@ module cpu (
     input [31:0] imem_read_data,
     input imem_rvalid,
 
-    (* pipeline_stage = "EX" *) output reg dmem_valid,
-    (* pipeline_stage = "EX" *) output reg [31:0] dmem_address,
-    (* pipeline_stage = "EX" *) output reg [31:0] dmem_write_data,
-    (* pipeline_stage = "EX" *) output reg [3:0] dmem_write_enable,
-    input [31:0] dmem_read_data,
+    // dmem, como imem: peticion (valid/ready, aceptada cuando los dos estan
+    // altos) y respuesta (rvalid + read_data + error, una por peticion y en
+    // orden). La peticion sale de los registros de EX en su primer ciclo.
+    output dmem_valid,
+    output [31:0] dmem_address,
+    output [31:0] dmem_write_data,
+    output [3:0] dmem_write_enable,
     input dmem_ready,
+    input [31:0] dmem_read_data,
+    input dmem_rvalid,
     input dmem_error,
+    // Hay un acceso a datos en EX sin terminar: para STALL_MEM/STALL_MMIO.
+    output dmem_waiting,
 
     input [4:0] debug_register_address,
     output [31:0] debug_register_data,
@@ -222,7 +228,10 @@ module cpu (
   reg ex_halt_after_retire;
   reg [2:0] ex_class;
   reg [7:0] ex_error_code;
-  reg ex_mem_request_sent;
+  reg ex_mem_request_sent;   // accepted, waiting for its response
+  reg [1:0] ex_mem_drop;     // responses still to come that nobody waits for
+  wire ex_mem_posted;
+  wire ex_mem_done;
   reg [31:0] ex_load_extended;
   reg [7:0] ex_load_byte;
   reg [15:0] ex_load_half;
@@ -728,6 +737,25 @@ module cpu (
   assign ex_is_memory = ex_valid &&
       (ex_class == OPCLASS_LOAD || ex_class == OPCLASS_STORE);
 
+  // The request comes straight from the EX registers in the first cycle of
+  // the access, and stays until accepted. The access ends with its response,
+  // except a STORE to SDRAM, which ends as soon as it is accepted ("posted"):
+  // cpu_dmem_adapter puts it in its write-combining buffer and can no longer
+  // fail it, so nobody needs the answer. Its response still comes, in order,
+  // and ex_mem_drop skips it. MMIO stores and every LOAD wait: an MMIO store
+  // can fail, and the error has to carry the PC of that STORE.
+  // SDRAM is the low 32 MiB (cpu_dmem_adapter SDRAM_SIZE_BYTES), the same
+  // seven NORs the adapter uses.
+  assign dmem_valid = ctl_memory && !ex_mem_request_sent;
+  assign dmem_address = ex_result;
+  assign dmem_write_data = ex_store_data;
+  assign dmem_write_enable = (ex_class == OPCLASS_STORE) ? ex_store_mask : 4'b0000;
+  assign ex_mem_posted = dmem_valid && dmem_ready &&
+                         (ex_class == OPCLASS_STORE) && (ex_result[31:25] == 7'd0);
+  assign ex_mem_done = ex_mem_posted ||
+      (ctl_memory && ex_mem_request_sent && dmem_rvalid && ex_mem_drop == 2'd0);
+  assign dmem_waiting = ctl_memory && !ex_mem_done;
+
   always @* begin
     case (dmem_address[1:0])
       2'd0: ex_load_byte = dmem_read_data[7:0];
@@ -764,16 +792,17 @@ module cpu (
       ex_class <= OPCLASS_NORMAL;
       ex_error_code <= ERROR_NONE;
       ex_mem_request_sent <= 1'b0;
-      dmem_valid <= 1'b0;
-      dmem_address <= 32'd0;
-      dmem_write_data <= 32'd0;
-      dmem_write_enable <= 4'b0000;
+      ex_mem_drop <= 2'd0;
     end else if (halted || ctl_flush) begin
       ex_valid <= 1'b0;
       ex_mem_request_sent <= 1'b0;
-      dmem_valid <= 1'b0;
-      dmem_write_enable <= 4'b0000;
+      // An access already accepted still gets its response: drop it too.
+      ex_mem_drop <= ex_mem_drop
+                     + {1'b0, ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)}
+                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
     end else begin
+      ex_mem_drop <= ex_mem_drop + {1'b0, ex_mem_posted}
+                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       if (ctl_advance) begin
         if (!raw_hazard) begin
           ex_valid <= id_valid;
@@ -795,15 +824,8 @@ module cpu (
         end
       end
       if (ctl_memory) begin
-        if (!ex_mem_request_sent) begin
-          dmem_address <= ex_result;
-          dmem_write_data <= ex_store_data;
-          dmem_write_enable <= (ex_class == OPCLASS_STORE) ? ex_store_mask : 4'b0000;
-          dmem_valid <= 1'b1;
-          ex_mem_request_sent <= 1'b1;
-        end else if (dmem_ready) begin
-          dmem_valid <= 1'b0;
-          dmem_write_enable <= 4'b0000;
+        if (dmem_valid && dmem_ready && !ex_mem_posted) ex_mem_request_sent <= 1'b1;
+        if (ex_mem_done) begin
           ex_valid <= 1'b0;
           ex_mem_request_sent <= 1'b0;
         end
@@ -857,7 +879,7 @@ module cpu (
         wb_error <= ex_class == OPCLASS_ERROR;
         wb_error_code <= ex_error_code;
       end
-      if (ctl_memory && ex_mem_request_sent && dmem_ready) begin
+      if (ex_mem_done) begin
         wb_valid <= 1'b1;
         wb_pc <= ex_pc;
         wb_next_pc <= ex_next_pc;
@@ -865,7 +887,7 @@ module cpu (
         wb_result <= ex_load_extended;
         wb_reg_write <= ex_class == OPCLASS_LOAD;
         wb_halt_after_retire <= ex_halt_after_retire;
-        wb_error <= dmem_error;
+        wb_error <= !ex_mem_posted && dmem_error;
         wb_error_code <= ERROR_MEMORY_ACCESS;
       end
     end
