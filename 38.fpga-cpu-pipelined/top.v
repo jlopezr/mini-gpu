@@ -45,9 +45,11 @@ module top (
   localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
 `else
   // Con `syn_useioff` en sdram_controller_128 los registros van en la celda de
-  // IO, como en Diamond, y la ventana pasa de 0-7 a 2-21 (phase-sweep,
-  // 2026-11-11, build ioff).
-  localparam [5:0] SDRAM_PHASE = 6'd11;
+  // IO, como en Diamond. La ventana fue 2-21 en el primer build (ioff) y 8-29
+  // en los tres siguientes (dcache, dcache-epoca, icache-ebr), asi que se usa
+  // su centro. Aun se mueve algo porque el reloj de la SDRAM va por rutado
+  // general (`assign sdram_clk = clk`).
+  localparam [5:0] SDRAM_PHASE = 6'd18;
 `endif
   pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
       .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
@@ -405,16 +407,15 @@ module top (
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
       .rsp_rdata(p0_rsp_rdata), .rsp_error(p0_rsp_error));
 
-  // Cuatro lineas de 16 bytes, y cada linea es exactamente una rafaga BL8. El
-  // vaciado cuelga de `cpu_halted`, no de `reset`: el monitor reescribe la
-  // memoria de programa con la CPU parada, y un reset de CPU tambien la deja
-  // parada, asi que los dos casos quedan cubiertos por la misma senal.
+  // Cache de instrucciones de 8 KB en EBR: 512 lineas de 16 bytes, y cada
+  // linea es exactamente una rafaga BL8. Se invalida al parar la CPU (el
+  // monitor reescribe la memoria de programa con la CPU parada) y con `reset`.
   //
   // `hit_count`/`miss_count` no se conectan: existen para los bancos de prueba
   // y la sintesis los quita. Los contadores de rendimiento de la CPU
   // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
   wire ibuf_hit, ibuf_miss;
-  instruction_buffer #(.LINES(4), .INDEX_BITS(2)) instruction_buffer_i(
+  instruction_buffer #(.LINES(512), .INDEX_BITS(9)) instruction_buffer_i(
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),

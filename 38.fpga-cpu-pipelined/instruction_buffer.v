@@ -1,7 +1,7 @@
 `default_nettype none
 
 /*
- * Bufer de instrucciones: LINES lineas de 16 bytes, mapeo directo.
+ * Cache de instrucciones: LINES lineas de 16 bytes, mapeo directo, en EBR.
  *
  * Se intercala entre el puerto `imem` de la CPU y el bus de memoria. Del lado
  * de la CPU el contrato es el de `imem` tal cual; del lado de la memoria es un
@@ -9,39 +9,63 @@
  * (`valid`/`ready`) y respuesta (`rvalid`), para poder servir un acierto por
  * ciclo.
  *
- * Y ahi esta la razon de que una linea sean 16 bytes y no otra cosa: **una
- * linea es exactamente una rafaga BL8**. Un fallo se resuelve con UNA peticion,
- * no con cuatro transacciones de 32 bits como en la version anterior de este
- * modulo, ni con los ocho accesos de 16 bits que costaban las cuatro busquedas
- * sueltas de la 16.
+ * Una linea son 16 bytes porque **una linea es exactamente una rafaga BL8**: un
+ * fallo se resuelve con UNA peticion.
  *
- * Por que un bufer y no una cache: la medida de docs/medida-inicial.md dice
- * que las busquedas son 645 de las 805 transacciones del bucle interior de
- * swap_demo_fast, y que servirlas en un ciclo vale 2,74x. Como el bucle entero
- * son cuatro instrucciones, 16 bytes, cabe en una linea y a partir de la
- * primera iteracion no vuelve a la SDRAM. No hacen falta ni asociatividad ni
- * politica de reemplazo: lo que hace falta es que quepa un bucle.
+ * ---------------------------------------------------------------------
+ * De 4 lineas en biestables a 512 en EBR
+ * ---------------------------------------------------------------------
  *
- * Por que cuatro lineas y no una: si el bucle cae a caballo entre dos lineas de
- * 16 bytes, con una sola linea se falla en CADA iteracion, y el bufer sale peor
- * que no tenerlo. El indice son los dos bits de direccion que siguen a la
- * linea, asi que dos lineas contiguas nunca chocan y un bucle de hasta 64 bytes
- * entra entero, este alineado o no. Son 512 biestables de datos.
+ * Empezo como un bufer de cuatro lineas (64 bytes) para que cupiera el bucle
+ * de swap_demo_fast, con todo en biestables y la etiqueta comparada en el
+ * mismo ciclo de la peticion. Con 16 lineas bresenham bajo de un CPI de 7,8 a
+ * 2,6, pero 16 lineas en biestables ya empujaban la colocacion del resto (el
+ * controlador de la SDRAM dejo de cerrar con todas las semillas). En EBR, 8 KB
+ * cuestan 5 bloques de los 208 y casi nada de logica.
  *
- * Coherencia. El monitor escribe la memoria de programa mientras la CPU esta
- * parada, asi que el bufer se vacia entero mientras `cpu_halted` esta alto: la
- * primera busqueda despues de arrancar falla siempre, por construccion. Eso
- * cubre el unico caso de incoherencia que existe aqui, porque esta CPU no
- * escribe su propio codigo: `dmem` no pasa por aqui.
+ * La EBR se lee en un flanco y da el dato en el siguiente, asi que la
+ * consulta va en dos ciclos:
+ *
+ *   ciclo N   se acepta la peticion A y la EBR lee su linea y su etiqueta
+ *   ciclo N+1 se compara: acierto -> `rvalid` con la instruccion, y en ese
+ *             mismo ciclo se acepta (y se lee) la peticion siguiente, B
+ *
+ * Un acierto se sigue contestando en N+1 y se sigue aceptando una peticion por
+ * ciclo: para la CPU no cambia nada. `rvalid` sale de la comparacion
+ * (combinacional desde la salida de la EBR); registrarlo costaria un ciclo de
+ * latencia y la cola de tres entradas de la CPU dejaria de bastar para una
+ * instruccion por ciclo.
+ *
+ * EL FALLO CON B YA ACEPTADA. Cuando A falla, B ya entro (en N+1 `ready` estaba
+ * alto). B se queda en `lookup_*` y su lectura de la EBR se repite mientras se
+ * contesta A (ST_SERVE): cuando A ya esta en la cache, y B se evalua al ciclo
+ * siguiente como cualquier otra, acertando si cae en la linea de A. Asi
+ * `ready` sigue saliendo de un registro: hacerlo depender del acierto ponia la
+ * EBR y la comparacion en el `if_accept` de la CPU.
+ *
+ * ---------------------------------------------------------------------
+ * Coherencia, con epoca
+ * ---------------------------------------------------------------------
+ *
+ * El monitor escribe la memoria de programa con la CPU parada, y la GPU tras un
+ * error no llega a `halted` pero si recibe `reset`. Asi que la cache se
+ * invalida entera en el FLANCO de `reset || cpu_halted`. Como en dcache.v, sin
+ * bits de valido: cada etiqueta guarda la epoca en que se escribio y vale si es
+ * la actual; invalidar es sumar uno a la epoca. La epoca 0 es "invalida" (la
+ * EBR arranca a ceros) y al dar la vuelta un barrido pone todas las lineas a 0.
+ * Ver la cabecera de dcache.v.
+ *
+ * Esta CPU no escribe su propio codigo (`dmem` no pasa por aqui), asi que no
+ * hay mas casos de incoherencia.
  *
  * Lo que NO se guarda: las direcciones fuera de la SDRAM y las busquedas
  * anteriores a `init_done`. Se responden con 0xf8000000, que es un opcode
- * invalido a proposito, igual que hacia el adaptador de la 16; guardarlo lo
- * haria permanente.
+ * invalido a proposito; guardarlo lo haria permanente.
  */
 module instruction_buffer #(
-    parameter integer LINES = 4,          // potencia de dos
-    parameter integer INDEX_BITS = 2,     // $clog2(LINES)
+    parameter integer LINES = 512,        // potencia de dos
+    parameter integer INDEX_BITS = 9,     // $clog2(LINES)
+    parameter integer EPOCH_BITS = 6,
     parameter [31:0] SDRAM_SIZE_BYTES = 32'h0200_0000
 ) (
     input  wire        clk,
@@ -58,8 +82,8 @@ module instruction_buffer #(
     input  wire        cpu_imem_valid,
     input  wire [31:0] cpu_imem_address,
     output wire        cpu_imem_ready,
-    output reg  [31:0] cpu_imem_read_data,
-    output reg         cpu_imem_rvalid,
+    output wire [31:0] cpu_imem_read_data,
+    output wire        cpu_imem_rvalid,
 
     // Puerto de 128 bits hacia el arbitro, con direccion de BYTE alineada a 16.
     output wire         req_valid,
@@ -74,36 +98,27 @@ module instruction_buffer #(
     input  wire [127:0] rsp_rdata,
     input  wire         rsp_error,
 
-    // Solo para los bancos de prueba. Un bufer que no acierta nunca funciona
-    // igual de bien y no sirve de nada, y sin contadores no hay forma de
-    // distinguirlo.
+    // Solo para los bancos de prueba.
     output reg  [31:0] hit_count,
     output reg  [31:0] miss_count,
 
-    // Lo mismo, para los contadores de rendimiento de la CPU (IMEM_HITS e
-    // IMEM_MISSES): un pulso de UN ciclo por busqueda cacheable, un ciclo
-    // despues de aceptarla. Salen registrados y no como `hit_now`, que es del
-    // camino critico de este modulo: una carga mas colgada de esa red costaba
-    // frecuencia.
+    // Para los contadores de rendimiento de la CPU (IMEM_HITS e IMEM_MISSES):
+    // un pulso de UN ciclo por busqueda cacheable, registrado para no colgar
+    // una carga mas de la comparacion.
     output reg         hit_event,
     output reg         miss_event
 );
   localparam integer TAG_LSB = 4 + INDEX_BITS;
-  localparam integer TAG_BITS = 32 - TAG_LSB;
+  localparam integer ADDR_BITS = $clog2(SDRAM_SIZE_BYTES);
+  localparam integer TAG_BITS = ADDR_BITS - TAG_LSB;
+  localparam integer ENTRY_BITS = EPOCH_BITS + TAG_BITS;
+  localparam [EPOCH_BITS-1:0] EPOCH_LAST = {EPOCH_BITS{1'b1}};
+  localparam [31:0] INVALID_OPCODE = 32'hf800_0000;
 
-  localparam [2:0] ST_IDLE = 3'd0, ST_ISSUE = 3'd2,
-                   ST_WAIT = 3'd3, ST_SERVE = 3'd4;
-
-  // Una linea son cuatro palabras de 32 bits, o sea los 128 bits de una rafaga.
-  reg [127:0] line_data[0:LINES-1];
-  reg [TAG_BITS-1:0] line_tag[0:LINES-1];
-  reg line_valid[0:LINES-1];
+  localparam [2:0] ST_IDLE = 3'd0, ST_ISSUE = 3'd1, ST_WAIT = 3'd2,
+                   ST_SERVE = 3'd3, ST_SWEEP = 3'd4;
 
   reg [2:0] state;
-  reg [INDEX_BITS-1:0] fill_index;
-  reg [TAG_BITS-1:0] fill_tag;
-  reg [1:0] want_word;
-  reg fill_cacheable;
 
   // El bufer nunca escribe.
   assign req_write = 1'b0;
@@ -112,98 +127,150 @@ module instruction_buffer #(
   // `req_valid` se mantiene hasta ver `req_ready`: en memory_fabric_4 la
   // concesion mira el `valid` del puerto, asi que bajarlo antes cuelga.
   assign req_valid = (state == ST_ISSUE);
-  // Sale del estado, que es un registro: no depende de la CPU en este ciclo.
-  assign cpu_imem_ready = (state == ST_IDLE);
   assign rsp_ready = (state == ST_WAIT);
 
-  wire [1:0] word_sel = cpu_imem_address[3:2];
-  wire [INDEX_BITS-1:0] index = cpu_imem_address[TAG_LSB-1:4];
-  wire [TAG_BITS-1:0] tag = cpu_imem_address[31:TAG_LSB];
-  // Comparar el rango con `<` cuesta un comparador de magnitud de 32 bits, y
-  // este cono llega hasta el `imem_valid` de la CPU: con la resta completa, la
-  // sintesis se quedaba en 84 MHz. Con el tamano siendo potencia de dos basta
-  // con mirar los bits altos, que son siete NOR. Es la misma forma que usaba
-  // sdram_system_adapter en la 16 (`address[31:25] == 0`), escrita para no
-  // atarse a los 32 MiB.
+  // -- La epoca (ver dcache.v) ---------------------------------------------------
+  // Ni `epoch` ni `sweep_pending` se reinician con `reset`: un reset es una
+  // invalidacion mas.
+  reg [EPOCH_BITS-1:0] epoch = {{(EPOCH_BITS-1){1'b0}}, 1'b1};
+  reg sweep_pending = 1'b0;
+  reg invalidate_prev = 1'b0;
+  wire invalidate_any = reset || cpu_halted;
+  wire bump = invalidate_any && !invalidate_prev;
+  wire wrapping = sweep_pending || (bump && epoch == EPOCH_LAST);
+
+  // Sale de registros: no depende de la CPU ni de la EBR en este ciclo.
+  assign cpu_imem_ready = (state == ST_IDLE) && !sweep_pending;
+  wire accept = cpu_imem_ready && cpu_imem_valid;
+
+  // -- La peticion en consulta -----------------------------------------------
+  // `lookup_valid`: hay una peticion aceptada cuya linea ya esta (o estara en
+  // el ciclo siguiente) a la salida de la EBR. Se evalua en ST_IDLE.
+  reg lookup_valid;
+  reg [31:0] lookup_address;
+  reg [EPOCH_BITS-1:0] lookup_epoch;
+  reg lookup_cacheable;
+  wire [INDEX_BITS-1:0] lookup_index = lookup_address[TAG_LSB-1:4];
+  wire [TAG_BITS-1:0] lookup_tag = lookup_address[ADDR_BITS-1:TAG_LSB];
+
+  // Comparar el rango con `<` cuesta un comparador de magnitud de 32 bits;
+  // siendo el tamano potencia de dos basta con mirar los bits altos.
   localparam [31:0] ADDR_RANGE_MASK = ~(SDRAM_SIZE_BYTES - 32'd1);
   wire cacheable = init_done &&
                    ((cpu_imem_address & ADDR_RANGE_MASK) == 32'd0) &&
                    (cpu_imem_address[1:0] == 2'b00);
-  // Las cuatro etiquetas se comparan EN PARALELO y luego se multiplexa un bit.
-  // Escrito como `line_valid[index] && line_tag[index] == tag` sale al reves
-  // —multiplexar 19 bits por cuatro y despues comparar—, y ese cono acaba en el
-  // `imem_valid` de la CPU. El area es la misma de cuatro comparadores en vez
-  // de uno, que aqui no se nota, y el camino baja varios niveles de LUT.
-  //
-  // Se probo ademas a partir la busqueda en dos ciclos, con la comparacion
-  // arrancando de un registro local en vez de la direccion de la CPU. NO
-  // compro margen —seguian cerrando la misma semilla de ocho, porque el camino
-  // critico esta en otro sitio y es de routing— y costaba un 8 % de
-  // rendimiento, asi que se deshizo. Queda anotado para no repetirlo.
-  wire [LINES-1:0] line_match;
-  genvar g;
-  generate
-    for (g = 0; g < LINES; g = g + 1) begin : tag_compare
-      assign line_match[g] = line_valid[g] && (line_tag[g] == tag);
-    end
-  endgenerate
-  wire hit_now = line_match[index];
+  wire [INDEX_BITS-1:0] cpu_index = cpu_imem_address[TAG_LSB-1:4];
 
-  integer i;
+  // -- Almacenamiento -------------------------------------------------------------
+  reg [127:0] data_mem[0:LINES-1];
+  reg [ENTRY_BITS-1:0] tag_mem[0:LINES-1];
+  reg [127:0] data_q;
+  reg [ENTRY_BITS-1:0] tag_q;
+
+  // El fallo en curso: que linea se rellena y con que epoca.
+  reg [INDEX_BITS-1:0] fill_index;
+  reg [TAG_BITS-1:0] fill_tag;
+  reg [EPOCH_BITS-1:0] fill_epoch;
+  reg [1:0] fill_word;
+  reg [31:0] serve_data;
+
+  // Lectura: al aceptar, o la repeticion de B mientras se contesta A.
+  wire replay_read = (state == ST_SERVE) && lookup_valid;
+  wire read_enable = accept || replay_read;
+  wire [INDEX_BITS-1:0] read_index = (state == ST_IDLE) ? cpu_index : lookup_index;
+
+  // Escritura: el relleno, o el barrido (nunca a la vez).
+  reg [INDEX_BITS-1:0] sweep_index;
+  wire fill_write = (state == ST_WAIT) && rsp_valid && !rsp_error;
+  wire sweep_write = (state == ST_SWEEP);
 
   always @(posedge clk) begin
-    cpu_imem_rvalid <= 1'b0;
+    if (read_enable) begin
+      data_q <= data_mem[read_index];
+      tag_q <= tag_mem[read_index];
+    end
+    if (fill_write) data_mem[fill_index] <= rsp_rdata;
+    if (fill_write || sweep_write)
+      tag_mem[sweep_write ? sweep_index : fill_index] <=
+          sweep_write ? {ENTRY_BITS{1'b0}} : {fill_epoch, fill_tag};
+  end
+
+  // -- La evaluacion (ciclo N+1) ------------------------------------------------
+  wire [EPOCH_BITS-1:0] stored_epoch = tag_q[ENTRY_BITS-1:TAG_BITS];
+  wire hit = (tag_q == {epoch, lookup_tag}) &&
+             (stored_epoch != {EPOCH_BITS{1'b0}}) && !bump && !wrapping;
+  wire evaluating = (state == ST_IDLE) && lookup_valid;
+  wire answer_now = evaluating && (!lookup_cacheable || hit);
+  wire miss_now = evaluating && lookup_cacheable && !hit;
+
+  wire [31:0] hit_word = data_q[{lookup_address[3:2], 5'b00000} +: 32];
+
+  assign cpu_imem_rvalid = answer_now || (state == ST_SERVE);
+  assign cpu_imem_read_data = (state == ST_SERVE) ? serve_data :
+                              (lookup_cacheable ? hit_word : INVALID_OPCODE);
+
+  always @(posedge clk) begin
     hit_event <= 1'b0;
     miss_event <= 1'b0;
+    invalidate_prev <= invalidate_any;
+
+    if (bump) begin
+      if (epoch == EPOCH_LAST) begin
+        epoch <= {{(EPOCH_BITS-1){1'b0}}, 1'b1};
+        sweep_pending <= 1'b1;
+      end else begin
+        epoch <= epoch + 1'b1;
+      end
+    end
 
     if (reset) begin
       state <= ST_IDLE;
+      lookup_valid <= 1'b0;
+      lookup_address <= 32'd0;
+      lookup_epoch <= {EPOCH_BITS{1'b0}};
+      lookup_cacheable <= 1'b0;
       req_addr <= 32'h0000_0000;
-      cpu_imem_read_data <= 32'h0000_0000;
-      fill_index <= 0;
-      fill_tag <= 0;
-      want_word <= 2'd0;
-      fill_cacheable <= 1'b0;
+      fill_index <= {INDEX_BITS{1'b0}};
+      fill_tag <= {TAG_BITS{1'b0}};
+      fill_epoch <= {EPOCH_BITS{1'b0}};
+      fill_word <= 2'd0;
+      serve_data <= 32'd0;
+      sweep_index <= {INDEX_BITS{1'b0}};
       hit_count <= 32'd0;
       miss_count <= 32'd0;
-      // El reset tambien invalida las lineas. Hasta ahora solo las vaciaba
-      // `cpu_halted`, y la GPU no siempre llega a `halted`: tras un error el
-      // warp se queda vivo, sin RUNNING ni HALTED (GPU_STATUS = 0x108). Con el
-      // buffer sin vaciar, el kernel siguiente acertaba en una linea del
-      // anterior, ejecutaba esa instruccion vieja (division por cero, en la
-      // primera, sin retirar nada) y volvia a dejar el error, asi que un solo
-      // error envenenaba todos los kernels hasta reprogramar la placa. El
-      // GPU_CONTROL.RESET del arnes llega aqui por `core_reset` y no bastaba.
-      for (i = 0; i < LINES; i = i + 1) line_valid[i] <= 1'b0;
     end else begin
+      // Una peticion aceptada pasa a consulta. En un ciclo de fallo tambien:
+      // es B, y se queda esperando a que se conteste A.
+      if (accept) begin
+        lookup_address <= cpu_imem_address;
+        lookup_epoch <= epoch;
+        lookup_cacheable <= cacheable;
+      end
+
       case (state)
-        // En ST_IDLE `cpu_imem_ready` esta alto: `valid` es una peticion
-        // aceptada. Antes la respuesta y la aceptacion eran la misma senal y
-        // hacia falta una guarda para no servir dos veces la misma busqueda,
-        // lo que dejaba un ciclo muerto tras cada respuesta.
         ST_IDLE: begin
-          if (cpu_imem_valid) begin
-            fill_index <= index;
-            fill_tag <= tag;
-            want_word <= word_sel;
-            fill_cacheable <= cacheable;
-            req_addr <= {cpu_imem_address[31:4], 4'b0000};
-            if (!cacheable) begin
-              // Igual que respondia el adaptador de la 16: opcode invalido,
-              // sin guardar nada.
-              cpu_imem_read_data <= 32'hf800_0000;
-              cpu_imem_rvalid <= 1'b1;
-            end else if (hit_now) begin
-              cpu_imem_read_data <=
-                  line_data[index][{word_sel, 5'b00000} +: 32];
-              cpu_imem_rvalid <= 1'b1;
+          lookup_valid <= accept;
+          if (evaluating && lookup_cacheable) begin
+            if (hit) begin
               hit_count <= hit_count + 1'b1;
               hit_event <= 1'b1;
             end else begin
               miss_count <= miss_count + 1'b1;
               miss_event <= 1'b1;
+              fill_index <= lookup_index;
+              fill_tag <= lookup_tag;
+              fill_epoch <= lookup_epoch;
+              fill_word <= lookup_address[3:2];
+              req_addr <= {lookup_address[31:4], 4'b0000};
               state <= ST_ISSUE;
             end
+          end
+          // El barrido espera a que no quede consulta: con `ready` bajo no
+          // entra ninguna nueva, y la que hubiera falla (hit se anula) y se
+          // resuelve antes.
+          if (!lookup_valid && sweep_pending) begin
+            sweep_index <= {INDEX_BITS{1'b0}};
+            state <= ST_SWEEP;
           end
         end
 
@@ -212,47 +279,42 @@ module instruction_buffer #(
 
         ST_WAIT:
           if (rsp_valid) begin
-            if (rsp_error) begin
-              // No deberia pasar: `cacheable` ya filtro el rango. Si pasa, se
-              // responde con opcode invalido y no se guarda la linea.
-              cpu_imem_read_data <= 32'hf800_0000;
-              cpu_imem_rvalid <= 1'b1;
-              state <= ST_IDLE;
-            end else begin
-              line_data[fill_index] <= rsp_rdata;
-              line_tag[fill_index] <= fill_tag;
-              line_valid[fill_index] <= 1'b1;
-              state <= ST_SERVE;
-            end
+            // Un error no deberia pasar (`cacheable` ya filtro el rango). Si
+            // pasa, opcode invalido y no se guarda la linea.
+            serve_data <= rsp_error ? INVALID_OPCODE :
+                          rsp_rdata[{fill_word, 5'b00000} +: 32];
+            state <= ST_SERVE;
           end
 
-        ST_SERVE: begin
-          cpu_imem_read_data <=
-              line_data[fill_index][{want_word, 5'b00000} +: 32];
-          cpu_imem_rvalid <= 1'b1;
+        // Contesta A. Si B esta esperando, su lectura de la EBR se repite en
+        // este ciclo (`replay_read`) y se evalua en ST_IDLE al siguiente.
+        ST_SERVE:
           state <= ST_IDLE;
+
+        ST_SWEEP: begin
+          sweep_index <= sweep_index + 1'b1;
+          if (sweep_index == {INDEX_BITS{1'b1}}) begin
+            // Si en este mismo ciclo da OTRA vuelta, queda otro barrido.
+            if (!(bump && epoch == EPOCH_LAST)) sweep_pending <= 1'b0;
+            state <= ST_IDLE;
+          end
         end
 
         default: state <= ST_IDLE;
       endcase
-
-      // El vaciado va al final del bloque a proposito: mientras la CPU esta
-      // parada tiene que ganar a cualquier escritura de `line_valid` que haya
-      // hecho el `case`, incluida la de un relleno que estuviera terminando
-      // justo cuando llego el `halt`.
-      if (cpu_halted) begin
-        for (i = 0; i < LINES; i = i + 1) line_valid[i] <= 1'b0;
-      end
     end
   end
 
+`ifndef SYNTHESIS
+  // Solo para simulacion: la EBR de verdad arranca a ceros al configurar.
+  integer i;
   initial begin
     for (i = 0; i < LINES; i = i + 1) begin
-      line_valid[i] = 1'b0;
-      line_tag[i] = 0;
-      line_data[i] = 128'd0;
+      data_mem[i] = 128'd0;
+      tag_mem[i] = {ENTRY_BITS{1'b0}};
     end
   end
+`endif
 endmodule
 
 `default_nettype wire
