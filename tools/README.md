@@ -1776,6 +1776,95 @@ nextpnr al que está en la placa, los destinos a ≥ 80 % del periodo bajan de 6
 293 y los de ≥ 90 % de 223 a 11. Antes de arreglar nada, el 80 % del muro eran
 registros anchos de `dmem_adapter_i` (`wb_data`, de 128 bits, y sus máscaras).
 
+**Nombres del RTL y resumen por etapa** (`--by-register`, `--filter`, `--stages`).
+Con `--by-register` cada destino se nombra con su registro del RTL
+(`cpu_i.ex_result`) en vez de con la celda (`$auto$ff.cc:337:slice$N`), y el muro
+deja de salir como `(anonimo)`. Lo saca del `hardware.json` de Yosys del mismo build
+(`build` lo archiva junto al `.pnr`; si no está, `--netlist`): la salida `Q` de cada
+flip-flop es un bit, y `netnames` dice qué señales lo contienen. Como un `wire` que
+corta un registro o un puerto que lo recibe comparten sus bits, se prefiere la señal
+declarada en el mismo fichero que el `always` que escribe el flip-flop, luego una sin
+constantes ni bits repetidos, y luego la más ancha. `--filter cpu_i.` deja solo un
+módulo.
+
+`--stages` (implica `--by-register`) añade un resumen por etapa. La etapa **no se
+deduce del circuito**: sale del RTL. Primero, del atributo
+`(* pipeline_stage = "IF" *)` en la declaración del registro, que Yosys conserva en
+el `hardware.json` (en `reg` y en `output reg`; **no** en arrays de memoria); si no
+lo tiene, del prefijo de su nombre corto. La lista dice los prefijos y el orden: un
+elemento en minúsculas que acaba en `_` es un prefijo (`if_` → etapa `IF`); el resto
+son etiquetas de atributo que solo fijan su sitio. `prefijo=ETIQUETA` pone la
+etiqueta a mano (`ctl_=_CTL`). Sin valor, `if_,id_,ex_,wb_,ctl_=_CTL`. Las
+etiquetas que empiezan por `_` (`_CTL`, `_RAM`) son **grupos que no son etapas** del
+pipeline, y lo que no tiene etapa se lista en `(sin etapa)`:
+
+```bash
+$ timing-wall -p 38 --clock clk_25mhz --filter cpu_i. --stages --ports
+ETAPA        LLEGADA  % PERIODO  DATO   ENABLE  OTRAS  REGISTROS  DESTINOS  >=80 %  >=90 %
+IF           19.17    48         19.17  18.13   7.82   6          388       0       0
+ID           19.32    48         18.60  19.32   7.84   3          195       0       0
+EX           17.48    44         17.48  12.38   7.55   18         645       0       0
+WB           10.69    27         9.55   10.69   7.32   13         433       0       0
+_CTL         9.54     24         7.14   9.54    3.66   4          11        0       0
+(sin etapa)  9.80     25         4.62   1.48    9.80   4          1243      0       0
+(sin etapa): registers 9.80, debug_data 4.62, sweep 3.87, debug_address_registered 3.62
+```
+
+En `38.fpga-cpu-pipelined/cpu.v` los `if_*`/`id_*`/`ex_*`/`wb_*` y `ctl_*` van por
+prefijo y solo llevan atributo los demás (`architectural_pc`, `imem_*`, `dmem_*`,
+`halted`...).
+La regla: un registro es de la etapa cuya lógica lo **lee**, así que la lógica de la
+etapa X es el cono que va de los registros de X a los de X+1.
+
+La `LLEGADA` de un registro es cuándo le llega la señal, no de qué etapa viene: en la
+38 los registros de IF llegan tan tarde como EX porque su habilitación depende de la
+decisión de salto. `--ports` lo separa en columnas por entrada del flip-flop: `DATO`
+(DI/M, lo que el registro calcula), `ENABLE` (CE, la decisión de si se actualiza) y
+`OTRAS` (reset, puertos de RAM):
+
+```bash
+$ timing-wall -p 38 --clock clk_25mhz --filter cpu_i. --by-register --ports
+REGISTRO DE DESTINO     MODULO  LLEGADA  HOLGURA  DATO   ENABLE  OTRAS  ...
+cpu_i.if_instruction    cpu_i   17.46    +22.54   1.79   17.46   4.27
+cpu_i.ex_result         cpu_i   17.48    +22.52   17.48  12.27   4.24
+```
+
+`if_instruction` copia su dato en 1,79 ns y solo espera al enable; `ex_result` sí
+calcula. Ojo en el resumen por etapa: los `*_valid` son bits de control y su "dato"
+es precisamente la decisión de avanzar, así que suben la columna `DATO` de la etapa.
+Para el camino concreto, `--path`.
+
+**Matriz entre etapas** (`--stage-matrix`, implica `--stages`). Sigue el netlist de
+Yosys hacia atrás desde cada entrada de cada registro, por la lógica combinacional,
+hasta los registros de los que sale, contando las LUT del camino (el carry cuenta una
+al entrar y ninguna a lo largo de la cadena; la lectura de RAM distribuida cuenta
+una y su contenido es un origen, `_RAM`). Saca dos matrices etapa origen × etapa
+destino, una para el DATO y otra para el CONTROL (CE/LSR), con `LUT/llegada` en
+cada casilla, y la lista de caminos hacia atrás:
+
+```bash
+$ timing-wall -p 38 --clock clk_25mhz --filter cpu_i. --stages --stage-matrix
+DATO (DI/M): lo que el registro calcula
+ORIGEN \ DESTINO  IF         ID         EX        WB       _CTL   _RAM  (fuera)  (sin etapa)
+IF                5/19.2 =   1/18.6     ·         ·        ·      ·     ·        ·
+ID                12/19.2 <  13/18.6 =  13/17.5   ·        ·      ·     ·        ·
+EX                7/19.2 <   7/18.6 <   8/14.6 =  4/9.6    ·      ·     ·        ·
+WB                8/19.2 <   8/18.6 <   9/14.6 <  4/9.6 =  2/6.0  ·     ·        ·
+_CTL              6/19.2     ·          6/14.6    4/9.6    4/7.1  ·     ·        ·
+_RAM              8/19.2     10/18.6    10/17.5   ·        ·      ·     ·        2/4.6
+...
+Caminos hacia atras, 20 de 204, por LUT:
+ORIGEN                ETAPA  DESTINO                    ENTRADA  ETAPA  LUT  LLEGADA
+cpu_i.id_instruction  ID     cpu_i.if_fetch_request_pc  dato     IF     12   18.58
+cpu_i.id_instruction  ID     cpu_i.imem_address         dato     IF     11   19.17
+```
+
+`<` es un camino hacia atrás, `=` uno dentro de la misma etapa; las casillas con
+algún grupo (`_CTL`, `_RAM`, `(fuera)`...) no llevan dirección. Las LUT son del par;
+la **llegada es del destino**, no del par (nextpnr no da tiempos por par), así que
+si un destino recibe caminos de dos etapas las dos casillas comparten su llegada.
+Las LUT no incluyen el ruteo, que puede ser más de la mitad del camino.
+
 Necesita el informe detallado de nextpnr (`--detailed-timing-report`): **todas las
 semillas de `build-sweep` lo llevan**, pero un `build` normal no, salvo que el
 `apio.ini` lo pida. Solo se miran los destinos del reloj elegido, sin las rutas
