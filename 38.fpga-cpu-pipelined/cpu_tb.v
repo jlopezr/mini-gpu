@@ -10,7 +10,7 @@ module cpu_tb;
   reg step_request = 1'b0;
   reg [4:0] debug_register_address = 5'd0;
   reg [31:0] imem_read_data = 32'h0000_0000;
-  reg imem_ready = 1'b0;
+  reg imem_rvalid = 1'b0;
 
   wire halted;
   wire error;
@@ -39,7 +39,8 @@ module cpu_tb;
       .imem_valid(imem_valid),
       .imem_address(imem_address),
       .imem_read_data(imem_read_data),
-      .imem_ready(imem_ready),
+      .imem_ready(1'b1),
+      .imem_rvalid(imem_rvalid),
       .dmem_valid(),
       .dmem_address(),
       .dmem_write_data(),
@@ -52,9 +53,10 @@ module cpu_tb;
       .debug_pc(debug_pc)
   );
 
-  // One-cycle-latency instruction memory model.
+  // One-cycle-latency instruction memory model: accepts a request every
+  // cycle and answers it on the next one, like an instruction_buffer hit.
   always @(posedge clk) begin
-    imem_ready <= imem_valid;
+    imem_rvalid <= imem_valid;
     if (imem_valid) begin
       imem_read_data <= instruction_memory[imem_address[6:2]];
     end
@@ -164,8 +166,14 @@ module cpu_tb;
     wait (halted);
     @(posedge clk);
     #1;
-    if (retired_count !== 1) $fatal(1, "HALT request did not stop at retirement");
-    if (debug_pc !== 32'h0000_0004) $fatal(1, "HALT request PC mismatch");
+    // `retired_count` va un ciclo por detras de `instruction_retired`, y con la
+    // busqueda de una instruccion por ciclo la segunda puede retirarse antes de
+    // que la CPU vea `halt_request`. Lo que importa es que pare ENTRE dos
+    // instrucciones: el PC justo detras de la ultima retirada, sin llegar al
+    // HALT natural del programa (palabra 3).
+    if (retired_count < 1 || retired_count > 2)
+      $fatal(1, "HALT request did not stop at retirement (%0d retired)", retired_count);
+    if (debug_pc !== 4 * retired_count) $fatal(1, "HALT request PC mismatch");
 
     // First ALU extension batch: NOP, SUB, AND, OR and XOR.
     instruction_memory[0] = 32'h4020_ffff;  // MOVI R1, -1

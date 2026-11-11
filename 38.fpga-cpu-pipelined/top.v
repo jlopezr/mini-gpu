@@ -210,7 +210,7 @@ module top (
   // sitio: el primero al dominio de pixel y el segundo a la CPU.
   wire video_underflow_clear, video_halt_request;
 
-  wire cpu_imem_valid, cpu_imem_ready;
+  wire cpu_imem_valid, cpu_imem_ready, cpu_imem_rvalid;
   wire [31:0] cpu_imem_address, cpu_imem_read_data;
   wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_error;
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
@@ -226,6 +226,7 @@ module top (
       .error_code(cpu_error_code), .instruction_retired(cpu_instruction_retired),
       .imem_valid(cpu_imem_valid), .imem_address(cpu_imem_address),
       .imem_read_data(cpu_imem_read_data), .imem_ready(cpu_imem_ready),
+      .imem_rvalid(cpu_imem_rvalid),
       .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
@@ -382,7 +383,8 @@ module top (
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
-      .cpu_imem_read_data(cpu_imem_read_data), .cpu_imem_ready(cpu_imem_ready),
+      .cpu_imem_ready(cpu_imem_ready), .cpu_imem_read_data(cpu_imem_read_data),
+      .cpu_imem_rvalid(cpu_imem_rvalid),
       .req_valid(p1_valid), .req_ready(p1_ready), .req_write(p1_write),
       .req_addr(p1_addr), .req_wdata(p1_wdata), .req_wmask(p1_wmask),
       .rsp_valid(p1_rsp_valid), .rsp_ready(p1_rsp_ready),

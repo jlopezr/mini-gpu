@@ -11,10 +11,10 @@
  *   chain     200 ADDI R1,R1,1 seguidos: la parada por dependencia.
  *   loop      bucle de 4 instrucciones con BNE hacia atras: el salto tomado.
  *
- * La memoria imita un ACIERTO de instruction_buffer.v: responde un ciclo
- * despues con un pulso de `ready`, e ignora la peticion en el ciclo en que
- * responde (su guarda `cpu_imem_valid && !cpu_imem_ready`). Es lo que veria la
- * CPU en la placa con un 100 % de aciertos; los fallos no se modelan.
+ * La memoria imita un ACIERTO de instruction_buffer.v: acepta una peticion
+ * por ciclo (`ready` siempre alto) y la responde al ciclo siguiente con
+ * `rvalid`. Es lo que veria la CPU en la placa con un 100 % de aciertos; los
+ * fallos no se modelan.
  *
  * Los ciclos se cuentan con la CPU en marcha (!halted), como CYCLES en
  * cpu_perf_counters.v. De momento solo informa: cuando un cambio mejore el CPI
@@ -27,7 +27,7 @@ module cpu_perf_tb;
   reg run_request = 1'b0;
   reg [4:0] debug_register_address = 5'd0;
   reg [31:0] imem_read_data = 32'h0000_0000;
-  reg imem_ready = 1'b0;
+  reg imem_rvalid = 1'b0;
 
   wire halted;
   wire error;
@@ -61,7 +61,8 @@ module cpu_perf_tb;
       .imem_valid(imem_valid),
       .imem_address(imem_address),
       .imem_read_data(imem_read_data),
-      .imem_ready(imem_ready),
+      .imem_ready(1'b1),
+      .imem_rvalid(imem_rvalid),
       .dmem_valid(),
       .dmem_address(),
       .dmem_write_data(),
@@ -74,14 +75,11 @@ module cpu_perf_tb;
       .debug_pc(debug_pc)
   );
 
-  // Acierto del bufer de instrucciones: un ciclo de latencia, `ready` de un
-  // ciclo, y la misma peticion no se sirve dos veces.
+  // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta al
+  // ciclo siguiente.
   always @(posedge clk) begin
-    imem_ready <= 1'b0;
-    if (imem_valid && !imem_ready) begin
-      imem_ready <= 1'b1;
-      imem_read_data <= instruction_memory[imem_address[9:2]];
-    end
+    imem_rvalid <= imem_valid;
+    if (imem_valid) imem_read_data <= instruction_memory[imem_address[9:2]];
   end
 
   always @(posedge clk) begin

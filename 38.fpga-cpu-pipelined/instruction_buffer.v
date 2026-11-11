@@ -5,7 +5,9 @@
  *
  * Se intercala entre el puerto `imem` de la CPU y el bus de memoria. Del lado
  * de la CPU el contrato es el de `imem` tal cual; del lado de la memoria es un
- * puerto de 128 bits contra memory_fabric_4.
+ * puerto de 128 bits contra memory_fabric_4. El puerto `imem` separa peticion
+ * (`valid`/`ready`) y respuesta (`rvalid`), para poder servir un acierto por
+ * ciclo.
  *
  * Y ahi esta la razon de que una linea sean 16 bytes y no otra cosa: **una
  * linea es exactamente una rafaga BL8**. Un fallo se resuelve con UNA peticion,
@@ -47,11 +49,17 @@ module instruction_buffer #(
     input  wire        init_done,
     input  wire        cpu_halted,
 
-    // Lado CPU: identico al puerto imem de cpu.v.
+    // Lado CPU: el puerto imem de cpu.v, con peticion y respuesta separadas.
+    // La peticion se acepta en el ciclo en que `valid` y `ready` estan altos;
+    // la respuesta llega despues con `rvalid`, una por peticion y en orden. Un
+    // acierto responde al ciclo siguiente y en ese mismo ciclo ya se acepta la
+    // siguiente peticion: una busqueda por ciclo mientras se acierte. Durante
+    // un fallo `ready` esta bajo hasta servirlo.
     input  wire        cpu_imem_valid,
     input  wire [31:0] cpu_imem_address,
+    output wire        cpu_imem_ready,
     output reg  [31:0] cpu_imem_read_data,
-    output reg         cpu_imem_ready,
+    output reg         cpu_imem_rvalid,
 
     // Puerto de 128 bits hacia el arbitro, con direccion de BYTE alineada a 16.
     output wire         req_valid,
@@ -104,6 +112,8 @@ module instruction_buffer #(
   // `req_valid` se mantiene hasta ver `req_ready`: en memory_fabric_4 la
   // concesion mira el `valid` del puerto, asi que bajarlo antes cuelga.
   assign req_valid = (state == ST_ISSUE);
+  // Sale del estado, que es un registro: no depende de la CPU en este ciclo.
+  assign cpu_imem_ready = (state == ST_IDLE);
   assign rsp_ready = (state == ST_WAIT);
 
   wire [1:0] word_sel = cpu_imem_address[3:2];
@@ -142,7 +152,7 @@ module instruction_buffer #(
   integer i;
 
   always @(posedge clk) begin
-    cpu_imem_ready <= 1'b0;
+    cpu_imem_rvalid <= 1'b0;
     hit_event <= 1'b0;
     miss_event <= 1'b0;
 
@@ -167,11 +177,12 @@ module instruction_buffer #(
       for (i = 0; i < LINES; i = i + 1) line_valid[i] <= 1'b0;
     end else begin
       case (state)
-        // `cpu_imem_ready` alto significa que se acaba de servir: la CPU
-        // mantiene `valid` un ciclo mas antes de bajarlo, y sin esta guarda la
-        // misma busqueda se serviria dos veces.
+        // En ST_IDLE `cpu_imem_ready` esta alto: `valid` es una peticion
+        // aceptada. Antes la respuesta y la aceptacion eran la misma senal y
+        // hacia falta una guarda para no servir dos veces la misma busqueda,
+        // lo que dejaba un ciclo muerto tras cada respuesta.
         ST_IDLE: begin
-          if (cpu_imem_valid && !cpu_imem_ready) begin
+          if (cpu_imem_valid) begin
             fill_index <= index;
             fill_tag <= tag;
             want_word <= word_sel;
@@ -181,11 +192,11 @@ module instruction_buffer #(
               // Igual que respondia el adaptador de la 16: opcode invalido,
               // sin guardar nada.
               cpu_imem_read_data <= 32'hf800_0000;
-              cpu_imem_ready <= 1'b1;
+              cpu_imem_rvalid <= 1'b1;
             end else if (hit_now) begin
               cpu_imem_read_data <=
                   line_data[index][{word_sel, 5'b00000} +: 32];
-              cpu_imem_ready <= 1'b1;
+              cpu_imem_rvalid <= 1'b1;
               hit_count <= hit_count + 1'b1;
               hit_event <= 1'b1;
             end else begin
@@ -205,7 +216,7 @@ module instruction_buffer #(
               // No deberia pasar: `cacheable` ya filtro el rango. Si pasa, se
               // responde con opcode invalido y no se guarda la linea.
               cpu_imem_read_data <= 32'hf800_0000;
-              cpu_imem_ready <= 1'b1;
+              cpu_imem_rvalid <= 1'b1;
               state <= ST_IDLE;
             end else begin
               line_data[fill_index] <= rsp_rdata;
@@ -218,7 +229,7 @@ module instruction_buffer #(
         ST_SERVE: begin
           cpu_imem_read_data <=
               line_data[fill_index][{want_word, 5'b00000} +: 32];
-          cpu_imem_ready <= 1'b1;
+          cpu_imem_rvalid <= 1'b1;
           state <= ST_IDLE;
         end
 

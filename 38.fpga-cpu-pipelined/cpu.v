@@ -22,10 +22,13 @@ module cpu (
     (* pipeline_stage = "WB" *) output reg [7:0] error_code,
     (* pipeline_stage = "WB" *) output reg instruction_retired,
 
-    (* pipeline_stage = "IF" *) output reg imem_valid,
+    // imem: peticion (valid/ready, aceptada cuando los dos estan altos) y
+    // respuesta (rvalid + read_data, una por peticion y en orden).
+    output imem_valid,
     (* pipeline_stage = "IF" *) output reg [31:0] imem_address,
-    input [31:0] imem_read_data,
     input imem_ready,
+    input [31:0] imem_read_data,
+    input imem_rvalid,
 
     (* pipeline_stage = "EX" *) output reg dmem_valid,
     (* pipeline_stage = "EX" *) output reg [31:0] dmem_address,
@@ -122,7 +125,6 @@ module cpu (
   reg ctl_step_active;
   reg ctl_start_pending;
   reg ctl_start_step_pending;
-  wire issue_stall;
   wire wb_stops_machine;
   wire id_redirects_fetch;
   wire ctl_start;
@@ -143,11 +145,22 @@ module cpu (
   wire [4:0] register_write_address;
   wire [31:0] register_write_data;
 
-  // IF
-  reg [31:0] if_fetch_request_pc;
-  reg if_valid;
-  reg [31:0] if_pc;
-  reg [31:0] if_instruction;
+  // IF: fetch queue. Entry 0 (if_valid/if_pc/if_instruction) is the head
+  // that ID takes; entries 1 and 2 are behind it.
+  reg if_valid, if_valid1, if_valid2;
+  reg [31:0] if_pc, if_pc1, if_pc2;
+  reg [31:0] if_instruction, if_instruction1, if_instruction2;
+  reg [31:0] if_response_pc;
+  reg [1:0] if_inflight;
+  reg [1:0] if_discard;
+  wire [2:0] if_used;
+  wire if_accept;
+  wire if_keep;
+  wire if_pop;
+  wire [1:0] if_inflight_next;
+  reg if_valid_n, if_valid1_n, if_valid2_n;
+  reg [31:0] if_pc_n, if_pc1_n, if_pc2_n;
+  reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n;
 
   // ID
   reg id_valid;
@@ -227,7 +240,6 @@ module cpu (
   // owner: the control FSM below, or the always block of its stage.
 
   // Events seen by the stages (raw_hazard itself is computed in ID).
-  assign issue_stall = raw_hazard || ex_is_memory;
   assign wb_stops_machine = wb_valid &&
       (wb_error || wb_halt_after_retire || ctl_step_active);
   assign id_redirects_fetch = id_valid && !raw_hazard &&
@@ -314,60 +326,93 @@ module cpu (
   // 02. IF — FETCH STATE
   // ======================================================================
 
-  // IF registers and instruction-memory request port.
+  /*
+   * Fetch with request and response split (see instruction_buffer.v).
+   *
+   * imem_address is the address of the next request. A request goes out
+   * whenever its response is sure to fit: the three queue entries count both
+   * the instructions already there and the requests still in flight. The
+   * count does not look at whether ID takes the head this cycle, so ID's
+   * decision (raw_hazard, id_redirects_fetch) stays out of imem_valid. With a
+   * one-cycle hit, three entries are exactly enough for one instruction per
+   * cycle: request, response, and ID taking it.
+   *
+   * A redirect (taken branch) or a stop (abort, fault, STEP/HALT retire)
+   * empties the queue, and the responses still in flight belong to the old
+   * path: if_discard counts them and they are dropped as they arrive. They
+   * arrive in order, so a count is enough.
+   */
+  assign if_used = {1'b0, if_valid} + {1'b0, if_valid1} + {1'b0, if_valid2} +
+                   {1'b0, if_inflight};
+  assign imem_valid = !halted && (if_used < 3'd3);
+  assign if_accept = imem_valid && imem_ready;
+  assign if_keep = imem_rvalid && (if_discard == 2'd0);
+  assign if_inflight_next = if_inflight + {1'b0, if_accept} - {1'b0, imem_rvalid};
+  assign if_pop = ctl_advance && !raw_hazard && !id_redirects_fetch && if_valid;
+
+  // Next queue contents without a flush: pop the head if ID takes it, then
+  // put a kept response in the first free entry.
+  always @* begin
+    if_valid_n = if_valid;    if_pc_n = if_pc;    if_instruction_n = if_instruction;
+    if_valid1_n = if_valid1;  if_pc1_n = if_pc1;  if_instruction1_n = if_instruction1;
+    if_valid2_n = if_valid2;  if_pc2_n = if_pc2;  if_instruction2_n = if_instruction2;
+    if (if_pop) begin
+      if_valid_n = if_valid1;  if_pc_n = if_pc1;  if_instruction_n = if_instruction1;
+      if_valid1_n = if_valid2; if_pc1_n = if_pc2; if_instruction1_n = if_instruction2;
+      if_valid2_n = 1'b0;
+    end
+    if (if_keep) begin
+      if (!if_valid_n) begin
+        if_valid_n = 1'b1;  if_pc_n = if_response_pc;  if_instruction_n = imem_read_data;
+      end else if (!if_valid1_n) begin
+        if_valid1_n = 1'b1; if_pc1_n = if_response_pc; if_instruction1_n = imem_read_data;
+      end else begin
+        if_valid2_n = 1'b1; if_pc2_n = if_response_pc; if_instruction2_n = imem_read_data;
+      end
+    end
+  end
+
   always @(posedge clk) begin
     if (reset) begin
-      if_fetch_request_pc <= 32'd0;
-      if_valid <= 1'b0;
-      if_pc <= 32'd0;
-      if_instruction <= 32'd0;
-      imem_valid <= 1'b0;
       imem_address <= 32'd0;
-    end else if (halted) begin
-      imem_valid <= 1'b0;
+      if_response_pc <= 32'd0;
+      if_inflight <= 2'd0;
+      if_discard <= 2'd0;
       if_valid <= 1'b0;
-      if (ctl_start) begin
-        imem_address <= architectural_pc;
-        if_fetch_request_pc <= architectural_pc;
-        imem_valid <= 1'b1;
-      end
-    end else if (ctl_abort) begin
-      if_fetch_request_pc <= architectural_pc;
-      if_valid <= 1'b0;
-      imem_valid <= 1'b0;
-    end else if (ctl_fault) begin
-      if_fetch_request_pc <= wb_pc;
-      if_valid <= 1'b0;
-      imem_valid <= 1'b0;
-    end else if (ctl_retire_stop) begin
-      if_fetch_request_pc <= wb_next_pc;
-      if_valid <= 1'b0;
-      imem_valid <= 1'b0;
+      if_valid1 <= 1'b0;
+      if_valid2 <= 1'b0;
+      if_pc <= 32'd0;
+      if_pc1 <= 32'd0;
+      if_pc2 <= 32'd0;
+      if_instruction <= 32'd0;
+      if_instruction1 <= 32'd0;
+      if_instruction2 <= 32'd0;
     end else begin
-      // Preserve original assignment priority: fetch handshake takes
-      // precedence over the simultaneous IF -> ID transfer.
-      if (ctl_advance && !raw_hazard) begin
-        if (id_redirects_fetch) begin
+      if_inflight <= if_inflight_next;
+      if (if_accept) imem_address <= imem_address + 32'd4;
+
+      if (halted || ctl_abort || ctl_fault || ctl_retire_stop ||
+          (ctl_advance && !raw_hazard && id_redirects_fetch)) begin
+        // Empty the queue; whatever is still in flight is stale.
+        if_valid <= 1'b0;
+        if_valid1 <= 1'b0;
+        if_valid2 <= 1'b0;
+        if_discard <= if_inflight_next;
+        if (halted) begin
+          if (ctl_start) begin
+            imem_address <= architectural_pc;
+            if_response_pc <= architectural_pc;
+          end
+        end else if (!(ctl_abort || ctl_fault || ctl_retire_stop)) begin
           imem_address <= id_next_pc;
-          if_fetch_request_pc <= id_next_pc;
-          imem_valid <= 1'b0;
-          if_valid <= 1'b0;
-        end else begin
-          if_valid <= 1'b0;
+          if_response_pc <= id_next_pc;
         end
-      end
-      if (ctl_fetch) begin
-        if (imem_valid && imem_ready && !if_valid) begin
-          if_pc <= if_fetch_request_pc;
-          if_instruction <= imem_read_data;
-          if_valid <= 1'b1;
-          imem_address <= imem_address + 32'd4;
-          if_fetch_request_pc <= imem_address + 32'd4;
-          imem_valid <= 1'b0;
-        end else if (!imem_valid && !if_valid && !issue_stall) begin
-          if_fetch_request_pc <= imem_address;
-          imem_valid <= 1'b1;
-        end
+      end else begin
+        if_valid <= if_valid_n;    if_pc <= if_pc_n;    if_instruction <= if_instruction_n;
+        if_valid1 <= if_valid1_n;  if_pc1 <= if_pc1_n;  if_instruction1 <= if_instruction1_n;
+        if_valid2 <= if_valid2_n;  if_pc2 <= if_pc2_n;  if_instruction2 <= if_instruction2_n;
+        if (if_keep) if_response_pc <= if_response_pc + 32'd4;
+        if (imem_rvalid && !if_keep) if_discard <= if_discard - 2'd1;
       end
     end
   end
