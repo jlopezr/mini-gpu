@@ -6,8 +6,9 @@ lo que se lee, en que orden, y que el bloque vuelva a como estaba.
 import unittest
 
 from tools import monitor_protocol
-from tools.perf_counters import (STALL_COUNTERS, breakdown, difference,
-                                 format_report, read_counters)
+from tools.perf_counters import (PIPELINE_COUNTERS, STALL_COUNTERS, breakdown,
+                                 difference, format_report, pipeline_breakdown,
+                                 read_counters)
 
 BASE = 0x8101_0000
 CTRL = BASE + 0x100
@@ -163,6 +164,46 @@ class InformeTest(unittest.TestCase):
     def test_sin_esperas_solo_ciclos_e_instrucciones(self):
         c = {"cycles": 800, "instructions": 100, "overflow": 0, "stalls": None}
         self.assertEqual(len(format_report(c)), 1)
+
+
+
+class PipelineTest(unittest.TestCase):
+    """Ranuras 8 a 11 de la CPU segmentada (capacidad `perf_pipeline`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(PIPELINE_COUNTERS, {
+            "stall_ex_mem": 0x20, "stall_raw": 0x24, "stall_branch": 0x28,
+            "stall_id_empty": 0x2C})
+
+    def test_solo_las_lee_si_se_piden(self):
+        pipeline = {BASE + 0x20: 100, BASE + 0x24: 250, BASE + 0x28: 75, BASE + 0x2C: 25}
+        cliente = ClienteFalso(bloque() | pipeline)
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("stall_raw", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, pipeline=True)
+        self.assertEqual(c["stalls"]["stall_raw"], 250)
+
+    def test_reparto_por_instruccion_y_otros_es_lo_que_falta(self):
+        # 1000 ciclos, 125 instrucciones: 125 + 100 + 250 + 75 + 25 = 575 contados.
+        stalls = {"stall_ex_mem": 100, "stall_raw": 250, "stall_branch": 75,
+                  "stall_id_empty": 25}
+        p = pipeline_breakdown(1000, 125, stalls)
+        self.assertEqual((p["ex_mem"], p["raw"], p["branch"], p["id_empty"]),
+                         (0.8, 2.0, 0.6, 0.2))
+        self.assertAlmostEqual(p["other"], 3.4)
+        self.assertAlmostEqual(1 + sum(p.values()), 1000 / 125)
+
+    def test_sin_ranuras_del_pipeline_no_hay_reparto(self):
+        self.assertIsNone(pipeline_breakdown(1000, 125, {"stall_mem": 3}))
+        self.assertIsNone(pipeline_breakdown(1000, 0, {"stall_raw": 3}))
+
+    def test_el_informe_lo_enseña(self):
+        c = {"cycles": 1000, "instructions": 125, "overflow": 0,
+             "stalls": {"imem_hits": 120, "imem_misses": 5, "mem_tx": 30,
+                        "stall_mem": 300, "stall_fetch": 120, "stall_mmio": 50,
+                        "stall_ex_mem": 100, "stall_raw": 250, "stall_branch": 75,
+                        "stall_id_empty": 25}}
+        self.assertIn("dependencia 2.00", "\n".join(format_report(c)))
 
 
 if __name__ == "__main__":

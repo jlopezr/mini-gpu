@@ -37,6 +37,7 @@ module cpu_perf_tb;
   wire [31:0] imem_address;
   wire [31:0] debug_register_data;
   wire [31:0] debug_pc;
+  wire [3:0] perf_stall;
 
   localparam integer WORDS = 256;
   localparam [31:0] HALT = 32'hfc00_0000;
@@ -72,8 +73,21 @@ module cpu_perf_tb;
       .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
-      .debug_pc(debug_pc)
+      .debug_pc(debug_pc),
+      .perf_stall(perf_stall)
   );
+
+  // Los contadores de la placa, con las ranuras del pipeline. Se leen por
+  // jerarquia: aqui no hay bus MMIO.
+  cpu_perf_counters #(.PIPELINE(1)) perf (
+      .clk(clk), .reset(reset),
+      .select(1'b0), .write(1'b0), .write_mask(4'd0), .address(16'd0),
+      .write_data(32'd0), .read_data(),
+      .running(!halted), .retired(instruction_retired), .restart(run_request),
+      .imem_valid(imem_valid), .imem_ready(1'b1),
+      .dmem_valid(1'b0), .dmem_ready(1'b0), .dmem_is_mmio(1'b0),
+      .imem_hit(1'b0), .imem_miss(1'b0), .mem_req0(1'b0), .mem_req1(1'b0),
+      .pipe_stall(perf_stall));
 
   // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta al
   // ciclo siguiente.
@@ -147,6 +161,13 @@ module cpu_perf_tb;
         $fatal(1, "%0s: retiro %0d, se esperaban %0d", name, retired, expected_retired);
       $display("PERF %-8s cycles=%0d retired=%0d CPI=%0.2f", name, cycles, retired,
                cycles * 1.0 / retired);
+      // Ciclos por instruccion de cada motivo; `otros` es lo que no cuentan
+      // los cuatro (arranque, parada, HALT).
+      $display("PIPE %-8s ex_mem=%0.2f raw=%0.2f branch=%0.2f id_empty=%0.2f otros=%0.2f",
+               name, perf.stall_ex_mem * 1.0 / retired, perf.stall_raw * 1.0 / retired,
+               perf.stall_branch * 1.0 / retired, perf.stall_id_empty * 1.0 / retired,
+               (perf.cycles - perf.retired_count - perf.stall_ex_mem - perf.stall_raw -
+                perf.stall_branch - perf.stall_id_empty) * 1.0 / retired);
     end
   endtask
 

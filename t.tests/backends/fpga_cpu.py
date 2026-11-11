@@ -66,6 +66,7 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_PERF_IMEM_HITS_OFF, MMIO_PERF_IMEM_MISSES_OFF, MMIO_PERF_MEM_TX_OFF,
     MMIO_PERF_STALL_MEM_OFF, MMIO_PERF_STALL_FETCH_OFF, MMIO_PERF_STALL_MMIO_OFF,
 )
+from tools.perf_counters import PIPELINE_COUNTERS  # noqa: E402
 
 VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
 VIDEO_FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
@@ -100,6 +101,9 @@ PERF_STALL_COUNTERS = {
     "stall_fetch": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_FETCH_OFF,
     "stall_mmio": MMIO_CPU_PERF_BASE + MMIO_PERF_STALL_MMIO_OFF,
 }
+# Los de la CPU segmentada (capacidad `perf_pipeline`, ranuras 8 a 11).
+PERF_PIPELINE_COUNTERS = {name: MMIO_CPU_PERF_BASE + offset
+                          for name, offset in PIPELINE_COUNTERS.items()}
 VIDEO_REGISTERS = frame_capture.Registers(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
@@ -432,6 +436,11 @@ class FpgaCpuBackend(MonitorBackend):
                     name: _read_register(client, address, has_word)
                     for name, address in PERF_STALL_COUNTERS.items()
                 }
+                if "perf_pipeline" in device_caps:
+                    waits.update({
+                        name: _read_register(client, address, has_word)
+                        for name, address in PERF_PIPELINE_COUNTERS.items()
+                    })
 
             video_result = None
             if video:

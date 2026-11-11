@@ -185,6 +185,13 @@
 `define MMIO_PERF_STALL_FETCH_OFF  32'h0000_0018
 `define MMIO_PERF_STALL_MMIO_OFF   32'h0000_001C
 
+// Extension de las CPU segmentadas (mmio.md §13.2, capacidad `perf_pipeline`):
+// el motivo de cada ciclo en que ninguna instruccion pasa de ID a EX.
+`define MMIO_PERF_STALL_EX_MEM_OFF   32'h0000_0020
+`define MMIO_PERF_STALL_RAW_OFF      32'h0000_0024
+`define MMIO_PERF_STALL_BRANCH_OFF   32'h0000_0028
+`define MMIO_PERF_STALL_ID_EMPTY_OFF 32'h0000_002C
+
 // ==== CPU CORE (mmio.md §13.1) ===========================================
 
 `define MMIO_CPU_ID_OFF            32'h0000_0000

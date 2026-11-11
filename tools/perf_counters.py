@@ -29,6 +29,10 @@ from tools.mmio_map import (
     MMIO_PERF_STALL_FETCH_OFF,
     MMIO_PERF_STALL_MEM_OFF,
     MMIO_PERF_STALL_MMIO_OFF,
+    MMIO_PERF_STALL_BRANCH_OFF,
+    MMIO_PERF_STALL_EX_MEM_OFF,
+    MMIO_PERF_STALL_ID_EMPTY_OFF,
+    MMIO_PERF_STALL_RAW_OFF,
 )
 
 # Nombre de cada contador de espera -> su offset en el bloque.
@@ -42,8 +46,19 @@ STALL_COUNTERS = {
 }
 
 
+# Los de la CPU segmentada (capacidad `perf_pipeline`, ranuras 8 a 11): el
+# motivo de cada ciclo en que ninguna instruccion pasa de ID a EX. Van en el
+# mismo diccionario que los de espera.
+PIPELINE_COUNTERS = {
+    "stall_ex_mem": MMIO_PERF_STALL_EX_MEM_OFF,
+    "stall_raw": MMIO_PERF_STALL_RAW_OFF,
+    "stall_branch": MMIO_PERF_STALL_BRANCH_OFF,
+    "stall_id_empty": MMIO_PERF_STALL_ID_EMPTY_OFF,
+}
+
+
 def read_counters(read_word, write_word=None, stalls: bool = False,
-                  base: int = MMIO_CPU_PERF_BASE) -> dict:
+                  base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False) -> dict:
     """Todos los contadores de un mismo instante.
 
     `read_word(direccion)` y `write_word(direccion, valor)` son los del cliente
@@ -69,6 +84,9 @@ def read_counters(read_word, write_word=None, stalls: bool = False,
         if stalls:
             contadores["stalls"] = {nombre: read_word(base + offset)
                                     for nombre, offset in STALL_COUNTERS.items()}
+            if pipeline:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in PIPELINE_COUNTERS.items()})
     finally:
         if write_word is not None:
             write_word(base + MMIO_PERF_CTRL_OFF, previo)
@@ -124,6 +142,23 @@ def breakdown(cycles, instructions, stalls) -> dict | None:
     }
 
 
+def pipeline_breakdown(cycles, instructions, stalls) -> dict | None:
+    """Ciclos por instruccion de cada motivo de no emitir, o `None` sin datos.
+
+    CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY
+    + otros, asi que CPI = 1 + la suma de lo que devuelve. `other` son los
+    ciclos de arranque, STEP, HALT y error; no baja de cero, porque los eventos
+    llegan un ciclo tarde.
+    """
+    if not cycles or not instructions or not stalls or "stall_raw" not in stalls:
+        return None
+    parts = {nombre.removeprefix("stall_"): stalls[nombre] / instructions
+             for nombre in PIPELINE_COUNTERS}
+    counted = instructions + sum(stalls[nombre] for nombre in PIPELINE_COUNTERS)
+    parts["other"] = max(0, cycles - counted) / instructions
+    return parts
+
+
 def _pct(fraction) -> str:
     return "n/d" if fraction is None else f"{100.0 * fraction:.1f} %"
 
@@ -151,6 +186,12 @@ def format_report(contadores: dict) -> list[str]:
             f"  buffer de instrucciones: {stalls['imem_hits']} aciertos, "
             f"{stalls['imem_misses']} fallos ({_pct(r['hit_rate'])} de acierto); "
             f"{stalls['mem_tx']} peticiones a memoria")
+    p = pipeline_breakdown(cycles, instructions, contadores.get("stalls"))
+    if p is not None:
+        lineas.append(
+            f"  ciclos por instruccion, ademas del 1: EX con memoria {p['ex_mem']:.2f}, "
+            f"dependencia {p['raw']:.2f}, salto {p['branch']:.2f}, "
+            f"ID vacio {p['id_empty']:.2f}, otros {p['other']:.2f}")
     if contadores.get("overflow"):
         lineas.append(
             f"  AVISO: PERF_OVF0={contadores['overflow']:#x}, algun contador ha dado la "

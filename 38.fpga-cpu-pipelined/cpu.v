@@ -40,7 +40,14 @@ module cpu (
 
     input [4:0] debug_register_address,
     output [31:0] debug_register_data,
-    output [31:0] debug_pc
+    output [31:0] debug_pc,
+
+    // Why the ID -> EX transfer did not happen this cycle, one-hot and
+    // registered (cpu_perf_counters, PIPELINE = 1): [0] EX busy with a memory
+    // access, [1] RAW hazard, [2] ID empty after a taken branch, [3] ID empty
+    // for any other reason. All zero: an instruction moved on, or the CPU is
+    // halted or stopping (STEP, HALT, error).
+    output reg [3:0] perf_stall
 );
 
   localparam [5:0] OPCODE_NOP = 6'h00;
@@ -136,6 +143,7 @@ module cpu (
   wire ctl_advance;
   wire ctl_memory;
   wire ctl_fetch;
+  reg perf_after_redirect;
 
   // Register file
   wire [31:0] register_a;
@@ -260,6 +268,33 @@ module cpu (
       !wb_stops_machine && ex_is_memory;
   assign ctl_fetch = !halted && !halt_request &&
       !wb_stops_machine && !id_redirects_fetch;
+
+  // Performance accounting at the ID -> EX transfer: every running cycle is
+  // either an instruction moving on or exactly one reason it did not, so the
+  // reasons add up to CYCLES - RETIRED (minus STEP/HALT/error cycles). Taken
+  // here and registered, so raw_hazard only feeds one LUT and one FF next to
+  // ID instead of a wire across the chip.
+  always @(posedge clk) begin
+    if (reset || halted) begin
+      perf_stall <= 4'b0000;
+      perf_after_redirect <= 1'b0;
+    end else begin
+      perf_stall <= 4'b0000;
+      if (ctl_memory)
+        perf_stall[0] <= 1'b1;
+      else if (ctl_advance && id_valid && raw_hazard)
+        perf_stall[1] <= 1'b1;
+      else if (ctl_advance && !id_valid)
+        perf_stall[perf_after_redirect ? 2 : 3] <= 1'b1;
+
+      // Set by a taken branch; cleared once ID holds the first instruction of
+      // the new path.
+      if (ctl_advance && !raw_hazard && id_redirects_fetch)
+        perf_after_redirect <= 1'b1;
+      else if (id_valid)
+        perf_after_redirect <= 1'b0;
+    end
+  end
 
   // Control FSM: only this process owns ctl_* and halted.
   always @(posedge clk) begin

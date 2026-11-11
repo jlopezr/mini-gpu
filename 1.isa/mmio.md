@@ -883,6 +883,10 @@ Array según §12.6.
 | 5 | `+0x14` | `STALL_MEM` |
 | 6 | `+0x18` | `STALL_FETCH` (extensión) |
 | 7 | `+0x1C` | `STALL_MMIO` (extensión) |
+| 8 | `+0x20` | `STALL_EX_MEM` (extensión segmentada) |
+| 9 | `+0x24` | `STALL_RAW` (extensión segmentada) |
+| 10 | `+0x28` | `STALL_BRANCH` (extensión segmentada) |
+| 11 | `+0x2C` | `STALL_ID_EMPTY` (extensión segmentada) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
@@ -903,6 +907,10 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `STALL_MEM` | Ciclos con una petición de memoria del núcleo pendiente, sea búsqueda de instrucción o acceso a datos a memoria, y sin respuesta todavía. |
 | `STALL_FETCH` | De los de `STALL_MEM`, los de la búsqueda de instrucción. Los de datos son `STALL_MEM − STALL_FETCH`. |
 | `STALL_MMIO` | Ciclos con un acceso a datos a un dispositivo MMIO pendiente. **No** se suman a `STALL_MEM`: un dispositivo no es memoria. |
+| `STALL_EX_MEM` | Solo CPU segmentada. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con un acceso a memoria o a MMIO, incluidos los ciclos de petición y respuesta que no son espera. |
+| `STALL_RAW` | Solo CPU segmentada. Ciclos en que ID tiene una instrucción pero la para una dependencia con una instrucción anterior que aún no ha escrito su registro. |
+| `STALL_BRANCH` | Solo CPU segmentada. Ciclos con ID vacío desde un salto tomado hasta que llega la primera instrucción del destino. |
+| `STALL_ID_EMPTY` | Solo CPU segmentada. Ciclos con ID vacío por cualquier otro motivo: un fallo del búfer de instrucciones o el arranque. |
 
 **Identidades.** Con ellas se comprueba una implementación y se reparte el
 tiempo:
@@ -913,6 +921,16 @@ IMEM_HITS + IMEM_MISSES  ≈  RETIRED            (una búsqueda por instrucción
 CPI = CYCLES / RETIRED         IPC = RETIRED / CYCLES
 ```
 
+En la CPU segmentada, cada ciclo con el núcleo corriendo o pasa una instrucción
+de ID a EX o cuenta en **uno solo** de los cuatro motivos, así que:
+
+```text
+CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros
+CPI    = 1 + (STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros) / RETIRED
+```
+
+`otros` son los pocos ciclos de arranque, `STEP`, `HALT` y error.
+
 La primera se cumple salvo por uno o dos ciclos: los eventos cruzan un registro
 antes de contarse, así que llegan un ciclo tarde. Es un retraso constante, no un
 error acumulado.
@@ -921,7 +939,8 @@ error acumulado.
 demás dan error (§12.6), no cero. Las CPU de las carpetas 16 a 21 implementan las
 ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
 detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
-RTL. Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+RTL. La 38, segmentada, implementa además las ranuras 8 a 11 (capacidad
+`perf_pipeline`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
 son bloques distintos y no chocan.
 
 **Cómo se leen.** Con el núcleo parado, o congelando el bloque con

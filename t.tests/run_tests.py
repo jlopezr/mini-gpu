@@ -35,6 +35,7 @@ if str(REPOSITORY) not in sys.path:
 
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
+from tools.perf_counters import pipeline_breakdown  # noqa: E402
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 from tools.board_record import folder_sha256  # noqa: E402
@@ -1260,6 +1261,37 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "buffer`: busquedas servidas sin ir a la SDRAM. `Tx/instr.`: peticiones",
             "de la CPU al fabric (busquedas que fallan y accesos a datos) por",
             "instruccion. Contadores de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # El CPI por motivo, solo para las CPU segmentadas (capacidad
+    # `perf_pipeline`): cada ciclo sin emitir cuenta en un solo motivo.
+    pipeline = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                p = pipeline_breakdown(medida.get("cycles"), medida.get("instructions"),
+                                       medida.get("stalls"))
+                if p is not None:
+                    pipeline.append((caso, v, medida, p))
+    if pipeline:
+        lineas += ["", "## Reparto del pipeline (ciclos por instruccion)", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "CPI", "EX con memoria", "Dependencia", "Salto",
+             "ID vacio", "Otros"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 6))
+        for caso, version, medida, p in pipeline:
+            lineas.append(_markdown_row(
+                [caso, version, _format_cpi(medida)] +
+                [f"{p[k]:.2f}" for k in ("ex_mem", "raw", "branch", "id_empty", "other")]))
+        lineas += [
+            "",
+            "CPI = 1 + EX con memoria + Dependencia + Salto + ID vacio + Otros. Cada",
+            "columna son los ciclos por instruccion en que ninguna instruccion paso",
+            "de ID a EX por ese motivo. `EX con memoria`: un LOAD/STORE o MMIO",
+            "ocupando EX; `Dependencia`: ID esperando un registro; `Salto`: ID vacio",
+            "tras un salto tomado; `ID vacio`: fallo de busqueda o arranque. Ranuras",
+            "8 a 11 de CPU PERFORMANCE, mmio.md §13.2.",
         ]
 
     # El ritmo de los casos de video: frames emitidos e intercambios hechos

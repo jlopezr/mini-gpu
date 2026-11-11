@@ -100,6 +100,13 @@
     "pattern": "SLOT_STALL_MEM\\s*=",
     "implies": ["perf_counters"]
   },
+  "_comment_perf_pipeline": "Los contadores de la CPU segmentada (mmio.md §13.2, ranuras 8 a 11: STALL_EX_MEM, STALL_RAW, STALL_BRANCH, STALL_ID_EMPTY). `--measure` los lee y reparte el CPI por motivo. cpu_perf_counters.v es el mismo fichero en 30 y 34-38 y solo las crea con PIPELINE = 1, asi que el patron mira el top.v que lo instancia asi, no el modulo.",
+  "perf_pipeline": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\)\\)",
+    "implies": ["perf_stalls"]
+  },
   "atomic_warp_faults": {
     "architecture": "gpu"
   },
