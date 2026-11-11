@@ -10,11 +10,20 @@
  *   straight  200 ADDI independientes en linea recta: solo la busqueda.
  *   chain     200 ADDI R1,R1,1 seguidos: la parada por dependencia.
  *   loop      bucle de 4 instrucciones con BNE hacia atras: el salto tomado.
+ *   store     bucle de STORE a direcciones seguidas, como el de un framebuffer.
+ *   load      bucle de LOAD a direcciones seguidas.
  *
  * La memoria imita un ACIERTO de instruction_buffer.v: acepta una peticion
  * por ciclo (`ready` siempre alto) y la responde al ciclo siguiente con
  * `rvalid`. Es lo que veria la CPU en la placa con un 100 % de aciertos; los
  * fallos no se modelan.
+ *
+ * La memoria de datos imita a cpu_dmem_adapter.v: un STORE a la linea de 16
+ * bytes que guarda el bufer de combinacion se contesta al ciclo siguiente; uno
+ * a otra linea espera el volcado (FLUSH_CYCLES); un LOAD espera la lectura
+ * (READ_CYCLES). Despues de contestar espera a que baje `valid` (su ST_DONE).
+ * Las latencias de la SDRAM son una estimacion: lo que se mide de verdad aqui
+ * es lo que cuesta el protocolo.
  *
  * Los ciclos se cuentan con la CPU en marcha (!halted), como CYCLES en
  * cpu_perf_counters.v. De momento solo informa: cuando un cambio mejore el CPI
@@ -28,6 +37,12 @@ module cpu_perf_tb;
   reg [4:0] debug_register_address = 5'd0;
   reg [31:0] imem_read_data = 32'h0000_0000;
   reg imem_rvalid = 1'b0;
+
+  wire dmem_valid;
+  wire [31:0] dmem_address, dmem_write_data;
+  wire [3:0] dmem_write_enable;
+  reg [31:0] dmem_read_data = 32'h0000_0000;
+  reg dmem_ready = 1'b0;
 
   wire halted;
   wire error;
@@ -64,12 +79,12 @@ module cpu_perf_tb;
       .imem_read_data(imem_read_data),
       .imem_ready(1'b1),
       .imem_rvalid(imem_rvalid),
-      .dmem_valid(),
-      .dmem_address(),
-      .dmem_write_data(),
-      .dmem_write_enable(),
-      .dmem_read_data(32'h0000_0000),
-      .dmem_ready(1'b0),
+      .dmem_valid(dmem_valid),
+      .dmem_address(dmem_address),
+      .dmem_write_data(dmem_write_data),
+      .dmem_write_enable(dmem_write_enable),
+      .dmem_read_data(dmem_read_data),
+      .dmem_ready(dmem_ready),
       .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
@@ -85,7 +100,7 @@ module cpu_perf_tb;
       .write_data(32'd0), .read_data(),
       .running(!halted), .retired(instruction_retired), .restart(run_request),
       .imem_valid(imem_valid), .imem_ready(1'b1),
-      .dmem_valid(1'b0), .dmem_ready(1'b0), .dmem_is_mmio(1'b0),
+      .dmem_valid(dmem_valid), .dmem_ready(dmem_ready), .dmem_is_mmio(1'b0),
       .imem_hit(1'b0), .imem_miss(1'b0), .mem_req0(1'b0), .mem_req1(1'b0),
       .pipe_stall(perf_stall));
 
@@ -94,6 +109,60 @@ module cpu_perf_tb;
   always @(posedge clk) begin
     imem_rvalid <= imem_valid;
     if (imem_valid) imem_read_data <= instruction_memory[imem_address[9:2]];
+  end
+
+  // Memoria de datos: 1024 palabras, con el comportamiento de cpu_dmem_adapter.
+  localparam integer FLUSH_CYCLES = 8;
+  localparam integer READ_CYCLES = 8;
+  localparam [1:0] D_IDLE = 2'd0, D_BUSY = 2'd1, D_DONE = 2'd2;
+  reg [31:0] data_memory[0:1023];
+  reg [1:0] d_state = D_IDLE;
+  integer d_wait = 0;
+  reg d_line_valid = 1'b0;
+  reg [27:0] d_line = 28'd0;
+  reg [31:0] stores = 0, loads = 0;
+
+  always @(posedge clk) begin
+    dmem_ready <= 1'b0;
+    if (reset) begin
+      d_state <= D_IDLE;
+      d_line_valid <= 1'b0;
+    end else case (d_state)
+      D_IDLE:
+        if (dmem_valid) begin
+          if (dmem_write_enable != 4'd0) begin
+            stores <= stores + 1;
+            if (dmem_write_enable[0]) data_memory[dmem_address[11:2]][7:0] <= dmem_write_data[7:0];
+            if (dmem_write_enable[1]) data_memory[dmem_address[11:2]][15:8] <= dmem_write_data[15:8];
+            if (dmem_write_enable[2]) data_memory[dmem_address[11:2]][23:16] <= dmem_write_data[23:16];
+            if (dmem_write_enable[3]) data_memory[dmem_address[11:2]][31:24] <= dmem_write_data[31:24];
+            if (!d_line_valid || d_line == dmem_address[31:4]) begin
+              dmem_ready <= 1'b1;
+              d_state <= D_DONE;
+            end else begin
+              d_wait <= FLUSH_CYCLES;
+              d_state <= D_BUSY;
+            end
+            d_line_valid <= 1'b1;
+            d_line <= dmem_address[31:4];
+          end else begin
+            loads <= loads + 1;
+            dmem_read_data <= data_memory[dmem_address[11:2]];
+            d_wait <= READ_CYCLES;
+            d_state <= D_BUSY;
+          end
+        end
+      D_BUSY:
+        if (d_wait <= 1) begin
+          dmem_ready <= 1'b1;
+          d_state <= D_DONE;
+        end else begin
+          d_wait <= d_wait - 1;
+        end
+      D_DONE:
+        if (!dmem_valid) d_state <= D_IDLE;
+      default: d_state <= D_IDLE;
+    endcase
   end
 
   always @(posedge clk) begin
@@ -113,6 +182,15 @@ module cpu_perf_tb;
 
   function [31:0] movi(input [4:0] rd, input [15:0] imm);
     movi = 32'h4000_0000 | (rd << 21) | imm;
+  endfunction
+
+  // STORE guarda rd en [ra + imm]; LOAD carga rd de [ra + imm].
+  function [31:0] store(input [4:0] rd, input [4:0] ra, input [15:0] imm);
+    store = 32'h5800_0000 | (rd << 21) | (ra << 16) | imm;
+  endfunction
+
+  function [31:0] load(input [4:0] rd, input [4:0] ra, input [15:0] imm);
+    load = 32'h5400_0000 | (rd << 21) | (ra << 16) | imm;
   endfunction
 
   // BNE compara rd con ra; el destino es PC + 4 + 4 * offset.
@@ -200,6 +278,32 @@ module cpu_perf_tb;
     instruction_memory[4] = bne(5'd2, 5'd0, 16'hfffc);    // a la palabra 1
     run_program("loop", 1 + 50 * 4 + 1);
     expect_register(5'd2, 32'd0);
+
+    // store: 64 STORE a palabras seguidas desde 0x400, cuatro por linea de 16
+    // bytes, con el contador y el puntero en medio como en un bucle de pixeles.
+    clear_memory();
+    instruction_memory[0] = movi(5'd1, 16'h0400);       // puntero
+    instruction_memory[1] = movi(5'd2, 16'd64);         // vueltas
+    instruction_memory[2] = movi(5'd3, 16'h1234);       // dato
+    instruction_memory[3] = store(5'd3, 5'd1, 16'd0);   // [R1] = R3
+    instruction_memory[4] = addi(5'd1, 5'd1, 16'd4);
+    instruction_memory[5] = addi(5'd2, 5'd2, 16'hffff);
+    instruction_memory[6] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 3
+    run_program("store", 3 + 64 * 4 + 1);
+    if (data_memory[(16'h0400 >> 2) + 63] !== 32'h0000_1234)
+      $fatal(1, "store: el ultimo STORE no llego a memoria");
+
+    // load: 64 LOAD de palabras seguidas.
+    clear_memory();
+    for (k = 0; k < 64; k = k + 1) data_memory[(16'h0400 >> 2) + k] = k;
+    instruction_memory[0] = movi(5'd1, 16'h0400);
+    instruction_memory[1] = movi(5'd2, 16'd64);
+    instruction_memory[2] = load(5'd4, 5'd1, 16'd0);    // R4 = [R1]
+    instruction_memory[3] = addi(5'd1, 5'd1, 16'd4);
+    instruction_memory[4] = addi(5'd2, 5'd2, 16'hffff);
+    instruction_memory[5] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 2
+    run_program("load", 2 + 64 * 4 + 1);
+    expect_register(5'd4, 32'd63);
 
     $display("PASS: cpu_perf");
     $finish;
