@@ -44,7 +44,10 @@ module top (
 `ifdef DIAMOND
   localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
 `else
-  localparam [5:0] SDRAM_PHASE = 6'd2;   // phase-sweep de la 38, 2026-11-11: ventana 0-5
+  // Con `syn_useioff` en sdram_controller_128 los registros van en la celda de
+  // IO, como en Diamond, y la ventana pasa de 0-7 a 2-21 (phase-sweep,
+  // 2026-11-11, build ioff).
+  localparam [5:0] SDRAM_PHASE = 6'd11;
 `endif
   pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
       .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
