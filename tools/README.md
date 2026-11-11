@@ -2174,6 +2174,32 @@ borra el sello de `_build/default/.uploaded`, así que el siguiente `run-board`
 o `board-upload` sin `--bitstream` vuelve a programar el bitstream actual del
 proyecto. Es incompatible con `--rebuild` y `--no-upload`.
 
+### Barrido de fase de la SDRAM (`phase-sweep`)
+
+Programa uno o varios bitstreams y, para cada uno, recorre las 48 fases del reloj
+de la SDRAM (pasos de 208 ps) escribiendo y leyendo cuatro patrones desde el
+monitor. Saca la ventana de fases que pasan en todos y recomienda su centro, que
+es la fase con la que sale el bitstream (`SDRAM_PHASE` en el `top.v` de la 35–38,
+un valor para Yosys y otro para Diamond; la 36 y la 37 la fijan en `pll_mem.v`):
+
+```bash
+$ phase-sweep --bitstream 38.fpga-cpu-pipelined/reports/20261111-165312-596391-paso-5 --dry-run
+$ phase-sweep --bitstream s3=37.fpga-cpu-gpu-mk2/reports/sweep-X/seed-3 \
+              --bitstream s10=37.fpga-cpu-gpu-mk2/reports/sweep-X/seed-10 --yes
+```
+
+`--bitstream` acepta `[NOMBRE=]RUTA`, al `hardware.bit` o a su carpeta de
+`reports/`; sin nombre usa el de esa carpeta. **El prototipo sale de la ruta**
+(la carpeta `N.nombre` que la contiene); `-p` solo hace falta para un bitstream
+fuera del repo. Se usa para dos cosas: `board-upload` comprueba tras programar
+que responde el monitor de ese prototipo, y el protocolo se habla con su
+`monitor.py`, que no es igual en todos (la 38 va a 250 kbaudios, la 35-37 a
+1 Mbaudio). Al acabar deja la placa en `--restore-phase`, por defecto la que tenía
+el bitstream recién programado. Los informes (JSONL, CSV, JSON y Markdown) van a
+`<prototipo>/reports/phase-sweep-<fecha>.*` salvo `--output`. Sin `--yes` no
+programa nada; `--phases 4-16` limita el barrido, pero entonces no recomienda
+fase.
+
 ### Cambiar la fuente de la consola sin resintetizar (`font-patch`)
 
 La fuente de `text_console.v` es contenido inicial de cuatro EBR: cambiarla no

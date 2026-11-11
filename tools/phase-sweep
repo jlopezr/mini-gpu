@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Lanzador global de `tools/phase_sweep.py` (barrido de fase SDRAM en placa). El
+# prototipo sale de la ruta de cada bitstream; ver la cabecera del modulo.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PY="$ROOT/.venv/bin/python3"
+
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+elif [[ -x "$VENV_PY" ]]; then
+  PY="$VENV_PY"
+else
+  PY="python3"
+fi
+
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m tools.phase_sweep "$@"

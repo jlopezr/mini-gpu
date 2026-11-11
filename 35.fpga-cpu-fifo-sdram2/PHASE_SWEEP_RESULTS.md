@@ -26,7 +26,7 @@ retrasos (`PHASEDIR=0`), porque el avance puede introducir glitches.
   tráfico anterior haya drenado. Después se reinicia solamente el controlador
   SDRAM y se espera de nuevo a `init_done`.
 - `monitor.py` incorpora `phase-status` y `phase-step`.
-- `phase_sweep.py` programa varios bitstreams, recorre las 48 posiciones,
+- `phase_sweep.py` (hoy `tools/phase-sweep`) programa varios bitstreams, recorre las 48 posiciones,
   conserva resultados parciales y genera JSONL, JSON, CSV y Markdown.
 
 No se modificó la lógica interna de `sdram_controller_128.v`.
@@ -137,8 +137,11 @@ El respaldo previo `reports/20261010-seed10-rf-ram-buena/` no se modificó.
 Ejemplo para dos bitstreams; se pueden repetir argumentos `--bitstream` para
 añadir más semillas:
 
+El script vivía entonces en esta carpeta; ahora es `tools/phase-sweep`, común a
+todos los prototipos, que saca el prototipo de la ruta de cada bitstream.
+
 ```powershell
-.\.venv\Scripts\python.exe 35.fpga-cpu-fifo-sdram2\phase_sweep.py `
+tools\phase-sweep.ps1 `
   --port COM3 `
   --bitstream "seed3=RUTA\seed-3\hardware.bit" `
   --bitstream "seed10=RUTA\seed-10\hardware.bit" `
