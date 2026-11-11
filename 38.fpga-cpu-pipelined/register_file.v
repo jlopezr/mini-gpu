@@ -1,6 +1,7 @@
 `default_nettype none
 
-/*
+/* @reviewed 2026-10-09
+ *
  * MiniISA register file.
  *
  * - 32 registers of 32 bits, of which R0 is hardwired to zero.
@@ -11,15 +12,25 @@
  * R0 IS HARDWIRED TO ZERO: writes are dropped, reads always return zero. It is
  * a rule of the ISA, not of this implementation. See 1.isa/isa.md section 1.
  *
- * EN ESTA CARPETA ESTE FICHERO NO ES EL DE LAS DEMAS (experimento, 9 de octubre
- * de 2026). Las demas ponen a cero los 32 registros en el ciclo del reset, y eso
- * obliga a la sintesis a usar flip-flops: 1.061 FF y 2.589 LUT4 de
- * multiplexores para tres lecturas. Aqui el banco es una RAM distribuida
- * (3 copias de 16 DPR16X4: 48 celdas, 43 FF y 141 LUT4) y el reset arranca un
- * BARRIDO de 32 ciclos que escribe cero en cada direccion. Mientras dura, y
- * mientras `reset` este alto, `busy` vale 1 y quien instancia el banco debe
- * mantener a la CPU parada: durante el barrido las lecturas no valen. Por eso
- * `registers[0]` sigue siendo cero: el barrido lo escribe y nada mas lo escribe.
+ * THIS FILE DIFFERS FROM THE ONE IN THE OTHER FOLDERS (experiment, 9 October
+ * 2026). The others clear all 32 registers in the reset cycle, which forces
+ * synthesis to use flip-flops: 1,061 FF plus 2,589 LUT4 of multiplexers for the
+ * three reads. Here the bank is distributed RAM, and reset starts a 32-cycle
+ * SWEEP that writes zero to every address instead.
+ *
+ * The RTL declares a single array, but a TRELLIS_DPR16X4 has only one read
+ * port, so Yosys builds one copy of the RAM per read (A, B and debug). All
+ * three copies share the same write port and therefore hold the same data.
+ * Each copy is 32x32 bits = 2 cells deep x 8 cells wide = 16 cells, for a
+ * total of 48 cells, 43 FF and 141 LUT4.
+ *
+ * While the sweep runs, and while `reset` is high, `busy` is 1 and reads are
+ * not valid; the instantiating module must keep the CPU stalled. Normal writes
+ * are ignored during the sweep for the same reason.
+ *
+ * R0 reads as zero because the sweep writes zero there and nothing else ever
+ * writes that address (`normal_write` excludes it). There is no read-side mux
+ * forcing zero, so any new write path into `registers` must keep that filter.
  */
 module register_file (
     input clk,
@@ -42,16 +53,22 @@ module register_file (
 
   reg [31:0] registers[0:31];
 
-  // 0..31 barre; 32 (bit 5) = terminado. El reset lo vuelve a 0.
+  // 0..31: sweeping; 32 (bit 5 set): done. Reset sets it back to 0. The
+  // initial value also runs the sweep at power-up without a reset.
   reg [5:0] sweep = 6'd0;
   wire sweeping = !sweep[5];
   assign busy = reset || sweeping;
 
   /*
-   * Debug is intentionally two cycles deep: first capture the requested
-   * address, then capture the selected register. UART debug traffic tolerates
-   * this latency and the large 32-to-1 mux no longer ends at a distant monitor
-   * register. The CPU read ports remain combinational. See timing.md.
+   * Debug is two cycles deep: first capture the requested address, then
+   * capture the selected register. The debug port has its own RAM copy, so
+   * the extra cycle is not caused by port sharing; it is inherited from the
+   * flip-flop version, where it split the path from the distant monitor
+   * register to a large 32-to-1 mux. With distributed RAM the read is only an
+   * asynchronous DPR16X4 read plus a 2-to-1 mux, so the address register is
+   * probably no longer needed, but it is kept: the monitor waits a fixed two
+   * cycles anyway and UART traffic hides the latency. The CPU read ports
+   * remain combinational. See 6.fpga-cpu/docs/timing.md.
    */
   reg [4:0] debug_address_registered;
 

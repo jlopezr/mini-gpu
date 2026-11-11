@@ -18,20 +18,20 @@ module cpu (
     input halt_request,
     input step_request,
 
-    output reg halted,
-    output reg error,
-    output reg [7:0] error_code,
-    output reg instruction_retired,
+    (* pipeline_stage = "_CTL" *) output reg halted,
+    (* pipeline_stage = "WB" *) output reg error,
+    (* pipeline_stage = "WB" *) output reg [7:0] error_code,
+    (* pipeline_stage = "WB" *) output reg instruction_retired,
 
-    output reg imem_valid,
-    output reg [31:0] imem_address,
+    (* pipeline_stage = "IF" *) output reg imem_valid,
+    (* pipeline_stage = "IF" *) output reg [31:0] imem_address,
     input [31:0] imem_read_data,
     input imem_ready,
 
-    output reg dmem_valid,
-    output reg [31:0] dmem_address,
-    output reg [31:0] dmem_write_data,
-    output reg [3:0] dmem_write_enable,
+    (* pipeline_stage = "EX" *) output reg dmem_valid,
+    (* pipeline_stage = "EX" *) output reg [31:0] dmem_address,
+    (* pipeline_stage = "EX" *) output reg [31:0] dmem_write_data,
+    (* pipeline_stage = "EX" *) output reg [3:0] dmem_write_enable,
     input [31:0] dmem_read_data,
     input dmem_ready,
     input dmem_error,
@@ -105,13 +105,26 @@ module cpu (
   localparam [2:0] OPCLASS_BRANCH = 3'd3;
   localparam [2:0] OPCLASS_ERROR = 3'd4;
 
-  reg running;
-  reg step_active;
-  reg halt_pending;
-  reg start_pending;
-  reg start_step_pending;
-  reg [31:0] architectural_pc;
-  reg [31:0] fetch_request_pc;
+  /*
+   * Pipeline stage of each register, for `tools/timing-wall --stages`.
+   *
+   * A register belongs to the stage whose logic reads it, i.e. where the
+   * instruction is while it uses that register; the logic of stage X is then
+   * the cone from the X registers to the X+1 registers. Registers named
+   * `if_*`, `id_*`, `ex_*` and `wb_*` get their stage from the prefix and need
+   * no attribute; only the rest are tagged. Values starting with `_` are
+   * groups that are not pipeline stages: `_WR` is the write buffer after WB
+   * (see register_write_*), `_CTL` the global run/halt/step control. Yosys
+   * keeps these attributes in hardware.json; it drops them on memories, so the
+   * register file array is not tagged.
+   */
+  (* pipeline_stage = "_CTL" *) reg running;
+  (* pipeline_stage = "_CTL" *) reg step_active;
+  (* pipeline_stage = "_CTL" *) reg halt_pending;
+  (* pipeline_stage = "_CTL" *) reg start_pending;
+  (* pipeline_stage = "_CTL" *) reg start_step_pending;
+  (* pipeline_stage = "WB" *) reg [31:0] architectural_pc;
+  (* pipeline_stage = "IF" *) reg [31:0] fetch_request_pc;
 
   assign debug_pc = architectural_pc;
 
@@ -120,9 +133,9 @@ module cpu (
   wire register_file_busy;
   reg [4:0] register_a_address;
   reg [4:0] register_b_address;
-  reg register_write_enable;
-  reg [4:0] register_write_address;
-  reg [31:0] register_write_data;
+  (* pipeline_stage = "_WR" *) reg register_write_enable;
+  (* pipeline_stage = "_WR" *) reg [4:0] register_write_address;
+  (* pipeline_stage = "_WR" *) reg [31:0] register_write_data;
 
   register_file register_file_i (
       .clk(clk),
@@ -172,7 +185,7 @@ module cpu (
   reg wb_error;
   reg [7:0] wb_error_code;
 
-  reg mem_request_sent;
+  (* pipeline_stage = "EX" *) reg mem_request_sent;
 
   wire [5:0] id_opcode = id_instruction[31:26];
   wire [4:0] id_rd = id_instruction[25:21];
