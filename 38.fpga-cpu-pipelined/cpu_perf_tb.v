@@ -102,7 +102,33 @@ module cpu_perf_tb;
 
   // Los contadores de la placa, con las ranuras del pipeline. Se leen por
   // jerarquia: aqui no hay bus MMIO.
-  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1)) perf (
+  // Video de mentira para las ranuras 16 y 17: un frame cada 37 ciclos, con
+  // el swap pendiente en sus 15 primeros. Corre libre, tambien con la CPU
+  // parada, como el barrido de verdad.
+  integer video_phase = 0;
+  wire frame_tick = (video_phase == 0);
+  wire swap_pending_tb = (video_phase < 15);
+  always @(posedge clk) video_phase <= (video_phase == 36) ? 0 : video_phase + 1;
+
+  // Cuenta de referencia, escrita aparte: cada pulso pasa por un registro y
+  // cuenta si la CPU esta en marcha en el ciclo siguiente; todo vuelve a cero
+  // con reset o con cada `run`.
+  reg frame_ref_q = 1'b0, swap_ref_q = 1'b0;
+  integer frames_ref = 0, swap_wait_ref = 0;
+  always @(posedge clk) begin
+    if (reset || run_request) begin
+      frame_ref_q <= 1'b0; swap_ref_q <= 1'b0;
+      frames_ref <= 0; swap_wait_ref <= 0;
+    end else begin
+      frame_ref_q <= frame_tick; swap_ref_q <= swap_pending_tb;
+      if (!halted) begin
+        frames_ref <= frames_ref + frame_ref_q;
+        swap_wait_ref <= swap_wait_ref + swap_ref_q;
+      end
+    end
+  end
+
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1), .VIDEO(1)) perf (
       .clk(clk), .reset(reset),
       .select(1'b0), .write(1'b0), .write_mask(4'd0), .address(16'd0),
       .write_data(32'd0), .read_data(),
@@ -112,7 +138,8 @@ module cpu_perf_tb;
       .imem_hit(1'b0), .imem_miss(1'b0), .mem_req0(1'b0), .mem_req1(1'b0),
       .pipe_stall(perf_stall[3:0]),
       .dmem_hit(1'b0), .dmem_miss(1'b0),
-      .muldiv_stall(perf_stall[4]), .muldiv_retired(perf_muldiv_retired));
+      .muldiv_stall(perf_stall[4]), .muldiv_retired(perf_muldiv_retired),
+      .frame_tick(frame_tick), .swap_pending(swap_pending_tb));
 
   // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta dos
   // ciclos despues (instruction_buffer.v registra su respuesta).
@@ -343,6 +370,22 @@ module cpu_perf_tb;
       $fatal(1, "muldiv: MULDIV_RETIRED = %0d, se esperaban 20", perf.muldiv_retired_count);
     if (perf.stall_ex_mem !== 32'd0)
       $fatal(1, "muldiv: STALL_EX_MEM = %0d, se esperaba 0", perf.stall_ex_mem);
+
+    // Ranuras 16 y 17 tras el ultimo programa (~500 ciclos, una docena de
+    // frames). Exactas contra la cuenta de referencia, y ademas no triviales.
+    if (perf.video_frames !== frames_ref || perf.swap_wait !== swap_wait_ref)
+      $fatal(1, "video: VIDEO_FRAMES=%0d SWAP_WAIT=%0d, se esperaban %0d y %0d",
+             perf.video_frames, perf.swap_wait, frames_ref, swap_wait_ref);
+    if (frames_ref < 10 || swap_wait_ref < 100 || swap_wait_ref >= perf.cycles)
+      $fatal(1, "video: cuenta de referencia sospechosa (%0d frames, %0d de espera)",
+             frames_ref, swap_wait_ref);
+    // Con la CPU parada no cuentan: dejar pasar cuatro frames y comparar.
+    repeat (4 * 37) @(posedge clk);
+    #1;
+    if (perf.video_frames !== frames_ref || perf.swap_wait !== swap_wait_ref)
+      $fatal(1, "video: los contadores avanzan con la CPU parada");
+    $display("VIDEO frames=%0d swap_wait=%0d cycles=%0d", perf.video_frames,
+             perf.swap_wait, perf.cycles);
 
     $display("PASS: cpu_perf");
     $finish;

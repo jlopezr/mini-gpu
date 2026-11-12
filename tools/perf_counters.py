@@ -37,6 +37,8 @@ from tools.mmio_map import (
     MMIO_PERF_STALL_EX_MEM_OFF,
     MMIO_PERF_STALL_ID_EMPTY_OFF,
     MMIO_PERF_STALL_RAW_OFF,
+    MMIO_PERF_SWAP_WAIT_OFF,
+    MMIO_PERF_VIDEO_FRAMES_OFF,
 )
 
 # Nombre de cada contador de espera -> su offset en el bloque.
@@ -77,9 +79,18 @@ MULDIV_COUNTERS = {
 }
 
 
+# Los de video (capacidad `perf_video`, ranuras 16 y 17): frames con la CPU en
+# marcha y ciclos esperando a que el barrido haga un intercambio pedido.
+VIDEO_COUNTERS = {
+    "video_frames": MMIO_PERF_VIDEO_FRAMES_OFF,
+    "swap_wait": MMIO_PERF_SWAP_WAIT_OFF,
+}
+
+
 def read_counters(read_word, write_word=None, stalls: bool = False,
                   base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False,
-                  dcache: bool = False, muldiv: bool = False) -> dict:
+                  dcache: bool = False, muldiv: bool = False,
+                  video: bool = False) -> dict:
     """Todos los contadores de un mismo instante.
 
     `read_word(direccion)` y `write_word(direccion, valor)` son los del cliente
@@ -114,6 +125,9 @@ def read_counters(read_word, write_word=None, stalls: bool = False,
             if muldiv:
                 contadores["stalls"].update({nombre: read_word(base + offset)
                                              for nombre, offset in MULDIV_COUNTERS.items()})
+            if video:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in VIDEO_COUNTERS.items()})
     finally:
         if write_word is not None:
             write_word(base + MMIO_PERF_CTRL_OFF, previo)
@@ -206,6 +220,32 @@ def muldiv_breakdown(instructions, stalls) -> dict | None:
     }
 
 
+def video_breakdown(cycles, swaps, stalls) -> dict | None:
+    """Cuanto del frame ocupa el trabajo de la CPU (capacidad `perf_video`).
+
+    `swaps` son los intercambios hechos en la medida (SWAP_COUNT). Devuelve
+    `cycles_per_frame` (CYCLES / VIDEO_FRAMES), `work_per_swap` (los ciclos que
+    no esperan un intercambio, por intercambio) y `occupancy`, su cociente: por
+    encima de 1 el trabajo de un frame no cabe en un frame. Cada valor es None
+    si falta su divisor; la funcion entera, None sin esos contadores.
+
+    Supone que el programa espera justo despues de pedir el intercambio, como
+    `swap_and_wait` (mmio.md §13.2).
+    """
+    if not cycles or not stalls or "video_frames" not in stalls or "swap_wait" not in stalls:
+        return None
+    frames = stalls["video_frames"]
+    per_frame = cycles / frames if frames else None
+    work = (cycles - stalls["swap_wait"]) / swaps if swaps else None
+    return {
+        "frames": frames,
+        "swap_wait": stalls["swap_wait"],
+        "cycles_per_frame": per_frame,
+        "work_per_swap": work,
+        "occupancy": work / per_frame if work is not None and per_frame else None,
+    }
+
+
 def pipeline_breakdown(cycles, instructions, stalls) -> dict | None:
     """Ciclos por instruccion de cada motivo de no emitir, o `None` sin datos.
 
@@ -266,6 +306,14 @@ def format_report(contadores: dict) -> list[str]:
         lineas.append(
             f"  MUL/DIV: {m['retired']} retiradas ({_pct(m['fraction'])} de las "
             f"instrucciones), {m['cycles_per_op']:.1f} ciclos de espera de media")
+    stalls = contadores.get("stalls")
+    if stalls and "video_frames" in stalls and "swap_wait" in stalls:
+        frames = stalls["video_frames"]
+        lineas.append(
+            f"  video: {frames} frames con la CPU en marcha"
+            + (f" ({cycles / frames:,.0f} ciclos cada uno)".replace(",", " ") if frames else "")
+            + f", {_pct(stalls['swap_wait'] / cycles if cycles else None)} de los ciclos "
+            f"esperando un swap")
     if contadores.get("overflow"):
         lineas.append(
             f"  AVISO: PERF_OVF0={contadores['overflow']:#x}, algun contador ha dado la "

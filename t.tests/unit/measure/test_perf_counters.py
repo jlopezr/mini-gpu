@@ -7,8 +7,8 @@ import unittest
 
 from tools import monitor_protocol
 from tools.perf_counters import (DCACHE_COUNTERS, MULDIV_COUNTERS, PIPELINE_COUNTERS,
-                                 STALL_COUNTERS, breakdown, dcache_breakdown,
-                                 muldiv_breakdown,
+                                 STALL_COUNTERS, VIDEO_COUNTERS, breakdown,
+                                 dcache_breakdown, muldiv_breakdown, video_breakdown,
                                  difference, format_report, pipeline_breakdown,
                                  read_counters)
 
@@ -265,6 +265,42 @@ class MuldivTest(unittest.TestCase):
         self.assertIsNone(muldiv_breakdown(200, {"stall_muldiv": 0,
                                                  "muldiv_retired": 0})["cycles_per_op"])
         self.assertIsNone(muldiv_breakdown(200, {"stall_raw": 3}))
+
+
+class VideoTest(unittest.TestCase):
+    """Ranuras 16 y 17 de video (capacidad `perf_video`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(VIDEO_COUNTERS, {"video_frames": 0x40, "swap_wait": 0x44})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x40: 4, BASE + 0x44: 300})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("video_frames", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, video=True)
+        self.assertEqual((c["stalls"]["video_frames"], c["stalls"]["swap_wait"]), (4, 300))
+
+    def test_frame_ocupado(self):
+        """1000 ciclos en 4 frames (250 cada uno); 300 esperando y 2 swaps: 350
+        de trabajo por swap, el 140 % de un frame."""
+        v = video_breakdown(1000, 2, {"video_frames": 4, "swap_wait": 300})
+        self.assertAlmostEqual(v["cycles_per_frame"], 250)
+        self.assertAlmostEqual(v["work_per_swap"], 350)
+        self.assertAlmostEqual(v["occupancy"], 1.4)
+
+    def test_sin_divisores_no_divide_y_sin_ranuras_no_hay_nada(self):
+        v = video_breakdown(1000, 0, {"video_frames": 0, "swap_wait": 0})
+        self.assertEqual((v["cycles_per_frame"], v["work_per_swap"], v["occupancy"]),
+                         (None, None, None))
+        self.assertIsNone(video_breakdown(1000, 2, {"stall_raw": 3}))
+        self.assertIsNone(video_breakdown(1000, 2, None))
+
+    def test_el_informe_lo_enseña(self):
+        lineas = format_report({"cycles": 1000, "instructions": 100, "overflow": 0,
+                                "stalls": {k: 0 for k in STALL_COUNTERS}
+                                | {"video_frames": 4, "swap_wait": 300}})
+        self.assertIn("video: 4 frames con la CPU en marcha (250 ciclos cada uno), "
+                      "30.0 % de los ciclos esperando un swap", "\n".join(lineas))
 
 
 if __name__ == "__main__":

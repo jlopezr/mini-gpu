@@ -891,6 +891,8 @@ Array según §12.6.
 | 13 | `+0x34` | `DMEM_MISSES` (extensión caché de datos) |
 | 14 | `+0x38` | `STALL_MULDIV` (extensión MUL/DIV segmentada) |
 | 15 | `+0x3C` | `MULDIV_RETIRED` (extensión MUL/DIV segmentada) |
+| 16 | `+0x40` | `VIDEO_FRAMES` (extensión vídeo) |
+| 17 | `+0x44` | `SWAP_WAIT` (extensión vídeo) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
@@ -919,6 +921,8 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `DMEM_MISSES` | Solo CPU con caché de datos. `LOAD` a memoria que tuvieron que leer una línea. Los `STORE`, el MMIO y los accesos fuera de memoria pasan de largo y no cuentan en ninguno de los dos. |
 | `STALL_MULDIV` | Solo CPU segmentada con MUL/DIV de varios ciclos. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con una `MUL`, `MULHI`, `MULFX`, `DIV`, `DIVU`, `REM` o `REMU`. Es un motivo más del reparto: esos ciclos ya no cuentan en `STALL_EX_MEM`. |
 | `MULDIV_RETIRED` | Solo CPU segmentada con MUL/DIV de varios ciclos. De las de `RETIRED`, las de esas siete instrucciones. `STALL_MULDIV / MULDIV_RETIRED` es lo que cuesta de media cada una, además de su ciclo. |
+| `VIDEO_FRAMES` | Solo CPU con vídeo de doble buffer. Frames que empieza el barrido (el mismo instante en que avanza `FRAME_COUNT`, §9.5) con el núcleo corriendo. A diferencia de `FRAME_COUNT`, se para y se reinicia con el resto del bloque: `CYCLES / VIDEO_FRAMES` son los ciclos de CPU que dura un frame, a cualquier reloj. |
+| `SWAP_WAIT` | Solo CPU con vídeo de doble buffer. Ciclos con el núcleo corriendo y un intercambio pedido que aún no ha hecho el barrido (`SWAP_PENDING`, §9.4). No es un motivo del reparto del pipeline: esos ciclos también cuentan donde toque (normalmente `STALL_EX_MEM` y `STALL_BRANCH`, el bucle que sondea). |
 
 **Identidades.** Con ellas se comprueba una implementación y se reparte el
 tiempo:
@@ -939,6 +943,20 @@ CPI    = 1 + (STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros) 
 
 Con `STALL_MULDIV`, es un quinto motivo y se suma igual a los otros cuatro.
 
+**Ocupación del frame.** Con `VIDEO_FRAMES`, `SWAP_WAIT` y los intercambios
+hechos en la medida (`SWAP_COUNT`, §9.5):
+
+```text
+ciclos por frame   = CYCLES / VIDEO_FRAMES
+trabajo por swap   = (CYCLES − SWAP_WAIT) / intercambios
+frame ocupado      = trabajo por swap / ciclos por frame
+```
+
+Por encima de 1, el trabajo de un frame no cabe en un frame y se pierden
+vblanks. Supone que el programa espera **justo después** de pedir el
+intercambio, como hace `swap_and_wait`: un programa que adelanta trabajo del
+frame siguiente con el intercambio pendiente lo vería contado como espera.
+
 `otros` son los pocos ciclos de arranque, `STEP`, `HALT` y error.
 
 La primera se cumple salvo por uno o dos ciclos: los eventos cruzan un registro
@@ -951,7 +969,8 @@ ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
 detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
 RTL. La 38, segmentada, implementa además las ranuras 8 a 11 (capacidad
 `perf_pipeline`), con su caché de datos las 12 y 13 (capacidad `perf_dcache`) y,
-con su multiplicador y divisor, las 14 y 15 (capacidad `perf_muldiv`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+con su multiplicador y divisor, las 14 y 15 (capacidad `perf_muldiv`) y,
+con su vídeo, las 16 y 17 (capacidad `perf_video`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
 son bloques distintos y no chocan.
 
 **Cómo se leen.** Con el núcleo parado, o congelando el bloque con

@@ -777,11 +777,11 @@ module top (
   // INPUT sale de la capacidad `input_device` (existe input_registers.v).
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
-      // Dieciseis contadores en CPU PERFORMANCE: los ocho de siempre, los
-      // cuatro del pipeline, los dos de la cache de datos y los dos de
-      // MUL/DIV. Los mismos que `cpu_perf_counters` con PIPELINE, DCACHE y
-      // MULDIV a 1.
-      .PERF_SLOTS(16),
+      // Dieciocho contadores en CPU PERFORMANCE: los ocho de siempre, los
+      // cuatro del pipeline, los dos de la cache de datos, los dos de
+      // MUL/DIV y los dos de video. Los mismos que `cpu_perf_counters` con
+      // PIPELINE, DCACHE, MULDIV y VIDEO a 1.
+      .PERF_SLOTS(18),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
@@ -806,7 +806,8 @@ module top (
   //
   // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
   // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
-  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1)) perf_i(
+  wire video_swap_waiting;
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1), .VIDEO(1)) perf_i(
       .clk(clk), .reset(reset),
       .select(mmio_perf_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
@@ -826,7 +827,11 @@ module top (
       .mem_req0(p0_valid), .mem_req1(p1_valid),
       .pipe_stall(cpu_perf_stall[3:0]),
       .dmem_hit(dcache_hit), .dmem_miss(dcache_miss),
-      .muldiv_stall(cpu_perf_stall[4]), .muldiv_retired(cpu_perf_muldiv_retired));
+      .muldiv_stall(cpu_perf_stall[4]), .muldiv_retired(cpu_perf_muldiv_retired),
+      // Frames y espera de swap: el inicio de frame es el mismo pulso que
+      // avanza FRAME_COUNT en video_registers, ya en este reloj.
+      .frame_tick(fill_start && fill_first),
+      .swap_pending(video_swap_waiting));
 
   wire text_enable;
 
@@ -845,7 +850,8 @@ module top (
       .halt_request(video_halt_request),
       .video_mode(video_mode),
       .text_enable(text_enable),
-      .debug_front(), .debug_back());
+      .debug_front(), .debug_back(),
+      .swap_waiting(video_swap_waiting));
 
   // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del
   // monitor, no por esta ventana: ver serial_port.v.

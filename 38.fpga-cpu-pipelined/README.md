@@ -7,7 +7,8 @@ convertirse en un nucleo segmentado que acepte una instruccion nueva por ciclo
 en el caso comun.
 
 La identificacion de placa es monitor `5.38`. La CPU va a 25 MHz (el oscilador
-de la placa, sin PLL) y cierra a unos 52-57 MHz; la SDRAM a 100 MHz.
+de la placa, sin PLL) y cierra a unos 65 MHz (build `dcache-decide`); la SDRAM
+a 100 MHz.
 
 ## Estado actual (12 de noviembre)
 
@@ -18,22 +19,33 @@ cpu.v ────┤                                          ├── arbitro
 ```
 
 - **Pipeline IF/ID/EX/WB** con punto de retiro arquitectonico. La ALU y la
-  decision de salto van en ID; EX solo hace el acceso a memoria. Las
-  dependencias paran ID (sin adelantamiento) y un salto tomado vacia la cola de
-  busqueda. Cada etapa es un `always` con un unico dueño por registro
-  (`timing-etapas.md`).
+  decision de salto van en ID; EX hace el acceso a memoria y las MUL/DIV. Las
+  dependencias paran ID (sin adelantamiento). Cada etapa es un `always` con un
+  unico dueño por registro (`timing-etapas.md`).
+- **Fuentes predecodificadas** (paso 1 del plan de etapas, abajo): al pasar de
+  IF a ID se registran que registros lee la instruccion (`id_src_a/b`,
+  `id_reads_a/b`), asi que la deteccion de dependencias sale de registros y no
+  de decodificar `id_instruction`.
+- **Redireccion del salto registrada** (paso 2): ID decide el salto, pero la
+  busqueda se redirige un ciclo despues (`if_redirect`, `if_redirect_pc`). Un
+  salto tomado cuesta ahora 5 burbujas (eran 3); es el precio de sacar la
+  decision del camino hacia la I-cache, y lo devolvera la prediccion.
 - **Busqueda de una instruccion por ciclo.** `imem` separa peticion
-  (`valid/ready`) y respuesta (`rvalid`); una cola de tres entradas en IF y un
+  (`valid/ready`) y respuesta (`rvalid`); una cola de cuatro entradas en IF y un
   contador descartan las respuestas del camino viejo tras un salto.
 - **Cache de instrucciones** (`instruction_buffer.v`): 8 KB, mapeo directo,
-  lineas de 16 bytes (una rafaga BL8), en EBR. Acierto en un ciclo y una
-  busqueda por ciclo; si una busqueda falla, la que ya se acepto detras se
-  repite tras el relleno, asi que `ready` sigue saliendo de un registro.
+  lineas de 16 bytes (una rafaga BL8), en EBR. Acierto en dos ciclos con la
+  respuesta registrada (paso 2b) y una busqueda por ciclo; si una busqueda
+  falla, la que ya se acepto detras se repite tras el relleno, asi que `ready`
+  sigue saliendo de un registro.
 - **Cache de datos** (`dcache.v`): 8 KB, mapeo directo, escritura inmediata a
   memoria y sin reservar linea al escribir, en EBR. Los STORE a SDRAM no
   esperan (posted) y siguen pasando por el bufer de combinacion de
   `cpu_dmem_adapter`; un LOAD que acierta espera a que el adaptador no deba
-  respuestas, para no adelantar a la de un STORE.
+  respuestas, para no adelantar a la de un STORE. Un acierto ocupa EX **2
+  ciclos**: la comparacion de etiqueta se registra (`ST_LOOKUP` -> `ST_DECIDE`)
+  y la instruccion siguiente entra en EX en el mismo ciclo en que llega la
+  respuesta (`ctl_advance` mira `ex_mem_done`).
 - **Volcados sin esperar respuesta** (`cpu_dmem_adapter.v`): el bufer de
   combinacion es de una linea, pero al cambiar de linea la vieja se manda al
   puerto y el STORE se contesta al ciclo siguiente, sin esperar a la SDRAM;
@@ -62,8 +74,9 @@ cpu.v ────┤                                          ├── arbitro
 - **Contadores de rendimiento** (CPU PERFORMANCE, `1.isa/mmio.md` §13.2): las
   ranuras 8-11 y 14 reparten cada ciclo sin emitir en un motivo (`CPI = 1 +
   EX con memoria + MUL/DIV + dependencia + salto + ID vacio + otros`), las
-  12-13 cuentan aciertos y fallos de la cache de datos y la 15 las MUL/DIV
-  retiradas. `run_tests.py --measure` los saca en tablas.
+  12-13 cuentan aciertos y fallos de la cache de datos, la 15 las MUL/DIV
+  retiradas y las 16-17 (`VIDEO_FRAMES`, `SWAP_WAIT`) cuanto del frame ocupa
+  el trabajo de la CPU. `run_tests.py --measure` los saca en tablas.
 - **SDRAM**: los registros de los pines van en las celdas de IO tambien con
   Yosys (`syn_useioff` en `sdram_controller_128.v`); la ventana de fase buena
   paso de 8 a unas 20-22 posiciones. La fase sale en el bitstream
@@ -72,10 +85,10 @@ cpu.v ────┤                                          ├── arbitro
 
 Bancos: `tools/test -p 38` (entre ellos `cpu_perf_tb`, que mide CPI sin placa,
 `dcache_tb`, `instruction_buffer_reset_tb`, `cpu_dmem_adapter_tb` y
-`cpu_muldiv_tb`, con mutantes comprobados). `cpu_data_path_tb` junta CPU, D-cache y adaptador reales,
+`cpu_muldiv_tb` y `cpu_redirect_tb`, con mutantes comprobados). `cpu_data_path_tb` junta CPU, D-cache y adaptador reales,
 y `cpu_memory_system_tb` añade puente, fabric, controlador, modelo de SDRAM y
-dos generadores de trafico en los otros puertos. En placa, los 49 casos de C
-pasan.
+dos generadores de trafico en los otros puertos. En placa pasan los 72 casos
+de `run_tests.py --backend fpga-cpu -p 38`.
 
 **Cuidado con el orden de las `<=` en Yosys (0.63+173).** Dentro de un bloque
 anidado, una asignacion condicional seguida de otra sin condicion a la misma
@@ -94,17 +107,30 @@ misma señal; las tareas lo esconden facil.
 
 CPI de algunos casos de `run_tests.py --measure`; cada columna añade un cambio.
 
-| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar |
-|---|---:|---:|---:|---:|---:|---:|
-| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 |
-| video-band | — | — | — | — | 3,82 | 2,90 |
-| video-swap-demo | — | — | — | — | 3,86 | 2,65 |
-| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | — |
-| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | — |
-| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | — |
-| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 |
-| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | — |
-| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | — |
+| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* |
+| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* |
+| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* |
+| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 |
+| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 |
+| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 |
+| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 |
+| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 |
+| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 |
+| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 |
+
+`Etapas 1-2b`: fuentes predecodificadas, redireccion registrada y respuesta de
+la I-cache registrada (12 de noviembre). Suben el CPI de todo lo que salta
+(+0,4-0,5 en bresenham: 5 burbujas por salto tomado en vez de 3) a cambio de
+reloj: la CPU pasa de cerrar a 55,8 MHz a 63,2, y a 65,4 con la D-cache.
+
+\* El CPI de los casos de video **no compara CPUs** desde `Etapas 1-2b`: a
+25 MHz el frame de bounce ya no cabe en un vsync (unos 530.000 ciclos de
+trabajo para 417.000 por frame), asi que pierde un vblank de cada dos y el
+bucle que espera al swap da mas vueltas, que cuentan como instrucciones. Para
+el video la medida buena es la de "Ritmo de video" de `--measure` (ranuras 16
+y 17): cuanto del frame ocupa el trabajo.
 
 La I-cache en EBR descubre un fallo un ciclo mas tarde que la de biestables
 (acepta, lee la EBR y compara al ciclo siguiente), asi que en los casos cortos,
@@ -166,52 +192,46 @@ Cuatro instrucciones que deberian costar 4 ciclos y cuestan ~15,8:
 
 En orden de lo que mas promete segun las medidas:
 
-1. **Saltos mas baratos** (hoy 3 burbujas por salto tomado):
-   - B) Respuesta directa a ID cuando la cola esta vacia, sin pasar por ella
-     (2 burbujas). Barato y fuera del camino critico; se mide con
-     `cpu_perf_tb`.
-   - A) Pedir el destino en el mismo ciclo en que ID decide (1 burbuja con B).
-     Alarga el camino critico (decodificar → banco → comparar → salto) hasta la
-     I-cache: hacerlo con el informe de tiempos delante.
-   - Despues, prediccion (saltos hacia atras tomados, o una BTB).
-2. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
-   1,04 en los programas largos). Toca el mismo camino critico que 1A.
-   Un resultado de ALU existe al salir de ID y se puede adelantar desde EX;
-   el de un LOAD o una MUL/DIV solo al acabar EX (`ex_class` vuelve a NORMAL),
-   asi que desde EX solo se adelanta si la clase ya es NORMAL o es de ALU.
+1. **Partir las etapas antes de optimizar** (plan para 80-100 MHz). Primero
+   se estabilizan las etapas, de modo que cada camino largo salga de
+   registros, y despues se meten adelantamiento y prediccion sobre esa base:
 
-   Con los volcados sin esperar (ya hechos), 1 y 2, el bucle de arriba pasaria
-   de ~16 ciclos a ~6-7, y el video de CPI 3,96 (hoy 2,6) a cerca de 1,7; con
-   el reloj a 50 MHz (paso 8), 4-5 veces mas rapido en tiempo real que con
-   `icache-ebr`.
-3. **Un acierto de la D-cache cuesta 3 ciclos de EX** (medido en
-   `cpu_data_path_tb`, con CPU, D-cache y adaptador reales: 3,00 por LOAD, y
-   3,31 justo detras de un STORE). Ciclo a ciclo:
+   | Paso | Que | Estado |
+   |---|---|---|
+   | 1 | Predecodificar las fuentes en la cabeza de la cola de IF | hecho |
+   | 2 | Redireccion del salto registrada | hecho (+2 burbujas por salto tomado) |
+   | 2b | Respuesta de la I-cache registrada, cola de 4 | hecho, CPU 63,2 MHz |
+   | — | Acierto de la D-cache en 2 ciclos, comparacion registrada | hecho, CPU 65,4 MHz |
+   | 3 | Sacar la ALU de ID a EX (camino `_RAM -> EX` de 14,1 ns) | siguiente |
+   | 4 | Adelantamiento EX/WB y prediccion de saltos (pasos 2 y 3 de esta lista) | pendiente |
+   | 5 | Subir el reloj (pasos 8 y 9) | pendiente |
 
-   ```text
-   E0  el LOAD entra en EX; la D-cache lo acepta y lee la EBR
-   E1  compara la etiqueta y registra la respuesta (local_rvalid)
-   E2  llega rvalid: el LOAD pasa a WB y EX queda vacio
-   E3  entra en EX la instruccion siguiente
-   ```
-
-   Un ciclo es la lectura de la EBR, otro la respuesta registrada y el
-   tercero que la instruccion siguiente no entra en EX en el mismo ciclo en
-   que el acceso acaba (`ctl_advance` mira `ex_is_memory`, no si termina).
-   subword-loads son 13 instrucciones: un fallo frio y 9 aciertos de 3
-   ciclos, de ahi sus ~3,5. Tras un STORE solo se anaden 0,31: `pending`
-   cuenta las respuestas del adaptador, que contesta un STORE al ciclo
-   siguiente.
-
-   Que hacer: dejar entrar la siguiente en el ciclo en que el acceso acaba
-   (-1 ciclo en todo acceso a memoria o MMIO) y, para tiempos, registrar la
-   comparacion de la D-cache (+1). Un LOAD por ciclo necesita una etapa MEM
-   aparte (partir ID/EX, paso de los 80 MHz).
+   El camino critico ahora es la cola de IF (`if_pc2`, 15,3 ns, 79 % de
+   rutado), seguido del resultado de la ALU en EX.
+2. **Saltos mas baratos** (hoy 5 burbujas por salto tomado, tras la
+   redireccion registrada):
+   - Prediccion: saltos hacia atras tomados, o una BTB que redirija la
+     busqueda desde IF sin esperar a ID. Es lo que devuelve lo que costo el
+     paso 2, y mas.
+   - Respuesta directa a ID cuando la cola esta vacia, sin pasar por ella.
+3. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
+   1,04 en los programas largos). Un resultado de ALU existe al salir de ID y se
+   puede adelantar desde EX; el de un LOAD o una MUL/DIV solo al acabar EX
+   (`ex_class` vuelve a NORMAL), asi que desde EX solo se adelanta si la clase
+   ya es NORMAL o es de ALU.
 4. **Menos fallos de primer acceso**: traer la linea siguiente por adelantado
    (prefetch) en las dos caches, o lineas de 32 bytes.
-5. **Un programa grande para medir tamaños**: una demo en C con biblioteca o un
-   juego que pase de 8 KB de codigo o datos. Con `IMEM_MISSES` y `DMEM_MISSES`
-   se ve directamente si 16 KB o dos vias servirian; con los casos actuales no.
+5. **Un programa grande para medir tamaños.** Los casos actuales caben en
+   8 KB (el mayor con MUL/DIV, serial-forth, son 4,4 KB; pacman, 3 KB de
+   codigo y unos 7,5 KB de datos). Los sketches 3D de `39.mini-gl` si pasan:
+   racer ~209 KB de codigo, skimmer ~60, tanks ~50, rotating_cube/boxes ~30
+   (la base del renderer) y tie_fighter/x_wing ~29 KB de codigo con 18-30 KB
+   de datos. En 3D renderiza la CPU (`MGL_VERSION` 0), asi que en principio
+   corren en la 38. Falta comprobar que no tocan MMIO que la 38 no tiene, que
+   corren sin teclado de forma determinista (parar en el swap N) y cuanto
+   tardan por frame. Con `IMEM_MISSES` y `DMEM_MISSES` se veria si 16 KB o
+   dos vias servirian; rotating_cube para la I-cache, tie_fighter para la
+   D-cache.
 6. **Reloj de la SDRAM por la celda de IO** (`ODDRX1F` con `D0=1, D1=0`, como
    el DVI). Hoy `assign sdram_clk = clk` va por rutado general y la ventana de
    fase aun se mueve entre builds (2-21 en uno, 8-29 en otro). Tambien `dq_oe`,
@@ -232,16 +252,16 @@ En orden de lo que mas promete segun las medidas:
    del `mmio_mux` a juego) seria un ciclo menos. La etapa 2 no se puede quitar:
    el error de SWAP y el byte del puerto serie solo valen despues de escribir.
 8. **Subir el reloj de la CPU a 40-50 MHz, aplazado.** A 25 MHz sobra margen
-   (cierra a 52-57) para los saltos y el adelantamiento, que alargan el camino
+   (cierra a 65) para los saltos y el adelantamiento, que alargan el camino
    critico; se sube al final. PLL y divisor UART 100 -> 200.
    A 50 hay que barrer semillas y, si no cumplen, quedarse en 40. Medir antes y despues contra la 35 (`bench-all -p 35 -p 38`;
    la 35 va a 80 MHz y necesita antes `syn_useioff` para volver a cumplir).
-9. **Mas alla de ~50 MHz hay que partir ID**, que es todo el camino critico
+9. **Mas alla de ~50 MHz hay que partir ID** (en marcha: paso 1 de esta lista), que es todo el camino critico
    (decodificar -> banco -> comparar -> salto -> enable de IF e ID): pipeline
-   clasico IF/ID/EX/MEM/WB con adelantamiento a EX, predecodificar en la cola
-   de IF para que las dependencias se detecten desde registros, y la
-   redireccion del salto registrada (con prediccion para no pagarlo). Techo
-   realista 70-80 MHz, por rutado. Ver `timing-etapas.md`.
+   clasico IF/ID/EX/MEM/WB con adelantamiento a EX. La predecodificacion en la
+   cola de IF y la redireccion registrada ya estan; falta sacar la ALU de ID y
+   la prediccion para no pagar la redireccion. Techo realista 70-80 MHz, por
+   rutado. Ver `timing-etapas.md`.
 10. **Scoreboard: todavia no.** Con el pipeline en orden y cada instruccion en
     una posicion fija, comparar las fuentes de ID con `ex_rd`/`wb_rd` ya es un
     scoreboard de dos entradas, y el adelantamiento usa esas mismas
@@ -253,3 +273,19 @@ En orden de lo que mas promete segun las medidas:
 11. **Instruction buffer y fabric de la 35-37**: la 38 tiene ya su propia
     version de `instruction_buffer.v` (protocolo partido y EBR). Si se quiere
     llevar a los otros prototipos, hay que cambiar tambien su CPU.
+
+### Resuelto: el acierto de la D-cache cuesta 2 ciclos de EX
+
+Eran 3. Medido en `cpu_data_path_tb` con CPU, D-cache y adaptador reales;
+justo detras de un STORE, 1,62 (eran 3,31). Ciclo a ciclo:
+
+```text
+E0  el LOAD entra en EX; la D-cache lo acepta y lee la EBR
+E1  compara la etiqueta y la registra (ST_LOOKUP -> ST_DECIDE)
+E2  rvalid sale de esos registros; el LOAD pasa a WB y en el MISMO ciclo
+    entra en EX la instruccion siguiente (ctl_advance mira ex_mem_done)
+```
+
+Antes la siguiente no entraba hasta el ciclo despues de `rvalid`. Registrar
+la comparacion no cuesta latencia y saco la etiqueta del camino critico.
+Un LOAD por ciclo necesitaria una etapa MEM aparte.

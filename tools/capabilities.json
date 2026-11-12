@@ -118,8 +118,15 @@
   "perf_muldiv": {
     "architecture": "cpu",
     "file": "top.v",
-    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\)\\)",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\)",
     "implies": ["perf_dcache"]
+  },
+  "_comment_perf_video": "Los contadores de video de la CPU (mmio.md §13.2, ranuras 16 y 17: VIDEO_FRAMES, SWAP_WAIT): cuanto del frame ocupa el trabajo de la CPU. En el top.v que instancia cpu_perf_counters con VIDEO = 1.",
+  "perf_video": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\),\\s*\\.VIDEO\\(1\\)\\)",
+    "implies": ["perf_muldiv"]
   },
   "atomic_warp_faults": {
     "architecture": "gpu"

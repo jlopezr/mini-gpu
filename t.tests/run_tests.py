@@ -35,7 +35,8 @@ if str(REPOSITORY) not in sys.path:
 
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
-from tools.perf_counters import dcache_breakdown, muldiv_breakdown, pipeline_breakdown  # noqa: E402
+from tools.perf_counters import (  # noqa: E402
+    dcache_breakdown, muldiv_breakdown, pipeline_breakdown, video_breakdown)
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 from tools.board_record import folder_sha256  # noqa: E402
@@ -1175,6 +1176,8 @@ def _video_pacing(medida: dict | None) -> dict | None:
         "swaps": swaps,
         "swaps_per_frame": swaps / frames if frames else None,
         "cycles_per_swap": cycles / swaps if swaps else None,
+        # Con `perf_video`: ciclos por frame, trabajo por swap y su cociente.
+        "occupancy": video_breakdown(cycles, swaps, medida.get("stalls")),
     }
 
 
@@ -1363,18 +1366,30 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
              for caso in casos for v in versiones]
     ritmo = [fila for fila in ritmo if fila[2] is not None]
     if ritmo:
+        # Las columnas de ocupacion solo si alguna medida trae `perf_video`.
+        con_ocupacion = any(p["occupancy"] is not None for _, _, p in ritmo)
+
+        def _ciclos(valor):
+            return "n/d" if valor is None else f"{valor:,.0f}".replace(",", " ")
+
         lineas += ["", "## Ritmo de video", ""]
         lineas.append(_markdown_row(
-            ["Caso", "Version", "Frames", "Swaps", "Swaps/frame", "Ciclos/swap"]))
-        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 4))
+            ["Caso", "Version", "Frames", "Swaps", "Swaps/frame", "Ciclos/swap"] +
+            (["Ciclos/frame", "Trabajo/swap", "Frame ocupado"] if con_ocupacion else [])))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * (7 if con_ocupacion else 4)))
         for caso, version, p in ritmo:
-            lineas.append(_markdown_row([
+            fila = [
                 caso, version, f"{p['frames']:,}".replace(",", " "),
                 f"{p['swaps']:,}".replace(",", " "),
                 "n/d" if p["swaps_per_frame"] is None
                 else f"{p['swaps_per_frame']:.2f}",
-                "n/d" if p["cycles_per_swap"] is None
-                else f"{p['cycles_per_swap']:,.0f}".replace(",", " ")]))
+                _ciclos(p["cycles_per_swap"])]
+            if con_ocupacion:
+                o = p["occupancy"] or {}
+                fila += [_ciclos(o.get("cycles_per_frame")),
+                         _ciclos(o.get("work_per_swap")),
+                         _format_percent(o.get("occupancy")) if o else "—"]
+            lineas.append(_markdown_row(fila))
         lineas += [
             "",
             "`Frames`: frames emitidos por el scanout entre arrancar y parar la CPU;",
@@ -1385,6 +1400,15 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "Los frames se cuentan con el reloj de pared de la placa, asi que llevan",
             "unos pocos de mas por el viaje de parada; no compares un caso corto.",
         ]
+        if con_ocupacion:
+            lineas += [
+                "`Ciclos/frame`: ciclos de CPU que dura un frame (CYCLES / VIDEO_FRAMES,",
+                "estos sin viaje de parada). `Trabajo/swap`: ciclos que no esperan un",
+                "intercambio pedido, por intercambio. `Frame ocupado`: su cociente; por",
+                "encima del 100 % el trabajo de un frame no cabe en un frame. Supone que",
+                "el programa espera justo tras pedir el swap. Ranuras 16 y 17 de CPU",
+                "PERFORMANCE, mmio.md §13.2. `—`: la version no tiene esos contadores.",
+            ]
 
     lineas += [
         "",

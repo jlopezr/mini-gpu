@@ -163,7 +163,11 @@ module video_registers #(
     output wire text_enable,
 
     output wire [31:0] debug_front,
-    output wire [31:0] debug_back
+    output wire [31:0] debug_back,
+
+    // SWAP_PENDING hacia CPU PERFORMANCE (ranura 17, SWAP_WAIT): cuantos
+    // ciclos espera la CPU a que el barrido haga el intercambio que pidio.
+    output wire swap_waiting
 );
 
   // Disposicion de MMIO v2 (1.isa/mmio.md §9). CTRL vuelve a +0x00, que es lo
@@ -204,6 +208,7 @@ module video_registers #(
   reg [31:0] fb_front;
   reg [31:0] fb_back;
   reg swap_pending;
+  assign swap_waiting = swap_pending;
   reg state_commit_pending;
   reg commit_error_latched;
   reg [31:0] config_shadow;

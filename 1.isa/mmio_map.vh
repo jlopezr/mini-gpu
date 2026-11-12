@@ -202,6 +202,11 @@
 `define MMIO_PERF_STALL_MULDIV_OFF   32'h0000_0038
 `define MMIO_PERF_MULDIV_RETIRED_OFF 32'h0000_003C
 
+// Extension de las CPU con video y doble buffer (mmio.md §13.2, capacidad
+// `perf_video`): frames con la CPU en marcha y ciclos con un swap pendiente.
+`define MMIO_PERF_VIDEO_FRAMES_OFF   32'h0000_0040
+`define MMIO_PERF_SWAP_WAIT_OFF      32'h0000_0044
+
 // ==== CPU CORE (mmio.md §13.1) ===========================================
 
 `define MMIO_CPU_ID_OFF            32'h0000_0000
