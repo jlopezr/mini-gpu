@@ -33,6 +33,11 @@ typedef struct {
 
 mgl_real_t mgl_sin(mgl_real_t a);
 mgl_real_t mgl_cos(mgl_real_t a);
+/* Lo mismo con una tabla: 4-6 veces más rápido en MiniGPU y error < 1e-4. No
+   dan los mismos bits que las de arriba: para quien prefiera velocidad. */
+mgl_real_t mgl_sin_fast(mgl_real_t a);
+mgl_real_t mgl_cos_fast(mgl_real_t a);
+void mgl_sincos_fast(mgl_real_t a, mgl_real_t *s, mgl_real_t *c);
 mgl_real_t mgl_sqrt(mgl_real_t v); /* 0 si v <= 0 */
 /* Redondeo al entero más cercano (las mitades, lejos de cero). */
 mgl_s32 mgl_round(mgl_real_t v);

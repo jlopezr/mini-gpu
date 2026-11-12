@@ -59,6 +59,102 @@ mgl_real_t mgl_cos(mgl_real_t a) {
     return mgl_sin(a + HALF_PI);
 }
 
+/* Seno y coseno rápidos (mgl_sin_fast, mgl_cos_fast, mgl_sincos_fast): una tabla
+   de 256 senos por vuelta, en Q16 (65536 = 1), e interpolación lineal entre dos.
+   Error < 1e-4 (el de interpolar: (2 pi / 256)^2 / 8 ~ 7.5e-5, más el redondeo
+   de la tabla), invisible en pantalla; no dan los mismos bits que mgl_sin.
+
+   Por dentro, todo con enteros: una sola multiplicación float pasa el ángulo a
+   vueltas en 8.16 (8 bits de indice en la tabla, 16 de fraccion entre dos
+   entradas: una vuelta son 2^24), y el resultado Q16 vuelve a float con una
+   conversión y restando 16 al exponente (exacto, sin multiplicar). En MiniGPU,
+   ~100-150 instrucciones frente a las ~400-900 de mgl_sin/mgl_cos. El coseno es
+   el seno un cuarto de vuelta después: 64 entradas mas.
+
+   Ángulos hasta unos +-500 radianes van directos; más alla, se reducen antes
+   como en mgl_sin (en racer y compañía los ángulos se mantienen pequenos).
+   Generada con round(sin(2 pi i / 256) * 65536), i = 0..256. */
+static const mgl_s32 sin_table[257] = {
+    0, 1608, 3216, 4821, 6424, 8022, 9616, 11204,
+    12785, 14359, 15924, 17479, 19024, 20557, 22078, 23586,
+    25080, 26558, 28020, 29466, 30893, 32303, 33692, 35062,
+    36410, 37736, 39040, 40320, 41576, 42806, 44011, 45190,
+    46341, 47464, 48559, 49624, 50660, 51665, 52639, 53581,
+    54491, 55368, 56212, 57022, 57798, 58538, 59244, 59914,
+    60547, 61145, 61705, 62228, 62714, 63162, 63572, 63944,
+    64277, 64571, 64827, 65043, 65220, 65358, 65457, 65516,
+    65536, 65516, 65457, 65358, 65220, 65043, 64827, 64571,
+    64277, 63944, 63572, 63162, 62714, 62228, 61705, 61145,
+    60547, 59914, 59244, 58538, 57798, 57022, 56212, 55368,
+    54491, 53581, 52639, 51665, 50660, 49624, 48559, 47464,
+    46341, 45190, 44011, 42806, 41576, 40320, 39040, 37736,
+    36410, 35062, 33692, 32303, 30893, 29466, 28020, 26558,
+    25080, 23586, 22078, 20557, 19024, 17479, 15924, 14359,
+    12785, 11204, 9616, 8022, 6424, 4821, 3216, 1608,
+    0, -1608, -3216, -4821, -6424, -8022, -9616, -11204,
+    -12785, -14359, -15924, -17479, -19024, -20557, -22078, -23586,
+    -25080, -26558, -28020, -29466, -30893, -32303, -33692, -35062,
+    -36410, -37736, -39040, -40320, -41576, -42806, -44011, -45190,
+    -46341, -47464, -48559, -49624, -50660, -51665, -52639, -53581,
+    -54491, -55368, -56212, -57022, -57798, -58538, -59244, -59914,
+    -60547, -61145, -61705, -62228, -62714, -63162, -63572, -63944,
+    -64277, -64571, -64827, -65043, -65220, -65358, -65457, -65516,
+    -65536, -65516, -65457, -65358, -65220, -65043, -64827, -64571,
+    -64277, -63944, -63572, -63162, -62714, -62228, -61705, -61145,
+    -60547, -59914, -59244, -58538, -57798, -57022, -56212, -55368,
+    -54491, -53581, -52639, -51665, -50660, -49624, -48559, -47464,
+    -46341, -45190, -44011, -42806, -41576, -40320, -39040, -37736,
+    -36410, -35062, -33692, -32303, -30893, -29466, -28020, -26558,
+    -25080, -23586, -22078, -20557, -19024, -17479, -15924, -14359,
+    -12785, -11204, -9616, -8022, -6424, -4821, -3216, -1608,
+    0
+};
+
+/* 2^24 / (2 pi): radianes a vueltas en 8.16. */
+#define FAST_TURN_SCALE 2670176.93f
+
+static mgl_u32 fast_turns(mgl_real_t a) {
+    /* |a| > 500 mirando los bits, como mgl_round: con float por software, dos
+       comparaciones menos en cada llamada. 500.0f es 0x43fa0000. */
+    if ((mgl_real_to_f32(a) & 0x7fffffffU) > 0x43fa0000U)
+        a = a - (mgl_real_t)mgl_round(a * INV_TWO_PI) * TWO_PI;
+    /* Truncar hacia cero y quedarse con los 24 bits de abajo es, en
+       complemento a dos, el ángulo modulo una vuelta: también si es negativo. */
+    return (mgl_u32)(mgl_s32)(a * FAST_TURN_SCALE);
+}
+
+/* El seno en Q16 de un ángulo en vueltas 8.16 (los bits de encima no cuentan). */
+static mgl_s32 fast_sin_q16(mgl_u32 turns) {
+    mgl_u32 i = (turns >> 16) & 255U;
+    mgl_s32 frac = (mgl_s32)(turns & 0xffffU);
+    mgl_s32 s0 = sin_table[i];
+    /* |s1 - s0| <= 1608 y frac < 2^16: el producto cabe en 32 bits. */
+    return s0 + (((sin_table[i + 1] - s0) * frac) >> 16);
+}
+
+/* Q16 a float: convertir el entero y dividir por 2^16 restando 16 al
+   exponente. Exacto: |q| <= 65536 cabe en la mantisa y no hay subnormales. */
+static mgl_real_t q16_to_real(mgl_s32 q) {
+    f32_bits b;
+    b.f = (mgl_real_t)q;
+    if (q != 0) b.u -= (mgl_u32)16 << 23;
+    return b.f;
+}
+
+mgl_real_t mgl_sin_fast(mgl_real_t a) {
+    return q16_to_real(fast_sin_q16(fast_turns(a)));
+}
+
+mgl_real_t mgl_cos_fast(mgl_real_t a) {
+    return q16_to_real(fast_sin_q16(fast_turns(a) + ((mgl_u32)64 << 16)));
+}
+
+void mgl_sincos_fast(mgl_real_t a, mgl_real_t *s, mgl_real_t *c) {
+    mgl_u32 t = fast_turns(a);
+    *s = q16_to_real(fast_sin_q16(t));
+    *c = q16_to_real(fast_sin_q16(t + ((mgl_u32)64 << 16)));
+}
+
 /* Newton desde una estimación sacada del exponente (error < 4%): cuatro pasos
    dan la precisión de float. */
 mgl_real_t mgl_sqrt(mgl_real_t v) {

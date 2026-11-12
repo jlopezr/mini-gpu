@@ -26,6 +26,26 @@ static void test_functions(void) {
     }
     CHECK(worst_sin < 2e-6 && worst_cos < 2e-6);
     CHECK(mgl_sin(0.0f) == 0.0f);
+    /* Las rápidas, con tabla: error < 1e-4 (1.2e-4 con margen), exactas en 0, y
+       mgl_sincos_fast da lo mismo que las dos sueltas. También ángulos grandes,
+       que se reducen antes. */
+    {
+        double worst = 0.0;
+        mgl_real_t s, c;
+        int k;
+        for (k = -20000; k <= 20000; k++) {
+            float x = (float)k * 0.00157f;
+            double es = fabs(mgl_sin_fast(x) - sin((double)x));
+            double ec = fabs(mgl_cos_fast(x) - cos((double)x));
+            if (es > worst) worst = es;
+            if (ec > worst) worst = ec;
+            mgl_sincos_fast(x, &s, &c);
+            CHECK(s == mgl_sin_fast(x) && c == mgl_cos_fast(x));
+        }
+        CHECK(worst < 1.2e-4);
+        CHECK(mgl_sin_fast(0.0f) == 0.0f && mgl_cos_fast(0.0f) == 1.0f);
+        CHECK(NEAR(mgl_sin_fast(1000.0f), sin(1000.0), 2e-4) && NEAR(mgl_cos_fast(-777.0f), cos(-777.0), 2e-4));
+    }
     CHECK(NEAR(mgl_sqrt(2.0f), 1.41421356, 1e-6) && NEAR(mgl_sqrt(1e6f), 1000.0, 1e-3));
     CHECK(NEAR(mgl_sqrt(0.0001f), 0.01, 1e-8) && mgl_sqrt(-1.0f) == 0.0f);
     CHECK(mgl_round(2.5f) == 3 && mgl_round(-2.5f) == -3 && mgl_round(2.49f) == 2 && mgl_round(-0.4f) == 0);
