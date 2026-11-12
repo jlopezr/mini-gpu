@@ -65,14 +65,18 @@ y `cpu_memory_system_tb` añade puente, fabric, controlador, modelo de SDRAM y
 dos generadores de trafico en los otros puertos. En placa, los 49 casos de C
 pasan.
 
-**Cuidado con las tareas de Verilog en Yosys (0.63).** Una tarea con
-asignaciones `<=`, llamada dentro de un `if`, seguida en la misma rama de otra
-`<=` a la misma señal: Verilog se queda con la ultima y Yosys con la de la
-tarea. La primera version de los volcados sin esperar pasaba todos los bancos y
-fallaba 12 casos en placa por eso (`if (wb_valid) send_flush; wb_valid <= 1`
-dejaba la linea nueva invalida). Se encontro simulando la netlist de Yosys
-(`synth -flatten; write_verilog` mas `simlib.v`) con el mismo banco. Regla:
-una tarea no asigna señales que quien la llama pueda reasignar despues.
+**Cuidado con el orden de las `<=` en Yosys (0.63+173).** Dentro de un bloque
+anidado, una asignacion condicional seguida de otra sin condicion a la misma
+señal sale mal: `if (c) begin if (a) v <= 0; v <= b; end` da `a ? 0 : b` en vez
+de `b` (y con un `if/else` completo delante, Yosys ignora la ultima). En el
+nivel de arriba del `always`, o con el valor por defecto primero y el
+condicional despues (lo habitual), sale bien. La primera version de los
+volcados sin esperar pasaba todos los bancos y fallaba 12 casos en placa por
+eso: `if (wb_valid) send_flush; wb_valid <= 1`, con `wb_valid <= 0` dentro de
+la tarea, dejaba la linea nueva invalida. Se encontro simulando la netlist de
+Yosys (`synth -flatten; write_verilog` mas `simlib.v`) con el mismo banco.
+Regla: nunca una asignacion sin condicion despues de otra condicional a la
+misma señal; las tareas lo esconden facil.
 
 ## Rendimiento medido en placa
 
