@@ -156,12 +156,19 @@ cpu.v ────┤                                          ├── arbitro
   10,7 M ciclos, CPI de 1,90 a 1,73. Los sketches de mini-gl a lo largo del
   dia (25 MHz; `make FIXED=1` para coma fija):
 
-  | Sketch | BTB | + STORE actualiza | + division rapida | + etapa MEM |
-  |---|---:|---:|---:|---:|
-  | tie_fighter, float | ~1,25 | 1,53 | 1,62 | **1,81** |
-  | racer, float | | 1,58 | 1,62 | **1,72** |
-  | tie_fighter, coma fija | | 2,32 | 2,58 | **3,02** |
-  | racer, coma fija | | 2,19 | 2,29 | **2,50** |
+  | Sketch | BTB | + STORE actualiza | + division rapida | + etapa MEM | + 50 MHz |
+  |---|---:|---:|---:|---:|---:|
+  | tie_fighter, float | ~1,25 | 1,53 | 1,62 | 1,81 | **3,33** |
+  | racer, float | | 1,58 | 1,62 | 1,72 | **3,11** |
+  | tie_fighter, coma fija | | 2,32 | 2,58 | 3,02 | **5,87** |
+  | racer, coma fija | | 2,19 | 2,29 | 2,50 | **5,17** |
+- **CPU y monitor a 50 MHz** (`pll_cpu.v`, `CLK_FREQ_HZ` en `top.v`): un
+  EHXPLLL de 25 a 50 MHz (3 de los 4 PLL); nextpnr cierra la CPU a ~64 MHz.
+  El divisor de la UART pasa de 100 a 200 y deja los mismos 250 kbaud, asi que
+  el monitor y las herramientas no cambian. SDRAM (100 MHz) y video siguen en
+  sus dominios. En placa, los 72 casos con la fase 27 y los sketches de mini-gl
+  a x1,8-1,9 (tabla de arriba): el CPI sube de 1,73 a 1,89 porque la espera a
+  la SDRAM cuesta el doble de ciclos.
 - **Dos resets en la CPU**: `reset` (el del sistema, con el que tambien se
   vacian las caches) y `soft_reset` (el RESET del monitor, solo la CPU). Con
   el segundo las caches siguen y contestan lo que ya habian aceptado; la CPU
