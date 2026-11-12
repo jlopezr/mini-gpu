@@ -190,6 +190,9 @@ module cpu #(
   reg if_valid_n, if_valid1_n, if_valid2_n;
   reg [31:0] if_pc_n, if_pc1_n, if_pc2_n;
   reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n;
+  // A taken branch, registered: IF redirects the cycle after ID decides.
+  reg if_redirect;
+  reg [31:0] if_redirect_pc;
   // Predecode of the queue head, for ID's source registers (section 02).
   wire [5:0] if_opcode;
   wire if_compare_branch;
@@ -201,6 +204,9 @@ module cpu #(
 
   // ID
   reg id_valid;
+  // ID holds an instruction that will run: not the wrong-path one that came
+  // in behind a taken branch (it sits in ID during the if_redirect cycle).
+  wire id_live;
   reg [31:0] id_pc;
   reg [31:0] id_instruction;
   wire [5:0] id_opcode;
@@ -321,7 +327,8 @@ module cpu #(
   // Events seen by the stages (raw_hazard itself is computed in ID).
   assign wb_stops_machine = wb_valid &&
       (wb_error || wb_halt_after_retire || ctl_step_active);
-  assign id_redirects_fetch = id_valid && !raw_hazard &&
+  assign id_live = id_valid && !if_redirect;
+  assign id_redirects_fetch = id_live && !raw_hazard &&
       (id_class == OPCLASS_BRANCH) && id_branch_taken;
 
   // Per-cycle decisions.
@@ -357,16 +364,16 @@ module cpu #(
         perf_stall[0] <= 1'b1;
       else if (ctl_muldiv)
         perf_stall[4] <= 1'b1;
-      else if (ctl_advance && id_valid && raw_hazard)
+      else if (ctl_advance && id_live && raw_hazard)
         perf_stall[1] <= 1'b1;
-      else if (ctl_advance && !id_valid)
+      else if (ctl_advance && !id_live)
         perf_stall[perf_after_redirect ? 2 : 3] <= 1'b1;
 
       // Set by a taken branch; cleared once ID holds the first instruction of
       // the new path.
       if (ctl_advance && !raw_hazard && id_redirects_fetch)
         perf_after_redirect <= 1'b1;
-      else if (id_valid)
+      else if (id_live)
         perf_after_redirect <= 1'b0;
     end
   end
@@ -451,6 +458,15 @@ module cpu #(
    * empties the queue, and the responses still in flight belong to the old
    * path: if_discard counts them and they are dropped as they arrive. They
    * arrive in order, so a count is enough.
+   *
+   * The redirect is registered (if_redirect, if_redirect_pc): in the cycle
+   * ID decides a taken branch, IF and ID carry on as if it were not taken
+   * and the branch moves to EX; the next cycle IF empties the queue and
+   * fetches the target, and ID drops the wrong-path instruction it took
+   * (id_live). So the 33-bit compare ends in two registers instead of
+   * steering the queue, if_pop and ID's load in the same cycle. It costs
+   * one bubble per taken branch (3 -> 4), which branch prediction can win
+   * back. cpu_redirect_tb checks the wrong-path slot.
    */
   assign if_used = {1'b0, if_valid} + {1'b0, if_valid1} + {1'b0, if_valid2} +
                    {1'b0, if_inflight};
@@ -458,7 +474,7 @@ module cpu #(
   assign if_accept = imem_valid && imem_ready;
   assign if_keep = imem_rvalid && (if_discard == 2'd0);
   assign if_inflight_next = if_inflight + {1'b0, if_accept} - {1'b0, imem_rvalid};
-  assign if_pop = ctl_advance && !raw_hazard && !id_redirects_fetch && if_valid;
+  assign if_pop = ctl_advance && !raw_hazard && if_valid;
 
   // Next queue contents without a flush: pop the head if ID takes it, then
   // put a kept response in the first free entry.
@@ -497,12 +513,18 @@ module cpu #(
       if_instruction <= 32'd0;
       if_instruction1 <= 32'd0;
       if_instruction2 <= 32'd0;
+      if_redirect <= 1'b0;
+      if_redirect_pc <= 32'd0;
     end else begin
+      // ctl_advance is low in any cycle that stops the machine, so a stop
+      // never leaves a redirect behind.
+      if_redirect <= ctl_advance && !raw_hazard && id_redirects_fetch;
+      if_redirect_pc <= id_next_pc;
       if_inflight <= if_inflight_next;
       if (if_accept) imem_address <= imem_address + 32'd4;
 
       if (halted || ctl_abort || ctl_fault || ctl_retire_stop ||
-          (ctl_advance && !raw_hazard && id_redirects_fetch)) begin
+          if_redirect) begin
         // Empty the queue; whatever is still in flight is stale.
         if_valid <= 1'b0;
         if_valid1 <= 1'b0;
@@ -514,8 +536,8 @@ module cpu #(
             if_response_pc <= architectural_pc;
           end
         end else if (!(ctl_abort || ctl_fault || ctl_retire_stop)) begin
-          imem_address <= id_next_pc;
-          if_response_pc <= id_next_pc;
+          imem_address <= if_redirect_pc;
+          if_response_pc <= if_redirect_pc;
         end
       end else begin
         if_valid <= if_valid_n;    if_pc <= if_pc_n;    if_instruction <= if_instruction_n;
@@ -579,8 +601,8 @@ module cpu #(
   assign id_address_misaligned = (id_access_size == 2'd2) ? (id_effective_address[1:0] != 2'b00) :
       (id_access_size == 2'd1) ? (id_effective_address[0] != 1'b0) : 1'b0;
   // id_reads_* belong to whatever is in id_instruction, valid or not.
-  assign id_uses_a = id_valid && id_reads_a;
-  assign id_uses_b = id_valid && id_reads_b;
+  assign id_uses_a = id_live && id_reads_a;
+  assign id_uses_b = id_live && id_reads_b;
   assign hazard_ex = ex_valid && ex_reg_write && ex_rd != 5'd0 &&
                    ((id_uses_a && id_src_a == ex_rd) ||
                     (id_uses_b && id_src_b == ex_rd));
@@ -808,18 +830,18 @@ module cpu #(
       id_reads_b <= 1'b0;
     end else if (halted || ctl_flush) begin
       id_valid <= 1'b0;
+    end else if (if_redirect) begin
+      // The instruction that came in behind the taken branch is dropped, and
+      // so is the queue head: IF is emptying the queue this same cycle.
+      id_valid <= 1'b0;
     end else if (ctl_advance && !raw_hazard) begin
-      if (id_redirects_fetch) begin
-        id_valid <= 1'b0;
-      end else begin
-        id_valid <= if_valid;
-        id_pc <= if_pc;
-        id_instruction <= if_instruction;
-        id_src_a <= if_src_a;
-        id_src_b <= if_src_b;
-        id_reads_a <= if_reads_a;
-        id_reads_b <= if_reads_b;
-      end
+      id_valid <= if_valid;
+      id_pc <= if_pc;
+      id_instruction <= if_instruction;
+      id_src_a <= if_src_a;
+      id_src_b <= if_src_b;
+      id_reads_a <= if_reads_a;
+      id_reads_b <= if_reads_b;
     end
   end
 
@@ -1020,7 +1042,7 @@ module cpu #(
                      - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       if (ctl_advance) begin
         if (!raw_hazard) begin
-          ex_valid <= id_valid;
+          ex_valid <= id_live;
           ex_pc <= id_pc;
           ex_next_pc <= id_branch_taken ? id_next_pc : (id_pc + 32'd4);
           ex_rd <= id_rd;
@@ -1041,7 +1063,7 @@ module cpu #(
           ex_md_counted <= id_class == OPCLASS_MULDIV;
           ex_md_step <= 6'd0;
           // Any other instruction between a DIV and its REM ends the tag.
-          if (id_valid) md_tag_valid <= 1'b0;
+          if (id_live) md_tag_valid <= 1'b0;
         end else begin
           ex_valid <= 1'b0;
         end
