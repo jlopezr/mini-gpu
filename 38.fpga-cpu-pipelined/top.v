@@ -15,8 +15,10 @@ module top (
     output wire [1:0] sdram_dqm, inout wire [15:0] sdram_d,
     output wire [3:0] gpdi_dp
 );
-  // Prueba de timing del pipeline a 25 MHz: el dominio de CPU/monitor sale
-  // directo del oscilador de la placa. La SDRAM sigue en `clk_mem` a 100 MHz.
+  // El dominio de CPU/monitor va a 50 MHz, de `pll_cpu.v` (hasta el 12 de
+  // noviembre, 25 MHz directos del oscilador, para tener margen mientras se
+  // segmentaba el pipeline; nextpnr lo cierra a ~61). La SDRAM sigue en
+  // `clk_mem` a 100 MHz y el video en su propio reloj de pixel.
   //
   // El divisor UART tiene que cumplir DOS condiciones a la vez:
   //
@@ -24,10 +26,11 @@ module top (
   //      sobremuestrea 4 veces, y la division es entera.
   //   2. Un baudio que el FTDI sepa generar exacto.
   //
-  // Con 25 MHz, 1 Mbaud pediria divisor 25 y romperia (1). Divisor 100 deja
-  // 250 kbaud y tambien es exacto en FTDI: 3 MHz / 12.
-  localparam integer CLK_FREQ_HZ = 25_000_000;
-  localparam integer UART_CLOCKS_PER_BIT = 100;
+  // Con 50 MHz, divisor 200 deja los mismos 250 kbaud de antes, exactos en el
+  // FTDI (3 MHz / 12): el monitor y las herramientas no cambian. (1 Mbaud
+  // pediria divisor 50 y romperia (1).)
+  localparam integer CLK_FREQ_HZ = 50_000_000;
+  localparam integer UART_CLOCKS_PER_BIT = 200;
   localparam integer UART_MAX_BAUD = 250_000;
   localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
 
