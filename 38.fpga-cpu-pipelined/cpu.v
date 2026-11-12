@@ -190,6 +190,14 @@ module cpu #(
   reg if_valid_n, if_valid1_n, if_valid2_n;
   reg [31:0] if_pc_n, if_pc1_n, if_pc2_n;
   reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n;
+  // Predecode of the queue head, for ID's source registers (section 02).
+  wire [5:0] if_opcode;
+  wire if_compare_branch;
+  wire if_store;
+  wire [4:0] if_src_a;
+  wire [4:0] if_src_b;
+  wire if_reads_a;
+  wire if_reads_b;
 
   // ID
   reg id_valid;
@@ -199,8 +207,12 @@ module cpu #(
   wire [4:0] id_rd;
   wire [4:0] id_ra;
   wire [4:0] id_rb;
-  wire [4:0] id_src_a;
-  wire [4:0] id_src_b;
+  // Register-file sources and whether the instruction reads them, from IF's
+  // predecode (section 02), loaded with id_instruction (section 03).
+  reg [4:0] id_src_a;
+  reg [4:0] id_src_b;
+  reg id_reads_a;
+  reg id_reads_b;
   wire [31:0] id_imm_signed;
   wire [31:0] id_imm_unsigned;
   wire [31:0] id_jump_offset;
@@ -515,6 +527,39 @@ module cpu #(
     end
   end
 
+  /*
+   * Predecode. Which fields name the register-file sources, and whether the
+   * instruction reads them, depends only on the opcode, so it is worked out
+   * here, from the head of the IF queue (if_instruction, a register with
+   * time to spare), and stored next to id_instruction at the IF -> ID
+   * boundary (section 03). At the head and not where the I-cache response
+   * enters the queue, so as not to lengthen the EBR path.
+   *
+   * ID then reads the register file, and compares against ex_rd/wb_rd for
+   * hazards, straight from registers: the opcode decode (a range compare
+   * that Yosys builds as a carry chain) is no longer at the head of ID's
+   * critical path. Same cycles as before.
+   *   - conditional branches compare rd with ra;
+   *   - stores write the data in rd;
+   *   - everything else reads ra and rb.
+   */
+  assign if_opcode = if_instruction[31:26];
+  assign if_compare_branch = if_opcode >= OPCODE_BEQ && if_opcode <= OPCODE_BGEU;
+  assign if_store = if_opcode == OPCODE_STORE || if_opcode == OPCODE_STOREB ||
+                    if_opcode == OPCODE_STOREH;
+  assign if_src_a = if_compare_branch ? if_instruction[25:21] : if_instruction[20:16];
+  assign if_src_b = if_compare_branch ? if_instruction[20:16] :
+                    (if_store ? if_instruction[25:21] : if_instruction[15:11]);
+  assign if_reads_a =
+      !(if_opcode == OPCODE_NOP || if_opcode == OPCODE_MOVI ||
+        if_opcode == OPCODE_MOVHI || if_opcode == OPCODE_JAL ||
+        if_opcode == OPCODE_HALT || if_opcode == OPCODE_TRAP ||
+        if_opcode == OPCODE_SSY || if_opcode == OPCODE_BAR);
+  assign if_reads_b =
+      (if_opcode >= OPCODE_ADD && if_opcode <= OPCODE_REMU) ||
+      if_compare_branch || if_store ||
+      if_opcode == OPCODE_SLT || if_opcode == OPCODE_SLTU;
+
   // ======================================================================
   // 03. ID — DECODE, OPERANDS, HAZARDS AND ALU
   // ======================================================================
@@ -523,12 +568,7 @@ module cpu #(
   assign id_rd = id_instruction[25:21];
   assign id_ra = id_instruction[20:16];
   assign id_rb = id_instruction[15:11];
-  assign id_src_a = (id_opcode >= OPCODE_BEQ && id_opcode <= OPCODE_BGEU) ?
-                        id_rd : id_ra;
-  assign id_src_b = (id_opcode >= OPCODE_BEQ && id_opcode <= OPCODE_BGEU) ?
-                        id_ra : ((id_opcode == OPCODE_STORE ||
-                                  id_opcode == OPCODE_STOREB ||
-                                  id_opcode == OPCODE_STOREH) ? id_rd : id_rb);
+
   assign id_imm_signed = {{16{id_instruction[15]}}, id_instruction[15:0]};
   assign id_imm_unsigned = {16'h0000, id_instruction[15:0]};
   assign id_jump_offset = {{14{id_instruction[15]}}, id_instruction[15:0], 2'b00};
@@ -538,17 +578,9 @@ module cpu #(
   assign id_effective_address = register_a + id_imm_signed;
   assign id_address_misaligned = (id_access_size == 2'd2) ? (id_effective_address[1:0] != 2'b00) :
       (id_access_size == 2'd1) ? (id_effective_address[0] != 1'b0) : 1'b0;
-  assign id_uses_a = id_valid &&
-      !(id_opcode == OPCODE_NOP || id_opcode == OPCODE_MOVI ||
-        id_opcode == OPCODE_MOVHI || id_opcode == OPCODE_JAL ||
-        id_opcode == OPCODE_HALT || id_opcode == OPCODE_TRAP ||
-        id_opcode == OPCODE_SSY || id_opcode == OPCODE_BAR);
-  assign id_uses_b = id_valid &&
-      ((id_opcode >= OPCODE_ADD && id_opcode <= OPCODE_REMU) ||
-       (id_opcode >= OPCODE_BEQ && id_opcode <= OPCODE_BGEU) ||
-       id_opcode == OPCODE_SLT || id_opcode == OPCODE_SLTU ||
-       id_opcode == OPCODE_STORE || id_opcode == OPCODE_STOREB ||
-       id_opcode == OPCODE_STOREH);
+  // id_reads_* belong to whatever is in id_instruction, valid or not.
+  assign id_uses_a = id_valid && id_reads_a;
+  assign id_uses_b = id_valid && id_reads_b;
   assign hazard_ex = ex_valid && ex_reg_write && ex_rd != 5'd0 &&
                    ((id_uses_a && id_src_a == ex_rd) ||
                     (id_uses_b && id_src_b == ex_rd));
@@ -770,6 +802,10 @@ module cpu #(
       id_valid <= 1'b0;
       id_pc <= 32'd0;
       id_instruction <= 32'd0;
+      id_src_a <= 5'd0;
+      id_src_b <= 5'd0;
+      id_reads_a <= 1'b0;
+      id_reads_b <= 1'b0;
     end else if (halted || ctl_flush) begin
       id_valid <= 1'b0;
     end else if (ctl_advance && !raw_hazard) begin
@@ -779,6 +815,10 @@ module cpu #(
         id_valid <= if_valid;
         id_pc <= if_pc;
         id_instruction <= if_instruction;
+        id_src_a <= if_src_a;
+        id_src_b <= if_src_b;
+        id_reads_a <= if_reads_a;
+        id_reads_b <= if_reads_b;
       end
     end
   end
