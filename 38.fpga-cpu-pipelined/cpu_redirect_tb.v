@@ -62,7 +62,7 @@ module cpu_redirect_tb;
   // comparten entrada, y el caso 8 lo aprovecha. Los demas casos corren igual
   // con ella; la BTB de verdad la usan cpu_tb, cpu_perf_tb y la suite.
   cpu #(.BTB_BITS(2), .BTB_TAG_BITS(1)) dut (
-      .clk(clk), .reset(reset),
+      .clk(clk), .reset(reset), .soft_reset(1'b0),
       .run_request(run_request), .halt_request(halt_request),
       .step_request(step_request),
       .halted(halted), .error(error), .error_code(error_code),

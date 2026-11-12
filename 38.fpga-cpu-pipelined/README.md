@@ -121,6 +121,15 @@ cpu.v ────┤                                          ├── arbitro
   en que se escribio e invalidar todo es sumar uno (en el flanco de `reset` o de
   la CPU parandose). Sin bits de valido, cada cache cuesta unas 330-390 LUT en
   vez de unas 2.000-2.300.
+- **Dos resets en la CPU**: `reset` (el del sistema, con el que tambien se
+  vacian las caches) y `soft_reset` (el RESET del monitor, solo la CPU). Con
+  el segundo las caches siguen y contestan lo que ya habian aceptado; la CPU
+  conserva la cuenta de lo que esta en vuelo (`if_inflight`, `ex_mem_drop`) y
+  lo descarta. Antes las dos entradas eran una y `board-load` sobre un programa
+  en marcha dejaba la CPU, a veces, sin pedir instrucciones (0 retiradas): una
+  respuesta tardia de la I-cache daba la vuelta a `if_inflight`. Pasaba desde
+  el adelantamiento (y seguramente antes); lo cubre el caso 3 de
+  `cpu_memory_system_tb`, que se cuelga con el cableado antiguo.
 - **Contadores de rendimiento** (CPU PERFORMANCE, `1.isa/mmio.md` §13.2): las
   ranuras 8-11 y 14 reparten cada ciclo sin emitir en un motivo (`CPI = 1 +
   EX con memoria + MUL/DIV + dependencia + salto + ID vacio + otros`), las

@@ -31,6 +31,13 @@
  *   Branches are decided in EX, not in ID with forwarded operands, for the
  *   same reason; prediction is what will recover their bubbles.
  *
+ * Two resets. reset is the system one: the memories are reset with it, so
+ * nothing is in flight afterwards. soft_reset is the monitor's RESET, which
+ * restarts only the CPU while the I-cache and the D-cache may still owe it
+ * responses (a program was running): it resets everything but the in-flight
+ * bookkeeping (if_req_*, if_inflight, if_discard, ex_mem_drop), and what is
+ * in flight becomes dropped, as when the CPU stops.
+ *
  * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
  * several cycles like a memory access (section 04b).
  */
@@ -52,6 +59,7 @@ module cpu #(
 ) (
     input clk,
     input reset,
+    input soft_reset,
 
     input run_request,
     input halt_request,
@@ -100,6 +108,9 @@ module cpu #(
     // in the same cycle as instruction_retired.
     (* pipeline_stage = "WB" *) output reg perf_muldiv_retired
 );
+
+  // Everything but the in-flight bookkeeping (header): reset or soft_reset.
+  wire core_reset = reset || soft_reset;
 
   localparam [5:0] OPCODE_NOP = 6'h00;
   localparam [5:0] OPCODE_ADD = 6'h01;
@@ -526,7 +537,7 @@ module cpu #(
   // ID instead of a wire across the chip. When EX redirects, what moves from
   // ID is on the wrong path and becomes a bubble: it counts as a branch.
   always @(posedge clk) begin
-    if (reset || halted) begin
+    if (core_reset || halted) begin
       perf_stall <= 5'b00000;
       perf_after_redirect <= 1'b0;
       perf_after_predict <= 1'b0;
@@ -560,7 +571,7 @@ module cpu #(
 
   // Control FSM: only this process owns ctl_* and halted.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       ctl_step_active <= 1'b0;
       ctl_start_pending <= 1'b0;
       ctl_start_step_pending <= 1'b0;
@@ -606,7 +617,7 @@ module cpu #(
 
   register_file register_file_i (
       .clk(clk),
-      .reset(reset),
+      .reset(core_reset),
       .read_address_a(id_src_a),
       .read_data_a(register_a),
       .read_address_b(id_src_b),
@@ -719,10 +730,11 @@ module cpu #(
   end
 
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       imem_address <= 32'd0;
-      if_inflight <= 3'd0;
-      if_discard <= 3'd0;
+      // soft_reset: the I-cache still answers what it accepted; drop it.
+      if_inflight <= reset ? 3'd0 : if_inflight_next;
+      if_discard <= reset ? 3'd0 : if_inflight_next;
       if_valid <= 1'b0;
       if_valid1 <= 1'b0;
       if_valid2 <= 1'b0;
@@ -877,7 +889,7 @@ module cpu #(
   assign if_predict_target = if_btb ? if_btb_target : if_static_target;
 
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       if_ras_top <= {RAS_BITS{1'b0}};
       if_ras_count <= {(RAS_BITS+1){1'b0}};
     end else if (BRANCH_PREDICT && if_take) begin
@@ -937,9 +949,9 @@ module cpu #(
                          (!ex_branch_register || ex_return);
 
   always @(posedge clk) begin
-    if_btb_write <= !reset && !halted && ex_btb_update;
+    if_btb_write <= !core_reset && !halted && ex_btb_update;
     // Predicted taken but not a branch: the entry is someone else's.
-    if_btb_write_kill <= !reset && !halted && BTB && ctl_advance && ex_valid &&
+    if_btb_write_kill <= !core_reset && !halted && BTB && ctl_advance && ex_valid &&
                       !ex_is_branch && ex_predicted && ex_btb_hit;
     if_btb_write_taken <= ex_taken;
     if_btb_write_hit <= ex_btb_hit;
@@ -951,7 +963,7 @@ module cpu #(
   end
 
   always @(posedge clk) begin
-    if (reset || halted) begin
+    if (core_reset || halted) begin
       if_btb_valid <= {BTB_ENTRIES{1'b0}};
     end else if (if_btb_write) begin
       if (if_btb_write_taken) begin
@@ -1221,7 +1233,7 @@ module cpu #(
 
   // IF -> ID boundary registers.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       id_valid <= 1'b0;
       id_pc <= 32'd0;
       id_instruction <= 32'd0;
@@ -1466,7 +1478,7 @@ module cpu #(
 
   // ID -> EX boundary and data-memory transaction state.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       ex_valid <= 1'b0;
       ex_pc <= 32'd0;
       ex_next_pc <= 32'd0;
@@ -1495,7 +1507,12 @@ module cpu #(
       ex_class <= OPCLASS_NORMAL;
       ex_error_code <= ERROR_NONE;
       ex_mem_request_sent <= 1'b0;
-      ex_mem_drop <= 2'd0;
+      // soft_reset: the access in flight, or accepted this cycle, still gets
+      // its response from the D-cache; drop it.
+      ex_mem_drop <= reset ? 2'd0 : ex_mem_drop
+                     + {1'b0, (ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)) ||
+                              (dmem_valid && dmem_ready)}
+                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       ex_md_op <= OPCODE_NOP;
       ex_md_ra <= 5'd0;
       ex_md_rb <= 5'd0;
@@ -1606,7 +1623,7 @@ module cpu #(
   always @(posedge clk) begin
     instruction_retired <= 1'b0;
     perf_muldiv_retired <= 1'b0;
-    if (reset) begin
+    if (core_reset) begin
       wb_md_counted <= 1'b0;
       wb_valid <= 1'b0;
       wb_pc <= 32'd0;

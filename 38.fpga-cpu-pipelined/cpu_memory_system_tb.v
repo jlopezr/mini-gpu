@@ -47,7 +47,7 @@ module cpu_memory_system_tb;
   wire [3:0] c_wen;
 
   cpu cpu_i(
-      .clk(clk), .reset(reset || cpu_reset_request), .run_request(run_request), .halt_request(1'b0),
+      .clk(clk), .reset(reset), .soft_reset(cpu_reset_request), .run_request(run_request), .halt_request(1'b0),
       .step_request(1'b0), .halted(halted), .error(error), .error_code(error_code),
       .instruction_retired(instruction_retired),
       .imem_valid(imem_valid), .imem_address(imem_address),
@@ -59,10 +59,20 @@ module cpu_memory_system_tb;
       .debug_register_data(debug_register_data), .debug_pc(debug_pc),
       .perf_stall());
 
+  // Memoria de instrucciones: contesta al ciclo siguiente o, con imem_slow,
+  // cuatro despues, como un fallo corto de la I-cache. Tampoco ve el RESET de
+  // la CPU: lo que acepto antes lo contesta despues.
   reg [31:0] instruction_memory[0:WORDS-1];
+  reg imem_slow = 1'b0;
+  reg [2:0] imem_delay_valid = 3'b000;
+  reg [31:0] imem_delay_data[0:2];
   always @(posedge clk) begin
-    imem_rvalid <= imem_valid;
-    if (imem_valid) imem_read_data <= instruction_memory[imem_address[9:2]];
+    imem_delay_valid <= {imem_delay_valid[1:0], imem_valid};
+    imem_delay_data[0] <= instruction_memory[imem_address[9:2]];
+    imem_delay_data[1] <= imem_delay_data[0];
+    imem_delay_data[2] <= imem_delay_data[1];
+    imem_rvalid <= imem_slow ? imem_delay_valid[2] : imem_valid;
+    imem_read_data <= imem_slow ? imem_delay_data[2] : instruction_memory[imem_address[9:2]];
   end
 
   // -- D-cache y adaptador -------------------------------------------------------
@@ -228,7 +238,7 @@ module cpu_memory_system_tb;
   endfunction
 
   integer errors = 0;
-  integer k, t;
+  integer k, t, round;
 
   task run_program(input [8*12-1:0] name);
     begin
@@ -325,6 +335,27 @@ module cpu_memory_system_tb;
     cpu_reset;
     run_program("lectura16");
     for (k = 0; k < 8; k = k + 1) expect_register(5'd10 + k, k + 1, "stride16");
+
+    // 3) RESET de la CPU con un programa corriendo, como board-load: la
+    //    I-cache (lenta aqui) y la D-cache (LOADs que fallan) aun deben
+    //    respuestas, que la CPU tiene que descartar. Antes se las tomaba por
+    //    nuevas y se quedaba sin pedir instrucciones (0 retiradas en placa).
+    //    Despues relee lo que escribio el caso 1.
+    imem_slow = 1'b1;
+    for (round = 0; round < 8; round = round + 1) begin
+      for (k = 0; k < WORDS; k = k + 1) instruction_memory[k] = HALT;
+      instruction_memory[0] = movi(5'd1, 16'h0800);
+      instruction_memory[1] = load(5'd5, 5'd1, 16'd0);
+      instruction_memory[2] = addi(5'd1, 5'd1, 16'd16);
+      instruction_memory[3] = bne(5'd1, 5'd0, 16'hfffd);   // a la palabra 1
+      cpu_reset;
+      @(negedge clk); run_request = 1'b1;
+      @(negedge clk); run_request = 1'b0;
+      repeat (60 + 7 * round) @(negedge clk);
+      readback(16'h0200);
+      for (k = 0; k < 10; k = k + 1) expect_register(5'd10 + k, k + 1, "reset vivo");
+    end
+    imem_slow = 1'b0;
 
     if (g_mismatch != 2'b00) begin
       errors = errors + 1; $display("FALLO: los generadores de trafico vieron datos malos (%b)", g_mismatch);
