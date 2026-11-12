@@ -112,9 +112,9 @@ module dcache_tb;
 
   // -- Comprobacion de respuestas, en orden --------------------------------------
   // Cada peticion apunta lo que espera; cada `rvalid` consume la siguiente.
-  reg [31:0] exp_data[0:63];
-  reg exp_error[0:63];
-  reg exp_check[0:63];         // 0 = STORE o error: no se mira el dato
+  reg [31:0] exp_data[0:4095];
+  reg exp_error[0:4095];
+  reg exp_check[0:4095];         // 0 = STORE o error: no se mira el dato
   integer exp_head = 0, exp_tail = 0;
   integer errors = 0;
   integer cycle = 0;
@@ -226,10 +226,11 @@ module dcache_tb;
       $display("FALLO 2: acierto en %0d ciclos", last_rvalid_cycle - start);
     end
 
-    // 3) Un STORE pasa al adaptador e invalida la linea: el LOAD siguiente falla
-    //    y trae el dato nuevo. El LOAD va pegado detras, como en la CPU.
+    // 3) Un STORE pasa al adaptador y actualiza la linea, que esta en la
+    //    cache: el LOAD siguiente acierta con el dato nuevo. El LOAD va pegado
+    //    detras, como en la CPU.
     store(32'h0000_0108, 32'h0000_00EE, 4'b0001);
-    load_wait(32'h0000_0108, 32'hA000_01EE, 0, 1, "3 tras store");
+    load_wait(32'h0000_0108, 32'hA000_01EE, 0, 0, "3 tras store");
     load_wait(32'h0000_0100, 32'hA000_0100, 0, 0, "3 linea de nuevo");
 
     // 4) Conflicto de indice: 0x100 y 0x140 caen en la misma de las 4 lineas.
@@ -257,11 +258,11 @@ module dcache_tb;
     store(32'h0000_1000, 32'h1111_1111, 4'b1111);
     load_wait(32'h0000_0110, 32'hA000_0110, 0, 0, "8 acierto detras");
 
-    // 9) Varios STORE seguidos y un LOAD a la primera linea: falla y ve todos.
+    // 9) Varios STORE seguidos y un LOAD a la primera linea: acierta y ve todos.
     store(32'h0000_0100, 32'h0000_0001, 4'b1111);
     store(32'h0000_0104, 32'h0000_0002, 4'b1111);
     store(32'h0000_0100, 32'h0000_0003, 4'b0001);
-    load_wait(32'h0000_0100, 32'h0000_0003, 0, 1, "9 tras varios store");
+    load_wait(32'h0000_0100, 32'h0000_0003, 0, 0, "9 tras varios store");
     load_wait(32'h0000_0104, 32'h0000_0002, 0, 0, "9 misma linea");
 
     // 10) `invalidate` en mitad de un fallo: contesta, pero no guarda la linea.
@@ -346,6 +347,67 @@ module dcache_tb;
                  k, mem_reads - start);
       end
     end
+
+    // 16) STORE que acierta y LOAD a la misma palabra 0..3 ciclos despues: el
+    //     LOAD lee la EBR antes de que S2 escriba, en el mismo ciclo, o
+    //     despues; en todos ve el dato nuevo (adelantamiento desde S2 y W).
+    //     Bytes sueltos, para la mezcla.
+    for (k = 0; k < 4; k = k + 1) begin
+      load_wait(32'h0000_0180, memory[32'h180 >> 2], 0, (k == 0) ? 1 : 0, "16 preparar");
+      store(32'h0000_0184, 32'h1600_0000 | (k << 8), 4'b0010);
+      repeat (k) @(posedge clk);
+      load(32'h0000_0184, merge(memory[32'h184 >> 2], 32'h1600_0000 | (k << 8), 4'b0010), 0);
+      wait_responses;
+    end
+
+    // 17) STOREs pegados a la misma linea (los PUSH de un prologo), con 0, 1
+    //     y 2 ciclos entre ellos: cada uno mezcla sobre la linea que dejo el
+    //     anterior, aunque aun no este escrita. Luego todo acierta.
+    for (k = 0; k < 3; k = k + 1) begin
+      start = mem_reads;
+      store(32'h0000_0190, 32'h1700_0000 + k, 4'b1111);
+      repeat (k) @(posedge clk);
+      store(32'h0000_0194, 32'h1710_0000 + k, 4'b1111);
+      repeat (k) @(posedge clk);
+      store(32'h0000_0198, 32'h1720_0000 + k, 4'b0001);
+      store(32'h0000_0190, 32'h0000_AA00, 4'b0010);
+      load(32'h0000_0190, merge(32'h1700_0000 + k, 32'h0000_AA00, 4'b0010), 0);
+      load(32'h0000_0194, 32'h1710_0000 + k, 0);
+      load(32'h0000_0198, memory[32'h198 >> 2], 0);
+      load(32'h0000_019C, memory[32'h19C >> 2], 0);
+      wait_responses;
+      if (mem_reads - start != (k == 0 ? 1 : 0)) begin
+        errors = errors + 1;
+        $display("FALLO 17.%0d: %0d lecturas al adaptador", k, mem_reads - start);
+      end
+    end
+
+    // 18) STORE a otra linea del mismo indice (0x1D0 frente a 0x190): no
+    //     toca la que esta en la cache, que sigue acertando con su dato.
+    store(32'h0000_01D4, 32'h1818_1818, 4'b1111);
+    load_wait(32'h0000_0194, 32'h1710_0002, 0, 0, "18 la otra sigue");
+    // 19) Y el STORE que falla no trae la linea.
+    load_wait(32'h0000_01D4, 32'h1818_1818, 0, 1, "19 sin reservar");
+
+    // 20) Aleatorio: LOAD y STORE de cualquier tamano, con 0..2 ciclos entre
+    //     ellos, sobre 16 lineas que caen en las 4 de la cache. Cada LOAD
+    //     contra el modelo de memoria.
+    for (k = 0; k < 3000; k = k + 1) begin : aleatorio
+      reg [31:0] a, d;
+      reg [3:0] m;
+      a = 32'h0000_0200 | ($random & 32'hFC);
+      d = $random;
+      case ($random & 3)
+        0: m = 4'b1111;
+        1: m = ($random & 1) ? 4'b1100 : 4'b0011;
+        default: m = 4'b0001 << ($random & 3);
+      endcase
+      if ($random & 1) store(a, d, m);
+      else load(a, memory[a[11:2]], 0);
+      repeat ($random & 1) @(posedge clk);
+      if ((k & 15) == 15) wait_responses;
+    end
+    wait_responses;
 
     repeat (20) @(posedge clk);
     wait_responses;

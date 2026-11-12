@@ -19,10 +19,10 @@
  *                  N+1: si acierta, contesta. Si falla, pide la palabra al
  *                  adaptador, contesta con ella y guarda la linea entera
  *                  (`mem_read_line`, que el adaptador ya tiene).
- *   STORE a SDRAM  Pasa directo al adaptador e invalida la linea de su
- *                  indice, sin mirar la etiqueta: puede tirar una linea ajena
- *                  que comparte indice, lo que solo cuesta un fallo. El dato
- *                  llega a memoria por el bufer de combinacion, como antes.
+ *   STORE a SDRAM  Pasa directo al adaptador (el dato llega a memoria por el
+ *                  bufer de combinacion) y, si su linea esta en la cache, la
+ *                  actualiza; si no, no la trae (sin reservar). Ver "El STORE
+ *                  que actualiza", abajo.
  *   MMIO, fuera de rango, cualquier otra cosa
  *                  Pasa directo, sin cache.
  *   `invalidate`   Invalida todo (quien la conecte: CPU parada para el
@@ -48,6 +48,36 @@
  * `pending == 0`.
  *
  * ---------------------------------------------------------------------
+ * El STORE que actualiza
+ * ---------------------------------------------------------------------
+ *
+ * Antes un STORE invalidaba la linea de su indice. Parecia barato ("solo
+ * cuesta un fallo"), pero el codigo compilado guarda en la pila y relee al
+ * momento: el 93 % de los fallos eran lineas recien tiradas por un STORE
+ * (26-33 % de fallos en tie_fighter y racer; 1,5-3,5 % actualizando).
+ *
+ * Ahora el STORE se acepta igual (en un ciclo, y la CPU no espera) y ademas
+ * lee etiqueta y linea como un LOAD. Despues, dos etapas registradas:
+ *
+ *   S1  compara la etiqueta (a un registro, como ST_LOOKUP) y mezcla la
+ *       palabra en la linea con su mascara de bytes.
+ *   S2  si acerto, escribe la linea entera. Leer, mezclar y escribir: la EBR
+ *       no necesita escrituras por bytes.
+ *
+ * Quien lea la linea mientras tanto (un LOAD, u otro STORE: los PUSH de un
+ * prologo van seguidos a la misma linea) la leeria vieja: su lectura es de
+ * antes de la escritura de S2, o del mismo ciclo (lectura y escritura del
+ * mismo indice en puertos distintos de la EBR: el dato leido no esta
+ * garantizado). Por eso la linea leida pasa por `line_now`, que la toma de S2
+ * (escribe al final de este ciclo) o de W (escribio al final del anterior) si
+ * son del mismo indice. Las etiquetas no cambian con un STORE, asi que la
+ * comparacion no necesita adelantamiento.
+ *
+ * El relleno de un fallo y la escritura de S2 nunca coinciden: un STORE solo
+ * se acepta en IDLE, y un LOAD aceptado detras tarda al menos tres ciclos en
+ * llegar a ST_FILL. Comparten el puerto de escritura de datos.
+ *
+ * ---------------------------------------------------------------------
  * Invalidar sin bits de valido: la epoca
  * ---------------------------------------------------------------------
  *
@@ -61,7 +91,6 @@
  *   - La epoca 0 es "invalida": la EBR arranca a ceros, asi que al configurar
  *     la FPGA no hay nada valido sin hacer nada. Por la misma razon un acierto
  *     exige epoca distinta de 0, por si el registro de epoca arrancara en 0.
- *   - Un STORE escribe epoca 0 en su indice.
  *   - Una linea se guarda con la epoca del momento en que se ACEPTO el LOAD: si
  *     se invalido mientras tanto, nace ya invalida.
  *   - LA VUELTA. Al pasar de la ultima epoca a la 1, una linea que nadie ha
@@ -135,6 +164,7 @@ module dcache #(
   wire cpu_in_sdram = ((cpu_address & ADDR_RANGE_MASK) == 32'd0);
   wire cpu_is_write = |cpu_write_enable;
   wire cpu_cacheable_load = cpu_in_sdram && !cpu_is_write;
+  wire [TAG_BITS-1:0] cpu_tag = cpu_address[ADDR_BITS-1:TAG_LSB];
 
   wire [INDEX_BITS-1:0] cpu_index = cpu_address[TAG_LSB-1:4];
 
@@ -159,6 +189,7 @@ module dcache #(
   wire pass_through = idle_open && !cpu_cacheable_load;
   wire pass_accept = pass_through && cpu_valid && mem_ready;
   wire load_accept = idle_open && cpu_valid && cpu_cacheable_load;
+  wire store_accept = pass_accept && cpu_in_sdram && cpu_is_write;
 
   assign cpu_ready = idle_open && (cpu_cacheable_load || mem_ready);
 
@@ -175,31 +206,88 @@ module dcache #(
   reg [127:0] data_q;
   reg [ENTRY_BITS-1:0] tag_q;
 
-  // Un solo puerto de escritura en las etiquetas, para tres usos que nunca
-  // coinciden porque van en estados distintos: el barrido, el STORE (en IDLE)
-  // y el relleno (en FILL).
+  // Un solo puerto de escritura en las etiquetas, para dos usos que nunca
+  // coinciden porque van en estados distintos: el barrido y el relleno (en
+  // FILL). Un STORE no las toca.
   reg [INDEX_BITS-1:0] sweep_index;
   wire fill_write = (state == ST_FILL) && mem_rvalid && !mem_error;
-  wire store_clear = pass_accept && cpu_in_sdram && cpu_is_write;
   wire sweep_write = (state == ST_SWEEP);
-  wire tag_write = fill_write || store_clear || sweep_write;
-  wire [INDEX_BITS-1:0] tag_write_index =
-      sweep_write ? sweep_index : (store_clear ? cpu_index : held_index);
+  wire tag_write = fill_write || sweep_write;
+  wire [INDEX_BITS-1:0] tag_write_index = sweep_write ? sweep_index : held_index;
   wire [ENTRY_BITS-1:0] tag_write_value =
       fill_write ? {held_epoch, held_tag} : {ENTRY_BITS{1'b0}};
 
+  // -- El STORE que actualiza: S1, S2 y W (cabecera) ---------------------------
+  reg s1_valid;
+  reg [INDEX_BITS-1:0] s1_index;
+  reg [TAG_BITS-1:0] s1_tag;
+  reg [1:0] s1_word;
+  reg [31:0] s1_data;
+  reg [3:0] s1_mask;
+  reg s2_valid;                       // acerto: escribe al final de este ciclo
+  reg [INDEX_BITS-1:0] s2_index;
+  reg [127:0] s2_line;
+  reg w_valid;                        // escribio al final del ciclo anterior
+  reg [INDEX_BITS-1:0] w_index;
+  reg [127:0] w_line;
+  // El indice de lo leido en el ciclo anterior (LOAD o STORE), para adelantar.
+  reg [INDEX_BITS-1:0] read_index_q;
+
+  // Un solo puerto de escritura de datos: relleno o S2, que nunca coinciden.
+  wire data_write = fill_write || s2_valid;
+  wire [INDEX_BITS-1:0] data_write_index = fill_write ? held_index : s2_index;
+  wire [127:0] data_write_value = fill_write ? mem_read_line : s2_line;
+
   always @(posedge clk) begin
-    if (load_accept) begin
+    if (load_accept || store_accept) begin
       data_q <= data_mem[cpu_index];
       tag_q <= tag_mem[cpu_index];
     end
-    if (fill_write) data_mem[held_index] <= mem_read_line;
+    if (data_write) data_mem[data_write_index] <= data_write_value;
     if (tag_write) tag_mem[tag_write_index] <= tag_write_value;
   end
 
+  // La linea leida en el ciclo anterior, con lo que S2 o W hayan escrito en
+  // ella despues (S2 es mas nueva: si coinciden los dos, ya incluye a W).
+  wire [127:0] line_now =
+      (s2_valid && s2_index == read_index_q) ? s2_line :
+      (w_valid && w_index == read_index_q) ? w_line : data_q;
+
   wire [EPOCH_BITS-1:0] stored_epoch = tag_q[ENTRY_BITS-1:TAG_BITS];
-  wire hit = (tag_q == {epoch, held_tag}) && (stored_epoch != {EPOCH_BITS{1'b0}}) &&
-             !bump && !wrapping;
+  wire entry_live = (stored_epoch != {EPOCH_BITS{1'b0}}) && !bump && !wrapping;
+  wire hit = (tag_q == {epoch, held_tag}) && entry_live;
+  wire s1_hit = s1_valid && (tag_q == {epoch, s1_tag}) && entry_live;
+
+  // La palabra del STORE mezclada en la linea, byte a byte.
+  reg [127:0] s1_merged;
+  integer b;
+  always @* begin
+    s1_merged = line_now;
+    for (b = 0; b < 4; b = b + 1)
+      if (s1_mask[b]) s1_merged[{s1_word, 5'b00000} + b * 8 +: 8] = s1_data[b * 8 +: 8];
+  end
+
+  always @(posedge clk) begin
+    if (reset) begin
+      s1_valid <= 1'b0;
+      s2_valid <= 1'b0;
+      w_valid <= 1'b0;
+    end else begin
+      s1_valid <= store_accept;
+      s2_valid <= s1_hit;
+      w_valid <= s2_valid;
+    end
+    if (load_accept || store_accept) read_index_q <= cpu_index;
+    s1_index <= cpu_index;
+    s1_tag <= cpu_tag;
+    s1_word <= cpu_address[3:2];
+    s1_data <= cpu_write_data;
+    s1_mask <= cpu_write_enable;
+    s2_index <= s1_index;
+    s2_line <= s1_merged;
+    w_index <= s2_index;
+    w_line <= s2_line;
+  end
 
   // -- Respuestas pendientes del adaptador -----------------------------------
   // Cuenta las peticiones aceptadas por el adaptador y aun sin contestar,
@@ -275,7 +363,7 @@ module dcache #(
         // Datos y etiqueta ya leidos: comparar, a registros.
         ST_LOOKUP: begin
           hit_q <= hit;
-          word_q <= data_q[{held_address[3:2], 5'b00000} +: 32];
+          word_q <= line_now[{held_address[3:2], 5'b00000} +: 32];
           state <= ST_DECIDE;
         end
 
