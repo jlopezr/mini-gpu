@@ -52,7 +52,11 @@ module cpu_tb;
       .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
-      .debug_pc(debug_pc)
+      .debug_pc(debug_pc),
+      // Sin D-cache: cada LOAD pide en MEM.
+      .dcache_lookup_address(), .dcache_hit(1'b0), .dcache_read_data(32'd0),
+      .dcache_mem_advance(), .dcache_ex_load(), .dcache_ex_store(),
+      .dcache_ex_write_data(), .dcache_ex_write_enable()
   );
 
   // One-cycle-latency instruction memory model: accepts a request every

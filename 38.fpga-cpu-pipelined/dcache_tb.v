@@ -4,48 +4,88 @@
 /*
  * Banco de dcache.v con 4 lineas (64 bytes), para forzar conflictos de indice
  * con direcciones cercanas, y 2 bits de epoca, para dar la vuelta (y obligar
- * al barrido) con tres invalidaciones. El adaptador es un modelo: una peticion cada vez,
- * escrituras contestadas al ciclo siguiente (como al fundirse en el bufer de
- * combinacion) salvo en la zona "lenta" (bit 12 de la direccion, como un
- * volcado), y lecturas a los READ_CYCLES ciclos con la palabra y la linea.
+ * al barrido) con tres invalidaciones.
  *
- * La prueba 15 invalida en cada momento de una consulta (comparar, decidir y
- * decidir esperando a un STORE): el acierto viejo ya no vale.
+ * El banco hace de pipeline de cpu.v en pequeno, con sus dos etapas que tocan
+ * la cache:
  *
- * La CPU de prueba se porta como cpu.v: un LOAD espera su respuesta; un STORE a
- * SDRAM no, y su respuesta se descarta al llegar. Cada respuesta se compara
- * contra la que tocaba en ese orden.
+ *   EX   el acceso cuya linea se leyo en el flanco anterior: la cache dice si
+ *        acierta y da la palabra; si pasa a MEM se guardan.
+ *   MEM  un LOAD que acerto ya tiene su dato; uno que fallo (o MMIO) lo pide
+ *        y espera la respuesta; un STORE se pide siempre y termina al
+ *        aceptarse (a SDRAM no se espera la respuesta: se descarta al llegar,
+ *        como mem_drop). Mientras MEM espera, EX tambien, y la cache relee la
+ *        linea de EX en cada flanco (`lookup_address`).
+ *
+ * Los accesos salen en orden de programa, con 0..2 ciclos entre ellos; cada
+ * LOAD se compara con una copia de la memoria tomada en ese orden. Asi se
+ * cubre lo delicado: un LOAD o un STORE justo detras de un STORE que acierta
+ * (la linea adelantada desde la escritura de este ciclo o del anterior), un
+ * LOAD detras del relleno de su misma linea, y STOREs seguidos a una linea.
+ *
+ * El adaptador es un modelo: acepta con `ready` aleatorio, escribe al aceptar
+ * y contesta en orden tras 1..8 ciclos, las lecturas con la linea entera. De
+ * vez en cuando la "CPU" se para: se vacia el pipeline y `invalidate` sube
+ * unos ciclos (cada tres, una vuelta de epoca y un barrido).
+ *
+ * Al final, casos dirigidos para lo que el aleatorio podria no forzar: el
+ * STORE que falla no trae la linea, y MMIO nunca acierta.
  */
 module dcache_tb;
   reg clk = 0;
   always #5 clk = ~clk;
 
-  localparam integer READ_CYCLES = 6;
-  localparam integer SLOW_CYCLES = 12;
   localparam [31:0] MMIO_DATA = 32'h1234_5678;
+  localparam integer N_RANDOM = 6000;
 
   reg reset = 1, invalidate = 0;
 
-  reg cpu_valid = 0;
-  reg [31:0] cpu_address = 0, cpu_write_data = 0;
-  reg [3:0] cpu_write_enable = 0;
-  wire cpu_ready, cpu_rvalid, cpu_error;
+  // -- La cache ------------------------------------------------------------------
+  wire [31:0] lookup_address;
+  wire ex_hit;
+  wire [31:0] ex_read_data;
+  wire mem_advance, ex_load, ex_store;
+  wire cpu_valid, cpu_ready, cpu_rvalid, cpu_error;
   wire [31:0] cpu_read_data;
-
-  wire mem_valid;
+  wire mem_valid, mem_ready;
   wire [31:0] mem_address, mem_write_data;
   wire [3:0] mem_write_enable;
-  wire mem_ready;
   reg [31:0] mem_read_data = 0;
   reg [127:0] mem_read_line = 0;
   reg mem_rvalid = 0, mem_error = 0;
   wire hit_event, miss_event;
 
-  // EPOCH_BITS = 2: solo tres epocas validas, para dar la vuelta enseguida.
+  // Lo que EX y MEM tienen (registros del banco).
+  reg ex_v = 0, ex_is_load = 0;
+  reg [31:0] ex_addr = 0, ex_data = 0, ex_expect = 0;
+  reg [3:0] ex_wen = 0;
+  reg m_v = 0, m_is_load = 0, m_hit = 0, m_sent = 0, m_got = 0;
+  reg [31:0] m_addr = 0, m_data = 0, m_wdata = 0, m_expect = 0;
+  reg [3:0] m_wen = 0;
+  // El siguiente acceso, listo para entrar en EX.
+  reg nx_v = 0, nx_is_load = 0;
+  reg [31:0] nx_addr = 0, nx_data = 0, nx_expect = 0;
+  reg [3:0] nx_wen = 0;
+
+  wire m_in_sdram = m_addr[31:25] == 7'd0;
+  wire m_needs = m_v && (m_is_load ? !(m_hit || m_got) : 1'b1);
+  assign cpu_valid = m_needs && !m_sent;
+  wire m_store_posted = cpu_valid && cpu_ready && !m_is_load && m_in_sdram;
+  wire m_busy = m_v && (m_is_load ? !(m_hit || m_got) : !m_store_posted);
+  wire advance = !m_busy;
+
+  assign lookup_address = advance ? nx_addr : ex_addr;
+  assign mem_advance = advance;
+  assign ex_load = advance && ex_v && ex_is_load;
+  assign ex_store = advance && ex_v && !ex_is_load;
+
   dcache #(.LINES(4), .INDEX_BITS(2), .EPOCH_BITS(2)) dut(
       .clk(clk), .reset(reset), .invalidate(invalidate),
-      .cpu_valid(cpu_valid), .cpu_address(cpu_address),
-      .cpu_write_data(cpu_write_data), .cpu_write_enable(cpu_write_enable),
+      .lookup_address(lookup_address), .ex_hit(ex_hit), .ex_read_data(ex_read_data),
+      .mem_advance(mem_advance), .ex_load(ex_load), .ex_store(ex_store),
+      .ex_write_data(ex_data), .ex_write_enable(ex_is_load ? 4'b0000 : ex_wen),
+      .cpu_valid(cpu_valid), .cpu_address(m_addr),
+      .cpu_write_data(m_wdata), .cpu_write_enable(m_is_load ? 4'b0000 : m_wen),
       .cpu_ready(cpu_ready), .cpu_read_data(cpu_read_data),
       .cpu_rvalid(cpu_rvalid), .cpu_error(cpu_error),
       .mem_valid(mem_valid), .mem_address(mem_address),
@@ -55,16 +95,18 @@ module dcache_tb;
       .mem_error(mem_error),
       .hit_event(hit_event), .miss_event(miss_event));
 
-  // -- Modelo del adaptador -----------------------------------------------------
-  // 4 KiB de "SDRAM" por palabras, repetidos en todo el rango (basta para el
-  // banco). Lo que no es SDRAM ni MMIO contesta con error.
+  // -- Modelo del adaptador -----------------------------------------------------------
+  // 4 KiB de "SDRAM" por palabras, repetidos en todo el rango. MMIO contesta
+  // con un valor fijo.
   reg [31:0] memory[0:1023];
-  integer busy = 0;
-  reg [31:0] req_address;
-  reg req_write;
-  assign mem_ready = (busy == 0);
-
-  integer mem_reads = 0, mem_writes = 0;
+  reg [31:0] q_data[0:15];
+  reg [127:0] q_line[0:15];
+  integer q_time[0:15];
+  integer q_w = 0, q_r = 0, now = 0;
+  integer seed = 32'hdcac4e;
+  reg ready_rand = 1;
+  assign mem_ready = ready_rand && (q_w - q_r < 8);
+  integer mem_reads = 0;
 
   function [31:0] merge(input [31:0] old, input [31:0] data, input [3:0] wen);
     integer b;
@@ -75,345 +117,197 @@ module dcache_tb;
   endfunction
 
   always @(posedge clk) begin
+    now = now + 1;
     mem_rvalid <= 1'b0;
-    mem_error <= 1'b0;
-    if (busy > 1) busy <= busy - 1;
-    if (busy == 1) begin
-      busy <= 0;
-      mem_rvalid <= 1'b1;
-      if (req_address[31]) begin
-        mem_read_data <= req_write ? 32'd0 : MMIO_DATA;
-      end else if (req_address[31:25] != 0) begin
-        mem_error <= 1'b1;
-      end else if (req_write) begin
-        // Un dato reconocible: si una respuesta de STORE se cruza con la de un
-        // LOAD, el LOAD lo ve.
-        mem_read_data <= 32'hDEAD_57E0;
-      end else begin
-        mem_read_data <= memory[req_address[11:2]];
-        mem_read_line <= {memory[{req_address[11:4], 2'd3}], memory[{req_address[11:4], 2'd2}],
-                          memory[{req_address[11:4], 2'd1}], memory[{req_address[11:4], 2'd0}]};
-      end
-    end
+    ready_rand <= ($random(seed) & 3) != 0;
     if (mem_valid && mem_ready) begin
-      req_address <= mem_address;
-      req_write <= |mem_write_enable;
-      if (|mem_write_enable) begin
-        mem_writes = mem_writes + 1;
-        if (mem_address[31:25] == 0)
-          memory[mem_address[11:2]] <= merge(memory[mem_address[11:2]], mem_write_data, mem_write_enable);
-        busy <= mem_address[12] ? SLOW_CYCLES : 1;
+      if (mem_address[31]) begin
+        q_data[q_w % 16] = MMIO_DATA;
+        q_line[q_w % 16] = 128'd0;
       end else begin
-        mem_reads = mem_reads + 1;
-        busy <= READ_CYCLES;
+        if (|mem_write_enable)
+          memory[mem_address[11:2]] = merge(memory[mem_address[11:2]], mem_write_data,
+                                            mem_write_enable);
+        else
+          mem_reads = mem_reads + 1;
+        q_data[q_w % 16] = memory[mem_address[11:2]];
+        q_line[q_w % 16] = {memory[{mem_address[11:4], 2'd3}], memory[{mem_address[11:4], 2'd2}],
+                            memory[{mem_address[11:4], 2'd1}], memory[{mem_address[11:4], 2'd0}]};
       end
+      q_time[q_w % 16] = now + 1 + ($random(seed) & 7);
+      if (q_w > q_r && q_time[q_w % 16] < q_time[(q_w - 1) % 16])
+        q_time[q_w % 16] = q_time[(q_w - 1) % 16];
+      q_w = q_w + 1;
+    end
+    if (q_r < q_w && q_time[q_r % 16] <= now) begin
+      mem_read_data <= q_data[q_r % 16];
+      mem_read_line <= q_line[q_r % 16];
+      mem_rvalid <= 1'b1;
+      q_r = q_r + 1;
     end
   end
 
-  // -- Comprobacion de respuestas, en orden --------------------------------------
-  // Cada peticion apunta lo que espera; cada `rvalid` consume la siguiente.
-  reg [31:0] exp_data[0:4095];
-  reg exp_error[0:4095];
-  reg exp_check[0:4095];         // 0 = STORE o error: no se mira el dato
-  integer exp_head = 0, exp_tail = 0;
-  integer errors = 0;
-  integer cycle = 0;
-  integer last_rvalid_cycle = 0;
+  // -- La copia en orden de programa, y el generador ---------------------------------
+  reg [31:0] shadow[0:1023];
+  integer errors = 0, checked = 0, hits = 0, misses = 0;
+  integer generated = 0, gap = 0, drop = 0;
+  reg generating = 0;
+  reg [31:0] a, d;
+  reg [3:0] m;
 
+  // Uno nuevo en nx_*, en orden de programa: la copia se actualiza ya.
+  task new_access;
+    begin
+      a = 32'h0000_0100 | ($random(seed) & 32'hFC);
+      d = $random(seed);
+      case ($random(seed) & 3)
+        0: m = 4'b1111;
+        1: m = ($random(seed) & 1) ? 4'b1100 : 4'b0011;
+        default: m = 4'b0001 << ($random(seed) & 3);
+      endcase
+      // No bloqueantes: la cache lee lookup_address en este mismo flanco.
+      nx_v <= 1; nx_addr <= a; nx_data <= d; nx_wen <= m;
+      if (($random(seed) & 31) == 0) begin
+        nx_is_load <= 1; nx_addr <= 32'h8000_0000; nx_expect <= MMIO_DATA;
+      end else if ($random(seed) & 1) begin
+        nx_is_load <= 1; nx_expect <= shadow[a[11:2]];
+      end else begin
+        nx_is_load <= 0;
+        shadow[a[11:2]] = merge(shadow[a[11:2]], d, m);
+      end
+      generated = generated + 1;
+    end
+  endtask
+
+  // Cobertura: accesos que salen de EX con la linea adelantada desde la
+  // escritura de este ciclo o desde W (la del anterior).
+  integer fwd_now = 0, fwd_w = 0;
   always @(posedge clk) begin
-    cycle <= cycle + 1;
-    if (cpu_rvalid) begin
-      last_rvalid_cycle <= cycle;
-      if (exp_head == exp_tail) begin
-        errors = errors + 1;
-        $display("FALLO: respuesta sin peticion (dato %h)", cpu_read_data);
-      end else begin
-        if (cpu_error !== exp_error[exp_head] ||
-            (exp_check[exp_head] && cpu_read_data !== exp_data[exp_head])) begin
-          errors = errors + 1;
-          $display("FALLO: respuesta %0d = %h err=%b, esperaba %h err=%b", exp_head,
-                   cpu_read_data, cpu_error, exp_data[exp_head], exp_error[exp_head]);
-        end
-        exp_head = exp_head + 1;
-      end
-    end
+    if (advance && ex_v && dut.data_write && dut.data_write_index == dut.ex_index)
+      fwd_now = fwd_now + 1;
+    else if (advance && ex_v && dut.w_data_valid && dut.w_index == dut.ex_index)
+      fwd_w = fwd_w + 1;
   end
 
-  // -- La CPU de prueba ------------------------------------------------------------
-  task request(input [31:0] address, input [31:0] data, input [3:0] wen);
-    begin
-      @(negedge clk);
-      cpu_address = address; cpu_write_data = data; cpu_write_enable = wen; cpu_valid = 1;
-      @(posedge clk);
-      while (!cpu_ready) @(posedge clk);
-      #1 cpu_valid = 0;
-    end
-  endtask
-
-  task wait_responses;
-    integer t;
-    begin
-      t = 0;
-      while (exp_head != exp_tail && t < 200) begin @(posedge clk); t = t + 1; end
-      if (exp_head != exp_tail) begin
-        errors = errors + 1;
-        $display("FALLO: faltan %0d respuestas", exp_tail - exp_head);
-        exp_head = exp_tail;
-      end
-      #1;
-    end
-  endtask
-
-  task load(input [31:0] address, input [31:0] expected, input expected_error);
-    begin
-      exp_data[exp_tail] = expected; exp_error[exp_tail] = expected_error;
-      exp_check[exp_tail] = !expected_error; exp_tail = exp_tail + 1;
-      request(address, 0, 4'b0000);
-    end
-  endtask
-
-  // STORE que no espera, como el de cpu.v a SDRAM.
-  task store(input [31:0] address, input [31:0] data, input [3:0] wen);
-    begin
-      exp_data[exp_tail] = 0; exp_error[exp_tail] = 0;
-      exp_check[exp_tail] = 0; exp_tail = exp_tail + 1;
-      request(address, data, wen);
-    end
-  endtask
-
-  // LOAD que espera su respuesta y cuenta las lecturas que llegaron al adaptador.
-  task load_wait(input [31:0] address, input [31:0] expected, input expected_error,
-                 input integer expected_mem_reads, input [8*24-1:0] name);
-    integer reads_before;
-    begin
-      reads_before = mem_reads;
-      load(address, expected, expected_error);
-      wait_responses;
-      if (mem_reads - reads_before != expected_mem_reads) begin
-        errors = errors + 1;
-        $display("FALLO %0s: %0d lecturas al adaptador, esperaba %0d", name,
-                 mem_reads - reads_before, expected_mem_reads);
-      end
-    end
-  endtask
-
-  integer k, start, hits_before, misses_before;
-  reg [1:0] epoch_before;
-  integer hits = 0, misses = 0;
   always @(posedge clk) begin
     if (hit_event) hits = hits + 1;
     if (miss_event) misses = misses + 1;
+    // Respuestas: la del acceso de MEM, o la de un STORE ya terminado.
+    if (cpu_rvalid) begin
+      if (drop > 0) drop = drop - 1;
+      else if (m_v && m_sent && m_is_load) begin
+        m_got <= 1'b1;
+        m_data <= cpu_read_data;
+      end
+    end
+    if (m_store_posted) drop = drop + 1;
+    if (cpu_valid && cpu_ready) m_sent <= 1'b1;
+    if (advance) begin
+      // Lo que sale de MEM.
+      if (m_v && m_is_load) begin
+        checked = checked + 1;
+        if (m_data !== m_expect) begin
+          errors = errors + 1;
+          if (errors < 10)
+            $display("FALLO: LOAD %h = %h, esperaba %h (acierto %b)", m_addr, m_data,
+                     m_expect, m_hit);
+        end
+      end
+      // EX -> MEM: un acierto lleva su dato.
+      m_v <= ex_v; m_addr <= ex_addr; m_wdata <= ex_data; m_wen <= ex_wen;
+      m_is_load <= ex_is_load; m_expect <= ex_expect;
+      m_hit <= ex_v && ex_is_load && ex_hit; m_data <= ex_read_data;
+      m_sent <= 1'b0; m_got <= 1'b0;
+      // Siguiente -> EX.
+      ex_v <= nx_v; ex_addr <= nx_addr; ex_data <= nx_data; ex_wen <= nx_wen;
+      ex_is_load <= nx_is_load; ex_expect <= nx_expect;
+      nx_v <= 0;
+      if (generating) begin
+        if (gap > 0) gap = gap - 1;
+        else begin
+          new_access();
+          gap = $random(seed) & 3;
+          if (gap == 3) gap = 0;
+        end
+      end
+    end
   end
 
+  // Para y vacia el pipeline (lo que hace la CPU antes de que suba invalidate).
+  task drain;
+    integer t;
+    begin
+      generating = 0;
+      t = 0;
+      while ((nx_v || ex_v || m_v || drop > 0 || q_r != q_w) && t < 500) begin
+        @(posedge clk); t = t + 1;
+      end
+      if (t >= 500) begin errors = errors + 1; $display("FALLO: el pipeline no se vacia"); end
+      @(negedge clk);
+    end
+  endtask
+
+  // Un acceso suelto, dirigido, y esperar a que salga.
+  task single(input is_load, input [31:0] address, input [31:0] data);
+    begin
+      @(negedge clk);
+      nx_v = 1; nx_is_load = is_load; nx_addr = address; nx_data = data; nx_wen = 4'b1111;
+      nx_expect = data;
+      if (!is_load && address[31:25] == 0) shadow[address[11:2]] = data;
+      @(posedge clk); while (nx_v) @(posedge clk);
+      drain();
+    end
+  endtask
+
+  integer k, round;
   initial begin
-    for (k = 0; k < 1024; k = k + 1) memory[k] = 32'hA000_0000 | (k << 2);
+    for (k = 0; k < 1024; k = k + 1) begin
+      memory[k] = 32'hA000_0000 | (k << 2);
+      shadow[k] = 32'hA000_0000 | (k << 2);
+    end
     repeat (3) @(posedge clk);
     reset = 0;
     repeat (2) @(posedge clk);
 
-    // 1) Fallo y despues aciertos en la misma linea, cualquier palabra.
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 1, "1 fallo");
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 0, "1 acierto");
-    load_wait(32'h0000_010C, 32'hA000_010C, 0, 0, "1 otra palabra");
-    load_wait(32'h0000_0105, 32'hA000_0104, 0, 0, "1 byte");   // la CPU elige el byte
+    for (round = 0; round < 12; round = round + 1) begin
+      @(negedge clk); generating = 1;
+      while (generated < (round + 1) * N_RANDOM / 12) @(posedge clk);
+      drain();
+      // La "CPU" parada: invalidate unos ciclos (cada tres, la vuelta).
+      invalidate = 1; repeat (2 + (round & 3)) @(negedge clk); invalidate = 0;
+      repeat (2) @(negedge clk);
+    end
 
-    // 2) El acierto contesta dos ciclos despues de aceptar.
-    @(negedge clk); start = cycle;
-    load(32'h0000_0104, 32'hA000_0104, 0);
-    wait_responses;
-    if (last_rvalid_cycle - start > 3) begin
+    // Dirigidos. El STORE que falla no trae la linea: el LOAD despues falla.
+    @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0; repeat (3) @(negedge clk);
+    k = mem_reads;
+    single(0, 32'h0000_0140, 32'h1919_1919);
+    single(1, 32'h0000_0140, 32'h1919_1919);
+    if (mem_reads - k != 1) begin
       errors = errors + 1;
-      $display("FALLO 2: acierto en %0d ciclos", last_rvalid_cycle - start);
+      $display("FALLO: el STORE que falla trajo la linea (%0d lecturas)", mem_reads - k);
+    end
+    // Y MMIO nunca acierta: dos lecturas, las dos al adaptador.
+    k = q_w;
+    single(1, 32'h8000_0000, MMIO_DATA);
+    single(1, 32'h8000_0000, MMIO_DATA);
+    if (q_w - k != 2) begin
+      errors = errors + 1; $display("FALLO: MMIO llego %0d veces al adaptador, esperaba 2", q_w - k);
     end
 
-    // 3) Un STORE pasa al adaptador y actualiza la linea, que esta en la
-    //    cache: el LOAD siguiente acierta con el dato nuevo. El LOAD va pegado
-    //    detras, como en la CPU.
-    store(32'h0000_0108, 32'h0000_00EE, 4'b0001);
-    load_wait(32'h0000_0108, 32'hA000_01EE, 0, 0, "3 tras store");
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 0, "3 linea de nuevo");
-
-    // 4) Conflicto de indice: 0x100 y 0x140 caen en la misma de las 4 lineas.
-    load_wait(32'h0000_0140, 32'hA000_0140, 0, 1, "4 expulsa");
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 1, "4 vuelve a fallar");
-    load_wait(32'h0000_0110, 32'hA000_0110, 0, 1, "4 otro indice");
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 0, "4 sigue ahi");
-
-    // 5) MMIO pasa directo y no se guarda.
-    load_wait(32'h8101_0000, MMIO_DATA, 0, 1, "5 mmio");
-    load_wait(32'h8101_0000, MMIO_DATA, 0, 1, "5 mmio otra vez");
-
-    // 6) Fuera de rango: error, y no se guarda.
-    load_wait(32'h0400_0000, 32'd0, 1, 1, "6 error");
-    load_wait(32'h0400_0000, 32'd0, 1, 1, "6 error otra vez");
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 0, "6 la buena sigue");
-
-    // 7) `invalidate` borra todo.
-    @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
-    load_wait(32'h0000_0100, 32'hA000_0100, 0, 1, "7 tras invalidar");
-
-    // 8) Orden: un STORE lento (como un volcado) y detras un LOAD que acierta
-    //    en OTRA linea. La respuesta del STORE tiene que salir antes.
-    load_wait(32'h0000_0110, 32'hA000_0110, 0, 1, "8 preparar");
-    store(32'h0000_1000, 32'h1111_1111, 4'b1111);
-    load_wait(32'h0000_0110, 32'hA000_0110, 0, 0, "8 acierto detras");
-
-    // 9) Varios STORE seguidos y un LOAD a la primera linea: acierta y ve todos.
-    store(32'h0000_0100, 32'h0000_0001, 4'b1111);
-    store(32'h0000_0104, 32'h0000_0002, 4'b1111);
-    store(32'h0000_0100, 32'h0000_0003, 4'b0001);
-    load_wait(32'h0000_0100, 32'h0000_0003, 0, 0, "9 tras varios store");
-    load_wait(32'h0000_0104, 32'h0000_0002, 0, 0, "9 misma linea");
-
-    // 10) `invalidate` en mitad de un fallo: contesta, pero no guarda la linea.
-    //     Que no coincida con una vuelta: el barrido lo taparia todo.
-    if (dut.epoch == 2'd3) begin
-      @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
+    $display("dcache: %0d LOAD comprobados, %0d aciertos, %0d fallos a SDRAM; adelantada %0d (este ciclo) y %0d (W)",
+             checked, hits, misses, fwd_now, fwd_w);
+    if (hits < checked / 8 || misses < 100 || fwd_now < 50 || fwd_w < 50) begin
+      errors = errors + 1; $display("FALLO: mezcla de aciertos y fallos sospechosa");
     end
-    load(32'h0000_0120, 32'hA000_0120, 0);
-    repeat (3) @(posedge clk);
-    @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
-    wait_responses;
-    load_wait(32'h0000_0120, 32'hA000_0120, 0, 1, "10 no guardada");
-
-    // 11) Contadores de rendimiento: un pulso por consulta.
-    hits_before = hits; misses_before = misses;
-    load_wait(32'h0000_0124, 32'hA000_0124, 0, 0, "11 acierto");
-    load_wait(32'h0000_0200, 32'hA000_0200, 0, 1, "11 fallo");
-    if (hits - hits_before != 1 || misses - misses_before != 1) begin
-      errors = errors + 1;
-      $display("FALLO 11: %0d aciertos y %0d fallos", hits - hits_before, misses - misses_before);
-    end
-
-    // 12) `reset` invalida: la memoria cambia por detras (como cuando escribe
-    //     el monitor) y tras el reset se ve el dato nuevo.
-    load_wait(32'h0000_0130, 32'hA000_0130, 0, 1, "12 preparar");
-    load_wait(32'h0000_0130, 32'hA000_0130, 0, 0, "12 en cache");
-    memory[32'h130 >> 2] = 32'h0000_1212;
-    @(negedge clk); reset = 1; repeat (2) @(negedge clk); reset = 0;
-    load_wait(32'h0000_0130, 32'h0000_1212, 0, 1, "12 tras reset");
-
-    // 13) La vuelta de la epoca. Con dos bits, tras tres invalidaciones la
-    //     epoca vuelve a la de la linea guardada: sin el barrido, la linea
-    //     resucitaria con el dato viejo. Se prueba desde las tres epocas.
-    memory[32'h110 >> 2] = 32'h0000_1300;
-    @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
-    load_wait(32'h0000_0110, 32'h0000_1300, 0, 1, "13 preparar");
-    for (k = 1; k <= 3; k = k + 1) begin
-      load_wait(32'h0000_0110, 32'h0000_1300 + k - 1, 0, 0, "13 en cache");
-      memory[32'h110 >> 2] = 32'h0000_1300 + k;
-      repeat (3) begin
-        @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
-      end
-      load_wait(32'h0000_0110, 32'h0000_1300 + k, 0, 1, "13 tras la vuelta");
-    end
-
-    // 14) `invalidate` sostenido muchos ciclos (la CPU parada) cuenta como UNA
-    //     invalidacion: no puede dar vueltas sin parar.
-    load_wait(32'h0000_0150, 32'hA000_0150, 0, 1, "14 preparar");
-    epoch_before = dut.epoch;
-    @(negedge clk); invalidate = 1; repeat (42) @(negedge clk); invalidate = 0;   // 42: multiplo de 3, por si contara cada ciclo
-    if (dut.epoch !== (epoch_before == 2'd3 ? 2'd1 : epoch_before + 2'd1)) begin
-      errors = errors + 1;
-      $display("FALLO 14: la epoca paso de %0d a %0d", epoch_before, dut.epoch);
-    end
-    load_wait(32'h0000_0150, 32'hA000_0150, 0, 1, "14 fallo tras invalidar");
-    load_wait(32'h0000_0150, 32'hA000_0150, 0, 0, "14 y luego acierta");
-
-    // 15) `invalidate` mientras un LOAD que acertaria esta consultando: la
-    //     memoria cambia por detras y el LOAD tiene que ver el dato nuevo
-    //     (fallar). En tres momentos: durante ST_LOOKUP (compara), durante
-    //     ST_DECIDE (decide) y mientras ST_DECIDE espera a un STORE lento.
-    for (k = 0; k < 3; k = k + 1) begin
-      if (dut.epoch == 2'd3) begin   // que no coincida con una vuelta
-        @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
-      end
-      memory[32'h170 >> 2] = 32'h0000_1500 + k;
-      load_wait(32'h0000_0170, 32'h0000_1500 + k, 0, 1, "15 preparar");
-      memory[32'h170 >> 2] = 32'h0000_1510 + k;
-      if (k == 2) store(32'h0000_1000, 32'h1515_1515, 4'b1111);  // lento
-      start = mem_reads;
-      load(32'h0000_0170, 32'h0000_1510 + k, 0);
-      // `request` vuelve justo despues del flanco que acepta: es ST_LOOKUP.
-      if (k >= 1) @(posedge clk);                  // ST_DECIDE
-      if (k == 2) repeat (3) @(posedge clk);       // ST_DECIDE, esperando
-      // Alto durante ese ciclo entero, hasta el flanco que lo cierra.
-      #1 invalidate = 1;
-      @(posedge clk); #1 invalidate = 0;
-      wait_responses;
-      if (mem_reads - start != 1) begin
-        errors = errors + 1;
-        $display("FALLO 15.%0d: %0d lecturas, esperaba 1 (el acierto viejo no vale)",
-                 k, mem_reads - start);
-      end
-    end
-
-    // 16) STORE que acierta y LOAD a la misma palabra 0..3 ciclos despues: el
-    //     LOAD lee la EBR antes de que S2 escriba, en el mismo ciclo, o
-    //     despues; en todos ve el dato nuevo (adelantamiento desde S2 y W).
-    //     Bytes sueltos, para la mezcla.
-    for (k = 0; k < 4; k = k + 1) begin
-      load_wait(32'h0000_0180, memory[32'h180 >> 2], 0, (k == 0) ? 1 : 0, "16 preparar");
-      store(32'h0000_0184, 32'h1600_0000 | (k << 8), 4'b0010);
-      repeat (k) @(posedge clk);
-      load(32'h0000_0184, merge(memory[32'h184 >> 2], 32'h1600_0000 | (k << 8), 4'b0010), 0);
-      wait_responses;
-    end
-
-    // 17) STOREs pegados a la misma linea (los PUSH de un prologo), con 0, 1
-    //     y 2 ciclos entre ellos: cada uno mezcla sobre la linea que dejo el
-    //     anterior, aunque aun no este escrita. Luego todo acierta.
-    for (k = 0; k < 3; k = k + 1) begin
-      start = mem_reads;
-      store(32'h0000_0190, 32'h1700_0000 + k, 4'b1111);
-      repeat (k) @(posedge clk);
-      store(32'h0000_0194, 32'h1710_0000 + k, 4'b1111);
-      repeat (k) @(posedge clk);
-      store(32'h0000_0198, 32'h1720_0000 + k, 4'b0001);
-      store(32'h0000_0190, 32'h0000_AA00, 4'b0010);
-      load(32'h0000_0190, merge(32'h1700_0000 + k, 32'h0000_AA00, 4'b0010), 0);
-      load(32'h0000_0194, 32'h1710_0000 + k, 0);
-      load(32'h0000_0198, memory[32'h198 >> 2], 0);
-      load(32'h0000_019C, memory[32'h19C >> 2], 0);
-      wait_responses;
-      if (mem_reads - start != (k == 0 ? 1 : 0)) begin
-        errors = errors + 1;
-        $display("FALLO 17.%0d: %0d lecturas al adaptador", k, mem_reads - start);
-      end
-    end
-
-    // 18) STORE a otra linea del mismo indice (0x1D0 frente a 0x190): no
-    //     toca la que esta en la cache, que sigue acertando con su dato.
-    store(32'h0000_01D4, 32'h1818_1818, 4'b1111);
-    load_wait(32'h0000_0194, 32'h1710_0002, 0, 0, "18 la otra sigue");
-    // 19) Y el STORE que falla no trae la linea.
-    load_wait(32'h0000_01D4, 32'h1818_1818, 0, 1, "19 sin reservar");
-
-    // 20) Aleatorio: LOAD y STORE de cualquier tamano, con 0..2 ciclos entre
-    //     ellos, sobre 16 lineas que caen en las 4 de la cache. Cada LOAD
-    //     contra el modelo de memoria.
-    for (k = 0; k < 3000; k = k + 1) begin : aleatorio
-      reg [31:0] a, d;
-      reg [3:0] m;
-      a = 32'h0000_0200 | ($random & 32'hFC);
-      d = $random;
-      case ($random & 3)
-        0: m = 4'b1111;
-        1: m = ($random & 1) ? 4'b1100 : 4'b0011;
-        default: m = 4'b0001 << ($random & 3);
-      endcase
-      if ($random & 1) store(a, d, m);
-      else load(a, memory[a[11:2]], 0);
-      repeat ($random & 1) @(posedge clk);
-      if ((k & 15) == 15) wait_responses;
-    end
-    wait_responses;
-
-    repeat (20) @(posedge clk);
-    wait_responses;
-
     if (errors == 0) $display("PASS: dcache");
     else             $display("FAIL: dcache (%0d errores)", errors);
+    $finish;
+  end
+
+  initial begin
+    #5_000_000;
+    $display("FAIL: dcache (timeout)");
     $finish;
   end
 endmodule

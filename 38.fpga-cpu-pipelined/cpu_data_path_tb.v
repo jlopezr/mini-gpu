@@ -48,6 +48,11 @@ module cpu_data_path_tb;
   wire [31:0] c_address, c_wdata, c_rdata;
   wire [3:0] c_wen;
 
+  // Consulta a la D-cache desde ID/EX, como en top.v.
+  wire [31:0] dc_lookup, dc_rdata, dc_wdata;
+  wire dc_hit, dc_advance, dc_load, dc_store;
+  wire [3:0] dc_wen;
+
   cpu cpu_i(
       .clk(clk), .reset(reset), .soft_reset(1'b0), .run_request(run_request), .halt_request(1'b0),
       .step_request(1'b0), .halted(halted), .error(error), .error_code(error_code),
@@ -59,7 +64,10 @@ module cpu_data_path_tb;
       .dmem_rvalid(c_rvalid), .dmem_error(c_error), .dmem_waiting(dmem_waiting),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data), .debug_pc(debug_pc),
-      .perf_stall(perf_stall));
+      .perf_stall(perf_stall),
+      .dcache_lookup_address(dc_lookup), .dcache_hit(dc_hit), .dcache_read_data(dc_rdata),
+      .dcache_mem_advance(dc_advance), .dcache_ex_load(dc_load), .dcache_ex_store(dc_store),
+      .dcache_ex_write_data(dc_wdata), .dcache_ex_write_enable(dc_wen));
 
   reg [31:0] instruction_memory[0:WORDS-1];
   always @(posedge clk) begin
@@ -76,6 +84,9 @@ module cpu_data_path_tb;
 
   dcache #(.LINES(16), .INDEX_BITS(4)) dcache_i(
       .clk(clk), .reset(reset), .invalidate(cpu_halted),
+      .lookup_address(dc_lookup), .ex_hit(dc_hit), .ex_read_data(dc_rdata),
+      .mem_advance(dc_advance), .ex_load(dc_load), .ex_store(dc_store),
+      .ex_write_data(dc_wdata), .ex_write_enable(dc_wen),
       .cpu_valid(c_valid), .cpu_address(c_address), .cpu_write_data(c_wdata),
       .cpu_write_enable(c_wen), .cpu_ready(c_ready), .cpu_read_data(c_rdata),
       .cpu_rvalid(c_rvalid), .cpu_error(c_error),

@@ -101,7 +101,11 @@ module cpu_perf_tb;
       .debug_register_data(debug_register_data),
       .debug_pc(debug_pc),
       .perf_stall(perf_stall),
-      .perf_muldiv_retired(perf_muldiv_retired)
+      .perf_muldiv_retired(perf_muldiv_retired),
+      // Sin D-cache: cada LOAD pide en MEM.
+      .dcache_lookup_address(), .dcache_hit(1'b0), .dcache_read_data(32'd0),
+      .dcache_mem_advance(), .dcache_ex_load(), .dcache_ex_store(),
+      .dcache_ex_write_data(), .dcache_ex_write_enable()
   );
 
   // Los contadores de la placa, con las ranuras del pipeline. Se leen por

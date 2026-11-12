@@ -224,6 +224,10 @@ module top (
   wire cpu_dmem_waiting;
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
+  // Consulta a la D-cache desde ID/EX (dcache.v, cpu.v seccion 04c).
+  wire [31:0] dcache_lookup_address, dcache_ex_read_data, dcache_ex_write_data;
+  wire dcache_ex_hit, dcache_mem_advance, dcache_ex_load, dcache_ex_store;
+  wire [3:0] dcache_ex_write_enable;
   cpu cpu_i(
       .clk(clk), .reset(reset),
       // RESET del monitor: solo la CPU. Las caches siguen y contestan lo que
@@ -245,6 +249,11 @@ module top (
       .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
       .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
       .dmem_waiting(cpu_dmem_waiting),
+      .dcache_lookup_address(dcache_lookup_address), .dcache_hit(dcache_ex_hit),
+      .dcache_read_data(dcache_ex_read_data), .dcache_mem_advance(dcache_mem_advance),
+      .dcache_ex_load(dcache_ex_load), .dcache_ex_store(dcache_ex_store),
+      .dcache_ex_write_data(dcache_ex_write_data),
+      .dcache_ex_write_enable(dcache_ex_write_enable),
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
       .perf_stall(cpu_perf_stall),
@@ -379,6 +388,10 @@ module top (
   wire dcache_hit, dcache_miss;
   dcache dcache_i(
       .clk(clk), .reset(reset), .invalidate(cpu_halted),
+      .lookup_address(dcache_lookup_address), .ex_hit(dcache_ex_hit),
+      .ex_read_data(dcache_ex_read_data), .mem_advance(dcache_mem_advance),
+      .ex_load(dcache_ex_load), .ex_store(dcache_ex_store),
+      .ex_write_data(dcache_ex_write_data), .ex_write_enable(dcache_ex_write_enable),
       .cpu_valid(cpu_dmem_valid), .cpu_address(cpu_dmem_address),
       .cpu_write_data(cpu_dmem_write_data),
       .cpu_write_enable(cpu_dmem_write_enable),
