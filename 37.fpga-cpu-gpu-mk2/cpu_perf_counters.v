@@ -35,6 +35,13 @@
 //   ranura 12 DMEM_HITS    LOAD a memoria servidos por la cache de datos
 //   ranura 13 DMEM_MISSES  LOAD a memoria que tuvieron que leer una linea
 //
+// Y solo con MULDIV = 1 (la 38 con MUL/DIV en EX), que exige DCACHE = 1:
+//
+//   ranura 14 STALL_MULDIV    EX ocupado con una MUL/DIV: un quinto motivo
+//                             del reparto, que ya no cuenta en STALL_EX_MEM
+//   ranura 15 MULDIV_RETIRED  de las retiradas, las MUL/MULHI/MULFX/DIV/
+//                             DIVU/REM/REMU
+//
 // Con ellos, CYCLES se reparte en calculo, memoria y MMIO sin instrumentar
 // nada mas: CYCLES = calculo + STALL_MEM + STALL_MMIO, y de STALL_MEM se
 // separan la busqueda (STALL_FETCH) y los datos (STALL_MEM - STALL_FETCH).
@@ -78,7 +85,10 @@ module cpu_perf_counters #(
     // ranuras 8 a 11 y la entrada no se usa: el circuito es el de siempre.
     parameter integer PIPELINE = 0,
     // 1 con cache de datos, que da `dmem_hit`/`dmem_miss`. Exige PIPELINE = 1.
-    parameter integer DCACHE = 0
+    parameter integer DCACHE = 0,
+    // 1 con MUL/DIV de varios ciclos, que da `muldiv_stall`/`muldiv_retired`.
+    // Exige DCACHE = 1.
+    parameter integer MULDIV = 0
 ) (
     input wire clk,
     input wire reset,
@@ -124,10 +134,15 @@ module cpu_perf_counters #(
 
     // Pulsos de dcache.v, uno por LOAD a memoria. Solo con DCACHE.
     input wire dmem_hit,
-    input wire dmem_miss
+    input wire dmem_miss,
+
+    // De cpu.v, ya registrados: EX ocupado con una MUL/DIV (el quinto motivo
+    // de `perf_stall`) y un pulso por cada MUL/DIV retirada. Solo con MULDIV.
+    input wire muldiv_stall,
+    input wire muldiv_retired
 );
   // Cuantas ranuras del array existen de verdad. El resto dan error.
-  localparam integer NUM_COUNTERS = DCACHE ? 14 : (PIPELINE ? 12 : 8);
+  localparam integer NUM_COUNTERS = MULDIV ? 16 : (DCACHE ? 14 : (PIPELINE ? 12 : 8));
 
   localparam [5:0] SLOT_CYCLES      = 6'd0;
   localparam [5:0] SLOT_RETIRED     = 6'd1;
@@ -143,6 +158,8 @@ module cpu_perf_counters #(
   localparam [5:0] SLOT_STALL_ID_EMPTY = 6'd11;
   localparam [5:0] SLOT_DMEM_HITS      = 6'd12;
   localparam [5:0] SLOT_DMEM_MISSES    = 6'd13;
+  localparam [5:0] SLOT_STALL_MULDIV   = 6'd14;
+  localparam [5:0] SLOT_MULDIV_RETIRED = 6'd15;
 
   // El mismo numero, en cinco bits, para indexar OVF0. La ranura son SEIS
   // bits porque §12.6 admite hasta 64 contadores, pero las banderas van en
@@ -165,6 +182,8 @@ module cpu_perf_counters #(
   localparam [4:0] BIT_STALL_ID_EMPTY = SLOT_STALL_ID_EMPTY[4:0];
   localparam [4:0] BIT_DMEM_HITS      = SLOT_DMEM_HITS[4:0];
   localparam [4:0] BIT_DMEM_MISSES    = SLOT_DMEM_MISSES[4:0];
+  localparam [4:0] BIT_STALL_MULDIV   = SLOT_STALL_MULDIV[4:0];
+  localparam [4:0] BIT_MULDIV_RETIRED = SLOT_MULDIV_RETIRED[4:0];
 
   localparam [15:0] OFF_CTRL = 16'h0100;
   localparam [15:0] OFF_OVF0 = 16'h0104;
@@ -187,6 +206,8 @@ module cpu_perf_counters #(
   reg [31:0] stall_id_empty;
   reg [31:0] dmem_hits;
   reg [31:0] dmem_misses;
+  reg [31:0] stall_muldiv;
+  reg [31:0] muldiv_retired_count;
   // Una bandera por contador, en el bit `n mod 32` de PERF_OVF[n div 32].
   // Con ocho contadores sobran 24 bits de OVF0 y OVF1 entero, y se declaran
   // igual: anadir OVF1 despues obligaria a decidir donde con el control ya
@@ -203,6 +224,7 @@ module cpu_perf_counters #(
 
   reg wait_fetch_q, wait_data_q, wait_mmio_q, hit_q, miss_q;
   reg dhit_q, dmiss_q;
+  reg mdstall_q;
   reg [3:0] pipe_q;
   // Cero, una o dos peticiones nuevas en el mismo ciclo.
   reg [1:0] tx_q;
@@ -220,6 +242,7 @@ module cpu_perf_counters #(
       pipe_q <= 4'd0;
       dhit_q <= 1'b0;
       dmiss_q <= 1'b0;
+      mdstall_q <= 1'b0;
     end else begin
       req0_prev <= mem_req0;
       req1_prev <= mem_req1;
@@ -232,6 +255,7 @@ module cpu_perf_counters #(
       pipe_q <= PIPELINE ? pipe_stall : 4'd0;
       dhit_q <= DCACHE ? dmem_hit : 1'b0;
       dmiss_q <= DCACHE ? dmem_miss : 1'b0;
+      mdstall_q <= MULDIV ? muldiv_stall : 1'b0;
     end
   end
 
@@ -273,6 +297,8 @@ module cpu_perf_counters #(
       stall_id_empty <= 32'd0;
       dmem_hits <= 32'd0;
       dmem_misses <= 32'd0;
+      stall_muldiv <= 32'd0;
+      muldiv_retired_count <= 32'd0;
       ovf0 <= 32'd0;
       // Tras reset los contadores CUENTAN. Arrancar congelado obligaria a
       // todo programa existente a escribir PERF_CTRL antes de medir.
@@ -293,6 +319,8 @@ module cpu_perf_counters #(
         stall_id_empty <= 32'd0;
         dmem_hits <= 32'd0;
         dmem_misses <= 32'd0;
+        stall_muldiv <= 32'd0;
+        muldiv_retired_count <= 32'd0;
         ovf0 <= 32'd0;
       end else begin
         if (contando) begin
@@ -350,6 +378,10 @@ module cpu_perf_counters #(
             dmem_misses <= dmem_misses + 1'b1;
             if (&dmem_misses) ovf0[BIT_DMEM_MISSES] <= 1'b1;
           end
+          if (mdstall_q) begin
+            stall_muldiv <= stall_muldiv + 1'b1;
+            if (&stall_muldiv) ovf0[BIT_STALL_MULDIV] <= 1'b1;
+          end
         end
         // RETIRED no se condiciona a `running`, y esa es la diferencia entre
         // contar bien y contar una de menos SIEMPRE: el HALT retira en el
@@ -364,6 +396,11 @@ module cpu_perf_counters #(
         if (retired && enable) begin
           retired_count <= retired_count + 1'b1;
           if (&retired_count) ovf0[BIT_RETIRED] <= 1'b1;
+        end
+        // Como RETIRED: una MUL/DIV puede ser la que para la CPU (STEP).
+        if (MULDIV && muldiv_retired && enable) begin
+          muldiv_retired_count <= muldiv_retired_count + 1'b1;
+          if (&muldiv_retired_count) ovf0[BIT_MULDIV_RETIRED] <= 1'b1;
         end
         // W1C: escribir un uno limpia ese bit. Se aplica DESPUES de las
         // subidas de arriba, asi que un desbordamiento en el mismo ciclo que
@@ -397,6 +434,8 @@ module cpu_perf_counters #(
         SLOT_STALL_ID_EMPTY: read_value = stall_id_empty;
         SLOT_DMEM_HITS:      read_value = dmem_hits;
         SLOT_DMEM_MISSES:    read_value = dmem_misses;
+        SLOT_STALL_MULDIV:   read_value = stall_muldiv;
+        SLOT_MULDIV_RETIRED: read_value = muldiv_retired_count;
         default:          read_value = 32'd0;   // ranura sin contador: da error
       endcase
     end else begin

@@ -197,6 +197,11 @@
 `define MMIO_PERF_DMEM_HITS_OFF      32'h0000_0030
 `define MMIO_PERF_DMEM_MISSES_OFF    32'h0000_0034
 
+// Extension de las CPU con multiplicador y divisor en un pipeline (mmio.md
+// §13.2, capacidad `perf_muldiv`): espera por MUL/DIV y cuantas se retiran.
+`define MMIO_PERF_STALL_MULDIV_OFF   32'h0000_0038
+`define MMIO_PERF_MULDIV_RETIRED_OFF 32'h0000_003C
+
 // ==== CPU CORE (mmio.md §13.1) ===========================================
 
 `define MMIO_CPU_ID_OFF            32'h0000_0000

@@ -111,8 +111,15 @@
   "perf_dcache": {
     "architecture": "cpu",
     "file": "top.v",
-    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\)\\)",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\)",
     "implies": ["perf_pipeline"]
+  },
+  "_comment_perf_muldiv": "Los contadores de MUL/DIV de la CPU segmentada (mmio.md §13.2, ranuras 14 y 15: STALL_MULDIV, MULDIV_RETIRED). Igual que perf_dcache, en el top.v que instancia cpu_perf_counters con MULDIV = 1.",
+  "perf_muldiv": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\)\\)",
+    "implies": ["perf_dcache"]
   },
   "atomic_warp_faults": {
     "architecture": "gpu"

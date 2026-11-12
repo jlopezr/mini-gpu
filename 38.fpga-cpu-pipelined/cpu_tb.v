@@ -449,40 +449,7 @@ module cpu_tb;
     #1;
     if (!error || error_code !== 8'h01) $fatal(1, "EXIT deberia seguir siendo opcode invalido");
 
-    // Este prototipo quita multiplicador y divisor para estudiar timing: esos
-    // opcodes no deben retirarse ni anunciarse como capacidad.
-    instruction_memory[0] = 32'h2861_1000;  // MUL R3, R1, R2
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "MUL invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "MUL invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "MUL was incorrectly retired");
-
-    instruction_memory[0] = 32'h0c63_0800;  // MULFX R3, R3, R1
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "MULFX invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "MULFX invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "MULFX was incorrectly retired");
-
-    instruction_memory[0] = 32'h3061_1000;  // DIV R3, R1, R2
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "DIV invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "DIV invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "DIV was incorrectly retired");
+    // MUL/DIV y familia: cpu_muldiv_tb.v.
 
     $display("PASS: minimal CPU behavior is correct");
     $finish;

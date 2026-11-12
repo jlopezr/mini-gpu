@@ -889,6 +889,8 @@ Array según §12.6.
 | 11 | `+0x2C` | `STALL_ID_EMPTY` (extensión segmentada) |
 | 12 | `+0x30` | `DMEM_HITS` (extensión caché de datos) |
 | 13 | `+0x34` | `DMEM_MISSES` (extensión caché de datos) |
+| 14 | `+0x38` | `STALL_MULDIV` (extensión MUL/DIV segmentada) |
+| 15 | `+0x3C` | `MULDIV_RETIRED` (extensión MUL/DIV segmentada) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
@@ -909,12 +911,14 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `STALL_MEM` | Ciclos con una petición de memoria del núcleo pendiente, sea búsqueda de instrucción o acceso a datos a memoria, y sin respuesta todavía. |
 | `STALL_FETCH` | De los de `STALL_MEM`, los de la búsqueda de instrucción. Los de datos son `STALL_MEM − STALL_FETCH`. |
 | `STALL_MMIO` | Ciclos con un acceso a datos a un dispositivo MMIO pendiente. **No** se suman a `STALL_MEM`: un dispositivo no es memoria. |
-| `STALL_EX_MEM` | Solo CPU segmentada. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con un acceso a memoria o a MMIO, incluidos los ciclos de petición y respuesta que no son espera. |
+| `STALL_EX_MEM` | Solo CPU segmentada. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con un acceso a memoria o a MMIO, incluidos los ciclos de petición y respuesta que no son espera. Sin `STALL_MULDIV`, incluye también los de MUL/DIV. |
 | `STALL_RAW` | Solo CPU segmentada. Ciclos en que ID tiene una instrucción pero la para una dependencia con una instrucción anterior que aún no ha escrito su registro. |
 | `STALL_BRANCH` | Solo CPU segmentada. Ciclos con ID vacío desde un salto tomado hasta que llega la primera instrucción del destino. |
 | `STALL_ID_EMPTY` | Solo CPU segmentada. Ciclos con ID vacío por cualquier otro motivo: un fallo del búfer de instrucciones o el arranque. |
 | `DMEM_HITS` | Solo CPU con caché de datos. `LOAD` a memoria servidos por la caché, sin ir al fabric. |
 | `DMEM_MISSES` | Solo CPU con caché de datos. `LOAD` a memoria que tuvieron que leer una línea. Los `STORE`, el MMIO y los accesos fuera de memoria pasan de largo y no cuentan en ninguno de los dos. |
+| `STALL_MULDIV` | Solo CPU segmentada con MUL/DIV de varios ciclos. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con una `MUL`, `MULHI`, `MULFX`, `DIV`, `DIVU`, `REM` o `REMU`. Es un motivo más del reparto: esos ciclos ya no cuentan en `STALL_EX_MEM`. |
+| `MULDIV_RETIRED` | Solo CPU segmentada con MUL/DIV de varios ciclos. De las de `RETIRED`, las de esas siete instrucciones. `STALL_MULDIV / MULDIV_RETIRED` es lo que cuesta de media cada una, además de su ciclo. |
 
 **Identidades.** Con ellas se comprueba una implementación y se reparte el
 tiempo:
@@ -933,6 +937,8 @@ CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + ot
 CPI    = 1 + (STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros) / RETIRED
 ```
 
+Con `STALL_MULDIV`, es un quinto motivo y se suma igual a los otros cuatro.
+
 `otros` son los pocos ciclos de arranque, `STEP`, `HALT` y error.
 
 La primera se cumple salvo por uno o dos ciclos: los eventos cruzan un registro
@@ -944,7 +950,8 @@ demás dan error (§12.6), no cero. Las CPU de las carpetas 16 a 21 implementan 
 ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
 detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
 RTL. La 38, segmentada, implementa además las ranuras 8 a 11 (capacidad
-`perf_pipeline`) y, con su caché de datos, las 12 y 13 (capacidad `perf_dcache`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+`perf_pipeline`), con su caché de datos las 12 y 13 (capacidad `perf_dcache`) y,
+con su multiplicador y divisor, las 14 y 15 (capacidad `perf_muldiv`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
 son bloques distintos y no chocan.
 
 **Cómo se leen.** Con el núcleo parado, o congelando el bloque con

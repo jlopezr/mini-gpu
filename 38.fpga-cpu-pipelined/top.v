@@ -101,7 +101,8 @@ module top (
   wire [4:0] cpu_debug_register_address;
   wire [31:0] cpu_debug_register_data, cpu_pc;
   // Motivo de no emitir de cada ciclo, para CPU PERFORMANCE (ranuras 8-11).
-  wire [3:0] cpu_perf_stall;
+  wire [4:0] cpu_perf_stall;
+  wire cpu_perf_muldiv_retired;
 
   // Lado del monitor del puerto serie: lo que desencapsulan SEND_BYTES y
   // RECV_BYTES. No hay pin ni baudio propio, es el mismo enlace del monitor.
@@ -243,7 +244,8 @@ module top (
       .dmem_waiting(cpu_dmem_waiting),
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
-      .perf_stall(cpu_perf_stall));
+      .perf_stall(cpu_perf_stall),
+      .perf_muldiv_retired(cpu_perf_muldiv_retired));
 
   // Puertos de video del adaptador. Se declaran aqui porque el adaptador se
   // instancia antes que el subsistema de video.
@@ -775,10 +777,11 @@ module top (
   // INPUT sale de la capacidad `input_device` (existe input_registers.v).
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
-      // Catorce contadores en CPU PERFORMANCE: los ocho de siempre, los cuatro
-      // del pipeline y los dos de la cache de datos. Los mismos que
-      // `cpu_perf_counters` con PIPELINE = 1 y DCACHE = 1.
-      .PERF_SLOTS(14),
+      // Dieciseis contadores en CPU PERFORMANCE: los ocho de siempre, los
+      // cuatro del pipeline, los dos de la cache de datos y los dos de
+      // MUL/DIV. Los mismos que `cpu_perf_counters` con PIPELINE, DCACHE y
+      // MULDIV a 1.
+      .PERF_SLOTS(16),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
@@ -803,7 +806,7 @@ module top (
   //
   // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
   // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
-  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1)) perf_i(
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1)) perf_i(
       .clk(clk), .reset(reset),
       .select(mmio_perf_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
@@ -821,8 +824,9 @@ module top (
       .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
       .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
       .mem_req0(p0_valid), .mem_req1(p1_valid),
-      .pipe_stall(cpu_perf_stall),
-      .dmem_hit(dcache_hit), .dmem_miss(dcache_miss));
+      .pipe_stall(cpu_perf_stall[3:0]),
+      .dmem_hit(dcache_hit), .dmem_miss(dcache_miss),
+      .muldiv_stall(cpu_perf_stall[4]), .muldiv_retired(cpu_perf_muldiv_retired));
 
   wire text_enable;
 

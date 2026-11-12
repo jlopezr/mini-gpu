@@ -35,7 +35,7 @@ if str(REPOSITORY) not in sys.path:
 
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
-from tools.perf_counters import dcache_breakdown, pipeline_breakdown  # noqa: E402
+from tools.perf_counters import dcache_breakdown, muldiv_breakdown, pipeline_breakdown  # noqa: E402
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 from tools.board_record import folder_sha256  # noqa: E402
@@ -1275,23 +1275,56 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
                 if p is not None:
                     pipeline.append((caso, v, medida, p))
     if pipeline:
+        # La columna MUL/DIV solo si alguna medida trae STALL_MULDIV; en las
+        # que no, sus esperas van en `EX con memoria`.
+        con_muldiv = any("muldiv" in p for _, _, _, p in pipeline)
+        claves = ["ex_mem"] + (["muldiv"] if con_muldiv else []) + [
+            "raw", "branch", "id_empty", "other"]
         lineas += ["", "## Reparto del pipeline (ciclos por instruccion)", ""]
         lineas.append(_markdown_row(
-            ["Caso", "Version", "CPI", "EX con memoria", "Dependencia", "Salto",
-             "ID vacio", "Otros"]))
-        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 6))
+            ["Caso", "Version", "CPI", "EX con memoria"] +
+            (["MUL/DIV"] if con_muldiv else []) +
+            ["Dependencia", "Salto", "ID vacio", "Otros"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * (len(claves) + 1)))
         for caso, version, medida, p in pipeline:
             lineas.append(_markdown_row(
                 [caso, version, _format_cpi(medida)] +
-                [f"{p[k]:.2f}" for k in ("ex_mem", "raw", "branch", "id_empty", "other")]))
+                [f"{p[k]:.2f}" if k in p else "—" for k in claves]))
         lineas += [
             "",
-            "CPI = 1 + EX con memoria + Dependencia + Salto + ID vacio + Otros. Cada",
+            "CPI = 1 + EX con memoria" + (" + MUL/DIV" if con_muldiv else "") +
+            " + Dependencia + Salto + ID vacio + Otros. Cada",
             "columna son los ciclos por instruccion en que ninguna instruccion paso",
             "de ID a EX por ese motivo. `EX con memoria`: un LOAD/STORE o MMIO",
-            "ocupando EX; `Dependencia`: ID esperando un registro; `Salto`: ID vacio",
+            "ocupando EX; " + ("`MUL/DIV`: una MUL/DIV ocupando EX; " if con_muldiv else "") +
+            "`Dependencia`: ID esperando un registro; `Salto`: ID vacio",
             "tras un salto tomado; `ID vacio`: fallo de busqueda o arranque. Ranuras",
-            "8 a 11 de CPU PERFORMANCE, mmio.md §13.2.",
+            "8 a 11" + (" y 14" if con_muldiv else "") + " de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # MUL/DIV (capacidad `perf_muldiv`): cuantas hay y cuanto esperan.
+    muldiv = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                m = muldiv_breakdown(medida.get("instructions"), medida.get("stalls"))
+                if m is not None and m["retired"]:
+                    muldiv.append((caso, v, m))
+    if muldiv:
+        lineas += ["", "## MUL/DIV", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Retiradas", "Parte de las instr.", "Espera media"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 3))
+        for caso, version, m in muldiv:
+            lineas.append(_markdown_row([
+                caso, version, f"{m['retired']:,}".replace(",", " "),
+                _format_percent(m["fraction"]), f"{m['cycles_per_op']:.1f}"]))
+        lineas += [
+            "",
+            "`Espera media`: ciclos que cada MUL/DIV tiene EX ocupado, ademas del",
+            "suyo (MUL 3, DIV 34, REM tras su DIV 2). Solo los casos con alguna.",
+            "Ranuras 14 y 15 de CPU PERFORMANCE, mmio.md §13.2.",
         ]
 
     # Los aciertos de la cache de datos (capacidad `perf_dcache`).

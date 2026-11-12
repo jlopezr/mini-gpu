@@ -8,8 +8,15 @@
  * one instruction, and errors leave the architectural PC on the faulting
  * instruction. The pipeline is deliberately conservative: RAW hazards, memory waits and control events insert bubbles.
  * The current fetch handshake also limits instruction throughput.
+ *
+ * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
+ * several cycles like a memory access (section 04b).
  */
-module cpu (
+module cpu #(
+    // REM/REMU right after their DIV/DIVU reuse its remainder instead of
+    // dividing again. Invisible to the architecture: zero only changes cycles.
+    parameter ALU_FAST_PATH = 1'b1
+) (
     input clk,
     input reset,
 
@@ -51,9 +58,13 @@ module cpu (
     // Why the ID -> EX transfer did not happen this cycle, one-hot and
     // registered (cpu_perf_counters, PIPELINE = 1): [0] EX busy with a memory
     // access, [1] RAW hazard, [2] ID empty after a taken branch, [3] ID empty
-    // for any other reason. All zero: an instruction moved on, or the CPU is
-    // halted or stopping (STEP, HALT, error).
-    output reg [3:0] perf_stall
+    // for any other reason, [4] EX busy with a MUL/DIV (MULDIV = 1). All
+    // zero: an instruction moved on, or the CPU is halted or stopping (STEP,
+    // HALT, error).
+    output reg [4:0] perf_stall,
+    // One pulse per retired MUL/MULHI/MULFX/DIV/DIVU/REM/REMU, registered and
+    // in the same cycle as instruction_retired.
+    output reg perf_muldiv_retired
 );
 
   localparam [5:0] OPCODE_NOP = 6'h00;
@@ -116,6 +127,9 @@ module cpu (
   localparam [2:0] OPCLASS_STORE = 3'd2;
   localparam [2:0] OPCLASS_BRANCH = 3'd3;
   localparam [2:0] OPCLASS_ERROR = 3'd4;
+  // Stays in EX until the multiplier or divider is done, then becomes
+  // OPCLASS_NORMAL with its result in ex_result.
+  localparam [2:0] OPCLASS_MULDIV = 3'd5;
 
   // ======================================================================
   // DECLARATIONS (all before use, for Icarus elaboration)
@@ -148,6 +162,7 @@ module cpu (
   wire ctl_flush;
   wire ctl_advance;
   wire ctl_memory;
+  wire ctl_muldiv;
   wire ctl_fetch;
   reg perf_after_redirect;
 
@@ -237,6 +252,41 @@ module cpu (
   reg [15:0] ex_load_half;
   wire ex_is_memory;
 
+  // EX: multiplier and divider (section 04b). Operand a travels in ex_result
+  // and operand b in ex_store_data.
+  wire ex_is_muldiv;
+  wire ex_md_run;
+  reg [5:0] ex_md_op;          // opcode
+  reg [4:0] ex_md_ra;
+  reg [4:0] ex_md_rb;
+  reg ex_md_fast;              // REM/REMU that reuses the previous remainder
+  reg ex_md_counted;           // a MUL/DIV, for perf_muldiv_retired (ex_class
+                               // turns NORMAL when it is done)
+  reg wb_md_counted;
+  reg [5:0] ex_md_step;
+  wire ex_md_is_div;
+  wire ex_md_signed_div;
+  reg [31:0] md_ll, md_lh, md_hl, md_hh;
+  reg [31:0] md_correction;
+  reg [63:0] md_product;
+  wire [31:0] md_high_signed;
+  reg [31:0] md_mul_result;
+  reg [31:0] md_dividend;
+  reg [31:0] md_divisor;
+  reg [31:0] md_quotient;
+  reg [31:0] md_remainder;
+  reg md_quotient_negative;
+  reg md_remainder_negative;
+  wire [31:0] md_shifted;
+  wire md_subtract;
+  reg [31:0] md_div_result;
+  // Last completed DIV/DIVU, for the REM/REMU fast path.
+  reg md_tag_valid;
+  reg md_tag_unsigned;
+  reg [4:0] md_tag_ra;
+  reg [4:0] md_tag_rb;
+  wire id_md_fast;
+
   // WB
   reg wb_valid;
   reg [31:0] wb_pc;
@@ -272,9 +322,11 @@ module cpu (
       (wb_halt_after_retire || ctl_step_active);
   assign ctl_flush = ctl_abort || ctl_fault || ctl_retire_stop;
   assign ctl_advance = !halted && !halt_request &&
-      !wb_stops_machine && !ex_is_memory;
+      !wb_stops_machine && !ex_is_memory && !ex_is_muldiv;
   assign ctl_memory = !halted && !halt_request &&
       !wb_stops_machine && ex_is_memory;
+  assign ctl_muldiv = !halted && !halt_request &&
+      !wb_stops_machine && ex_is_muldiv;
   assign ctl_fetch = !halted && !halt_request &&
       !wb_stops_machine && !id_redirects_fetch;
 
@@ -285,12 +337,14 @@ module cpu (
   // ID instead of a wire across the chip.
   always @(posedge clk) begin
     if (reset || halted) begin
-      perf_stall <= 4'b0000;
+      perf_stall <= 5'b00000;
       perf_after_redirect <= 1'b0;
     end else begin
-      perf_stall <= 4'b0000;
+      perf_stall <= 5'b00000;
       if (ctl_memory)
         perf_stall[0] <= 1'b1;
+      else if (ctl_muldiv)
+        perf_stall[4] <= 1'b1;
       else if (ctl_advance && id_valid && raw_hazard)
         perf_stall[1] <= 1'b1;
       else if (ctl_advance && !id_valid)
@@ -490,7 +544,7 @@ module cpu (
         id_opcode == OPCODE_HALT || id_opcode == OPCODE_TRAP ||
         id_opcode == OPCODE_SSY || id_opcode == OPCODE_BAR);
   assign id_uses_b = id_valid &&
-      ((id_opcode >= OPCODE_ADD && id_opcode <= OPCODE_SAR) ||
+      ((id_opcode >= OPCODE_ADD && id_opcode <= OPCODE_REMU) ||
        (id_opcode >= OPCODE_BEQ && id_opcode <= OPCODE_BGEU) ||
        id_opcode == OPCODE_SLT || id_opcode == OPCODE_SLTU ||
        id_opcode == OPCODE_STORE || id_opcode == OPCODE_STOREB ||
@@ -609,10 +663,13 @@ module cpu (
         OPCODE_SLT: begin id_result = {31'd0, id_compare_signed_less}; id_reg_write = 1'b1; end
         OPCODE_SLTU: begin id_result = {31'd0, id_compare_difference[32]}; id_reg_write = 1'b1; end
 
+        // Operand a goes to EX in ex_result and b in ex_store_data (a word
+        // access size, so id_store_data is register_b).
         OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX,
         OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
-          id_class = OPCLASS_ERROR;
-          id_error_code = ERROR_INVALID_OPCODE;
+          id_result = register_a;
+          id_class = OPCLASS_MULDIV;
+          id_reg_write = 1'b1;
         end
 
         OPCODE_LOAD, OPCODE_LOADB, OPCODE_LOADUB, OPCODE_LOADH, OPCODE_LOADUH: begin
@@ -775,6 +832,112 @@ module cpu (
     endcase
   end
 
+  // ======================================================================
+  // 04b. EX — MULTIPLIER AND DIVIDER
+  // ======================================================================
+
+  /*
+   * A MUL/DIV class instruction stays in EX (ctl_advance low) while
+   * ex_md_step counts. When it is done, the EX block writes the result into
+   * ex_result and turns ex_class into OPCLASS_NORMAL (or OPCLASS_ERROR for a
+   * division by zero), and from then on it leaves EX like any ALU
+   * instruction. WB needs no new input and the RAW checks need no change:
+   * the producer is in EX, so hazard_ex holds its consumers.
+   *
+   * Multiplier, 3 cycles in EX plus the one to leave it. MUL, MULHI and
+   * MULFX are all slices of the same signed 64-bit product, built from the
+   * unsigned one (1.isa/isa.md):
+   *
+   *     signed[63:32] = unsigned[63:32] - (a[31] ? b : 0) - (b[31] ? a : 0)
+   *
+   * MUL is signed[31:0], MULHI signed[63:32], and MULFX (Q16.16, arithmetic
+   * shift by 16) signed[47:16]. These registers have no reset and no enable:
+   * they recompute every cycle from ex_result/ex_store_data, which stay put
+   * while the instruction waits in EX.
+   *   step 0: four 16x16 products (one ECP5 DSP each) and the correction.
+   *   step 1: md_product, the unsigned 64-bit product.
+   *   step 2: md_mul_result -> ex_result.
+   *
+   * Divider: restoring, one bit per cycle over the magnitudes; the sign goes
+   * on at the end (quotient truncated towards zero, remainder with the sign
+   * of the dividend). -2^31 / -1 wraps to 0x80000000 with remainder 0 by
+   * itself.
+   *   step 0: division by zero -> error; fast REM/REMU -> sign; else setup.
+   *   steps 1-32: one quotient bit each (fast REM/REMU: step 1 writes).
+   *   step 33: md_div_result -> ex_result.
+   *
+   * Fast path, as in the 35: a REM/REMU whose immediately preceding
+   * instruction was a DIV/DIVU with the same source registers takes the
+   * remainder that DIV left in md_remainder. Comparing register numbers is
+   * enough because nothing ran in between, provided the DIV did not
+   * overwrite one of its own sources (rd == ra or rd == rb arms no tag).
+   * The tag is armed when a DIV/DIVU completes and cleared when any other
+   * valid instruction enters EX, and on halt; the match (id_md_fast) is
+   * taken from ID's instruction fields, off the register-file path.
+   */
+  assign ex_is_muldiv = ex_valid && (ex_class == OPCLASS_MULDIV);
+  // The cycles in which the instruction in EX works: the same condition that
+  // the EX block below uses to keep it (not halted, not flushed).
+  assign ex_md_run = !halted && !ctl_flush && ex_is_muldiv;
+  assign ex_md_is_div = ex_md_op[3:2] == 2'b11;  // 0x0c-0x0f
+  assign ex_md_signed_div = (ex_md_op == OPCODE_DIV) || (ex_md_op == OPCODE_REM);
+  assign id_md_fast = ALU_FAST_PATH && md_tag_valid &&
+      md_tag_ra == id_ra && md_tag_rb == id_rb &&
+      ((id_opcode == OPCODE_REM && !md_tag_unsigned) ||
+       (id_opcode == OPCODE_REMU && md_tag_unsigned));
+
+  always @(posedge clk) begin
+    md_ll <= ex_result[15:0] * ex_store_data[15:0];
+    md_lh <= ex_result[15:0] * ex_store_data[31:16];
+    md_hl <= ex_result[31:16] * ex_store_data[15:0];
+    md_hh <= ex_result[31:16] * ex_store_data[31:16];
+    md_correction <= (ex_result[31] ? ex_store_data : 32'd0) +
+                     (ex_store_data[31] ? ex_result : 32'd0);
+    md_product <= {md_hh, md_ll} + ({31'd0, {1'b0, md_lh} + {1'b0, md_hl}} << 16);
+  end
+
+  assign md_high_signed = md_product[63:32] - md_correction;
+
+  always @* begin
+    case (ex_md_op)
+      OPCODE_MUL: md_mul_result = md_product[31:0];
+      OPCODE_MULHI: md_mul_result = md_high_signed;
+      default: md_mul_result = {md_high_signed[15:0], md_product[31:16]};  // MULFX
+    endcase
+    case (ex_md_op)
+      OPCODE_DIV: md_div_result = md_quotient_negative ? -md_quotient : md_quotient;
+      OPCODE_DIVU: md_div_result = md_quotient;
+      OPCODE_REM: md_div_result = md_remainder_negative ? -md_remainder : md_remainder;
+      default: md_div_result = md_remainder;  // REMU
+    endcase
+  end
+
+  assign md_shifted = {md_remainder[30:0], md_dividend[31]};
+  assign md_subtract = md_shifted >= md_divisor;
+
+  always @(posedge clk) begin
+    if (ex_md_run && ex_md_is_div) begin
+      if (ex_md_step == 6'd0) begin
+        if (ex_md_fast) begin
+          // md_remainder is the DIV's; only the sign is this instruction's.
+          md_remainder_negative <= ex_md_signed_div && ex_result[31];
+        end else begin
+          md_dividend <= (ex_md_signed_div && ex_result[31]) ? -ex_result : ex_result;
+          md_divisor <= (ex_md_signed_div && ex_store_data[31]) ? -ex_store_data
+                                                                : ex_store_data;
+          md_quotient_negative <= ex_md_signed_div && (ex_result[31] ^ ex_store_data[31]);
+          md_remainder_negative <= ex_md_signed_div && ex_result[31];
+          md_quotient <= 32'd0;
+          md_remainder <= 32'd0;
+        end
+      end else if (!ex_md_fast && ex_md_step <= 6'd32) begin
+        md_dividend <= {md_dividend[30:0], 1'b0};
+        md_remainder <= md_subtract ? md_shifted - md_divisor : md_shifted;
+        md_quotient <= {md_quotient[30:0], md_subtract};
+      end
+    end
+  end
+
   // ID -> EX boundary and data-memory transaction state.
   always @(posedge clk) begin
     if (reset) begin
@@ -793,9 +956,21 @@ module cpu (
       ex_error_code <= ERROR_NONE;
       ex_mem_request_sent <= 1'b0;
       ex_mem_drop <= 2'd0;
+      ex_md_op <= OPCODE_NOP;
+      ex_md_ra <= 5'd0;
+      ex_md_rb <= 5'd0;
+      ex_md_fast <= 1'b0;
+      ex_md_counted <= 1'b0;
+      ex_md_step <= 6'd0;
+      md_tag_valid <= 1'b0;
+      md_tag_unsigned <= 1'b0;
+      md_tag_ra <= 5'd0;
+      md_tag_rb <= 5'd0;
     end else if (halted || ctl_flush) begin
       ex_valid <= 1'b0;
       ex_mem_request_sent <= 1'b0;
+      // After a stop the monitor may run anything before RUN: no fast path.
+      md_tag_valid <= 1'b0;
       // An access already accepted still gets its response: drop it too.
       ex_mem_drop <= ex_mem_drop
                      + {1'b0, ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)}
@@ -819,8 +994,38 @@ module cpu (
           ex_class <= id_class;
           ex_error_code <= id_error_code;
           ex_mem_request_sent <= 1'b0;
+          ex_md_op <= id_opcode;
+          ex_md_ra <= id_ra;
+          ex_md_rb <= id_rb;
+          ex_md_fast <= id_md_fast;
+          ex_md_counted <= id_class == OPCLASS_MULDIV;
+          ex_md_step <= 6'd0;
+          // Any other instruction between a DIV and its REM ends the tag.
+          if (id_valid) md_tag_valid <= 1'b0;
         end else begin
           ex_valid <= 1'b0;
+        end
+      end
+      if (ex_md_run) begin
+        ex_md_step <= ex_md_step + 6'd1;
+        if (!ex_md_is_div) begin
+          if (ex_md_step == 6'd2) begin
+            ex_result <= md_mul_result;
+            ex_class <= OPCLASS_NORMAL;
+          end
+        end else if (ex_md_step == 6'd0 && ex_store_data == 32'd0) begin
+          ex_class <= OPCLASS_ERROR;
+          ex_error_code <= ERROR_DIVISION_BY_ZERO;
+        end else if ((ex_md_fast && ex_md_step == 6'd1) || ex_md_step == 6'd33) begin
+          // The fast path ends at step 1: step 0 put the sign in place.
+          ex_result <= md_div_result;
+          ex_class <= OPCLASS_NORMAL;
+          if (ex_md_op == OPCODE_DIV || ex_md_op == OPCODE_DIVU) begin
+            md_tag_valid <= ALU_FAST_PATH && ex_rd != ex_md_ra && ex_rd != ex_md_rb;
+            md_tag_unsigned <= ex_md_op == OPCODE_DIVU;
+            md_tag_ra <= ex_md_ra;
+            md_tag_rb <= ex_md_rb;
+          end
         end
       end
       if (ctl_memory) begin
@@ -842,7 +1047,9 @@ module cpu (
   // EX -> WB boundary, architectural retirement and error reporting.
   always @(posedge clk) begin
     instruction_retired <= 1'b0;
+    perf_muldiv_retired <= 1'b0;
     if (reset) begin
+      wb_md_counted <= 1'b0;
       wb_valid <= 1'b0;
       wb_pc <= 32'd0;
       wb_next_pc <= 32'd0;
@@ -865,6 +1072,7 @@ module cpu (
     end else begin
       if (ctl_retire) begin
         instruction_retired <= 1'b1;
+        perf_muldiv_retired <= wb_md_counted;
         architectural_pc <= wb_next_pc;
         wb_valid <= 1'b0;
       end
@@ -876,6 +1084,7 @@ module cpu (
         wb_result <= ex_result;
         wb_reg_write <= ex_reg_write;
         wb_halt_after_retire <= ex_halt_after_retire;
+        wb_md_counted <= ex_md_counted;
         wb_error <= ex_class == OPCLASS_ERROR;
         wb_error_code <= ex_error_code;
       end
@@ -886,6 +1095,7 @@ module cpu (
         wb_rd <= ex_rd;
         wb_result <= ex_load_extended;
         wb_reg_write <= ex_class == OPCLASS_LOAD;
+        wb_md_counted <= 1'b0;
         wb_halt_after_retire <= ex_halt_after_retire;
         wb_error <= !ex_mem_posted && dmem_error;
         wb_error_code <= ERROR_MEMORY_ACCESS;

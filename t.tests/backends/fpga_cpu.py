@@ -66,7 +66,7 @@ from tools.mmio_map import (  # noqa: E402
     MMIO_PERF_IMEM_HITS_OFF, MMIO_PERF_IMEM_MISSES_OFF, MMIO_PERF_MEM_TX_OFF,
     MMIO_PERF_STALL_MEM_OFF, MMIO_PERF_STALL_FETCH_OFF, MMIO_PERF_STALL_MMIO_OFF,
 )
-from tools.perf_counters import DCACHE_COUNTERS, PIPELINE_COUNTERS  # noqa: E402
+from tools.perf_counters import DCACHE_COUNTERS, MULDIV_COUNTERS, PIPELINE_COUNTERS  # noqa: E402
 
 VIDEO_FB_FRONT = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_FRONT_OFF
 VIDEO_FB_BACK = MMIO_VIDEO_BASE + MMIO_VIDEO_FB_BACK_OFF
@@ -107,6 +107,9 @@ PERF_PIPELINE_COUNTERS = {name: MMIO_CPU_PERF_BASE + offset
 # Los de la cache de datos (capacidad `perf_dcache`, ranuras 12 y 13).
 PERF_DCACHE_COUNTERS = {name: MMIO_CPU_PERF_BASE + offset
                         for name, offset in DCACHE_COUNTERS.items()}
+# Los de MUL/DIV (capacidad `perf_muldiv`, ranuras 14 y 15).
+PERF_MULDIV_COUNTERS = {name: MMIO_CPU_PERF_BASE + offset
+                        for name, offset in MULDIV_COUNTERS.items()}
 VIDEO_REGISTERS = frame_capture.Registers(
     status=VIDEO_STATUS, swap_count=VIDEO_SWAP_COUNT,
     fb_front=VIDEO_FB_FRONT, fb_back=VIDEO_FB_BACK)
@@ -448,6 +451,11 @@ class FpgaCpuBackend(MonitorBackend):
                     waits.update({
                         name: _read_register(client, address, has_word)
                         for name, address in PERF_DCACHE_COUNTERS.items()
+                    })
+                if "perf_muldiv" in device_caps:
+                    waits.update({
+                        name: _read_register(client, address, has_word)
+                        for name, address in PERF_MULDIV_COUNTERS.items()
                     })
 
             video_result = None

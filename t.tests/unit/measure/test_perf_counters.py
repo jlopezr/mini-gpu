@@ -6,8 +6,9 @@ lo que se lee, en que orden, y que el bloque vuelva a como estaba.
 import unittest
 
 from tools import monitor_protocol
-from tools.perf_counters import (DCACHE_COUNTERS, PIPELINE_COUNTERS, STALL_COUNTERS,
-                                 breakdown, dcache_breakdown,
+from tools.perf_counters import (DCACHE_COUNTERS, MULDIV_COUNTERS, PIPELINE_COUNTERS,
+                                 STALL_COUNTERS, breakdown, dcache_breakdown,
+                                 muldiv_breakdown,
                                  difference, format_report, pipeline_breakdown,
                                  read_counters)
 
@@ -231,6 +232,39 @@ class DcacheTest(unittest.TestCase):
         self.assertIsNone(dcache_breakdown(200, {"dmem_hits": 0, "dmem_misses": 0})["hit_rate"])
         self.assertIsNone(dcache_breakdown(200, {"stall_raw": 3}))
         self.assertIsNone(dcache_breakdown(200, None))
+
+
+class MuldivTest(unittest.TestCase):
+    """Ranuras 14 y 15 de MUL/DIV (capacidad `perf_muldiv`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(MULDIV_COUNTERS, {"stall_muldiv": 0x38, "muldiv_retired": 0x3C})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x38: 370, BASE + 0x3C: 20})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("stall_muldiv", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, muldiv=True)
+        self.assertEqual((c["stalls"]["stall_muldiv"], c["stalls"]["muldiv_retired"]),
+                         (370, 20))
+
+    def test_es_un_motivo_mas_del_reparto(self):
+        stalls = {"stall_ex_mem": 0, "stall_raw": 20, "stall_branch": 30,
+                  "stall_id_empty": 5, "stall_muldiv": 370}
+        p = pipeline_breakdown(100 + 20 + 30 + 5 + 370 + 7, 100, stalls)
+        self.assertAlmostEqual(p["muldiv"], 3.7)
+        self.assertAlmostEqual(p["other"], 0.07)
+        self.assertNotIn("muldiv", pipeline_breakdown(
+            200, 100, {k: 0 for k in PIPELINE_COUNTERS}))
+
+    def test_espera_media_y_parte_de_las_instrucciones(self):
+        m = muldiv_breakdown(200, {"stall_muldiv": 370, "muldiv_retired": 20})
+        self.assertEqual((m["retired"], m["stall"]), (20, 370))
+        self.assertAlmostEqual(m["fraction"], 0.1)
+        self.assertAlmostEqual(m["cycles_per_op"], 18.5)
+        self.assertIsNone(muldiv_breakdown(200, {"stall_muldiv": 0,
+                                                 "muldiv_retired": 0})["cycles_per_op"])
+        self.assertIsNone(muldiv_breakdown(200, {"stall_raw": 3}))
 
 
 if __name__ == "__main__":

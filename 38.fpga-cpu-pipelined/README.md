@@ -43,15 +43,27 @@ cpu.v ────┤                                          ├── arbitro
   dato. Solo esperan a que se confirmen todas las escrituras el MMIO (que puede
   fallar y debe dar error preciso), la parada de la CPU (el monitor lee por
   otro puerto) y un LOAD a la linea guardada.
+- **MUL, MULHI, MULFX, DIV, DIVU, REM y REMU** en EX (`cpu.v`, seccion 04b),
+  que se queda la instruccion varios ciclos como un acceso a memoria. ID manda
+  los operandos por `ex_result` y `ex_store_data`; al acabar, EX escribe el
+  resultado en `ex_result` y la instruccion sigue como una de ALU, asi que WB
+  y las dependencias no cambian. MUL/MULHI/MULFX salen del mismo producto con
+  signo (cuatro parciales 16x16 en DSP, inferidos): 3 ciclos mas que una
+  instruccion de ALU. La division es iterativa con signo al final: unos 34
+  ciclos mas, y un REM/REMU justo detras de su DIV/DIVU con los mismos
+  registros reutiliza el resto (2 ciclos mas, `ALU_FAST_PATH`, como en la 35).
+  La division por cero es un error preciso. Sus esperas tienen contador propio
+  (ranura 14, `STALL_MULDIV`, un motivo mas del reparto) y la ranura 15
+  (`MULDIV_RETIRED`) cuenta cuantas se retiran.
 - **Invalidacion por epoca** en las dos caches: cada etiqueta guarda la epoca
   en que se escribio e invalidar todo es sumar uno (en el flanco de `reset` o de
   la CPU parandose). Sin bits de valido, cada cache cuesta unas 330-390 LUT en
   vez de unas 2.000-2.300.
 - **Contadores de rendimiento** (CPU PERFORMANCE, `1.isa/mmio.md` §13.2): las
-  ranuras 8-11 reparten cada ciclo sin emitir en un motivo (`CPI = 1 + EX con
-  memoria + dependencia + salto + ID vacio + otros`) y las 12-13 cuentan
-  aciertos y fallos de la cache de datos. `run_tests.py --measure` los saca en
-  tablas.
+  ranuras 8-11 y 14 reparten cada ciclo sin emitir en un motivo (`CPI = 1 +
+  EX con memoria + MUL/DIV + dependencia + salto + ID vacio + otros`), las
+  12-13 cuentan aciertos y fallos de la cache de datos y la 15 las MUL/DIV
+  retiradas. `run_tests.py --measure` los saca en tablas.
 - **SDRAM**: los registros de los pines van en las celdas de IO tambien con
   Yosys (`syn_useioff` en `sdram_controller_128.v`); la ventana de fase buena
   paso de 8 a unas 20-22 posiciones. La fase sale en el bitstream
@@ -59,8 +71,8 @@ cpu.v ────┤                                          ├── arbitro
   `tools/phase-sweep`.
 
 Bancos: `tools/test -p 38` (entre ellos `cpu_perf_tb`, que mide CPI sin placa,
-`dcache_tb`, `instruction_buffer_reset_tb` y `cpu_dmem_adapter_tb`, con
-mutantes comprobados). `cpu_data_path_tb` junta CPU, D-cache y adaptador reales,
+`dcache_tb`, `instruction_buffer_reset_tb`, `cpu_dmem_adapter_tb` y
+`cpu_muldiv_tb`, con mutantes comprobados). `cpu_data_path_tb` junta CPU, D-cache y adaptador reales,
 y `cpu_memory_system_tb` añade puente, fabric, controlador, modelo de SDRAM y
 dos generadores de trafico en los otros puertos. En placa, los 49 casos de C
 pasan.
@@ -108,6 +120,11 @@ Lo que dicen los contadores:
   encuentra las 4 escrituras en vuelo).
 - **Bresenham** (2,64) pierde sobre todo en saltos (1,03 por instruccion: unos
   3 ciclos por salto tomado) y dependencias (0,34).
+- **MUL/DIV** (build `muldiv-contadores`, 72 casos en placa): pesan poco
+  salvo en mandelbrot, donde el 21 % de las instrucciones son MUL y su espera
+  es 0,68 de un CPI de 2,76. En starfield las DIV esperan 24 ciclos de media,
+  pero son el 0,6 % de las instrucciones (0,14 de CPI). Lo que mas rinde es
+  acortar la MUL (hoy 3 ciclos), no un scoreboard para la DIV.
 - **Los fallos de cache que quedan son de primer acceso.** Los casos son muy
   cortos (10-5.000 instrucciones) y caben enteros en 8 KB: agrandar las caches
   no mejoraria ninguno. La cache de datos acierta un 57-60 % en memory-copy y
@@ -159,6 +176,9 @@ En orden de lo que mas promete segun las medidas:
    - Despues, prediccion (saltos hacia atras tomados, o una BTB).
 2. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
    1,04 en los programas largos). Toca el mismo camino critico que 1A.
+   Un resultado de ALU existe al salir de ID y se puede adelantar desde EX;
+   el de un LOAD o una MUL/DIV solo al acabar EX (`ex_class` vuelve a NORMAL),
+   asi que desde EX solo se adelanta si la clase ya es NORMAL o es de ALU.
 
    Con los volcados sin esperar (ya hechos), 1 y 2, el bucle de arriba pasaria
    de ~16 ciclos a ~6-7, y el video de CPI 3,96 (hoy 2,6) a cerca de 1,7; con
@@ -202,14 +222,12 @@ En orden de lo que mas promete segun las medidas:
    de IF para que las dependencias se detecten desde registros, y la
    redireccion del salto registrada (con prediccion para no pagarlo). Techo
    realista 70-80 MHz, por rutado. Ver `timing-etapas.md`.
-10. **MUL y DIV no estan implementadas**: hoy dan `ERROR_INVALID_OPCODE` en ID
-    (por eso el caso `multiply` sale `n/a`). MUL con los bloques DSP en dos
-    etapas, DIV iterativa y bloqueante; nunca en el camino de un ciclo.
-    **Scoreboard: todavia no.** Con el pipeline en orden y cada instruccion en
+10. **Scoreboard: todavia no.** Con el pipeline en orden y cada instruccion en
     una posicion fija, comparar las fuentes de ID con `ex_rd`/`wb_rd` ya es un
     scoreboard de dos entradas, y el adelantamiento usa esas mismas
     comparaciones. Hara falta cuando algo termine fuera de su posicion: una DIV
-    iterativa que corra de fondo, o LOADs que no bloqueen EX mientras falla la
+    que corra de fondo mientras siguen entrando instrucciones independientes
+    (hoy para EX ~35 ciclos; medir antes si pesa), o LOADs que no bloqueen EX mientras falla la
     D-cache (y entonces tambien reglas para que los errores sigan siendo
     precisos).
 11. **Instruction buffer y fabric de la 35-37**: la 38 tiene ya su propia

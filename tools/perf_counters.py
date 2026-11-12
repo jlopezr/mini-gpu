@@ -23,6 +23,8 @@ from tools.mmio_map import (
     MMIO_PERF_CYCLES_OFF,
     MMIO_PERF_DMEM_HITS_OFF,
     MMIO_PERF_DMEM_MISSES_OFF,
+    MMIO_PERF_MULDIV_RETIRED_OFF,
+    MMIO_PERF_STALL_MULDIV_OFF,
     MMIO_PERF_IMEM_HITS_OFF,
     MMIO_PERF_IMEM_MISSES_OFF,
     MMIO_PERF_MEM_TX_OFF,
@@ -67,9 +69,17 @@ DCACHE_COUNTERS = {
 }
 
 
+# Los de MUL/DIV en la CPU segmentada (capacidad `perf_muldiv`, ranuras 14 y
+# 15): la espera es un motivo mas del reparto del pipeline.
+MULDIV_COUNTERS = {
+    "stall_muldiv": MMIO_PERF_STALL_MULDIV_OFF,
+    "muldiv_retired": MMIO_PERF_MULDIV_RETIRED_OFF,
+}
+
+
 def read_counters(read_word, write_word=None, stalls: bool = False,
                   base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False,
-                  dcache: bool = False) -> dict:
+                  dcache: bool = False, muldiv: bool = False) -> dict:
     """Todos los contadores de un mismo instante.
 
     `read_word(direccion)` y `write_word(direccion, valor)` son los del cliente
@@ -101,6 +111,9 @@ def read_counters(read_word, write_word=None, stalls: bool = False,
             if dcache:
                 contadores["stalls"].update({nombre: read_word(base + offset)
                                              for nombre, offset in DCACHE_COUNTERS.items()})
+            if muldiv:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in MULDIV_COUNTERS.items()})
     finally:
         if write_word is not None:
             write_word(base + MMIO_PERF_CTRL_OFF, previo)
@@ -174,19 +187,42 @@ def dcache_breakdown(instructions, stalls) -> dict | None:
     }
 
 
+def muldiv_breakdown(instructions, stalls) -> dict | None:
+    """MUL/DIV de la CPU segmentada (capacidad `perf_muldiv`).
+
+    Devuelve `retired` (MUL/DIV retiradas), `stall` (ciclos de espera),
+    `fraction` (parte de las instrucciones que son MUL/DIV) y `cycles_per_op`
+    (espera media de cada una, None sin ninguna); None si la medida no trae
+    esos contadores.
+    """
+    if not stalls or "stall_muldiv" not in stalls or "muldiv_retired" not in stalls:
+        return None
+    retired, stall = stalls["muldiv_retired"], stalls["stall_muldiv"]
+    return {
+        "retired": retired,
+        "stall": stall,
+        "fraction": retired / instructions if instructions else None,
+        "cycles_per_op": stall / retired if retired else None,
+    }
+
+
 def pipeline_breakdown(cycles, instructions, stalls) -> dict | None:
     """Ciclos por instruccion de cada motivo de no emitir, o `None` sin datos.
 
     CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY
-    + otros, asi que CPI = 1 + la suma de lo que devuelve. `other` son los
-    ciclos de arranque, STEP, HALT y error; no baja de cero, porque los eventos
-    llegan un ciclo tarde.
+    (+ STALL_MULDIV) + otros, asi que CPI = 1 + la suma de lo que devuelve.
+    `muldiv` solo esta si la medida trae STALL_MULDIV. `other` son los ciclos
+    de arranque, STEP, HALT y error; no baja de cero, porque los eventos llegan
+    un ciclo tarde.
     """
     if not cycles or not instructions or not stalls or "stall_raw" not in stalls:
         return None
+    motivos = list(PIPELINE_COUNTERS)
+    if "stall_muldiv" in stalls:
+        motivos.append("stall_muldiv")
     parts = {nombre.removeprefix("stall_"): stalls[nombre] / instructions
-             for nombre in PIPELINE_COUNTERS}
-    counted = instructions + sum(stalls[nombre] for nombre in PIPELINE_COUNTERS)
+             for nombre in motivos}
+    counted = instructions + sum(stalls[nombre] for nombre in motivos)
     parts["other"] = max(0, cycles - counted) / instructions
     return parts
 
@@ -220,10 +256,16 @@ def format_report(contadores: dict) -> list[str]:
             f"{stalls['mem_tx']} peticiones a memoria")
     p = pipeline_breakdown(cycles, instructions, contadores.get("stalls"))
     if p is not None:
+        muldiv = f"MUL/DIV {p['muldiv']:.2f}, " if "muldiv" in p else ""
         lineas.append(
             f"  ciclos por instruccion, ademas del 1: EX con memoria {p['ex_mem']:.2f}, "
-            f"dependencia {p['raw']:.2f}, salto {p['branch']:.2f}, "
+            f"{muldiv}dependencia {p['raw']:.2f}, salto {p['branch']:.2f}, "
             f"ID vacio {p['id_empty']:.2f}, otros {p['other']:.2f}")
+    m = muldiv_breakdown(instructions, contadores.get("stalls"))
+    if m is not None and m["retired"]:
+        lineas.append(
+            f"  MUL/DIV: {m['retired']} retiradas ({_pct(m['fraction'])} de las "
+            f"instrucciones), {m['cycles_per_op']:.1f} ciclos de espera de media")
     if contadores.get("overflow"):
         lineas.append(
             f"  AVISO: PERF_OVF0={contadores['overflow']:#x}, algun contador ha dado la "

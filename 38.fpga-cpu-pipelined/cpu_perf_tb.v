@@ -12,6 +12,8 @@
  *   loop      bucle de 4 instrucciones con BNE hacia atras: el salto tomado.
  *   store     bucle de STORE a direcciones seguidas, como el de un framebuffer.
  *   load      bucle de LOAD a direcciones seguidas.
+ *   muldiv    bucle con una MUL y una DIV: los contadores STALL_MULDIV y
+ *             MULDIV_RETIRED, con valor exacto.
  *
  * La memoria imita un ACIERTO de instruction_buffer.v: acepta una peticion
  * por ciclo (`ready` siempre alto) y la responde al ciclo siguiente con
@@ -54,7 +56,8 @@ module cpu_perf_tb;
   wire [31:0] imem_address;
   wire [31:0] debug_register_data;
   wire [31:0] debug_pc;
-  wire [3:0] perf_stall;
+  wire [4:0] perf_stall;
+  wire perf_muldiv_retired;
 
   localparam integer WORDS = 256;
   localparam [31:0] HALT = 32'hfc00_0000;
@@ -93,12 +96,13 @@ module cpu_perf_tb;
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
       .debug_pc(debug_pc),
-      .perf_stall(perf_stall)
+      .perf_stall(perf_stall),
+      .perf_muldiv_retired(perf_muldiv_retired)
   );
 
   // Los contadores de la placa, con las ranuras del pipeline. Se leen por
   // jerarquia: aqui no hay bus MMIO.
-  cpu_perf_counters #(.PIPELINE(1)) perf (
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1)) perf (
       .clk(clk), .reset(reset),
       .select(1'b0), .write(1'b0), .write_mask(4'd0), .address(16'd0),
       .write_data(32'd0), .read_data(),
@@ -106,7 +110,9 @@ module cpu_perf_tb;
       .imem_valid(imem_valid), .imem_ready(1'b1),
       .dmem_valid(dmem_waiting), .dmem_ready(1'b0), .dmem_is_mmio(1'b0),
       .imem_hit(1'b0), .imem_miss(1'b0), .mem_req0(1'b0), .mem_req1(1'b0),
-      .pipe_stall(perf_stall));
+      .pipe_stall(perf_stall[3:0]),
+      .dmem_hit(1'b0), .dmem_miss(1'b0),
+      .muldiv_stall(perf_stall[4]), .muldiv_retired(perf_muldiv_retired));
 
   // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta al
   // ciclo siguiente.
@@ -200,6 +206,10 @@ module cpu_perf_tb;
     bne = 32'h8400_0000 | (a << 21) | (b << 16) | offset;
   endfunction
 
+  function [31:0] rtype(input [5:0] op, input [4:0] rd, input [4:0] ra, input [4:0] rb);
+    rtype = {op, rd, ra, rb, 11'd0};
+  endfunction
+
   task clear_memory;
     begin
       for (k = 0; k < WORDS; k = k + 1) instruction_memory[k] = HALT;
@@ -243,10 +253,11 @@ module cpu_perf_tb;
                cycles * 1.0 / retired);
       // Ciclos por instruccion de cada motivo; `otros` es lo que no cuentan
       // los cuatro (arranque, parada, HALT).
-      $display("PIPE %-8s ex_mem=%0.2f raw=%0.2f branch=%0.2f id_empty=%0.2f otros=%0.2f",
-               name, perf.stall_ex_mem * 1.0 / retired, perf.stall_raw * 1.0 / retired,
+      $display("PIPE %-8s ex_mem=%0.2f muldiv=%0.2f raw=%0.2f branch=%0.2f id_empty=%0.2f otros=%0.2f",
+               name, perf.stall_ex_mem * 1.0 / retired, perf.stall_muldiv * 1.0 / retired,
+               perf.stall_raw * 1.0 / retired,
                perf.stall_branch * 1.0 / retired, perf.stall_id_empty * 1.0 / retired,
-               (perf.cycles - perf.retired_count - perf.stall_ex_mem - perf.stall_raw -
+               (perf.cycles - perf.retired_count - perf.stall_ex_mem - perf.stall_muldiv - perf.stall_raw -
                 perf.stall_branch - perf.stall_id_empty) * 1.0 / retired);
     end
   endtask
@@ -306,6 +317,27 @@ module cpu_perf_tb;
     instruction_memory[5] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 2
     run_program("load", 2 + 64 * 4 + 1);
     expect_register(5'd4, 32'd63);
+
+    // muldiv: 10 vueltas de MUL, DIV, contador y salto. Ninguna depende de
+    // la anterior, asi que la espera es solo la de EX: 3 ciclos por MUL y 34
+    // por DIV (cpu_muldiv_tb.v), y nada de eso cuenta en STALL_EX_MEM.
+    clear_memory();
+    instruction_memory[0] = movi(5'd1, 16'd1000);
+    instruction_memory[1] = movi(5'd2, 16'd7);
+    instruction_memory[2] = movi(5'd5, 16'd10);
+    instruction_memory[3] = rtype(6'h0a, 5'd3, 5'd1, 5'd2);  // MUL R3 = R1 * R2
+    instruction_memory[4] = rtype(6'h0c, 5'd4, 5'd1, 5'd2);  // DIV R4 = R1 / R2
+    instruction_memory[5] = addi(5'd5, 5'd5, 16'hffff);
+    instruction_memory[6] = bne(5'd5, 5'd0, 16'hfffc);      // a la palabra 3
+    run_program("muldiv", 3 + 10 * 4 + 1);
+    expect_register(5'd3, 32'd7000);
+    expect_register(5'd4, 32'd142);
+    if (perf.stall_muldiv !== 32'd370)
+      $fatal(1, "muldiv: STALL_MULDIV = %0d, se esperaban 370", perf.stall_muldiv);
+    if (perf.muldiv_retired_count !== 32'd20)
+      $fatal(1, "muldiv: MULDIV_RETIRED = %0d, se esperaban 20", perf.muldiv_retired_count);
+    if (perf.stall_ex_mem !== 32'd0)
+      $fatal(1, "muldiv: STALL_EX_MEM = %0d, se esperaba 0", perf.stall_ex_mem);
 
     $display("PASS: cpu_perf");
     $finish;

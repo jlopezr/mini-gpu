@@ -35,7 +35,7 @@ module cpu_data_path_tb;
   wire halted, error, instruction_retired, dmem_waiting;
   wire [7:0] error_code;
   wire [31:0] debug_register_data, debug_pc;
-  wire [3:0] perf_stall;
+  wire [4:0] perf_stall;
   reg [4:0] debug_register_address = 5'd0;
 
   wire c_valid, c_ready, c_rvalid, c_error;
