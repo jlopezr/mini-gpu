@@ -729,6 +729,34 @@ aparece, se cierra sin hacer nada.
 
 ---
 
+## 20. Simular la netlist de Yosys, no solo el RTL
+
+**Qué falta.** Un paso de `tools/test` que sintetice algunos módulos con Yosys
+(`synth -flatten; write_verilog -noattr`) y pase su banco de siempre contra esa
+netlist, con `simlib.v` y `simcells.v` de `yosys-config --datdir`. Bastaría con
+una lista por prototipo de pares módulo/banco, empezando por los que tienen
+máquinas de estado con muchas ramas: `cpu_dmem_adapter`, `dcache`,
+`instruction_buffer` y `gpu_sm`.
+
+**Por qué importa.** Yosys 0.63+173 sintetiza mal un orden de `<=` legal en
+Verilog. Dentro de un bloque anidado, una asignación condicional seguida de otra
+sin condición a la misma señal (`if (c) begin if (a) v <= 0; v <= b; end`) da
+`a ? 0 : b` en vez de `b`. Con un `if/else` completo delante, ignora la última.
+En la 38 pasó todos los bancos y falló 12 casos en placa: el adaptador escondía
+la asignación condicional dentro de una tarea. Solo la netlist simulada lo
+reprodujo; iverilog sobre el RTL no lo ve nunca. Repro mínimo y variantes en el
+README de la 38. Los adaptadores de la 34-37 están a salvo (la tarea es lo
+último de cada rama); `gpu_sm` (36/37) parece a salvo leyéndolo, pero no está
+comprobado.
+
+**Qué lo bloquea.** Nada. Coste a vigilar: los bancos con netlist van más
+lentos, así que mejor con su propia marca (como `TEST-LENTO`). Los bancos que
+miran señales internas (`dut.wb_valid`) no sobreviven a `-flatten` con los
+nombres cambiados; esos se adaptan o se quedan fuera. De paso: comprobar si una
+versión más nueva de Yosys lo corrige y, si no, avisar a Yosys con el repro.
+
+---
+
 ## Cerrado — no reabrir sin motivo nuevo
 
 - **La 17 en la suite de placa.** El 01/10/2026 se dejó fuera por considerarla un

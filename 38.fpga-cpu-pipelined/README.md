@@ -149,11 +149,7 @@ Cuatro instrucciones que deberian costar 4 ciclos y cuestan ~15,8:
 
 En orden de lo que mas promete segun las medidas:
 
-1. **Subir el reloj de la CPU a 40-50 MHz** (PLL; divisor UART 100 -> 200).
-   Cierra a 52-57 MHz, asi que 50 deja poco margen: barrer semillas y, si no
-   cumplen, 40. Medir antes y despues contra la 35 (`bench-all -p 35 -p 38`;
-   la 35 va a 80 MHz y necesita antes `syn_useioff` para volver a cumplir).
-2. **Saltos mas baratos** (hoy 3 burbujas por salto tomado):
+1. **Saltos mas baratos** (hoy 3 burbujas por salto tomado):
    - B) Respuesta directa a ID cuando la cola esta vacia, sin pasar por ella
      (2 burbujas). Barato y fuera del camino critico; se mide con
      `cpu_perf_tb`.
@@ -161,25 +157,26 @@ En orden de lo que mas promete segun las medidas:
      Alarga el camino critico (decodificar → banco → comparar → salto) hasta la
      I-cache: hacerlo con el informe de tiempos delante.
    - Despues, prediccion (saltos hacia atras tomados, o una BTB).
-3. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
-   1,04 en los programas largos). Toca el mismo camino critico que 2A.
+2. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
+   1,04 en los programas largos). Toca el mismo camino critico que 1A.
 
-   Con los volcados sin esperar (ya hechos), 2 y 3, el bucle de arriba pasaria
+   Con los volcados sin esperar (ya hechos), 1 y 2, el bucle de arriba pasaria
    de ~16 ciclos a ~6-7, y el video de CPI 3,96 (hoy 2,6) a cerca de 1,7; con
-   el reloj a 50 MHz, 4-5 veces mas rapido en tiempo real que con `icache-ebr`.
-4. **Por que un acierto de la D-cache cuesta 2-3 ciclos**: subword-loads
+   el reloj a 50 MHz (paso 8), 4-5 veces mas rapido en tiempo real que con
+   `icache-ebr`.
+3. **Por que un acierto de la D-cache cuesta 2-3 ciclos**: subword-loads
    acierta 9 de 10 LOAD y aun le quedan 3,46 ciclos de "EX con memoria" por
    instruccion. Mirarlo en `cpu_perf_tb`.
-5. **Menos fallos de primer acceso**: traer la linea siguiente por adelantado
+4. **Menos fallos de primer acceso**: traer la linea siguiente por adelantado
    (prefetch) en las dos caches, o lineas de 32 bytes.
-6. **Un programa grande para medir tamaños**: una demo en C con biblioteca o un
+5. **Un programa grande para medir tamaños**: una demo en C con biblioteca o un
    juego que pase de 8 KB de codigo o datos. Con `IMEM_MISSES` y `DMEM_MISSES`
    se ve directamente si 16 KB o dos vias servirian; con los casos actuales no.
-7. **Reloj de la SDRAM por la celda de IO** (`ODDRX1F` con `D0=1, D1=0`, como
+6. **Reloj de la SDRAM por la celda de IO** (`ODDRX1F` con `D0=1, D1=0`, como
    el DVI). Hoy `assign sdram_clk = clk` va por rutado general y la ventana de
    fase aun se mueve entre builds (2-21 en uno, 8-29 en otro). Tambien `dq_oe`,
    replicado por pin, para que quepa en las celdas de IO.
-8. **MMIO, solo si aparece un caso que lo necesite.** El "EX con memoria"
+7. **MMIO, solo si aparece un caso que lo necesite.** El "EX con memoria"
    alto de input-keys-and-mouse (2,33) NO es tiempo perdido: es una espera
    activa (`LOAD STATUS / ANDI / BEQ`) hasta que el PC manda una tecla, y
    preguntar mas deprisa solo da mas vueltas. Lo mismo el `wait_swap` del
@@ -194,6 +191,11 @@ En orden de lo que mas promete segun las medidas:
    para cerrar 80 MHz y a 25-50 MHz sobra. Con un parametro (y `EXTRA_CYCLES`
    del `mmio_mux` a juego) seria un ciclo menos. La etapa 2 no se puede quitar:
    el error de SWAP y el byte del puerto serie solo valen despues de escribir.
+8. **Subir el reloj de la CPU a 40-50 MHz, aplazado.** A 25 MHz sobra margen
+   (cierra a 52-57) para los saltos y el adelantamiento, que alargan el camino
+   critico; se sube al final. PLL y divisor UART 100 -> 200.
+   A 50 hay que barrer semillas y, si no cumplen, quedarse en 40. Medir antes y despues contra la 35 (`bench-all -p 35 -p 38`;
+   la 35 va a 80 MHz y necesita antes `syn_useioff` para volver a cumplir).
 9. **Mas alla de ~50 MHz hay que partir ID**, que es todo el camino critico
    (decodificar -> banco -> comparar -> salto -> enable de IF e ID): pipeline
    clasico IF/ID/EX/MEM/WB con adelantamiento a EX, predecodificar en la cola
