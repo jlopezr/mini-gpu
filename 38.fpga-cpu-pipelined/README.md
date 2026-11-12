@@ -138,6 +138,30 @@ cpu.v ────┤                                          ├── arbitro
   | racer, coma fija | 1,49 fps* | 2,19 fps |
 
   \* con el bitstream de la fase 1 (sin BTB).
+- **Cinco etapas: IF, ID, EX, MEM, WB** (`cpu.v` seccion 04c). El acceso a
+  datos sale de MEM; EX recibe operandos de MEM y de WB (FWD-MEM-EX,
+  FWD-WB-EX), y una MUL/DIV parada en EX deja avanzar a MEM. La D-cache se
+  consulta desde ID: la EBR se lee en el flanco en que el acceso entra en EX,
+  y EX compara la etiqueta y elige la palabra. **Un LOAD que acierta no para
+  nada**: su dato llega a MEM con el y la instruccion de detras lo toma de ahi
+  al ciclo siguiente (antes, 2 ciclos de CPU parada por LOAD). MEM solo pide
+  al adaptador fallos, STOREs y MMIO. La unica espera por dependencia que
+  queda es AGI: la base de un LOAD/STORE escrita por la instruccion de EX o
+  de MEM. Comprobado con la traza de retiro de test-scheduler (6,4 M
+  instrucciones) contra el simulador funcional, con memoria ideal, con
+  latencias aleatorias y con la D-cache real y un adaptador aleatorio. CPU a
+  61 MHz en nextpnr (66 antes).
+
+  Con tie_fighter (float, 10 s): espera en EX/MEM por memoria de 40,1 M a
+  10,7 M ciclos, CPI de 1,90 a 1,73. Los sketches de mini-gl a lo largo del
+  dia (25 MHz; `make FIXED=1` para coma fija):
+
+  | Sketch | BTB | + STORE actualiza | + division rapida | + etapa MEM |
+  |---|---:|---:|---:|---:|
+  | tie_fighter, float | ~1,25 | 1,53 | 1,62 | **1,81** |
+  | racer, float | | 1,58 | 1,62 | **1,72** |
+  | tie_fighter, coma fija | | 2,32 | 2,58 | **3,02** |
+  | racer, coma fija | | 2,19 | 2,29 | **2,50** |
 - **Dos resets en la CPU**: `reset` (el del sistema, con el que tambien se
   vacian las caches) y `soft_reset` (el RESET del monitor, solo la CPU). Con
   el segundo las caches siguen y contestan lo que ya habian aceptado; la CPU
