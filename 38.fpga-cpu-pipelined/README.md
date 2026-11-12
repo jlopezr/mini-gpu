@@ -7,8 +7,8 @@ convertirse en un nucleo segmentado que acepte una instruccion nueva por ciclo
 en el caso comun.
 
 La identificacion de placa es monitor `5.38`. La CPU va a 25 MHz (el oscilador
-de la placa, sin PLL) y cierra a unos 65 MHz (build `dcache-decide`); la SDRAM
-a 100 MHz.
+de la placa, sin PLL) y cierra a 65-70 MHz segun la colocacion (builds
+`dcache-decide` y `perf-video`); la SDRAM a 100 MHz.
 
 ## Estado actual (12 de noviembre)
 
@@ -155,6 +155,45 @@ Lo que dicen los contadores:
   cortos (10-5.000 instrucciones) y caben enteros en 8 KB: agrandar las caches
   no mejoraria ninguno. La cache de datos acierta un 57-60 % en memory-copy y
   array-sum porque cada linea nueva falla la primera vez.
+
+## Video: cuanto del frame ocupa (build `perf-video`)
+
+Con las ranuras 16 y 17, en "Ritmo de video" de `--measure`. Solo los casos con
+muchos intercambios; en los de 1 a 4 domina el dibujo inicial.
+
+| Caso | Ciclos/frame | Trabajo/swap | Frame ocupado | Frames por swap |
+|---|---:|---:|---:|---:|
+| video-band | 385 926 | 426 402 | 110,5 % | 2,0 |
+| video-bounce | 418 464 | 430 558 | 102,9 % | 2,0 |
+| video-swap-demo | 414 988 | 427 095 | 102,9 % | 2,0 |
+| video-starfield | 418 345 | 429 713 | 102,7 % | 2,0 |
+| video-cube | 419 452 | 400 205 | 95,4 % | 1,08 |
+| video-swap-demo-fast | 415 520 | 89 712 | 21,6 % | 1,08 |
+| video-starfield-fast | 412 312 | 77 794 | 18,9 % | 1,05 |
+| pacman | 419 768 | 17 319 | 4,1 % | 1,02 |
+
+bounce, starfield y swap-demo **no caben por un 3 %** y van a un intercambio
+cada dos frames (30 fps en vez de 60); band necesita un 10 % menos. La columna
+antigua `Swaps/frame` lo escondia: cuenta frames de pared, con el viaje de
+parada, y daba 0,37 en cube, que con la CPU en marcha va casi a un swap por
+frame. A 50 MHz el frame ocupado se reduciria a la mitad.
+
+## Que mejorar primero (build `perf-video`)
+
+Programas largos sin video (9 M instrucciones, sobre todo test-scheduler-c y
+mandelbrot), CPI 3,33. "Recuperaria" es un techo estimado: los contadores dicen
+cuanto pierde cada motivo, no que parte de las dependencias es de un LOAD.
+
+| Mejora | Motivo | Pierde | Recuperaria | Coste |
+|---|---|---:|---:|---|
+| Adelantamiento | Dependencia | 1,09 | ~0,7-0,9 (lo de ALU; LOAD y MUL/DIV siguen esperando a EX) | medio |
+| Prediccion de saltos | Salto | 0,75 | ~0,5-0,6 (5 burbujas -> 0-1 si acierta) | medio-alto |
+| MUL en 1-2 ciclos | MUL/DIV | 0,24 | ~0,15 (mandelbrot 0,68 -> ~0,25) | bajo |
+| MMIO un ciclo menos | EX con memoria | 0,25 | ~0,05 | bajo |
+| Prefetch | ID vacio | 0,00 | 0 | — |
+
+En video el reparto incluye el bucle que espera el intercambio; lo que manda
+es el frame ocupado, y a bounce, starfield y swap-demo les basta un 3 %.
 
 ## Donde se pierde el CPI (build `icache-ebr`)
 
