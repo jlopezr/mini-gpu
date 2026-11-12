@@ -54,7 +54,11 @@ SIM_ARGS ?=
 # En MiniGPU la versión 2D se elige al compilar (all es 0) y cada una va a su carpeta.
 MV := $(if $(filter all,$(V)),0,$(V))
 MG := build/minigpu/v$(MV)
-MG3 := build/minigpu/3d
+# FIXED=1: geometría (transformar, outcode, viewport) y profundidad en Q16.16 en vez de float soft
+# (MGR_FIXED_GEOMETRY/MGR_FIXED_DEPTH, experimentales); va a su carpeta para comparar con la de float.
+FIXED ?= 0
+MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)
+MG3_DEFS := $(if $(filter 1,$(FIXED)),-D MGR_FIXED_GEOMETRY=1 -D MGR_FIXED_DEPTH=1)
 
 # ---------------------------------------------------------------------------
 # Fuentes, objetos y programas
@@ -112,6 +116,7 @@ help:
 	@echo '  make check-minigpu3d     lo mismo con los sketches 3D'
 	@echo '  make profile-minigpu-<sketch>  instrucciones por función hasta el frame FRAMES'
 	@echo '  make minigpu / minigpu3d solo compilar los .bin'
+	@echo '  FIXED=1 (3D)             geometría y profundidad en coma fija, en build/minigpu/3d-fixed'
 	@echo 'Otros:'
 	@echo '  make clean               borra build/ y los .ppm'
 
@@ -236,7 +241,7 @@ $(MG)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC_
 	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU_SRCS) $(LIBC) $(INCLUDES) -D MGL_VERSION=$(MV) --outdir $(MG)/$* -o $@
 # 3D: el renderer de referencia en la CPU de MiniGPU, con las mismas fuentes que en el host.
 $(MG3)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU3D_SRCS) $(HDRS) $(LIBC_DEPS)
-	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU3D_SRCS) $(LIBC) $(INCLUDES) --outdir $(MG3)/$* -o $@
+	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU3D_SRCS) $(LIBC) $(INCLUDES) $(MG3_DEFS) --outdir $(MG3)/$* -o $@
 
 # Las mismas tres órdenes para 2D ($(MG)) y 3D ($(MG3)); $(1) es la carpeta.
 # Ventana del simulador. Cada frame son millones de instrucciones.
