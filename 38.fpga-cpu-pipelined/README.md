@@ -31,9 +31,17 @@ cpu.v ────┤                                          ├── arbitro
 - **Redireccion del salto registrada** (paso 2): EX decide el salto y la
   busqueda se redirige un ciclo despues (`if_redirect`, `if_redirect_pc`); la
   instruccion que entra en EX detras del salto pasa como burbuja. Un salto
-  tomado cuesta 6 burbujas (3 con la decision en ID sin registrar, 5 con la
-  redireccion registrada, una mas al pasar la decision a EX); lo devolvera la
-  prediccion.
+  tomado sin predecir cuesta 6 burbujas (3 con la decision en ID sin
+  registrar, 5 con la redireccion registrada, una mas al pasar la decision a
+  EX).
+- **Prediccion de saltos, fase 1** (`cpu.v`, seccion 02b, parametro
+  `BRANCH_PREDICT`): al pasar la cabeza de la cola de IF a ID se predicen
+  tomados BRA y JAL, los saltos condicionales hacia atras (*backward-taken,
+  forward-not-taken*) y `JR R31`, el retorno de mini-cc, con una pila de 8
+  direcciones (*return address stack*) que llenan JAL/JALR con `rd = R31`.
+  Lo de detras en la cola se descarta y se busca el destino: ~3 burbujas en
+  vez de 6. EX comprueba y solo redirige si fallo (tomado sin predecir,
+  predicho y no tomado, o retorno a otra direccion), con el coste de antes.
 - **Busqueda de una instruccion por ciclo.** `imem` separa peticion
   (`valid/ready`) y respuesta (`rvalid`); una cola de cuatro entradas en IF y un
   contador descartan las respuestas del camino viejo tras un salto.
@@ -141,18 +149,18 @@ misma señal; las tareas lo esconden facil.
 
 CPI de algunos casos de `run_tests.py --measure`; cada columna añade un cambio.
 
-| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos | Adelantamiento |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* | 2,61* |
-| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* | 2,88* |
-| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* | 2,67* |
-| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 | 2,86 |
-| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 | 2,57 |
-| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 | 2,12 |
-| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 | 8,77 |
-| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 | 4,73 |
-| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 | 4,50 |
-| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 | 6,46 |
+| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos | Adelantamiento | Prediccion |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* | 2,61* | 2,18* |
+| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* | 2,88* | 2,34* |
+| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* | 2,67* | 2,18* |
+| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 | 2,86 | 2,52 |
+| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 | 2,57 | 2,25 |
+| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 | 2,12 | 1,90 |
+| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 | 8,77 | 8,64 |
+| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 | 4,73 | 4,23 |
+| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 | 4,50 | 4,35 |
+| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 | 6,46 | 6,77 |
 
 `Etapas 1-2b`: fuentes predecodificadas, redireccion registrada y respuesta de
 la I-cache registrada (12 de noviembre). Suben el CPI de todo lo que salta
@@ -164,6 +172,14 @@ adelantamiento WB -> EX. El CPI medio de `--measure` baja un 24 % (3,49 ->
 2,65) con el reloj igual (69,4 MHz): test-scheduler-c 3,49 -> 2,59,
 mandelbrot -27 %, xorshift -30 %, bresenham-circles -13 %. Lo que salta mucho y apenas encadena resultados
 (calls, jump-table) sube un 2-4 %: el salto tomado cuesta una burbuja mas.
+
+`Prediccion` (fase 1 de los saltos, 12 de noviembre): prediccion estatica y
+pila de retornos en la cabeza de la cola de IF. CPI medio 2,65 -> 2,30
+(-13 %), con el reloj igual (69,8 MHz): test-scheduler-c 2,59 -> 2,21,
+fibonacci -17 %, calls-link-and-return -16 %, bresenham -12 %. En video el
+salto pasa de ~1,5 a ~0,6 por instruccion; parte de lo ganado se va a EX con
+memoria (0,08 -> 0,56 en bounce): el bucle llega antes al STORE que cambia de
+linea y espera mas al volcado.
 
 \* El CPI de los casos de video **no compara CPUs** desde `Etapas 1-2b`: a
 25 MHz el frame de bounce ya no cabe en un vsync (unos 530.000 ciclos de
@@ -202,47 +218,53 @@ Con las ranuras 16 y 17, en "Ritmo de video" de `--measure`. Solo los casos con
 muchos intercambios; en los de 1 a 4 domina el dibujo inicial. `Frames por
 swap` es Ciclos/swap entre Ciclos/frame.
 
-| Caso | Frame ocupado (`perf-video`) | Frames por swap | Frame ocupado (adelantamiento) | Frames por swap |
-|---|---:|---:|---:|---:|
-| video-band | 110,5 % | 2,0 | 99,2 % | 1,25 |
-| video-bounce | 102,9 % | 2,0 | **93,9 %** | 1,01 |
-| video-swap-demo | 102,9 % | 2,0 | **93,0 %** | 1,04 |
-| video-starfield | 102,7 % | 2,0 | **92,5 %** | 1,02 |
-| video-cube | 95,4 % | 1,08 | — | — |
-| video-swap-demo-fast | 21,6 % | 1,08 | 19,5 % | 1,04 |
-| video-starfield-fast | 18,9 % | 1,05 | 17,0 % | 1,05 |
-| pacman | 4,1 % | 1,02 | — | — |
+| Caso | Frame ocupado (`perf-video`) | Frames por swap | Frame ocupado (adelantamiento) | Frames por swap | Frame ocupado (prediccion) |
+|---|---:|---:|---:|---:|---:|
+| video-band | 110,5 % | 2,0 | 99,2 % | 1,25 | **70,1 %** |
+| video-bounce | 102,9 % | 2,0 | **93,9 %** | 1,01 | **66,4 %** |
+| video-swap-demo | 102,9 % | 2,0 | **93,0 %** | 1,04 | **65,7 %** |
+| video-starfield | 102,7 % | 2,0 | **92,5 %** | 1,02 | **65,4 %** |
+| video-cube | 95,4 % | 1,08 | — | — | — |
+| video-swap-demo-fast | 21,6 % | 1,08 | 19,5 % | 1,04 | 14,0 % |
+| video-starfield-fast | 18,9 % | 1,05 | 17,0 % | 1,05 | 14,9 % |
+| pacman | 4,1 % | 1,02 | — | — | — |
 
 Con `perf-video` (antes del paso 3), bounce, starfield y swap-demo **no
 cabian por un 3 %** e iban a un intercambio cada dos frames (30 fps en vez de
 60). Con el adelantamiento les sobra un 6-7 % y vuelven a ir a un swap por
-frame; band queda justo (99 %) y pierde un vblank de cada cuatro. (cube y
+frame; band queda justo (99 %) y pierde un vblank de cada cuatro. Con la
+prediccion todos se quedan en un 65-70 %: un tercio del frame libre. (cube y
 pacman no entraron en esa medida.) La columna antigua `Swaps/frame` escondia
 todo esto: cuenta frames de pared, con el viaje de parada. A 50 MHz el frame
 ocupado se reduciria a la mitad.
 
-## Que mejorar primero (tras el adelantamiento)
+## Que mejorar primero (tras la prediccion, fase 1)
 
-Reparto de `--measure` (CPI = 1 + motivos) en los casos que mas duran.
-Con el adelantamiento la dependencia es ~0 en todos ellos; lo que queda es
-sobre todo el salto:
+Reparto de `--measure` (CPI = 1 + motivos) en los casos que mas duran; entre
+parentesis, el salto con solo el adelantamiento:
 
 | Caso | CPI | EX con memoria | MUL/DIV | Dependencia | Salto |
 |---|---:|---:|---:|---:|---:|
-| video-bounce | 2,61 | 0,08 | 0 | 0 | **1,53** |
-| video-starfield | 3,34 | 0,20 | 0,14 | 0 | **1,99** |
-| video-swap-demo | 2,67 | 0,12 | 0 | 0 | **1,55** |
-| program-mandelbrot | 2,12 | 0 | **0,68** | 0 | 0,44 |
-| cpu-gpu/gpu-scheduler/test-scheduler-c | 2,59 | 0,35 | 0,06 | 0,11 | **1,08** |
-| program-bresenham-circles-core | 2,57 | 0 | 0 | 0 | **1,51** |
-| cpu-gpu/libc/string-c | 3,29 | 0,45 | 0,02 | 0,05 | **1,62** |
+| video-bounce | 2,18 | **0,56** | 0 | 0 | 0,61 (1,53) |
+| video-starfield | 2,63 | **0,76** | 0,11 | 0 | 0,75 (1,99) |
+| video-band | 2,34 | **0,77** | 0 | 0 | 0,56 (1,62) |
+| program-mandelbrot | 1,90 | 0 | **0,68** | 0 | 0,22 (0,44) |
+| cpu-gpu/gpu-scheduler/test-scheduler-c | 2,21 | 0,35 | 0,06 | 0,11 | **0,69** (1,08) |
+| program-bresenham-circles-core | 2,25 | 0 | 0 | 0 | **1,19** (1,51) |
+| program-bresenham-lines-core | 2,52 | 0 | 0 | 0 | **1,36** (1,71) |
+| cpu-gpu/libc/string-c | 2,89 | 0,46 | 0,02 | 0,05 | **1,22** (1,62) |
+
+Lo que queda en salto es, sobre todo, saltos hacia delante tomados y saltos
+que dependen del dato (bresenham, string-c), que la prediccion estatica da
+por no tomados: eso es lo que puede ganar una BTB con contadores de 2 bits.
+En video, lo siguiente ya es el STORE que espera al volcado.
 
 "Recuperaria" es un techo estimado:
 
 | Mejora | Motivo | Recuperaria | Coste |
 |---|---|---|---|
-| Prediccion, fase 1: BRA/JAL, saltos hacia atras y retornos (RAS) en la cabeza de IF | Salto | ~la mitad: 6 -> 2-3 burbujas en bucles, llamadas y retornos | medio, poco riesgo para el reloj |
-| Prediccion, fase 2: BTB con contadores de 2 bits | Salto | lo que quede: 0-1 burbujas si acierta | alto: va en el camino de `imem_address` |
+| Prediccion, fase 2: BTB con contadores de 2 bits | Salto | saltos hacia delante y dependientes del dato; 3 -> 0-1 burbujas en los que ya se predicen | alto: va en el camino de `imem_address` |
+| Volcados: mas de una linea en el bufer de combinacion | EX con memoria | 0,5-0,8 en video | medio |
 | MUL en 1-2 ciclos | MUL/DIV | ~0,4 en mandelbrot | bajo |
 | MMIO un ciclo menos | EX con memoria | 0,05-0,2 en video | bajo |
 | AGI (base recien calculada) | Dependencia | ~0 | no compensa |
@@ -295,23 +317,18 @@ En orden de lo que mas promete segun las medidas:
    | 2b | Respuesta de la I-cache registrada, cola de 4 | hecho, CPU 63,2 MHz |
    | — | Acierto de la D-cache en 2 ciclos, comparacion registrada | hecho, CPU 65,4 MHz |
    | 3 | ALU y decision de salto en EX, con adelantamiento WB -> EX | hecho, CPU 69,4 MHz (+1 burbuja por salto tomado) |
-   | 4 | Prediccion de saltos (paso 2 de esta lista) | siguiente |
+   | 4 | Prediccion de saltos, fase 1: estatica y pila de retornos | hecho, CPU 69,8 MHz |
+   | 4b | Prediccion de saltos, fase 2: BTB | siguiente |
    | 5 | Subir el reloj (pasos 8 y 9) | pendiente |
 
    El camino critico ahora es la comprobacion de division por cero en EX
    (`ex_forward_b` -> `ex_b == 0` -> `ex_class`, 14,4 ns), seguida de la cola
    de IF (13,8 ns). La primera se quita comprobando `md_divisor` un ciclo
    despues.
-2. **Saltos mas baratos** (hoy 6 burbujas por salto tomado; es lo que mas
-   pierde en video y en casi todo lo largo). Siguiente paso, en dos fases que
-   comparten la comprobacion en EX (llevar "predicho tomado y a donde" por el
-   pipeline y corregir si falla, con el coste de hoy):
-   - **Fase 1, en la cabeza de la cola de IF**, con la predecodificacion que
-     ya hay: BRA y JAL siempre (no fallan); saltos condicionales hacia atras
-     como tomados (*backward-taken, forward-not-taken*, el cierre de un
-     bucle); y retornos con una pila de direcciones (*return address stack*:
-     JAL/JALR apilan `pc+4`, el retorno desapila). ~2-3 burbujas en vez de 6.
-     Antes, mirar con que instruccion y registro retorna `mini-cc`.
+2. **Saltos mas baratos**, en dos fases que comparten la comprobacion en EX
+   (llevar "predicho tomado y a donde" por el pipeline y corregir si falla):
+   - **Fase 1, en la cabeza de la cola de IF: hecha** (ver Estado actual).
+     mini-cc llama con `JAL R31` / `JALR R31` y retorna con `JR R31`.
    - **Fase 2, al pedir la instruccion**: una BTB (*branch target buffer*)
      indexada por el PC de busqueda, con contadores de 2 bits y un bit de
      "es retorno" que usa la misma pila. 0-1 burbujas si acierta; la fase 1

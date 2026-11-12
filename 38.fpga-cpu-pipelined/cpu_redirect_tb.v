@@ -19,6 +19,10 @@
  *   4. HALT del monitor en cada ciclo de un bucle (barrido), y RUN: el
  *      resultado final no cambia, y el HALT de detras del salto no se adelanta.
  *   5. Salto tomado esperando en ID con EX ocupado por una MUL o una DIV.
+ *   6. Prediccion estatica fallada: salto hacia atras no tomado y salida de
+ *      un bucle.
+ *   7. Pila de retornos: anidamiento mas hondo que la pila y un retorno a
+ *      otra direccion que la apilada.
  *
  * Todo con aciertos de la I-cache de 1, 2 (la real) y 3 ciclos.
  */
@@ -108,6 +112,10 @@ module cpu_redirect_tb;
   endfunction
   function [31:0] jal(input [4:0] rd, input [15:0] offset);
     jal = {6'h2c, rd, 5'd0, offset};
+  endfunction
+  // JR ra (destino = ra); JR R31 es el retorno de mini-cc.
+  function [31:0] jr(input [4:0] ra);
+    jr = {6'h2e, 5'd0, ra, 16'd0};
   endfunction
   function [31:0] store(input [4:0] rd, input [4:0] ra, input [15:0] imm);
     store = {6'h16, rd, ra, imm};
@@ -363,6 +371,120 @@ module cpu_redirect_tb;
     expect_register("5 R6", 5'd6, 32'd701);
     if (errors != 0) $fatal(1, "5: %0d fallo(s)", errors);
     $display("5. salto tomado detras de MUL/DIV: redirige una vez");
+
+    // 6. Prediccion estatica que falla (cpu.v, seccion 02b): un salto hacia
+    //    atras que no se toma, con un TRAP en el destino que se predijo, y la
+    //    salida de un bucle, cuyo camino equivocado decrementaria R1 otra vez.
+    clear_memory();
+    emit(bra(26'd1));                     // 0  -> 8
+    emit(TRAP);                           // 4  destino predicho del BEQ
+    emit(addi(5'd5, 5'd0, 16'd1));        // 8
+    emit(beq(5'd5, 5'd0, 16'hfffd));      // 12 hacia atras, no se toma
+    emit(addi(5'd1, 5'd0, 16'd3));        // 16
+    emit(addi(5'd1, 5'd1, 16'hffff));     // 20 R1 -= 1
+    emit(bne(5'd1, 5'd0, 16'hfffe));      // 24 -> 20, tres vueltas
+    emit(addi(5'd2, 5'd0, 16'd5));        // 28
+    emit(HALT);                           // 32
+    run_ok("6 prediccion fallada");
+    if (retired !== 12) begin
+      $display("6: retiradas %0d, se esperaban 12", retired);
+      errors = errors + 1;
+    end
+    expect_register("6 R1", 5'd1, 32'd0);
+    expect_register("6 R2", 5'd2, 32'd5);
+    expect_pc("6 HALT", 32'd36);
+    if (errors != 0) $fatal(1, "6: %0d fallo(s)", errors);
+    $display("6. salto hacia atras no tomado y salida de bucle: sin efectos");
+
+    // 6b. Un BRA predicho espera en la cabeza de la cola mientras EX hace una
+    //     MUL, y detras se llena la cola con TRAP: al predecir se descartan.
+    clear_memory();
+    emit(addi(5'd1, 5'd0, 16'd100));      // 0
+    emit(addi(5'd2, 5'd0, 16'd7));        // 4
+    emit(rtype(6'h0a, 5'd3, 5'd1, 5'd2)); // 8  MUL R3 = 700
+    emit(addi(5'd4, 5'd0, 16'd1));        // 12 espera en ID
+    emit(bra(26'd3));                     // 16 -> 32, espera en la cabeza
+    emit(TRAP);                           // 20 cola detras del BRA
+    emit(TRAP);                           // 24
+    emit(TRAP);                           // 28
+    emit(addi(5'd6, 5'd3, 16'd1));        // 32 R6 = 701
+    emit(HALT);                           // 36
+    run_ok("6b cola llena");
+    expect_register("6b R6", 5'd6, 32'd701);
+    expect_pc("6b HALT", 32'd40);
+    if (errors != 0) $fatal(1, "6b: %0d fallo(s)", errors);
+    $display("6b. salto predicho con la cola llena detras: la descarta");
+
+    // 7. Pila de retornos: diez llamadas anidadas (la pila tiene 8) y un
+    //    retorno a otra direccion que la apilada (g suma 8 a R31).
+    clear_memory();
+    emit(jal(5'd31, 16'd6));              // 0  llama a f1 (palabra 7)
+    emit(addi(5'd20, 5'd0, 16'd99));      // 4
+    emit(jal(5'd31, 16'd54));             // 8  llama a g (palabra 57)
+    emit(TRAP);                           // 12 retorno apilado, no el real
+    emit(TRAP);                           // 16
+    emit(addi(5'd22, 5'd0, 16'd1));       // 20 retorno real de g
+    emit(HALT);                           // 24
+    emit(rtype(6'h01, 5'd1, 5'd31, 5'd0));  // f1: R1 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f2
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd1, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd2, 5'd31, 5'd0));  // f2: R2 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f3
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd2, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd3, 5'd31, 5'd0));  // f3: R3 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f4
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd3, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd4, 5'd31, 5'd0));  // f4: R4 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f5
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd4, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd5, 5'd31, 5'd0));  // f5: R5 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f6
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd5, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd6, 5'd31, 5'd0));  // f6: R6 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f7
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd6, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd7, 5'd31, 5'd0));  // f7: R7 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f8
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd7, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd8, 5'd31, 5'd0));  // f8: R8 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f9
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd8, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd9, 5'd31, 5'd0));  // f9: R9 = R31
+    emit(jal(5'd31, 16'd3));          //   llama a f10
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd9, 5'd0));
+    emit(jr(5'd31));
+    emit(rtype(6'h01, 5'd10, 5'd31, 5'd0));  // f10: R10 = R31
+    emit(addi(5'd23, 5'd0, 16'd1));   //   la mas honda
+    emit(addi(5'd21, 5'd21, 16'd1));
+    emit(rtype(6'h01, 5'd31, 5'd10, 5'd0));
+    emit(jr(5'd31));
+    emit(addi(5'd31, 5'd31, 16'd8));      // g: vuelve 8 bytes mas alla
+    emit(jr(5'd31));
+    run_ok("7 pila de retornos");
+    expect_register("7 R21", 5'd21, 32'd10);
+    expect_register("7 R20", 5'd20, 32'd99);
+    expect_register("7 R22", 5'd22, 32'd1);
+    expect_register("7 R1", 5'd1, 32'd4);
+    expect_pc("7 HALT", 32'd28);
+    if (errors != 0) $fatal(1, "7: %0d fallo(s)", errors);
+    $display("7. llamadas mas hondas que la pila y retorno cambiado: bien");
 
     end
     $display("PASS: cpu_redirect");

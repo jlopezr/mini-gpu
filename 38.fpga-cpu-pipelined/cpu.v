@@ -37,7 +37,10 @@
 module cpu #(
     // REM/REMU right after their DIV/DIVU reuse its remainder instead of
     // dividing again. Invisible to the architecture: zero only changes cycles.
-    parameter ALU_FAST_PATH = 1'b1
+    parameter ALU_FAST_PATH = 1'b1,
+    // Static branch prediction at the head of the IF queue, with a return
+    // address stack (section 02b). Zero: every taken branch redirects from EX.
+    parameter BRANCH_PREDICT = 1'b1
 ) (
     input clk,
     input reset,
@@ -175,6 +178,10 @@ module cpu #(
   localparam [2:0] BRANCH_GEU = 3'd5;
   localparam [2:0] BRANCH_ALWAYS = 3'd6;
 
+  // Return address stack: entries, and bits to index them.
+  localparam integer RAS_DEPTH = 8;
+  localparam integer RAS_BITS = 3;
+
   // ======================================================================
   // DECLARATIONS (all before use, for Icarus elaboration)
   // ======================================================================
@@ -207,6 +214,7 @@ module cpu #(
   wire ctl_memory;
   wire ctl_muldiv;
   (* pipeline_stage = "_PERF" *) reg perf_after_redirect;
+  (* pipeline_stage = "_PERF" *) reg perf_after_predict;
 
   // Register file
   wire [31:0] register_a;
@@ -244,6 +252,16 @@ module cpu #(
   wire if_memory;
   wire [4:0] if_src_a;
   wire [4:0] if_src_b;
+  // Static prediction of the queue head (section 02b).
+  wire if_call;
+  wire if_return;
+  wire if_predict_taken;
+  wire [31:0] if_predict_target;
+  wire if_take;
+  wire if_predict_pop;
+  reg [31:0] if_ras [0:RAS_DEPTH-1];
+  reg [RAS_BITS-1:0] if_ras_top;
+  reg [RAS_BITS:0] if_ras_count;
 
   // ID
   reg id_valid;
@@ -261,6 +279,9 @@ module cpu #(
   reg [4:0] id_src_a;
   reg [4:0] id_src_b;
   reg id_memory;
+  // IF predicted it taken, and where it sent the fetch (section 02b).
+  reg id_predicted;
+  reg [31:0] id_predict_target;
   wire [31:0] id_imm_signed;
   wire [31:0] id_imm_unsigned;
   wire [31:0] id_jump_offset;
@@ -327,6 +348,10 @@ module cpu #(
   reg ex_taken;
   wire ex_redirects;
   wire [31:0] ex_target;
+  reg ex_predicted;
+  reg [31:0] ex_predict_target;
+  wire ex_wrong_return;
+  wire [31:0] ex_redirect_pc;
   reg [31:0] ex_store_data;
   reg [3:0] ex_store_mask;
   reg [1:0] ex_load_size;
@@ -432,6 +457,7 @@ module cpu #(
     if (reset || halted) begin
       perf_stall <= 5'b00000;
       perf_after_redirect <= 1'b0;
+      perf_after_predict <= 1'b0;
     end else begin
       perf_stall <= 5'b00000;
       if (ctl_memory && !ex_mem_done)
@@ -443,7 +469,7 @@ module cpu #(
       else if (ctl_advance && id_live && raw_hazard)
         perf_stall[1] <= 1'b1;
       else if (ctl_advance && !id_live)
-        perf_stall[perf_after_redirect ? 2 : 3] <= 1'b1;
+        perf_stall[(perf_after_redirect || perf_after_predict) ? 2 : 3] <= 1'b1;
 
       // Set by a taken branch; cleared once ID holds the first instruction of
       // the new path.
@@ -451,6 +477,12 @@ module cpu #(
         perf_after_redirect <= 1'b1;
       else if (id_live)
         perf_after_redirect <= 1'b0;
+      // A predicted-taken branch leaves ID empty until its target arrives;
+      // those cycles are the branch's too. Cleared when the target is popped.
+      if (if_predict_pop)
+        perf_after_predict <= 1'b1;
+      else if (if_take)
+        perf_after_predict <= 1'b0;
     end
   end
 
@@ -604,7 +636,7 @@ module cpu #(
       // ctl_advance is low in any cycle that stops the machine, so a stop
       // never leaves a redirect behind.
       if_redirect <= ctl_advance && ex_redirects;
-      if_redirect_pc <= ex_target;
+      if_redirect_pc <= ex_redirect_pc;
       if_inflight <= if_inflight_next;
       if (if_accept) imem_address <= imem_address + 32'd4;
 
@@ -625,6 +657,16 @@ module cpu #(
           imem_address <= if_redirect_pc;
           if_response_pc <= if_redirect_pc;
         end
+      end else if (if_predict_pop) begin
+        // The head goes to ID and is predicted taken: what is behind it in
+        // the queue, and in flight, is the fall-through path. ID keeps it.
+        if_valid <= 1'b0;
+        if_valid1 <= 1'b0;
+        if_valid2 <= 1'b0;
+        if_valid3 <= 1'b0;
+        if_discard <= if_inflight_next;
+        imem_address <= if_predict_target;
+        if_response_pc <= if_predict_target;
       end else begin
         if_valid <= if_valid_n;    if_pc <= if_pc_n;    if_instruction <= if_instruction_n;
         if_valid1 <= if_valid1_n;  if_pc1 <= if_pc1_n;  if_instruction1 <= if_instruction1_n;
@@ -664,6 +706,63 @@ module cpu #(
   assign if_src_a = if_compare_branch ? if_instruction[25:21] : if_instruction[20:16];
   assign if_src_b = if_compare_branch ? if_instruction[20:16] :
                     (if_store ? if_instruction[25:21] : if_instruction[15:11]);
+
+  // ======================================================================
+  // 02b. IF — STATIC BRANCH PREDICTION AND RETURN ADDRESS STACK
+  // ======================================================================
+
+  /*
+   * When ID takes the queue head (if_pop), IF predicts it from its opcode:
+   *   - BRA and JAL: always taken (they cannot fail);
+   *   - conditional branches backwards (negative offset): taken, the end of
+   *     a loop; forwards: not taken (backward-taken, forward-not-taken);
+   *   - JR R31 (mini-cc's return): taken, to the top of the return address
+   *     stack, if it is not empty. Calls (JAL/JALR with rd = R31) push pc+4.
+   * Predicted taken: the rest of the queue and whatever is in flight are
+   * the fall-through path, so they are dropped like after a redirect, and
+   * fetch goes on at the target. ID keeps the branch, with id_predicted and
+   * the target it predicted.
+   *
+   * EX checks (ex_redirects): it redirects only if the prediction was wrong
+   * -- taken and not predicted, predicted and not taken (back to pc+4), or a
+   * return to another address --, with the same cost as an unpredicted
+   * branch today. A correct one costs the fetch of its target: about three
+   * bubbles instead of six.
+   *
+   * The stack is updated here, so the wrong path after a misprediction can
+   * leave it off; that only costs a later misprediction, since EX checks.
+   * The target adders read the head registers, which have time to spare.
+   */
+  assign if_call = (if_opcode == OPCODE_JAL || if_opcode == OPCODE_JALR) &&
+                   if_instruction[25:21] == 5'd31;
+  assign if_return = if_opcode == OPCODE_JR && if_instruction[20:16] == 5'd31;
+  assign if_predict_taken = BRANCH_PREDICT && (
+      if_opcode == OPCODE_BRA || if_opcode == OPCODE_JAL ||
+      (if_compare_branch && if_instruction[15]) ||
+      (if_return && if_ras_count != 0));
+  assign if_predict_target =
+      if_return ? if_ras[if_ras_top] :
+      (if_opcode == OPCODE_BRA) ? (if_pc + 32'd4) + {{4{if_instruction[25]}}, if_instruction[25:0], 2'b00} :
+                                  (if_pc + 32'd4) + {{14{if_instruction[15]}}, if_instruction[15:0], 2'b00};
+  // ID really takes the head: not in the cycle a redirect empties everything.
+  assign if_take = if_pop && !if_redirect;
+  assign if_predict_pop = if_take && if_predict_taken;
+
+  always @(posedge clk) begin
+    if (reset) begin
+      if_ras_top <= {RAS_BITS{1'b0}};
+      if_ras_count <= {(RAS_BITS+1){1'b0}};
+    end else if (BRANCH_PREDICT && if_take) begin
+      if (if_call) begin
+        if_ras[if_ras_top + 1'b1] <= if_pc + 32'd4;
+        if_ras_top <= if_ras_top + 1'b1;
+        if (if_ras_count != RAS_DEPTH) if_ras_count <= if_ras_count + 1'b1;
+      end else if (if_return && if_ras_count != 0) begin
+        if_ras_top <= if_ras_top - 1'b1;
+        if_ras_count <= if_ras_count - 1'b1;
+      end
+    end
+  end
 
   // ======================================================================
   // 03. ID — DECODE, OPERANDS AND ADDRESSES
@@ -919,6 +1018,8 @@ module cpu #(
       id_src_a <= 5'd0;
       id_src_b <= 5'd0;
       id_memory <= 1'b0;
+      id_predicted <= 1'b0;
+      id_predict_target <= 32'd0;
     end else if (halted || ctl_flush) begin
       id_valid <= 1'b0;
     end else if (if_redirect) begin
@@ -932,6 +1033,8 @@ module cpu #(
       id_src_a <= if_src_a;
       id_src_b <= if_src_b;
       id_memory <= if_memory;
+      id_predicted <= if_predict_taken;
+      id_predict_target <= if_predict_target;
     end
   end
 
@@ -980,8 +1083,15 @@ module cpu #(
 
   // A branch is never held in EX (it is not memory or MUL/DIV), so it
   // redirects in the cycle it leaves, if it leaves (ctl_advance).
-  assign ex_redirects = ex_valid && (ex_class == OPCLASS_BRANCH) && ex_taken;
   assign ex_target = ex_branch_register ? (ex_sum & ~32'd3) : ex_branch_target;
+  // Section 02b: only a misprediction redirects. A predicted PC-relative
+  // target is the same sum as ex_branch_target; a predicted register jump
+  // (JR R31, offset 0) is checked against the register itself.
+  assign ex_wrong_return = ex_predicted && ex_branch_register &&
+                           ex_a[31:2] != ex_predict_target[31:2];
+  assign ex_redirects = ex_valid && (ex_class == OPCLASS_BRANCH) &&
+                        ((ex_taken != ex_predicted) || ex_wrong_return);
+  assign ex_redirect_pc = ex_taken ? ex_target : ex_next_pc;
 
   // Store data: the low byte or half replicated, as the mask expects.
   always @* begin
@@ -1157,6 +1267,8 @@ module cpu #(
       ex_branch_cond <= BRANCH_ALWAYS;
       ex_branch_register <= 1'b0;
       ex_branch_target <= 32'd0;
+      ex_predicted <= 1'b0;
+      ex_predict_target <= 32'd0;
       ex_store_mask <= 4'b0000;
       ex_load_size <= 2'd2;
       ex_load_signed <= 1'b0;
@@ -1213,6 +1325,8 @@ module cpu #(
           ex_branch_cond <= id_branch_cond;
           ex_branch_register <= id_branch_register;
           ex_branch_target <= id_branch_target;
+          ex_predicted <= id_predicted;
+          ex_predict_target <= id_predict_target;
           ex_store_mask <= id_store_mask;
           ex_load_size <= id_access_size;
           ex_load_signed <= id_access_signed;
