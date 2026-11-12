@@ -23,6 +23,8 @@
  *      un bucle.
  *   7. Pila de retornos: anidamiento mas hondo que la pila y un retorno a
  *      otra direccion que la apilada.
+ *   8. BTB con alias: un salto que encuentra el destino de otro, y una
+ *      instruccion que no es un salto predicha como tomada.
  *
  * Todo con aciertos de la I-cache de 1, 2 (la real) y 3 ciclos.
  */
@@ -56,7 +58,10 @@ module cpu_redirect_tb;
 
   // Sin memoria de datos: un acceso que llegara a EX se quedaria esperando
   // para siempre (dmem_ready = 0), y el banco lo ve como un cuelgue.
-  cpu dut (
+  // BTB diminuta (4 entradas, 1 bit de etiqueta): dos instrucciones a 32 bytes
+  // comparten entrada, y el caso 8 lo aprovecha. Los demas casos corren igual
+  // con ella; la BTB de verdad la usan cpu_tb, cpu_perf_tb y la suite.
+  cpu #(.BTB_BITS(2), .BTB_TAG_BITS(1)) dut (
       .clk(clk), .reset(reset),
       .run_request(run_request), .halt_request(halt_request),
       .step_request(step_request),
@@ -485,6 +490,37 @@ module cpu_redirect_tb;
     expect_pc("7 HALT", 32'd28);
     if (errors != 0) $fatal(1, "7: %0d fallo(s)", errors);
     $display("7. llamadas mas hondas que la pila y retorno cambiado: bien");
+
+    // 8. BTB con alias (seccion 02c): las palabras 2, 10 y 18 comparten
+    //    entrada. El BNE de la 2 la llena (destino 1); el BEQ de la 10 la
+    //    encuentra con el destino de otro (debe ir a la 12, no a la 1) y la
+    //    reescribe; el ADDI de la 18 no es un salto y la BTB lo da por tomado
+    //    hacia la 12, que sumaria 1 a R5 otra vez.
+    clear_memory();
+    emit(addi(5'd1, 5'd0, 16'd3));        // 0
+    emit(addi(5'd1, 5'd1, 16'hffff));     // 4  R1 -= 1
+    emit(bne(5'd1, 5'd0, 16'hfffe));      // 8  -> 4
+    emit(addi(5'd3, 5'd0, 16'd7));        // 12
+    for (k = 0; k < 6; k = k + 1) emit(32'h0000_0000);  // 16-36 NOP
+    emit(beq(5'd0, 5'd0, 16'd1));         // 40 -> 48 (alias de la 8)
+    emit(TRAP);                           // 44
+    emit(addi(5'd5, 5'd5, 16'd1));        // 48 R5 += 1
+    for (k = 0; k < 5; k = k + 1) emit(32'h0000_0000);  // 52-68 NOP
+    emit(addi(5'd2, 5'd0, 16'd5));        // 72 (alias de la 8, no es salto)
+    emit(addi(5'd4, 5'd0, 16'd9));        // 76
+    emit(HALT);                           // 80
+    run_ok("8 alias en la BTB");
+    if (retired !== 24) begin
+      $display("8: retiradas %0d, se esperaban 24", retired);
+      errors = errors + 1;
+    end
+    expect_register("8 R1", 5'd1, 32'd0);
+    expect_register("8 R5", 5'd5, 32'd1);
+    expect_register("8 R2", 5'd2, 32'd5);
+    expect_register("8 R4", 5'd4, 32'd9);
+    expect_pc("8 HALT", 32'd84);
+    if (errors != 0) $fatal(1, "8: %0d fallo(s)", errors);
+    $display("8. alias en la BTB: destino ajeno y prediccion sobre un no-salto");
 
     end
     $display("PASS: cpu_redirect");
