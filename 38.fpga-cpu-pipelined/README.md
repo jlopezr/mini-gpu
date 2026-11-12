@@ -121,6 +121,23 @@ cpu.v ────┤                                          ├── arbitro
   en que se escribio e invalidar todo es sumar uno (en el flanco de `reset` o de
   la CPU parandose). Sin bits de valido, cada cache cuesta unas 330-390 LUT en
   vez de unas 2.000-2.300.
+- **El STORE actualiza la D-cache** (`dcache.v`, "El STORE que actualiza"):
+  antes invalidaba la linea de su indice, y el codigo compilado, que guarda en
+  la pila y relee al momento, fallaba en el 26-33 % de los LOAD (el 93 % de los
+  fallos eran lineas recien tiradas por un STORE; lo midio un modelo de la
+  cache sobre la traza del simulador funcional). Ahora lee etiqueta y linea,
+  compara en S1 y escribe la linea mezclada en S2, sin que la CPU espere; quien
+  lea esa linea entre medias la recibe adelantada. En placa, con tie_fighter:
+  fallos del 28,4 % al 2,2 %, CPI de 2,57 a 2,06.
+
+  | Sketch (mini-gl, 25 MHz) | Antes | Ahora |
+  |---|---:|---:|
+  | tie_fighter, float | ~1,25 fps | 1,53 fps |
+  | racer, float | 1,18 fps* | 1,58 fps |
+  | tie_fighter, coma fija (`make FIXED=1`) | 1,45 fps* | 2,32 fps |
+  | racer, coma fija | 1,49 fps* | 2,19 fps |
+
+  \* con el bitstream de la fase 1 (sin BTB).
 - **Dos resets en la CPU**: `reset` (el del sistema, con el que tambien se
   vacian las caches) y `soft_reset` (el RESET del monitor, solo la CPU). Con
   el segundo las caches siguen y contestan lo que ya habian aceptado; la CPU
@@ -270,6 +287,11 @@ todo esto: cuenta frames de pared, con el viaje de parada. A 50 MHz el frame
 ocupado se reduciria a la mitad.
 
 ## Que mejorar primero (tras la BTB)
+
+*Medido antes de que el STORE actualizara la D-cache: la columna "EX con
+memoria" de los casos con STOREs a SDRAM ha bajado desde entonces.* En los
+sketches 3D de mini-gl, despues de ese cambio (tie_fighter, 10 s): emite 49 %,
+salto 15 %, EX con memoria 15 %, MUL/DIV 13 %, ID vacio 8 %.
 
 Reparto de `--measure` (CPI = 1 + motivos) en los casos que mas duran; entre
 parentesis, el salto con la prediccion estatica sola:
