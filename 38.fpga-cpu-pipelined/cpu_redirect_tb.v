@@ -16,6 +16,8 @@
  *   4. HALT del monitor en cada ciclo de un bucle (barrido), y RUN: el
  *      resultado final no cambia, y el HALT de detras del salto no se adelanta.
  *   5. Salto tomado esperando en ID con EX ocupado por una MUL o una DIV.
+ *
+ * Todo con aciertos de la I-cache de 1, 2 (la real) y 3 ciclos.
  */
 module cpu_redirect_tb;
 
@@ -25,8 +27,8 @@ module cpu_redirect_tb;
   reg halt_request = 1'b0;
   reg step_request = 1'b0;
   reg [4:0] debug_register_address = 5'd0;
-  reg [31:0] imem_read_data = 32'h0000_0000;
-  reg imem_rvalid = 1'b0;
+  wire [31:0] imem_read_data;
+  wire imem_rvalid;
 
   wire halted;
   wire error;
@@ -62,9 +64,21 @@ module cpu_redirect_tb;
       .debug_register_data(debug_register_data), .debug_pc(debug_pc),
       .perf_stall(), .perf_muldiv_retired());
 
+  // Memoria de instrucciones con latencia de acierto `imem_latency` (1 a 3):
+  // la CPU tiene que dar lo mismo con cualquiera. La real tarda 2.
+  integer imem_latency = 2;
+  reg [2:0] imem_pipe_valid = 3'b000;
+  reg [31:0] imem_pipe_data[0:2];
   always @(posedge clk) begin
-    imem_rvalid <= imem_valid;
-    if (imem_valid) imem_read_data <= instruction_memory[imem_address[7:2]];
+    imem_pipe_valid <= reset ? 3'b000 : {imem_pipe_valid[1:0], imem_valid};
+    imem_pipe_data[0] <= instruction_memory[imem_address[7:2]];
+    imem_pipe_data[1] <= imem_pipe_data[0];
+    imem_pipe_data[2] <= imem_pipe_data[1];
+  end
+  assign imem_rvalid = imem_pipe_valid[imem_latency - 1];
+  assign imem_read_data = imem_pipe_data[imem_latency - 1];
+
+  always @(posedge clk) begin
     if (reset) retired <= 0;
     else if (instruction_retired) retired <= retired + 1;
     if (dmem_valid) $fatal(1, "un acceso a datos llego a EX en pc %08x", dut.ex_pc);
@@ -187,8 +201,12 @@ module cpu_redirect_tb;
     $fatal(1, "cpu_redirect_tb: timeout");
   end
 
+  integer lat;
   initial begin
     errors = 0;
+    for (lat = 1; lat <= 3; lat = lat + 1) begin
+    imem_latency = lat;
+    $display("-- latencia de la I-cache: %0d", lat);
 
     // 1. Lo que hay detras de un salto tomado no deja rastro. Cada salto
     //    salta UNA instruccion, la del camino equivocado.
@@ -319,6 +337,7 @@ module cpu_redirect_tb;
     if (errors != 0) $fatal(1, "5: %0d fallo(s)", errors);
     $display("5. salto tomado detras de MUL/DIV: redirige una vez");
 
+    end
     $display("PASS: cpu_redirect");
     $finish;
   end

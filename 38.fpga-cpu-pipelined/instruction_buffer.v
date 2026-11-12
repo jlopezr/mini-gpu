@@ -27,14 +27,16 @@
  * consulta va en dos ciclos:
  *
  *   ciclo N   se acepta la peticion A y la EBR lee su linea y su etiqueta
- *   ciclo N+1 se compara: acierto -> `rvalid` con la instruccion, y en ese
- *             mismo ciclo se acepta (y se lee) la peticion siguiente, B
+ *   ciclo N+1 se compara: acierto -> la respuesta va a un registro, y en
+ *             ese mismo ciclo se acepta (y se lee) la peticion siguiente, B
+ *   ciclo N+2 `rvalid` con la instruccion, desde ese registro
  *
- * Un acierto se sigue contestando en N+1 y se sigue aceptando una peticion por
- * ciclo: para la CPU no cambia nada. `rvalid` sale de la comparacion
- * (combinacional desde la salida de la EBR); registrarlo costaria un ciclo de
- * latencia y la cola de tres entradas de la CPU dejaria de bastar para una
- * instruccion por ciclo.
+ * Se sigue aceptando una peticion por ciclo y contestando una por ciclo
+ * mientras se acierte; el acierto tarda dos ciclos. La respuesta sale
+ * registrada porque la EBR da el dato tarde (~6 ns despues del flanco, sin
+ * registro de salida) y, con `rvalid` combinacional, EBR + comparacion + la
+ * cola de la CPU eran el camino critico del diseno. La CPU necesita por eso
+ * una cola de cuatro entradas para una instruccion por ciclo (cpu.v).
  *
  * EL FALLO CON B YA ACEPTADA. Cuando A falla, B ya entro (en N+1 `ready` estaba
  * alto). B se queda en `lookup_*` y su lectura de la EBR se repite mientras se
@@ -76,9 +78,9 @@ module instruction_buffer #(
     // Lado CPU: el puerto imem de cpu.v, con peticion y respuesta separadas.
     // La peticion se acepta en el ciclo en que `valid` y `ready` estan altos;
     // la respuesta llega despues con `rvalid`, una por peticion y en orden. Un
-    // acierto responde al ciclo siguiente y en ese mismo ciclo ya se acepta la
-    // siguiente peticion: una busqueda por ciclo mientras se acierte. Durante
-    // un fallo `ready` esta bajo hasta servirlo.
+    // acierto responde dos ciclos despues, y entre tanto se siguen aceptando
+    // peticiones: una busqueda por ciclo mientras se acierte. Durante un
+    // fallo `ready` esta bajo hasta servirlo.
     input  wire        cpu_imem_valid,
     input  wire [31:0] cpu_imem_address,
     output wire        cpu_imem_ready,
@@ -205,9 +207,18 @@ module instruction_buffer #(
 
   wire [31:0] hit_word = data_q[{lookup_address[3:2], 5'b00000} +: 32];
 
-  assign cpu_imem_rvalid = answer_now || (state == ST_SERVE);
-  assign cpu_imem_read_data = (state == ST_SERVE) ? serve_data :
-                              (lookup_cacheable ? hit_word : INVALID_OPCODE);
+  // La respuesta, registrada: `rvalid` y el dato llegan a la CPU un ciclo
+  // despues de evaluar, desde biestables (ver la cabecera).
+  reg rsp_valid_q;
+  reg [31:0] rsp_data_q;
+  assign cpu_imem_rvalid = rsp_valid_q;
+  assign cpu_imem_read_data = rsp_data_q;
+
+  always @(posedge clk) begin
+    rsp_valid_q <= !reset && (answer_now || (state == ST_SERVE));
+    rsp_data_q <= (state == ST_SERVE) ? serve_data :
+                  (lookup_cacheable ? hit_word : INVALID_OPCODE);
+  end
 
   always @(posedge clk) begin
     hit_event <= 1'b0;

@@ -184,9 +184,29 @@ En orden de lo que mas promete segun las medidas:
    de ~16 ciclos a ~6-7, y el video de CPI 3,96 (hoy 2,6) a cerca de 1,7; con
    el reloj a 50 MHz (paso 8), 4-5 veces mas rapido en tiempo real que con
    `icache-ebr`.
-3. **Por que un acierto de la D-cache cuesta 2-3 ciclos**: subword-loads
-   acierta 9 de 10 LOAD y aun le quedan 3,46 ciclos de "EX con memoria" por
-   instruccion. Mirarlo en `cpu_perf_tb`.
+3. **Un acierto de la D-cache cuesta 3 ciclos de EX** (medido en
+   `cpu_data_path_tb`, con CPU, D-cache y adaptador reales: 3,00 por LOAD, y
+   3,31 justo detras de un STORE). Ciclo a ciclo:
+
+   ```text
+   E0  el LOAD entra en EX; la D-cache lo acepta y lee la EBR
+   E1  compara la etiqueta y registra la respuesta (local_rvalid)
+   E2  llega rvalid: el LOAD pasa a WB y EX queda vacio
+   E3  entra en EX la instruccion siguiente
+   ```
+
+   Un ciclo es la lectura de la EBR, otro la respuesta registrada y el
+   tercero que la instruccion siguiente no entra en EX en el mismo ciclo en
+   que el acceso acaba (`ctl_advance` mira `ex_is_memory`, no si termina).
+   subword-loads son 13 instrucciones: un fallo frio y 9 aciertos de 3
+   ciclos, de ahi sus ~3,5. Tras un STORE solo se anaden 0,31: `pending`
+   cuenta las respuestas del adaptador, que contesta un STORE al ciclo
+   siguiente.
+
+   Que hacer: dejar entrar la siguiente en el ciclo en que el acceso acaba
+   (-1 ciclo en todo acceso a memoria o MMIO) y, para tiempos, registrar la
+   comparacion de la D-cache (+1). Un LOAD por ciclo necesita una etapa MEM
+   aparte (partir ID/EX, paso de los 80 MHz).
 4. **Menos fallos de primer acceso**: traer la linea siguiente por adelantado
    (prefetch) en las dos caches, o lineas de 32 bytes.
 5. **Un programa grande para medir tamaños**: una demo en C con biblioteca o un

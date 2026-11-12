@@ -4,7 +4,8 @@
 /*
  * El reset de instruction_buffer debe invalidar las lineas, aunque `cpu_halted`
  * no llegue a subir. Y, con peticion y respuesta separadas, cuatro peticiones
- * seguidas que aciertan se responden en cuatro ciclos seguidos (prueba 5).
+ * seguidas que aciertan se responden en cuatro ciclos seguidos, cada una dos
+ * ciclos despues de aceptarse (prueba 5).
  *
  * Con la cache en EBR la consulta va en dos ciclos, asi que cuando una
  * peticion falla la siguiente ya esta aceptada y hay que repetirla despues del
@@ -55,6 +56,7 @@ module instruction_buffer_reset_tb;
 
     integer errors = 0;
     integer n, misses;
+    integer accept_cycle;
 
     // Hace una busqueda y, si falla, contesta con `line`. Devuelve si hubo fallo.
     // La peticion se acepta en el flanco en que `ready` esta alto; la respuesta
@@ -209,6 +211,7 @@ module instruction_buffer_reset_tb;
         for (n = 0; n < 4; n = n + 1) begin
             imem_address = 4 * n; imem_valid = 1;
             @(negedge clk);
+            if (n == 0) accept_cycle = cycle;
             if (!imem_ready) begin errors = errors + 1; $display("FALLO 5a: ready bajo en la peticion %0d", n); end
         end
         imem_valid = 0;
@@ -221,6 +224,13 @@ module instruction_buffer_reset_tb;
             if (n > 0 && response_cycle[n] !== response_cycle[0] + n) begin
                 errors = errors + 1; $display("FALLO 5d: respuesta %0d no llega en el ciclo siguiente", n);
             end
+        end
+        // El acierto tarda DOS ciclos: aceptada en el flanco t, `rvalid` en el
+        // ciclo que acaba en t + 2 (la respuesta sale registrada).
+        if (response_cycle[0] - accept_cycle !== 1) begin
+            errors = errors + 1;
+            $display("FALLO 5e: el acierto tarda %0d ciclos, esperaba 2",
+                     response_cycle[0] - accept_cycle + 1);
         end
 
         // ---- Modelo automatico a partir de aqui ----

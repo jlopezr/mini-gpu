@@ -175,21 +175,23 @@ module cpu #(
   wire [31:0] register_write_data;
 
   // IF: fetch queue. Entry 0 (if_valid/if_pc/if_instruction) is the head
-  // that ID takes; entries 1 and 2 are behind it.
-  reg if_valid, if_valid1, if_valid2;
-  reg [31:0] if_pc, if_pc1, if_pc2;
-  reg [31:0] if_instruction, if_instruction1, if_instruction2;
+  // that ID takes; entries 1 to 3 are behind it.
+  reg if_valid, if_valid1, if_valid2, if_valid3;
+  reg [31:0] if_pc, if_pc1, if_pc2, if_pc3;
+  reg [31:0] if_instruction, if_instruction1, if_instruction2, if_instruction3;
   reg [31:0] if_response_pc;
-  reg [1:0] if_inflight;
-  reg [1:0] if_discard;
+  // Up to four: entries + in flight never pass four (imem_valid), but after
+  // a redirect the queue is empty and all four can be in flight.
+  reg [2:0] if_inflight;
+  reg [2:0] if_discard;
   wire [2:0] if_used;
   wire if_accept;
   wire if_keep;
   wire if_pop;
-  wire [1:0] if_inflight_next;
-  reg if_valid_n, if_valid1_n, if_valid2_n;
-  reg [31:0] if_pc_n, if_pc1_n, if_pc2_n;
-  reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n;
+  wire [2:0] if_inflight_next;
+  reg if_valid_n, if_valid1_n, if_valid2_n, if_valid3_n;
+  reg [31:0] if_pc_n, if_pc1_n, if_pc2_n, if_pc3_n;
+  reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n, if_instruction3_n;
   // A taken branch, registered: IF redirects the cycle after ID decides.
   reg if_redirect;
   reg [31:0] if_redirect_pc;
@@ -447,12 +449,13 @@ module cpu #(
    * Fetch with request and response split (see instruction_buffer.v).
    *
    * imem_address is the address of the next request. A request goes out
-   * whenever its response is sure to fit: the three queue entries count both
+   * whenever its response is sure to fit: the four queue entries count both
    * the instructions already there and the requests still in flight. The
    * count does not look at whether ID takes the head this cycle, so ID's
-   * decision (raw_hazard, id_redirects_fetch) stays out of imem_valid. With a
-   * one-cycle hit, three entries are exactly enough for one instruction per
-   * cycle: request, response, and ID taking it.
+   * decision (raw_hazard, id_redirects_fetch) stays out of imem_valid. A
+   * hit answers two cycles after the request (the I-cache registers its
+   * response), so four entries are exactly enough for one instruction per
+   * cycle: two requests in flight, the response, and ID taking it.
    *
    * A redirect (taken branch) or a stop (abort, fault, STEP/HALT retire)
    * empties the queue, and the responses still in flight belong to the old
@@ -468,12 +471,12 @@ module cpu #(
    * one bubble per taken branch (3 -> 4), which branch prediction can win
    * back. cpu_redirect_tb checks the wrong-path slot.
    */
-  assign if_used = {1'b0, if_valid} + {1'b0, if_valid1} + {1'b0, if_valid2} +
-                   {1'b0, if_inflight};
-  assign imem_valid = !halted && (if_used < 3'd3);
+  assign if_used = {2'b00, if_valid} + {2'b00, if_valid1} + {2'b00, if_valid2} +
+                   {2'b00, if_valid3} + if_inflight;
+  assign imem_valid = !halted && (if_used < 3'd4);
   assign if_accept = imem_valid && imem_ready;
-  assign if_keep = imem_rvalid && (if_discard == 2'd0);
-  assign if_inflight_next = if_inflight + {1'b0, if_accept} - {1'b0, imem_rvalid};
+  assign if_keep = imem_rvalid && (if_discard == 3'd0);
+  assign if_inflight_next = if_inflight + {2'b00, if_accept} - {2'b00, imem_rvalid};
   assign if_pop = ctl_advance && !raw_hazard && if_valid;
 
   // Next queue contents without a flush: pop the head if ID takes it, then
@@ -482,18 +485,22 @@ module cpu #(
     if_valid_n = if_valid;    if_pc_n = if_pc;    if_instruction_n = if_instruction;
     if_valid1_n = if_valid1;  if_pc1_n = if_pc1;  if_instruction1_n = if_instruction1;
     if_valid2_n = if_valid2;  if_pc2_n = if_pc2;  if_instruction2_n = if_instruction2;
+    if_valid3_n = if_valid3;  if_pc3_n = if_pc3;  if_instruction3_n = if_instruction3;
     if (if_pop) begin
       if_valid_n = if_valid1;  if_pc_n = if_pc1;  if_instruction_n = if_instruction1;
       if_valid1_n = if_valid2; if_pc1_n = if_pc2; if_instruction1_n = if_instruction2;
-      if_valid2_n = 1'b0;
+      if_valid2_n = if_valid3; if_pc2_n = if_pc3; if_instruction2_n = if_instruction3;
+      if_valid3_n = 1'b0;
     end
     if (if_keep) begin
       if (!if_valid_n) begin
         if_valid_n = 1'b1;  if_pc_n = if_response_pc;  if_instruction_n = imem_read_data;
       end else if (!if_valid1_n) begin
         if_valid1_n = 1'b1; if_pc1_n = if_response_pc; if_instruction1_n = imem_read_data;
-      end else begin
+      end else if (!if_valid2_n) begin
         if_valid2_n = 1'b1; if_pc2_n = if_response_pc; if_instruction2_n = imem_read_data;
+      end else begin
+        if_valid3_n = 1'b1; if_pc3_n = if_response_pc; if_instruction3_n = imem_read_data;
       end
     end
   end
@@ -502,17 +509,20 @@ module cpu #(
     if (reset) begin
       imem_address <= 32'd0;
       if_response_pc <= 32'd0;
-      if_inflight <= 2'd0;
-      if_discard <= 2'd0;
+      if_inflight <= 3'd0;
+      if_discard <= 3'd0;
       if_valid <= 1'b0;
       if_valid1 <= 1'b0;
       if_valid2 <= 1'b0;
+      if_valid3 <= 1'b0;
       if_pc <= 32'd0;
       if_pc1 <= 32'd0;
       if_pc2 <= 32'd0;
+      if_pc3 <= 32'd0;
       if_instruction <= 32'd0;
       if_instruction1 <= 32'd0;
       if_instruction2 <= 32'd0;
+      if_instruction3 <= 32'd0;
       if_redirect <= 1'b0;
       if_redirect_pc <= 32'd0;
     end else begin
@@ -529,6 +539,7 @@ module cpu #(
         if_valid <= 1'b0;
         if_valid1 <= 1'b0;
         if_valid2 <= 1'b0;
+        if_valid3 <= 1'b0;
         if_discard <= if_inflight_next;
         if (halted) begin
           if (ctl_start) begin
@@ -543,8 +554,9 @@ module cpu #(
         if_valid <= if_valid_n;    if_pc <= if_pc_n;    if_instruction <= if_instruction_n;
         if_valid1 <= if_valid1_n;  if_pc1 <= if_pc1_n;  if_instruction1 <= if_instruction1_n;
         if_valid2 <= if_valid2_n;  if_pc2 <= if_pc2_n;  if_instruction2 <= if_instruction2_n;
+        if_valid3 <= if_valid3_n;  if_pc3 <= if_pc3_n;  if_instruction3 <= if_instruction3_n;
         if (if_keep) if_response_pc <= if_response_pc + 32'd4;
-        if (imem_rvalid && !if_keep) if_discard <= if_discard - 2'd1;
+        if (imem_rvalid && !if_keep) if_discard <= if_discard - 3'd1;
       end
     end
   end

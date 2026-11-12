@@ -13,6 +13,12 @@
  *
  * Cada programa termina en HALT; despues se espera a `wb_dirty` (lo que hace el
  * monitor) y se compara la memoria del modelo.
+ *
+ * Tambien mide lo que cuesta un LOAD que acierta en la D-cache, en ciclos de
+ * "EX con memoria" (perf_stall[0]) y por diferencia entre dos programas que
+ * solo cambian en los LOAD medidos:
+ *   aciertos   LOAD seguidos a una linea ya en la cache;
+ *   tras STORE pares STORE (a otra linea, sale sin esperar) + LOAD que acierta.
  */
 module cpu_data_path_tb;
   reg clk = 1'b0;
@@ -165,6 +171,50 @@ module cpu_data_path_tb;
 
   integer errors = 0;
   integer k, t;
+  integer base_ex_mem, base_cycles;
+
+  task measure_hits(input integer n);
+    begin
+      for (k = 0; k < WORDS; k = k + 1) instruction_memory[k] = HALT;
+      instruction_memory[0] = movi(5'd1, 16'h0300);
+      instruction_memory[1] = addi(5'd0, 5'd0, 16'd0);   // NOP: R1 listo
+      instruction_memory[2] = addi(5'd0, 5'd0, 16'd0);
+      instruction_memory[3] = load(5'd4, 5'd1, 16'd0);   // falla: trae la linea
+      for (k = 0; k < n; k = k + 1)
+        instruction_memory[4 + k] = load(5'd5 + (k % 8), 5'd1, 4 * (k % 4));
+      run_program("aciertos");
+    end
+  endtask
+
+  // 16 pares STORE (a 0x500 + 16k: una linea nueva cada vez, asi que cada uno
+  // sale al puerto) y, con `with_load`, un LOAD que acierta en 0x300.
+  task measure_store_load(input integer with_load);
+    begin
+      for (k = 0; k < WORDS; k = k + 1) instruction_memory[k] = HALT;
+      instruction_memory[0] = movi(5'd1, 16'h0300);
+      instruction_memory[1] = movi(5'd2, 16'h0500);
+      instruction_memory[2] = addi(5'd0, 5'd0, 16'd0);
+      instruction_memory[3] = load(5'd4, 5'd1, 16'd0);   // falla: trae la linea
+      for (k = 0; k < 16; k = k + 1) begin
+        instruction_memory[4 + 2 * k] = store(5'd1, 5'd2, 16 * k);
+        instruction_memory[5 + 2 * k] = with_load ? load(5'd5 + (k % 8), 5'd1, 4 * (k % 4))
+                                                  : addi(5'd0, 5'd0, 16'd0);
+      end
+      run_program("tras store");
+    end
+  endtask
+
+  // Ciclos con la CPU en marcha y de ellos, los de EX ocupado con memoria.
+  integer run_cycles = 0, ex_mem_cycles = 0;
+  always @(posedge clk) begin
+    if (reset) begin
+      run_cycles <= 0;
+      ex_mem_cycles <= 0;
+    end else begin
+      if (!halted) run_cycles <= run_cycles + 1;
+      if (perf_stall[0]) ex_mem_cycles <= ex_mem_cycles + 1;
+    end
+  end
 
   task run_program(input [8*12-1:0] name);
     begin
@@ -233,6 +283,22 @@ module cpu_data_path_tb;
         $display("FALLO copia: memoria[%h] = %h, esperaba %h", 32'h400 + 4 * k,
                  mem_word(32'h400 + 4 * k), 32'hC0DE_0000 + k);
       end
+
+    // 3) Coste de un acierto. Un LOAD frio a 0x300 (falla y trae la linea) y
+    //    despues `n` LOAD a la misma linea, a registros distintos que nadie
+    //    lee: sin dependencias, solo la D-cache.
+    measure_hits(0);
+    base_ex_mem = ex_mem_cycles; base_cycles = run_cycles;
+    measure_hits(32);
+    $display("PERF acierto: %0.2f ciclos de EX con memoria por LOAD (%0.2f de CPU)",
+             (ex_mem_cycles - base_ex_mem) / 32.0, (run_cycles - base_cycles) / 32.0);
+
+    // 4) Un LOAD que acierta justo detras de un STORE que sale sin esperar.
+    measure_store_load(0);
+    base_ex_mem = ex_mem_cycles; base_cycles = run_cycles;
+    measure_store_load(1);
+    $display("PERF acierto tras STORE: %0.2f ciclos de EX con memoria por LOAD (%0.2f de CPU)",
+             (ex_mem_cycles - base_ex_mem) / 16.0, (run_cycles - base_cycles) / 16.0);
 
     if (errors == 0) $display("PASS: cpu_data_path");
     else             $display("FAIL: cpu_data_path (%0d errores)", errors);

@@ -16,7 +16,7 @@
  *             MULDIV_RETIRED, con valor exacto.
  *
  * La memoria imita un ACIERTO de instruction_buffer.v: acepta una peticion
- * por ciclo (`ready` siempre alto) y la responde al ciclo siguiente con
+ * por ciclo (`ready` siempre alto) y la responde dos ciclos despues con
  * `rvalid`. Es lo que veria la CPU en la placa con un 100 % de aciertos; los
  * fallos no se modelan.
  *
@@ -37,8 +37,8 @@ module cpu_perf_tb;
   reg reset = 1'b1;
   reg run_request = 1'b0;
   reg [4:0] debug_register_address = 5'd0;
-  reg [31:0] imem_read_data = 32'h0000_0000;
-  reg imem_rvalid = 1'b0;
+  wire [31:0] imem_read_data;
+  wire imem_rvalid;
 
   wire dmem_valid;
   wire [31:0] dmem_address, dmem_write_data;
@@ -114,12 +114,17 @@ module cpu_perf_tb;
       .dmem_hit(1'b0), .dmem_miss(1'b0),
       .muldiv_stall(perf_stall[4]), .muldiv_retired(perf_muldiv_retired));
 
-  // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta al
-  // ciclo siguiente.
+  // Acierto del bufer de instrucciones: una peticion por ciclo, respuesta dos
+  // ciclos despues (instruction_buffer.v registra su respuesta).
+  reg [1:0] imem_pipe_valid = 2'b00;
+  reg [31:0] imem_pipe_data0, imem_pipe_data1;
   always @(posedge clk) begin
-    imem_rvalid <= imem_valid;
-    if (imem_valid) imem_read_data <= instruction_memory[imem_address[9:2]];
+    imem_pipe_valid <= reset ? 2'b00 : {imem_pipe_valid[0], imem_valid};
+    imem_pipe_data0 <= instruction_memory[imem_address[9:2]];
+    imem_pipe_data1 <= imem_pipe_data0;
   end
+  assign imem_rvalid = imem_pipe_valid[1];
+  assign imem_read_data = imem_pipe_data1;
 
   // Memoria de datos: 1024 palabras, con el comportamiento de cpu_dmem_adapter.
   localparam integer FLUSH_CYCLES = 8;
