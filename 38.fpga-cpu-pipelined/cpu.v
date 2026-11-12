@@ -8,26 +8,29 @@
  * one instruction, and errors leave the architectural PC on the faulting
  * instruction.
  *
- * IF -> ID -> EX -> WB. ID decodes, reads the register file (with a bypass
- * from WB) and computes load/store addresses; EX has the ALU, the branch
- * decision and the memory access.
+ * IF -> ID -> EX -> MEM -> WB. ID decodes, reads the register file (with a
+ * bypass from WB) and computes load/store addresses; EX has the ALU, the
+ * branch decision and MUL/DIV; MEM the data-memory access (section 04c).
  *
  * Forwarding map (grep the tags):
- *   FWD-WB-EX  WB -> EX operand mux (ex_a, ex_b): the result of the
+ *   FWD-MEM-EX MEM -> EX operand mux (ex_a, ex_b): the result of the
  *              instruction right before, for the ALU, branch compare,
- *              JALR/JR target, store data and MUL/DIV operands. Selected by
- *              ex_forward_a/b, decided in ID and registered.
+ *              JALR/JR target, store data and MUL/DIV operands.
+ *   FWD-WB-EX  WB -> EX, the same for the instruction two before. Both
+ *              selected by ex_forward_mem/wb_a/b, decided in ID and
+ *              registered.
  *   FWD-WB-ID  register-file bypass (id_op_a, id_op_b): the value WB writes
  *              this cycle, which the asynchronous read does not see yet.
- *   FWD-HOLD   an instruction held in EX (memory, MUL/DIV) latches its
- *              forwarded operands, since WB retires after one cycle.
- *   A load's consumer needs no path of its own: it waits in ID during the
- *   access and enters EX as the load moves to WB with its data (FWD-WB-EX).
- * Not forwarded, on purpose:
+ *   FWD-HOLD   an instruction held in EX (MUL/DIV, or a memory access in
+ *              MEM ahead) latches its forwarded operands, since the
+ *              producers move on.
+ * Waits in ID (raw_hazard):
+ *   load-use   the instruction in EX is a load: its data exists when it
+ *              leaves MEM, and then comes from WB (FWD-WB-EX).
  *   AGI        a load/store whose base register is written by the
- *              instruction in EX waits one cycle (raw_hazard): the address
- *              is computed in ID, and EX -> ID forwarding would put the ALU
- *              in front of the address adder in the same cycle.
+ *              instruction in EX or MEM: the address is computed in ID, and
+ *              forwarding to ID would put the ALU or a mux in front of the
+ *              address adder in the same cycle.
  *   Branches are decided in EX, not in ID with forwarded operands, for the
  *   same reason; prediction is what will recover their bubbles.
  *
@@ -35,11 +38,11 @@
  * nothing is in flight afterwards. soft_reset is the monitor's RESET, which
  * restarts only the CPU while the I-cache and the D-cache may still owe it
  * responses (a program was running): it resets everything but the in-flight
- * bookkeeping (if_req_*, if_inflight, if_discard, ex_mem_drop), and what is
+ * bookkeeping (if_req_*, if_inflight, if_discard, mem_drop), and what is
  * in flight becomes dropped, as when the CPU stops.
  *
  * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
- * several cycles like a memory access (section 04b).
+ * several cycles (section 04b); MEM goes on meanwhile, with bubbles.
  */
 module cpu #(
     // REM/REMU right after their DIV/DIVU reuse its remainder instead of
@@ -80,7 +83,7 @@ module cpu #(
 
     // dmem, como imem: peticion (valid/ready, aceptada cuando los dos estan
     // altos) y respuesta (rvalid + read_data + error, una por peticion y en
-    // orden). La peticion sale de los registros de EX en su primer ciclo.
+    // orden). La peticion sale de los registros de MEM en su primer ciclo.
     output dmem_valid,
     output [31:0] dmem_address,
     output [31:0] dmem_write_data,
@@ -89,7 +92,7 @@ module cpu #(
     input [31:0] dmem_read_data,
     input dmem_rvalid,
     input dmem_error,
-    // Hay un acceso a datos en EX sin terminar: para STALL_MEM/STALL_MMIO.
+    // Hay un acceso a datos en MEM sin terminar: para STALL_MEM/STALL_MMIO.
     output dmem_waiting,
 
     input [4:0] debug_register_address,
@@ -97,7 +100,7 @@ module cpu #(
     output [31:0] debug_pc,
 
     // Why the ID -> EX transfer did not happen this cycle, one-hot and
-    // registered (cpu_perf_counters, PIPELINE = 1): [0] EX busy with a memory
+    // registered (cpu_perf_counters, PIPELINE = 1): [0] MEM busy with a memory
     // access, [1] RAW hazard, [2] taken branch (the wrong-path instruction
     // that becomes a bubble, and ID empty until the target), [3] ID empty
     // for any other reason, [4] EX busy with a MUL/DIV (MULDIV = 1). All
@@ -231,6 +234,8 @@ module cpu #(
   wire ctl_retire;
   wire ctl_retire_stop;
   wire ctl_flush;
+  wire ctl_run;
+  wire ctl_mem_advance;
   wire ctl_advance;
   wire ctl_memory;
   wire ctl_muldiv;
@@ -354,9 +359,12 @@ module cpu #(
   wire id_bypass_b;
   wire [31:0] id_op_a;
   wire [31:0] id_op_b;
-  // EX takes the operand from WB next cycle: the instruction in EX writes it.
-  wire id_forward_a;
-  wire id_forward_b;
+  // EX takes the operand next cycle from MEM (the instruction in EX writes
+  // it) or from WB (the instruction in MEM writes it).
+  wire id_forward_mem_a;
+  wire id_forward_mem_b;
+  wire id_forward_wb_a;
+  wire id_forward_wb_b;
   reg [1:0] id_access_size;
   reg id_access_signed;
   wire [31:0] id_effective_address;
@@ -385,13 +393,15 @@ module cpu #(
   // Computed in ID: the load/store address, a constant result (MOVI, JAL's
   // return address...), and the MUL/DIV result once it is done.
   reg [31:0] ex_result;
-  // Operands as ID read them, and whether to take WB's result instead
-  // (forwarding). While EX holds an instruction they keep the forwarded
-  // value: WB retires after one cycle.
+  // Operands as ID read them, and whether to take MEM's or WB's result
+  // instead (forwarding). While EX holds an instruction they keep the
+  // forwarded value: the producer moves on.
   reg [31:0] ex_op_a;
   reg [31:0] ex_op_b;
-  reg ex_forward_a;
-  reg ex_forward_b;
+  reg ex_forward_mem_a;
+  reg ex_forward_mem_b;
+  reg ex_forward_wb_a;
+  reg ex_forward_wb_b;
   wire [31:0] ex_a;
   wire [31:0] ex_b;
   // ALU and branch, decoded in ID.
@@ -443,14 +453,8 @@ module cpu #(
   reg ex_halt_after_retire;
   reg [2:0] ex_class;
   reg [7:0] ex_error_code;
-  reg ex_mem_request_sent;   // accepted, waiting for its response
-  reg [1:0] ex_mem_drop;     // responses still to come that nobody waits for
-  wire ex_mem_posted;
-  wire ex_mem_done;
-  reg [31:0] ex_load_extended;
-  reg [7:0] ex_load_byte;
-  reg [15:0] ex_load_half;
-  wire ex_is_memory;
+  wire [31:0] ex_mem_result;    // what goes to MEM: ALU, constant or address
+  wire [31:0] ex_mem_next_pc;
 
   // EX: multiplier and divider (section 04b), on ex_a and ex_b.
   wire ex_is_muldiv;
@@ -488,6 +492,32 @@ module cpu #(
   (* pipeline_stage = "EX" *) reg [4:0] md_tag_rb;
   wire id_md_fast;
 
+  // MEM: the data-memory access (section 04c).
+  reg mem_valid;
+  reg [31:0] mem_pc;
+  reg [31:0] mem_next_pc;
+  reg [4:0] mem_rd;
+  // The result for WB and for forwarding; for a load/store, its address.
+  reg [31:0] mem_result;
+  reg [31:0] mem_store_data;
+  reg [3:0] mem_store_mask;
+  reg [1:0] mem_load_size;
+  reg mem_load_signed;
+  reg mem_reg_write;
+  reg mem_halt_after_retire;
+  reg [2:0] mem_class;
+  reg [7:0] mem_error_code;
+  reg mem_md_counted;
+  reg mem_request_sent;      // accepted, waiting for its response
+  reg [1:0] mem_drop;        // responses still to come that nobody waits for
+  wire mem_posted;
+  wire mem_done;
+  wire mem_is_memory;
+  wire mem_hold;
+  reg [31:0] mem_load_extended;
+  reg [7:0] mem_load_byte;
+  reg [15:0] mem_load_half;
+
   // WB
   reg wb_valid;
   reg [31:0] wb_pc;
@@ -521,15 +551,18 @@ module cpu #(
   assign ctl_retire_stop = ctl_retire &&
       (wb_halt_after_retire || ctl_step_active);
   assign ctl_flush = ctl_abort || ctl_fault || ctl_retire_stop;
-  // A memory access lets the next instruction into EX in the cycle it ends
-  // (ex_mem_done), not the one after: dmem_ready and dmem_rvalid come from
-  // registers in dcache.v and cpu_dmem_adapter.v.
-  assign ctl_advance = !halted && !halt_request && !wb_stops_machine &&
-      !(ex_is_memory && !ex_mem_done) && !ex_is_muldiv;
-  assign ctl_memory = !halted && !halt_request &&
-      !wb_stops_machine && ex_is_memory;
-  assign ctl_muldiv = !halted && !halt_request &&
-      !wb_stops_machine && ex_is_muldiv;
+  // The machine runs this cycle: nothing in WB stops it. A younger access in
+  // MEM does not start while WB holds an instruction that stops the machine
+  // (STEP, HALT, error), so nothing after it reaches memory.
+  assign ctl_run = !halted && !halt_request && !wb_stops_machine;
+  // Each stage moves on unless a later one holds: MEM waits for its access
+  // (it moves in the cycle the access ends, mem_done: dmem_ready and
+  // dmem_rvalid come from registers in dcache.v and cpu_dmem_adapter.v); EX
+  // also waits for a MUL/DIV, and then MEM takes a bubble.
+  assign ctl_mem_advance = ctl_run && !mem_hold;
+  assign ctl_advance = ctl_mem_advance && !ex_is_muldiv;
+  assign ctl_memory = ctl_run && mem_is_memory;
+  assign ctl_muldiv = ctl_run && ex_is_muldiv;
 
   // Performance accounting at the ID -> EX transfer: every running cycle is
   // either an instruction moving on or exactly one reason it did not, so the
@@ -544,7 +577,7 @@ module cpu #(
       perf_after_predict <= 1'b0;
     end else begin
       perf_stall <= 5'b00000;
-      if (ctl_memory && !ex_mem_done)
+      if (ctl_memory && !mem_done)
         perf_stall[0] <= 1'b1;
       else if (ctl_muldiv)
         perf_stall[4] <= 1'b1;
@@ -1023,13 +1056,23 @@ module cpu #(
   assign id_bypass_b = wb_valid && wb_reg_write && wb_rd != 5'd0 && wb_rd == id_src_b;
   assign id_op_a = id_bypass_a ? wb_result : register_a;
   assign id_op_b = id_bypass_b ? wb_result : register_b;
-  // FWD-WB-EX, decided here: the instruction in EX goes to WB as this one goes
-  // to EX, so EX will take the operand from WB (ex_forward_a/b).
-  assign id_forward_a = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_a;
-  assign id_forward_b = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_b;
-  // AGI: the address needs the base now, and the instruction in EX has not
-  // produced it yet. The only RAW stall.
-  assign raw_hazard = id_live && id_memory && id_forward_a;
+  // FWD-MEM-EX and FWD-WB-EX, decided here: as this instruction goes to EX,
+  // the one in EX goes to MEM and the one in MEM to WB, so EX will take the
+  // operand from there (ex_forward_mem/wb_a/b). The nearer producer wins.
+  assign id_forward_mem_a = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_a;
+  assign id_forward_mem_b = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_b;
+  assign id_forward_wb_a = mem_valid && mem_reg_write && mem_rd != 5'd0 && mem_rd == id_src_a;
+  assign id_forward_wb_b = mem_valid && mem_reg_write && mem_rd != 5'd0 && mem_rd == id_src_b;
+  // The RAW stalls:
+  //   load-use: the instruction in EX is a load, whose data only exists when
+  //     it leaves MEM; this one waits and then takes it from WB.
+  //   AGI: the address needs the base now, and the instruction in EX or MEM
+  //     has not written it yet; it waits until it can take it from WB (the
+  //     bypass above). Not forwarded from MEM: that mux would sit in front
+  //     of the address adder.
+  assign raw_hazard = id_live &&
+      ((ex_class == OPCLASS_LOAD && (id_forward_mem_a || id_forward_mem_b)) ||
+       (id_memory && (id_forward_mem_a || id_forward_wb_a)));
 
   assign id_return = id_opcode == OPCODE_JR && id_ra == 5'd31;
   assign id_target_wrong = id_predicted && !id_branch_register &&
@@ -1266,14 +1309,15 @@ module cpu #(
   // ======================================================================
 
   /*
-   * FWD-WB-EX. ex_forward_* was decided in ID (the instruction ahead of
-   * this one writes the operand), so the mux selects from a register: FF ->
-   * mux -> ALU, no compare in front. The only source is WB: with the ALU
-   * in EX, WB holds the result of the instruction right before, and anything
-   * older is already in the register file or came through ID's bypass.
+   * FWD-MEM-EX and FWD-WB-EX. ex_forward_* was decided in ID (an instruction
+   * ahead of this one writes the operand), so the mux selects from registers:
+   * FF -> mux -> ALU, no compare in front. MEM holds the result of the
+   * instruction right before (never a load's: load-use waits in ID), WB the
+   * one before that, and anything older is already in the register file or
+   * came through ID's bypass.
    */
-  assign ex_a = ex_forward_a ? wb_result : ex_op_a;
-  assign ex_b = ex_forward_b ? wb_result : ex_op_b;
+  assign ex_a = ex_forward_mem_a ? mem_result : ex_forward_wb_a ? wb_result : ex_op_a;
+  assign ex_b = ex_forward_mem_b ? mem_result : ex_forward_wb_b ? wb_result : ex_op_b;
 
   assign ex_alu_b = ex_alu_imm ? ex_imm : ex_b;
   assign ex_sum = ex_a + ex_alu_b;
@@ -1331,46 +1375,10 @@ module cpu #(
     endcase
   end
 
-  assign ex_is_memory = ex_valid &&
-      (ex_class == OPCLASS_LOAD || ex_class == OPCLASS_STORE);
-
-  // The request comes straight from the EX registers in the first cycle of
-  // the access, and stays until accepted. The access ends with its response,
-  // except a STORE to SDRAM, which ends as soon as it is accepted ("posted"):
-  // cpu_dmem_adapter puts it in its write-combining buffer and can no longer
-  // fail it, so nobody needs the answer. Its response still comes, in order,
-  // and ex_mem_drop skips it. MMIO stores and every LOAD wait: an MMIO store
-  // can fail, and the error has to carry the PC of that STORE.
-  // SDRAM is the low 32 MiB (cpu_dmem_adapter SDRAM_SIZE_BYTES), the same
-  // seven NORs the adapter uses.
-  assign dmem_valid = ctl_memory && !ex_mem_request_sent;
-  assign dmem_address = ex_result;
-  assign dmem_write_data = ex_store_data;
-  assign dmem_write_enable = (ex_class == OPCLASS_STORE) ? ex_store_mask : 4'b0000;
-  assign ex_mem_posted = dmem_valid && dmem_ready &&
-                         (ex_class == OPCLASS_STORE) && (ex_result[31:25] == 7'd0);
-  assign ex_mem_done = ex_mem_posted ||
-      (ctl_memory && ex_mem_request_sent && dmem_rvalid && ex_mem_drop == 2'd0);
-  assign dmem_waiting = ctl_memory && !ex_mem_done;
-
-  always @* begin
-    case (dmem_address[1:0])
-      2'd0: ex_load_byte = dmem_read_data[7:0];
-      2'd1: ex_load_byte = dmem_read_data[15:8];
-      2'd2: ex_load_byte = dmem_read_data[23:16];
-      default: ex_load_byte = dmem_read_data[31:24];
-    endcase
-    ex_load_half = dmem_address[1] ? dmem_read_data[31:16] : dmem_read_data[15:0];
-    case (ex_load_size)
-      2'd0:
-        ex_load_extended =
-            ex_load_signed ? {{24{ex_load_byte[7]}}, ex_load_byte} : {24'd0, ex_load_byte};
-      2'd1:
-        ex_load_extended =
-            ex_load_signed ? {{16{ex_load_half[15]}}, ex_load_half} : {16'd0, ex_load_half};
-      default: ex_load_extended = dmem_read_data;
-    endcase
-  end
+  // To MEM: the ALU result, or the value known in ID (a constant, a finished
+  // MUL/DIV, or the load/store address); and where the program goes next.
+  assign ex_mem_result = ex_use_alu ? ex_alu_result : ex_result;
+  assign ex_mem_next_pc = (ex_class == OPCLASS_BRANCH && ex_taken) ? ex_target : ex_next_pc;
 
   // ======================================================================
   // 04b. EX — MULTIPLIER AND DIVIDER
@@ -1512,7 +1520,7 @@ module cpu #(
     end
   end
 
-  // ID -> EX boundary and data-memory transaction state.
+  // ID -> EX boundary.
   always @(posedge clk) begin
     if (core_reset) begin
       ex_valid <= 1'b0;
@@ -1522,8 +1530,10 @@ module cpu #(
       ex_result <= 32'd0;
       ex_op_a <= 32'd0;
       ex_op_b <= 32'd0;
-      ex_forward_a <= 1'b0;
-      ex_forward_b <= 1'b0;
+      ex_forward_mem_a <= 1'b0;
+      ex_forward_mem_b <= 1'b0;
+      ex_forward_wb_a <= 1'b0;
+      ex_forward_wb_b <= 1'b0;
       ex_use_alu <= 1'b0;
       ex_alu_op <= ALU_ADD;
       ex_alu_imm <= 1'b0;
@@ -1542,13 +1552,6 @@ module cpu #(
       ex_halt_after_retire <= 1'b0;
       ex_class <= OPCLASS_NORMAL;
       ex_error_code <= ERROR_NONE;
-      ex_mem_request_sent <= 1'b0;
-      // soft_reset: the access in flight, or accepted this cycle, still gets
-      // its response from the D-cache; drop it.
-      ex_mem_drop <= reset ? 2'd0 : ex_mem_drop
-                     + {1'b0, (ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)) ||
-                              (dmem_valid && dmem_ready)}
-                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       ex_md_op <= OPCODE_NOP;
       ex_md_ra <= 5'd0;
       ex_md_rb <= 5'd0;
@@ -1561,22 +1564,17 @@ module cpu #(
       md_tag_rb <= 5'd0;
     end else if (halted || ctl_flush) begin
       ex_valid <= 1'b0;
-      ex_mem_request_sent <= 1'b0;
       // After a stop the monitor may run anything before RUN: no fast path.
       md_tag_valid <= 1'b0;
-      // An access already accepted still gets its response: drop it too.
-      ex_mem_drop <= ex_mem_drop
-                     + {1'b0, ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)}
-                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
     end else begin
-      ex_mem_drop <= ex_mem_drop + {1'b0, ex_mem_posted}
-                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       // FWD-HOLD: an instruction that stays in EX keeps its operands as
-      // forwarded: the producer leaves WB at the end of this cycle.
+      // forwarded: the producers may move on at the end of this cycle.
       ex_op_a <= ex_a;
       ex_op_b <= ex_b;
-      ex_forward_a <= 1'b0;
-      ex_forward_b <= 1'b0;
+      ex_forward_mem_a <= 1'b0;
+      ex_forward_mem_b <= 1'b0;
+      ex_forward_wb_a <= 1'b0;
+      ex_forward_wb_b <= 1'b0;
       if (ctl_advance) begin
         if (!raw_hazard) begin
           // Behind a taken branch, a bubble (the wrong path).
@@ -1587,8 +1585,10 @@ module cpu #(
           ex_result <= id_result;
           ex_op_a <= id_op_a;
           ex_op_b <= id_op_b;
-          ex_forward_a <= id_forward_a;
-          ex_forward_b <= id_forward_b;
+          ex_forward_mem_a <= id_forward_mem_a;
+          ex_forward_mem_b <= id_forward_mem_b;
+          ex_forward_wb_a <= id_forward_wb_a && !id_forward_mem_a;
+          ex_forward_wb_b <= id_forward_wb_b && !id_forward_mem_b;
           ex_use_alu <= id_use_alu;
           ex_alu_op <= id_alu_op;
           ex_alu_imm <= id_alu_imm;
@@ -1607,7 +1607,6 @@ module cpu #(
           ex_halt_after_retire <= id_halt_after_retire;
           ex_class <= id_class;
           ex_error_code <= id_error_code;
-          ex_mem_request_sent <= 1'b0;
           ex_md_op <= id_opcode;
           ex_md_ra <= id_ra;
           ex_md_rb <= id_rb;
@@ -1643,10 +1642,114 @@ module cpu #(
           end
         end
       end
-      // When the access ends, ctl_advance is high in that same cycle and the
-      // block above has already brought in the next instruction (or a bubble).
-      if (ctl_memory && !ex_mem_done && dmem_valid && dmem_ready)
-        ex_mem_request_sent <= 1'b1;
+    end
+  end
+
+  // ======================================================================
+  // 04c. MEM — DATA MEMORY
+  // ======================================================================
+
+  /*
+   * Every instruction goes through MEM; only loads and stores do something
+   * here, and MEM holds them until the access ends (mem_hold), with EX, ID
+   * and IF behind. The address was computed in ID and the store data in EX.
+   *
+   * The request comes straight from the MEM registers in the first cycle of
+   * the access, and stays until accepted. The access ends with its response,
+   * except a STORE to SDRAM, which ends as soon as it is accepted ("posted"):
+   * cpu_dmem_adapter puts it in its write-combining buffer and can no longer
+   * fail it, so nobody needs the answer. Its response still comes, in order,
+   * and mem_drop skips it. MMIO stores and every LOAD wait: an MMIO store
+   * can fail, and the error has to carry the PC of that STORE.
+   * SDRAM is the low 32 MiB (cpu_dmem_adapter SDRAM_SIZE_BYTES), the same
+   * seven NORs the adapter uses.
+   */
+  assign mem_is_memory = mem_valid &&
+      (mem_class == OPCLASS_LOAD || mem_class == OPCLASS_STORE);
+  assign dmem_valid = ctl_memory && !mem_request_sent;
+  assign dmem_address = mem_result;
+  assign dmem_write_data = mem_store_data;
+  assign dmem_write_enable = (mem_class == OPCLASS_STORE) ? mem_store_mask : 4'b0000;
+  assign mem_posted = dmem_valid && dmem_ready &&
+                      (mem_class == OPCLASS_STORE) && (mem_result[31:25] == 7'd0);
+  assign mem_done = mem_posted ||
+      (ctl_memory && mem_request_sent && dmem_rvalid && mem_drop == 2'd0);
+  assign mem_hold = mem_is_memory && !mem_done;
+  assign dmem_waiting = ctl_memory && !mem_done;
+
+  always @* begin
+    case (dmem_address[1:0])
+      2'd0: mem_load_byte = dmem_read_data[7:0];
+      2'd1: mem_load_byte = dmem_read_data[15:8];
+      2'd2: mem_load_byte = dmem_read_data[23:16];
+      default: mem_load_byte = dmem_read_data[31:24];
+    endcase
+    mem_load_half = dmem_address[1] ? dmem_read_data[31:16] : dmem_read_data[15:0];
+    case (mem_load_size)
+      2'd0:
+        mem_load_extended =
+            mem_load_signed ? {{24{mem_load_byte[7]}}, mem_load_byte} : {24'd0, mem_load_byte};
+      2'd1:
+        mem_load_extended =
+            mem_load_signed ? {{16{mem_load_half[15]}}, mem_load_half} : {16'd0, mem_load_half};
+      default: mem_load_extended = dmem_read_data;
+    endcase
+  end
+
+  // EX -> MEM boundary and data-memory transaction state.
+  always @(posedge clk) begin
+    if (core_reset) begin
+      mem_valid <= 1'b0;
+      mem_pc <= 32'd0;
+      mem_next_pc <= 32'd0;
+      mem_rd <= 5'd0;
+      mem_result <= 32'd0;
+      mem_store_data <= 32'd0;
+      mem_store_mask <= 4'b0000;
+      mem_load_size <= 2'd2;
+      mem_load_signed <= 1'b0;
+      mem_reg_write <= 1'b0;
+      mem_halt_after_retire <= 1'b0;
+      mem_class <= OPCLASS_NORMAL;
+      mem_error_code <= ERROR_NONE;
+      mem_md_counted <= 1'b0;
+      mem_request_sent <= 1'b0;
+      // soft_reset: the access in flight, or accepted this cycle, still gets
+      // its response from the D-cache; drop it.
+      mem_drop <= reset ? 2'd0 : mem_drop
+                  + {1'b0, (mem_request_sent && !(dmem_rvalid && mem_drop == 2'd0)) ||
+                           (dmem_valid && dmem_ready)}
+                  - {1'b0, dmem_rvalid && mem_drop != 2'd0};
+    end else if (halted || ctl_flush) begin
+      mem_valid <= 1'b0;
+      mem_request_sent <= 1'b0;
+      // An access already accepted still gets its response: drop it too.
+      mem_drop <= mem_drop
+                  + {1'b0, mem_request_sent && !(dmem_rvalid && mem_drop == 2'd0)}
+                  - {1'b0, dmem_rvalid && mem_drop != 2'd0};
+    end else begin
+      mem_drop <= mem_drop + {1'b0, mem_posted}
+                  - {1'b0, dmem_rvalid && mem_drop != 2'd0};
+      if (ctl_mem_advance) begin
+        // A MUL/DIV still working in EX leaves a bubble.
+        mem_valid <= ctl_advance && ex_valid;
+        mem_pc <= ex_pc;
+        mem_next_pc <= ex_mem_next_pc;
+        mem_rd <= ex_rd;
+        mem_result <= ex_mem_result;
+        mem_store_data <= ex_store_data;
+        mem_store_mask <= ex_store_mask;
+        mem_load_size <= ex_load_size;
+        mem_load_signed <= ex_load_signed;
+        mem_reg_write <= ex_reg_write;
+        mem_halt_after_retire <= ex_halt_after_retire;
+        mem_class <= ex_class;
+        mem_error_code <= ex_error_code;
+        mem_md_counted <= ex_md_counted;
+        mem_request_sent <= 1'b0;
+      end else if (ctl_memory && dmem_valid && dmem_ready) begin
+        mem_request_sent <= 1'b1;
+      end
     end
   end
 
@@ -1688,29 +1791,19 @@ module cpu #(
         architectural_pc <= wb_next_pc;
         wb_valid <= 1'b0;
       end
-      // A memory access ending also has ctl_advance high: it goes first.
-      if (ex_mem_done) begin
+      // A memory access moves on in the cycle it ends (mem_done), with its
+      // data or its error.
+      if (ctl_mem_advance && mem_valid) begin
         wb_valid <= 1'b1;
-        wb_pc <= ex_pc;
-        wb_next_pc <= ex_next_pc;
-        wb_rd <= ex_rd;
-        wb_result <= ex_load_extended;
-        wb_reg_write <= ex_class == OPCLASS_LOAD;
-        wb_md_counted <= 1'b0;
-        wb_halt_after_retire <= ex_halt_after_retire;
-        wb_error <= !ex_mem_posted && dmem_error;
-        wb_error_code <= ERROR_MEMORY_ACCESS;
-      end else if (ctl_advance && ex_valid) begin
-        wb_valid <= 1'b1;
-        wb_pc <= ex_pc;
-        wb_next_pc <= (ex_class == OPCLASS_BRANCH && ex_taken) ? ex_target : ex_next_pc;
-        wb_rd <= ex_rd;
-        wb_result <= ex_use_alu ? ex_alu_result : ex_result;
-        wb_reg_write <= ex_reg_write;
-        wb_halt_after_retire <= ex_halt_after_retire;
-        wb_md_counted <= ex_md_counted;
-        wb_error <= ex_class == OPCLASS_ERROR;
-        wb_error_code <= ex_error_code;
+        wb_pc <= mem_pc;
+        wb_next_pc <= mem_next_pc;
+        wb_rd <= mem_rd;
+        wb_result <= (mem_class == OPCLASS_LOAD) ? mem_load_extended : mem_result;
+        wb_reg_write <= mem_reg_write;
+        wb_halt_after_retire <= mem_halt_after_retire;
+        wb_md_counted <= mem_md_counted;
+        wb_error <= mem_is_memory ? (!mem_posted && dmem_error) : (mem_class == OPCLASS_ERROR);
+        wb_error_code <= mem_is_memory ? ERROR_MEMORY_ACCESS : mem_error_code;
       end
     end
   end
