@@ -12,6 +12,9 @@
  *   loop      bucle de 4 instrucciones con BNE hacia atras: el salto tomado.
  *   store     bucle de STORE a direcciones seguidas, como el de un framebuffer.
  *   load      bucle de LOAD a direcciones seguidas.
+ *   branchdep bucle de 2 cuyo salto depende de la instruccion de antes.
+ *   loaduse   LOAD seguido de una instruccion que usa el dato.
+ *   addrdep   LOAD cuya direccion acaba de calcular la instruccion de antes.
  *   muldiv    bucle con una MUL y una DIV: los contadores STALL_MULDIV y
  *             MULDIV_RETIRED, con valor exacto.
  *
@@ -348,6 +351,40 @@ module cpu_perf_tb;
     instruction_memory[4] = addi(5'd2, 5'd2, 16'hffff);
     instruction_memory[5] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 2
     run_program("load", 2 + 64 * 4 + 1);
+    expect_register(5'd4, 32'd63);
+
+    // branchdep: el salto compara el registro que acaba de cambiar la
+    // instruccion de antes, como el `ADDI R3; BLT R3` de un bucle de pixeles.
+    clear_memory();
+    instruction_memory[0] = movi(5'd2, 16'd50);
+    instruction_memory[1] = addi(5'd2, 5'd2, 16'hffff);  // R2 -= 1
+    instruction_memory[2] = bne(5'd2, 5'd0, 16'hfffe);    // a la palabra 1
+    run_program("branchdep", 1 + 50 * 2 + 1);
+    expect_register(5'd2, 32'd0);
+
+    // loaduse: el ADD usa el dato del LOAD de justo antes.
+    clear_memory();
+    for (k = 0; k < 64; k = k + 1) data_memory[(16'h0400 >> 2) + k] = k;
+    instruction_memory[0] = movi(5'd1, 16'h0400);
+    instruction_memory[1] = movi(5'd2, 16'd64);
+    instruction_memory[2] = movi(5'd5, 16'd0);
+    instruction_memory[3] = load(5'd4, 5'd1, 16'd0);    // R4 = [R1]
+    instruction_memory[4] = rtype(6'h01, 5'd5, 5'd5, 5'd4);  // R5 += R4
+    instruction_memory[5] = addi(5'd1, 5'd1, 16'd4);
+    instruction_memory[6] = addi(5'd2, 5'd2, 16'hffff);
+    instruction_memory[7] = bne(5'd2, 5'd0, 16'hfffb);  // a la palabra 3
+    run_program("loaduse", 3 + 64 * 5 + 1);
+    expect_register(5'd5, 32'd2016);
+
+    // addrdep: el LOAD usa como direccion el puntero que acaba de avanzar.
+    clear_memory();
+    instruction_memory[0] = movi(5'd1, 16'h03fc);
+    instruction_memory[1] = movi(5'd2, 16'd64);
+    instruction_memory[2] = addi(5'd1, 5'd1, 16'd4);
+    instruction_memory[3] = load(5'd4, 5'd1, 16'd0);    // R4 = [R1]
+    instruction_memory[4] = addi(5'd2, 5'd2, 16'hffff);
+    instruction_memory[5] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 2
+    run_program("addrdep", 2 + 64 * 4 + 1);
     expect_register(5'd4, 32'd63);
 
     // muldiv: 10 vueltas de MUL, DIV, contador y salto. Ninguna depende de

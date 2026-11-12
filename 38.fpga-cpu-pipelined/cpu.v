@@ -6,8 +6,30 @@
  * This prototype keeps the monitor-facing contract of the multicycle CPU:
  * reset starts halted, RUN starts free-running execution, STEP retires exactly
  * one instruction, and errors leave the architectural PC on the faulting
- * instruction. The pipeline is deliberately conservative: RAW hazards, memory waits and control events insert bubbles.
- * The current fetch handshake also limits instruction throughput.
+ * instruction.
+ *
+ * IF -> ID -> EX -> WB. ID decodes, reads the register file (with a bypass
+ * from WB) and computes load/store addresses; EX has the ALU, the branch
+ * decision and the memory access.
+ *
+ * Forwarding map (grep the tags):
+ *   FWD-WB-EX  WB -> EX operand mux (ex_a, ex_b): the result of the
+ *              instruction right before, for the ALU, branch compare,
+ *              JALR/JR target, store data and MUL/DIV operands. Selected by
+ *              ex_forward_a/b, decided in ID and registered.
+ *   FWD-WB-ID  register-file bypass (id_op_a, id_op_b): the value WB writes
+ *              this cycle, which the asynchronous read does not see yet.
+ *   FWD-HOLD   an instruction held in EX (memory, MUL/DIV) latches its
+ *              forwarded operands, since WB retires after one cycle.
+ *   A load's consumer needs no path of its own: it waits in ID during the
+ *   access and enters EX as the load moves to WB with its data (FWD-WB-EX).
+ * Not forwarded, on purpose:
+ *   AGI        a load/store whose base register is written by the
+ *              instruction in EX waits one cycle (raw_hazard): the address
+ *              is computed in ID, and EX -> ID forwarding would put the ALU
+ *              in front of the address adder in the same cycle.
+ *   Branches are decided in EX, not in ID with forwarded operands, for the
+ *   same reason; prediction is what will recover their bubbles.
  *
  * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
  * several cycles like a memory access (section 04b).
@@ -57,14 +79,15 @@ module cpu #(
 
     // Why the ID -> EX transfer did not happen this cycle, one-hot and
     // registered (cpu_perf_counters, PIPELINE = 1): [0] EX busy with a memory
-    // access, [1] RAW hazard, [2] ID empty after a taken branch, [3] ID empty
+    // access, [1] RAW hazard, [2] taken branch (the wrong-path instruction
+    // that becomes a bubble, and ID empty until the target), [3] ID empty
     // for any other reason, [4] EX busy with a MUL/DIV (MULDIV = 1). All
     // zero: an instruction moved on, or the CPU is halted or stopping (STEP,
     // HALT, error).
-    output reg [4:0] perf_stall,
+    (* pipeline_stage = "_PERF" *) output reg [4:0] perf_stall,
     // One pulse per retired MUL/MULHI/MULFX/DIV/DIVU/REM/REMU, registered and
     // in the same cycle as instruction_retired.
-    output reg perf_muldiv_retired
+    (* pipeline_stage = "WB" *) output reg perf_muldiv_retired
 );
 
   localparam [5:0] OPCODE_NOP = 6'h00;
@@ -131,6 +154,27 @@ module cpu #(
   // OPCLASS_NORMAL with its result in ex_result.
   localparam [2:0] OPCLASS_MULDIV = 3'd5;
 
+  // EX's ALU operation (ex_alu_op). b is the immediate when ex_alu_imm.
+  localparam [3:0] ALU_ADD = 4'd0;
+  localparam [3:0] ALU_SUB = 4'd1;
+  localparam [3:0] ALU_AND = 4'd2;
+  localparam [3:0] ALU_OR = 4'd3;
+  localparam [3:0] ALU_XOR = 4'd4;
+  localparam [3:0] ALU_SHL = 4'd5;
+  localparam [3:0] ALU_SHR = 4'd6;
+  localparam [3:0] ALU_SAR = 4'd7;
+  localparam [3:0] ALU_SLT = 4'd8;
+  localparam [3:0] ALU_SLTU = 4'd9;
+
+  // Branch condition in EX (ex_branch_cond), comparing a with b.
+  localparam [2:0] BRANCH_EQ = 3'd0;
+  localparam [2:0] BRANCH_NE = 3'd1;
+  localparam [2:0] BRANCH_LT = 3'd2;
+  localparam [2:0] BRANCH_GE = 3'd3;
+  localparam [2:0] BRANCH_LTU = 3'd4;
+  localparam [2:0] BRANCH_GEU = 3'd5;
+  localparam [2:0] BRANCH_ALWAYS = 3'd6;
+
   // ======================================================================
   // DECLARATIONS (all before use, for Icarus elaboration)
   // ======================================================================
@@ -153,7 +197,6 @@ module cpu #(
   reg ctl_start_pending;
   reg ctl_start_step_pending;
   wire wb_stops_machine;
-  wire id_redirects_fetch;
   wire ctl_start;
   wire ctl_abort;
   wire ctl_fault;
@@ -163,8 +206,7 @@ module cpu #(
   wire ctl_advance;
   wire ctl_memory;
   wire ctl_muldiv;
-  wire ctl_fetch;
-  reg perf_after_redirect;
+  (* pipeline_stage = "_PERF" *) reg perf_after_redirect;
 
   // Register file
   wire [31:0] register_a;
@@ -192,17 +234,16 @@ module cpu #(
   reg if_valid_n, if_valid1_n, if_valid2_n, if_valid3_n;
   reg [31:0] if_pc_n, if_pc1_n, if_pc2_n, if_pc3_n;
   reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n, if_instruction3_n;
-  // A taken branch, registered: IF redirects the cycle after ID decides.
+  // A taken branch, registered: IF redirects the cycle after EX decides.
   reg if_redirect;
   reg [31:0] if_redirect_pc;
   // Predecode of the queue head, for ID's source registers (section 02).
   wire [5:0] if_opcode;
   wire if_compare_branch;
   wire if_store;
+  wire if_memory;
   wire [4:0] if_src_a;
   wire [4:0] if_src_b;
-  wire if_reads_a;
-  wire if_reads_b;
 
   // ID
   reg id_valid;
@@ -215,46 +256,77 @@ module cpu #(
   wire [4:0] id_rd;
   wire [4:0] id_ra;
   wire [4:0] id_rb;
-  // Register-file sources and whether the instruction reads them, from IF's
+  // Register-file sources and whether it is a load/store, from IF's
   // predecode (section 02), loaded with id_instruction (section 03).
   reg [4:0] id_src_a;
   reg [4:0] id_src_b;
-  reg id_reads_a;
-  reg id_reads_b;
+  reg id_memory;
   wire [31:0] id_imm_signed;
   wire [31:0] id_imm_unsigned;
   wire [31:0] id_jump_offset;
   wire [31:0] id_bra_offset;
   wire id_shift_immediate;
-  wire [4:0] id_shift_amount;
+  // Operands: the register file, or WB's result if WB is about to write it.
+  wire id_bypass_a;
+  wire id_bypass_b;
+  wire [31:0] id_op_a;
+  wire [31:0] id_op_b;
+  // EX takes the operand from WB next cycle: the instruction in EX writes it.
+  wire id_forward_a;
+  wire id_forward_b;
   reg [1:0] id_access_size;
   reg id_access_signed;
   wire [31:0] id_effective_address;
   wire id_address_misaligned;
-  reg [31:0] id_store_data;
   reg [3:0] id_store_mask;
   reg id_encoding_valid;
-  wire id_uses_a;
-  wire id_uses_b;
-  wire hazard_ex;
-  wire hazard_wb;
   wire raw_hazard;
   reg [31:0] id_result;
-  reg [31:0] id_next_pc;
+  reg id_use_alu;
+  reg [3:0] id_alu_op;
+  reg id_alu_imm;
+  reg [31:0] id_imm;
+  reg [2:0] id_branch_cond;
+  reg id_branch_register;
+  reg [31:0] id_branch_target;
   reg id_reg_write;
   reg id_halt_after_retire;
-  reg id_branch_taken;
   reg [2:0] id_class;
   reg [7:0] id_error_code;
-  reg [32:0] id_compare_difference;
-  reg id_compare_signed_less;
 
   // EX
   reg ex_valid;
   reg [31:0] ex_pc;
   reg [31:0] ex_next_pc;
   reg [4:0] ex_rd;
+  // Computed in ID: the load/store address, a constant result (MOVI, JAL's
+  // return address...), and the MUL/DIV result once it is done.
   reg [31:0] ex_result;
+  // Operands as ID read them, and whether to take WB's result instead
+  // (forwarding). While EX holds an instruction they keep the forwarded
+  // value: WB retires after one cycle.
+  reg [31:0] ex_op_a;
+  reg [31:0] ex_op_b;
+  reg ex_forward_a;
+  reg ex_forward_b;
+  wire [31:0] ex_a;
+  wire [31:0] ex_b;
+  // ALU and branch, decoded in ID.
+  reg ex_use_alu;
+  reg [3:0] ex_alu_op;
+  reg ex_alu_imm;
+  reg [31:0] ex_imm;
+  reg [2:0] ex_branch_cond;
+  reg ex_branch_register;
+  reg [31:0] ex_branch_target;
+  wire [31:0] ex_alu_b;
+  wire [31:0] ex_sum;
+  wire [32:0] ex_difference;
+  wire ex_signed_less;
+  reg [31:0] ex_alu_result;
+  reg ex_taken;
+  wire ex_redirects;
+  wire [31:0] ex_target;
   reg [31:0] ex_store_data;
   reg [3:0] ex_store_mask;
   reg [1:0] ex_load_size;
@@ -272,8 +344,7 @@ module cpu #(
   reg [15:0] ex_load_half;
   wire ex_is_memory;
 
-  // EX: multiplier and divider (section 04b). Operand a travels in ex_result
-  // and operand b in ex_store_data.
+  // EX: multiplier and divider (section 04b), on ex_a and ex_b.
   wire ex_is_muldiv;
   wire ex_md_run;
   reg [5:0] ex_md_op;          // opcode
@@ -286,25 +357,26 @@ module cpu #(
   reg [5:0] ex_md_step;
   wire ex_md_is_div;
   wire ex_md_signed_div;
-  reg [31:0] md_ll, md_lh, md_hl, md_hh;
-  reg [31:0] md_correction;
-  reg [63:0] md_product;
+  // The md_* registers are EX's: its logic reads them while the MUL/DIV waits.
+  (* pipeline_stage = "EX" *) reg [31:0] md_ll, md_lh, md_hl, md_hh;
+  (* pipeline_stage = "EX" *) reg [31:0] md_correction;
+  (* pipeline_stage = "EX" *) reg [63:0] md_product;
   wire [31:0] md_high_signed;
   reg [31:0] md_mul_result;
-  reg [31:0] md_dividend;
-  reg [31:0] md_divisor;
-  reg [31:0] md_quotient;
-  reg [31:0] md_remainder;
-  reg md_quotient_negative;
-  reg md_remainder_negative;
+  (* pipeline_stage = "EX" *) reg [31:0] md_dividend;
+  (* pipeline_stage = "EX" *) reg [31:0] md_divisor;
+  (* pipeline_stage = "EX" *) reg [31:0] md_quotient;
+  (* pipeline_stage = "EX" *) reg [31:0] md_remainder;
+  (* pipeline_stage = "EX" *) reg md_quotient_negative;
+  (* pipeline_stage = "EX" *) reg md_remainder_negative;
   wire [31:0] md_shifted;
   wire md_subtract;
   reg [31:0] md_div_result;
   // Last completed DIV/DIVU, for the REM/REMU fast path.
-  reg md_tag_valid;
-  reg md_tag_unsigned;
-  reg [4:0] md_tag_ra;
-  reg [4:0] md_tag_rb;
+  (* pipeline_stage = "EX" *) reg md_tag_valid;
+  (* pipeline_stage = "EX" *) reg md_tag_unsigned;
+  (* pipeline_stage = "EX" *) reg [4:0] md_tag_ra;
+  (* pipeline_stage = "EX" *) reg [4:0] md_tag_rb;
   wire id_md_fast;
 
   // WB
@@ -330,8 +402,6 @@ module cpu #(
   assign wb_stops_machine = wb_valid &&
       (wb_error || wb_halt_after_retire || ctl_step_active);
   assign id_live = id_valid && !if_redirect;
-  assign id_redirects_fetch = id_live && !raw_hazard &&
-      (id_class == OPCLASS_BRANCH) && id_branch_taken;
 
   // Per-cycle decisions.
   assign ctl_start = halted &&
@@ -351,14 +421,13 @@ module cpu #(
       !wb_stops_machine && ex_is_memory;
   assign ctl_muldiv = !halted && !halt_request &&
       !wb_stops_machine && ex_is_muldiv;
-  assign ctl_fetch = !halted && !halt_request &&
-      !wb_stops_machine && !id_redirects_fetch;
 
   // Performance accounting at the ID -> EX transfer: every running cycle is
   // either an instruction moving on or exactly one reason it did not, so the
   // reasons add up to CYCLES - RETIRED (minus STEP/HALT/error cycles). Taken
   // here and registered, so raw_hazard only feeds one LUT and one FF next to
-  // ID instead of a wire across the chip.
+  // ID instead of a wire across the chip. When EX redirects, what moves from
+  // ID is on the wrong path and becomes a bubble: it counts as a branch.
   always @(posedge clk) begin
     if (reset || halted) begin
       perf_stall <= 5'b00000;
@@ -369,6 +438,8 @@ module cpu #(
         perf_stall[0] <= 1'b1;
       else if (ctl_muldiv)
         perf_stall[4] <= 1'b1;
+      else if (ctl_advance && ex_redirects)
+        perf_stall[2] <= 1'b1;
       else if (ctl_advance && id_live && raw_hazard)
         perf_stall[1] <= 1'b1;
       else if (ctl_advance && !id_live)
@@ -376,7 +447,7 @@ module cpu #(
 
       // Set by a taken branch; cleared once ID holds the first instruction of
       // the new path.
-      if (ctl_advance && !raw_hazard && id_redirects_fetch)
+      if (ctl_advance && ex_redirects)
         perf_after_redirect <= 1'b1;
       else if (id_live)
         perf_after_redirect <= 1'b0;
@@ -420,8 +491,8 @@ module cpu #(
 
   // WB drives the synchronous register-file write port directly (there is
   // no _WR write buffer any more). ID reads asynchronously with its own
-  // source fields. There is no WB -> ID bypass: hazard_wb stalls ID while
-  // the producer is in WB, and the next cycle the bank already holds it.
+  // source fields; the value WB writes at the end of this cycle reaches ID
+  // through id_bypass_a/b (section 03).
 
   // ctl_retire is exactly the cycle WB retires. A write during reset is
   // harmless: reset restarts the clearing sweep, which overwrites it.
@@ -454,8 +525,8 @@ module cpu #(
    * imem_address is the address of the next request. A request goes out
    * whenever its response is sure to fit: the four queue entries count both
    * the instructions already there and the requests still in flight. The
-   * count does not look at whether ID takes the head this cycle, so ID's
-   * decision (raw_hazard, id_redirects_fetch) stays out of imem_valid. A
+   * count does not look at whether ID takes the head this cycle, so the
+   * pipeline's decisions (raw_hazard, ex_redirects) stay out of imem_valid. A
    * hit answers two cycles after the request (the I-cache registers its
    * response), so four entries are exactly enough for one instruction per
    * cycle: two requests in flight, the response, and ID taking it.
@@ -466,13 +537,14 @@ module cpu #(
    * arrive in order, so a count is enough.
    *
    * The redirect is registered (if_redirect, if_redirect_pc): in the cycle
-   * ID decides a taken branch, IF and ID carry on as if it were not taken
-   * and the branch moves to EX; the next cycle IF empties the queue and
-   * fetches the target, and ID drops the wrong-path instruction it took
-   * (id_live). So the 33-bit compare ends in two registers instead of
-   * steering the queue, if_pop and ID's load in the same cycle. It costs
-   * one bubble per taken branch (3 -> 4), which branch prediction can win
-   * back. cpu_redirect_tb checks the wrong-path slot.
+   * EX decides a taken branch, IF and ID carry on as if it were not taken,
+   * the branch moves to WB and the instruction behind it enters EX as a
+   * bubble (ex_valid, one LUT after the compare); the next cycle IF empties
+   * the queue and fetches the target, and ID drops the wrong-path
+   * instruction it took (id_live). So the 33-bit compare ends in a few
+   * registers instead of steering the queue, if_pop and ID's load in the
+   * same cycle. A taken branch costs six bubbles, which branch prediction
+   * can win back. cpu_redirect_tb checks the wrong-path slots.
    */
   assign if_used = {2'b00, if_valid} + {2'b00, if_valid1} + {2'b00, if_valid2} +
                    {2'b00, if_valid3} + if_inflight;
@@ -531,8 +603,8 @@ module cpu #(
     end else begin
       // ctl_advance is low in any cycle that stops the machine, so a stop
       // never leaves a redirect behind.
-      if_redirect <= ctl_advance && !raw_hazard && id_redirects_fetch;
-      if_redirect_pc <= id_next_pc;
+      if_redirect <= ctl_advance && ex_redirects;
+      if_redirect_pc <= ex_target;
       if_inflight <= if_inflight_next;
       if (if_accept) imem_address <= imem_address + 32'd4;
 
@@ -566,40 +638,56 @@ module cpu #(
 
   /*
    * Predecode. Which fields name the register-file sources, and whether the
-   * instruction reads them, depends only on the opcode, so it is worked out
-   * here, from the head of the IF queue (if_instruction, a register with
+   * instruction is a load/store, depends only on the opcode, so it is worked
+   * out here, from the head of the IF queue (if_instruction, a register with
    * time to spare), and stored next to id_instruction at the IF -> ID
    * boundary (section 03). At the head and not where the I-cache response
    * enters the queue, so as not to lengthen the EBR path.
    *
    * ID then reads the register file, and compares against ex_rd/wb_rd for
-   * hazards, straight from registers: the opcode decode (a range compare
-   * that Yosys builds as a carry chain) is no longer at the head of ID's
-   * critical path. Same cycles as before.
+   * forwarding, straight from registers: the opcode decode (a range compare
+   * that Yosys builds as a carry chain) is not at the head of ID's critical
+   * path.
    *   - conditional branches compare rd with ra;
    *   - stores write the data in rd;
    *   - everything else reads ra and rb.
+   * An instruction that does not read a source may still get it forwarded:
+   * it never looks at it.
    */
   assign if_opcode = if_instruction[31:26];
   assign if_compare_branch = if_opcode >= OPCODE_BEQ && if_opcode <= OPCODE_BGEU;
   assign if_store = if_opcode == OPCODE_STORE || if_opcode == OPCODE_STOREB ||
                     if_opcode == OPCODE_STOREH;
+  assign if_memory = if_store || if_opcode == OPCODE_LOAD ||
+                     if_opcode == OPCODE_LOADB || if_opcode == OPCODE_LOADUB ||
+                     if_opcode == OPCODE_LOADH || if_opcode == OPCODE_LOADUH;
   assign if_src_a = if_compare_branch ? if_instruction[25:21] : if_instruction[20:16];
   assign if_src_b = if_compare_branch ? if_instruction[20:16] :
                     (if_store ? if_instruction[25:21] : if_instruction[15:11]);
-  assign if_reads_a =
-      !(if_opcode == OPCODE_NOP || if_opcode == OPCODE_MOVI ||
-        if_opcode == OPCODE_MOVHI || if_opcode == OPCODE_JAL ||
-        if_opcode == OPCODE_HALT || if_opcode == OPCODE_TRAP ||
-        if_opcode == OPCODE_SSY || if_opcode == OPCODE_BAR);
-  assign if_reads_b =
-      (if_opcode >= OPCODE_ADD && if_opcode <= OPCODE_REMU) ||
-      if_compare_branch || if_store ||
-      if_opcode == OPCODE_SLT || if_opcode == OPCODE_SLTU;
 
   // ======================================================================
-  // 03. ID — DECODE, OPERANDS, HAZARDS AND ALU
+  // 03. ID — DECODE, OPERANDS AND ADDRESSES
   // ======================================================================
+
+  /*
+   * ID decodes for EX and reads the operands; the ALU and the branch decision
+   * are in EX (section 04). What ID still computes from register values is
+   * the load/store address (base + offset), so that the data request leaves
+   * from EX registers (dmem_address = ex_result) and the D-cache path does
+   * not grow by a forwarding mux and an adder.
+   *
+   * Operands. The register file holds everything retired. The instruction in
+   * WB writes at the end of this cycle, so ID takes WB's result directly
+   * (id_bypass_*). The instruction in EX goes to WB at the same time this one
+   * goes to EX, so EX will take it from WB then (id_forward_* ->
+   * ex_forward_*, a register: EX's forwarding mux selects from a FF).
+   *
+   * The one hazard left: a load/store whose base is written by the
+   * instruction in EX. Its address is needed here, so it waits one cycle and
+   * then takes the value through the bypass. A load's consumer does not wait:
+   * it stays in ID while the access runs, and enters EX when the load moves
+   * to WB with its data.
+   */
 
   assign id_opcode = id_instruction[31:26];
   assign id_rd = id_instruction[25:21];
@@ -611,20 +699,23 @@ module cpu #(
   assign id_jump_offset = {{14{id_instruction[15]}}, id_instruction[15:0], 2'b00};
   assign id_bra_offset = {{4{id_instruction[25]}}, id_instruction[25:0], 2'b00};
   assign id_shift_immediate = id_instruction[10];
-  assign id_shift_amount = id_shift_immediate ? id_rb : register_b[4:0];
-  assign id_effective_address = register_a + id_imm_signed;
+
+  // FWD-WB-ID: register-file bypass.
+  assign id_bypass_a = wb_valid && wb_reg_write && wb_rd != 5'd0 && wb_rd == id_src_a;
+  assign id_bypass_b = wb_valid && wb_reg_write && wb_rd != 5'd0 && wb_rd == id_src_b;
+  assign id_op_a = id_bypass_a ? wb_result : register_a;
+  assign id_op_b = id_bypass_b ? wb_result : register_b;
+  // FWD-WB-EX, decided here: the instruction in EX goes to WB as this one goes
+  // to EX, so EX will take the operand from WB (ex_forward_a/b).
+  assign id_forward_a = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_a;
+  assign id_forward_b = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_b;
+  // AGI: the address needs the base now, and the instruction in EX has not
+  // produced it yet. The only RAW stall.
+  assign raw_hazard = id_live && id_memory && id_forward_a;
+
+  assign id_effective_address = id_op_a + id_imm_signed;
   assign id_address_misaligned = (id_access_size == 2'd2) ? (id_effective_address[1:0] != 2'b00) :
       (id_access_size == 2'd1) ? (id_effective_address[0] != 1'b0) : 1'b0;
-  // id_reads_* belong to whatever is in id_instruction, valid or not.
-  assign id_uses_a = id_live && id_reads_a;
-  assign id_uses_b = id_live && id_reads_b;
-  assign hazard_ex = ex_valid && ex_reg_write && ex_rd != 5'd0 &&
-                   ((id_uses_a && id_src_a == ex_rd) ||
-                    (id_uses_b && id_src_b == ex_rd));
-  assign hazard_wb = wb_valid && wb_reg_write && wb_rd != 5'd0 &&
-                   ((id_uses_a && id_src_a == wb_rd) ||
-                    (id_uses_b && id_src_b == wb_rd));
-  assign raw_hazard = hazard_ex || hazard_wb;
 
   always @* begin
     case (id_opcode)
@@ -640,18 +731,9 @@ module cpu #(
 
   always @* begin
     case (id_access_size)
-      2'd0: begin
-        id_store_data = {4{register_b[7:0]}};
-        id_store_mask = 4'b0001 << id_effective_address[1:0];
-      end
-      2'd1: begin
-        id_store_data = {2{register_b[15:0]}};
-        id_store_mask = id_effective_address[1] ? 4'b1100 : 4'b0011;
-      end
-      default: begin
-        id_store_data = register_b;
-        id_store_mask = 4'b1111;
-      end
+      2'd0: id_store_mask = 4'b0001 << id_effective_address[1:0];
+      2'd1: id_store_mask = id_effective_address[1] ? 4'b1100 : 4'b0011;
+      default: id_store_mask = 4'b1111;
     endcase
   end
 
@@ -679,18 +761,24 @@ module cpu #(
     endcase
   end
 
+  // What EX does with the instruction. id_result is a value known here (it
+  // goes to WB unless id_use_alu); EX's ALU computes a OP b, b being
+  // id_imm when id_alu_imm. A branch is taken when id_branch_cond holds for
+  // a and b; its target is id_branch_target, or a + id_imm (word-aligned)
+  // when id_branch_register (JALR, JR: the ALU's adder).
   always @* begin
     id_result = 32'h0000_0000;
-    id_next_pc = id_pc + 32'd4;
+    id_use_alu = 1'b0;
+    id_alu_op = ALU_ADD;
+    id_alu_imm = 1'b0;
+    id_imm = id_imm_signed;
+    id_branch_cond = BRANCH_ALWAYS;
+    id_branch_register = 1'b0;
+    id_branch_target = (id_pc + 32'd4) + id_jump_offset;
     id_reg_write = 1'b0;
     id_halt_after_retire = 1'b0;
-    id_branch_taken = 1'b0;
     id_class = OPCLASS_NORMAL;
     id_error_code = ERROR_NONE;
-    id_compare_difference = {1'b0, register_a} - {1'b0, register_b};
-    id_compare_signed_less =
-        register_a[31] != register_b[31] ? register_a[31] :
-                                                id_compare_difference[31];
 
     if (!id_encoding_valid) begin
       id_class = OPCLASS_ERROR;
@@ -715,28 +803,42 @@ module cpu #(
           id_reg_write = 1'b1;
         end
 
-        OPCODE_ADD:  begin id_result = register_a + register_b; id_reg_write = 1'b1; end
-        OPCODE_SUB:  begin id_result = register_a - register_b; id_reg_write = 1'b1; end
-        OPCODE_AND:  begin id_result = register_a & register_b; id_reg_write = 1'b1; end
-        OPCODE_OR:   begin id_result = register_a | register_b; id_reg_write = 1'b1; end
-        OPCODE_XOR:  begin id_result = register_a ^ register_b; id_reg_write = 1'b1; end
-        OPCODE_ADDI: begin id_result = register_a + id_imm_signed; id_reg_write = 1'b1; end
-        OPCODE_ANDI: begin id_result = register_a & id_imm_unsigned; id_reg_write = 1'b1; end
-        OPCODE_ORI:  begin id_result = register_a | id_imm_unsigned; id_reg_write = 1'b1; end
-        OPCODE_XORI: begin id_result = register_a ^ id_imm_unsigned; id_reg_write = 1'b1; end
+        OPCODE_ADD:  begin id_use_alu = 1'b1; id_alu_op = ALU_ADD; id_reg_write = 1'b1; end
+        OPCODE_SUB:  begin id_use_alu = 1'b1; id_alu_op = ALU_SUB; id_reg_write = 1'b1; end
+        OPCODE_AND:  begin id_use_alu = 1'b1; id_alu_op = ALU_AND; id_reg_write = 1'b1; end
+        OPCODE_OR:   begin id_use_alu = 1'b1; id_alu_op = ALU_OR;  id_reg_write = 1'b1; end
+        OPCODE_XOR:  begin id_use_alu = 1'b1; id_alu_op = ALU_XOR; id_reg_write = 1'b1; end
+        OPCODE_SLT:  begin id_use_alu = 1'b1; id_alu_op = ALU_SLT; id_reg_write = 1'b1; end
+        OPCODE_SLTU: begin id_use_alu = 1'b1; id_alu_op = ALU_SLTU; id_reg_write = 1'b1; end
+        OPCODE_ADDI: begin
+          id_use_alu = 1'b1; id_alu_op = ALU_ADD; id_alu_imm = 1'b1;
+          id_reg_write = 1'b1;
+        end
+        OPCODE_ANDI: begin
+          id_use_alu = 1'b1; id_alu_op = ALU_AND; id_alu_imm = 1'b1;
+          id_imm = id_imm_unsigned; id_reg_write = 1'b1;
+        end
+        OPCODE_ORI: begin
+          id_use_alu = 1'b1; id_alu_op = ALU_OR; id_alu_imm = 1'b1;
+          id_imm = id_imm_unsigned; id_reg_write = 1'b1;
+        end
+        OPCODE_XORI: begin
+          id_use_alu = 1'b1; id_alu_op = ALU_XOR; id_alu_imm = 1'b1;
+          id_imm = id_imm_unsigned; id_reg_write = 1'b1;
+        end
 
-        OPCODE_SHL: begin id_result = register_a << id_shift_amount; id_reg_write = 1'b1; end
-        OPCODE_SHR: begin id_result = register_a >> id_shift_amount; id_reg_write = 1'b1; end
-        OPCODE_SAR: begin id_result = $signed(register_a) >>> id_shift_amount; id_reg_write = 1'b1; end
+        // The shift amount is rb's field (immediate) or rb's value [4:0].
+        OPCODE_SHL, OPCODE_SHR, OPCODE_SAR: begin
+          id_use_alu = 1'b1;
+          id_alu_op = (id_opcode == OPCODE_SHL) ? ALU_SHL :
+                      (id_opcode == OPCODE_SHR) ? ALU_SHR : ALU_SAR;
+          id_alu_imm = id_shift_immediate;
+          id_imm = {27'd0, id_rb};
+          id_reg_write = 1'b1;
+        end
 
-        OPCODE_SLT: begin id_result = {31'd0, id_compare_signed_less}; id_reg_write = 1'b1; end
-        OPCODE_SLTU: begin id_result = {31'd0, id_compare_difference[32]}; id_reg_write = 1'b1; end
-
-        // Operand a goes to EX in ex_result and b in ex_store_data (a word
-        // access size, so id_store_data is register_b).
         OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX,
         OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
-          id_result = register_a;
           id_class = OPCLASS_MULDIV;
           id_reg_write = 1'b1;
         end
@@ -762,58 +864,33 @@ module cpu #(
           end
         end
 
-        OPCODE_BEQ: begin
-          id_branch_taken = id_compare_difference[31:0] == 0;
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
-        OPCODE_BNE: begin
-          id_branch_taken = id_compare_difference[31:0] != 0;
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
-        OPCODE_BLT: begin
-          id_branch_taken = id_compare_signed_less;
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
-        OPCODE_BGE: begin
-          id_branch_taken = !id_compare_signed_less;
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
-        OPCODE_BLTU: begin
-          id_branch_taken = id_compare_difference[32];
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
-        OPCODE_BGEU: begin
-          id_branch_taken = !id_compare_difference[32];
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
-          id_class = OPCLASS_BRANCH;
-        end
+        OPCODE_BEQ:  begin id_branch_cond = BRANCH_EQ;  id_class = OPCLASS_BRANCH; end
+        OPCODE_BNE:  begin id_branch_cond = BRANCH_NE;  id_class = OPCLASS_BRANCH; end
+        OPCODE_BLT:  begin id_branch_cond = BRANCH_LT;  id_class = OPCLASS_BRANCH; end
+        OPCODE_BGE:  begin id_branch_cond = BRANCH_GE;  id_class = OPCLASS_BRANCH; end
+        OPCODE_BLTU: begin id_branch_cond = BRANCH_LTU; id_class = OPCLASS_BRANCH; end
+        OPCODE_BGEU: begin id_branch_cond = BRANCH_GEU; id_class = OPCLASS_BRANCH; end
         OPCODE_BRA: begin
-          id_branch_taken = 1'b1;
-          id_next_pc = (id_pc + 32'd4) + id_bra_offset;
+          id_branch_target = (id_pc + 32'd4) + id_bra_offset;
           id_class = OPCLASS_BRANCH;
         end
         OPCODE_JAL: begin
-          id_branch_taken = 1'b1;
-          id_next_pc = (id_pc + 32'd4) + id_jump_offset;
           id_result = id_pc + 32'd4;
           id_reg_write = 1'b1;
           id_class = OPCLASS_BRANCH;
         end
         OPCODE_JALR: begin
-          id_branch_taken = 1'b1;
-          id_next_pc = (register_a + id_jump_offset) & ~32'd3;
+          id_branch_register = 1'b1;
+          id_alu_imm = 1'b1;
+          id_imm = id_jump_offset;
           id_result = id_pc + 32'd4;
           id_reg_write = 1'b1;
           id_class = OPCLASS_BRANCH;
         end
         OPCODE_JR: begin
-          id_branch_taken = 1'b1;
-          id_next_pc = register_a & ~32'd3;
+          id_branch_register = 1'b1;
+          id_alu_imm = 1'b1;
+          id_imm = 32'd0;
           id_class = OPCLASS_BRANCH;
         end
 
@@ -841,8 +918,7 @@ module cpu #(
       id_instruction <= 32'd0;
       id_src_a <= 5'd0;
       id_src_b <= 5'd0;
-      id_reads_a <= 1'b0;
-      id_reads_b <= 1'b0;
+      id_memory <= 1'b0;
     end else if (halted || ctl_flush) begin
       id_valid <= 1'b0;
     end else if (if_redirect) begin
@@ -855,18 +931,66 @@ module cpu #(
       id_instruction <= if_instruction;
       id_src_a <= if_src_a;
       id_src_b <= if_src_b;
-      id_reads_a <= if_reads_a;
-      id_reads_b <= if_reads_b;
+      id_memory <= if_memory;
     end
   end
 
   // ======================================================================
-  // 04. EX — MEMORY STAGE
+  // 04. EX — ALU, BRANCHES AND MEMORY
   // ======================================================================
 
-  // Despite the prefix, this stage only does the memory access: the ALU and
-  // the branch decision run in ID, so ex_result already holds the result
-  // (or the load/store address) when the instruction gets here.
+  /*
+   * FWD-WB-EX. ex_forward_* was decided in ID (the instruction ahead of
+   * this one writes the operand), so the mux selects from a register: FF ->
+   * mux -> ALU, no compare in front. The only source is WB: with the ALU
+   * in EX, WB holds the result of the instruction right before, and anything
+   * older is already in the register file or came through ID's bypass.
+   */
+  assign ex_a = ex_forward_a ? wb_result : ex_op_a;
+  assign ex_b = ex_forward_b ? wb_result : ex_op_b;
+
+  assign ex_alu_b = ex_alu_imm ? ex_imm : ex_b;
+  assign ex_sum = ex_a + ex_alu_b;
+  assign ex_difference = {1'b0, ex_a} - {1'b0, ex_alu_b};
+  assign ex_signed_less = (ex_a[31] != ex_alu_b[31]) ? ex_a[31] : ex_difference[31];
+
+  always @* begin
+    case (ex_alu_op)
+      ALU_ADD:  ex_alu_result = ex_sum;
+      ALU_SUB:  ex_alu_result = ex_difference[31:0];
+      ALU_AND:  ex_alu_result = ex_a & ex_alu_b;
+      ALU_OR:   ex_alu_result = ex_a | ex_alu_b;
+      ALU_XOR:  ex_alu_result = ex_a ^ ex_alu_b;
+      ALU_SHL:  ex_alu_result = ex_a << ex_alu_b[4:0];
+      ALU_SHR:  ex_alu_result = ex_a >> ex_alu_b[4:0];
+      ALU_SAR:  ex_alu_result = $signed(ex_a) >>> ex_alu_b[4:0];
+      ALU_SLT:  ex_alu_result = {31'd0, ex_signed_less};
+      default:  ex_alu_result = {31'd0, ex_difference[32]};  // SLTU
+    endcase
+    case (ex_branch_cond)
+      BRANCH_EQ:  ex_taken = ex_difference[31:0] == 32'd0;
+      BRANCH_NE:  ex_taken = ex_difference[31:0] != 32'd0;
+      BRANCH_LT:  ex_taken = ex_signed_less;
+      BRANCH_GE:  ex_taken = !ex_signed_less;
+      BRANCH_LTU: ex_taken = ex_difference[32];
+      BRANCH_GEU: ex_taken = !ex_difference[32];
+      default:    ex_taken = 1'b1;
+    endcase
+  end
+
+  // A branch is never held in EX (it is not memory or MUL/DIV), so it
+  // redirects in the cycle it leaves, if it leaves (ctl_advance).
+  assign ex_redirects = ex_valid && (ex_class == OPCLASS_BRANCH) && ex_taken;
+  assign ex_target = ex_branch_register ? (ex_sum & ~32'd3) : ex_branch_target;
+
+  // Store data: the low byte or half replicated, as the mask expects.
+  always @* begin
+    case (ex_load_size)
+      2'd0: ex_store_data = {4{ex_b[7:0]}};
+      2'd1: ex_store_data = {2{ex_b[15:0]}};
+      default: ex_store_data = ex_b;
+    endcase
+  end
 
   assign ex_is_memory = ex_valid &&
       (ex_class == OPCLASS_LOAD || ex_class == OPCLASS_STORE);
@@ -917,9 +1041,10 @@ module cpu #(
    * A MUL/DIV class instruction stays in EX (ctl_advance low) while
    * ex_md_step counts. When it is done, the EX block writes the result into
    * ex_result and turns ex_class into OPCLASS_NORMAL (or OPCLASS_ERROR for a
-   * division by zero), and from then on it leaves EX like any ALU
-   * instruction. WB needs no new input and the RAW checks need no change:
-   * the producer is in EX, so hazard_ex holds its consumers.
+   * division by zero), and from then on it leaves EX like an instruction
+   * with a result known in ID (ex_use_alu low). Its consumer waits in ID
+   * meanwhile and takes the result from WB, forwarded, like any other.
+   * The operands are ex_a and ex_b, which EX keeps once forwarded.
    *
    * Multiplier, 3 cycles in EX plus the one to leave it. MUL, MULHI and
    * MULFX are all slices of the same signed 64-bit product, built from the
@@ -929,8 +1054,8 @@ module cpu #(
    *
    * MUL is signed[31:0], MULHI signed[63:32], and MULFX (Q16.16, arithmetic
    * shift by 16) signed[47:16]. These registers have no reset and no enable:
-   * they recompute every cycle from ex_result/ex_store_data, which stay put
-   * while the instruction waits in EX.
+   * they recompute every cycle from ex_a/ex_b, which stay put while the
+   * instruction waits in EX.
    *   step 0: four 16x16 products (one ECP5 DSP each) and the correction.
    *   step 1: md_product, the unsigned 64-bit product.
    *   step 2: md_mul_result -> ex_result.
@@ -964,12 +1089,11 @@ module cpu #(
        (id_opcode == OPCODE_REMU && md_tag_unsigned));
 
   always @(posedge clk) begin
-    md_ll <= ex_result[15:0] * ex_store_data[15:0];
-    md_lh <= ex_result[15:0] * ex_store_data[31:16];
-    md_hl <= ex_result[31:16] * ex_store_data[15:0];
-    md_hh <= ex_result[31:16] * ex_store_data[31:16];
-    md_correction <= (ex_result[31] ? ex_store_data : 32'd0) +
-                     (ex_store_data[31] ? ex_result : 32'd0);
+    md_ll <= ex_a[15:0] * ex_b[15:0];
+    md_lh <= ex_a[15:0] * ex_b[31:16];
+    md_hl <= ex_a[31:16] * ex_b[15:0];
+    md_hh <= ex_a[31:16] * ex_b[31:16];
+    md_correction <= (ex_a[31] ? ex_b : 32'd0) + (ex_b[31] ? ex_a : 32'd0);
     md_product <= {md_hh, md_ll} + ({31'd0, {1'b0, md_lh} + {1'b0, md_hl}} << 16);
   end
 
@@ -997,13 +1121,12 @@ module cpu #(
       if (ex_md_step == 6'd0) begin
         if (ex_md_fast) begin
           // md_remainder is the DIV's; only the sign is this instruction's.
-          md_remainder_negative <= ex_md_signed_div && ex_result[31];
+          md_remainder_negative <= ex_md_signed_div && ex_a[31];
         end else begin
-          md_dividend <= (ex_md_signed_div && ex_result[31]) ? -ex_result : ex_result;
-          md_divisor <= (ex_md_signed_div && ex_store_data[31]) ? -ex_store_data
-                                                                : ex_store_data;
-          md_quotient_negative <= ex_md_signed_div && (ex_result[31] ^ ex_store_data[31]);
-          md_remainder_negative <= ex_md_signed_div && ex_result[31];
+          md_dividend <= (ex_md_signed_div && ex_a[31]) ? -ex_a : ex_a;
+          md_divisor <= (ex_md_signed_div && ex_b[31]) ? -ex_b : ex_b;
+          md_quotient_negative <= ex_md_signed_div && (ex_a[31] ^ ex_b[31]);
+          md_remainder_negative <= ex_md_signed_div && ex_a[31];
           md_quotient <= 32'd0;
           md_remainder <= 32'd0;
         end
@@ -1023,7 +1146,17 @@ module cpu #(
       ex_next_pc <= 32'd0;
       ex_rd <= 5'd0;
       ex_result <= 32'd0;
-      ex_store_data <= 32'd0;
+      ex_op_a <= 32'd0;
+      ex_op_b <= 32'd0;
+      ex_forward_a <= 1'b0;
+      ex_forward_b <= 1'b0;
+      ex_use_alu <= 1'b0;
+      ex_alu_op <= ALU_ADD;
+      ex_alu_imm <= 1'b0;
+      ex_imm <= 32'd0;
+      ex_branch_cond <= BRANCH_ALWAYS;
+      ex_branch_register <= 1'b0;
+      ex_branch_target <= 32'd0;
       ex_store_mask <= 4'b0000;
       ex_load_size <= 2'd2;
       ex_load_signed <= 1'b0;
@@ -1055,14 +1188,31 @@ module cpu #(
     end else begin
       ex_mem_drop <= ex_mem_drop + {1'b0, ex_mem_posted}
                      - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
+      // FWD-HOLD: an instruction that stays in EX keeps its operands as
+      // forwarded: the producer leaves WB at the end of this cycle.
+      ex_op_a <= ex_a;
+      ex_op_b <= ex_b;
+      ex_forward_a <= 1'b0;
+      ex_forward_b <= 1'b0;
       if (ctl_advance) begin
         if (!raw_hazard) begin
-          ex_valid <= id_live;
+          // Behind a taken branch, a bubble (the wrong path).
+          ex_valid <= id_live && !ex_redirects;
           ex_pc <= id_pc;
-          ex_next_pc <= id_branch_taken ? id_next_pc : (id_pc + 32'd4);
+          ex_next_pc <= id_pc + 32'd4;
           ex_rd <= id_rd;
           ex_result <= id_result;
-          ex_store_data <= id_store_data;
+          ex_op_a <= id_op_a;
+          ex_op_b <= id_op_b;
+          ex_forward_a <= id_forward_a;
+          ex_forward_b <= id_forward_b;
+          ex_use_alu <= id_use_alu;
+          ex_alu_op <= id_alu_op;
+          ex_alu_imm <= id_alu_imm;
+          ex_imm <= id_imm;
+          ex_branch_cond <= id_branch_cond;
+          ex_branch_register <= id_branch_register;
+          ex_branch_target <= id_branch_target;
           ex_store_mask <= id_store_mask;
           ex_load_size <= id_access_size;
           ex_load_signed <= id_access_signed;
@@ -1090,7 +1240,7 @@ module cpu #(
             ex_result <= md_mul_result;
             ex_class <= OPCLASS_NORMAL;
           end
-        end else if (ex_md_step == 6'd0 && ex_store_data == 32'd0) begin
+        end else if (ex_md_step == 6'd0 && ex_b == 32'd0) begin
           ex_class <= OPCLASS_ERROR;
           ex_error_code <= ERROR_DIVISION_BY_ZERO;
         end else if ((ex_md_fast && ex_md_step == 6'd1) || ex_md_step == 6'd33) begin
@@ -1165,9 +1315,9 @@ module cpu #(
       end else if (ctl_advance && ex_valid) begin
         wb_valid <= 1'b1;
         wb_pc <= ex_pc;
-        wb_next_pc <= ex_next_pc;
+        wb_next_pc <= (ex_class == OPCLASS_BRANCH && ex_taken) ? ex_target : ex_next_pc;
         wb_rd <= ex_rd;
-        wb_result <= ex_result;
+        wb_result <= ex_use_alu ? ex_alu_result : ex_result;
         wb_reg_write <= ex_reg_write;
         wb_halt_after_retire <= ex_halt_after_retire;
         wb_md_counted <= ex_md_counted;

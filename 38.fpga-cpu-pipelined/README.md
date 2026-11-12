@@ -18,18 +18,22 @@ cpu.v ────┤                                          ├── arbitro
  IF/ID/EX/WB └─ dcache (8 KB, EBR) ── cpu_dmem_adapter ─┘
 ```
 
-- **Pipeline IF/ID/EX/WB** con punto de retiro arquitectonico. La ALU y la
-  decision de salto van en ID; EX hace el acceso a memoria y las MUL/DIV. Las
-  dependencias paran ID (sin adelantamiento). Cada etapa es un `always` con un
+- **Pipeline IF/ID/EX/WB** con punto de retiro arquitectonico. ID decodifica,
+  lee el banco y calcula la direccion de LOAD/STORE; EX tiene la ALU, la
+  decision de salto, el acceso a memoria y las MUL/DIV (paso 3). Con
+  **adelantamiento** (seccion siguiente) la unica dependencia que para es la
+  base de un LOAD/STORE recien calculada. Cada etapa es un `always` con un
   unico dueño por registro (`timing-etapas.md`).
 - **Fuentes predecodificadas** (paso 1 del plan de etapas, abajo): al pasar de
-  IF a ID se registran que registros lee la instruccion (`id_src_a/b`,
-  `id_reads_a/b`), asi que la deteccion de dependencias sale de registros y no
-  de decodificar `id_instruction`.
-- **Redireccion del salto registrada** (paso 2): ID decide el salto, pero la
-  busqueda se redirige un ciclo despues (`if_redirect`, `if_redirect_pc`). Un
-  salto tomado cuesta ahora 5 burbujas (eran 3); es el precio de sacar la
-  decision del camino hacia la I-cache, y lo devolvera la prediccion.
+  IF a ID se registran que registros lee la instruccion (`id_src_a/b`) y si es
+  un LOAD/STORE (`id_memory`), asi que las comparaciones para adelantar salen
+  de registros y no de decodificar `id_instruction`.
+- **Redireccion del salto registrada** (paso 2): EX decide el salto y la
+  busqueda se redirige un ciclo despues (`if_redirect`, `if_redirect_pc`); la
+  instruccion que entra en EX detras del salto pasa como burbuja. Un salto
+  tomado cuesta 6 burbujas (3 con la decision en ID sin registrar, 5 con la
+  redireccion registrada, una mas al pasar la decision a EX); lo devolvera la
+  prediccion.
 - **Busqueda de una instruccion por ciclo.** `imem` separa peticion
   (`valid/ready`) y respuesta (`rvalid`); una cola de cuatro entradas en IF y un
   contador descartan las respuestas del camino viejo tras un salto.
@@ -56,10 +60,10 @@ cpu.v ────┤                                          ├── arbitro
   fallar y debe dar error preciso), la parada de la CPU (el monitor lee por
   otro puerto) y un LOAD a la linea guardada.
 - **MUL, MULHI, MULFX, DIV, DIVU, REM y REMU** en EX (`cpu.v`, seccion 04b),
-  que se queda la instruccion varios ciclos como un acceso a memoria. ID manda
-  los operandos por `ex_result` y `ex_store_data`; al acabar, EX escribe el
-  resultado en `ex_result` y la instruccion sigue como una de ALU, asi que WB
-  y las dependencias no cambian. MUL/MULHI/MULFX salen del mismo producto con
+  que se queda la instruccion varios ciclos como un acceso a memoria. Los
+  operandos son los de EX ya adelantados (`ex_a`, `ex_b`); al acabar, EX
+  escribe el resultado en `ex_result` y la instruccion sale hacia WB como
+  cualquier otra, y su consumidor lo toma adelantado. MUL/MULHI/MULFX salen del mismo producto con
   signo (cuatro parciales 16x16 en DSP, inferidos): 3 ciclos mas que una
   instruccion de ALU. La division es iterativa con signo al final: unos 34
   ciclos mas, y un REM/REMU justo detras de su DIV/DIVU con los mismos
@@ -67,6 +71,28 @@ cpu.v ────┤                                          ├── arbitro
   La division por cero es un error preciso. Sus esperas tienen contador propio
   (ranura 14, `STALL_MULDIV`, un motivo mas del reparto) y la ranura 15
   (`MULDIV_RETIRED`) cuenta cuantas se retiran.
+- **Adelantamiento (forwarding).** Todos los caminos que salen baratos; en
+  `cpu.v` llevan una etiqueta para buscarlos y el mapa completo esta en la
+  cabecera del modulo:
+
+  | Etiqueta | Camino (en ingles) | Que resuelve |
+  |---|---|---|
+  | `FWD-WB-EX` | *WB -> EX forwarding*: mux delante de la ALU (`ex_a`, `ex_b`) | usar el resultado de la instruccion de justo antes: ALU, comparacion del salto, destino de JALR/JR, dato del STORE y operandos de MUL/DIV. Lo selecciona `ex_forward_a/b`, decidido en ID y registrado, asi que el mux sale de un FF |
+  | `FWD-WB-ID` | *register-file bypass* (`id_op_a`, `id_op_b`) | el valor que WB escribe este ciclo, que la lectura asincrona del banco aun no ve |
+  | `FWD-HOLD` | operandos retenidos en EX | una instruccion que se queda en EX (memoria, MUL/DIV) guarda lo adelantado: WB se retira al ciclo siguiente |
+
+  El consumidor de un LOAD (*load-use*) no necesita camino propio: espera en
+  ID mientras dura el acceso y entra en EX cuando el LOAD pasa a WB con el
+  dato, asi que no paga nada extra.
+
+  Lo que **no** se adelanta, a proposito:
+
+  | Caso | En ingles | Coste | Por que no |
+  |---|---|---|---|
+  | LOAD/STORE cuya base escribe la instruccion de justo antes (`ADDI R1,R1,4` + `LOAD [R1]`) | *address-generation interlock* (AGI) | 1 burbuja (`raw_hazard`, la unica parada por dependencia) | la direccion se calcula en ID para que la peticion a la D-cache salga de un registro; adelantar de EX a ID pondria la ALU delante del sumador de la direccion en el mismo ciclo |
+  | Decidir el salto en ID con operandos adelantados | *early branch resolution* | 1 burbuja mas por salto tomado | el mismo camino largo; lo recupera la prediccion |
+  | Dato del LOAD directo de la respuesta a EX | *memory -> EX forwarding* | — | no ganaria nada: el consumidor ya entra en EX justo cuando el LOAD pasa a WB |
+
 - **Invalidacion por epoca** en las dos caches: cada etiqueta guarda la epoca
   en que se escribio e invalidar todo es sumar uno (en el flanco de `reset` o de
   la CPU parandose). Sin bits de valido, cada cache cuesta unas 330-390 LUT en
@@ -81,9 +107,17 @@ cpu.v ────┤                                          ├── arbitro
   Yosys (`syn_useioff` en `sdram_controller_128.v`); la ventana de fase buena
   paso de 8 a unas 20-22 posiciones. La fase sale en el bitstream
   (`SDRAM_PHASE` en `top.v`, una por herramienta) y se mide con
-  `tools/phase-sweep`.
+  `tools/phase-sweep`. **Cuidado:** la ventana se sigue moviendo entre builds
+  y la 18 de fabrica ha quedado en el borde (17-37 en `dcache-decide`). Con el
+  build del adelantamiento, test-scheduler-c fallaba en placa de forma
+  intermitente con la 18 (un resultado distinto cada vez; la memoria pasaba
+  la prueba de 256 KB) y pasa siempre con la 27 (`monitor.py phase-set 27`).
+  Antes de medir, fijar la fase; la solucion de fondo es el reloj de la SDRAM
+  por la celda de IO (paso 6).
 
-Bancos: `tools/test -p 38` (entre ellos `cpu_perf_tb`, que mide CPI sin placa,
+Bancos: `tools/test -p 38` (entre ellos `cpu_perf_tb`, que mide CPI sin placa
+con programas que aislan cada efecto: dependencias encadenadas, salto que
+depende de la anterior, LOAD seguido de su uso, base recien calculada...,
 `dcache_tb`, `instruction_buffer_reset_tb`, `cpu_dmem_adapter_tb` y
 `cpu_muldiv_tb` y `cpu_redirect_tb`, con mutantes comprobados). `cpu_data_path_tb` junta CPU, D-cache y adaptador reales,
 y `cpu_memory_system_tb` añade puente, fabric, controlador, modelo de SDRAM y
@@ -107,23 +141,29 @@ misma señal; las tareas lo esconden facil.
 
 CPI de algunos casos de `run_tests.py --measure`; cada columna añade un cambio.
 
-| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* |
-| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* |
-| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* |
-| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 |
-| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 |
-| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 |
-| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 |
-| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 |
-| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 |
-| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 |
+| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos | Adelantamiento |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* | 2,61* |
+| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* | 2,88* |
+| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* | 2,67* |
+| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 | 2,86 |
+| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 | 2,57 |
+| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 | 2,12 |
+| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 | 8,77 |
+| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 | 4,73 |
+| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 | 4,50 |
+| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 | 6,46 |
 
 `Etapas 1-2b`: fuentes predecodificadas, redireccion registrada y respuesta de
 la I-cache registrada (12 de noviembre). Suben el CPI de todo lo que salta
 (+0,4-0,5 en bresenham: 5 burbujas por salto tomado en vez de 3) a cambio de
 reloj: la CPU pasa de cerrar a 55,8 MHz a 63,2, y a 65,4 con la D-cache.
+
+`Adelantamiento` (paso 3, 12 de noviembre): ALU y salto en EX con
+adelantamiento WB -> EX. El CPI medio de `--measure` baja un 24 % (3,49 ->
+2,65) con el reloj igual (69,4 MHz): test-scheduler-c 3,49 -> 2,59,
+mandelbrot -27 %, xorshift -30 %, bresenham-circles -13 %. Lo que salta mucho y apenas encadena resultados
+(calls, jump-table) sube un 2-4 %: el salto tomado cuesta una burbuja mas.
 
 \* El CPI de los casos de video **no compara CPUs** desde `Etapas 1-2b`: a
 25 MHz el frame de bounce ya no cabe en un vsync (unos 530.000 ciclos de
@@ -156,44 +196,57 @@ Lo que dicen los contadores:
   no mejoraria ninguno. La cache de datos acierta un 57-60 % en memory-copy y
   array-sum porque cada linea nueva falla la primera vez.
 
-## Video: cuanto del frame ocupa (build `perf-video`)
+## Video: cuanto del frame ocupa
 
 Con las ranuras 16 y 17, en "Ritmo de video" de `--measure`. Solo los casos con
-muchos intercambios; en los de 1 a 4 domina el dibujo inicial.
+muchos intercambios; en los de 1 a 4 domina el dibujo inicial. `Frames por
+swap` es Ciclos/swap entre Ciclos/frame.
 
-| Caso | Ciclos/frame | Trabajo/swap | Frame ocupado | Frames por swap |
+| Caso | Frame ocupado (`perf-video`) | Frames por swap | Frame ocupado (adelantamiento) | Frames por swap |
 |---|---:|---:|---:|---:|
-| video-band | 385 926 | 426 402 | 110,5 % | 2,0 |
-| video-bounce | 418 464 | 430 558 | 102,9 % | 2,0 |
-| video-swap-demo | 414 988 | 427 095 | 102,9 % | 2,0 |
-| video-starfield | 418 345 | 429 713 | 102,7 % | 2,0 |
-| video-cube | 419 452 | 400 205 | 95,4 % | 1,08 |
-| video-swap-demo-fast | 415 520 | 89 712 | 21,6 % | 1,08 |
-| video-starfield-fast | 412 312 | 77 794 | 18,9 % | 1,05 |
-| pacman | 419 768 | 17 319 | 4,1 % | 1,02 |
+| video-band | 110,5 % | 2,0 | 99,2 % | 1,25 |
+| video-bounce | 102,9 % | 2,0 | **93,9 %** | 1,01 |
+| video-swap-demo | 102,9 % | 2,0 | **93,0 %** | 1,04 |
+| video-starfield | 102,7 % | 2,0 | **92,5 %** | 1,02 |
+| video-cube | 95,4 % | 1,08 | — | — |
+| video-swap-demo-fast | 21,6 % | 1,08 | 19,5 % | 1,04 |
+| video-starfield-fast | 18,9 % | 1,05 | 17,0 % | 1,05 |
+| pacman | 4,1 % | 1,02 | — | — |
 
-bounce, starfield y swap-demo **no caben por un 3 %** y van a un intercambio
-cada dos frames (30 fps en vez de 60); band necesita un 10 % menos. La columna
-antigua `Swaps/frame` lo escondia: cuenta frames de pared, con el viaje de
-parada, y daba 0,37 en cube, que con la CPU en marcha va casi a un swap por
-frame. A 50 MHz el frame ocupado se reduciria a la mitad.
+Con `perf-video` (antes del paso 3), bounce, starfield y swap-demo **no
+cabian por un 3 %** e iban a un intercambio cada dos frames (30 fps en vez de
+60). Con el adelantamiento les sobra un 6-7 % y vuelven a ir a un swap por
+frame; band queda justo (99 %) y pierde un vblank de cada cuatro. (cube y
+pacman no entraron en esa medida.) La columna antigua `Swaps/frame` escondia
+todo esto: cuenta frames de pared, con el viaje de parada. A 50 MHz el frame
+ocupado se reduciria a la mitad.
 
-## Que mejorar primero (build `perf-video`)
+## Que mejorar primero (tras el adelantamiento)
 
-Programas largos sin video (9 M instrucciones, sobre todo test-scheduler-c y
-mandelbrot), CPI 3,33. "Recuperaria" es un techo estimado: los contadores dicen
-cuanto pierde cada motivo, no que parte de las dependencias es de un LOAD.
+Reparto de `--measure` (CPI = 1 + motivos) en los casos que mas duran.
+Con el adelantamiento la dependencia es ~0 en todos ellos; lo que queda es
+sobre todo el salto:
 
-| Mejora | Motivo | Pierde | Recuperaria | Coste |
-|---|---|---:|---:|---|
-| Adelantamiento | Dependencia | 1,09 | ~0,7-0,9 (lo de ALU; LOAD y MUL/DIV siguen esperando a EX) | medio |
-| Prediccion de saltos | Salto | 0,75 | ~0,5-0,6 (5 burbujas -> 0-1 si acierta) | medio-alto |
-| MUL en 1-2 ciclos | MUL/DIV | 0,24 | ~0,15 (mandelbrot 0,68 -> ~0,25) | bajo |
-| MMIO un ciclo menos | EX con memoria | 0,25 | ~0,05 | bajo |
-| Prefetch | ID vacio | 0,00 | 0 | — |
+| Caso | CPI | EX con memoria | MUL/DIV | Dependencia | Salto |
+|---|---:|---:|---:|---:|---:|
+| video-bounce | 2,61 | 0,08 | 0 | 0 | **1,53** |
+| video-starfield | 3,34 | 0,20 | 0,14 | 0 | **1,99** |
+| video-swap-demo | 2,67 | 0,12 | 0 | 0 | **1,55** |
+| program-mandelbrot | 2,12 | 0 | **0,68** | 0 | 0,44 |
+| cpu-gpu/gpu-scheduler/test-scheduler-c | 2,59 | 0,35 | 0,06 | 0,11 | **1,08** |
+| program-bresenham-circles-core | 2,57 | 0 | 0 | 0 | **1,51** |
+| cpu-gpu/libc/string-c | 3,29 | 0,45 | 0,02 | 0,05 | **1,62** |
 
-En video el reparto incluye el bucle que espera el intercambio; lo que manda
-es el frame ocupado, y a bounce, starfield y swap-demo les basta un 3 %.
+"Recuperaria" es un techo estimado:
+
+| Mejora | Motivo | Recuperaria | Coste |
+|---|---|---|---|
+| Prediccion, fase 1: BRA/JAL, saltos hacia atras y retornos (RAS) en la cabeza de IF | Salto | ~la mitad: 6 -> 2-3 burbujas en bucles, llamadas y retornos | medio, poco riesgo para el reloj |
+| Prediccion, fase 2: BTB con contadores de 2 bits | Salto | lo que quede: 0-1 burbujas si acierta | alto: va en el camino de `imem_address` |
+| MUL en 1-2 ciclos | MUL/DIV | ~0,4 en mandelbrot | bajo |
+| MMIO un ciclo menos | EX con memoria | 0,05-0,2 en video | bajo |
+| AGI (base recien calculada) | Dependencia | ~0 | no compensa |
+| Prefetch | ID vacio | 0 en estos casos: caben en 8 KB | hace falta un caso grande (cubo de mini-gl) |
 
 ## Donde se pierde el CPI (build `icache-ebr`)
 
@@ -241,23 +294,33 @@ En orden de lo que mas promete segun las medidas:
    | 2 | Redireccion del salto registrada | hecho (+2 burbujas por salto tomado) |
    | 2b | Respuesta de la I-cache registrada, cola de 4 | hecho, CPU 63,2 MHz |
    | — | Acierto de la D-cache en 2 ciclos, comparacion registrada | hecho, CPU 65,4 MHz |
-   | 3 | Sacar la ALU de ID a EX (camino `_RAM -> EX` de 14,1 ns) | siguiente |
-   | 4 | Adelantamiento EX/WB y prediccion de saltos (pasos 2 y 3 de esta lista) | pendiente |
+   | 3 | ALU y decision de salto en EX, con adelantamiento WB -> EX | hecho, CPU 69,4 MHz (+1 burbuja por salto tomado) |
+   | 4 | Prediccion de saltos (paso 2 de esta lista) | siguiente |
    | 5 | Subir el reloj (pasos 8 y 9) | pendiente |
 
-   El camino critico ahora es la cola de IF (`if_pc2`, 15,3 ns, 79 % de
-   rutado), seguido del resultado de la ALU en EX.
-2. **Saltos mas baratos** (hoy 5 burbujas por salto tomado, tras la
-   redireccion registrada):
-   - Prediccion: saltos hacia atras tomados, o una BTB que redirija la
-     busqueda desde IF sin esperar a ID. Es lo que devuelve lo que costo el
-     paso 2, y mas.
-   - Respuesta directa a ID cuando la cola esta vacia, sin pasar por ella.
-3. **Adelantamiento EX/WB → ID**, para las dependencias (0,34 en bresenham,
-   1,04 en los programas largos). Un resultado de ALU existe al salir de ID y se
-   puede adelantar desde EX; el de un LOAD o una MUL/DIV solo al acabar EX
-   (`ex_class` vuelve a NORMAL), asi que desde EX solo se adelanta si la clase
-   ya es NORMAL o es de ALU.
+   El camino critico ahora es la comprobacion de division por cero en EX
+   (`ex_forward_b` -> `ex_b == 0` -> `ex_class`, 14,4 ns), seguida de la cola
+   de IF (13,8 ns). La primera se quita comprobando `md_divisor` un ciclo
+   despues.
+2. **Saltos mas baratos** (hoy 6 burbujas por salto tomado; es lo que mas
+   pierde en video y en casi todo lo largo). Siguiente paso, en dos fases que
+   comparten la comprobacion en EX (llevar "predicho tomado y a donde" por el
+   pipeline y corregir si falla, con el coste de hoy):
+   - **Fase 1, en la cabeza de la cola de IF**, con la predecodificacion que
+     ya hay: BRA y JAL siempre (no fallan); saltos condicionales hacia atras
+     como tomados (*backward-taken, forward-not-taken*, el cierre de un
+     bucle); y retornos con una pila de direcciones (*return address stack*:
+     JAL/JALR apilan `pc+4`, el retorno desapila). ~2-3 burbujas en vez de 6.
+     Antes, mirar con que instruccion y registro retorna `mini-cc`.
+   - **Fase 2, al pedir la instruccion**: una BTB (*branch target buffer*)
+     indexada por el PC de busqueda, con contadores de 2 bits y un bit de
+     "es retorno" que usa la misma pila. 0-1 burbujas si acierta; la fase 1
+     se queda para sus fallos (primera vez, conflictos). Es el cambio
+     delicado para el reloj: va en el camino de `imem_address`.
+   - Ademas, respuesta directa a ID cuando la cola esta vacia, sin pasar por
+     ella (abarata tambien los fallos de prediccion).
+3. **Adelantamiento: hecho** con el paso 3 (ver Estado actual). Queda solo
+   la burbuja del AGI, que no compensa quitar.
 4. **Menos fallos de primer acceso**: traer la linea siguiente por adelantado
    (prefetch) en las dos caches, o lineas de 32 bytes.
 5. **Un programa grande para medir tamaños.** Los casos actuales caben en

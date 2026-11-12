@@ -915,7 +915,7 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `STALL_MMIO` | Ciclos con un acceso a datos a un dispositivo MMIO pendiente. **No** se suman a `STALL_MEM`: un dispositivo no es memoria. |
 | `STALL_EX_MEM` | Solo CPU segmentada. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con un acceso a memoria o a MMIO, incluidos los ciclos de petición y respuesta que no son espera. Sin `STALL_MULDIV`, incluye también los de MUL/DIV. |
 | `STALL_RAW` | Solo CPU segmentada. Ciclos en que ID tiene una instrucción pero la para una dependencia con una instrucción anterior que aún no ha escrito su registro. |
-| `STALL_BRANCH` | Solo CPU segmentada. Ciclos con ID vacío desde un salto tomado hasta que llega la primera instrucción del destino. |
+| `STALL_BRANCH` | Solo CPU segmentada. Ciclos perdidos por un salto tomado: desde que se decide hasta que llega a ID la primera instrucción del destino (con ID vacío, o con la instrucción del camino equivocado que se descarta). |
 | `STALL_ID_EMPTY` | Solo CPU segmentada. Ciclos con ID vacío por cualquier otro motivo: un fallo del búfer de instrucciones o el arranque. |
 | `DMEM_HITS` | Solo CPU con caché de datos. `LOAD` a memoria servidos por la caché, sin ir al fabric. |
 | `DMEM_MISSES` | Solo CPU con caché de datos. `LOAD` a memoria que tuvieron que leer una línea. Los `STORE`, el MMIO y los accesos fuera de memoria pasan de largo y no cuentan en ninguno de los dos. |

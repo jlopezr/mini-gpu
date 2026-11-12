@@ -4,12 +4,15 @@
 /*
  * Redireccion del salto registrada (cpu.v, if_redirect).
  *
- * Un salto tomado se decide en ID y redirige IF al ciclo siguiente. En ese
- * ciclo ID tiene la instruccion de detras del salto, del camino equivocado:
- * no debe llegar a EX, ni escribir, ni fallar, ni parar por dependencia. Este
- * banco pone de todo en ese hueco y comprueba que no deja rastro:
+ * Un salto tomado se decide en EX y redirige IF al ciclo siguiente. Detras
+ * de el vienen dos instrucciones del camino equivocado: la que pasa de ID a
+ * EX mientras el salto decide (entra como burbuja) y la que ID tiene en el
+ * ciclo de la redireccion. Ninguna debe ejecutarse en EX, ni escribir, ni
+ * fallar, ni parar por dependencia. Este banco pone de todo en esos huecos y
+ * comprueba que no deja rastro:
  *
- *   1. TRAP, DIV por cero, JAL, STORE y ADDI en el camino equivocado.
+ *   1. TRAP, DIV por cero, JAL, STORE y ADDI en el camino equivocado, en
+ *      el primer hueco y en los dos.
  *   2. Saltos encadenados: el destino de un salto es otro salto.
  *   3. STEP sobre el salto: PC en el destino y la siguiente instruccion es la
  *      del destino.
@@ -232,6 +235,30 @@ module cpu_redirect_tb;
     expect_pc("1 HALT", 32'd52);       // el HALT (0x30) se retira: PC a la siguiente
     if (errors != 0) $fatal(1, "1: %0d fallo(s)", errors);
     $display("1. camino equivocado tras salto tomado: sin efectos");
+
+    // 1b. Igual, saltando DOS: la primera entra en EX como burbuja mientras
+    //     el salto decide, y la segunda esta en ID durante la redireccion.
+    clear_memory();
+    emit(addi(5'd5, 5'd0, 16'd7));        // 0  R5 = 7
+    emit(beq(5'd0, 5'd0, 16'd2));         // 4  tomado -> 16
+    emit(store(5'd5, 5'd0, 16'h0400));    // 8    STORE (colgaria la CPU)
+    emit(TRAP);                           // 12
+    emit(bne(5'd5, 5'd0, 16'd2));         // 16 tomado -> 28
+    emit(jal(5'd8, 16'd10));              // 20   JAL R8
+    emit(rtype(6'h0c, 5'd7, 5'd5, 5'd6)); // 24   DIV por cero
+    emit(bra(26'd2));                     // 28 tomado -> 40
+    emit(addi(5'd2, 5'd0, 16'd99));       // 32   R2 = 99
+    emit(store(5'd2, 5'd0, 16'h0400));    // 36   STORE con el R2 de arriba
+    emit(addi(5'd3, 5'd2, 16'd1));        // 40 R3 = R2 + 1 = 1
+    emit(HALT);                           // 44
+    run_ok("1b dos huecos");
+    expect_register("1b R7", 5'd7, 32'd0);
+    expect_register("1b R8", 5'd8, 32'd0);
+    expect_register("1b R2", 5'd2, 32'd0);
+    expect_register("1b R3", 5'd3, 32'd1);
+    expect_pc("1b HALT", 32'd48);
+    if (errors != 0) $fatal(1, "1b: %0d fallo(s)", errors);
+    $display("1b. dos instrucciones tras el salto tomado: sin efectos");
 
     // 2. Saltos encadenados: cada destino es otro salto tomado.
     clear_memory();
