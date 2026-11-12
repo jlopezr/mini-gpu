@@ -9,6 +9,9 @@
  * combinacion) salvo en la zona "lenta" (bit 12 de la direccion, como un
  * volcado), y lecturas a los READ_CYCLES ciclos con la palabra y la linea.
  *
+ * La prueba 15 invalida en cada momento de una consulta (comparar, decidir y
+ * decidir esperando a un STORE): el acierto viejo ya no vale.
+ *
  * La CPU de prueba se porta como cpu.v: un LOAD espera su respuesta; un STORE a
  * SDRAM no, y su respuesta se descarta al llegar. Cada respuesta se compara
  * contra la que tocaba en ese orden.
@@ -315,6 +318,34 @@ module dcache_tb;
     end
     load_wait(32'h0000_0150, 32'hA000_0150, 0, 1, "14 fallo tras invalidar");
     load_wait(32'h0000_0150, 32'hA000_0150, 0, 0, "14 y luego acierta");
+
+    // 15) `invalidate` mientras un LOAD que acertaria esta consultando: la
+    //     memoria cambia por detras y el LOAD tiene que ver el dato nuevo
+    //     (fallar). En tres momentos: durante ST_LOOKUP (compara), durante
+    //     ST_DECIDE (decide) y mientras ST_DECIDE espera a un STORE lento.
+    for (k = 0; k < 3; k = k + 1) begin
+      if (dut.epoch == 2'd3) begin   // que no coincida con una vuelta
+        @(negedge clk); invalidate = 1; @(negedge clk); invalidate = 0;
+      end
+      memory[32'h170 >> 2] = 32'h0000_1500 + k;
+      load_wait(32'h0000_0170, 32'h0000_1500 + k, 0, 1, "15 preparar");
+      memory[32'h170 >> 2] = 32'h0000_1510 + k;
+      if (k == 2) store(32'h0000_1000, 32'h1515_1515, 4'b1111);  // lento
+      start = mem_reads;
+      load(32'h0000_0170, 32'h0000_1510 + k, 0);
+      // `request` vuelve justo despues del flanco que acepta: es ST_LOOKUP.
+      if (k >= 1) @(posedge clk);                  // ST_DECIDE
+      if (k == 2) repeat (3) @(posedge clk);       // ST_DECIDE, esperando
+      // Alto durante ese ciclo entero, hasta el flanco que lo cierra.
+      #1 invalidate = 1;
+      @(posedge clk); #1 invalidate = 0;
+      wait_responses;
+      if (mem_reads - start != 1) begin
+        errors = errors + 1;
+        $display("FALLO 15.%0d: %0d lecturas, esperaba 1 (el acierto viejo no vale)",
+                 k, mem_reads - start);
+      end
+    end
 
     repeat (20) @(posedge clk);
     wait_responses;

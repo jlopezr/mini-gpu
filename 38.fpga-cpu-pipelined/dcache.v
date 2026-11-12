@@ -127,7 +127,7 @@ module dcache #(
   localparam [EPOCH_BITS-1:0] EPOCH_LAST = {EPOCH_BITS{1'b1}};
 
   localparam [2:0] ST_IDLE = 3'd0, ST_LOOKUP = 3'd1, ST_ISSUE = 3'd2,
-                   ST_FILL = 3'd3, ST_SWEEP = 3'd4;
+                   ST_FILL = 3'd3, ST_SWEEP = 3'd4, ST_DECIDE = 3'd5;
 
   reg [2:0] state;
 
@@ -215,15 +215,26 @@ module dcache #(
   assign mem_write_data = cpu_write_data;
   assign mem_write_enable = (state == ST_ISSUE) ? 4'b0000 : cpu_write_enable;
 
+  // -- La comparacion, registrada ---------------------------------------------
+  // La EBR da la etiqueta ~6 ns despues del flanco: compararla y decidir el
+  // estado y la respuesta en ese mismo ciclo era el camino critico del
+  // diseno. En ST_LOOKUP solo se compara y se elige la palabra, a registros;
+  // en ST_DECIDE se decide con ellos. Un `bump` entre medias anula el
+  // acierto (la epoca ha cambiado).
+  reg hit_q;
+  reg [31:0] word_q;
+  wire decide_hit = (state == ST_DECIDE) && (pending == 3'd0) && hit_q &&
+                    !bump && !wrapping;
+
   // -- Hacia la CPU -------------------------------------------------------------
-  reg local_rvalid;
-  reg [31:0] local_data;
-  assign cpu_rvalid = local_rvalid || mem_rvalid;
-  assign cpu_read_data = local_rvalid ? local_data : mem_read_data;
-  assign cpu_error = !local_rvalid && mem_error;
+  // El acierto contesta en ST_DECIDE, combinacional desde registros (hit_q,
+  // pending, state): sin coste de latencia frente a registrar la respuesta.
+  // Con `pending` a cero el adaptador no contesta nada en ese ciclo.
+  assign cpu_rvalid = decide_hit || mem_rvalid;
+  assign cpu_read_data = decide_hit ? word_q : mem_read_data;
+  assign cpu_error = !decide_hit && mem_error;
 
   always @(posedge clk) begin
-    local_rvalid <= 1'b0;
     hit_event <= 1'b0;
     miss_event <= 1'b0;
     invalidate_prev <= invalidate_any;
@@ -243,7 +254,8 @@ module dcache #(
       pending <= 3'd0;
       held_address <= 32'd0;
       held_epoch <= {EPOCH_BITS{1'b0}};
-      local_data <= 32'd0;
+      hit_q <= 1'b0;
+      word_q <= 32'd0;
       sweep_index <= {INDEX_BITS{1'b0}};
     end else begin
       pending <= pending_next;
@@ -260,19 +272,26 @@ module dcache #(
           end
         end
 
-        // Datos y etiqueta ya leidos. Se espera a que el adaptador no deba
-        // nada: asi la respuesta sale detras de las anteriores.
-        ST_LOOKUP:
+        // Datos y etiqueta ya leidos: comparar, a registros.
+        ST_LOOKUP: begin
+          hit_q <= hit;
+          word_q <= data_q[{held_address[3:2], 5'b00000} +: 32];
+          state <= ST_DECIDE;
+        end
+
+        // Se espera a que el adaptador no deba nada: asi la respuesta sale
+        // detras de las anteriores. Si la epoca cambia mientras, ya no vale.
+        ST_DECIDE:
           if (pending == 3'd0) begin
-            if (hit) begin
-              local_data <= data_q[{held_address[3:2], 5'b00000} +: 32];
-              local_rvalid <= 1'b1;
+            if (decide_hit) begin
               hit_event <= 1'b1;
               state <= ST_IDLE;
             end else begin
               miss_event <= 1'b1;
               state <= ST_ISSUE;
             end
+          end else if (bump) begin
+            hit_q <= 1'b0;
           end
 
         ST_ISSUE:

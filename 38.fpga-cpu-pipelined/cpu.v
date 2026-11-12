@@ -342,8 +342,11 @@ module cpu #(
   assign ctl_retire_stop = ctl_retire &&
       (wb_halt_after_retire || ctl_step_active);
   assign ctl_flush = ctl_abort || ctl_fault || ctl_retire_stop;
-  assign ctl_advance = !halted && !halt_request &&
-      !wb_stops_machine && !ex_is_memory && !ex_is_muldiv;
+  // A memory access lets the next instruction into EX in the cycle it ends
+  // (ex_mem_done), not the one after: dmem_ready and dmem_rvalid come from
+  // registers in dcache.v and cpu_dmem_adapter.v.
+  assign ctl_advance = !halted && !halt_request && !wb_stops_machine &&
+      !(ex_is_memory && !ex_mem_done) && !ex_is_muldiv;
   assign ctl_memory = !halted && !halt_request &&
       !wb_stops_machine && ex_is_memory;
   assign ctl_muldiv = !halted && !halt_request &&
@@ -362,7 +365,7 @@ module cpu #(
       perf_after_redirect <= 1'b0;
     end else begin
       perf_stall <= 5'b00000;
-      if (ctl_memory)
+      if (ctl_memory && !ex_mem_done)
         perf_stall[0] <= 1'b1;
       else if (ctl_muldiv)
         perf_stall[4] <= 1'b1;
@@ -1102,13 +1105,10 @@ module cpu #(
           end
         end
       end
-      if (ctl_memory) begin
-        if (dmem_valid && dmem_ready && !ex_mem_posted) ex_mem_request_sent <= 1'b1;
-        if (ex_mem_done) begin
-          ex_valid <= 1'b0;
-          ex_mem_request_sent <= 1'b0;
-        end
-      end
+      // When the access ends, ctl_advance is high in that same cycle and the
+      // block above has already brought in the next instruction (or a bubble).
+      if (ctl_memory && !ex_mem_done && dmem_valid && dmem_ready)
+        ex_mem_request_sent <= 1'b1;
     end
   end
 
@@ -1150,18 +1150,7 @@ module cpu #(
         architectural_pc <= wb_next_pc;
         wb_valid <= 1'b0;
       end
-      if (ctl_advance && ex_valid) begin
-        wb_valid <= 1'b1;
-        wb_pc <= ex_pc;
-        wb_next_pc <= ex_next_pc;
-        wb_rd <= ex_rd;
-        wb_result <= ex_result;
-        wb_reg_write <= ex_reg_write;
-        wb_halt_after_retire <= ex_halt_after_retire;
-        wb_md_counted <= ex_md_counted;
-        wb_error <= ex_class == OPCLASS_ERROR;
-        wb_error_code <= ex_error_code;
-      end
+      // A memory access ending also has ctl_advance high: it goes first.
       if (ex_mem_done) begin
         wb_valid <= 1'b1;
         wb_pc <= ex_pc;
@@ -1173,6 +1162,17 @@ module cpu #(
         wb_halt_after_retire <= ex_halt_after_retire;
         wb_error <= !ex_mem_posted && dmem_error;
         wb_error_code <= ERROR_MEMORY_ACCESS;
+      end else if (ctl_advance && ex_valid) begin
+        wb_valid <= 1'b1;
+        wb_pc <= ex_pc;
+        wb_next_pc <= ex_next_pc;
+        wb_rd <= ex_rd;
+        wb_result <= ex_result;
+        wb_reg_write <= ex_reg_write;
+        wb_halt_after_retire <= ex_halt_after_retire;
+        wb_md_counted <= ex_md_counted;
+        wb_error <= ex_class == OPCLASS_ERROR;
+        wb_error_code <= ex_error_code;
       end
     end
   end
