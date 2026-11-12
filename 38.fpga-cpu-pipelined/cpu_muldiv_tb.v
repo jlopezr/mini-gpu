@@ -273,7 +273,30 @@ module cpu_muldiv_tb;
       if (i % 4 == 1) rb_value = rb_value >>> 20;  // divisores pequeños
       check_pair(ra_value, rb_value);
     end
-    $display("1. resultados: 140 pares OK");
+    // Tamanos de todo tipo, para que la salida temprana de la division salte
+    // de 0 a 32 pasos: cada operando desplazado un numero aleatorio de bits,
+    // con su signo.
+    for (i = 0; i < 64; i = i + 1) begin
+      ra_value = $random(seed);
+      rb_value = $random(seed);
+      ra_value = ra_value >>> ($random(seed) & 31);
+      rb_value = rb_value >>> ($random(seed) & 31);
+      if (i % 3 == 0) ra_value = ra_value >> 1;   // positivos grandes
+      check_pair(ra_value, rb_value);
+    end
+    // Los bordes de la salida temprana: n < d (cero pasos), un bit de cociente
+    // y la potencia de dos justo por encima o por debajo.
+    check_pair(32'd6, 32'd7);
+    check_pair(32'd7, 32'd7);
+    check_pair(32'd13, 32'd7);
+    check_pair(32'd14, 32'd7);
+    check_pair(32'h0000_8000, 32'h0000_8001);
+    check_pair(32'h0001_0000, 32'h0000_8000);
+    check_pair(32'hffff_ffff, 32'h0000_0001);
+    check_pair(32'h7fff_ffff, 32'h4000_0000);
+    check_pair(32'h0000_0001, 32'h8000_0000);
+    check_pair(32'h0000_0000, 32'h0000_0003);
+    $display("1. resultados: 214 pares OK");
 
     // 2. El atajo no debe acertar. Cada caso calcula un REM cuyo valor cambia
     //    si se reutilizara el resto del DIV anterior.
@@ -404,8 +427,33 @@ module cpu_muldiv_tb;
     emit(NOP);
     run_ok("cost DIV");
     n = cycles - base_cycles;
-    $display("PERF DIV  +%0d ciclos", n);
-    if (n > 36) $fatal(1, "5: DIV cuesta %0d ciclos de mas", n);
+    $display("PERF DIV 1000/7  +%0d ciclos", n);
+    // Cociente de 8 bits: salta 24 de los 32 pasos.
+    if (n > 14) $fatal(1, "5: DIV 1000/7 cuesta %0d ciclos de mas", n);
+
+    // Cociente de 32 bits: no salta nada. Mismo programa con dos NOP en su
+    // sitio como base.
+    cost_prologue();
+    load_constant(5'd5, 32'hffff_ffff);
+    load_constant(5'd6, 32'd1);
+    emit(NOP);
+    emit(NOP);
+    emit(rtype(OP_DIVU, 5'd3, 5'd5, 5'd6));
+    emit(NOP);
+    run_ok("cost DIVU max");
+    expect_register("5 DIVU max", 5'd3, 32'hffff_ffff);
+    body_cycles = cycles;
+    cost_prologue();
+    load_constant(5'd5, 32'hffff_ffff);
+    load_constant(5'd6, 32'd1);
+    emit(NOP);
+    emit(NOP);
+    emit(NOP);
+    emit(NOP);
+    run_ok("cost DIVU max base");
+    body_cycles = body_cycles - cycles;
+    $display("PERF DIVU 32 bits  +%0d ciclos", body_cycles);
+    if (body_cycles > 38) $fatal(1, "5: DIVU de 32 bits cuesta %0d ciclos de mas", body_cycles);
 
     cost_prologue();
     emit(rtype(OP_DIV, 5'd3, 5'd1, 5'd2));

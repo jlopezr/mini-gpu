@@ -402,19 +402,23 @@ module cpu_perf_tb;
     run_program("muldiv", 3 + 10 * 4 + 1);
     expect_register(5'd3, 32'd7000);
     expect_register(5'd4, 32'd142);
-    if (perf.stall_muldiv !== 32'd370)
-      $fatal(1, "muldiv: STALL_MULDIV = %0d, se esperaban 370", perf.stall_muldiv);
+    // 10 x (3 de la MUL + 12 de la DIV): 1000/7 tiene un cociente de 8 bits y
+    // la salida temprana se salta 24 de los 32 pasos (antes, 10 x (3 + 34)).
+    if (perf.stall_muldiv !== 32'd150)
+      $fatal(1, "muldiv: STALL_MULDIV = %0d, se esperaban 150", perf.stall_muldiv);
     if (perf.muldiv_retired_count !== 32'd20)
       $fatal(1, "muldiv: MULDIV_RETIRED = %0d, se esperaban 20", perf.muldiv_retired_count);
     if (perf.stall_ex_mem !== 32'd0)
       $fatal(1, "muldiv: STALL_EX_MEM = %0d, se esperaba 0", perf.stall_ex_mem);
 
-    // Ranuras 16 y 17 tras el ultimo programa (~500 ciclos, una docena de
-    // frames). Exactas contra la cuenta de referencia, y ademas no triviales.
+    // Ranuras 16 y 17 tras el ultimo programa (~200 ciclos, media docena de
+    // frames de 37). Exactas contra la cuenta de referencia, y ademas no
+    // triviales: al menos la mitad de los frames que caben y algo de espera.
     if (perf.video_frames !== frames_ref || perf.swap_wait !== swap_wait_ref)
       $fatal(1, "video: VIDEO_FRAMES=%0d SWAP_WAIT=%0d, se esperaban %0d y %0d",
              perf.video_frames, perf.swap_wait, frames_ref, swap_wait_ref);
-    if (frames_ref < 10 || swap_wait_ref < 100 || swap_wait_ref >= perf.cycles)
+    if (frames_ref * 2 * 37 < perf.cycles || swap_wait_ref * 8 < perf.cycles ||
+        swap_wait_ref >= perf.cycles)
       $fatal(1, "video: cuenta de referencia sospechosa (%0d frames, %0d de espera)",
              frames_ref, swap_wait_ref);
     // Con la CPU parada no cuentan: dejar pasar cuatro frames y comparar.

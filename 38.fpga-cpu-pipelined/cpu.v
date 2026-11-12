@@ -475,6 +475,7 @@ module cpu #(
   (* pipeline_stage = "EX" *) reg [31:0] md_divisor;
   (* pipeline_stage = "EX" *) reg [31:0] md_quotient;
   (* pipeline_stage = "EX" *) reg [31:0] md_remainder;
+  (* pipeline_stage = "EX" *) reg [5:0] md_skip;   // quotient bits known to be 0
   (* pipeline_stage = "EX" *) reg md_quotient_negative;
   (* pipeline_stage = "EX" *) reg md_remainder_negative;
   wire [31:0] md_shifted;
@@ -1402,9 +1403,22 @@ module cpu #(
    * on at the end (quotient truncated towards zero, remainder with the sign
    * of the dividend). -2^31 / -1 wraps to 0x80000000 with remainder 0 by
    * itself.
+   *
+   * Early exit: only the quotient bits that can be 1 are computed. With n
+   * and d the magnitudes, the first md_skip = 31 - bits(n) + bits(d) steps
+   * (at most 32) shift in a prefix of n that is still below d: quotient bit
+   * 0 and remainder = that prefix. So step 2 puts the remainder and the
+   * dividend where those steps would have left them and jumps the step
+   * count. The rasterizer's divisions (a span length in pixels) need about
+   * 10 steps instead of 32; a full 32-bit quotient costs 2 cycles more than
+   * without the skip. Counting and shifting are two steps, not to lengthen
+   * the cycle.
    *   step 0: division by zero -> error; fast REM/REMU -> sign; else setup.
-   *   steps 1-32: one quotient bit each (fast REM/REMU: step 1 writes).
-   *   step 33: md_div_result -> ex_result.
+   *   step 1: md_skip from the leading zeros of both magnitudes (fast
+   *           REM/REMU: writes instead).
+   *   step 2: skip md_skip steps; the count jumps to 3 + md_skip.
+   *   steps 3-34: one quotient bit each.
+   *   step 35: md_div_result -> ex_result.
    *
    * Fast path, as in the 35: a REM/REMU whose immediately preceding
    * instruction was a DIV/DIVU with the same source registers takes the
@@ -1454,6 +1468,19 @@ module cpu #(
   assign md_shifted = {md_remainder[30:0], md_dividend[31]};
   assign md_subtract = md_shifted >= md_divisor;
 
+  // Significant bits of a value: 32 - leading zeros, 0 for zero.
+  function [5:0] md_bits(input [31:0] value);
+    integer k;
+    begin
+      md_bits = 6'd0;
+      for (k = 0; k < 32; k = k + 1)
+        if (value[k]) md_bits = k + 1;
+    end
+  endfunction
+  // 31 - bits(n) + bits(d), at most 32; d != 0, so it is never negative.
+  wire [6:0] md_skip_raw = 7'd31 - {1'b0, md_bits(md_dividend)} + {1'b0, md_bits(md_divisor)};
+  wire [5:0] md_skip_next = (md_skip_raw > 7'd32) ? 6'd32 : md_skip_raw[5:0];
+
   always @(posedge clk) begin
     if (ex_md_run && ex_md_is_div) begin
       if (ex_md_step == 6'd0) begin
@@ -1468,7 +1495,16 @@ module cpu #(
           md_quotient <= 32'd0;
           md_remainder <= 32'd0;
         end
-      end else if (!ex_md_fast && ex_md_step <= 6'd32) begin
+      end else if (ex_md_fast) begin
+        // Step 1 writes the result; nothing to compute.
+      end else if (ex_md_step == 6'd1) begin
+        md_skip <= md_skip_next;
+      end else if (ex_md_step == 6'd2) begin
+        // What md_skip steps would have left: remainder = the top md_skip
+        // bits of n, dividend = the rest, at the top; quotient still 0.
+        md_remainder <= md_dividend >> (6'd32 - md_skip);
+        md_dividend <= md_dividend << md_skip;
+      end else if (ex_md_step <= 6'd34) begin
         md_dividend <= {md_dividend[30:0], 1'b0};
         md_remainder <= md_subtract ? md_shifted - md_divisor : md_shifted;
         md_quotient <= {md_quotient[30:0], md_subtract};
@@ -1585,7 +1621,8 @@ module cpu #(
         end
       end
       if (ex_md_run) begin
-        ex_md_step <= ex_md_step + 6'd1;
+        ex_md_step <= (ex_md_is_div && !ex_md_fast && ex_md_step == 6'd2) ?
+                      6'd3 + md_skip : ex_md_step + 6'd1;
         if (!ex_md_is_div) begin
           if (ex_md_step == 6'd2) begin
             ex_result <= md_mul_result;
@@ -1594,7 +1631,7 @@ module cpu #(
         end else if (ex_md_step == 6'd0 && ex_b == 32'd0) begin
           ex_class <= OPCLASS_ERROR;
           ex_error_code <= ERROR_DIVISION_BY_ZERO;
-        end else if ((ex_md_fast && ex_md_step == 6'd1) || ex_md_step == 6'd33) begin
+        end else if ((ex_md_fast && ex_md_step == 6'd1) || ex_md_step == 6'd35) begin
           // The fast path ends at step 1: step 0 put the sign in place.
           ex_result <= md_div_result;
           ex_class <= OPCLASS_NORMAL;
