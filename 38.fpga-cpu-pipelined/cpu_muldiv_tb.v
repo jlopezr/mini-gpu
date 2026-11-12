@@ -49,6 +49,7 @@ module cpu_muldiv_tb;
   cpu dut (
       .clk(clk),
       .reset(reset),
+      .soft_reset(1'b0),
       .run_request(run_request),
       .halt_request(halt_request),
       .step_request(1'b0),

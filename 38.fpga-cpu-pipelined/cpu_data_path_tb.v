@@ -49,7 +49,7 @@ module cpu_data_path_tb;
   wire [3:0] c_wen;
 
   cpu cpu_i(
-      .clk(clk), .reset(reset), .run_request(run_request), .halt_request(1'b0),
+      .clk(clk), .reset(reset), .soft_reset(1'b0), .run_request(run_request), .halt_request(1'b0),
       .step_request(1'b0), .halted(halted), .error(error), .error_code(error_code),
       .instruction_retired(instruction_retired),
       .imem_valid(imem_valid), .imem_address(imem_address),

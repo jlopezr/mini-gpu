@@ -31,6 +31,13 @@
  *   Branches are decided in EX, not in ID with forwarded operands, for the
  *   same reason; prediction is what will recover their bubbles.
  *
+ * Two resets. reset is the system one: the memories are reset with it, so
+ * nothing is in flight afterwards. soft_reset is the monitor's RESET, which
+ * restarts only the CPU while the I-cache and the D-cache may still owe it
+ * responses (a program was running): it resets everything but the in-flight
+ * bookkeeping (if_req_*, if_inflight, if_discard, ex_mem_drop), and what is
+ * in flight becomes dropped, as when the CPU stops.
+ *
  * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
  * several cycles like a memory access (section 04b).
  */
@@ -40,10 +47,19 @@ module cpu #(
     parameter ALU_FAST_PATH = 1'b1,
     // Static branch prediction at the head of the IF queue, with a return
     // address stack (section 02b). Zero: every taken branch redirects from EX.
-    parameter BRANCH_PREDICT = 1'b1
+    parameter BRANCH_PREDICT = 1'b1,
+    // Branch target buffer looked up with each fetch request (section 02c).
+    // Needs BRANCH_PREDICT.
+    parameter BTB = 1'b1,
+    // 2^BTB_BITS entries, direct-mapped by pc[BTB_BITS+1:2], with a partial
+    // tag of BTB_TAG_BITS bits above the index. Small values only make sense
+    // in a testbench, to force aliasing.
+    parameter integer BTB_BITS = 6,
+    parameter integer BTB_TAG_BITS = 10
 ) (
     input clk,
     input reset,
+    input soft_reset,
 
     input run_request,
     input halt_request,
@@ -92,6 +108,9 @@ module cpu #(
     // in the same cycle as instruction_retired.
     (* pipeline_stage = "WB" *) output reg perf_muldiv_retired
 );
+
+  // Everything but the in-flight bookkeeping (header): reset or soft_reset.
+  wire core_reset = reset || soft_reset;
 
   localparam [5:0] OPCODE_NOP = 6'h00;
   localparam [5:0] OPCODE_ADD = 6'h01;
@@ -182,6 +201,8 @@ module cpu #(
   localparam integer RAS_DEPTH = 8;
   localparam integer RAS_BITS = 3;
 
+  localparam integer BTB_ENTRIES = 1 << BTB_BITS;
+
   // ======================================================================
   // DECLARATIONS (all before use, for Icarus elaboration)
   // ======================================================================
@@ -229,7 +250,19 @@ module cpu #(
   reg if_valid, if_valid1, if_valid2, if_valid3;
   reg [31:0] if_pc, if_pc1, if_pc2, if_pc3;
   reg [31:0] if_instruction, if_instruction1, if_instruction2, if_instruction3;
-  reg [31:0] if_response_pc;
+  // Requests in flight, in order (section 02c): the PC of each, and whether
+  // the BTB sent the next request to a target. A response takes its entry.
+  reg [31:0] if_req_pc [0:3];
+  reg if_req_btb [0:3];
+  reg [31:0] if_req_target [0:3];
+  // Fetched after a BTB hit, before the redirect: the fall-through slot.
+  reg if_req_drop [0:3];
+  reg [1:0] if_req_write;
+  reg [1:0] if_req_read;
+  wire [31:0] if_response_pc;
+  wire if_response_btb;
+  wire [31:0] if_response_target;
+  wire if_response_drop;
   // Up to four: entries + in flight never pass four (imem_valid), but after
   // a redirect the queue is empty and all four can be in flight.
   reg [2:0] if_inflight;
@@ -242,6 +275,11 @@ module cpu #(
   reg if_valid_n, if_valid1_n, if_valid2_n, if_valid3_n;
   reg [31:0] if_pc_n, if_pc1_n, if_pc2_n, if_pc3_n;
   reg [31:0] if_instruction_n, if_instruction1_n, if_instruction2_n, if_instruction3_n;
+  // Per entry: the BTB predicted it taken when it was fetched, and where.
+  reg if_btb, if_btb1, if_btb2, if_btb3;
+  reg [31:0] if_btb_target, if_btb_target1, if_btb_target2, if_btb_target3;
+  reg if_btb_n, if_btb1_n, if_btb2_n, if_btb3_n;
+  reg [31:0] if_btb_target_n, if_btb_target1_n, if_btb_target2_n, if_btb_target3_n;
   // A taken branch, registered: IF redirects the cycle after EX decides.
   reg if_redirect;
   reg [31:0] if_redirect_pc;
@@ -255,6 +293,8 @@ module cpu #(
   // Static prediction of the queue head (section 02b).
   wire if_call;
   wire if_return;
+  wire if_static_taken;
+  wire [31:0] if_static_target;
   wire if_predict_taken;
   wire [31:0] if_predict_target;
   wire if_take;
@@ -262,6 +302,23 @@ module cpu #(
   reg [31:0] if_ras [0:RAS_DEPTH-1];
   reg [RAS_BITS-1:0] if_ras_top;
   reg [RAS_BITS:0] if_ras_count;
+  // Branch target buffer (section 02c).
+  reg [BTB_ENTRIES-1:0] if_btb_valid;
+  reg [BTB_TAG_BITS-1:0] if_btb_tag [0:BTB_ENTRIES-1];
+  reg [29:0] if_btb_dest [0:BTB_ENTRIES-1];
+  reg [1:0] if_btb_counter [0:BTB_ENTRIES-1];
+  reg if_btb_return [0:BTB_ENTRIES-1];
+  wire [BTB_BITS-1:0] if_lookup_index;
+  wire if_lookup_hit;
+  wire if_lookup_taken;
+  wire [31:0] if_lookup_target;
+  // The lookup of the request accepted last cycle predicted taken: fetch
+  // goes to its target now (registered, section 02c).
+  reg if_btb_lookup_taken;
+  reg [31:0] if_btb_redirect_pc;
+  // The queue was emptied in the cycle of that lookup: its request is stale.
+  reg if_btb_stale;
+  wire if_btb_redirect;
 
   // ID
   reg id_valid;
@@ -282,6 +339,11 @@ module cpu #(
   // IF predicted it taken, and where it sent the fetch (section 02b).
   reg id_predicted;
   reg [31:0] id_predict_target;
+  // JR R31, mini-cc's return: the BTB marks its entries as returns.
+  wire id_return;
+  // A predicted PC-relative target that is not this branch's (a BTB entry
+  // that belongs to another branch, or to an old program).
+  wire id_target_wrong;
   wire [31:0] id_imm_signed;
   wire [31:0] id_imm_unsigned;
   wire [31:0] id_jump_offset;
@@ -350,6 +412,27 @@ module cpu #(
   wire [31:0] ex_target;
   reg ex_predicted;
   reg [31:0] ex_predict_target;
+  reg ex_return;
+  reg ex_target_wrong;
+  wire ex_is_branch;
+  wire ex_branch_taken;
+  // BTB update when a branch leaves EX (section 02c).
+  wire [BTB_BITS-1:0] ex_btb_index;
+  wire [BTB_TAG_BITS-1:0] ex_btb_tag;
+  wire ex_btb_hit;
+  wire [1:0] ex_btb_counter;
+  wire ex_btb_update;
+  // The update, registered: written into the BTB one cycle later, so that
+  // ctl_advance and ex_target do not reach the table.
+  reg if_btb_write;
+  reg if_btb_write_taken;
+  reg if_btb_write_hit;
+  reg [BTB_BITS-1:0] if_btb_write_index;
+  reg [BTB_TAG_BITS-1:0] if_btb_write_tag;
+  reg [29:0] if_btb_write_dest;
+  reg if_btb_write_return;
+  reg [1:0] if_btb_write_counter;
+  reg if_btb_write_kill;
   wire ex_wrong_return;
   wire [31:0] ex_redirect_pc;
   reg [31:0] ex_store_data;
@@ -454,7 +537,7 @@ module cpu #(
   // ID instead of a wire across the chip. When EX redirects, what moves from
   // ID is on the wrong path and becomes a bubble: it counts as a branch.
   always @(posedge clk) begin
-    if (reset || halted) begin
+    if (core_reset || halted) begin
       perf_stall <= 5'b00000;
       perf_after_redirect <= 1'b0;
       perf_after_predict <= 1'b0;
@@ -488,7 +571,7 @@ module cpu #(
 
   // Control FSM: only this process owns ctl_* and halted.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       ctl_step_active <= 1'b0;
       ctl_start_pending <= 1'b0;
       ctl_start_step_pending <= 1'b0;
@@ -534,7 +617,7 @@ module cpu #(
 
   register_file register_file_i (
       .clk(clk),
-      .reset(reset),
+      .reset(core_reset),
       .read_address_a(id_src_a),
       .read_data_a(register_a),
       .read_address_b(id_src_b),
@@ -582,7 +665,7 @@ module cpu #(
                    {2'b00, if_valid3} + if_inflight;
   assign imem_valid = !halted && (if_used < 3'd4);
   assign if_accept = imem_valid && imem_ready;
-  assign if_keep = imem_rvalid && (if_discard == 3'd0);
+  assign if_keep = imem_rvalid && (if_discard == 3'd0) && !if_response_drop;
   assign if_inflight_next = if_inflight + {2'b00, if_accept} - {2'b00, imem_rvalid};
   assign if_pop = ctl_advance && !raw_hazard && if_valid;
 
@@ -593,31 +676,65 @@ module cpu #(
     if_valid1_n = if_valid1;  if_pc1_n = if_pc1;  if_instruction1_n = if_instruction1;
     if_valid2_n = if_valid2;  if_pc2_n = if_pc2;  if_instruction2_n = if_instruction2;
     if_valid3_n = if_valid3;  if_pc3_n = if_pc3;  if_instruction3_n = if_instruction3;
+    if_btb_n = if_btb;    if_btb_target_n = if_btb_target;
+    if_btb1_n = if_btb1;  if_btb_target1_n = if_btb_target1;
+    if_btb2_n = if_btb2;  if_btb_target2_n = if_btb_target2;
+    if_btb3_n = if_btb3;  if_btb_target3_n = if_btb_target3;
     if (if_pop) begin
       if_valid_n = if_valid1;  if_pc_n = if_pc1;  if_instruction_n = if_instruction1;
       if_valid1_n = if_valid2; if_pc1_n = if_pc2; if_instruction1_n = if_instruction2;
       if_valid2_n = if_valid3; if_pc2_n = if_pc3; if_instruction2_n = if_instruction3;
       if_valid3_n = 1'b0;
+      if_btb_n = if_btb1;   if_btb_target_n = if_btb_target1;
+      if_btb1_n = if_btb2;  if_btb_target1_n = if_btb_target2;
+      if_btb2_n = if_btb3;  if_btb_target2_n = if_btb_target3;
     end
     if (if_keep) begin
       if (!if_valid_n) begin
         if_valid_n = 1'b1;  if_pc_n = if_response_pc;  if_instruction_n = imem_read_data;
+        if_btb_n = if_response_btb;  if_btb_target_n = if_response_target;
       end else if (!if_valid1_n) begin
         if_valid1_n = 1'b1; if_pc1_n = if_response_pc; if_instruction1_n = imem_read_data;
+        if_btb1_n = if_response_btb; if_btb_target1_n = if_response_target;
       end else if (!if_valid2_n) begin
         if_valid2_n = 1'b1; if_pc2_n = if_response_pc; if_instruction2_n = imem_read_data;
+        if_btb2_n = if_response_btb; if_btb_target2_n = if_response_target;
       end else begin
         if_valid3_n = 1'b1; if_pc3_n = if_response_pc; if_instruction3_n = imem_read_data;
+        if_btb3_n = if_response_btb; if_btb_target3_n = if_response_target;
       end
     end
   end
 
+  assign if_response_pc = if_req_pc[if_req_read];
+  assign if_response_btb = if_req_btb[if_req_read];
+  assign if_response_target = if_req_target[if_req_read];
+  assign if_response_drop = if_req_drop[if_req_read];
+  assign if_btb_redirect = if_btb_lookup_taken && !if_btb_stale;
+
+  // Every accepted request gets one response, in order, kept or dropped.
   always @(posedge clk) begin
     if (reset) begin
+      if_req_write <= 2'd0;
+      if_req_read <= 2'd0;
+    end else begin
+      if (if_accept) begin
+        if_req_pc[if_req_write] <= imem_address;
+        if_req_btb[if_req_write] <= if_lookup_taken;
+        if_req_target[if_req_write] <= if_lookup_target;
+        if_req_drop[if_req_write] <= if_btb_redirect;
+        if_req_write <= if_req_write + 2'd1;
+      end
+      if (imem_rvalid) if_req_read <= if_req_read + 2'd1;
+    end
+  end
+
+  always @(posedge clk) begin
+    if (core_reset) begin
       imem_address <= 32'd0;
-      if_response_pc <= 32'd0;
-      if_inflight <= 3'd0;
-      if_discard <= 3'd0;
+      // soft_reset: the I-cache still answers what it accepted; drop it.
+      if_inflight <= reset ? 3'd0 : if_inflight_next;
+      if_discard <= reset ? 3'd0 : if_inflight_next;
       if_valid <= 1'b0;
       if_valid1 <= 1'b0;
       if_valid2 <= 1'b0;
@@ -630,9 +747,28 @@ module cpu #(
       if_instruction1 <= 32'd0;
       if_instruction2 <= 32'd0;
       if_instruction3 <= 32'd0;
+      if_btb <= 1'b0;
+      if_btb1 <= 1'b0;
+      if_btb2 <= 1'b0;
+      if_btb3 <= 1'b0;
+      if_btb_target <= 32'd0;
+      if_btb_target1 <= 32'd0;
+      if_btb_target2 <= 32'd0;
+      if_btb_target3 <= 32'd0;
       if_redirect <= 1'b0;
       if_redirect_pc <= 32'd0;
+      if_btb_lookup_taken <= 1'b0;
+      if_btb_redirect_pc <= 32'd0;
+      if_btb_stale <= 1'b0;
     end else begin
+      // Not from a request that is itself the dropped fall-through slot. One
+      // accepted in a cycle that empties the queue is stale: that is kept in
+      // its own register (if_btb_stale) so that ctl_advance -> if_pop does
+      // not reach this one.
+      if_btb_lookup_taken <= if_accept && if_lookup_taken && !if_btb_redirect;
+      if_btb_redirect_pc <= if_lookup_target;
+      if_btb_stale <= halted || ctl_abort || ctl_fault || ctl_retire_stop ||
+                      if_redirect || if_predict_pop;
       // ctl_advance is low in any cycle that stops the machine, so a stop
       // never leaves a redirect behind.
       if_redirect <= ctl_advance && ex_redirects;
@@ -649,13 +785,9 @@ module cpu #(
         if_valid3 <= 1'b0;
         if_discard <= if_inflight_next;
         if (halted) begin
-          if (ctl_start) begin
-            imem_address <= architectural_pc;
-            if_response_pc <= architectural_pc;
-          end
+          if (ctl_start) imem_address <= architectural_pc;
         end else if (!(ctl_abort || ctl_fault || ctl_retire_stop)) begin
           imem_address <= if_redirect_pc;
-          if_response_pc <= if_redirect_pc;
         end
       end else if (if_predict_pop) begin
         // The head goes to ID and is predicted taken: what is behind it in
@@ -665,15 +797,18 @@ module cpu #(
         if_valid2 <= 1'b0;
         if_valid3 <= 1'b0;
         if_discard <= if_inflight_next;
-        imem_address <= if_predict_target;
-        if_response_pc <= if_predict_target;
+        imem_address <= if_static_target;
       end else begin
         if_valid <= if_valid_n;    if_pc <= if_pc_n;    if_instruction <= if_instruction_n;
         if_valid1 <= if_valid1_n;  if_pc1 <= if_pc1_n;  if_instruction1 <= if_instruction1_n;
         if_valid2 <= if_valid2_n;  if_pc2 <= if_pc2_n;  if_instruction2 <= if_instruction2_n;
         if_valid3 <= if_valid3_n;  if_pc3 <= if_pc3_n;  if_instruction3 <= if_instruction3_n;
-        if (if_keep) if_response_pc <= if_response_pc + 32'd4;
-        if (imem_rvalid && !if_keep) if_discard <= if_discard - 3'd1;
+        if_btb <= if_btb_n;    if_btb_target <= if_btb_target_n;
+        if_btb1 <= if_btb1_n;  if_btb_target1 <= if_btb_target1_n;
+        if_btb2 <= if_btb2_n;  if_btb_target2 <= if_btb_target2_n;
+        if_btb3 <= if_btb3_n;  if_btb_target3 <= if_btb_target3_n;
+        if (imem_rvalid && if_discard != 3'd0) if_discard <= if_discard - 3'd1;
+        if (if_btb_redirect) imem_address <= if_btb_redirect_pc;
       end
     end
   end
@@ -736,20 +871,25 @@ module cpu #(
   assign if_call = (if_opcode == OPCODE_JAL || if_opcode == OPCODE_JALR) &&
                    if_instruction[25:21] == 5'd31;
   assign if_return = if_opcode == OPCODE_JR && if_instruction[20:16] == 5'd31;
-  assign if_predict_taken = BRANCH_PREDICT && (
+  // Only for what the BTB did not predict at fetch: if it did, the queue
+  // behind the head is already the target path.
+  assign if_static_taken = BRANCH_PREDICT && !if_btb && (
       if_opcode == OPCODE_BRA || if_opcode == OPCODE_JAL ||
       (if_compare_branch && if_instruction[15]) ||
       (if_return && if_ras_count != 0));
-  assign if_predict_target =
+  assign if_static_target =
       if_return ? if_ras[if_ras_top] :
       (if_opcode == OPCODE_BRA) ? (if_pc + 32'd4) + {{4{if_instruction[25]}}, if_instruction[25:0], 2'b00} :
                                   (if_pc + 32'd4) + {{14{if_instruction[15]}}, if_instruction[15:0], 2'b00};
   // ID really takes the head: not in the cycle a redirect empties everything.
   assign if_take = if_pop && !if_redirect;
-  assign if_predict_pop = if_take && if_predict_taken;
+  assign if_predict_pop = if_take && if_static_taken;
+  // What ID gets: the BTB's prediction, or the static one.
+  assign if_predict_taken = if_btb || if_static_taken;
+  assign if_predict_target = if_btb ? if_btb_target : if_static_target;
 
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       if_ras_top <= {RAS_BITS{1'b0}};
       if_ras_count <= {(RAS_BITS+1){1'b0}};
     end else if (BRANCH_PREDICT && if_take) begin
@@ -761,6 +901,84 @@ module cpu #(
         if_ras_top <= if_ras_top - 1'b1;
         if_ras_count <= if_ras_count - 1'b1;
       end
+    end
+  end
+
+  // ======================================================================
+  // 02c. IF — BRANCH TARGET BUFFER
+  // ======================================================================
+
+  /*
+   * Looked up with every fetch request (imem_address), and the answer
+   * registered (if_btb_redirect): a hit that predicts taken sends fetch to
+   * the target in the next cycle, and the request accepted in between, the
+   * fall-through, is marked to be dropped (if_req_drop). A correctly
+   * predicted branch costs one bubble. Sending the very next request to the
+   * target would cost none, but puts the table, its tag compare and the
+   * target mux inside the imem_address loop: the CPU fell from ~70 to an
+   * estimated 45 MHz and nextpnr did not finish routing. Entries: partial tag,
+   * target, a 2-bit counter (taken if >= 2) and a return bit; a return
+   * takes the top of the return address stack (02b) instead of the target.
+   * Requests are no longer sequential, so each request in flight keeps its
+   * PC and prediction (if_req_*), and each queue entry carries them on to ID
+   * (if_btb*). The static prediction of 02b only acts on what the BTB did not
+   * predict.
+   *
+   * Written when a branch leaves EX (ex_btb_update): taken branches allocate
+   * (counter 2, weakly taken) or count up; not taken ones count down if they
+   * are there. Only branches whose target is fixed (PC-relative) and returns
+   * go in; other register jumps (JALR, JR to a table) do not. Emptied (valid
+   * bits) on reset and while halted: the monitor may load another program.
+   * A stale or aliased entry only costs a misprediction: EX checks the
+   * direction, ID the PC-relative target and EX the return address, and an
+   * instruction predicted taken that is not a branch redirects to pc+4.
+   */
+  assign if_lookup_index = imem_address[BTB_BITS+1:2];
+  assign if_lookup_hit = BTB && BRANCH_PREDICT && if_btb_valid[if_lookup_index] &&
+      if_btb_tag[if_lookup_index] == imem_address[BTB_BITS+BTB_TAG_BITS+1:BTB_BITS+2];
+  assign if_lookup_taken = if_lookup_hit &&
+      (if_btb_return[if_lookup_index] ? (if_ras_count != 0) : if_btb_counter[if_lookup_index][1]);
+  assign if_lookup_target = if_btb_return[if_lookup_index] ? if_ras[if_ras_top] :
+                            {if_btb_dest[if_lookup_index], 2'b00};
+
+  assign ex_btb_index = ex_pc[BTB_BITS+1:2];
+  assign ex_btb_tag = ex_pc[BTB_BITS+BTB_TAG_BITS+1:BTB_BITS+2];
+  assign ex_btb_hit = if_btb_valid[ex_btb_index] && if_btb_tag[ex_btb_index] == ex_btb_tag;
+  assign ex_btb_counter = if_btb_counter[ex_btb_index];
+  assign ex_btb_update = BTB && BRANCH_PREDICT && ctl_advance && ex_is_branch &&
+                         (!ex_branch_register || ex_return);
+
+  always @(posedge clk) begin
+    if_btb_write <= !core_reset && !halted && ex_btb_update;
+    // Predicted taken but not a branch: the entry is someone else's.
+    if_btb_write_kill <= !core_reset && !halted && BTB && ctl_advance && ex_valid &&
+                      !ex_is_branch && ex_predicted && ex_btb_hit;
+    if_btb_write_taken <= ex_taken;
+    if_btb_write_hit <= ex_btb_hit;
+    if_btb_write_index <= ex_btb_index;
+    if_btb_write_tag <= ex_btb_tag;
+    if_btb_write_dest <= ex_target[31:2];
+    if_btb_write_return <= ex_return;
+    if_btb_write_counter <= ex_btb_counter;
+  end
+
+  always @(posedge clk) begin
+    if (core_reset || halted) begin
+      if_btb_valid <= {BTB_ENTRIES{1'b0}};
+    end else if (if_btb_write) begin
+      if (if_btb_write_taken) begin
+        if_btb_valid[if_btb_write_index] <= 1'b1;
+        if_btb_tag[if_btb_write_index] <= if_btb_write_tag;
+        if_btb_dest[if_btb_write_index] <= if_btb_write_dest;
+        if_btb_return[if_btb_write_index] <= if_btb_write_return;
+        if_btb_counter[if_btb_write_index] <= !if_btb_write_hit ? 2'd2 :
+            (if_btb_write_counter == 2'd3) ? 2'd3 : if_btb_write_counter + 2'd1;
+      end else if (if_btb_write_hit) begin
+        if_btb_counter[if_btb_write_index] <= (if_btb_write_counter == 2'd0) ? 2'd0 :
+                                           if_btb_write_counter - 2'd1;
+      end
+    end else if (if_btb_write_kill) begin
+      if_btb_valid[if_btb_write_index] <= 1'b0;
     end
   end
 
@@ -811,6 +1029,10 @@ module cpu #(
   // AGI: the address needs the base now, and the instruction in EX has not
   // produced it yet. The only RAW stall.
   assign raw_hazard = id_live && id_memory && id_forward_a;
+
+  assign id_return = id_opcode == OPCODE_JR && id_ra == 5'd31;
+  assign id_target_wrong = id_predicted && !id_branch_register &&
+                           id_predict_target[31:2] != id_branch_target[31:2];
 
   assign id_effective_address = id_op_a + id_imm_signed;
   assign id_address_misaligned = (id_access_size == 2'd2) ? (id_effective_address[1:0] != 2'b00) :
@@ -1011,7 +1233,7 @@ module cpu #(
 
   // IF -> ID boundary registers.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       id_valid <= 1'b0;
       id_pc <= 32'd0;
       id_instruction <= 32'd0;
@@ -1089,9 +1311,15 @@ module cpu #(
   // (JR R31, offset 0) is checked against the register itself.
   assign ex_wrong_return = ex_predicted && ex_branch_register &&
                            ex_a[31:2] != ex_predict_target[31:2];
-  assign ex_redirects = ex_valid && (ex_class == OPCLASS_BRANCH) &&
-                        ((ex_taken != ex_predicted) || ex_wrong_return);
-  assign ex_redirect_pc = ex_taken ? ex_target : ex_next_pc;
+  assign ex_is_branch = ex_valid && (ex_class == OPCLASS_BRANCH);
+  assign ex_branch_taken = ex_is_branch && ex_taken;
+  // Section 02c adds two ways to be wrong: a PC-relative target that is not
+  // this branch's (checked in ID, ex_target_wrong), and a prediction on an
+  // instruction that is not a branch (back to pc+4).
+  assign ex_redirects = ex_is_branch ?
+      ((ex_taken != ex_predicted) || (ex_taken && ex_target_wrong) || ex_wrong_return) :
+      (ex_valid && ex_predicted);
+  assign ex_redirect_pc = ex_branch_taken ? ex_target : ex_next_pc;
 
   // Store data: the low byte or half replicated, as the mask expects.
   always @* begin
@@ -1250,7 +1478,7 @@ module cpu #(
 
   // ID -> EX boundary and data-memory transaction state.
   always @(posedge clk) begin
-    if (reset) begin
+    if (core_reset) begin
       ex_valid <= 1'b0;
       ex_pc <= 32'd0;
       ex_next_pc <= 32'd0;
@@ -1269,6 +1497,8 @@ module cpu #(
       ex_branch_target <= 32'd0;
       ex_predicted <= 1'b0;
       ex_predict_target <= 32'd0;
+      ex_return <= 1'b0;
+      ex_target_wrong <= 1'b0;
       ex_store_mask <= 4'b0000;
       ex_load_size <= 2'd2;
       ex_load_signed <= 1'b0;
@@ -1277,7 +1507,12 @@ module cpu #(
       ex_class <= OPCLASS_NORMAL;
       ex_error_code <= ERROR_NONE;
       ex_mem_request_sent <= 1'b0;
-      ex_mem_drop <= 2'd0;
+      // soft_reset: the access in flight, or accepted this cycle, still gets
+      // its response from the D-cache; drop it.
+      ex_mem_drop <= reset ? 2'd0 : ex_mem_drop
+                     + {1'b0, (ex_mem_request_sent && !(dmem_rvalid && ex_mem_drop == 2'd0)) ||
+                              (dmem_valid && dmem_ready)}
+                     - {1'b0, dmem_rvalid && ex_mem_drop != 2'd0};
       ex_md_op <= OPCODE_NOP;
       ex_md_ra <= 5'd0;
       ex_md_rb <= 5'd0;
@@ -1327,6 +1562,8 @@ module cpu #(
           ex_branch_target <= id_branch_target;
           ex_predicted <= id_predicted;
           ex_predict_target <= id_predict_target;
+          ex_return <= id_return;
+          ex_target_wrong <= id_target_wrong;
           ex_store_mask <= id_store_mask;
           ex_load_size <= id_access_size;
           ex_load_signed <= id_access_signed;
@@ -1386,7 +1623,7 @@ module cpu #(
   always @(posedge clk) begin
     instruction_retired <= 1'b0;
     perf_muldiv_retired <= 1'b0;
-    if (reset) begin
+    if (core_reset) begin
       wb_md_counted <= 1'b0;
       wb_valid <= 1'b0;
       wb_pc <= 32'd0;

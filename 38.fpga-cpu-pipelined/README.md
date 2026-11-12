@@ -42,6 +42,22 @@ cpu.v ────┤                                          ├── arbitro
   Lo de detras en la cola se descarta y se busca el destino: ~3 burbujas en
   vez de 6. EX comprueba y solo redirige si fallo (tomado sin predecir,
   predicho y no tomado, o retorno a otra direccion), con el coste de antes.
+- **Prediccion de saltos, fase 2: BTB** (*branch target buffer*, seccion
+  02c, parametros `BTB`, `BTB_BITS`, `BTB_TAG_BITS`): 64 entradas de mapeo
+  directo con etiqueta parcial de 10 bits, destino, contador de 2 bits y bit
+  de retorno (que toma la cima de la pila). Se consulta con cada peticion y
+  la respuesta se **registra**: si predice tomado, la busqueda va al destino
+  al ciclo siguiente y la peticion aceptada entre medias (`pc+4`) se marca
+  para descartarla (`if_req_drop`). Un acierto cuesta **1 burbuja**. Como las
+  peticiones ya no son seguidas, una FIFO de lo pedido en vuelo
+  (`if_req_*`) guarda el PC de cada una. Se escribe un ciclo despues de que
+  el salto sale de EX (`if_btb_write_*`) y se vacia al parar la CPU. Lo que
+  no predice la BTB lo sigue prediciendo la fase 1. Una entrada ajena solo
+  cuesta un fallo: ID comprueba el destino relativo, EX el de los retornos, y
+  una instruccion predicha que no es salto vuelve a `pc+4`.
+  Sin registrar (0 burbujas) la tabla queda dentro del bucle de
+  `imem_address`: la CPU caia a ~45 MHz estimados y nextpnr no acababa de
+  rutar en 45 minutos.
 - **Busqueda de una instruccion por ciclo.** `imem` separa peticion
   (`valid/ready`) y respuesta (`rvalid`); una cola de cuatro entradas en IF y un
   contador descartan las respuestas del camino viejo tras un salto.
@@ -105,6 +121,15 @@ cpu.v ────┤                                          ├── arbitro
   en que se escribio e invalidar todo es sumar uno (en el flanco de `reset` o de
   la CPU parandose). Sin bits de valido, cada cache cuesta unas 330-390 LUT en
   vez de unas 2.000-2.300.
+- **Dos resets en la CPU**: `reset` (el del sistema, con el que tambien se
+  vacian las caches) y `soft_reset` (el RESET del monitor, solo la CPU). Con
+  el segundo las caches siguen y contestan lo que ya habian aceptado; la CPU
+  conserva la cuenta de lo que esta en vuelo (`if_inflight`, `ex_mem_drop`) y
+  lo descarta. Antes las dos entradas eran una y `board-load` sobre un programa
+  en marcha dejaba la CPU, a veces, sin pedir instrucciones (0 retiradas): una
+  respuesta tardia de la I-cache daba la vuelta a `if_inflight`. Pasaba desde
+  el adelantamiento (y seguramente antes); lo cubre el caso 3 de
+  `cpu_memory_system_tb`, que se cuelga con el cableado antiguo.
 - **Contadores de rendimiento** (CPU PERFORMANCE, `1.isa/mmio.md` §13.2): las
   ranuras 8-11 y 14 reparten cada ciclo sin emitir en un motivo (`CPI = 1 +
   EX con memoria + MUL/DIV + dependencia + salto + ID vacio + otros`), las
@@ -149,18 +174,18 @@ misma señal; las tareas lo esconden facil.
 
 CPI de algunos casos de `run_tests.py --measure`; cada columna añade un cambio.
 
-| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos | Adelantamiento | Prediccion |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* | 2,61* | 2,18* |
-| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* | 2,88* | 2,34* |
-| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* | 2,67* | 2,18* |
-| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 | 2,86 | 2,52 |
-| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 | 2,57 | 2,25 |
-| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 | 2,12 | 1,90 |
-| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 | 8,77 | 8,64 |
-| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 | 4,73 | 4,23 |
-| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 | 4,50 | 4,35 |
-| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 | 6,46 | 6,77 |
+| Caso | Busqueda 1/ciclo | STORE sin esperar | I-cache 256 B | + D-cache 8 KB | I-cache 8 KB EBR | Volcados sin esperar | MUL/DIV | Etapas 1-2b | Acierto D-cache 2 ciclos | Adelantamiento | Prediccion | BTB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| video-bounce | 4,43 | 3,85 | 3,85 | 3,85 | 3,85 | 2,61 | 2,61 | 4,07* | 3,97* | 2,61* | 2,18* | 1,97* |
+| video-band | — | — | — | — | 3,82 | 2,90 | 2,71 | 3,96* | 3,82* | 2,88* | 2,34* | 1,95* |
+| video-swap-demo | — | — | — | — | 3,86 | 2,65 | 2,67 | 4,06* | 3,96* | 2,67* | 2,18* | 1,99* |
+| program-bresenham-lines-core | 7,93 | 7,81 | 2,64 | 2,64 | 2,48 | 2,48 | 2,48 | 2,99 | 2,94 | 2,86 | 2,52 | 2,11 |
+| program-bresenham-circles-core | 7,79 | 7,49 | 2,65 | 2,65 | 2,57 | 2,57 | 2,57 | 3,04 | 2,94 | 2,57 | 2,25 | 2,03 |
+| program-mandelbrot | — | — | — | — | — | — | 2,76 | 2,90 | 2,90 | 2,12 | 1,90 | 1,76 |
+| shared-calls-call-return | — | 10,86 | 8,32 | 8,14 | 8,41 | 8,50 | 8,36 | 8,68 | 8,82 | 8,77 | 8,64 | 8,64 |
+| program-memory-copy | 6,68 | 6,05 | 6,07 | 5,00 | 5,02 | 4,64 | 4,64 | 5,14 | 5,09 | 4,73 | 4,23 | 3,89 |
+| program-array-sum | 6,03 | 5,88 | 5,79 | 4,85 | 4,79 | 4,88 | 4,76 | 5,21 | 4,94 | 4,50 | 4,35 | 4,18 |
+| subword-loads | 16,54 | 15,54 | 15,77 | 6,85 | 7,08 | 7,08 | 7,15 | 6,85 | 6,85 | 6,46 | 6,77 | 6,46 |
 
 `Etapas 1-2b`: fuentes predecodificadas, redireccion registrada y respuesta de
 la I-cache registrada (12 de noviembre). Suben el CPI de todo lo que salta
@@ -180,6 +205,12 @@ fibonacci -17 %, calls-link-and-return -16 %, bresenham -12 %. En video el
 salto pasa de ~1,5 a ~0,6 por instruccion; parte de lo ganado se va a EX con
 memoria (0,08 -> 0,56 en bounce): el bucle llega antes al STORE que cambia de
 linea y espera mas al volcado.
+
+`BTB` (fase 2 de los saltos, 12 de noviembre): tabla de destinos consultada
+con cada peticion de busqueda. CPI medio 2,30 -> 1,85 (-20 %), con el reloj
+igual (69,1 MHz): test-scheduler-c 2,21 -> 1,65, string-c 2,89 -> 2,17,
+bresenham-lines -16 %. En video el salto queda en 0,01 por instruccion (la
+burbuja de cada acierto sale como "ID vacio", ~0,2).
 
 \* El CPI de los casos de video **no compara CPUs** desde `Etapas 1-2b`: a
 25 MHz el frame de bounce ya no cabe en un vsync (unos 530.000 ciclos de
@@ -238,34 +269,35 @@ pacman no entraron en esa medida.) La columna antigua `Swaps/frame` escondia
 todo esto: cuenta frames de pared, con el viaje de parada. A 50 MHz el frame
 ocupado se reduciria a la mitad.
 
-## Que mejorar primero (tras la prediccion, fase 1)
+## Que mejorar primero (tras la BTB)
 
 Reparto de `--measure` (CPI = 1 + motivos) en los casos que mas duran; entre
-parentesis, el salto con solo el adelantamiento:
+parentesis, el salto con la prediccion estatica sola:
 
-| Caso | CPI | EX con memoria | MUL/DIV | Dependencia | Salto |
-|---|---:|---:|---:|---:|---:|
-| video-bounce | 2,18 | **0,56** | 0 | 0 | 0,61 (1,53) |
-| video-starfield | 2,63 | **0,76** | 0,11 | 0 | 0,75 (1,99) |
-| video-band | 2,34 | **0,77** | 0 | 0 | 0,56 (1,62) |
-| program-mandelbrot | 1,90 | 0 | **0,68** | 0 | 0,22 (0,44) |
-| cpu-gpu/gpu-scheduler/test-scheduler-c | 2,21 | 0,35 | 0,06 | 0,11 | **0,69** (1,08) |
-| program-bresenham-circles-core | 2,25 | 0 | 0 | 0 | **1,19** (1,51) |
-| program-bresenham-lines-core | 2,52 | 0 | 0 | 0 | **1,36** (1,71) |
-| cpu-gpu/libc/string-c | 2,89 | 0,46 | 0,02 | 0,05 | **1,22** (1,62) |
+| Caso | CPI | EX con memoria | MUL/DIV | Dependencia | Salto | ID vacio |
+|---|---:|---:|---:|---:|---:|---:|
+| video-bounce | 1,97 | **0,78** | 0 | 0 | 0,01 (0,61) | 0,18 |
+| video-starfield | 2,34 | **1,01** | 0,10 | 0 | 0,01 (0,75) | 0,22 |
+| video-band | 1,95 | **0,75** | 0 | 0 | 0,01 (0,56) | 0,19 |
+| program-mandelbrot | 1,76 | 0 | **0,68** | 0 | 0,01 (0,22) | 0,07 |
+| cpu-gpu/gpu-scheduler/test-scheduler-c | 1,65 | 0,35 | 0,06 | 0,10 | 0,09 (0,69) | 0,06 |
+| program-bresenham-circles-core | 2,03 | 0 | 0 | 0 | **0,86** (1,19) | 0,17 |
+| program-bresenham-lines-core | 2,11 | 0 | 0 | 0 | **0,77** (1,36) | 0,33 |
+| cpu-gpu/libc/string-c | 2,17 | 0,46 | 0,02 | 0,04 | **0,44** (1,22) | 0,21 |
 
-Lo que queda en salto es, sobre todo, saltos hacia delante tomados y saltos
-que dependen del dato (bresenham, string-c), que la prediccion estatica da
-por no tomados: eso es lo que puede ganar una BTB con contadores de 2 bits.
-En video, lo siguiente ya es el STORE que espera al volcado.
+"ID vacio" incluye ya la burbuja de cada acierto de la BTB. Lo que queda en
+salto es bresenham y string-c: saltos que dependen del dato, que fallan con
+cualquier contador. En video manda el STORE que espera al volcado; en
+mandelbrot, la MUL.
 
 "Recuperaria" es un techo estimado:
 
 | Mejora | Motivo | Recuperaria | Coste |
 |---|---|---|---|
-| Prediccion, fase 2: BTB con contadores de 2 bits | Salto | saltos hacia delante y dependientes del dato; 3 -> 0-1 burbujas en los que ya se predicen | alto: va en el camino de `imem_address` |
 | Volcados: mas de una linea en el bufer de combinacion | EX con memoria | 0,5-0,8 en video | medio |
-| MUL en 1-2 ciclos | MUL/DIV | ~0,4 en mandelbrot | bajo |
+| MUL en 1-2 ciclos (ALU54B para sumar los parciales) | MUL/DIV | ~0,4 en mandelbrot | bajo |
+| D-cache segmentada y etapa MEM aparte: un acierto en 1 ciclo sin bloquear EX | EX con memoria | ~1 ciclo por LOAD que acierta | alto |
+| BTB sin la burbuja del acierto | ID vacio | ~0,2 | alto: el reloj (ver arriba) |
 | MMIO un ciclo menos | EX con memoria | 0,05-0,2 en video | bajo |
 | AGI (base recien calculada) | Dependencia | ~0 | no compensa |
 | Prefetch | ID vacio | 0 en estos casos: caben en 8 KB | hace falta un caso grande (cubo de mini-gl) |
@@ -318,7 +350,7 @@ En orden de lo que mas promete segun las medidas:
    | — | Acierto de la D-cache en 2 ciclos, comparacion registrada | hecho, CPU 65,4 MHz |
    | 3 | ALU y decision de salto en EX, con adelantamiento WB -> EX | hecho, CPU 69,4 MHz (+1 burbuja por salto tomado) |
    | 4 | Prediccion de saltos, fase 1: estatica y pila de retornos | hecho, CPU 69,8 MHz |
-   | 4b | Prediccion de saltos, fase 2: BTB | siguiente |
+   | 4b | Prediccion de saltos, fase 2: BTB (consulta registrada) | hecho, CPU 69,1 MHz |
    | 5 | Subir el reloj (pasos 8 y 9) | pendiente |
 
    El camino critico ahora es la comprobacion de division por cero en EX
@@ -329,11 +361,8 @@ En orden de lo que mas promete segun las medidas:
    (llevar "predicho tomado y a donde" por el pipeline y corregir si falla):
    - **Fase 1, en la cabeza de la cola de IF: hecha** (ver Estado actual).
      mini-cc llama con `JAL R31` / `JALR R31` y retorna con `JR R31`.
-   - **Fase 2, al pedir la instruccion**: una BTB (*branch target buffer*)
-     indexada por el PC de busqueda, con contadores de 2 bits y un bit de
-     "es retorno" que usa la misma pila. 0-1 burbujas si acierta; la fase 1
-     se queda para sus fallos (primera vez, conflictos). Es el cambio
-     delicado para el reloj: va en el camino de `imem_address`.
+   - **Fase 2, al pedir la instruccion: hecha**, con la consulta registrada
+     (1 burbuja por acierto; ver Estado actual).
    - Ademas, respuesta directa a ID cuando la cola esta vacia, sin pasar por
      ella (abarata tambien los fallos de prediccion).
 3. **Adelantamiento: hecho** con el paso 3 (ver Estado actual). Queda solo

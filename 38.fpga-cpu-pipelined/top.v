@@ -225,7 +225,10 @@ module top (
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
   cpu cpu_i(
-      .clk(clk), .reset(reset || cpu_reset_request),
+      .clk(clk), .reset(reset),
+      // RESET del monitor: solo la CPU. Las caches siguen y contestan lo que
+      // ya aceptaron, que la CPU descarta (cpu.v, soft_reset).
+      .soft_reset(cpu_reset_request),
       .run_request(cpu_run_request),
       // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
       // video, que la para al completar el intercambio numero N. Lo segundo es
