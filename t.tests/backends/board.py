@@ -295,14 +295,39 @@ def upload(project: Path) -> None:
     _program_bitstream(project, bitstream)
 
 
+def _sources_changed(project: Path) -> str | None:
+    """Por qué la placa puede no tener el diseño del RTL actual, o None.
+
+    La versión del monitor no cambia con cada build, y el runner saca las
+    capacidades del RTL en disco: si el RTL ha cambiado desde el último build,
+    pediría cosas que el bitstream de la placa no tiene (o se saltaría casos
+    que sí podría correr). Pasó dos veces: contadores leídos de ranuras que no
+    existían (72 casos "rechazados") y medidas `n/a`. Solo en ULX3S, donde
+    `tools/build` archiva los hashes de las fuentes de cada build.
+    """
+    if not _is_ulx3s(project):
+        return None
+    from tools.build_report import bitstream_is_current
+
+    if bitstream_is_current(project):
+        return None
+    return (
+        f"Las fuentes sintetizables de {project} han cambiado desde su último "
+        f"build: la placa no tiene el diseño del RTL actual, y las capacidades "
+        f"que el runner saca de ese RTL no cuadrarían con ella. Sintetiza con "
+        f"`tools/build -p {project.name.split('.')[0]}` y carga el bitstream."
+    )
+
+
 def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
                      expected: tuple[int, int], project: Path,
                      backend: str, version_name: str,
                      policy: UploadPolicy) -> None:
     """Deja la placa con el bitstream que este backend necesita.
 
-    Sube el bitstream solo si la placa responde con otra versión, la política lo
-    permite y el usuario lo confirma. Después vuelve a preguntar la versión: que
+    Sube el bitstream solo si la placa responde con otra versión (o con la
+    buena pero el RTL ha cambiado desde el último build, `_sources_changed`),
+    la política lo permite y el usuario lo confirma. Después vuelve a preguntar la versión: que
     El build y la programación pueden terminar sin que la placa quede con el
     monitor esperado, por eso se vuelve a comprobar después.
     """
@@ -318,13 +343,16 @@ def ensure_bitstream(monitor: ModuleType, port: str, serial_timeout: float,
         )
     else:
         if actual == expected:
-            return
-        actual_text = ".".join(map(str, actual))
-        problem = (
-            f"La placa en {port} responde con monitor {actual_text}, pero "
-            f"--backend {backend} --version {version_name} requiere "
-            f"{expected_text}."
-        )
+            problem = _sources_changed(project)
+            if problem is None:
+                return
+        else:
+            actual_text = ".".join(map(str, actual))
+            problem = (
+                f"La placa en {port} responde con monitor {actual_text}, pero "
+                f"--backend {backend} --version {version_name} requiere "
+                f"{expected_text}."
+            )
     if not policy.allowed:
         raise BitstreamMismatch(
             f"{problem}\nCarga el bitstream de {project} o quita --no-upload."
