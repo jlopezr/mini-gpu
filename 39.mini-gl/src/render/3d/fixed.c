@@ -314,8 +314,8 @@ void mgr_depth_plane(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
         gx = qx - (qx < 0 ? -(-qx >> 16) : qx >> 16);
         gy = qy - (qy < 0 ? -(-qy >> 16) : qy >> 16);
         /* incremental de depth_plane_wide: |gx| w + |gy| h <= 2^28. En 32 bits: cada producto <= 2^28 (la
-           división lo asegura) y la suma no se sale. Con long long, mini-lcc suma mal dos productos de 64 bits
-           (la parte baja pisa la alta del primero), así que aquí no. */
+           división lo asegura) y la suma no se sale; más corto que dos productos de 64 bits y su suma (que
+           además mini-lcc compilaba mal hasta u.lcc 15c63e3, con el par del resultado corrido uno). */
         ux = (mgl_u32)abs_s32(gx);
         uy = (mgl_u32)abs_s32(gy);
         ok = ux <= 268435456U / (mgl_u32)w && uy <= 268435456U / (mgl_u32)h && ux * (mgl_u32)w + uy * (mgl_u32)h <= 268435456U;
