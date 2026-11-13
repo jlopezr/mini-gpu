@@ -6,7 +6,19 @@
   "fp32": {
     "architecture": "cpu",
     "file": "cpu.v",
-    "pattern": "OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV: begin"
+    "pattern": "OPCODE_FCVT: begin"
+  },
+
+  "_comment_ext": "EXT (0x1E): MIN/MAX/MINU/MAXU (minmax) y CLZ (clz), cada una con su capability aunque compartan opcode (isa.md §7.3). El patron es el case de la funcion en cpu.v.",
+  "minmax": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "EXT_MIN, EXT_MAX, EXT_MINU, EXT_MAXU:"
+  },
+  "clz": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "EXT_CLZ:"
   },
 
   "_comment_mul_div": "Extension opcional CPU/GPU: MUL, MULFX y DIV. alu_extended requiere mul_div. No forma parte del repertorio base.",

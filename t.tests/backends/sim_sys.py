@@ -26,6 +26,7 @@ VERSIONS = {
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
                          "shift_immediate", "alu_extended", "mul_div",
                          "compare", "large_memory", "input", "fp32",
+                         "minmax", "clz",
                          "gpu_core", "gpu_warp_start"),
         "description": "simulador funcional MiniCPU + MiniGPU actual",
     },

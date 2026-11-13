@@ -49,6 +49,8 @@ class CodonBackendTest(unittest.TestCase):
 
     def test_cpu_fp32(self):
         self.compare(CASES.parents[0] / 'cases-cpu/alu/fp32/program.asm')
+        self.compare(CASES.parents[0] / 'cases-cpu/alu/fp32-cmp-cvt/program.asm')
+        self.compare(CASES.parents[0] / 'cases-cpu/alu/ext-minmax-clz/program.asm')
 
     def test_launch_and_ratios(self):
         for cpu,gpu in ((1,1),(5,1),(1,5),(3,7)):

@@ -1,11 +1,15 @@
 // FP32 arithmetic: four elastic stages, iterative divide, RNE, DAZ/FTZ.
-// Canonical NaN; no exception flags. in_op: 0 add, 1 subtract, 2 multiply, 3 divide.
+// Canonical NaN; no exception flags. in_op: 0 add, 1 subtract, 2 multiply, 3 divide,
+// 4 FTOI (float -> int32, trunc(a * 2^in_fbits), saturating, NaN -> 0),
+// 5 ITOF (int32 -> float, a / 2^in_fbits, RNE). Conversions, like the divide,
+// start with the unit empty and take two steps after the accept.
 module fp32_alu (
     input  logic        clk,
     input  logic        rst,
     input  logic        in_valid,
     output logic        in_ready,
-    input  logic [1:0]  in_op,
+    input  logic [2:0]  in_op,
+    input  logic [4:0]  in_fbits,
     input  logic [31:0] in_a,
     input  logic [31:0] in_b,
     output logic        out_valid,
@@ -146,11 +150,11 @@ module fp32_alu (
     logic [31:0] input_special_data;
     logic input_b_sign;
     always_comb begin
-        input_b_sign = in_b[31] ^ (in_op == 2'd1);
+        input_b_sign = in_b[31] ^ (in_op == 3'd1);
         input_special = 0;
         input_special_data = QNAN;
         if (is_nan(in_a) || is_nan(in_b)) input_special = 1;
-        else if (in_op == 2'd2) begin
+        else if (in_op == 3'd2) begin
             input_special = is_inf(in_a) || is_inf(in_b) || is_zero(in_a) || is_zero(in_b);
             if ((is_inf(in_a) && is_zero(in_b)) || (is_inf(in_b) && is_zero(in_a)))
                 input_special_data = QNAN;
@@ -179,15 +183,63 @@ module fp32_alu (
     logic divisor_is_special;
     logic [26:0] shifted_remainder;
     logic [25:0] next_quotient;
-    logic fast_accept, divide_accept;
+    logic fast_accept, divide_accept, convert_accept;
+
+    // Conversions. Step 1 shifts (FTOI: the significand into place; ITOF: the
+    // magnitude normalized with a leading-zero tree); step 2 saturates and
+    // negates, or rounds. convert_* hold the accepted operands, convert_step
+    // says which step runs this cycle.
+    logic convert_busy, convert_step, convert_itof, convert_sign;
+    logic [31:0] convert_a;
+    logic [4:0] convert_fbits;
+    logic convert_nan, convert_saturate;
+    logic [31:0] convert_magnitude;
+    logic signed [10:0] convert_exponent;
+
+    // FTOI step 1: |a| * 2^fbits truncated, or saturate when it is >= 2^31.
+    function automatic logic [33:0] ftoi_shift(input logic [31:0] a, input logic [4:0] fbits);
+        logic signed [10:0] shift;
+        logic [31:0] full, magnitude;
+        logic saturate;
+        begin
+            shift = $signed({3'b0, a[30:23]}) - 11'sd150 + $signed({6'b0, fbits});
+            full = {8'b0, 1'b1, a[22:0]};
+            saturate = 0;
+            magnitude = 0;
+            if (a[30:23] == 8'd0) magnitude = 0;             // zero or subnormal
+            else if (shift >= 11'sd8) saturate = 1;           // >= 2^31, also infinity
+            else if (shift >= 11'sd0) magnitude = full << shift[2:0];
+            else if (shift > -11'sd32) magnitude = full >> (-shift);
+            ftoi_shift = {(&a[30:23]) && (|a[22:0]), saturate, magnitude};
+        end
+    endfunction
+
+    // ITOF step 1: |a| with its leading 1 at bit 31, and the exponent.
+    function automatic logic [42:0] itof_normalize(input logic [31:0] magnitude, input logic [4:0] fbits);
+        logic [31:0] m;
+        logic [4:0] zeros;
+        begin
+            m = magnitude;
+            zeros = 0;
+            if (!(|m[31:16])) begin m = m << 16; zeros = zeros | 5'd16; end
+            if (!(|m[31:24])) begin m = m << 8; zeros = zeros | 5'd8; end
+            if (!(|m[31:28])) begin m = m << 4; zeros = zeros | 5'd4; end
+            if (!(|m[31:30])) begin m = m << 2; zeros = zeros | 5'd2; end
+            if (!m[31]) begin m = m << 1; zeros = zeros | 5'd1; end
+            // value = m * 2^(31 - zeros - 31 - fbits): exponent 127 + 31 - zeros - fbits
+            itof_normalize = {11'sd158 - $signed({6'b0, zeros}) - $signed({6'b0, fbits}), m};
+        end
+    endfunction
 
     assign out_valid = stage3_valid;
     assign out_data = stage3_data;
-    assign fast_accept = in_valid && (in_op != 2'd3) && in_ready;
-    assign divide_accept = in_valid && (in_op == 2'd3) && in_ready;
-    // A division starts only with a completely empty fast path, preventing a
-    // response collision while retaining one operation/cycle fast-path issue.
-    assign in_ready = !divisor_busy && (in_op == 2'd3 ?
+    assign fast_accept = in_valid && (in_op <= 3'd2) && in_ready;
+    assign divide_accept = in_valid && (in_op == 3'd3) && in_ready;
+    assign convert_accept = in_valid && in_op[2] && in_ready;
+    // A division or conversion starts only with a completely empty fast path,
+    // preventing a response collision while retaining one operation/cycle
+    // fast-path issue.
+    assign in_ready = !divisor_busy && !convert_busy && (in_op >= 3'd3 ?
         !(stage0_valid || stage1_valid || stage2_valid || stage3_valid) :
         stage0_ready);
 
@@ -201,7 +253,7 @@ module fp32_alu (
     end
 
     always_ff @(posedge clk) begin
-        if (fast_accept && in_op == 2'd2)
+        if (fast_accept && in_op == 3'd2)
             stage0_product <= {1'b1, in_a[22:0]} * {1'b1, in_b[22:0]};
     end
 
@@ -209,6 +261,7 @@ module fp32_alu (
         if (rst) begin
             stage0_valid <= 0; stage1_valid <= 0; stage2_valid <= 0; stage3_valid <= 0;
             divisor_busy <= 0; divisor_count <= 0;
+            convert_busy <= 0; convert_step <= 0;
         end else begin
             if (out_ready) stage3_valid <= 0;
             if (!divisor_busy) begin
@@ -246,6 +299,13 @@ module fp32_alu (
                         $signed({3'b0, in_b[30:23]}) - 11'sd127;
                     stage0_operands <= sort_add(in_a, in_b, in_op[0]);
                 end
+                if (convert_accept) begin
+                    convert_busy <= 1;
+                    convert_step <= 0;
+                    convert_itof <= in_op[0];
+                    convert_a <= in_a;
+                    convert_fbits <= in_fbits;
+                end
                 if (divide_accept) begin
                     divisor_busy <= 1;
                     divisor_count <= 0;
@@ -278,6 +338,35 @@ module fp32_alu (
                             {1'b1, next_quotient[25:3],
                              next_quotient[2], next_quotient[1],
                              next_quotient[0] | (|shifted_remainder)});
+                end
+            end
+            if (convert_busy) begin
+                convert_step <= 1;
+                if (!convert_step) begin
+                    if (convert_itof) begin
+                        convert_sign <= convert_a[31];
+                        convert_nan <= 0;
+                        convert_saturate <= convert_a == 0; // zero: +0
+                        {convert_exponent, convert_magnitude} <= itof_normalize(
+                            convert_a[31] ? 32'd0 - convert_a : convert_a, convert_fbits);
+                    end else begin
+                        convert_sign <= convert_a[31];
+                        {convert_nan, convert_saturate, convert_magnitude} <=
+                            ftoi_shift(convert_a, convert_fbits);
+                    end
+                end else begin
+                    convert_busy <= 0;
+                    stage3_valid <= 1;
+                    if (convert_itof)
+                        stage3_data <= convert_saturate ? 32'd0 :
+                            pack_rne(convert_sign, convert_exponent,
+                                {convert_magnitude[31:6], |convert_magnitude[5:0]});
+                    else if (convert_nan)
+                        stage3_data <= 32'd0;
+                    else if (convert_saturate || convert_magnitude[31])
+                        stage3_data <= convert_sign ? 32'h8000_0000 : 32'h7fff_ffff;
+                    else
+                        stage3_data <= convert_sign ? 32'd0 - convert_magnitude : convert_magnitude;
                 end
             end
         end

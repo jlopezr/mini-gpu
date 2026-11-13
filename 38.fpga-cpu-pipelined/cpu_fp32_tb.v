@@ -241,6 +241,63 @@ module cpu_fp32_tb;
       expect_register("younger", 4, 0);
     end
 
+    // FEQ/FLT/FLE (ALU), FTOI/ITOF (FP unit) and EXT MIN/MAX/MINU/MAXU/CLZ,
+    // with forwarding between them. Expected values match tools/fp32.py.
+    clear_memory();
+    load_constant(1, 32'h3fc00000);                     // 1.5
+    load_constant(2, 32'hc0100000);                     // -2.25
+    load_constant(9, 32'h7fc00000);                     // NaN
+    emit(rtype(6'h3c, 3, 2, 1) | 1);                    // FLT -2.25 < 1.5 = 1
+    emit(rtype(6'h3c, 4, 1, 2) | 2);                    // FLE 1.5 <= -2.25 = 0
+    emit(rtype(6'h3c, 5, 9, 9));                        // FEQ NaN = 0
+    emit(rtype(6'h3d, 6, 1, 0) | 16);                   // FTOI 1.5, 16 = 0x18000
+    emit(rtype(6'h3d, 7, 6, 0) | 32'h30);               // ITOF 0x18000, 16 = 1.5 (FP -> FP)
+    emit(rtype(6'h3c, 8, 7, 1));                        // FEQ: 1
+    emit(rtype(6'h3d, 10, 2, 0));                       // FTOI -2.25 = -2
+    emit(rtype(6'h1e, 11, 10, 3));                      // MIN(-2, 1) = -2
+    emit(rtype(6'h1e, 12, 10, 3) | 1);                  // MAX = 1
+    emit(rtype(6'h1e, 13, 10, 3) | 2);                  // MINU = 1
+    emit(rtype(6'h1e, 14, 10, 3) | 3);                  // MAXU = 0xfffffffe
+    emit(rtype(6'h1e, 15, 6, 0) | 9);                   // CLZ 0x18000 = 15
+    emit(rtype(6'h1e, 16, 0, 0) | 9);                   // CLZ 0 = 32
+    emit(rtype(6'h3d, 17, 15, 0) | 32'h20);             // ITOF 15 = 15.0 (ALU -> FP)
+    run_ok("cmp/cvt/ext");
+    expect_register("FLT", 3, 1);
+    expect_register("FLE", 4, 0);
+    expect_register("FEQ NaN", 5, 0);
+    expect_register("FTOI Q16", 6, 32'h00018000);
+    expect_register("ITOF Q16", 7, 32'h3fc00000);
+    expect_register("FEQ", 8, 1);
+    expect_register("FTOI", 10, 32'hfffffffe);
+    expect_register("MIN", 11, 32'hfffffffe);
+    expect_register("MAX", 12, 1);
+    expect_register("MINU", 13, 1);
+    expect_register("MAXU", 14, 32'hfffffffe);
+    expect_register("CLZ", 15, 15);
+    expect_register("CLZ 0", 16, 32);
+    expect_register("ITOF", 17, 32'h41700000);
+
+    // Reserved selectors and functions: invalid opcode (1); reserved fields:
+    // invalid encoding (5). Both before writing rd.
+    for (n = 0; n < 6; n = n + 1) begin
+      clear_memory();
+      load_constant(3, 32'h12345678);
+      case (n)
+        0: emit(rtype(6'h3c, 3, 0, 0) | 3);          // FCMP selector 3
+        1: emit(rtype(6'h3d, 3, 0, 0) | 32'h40);     // FCVT conversion 2
+        2: emit(rtype(6'h1e, 3, 0, 0) | 4);          // EXT function 4 (not implemented)
+        3: emit(rtype(6'h3c, 3, 0, 0) | 4);          // FCMP extra[2]
+        4: emit(rtype(6'h3d, 3, 0, 1));              // FCVT Rb != 0
+        default: emit(rtype(6'h1e, 3, 0, 1) | 9);    // CLZ Rb != 0
+      endcase
+      emit(addi(4, 0, 99));
+      reset_and_run(); wait_halt();
+      if (!error || error_code != (n < 3 ? 1 : 5) || debug_pc != 8)
+        $fatal(1, "cmp/cvt/ext reserved %0d: error=%b code=%d pc=%h", n, error, error_code, debug_pc);
+      expect_register("precise rd", 3, 32'h12345678);
+      expect_register("younger", 4, 0);
+    end
+
     // HALT from the monitor cancels an in-flight divide; RUN restarts it.
     clear_memory();
     load_constant(1, 32'h40c00000);

@@ -85,3 +85,62 @@ def fp32_binary(op: int, a: int, b: int) -> int:
     quotient = numerator // mb
     return pack_fp32(sign, ea - eb + 127 - int(low),
                      quotient | int(numerator % mb != 0))
+
+
+def fp32_compare(op: int, a: int, b: int) -> int:
+    """op 0/1/2: FEQ/FLT/FLE -> 1 or 0. No DAZ (exact on subnormals), -0 == +0,
+    and any NaN gives 0: the same results as cmpsf in the softfloat runtime."""
+    if ((a >> 23) & 255 == 255 and a & 0x7FFFFF) or ((b >> 23) & 255 == 255 and b & 0x7FFFFF):
+        return 0
+    if ((a | b) & 0x7FFFFFFF) == 0:
+        order = 0
+    elif (a ^ b) >> 31:
+        order = -1 if a >> 31 else 1
+    elif a == b:
+        order = 0
+    elif a >> 31:
+        order = 1 if a < b else -1
+    else:
+        order = -1 if a < b else 1
+    if op == 0:
+        return int(order == 0)
+    if op == 1:
+        return int(order < 0)
+    return int(order <= 0)
+
+
+def fp32_to_int(a: int, fbits: int) -> int:
+    """FTOI: trunc(binary32(a) * 2^fbits) as int32, saturating; NaN gives 0.
+    With fbits = 0 it is __fixsfsi from the softfloat runtime."""
+    sign, exponent, mantissa = a >> 31, (a >> 23) & 255, a & 0x7FFFFF
+    if exponent == 255 and mantissa:
+        return 0
+    if exponent == 0:  # zero or subnormal: |value * 2^31| < 1
+        return 0
+    shift = exponent - 150 + fbits  # value * 2^fbits = (mantissa | 2^23) * 2^shift
+    if shift >= 8:  # >= 2^31, also infinity
+        magnitude = 0x80000000 if sign else 0x7FFFFFFF
+    else:
+        full = mantissa | 0x800000
+        magnitude = full << shift if shift >= 0 else (full >> -shift if shift > -32 else 0)
+        if magnitude > 0x7FFFFFFF + sign:
+            magnitude = 0x80000000 if sign else 0x7FFFFFFF
+    return ((0 - magnitude) if sign else magnitude) & 0xFFFFFFFF
+
+
+def int_to_fp32(a: int, fbits: int) -> int:
+    """ITOF: int32(a) / 2^fbits as binary32, RNE (never subnormal). With fbits = 0
+    it is __floatsisf from the softfloat runtime."""
+    sign = a >> 31
+    magnitude = ((0 - a) & 0xFFFFFFFF) if sign else a
+    if magnitude == 0:
+        return 0
+    top = 31  # the leading 1 (no bit_length: the CPU core also compiles with Codon)
+    while not (magnitude >> top) & 1:
+        top -= 1
+    # pack_fp32 takes a mantissa with the leading 1 at bit 26 (3 rounding bits).
+    if top <= 26:
+        mantissa = magnitude << (26 - top)
+    else:
+        mantissa = shift_jam(magnitude, top - 26)
+    return pack_fp32(sign, 127 + top - fbits, mantissa)

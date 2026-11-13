@@ -175,6 +175,14 @@ module cpu #(
   localparam [5:0] OPCODE_FSUB = 6'h39;
   localparam [5:0] OPCODE_FMUL = 6'h3a;
   localparam [5:0] OPCODE_FDIV = 6'h3b;
+  localparam [5:0] OPCODE_FCMP = 6'h3c;  // FEQ/FLT/FLE: extra[1:0]
+  localparam [5:0] OPCODE_FCVT = 6'h3d;  // FTOI/ITOF: extra[6:5], fbits extra[4:0]
+  localparam [5:0] OPCODE_EXT = 6'h1e;   // func6 = instruction[5:0]
+  localparam [5:0] EXT_MIN = 6'h00;
+  localparam [5:0] EXT_MAX = 6'h01;
+  localparam [5:0] EXT_MINU = 6'h02;
+  localparam [5:0] EXT_MAXU = 6'h03;
+  localparam [5:0] EXT_CLZ = 6'h09;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
@@ -196,16 +204,25 @@ module cpu #(
   localparam [2:0] OPCLASS_FP32 = 3'd6;
 
   // EX's ALU operation (ex_alu_op). b is the immediate when ex_alu_imm.
-  localparam [3:0] ALU_ADD = 4'd0;
-  localparam [3:0] ALU_SUB = 4'd1;
-  localparam [3:0] ALU_AND = 4'd2;
-  localparam [3:0] ALU_OR = 4'd3;
-  localparam [3:0] ALU_XOR = 4'd4;
-  localparam [3:0] ALU_SHL = 4'd5;
-  localparam [3:0] ALU_SHR = 4'd6;
-  localparam [3:0] ALU_SAR = 4'd7;
-  localparam [3:0] ALU_SLT = 4'd8;
-  localparam [3:0] ALU_SLTU = 4'd9;
+  localparam [4:0] ALU_ADD = 5'd0;
+  localparam [4:0] ALU_SUB = 5'd1;
+  localparam [4:0] ALU_AND = 5'd2;
+  localparam [4:0] ALU_OR = 5'd3;
+  localparam [4:0] ALU_XOR = 5'd4;
+  localparam [4:0] ALU_SHL = 5'd5;
+  localparam [4:0] ALU_SHR = 5'd6;
+  localparam [4:0] ALU_SAR = 5'd7;
+  localparam [4:0] ALU_SLT = 5'd8;
+  localparam [4:0] ALU_SLTU = 5'd9;
+  // FEQ/FLT/FLE: binary32 compares on the integer subtractor (no DAZ, NaN -> 0).
+  localparam [4:0] ALU_FEQ = 5'd10;
+  localparam [4:0] ALU_FLT = 5'd11;
+  localparam [4:0] ALU_FLE = 5'd12;
+  localparam [4:0] ALU_MIN = 5'd13;
+  localparam [4:0] ALU_MAX = 5'd14;
+  localparam [4:0] ALU_MINU = 5'd15;
+  localparam [4:0] ALU_MAXU = 5'd16;
+  localparam [4:0] ALU_CLZ = 5'd17;
 
   // Branch condition in EX (ex_branch_cond), comparing a with b.
   localparam [2:0] BRANCH_EQ = 3'd0;
@@ -390,7 +407,7 @@ module cpu #(
   wire raw_hazard;
   reg [31:0] id_result;
   reg id_use_alu;
-  reg [3:0] id_alu_op;
+  reg [4:0] id_alu_op;
   reg id_alu_imm;
   reg [31:0] id_imm;
   reg [2:0] id_branch_cond;
@@ -422,7 +439,7 @@ module cpu #(
   wire [31:0] ex_b;
   // ALU and branch, decoded in ID.
   reg ex_use_alu;
-  reg [3:0] ex_alu_op;
+  reg [4:0] ex_alu_op;
   reg ex_alu_imm;
   reg [31:0] ex_imm;
   reg [2:0] ex_branch_cond;
@@ -582,7 +599,9 @@ module cpu #(
   // a stale result. Operands use the same forwarding/hold paths as MUL/DIV.
   fp32_alu fp32_unit (
       .clk(clk), .rst(core_reset || halted || ctl_flush),
-      .in_valid(fp_issue), .in_ready(fp_ready), .in_op(ex_md_op[1:0]),
+      .in_valid(fp_issue), .in_ready(fp_ready),
+      .in_op(ex_md_op == OPCODE_FCVT ? {2'b10, ex_imm[5]} : {1'b0, ex_md_op[1:0]}),
+      .in_fbits(ex_imm[4:0]),
       .in_a(ex_a), .in_b(ex_b), .out_valid(fp_valid),
       .out_ready(1'b1), .out_data(fp_result)
   );
@@ -1149,6 +1168,13 @@ module cpu #(
       OPCODE_REMU, OPCODE_SLT, OPCODE_SLTU,
       OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV:
         id_encoding_valid = id_instruction[10:0] == 0;
+      OPCODE_FCMP:
+        id_encoding_valid = id_instruction[10:2] == 0;
+      OPCODE_FCVT:  // Rb = 0 and extra[10:7] = 0
+        id_encoding_valid = id_instruction[15:7] == 0;
+      OPCODE_EXT:   // Rc = 0; CLZ also Rb = 0. Other functions: invalid opcode.
+        id_encoding_valid = id_instruction[5:0] <= EXT_MAXU ? id_instruction[10:6] == 0 :
+                            id_instruction[5:0] == EXT_CLZ ? id_instruction[15:6] == 0 : 1'b1;
       OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:
         id_encoding_valid = id_instruction[9:0] == 0;
       OPCODE_MOVI, OPCODE_MOVHI:
@@ -1243,6 +1269,49 @@ module cpu #(
         OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV: begin
           id_class = OPCLASS_FP32;
           id_reg_write = 1'b1;
+        end
+
+        // The unit takes the conversion and fbits from ex_imm[6:0].
+        OPCODE_FCVT: begin
+          if (id_instruction[6]) begin
+            id_class = OPCLASS_ERROR;
+            id_error_code = ERROR_INVALID_OPCODE;
+          end else begin
+            id_class = OPCLASS_FP32;
+            id_imm = {25'd0, id_instruction[6:0]};
+            id_reg_write = 1'b1;
+          end
+        end
+
+        OPCODE_FCMP: begin
+          if (id_instruction[1:0] == 2'd3) begin
+            id_class = OPCLASS_ERROR;
+            id_error_code = ERROR_INVALID_OPCODE;
+          end else begin
+            id_use_alu = 1'b1;
+            id_alu_op = id_instruction[1:0] == 2'd0 ? ALU_FEQ :
+                        id_instruction[1:0] == 2'd1 ? ALU_FLT : ALU_FLE;
+            id_reg_write = 1'b1;
+          end
+        end
+
+        OPCODE_EXT: begin
+          case (id_instruction[5:0])
+            EXT_MIN, EXT_MAX, EXT_MINU, EXT_MAXU: begin
+              id_use_alu = 1'b1;
+              id_alu_op = ALU_MIN + {3'd0, id_instruction[1:0]};
+              id_reg_write = 1'b1;
+            end
+            EXT_CLZ: begin
+              id_use_alu = 1'b1;
+              id_alu_op = ALU_CLZ;
+              id_reg_write = 1'b1;
+            end
+            default: begin
+              id_class = OPCLASS_ERROR;
+              id_error_code = ERROR_INVALID_OPCODE;
+            end
+          endcase
         end
 
         OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX,
@@ -1367,6 +1436,22 @@ module cpu #(
   assign ex_difference = {1'b0, ex_a} - {1'b0, ex_alu_b};
   assign ex_signed_less = (ex_a[31] != ex_alu_b[31]) ? ex_a[31] : ex_difference[31];
 
+  // FEQ/FLT/FLE on the same subtractor: as sign-magnitude, with -0 == +0, and
+  // false when either operand is NaN. Subnormals compare exactly (no DAZ).
+  wire ex_f_nan = (&ex_a[30:23] && |ex_a[22:0]) || (&ex_b[30:23] && |ex_b[22:0]);
+  wire ex_f_zeros = (ex_a[30:0] | ex_b[30:0]) == 31'd0;
+  wire ex_f_equal = ex_f_zeros || ex_difference[31:0] == 32'd0;
+  wire ex_f_less = !ex_f_zeros && (ex_a[31] != ex_b[31] ? ex_a[31] :
+                   ex_a[31] ? !ex_difference[32] && ex_difference[31:0] != 32'd0 :
+                   ex_difference[32]);
+  reg [5:0] ex_clz;
+  integer ex_clz_bit;
+  always @* begin
+    ex_clz = 6'd32;
+    for (ex_clz_bit = 0; ex_clz_bit < 32; ex_clz_bit = ex_clz_bit + 1)
+      if (ex_a[ex_clz_bit]) ex_clz = 6'd31 - ex_clz_bit[5:0];
+  end
+
   always @* begin
     case (ex_alu_op)
       ALU_ADD:  ex_alu_result = ex_sum;
@@ -1378,6 +1463,14 @@ module cpu #(
       ALU_SHR:  ex_alu_result = ex_a >> ex_alu_b[4:0];
       ALU_SAR:  ex_alu_result = $signed(ex_a) >>> ex_alu_b[4:0];
       ALU_SLT:  ex_alu_result = {31'd0, ex_signed_less};
+      ALU_FEQ:  ex_alu_result = {31'd0, !ex_f_nan && ex_f_equal};
+      ALU_FLT:  ex_alu_result = {31'd0, !ex_f_nan && ex_f_less};
+      ALU_FLE:  ex_alu_result = {31'd0, !ex_f_nan && (ex_f_less || ex_f_equal)};
+      ALU_MIN:  ex_alu_result = ex_signed_less ? ex_a : ex_b;
+      ALU_MAX:  ex_alu_result = ex_signed_less ? ex_b : ex_a;
+      ALU_MINU: ex_alu_result = ex_difference[32] ? ex_a : ex_b;
+      ALU_MAXU: ex_alu_result = ex_difference[32] ? ex_b : ex_a;
+      ALU_CLZ:  ex_alu_result = {26'd0, ex_clz};
       default:  ex_alu_result = {31'd0, ex_difference[32]};  // SLTU
     endcase
     case (ex_branch_cond)

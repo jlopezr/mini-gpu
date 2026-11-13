@@ -140,6 +140,77 @@ def branch16(name: str, opcode: int, description: str) -> Instruction:
     )
 
 
+FCMP_SELECT = Field("fcmp_select", 0, 2)
+# R-Type with extra split for FTOI/ITOF: extra[10:5] selects, extra[4:0] = fbits.
+RF_SELECT = Field("extra_select", 5, 6)
+RF_FBITS = Field("fbits", 0, 5)
+RF = Format("R", (OPCODE, R_RD, R_RA, R_RB, RF_SELECT, RF_FBITS))
+
+
+def fcmp(name: str, select: int, description: str) -> Instruction:
+    """FP32 compare, opcode 0x3C: extra[1:0] chooses it, extra[10:2] = 0."""
+    return Instruction(
+        name,
+        0x3C,
+        R,
+        (reg("Rd", R_RD), reg("Ra", R_RA), reg("Rb", R_RB)),
+        f"{name} Rd, Ra, Rb",
+        description,
+        fixed_mask=R_EXTRA.mask,
+        fixed_value=FCMP_SELECT.encode(select),
+        category="FP32",
+    )
+
+
+def fcvt(name: str, select: int, description: str) -> Instruction:
+    """FP32 conversion, opcode 0x3D: Rb = 0, extra[6:5] chooses it, extra[4:0] = fbits."""
+    return Instruction(
+        name,
+        0x3D,
+        RF,
+        (reg("Rd", R_RD), reg("Ra", R_RA), uimm("fbits", RF_FBITS, 5)),
+        f"{name} Rd, Ra, fbits",
+        description,
+        fixed_mask=R_RB.mask | RF_SELECT.mask,
+        fixed_value=RF_SELECT.encode(select),
+        category="FP32",
+    )
+
+
+# EXT (0x1E): Rd, Ra, Rb, Rc and func6 (isa.md §3, EXT).
+EXT_RC = Field("rc", 6, 5)
+EXT_FUNC6 = Field("func6", 0, 6)
+EXT = Format("EXT", (OPCODE, R_RD, R_RA, R_RB, EXT_RC, EXT_FUNC6))
+
+
+def ext3(name: str, func6: int, description: str) -> Instruction:
+    return Instruction(
+        name,
+        0x1E,
+        EXT,
+        (reg("Rd", R_RD), reg("Ra", R_RA), reg("Rb", R_RB)),
+        f"{name} Rd, Ra, Rb",
+        description,
+        fixed_mask=EXT_RC.mask | EXT_FUNC6.mask,
+        fixed_value=EXT_FUNC6.encode(func6),
+        category="ALU",
+    )
+
+
+def ext2(name: str, func6: int, description: str) -> Instruction:
+    return Instruction(
+        name,
+        0x1E,
+        EXT,
+        (reg("Rd", R_RD), reg("Ra", R_RA)),
+        f"{name} Rd, Ra",
+        description,
+        fixed_mask=R_RB.mask | EXT_RC.mask | EXT_FUNC6.mask,
+        fixed_value=EXT_FUNC6.encode(func6),
+        category="ALU",
+    )
+
+
 def getid(name: str, type_id: int, description: str) -> Instruction:
     return Instruction(
         name,
@@ -237,10 +308,20 @@ INSTRUCTIONS: tuple[Instruction, ...] = (
     r3("DIVU", 0x0D, "Unsigned division"),
     r3("REM", 0x0E, "Signed remainder"),
     r3("REMU", 0x0F, "Unsigned remainder"),
+    ext3("MIN", 0x00, "Rd = min(signed(Ra), signed(Rb))"),
+    ext3("MAX", 0x01, "Rd = max(signed(Ra), signed(Rb))"),
+    ext3("MINU", 0x02, "Rd = min(unsigned(Ra), unsigned(Rb))"),
+    ext3("MAXU", 0x03, "Rd = max(unsigned(Ra), unsigned(Rb))"),
+    ext2("CLZ", 0x09, "Rd = leading zeros of Ra (32 if Ra = 0)"),
     r3("FADD", 0x38, "FP32 add (RNE, DAZ/FTZ)", category="FP32"),
     r3("FSUB", 0x39, "FP32 subtract (RNE, DAZ/FTZ)", category="FP32"),
     r3("FMUL", 0x3A, "FP32 multiply (RNE, DAZ/FTZ)", category="FP32"),
     r3("FDIV", 0x3B, "FP32 divide (RNE, DAZ/FTZ)", category="FP32"),
+    fcmp("FEQ", 0, "Rd = binary32(Ra) == binary32(Rb) (NaN: 0)"),
+    fcmp("FLT", 1, "Rd = binary32(Ra) < binary32(Rb) (NaN: 0)"),
+    fcmp("FLE", 2, "Rd = binary32(Ra) <= binary32(Rb) (NaN: 0)"),
+    fcvt("FTOI", 0, "Rd = int32(trunc(binary32(Ra) * 2^fbits)), saturating; NaN: 0"),
+    fcvt("ITOF", 1, "Rd = binary32(int32(Ra) / 2^fbits), RNE"),
     Instruction(
         "MOVI",
         0x10,

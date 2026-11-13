@@ -411,8 +411,9 @@ module cpu_tb;
     if (debug_pc !== 0) $fatal(1, "Invalid encoding PC mismatch");
 
     // A reserved opcode remains an invalid opcode, independently of encoding.
-    // 0x1b dejo de estar libre al llegar LOADH; 0x1e sigue sin asignar.
-    instruction_memory[0] = 32'h7800_0000;  // Reserved opcode 0x1e.
+    // 0x1b dejo de estar libre al llegar LOADH, y 0x1e con EXT (MIN...); 0x36
+    // sigue sin asignar.
+    instruction_memory[0] = 32'hd800_0000;  // Reserved opcode 0x36.
     reset_cpu();
     pulse_run();
     wait (!halted);

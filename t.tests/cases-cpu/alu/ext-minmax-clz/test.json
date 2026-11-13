@@ -1,0 +1,27 @@
+{
+  "architecture": "cpu",
+  "name": "ext-minmax-clz",
+  "program": "program.asm",
+  "requires": ["minmax", "clz"],
+  "max_instructions": 1000,
+  "timeout_seconds": 2.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R0": 0,
+      "R3": "0xfffffffb",
+      "R4": 7,
+      "R5": 7,
+      "R6": "0xfffffffb",
+      "R7": 7,
+      "R8": 32,
+      "R9": 0,
+      "R10": 29,
+      "R12": 15,
+      "R13": "0xfffffffb",
+      "R14": 0
+    }
+  }
+}

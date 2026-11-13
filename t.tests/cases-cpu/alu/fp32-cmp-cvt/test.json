@@ -1,0 +1,35 @@
+{
+  "architecture": "cpu",
+  "name": "fp32-cmp-cvt",
+  "program": "program.asm",
+  "requires": ["fp32"],
+  "max_instructions": 1000,
+  "timeout_seconds": 2.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": "0x00",
+    "registers": {
+      "R0": 0,
+      "R6": 1,
+      "R7": 0,
+      "R8": 1,
+      "R9": 1,
+      "R10": 0,
+      "R11": 0,
+      "R12": 1,
+      "R14": 1,
+      "R15": "0xfffffffe",
+      "R16": "0x00018000",
+      "R18": "0x7fffffff",
+      "R20": "0x80000000",
+      "R21": 0,
+      "R23": "0xc0400000",
+      "R25": "0x3fc00000",
+      "R27": "0x4f000000",
+      "R28": 0,
+      "R29": "0xbfc00000",
+      "R30": "0xfffffffd"
+    }
+  }
+}

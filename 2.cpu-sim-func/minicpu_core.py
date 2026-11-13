@@ -12,7 +12,7 @@ from tools.sysid_device import (
 # Lo que Codon no trae (struct, from_bytes...): ver tools/codon/LIMITACIONES.md.
 from tools.codon_compat import load_le, load_u32, store_le, store_u32
 from tools.mmio_device import MmioDevice
-from tools.fp32 import fp32_binary
+from tools.fp32 import fp32_binary, fp32_compare, fp32_to_int, int_to_fp32
 from tools.sim_devices import InputDevice, SerialDevice, VideoDevice
 
 # Qué sabe ejecutar ESTE modelo, no la placa que modela.
@@ -52,6 +52,17 @@ def valid_encoding(instr: int, opcode: int) -> bool:
                   0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
                   0x26, 0x27, 0x38, 0x39, 0x3A, 0x3B):
         return (instr & 0x7FF) == 0
+    if opcode == 0x1E:  # EXT: Rc = 0 en MIN/MAX/MINU/MAXU; Rb = Rc = 0 en CLZ
+        func6 = instr & 0x3F
+        if func6 <= 0x03:
+            return (instr & 0x7C0) == 0
+        if func6 == 0x09:
+            return (instr & 0xFFC0) == 0
+        return True  # función reservada: ERROR_INVALID_OPCODE al ejecutarla
+    if opcode == 0x3C:  # FEQ/FLT/FLE: el selector en extra[1:0]
+        return (instr & 0x7FC) == 0
+    if opcode == 0x3D:  # FTOI/ITOF: Rb = 0, operación en extra[6:5], fbits en extra[4:0]
+        return (instr & 0xF780) == 0
     if opcode in (0x10, 0x17):  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
     if opcode == 0x30:  # GETTID requires Y=0 and imm16=0
@@ -426,6 +437,51 @@ class CPU:
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
             self.set_register(rd, fp32_binary(opcode & 3, self.regs[ra], self.regs[rb]))
+
+        elif opcode == 0x1E:  # EXT: MIN / MAX / MINU / MAXU / CLZ
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            func6 = instr & 0x3F
+            a = self.regs[ra]
+            b = self.regs[rb]
+            if func6 == 0x00:
+                self.set_register(rd, a if s32(a) <= s32(b) else b)
+            elif func6 == 0x01:
+                self.set_register(rd, a if s32(a) >= s32(b) else b)
+            elif func6 == 0x02:
+                self.set_register(rd, a if a <= b else b)
+            elif func6 == 0x03:
+                self.set_register(rd, a if a >= b else b)
+            elif func6 == 0x09:
+                zeros = 0
+                while zeros < 32 and not (a >> (31 - zeros)) & 1:
+                    zeros += 1
+                self.set_register(rd, zeros)
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
+
+        elif opcode == 0x3C:  # FEQ / FLT / FLE
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            if (instr & 3) == 3:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
+            self.set_register(rd, fp32_compare(instr & 3, self.regs[ra], self.regs[rb]))
+
+        elif opcode == 0x3D:  # FTOI / ITOF
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            conversion = (instr >> 5) & 3
+            if conversion == 0:
+                self.set_register(rd, fp32_to_int(self.regs[ra], instr & 0x1F))
+            elif conversion == 1:
+                self.set_register(rd, int_to_fp32(self.regs[ra], instr & 0x1F))
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
 
         elif opcode == 0x12:  # ANDI
             rd = (instr >> 21) & 0x1F

@@ -47,6 +47,8 @@ def ops_with_signature(*signature: str) -> set[str]:
 NO_OPERAND_OPS = ops_with_signature()
 R3_OPS = ops_with_signature("Rd", "Ra", "Rb")
 IMM5_OPS = ops_with_signature("Rd", "Ra", "imm5")
+FBITS_OPS = ops_with_signature("Rd", "Ra", "fbits")  # FTOI/ITOF
+R2_OPS = ops_with_signature("Rd", "Ra")  # CLZ
 GETID_OPS = {
     name for name in REAL_OPS
     if operand_signature(name) == ("Rd",) and INSTRUCTIONS[name].fmt.name == "I"
@@ -1307,6 +1309,20 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
             raise AsmError(
                 f"cantidad de {mnemonic} fuera de rango 0..31: {amount}")
         return encode_real(mnemonic, Rd=rd, Ra=ra, imm5=amount)
+
+    if mnemonic in R2_OPS:
+        require_operands(mnemonic, ops, 2, "Rd, Ra")
+        return encode_real(mnemonic, Rd=parse_reg(ops[0]), Ra=parse_reg(ops[1]))
+
+    if mnemonic in FBITS_OPS:
+        # FTOI/ITOF Rd, Ra: conversión de C (fbits = 0); con fbits, coma fija.
+        if len(ops) == 2:
+            ops = ops + ["0"]
+        require_operands(mnemonic, ops, 3, "Rd, Ra, fbits")
+        fbits = parse_int(ops[2])
+        if not 0 <= fbits <= 31:
+            raise AsmError(f"fbits de {mnemonic} fuera de rango 0..31: {fbits}")
+        return encode_real(mnemonic, Rd=parse_reg(ops[0]), Ra=parse_reg(ops[1]), fbits=fbits)
 
     if mnemonic in GETID_OPS:
         require_operands(mnemonic, ops, 1, "Rd")

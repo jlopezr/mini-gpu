@@ -42,7 +42,9 @@ propuestas se enumeran en §7.1.
 | `alu_extended`    | `0x0B`, `0x0D–0x0F`     | `MULHI`, `DIVU`, `REM`, `REMU`                           |
 | `shift_immediate` | `0x07–0x09`, bit 10 = 1 | `SHLI`, `SHRI`, `SARI`                                   |
 | `gpu_ids`         | `0x30`, `type = 1–4`    | `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`                 |
-| `fp32`            | `0x38–0x3B`             | `FADD`, `FSUB`, `FMUL`, `FDIV`                             |
+| `fp32`            | `0x38–0x3D`             | `FADD`, `FSUB`, `FMUL`, `FDIV`, `FEQ`, `FLT`, `FLE`, `FTOI`, `ITOF` |
+| `minmax`          | `0x1E`, `func6 = 0x00–0x03` | `MIN`, `MAX`, `MINU`, `MAXU`                         |
+| `clz`             | `0x1E`, `func6 = 0x09`  | `CLZ`                                                    |
 | `compare`         | `0x26–0x27`             | `SLT`, `SLTU`                                            |
 
 En las tablas de opcodes, **Base** significa que no se requiere una capability
@@ -227,8 +229,8 @@ consulta por separado en las capabilities de cada prototipo.
   registro; el bit 10 selecciona la variante inmediata.
 
 Las filas están ordenadas por **opcode primario y selector** (`bit 10`,
-`type` o `func6`). La tabla contiene **59 mnemónicos vigentes y 15 propuestos**,
-además de los cinco opcodes que seguirían libres al adoptar toda v0.2.
+`type` o `func6`). La tabla contiene **69 mnemónicos vigentes y 11 propuestos**,
+además de los tres opcodes que seguirían libres al adoptar toda v0.2.
 Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuestos.
 
 | Opcode y selector | Categoría | Extensión / ámbito | Instrucción | Operandos | Estado | Sim. funcional (CPU / GPU) | Definición |
@@ -266,15 +268,16 @@ Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuest
 | `0x1B` | Memoria | `subword_memory` | `LOADH` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
 | `0x1C` | Memoria | `subword_memory` | `LOADUH` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
 | `0x1D` | Memoria | `subword_memory` | `STOREH` | `Rs, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
-| `0x1E`; `func6 = 0x00` | Límites signed | `minmax` | `MIN` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
-| `0x1E`; `func6 = 0x01` | Límites signed | `minmax` | `MAX` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
-| `0x1E`; `func6 = 0x02` | Límites unsigned | `minmax` | `MINU` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
-| `0x1E`; `func6 = 0x03` | Límites unsigned | `minmax` | `MAXU` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x00` | Límites signed | `minmax` | `MIN` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
+| `0x1E`; `func6 = 0x01` | Límites signed | `minmax` | `MAX` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
+| `0x1E`; `func6 = 0x02` | Límites unsigned | `minmax` | `MINU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
+| `0x1E`; `func6 = 0x03` | Límites unsigned | `minmax` | `MAXU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
 | `0x1E`; `func6 = 0x04` | Selección | `select` | `SEL` | `Rd, Ra, Rb, Rc` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x05` | Acumulación Q16.16 | `macfx` | `MACFX` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x06` | Recíproco Q16.16 | `rcpfx` | `RCPFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x07` | Raíz inversa Q16.16 | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x08` | Conversión de píxeles | `pack565` | `PACK565` | `Rd, Ra` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x09` | Bits | `clz` | `CLZ` | `Rd, Ra` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
 | `0x1F` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#inmediatos-y-memoria); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
 | `0x20` | Saltos | Base | `BEQ` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
 | `0x21` | Saltos | Base | `BNE` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
@@ -308,8 +311,11 @@ Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuest
 | `0x39` | Aritmética FP32 | `fp32` | `FSUB` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3A` | Aritmética FP32 | `fp32` | `FMUL` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3B` | Aritmética FP32 | `fp32` | `FDIV` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
-| `0x3C` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
-| `0x3D` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x3C`; `extra = 0` | Comparación FP32 | `fp32` | `FEQ` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3C`; `extra = 1` | Comparación FP32 | `fp32` | `FLT` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3C`; `extra = 2` | Comparación FP32 | `fp32` | `FLE` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3D`; `extra[6:5] = 0` | Conversión FP32 | `fp32` | `FTOI` | `Rd, Ra, fbits` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3D`; `extra[6:5] = 1` | Conversión FP32 | `fp32` | `ITOF` | `Rd, Ra, fbits` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3E` | Sistema | Base | `TRAP` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
 | `0x3F` | Sistema | Base | `HALT` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
 
@@ -323,11 +329,12 @@ En EXT, `Rc = 0` está reservado para `MIN/MAX/MINU/MAXU/MACFX`;
 La falta de contrato numérico de `RCPFX/RSQRTFX` impide tratarlas como listas
 para implementar aunque ya tengan una asignación propuesta.
 
-El mapa vigente tiene **52 opcodes primarios ocupados y 12 reservados**.
-V0.2 propone ocupar siete de esos huecos: `0x1E`, `0x28–0x2B` y `0x34–0x35`.
-Si se adoptara todo el conjunto, habría **59 ocupados y 5 libres**:
-`0x1F`, `0x36`, `0x37`, `0x3C` y `0x3D`. Las 55 funciones EXT `0x09–0x3F`
-seguirían libres. La ocupación por bloques se resume en §7.4.
+El mapa vigente tiene **55 opcodes primarios ocupados y 9 reservados**
+(`EXT` en `0x1E` y FP32 en `0x3C–0x3D` son los últimos en ocuparse).
+V0.2 propone ocupar seis de esos huecos más: `0x28–0x2B` y `0x34–0x35`.
+Si se adoptara todo el conjunto, habría **61 ocupados y 3 libres**:
+`0x1F`, `0x36` y `0x37`. De las funciones EXT, `0x09` es `CLZ` y `0x0A–0x3F`
+(54) seguirían libres. La ocupación por bloques se resume en §7.4.
 
 ### ALU y aritmética
 
@@ -426,11 +433,12 @@ recuperación arquitectónica.
 |      `0x1B` | `LOADH`   | `Rd, Ra, imm16` | 16 bits, extensión con signo          | `subword_memory` |
 |      `0x1C` | `LOADUH`  | `Rd, Ra, imm16` | 16 bits, extensión con ceros          | `subword_memory` |
 |      `0x1D` | `STOREH`  | `Rs, Ra, imm16` | escribe `Rs[15:0]`                    | `subword_memory` |
-| `0x1E–0x1F` | —         | —               | Reservadas                            | —                |
+|      `0x1E` | `EXT`     | según `func6`   | `MIN`/`MAX`/`MINU`/`MAXU`/`CLZ`, ver [EXT](#ext-minmax-y-clz-capabilities-minmax-y-clz) | `minmax`, `clz` |
+|      `0x1F` | —         | —               | Reservada                             | —                |
 
 Los seis accesos sub-palabra siguen el mapa vigente de esta tabla y
-aparecieron en `19.fpga-cpu-hdmi-ls`. Quedan **dos opcodes libres** en esta
-familia.
+aparecieron en `19.fpga-cpu-hdmi-ls`. `0x1E` es `EXT` (MIN/MAX/CLZ) y queda
+**un opcode libre** en esta familia, `0x1F`.
 
 Todas las cargas y stores calculan `address = low32(Ra + sign_extend(imm16))`.
 El desplazamiento está en bytes y admite `-32768..32767`.
@@ -554,15 +562,96 @@ Implementado en la CPU del prototipo **38**, el simulador CPU **2** y la CPU del
 simulador integrado **32**. Las GPU y los demás prototipos no ofrecen todavía
 esta capability. Los opcodes se asignan del espacio antes reservado `0x34–0x3D`,
 y no cambian los binarios existentes. Las propuestas v0.2–v0.4 siguen siendo
-propuestas, con mapas propios. lcc genera estas instrucciones para `+ - * /` de
-`float` con la opción `-fp32` (`mini-cc --fp32`; ver `u.lcc/README-miniisa.md`);
-sin ella, y para comparaciones, conversiones y `double`, sigue el softfloat. No
-hay todavía conversiones ni comparaciones FP en la ISA.
+propuestas, con mapas propios. lcc genera estas instrucciones para `float` con
+la opción `-fp32` (`mini-cc --fp32`; ver `u.lcc/README-miniisa.md`): `+ - * /`,
+las comparaciones y las conversiones entre `int` y `float`. `double`, `long long`
+y `unsigned` siguen en softfloat.
+
+#### Comparaciones: `FEQ`, `FLT`, `FLE` (`0x3C`)
+
+| `extra` | Mnemónico | Operandos | Resultado en `Rd` |
+|--------:|-----------|-----------|-------------------|
+| `0` | `FEQ` | `Rd, Ra, Rb` | 1 si binary32(Ra) == binary32(Rb), si no 0 |
+| `1` | `FLT` | `Rd, Ra, Rb` | 1 si binary32(Ra) < binary32(Rb), si no 0 |
+| `2` | `FLE` | `Rd, Ra, Rb` | 1 si binary32(Ra) <= binary32(Rb), si no 0 |
+
+R-Type; `extra[10:2]` debe ser 0 (si no, `ERROR_INVALID_ENCODING`) y
+`extra = 3` produce `ERROR_INVALID_OPCODE`. Son comparaciones IEEE sin excepción:
+
+- Si algún operando es NaN, las tres dan 0 (`x != y` es `FEQ` negado, y da 1).
+- `-0 == +0`.
+- **Sin DAZ**: los subnormales se comparan exactamente. Es más barato que
+  aplicar DAZ y da los mismos resultados que el softfloat de lcc.
+
+`>` y `>=` son `FLT`/`FLE` con los operandos intercambiados.
+
+#### Conversiones: `FTOI`, `ITOF` (`0x3D`)
+
+```text
+31       26 25   21 20   16 15   11 10    7 6    5 4       0
++----------+-------+-------+-------+-------+------+---------+
+|   0x3D   |  Rd   |  Ra   |   0   |   0   |  op  |  fbits  |
++----------+-------+-------+-------+-------+------+---------+
+```
+
+| `op` | Mnemónico | Operandos | Resultado en `Rd` |
+|-----:|-----------|-----------|-------------------|
+| `0` | `FTOI` | `Rd, Ra, fbits` | int32(trunc(binary32(Ra) × 2^fbits)) |
+| `1` | `ITOF` | `Rd, Ra, fbits` | binary32(int32(Ra) / 2^fbits), RNE |
+
+`Rb` y `extra[10:7]` deben ser 0 (si no, `ERROR_INVALID_ENCODING`); `op = 2, 3`
+producen `ERROR_INVALID_OPCODE`. `fbits` va de 0 a 31: con 0 son las
+conversiones de C (`(int)f`, `(float)i`); con 16, de y a Q16.16. El ensamblador
+acepta `FTOI Rd, Ra` e `ITOF Rd, Ra` con `fbits = 0`.
+
+- `FTOI` trunca hacia cero. Fuera de rango, e infinito, satura a `0x7FFFFFFF`
+  o `0x80000000` según el signo. Un NaN da 0. Cero y subnormales dan 0 (con
+  cualquier `fbits`, un subnormal por 2^31 es menor que 1).
+- `ITOF` redondea al más cercano con desempate al par. El resultado nunca es
+  subnormal (el menor no nulo es 2^-31).
+- Con `fbits = 0` dan los mismos bits que `__fixsfsi` y `__floatsisf` del
+  softfloat de lcc. El modelo de referencia es `tools/fp32.py`.
+
+Comparaciones e `ITOF` no dependen de DAZ/FTZ, así que el resultado es el mismo
+con y sin la extensión; solo `FADD/FSUB/FMUL/FDIV` pueden diferir del softfloat
+con subnormales.
 
 ```asm
 LI R1, 0x3fc00000        ; 1.5
 LI R2, 0x40100000        ; 2.25
 FADD R3, R1, R2          ; R3 = 0x40700000 (3.75)
+FLT  R4, R1, R2          ; R4 = 1
+FTOI R5, R1, 16          ; R5 = 0x00018000 (1.5 en Q16.16)
+ITOF R6, R5, 16          ; R6 = 0x3fc00000 (1.5)
+```
+
+### EXT: MIN/MAX y CLZ (capabilities `minmax` y `clz`)
+
+El opcode `0x1E` (`EXT`) elige la operación por `func6`, con el formato de
+[§7.3](#encoding-propuesto-ext-en-0x1e): `Rd`, `Ra`, `Rb`, `Rc` y `func6`.
+Están implementadas estas cinco, en la CPU de la **38** y en los simuladores
+CPU **2** y **32**:
+
+| `func6` | Mnemónico | Operandos | Resultado | Campos a 0 | Capability |
+|--------:|-----------|-----------|-----------|------------|------------|
+| `0x00` | `MIN`  | `Rd, Ra, Rb` | el menor con signo | `Rc` | `minmax` |
+| `0x01` | `MAX`  | `Rd, Ra, Rb` | el mayor con signo | `Rc` | `minmax` |
+| `0x02` | `MINU` | `Rd, Ra, Rb` | el menor sin signo | `Rc` | `minmax` |
+| `0x03` | `MAXU` | `Rd, Ra, Rb` | el mayor sin signo | `Rc` | `minmax` |
+| `0x09` | `CLZ`  | `Rd, Ra`     | ceros iniciales de `Ra`; `CLZ(0) = 32` | `Rb`, `Rc` | `clz` |
+
+Un campo reservado no nulo produce `ERROR_INVALID_ENCODING`; las demás
+funciones (las propuestas de §7.3 incluidas), `ERROR_INVALID_OPCODE`. Las cinco
+son de un ciclo en la ALU de la 38. En C se usan con los intrínsecos de
+`u.lcc/include/mini/none/mini_ext.h` (`__mini_min`, `__mini_clz`...), que lcc
+convierte en la instrucción.
+
+```asm
+LI   R1, -5
+MOVI R2, 7
+MIN  R3, R1, R2          ; R3 = -5
+MAXU R4, R1, R2          ; R4 = 0xfffffffb
+CLZ  R5, R2              ; R5 = 29
 ```
 
 ### Sistema y SIMT
@@ -576,8 +665,8 @@ son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
 |      `0x31` | `SSY`     | `label`   | MiniGPU; en MiniCPU no-op. B-Type    |
 |      `0x32` | `BAR`     | —         | MiniGPU; en MiniCPU no-op            |
 |      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
-| `0x34–0x37`, `0x3C–0x3D` | — | — | Reservadas para GPU |
-| `0x38–0x3B` | `FADD/FSUB/FMUL/FDIV` | `Rd, Ra, Rb` | Extensión `fp32`, ver arriba |
+| `0x34–0x37` | — | — | Reservadas para GPU |
+| `0x38–0x3D` | `FADD/FSUB/FMUL/FDIV`, `FEQ/FLT/FLE`, `FTOI/ITOF` | — | Extensión `fp32`, ver arriba |
 |      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error |
 |      `0x3F` | `HALT`    | —         | Definida e implementada              |
 
@@ -808,7 +897,7 @@ añade una capability separada `warp_user_id`:
 | Capability propuesta | Operaciones                  | Alcance inicial propuesto                  |
 |----------------------|------------------------------|--------------------------------------------|
 | `branch_immediate`   | Los seis branches inmediatos | CPU y GPU                                  |
-| `minmax`             | `MIN`, `MAX`, `MINU`, `MAXU` | CPU y GPU                                  |
+| `minmax`             | `MIN`, `MAX`, `MINU`, `MAXU` | Vigente en la CPU de la 38; falta la GPU   |
 | `select`             | `SEL`                        | CPU y GPU                                  |
 | `macfx`              | `MACFX`                      | CPU y GPU                                  |
 | `pack565`            | `PACK565`                    | CPU y GPU                                  |
@@ -893,8 +982,8 @@ registro-registro existentes.
 
 | Operación propuesta | Utilidad                         | Grado de definición                  |
 |---------------------|----------------------------------|--------------------------------------|
-| `MIN`, `MAX`        | Límites y recorte signed32       | Semántica definida en esta propuesta |
-| `MINU`, `MAXU`      | Índices y profundidad unsigned32 | Semántica definida en esta propuesta |
+| `MIN`, `MAX`        | Límites y recorte signed32       | Vigente en la 38 (§3, EXT)           |
+| `MINU`, `MAXU`      | Índices y profundidad unsigned32 | Vigente en la 38 (§3, EXT)           |
 | `SEL`               | Selección de datos sin branch    | Semántica definida en esta propuesta |
 | `MACFX`             | Acumulación Q16.16               | Semántica definida en esta propuesta |
 | `PACK565`           | Conversión RGB888 a RGB565       | Semántica definida en esta propuesta |
@@ -954,7 +1043,8 @@ cambia; el ensamblador expondrá los mnemónicos, no un `EXT` genérico.
 | `0x06`            | `RCPFX`    | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
 | `0x07`            | `RSQRTFX`  | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
 | `0x08`            | `PACK565`  | `Rd, Ra`         | `Rb = Rc = 0`                     |
-| `0x09–0x3F`       | Reservadas | —                | 55 suboperaciones disponibles     |
+| `0x09`            | `CLZ`      | `Rd, Ra`         | `Rb = Rc = 0`; vigente (§3, EXT)  |
+| `0x0A–0x3F`       | Reservadas | —                | 54 suboperaciones disponibles     |
 
 Un campo reservado a cero no es un operando leído. Los campos reservados no
 nulos producen `ERROR_INVALID_ENCODING`; una función reservada o no soportada
@@ -965,11 +1055,12 @@ solo escriben las lanes activas y no modifican las máscaras SIMT.
 
 #### Qué añadiría el conjunto completo
 
-Sobre el repertorio vigente se proponen **15 operaciones nuevas**: seis
-branches inmediatos y nueve operaciones bajo `EXT`. Consumen **7 opcodes
-primarios nuevos**: seis para los branches y uno para EXT. Dos operaciones EXT
-tienen contrato numérico pendiente. Los cinco mnemónicos GETID ya están
-incorporados y no cuentan como novedades de esta revisión.
+Sobre el repertorio vigente se proponen **11 operaciones nuevas**: seis
+branches inmediatos y cinco operaciones bajo `EXT` (`SEL`, `MACFX`, `RCPFX`,
+`RSQRTFX`, `PACK565`). Consumen **6 opcodes primarios nuevos**, los de los
+branches: `EXT` ya está ocupado con `MIN/MAX/MINU/MAXU` y `CLZ` (vigentes en la
+38). Dos operaciones EXT tienen contrato numérico pendiente. Los cinco
+mnemónicos GETID ya están incorporados y no cuentan como novedades.
 
 Portar capabilities existentes entre backends no consume nuevos opcodes.
 `R0`, `JR`, las unidades de los saltos y todos los encodings vigentes,
@@ -985,14 +1076,14 @@ otro mapa paralelo aquí.
 | Bloque de opcodes | Ocupados vigentes | Libres vigentes | Nuevos propuestos | Libres resultantes |
 |---|---:|---:|---:|---:|
 | `0x00–0x0F` | 16 | 0 | 0 | 0 |
-| `0x10–0x1F` | 14 | 2 | 1 | 1 |
+| `0x10–0x1F` | 15 | 1 | 0 | 1 |
 | `0x20–0x2F` | 12 | 4 | 4 | 0 |
-| `0x30–0x3F` | 10 | 6 | 2 | 4 |
-| **Total** | **52** | **12** | **7** | **5** |
+| `0x30–0x3F` | 12 | 4 | 2 | 2 |
+| **Total** | **55** | **9** | **6** | **3** |
 
-El conjunto completo ocuparía **59 de 64 opcodes**, con **5 libres**:
-`0x1F`, `0x36`, `0x37`, `0x3C` y `0x3D`. Quedan también **55 suboperaciones
-EXT libres** (`func6 = 0x09–0x3F`). Los bloques indican posiciones del mapa;
+El conjunto completo ocuparía **61 de 64 opcodes**, con **3 libres**:
+`0x1F`, `0x36` y `0x37`. Quedan también **54 suboperaciones
+EXT libres** (`func6 = 0x0A–0x3F`). Los bloques indican posiciones del mapa;
 no imponen un formato único ni limitan la categoría semántica de sus operaciones.
 
 No se puede recuperar `0x2E` sin romper compatibilidad. Si las nueve
@@ -1014,6 +1105,8 @@ CPU o en un RTL GPU no garantiza que esté en la GPU funcional de la 11.
 | `alu_extended` | Sí | No | `MULHI`, `DIVU`, `REM`, `REMU` por lane |
 | `compare` | Sí | No | `SLT`, `SLTU` por lane |
 | `fp32` | Sí | No | Operaciones FP32 por lane, si se incorpora esta capability |
+| `minmax` | Sí | No | `MIN`, `MAX`, `MINU`, `MAXU` por lane (`EXT`) |
+| `clz` | Sí | No | `CLZ` por lane (`EXT`) |
 
 El estado funcional anterior es el de los núcleos que reutiliza la 32. El
 modelo de ciclos de la 25 y los prototipos FPGA tienen su propia disponibilidad;

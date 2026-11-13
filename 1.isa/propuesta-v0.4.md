@@ -112,7 +112,7 @@ Compartir opcode no obliga a implementar otras capabilities de la misma familia.
 | `warp_shuffle` | `SHFL` | GPU |
 | `pc_relative_address` | `LEAPC` | CPU / GPU |
 | `indexed_load` | `LOADX` de 32 bits | CPU / GPU |
-| `fp32` | `FADD`, `FSUB`, `FMUL`, `FDIV` | CPU / GPU |
+| `fp32` | `FADD`, `FSUB`, `FMUL`, `FDIV`, `FEQ`, `FLT`, `FLE`, `FTOI`, `ITOF` | CPU / GPU |
 
 `rcpfx` y `rsqrtfx` no pueden declararse hasta cerrar su contrato y modelo de
 referencia. Las demás capabilities de esta propuesta tampoco se anuncian hasta
@@ -358,6 +358,11 @@ libres de ese mapa.
 | `0x0A`; `func6 = 0x01` | Coma flotante | `fp32` (CPU / GPU) | `FSUB` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
 | `0x0A`; `func6 = 0x02` | Coma flotante | `fp32` (CPU / GPU) | `FMUL` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
 | `0x0A`; `func6 = 0x03` | Coma flotante | `fp32` (CPU / GPU) | `FDIV` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
+| `0x0A`; `func6 = 0x04` | Coma flotante | `fp32` (CPU / GPU) | `FEQ` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
+| `0x0A`; `func6 = 0x05` | Coma flotante | `fp32` (CPU / GPU) | `FLT` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
+| `0x0A`; `func6 = 0x06` | Coma flotante | `fp32` (CPU / GPU) | `FLE` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
+| `0x0A`; `func6 = 0x07` | Coma flotante | `fp32` (CPU / GPU) | `FTOI` | `Rd, Ra, fbits` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
+| `0x0A`; `func6 = 0x08` | Coma flotante | `fp32` (CPU / GPU) | `ITOF` | `Rd, Ra, fbits` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
 | `0x0B`; `func6 = 0x00` | Atómicos | `atomics` | `ATOMADD` | `Rd, Ra, Rb` | Propuesta v4 | No / No | [v0.4](#41-familia-atomic--0x0b) |
 | `0x0B`; `func6 = 0x01` | Atómicos | `atomics` | `ATOMCAS` | `Rd, Ra, Rb, Rc` | Propuesta v4; uso de Rc unificado | No / No | [v0.4](#41-familia-atomic--0x0b) |
 | `0x0C` | Comparaciones | `compare` | `SLTI` | `Rd, Ra, imm16` | Propuesta v4 | No / No | [v0.4](#548-comparaciones-y-alias-de-ensamblador) |
@@ -495,6 +500,9 @@ Por ejemplo, el resto signed conserva el signo del dividendo:
 Operandos `Rd, Ra, Rb`; `Rc=0`. Se devuelve el menor/mayor operando según
 comparación signed32 o unsigned32, sin saturación ni efectos de control.
 
+Las cuatro ya están implementadas (CPU de la 38, simuladores 2 y 32) con el
+mapa compatible de `isa.md`: `EXT` `0x1E`, `func6 = 0x00–0x03`, mismo contrato.
+
 #### 5.1.4 SELECT — `0x07`
 
 `func6=0`: `SEL Rd, Ra, Rb, Rc`, resultado `Ra` si el contenido de `Rc` no es
@@ -510,6 +518,10 @@ máscaras SIMT ni ejecuta ambas ramas de código: selecciona valores ya calculad
 
 `Rb=Rc=0`. `CLZ` ayuda a normalizar datos y construir rutinas numéricas;
 `POPC` permite contar las lanes seleccionadas por un ballot.
+
+`CLZ` ya está implementada (CPU de la 38, simuladores 2 y 32) con el mapa
+compatible de `isa.md`: `EXT` `0x1E`, `func6 = 0x09`, capability `clz`. Aquí
+forma `bit_count` junto con `POPC`, que no está implementada.
 
 #### 5.1.6 FXMATH — `0x09`
 
@@ -800,7 +812,9 @@ escritura por lane y se permite extraer únicamente el canal necesario.
 
 `size=0,1,2` selecciona `STOREBP`, `STOREHP`, `STOREP` (8, 16, 32 bits).
 `size=3` está reservado. Sintaxis: `STOREP Rs, Ra, incremento`, equivalente
-para las otras dos variantes. El inmediato es signed en bytes, `-8192..8191`.
+para las otras dos variantes. En el mapa compatible de `isa.md`, `0x1E` ya es
+`EXT` (MIN/MAX/CLZ, implementado en la 38); llevar estos stores a ese mapa
+pide otro opcode, por ejemplo `0x1F`, con este mismo formato. El inmediato es signed en bytes, `-8192..8191`.
 
 ```text
 address = old_Ra
@@ -1006,7 +1020,7 @@ su propio opcode, como muestra el otro índice.
 
 ### 5.5 Familia FP32 — `0x0A`
 
-La capability opcional `fp32` agrupa las cuatro operaciones en un solo opcode
+La capability opcional `fp32` agrupa sus nueve operaciones en un solo opcode
 R-Type: `opcode | Rd | Ra | Rb | Rc | func6`, con `Rc=0`.
 
 | func6 | Instrucción | Operandos | Resultado |
@@ -1015,9 +1029,15 @@ R-Type: `opcode | Rd | Ra | Rb | Rc | func6`, con `Rc=0`.
 | `0x01` | `FSUB` | `Rd, Ra, Rb` | binary32(Ra) − binary32(Rb) |
 | `0x02` | `FMUL` | `Rd, Ra, Rb` | binary32(Ra) × binary32(Rb) |
 | `0x03` | `FDIV` | `Rd, Ra, Rb` | binary32(Ra) / binary32(Rb) |
+| `0x04` | `FEQ` | `Rd, Ra, Rb` | 1 si binary32(Ra) == binary32(Rb), si no 0 |
+| `0x05` | `FLT` | `Rd, Ra, Rb` | 1 si binary32(Ra) < binary32(Rb), si no 0 |
+| `0x06` | `FLE` | `Rd, Ra, Rb` | 1 si binary32(Ra) <= binary32(Rb), si no 0 |
+| `0x07` | `FTOI` | `Rd, Ra, fbits` | int32(trunc(binary32(Ra) × 2^fbits)), saturado |
+| `0x08` | `ITOF` | `Rd, Ra, fbits` | binary32(int32(Ra) / 2^fbits), RNE |
 
-Los valores `func6=0x04..0x3F` están reservados; no autorizan a declarar otras
-operaciones. `Rc` no cero es encoding inválido. Una capability ausente o una
+En `FTOI` e `ITOF`, `fbits` (0..31) ocupa el campo `Rb` como inmediato sin
+signo; no es un registro leído. Los valores `func6=0x09..0x3F` están
+reservados; no autorizan a declarar otras operaciones. `Rc` no cero es encoding inválido. Una capability ausente o una
 subfunción no soportada sigue las reglas generales del perfil (§1 y §3).
 
 Se hereda normativamente el contrato numérico de
@@ -1036,12 +1056,16 @@ sus cuatro opcodes independientes:
 - No hay FMA, flags FP, modo de redondeo configurable ni excepciones numéricas.
   En particular, FDIV por cero no causa DIVISION_BY_ZERO ni entra al handler.
 
-En GPU solo escriben las lanes activas. La capability comprende las cuatro
+Comparaciones y conversiones heredan también su contrato de `isa.md`
+(comparaciones sin DAZ, NaN da 0 y `-0 == +0`; `FTOI` trunca, satura y da 0
+con NaN; `ITOF` redondea RNE y nunca da subnormales).
+
+En GPU solo escriben las lanes activas. La capability comprende las nueve
 operaciones, aunque un backend puede ejecutarlas con latencias distintas.
-No se añaden conversiones, comparaciones ni nuevas pseudoinstrucciones FP.
+No se añaden nuevas pseudoinstrucciones FP.
 
 Este encoding v0.4 es una propuesta: la implementación actual en CPU 2/32 y
-RTL 38 usa los opcodes v0.1. Compartir contrato numérico no implica soporte del
+RTL 38 usa los opcodes del mapa compatible (`0x38–0x3D`, ver `isa.md`). Compartir contrato numérico no implica soporte del
 nuevo encoding ni soporte GPU implementado.
 
 ## 6. Modos de ejecución

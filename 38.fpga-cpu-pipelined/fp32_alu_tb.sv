@@ -1,14 +1,17 @@
 `timescale 1ns/1ps
 module fp32_alu_tb;
     logic clk = 0, rst = 1, in_valid = 0, in_ready, out_valid, out_ready = 1;
-    logic [1:0] in_op = 0;
+    logic [2:0] in_op = 0;
+    logic [4:0] in_fbits = 0;
     logic [31:0] in_a = 0, in_b = 0, out_data;
     fp32_alu dut (.*);
     always #5 clk = ~clk;
     integer seed = 32'h27182818, i, op;
     reg [31:0] a, b, expected;
+    localparam integer CONVERT_VECTORS = 3152;
+    reg [31:0] vectors [0:4 * CONVERT_VECTORS - 1];
 
-    task automatic issue(input logic [1:0] op, input logic [31:0] a, b);
+    task automatic issue(input logic [2:0] op, input logic [31:0] a, b);
         begin
             @(negedge clk); in_valid = 1; in_op = op; in_a = a; in_b = b;
             do @(posedge clk); while (!in_ready);
@@ -22,7 +25,7 @@ module fp32_alu_tb;
                 $fatal(1, "op=%d a=%h b=%h expected=%h got=%h", in_op, in_a, in_b, expected, out_data);
         end
     endtask
-    task automatic check(input [1:0] op, input [31:0] a, b, expected);
+    task automatic check(input [2:0] op, input [31:0] a, b, expected);
         begin issue(op, a, b); await_result(expected); end
     endtask
 
@@ -134,7 +137,31 @@ module fp32_alu_tb;
             if (out_valid) $fatal(1, "stale result after reset");
         end
         check(0, 'h3f800000, 'h3f800000, 'h40000000);
-        $display("PASS: fp32_alu (4000 random operations, edge cases and handshake)");
+        // FTOI/ITOF against tools/fp32.py (tools/gen_fp32_convert_vectors.py).
+        $readmemh("fp32_convert_vectors.hex", vectors);
+        for (i = 0; i < CONVERT_VECTORS; i = i + 1) begin
+            in_fbits = vectors[4 * i + 1][4:0];
+            check(vectors[4 * i][2:0], vectors[4 * i + 2], 32'd0, vectors[4 * i + 3]);
+        end
+        // A conversion waits for the fast path to drain, and back to back.
+        in_fbits = 16;
+        issue(2, 'h3fc00000, 'h40800000); // 6, in the fast path
+        in_valid = 1; in_op = 4; in_a = 'h3fc00000;
+        #1;
+        if (in_ready) $fatal(1, "conversion accepted before draining fast path");
+        in_valid = 0;
+        await_result('h40c00000);
+        check(4, 'h3fc00000, 0, 'h00018000); // 1.5 in Q16.16
+        issue(4, 'h3fc00000, 0);
+        @(negedge clk);
+        if (in_ready) $fatal(1, "accepted while converting");
+        await_result('h00018000);
+        in_fbits = 0;
+        issue(5, 'hfffffffd, 0);
+        await_result('hc0400000);
+        check(0, 'h3f800000, 'h3f800000, 'h40000000);
+        $display("PASS: fp32_alu (4000 random operations, %0d conversions, edge cases and handshake)",
+                 CONVERT_VECTORS);
         $finish;
     end
 endmodule

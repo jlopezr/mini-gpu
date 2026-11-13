@@ -10,13 +10,39 @@ La identificacion de placa es monitor `5.38`. La CPU va a 50 MHz mediante `pll_c
 FP32, los builds `dcache-decide` y `perf-video` cerraban a 65–70 MHz. El
 build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
 
+## Comparaciones y conversiones FP32, MIN/MAX y CLZ (13 de noviembre)
+
+`fp32` crece con `FEQ`/`FLT`/`FLE` (`0x3C`) y `FTOI`/`ITOF` (`0x3D`, con
+`fbits` para coma fija), y la CPU implementa `EXT` (`0x1E`) con `MIN`, `MAX`,
+`MINU`, `MAXU` (capability `minmax`) y `CLZ` (`clz`). Contratos y encodings en
+[`isa.md`](../1.isa/isa.md#aritmética-fp32-capability-fp32).
+
+- Comparaciones, MIN/MAX y CLZ son de un ciclo en la ALU de EX: las
+  comparaciones FP usan el restador entero, como `SLT`, más la detección de
+  NaN y de los dos ceros.
+- `FTOI`/`ITOF` van por `fp32_alu.sv`, como un tercer camino: arrancan con la
+  unidad vacía, como la división, y tardan dos pasos tras aceptarse
+  (desplazamiento o normalización, y saturación o redondeo). La CPU ya solo
+  tenía una operación FP en vuelo, así que no se pierde rendimiento.
+- Pruebas: `fp32_alu_tb.sv` compara 3.152 conversiones con `tools/fp32.py`
+  (`fp32_convert_vectors.hex`, de `tools/gen_fp32_convert_vectors.py`);
+  `cpu_fp32_tb.v` cubre dependencias ALU <-> FP, R0 y los selectores y campos
+  reservados. Casos compartidos:
+  [`alu/fp32-cmp-cvt`](../t.tests/cases-cpu/alu/fp32-cmp-cvt/) y
+  [`alu/ext-minmax-clz`](../t.tests/cases-cpu/alu/ext-minmax-clz/).
+- Síntesis (semilla 9, una ejecución): CPU 52,94 MHz (antes 57,20), SDRAM
+  104,65 MHz.
+- En racer (simulador, millones de instrucciones por frame): en float con
+  `-fp32`, de 3,17 a 2,52 M; en coma fija con `-fp32` y `EXT=1`, de 2,99 a
+  2,69 M.
+
 ## Extensión FP32 (13 de noviembre)
 
 La CPU implementa `FADD`, `FSUB`, `FMUL` y `FDIV` (`0x38–0x3B`), capability
 `fp32`. Usan los registros generales con patrones binary32. El contrato está en
 [`isa.md`](../1.isa/isa.md#aritmética-fp32-capability-fp32): RNE, DAZ/FTZ, NaN
 canónico, infinitos y ceros con signo, sin flags ni excepciones numéricas FP.
-No se han añadido conversiones/comparaciones FP ni soporte nativo en lcc.
+Las comparaciones y conversiones llegaron después (sección anterior).
 
 `fp32_alu.sv` se conecta a EX con valid/ready. EX emite una vez, espera el
 resultado y lo lleva a MEM/WB con el mismo retiro y adelantamiento que la ALU
