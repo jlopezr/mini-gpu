@@ -3432,6 +3432,58 @@ class TuiDemoTest(unittest.TestCase):
         self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -5,6 %
 
 
+class RetargetTest(unittest.TestCase):
+    def run_pass(self, body: str, ret32: bool = True):
+        stats = {}
+        source = ".text\n.globl f\nf:\n" + ("; @miniopt ret32\n" if ret32 else "") + body + "\nJR R31\n"
+        return lines_of(optimize(source, ["retarget", "dce"], stats=stats)), stats
+
+    def test_an_intrinsic_result_goes_straight_to_its_copy(self):
+        out, stats = self.run_pass("ADD R2, R25, R0\nMIN R1, R20, R25\nADD R20, R1, R0\nADDI R1, R20, 1")
+        self.assertIn("MIN R20, R20, R25", out)
+        self.assertNotIn("ADD R20, R1, R0", out)
+        self.assertNotIn("ADD R2, R25, R0", out)          # ret32: el JR no lee R2
+        self.assertEqual(stats["retarget.rewritten"], 1)
+
+    def test_without_ret32_r2_may_be_returned(self):
+        out, _ = self.run_pass("ADD R2, R25, R0\nMIN R1, R20, R25\nADD R20, R1, R0\nADDI R1, R20, 1",
+                               ret32=False)
+        self.assertIn("ADD R2, R25, R0", out)
+
+    def test_the_source_still_read_later_keeps_the_copy(self):
+        out, _ = self.run_pass("CLZ R1, R7\nADD R20, R1, R0\nADD R1, R1, R20")
+        self.assertIn("CLZ R1, R7", out)
+        self.assertIn("ADD R20, R1, R0", out)
+
+    def test_the_destination_read_in_between_keeps_the_copy(self):
+        out, _ = self.run_pass("MAX R1, R7, R8\nSTORE R20, R30, 0\nADD R20, R1, R0\nADD R1, R20, R0")
+        self.assertIn("MAX R1, R7, R8", out)
+
+    def test_a_label_in_between_keeps_the_copy(self):
+        out, _ = self.run_pass("MAX R9, R7, R8\nL.3:\nADD R20, R9, R0\nADD R1, R20, R0")
+        self.assertIn("MAX R9, R7, R8", out)
+
+    def test_a_call_is_not_retargeted(self):
+        out, _ = self.run_pass("JAL R31, g\nADD R20, R1, R0\nADD R1, R20, R0")
+        self.assertIn("ADD R20, R1, R0", out)
+
+    def test_same_results_in_the_simulator(self):
+        source = """.text
+.globl f
+f:
+LI R7, -5
+MOVI R8, 7
+MIN R1, R7, R8
+ADD R20, R1, R0
+CLZ R9, R8
+ADD R21, R9, R0
+MAX R1, R20, R21
+ADD R22, R1, R0
+HALT
+"""
+        self.assertEqual(final_registers(optimize(source), 0), final_registers(source, 0))
+
+
 class FP32SemanticsTest(unittest.TestCase):
     def test_optimizer_preserves_fp_dependencies(self):
         source = """.text

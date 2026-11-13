@@ -13,9 +13,13 @@ REGISTER_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 
 R3 = {"ADD", "SUB", "MULFX", "AND", "OR", "XOR", "SHL", "SHR", "SAR", "MUL", "MULHI",
-      "DIV", "DIVU", "REM", "REMU", "SLT", "SLTU", "FADD", "FSUB", "FMUL", "FDIV"}
+      "DIV", "DIVU", "REM", "REMU", "SLT", "SLTU", "FADD", "FSUB", "FMUL", "FDIV",
+      "FEQ", "FLT", "FLE", "MIN", "MAX", "MINU", "MAXU"}
 
 IMM2 = {"ADDI", "ANDI", "ORI", "XORI", "SHLI", "SHRI", "SARI"}
+
+# Leen Ra y escriben Rd; FTOI/ITOF llevan ademas fbits, una constante.
+UNARY = {"CLZ", "FTOI", "ITOF"}
 
 LOADS = {"LOAD", "LOADB", "LOADUB", "LOADH", "LOADUH"}
 
@@ -56,6 +60,8 @@ def defs_uses(line: Line) -> tuple[frozenset[int], frozenset[int]]:
     Se calcula una vez por (mnemonico, operandos): los pases piden esto millones de veces sobre las
     mismas instrucciones y cambian `args` en el sitio, asi que la clave son los valores de ahora. Los
     conjuntos son `frozenset`, compartidos entre llamadas."""
+    if line.op == "JR" and line.ret32:
+        return _defs_uses("JR.ret32", tuple(line.args))
     return _defs_uses(line.op, tuple(line.args))
 
 
@@ -82,7 +88,7 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
 
     if op in R3:
         add(defs, regs[0]); add(uses, *regs[1:3])
-    elif op in IMM2 or op in LOADS:
+    elif op in IMM2 or op in LOADS or op in UNARY:
         add(defs, regs[0]); add(uses, regs[1])
     elif op in WRITE_ONLY1:
         add(defs, regs[0])
@@ -98,6 +104,11 @@ def _defs_uses(op: str, args: tuple[str, ...]) -> tuple[frozenset[int], frozense
     elif op == "JR":
         add(uses, *regs)
         uses.update((1, 2, STACK, *CALLEE_SAVED))
+    elif op == "JR.ret32":          # retorno de una funcion de 32 bits (`; @miniopt ret32`): R2 no se devuelve
+        add(uses, *regs)
+        uses.update((1, STACK, *CALLEE_SAVED))
+    elif op == "CLOBBER":
+        add(defs, regs[0])          # `; @miniopt clobber RN`: RN ya no vale nada (no emite codigo)
     elif op == "NOALIAS":
         add(uses, regs[0])          # marca interna (`__noalias_mark = p`): lee el puntero para que siga vivo hasta ella
     elif op == "EXIT":
@@ -126,7 +137,7 @@ def instr(op: str, *args: str) -> Line:
     return Line("instr", "", op=op, args=list(args))
 
 
-PURE_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | {"MOVI", "MOVHI", "LI"}
+PURE_OPS = (R3 - {"DIV", "DIVU", "REM", "REMU"}) | IMM2 | UNARY | {"MOVI", "MOVHI", "LI"}
 
 
 def use_slots(line: Line) -> list[int] | None:
@@ -134,7 +145,7 @@ def use_slots(line: Line) -> list[int] | None:
     op = line.op
     if op in R3:
         return [1, 2]
-    if op in IMM2 or op in LOADS:
+    if op in IMM2 or op in LOADS or op in UNARY:
         return [1]
     if op in STORES or op in BRANCHES:
         return [0, 1]

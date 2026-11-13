@@ -1,4 +1,5 @@
 #include "mgr_stages.h"
+#include "mgl_ext.h"
 
 /* Cobertura con funciones de borde en enteros, escalar y determinista.
 
@@ -45,11 +46,15 @@
         if ((s) < 0) {                                   \
             if ((w) < 0) {                               \
                 n = (-(w) - (s) - 1) / -(s); /* techo */ \
-                if (n > lo) lo = n;                      \
+                MGL_SET_MAX(lo, n);                      \
             }                                            \
         } else if ((s) > 0) {                            \
-            n = (w) < 0 ? -1 : (w) / (s);                \
-            if (n < hi) hi = n;                          \
+            if ((w) < 0)                                 \
+                hi = -1;                                 \
+            else {                                       \
+                n = (w) / (s);                           \
+                MGL_SET_MIN(hi, n);                      \
+            }                                            \
         } else if ((w) < 0)                              \
             hi = -1;                                     \
     } while (0)
@@ -91,25 +96,25 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     }
 
     /* Píxeles cuyo centro (16 i + 8) cae en la caja del triángulo, dentro de clip. */
-    /* Con if sobre la propia variable y no con ?: , que mini-lcc pasa por una variable temporal en la pila. */
+    /* MGL_SET_MIN/MAX: MIN/MAX con MGL_EXT, o if sobre la propia variable (mgl_ext.h). */
     minx = maxx = a->x;
-    if (b->x < minx) minx = b->x;
-    if (b->x > maxx) maxx = b->x;
-    if (c->x < minx) minx = c->x;
-    if (c->x > maxx) maxx = c->x;
+    MGL_SET_MIN(minx, b->x);
+    MGL_SET_MAX(maxx, b->x);
+    MGL_SET_MIN(minx, c->x);
+    MGL_SET_MAX(maxx, c->x);
     miny = maxy = a->y;
-    if (b->y < miny) miny = b->y;
-    if (b->y > maxy) maxy = b->y;
-    if (c->y < miny) miny = c->y;
-    if (c->y > maxy) maxy = c->y;
+    MGL_SET_MIN(miny, b->y);
+    MGL_SET_MAX(maxy, b->y);
+    MGL_SET_MIN(miny, c->y);
+    MGL_SET_MAX(maxy, c->y);
     x0 = floor16(minx + MGR_SUBPIXEL / 2 - 1);
     x1 = floor16(maxx - MGR_SUBPIXEL / 2) + 1;
     y0 = floor16(miny + MGR_SUBPIXEL / 2 - 1);
     y1 = floor16(maxy - MGR_SUBPIXEL / 2) + 1;
-    if (x0 < clip->x0) x0 = clip->x0;
-    if (y0 < clip->y0) y0 = clip->y0;
-    if (x1 > clip->x1) x1 = clip->x1;
-    if (y1 > clip->y1) y1 = clip->y1;
+    MGL_SET_MAX(x0, clip->x0);
+    MGL_SET_MAX(y0, clip->y0);
+    MGL_SET_MIN(x1, clip->x1);
+    MGL_SET_MIN(y1, clip->y1);
     if (x0 >= x1 || y0 >= y1) return 0;
 
     px = x0 * MGR_SUBPIXEL + MGR_SUBPIXEL / 2;
@@ -191,8 +196,13 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {
                 depth_start = depth_row + depth_dx * (start - x0);
-                zi = depth_start <= 0 ? 0 : depth_start >= MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
-                    (depth_start + 8) >> 4;
+                /* Con if y no con ?: , que mini-lcc pasa por temporales en la pila. */
+                if (depth_start <= 0)
+                    zi = 0;
+                else if (depth_start >= MGR_DEPTH_MAX * 16)
+                    zi = MGR_DEPTH_MAX;
+                else
+                    zi = (depth_start + 8) >> 4;
             } else {
 #endif
 #if MGR_FIXED_DEPTH

@@ -21,8 +21,8 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # detras de todo porque una etiqueta parte un bloque.
 DEFAULT_PASSES = [
     "deadfuncs", "intrinsics", "kernelcalls", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
-    "copyprop", "dce", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
-    "sharebase", "deadsaves", "inline", "stackslots", "leafregs", "copyprop", "dce", "jumps", "unreachable", "deadsaves",
+    "copyprop", "dce", "retarget", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
+    "sharebase", "deadsaves", "inline", "stackslots", "leafregs", "copyprop", "dce", "retarget", "dce", "jumps", "unreachable", "deadsaves",
     "tailcalls", "unreachable", "deadfuncs", "invert", "ssy", "lanestack", "marks",
 ]
 

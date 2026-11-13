@@ -1,4 +1,5 @@
 #include "mgr_stages.h"
+#include "mgl_ext.h"
 #include "mgl_bytes.h"
 
 /* Geometría en Q16.16 (MGR_FIXED_GEOMETRY=1): transformar, outcode, recorte y viewport.
@@ -24,7 +25,10 @@ static mgl_s32 q_div(mgl_s32 a, mgl_s32 b) {
 }
 
 
-/* Ceros iniciales de x != 0. */
+/* Ceros iniciales de x != 0: con MGL_EXT, la instrucción CLZ (mgl_ext.h). */
+#if MGL_EXT_NATIVE
+#define clz32(x) MGL_CLZ(x)
+#else
 static int clz32(mgl_u32 x) {
     int n = 0;
     if (!(x & 0xffff0000U)) { n += 16; x <<= 16; }
@@ -34,6 +38,7 @@ static int clz32(mgl_u32 x) {
     if (!(x & 0x80000000U)) n += 1;
     return n;
 }
+#endif
 
 /* floor(n 2^bits / d) módulo 2^32, con 0 < d < 2^31: la división larga con la DIVU del hardware, que q_div
    (__mini_divfx) hace bit a bit en un bucle. El resto r < d deja clz(d) bits libres arriba: cada DIVU saca
@@ -57,16 +62,24 @@ static mgl_u32 udiv_shift(mgl_u32 n, mgl_u32 d, int bits) {
 #if MGR_FIXED_GEOMETRY
 
 /* Los bits de un float32 a Q16.16 sin pasar por soft-float: trunca hacia cero y satura. */
+/* trunc(valor * 2^16), saturando a [-2^31, 2^31 - 1], y 0 con NaN o subnormal: lo mismo que la instrucción
+   FTOI con fbits = 16 (isa.md), que es FMUL por 65536 (exacto) y FTOI en mini-lcc -fp32 (Q_FROM_FLOAT). */
 static mgl_s32 q_from_f32(mgl_u32 bits) {
     mgl_u32 mag = bits & 0x7fffffffU, e = mag >> 23, m = (mag & 0x7fffffU) | 0x800000U, q;
     int shift = (int)e - 134; /* valor * 2^16 = m * 2^(e - 127 - 23 + 16) */
-    if (e == 0) return 0;
-    if (shift > 7) q = 0x7fffffffU;
+    if (e == 0 || mag > 0x7f800000U) return 0;
+    if (shift > 7) return (bits >> 31) ? (mgl_s32)0x80000000U : 0x7fffffff;
     else if (shift >= 0) q = m << shift;
     else if (shift > -32) q = m >> -shift;
     else q = 0;
     return (bits >> 31) ? -(mgl_s32)q : (mgl_s32)q;
 }
+
+#ifdef __MINI_FP32__
+#define Q_FROM_FLOAT(p) ((mgl_s32)(*(const float *)(p) * 65536.0f))
+#else
+#define Q_FROM_FLOAT(p) q_from_f32(RD32(p))
+#endif
 
 const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s) {
     const mgl_mat4_t *f = mgr_state_mvp(s);
@@ -83,7 +96,7 @@ void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_ma
     mgr_vec4q_t *clip) {
     const unsigned char *p = v->base + index * v->stride;
     const mgl_s32 *m = mvp->m;
-    mgl_s32 x = q_from_f32(RD32(p)), y = q_from_f32(RD32(p + 4)), z = q_from_f32(RD32(p + 8));
+    mgl_s32 x = Q_FROM_FLOAT(p), y = Q_FROM_FLOAT(p + 4), z = Q_FROM_FLOAT(p + 8);
     clip->x = q_mul(m[0], x) + q_mul(m[4], y) + q_mul(m[8], z) + m[12];
     clip->y = q_mul(m[1], x) + q_mul(m[5], y) + q_mul(m[9], z) + m[13];
     clip->z = q_mul(m[2], x) + q_mul(m[6], y) + q_mul(m[10], z) + m[14];
