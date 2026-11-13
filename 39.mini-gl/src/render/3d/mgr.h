@@ -33,6 +33,11 @@ typedef struct {
     mgl_u32 fragments; /* píxeles cubiertos, antes de la prueba de profundidad */
 } mgr_stats_t;
 
+/* Una matriz en Q16.16, para MGR_FIXED_GEOMETRY (fixed.c). */
+typedef struct {
+    mgl_s32 m[16];
+} mgr_mat4q_t;
+
 /* Estado que fijan los comandos. Lo usan las etapas (mgr_stages.h). */
 typedef struct {
     /* SET_RENDER_TARGET: punteros ya traducidos */
@@ -49,6 +54,9 @@ typedef struct {
     mgl_mat4_t matrix[3];
     mgl_mat4_t mvp;
     int mvp_dirty;
+    /* mvp en Q16.16 (MGR_FIXED_GEOMETRY): se convierte cuando cambia mvp, no en cada DRAW_INDEXED */
+    mgr_mat4q_t mvp_q;
+    int mvp_q_dirty;
     /* SET_RENDER_STATE y SET_COLOR */
     mgl_u32 flags;
     mgl_color_t fill;

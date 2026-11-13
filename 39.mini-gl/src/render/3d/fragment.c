@@ -24,6 +24,20 @@ void mgr_fragment_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z
     /* El modo es constante en todo el span: decidir fuera del bucle evita
        comprobar test/write en cada píxel, también en mini-lcc. */
     if (mode == (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE)) {
+        /* z es lineal en el span: si los dos extremos están dentro de (0, MAX), todos lo están y no hace falta
+           acotar cada píxel (los mismos valores). Y el final como puntero, sin contador: 9 instrucciones por
+           píxel en MiniGPU en vez de 12. Es el caso de casi todos los spans. */
+        mgl_s32 last = zz + step * (n - 1);
+        if (zz > 0 && zz < MGR_DEPTH_MAX && last > 0 && last < MGR_DEPTH_MAX) {
+            mgl_color_t *end = c + n;
+            for (; c != end; c++, d++, zz += step) {
+                v = (unsigned int)zz >> MGR_DEPTH_FRAC;
+                if (v >= *d) continue;
+                *d = (mgl_u16)v;
+                *c = fill;
+            }
+            return;
+        }
         for (; n > 0; n--, c++, d++, zz += step) {
             v = zz <= 0 ? 0U : zz >= MGR_DEPTH_MAX ? 65535U : (unsigned int)zz >> MGR_DEPTH_FRAC;
             if (v >= *d) continue;

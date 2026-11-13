@@ -188,11 +188,19 @@ void mgl_set_color(mgl_color_t c) {
     color = c;
 }
 
-/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. */
+/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. Processing fija las tres matrices en cada
+   dibujo, así que se compara mucho: en MiniGPU como palabras (lcc no tiene strict aliasing), sin llamar a
+   mgl_real_to_f32 por elemento. */
 static int same_matrix(const mgl_mat4_t *a, const mgl_mat4_t *b) {
     int i;
+#ifdef __MINIGPU__
+    const mgl_u32 *p = (const mgl_u32 *)a->m, *q = (const mgl_u32 *)b->m;
+    for (i = 0; i < 16; i += 4, p += 4, q += 4)
+        if (p[0] != q[0] || p[1] != q[1] || p[2] != q[2] || p[3] != q[3]) return 0;
+#else
     for (i = 0; i < 16; i++)
         if (mgl_real_to_f32(a->m[i]) != mgl_real_to_f32(b->m[i])) return 0;
+#endif
     return 1;
 }
 

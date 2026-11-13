@@ -82,8 +82,8 @@ typedef struct {
 void mgr_viewport_map(const mgr_state_t *s, const mgl_vec4_t *v, mgr_window_vertex_t *out);
 
 /* ---- fixed.c ------------------------------------------------------------ */
-/* Geometría en Q16.16 en vez de float (transformar, outcode y viewport de los triángulos sin recortar);
-   el recorte sigue en float. Experimental: no da los mismos bits que float. */
+/* Geometría en Q16.16 en vez de float: transformar, outcode, recorte y viewport. Experimental: no da los mismos
+   bits que float. */
 #ifndef MGR_FIXED_GEOMETRY
 #define MGR_FIXED_GEOMETRY 0
 #endif
@@ -93,16 +93,14 @@ typedef struct {
     mgl_s32 x, y, z, w;
 } mgr_vec4q_t;
 
-typedef struct {
-    mgl_s32 m[16];
-} mgr_mat4q_t;
-
-void mgr_mat4q_from_float(const mgl_mat4_t *f, mgr_mat4q_t *q);
+/* mgr_state_mvp en Q16.16. */
+const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s);
 void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
     mgr_vec4q_t *clip);
 unsigned int mgr_outcode_q(const mgr_vec4q_t *v);
 void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_vertex_t *out);
-void mgr_vec4q_to_float(const mgr_vec4q_t *q, mgl_vec4_t *f);
+/* Como mgr_clip_triangle, en Q16.16. */
+int mgr_clip_triangle_q(const mgr_vec4q_t in[3], mgr_vec4q_t out[MGR_CLIP_MAX]);
 #endif
 
 #if MGR_FIXED_DEPTH

@@ -279,34 +279,51 @@ void mgl_mat4_look_at(mgl_mat4_t *out, mgl_real_t ex, mgl_real_t ey, mgl_real_t 
     out->m[14] = f[0] * ex + f[1] * ey + f[2] * ez;
 }
 
+/* m = m * T, m * S y m * R sin el producto completo (64 productos y 48 sumas en float por software): solo cambian
+   las columnas que T, S o R no dejan como en la identidad, con las mismas operaciones y en el mismo orden que
+   mgl_mat4_mul sin los términos que multiplican por 0. Los mismos valores; solo puede cambiar el signo de un cero
+   (en mgl_mat4_mul, -0 + 0 da +0). */
 void mgl_mat4_translate_by(mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z) {
-    mgl_mat4_t t;
-    mgl_mat4_translation(&t, x, y, z);
-    mgl_mat4_mul(m, m, &t);
+    int r;
+    for (r = 0; r < 4; r++)
+        m->m[12 + r] = m->m[r] * x + m->m[4 + r] * y + m->m[8 + r] * z + m->m[12 + r];
 }
 
 void mgl_mat4_scale_by(mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z) {
-    mgl_mat4_t t;
-    mgl_mat4_scaling(&t, x, y, z);
-    mgl_mat4_mul(m, m, &t);
+    int r;
+    for (r = 0; r < 4; r++) {
+        m->m[r] = m->m[r] * x;
+        m->m[4 + r] = m->m[4 + r] * y;
+        m->m[8 + r] = m->m[8 + r] * z;
+    }
+}
+
+/* Las columnas i y j de m tras m * R: la i nueva es c * col_i + sj * col_j y la j,
+   si * col_i + c * col_j, con los coeficientes de la matriz de giro (rotation_x/y/z). */
+static void rotate_columns(mgl_mat4_t *m, int i, int j, mgl_real_t c, mgl_real_t si, mgl_real_t sj) {
+    int r;
+    mgl_real_t a, b;
+    for (r = 0; r < 4; r++) {
+        a = m->m[i * 4 + r];
+        b = m->m[j * 4 + r];
+        m->m[i * 4 + r] = a * c + b * sj;
+        m->m[j * 4 + r] = a * si + b * c;
+    }
 }
 
 void mgl_mat4_rotate_x_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_x(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 1, 2, c, -s, s); /* rotation_x: col 1 = (0, c, s, 0), col 2 = (0, -s, c, 0) */
 }
 
 void mgl_mat4_rotate_y_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_y(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 0, 2, c, s, -s); /* rotation_y: col 0 = (c, 0, -s, 0), col 2 = (s, 0, c, 0) */
 }
 
 void mgl_mat4_rotate_z_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_z(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 0, 1, c, -s, s); /* rotation_z: col 0 = (c, s, 0, 0), col 1 = (-s, c, 0, 0) */
 }
 
 void mgl_mat4_transform_point(const mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z,

@@ -26,6 +26,7 @@ void mgr_state_reset(mgr_state_t *s) {
     mgl_mat4_identity(&s->matrix[2]);
     mgl_mat4_identity(&s->mvp);
     s->mvp_dirty = 0;
+    s->mvp_q_dirty = 1;
     s->flags = MGL_STATE_DEFAULT;
     s->fill = 0xffff;
 }
@@ -109,6 +110,7 @@ const mgl_mat4_t *mgr_state_mvp(mgr_state_t *s) {
         mgl_mat4_mul(&s->mvp, &s->matrix[MGL_MATRIX_PROJECTION - 1U], &s->matrix[MGL_MATRIX_VIEW - 1U]);
         mgl_mat4_mul(&s->mvp, &s->mvp, &s->matrix[MGL_MATRIX_MODEL - 1U]);
         s->mvp_dirty = 0;
+        s->mvp_q_dirty = 1;
     }
     return &s->mvp;
 }

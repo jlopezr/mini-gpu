@@ -54,7 +54,7 @@ SIM_ARGS ?=
 # En MiniGPU la versión 2D se elige al compilar (all es 0) y cada una va a su carpeta.
 MV := $(if $(filter all,$(V)),0,$(V))
 MG := build/minigpu/v$(MV)
-# FIXED=1: geometría (transformar, outcode, viewport) y profundidad en Q16.16 en vez de float soft
+# FIXED=1: geometría (transformar, outcode, recorte, viewport) y profundidad en Q16.16 en vez de float soft
 # (MGR_FIXED_GEOMETRY/MGR_FIXED_DEPTH, experimentales); va a su carpeta para comparar con la de float.
 FIXED ?= 0
 MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)

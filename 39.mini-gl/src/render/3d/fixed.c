@@ -1,7 +1,7 @@
 #include "mgr_stages.h"
 #include "mgl_bytes.h"
 
-/* Geometría en Q16.16 (MGR_FIXED_GEOMETRY=1): transformar, outcode y viewport de los triángulos sin recortar.
+/* Geometría en Q16.16 (MGR_FIXED_GEOMETRY=1): transformar, outcode, recorte y viewport.
    Un Q16.16 es un int: sumar y comparar son los operadores de C. El producto y la cociente usan los idiomas que
    mini-lcc baja a MULFX y a __mini_divfx (u.lcc/mini-tst/143-146); si se escriben distinto sigue siendo correcto
    pero cuesta unas 28 instrucciones por producto en vez de una. Los resultados NO coinciden bit a bit con los
@@ -23,6 +23,35 @@ static mgl_s32 q_div(mgl_s32 a, mgl_s32 b) {
     return (mgl_s32)((((long long)a) << 16) / (long long)b);
 }
 
+
+/* Ceros iniciales de x != 0. */
+static int clz32(mgl_u32 x) {
+    int n = 0;
+    if (!(x & 0xffff0000U)) { n += 16; x <<= 16; }
+    if (!(x & 0xff000000U)) { n += 8; x <<= 8; }
+    if (!(x & 0xf0000000U)) { n += 4; x <<= 4; }
+    if (!(x & 0xc0000000U)) { n += 2; x <<= 2; }
+    if (!(x & 0x80000000U)) n += 1;
+    return n;
+}
+
+/* floor(n 2^bits / d) módulo 2^32, con 0 < d < 2^31: la división larga con la DIVU del hardware, que q_div
+   (__mini_divfx) hace bit a bit en un bucle. El resto r < d deja clz(d) bits libres arriba: cada DIVU saca
+   tantos bits del cociente. Con d de unas pocas unidades en Q16.16 (2^17 - 2^24) son dos o tres. */
+static mgl_u32 udiv_shift(mgl_u32 n, mgl_u32 d, int bits) {
+    mgl_u32 q = n / d, r = n - q * d, t;
+    int k = clz32(d), step;
+    while (bits > 0) {
+        step = k < bits ? k : bits;
+        r <<= step;
+        t = r / d;
+        r -= t * d;
+        q = (q << step) | t;
+        bits -= step;
+    }
+    return q;
+}
+
 #endif
 
 #if MGR_FIXED_GEOMETRY
@@ -39,10 +68,15 @@ static mgl_s32 q_from_f32(mgl_u32 bits) {
     return (bits >> 31) ? -(mgl_s32)q : (mgl_s32)q;
 }
 
-void mgr_mat4q_from_float(const mgl_mat4_t *f, mgr_mat4q_t *q) {
+const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s) {
+    const mgl_mat4_t *f = mgr_state_mvp(s);
     int i;
-    for (i = 0; i < 16; i++)
-        q->m[i] = q_from_f32(mgl_real_to_f32(f->m[i]));
+    if (s->mvp_q_dirty) {
+        for (i = 0; i < 16; i++)
+            s->mvp_q.m[i] = q_from_f32(mgl_real_to_f32(f->m[i]));
+        s->mvp_q_dirty = 0;
+    }
+    return &s->mvp_q;
 }
 
 void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
@@ -75,7 +109,7 @@ unsigned int mgr_outcode_q(const mgr_vec4q_t *v) {
 void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_vertex_t *out) {
     mgl_s32 xn, yn, zn, r;
     if (v->w > 0x8000) {
-        r = q_div(0x40000000, v->w);
+        r = (mgl_s32)udiv_shift(0x40000000U, (mgl_u32)v->w, 16); /* q_div(0x40000000, v->w) */
         xn = (mgl_s32)(((long long)v->x * (long long)r) >> 30);
         yn = (mgl_s32)(((long long)v->y * (long long)r) >> 30);
         zn = (mgl_s32)(((long long)v->z * (long long)r) >> 30);
@@ -93,28 +127,98 @@ void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_v
 #endif
 }
 
-/* Para el camino de recorte, que sigue en float. */
-void mgr_vec4q_to_float(const mgr_vec4q_t *q, mgl_vec4_t *f) {
-    f->x = (mgl_real_t)q->x * (1.0f / 65536.0f);
-    f->y = (mgl_real_t)q->y * (1.0f / 65536.0f);
-    f->z = (mgl_real_t)q->z * (1.0f / 65536.0f);
-    f->w = (mgl_real_t)q->w * (1.0f / 65536.0f);
+/* El recorte de clipping.c en Q16.16: los mismos planos, el mismo orden y el corte siempre desde el vértice de
+   dentro (dos triángulos con una arista común obtienen el mismo punto). Dentro de un plano es la comparación del
+   outcode, sin sumas. Las distancias del corte, di = w +- c >= 0 y do < 0, se restan en 32 bits: necesita
+   |coordenada| < 2^30 (16384 unidades), un poco menos que el resto de fixed.c.
+
+   t = di / (di - do) en [0, 1) con 30 bits de fracción (udiv_shift), no los 16 de q_div: con 16 el corte de una
+   arista larga en el plano cercano se movería un cuarto de píxel. Luego p = inside + (outside - inside) * t
+   (MUL + MULHI). */
+static int inside_q(int k, const mgr_vec4q_t *v) {
+    switch (k) {
+    case 0:
+        return !(v->z < -v->w); /* cercano */
+    case 1:
+        return !(v->w < v->z); /* lejano */
+    case 2:
+        return !(v->x < -v->w); /* izquierdo */
+    case 3:
+        return !(v->w < v->x); /* derecho */
+    case 4:
+        return !(v->y < -v->w); /* inferior */
+    default:
+        return !(v->w < v->y); /* superior */
+    }
+}
+
+static mgl_s32 dist_q(int k, const mgr_vec4q_t *v) {
+    switch (k) {
+    case 0:
+        return v->w + v->z;
+    case 1:
+        return v->w - v->z;
+    case 2:
+        return v->w + v->x;
+    case 3:
+        return v->w - v->x;
+    case 4:
+        return v->w + v->y;
+    default:
+        return v->w - v->y;
+    }
+}
+
+static mgl_s32 lerp_q(mgl_s32 a, mgl_s32 b, mgl_s32 t30) {
+    return a + (mgl_s32)(((long long)(b - a) * (long long)t30) >> 30);
+}
+
+static void intersect_q(int k, const mgr_vec4q_t *inside, const mgr_vec4q_t *outside, mgr_vec4q_t *out) {
+    mgl_u32 n = (mgl_u32)dist_q(k, inside), d = n - (mgl_u32)dist_q(k, outside);
+    mgl_s32 t30;
+    if (d & 0x80000000U) { /* udiv_shift: n < d < 2^31 */
+        n >>= 1;
+        d >>= 1;
+    }
+    t30 = (mgl_s32)udiv_shift(n, d, 30); /* < 2^30: n < d */
+    out->x = lerp_q(inside->x, outside->x, t30);
+    out->y = lerp_q(inside->y, outside->y, t30);
+    out->z = lerp_q(inside->z, outside->z, t30);
+    out->w = lerp_q(inside->w, outside->w, t30);
+}
+
+int mgr_clip_triangle_q(const mgr_vec4q_t in[3], mgr_vec4q_t out[MGR_CLIP_MAX]) {
+    mgr_vec4q_t buffer[2][MGR_CLIP_MAX];
+    const mgr_vec4q_t *src;
+    mgr_vec4q_t *dst;
+    int n = 3, k, i, m, which = 0;
+    unsigned int all = 0;
+    for (i = 0; i < 3; i++) {
+        buffer[0][i] = in[i];
+        all |= mgr_outcode_q(&in[i]);
+    }
+    for (k = 0; k < 6; k++) {
+        if (!(all & (1U << k))) continue;
+        src = buffer[which];
+        dst = buffer[which ^ 1];
+        m = 0;
+        for (i = 0; i < n; i++) {
+            const mgr_vec4q_t *a = &src[i], *b = &src[i + 1 < n ? i + 1 : 0];
+            int a_in = inside_q(k, a), b_in = inside_q(k, b);
+            if (a_in) dst[m++] = *a;
+            if (a_in != b_in) intersect_q(k, a_in ? a : b, a_in ? b : a, &dst[m++]);
+        }
+        which ^= 1;
+        n = m;
+        if (n < 3) return 0;
+    }
+    for (i = 0; i < n; i++) out[i] = buffer[which][i];
+    return n;
 }
 
 #endif /* MGR_FIXED_GEOMETRY */
 
 #if MGR_FIXED_DEPTH
-
-/* Ceros iniciales de x != 0. */
-static int clz32(mgl_u32 x) {
-    int n = 0;
-    if (!(x & 0xffff0000U)) { n += 16; x <<= 16; }
-    if (!(x & 0xff000000U)) { n += 8; x <<= 8; }
-    if (!(x & 0xf0000000U)) { n += 4; x <<= 4; }
-    if (!(x & 0xc0000000U)) { n += 2; x <<= 2; }
-    if (!(x & 0x80000000U)) n += 1;
-    return n;
-}
 
 /* t * r >> sh sin desbordar 64 bits (|t| < 2^58, r < 2^24, 24 <= sh <= 58): t se parte en una mitad alta y otra
    de 24 bits. Trunca hacia cero. */

@@ -15,13 +15,13 @@
    dura un DRAW_INDEXED. */
 #define MGR_VCACHE 64
 
-/* Con MGR_FIXED_GEOMETRY los vértices transformados, el outcode y el viewport son Q16.16 (fixed.c); el recorte
-   sigue en float y recibe los tres vértices convertidos. */
+/* Con MGR_FIXED_GEOMETRY los vértices transformados, el outcode, el recorte y el viewport son Q16.16 (fixed.c). */
 #if MGR_FIXED_GEOMETRY
 typedef mgr_vec4q_t mgr_clipv_t;
 typedef mgr_mat4q_t mgr_mvp_t;
 #define TRANSFORM_VERTEX mgr_transform_vertex_q
 #define OUTCODE mgr_outcode_q
+#define CLIP_TRIANGLE mgr_clip_triangle_q
 #define VIEWPORT_MAP mgr_viewport_map_q
 #define W_POSITIVE(v) ((v)->w > 0)
 #else
@@ -29,6 +29,7 @@ typedef mgl_vec4_t mgr_clipv_t;
 typedef mgl_mat4_t mgr_mvp_t;
 #define TRANSFORM_VERTEX mgr_transform_vertex
 #define OUTCODE mgr_outcode
+#define CLIP_TRIANGLE mgr_clip_triangle
 #define VIEWPORT_MAP mgr_viewport_map
 #define W_POSITIVE(v) ((v)->w > 0.0f)
 #endif
@@ -62,13 +63,13 @@ static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_wi
     st->fragments += (mgl_u32)covered;
 }
 
-static void fan(mgr_state_t *s, mgr_stats_t *st, const mgl_vec4_t *v, int n, const mgr_rect_t *clip,
+static void fan(mgr_state_t *s, mgr_stats_t *st, const mgr_clipv_t *v, int n, const mgr_rect_t *clip,
     const mgr_fragment_t *f) {
     mgr_window_vertex_t w[MGR_CLIP_MAX];
     int i;
     for (i = 0; i < n; i++) {
-        if (!(v[i].w > 0.0f)) return; /* solo con matrices degeneradas: dentro del volumen w >= 0 */
-        mgr_viewport_map(s, &v[i], &w[i]);
+        if (!W_POSITIVE(&v[i])) return; /* solo con matrices degeneradas: dentro del volumen w >= 0 */
+        VIEWPORT_MAP(s, &v[i], &w[i]);
     }
     for (i = 1; i + 1 < n; i++)
         triangle(st, &w[0], &w[i], &w[i + 1], clip, f);
@@ -79,15 +80,11 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     mgr_fragment_t f;
     mgr_rect_t clip;
     const mgr_mvp_t *mvp;
-#if MGR_FIXED_GEOMETRY
-    mgr_mvp_t mvp_q;
-    mgl_vec4_t clip_in[3];
-#endif
     const unsigned char *indices;
     mgr_vcache_t cache[MGR_VCACHE], *c;
     mgr_window_vertex_t w[3];
     mgr_clipv_t tri[3];
-    mgl_vec4_t poly[MGR_CLIP_MAX];
+    mgr_clipv_t poly[MGR_CLIP_MAX];
     mgl_u32 vaddr = RD32(p + MGL_CMD_ARG0), iaddr = RD32(p + MGL_CMD_ARG1);
     mgl_u32 vcount = RD32(p + 16), icount = RD32(p + 20), stride = RD16(p + 28), i, k, index;
     unsigned int vformat = RD16(p + 24), iformat = RD16(p + 26), topology = RD16(p + 30);
@@ -121,8 +118,7 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     clip.x1 = s->vx + s->vw < s->width ? s->vx + s->vw : s->width;
     clip.y1 = s->vy + s->vh < s->height ? s->vy + s->vh : s->height;
 #if MGR_FIXED_GEOMETRY
-    mgr_mat4q_from_float(mgr_state_mvp(s), &mvp_q);
-    mvp = &mvp_q;
+    mvp = mgr_state_mvp_q(s);
 #else
     mvp = mgr_state_mvp(s);
 #endif
@@ -167,13 +163,7 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
             continue;
         }
         st->clipped++;
-#if MGR_FIXED_GEOMETRY
-        for (k = 0; k < 3; k++)
-            mgr_vec4q_to_float(&tri[k], &clip_in[k]);
-        n = mgr_clip_triangle(clip_in, poly);
-#else
-        n = mgr_clip_triangle(tri, poly);
-#endif
+        n = CLIP_TRIANGLE(tri, poly);
         if (n) fan(s, st, poly, n, &clip, &f);
     }
     return MGR_OK;
