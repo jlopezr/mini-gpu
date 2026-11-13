@@ -26,6 +26,7 @@ HOST = ROOT / "tools/codon"
 
 #: Destino en el directorio de compilación -> fuente en el repositorio.
 SOURCES = {
+    "tools/fp32.py": "tools/fp32.py",
     "engine.codon": "tools/codon/engine.codon",
     "minicpu_core.py": "2.cpu-sim-func/minicpu_core.py",
     "minigpu_core.py": "11.gpu-sim-func/minigpu_core.py",

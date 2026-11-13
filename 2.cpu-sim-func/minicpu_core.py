@@ -12,6 +12,7 @@ from tools.sysid_device import (
 # Lo que Codon no trae (struct, from_bytes...): ver tools/codon/LIMITACIONES.md.
 from tools.codon_compat import load_le, load_u32, store_le, store_u32
 from tools.mmio_device import MmioDevice
+from tools.fp32 import fp32_binary
 from tools.sim_devices import InputDevice, SerialDevice, VideoDevice
 
 # Qué sabe ejecutar ESTE modelo, no la placa que modela.
@@ -49,7 +50,7 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         return (instr & 0x3FF) == 0
     if opcode in (0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
                   0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-                  0x26, 0x27):
+                  0x26, 0x27, 0x38, 0x39, 0x3A, 0x3B):
         return (instr & 0x7FF) == 0
     if opcode in (0x10, 0x17):  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
@@ -419,6 +420,12 @@ class CPU:
                 else:
                     remainder = dividend % divisor
                 self.set_register(rd, u32(remainder))
+
+        elif opcode in (0x38, 0x39, 0x3A, 0x3B):  # FADD / FSUB / FMUL / FDIV
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.set_register(rd, fp32_binary(opcode & 3, self.regs[ra], self.regs[rb]))
 
         elif opcode == 0x12:  # ANDI
             rd = (instr >> 21) & 0x1F

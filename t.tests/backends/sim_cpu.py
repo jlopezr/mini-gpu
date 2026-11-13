@@ -18,11 +18,10 @@ VERSIONS = {
         # entera, incluidas las extensiones que solo tiene el bitstream de la
         # 19. Ver el comentario de CAPABILITIES en run_tests.py.
         # `mul_div` llega implicada por `alu_extended`, pero se declara aparte
-        # igualmente: aqui no es una extension sino la base de la ISA, y el
-        # simulador la tiene desde siempre.
+        # igualmente: el simulador ofrece la extension completa MUL/MULFX/DIV.
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
                          "shift_immediate", "alu_extended", "mul_div",
-                         "compare", "large_memory", "input"),
+                         "compare", "large_memory", "input", "fp32"),
         "description": "simulador funcional MiniCPU actual",
     },
 }

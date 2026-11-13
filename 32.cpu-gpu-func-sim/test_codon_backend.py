@@ -47,6 +47,9 @@ class CodonBackendTest(unittest.TestCase):
             program=Path(folder)/'program.bin';program.write_bytes(asm(source))
             self.compare(program,'--memory-size','0x100000','--run-limit','10000',*options)
 
+    def test_cpu_fp32(self):
+        self.compare(CASES.parents[0] / 'cases-cpu/alu/fp32/program.asm')
+
     def test_launch_and_ratios(self):
         for cpu,gpu in ((1,1),(5,1),(1,5),(3,7)):
             with self.subTest(cpu=cpu,gpu=gpu):

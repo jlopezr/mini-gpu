@@ -3432,5 +3432,25 @@ class TuiDemoTest(unittest.TestCase):
         self.assertLess(optimized, raw * 0.98, f"{raw} -> {optimized}")       # medido: -5,6 %
 
 
+class FP32SemanticsTest(unittest.TestCase):
+    def test_optimizer_preserves_fp_dependencies(self):
+        source = """.text
+.globl f
+f:
+LI R1, 0x3fc00000
+LI R2, 0x40100000
+FADD R16, R1, R2
+FSUB R17, R16, R1
+FMUL R18, R17, R1
+FDIV R19, R18, R1
+FDIV R20, R1, R0
+HALT
+"""
+        expected = final_registers(source, 0)
+        self.assertEqual(expected[:5], [0x40700000, 0x40100000, 0x40580000,
+                                       0x40100000, 0x7f800000])
+        self.assertEqual(final_registers(optimize(source), 0), expected)
+
+
 if __name__ == "__main__":
     unittest.main()

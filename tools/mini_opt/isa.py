@@ -13,7 +13,7 @@ REGISTER_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 
 R3 = {"ADD", "SUB", "MULFX", "AND", "OR", "XOR", "SHL", "SHR", "SAR", "MUL", "MULHI",
-      "DIV", "DIVU", "REM", "REMU", "SLT", "SLTU"}
+      "DIV", "DIVU", "REM", "REMU", "SLT", "SLTU", "FADD", "FSUB", "FMUL", "FDIV"}
 
 IMM2 = {"ADDI", "ANDI", "ORI", "XORI", "SHLI", "SHRI", "SARI"}
 

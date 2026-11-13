@@ -237,6 +237,10 @@ INSTRUCTIONS: tuple[Instruction, ...] = (
     r3("DIVU", 0x0D, "Unsigned division"),
     r3("REM", 0x0E, "Signed remainder"),
     r3("REMU", 0x0F, "Unsigned remainder"),
+    r3("FADD", 0x38, "FP32 add (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FSUB", 0x39, "FP32 subtract (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FMUL", 0x3A, "FP32 multiply (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FDIV", 0x3B, "FP32 divide (RNE, DAZ/FTZ)", category="FP32"),
     Instruction(
         "MOVI",
         0x10,

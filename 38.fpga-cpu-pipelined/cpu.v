@@ -114,11 +114,11 @@ module cpu #(
     // registered (cpu_perf_counters, PIPELINE = 1): [0] MEM busy with a memory
     // access, [1] RAW hazard, [2] taken branch (the wrong-path instruction
     // that becomes a bubble, and ID empty until the target), [3] ID empty
-    // for any other reason, [4] EX busy with a MUL/DIV (MULDIV = 1). All
+    // for any other reason, [4] EX busy with MUL/DIV or FP32 (MULDIV = 1). All
     // zero: an instruction moved on, or the CPU is halted or stopping (STEP,
     // HALT, error).
     (* pipeline_stage = "_PERF" *) output reg [4:0] perf_stall,
-    // One pulse per retired MUL/MULHI/MULFX/DIV/DIVU/REM/REMU, registered and
+    // One pulse per retired MUL/MULHI/MULFX/DIV/DIVU/REM/REMU or FP32, registered and
     // in the same cycle as instruction_retired.
     (* pipeline_stage = "WB" *) output reg perf_muldiv_retired
 );
@@ -171,6 +171,10 @@ module cpu #(
   localparam [5:0] OPCODE_GETTID = 6'h30;
   localparam [5:0] OPCODE_SSY = 6'h31;
   localparam [5:0] OPCODE_BAR = 6'h32;
+  localparam [5:0] OPCODE_FADD = 6'h38;
+  localparam [5:0] OPCODE_FSUB = 6'h39;
+  localparam [5:0] OPCODE_FMUL = 6'h3a;
+  localparam [5:0] OPCODE_FDIV = 6'h3b;
   localparam [5:0] OPCODE_TRAP = 6'h3e;
   localparam [5:0] OPCODE_HALT = 6'h3f;
 
@@ -189,6 +193,7 @@ module cpu #(
   // Stays in EX until the multiplier or divider is done, then becomes
   // OPCLASS_NORMAL with its result in ex_result.
   localparam [2:0] OPCLASS_MULDIV = 3'd5;
+  localparam [2:0] OPCLASS_FP32 = 3'd6;
 
   // EX's ALU operation (ex_alu_op). b is the immediate when ex_alu_imm.
   localparam [3:0] ALU_ADD = 4'd0;
@@ -471,7 +476,11 @@ module cpu #(
   reg [7:0] ex_load_byte;
   reg [15:0] ex_load_half;
 
-  // EX: multiplier and divider (section 04b), on ex_a and ex_b.
+  // EX: integer MUL/DIV and FP32, using forwarded operands ex_a/ex_b.
+  wire ex_is_fp32 = ex_valid && ex_class == OPCLASS_FP32;
+  reg ex_fp_sent;
+  wire fp_ready, fp_valid;
+  wire [31:0] fp_result;
   wire ex_is_muldiv;
   wire ex_md_run;
   reg [5:0] ex_md_op;          // opcode
@@ -567,6 +576,17 @@ module cpu #(
   assign ctl_start = halted &&
       (ctl_start_pending || run_request || step_request) && !register_file_busy;
   assign ctl_abort = !halted && halt_request;
+  wire fp_issue = !halted && !ctl_flush && ex_is_fp32 && !ex_fp_sent &&
+      !((ex_forward_mem_a || ex_forward_mem_b) && mem_hold);
+  // Flush also cancels the unit: a stopped or restarted CPU cannot consume
+  // a stale result. Operands use the same forwarding/hold paths as MUL/DIV.
+  fp32_alu fp32_unit (
+      .clk(clk), .rst(core_reset || halted || ctl_flush),
+      .in_valid(fp_issue), .in_ready(fp_ready), .in_op(ex_md_op[1:0]),
+      .in_a(ex_a), .in_b(ex_b), .out_valid(fp_valid),
+      .out_ready(1'b1), .out_data(fp_result)
+  );
+
   assign ctl_fault = !halted && !halt_request && wb_valid && wb_error;
   assign ctl_retire = !halted && !halt_request && wb_valid && !wb_error;
   assign ctl_retire_stop = ctl_retire &&
@@ -581,9 +601,9 @@ module cpu #(
   // dmem_rvalid come from registers in dcache.v and cpu_dmem_adapter.v); EX
   // also waits for a MUL/DIV, and then MEM takes a bubble.
   assign ctl_mem_advance = ctl_run && !mem_hold;
-  assign ctl_advance = ctl_mem_advance && !ex_is_muldiv;
+  assign ctl_advance = ctl_mem_advance && !ex_is_muldiv && !ex_is_fp32;
   assign ctl_memory = ctl_run && mem_is_memory;
-  assign ctl_muldiv = ctl_run && ex_is_muldiv;
+  assign ctl_muldiv = ctl_run && (ex_is_muldiv || ex_is_fp32);
 
   // Performance accounting at the ID -> EX transfer: every running cycle is
   // either an instruction moving on or exactly one reason it did not, so the
@@ -1126,7 +1146,8 @@ module cpu #(
         id_encoding_valid = id_instruction[25:0] == 0;
       OPCODE_ADD, OPCODE_SUB, OPCODE_MULFX, OPCODE_AND, OPCODE_OR, OPCODE_XOR,
       OPCODE_MUL, OPCODE_MULHI, OPCODE_DIV, OPCODE_DIVU, OPCODE_REM,
-      OPCODE_REMU, OPCODE_SLT, OPCODE_SLTU:
+      OPCODE_REMU, OPCODE_SLT, OPCODE_SLTU,
+      OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV:
         id_encoding_valid = id_instruction[10:0] == 0;
       OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:
         id_encoding_valid = id_instruction[9:0] == 0;
@@ -1216,6 +1237,11 @@ module cpu #(
                       (id_opcode == OPCODE_SHR) ? ALU_SHR : ALU_SAR;
           id_alu_imm = id_shift_immediate;
           id_imm = {27'd0, id_rb};
+          id_reg_write = 1'b1;
+        end
+
+        OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV: begin
+          id_class = OPCLASS_FP32;
           id_reg_write = 1'b1;
         end
 
@@ -1601,6 +1627,7 @@ module cpu #(
       ex_halt_after_retire <= 1'b0;
       ex_class <= OPCLASS_NORMAL;
       ex_error_code <= ERROR_NONE;
+      ex_fp_sent <= 1'b0;
       ex_md_op <= OPCODE_NOP;
       ex_md_ra <= 5'd0;
       ex_md_rb <= 5'd0;
@@ -1612,6 +1639,7 @@ module cpu #(
       md_tag_ra <= 5'd0;
       md_tag_rb <= 5'd0;
     end else if (halted || ctl_flush) begin
+      ex_fp_sent <= 1'b0;
       ex_valid <= 1'b0;
       // After a stop the monitor may run anything before RUN: no fast path.
       md_tag_valid <= 1'b0;
@@ -1657,17 +1685,23 @@ module cpu #(
           ex_halt_after_retire <= id_halt_after_retire;
           ex_class <= id_class;
           ex_error_code <= id_error_code;
+          ex_fp_sent <= 1'b0;
           ex_md_op <= id_opcode;
           ex_md_ra <= id_ra;
           ex_md_rb <= id_rb;
           ex_md_fast <= id_md_fast;
-          ex_md_counted <= id_class == OPCLASS_MULDIV;
+          ex_md_counted <= id_class == OPCLASS_MULDIV || id_class == OPCLASS_FP32;
           ex_md_step <= 6'd0;
           // Any other instruction between a DIV and its REM ends the tag.
           if (id_live) md_tag_valid <= 1'b0;
         end else begin
           ex_valid <= 1'b0;
         end
+      end
+      if (fp_issue && fp_ready) ex_fp_sent <= 1'b1;
+      if (ex_is_fp32 && ex_fp_sent && fp_valid) begin
+        ex_result <= fp_result;
+        ex_class <= OPCLASS_NORMAL;
       end
       if (ex_md_run) begin
         ex_md_step <= (ex_md_is_div && !ex_md_fast && ex_md_step == 6'd2) ?

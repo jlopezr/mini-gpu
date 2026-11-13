@@ -6,9 +6,50 @@ objetivo es aislar la pregunta de microarquitectura: si la MiniCPU puede
 convertirse en un nucleo segmentado que acepte una instruccion nueva por ciclo
 en el caso comun.
 
-La identificacion de placa es monitor `5.38`. La CPU va a 25 MHz (el oscilador
-de la placa, sin PLL) y cierra a 65-70 MHz segun la colocacion (builds
-`dcache-decide` y `perf-video`); la SDRAM a 100 MHz.
+La identificacion de placa es monitor `5.38`. La CPU va a 50 MHz mediante `pll_cpu.v`; la SDRAM a 100 MHz. Antes de
+FP32, los builds `dcache-decide` y `perf-video` cerraban a 65–70 MHz. El
+build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
+
+## Extensión FP32 (13 de noviembre)
+
+La CPU implementa `FADD`, `FSUB`, `FMUL` y `FDIV` (`0x38–0x3B`), capability
+`fp32`. Usan los registros generales con patrones binary32. El contrato está en
+[`isa.md`](../1.isa/isa.md#aritmética-fp32-capability-fp32): RNE, DAZ/FTZ, NaN
+canónico, infinitos y ceros con signo, sin flags ni excepciones numéricas FP.
+No se han añadido conversiones/comparaciones FP ni soporte nativo en lcc.
+
+`fp32_alu.sv` se conecta a EX con valid/ready. EX emite una vez, espera el
+resultado y lo lleva a MEM/WB con el mismo retiro y adelantamiento que la ALU
+entera; las instrucciones jóvenes esperan. La unidad tiene cuatro etapas
+elásticas de cálculo: preparación de operandos, alineación y suma/resta,
+normalización y redondeo (el producto se calcula en la preparación). La normalización usa un árbol de cinco niveles. La división usa
+26 iteraciones. La CPU
+actual solo mantiene una operación FP en vuelo: no aprovecha la emisión por
+ciclo de la unidad aislada. HALT, STEP, error y reset cancelan lo especulativo.
+`STALL_MULDIV` y `MULDIV_RETIRED` incluyen también las cuatro instrucciones FP
+para conservar el reparto de ciclos del pipeline.
+
+Pruebas: `tools/test -p 38` incluye `fp32_alu_tb.sv` (4.000 operaciones aleatorias
+contra referencia binary64, esquinas RNE/DAZ/FTZ, contrapresión y reset) y
+`cpu_fp32_tb.v` (dependencias, R0, encoding inválido, parada y reanudación).
+El caso compartido [`alu/fp32`](../t.tests/cases-cpu/alu/fp32/) añade memoria y
+se ejecuta con `sim-cpu` y, tras sintetizar, con `test-board -p 38`.
+
+Síntesis verificada con `--tmg-ripup --placer-heap-timingweight 180`: de las
+semillas 1, 3 y 9, cumplen todas las restricciones la 3 y la 9. Se adopta la 9
+por su mayor margen global; `apio.ini` y `_build/default/hardware.bit` quedan
+actualizados, sin programar la placa.
+
+| Dominio | Fmax | Requerido |
+|---|---:|---:|
+| CPU/monitor | 55,75 MHz | 50 MHz |
+| SDRAM | 111,01 MHz | 100 MHz |
+| Píxel | 61,32 MHz | 25 MHz |
+| TMDS | 227,58 MHz | 125 MHz |
+
+El prototipo completo ocupa 24.081 celdas combinacionales, 15.486 FF y
+10 multiplicadores DSP (de 83.640, 83.640 y 156 disponibles, respectivamente).
+Validación realizada en simulación y síntesis; pendiente ejecución en placa.
 
 ## Estado actual (12 de noviembre)
 
