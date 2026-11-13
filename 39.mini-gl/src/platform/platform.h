@@ -9,6 +9,12 @@
 #define PLATFORM_VERSIONS 3
 #define PLATFORM_FB_A 0x01000000u
 #define PLATFORM_FB_B 0x01025800u
+/* El tercero (frameBuffers(3), por defecto): al final de la ventana de 1 MB del contexto 3D (context3d.h), tras la memoria
+   de frame (0x010C0800 + 0x10000) y alineado a 16 bytes como pide VIDEO_FB_BACK. */
+#define PLATFORM_FB_C 0x010D0800u
+
+/* Buffers de pantalla que pidió el sketch con frameBuffers() (2 o 3). Lo mira la plataforma tras setup(). */
+extern int platform_buffers;
 
 /* Estado Processing y ciclo comunes a host, SDL y MiniGPU, en 2D y 3D. */
 int platform_init(void *ram, int version);
