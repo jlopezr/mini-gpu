@@ -238,8 +238,8 @@ static long long mulr(long long t, mgl_u32 r, int sh) {
    dzi = dx / 16 (Q8), y la profundidad en (px, py) es (zq_a + (Na (px - ax) + Nb (py - ay)) / area) * 65535 / 16.
    La división por area es un solo recíproco: 1/area = r24 * 2^s / 2^54, con area << s en [2^30, 2^31); r0 sale
    de una __mini_divfx (16 bits) y una iteración de Newton lo lleva a unos 30. */
-void mgr_depth_plane(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b, const mgr_window_vertex_t *c,
-    mgl_s32 area, mgl_s32 px, mgl_s32 py, int w, int h, mgr_depth_plane_t *out) {
+static void depth_plane_wide(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, mgl_s32 area, mgl_s32 px, mgl_s32 py, int w, int h, mgr_depth_plane_t *out) {
     mgl_s32 dxb = b->x - a->x, dyb = b->y - a->y, dxc = c->x - a->x, dyc = c->y - a->y;
     mgl_s32 dzb = b->zq - a->zq, dzc = c->zq - a->zq;
     long long na = (long long)dzb * dyc - (long long)dzc * dyb;
@@ -267,6 +267,78 @@ void mgr_depth_plane(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     out->row = (mgl_s32)origin;
     out->dx = (mgl_s32)gx;
     out->dy = (mgl_s32)gy;
+}
+
+/* El caso de casi todos los triángulos, en 32 bits (unas 250 instrucciones en vez de unas 900): con las aristas
+   por debajo de 1000 píxeles (16000 en 1/16) y |dz| <= 65536 + algo, Na y Nb caben en 32 bits, y cada gradiente
+   es un cociente exacto, qx = Na 2^16 / area (udiv_shift, con la DIVU), sin recíproco ni productos partidos.
+     dx = Na 65535 / area = qx - qx / 2^16          (Q12 por píxel, truncado hacia cero, como mulr)
+     q8 = (qx (px - ax) + qy (py - ay)) / 2^8        (z en Q8 respecto a a: MUL + MULHI)
+     origin = ((zq_a << 8) + q8) 65535 >> 12 = 16 x - ceil(x / 4096)
+   Si algo no cabe (aristas largas, gradientes de un triángulo casi de canto, el plano lejos de la caja), el
+   cálculo de 64 bits de antes (depth_plane_wide), que también decide si sirve el recorrido incremental. */
+#define DEPTH_EDGE_MAX 16000
+
+static mgl_s32 abs_s32(mgl_s32 v) {
+    return v < 0 ? -v : v;
+}
+
+/* n 2^16 / area truncado hacia cero, o 0 con *ok = 0 si no cabe en 31 bits. */
+static mgl_s32 gradient16(mgl_s32 n, mgl_s32 area, int *ok) {
+    mgl_u32 m = (mgl_u32)abs_s32(n), q;
+    if ((m >> 15) >= (mgl_u32)area) {
+        *ok = 0;
+        return 0;
+    }
+    q = udiv_shift(m, (mgl_u32)area, 16);
+    return n < 0 ? -(mgl_s32)q : (mgl_s32)q;
+}
+
+void mgr_depth_plane(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b, const mgr_window_vertex_t *c,
+    mgl_s32 area, mgl_s32 px, mgl_s32 py, int w, int h, mgr_depth_plane_t *out) {
+    mgl_s32 dxb = b->x - a->x, dyb = b->y - a->y, dxc = c->x - a->x, dyc = c->y - a->y;
+    mgl_s32 dzb = b->zq - a->zq, dzc = c->zq - a->zq, na, nb, qx, qy, gx, gy, dz, x32;
+    mgl_u32 ux, uy;
+    long long x;
+    int ok = 1;
+    if (abs_s32(dxb) >= DEPTH_EDGE_MAX || abs_s32(dyb) >= DEPTH_EDGE_MAX || abs_s32(dxc) >= DEPTH_EDGE_MAX ||
+        abs_s32(dyc) >= DEPTH_EDGE_MAX || abs_s32(dzb) > 65600 || abs_s32(dzc) > 65600)
+        ok = 0;
+    if (ok) {
+        na = dzb * dyc - dzc * dyb;
+        nb = dzc * dxb - dzb * dxc;
+        qx = gradient16(na, area, &ok);
+        qy = gradient16(nb, area, &ok);
+    }
+    if (ok) {
+        gx = qx - (qx < 0 ? -(-qx >> 16) : qx >> 16);
+        gy = qy - (qy < 0 ? -(-qy >> 16) : qy >> 16);
+        /* incremental de depth_plane_wide: |gx| w + |gy| h <= 2^28. En 32 bits: cada producto <= 2^28 (la
+           división lo asegura) y la suma no se sale. Con long long, mini-lcc suma mal dos productos de 64 bits
+           (la parte baja pisa la alta del primero), así que aquí no. */
+        ux = (mgl_u32)abs_s32(gx);
+        uy = (mgl_u32)abs_s32(gy);
+        ok = ux <= 268435456U / (mgl_u32)w && uy <= 268435456U / (mgl_u32)h && ux * (mgl_u32)w + uy * (mgl_u32)h <= 268435456U;
+    }
+    if (ok) {
+        x = ((long long)qx * (long long)(px - a->x) + (long long)qy * (long long)(py - a->y)) >> 8;
+        x += (long long)a->zq << 8;
+        ok = x < 33554432 && x > -33554432; /* |origin| <= 2^29 */
+    }
+    if (!ok) {
+        depth_plane_wide(a, b, c, area, px, py, w, h, out);
+        return;
+    }
+    dz = (gx + 8) >> 4;
+    out->dzi = dz > DEPTH_LIMIT ? DEPTH_LIMIT : dz < -DEPTH_LIMIT ? -DEPTH_LIMIT : dz;
+    x32 = (mgl_s32)x;
+    out->row = (x32 << 4) - ((x32 + 4095) >> 12);
+    out->dx = gx;
+    out->dy = gy;
+    out->incremental = 1;
+    out->origin = out->row;
+    out->dx64 = gx;
+    out->dy64 = gy;
 }
 
 #endif /* MGR_FIXED_DEPTH */

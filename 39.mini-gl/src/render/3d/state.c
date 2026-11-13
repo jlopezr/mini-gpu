@@ -25,7 +25,9 @@ void mgr_state_reset(mgr_state_t *s) {
     mgl_mat4_identity(&s->matrix[1]);
     mgl_mat4_identity(&s->matrix[2]);
     mgl_mat4_identity(&s->mvp);
+    mgl_mat4_identity(&s->pv);
     s->mvp_dirty = 0;
+    s->pv_dirty = 0;
     s->mvp_q_dirty = 1;
     s->flags = MGL_STATE_DEFAULT;
     s->fill = 0xffff;
@@ -85,6 +87,7 @@ int mgr_state_matrix(mgr_state_t *s, const unsigned char *p) {
     m = &s->matrix[which - 1U];
     for (i = 0; i < 16; i++) m->m[i] = mgl_real_from_f32(RD32(p + 16 + 4 * i));
     s->mvp_dirty = 1;
+    if (which != MGL_MATRIX_MODEL) s->pv_dirty = 1;
     return MGR_OK;
 }
 
@@ -107,8 +110,12 @@ int mgr_state_color(mgr_state_t *s, const unsigned char *p) {
 
 const mgl_mat4_t *mgr_state_mvp(mgr_state_t *s) {
     if (s->mvp_dirty) {
-        mgl_mat4_mul(&s->mvp, &s->matrix[MGL_MATRIX_PROJECTION - 1U], &s->matrix[MGL_MATRIX_VIEW - 1U]);
-        mgl_mat4_mul(&s->mvp, &s->mvp, &s->matrix[MGL_MATRIX_MODEL - 1U]);
+        /* (P * V) * M, en ese orden: los mismos bits que sin guardar P * V */
+        if (s->pv_dirty) {
+            mgl_mat4_mul(&s->pv, &s->matrix[MGL_MATRIX_PROJECTION - 1U], &s->matrix[MGL_MATRIX_VIEW - 1U]);
+            s->pv_dirty = 0;
+        }
+        mgl_mat4_mul(&s->mvp, &s->pv, &s->matrix[MGL_MATRIX_MODEL - 1U]);
         s->mvp_dirty = 0;
         s->mvp_q_dirty = 1;
     }

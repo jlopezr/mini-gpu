@@ -153,7 +153,8 @@ static void test_mvp_order(void) {
     mgl_mat4_translation(&s.matrix[MGL_MATRIX_MODEL - 1], 1.0f, 0.0f, 0.0f);
     mgl_mat4_rotation_z(&s.matrix[MGL_MATRIX_VIEW - 1], 1.57079633f);
     mgl_mat4_scaling(&s.matrix[MGL_MATRIX_PROJECTION - 1], 2.0f, 3.0f, 1.0f);
-    s.mvp_dirty = 1;
+    s.mvp_dirty = 1; /* lo que hace mgr_state_matrix al cambiar View o Projection */
+    s.pv_dirty = 1;
     mgl_mat4_transform_point(mgr_state_mvp(&s), 0.0f, 0.0f, 0.0f, &v);
     /* (0,0,0) -> modelo (1,0,0) -> vista (0,1,0) -> proyección (0,3,0) */
     CHECK(NEAR(v.x, 0.0, 1e-6) && NEAR(v.y, 3.0, 1e-6));

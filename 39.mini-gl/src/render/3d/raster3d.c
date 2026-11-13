@@ -129,7 +129,7 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     row1 = (a->x - c->x) * MGR_SUBPIXEL;
     row2 = (b->x - a->x) * MGR_SUBPIXEL;
 
-    for (y = y0; y < y1; y++, py += MGR_SUBPIXEL) {
+    for (y = y0; y < y1; y++) { /* py, el centro de la fila y, solo hace falta sin el recorrido incremental */
         /* Dentro de las tres a la vez: un tramo, porque el triángulo es convexo. */
         lo = 0;
         hi = x1 - x0 - 1;
@@ -200,7 +200,7 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
             zi = depth_wide <= 0 ? 0 : depth_wide >= (long long)MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
                 (mgl_s32)((depth_wide + 8) >> 4);
 #else
-            zrow = a->z + gb * (mgl_real_t)(py - a->y);
+            zrow = a->z + gb * (mgl_real_t)(y * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->y);
             zf = (zrow + ga * (mgl_real_t)(start * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->x)) * DEPTH_SCALE;
             zi = zf <= 0.0f ? 0 : zf >= DEPTH_SCALE ? MGR_DEPTH_MAX : mgl_round(zf);
 #endif

@@ -54,6 +54,9 @@ typedef struct {
     mgl_mat4_t matrix[3];
     mgl_mat4_t mvp;
     int mvp_dirty;
+    /* Projection * View: cambian una vez por frame y Model en cada objeto, así que se guarda aparte */
+    mgl_mat4_t pv;
+    int pv_dirty;
     /* mvp en Q16.16 (MGR_FIXED_GEOMETRY): se convierte cuando cambia mvp, no en cada DRAW_INDEXED */
     mgr_mat4q_t mvp_q;
     int mvp_q_dirty;

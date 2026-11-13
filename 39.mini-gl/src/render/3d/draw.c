@@ -12,7 +12,8 @@
    MGR_VCACHE entradas de correspondencia directa (índice & (MGR_VCACHE - 1));
    el viewport, solo cuando hace falta (un triángulo sin recortar). Mismos
    cálculos con los mismos datos: los mismos bits que sin caché. Vale lo que
-   dura un DRAW_INDEXED. */
+   dura un DRAW_INDEXED: cada entrada lleva el dibujo en que se llenó, así que
+   no hay que vaciarla al empezar otro (ver cache_generation). */
 #define MGR_VCACHE 64
 
 /* Con MGR_FIXED_GEOMETRY los vértices transformados, el outcode, el recorte y el viewport son Q16.16 (fixed.c). */
@@ -35,7 +36,7 @@ typedef mgl_mat4_t mgr_mvp_t;
 #endif
 
 typedef struct {
-    mgl_u32 index; /* MGR_VCACHE_EMPTY: libre */
+    mgl_u32 tag; /* (generación << 16) | índice; MGR_VCACHE_EMPTY: libre */
     mgr_clipv_t clip;
     unsigned int out;
     int mapped; /* window ya calculado */
@@ -43,6 +44,13 @@ typedef struct {
 } mgr_vcache_t;
 
 #define MGR_VCACHE_EMPTY 0xffffffffU
+
+/* La caché queda entre un DRAW_INDEXED y el siguiente, y la generación cambia en cada uno: vaciarla eran 64
+   escrituras por dibujo (unas 60000 instrucciones por frame en racer). Generaciones de 1 a 0xfffe, para que
+   ninguna etiqueta valga MGR_VCACHE_EMPTY; al dar la vuelta se vacía de verdad. Los índices caben en 16 bits
+   (vcount <= 65536). */
+static mgr_vcache_t cache[MGR_VCACHE];
+static mgl_u32 cache_generation;
 
 static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
@@ -81,14 +89,12 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     mgr_rect_t clip;
     const mgr_mvp_t *mvp;
     const unsigned char *indices;
-    mgr_vcache_t cache[MGR_VCACHE], *c;
-    mgr_window_vertex_t w[3];
+    mgr_vcache_t *c, *e[3], local[3];
     mgr_clipv_t tri[3];
     mgr_clipv_t poly[MGR_CLIP_MAX];
     mgl_u32 vaddr = RD32(p + MGL_CMD_ARG0), iaddr = RD32(p + MGL_CMD_ARG1);
-    mgl_u32 vcount = RD32(p + 16), icount = RD32(p + 20), stride = RD16(p + 28), i, k, index;
+    mgl_u32 vcount = RD32(p + 16), icount = RD32(p + 20), stride = RD16(p + 28), i, k, index, generation, tag;
     unsigned int vformat = RD16(p + 24), iformat = RD16(p + 26), topology = RD16(p + 30);
-    unsigned int out[3];
     int n;
 
     if (vformat == MGL_VERTEX_POSITION_Q16_16_XYZ || iformat == MGL_INDEX_UINT32)
@@ -122,47 +128,50 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
 #else
     mvp = mgr_state_mvp(s);
 #endif
-    for (k = 0; k < MGR_VCACHE; k++)
-        cache[k].index = MGR_VCACHE_EMPTY;
+    if (++cache_generation > 0xfffeU) {
+        for (k = 0; k < MGR_VCACHE; k++)
+            cache[k].tag = MGR_VCACHE_EMPTY;
+        cache_generation = 1;
+    }
+    generation = cache_generation << 16;
 
     for (i = 0; i < icount; i += 3) {
+        /* e[k]: la entrada del vértice k, sin copiarla. Si otro vértice de este triángulo ya está en la misma
+           entrada (índices iguales módulo MGR_VCACHE, raro), este va a una local. */
         for (k = 0; k < 3; k++) {
             index = RD16(indices + 2U * (i + k));
             if (index >= vcount) return MGR_ERR_LIMIT;
+            tag = generation | index;
             c = &cache[index & (MGR_VCACHE - 1U)];
-            if (c->index != index) {
-                c->index = index;
+            if (c->tag != tag) {
+                if ((k > 0 && e[0] == c) || (k > 1 && e[1] == c)) c = &local[k];
+                c->tag = tag;
                 TRANSFORM_VERTEX(&verts, index, mvp, &c->clip);
                 c->out = OUTCODE(&c->clip);
                 c->mapped = 0;
             }
-            tri[k] = c->clip; /* copias: otro vértice del triángulo puede caer en la misma entrada */
-            out[k] = c->out;
+            e[k] = c;
         }
         st->triangles++;
-        if (out[0] & out[1] & out[2]) { /* los tres fuera del mismo plano */
+        if (e[0]->out & e[1]->out & e[2]->out) { /* los tres fuera del mismo plano */
             st->rejected++;
             continue;
         }
-        if (!(out[0] | out[1] | out[2])) { /* dentro de todos: sin recortar */
+        if (!(e[0]->out | e[1]->out | e[2]->out)) { /* dentro de todos: sin recortar */
             for (k = 0; k < 3; k++) {
-                if (!W_POSITIVE(&tri[k])) break; /* como en fan */
-                index = RD16(indices + 2U * (i + k));
-                c = &cache[index & (MGR_VCACHE - 1U)];
-                if (c->index != index) { /* lo echó otro vértice de este triángulo */
-                    VIEWPORT_MAP(s, &tri[k], &w[k]);
-                    continue;
-                }
+                c = e[k];
+                if (!W_POSITIVE(&c->clip)) break; /* como en fan */
                 if (!c->mapped) {
                     VIEWPORT_MAP(s, &c->clip, &c->window);
                     c->mapped = 1;
                 }
-                w[k] = c->window;
             }
-            if (k == 3) triangle(st, &w[0], &w[1], &w[2], &clip, &f);
+            if (k == 3) triangle(st, &e[0]->window, &e[1]->window, &e[2]->window, &clip, &f);
             continue;
         }
         st->clipped++;
+        for (k = 0; k < 3; k++)
+            tri[k] = e[k]->clip;
         n = CLIP_TRIANGLE(tri, poly);
         if (n) fan(s, st, poly, n, &clip, &f);
     }
