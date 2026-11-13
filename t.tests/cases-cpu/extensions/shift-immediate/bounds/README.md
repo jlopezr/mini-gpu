@@ -6,7 +6,7 @@
 
 ## Comportamiento esperado
 
-- Opción B de `propuesta-v0.2.md` §4.2: no hay opcodes nuevos. `SHL`, `SHR` y
+- Formato vigente de `isa.md` §3: no hay opcodes nuevos. `SHL`, `SHR` y
   `SAR` siguen siendo R-Type y el bit 10 del campo `extra` dice que la cantidad
   es inmediata, tomándola de los cinco bits del campo `Rb`.
 - Cantidad 0 (no da ni un paso) y 31 (el otro borde), sobre `R1 = 0x89ABCDEF`,

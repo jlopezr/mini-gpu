@@ -184,8 +184,7 @@ cantidad viaja en los cinco bits del campo `Rb`:
                                             ↑ 1 = cantidad inmediata
 ```
 
-Es la **opción B** de [`propuesta-v0.2.md`](../1.isa/propuesta-v0.2.md) §4.2, la
-que ese documento recomienda: cuesta **cero opcodes**, y la familia `0x10–0x1F`
+Es el formato vigente de [isa.md, desplazamientos inmediatos](../1.isa/isa.md#desplazamientos-con-cantidad-inmediata): cuesta **cero opcodes**, y la familia `0x10–0x1F`
 es la única con presión real. Los mnemónicos son `SHLI`, `SHRI` y `SARI`, que no
 son opcodes sino azúcar del ensamblador sobre los mismos tres.
 

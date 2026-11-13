@@ -201,19 +201,13 @@ diseño, qué falta y cómo desbloquearlos: [backend-fpga-sys.md](backend-fpga-s
 Solo `sim-cpu` y `fpga-cpu --version alu` ejecutan los 38 casos: son los
 dos únicos que tienen las ocho capacidades.
 
-**`sdram` no tiene `mul_div`, y esa capacidad es distinta de las demás.**
-`10.fpga-cpu-ram` no implementa `MUL`, `MULFX` ni `DIV`, que son instrucciones
-**base** de la MiniISA, no extensiones. Salió al correr el diferencial contra esa
-placa por primera vez. Se probó el port —copiar el `cpu.v` de la 6, que resultó
-ser un superconjunto estricto— y funciona, pero deja el diseño en una de ocho
-semillas al +2,4 %; el detalle está en
-[`10.fpga-cpu-ram/cpu.v`](../10.fpga-cpu-ram/cpu.v).
-
-`mul_div` es por tanto la única capacidad que significa «a este backend le
-**falta** algo de la base» en vez de «tiene algo **de más**». Conviene no leer su
-`SKIP` como «aquí no hace falta»: ahí falta algo que la ISA exige. El día que la
-10 implemente las tres, la capacidad desaparece entera en lugar de extenderse a
-más backends.
+**`sdram` no ofrece la extensión opcional `mul_div`.** Esta agrupa `MUL`,
+`MULFX` y `DIV` para CPU y GPU. La 10 las omite por temporización; el detalle
+está en [`10.fpga-cpu-ram/cpu.v`](../10.fpga-cpu-ram/cpu.v). Los casos que las
+necesiten declaran `requires: ["mul_div"]` y se omiten donde no estén disponibles.
+No ofrecer esta extensión no incumple el repertorio base de la ISA. La
+capability seguirá definiendo su disponibilidad aunque todos los backends
+actuales lleguen a implementarla.
 
 La selección automática para `fpga-gpu` y `gpu-both` omite con un mensaje
 `SKIP` los casos que requieren capacidades no implementadas:
@@ -729,7 +723,7 @@ declara lo que necesita:
 | `input_device` | El RTL tiene el bloque INPUT (`input_registers.v`), alimentado por `INPUT_EVENTS`/`INPUT_PRESENCE` del monitor. Da el bit INPUT de `DEVICES` (`mmio.md` §5.4). **No implica `input`**: tener el dispositivo no significa poder reproducir un guion con tiempo | `console` |
 | `shift_immediate` | `SHLI`/`SHRI`/`SARI`: bit 10 de `SHL`/`SHR`/`SAR` | `sim-cpu`, `alu` |
 | `alu_extended` | `MULHI`/`DIVU`/`REM`/`REMU`, opcodes `0x0B` y `0x0D–0x0F` | `sim-cpu`, `alu` |
-| `mul_div` | `MUL`/`MULFX`/`DIV`: **base de la ISA**, no una extensión | todos menos `sdram` |
+| `mul_div` | `MUL`/`MULFX`/`DIV`: extensión opcional CPU/GPU | todos menos `sdram` |
 | `perf_counters` | `CYCLES` y `RETIRED` de CPU PERFORMANCE (`0x81010000`): dan el CPI de `--measure` | `hdmi`, `bl8`, `subword`, `alu`, `console` |
 | `perf_stalls` | Además las ranuras 2 a 7 (`IMEM_HITS`, `IMEM_MISSES`, `MEM_TX`, `STALL_MEM`, `STALL_FETCH`, `STALL_MMIO`): `--measure` reparte los ciclos entre cálculo, búsqueda, datos y MMIO | `console` |
 
@@ -753,16 +747,13 @@ bitstream sin ella ese bit sigue siendo reservado y el programa para con
 **`0x05`, encoding inválido** —justo lo que produce un ensamblador roto—. El
 `SKIP` ahorra exactamente esa confusión.
 
-### `mul_div` va al revés que todas las demás
+### Dependencia entre `alu_extended` y `mul_div`
 
-`alu_extended` **implica** `mul_div`, y es una implicación física: `MULHI` sale
-del mismo multiplicador que `MUL`, y `REM` del mismo divisor que `DIV`. Un
-backend con `MULHI` pero sin `MUL` no puede existir, así que `alu` no la declara
-—le llega sola—.
-
-Y es la única capacidad que **encogerá** en vez de crecer. Las demás se extienden
-según los bitstreams las van implementando; ésta desaparece entera el día que la
-10 tenga multiplicador, porque ese día ya no habrá nada que distinguir.
+`alu_extended` **requiere** `mul_div`: declarar `MULHI`, `DIVU`, `REM` y
+`REMU` exige ofrecer también `MUL`, `MULFX` y `DIV`. Es una dependencia del
+contrato de ISA, no una obligación derivada de compartir circuitos. El runner
+expande esa implicación, por lo que un caso que pide `alu_extended` no necesita
+repetir `mul_div`. La implicación inversa no existe.
 
 ### Dos cosas que NO son capacidades, por motivos opuestos
 

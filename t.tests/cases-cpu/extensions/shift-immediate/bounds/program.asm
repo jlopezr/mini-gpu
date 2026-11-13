@@ -1,6 +1,6 @@
 ; SHLI / SHRI / SARI: los bordes de la cantidad y el modo aritmetico.
 ;
-; Opcion B de propuesta-v0.2.md §4.2: no hay opcodes nuevos. SHL, SHR y SAR
+; Formato vigente de isa.md §3: no hay opcodes nuevos. SHL, SHR y SAR
 ; siguen siendo R-Type y el bit 10 del campo `extra` dice que la cantidad es
 ; inmediata, tomandola de los cinco bits del campo Rb.
 ;

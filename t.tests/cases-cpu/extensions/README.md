@@ -14,7 +14,7 @@ eso todos sus casos llevan `requires`:
 | [alu-extended](alu-extended/) | `alu_extended` | `MULHI`, `DIVU`, `REM`, `REMU` (`0x0B`, `0x0D–0x0F`) | 21 |
 | [compare](compare/) | `compare` | `SLT`, `SLTU` (`0x26–0x27`) | 21 |
 
-Todas siguen el mapa de [`propuesta-v0.2.md`](../../../1.isa/propuesta-v0.2.md),
+Todas siguen el mapa de [`isa.md`](../../../1.isa/isa.md),
 no el de la v0.3. Las tiene el simulador funcional; los bitstreams son
 [`19.fpga-cpu-hdmi-ls`](../../../19.fpga-cpu-hdmi-ls/) (`--version subword`)
 para las tres primeras y

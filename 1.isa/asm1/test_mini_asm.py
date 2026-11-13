@@ -295,7 +295,7 @@ class IncbinTest(unittest.TestCase):
 
 
 class ShiftInmediatoTest(unittest.TestCase):
-    """SHLI, SHRI y SARI: opcion B de propuesta-v0.2.md §4.2.
+    """SHLI, SHRI y SARI: formato vigente de isa.md §3.
 
     No hay opcodes nuevos. Son SHL, SHR y SAR con el bit 10 del campo `extra`
     puesto y la cantidad en el campo Rb. El ensamblador es el unico sitio donde

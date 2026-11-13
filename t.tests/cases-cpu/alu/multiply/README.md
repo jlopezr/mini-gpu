@@ -11,6 +11,6 @@ El caso más corto posible de `MUL`: `10 * 20 = 200`.
 ## Qué comprueba el `test.json`
 
 - `R1`, `R2` y `R3`, y parada limpia en `pc = 0x10`.
-- Declara `requires: ["mul_div"]`. `MUL` es base de la MiniISA, pero
+- Declara `requires: ["mul_div"]`. `MUL` pertenece a esa extensión opcional;
   `10.fpga-cpu-ram` no tiene multiplicador, y ahí el caso se omite con `SKIP`.
   El porqué está en el [README de la categoría](../README.md).

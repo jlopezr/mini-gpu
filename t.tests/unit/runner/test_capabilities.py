@@ -177,14 +177,9 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertEqual(sin_ella, [])
 
     def test_solo_la_10_no_tiene_mul_div(self):
-        """`mul_div` es un HUECO, no una extension, y es el unico de la tabla.
+        """La extension opcional MUL/MULFX/DIV falta solo en la CPU 10 actual.
 
-        MUL, MULFX y DIV son instrucciones base de la MiniISA. La 10 se quedo
-        sin ellas por temporizacion --ver 10.fpga-cpu-ram/cpu.v--. La 38 las
-        quito un tiempo como experimento de timing del pipeline y ya las tiene.
-        Si algun dia las implementa, esta capacidad desaparece entera en vez de
-        extenderse a mas backends, que es lo contrario de lo que le pasa a una
-        extension.
+        No ofrecerla es valido; los casos que la requieren deben omitirse.
         """
         sin_ella = [nombre for nombre in fpga_cpu.VERSIONS
                     if "mul_div" not in fpga_cpu.capabilities(nombre)]
@@ -192,11 +187,7 @@ class CapabilitiesTest(unittest.TestCase):
         self.assertIn("mul_div", sim_cpu.capabilities())
 
     def test_alu_extended_implica_mul_div(self):
-        """MULHI sale del mismo multiplicador que MUL, y REM del divisor de DIV.
-
-        Un backend con MULHI pero sin MUL no puede existir, asi que declarar
-        `alu_extended` basta.
-        """
+        """La ISA exige mul_div cuando se declara alu_extended, no al reves."""
         self.assertEqual(expand_capabilities(["alu_extended"]),
                          {"alu_extended", "mul_div"})
         # Y no al reves: tener MUL no da MULHI.

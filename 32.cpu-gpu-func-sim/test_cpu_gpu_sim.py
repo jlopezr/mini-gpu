@@ -1851,7 +1851,7 @@ class ProfileTest(unittest.TestCase):
 
     def test_a_c_kernel_is_counted_in_warp_instructions_with_its_c_name(self):
         sys.path.insert(0, str(sim.ROOT))
-        from tools import build_c as c_build
+        from tools import mini_cc as c_build
         image, _ = build_c_example("dma/memset")
         wrapper = c_build.wrapper_path(CASES / "dma" / "memset" / "memset.c")
         profile = self.sim_profile.Profile(self.sim_profile.Symbols.from_program(Path("memset.bin"), wrapper))

@@ -1,8 +1,5 @@
-; `JALR R0, Ra, 0` es un `JR Ra` completo, y por eso 0x2E queda obsoleto.
-;
-; Es la razon de peso para cablear R0 a cero --la otra son los idiomas--: la
-; familia de control 0x20-0x2F estaba a CERO opcodes libres despues de
-; propuesta-v0.2.md seccion 6, y esto devuelve uno al bote.
+; `JALR R0, Ra, 0` equivale a `JR Ra`. El mapa compatible de isa.md
+; conserva JR en 0x2E; reutilizarlo exige una revision incompatible como v0.3.
 ;
 ; `JR` no se ha quitado: sigue implementado y sigue siendo valido. Su hueco es
 ; *reclamable*, no libre. Quitarlo hoy romperia todo lo que usa `RET` sin ganar

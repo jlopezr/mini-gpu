@@ -520,8 +520,8 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # backend futuro puede tener una sin las otras.
 #
 #   shift_immediate  SHLI/SHRI/SARI. No son opcodes nuevos: SHL/SHR/SAR con el
-#                    bit 10 del campo `extra` puesto (propuesta-v0.2.md §4.2,
-#                    opcion B). Ojo con esto, porque es el unico caso del
+#                    bit 10 del campo `extra` puesto (isa.md §3,
+#                    desplazamientos inmediatos). Ojo con esto, porque es el unico caso del
 #                    repositorio en el que la capacidad NO se puede detectar por
 #                    un ERROR_INVALID_OPCODE: en un bitstream sin ella, el bit
 #                    10 sigue siendo reservado y el programa para con
@@ -547,25 +547,20 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # numero y solo cambian los ciclos, que el diferencial ya excluye. Un caso no
 # puede depender de el, asi que no hay nada que declarar.
 #
-# `mul_div` es la rara de la lista, y conviene leerla aparte de las demas:
-# **no es una extension, es un hueco**. MUL, MULFX y DIV son instrucciones BASE
-# de la MiniISA; todas las implementaciones las tienen menos `sdram`
-# (10.fpga-cpu-ram), que se quedo sin ellas por temporizacion --el detalle esta
-# en su `cpu.v`--. Las demas capacidades dicen «este backend tiene algo de mas»;
-# esta dice «a este le falta algo de la base».
-#
-# Existe por la misma razon practica que el resto: sin ella, `cases-cpu/alu/multiply`
-# falla en esa placa con ERROR_INVALID_OPCODE, que es lo mismo que produce un
-# ensamblador roto. Con ella, el SKIP dice donde esta el problema. Pero conviene
-# NO leer el SKIP como «aqui no hace falta»: ahi falta algo que la ISA exige, y
-# el dia que la 10 implemente las tres, esta entrada desaparece.
+# `mul_div` es una extension opcional de ISA para CPU y GPU que comprende
+# MUL, MULFX y DIV. Sus opcodes estan reservados aunque el backend no la ofrezca;
+# ejecutarlos sin soporte produce ERROR_INVALID_OPCODE. No son parte de la base.
+# La CPU `sdram` (10.fpga-cpu-ram) no la implementa por temporizacion; el resto
+# de backends actuales la ofrece. Un caso que use cualquiera de esas operaciones
+# debe pedir `mul_div`, o una extension que la implique, como `alu_extended`.
+# Sin ella el caso se omite: no es un fallo de conformidad de la base.
 # `CAPABILITIES` (arquitectura de cada una) y `CAPABILITY_IMPLIES` ya no se
 # escriben aqui: se derivan de tools/capabilities.json, que es el mismo
 # fichero de donde `backends/fpga_cpu.py` y `tools/prototype_report.py` leen que
 # buscar en el RTL. Una tabla, no tres. `implies` alli documenta lo mismo que
 # el parrafo anterior --`frame_capture` implica `video`, `alu_extended`
 # implica `mul_div`-- pero como metadato, para que un caso pueda declarar solo
-# la mas especifica sin repetir la base.
+# la mas especifica sin repetir sus dependencias.
 _CAPABILITY_SIGNALS = load_capability_signals(REPOSITORY)
 # El valor es la TUPLA de arquitecturas que pueden declarar la capacidad, no
 # una sola: `video` lo tienen CPU y GPU, y mientras fuese un unico valor un caso

@@ -9,6 +9,7 @@
     "pattern": "OPCODE_FADD, OPCODE_FSUB, OPCODE_FMUL, OPCODE_FDIV: begin"
   },
 
+  "_comment_mul_div": "Extension opcional CPU/GPU: MUL, MULFX y DIV. alu_extended requiere mul_div. No forma parte del repertorio base.",
   "mul_div": {
     "architecture": ["cpu", "gpu"],
     "file": ["cpu.v", "gpu_lane.v"],

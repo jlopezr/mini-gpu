@@ -254,7 +254,7 @@ class CallTest(unittest.TestCase):
 
 
 class ShiftImmediateTest(unittest.TestCase):
-    """Opcion B de propuesta-v0.2.md §4.2: el bit 10 y la cantidad en `Rb`."""
+    """Formato vigente de isa.md §3: el bit 10 y la cantidad en `Rb`."""
 
     IMMEDIATE = 1 << 10
 

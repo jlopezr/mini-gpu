@@ -45,7 +45,7 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         return (instr & 0x03FFFFFF) == 0
     if opcode in (0x07, 0x08, 0x09):  # SHL/SHR/SAR
         # El bit 10 es significativo: dice que la cantidad es inmediata
-        # (propuesta-v0.2.md §4.2, opcion B). El campo reservado de estos tres
+        # (isa.md §3, desplazamientos inmediatos). El campo reservado de estos tres
         # opcodes es por tanto `extra[9:0]`, no `extra` entero.
         return (instr & 0x3FF) == 0
     if opcode in (0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
@@ -355,7 +355,7 @@ class CPU:
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            # Opción B de propuesta-v0.2.md §4.2: el bit 10 dice que la cantidad
+            # Formato vigente de isa.md §3: el bit 10 dice que la cantidad
             # es inmediata y viaja en el propio campo Rb. MiniISA usa siempre
             # cinco bits de cantidad, así que con inmediato el campo entra tal
             # cual y con registro se enmascara.

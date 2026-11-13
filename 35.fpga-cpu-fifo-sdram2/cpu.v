@@ -88,8 +88,8 @@ module cpu (
   localparam [5:0] OPCODE_LOAD = 6'h15;
   localparam [5:0] OPCODE_STORE = 6'h16;
   localparam [5:0] OPCODE_MOVHI = 6'h17;
-  // Accesos sub-palabra. El mapa de opcodes es el de 1.isa/propuesta-v0.2.md
-  // §7; v0.3 reordena 0x1A..0x1D, asi que al migrar habra que recodificar.
+  // Accesos sub-palabra. El mapa de opcodes es el de 1.isa/isa.md
+  // §3, inmediatos y memoria; v0.3 reordena 0x1A..0x1D, asi que al migrar habra que recodificar.
   localparam [5:0] OPCODE_LOADB = 6'h18;
   localparam [5:0] OPCODE_LOADUB = 6'h19;
   localparam [5:0] OPCODE_STOREB = 6'h1a;
@@ -108,7 +108,7 @@ module cpu (
   // branch_b_sign) para no abrir un segundo comparador de 33 bits.
   localparam [5:0] OPCODE_SLT = 6'h26;
   localparam [5:0] OPCODE_SLTU = 6'h27;
-  // Llamadas y saltos indirectos. Mapa de 1.isa/propuesta-v0.2.md §3.2.
+  // Llamadas y saltos indirectos. Mapa de 1.isa/isa.md §3, control de flujo.
   //
   // `JR` (0x2E) queda OBSOLETO en esta version: con `R0` cableado a cero,
   // `JR Ra` es exactamente `JALR R0, Ra, 0`. Se deja implementado porque
@@ -326,7 +326,7 @@ module cpu (
   wire [31:0] immediate_unsigned = {16'h0000, instruction[15:0]};
 
   /*
-   * Cantidad de desplazamiento. Opcion B de 1.isa/propuesta-v0.2.md §4.2: sin
+   * Cantidad de desplazamiento. Formato vigente de 1.isa/isa.md §3: sin
    * opcodes nuevos, el bit 10 de `extra` dice «la cantidad es inmediata» y la
    * cantidad viaja en los cinco bits del campo Rb, que ya era el sitio donde
    * estaba con registro.
@@ -491,7 +491,7 @@ module cpu (
       /*
        * Para los tres desplazamientos el bit 10 ya NO es reservado: dice que la
        * cantidad es inmediata. El campo que debe valer cero es `extra[9:0]`.
-       * Es la contrapartida de la opcion B de propuesta-v0.2.md §4.2, y la
+       * Es la contrapartida de la forma inmediata de isa.md §3, y la
        * unica irregularidad del decodificador de encoding.
        */
       OPCODE_SHL, OPCODE_SHR, OPCODE_SAR:

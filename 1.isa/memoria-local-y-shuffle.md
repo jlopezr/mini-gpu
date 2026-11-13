@@ -1,7 +1,7 @@
 # Memoria local por lane y shuffle: ideas para aprovechar la EBR de la 37
 
 Notas de diseño, no un contrato. Nada de esto está implementado: los opcodes de
-`gpu_lane.v` llegan hasta `GETTID` (0x30) y los de la propuesta v0.4b que aquí se
+`gpu_lane.v` llegan hasta `GETTID` (0x30) y los de la propuesta v0.4 que aquí se
 citan no existen en el RTL de `37.fpga-cpu-gpu-mk2`.
 
 ## 1. Punto de partida
@@ -69,13 +69,12 @@ cuántos ciclos libres de lectura hay con carga real (hay contadores para medirl
 
 ### Lo que ya había en el repositorio
 
-- `propuesta-v0.3.md` (§ SHFL, 0x35, y ejemplo §15.10): solo la forma
-  **indexada**, `SHFL Rd, Ra, Rb`; no propone variantes XOR, up ni down. Deja
-  pendiente el tratamiento del índice fuera del warp y de una fuente inactiva.
-- `propuesta-v0.4b.md` § 6.2: cierra ese pendiente. Un índice fuera del warp o una
-  fuente inactiva produce cero, sin wrap. Captura máscara, `Ra` y `Rb` antes de
-  escribir; no es barrera ni reconverge; solo escriben las lanes activas.
-  Capability `warp_shuffle`.
+- [`propuesta-v0.4.md`](propuesta-v0.4.md#51-contratos-del-repertorio)
+  define la forma **indexada**, `SHFL Rd, Ra, Rb` (0x35, ejemplo §18.10).
+  Un índice fuera del warp o una fuente inactiva produce cero, sin wrap.
+  Captura máscara, Ra y Rb antes de escribir; no es barrera ni reconverge;
+  solo escriben las lanes activas. Requiere `warp_shuffle` y no asigna variantes
+  XOR, up ni down.
 - `minigpu_fuego_warps.md` § 8: caso de uso `SHFL_UP`/`SHFL_DOWN` en el kernel de
   propagación de calor. Pasaría de 3 lecturas por píxel a 1 (no implica 3× de
   velocidad), y no resuelve los bordes entre warps: el borde necesita un
@@ -97,11 +96,12 @@ cuántos ciclos libres de lectura hay con carga real (hay contadores para medirl
    - vecino (`up`/`down` con delta 1): un desplazamiento fijo del vector, casi gratis;
    - `xor` con máscara fija: reducciones en árbol (con 8 lanes, máscaras 1, 2 y 4
      cubren una reducción completa en 3 pasos);
-   - indexado (`SHFL` de v0.3/v0.4b): 8 mux 8:1 de 32 bits con el índice de
+   - indexado (`SHFL` de v0.4): 8 mux 8:1 de 32 bits con el índice de
      origen por lane. Es la forma ya propuesta.
 4. **Falta decidir** si, además del indexado, merece la pena una forma fija de
    vecino (más barata y la que pide el kernel de calor), y qué recibe la lane 0 en
-   `up` y la 7 en `down`. v0.4b ya dice cero para fuera de rango.
+   `up` y la 7 en `down`. El SHFL indexado de v0.4 devuelve cero para fuentes inválidas; una nueva variante
+   debe definir sus propios casos límite.
 
 ### Nombres de referencia en otras GPU
 

@@ -6,17 +6,16 @@ BL8, el subsistema de vídeo y el monitor son los de la 18 byte a byte.
 
 ## Qué no es esto
 
-No es la ISA v0.1. La v0.1 ([`1.isa/isa.md`](../../1.isa/isa.md), §«Inmediatos
-y memoria») define `LOAD` y `STORE` de exactamente cuatro bytes alineados, y
-deja `0x18–0x1F` como *reservadas*. Los accesos sub-palabra aparecen por primera
-vez en las propuestas, y **las dos propuestas no coinciden**:
+Los accesos sub-palabra pertenecen a la extensión `subword_memory` de
+[la ISA vigente](../../1.isa/isa.md#inmediatos-y-memoria). Conservan este mapa
+compatible; v0.4 reorganiza algunas asignaciones:
 
-| Opcode | `propuesta-v0.2.md` §7 | `propuesta-v0.4.md` |
+| Opcode | `isa.md` §3 | `propuesta-v0.4.md` |
 |--------|------------------------|---------------------|
 | `0x18` | `LOADB`                | `LOADB`             |
-| `0x19` | `LOADUB`               | `LOADBU`            |
+| `0x19` | `LOADUB`               | `LOADUB`            |
 | `0x1A` | **`STOREB`**           | **`LOADH`**         |
-| `0x1B` | `LOADH`                | `LOADHU`            |
+| `0x1B` | `LOADH`                | `LOADUH`            |
 | `0x1C` | `LOADUH`               | `STOREB`            |
 | `0x1D` | `STOREH`               | `STOREH`            |
 

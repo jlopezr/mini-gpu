@@ -1,33 +1,59 @@
-# MiniISA v0.1
+# MiniISA: repertorio vigente y extensiones compatibles
 
-Este documento es la especificación de la ISA usada por MiniCPU y MiniGPU. Cuando el código y este texto discrepen, la discrepancia debe tratarse
-como un error; no se debe deducir la ISA exclusivamente del simulador.
+Este documento reúne la especificación vigente de **MiniISA v0.1** y las
+**extensiones compatibles propuestas en v0.2**. Cuando el código y un contrato
+vigente discrepen, la discrepancia debe tratarse como un error; no se deduce la
+ISA exclusivamente del simulador.
 
-Este documento describe **MiniISA v0.1 vigente**. La implementación escalar más
-completa, y referencia para su repertorio y encoding, es
-[`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu/README.md). También se documenta
-el repertorio SIMT de MiniGPU, que la CPU escalar no ejecuta.
-[`propuesta-v0.2.md`](propuesta-v0.2.md) y
-[`propuesta-v0.4.md`](propuesta-v0.4.md) es la propuesta de evolución unificada: su mapa
-no sustituyen al definido aquí.
+La referencia escalar para el repertorio entero y su encoding es
+[`21.fpga-cpu-hdmi-alu`](../21.fpga-cpu-hdmi-alu/README.md); la extensión FP32
+se implementa en [`38.fpga-cpu-pipelined`](../38.fpga-cpu-pipelined/README.md).
+También se documenta la semántica SIMT de MiniGPU y los NOP SSY/BAR de CPU.
+
+Los apartados §1–§6 describen el repertorio vigente. §7 incorpora las propuestas
+compatibles de v0.2, con su estado explícito: **documentarlas no significa que
+estén implementadas**. §8 reúne disponibilidad, portabilidad y validación.
+El [catálogo de instrucciones](#3-mapa-de-opcodes) distingue ambos estados
+y muestra el soporte de cada instrucción en los simuladores funcionales.
+
+Las extensiones compatibles conservan los opcodes, formatos y comportamientos
+vigentes: pueden ocupar huecos reservados y añadir capabilities, pero no mover
+instrucciones ni reinterpretar encodings válidos. Prevalecen las asignaciones
+ya implementadas en CPU (2) y GPU (11), reutilizadas por el integrado (32).
+Un programa válido conserva su comportamiento al mantener sus capabilities;
+esto no permite ejecutarlo en un backend que carezca de ellas.
+
+El mapa incompatible de [v0.4](propuesta-v0.4.md) se mantiene aparte y no
+sustituye al definido aquí.
 
 ### Capabilities de instrucciones
 
 Una capability identifica una extensión que una implementación puede ofrecer.
 La ISA fija su encoding y comportamiento; cada backend declara cuáles tiene.
-Las extensiones son independientes y pueden incorporarse a otras versiones.
+Las extensiones pueden incorporarse a otras versiones respetando sus
+dependencias. La tabla siguiente recoge las capabilities vigentes; las
+propuestas se enumeran en §7.1.
 
 | Capability        | Opcodes o variantes     | Instrucciones                                            |
 |-------------------|-------------------------|----------------------------------------------------------|
+| `mul_div`         | `0x03`, `0x0A`, `0x0C` | `MULFX`, `MUL`, `DIV` |
 | `subword_memory`  | `0x18–0x1D`             | `LOADB`, `LOADUB`, `STOREB`, `LOADH`, `LOADUH`, `STOREH` |
 | `calls`           | `0x2C–0x2E`             | `JAL`, `JALR`, `JR`                                      |
 | `alu_extended`    | `0x0B`, `0x0D–0x0F`     | `MULHI`, `DIVU`, `REM`, `REMU`                           |
 | `shift_immediate` | `0x07–0x09`, bit 10 = 1 | `SHLI`, `SHRI`, `SARI`                                   |
+| `gpu_ids`         | `0x30`, `type = 1–4`    | `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`                 |
+| `fp32`            | `0x38–0x3B`             | `FADD`, `FSUB`, `FMUL`, `FDIV`                             |
 | `compare`         | `0x26–0x27`             | `SLT`, `SLTU`                                            |
 
 En las tablas de opcodes, **Base** significa que no se requiere una capability
 adicional; no es el nombre de una capability del runner. Los desplazamientos
 por registro pertenecen a la base, aunque sus variantes inmediatas sean opcionales.
+
+`mul_div` es una extensión opcional de CPU y GPU que comprende `MUL`,
+`MULFX` y `DIV`; no pertenecen al repertorio base. Sin ella, sus opcodes siguen
+asignados y ejecutarlos produce `ERROR_INVALID_OPCODE`. `alu_extended` requiere
+`mul_div`, sin que la implicación inversa sea válida. Los backends actuales la
+ofrecen salvo la CPU de `10.fpga-cpu-ram`, que puede omitirla sin incumplir la base.
 
 Disponibilidad actual de las capabilities de instrucciones en MiniCPU:
 
@@ -56,7 +82,9 @@ En la GPU, `JALR` y `JR` sacan el destino de un registro por lane, y un warp sol
 puede seguir si **todas sus lanes activas** llegan al mismo destino. Si no, para
 con `ERROR_SIMT` (0x06) en lugar de serializar en silencio: no hay un destino que
 apilar en la pila de divergencia. Un warp convergente, o con lanes enmascaradas
-que coinciden, funciona como en la CPU.
+que coinciden, funciona como en la CPU. La uniformidad se comprueba sobre los
+destinos efectivos después de cálculo y alineación, antes de escribir cualquier
+enlace; si falla, no hay escrituras parciales de enlace.
 
 Las declaraciones del runner están en
 [`backends/fpga_cpu.py`](../t.tests/backends/fpga_cpu.py) y
@@ -118,7 +146,7 @@ aquellos bitstreams antiguos no cumplen esta especificación vigente.
       6           5         5         5            11
 ```
 
-`extra` debe ser cero, con **una excepción**: en `SHL`, `SHR` y `SAR` el bit 10
+En el repertorio vigente, `extra` debe ser cero, con **una excepción**: en `SHL`, `SHR` y `SAR` el bit 10
 significa «la cantidad es inmediata» y solo `extra[9:0]` está reservado. Ver
 [§3, desplazamientos](#desplazamientos-con-cantidad-inmediata).
 
@@ -165,14 +193,141 @@ Los ceros de esta tabla son campos reservados, no lecturas de `R0`.
 
 ## 3. Mapa de opcodes
 
-Los dos bits altos del opcode separan cuatro familias:
+Este catálogo reúne el repertorio vigente y las extensiones compatibles
+propuestas. La columna Estado y el soporte funcional distinguen definición e
+implementación. Las asignaciones propuestas no cambian por sí mismas ningún
+backend. Los contratos detallados se desarrollan después de la tabla y en §7.
 
-| Rango       | Prefijo  | Uso                  |
-|-------------|----------|----------------------|
-| `0x00–0x0F` | `00xxxx` | ALU y aritmética     |
-| `0x10–0x1F` | `01xxxx` | Inmediatos y memoria |
-| `0x20–0x2F` | `10xxxx` | Control de flujo     |
-| `0x30–0x3F` | `11xxxx` | Sistema y SIMT       |
+#### Lectura del soporte funcional
+
+La columna **Sim. funcional (CPU / GPU)** muestra el soporte por arquitectura,
+en ese orden: `Sí / No` significa implementada en CPU y ausente en GPU.
+`No-op / Sí` indica que la CPU acepta la instrucción sin efecto y la GPU
+implementa su semántica SIMT.
+
+Comprobado contra los núcleos de [MiniCPU funcional (2)](../2.cpu-sim-func/minicpu_core.py)
+y [MiniGPU funcional (11)](../11.gpu-sim-func/minigpu_core.py). El
+[simulador integrado (32)](../32.cpu-gpu-func-sim/cpu_gpu_core.py) reutiliza ambos
+núcleos. La columna describe ejecución funcional; la disponibilidad en FPGA se
+consulta por separado en las capabilities de cada prototipo.
+
+#### Catálogo por opcode y selector
+
+- **Base** es el repertorio base de la arquitectura, no una capability del
+  runner. En las filas vigentes, los nombres entre comillas de código son
+  capabilities de `isa.md`.
+- **Base (GPU)** identifica el repertorio base de la arquitectura GPU,
+  incluidas las instrucciones SIMT; no es una capability llamada `simt`. `SSY` y `BAR` tienen efecto no-op en la CPU escalar.
+- **`gpu_ids` (GPU)** añade los identificadores `GETLANE`, `GETWARP`,
+  `GETLWARP` y `GETARG` al `GETTID` base. Comparten
+  `0x30` con `GETTID`; `type` ocupa el campo Y y `imm16` debe ser cero.
+  `GETID` es el nombre de la familia, no un opcode adicional. En CPU solo
+  está definido `GETTID`, que devuelve cero.
+- `SHLI`, `SHRI` y `SARI` comparten opcode con los desplazamientos por
+  registro; el bit 10 selecciona la variante inmediata.
+
+Las filas están ordenadas por **opcode primario y selector** (`bit 10`,
+`type` o `func6`). La tabla contiene **59 mnemónicos vigentes y 15 propuestos**,
+además de los cinco opcodes que seguirían libres al adoptar toda v0.2.
+Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuestos.
+
+| Opcode y selector | Categoría | Extensión / ámbito | Instrucción | Operandos | Estado | Sim. funcional (CPU / GPU) | Definición |
+|---|---|---|---|---|---|---|---|
+| `0x00` | Sistema | Base | `NOP` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x01` | Aritmética entera | Base | `ADD` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#alu-y-aritmética) |
+| `0x02` | Aritmética entera | Base | `SUB` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#alu-y-aritmética) |
+| `0x03` | Aritmética entera | `mul_div` | `MULFX` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#multiplicación-y-división) |
+| `0x04` | Lógica | Base | `AND` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#alu-y-aritmética) |
+| `0x05` | Lógica | Base | `OR` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#alu-y-aritmética) |
+| `0x06` | Lógica | Base | `XOR` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#alu-y-aritmética) |
+| `0x07`; `bit 10 = 0` | Desplazamientos | Base | `SHL` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x07`; `bit 10 = 1` | Desplazamientos | `shift_immediate` | `SHLI` | `Rd, Ra, imm5` | Vigente | Sí / No | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x08`; `bit 10 = 0` | Desplazamientos | Base | `SHR` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x08`; `bit 10 = 1` | Desplazamientos | `shift_immediate` | `SHRI` | `Rd, Ra, imm5` | Vigente | Sí / No | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x09`; `bit 10 = 0` | Desplazamientos | Base | `SAR` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x09`; `bit 10 = 1` | Desplazamientos | `shift_immediate` | `SARI` | `Rd, Ra, imm5` | Vigente | Sí / No | [isa.md §3](#desplazamientos-con-cantidad-inmediata) |
+| `0x0A` | Aritmética entera | `mul_div` | `MUL` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#multiplicación-y-división) |
+| `0x0B` | Aritmética entera | `alu_extended` | `MULHI` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#multiplicación-y-división) |
+| `0x0C` | Aritmética entera | `mul_div` | `DIV` | `Rd, Ra, Rb` | Vigente | Sí / Sí | [isa.md §3](#multiplicación-y-división) |
+| `0x0D` | Aritmética entera | `alu_extended` | `DIVU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#multiplicación-y-división) |
+| `0x0E` | Aritmética entera | `alu_extended` | `REM` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#multiplicación-y-división) |
+| `0x0F` | Aritmética entera | `alu_extended` | `REMU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#multiplicación-y-división) |
+| `0x10` | Constantes | Base | `MOVI` | `Rd, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x11` | Aritmética inmediata | Base | `ADDI` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x12` | Lógica inmediata | Base | `ANDI` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x13` | Lógica inmediata | Base | `ORI` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x14` | Lógica inmediata | Base | `XORI` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x15` | Memoria | Base | `LOAD` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x16` | Memoria | Base | `STORE` | `Rs, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x17` | Constantes | Base | `MOVHI` | `Rd, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x18` | Memoria | `subword_memory` | `LOADB` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x19` | Memoria | `subword_memory` | `LOADUB` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x1A` | Memoria | `subword_memory` | `STOREB` | `Rs, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x1B` | Memoria | `subword_memory` | `LOADH` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x1C` | Memoria | `subword_memory` | `LOADUH` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x1D` | Memoria | `subword_memory` | `STOREH` | `Rs, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#inmediatos-y-memoria) |
+| `0x1E`; `func6 = 0x00` | Límites signed | `minmax` | `MIN` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x01` | Límites signed | `minmax` | `MAX` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x02` | Límites unsigned | `minmax` | `MINU` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x03` | Límites unsigned | `minmax` | `MAXU` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x04` | Selección | `select` | `SEL` | `Rd, Ra, Rb, Rc` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x05` | Acumulación Q16.16 | `macfx` | `MACFX` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x06` | Recíproco Q16.16 | `rcpfx` | `RCPFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x07` | Raíz inversa Q16.16 | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x08` | Conversión de píxeles | `pack565` | `PACK565` | `Rd, Ra` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1F` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#inmediatos-y-memoria); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x20` | Saltos | Base | `BEQ` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x21` | Saltos | Base | `BNE` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x22` | Saltos | Base | `BLT` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x23` | Saltos | Base | `BGE` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x24` | Saltos | Base | `BLTU` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x25` | Saltos | Base | `BGEU` | `Ra, Rb, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x26` | Comparaciones | `compare` | `SLT` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#control-de-flujo) |
+| `0x27` | Comparaciones | `compare` | `SLTU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#control-de-flujo) |
+| `0x28` | Saltos con inmediato | `branch_immediate` | `BLTI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x29` | Saltos con inmediato | `branch_immediate` | `BGEI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x2A` | Saltos con inmediato | `branch_immediate` | `BLTUI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x2B` | Saltos con inmediato | `branch_immediate` | `BGEUI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x2C` | Llamadas y retornos | `calls` | `JAL` | `Rd, target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x2D` | Llamadas y retornos | `calls` | `JALR` | `Rd, Ra, imm16` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x2E` | Llamadas y retornos | `calls` | `JR` | `Ra` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x2F` | Saltos | Base | `BRA` | `target` | Vigente | Sí / Sí | [isa.md §3](#control-de-flujo) |
+| `0x30`; `type = 0` | Identificadores de ejecución | Base | `GETTID` | `Rd` | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x30`; `type = 1` | Identificadores de ejecución | `gpu_ids` (GPU) | `GETLANE` | `Rd` | Vigente | No / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x30`; `type = 2` | Identificadores de ejecución | `gpu_ids` (GPU) | `GETWARP` | `Rd` | Vigente | No / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x30`; `type = 3` | Identificadores de ejecución | `gpu_ids` (GPU) | `GETLWARP` | `Rd` | Vigente | No / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x30`; `type = 4` | Identificadores de ejecución | `gpu_ids` (GPU) | `GETARG` | `Rd` | Vigente | No / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x31` | Control SIMT | Base (GPU) | `SSY` | `label` | Vigente | No-op / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x32` | Control SIMT | Base (GPU) | `BAR` | — | Vigente | No-op / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x33` | Control SIMT | Base (GPU) | `EXIT` | — | Vigente | No / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x34` | Saltos con inmediato | `branch_immediate` | `BEQI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x35` | Saltos con inmediato | `branch_immediate` | `BNEI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
+| `0x36` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x37` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x38` | Aritmética FP32 | `fp32` | `FADD` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x39` | Aritmética FP32 | `fp32` | `FSUB` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3A` | Aritmética FP32 | `fp32` | `FMUL` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3B` | Aritmética FP32 | `fp32` | `FDIV` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3C` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x3D` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x3E` | Sistema | Base | `TRAP` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
+| `0x3F` | Sistema | Base | `HALT` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
+
+`HALT` detiene la CPU; en GPU retira las lanes activas como `EXIT`. Los detalles
+numéricos, formatos, campos reservados y errores se consultan en las secciones
+enlazadas, junto con [los formatos de instrucción](#2-formatos-de-instrucción)
+y [las reglas de conformidad](#6-conformidad-y-evolución).
+
+En EXT, `Rc = 0` está reservado para `MIN/MAX/MINU/MAXU/MACFX`;
+`Rb = Rc = 0` para `RCPFX/RSQRTFX/PACK565`. `SEL` usa los cuatro registros.
+La falta de contrato numérico de `RCPFX/RSQRTFX` impide tratarlas como listas
+para implementar aunque ya tengan una asignación propuesta.
+
+El mapa vigente tiene **52 opcodes primarios ocupados y 12 reservados**.
+V0.2 propone ocupar siete de esos huecos: `0x1E`, `0x28–0x2B` y `0x34–0x35`.
+Si se adoptara todo el conjunto, habría **59 ocupados y 5 libres**:
+`0x1F`, `0x36`, `0x37`, `0x3C` y `0x3D`. Las 55 funciones EXT `0x09–0x3F`
+seguirían libres. La ocupación por bloques se resume en §7.4.
 
 ### ALU y aritmética
 
@@ -181,16 +336,16 @@ Los dos bits altos del opcode separan cuatro familias:
 | `0x00` | `NOP`     | —            | Sin efecto                        | Base           |
 | `0x01` | `ADD`     | `Rd, Ra, Rb` | `Rd = Ra + Rb`                    | Base           |
 | `0x02` | `SUB`     | `Rd, Ra, Rb` | `Rd = Ra - Rb`                    | Base           |
-| `0x03` | `MULFX`   | `Rd, Ra, Rb` | multiplicación signed Q16.16      | Base           |
+| `0x03` | `MULFX`   | `Rd, Ra, Rb` | multiplicación signed Q16.16      | `mul_div`           |
 | `0x04` | `AND`     | `Rd, Ra, Rb` | AND bit a bit                     | Base           |
 | `0x05` | `OR`      | `Rd, Ra, Rb` | OR bit a bit                      | Base           |
 | `0x06` | `XOR`     | `Rd, Ra, Rb` | XOR bit a bit                     | Base           |
 | `0x07` | `SHL`     | `Rd, Ra, Rb` | desplazamiento lógico izquierdo   | Base           |
 | `0x08` | `SHR`     | `Rd, Ra, Rb` | desplazamiento lógico derecho     | Base           |
 | `0x09` | `SAR`     | `Rd, Ra, Rb` | desplazamiento aritmético derecho | Base           |
-| `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | Base           |
+| `0x0A` | `MUL`     | `Rd, Ra, Rb` | 32 bits bajos de `Ra × Rb`        | `mul_div`           |
 | `0x0B` | `MULHI`   | `Rd, Ra, Rb` | 32 bits altos, **signed**         | `alu_extended` |
-| `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | Base           |
+| `0x0C` | `DIV`     | `Rd, Ra, Rb` | división signed, hacia cero       | `mul_div`           |
 | `0x0D` | `DIVU`    | `Rd, Ra, Rb` | división unsigned                 | `alu_extended` |
 | `0x0E` | `REM`     | `Rd, Ra, Rb` | resto signed, signo del dividendo | `alu_extended` |
 | `0x0F` | `REMU`    | `Rd, Ra, Rb` | resto unsigned                    | `alu_extended` |
@@ -273,7 +428,7 @@ recuperación arquitectónica.
 |      `0x1D` | `STOREH`  | `Rs, Ra, imm16` | escribe `Rs[15:0]`                    | `subword_memory` |
 | `0x1E–0x1F` | —         | —               | Reservadas                            | —                |
 
-Los seis accesos sub-palabra siguen el mapa de `propuesta-v0.2.md` §6 y
+Los seis accesos sub-palabra siguen el mapa vigente de esta tabla y
 aparecieron en `19.fpga-cpu-hdmi-ls`. Quedan **dos opcodes libres** en esta
 familia.
 
@@ -360,6 +515,55 @@ BRA:                 target = PC + 4 + sign_extend(offset26) * 4
 
 El ensamblador calcula estos offsets al resolver labels.
 
+### Aritmética FP32 (capability `fp32`)
+
+| Opcode | Mnemónico | Operandos | Resultado |
+|-------:|-----------|-----------|-----------|
+| `0x38` | `FADD` | `Rd, Ra, Rb` | binary32(Ra) + binary32(Rb) |
+| `0x39` | `FSUB` | `Rd, Ra, Rb` | binary32(Ra) − binary32(Rb) |
+| `0x3A` | `FMUL` | `Rd, Ra, Rb` | binary32(Ra) × binary32(Rb) |
+| `0x3B` | `FDIV` | `Rd, Ra, Rb` | binary32(Ra) / binary32(Rb) |
+
+Son R-Type, con `extra[10:0] = 0` (si no, `ERROR_INVALID_ENCODING`). Los
+operandos y el resultado son **patrones IEEE 754 binary32 en los registros
+generales R0–R31**; no hay banco FP separado ni conversión implícita desde
+enteros o Q16.16. Se cargan con `LI`, `MOVHI`/`ORI` o `LOAD` y se guardan con
+`STORE`. R0 representa +0 y descarta la escritura como en las demás operaciones.
+
+Contrato numérico:
+
+- Redondeo fijo **al más cercano, con desempate al par** (RNE), después de
+  cada operación. No hay FMA ni registros de modo o flags FP.
+- **DAZ**: cada entrada subnormal se trata como cero conservando el signo.
+- **FTZ**: se redondea primero a binary32; si el resultado es subnormal, se
+  sustituye por cero con su signo. Un valor que redondea al mínimo normal se
+  conserva como normal. Un desbordamiento devuelve infinito con signo.
+- Cualquier NaN, incluido señalizante, y cualquier operación inválida producen
+  el NaN canónico `0x7FC00000`, sin conservar payload ni signo.
+- `∞ + (−∞)`, `∞ − ∞`, `0 × ∞`, `0 / 0` e `∞ / ∞` son inválidas. Las reglas
+  se aplican después de DAZ. Un finito no nulo dividido por ±0 devuelve infinito
+  con el signo XOR; un finito dividido por infinito devuelve cero con signo XOR.
+- Suma y resta con cancelación exacta producen +0; sumar dos ceros con el mismo
+  signo conserva ese signo (en FSUB se invierte primero el signo de Rb).
+  Multiplicación y división usan el signo XOR también para cero e infinito.
+
+Los casos numéricos especiales **no generan excepciones de CPU**: en particular,
+FDIV por cero no produce `ERROR_DIVISION_BY_ZERO`. No hay flags de excepción.
+
+Implementado en la CPU del prototipo **38**, el simulador CPU **2** y la CPU del
+simulador integrado **32**. Las GPU y los demás prototipos no ofrecen todavía
+esta capability. Los opcodes se asignan del espacio antes reservado `0x34–0x3D`,
+y no cambian los binarios existentes. Las propuestas v0.2–v0.4 siguen siendo
+propuestas, con mapas propios. El compilador C mantiene su soporte actual:
+esta extensión permite por ahora escribir operaciones FP32 en ensamblador;
+no añade conversiones, comparaciones FP ni generación nativa de `float` en lcc.
+
+```asm
+LI R1, 0x3fc00000        ; 1.5
+LI R2, 0x40100000        ; 2.25
+FADD R3, R1, R2          ; R3 = 0x40700000 (3.75)
+```
+
 ### Sistema y SIMT
 
 `GETTID`, `TRAP` y `HALT` pertenecen a la base. `SSY`, `BAR` y `EXIT`
@@ -371,7 +575,8 @@ son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
 |      `0x31` | `SSY`     | `label`   | MiniGPU; en MiniCPU no-op. B-Type    |
 |      `0x32` | `BAR`     | —         | MiniGPU; en MiniCPU no-op            |
 |      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
-| `0x34–0x3D` | —         | —         | Reservadas para GPU                  |
+| `0x34–0x37`, `0x3C–0x3D` | — | — | Reservadas para GPU |
+| `0x38–0x3B` | `FADD/FSUB/FMUL/FDIV` | `Rd, Ra, Rb` | Extensión `fp32`, ver arriba |
 |      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error |
 |      `0x3F` | `HALT`    | —         | Definida e implementada              |
 
@@ -407,6 +612,11 @@ al repertorio implementado por la MiniCPU escalar.
 con el campo `type` en el campo Y de un I-Type con `imm16 = 0`. `type = 0` es el
 `GETTID` de siempre, así que los binarios existentes no cambian.
 
+`GETTID` pertenece a la base. Las otras cuatro variantes requieren la capability
+`gpu_ids`, exclusiva de GPU; una implementación sin ella solo admite `type = 0`
+y rechaza los otros selectores con `ERROR_INVALID_ENCODING`. El nombre GETID
+agrupa el encoding compartido, no identifica una extensión por sí mismo.
+
 | `type` | Mnemónico | Devuelve |
 |---:|---|---|
 | 0 | `GETTID` | thread residente, `warp_id * warp_size + core_id` |
@@ -420,9 +630,28 @@ Un `type` mayor que 4, o `imm16` distinto de cero, es `ERROR_INVALID_ENCODING`.
 y `WARP_ARG[n]` (`mmio.md` §14.2), y cero tras el reset. Son iguales para todas las
 lanes del warp, y solo escriben las lanes activas.
 
-`GETLWARP` es el antiguo `GETWID` (`warp_user_id`) de las propuestas v0.2 a v0.4b:
+`GETLWARP` es el antiguo `GETWID` (`warp_user_id`) usado en borradores anteriores:
 se renombró porque `GETWID` se leía como «workgroup id», que es otra cosa
 (`WORKGROUP_ID` solo agrupa warps para `BAR`). `GETARG` es nueva.
+
+El identificador lógico es independiente del slot físico y de WORKGROUP_ID;
+no exige unicidad ni asigna trabajo implícitamente. Al mover un trabajo de slot
+o de SM, el lanzador conserva ID y argumento; no se presupone migración automática.
+
+Su configuración sigue [MMIO §14.2](mmio.md#142-gpu-warps--0x82010000), GPU
+WARPS con base `0x82010000`:
+
+| Offset | Registro | Instrucción |
+|---|---|---|
+| `+0x200 + 4n` | `LOGICAL_WARP_ID[n]` | `GETLWARP` |
+| `+0x280 + 4n` | `WARP_ARG[n]` | `GETARG` |
+
+No ocupan el cuarto word del descriptor, reservado a SIMT_STATE. Escribirlos
+con ese warp vivo es error, incluso si está pausado; se pueden configurar con
+ese warp no vivo. Valen cero tras reset del sistema; GPU_CONTROL.RESET conserva
+ambos arrays y los descriptores. HALT/RESUME no los altera. Si el ID representa
+un número de bloque, el programa calcula `logical_warp_id * warp_size + lane_id`;
+si representa una base de elementos, puede sumar directamente GETLANE.
 
 **Estado:** el ensamblador (`asm2/mini-asm.py`), el simulador funcional de `11`
 y el de `32` los implementan. **Faltan** el modelo de ciclos de `25` y el RTL.
@@ -495,6 +724,39 @@ SHLI R3, R2, 2      ; indice -> desplazamiento en bytes, sin gastar un MOVI
 SHL  R3, R2, R4     ; la misma operacion con la cantidad en un registro
 ```
 
+### Pseudoinstrucciones y alias
+
+Estas tres construcciones se expanden durante el ensamblado y no reservan
+opcodes nuevos. Su soporte funcional corresponde a las instrucciones emitidas
+por el ensamblador, implementadas tanto en la CPU como en la GPU funcionales.
+Cada palabra emitida ocupa cuatro bytes y se ejecuta como una instrucción.
+
+| Categoría | Mnemónico | Operandos | Expansión vigente | Palabras | Sim. funcional (CPU / GPU) | Definición |
+|---|---|---|---|---|---|---|
+| Constantes / pseudoinstrucción | `LI` | `Rd, expr` | `MOVI`, `ORI Rd, R0, v` o `MOVHI` + `ORI`, según el valor y la forma del operando | 1 o 2 | Sí / Sí (vía expansión) | [ensamblador.md, sintaxis](ensamblador.md#sintaxis) |
+| Direcciones / pseudoinstrucción | `LA` | `Rd, etiqueta` | `MOVHI Rd, hi16` + `ORI Rd, Rd, lo16` de la dirección absoluta de 32 bits | 2 | Sí / Sí (vía expansión) | [ensamblador.md, sintaxis](ensamblador.md#sintaxis) |
+| Retorno / alias de ensamblador | `RET` | — | `JR R31` (`0x2E`) | 1 | Sí / Sí (vía `JR`) | [ensamblador.md, sintaxis](ensamblador.md#sintaxis); [isa.md §3, control de flujo](#control-de-flujo) |
+
+Para `LI`, los literales numéricos entre −32768 y 32767 emiten un `MOVI`;
+los demás literales emiten `MOVHI` + `ORI`, incluso entre 32768 y 65535.
+Los operandos simbólicos (etiquetas, constantes `.equ` y sus expresiones)
+se relajan: emiten `MOVI` entre −32768 y 32767, `ORI Rd, R0, v` entre
+32768 y 65535, y dos palabras en los demás casos.
+
+`LA` siempre emite dos palabras, sin relajación, y admite expresiones de
+direcciones como `tabla+8`. `RET` usa el registro de enlace R31 por convención
+de software; el hardware ejecuta un `JR` ordinario.
+
+`MOVI` usa `0x10`, `ORI` usa `0x13` y `MOVHI` usa `0x17`: sus definiciones
+están en la tabla de instrucciones anterior. Las variantes `SHLI`, `SHRI` y `SARI`
+también se describen en `ensamblador.md` y ya figuran en la tabla de instrucciones
+como variantes del encoding de los desplazamientos, con una sola palabra.
+
+Los nombres de instrucciones que aparecen como alternativas futuras en
+`isa.md` no cambian las expansiones vigentes de esta tabla. Las directivas
+como `.word`, `.equ` o `.include` se documentan en
+[ensamblador.md, directivas](ensamblador.md#directivas).
+
 ## 6. Conformidad y evolución
 
 Una implementación conforme debe cumplir las reglas comunes, incluido `R0=0`,
@@ -523,7 +785,292 @@ RET    -> JALR R0, R31, 0
 ```
 
 La propuesta v0.2 conserva `JR` en `0x2E` y plantea esta alternativa como
-evolución; la v0.3 sí elimina su opcode y adopta la pseudoinstrucción.
+evolución; la v0.4 sí elimina su opcode y adopta la pseudoinstrucción.
 **MiniISA v0.1 vigente conserva `JR` y `0x2E` sigue ocupado.** Eliminarlo o
 reasignarlo rompería los binarios que lo utilizan y requeriría una revisión
 explícita de la codificación y del ensamblador.
+
+
+## 7. Extensiones compatibles propuestas (v0.2)
+
+Las siguientes asignaciones son propuestas documentales, no instrucciones
+implementadas. Las operaciones vigentes y sus binarios conservan su contrato.
+Las capacidades se pueden adoptar por separado; RCPFX y RSQRTFX siguen sin
+contrato numérico cerrado y no deben anunciarse como soportadas.
+
+### 7.1 Capabilities propuestas y decisiones pendientes
+
+Los nombres de esta tabla son **propuestas**, no entradas existentes del
+runner. `gpu_ids` ya existe con el contrato de §3; no se redefine aquí ni se
+añade una capability separada `warp_user_id`:
+
+| Capability propuesta | Operaciones                  | Alcance inicial propuesto                  |
+|----------------------|------------------------------|--------------------------------------------|
+| `branch_immediate`   | Los seis branches inmediatos | CPU y GPU                                  |
+| `minmax`             | `MIN`, `MAX`, `MINU`, `MAXU` | CPU y GPU                                  |
+| `select`             | `SEL`                        | CPU y GPU                                  |
+| `macfx`              | `MACFX`                      | CPU y GPU                                  |
+| `pack565`            | `PACK565`                    | CPU y GPU                                  |
+| `rcpfx`              | `RCPFX`                      | Pendiente del contrato numérico            |
+| `rsqrtfx`            | `RSQRTFX`                    | Pendiente del contrato numérico            |
+
+No se propone una capability única que obligue a implementar todo `EXT`.
+Compartir opcode no implica compartir disponibilidad: un backend puede ofrecer
+`MIN/MAX` sin recíproco. La implementación de las propuestas debe declarar
+estas capabilities en CPU y GPU y comprobar `requires` contra cada backend.
+
+Antes de implementar falta:
+
+1. Aprobar las asignaciones nuevas y los nombres/grupos de capabilities.
+2. Cerrar los contratos numéricos de `RCPFX` y `RSQRTFX`.
+3. Elegir qué operaciones se incorporan primero y a qué backends, con medidas
+   reproducibles de instrucciones, ciclos, área y timing.
+
+Quedan fuera de este alcance la eliminación de `JR`, los branches compactados
+de v0.4, el cambio de unidades de `JALR`, rotaciones y las nuevas operaciones de
+voto/intercambio (`BALLOT`, `ANY`, `ALL`, `SHFL`), que no reciben encoding aquí.
+V0.3 propone LEAPC y LOADX; LDR relativo al PC permanece sin encoding.
+
+### 7.2 Branches con inmediato
+
+Permiten comparar con una constante pequeña sin preparar otro registro:
+
+```asm
+; Secuencia vigente:
+MOVI R2, 4
+BLT  R1, R2, low
+
+; Instrucción propuesta:
+BLTI R1, 4, low
+```
+
+Las comparaciones contra cero ya pueden usar `R0`; el beneficio de estas nuevas
+instrucciones debe medirse sobre todo para otras constantes.
+
+#### Formato y semántica
+
+Se conserva I-Type, sustituyendo el segundo registro por `imm5`:
+
+```text
+31          26 25    21 20    16 15                         0
++-------------+--------+--------+----------------------------+
+|   opcode    |   Ra   |  imm5  |       signed offset16      |
++-------------+--------+--------+----------------------------+
+```
+
+| Opcode propuesto | Mnemónico | Comparación             | Extensión de `imm5`  |
+|------------------|-----------|-------------------------|----------------------|
+| `0x34`           | `BEQI`    | `Ra == imm`             | Con signo, `-16..15` |
+| `0x35`           | `BNEI`    | `Ra != imm`             | Con signo, `-16..15` |
+| `0x28`           | `BLTI`    | `signed32(Ra) < imm`    | Con signo, `-16..15` |
+| `0x29`           | `BGEI`    | `signed32(Ra) >= imm`   | Con signo, `-16..15` |
+| `0x2A`           | `BLTUI`   | `unsigned32(Ra) < imm`  | Con ceros, `0..31`   |
+| `0x2B`           | `BGEUI`   | `unsigned32(Ra) >= imm` | Con ceros, `0..31`   |
+
+`SLT` y `SLTU` conservan `0x26/0x27`. Por eso `BEQI/BNEI` se proponen en
+`0x34/0x35`; los identificadores GPU permanecen agrupados en `0x30`. El prefijo del opcode no basta para decidir la
+operación ni el formato: estos dos branches usan I-Type aunque sus opcodes
+estén en el bloque `0x30–0x3F`.
+
+La igualdad compara los 32 bits después de extender el inmediato. Así,
+`BEQI Ra, -1, label` compara con `0xFFFFFFFF`, no con 31.
+
+```text
+si se cumple: PC = low32(PC + 4 + sign_extend(offset16) * 4)
+si no:        PC = low32(PC + 4)
+```
+
+`PC` es la dirección de la instrucción. El offset admite `-32768..32767`
+palabras, aproximadamente ±128 KiB. El ensamblador resuelve etiquetas y rechaza
+inmediatos o destinos fuera de rango. No cambia la codificación de `BEQ`…`BGEU`.
+En GPU se aplican las reglas de divergencia y reconvergencia de los branches
+registro-registro existentes.
+
+### 7.3 Operaciones nuevas mediante EXT
+
+#### Operaciones y contratos
+
+| Operación propuesta | Utilidad                         | Grado de definición                  |
+|---------------------|----------------------------------|--------------------------------------|
+| `MIN`, `MAX`        | Límites y recorte signed32       | Semántica definida en esta propuesta |
+| `MINU`, `MAXU`      | Índices y profundidad unsigned32 | Semántica definida en esta propuesta |
+| `SEL`               | Selección de datos sin branch    | Semántica definida en esta propuesta |
+| `MACFX`             | Acumulación Q16.16               | Semántica definida en esta propuesta |
+| `PACK565`           | Conversión RGB888 a RGB565       | Semántica definida en esta propuesta |
+| `RCPFX`, `RSQRTFX`  | Recíproco y raíz inversa Q16.16  | Contrato numérico pendiente          |
+
+`MIN/MAX` devuelven el menor/mayor operando según comparación signed32;
+`MINU/MAXU` usan unsigned32. `SEL Rd, Ra, Rb, Rc` devuelve `Ra` si el contenido
+de `Rc` no es cero y `Rb` en caso contrario.
+
+`MACFX Rd, Ra, Rb` equivale a `MULFX` seguido de suma al antiguo `Rd`:
+
+```text
+product = signed64(signed32(Ra) * signed32(Rb))
+Rd = low32(old_Rd + low32(product >> 16))
+```
+
+El desplazamiento es aritmético. No hay acumulador oculto de 64 bits ni redondeo
+fusionado. Se leen todos los valores anteriores, aunque coincidan registros.
+Con `Rd = R0`, el acumulador leído es cero y el resultado se descarta.
+`MACFX` y `SEL` requieren tres lecturas: pueden necesitar otro ciclo o más
+puertos de registro. No se promete latencia de un ciclo.
+
+`PACK565 Rd, Ra` convierte `0x00RRGGBB` a RGB565 en los 16 bits bajos y deja
+los 16 altos a cero; ignora el byte alto de `Ra`:
+
+```text
+Rd = ((Ra >> 8) & 0xF800) | ((Ra >> 5) & 0x07E0) | ((Ra >> 3) & 0x001F)
+```
+
+Para `RCPFX` y `RSQRTFX` faltan dominio, rango, precisión, error máximo,
+redondeo, saturación/desbordamiento y tratamiento de cero y negativos. Sus
+subopcodes se proponen para planificación, pero **no están listas para implementar**.
+`DIV` entero no sustituye directamente esas operaciones Q16.16.
+
+#### Encoding propuesto: `EXT` en `0x1E`
+
+```text
+31       26 25   21 20   16 15   11 10    6 5          0
++----------+-------+-------+-------+-------+------------+
+| EXT=0x1E |  Rd   |  Ra   |  Rb   |  Rc   |   func6    |
++----------+-------+-------+-------+-------+------------+
+```
+
+Son 32 bits: 6 de opcode, cuatro campos de registro de 5 bits y 6 de función.
+Solo `EXT` interpreta los once bits bajos como `Rc + func6`. El decodificador
+no puede asumir que toda la familia `01xxxx` es I-Type. Ningún encoding vigente
+cambia; el ensamblador expondrá los mnemónicos, no un `EXT` genérico.
+
+| `func6` propuesto | Mnemónico  | Operandos        | Campos reservados                 |
+|-------------------|------------|------------------|-----------------------------------|
+| `0x00`            | `MIN`      | `Rd, Ra, Rb`     | `Rc = 0`                          |
+| `0x01`            | `MAX`      | `Rd, Ra, Rb`     | `Rc = 0`                          |
+| `0x02`            | `MINU`     | `Rd, Ra, Rb`     | `Rc = 0`                          |
+| `0x03`            | `MAXU`     | `Rd, Ra, Rb`     | `Rc = 0`                          |
+| `0x04`            | `SEL`      | `Rd, Ra, Rb, Rc` | Ninguno                           |
+| `0x05`            | `MACFX`    | `Rd, Ra, Rb`     | `Rc = 0`                          |
+| `0x06`            | `RCPFX`    | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
+| `0x07`            | `RSQRTFX`  | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
+| `0x08`            | `PACK565`  | `Rd, Ra`         | `Rb = Rc = 0`                     |
+| `0x09–0x3F`       | Reservadas | —                | 55 suboperaciones disponibles     |
+
+Un campo reservado a cero no es un operando leído. Los campos reservados no
+nulos producen `ERROR_INVALID_ENCODING`; una función reservada o no soportada
+produce `ERROR_INVALID_OPCODE`. Todas las operaciones respetan `R0=0`; en GPU
+solo escriben las lanes activas y no modifican las máscaras SIMT.
+
+### 7.4 Mapa conjunto y ocupación
+
+#### Qué añadiría el conjunto completo
+
+Sobre el repertorio vigente se proponen **15 operaciones nuevas**: seis
+branches inmediatos y nueve operaciones bajo `EXT`. Consumen **7 opcodes
+primarios nuevos**: seis para los branches y uno para EXT. Dos operaciones EXT
+tienen contrato numérico pendiente. Los cinco mnemónicos GETID ya están
+incorporados y no cuentan como novedades de esta revisión.
+
+Portar capabilities existentes entre backends no consume nuevos opcodes.
+`R0`, `JR`, las unidades de los saltos y todos los encodings vigentes,
+incluidos `SLT/SLTU`, GETID y FP32, permanecen iguales.
+
+El [catálogo de §3](#3-mapa-de-opcodes) es el mapa conjunto de referencia:
+Vigente identifica asignaciones definidas, Propuesta v0.2 las ampliaciones
+compatibles pendientes y Reservado los huecos sin asignar. No se reproduce
+otro mapa paralelo aquí.
+
+#### Ocupación
+
+| Bloque de opcodes | Ocupados vigentes | Libres vigentes | Nuevos propuestos | Libres resultantes |
+|---|---:|---:|---:|---:|
+| `0x00–0x0F` | 16 | 0 | 0 | 0 |
+| `0x10–0x1F` | 14 | 2 | 1 | 1 |
+| `0x20–0x2F` | 12 | 4 | 4 | 0 |
+| `0x30–0x3F` | 10 | 6 | 2 | 4 |
+| **Total** | **52** | **12** | **7** | **5** |
+
+El conjunto completo ocuparía **59 de 64 opcodes**, con **5 libres**:
+`0x1F`, `0x36`, `0x37`, `0x3C` y `0x3D`. Quedan también **55 suboperaciones
+EXT libres** (`func6 = 0x09–0x3F`). Los bloques indican posiciones del mapa;
+no imponen un formato único ni limitan la categoría semántica de sus operaciones.
+
+No se puede recuperar `0x2E` sin romper compatibilidad. Si las nueve
+operaciones EXT consumieran un opcode principal cada una, harían falta ocho
+opcodes más que con EXT y se excedería el espacio disponible en tres.
+
+## 8. Implementación y validación por backend
+
+Esta sección describe trabajo por backend, sin nuevas asignaciones de opcode.
+El soporte se comprueba en cada implementación; que una capability exista en
+CPU o en un RTL GPU no garantiza que esté en la GPU funcional de la 11.
+
+| Capability vigente | CPU funcional (2) | GPU funcional (11) | Trabajo restante en la GPU funcional |
+|---|---|---|---|
+| `mul_div` | Sí | Sí | Mantener el contrato de `MUL`, `MULFX` y `DIV` |
+| `calls` | Sí | Sí | Mantener la regresión de destinos indirectos |
+| `subword_memory` | Sí | Sí | Mantener la regresión de tamaños, máscaras y errores |
+| `shift_immediate` | Sí | No | Bit 10 y selección de cantidad |
+| `alu_extended` | Sí | No | `MULHI`, `DIVU`, `REM`, `REMU` por lane |
+| `compare` | Sí | No | `SLT`, `SLTU` por lane |
+| `fp32` | Sí | No | Operaciones FP32 por lane, si se incorpora esta capability |
+
+El estado funcional anterior es el de los núcleos que reutiliza la 32. El
+modelo de ciclos de la 25 y los prototipos FPGA tienen su propia disponibilidad;
+por ejemplo, el RTL GPU de la 37 ya implementa `shift_immediate`,
+`alu_extended` y `compare`. Un port conserva siempre los encodings y los
+contratos de `isa.md`.
+
+### 8.1 Portabilidad de accesos pequeños
+
+El contrato de v0.1 ya está en CPU y GPU funcionales: offset16 signed en bytes,
+little-endian, alineación par para medias palabras y conservación de bytes
+vecinos. Solo acceden las lanes activas; se valida el intervalo completo de
+cada acceso. Los accesos subpalabra a MMIO se rechazan según `mmio.md` §4.1.
+
+Al portar a otro backend, la interfaz SM↔LSU debe transportar el tamaño. Las
+respuestas conservan la asociación con warp/lane y sus errores. Aceptar una
+petición no equivale a completarla: `BAR` debe esperar estos accesos. Esta
+propuesta no añade atómicos ni orden entre escrituras solapadas de distintos
+warps, ni una garantía nueva de rollback global ante un fallo parcial de un
+backend físico.
+
+Un backend EBR necesita habilitaciones por byte; uno SDRAM, máscaras adecuadas
+al tamaño y a la posición del dato. Los detalles de ráfagas y transferencias
+pertenecen a cada implementación, no al contrato de la instrucción.
+
+### 8.2 Plan de implementación y validación
+
+| Componente              | Trabajo pendiente                                                         |
+|-------------------------|---------------------------------------------------------------------------|
+| `1.isa/asm2/mini-asm.py` | Mnemónicos y encodings de los seis branches y nueve operaciones EXT; validación de operandos |
+| `2.cpu-sim-func`        | Referencia funcional de las operaciones nuevas adoptadas                  |
+| `11.gpu-sim-func`       | Nuevas operaciones, capabilities portadas, máscaras y fallos              |
+| CPU RTL basada en la 21 | Decodificación y datapaths de las capabilities elegidas                   |
+| GPU RTL                 | Portar capabilities existentes y añadir las nuevas elegidas, incluida LSU |
+| Monitor/lanzador | Mantener la configuración existente de `LOGICAL_WARP_ID`/`WARP_ARG` y la identificación de backends |
+| `t.tests`           | Declaración de capabilities, `requires` y pruebas diferenciales           |
+| `1.isa/isa.md` | Actualizar el estado de propuestas adoptadas y su disponibilidad verificada |
+
+No es necesario portar una extensión a todas las carpetas históricas para
+incorporarla a un backend. Cada backend debe declarar únicamente lo que implementa.
+
+La validación debe cubrir:
+
+- Branches: límites de `imm5` y `offset16`, extensión signed/unsigned, igualdad
+  con `-1`, saltos tomados/no tomados y divergencia/reconvergencia en GPU.
+- Identificadores: lanes/warps distintos, máscara activa, descarte en `R0`,
+  reset del sistema, conservación de descriptores en `GPU_CONTROL.RESET`,
+  pausa/reanudación y traslado del ID lógico entre slots.
+- Calls GPU: destinos efectivos uniformes y divergentes, registros coincidentes,
+  enlace descartado en `R0`, alineación y efectos observables del fallo.
+- Memoria GPU: tamaños, extensión, bytes vecinos, offsets negativos, límites,
+  alineación, errores por lane y finalización antes de `BAR`.
+- EXT: funciones no soportadas, campos reservados, operandos coincidentes,
+  extremos signed/unsigned, equivalencia de `MACFX` a `MULFX`+`ADD` y colores RGB565.
+- Aritmética portada a GPU: signos, overflow, división por cero y máscaras activas.
+- Regresión: conservar los resultados y encodings de programas v0.1; medir
+  rendimiento por separado de la equivalencia funcional.
+
+Esta revisión actualiza la propuesta documental y sus asignaciones aún no
+implementadas. No implementa instrucciones, no registra capabilities nuevas y
+no cambia los encodings ni los contratos de la ISA vigente.
