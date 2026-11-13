@@ -195,9 +195,10 @@ static float wrap_angle(float a) {
     return a;
 }
 
-/* El rumbo a apunta a (-sin a, -cos a): con a = 0, hacia -z (el norte). */
-static float dir_x(float a) { return -mgl_sin(a); }
-static float dir_z(float a) { return -mgl_cos(a); }
+/* El rumbo a apunta a (-sin a, -cos a): con a = 0, hacia -z (el norte). Con
+   la tabla (mgl_sin_fast): error < 1e-4, de sobra para mover coches. */
+static float dir_x(float a) { return -mgl_sin_fast(a); }
+static float dir_z(float a) { return -mgl_cos_fast(a); }
 /* El rumbo que apunta de un punto a otro separado (dx, dz). */
 static float heading_to(float dx, float dz) { return atan2_(-dx, -dz); }
 
@@ -1816,9 +1817,10 @@ static float road_heading(int k, float x, float z, float *right, float *along) {
 
 /* Dónde queda (x, z) respecto a t: por delante (ahead) y a la derecha (side). */
 static void relative(const Vehicle *t, float x, float z, float *ahead, float *side) {
-    float dx = x - t->x, dz = z - t->z;
-    *ahead = dx * dir_x(t->a) + dz * dir_z(t->a);
-    *side = dx * mgl_cos(t->a) - dz * mgl_sin(t->a);
+    float dx = x - t->x, dz = z - t->z, sa, ca;
+    mgl_sincos_fast(t->a, &sa, &ca);
+    *ahead = -dx * sa - dz * ca;
+    *side = dx * ca - dz * sa;
 }
 
 /* Medio ancho y medio largo: los modelos miden 16.5 x 26 (el coche) y
@@ -1897,7 +1899,7 @@ static float give_way(const Vehicle *t, float want) {
             ox = n < 0 ? car_x : traffic[n].x;
             oz = n < 0 ? car_z : traffic[n].z;
             oa = n < 0 ? car_a : traffic[n].a;
-            cross = mgl_cos(oa - t->a); /* por la otra carretera: de lado */
+            cross = mgl_cos_fast(oa - t->a); /* por la otra carretera: de lado */
             if (cross > 0.7f || cross < -0.7f) continue;
             dx = ox - cx;
             dz = oz - cz;
@@ -2194,10 +2196,18 @@ static void draw_sky(int hy) {
     }
 }
 
-/* ¿Puede verse algo en (x, z) de radio r? En planta, con margen por el cabeceo. */
+/* ¿Puede verse algo en (x, z) de radio r? En planta, con margen por el cabeceo.
+   El seno y el coseno de cam_a se guardan: se llama unas 160 veces por frame
+   con la misma cámara. */
 static int visible(float x, float z, float r) {
-    float dx = x - cam_x, dz = z - cam_z;
-    float ahead = dx * dir_x(cam_a) + dz * dir_z(cam_a), side = dx * mgl_cos(cam_a) - dz * mgl_sin(cam_a);
+    static float seen_a = 1e30f, sa, ca;
+    float dx = x - cam_x, dz = z - cam_z, ahead, side;
+    if (cam_a != seen_a) {
+        mgl_sincos_fast(cam_a, &sa, &ca);
+        seen_a = cam_a;
+    }
+    ahead = -dx * sa - dz * ca;
+    side = dx * ca - dz * sa;
     if (ahead < -r || ahead > VIEW + r) return 0;
     return absf(side) < ahead * 0.85f + r;
 }
@@ -2221,7 +2231,7 @@ static void draw_world(void) {
         pushMatrix();
         translate(p->x, -p->h, p->z);
         if (p->kind == PROP_COW) { /* pasta y de vez en cuando levanta la cabeza; se va girando */
-            rotateY(p->a + 0.6f * mgl_sin((anim + p->phase) * 0.004f));
+            rotateY(p->a + 0.6f * mgl_sin_fast((anim + p->phase) * 0.004f));
             shape((anim + p->phase) % 500 < 380 ? &cow_down : &cow_up);
             popMatrix();
             continue;
@@ -2245,7 +2255,7 @@ static void draw_world(void) {
     }
     if (deer.on && visible(deer.x, deer.z, 15.0f)) { /* al trote: da saltitos */
         pushMatrix();
-        translate(deer.x, -deer.h - 1.5f * absf(mgl_sin(anim * 0.25f)), deer.z);
+        translate(deer.x, -deer.h - 1.5f * absf(mgl_sin_fast(anim * 0.25f)), deer.z);
         rotateY(deer.a);
         shape(&deer_shape);
         popMatrix();
