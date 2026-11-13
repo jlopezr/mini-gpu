@@ -383,13 +383,13 @@ module top (
   // dos lados (ver dcache.v). Escritura inmediata, asi que la SDRAM esta al
   // dia salvo lo que guarde el bufer de combinacion, que se vacia como antes.
   // Se invalida entera con `reset` y al parar la CPU: es cuando el monitor
-  // puede escribir en memoria por su cuenta.
+  // puede escribir en memoria por su cuenta. 16 KB: 1024 lineas de 16 bytes.
   wire ad_dmem_valid, ad_dmem_ready, ad_dmem_rvalid, ad_dmem_error;
   wire [31:0] ad_dmem_address, ad_dmem_write_data, ad_dmem_read_data;
   wire [3:0] ad_dmem_write_enable;
   wire [127:0] ad_dmem_read_line;
   wire dcache_hit, dcache_miss;
-  dcache dcache_i(
+  dcache #(.LINES(1024), .INDEX_BITS(10)) dcache_i(
       .clk(clk), .reset(reset), .invalidate(cpu_halted),
       .lookup_address(dcache_lookup_address), .ex_hit(dcache_ex_hit),
       .ex_read_data(dcache_ex_read_data), .mem_advance(dcache_mem_advance),
@@ -428,7 +428,7 @@ module top (
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
       .rsp_rdata(p0_rsp_rdata), .rsp_error(p0_rsp_error));
 
-  // Cache de instrucciones de 8 KB en EBR: 512 lineas de 16 bytes, y cada
+  // Cache de instrucciones de 16 KB en EBR: 1024 lineas de 16 bytes, y cada
   // linea es exactamente una rafaga BL8. Se invalida al parar la CPU (el
   // monitor reescribe la memoria de programa con la CPU parada) y con `reset`.
   //
@@ -436,7 +436,7 @@ module top (
   // y la sintesis los quita. Los contadores de rendimiento de la CPU
   // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
   wire ibuf_hit, ibuf_miss;
-  instruction_buffer #(.LINES(512), .INDEX_BITS(9)) instruction_buffer_i(
+  instruction_buffer #(.LINES(1024), .INDEX_BITS(10)) instruction_buffer_i(
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
