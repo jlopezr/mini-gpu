@@ -41,6 +41,7 @@
    reloj.
    Uso: racer [-f frames] [-e K] [-o salida.ppm]   (plataforma 3D) */
 #include "processing3d.h"
+#include "minigl3d.h" /* mgl_clear_depth */
 
 #define PI 3.14159265f
 #define FOCAL 207.846f /* (height / 2) / tan(30°): la distancia de la cámara de Processing */
@@ -2176,8 +2177,14 @@ static void draw_sky(int hy) {
     static const float isle_a[5] = {0.7f, 1.9f, 2.6f, 4.1f, 5.3f};
     static const int isle_w[5] = {40, 22, 60, 30, 48}, isle_h[5] = {7, 4, 10, 5, 8};
     int i, x;
-    background(95, 145, 210);
+    /* Sin background(): cielo, franjas y agua cubren la pantalla entera, así que borrar el color antes era pintar
+       dos veces lo de debajo del cielo. Solo hace falta borrar la profundidad. */
+    mgl_clear_depth(1.0f);
     noStroke();
+    if (hy - 50 > 0) {
+        fill(95, 145, 210);
+        rect(0, 0, width, hy - 50 < height ? hy - 50 : height);
+    }
     fill(140, 175, 220);
     rect(0, hy - 50, width, 20);
     fill(190, 200, 215);

@@ -48,11 +48,12 @@ static mgl_u32 expected_size(unsigned int op) {
 
 static int clear(mgr_state_t *s, const unsigned char *p, unsigned int flags) {
     mgl_u32 color = RD32(p + MGL_CMD_ARG0), depth = RD32(p + MGL_CMD_ARG1);
-    if (color > 0xffffU || (flags & ~MGL_CLEAR_DEPTH) || depth > MGL_DEPTH_ONE ||
-        (!(flags & MGL_CLEAR_DEPTH) && depth))
+    if (color > 0xffffU || (flags & ~(MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR)) || depth > MGL_DEPTH_ONE ||
+        (!(flags & MGL_CLEAR_DEPTH) && depth) ||
+        ((flags & MGL_CLEAR_KEEP_COLOR) && (!(flags & MGL_CLEAR_DEPTH) || color)))
         return MGR_ERR_FORMAT;
     if (!s->color) return MGR_ERR_STATE;
-    mgr_clear_color(s, (mgl_color_t)color);
+    if (!(flags & MGL_CLEAR_KEEP_COLOR)) mgr_clear_color(s, (mgl_color_t)color);
     /* Q16.16 en [0, 1] a 0..65535, redondeando. */
     if (flags & MGL_CLEAR_DEPTH) mgr_clear_depth(s, (mgl_u16)((depth * 65535U + 0x8000U) >> 16));
     return MGR_OK;

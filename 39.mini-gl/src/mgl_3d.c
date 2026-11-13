@@ -122,7 +122,7 @@ int mgl_end_frame(void) {
     return b->error;
 }
 
-void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
+static void clear_depth(mgl_color_t c, mgl_real_t depth, mgl_u32 flags) {
     mgl_u32 d;
     if (!mgl_deferred_()) return;
     if (!in_frame || !target.depth_addr) {
@@ -135,7 +135,15 @@ void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
         d = MGL_DEPTH_ONE;
     else
         d = (mgl_u32)mgl_round(depth * 65536.0f);
-    command(MGL_CMD_CLEAR, MGL_CLEAR_DEPTH, MGL_CLEAR_BYTES, c, d);
+    command(MGL_CMD_CLEAR, flags, MGL_CLEAR_BYTES, c, d);
+}
+
+void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
+    clear_depth(c, depth, MGL_CLEAR_DEPTH);
+}
+
+void mgl_clear_depth(mgl_real_t depth) {
+    clear_depth(0, depth, MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR);
 }
 
 void mgl_set_viewport(int x, int y, int w, int h) {

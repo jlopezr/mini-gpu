@@ -69,7 +69,10 @@ de la capa de arriba.
 
 `arg0` = color RGB565. Con `flags = 0` (el CLEAR de siempre) `arg1 = 0` y solo borra el color. Con
 `flags = MGL_CLEAR_DEPTH` (1) borra también la profundidad: `arg1` es el valor en Q16.16 sin signo, de `0`
-(cerca) a `0x10000` (lejos). Borra todo el destino; no depende del viewport.
+(cerca) a `0x10000` (lejos). Con `flags = MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR` (3) borra solo la
+profundidad y `arg0` tiene que ser 0 (`mgl_clear_depth`): para frames que pintan toda la pantalla de todos modos.
+`MGL_CLEAR_KEEP_COLOR` sin `MGL_CLEAR_DEPTH` es un error de formato. Borra todo el destino; no depende del
+viewport.
 
 ### BATCH (40)
 

@@ -41,10 +41,13 @@
 
 /* CLEAR, 16 bytes. arg0 = color RGB565. Con flags = MGL_CLEAR_DEPTH (versión 2)
    borra también la profundidad: arg1 = valor en Q16.16 sin signo, de 0 (cerca)
-   a 0x10000 (lejos). Sin flags arg1 = 0. Borra todo el destino, sin viewport. */
+   a 0x10000 (lejos). Sin flags arg1 = 0. Borra todo el destino, sin viewport.
+   MGL_CLEAR_KEEP_COLOR, siempre con MGL_CLEAR_DEPTH, deja el color como está
+   (arg0 = 0): para cuando el frame pinta de todos modos toda la pantalla. */
 #define MGL_CMD_CLEAR 1U
 #define MGL_CLEAR_BYTES 16U
 #define MGL_CLEAR_DEPTH 1U
+#define MGL_CLEAR_KEEP_COLOR 2U
 #define MGL_DEPTH_ONE 0x10000U
 
 /* BATCH, 40 bytes: una primitiva 2D en coordenadas de píxel.

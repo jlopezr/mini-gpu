@@ -112,6 +112,10 @@ int mgl_end_frame(void);
 /* Borra color y profundidad. depth de 0 (cerca) a 1 (lejos). */
 void mgl_clear_color_depth(mgl_color_t color, mgl_real_t depth);
 
+/* Borra solo la profundidad: para cuando el frame pinta de todos modos toda la pantalla (cielo, suelo...), y
+   borrar el color sería pintarla dos veces. */
+void mgl_clear_depth(mgl_real_t depth);
+
 void mgl_set_viewport(int x, int y, int width, int height);
 /* which: MGL_MATRIX_MODEL, MGL_MATRIX_VIEW o MGL_MATRIX_PROJECTION. Se copia el valor. */
 void mgl_set_matrix(unsigned int which, const mgl_mat4_t *matrix);

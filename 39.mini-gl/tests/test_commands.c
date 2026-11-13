@@ -358,6 +358,15 @@ static void test_renderer_rejects(void) {
     p = raw_begin(); /* CLEAR de profundidad sin buffer de profundidad: vale, no hay nada que borrar */
     raw_cmd(p, MGL_CMD_CLEAR, MGL_CLEAR_DEPTH, 16, 0, MGL_DEPTH_ONE);
     CHECK(raw_run(p + 16) == MGR_OK);
+    p = raw_begin(); /* solo profundidad */
+    raw_cmd(p, MGL_CMD_CLEAR, MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR, 16, 0, MGL_DEPTH_ONE);
+    CHECK(raw_run(p + 16) == MGR_OK);
+    p = raw_begin(); /* conservar el color sin borrar la profundidad */
+    raw_cmd(p, MGL_CMD_CLEAR, MGL_CLEAR_KEEP_COLOR, 16, 0, 0);
+    CHECK(raw_run(p + 16) == MGR_ERR_FORMAT);
+    p = raw_begin(); /* conservar el color con un color */
+    raw_cmd(p, MGL_CMD_CLEAR, MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR, 16, 0x1234, MGL_DEPTH_ONE);
+    CHECK(raw_run(p + 16) == MGR_ERR_FORMAT);
     p = raw_begin(); /* profundidad fuera de [0, 1] */
     raw_cmd(p, MGL_CMD_CLEAR, MGL_CLEAR_DEPTH, 16, 0, MGL_DEPTH_ONE + 1);
     CHECK(raw_run(p + 16) == MGR_ERR_FORMAT);
