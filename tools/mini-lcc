@@ -59,8 +59,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-crt", action="store_true",
                         help="no emite `_start` ni `.comm __stack`: el arranque lo pone un crt0 "
                              "(runtime/src/crt0.s) o, en una unidad sin `main`, nadie")
+    parser.add_argument("--fp32", action="store_true",
+                        help="+ - * / de float con FADD/FSUB/FMUL/FDIV (capability fp32, solo la 38) en vez de "
+                             "softfloat; define __MINI_FP32__. FP32 es DAZ/FTZ: con subnormales puede no dar "
+                             "los mismos bits que softfloat")
     args = parser.parse_args(argv)
     rcc_flags = ["-crt=none"] if args.no_crt else []
+    if args.fp32:
+        rcc_flags.append("-fp32")
+        args.defines.append("__MINI_FP32__")
 
     script = MINI_LCC / "run-mini-tst.py"
     if not script.exists():

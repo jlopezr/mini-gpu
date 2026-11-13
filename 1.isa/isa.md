@@ -554,9 +554,10 @@ Implementado en la CPU del prototipo **38**, el simulador CPU **2** y la CPU del
 simulador integrado **32**. Las GPU y los demás prototipos no ofrecen todavía
 esta capability. Los opcodes se asignan del espacio antes reservado `0x34–0x3D`,
 y no cambian los binarios existentes. Las propuestas v0.2–v0.4 siguen siendo
-propuestas, con mapas propios. El compilador C mantiene su soporte actual:
-esta extensión permite por ahora escribir operaciones FP32 en ensamblador;
-no añade conversiones, comparaciones FP ni generación nativa de `float` en lcc.
+propuestas, con mapas propios. lcc genera estas instrucciones para `+ - * /` de
+`float` con la opción `-fp32` (`mini-cc --fp32`; ver `u.lcc/README-miniisa.md`);
+sin ella, y para comparaciones, conversiones y `double`, sigue el softfloat. No
+hay todavía conversiones ni comparaciones FP en la ISA.
 
 ```asm
 LI R1, 0x3fc00000        ; 1.5

@@ -57,8 +57,11 @@ MG := build/minigpu/v$(MV)
 # FIXED=1: geometría (transformar, outcode, recorte, viewport) y profundidad en Q16.16 en vez de float soft
 # (MGR_FIXED_GEOMETRY/MGR_FIXED_DEPTH, experimentales); va a su carpeta para comparar con la de float.
 FIXED ?= 0
-MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)
-MG3_DEFS := $(if $(filter 1,$(FIXED)),-D MGR_FIXED_GEOMETRY=1 -D MGR_FIXED_DEPTH=1)
+# FP32=1: + - * / de float con las instrucciones FP32 de la 38 (mini-cc --fp32) en vez de softfloat. Solo corre
+# en la 38 (en otra CPU, ERROR_INVALID_OPCODE). FP32 es DAZ/FTZ: con subnormales puede diferir del host.
+FP32 ?= 0
+MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)$(if $(filter 1,$(FP32)),-fp32)
+MG3_DEFS := $(if $(filter 1,$(FIXED)),-D MGR_FIXED_GEOMETRY=1 -D MGR_FIXED_DEPTH=1) $(if $(filter 1,$(FP32)),--fp32)
 
 # ---------------------------------------------------------------------------
 # Fuentes, objetos y programas
@@ -117,6 +120,7 @@ help:
 	@echo '  make profile-minigpu-<sketch>  instrucciones por función hasta el frame FRAMES'
 	@echo '  make minigpu / minigpu3d solo compilar los .bin'
 	@echo '  FIXED=1 (3D)             geometría y profundidad en coma fija, en build/minigpu/3d-fixed'
+	@echo '  FP32=1 (3D)              float con las instrucciones FP32 (solo la 38), en build/minigpu/3d-fp32'
 	@echo 'Otros:'
 	@echo '  make clean               borra build/ y los .ppm'
 

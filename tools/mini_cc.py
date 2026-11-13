@@ -57,13 +57,14 @@ def run(*command: str) -> None:
         raise BuildError(f"{' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
 
 
-def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines: tuple[str, ...] = ()) -> Path:
-    """C -> .s sin arranque."""
+def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines: tuple[str, ...] = (),
+            fp32: bool = False) -> Path:
+    """C -> .s sin arranque. `fp32`: float con FADD/FSUB/FMUL/FDIV (mini-lcc --fp32)."""
     outdir.mkdir(parents=True, exist_ok=True)
     plain = outdir / f"{source.stem}.s"
     flags = [arg for folder in (*C_INCLUDE_DIRS, *includes) for arg in ("-I", folder)]
     flags += [arg for define in defines for arg in ("-D", define)]
-    run(TOOLS / "mini-lcc", source, "--no-crt", *flags, "-o", plain)
+    run(TOOLS / "mini-lcc", source, "--no-crt", *(["--fp32"] if fp32 else []), *flags, "-o", plain)
     scope_statics(plain)
     return plain
 
@@ -182,7 +183,7 @@ def wrapper_path(program: Path, board: bool = False, outdir: Path | None = None)
 def build(program: Path, output: Path | None = None, board: bool = False,
           outdir: Path | None = None, includes: tuple[Path, ...] = (),
           data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = (),
-          defines: tuple[str, ...] = ()) -> Path:
+          defines: tuple[str, ...] = (), fp32: bool = False) -> Path:
     """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo. `program` da el nombre a la
     imagen y suele llevar `main`. `sources`: el resto de ficheros, en orden: los .c se compilan y optimizan
     juntos, los demas (.s, .asm, .inc) se incluyen sin tocar tras el codigo. Con algun .c se pone el arranque."""
@@ -204,7 +205,7 @@ def build(program: Path, output: Path | None = None, board: bool = False,
         if sys.platform == "win32":
             ensure_msvc_environment()
         with ThreadPoolExecutor(max_workers=min(len(units), os.cpu_count() or 1)) as pool:
-            plains = list(pool.map(lambda unit: lower_c(unit, outdir, includes, defines), units))
+            plains = list(pool.map(lambda unit: lower_c(unit, outdir, includes, defines, fp32), units))
         share_runtime(plains)
         compiled = [optimize_s(plains, startup + by_hand, outdir / f"{program.stem}.opt.s")]
     blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
@@ -245,11 +246,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--load", nargs="?", const="36", metavar="PROTOTIPO",
                         help="sube la imagen a la placa tras compilar (implica --board; por defecto la 36)")
     parser.add_argument("--no-run", action="store_true", help="con --load, la carga pero no la arranca")
+    parser.add_argument("--fp32", action="store_true",
+                        help="float con FADD/FSUB/FMUL/FDIV (capability fp32, solo la 38) en vez de softfloat")
     args = parser.parse_args(argv)
     board = args.board or args.load is not None
     try:
         out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data),
-                    tuple(args.sources), tuple(args.defines))
+                    tuple(args.sources), tuple(args.defines), args.fp32)
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1
