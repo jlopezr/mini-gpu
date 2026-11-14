@@ -53,8 +53,64 @@ typedef struct {
 static mgr_vcache_t cache[MGR_VCACHE];
 static mgl_u32 cache_generation;
 
+/* MGL_STATE_DEPTH_SORT (el algoritmo del pintor): los triángulos aceptados se guardan aquí, ya en pantalla, y
+   mgr_sort_flush los rasteriza de lejos a cerca (por la suma de las z de sus vértices; a igual distancia, en
+   el orden en que llegaron). Sin Z-buffer, lo de delante tapa a lo de detrás porque se pinta después. Si la
+   lista se llena, se vacía antes de seguir: lo de antes queda detrás de lo de después. */
+#define MGR_SORT_MAX 1024
+typedef struct {
+    mgr_window_vertex_t v[3];
+    mgl_s32 area, key;
+    mgl_u32 flags;
+    mgl_color_t fill;
+} mgr_sorted_t;
+static mgr_sorted_t sorted[MGR_SORT_MAX];
+static unsigned short sort_order[MGR_SORT_MAX], sort_tmp[MGR_SORT_MAX];
+static unsigned int sort_count;
+
+static void raster(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f, mgl_s32 area) {
+    st->fragments += (mgl_u32)mgr_raster_triangle_area(a, b, c, clip, f, area);
+    st->rasterized++;
+}
+
+#if MGR_FIXED_DEPTH
+#define SORT_Z(v) ((v)->zq)
+#else
+#define SORT_Z(v) ((mgl_s32)((v)->z * 65536.0f))
+#endif
+
+/* De lejos a cerca: key mayor primero. Por mezclas, de abajo arriba: estable. */
+static void sort_flush(mgr_stats_t *st, const mgr_rect_t *clip, const mgr_fragment_t *base) {
+    mgr_fragment_t f = *base;
+    unsigned short *from = sort_order, *to = sort_tmp, *t;
+    unsigned int n = sort_count, width, i, l, m, h, j, k;
+    const mgr_sorted_t *e;
+    if (!n) return;
+    sort_count = 0;
+    for (i = 0; i < n; i++) from[i] = (unsigned short)i;
+    for (width = 1; width < n; width *= 2) {
+        for (l = 0; l < n; l = h) {
+            m = l + width < n ? l + width : n;
+            h = m + width < n ? m + width : n;
+            for (i = l, j = l, k = m; i < h; i++)
+                to[i] = (k >= h || (j < m && sorted[from[j]].key >= sorted[from[k]].key)) ? from[j++] : from[k++];
+        }
+        t = from;
+        from = to;
+        to = t;
+    }
+    for (i = 0; i < n; i++) {
+        e = &sorted[from[i]];
+        f.flags = e->flags;
+        f.fill = e->fill;
+        raster(st, &e->v[0], &e->v[1], &e->v[2], clip, &f, e->area);
+    }
+}
+
 static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
+    mgr_sorted_t *e;
     /* Lo que mgr_raster_triangle descartaría al empezar (área nula o cara descartada), sin llamarla: con
        culling es la mitad de los triángulos, y ella guarda y restaura catorce registros. Los aceptados van a
        mgr_raster_triangle_area con el área ya calculada, sin repetir las comprobaciones. */
@@ -64,9 +120,19 @@ static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_wi
         st->culled++;
         return;
     }
-    covered = mgr_raster_triangle_area(a, b, c, clip, f, covered);
-    st->rasterized++;
-    st->fragments += (mgl_u32)covered;
+    if (!(f->flags & MGL_STATE_DEPTH_SORT)) {
+        raster(st, a, b, c, clip, f, covered);
+        return;
+    }
+    if (sort_count == MGR_SORT_MAX) sort_flush(st, clip, f);
+    e = &sorted[sort_count++];
+    e->v[0] = *a;
+    e->v[1] = *b;
+    e->v[2] = *c;
+    e->area = covered;
+    e->key = SORT_Z(a) + SORT_Z(b) + SORT_Z(c);
+    e->flags = f->flags;
+    e->fill = f->fill;
 }
 
 static void fan(mgr_state_t *s, mgr_stats_t *st, const mgr_clipv_t *v, int n, const mgr_rect_t *clip,
@@ -79,6 +145,36 @@ static void fan(mgr_state_t *s, mgr_stats_t *st, const mgr_clipv_t *v, int n, co
     }
     for (i = 1; i + 1 < n; i++)
         triangle(st, &w[0], &w[i], &w[i + 1], clip, f);
+}
+
+/* El fragmento (destino y estado) y donde se puede escribir: el viewport dentro del destino. */
+static void setup(const mgr_state_t *s, mgr_fragment_t *f, mgr_rect_t *clip) {
+    f->color = s->color;
+    f->depth = s->depth;
+    f->color_stride = s->color_stride;
+    f->depth_stride = s->depth_stride;
+    f->flags = s->flags;
+    f->fill = s->fill;
+    clip->x0 = s->vx > 0 ? s->vx : 0;
+    clip->y0 = s->vy > 0 ? s->vy : 0;
+    clip->x1 = s->vx + s->vw < s->width ? s->vx + s->vw : s->width;
+    clip->y1 = s->vy + s->vh < s->height ? s->vy + s->vh : s->height;
+}
+
+void mgr_sort_discard(void) {
+    sort_count = 0;
+}
+
+void mgr_sort_flush(mgr_state_t *s, mgr_stats_t *st) {
+    mgr_fragment_t f;
+    mgr_rect_t clip;
+    if (!sort_count) return;
+    if (!s->color) { /* sin destino no se llega a guardar nada; por si acaso */
+        sort_count = 0;
+        return;
+    }
+    setup(s, &f, &clip);
+    sort_flush(st, &clip, &f);
 }
 
 int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, const unsigned char *p) {
@@ -110,17 +206,9 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     indices = (const unsigned char *)mgl_memory_ptr(m, iaddr, icount * 2U, 2);
     if (!verts.base || (icount && !indices)) return MGR_ERR_MEMORY;
 
-    f.color = s->color;
-    f.depth = s->depth;
-    f.color_stride = s->color_stride;
-    f.depth_stride = s->depth_stride;
-    f.flags = s->flags;
-    f.fill = s->fill;
-    /* Donde se puede escribir: el viewport dentro del destino. */
-    clip.x0 = s->vx > 0 ? s->vx : 0;
-    clip.y0 = s->vy > 0 ? s->vy : 0;
-    clip.x1 = s->vx + s->vw < s->width ? s->vx + s->vw : s->width;
-    clip.y1 = s->vy + s->vh < s->height ? s->vy + s->vh : s->height;
+    /* Lo que quede en la lista de un dibujo con DEPTH_SORT va antes que este, si este no lo tiene. */
+    if (!(s->flags & MGL_STATE_DEPTH_SORT)) mgr_sort_flush(s, st);
+    setup(s, &f, &clip);
 #if MGR_FIXED_GEOMETRY
     mvp = mgr_state_mvp_q(s);
 #else

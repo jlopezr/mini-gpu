@@ -32,6 +32,12 @@ const mgl_mat4_t *mgr_state_mvp(mgr_state_t *s);
 
 /* ---- draw.c ------------------------------------------------------------- */
 int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, const unsigned char *cmd);
+/* Rasteriza, de lejos a cerca, los triángulos que han guardado los dibujos con MGL_STATE_DEPTH_SORT. Va
+   antes de lo que tiene que quedar encima o cambia el destino (commands.c): CLEAR, BATCH, SET_RENDER_TARGET,
+   SET_VIEWPORT, END_FRAME, un dibujo sin DEPTH_SORT y el final del buffer. */
+void mgr_sort_flush(mgr_state_t *s, mgr_stats_t *st);
+/* Olvida la lista sin pintarla: al empezar a ejecutar un buffer (uno anterior pudo acabar con un error). */
+void mgr_sort_discard(void);
 
 /* ---- transform.c -------------------------------------------------------- */
 /* Un flujo de vértices ya validado: posiciones F32 XYZ little-endian. */

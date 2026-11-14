@@ -955,7 +955,11 @@ frame ocupado      = trabajo por swap / ciclos por frame
 Por encima de 1, el trabajo de un frame no cabe en un frame y se pierden
 vblanks. Supone que el programa espera **justo después** de pedir el
 intercambio, como hace `swap_and_wait`: un programa que adelanta trabajo del
-frame siguiente con el intercambio pendiente lo vería contado como espera.
+frame siguiente con el intercambio pendiente lo vería contado como espera. Es
+el caso del triple buffer de mini-gl (`39.mini-gl/src/platform/minigpu.c`):
+pide el intercambio y dibuja enseguida en el tercer buffer, así que
+`SWAP_WAIT` es el tiempo que el intercambio pasa pendiente (hasta el siguiente
+vblank, unos 8 ms de media), no tiempo parado de la CPU.
 
 `otros` son los pocos ciclos de arranque, `STEP`, `HALT` y error.
 

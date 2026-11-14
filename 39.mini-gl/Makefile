@@ -193,12 +193,14 @@ build/raster3d_reference.o: src/render/3d/raster3d.c $(HDRS) | build
 	    -Dmgr_raster_triangle_area=mgr_raster_triangle_area_reference -c -o $@ $<
 build/draw_reference.o: src/render/3d/draw.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_draw_indexed=mgr_draw_indexed_reference \
+	    -Dmgr_sort_flush=mgr_sort_flush_reference -Dmgr_sort_discard=mgr_sort_discard_reference \
 	    -Dmgr_raster_triangle=mgr_raster_triangle_reference \
 	    -Dmgr_raster_triangle_area=mgr_raster_triangle_area_reference -c -o $@ $<
 build/commands_reference.o: src/render/3d/commands.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_execute=mgr_execute_reference \
 	    -Dmgr_draw_indexed=mgr_draw_indexed_reference -Dmgr_init=mgr_init_reference \
-	    -Dmgr_reset_stats=mgr_reset_stats_reference -c -o $@ $<
+	    -Dmgr_reset_stats=mgr_reset_stats_reference -Dmgr_sort_flush=mgr_sort_flush_reference \
+	    -Dmgr_sort_discard=mgr_sort_discard_reference -c -o $@ $<
 REFERENCE_OBJS = build/raster3d_reference.o build/draw_reference.o build/commands_reference.o
 $(SKETCHES3D:%=build/test_depth_%): build/test_depth_%: build/test_depth_scenes.o build/%.o $(REFERENCE_OBJS) $(LIB3D)
 	$(CC) $(CFLAGS) -o $@ $^

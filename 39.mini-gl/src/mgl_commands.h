@@ -145,6 +145,10 @@
 #define MGL_STATE_BLEND 4U /* reservado: se rechaza */
 #define MGL_STATE_CULL_BACK 8U
 #define MGL_STATE_CULL_FRONT 16U
+/* El algoritmo del pintor: los triángulos se rasterizan de lejos a cerca (por la z media de sus vértices) al
+   final, antes de lo siguiente que no lo use (2D, CLEAR, otro destino o viewport, END_FRAME). Con la prueba
+   y la escritura de profundidad apagadas no hace falta Z-buffer. */
+#define MGL_STATE_DEPTH_SORT 32U
 #define MGL_STATE_DEFAULT MGL_STATE_DEPTH_WRITE
 
 #endif

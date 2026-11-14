@@ -63,6 +63,10 @@ static int execute(mgr_renderer_t *r, const unsigned char *p, unsigned int op, u
     mgr_state_t *s = &r->state;
     int result;
     if (flags && op != MGL_CMD_CLEAR) return MGR_ERR_FORMAT;
+    /* Lo guardado por DEPTH_SORT, antes de lo que pinta encima o cambia el destino. */
+    if (op == MGL_CMD_CLEAR || op == MGL_CMD_BATCH || op == MGL_CMD_SET_RENDER_TARGET ||
+        op == MGL_CMD_SET_VIEWPORT || op == MGL_CMD_END_FRAME)
+        mgr_sort_flush(s, &r->stats);
     switch (op) {
     case MGL_CMD_CLEAR:
         return clear(s, p, flags);
@@ -98,6 +102,7 @@ int mgr_execute(mgr_renderer_t *r, mgl_u32 addr) {
     if (!r) return MGR_ERR_FORMAT;
     r->error_offset = 0;
     mgr_state_reset(&r->state);
+    mgr_sort_discard();
     p = (const unsigned char *)mgl_memory_ptr(&r->memory, addr, MGL_BUFFER_HEADER_BYTES, 4);
     if (!p) return MGR_ERR_MEMORY;
     used = RD32(p + 8);
@@ -118,6 +123,7 @@ int mgr_execute(mgr_renderer_t *r, mgl_u32 addr) {
         if (result != MGR_OK) return result;
         r->stats.commands++;
     }
+    mgr_sort_flush(&r->state, &r->stats); /* un buffer sin END_FRAME */
     r->error_offset = 0;
     return MGR_OK;
 }

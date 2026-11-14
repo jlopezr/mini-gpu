@@ -136,6 +136,12 @@ void mgl_set_viewport(int x, int y, int width, int height);
 void mgl_set_matrix(unsigned int which, const mgl_mat4_t *matrix);
 void mgl_set_depth_test(int enabled);
 void mgl_set_depth_write(int enabled);
+/* El algoritmo del pintor (MGL_STATE_DEPTH_SORT): los triángulos de los dibujos que lo tengan se pintan de
+   lejos a cerca, por la z media de sus vértices, antes de lo siguiente que no lo tenga (2D, clear, otro
+   destino o viewport, fin del frame). Con mgl_set_depth_test(0) y mgl_set_depth_write(0) no usa el Z-buffer:
+   no hace falta borrarlo, y cada triángulo y cada píxel cuestan menos. Falla como el pintor: triángulos que
+   se cruzan, o uno largo junto a otros pequeños, pueden quedar en mal orden. */
+void mgl_set_depth_sort(int enabled);
 /* MGL_CULL_NONE, MGL_CULL_BACK o MGL_CULL_FRONT. */
 void mgl_set_cull(int mode);
 void mgl_set_color(mgl_color_t color);

@@ -95,7 +95,8 @@ int mgr_state_flags(mgr_state_t *s, const unsigned char *p) {
     mgl_u32 f = RD32(p + MGL_CMD_ARG0);
     if (RD32(p + MGL_CMD_ARG1)) return MGR_ERR_FORMAT;
     if (f & MGL_STATE_BLEND) return MGR_ERR_UNSUPPORTED;
-    if (f & ~(MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE | MGL_STATE_CULL_BACK | MGL_STATE_CULL_FRONT))
+    if (f & ~(MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE | MGL_STATE_CULL_BACK | MGL_STATE_CULL_FRONT |
+              MGL_STATE_DEPTH_SORT))
         return MGR_ERR_FORMAT;
     s->flags = f;
     return MGR_OK;

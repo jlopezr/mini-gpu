@@ -9,7 +9,7 @@ static int depth;
 static int view_w, view_h;
 static mgl_mesh_t cube;
 /* hint(): test y escritura de profundidad. */
-static int depth_test = 1, depth_mask = 1;
+static int depth_test = 1, depth_mask = 1, depth_sort;
 
 /* Cubo unidad centrado en el origen: 8 vértices, 12 triángulos. Con y hacia
    abajo como en Processing; el orden de los índices da igual mientras no haya
@@ -92,11 +92,13 @@ static void prepare(const mgl_mat4_t *m) {
     /* Sin test tampoco se escribe, como en OpenGL. */
     mgl_set_depth_test(depth_test);
     mgl_set_depth_write(depth_test && depth_mask);
+    mgl_set_depth_sort(depth_sort);
 }
 
 void hint(int which) {
     if (which == DISABLE_DEPTH_TEST || which == ENABLE_DEPTH_TEST) depth_test = which == ENABLE_DEPTH_TEST;
     if (which == DISABLE_DEPTH_MASK || which == ENABLE_DEPTH_MASK) depth_mask = which == ENABLE_DEPTH_MASK;
+    if (which == ENABLE_DEPTH_SORT || which == DISABLE_DEPTH_SORT) depth_sort = which == ENABLE_DEPTH_SORT;
 }
 
 /* La malla se crea la primera vez y se reutiliza; el tamaño va en la matriz. */

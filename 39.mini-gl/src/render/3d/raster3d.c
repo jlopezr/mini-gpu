@@ -155,6 +155,13 @@ mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_
                 /* La profundidad, al encontrar el primer píxel: un triángulo que no cubre ningún centro (muchos
                    de un modelo pequeño en pantalla) se la ahorra. Mismos cálculos que antes del bucle. */
                 ready = 1;
+#if MGR_INCREMENTAL_DEPTH
+                /* Sin prueba ni escritura de profundidad (el modo DEPTH_SORT, el algoritmo del pintor), el
+                   plano no hace falta: fragment no mira z. Era lo más caro de un triángulo pequeño. */
+                if (!f->depth || !(f->flags & (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE))) {
+                    incremental = 1; /* depth_row, depth_dx, depth_dy y dzi se quedan a 0 */
+                } else {
+#endif
 #if MGR_FIXED_DEPTH
                 mgr_depth_plane(a, b, c, area, px, py0, x1 - x0, y1 - y0, &plane);
                 dzi = plane.dzi;
@@ -199,6 +206,9 @@ mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_
                 }
 #endif
 #endif /* MGR_FIXED_DEPTH */
+#if MGR_INCREMENTAL_DEPTH
+                }
+#endif
             }
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {

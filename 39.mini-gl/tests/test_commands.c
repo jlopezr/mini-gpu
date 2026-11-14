@@ -287,6 +287,45 @@ static void test_vertex_color(void) {
     mgl_set_deferred(0);
 }
 
+/* MGL_STATE_DEPTH_SORT: sin Z-buffer, el triángulo de delante (rojo, dibujado primero) queda encima del de
+   detrás (verde) porque se pintan de lejos a cerca; sin ordenar, gana el último. Lo 2D que viene después
+   queda encima de todo (la lista se vacía antes del BATCH). */
+static void sorted_pair(int sort, int rect) {
+    t_begin();
+    mgl_set_depth_test(0);
+    mgl_set_depth_write(0);
+    mgl_set_depth_sort(sort);
+    mgl_set_color(0xf800);
+    t_triangle(0, -0.8f, -0.8f, -0.5f, 0.8f, -0.8f, -0.5f, 0.0f, 0.8f, -0.5f);
+    mgl_set_color(0x07e0);
+    t_triangle(64, -0.9f, -0.9f, 0.5f, 0.9f, -0.9f, 0.5f, 0.0f, 0.9f, 0.5f);
+    if (rect) {
+        mgl_fill(0x001f);
+        mgl_rect(T_W / 2 - 2, T_H / 2 - 2, 4, 4);
+    }
+}
+
+static void test_depth_sort(void) {
+    const unsigned char *p;
+    t_init(4096);
+    sorted_pair(1, 0);
+    p = t_find(MGL_CMD_SET_RENDER_STATE, 0);
+    CHECK(p && (RD32(p + 8) & MGL_STATE_DEPTH_SORT));
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_pixel(T_W / 2, T_H / 2) == 0xf800 && t_rnd.stats.rasterized == 2U);
+    CHECK(t_count(0x07e0) > 0); /* el verde asoma por los bordes */
+    sorted_pair(0, 0);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_pixel(T_W / 2, T_H / 2) == 0x07e0);
+    sorted_pair(1, 1);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_pixel(T_W / 2, T_H / 2) == 0x001f && t_count(0xf800) > 0);
+    mgl_set_depth_sort(0);
+    mgl_set_depth_test(1);
+    mgl_set_depth_write(1);
+    mgl_set_deferred(0);
+}
+
 /* Errores de uso en MiniGL. */
 static void test_api_errors(void) {
     mgl_mat4_t m;
@@ -459,6 +498,7 @@ int main(void) {
     test_capacity();
     test_draw_range();
     test_vertex_color();
+    test_depth_sort();
     test_api_errors();
     test_renderer_rejects();
     return t_report("test_commands: cabeceras, SET_MATRIX, DRAW_INDEXED, estado, capacidad y rechazos");

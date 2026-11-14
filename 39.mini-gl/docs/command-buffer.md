@@ -124,8 +124,17 @@ Un solo opcode para las tres matrices. La matriz va por valor: MiniGL la copia a
 | `MGL_STATE_BLEND` (4) | reservado: se rechaza |
 | `MGL_STATE_CULL_BACK` (8) | descarta caras traseras |
 | `MGL_STATE_CULL_FRONT` (16) | descarta caras delanteras |
+| `MGL_STATE_DEPTH_SORT` (32) | algoritmo del pintor: ordena los triángulos de lejos a cerca |
 
 De frente = antihorario en coordenadas normalizadas (y hacia arriba), como OpenGL.
+
+**`DEPTH_SORT`**: los triángulos aceptados (tras recortar y descartar caras) de los `DRAW_INDEXED` con este
+bit no se rasterizan enseguida: el renderer los guarda, con su color y su estado, y los rasteriza de lejos a
+cerca (por la suma de las z de sus vértices; a igual distancia, en el orden de llegada) antes del siguiente
+`CLEAR`, `BATCH`, `SET_RENDER_TARGET`, `SET_VIEWPORT`, `DRAW_INDEXED` sin el bit, `END_FRAME` o el final del
+buffer. Si su lista (1024 triángulos) se llena, la vacía antes de seguir. Con `DEPTH_TEST` y `DEPTH_WRITE`
+apagados no usa el Z-buffer: ni plano de profundidad por triángulo ni lectura por píxel, y no hace falta
+borrarlo. Falla como el pintor: triángulos que se cruzan, o uno largo junto a otros pequeños.
 
 ### SET_COLOR (16)
 

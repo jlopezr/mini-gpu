@@ -219,6 +219,10 @@ void mgl_set_depth_write(int on) {
     set_bit(MGL_STATE_DEPTH_WRITE, on);
 }
 
+void mgl_set_depth_sort(int on) {
+    set_bit(MGL_STATE_DEPTH_SORT, on);
+}
+
 void mgl_set_cull(int mode) {
     if (mode < MGL_CULL_NONE || mode > MGL_CULL_FRONT) {
         fail(MGL_ERR_ARGUMENT);

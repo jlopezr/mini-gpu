@@ -124,13 +124,20 @@ void endShape(void);
      el resto).
    - DISABLE_DEPTH_MASK: se compara, pero no se escribe (lo de después no queda
      tapado por esto).
-   ENABLE_* los vuelven a activar. Duran hasta el siguiente hint(), también de
-   un frame al siguiente; al empezar, los dos activos. Otros valores no hacen
-   nada. */
+   - ENABLE_DEPTH_SORT: el algoritmo del pintor, como en Processing: los
+     triángulos 3D se pintan de lejos a cerca al acabar lo 3D seguido (antes
+     de lo 2D que venga después). Con DISABLE_DEPTH_TEST, sin Z-buffer: en un
+     sketch con pocos objetos sueltos (tanks.c) es más rápido; no hace falta
+     borrar la profundidad. DISABLE_DEPTH_SORT lo quita.
+   ENABLE_DEPTH_TEST, ENABLE_DEPTH_MASK y DISABLE_DEPTH_SORT vuelven a como al
+   empezar (test y escritura sí, ordenar no). Duran hasta el siguiente hint(),
+   también de un frame al siguiente. Otros valores no hacen nada. */
 #define DISABLE_DEPTH_TEST 2 /* los valores de Processing */
 #define ENABLE_DEPTH_TEST (-2)
 #define DISABLE_DEPTH_MASK 5
 #define ENABLE_DEPTH_MASK (-5)
+#define ENABLE_DEPTH_SORT 7
+#define DISABLE_DEPTH_SORT (-7)
 void hint(int which);
 
 /* Para la plataforma: al principio de cada draw() (y de setup()). */
