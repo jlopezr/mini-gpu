@@ -107,6 +107,23 @@ void beginShape(int kind);
 void vertex(float x, float y, float z);
 void endShape(void);
 
+/* hint(), como en Processing, solo con la profundidad:
+   - DISABLE_DEPTH_TEST: lo 3D que se dibuje después ni se compara con el
+     Z-buffer ni lo escribe (como glDisable(GL_DEPTH_TEST)): lo último que se
+     pinta queda encima. Es el camino más rápido por píxel; sirve para lo que
+     se dibuja en orden de atrás hacia delante (un suelo o un fondo antes que
+     el resto).
+   - DISABLE_DEPTH_MASK: se compara, pero no se escribe (lo de después no queda
+     tapado por esto).
+   ENABLE_* los vuelven a activar. Duran hasta el siguiente hint(), también de
+   un frame al siguiente; al empezar, los dos activos. Otros valores no hacen
+   nada. */
+#define DISABLE_DEPTH_TEST 2 /* los valores de Processing */
+#define ENABLE_DEPTH_TEST (-2)
+#define DISABLE_DEPTH_MASK 5
+#define ENABLE_DEPTH_MASK (-5)
+void hint(int which);
+
 /* Para la plataforma: al principio de cada draw() (y de setup()). */
 void processing3d_begin_draw(void);
 /* Para la plataforma: tras size_renderer, con el tamaño ya fijado. */

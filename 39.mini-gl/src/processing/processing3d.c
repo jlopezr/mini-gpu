@@ -8,6 +8,8 @@ static mgl_mat4_t stack[P3D_MATRIX_STACK];
 static int depth;
 static int view_w, view_h;
 static mgl_mesh_t cube;
+/* hint(): test y escritura de profundidad. */
+static int depth_test = 1, depth_mask = 1;
 
 /* Cubo unidad centrado en el origen: 8 vértices, 12 triángulos. Con y hacia
    abajo como en Processing; el orden de los índices da igual mientras no haya
@@ -87,8 +89,14 @@ static void prepare(const mgl_mat4_t *m) {
     mgl_set_matrix(MGL_MATRIX_PROJECTION, &projection);
     mgl_set_matrix(MGL_MATRIX_VIEW, &view);
     mgl_set_matrix(MGL_MATRIX_MODEL, m);
-    mgl_set_depth_test(1);
-    mgl_set_depth_write(1);
+    /* Sin test tampoco se escribe, como en OpenGL. */
+    mgl_set_depth_test(depth_test);
+    mgl_set_depth_write(depth_test && depth_mask);
+}
+
+void hint(int which) {
+    if (which == DISABLE_DEPTH_TEST || which == ENABLE_DEPTH_TEST) depth_test = which == ENABLE_DEPTH_TEST;
+    if (which == DISABLE_DEPTH_MASK || which == ENABLE_DEPTH_MASK) depth_mask = which == ENABLE_DEPTH_MASK;
 }
 
 /* La malla se crea la primera vez y se reutiliza; el tamaño va en la matriz. */

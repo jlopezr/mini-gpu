@@ -15,7 +15,8 @@ static mgl_u32 state = MGL_STATE_DEFAULT;
 static mgl_color_t color = 0xffff;
 
 static int sent_viewport[4], viewport_sent;
-static mgl_mat4_t sent_matrix[3];
+/* matrix_sent[k]: matrix[k] ya está en el buffer tal cual. mgl_set_matrix
+   compara al llegar (una vez por cambio) y no flush_state en cada dibujo. */
 static int matrix_sent[3];
 static mgl_u32 sent_state;
 static int state_sent;
@@ -75,6 +76,7 @@ static void emit_target(void) {
 void mgl_reset_state3d(void) {
     matrices_ready = 0;
     ensure_matrices();
+    matrix_sent[0] = matrix_sent[1] = matrix_sent[2] = 0;
     state = MGL_STATE_DEFAULT;
     color = 0xffff;
     viewport[0] = viewport[1] = 0;
@@ -159,13 +161,31 @@ void mgl_set_viewport(int x, int y, int w, int h) {
     viewport[3] = h;
 }
 
+/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. Processing fija las tres matrices en cada
+   dibujo, así que se compara mucho: en MiniGPU como palabras (lcc no tiene strict aliasing), sin llamar a
+   mgl_real_to_f32 por elemento. */
+static int same_matrix(const mgl_mat4_t *a, const mgl_mat4_t *b) {
+    int i;
+#ifdef __MINIGPU__
+    const mgl_u32 *p = (const mgl_u32 *)a->m, *q = (const mgl_u32 *)b->m;
+    for (i = 0; i < 16; i += 4, p += 4, q += 4)
+        if (p[0] != q[0] || p[1] != q[1] || p[2] != q[2] || p[3] != q[3]) return 0;
+#else
+    for (i = 0; i < 16; i++)
+        if (mgl_real_to_f32(a->m[i]) != mgl_real_to_f32(b->m[i])) return 0;
+#endif
+    return 1;
+}
+
 void mgl_set_matrix(unsigned int which, const mgl_mat4_t *m) {
     if (which < MGL_MATRIX_MODEL || which > MGL_MATRIX_PROJECTION || !m) {
         fail(MGL_ERR_ARGUMENT);
         return;
     }
     ensure_matrices();
+    if (same_matrix(&matrix[which - 1U], m)) return;
     matrix[which - 1U] = *m;
+    matrix_sent[which - 1U] = 0;
 }
 
 static void set_bit(mgl_u32 bit, int on) {
@@ -196,22 +216,6 @@ void mgl_set_color(mgl_color_t c) {
     color = c;
 }
 
-/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. Processing fija las tres matrices en cada
-   dibujo, así que se compara mucho: en MiniGPU como palabras (lcc no tiene strict aliasing), sin llamar a
-   mgl_real_to_f32 por elemento. */
-static int same_matrix(const mgl_mat4_t *a, const mgl_mat4_t *b) {
-    int i;
-#ifdef __MINIGPU__
-    const mgl_u32 *p = (const mgl_u32 *)a->m, *q = (const mgl_u32 *)b->m;
-    for (i = 0; i < 16; i += 4, p += 4, q += 4)
-        if (p[0] != q[0] || p[1] != q[1] || p[2] != q[2] || p[3] != q[3]) return 0;
-#else
-    for (i = 0; i < 16; i++)
-        if (mgl_real_to_f32(a->m[i]) != mgl_real_to_f32(b->m[i])) return 0;
-#endif
-    return 1;
-}
-
 static void flush_state(void) {
     unsigned char *p;
     unsigned int i, k;
@@ -225,11 +229,10 @@ static void flush_state(void) {
     }
     /* Projection, View y Model: el orden en que se componen. */
     for (k = 3; k >= 1; k--) {
-        if (matrix_sent[k - 1] && same_matrix(&sent_matrix[k - 1], &matrix[k - 1])) continue;
+        if (matrix_sent[k - 1]) continue;
         p = command(MGL_CMD_SET_MATRIX, 0, MGL_SET_MATRIX_BYTES, k, MGL_FORMAT_FLOAT32);
         if (!p) return;
         for (i = 0; i < 16; i++) WR32(p + 16 + 4 * i, mgl_real_to_f32(matrix[k - 1].m[i]));
-        sent_matrix[k - 1] = matrix[k - 1];
         matrix_sent[k - 1] = 1;
     }
     if (!state_sent || sent_state != state) {
