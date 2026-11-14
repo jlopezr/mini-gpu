@@ -14,7 +14,7 @@ build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
 
 Tres cambios de `cpu.v`, medidos en la placa entre los mismos frames (el
 porqué de medir así, y el análisis completo con lo descartado, en
-[`analisis-rendimiento.md`](analisis-rendimiento.md)):
+[`docs/analisis-rendimiento.md`](docs/analisis-rendimiento.md)):
 
 Cada paso se midió contra el anterior en el mismo tramo de frames (fps antes
 → después):
@@ -49,6 +49,31 @@ vale es la mejora de cada paso.
   salto y DIV en medio; costes exactos 0/1/0 ciclos) y `cpu_perf_tb`
   (`muluse`: STORE y LOAD con el producto; `addrdep` de 128 a 64 esperas;
   `agi`: cada productor de la base, 3 esperas exactas).
+
+## Reloj de la SDRAM por la celda de IO y sin generadores de tráfico (14 de noviembre)
+
+- **Generadores de tráfico apagados.** Los dos `memory_traffic_gen` de la 35
+  (puertos 4 y 5 del fabric) seguían en `top.v` con `.enable(1'b1)` y competían
+  con la CPU por la SDRAM todo el rato. Apagados, un fallo de la D-cache pasa
+  de 24,7 a 23,1 ciclos de espera (microbenchmark A) y racer de CPI 1,637 a
+  1,580; tanks 48,93 → 49,29 fps, skimmer 22,86 → 23,35.
+- **El reloj de la SDRAM sale por un `ODDRX1F`** en la celda de IO del pin
+  (antes `assign sdram_clk = clk_sdram`, por rutado general). Sin los
+  generadores, la ventana de fase buena se movió y la 18 de fábrica quedó
+  fuera: los programas se reiniciaban sin parar hasta `phase-set 27`. Con el
+  ODDR el retardo al pin ya no depende de la colocación: semilla 9, ventana
+  7-27; semilla 5 (otra colocación), 6-27.
+- **El `CLKOS_CPHASE` estático no cuenta.** Con `DPHASE_SOURCE="ENABLED"` el
+  EHXPLLL arranca siempre en la misma fase física: builds idénticas con CPHASE
+  7, 10 y 4 dan la misma ventana medida desde el arranque. `SDRAM_PHASE` solo
+  etiqueta esa posición para `pll_phase_ctl`; para mover la fase de arranque
+  hay que tocar el camino del reloj, no el número. Con `D0=1, D1=0` la ventana
+  quedaba de +13 a +33 pasos desde el arranque; `D0=0, D1=1` invierte el reloj
+  (24 pasos, 180°) y deja la 18 de fábrica en el centro de 7-27 (11 fases de
+  margen por abajo, 9 por arriba).
+- Build `oddr-inv` (semilla 9): CPU 50,95 MHz, SDRAM 110,22 MHz. Con la fase
+  de fábrica y sin `phase-set`: racer 12,64 fps (CPI 1,581), tanks 49,15,
+  skimmer 23,30.
 
 ## Comparaciones y conversiones FP32, MIN/MAX y CLZ (13 de noviembre)
 
@@ -304,13 +329,11 @@ cpu.v ────┤                                           ├── arbitr
   Yosys (`syn_useioff` en `sdram_controller_128.v`); la ventana de fase buena
   paso de 8 a unas 20-22 posiciones. La fase sale en el bitstream
   (`SDRAM_PHASE` en `top.v`, una por herramienta) y se mide con
-  `tools/phase-sweep`. **Cuidado:** la ventana se sigue moviendo entre builds
-  y la 18 de fabrica ha quedado en el borde (17-37 en `dcache-decide`). Con el
-  build del adelantamiento, test-scheduler-c fallaba en placa de forma
-  intermitente con la 18 (un resultado distinto cada vez; la memoria pasaba
-  la prueba de 256 KB) y pasa siempre con la 27 (`monitor.py phase-set 27`).
-  Antes de medir, fijar la fase; la solucion de fondo es el reloj de la SDRAM
-  por la celda de IO (paso 6).
+  `tools/phase-sweep`. Hasta el 14 de noviembre la ventana se movia entre
+  builds y la 18 de fabrica llego a quedar en el borde o fuera (habia que
+  `monitor.py phase-set 27`). Desde que el reloj sale por un `ODDRX1F`
+  invertido la ventana es 6/7-27 con cualquier colocacion y la 18 queda en el
+  centro (ver la seccion del 14 de noviembre).
 
 Bancos: `tools/test -p 38` (entre ellos `cpu_perf_tb`, que mide CPI sin placa
 con programas que aislan cada efecto: dependencias encadenadas, salto que
@@ -549,10 +572,9 @@ En orden de lo que mas promete segun las medidas:
    tardan por frame. Con `IMEM_MISSES` y `DMEM_MISSES` se veria si 16 KB o
    dos vias servirian; rotating_cube para la I-cache, tie_fighter para la
    D-cache.
-6. **Reloj de la SDRAM por la celda de IO** (`ODDRX1F` con `D0=1, D1=0`, como
-   el DVI). Hoy `assign sdram_clk = clk` va por rutado general y la ventana de
-   fase aun se mueve entre builds (2-21 en uno, 8-29 en otro). Tambien `dq_oe`,
-   replicado por pin, para que quepa en las celdas de IO.
+6. **Reloj de la SDRAM por la celda de IO**: hecho el 14 de noviembre
+   (`ODDRX1F` invertido; la ventana ya no se mueve). Queda `dq_oe`, replicado
+   por pin, para que quepa en las celdas de IO.
 7. **MMIO, solo si aparece un caso que lo necesite.** El "EX con memoria"
    alto de input-keys-and-mouse (2,33) NO es tiempo perdido: es una espera
    activa (`LOAD STATUS / ANDI / BEQ`) hasta que el PC manda una tecla, y

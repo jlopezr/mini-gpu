@@ -47,11 +47,10 @@ module top (
 `ifdef DIAMOND
   localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
 `else
-  // Con `syn_useioff` en sdram_controller_128 los registros van en la celda de
-  // IO, como en Diamond. La ventana fue 2-21 en el primer build (ioff) y 8-29
-  // en los tres siguientes (dcache, dcache-epoca, icache-ebr), asi que se usa
-  // su centro. Aun se mueve algo porque el reloj de la SDRAM va por rutado
-  // general (`assign sdram_clk = clk`).
+  // Con DPHASE_SOURCE="ENABLED" el EHXPLLL no aplica el CLKOS_CPHASE estatico
+  // (14 de noviembre: builds identicas con CPHASE 7, 10 y 4 arrancan en la
+  // misma fase fisica). Este numero solo etiqueta la posicion de arranque para
+  // pll_phase_ctl; lo que cuenta es el retardo del camino del reloj al pin.
   localparam [5:0] SDRAM_PHASE = 6'd18;
 `endif
   pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
@@ -59,7 +58,19 @@ module top (
       .phasestep(pll_phasestep), .phasedir(pll_phasedir),
       .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
       .locked(pll_mem_locked));
+  // El reloj sale de la celda de IO del pin (F19): un ODDRX1F copia clk_sdram
+  // con un retardo fijo. Con D0=1, D1=0 la ventana buena quedaba de +13 a +33
+  // pasos desde el arranque; D0=0, D1=1 la invierte (24 pasos, 180 grados) y
+  // deja el arranque cerca del centro. Por rutado general (`assign`) el
+  // retardo dependia de la colocacion y la ventana de fase buena se movia con
+  // cada build: el 14 de noviembre, sin los generadores de trafico, la 18 de
+  // fabrica quedo fuera y los programas se reiniciaban. Fuera de sintesis
+  // (iverilog no trae ODDRX1F), la asignacion directa, como en dvi_generator.
+`ifdef SYNTHESIZE
+  ODDRX1F sdram_clk_oddr (.D0(1'b0), .D1(1'b1), .SCLK(clk_sdram), .RST(1'b0), .Q(sdram_clk));
+`else
   assign sdram_clk = clk_sdram;
+`endif
 
   // Resets: asercion asincrona y liberacion sincrona (`reset_sync.v`), una
   // cadena por dominio de reloj (ver la 37). El modulo SDRAM hace aparte su
@@ -501,7 +512,9 @@ module top (
           .BASE_ADDR(32'h01D0_0000 + traffic_index * 32'h0010_0000),
           .REGION_SIZE(32'h0010_0000),
           .SEED(32'h1111_1111 + traffic_index * 32'h1111_1111)) gen_i (
-          .clk(clk), .reset(reset), .enable(1'b1),
+          // Apagados: en la 35 estresaban el fabric; aqui competian con la
+          // CPU por la SDRAM en todo momento (ver docs/analisis-rendimiento.md).
+          .clk(clk), .reset(reset), .enable(1'b0),
           .urgent_enable(1'b0), .clear_stats(1'b0),
           .req_valid(m_req_valid[traffic_index + 4]),
           .req_ready(m_req_ready[traffic_index + 4]),

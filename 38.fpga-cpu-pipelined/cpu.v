@@ -64,7 +64,7 @@ module cpu #(
     // 2^BTB_BITS entries, direct-mapped by pc[BTB_BITS+1:2], with a partial
     // tag of BTB_TAG_BITS bits above the index. Small values only make sense
     // in a testbench, to force aliasing.
-    // 256 entries: 64 aliased enough to cost ~3 % (analisis-rendimiento.md).
+    // 256 entries: 64 aliased enough to cost ~3 % (docs/analisis-rendimiento.md).
     parameter integer BTB_BITS = 8,
     parameter integer BTB_TAG_BITS = 10
 ) (
