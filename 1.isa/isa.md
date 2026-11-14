@@ -274,8 +274,8 @@ Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuest
 | `0x1E`; `func6 = 0x03` | Límites unsigned | `minmax` | `MAXU` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
 | `0x1E`; `func6 = 0x04` | Selección | `select` | `SEL` | `Rd, Ra, Rb, Rc` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x05` | Acumulación Q16.16 | `macfx` | `MACFX` | `Rd, Ra, Rb` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
-| `0x1E`; `func6 = 0x06` | Recíproco Q16.16 | `rcpfx` | `RCPFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
-| `0x1E`; `func6 = 0x07` | Raíz inversa Q16.16 | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Propuesta v0.2; contrato numérico pendiente | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
+| `0x1E`; `func6 = 0x06` | Recíproco Q16.16 | `rcpfx` | `RCPFX` | `Rd, Ra, k` | Propuesta v0.2; contrato propuesto | No / No | [isa.md §7.3](#rcpfx-contrato-propuesto) |
+| `0x1E`; `func6 = 0x07` | Raíz inversa Q16.16 | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Propuesta de retirada: la sustituye `FSQRT` | No / No | [isa.md §7.3](#recíproco-y-raíz-coma-fija-o-fp32) |
 | `0x1E`; `func6 = 0x08` | Conversión de píxeles | `pack565` | `PACK565` | `Rd, Ra` | Propuesta v0.2 | No / No | [isa.md §7.3](#73-operaciones-nuevas-mediante-ext) |
 | `0x1E`; `func6 = 0x09` | Bits | `clz` | `CLZ` | `Rd, Ra` | Vigente | Sí / No | [isa.md §3](#ext-minmax-y-clz-capabilities-minmax-y-clz) |
 | `0x1F` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#inmediatos-y-memoria); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
@@ -316,6 +316,7 @@ Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuest
 | `0x3C`; `extra = 2` | Comparación FP32 | `fp32` | `FLE` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3D`; `extra[6:5] = 0` | Conversión FP32 | `fp32` | `FTOI` | `Rd, Ra, fbits` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3D`; `extra[6:5] = 1` | Conversión FP32 | `fp32` | `ITOF` | `Rd, Ra, fbits` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
+| `0x3D`; `extra[6:5] = 2` | Raíz cuadrada FP32 | `fp32_sqrt` | `FSQRT` | `Rd, Ra` | Propuesta v0.2 | No / No | [isa.md §7.3](#fsqrt-contrato-propuesto) |
 | `0x3E` | Sistema | Base | `TRAP` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
 | `0x3F` | Sistema | Base | `HALT` | — | Vigente | Sí / Sí | [isa.md §3](#sistema-y-simt) |
 
@@ -325,9 +326,11 @@ enlazadas, junto con [los formatos de instrucción](#2-formatos-de-instrucción)
 y [las reglas de conformidad](#6-conformidad-y-evolución).
 
 En EXT, `Rc = 0` está reservado para `MIN/MAX/MINU/MAXU/MACFX`;
-`Rb = Rc = 0` para `RCPFX/RSQRTFX/PACK565`. `SEL` usa los cuatro registros.
-La falta de contrato numérico de `RCPFX/RSQRTFX` impide tratarlas como listas
-para implementar aunque ya tengan una asignación propuesta.
+`Rb = Rc = 0` para `RSQRTFX/PACK565`. `RCPFX` reserva `Rb = 0` y usa el campo
+`Rc` como la constante `k`, no como registro. `SEL` usa los cuatro registros.
+`RCPFX` tiene un contrato propuesto (§7.3) pendiente de aprobación. Para
+`RSQRTFX` se propone retirarla en favor de `FSQRT` (§7.3); mientras no se
+decida, conserva su asignación pero no es implementable.
 
 El mapa vigente tiene **55 opcodes primarios ocupados y 9 reservados**
 (`EXT` en `0x1E` y FP32 en `0x3C–0x3D` son los últimos en ocuparse).
@@ -600,7 +603,7 @@ R-Type; `extra[10:2]` debe ser 0 (si no, `ERROR_INVALID_ENCODING`) y
 | `1` | `ITOF` | `Rd, Ra, fbits` | binary32(int32(Ra) / 2^fbits), RNE |
 
 `Rb` y `extra[10:7]` deben ser 0 (si no, `ERROR_INVALID_ENCODING`); `op = 2, 3`
-producen `ERROR_INVALID_OPCODE`. `fbits` va de 0 a 31: con 0 son las
+producen `ERROR_INVALID_OPCODE` (`op = 2` está propuesto para `FSQRT`, §7.3). `fbits` va de 0 a 31: con 0 son las
 conversiones de C (`(int)f`, `(float)i`); con 16, de y a Q16.16. El ensamblador
 acepta `FTOI Rd, Ra` e `ITOF Rd, Ra` con `fbits = 0`.
 
@@ -885,8 +888,9 @@ explícita de la codificación y del ensamblador.
 
 Las siguientes asignaciones son propuestas documentales, no instrucciones
 implementadas. Las operaciones vigentes y sus binarios conservan su contrato.
-Las capacidades se pueden adoptar por separado; RCPFX y RSQRTFX siguen sin
-contrato numérico cerrado y no deben anunciarse como soportadas.
+Las capacidades se pueden adoptar por separado; RCPFX y FSQRT tienen un
+contrato propuesto pendiente de aprobación y para RSQRTFX se propone la
+retirada: ninguna debe anunciarse como soportada.
 
 ### 7.1 Capabilities propuestas y decisiones pendientes
 
@@ -901,8 +905,9 @@ añade una capability separada `warp_user_id`:
 | `select`             | `SEL`                        | CPU y GPU                                  |
 | `macfx`              | `MACFX`                      | CPU y GPU                                  |
 | `pack565`            | `PACK565`                    | CPU y GPU                                  |
-| `rcpfx`              | `RCPFX`                      | Pendiente del contrato numérico            |
-| `rsqrtfx`            | `RSQRTFX`                    | Pendiente del contrato numérico            |
+| `rcpfx`              | `RCPFX`                      | CPU primero (el `1/w` de mini-gl); contrato propuesto en §7.3 |
+| `rsqrtfx`            | `RSQRTFX`                    | Propuesta de retirada: ver `fp32_sqrt`     |
+| `fp32_sqrt`          | `FSQRT`                      | CPU con `fp32`; contrato propuesto en §7.3 |
 
 No se propone una capability única que obligue a implementar todo `EXT`.
 Compartir opcode no implica compartir disponibilidad: un backend puede ofrecer
@@ -912,7 +917,8 @@ estas capabilities en CPU y GPU y comprobar `requires` contra cada backend.
 Antes de implementar falta:
 
 1. Aprobar las asignaciones nuevas y los nombres/grupos de capabilities.
-2. Cerrar los contratos numéricos de `RCPFX` y `RSQRTFX`.
+2. Aprobar los contratos propuestos de `RCPFX` y `FSQRT` (§7.3) y la
+   retirada de `RSQRTFX`.
 3. Elegir qué operaciones se incorporan primero y a qué backends, con medidas
    reproducibles de instrucciones, ciclos, área y timing.
 
@@ -987,7 +993,9 @@ registro-registro existentes.
 | `SEL`               | Selección de datos sin branch    | Semántica definida en esta propuesta |
 | `MACFX`             | Acumulación Q16.16               | Semántica definida en esta propuesta |
 | `PACK565`           | Conversión RGB888 a RGB565       | Semántica definida en esta propuesta |
-| `RCPFX`, `RSQRTFX`  | Recíproco y raíz inversa Q16.16  | Contrato numérico pendiente          |
+| `RCPFX`             | Recíproco Q16.16 con escala      | Contrato propuesto en esta sección   |
+| `RSQRTFX`           | Raíz inversa Q16.16              | Propuesta de retirada (ver `FSQRT`)  |
+| `FSQRT` (FP32)      | Raíz cuadrada binary32           | Contrato propuesto en esta sección   |
 
 `MIN/MAX` devuelven el menor/mayor operando según comparación signed32;
 `MINU/MAXU` usan unsigned32. `SEL Rd, Ra, Rb, Rc` devuelve `Ra` si el contenido
@@ -1013,10 +1021,153 @@ los 16 altos a cero; ignora el byte alto de `Ra`:
 Rd = ((Ra >> 8) & 0xF800) | ((Ra >> 5) & 0x07E0) | ((Ra >> 3) & 0x001F)
 ```
 
-Para `RCPFX` y `RSQRTFX` faltan dominio, rango, precisión, error máximo,
-redondeo, saturación/desbordamiento y tratamiento de cero y negativos. Sus
-subopcodes se proponen para planificación, pero **no están listas para implementar**.
-`DIV` entero no sustituye directamente esas operaciones Q16.16.
+#### RCPFX: contrato propuesto
+
+`RCPFX Rd, Ra, k` devuelve el recíproco de `Ra`, leído como signed Q16.16, con
+`16 + k` bits de fracción, **exacto y truncado hacia cero**, como `DIV`. `k`
+es una constante de 0 a 31 que va en el campo `Rc` (bits `[10:6]`); `RCPFX Rd,
+Ra` es `k = 0`, el recíproco en Q16.16.
+
+```text
+x = signed32(Ra)
+si x == 0:
+    q = 2^31 - 1                           ; cero: satura, positivo
+si no:
+    m = |x|                                ; entero de 1 a 2^31 (|-2^31| = 2^31)
+    q = floor(2^(32 + k) / m)              ; exacto, sin aproximación
+    q = min(q, 2^31 - 1)                   ; satura si no cabe
+Rd = low32(x < 0 ? -q : q)
+```
+
+- **Dominio:** los 2^32 valores de `Ra`. No hay errores numéricos ni
+  excepciones: solo `ERROR_INVALID_ENCODING` si `Rb != 0`.
+- **Precisión y redondeo:** el resultado es el valor exacto
+  `2^(32+k) / |x|` truncado hacia cero; el error es menor que una unidad del
+  último bit (`2^-(16+k)`). No hay redondeo al más cercano: así el contrato se
+  cumple con una división y no admite variantes que hagan divergir simulador y
+  RTL. Una implementación más rápida (tabla e iteraciones) tiene que dar el
+  mismo resultado bit a bit.
+- **Saturación:** el cociente satura a `2^31 - 1` cuando no cabe, que es
+  exactamente cuando `|x| <= 2^(k+1)` (con `k = 0`, `|x|` de 1 o 2: `1/2^-16`
+  y `1/2^-15`; con `k >= 30` satura siempre, así que no tiene uso). Con
+  `x = 0` el resultado es también `2^31 - 1`: a diferencia
+  de `DIV`, no hay error por cero, porque el código gráfico ya recorta antes
+  los `w` próximos a cero y no debe parar por uno degenerado.
+- **Signo:** `RCPFX(-x) = -RCPFX(x)` para todo `x`, saturados incluidos
+  (`-(2^31 - 1)` es `0x80000001`, no `0x80000000`).
+- **`Rd = Ra`** está permitido: se lee `Ra` antes de escribir. Con `Rd = R0` el
+  resultado se descarta.
+
+Por qué la escala `k`: el `1/w` de la proyección de mini-gl
+(`mgr_viewport_map_q`) necesita 30 bits de fracción, no 16, y hoy lo calcula
+con 2–3 `DIVU` (`udiv_shift(0x40000000, w, 16)`, que es `floor(2^46 / w)`).
+`RCPFX Rd, Ra, 14` da ese mismo valor para todo `w > 0`, así que puede
+sustituirlo sin cambiar un solo píxel. `DIV` no basta: el dividendo `2^(32+k)`
+no cabe en 32 bits.
+
+Ejemplos (`k = 0` salvo que se diga):
+
+| `Ra` | Valor | `Rd` | Valor |
+|---|---|---|---|
+| `0x00010000` | 1,0 | `0x00010000` | 1,0 |
+| `0x00020000` | 2,0 | `0x00008000` | 0,5 |
+| `0x00030000` | 3,0 | `0x00005555` | 0,333328… (truncado) |
+| `0x00008000` | 0,5 | `0x00020000` | 2,0 |
+| `0xFFFF0000` | −1,0 | `0xFFFF0000` | −1,0 |
+| `0xFFFD0000` | −3,0 | `0xFFFFAAAB` | −0,333328… (truncado hacia cero) |
+| `0x00000003` | 3 · 2^-16 | `0x55555555` | 21845,33… |
+| `0x00000002` | 2^-15 | `0x7FFFFFFF` | satura |
+| `0x00000000` | 0 | `0x7FFFFFFF` | satura |
+| `0x7FFFFFFF` | ≈ 32768 | `0x00000002` | 2^-15 (truncado) |
+| `0x80000000` | −32768 | `0xFFFFFFFE` | −2^-15 |
+| `0x00020000`, `k = 14` | 2,0 | `0x20000000` | 0,5 con 30 bits de fracción |
+
+Implementación orientativa, no normativa: es una división sin signo de
+`2^(32+k)` entre `|x|`, con el signo al final, y cabe en el divisor iterativo
+de `DIV` (el dividendo es un solo bit a uno). Con la salida temprana de los
+ceros, un `w` de una a varias unidades con `k = 14` saca 22–29 bits de
+cociente.
+
+#### Recíproco y raíz: coma fija o FP32
+
+Las dos operaciones se propusieron juntas en Q16.16, pero no tienen el mismo
+sitio natural:
+
+- **El recíproco va en coma fija.** Su uso principal es el `1/w` de la
+  proyección, que mini-gl hace en coma fija (`MGR_FIXED_GEOMETRY`) porque es el
+  camino rápido de esta máquina. Ahí `DIV` no basta (el dividendo `2^(32+k)` no
+  cabe en 32 bits) y `RCPFX` sustituye 2–3 `DIVU` por una instrucción con el
+  mismo resultado. El dominio entero se cierra con dos reglas sencillas
+  (saturar y simetría de signo), y el resultado exacto se obtiene con el divisor
+  que ya existe.
+- **En FP32 un recíproco no aporta casi nada.** El correctamente redondeado es
+  `FDIV(1.0, x)`, que ya existe y tarda lo mismo. Uno aproximado y rápido (tabla
+  e iteración, como en las GPU) da un resultado que depende de la
+  implementación: para que simulador y RTL coincidan bit a bit, la ISA tendría
+  que fijar el algoritmo.
+- **La raíz inversa no encaja en Q16.16.** `1/sqrt(x)` de un valor pequeño se
+  dispara y la de uno grande deja pocos bits útiles, así que el contrato tendría
+  que repartir saturación y precisión según la magnitud; y negativos y cero no
+  tienen una respuesta natural. Es justo lo que lo dejó sin cerrar.
+- **En FP32 la raíz sale casi sola.** El rango no es problema y los casos
+  especiales ya los resuelve el contrato FP32 (DAZ/FTZ, NaN canónico,
+  infinitos). Mejor que una raíz inversa aproximada es la **raíz cuadrada
+  exacta** (`FSQRT`): IEEE la define correctamente redondeada, sin ambigüedad;
+  se calcula dígito a dígito como la división, aprovechando casi entera la
+  estructura iterativa de `FDIV`; y completa el juego FP32, que no tiene raíz.
+  `1/sqrt(x)` es `FDIV(1.0, FSQRT(x))`, con dos redondeos pero definido.
+
+Por eso se propone **retirar `RSQRTFX`** (su `func6 = 0x07` volvería a quedar
+reservado) y añadir `FSQRT`. Ninguna de las dos acelera los juegos actuales:
+en racer, `mgl_sqrt` es el 0,1 % de las instrucciones y `normalize3` se llama
+4 veces por frame. Tendrían peso con iluminación por vértice.
+
+#### FSQRT: contrato propuesto
+
+`FSQRT Rd, Ra` (capability `fp32_sqrt`, que exige `fp32`) va en el espacio libre
+de las conversiones FP32: opcode `0x3D` con `op = 2` (`extra[6:5]`), y `Rb`,
+`extra[10:7]` y `fbits` a cero (si no, `ERROR_INVALID_ENCODING`). Hoy `op = 2`
+da `ERROR_INVALID_OPCODE`, así que no cambia ningún binario.
+
+```text
+31       26 25   21 20   16 15   11 10    7 6    5 4       0
++----------+-------+-------+-------+-------+------+---------+
+|   0x3D   |  Rd   |  Ra   |   0   |   0   |  2   |    0    |
++----------+-------+-------+-------+-------+------+---------+
+```
+
+Resultado: la raíz cuadrada de binary32(`Ra`), **correctamente redondeada al
+más cercano con desempate al par** (RNE), con las reglas del contrato FP32 de
+§3:
+
+- **DAZ:** una entrada subnormal es un cero con su signo.
+- `FSQRT(+0) = +0` y `FSQRT(-0) = -0` (también los subnormales, por DAZ).
+- Un negativo no nulo, incluido `-∞`, es inválido: NaN canónico `0x7FC00000`.
+- Un NaN da el NaN canónico. `FSQRT(+∞) = +∞`.
+- El resultado de un normal positivo nunca es subnormal (el menor es 2^-63), así
+  que FTZ no interviene. No hay excepciones ni flags.
+
+| `Ra` | Valor | `Rd` | Valor |
+|---|---|---|---|
+| `0x40800000` | 4,0 | `0x40000000` | 2,0 |
+| `0x40000000` | 2,0 | `0x3FB504F3` | 1,4142135… |
+| `0x3E800000` | 0,25 | `0x3F000000` | 0,5 |
+| `0x42C80000` | 100,0 | `0x41200000` | 10,0 |
+| `0x7F7FFFFF` | máximo finito | `0x5F7FFFFF` | 1,8446743 · 10^19 |
+| `0x00800000` | mínimo normal (2^-126) | `0x20000000` | 2^-63 |
+| `0x00000001` | subnormal | `0x00000000` | +0 (DAZ) |
+| `0x80400000` | subnormal negativo | `0x80000000` | −0 (DAZ) |
+| `0x80000000` | −0 | `0x80000000` | −0 |
+| `0xBF800000` | −1,0 | `0x7FC00000` | NaN |
+| `0xFF800000` | −∞ | `0x7FC00000` | NaN |
+| `0x7F800000` | +∞ | `0x7F800000` | +∞ |
+| `0x7FC00001` | NaN | `0x7FC00000` | NaN canónico |
+
+Modelo de referencia: la raíz entera exacta de la mantisa escalada
+(`math.isqrt`) con redondeo RNE; coincide con la raíz en `double` redondeada a
+`float`, que para la raíz no sufre de doble redondeo. Se añadiría a
+`tools/fp32.py`. Implementación orientativa, no normativa: recurrencia de un
+bit por iteración, como `FDIV`, unas 25 iteraciones.
 
 #### Encoding propuesto: `EXT` en `0x1E`
 
@@ -1040,8 +1191,8 @@ cambia; el ensamblador expondrá los mnemónicos, no un `EXT` genérico.
 | `0x03`            | `MAXU`     | `Rd, Ra, Rb`     | `Rc = 0`                          |
 | `0x04`            | `SEL`      | `Rd, Ra, Rb, Rc` | Ninguno                           |
 | `0x05`            | `MACFX`    | `Rd, Ra, Rb`     | `Rc = 0`                          |
-| `0x06`            | `RCPFX`    | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
-| `0x07`            | `RSQRTFX`  | `Rd, Ra`         | `Rb = Rc = 0`; contrato pendiente |
+| `0x06`            | `RCPFX`    | `Rd, Ra, k`      | `Rb = 0`; `Rc` es la constante `k` |
+| `0x07`            | `RSQRTFX`  | `Rd, Ra`         | `Rb = Rc = 0`; propuesta de retirada |
 | `0x08`            | `PACK565`  | `Rd, Ra`         | `Rb = Rc = 0`                     |
 | `0x09`            | `CLZ`      | `Rd, Ra`         | `Rb = Rc = 0`; vigente (§3, EXT)  |
 | `0x0A–0x3F`       | Reservadas | —                | 54 suboperaciones disponibles     |
@@ -1059,7 +1210,8 @@ Sobre el repertorio vigente se proponen **11 operaciones nuevas**: seis
 branches inmediatos y cinco operaciones bajo `EXT` (`SEL`, `MACFX`, `RCPFX`,
 `RSQRTFX`, `PACK565`). Consumen **6 opcodes primarios nuevos**, los de los
 branches: `EXT` ya está ocupado con `MIN/MAX/MINU/MAXU` y `CLZ` (vigentes en la
-38). Dos operaciones EXT tienen contrato numérico pendiente. Los cinco
+38). El contrato de `RCPFX` está propuesto en §7.3, y para `RSQRTFX` se propone
+la retirada en favor de `FSQRT` (en `0x3D`, sin opcode nuevo). Los cinco
 mnemónicos GETID ya están incorporados y no cuentan como novedades.
 
 Portar capabilities existentes entre backends no consume nuevos opcodes.
@@ -1161,6 +1313,13 @@ La validación debe cubrir:
   alineación, errores por lane y finalización antes de `BAR`.
 - EXT: funciones no soportadas, campos reservados, operandos coincidentes,
   extremos signed/unsigned, equivalencia de `MACFX` a `MULFX`+`ADD` y colores RGB565.
+- `RCPFX`: los ejemplos de §7.3; cero, `±1`, `±2`, `-2^31` y `2^31 - 1` con
+  todos los `k`; la frontera de saturación `|x| = 2^(k+1)` y `2^(k+1) + 1`;
+  simetría `RCPFX(-x) = -RCPFX(x)`; `Rd = Ra`; y, con `k = 14`, igualdad con
+  `udiv_shift(0x40000000, w, 16)` de mini-gl para `w` aleatorios positivos.
+- `FSQRT`: los ejemplos de §7.3; ceros con signo, subnormales de los dos
+  signos, negativos, infinitos y NaN; cuadrados exactos; y contraste aleatorio
+  con el modelo de referencia, incluidos los casos de desempate.
 - Aritmética portada a GPU: signos, overflow, división por cero y máscaras activas.
 - Regresión: conservar los resultados y encodings de programas v0.1; medir
   rendimiento por separado de la equivalencia funcional.

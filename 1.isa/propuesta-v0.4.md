@@ -102,8 +102,8 @@ Compartir opcode no obliga a implementar otras capabilities de la misma familia.
 | `select` | `SEL` | CPU / GPU |
 | `macfx` | `MACFX` | CPU / GPU |
 | `pack565` | `PACK565` | CPU / GPU |
-| `rcpfx` | `RCPFX` | Contrato numérico pendiente |
-| `rsqrtfx` | `RSQRTFX` | Contrato numérico pendiente |
+| `rcpfx` | `RCPFX` | Contrato propuesto en `isa.md` §7.3 |
+| `rsqrtfx` | `RSQRTFX` | Propuesta de retirada en favor de `FSQRT` (`isa.md` §7.3) |
 | `mul_high_variants` | `MULHU`, `MULHSU` | CPU / GPU |
 | `unpack565` | `UNPACK565R`, `UNPACK565G`, `UNPACK565B` | CPU / GPU |
 | `bit_count` | `CLZ`, `POPC` | CPU / GPU |
@@ -114,8 +114,8 @@ Compartir opcode no obliga a implementar otras capabilities de la misma familia.
 | `indexed_load` | `LOADX` de 32 bits | CPU / GPU |
 | `fp32` | `FADD`, `FSUB`, `FMUL`, `FDIV`, `FEQ`, `FLT`, `FLE`, `FTOI`, `ITOF` | CPU / GPU |
 
-`rcpfx` y `rsqrtfx` no pueden declararse hasta cerrar su contrato y modelo de
-referencia. Las demás capabilities de esta propuesta tampoco se anuncian hasta
+`rcpfx` no puede declararse hasta aprobar su contrato (propuesto en `isa.md`
+§7.3) y tener modelo de referencia; para `rsqrtfx` se propone la retirada. Las demás capabilities de esta propuesta tampoco se anuncian hasta
 implementar y validar todas sus instrucciones. No existe capability de familia
 MUL, DIV o EXT que sustituya a esta tabla. `R0=0` es obligatorio y la reutilización
 interna de resultados o el número de ciclos no constituyen capabilities.
@@ -352,8 +352,8 @@ libres de ese mapa.
 | `0x07`; `func6 = 0x00` | Selección | `select` | `SEL` | `Rd, Ra, Rb, Rc` | Propuesta; uso de Rc unificado | No / No | [v0.4](#514-select--0x07) |
 | `0x08`; `func6 = 0x00` | Bits | `bit_count` | `CLZ` | `Rd, Ra` | Propuesta v4 | No / No | [v0.4](#515-bit--0x08) |
 | `0x08`; `func6 = 0x01` | Bits | `bit_count` | `POPC` | `Rd, Ra` | Propuesta v4 | No / No | [v0.4](#515-bit--0x08) |
-| `0x09`; `func6 = 0x00` | Coma fija | `rcpfx` | `RCPFX` | `Rd, Ra` | Contrato numérico pendiente | No / No | [v0.4](#516-fxmath--0x09) |
-| `0x09`; `func6 = 0x01` | Coma fija | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Contrato numérico pendiente | No / No | [v0.4](#516-fxmath--0x09) |
+| `0x09`; `func6 = 0x00` | Coma fija | `rcpfx` | `RCPFX` | `Rd, Ra, k` | Contrato propuesto (`isa.md` §7.3) | No / No | [v0.4](#516-fxmath--0x09) |
+| `0x09`; `func6 = 0x01` | Coma fija | `rsqrtfx` | `RSQRTFX` | `Rd, Ra` | Propuesta de retirada | No / No | [v0.4](#516-fxmath--0x09) |
 | `0x0A`; `func6 = 0x00` | Coma flotante | `fp32` (CPU / GPU) | `FADD` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
 | `0x0A`; `func6 = 0x01` | Coma flotante | `fp32` (CPU / GPU) | `FSUB` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
 | `0x0A`; `func6 = 0x02` | Coma flotante | `fp32` (CPU / GPU) | `FMUL` | `Rd, Ra, Rb` | Propuesta v4; contrato numérico vigente | No / No | [v0.4](#55-familia-fp32--0x0a) |
@@ -527,13 +527,16 @@ forma `bit_count` junto con `POPC`, que no está implementada.
 
 | `func6`   | Operación          | Objetivo                             |
 | --------- | ------------------ | ------------------------------------ |
-| `0x00`    | `RCPFX Rd, Ra`     | Recíproco `1/x` en Q16.16            |
-| `0x01`    | `RSQRTFX Rd, Ra`   | Raíz inversa `1/sqrt(x)` en Q16.16   |
+| `0x00`    | `RCPFX Rd, Ra, k`  | Recíproco `2^(32+k)/x`, Q16.16 con `16+k` bits de fracción |
+| `0x01`    | `RSQRTFX Rd, Ra`   | Raíz inversa `1/sqrt(x)` en Q16.16 (propuesta de retirada) |
 
-`Rb=Rc=0`. Se proponen estos encodings, pero ambas operaciones siguen pendientes
-de definir dominio, rango, precisión, redondeo, overflow y errores. Un backend
-no debe declarar soporte hasta disponer del contrato y un modelo de referencia.
-El contrato debe permitir comprobar resultados entre simulador y RTL.
+`RCPFX` reserva `Rb = 0` y lleva `k` en el campo `Rc`; su contrato (exacto,
+truncado hacia cero, con saturación y simetría de signo) está propuesto en
+`isa.md` §7.3, con ejemplos. Para `RSQRTFX` se propone la retirada en favor de
+`FSQRT` en FP32 (`isa.md` §7.3, «Recíproco y raíz: coma fija o FP32»): en
+Q16.16 no hay un reparto natural de rango y precisión. Un backend no debe
+declarar soporte de ninguna hasta aprobar el contrato y disponer de un modelo de
+referencia que permita comprobar resultados entre simulador y RTL.
 
 Se prioriza `RCPFX`: un recíproco de `w` se reutiliza para proyectar coordenadas
 y recuperar atributos con perspectiva. `RSQRTFX` se orienta a normalización e
