@@ -80,9 +80,9 @@ Validación realizada en simulación y síntesis; pendiente ejecución en placa.
 ## Estado actual (12 de noviembre)
 
 ```text
-          ┌─ instruction_buffer (I-cache 8 KB, EBR) ─┐
-cpu.v ────┤                                          ├── arbitro ── SDRAM
- IF/ID/EX/WB └─ dcache (8 KB, EBR) ── cpu_dmem_adapter ─┘
+          ┌─ instruction_buffer (I-cache 32 KB, EBR) ─┐
+cpu.v ────┤                                           ├── arbitro ── SDRAM
+ IF/ID/EX/WB └─ dcache (16 KB, EBR) ── cpu_dmem_adapter ─┘
 ```
 
 - **Pipeline IF/ID/EX/WB** con punto de retiro arquitectonico. ID decodifica,
@@ -128,12 +128,19 @@ cpu.v ────┤                                          ├── arbitro
 - **Busqueda de una instruccion por ciclo.** `imem` separa peticion
   (`valid/ready`) y respuesta (`rvalid`); una cola de cuatro entradas en IF y un
   contador descartan las respuestas del camino viejo tras un salto.
-- **Cache de instrucciones** (`instruction_buffer.v`): 8 KB, mapeo directo,
+- **Cache de instrucciones** (`instruction_buffer.v`): 32 KB (2048 lineas;
+  8 KB hasta el 13 de noviembre, 16 KB hasta el 14), mapeo directo,
   lineas de 16 bytes (una rafaga BL8), en EBR. Acierto en dos ciclos con la
   respuesta registrada (paso 2b) y una busqueda por ciclo; si una busqueda
   falla, la que ya se acepto detras se repite tras el relleno, asi que `ready`
-  sigue saliendo de un registro.
-- **Cache de datos** (`dcache.v`): 8 KB, mapeo directo, escritura inmediata a
+  sigue saliendo de un registro. Con 16 KB, skimmer y tanks fallaban 6-8 veces
+  por cada mil instrucciones segun como cayera el codigo (cambiar una funcion
+  movia el resto y una pareja caliente se pisaba: +-4 % de fps sin tocar el
+  trabajo); con 32 KB, 0,8-1,9, y en la placa tanks 40,8 -> 42,9 fps, skimmer
+  20,0 -> 21,5 y racer CPI 1,82 -> 1,79. Un modelo con la traza del simulador
+  da 2 vias de 16 KB parecidas a 32 KB de mapeo directo; 32 KB fue cambiar un
+  parametro. Sintesis: CPU 53,62 MHz, SDRAM 102,94 MHz, 37 de 208 EBR.
+- **Cache de datos** (`dcache.v`): 16 KB (1024 lineas), mapeo directo, escritura inmediata a
   memoria y sin reservar linea al escribir, en EBR. Los STORE a SDRAM no
   esperan (posted) y siguen pasando por el bufer de combinacion de
   `cpu_dmem_adapter`; un LOAD que acierta espera a que el adaptador no deba

@@ -428,15 +428,17 @@ module top (
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
       .rsp_rdata(p0_rsp_rdata), .rsp_error(p0_rsp_error));
 
-  // Cache de instrucciones de 16 KB en EBR: 1024 lineas de 16 bytes, y cada
-  // linea es exactamente una rafaga BL8. Se invalida al parar la CPU (el
+  // Cache de instrucciones de 32 KB en EBR: 2048 lineas de 16 bytes, y cada
+  // linea es exactamente una rafaga BL8. Con 16 KB, el codigo caliente de los
+  // sketches 3D de 39.mini-gl se pisaba segun como cayera (skimmer y tanks,
+  // 6-8 fallos por cada mil instrucciones); con 32 KB, 0,8-1,9 y +5-7 % fps. Se invalida al parar la CPU (el
   // monitor reescribe la memoria de programa con la CPU parada) y con `reset`.
   //
   // `hit_count`/`miss_count` no se conectan: existen para los bancos de prueba
   // y la sintesis los quita. Los contadores de rendimiento de la CPU
   // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
   wire ibuf_hit, ibuf_miss;
-  instruction_buffer #(.LINES(1024), .INDEX_BITS(10)) instruction_buffer_i(
+  instruction_buffer #(.LINES(2048), .INDEX_BITS(11)) instruction_buffer_i(
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
