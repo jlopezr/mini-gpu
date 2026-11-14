@@ -14,9 +14,16 @@
  *   load      bucle de LOAD a direcciones seguidas.
  *   branchdep bucle de 2 cuyo salto depende de la instruccion de antes.
  *   loaduse   LOAD seguido de una instruccion que usa el dato.
- *   addrdep   LOAD cuya direccion acaba de calcular la instruccion de antes.
+ *   addrdep   LOAD cuya direccion acaba de calcular la instruccion de antes:
+ *             un ciclo de espera (AGI), y la base llega desde MEM.
+ *   agi       la base desde MEM (FWD-MEM-ID) con cada productor: constante,
+ *             LOAD (puntero leido de memoria), ADDI a dos instrucciones (sin
+ *             espera) y MUL a dos (espera: su producto se suma en MEM).
  *   muldiv    bucle con una MUL y una DIV: los contadores STALL_MULDIV y
  *             MULDIV_RETIRED, con valor exacto.
+ *   muluse    MUL cuyo producto usa la instruccion de justo detras como dato
+ *             de un STORE y como base de un LOAD: la espera MUL-use cuenta
+ *             como RAW, y los valores llegan bien a memoria y desde ella.
  *
  * La memoria imita un ACIERTO de instruction_buffer.v: acepta una peticion
  * por ciclo (`ready` siempre alto) y la responde dos ciclos despues con
@@ -391,10 +398,39 @@ module cpu_perf_tb;
     instruction_memory[5] = bne(5'd2, 5'd0, 16'hfffc);  // a la palabra 2
     run_program("addrdep", 2 + 64 * 4 + 1);
     expect_register(5'd4, 32'd63);
+    // Un ciclo por vuelta: el ADDI esta en EX cuando el LOAD llega a ID, y al
+    // ciclo siguiente su resultado esta en MEM (FWD-MEM-ID). Antes, dos.
+    if (perf.stall_raw !== 32'd64)
+      $fatal(1, "addrdep: STALL_RAW = %0d, se esperaban 64", perf.stall_raw);
+
+    // agi: cada productor de la base, y los valores.
+    clear_memory();
+    data_memory[16'h0400 >> 2] = 32'h0000_0404;
+    data_memory[16'h0404 >> 2] = 32'h0000_0408;
+    data_memory[16'h0408 >> 2] = 32'h0000_0555;
+    data_memory[16'h040c >> 2] = 32'h0000_0777;
+    instruction_memory[0] = movi(5'd9, 16'h0081);
+    instruction_memory[1] = movi(5'd10, 16'd8);
+    instruction_memory[2] = movi(5'd1, 16'h0400);
+    instruction_memory[3] = load(5'd1, 5'd1, 16'd0);         // base de MOVI, a 1: 1 ciclo
+    instruction_memory[4] = load(5'd1, 5'd1, 16'd0);         // base de LOAD, a 1: 1 ciclo
+    instruction_memory[5] = addi(5'd3, 5'd1, 16'd4);         // usa el LOAD: sin espera
+    instruction_memory[6] = addi(5'd6, 5'd0, 16'd1);
+    instruction_memory[7] = load(5'd4, 5'd3, 16'd0);         // base de ADDI, a 2: 0
+    instruction_memory[8] = rtype(6'h0a, 5'd8, 5'd9, 5'd10); // MUL R8 = 0x408
+    instruction_memory[9] = addi(5'd12, 5'd0, 16'd2);
+    instruction_memory[10] = load(5'd11, 5'd8, 16'd0);       // base de MUL, a 2: 1
+    run_program("agi", 11 + 1);
+    expect_register(5'd1, 32'h0000_0408);
+    expect_register(5'd3, 32'h0000_040c);
+    expect_register(5'd4, 32'h0000_0777);
+    expect_register(5'd11, 32'h0000_0555);
+    if (perf.stall_raw !== 32'd3)
+      $fatal(1, "agi: STALL_RAW = %0d, se esperaban 3", perf.stall_raw);
 
     // muldiv: 10 vueltas de MUL, DIV, contador y salto. Ninguna depende de
-    // la anterior, asi que la espera es solo la de EX: 3 ciclos por MUL y 34
-    // por DIV (cpu_muldiv_tb.v), y nada de eso cuenta en STALL_EX_MEM.
+    // la anterior, asi que la espera es solo la de la DIV en EX (la MUL esta
+    // segmentada y no para EX, cpu_muldiv_tb.v), y nada cuenta en STALL_EX_MEM.
     clear_memory();
     instruction_memory[0] = movi(5'd1, 16'd1000);
     instruction_memory[1] = movi(5'd2, 16'd7);
@@ -406,14 +442,42 @@ module cpu_perf_tb;
     run_program("muldiv", 3 + 10 * 4 + 1);
     expect_register(5'd3, 32'd7000);
     expect_register(5'd4, 32'd142);
-    // 10 x (3 de la MUL + 12 de la DIV): 1000/7 tiene un cociente de 8 bits y
-    // la salida temprana se salta 24 de los 32 pasos (antes, 10 x (3 + 34)).
-    if (perf.stall_muldiv !== 32'd150)
-      $fatal(1, "muldiv: STALL_MULDIV = %0d, se esperaban 150", perf.stall_muldiv);
+    // 10 x 12 de la DIV: 1000/7 tiene un cociente de 8 bits y la salida
+    // temprana se salta 24 de los 32 pasos (antes, 10 x (3 + 34) con la MUL
+    // parando EX 3 ciclos, y 10 x (3 + 12) hasta segmentarla).
+    if (perf.stall_muldiv !== 32'd120)
+      $fatal(1, "muldiv: STALL_MULDIV = %0d, se esperaban 120", perf.stall_muldiv);
     if (perf.muldiv_retired_count !== 32'd20)
       $fatal(1, "muldiv: MULDIV_RETIRED = %0d, se esperaban 20", perf.muldiv_retired_count);
     if (perf.stall_ex_mem !== 32'd0)
       $fatal(1, "muldiv: STALL_EX_MEM = %0d, se esperaba 0", perf.stall_ex_mem);
+
+    // muluse: 10 vueltas de MUL -> STORE del producto, MUL -> LOAD con el
+    // producto de base (AGI: espera hasta tenerlo en WB) -> ADD que usa el
+    // dato. R1 = 0x100, R2 = 4: la MUL da 0x400, la direccion de los datos.
+    clear_memory();
+    for (k = 0; k < 64; k = k + 1) data_memory[(16'h0400 >> 2) + k] = 32'd0;
+    data_memory[(16'h0400 >> 2) + 1] = 32'h0000_0777;
+    instruction_memory[0] = movi(5'd1, 16'h0100);
+    instruction_memory[1] = movi(5'd2, 16'd4);
+    instruction_memory[2] = movi(5'd5, 16'd10);
+    instruction_memory[3] = rtype(6'h0a, 5'd3, 5'd1, 5'd2);  // MUL R3 = 0x400
+    instruction_memory[4] = store(5'd3, 5'd3, 16'd8);        // [R3+8] = R3
+    instruction_memory[5] = rtype(6'h0a, 5'd4, 5'd1, 5'd2);  // MUL R4 = 0x400
+    instruction_memory[6] = load(5'd6, 5'd4, 16'd4);         // R6 = [R4+4]
+    instruction_memory[7] = addi(5'd5, 5'd5, 16'hffff);
+    instruction_memory[8] = bne(5'd5, 5'd0, 16'hfffa);       // a la palabra 3
+    run_program("muluse", 3 + 10 * 6 + 1);
+    expect_register(5'd6, 32'h0000_0777);
+    if (data_memory[(16'h0400 >> 2) + 2] !== 32'h0000_0400)
+      $fatal(1, "muluse: el STORE guardo %08x, se esperaba 00000400",
+             data_memory[(16'h0400 >> 2) + 2]);
+    if (perf.stall_muldiv !== 32'd0)
+      $fatal(1, "muluse: STALL_MULDIV = %0d, se esperaba 0", perf.stall_muldiv);
+    if (perf.muldiv_retired_count !== 32'd20)
+      $fatal(1, "muluse: MULDIV_RETIRED = %0d, se esperaban 20", perf.muldiv_retired_count);
+    if (perf.stall_raw < 32'd20)
+      $fatal(1, "muluse: STALL_RAW = %0d, se esperaban al menos 20", perf.stall_raw);
 
     // Ranuras 16 y 17 tras el ultimo programa (~200 ciclos, media docena de
     // frames de 37). Exactas contra la cuenta de referencia, y ademas no

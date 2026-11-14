@@ -21,16 +21,22 @@
  *              registered.
  *   FWD-WB-ID  register-file bypass (id_op_a, id_op_b): the value WB writes
  *              this cycle, which the asynchronous read does not see yet.
+ *   FWD-MEM-ID MEM -> ID, only into the address adder (id_address_base):
+ *              the base of a load/store written by the instruction two
+ *              before, from mem_result (not a MUL: section 04b).
  *   FWD-HOLD   an instruction held in EX (MUL/DIV, or a memory access in
  *              MEM ahead) latches its forwarded operands, since the
  *              producers move on.
  * Waits in ID (raw_hazard):
+ *   MUL-use    the instruction in EX is a MUL: its product is summed in
+ *              MEM and exists from WB on (FWD-WB-EX), one cycle later.
  *   load-use   the instruction in EX is a load: its data exists when it
  *              leaves MEM, and then comes from WB (FWD-WB-EX).
  *   AGI        a load/store whose base register is written by the
- *              instruction in EX or MEM: the address is computed in ID, and
- *              forwarding to ID would put the ALU or a mux in front of the
- *              address adder in the same cycle.
+ *              instruction in EX (or by a MUL in MEM): the address is
+ *              computed in ID, and forwarding from EX would put the ALU in
+ *              front of the address adder in the same cycle. One cycle, and
+ *              then the base comes from MEM (FWD-MEM-ID).
  *   Branches are decided in EX, not in ID with forwarded operands, for the
  *   same reason; prediction is what will recover their bubbles.
  *
@@ -41,8 +47,9 @@
  * bookkeeping (if_req_*, if_inflight, if_discard, mem_drop), and what is
  * in flight becomes dropped, as when the CPU stops.
  *
- * MUL/MULHI/MULFX and DIV/DIVU/REM/REMU run in EX, which holds them for
- * several cycles (section 04b); MEM goes on meanwhile, with bubbles.
+ * DIV/DIVU/REM/REMU run in EX, which holds them for several cycles
+ * (section 04b); MEM goes on meanwhile, with bubbles. MUL/MULHI/MULFX are
+ * pipelined: partial products in EX, their sum in MEM (section 04b).
  */
 module cpu #(
     // REM/REMU right after their DIV/DIVU reuse its remainder instead of
@@ -57,7 +64,8 @@ module cpu #(
     // 2^BTB_BITS entries, direct-mapped by pc[BTB_BITS+1:2], with a partial
     // tag of BTB_TAG_BITS bits above the index. Small values only make sense
     // in a testbench, to force aliasing.
-    parameter integer BTB_BITS = 6,
+    // 256 entries: 64 aliased enough to cost ~3 % (analisis-rendimiento.md).
+    parameter integer BTB_BITS = 8,
     parameter integer BTB_TAG_BITS = 10
 ) (
     input clk,
@@ -340,11 +348,18 @@ module cpu #(
   reg [31:0] if_ras [0:RAS_DEPTH-1];
   reg [RAS_BITS-1:0] if_ras_top;
   reg [RAS_BITS:0] if_ras_count;
-  // Branch target buffer (section 02c).
+  // Branch target buffer (section 02c). Distributed RAM (LUTs), read in the
+  // same cycle as imem_address: with 256 entries Yosys put the tags in EBR,
+  // whose synchronous read pulled the next-fetch logic (ctl_advance) into its
+  // address and left the CPU at 47.7 MHz; forced to LUTs it closes (52.2).
   reg [BTB_ENTRIES-1:0] if_btb_valid;
+  (* ram_style = "distributed" *)
   reg [BTB_TAG_BITS-1:0] if_btb_tag [0:BTB_ENTRIES-1];
+  (* ram_style = "distributed" *)
   reg [29:0] if_btb_dest [0:BTB_ENTRIES-1];
+  (* ram_style = "distributed" *)
   reg [1:0] if_btb_counter [0:BTB_ENTRIES-1];
+  (* ram_style = "distributed" *)
   reg if_btb_return [0:BTB_ENTRIES-1];
   wire [BTB_BITS-1:0] if_lookup_index;
   wire if_lookup_hit;
@@ -401,6 +416,8 @@ module cpu #(
   reg [1:0] id_access_size;
   reg id_access_signed;
   wire [31:0] id_effective_address;
+  wire id_base_from_mem;
+  wire [31:0] id_address_base;
   wire id_address_misaligned;
   reg [3:0] id_store_mask;
   reg id_encoding_valid;
@@ -415,6 +432,7 @@ module cpu #(
   reg [31:0] id_branch_target;
   reg id_reg_write;
   reg id_halt_after_retire;
+  reg id_mul;                 // MUL/MULHI/MULFX: pipelined, section 04b
   reg [2:0] id_class;
   reg [7:0] id_error_code;
 
@@ -506,14 +524,16 @@ module cpu #(
   reg ex_md_fast;              // REM/REMU that reuses the previous remainder
   reg ex_md_counted;           // a MUL/DIV, for perf_muldiv_retired (ex_class
                                // turns NORMAL when it is done)
+  reg ex_mul;                  // MUL/MULHI/MULFX (OPCLASS_NORMAL, 04b)
   reg wb_md_counted;
   reg [5:0] ex_md_step;
   wire ex_md_is_div;
   wire ex_md_signed_div;
-  // The md_* registers are EX's: its logic reads them while the MUL/DIV waits.
-  (* pipeline_stage = "EX" *) reg [31:0] md_ll, md_lh, md_hl, md_hh;
-  (* pipeline_stage = "EX" *) reg [31:0] md_correction;
-  (* pipeline_stage = "EX" *) reg [63:0] md_product;
+  // The partial products are loaded as a MUL leaves EX and read by MEM; the
+  // divider's registers are EX's, read while the DIV waits there.
+  (* pipeline_stage = "MEM" *) reg [31:0] md_ll, md_lh, md_hl, md_hh;
+  (* pipeline_stage = "MEM" *) reg [31:0] md_correction;
+  wire [63:0] md_product;
   wire [31:0] md_high_signed;
   reg [31:0] md_mul_result;
   (* pipeline_stage = "EX" *) reg [31:0] md_dividend;
@@ -554,6 +574,8 @@ module cpu #(
   reg [2:0] mem_class;
   reg [7:0] mem_error_code;
   reg mem_md_counted;
+  reg mem_mul;               // a MUL whose product is summed here (04b)
+  reg [5:0] mem_mul_op;
   reg mem_request_sent;      // accepted, waiting for its response
   reg [1:0] mem_drop;        // responses still to come that nobody waits for
   wire mem_posted;
@@ -618,7 +640,7 @@ module cpu #(
   // Each stage moves on unless a later one holds: MEM waits for its access
   // (it moves in the cycle the access ends, mem_done: dmem_ready and
   // dmem_rvalid come from registers in dcache.v and cpu_dmem_adapter.v); EX
-  // also waits for a MUL/DIV, and then MEM takes a bubble.
+  // also waits for a DIV or FP32 operation, and then MEM takes a bubble.
   assign ctl_mem_advance = ctl_run && !mem_hold;
   assign ctl_advance = ctl_mem_advance && !ex_is_muldiv && !ex_is_fp32;
   assign ctl_memory = ctl_run && mem_is_memory;
@@ -1123,18 +1145,32 @@ module cpu #(
   assign id_forward_mem_b = ex_valid && ex_reg_write && ex_rd != 5'd0 && ex_rd == id_src_b;
   assign id_forward_wb_a = mem_valid && mem_reg_write && mem_rd != 5'd0 && mem_rd == id_src_a;
   assign id_forward_wb_b = mem_valid && mem_reg_write && mem_rd != 5'd0 && mem_rd == id_src_b;
+  // FWD-MEM-ID: the base of a load/store address may come from the
+  // instruction in MEM, whose result sits in mem_result (a register: the ALU
+  // result, a load's data once it has it, a finished DIV/FP32). Not from a
+  // MUL there: its product is still being summed in MEM (04b). Only the
+  // address adder takes it, not id_op_a: the other operands get it in EX.
+  assign id_base_from_mem = id_forward_wb_a && !mem_mul;
+  assign id_address_base = id_base_from_mem ? mem_result : id_op_a;
   // The one RAW stall, AGI: the address needs the base now, and the
-  // instruction in EX or MEM has not written it yet; it waits until it can
-  // take it from WB (the bypass above). Not forwarded from MEM: that mux
-  // would sit in front of the address adder, which also feeds the D-cache.
+  // instruction in EX has not computed it yet (or the MUL in MEM has not);
+  // it waits until it can take it from MEM (FWD-MEM-ID) or WB (the bypass
+  // above). A base written by the instruction right before costs one cycle;
+  // two before, none. Not forwarded from EX: the ALU would sit in front of
+  // the address adder, which also feeds the D-cache.
   // A load's consumer does not wait: the load's data reaches MEM with it.
-  assign raw_hazard = id_live && id_memory && (id_forward_mem_a || id_forward_wb_a);
+  // The second one, MUL-use: a MUL's product is summed in MEM and exists
+  // from WB on, so the instruction right after it waits one cycle and then
+  // takes it from WB (FWD-WB-EX); the one after that does not wait (04b).
+  assign raw_hazard = id_live && (
+      (id_memory && (id_forward_mem_a || (id_forward_wb_a && mem_mul))) ||
+      (ex_mul && (id_forward_mem_a || id_forward_mem_b)));
 
   assign id_return = id_opcode == OPCODE_JR && id_ra == 5'd31;
   assign id_target_wrong = id_predicted && !id_branch_register &&
                            id_predict_target[31:2] != id_branch_target[31:2];
 
-  assign id_effective_address = id_op_a + id_imm_signed;
+  assign id_effective_address = id_address_base + id_imm_signed;
   assign id_address_misaligned = (id_access_size == 2'd2) ? (id_effective_address[1:0] != 2'b00) :
       (id_access_size == 2'd1) ? (id_effective_address[0] != 1'b0) : 1'b0;
 
@@ -1206,6 +1242,7 @@ module cpu #(
     id_branch_target = (id_pc + 32'd4) + id_jump_offset;
     id_reg_write = 1'b0;
     id_halt_after_retire = 1'b0;
+    id_mul = 1'b0;
     id_class = OPCLASS_NORMAL;
     id_error_code = ERROR_NONE;
 
@@ -1314,7 +1351,13 @@ module cpu #(
           endcase
         end
 
-        OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX,
+        // MUL goes through EX like an instruction with a result known in ID
+        // (id_use_alu low); MEM puts the product in its place (04b).
+        OPCODE_MUL, OPCODE_MULHI, OPCODE_MULFX: begin
+          id_mul = 1'b1;
+          id_reg_write = 1'b1;
+        end
+
         OPCODE_DIV, OPCODE_DIVU, OPCODE_REM, OPCODE_REMU: begin
           id_class = OPCLASS_MULDIV;
           id_reg_write = 1'b1;
@@ -1548,7 +1591,7 @@ module cpu #(
   // ======================================================================
 
   /*
-   * A MUL/DIV class instruction stays in EX (ctl_advance low) while
+   * A DIV/REM (OPCLASS_MULDIV) stays in EX (ctl_advance low) while
    * ex_md_step counts. When it is done, the EX block writes the result into
    * ex_result and turns ex_class into OPCLASS_NORMAL (or OPCLASS_ERROR for a
    * division by zero), and from then on it leaves EX like an instruction
@@ -1556,19 +1599,25 @@ module cpu #(
    * meanwhile and takes the result from WB, forwarded, like any other.
    * The operands are ex_a and ex_b, which EX keeps once forwarded.
    *
-   * Multiplier, 3 cycles in EX plus the one to leave it. MUL, MULHI and
-   * MULFX are all slices of the same signed 64-bit product, built from the
-   * unsigned one (1.isa/isa.md):
+   * Multiplier, pipelined: a MUL spends one cycle in EX like an ADD, and
+   * the next instruction can follow it. MUL, MULHI and MULFX are all slices
+   * of the same signed 64-bit product, built from the unsigned one
+   * (1.isa/isa.md):
    *
    *     signed[63:32] = unsigned[63:32] - (a[31] ? b : 0) - (b[31] ? a : 0)
    *
    * MUL is signed[31:0], MULHI signed[63:32], and MULFX (Q16.16, arithmetic
-   * shift by 16) signed[47:16]. These registers have no reset and no enable:
-   * they recompute every cycle from ex_a/ex_b, which stay put while the
-   * instruction waits in EX.
-   *   step 0: four 16x16 products (one ECP5 DSP each) and the correction.
-   *   step 1: md_product, the unsigned 64-bit product.
-   *   step 2: md_mul_result -> ex_result.
+   * shift by 16) signed[47:16].
+   *   EX -> MEM: four 16x16 products (one ECP5 DSP each, its output register
+   *              with the clock enable) and the correction, from ex_a/ex_b.
+   *   MEM:       md_product (the unsigned sum), the correction and the slice
+   *              (md_mul_result), into wb_result instead of mem_result.
+   * The product exists from WB on: the instruction right after a MUL that
+   * reads it waits one cycle in ID (raw_hazard, MUL-use), the one two
+   * after does not wait. The registers are written only when a MUL leaves
+   * EX, and a MUL never stays in MEM (it is not a memory access), so the
+   * next one cannot overwrite them before they are used. Before, the MUL
+   * held EX three more cycles, the whole pipeline behind it.
    *
    * Divider: restoring, one bit per cycle over the magnitudes; the sign goes
    * on at the end (quotient truncated towards zero, remainder with the sign
@@ -1616,19 +1665,23 @@ module cpu #(
       ((id_opcode == OPCODE_REM && !md_tag_unsigned) ||
        (id_opcode == OPCODE_REMU && md_tag_unsigned));
 
+  // Loaded only as the MUL moves to MEM (the clock enable of the DSPs): MEM
+  // may keep it while EX already holds the next instruction.
   always @(posedge clk) begin
-    md_ll <= ex_a[15:0] * ex_b[15:0];
-    md_lh <= ex_a[15:0] * ex_b[31:16];
-    md_hl <= ex_a[31:16] * ex_b[15:0];
-    md_hh <= ex_a[31:16] * ex_b[31:16];
-    md_correction <= (ex_a[31] ? ex_b : 32'd0) + (ex_b[31] ? ex_a : 32'd0);
-    md_product <= {md_hh, md_ll} + ({31'd0, {1'b0, md_lh} + {1'b0, md_hl}} << 16);
+    if (ctl_advance && ex_valid && ex_mul) begin
+      md_ll <= ex_a[15:0] * ex_b[15:0];
+      md_lh <= ex_a[15:0] * ex_b[31:16];
+      md_hl <= ex_a[31:16] * ex_b[15:0];
+      md_hh <= ex_a[31:16] * ex_b[31:16];
+      md_correction <= (ex_a[31] ? ex_b : 32'd0) + (ex_b[31] ? ex_a : 32'd0);
+    end
   end
 
+  assign md_product = {md_hh, md_ll} + ({31'd0, {1'b0, md_lh} + {1'b0, md_hl}} << 16);
   assign md_high_signed = md_product[63:32] - md_correction;
 
   always @* begin
-    case (ex_md_op)
+    case (mem_mul_op)
       OPCODE_MUL: md_mul_result = md_product[31:0];
       OPCODE_MULHI: md_mul_result = md_high_signed;
       default: md_mul_result = {md_high_signed[15:0], md_product[31:16]};  // MULFX
@@ -1726,6 +1779,7 @@ module cpu #(
       ex_md_rb <= 5'd0;
       ex_md_fast <= 1'b0;
       ex_md_counted <= 1'b0;
+      ex_mul <= 1'b0;
       ex_md_step <= 6'd0;
       md_tag_valid <= 1'b0;
       md_tag_unsigned <= 1'b0;
@@ -1783,7 +1837,8 @@ module cpu #(
           ex_md_ra <= id_ra;
           ex_md_rb <= id_rb;
           ex_md_fast <= id_md_fast;
-          ex_md_counted <= id_class == OPCLASS_MULDIV || id_class == OPCLASS_FP32;
+          ex_md_counted <= id_class == OPCLASS_MULDIV || id_class == OPCLASS_FP32 || id_mul;
+          ex_mul <= id_mul;
           ex_md_step <= 6'd0;
           // Any other instruction between a DIV and its REM ends the tag.
           if (id_live) md_tag_valid <= 1'b0;
@@ -1799,12 +1854,7 @@ module cpu #(
       if (ex_md_run) begin
         ex_md_step <= (ex_md_is_div && !ex_md_fast && ex_md_step == 6'd2) ?
                       6'd3 + md_skip : ex_md_step + 6'd1;
-        if (!ex_md_is_div) begin
-          if (ex_md_step == 6'd2) begin
-            ex_result <= md_mul_result;
-            ex_class <= OPCLASS_NORMAL;
-          end
-        end else if (ex_md_step == 6'd0 && ex_b == 32'd0) begin
+        if (ex_md_step == 6'd0 && ex_b == 32'd0) begin
           ex_class <= OPCLASS_ERROR;
           ex_error_code <= ERROR_DIVISION_BY_ZERO;
         end else if ((ex_md_fast && ex_md_step == 6'd1) || ex_md_step == 6'd35) begin
@@ -1902,6 +1952,8 @@ module cpu #(
       mem_class <= OPCLASS_NORMAL;
       mem_error_code <= ERROR_NONE;
       mem_md_counted <= 1'b0;
+      mem_mul <= 1'b0;
+      mem_mul_op <= OPCODE_NOP;
       mem_request_sent <= 1'b0;
       // soft_reset: the access in flight, or accepted this cycle, still gets
       // its response from the D-cache; drop it.
@@ -1939,6 +1991,8 @@ module cpu #(
         mem_class <= ex_class;
         mem_error_code <= ex_error_code;
         mem_md_counted <= ex_md_counted;
+        mem_mul <= ex_mul;
+        mem_mul_op <= ex_md_op;
         mem_request_sent <= 1'b0;
       end else begin
         if (ctl_memory && dmem_valid && dmem_ready) mem_request_sent <= 1'b1;
@@ -1996,7 +2050,7 @@ module cpu #(
         wb_pc <= mem_pc;
         wb_next_pc <= mem_next_pc;
         wb_rd <= mem_rd;
-        wb_result <= mem_result;
+        wb_result <= mem_mul ? md_mul_result : mem_result;
         wb_reg_write <= mem_reg_write;
         wb_halt_after_retire <= mem_halt_after_retire;
         wb_md_counted <= mem_md_counted;

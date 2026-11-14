@@ -18,7 +18,15 @@
  * Errores: division por cero en las cuatro, con el PC en la instruccion y sin
  * escribir rd. Parada (HALT del monitor) a mitad de una division y reanudacion.
  *
- * Costes: tope de ciclos para MUL, para DIV y para el REM que acierta.
+ * MUL segmentada: el producto se suma en MEM y existe desde WB. Cadenas de
+ * MUL que dependen de la de justo antes, de la de dos antes, por cualquiera
+ * de los dos operandos, y un salto que compara el resultado (las esperas de
+ * MUL-use, raw_hazard en cpu.v). STORE y LOAD con el producto: cpu_perf_tb.v,
+ * que tiene memoria de datos.
+ *
+ * Costes: tope de ciclos para MUL, para DIV y para el REM que acierta, y
+ * exactos para la MUL segmentada: 0 de mas, 1 con un consumidor justo detras
+ * y 0 con uno a dos instrucciones.
  */
 module cpu_muldiv_tb;
 
@@ -105,6 +113,10 @@ module cpu_muldiv_tb;
   endfunction
   function [31:0] addi(input [4:0] rd, input [4:0] ra, input [15:0] imm);
     addi = {6'h11, rd, ra, imm};
+  endfunction
+  // BNE: compara rd con ra; offset en palabras desde PC + 4.
+  function [31:0] bne(input [4:0] a, input [4:0] b, input [15:0] offset);
+    bne = {6'h21, a, b, offset};
   endfunction
 
   // ------------------------------------------------------------------ referencia
@@ -416,6 +428,54 @@ module cpu_muldiv_tb;
     if (errors != 0) $fatal(1, "4. parada: %0d fallo(s)", errors);
     $display("4. HALT a mitad de DIV: PC en la DIV y reanuda bien");
 
+    // 6. MUL segmentada: consumidores a distancia 1 y 2, por a y por b, en
+    // cadena, mezclando las tres operaciones y con DIV y ADD en medio.
+    clear_memory();
+    load_constant(5'd1, 32'h0001_2345);
+    load_constant(5'd2, 32'hfff0_0007);
+    emit(rtype(OP_MUL, 5'd3, 5'd1, 5'd2));      // R3 = R1*R2
+    emit(rtype(OP_MUL, 5'd4, 5'd3, 5'd1));      // por a, justo detras
+    emit(rtype(OP_MULHI, 5'd5, 5'd2, 5'd4));    // por b, justo detras
+    emit(rtype(OP_ADD, 5'd6, 5'd4, 5'd3));      // a dos y a tres
+    emit(rtype(OP_MULFX, 5'd7, 5'd5, 5'd5));    // los dos operandos, a dos
+    emit(rtype(OP_MUL, 5'd7, 5'd7, 5'd7));      // rd == ra == rb, justo detras
+    emit(rtype(OP_DIV, 5'd8, 5'd7, 5'd2));      // DIV que espera a la MUL
+    emit(rtype(OP_MUL, 5'd9, 5'd8, 5'd8));      // MUL que espera a la DIV
+    emit(rtype(OP_ADD, 5'd9, 5'd9, 5'd0));      // y su consumidor
+    emit(rtype(OP_MUL, 5'd0, 5'd1, 5'd2));      // a R0: no escribe
+    emit(rtype(OP_ADD, 5'd10, 5'd0, 5'd9));
+    // El salto compara el producto: R11 = R1*R2 es distinto de R3 + 1, asi
+    // que salta por encima del ADDI; si comparara un valor viejo no saltaria.
+    emit(addi(5'd12, 5'd3, 16'd1));
+    emit(rtype(OP_MUL, 5'd11, 5'd1, 5'd2));
+    emit(bne(5'd11, 5'd12, 16'd1));
+    emit(addi(5'd13, 5'd0, 16'd1));             // saltado
+    emit(addi(5'd14, 5'd11, 16'd0));
+    run_ok("mul-use");
+    begin : mul_use
+      reg [63:0] p3, p4, p5, p7a, p7, p9;
+      reg [31:0] d8;
+      p3 = smul(32'h0001_2345, 32'hfff0_0007);
+      p4 = smul(p3[31:0], 32'h0001_2345);
+      p5 = smul(32'hfff0_0007, p4[31:0]);
+      p7a = smul(p5[63:32], p5[63:32]);
+      p7 = smul(p7a[47:16], p7a[47:16]);
+      d8 = ref_div(p7[31:0], 32'hfff0_0007);
+      p9 = smul(d8, d8);
+      expect_register("6 MUL", 5'd3, p3[31:0]);
+      expect_register("6 MUL a", 5'd4, p4[31:0]);
+      expect_register("6 MULHI b", 5'd5, p5[63:32]);
+      expect_register("6 ADD", 5'd6, p4[31:0] + p3[31:0]);
+      expect_register("6 MUL rd=ra=rb", 5'd7, p7[31:0]);
+      expect_register("6 DIV", 5'd8, d8);
+      expect_register("6 MUL tras DIV", 5'd9, p9[31:0]);
+      expect_register("6 R0", 5'd10, p9[31:0]);
+      expect_register("6 BNE MUL", 5'd13, 32'd0);
+      expect_register("6 MUL a dos", 5'd14, p3[31:0]);
+    end
+    if (errors != 0) $fatal(1, "6. MUL segmentada: %0d fallo(s)", errors);
+    $display("6. MUL segmentada: consumidores a distancia 1 y 2, salto y DIV en medio");
+
     // 5. Costes, respecto a dos NOP en el mismo sitio.
     measure_base();
     cost_prologue();
@@ -424,7 +484,35 @@ module cpu_muldiv_tb;
     run_ok("cost MUL");
     body_cycles = cycles - base_cycles;
     $display("PERF MUL  +%0d ciclos", body_cycles);
-    if (body_cycles > 4) $fatal(1, "5: MUL cuesta %0d ciclos de mas", body_cycles);
+    if (body_cycles != 0) $fatal(1, "5: MUL cuesta %0d ciclos de mas, se esperaba 0", body_cycles);
+
+    // El consumidor justo detras espera un ciclo (MUL-use), a dos ninguno.
+    cost_prologue();
+    emit(rtype(OP_MUL, 5'd3, 5'd1, 5'd2));
+    emit(rtype(OP_ADD, 5'd4, 5'd3, 5'd1));
+    run_ok("cost MUL-use 1");
+    expect_register("5 MUL-use 1", 5'd4, 32'd8000);
+    body_cycles = cycles - base_cycles;
+    $display("PERF MUL + consumidor  +%0d ciclos", body_cycles);
+    if (body_cycles != 1) $fatal(1, "5: MUL y consumidor cuestan %0d de mas, se esperaba 1", body_cycles);
+    measure_base();
+    n = base_cycles;
+    cost_prologue();
+    emit(NOP);
+    emit(NOP);
+    emit(NOP);
+    run_ok("base 3");
+    base_cycles = cycles;
+    cost_prologue();
+    emit(rtype(OP_MUL, 5'd3, 5'd1, 5'd2));
+    emit(NOP);
+    emit(rtype(OP_ADD, 5'd4, 5'd1, 5'd3));
+    run_ok("cost MUL-use 2");
+    expect_register("5 MUL-use 2", 5'd4, 32'd8000);
+    body_cycles = cycles - base_cycles;
+    $display("PERF MUL, NOP, consumidor  +%0d ciclos", body_cycles);
+    if (body_cycles != 0) $fatal(1, "5: consumidor a dos cuesta %0d de mas, se esperaba 0", body_cycles);
+    base_cycles = n;
 
     cost_prologue();
     emit(rtype(OP_DIV, 5'd3, 5'd1, 5'd2));

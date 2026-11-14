@@ -10,6 +10,46 @@ La identificacion de placa es monitor `5.38`. La CPU va a 50 MHz mediante `pll_c
 FP32, los builds `dcache-decide` y `perf-video` cerraban a 65–70 MHz. El
 build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
 
+## MUL segmentada, adelantamiento MEM -> ID y BTB de 256 (14 de noviembre)
+
+Tres cambios de `cpu.v`, medidos en la placa entre los mismos frames (el
+porqué de medir así, y el análisis completo con lo descartado, en
+[`analisis-rendimiento.md`](analisis-rendimiento.md)):
+
+Cada paso se midió contra el anterior en el mismo tramo de frames (fps antes
+→ después):
+
+| | MUL segmentada | + MEM -> ID | + BTB 256 |
+|---|---|---|---|
+| racer | 11,58 → 12,12 (+4,5 %) | 12,10 → 12,29 (+1,5 %) | 11,88 → 12,22 (+2,9 %) |
+| tanks | — | 45,71 → 47,00 (+2,8 %) | 47,00 → 48,69 (+3,6 %) |
+| skimmer | — | 21,64 → 22,15 (+2,4 %) | 22,15 → 22,89 (+3,3 %) |
+
+racer CPI: 1,790 → 1,711 → 1,689 → 1,636. Los tramos cambian entre columnas
+(racer da 12,29 en uno y 11,88 en otro con el mismo bitstream), así que lo que
+vale es la mejora de cada paso.
+
+- **MUL segmentada** (sección 04b). MUL/MULHI/MULFX ya no paran EX 3 ciclos:
+  los cuatro productos de 16x16 se registran en los DSP al salir de EX, y MEM
+  los suma, corrige el signo y escribe el resultado en WB. La instrucción
+  justo detrás que lo usa espera 1 ciclo (MUL-use, en `raw_hazard`); la de dos
+  después, ninguno. Racer hace ~82 k MUL por frame. CPU 54,07 MHz.
+- **Adelantamiento MEM -> ID para la dirección** (`FWD-MEM-ID`,
+  `id_address_base`). La base de un LOAD/STORE puede venir de `mem_result`:
+  la espera AGI baja de 2 ciclos a 1 si la base la escribe la instrucción
+  anterior, y de 1 a 0 si es la de dos antes (no si en MEM hay una MUL). Solo
+  la usa el sumador de direcciones. Barrido de semillas con las opciones del
+  `apio.ini`: cumplen 5 de 6, CPU 50,7–53,9 MHz.
+- **BTB de 256 entradas** (`BTB_BITS = 8`). Con 64, los saltos se pisaban y
+  caían a la predicción estática. En memoria distribuida
+  (`ram_style = "distributed"`): Yosys la ponía en EBR, cuya lectura síncrona
+  metía la lógica de la búsqueda siguiente en su dirección (CPU a 47,7 MHz).
+  Síntesis: CPU 52,21 MHz, SDRAM 100,21 MHz, 36 EBR.
+- Pruebas: `cpu_muldiv_tb` (consumidores de la MUL a distancia 1 y 2, cadenas,
+  salto y DIV en medio; costes exactos 0/1/0 ciclos) y `cpu_perf_tb`
+  (`muluse`: STORE y LOAD con el producto; `addrdep` de 128 a 64 esperas;
+  `agi`: cada productor de la base, 3 esperas exactas).
+
 ## Comparaciones y conversiones FP32, MIN/MAX y CLZ (13 de noviembre)
 
 `fp32` crece con `FEQ`/`FLT`/`FLE` (`0x3C`) y `FTOI`/`ITOF` (`0x3D`, con
@@ -110,7 +150,8 @@ cpu.v ────┤                                           ├── arbitr
   vez de 6. EX comprueba y solo redirige si fallo (tomado sin predecir,
   predicho y no tomado, o retorno a otra direccion), con el coste de antes.
 - **Prediccion de saltos, fase 2: BTB** (*branch target buffer*, seccion
-  02c, parametros `BTB`, `BTB_BITS`, `BTB_TAG_BITS`): 64 entradas de mapeo
+  02c, parametros `BTB`, `BTB_BITS`, `BTB_TAG_BITS`): 256 entradas (64 hasta
+  el 14 de noviembre) de mapeo
   directo con etiqueta parcial de 10 bits, destino, contador de 2 bits y bit
   de retorno (que toma la cima de la pila). Se consulta con cada peticion y
   la respuesta se **registra**: si predice tomado, la busqueda va al destino
@@ -162,7 +203,8 @@ cpu.v ────┤                                           ├── arbitr
   operandos son los de EX ya adelantados (`ex_a`, `ex_b`); al acabar, EX
   escribe el resultado en `ex_result` y la instruccion sale hacia WB como
   cualquier otra, y su consumidor lo toma adelantado. MUL/MULHI/MULFX salen del mismo producto con
-  signo (cuatro parciales 16x16 en DSP, inferidos): 3 ciclos mas que una
+  signo (cuatro parciales 16x16 en DSP, inferidos); desde el 14 de noviembre
+  van segmentadas (parciales en EX, suma en MEM: ver arriba). Antes, 3 ciclos mas que una
   instruccion de ALU. La division es iterativa con signo al final: unos 34
   ciclos mas, y un REM/REMU justo detras de su DIV/DIVU con los mismos
   registros reutiliza el resto (2 ciclos mas, `ALU_FAST_PATH`, como en la 35).
@@ -187,7 +229,7 @@ cpu.v ────┤                                           ├── arbitr
 
   | Caso | En ingles | Coste | Por que no |
   |---|---|---|---|
-  | LOAD/STORE cuya base escribe la instruccion de justo antes (`ADDI R1,R1,4` + `LOAD [R1]`) | *address-generation interlock* (AGI) | 1 burbuja (`raw_hazard`, la unica parada por dependencia) | la direccion se calcula en ID para que la peticion a la D-cache salga de un registro; adelantar de EX a ID pondria la ALU delante del sumador de la direccion en el mismo ciclo |
+  | LOAD/STORE cuya base escribe la instruccion de justo antes (`ADDI R1,R1,4` + `LOAD [R1]`) | *address-generation interlock* (AGI) | 1 burbuja (`raw_hazard`); 2 hasta el 14 de noviembre, cuando la base empezo a venir de MEM (`FWD-MEM-ID`) | la direccion se calcula en ID para que la peticion a la D-cache salga de un registro; adelantar de EX a ID pondria la ALU delante del sumador de la direccion en el mismo ciclo |
   | Decidir el salto en ID con operandos adelantados | *early branch resolution* | 1 burbuja mas por salto tomado | el mismo camino largo; lo recupera la prediccion |
   | Dato del LOAD directo de la respuesta a EX | *memory -> EX forwarding* | — | no ganaria nada: el consumidor ya entra en EX justo cuando el LOAD pasa a WB |
 
