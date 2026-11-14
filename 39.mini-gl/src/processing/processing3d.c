@@ -116,16 +116,31 @@ void box(float side) {
 /* Las mallas de los PShape ya dibujados, por dirección del PShape. */
 static const PShape *shape_key[P3D_SHAPES];
 static mgl_mesh_t shape_mesh[P3D_SHAPES];
+/* Pista para encontrar el hueco sin recorrerlos: por bits de la dirección del PShape, el último hueco que
+   tuvo esa pista. Si no acierta (otro PShape con la misma), se busca y se apunta. Un juego con unos 50
+   modelos recorría 50 huecos en cada shape(): ~340 instrucciones en MiniGPU. */
+static unsigned char shape_hint[P3D_SHAPES];
 
 void shape(const PShape *s) {
-    unsigned int i, first = 0;
-    int slot = -1;
-    for (i = 0; i < P3D_SHAPES && shape_key[i]; i++)
-        if (shape_key[i] == s) slot = (int)i;
-    if (slot < 0) {
-        if (i == P3D_SHAPES) return;
-        slot = (int)i;
-        shape_key[slot] = s;
+    unsigned int i, first = 0, h;
+    const PShapeGroup *g;
+    unsigned long a = (unsigned long)s;
+    int slot;
+    h = (unsigned int)((a >> 4) ^ (a >> 10)) & (P3D_SHAPES - 1U);
+    slot = shape_hint[h];
+    if (shape_key[slot] != s) {
+        slot = -1;
+        for (i = 0; i < P3D_SHAPES && shape_key[i]; i++)
+            if (shape_key[i] == s) {
+                slot = (int)i;
+                break;
+            }
+        if (slot < 0) {
+            if (i == P3D_SHAPES) return;
+            slot = (int)i;
+            shape_key[slot] = s;
+        }
+        shape_hint[h] = (unsigned char)slot;
     }
     if (!shape_mesh[slot] || mgl_mesh_info(shape_mesh[slot], 0) != MGL_OK) /* como el cubo */
         shape_mesh[slot] = mgl_create_mesh_copy(s->positions, s->vertex_count, s->indices, s->index_count);
@@ -134,8 +149,7 @@ void shape(const PShape *s) {
        frente (antihoraria en el OBJ) queda horaria en pantalla, y para MiniGL
        es la de detrás (ver processing3d_size). */
     if (s->cull) mgl_set_cull(MGL_CULL_FRONT);
-    for (i = 0; i < s->group_count; i++) {
-        const PShapeGroup *g = &s->groups[i];
+    for (i = 0, g = s->groups; i < s->group_count; i++, g++) { /* g por puntero: sin MUL por grupo */
         mgl_set_color(color565(g->r, g->g, g->b));
         mgl_draw_mesh_range(shape_mesh[slot], first, g->end - first); /* malla 0: MGL_ERR_HANDLE */
         first = g->end;
