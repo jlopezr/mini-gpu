@@ -23,6 +23,7 @@ que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay
 |---|---|---|---|
 | Aplicación | `mgl_create_mesh(&desc)` | la aplicación: le da a MiniGL las direcciones | ninguna |
 | MiniGL | `mgl_create_mesh_copy(pos, n, idx, m)` | MiniGL, en su heap | una, al crear |
+| MiniGL, con color | `mgl_create_mesh_copy_rgb565(pos, colores, n, idx, m)` | MiniGL, en su heap | una, al crear |
 
 - **Memoria de la aplicación**: para programas que ya gestionan sus buffers en SDRAM. MiniGL solo comprueba
   la descripción (formatos admitidos, stride, que los rangos estén dentro de la RAM compartida y alineados) y
@@ -32,8 +33,24 @@ que un handle viejo da `MGL_ERR_HANDLE` aunque el hueco se haya reutilizado. Hay
   entero y destruye todas las mallas. La copia escribe el **formato serializado** (floats IEEE
   little-endian, índices `u16`), no la representación del host. Si la malla no cabe, no queda nada a medias.
 
+### Color por vértice
+
+`mgl_create_mesh_copy_rgb565` copia la malla como `POSITION_F32_XYZ_RGB565` (16 bytes por vértice, ver
+[command-buffer.md](command-buffer.md)): cada triángulo sale del color de su primer vértice y `mgl_set_color`
+no cuenta. Con `colores = 0` los vértices quedan blancos y sin asignar, para darlos por tramos de triángulos
+con `mgl_mesh_color_range(malla, first, count, color)`: es el paso de grupos de un color (un `PShape`) a
+color por vértice. Si un vértice ya tenía otro color (lo comparten triángulos de dos colores), devuelve
+`MGL_ERR_ARGUMENT` y no toca la malla. `mgl_draw_mesh_range_uniform` dibuja una malla con color con el de
+`mgl_set_color`: el mismo dato con el formato 1 y el stride de la malla, sin otra copia.
+
+Qué compensa: un `DRAW_INDEXED` cuesta unas 700 instrucciones fijas en MiniGPU (grabar, interpretar,
+prepararlo) y leer el color unas 5 por triángulo. Un modelo con muchos colores y pocos triángulos (los de
+racer: de 2,62 a 2,49 M instrucciones por frame) gana; uno con muchos triángulos por color (el caza TIE), no.
+
 MiniProcessing crea el cubo con la segunda: una vez, en el primer `box()`; el tamaño va en la matriz del
-modelo. Lo mismo cada `PShape` en su primer `shape()`. Para cambiar de modelos (otro nivel de un juego),
+modelo. Lo mismo cada `PShape` en su primer `shape()`, con color: lo dibuja en un solo `DRAW_INDEXED` si
+tiene menos de 128 triángulos por cada grupo que se ahorra y ningún vértice está en dos colores; si no, por
+grupos como antes (la misma imagen). `disableStyle(&s)` lo dibuja del color de `fill()`. Para cambiar de modelos (otro nivel de un juego),
 `resetShapes()` vuelve a llamar a `mgl_resources_init` y a `mgl_frame_memory_init` desde el contexto: se
 olvidan todas las mallas y el heap vuelve a estar libre. Va antes de dibujar nada en el frame.
 

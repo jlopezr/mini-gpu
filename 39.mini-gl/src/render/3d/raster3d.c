@@ -61,8 +61,20 @@
 
 mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
+    /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
+    mgl_s32 area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+    if (area == 0) return -1;
+    if ((f->flags & MGL_STATE_CULL_BACK) && area > 0) return -1;
+    if ((f->flags & MGL_STATE_CULL_FRONT) && area < 0) return -1;
+    return mgr_raster_triangle_area(a, b, c, clip, f, area);
+}
+
+/* Sin repetir las comprobaciones de arriba: draw.c ya las hace (con el área que pasa) y aquí se predecían
+   casi siempre mal (una vez por triángulo, fuera de la BTB). */
+mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f, mgl_s32 area) {
     const mgr_window_vertex_t *t;
-    mgl_s32 area, minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
+    mgl_s32 minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
     mgl_s32 w0, w1, w2, row0, row1, row2, lo, hi, n, covered = 0, zi, dzi = 0;
     int ready = 0;
 #if MGR_FIXED_DEPTH
@@ -83,11 +95,6 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
 #endif
 #endif
 
-    /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
-    area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
-    if (area == 0) return -1;
-    if ((f->flags & MGL_STATE_CULL_BACK) && area > 0) return -1;
-    if ((f->flags & MGL_STATE_CULL_FRONT) && area < 0) return -1;
     if (area < 0) {
         t = b;
         b = c;
@@ -196,13 +203,12 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {
                 depth_start = depth_row + depth_dx * (start - x0);
-                /* Con if y no con ?: , que mini-lcc pasa por temporales en la pila. */
-                if (depth_start <= 0)
-                    zi = 0;
-                else if (depth_start >= MGR_DEPTH_MAX * 16)
-                    zi = MGR_DEPTH_MAX;
-                else
-                    zi = (depth_start + 8) >> 4;
+                /* Acotar y redondear: 0 si <= 0 y MGR_DEPTH_MAX si >= MGR_DEPTH_MAX * 16 ((MAX * 16 + 8) >> 4 es
+                   MAX). Con MIN y MAX (MGL_EXT) sin saltos: con if/else if, el caso de siempre era el último y su
+                   salto se predecía mal en todos los spans. */
+                MGL_SET_MAX(depth_start, 0);
+                MGL_SET_MIN(depth_start, MGR_DEPTH_MAX * 16);
+                zi = (depth_start + 8) >> 4;
             } else {
 #endif
 #if MGR_FIXED_DEPTH

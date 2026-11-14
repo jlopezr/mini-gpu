@@ -44,6 +44,9 @@ typedef struct {
    clip = mvp * (x, y, z, 1). */
 void mgr_transform_vertex(const mgr_vertices_t *v, mgl_u32 index, const mgl_mat4_t *mvp,
     mgl_vec4_t *clip);
+/* Lo mismo con el vértice ya localizado (p = base + index * stride): draw.c lo calcula una vez y lee de
+   ahí también el color. */
+void mgr_transform_at(const unsigned char *p, const mgl_mat4_t *mvp, mgl_vec4_t *clip);
 
 /* ---- clipping.c --------------------------------------------------------- */
 /* Un triángulo recortado por los seis planos es un polígono convexo de hasta
@@ -97,6 +100,7 @@ typedef struct {
 const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s);
 void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
     mgr_vec4q_t *clip);
+void mgr_transform_at_q(const unsigned char *p, const mgr_mat4q_t *mvp, mgr_vec4q_t *clip);
 unsigned int mgr_outcode_q(const mgr_vec4q_t *v);
 void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_vertex_t *out);
 /* Como mgr_clip_triangle, en Q16.16. */
@@ -157,6 +161,10 @@ typedef struct {
    descartó por cara o área nula. */
 mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f);
+/* Lo mismo con el área ya calculada y el triángulo ya aceptado (área no nula y cara no descartada): lo
+   que usa draw.c, que hace esas comprobaciones antes de llamarla. Devuelve los píxeles cubiertos. */
+mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f, mgl_s32 area);
 
 /* ---- raster2d.c --------------------------------------------------------- */
 /* Comandos 2D en el destino actual (sin profundidad, como V0). */

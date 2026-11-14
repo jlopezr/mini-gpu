@@ -125,6 +125,11 @@ help:
 	@echo '  FIXED=1 (3D)             geometría y profundidad en coma fija, en build/minigpu/3d-fixed'
 	@echo '  FP32=1 (3D)              float con las instrucciones FP32 (solo la 38), en build/minigpu/3d-fp32'
 	@echo '  EXT=1 (3D)               MIN/MAX/CLZ con las instrucciones EXT (solo la 38), sufijo -ext'
+	@echo 'Placa (tools/run-board):'
+	@echo '  make board-<sketch>      compila el .bin, sube el bitstream si la placa no tiene el del prototipo,'
+	@echo '                           y carga y arranca el programa; BOARD_PROTO=38, BOARD_UPLOAD=0 (no subir),'
+	@echo '                           BOARD_ARGS="--port ..."'
+	@echo '                           racer, con FIXED=1 FP32=1 EXT=1 (BOARD_OPTS_racer; la línea de órdenes manda)'
 	@echo 'Otros:'
 	@echo '  make clean               borra build/ y los .ppm'
 
@@ -184,10 +189,12 @@ build/test_platform3d: build/test_platform3d.o $(LIB3D)
 # renombradas (*_reference), para que las dos convivan en un mismo programa.
 build/raster3d_reference.o: src/render/3d/raster3d.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DMGR_INCREMENTAL_DEPTH=0 \
-	    -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
+	    -Dmgr_raster_triangle=mgr_raster_triangle_reference \
+	    -Dmgr_raster_triangle_area=mgr_raster_triangle_area_reference -c -o $@ $<
 build/draw_reference.o: src/render/3d/draw.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_draw_indexed=mgr_draw_indexed_reference \
-	    -Dmgr_raster_triangle=mgr_raster_triangle_reference -c -o $@ $<
+	    -Dmgr_raster_triangle=mgr_raster_triangle_reference \
+	    -Dmgr_raster_triangle_area=mgr_raster_triangle_area_reference -c -o $@ $<
 build/commands_reference.o: src/render/3d/commands.c $(HDRS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmgr_execute=mgr_execute_reference \
 	    -Dmgr_draw_indexed=mgr_draw_indexed_reference -Dmgr_init=mgr_init_reference \
@@ -284,6 +291,33 @@ $(SKETCHES3D:%=profile-minigpu-%): profile-minigpu-%: $(MG3)/%.bin
 check-minigpu3d: $(SKETCHES3D:%=check-minigpu-%)
 $(SKETCHES3D:%=check-minigpu-%): check-minigpu-%: $(MG3)/%.bin build/%
 	$(call SIM_CHECK,$(MG3),-q)
+
+# ---------------------------------------------------------------------------
+# Placa (tools/run-board): compila el .bin, comprueba que la placa tenga el
+# bitstream del prototipo (la identidad del monitor, la del RTL) y, si no, lo
+# sube sin preguntar (el de _build/default del prototipo); luego carga el
+# programa y lo arranca. BOARD_UPLOAD=0: no sube nada, falla si no coincide.
+# ---------------------------------------------------------------------------
+
+BOARD_PROTO ?= 38
+BOARD_UPLOAD ?= 1
+BOARD_ARGS ?=
+# Desde la raíz del repo: run-board busca ahí los prototipos.
+BOARD_LOAD = cd $(REPO) && tools/run-board -p $(BOARD_PROTO) $(if $(filter 0,$(BOARD_UPLOAD)),--no-upload,-y) \
+    $(BOARD_ARGS)
+# Opciones con las que se compila cada sketch 3D para la placa (las de la 38). FIXED, FP32 o EXT en la
+# línea de órdenes mandan sobre estas.
+BOARD_OPTS_racer = FIXED=1 FP32=1 EXT=1
+# board_opt(VAR,sketch): VAR=valor, de la línea de órdenes, o si no de BOARD_OPTS_<sketch>, o el de siempre.
+board_opt = $(if $(filter command line,$(origin $(1))),$(1)=$($(1)),$(or $(filter $(1)=%,$(BOARD_OPTS_$(2))),$(1)=$($(1))))
+
+board-%: $(MG)/%.bin
+	$(BOARD_LOAD) --program $(abspath $<)
+$(SKETCHES3D:%=board-%): board-%:
+	@$(MAKE) --no-print-directory $(call board_opt,FIXED,$*) $(call board_opt,FP32,$*) \
+	    $(call board_opt,EXT,$*) board-load3d-$*
+board-load3d-%: $(MG3)/%.bin
+	$(BOARD_LOAD) --program $(abspath $<)
 
 # ---------------------------------------------------------------------------
 # Pruebas y limpieza

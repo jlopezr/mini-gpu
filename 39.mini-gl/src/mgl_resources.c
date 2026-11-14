@@ -68,17 +68,20 @@ void mgl_frame_reset_(void) {
 /* Lo que el renderer de referencia sabe leer; el resto se rechaza aquí, antes
    de que llegue a un command buffer. */
 static int check(const mgl_mesh_desc_t *d) {
-    mgl_u32 vbytes, ibytes;
+    mgl_u32 vbytes, ibytes, vsize;
+    int colored;
     if (!d) return MGL_ERR_ARGUMENT;
+    colored = d->vertex_format == MGL_VERTEX_POSITION_F32_XYZ_RGB565;
+    vsize = colored ? 16U : 12U;
     if (d->vertex_format == MGL_VERTEX_POSITION_Q16_16_XYZ || d->index_format == MGL_INDEX_UINT32)
         return MGL_ERR_UNSUPPORTED;
-    if (d->vertex_format != MGL_VERTEX_POSITION_F32_XYZ || d->index_format != MGL_INDEX_UINT16)
+    if ((d->vertex_format != MGL_VERTEX_POSITION_F32_XYZ && !colored) || d->index_format != MGL_INDEX_UINT16)
         return MGL_ERR_ARGUMENT;
-    if (d->vertex_stride < 12U || d->vertex_stride > 65535U || (d->vertex_stride & 3U) ||
+    if (d->vertex_stride < vsize || d->vertex_stride > 65535U || (d->vertex_stride & 3U) ||
         !d->vertex_count || d->vertex_count > 65536U || !d->index_count ||
         d->index_count % 3U || d->index_count > 0x7fffffffU / 2U)
         return MGL_ERR_ARGUMENT;
-    vbytes = (d->vertex_count - 1U) * d->vertex_stride + 12U;
+    vbytes = (d->vertex_count - 1U) * d->vertex_stride + vsize;
     ibytes = d->index_count * 2U;
     if (!has_memory || !mgl_memory_ptr(&memory, d->vertex_addr, vbytes, 4) ||
         !mgl_memory_ptr(&memory, d->index_addr, ibytes, 2))
@@ -110,29 +113,41 @@ mgl_mesh_t mgl_create_mesh(const mgl_mesh_desc_t *d) {
 
 /* Copia posiciones e índices a [base, base + size) y crea la malla. Si algo
    no cabe o no vale, *used vuelve a como estaba. */
+/* Con color (colored), RGB565 por vértice: colors, o blanco sin asignar si es 0 (ver mgl_mesh_color_range). */
+#define COLOR_SET 1U /* en +14: color asignado */
+
 static mgl_mesh_t copy_mesh(mgl_u32 base, mgl_u32 size, mgl_u32 *used, const float *positions,
-    mgl_u32 vertex_count, const unsigned short *indices, mgl_u32 index_count) {
+    const mgl_color_t *colors, int colored, mgl_u32 vertex_count, const unsigned short *indices,
+    mgl_u32 index_count) {
     mgl_mesh_desc_t d;
     unsigned char *p;
-    mgl_u32 i, mark = *used;
+    mgl_u32 i, mark = *used, vsize = colored ? 16U : 12U;
     mgl_mesh_t h;
     if (!positions || !indices || !vertex_count || vertex_count > 65536U || !index_count ||
         index_count > 0x10000000U)
         return 0;
-    d.vertex_format = MGL_VERTEX_POSITION_F32_XYZ;
+    d.vertex_format = colored ? MGL_VERTEX_POSITION_F32_XYZ_RGB565 : MGL_VERTEX_POSITION_F32_XYZ;
     d.index_format = MGL_INDEX_UINT16;
-    d.vertex_stride = 12;
+    d.vertex_stride = vsize;
     d.vertex_count = vertex_count;
     d.index_count = index_count;
-    d.vertex_addr = bump(base, size, used, vertex_count * 12U, 16);
+    d.vertex_addr = bump(base, size, used, vertex_count * vsize, 16);
     d.index_addr = bump(base, size, used, index_count * 2U, 4);
     if (!d.vertex_addr || !d.index_addr || check(&d) != MGL_OK) {
         *used = mark;
         return 0;
     }
     /* Se escribe el formato serializado (little-endian), no la representación del host. */
-    p = (unsigned char *)mgl_memory_ptr(&memory, d.vertex_addr, vertex_count * 12U, 4);
-    for (i = 0; i < vertex_count * 3U; i++, p += 4) WR32(p, mgl_real_to_f32(positions[i]));
+    p = (unsigned char *)mgl_memory_ptr(&memory, d.vertex_addr, vertex_count * vsize, 4);
+    for (i = 0; i < vertex_count; i++, p += vsize) {
+        WR32(p, mgl_real_to_f32(positions[3U * i]));
+        WR32(p + 4, mgl_real_to_f32(positions[3U * i + 1U]));
+        WR32(p + 8, mgl_real_to_f32(positions[3U * i + 2U]));
+        if (colored) {
+            WR16(p + 12, colors ? colors[i] : 0xffffU);
+            WR16(p + 14, colors ? COLOR_SET : 0U);
+        }
+    }
     p = (unsigned char *)mgl_memory_ptr(&memory, d.index_addr, index_count * 2U, 2);
     for (i = 0; i < index_count; i++, p += 2) WR16(p, indices[i]);
     h = add(&d);
@@ -142,12 +157,18 @@ static mgl_mesh_t copy_mesh(mgl_u32 base, mgl_u32 size, mgl_u32 *used, const flo
 
 mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
     const unsigned short *indices, mgl_u32 index_count) {
-    return copy_mesh(heap_addr, heap_size, &heap_used, positions, vertex_count, indices, index_count);
+    return copy_mesh(heap_addr, heap_size, &heap_used, positions, 0, 0, vertex_count, indices, index_count);
+}
+
+mgl_mesh_t mgl_create_mesh_copy_rgb565(const float *positions, const mgl_color_t *colors,
+    mgl_u32 vertex_count, const unsigned short *indices, mgl_u32 index_count) {
+    return copy_mesh(heap_addr, heap_size, &heap_used, positions, colors, 1, vertex_count, indices,
+        index_count);
 }
 
 mgl_mesh_t mgl_create_mesh_frame(const float *positions, mgl_u32 vertex_count,
     const unsigned short *indices, mgl_u32 index_count) {
-    return copy_mesh(frame_addr, frame_size, &frame_used, positions, vertex_count, indices, index_count);
+    return copy_mesh(frame_addr, frame_size, &frame_used, positions, 0, 0, vertex_count, indices, index_count);
 }
 
 int mgl_destroy_mesh(mgl_mesh_t h) {
@@ -155,6 +176,37 @@ int mgl_destroy_mesh(mgl_mesh_t h) {
     if (!s) return MGL_ERR_HANDLE;
     s->used = 0;
     s->generation++;
+    return MGL_OK;
+}
+
+int mgl_mesh_color_range(mgl_mesh_t h, mgl_u32 first, mgl_u32 count, mgl_color_t color) {
+    mesh_slot *s = find(h);
+    const unsigned char *ix;
+    unsigned char *v, *q;
+    mgl_u32 i, stride;
+    if (!s) return MGL_ERR_HANDLE;
+    if (s->desc.vertex_format != MGL_VERTEX_POSITION_F32_XYZ_RGB565 || first % 3U || count % 3U ||
+        first > s->desc.index_count || count > s->desc.index_count - first)
+        return MGL_ERR_ARGUMENT;
+    stride = s->desc.vertex_stride;
+    v = (unsigned char *)mgl_memory_ptr(&memory, s->desc.vertex_addr,
+        (s->desc.vertex_count - 1U) * stride + 16U, 4);
+    ix = (const unsigned char *)mgl_memory_ptr(&memory, s->desc.index_addr, s->desc.index_count * 2U, 2);
+    if (!v || !ix) return MGL_ERR_MEMORY;
+    ix += first * 2U;
+    /* Primero se comprueba (índices fuera de rango, vértices con otro color) y luego se escribe: si no vale,
+       la malla queda como estaba. */
+    for (i = 0; i < count; i++) {
+        mgl_u32 index = RD16(ix + 2U * i);
+        if (index >= s->desc.vertex_count) return MGL_ERR_ARGUMENT;
+        q = v + index * stride;
+        if (RD16(q + 14) == COLOR_SET && RD16(q + 12) != color) return MGL_ERR_ARGUMENT;
+    }
+    for (i = 0; i < count; i++) {
+        q = v + RD16(ix + 2U * i) * stride;
+        WR16(q + 12, color);
+        WR16(q + 14, COLOR_SET);
+    }
     return MGL_OK;
 }
 

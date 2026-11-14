@@ -124,6 +124,11 @@
 /* Formatos de vértice e índice. */
 #define MGL_VERTEX_POSITION_F32_XYZ 1U
 #define MGL_VERTEX_POSITION_Q16_16_XYZ 2U /* reservado: se rechaza */
+/* Posición F32 y color RGB565 por vértice: +12 u16 color, +14 u16 reservado (el renderer no lo lee). Stride
+   >= 16. Cada triángulo se pinta del color de su primer vértice (el "provoking vertex" de OpenGL), y
+   SET_COLOR no cuenta. Los mismos datos con MGL_VERTEX_POSITION_F32_XYZ y stride 16 se pintan del color de
+   SET_COLOR: el formato del DRAW_INDEXED decide, no la malla. */
+#define MGL_VERTEX_POSITION_F32_XYZ_RGB565 3U
 #define MGL_INDEX_UINT16 1U
 #define MGL_INDEX_UINT32 2U /* reservado: se rechaza */
 #define MGL_TOPOLOGY_TRIANGLES 1U

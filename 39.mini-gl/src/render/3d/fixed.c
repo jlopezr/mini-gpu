@@ -47,7 +47,8 @@ static mgl_u32 udiv_shift(mgl_u32 n, mgl_u32 d, int bits) {
     mgl_u32 q = n / d, r = n - q * d, t;
     int k = clz32(d), step;
     while (bits > 0) {
-        step = k < bits ? k : bits;
+        step = k;
+        MGL_SET_MIN(step, bits); /* MIN con MGL_EXT: el ?: era un salto que fallaba la mitad de las veces */
         r <<= step;
         t = r / d;
         r -= t * d;
@@ -94,7 +95,10 @@ const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s) {
 
 void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
     mgr_vec4q_t *clip) {
-    const unsigned char *p = v->base + index * v->stride;
+    mgr_transform_at_q(v->base + index * v->stride, mvp, clip);
+}
+
+void mgr_transform_at_q(const unsigned char *p, const mgr_mat4q_t *mvp, mgr_vec4q_t *clip) {
     const mgl_s32 *m = mvp->m;
     mgl_s32 x = Q_FROM_FLOAT(p), y = Q_FROM_FLOAT(p + 4), z = Q_FROM_FLOAT(p + 8);
     clip->x = q_mul(m[0], x) + q_mul(m[4], y) + q_mul(m[8], z) + m[12];

@@ -228,6 +228,65 @@ static void test_draw_range(void) {
     mgl_set_deferred(0);
 }
 
+/* Color por vértice (POSITION_F32_XYZ_RGB565): cada triángulo del color de su primer vértice, sin mirar
+   SET_COLOR; con mgl_draw_mesh_range_uniform, los mismos datos del color de SET_COLOR. Y
+   mgl_mesh_color_range: colores por tramos de triángulos, que no puede dar dos colores a un vértice. */
+static void test_vertex_color(void) {
+    static const float quad_xyz[12] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+    static const unsigned short quad_idx[6] = {0, 1, 2, 2, 3, 0}; /* primeros vértices: 0 y 2 */
+    static const unsigned short split_idx[6] = {0, 1, 2, 3, 4, 5};
+    static const float split_xyz[18] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0,
+        0.5f, 0.5f, 0, -0.5f, 0.5f, 0, -0.5f, -0.5f, 0};
+    mgl_color_t colors[4] = {0xf800, 0xffff, 0x07e0, 0xffff};
+    mgl_mesh_t mesh, plain, split;
+    mgl_mesh_desc_t d;
+    const unsigned char *p, *v;
+    int red, green;
+    t_init(4096);
+    mesh = mgl_create_mesh_copy_rgb565(quad_xyz, colors, 4, quad_idx, 6);
+    CHECK(mesh != 0 && mgl_mesh_info(mesh, &d) == MGL_OK);
+    CHECK(d.vertex_format == MGL_VERTEX_POSITION_F32_XYZ_RGB565 && d.vertex_stride == 16U);
+    t_begin();
+    mgl_set_color(0x001f); /* no cuenta */
+    mgl_draw_mesh(mesh);
+    CHECK(mgl_cmd_status(&t_cmd) == MGL_OK);
+    p = t_find(MGL_CMD_DRAW_INDEXED, 0);
+    CHECK(p && RD16(p + 24) == MGL_VERTEX_POSITION_F32_XYZ_RGB565 && RD16(p + 28) == 16U);
+    CHECK(t_end_and_run() == MGR_OK);
+    red = t_count(0xf800);
+    green = t_count(0x07e0);
+    CHECK(red > 100 && green > 100 && t_count(0x001f) == 0 && t_count(0xffff) == 0);
+    t_begin();
+    mgl_set_color(0x001f);
+    mgl_draw_mesh_range_uniform(mesh, 0, 6);
+    p = t_find(MGL_CMD_DRAW_INDEXED, 0);
+    CHECK(p && RD16(p + 24) == MGL_VERTEX_POSITION_F32_XYZ && RD16(p + 28) == 16U);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_count(0x001f) == red + green && t_count(0xf800) == 0);
+
+    /* Por tramos: el segundo comparte los vértices 0 y 2 con el primero. */
+    mesh = mgl_create_mesh_copy_rgb565(quad_xyz, 0, 4, quad_idx, 6);
+    CHECK(mgl_mesh_color_range(mesh, 0, 3, 0xf800) == MGL_OK);
+    CHECK(mgl_mesh_color_range(mesh, 0, 3, 0xf800) == MGL_OK); /* el mismo color otra vez, sí */
+    CHECK(mgl_mesh_color_range(mesh, 3, 3, 0x07e0) == MGL_ERR_ARGUMENT);
+    CHECK(mgl_mesh_info(mesh, &d) == MGL_OK);
+    v = (const unsigned char *)mgl_memory_ptr(&t_mem, d.vertex_addr, 64, 4);
+    CHECK(v && RD16(v + 3 * 16 + 12) == 0xffffU); /* el vértice 3 sigue sin tocar */
+    CHECK(mgl_mesh_color_range(mesh, 1, 3, 0x07e0) == MGL_ERR_ARGUMENT);
+    CHECK(mgl_mesh_color_range(mesh, 3, 6, 0x07e0) == MGL_ERR_ARGUMENT);
+    CHECK(mgl_mesh_color_range(0, 0, 3, 0x07e0) == MGL_ERR_HANDLE);
+    plain = mgl_create_mesh_copy(quad_xyz, 4, quad_idx, 6);
+    CHECK(mgl_mesh_color_range(plain, 0, 3, 0x07e0) == MGL_ERR_ARGUMENT); /* sin color */
+    /* Sin vértices compartidos, dos tramos de dos colores: lo mismo que la malla de colors. */
+    split = mgl_create_mesh_copy_rgb565(split_xyz, 0, 6, split_idx, 6);
+    CHECK(mgl_mesh_color_range(split, 0, 3, 0xf800) == MGL_OK && mgl_mesh_color_range(split, 3, 3, 0x07e0) == MGL_OK);
+    t_begin();
+    mgl_draw_mesh(split);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_count(0xf800) == red && t_count(0x07e0) == green);
+    mgl_set_deferred(0);
+}
+
 /* Errores de uso en MiniGL. */
 static void test_api_errors(void) {
     mgl_mat4_t m;
@@ -328,6 +387,9 @@ static void test_renderer_rejects(void) {
     p = raw_begin();
     CHECK(raw_run(raw_draw(p, app, app + 36, 3, 3, MGL_VERTEX_POSITION_Q16_16_XYZ, MGL_INDEX_UINT16)) ==
         MGR_ERR_UNSUPPORTED);
+    p = raw_begin(); /* con color, el stride es al menos 16 */
+    CHECK(raw_run(raw_draw(p, app, app + 36, 3, 3, MGL_VERTEX_POSITION_F32_XYZ_RGB565, MGL_INDEX_UINT16)) ==
+        MGR_ERR_LIMIT);
     p = raw_begin();
     CHECK(raw_run(raw_draw(p, app, app + 36, 3, 3, MGL_VERTEX_POSITION_F32_XYZ, MGL_INDEX_UINT32)) ==
         MGR_ERR_UNSUPPORTED);
@@ -396,6 +458,7 @@ int main(void) {
     test_redundant_state();
     test_capacity();
     test_draw_range();
+    test_vertex_color();
     test_api_errors();
     test_renderer_rejects();
     return t_report("test_commands: cabeceras, SET_MATRIX, DRAW_INDEXED, estado, capacidad y rechazos");

@@ -78,6 +78,21 @@ mgl_mesh_t mgl_create_mesh(const mgl_mesh_desc_t *desc);
 mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
     const unsigned short *indices, mgl_u32 index_count);
 
+/* Malla con color por vértice: POSITION_F32_XYZ_RGB565 con stride 16 (x, y, z en float, color RGB565 y dos
+   bytes reservados). Cada triángulo se pinta del color de su primer vértice; mgl_set_color no cuenta (salvo
+   con mgl_draw_mesh_range_uniform). colors tiene vertex_count colores, o es 0: todos blancos y sin asignar,
+   para darlos después con mgl_mesh_color_range. 0 si no vale o no cabe. */
+mgl_mesh_t mgl_create_mesh_copy_rgb565(const float *positions, const mgl_color_t *colors,
+    mgl_u32 vertex_count, const unsigned short *indices, mgl_u32 index_count);
+
+/* Da el color a los vértices de los triángulos [first, first + count) de los índices (first y count
+   múltiplos de 3), en una malla de mgl_create_mesh_copy_rgb565: así se pasa de grupos de triángulos de un
+   color (un PShape) a color por vértice. MGL_ERR_ARGUMENT, y la malla sin tocar, si algún vértice ya tenía
+   asignado otro color (lo comparten triángulos de dos colores: con color por vértice no se puede) o la malla
+   no tiene color; MGL_ERR_HANDLE si el handle no vale. Como la ejecución es diferida, el color nuevo lo ven
+   también los dibujos de esa malla ya grabados en el frame en curso. */
+int mgl_mesh_color_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count, mgl_color_t color);
+
 /* Lo mismo en memoria de frame: los datos valen hasta el siguiente
    mgl_begin_frame. El handle hay que destruirlo igual (se puede en cuanto se
    ha dibujado: el command buffer ya tiene las direcciones). */
@@ -129,6 +144,10 @@ void mgl_draw_mesh(mgl_mesh_t mesh);
 /* Solo los índices [first, first + count) (múltiplos de 3): para dibujar
    partes de una malla con estado distinto, como un color por cara. */
 void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count);
+/* Como mgl_draw_mesh_range, pero con el color de mgl_set_color aunque la malla tenga color por vértice
+   (mgl_create_mesh_copy_rgb565): un DRAW_INDEXED con formato POSITION_F32_XYZ y el stride de la malla. En una
+   malla sin color es lo mismo que mgl_draw_mesh_range. */
+void mgl_draw_mesh_range_uniform(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count);
 
 #define MGL_CULL_NONE 0
 #define MGL_CULL_BACK 1

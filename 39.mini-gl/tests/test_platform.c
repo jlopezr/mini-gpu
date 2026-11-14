@@ -51,6 +51,35 @@ static void two_boxes(void) {
     box(40);
     if (hint_case == 1) hint(ENABLE_DEPTH_TEST);
 }
+
+/* shape(): un cuadrado de dos colores (un triángulo rojo y uno verde). shared comparte dos vértices entre
+   los dos colores, así que va por grupos; split no, y va en un solo DRAW_INDEXED. La imagen, la misma.
+   Con disableStyle, el color de fill(); con noFill(), nada. */
+static const float shared_xyz[12] = {100, 80, 0, 220, 80, 0, 220, 160, 0, 100, 160, 0};
+static const unsigned short shared_idx[6] = {0, 1, 2, 2, 3, 0};
+static const float split_xyz[18] = {100, 80, 0, 220, 80, 0, 220, 160, 0, 220, 160, 0, 100, 160, 0, 100, 80, 0};
+static const unsigned short split_idx[6] = {0, 1, 2, 3, 4, 5};
+static const PShapeGroup two_groups[2] = {{255, 0, 0, 3}, {0, 255, 0, 6}};
+static const PShape shared_shape = {shared_xyz, 4, shared_idx, 6, two_groups, 2, 0};
+static const PShape split_shape = {split_xyz, 6, split_idx, 6, two_groups, 2, 0};
+static const PShape *shape_case;
+static int style_case;
+
+static void one_shape(void) {
+    background565(0x0000);
+    if (style_case) disableStyle(shape_case);
+    if (style_case == 1) fill(0, 0, 255);
+    if (style_case == 2) noFill();
+    shape(shape_case);
+    if (style_case) enableStyle(shape_case);
+    fill(255, 255, 255);
+}
+
+static int count565(const mgl_color_t *p, mgl_color_t c) {
+    int i, n = 0;
+    for (i = 0; i < width * height; i++) n += p[i] == c;
+    return n;
+}
 #endif
 
 static void capture(void) {
@@ -103,6 +132,32 @@ int main(void) {
         for (hint_case = 0; hint_case < 3; hint_case++) {
             CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, two_boxes, 0) == MGL_OK);
             CHECK(pixels[120 * width + 160] == (hint_case ? 0x001F : 0xF800));
+        }
+        {
+            static mgl_color_t first[320 * 240];
+            int red, green, k;
+            shape_case = &shared_shape;
+            style_case = 0;
+            CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, one_shape, 0) == MGL_OK);
+            red = count565(pixels, 0xF800);
+            green = count565(pixels, 0x07E0);
+            CHECK(red > 1000 && green > 1000);
+            for (k = 0; k < width * height; k++) first[k] = pixels[k];
+            shape_case = &split_shape;
+            CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, one_shape, 0) == MGL_OK);
+            for (k = 0; k < width * height && first[k] == pixels[k]; k++) continue;
+            CHECK(k == width * height);
+            for (shape_case = &shared_shape; shape_case; shape_case = shape_case == &shared_shape ? &split_shape : 0) {
+                style_case = 1;
+                CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, one_shape, 0) == MGL_OK);
+                CHECK(count565(pixels, 0x001F) == red + green);
+                style_case = 2;
+                CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, one_shape, 0) == MGL_OK);
+                CHECK(count565(pixels, 0x0000) == width * height);
+                style_case = 0; /* enableStyle: otra vez sus colores */
+                CHECK(platform_frame(PLATFORM_FB_A, PLATFORM_FB_A, one_shape, 0) == MGL_OK);
+                CHECK(count565(pixels, 0xF800) == red && count565(pixels, 0x07E0) == green);
+            }
         }
         /* Los ENABLE_* del frame anterior siguen valiendo. */
         hint_case = 0;

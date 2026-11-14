@@ -60,6 +60,10 @@ void box(float side);
    final del anterior (0 para el primero) hasta end. shape(s) lo dibuja con sus
    colores, sin mirar fill(); la malla se crea en el primer shape() y se
    reutiliza, como la de box(). Como mucho P3D_SHAPES modelos distintos.
+   La malla guarda el color de cada vértice (el de su grupo) y, si el modelo
+   tiene pocos triángulos por color, se dibuja con un solo DRAW_INDEXED en vez
+   de uno por grupo; si no compensa, o si un vértice está en grupos de dos
+   colores, por grupos. La imagen es la misma.
    Con cull no se rasterizan las caras traseras (las que se ven en sentido
    horario, con los vértices del OBJ en sentido antihorario de frente): la
    mitad de triángulos y fragmentos, y la misma imagen si la malla tiene una
@@ -83,6 +87,11 @@ typedef struct {
 #define P3D_SHAPES 64
 
 void shape(const PShape *s);
+/* Como PShape.disableStyle() de Processing: s se dibuja entero del color de
+   fill() (con noFill(), no se dibuja), sin sus colores, hasta enableStyle(s).
+   Para un modelo de un color cualquiera, o que parpadee al chocar. */
+void disableStyle(const PShape *s);
+void enableStyle(const PShape *s);
 
 /* Olvida los modelos ya dibujados y vacía la memoria de MiniGL donde están
    sus mallas (que no se libera de una en una), para hacer otros con los

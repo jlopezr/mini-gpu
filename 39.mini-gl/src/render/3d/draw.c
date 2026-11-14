@@ -20,7 +20,7 @@
 #if MGR_FIXED_GEOMETRY
 typedef mgr_vec4q_t mgr_clipv_t;
 typedef mgr_mat4q_t mgr_mvp_t;
-#define TRANSFORM_VERTEX mgr_transform_vertex_q
+#define TRANSFORM_AT mgr_transform_at_q
 #define OUTCODE mgr_outcode_q
 #define CLIP_TRIANGLE mgr_clip_triangle_q
 #define VIEWPORT_MAP mgr_viewport_map_q
@@ -28,7 +28,7 @@ typedef mgr_mat4q_t mgr_mvp_t;
 #else
 typedef mgl_vec4_t mgr_clipv_t;
 typedef mgl_mat4_t mgr_mvp_t;
-#define TRANSFORM_VERTEX mgr_transform_vertex
+#define TRANSFORM_AT mgr_transform_at
 #define OUTCODE mgr_outcode
 #define CLIP_TRIANGLE mgr_clip_triangle
 #define VIEWPORT_MAP mgr_viewport_map
@@ -40,6 +40,7 @@ typedef struct {
     mgr_clipv_t clip;
     unsigned int out;
     int mapped; /* window ya calculado */
+    mgl_color_t color; /* con MGL_VERTEX_POSITION_F32_XYZ_RGB565 */
     mgr_window_vertex_t window;
 } mgr_vcache_t;
 
@@ -55,18 +56,15 @@ static mgl_u32 cache_generation;
 static void triangle(mgr_stats_t *st, const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
     /* Lo que mgr_raster_triangle descartaría al empezar (área nula o cara descartada), sin llamarla: con
-       culling es la mitad de los triángulos, y ella guarda y restaura catorce registros. */
+       culling es la mitad de los triángulos, y ella guarda y restaura catorce registros. Los aceptados van a
+       mgr_raster_triangle_area con el área ya calculada, sin repetir las comprobaciones. */
     mgl_s32 covered = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
     if (covered == 0 || ((f->flags & MGL_STATE_CULL_BACK) && covered > 0) ||
         ((f->flags & MGL_STATE_CULL_FRONT) && covered < 0)) {
         st->culled++;
         return;
     }
-    covered = mgr_raster_triangle(a, b, c, clip, f);
-    if (covered < 0) {
-        st->culled++;
-        return;
-    }
+    covered = mgr_raster_triangle_area(a, b, c, clip, f, covered);
     st->rasterized++;
     st->fragments += (mgl_u32)covered;
 }
@@ -88,25 +86,25 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
     mgr_fragment_t f;
     mgr_rect_t clip;
     const mgr_mvp_t *mvp;
-    const unsigned char *indices;
+    const unsigned char *indices, *vp;
     mgr_vcache_t *c, *e[3], local[3];
     mgr_clipv_t tri[3];
     mgr_clipv_t poly[MGR_CLIP_MAX];
     mgl_u32 vaddr = RD32(p + MGL_CMD_ARG0), iaddr = RD32(p + MGL_CMD_ARG1);
     mgl_u32 vcount = RD32(p + 16), icount = RD32(p + 20), stride = RD16(p + 28), i, k, index, generation, tag;
     unsigned int vformat = RD16(p + 24), iformat = RD16(p + 26), topology = RD16(p + 30);
-    int n;
+    int n, colored = vformat == MGL_VERTEX_POSITION_F32_XYZ_RGB565;
 
     if (vformat == MGL_VERTEX_POSITION_Q16_16_XYZ || iformat == MGL_INDEX_UINT32)
         return MGR_ERR_UNSUPPORTED;
-    if (vformat != MGL_VERTEX_POSITION_F32_XYZ || iformat != MGL_INDEX_UINT16 ||
+    if ((vformat != MGL_VERTEX_POSITION_F32_XYZ && !colored) || iformat != MGL_INDEX_UINT16 ||
         topology != MGL_TOPOLOGY_TRIANGLES)
         return MGR_ERR_FORMAT;
-    if (stride < 12U || (stride & 3U) || !vcount || vcount > 65536U || icount % 3U ||
+    if (stride < (colored ? 16U : 12U) || (stride & 3U) || !vcount || vcount > 65536U || icount % 3U ||
         icount > 0x7fffffffU / 2U)
         return MGR_ERR_LIMIT;
     if (!s->color) return MGR_ERR_STATE;
-    verts.base = (const unsigned char *)mgl_memory_ptr(m, vaddr, (vcount - 1U) * stride + 12U, 4);
+    verts.base = (const unsigned char *)mgl_memory_ptr(m, vaddr, (vcount - 1U) * stride + (colored ? 16U : 12U), 4);
     verts.stride = stride;
     verts.count = vcount;
     indices = (const unsigned char *)mgl_memory_ptr(m, iaddr, icount * 2U, 2);
@@ -146,9 +144,11 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
             if (c->tag != tag) {
                 if ((k > 0 && e[0] == c) || (k > 1 && e[1] == c)) c = &local[k];
                 c->tag = tag;
-                TRANSFORM_VERTEX(&verts, index, mvp, &c->clip);
+                vp = verts.base + index * stride;
+                TRANSFORM_AT(vp, mvp, &c->clip);
                 c->out = OUTCODE(&c->clip);
                 c->mapped = 0;
+                if (colored) c->color = RD16(vp + 12);
             }
             e[k] = c;
         }
@@ -157,6 +157,7 @@ int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, con
             st->rejected++;
             continue;
         }
+        if (colored) f.fill = e[0]->color; /* el del primer vértice; también para lo que salga del recorte */
         if (!(e[0]->out | e[1]->out | e[2]->out)) { /* dentro de todos: sin recortar */
             for (k = 0; k < 3; k++) {
                 c = e[k];

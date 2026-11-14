@@ -270,7 +270,7 @@ static void flush_state(void) {
 /* Un tramo [first, first + count) de los índices: la misma malla, con la
    dirección de los índices desplazada. Así se dibuja cada parte de una malla
    con su propio estado (un color por cara) sin cambiar DRAW_INDEXED. */
-void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+static void draw_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count, int uniform) {
     mgl_mesh_desc_t d;
     unsigned char *p;
     if (!mgl_deferred_()) return;
@@ -292,10 +292,19 @@ void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
     if (!p) return;
     WR32(p + 16, d.vertex_count);
     WR32(p + 20, count);
-    WR16(p + 24, d.vertex_format);
+    /* uniform: los mismos datos como solo posición (el stride salta el color), y el color de SET_COLOR. */
+    WR16(p + 24, uniform ? MGL_VERTEX_POSITION_F32_XYZ : d.vertex_format);
     WR16(p + 26, d.index_format);
     WR16(p + 28, d.vertex_stride);
     WR16(p + 30, MGL_TOPOLOGY_TRIANGLES);
+}
+
+void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+    draw_range(mesh, first, count, 0);
+}
+
+void mgl_draw_mesh_range_uniform(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+    draw_range(mesh, first, count, 1);
 }
 
 void mgl_draw_mesh(mgl_mesh_t mesh) {
