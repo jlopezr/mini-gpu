@@ -16,7 +16,8 @@
 //   area1                 6.584 COMB, 2.323 FF, 0 DSP, 44-45 MHz
 //   area1 + GEN           7.462 COMB, 2.432 FF, 5 DSP, 60-61 MHz
 //   esta (+ FRAC/SAT, grupos de 8, sin barrera, Z registrada)
-//                         8.054 COMB, 2.475 FF, 5 DSP, 60-63 MHz
+//                         5.703 LUT4, 2.475 FF, 5 DSP tras Yosys aislado
+//                         (15 de noviembre; P&R del diseño completo decide Fmax)
 // Banco: rop_core_tb.sv y rop_core_stress_tb.sv.
 //
 // Modo de SPAN/FRAGMENT (cmd_mode en los explicitos; el modo de render de
@@ -199,18 +200,15 @@ module rop_core #(
         passed = 1'b0;
         new_value = 32'd0;
         old_value = 32'd0;
-        for (k=0; k<8; k=k+1) begin
-            v = cur_z + dx_mult[k];
-            if ((width32 && k<4) || !width32) begin
-                if (width32) begin
-                    new_value = v;
-                    old_value = rsp_rdata[k*32 +: 32];
-                    gen_word[k*32 +: 32] = v;
-                end else begin
-                    new_value = {16'd0,v[15:0]};
-                    old_value = {16'd0,rsp_rdata[k*16 +: 16]};
-                    gen_word[k*16 +: 16] = v[15:0];
-                end
+        if (width32) begin
+            // Cuatro palabras de 32 bits caben en rsp_rdata. Separar este
+            // bucle del de 16 bits evita que Yosys elabore selects [255:128]
+            // aunque k<4 los haga inalcanzables en tiempo de ejecucion.
+            for (k=0; k<4; k=k+1) begin
+                v = cur_z + dx_mult[k];
+                new_value = v;
+                old_value = rsp_rdata[k*32 +: 32];
+                gen_word[k*32 +: 32] = v;
                 case (cmp)
                     3'd0: passed = 1'b1;
                     3'd1: passed = (new_value == old_value);
@@ -233,10 +231,33 @@ module rop_core #(
                         (new_value >= old_value);
                     default: passed = 1'b0;
                 endcase
-                if (passed) begin
-                    if (width32) cmp_mask[k*4 +: 4] = 4'hf;
-                    else cmp_mask[k*2 +: 2] = 2'b11;
-                end
+                if (passed) cmp_mask[k*4 +: 4] = 4'hf;
+            end
+        end else begin
+            for (k=0; k<8; k=k+1) begin
+                v = cur_z + dx_mult[k];
+                new_value = {16'd0,v[15:0]};
+                old_value = {16'd0,rsp_rdata[k*16 +: 16]};
+                gen_word[k*16 +: 16] = v[15:0];
+                case (cmp)
+                    3'd0: passed = 1'b1;
+                    3'd1: passed = (new_value == old_value);
+                    3'd2: passed = (new_value != old_value);
+                    3'd3: passed = signed_cmp ?
+                        ($signed(new_value[15:0]) < $signed(old_value[15:0])) :
+                        (new_value < old_value);
+                    3'd4: passed = signed_cmp ?
+                        ($signed(new_value[15:0]) <= $signed(old_value[15:0])) :
+                        (new_value <= old_value);
+                    3'd5: passed = signed_cmp ?
+                        ($signed(new_value[15:0]) > $signed(old_value[15:0])) :
+                        (new_value > old_value);
+                    3'd6: passed = signed_cmp ?
+                        ($signed(new_value[15:0]) >= $signed(old_value[15:0])) :
+                        (new_value >= old_value);
+                    default: passed = 1'b0;
+                endcase
+                if (passed) cmp_mask[k*2 +: 2] = 2'b11;
             end
         end
     end
