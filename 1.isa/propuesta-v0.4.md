@@ -419,7 +419,7 @@ libres de ese mapa.
 | `0x36`; `func6 = 0x02` | Sistema | `privileged_traps` | `MFSR` | `Rd, SRn` | Propuesta v4; contrato común por referencia | No / No | [v0.4](#42-familia-system--0x36) |
 | `0x36`; `func6 = 0x03` | Sistema | `privileged_traps` | `MTSR` | `SRn, Rs` | Propuesta v4; contrato común por referencia | No / No | [v0.4](#42-familia-system--0x36) |
 | `0x36`; `func6 = 0x04` | Sistema | `privileged_traps` | `ENTERUSER` | — | Propuesta v4; contrato común por referencia | No / No | [v0.4](#42-familia-system--0x36) |
-| `0x37` | Sin asignar | — | — | — | Libre en v4 | No / No | [v0.4](#5-mapa-de-opcodes-v04) |
+| `0x37` | ROP (propuesta) | `rop` | `ROPSET`, `ROPSUBMIT`, `ROPWAIT`, `ROPSTATUS` | ver `isa.md` §7.5 | Propuesto en el mapa vigente; mismo opcode, libre aquí | No / No | [`isa.md` §7.5](isa.md#75-rop--0x37-capability-rop-contrato-propuesto) |
 | `0x38` | Sin asignar | — | — | — | Libre en v4 | No / No | [v0.4](#5-mapa-de-opcodes-v04) |
 | `0x39` | Sin asignar | — | — | — | Libre en v4 | No / No | [v0.4](#5-mapa-de-opcodes-v04) |
 | `0x3A` | Sin asignar | — | — | — | Libre en v4 | No / No | [v0.4](#5-mapa-de-opcodes-v04) |
@@ -1815,6 +1815,13 @@ encolar, porque complicaría reintentos y recovery.
 No se reserva aún `0x37` para ello. Si los perfiles demuestran que la interfaz
 merece una instrucción, una familia `PIPE` en uno de los opcodes libres de
 sistema/SIMT permitiría múltiples suboperaciones sin consumir el mapa entero.
+
+**Actualización (15 de noviembre).** Para el ROP los perfiles ya lo
+demuestran: por MMIO, racer gastaría ~3 % del frame solo en enviar spans, y el
+MMIO de la 38 no puede esperar a una cola llena. `isa.md` §7.5 propone la
+familia ROP en `0x37`, libre en los dos mapas, con suboperaciones (`ROPSET`,
+`ROPSUBMIT`, `ROPWAIT`, `ROPSTATUS`) y `FRAGMENT` reservado a emisores SIMT.
+El camino MMIO de §17.3 queda como alternativa descartada allí.
 
 ### 17.3 Camino CPU
 

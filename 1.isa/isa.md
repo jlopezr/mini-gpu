@@ -306,7 +306,7 @@ Las capabilities de las filas con estado «Propuesta v0.2» son nombres propuest
 | `0x34` | Saltos con inmediato | `branch_immediate` | `BEQI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
 | `0x35` | Saltos con inmediato | `branch_immediate` | `BNEI` | `Ra, imm5, target` | Propuesta v0.2 | No / No | [isa.md §7.2](#72-branches-con-inmediato) |
 | `0x36` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
-| `0x37` | Reservado | — | — | — | Reservado en v0.1 y v0.2 | No / No | [isa.md §3](#sistema-y-simt); [isa.md §7.4](#74-mapa-conjunto-y-ocupación) |
+| `0x37`; `sub = 0–3` | ROP | `rop` | `ROPSET`, `ROPSUBMIT`, `ROPWAIT`, `ROPSTATUS` | ver §7.5 | Propuesta v0.2; contrato propuesto | No / No | [isa.md §7.5](#75-rop--0x37-capability-rop-contrato-propuesto) |
 | `0x38` | Aritmética FP32 | `fp32` | `FADD` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x39` | Aritmética FP32 | `fp32` | `FSUB` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
 | `0x3A` | Aritmética FP32 | `fp32` | `FMUL` | `Rd, Ra, Rb` | Vigente | Sí / No | [isa.md §3](#aritmética-fp32-capability-fp32) |
@@ -334,9 +334,9 @@ decida, conserva su asignación pero no es implementable.
 
 El mapa vigente tiene **55 opcodes primarios ocupados y 9 reservados**
 (`EXT` en `0x1E` y FP32 en `0x3C–0x3D` son los últimos en ocuparse).
-V0.2 propone ocupar seis de esos huecos más: `0x28–0x2B` y `0x34–0x35`.
-Si se adoptara todo el conjunto, habría **61 ocupados y 3 libres**:
-`0x1F`, `0x36` y `0x37`. De las funciones EXT, `0x09` es `CLZ` y `0x0A–0x3F`
+V0.2 propone ocupar siete de esos huecos más: `0x28–0x2B`, `0x34–0x35` y
+`0x37` (ROP, §7.5). Si se adoptara todo el conjunto, habría **62 ocupados y 2
+libres**: `0x1F` y `0x36`. De las funciones EXT, `0x09` es `CLZ` y `0x0A–0x3F`
 (54) seguirían libres. La ocupación por bloques se resume en §7.4.
 
 ### ALU y aritmética
@@ -668,7 +668,8 @@ son instrucciones de la arquitectura GPU, sin capability adicional en el runner.
 |      `0x31` | `SSY`     | `label`   | MiniGPU; en MiniCPU no-op. B-Type    |
 |      `0x32` | `BAR`     | —         | MiniGPU; en MiniCPU no-op            |
 |      `0x33` | `EXIT`    | —         | Implementada en MiniGPU              |
-| `0x34–0x37` | — | — | Reservadas para GPU |
+| `0x34–0x36` | — | — | Reservadas para GPU (`0x34–0x35`: branches inmediatos propuestos) |
+|      `0x37` | `ROP*`    | ver §7.5  | Propuesta: familia ROP (capability `rop`); en la GPU, reservada |
 | `0x38–0x3D` | `FADD/FSUB/FMUL/FDIV`, `FEQ/FLT/FLE`, `FTOI/ITOF` | — | Extensión `fp32`, ver arriba |
 |      `0x3E` | `TRAP`    | —         | Parada explícita con estado de error |
 |      `0x3F` | `HALT`    | —         | Definida e implementada              |
@@ -908,6 +909,7 @@ añade una capability separada `warp_user_id`:
 | `rcpfx`              | `RCPFX`                      | CPU primero (el `1/w` de mini-gl); contrato propuesto en §7.3 |
 | `rsqrtfx`            | `RSQRTFX`                    | Propuesta de retirada: ver `fp32_sqrt`     |
 | `fp32_sqrt`          | `FSQRT`                      | CPU con `fp32`; contrato propuesto en §7.3 |
+| `rop`                | `ROPSET`, `ROPSUBMIT`, `ROPWAIT`, `ROPSTATUS` (`0x37`) | CPU de la 38 primero; la semántica SIMT queda reservada. Contrato propuesto en §7.5 |
 
 No se propone una capability única que obligue a implementar todo `EXT`.
 Compartir opcode no implica compartir disponibilidad: un backend puede ofrecer
@@ -917,8 +919,8 @@ estas capabilities en CPU y GPU y comprobar `requires` contra cada backend.
 Antes de implementar falta:
 
 1. Aprobar las asignaciones nuevas y los nombres/grupos de capabilities.
-2. Aprobar los contratos propuestos de `RCPFX` y `FSQRT` (§7.3) y la
-   retirada de `RSQRTFX`.
+2. Aprobar los contratos propuestos de `RCPFX` y `FSQRT` (§7.3), la
+   retirada de `RSQRTFX` y el contrato del ROP (§7.5).
 3. Elegir qué operaciones se incorporan primero y a qué backends, con medidas
    reproducibles de instrucciones, ciclos, área y timing.
 
@@ -1208,8 +1210,9 @@ solo escriben las lanes activas y no modifican las máscaras SIMT.
 
 Sobre el repertorio vigente se proponen **11 operaciones nuevas**: seis
 branches inmediatos y cinco operaciones bajo `EXT` (`SEL`, `MACFX`, `RCPFX`,
-`RSQRTFX`, `PACK565`). Consumen **6 opcodes primarios nuevos**, los de los
-branches: `EXT` ya está ocupado con `MIN/MAX/MINU/MAXU` y `CLZ` (vigentes en la
+`RSQRTFX`, `PACK565`), más la familia ROP (§7.5), con cuatro suboperaciones
+bajo un solo opcode. Consumen **7 opcodes primarios nuevos**, los seis de los
+branches y `0x37`: `EXT` ya está ocupado con `MIN/MAX/MINU/MAXU` y `CLZ` (vigentes en la
 38). El contrato de `RCPFX` está propuesto en §7.3, y para `RSQRTFX` se propone
 la retirada en favor de `FSQRT` (en `0x3D`, sin opcode nuevo). Los cinco
 mnemónicos GETID ya están incorporados y no cuentan como novedades.
@@ -1230,17 +1233,182 @@ otro mapa paralelo aquí.
 | `0x00–0x0F` | 16 | 0 | 0 | 0 |
 | `0x10–0x1F` | 15 | 1 | 0 | 1 |
 | `0x20–0x2F` | 12 | 4 | 4 | 0 |
-| `0x30–0x3F` | 12 | 4 | 2 | 2 |
-| **Total** | **55** | **9** | **6** | **3** |
+| `0x30–0x3F` | 12 | 4 | 3 | 1 |
+| **Total** | **55** | **9** | **7** | **2** |
 
-El conjunto completo ocuparía **61 de 64 opcodes**, con **3 libres**:
-`0x1F`, `0x36` y `0x37`. Quedan también **54 suboperaciones
+El conjunto completo ocuparía **62 de 64 opcodes**, con **2 libres**:
+`0x1F` y `0x36` (`0x37` es el ROP, §7.5). Quedan también **54 suboperaciones
 EXT libres** (`func6 = 0x0A–0x3F`). Los bloques indican posiciones del mapa;
 no imponen un formato único ni limitan la categoría semántica de sus operaciones.
 
 No se puede recuperar `0x2E` sin romper compatibilidad. Si las nueve
 operaciones EXT consumieran un opcode principal cada una, harían falta ocho
 opcodes más que con EXT y se excedería el espacio disponible en tres.
+
+### 7.5 ROP — `0x37` (capability `rop`), contrato propuesto
+
+El ROP (raster operations processor) es una unidad compartida que ejecuta
+rellenos, copias, rampas y spans con prueba de profundidad contra la SDRAM, de
+forma asíncrona respecto a quien le envía trabajo. Esta sección define cómo lo
+alimenta la **CPU**; la semántica SIMT queda reservada (ver *GPU*, al final).
+
+**Por qué instrucciones y no MMIO.** La v0.4 (§17) proponía un puerto MMIO
+"hasta que los perfiles demuestren que la interfaz merece una instrucción". En
+la 38 un acceso MMIO cuesta unos 6 ciclos (dos etapas de decodificador y la
+latencia fija de `mmio_mux`), y racer mandaría unos 3.900 spans por frame de
+cuatro o cinco parámetros: ~115 k ciclos por frame (~3 %) solo en el envío.
+Además el MMIO de la 38 no puede quedarse esperando, así que una cola llena o
+una espera se convertirían en sondeos. Una instrucción cuesta un ciclo, lleva
+dos operandos y, si la cola está llena o el trabajo no ha terminado, para el
+pipeline hasta que puede continuar.
+
+#### Modelo
+
+- El ROP tiene **parámetros de envío** `P0`–`P9` (32 bits) y `PMODE` (16 bits)
+  por emisor. Persisten entre envíos: solo se reescribe lo que cambia.
+- `ROPSUBMIT` toma una **instantánea** de `P0`–`P9`, `PMODE` y la operación y
+  la encola. Cambiar los parámetros después no altera trabajos encolados.
+- El ROP tiene además **configuración persistente** (bases, strides, color, Z
+  inicial y deltas, modo de render) que solo cambia la operación `CONFIG`,
+  ordenada con el resto. Las operaciones *compactas* la usan.
+- **Semántica secuencial:** la memoria queda como si los trabajos se ejecutaran
+  uno detrás de otro en orden de envío. Una implementación puede solaparlos,
+  pero debe detectar ella misma las dependencias; el software nunca pone
+  barreras entre trabajos del ROP.
+- **Terminar** un trabajo significa que han llegado las respuestas de todas sus
+  escrituras, no solo que se han emitido.
+
+#### Codificación
+
+```text
+31          26 25    21 20    16 15   12 11                         0
+┌─────────────┬────────┬────────┬───────┬────────────────────────────┐
+│ 0x37        │   X    │   Y    │  sub  │        según `sub`         │
+└─────────────┴────────┴────────┴───────┴────────────────────────────┘
+      6           5        5        4                 12
+```
+
+| `sub` | Mnemónico | `X` | `Y` | `[11:0]` |
+|---|---|---|---|---|
+| 0 | `ROPSET pA, Ra [, pB, Rb]` | `Ra` | `Rb` | `[11:8] = pA`, `[7:4] = pB`, `[3:0] = 0` |
+| 1 | `ROPSUBMIT op[.F] [, pA, Ra [, pB, Rb]]` | `Ra` | `Rb` | `[11:9] = op`, `[8] = F`, `[7:4] = pA`, `[3:0] = pB` |
+| 2 | `ROPWAIT [INV]` | 0 | 0 | `[0] = INV`, `[11:1] = 0` |
+| 3 | `ROPSTATUS Rd [, CLEAR]` | `Rd` | 0 | `[0] = CLEAR`, `[11:1] = 0` |
+| 4–15 | — | | | `ERROR_INVALID_OPCODE` |
+
+Índices de parámetro (`pA`, `pB`): 0–9 son `P0`–`P9`; 10 es `PMODE` (el
+registro debe tener `[31:16] = 0`); **15 es "ninguno"** (no se escribe nada y
+el registro correspondiente debe ser 0); 11–14 dan `ERROR_INVALID_ENCODING`,
+igual que `pA = pB` con los dos distintos de 15. `ROPSET` y `ROPSUBMIT`
+escriben `Ra` en `pA` y `Rb` en `pB`; en `ROPSUBMIT` la escritura se hace
+**antes** de la instantánea, así que un span que solo cambia dos parámetros es
+una sola instrucción.
+
+#### Operaciones (`op` de `ROPSUBMIT`)
+
+| `op` | Operación | Parámetros |
+|---|---|---|
+| 0 | `FILL` | `P0` destino, `P1` ancho en bytes, `P2` filas, `P3` stride destino, `P4` patrón de 32 bits |
+| 1 | `COPY` | `P0` origen, `P1` destino, `P2` ancho en bytes, `P3` filas, `P4`/`P5` strides de origen y destino |
+| 2 | `GENERATE` | `P0` destino, `P1` ancho en elementos, `P2` filas, `P3` stride, `P4` valor inicial, `P5` dX, `P6` dY |
+| 3 | `SPAN` | explícito: `P0`/`P1` direcciones de color y Z, `P2` ancho en píxeles, `P3` filas, `P4`/`P5` strides de color y Z, `P6` color, `P7` Z inicial, `P8` dX, `P9` dY. Compacto (`PMODE[12] = 1`): `P0`/`P1` offsets sobre las bases de CONFIG, `P2` ancho, `P3` filas y, si `PMODE[8..11]`, `P4` color, `P5` Z inicial, `P6` dX, `P7` dY sustituyen a los de CONFIG; el resto sale de CONFIG |
+| 4 | `FRAGMENT` | reservada a emisores SIMT; en la CPU, `ERROR_INVALID_ENCODING` |
+| 5 | `CONFIG` | `PMODE[4:0]` elige los grupos: bases (`P0` color, `P1` Z), strides (`P2`, `P3`), color (`P4`), Z inicial y deltas (`P5`–`P7`), modo de render (`P8[15:0]`) |
+| 6–7 | — | `ERROR_INVALID_ENCODING` |
+
+En los compactos, `PMODE[7:0]` y `[15:13]` deben ser cero: formato,
+comparación, escrituras, `FRAC` y `SAT` salen del modo de render de `CONFIG`.
+
+Alineación: `FILL`, `COPY` y las filas de `GENERATE` trabajan en bloques de 16
+bytes alineados; `SPAN` admite píxeles sueltos de 16 o 32 bits en cualquier
+posición alineada a su tamaño, con color y Z de alineaciones independientes.
+Las filas de un `SPAN` no deben solaparse.
+
+`PMODE` de `SPAN` (y modo de render de `CONFIG`, con el bit 12 a cero):
+
+| Bits | Campo |
+|---|---|
+| `[2:0]` | comparación de Z: 0 `ALWAYS`, 1 `EQ`, 2 `NE`, 3 `LT`, 4 `LE`, 5 `GT`, 6 `GE`; 7 inválido |
+| `[3]`, `[4]` | color y Z de 32 bits (si no, 16) |
+| `[5]`, `[6]` | escribe Z, escribe color (al menos uno) |
+| `[7]` | comparación con signo |
+| `[11:8]` | explícito: `FRAC`. Compacto: sustituciones de `P4`–`P7` |
+| `[12]` | compacto |
+| `[13]` | `SAT` |
+| `[15:14]` | reservados, a cero |
+
+La Z de cada píxel sale de un acumulador de 32 bits modular
+(`Z0 + x·dX + y·dY`) desplazado aritméticamente `FRAC` bits. Con Z16 se guardan
+sus 16 bits bajos o, con `SAT`, el valor saturado a 0–65535; `SAT` solo vale
+con Z16 y comparación sin signo. Con `FRAC = 8` y `SAT` es exactamente el
+`clamp(zz >> 8)` de mini-gl. Un píxel pasa si cumple la comparación contra la
+Z que hay en memoria (con el mismo formato); si pasa, escribe Z y/o color según
+`[5]`/`[6]`. `GENERATE` usa `PMODE[2:0]` (comparación), `[3]` (32 bits) y `[4]`
+(con signo), sin `FRAC`.
+
+#### Esperas y bloqueo
+
+- `ROPSUBMIT` para el pipeline mientras la cola esté llena. Con `F = 1`, además
+  espera a que hayan terminado todos los `STORE` anteriores de la CPU.
+- `ROPWAIT` para el pipeline hasta que han **terminado** todos los trabajos
+  enviados antes por la CPU. Con `INV`, al terminar invalida la D-cache.
+- `ROPSET` y `ROPSTATUS` no esperan nunca.
+
+#### Orden con la memoria de la CPU
+
+| Caso | Garantía |
+|---|---|
+| El ROP lee lo que escribió la CPU | Solo si el `ROPSUBMIT` lleva `F`, o hubo un `ROPWAIT` después de los `STORE`. Sin `F` el ROP puede leer valores anteriores |
+| La CPU lee lo que escribió el ROP | Después de `ROPWAIT`. Si la CPU puede tener esas líneas en cache, `ROPWAIT INV` (o invalidar de otra forma) |
+| La CPU escribe memoria que un trabajo pendiente lee o escribe | Indefinido: es una carrera del software |
+| El vídeo muestra lo que escribió el ROP | Después de `ROPWAIT`; el SWAP no espera al ROP por su cuenta |
+
+`F` es opcional porque cuesta: la CPU escribe la pila constantemente, y esperar
+a que terminen sus `STORE` en cada span pararía el pipeline sin necesidad cuando
+el ROP solo lee lo que él mismo escribió (el depth buffer).
+
+#### Errores
+
+- **Precisos**, en la instrucción: `sub` sin asignar (`ERROR_INVALID_OPCODE`),
+  campos reservados, índices 11–14, `pA = pB`, `op` 4/6/7 en la CPU o un
+  `PMODE` con `[31:16] ≠ 0` (`ERROR_INVALID_ENCODING`).
+- **Asíncronos**: un descriptor que el ROP rechaza (alineación, ancho cero,
+  `SAT` con signo...) o un error de memoria en un trabajo. No se pueden detectar
+  al enviar: la validez de un compacto depende de la configuración vigente
+  cuando se ejecuta. Marcan un **error pegajoso**; los trabajos siguientes se
+  ejecutan igualmente.
+- `ROPWAIT` con el error pegajoso activo para la CPU con **`ERROR_ROP`
+  (`0x07`)** en su PC. `ROPSTATUS` permite verlo sin parar, y `CLEAR` lo borra.
+
+#### `ROPSTATUS`
+
+| Bit | Significado |
+|---|---|
+| 0 | hay trabajos sin terminar |
+| 1 | la cola está llena |
+| 2 | error pegajoso |
+| `[15:8]` | huecos libres en la cola, **orientativo** |
+| resto | 0 |
+
+Ningún campo dice cuántos trabajos se ejecutan a la vez: una implementación con
+varios contextos los conserva con el mismo significado.
+
+#### GPU
+
+El mismo opcode queda reservado para emisores SIMT, con `FRAGMENT` (ocho
+fragmentos con color, Z y cobertura por lane) como operación propia. Hasta que
+se defina, `0x37` en la GPU da `ERROR_INVALID_OPCODE`. Cada emisor tiene sus
+propios `P0`–`P9`/`PMODE`; el orden entre trabajos de emisores distintos solo
+queda definido por sus esperas.
+
+#### Alternativas descartadas
+
+| Alternativa | Coste | Por qué no |
+|---|---|---|
+| MMIO (v0.4 §17.3) | sin opcode | ~6 ciclos por parámetro, sin espera natural; ver arriba |
+| Descriptor en memoria (`ROPSUBMIT Ra` = dirección) | el ROP lee el descriptor por el fabric | ~25 ciclos de latencia por trabajo: ahoga los spans cortos (un tercio son de 1–4 píxeles) |
+| Una instrucción por operación (`ROPFILL`, `ROPSPAN`...) | cinco o seis opcodes o subfamilias | los parámetros no caben igual en dos registros; las suboperaciones de `0x37` dan lo mismo con un opcode |
+| Validar los descriptores al enviar | duplicar la validación del ROP en el frontend | no sirve para los compactos, cuya validez depende de la configuración en el momento de ejecutarse |
 
 ## 8. Implementación y validación por backend
 
