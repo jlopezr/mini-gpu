@@ -225,6 +225,58 @@ def getid(name: str, type_id: int, description: str) -> Instruction:
     )
 
 
+# ROP (0x37, isa.md §7.5): X y Y son Ra y Rb (o Rd en ROPSTATUS), [15:12] es
+# la suboperacion y el resto depende de ella.
+ROP_SUB = Field("sub", 12, 4)
+ROP_SET_PA = Field("pa_set", 8, 4)
+ROP_SET_PB = Field("pb_set", 4, 4)
+ROP_SET_LOW = Field("low", 0, 4)
+ROP_SUB_OP = Field("op", 9, 3)
+ROP_SUB_F = Field("f", 8, 1)
+ROP_SUB_PA = Field("pa_submit", 4, 4)
+ROP_SUB_PB = Field("pb_submit", 0, 4)
+ROP_RES = Field("reserved", 1, 11)
+ROP_FLAG = Field("flag", 0, 1)
+ROPSET_FMT = Format("ROPSET", (OPCODE, I_X, I_Y, ROP_SUB, ROP_SET_PA, ROP_SET_PB, ROP_SET_LOW))
+ROPSUBMIT_FMT = Format("ROPSUBMIT", (OPCODE, I_X, I_Y, ROP_SUB, ROP_SUB_OP, ROP_SUB_F,
+                                     ROP_SUB_PA, ROP_SUB_PB))
+ROPW_FMT = Format("ROPW", (OPCODE, I_X, I_Y, ROP_SUB, ROP_RES, ROP_FLAG))
+
+
+def ropsubmit(name: str, f: int) -> Instruction:
+    return Instruction(
+        name,
+        0x37,
+        ROPSUBMIT_FMT,
+        (uimm("op", ROP_SUB_OP), uimm("pA", ROP_SUB_PA), reg("Ra", I_X),
+         uimm("pB", ROP_SUB_PB), reg("Rb", I_Y)),
+        f"{name} op, pA, Ra, pB, Rb",
+        "Write two ROP parameters, snapshot them and queue operation op"
+        + (" after every earlier CPU store is confirmed" if f else ""),
+        fixed_mask=ROP_SUB.mask | ROP_SUB_F.mask,
+        fixed_value=ROP_SUB.encode(1) | ROP_SUB_F.encode(f),
+        category="ROP",
+    )
+
+
+def ropw(name: str, sub: int, flag: int, operands: tuple, syntax: str,
+         description: str) -> Instruction:
+    fixed = ROP_SUB.mask | ROP_RES.mask | ROP_FLAG.mask | I_Y.mask
+    if not operands:
+        fixed |= I_X.mask
+    return Instruction(
+        name,
+        0x37,
+        ROPW_FMT,
+        operands,
+        syntax,
+        description,
+        fixed_mask=fixed,
+        fixed_value=ROP_SUB.encode(sub) | ROP_FLAG.encode(flag),
+        category="ROP",
+    )
+
+
 SHIFT_IMMEDIATE_BIT = 1 << 10
 
 
@@ -412,6 +464,25 @@ INSTRUCTIONS: tuple[Instruction, ...] = (
     ),
     Instruction("BAR", 0x32, R, (), "BAR", "SIMT barrier", category="SIMT"),
     Instruction("EXIT", 0x33, R, (), "EXIT", "Terminate current SIMT thread/lane", category="SIMT"),
+    Instruction(
+        "ROPSET",
+        0x37,
+        ROPSET_FMT,
+        (uimm("pA", ROP_SET_PA), reg("Ra", I_X), uimm("pB", ROP_SET_PB), reg("Rb", I_Y)),
+        "ROPSET pA, Ra, pB, Rb",
+        "ROP parameter pA = Ra, pB = Rb (P0-P9, 10 PMODE, 15 none)",
+        fixed_mask=ROP_SUB.mask | ROP_SET_LOW.mask,
+        fixed_value=ROP_SUB.encode(0),
+        category="ROP",
+    ),
+    ropsubmit("ROPSUBMIT", 0),
+    ropsubmit("ROPSUBMIT.F", 1),
+    ropw("ROPWAIT", 2, 0, (), "ROPWAIT", "Wait until every earlier ROP job is done"),
+    ropw("ROPWAIT.INV", 2, 1, (), "ROPWAIT.INV",
+         "ROPWAIT, then invalidate the D-cache"),
+    ropw("ROPSTATUS", 3, 0, (reg("Rd", I_X),), "ROPSTATUS Rd", "Rd = ROP status"),
+    ropw("ROPSTATUS.CLEAR", 3, 1, (reg("Rd", I_X),), "ROPSTATUS.CLEAR Rd",
+         "Rd = ROP status, then clear the sticky error"),
     Instruction("TRAP", 0x3E, R, (), "TRAP", "Trap", category="System"),
     Instruction("HALT", 0x3F, R, (), "HALT", "Halt processor", category="System"),
 )

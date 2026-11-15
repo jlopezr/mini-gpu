@@ -1270,6 +1270,66 @@ def resolve_target(token: str, labels: dict[str, int]) -> int:
     return parse_int(token)
 
 
+# ROP (isa.md §7.5). Indices de parametro y operaciones por nombre o numero.
+ROP_PARAMS = {f"P{i}": i for i in range(10)} | {"PMODE": 10, "NONE": 15}
+ROP_OPERATIONS = {"FILL": 0, "COPY": 1, "GENERATE": 2, "SPAN": 3, "FRAGMENT": 4,
+                  "CONFIG": 5}
+ROP_MNEMONICS = {"ROPSET", "ROPSUBMIT", "ROPSUBMIT.F", "ROPWAIT", "ROPWAIT.INV",
+                 "ROPSTATUS", "ROPSTATUS.CLEAR"}
+
+
+def rop_index(token: str) -> int:
+    name = token.strip().upper()
+    if name in ROP_PARAMS:
+        return ROP_PARAMS[name]
+    value = parse_int(token)
+    if not (0 <= value <= 10 or value == 15):
+        raise AsmError(f"indice de parametro ROP invalido: {token} (P0-P9, PMODE, NONE)")
+    return value
+
+
+def rop_pairs(mnemonic: str, ops: list[str]) -> tuple[int, int, int, int]:
+    """`pA, Ra [, pB, Rb]`, o nada: lo que falta es NONE con R0."""
+    if len(ops) not in (0, 2, 4):
+        raise AsmError(f"{mnemonic} requiere pares indice, registro: pA, Ra [, pB, Rb]")
+    pa, ra, pb, rb = 15, 0, 15, 0
+    if len(ops) >= 2:
+        pa, ra = rop_index(ops[0]), parse_reg(ops[1])
+    if len(ops) == 4:
+        pb, rb = rop_index(ops[2]), parse_reg(ops[3])
+    return pa, ra, pb, rb
+
+
+def assemble_rop(mnemonic: str, ops: list[str]) -> int:
+    if mnemonic == "ROPSET":
+        if len(ops) not in (2, 4):
+            raise AsmError("ROPSET requiere: pA, Ra [, pB, Rb]")
+        pa, ra, pb, rb = rop_pairs(mnemonic, ops)
+        return encode_real(mnemonic, pA=pa, Ra=ra, pB=pb, Rb=rb)
+    if mnemonic in {"ROPSUBMIT", "ROPSUBMIT.F"}:
+        if not ops:
+            raise AsmError(f"{mnemonic} requiere: op [, pA, Ra [, pB, Rb]]")
+        name = ops[0].strip().upper()
+        op = ROP_OPERATIONS[name] if name in ROP_OPERATIONS else parse_int(ops[0])
+        if not 0 <= op <= 7:
+            raise AsmError(f"operacion ROP fuera de rango: {ops[0]}")
+        pa, ra, pb, rb = rop_pairs(mnemonic, ops[1:])
+        return encode_real(mnemonic, op=op, pA=pa, Ra=ra, pB=pb, Rb=rb)
+    if mnemonic in {"ROPWAIT", "ROPWAIT.INV"}:
+        # `ROPWAIT INV` es lo mismo que `ROPWAIT.INV`.
+        if mnemonic == "ROPWAIT" and [o.strip().upper() for o in ops] == ["INV"]:
+            mnemonic, ops = "ROPWAIT.INV", []
+        if ops:
+            raise AsmError(f"{mnemonic} no acepta operandos (salvo INV)")
+        return encode_real(mnemonic)
+    # ROPSTATUS Rd [, CLEAR]
+    if len(ops) == 2 and mnemonic == "ROPSTATUS" and ops[1].strip().upper() == "CLEAR":
+        mnemonic, ops = "ROPSTATUS.CLEAR", ops[:1]
+    if len(ops) != 1:
+        raise AsmError(f"{mnemonic} requiere: Rd [, CLEAR]")
+    return encode_real(mnemonic, Rd=parse_reg(ops[0]))
+
+
 def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
     parts = line.text.split(None, 1)
     mnemonic = parts[0].upper()
@@ -1286,6 +1346,9 @@ def assemble_instruction(line: SourceLine, labels: dict[str, int]) -> int:
             raise AsmError("RET no acepta operandos")
         mnemonic = "JR"
         ops = ["R31"]
+
+    if mnemonic in ROP_MNEMONICS:
+        return assemble_rop(mnemonic, ops)
 
     if mnemonic not in REAL_OPS:
         raise AsmError(f"instrucción desconocida: {mnemonic}")
