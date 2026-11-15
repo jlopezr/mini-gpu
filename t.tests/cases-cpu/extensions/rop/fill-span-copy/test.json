@@ -1,0 +1,20 @@
+{
+  "architecture": "cpu",
+  "name": "rop-fill-span-copy",
+  "program": "program.asm",
+  "requires": ["rop"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000140",
+    "registers": {
+      "R10": "0x0DE5A170",
+      "R11": "0xFFFE7FFD",
+      "R12": "0x579B579A",
+      "R13": "0x06F2D0B8",
+      "R14": "0x00001000"
+    }
+  }
+}
