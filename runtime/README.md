@@ -33,6 +33,7 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`crt0.s`](src/crt0.s) | `_start`: pone la pila, llama a `main` y para | — |
 | [`gpu.c`](src/gpu.c) | `gpu_launch` y `__gpu_stack`, los 32 KiB de pila de las lanes de los kernels | `gpu.h`, `gpu_runtime.inc` |
 | [`gpu_runtime.inc`](src/gpu_runtime.inc) | `gpu_run`: la CPU lanza un job en la GPU y lo espera | `mmio.inc`; con `BOARD`, la placa 36 |
+| [`rop.h`](include/rop.h), [`rop.inc`](src/rop.inc) | API C y rutinas MiniABI para FILL, COPY, GENERATE, SPAN y CONFIG del ROP | capability `rop`, CPU 38 |
 | [`bench.inc`](src/bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
 | [`string.c`](src/string.c) | `memset`, `memcpy`, `memcmp` (cabecera `string.h`). Código de CPU | `string.h` |
 | [`putpixel.inc`](src/putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
@@ -46,6 +47,37 @@ Makefile, `$(GPU_RUNTIME)`). Un programa que no lanza trabajos en la GPU desde C
 símbolo `BOARD`, antes del `.include`: `-D BOARD` en la línea de órdenes del ensamblador (así lo hacen `run-board`,
 siempre, y `mini-cc --board`) o `.define BOARD` en el propio `.asm`. Un `.asm` que valga para el simulador y para la
 placa no necesita variante `_board`: usa `.ifdef BOARD` para lo que sea solo de la placa y no repite el `.define`.
+
+### ROP desde C
+
+`rop.h` declara descriptores y funciones con ABI C; `rop.inc` implementa las
+rutas cortas en ensamblador. El C no necesita conocer `P0`–`P9`: cada
+`rop_submit_*()` toma un puntero a descriptor, carga los parámetros y encola
+el trabajo. Es asíncrono; termina con `rop_wait()` o `rop_wait_invalidate()` si
+la CPU va a leer memoria que haya escrito el ROP.
+
+La API no relaja las restricciones del hardware: `FILL` y `COPY` requieren
+direcciones, anchos y strides múltiplos de 16; `SPAN` tiene las alineaciones de
+píxel que fija `isa.md` §7.5. Los descriptores no se validan en software: un
+error de ese tipo es asíncrono y aparece en el siguiente `rop_wait*`.
+
+`rop_submit_copy_fenced()` es la variante que hay que usar si la CPU acaba de
+escribir el origen: emite `ROPSUBMIT.F` y confirma esos `STORE` antes de que el
+ROP lea `src`. El `rop_submit_copy()` normal evita esa espera cuando el origen
+ya era visible para el ROP.
+
+```c
+#include "rop.h"
+
+rop_fill_t clear = { framebuffer, bytes_per_row, rows, bytes_per_row, 0, 0 };
+rop_submit_fill(&clear);
+rop_wait_invalidate();
+```
+
+Incluye `rop.inc` una vez al ensamblar el programa que use estas funciones. La
+fuente lleva `.once`, por lo que puede ser dependencia transitiva de otros
+trozos del runtime sin duplicar símbolos. `mode` y `groups` son `rop_u32` (una
+palabra de MiniABI), de modo que la CPU valida el valor entero de `PMODE`.
 
 ## Cómo se buscan
 
