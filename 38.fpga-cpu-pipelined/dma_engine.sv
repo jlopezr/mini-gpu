@@ -35,9 +35,9 @@ module dma_engine #(
 
     localparam integer CB = $clog2(NUM_CHANNELS);
     localparam integer TB = $clog2(TAG_DEPTH);
-    localparam [31:0] CH_MASK =
-        (32'h1 << NUM_CHANNELS) - 1;
-
+    localparam [31:0] CH_MASK = (32'h1 << NUM_CHANNELS) - 1;
+    localparam integer WP_BITS = $clog2(TAG_DEPTH + 1);
+    
     // Configuracion de cada canal.
     reg [31:0] src        [0:NUM_CHANNELS-1];
     reg [31:0] dst        [0:NUM_CHANNELS-1];
@@ -59,10 +59,10 @@ module dma_engine #(
     reg [31:0] src_row       [0:NUM_CHANNELS-1];
     reg [31:0] dst_row       [0:NUM_CHANNELS-1];
     reg [31:0] rows_left     [0:NUM_CHANNELS-1];
-    reg [31:0] words_left    [0:NUM_CHANNELS-1];
+    reg [27:0] words_left    [0:NUM_CHANNELS-1];
     reg [31:0] bytes_done    [0:NUM_CHANNELS-1];
     reg [127:0] read_buffer  [0:NUM_CHANNELS-1];
-    reg [7:0] writes_pending [0:NUM_CHANNELS-1];
+    reg [WP_BITS-1:0] writes_pending [0:NUM_CHANNELS-1];
 
     reg [NUM_CHANNELS-1:0] irq_pending;
     reg [NUM_CHANNELS-1:0] irq_enable;
@@ -242,6 +242,25 @@ module dma_engine #(
 
     integer i;
 
+    wire [31:0] src_next [0:NUM_CHANNELS-1];
+    wire [31:0] dst_next [0:NUM_CHANNELS-1];
+
+    genvar g;
+    generate
+        for (g = 0; g < NUM_CHANNELS; g = g + 1) begin : gen_addr
+            wire end_row = (words_left[g] == 32'd1);
+
+            assign src_next[g] =
+                (end_row ? src_row[g] : src_cur[g]) +
+                (end_row ? src_stride[g] : 32'd16);
+
+            assign dst_next[g] =
+                (end_row ? dst_row[g] : dst_cur[g]) +
+                (end_row ? dst_stride[g] : 32'd16);
+        end
+    endgenerate
+
+
     always @(posedge clk) begin
         if (reset) begin
             rr <= 0;
@@ -338,9 +357,9 @@ module dma_engine #(
                 end
 
                 writes_pending[i] <= writes_pending[i] +
-                    ((issue_write && slot_ch == i) ? 8'd1 : 8'd0) -
+                    ((issue_write && slot_ch == i) ? 1'b1 : 1'b0) -
                     ((response && !response_read &&
-                      response_ch == i) ? 8'd1 : 8'd0);
+                      response_ch == i) ? 1'b1 : 1'b0);
 
                 if (response && response_ch == i && rsp_error) begin
                     error[i] <= 1'b1;
@@ -349,23 +368,29 @@ module dma_engine #(
                 end
 
                 if (issue_write && slot_ch == i) begin
-                    if (!fill_mode[i])
-                        data_valid[i] <= 1'b0;
 
-                    bytes_done[i] <= bytes_done[i] + 32'd16;
+                    if (issue_write && slot_ch == i) begin
+                        if (!fill_mode[i])
+                            data_valid[i] <= 1'b0;
 
-                    if (words_left[i] == 1) begin
-                        rows_left[i] <= rows_left[i] - 1'b1;
-                        words_left[i] <= width[i] >> 4;
-                        src_row[i] <= src_row[i] + src_stride[i];
-                        dst_row[i] <= dst_row[i] + dst_stride[i];
-                        src_cur[i] <= src_row[i] + src_stride[i];
-                        dst_cur[i] <= dst_row[i] + dst_stride[i];
-                    end else begin
-                        words_left[i] <= words_left[i] - 1'b1;
-                        src_cur[i] <= src_cur[i] + 32'd16;
-                        dst_cur[i] <= dst_cur[i] + 32'd16;
+                        bytes_done[i] <= bytes_done[i] + 32'd16;
+
+                        // Avance de direcciones mediante los sumadores compartidos.
+                        src_cur[i] <= src_next[i];
+                        dst_cur[i] <= dst_next[i];
+
+                        if (words_left[i] == 1) begin
+                            rows_left[i] <= rows_left[i] - 1'b1;
+                            words_left[i] <= width[i] >> 4;
+
+                            // La nueva fila empieza exactamente en src_next/dst_next.
+                            src_row[i] <= src_next[i];
+                            dst_row[i] <= dst_next[i];
+                        end else begin
+                            words_left[i] <= words_left[i] - 1'b1;
+                        end
                     end
+
                 end
 
                 // DONE solo tras recibir todas las respuestas.
@@ -389,48 +414,58 @@ module dma_engine #(
 
             if (select && write && !mmio_error) begin
                 if (channel_region && channel_exists) begin
-                    case (mmio_off)
-                        6'h00: src[mmio_ch] <= write_data;
-                        6'h04: dst[mmio_ch] <= write_data;
-                        6'h08: width[mmio_ch] <= write_data;
-                        6'h0c: height[mmio_ch] <= write_data;
-                        6'h10: src_stride[mmio_ch] <= write_data;
-                        6'h14: dst_stride[mmio_ch] <= write_data;
-                        6'h18: pattern[mmio_ch] <= write_data;
+                    for (i = 0; i < NUM_CHANNELS; i = i + 1) begin
+                        if (mmio_ch == i) begin
+                            case (mmio_off)
+                                6'h00: src[i] <= write_data;
+                                6'h04: dst[i] <= write_data;
+                                6'h08: width[i] <= write_data;
+                                6'h0c: height[i] <= write_data;
+                                6'h10: src_stride[i] <= write_data;
+                                6'h14: dst_stride[i] <= write_data;
+                                6'h18: pattern[i] <= write_data;
 
-                        6'h1c: begin
-                            busy[mmio_ch] <= 1'b1;
-                            done[mmio_ch] <= 1'b0;
-                            error[mmio_ch] <= 1'b0;
-                            aborted[mmio_ch] <= 1'b0;
-                            read_pending[mmio_ch] <= 1'b0;
-                            data_valid[mmio_ch] <= 1'b0;
-                            fill_mode[mmio_ch] <= write_data[1];
-                            irq_pending[mmio_ch] <= 1'b0;
+                                6'h1c: begin
+                                    busy[i] <= 1'b1;
+                                    done[i] <= 1'b0;
+                                    error[i] <= 1'b0;
+                                    aborted[i] <= 1'b0;
+                                    read_pending[i] <= 1'b0;
+                                    data_valid[i] <= 1'b0;
+                                    fill_mode[i] <= write_data[1];
+                                    irq_pending[i] <= 1'b0;
 
-                            src_row[mmio_ch] <= src[mmio_ch];
-                            dst_row[mmio_ch] <= dst[mmio_ch];
-                            src_cur[mmio_ch] <= src[mmio_ch];
-                            dst_cur[mmio_ch] <= dst[mmio_ch];
-                            rows_left[mmio_ch] <= height[mmio_ch];
-                            words_left[mmio_ch] <= width[mmio_ch] >> 4;
-                            bytes_done[mmio_ch] <= 0;
-                            writes_pending[mmio_ch] <= 0;
+                                    src_row[i] <= src[i];
+                                    dst_row[i] <= dst[i];
+                                    src_cur[i] <= src[i];
+                                    dst_cur[i] <= dst[i];
+                                    rows_left[i] <= height[i];
+                                    words_left[i] <= width[i] >> 4;
+                                    bytes_done[i] <= 0;
+                                    writes_pending[i] <= 0;
+                                end
+
+                                6'h20: begin
+                                    if (write_data[1])
+                                        done[i] <= 1'b0;
+                                    if (write_data[2])
+                                        error[i] <= 1'b0;
+                                end
+
+                                default: ;
+                            endcase
                         end
-
-                        6'h20: begin
-                            if (write_data[1]) done[mmio_ch] <= 0;
-                            if (write_data[2]) error[mmio_ch] <= 0;
-                        end
-                        default: ;
-                    endcase
+                    end
                 end else if (global_region) begin
                     case (address[9:0])
                         10'h208:
                             irq_pending <= irq_pending &
-                                           ~write_data[NUM_CHANNELS-1:0];
+                                ~write_data[NUM_CHANNELS-1:0];
+
                         10'h20c:
-                            irq_enable <= write_data[NUM_CHANNELS-1:0];
+                            irq_enable <=
+                                write_data[NUM_CHANNELS-1:0];
+
                         default: ;
                     endcase
                 end
