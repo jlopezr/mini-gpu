@@ -92,6 +92,9 @@ module cpu_dmem_adapter #(
     input  wire        reset,
     input  wire        init_done,
     input  wire        cpu_halted,
+    // ROPSUBMIT.F (cpu.v rop_fence): vaciar el bufer aunque la CPU siga en
+    // marcha, para que `wb_dirty` llegue a cero y el ROP vea esos STORE.
+    input  wire        flush_request,
 
     // Lado CPU: el puerto dmem de cpu.v, con peticion y respuesta separadas,
     // como imem. La peticion se acepta en el ciclo en que `valid` y `ready`
@@ -292,9 +295,10 @@ module cpu_dmem_adapter #(
       case (state)
         // En ST_IDLE con `dmem_ready` alto, `valid` es una peticion aceptada.
         ST_IDLE: begin
-          if (cpu_halted && wb_valid && !slot_busy) begin
+          if ((cpu_halted || flush_request) && wb_valid && !slot_busy) begin
             // Vaciado 2: la CPU se ha parado y el monitor va a querer leer
-            // memoria de verdad. `wb_dirty` lo hace esperar.
+            // memoria de verdad. `wb_dirty` lo hace esperar. Lo mismo con
+            // flush_request (ROPSUBMIT.F): la CPU espera en MEM sin acceder.
             send_flush;
             wb_valid <= 1'b0;
           end else if (accept) begin

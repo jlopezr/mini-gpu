@@ -4,9 +4,10 @@
 // In-order responses are REQUIRED (as in dma_engine_v2).
 // FILL/COPY/GEN keep v0.1 alignment rules. SPAN/FRAGMENT support partial words.
 //
-// Todavia NO esta instanciado en top.v: falta el frontal MMIO con cola de
-// comandos. De las variantes del experimento (v0.4, v0.4-area1, area1_debug;
-// los originales en ROP.zip) queda esta, con un cambio: GENERATE2D ya no
+// Esta es la versión integrada en top.v: rop_frontend la alimenta desde la
+// familia de instrucciones 0x37 y sus peticiones salen por el puerto 3. De las
+// variantes del experimento (v0.4, v0.4-area1, area1_debug; los originales en
+// ROP.zip) queda esta, con un cambio: GENERATE2D ya no
 // encadena ocho sumas `v = v + dx`, sino que suma cur_z + dx_mult[k] por
 // carril (dx_mult = k*dx, cargado al aceptar el comando).
 //

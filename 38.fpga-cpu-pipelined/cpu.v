@@ -66,7 +66,10 @@ module cpu #(
     // in a testbench, to force aliasing.
     // 256 entries: 64 aliased enough to cost ~3 % (docs/analisis-rendimiento.md).
     parameter integer BTB_BITS = 8,
-    parameter integer BTB_TAG_BITS = 10
+    parameter integer BTB_TAG_BITS = 10,
+    // Familia ROP (opcode 0x37, 1.isa/isa.md §7.5) hacia rop_frontend. Con 0,
+    // 0x37 es un opcode invalido, como antes, y los puertos rop_* no se usan.
+    parameter ROP = 1'b0
 ) (
     input clk,
     input reset,
@@ -128,7 +131,28 @@ module cpu #(
     (* pipeline_stage = "_PERF" *) output reg [4:0] perf_stall,
     // One pulse per retired MUL/MULHI/MULFX/DIV/DIVU/REM/REMU or FP32, registered and
     // in the same cycle as instruction_retired.
-    (* pipeline_stage = "WB" *) output reg perf_muldiv_retired
+    (* pipeline_stage = "WB" *) output reg perf_muldiv_retired,
+
+    // ROP (§7.5): la microoperacion sale de MEM y se sostiene hasta rop_ready.
+    // rop_rdata y los errores son del mismo ciclo (rop_frontend).
+    output rop_valid,
+    output [1:0] rop_uop,
+    output [3:0] rop_ia,
+    output [3:0] rop_ib,
+    output [31:0] rop_da,
+    output [31:0] rop_db,
+    output [2:0] rop_op,
+    output rop_clear,
+    input rop_ready,
+    input [31:0] rop_rdata,
+    input rop_bad_value,
+    input rop_error,
+    // ROPSUBMIT.F: mientras espera, pide que se vacie el bufer de escrituras
+    // (rop_fence) y espera a que no quede ninguna sin confirmar (mem_quiet).
+    output rop_fence,
+    input mem_quiet,
+    // ROPWAIT INV: un pulso que invalida la D-cache.
+    output rop_dcache_invalidate
 );
 
   // Everything but the in-flight bookkeeping (header): reset or soft_reset.
@@ -200,6 +224,8 @@ module cpu #(
   localparam [7:0] ERROR_EXPLICIT_TRAP = 8'h03;
   localparam [7:0] ERROR_DIVISION_BY_ZERO = 8'h04;
   localparam [7:0] ERROR_INVALID_ENCODING = 8'h05;
+  localparam [7:0] ERROR_ROP = 8'h07;
+  localparam [5:0] OPCODE_ROP = 6'h37;
 
   localparam [2:0] OPCLASS_NORMAL = 3'd0;
   localparam [2:0] OPCLASS_LOAD = 3'd1;
@@ -210,6 +236,8 @@ module cpu #(
   // OPCLASS_NORMAL with its result in ex_result.
   localparam [2:0] OPCLASS_MULDIV = 3'd5;
   localparam [2:0] OPCLASS_FP32 = 3'd6;
+  // ROPSET/ROPSUBMIT/ROPWAIT/ROPSTATUS: MEM las entrega a rop_frontend.
+  localparam [2:0] OPCLASS_ROP = 3'd7;
 
   // EX's ALU operation (ex_alu_op). b is the immediate when ex_alu_imm.
   localparam [4:0] ALU_ADD = 5'd0;
@@ -503,6 +531,7 @@ module cpu #(
   reg ex_reg_write;
   reg ex_halt_after_retire;
   reg [2:0] ex_class;
+  reg [15:0] ex_rop_bits;     // instruction[15:0] of a ROP instruction
   reg [7:0] ex_error_code;
   wire [31:0] ex_mem_result;    // what goes to MEM: ALU, constant or load data
   wire [31:0] ex_mem_next_pc;
@@ -576,6 +605,8 @@ module cpu #(
   reg mem_md_counted;
   reg mem_mul;               // a MUL whose product is summed here (04b)
   reg [5:0] mem_mul_op;
+  reg [15:0] mem_rop_bits;
+  reg mem_rop_fired;         // ROPSTATUS accepted, its value in mem_result
   reg mem_request_sent;      // accepted, waiting for its response
   reg [1:0] mem_drop;        // responses still to come that nobody waits for
   wire mem_posted;
@@ -955,8 +986,10 @@ module cpu #(
                      if_opcode == OPCODE_LOADB || if_opcode == OPCODE_LOADUB ||
                      if_opcode == OPCODE_LOADH || if_opcode == OPCODE_LOADUH;
   assign if_src_a = if_compare_branch ? if_instruction[25:21] : if_instruction[20:16];
+  // A ROP instruction reads X (Ra) and Y (Rb), the same fields as a store.
   assign if_src_b = if_compare_branch ? if_instruction[20:16] :
-                    (if_store ? if_instruction[25:21] : if_instruction[15:11]);
+                    ((if_store || if_opcode == OPCODE_ROP) ? if_instruction[25:21] :
+                     if_instruction[15:11]);
 
   // ======================================================================
   // 02b. IF — STATIC BRANCH PREDICTION AND RETURN ADDRESS STACK
@@ -1194,6 +1227,31 @@ module cpu #(
     endcase
   end
 
+  // ROP (§7.5): sub = [15:12]. Indices pA/pB: 0-9 P0-P9, 10 PMODE, 15
+  // ninguno (y entonces su registro debe ser R0); 11-14 y pA = pB invalidos.
+  wire [3:0] id_rop_sub = id_instruction[15:12];
+  wire [3:0] id_rop_ia = (id_rop_sub == 4'd0) ? id_instruction[11:8] : id_instruction[7:4];
+  wire [3:0] id_rop_ib = (id_rop_sub == 4'd0) ? id_instruction[7:4] : id_instruction[3:0];
+  wire id_rop_indices_ok =
+      (id_rop_ia <= 4'd10 || id_rop_ia == 4'd15) &&
+      (id_rop_ib <= 4'd10 || id_rop_ib == 4'd15) &&
+      !(id_rop_ia == id_rop_ib && id_rop_ia != 4'd15) &&
+      (id_rop_ia != 4'd15 || id_instruction[25:21] == 5'd0) &&
+      (id_rop_ib != 4'd15 || id_instruction[20:16] == 5'd0);
+  wire [2:0] id_rop_op = id_instruction[11:9];
+  reg id_rop_encoding_valid;
+  always @* begin
+    case (id_rop_sub)
+      4'd0: id_rop_encoding_valid = id_rop_indices_ok && id_instruction[3:0] == 0;
+      // FRAGMENT (4) es de emisores SIMT; 6 y 7 no existen.
+      4'd1: id_rop_encoding_valid = id_rop_indices_ok &&
+                                    id_rop_op != 3'd4 && id_rop_op < 3'd6;
+      4'd2: id_rop_encoding_valid = id_instruction[25:16] == 0 && id_instruction[11:1] == 0;
+      4'd3: id_rop_encoding_valid = id_instruction[20:16] == 0 && id_instruction[11:1] == 0;
+      default: id_rop_encoding_valid = 1'b1;   // sub sin asignar: opcode invalido
+    endcase
+  end
+
   always @* begin
     id_encoding_valid = 1'b1;
     case (id_opcode)
@@ -1222,6 +1280,8 @@ module cpu #(
       OPCODE_JR:
         id_encoding_valid = id_instruction[25:21] == 0 &&
                             id_instruction[15:0] == 0;
+      OPCODE_ROP:
+        id_encoding_valid = !ROP || id_rop_encoding_valid;
       default: id_encoding_valid = 1'b1;
     endcase
   end
@@ -1412,6 +1472,22 @@ module cpu #(
           id_alu_imm = 1'b1;
           id_imm = 32'd0;
           id_class = OPCLASS_BRANCH;
+        end
+
+        // ROP: the ALU passes Rb (operand a, field Y) to mem_result; Ra
+        // (field X) travels as the store data. ROPSTATUS writes X.
+        OPCODE_ROP: begin
+          if (!ROP || id_rop_sub > 4'd3) begin
+            id_class = OPCLASS_ERROR;
+            id_error_code = ERROR_INVALID_OPCODE;
+          end else begin
+            id_class = OPCLASS_ROP;
+            id_use_alu = 1'b1;
+            id_alu_op = ALU_ADD;
+            id_alu_imm = 1'b1;
+            id_imm = 32'd0;
+            id_reg_write = id_rop_sub == 4'd3;
+          end
         end
 
         OPCODE_HALT: begin
@@ -1772,6 +1848,7 @@ module cpu #(
       ex_reg_write <= 1'b0;
       ex_halt_after_retire <= 1'b0;
       ex_class <= OPCLASS_NORMAL;
+      ex_rop_bits <= 16'd0;
       ex_error_code <= ERROR_NONE;
       ex_fp_sent <= 1'b0;
       ex_md_op <= OPCODE_NOP;
@@ -1831,6 +1908,7 @@ module cpu #(
           ex_reg_write <= id_reg_write;
           ex_halt_after_retire <= id_halt_after_retire;
           ex_class <= id_class;
+          ex_rop_bits <= id_instruction[15:0];
           ex_error_code <= id_error_code;
           ex_fp_sent <= 1'b0;
           ex_md_op <= id_opcode;
@@ -1909,7 +1987,34 @@ module cpu #(
   // Its response is still to come: sent, and not a load that already has it.
   wire mem_owed = mem_request_sent && !mem_loaded;
   assign mem_done = mem_is_load ? (mem_hit || mem_loaded) : (mem_posted || mem_response);
-  assign mem_hold = mem_is_memory && !mem_done;
+  // ROP (§7.5). The micro-op leaves MEM and is held until rop_ready. SET,
+  // SUBMIT and WAIT end in that cycle; STATUS, like a load, puts its value in
+  // mem_result first (mem_rop_fired) and ends the cycle after, so that a
+  // consumer waiting in EX (FWD-MEM-EX) takes the value and not Rb.
+  // ROPSUBMIT.F waits for the CPU's stores to be confirmed (mem_quiet), and
+  // meanwhile asks for the write-combining buffer to be flushed.
+  wire mem_is_rop = mem_valid && mem_class == OPCLASS_ROP;
+  wire [3:0] mem_rop_sub = mem_rop_bits[15:12];
+  wire mem_rop_status = mem_rop_sub == 4'd3;
+  wire mem_rop_fence_wait = mem_rop_sub == 4'd1 && mem_rop_bits[8] && !mem_quiet;
+  assign rop_valid = ROP && ctl_run && mem_is_rop && !mem_rop_fired && !mem_rop_fence_wait;
+  assign rop_uop = mem_rop_sub[1:0];
+  assign rop_ia = (mem_rop_sub == 4'd0) ? mem_rop_bits[11:8] : mem_rop_bits[7:4];
+  assign rop_ib = (mem_rop_sub == 4'd0) ? mem_rop_bits[7:4] : mem_rop_bits[3:0];
+  assign rop_da = mem_store_data;
+  assign rop_db = mem_result;
+  assign rop_op = mem_rop_bits[11:9];
+  assign rop_clear = mem_rop_bits[0];
+  assign rop_fence = ROP && ctl_run && mem_is_rop && mem_rop_fence_wait;
+  wire rop_fire = rop_valid && rop_ready;
+  assign rop_dcache_invalidate = rop_fire && mem_rop_sub == 4'd2 && mem_rop_bits[0];
+  wire mem_rop_done = mem_rop_fired || (rop_fire && !mem_rop_status);
+  // Errors of the cycle the micro-op is accepted (SET/SUBMIT/WAIT leave MEM
+  // in that same cycle): a PMODE with [31:16] != 0, or the sticky error at a
+  // WAIT.
+  wire mem_rop_bad = rop_fire && mem_rop_sub != 4'd2 && rop_bad_value;
+  wire mem_rop_err = rop_fire && mem_rop_sub == 4'd2 && rop_error;
+  assign mem_hold = (mem_is_memory && !mem_done) || (mem_is_rop && !mem_rop_done);
   assign dmem_waiting = ctl_memory && !mem_done;
 
   always @* begin
@@ -1954,6 +2059,8 @@ module cpu #(
       mem_md_counted <= 1'b0;
       mem_mul <= 1'b0;
       mem_mul_op <= OPCODE_NOP;
+      mem_rop_bits <= 16'd0;
+      mem_rop_fired <= 1'b0;
       mem_request_sent <= 1'b0;
       // soft_reset: the access in flight, or accepted this cycle, still gets
       // its response from the D-cache; drop it.
@@ -1964,6 +2071,7 @@ module cpu #(
     end else if (halted || ctl_flush) begin
       mem_valid <= 1'b0;
       mem_request_sent <= 1'b0;
+      mem_rop_fired <= 1'b0;
       // An access already accepted still gets its response: drop it too.
       mem_drop <= mem_drop
                   + {1'b0, mem_owed && !(dmem_rvalid && mem_drop == 2'd0)}
@@ -1993,9 +2101,15 @@ module cpu #(
         mem_md_counted <= ex_md_counted;
         mem_mul <= ex_mul;
         mem_mul_op <= ex_md_op;
+        mem_rop_bits <= ex_rop_bits;
+        mem_rop_fired <= 1'b0;
         mem_request_sent <= 1'b0;
       end else begin
         if (ctl_memory && dmem_valid && dmem_ready) mem_request_sent <= 1'b1;
+        if (rop_fire && mem_rop_status) begin
+          mem_result <= rop_rdata;
+          mem_rop_fired <= 1'b1;
+        end
         if (mem_response && mem_is_load) begin
           mem_result <= mem_load_extended;
           mem_load_error <= dmem_error;
@@ -2054,9 +2168,11 @@ module cpu #(
         wb_reg_write <= mem_reg_write;
         wb_halt_after_retire <= mem_halt_after_retire;
         wb_md_counted <= mem_md_counted;
-        wb_error <= !mem_is_memory ? (mem_class == OPCLASS_ERROR) :
+        wb_error <= mem_is_rop ? (mem_rop_bad || mem_rop_err) :
+                    !mem_is_memory ? (mem_class == OPCLASS_ERROR) :
                     mem_is_load ? mem_load_error : (!mem_posted && dmem_error);
-        wb_error_code <= mem_is_memory ? ERROR_MEMORY_ACCESS : mem_error_code;
+        wb_error_code <= mem_is_rop ? (mem_rop_bad ? ERROR_INVALID_ENCODING : ERROR_ROP) :
+                         mem_is_memory ? ERROR_MEMORY_ACCESS : mem_error_code;
       end
     end
   end

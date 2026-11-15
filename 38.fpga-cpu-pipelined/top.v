@@ -242,7 +242,17 @@ module top (
   wire [31:0] dcache_lookup_address, dcache_ex_read_data, dcache_ex_write_data;
   wire dcache_ex_hit, dcache_mem_advance, dcache_ex_load, dcache_ex_store;
   wire [3:0] dcache_ex_write_enable;
-  cpu cpu_i(
+  // ROP (opcode 0x37, 1.isa/isa.md §7.5): cpu.v entrega las microoperaciones
+  // a rop_frontend desde MEM; rop_core ejecuta los trabajos en el puerto 3.
+  wire rop_valid, rop_ready, rop_clear, rop_bad_value, rop_error, rop_fence;
+  wire rop_dcache_invalidate;
+  wire [1:0] rop_uop;
+  wire [3:0] rop_ia, rop_ib;
+  wire [31:0] rop_da, rop_db, rop_rdata;
+  wire [2:0] rop_op;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
+  wire wb_dirty;
+  cpu #(.ROP(1)) cpu_i(
       .clk(clk), .reset(reset),
       // RESET del monitor: solo la CPU. Las caches siguen y contestan lo que
       // ya aceptaron, que la CPU descarta (cpu.v, soft_reset).
@@ -271,7 +281,14 @@ module top (
       .debug_register_address(cpu_debug_register_address),
       .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
       .perf_stall(cpu_perf_stall),
-      .perf_muldiv_retired(cpu_perf_muldiv_retired));
+      .perf_muldiv_retired(cpu_perf_muldiv_retired),
+      .rop_valid(rop_valid), .rop_uop(rop_uop), .rop_ia(rop_ia), .rop_ib(rop_ib),
+      .rop_da(rop_da), .rop_db(rop_db), .rop_op(rop_op), .rop_clear(rop_clear),
+      .rop_ready(rop_ready), .rop_rdata(rop_rdata),
+      .rop_bad_value(rop_bad_value), .rop_error(rop_error),
+      // ROPSUBMIT.F: todo STORE anterior confirmado (`wb_dirty` bajo).
+      .rop_fence(rop_fence), .mem_quiet(!wb_dirty),
+      .rop_dcache_invalidate(rop_dcache_invalidate));
 
   // Puertos de video del adaptador. Se declaran aqui porque el adaptador se
   // instancia antes que el subsistema de video.
@@ -324,8 +341,8 @@ module top (
   // compara este camino, y los bancos que los miden siguen pasando.
   // ===========================================================================
   wire init_done, init_done_mem, sdram_busy;
-  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
-  wire wb_dirty;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar
+  // (declarado arriba, junto a la CPU, que lo usa para ROPSUBMIT.F).
 
   // Puerto comun del arbitro hacia el controlador.
   wire fab_req_valid, fab_req_ready, fab_req_write;
@@ -407,7 +424,8 @@ module top (
   wire [127:0] ad_dmem_read_line;
   wire dcache_hit, dcache_miss;
   dcache #(.LINES(1024), .INDEX_BITS(10)) dcache_i(
-      .clk(clk), .reset(reset), .invalidate(cpu_halted),
+      // Tambien con ROPWAIT INV: un pulso, y la cache suma su epoca en el flanco.
+      .clk(clk), .reset(reset), .invalidate(cpu_halted || rop_dcache_invalidate),
       .lookup_address(dcache_lookup_address), .ex_hit(dcache_ex_hit),
       .ex_read_data(dcache_ex_read_data), .mem_advance(dcache_mem_advance),
       .ex_load(dcache_ex_load), .ex_store(dcache_ex_store),
@@ -433,7 +451,7 @@ module top (
       .dmem_read_data(ad_dmem_read_data), .dmem_read_line(ad_dmem_read_line),
       .dmem_ready(ad_dmem_ready),
       .dmem_rvalid(ad_dmem_rvalid), .dmem_error(ad_dmem_error),
-      .cpu_halted(cpu_halted),
+      .cpu_halted(cpu_halted), .flush_request(rop_fence),
       // Los contadores son para los bancos; la sintesis los quita.
       .wb_dirty(wb_dirty), .merge_count(), .flush_count(),
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
@@ -516,6 +534,12 @@ module top (
   wire [127:0] dma_req_wdata, dma_rsp_rdata;
   wire [15:0] dma_req_wmask;
 
+  // Lado "dma" del arbitro del monitor: ROP + DMA juntos (blit_arbiter_i).
+  wire blit_req_valid, blit_req_ready, blit_req_write;
+  wire blit_rsp_valid, blit_rsp_ready, blit_rsp_error;
+  wire [31:0] blit_req_addr;
+  wire [127:0] blit_req_wdata, blit_rsp_rdata;
+  wire [15:0] blit_req_wmask;
   dma_monitor_arbiter #(.TAG_DEPTH(8)) dma_arbiter_i(
       .clk(clk), .reset(reset),
       .mon_req_valid(p3_valid), .mon_req_ready(p3_ready),
@@ -523,16 +547,97 @@ module top (
       .mon_req_wdata(p3_wdata), .mon_req_wmask(p3_wmask),
       .mon_rsp_valid(p3_rsp_valid), .mon_rsp_ready(p3_rsp_ready),
       .mon_rsp_rdata(p3_rsp_rdata), .mon_rsp_error(p3_rsp_error),
-      .dma_req_valid(dma_req_valid), .dma_req_ready(dma_req_ready),
-      .dma_req_write(dma_req_write), .dma_req_addr(dma_req_addr),
-      .dma_req_wdata(dma_req_wdata), .dma_req_wmask(dma_req_wmask),
-      .dma_rsp_valid(dma_rsp_valid), .dma_rsp_ready(dma_rsp_ready),
-      .dma_rsp_rdata(dma_rsp_rdata), .dma_rsp_error(dma_rsp_error),
+      .dma_req_valid(blit_req_valid), .dma_req_ready(blit_req_ready),
+      .dma_req_write(blit_req_write), .dma_req_addr(blit_req_addr),
+      .dma_req_wdata(blit_req_wdata), .dma_req_wmask(blit_req_wmask),
+      .dma_rsp_valid(blit_rsp_valid), .dma_rsp_ready(blit_rsp_ready),
+      .dma_rsp_rdata(blit_rsp_rdata), .dma_rsp_error(blit_rsp_error),
       .req_valid(fab3_valid), .req_ready(fab3_ready),
       .req_urgent(), .req_write(fab3_write), .req_addr(fab3_addr),
       .req_wdata(fab3_wdata), .req_wmask(fab3_wmask),
       .rsp_valid(fab3_rsp_valid), .rsp_ready(fab3_rsp_ready),
       .rsp_rdata(fab3_rsp_rdata), .rsp_error(fab3_rsp_error));
+
+  // El ROP y el DMA comparten el lado "dma" del arbitro del monitor a traves
+  // de otro dma_monitor_arbiter: el ROP en su lado prioritario, porque sus
+  // trabajos son pequenos y frecuentes (spans) y el DMA mueve bloques grandes.
+  // Cada arbitro enruta sus respuestas con su FIFO de propietarios, asi que
+  // encadenarlos conserva el orden de cada maestro.
+  wire rop_req_valid, rop_req_ready, rop_req_write;
+  wire rop_rsp_valid, rop_rsp_ready, rop_rsp_error;
+  wire [31:0] rop_req_addr;
+  wire [127:0] rop_req_wdata, rop_rsp_rdata;
+  wire [15:0] rop_req_wmask;
+
+  dma_monitor_arbiter #(.TAG_DEPTH(8)) blit_arbiter_i(
+      .clk(clk), .reset(reset),
+      .mon_req_valid(rop_req_valid), .mon_req_ready(rop_req_ready),
+      .mon_req_write(rop_req_write), .mon_req_addr(rop_req_addr),
+      .mon_req_wdata(rop_req_wdata), .mon_req_wmask(rop_req_wmask),
+      .mon_rsp_valid(rop_rsp_valid), .mon_rsp_ready(rop_rsp_ready),
+      .mon_rsp_rdata(rop_rsp_rdata), .mon_rsp_error(rop_rsp_error),
+      .dma_req_valid(dma_req_valid), .dma_req_ready(dma_req_ready),
+      .dma_req_write(dma_req_write), .dma_req_addr(dma_req_addr),
+      .dma_req_wdata(dma_req_wdata), .dma_req_wmask(dma_req_wmask),
+      .dma_rsp_valid(dma_rsp_valid), .dma_rsp_ready(dma_rsp_ready),
+      .dma_rsp_rdata(dma_rsp_rdata), .dma_rsp_error(dma_rsp_error),
+      .req_valid(blit_req_valid), .req_ready(blit_req_ready),
+      .req_urgent(), .req_write(blit_req_write), .req_addr(blit_req_addr),
+      .req_wdata(blit_req_wdata), .req_wmask(blit_req_wmask),
+      .rsp_valid(blit_rsp_valid), .rsp_ready(blit_rsp_ready),
+      .rsp_rdata(blit_rsp_rdata), .rsp_error(blit_rsp_error));
+
+  wire rop_cmd_valid, rop_cmd_ready, rop_done_valid, rop_done_error;
+  wire [2:0] rop_cmd_op;
+  wire [15:0] rop_cmd_mode;
+  wire [319:0] rop_cmd_params;
+  wire rop_frontend_busy, rop_core_busy;
+  reg rop_reset_pending, rop_soft_reset;
+  wire rop_reset = reset || rop_soft_reset;
+
+  // RESET_CPU no puede resetear el ROP en seco: puede haber respuestas suyas
+  // etiquetadas en los dos arbitros. Se espera a que frontend y core hayan
+  // terminado/drenado todo lo aceptado y entonces se borra su estado para que
+  // un programa nuevo no herede el sticky_error ni la configuracion anterior.
+  always @(posedge clk) begin
+    if (reset) begin
+      rop_reset_pending <= 1'b0;
+      rop_soft_reset <= 1'b0;
+    end else begin
+      rop_soft_reset <= 1'b0;
+      if (cpu_reset_request)
+        rop_reset_pending <= 1'b1;
+      if (rop_reset_pending && !rop_frontend_busy && !rop_core_busy) begin
+        rop_reset_pending <= 1'b0;
+        rop_soft_reset <= 1'b1;
+      end
+    end
+  end
+
+  rop_frontend #(.QUEUE_DEPTH(16)) rop_frontend_i(
+      .clk(clk), .reset(rop_reset),
+      .cpu_valid(rop_valid), .cpu_ready(rop_ready), .cpu_uop(rop_uop),
+      .cpu_ia(rop_ia), .cpu_ib(rop_ib), .cpu_da(rop_da), .cpu_db(rop_db),
+      .cpu_op(rop_op), .cpu_clear(rop_clear), .cpu_rdata(rop_rdata),
+      .cpu_bad_value(rop_bad_value), .cpu_rop_error(rop_error),
+      .cpu_busy(rop_frontend_busy),
+      .rop_cmd_valid(rop_cmd_valid), .rop_cmd_ready(rop_cmd_ready),
+      .rop_cmd_op(rop_cmd_op), .rop_cmd_mode(rop_cmd_mode),
+      .rop_cmd_params(rop_cmd_params),
+      .rop_done_valid(rop_done_valid), .rop_done_error(rop_done_error));
+
+  rop_core #(.TAG_DEPTH(8)) rop_core_i(
+      .clk(clk), .reset(rop_reset),
+      .cmd_valid(rop_cmd_valid), .cmd_ready(rop_cmd_ready),
+      .cmd_op(rop_cmd_op), .cmd_mode(rop_cmd_mode), .cmd_params(rop_cmd_params),
+      // FRAGMENT es de emisores SIMT: la CPU no lo envia (cpu.v lo rechaza).
+      .cmd_frag_colors(256'd0), .cmd_frag_z(256'd0),
+      .done_valid(rop_done_valid), .done_error(rop_done_error), .busy(rop_core_busy),
+      .req_valid(rop_req_valid), .req_ready(rop_req_ready),
+      .req_write(rop_req_write), .req_addr(rop_req_addr),
+      .req_wdata(rop_req_wdata), .req_wmask(rop_req_wmask),
+      .rsp_valid(rop_rsp_valid), .rsp_ready(rop_rsp_ready),
+      .rsp_rdata(rop_rsp_rdata), .rsp_error(rop_rsp_error));
 
   dma_engine #(.NUM_CHANNELS(2), .TAG_DEPTH(8)) dma_engine_i(
       .clk(clk), .reset(reset), .init_done(init_done), .wb_dirty(wb_dirty),

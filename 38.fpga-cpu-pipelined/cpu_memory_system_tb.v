@@ -111,7 +111,7 @@ module cpu_memory_system_tb;
   wire [15:0] p_wmask;
 
   cpu_dmem_adapter adapter_i(
-      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted),
+      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(halted), .flush_request(1'b0),
       .dmem_valid(a_valid), .dmem_address(a_address), .dmem_write_data(a_wdata),
       .dmem_write_enable(a_wen), .dmem_ready(a_ready), .dmem_read_data(a_rdata),
       .dmem_read_line(a_line), .dmem_rvalid(a_rvalid), .dmem_error(a_error),

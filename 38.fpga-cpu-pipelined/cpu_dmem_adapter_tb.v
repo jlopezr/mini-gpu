@@ -49,7 +49,7 @@ module cpu_dmem_adapter_tb;
   reg [127:0] rsp_rdata = 0;
 
   cpu_dmem_adapter dut(
-      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(cpu_halted),
+      .clk(clk), .reset(reset), .init_done(init_done), .cpu_halted(cpu_halted), .flush_request(1'b0),
       .dmem_valid(dmem_valid), .dmem_address(dmem_address),
       .dmem_write_data(dmem_write_data), .dmem_write_enable(dmem_write_enable),
       .dmem_ready(dmem_ready), .dmem_read_data(dmem_read_data),
