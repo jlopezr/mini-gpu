@@ -193,5 +193,12 @@
   "dma_device": {
     "architecture": ["cpu", "gpu"],
     "file": "dma_engine.sv"
+  },
+
+  "_comment_rop": "Familia ROP de la CPU (opcode 0x37: ROPSET, ROPSUBMIT, ROPWAIT, ROPSTATUS; 1.isa/isa.md §7.5, contrato propuesto). La CPU solo la decodifica con el parametro ROP de cpu.v a uno, que pone top.v; sin el, 0x37 es un opcode invalido.",
+  "rop": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu\\s*#\\(\\s*\\.ROP\\(1\\)"
   }
 }
