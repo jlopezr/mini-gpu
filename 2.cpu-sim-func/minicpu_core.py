@@ -14,6 +14,7 @@ from tools.codon_compat import load_le, load_u32, store_le, store_u32
 from tools.mmio_device import MmioDevice
 from tools.fp32 import fp32_binary, fp32_compare, fp32_to_int, int_to_fp32
 from tools.sim_devices import InputDevice, SerialDevice, VideoDevice
+from rop import Rop
 
 # Qué sabe ejecutar ESTE modelo, no la placa que modela.
 #
@@ -34,6 +35,7 @@ ERROR_MEMORY_ACCESS = 0x02
 ERROR_EXPLICIT_TRAP = 0x03
 ERROR_DIVISION_BY_ZERO = 0x04
 ERROR_INVALID_ENCODING = 0x05
+ERROR_ROP = 0x07
 
 
 # Los conjuntos de opcodes van como tuplas o constantes del módulo y no como
@@ -127,6 +129,7 @@ class CPU:
     serial: SerialDevice | None
     input: InputDevice | None
     sysid: SysIdDevice
+    rop: Rop
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  video: VideoDevice | None = None,
@@ -159,6 +162,7 @@ class CPU:
             devices=declared_devices(serial=serial is not None,
                                      video=video is not None,
                                      input=input_device is not None))
+        self.rop = Rop(self)
 
     def _device(self, address: int) -> MmioDevice | None:
         """Que dispositivo MMIO, si alguno, responde a esta direccion.
@@ -187,6 +191,7 @@ class CPU:
         self.error_code = ERROR_NONE
         self.error_pc = 0
         self.instructions_executed = 0
+        self.rop.reset()
 
     def set_register(self, index: int, value: int) -> None:
         """Escribe un registro. R0 está cableado a cero y descarta la escritura.
@@ -649,6 +654,36 @@ class CPU:
             # delante para el SM con ERROR_SIMT. Mismo criterio que GETTID.
             pass
 
+        elif opcode == 0x37:  # ROP (§7.5)
+            sub = (instr >> 12) & 15
+            x, y = (instr >> 21) & 31, (instr >> 16) & 31
+            valid_index = lambda index: index <= 10 or index == 15
+            if sub == 0:
+                ia, ib = (instr >> 8) & 15, (instr >> 4) & 15
+                if (instr & 15) or not valid_index(ia) or not valid_index(ib) or (ia == ib and ia != 15) or (ia == 15 and x) or (ib == 15 and y):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.rop.set_pair(ia, self.regs[x], ib, self.regs[y])
+            elif sub == 1:
+                op, fence = (instr >> 9) & 7, (instr >> 8) & 1
+                ia, ib = (instr >> 4) & 15, instr & 15
+                if op >= 6 or op == 4 or not valid_index(ia) or not valid_index(ib) or (ia == ib and ia != 15) or (ia == 15 and x) or (ib == 15 and y):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                # La memoria funcional no tiene stores pendientes: F no añade espera.
+                self.rop.submit(op, ia, self.regs[x], ib, self.regs[y])
+            elif sub == 2:
+                if x or y or (instr & 0xffe):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.rop.drain()
+                if self.rop.sticky_error:
+                    self.stop_with_error(ERROR_ROP, instr_pc); return
+            elif sub == 3:
+                if y or (instr & 0xffe):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.set_register(x, self.rop.status())
+                if instr & 1: self.rop.sticky_error = False
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc); return
+
         elif opcode == 0x3F:  # HALT
             self.halted = True
 
@@ -661,6 +696,7 @@ class CPU:
             return
 
         self.instructions_executed += 1
+        self.rop.tick()
         if self.serial is not None:
             self.serial.tick()
         if self.input is not None:

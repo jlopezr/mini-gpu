@@ -22,7 +22,7 @@ VERSIONS = {
         "capabilities": ("frame_capture", "subword_memory", "calls", "serial",
                          "shift_immediate", "alu_extended", "mul_div",
                          "compare", "large_memory", "input", "fp32",
-                         "minmax", "clz"),
+                         "minmax", "clz", "rop"),
         "description": "simulador funcional MiniCPU actual",
     },
 }
