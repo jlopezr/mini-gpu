@@ -2,13 +2,28 @@
 `default_nettype none
 
 module dma_engine #(
+    // Potencia de dos, obligatorio: el scheduler y el avance de `rr` usan
+    // mascaras `(ch + 1) & (NUM_CHANNELS - 1)`.
     parameter integer NUM_CHANNELS = 2,
     parameter integer TAG_DEPTH = 8
 )(
     input wire clk,
     input wire reset,
 
-    // MMIO: direccion relativa a 0x8050_0000.
+    // Como los demas maestros del fabric (cpu_dmem_adapter,
+    // monitor_mem_adapter_128): no aceptar trafico real hasta que la SDRAM
+    // haya terminado su inicializacion. Aqui solo afecta a START: la
+    // configuracion se puede escribir antes (y un programa cargado por el
+    // monitor nunca llega a verlo, porque el monitor ya espero a init_done).
+    input wire init_done,
+    // El bufer de combinacion de escrituras de la CPU puede seguir reteniendo
+    // bytes que este motor esta a punto de leer. Las LECTURAS no se lanzan
+    // mientras este sucio; las escrituras si, porque dos escritores
+    // simultaneos sobre la misma direccion son carrera de software, no algo
+    // que el hardware tenga que ordenar (ver README, seccion DMA).
+    input wire wb_dirty,
+
+    // MMIO: direccion relativa a 0x8050_0000 (bloque DMA de mmio.md §11).
     input wire select,
     input wire write,
     input wire [3:0] write_mask,
@@ -85,6 +100,7 @@ module dma_engine #(
         mmio_off == 6'h1c && write;
 
     wire start_valid =
+        init_done &&
         write_data[0] &&
         write_data[31:2] == 0 &&
         width[mmio_ch] != 0 &&
@@ -175,7 +191,6 @@ module dma_engine #(
     reg found;
     reg [CB-1:0] chosen;
     reg chosen_read;
-    integer j;
     integer candidate;
 
     always @* begin
@@ -306,7 +321,11 @@ module dma_engine #(
             // Solicitudes y tags
             // ----------------------------------------------------
 
-            if (!slot_valid && found && !tags_full) begin
+            // Una lectura no se captura mientras el bufer de escrituras de la
+            // CPU siga sucio: su dato puede estar alla todavia. Una escritura
+            // si avanza (FILL no se frena por wb_dirty).
+            if (!slot_valid && found && !tags_full &&
+                (!chosen_read || !wb_dirty)) begin
                 slot_valid <= 1'b1;
                 slot_ch <= chosen;
                 slot_read <= chosen_read;
@@ -368,29 +387,25 @@ module dma_engine #(
                 end
 
                 if (issue_write && slot_ch == i) begin
+                    if (!fill_mode[i])
+                        data_valid[i] <= 1'b0;
 
-                    if (issue_write && slot_ch == i) begin
-                        if (!fill_mode[i])
-                            data_valid[i] <= 1'b0;
+                    bytes_done[i] <= bytes_done[i] + 32'd16;
 
-                        bytes_done[i] <= bytes_done[i] + 32'd16;
+                    // Avance de direcciones mediante los sumadores compartidos.
+                    src_cur[i] <= src_next[i];
+                    dst_cur[i] <= dst_next[i];
 
-                        // Avance de direcciones mediante los sumadores compartidos.
-                        src_cur[i] <= src_next[i];
-                        dst_cur[i] <= dst_next[i];
+                    if (words_left[i] == 1) begin
+                        rows_left[i] <= rows_left[i] - 1'b1;
+                        words_left[i] <= width[i] >> 4;
 
-                        if (words_left[i] == 1) begin
-                            rows_left[i] <= rows_left[i] - 1'b1;
-                            words_left[i] <= width[i] >> 4;
-
-                            // La nueva fila empieza exactamente en src_next/dst_next.
-                            src_row[i] <= src_next[i];
-                            dst_row[i] <= dst_next[i];
-                        end else begin
-                            words_left[i] <= words_left[i] - 1'b1;
-                        end
+                        // La nueva fila empieza exactamente en src_next/dst_next.
+                        src_row[i] <= src_next[i];
+                        dst_row[i] <= dst_next[i];
+                    end else begin
+                        words_left[i] <= words_left[i] - 1'b1;
                     end
-
                 end
 
                 // DONE solo tras recibir todas las respuestas.

@@ -30,9 +30,15 @@ module dma_engine_stress_tb;
     reg [127:0] rsp_rdata = 0;
     reg rsp_error = 0;
     reg response_consumed = 0;
+    // init_done cae con el reset y sube con el, como en placa. wb_dirty se
+    // pulsa a mitad de la prueba 3 para verificar que las lecturas esperan
+    // sin bloqueos (gating, ver dma_engine_tb pruebas 6 y 7).
+    wire init_done = !reset;
+    reg wb_dirty = 0;
 
     dma_engine #(.NUM_CHANNELS(NCH), .TAG_DEPTH(8)) dut (
-        .clk(clk), .reset(reset), .select(select), .write(write),
+        .clk(clk), .reset(reset), .init_done(init_done), .wb_dirty(wb_dirty),
+        .select(select), .write(write),
         .write_mask(write_mask), .address(address),
         .write_data(write_data), .read_data(read_data),
         .mmio_error(mmio_error), .irq(irq),
@@ -247,6 +253,13 @@ module dma_engine_stress_tb;
         channel_config(1,0,32'hC000,1024,2,0,1152,32'h9A9A9A9A);
         mmio_wr(16'h01c,1);
         mmio_wr(16'h05c,3);
+        // Pulso de wb_dirty con los dos canales en vuelo: las lecturas de CH0
+        // se detienen, las escrituras de CH1 (FILL) siguen. Al bajar, todo
+        // termina; el chequeo de pendingResponses de wait_status cubre que no
+        // quede nada colgado.
+        wb_dirty = 1;
+        repeat (40) @(negedge clk);
+        wb_dirty = 0;
         // Poll both until both have finished. Each has independent state.
         begin : concurrent_wait
             integer t;

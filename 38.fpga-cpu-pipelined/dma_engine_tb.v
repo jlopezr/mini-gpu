@@ -24,9 +24,12 @@ module dma_engine_tb;
     reg rsp_valid = 1'b0;
     reg [127:0] rsp_rdata = 128'd0;
     reg rsp_error = 1'b0;
+    reg init_done = 1'b1;
+    reg wb_dirty = 1'b0;
 
     dma_engine #(.NUM_CHANNELS(2), .TAG_DEPTH(8)) dut (
-        .clk(clk), .reset(reset), .select(select), .write(write),
+        .clk(clk), .reset(reset), .init_done(init_done), .wb_dirty(wb_dirty),
+        .select(select), .write(write),
         .write_mask(write_mask), .address(address),
         .write_data(write_data), .read_data(read_data),
         .mmio_error(mmio_error), .irq(irq),
@@ -231,6 +234,47 @@ module dma_engine_tb;
         mmio_wr(16'h0060, 32'h6);
         mmio_rd(16'h0020, tmp);
         if (tmp[2:1] !== 2'b00) $fatal(1, "W1C status failed");
+
+        // 6. Gating: sin init_done, START da error y no se arranca nada.
+        init_done = 1'b0;
+        mmio_wr(16'h0004, 32'h00004000);
+        mmio_wr(16'h0008, 32'd64);
+        mmio_wr(16'h000c, 32'd1);
+        mmio_wr(16'h0014, 32'd64);
+        mmio_wr(16'h0018, 32'hABABABAB);
+        begin
+            @(negedge clk);
+            select = 1'b1; write = 1'b1; write_mask = 4'hf;
+            address = 16'h001c; write_data = 32'd3;
+            #1;
+            if (mmio_error !== 1'b1)
+                $fatal(1, "START without init_done must error");
+            @(negedge clk);
+            select = 1'b0; write = 1'b0;
+        end
+        init_done = 1'b1;
+        mmio_wr(16'h001c, 32'd3); // ahora si arranca
+        wait_done(16'h0020);
+        verify_fill(16'h4000, 64, 8'hab);
+
+        // 7. Gating: con wb_dirty las LECTURAS no salen; al bajarlo se libera.
+        accepted = 0;
+        wb_dirty = 1'b1;
+        mmio_wr(16'h0000, 32'h00003000); // fuente con datos (test 4)
+        mmio_wr(16'h0004, 32'h00005000);
+        mmio_wr(16'h0008, 32'd64);
+        mmio_wr(16'h000c, 32'd1);
+        mmio_wr(16'h0010, 32'd64);
+        mmio_wr(16'h0014, 32'd64);
+        mmio_wr(16'h001c, 32'd1); // COPY
+        repeat (20) @(negedge clk);
+        if (req_valid || accepted != 0)
+            $fatal(1, "COPY issued requests while wb_dirty");
+        wb_dirty = 1'b0;
+        wait_done(16'h0020);
+        for (i=0; i<64; i=i+1)
+            if (mem[16'h5000+i] !== i[7:0])
+                $fatal(1, "COPY after wb_dirty mismatch at byte %0d", i);
 
         $display("PASS dma_engine_tb: %0d requests, %0d responses", accepted, acknowledged);
         $finish;

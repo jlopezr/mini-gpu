@@ -187,5 +187,11 @@
   "input_device": {
     "architecture": "cpu",
     "file": "input_registers.v"
+  },
+
+  "_comment_dma_device": "El RTL TIENE el motor de DMA (dma_engine.sv, bloque 0x8050_0000 de mmio.md §11). Es la que lee tools/generate_sysid.py para el bit DMA (8) de DEVICES. En la 38 la interfaz del bloque es EXPERIMENTAL (sin congelar): el bit dice que el motor esta presente, no que su mapa de registros este sellado.",
+  "dma_device": {
+    "architecture": ["cpu", "gpu"],
+    "file": "dma_engine.sv"
   }
 }

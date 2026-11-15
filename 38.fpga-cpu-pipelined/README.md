@@ -10,6 +10,62 @@ La identificacion de placa es monitor `5.38`. La CPU va a 50 MHz mediante `pll_c
 FP32, los builds `dcache-decide` y `perf-video` cerraban a 65–70 MHz. El
 build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
 
+## Motor de DMA integrado en el puerto del monitor (15 de noviembre)
+
+El motor de DMA que venia validado con sus propios bancos (`dma_engine.sv`,
+FILL y COPY 2D de bloques de 16 bytes, dos canales) esta ya conectado al resto
+del sistema:
+
+- **MMIO en `0x8050_0000`** (bloque DMA de `1.isa/mmio.md` §11.1,
+  EXPERIMENTAL). `mmio_decoder.v` gana el bloque y el bit 8 de `DEVICES`
+  (`SYSID_DEVICES` = `0x0B37`, regenerado con `tools/generate-sysid` desde la
+  nueva capacidad `dma_device` de `tools/capabilities.json`).
+- **Puerto compartido con el monitor.** `dma_monitor_arbiter.v` junta los dos
+  maestros delante del puerto 3 del fabric: prioridad al monitor, respuestas
+  enrutadas con una FIFO de propietarios. No va en un puerto propio porque
+  esos son de la CPU (datos e instrucciones) y del video, y el quinto queda
+  reservado para la GPU; el monitor, ademas, solo mueve trafico durante la
+  carga, y despues el puerto queda para el DMA. La `TAG_DEPTH=8` del arbiter
+  es el techo combinado en vuelo de los dos; el motor aguanta la
+  contrapresion y su FIFO interna no llega a llenarse.
+- **Gating como los demas maestros.** El motor ahora recibe `init_done` (sin
+  el, START da error: no hay forma de lanzar trafico antes de que la SDRAM
+  este inicializada) y `wb_dirty` (las LECTURAS no se emiten mientras el
+  bufer de combinacion de la CPU tenga algo sin volcar; las escrituras si,
+  porque dos escritores sobre la misma direccion son carrera de software).
+  Los bancos `dma_engine_tb` (pruebas 6 y 7 nuevas) y `dma_engine_stress_tb`
+  (pulso de `wb_dirty` a mitad de la prueba de canales concurrentes) cubren
+  el gating; el estres de 2 canales da exactamente los conteos de antes
+  (1.922 solicitudes, pico 5, 1.369 cambios de canal).
+- **Interrupcion sin destino.** La senal `irq` del motor existe (DMA_IRQ /
+  DMA_IRQ_ENABLE en +0x208/+0x20C), pero aqui no hay controlador de
+  interrupciones: queda al aire y los programas sondean STATUS.
+
+- **Lectura y error capturados en el decodificador.** `dma_engine` solo da
+  `read_data` y `mmio_error` mientras `select` esta alto, y la etapa 2 de
+  `mmio_decoder` se reevalua hasta el `ack` del `mmio_mux`, dos ciclos
+  despues: sin capturarlos en el ciclo de `dma_select`, la CPU leia 0 en todo
+  el bloque (tambien `DMA_ID`) y nunca veia un error. No se arregla en el
+  motor porque su error depende de BUSY, que el propio START cambia: un START
+  valido daria error un ciclo despues. Lo cubre `dma_mmio_chain_tb` (mux +
+  decodificador + motor, mirando el ciclo del `ack`).
+- **En placa**: `t.tests/cases-cpu/extensions/dma/` (`requires: dma_device`,
+  los simuladores los saltan). `fill-copy` hace un FILL 2D y un COPY 2D con
+  strides distintos y comprueba los destinos con dos sumas; `start-invalid`,
+  que un START con `WIDTH = 8` para con error `0x02` en ese STORE. Suite de
+  placa: 77 PASS / 0 FAIL. Build `dma-fix`: CPU 53,93 MHz, SDRAM 101,80 MHz.
+- **El motor no se reinicia al cargar un programa**, solo con el reset del
+  sistema: la configuracion y los DONE de un programa anterior siguen ahi, y
+  un DMA en marcha seguiria corriendo durante una carga.
+
+**Regla de coherencia con la D-cache** (limitacion conocida, no decidida
+todavia como se resuelve a largo plazo): la D-cache es write-through pero solo
+se invalida al parar la CPU. Un programa NO debe leer con la CPU memoria que
+el DMA acabe de escribir (framebuffer, destinos de blit): vera datos viejos.
+Para consumir el resultado, o lo lee el hardware de video directamente, o se
+para la CPU (la invalidacion es parte del halt). La direccion contraria esta
+cubierta en hardware: el DMA no emite lecturas mientras `wb_dirty` este alto.
+
 ## MUL segmentada, adelantamiento MEM -> ID y BTB de 256 (14 de noviembre)
 
 Tres cambios de `cpu.v`, medidos en la placa entre los mismos frames (el

@@ -1,0 +1,17 @@
+{
+  "architecture": "cpu",
+  "name": "dma-start-invalid",
+  "program": "program.asm",
+  "requires": ["dma_device"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x02",
+    "pc": "0x00000070",
+    "registers": {
+      "R1": "0x00000002",
+      "R2": "0x00000000"
+    }
+  }
+}

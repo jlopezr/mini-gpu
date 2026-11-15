@@ -1,0 +1,25 @@
+{
+  "architecture": "cpu",
+  "name": "dma-fill-copy",
+  "program": "program.asm",
+  "requires": ["dma_device", "mul_div"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": false,
+    "error_code": 0,
+    "pc": "0x00000148",
+    "registers": {
+      "R1": "0x444D4131",
+      "R2": "0x00000002",
+      "R3": "0x00000002",
+      "R4": "0x00000100",
+      "R5": "0x00000002",
+      "R6": "0x00000080",
+      "R10": "0x379685C0",
+      "R11": "0x0E9BFAE0",
+      "R12": "0x000001F0",
+      "R13": "0x00002AA0"
+    }
+  }
+}

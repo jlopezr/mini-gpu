@@ -736,6 +736,59 @@ Del controlador de interrupciones se prevén al menos estas fuentes:
 INPUT (teclado y ratón, `0x80600000`) se define en §25. Se numera al final para no
 renumerar las secciones existentes (§1.5).
 
+### 11.1. DMA, interfaz experimental (38)
+
+La 38 implementa un primer motor de DMA en `0x8050_0000`, y enciende
+`DEVICES.DMA` (bit 8). **La interfaz NO está congelada**: lo que sigue describe
+la implementación de la 38 para que un programa sepa a qué atenerse, y puede
+cambiar en versiones futuras sin respetar §1.5 — el sellado del mapa llegará
+con la extensión del blitter (COPY/FILL → comparación condicional y Z).
+
+El bloque se organiza en dos regiones, con canales de **0x40 bytes** cada uno y
+los registros globales detrás de la extensión máxima (§1.4):
+
+```text
++0x000..+0x0FF   canales (stride 0x40; la 38 tiene dos, 0 y 1)
++0x200           DMA_ID        R   "DMA1"
++0x204           DMA_CAPS      R   numero de canales
++0x208           DMA_IRQ       W1C pending, R pending
++0x20C           DMA_IRQ_ENABLE R/W
+```
+
+Cada canal, offsets relativos al inicio del canal:
+
+| Offset | Registro | R/W | Contenido |
+|---|---|---|---|
+| `+0x00` | `SRC` | R/W | dirección de origen, alineada a 16 |
+| `+0x04` | `DST` | R/W | dirección de destino, alineada a 16 |
+| `+0x08` | `WIDTH` | R/W | ancho en **bytes**, múltiplo de 16 |
+| `+0x0C` | `HEIGHT` | R/W | alto en filas |
+| `+0x10` | `SRC_STRIDE` | R/W | salto de fila origen, alineado a 16 |
+| `+0x14` | `DST_STRIDE` | R/W | salto de fila destino, alineado a 16 |
+| `+0x18` | `PATTERN` | R/W | patrón de 32 bits para FILL |
+| `+0x1C` | `CTRL` | W | START (bit 0), FILL (bit 1) |
+| `+0x20` | `STATUS` | R/W | bit 0 BUSY, bit 1 DONE, bit 2 ERROR; DONE/ERROR se limpian escribiendo 1 |
+| `+0x24` | `BYTES_DONE` | R | bytes transferidos |
+
+Reglas de la implementación de la 38:
+
+- Todo acceso es de 32 bits, alineado y con máscara completa; los huecos y los
+  offsets sin registro dan error (§4.3).
+- `START` con `FILL=0` es un **COPY** 2D de `SRC` a `DST`, `WIDTH×HEIGHT` bytes
+  con strides independientes; con `FILL=1` escribe `PATTERN` repetido en `DST`.
+  Origen y destino no deben solaparse.
+- ESCRIBIR la configuración de un canal BUSY da error; los registros se
+  escriben antes de `START` y se leen en cualquier momento.
+- Sin `init_done` de la SDRAM, `START` da error.
+- Coherencia: el motor escribe **detrás** de la D-cache de la CPU. Un programa
+  no debe leer por la D-cache memoria que el DMA haya escrito con la CPU
+  corriendo — la caché solo se invalida al parar la CPU. Antes de que el DMA
+  lea memoria escrita por la CPU, el hardware espera a que el búfer de
+  combinación de escrituras se vacíe (`wb_dirty`).
+- `DMA_IRQ`/`DMA_IRQ_ENABLE` existen, pero en la 38 no hay controlador de
+  interrupciones: la señal no llega a ningún sitio y los programas sondean
+  `STATUS`.
+
 ---
 
 ## 12. Contadores de rendimiento: reglas comunes

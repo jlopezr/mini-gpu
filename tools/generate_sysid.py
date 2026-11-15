@@ -66,6 +66,7 @@ BIT_VIDEO = 5
 BIT_CPU = 9
 BIT_GPU = 10
 BIT_INPUT = 11
+BIT_DMA = 8
 
 AVISO = ("GENERADO por tools/generate-sysid desde el RTL de esta carpeta. "
          "No editar.")
@@ -150,6 +151,10 @@ def devices_de(directorio: Path, capacidades: set[str]) -> int:
     # simuladores. Ver el comentario de `input_device` en capabilities.json.
     if "input_device" in capacidades:
         bits |= 1 << BIT_INPUT
+    # `dma_device` (el RTL tiene dma_engine.sv), por el mismo camino que
+    # INPUT: la capacidad vive en capabilities.json y el bit es el 8 de §5.4.
+    if "dma_device" in capacidades:
+        bits |= 1 << BIT_DMA
 
     arquitectura = backend_from_rtl(directorio)
     if arquitectura == "cpu":

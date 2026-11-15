@@ -374,11 +374,17 @@ module top (
   wire [127:0] p2_wdata, p2_rsp_rdata;
   wire [15:0] p2_wmask;
 
-  // Puerto 3: monitor.
+  // Puerto 3: monitor + DMA, compartido detras de dma_monitor_arbiter. Los
+  // `p3_*` son el lado del monitor; el arbiter junta los dos maestros y su
+  // salida son los `fab3_*` que entran en el fabric.
   wire p3_valid, p3_ready, p3_write, p3_rsp_valid, p3_rsp_ready, p3_rsp_error;
   wire [31:0] p3_addr;
   wire [127:0] p3_wdata, p3_rsp_rdata;
   wire [15:0] p3_wmask;
+  wire fab3_valid, fab3_ready, fab3_write, fab3_rsp_valid, fab3_rsp_ready, fab3_rsp_error;
+  wire [31:0] fab3_addr;
+  wire [127:0] fab3_wdata, fab3_rsp_rdata;
+  wire [15:0] fab3_wmask;
 
   // Los dos clientes de la ventana de registros de video.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
@@ -482,6 +488,64 @@ module top (
       .rsp_valid(p3_rsp_valid), .rsp_ready(p3_rsp_ready),
       .rsp_rdata(p3_rsp_rdata), .rsp_error(p3_rsp_error));
 
+  // -----------------------------------------------------------------------
+  // DMA (mmio.md §11, experimental en la 38), en 0x8050_0000.
+  //
+  // Comparte el puerto 3 con el monitor detras de dma_monitor_arbiter, y no
+  // en un puerto propio: los otros tres los ocupan CPU datos, instrucciones y
+  // video, y el quinto lo reserved la GPU que ha de venir. El monitor hace
+  // trabajo real solo durante la carga, despues el puerto queda para el DMA;
+  // el arbiter le da prioridad al monitor y enruta las respuestas con una
+  // FIFO de propietarios (dma_monitor_arbiter.v). La TAG_DEPTH=8 del arbiter
+  // es el techo COMBINADO de operaciones en vuelo de los dos maestros; el
+  // motor aguanta backpressure, asi que no hace falta que coincida con su
+  // TAG_DEPTH interno.
+  //
+  // Coherencia, REGLA DE USO mientras no haya invalidacion por regiones: el
+  // motor escribe detras de la D-cache, que solo se invalida al parar la CPU.
+  // Un programa NO debe leer por su D-cache memoria que el DMA acabe de
+  // escribir (framebuffer, destinos de blit): para eso, o la lee el hardware
+  // de video directamente, o se invalida la cache parando la CPU. Leer
+  // regiones que el DMA escribe con la CPU corriendo da datos viejos.
+  // -----------------------------------------------------------------------
+  wire dma_select, dma_error;
+  wire [31:0] dma_read_data;
+  wire dma_irq;
+  wire dma_req_valid, dma_req_ready, dma_req_write, dma_rsp_valid, dma_rsp_ready, dma_rsp_error;
+  wire [31:0] dma_req_addr;
+  wire [127:0] dma_req_wdata, dma_rsp_rdata;
+  wire [15:0] dma_req_wmask;
+
+  dma_monitor_arbiter #(.TAG_DEPTH(8)) dma_arbiter_i(
+      .clk(clk), .reset(reset),
+      .mon_req_valid(p3_valid), .mon_req_ready(p3_ready),
+      .mon_req_write(p3_write), .mon_req_addr(p3_addr),
+      .mon_req_wdata(p3_wdata), .mon_req_wmask(p3_wmask),
+      .mon_rsp_valid(p3_rsp_valid), .mon_rsp_ready(p3_rsp_ready),
+      .mon_rsp_rdata(p3_rsp_rdata), .mon_rsp_error(p3_rsp_error),
+      .dma_req_valid(dma_req_valid), .dma_req_ready(dma_req_ready),
+      .dma_req_write(dma_req_write), .dma_req_addr(dma_req_addr),
+      .dma_req_wdata(dma_req_wdata), .dma_req_wmask(dma_req_wmask),
+      .dma_rsp_valid(dma_rsp_valid), .dma_rsp_ready(dma_rsp_ready),
+      .dma_rsp_rdata(dma_rsp_rdata), .dma_rsp_error(dma_rsp_error),
+      .req_valid(fab3_valid), .req_ready(fab3_ready),
+      .req_urgent(), .req_write(fab3_write), .req_addr(fab3_addr),
+      .req_wdata(fab3_wdata), .req_wmask(fab3_wmask),
+      .rsp_valid(fab3_rsp_valid), .rsp_ready(fab3_rsp_ready),
+      .rsp_rdata(fab3_rsp_rdata), .rsp_error(fab3_rsp_error));
+
+  dma_engine #(.NUM_CHANNELS(2), .TAG_DEPTH(8)) dma_engine_i(
+      .clk(clk), .reset(reset), .init_done(init_done), .wb_dirty(wb_dirty),
+      .select(dma_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[15:0]),
+      .write_data(mmio_write_data), .read_data(dma_read_data),
+      .mmio_error(dma_error), .irq(dma_irq),
+      .req_valid(dma_req_valid), .req_ready(dma_req_ready),
+      .req_write(dma_req_write), .req_addr(dma_req_addr),
+      .req_wdata(dma_req_wdata), .req_wmask(dma_req_wmask),
+      .rsp_valid(dma_rsp_valid), .rsp_ready(dma_rsp_ready),
+      .rsp_rdata(dma_rsp_rdata), .rsp_error(dma_rsp_error));
+
   // El monitor va primero: sus peticiones son raras, las de la CPU son un bucle
   // que puede esperar un ciclo, y asi un SWAP escrito desde el PC no se queda
   // detras de un programa que dibuja a toda velocidad.
@@ -574,17 +638,17 @@ module top (
   assign p2_rsp_rdata = m_rsp_rdata[2];
   assign p2_rsp_error = m_rsp_error[2];
 
-  assign m_req_valid[3] = p3_valid;
-  assign p3_ready = m_req_ready[3];
+  assign m_req_valid[3] = fab3_valid;
+  assign fab3_ready = m_req_ready[3];
   assign m_req_urgent[3] = 1'b0;
-  assign m_req_write[3] = p3_write;
-  assign m_req_addr[3] = p3_addr;
-  assign m_req_wdata[3] = p3_wdata;
-  assign m_req_wmask[3] = p3_wmask;
-  assign p3_rsp_valid = m_rsp_valid[3];
-  assign m_rsp_ready[3] = p3_rsp_ready;
-  assign p3_rsp_rdata = m_rsp_rdata[3];
-  assign p3_rsp_error = m_rsp_error[3];
+  assign m_req_write[3] = fab3_write;
+  assign m_req_addr[3] = fab3_addr;
+  assign m_req_wdata[3] = fab3_wdata;
+  assign m_req_wmask[3] = fab3_wmask;
+  assign fab3_rsp_valid = m_rsp_valid[3];
+  assign m_rsp_ready[3] = fab3_rsp_ready;
+  assign fab3_rsp_rdata = m_rsp_rdata[3];
+  assign fab3_rsp_error = m_rsp_error[3];
 
   wire [5:0] req_empty, req_rd_en, req_rd_valid;
   wire [5:0] bridge_req_ready;
@@ -807,10 +871,14 @@ module top (
   //
   // DEVICES (§5.4) no se escribe aqui: sale de `sysid_params.vh`, que genera
   // tools/generate-sysid desde este RTL. Hoy son SYSTEM(0) + FABRIC(1) +
-  // SDRAM(2) + SERIAL(4) + VIDEO(5) + CPU(9) + INPUT(11) = 0x0A37; el bit
-  // INPUT sale de la capacidad `input_device` (existe input_registers.v).
+  // SDRAM(2) + SERIAL(4) + VIDEO(5) + DMA(8) + CPU(9) + INPUT(11) = 0x0B37; el
+  // bit INPUT sale de la capacidad `input_device` (existe input_registers.v) y
+  // el DMA de `dma_device` (existe dma_engine.sv). El mapa del bloque DMA esta
+  // en dma_engine.sv y en 1.isa/mmio.md §11: EXPERIMENTAL, interfaz sin
+  // congelar.
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
+      .HAS_DMA(1),
       // Dieciocho contadores en CPU PERFORMANCE: los ocho de siempre, los
       // cuatro del pipeline, los dos de la cache de datos, los dos de
       // MUL/DIV y los dos de video. Los mismos que `cpu_perf_counters` con
@@ -829,6 +897,8 @@ module top (
       .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
       .input_select(mmio_input_select), .input_read_data(mmio_input_read_data),
       .input_error(mmio_input_error),
+      .dma_select(dma_select), .dma_read_data(dma_read_data),
+      .dma_error(dma_error),
       .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .phase_select(mmio_phase_select), .phase_read_data(mmio_phase_read_data),
       .phase_error(mmio_phase_error),
