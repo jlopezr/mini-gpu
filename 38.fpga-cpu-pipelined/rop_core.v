@@ -13,8 +13,31 @@
 // Fuera de contexto (Yosys + nextpnr, 85F, 50 MHz), 15 de noviembre:
 //   v0.4                 11.347 COMB, 2.289 FF, 2 DSP, 32 MHz
 //   area1                 6.584 COMB, 2.323 FF, 0 DSP, 44-45 MHz
-//   esta (area1 + GEN)    7.462 COMB, 2.432 FF, 5 DSP, 60-61 MHz
-// Banco: rop_core_tb.sv.
+//   area1 + GEN           7.462 COMB, 2.432 FF, 5 DSP, 60-61 MHz
+//   esta (+ FRAC/SAT, grupos de 8, sin barrera, Z registrada)
+//                         8.054 COMB, 2.475 FF, 5 DSP, 60-63 MHz
+// Banco: rop_core_tb.sv y rop_core_stress_tb.sv.
+//
+// Modo de SPAN/FRAGMENT (cmd_mode en los explicitos; el modo de render de
+// CONFIG, p8[15:0], en los compactos, con el bit 12 a cero):
+//   [2:0] comparacion (0 ALWAYS, 1 EQ, 2 NE, 3 LT, 4 LE, 5 GT, 6 GE)
+//   [3] color de 32 bits  [4] Z de 32 bits  [5] escribe Z  [6] escribe color
+//   [7] comparacion con signo
+//   [11:8] FRAC: la Z de cada pixel es el acumulador desplazado
+//          aritmeticamente FRAC bits (z >>> FRAC); el acumulador sigue siendo
+//          de 32 bits y modular, asi que la fraccion no se pierde entre pixeles.
+//          En los compactos [11:8] son los overrides y FRAC sale de CONFIG.
+//   [12] compacto (solo en cmd_mode)
+//   [13] SAT: con Z16, el valor desplazado se satura a 0..65535 en vez de
+//          quedarse con sus 16 bits bajos. Es lo que hace mini-gl
+//          (FRAC = 8, MGR_DEPTH_FRAC). Solo con Z16 y comparacion sin signo.
+//   [15:14] reservados, a cero.
+//
+// Los grupos de SPAN/FRAGMENT son de hasta 8 pixeles (lo que cabe en la
+// palabra de 128 bits de Z y de color) y NO esperan a que terminen las
+// escrituras del grupo anterior: las escrituras llevan mascara de bytes y dos
+// grupos que comparten palabra tocan pixeles distintos. Las filas de un SPAN
+// no deben solaparse.
 module rop_core #(
     parameter integer TAG_DEPTH = 8
 )(
@@ -23,7 +46,7 @@ module rop_core #(
     input wire cmd_valid,
     output wire cmd_ready,
     input wire [2:0] cmd_op,       // 0 FILL, 1 COPY, 2 GENERATE2D, 3 SPAN, 4 FRAGMENT, 5 CONFIG
-    input wire [12:0] cmd_mode,    // meaning depends on cmd_op (see README)
+    input wire [15:0] cmd_mode,    // meaning depends on cmd_op (see header)
     input wire [319:0] cmd_params, // p0 = bits 31:0, ..., p9 = 319:288
     input wire [255:0] cmd_frag_colors, // lane i color at [32*i +: 32]
     input wire [255:0] cmd_frag_z,      // lane i Z at [32*i +: 32]
@@ -46,18 +69,18 @@ module rop_core #(
        S_READ_WAIT=3, S_WRITE_REQ=4, S_ADV=5, S_DRAIN=6,
        S_SP_PREP=7, S_SP_READ_REQ=8, S_SP_READ_WAIT=9,
        S_SP_Z_REQ=10, S_SP_COLOR_REQ=11, S_SP_ADV=12,
-       S_SP_SYNC=13, S_SP_PIXEL=14;
+       S_SP_PIXEL=14;   // 13 era S_SP_SYNC, la barrera que se quito
     localparam integer PTR_W = (TAG_DEPTH <= 2) ? 1 : $clog2(TAG_DEPTH);
     // Ordered persistent configuration. No MMIO; CONFIG is another command.
     // CONFIG mode[4:0] selects fields to update (see README v0.4).
     reg [31:0] cfg_color_base, cfg_z_base;
     reg [31:0] cfg_color_stride, cfg_z_stride;
     reg [31:0] cfg_color, cfg_z0, cfg_dx, cfg_dy;
-    reg [7:0] cfg_render_mode;
+    reg [15:0] cfg_render_mode;
     reg [4:0] cfg_written;
     reg [3:0] state;
     reg [2:0] op;
-    reg [12:0] mode;
+    reg [15:0] mode;
     reg [31:0] row_src, row_dst, cur_src, cur_dst;
     reg [31:0] rows_left, blocks_left, blocks_per_row;
     reg [31:0] src_stride, dst_stride, pattern, dx, dy;
@@ -73,7 +96,7 @@ module rop_core #(
     reg [31:0] sp_color_stride, sp_z_stride;
     reg [31:0] sp_width, sp_remaining, sp_rows, sp_row_initial, sp_cur_z;
     reg [31:0] sp_dx, sp_dy, sp_color;
-    reg [2:0] sp_step;
+    reg [3:0] sp_step;
     reg [2:0] sp_pixel_index;
     reg [31:0] sp_pixel_z;
     reg [3:0] frag_index;   // index of first fragment in current group (0..7)
@@ -115,13 +138,15 @@ module rop_core #(
     wire sp_write_z = mode[5];
     wire sp_write_color = mode[6];
     wire sp_signed = mode[7];
+    wire [3:0] sp_frac = mode[11:8];
+    wire sp_sat = mode[13];
     wire [2:0] sp_cmp = mode[2:0];
     wire [31:0] sp_z_offset = {28'd0, sp_z_cur[3:0]};
     wire [31:0] sp_color_offset = {28'd0, sp_color_cur[3:0]};
     wire [31:0] sp_z_room = (32'd16 - sp_z_offset) >> (sp_z32 ? 2 : 1);
     wire [31:0] sp_color_room = (32'd16 - sp_color_offset) >> (sp_color32 ? 2 : 1);
-    wire [31:0] sp_step_w = (sp_remaining < 32'd4 ? sp_remaining : 32'd4) < sp_z_room ?
-        (sp_remaining < 32'd4 ? sp_remaining : 32'd4) : sp_z_room;
+    wire [31:0] sp_step_w = (sp_remaining < 32'd8 ? sp_remaining : 32'd8) < sp_z_room ?
+        (sp_remaining < 32'd8 ? sp_remaining : 32'd8) : sp_z_room;
     wire [31:0] sp_step_calc = sp_step_w < sp_color_room ? sp_step_w : sp_color_room;
     wire [31:0] value_step = width32 ? (dx << 2) : (dx << 3);
     wire response = rsp_valid && rsp_ready;
@@ -220,8 +245,6 @@ module rop_core #(
     // by a single pixel extractor, comparator and byte-lane writer.
     // Pixel addresses are always aligned within the current 128-bit word.
     wire [3:0] sp_lane_index = frag_index + {1'b0, sp_pixel_index};
-    wire [31:0] sp_pixel_value = (op == OP_FRAGMENT) ?
-        frag_depths[sp_lane_index*32 +: 32] : sp_pixel_z;
     wire [31:0] sp_pixel_color = (op == OP_FRAGMENT) ?
         frag_colors[sp_lane_index*32 +: 32] : sp_color;
     wire [4:0] sp_pixel_z_byte = {1'b0,sp_z_cur[3:0]} +
@@ -233,8 +256,23 @@ module rop_core #(
     wire [31:0] sp_pixel_old = sp_z32 ?
         read_buffer[sp_pixel_z_bit +: 32] :
         {16'd0,read_buffer[sp_pixel_z_bit +: 16]};
-    wire [31:0] sp_pixel_new = sp_z32 ? sp_pixel_value :
-        {16'd0,sp_pixel_value[15:0]};
+    // Formato de la Z: desplazamiento aritmetico FRAC y, con SAT, saturacion
+    // a 16 bits sin signo. Se calcula UN CICLO ANTES y se registra en
+    // sp_new_q: en S_SP_PREP el del primer pixel del grupo, y en cada ciclo de
+    // S_SP_PIXEL el del siguiente. Asi el mux del carril, el desplazamiento y
+    // la saturacion no van en serie con la comparacion y las mascaras (sin
+    // registrar, 45-46 MHz fuera de contexto).
+    wire [3:0] sp_next_lane = (sp_lane_index + 4'd1) & 4'd7;
+    wire [31:0] sp_fmt_in = (state == S_SP_PIXEL) ?
+        ((op == OP_FRAGMENT) ? frag_depths[sp_next_lane*32 +: 32] : sp_pixel_z + sp_dx) :
+        ((op == OP_FRAGMENT) ? frag_depths[frag_index[2:0]*32 +: 32] : sp_cur_z);
+    wire signed [31:0] sp_fmt_shifted = $signed(sp_fmt_in) >>> sp_frac;
+    wire [15:0] sp_fmt_z16 = !sp_sat ? sp_fmt_shifted[15:0] :
+        sp_fmt_shifted[31] ? 16'd0 :
+        (|sp_fmt_shifted[30:16]) ? 16'hffff : sp_fmt_shifted[15:0];
+    wire [31:0] sp_fmt_out = sp_z32 ? sp_fmt_shifted : {16'd0,sp_fmt_z16};
+    reg [31:0] sp_new_q;
+    wire [31:0] sp_pixel_new = sp_new_q;
     wire sp_eq = (sp_pixel_new == sp_pixel_old);
     // Flip the sign bit for a single unsigned comparison circuit in both
     // signed and unsigned modes. Z16 is compared in the low 16 bits.
@@ -264,6 +302,10 @@ module rop_core #(
     // Pointers do not need power-of-two depth (only TAG_DEPTH >=2).
     wire [PTR_W-1:0] wr_next = (tag_wr == TAG_DEPTH-1) ? 0 : tag_wr + 1'b1;
     wire [PTR_W-1:0] rd_next = (tag_rd == TAG_DEPTH-1) ? 0 : tag_rd + 1'b1;
+    // SAT solo tiene sentido con Z16 y comparacion sin signo.
+    function z_format_ok(input [15:0] m);
+        z_format_ok = !m[13] || (!m[4] && !m[7]);
+    endfunction
     reg valid_command;
     always @* begin
         valid_command = 1'b0;
@@ -276,11 +318,12 @@ module rop_core #(
             OP_GEN: valid_command = p1 != 0 && p2 != 0 &&
                 p0[3:0] == 0 && p3[3:0] == 0 &&
                 (cmd_mode[3] ? (p1[1:0] == 0) : (p1[2:0] == 0)) &&
-                cmd_mode[2:0] != 3'd7 && cmd_mode[12:5] == 0;
+                cmd_mode[2:0] != 3'd7 && cmd_mode[15:5] == 0;
             OP_SPAN: begin
                 if (!compact_graphics) begin
                     valid_command = p2 != 0 && p3 != 0 &&
-                        cmd_mode[2:0] != 3'd7 && cmd_mode[12:8] == 0 &&
+                        cmd_mode[2:0] != 3'd7 && cmd_mode[12] == 0 &&
+                        cmd_mode[15:14] == 0 && z_format_ok(cmd_mode) &&
                         (cmd_mode[5] || cmd_mode[6]) &&
                         p0[0] == 0 && p1[0] == 0 &&
                         (!cmd_mode[3] || (p0[1:0] == 0 && p4[1:0] == 0)) &&
@@ -290,6 +333,7 @@ module rop_core #(
                 end else begin
                     valid_command = (cfg_written == 5'b11111) &&
                         p2 != 0 && p3 != 0 && cmd_mode[7:0] == 0 &&
+                        cmd_mode[15:13] == 0 &&
                         p8 == 0 && p9 == 0 &&
                         cfg_render_mode[2:0] != 3'd7 &&
                         (cfg_render_mode[5] || cfg_render_mode[6]) &&
@@ -303,7 +347,8 @@ module rop_core #(
             OP_FRAGMENT: begin
                 if (!compact_graphics) begin
                     valid_command = p2 >= 1 && p2 <= 8 &&
-                        cmd_mode[2:0] != 3'd7 && cmd_mode[12:8] == 0 &&
+                        cmd_mode[2:0] != 3'd7 && cmd_mode[12] == 0 &&
+                        cmd_mode[15:14] == 0 && z_format_ok(cmd_mode) &&
                         (cmd_mode[5] || cmd_mode[6]) &&
                         p0[0] == 0 && p1[0] == 0 &&
                         (!cmd_mode[3] || p0[1:0] == 0) &&
@@ -313,7 +358,8 @@ module rop_core #(
                         p8 == 0 && p9 == 0;
                 end else begin
                     valid_command = cfg_written[4:0] == 5'b11111 &&
-                        cmd_mode[11:0] == 0 && p2 >= 1 && p2 <= 8 &&
+                        cmd_mode[11:0] == 0 && cmd_mode[15:13] == 0 &&
+                        p2 >= 1 && p2 <= 8 &&
                         cfg_render_mode[2:0] != 3'd7 &&
                         (cfg_render_mode[5] || cfg_render_mode[6]) &&
                         compact_color_address[0] == 0 && compact_z_address[0] == 0 &&
@@ -324,10 +370,11 @@ module rop_core #(
                         p8 == 0 && p9 == 0;
                 end
             end
-            OP_CONFIG: valid_command = cmd_mode[12:5] == 0 &&
+            OP_CONFIG: valid_command = cmd_mode[15:5] == 0 &&
                 cmd_mode[4:0] != 0 &&
                 p9 == 0 &&
-                (!cmd_mode[4] || (p8[31:8] == 0 && p8[2:0] != 3'd7 &&
+                (!cmd_mode[4] || (p8[31:16] == 0 && p8[2:0] != 3'd7 &&
+                    p8[12] == 0 && p8[15:14] == 0 && z_format_ok(p8[15:0]) &&
                     (p8[5] || p8[6])));
             default: valid_command = 1'b0;
         endcase
@@ -354,6 +401,7 @@ module rop_core #(
             sp_width <= 0; sp_remaining <= 0; sp_rows <= 0;
             sp_row_initial <= 0; sp_cur_z <= 0; sp_dx <= 0; sp_dy <= 0;
             sp_color <= 0; sp_step <= 0; sp_pixel_index <= 0; sp_pixel_z <= 0;
+            sp_new_q <= 0;
             sp_z_data <= 0; sp_color_data <= 0;
             frag_index <= 0; frag_coverage <= 0; frag_colors <= 0; frag_depths <= 0;
             sp_z_mask <= 0; sp_color_mask <= 0;
@@ -404,14 +452,14 @@ module rop_core #(
                             cfg_dx <= p6;
                             cfg_dy <= p7;
                         end
-                        if (cmd_mode[4]) cfg_render_mode <= p8[7:0];
+                        if (cmd_mode[4]) cfg_render_mode <= p8[15:0];
                         cfg_written <= cfg_written | cmd_mode[4:0];
                         done_valid <= 1'b1;
                         done_error <= 1'b0;
                     end else begin
                         op <= cmd_op;
                         mode <= ((cmd_op == OP_SPAN || cmd_op == OP_FRAGMENT) && compact_graphics) ?
-                                {5'd0, cfg_render_mode} : cmd_mode;
+                                cfg_render_mode : cmd_mode;
                         failed <= 1'b0;
                         if (cmd_op == OP_FILL) begin
                             row_dst <= p0; cur_dst <= p0;
@@ -505,7 +553,8 @@ module rop_core #(
                 // A conditional Z test reads the old word once, then processes
                 // the group's pixels over successive clock cycles.
                 S_SP_PREP: begin
-                    sp_step <= sp_step_calc[2:0];
+                    sp_new_q <= sp_fmt_out;
+                    sp_step <= sp_step_calc[3:0];
                     sp_pixel_index <= 0;
                     sp_pixel_z <= sp_cur_z;
                     sp_z_data <= 0;
@@ -523,9 +572,9 @@ module rop_core #(
                     // The Z value is assembled even when comparison fails;
                     // only byte masks determine what gets written to RAM.
                     if (sp_z32)
-                        sp_z_data[sp_pixel_z_bit +: 32] <= sp_pixel_value;
+                        sp_z_data[sp_pixel_z_bit +: 32] <= sp_pixel_new;
                     else
-                        sp_z_data[sp_pixel_z_bit +: 16] <= sp_pixel_value[15:0];
+                        sp_z_data[sp_pixel_z_bit +: 16] <= sp_pixel_new[15:0];
                     if (sp_pixel_pass) begin
                         if (sp_write_z) begin
                             if (sp_z32)
@@ -544,7 +593,8 @@ module rop_core #(
                         end
                     end
                     if (op != OP_FRAGMENT) sp_pixel_z <= sp_pixel_z + sp_dx;
-                    if (sp_pixel_index + 3'd1 == sp_step)
+                    sp_new_q <= sp_fmt_out;
+                    if ({1'b0, sp_pixel_index} + 4'd1 == sp_step)
                         state <= S_SP_Z_REQ;
                     else
                         sp_pixel_index <= sp_pixel_index + 3'd1;
@@ -553,16 +603,15 @@ module rop_core #(
                     if (sp_z_mask == 0 || issue)
                         state <= S_SP_COLOR_REQ;
                 end
+                // Sin barrera: el grupo siguiente puede leer su palabra de Z
+                // con escrituras de este aun pendientes. Si comparten palabra,
+                // son pixeles distintos y las mascaras de bytes no se pisan.
                 S_SP_COLOR_REQ: begin
                     if (sp_color_mask == 0 || issue)
-                        state <= S_SP_SYNC;
+                        state <= S_SP_ADV;
                 end
-                // Completion of writes is required before reading next group:
-                // successive 4-pixel groups can inhabit the same 128b Z word.
-                // Without this barrier RMW can race pending Z writes.
-                S_SP_SYNC: if (tag_count == 0) state <= S_SP_ADV;
                 S_SP_ADV: begin
-                    if (sp_remaining == {29'd0,sp_step}) begin
+                    if (sp_remaining == {28'd0,sp_step}) begin
                         if (sp_rows == 1) begin
                             state <= S_DRAIN;
                         end else begin
@@ -578,8 +627,8 @@ module rop_core #(
                         end
                     end else begin
                         sp_remaining <= sp_remaining - sp_step;
-                        sp_color_cur <= sp_color_cur + (sp_color32 ? ({29'd0,sp_step} << 2) : ({29'd0,sp_step} << 1));
-                        sp_z_cur <= sp_z_cur + (sp_z32 ? ({29'd0,sp_step} << 2) : ({29'd0,sp_step} << 1));
+                        sp_color_cur <= sp_color_cur + (sp_color32 ? ({28'd0,sp_step} << 2) : ({28'd0,sp_step} << 1));
+                        sp_z_cur <= sp_z_cur + (sp_z32 ? ({28'd0,sp_step} << 2) : ({28'd0,sp_step} << 1));
                         sp_cur_z <= sp_pixel_z;
                         if (op == OP_FRAGMENT) frag_index <= frag_index + sp_step;
                         state <= S_SP_PREP;

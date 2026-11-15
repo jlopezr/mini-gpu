@@ -5,7 +5,7 @@ module rop_core_tb;
   reg cmd_valid=0;
   wire cmd_ready, done_valid, done_error, busy;
   reg [2:0] cmd_op=0;
-  reg [12:0] cmd_mode=0;
+  reg [15:0] cmd_mode=0;
   reg [319:0] cmd_params=0;
   reg [255:0] cmd_frag_colors=0, cmd_frag_z=0;
   wire req_valid, req_write, rsp_ready;
@@ -68,7 +68,7 @@ module rop_core_tb;
   function [15:0] get16(input integer addr);
     get16={ram[addr+1],ram[addr]};
   endfunction
-  task automatic run(input [2:0] op,input [12:0] mode,input [319:0] params);
+  task automatic run(input [2:0] op,input [15:0] mode,input [319:0] params);
     integer watch;
     begin
       watch=0;
@@ -89,7 +89,7 @@ module rop_core_tb;
   endtask
   // Como run, pero la respuesta numero `nth` (0 = la primera) de ESTE comando
   // llega con error: el comando tiene que acabar con done_error.
-  task automatic run_error(input [2:0] op,input [12:0] mode,input [319:0] params,
+  task automatic run_error(input [2:0] op,input [15:0] mode,input [319:0] params,
                            input integer nth);
     integer watch;
     begin
@@ -105,6 +105,55 @@ module rop_core_tb;
       end
       if(!done_error) $fatal(1,"error response not reported (op %0d, nth %0d)", op, nth);
       err_at=-1;
+    end
+  endtask
+  // Un comando invalido: done_error sin ninguna peticion a memoria.
+  task automatic run_reject(input [2:0] op,input [15:0] mode,input [319:0] params);
+    integer nreq0, watch;
+    begin
+      @(negedge clk);
+      while (!cmd_ready) @(negedge clk);
+      nreq0=req_count;
+      cmd_op=op; cmd_mode=mode; cmd_params=params;cmd_valid=1;
+      @(negedge clk); cmd_valid=0;
+      watch=0;
+      while (!done_valid) begin
+        @(negedge clk); watch=watch+1;
+        if(watch>100) $fatal(1,"timeout on rejected command");
+      end
+      if(!done_error) $fatal(1,"invalid command accepted (op %0d mode %h)", op, mode);
+      if(req_count!=nreq0) $fatal(1,"rejected command issued requests");
+    end
+  endtask
+  // La Z16 de mini-gl: sat16(z >>> frac), o los 16 bits bajos sin SAT.
+  function [15:0] zfmt16(input [31:0] z, input integer frac, input sat);
+    reg signed [31:0] sh;
+    begin
+      sh=$signed(z)>>>frac;
+      if(!sat) zfmt16=sh[15:0];
+      else if(sh<0) zfmt16=16'd0;
+      else if(sh>65535) zfmt16=16'hffff;
+      else zfmt16=sh[15:0];
+    end
+  endfunction
+  // SPAN Z16 + color16, LT, escribe Z y color, una fila, con FRAC/SAT. La Z
+  // vieja es 0xFFFF en todos: pasa donde la nueva es menor, y con SAT los
+  // pixeles saturados a 0xFFFF no pasan (ni escriben color).
+  task automatic check_span_fmt(input integer cbase,input integer zbase,input integer w,
+                                input [31:0] z0,input [31:0] dx,input integer frac,input sat);
+    integer x;
+    reg [15:0] nz;
+    begin
+      for(x=0;x<w;x=x+1) begin set16(zbase+x*2,16'hffff); set16(cbase+x*2,16'hcafe); end
+      run(3,{2'b00,sat,1'b0,frac[3:0],8'h63},
+          span_params(cbase,zbase,w,1,64,64,32'h0000abcd,z0,dx,0));
+      for(x=0;x<w;x=x+1) begin
+        nz=zfmt16(z0+x*dx,frac,sat);
+        if(get16(zbase+x*2)!==(nz < 16'hffff ? nz : 16'hffff) ||
+           get16(cbase+x*2)!==(nz < 16'hffff ? 16'habcd : 16'hcafe))
+          $fatal(1,"SPAN FRAC=%0d SAT=%0d x=%0d: Z=%h C=%h, expected Z=%h",
+                 frac,sat,x,get16(zbase+x*2),get16(cbase+x*2),nz);
+      end
     end
   endtask
   function [319:0] span_params(
@@ -342,7 +391,39 @@ module rop_core_tb;
     for(i=0;i<2;i=i+1)
       for(j=0;j<8;j=j+1)
         if(get32('h100+i*48+j*4)!==32'h77777777) $fatal(1,"FILL after error mismatch");
-    $display("PASS rop_core_tb: dos pasadas (sin y con contrapresion) + errores");
+    // FRAC/SAT. dx = 12000<<8: la rampa empieza en negativo (SAT -> 0), pasa
+    // por valores normales y acaba por encima de 65535<<8 (SAT -> 0xFFFF).
+    check_span_fmt('h3a04,'h3802,12,32'd100-2*32'd3072000,32'd3072000,8,1);
+    check_span_fmt('h3a44,'h3842,12,32'd100-2*32'd3072000,32'd3072000,8,0);
+    check_span_fmt('h3a84,'h3882,10,32'h00012345,32'h00000f00,4,1);
+    check_span_fmt('h3ac4,'h38c2,9,32'h7fffff00,32'h00000100,0,1);
+    // FRAGMENT con FRAC=4 y SAT, Z16, ALWAYS, escribe Z.
+    cmd_frag_z=0; cmd_frag_colors=0;
+    cmd_frag_z[0*32 +: 32]=-32'sd5; cmd_frag_z[1*32 +: 32]=32'h10;
+    cmd_frag_z[2*32 +: 32]=32'h7fffffff; cmd_frag_z[3*32 +: 32]=32'h000ffff0;
+    cmd_frag_z[4*32 +: 32]=32'h00100000;
+    run(4,{2'b00,1'b1,1'b0,4'd4,8'h20},{192'd0,32'h1f,32'd5,32'h3c02,32'h3d02});
+    if(get16('h3c02)!==16'd0 || get16('h3c04)!==16'd1 || get16('h3c06)!==16'hffff ||
+       get16('h3c08)!==16'hffff || get16('h3c0a)!==16'hffff)
+      $fatal(1,"FRAGMENT FRAC/SAT: %h %h %h %h %h",get16('h3c02),get16('h3c04),
+             get16('h3c06),get16('h3c08),get16('h3c0a));
+    // El formato viene de CONFIG en los compactos (p8[13] SAT, p8[11:8] FRAC).
+    run(5,16'h01f,{32'd0,32'h2863,32'd0,32'd0,32'd0,
+                   32'h00001111,32'd64,32'd64,32'h3e00,32'h3f00});
+    for(j=0;j<4;j=j+1) begin set16('h3e00+j*2,16'hffff); set16('h3f00+j*2,16'h0); end
+    run(3,16'h1300,{64'd0,32'hffffff00,32'h00002222,32'd1,32'd4,32'd0,32'd0});
+    // z0 = -256 (-1 con FRAC 8, SAT -> 0), dx de CONFIG = 0 ... todo 0.
+    for(j=0;j<4;j=j+1)
+      if(get16('h3e00+j*2)!==16'd0 || get16('h3f00+j*2)!==16'h2222)
+        $fatal(1,"compact SPAN with CONFIG FRAC/SAT at %0d: Z=%h C=%h",j,get16('h3e00+j*2),get16('h3f00+j*2));
+    // Rechazos: SAT con signo, SAT con Z32, bits reservados, bit 12 en CONFIG.
+    run_reject(3,16'h20e3,span_params('h3a04,'h3802,4,1,64,64,0,0,0,0));
+    run_reject(3,16'h2073,span_params('h3a04,'h3800,4,1,64,64,0,0,0,0));
+    run_reject(3,16'h4063,span_params('h3a04,'h3802,4,1,64,64,0,0,0,0));
+    run_reject(4,16'h20a0,{192'd0,32'h1,32'd1,32'h3c02,32'h3d02});
+    run_reject(5,16'h010,{32'd0,32'h1063,256'd0});
+    run_reject(5,16'h010,{32'd0,32'h20e3,256'd0});
+    $display("PASS rop_core_tb: dos pasadas (sin y con contrapresion) + errores + FRAC/SAT");
     $finish;
   end
 endmodule

@@ -14,9 +14,9 @@
 // La memoria contesta como en dma_engine_stress_tb: respuesta en el flanco de
 // bajada, estable hasta el handshake, con contrapresion y latencia aleatorias
 // y en orden. Los contadores del final obligan a que el estres haya ocurrido
-// (los 8 tags llenos, peticiones frenadas, respuestas retrasadas, esperas
-// en la barrera de lectura-modificacion-escritura, mascaras parciales, y
-// pasa/no pasa de la prueba de Z).
+// (los 8 tags llenos, peticiones frenadas, respuestas retrasadas, lecturas de
+// Z con escrituras aun pendientes, grupos de 8 pixeles, mascaras parciales,
+// pasa/no pasa de la prueba de Z y saturaciones por abajo y por arriba).
 //
 // Semilla: +seed=N (por defecto 1). Comandos: +n=N (por defecto 400).
 // +late_writes: memoria que no ordena lecturas tras escrituras pendientes.
@@ -29,7 +29,7 @@ module rop_core_stress_tb;
   reg reset = 1;
   reg cmd_valid = 0;
   reg [2:0] cmd_op = 0;
-  reg [12:0] cmd_mode = 0;
+  reg [15:0] cmd_mode = 0;
   reg [319:0] cmd_params = 0;
   reg [255:0] cmd_frag_colors = 0, cmd_frag_z = 0;
   wire cmd_ready, done_valid, done_error, busy;
@@ -56,9 +56,11 @@ module rop_core_stress_tb;
   reg [127:0] q_data [0:QMAX-1];
   // +late_writes: la escritura se aplica al llegar su respuesta, no al
   // aceptarla. Modela una memoria que no ordena una lectura respecto a una
-  // escritura anterior aun pendiente; es lo que exige la barrera S_SP_SYNC.
-  // La SDRAM de la 38 SI ordena (READ/WRITE en orden de llegada), asi que por
-  // defecto las escrituras se aplican al aceptarlas.
+  // escritura anterior aun pendiente. rop_core ya no tiene barrera entre
+  // grupos (S_SP_SYNC): tiene que dar lo mismo, porque las escrituras llevan
+  // mascara de bytes y dos grupos que comparten palabra tocan pixeles
+  // distintos. La SDRAM de la 38 SI ordena (READ/WRITE en orden de llegada),
+  // asi que por defecto las escrituras se aplican al aceptarlas.
   reg late_writes = 0;
   reg q_write [0:QMAX-1];
   reg [31:0] q_addr [0:QMAX-1];
@@ -68,7 +70,7 @@ module rop_core_stress_tb;
   integer q_head = 0, q_tail = 0, q_count = 0, tick = 0;
   reg consumed = 0;
   integer accepted = 0, completed = 0, peak = 0, stalled = 0, delayed = 0;
-  integer partial_masks = 0, sync_waits = 0;
+  integer partial_masks = 0, overlap_reads = 0, groups8 = 0;
   integer b;
   reg [127:0] temp;
 
@@ -91,7 +93,11 @@ module rop_core_stress_tb;
     if (!reset) begin
       if (req_valid && !req_ready) stalled = stalled + 1;
       if (q_count != 0 && !rsp_valid) delayed = delayed + 1;
-      if (dut.state == 4'd13 && dut.tag_count != 0) sync_waits = sync_waits + 1;
+      // Una lectura de Z con escrituras aun pendientes: ya no hay barrera.
+      if (dut.state == 4'd8 && req_valid && req_ready && dut.tag_count != 0)
+        overlap_reads = overlap_reads + 1;
+      if (dut.state == 4'd14 && dut.sp_pixel_index == 0 && dut.sp_step == 8)
+        groups8 = groups8 + 1;
       if (rsp_valid && rsp_ready) begin
         consumed = 1;
         if (q_count == 0) $fatal(1, "response with empty queue");
@@ -145,7 +151,21 @@ module rop_core_stress_tb;
     end
   endtask
 
-  integer passes = 0, fails = 0;
+  integer passes = 0, fails = 0, sat_lo = 0, sat_hi = 0;
+
+  // La Z que guarda y compara rop_core: acumulador >>> FRAC (mode[11:8]) y,
+  // con Z16, los 16 bits bajos o, con SAT (mode[13]), saturada a 0..65535.
+  function [31:0] zformat(input [15:0] mode, input [31:0] v);
+    reg signed [31:0] sh;
+    begin
+      sh = $signed(v) >>> mode[11:8];
+      if (mode[4]) zformat = sh;
+      else if (!mode[13]) zformat = {16'd0, sh[15:0]};
+      else if (sh < 0) zformat = 32'd0;
+      else if (sh > 65535) zformat = 32'd65535;
+      else zformat = {16'd0, sh[15:0]};
+    end
+  endfunction
   integer cmp_used [0:6];
 
   // La prueba de Z de rop_core: `nv` y `ov` ya recortados al ancho (16 o 32
@@ -175,7 +195,7 @@ module rop_core_stress_tb;
 
   // Un pixel de SPAN o FRAGMENT. `mode` es el modo efectivo: [2:0] cmp,
   // [3] color32, [4] z32, [5] escribe Z, [6] escribe color, [7] con signo.
-  task model_pixel(input [7:0] mode, input integer ca, input integer za,
+  task model_pixel(input [15:0] mode, input integer ca, input integer za,
                    input [31:0] v, input [31:0] color, input covered);
     reg [31:0] nv, ov;
     reg p;
@@ -183,7 +203,11 @@ module rop_core_stress_tb;
     begin
       zb = mode[4] ? 4 : 2;
       cb = mode[3] ? 4 : 2;
-      nv = mode[4] ? v : {16'd0, v[15:0]};
+      nv = zformat(mode, v);
+      if (!mode[4] && mode[13]) begin
+        if ($signed(v) >>> mode[11:8] < 0) sat_lo = sat_lo + 1;
+        else if (($signed(v) >>> mode[11:8]) > 65535) sat_hi = sat_hi + 1;
+      end
       ov = rd(za, zb);
       p = covered && pass_cmp(mode[2:0], mode[7], mode[4], nv, ov);
       if (mode[2:0] != 0) begin if (p) passes = passes + 1; else fails = fails + 1; end
@@ -194,7 +218,7 @@ module rop_core_stress_tb;
     end
   endtask
 
-  task model_span(input [7:0] mode, input integer cbase, input integer zbase,
+  task model_span(input [15:0] mode, input integer cbase, input integer zbase,
                   input integer w, input integer h, input integer cs, input integer zs,
                   input [31:0] color, input [31:0] z0, input [31:0] dx, input [31:0] dy);
     integer x, y;
@@ -211,7 +235,7 @@ module rop_core_stress_tb;
     end
   endtask
 
-  task model_fragment(input [7:0] mode, input integer cbase, input integer zbase,
+  task model_fragment(input [15:0] mode, input integer cbase, input integer zbase,
                       input integer n, input [7:0] cov,
                       input [255:0] colors, input [255:0] zs);
     integer q;
@@ -242,7 +266,7 @@ module rop_core_stress_tb;
 
   // ---- Ejecutar un comando y comprobar ------------------------------------
   integer cmd_index = 0, i;
-  task automatic issue(input [2:0] op, input [12:0] mode, input [319:0] params);
+  task automatic issue(input [2:0] op, input [15:0] mode, input [319:0] params);
     integer watch;
     begin
       // Sin hueco: el comando sale en cuanto cmd_ready esta alto.
@@ -273,8 +297,9 @@ module rop_core_stress_tb;
   function [31:0] rval;
     integer k;
     begin
-      k = rnd(5);
+      k = rnd(6);
       case (k)
+        5: rval = (32'd65535 << rnd(16)) - 32 + rnd(64);
         0: rval = rnd(64);
         1: rval = -rnd(64);
         2: rval = 32'h7fff_fff0 + rnd(32);
@@ -287,16 +312,22 @@ module rop_core_stress_tb;
   // Configuracion persistente, la misma que lleva rop_core.
   reg [31:0] c_color_base, c_z_base, c_color_stride, c_z_stride;
   reg [31:0] c_color, c_z0, c_dx, c_dy;
-  reg [7:0] c_mode;
+  reg [15:0] c_mode;
   reg configured = 0;
 
-  // Modo de render aleatorio valido: cmp != 7 y al menos una escritura.
-  function [7:0] rmode;
-    reg [7:0] m;
+  // Modo aleatorio valido: cmp != 7, al menos una escritura, FRAC al azar
+  // (0 la mitad de las veces) y SAT solo con Z16 sin signo. El bit 12
+  // (compacto) y [15:14] a cero: vale como cmd_mode explicito y como modo
+  // de render de CONFIG.
+  function [15:0] rmode;
+    reg [15:0] m;
     begin
-      m = $random(seed);
+      m = 0;
+      m[7:0] = $random(seed);
       m[2:0] = rnd(7);
       if (!m[5] && !m[6]) m[5 + rnd(2)] = 1'b1;
+      m[11:8] = rnd(2) ? rnd(16) : 0;
+      m[13] = (!m[4] && !m[7]) ? rnd(2) : 1'b0;
       rmode = m;
     end
   endfunction
@@ -304,14 +335,15 @@ module rop_core_stress_tb;
   integer op_count [0:6];
   integer k, w, h, cs, zs, cb, zb, n, nbytes, x;
   integer cbase, zbase, dst, src, stride;
-  reg [7:0] m8, cov;
+  reg [15:0] m8;
+  reg [7:0] cov;
   reg [12:0] m13;
   reg [31:0] color, z0, dx, dy, pat;
   reg [255:0] fc, fz;
 
   // Para que EQ/NE no fallen siempre: copia en la Z vieja el valor que traera
   // el span en algunos pixeles.
-  task seed_equal_span(input [7:0] mode, input integer zbase, input integer w,
+  task seed_equal_span(input [15:0] mode, input integer zbase, input integer w,
                        input integer h, input integer zs, input [31:0] z0,
                        input [31:0] dx, input [31:0] dy);
     integer x, y, a, bytes;
@@ -321,7 +353,7 @@ module rop_core_stress_tb;
       for (y = 0; y < h; y = y + 1)
         for (x = 0; x < w; x = x + 1)
           if (rnd(2)) begin
-            v = z0 + y*dy + x*dx;
+            v = zformat(mode, z0 + y*dy + x*dx);
             a = zbase + y*zs + x*bytes;
             mem[a] = v[7:0]; mem[a+1] = v[15:8];
             refm[a] = v[7:0]; refm[a+1] = v[15:8];
@@ -368,7 +400,7 @@ module rop_core_stress_tb;
         op_count[5] = op_count[5] + 1;
       end else begin
         model_span(m8, cbase, zbase, w, h, cs, zs, color, z0, dx, dy);
-        issue(3'd3, {5'd0, m8}, {dy, dx, z0, color, zs, cs, h, w, zbase, cbase});
+        issue(3'd3, m8, {dy, dx, z0, color, zs, cs, h, w, zbase, cbase});
         op_count[0] = op_count[0] + 1;
       end
       cmp_used[m8[2:0]] = cmp_used[m8[2:0]] + 1;
@@ -389,7 +421,7 @@ module rop_core_stress_tb;
         fz[32*k +: 32] = rval();
         // Algunos carriles con la Z que ya hay, para EQ/NE.
         if (k < n && rnd(3) == 0)
-          fz[32*k +: 32] = rd(zbase + k*zb, zb);
+          fz[32*k +: 32] = rd(zbase + k*zb, zb) << m8[11:8];
       end
       cmd_frag_colors = fc; cmd_frag_z = fz;
       model_fragment(m8, cbase, zbase, n, cov, fc, fz);
@@ -397,7 +429,7 @@ module rop_core_stress_tb;
         issue(3'd4, 13'h1000, {192'd0, {24'd0, cov}, n, zbase - c_z_base, cbase - c_color_base});
         op_count[6] = op_count[6] + 1;
       end else begin
-        issue(3'd4, {5'd0, m8}, {192'd0, {24'd0, cov}, n, zbase, cbase});
+        issue(3'd4, m8, {192'd0, {24'd0, cov}, n, zbase, cbase});
         op_count[1] = op_count[1] + 1;
       end
       cmp_used[m8[2:0]] = cmp_used[m8[2:0]] + 1;
@@ -461,7 +493,7 @@ module rop_core_stress_tb;
       if (sel[2]) c_color = $random(seed);
       if (sel[3]) begin c_z0 = rval(); c_dx = rval(); c_dy = rval(); end
       if (sel[4]) c_mode = rmode();
-      issue(3'd5, {8'd0, sel}, {32'd0, {24'd0, c_mode}, c_dy, c_dx, c_z0, c_color,
+      issue(3'd5, {11'd0, sel}, {32'd0, {16'd0, c_mode}, c_dy, c_dx, c_z0, c_color,
                                 c_z_stride, c_color_stride, c_z_base, c_color_base});
       configured = 1;
     end
@@ -494,14 +526,14 @@ module rop_core_stress_tb;
     // Cobertura: que el estres haya ocurrido de verdad.
     if (accepted != completed || q_count != 0)
       $fatal(1, "pending responses: accepted=%0d completed=%0d", accepted, completed);
-    if (peak < 8 || stalled == 0 || delayed == 0 || sync_waits == 0 ||
-        partial_masks == 0 || passes == 0 || fails == 0)
-      $fatal(1, "insufficient coverage: peak=%0d stalled=%0d delayed=%0d sync=%0d partial=%0d pass=%0d fail=%0d",
-             peak, stalled, delayed, sync_waits, partial_masks, passes, fails);
+    if (peak < 8 || stalled == 0 || delayed == 0 || overlap_reads == 0 || groups8 == 0 ||
+        partial_masks == 0 || passes == 0 || fails == 0 || sat_lo == 0 || sat_hi == 0)
+      $fatal(1, "insufficient coverage: peak=%0d stalled=%0d delayed=%0d overlap=%0d groups8=%0d partial=%0d pass=%0d fail=%0d satlo=%0d sathi=%0d",
+             peak, stalled, delayed, overlap_reads, groups8, partial_masks, passes, fails, sat_lo, sat_hi);
     for (i = 0; i < 7; i = i + 1)
       if (cmp_used[i] == 0) $fatal(1, "comparison mode %0d never used", i);
-    $display("PASS rop_core_stress_tb seed=%0d commands=%0d requests=%0d peak=%0d stalled=%0d delayed=%0d sync=%0d partial=%0d zpass=%0d zfail=%0d",
-             seed0, cmd_index, accepted, peak, stalled, delayed, sync_waits, partial_masks, passes, fails);
+    $display("PASS rop_core_stress_tb seed=%0d commands=%0d requests=%0d peak=%0d stalled=%0d delayed=%0d overlap=%0d groups8=%0d partial=%0d zpass=%0d zfail=%0d satlo=%0d sathi=%0d",
+             seed0, cmd_index, accepted, peak, stalled, delayed, overlap_reads, groups8, partial_masks, passes, fails, sat_lo, sat_hi);
     $display("  span=%0d frag=%0d gen=%0d fill=%0d copy=%0d compact_span=%0d compact_frag=%0d",
              op_count[0], op_count[1], op_count[2], op_count[3], op_count[4], op_count[5], op_count[6]);
     $finish;
