@@ -106,6 +106,42 @@ rop_submit_config:
     LOAD R3, R1, 36
     ROPSET P8, R2, PMODE, R3
     ROPSUBMIT CONFIG
+    ROPSET P8, R0, P9, R0
+    JR R31
+
+    .globl rop_submit_config_fenced
+rop_submit_config_fenced:
+    LOAD R2, R1, 0
+    LOAD R3, R1, 4
+    ROPSET P0, R2, P1, R3
+    LOAD R2, R1, 8
+    LOAD R3, R1, 12
+    ROPSET P2, R2, P3, R3
+    LOAD R2, R1, 16
+    LOAD R3, R1, 20
+    ROPSET P4, R2, P5, R3
+    LOAD R2, R1, 24
+    LOAD R3, R1, 28
+    ROPSET P6, R2, P7, R3
+    LOAD R2, R1, 32
+    LOAD R3, R1, 36
+    ROPSET P8, R2, PMODE, R3
+    ROPSUBMIT.F CONFIG
+    ROPSET P8, R0, P9, R0
+    JR R31
+
+    .globl rop_submit_span_compact
+rop_submit_span_compact:
+    LOAD R2, R1, 0
+    LOAD R3, R1, 4
+    ROPSET P0, R2, P1, R3
+    LOAD R2, R1, 8
+    LOAD R3, R1, 12
+    ROPSET P2, R2, P3, R3
+    LOAD R2, R1, 16
+    LOAD R3, R1, 20
+    ROPSET P5, R2, PMODE, R3
+    ROPSUBMIT SPAN
     JR R31
 
     .globl rop_wait

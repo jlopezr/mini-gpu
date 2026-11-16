@@ -38,7 +38,9 @@ COMPARE_FRAMES = $(PYTHON) $(REPO)/tools/compare-frames.py
 # Límite de instrucciones del simulador: en la práctica, ninguno.
 SIM_LIMIT = 100000000000
 # Lo que mini-cc no pone solo: el runtime de la GPU y la biblioteca C mínima (runtime/).
-LIBC = $(REPO)/runtime/src/gpu.c $(REPO)/runtime/src/gpu_runtime.inc $(REPO)/runtime/src/bench.inc $(REPO)/runtime/src/string.c
+ROP ?= 0
+ROP_RUNTIME = $(if $(filter 1,$(ROP)),$(REPO)/runtime/src/rop.inc)
+LIBC = $(REPO)/runtime/src/gpu.c $(REPO)/runtime/src/gpu_runtime.inc $(REPO)/runtime/src/bench.inc $(REPO)/runtime/src/string.c $(ROP_RUNTIME)
 LIBC_DEPS = $(LIBC) $(wildcard $(REPO)/runtime/include/*.h)
 
 # Variables de la línea de órdenes (ver `make help`).
@@ -62,9 +64,9 @@ FIXED ?= 0
 FP32 ?= 0
 # EXT=1: MIN/MAX y CLZ con las instrucciones EXT de la 38 (mgl_ext.h, intrínsecos de mini-lcc). Solo la 38.
 EXT ?= 0
-MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)$(if $(filter 1,$(FP32)),-fp32)$(if $(filter 1,$(EXT)),-ext)
+MG3 := build/minigpu/3d$(if $(filter 1,$(FIXED)),-fixed)$(if $(filter 1,$(FP32)),-fp32)$(if $(filter 1,$(EXT)),-ext)$(if $(filter 1,$(ROP)),-rop)
 MG3_DEFS := $(if $(filter 1,$(FIXED)),-D MGR_FIXED_GEOMETRY=1 -D MGR_FIXED_DEPTH=1) $(if $(filter 1,$(FP32)),--fp32) \
-    $(if $(filter 1,$(EXT)),-D MGL_EXT=1)
+    $(if $(filter 1,$(EXT)),-D MGL_EXT=1) $(if $(filter 1,$(ROP)),-D MGR_USE_ROP=1)
 
 # ---------------------------------------------------------------------------
 # Fuentes, objetos y programas

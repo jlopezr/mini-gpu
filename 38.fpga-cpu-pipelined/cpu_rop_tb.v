@@ -450,6 +450,46 @@ module cpu_rop_tb;
     expect_word(12'h900, 32'h00ab_00ab);
     expect_word(12'h904, 32'h0000_0000);
 
+    // ---- compact: CONFIG + SPAN compacto desde la CPU --------------------
+    // El frontend debe conservar la instantánea del CONFIG al cambiar PMODE y
+    // P8/P9 para el descriptor compacto siguiente.
+    for (i = 0; i < 24; i = i + 1) data_memory[(12'hb00 >> 2) + i] = 32'hffff_ffff;
+    for (i = 0; i < 24; i = i + 1) data_memory[(12'ha00 >> 2) + i] = 32'h0000_0000;
+    clear_program();
+    emit(movi(5'd1, 16'h0a00));              // CONFIG P0 color base
+    emit(movi(5'd2, 16'h0b00));              // CONFIG P1 Z base
+    emit(ropset(4'd0, 5'd1, 4'd1, 5'd2));
+    emit(movi(5'd3, 16'd32));
+    emit(movi(5'd4, 16'd40));
+    emit(ropset(4'd2, 5'd3, 4'd3, 5'd4));    // strides independientes
+    emit(movi(5'd5, 16'h1234));
+    emit(movi(5'd6, 16'd100));
+    emit(ropset(4'd4, 5'd5, 4'd5, 5'd6));
+    emit(movi(5'd7, 16'd3));
+    emit(movi(5'd8, 16'd20));
+    emit(ropset(4'd6, 5'd7, 4'd7, 5'd8));
+    emit(movi(5'd9, 16'h0060));              // ALWAYS, escribe Z y color
+    emit(movi(5'd10, 16'h001f));             // todos los grupos de CONFIG
+    emit(ropsubmit(3'd5, 1'b0, 4'd8, 5'd9, PMODE, 5'd10));
+    emit(ropwait(1'b0));
+    emit(movi(5'd10, 16'h1000));
+    emit(ropset(PMODE, 5'd10, 4'd8, 5'd0));  // compacto; P8 reservado = 0
+    emit(ropset(4'd9, 5'd0, NONE, 5'd0));    // P9 reservado = 0
+    emit(movi(5'd1, 16'd2));
+    emit(movi(5'd2, 16'd6));
+    emit(ropset(4'd0, 5'd1, 4'd1, 5'd2));    // offsets de color y Z
+    emit(movi(5'd3, 16'd5));
+    emit(movi(5'd4, 16'd2));
+    emit(ropset(4'd2, 5'd3, 4'd3, 5'd4));
+    emit(ropsubmit(3'd3, 1'b0, NONE, 5'd0, NONE, 5'd0));
+    emit(ropwait(1'b0));
+    emit(HALT);
+    run("compact", 1'b0, 8'd0, 32'd0);
+    expect_word(12'ha00, 32'h1234_0000);
+    expect_word(12'ha24, 32'h1234_1234);
+    expect_word(12'hb08, 32'h006a_0067);     // fila 0: 103, 106
+    expect_word(12'hb30, 32'h007e_007b);     // fila 1: 123, 126
+
     // ---- inv ----------------------------------------------------------------
     clear_program();
     emit(ropwait(1'b1));

@@ -76,7 +76,7 @@ mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_
     const mgr_window_vertex_t *t;
     mgl_s32 minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
     mgl_s32 w0, w1, w2, row0, row1, row2, lo, hi, n, covered = 0, zi, dzi = 0;
-    int ready = 0;
+    int ready = 0, rop = 0;
 #if MGR_FIXED_DEPTH
     /* El plano de profundidad en enteros (fixed.c); el recorrido de filas es el mismo de abajo. */
     mgr_depth_plane_t plane;
@@ -233,7 +233,9 @@ mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_
 #if MGR_INCREMENTAL_DEPTH
             }
 #endif
-            mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
+            if (!rop) rop = mgr_fragment_rop_begin(f, dzi);
+            if (rop) mgr_fragment_rop_span(f, (int)y, (int)start, (int)x, zi);
+            else mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
             covered += x - start;
         }
         w0 += row0;

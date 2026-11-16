@@ -67,6 +67,8 @@ static int execute(mgr_renderer_t *r, const unsigned char *p, unsigned int op, u
     if (op == MGL_CMD_CLEAR || op == MGL_CMD_BATCH || op == MGL_CMD_SET_RENDER_TARGET ||
         op == MGL_CMD_SET_VIEWPORT || op == MGL_CMD_END_FRAME)
         mgr_sort_flush(s, &r->stats);
+    if (op == MGL_CMD_CLEAR || op == MGL_CMD_BATCH || op == MGL_CMD_SET_RENDER_TARGET || op == MGL_CMD_END_FRAME)
+        mgr_fragment_rop_finish();
     switch (op) {
     case MGL_CMD_CLEAR:
         return clear(s, p, flags);
@@ -124,6 +126,7 @@ int mgr_execute(mgr_renderer_t *r, mgl_u32 addr) {
         r->stats.commands++;
     }
     mgr_sort_flush(&r->state, &r->stats); /* un buffer sin END_FRAME */
+    mgr_fragment_rop_finish();
     r->error_offset = 0;
     return MGR_OK;
 }

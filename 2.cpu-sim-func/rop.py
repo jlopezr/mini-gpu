@@ -87,32 +87,54 @@ class Rop:
                 src = p[0] + row * p[4]
                 dst = p[1] + row * p[5]
                 self.cpu.memory[dst:dst + p[2]] = self.cpu.memory[src:src + p[2]]
-        elif op == 3:  # SPAN explícito
-            if mode & 0xc000 or mode & 0x1000 or not p[2] or not p[3] or not (mode & 0x60) or (mode & 7) == 7:
+        elif op == 3:  # SPAN explícito o compacto sobre CONFIG
+            compact = mode & 0x1000
+            if compact:
+                # En compacto solo [12:8] tiene significado: los cuatro
+                # overrides y el bit COMPACT. P8/P9 quedan reservados.
+                if mode & ~0x1f00 or self.config_written != 0x1f or p[8] or p[9]:
+                    raise ValueError()
+                render_mode = self.config[8]
+                color, z = self.config[0] + p[0], self.config[1] + p[1]
+                cstride, zstride = self.config[2], self.config[3]
+                value = p[4] if mode & 0x0100 else self.config[4]
+                initial = p[5] if mode & 0x0200 else self.config[5]
+                dx = p[6] if mode & 0x0400 else self.config[6]
+                dy = p[7] if mode & 0x0800 else self.config[7]
+            else:
+                if mode & 0xd000:
+                    raise ValueError()
+                render_mode = mode
+                color, z = p[0], p[1]
+                cstride, zstride = p[4], p[5]
+                value, initial, dx, dy = p[6], p[7], p[8], p[9]
+            if (render_mode & 0xc000 or render_mode & 0x1000 or not p[2] or not p[3] or
+                    not (render_mode & 0x60) or (render_mode & 7) == 7 or
+                    ((render_mode & 0x2000) and ((render_mode & 0x10) or (render_mode & 0x80)))):
                 raise ValueError()
-            csize, zsize = (4 if mode & 8 else 2), (4 if mode & 16 else 2)
-            if p[0] % csize or p[1] % zsize:
+            csize, zsize = (4 if render_mode & 8 else 2), (4 if render_mode & 16 else 2)
+            if color % csize or z % zsize:
                 raise ValueError()
             for row in range(p[3]):
                 for col in range(p[2]):
-                    zraw = (p[7] + col * p[8] + row * p[9]) & MASK32
-                    shifted = s32(zraw) >> ((mode >> 8) & 15)
-                    if zsize == 2 and mode & 0x2000:
+                    zraw = (initial + col * dx + row * dy) & MASK32
+                    shifted = s32(zraw) >> ((render_mode >> 8) & 15)
+                    if zsize == 2 and render_mode & 0x2000:
                         newz = max(0, min(0xffff, shifted))
                     else:
                         newz = shifted & ((1 << (8 * zsize)) - 1)
-                    za = p[1] + row * p[5] + col * zsize
-                    ca = p[0] + row * p[4] + col * csize
+                    za = z + row * zstride + col * zsize
+                    ca = color + row * cstride + col * csize
                     old = self._read(za, zsize)
-                    a = s32(newz) if mode & 0x80 and zsize == 4 else (newz ^ (0x8000 if mode & 0x80 else 0) if zsize == 2 else newz)
-                    b = s32(old) if mode & 0x80 and zsize == 4 else (old ^ (0x8000 if mode & 0x80 else 0) if zsize == 2 else old)
-                    cmp = mode & 7
+                    a = s32(newz) if render_mode & 0x80 and zsize == 4 else (newz ^ (0x8000 if render_mode & 0x80 else 0) if zsize == 2 else newz)
+                    b = s32(old) if render_mode & 0x80 and zsize == 4 else (old ^ (0x8000 if render_mode & 0x80 else 0) if zsize == 2 else old)
+                    cmp = render_mode & 7
                     passed = (cmp == 0 or (cmp == 1 and a == b) or (cmp == 2 and a != b) or
                               (cmp == 3 and a < b) or (cmp == 4 and a <= b) or
                               (cmp == 5 and a > b) or (cmp == 6 and a >= b))
                     if passed:
-                        if mode & 0x20: self._write(za, zsize, newz)
-                        if mode & 0x40: self._write(ca, csize, p[6])
+                        if render_mode & 0x20: self._write(za, zsize, newz)
+                        if render_mode & 0x40: self._write(ca, csize, value)
         elif op == 5:  # CONFIG
             if mode & ~31 or not mode:
                 raise ValueError()

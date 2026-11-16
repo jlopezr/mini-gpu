@@ -64,6 +64,11 @@ typedef struct {
     rop_u32 z_initial, dx, dy, render_mode, groups;
 } rop_config_t;
 
+/* SPAN compacto: offsets sobre CONFIG; z_initial sustituye el de CONFIG. */
+typedef struct {
+    rop_u32 color_offset, z_offset, pixels, rows, z_initial, mode;
+} rop_span_compact_t;
+
 void rop_submit_fill(const rop_fill_t *job);
 void rop_submit_copy(const rop_copy_t *job);
 /* Igual que COPY, pero confirma los STORE anteriores de la CPU antes de leer src. */
@@ -71,6 +76,8 @@ void rop_submit_copy_fenced(const rop_copy_t *job);
 void rop_submit_generate(const rop_generate_t *job);
 void rop_submit_span(const rop_span_t *job);
 void rop_submit_config(const rop_config_t *config);
+void rop_submit_config_fenced(const rop_config_t *config);
+void rop_submit_span_compact(const rop_span_compact_t *job);
 
 /* Espera todos los submits anteriores; INV invalida tambien la D-cache. */
 void rop_wait(void);

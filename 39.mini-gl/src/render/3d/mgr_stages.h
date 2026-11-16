@@ -151,6 +151,10 @@ typedef struct {
 /* Los píxeles de x0 a x1 - 1 de la fila y (ya dentro del destino). z es la
    profundidad en x0 y dz lo que cambia por píxel. */
 void mgr_fragment_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z, mgl_s32 dz);
+/* Backend ROP opcional: solo Z16/C16, LESS, test+write. */
+int mgr_fragment_rop_begin(const mgr_fragment_t *f, mgl_s32 dz);
+void mgr_fragment_rop_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z);
+void mgr_fragment_rop_finish(void);
 
 void mgr_clear_color(const mgr_state_t *s, mgl_color_t c);
 void mgr_clear_depth(const mgr_state_t *s, mgl_u16 d);
