@@ -1,0 +1,4 @@
+{
+  "alias": "pipelined",
+  "description": "Prototipo de viabilidad para una MiniCPU pipelined capaz de aceptar una instruccion por ciclo"
+}

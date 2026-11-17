@@ -67,6 +67,7 @@ BIT_CPU = 9
 BIT_GPU = 10
 BIT_INPUT = 11
 BIT_DMA = 8
+BIT_AUDIO = 12
 
 AVISO = ("GENERADO por tools/generate-sysid desde el RTL de esta carpeta. "
          "No editar.")
@@ -155,6 +156,8 @@ def devices_de(directorio: Path, capacidades: set[str]) -> int:
     # INPUT: la capacidad vive en capabilities.json y el bit es el 8 de §5.4.
     if "dma_device" in capacidades:
         bits |= 1 << BIT_DMA
+    if "audio_device" in capacidades:
+        bits |= 1 << BIT_AUDIO
 
     arquitectura = backend_from_rtl(directorio)
     if arquitectura == "cpu":

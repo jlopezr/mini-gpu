@@ -195,6 +195,12 @@
     "file": "dma_engine.sv"
   },
 
+  "_comment_audio_device": "El periferico AUDIO HDMI (audio_mmio.v, bloque 0x8070_0000) publica el ring PCM para su lector interno. El bit AUDIO de DEVICES es el 12.",
+  "audio_device": {
+    "architecture": "cpu",
+    "file": "audio_mmio.v"
+  },
+
   "_comment_rop": "Familia ROP de la CPU (opcode 0x37: ROPSET, ROPSUBMIT, ROPWAIT, ROPSTATUS; 1.isa/isa.md §7.5, contrato propuesto). La CPU solo la decodifica con el parametro ROP de cpu.v a uno, que pone top.v; sin el, 0x37 es un opcode invalido.",
   "rop": {
     "architecture": "cpu",

@@ -1,0 +1,1207 @@
+// Identidad del prototipo (MMIO v2 §5). GENERADO por `tools/generate-sysid`
+// desde el RTL de esta carpeta. §5.4 lo pide asi: «no se escribe a mano en
+// cada `top.v` [...]. Un bitmap escrito a mano seria una tercera gemela junto
+// a las ventanas del decodificador y la lista del cliente Python».
+`include "sysid_params.vh"
+`default_nettype none
+
+module top (
+    input wire clk_25mhz, input wire btn_pwr_n, input wire btn_fire1,
+    output wire [7:0] led, output wire wifi_gpio0,
+    input wire ftdi_txd, output wire ftdi_rxd,
+    output wire sdram_clk, output wire sdram_cke, output wire sdram_csn,
+    output wire sdram_rasn, output wire sdram_casn, output wire sdram_wen,
+    output wire [12:0] sdram_a, output wire [1:0] sdram_ba,
+    output wire [1:0] sdram_dqm, inout wire [15:0] sdram_d,
+    output wire [3:0] gpdi_dp
+);
+  function [31:0] gray_to_bin32;
+    input [31:0] value;
+    integer gray_bit;
+    begin
+      gray_to_bin32[31] = value[31];
+      for (gray_bit = 30; gray_bit >= 0; gray_bit = gray_bit - 1)
+        gray_to_bin32[gray_bit] = gray_to_bin32[gray_bit + 1] ^ value[gray_bit];
+    end
+  endfunction
+  // El dominio de CPU/monitor va a 50 MHz, de `pll_cpu.v` (hasta el 12 de
+  // noviembre, 25 MHz directos del oscilador, para tener margen mientras se
+  // segmentaba el pipeline; nextpnr lo cierra a ~61). La SDRAM sigue en
+  // `clk_mem` a 100 MHz y el video en su propio reloj de pixel.
+  //
+  // El divisor UART tiene que cumplir DOS condiciones a la vez:
+  //
+  //   1. Multiplo de 4. `uart.v` alimenta la recepcion con DIVISOR/4 porque
+  //      sobremuestrea 4 veces, y la division es entera.
+  //   2. Un baudio que el FTDI sepa generar exacto.
+  //
+  // Con 50 MHz, divisor 200 deja los mismos 250 kbaud de antes, exactos en el
+  // FTDI (3 MHz / 12): el monitor y las herramientas no cambian. (1 Mbaud
+  // pediria divisor 50 y romperia (1).)
+  localparam integer CLK_FREQ_HZ = 50_000_000;
+  localparam integer UART_CLOCKS_PER_BIT = 200;
+  localparam integer UART_MAX_BAUD = 250_000;
+  localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
+
+  wire clk, pll_locked;
+  pll_cpu pll_i(.clkin(clk_25mhz), .clkout0(clk), .locked(pll_locked));
+
+  wire clk_mem, clk_sdram, pll_mem_locked;
+  wire pll_phasestep, pll_phasedir, pll_phaseloadreg;
+  wire [1:0] pll_phasesel;
+  // Fase del reloj de la SDRAM con la que sale el bitstream, en pasos de 208 ps.
+  // Depende de la herramienta: la etapa de registros antes de los pines se
+  // implementa distinto y desplaza la ventana buena. Se mide con
+  // `tools/phase-sweep` y se cambia en caliente con `monitor.py phase-set`.
+`ifdef DIAMOND
+  localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
+`else
+  // Con DPHASE_SOURCE="ENABLED" el EHXPLLL no aplica el CLKOS_CPHASE estatico
+  // (14 de noviembre: builds identicas con CPHASE 7, 10 y 4 arrancan en la
+  // misma fase fisica). Este numero solo etiqueta la posicion de arranque para
+  // pll_phase_ctl; lo que cuenta es el retardo del camino del reloj al pin.
+  localparam [5:0] SDRAM_PHASE = 6'd18;
+`endif
+  pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
+      .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
+      .locked(pll_mem_locked));
+  // El reloj sale de la celda de IO del pin (F19): un ODDRX1F copia clk_sdram
+  // con un retardo fijo. Con D0=1, D1=0 la ventana buena quedaba de +13 a +33
+  // pasos desde el arranque; D0=0, D1=1 la invierte (24 pasos, 180 grados) y
+  // deja el arranque cerca del centro. Por rutado general (`assign`) el
+  // retardo dependia de la colocacion y la ventana de fase buena se movia con
+  // cada build: el 14 de noviembre, sin los generadores de trafico, la 18 de
+  // fabrica quedo fuera y los programas se reiniciaban. Fuera de sintesis
+  // (iverilog no trae ODDRX1F), la asignacion directa, como en el serializador HDMI.
+`ifdef SYNTHESIZE
+  ODDRX1F sdram_clk_oddr (.D0(1'b0), .D1(1'b1), .SCLK(clk_sdram), .RST(1'b0), .Q(sdram_clk));
+`else
+  assign sdram_clk = clk_sdram;
+`endif
+
+  // Resets: asercion asincrona y liberacion sincrona (`reset_sync.v`), una
+  // cadena por dominio de reloj (ver la 37). El modulo SDRAM hace aparte su
+  // retardo de arranque JEDEC antes de `init_done`.
+  wire arst_cpu = !pll_locked     || !btn_pwr_n;
+  wire arst_mem = !pll_mem_locked || !btn_pwr_n;
+  wire reset, reset_mem;
+  reset_sync #(.STAGES(16)) rs_reset (.clk(clk),     .arst(arst_cpu), .rst(reset));
+  reset_sync #(.STAGES(16)) rs_mem   (.clk(clk_mem), .arst(arst_mem), .rst(reset_mem));
+  assign wifi_gpio0 = 1'b1;
+
+  wire [7:0] uart_rx_data, uart_tx_data;
+  wire uart_rx_strobe, uart_tx_strobe, uart_tx_ready;
+  uart #(.DIVISOR(UART_DIVISOR)) uart_i(
+      .clk(clk), .reset(reset), .serial_rxd(ftdi_txd), .serial_txd(ftdi_rxd),
+      .rxd(uart_rx_data), .rxd_strobe(uart_rx_strobe),
+      .txd(uart_tx_data), .txd_strobe(uart_tx_strobe), .txd_ready(uart_tx_ready));
+
+  // Keep UART receive routing and the monitor's large command FSM on separate
+  // timing stages. The strobe is delayed with its byte, preserving semantics.
+  (* keep = "true" *) reg [7:0] monitor_rx_data;
+  (* keep = "true" *) reg monitor_rx_strobe;
+  always @(posedge clk) begin
+    if (reset) begin
+      monitor_rx_data <= 8'h00;
+      monitor_rx_strobe <= 1'b0;
+    end else begin
+      monitor_rx_data <= uart_rx_data;
+      monitor_rx_strobe <= uart_rx_strobe;
+    end
+  end
+
+  wire [31:0] mem_address;
+  wire [7:0] mem_write_data, mem_read_data, last_command;
+  wire [31:0] mem_read_word;   // la misma lectura sin trocear, para READ_WORD
+  wire [31:0] mem_write_word;  // la palabra entera, para WRITE_WORD
+  wire mem_write_enable, mem_write_word_enable;
+  wire mem_read_enable, mem_ready, mem_error, monitor_busy;
+  wire cpu_run_request, cpu_halt_request, cpu_step_request, cpu_reset_request;
+  wire cpu_halted, cpu_error, cpu_instruction_retired;
+  wire [7:0] cpu_error_code;
+  wire [4:0] cpu_debug_register_address;
+  wire [31:0] cpu_debug_register_data, cpu_pc;
+  // Motivo de no emitir de cada ciclo, para CPU PERFORMANCE (ranuras 8-11).
+  wire [4:0] cpu_perf_stall;
+  wire cpu_perf_muldiv_retired;
+
+  // Lado del monitor del puerto serie: lo que desencapsulan SEND_BYTES y
+  // RECV_BYTES. No hay pin ni baudio propio, es el mismo enlace del monitor.
+  wire serial_host_push, serial_host_pop;
+  wire [7:0] serial_host_push_data;
+  wire [7:0] serial_host_rx_free, serial_host_tx_data, serial_host_tx_count;
+
+  // Lado del monitor de INPUT: los eventos ya formados que manda el PC con
+  // INPUT_EVENTS e INPUT_PRESENCE. El adaptador es el software del PC; este
+  // bloque solo guarda STATE y la FIFO. Ver input_registers.v.
+  wire input_event_valid, input_presence_write;
+  wire input_presence_keyboard, input_presence_mouse;
+  wire [31:0] input_event_word;
+  wire [4:0] input_free_slots;
+  // Los contadores de rendimiento vivian AQUI, como dos registros que solo
+  // leia el host con los comandos 0x36/0x37. Ahora son un dispositivo MMIO en
+  // 0x81010000 --el bloque CPU PERFORMANCE de MMIO v2-- y el programa se mide
+  // a si mismo sin parar ni pasar por el puerto serie. Ver cpu_perf_counters.v.
+
+  // MAYOR = 5: juego base MAS puerto serie MAS INPUT, diecisiete comandos. Los
+  // MAYORES son 3 (base), 4 (base + serie) y 5 (base + serie + INPUT): la 30 es
+  // la unica con los dos comandos de INPUT, asi que es la unica que sube. MENOR
+  // = numero de carpeta. Las demas carpetas reciben el mismo monitor.v con
+  // HAS_INPUT = 0 y contestan `ff` a esos comandos, o sea que su protocolo no
+  // cambia y su MAYOR tampoco.
+  //
+  // 1.15 fue la ALU completa: MULHI, DIVU, REM y REMU (0x0B, 0x0D..0x0F), los
+  // desplazamientos con cantidad inmediata (bit 10 de SHL/SHR/SAR) y R0 cableado
+  // a cero. El PROTOCOLO no cambia, igual que en 1.13, y subio por la misma
+  // razon con un motivo mas: R0 no es un cambio aditivo sino INCOMPATIBLE --un
+  // programa que lo use como registro general da resultados distintos sin parar
+  // con error-- asi que el runner tiene que poder distinguir los dos bitstreams.
+  //
+  // El monitor ya no lleva ventanas MMIO: los comandos de bloque solo comprueban que un bloque
+  // que empieza en RAM acabe en RAM (RAM_END) y que ninguno de la vuelta al espacio de 32 bits.
+  // Que registro existe y cual no lo dice el decodificador MMIO, que contesta error a todo hueco.
+  monitor #(.VERSION_MAJOR(8'd5),.VERSION_MINOR(8'd42),
+      .HAS_SERIAL(1), .HAS_INPUT(1),
+      .RAM_END(33'h0_0200_0000))
+    monitor_i (
+      .clk(clk), .reset(reset), .rx_data(monitor_rx_data),
+      .rx_strobe(monitor_rx_strobe),
+      .tx_data(uart_tx_data), .tx_strobe(uart_tx_strobe), .tx_ready(uart_tx_ready),
+      .mem_address(mem_address), .mem_write_data(mem_write_data),
+      .mem_write_enable(mem_write_enable),
+      .mem_write_word(mem_write_word),
+      .mem_write_word_enable(mem_write_word_enable),
+      .mem_read_enable(mem_read_enable),
+      .mem_read_data(mem_read_data), .mem_read_word(mem_read_word), .mem_ready(mem_ready), .mem_error(mem_error),
+      .cpu_run_request(cpu_run_request), .cpu_halt_request(cpu_halt_request),
+      .cpu_step_request(cpu_step_request), .cpu_reset_request(cpu_reset_request),
+      .cpu_halted(cpu_halted), .cpu_error(cpu_error),
+      .cpu_error_code(cpu_error_code), .cpu_pc(cpu_pc),
+      .cpu_debug_register_address(cpu_debug_register_address),
+      .cpu_debug_register_data(cpu_debug_register_data),
+      .serial_push(serial_host_push), .serial_push_data(serial_host_push_data),
+      .serial_rx_free(serial_host_rx_free),
+      .serial_pop(serial_host_pop), .serial_tx_data(serial_host_tx_data),
+      .serial_tx_count(serial_host_tx_count),
+      .input_event_valid(input_event_valid), .input_event_word(input_event_word),
+      .input_presence_write(input_presence_write),
+      .input_presence_keyboard(input_presence_keyboard),
+      .input_presence_mouse(input_presence_mouse),
+      .input_free_slots(input_free_slots),
+      .last_command(last_command), .busy(monitor_busy));
+
+  // Register both directions of the monitor memory port. Besides making the
+  // interface timing-independent, this prevents the monitor FSM, arbitration
+  // and response handling from becoming one long combinational path.
+  reg [31:0] adapter_monitor_address;
+  reg [7:0] adapter_monitor_write_data;
+  reg [31:0] adapter_monitor_write_word;
+  reg adapter_monitor_write_enable, adapter_monitor_write_word_enable;
+  reg adapter_monitor_read_enable;
+  wire [7:0] adapter_monitor_read_data;
+  wire [31:0] adapter_monitor_read_word;   // la misma lectura sin trocear
+  wire adapter_monitor_ready, adapter_monitor_error;
+  reg [7:0] registered_mem_read_data;
+  reg [31:0] registered_mem_read_word;
+  reg registered_mem_ready, registered_mem_error;
+  always @(posedge clk) begin
+    if (reset) begin
+      adapter_monitor_address <= 32'h0000_0000;
+      adapter_monitor_write_data <= 8'h00;
+      adapter_monitor_write_word <= 32'h0000_0000;
+      adapter_monitor_write_enable <= 1'b0;
+      adapter_monitor_write_word_enable <= 1'b0;
+      adapter_monitor_read_enable <= 1'b0;
+      registered_mem_read_data <= 8'h00;
+      registered_mem_read_word <= 32'h0000_0000;
+      registered_mem_ready <= 1'b0;
+      registered_mem_error <= 1'b0;
+    end else begin
+      adapter_monitor_address <= mem_address;
+      adapter_monitor_write_data <= mem_write_data;
+      adapter_monitor_write_word <= mem_write_word;
+      adapter_monitor_write_enable <= mem_write_enable;
+      adapter_monitor_write_word_enable <= mem_write_word_enable;
+      adapter_monitor_read_enable <= mem_read_enable;
+      registered_mem_read_data <= adapter_monitor_read_data;
+      registered_mem_read_word <= adapter_monitor_read_word;
+      registered_mem_ready <= adapter_monitor_ready;
+      registered_mem_error <= adapter_monitor_error;
+    end
+  end
+  assign mem_read_data = registered_mem_read_data;
+  assign mem_read_word = registered_mem_read_word;
+  assign mem_ready = registered_mem_ready;
+  assign mem_error = registered_mem_error;
+
+  // Borrado del underflow y parada por HALT_AT. Los dos nacen en el bloque de
+  // registros de video, que se instancia mucho mas abajo, y cruzan a otro
+  // sitio: el primero al dominio de pixel y el segundo a la CPU.
+  wire video_underflow_clear, video_halt_request;
+
+  wire cpu_imem_valid, cpu_imem_ready, cpu_imem_rvalid;
+  wire [31:0] cpu_imem_address, cpu_imem_read_data;
+  wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_rvalid, cpu_dmem_error;
+  wire cpu_dmem_waiting;
+  wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
+  wire [3:0] cpu_dmem_write_enable;
+  // Consulta a la D-cache desde ID/EX (dcache.v, cpu.v seccion 04c).
+  wire [31:0] dcache_lookup_address, dcache_ex_read_data, dcache_ex_write_data;
+  wire dcache_ex_hit, dcache_mem_advance, dcache_ex_load, dcache_ex_store;
+  wire [3:0] dcache_ex_write_enable;
+  // ROP (opcode 0x37, 1.isa/isa.md §7.5): cpu.v entrega las microoperaciones
+  // a rop_frontend desde MEM; rop_core ejecuta los trabajos en el puerto 3.
+  wire rop_valid, rop_ready, rop_clear, rop_bad_value, rop_error, rop_fence;
+  wire rop_dcache_invalidate;
+  wire [1:0] rop_uop;
+  wire [3:0] rop_ia, rop_ib;
+  wire [31:0] rop_da, rop_db, rop_rdata;
+  wire [2:0] rop_op;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
+  wire wb_dirty;
+  cpu #(.ROP(1)) cpu_i(
+      .clk(clk), .reset(reset),
+      // RESET del monitor: solo la CPU. Las caches siguen y contestan lo que
+      // ya aceptaron, que la CPU descarta (cpu.v, soft_reset).
+      .soft_reset(cpu_reset_request),
+      .run_request(cpu_run_request),
+      // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
+      // video, que la para al completar el intercambio numero N. Lo segundo es
+      // lo que hace repetible una captura de frame.
+      .halt_request(cpu_halt_request || video_halt_request),
+      .step_request(cpu_step_request), .halted(cpu_halted), .error(cpu_error),
+      .error_code(cpu_error_code), .instruction_retired(cpu_instruction_retired),
+      .imem_valid(cpu_imem_valid), .imem_address(cpu_imem_address),
+      .imem_read_data(cpu_imem_read_data), .imem_ready(cpu_imem_ready),
+      .imem_rvalid(cpu_imem_rvalid),
+      .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
+      .dmem_write_data(cpu_dmem_write_data),
+      .dmem_write_enable(cpu_dmem_write_enable),
+      .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
+      .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
+      .dmem_waiting(cpu_dmem_waiting),
+      .dcache_lookup_address(dcache_lookup_address), .dcache_hit(dcache_ex_hit),
+      .dcache_read_data(dcache_ex_read_data), .dcache_mem_advance(dcache_mem_advance),
+      .dcache_ex_load(dcache_ex_load), .dcache_ex_store(dcache_ex_store),
+      .dcache_ex_write_data(dcache_ex_write_data),
+      .dcache_ex_write_enable(dcache_ex_write_enable),
+      .debug_register_address(cpu_debug_register_address),
+      .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
+      .perf_stall(cpu_perf_stall),
+      .perf_muldiv_retired(cpu_perf_muldiv_retired),
+      .rop_valid(rop_valid), .rop_uop(rop_uop), .rop_ia(rop_ia), .rop_ib(rop_ib),
+      .rop_da(rop_da), .rop_db(rop_db), .rop_op(rop_op), .rop_clear(rop_clear),
+      .rop_ready(rop_ready), .rop_rdata(rop_rdata),
+      .rop_bad_value(rop_bad_value), .rop_error(rop_error),
+      // ROPSUBMIT.F: todo STORE anterior confirmado (`wb_dirty` bajo).
+      .rop_fence(rop_fence), .mem_quiet(!wb_dirty),
+      .rop_dcache_invalidate(rop_dcache_invalidate));
+
+  // Puertos de video del adaptador. Se declaran aqui porque el adaptador se
+  // instancia antes que el subsistema de video.
+  // El lector de video frena al arbitro mientras vacia una rafaga en el line
+  // buffer, asi que su `rsp_ready` sale de el y no es constante.
+  wire video_rsp_ready;
+  wire mmio_select, mmio_write;
+  wire [3:0] mmio_write_mask;
+  // Doce bits: la ventana pasa de 32 bytes a 4 KiB, repartidos en dieciseis
+  // La direccion va ENTERA hasta el decodificador: en v2 los bloques estan a
+  // megabytes unos de otros. Ver mmio_decoder.v para el mapa y su coste.
+  wire [31:0] mmio_address;
+  wire [31:0] mmio_write_data, mmio_read_data;
+  wire mmio_error;
+  wire mmio_video_select, mmio_serial_select, mmio_input_select;
+  wire mmio_phase_select;
+  wire [31:0] mmio_video_read_data, mmio_video_core_read_data;
+  wire [31:0] mmio_console_read_data, mmio_serial_read_data, mmio_input_read_data;
+  wire mmio_input_error;
+  wire mmio_video_error, mmio_video_core_error, mmio_console_error;
+  wire mmio_perf_select;
+  wire [31:0] mmio_phase_read_data;
+  wire mmio_phase_error;
+  assign mmio_video_read_data = mmio_video_core_read_data
+                                | mmio_console_read_data;
+  assign mmio_video_error = mmio_video_core_error | mmio_console_error;
+
+
+  // ===========================================================================
+  // Camino de memoria en rafagas BL8
+  //
+  // La 16 tenia un solo bloque, `sdram_system_adapter`, que arbitraba monitor,
+  // CPU y video contra un controlador de 16 bits. Aqui el bus es de 128 bits y
+  // el reparto cambia de forma: cada cliente tiene su propio adaptador y su
+  // propio puerto del arbitro.
+  //
+  //                       ┌── p0  cpu_dmem_adapter      ── dmem 32 bits + MMIO
+  //   sdram_controller_128┤── p1  instruction_buffer    ── imem 32 bits
+  //           ▲           ├── p2  video_line_source_burst  (nativo, urgent)
+  //           │           └── p3  monitor_mem_adapter_128 ── monitor, byte a byte
+  //     memory_fabric_4
+  //
+  // El puerto 1 del arbitro esta pensado en `pruebas/sdram` para una GPU; aqui
+  // lo ocupa el bufer de instrucciones, que es el cliente de solo lectura que
+  // mas trafico mueve. Cuando llegue la GPU habra que ensanchar el arbitro, y
+  // esa conversacion es mejor tenerla con el reparto ya medido.
+  //
+  // Lo que se queda sin instanciar pero no se borra: `sdram_controller` (BL1) y
+  // `sdram_system_adapter`, que siguen siendo la linea base contra la que se
+  // compara este camino, y los bancos que los miden siguen pasando.
+  // ===========================================================================
+  wire init_done, init_done_mem, sdram_busy;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar
+  // (declarado arriba, junto a la CPU, que lo usa para ROPSUBMIT.F).
+
+  // Puerto comun del arbitro hacia el controlador.
+  wire fab_req_valid, fab_req_ready, fab_req_write;
+  wire controller_req_valid, controller_req_ready;
+  wire [23:0] fab_req_addr;
+  wire [127:0] fab_req_wdata, fab_rdata;
+  wire [15:0] fab_req_wmask;
+  wire fab_done, fabric_busy;
+
+  // Peticion MMIO (clk) -> controlador de fase (clk_mem), con bus agrupado y
+  // handshake por toggle. `phase_quiesce` frena clientes nuevos mientras las
+  // colas previas se drenan; `phase_traffic_block` se activa solo al quedar
+  // todo vacio, para no congelar una peticion a medio aceptar.
+  wire phase_req_toggle, phase_ack_toggle;
+  wire [5:0] phase_req_steps, phase_pos_gray;
+  wire phase_quiesce, phase_busy_mem, phase_err_mem;
+  wire phase_controller_reset, phase_traffic_block;
+
+  phase_mmio phase_mmio_i(
+      .clk(clk), .reset(reset), .select(mmio_phase_select),
+      .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_phase_read_data), .error(mmio_phase_error),
+      .req_toggle(phase_req_toggle), .req_steps(phase_req_steps),
+      .ack_toggle_async(phase_ack_toggle),
+      .phase_busy_async(phase_busy_mem), .phase_err_async(phase_err_mem),
+      .phase_pos_gray_async(phase_pos_gray),
+      .pll_locked_async(pll_mem_locked), .init_done_async(init_done_mem),
+      .quiesce(phase_quiesce));
+
+  // Puerto 0: datos de la CPU.
+  wire p0_valid, p0_ready, p0_write, p0_rsp_valid, p0_rsp_ready, p0_rsp_error;
+  wire [31:0] p0_addr;
+  wire [127:0] p0_wdata, p0_rsp_rdata;
+  wire [15:0] p0_wmask;
+
+  // Puerto 1: instrucciones.
+  wire p1_valid, p1_ready, p1_write, p1_rsp_valid, p1_rsp_ready, p1_rsp_error;
+  wire [31:0] p1_addr;
+  wire [127:0] p1_wdata, p1_rsp_rdata;
+  wire [15:0] p1_wmask;
+
+  // Puerto 2: video.
+  wire p2_valid, p2_ready, p2_write, p2_urgent, p2_rsp_valid, p2_rsp_error;
+  wire [31:0] p2_addr;
+  wire [127:0] p2_wdata, p2_rsp_rdata;
+  wire [15:0] p2_wmask;
+
+  // Puerto 3: monitor, ROP y DMA, compartido detras de un arbitro local. Los
+  // `p3_*` son el lado del monitor; el arbitro junta los tres maestros y su
+  // salida son los `fab3_*` que entran en el fabric.
+  wire p3_valid, p3_ready, p3_write, p3_rsp_valid, p3_rsp_ready, p3_rsp_error;
+  wire [31:0] p3_addr;
+  wire [127:0] p3_wdata, p3_rsp_rdata;
+  wire [15:0] p3_wmask;
+  wire fab3_valid, fab3_ready, fab3_write, fab3_rsp_valid, fab3_rsp_ready, fab3_rsp_error;
+  wire [31:0] fab3_addr;
+  wire [127:0] fab3_wdata, fab3_rsp_rdata;
+  wire [15:0] fab3_wmask;
+
+  // Los dos clientes de la ventana de registros de video.
+  wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
+  wire [3:0] mon_mmio_mask;
+  wire [31:0] mon_mmio_addr;
+  wire [31:0] mon_mmio_wdata;
+  wire cpu_mmio_req, cpu_mmio_ack, cpu_mmio_write;
+  wire [3:0] cpu_mmio_mask;
+  wire [31:0] cpu_mmio_addr;
+  wire [31:0] cpu_mmio_wdata;
+
+  // Cache de datos entre la CPU y el adaptador, con el mismo protocolo a los
+  // dos lados (ver dcache.v). Escritura inmediata, asi que la SDRAM esta al
+  // dia salvo lo que guarde el bufer de combinacion, que se vacia como antes.
+  // Se invalida entera con `reset` y al parar la CPU: es cuando el monitor
+  // puede escribir en memoria por su cuenta. 16 KB: 1024 lineas de 16 bytes.
+  wire ad_dmem_valid, ad_dmem_ready, ad_dmem_rvalid, ad_dmem_error;
+  wire [31:0] ad_dmem_address, ad_dmem_write_data, ad_dmem_read_data;
+  wire [3:0] ad_dmem_write_enable;
+  wire [127:0] ad_dmem_read_line;
+  wire dcache_hit, dcache_miss;
+  dcache #(.LINES(1024), .INDEX_BITS(10)) dcache_i(
+      // Tambien con ROPWAIT INV: un pulso, y la cache suma su epoca en el flanco.
+      .clk(clk), .reset(reset), .invalidate(cpu_halted || rop_dcache_invalidate),
+      .lookup_address(dcache_lookup_address), .ex_hit(dcache_ex_hit),
+      .ex_read_data(dcache_ex_read_data), .mem_advance(dcache_mem_advance),
+      .ex_load(dcache_ex_load), .ex_store(dcache_ex_store),
+      .ex_write_data(dcache_ex_write_data), .ex_write_enable(dcache_ex_write_enable),
+      .cpu_valid(cpu_dmem_valid), .cpu_address(cpu_dmem_address),
+      .cpu_write_data(cpu_dmem_write_data),
+      .cpu_write_enable(cpu_dmem_write_enable),
+      .cpu_ready(cpu_dmem_ready), .cpu_read_data(cpu_dmem_read_data),
+      .cpu_rvalid(cpu_dmem_rvalid), .cpu_error(cpu_dmem_error),
+      .mem_valid(ad_dmem_valid), .mem_address(ad_dmem_address),
+      .mem_write_data(ad_dmem_write_data),
+      .mem_write_enable(ad_dmem_write_enable),
+      .mem_ready(ad_dmem_ready), .mem_read_data(ad_dmem_read_data),
+      .mem_read_line(ad_dmem_read_line),
+      .mem_rvalid(ad_dmem_rvalid), .mem_error(ad_dmem_error),
+      .hit_event(dcache_hit), .miss_event(dcache_miss));
+
+  cpu_dmem_adapter dmem_adapter_i(
+      .clk(clk), .reset(reset), .init_done(init_done),
+      .dmem_valid(ad_dmem_valid), .dmem_address(ad_dmem_address),
+      .dmem_write_data(ad_dmem_write_data),
+      .dmem_write_enable(ad_dmem_write_enable),
+      .dmem_read_data(ad_dmem_read_data), .dmem_read_line(ad_dmem_read_line),
+      .dmem_ready(ad_dmem_ready),
+      .dmem_rvalid(ad_dmem_rvalid), .dmem_error(ad_dmem_error),
+      .cpu_halted(cpu_halted), .flush_request(rop_fence),
+      // Los contadores son para los bancos; la sintesis los quita.
+      .wb_dirty(wb_dirty), .merge_count(), .flush_count(),
+      .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
+      .mmio_write(cpu_mmio_write), .mmio_write_mask(cpu_mmio_mask),
+      .mmio_address(cpu_mmio_addr), .mmio_write_data(cpu_mmio_wdata),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
+      .req_valid(p0_valid), .req_ready(p0_ready), .req_write(p0_write),
+      .req_addr(p0_addr), .req_wdata(p0_wdata), .req_wmask(p0_wmask),
+      .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
+      .rsp_rdata(p0_rsp_rdata), .rsp_error(p0_rsp_error));
+
+  // Cache de instrucciones de 32 KB en EBR: 2048 lineas de 16 bytes, y cada
+  // linea es exactamente una rafaga BL8. Con 16 KB, el codigo caliente de los
+  // sketches 3D de 39.mini-gl se pisaba segun como cayera (skimmer y tanks,
+  // 6-8 fallos por cada mil instrucciones); con 32 KB, 0,8-1,9 y +5-7 % fps. Se invalida al parar la CPU (el
+  // monitor reescribe la memoria de programa con la CPU parada) y con `reset`.
+  //
+  // `hit_count`/`miss_count` no se conectan: existen para los bancos de prueba
+  // y la sintesis los quita. Los contadores de rendimiento de la CPU
+  // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
+  wire ibuf_hit, ibuf_miss;
+  instruction_buffer #(.LINES(2048), .INDEX_BITS(11)) instruction_buffer_i(
+      .clk(clk), .reset(reset), .init_done(init_done),
+      .cpu_halted(cpu_halted),
+      .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
+      .cpu_imem_ready(cpu_imem_ready), .cpu_imem_read_data(cpu_imem_read_data),
+      .cpu_imem_rvalid(cpu_imem_rvalid),
+      .req_valid(p1_valid), .req_ready(p1_ready), .req_write(p1_write),
+      .req_addr(p1_addr), .req_wdata(p1_wdata), .req_wmask(p1_wmask),
+      .rsp_valid(p1_rsp_valid), .rsp_ready(p1_rsp_ready),
+      .rsp_rdata(p1_rsp_rdata), .rsp_error(p1_rsp_error),
+      .hit_count(), .miss_count(),
+      .hit_event(ibuf_hit), .miss_event(ibuf_miss));
+
+  monitor_mem_adapter_128 monitor_adapter_i(
+      .clk(clk), .reset(reset), .init_done(init_done),
+      .cpu_halted(cpu_halted), .wb_dirty(wb_dirty),
+      .mem_address(adapter_monitor_address),
+      .mem_write_data(adapter_monitor_write_data),
+      .mem_write_enable(adapter_monitor_write_enable),
+      .mem_write_word(adapter_monitor_write_word),
+      .mem_write_word_enable(adapter_monitor_write_word_enable),
+      .mem_read_enable(adapter_monitor_read_enable),
+      .mem_read_data(adapter_monitor_read_data),.mem_read_word(adapter_monitor_read_word),
+      .mem_ready(adapter_monitor_ready), .mem_error(adapter_monitor_error),
+      .mmio_req(mon_mmio_req), .mmio_ack(mon_mmio_ack),
+      .mmio_write(mon_mmio_write), .mmio_write_mask(mon_mmio_mask),
+      .mmio_address(mon_mmio_addr), .mmio_write_data(mon_mmio_wdata),
+      .mmio_read_data(mmio_read_data), .mmio_error(mmio_error),
+      .req_valid(p3_valid), .req_ready(p3_ready), .req_write(p3_write),
+      .req_addr(p3_addr), .req_wdata(p3_wdata), .req_wmask(p3_wmask),
+      .rsp_valid(p3_rsp_valid), .rsp_ready(p3_rsp_ready),
+      .rsp_rdata(p3_rsp_rdata), .rsp_error(p3_rsp_error));
+
+  // -----------------------------------------------------------------------
+  // AUDIO (0x8070_0000): el lector PCM se anadira detras de sus registros.
+  //
+  // Comparte el puerto 3 con monitor y ROP detras de un arbitro local, y no
+  // en un puerto propio: los otros tres los ocupan CPU datos, instrucciones y
+  // video, y el quinto lo reserved la GPU que ha de venir. El monitor hace
+  // trabajo real solo durante la carga. El arbitro da prioridad monitor > ROP
+  // y deja el tercer lado preparado para el lector AUDIO; enruta respuestas con
+  // una FIFO de propietarios (monitor_rop_dma_arbiter.v). TAG_DEPTH=8 es el
+  // techo COMBINADO de operaciones en vuelo de los tres maestros.
+  // -----------------------------------------------------------------------
+  wire rop_req_valid, rop_req_ready, rop_req_write;
+  wire rop_rsp_valid, rop_rsp_ready, rop_rsp_error;
+  wire [31:0] rop_req_addr;
+  wire [127:0] rop_req_wdata, rop_rsp_rdata;
+  wire [15:0] rop_req_wmask;
+  wire audio_req_valid, audio_req_ready, audio_req_write, audio_rsp_valid, audio_rsp_ready, audio_rsp_error;
+  wire [31:0] audio_req_addr, audio_dma_read_cursor, audio_dma_errors;
+  wire [127:0] audio_req_wdata, audio_rsp_rdata;
+  wire [15:0] audio_req_wmask;
+  wire audio_fifo_wr_en, audio_fifo_full;
+  wire [31:0] audio_fifo_wdata;
+  wire [8:0] audio_fifo_level;
+  reg [31:0] audio_underruns_pix;
+  reg [31:0] audio_sample_ticks_pix;
+  wire [31:0] audio_sample_ticks_gray_pix = (audio_sample_ticks_pix >> 1) ^ audio_sample_ticks_pix;
+  (* async_reg = "true" *) reg [31:0] audio_sample_ticks_gray_sync1, audio_sample_ticks_gray_sync2;
+  wire [31:0] audio_sample_ticks_clk = gray_to_bin32(audio_sample_ticks_gray_sync2);
+  always @(posedge clk) begin
+    if (reset) begin
+      audio_sample_ticks_gray_sync1 <= 0;
+      audio_sample_ticks_gray_sync2 <= 0;
+    end else begin
+      audio_sample_ticks_gray_sync1 <= audio_sample_ticks_gray_pix;
+      audio_sample_ticks_gray_sync2 <= audio_sample_ticks_gray_sync1;
+    end
+  end
+
+  monitor_rop_dma_arbiter #(.TAG_DEPTH(8)) fabric3_arbiter_i(
+      .clk(clk), .reset(reset),
+      .mon_req_valid(p3_valid), .mon_req_ready(p3_ready),
+      .mon_req_write(p3_write), .mon_req_addr(p3_addr),
+      .mon_req_wdata(p3_wdata), .mon_req_wmask(p3_wmask),
+      .mon_rsp_valid(p3_rsp_valid), .mon_rsp_ready(p3_rsp_ready),
+      .mon_rsp_rdata(p3_rsp_rdata), .mon_rsp_error(p3_rsp_error),
+      .rop_req_valid(rop_req_valid), .rop_req_ready(rop_req_ready),
+      .rop_req_write(rop_req_write), .rop_req_addr(rop_req_addr),
+      .rop_req_wdata(rop_req_wdata), .rop_req_wmask(rop_req_wmask),
+      .rop_rsp_valid(rop_rsp_valid), .rop_rsp_ready(rop_rsp_ready),
+      .rop_rsp_rdata(rop_rsp_rdata), .rop_rsp_error(rop_rsp_error),
+      .dma_req_valid(audio_req_valid), .dma_req_ready(audio_req_ready), .dma_req_write(audio_req_write),
+      .dma_req_addr(audio_req_addr), .dma_req_wdata(audio_req_wdata), .dma_req_wmask(audio_req_wmask),
+      .dma_rsp_valid(audio_rsp_valid), .dma_rsp_ready(audio_rsp_ready), .dma_rsp_rdata(audio_rsp_rdata), .dma_rsp_error(audio_rsp_error),
+      .req_valid(fab3_valid), .req_ready(fab3_ready),
+      .req_urgent(), .req_write(fab3_write), .req_addr(fab3_addr),
+      .req_wdata(fab3_wdata), .req_wmask(fab3_wmask),
+      .rsp_valid(fab3_rsp_valid), .rsp_ready(fab3_rsp_ready),
+      .rsp_rdata(fab3_rsp_rdata), .rsp_error(fab3_rsp_error));
+
+  // El ROP llega directamente al arbitro; el tercer maestro sera AUDIO.
+  wire rop_cmd_valid, rop_cmd_ready, rop_done_valid, rop_done_error;
+  wire [2:0] rop_cmd_op;
+  wire [15:0] rop_cmd_mode;
+  wire [319:0] rop_cmd_params;
+  wire rop_frontend_busy, rop_core_busy;
+  reg rop_reset_pending, rop_soft_reset;
+  wire rop_reset = reset || rop_soft_reset;
+
+  // RESET_CPU no puede resetear el ROP en seco: puede haber respuestas suyas
+  // etiquetadas en el arbitro. Se espera a que frontend y core hayan
+  // terminado/drenado todo lo aceptado y entonces se borra su estado para que
+  // un programa nuevo no herede el sticky_error ni la configuracion anterior.
+  always @(posedge clk) begin
+    if (reset) begin
+      rop_reset_pending <= 1'b0;
+      rop_soft_reset <= 1'b0;
+    end else begin
+      rop_soft_reset <= 1'b0;
+      if (cpu_reset_request)
+        rop_reset_pending <= 1'b1;
+      if (rop_reset_pending && !rop_frontend_busy && !rop_core_busy) begin
+        rop_reset_pending <= 1'b0;
+        rop_soft_reset <= 1'b1;
+      end
+    end
+  end
+
+  rop_frontend #(.QUEUE_DEPTH(16)) rop_frontend_i(
+      .clk(clk), .reset(rop_reset),
+      .cpu_valid(rop_valid), .cpu_ready(rop_ready), .cpu_uop(rop_uop),
+      .cpu_ia(rop_ia), .cpu_ib(rop_ib), .cpu_da(rop_da), .cpu_db(rop_db),
+      .cpu_op(rop_op), .cpu_clear(rop_clear), .cpu_rdata(rop_rdata),
+      .cpu_bad_value(rop_bad_value), .cpu_rop_error(rop_error),
+      .cpu_busy(rop_frontend_busy),
+      .rop_cmd_valid(rop_cmd_valid), .rop_cmd_ready(rop_cmd_ready),
+      .rop_cmd_op(rop_cmd_op), .rop_cmd_mode(rop_cmd_mode),
+      .rop_cmd_params(rop_cmd_params),
+      .rop_done_valid(rop_done_valid), .rop_done_error(rop_done_error));
+
+  rop_core #(.TAG_DEPTH(8)) rop_core_i(
+      .clk(clk), .reset(rop_reset),
+      .cmd_valid(rop_cmd_valid), .cmd_ready(rop_cmd_ready),
+      .cmd_op(rop_cmd_op), .cmd_mode(rop_cmd_mode), .cmd_params(rop_cmd_params),
+      // FRAGMENT es de emisores SIMT: la CPU no lo envia (cpu.v lo rechaza).
+      .cmd_frag_colors(256'd0), .cmd_frag_z(256'd0),
+      .done_valid(rop_done_valid), .done_error(rop_done_error), .busy(rop_core_busy),
+      .req_valid(rop_req_valid), .req_ready(rop_req_ready),
+      .req_write(rop_req_write), .req_addr(rop_req_addr),
+      .req_wdata(rop_req_wdata), .req_wmask(rop_req_wmask),
+      .rsp_valid(rop_rsp_valid), .rsp_ready(rop_rsp_ready),
+      .rsp_rdata(rop_rsp_rdata), .rsp_error(rop_rsp_error));
+
+  wire audio_select, audio_error, audio_enabled, audio_clear_underruns;
+  wire [31:0] audio_read_data, audio_ring_base, audio_write_cursor;
+  wire [4:0] audio_ring_log2_frames;
+  audio_mmio audio_mmio_i(
+      .clk(clk), .reset(reset), .select(audio_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[15:0]),
+      .write_data(mmio_write_data), .read_data(audio_read_data), .mmio_error(audio_error),
+      .enabled(audio_enabled), .ring_base(audio_ring_base),
+      .ring_log2_frames(audio_ring_log2_frames), .write_cursor(audio_write_cursor),
+      .read_cursor(audio_dma_read_cursor), .fifo_level({7'd0, audio_fifo_level}), .fifo_empty(audio_fifo_level == 0), .underruns(audio_underruns_pix), .sample_ticks(audio_sample_ticks_clk),
+      .clear_underruns(audio_clear_underruns));
+  audio_dma audio_dma_i(
+      .clk(clk), .reset(reset), .enabled(audio_enabled), .wb_dirty(wb_dirty),
+      .ring_base(audio_ring_base), .ring_log2_frames(audio_ring_log2_frames),
+      .write_cursor(audio_write_cursor), .read_cursor(audio_dma_read_cursor),
+      .req_valid(audio_req_valid), .req_ready(audio_req_ready), .req_write(audio_req_write),
+      .req_addr(audio_req_addr), .req_wdata(audio_req_wdata), .req_wmask(audio_req_wmask),
+      .rsp_valid(audio_rsp_valid), .rsp_ready(audio_rsp_ready), .rsp_rdata(audio_rsp_rdata), .rsp_error(audio_rsp_error),
+      .fifo_wr_en(audio_fifo_wr_en), .fifo_wdata(audio_fifo_wdata), .fifo_full(audio_fifo_full), .errors(audio_dma_errors));
+
+  // El monitor va primero: sus peticiones son raras, las de la CPU son un bucle
+  // que puede esperar un ciclo, y asi un SWAP escrito desde el PC no se queda
+  // detras de un programa que dibuja a toda velocidad.
+  mmio_mux mmio_mux_i(
+      .clk(clk), .reset(reset),
+      .a_req(mon_mmio_req), .a_ack(mon_mmio_ack), .a_write(mon_mmio_write),
+      .a_write_mask(mon_mmio_mask), .a_address(mon_mmio_addr),
+      .a_write_data(mon_mmio_wdata),
+      .b_req(cpu_mmio_req), .b_ack(cpu_mmio_ack), .b_write(cpu_mmio_write),
+      .b_write_mask(cpu_mmio_mask), .b_address(cpu_mmio_addr),
+      .b_write_data(cpu_mmio_wdata),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask),
+      .address(mmio_address), .write_data(mmio_write_data));
+
+  wire [5:0] m_req_valid, m_req_ready, m_req_urgent, m_req_write;
+  wire [31:0] m_req_addr [0:5];
+  wire [127:0] m_req_wdata [0:5];
+  wire [15:0] m_req_wmask [0:5];
+  wire [5:0] m_rsp_valid, m_rsp_ready, m_rsp_error;
+  wire [127:0] m_rsp_rdata [0:5];
+  wire [1:0] gen_response_error_seen;
+  wire [1:0] gen_mismatch_seen;
+
+  genvar traffic_index;
+  generate
+    for (traffic_index = 0; traffic_index < 2; traffic_index = traffic_index + 1) begin : g_traffic
+      memory_traffic_gen #(
+          .BASE_ADDR(32'h01D0_0000 + traffic_index * 32'h0010_0000),
+          .REGION_SIZE(32'h0010_0000),
+          .SEED(32'h1111_1111 + traffic_index * 32'h1111_1111)) gen_i (
+          // Apagados: en la 35 estresaban el fabric; aqui competian con la
+          // CPU por la SDRAM en todo momento (ver docs/analisis-rendimiento.md).
+          .clk(clk), .reset(reset), .enable(1'b0),
+          .urgent_enable(1'b0), .clear_stats(1'b0),
+          .req_valid(m_req_valid[traffic_index + 4]),
+          .req_ready(m_req_ready[traffic_index + 4]),
+          .req_urgent(m_req_urgent[traffic_index + 4]),
+          .req_write(m_req_write[traffic_index + 4]),
+          .req_addr(m_req_addr[traffic_index + 4]),
+          .req_wdata(m_req_wdata[traffic_index + 4]),
+          .req_wmask(m_req_wmask[traffic_index + 4]),
+          .rsp_valid(m_rsp_valid[traffic_index + 4]),
+          .rsp_ready(m_rsp_ready[traffic_index + 4]),
+          .rsp_rdata(m_rsp_rdata[traffic_index + 4]),
+          .rsp_error(m_rsp_error[traffic_index + 4]),
+          .active(), .request_count(), .write_count(), .read_count(),
+          .response_error_count(), .mismatch_count(),
+          .response_error_seen(gen_response_error_seen[traffic_index]),
+          .mismatch_seen(gen_mismatch_seen[traffic_index]), .current_addr(),
+          .loop_count(), .last_error_addr(), .last_expected(), .last_received());
+    end
+  endgenerate
+
+  // CPU datos e instrucciones conservan puertos independientes, como en la
+  // 30. Asi un miss de instrucciones y una operacion de datos pueden estar en
+  // las colas del fabric simultaneamente.
+  assign m_req_valid[0] = p0_valid;
+  assign p0_ready = m_req_ready[0];
+  assign m_req_urgent[0] = 1'b0;
+  assign m_req_write[0] = p0_write;
+  assign m_req_addr[0] = p0_addr;
+  assign m_req_wdata[0] = p0_wdata;
+  assign m_req_wmask[0] = p0_wmask;
+  assign p0_rsp_valid = m_rsp_valid[0];
+  assign m_rsp_ready[0] = p0_rsp_ready;
+  assign p0_rsp_rdata = m_rsp_rdata[0];
+  assign p0_rsp_error = m_rsp_error[0];
+
+  assign m_req_valid[1] = p1_valid;
+  assign p1_ready = m_req_ready[1];
+  assign m_req_urgent[1] = 1'b0;
+  assign m_req_write[1] = p1_write;
+  assign m_req_addr[1] = p1_addr;
+  assign m_req_wdata[1] = p1_wdata;
+  assign m_req_wmask[1] = p1_wmask;
+  assign p1_rsp_valid = m_rsp_valid[1];
+  assign m_rsp_ready[1] = p1_rsp_ready;
+  assign p1_rsp_rdata = m_rsp_rdata[1];
+  assign p1_rsp_error = m_rsp_error[1];
+
+  assign m_req_valid[2] = p2_valid;
+  assign p2_ready = m_req_ready[2];
+  assign m_req_urgent[2] = p2_urgent;
+  assign m_req_write[2] = p2_write;
+  assign m_req_addr[2] = p2_addr;
+  assign m_req_wdata[2] = p2_wdata;
+  assign m_req_wmask[2] = p2_wmask;
+  assign p2_rsp_valid = m_rsp_valid[2];
+  assign m_rsp_ready[2] = video_rsp_ready;
+  assign p2_rsp_rdata = m_rsp_rdata[2];
+  assign p2_rsp_error = m_rsp_error[2];
+
+  assign m_req_valid[3] = fab3_valid;
+  assign fab3_ready = m_req_ready[3];
+  assign m_req_urgent[3] = 1'b0;
+  assign m_req_write[3] = fab3_write;
+  assign m_req_addr[3] = fab3_addr;
+  assign m_req_wdata[3] = fab3_wdata;
+  assign m_req_wmask[3] = fab3_wmask;
+  assign fab3_rsp_valid = m_rsp_valid[3];
+  assign m_rsp_ready[3] = fab3_rsp_ready;
+  assign fab3_rsp_rdata = m_rsp_rdata[3];
+  assign fab3_rsp_error = m_rsp_error[3];
+
+  wire [5:0] req_empty, req_rd_en, req_rd_valid;
+  wire [5:0] bridge_req_ready;
+  wire [177:0] req_data [0:5];
+  wire [5:0] rsp_full, rsp_wr_en;
+  wire [128:0] rsp_data [0:5];
+  genvar bridge_index;
+  generate
+    for (bridge_index = 0; bridge_index < 6; bridge_index = bridge_index + 1) begin : g_bridge
+      fabric_fifo_bridge #(.FIFO_ADDR_WIDTH(2)) bridge_i(
+          .master_clk(clk), .master_reset(reset),
+          .req_valid(m_req_valid[bridge_index] && !phase_quiesce),
+          .req_ready(bridge_req_ready[bridge_index]),
+          .req_urgent(m_req_urgent[bridge_index]), .req_write(m_req_write[bridge_index]),
+          .req_addr(m_req_addr[bridge_index]), .req_wdata(m_req_wdata[bridge_index]),
+          .req_wmask(m_req_wmask[bridge_index]),
+          .rsp_valid(m_rsp_valid[bridge_index]), .rsp_ready(m_rsp_ready[bridge_index]),
+          .rsp_rdata(m_rsp_rdata[bridge_index]), .rsp_error(m_rsp_error[bridge_index]),
+          .mem_clk(clk_mem), .mem_reset(reset_mem),
+          .mem_req_empty(req_empty[bridge_index]),
+          .mem_req_rd_en(req_rd_en[bridge_index]),
+          .mem_req_rd_valid(req_rd_valid[bridge_index]),
+          .mem_req_data(req_data[bridge_index]),
+          .mem_rsp_full(rsp_full[bridge_index]),
+          .mem_rsp_wr_en(rsp_wr_en[bridge_index]),
+          .mem_rsp_data(rsp_data[bridge_index]));
+    end
+  endgenerate
+
+  assign m_req_ready = bridge_req_ready & {6{!phase_quiesce}};
+
+  memory_fabric_fifo_6 fabric_i(
+      .clk(clk_mem), .reset(reset_mem),
+      .p0_req_empty(req_empty[0]), .p0_req_rd_en(req_rd_en[0]), .p0_req_rd_valid(req_rd_valid[0]), .p0_req_data(req_data[0]), .p0_rsp_full(rsp_full[0]), .p0_rsp_wr_en(rsp_wr_en[0]), .p0_rsp_data(rsp_data[0]),
+      .p1_req_empty(req_empty[1]), .p1_req_rd_en(req_rd_en[1]), .p1_req_rd_valid(req_rd_valid[1]), .p1_req_data(req_data[1]), .p1_rsp_full(rsp_full[1]), .p1_rsp_wr_en(rsp_wr_en[1]), .p1_rsp_data(rsp_data[1]),
+      .p2_req_empty(req_empty[2]), .p2_req_rd_en(req_rd_en[2]), .p2_req_rd_valid(req_rd_valid[2]), .p2_req_data(req_data[2]), .p2_rsp_full(rsp_full[2]), .p2_rsp_wr_en(rsp_wr_en[2]), .p2_rsp_data(rsp_data[2]),
+      .p3_req_empty(req_empty[3]), .p3_req_rd_en(req_rd_en[3]), .p3_req_rd_valid(req_rd_valid[3]), .p3_req_data(req_data[3]), .p3_rsp_full(rsp_full[3]), .p3_rsp_wr_en(rsp_wr_en[3]), .p3_rsp_data(rsp_data[3]),
+      .p4_req_empty(req_empty[4]), .p4_req_rd_en(req_rd_en[4]), .p4_req_rd_valid(req_rd_valid[4]), .p4_req_data(req_data[4]), .p4_rsp_full(rsp_full[4]), .p4_rsp_wr_en(rsp_wr_en[4]), .p4_rsp_data(rsp_data[4]),
+      .p5_req_empty(req_empty[5]), .p5_req_rd_en(req_rd_en[5]), .p5_req_rd_valid(req_rd_valid[5]), .p5_req_data(req_data[5]), .p5_rsp_full(rsp_full[5]), .p5_rsp_wr_en(rsp_wr_en[5]), .p5_rsp_data(rsp_data[5]),
+      .sdram_req_valid(fab_req_valid), .sdram_req_ready(fab_req_ready),
+      .sdram_req_write(fab_req_write), .sdram_req_addr(fab_req_addr),
+      .sdram_req_wdata(fab_req_wdata), .sdram_req_wmask(fab_req_wmask),
+      .sdram_done(fab_done), .sdram_rdata(fab_rdata), .busy(fabric_busy),
+      .dbg_trace_idx(5'd0));
+
+  reg init_done_sync1, init_done_sync2;
+  always @(posedge clk) begin
+    if (reset) begin
+      init_done_sync1 <= 1'b0;
+      init_done_sync2 <= 1'b0;
+    end else begin
+      init_done_sync1 <= init_done_mem;
+      init_done_sync2 <= init_done_sync1;
+    end
+  end
+  assign init_done = init_done_sync2;
+
+  wire phase_safe_idle = !fabric_busy && (&req_empty) && !sdram_busy
+                         && !fab_req_valid;
+  pll_phase_ctl #(.INITIAL_POS(SDRAM_PHASE)) phase_ctl_i(
+      .clk(clk_mem), .reset(reset_mem),
+      .req_toggle_async(phase_req_toggle), .req_steps_async(phase_req_steps),
+      .ack_toggle(phase_ack_toggle), .safe_idle(phase_safe_idle),
+      .controller_init_done(init_done_mem), .pll_locked(pll_mem_locked),
+      .phasestep(pll_phasestep), .phasedir(pll_phasedir),
+      .phasesel(pll_phasesel), .phaseloadreg(pll_phaseloadreg),
+      .controller_reset(phase_controller_reset),
+      .traffic_block(phase_traffic_block),
+      .busy(phase_busy_mem), .err(phase_err_mem),
+      .phase_pos(), .phase_pos_gray(phase_pos_gray));
+
+  assign controller_req_valid = fab_req_valid && !phase_traffic_block;
+  assign fab_req_ready = controller_req_ready && !phase_traffic_block;
+
+  sdram_controller_128 #(.CLK_FREQ_HZ(100_000_000), .READ_DELAY_CYCLES(2)) controller_i(
+      .clk(clk_mem), .reset(reset_mem || phase_controller_reset),
+      .req_valid(controller_req_valid), .req_write(fab_req_write),
+      .req_addr(fab_req_addr), .req_wdata(fab_req_wdata),
+      .req_wmask(fab_req_wmask), .req_ready(controller_req_ready),
+      .done(fab_done), .rdata(fab_rdata),
+      .init_done(init_done_mem), .busy(sdram_busy), .sdram_clk(),
+      .sdram_cke(sdram_cke), .sdram_csn(sdram_csn), .sdram_rasn(sdram_rasn),
+      .sdram_casn(sdram_casn), .sdram_wen(sdram_wen), .sdram_a(sdram_a),
+      .sdram_ba(sdram_ba), .sdram_dqm(sdram_dqm), .sdram_d(sdram_d));
+
+
+  // ---------------------------------------------------------------------------
+  // Subsistema de video (hitos A y B)
+  //
+  // Dominio de reloj propio. En el hito B tampoco hay conexion con la CPU ni
+  // con la SDRAM: las lineas las genera `video_line_source_pattern`, y lo que
+  // se valida es el cruce de dominios y el doble line buffer. En el hito C ese
+  // productor se sustituye por un lector de SDRAM con el mismo contrato, y esta
+  // es la unica linea de `top` que cambiara.
+  //
+  // El unico recurso compartido con la CPU es `clk_25mhz`, que alimenta los dos
+  // PLL.
+  //
+  //   625 MHz VCO / 5  = 125,0 MHz  -> reloj serie TMDS
+  //   625 MHz VCO / 25 =  25,0 MHz  -> reloj de pixel
+  //
+  // Los 25,0 MHz son un 0,7 % mas lentos que los 25,175 MHz nominales de
+  // 640x480p60. Esta dentro de lo que aceptan los monitores y evita un VCO
+  // incomodo; es la misma aproximacion que hacia 13.hdmi con 74 frente a
+  // 74,25 MHz para 720p, pero aqui el margen de temporizacion es mucho mayor
+  // porque el reloj serie baja de 370 a 125 MHz.
+  // ---------------------------------------------------------------------------
+  wire clk_pix, clk_pix_5x, clk_pix_locked;
+  clock2_gen #(
+      .CLKI_DIV(1),
+      .CLKFB_DIV(5),
+      .CLKOP_DIV(5),
+      .CLKOP_CPHASE(2),
+      .CLKOS_DIV(25),
+      .CLKOS_CPHASE(12)
+  ) clock_pix_i(
+      .clk_in(clk_25mhz), .clk_5x_out(clk_pix_5x), .clk_out(clk_pix),
+      .clk_locked(clk_pix_locked));
+
+  // El reset del dominio de pixel no puede venir del dominio de 120 MHz: se
+  // sincroniza el pulsador, que ya es asincrono de por si.
+  reg btn_pwr_n_sync_0, btn_pwr_n_sync_1;
+  always @(posedge clk_pix) begin
+    btn_pwr_n_sync_0 <= btn_pwr_n;
+    btn_pwr_n_sync_1 <= btn_pwr_n_sync_0;
+  end
+  wire rst_pix = !clk_pix_locked || !btn_pwr_n_sync_1;
+
+  localparam integer V_RES = 480;
+  wire [11:0] sx, sy;
+  wire hsync, vsync, de;
+  // `hdmi_i` owns the 640x480 timing counters.  Keeping scanout on those
+  // counters avoids two independent pixel timebases once data islands exist.
+  assign hsync = !(sx >= 12'd656 && sx <= 12'd751);
+  assign vsync = !(sy >= 12'd490 && sy <= 12'd491);
+  assign de = (sx <= 12'd639 && sy <= 12'd479);
+
+  wire frame = (sy == V_RES[11:0] && sx == 12'd0);
+
+  // Scanout con doble line buffer. Los sincronismos que salen de aqui llevan un
+  // ciclo de retraso, el que cuesta leer el line buffer, y son la referencia de
+  // tiempo de los dos modos.
+  wire [7:0] scan_r, scan_g, scan_b;
+  wire scan_de, scan_hsync, scan_vsync, video_underflow;
+  wire fill_start, fill_first, fill_we, fill_done;
+  // Modo de salida, de video_registers al mux de fuentes de linea. Se declara
+  // aqui porque el bloque de registros se instancia mas abajo que el mux.
+  wire [1:0] video_mode;
+  wire [7:0] fill_line;
+  wire [23:0] fb_base;
+  wire [8:0] fill_addr;
+  wire [15:0] fill_data;
+
+  video_scanout scanout_i(
+      .clk_pix(clk_pix), .rst_pix(rst_pix), .sx(sx), .sy(sy),
+      .de_in(de), .hsync_in(hsync), .vsync_in(vsync),
+      .r(scan_r), .g(scan_g), .b(scan_b),
+      .de_out(scan_de), .hsync_out(scan_hsync), .vsync_out(scan_vsync),
+      .underflow(video_underflow),
+      .clk_sys(clk), .rst_sys(reset),
+      .underflow_clear(video_underflow_clear),
+      .fill_start(fill_start), .fill_line(fill_line), .fill_first(fill_first),
+      .fill_we(fill_we), .fill_addr(fill_addr), .fill_data(fill_data),
+      .fill_done(fill_done));
+
+  // Dos productores de linea, y un mux que elige entre ellos segun VIDEO_CTRL.
+  //
+  // El generador de patron llevaba desde el hito C sin instanciarse: existia en
+  // el arbol solo por su banco de pruebas. Vuelve porque ahora hace falta un
+  // modo que NO lea memoria -- que es la razon de ser de VIDEO_CTRL: arrancar
+  // sin scanout, para que las bases de framebuffer puedan dejar de venir
+  // cableadas en el reset.
+  //
+  // El mux NO se puentea con `video_mode` directamente. Ver la cabecera de
+  // video_line_source_mux.v: `video_mode` cambia cuando el software escribe
+  // VIDEO_CTRL, sin relacion con el llenado en curso, y hacerlo a media linea
+  // dejaba a la fuente entrante sin `fill_start` y a la saliente sin poder
+  // entregar su `fill_done` -- el video se quedaba ENCALLADO para siempre, y en
+  // placa solo se recuperaba reprogramando la FPGA.
+  wire start_sdram, start_pattern;
+  wire burst_we, pat_we, burst_done, pat_done;
+  wire [8:0] burst_addr, pat_addr;
+  wire [15:0] burst_data, pat_data;
+
+  video_line_source_burst source_i(
+      .clk(clk), .reset(reset), .fb_base(fb_base),
+      .fill_start(start_sdram), .fill_line(fill_line),
+      .fill_we(burst_we), .fill_addr(burst_addr), .fill_data(burst_data),
+      .fill_done(burst_done),
+      .req_valid(p2_valid), .req_ready(p2_ready), .req_write(p2_write),
+      .req_addr(p2_addr), .req_wdata(p2_wdata), .req_wmask(p2_wmask),
+      .urgent(p2_urgent),
+      .rsp_valid(p2_rsp_valid), .rsp_ready(video_rsp_ready),
+      .rsp_rdata(p2_rsp_rdata), .rsp_error(p2_rsp_error));
+
+  video_line_source_pattern pattern_source_i(
+      .clk(clk), .reset(reset),
+      .fill_start(start_pattern), .fill_line(fill_line),
+      .fill_we(pat_we), .fill_addr(pat_addr), .fill_data(pat_data),
+      .fill_done(pat_done));
+
+  video_line_source_mux source_mux_i(
+      .clk(clk), .reset(reset), .video_mode(video_mode),
+      .fill_start(fill_start),
+      .start_sdram(start_sdram), .start_pattern(start_pattern),
+      .burst_we(burst_we), .burst_addr(burst_addr),
+      .burst_data(burst_data), .burst_done(burst_done),
+      .pat_we(pat_we), .pat_addr(pat_addr),
+      .pat_data(pat_data), .pat_done(pat_done),
+      .fill_we(fill_we), .fill_addr(fill_addr),
+      .fill_data(fill_data), .fill_done(fill_done));
+
+  // Reparto del espacio MMIO entre dispositivos. El mapa esta en
+  // mmio_decoder.v. Con MMIO v2 el video se MUEVE de 0x80000000 a 0x80200000,
+  // y 0x80000000 pasa a ser el bloque SYSTEM.
+  //
+  // ISA_PROFILE: en este experimento quedan solo accesos de subpalabra; MUL,
+  // MULFX y DIV estan quitados para estudiar timing. El bit 3 (SIMT) va a CERO
+  // aunque `cpu.v` decodifique SSY y BAR: aqui son NO-OP, puestos para poder
+  // compartir binarios con la GPU. Encenderlo diria al host que este nucleo
+  // diverge y reconverge, que es falso.
+  //
+  // DEVICES (§5.4) no se escribe aqui: sale de `sysid_params.vh`, que genera
+  // tools/generate-sysid desde este RTL. Hoy son SYSTEM(0) + FABRIC(1) +
+  // SDRAM(2) + SERIAL(4) + VIDEO(5) + DMA(8) + CPU(9) + INPUT(11) = 0x0B37; el
+  // bit INPUT sale de la capacidad `input_device` (existe input_registers.v) y
+  // el DMA de `dma_device` (existe dma_engine.sv). El mapa del bloque DMA esta
+  // en dma_engine.sv y en 1.isa/mmio.md §11: EXPERIMENTAL, interfaz sin
+  // congelar.
+  wire [31:0] mmio_perf_read_data;
+  mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
+      .HAS_DMA(0), .HAS_AUDIO(1),
+      // Dieciocho contadores en CPU PERFORMANCE: los ocho de siempre, los
+      // cuatro del pipeline, los dos de la cache de datos, los dos de
+      // MUL/DIV y los dos de video. Los mismos que `cpu_perf_counters` con
+      // PIPELINE, DCACHE, MULDIV y VIDEO a 1.
+      .PERF_SLOTS(18),
+      .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
+      .ISA_PROFILE(`SYSID_ISA_PROFILE),
+      .DEVICES(`SYSID_DEVICES),
+      .MEM_BASE(`SYSID_MEM_BASE), .MEM_SIZE(`SYSID_MEM_SIZE),
+      .MONITOR_VERSION(`SYSID_MONITOR_VERSION))   // 5.42, el mismo que monitor_i
+    mmio_decoder_i(
+      .clk(clk),
+      .select(mmio_select), .write(mmio_write), .write_mask(mmio_write_mask), .address(mmio_address),
+      .video_select(mmio_video_select), .video_read_data(mmio_video_read_data),
+      .video_error(mmio_video_error),
+      .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
+      .input_select(mmio_input_select), .input_read_data(mmio_input_read_data),
+      .input_error(mmio_input_error),
+      .audio_select(audio_select), .audio_read_data(audio_read_data),
+      .audio_error(audio_error),
+      .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
+      .phase_select(mmio_phase_select), .phase_read_data(mmio_phase_read_data),
+      .phase_error(mmio_phase_error),
+      .read_data(mmio_read_data), .error(mmio_error));
+
+  // Contadores de rendimiento en 0x81010000 (CPU PERFORMANCE, mmio.md §13.2).
+  // `restart` es `cpu_run_request`: cada `run` empieza una medida nueva, que
+  // es lo que estos contadores hacian ya cuando vivian en este fichero.
+  //
+  // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
+  // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
+  wire video_swap_waiting;
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1), .VIDEO(1)) perf_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_perf_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_perf_read_data),
+      .running(!cpu_halted), .retired(cpu_instruction_retired),
+      .restart(cpu_run_request),
+      // Esperas de la CPU. Un acceso a datos es MMIO con el mismo criterio que
+      // `cpu_dmem_adapter` (`address_is_mmio`), y todo esto va a registros
+      // dentro del bloque: ver la cabecera de cpu_perf_counters.v.
+      .imem_valid(cpu_imem_valid), .imem_ready(cpu_imem_ready),
+      // Con peticion y respuesta separadas, `valid && !ready` ya no es "esperando":
+      // la CPU dice si tiene un acceso a datos sin terminar.
+      .dmem_valid(cpu_dmem_waiting), .dmem_ready(1'b0),
+      .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
+      .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
+      .mem_req0(p0_valid), .mem_req1(p1_valid),
+      .pipe_stall(cpu_perf_stall[3:0]),
+      .dmem_hit(dcache_hit), .dmem_miss(dcache_miss),
+      .muldiv_stall(cpu_perf_stall[4]), .muldiv_retired(cpu_perf_muldiv_retired),
+      // Frames y espera de swap: el inicio de frame es el mismo pulso que
+      // avanza FRAME_COUNT en video_registers, ya en este reloj.
+      .frame_tick(fill_start && fill_first),
+      .swap_pending(video_swap_waiting));
+
+  wire text_enable;
+
+  // Registros de video en 0x80200000, y con ellos el doble framebuffer.
+  video_registers registers_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_video_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[15:0]), .write_data(mmio_write_data),
+      .read_data(mmio_video_core_read_data),
+      .error(mmio_video_core_error),
+      .running(!cpu_halted),
+      .fill_start(fill_start), .fill_first(fill_first), .fb_base(fb_base),
+      .underflow_pix(video_underflow),
+      .underflow_clear(video_underflow_clear),
+      .halt_request(video_halt_request),
+      .video_mode(video_mode),
+      .text_enable(text_enable),
+      .debug_front(), .debug_back(),
+      .swap_waiting(video_swap_waiting));
+
+  // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del
+  // monitor, no por esta ventana: ver serial_port.v.
+  serial_port serial_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_serial_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
+      .read_data(mmio_serial_read_data),
+      .host_push(serial_host_push), .host_push_data(serial_host_push_data),
+      .host_rx_free(serial_host_rx_free),
+      .host_pop(serial_host_pop), .host_tx_data(serial_host_tx_data),
+      .host_tx_count(serial_host_tx_count));
+
+  // INPUT (teclado y raton) en 0x80600000. No hay ningun teclado ni raton
+  // conectado a la FPGA: los eventos llegan del PC por el monitor. La presencia
+  // tambien: la manda el PC con INPUT_PRESENCE.
+  input_registers input_i(
+      .clk(clk), .reset(reset),
+      .select(mmio_input_select), .write(mmio_write),
+      .write_mask(mmio_write_mask),
+      .address(mmio_address[7:0]), .write_data(mmio_write_data),
+      .read_data(mmio_input_read_data), .input_error(mmio_input_error),
+      .event_valid(input_event_valid), .event_word(input_event_word),
+      .presence_write(input_presence_write),
+      .presence_keyboard(input_presence_keyboard),
+      .presence_mouse(input_presence_mouse),
+      .free_slots(input_free_slots));
+
+  // Modo de reserva: el patron del hito A, generado por logica pura sin tocar
+  // el line buffer. Con FIRE1 pulsado se muestra ese y no el scanout. Es el
+  // instrumento de depuracion que separa "falla la cadena HDMI" de "falla el
+  // camino de datos": si con FIRE1 se ve bien y sin FIRE1 no, el problema esta
+  // del line buffer hacia dentro.
+  reg btn_fire1_sync_0, btn_fire1_sync_1;
+  always @(posedge clk_pix) begin
+    btn_fire1_sync_0 <= btn_fire1;
+    btn_fire1_sync_1 <= btn_fire1_sync_0;
+  end
+  wire show_pattern = btn_fire1_sync_1;
+
+  wire [7:0] paint_r, paint_g, paint_b;
+  video_pattern pattern_i(
+      .clk_pix(clk_pix), .rst_pix(rst_pix), .sx(sx), .sy(sy), .de(de),
+      .frame(frame), .r(paint_r), .g(paint_g), .b(paint_b));
+
+  // El patron es combinacional desde `sx`, mientras que el scanout llega un
+  // ciclo mas tarde. Se retrasa para que los dos modos compartan sincronismos.
+  reg [7:0] paint_r_d, paint_g_d, paint_b_d;
+  always @(posedge clk_pix) begin
+    paint_r_d <= paint_r;
+    paint_g_d <= paint_g;
+    paint_b_d <= paint_b;
+  end
+
+  wire [7:0] text_r, text_g, text_b;
+  wire text_de, text_hsync, text_vsync;
+  wire [7:0] base_r = show_pattern ? paint_r_d : scan_r;
+  wire [7:0] base_g = show_pattern ? paint_g_d : scan_g;
+  wire [7:0] base_b = show_pattern ? paint_b_d : scan_b;
+
+  text_console console_i(
+      .clk_sys(clk), .reset_sys(reset),
+      .select(mmio_video_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[15:0]),
+      .write_data(mmio_write_data), .read_data(mmio_console_read_data),
+      .error(mmio_console_error),
+      .clk_pix(clk_pix), .reset_pix(rst_pix), .enable(text_enable),
+      .sx(sx), .sy(sy), .r_in(base_r), .g_in(base_g), .b_in(base_b),
+      .de_in(scan_de), .hsync_in(scan_hsync), .vsync_in(scan_vsync),
+      .r_out(text_r), .g_out(text_g), .b_out(text_b), .de_out(text_de),
+      .hsync_out(text_hsync), .vsync_out(text_vsync));
+
+  reg [7:0] dvi_r, dvi_g, dvi_b;
+  always @(posedge clk_pix) begin
+    dvi_r <= text_r;
+    dvi_g <= text_g;
+    dvi_b <= text_b;
+  end
+
+  // Hito A de audio: HDMI LPCM estéreo 48 kHz con silencio. El ring PCM y su
+  // lector de SDRAM sustituirán esos dos ceros sin cambiar el transmisor.
+  wire audio_sample_strobe;
+  hdmi_audio_clk_gen #(.CLK_HZ(25000000), .AUDIO_HZ(48000)) audio_clock_i(
+      .clk_pixel(clk_pix), .reset(rst_pix), .sample_strobe(audio_sample_strobe));
+
+  wire [31:0] audio_fifo_rdata;
+  wire audio_fifo_rd_valid, audio_fifo_empty;
+  reg audio_clear_sync1, audio_clear_sync2;
+  reg [31:0] audio_pcm_sample;
+  async_fifo #(.DATA_WIDTH(32), .ADDR_WIDTH(8)) audio_fifo_i(
+      .clk_wr(clk), .clk_rd(clk_pix), .rst_wr_n(!reset), .rst_rd_n(!rst_pix),
+      .wr_en(audio_fifo_wr_en), .rd_en(audio_sample_strobe && !audio_fifo_empty),
+      .data_in(audio_fifo_wdata), .data_out(audio_fifo_rdata), .rd_valid(audio_fifo_rd_valid),
+      .full(audio_fifo_full), .empty(audio_fifo_empty), .wr_level(audio_fifo_level),
+      .dbg_wr_ptr_gray(), .dbg_rd_ptr_gray());
+  always @(posedge clk_pix) begin
+    if (rst_pix) begin
+      audio_pcm_sample <= 32'd0; audio_underruns_pix <= 0; audio_sample_ticks_pix <= 0;
+      audio_clear_sync1 <= 0; audio_clear_sync2 <= 0;
+    end else begin
+      audio_clear_sync1 <= audio_clear_underruns;
+      audio_clear_sync2 <= audio_clear_sync1;
+      if (audio_clear_sync2) begin
+        audio_underruns_pix <= 0;
+        audio_sample_ticks_pix <= 0;
+      end else if (audio_sample_strobe) begin
+        audio_sample_ticks_pix <= audio_sample_ticks_pix + 1'b1;
+        if (audio_fifo_empty) audio_underruns_pix <= audio_underruns_pix + 1'b1;
+      end
+      if (audio_fifo_rd_valid) audio_pcm_sample <= audio_fifo_rdata;
+    end
+  end
+
+  wire [3:0] hdmi_tmds_p, hdmi_tmds_n;
+  hdmi #(
+      .VIDEO_ID_CODE(1), .IT_CONTENT(1'b1), .DVI_OUTPUT(1'b0),
+      .AUDIO_RATE(48000), .AUDIO_BIT_WIDTH(16),
+      .VENDOR_NAME(64'h4D696E6947505500),
+      .PRODUCT_DESCRIPTION(128'h4D696E694750552048444D4920415544494F00),
+      .FRAME_WIDTH(800), .FRAME_HEIGHT(525), .SCREEN_WIDTH(640), .SCREEN_HEIGHT(480),
+      .HSYNC_PULSE_START(16), .HSYNC_PULSE_SIZE(96),
+      .VSYNC_PULSE_START(10), .VSYNC_PULSE_SIZE(2),
+      .INVERT_POLARITY(1), .COUNTER_WIDTH(12),
+      .TMDS_CLOCK_DDR(0), .TMDS_DIFFERENTIAL(0)
+  ) hdmi_i(
+      .clk_pixel_x5(clk_pix_5x), .clk_pixel(clk_pix),
+      .sample_strobe(audio_sample_strobe), .reset(rst_pix),
+      .rgb({dvi_r, dvi_g, dvi_b}),
+      .audio_sample_word_0(audio_enabled ? audio_pcm_sample[15:0] : 16'd0),
+      .audio_sample_word_1(audio_enabled ? audio_pcm_sample[31:16] : 16'd0),
+      .frame_height_i(12'd0), .tmds(), .tmds_clock(),
+      .tmds_p(hdmi_tmds_p), .tmds_n(hdmi_tmds_n),
+      .cx(sx), .cy(sy), .frame_width(), .frame_height(),
+      .screen_width(), .screen_height());
+
+  assign gpdi_dp = hdmi_tmds_p;
+
+  // Los fallos pegajosos de los generadores hacen observable la carga de
+  // fondo: sin estas salidas el sintetizador podria eliminar sus comparadores.
+  assign led = {cpu_error, |gen_mismatch_seen, |gen_response_error_seen,
+                init_done, sdram_busy, monitor_busy, cpu_halted,
+                video_underflow};
+endmodule
+
+`default_nettype wire

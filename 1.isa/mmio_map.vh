@@ -43,6 +43,7 @@
 `define MMIO_INTC_BASE             32'h8040_0000
 `define MMIO_DMA_BASE              32'h8050_0000
 `define MMIO_INPUT_BASE            32'h8060_0000
+`define MMIO_AUDIO_BASE            32'h8070_0000
 `define MMIO_CPU_BASE              32'h8100_0000
 `define MMIO_CPU_PERF_BASE         32'h8101_0000
 `define MMIO_CPU_DEBUG_BASE        32'h8102_0000
@@ -84,6 +85,7 @@
 `define MMIO_DEV_CPU_BIT           32'h0000_0009
 `define MMIO_DEV_GPU_BIT           32'h0000_000A
 `define MMIO_DEV_INPUT_BIT         32'h0000_000B
+`define MMIO_DEV_AUDIO_BIT         32'h0000_000C
 
 // ==== SDRAM (mmio.md §7) =================================================
 

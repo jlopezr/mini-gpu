@@ -25,6 +25,7 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`gpu.h`](include/gpu.h) | `KERNEL`, `GPU_RUN`, `NOALIAS`, las variables `__gpu_*` |
 | [`stdint.h`](include/stdint.h), [`stdbool.h`](include/stdbool.h) | Tipos de anchura fija y `bool` para `mini-lcc`. La librería de lcc no los trae, y sin ellos `cc -E` cogería los del sistema, que lcc no entiende. Aquí `bool` es un `int`, porque C89 no tiene `_Bool` |
 | [`string.h`](include/string.h) | La biblioteca C mínima: `memset`, `memcpy`, `memcmp`. Se añade lo que algún programa vaya necesitando. La implementación es [`string.c`](src/string.c) |
+| [`audio.h`](include/audio.h) | Ring PCM S16 estéreo a 48 kHz. El productor C publica `write_index`; el futuro dispositivo HDMI actualizará `read_index`. |
 
 ## `src/`
 
@@ -36,6 +37,7 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`rop.h`](include/rop.h), [`rop.inc`](src/rop.inc) | API C y rutinas MiniABI para FILL, COPY, GENERATE, SPAN y CONFIG del ROP | capability `rop`, CPU 38 |
 | [`bench.inc`](src/bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
 | [`string.c`](src/string.c) | `memset`, `memcpy`, `memcmp` (cabecera `string.h`). Código de CPU | `string.h` |
+| [`audio.c`](src/audio.c) | Operaciones C89 del ring PCM, sin MMIO ni backend específico | `audio.h` |
 | [`putpixel.inc`](src/putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
 | [`drawline.inc`](src/drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc`, que incluye él solo |
 | [`sin256.inc`](src/sin256.inc) | `sin_table`, 256 entradas Q16.16 en `.rodata` | — |
