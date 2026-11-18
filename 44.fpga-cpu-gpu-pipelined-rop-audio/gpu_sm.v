@@ -1,5 +1,5 @@
 `default_nettype none
-// SM segmentado: S -> F -> I -> D -> X -> W, diseno en sm-pipeline.md,
+// SM segmentado: SCH -> IS -> IF -> ID -> RR -> EX -> MEM -> WB.
 // especificacion ejecutable en 25.gpu-sim-cycle-uarch/DESIGN.md.
 //
 // Una instruccion en vuelo por warp (`busy[w]`), finalizacion en orden por
@@ -8,11 +8,13 @@
 // (imem_*/lsu_*/cfg_*/debug_*) no cambian frente a la FSM monolitica que
 // sustituye.
 //
-// Registros de etapa (packet por token, uno por letra salvo W, que es un
-// evento de compromiso combinacional, no una cola):
-//   F: {valid,warp,pc,accepted}                     -- presenta imem_address
-//   I: {valid,warp,pc,instruction,sequential_pc}     -- presenta la direccion de RF
-//   D: {valid,warp,pc,instruction,sequential_pc,     -- decodifica; rf_a/rf_b ya
+// Registros de etapa (packet por token; WB es un evento de compromiso, no una
+// cola). Los nombres internos historicos f/i/d/x se conservan para no mezclar
+// este cambio de frontera con el futuro forwarding:
+//   IS: {valid,warp,pc}                               -- admision desde SCH
+//   IF/F: {valid,warp,pc,accepted}                    -- presenta imem_address
+//   ID/I: {valid,warp,pc,instruction,sequential_pc}   -- presenta la direccion de RF
+//   RR/D: {valid,warp,pc,instruction,sequential_pc,   -- decode + rf_a/rf_b ya
 //       target,branch_target,rf_a,rf_b}                 resueltos (RF de 1 ciclo)
 //   X: igual que D + `done` (mascara de lanes que ya retiraron)
 //
@@ -147,6 +149,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // ------------------------------------------------------------------
     // Registros de etapa.
     // ------------------------------------------------------------------
+    // SCH selecciona un warp; IS lo retiene hasta que IF puede admitirlo.
+    reg is_valid;
+    reg [2:0] is_warp;
+    reg [31:0] is_pc;
+
     reg f_valid, f_accepted;
     reg [2:0] f_warp;
     reg [31:0] f_pc;
@@ -169,19 +176,51 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg [255:0] x_rf_a, x_rf_b;
     reg [7:0] done;
 
-    // Solo para %d de diagnostico en testbenches (dut.sm.state): no hay una
-    // FSM unica que describir, asi que es un resumen de ocupacion del cauce.
-    wire [3:0] state = {x_valid,d_valid,i_valid,f_valid};
+    // Estado explícito de las dos últimas fases. MEM puede contener varios
+    // warps dentro de la LSU; WB es un único pulso de commit por ciclo.
+    reg [7:0] mem_valid;
+    reg wb_valid;
+    reg [2:0] wb_warp;
+    // Registro fisico de WB, compartido por ALU lineales, respuestas MEM y
+    // operaciones RR que no tocan las pilas SIMT.
+    reg wb_q_valid;
+    reg wb_q_ready;
+    reg [2:0] wb_q_source, wb_q_warp;
+    reg [4:0] wb_q_rd;
+    reg [31:0] wb_q_pc, wb_q_next_pc, wb_q_instruction, wb_q_target;
+    reg [7:0] wb_q_active;
+    reg [255:0] wb_q_write_data;
+    reg [7:0] wb_q_write_mask;
+    reg [7:0] wb_q_error;
+    reg [7:0] wb_q_taken;
+    reg [31:0] wb_q_branch_target, wb_q_indirect_target;
+    reg wb_q_indirect_diverges;
+    reg [7:0] wb_q_fault_code;
+    reg [2:0] wb_q_fault_lane;
+    reg wb_q_fault_lane_valid;
+    reg wb_q_fault_wait_x;
+    // Scoreboard de destinos, por ahora solo observado: `busy` continua
+    // imponiendo una instruccion por warp hasta que esta tabla se valide.
+    reg [31:0] pending_write[0:7];
+
+    // Solo para %d de diagnostico en testbenches (dut.sm.state): MEM se ve en
+    // mem_valid y WB en wb_valid, porque no caben fielmente en este resumen.
+    wire [4:0] state = {x_valid,d_valid,i_valid,f_valid,is_valid};
 
     assign halted=!running && busy==8'b0 && lsu_occupied==0;
     assign sm_running=running;
     assign live_warps={|live[7],|live[6],|live[5],|live[4],|live[3],|live[2],|live[1],|live[0]};
     assign debug_pc=error ? error_pc : pc[debug_warp];
 
+    localparam [2:0] WB_NONE=3'd0, WB_XFAULT=3'd1, WB_EX=3'd2,
+                     WB_MEM=3'd3, WB_RRFLT=3'd4, WB_RR=3'd5,
+                     WB_ALU=3'd6, WB_RR_SIMPLE=3'd7;
+
     // -- F: fetch ----------------------------------------------------------
     assign imem_valid=f_valid && !f_accepted;
     assign imem_address=f_pc;
-    assign imem_rsp_ready=f_valid && f_accepted && !i_valid;
+    // La asignacion definitiva anade abajo la reserva de wb_q para un error
+    // de fetch. Las respuestas correctas no se frenan por ese camino.
 
     // -- I: registro puente entre F y D. No presenta direccion de RF: eso
     // haria falta un ciclo antes de que D exista, y el puerto de lectura de
@@ -223,9 +262,18 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire d_is_memory=d_opcode==OPCODE_LOAD || d_opcode==OPCODE_STORE || d_is_byte || d_is_half;
     wire d_is_special=d_opcode==6'h31 || d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f;
     wire d_encoding_bad=(d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f) && d_instruction[25:0]!=0;
+    wire d_is_alu = d_active && !d_is_memory && !d_is_special && !d_encoding_bad;
     wire d_write=d_is_store;
+    wire d_load_writes = d_is_memory && !d_is_store;
+    // Todas las ALU salvo NOP, ramas y saltos sin enlace escriben Rd.
+    wire d_alu_writes = d_is_alu && d_opcode != 6'h00 &&
+        !(d_opcode >= 6'h20 && d_opcode <= 6'h25) &&
+        d_opcode != 6'h2e && d_opcode != 6'h2f;
+    wire [4:0] d_rd = d_instruction[25:21];
     wire [31:0] d_immediate={{16{d_instruction[15]}},d_instruction[15:0]};
     wire [31:0] d_ssy_index={29'b0,d_warp}*SIMT_REGION_DEPTH+{{(32-SP_BITS){1'b0}},sp[d_warp]};
+    wire [31:0] wb_q_ssy_index={29'b0,wb_q_warp}*SIMT_REGION_DEPTH+
+        {{(32-SP_BITS){1'b0}},sp[wb_q_warp]};
 
     // -- X: la lane ALU y la deteccion de compromiso -------------------------
     wire [5:0] x_opcode=x_instruction[31:26];
@@ -236,28 +284,70 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // su `lane_pc` y el warp solo puede seguir si todas las activas coinciden.
     wire x_opcode_is_jal=x_opcode==6'h2c;
     wire x_opcode_is_indirect=x_opcode==6'h2d || x_opcode==6'h2e;
-    wire [31:0] x_path_index={29'b0,x_warp}*SIMT_PATH_DEPTH+{{(32-PP_BITS){1'b0}},pp[x_warp]};
+    wire x_simple_alu = !x_branch && !x_opcode_is_bra && !x_opcode_is_jal &&
+                        !x_opcode_is_indirect;
+    // Es el mismo subconjunto que d_alu_writes, ya en el packet de X. NOP no
+    // genera wb_q, pero si se retira por WB para que todas las ALU lineales
+    // tengan un unico punto de compromiso.
+    wire x_linear_alu_writes = x_simple_alu && x_opcode != 6'h00;
+    wire x_control = x_branch || x_opcode_is_bra || x_opcode_is_jal ||
+                     x_opcode_is_indirect;
+    wire [4:0] x_rd=x_instruction[25:21];
+    wire [31:0] wb_q_path_index={29'b0,wb_q_warp}*SIMT_PATH_DEPTH+
+        {{(32-PP_BITS){1'b0}},pp[wb_q_warp]};
 
-    // X siempre gana el puerto de escritura de RF frente a una respuesta de
-    // LSU. `lane_we` pulsa un ciclo ANTES de que `lane_retired` lo haga (ver
+    // `lane_we` pulsa un ciclo ANTES de que `lane_retired` lo haga (ver
     // gpu_lane.v: STATE_EXECUTE deja la escritura lista, y el retiro no se ve
-    // hasta STATE_RETIRE, un ciclo despues) -- por eso la escritura de RF se
-    // gobierna con `x_valid && lane_we`, no con `x_completes`, y el arbitraje
-    // frente a LSU cubre las DOS ventanas para no dejar una en el aire.
+    // hasta STATE_RETIRE). ALU y control capturan su resultado o decisión en
+    // EX/WB; la autoridad arquitectónica de ambos está en WB.
     wire x_completes = x_valid && (&done);
     wire x_writes_this_cycle = x_valid && |(lane_we & active[x_warp]);
-    assign lsu_rsp_ready = !x_writes_this_cycle && !x_completes;
+    // Mantener una respuesta LSU mientras wb_q ocupa el unico puerto de RF.
+    // Esto conserva la prioridad historica X > MEM y evita descartar un
+    // resultado ya capturado si MEM responde en el ciclo siguiente.
+    // wb_q tiene una sola entrada: mientras X ejecuta, una respuesta MEM no
+    // puede adelantar al resultado de una ALU multicíclo y ocuparla.
+    assign lsu_rsp_ready = !x_valid && !wb_q_valid;
     wire lsu_commits = response_commit;
+    // El pulso de retire de una lane se observa un flanco despues de que esta
+    // prepare el resultado. Retener wb_q hasta que `done` ya lo haya
+    // consolidado impide vaciarlo en esa ventana intermedia.
+    wire wb_q_fire = wb_q_valid && !lsu_commits && !x_writes_this_cycle &&
+        ((wb_q_source == WB_ALU && x_completes) ||
+         (wb_q_source == WB_EX && wb_q_ready && x_completes) ||
+         (wb_q_source == WB_XFAULT && wb_q_ready &&
+             (!wb_q_fault_wait_x || x_completes)) ||
+         (wb_q_source != WB_ALU && wb_q_source != WB_EX && !x_completes));
+    wire x_alu_wb_capture = x_simple_alu && x_writes_this_cycle &&
+                        (!wb_q_valid || wb_q_fire);
+    // NOP no genera lane_we, pero conserva la misma frontera EX/WB que el
+    // resto de ALU: el paquete solo lleva metadatos y mascara nula.
+    wire x_nop_wb_capture = x_simple_alu && !x_linear_alu_writes &&
+        x_completes && !wb_q_valid;
+    wire x_control_data_capture = x_control && x_writes_this_cycle &&
+                        (!wb_q_valid || wb_q_fire);
     // Una especial en D nunca adelanta a un compromiso de X ni a una
     // respuesta de LSU del mismo ciclo: el puerto de retiro
     // (instruction_retired/retired_lanes) es de un solo evento por ciclo.
     wire d_special_commits = d_active && d_is_special && !d_encoding_bad &&
         !x_completes && !lsu_commits;
     wire d_fault_commits = d_active && d_encoding_bad && !x_completes && !lsu_commits;
+    // Todos los retiros RR pasan por WB. SSY conserva sus datos de pila en
+    // el packet; los otros especiales no necesitan campos adicionales.
+    wire d_rr_capture = (d_special_commits || d_fault_commits) &&
+        !wb_q_valid && !x_valid;
+    // Un fallo de la I-cache se captura solo cuando la cola esta libre y no
+    // compite con X, MEM ni RR. La respuesta queda retenida hasta entonces.
+    wire fetch_fault_capture = imem_rsp_valid && f_valid && f_accepted &&
+        !i_valid && imem_error && !wb_q_valid && !x_valid &&
+        !lsu_commits && !d_rr_capture;
+    assign imem_rsp_ready = f_valid && f_accepted && !i_valid &&
+        (!imem_error || fetch_fault_capture);
 
     // -- D -> X: arranca la ejecucion de lane el mismo ciclo que X se ocupa --
-    wire d_is_alu = d_active && !d_is_memory && !d_is_special && !d_encoding_bad;
-    wire d_to_x_fire = d_is_alu && !x_valid;
+    // No lanzar una ALU junto a la captura de una respuesta MEM: la primera
+    // escritura de lane debe tener garantizada la entrada EX/WB.
+    wire d_to_x_fire = d_is_alu && !x_valid && !wb_q_valid && !lsu_commits;
 
     genvar l;
     generate for(l=0;l<8;l=l+1) begin: lanes
@@ -266,15 +356,14 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         // queda fuera del guardian a proposito (ver !init_done abajo): es
         // quien pone el banco a cero, porque esta BRAM no tiene reset.
         wire [4:0] write_register=!init_done ? 5'd0 :
-            (lsu_commits ? load_rd[lsu_rsp_tag] : lane_write_address[l*5 +: 5]);
+            (wb_q_fire ? wb_q_rd : lane_write_address[l*5 +: 5]);
         wire rf_write=!init_done ||
             ((write_register!=5'd0) &&
-             ((lsu_commits && active[lsu_rsp_tag][l] && !load_is_write[lsu_rsp_tag] && !lsu_rsp_error[l]) ||
-              (x_valid && active[x_warp][l] && lane_we[l])));
+             (wb_q_fire && wb_q_write_mask[l]));
         wire [7:0] wa=!init_done ? init_address :
-            (lsu_commits ? {lsu_rsp_tag,load_rd[lsu_rsp_tag]} : {x_warp,lane_write_address[l*5 +: 5]});
+            (wb_q_fire ? {wb_q_warp,wb_q_rd} : {x_warp,lane_write_address[l*5 +: 5]});
         wire [31:0] wd=!init_done ? 32'b0 :
-            (lsu_commits ? lsu_rsp_data[l*32 +: 32] : lane_write_data[l*32 +: 32]);
+            (wb_q_fire ? wb_q_write_data[l*32 +: 32] : lane_write_data[l*32 +: 32]);
         gpu_register_file rf (
             .clk(clk), .read_address_a(halted ? {debug_warp,debug_register} :
                 (d_valid ? {d_warp,d_ra} : {i_warp,i_ra})),
@@ -425,7 +514,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // terminado y eso no es una burbuja, es el final). Separa "el cauce no
     // tiene con que llenarse" de "el cauce esta lleno", que es justo la
     // pregunta que profiling.md deja abierta al segmentar S/F/I/D/X/W.
-    assign no_warp_stall = init_done && running && !error && !f_valid &&
+    assign no_warp_stall = init_done && running && !error && !is_valid && !f_valid &&
                            !pick_found && any_live && !step_locked;
 
     // -- X: deteccion de fallo y de divergencia -------------------------------
@@ -455,7 +544,20 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         end
     end
     wire x_would_fault = x_completes && alu_fault;
-    wire x_commits_ok = x_completes && !alu_fault;
+    wire x_control_complete = x_control && x_completes && !alu_fault;
+    // Packet de entrada a WB. Se declara despues de EX porque consume sus
+    // señales de finalizacion; el arbitraje conserva la prioridad anterior.
+    reg [2:0] wb_packet_source, wb_packet_warp;
+    reg [4:0] wb_packet_rd;
+    reg wb_packet_valid;
+    always @* begin
+        wb_packet_valid=1'b1; wb_packet_source=WB_NONE;
+        wb_packet_warp=3'd0; wb_packet_rd=5'd0;
+        if (wb_q_fire) begin
+            wb_packet_source=wb_q_source; wb_packet_warp=wb_q_warp;
+            wb_packet_rd=wb_q_rd;
+        end else wb_packet_valid=1'b0;
+    end
 
     always @* begin
         if(cfg_bank==2'd1) cfg_read_data=logical_id[cfg_word[2:0]];
@@ -488,8 +590,22 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             end
             running<=0; pause_pending<=0;
             releasing<=0;
-            f_valid<=0; i_valid<=0; d_valid<=0; x_valid<=0;
+            is_valid<=0; f_valid<=0; i_valid<=0; d_valid<=0; x_valid<=0;
             busy<=8'b0;
+        end
+    endtask
+
+    // Unico emisor del evento de retiro arquitectonico. Todos los productores
+    // llegan ya como wb_packet; los casos de WB solo deciden si completan o
+    // fallan y actualizan su estado especifico.
+    task retire_from_wb;
+        input [2:0] warp_id;
+        input [7:0] lane_mask;
+        begin
+            instruction_retired<=1;
+            retired_lanes<=lane_mask;
+            retired_count<=retired_count+1'b1;
+            warp_retired_count[warp_id]<=warp_retired_count[warp_id]+1'b1;
         end
     endtask
 
@@ -521,18 +637,27 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire [7:0] launch_set = launch_all ? desc_enabled : launch_mask;
 
     always @(posedge clk) begin
-        instruction_retired<=0; retired_lanes<=8'd0;
+        instruction_retired<=0; retired_lanes<=8'd0; wb_valid<=0;
         if (reset || soft_reset) begin
             init_address<=0; init_done<=0; running<=0; pause_pending<=0; stepping<=0; step_locked<=0;
             cursor<=0; busy<=0; wait_bar<=0; releasing<=0; load_is_write<=0;
             error<=0; error_code<=ERROR_NONE; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
             retired_count<=0;
+            is_valid<=0; is_warp<=0; is_pc<=0;
             f_valid<=0; f_accepted<=0; f_warp<=0; f_pc<=0;
             i_valid<=0; i_warp<=0; i_pc<=0; i_instruction<=0; i_sequential_pc<=0;
             d_valid<=0; d_settled<=0; d_ready<=0; d_warp<=0; d_pc<=0; d_instruction<=0; d_sequential_pc<=0; d_target<=0; d_branch_target<=0;
             d_rf_a<=0; d_rf_b<=0;
             x_valid<=0; x_started<=0; x_warp<=0; x_logical_id<=0; x_warp_arg<=0; x_pc<=0; x_instruction<=0; x_sequential_pc<=0; x_target<=0; x_branch_target<=0;
             x_rf_a<=0; x_rf_b<=0; done<=0;
+            mem_valid<=0; wb_valid<=0; wb_warp<=0;
+            wb_q_valid<=0; wb_q_ready<=0; wb_q_source<=WB_NONE; wb_q_warp<=0; wb_q_rd<=0;
+            wb_q_pc<=0; wb_q_next_pc<=0; wb_q_instruction<=0; wb_q_target<=0; wb_q_active<=0;
+            wb_q_write_data<=0; wb_q_write_mask<=0; wb_q_error<=0;
+            wb_q_taken<=0; wb_q_branch_target<=0; wb_q_indirect_target<=0; wb_q_indirect_diverges<=0;
+            wb_q_fault_code<=ERROR_NONE; wb_q_fault_lane<=0; wb_q_fault_lane_valid<=0;
+            wb_q_fault_wait_x<=0;
+            for(w=0;w<8;w=w+1) pending_write[w]<=0;
             for(w=0;w<8;w=w+1) begin
                 // 36: ningun warp configurado tras el reset (`ACTIVE == 0` es
                 // "deshabilitado", mmio.md §14.2). En la 29 arrancaban los ocho a
@@ -543,6 +668,104 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 pending_pc_top[w]<=0; pending_mask_top[w]<=0;
             end
         end else begin
+            // wb_q es una cola de una entrada: se retira solo cuando ha usado
+            // el puerto de RF. Una captura simultanea reemplaza la entrada que
+            // acaba de salir (nonblocking assignments, la captura va despues).
+            if (wb_q_fire) begin
+                wb_q_valid<=0; wb_q_ready<=0;
+            end
+            if (x_alu_wb_capture) begin
+                wb_q_valid<=1; wb_q_source<=WB_ALU; wb_q_warp<=x_warp;
+                wb_q_rd<=x_rd; wb_q_pc<=x_pc;
+                wb_q_next_pc<=x_sequential_pc; wb_q_instruction<=x_instruction; wb_q_target<=0;
+                wb_q_active<=active[x_warp];
+                wb_q_write_data<=lane_write_data;
+                wb_q_write_mask<=lane_we & active[x_warp];
+                wb_q_error<=0;
+                wb_q_ready<=0; wb_q_taken<=0; wb_q_branch_target<=0;
+                wb_q_indirect_target<=0; wb_q_indirect_diverges<=0;
+                wb_q_fault_code<=ERROR_NONE; wb_q_fault_lane<=0; wb_q_fault_lane_valid<=0;
+                wb_q_fault_wait_x<=0;
+            end else if (x_nop_wb_capture) begin
+                wb_q_valid<=1; wb_q_ready<=0; wb_q_source<=WB_ALU; wb_q_warp<=x_warp;
+                wb_q_rd<=0; wb_q_pc<=x_pc; wb_q_next_pc<=x_sequential_pc;
+                wb_q_instruction<=x_instruction; wb_q_target<=0;
+                wb_q_active<=active[x_warp]; wb_q_write_data<=0;
+                wb_q_write_mask<=0; wb_q_error<=0; wb_q_taken<=0;
+                wb_q_branch_target<=0; wb_q_indirect_target<=0;
+                wb_q_indirect_diverges<=0; wb_q_fault_code<=ERROR_NONE;
+                wb_q_fault_lane<=0; wb_q_fault_lane_valid<=0; wb_q_fault_wait_x<=0;
+            end else if (x_control_data_capture) begin
+                // JAL/JALR escriben el enlace antes de retirarse. El packet
+                // conserva el dato hasta que X haya fijado target/taken.
+                wb_q_valid<=1; wb_q_ready<=0; wb_q_source<=WB_EX; wb_q_warp<=x_warp;
+                wb_q_rd<=x_rd; wb_q_pc<=x_pc; wb_q_next_pc<=x_sequential_pc;
+                wb_q_instruction<=x_instruction; wb_q_target<=x_target;
+                wb_q_active<=active[x_warp]; wb_q_write_data<=lane_write_data;
+                wb_q_write_mask<=lane_we & active[x_warp]; wb_q_error<=0;
+                wb_q_taken<=0; wb_q_branch_target<=0;
+                wb_q_indirect_target<=0; wb_q_indirect_diverges<=0;
+                wb_q_fault_code<=ERROR_NONE; wb_q_fault_lane<=0; wb_q_fault_lane_valid<=0;
+                wb_q_fault_wait_x<=0;
+            end else if (x_control_complete) begin
+                // Las ramas sin enlace crean aqui el packet; JAL/JALR solo
+                // completan los campos de control del packet ya capturado.
+                if (!wb_q_valid) begin
+                    wb_q_valid<=1; wb_q_source<=WB_EX; wb_q_warp<=x_warp;
+                    wb_q_rd<=x_rd; wb_q_pc<=x_pc; wb_q_next_pc<=x_sequential_pc;
+                    wb_q_instruction<=x_instruction; wb_q_target<=x_target;
+                    wb_q_active<=active[x_warp]; wb_q_write_data<=0;
+                    wb_q_write_mask<=0; wb_q_error<=0;
+                end
+                wb_q_ready<=1; wb_q_taken<=taken;
+                wb_q_branch_target<=x_branch_target;
+                wb_q_indirect_target<=indirect_target;
+                wb_q_indirect_diverges<=indirect_diverges;
+            end else if (x_would_fault) begin
+                // X solo detecta el error. WB recibe una instantánea completa
+                // y es el único que cambia el estado arquitectónico de fallo.
+                wb_q_valid<=1; wb_q_ready<=1; wb_q_source<=WB_XFAULT;
+                wb_q_warp<=x_warp; wb_q_rd<=0; wb_q_pc<=x_pc;
+                wb_q_next_pc<=x_sequential_pc; wb_q_instruction<=x_instruction;
+                wb_q_target<=0; wb_q_active<=active[x_warp];
+                wb_q_write_data<=0; wb_q_write_mask<=0; wb_q_error<=0;
+                wb_q_taken<=0; wb_q_branch_target<=0;
+                wb_q_indirect_target<=0; wb_q_indirect_diverges<=0;
+                wb_q_fault_code<=fault_code; wb_q_fault_lane<=fault_lane;
+                wb_q_fault_lane_valid<=fault_code==ERROR_DIVISION_BY_ZERO;
+                wb_q_fault_wait_x<=1;
+            end else if (fetch_fault_capture) begin
+                // F registra su error, pero el estado global no se detiene
+                // hasta que WB consuma este packet.
+                wb_q_valid<=1; wb_q_ready<=1; wb_q_source<=WB_XFAULT;
+                wb_q_warp<=f_warp; wb_q_rd<=0; wb_q_pc<=f_pc;
+                wb_q_next_pc<=f_pc+4; wb_q_instruction<=0; wb_q_target<=0;
+                wb_q_active<=active[f_warp]; wb_q_write_data<=0;
+                wb_q_write_mask<=0; wb_q_error<=0; wb_q_taken<=0;
+                wb_q_branch_target<=0; wb_q_indirect_target<=0;
+                wb_q_indirect_diverges<=0;
+                wb_q_fault_code<=ERROR_MEMORY_ACCESS; wb_q_fault_lane<=0;
+                wb_q_fault_lane_valid<=0; wb_q_fault_wait_x<=0;
+            end else if (lsu_commits) begin
+                // La respuesta ya fue aceptada del LSU, pero su efecto visible
+                // (RF, PC, busy y contadores) se difiere a WB.
+                wb_q_valid<=1; wb_q_source<=WB_MEM; wb_q_warp<=lsu_rsp_tag;
+                wb_q_rd<=load_is_write[lsu_rsp_tag] ? 5'd0 : load_rd[lsu_rsp_tag];
+                wb_q_pc<=pc[lsu_rsp_tag]; wb_q_next_pc<=pc[lsu_rsp_tag]+4;
+                wb_q_instruction<=0; wb_q_target<=0; wb_q_active<=active[lsu_rsp_tag];
+                wb_q_write_data<=lsu_rsp_data;
+                wb_q_write_mask<=load_is_write[lsu_rsp_tag] ? 8'b0 : active[lsu_rsp_tag];
+                wb_q_error<=lsu_rsp_error;
+            end else if (d_rr_capture) begin
+                wb_q_valid<=1;
+                wb_q_source<=d_fault_commits ? WB_RRFLT :
+                    (d_opcode==6'h31 ? WB_RR : WB_RR_SIMPLE);
+                wb_q_warp<=d_warp;
+                wb_q_rd<=0; wb_q_pc<=d_pc; wb_q_next_pc<=d_sequential_pc;
+                wb_q_instruction<=d_instruction; wb_q_target<=d_target; wb_q_active<=active[d_warp];
+                wb_q_write_data<=0; wb_q_write_mask<=0; wb_q_error<=0;
+                d_valid<=0;
+            end
             if (!init_done) begin
                 init_address<=init_address+1'b1;
                 if(init_address==255) init_done<=1;
@@ -552,101 +775,134 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // Compromiso (W): X > respuesta de LSU > especial de D.
             // Como mucho un evento de retiro por ciclo.
             // ---------------------------------------------------------
-            if (x_would_fault) begin
-                fault(fault_code,x_warp,fault_lane,fault_code==ERROR_DIVISION_BY_ZERO);
-            end else if (x_commits_ok) begin
-                if(x_opcode_is_indirect && indirect_diverges) begin
-                    fault(ERROR_SIMT,x_warp,0,0);
-                end else if(x_branch && taken!=0 && taken!=active[x_warp]) begin
-                    if(sp[x_warp]==0) fault(ERROR_SIMT,x_warp,0,0);
-                    else if(x_branch_target==join_pc_top[x_warp]) begin
-                        active[x_warp]<=active[x_warp] & ~taken;
-                        pc[x_warp]<=x_sequential_pc;
-                        instruction_retired<=1; retired_lanes<=active[x_warp]; retired_count<=retired_count+1'b1;
-                        warp_retired_count[x_warp]<=warp_retired_count[x_warp]+1'b1;
-                        busy[x_warp]<=0; x_valid<=0;
-                    end else if(x_sequential_pc==join_pc_top[x_warp]) begin
-                        active[x_warp]<=taken; pc[x_warp]<=x_branch_target;
-                        instruction_retired<=1; retired_lanes<=active[x_warp]; retired_count<=retired_count+1'b1;
-                        warp_retired_count[x_warp]<=warp_retired_count[x_warp]+1'b1;
-                        busy[x_warp]<=0; x_valid<=0;
-                    end else if(pp[x_warp]==SIMT_PATH_DEPTH[PP_BITS-1:0]) begin
-                        fault(ERROR_SIMT,x_warp,0,0);
+            if (wb_packet_valid && wb_packet_source == WB_XFAULT) begin
+                fault(wb_q_fault_code,wb_packet_warp,wb_q_fault_lane,wb_q_fault_lane_valid);
+            end else if (wb_packet_valid && wb_packet_source == WB_ALU) begin
+                // Commit de las ALU lineales: writeback y retiro salen del
+                // mismo packet registrado. En una NOP wb_q no es necesario.
+                wb_valid<=1; wb_warp<=wb_packet_warp;
+                if (wb_packet_rd != 0 && x_linear_alu_writes)
+                    pending_write[wb_packet_warp][wb_packet_rd]<=0;
+                pc[wb_packet_warp]<=wb_q_valid ? wb_q_next_pc : x_sequential_pc;
+                retire_from_wb(wb_packet_warp,wb_q_active);
+                busy[wb_packet_warp]<=0;
+                x_valid<=0;
+            end else if (wb_packet_valid && wb_packet_source == WB_EX) begin
+                // Todos los campos de control proceden del packet EX/WB; X
+                // solo espera a que WB acepte para liberar su token.
+                wb_valid<=1; wb_warp<=wb_packet_warp;
+                if (wb_packet_rd != 0 &&
+                    (wb_q_instruction[31:26]==6'h2c || wb_q_instruction[31:26]==6'h2d))
+                    pending_write[wb_packet_warp][wb_packet_rd]<=0;
+                if((wb_q_instruction[31:26]==6'h2d || wb_q_instruction[31:26]==6'h2e) &&
+                   wb_q_indirect_diverges) begin
+                    fault(ERROR_SIMT,wb_packet_warp,0,0);
+                end else if(wb_q_instruction[31:26]>=6'h20 && wb_q_instruction[31:26]<=6'h25 &&
+                            wb_q_taken!=0 && wb_q_taken!=wb_q_active) begin
+                    if(sp[wb_packet_warp]==0) fault(ERROR_SIMT,wb_packet_warp,0,0);
+                    else if(wb_q_branch_target==join_pc_top[wb_packet_warp]) begin
+                        active[wb_packet_warp]<=wb_q_active & ~wb_q_taken;
+                        pc[wb_packet_warp]<=wb_q_next_pc;
+                        retire_from_wb(wb_packet_warp,wb_q_active);
+                        busy[wb_packet_warp]<=0; x_valid<=0;
+                    end else if(wb_q_next_pc==join_pc_top[wb_packet_warp]) begin
+                        active[wb_packet_warp]<=wb_q_taken; pc[wb_packet_warp]<=wb_q_branch_target;
+                        retire_from_wb(wb_packet_warp,wb_q_active);
+                        busy[wb_packet_warp]<=0; x_valid<=0;
+                    end else if(pp[wb_packet_warp]==SIMT_PATH_DEPTH[PP_BITS-1:0]) begin
+                        fault(ERROR_SIMT,wb_packet_warp,0,0);
                     end else begin
-                        pending_pc[x_path_index]<=x_branch_target; pending_mask[x_path_index]<=taken;
-                        pending_pc_top[x_warp]<=x_branch_target; pending_mask_top[x_warp]<=taken;
-                        pp[x_warp]<=pp[x_warp]+1'b1; active[x_warp]<=active[x_warp] & ~taken;
-                        pc[x_warp]<=x_sequential_pc;
-                        instruction_retired<=1; retired_lanes<=active[x_warp]; retired_count<=retired_count+1'b1;
-                        warp_retired_count[x_warp]<=warp_retired_count[x_warp]+1'b1;
-                        busy[x_warp]<=0; x_valid<=0;
+                        pending_pc[wb_q_path_index]<=wb_q_branch_target; pending_mask[wb_q_path_index]<=wb_q_taken;
+                        pending_pc_top[wb_packet_warp]<=wb_q_branch_target; pending_mask_top[wb_packet_warp]<=wb_q_taken;
+                        pp[wb_packet_warp]<=pp[wb_packet_warp]+1'b1;
+                        active[wb_packet_warp]<=wb_q_active & ~wb_q_taken;
+                        pc[wb_packet_warp]<=wb_q_next_pc;
+                        retire_from_wb(wb_packet_warp,wb_q_active);
+                        busy[wb_packet_warp]<=0; x_valid<=0;
                     end
                 end else begin
-                    if (x_branch && taken!=0) pc[x_warp]<=x_branch_target;
-                    else if(x_opcode_is_bra) pc[x_warp]<=x_target;
-                    else if(x_opcode_is_jal) pc[x_warp]<=x_branch_target;
-                    else if(x_opcode_is_indirect) pc[x_warp]<=indirect_target;
-                    else pc[x_warp]<=x_sequential_pc;
-                    instruction_retired<=1; retired_lanes<=active[x_warp]; retired_count<=retired_count+1'b1;
-                    warp_retired_count[x_warp]<=warp_retired_count[x_warp]+1'b1;
-                    busy[x_warp]<=0; x_valid<=0;
+                    if (wb_q_instruction[31:26]>=6'h20 && wb_q_instruction[31:26]<=6'h25 && wb_q_taken!=0)
+                        pc[wb_packet_warp]<=wb_q_branch_target;
+                    else if(wb_q_instruction[31:26]==6'h2f) pc[wb_packet_warp]<=wb_q_target;
+                    else if(wb_q_instruction[31:26]==6'h2c) pc[wb_packet_warp]<=wb_q_branch_target;
+                    else if(wb_q_instruction[31:26]==6'h2d || wb_q_instruction[31:26]==6'h2e)
+                        pc[wb_packet_warp]<=wb_q_indirect_target;
+                    else pc[wb_packet_warp]<=wb_q_next_pc;
+                    retire_from_wb(wb_packet_warp,wb_q_active);
+                    busy[wb_packet_warp]<=0; x_valid<=0;
                 end
-            end else if (lsu_commits) begin
-                if(|lsu_rsp_error) begin
-                    for(w=7;w>=0;w=w-1) if(lsu_rsp_error[w]) fault(ERROR_MEMORY_ACCESS,lsu_rsp_tag,w[2:0],1'b1);
+            end else if (wb_packet_valid && wb_packet_source == WB_MEM) begin
+                mem_valid[wb_packet_warp]<=0;
+                if (wb_packet_rd != 0)
+                    pending_write[wb_packet_warp][wb_packet_rd]<=0;
+                if(|wb_q_error) begin
+                    for(w=7;w>=0;w=w-1)
+                        if(wb_q_error[w]) fault(ERROR_MEMORY_ACCESS,wb_packet_warp,w[2:0],1'b1);
                 end else begin
-                    pc[lsu_rsp_tag]<=pc[lsu_rsp_tag]+4;
-                    instruction_retired<=1; retired_lanes<=active[lsu_rsp_tag]; retired_count<=retired_count+1'b1;
-                    warp_retired_count[lsu_rsp_tag]<=warp_retired_count[lsu_rsp_tag]+1'b1;
-                    busy[lsu_rsp_tag]<=0;
+                    wb_valid<=1; wb_warp<=wb_packet_warp;
+                    pc[wb_packet_warp]<=wb_q_next_pc;
+                    retire_from_wb(wb_packet_warp,wb_q_active);
+                    busy[wb_packet_warp]<=0;
                 end
-            end else if (d_fault_commits) begin
-                fault(ERROR_INVALID_ENCODING,d_warp,0,0);
-            end else if (d_special_commits) begin
-                if(bar_mismatch_for_d && d_opcode==6'h32) begin
-                    fault(ERROR_BARRIER,d_warp,0,0);
-                end else case(d_opcode)
-                    6'h31: begin // SSY
-                        if(|d_target[31:17] || |d_target[1:0]) fault(ERROR_MEMORY_ACCESS,d_warp,0,0);
-                        else if(sp[d_warp]!=0 && ssy_pc_top[d_warp]==d_pc) begin
-                            if(join_pc_top[d_warp]!=d_target) fault(ERROR_SIMT,d_warp,0,0);
-                            else begin
-                                pc[d_warp]<=d_sequential_pc;
-                                instruction_retired<=1; retired_lanes<=active[d_warp]; retired_count<=retired_count+1'b1;
-                                warp_retired_count[d_warp]<=warp_retired_count[d_warp]+1'b1;
-                                busy[d_warp]<=0; d_valid<=0;
-                            end
-                        end else if(sp[d_warp]==SIMT_REGION_DEPTH[SP_BITS-1:0]) fault(ERROR_SIMT,d_warp,0,0);
-                        else begin
-                            join_pc[d_ssy_index]<=d_target; entry_mask[d_ssy_index]<=active[d_warp];
-                            ssy_pc[d_ssy_index]<=d_pc; path_base[d_ssy_index]<=pp[d_warp];
-                            join_pc_top[d_warp]<=d_target; entry_mask_top[d_warp]<=active[d_warp];
-                            ssy_pc_top[d_warp]<=d_pc; path_base_top[d_warp]<=pp[d_warp];
-                            sp[d_warp]<=sp[d_warp]+1'b1; pc[d_warp]<=d_sequential_pc;
-                            instruction_retired<=1; retired_lanes<=active[d_warp]; retired_count<=retired_count+1'b1;
-                            warp_retired_count[d_warp]<=warp_retired_count[d_warp]+1'b1;
-                            busy[d_warp]<=0; d_valid<=0;
-                        end
-                    end
+            end else if (wb_packet_valid && wb_packet_source == WB_RRFLT) begin
+                fault(ERROR_INVALID_ENCODING,wb_packet_warp,0,0);
+            end else if (wb_packet_valid && wb_packet_source == WB_RR_SIMPLE) begin
+                // BAR, EXIT y HALT llegan aqui ya desligadas de D. No tocan
+                // las pilas SIMT; SSY conserva su camino propio inmediatamente
+                // debajo hasta migrar los cambios de pila de forma atomica.
+                wb_valid<=1; wb_warp<=wb_packet_warp;
+                case(wb_q_instruction[31:26])
                     6'h32: begin // BAR
-                        if(active[d_warp]!=live[d_warp]) fault(ERROR_BARRIER,d_warp,0,0);
+                        if(wb_q_active!=live[wb_packet_warp])
+                            fault(ERROR_BARRIER,wb_packet_warp,0,0);
                         else begin
-                            wait_bar[d_warp]<=1;
-                            instruction_retired<=1; retired_lanes<=active[d_warp]; retired_count<=retired_count+1'b1;
-                            warp_retired_count[d_warp]<=warp_retired_count[d_warp]+1'b1;
-                            busy[d_warp]<=0; d_valid<=0;
+                            wait_bar[wb_packet_warp]<=1;
+                            retire_from_wb(wb_packet_warp,wb_q_active);
+                            busy[wb_packet_warp]<=0;
                         end
                     end
                     6'h33,6'h3f: begin // EXIT, HALT
-                        live[d_warp]<=live[d_warp] & ~active[d_warp];
-                        active[d_warp]<=0;
-                        pc[d_warp]<=d_sequential_pc;
-                        if ((live[d_warp] & ~active[d_warp])==0) begin
-                            sp[d_warp]<=0; pp[d_warp]<=0;
+                        live[wb_packet_warp]<=live[wb_packet_warp] & ~wb_q_active;
+                        active[wb_packet_warp]<=0;
+                        pc[wb_packet_warp]<=wb_q_next_pc;
+                        if ((live[wb_packet_warp] & ~wb_q_active)==0) begin
+                            sp[wb_packet_warp]<=0; pp[wb_packet_warp]<=0;
                         end
-                        instruction_retired<=1; retired_lanes<=active[d_warp]; retired_count<=retired_count+1'b1;
-                        warp_retired_count[d_warp]<=warp_retired_count[d_warp]+1'b1;
-                        busy[d_warp]<=0; d_valid<=0;
+                        retire_from_wb(wb_packet_warp,wb_q_active);
+                        busy[wb_packet_warp]<=0;
+                    end
+                endcase
+            end else if (wb_packet_valid && wb_packet_source == WB_RR) begin
+                wb_valid<=1; wb_warp<=wb_packet_warp;
+                case(wb_q_instruction[31:26])
+                    6'h31: begin // SSY: la pila solo cambia desde WB.
+                        if(|wb_q_target[31:17] || |wb_q_target[1:0])
+                            fault(ERROR_MEMORY_ACCESS,wb_packet_warp,0,0);
+                        else if(sp[wb_packet_warp]!=0 &&
+                                ssy_pc_top[wb_packet_warp]==wb_q_pc) begin
+                            if(join_pc_top[wb_packet_warp]!=wb_q_target)
+                                fault(ERROR_SIMT,wb_packet_warp,0,0);
+                            else begin
+                                pc[wb_packet_warp]<=wb_q_next_pc;
+                                retire_from_wb(wb_packet_warp,wb_q_active);
+                                busy[wb_packet_warp]<=0;
+                            end
+                        end else if(sp[wb_packet_warp]==SIMT_REGION_DEPTH[SP_BITS-1:0])
+                            fault(ERROR_SIMT,wb_packet_warp,0,0);
+                        else begin
+                            join_pc[wb_q_ssy_index]<=wb_q_target;
+                            entry_mask[wb_q_ssy_index]<=wb_q_active;
+                            ssy_pc[wb_q_ssy_index]<=wb_q_pc;
+                            path_base[wb_q_ssy_index]<=pp[wb_packet_warp];
+                            join_pc_top[wb_packet_warp]<=wb_q_target;
+                            entry_mask_top[wb_packet_warp]<=wb_q_active;
+                            ssy_pc_top[wb_packet_warp]<=wb_q_pc;
+                            path_base_top[wb_packet_warp]<=pp[wb_packet_warp];
+                            sp[wb_packet_warp]<=sp[wb_packet_warp]+1'b1;
+                            pc[wb_packet_warp]<=wb_q_next_pc;
+                            retire_from_wb(wb_packet_warp,wb_q_active);
+                            busy[wb_packet_warp]<=0;
+                        end
                     end
                 endcase
             end
@@ -699,17 +955,31 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                     end
                 end else begin
                     // live!=0 garantizado por la eleccion de normalize_warp:
-                    // active==0 sin pila que restaurar es un fallo SIMT.
-                    fault(ERROR_SIMT,normalize_warp,0,0);
+                    // active==0 sin pila que restaurar es un fallo SIMT. No
+                    // invoca fault() aqui: lo registra para que WB sea quien
+                    // detenga la maquina de forma uniforme.
+                    if (!wb_q_valid) begin
+                        wb_q_valid<=1; wb_q_ready<=1; wb_q_source<=WB_XFAULT;
+                        wb_q_warp<=normalize_warp; wb_q_rd<=0;
+                        wb_q_pc<=pc[normalize_warp]; wb_q_next_pc<=pc[normalize_warp];
+                        wb_q_instruction<=0; wb_q_target<=0;
+                        wb_q_active<=active[normalize_warp]; wb_q_write_data<=0;
+                        wb_q_write_mask<=0; wb_q_error<=0; wb_q_taken<=0;
+                        wb_q_branch_target<=0; wb_q_indirect_target<=0;
+                        wb_q_indirect_diverges<=0;
+                        wb_q_fault_code<=ERROR_SIMT; wb_q_fault_lane<=0;
+                        wb_q_fault_lane_valid<=0; wb_q_fault_wait_x<=0;
+                    end
                 end
             end
 
             // ---------------------------------------------------------
-            // S -> F: elegir un warp nuevo si F esta libre.
+            // SCH -> IS: elegir un warp elegible. SCH solo decide; IS es la
+            // frontera de admision que mas adelante recibira el scoreboard.
             // ---------------------------------------------------------
-            if (init_done && running && !error && !f_valid && pick_found && !step_locked) begin
+            if (init_done && running && !error && !is_valid && pick_found && !step_locked) begin
                 busy[pick_warp]<=1; cursor<=pick_warp+1'b1;
-                f_valid<=1; f_accepted<=0; f_warp<=pick_warp; f_pc<=pc[pick_warp];
+                is_valid<=1; is_warp<=pick_warp; is_pc<=pc[pick_warp];
                 // En modo paso a paso, esta es LA UNICA instruccion que se
                 // deja entrar: sin este cerrojo, en cuanto ella compromete y
                 // libera `busy` puede haber otro warp elegible ese mismo
@@ -717,13 +987,19 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 // que se reconozca la pausa), y STEP retiraria dos.
                 if (stepping) step_locked<=1;
             end
+            // IS -> IF. Separar esto de SCH hace visible el handshake de
+            // issue sin cambiar aun las reglas de dependencia del SM.
+            if (is_valid && !f_valid) begin
+                f_valid<=1; f_accepted<=0; f_warp<=is_warp; f_pc<=is_pc;
+                is_valid<=0;
+            end
             if (init_done && stepping && d_valid && !x_valid) begin
                 // El paso a paso marca la pausa en cuanto la instruccion
                 // elegida llega a D; se aplica cuando ya no queda nada vivo.
                 pause_pending<=1; stepping<=0;
             end
             if ((pause_pending || (running && !any_live)) &&
-                busy==8'b0 && !f_valid && !i_valid && !d_valid && !x_valid) begin
+                busy==8'b0 && !is_valid && !f_valid && !i_valid && !d_valid && !x_valid) begin
                 running<=0; pause_pending<=0;
             end
             if (halted && (run_request || step_request) && !error) begin
@@ -736,7 +1012,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             if (f_valid && !f_accepted && imem_valid && imem_ready) f_accepted<=1;
             if (imem_rsp_valid && imem_rsp_ready) begin
                 if (imem_error) begin
-                    fault(ERROR_MEMORY_ACCESS,f_warp,0,0);
+                    f_valid<=0;
                 end else begin
                     i_valid<=1; i_warp<=f_warp; i_pc<=f_pc;
                     i_instruction<=imem_data; i_sequential_pc<=f_pc+32'd4;
@@ -769,6 +1045,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (d_dispatch_mem && lsu_ready) begin
                 load_rd[d_warp]<=d_instruction[25:21]; load_is_write[d_warp]<=d_write;
+                mem_valid[d_warp]<=1;
+                if (d_load_writes && d_rd != 0) pending_write[d_warp][d_rd]<=1;
                 d_valid<=0;
                 // busy[d_warp] sigue a 1: el warp queda parado en memoria
                 // hasta que la respuesta compromete arriba.
@@ -778,6 +1056,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // D -> X: arranca la ejecucion (mismo ciclo que X se ocupa).
             // ---------------------------------------------------------
             if (d_to_x_fire) begin
+                if (d_alu_writes && d_rd != 0) pending_write[d_warp][d_rd]<=1;
                 x_valid<=1; x_started<=0; x_warp<=d_warp; x_pc<=d_pc;
                 x_logical_id<=logical_id[d_warp]; x_warp_arg<=warp_arg[d_warp];
                 x_instruction<=d_instruction; x_sequential_pc<=d_sequential_pc;
