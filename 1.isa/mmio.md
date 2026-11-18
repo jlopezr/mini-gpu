@@ -736,6 +736,59 @@ Del controlador de interrupciones se prevén al menos estas fuentes:
 INPUT (teclado y ratón, `0x80600000`) se define en §25. Se numera al final para no
 renumerar las secciones existentes (§1.5).
 
+### 11.1. DMA, interfaz experimental (38)
+
+La 38 implementa un primer motor de DMA en `0x8050_0000`, y enciende
+`DEVICES.DMA` (bit 8). **La interfaz NO está congelada**: lo que sigue describe
+la implementación de la 38 para que un programa sepa a qué atenerse, y puede
+cambiar en versiones futuras sin respetar §1.5 — el sellado del mapa llegará
+con la extensión del blitter (COPY/FILL → comparación condicional y Z).
+
+El bloque se organiza en dos regiones, con canales de **0x40 bytes** cada uno y
+los registros globales detrás de la extensión máxima (§1.4):
+
+```text
++0x000..+0x0FF   canales (stride 0x40; la 38 tiene dos, 0 y 1)
++0x200           DMA_ID        R   "DMA1"
++0x204           DMA_CAPS      R   numero de canales
++0x208           DMA_IRQ       W1C pending, R pending
++0x20C           DMA_IRQ_ENABLE R/W
+```
+
+Cada canal, offsets relativos al inicio del canal:
+
+| Offset | Registro | R/W | Contenido |
+|---|---|---|---|
+| `+0x00` | `SRC` | R/W | dirección de origen, alineada a 16 |
+| `+0x04` | `DST` | R/W | dirección de destino, alineada a 16 |
+| `+0x08` | `WIDTH` | R/W | ancho en **bytes**, múltiplo de 16 |
+| `+0x0C` | `HEIGHT` | R/W | alto en filas |
+| `+0x10` | `SRC_STRIDE` | R/W | salto de fila origen, alineado a 16 |
+| `+0x14` | `DST_STRIDE` | R/W | salto de fila destino, alineado a 16 |
+| `+0x18` | `PATTERN` | R/W | patrón de 32 bits para FILL |
+| `+0x1C` | `CTRL` | W | START (bit 0), FILL (bit 1) |
+| `+0x20` | `STATUS` | R/W | bit 0 BUSY, bit 1 DONE, bit 2 ERROR; DONE/ERROR se limpian escribiendo 1 |
+| `+0x24` | `BYTES_DONE` | R | bytes transferidos |
+
+Reglas de la implementación de la 38:
+
+- Todo acceso es de 32 bits, alineado y con máscara completa; los huecos y los
+  offsets sin registro dan error (§4.3).
+- `START` con `FILL=0` es un **COPY** 2D de `SRC` a `DST`, `WIDTH×HEIGHT` bytes
+  con strides independientes; con `FILL=1` escribe `PATTERN` repetido en `DST`.
+  Origen y destino no deben solaparse.
+- ESCRIBIR la configuración de un canal BUSY da error; los registros se
+  escriben antes de `START` y se leen en cualquier momento.
+- Sin `init_done` de la SDRAM, `START` da error.
+- Coherencia: el motor escribe **detrás** de la D-cache de la CPU. Un programa
+  no debe leer por la D-cache memoria que el DMA haya escrito con la CPU
+  corriendo — la caché solo se invalida al parar la CPU. Antes de que el DMA
+  lea memoria escrita por la CPU, el hardware espera a que el búfer de
+  combinación de escrituras se vacíe (`wb_dirty`).
+- `DMA_IRQ`/`DMA_IRQ_ENABLE` existen, pero en la 38 no hay controlador de
+  interrupciones: la señal no llega a ningún sitio y los programas sondean
+  `STATUS`.
+
 ---
 
 ## 12. Contadores de rendimiento: reglas comunes
@@ -883,6 +936,16 @@ Array según §12.6.
 | 5 | `+0x14` | `STALL_MEM` |
 | 6 | `+0x18` | `STALL_FETCH` (extensión) |
 | 7 | `+0x1C` | `STALL_MMIO` (extensión) |
+| 8 | `+0x20` | `STALL_EX_MEM` (extensión segmentada) |
+| 9 | `+0x24` | `STALL_RAW` (extensión segmentada) |
+| 10 | `+0x28` | `STALL_BRANCH` (extensión segmentada) |
+| 11 | `+0x2C` | `STALL_ID_EMPTY` (extensión segmentada) |
+| 12 | `+0x30` | `DMEM_HITS` (extensión caché de datos) |
+| 13 | `+0x34` | `DMEM_MISSES` (extensión caché de datos) |
+| 14 | `+0x38` | `STALL_MULDIV` (extensión MUL/DIV segmentada) |
+| 15 | `+0x3C` | `MULDIV_RETIRED` (extensión MUL/DIV segmentada) |
+| 16 | `+0x40` | `VIDEO_FRAMES` (extensión vídeo) |
+| 17 | `+0x44` | `SWAP_WAIT` (extensión vídeo) |
 
 Con `CYCLES`, `STALL_MEM` e `IMEM_MISSES` se separa cómputo de memoria y de
 fetch sin instrumentar nada más, y **un programa se mide a sí mismo en la
@@ -903,6 +966,16 @@ núcleo corriendo, salvo `RETIRED` (abajo).
 | `STALL_MEM` | Ciclos con una petición de memoria del núcleo pendiente, sea búsqueda de instrucción o acceso a datos a memoria, y sin respuesta todavía. |
 | `STALL_FETCH` | De los de `STALL_MEM`, los de la búsqueda de instrucción. Los de datos son `STALL_MEM − STALL_FETCH`. |
 | `STALL_MMIO` | Ciclos con un acceso a datos a un dispositivo MMIO pendiente. **No** se suman a `STALL_MEM`: un dispositivo no es memoria. |
+| `STALL_EX_MEM` | Solo CPU segmentada. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con un acceso a memoria o a MMIO, incluidos los ciclos de petición y respuesta que no son espera. Sin `STALL_MULDIV`, incluye también los de MUL/DIV. |
+| `STALL_RAW` | Solo CPU segmentada. Ciclos en que ID tiene una instrucción pero la para una dependencia con una instrucción anterior que aún no ha escrito su registro. |
+| `STALL_BRANCH` | Solo CPU segmentada. Ciclos perdidos por un salto tomado: desde que se decide hasta que llega a ID la primera instrucción del destino (con ID vacío, o con la instrucción del camino equivocado que se descarta). |
+| `STALL_ID_EMPTY` | Solo CPU segmentada. Ciclos con ID vacío por cualquier otro motivo: un fallo del búfer de instrucciones o el arranque. |
+| `DMEM_HITS` | Solo CPU con caché de datos. `LOAD` a memoria servidos por la caché, sin ir al fabric. |
+| `DMEM_MISSES` | Solo CPU con caché de datos. `LOAD` a memoria que tuvieron que leer una línea. Los `STORE`, el MMIO y los accesos fuera de memoria pasan de largo y no cuentan en ninguno de los dos. |
+| `STALL_MULDIV` | Solo CPU segmentada con MUL/DIV de varios ciclos. Ciclos en que ninguna instrucción pasa de ID a EX porque EX está ocupado con una `MUL`, `MULHI`, `MULFX`, `DIV`, `DIVU`, `REM` o `REMU`. En la CPU 38 incluye también `FADD`, `FSUB`, `FMUL` y `FDIV`. Es un motivo más del reparto: esos ciclos ya no cuentan en `STALL_EX_MEM`. |
+| `MULDIV_RETIRED` | Solo CPU segmentada con MUL/DIV de varios ciclos. De las de `RETIRED`, las de esas siete instrucciones y, en la CPU 38, las cuatro FP32. `STALL_MULDIV / MULDIV_RETIRED` es lo que cuesta de media cada una, además de su ciclo. |
+| `VIDEO_FRAMES` | Solo CPU con vídeo de doble buffer. Frames que empieza el barrido (el mismo instante en que avanza `FRAME_COUNT`, §9.5) con el núcleo corriendo. A diferencia de `FRAME_COUNT`, se para y se reinicia con el resto del bloque: `CYCLES / VIDEO_FRAMES` son los ciclos de CPU que dura un frame, a cualquier reloj. |
+| `SWAP_WAIT` | Solo CPU con vídeo de doble buffer. Ciclos con el núcleo corriendo y un intercambio pedido que aún no ha hecho el barrido (`SWAP_PENDING`, §9.4). No es un motivo del reparto del pipeline: esos ciclos también cuentan donde toque (normalmente `STALL_EX_MEM` y `STALL_BRANCH`, el bucle que sondea). |
 
 **Identidades.** Con ellas se comprueba una implementación y se reparte el
 tiempo:
@@ -913,6 +986,36 @@ IMEM_HITS + IMEM_MISSES  ≈  RETIRED            (una búsqueda por instrucción
 CPI = CYCLES / RETIRED         IPC = RETIRED / CYCLES
 ```
 
+En la CPU segmentada, cada ciclo con el núcleo corriendo o pasa una instrucción
+de ID a EX o cuenta en **uno solo** de los cuatro motivos, así que:
+
+```text
+CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros
+CPI    = 1 + (STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY + otros) / RETIRED
+```
+
+Con `STALL_MULDIV`, es un quinto motivo y se suma igual a los otros cuatro.
+
+**Ocupación del frame.** Con `VIDEO_FRAMES`, `SWAP_WAIT` y los intercambios
+hechos en la medida (`SWAP_COUNT`, §9.5):
+
+```text
+ciclos por frame   = CYCLES / VIDEO_FRAMES
+trabajo por swap   = (CYCLES − SWAP_WAIT) / intercambios
+frame ocupado      = trabajo por swap / ciclos por frame
+```
+
+Por encima de 1, el trabajo de un frame no cabe en un frame y se pierden
+vblanks. Supone que el programa espera **justo después** de pedir el
+intercambio, como hace `swap_and_wait`: un programa que adelanta trabajo del
+frame siguiente con el intercambio pendiente lo vería contado como espera. Es
+el caso del triple buffer de mini-gl (`39.mini-gl/src/platform/minigpu.c`):
+pide el intercambio y dibuja enseguida en el tercer buffer, así que
+`SWAP_WAIT` es el tiempo que el intercambio pasa pendiente (hasta el siguiente
+vblank, unos 8 ms de media), no tiempo parado de la CPU.
+
+`otros` son los pocos ciclos de arranque, `STEP`, `HALT` y error.
+
 La primera se cumple salvo por uno o dos ciclos: los eventos cruzan un registro
 antes de contarse, así que llegan un ciclo tarde. Es un retraso constante, no un
 error acumulado.
@@ -921,7 +1024,10 @@ error acumulado.
 demás dan error (§12.6), no cero. Las CPU de las carpetas 16 a 21 implementan las
 ranuras 0 y 1; la 30 implementa las ocho. El software que quiera las ocho lo
 detecta por la capacidad `perf_stalls` (`tools/capabilities.json`), que sale del
-RTL. Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
+RTL. La 38, segmentada, implementa además las ranuras 8 a 11 (capacidad
+`perf_pipeline`), con su caché de datos las 12 y 13 (capacidad `perf_dcache`) y,
+con su multiplicador y divisor, las 14 y 15 (capacidad `perf_muldiv`) y,
+con su vídeo, las 16 y 17 (capacidad `perf_video`). Las ranuras 6 y 7 de GPU PERFORMANCE (§14.4) son otra cosa de esa familia:
 son bloques distintos y no chocan.
 
 **Cómo se leen.** Con el núcleo parado, o congelando el bloque con
@@ -1191,6 +1297,40 @@ Array según §12.6.
 | 3 | `+0x0C` | `IMEM_MISSES` |
 | 4 | `+0x10` | `LSU_TX` |
 | 5 | `+0x14` | `STALL_MEM` |
+
+La GPU segmentada puede exponer estas extensiones de perfil a partir de la
+ranura 6; son contadores acumulados y de solo lectura, igual que los seis
+anteriores:
+
+| Ranura | Offset | Contador |
+|---:|---:|---|
+| 6 | `+0x18` | `LANE_OPS` |
+| 7 | `+0x1C` | `NO_WARP_STALL` |
+| 8 | `+0x20` | `RR_RAW_STALL` |
+| 9 | `+0x24` | `LSU_RSP_BLOCKED` |
+| 10 | `+0x28` | `ISSUE_AFTER_LOAD` |
+| 11 | `+0x2C` | `WB_ARB_MEM_WAIT` |
+| 12 | `+0x30` | `SCH_ISSUED` |
+| 13 | `+0x34` | `IS_CYCLES` |
+| 14 | `+0x38` | `IF_CYCLES` |
+| 15 | `+0x3C` | `ID_CYCLES` |
+| 16 | `+0x40` | `RR_CYCLES` |
+| 17 | `+0x44` | `EX_CYCLES` |
+| 18 | `+0x48` | `MEM_WARP_CYCLES` |
+| 19 | `+0x4C` | `WB_PACKET_CYCLES` |
+
+`RR_RAW_STALL` cuenta ciclos en que RR espera un registro pendiente; mide el
+coste que podría recuperar forwarding. `LSU_RSP_BLOCKED` y
+`WB_ARB_MEM_WAIT` separan la presión en la frontera MEM/WB. `ISSUE_AFTER_LOAD`
+es un pulso por la instrucción independiente admitida en la ventana tras una
+carga.
+
+`*_CYCLES` mide residencia: el número acumulado de ciclos-token en el registro
+de la etapa, por lo que `IS_CYCLES / SCH_ISSUED` da la estancia media en IS,
+y análogamente para IF, ID, RR y EX. MEM admite varios warps y las dos colas
+físicas de WB pueden coexistir, así que `MEM_WARP_CYCLES` y
+`WB_PACKET_CYCLES` pueden superar `CYCLES`; no son motivos excluyentes de
+burbuja como los de CPU PERFORMANCE.
 
 `LSU_TX` y `STALL_MEM` están aquí, y no en FABRIC, porque la LSU es parte de la
 GPU. `VIDEO_TX` **no** está aquí: es de VIDEO (§9.7).

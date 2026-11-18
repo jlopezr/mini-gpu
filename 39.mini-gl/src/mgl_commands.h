@@ -41,10 +41,13 @@
 
 /* CLEAR, 16 bytes. arg0 = color RGB565. Con flags = MGL_CLEAR_DEPTH (versión 2)
    borra también la profundidad: arg1 = valor en Q16.16 sin signo, de 0 (cerca)
-   a 0x10000 (lejos). Sin flags arg1 = 0. Borra todo el destino, sin viewport. */
+   a 0x10000 (lejos). Sin flags arg1 = 0. Borra todo el destino, sin viewport.
+   MGL_CLEAR_KEEP_COLOR, siempre con MGL_CLEAR_DEPTH, deja el color como está
+   (arg0 = 0): para cuando el frame pinta de todos modos toda la pantalla. */
 #define MGL_CMD_CLEAR 1U
 #define MGL_CLEAR_BYTES 16U
 #define MGL_CLEAR_DEPTH 1U
+#define MGL_CLEAR_KEEP_COLOR 2U
 #define MGL_DEPTH_ONE 0x10000U
 
 /* BATCH, 40 bytes: una primitiva 2D en coordenadas de píxel.
@@ -121,6 +124,11 @@
 /* Formatos de vértice e índice. */
 #define MGL_VERTEX_POSITION_F32_XYZ 1U
 #define MGL_VERTEX_POSITION_Q16_16_XYZ 2U /* reservado: se rechaza */
+/* Posición F32 y color RGB565 por vértice: +12 u16 color, +14 u16 reservado (el renderer no lo lee). Stride
+   >= 16. Cada triángulo se pinta del color de su primer vértice (el "provoking vertex" de OpenGL), y
+   SET_COLOR no cuenta. Los mismos datos con MGL_VERTEX_POSITION_F32_XYZ y stride 16 se pintan del color de
+   SET_COLOR: el formato del DRAW_INDEXED decide, no la malla. */
+#define MGL_VERTEX_POSITION_F32_XYZ_RGB565 3U
 #define MGL_INDEX_UINT16 1U
 #define MGL_INDEX_UINT32 2U /* reservado: se rechaza */
 #define MGL_TOPOLOGY_TRIANGLES 1U
@@ -137,6 +145,10 @@
 #define MGL_STATE_BLEND 4U /* reservado: se rechaza */
 #define MGL_STATE_CULL_BACK 8U
 #define MGL_STATE_CULL_FRONT 16U
+/* El algoritmo del pintor: los triángulos se rasterizan de lejos a cerca (por la z media de sus vértices) al
+   final, antes de lo siguiente que no lo use (2D, CLEAR, otro destino o viewport, END_FRAME). Con la prueba
+   y la escritura de profundidad apagadas no hace falta Z-buffer. */
+#define MGL_STATE_DEPTH_SORT 32U
 #define MGL_STATE_DEFAULT MGL_STATE_DEPTH_WRITE
 
 #endif

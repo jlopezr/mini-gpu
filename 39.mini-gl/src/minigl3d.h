@@ -78,6 +78,21 @@ mgl_mesh_t mgl_create_mesh(const mgl_mesh_desc_t *desc);
 mgl_mesh_t mgl_create_mesh_copy(const float *positions, mgl_u32 vertex_count,
     const unsigned short *indices, mgl_u32 index_count);
 
+/* Malla con color por vértice: POSITION_F32_XYZ_RGB565 con stride 16 (x, y, z en float, color RGB565 y dos
+   bytes reservados). Cada triángulo se pinta del color de su primer vértice; mgl_set_color no cuenta (salvo
+   con mgl_draw_mesh_range_uniform). colors tiene vertex_count colores, o es 0: todos blancos y sin asignar,
+   para darlos después con mgl_mesh_color_range. 0 si no vale o no cabe. */
+mgl_mesh_t mgl_create_mesh_copy_rgb565(const float *positions, const mgl_color_t *colors,
+    mgl_u32 vertex_count, const unsigned short *indices, mgl_u32 index_count);
+
+/* Da el color a los vértices de los triángulos [first, first + count) de los índices (first y count
+   múltiplos de 3), en una malla de mgl_create_mesh_copy_rgb565: así se pasa de grupos de triángulos de un
+   color (un PShape) a color por vértice. MGL_ERR_ARGUMENT, y la malla sin tocar, si algún vértice ya tenía
+   asignado otro color (lo comparten triángulos de dos colores: con color por vértice no se puede) o la malla
+   no tiene color; MGL_ERR_HANDLE si el handle no vale. Como la ejecución es diferida, el color nuevo lo ven
+   también los dibujos de esa malla ya grabados en el frame en curso. */
+int mgl_mesh_color_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count, mgl_color_t color);
+
 /* Lo mismo en memoria de frame: los datos valen hasta el siguiente
    mgl_begin_frame. El handle hay que destruirlo igual (se puede en cuanto se
    ha dibujado: el command buffer ya tiene las direcciones). */
@@ -112,11 +127,21 @@ int mgl_end_frame(void);
 /* Borra color y profundidad. depth de 0 (cerca) a 1 (lejos). */
 void mgl_clear_color_depth(mgl_color_t color, mgl_real_t depth);
 
+/* Borra solo la profundidad: para cuando el frame pinta de todos modos toda la pantalla (cielo, suelo...), y
+   borrar el color sería pintarla dos veces. */
+void mgl_clear_depth(mgl_real_t depth);
+
 void mgl_set_viewport(int x, int y, int width, int height);
 /* which: MGL_MATRIX_MODEL, MGL_MATRIX_VIEW o MGL_MATRIX_PROJECTION. Se copia el valor. */
 void mgl_set_matrix(unsigned int which, const mgl_mat4_t *matrix);
 void mgl_set_depth_test(int enabled);
 void mgl_set_depth_write(int enabled);
+/* El algoritmo del pintor (MGL_STATE_DEPTH_SORT): los triángulos de los dibujos que lo tengan se pintan de
+   lejos a cerca, por la z media de sus vértices, antes de lo siguiente que no lo tenga (2D, clear, otro
+   destino o viewport, fin del frame). Con mgl_set_depth_test(0) y mgl_set_depth_write(0) no usa el Z-buffer:
+   no hace falta borrarlo, y cada triángulo y cada píxel cuestan menos. Falla como el pintor: triángulos que
+   se cruzan, o uno largo junto a otros pequeños, pueden quedar en mal orden. */
+void mgl_set_depth_sort(int enabled);
 /* MGL_CULL_NONE, MGL_CULL_BACK o MGL_CULL_FRONT. */
 void mgl_set_cull(int mode);
 void mgl_set_color(mgl_color_t color);
@@ -125,6 +150,10 @@ void mgl_draw_mesh(mgl_mesh_t mesh);
 /* Solo los índices [first, first + count) (múltiplos de 3): para dibujar
    partes de una malla con estado distinto, como un color por cara. */
 void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count);
+/* Como mgl_draw_mesh_range, pero con el color de mgl_set_color aunque la malla tenga color por vértice
+   (mgl_create_mesh_copy_rgb565): un DRAW_INDEXED con formato POSITION_F32_XYZ y el stride de la malla. En una
+   malla sin color es lo mismo que mgl_draw_mesh_range. */
+void mgl_draw_mesh_range_uniform(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count);
 
 #define MGL_CULL_NONE 0
 #define MGL_CULL_BACK 1

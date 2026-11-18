@@ -7,23 +7,18 @@ bring-up de la ULX3S, monitor UART, CPU en FPGA y memoria SDRAM externa.
 
 ![MiniGPU](./1.isa/minigpu.png)
 
-El diseño de CPU más completo está actualmente en
-[`21.fpga-cpu-hdmi-alu`](21.fpga-cpu-hdmi-alu): la 19 con la familia ALU
-completa (`MULHI`, `DIVU`, `REM`, `REMU`), desplazamientos con cantidad
-inmediata y `R0` cableado a cero, cerrando a 91,8 MHz sobre un objetivo de 80
-—las ocho semillas cumplen—. **Todavía no se ha probado en placa**, así que el
-más completo *verificado en hardware* sigue siendo
-[`19.fpga-cpu-hdmi-ls`](19.fpga-cpu-hdmi-ls): una MiniCPU multiciclo con salida
-HDMI, memoria en ráfagas BL8 sobre los 32 MiB de SDRAM de la ULX3S, accesos de 8
-y 16 bits, llamadas y puerto serie, con cierre de timing a 80 MHz. El más rápido
-sigue siendo [`10.fpga-cpu-ram`](10.fpga-cpu-ram), a 120 MHz, porque no tiene
-vídeo compitiendo por la memoria.
+El repositorio incluye CPU y GPU funcionales y RTL, sistemas integrados y
+una CPU segmentada con FP32 en
+[`38.fpga-cpu-pipelined`](38.fpga-cpu-pipelined/README.md). La integración
+CPU/GPU se desarrolla en [`37.fpga-cpu-gpu-mk2`](37.fpga-cpu-gpu-mk2/README.md)
+y en el [simulador integrado](32.cpu-gpu-func-sim/README.md). El estado de
+capacidades, timing y pruebas en placa se consulta en cada prototipo y en el
+[resumen de implementaciones](docs/resumen-prototipos.md).
 
 **`R0` cableado a cero es la única corrección que ha tenido la MiniISA**, frente
 a un puñado de extensiones que son aditivas. No es opcional ni depende de la
-carpeta: lo cumplen las **nueve implementaciones** —seis de CPU, tres de GPU— y
-sus simuladores, después de un backport que subió la versión del monitor en
-todas ellas. Está en [`1.isa/isa.md`](1.isa/isa.md) §1.
+carpeta: lo deben cumplir todas las implementaciones conformes y sus simuladores.
+El backport corrigió los diseños históricos y actualizó sus versiones de monitor. Está en [`1.isa/isa.md`](1.isa/isa.md) §1.
 
 La diferencia con una extensión importa: las demás se detectan solas, porque un
 bitstream que no las tenga para con opcode inválido. Con `R0` general no hay
@@ -34,6 +29,21 @@ ausencia en el resto del repositorio.
 implementación, cuánta memoria ve y a qué frecuencia cierra.** Es lo que evita
 tener que abrir cinco `README.md` para saber si una instrucción está en un
 bitstream concreto.
+
+## Principios de diseño
+
+MiniCPU y MiniGPU comparten la ISA escalar; la GPU añade ejecución SIMT, con
+registros por thread, máscaras y planificación de warps. La ISA define el
+comportamiento visible del programa; pipeline, latencias, lanes físicos y
+scheduler pertenecen a la microarquitectura. Primero se valida el resultado
+funcional contra un modelo de referencia y después se miden ciclos, área y
+frecuencia. Cada etapa debe poder contrastarse con la anterior. La claridad y
+la trazabilidad guían las optimizaciones, manteniendo explícitas las capabilities.
+
+Mandelbrot es el workload conductor inicial: sus modelos float y Q16.16 permiten
+separar el error de cuantización de un fallo de implementación. El
+[flujo de validación y formato .iter](0.mandelbrot/README.md#flujo-de-validación)
+está documentado junto a los modelos.
 
 ## Recorrido del repositorio
 
@@ -84,7 +94,7 @@ referencias colgando:
 .venv/Scripts/python.exe tools/check-links.py
 ```
 
-## Arquitectura actual
+## Arquitectura CPU con SDRAM (prototipo 10)
 
 ```text
                             UART 3 Mbaud
@@ -198,12 +208,13 @@ latencia y rutas registradas están en
 
 ## Estado y alcance
 
-MiniISA, el ensamblador y el simulador implementan más operaciones que la CPU
-RTL. La tabla vigente de instrucciones está en
-[`6.fpga-cpu/instruction-status.md`](6.fpga-cpu/docs/instruction-status.md). La CPU
-FPGA actual es multiciclo, sin pipeline de instrucciones ni ejecución SIMT;
-la evolución hacia MiniGPU sigue siendo trabajo futuro.
+El repositorio contiene CPU y GPU, modelos funcionales y de ciclos, diseños
+multiciclo y segmentados, y sistemas CPU/GPU con memoria y periféricos compartidos.
+Cada backend ofrece un subconjunto explícito de capabilities; el número de
+carpeta no basta para inferir soporte ni validación en placa.
 
-Las decisiones de diseño generales están recogidas en
-[`1.isa/proyecto.md`](1.isa/proyecto.md) y las tareas abiertas en
-[`TODO.md`](TODO.md).
+La [ISA vigente y sus ampliaciones compatibles](1.isa/isa.md) se mantienen
+separadas de la [propuesta v0.4](1.isa/propuesta-v0.4.md), cuyo encoding aún
+no está implementado. El [índice vigente](1.isa/isa.md#3-mapa-de-opcodes), el
+[resumen de prototipos](docs/resumen-prototipos.md) y los README de cada etapa
+indican soporte y validación. Las tareas abiertas están en [`TODO.md`](TODO.md).

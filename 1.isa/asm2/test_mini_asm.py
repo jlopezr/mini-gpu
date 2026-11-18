@@ -345,5 +345,34 @@ class ApiAndCliSurfaceTest(unittest.TestCase):
         self.assertEqual(data["relocations"][0]["kind"], "ABS32")
 
 
+
+class RopSyntaxTest(unittest.TestCase):
+    """La familia ROP (isa.md §7.5): solo existe en asm2, asi que no se compara
+    con el ensamblador viejo sino con las palabras que fija el contrato."""
+
+    def words(self, source: str) -> list[int]:
+        return new_asm.assemble(source)
+
+    def test_encodings(self):
+        self.assertEqual(self.words("""
+            ROPSET P2, R3, P5, R4
+            ROPSET PMODE, R9
+            ROPSUBMIT SPAN, PMODE, R9
+            ROPSUBMIT.F COPY
+            ROPSUBMIT FILL, P0, R1, P4, R2
+            ROPWAIT
+            ROPWAIT INV
+            ROPSTATUS R6
+            ROPSTATUS R6, CLEAR
+        """), [0xDC640250, 0xDD200AF0, 0xDD2016AF, 0xDC0013FF, 0xDC221004,
+               0xDC002000, 0xDC002001, 0xDCC03000, 0xDCC03001])
+
+    def test_errors(self):
+        for line in ("ROPSET P11, R1", "ROPSET P1", "ROPSUBMIT", "ROPSUBMIT BLIT",
+                     "ROPWAIT R1", "ROPSTATUS"):
+            with self.assertRaises(new_asm.AsmError, msg=line):
+                self.words(line)
+
+
 if __name__ == "__main__":
     unittest.main()

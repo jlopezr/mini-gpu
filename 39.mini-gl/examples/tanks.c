@@ -520,8 +520,11 @@ static int sky_x(float a) {
 
 static void draw_sky(void) {
     int i, x, h = height / 2;
-    background(6, 8, 24);
+    /* Sin background(): no hay Z-buffer que borrar (el pintor, ver setup) y el color lo cubren el cielo y el
+       suelo de abajo. */
     noStroke();
+    fill(6, 8, 24);
+    rect(0, 0, width, h - 30);
     fill(14, 16, 40);
     rect(0, h - 30, width, 15);
     fill(26, 24, 58);
@@ -706,6 +709,11 @@ static void draw_hud(void) {
 
 void setup(void) {
     size(320, 240, P3D);
+    /* El algoritmo del pintor en vez del Z-buffer: objetos sueltos sobre un suelo 2D, y así cada triángulo y
+       cada píxel cuestan menos y no hay profundidad que borrar (en la 38, de 36,2 a 40,8 fps; la imagen
+       cambia en un par de píxeles de borde). */
+    hint(DISABLE_DEPTH_TEST);
+    hint(ENABLE_DEPTH_SORT);
     build_models();
     build_world();
     reset_game();

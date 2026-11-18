@@ -20,6 +20,40 @@
 //   ranura 6  STALL_FETCH  de esos, los de la busqueda de instruccion
 //   ranura 7  STALL_MMIO   ciclos esperando a un dispositivo MMIO
 //
+// Y solo con PIPELINE = 1 (la 38), el motivo de cada ciclo en que ninguna
+// instruccion pasa de ID a EX. Cada ciclo cuenta en uno solo, asi que
+// CYCLES = RETIRED + los cuatro + otros (STEP, HALT, error):
+//
+//   ranura 8  STALL_EX_MEM    EX ocupado con un acceso a memoria o MMIO
+//   ranura 9  STALL_RAW       ID parado por una dependencia
+//   ranura 10 STALL_BRANCH    ID vacio tras un salto tomado
+//   ranura 11 STALL_ID_EMPTY  ID vacio por otro motivo (fallo de busqueda)
+//
+// Y solo con DCACHE = 1 (la 38 con dcache.v), que exige PIPELINE = 1 porque
+// las ranuras van seguidas:
+//
+//   ranura 12 DMEM_HITS    LOAD a memoria servidos por la cache de datos
+//   ranura 13 DMEM_MISSES  LOAD a memoria que tuvieron que leer una linea
+//
+// Y solo con MULDIV = 1 (la 38 con MUL/DIV en EX), que exige DCACHE = 1:
+//
+//   ranura 14 STALL_MULDIV    EX ocupado con una MUL/DIV: un quinto motivo
+//                             del reparto, que ya no cuenta en STALL_EX_MEM
+//   ranura 15 MULDIV_RETIRED  de las retiradas, las MUL/MULHI/MULFX/DIV/
+//                             DIVU/REM/REMU
+//
+// Y solo con VIDEO = 1 (la 38 con su doble buffer), que exige MULDIV = 1:
+//
+//   ranura 16 VIDEO_FRAMES  frames que empieza el barrido con la CPU en marcha
+//   ranura 17 SWAP_WAIT     ciclos con un intercambio pedido que el barrido
+//                           aun no ha hecho. NO es un motivo del reparto: esos
+//                           ciclos cuentan tambien en el que toque
+//
+// Con CYCLES y los intercambios hechos (SWAP_COUNT) dicen cuanto del frame
+// ocupa el trabajo de la CPU: (CYCLES - SWAP_WAIT) / swaps entre CYCLES /
+// VIDEO_FRAMES. FRAME_COUNT no sirve para eso: corre con la CPU parada y no
+// se reinicia con `run`.
+//
 // Con ellos, CYCLES se reparte en calculo, memoria y MMIO sin instrumentar
 // nada mas: CYCLES = calculo + STALL_MEM + STALL_MMIO, y de STALL_MEM se
 // separan la busqueda (STALL_FETCH) y los datos (STALL_MEM - STALL_FETCH).
@@ -58,7 +92,19 @@
 // AVISO DE MEDIDA. Leer CYCLES con un LOAD cuesta ciclos y retira una
 // instruccion, y en la 21 ademas drena el bufer de escrituras: el programa
 // perturba su propia medida. Se mide por deltas y se asume el sesgo.
-module cpu_perf_counters (
+module cpu_perf_counters #(
+    // 1 en las CPU segmentadas, que dan `pipe_stall`. Con 0 no existen las
+    // ranuras 8 a 11 y la entrada no se usa: el circuito es el de siempre.
+    parameter integer PIPELINE = 0,
+    // 1 con cache de datos, que da `dmem_hit`/`dmem_miss`. Exige PIPELINE = 1.
+    parameter integer DCACHE = 0,
+    // 1 con MUL/DIV de varios ciclos, que da `muldiv_stall`/`muldiv_retired`.
+    // Exige DCACHE = 1.
+    parameter integer MULDIV = 0,
+    // 1 con doble buffer de video, que da `frame_tick`/`swap_pending`. Exige
+    // MULDIV = 1.
+    parameter integer VIDEO = 0
+) (
     input wire clk,
     input wire reset,
 
@@ -95,10 +141,29 @@ module cpu_perf_counters (
 
     // `valid` de los dos puertos de la CPU en el fabric (datos e instrucciones).
     input wire mem_req0,
-    input wire mem_req1
+    input wire mem_req1,
+
+    // Motivo de no emitir, de cpu.v (`perf_stall`), ya registrado: [0] EX con
+    // memoria, [1] dependencia, [2] salto, [3] ID vacio. Solo con PIPELINE.
+    input wire [3:0] pipe_stall,
+
+    // Pulsos de dcache.v, uno por LOAD a memoria. Solo con DCACHE.
+    input wire dmem_hit,
+    input wire dmem_miss,
+
+    // De cpu.v, ya registrados: EX ocupado con una MUL/DIV (el quinto motivo
+    // de `perf_stall`) y un pulso por cada MUL/DIV retirada. Solo con MULDIV.
+    input wire muldiv_stall,
+    input wire muldiv_retired,
+
+    // De video_registers.v, en este mismo reloj: un pulso al empezar cada
+    // frame (lo que avanza FRAME_COUNT) y alto mientras hay un intercambio
+    // pedido sin hacer (SWAP_PENDING). Solo con VIDEO.
+    input wire frame_tick,
+    input wire swap_pending
 );
   // Cuantas ranuras del array existen de verdad. El resto dan error.
-  localparam integer NUM_COUNTERS = 8;
+  localparam integer NUM_COUNTERS = VIDEO ? 18 : MULDIV ? 16 : (DCACHE ? 14 : (PIPELINE ? 12 : 8));
 
   localparam [5:0] SLOT_CYCLES      = 6'd0;
   localparam [5:0] SLOT_RETIRED     = 6'd1;
@@ -108,6 +173,16 @@ module cpu_perf_counters (
   localparam [5:0] SLOT_STALL_MEM   = 6'd5;
   localparam [5:0] SLOT_STALL_FETCH = 6'd6;
   localparam [5:0] SLOT_STALL_MMIO  = 6'd7;
+  localparam [5:0] SLOT_STALL_EX_MEM   = 6'd8;
+  localparam [5:0] SLOT_STALL_RAW      = 6'd9;
+  localparam [5:0] SLOT_STALL_BRANCH   = 6'd10;
+  localparam [5:0] SLOT_STALL_ID_EMPTY = 6'd11;
+  localparam [5:0] SLOT_DMEM_HITS      = 6'd12;
+  localparam [5:0] SLOT_DMEM_MISSES    = 6'd13;
+  localparam [5:0] SLOT_STALL_MULDIV   = 6'd14;
+  localparam [5:0] SLOT_MULDIV_RETIRED = 6'd15;
+  localparam [5:0] SLOT_VIDEO_FRAMES   = 6'd16;
+  localparam [5:0] SLOT_SWAP_WAIT      = 6'd17;
 
   // El mismo numero, en cinco bits, para indexar OVF0. La ranura son SEIS
   // bits porque §12.6 admite hasta 64 contadores, pero las banderas van en
@@ -124,6 +199,16 @@ module cpu_perf_counters (
   localparam [4:0] BIT_STALL_MEM   = SLOT_STALL_MEM[4:0];
   localparam [4:0] BIT_STALL_FETCH = SLOT_STALL_FETCH[4:0];
   localparam [4:0] BIT_STALL_MMIO  = SLOT_STALL_MMIO[4:0];
+  localparam [4:0] BIT_STALL_EX_MEM   = SLOT_STALL_EX_MEM[4:0];
+  localparam [4:0] BIT_STALL_RAW      = SLOT_STALL_RAW[4:0];
+  localparam [4:0] BIT_STALL_BRANCH   = SLOT_STALL_BRANCH[4:0];
+  localparam [4:0] BIT_STALL_ID_EMPTY = SLOT_STALL_ID_EMPTY[4:0];
+  localparam [4:0] BIT_DMEM_HITS      = SLOT_DMEM_HITS[4:0];
+  localparam [4:0] BIT_DMEM_MISSES    = SLOT_DMEM_MISSES[4:0];
+  localparam [4:0] BIT_STALL_MULDIV   = SLOT_STALL_MULDIV[4:0];
+  localparam [4:0] BIT_MULDIV_RETIRED = SLOT_MULDIV_RETIRED[4:0];
+  localparam [4:0] BIT_VIDEO_FRAMES   = SLOT_VIDEO_FRAMES[4:0];
+  localparam [4:0] BIT_SWAP_WAIT      = SLOT_SWAP_WAIT[4:0];
 
   localparam [15:0] OFF_CTRL = 16'h0100;
   localparam [15:0] OFF_OVF0 = 16'h0104;
@@ -140,6 +225,16 @@ module cpu_perf_counters (
   reg [31:0] stall_mem;
   reg [31:0] stall_fetch;
   reg [31:0] stall_mmio;
+  reg [31:0] stall_ex_mem;
+  reg [31:0] stall_raw;
+  reg [31:0] stall_branch;
+  reg [31:0] stall_id_empty;
+  reg [31:0] dmem_hits;
+  reg [31:0] dmem_misses;
+  reg [31:0] stall_muldiv;
+  reg [31:0] muldiv_retired_count;
+  reg [31:0] video_frames;
+  reg [31:0] swap_wait;
   // Una bandera por contador, en el bit `n mod 32` de PERF_OVF[n div 32].
   // Con ocho contadores sobran 24 bits de OVF0 y OVF1 entero, y se declaran
   // igual: anadir OVF1 despues obligaria a decidir donde con el control ya
@@ -155,6 +250,10 @@ module cpu_perf_counters (
   wire tx1 = mem_req1 && !req1_prev;
 
   reg wait_fetch_q, wait_data_q, wait_mmio_q, hit_q, miss_q;
+  reg dhit_q, dmiss_q;
+  reg mdstall_q;
+  reg frame_q, swapw_q;
+  reg [3:0] pipe_q;
   // Cero, una o dos peticiones nuevas en el mismo ciclo.
   reg [1:0] tx_q;
 
@@ -168,6 +267,12 @@ module cpu_perf_counters (
       hit_q <= 1'b0;
       miss_q <= 1'b0;
       tx_q <= 2'd0;
+      pipe_q <= 4'd0;
+      dhit_q <= 1'b0;
+      dmiss_q <= 1'b0;
+      mdstall_q <= 1'b0;
+      frame_q <= 1'b0;
+      swapw_q <= 1'b0;
     end else begin
       req0_prev <= mem_req0;
       req1_prev <= mem_req1;
@@ -177,6 +282,12 @@ module cpu_perf_counters (
       hit_q <= imem_hit;
       miss_q <= imem_miss;
       tx_q <= {1'b0, tx0} + {1'b0, tx1};
+      pipe_q <= PIPELINE ? pipe_stall : 4'd0;
+      dhit_q <= DCACHE ? dmem_hit : 1'b0;
+      dmiss_q <= DCACHE ? dmem_miss : 1'b0;
+      mdstall_q <= MULDIV ? muldiv_stall : 1'b0;
+      frame_q <= VIDEO ? frame_tick : 1'b0;
+      swapw_q <= VIDEO ? swap_pending : 1'b0;
     end
   end
 
@@ -212,6 +323,16 @@ module cpu_perf_counters (
       stall_mem <= 32'd0;
       stall_fetch <= 32'd0;
       stall_mmio <= 32'd0;
+      stall_ex_mem <= 32'd0;
+      stall_raw <= 32'd0;
+      stall_branch <= 32'd0;
+      stall_id_empty <= 32'd0;
+      dmem_hits <= 32'd0;
+      dmem_misses <= 32'd0;
+      stall_muldiv <= 32'd0;
+      muldiv_retired_count <= 32'd0;
+      video_frames <= 32'd0;
+      swap_wait <= 32'd0;
       ovf0 <= 32'd0;
       // Tras reset los contadores CUENTAN. Arrancar congelado obligaria a
       // todo programa existente a escribir PERF_CTRL antes de medir.
@@ -226,6 +347,16 @@ module cpu_perf_counters (
         stall_mem <= 32'd0;
         stall_fetch <= 32'd0;
         stall_mmio <= 32'd0;
+        stall_ex_mem <= 32'd0;
+        stall_raw <= 32'd0;
+        stall_branch <= 32'd0;
+        stall_id_empty <= 32'd0;
+        dmem_hits <= 32'd0;
+        dmem_misses <= 32'd0;
+        stall_muldiv <= 32'd0;
+        muldiv_retired_count <= 32'd0;
+        video_frames <= 32'd0;
+        swap_wait <= 32'd0;
         ovf0 <= 32'd0;
       end else begin
         if (contando) begin
@@ -259,6 +390,42 @@ module cpu_perf_counters (
             stall_mmio <= stall_mmio + 1'b1;
             if (&stall_mmio) ovf0[BIT_STALL_MMIO] <= 1'b1;
           end
+          if (pipe_q[0]) begin
+            stall_ex_mem <= stall_ex_mem + 1'b1;
+            if (&stall_ex_mem) ovf0[BIT_STALL_EX_MEM] <= 1'b1;
+          end
+          if (pipe_q[1]) begin
+            stall_raw <= stall_raw + 1'b1;
+            if (&stall_raw) ovf0[BIT_STALL_RAW] <= 1'b1;
+          end
+          if (pipe_q[2]) begin
+            stall_branch <= stall_branch + 1'b1;
+            if (&stall_branch) ovf0[BIT_STALL_BRANCH] <= 1'b1;
+          end
+          if (pipe_q[3]) begin
+            stall_id_empty <= stall_id_empty + 1'b1;
+            if (&stall_id_empty) ovf0[BIT_STALL_ID_EMPTY] <= 1'b1;
+          end
+          if (dhit_q) begin
+            dmem_hits <= dmem_hits + 1'b1;
+            if (&dmem_hits) ovf0[BIT_DMEM_HITS] <= 1'b1;
+          end
+          if (dmiss_q) begin
+            dmem_misses <= dmem_misses + 1'b1;
+            if (&dmem_misses) ovf0[BIT_DMEM_MISSES] <= 1'b1;
+          end
+          if (mdstall_q) begin
+            stall_muldiv <= stall_muldiv + 1'b1;
+            if (&stall_muldiv) ovf0[BIT_STALL_MULDIV] <= 1'b1;
+          end
+          if (frame_q) begin
+            video_frames <= video_frames + 1'b1;
+            if (&video_frames) ovf0[BIT_VIDEO_FRAMES] <= 1'b1;
+          end
+          if (swapw_q) begin
+            swap_wait <= swap_wait + 1'b1;
+            if (&swap_wait) ovf0[BIT_SWAP_WAIT] <= 1'b1;
+          end
         end
         // RETIRED no se condiciona a `running`, y esa es la diferencia entre
         // contar bien y contar una de menos SIEMPRE: el HALT retira en el
@@ -273,6 +440,11 @@ module cpu_perf_counters (
         if (retired && enable) begin
           retired_count <= retired_count + 1'b1;
           if (&retired_count) ovf0[BIT_RETIRED] <= 1'b1;
+        end
+        // Como RETIRED: una MUL/DIV puede ser la que para la CPU (STEP).
+        if (MULDIV && muldiv_retired && enable) begin
+          muldiv_retired_count <= muldiv_retired_count + 1'b1;
+          if (&muldiv_retired_count) ovf0[BIT_MULDIV_RETIRED] <= 1'b1;
         end
         // W1C: escribir un uno limpia ese bit. Se aplica DESPUES de las
         // subidas de arriba, asi que un desbordamiento en el mismo ciclo que
@@ -300,6 +472,16 @@ module cpu_perf_counters (
         SLOT_STALL_MEM:   read_value = stall_mem;
         SLOT_STALL_FETCH: read_value = stall_fetch;
         SLOT_STALL_MMIO:  read_value = stall_mmio;
+        SLOT_STALL_EX_MEM:   read_value = stall_ex_mem;
+        SLOT_STALL_RAW:      read_value = stall_raw;
+        SLOT_STALL_BRANCH:   read_value = stall_branch;
+        SLOT_STALL_ID_EMPTY: read_value = stall_id_empty;
+        SLOT_DMEM_HITS:      read_value = dmem_hits;
+        SLOT_DMEM_MISSES:    read_value = dmem_misses;
+        SLOT_STALL_MULDIV:   read_value = stall_muldiv;
+        SLOT_MULDIV_RETIRED: read_value = muldiv_retired_count;
+        SLOT_VIDEO_FRAMES:   read_value = video_frames;
+        SLOT_SWAP_WAIT:      read_value = swap_wait;
         default:          read_value = 32'd0;   // ranura sin contador: da error
       endcase
     end else begin

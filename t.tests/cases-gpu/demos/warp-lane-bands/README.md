@@ -16,7 +16,7 @@ ocho warps, que participan las ocho lanes, y dónde empieza y acaba cada uno.
 - Warp y lane salen de `GETTID` (`warp = tid >> 3`, `lane = tid & 7`). Se escribió
   primero con `GETWARP` y `GETLANE`, de la propuesta v0.2, que nunca llegaron a
   tener opcode.
-- Es capability **Base**, salvo `MUL`/`DIV` (de ahí `requires: ["mul_div"]`).
+- Usa el repertorio **Base**, salvo la extensión `mul_div` (`MUL`/`MULFX`/`DIV`) (de ahí `requires: ["mul_div"]`).
 
 ## Qué comprueba el `test.json`
 

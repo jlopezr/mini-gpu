@@ -1,8 +1,18 @@
 # MiniISA
 
-Especificación y herramientas de la ISA común a MiniCPU y la futura MiniGPU.
-La referencia normativa es [`isa.md`](isa.md); [`proyecto.md`](proyecto.md)
-describe los objetivos y las decisiones generales.
+[`isa.md`](isa.md) unifica el repertorio vigente y las extensiones compatibles
+propuestas en v0.2, distinguiendo su estado de implementación.
+
+Especificación y herramientas de la ISA común a MiniCPU y MiniGPU.
+La referencia normativa es [`isa.md`](isa.md); el [README principal](../README.md)
+describe los objetivos y principios generales del proyecto.
+
+Cada especificación incluye su catálogo por opcode, categoría, capability y
+soporte funcional, con enlaces internos a los contratos y una tabla separada
+de pseudoinstrucciones:
+
+- [ISA vigente y ampliaciones compatibles](isa.md#3-mapa-de-opcodes).
+- [Propuesta v0.4](propuesta-v0.4.md#5-mapa-de-opcodes-v04), con mapa incompatible.
 
 [`mmio.md`](mmio.md) es la otra referencia normativa: el contrato del espacio de
 direcciones y de los periféricos —MMIO v2— para CPU, GPU, el sistema integrado,

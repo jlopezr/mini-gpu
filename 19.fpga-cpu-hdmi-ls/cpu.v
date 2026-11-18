@@ -78,8 +78,8 @@ module cpu (
   localparam [5:0] OPCODE_LOAD = 6'h15;
   localparam [5:0] OPCODE_STORE = 6'h16;
   localparam [5:0] OPCODE_MOVHI = 6'h17;
-  // Accesos sub-palabra. El mapa de opcodes es el de 1.isa/propuesta-v0.2.md
-  // §7; v0.3 reordena 0x1A..0x1D, asi que al migrar habra que recodificar.
+  // Accesos sub-palabra. El mapa de opcodes es el de 1.isa/isa.md
+  // §3, inmediatos y memoria; v0.3 reordena 0x1A..0x1D, asi que al migrar habra que recodificar.
   localparam [5:0] OPCODE_LOADB = 6'h18;
   localparam [5:0] OPCODE_LOADUB = 6'h19;
   localparam [5:0] OPCODE_STOREB = 6'h1a;
@@ -92,7 +92,7 @@ module cpu (
   localparam [5:0] OPCODE_BGE = 6'h23;
   localparam [5:0] OPCODE_BLTU = 6'h24;
   localparam [5:0] OPCODE_BGEU = 6'h25;
-  // Llamadas y saltos indirectos. Mapa de 1.isa/propuesta-v0.2.md §3.2: se
+  // Llamadas y saltos indirectos. Mapa de 1.isa/isa.md §3, control de flujo: se
   // mantiene `R0` como registro general, asi que `JR` gasta un opcode propio en
   // lugar de ser el alias `JALR R0, Ra, 0` que propone v0.3.
   localparam [5:0] OPCODE_JAL = 6'h2c;

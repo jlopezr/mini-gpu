@@ -35,6 +35,8 @@ if str(REPOSITORY) not in sys.path:
 
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
+from tools.perf_counters import (  # noqa: E402
+    dcache_breakdown, muldiv_breakdown, pipeline_breakdown, video_breakdown)
 from tools.rtl_facts import capability_architectures, load_capability_signals  # noqa: E402
 from tools.prototype import PrototypeResolutionError, resolve_prototype  # noqa: E402
 from tools.board_record import folder_sha256  # noqa: E402
@@ -518,8 +520,8 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # backend futuro puede tener una sin las otras.
 #
 #   shift_immediate  SHLI/SHRI/SARI. No son opcodes nuevos: SHL/SHR/SAR con el
-#                    bit 10 del campo `extra` puesto (propuesta-v0.2.md §4.2,
-#                    opcion B). Ojo con esto, porque es el unico caso del
+#                    bit 10 del campo `extra` puesto (isa.md §3,
+#                    desplazamientos inmediatos). Ojo con esto, porque es el unico caso del
 #                    repositorio en el que la capacidad NO se puede detectar por
 #                    un ERROR_INVALID_OPCODE: en un bitstream sin ella, el bit
 #                    10 sigue siendo reservado y el programa para con
@@ -545,25 +547,20 @@ def simulator_options(raw: dict, architecture: str) -> dict:
 # numero y solo cambian los ciclos, que el diferencial ya excluye. Un caso no
 # puede depender de el, asi que no hay nada que declarar.
 #
-# `mul_div` es la rara de la lista, y conviene leerla aparte de las demas:
-# **no es una extension, es un hueco**. MUL, MULFX y DIV son instrucciones BASE
-# de la MiniISA; todas las implementaciones las tienen menos `sdram`
-# (10.fpga-cpu-ram), que se quedo sin ellas por temporizacion --el detalle esta
-# en su `cpu.v`--. Las demas capacidades dicen «este backend tiene algo de mas»;
-# esta dice «a este le falta algo de la base».
-#
-# Existe por la misma razon practica que el resto: sin ella, `cases-cpu/alu/multiply`
-# falla en esa placa con ERROR_INVALID_OPCODE, que es lo mismo que produce un
-# ensamblador roto. Con ella, el SKIP dice donde esta el problema. Pero conviene
-# NO leer el SKIP como «aqui no hace falta»: ahi falta algo que la ISA exige, y
-# el dia que la 10 implemente las tres, esta entrada desaparece.
+# `mul_div` es una extension opcional de ISA para CPU y GPU que comprende
+# MUL, MULFX y DIV. Sus opcodes estan reservados aunque el backend no la ofrezca;
+# ejecutarlos sin soporte produce ERROR_INVALID_OPCODE. No son parte de la base.
+# La CPU `sdram` (10.fpga-cpu-ram) no la implementa por temporizacion; el resto
+# de backends actuales la ofrece. Un caso que use cualquiera de esas operaciones
+# debe pedir `mul_div`, o una extension que la implique, como `alu_extended`.
+# Sin ella el caso se omite: no es un fallo de conformidad de la base.
 # `CAPABILITIES` (arquitectura de cada una) y `CAPABILITY_IMPLIES` ya no se
 # escriben aqui: se derivan de tools/capabilities.json, que es el mismo
 # fichero de donde `backends/fpga_cpu.py` y `tools/prototype_report.py` leen que
 # buscar en el RTL. Una tabla, no tres. `implies` alli documenta lo mismo que
 # el parrafo anterior --`frame_capture` implica `video`, `alu_extended`
 # implica `mul_div`-- pero como metadato, para que un caso pueda declarar solo
-# la mas especifica sin repetir la base.
+# la mas especifica sin repetir sus dependencias.
 _CAPABILITY_SIGNALS = load_capability_signals(REPOSITORY)
 # El valor es la TUPLA de arquitecturas que pueden declarar la capacidad, no
 # una sola: `video` lo tienen CPU y GPU, y mientras fuese un unico valor un caso
@@ -1174,6 +1171,8 @@ def _video_pacing(medida: dict | None) -> dict | None:
         "swaps": swaps,
         "swaps_per_frame": swaps / frames if frames else None,
         "cycles_per_swap": cycles / swaps if swaps else None,
+        # Con `perf_video`: ciclos por frame, trabajo por swap y su cociente.
+        "occupancy": video_breakdown(cycles, swaps, medida.get("stalls")),
     }
 
 
@@ -1262,6 +1261,99 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "instruccion. Contadores de CPU PERFORMANCE, mmio.md §13.2.",
         ]
 
+    # El CPI por motivo, solo para las CPU segmentadas (capacidad
+    # `perf_pipeline`): cada ciclo sin emitir cuenta en un solo motivo.
+    pipeline = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                p = pipeline_breakdown(medida.get("cycles"), medida.get("instructions"),
+                                       medida.get("stalls"))
+                if p is not None:
+                    pipeline.append((caso, v, medida, p))
+    if pipeline:
+        # La columna MUL/DIV solo si alguna medida trae STALL_MULDIV; en las
+        # que no, sus esperas van en `EX con memoria`.
+        con_muldiv = any("muldiv" in p for _, _, _, p in pipeline)
+        claves = ["ex_mem"] + (["muldiv"] if con_muldiv else []) + [
+            "raw", "branch", "id_empty", "other"]
+        lineas += ["", "## Reparto del pipeline (ciclos por instruccion)", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "CPI", "EX con memoria"] +
+            (["MUL/DIV"] if con_muldiv else []) +
+            ["Dependencia", "Salto", "ID vacio", "Otros"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * (len(claves) + 1)))
+        for caso, version, medida, p in pipeline:
+            lineas.append(_markdown_row(
+                [caso, version, _format_cpi(medida)] +
+                [f"{p[k]:.2f}" if k in p else "—" for k in claves]))
+        lineas += [
+            "",
+            "CPI = 1 + EX con memoria" + (" + MUL/DIV" if con_muldiv else "") +
+            " + Dependencia + Salto + ID vacio + Otros. Cada",
+            "columna son los ciclos por instruccion en que ninguna instruccion paso",
+            "de ID a EX por ese motivo. `EX con memoria`: un LOAD/STORE o MMIO",
+            "ocupando EX; " + ("`MUL/DIV`: una MUL/DIV ocupando EX; " if con_muldiv else "") +
+            "`Dependencia`: ID esperando un registro; `Salto`: ID vacio",
+            "tras un salto tomado; `ID vacio`: fallo de busqueda o arranque. Ranuras",
+            "8 a 11" + (" y 14" if con_muldiv else "") + " de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # MUL/DIV (capacidad `perf_muldiv`): cuantas hay y cuanto esperan.
+    muldiv = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                m = muldiv_breakdown(medida.get("instructions"), medida.get("stalls"))
+                if m is not None and m["retired"]:
+                    muldiv.append((caso, v, m))
+    if muldiv:
+        lineas += ["", "## MUL/DIV", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Retiradas", "Parte de las instr.", "Espera media"]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 3))
+        for caso, version, m in muldiv:
+            lineas.append(_markdown_row([
+                caso, version, f"{m['retired']:,}".replace(",", " "),
+                _format_percent(m["fraction"]), f"{m['cycles_per_op']:.1f}"]))
+        lineas += [
+            "",
+            "`Espera media`: ciclos que cada MUL/DIV tiene EX ocupado, ademas del",
+            "suyo (MUL 3, DIV 34, REM tras su DIV 2). Solo los casos con alguna.",
+            "Ranuras 14 y 15 de CPU PERFORMANCE, mmio.md §13.2.",
+        ]
+
+    # Los aciertos de la cache de datos (capacidad `perf_dcache`).
+    dcache = []
+    for caso in casos:
+        for v in versiones:
+            medida = medidas.get((caso, v))
+            if medida and not medida.get("skipped"):
+                d = dcache_breakdown(medida.get("instructions"), medida.get("stalls"))
+                if d is not None:
+                    dcache.append((caso, v, d))
+    if dcache:
+        lineas += ["", "## Cache de datos", ""]
+        lineas.append(_markdown_row(
+            ["Caso", "Version", "Aciertos", "Fallos", "Acierto", "Fallos/instr."]))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 4))
+        for caso, version, d in dcache:
+            mpi = d["misses_per_instruction"]
+            lineas.append(_markdown_row([
+                caso, version, f"{d['hits']:,}".replace(",", " "),
+                f"{d['misses']:,}".replace(",", " "),
+                "n/d" if d["hit_rate"] is None else _format_percent(d["hit_rate"]),
+                "n/d" if mpi is None else f"{mpi:.3f}"]))
+        lineas += [
+            "",
+            "Cada LOAD a memoria acierta o falla en la cache de datos; los STORE,",
+            "el MMIO y los accesos fuera de memoria no cuentan. `n/d`: el caso no",
+            "hace ningun LOAD a memoria. Ranuras 12 y 13 de CPU PERFORMANCE,",
+            "mmio.md §13.2.",
+        ]
+
     # El ritmo de los casos de video: frames emitidos e intercambios hechos
     # durante la ejecucion. Es lo que dice si el MMIO del reparto es espera de
     # vsync (swaps ~ frames) o una CPU que no llega (swaps < frames).
@@ -1269,18 +1361,30 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
              for caso in casos for v in versiones]
     ritmo = [fila for fila in ritmo if fila[2] is not None]
     if ritmo:
+        # Las columnas de ocupacion solo si alguna medida trae `perf_video`.
+        con_ocupacion = any(p["occupancy"] is not None for _, _, p in ritmo)
+
+        def _ciclos(valor):
+            return "n/d" if valor is None else f"{valor:,.0f}".replace(",", " ")
+
         lineas += ["", "## Ritmo de video", ""]
         lineas.append(_markdown_row(
-            ["Caso", "Version", "Frames", "Swaps", "Swaps/frame", "Ciclos/swap"]))
-        lineas.append(_markdown_row(["---", "---"] + ["---:"] * 4))
+            ["Caso", "Version", "Frames", "Swaps", "Swaps/frame", "Ciclos/swap"] +
+            (["Ciclos/frame", "Trabajo/swap", "Frame ocupado"] if con_ocupacion else [])))
+        lineas.append(_markdown_row(["---", "---"] + ["---:"] * (7 if con_ocupacion else 4)))
         for caso, version, p in ritmo:
-            lineas.append(_markdown_row([
+            fila = [
                 caso, version, f"{p['frames']:,}".replace(",", " "),
                 f"{p['swaps']:,}".replace(",", " "),
                 "n/d" if p["swaps_per_frame"] is None
                 else f"{p['swaps_per_frame']:.2f}",
-                "n/d" if p["cycles_per_swap"] is None
-                else f"{p['cycles_per_swap']:,.0f}".replace(",", " ")]))
+                _ciclos(p["cycles_per_swap"])]
+            if con_ocupacion:
+                o = p["occupancy"] or {}
+                fila += [_ciclos(o.get("cycles_per_frame")),
+                         _ciclos(o.get("work_per_swap")),
+                         _format_percent(o.get("occupancy")) if o else "—"]
+            lineas.append(_markdown_row(fila))
         lineas += [
             "",
             "`Frames`: frames emitidos por el scanout entre arrancar y parar la CPU;",
@@ -1291,6 +1395,15 @@ def measurement_table(medidas: dict, casos: list[str], versiones: list[str],
             "Los frames se cuentan con el reloj de pared de la placa, asi que llevan",
             "unos pocos de mas por el viaje de parada; no compares un caso corto.",
         ]
+        if con_ocupacion:
+            lineas += [
+                "`Ciclos/frame`: ciclos de CPU que dura un frame (CYCLES / VIDEO_FRAMES,",
+                "estos sin viaje de parada). `Trabajo/swap`: ciclos que no esperan un",
+                "intercambio pedido, por intercambio. `Frame ocupado`: su cociente; por",
+                "encima del 100 % el trabajo de un frame no cabe en un frame. Supone que",
+                "el programa espera justo tras pedir el swap. Ranuras 16 y 17 de CPU",
+                "PERFORMANCE, mmio.md §13.2. `—`: la version no tiene esos contadores.",
+            ]
 
     lineas += [
         "",

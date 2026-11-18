@@ -16,6 +16,6 @@ Recorre la ALU con operandos generados con `random.Random(1288)`: 33 operaciones
 - Los demás registros no nulos de esas dos lanes y el contador de instrucciones.
 - Lleva `rtl.differential`: `tools/make_rtl_fixtures.py` lo ejecuta en el simulador funcional y `gpu_system_tb.v` compara con ello el estado completo del RTL.
 
-Solo declara `mul_div`: `MULFX`, `SAR` y los desplazamientos son base; `DIV` y `MUL` no.
+Declara `mul_div` para `MUL`, `MULFX` y `DIV`. `SAR` y los demás desplazamientos por registro pertenecen a la base.
 
 Contexto: [README de la categoría](../README.md).

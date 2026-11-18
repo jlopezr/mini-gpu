@@ -720,8 +720,11 @@ static void draw_sky(void) {
     int i, sx, sy;
     roll_c = mgl_cos(bank);
     roll_s = mgl_sin(bank);
-    background(30, 14, 44);
+    /* Sin background(): no hay Z-buffer que borrar (el pintor, ver setup). El color de arriba, un quad
+       grande; el resto lo cubren las franjas y el suelo. */
     noStroke();
+    fill(30, 14, 44);
+    sky_quad(-SKY_W, hy - 2.0f * SKY_W, SKY_W, hy - 60.0f);
     fill(62, 24, 62);
     sky_quad(-SKY_W, hy - 60.0f, SKY_W, hy - 40.0f);
     fill(112, 40, 62);
@@ -1006,6 +1009,10 @@ static void draw_hud(void) {
 
 void setup(void) {
     size(320, 240, P3D);
+    /* El algoritmo del pintor en vez del Z-buffer, como en tanks.c (en la 38, de 18,2 a 20,0 fps; la imagen
+       cambia en unos 25 píxeles de borde). */
+    hint(DISABLE_DEPTH_TEST);
+    hint(ENABLE_DEPTH_SORT);
     build_models();
     build_world();
     reset_game();

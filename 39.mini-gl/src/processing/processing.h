@@ -48,6 +48,13 @@ void image(const mgl_sprite_t *sprite, int x, int y);
 void setup(void);
 void draw(void);
 void size(int w, int h);
+/* frameBuffers(n) en setup(): buffers de pantalla en MiniGPU, 3 (por defecto) o 2. Con dos, al acabar un
+   frame la CPU espera al siguiente VBlank para dibujar en el buffer que se deja de mostrar; con tres, dibuja
+   enseguida en el libre y el terminado se muestra en el VBlank. La imagen es la misma, sin desgarros. Por
+   debajo de 60 fps tres no añade latencia (racer y tie_fighter en la 38: +10-13 % fps). Un sketch que llega a
+   60 fps puede ir un frame por delante de lo que se ve, hasta 16,7 ms de latencia más: ahí, frameBuffers(2).
+   En host y SDL no cambia nada. */
+void frameBuffers(int n);
 extern int width, height;
 extern int frameCount;
 extern int mouseX, mouseY, pmouseX, pmouseY, mousePressed;

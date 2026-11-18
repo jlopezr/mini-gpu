@@ -32,6 +32,12 @@ const mgl_mat4_t *mgr_state_mvp(mgr_state_t *s);
 
 /* ---- draw.c ------------------------------------------------------------- */
 int mgr_draw_indexed(mgr_state_t *s, mgr_stats_t *st, const mgl_memory_t *m, const unsigned char *cmd);
+/* Rasteriza, de lejos a cerca, los triángulos que han guardado los dibujos con MGL_STATE_DEPTH_SORT. Va
+   antes de lo que tiene que quedar encima o cambia el destino (commands.c): CLEAR, BATCH, SET_RENDER_TARGET,
+   SET_VIEWPORT, END_FRAME, un dibujo sin DEPTH_SORT y el final del buffer. */
+void mgr_sort_flush(mgr_state_t *s, mgr_stats_t *st);
+/* Olvida la lista sin pintarla: al empezar a ejecutar un buffer (uno anterior pudo acabar con un error). */
+void mgr_sort_discard(void);
 
 /* ---- transform.c -------------------------------------------------------- */
 /* Un flujo de vértices ya validado: posiciones F32 XYZ little-endian. */
@@ -44,6 +50,9 @@ typedef struct {
    clip = mvp * (x, y, z, 1). */
 void mgr_transform_vertex(const mgr_vertices_t *v, mgl_u32 index, const mgl_mat4_t *mvp,
     mgl_vec4_t *clip);
+/* Lo mismo con el vértice ya localizado (p = base + index * stride): draw.c lo calcula una vez y lee de
+   ahí también el color. */
+void mgr_transform_at(const unsigned char *p, const mgl_mat4_t *mvp, mgl_vec4_t *clip);
 
 /* ---- clipping.c --------------------------------------------------------- */
 /* Un triángulo recortado por los seis planos es un polígono convexo de hasta
@@ -82,8 +91,8 @@ typedef struct {
 void mgr_viewport_map(const mgr_state_t *s, const mgl_vec4_t *v, mgr_window_vertex_t *out);
 
 /* ---- fixed.c ------------------------------------------------------------ */
-/* Geometría en Q16.16 en vez de float (transformar, outcode y viewport de los triángulos sin recortar);
-   el recorte sigue en float. Experimental: no da los mismos bits que float. */
+/* Geometría en Q16.16 en vez de float: transformar, outcode, recorte y viewport. Experimental: no da los mismos
+   bits que float. */
 #ifndef MGR_FIXED_GEOMETRY
 #define MGR_FIXED_GEOMETRY 0
 #endif
@@ -93,16 +102,15 @@ typedef struct {
     mgl_s32 x, y, z, w;
 } mgr_vec4q_t;
 
-typedef struct {
-    mgl_s32 m[16];
-} mgr_mat4q_t;
-
-void mgr_mat4q_from_float(const mgl_mat4_t *f, mgr_mat4q_t *q);
+/* mgr_state_mvp en Q16.16. */
+const mgr_mat4q_t *mgr_state_mvp_q(mgr_state_t *s);
 void mgr_transform_vertex_q(const mgr_vertices_t *v, mgl_u32 index, const mgr_mat4q_t *mvp,
     mgr_vec4q_t *clip);
+void mgr_transform_at_q(const unsigned char *p, const mgr_mat4q_t *mvp, mgr_vec4q_t *clip);
 unsigned int mgr_outcode_q(const mgr_vec4q_t *v);
 void mgr_viewport_map_q(const mgr_state_t *s, const mgr_vec4q_t *v, mgr_window_vertex_t *out);
-void mgr_vec4q_to_float(const mgr_vec4q_t *q, mgl_vec4_t *f);
+/* Como mgr_clip_triangle, en Q16.16. */
+int mgr_clip_triangle_q(const mgr_vec4q_t in[3], mgr_vec4q_t out[MGR_CLIP_MAX]);
 #endif
 
 #if MGR_FIXED_DEPTH
@@ -143,6 +151,10 @@ typedef struct {
 /* Los píxeles de x0 a x1 - 1 de la fila y (ya dentro del destino). z es la
    profundidad en x0 y dz lo que cambia por píxel. */
 void mgr_fragment_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z, mgl_s32 dz);
+/* Backend ROP opcional: solo Z16/C16, LESS, test+write. */
+int mgr_fragment_rop_begin(const mgr_fragment_t *f, mgl_s32 dz);
+void mgr_fragment_rop_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z);
+void mgr_fragment_rop_finish(void);
 
 void mgr_clear_color(const mgr_state_t *s, mgl_color_t c);
 void mgr_clear_depth(const mgr_state_t *s, mgl_u16 d);
@@ -159,6 +171,10 @@ typedef struct {
    descartó por cara o área nula. */
 mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f);
+/* Lo mismo con el área ya calculada y el triángulo ya aceptado (área no nula y cara no descartada): lo
+   que usa draw.c, que hace esas comprobaciones antes de llamarla. Devuelve los píxeles cubiertos. */
+mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f, mgl_s32 area);
 
 /* ---- raster2d.c --------------------------------------------------------- */
 /* Comandos 2D en el destino actual (sin profundidad, como V0). */

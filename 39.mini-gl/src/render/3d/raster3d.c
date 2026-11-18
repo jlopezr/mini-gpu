@@ -1,4 +1,5 @@
 #include "mgr_stages.h"
+#include "mgl_ext.h"
 
 /* Cobertura con funciones de borde en enteros, escalar y determinista.
 
@@ -45,21 +46,37 @@
         if ((s) < 0) {                                   \
             if ((w) < 0) {                               \
                 n = (-(w) - (s) - 1) / -(s); /* techo */ \
-                if (n > lo) lo = n;                      \
+                MGL_SET_MAX(lo, n);                      \
             }                                            \
         } else if ((s) > 0) {                            \
-            n = (w) < 0 ? -1 : (w) / (s);                \
-            if (n < hi) hi = n;                          \
+            if ((w) < 0)                                 \
+                hi = -1;                                 \
+            else {                                       \
+                n = (w) / (s);                           \
+                MGL_SET_MIN(hi, n);                      \
+            }                                            \
         } else if ((w) < 0)                              \
             hi = -1;                                     \
     } while (0)
 
 mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
     const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f) {
+    /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
+    mgl_s32 area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+    if (area == 0) return -1;
+    if ((f->flags & MGL_STATE_CULL_BACK) && area > 0) return -1;
+    if ((f->flags & MGL_STATE_CULL_FRONT) && area < 0) return -1;
+    return mgr_raster_triangle_area(a, b, c, clip, f, area);
+}
+
+/* Sin repetir las comprobaciones de arriba: draw.c ya las hace (con el área que pasa) y aquí se predecían
+   casi siempre mal (una vez por triángulo, fuera de la BTB). */
+mgl_s32 mgr_raster_triangle_area(const mgr_window_vertex_t *a, const mgr_window_vertex_t *b,
+    const mgr_window_vertex_t *c, const mgr_rect_t *clip, const mgr_fragment_t *f, mgl_s32 area) {
     const mgr_window_vertex_t *t;
-    mgl_s32 area, minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
+    mgl_s32 minx, maxx, miny, maxy, x0, x1, y0, y1, x, y, start, px, py, step0, step1, step2;
     mgl_s32 w0, w1, w2, row0, row1, row2, lo, hi, n, covered = 0, zi, dzi = 0;
-    int ready = 0;
+    int ready = 0, rop = 0;
 #if MGR_FIXED_DEPTH
     /* El plano de profundidad en enteros (fixed.c); el recorrido de filas es el mismo de abajo. */
     mgr_depth_plane_t plane;
@@ -78,11 +95,6 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
 #endif
 #endif
 
-    /* Cara: de frente es antihorario con y hacia arriba, es decir, área negativa aquí (y hacia abajo). */
-    area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
-    if (area == 0) return -1;
-    if ((f->flags & MGL_STATE_CULL_BACK) && area > 0) return -1;
-    if ((f->flags & MGL_STATE_CULL_FRONT) && area < 0) return -1;
     if (area < 0) {
         t = b;
         b = c;
@@ -91,25 +103,25 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     }
 
     /* Píxeles cuyo centro (16 i + 8) cae en la caja del triángulo, dentro de clip. */
-    /* Con if sobre la propia variable y no con ?: , que mini-lcc pasa por una variable temporal en la pila. */
+    /* MGL_SET_MIN/MAX: MIN/MAX con MGL_EXT, o if sobre la propia variable (mgl_ext.h). */
     minx = maxx = a->x;
-    if (b->x < minx) minx = b->x;
-    if (b->x > maxx) maxx = b->x;
-    if (c->x < minx) minx = c->x;
-    if (c->x > maxx) maxx = c->x;
+    MGL_SET_MIN(minx, b->x);
+    MGL_SET_MAX(maxx, b->x);
+    MGL_SET_MIN(minx, c->x);
+    MGL_SET_MAX(maxx, c->x);
     miny = maxy = a->y;
-    if (b->y < miny) miny = b->y;
-    if (b->y > maxy) maxy = b->y;
-    if (c->y < miny) miny = c->y;
-    if (c->y > maxy) maxy = c->y;
+    MGL_SET_MIN(miny, b->y);
+    MGL_SET_MAX(maxy, b->y);
+    MGL_SET_MIN(miny, c->y);
+    MGL_SET_MAX(maxy, c->y);
     x0 = floor16(minx + MGR_SUBPIXEL / 2 - 1);
     x1 = floor16(maxx - MGR_SUBPIXEL / 2) + 1;
     y0 = floor16(miny + MGR_SUBPIXEL / 2 - 1);
     y1 = floor16(maxy - MGR_SUBPIXEL / 2) + 1;
-    if (x0 < clip->x0) x0 = clip->x0;
-    if (y0 < clip->y0) y0 = clip->y0;
-    if (x1 > clip->x1) x1 = clip->x1;
-    if (y1 > clip->y1) y1 = clip->y1;
+    MGL_SET_MAX(x0, clip->x0);
+    MGL_SET_MAX(y0, clip->y0);
+    MGL_SET_MIN(x1, clip->x1);
+    MGL_SET_MIN(y1, clip->y1);
     if (x0 >= x1 || y0 >= y1) return 0;
 
     px = x0 * MGR_SUBPIXEL + MGR_SUBPIXEL / 2;
@@ -129,7 +141,7 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
     row1 = (a->x - c->x) * MGR_SUBPIXEL;
     row2 = (b->x - a->x) * MGR_SUBPIXEL;
 
-    for (y = y0; y < y1; y++, py += MGR_SUBPIXEL) {
+    for (y = y0; y < y1; y++) { /* py, el centro de la fila y, solo hace falta sin el recorrido incremental */
         /* Dentro de las tres a la vez: un tramo, porque el triángulo es convexo. */
         lo = 0;
         hi = x1 - x0 - 1;
@@ -143,6 +155,13 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
                 /* La profundidad, al encontrar el primer píxel: un triángulo que no cubre ningún centro (muchos
                    de un modelo pequeño en pantalla) se la ahorra. Mismos cálculos que antes del bucle. */
                 ready = 1;
+#if MGR_INCREMENTAL_DEPTH
+                /* Sin prueba ni escritura de profundidad (el modo DEPTH_SORT, el algoritmo del pintor), el
+                   plano no hace falta: fragment no mira z. Era lo más caro de un triángulo pequeño. */
+                if (!f->depth || !(f->flags & (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE))) {
+                    incremental = 1; /* depth_row, depth_dx, depth_dy y dzi se quedan a 0 */
+                } else {
+#endif
 #if MGR_FIXED_DEPTH
                 mgr_depth_plane(a, b, c, area, px, py0, x1 - x0, y1 - y0, &plane);
                 dzi = plane.dzi;
@@ -187,12 +206,19 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
                 }
 #endif
 #endif /* MGR_FIXED_DEPTH */
+#if MGR_INCREMENTAL_DEPTH
+                }
+#endif
             }
 #if MGR_INCREMENTAL_DEPTH
             if (incremental) {
                 depth_start = depth_row + depth_dx * (start - x0);
-                zi = depth_start <= 0 ? 0 : depth_start >= MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
-                    (depth_start + 8) >> 4;
+                /* Acotar y redondear: 0 si <= 0 y MGR_DEPTH_MAX si >= MGR_DEPTH_MAX * 16 ((MAX * 16 + 8) >> 4 es
+                   MAX). Con MIN y MAX (MGL_EXT) sin saltos: con if/else if, el caso de siempre era el último y su
+                   salto se predecía mal en todos los spans. */
+                MGL_SET_MAX(depth_start, 0);
+                MGL_SET_MIN(depth_start, MGR_DEPTH_MAX * 16);
+                zi = (depth_start + 8) >> 4;
             } else {
 #endif
 #if MGR_FIXED_DEPTH
@@ -200,14 +226,16 @@ mgl_s32 mgr_raster_triangle(const mgr_window_vertex_t *a, const mgr_window_verte
             zi = depth_wide <= 0 ? 0 : depth_wide >= (long long)MGR_DEPTH_MAX * 16 ? MGR_DEPTH_MAX :
                 (mgl_s32)((depth_wide + 8) >> 4);
 #else
-            zrow = a->z + gb * (mgl_real_t)(py - a->y);
+            zrow = a->z + gb * (mgl_real_t)(y * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->y);
             zf = (zrow + ga * (mgl_real_t)(start * MGR_SUBPIXEL + MGR_SUBPIXEL / 2 - a->x)) * DEPTH_SCALE;
             zi = zf <= 0.0f ? 0 : zf >= DEPTH_SCALE ? MGR_DEPTH_MAX : mgl_round(zf);
 #endif
 #if MGR_INCREMENTAL_DEPTH
             }
 #endif
-            mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
+            if (!rop) rop = mgr_fragment_rop_begin(f, dzi);
+            if (rop) mgr_fragment_rop_span(f, (int)y, (int)start, (int)x, zi);
+            else mgr_fragment_span(f, (int)y, (int)start, (int)x, zi, dzi);
             covered += x - start;
         }
         w0 += row0;

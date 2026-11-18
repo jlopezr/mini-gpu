@@ -4,6 +4,17 @@ int width = PLATFORM_DEFAULT_W, height = PLATFORM_DEFAULT_H;
 int frameCount, mouseX, mouseY, pmouseX, pmouseY, mousePressed;
 int keyPressed, key, keyCode;
 mgl_u32 platform_keys[8];
+/* PLATFORM_BUFFERS: el valor por defecto, 3; con -D PLATFORM_BUFFERS=2 se prueba un sketch con doble buffer
+   sin tocarlo. */
+#ifndef PLATFORM_BUFFERS
+#define PLATFORM_BUFFERS 3
+#endif
+int platform_buffers = PLATFORM_BUFFERS;
+
+/* frameBuffers(n), en setup(): 3 (por defecto) o 2. Otro valor se queda en 3. */
+void frameBuffers(int n) {
+    platform_buffers = n == 2 ? 2 : 3;
+}
 
 /* 0x32 es la tecla de fuera de EE. UU.: no da caracter. */
 const char platform_hid_plain[] = "1234567890\n\033\b\t -=[]\\\0;'`,./";
@@ -35,6 +46,7 @@ int platform_init(void *ram, int version) {
     int i;
     frameCount = mouseX = mouseY = pmouseX = pmouseY = mousePressed = 0;
     keyPressed = key = keyCode = 0;
+    platform_buffers = PLATFORM_BUFFERS;
     for (i = 0; i < 8; i++) platform_keys[i] = 0;
     return mgl_context_init(ram, version);
 }

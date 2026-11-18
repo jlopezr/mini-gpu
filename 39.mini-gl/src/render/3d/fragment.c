@@ -1,5 +1,41 @@
 #include "mgr_stages.h"
 
+#if defined(MGR_USE_ROP) && defined(__MINIGPU__)
+#include "rop.h"
+static int rop_pending;
+
+int mgr_fragment_rop_begin(const mgr_fragment_t *f, mgl_s32 dz) {
+    rop_config_t c;
+    if (!f->depth || (f->flags & (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE)) !=
+        (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE)) return 0;
+    c.color_base = (rop_u32)f->color; c.z_base = (rop_u32)f->depth;
+    c.color_stride = (rop_u32)(f->color_stride * 2); c.z_stride = (rop_u32)(f->depth_stride * 2);
+    c.color_value = f->fill; c.z_initial = 0; c.dx = (rop_u32)dz; c.dy = 0;
+    c.render_mode = ROP_Z_LT | ROP_MODE_WRITE_Z | ROP_MODE_WRITE_COLOR |
+        (MGR_DEPTH_FRAC << 8) | ROP_MODE_SAT;
+    c.groups = ROP_CONFIG_BASES | ROP_CONFIG_STRIDES | ROP_CONFIG_COLOR | ROP_CONFIG_Z | ROP_CONFIG_MODE;
+    rop_submit_config_fenced(&c);
+    rop_pending = 1;
+    return 1;
+}
+
+void mgr_fragment_rop_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z) {
+    rop_span_compact_t s;
+    s.color_offset = (rop_u32)((y * f->color_stride + x0) * 2);
+    s.z_offset = (rop_u32)((y * f->depth_stride + x0) * 2);
+    s.pixels = (rop_u32)(x1 - x0); s.rows = 1; s.z_initial = (rop_u32)z;
+    s.mode = 0x1200; /* COMPACT + sustituye Z0 */
+    rop_submit_span_compact(&s);
+}
+
+void mgr_fragment_rop_finish(void) { if (rop_pending) { rop_wait_invalidate(); rop_pending = 0; } }
+#else
+int mgr_fragment_rop_begin(const mgr_fragment_t *f, mgl_s32 dz) { (void)f; (void)dz; return 0; }
+void mgr_fragment_rop_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z)
+{ (void)f; (void)y; (void)x0; (void)x1; (void)z; }
+void mgr_fragment_rop_finish(void) {}
+#endif
+
 /* Por píxel, en orden: profundidad (si hay buffer y está activa la prueba: pasa
    si es menor, LESS), escritura de profundidad (si está activa) y color. Sin
    blending todavía: el color se escribe tal cual.
@@ -24,6 +60,20 @@ void mgr_fragment_span(const mgr_fragment_t *f, int y, int x0, int x1, mgl_s32 z
     /* El modo es constante en todo el span: decidir fuera del bucle evita
        comprobar test/write en cada píxel, también en mini-lcc. */
     if (mode == (MGL_STATE_DEPTH_TEST | MGL_STATE_DEPTH_WRITE)) {
+        /* z es lineal en el span: si los dos extremos están dentro de (0, MAX), todos lo están y no hace falta
+           acotar cada píxel (los mismos valores). Y el final como puntero, sin contador: 9 instrucciones por
+           píxel en MiniGPU en vez de 12. Es el caso de casi todos los spans. */
+        mgl_s32 last = zz + step * (n - 1);
+        if (zz > 0 && zz < MGR_DEPTH_MAX && last > 0 && last < MGR_DEPTH_MAX) {
+            mgl_color_t *end = c + n;
+            for (; c != end; c++, d++, zz += step) {
+                v = (unsigned int)zz >> MGR_DEPTH_FRAC;
+                if (v >= *d) continue;
+                *d = (mgl_u16)v;
+                *c = fill;
+            }
+            return;
+        }
         for (; n > 0; n--, c++, d++, zz += step) {
             v = zz <= 0 ? 0U : zz >= MGR_DEPTH_MAX ? 65535U : (unsigned int)zz >> MGR_DEPTH_FRAC;
             if (v >= *d) continue;

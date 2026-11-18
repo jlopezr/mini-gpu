@@ -7,3 +7,6 @@
 [submodule "w.vlink"]
 	path = w.vlink
 	url = https://github.com/jlopezr/vlink.git
+[submodule "w.caprice32"]
+	path = w.caprice32
+	url = https://github.com/ColinPitrat/caprice32.git

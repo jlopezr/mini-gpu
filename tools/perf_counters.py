@@ -21,6 +21,10 @@ from tools.mmio_map import (
     MMIO_PERF_CTRL_ENABLE_BIT,
     MMIO_PERF_CTRL_OFF,
     MMIO_PERF_CYCLES_OFF,
+    MMIO_PERF_DMEM_HITS_OFF,
+    MMIO_PERF_DMEM_MISSES_OFF,
+    MMIO_PERF_MULDIV_RETIRED_OFF,
+    MMIO_PERF_STALL_MULDIV_OFF,
     MMIO_PERF_IMEM_HITS_OFF,
     MMIO_PERF_IMEM_MISSES_OFF,
     MMIO_PERF_MEM_TX_OFF,
@@ -29,6 +33,12 @@ from tools.mmio_map import (
     MMIO_PERF_STALL_FETCH_OFF,
     MMIO_PERF_STALL_MEM_OFF,
     MMIO_PERF_STALL_MMIO_OFF,
+    MMIO_PERF_STALL_BRANCH_OFF,
+    MMIO_PERF_STALL_EX_MEM_OFF,
+    MMIO_PERF_STALL_ID_EMPTY_OFF,
+    MMIO_PERF_STALL_RAW_OFF,
+    MMIO_PERF_SWAP_WAIT_OFF,
+    MMIO_PERF_VIDEO_FRAMES_OFF,
 )
 
 # Nombre de cada contador de espera -> su offset en el bloque.
@@ -42,8 +52,45 @@ STALL_COUNTERS = {
 }
 
 
+# Los de la CPU segmentada (capacidad `perf_pipeline`, ranuras 8 a 11): el
+# motivo de cada ciclo en que ninguna instruccion pasa de ID a EX. Van en el
+# mismo diccionario que los de espera.
+PIPELINE_COUNTERS = {
+    "stall_ex_mem": MMIO_PERF_STALL_EX_MEM_OFF,
+    "stall_raw": MMIO_PERF_STALL_RAW_OFF,
+    "stall_branch": MMIO_PERF_STALL_BRANCH_OFF,
+    "stall_id_empty": MMIO_PERF_STALL_ID_EMPTY_OFF,
+}
+
+
+# Los de la cache de datos (capacidad `perf_dcache`, ranuras 12 y 13): cada
+# LOAD a memoria acierta o falla. Tambien van con los de espera.
+DCACHE_COUNTERS = {
+    "dmem_hits": MMIO_PERF_DMEM_HITS_OFF,
+    "dmem_misses": MMIO_PERF_DMEM_MISSES_OFF,
+}
+
+
+# Los de MUL/DIV en la CPU segmentada (capacidad `perf_muldiv`, ranuras 14 y
+# 15): la espera es un motivo mas del reparto del pipeline.
+MULDIV_COUNTERS = {
+    "stall_muldiv": MMIO_PERF_STALL_MULDIV_OFF,
+    "muldiv_retired": MMIO_PERF_MULDIV_RETIRED_OFF,
+}
+
+
+# Los de video (capacidad `perf_video`, ranuras 16 y 17): frames con la CPU en
+# marcha y ciclos esperando a que el barrido haga un intercambio pedido.
+VIDEO_COUNTERS = {
+    "video_frames": MMIO_PERF_VIDEO_FRAMES_OFF,
+    "swap_wait": MMIO_PERF_SWAP_WAIT_OFF,
+}
+
+
 def read_counters(read_word, write_word=None, stalls: bool = False,
-                  base: int = MMIO_CPU_PERF_BASE) -> dict:
+                  base: int = MMIO_CPU_PERF_BASE, pipeline: bool = False,
+                  dcache: bool = False, muldiv: bool = False,
+                  video: bool = False) -> dict:
     """Todos los contadores de un mismo instante.
 
     `read_word(direccion)` y `write_word(direccion, valor)` son los del cliente
@@ -69,6 +116,18 @@ def read_counters(read_word, write_word=None, stalls: bool = False,
         if stalls:
             contadores["stalls"] = {nombre: read_word(base + offset)
                                     for nombre, offset in STALL_COUNTERS.items()}
+            if pipeline:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in PIPELINE_COUNTERS.items()})
+            if dcache:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in DCACHE_COUNTERS.items()})
+            if muldiv:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in MULDIV_COUNTERS.items()})
+            if video:
+                contadores["stalls"].update({nombre: read_word(base + offset)
+                                             for nombre, offset in VIDEO_COUNTERS.items()})
     finally:
         if write_word is not None:
             write_word(base + MMIO_PERF_CTRL_OFF, previo)
@@ -124,6 +183,90 @@ def breakdown(cycles, instructions, stalls) -> dict | None:
     }
 
 
+def dcache_breakdown(instructions, stalls) -> dict | None:
+    """Aciertos de la cache de datos (capacidad `perf_dcache`).
+
+    Devuelve `hits`, `misses`, `hit_rate` (None sin ningun LOAD a memoria) y
+    `misses_per_instruction`; None si la medida no trae esos contadores.
+    """
+    if not stalls or "dmem_hits" not in stalls or "dmem_misses" not in stalls:
+        return None
+    hits, misses = stalls["dmem_hits"], stalls["dmem_misses"]
+    loads = hits + misses
+    return {
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": hits / loads if loads else None,
+        "misses_per_instruction": misses / instructions if instructions else None,
+    }
+
+
+def muldiv_breakdown(instructions, stalls) -> dict | None:
+    """MUL/DIV de la CPU segmentada (capacidad `perf_muldiv`).
+
+    Devuelve `retired` (MUL/DIV retiradas), `stall` (ciclos de espera),
+    `fraction` (parte de las instrucciones que son MUL/DIV) y `cycles_per_op`
+    (espera media de cada una, None sin ninguna); None si la medida no trae
+    esos contadores.
+    """
+    if not stalls or "stall_muldiv" not in stalls or "muldiv_retired" not in stalls:
+        return None
+    retired, stall = stalls["muldiv_retired"], stalls["stall_muldiv"]
+    return {
+        "retired": retired,
+        "stall": stall,
+        "fraction": retired / instructions if instructions else None,
+        "cycles_per_op": stall / retired if retired else None,
+    }
+
+
+def video_breakdown(cycles, swaps, stalls) -> dict | None:
+    """Cuanto del frame ocupa el trabajo de la CPU (capacidad `perf_video`).
+
+    `swaps` son los intercambios hechos en la medida (SWAP_COUNT). Devuelve
+    `cycles_per_frame` (CYCLES / VIDEO_FRAMES), `work_per_swap` (los ciclos que
+    no esperan un intercambio, por intercambio) y `occupancy`, su cociente: por
+    encima de 1 el trabajo de un frame no cabe en un frame. Cada valor es None
+    si falta su divisor; la funcion entera, None sin esos contadores.
+
+    Supone que el programa espera justo despues de pedir el intercambio, como
+    `swap_and_wait` (mmio.md §13.2).
+    """
+    if not cycles or not stalls or "video_frames" not in stalls or "swap_wait" not in stalls:
+        return None
+    frames = stalls["video_frames"]
+    per_frame = cycles / frames if frames else None
+    work = (cycles - stalls["swap_wait"]) / swaps if swaps else None
+    return {
+        "frames": frames,
+        "swap_wait": stalls["swap_wait"],
+        "cycles_per_frame": per_frame,
+        "work_per_swap": work,
+        "occupancy": work / per_frame if work is not None and per_frame else None,
+    }
+
+
+def pipeline_breakdown(cycles, instructions, stalls) -> dict | None:
+    """Ciclos por instruccion de cada motivo de no emitir, o `None` sin datos.
+
+    CYCLES = RETIRED + STALL_EX_MEM + STALL_RAW + STALL_BRANCH + STALL_ID_EMPTY
+    (+ STALL_MULDIV) + otros, asi que CPI = 1 + la suma de lo que devuelve.
+    `muldiv` solo esta si la medida trae STALL_MULDIV. `other` son los ciclos
+    de arranque, STEP, HALT y error; no baja de cero, porque los eventos llegan
+    un ciclo tarde.
+    """
+    if not cycles or not instructions or not stalls or "stall_raw" not in stalls:
+        return None
+    motivos = list(PIPELINE_COUNTERS)
+    if "stall_muldiv" in stalls:
+        motivos.append("stall_muldiv")
+    parts = {nombre.removeprefix("stall_"): stalls[nombre] / instructions
+             for nombre in motivos}
+    counted = instructions + sum(stalls[nombre] for nombre in motivos)
+    parts["other"] = max(0, cycles - counted) / instructions
+    return parts
+
+
 def _pct(fraction) -> str:
     return "n/d" if fraction is None else f"{100.0 * fraction:.1f} %"
 
@@ -151,6 +294,26 @@ def format_report(contadores: dict) -> list[str]:
             f"  buffer de instrucciones: {stalls['imem_hits']} aciertos, "
             f"{stalls['imem_misses']} fallos ({_pct(r['hit_rate'])} de acierto); "
             f"{stalls['mem_tx']} peticiones a memoria")
+    p = pipeline_breakdown(cycles, instructions, contadores.get("stalls"))
+    if p is not None:
+        muldiv = f"MUL/DIV {p['muldiv']:.2f}, " if "muldiv" in p else ""
+        lineas.append(
+            f"  ciclos por instruccion, ademas del 1: EX con memoria {p['ex_mem']:.2f}, "
+            f"{muldiv}dependencia {p['raw']:.2f}, salto {p['branch']:.2f}, "
+            f"ID vacio {p['id_empty']:.2f}, otros {p['other']:.2f}")
+    m = muldiv_breakdown(instructions, contadores.get("stalls"))
+    if m is not None and m["retired"]:
+        lineas.append(
+            f"  MUL/DIV: {m['retired']} retiradas ({_pct(m['fraction'])} de las "
+            f"instrucciones), {m['cycles_per_op']:.1f} ciclos de espera de media")
+    stalls = contadores.get("stalls")
+    if stalls and "video_frames" in stalls and "swap_wait" in stalls:
+        frames = stalls["video_frames"]
+        lineas.append(
+            f"  video: {frames} frames con la CPU en marcha"
+            + (f" ({cycles / frames:,.0f} ciclos cada uno)".replace(",", " ") if frames else "")
+            + f", {_pct(stalls['swap_wait'] / cycles if cycles else None)} de los ciclos "
+            f"esperando un swap")
     if contadores.get("overflow"):
         lineas.append(
             f"  AVISO: PERF_OVF0={contadores['overflow']:#x}, algun contador ha dado la "

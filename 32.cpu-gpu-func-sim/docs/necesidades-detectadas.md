@@ -50,7 +50,7 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 - Dos arrays nuevos tras los 32 descriptores (mmio.md §14.2, regla §1.4): `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280`.
 - Lectura y escritura. Escribirlos en un warp vivo es error, como el resto del descriptor.
 - No caben en el descriptor: el stride de 16 bytes está congelado y `SIMT_STATE` no es un hueco libre.
-- `LOGICAL_WARP_ID` es el antiguo `warp_user_id` de `propuesta-v0.2.md`, cuya ventana MMIO quedó "pendiente de asignación".
+- `LOGICAL_WARP_ID` es el antiguo `warp_user_id`; su contrato y ventana MMIO ya están definidos en [isa.md](../../1.isa/isa.md#sistema-y-simt) y MMIO §14.2.
 - Tocan: mmio.md, `tools/mmio_map.py` (generado), simulador de la 32 (`GpuWarpsDevice`), simulador de `11` (estado por warp), RTL.
 
 ### N4. `GETID` con `type` 1 a 4 — ensamblador, simuladores (11 y 25) y RTL de la 29 hechos; probado en placa
@@ -66,14 +66,14 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 | 4 | `GETARG` | `WARP_ARG` |
 
 - `type >= 5`: reservado, `ERROR_INVALID_ENCODING`.
-- **Renombrado:** `GETWID` y `warp_user_id` de `propuesta-v0.2.md`, `v0.3`, `v0.4` y `v0.4b` pasan a `GETLWARP` y `LOGICAL_WARP_ID`. `GETWID` se leía como "workgroup id". Un solo nombre en todas partes, sin alias.
+- **Renombrado:** los antiguos `GETWID` y `warp_user_id` pasan a `GETLWARP` y `LOGICAL_WARP_ID`, nombres unificados en `isa.md` y la propuesta v0.4. `GETWID` se leía como "workgroup id". Un solo nombre en todas partes, sin alias.
 - `warp_user_id` era genérico ("base, tile u objeto"); con el nombre nuevo la intención se estrecha a "id lógico que asigna el lanzador".
 - Tocan: las cuatro propuestas, `isa.md`, `mini_asm.py`, simulador de `11` y RTL.
 - `GETGWARP`, citado de memoria, no existe en el repo.
 
 ### N5. Semántica de reset — contrato y simulador hechos, RTL de la 29 distinto a propósito
 
-- `propuesta-v0.2.md` dice que `warp_user_id` "vale cero tras reset de GPU".
+- La redacción histórica «cero tras reset de GPU» ya se ha precisado en [isa.md](../../1.isa/isa.md#sistema-y-simt): hay que distinguir reset del sistema de GPU_CONTROL.RESET.
 - En MMIO v2, `GPU_CONTROL.RESET` conserva los descriptores. `LOGICAL_WARP_ID` y `WARP_ARG` son configuración del lanzador: `RESET` los conserva y solo el reset físico los pone a cero.
 - **El RTL de la 29 no lo cumple, a propósito**: el único reset que tiene es el del monitor (`core_reset`), que ya reinicia los descriptores, y pone a cero también los dos arrays. Cuando exista GPU CORE con su `RESET` propio habrá que separar los dos resets.
 
@@ -98,13 +98,13 @@ Limitación que hay que dejar escrita: un puntero equivocado pero **dentro de la
 
 ### N8. Atómicas y `FENCE` en la GPU — pospuesto
 
-- `atomics.md` propone `ATOMADD`, `ATOMCAS` y `FENCE`, y `propuesta-v0.4b.md` les da opcodes (grupo `0x2A` para las atómicas y `0x36` para `FENCE`). **No están implementadas** en ningún simulador, ensamblador ni RTL.
+- [`propuesta-v0.4.md`](../../1.isa/propuesta-v0.4.md#12-operaciones-atómicas) define `ATOMADD`, `ATOMCAS`, `FENCE` y sus opcodes (grupo `0x0B` para las atómicas y `0x36` para `FENCE`). **No están implementadas** en ningún simulador, ensamblador ni RTL.
 - **La v1 no las necesita** (D16). La sincronización CPU↔GPU va por `WARP_DONE` (D12) y el reparto es estático.
 - Harían falta para extensiones ya anotadas:
   - **Reparto dinámico de trozos** entre warps (`ATOMADD` sobre un contador compartido), si algún kernel tiene trabajo desigual.
   - **Warps residentes** con buzón en RAM (D12): `FENCE` para ordenar los datos antes del flag, y `ATOMADD` o `ATOMCAS` si varios consumidores comparten una cola.
   - **Contador `warps_pending` por job en RAM**, decrementado por cada warp, en lugar de contar con `WARP_DONE` desde la CPU.
-- `FENCE = NOP` es una implementación válida mientras la LSU no tenga operaciones pendientes (atomics.md §5), pero la LSU de la 29 coalesce por línea de 16 bytes y tiene etiquetas por warp: **habría que comprobar si puede tener operaciones pendientes** antes de darlo por válido ahí.
+- `FENCE = NOP` es una implementación válida si el master bloqueante ya garantiza el orden, finalización y visibilidad exigidos ([v0.4 §12.2](../../1.isa/propuesta-v0.4.md#122-implementación-orientativa-en-fabric-y-lsu)), pero la LSU de la 29 coalesce por línea de 16 bytes y tiene etiquetas por warp: **habría que comprobar si puede tener operaciones pendientes** antes de darlo por válido ahí.
 
 ### N9. `ANDI`, `ORI` y `XORI` no admitían símbolos `.equ` — resuelto en `1.isa/mini_asm.py`
 

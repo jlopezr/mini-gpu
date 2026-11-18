@@ -6,8 +6,11 @@ lo que se lee, en que orden, y que el bloque vuelva a como estaba.
 import unittest
 
 from tools import monitor_protocol
-from tools.perf_counters import (STALL_COUNTERS, breakdown, difference,
-                                 format_report, read_counters)
+from tools.perf_counters import (DCACHE_COUNTERS, MULDIV_COUNTERS, PIPELINE_COUNTERS,
+                                 STALL_COUNTERS, VIDEO_COUNTERS, breakdown,
+                                 dcache_breakdown, muldiv_breakdown, video_breakdown,
+                                 difference, format_report, pipeline_breakdown,
+                                 read_counters)
 
 BASE = 0x8101_0000
 CTRL = BASE + 0x100
@@ -163,6 +166,141 @@ class InformeTest(unittest.TestCase):
     def test_sin_esperas_solo_ciclos_e_instrucciones(self):
         c = {"cycles": 800, "instructions": 100, "overflow": 0, "stalls": None}
         self.assertEqual(len(format_report(c)), 1)
+
+
+
+class PipelineTest(unittest.TestCase):
+    """Ranuras 8 a 11 de la CPU segmentada (capacidad `perf_pipeline`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(PIPELINE_COUNTERS, {
+            "stall_ex_mem": 0x20, "stall_raw": 0x24, "stall_branch": 0x28,
+            "stall_id_empty": 0x2C})
+
+    def test_solo_las_lee_si_se_piden(self):
+        pipeline = {BASE + 0x20: 100, BASE + 0x24: 250, BASE + 0x28: 75, BASE + 0x2C: 25}
+        cliente = ClienteFalso(bloque() | pipeline)
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("stall_raw", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, pipeline=True)
+        self.assertEqual(c["stalls"]["stall_raw"], 250)
+
+    def test_reparto_por_instruccion_y_otros_es_lo_que_falta(self):
+        # 1000 ciclos, 125 instrucciones: 125 + 100 + 250 + 75 + 25 = 575 contados.
+        stalls = {"stall_ex_mem": 100, "stall_raw": 250, "stall_branch": 75,
+                  "stall_id_empty": 25}
+        p = pipeline_breakdown(1000, 125, stalls)
+        self.assertEqual((p["ex_mem"], p["raw"], p["branch"], p["id_empty"]),
+                         (0.8, 2.0, 0.6, 0.2))
+        self.assertAlmostEqual(p["other"], 3.4)
+        self.assertAlmostEqual(1 + sum(p.values()), 1000 / 125)
+
+    def test_sin_ranuras_del_pipeline_no_hay_reparto(self):
+        self.assertIsNone(pipeline_breakdown(1000, 125, {"stall_mem": 3}))
+        self.assertIsNone(pipeline_breakdown(1000, 0, {"stall_raw": 3}))
+
+    def test_el_informe_lo_enseña(self):
+        c = {"cycles": 1000, "instructions": 125, "overflow": 0,
+             "stalls": {"imem_hits": 120, "imem_misses": 5, "mem_tx": 30,
+                        "stall_mem": 300, "stall_fetch": 120, "stall_mmio": 50,
+                        "stall_ex_mem": 100, "stall_raw": 250, "stall_branch": 75,
+                        "stall_id_empty": 25}}
+        self.assertIn("dependencia 2.00", "\n".join(format_report(c)))
+
+
+
+class DcacheTest(unittest.TestCase):
+    """Ranuras 12 y 13 de la cache de datos (capacidad `perf_dcache`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(DCACHE_COUNTERS, {"dmem_hits": 0x30, "dmem_misses": 0x34})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x30: 90, BASE + 0x34: 10})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("dmem_hits", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, dcache=True)
+        self.assertEqual((c["stalls"]["dmem_hits"], c["stalls"]["dmem_misses"]), (90, 10))
+
+    def test_tasa_de_aciertos_y_fallos_por_instruccion(self):
+        d = dcache_breakdown(200, {"dmem_hits": 90, "dmem_misses": 10})
+        self.assertEqual((d["hits"], d["misses"]), (90, 10))
+        self.assertAlmostEqual(d["hit_rate"], 0.9)
+        self.assertAlmostEqual(d["misses_per_instruction"], 0.05)
+
+    def test_sin_loads_no_hay_tasa_y_sin_ranuras_no_hay_nada(self):
+        self.assertIsNone(dcache_breakdown(200, {"dmem_hits": 0, "dmem_misses": 0})["hit_rate"])
+        self.assertIsNone(dcache_breakdown(200, {"stall_raw": 3}))
+        self.assertIsNone(dcache_breakdown(200, None))
+
+
+class MuldivTest(unittest.TestCase):
+    """Ranuras 14 y 15 de MUL/DIV (capacidad `perf_muldiv`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(MULDIV_COUNTERS, {"stall_muldiv": 0x38, "muldiv_retired": 0x3C})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x38: 370, BASE + 0x3C: 20})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("stall_muldiv", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, muldiv=True)
+        self.assertEqual((c["stalls"]["stall_muldiv"], c["stalls"]["muldiv_retired"]),
+                         (370, 20))
+
+    def test_es_un_motivo_mas_del_reparto(self):
+        stalls = {"stall_ex_mem": 0, "stall_raw": 20, "stall_branch": 30,
+                  "stall_id_empty": 5, "stall_muldiv": 370}
+        p = pipeline_breakdown(100 + 20 + 30 + 5 + 370 + 7, 100, stalls)
+        self.assertAlmostEqual(p["muldiv"], 3.7)
+        self.assertAlmostEqual(p["other"], 0.07)
+        self.assertNotIn("muldiv", pipeline_breakdown(
+            200, 100, {k: 0 for k in PIPELINE_COUNTERS}))
+
+    def test_espera_media_y_parte_de_las_instrucciones(self):
+        m = muldiv_breakdown(200, {"stall_muldiv": 370, "muldiv_retired": 20})
+        self.assertEqual((m["retired"], m["stall"]), (20, 370))
+        self.assertAlmostEqual(m["fraction"], 0.1)
+        self.assertAlmostEqual(m["cycles_per_op"], 18.5)
+        self.assertIsNone(muldiv_breakdown(200, {"stall_muldiv": 0,
+                                                 "muldiv_retired": 0})["cycles_per_op"])
+        self.assertIsNone(muldiv_breakdown(200, {"stall_raw": 3}))
+
+
+class VideoTest(unittest.TestCase):
+    """Ranuras 16 y 17 de video (capacidad `perf_video`)."""
+
+    def test_las_ranuras_son_las_del_contrato(self):
+        self.assertEqual(VIDEO_COUNTERS, {"video_frames": 0x40, "swap_wait": 0x44})
+
+    def test_solo_las_lee_si_se_piden(self):
+        cliente = ClienteFalso(bloque() | {BASE + 0x40: 4, BASE + 0x44: 300})
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True)
+        self.assertNotIn("video_frames", c["stalls"])
+        c = read_counters(cliente.read_word, cliente.write_word, stalls=True, video=True)
+        self.assertEqual((c["stalls"]["video_frames"], c["stalls"]["swap_wait"]), (4, 300))
+
+    def test_frame_ocupado(self):
+        """1000 ciclos en 4 frames (250 cada uno); 300 esperando y 2 swaps: 350
+        de trabajo por swap, el 140 % de un frame."""
+        v = video_breakdown(1000, 2, {"video_frames": 4, "swap_wait": 300})
+        self.assertAlmostEqual(v["cycles_per_frame"], 250)
+        self.assertAlmostEqual(v["work_per_swap"], 350)
+        self.assertAlmostEqual(v["occupancy"], 1.4)
+
+    def test_sin_divisores_no_divide_y_sin_ranuras_no_hay_nada(self):
+        v = video_breakdown(1000, 0, {"video_frames": 0, "swap_wait": 0})
+        self.assertEqual((v["cycles_per_frame"], v["work_per_swap"], v["occupancy"]),
+                         (None, None, None))
+        self.assertIsNone(video_breakdown(1000, 2, {"stall_raw": 3}))
+        self.assertIsNone(video_breakdown(1000, 2, None))
+
+    def test_el_informe_lo_enseña(self):
+        lineas = format_report({"cycles": 1000, "instructions": 100, "overflow": 0,
+                                "stalls": {k: 0 for k in STALL_COUNTERS}
+                                | {"video_frames": 4, "swap_wait": 300}})
+        self.assertIn("video: 4 frames con la CPU en marcha (250 ciclos cada uno), "
+                      "30.0 % de los ciclos esperando un swap", "\n".join(lineas))
 
 
 if __name__ == "__main__":

@@ -15,8 +15,10 @@ module top (
     output wire [1:0] sdram_dqm, inout wire [15:0] sdram_d,
     output wire [3:0] gpdi_dp
 );
-  // Prueba de timing del pipeline a 25 MHz: el dominio de CPU/monitor sale
-  // directo del oscilador de la placa. La SDRAM sigue en `clk_mem` a 100 MHz.
+  // El dominio de CPU/monitor va a 50 MHz, de `pll_cpu.v` (hasta el 12 de
+  // noviembre, 25 MHz directos del oscilador, para tener margen mientras se
+  // segmentaba el pipeline; nextpnr lo cierra a ~61). La SDRAM sigue en
+  // `clk_mem` a 100 MHz y el video en su propio reloj de pixel.
   //
   // El divisor UART tiene que cumplir DOS condiciones a la vez:
   //
@@ -24,10 +26,11 @@ module top (
   //      sobremuestrea 4 veces, y la division es entera.
   //   2. Un baudio que el FTDI sepa generar exacto.
   //
-  // Con 25 MHz, 1 Mbaud pediria divisor 25 y romperia (1). Divisor 100 deja
-  // 250 kbaud y tambien es exacto en FTDI: 3 MHz / 12.
-  localparam integer CLK_FREQ_HZ = 25_000_000;
-  localparam integer UART_CLOCKS_PER_BIT = 100;
+  // Con 50 MHz, divisor 200 deja los mismos 250 kbaud de antes, exactos en el
+  // FTDI (3 MHz / 12): el monitor y las herramientas no cambian. (1 Mbaud
+  // pediria divisor 50 y romperia (1).)
+  localparam integer CLK_FREQ_HZ = 50_000_000;
+  localparam integer UART_CLOCKS_PER_BIT = 200;
   localparam integer UART_MAX_BAUD = 250_000;
   localparam integer UART_DIVISOR = UART_CLOCKS_PER_BIT;
 
@@ -37,12 +40,37 @@ module top (
   wire clk_mem, clk_sdram, pll_mem_locked;
   wire pll_phasestep, pll_phasedir, pll_phaseloadreg;
   wire [1:0] pll_phasesel;
-  pll_mem pll_mem_i(
+  // Fase del reloj de la SDRAM con la que sale el bitstream, en pasos de 208 ps.
+  // Depende de la herramienta: la etapa de registros antes de los pines se
+  // implementa distinto y desplaza la ventana buena. Se mide con
+  // `tools/phase-sweep` y se cambia en caliente con `monitor.py phase-set`.
+`ifdef DIAMOND
+  localparam [5:0] SDRAM_PHASE = 6'd10;  // validada en placa, 2026-11-10
+`else
+  // Con DPHASE_SOURCE="ENABLED" el EHXPLLL no aplica el CLKOS_CPHASE estatico
+  // (14 de noviembre: builds identicas con CPHASE 7, 10 y 4 arrancan en la
+  // misma fase fisica). Este numero solo etiqueta la posicion de arranque para
+  // pll_phase_ctl; lo que cuenta es el retardo del camino del reloj al pin.
+  localparam [5:0] SDRAM_PHASE = 6'd18;
+`endif
+  pll_mem #(.CLKOS_POS(SDRAM_PHASE)) pll_mem_i(
       .clkin(clk_25mhz), .clkout0(clk_mem), .clkout1(clk_sdram),
       .phasestep(pll_phasestep), .phasedir(pll_phasedir),
       .phaseloadreg(pll_phaseloadreg), .phasesel(pll_phasesel),
       .locked(pll_mem_locked));
+  // El reloj sale de la celda de IO del pin (F19): un ODDRX1F copia clk_sdram
+  // con un retardo fijo. Con D0=1, D1=0 la ventana buena quedaba de +13 a +33
+  // pasos desde el arranque; D0=0, D1=1 la invierte (24 pasos, 180 grados) y
+  // deja el arranque cerca del centro. Por rutado general (`assign`) el
+  // retardo dependia de la colocacion y la ventana de fase buena se movia con
+  // cada build: el 14 de noviembre, sin los generadores de trafico, la 18 de
+  // fabrica quedo fuera y los programas se reiniciaban. Fuera de sintesis
+  // (iverilog no trae ODDRX1F), la asignacion directa, como en dvi_generator.
+`ifdef SYNTHESIZE
+  ODDRX1F sdram_clk_oddr (.D0(1'b0), .D1(1'b1), .SCLK(clk_sdram), .RST(1'b0), .Q(sdram_clk));
+`else
   assign sdram_clk = clk_sdram;
+`endif
 
   // Resets: asercion asincrona y liberacion sincrona (`reset_sync.v`), una
   // cadena por dominio de reloj (ver la 37). El modulo SDRAM hace aparte su
@@ -86,6 +114,9 @@ module top (
   wire [7:0] cpu_error_code;
   wire [4:0] cpu_debug_register_address;
   wire [31:0] cpu_debug_register_data, cpu_pc;
+  // Motivo de no emitir de cada ciclo, para CPU PERFORMANCE (ranuras 8-11).
+  wire [4:0] cpu_perf_stall;
+  wire cpu_perf_muldiv_retired;
 
   // Lado del monitor del puerto serie: lo que desencapsulan SEND_BYTES y
   // RECV_BYTES. No hay pin ni baudio propio, es el mismo enlace del monitor.
@@ -201,13 +232,31 @@ module top (
   // sitio: el primero al dominio de pixel y el segundo a la CPU.
   wire video_underflow_clear, video_halt_request;
 
-  wire cpu_imem_valid, cpu_imem_ready;
+  wire cpu_imem_valid, cpu_imem_ready, cpu_imem_rvalid;
   wire [31:0] cpu_imem_address, cpu_imem_read_data;
-  wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_error;
+  wire cpu_dmem_valid, cpu_dmem_ready, cpu_dmem_rvalid, cpu_dmem_error;
+  wire cpu_dmem_waiting;
   wire [31:0] cpu_dmem_address, cpu_dmem_write_data, cpu_dmem_read_data;
   wire [3:0] cpu_dmem_write_enable;
-  cpu cpu_i(
-      .clk(clk), .reset(reset || cpu_reset_request),
+  // Consulta a la D-cache desde ID/EX (dcache.v, cpu.v seccion 04c).
+  wire [31:0] dcache_lookup_address, dcache_ex_read_data, dcache_ex_write_data;
+  wire dcache_ex_hit, dcache_mem_advance, dcache_ex_load, dcache_ex_store;
+  wire [3:0] dcache_ex_write_enable;
+  // ROP (opcode 0x37, 1.isa/isa.md §7.5): cpu.v entrega las microoperaciones
+  // a rop_frontend desde MEM; rop_core ejecuta los trabajos en el puerto 3.
+  wire rop_valid, rop_ready, rop_clear, rop_bad_value, rop_error, rop_fence;
+  wire rop_dcache_invalidate;
+  wire [1:0] rop_uop;
+  wire [3:0] rop_ia, rop_ib;
+  wire [31:0] rop_da, rop_db, rop_rdata;
+  wire [2:0] rop_op;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
+  wire wb_dirty;
+  cpu #(.ROP(1)) cpu_i(
+      .clk(clk), .reset(reset),
+      // RESET del monitor: solo la CPU. Las caches siguen y contestan lo que
+      // ya aceptaron, que la CPU descarta (cpu.v, soft_reset).
+      .soft_reset(cpu_reset_request),
       .run_request(cpu_run_request),
       // Dos fuentes de parada: el monitor, y el registro HALT_AT del bloque de
       // video, que la para al completar el intercambio numero N. Lo segundo es
@@ -217,13 +266,29 @@ module top (
       .error_code(cpu_error_code), .instruction_retired(cpu_instruction_retired),
       .imem_valid(cpu_imem_valid), .imem_address(cpu_imem_address),
       .imem_read_data(cpu_imem_read_data), .imem_ready(cpu_imem_ready),
+      .imem_rvalid(cpu_imem_rvalid),
       .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
       .dmem_write_data(cpu_dmem_write_data),
       .dmem_write_enable(cpu_dmem_write_enable),
       .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_error(cpu_dmem_error),
+      .dmem_rvalid(cpu_dmem_rvalid), .dmem_error(cpu_dmem_error),
+      .dmem_waiting(cpu_dmem_waiting),
+      .dcache_lookup_address(dcache_lookup_address), .dcache_hit(dcache_ex_hit),
+      .dcache_read_data(dcache_ex_read_data), .dcache_mem_advance(dcache_mem_advance),
+      .dcache_ex_load(dcache_ex_load), .dcache_ex_store(dcache_ex_store),
+      .dcache_ex_write_data(dcache_ex_write_data),
+      .dcache_ex_write_enable(dcache_ex_write_enable),
       .debug_register_address(cpu_debug_register_address),
-      .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc));
+      .debug_register_data(cpu_debug_register_data), .debug_pc(cpu_pc),
+      .perf_stall(cpu_perf_stall),
+      .perf_muldiv_retired(cpu_perf_muldiv_retired),
+      .rop_valid(rop_valid), .rop_uop(rop_uop), .rop_ia(rop_ia), .rop_ib(rop_ib),
+      .rop_da(rop_da), .rop_db(rop_db), .rop_op(rop_op), .rop_clear(rop_clear),
+      .rop_ready(rop_ready), .rop_rdata(rop_rdata),
+      .rop_bad_value(rop_bad_value), .rop_error(rop_error),
+      // ROPSUBMIT.F: todo STORE anterior confirmado (`wb_dirty` bajo).
+      .rop_fence(rop_fence), .mem_quiet(!wb_dirty),
+      .rop_dcache_invalidate(rop_dcache_invalidate));
 
   // Puertos de video del adaptador. Se declaran aqui porque el adaptador se
   // instancia antes que el subsistema de video.
@@ -276,8 +341,8 @@ module top (
   // compara este camino, y los bancos que los miden siguen pasando.
   // ===========================================================================
   wire init_done, init_done_mem, sdram_busy;
-  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar.
-  wire wb_dirty;
+  // Alto mientras el bufer de combinacion de escrituras tenga algo sin volcar
+  // (declarado arriba, junto a la CPU, que lo usa para ROPSUBMIT.F).
 
   // Puerto comun del arbitro hacia el controlador.
   wire fab_req_valid, fab_req_ready, fab_req_write;
@@ -326,11 +391,17 @@ module top (
   wire [127:0] p2_wdata, p2_rsp_rdata;
   wire [15:0] p2_wmask;
 
-  // Puerto 3: monitor.
+  // Puerto 3: monitor + DMA, compartido detras de dma_monitor_arbiter. Los
+  // `p3_*` son el lado del monitor; el arbiter junta los dos maestros y su
+  // salida son los `fab3_*` que entran en el fabric.
   wire p3_valid, p3_ready, p3_write, p3_rsp_valid, p3_rsp_ready, p3_rsp_error;
   wire [31:0] p3_addr;
   wire [127:0] p3_wdata, p3_rsp_rdata;
   wire [15:0] p3_wmask;
+  wire fab3_valid, fab3_ready, fab3_write, fab3_rsp_valid, fab3_rsp_ready, fab3_rsp_error;
+  wire [31:0] fab3_addr;
+  wire [127:0] fab3_wdata, fab3_rsp_rdata;
+  wire [15:0] fab3_wmask;
 
   // Los dos clientes de la ventana de registros de video.
   wire mon_mmio_req, mon_mmio_ack, mon_mmio_write;
@@ -342,13 +413,45 @@ module top (
   wire [31:0] cpu_mmio_addr;
   wire [31:0] cpu_mmio_wdata;
 
+  // Cache de datos entre la CPU y el adaptador, con el mismo protocolo a los
+  // dos lados (ver dcache.v). Escritura inmediata, asi que la SDRAM esta al
+  // dia salvo lo que guarde el bufer de combinacion, que se vacia como antes.
+  // Se invalida entera con `reset` y al parar la CPU: es cuando el monitor
+  // puede escribir en memoria por su cuenta. 16 KB: 1024 lineas de 16 bytes.
+  wire ad_dmem_valid, ad_dmem_ready, ad_dmem_rvalid, ad_dmem_error;
+  wire [31:0] ad_dmem_address, ad_dmem_write_data, ad_dmem_read_data;
+  wire [3:0] ad_dmem_write_enable;
+  wire [127:0] ad_dmem_read_line;
+  wire dcache_hit, dcache_miss;
+  dcache #(.LINES(1024), .INDEX_BITS(10)) dcache_i(
+      // Tambien con ROPWAIT INV: un pulso, y la cache suma su epoca en el flanco.
+      .clk(clk), .reset(reset), .invalidate(cpu_halted || rop_dcache_invalidate),
+      .lookup_address(dcache_lookup_address), .ex_hit(dcache_ex_hit),
+      .ex_read_data(dcache_ex_read_data), .mem_advance(dcache_mem_advance),
+      .ex_load(dcache_ex_load), .ex_store(dcache_ex_store),
+      .ex_write_data(dcache_ex_write_data), .ex_write_enable(dcache_ex_write_enable),
+      .cpu_valid(cpu_dmem_valid), .cpu_address(cpu_dmem_address),
+      .cpu_write_data(cpu_dmem_write_data),
+      .cpu_write_enable(cpu_dmem_write_enable),
+      .cpu_ready(cpu_dmem_ready), .cpu_read_data(cpu_dmem_read_data),
+      .cpu_rvalid(cpu_dmem_rvalid), .cpu_error(cpu_dmem_error),
+      .mem_valid(ad_dmem_valid), .mem_address(ad_dmem_address),
+      .mem_write_data(ad_dmem_write_data),
+      .mem_write_enable(ad_dmem_write_enable),
+      .mem_ready(ad_dmem_ready), .mem_read_data(ad_dmem_read_data),
+      .mem_read_line(ad_dmem_read_line),
+      .mem_rvalid(ad_dmem_rvalid), .mem_error(ad_dmem_error),
+      .hit_event(dcache_hit), .miss_event(dcache_miss));
+
   cpu_dmem_adapter dmem_adapter_i(
       .clk(clk), .reset(reset), .init_done(init_done),
-      .dmem_valid(cpu_dmem_valid), .dmem_address(cpu_dmem_address),
-      .dmem_write_data(cpu_dmem_write_data),
-      .dmem_write_enable(cpu_dmem_write_enable),
-      .dmem_read_data(cpu_dmem_read_data), .dmem_ready(cpu_dmem_ready),
-      .dmem_error(cpu_dmem_error), .cpu_halted(cpu_halted),
+      .dmem_valid(ad_dmem_valid), .dmem_address(ad_dmem_address),
+      .dmem_write_data(ad_dmem_write_data),
+      .dmem_write_enable(ad_dmem_write_enable),
+      .dmem_read_data(ad_dmem_read_data), .dmem_read_line(ad_dmem_read_line),
+      .dmem_ready(ad_dmem_ready),
+      .dmem_rvalid(ad_dmem_rvalid), .dmem_error(ad_dmem_error),
+      .cpu_halted(cpu_halted), .flush_request(rop_fence),
       // Los contadores son para los bancos; la sintesis los quita.
       .wb_dirty(wb_dirty), .merge_count(), .flush_count(),
       .mmio_req(cpu_mmio_req), .mmio_ack(cpu_mmio_ack),
@@ -360,20 +463,22 @@ module top (
       .rsp_valid(p0_rsp_valid), .rsp_ready(p0_rsp_ready),
       .rsp_rdata(p0_rsp_rdata), .rsp_error(p0_rsp_error));
 
-  // Cuatro lineas de 16 bytes, y cada linea es exactamente una rafaga BL8. El
-  // vaciado cuelga de `cpu_halted`, no de `reset`: el monitor reescribe la
-  // memoria de programa con la CPU parada, y un reset de CPU tambien la deja
-  // parada, asi que los dos casos quedan cubiertos por la misma senal.
+  // Cache de instrucciones de 32 KB en EBR: 2048 lineas de 16 bytes, y cada
+  // linea es exactamente una rafaga BL8. Con 16 KB, el codigo caliente de los
+  // sketches 3D de 39.mini-gl se pisaba segun como cayera (skimmer y tanks,
+  // 6-8 fallos por cada mil instrucciones); con 32 KB, 0,8-1,9 y +5-7 % fps. Se invalida al parar la CPU (el
+  // monitor reescribe la memoria de programa con la CPU parada) y con `reset`.
   //
   // `hit_count`/`miss_count` no se conectan: existen para los bancos de prueba
   // y la sintesis los quita. Los contadores de rendimiento de la CPU
   // (IMEM_HITS, IMEM_MISSES) cuelgan de los pulsos `hit_event`/`miss_event`.
   wire ibuf_hit, ibuf_miss;
-  instruction_buffer #(.LINES(4), .INDEX_BITS(2)) instruction_buffer_i(
+  instruction_buffer #(.LINES(2048), .INDEX_BITS(11)) instruction_buffer_i(
       .clk(clk), .reset(reset), .init_done(init_done),
       .cpu_halted(cpu_halted),
       .cpu_imem_valid(cpu_imem_valid), .cpu_imem_address(cpu_imem_address),
-      .cpu_imem_read_data(cpu_imem_read_data), .cpu_imem_ready(cpu_imem_ready),
+      .cpu_imem_ready(cpu_imem_ready), .cpu_imem_read_data(cpu_imem_read_data),
+      .cpu_imem_rvalid(cpu_imem_rvalid),
       .req_valid(p1_valid), .req_ready(p1_ready), .req_write(p1_write),
       .req_addr(p1_addr), .req_wdata(p1_wdata), .req_wmask(p1_wmask),
       .rsp_valid(p1_rsp_valid), .rsp_ready(p1_rsp_ready),
@@ -400,6 +505,151 @@ module top (
       .req_addr(p3_addr), .req_wdata(p3_wdata), .req_wmask(p3_wmask),
       .rsp_valid(p3_rsp_valid), .rsp_ready(p3_rsp_ready),
       .rsp_rdata(p3_rsp_rdata), .rsp_error(p3_rsp_error));
+
+  // -----------------------------------------------------------------------
+  // DMA (mmio.md §11, experimental en la 38), en 0x8050_0000.
+  //
+  // Comparte el puerto 3 con el monitor detras de dma_monitor_arbiter, y no
+  // en un puerto propio: los otros tres los ocupan CPU datos, instrucciones y
+  // video, y el quinto lo reserved la GPU que ha de venir. El monitor hace
+  // trabajo real solo durante la carga, despues el puerto queda para el DMA;
+  // el arbiter le da prioridad al monitor y enruta las respuestas con una
+  // FIFO de propietarios (dma_monitor_arbiter.v). La TAG_DEPTH=8 del arbiter
+  // es el techo COMBINADO de operaciones en vuelo de los dos maestros; el
+  // motor aguanta backpressure, asi que no hace falta que coincida con su
+  // TAG_DEPTH interno.
+  //
+  // Coherencia, REGLA DE USO mientras no haya invalidacion por regiones: el
+  // motor escribe detras de la D-cache, que solo se invalida al parar la CPU.
+  // Un programa NO debe leer por su D-cache memoria que el DMA acabe de
+  // escribir (framebuffer, destinos de blit): para eso, o la lee el hardware
+  // de video directamente, o se invalida la cache parando la CPU. Leer
+  // regiones que el DMA escribe con la CPU corriendo da datos viejos.
+  // -----------------------------------------------------------------------
+  wire dma_select, dma_error;
+  wire [31:0] dma_read_data;
+  wire dma_irq;
+  wire dma_req_valid, dma_req_ready, dma_req_write, dma_rsp_valid, dma_rsp_ready, dma_rsp_error;
+  wire [31:0] dma_req_addr;
+  wire [127:0] dma_req_wdata, dma_rsp_rdata;
+  wire [15:0] dma_req_wmask;
+
+  // Lado "dma" del arbitro del monitor: ROP + DMA juntos (blit_arbiter_i).
+  wire blit_req_valid, blit_req_ready, blit_req_write;
+  wire blit_rsp_valid, blit_rsp_ready, blit_rsp_error;
+  wire [31:0] blit_req_addr;
+  wire [127:0] blit_req_wdata, blit_rsp_rdata;
+  wire [15:0] blit_req_wmask;
+  dma_monitor_arbiter #(.TAG_DEPTH(8)) dma_arbiter_i(
+      .clk(clk), .reset(reset),
+      .mon_req_valid(p3_valid), .mon_req_ready(p3_ready),
+      .mon_req_write(p3_write), .mon_req_addr(p3_addr),
+      .mon_req_wdata(p3_wdata), .mon_req_wmask(p3_wmask),
+      .mon_rsp_valid(p3_rsp_valid), .mon_rsp_ready(p3_rsp_ready),
+      .mon_rsp_rdata(p3_rsp_rdata), .mon_rsp_error(p3_rsp_error),
+      .dma_req_valid(blit_req_valid), .dma_req_ready(blit_req_ready),
+      .dma_req_write(blit_req_write), .dma_req_addr(blit_req_addr),
+      .dma_req_wdata(blit_req_wdata), .dma_req_wmask(blit_req_wmask),
+      .dma_rsp_valid(blit_rsp_valid), .dma_rsp_ready(blit_rsp_ready),
+      .dma_rsp_rdata(blit_rsp_rdata), .dma_rsp_error(blit_rsp_error),
+      .req_valid(fab3_valid), .req_ready(fab3_ready),
+      .req_urgent(), .req_write(fab3_write), .req_addr(fab3_addr),
+      .req_wdata(fab3_wdata), .req_wmask(fab3_wmask),
+      .rsp_valid(fab3_rsp_valid), .rsp_ready(fab3_rsp_ready),
+      .rsp_rdata(fab3_rsp_rdata), .rsp_error(fab3_rsp_error));
+
+  // El ROP y el DMA comparten el lado "dma" del arbitro del monitor a traves
+  // de otro dma_monitor_arbiter: el ROP en su lado prioritario, porque sus
+  // trabajos son pequenos y frecuentes (spans) y el DMA mueve bloques grandes.
+  // Cada arbitro enruta sus respuestas con su FIFO de propietarios, asi que
+  // encadenarlos conserva el orden de cada maestro.
+  wire rop_req_valid, rop_req_ready, rop_req_write;
+  wire rop_rsp_valid, rop_rsp_ready, rop_rsp_error;
+  wire [31:0] rop_req_addr;
+  wire [127:0] rop_req_wdata, rop_rsp_rdata;
+  wire [15:0] rop_req_wmask;
+
+  dma_monitor_arbiter #(.TAG_DEPTH(8)) blit_arbiter_i(
+      .clk(clk), .reset(reset),
+      .mon_req_valid(rop_req_valid), .mon_req_ready(rop_req_ready),
+      .mon_req_write(rop_req_write), .mon_req_addr(rop_req_addr),
+      .mon_req_wdata(rop_req_wdata), .mon_req_wmask(rop_req_wmask),
+      .mon_rsp_valid(rop_rsp_valid), .mon_rsp_ready(rop_rsp_ready),
+      .mon_rsp_rdata(rop_rsp_rdata), .mon_rsp_error(rop_rsp_error),
+      .dma_req_valid(dma_req_valid), .dma_req_ready(dma_req_ready),
+      .dma_req_write(dma_req_write), .dma_req_addr(dma_req_addr),
+      .dma_req_wdata(dma_req_wdata), .dma_req_wmask(dma_req_wmask),
+      .dma_rsp_valid(dma_rsp_valid), .dma_rsp_ready(dma_rsp_ready),
+      .dma_rsp_rdata(dma_rsp_rdata), .dma_rsp_error(dma_rsp_error),
+      .req_valid(blit_req_valid), .req_ready(blit_req_ready),
+      .req_urgent(), .req_write(blit_req_write), .req_addr(blit_req_addr),
+      .req_wdata(blit_req_wdata), .req_wmask(blit_req_wmask),
+      .rsp_valid(blit_rsp_valid), .rsp_ready(blit_rsp_ready),
+      .rsp_rdata(blit_rsp_rdata), .rsp_error(blit_rsp_error));
+
+  wire rop_cmd_valid, rop_cmd_ready, rop_done_valid, rop_done_error;
+  wire [2:0] rop_cmd_op;
+  wire [15:0] rop_cmd_mode;
+  wire [319:0] rop_cmd_params;
+  wire rop_frontend_busy, rop_core_busy;
+  reg rop_reset_pending, rop_soft_reset;
+  wire rop_reset = reset || rop_soft_reset;
+
+  // RESET_CPU no puede resetear el ROP en seco: puede haber respuestas suyas
+  // etiquetadas en los dos arbitros. Se espera a que frontend y core hayan
+  // terminado/drenado todo lo aceptado y entonces se borra su estado para que
+  // un programa nuevo no herede el sticky_error ni la configuracion anterior.
+  always @(posedge clk) begin
+    if (reset) begin
+      rop_reset_pending <= 1'b0;
+      rop_soft_reset <= 1'b0;
+    end else begin
+      rop_soft_reset <= 1'b0;
+      if (cpu_reset_request)
+        rop_reset_pending <= 1'b1;
+      if (rop_reset_pending && !rop_frontend_busy && !rop_core_busy) begin
+        rop_reset_pending <= 1'b0;
+        rop_soft_reset <= 1'b1;
+      end
+    end
+  end
+
+  rop_frontend #(.QUEUE_DEPTH(16)) rop_frontend_i(
+      .clk(clk), .reset(rop_reset),
+      .cpu_valid(rop_valid), .cpu_ready(rop_ready), .cpu_uop(rop_uop),
+      .cpu_ia(rop_ia), .cpu_ib(rop_ib), .cpu_da(rop_da), .cpu_db(rop_db),
+      .cpu_op(rop_op), .cpu_clear(rop_clear), .cpu_rdata(rop_rdata),
+      .cpu_bad_value(rop_bad_value), .cpu_rop_error(rop_error),
+      .cpu_busy(rop_frontend_busy),
+      .rop_cmd_valid(rop_cmd_valid), .rop_cmd_ready(rop_cmd_ready),
+      .rop_cmd_op(rop_cmd_op), .rop_cmd_mode(rop_cmd_mode),
+      .rop_cmd_params(rop_cmd_params),
+      .rop_done_valid(rop_done_valid), .rop_done_error(rop_done_error));
+
+  rop_core #(.TAG_DEPTH(8)) rop_core_i(
+      .clk(clk), .reset(rop_reset),
+      .cmd_valid(rop_cmd_valid), .cmd_ready(rop_cmd_ready),
+      .cmd_op(rop_cmd_op), .cmd_mode(rop_cmd_mode), .cmd_params(rop_cmd_params),
+      // FRAGMENT es de emisores SIMT: la CPU no lo envia (cpu.v lo rechaza).
+      .cmd_frag_colors(256'd0), .cmd_frag_z(256'd0),
+      .done_valid(rop_done_valid), .done_error(rop_done_error), .busy(rop_core_busy),
+      .req_valid(rop_req_valid), .req_ready(rop_req_ready),
+      .req_write(rop_req_write), .req_addr(rop_req_addr),
+      .req_wdata(rop_req_wdata), .req_wmask(rop_req_wmask),
+      .rsp_valid(rop_rsp_valid), .rsp_ready(rop_rsp_ready),
+      .rsp_rdata(rop_rsp_rdata), .rsp_error(rop_rsp_error));
+
+  dma_engine #(.NUM_CHANNELS(2), .TAG_DEPTH(8)) dma_engine_i(
+      .clk(clk), .reset(reset), .init_done(init_done), .wb_dirty(wb_dirty),
+      .select(dma_select), .write(mmio_write),
+      .write_mask(mmio_write_mask), .address(mmio_address[15:0]),
+      .write_data(mmio_write_data), .read_data(dma_read_data),
+      .mmio_error(dma_error), .irq(dma_irq),
+      .req_valid(dma_req_valid), .req_ready(dma_req_ready),
+      .req_write(dma_req_write), .req_addr(dma_req_addr),
+      .req_wdata(dma_req_wdata), .req_wmask(dma_req_wmask),
+      .rsp_valid(dma_rsp_valid), .rsp_ready(dma_rsp_ready),
+      .rsp_rdata(dma_rsp_rdata), .rsp_error(dma_rsp_error));
 
   // El monitor va primero: sus peticiones son raras, las de la CPU son un bucle
   // que puede esperar un ciclo, y asi un SWAP escrito desde el PC no se queda
@@ -431,7 +681,9 @@ module top (
           .BASE_ADDR(32'h01D0_0000 + traffic_index * 32'h0010_0000),
           .REGION_SIZE(32'h0010_0000),
           .SEED(32'h1111_1111 + traffic_index * 32'h1111_1111)) gen_i (
-          .clk(clk), .reset(reset), .enable(1'b1),
+          // Apagados: en la 35 estresaban el fabric; aqui competian con la
+          // CPU por la SDRAM en todo momento (ver docs/analisis-rendimiento.md).
+          .clk(clk), .reset(reset), .enable(1'b0),
           .urgent_enable(1'b0), .clear_stats(1'b0),
           .req_valid(m_req_valid[traffic_index + 4]),
           .req_ready(m_req_ready[traffic_index + 4]),
@@ -491,17 +743,17 @@ module top (
   assign p2_rsp_rdata = m_rsp_rdata[2];
   assign p2_rsp_error = m_rsp_error[2];
 
-  assign m_req_valid[3] = p3_valid;
-  assign p3_ready = m_req_ready[3];
+  assign m_req_valid[3] = fab3_valid;
+  assign fab3_ready = m_req_ready[3];
   assign m_req_urgent[3] = 1'b0;
-  assign m_req_write[3] = p3_write;
-  assign m_req_addr[3] = p3_addr;
-  assign m_req_wdata[3] = p3_wdata;
-  assign m_req_wmask[3] = p3_wmask;
-  assign p3_rsp_valid = m_rsp_valid[3];
-  assign m_rsp_ready[3] = p3_rsp_ready;
-  assign p3_rsp_rdata = m_rsp_rdata[3];
-  assign p3_rsp_error = m_rsp_error[3];
+  assign m_req_write[3] = fab3_write;
+  assign m_req_addr[3] = fab3_addr;
+  assign m_req_wdata[3] = fab3_wdata;
+  assign m_req_wmask[3] = fab3_wmask;
+  assign fab3_rsp_valid = m_rsp_valid[3];
+  assign m_rsp_ready[3] = fab3_rsp_ready;
+  assign fab3_rsp_rdata = m_rsp_rdata[3];
+  assign fab3_rsp_error = m_rsp_error[3];
 
   wire [5:0] req_empty, req_rd_en, req_rd_valid;
   wire [5:0] bridge_req_ready;
@@ -561,7 +813,7 @@ module top (
 
   wire phase_safe_idle = !fabric_busy && (&req_empty) && !sdram_busy
                          && !fab_req_valid;
-  pll_phase_ctl phase_ctl_i(
+  pll_phase_ctl #(.INITIAL_POS(SDRAM_PHASE)) phase_ctl_i(
       .clk(clk_mem), .reset(reset_mem),
       .req_toggle_async(phase_req_toggle), .req_steps_async(phase_req_steps),
       .ack_toggle(phase_ack_toggle), .safe_idle(phase_safe_idle),
@@ -724,12 +976,19 @@ module top (
   //
   // DEVICES (§5.4) no se escribe aqui: sale de `sysid_params.vh`, que genera
   // tools/generate-sysid desde este RTL. Hoy son SYSTEM(0) + FABRIC(1) +
-  // SDRAM(2) + SERIAL(4) + VIDEO(5) + CPU(9) + INPUT(11) = 0x0A37; el bit
-  // INPUT sale de la capacidad `input_device` (existe input_registers.v).
+  // SDRAM(2) + SERIAL(4) + VIDEO(5) + DMA(8) + CPU(9) + INPUT(11) = 0x0B37; el
+  // bit INPUT sale de la capacidad `input_device` (existe input_registers.v) y
+  // el DMA de `dma_device` (existe dma_engine.sv). El mapa del bloque DMA esta
+  // en dma_engine.sv y en 1.isa/mmio.md §11: EXPERIMENTAL, interfaz sin
+  // congelar.
   wire [31:0] mmio_perf_read_data;
   mmio_decoder #(.FOLDER(`SYSID_FOLDER), .HAS_SERIAL(1), .HAS_INPUT(1),
-      // Ocho contadores en CPU PERFORMANCE: los mismos que `cpu_perf_counters`.
-      .PERF_SLOTS(8),
+      .HAS_DMA(1),
+      // Dieciocho contadores en CPU PERFORMANCE: los ocho de siempre, los
+      // cuatro del pipeline, los dos de la cache de datos, los dos de
+      // MUL/DIV y los dos de video. Los mismos que `cpu_perf_counters` con
+      // PIPELINE, DCACHE, MULDIV y VIDEO a 1.
+      .PERF_SLOTS(18),
       .VIDEO_REGISTERS(64'h0000_0000_0001_03ff),
       .ISA_PROFILE(`SYSID_ISA_PROFILE),
       .DEVICES(`SYSID_DEVICES),
@@ -743,6 +1002,8 @@ module top (
       .serial_select(mmio_serial_select), .serial_read_data(mmio_serial_read_data),
       .input_select(mmio_input_select), .input_read_data(mmio_input_read_data),
       .input_error(mmio_input_error),
+      .dma_select(dma_select), .dma_read_data(dma_read_data),
+      .dma_error(dma_error),
       .perf_select(mmio_perf_select), .perf_read_data(mmio_perf_read_data),
       .phase_select(mmio_phase_select), .phase_read_data(mmio_phase_read_data),
       .phase_error(mmio_phase_error),
@@ -754,7 +1015,8 @@ module top (
   //
   // La direccion son DIECISEIS bits, no ocho: PERF_CTRL vive en +0x100, fuera
   // de lo que alcanzan ocho, porque el array se reserva entero delante (§12.6).
-  cpu_perf_counters perf_i(
+  wire video_swap_waiting;
+  cpu_perf_counters #(.PIPELINE(1), .DCACHE(1), .MULDIV(1), .VIDEO(1)) perf_i(
       .clk(clk), .reset(reset),
       .select(mmio_perf_select), .write(mmio_write),
       .write_mask(mmio_write_mask),
@@ -766,10 +1028,19 @@ module top (
       // `cpu_dmem_adapter` (`address_is_mmio`), y todo esto va a registros
       // dentro del bloque: ver la cabecera de cpu_perf_counters.v.
       .imem_valid(cpu_imem_valid), .imem_ready(cpu_imem_ready),
-      .dmem_valid(cpu_dmem_valid), .dmem_ready(cpu_dmem_ready),
+      // Con peticion y respuesta separadas, `valid && !ready` ya no es "esperando":
+      // la CPU dice si tiene un acceso a datos sin terminar.
+      .dmem_valid(cpu_dmem_waiting), .dmem_ready(1'b0),
       .dmem_is_mmio(cpu_dmem_address[31] && cpu_dmem_address[1:0] == 2'b00),
       .imem_hit(ibuf_hit), .imem_miss(ibuf_miss),
-      .mem_req0(p0_valid), .mem_req1(p1_valid));
+      .mem_req0(p0_valid), .mem_req1(p1_valid),
+      .pipe_stall(cpu_perf_stall[3:0]),
+      .dmem_hit(dcache_hit), .dmem_miss(dcache_miss),
+      .muldiv_stall(cpu_perf_stall[4]), .muldiv_retired(cpu_perf_muldiv_retired),
+      // Frames y espera de swap: el inicio de frame es el mismo pulso que
+      // avanza FRAME_COUNT en video_registers, ya en este reloj.
+      .frame_tick(fill_start && fill_first),
+      .swap_pending(video_swap_waiting));
 
   wire text_enable;
 
@@ -788,7 +1059,8 @@ module top (
       .halt_request(video_halt_request),
       .video_mode(video_mode),
       .text_enable(text_enable),
-      .debug_front(), .debug_back());
+      .debug_front(), .debug_back(),
+      .swap_waiting(video_swap_waiting));
 
   // Puerto serie en 0x80000200. Los bytes llegan y salen en paquetes del
   // monitor, no por esta ventana: ver serial_port.v.

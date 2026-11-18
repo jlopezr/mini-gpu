@@ -1,6 +1,13 @@
 `default_nettype none
 
-module pll_mem (
+module pll_mem #(
+    // Fase de CLKOS (el reloj de la SDRAM) al salir de fabrica, en pasos de
+    // 1/8 de ciclo de VCO (208 ps). Debe coincidir con INITIAL_POS de
+    // pll_phase_ctl: top.v pasa el mismo SDRAM_PHASE a los dos.
+    // En placa (14 de noviembre) el CPHASE estatico no se aplica con la fase
+    // dinamica activada: CPHASE 7, 10 y 4 arrancan en la misma fase fisica.
+    parameter integer CLKOS_POS = 0
+) (
     input  wire clkin,
     output wire clkout0,
     output wire clkout1,
@@ -49,8 +56,10 @@ module pll_mem (
         .CLKOP_CPHASE(5),
         .CLKOP_FPHASE(0),
         .CLKOS_DIV(6),
-        .CLKOS_CPHASE(5),
-        .CLKOS_FPHASE(0),
+        // CLKOP_CPHASE + 1 es un ciclo de VCO = 8 pasos finos:
+        // POS = 8 * (CPHASE - 5) + FPHASE.
+        .CLKOS_CPHASE(5 + CLKOS_POS / 8),
+        .CLKOS_FPHASE(CLKOS_POS % 8),
 
         .FEEDBK_PATH("INT_OP")
     ) pll_i (

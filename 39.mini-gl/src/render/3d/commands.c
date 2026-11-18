@@ -48,11 +48,12 @@ static mgl_u32 expected_size(unsigned int op) {
 
 static int clear(mgr_state_t *s, const unsigned char *p, unsigned int flags) {
     mgl_u32 color = RD32(p + MGL_CMD_ARG0), depth = RD32(p + MGL_CMD_ARG1);
-    if (color > 0xffffU || (flags & ~MGL_CLEAR_DEPTH) || depth > MGL_DEPTH_ONE ||
-        (!(flags & MGL_CLEAR_DEPTH) && depth))
+    if (color > 0xffffU || (flags & ~(MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR)) || depth > MGL_DEPTH_ONE ||
+        (!(flags & MGL_CLEAR_DEPTH) && depth) ||
+        ((flags & MGL_CLEAR_KEEP_COLOR) && (!(flags & MGL_CLEAR_DEPTH) || color)))
         return MGR_ERR_FORMAT;
     if (!s->color) return MGR_ERR_STATE;
-    mgr_clear_color(s, (mgl_color_t)color);
+    if (!(flags & MGL_CLEAR_KEEP_COLOR)) mgr_clear_color(s, (mgl_color_t)color);
     /* Q16.16 en [0, 1] a 0..65535, redondeando. */
     if (flags & MGL_CLEAR_DEPTH) mgr_clear_depth(s, (mgl_u16)((depth * 65535U + 0x8000U) >> 16));
     return MGR_OK;
@@ -62,6 +63,12 @@ static int execute(mgr_renderer_t *r, const unsigned char *p, unsigned int op, u
     mgr_state_t *s = &r->state;
     int result;
     if (flags && op != MGL_CMD_CLEAR) return MGR_ERR_FORMAT;
+    /* Lo guardado por DEPTH_SORT, antes de lo que pinta encima o cambia el destino. */
+    if (op == MGL_CMD_CLEAR || op == MGL_CMD_BATCH || op == MGL_CMD_SET_RENDER_TARGET ||
+        op == MGL_CMD_SET_VIEWPORT || op == MGL_CMD_END_FRAME)
+        mgr_sort_flush(s, &r->stats);
+    if (op == MGL_CMD_CLEAR || op == MGL_CMD_BATCH || op == MGL_CMD_SET_RENDER_TARGET || op == MGL_CMD_END_FRAME)
+        mgr_fragment_rop_finish();
     switch (op) {
     case MGL_CMD_CLEAR:
         return clear(s, p, flags);
@@ -97,6 +104,7 @@ int mgr_execute(mgr_renderer_t *r, mgl_u32 addr) {
     if (!r) return MGR_ERR_FORMAT;
     r->error_offset = 0;
     mgr_state_reset(&r->state);
+    mgr_sort_discard();
     p = (const unsigned char *)mgl_memory_ptr(&r->memory, addr, MGL_BUFFER_HEADER_BYTES, 4);
     if (!p) return MGR_ERR_MEMORY;
     used = RD32(p + 8);
@@ -117,6 +125,8 @@ int mgr_execute(mgr_renderer_t *r, mgl_u32 addr) {
         if (result != MGR_OK) return result;
         r->stats.commands++;
     }
+    mgr_sort_flush(&r->state, &r->stats); /* un buffer sin END_FRAME */
+    mgr_fragment_rop_finish();
     r->error_offset = 0;
     return MGR_OK;
 }

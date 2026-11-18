@@ -164,6 +164,17 @@ static void test_depth(void) {
     quad(0, -0.9f, 0x001f);
     CHECK(t_end_and_run() == MGR_OK);
     CHECK(t_count(0x1234) == T_W * T_H && t_depth(0, 0) == 0);
+    /* Solo profundidad: el color de antes se queda y el cuadrado lejano pasa */
+    t_begin();
+    mgl_clear_depth(1.0f);
+    quad(0, 0.5f, 0x001f);
+    quad(256, 0.9f, 0xf800);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_count(0x001f) == T_W * T_H && t_depth(0, 0) < 65535);
+    t_begin();
+    mgl_clear_depth(1.0f);
+    CHECK(t_end_and_run() == MGR_OK);
+    CHECK(t_count(0x001f) == T_W * T_H && t_depth(0, 0) == 65535);
     /* Plano inclinado: la profundidad crece de izquierda a derecha y está en [0, 65535] */
     t_begin();
     mgl_clear(0);

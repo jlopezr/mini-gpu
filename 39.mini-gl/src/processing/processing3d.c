@@ -8,6 +8,8 @@ static mgl_mat4_t stack[P3D_MATRIX_STACK];
 static int depth;
 static int view_w, view_h;
 static mgl_mesh_t cube;
+/* hint(): test y escritura de profundidad. */
+static int depth_test = 1, depth_mask = 1, depth_sort;
 
 /* Cubo unidad centrado en el origen: 8 vértices, 12 triángulos. Con y hacia
    abajo como en Processing; el orden de los índices da igual mientras no haya
@@ -87,8 +89,16 @@ static void prepare(const mgl_mat4_t *m) {
     mgl_set_matrix(MGL_MATRIX_PROJECTION, &projection);
     mgl_set_matrix(MGL_MATRIX_VIEW, &view);
     mgl_set_matrix(MGL_MATRIX_MODEL, m);
-    mgl_set_depth_test(1);
-    mgl_set_depth_write(1);
+    /* Sin test tampoco se escribe, como en OpenGL. */
+    mgl_set_depth_test(depth_test);
+    mgl_set_depth_write(depth_test && depth_mask);
+    mgl_set_depth_sort(depth_sort);
+}
+
+void hint(int which) {
+    if (which == DISABLE_DEPTH_TEST || which == ENABLE_DEPTH_TEST) depth_test = which == ENABLE_DEPTH_TEST;
+    if (which == DISABLE_DEPTH_MASK || which == ENABLE_DEPTH_MASK) depth_mask = which == ENABLE_DEPTH_MASK;
+    if (which == ENABLE_DEPTH_SORT || which == DISABLE_DEPTH_SORT) depth_sort = which == ENABLE_DEPTH_SORT;
 }
 
 /* La malla se crea la primera vez y se reutiliza; el tamaño va en la matriz. */
@@ -105,34 +115,101 @@ void box(float side) {
     mgl_draw_mesh(cube); /* con cube == 0, MGL_ERR_HANDLE en el buffer */
 }
 
-/* Las mallas de los PShape ya dibujados, por dirección del PShape. */
+/* Las mallas de los PShape ya dibujados, por dirección del PShape. La malla lleva el color de cada vértice
+   (el de su grupo), así que se dibuja entera con un DRAW_INDEXED: un SET_COLOR y un DRAW_INDEXED por grupo
+   eran unas 700 instrucciones por grupo y frame en MiniGPU. Leer el color cuesta unas 5 por triángulo, así
+   que solo compensa con menos de SHAPE_TRIS_PER_DRAW triángulos por cada grupo que se ahorra (los modelos de
+   racer, sí; el caza TIE, 2150 triángulos en 4 colores, no). Si no compensa, o si un vértice está en grupos
+   de dos colores (no se puede), shape_grouped: por grupos, como antes, con el color de SET_COLOR. */
+#define SHAPE_TRIS_PER_DRAW 128U
 static const PShape *shape_key[P3D_SHAPES];
 static mgl_mesh_t shape_mesh[P3D_SHAPES];
+static unsigned char shape_grouped[P3D_SHAPES];
+static unsigned char shape_unstyled[P3D_SHAPES]; /* disableStyle() */
+/* Pista para encontrar el hueco sin recorrerlos: por bits de la dirección del PShape, el último hueco que
+   tuvo esa pista. Si no acierta (otro PShape con la misma), se busca y se apunta. Un juego con unos 50
+   modelos recorría 50 huecos en cada shape(): ~340 instrucciones en MiniGPU. */
+static unsigned char shape_hint[P3D_SHAPES];
+
+/* El hueco de s (lo ocupa si es nuevo), o -1 si no quedan. */
+static int shape_slot(const PShape *s) {
+    unsigned int i, h;
+    unsigned long a = (unsigned long)s;
+    int slot;
+    h = (unsigned int)((a >> 4) ^ (a >> 10)) & (P3D_SHAPES - 1U);
+    slot = shape_hint[h];
+    if (shape_key[slot] == s) return slot;
+    slot = -1;
+    for (i = 0; i < P3D_SHAPES && shape_key[i]; i++)
+        if (shape_key[i] == s) {
+            slot = (int)i;
+            break;
+        }
+    if (slot < 0) {
+        if (i == P3D_SHAPES) return -1;
+        slot = (int)i;
+        shape_key[slot] = s;
+        shape_unstyled[slot] = 0;
+    }
+    shape_hint[h] = (unsigned char)slot;
+    return slot;
+}
+
+static mgl_mesh_t shape_create(const PShape *s, int slot) {
+    unsigned int i, first = 0;
+    const PShapeGroup *g;
+    mgl_mesh_t m = mgl_create_mesh_copy_rgb565(s->positions, 0, s->vertex_count, s->indices, s->index_count);
+    shape_grouped[slot] = s->index_count / 3U >= SHAPE_TRIS_PER_DRAW * (s->group_count ? s->group_count - 1U : 0U);
+    for (i = 0, g = s->groups; m && !shape_grouped[slot] && i < s->group_count; i++, g++) {
+        if (g->end < first || mgl_mesh_color_range(m, first, g->end - first, color565(g->r, g->g, g->b)) != MGL_OK)
+            shape_grouped[slot] = 1;
+        first = g->end;
+    }
+    return m;
+}
 
 void shape(const PShape *s) {
     unsigned int i, first = 0;
-    int slot = -1;
-    for (i = 0; i < P3D_SHAPES && shape_key[i]; i++)
-        if (shape_key[i] == s) slot = (int)i;
-    if (slot < 0) {
-        if (i == P3D_SHAPES) return;
-        slot = (int)i;
-        shape_key[slot] = s;
-    }
+    const PShapeGroup *g;
+    mgl_color_t c;
+    int slot = shape_slot(s);
+    mgl_mesh_t m;
+    if (slot < 0) return;
     if (!shape_mesh[slot] || mgl_mesh_info(shape_mesh[slot], 0) != MGL_OK) /* como el cubo */
-        shape_mesh[slot] = mgl_create_mesh_copy(s->positions, s->vertex_count, s->indices, s->index_count);
+        shape_mesh[slot] = shape_create(s, slot);
+    m = shape_mesh[slot];
+    if (shape_unstyled[slot] && !mgl_get_fill(&c)) return; /* sin estilo y noFill(): como box() */
     prepare(&model);
     /* Las caras traseras: con la y invertida de la proyección, una cara de
        frente (antihoraria en el OBJ) queda horaria en pantalla, y para MiniGL
        es la de detrás (ver processing3d_size). */
     if (s->cull) mgl_set_cull(MGL_CULL_FRONT);
-    for (i = 0; i < s->group_count; i++) {
-        const PShapeGroup *g = &s->groups[i];
-        mgl_set_color(color565(g->r, g->g, g->b));
-        mgl_draw_mesh_range(shape_mesh[slot], first, g->end - first); /* malla 0: MGL_ERR_HANDLE */
-        first = g->end;
+    /* Solo hasta el final del último grupo, como antes: lo que no está en ningún grupo no se dibuja. */
+    if (s->group_count) {
+        if (shape_unstyled[slot]) {
+            mgl_set_color(c);
+            mgl_draw_mesh_range_uniform(m, 0, s->groups[s->group_count - 1U].end);
+        } else if (!shape_grouped[slot]) {
+            mgl_draw_mesh_range(m, 0, s->groups[s->group_count - 1U].end); /* malla 0: MGL_ERR_HANDLE */
+        } else {
+            for (i = 0, g = s->groups; i < s->group_count; i++, g++) { /* g por puntero: sin MUL por grupo */
+                mgl_set_color(color565(g->r, g->g, g->b));
+                mgl_draw_mesh_range_uniform(m, first, g->end - first);
+                first = g->end;
+            }
+        }
     }
     if (s->cull) mgl_set_cull(MGL_CULL_NONE); /* box() y beginShape no descartan nada */
+}
+
+void disableStyle(const PShape *s) {
+    int slot = shape_slot(s);
+    if (slot >= 0) shape_unstyled[slot] = 1;
+}
+
+void enableStyle(const PShape *s) {
+    int slot = shape_slot(s);
+    if (slot >= 0) shape_unstyled[slot] = 0;
 }
 
 void resetShapes(void) {

@@ -72,7 +72,9 @@ En "Reset blando a las lanes", **·** significa que el prototipo no tiene GPU.
    se invalida en reset en 35–38.
 8. **Etapa SDRAM y fase.** Un registro extra antes de los pines de la SDRAM (en `sdram_controller_128.v`) y
    `pll_phase_ctl.v`, con la fase que hay que aplicar tras programar. Está en 35–38. La 34 no lo tiene: su
-   controlador tiene 728 líneas frente a las 871 de 35 y 38.
+   controlador tiene 728 líneas frente a las 871 de 35 y 38. La fase buena **depende de la herramienta** (10 con
+   Diamond, 2 con Yosys en la 38), así que 35 y 38 la eligen en síntesis con `ifdef DIAMOND` (`SDRAM_PHASE` en
+   `top.v`) y el bitstream sale ya con ella.
 9. **Tabla de PAR.** La misma síntesis cierra o no según la tabla de coste de PAR
    (`--strategy par_place_iterator_start_pt=K`). Un cambio mínimo de RTL puede mover el resultado por 0,1 MHz.
 

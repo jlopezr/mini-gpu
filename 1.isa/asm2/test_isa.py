@@ -183,5 +183,21 @@ class ToolCompatibilityTest(unittest.TestCase):
         self.assertIn("GETARG", result.stdout)
 
 
+class FP32EncodingTest(unittest.TestCase):
+    def test_opcodes_and_disassembly(self):
+        spec = importlib.util.spec_from_file_location("fp32_asm", Path(__file__).with_name("mini-asm.py"))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        assemble = module.assemble
+        for op, name in enumerate(("FADD", "FSUB", "FMUL", "FDIV"), 0x38):
+            with self.subTest(name=name):
+                word = isa.encode(name, Rd=3, Ra=1, Rb=2)
+                self.assertEqual(word, (op << 26) | (3 << 21) | (1 << 16) | (2 << 11))
+                self.assertEqual(isa.decode(word).name, name)
+                self.assertEqual(isa.disassemble_word(word), f"{name} R3, R1, R2")
+                self.assertEqual(assemble(f"{name} R3, R1, R2")[0], word)
+
+
 if __name__ == "__main__":
     unittest.main()

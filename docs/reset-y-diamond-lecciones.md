@@ -258,9 +258,12 @@ que ya es la 35 sin GPU.
   que compilaba bien con apio el 5, así que no depende del tamaño ni del RTL. Lo que cambió en esos días fue el
   `.venv` (recreado el 8) y los paquetes de apio. Causa sin aclarar. Se puede reproducir el flujo a mano con
   yosys, nextpnr y ecppack, con los parámetros de `apio/scons/plugin_ecp5.py`.
-- **Fase de la SDRAM** (35, 36, 37 y 38). El valor final es el mismo en las cuatro: 10 pasos de 1/8 de ciclo de
-  VCO, unos 208 ps cada uno. En 35 y 38 la PLL sale a 0 y el monitor aplica el `sdram_phase` de su `version.json`
-  al conectar; sin ese paso la suite entera falla con `estado de fase no válido` y el registro de placa queda
+- **Fase de la SDRAM** (35, 36, 37 y 38). Con Diamond el valor es el mismo en las cuatro: 10 pasos de 1/8 de
+  ciclo de VCO, unos 208 ps cada uno. **Con Yosys/nextpnr no vale**: el 11 de noviembre `tools/phase-sweep`
+  midió en la 38 una ventana 0–5 y la 10 fallaba (44 de 49 casos con `INVALID_ENCODING` en `pc = 0`). Desde
+  entonces la 35 y la 38 llevan la fase en el bitstream (`SDRAM_PHASE` en `top.v`, con `ifdef DIAMOND`: 10 o 2)
+  y su `version.json` ya no la declara. Antes, en 35 y 38 la PLL salía a 0 y el monitor aplicaba el `sdram_phase`
+  de su `version.json` al conectar; sin ese paso la suite entera falla con `estado de fase no válido` y el registro de placa queda
   con un 0/N inválido. En 36 y 37 la PLL ya sale en 10 (`CLKOS_CPHASE(6)`, `CLKOS_FPHASE(2)` y
   `INITIAL_POS(6'd10)`), y no declaran fase en su `version.json`. No se ha medido el reloj en la placa. La 34 no
   tiene control de fase.

@@ -4,7 +4,7 @@
 /*
  * Desplazamientos con cantidad inmediata: SHLI, SHRI y SARI.
  *
- * Opcion B de 1.isa/propuesta-v0.2.md §4.2: sin opcodes nuevos. SHL (0x07),
+ * Formato vigente de 1.isa/isa.md §3: sin opcodes nuevos. SHL (0x07),
  * SHR (0x08) y SAR (0x09) siguen siendo R-Type y el bit 10 del campo `extra`
  * pasa a significar «la cantidad es inmediata», tomandola de los cinco bits del
  * campo Rb.

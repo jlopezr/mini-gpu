@@ -360,10 +360,10 @@ static void test_shape_cull(void) {
     }
 }
 
-/* resetShapes: cuatro PShape de 84 KB no caben a la vez en la memoria de MiniGL
-   (256 KB); vaciándola antes de cada uno, sí, y el mismo PShape con otros
-   datos se dibuja con los nuevos. */
-#define BIG_VERTICES 7000
+/* resetShapes: cuatro PShape de 80 KB (5000 vértices de 16 bytes, con color) no
+   caben a la vez en la memoria de MiniGL (256 KB); vaciándola antes de cada uno,
+   sí, y el mismo PShape con otros datos se dibuja con los nuevos. */
+#define BIG_VERTICES 5000
 static float big_xyz[BIG_VERTICES * 3];
 static const unsigned short big_indices[3] = {0, 1, 2};
 static const PShapeGroup big_group = {255, 0, 0, 3};

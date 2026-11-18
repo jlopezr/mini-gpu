@@ -7,8 +7,8 @@ mínimo para tener una convención de llamada.
 
 ## Qué se ha adoptado
 
-El mapa es el de [`../../1.isa/propuesta-v0.2.md`](../../1.isa/propuesta-v0.2.md)
-§3.2, igual que los accesos sub-palabra de esta misma carpeta:
+El mapa es el de [`../../1.isa/isa.md`](../../1.isa/isa.md)
+§3, «Control de flujo», junto con los accesos sub-palabra de esta carpeta:
 
 | Opcode | Mnemónico | Formato | Operandos       | Semántica                          |
 |--------|-----------|---------|-----------------|------------------------------------|

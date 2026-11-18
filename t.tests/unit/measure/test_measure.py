@@ -213,6 +213,30 @@ class MeasurementTableTest(unittest.TestCase):
         celdas = [c.strip() for c in fila.strip("|").split("|")]
         self.assertEqual(celdas[2:], ["310", "300", "0.97", "1 200 000"])
 
+    def test_ritmo_de_video_con_frame_ocupado(self):
+        """Con `perf_video`: 1,2 M ciclos en 300 frames son 4 000 por frame;
+        quitando 600 000 de espera quedan 3 000 por cada uno de los 200 swaps,
+        el 75 % del frame. Una version sin esas ranuras lleva `—`."""
+        con = medida(1000, 1_200_000, 25_000_000,
+                     esperas() | {"video_frames": 300, "swap_wait": 600_000})
+        con["video"] = {"frames": 302, "swaps": 200}
+        sin = medida(1000, 1_200_000, 25_000_000)
+        sin["video"] = {"frames": 302, "swaps": 200}
+        tabla = measurement_table({("bounce", "pipe"): con, ("bounce", "old"): sin},
+                                  ["bounce"], ["pipe", "old"])
+        filas = {l.split("|")[2].strip(): [c.strip() for c in l.strip("|").split("|")]
+                 for l in tabla.splitlines() if l.startswith("| bounce | ")
+                 and "| 302 |" in l}
+        self.assertEqual(filas["pipe"][6:], ["4 000", "3 000", "75.0 %"])
+        self.assertEqual(filas["old"][6:], ["n/d", "n/d", "—"])
+        self.assertIn("Frame ocupado", tabla)
+
+    def test_sin_contadores_de_video_la_tabla_de_ritmo_es_la_de_siempre(self):
+        m = medida(1000, 360_000_000, 80_000_000)
+        m["video"] = {"frames": 310, "swaps": 300}
+        tabla = measurement_table({("pacman", "console"): m}, ["pacman"], ["console"])
+        self.assertNotIn("Frame ocupado", tabla)
+
     def test_sin_video_o_sin_swaps_no_hay_tabla_de_ritmo(self):
         """Sin `frame_capture` swaps es None y frames sale de un registro que
         en v2 vale cero: mejor ninguna fila que una fila que miente."""

@@ -3,6 +3,25 @@
 
   "_comment_listas": "'file' y 'architecture' admiten un valor o una lista. Con lista, 'file' son ALTERNATIVAS: vale la primera que exista y case el patrón. Las dos listas existen por la misma razón, que es un mismo dispositivo en las dos familias: el vídeo se llama 'video_registers.v' en CPU y 'gpu_video_regs.v' en GPU, y si 'video' fuese solo de arquitectura 'cpu' un caso GPU no podría declararlo en 'requires' -- ver run_tests.py:parse_requires. Ese era el bloqueo para compartir un programa de vídeo entre la 21 y la 22.",
 
+  "fp32": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "OPCODE_FCVT: begin"
+  },
+
+  "_comment_ext": "EXT (0x1E): MIN/MAX/MINU/MAXU (minmax) y CLZ (clz), cada una con su capability aunque compartan opcode (isa.md §7.3). El patron es el case de la funcion en cpu.v.",
+  "minmax": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "EXT_MIN, EXT_MAX, EXT_MINU, EXT_MAXU:"
+  },
+  "clz": {
+    "architecture": "cpu",
+    "file": "cpu.v",
+    "pattern": "EXT_CLZ:"
+  },
+
+  "_comment_mul_div": "Extension opcional CPU/GPU: MUL, MULFX y DIV. alu_extended requiere mul_div. No forma parte del repertorio base.",
   "mul_div": {
     "architecture": ["cpu", "gpu"],
     "file": ["cpu.v", "gpu_lane.v"],
@@ -100,6 +119,34 @@
     "pattern": "SLOT_STALL_MEM\\s*=",
     "implies": ["perf_counters"]
   },
+  "_comment_perf_pipeline": "Los contadores de la CPU segmentada (mmio.md §13.2, ranuras 8 a 11: STALL_EX_MEM, STALL_RAW, STALL_BRANCH, STALL_ID_EMPTY). `--measure` los lee y reparte el CPI por motivo. cpu_perf_counters.v es el mismo fichero en 30 y 34-38 y solo las crea con PIPELINE = 1, asi que el patron mira el top.v que lo instancia asi, no el modulo.",
+  "perf_pipeline": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\)",
+    "implies": ["perf_stalls"]
+  },
+  "_comment_perf_dcache": "Los contadores de la cache de datos (mmio.md §13.2, ranuras 12 y 13: DMEM_HITS, DMEM_MISSES). Igual que perf_pipeline, se miran en el top.v que instancia cpu_perf_counters con DCACHE = 1.",
+  "perf_dcache": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\)",
+    "implies": ["perf_pipeline"]
+  },
+  "_comment_perf_muldiv": "Los contadores de MUL/DIV de la CPU segmentada (mmio.md §13.2, ranuras 14 y 15: STALL_MULDIV, MULDIV_RETIRED). Igual que perf_dcache, en el top.v que instancia cpu_perf_counters con MULDIV = 1.",
+  "perf_muldiv": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\)",
+    "implies": ["perf_dcache"]
+  },
+  "_comment_perf_video": "Los contadores de video de la CPU (mmio.md §13.2, ranuras 16 y 17: VIDEO_FRAMES, SWAP_WAIT): cuanto del frame ocupa el trabajo de la CPU. En el top.v que instancia cpu_perf_counters con VIDEO = 1.",
+  "perf_video": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu_perf_counters\\s*#\\(\\s*\\.PIPELINE\\(1\\),\\s*\\.DCACHE\\(1\\),\\s*\\.MULDIV\\(1\\),\\s*\\.VIDEO\\(1\\)\\)",
+    "implies": ["perf_muldiv"]
+  },
   "atomic_warp_faults": {
     "architecture": "gpu"
   },
@@ -140,5 +187,24 @@
   "input_device": {
     "architecture": "cpu",
     "file": "input_registers.v"
+  },
+
+  "_comment_dma_device": "El RTL TIENE el motor de DMA (dma_engine.sv, bloque 0x8050_0000 de mmio.md §11). Es la que lee tools/generate_sysid.py para el bit DMA (8) de DEVICES. En la 38 la interfaz del bloque es EXPERIMENTAL (sin congelar): el bit dice que el motor esta presente, no que su mapa de registros este sellado.",
+  "dma_device": {
+    "architecture": ["cpu", "gpu"],
+    "file": "dma_engine.sv"
+  },
+
+  "_comment_audio_device": "El periferico AUDIO HDMI (audio_mmio.v, bloque 0x8070_0000) publica el ring PCM para su lector interno. El bit AUDIO de DEVICES es el 12.",
+  "audio_device": {
+    "architecture": "cpu",
+    "file": "audio_mmio.v"
+  },
+
+  "_comment_rop": "Familia ROP de la CPU (opcode 0x37: ROPSET, ROPSUBMIT, ROPWAIT, ROPSTATUS; 1.isa/isa.md §7.5, contrato propuesto). La CPU solo la decodifica con el parametro ROP de cpu.v a uno, que pone top.v; sin el, 0x37 es un opcode invalido.",
+  "rop": {
+    "architecture": "cpu",
+    "file": "top.v",
+    "pattern": "cpu\\s*#\\(\\s*\\.ROP\\(1\\)"
   }
 }

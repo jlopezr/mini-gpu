@@ -10,7 +10,7 @@ module cpu_tb;
   reg step_request = 1'b0;
   reg [4:0] debug_register_address = 5'd0;
   reg [31:0] imem_read_data = 32'h0000_0000;
-  reg imem_ready = 1'b0;
+  reg imem_rvalid = 1'b0;
 
   wire halted;
   wire error;
@@ -29,6 +29,7 @@ module cpu_tb;
   cpu dut (
       .clk(clk),
       .reset(reset),
+      .soft_reset(1'b0),
       .run_request(run_request),
       .halt_request(halt_request),
       .step_request(step_request),
@@ -39,22 +40,29 @@ module cpu_tb;
       .imem_valid(imem_valid),
       .imem_address(imem_address),
       .imem_read_data(imem_read_data),
-      .imem_ready(imem_ready),
+      .imem_ready(1'b1),
+      .imem_rvalid(imem_rvalid),
       .dmem_valid(),
       .dmem_address(),
       .dmem_write_data(),
       .dmem_write_enable(),
       .dmem_read_data(32'h0000_0000),
       .dmem_ready(1'b0),
+      .dmem_rvalid(1'b0),
       .dmem_error(1'b0),
       .debug_register_address(debug_register_address),
       .debug_register_data(debug_register_data),
-      .debug_pc(debug_pc)
+      .debug_pc(debug_pc),
+      // Sin D-cache: cada LOAD pide en MEM.
+      .dcache_lookup_address(), .dcache_hit(1'b0), .dcache_read_data(32'd0),
+      .dcache_mem_advance(), .dcache_ex_load(), .dcache_ex_store(),
+      .dcache_ex_write_data(), .dcache_ex_write_enable()
   );
 
-  // One-cycle-latency instruction memory model.
+  // One-cycle-latency instruction memory model: accepts a request every
+  // cycle and answers it on the next one, like an instruction_buffer hit.
   always @(posedge clk) begin
-    imem_ready <= imem_valid;
+    imem_rvalid <= imem_valid;
     if (imem_valid) begin
       imem_read_data <= instruction_memory[imem_address[6:2]];
     end
@@ -164,8 +172,14 @@ module cpu_tb;
     wait (halted);
     @(posedge clk);
     #1;
-    if (retired_count !== 1) $fatal(1, "HALT request did not stop at retirement");
-    if (debug_pc !== 32'h0000_0004) $fatal(1, "HALT request PC mismatch");
+    // `retired_count` va un ciclo por detras de `instruction_retired`, y con la
+    // busqueda de una instruccion por ciclo la segunda puede retirarse antes de
+    // que la CPU vea `halt_request`. Lo que importa es que pare ENTRE dos
+    // instrucciones: el PC justo detras de la ultima retirada, sin llegar al
+    // HALT natural del programa (palabra 3).
+    if (retired_count < 1 || retired_count > 2)
+      $fatal(1, "HALT request did not stop at retirement (%0d retired)", retired_count);
+    if (debug_pc !== 4 * retired_count) $fatal(1, "HALT request PC mismatch");
 
     // First ALU extension batch: NOP, SUB, AND, OR and XOR.
     instruction_memory[0] = 32'h4020_ffff;  // MOVI R1, -1
@@ -397,8 +411,9 @@ module cpu_tb;
     if (debug_pc !== 0) $fatal(1, "Invalid encoding PC mismatch");
 
     // A reserved opcode remains an invalid opcode, independently of encoding.
-    // 0x1b dejo de estar libre al llegar LOADH; 0x1e sigue sin asignar.
-    instruction_memory[0] = 32'h7800_0000;  // Reserved opcode 0x1e.
+    // 0x1b dejo de estar libre al llegar LOADH, y 0x1e con EXT (MIN...); 0x36
+    // sigue sin asignar.
+    instruction_memory[0] = 32'hd800_0000;  // Reserved opcode 0x36.
     reset_cpu();
     pulse_run();
     wait (!halted);
@@ -440,40 +455,7 @@ module cpu_tb;
     #1;
     if (!error || error_code !== 8'h01) $fatal(1, "EXIT deberia seguir siendo opcode invalido");
 
-    // Este prototipo quita multiplicador y divisor para estudiar timing: esos
-    // opcodes no deben retirarse ni anunciarse como capacidad.
-    instruction_memory[0] = 32'h2861_1000;  // MUL R3, R1, R2
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "MUL invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "MUL invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "MUL was incorrectly retired");
-
-    instruction_memory[0] = 32'h0c63_0800;  // MULFX R3, R3, R1
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "MULFX invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "MULFX invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "MULFX was incorrectly retired");
-
-    instruction_memory[0] = 32'h3061_1000;  // DIV R3, R1, R2
-    reset_cpu();
-    pulse_run();
-    wait (!halted);
-    wait (halted);
-    @(posedge clk);
-    #1;
-    if (!error || error_code !== 8'h01) $fatal(1, "DIV invalid opcode mismatch");
-    if (debug_pc !== 0) $fatal(1, "DIV invalid PC mismatch");
-    if (retired_count !== 0) $fatal(1, "DIV was incorrectly retired");
+    // MUL/DIV y familia: cpu_muldiv_tb.v.
 
     $display("PASS: minimal CPU behavior is correct");
     $finish;

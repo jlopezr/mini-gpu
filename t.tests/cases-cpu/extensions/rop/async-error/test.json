@@ -1,0 +1,16 @@
+{
+  "architecture": "cpu",
+  "name": "rop-async-error",
+  "program": "program.asm",
+  "requires": ["rop"],
+  "timeout_seconds": 5.0,
+  "expect": {
+    "halted": true,
+    "error": true,
+    "error_code": "0x07",
+    "pc": "0x00000010",
+    "registers": {
+      "R1": "0x00001000"
+    }
+  }
+}

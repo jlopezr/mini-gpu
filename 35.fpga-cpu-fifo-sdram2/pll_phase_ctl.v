@@ -15,7 +15,9 @@
 module pll_phase_ctl #(
     parameter [5:0] PHASE_STEPS = 6'd48,
     parameter [7:0] GUARD_CYCLES = 8'd8,
-    parameter [7:0] RESET_CYCLES = 8'd16
+    parameter [7:0] RESET_CYCLES = 8'd16,
+    // Posicion con la que el PLL sale ya de fabrica (pll_mem CLKOS_POS).
+    parameter [5:0] INITIAL_POS = 6'd0
 ) (
     input  wire       clk,
     input  wire       reset,
@@ -73,7 +75,7 @@ module pll_phase_ctl #(
             traffic_block <= 1'b0;
             busy <= 1'b0;
             err <= 1'b0;
-            phase_pos <= 6'd0;
+            phase_pos <= INITIAL_POS;
             steps_left <= 6'd0;
             wait_count <= 8'd0;
             state <= ST_IDLE;

@@ -25,6 +25,14 @@ SYMBOL_RE = re.compile(r"[A-Za-z_.$@][A-Za-z0-9_.$@]*")
 #                                     a mano, sin pila (u.lcc/runtime/softfloat_mini.s); quien la llama deja vivos
 #                                     sus temporales R7-R15 a traves de la llamada
 FACT_RE = re.compile(r"^\s*;\s*@miniopt\s+(volatile|const|leafcall)\s+(\S+)\s*$")
+# Dentro de una funcion, tras su etiqueta:
+#     ; @miniopt ret32                la funcion devuelve 32 bits o nada: sus `JR R31` leen R1 y no R2 (sin el
+#                                     hecho, un retorno puede ser de 64 bits en R1:R2)
+RET32_RE = re.compile(r"^\s*;\s*@miniopt\s+ret32\s*$")
+#     ; @miniopt clobber RN           RN deja de valer aqui (los argumentos de un intrinseco de `mini_ext.h`, que el
+#                                     ABI de una llamada no conserva): se lee como una instruccion `CLOBBER RN` que
+#                                     escribe RN y se vuelve a escribir como este comentario
+CLOBBER_RE = re.compile(r"^\s*;\s*@miniopt\s+clobber\s+(R\d+)\s*$")
 
 class OptError(ValueError):
     """Entrada mala (un intrinseco mal usado...)."""
@@ -42,11 +50,15 @@ class Line:
     # para el perfil. () es de la propia funcion (lo pone `parse_line`); None, una linea que ha creado un pase:
     # `marks` le da el de sus vecinas.
     origin: tuple[str, ...] | None = field(default=None, compare=False)
+    # Un `JR R31` de una funcion con `; @miniopt ret32`: el valor devuelto es solo R1 (ver `isa.defs_uses`).
+    ret32: bool = field(default=False, compare=False)
 
     def render(self) -> str:
         if self.kind == "label":
             return f"{self.name}:"
         if self.kind == "instr":
+            if self.op == "CLOBBER":
+                return f"; @miniopt clobber {self.args[0]}"
             return f"{self.op} {', '.join(self.args)}" if self.args else self.op
         return self.text
 
@@ -76,6 +88,7 @@ class Function:
     name: str
     header: list[Line]              # `.text`, `.globl f`, `.align 4` que la preceden
     body: list[Line]                # desde la etiqueta de la funcion inclusive
+    ret32: bool = False             # `; @miniopt ret32`: devuelve 32 bits o nada
 
     @property
     def opaque(self) -> bool:
@@ -148,6 +161,15 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
         pending.clear()
 
     for raw in source.splitlines():
+        if RET32_RE.match(raw):
+            if current is not None:
+                current.ret32 = True
+            continue
+        clobber = CLOBBER_RE.match(raw)
+        if clobber and current is not None:
+            release()
+            current.body.append(Line("instr", raw.strip(), op="CLOBBER", args=[clobber.group(1)], origin=()))
+            continue
         fact = FACT_RE.match(raw)
         if fact:
             if fact.group(1) == "leafcall":
@@ -189,6 +211,11 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
             else:
                 unit.chunks.append(line)
     release()
+    for function in unit.functions():
+        if function.ret32:
+            for line in function.body:
+                if line.kind == "instr" and line.op == "JR" and line.args and line.args[0].strip().upper() == "R31":
+                    line.ret32 = True
     return unit
 
 

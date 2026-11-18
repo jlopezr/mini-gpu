@@ -31,7 +31,7 @@ module subword_ls_tb;
   localparam [31:0] BASE = 32'h0001_0000;
   localparam [7:0] ERROR_MEMORY_ACCESS = 8'h02;
 
-  // Opcodes, en el mapa de 1.isa/propuesta-v0.2.md §7.
+  // Opcodes, en el mapa de 1.isa/isa.md §3, inmediatos y memoria.
   localparam [5:0] OP_ORI = 6'h13;
   localparam [5:0] OP_MOVI = 6'h10;
   localparam [5:0] OP_LOAD = 6'h15;

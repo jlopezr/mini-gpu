@@ -19,11 +19,10 @@ incompatible.
 
 Las dos razones que sí valen:
 
-**El opcode.** La familia de control `0x20–0x2F` está a **cero libres** después
-de `propuesta-v0.2.md` §6: `BEQ`…`BGEU`, los seis branches con inmediato, `JAL`,
-`JALR`, `JR` y `BRA` la llenan. Con `R0` a cero, `JR Ra` es exactamente
-`JALR R0, Ra, 0` y `0x2E` vuelve al bote. El propio documento anota esta palanca
-como «la más barata» en su línea 526.
+**El opcode.** Con R0 a cero, `JR Ra` equivale a `JALR R0, Ra, 0`.
+El [mapa compatible](../../1.isa/isa.md#74-mapa-conjunto-y-ocupación) conserva
+JR en 0x2E; eliminarlo rompería binarios existentes. Una revisión incompatible,
+como v0.3/v0.4, puede conservar JR como alias y reutilizar su opcode.
 
 **Los idiomas.** Cero sin gastar un `MOVI` ni un registro —`BEQ R5, R0, fin`,
 `SUB R3, R0, R1`— y un destino de descarte para cuando solo interesan los

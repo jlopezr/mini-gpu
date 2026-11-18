@@ -112,7 +112,7 @@ OPCODES = {
     "STORE":  0x16,
     "MOVHI":  0x17,
 
-    # Accesos sub-palabra. Mapa de propuesta-v0.2.md §7; v0.3 reordena
+    # Accesos sub-palabra. Mapa de isa.md §3, inmediatos y memoria; v0.3 reordena
     # 0x1A..0x1D, asi que estos valores cambiaran al migrar.
     "LOADB":  0x18,
     "LOADUB": 0x19,
@@ -133,7 +133,7 @@ OPCODES = {
     "SLT":    0x26,
     "SLTU":   0x27,
 
-    # Llamadas y saltos indirectos. Mapa de propuesta-v0.2.md §3.2: R0 sigue
+    # Llamadas y saltos indirectos. Mapa de isa.md §3, control de flujo: R0 sigue
     # siendo un registro general, asi que JR gasta opcode propio.
     "JAL":    0x2C,
     "JALR":   0x2D,
@@ -157,7 +157,7 @@ R3_OPS = {
     "SLT", "SLTU",
 }
 
-# Desplazamientos con cantidad inmediata: opcion B de propuesta-v0.2.md §4.2.
+# Desplazamientos con cantidad inmediata: formato vigente de isa.md §3.
 # No gastan opcode. Reusan el de su version con registro y encienden el bit 10
 # del campo `extra`; la cantidad viaja en los cinco bits del campo Rb.
 #
@@ -175,8 +175,8 @@ SHIFT_IMM_OPS = {
 }
 
 # La familia GETID: un solo opcode (0x30, el de GETTID) con el campo `type` en el
-# campo Y de un I-Type con imm16 = 0 (propuesta-v0.3.md §9, propuesta-v0.4b.md
-# §6.1). `type = 0` es el encoding de siempre de GETTID, así que los binarios
+# campo Y de un I-Type con imm16 = 0 (isa.md §3, propuesta-v0.4.md §5.1.7).
+# `type = 0` es el encoding de siempre de GETTID, así que los binarios
 # existentes no cambian. Tampoco gastan entrada propia en OPCODES.
 #
 #   GETTID   0   thread residente: warp * lanes + lane

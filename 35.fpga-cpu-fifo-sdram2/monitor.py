@@ -153,7 +153,7 @@ class PhaseMixin:
         """Pone la fase que fija `version.json` (`"sdram_phase"`), si la hay.
 
         Tras programar la FPGA la fase vuelve a 0, que en esta placa no es buena.
-        El valor sale de un barrido (`phase_sweep.py`): el centro de la ventana de
+        El valor sale de un barrido (`tools/phase-sweep`): el centro de la ventana de
         fases que pasan. Devuelve la fase aplicada, o None si no hay ninguna.
         """
         import json

@@ -60,6 +60,10 @@ void box(float side);
    final del anterior (0 para el primero) hasta end. shape(s) lo dibuja con sus
    colores, sin mirar fill(); la malla se crea en el primer shape() y se
    reutiliza, como la de box(). Como mucho P3D_SHAPES modelos distintos.
+   La malla guarda el color de cada vértice (el de su grupo) y, si el modelo
+   tiene pocos triángulos por color, se dibuja con un solo DRAW_INDEXED en vez
+   de uno por grupo; si no compensa, o si un vértice está en grupos de dos
+   colores, por grupos. La imagen es la misma.
    Con cull no se rasterizan las caras traseras (las que se ven en sentido
    horario, con los vértices del OBJ en sentido antihorario de frente): la
    mitad de triángulos y fragmentos, y la misma imagen si la malla tiene una
@@ -83,6 +87,11 @@ typedef struct {
 #define P3D_SHAPES 64
 
 void shape(const PShape *s);
+/* Como PShape.disableStyle() de Processing: s se dibuja entero del color de
+   fill() (con noFill(), no se dibuja), sin sus colores, hasta enableStyle(s).
+   Para un modelo de un color cualquiera, o que parpadee al chocar. */
+void disableStyle(const PShape *s);
+void enableStyle(const PShape *s);
 
 /* Olvida los modelos ya dibujados y vacía la memoria de MiniGL donde están
    sus mallas (que no se libera de una en una), para hacer otros con los
@@ -106,6 +115,30 @@ void resetShapes(void);
 void beginShape(int kind);
 void vertex(float x, float y, float z);
 void endShape(void);
+
+/* hint(), como en Processing, solo con la profundidad:
+   - DISABLE_DEPTH_TEST: lo 3D que se dibuje después ni se compara con el
+     Z-buffer ni lo escribe (como glDisable(GL_DEPTH_TEST)): lo último que se
+     pinta queda encima. Es el camino más rápido por píxel; sirve para lo que
+     se dibuja en orden de atrás hacia delante (un suelo o un fondo antes que
+     el resto).
+   - DISABLE_DEPTH_MASK: se compara, pero no se escribe (lo de después no queda
+     tapado por esto).
+   - ENABLE_DEPTH_SORT: el algoritmo del pintor, como en Processing: los
+     triángulos 3D se pintan de lejos a cerca al acabar lo 3D seguido (antes
+     de lo 2D que venga después). Con DISABLE_DEPTH_TEST, sin Z-buffer: en un
+     sketch con pocos objetos sueltos (tanks.c) es más rápido; no hace falta
+     borrar la profundidad. DISABLE_DEPTH_SORT lo quita.
+   ENABLE_DEPTH_TEST, ENABLE_DEPTH_MASK y DISABLE_DEPTH_SORT vuelven a como al
+   empezar (test y escritura sí, ordenar no). Duran hasta el siguiente hint(),
+   también de un frame al siguiente. Otros valores no hacen nada. */
+#define DISABLE_DEPTH_TEST 2 /* los valores de Processing */
+#define ENABLE_DEPTH_TEST (-2)
+#define DISABLE_DEPTH_MASK 5
+#define ENABLE_DEPTH_MASK (-5)
+#define ENABLE_DEPTH_SORT 7
+#define DISABLE_DEPTH_SORT (-7)
+void hint(int which);
 
 /* Para la plataforma: al principio de cada draw() (y de setup()). */
 void processing3d_begin_draw(void);

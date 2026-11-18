@@ -116,6 +116,18 @@ static void test_rejected(void) {
     CHECK(mgl_create_mesh(&d) == 0);
     CHECK(mgl_create_mesh(0) == 0);
     CHECK(mgl_create_mesh_copy(xyz, 0, idx, 3) == 0);
+    CHECK(mgl_create_mesh_copy_rgb565(xyz, 0, 0, idx, 3) == 0);
+    /* Con color: stride 16 como mínimo, y el último vértice entero (16 bytes) dentro de la RAM. */
+    d = app_desc();
+    d.vertex_format = MGL_VERTEX_POSITION_F32_XYZ_RGB565;
+    CHECK(mgl_create_mesh(&d) == 0);
+    d.vertex_stride = 16;
+    CHECK(mgl_create_mesh(&d) != 0);
+    d.vertex_addr = T_RAM_ADDR + T_RAM_SIZE - 44U; /* 2 * 16 + 12: sin el color del último */
+    CHECK(mgl_create_mesh(&d) == 0);
+    d.vertex_addr = T_RAM_ADDR + T_RAM_SIZE - 48U;
+    d.index_addr = T_APP_ADDR;
+    CHECK(mgl_create_mesh(&d) != 0);
 }
 
 /* Límites: memoria de MiniGL agotada (sin dejar nada a medias) y tabla llena. */

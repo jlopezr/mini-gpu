@@ -12,7 +12,9 @@ from tools.sysid_device import (
 # Lo que Codon no trae (struct, from_bytes...): ver tools/codon/LIMITACIONES.md.
 from tools.codon_compat import load_le, load_u32, store_le, store_u32
 from tools.mmio_device import MmioDevice
+from tools.fp32 import fp32_binary, fp32_compare, fp32_to_int, int_to_fp32
 from tools.sim_devices import InputDevice, SerialDevice, VideoDevice
+from rop import Rop
 
 # Qué sabe ejecutar ESTE modelo, no la placa que modela.
 #
@@ -33,6 +35,7 @@ ERROR_MEMORY_ACCESS = 0x02
 ERROR_EXPLICIT_TRAP = 0x03
 ERROR_DIVISION_BY_ZERO = 0x04
 ERROR_INVALID_ENCODING = 0x05
+ERROR_ROP = 0x07
 
 
 # Los conjuntos de opcodes van como tuplas o constantes del módulo y no como
@@ -44,13 +47,24 @@ def valid_encoding(instr: int, opcode: int) -> bool:
         return (instr & 0x03FFFFFF) == 0
     if opcode in (0x07, 0x08, 0x09):  # SHL/SHR/SAR
         # El bit 10 es significativo: dice que la cantidad es inmediata
-        # (propuesta-v0.2.md §4.2, opcion B). El campo reservado de estos tres
+        # (isa.md §3, desplazamientos inmediatos). El campo reservado de estos tres
         # opcodes es por tanto `extra[9:0]`, no `extra` entero.
         return (instr & 0x3FF) == 0
     if opcode in (0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
                   0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-                  0x26, 0x27):
+                  0x26, 0x27, 0x38, 0x39, 0x3A, 0x3B):
         return (instr & 0x7FF) == 0
+    if opcode == 0x1E:  # EXT: Rc = 0 en MIN/MAX/MINU/MAXU; Rb = Rc = 0 en CLZ
+        func6 = instr & 0x3F
+        if func6 <= 0x03:
+            return (instr & 0x7C0) == 0
+        if func6 == 0x09:
+            return (instr & 0xFFC0) == 0
+        return True  # función reservada: ERROR_INVALID_OPCODE al ejecutarla
+    if opcode == 0x3C:  # FEQ/FLT/FLE: el selector en extra[1:0]
+        return (instr & 0x7FC) == 0
+    if opcode == 0x3D:  # FTOI/ITOF: Rb = 0, operación en extra[6:5], fbits en extra[4:0]
+        return (instr & 0xF780) == 0
     if opcode in (0x10, 0x17):  # MOVI/MOVHI require Y=0
         return ((instr >> 16) & 0x1F) == 0
     if opcode == 0x30:  # GETTID requires Y=0 and imm16=0
@@ -115,6 +129,7 @@ class CPU:
     serial: SerialDevice | None
     input: InputDevice | None
     sysid: SysIdDevice
+    rop: Rop
 
     def __init__(self, memory_size: int = 32 * 1024 * 1024,
                  video: VideoDevice | None = None,
@@ -147,6 +162,7 @@ class CPU:
             devices=declared_devices(serial=serial is not None,
                                      video=video is not None,
                                      input=input_device is not None))
+        self.rop = Rop(self)
 
     def _device(self, address: int) -> MmioDevice | None:
         """Que dispositivo MMIO, si alguno, responde a esta direccion.
@@ -175,6 +191,7 @@ class CPU:
         self.error_code = ERROR_NONE
         self.error_pc = 0
         self.instructions_executed = 0
+        self.rop.reset()
 
     def set_register(self, index: int, value: int) -> None:
         """Escribe un registro. R0 está cableado a cero y descarta la escritura.
@@ -354,7 +371,7 @@ class CPU:
             rd = (instr >> 21) & 0x1F
             ra = (instr >> 16) & 0x1F
             rb = (instr >> 11) & 0x1F
-            # Opción B de propuesta-v0.2.md §4.2: el bit 10 dice que la cantidad
+            # Formato vigente de isa.md §3: el bit 10 dice que la cantidad
             # es inmediata y viaja en el propio campo Rb. MiniISA usa siempre
             # cinco bits de cantidad, así que con inmediato el campo entra tal
             # cual y con registro se enmascara.
@@ -419,6 +436,57 @@ class CPU:
                 else:
                     remainder = dividend % divisor
                 self.set_register(rd, u32(remainder))
+
+        elif opcode in (0x38, 0x39, 0x3A, 0x3B):  # FADD / FSUB / FMUL / FDIV
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            self.set_register(rd, fp32_binary(opcode & 3, self.regs[ra], self.regs[rb]))
+
+        elif opcode == 0x1E:  # EXT: MIN / MAX / MINU / MAXU / CLZ
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            func6 = instr & 0x3F
+            a = self.regs[ra]
+            b = self.regs[rb]
+            if func6 == 0x00:
+                self.set_register(rd, a if s32(a) <= s32(b) else b)
+            elif func6 == 0x01:
+                self.set_register(rd, a if s32(a) >= s32(b) else b)
+            elif func6 == 0x02:
+                self.set_register(rd, a if a <= b else b)
+            elif func6 == 0x03:
+                self.set_register(rd, a if a >= b else b)
+            elif func6 == 0x09:
+                zeros = 0
+                while zeros < 32 and not (a >> (31 - zeros)) & 1:
+                    zeros += 1
+                self.set_register(rd, zeros)
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
+
+        elif opcode == 0x3C:  # FEQ / FLT / FLE
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            rb = (instr >> 11) & 0x1F
+            if (instr & 3) == 3:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
+            self.set_register(rd, fp32_compare(instr & 3, self.regs[ra], self.regs[rb]))
+
+        elif opcode == 0x3D:  # FTOI / ITOF
+            rd = (instr >> 21) & 0x1F
+            ra = (instr >> 16) & 0x1F
+            conversion = (instr >> 5) & 3
+            if conversion == 0:
+                self.set_register(rd, fp32_to_int(self.regs[ra], instr & 0x1F))
+            elif conversion == 1:
+                self.set_register(rd, int_to_fp32(self.regs[ra], instr & 0x1F))
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc)
+                return
 
         elif opcode == 0x12:  # ANDI
             rd = (instr >> 21) & 0x1F
@@ -586,6 +654,36 @@ class CPU:
             # delante para el SM con ERROR_SIMT. Mismo criterio que GETTID.
             pass
 
+        elif opcode == 0x37:  # ROP (§7.5)
+            sub = (instr >> 12) & 15
+            x, y = (instr >> 21) & 31, (instr >> 16) & 31
+            valid_index = lambda index: index <= 10 or index == 15
+            if sub == 0:
+                ia, ib = (instr >> 8) & 15, (instr >> 4) & 15
+                if (instr & 15) or not valid_index(ia) or not valid_index(ib) or (ia == ib and ia != 15) or (ia == 15 and x) or (ib == 15 and y):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.rop.set_pair(ia, self.regs[x], ib, self.regs[y])
+            elif sub == 1:
+                op, fence = (instr >> 9) & 7, (instr >> 8) & 1
+                ia, ib = (instr >> 4) & 15, instr & 15
+                if op >= 6 or op == 4 or not valid_index(ia) or not valid_index(ib) or (ia == ib and ia != 15) or (ia == 15 and x) or (ib == 15 and y):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                # La memoria funcional no tiene stores pendientes: F no añade espera.
+                self.rop.submit(op, ia, self.regs[x], ib, self.regs[y])
+            elif sub == 2:
+                if x or y or (instr & 0xffe):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.rop.drain()
+                if self.rop.sticky_error:
+                    self.stop_with_error(ERROR_ROP, instr_pc); return
+            elif sub == 3:
+                if y or (instr & 0xffe):
+                    self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
+                self.set_register(x, self.rop.status())
+                if instr & 1: self.rop.sticky_error = False
+            else:
+                self.stop_with_error(ERROR_INVALID_OPCODE, instr_pc); return
+
         elif opcode == 0x3F:  # HALT
             self.halted = True
 
@@ -598,6 +696,7 @@ class CPU:
             return
 
         self.instructions_executed += 1
+        self.rop.tick()
         if self.serial is not None:
             self.serial.tick()
         if self.input is not None:

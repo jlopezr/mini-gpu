@@ -140,6 +140,77 @@ def branch16(name: str, opcode: int, description: str) -> Instruction:
     )
 
 
+FCMP_SELECT = Field("fcmp_select", 0, 2)
+# R-Type with extra split for FTOI/ITOF: extra[10:5] selects, extra[4:0] = fbits.
+RF_SELECT = Field("extra_select", 5, 6)
+RF_FBITS = Field("fbits", 0, 5)
+RF = Format("R", (OPCODE, R_RD, R_RA, R_RB, RF_SELECT, RF_FBITS))
+
+
+def fcmp(name: str, select: int, description: str) -> Instruction:
+    """FP32 compare, opcode 0x3C: extra[1:0] chooses it, extra[10:2] = 0."""
+    return Instruction(
+        name,
+        0x3C,
+        R,
+        (reg("Rd", R_RD), reg("Ra", R_RA), reg("Rb", R_RB)),
+        f"{name} Rd, Ra, Rb",
+        description,
+        fixed_mask=R_EXTRA.mask,
+        fixed_value=FCMP_SELECT.encode(select),
+        category="FP32",
+    )
+
+
+def fcvt(name: str, select: int, description: str) -> Instruction:
+    """FP32 conversion, opcode 0x3D: Rb = 0, extra[6:5] chooses it, extra[4:0] = fbits."""
+    return Instruction(
+        name,
+        0x3D,
+        RF,
+        (reg("Rd", R_RD), reg("Ra", R_RA), uimm("fbits", RF_FBITS, 5)),
+        f"{name} Rd, Ra, fbits",
+        description,
+        fixed_mask=R_RB.mask | RF_SELECT.mask,
+        fixed_value=RF_SELECT.encode(select),
+        category="FP32",
+    )
+
+
+# EXT (0x1E): Rd, Ra, Rb, Rc and func6 (isa.md §3, EXT).
+EXT_RC = Field("rc", 6, 5)
+EXT_FUNC6 = Field("func6", 0, 6)
+EXT = Format("EXT", (OPCODE, R_RD, R_RA, R_RB, EXT_RC, EXT_FUNC6))
+
+
+def ext3(name: str, func6: int, description: str) -> Instruction:
+    return Instruction(
+        name,
+        0x1E,
+        EXT,
+        (reg("Rd", R_RD), reg("Ra", R_RA), reg("Rb", R_RB)),
+        f"{name} Rd, Ra, Rb",
+        description,
+        fixed_mask=EXT_RC.mask | EXT_FUNC6.mask,
+        fixed_value=EXT_FUNC6.encode(func6),
+        category="ALU",
+    )
+
+
+def ext2(name: str, func6: int, description: str) -> Instruction:
+    return Instruction(
+        name,
+        0x1E,
+        EXT,
+        (reg("Rd", R_RD), reg("Ra", R_RA)),
+        f"{name} Rd, Ra",
+        description,
+        fixed_mask=R_RB.mask | EXT_RC.mask | EXT_FUNC6.mask,
+        fixed_value=EXT_FUNC6.encode(func6),
+        category="ALU",
+    )
+
+
 def getid(name: str, type_id: int, description: str) -> Instruction:
     return Instruction(
         name,
@@ -151,6 +222,58 @@ def getid(name: str, type_id: int, description: str) -> Instruction:
         fixed_mask=I_Y.mask | I_IMM16.mask,
         fixed_value=I_Y.encode(type_id),
         category="SIMT",
+    )
+
+
+# ROP (0x37, isa.md §7.5): X y Y son Ra y Rb (o Rd en ROPSTATUS), [15:12] es
+# la suboperacion y el resto depende de ella.
+ROP_SUB = Field("sub", 12, 4)
+ROP_SET_PA = Field("pa_set", 8, 4)
+ROP_SET_PB = Field("pb_set", 4, 4)
+ROP_SET_LOW = Field("low", 0, 4)
+ROP_SUB_OP = Field("op", 9, 3)
+ROP_SUB_F = Field("f", 8, 1)
+ROP_SUB_PA = Field("pa_submit", 4, 4)
+ROP_SUB_PB = Field("pb_submit", 0, 4)
+ROP_RES = Field("reserved", 1, 11)
+ROP_FLAG = Field("flag", 0, 1)
+ROPSET_FMT = Format("ROPSET", (OPCODE, I_X, I_Y, ROP_SUB, ROP_SET_PA, ROP_SET_PB, ROP_SET_LOW))
+ROPSUBMIT_FMT = Format("ROPSUBMIT", (OPCODE, I_X, I_Y, ROP_SUB, ROP_SUB_OP, ROP_SUB_F,
+                                     ROP_SUB_PA, ROP_SUB_PB))
+ROPW_FMT = Format("ROPW", (OPCODE, I_X, I_Y, ROP_SUB, ROP_RES, ROP_FLAG))
+
+
+def ropsubmit(name: str, f: int) -> Instruction:
+    return Instruction(
+        name,
+        0x37,
+        ROPSUBMIT_FMT,
+        (uimm("op", ROP_SUB_OP), uimm("pA", ROP_SUB_PA), reg("Ra", I_X),
+         uimm("pB", ROP_SUB_PB), reg("Rb", I_Y)),
+        f"{name} op, pA, Ra, pB, Rb",
+        "Write two ROP parameters, snapshot them and queue operation op"
+        + (" after every earlier CPU store is confirmed" if f else ""),
+        fixed_mask=ROP_SUB.mask | ROP_SUB_F.mask,
+        fixed_value=ROP_SUB.encode(1) | ROP_SUB_F.encode(f),
+        category="ROP",
+    )
+
+
+def ropw(name: str, sub: int, flag: int, operands: tuple, syntax: str,
+         description: str) -> Instruction:
+    fixed = ROP_SUB.mask | ROP_RES.mask | ROP_FLAG.mask | I_Y.mask
+    if not operands:
+        fixed |= I_X.mask
+    return Instruction(
+        name,
+        0x37,
+        ROPW_FMT,
+        operands,
+        syntax,
+        description,
+        fixed_mask=fixed,
+        fixed_value=ROP_SUB.encode(sub) | ROP_FLAG.encode(flag),
+        category="ROP",
     )
 
 
@@ -237,6 +360,20 @@ INSTRUCTIONS: tuple[Instruction, ...] = (
     r3("DIVU", 0x0D, "Unsigned division"),
     r3("REM", 0x0E, "Signed remainder"),
     r3("REMU", 0x0F, "Unsigned remainder"),
+    ext3("MIN", 0x00, "Rd = min(signed(Ra), signed(Rb))"),
+    ext3("MAX", 0x01, "Rd = max(signed(Ra), signed(Rb))"),
+    ext3("MINU", 0x02, "Rd = min(unsigned(Ra), unsigned(Rb))"),
+    ext3("MAXU", 0x03, "Rd = max(unsigned(Ra), unsigned(Rb))"),
+    ext2("CLZ", 0x09, "Rd = leading zeros of Ra (32 if Ra = 0)"),
+    r3("FADD", 0x38, "FP32 add (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FSUB", 0x39, "FP32 subtract (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FMUL", 0x3A, "FP32 multiply (RNE, DAZ/FTZ)", category="FP32"),
+    r3("FDIV", 0x3B, "FP32 divide (RNE, DAZ/FTZ)", category="FP32"),
+    fcmp("FEQ", 0, "Rd = binary32(Ra) == binary32(Rb) (NaN: 0)"),
+    fcmp("FLT", 1, "Rd = binary32(Ra) < binary32(Rb) (NaN: 0)"),
+    fcmp("FLE", 2, "Rd = binary32(Ra) <= binary32(Rb) (NaN: 0)"),
+    fcvt("FTOI", 0, "Rd = int32(trunc(binary32(Ra) * 2^fbits)), saturating; NaN: 0"),
+    fcvt("ITOF", 1, "Rd = binary32(int32(Ra) / 2^fbits), RNE"),
     Instruction(
         "MOVI",
         0x10,
@@ -327,6 +464,25 @@ INSTRUCTIONS: tuple[Instruction, ...] = (
     ),
     Instruction("BAR", 0x32, R, (), "BAR", "SIMT barrier", category="SIMT"),
     Instruction("EXIT", 0x33, R, (), "EXIT", "Terminate current SIMT thread/lane", category="SIMT"),
+    Instruction(
+        "ROPSET",
+        0x37,
+        ROPSET_FMT,
+        (uimm("pA", ROP_SET_PA), reg("Ra", I_X), uimm("pB", ROP_SET_PB), reg("Rb", I_Y)),
+        "ROPSET pA, Ra, pB, Rb",
+        "ROP parameter pA = Ra, pB = Rb (P0-P9, 10 PMODE, 15 none)",
+        fixed_mask=ROP_SUB.mask | ROP_SET_LOW.mask,
+        fixed_value=ROP_SUB.encode(0),
+        category="ROP",
+    ),
+    ropsubmit("ROPSUBMIT", 0),
+    ropsubmit("ROPSUBMIT.F", 1),
+    ropw("ROPWAIT", 2, 0, (), "ROPWAIT", "Wait until every earlier ROP job is done"),
+    ropw("ROPWAIT.INV", 2, 1, (), "ROPWAIT.INV",
+         "ROPWAIT, then invalidate the D-cache"),
+    ropw("ROPSTATUS", 3, 0, (reg("Rd", I_X),), "ROPSTATUS Rd", "Rd = ROP status"),
+    ropw("ROPSTATUS.CLEAR", 3, 1, (reg("Rd", I_X),), "ROPSTATUS.CLEAR Rd",
+         "Rd = ROP status, then clear the sticky error"),
     Instruction("TRAP", 0x3E, R, (), "TRAP", "Trap", category="System"),
     Instruction("HALT", 0x3F, R, (), "HALT", "Halt processor", category="System"),
 )

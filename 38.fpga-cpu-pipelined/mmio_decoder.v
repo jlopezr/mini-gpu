@@ -82,6 +82,9 @@ module mmio_decoder #(
     // 1 si hay bloque INPUT (§25) en 0x8060_0000. Con 0 el bloque da error, como
     // cualquier bloque sin dispositivo.
     parameter HAS_INPUT = 0,
+    // 1 si hay bloque DMA (mmio.md §11) en 0x8050_0000. Con 0 el bloque da
+    // error, como cualquier bloque sin dispositivo.
+    parameter HAS_DMA = 0,
     // Cuantas ranuras del array de CPU PERFORMANCE existen de verdad (mmio.md
     // §12.6): las demas dan error, no ceros. Tiene que coincidir con
     // `NUM_COUNTERS` de `cpu_perf_counters`. Por defecto dos --CYCLES y RETIRED--,
@@ -121,6 +124,12 @@ module mmio_decoder #(
     output wire        input_select,
     input  wire [31:0] input_read_data,
     input  wire        input_error,
+
+    // DMA (§11, experimental en la 38). Igual que VIDEO: el error de DATO lo
+    // pone el dispositivo; aqui solo se filtra el select.
+    output wire        dma_select,
+    input  wire [31:0] dma_read_data,
+    input  wire        dma_error,
     // Los contadores ya no son de solo lectura: PERF_CTRL y PERF_OVF se
     // escriben, asi que necesitan `select` filtrado.
     output wire        perf_select,
@@ -141,6 +150,7 @@ module mmio_decoder #(
   localparam [10:0] BLK_SERIAL   = 11'h010;   // 0x8010_0000
   localparam [10:0] BLK_VIDEO    = 11'h020;   // 0x8020_0000
   localparam [10:0] BLK_INPUT    = 11'h060;   // 0x8060_0000
+  localparam [10:0] BLK_DMA      = 11'h050;   // 0x8050_0000
   localparam [10:0] BLK_CPU_PERF = 11'h101;   // 0x8101_0000
 
   wire [10:0] block  = address[26:16];
@@ -157,8 +167,9 @@ module mmio_decoder #(
   wire es_video_d  = !fuera && (block == BLK_VIDEO);
   wire es_perf_d   = !fuera && (block == BLK_CPU_PERF);
   wire es_input_d  = !fuera && (block == BLK_INPUT) && (HAS_INPUT != 0);
+  wire es_dma_d    = !fuera && (block == BLK_DMA) && (HAS_DMA != 0);
 
-  reg es_system, es_phase, es_serial, es_video, es_perf, es_input;
+  reg es_system, es_phase, es_serial, es_video, es_perf, es_input, es_dma;
   reg select_q;
   reg error_direccion_q;
 
@@ -196,6 +207,7 @@ module mmio_decoder #(
     es_video  <= es_video_d;
     es_perf   <= es_perf_d;
     es_input  <= es_input_d;
+    es_dma    <= es_dma_d;
     error_direccion_q <= error_direccion;
     select_q <= select;
   end
@@ -204,6 +216,7 @@ module mmio_decoder #(
   assign serial_select = select_q && !error_direccion_q && es_serial;
   assign perf_select   = select_q && !error_direccion_q && es_perf;
   assign input_select  = select_q && !error_direccion_q && es_input;
+  assign dma_select    = select_q && !error_direccion_q && es_dma;
   assign phase_select  = select_q && !error_direccion_q && es_phase;
 
   // DEUDA CONOCIDA, y merece leerse entera.
@@ -271,6 +284,12 @@ module mmio_decoder #(
       || (write ? ((palabra != 6'd2) || (write_mask != 4'b1111))
                 : !((palabra <= 6'd1) || (palabra >= 6'd4 && palabra <= 6'd12)));
 
+  // El DMA valida sus propios offsets --alineacion, mascara completa, huecos,
+  // registros reservados-- y los denuncia por `dma_error`, que aqui viaja como
+  // el error de DATO de VIDEO (un ciclo despues del select). No hay `e_dma`:
+  // cualquier direccion del bloque llega al dispositivo, y el decide si existe.
+  wire e_dma = 1'b0;
+
   // Disposicion de §12.6. Aqui SI hay registros por encima de +0xFF: el array
   // llega hasta +0x0FC y el control esta detras, en +0x100.
   //
@@ -281,7 +300,7 @@ module mmio_decoder #(
       : ((offset > 16'h0108) || !word_aligned || (offset[15:8] != 8'h01));
 
   wire hay_bloque = es_system_d || es_phase_d || es_serial_d || es_video_d || es_perf_d
-                    || es_input_d;
+                    || es_input_d || es_dma_d;
 
   always @* begin
     error_direccion = fuera || !hay_bloque
@@ -290,6 +309,7 @@ module mmio_decoder #(
         || (es_serial_d && e_serial)
         || (es_video_d  && e_video)
         || (es_input_d  && e_input)
+        || (es_dma_d    && e_dma)
         || (es_perf_d   && e_perf);
   end
 
@@ -298,9 +318,20 @@ module mmio_decoder #(
   //
   // Etapa 2: se registran el error y el dato. Se muestrean con los `es_*` ya en
   // registros, un ciclo despues de que el dispositivo recibiera su `select`.
+  // DMA es distinto de los demas: su `read_data` y su `mmio_error` solo valen
+  // en el ciclo de `dma_select` (dma_engine los calcula dentro de
+  // `if (select)`, y el error depende de BUSY, que el propio START cambia).
+  // Esta etapa se reevalua en cada ciclo hasta el `ack` del mmio_mux, asi que
+  // sin capturarlos aqui el dato y el error se pisaban con ceros: la CPU leia
+  // 0 en DMA_ID y nunca veia un error del bloque.
+  reg dma_error_q;
+  always @(posedge clk)
+    if (dma_select) dma_error_q <= dma_error;
+
   always @(posedge clk) begin
     error <= error_direccion_q || (es_video && video_error)
-             || (es_input && input_error) || (es_phase && phase_error);
+             || (es_input && input_error) || (es_phase && phase_error)
+             || (es_dma && (dma_select ? dma_error : dma_error_q));
 
     if (es_system)      read_data <= system_read_data;
     else if (es_phase)  read_data <= phase_read_data;
@@ -308,6 +339,7 @@ module mmio_decoder #(
     else if (es_video)  read_data <= video_read_data;
     else if (es_perf)   read_data <= perf_read_data;
     else if (es_input)  read_data <= input_read_data;
+    else if (es_dma)    read_data <= dma_select ? dma_read_data : read_data;
     else                read_data <= 32'd0;
   end
 endmodule

@@ -15,12 +15,22 @@ static mgl_u32 state = MGL_STATE_DEFAULT;
 static mgl_color_t color = 0xffff;
 
 static int sent_viewport[4], viewport_sent;
-static mgl_mat4_t sent_matrix[3];
+/* matrix_sent[k]: matrix[k] ya está en el buffer tal cual. mgl_set_matrix
+   compara al llegar (una vez por cambio) y no flush_state en cada dibujo. */
 static int matrix_sent[3];
 static mgl_u32 sent_state;
 static int state_sent;
 static mgl_color_t sent_color;
 static int color_sent;
+/* Lo que la aplicación ha tocado desde el último dibujo: flush_state solo compara eso con lo enviado (antes
+   comparaba todo en cada dibujo, ~150 instrucciones en MiniGPU). Se sigue comparando con lo enviado, no solo
+   marcando: un estado que cambia y vuelve antes del siguiente dibujo (mgl_set_cull en shape()) no emite nada. */
+#define DIRTY_VIEWPORT 1U
+#define DIRTY_MATRIX 2U
+#define DIRTY_STATE 4U
+#define DIRTY_COLOR 8U
+#define DIRTY_ALL 15U
+static unsigned int dirty = DIRTY_ALL;
 
 static void fail(int error) {
     mgl_cmd_buffer_t *b = mgl_deferred_();
@@ -51,6 +61,7 @@ static void ensure_matrices(void) {
 static void forget_sent(void) {
     viewport_sent = state_sent = color_sent = 0;
     matrix_sent[0] = matrix_sent[1] = matrix_sent[2] = 0;
+    dirty = DIRTY_ALL;
 }
 
 static void emit_target(void) {
@@ -68,6 +79,7 @@ static void emit_target(void) {
     WR32(p + 28, 0);
     /* El renderer pone el viewport a todo el destino: lo emitido ya no vale. */
     viewport_sent = 0;
+    dirty |= DIRTY_VIEWPORT;
     mgl_clear_flags_ = depth ? MGL_CLEAR_DEPTH : 0;
     mgl_clear_depth_ = depth ? MGL_DEPTH_ONE : 0;
 }
@@ -75,6 +87,8 @@ static void emit_target(void) {
 void mgl_reset_state3d(void) {
     matrices_ready = 0;
     ensure_matrices();
+    matrix_sent[0] = matrix_sent[1] = matrix_sent[2] = 0;
+    dirty = DIRTY_ALL;
     state = MGL_STATE_DEFAULT;
     color = 0xffff;
     viewport[0] = viewport[1] = 0;
@@ -95,6 +109,7 @@ void mgl_set_render_target(const mgl_render_target_t *t) {
     viewport[0] = viewport[1] = 0;
     viewport[2] = t->width;
     viewport[3] = t->height;
+    dirty |= DIRTY_VIEWPORT;
     if (in_frame) emit_target();
 }
 
@@ -122,7 +137,7 @@ int mgl_end_frame(void) {
     return b->error;
 }
 
-void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
+static void clear_depth(mgl_color_t c, mgl_real_t depth, mgl_u32 flags) {
     mgl_u32 d;
     if (!mgl_deferred_()) return;
     if (!in_frame || !target.depth_addr) {
@@ -135,7 +150,15 @@ void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
         d = MGL_DEPTH_ONE;
     else
         d = (mgl_u32)mgl_round(depth * 65536.0f);
-    command(MGL_CMD_CLEAR, MGL_CLEAR_DEPTH, MGL_CLEAR_BYTES, c, d);
+    command(MGL_CMD_CLEAR, flags, MGL_CLEAR_BYTES, c, d);
+}
+
+void mgl_clear_color_depth(mgl_color_t c, mgl_real_t depth) {
+    clear_depth(c, depth, MGL_CLEAR_DEPTH);
+}
+
+void mgl_clear_depth(mgl_real_t depth) {
+    clear_depth(0, depth, MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR);
 }
 
 void mgl_set_viewport(int x, int y, int w, int h) {
@@ -149,6 +172,23 @@ void mgl_set_viewport(int x, int y, int w, int h) {
     viewport[1] = y;
     viewport[2] = w;
     viewport[3] = h;
+    dirty |= DIRTY_VIEWPORT;
+}
+
+/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. Processing fija las tres matrices en cada
+   dibujo, así que se compara mucho: en MiniGPU como palabras (lcc no tiene strict aliasing), sin llamar a
+   mgl_real_to_f32 por elemento. */
+static int same_matrix(const mgl_mat4_t *a, const mgl_mat4_t *b) {
+    int i;
+#ifdef __MINIGPU__
+    const mgl_u32 *p = (const mgl_u32 *)a->m, *q = (const mgl_u32 *)b->m;
+    for (i = 0; i < 16; i += 4, p += 4, q += 4)
+        if (p[0] != q[0] || p[1] != q[1] || p[2] != q[2] || p[3] != q[3]) return 0;
+#else
+    for (i = 0; i < 16; i++)
+        if (mgl_real_to_f32(a->m[i]) != mgl_real_to_f32(b->m[i])) return 0;
+#endif
+    return 1;
 }
 
 void mgl_set_matrix(unsigned int which, const mgl_mat4_t *m) {
@@ -157,7 +197,10 @@ void mgl_set_matrix(unsigned int which, const mgl_mat4_t *m) {
         return;
     }
     ensure_matrices();
+    if (same_matrix(&matrix[which - 1U], m)) return;
     matrix[which - 1U] = *m;
+    matrix_sent[which - 1U] = 0;
+    dirty |= DIRTY_MATRIX;
 }
 
 static void set_bit(mgl_u32 bit, int on) {
@@ -165,6 +208,7 @@ static void set_bit(mgl_u32 bit, int on) {
         state |= bit;
     else
         state &= ~bit;
+    dirty |= DIRTY_STATE;
 }
 
 void mgl_set_depth_test(int on) {
@@ -173,6 +217,10 @@ void mgl_set_depth_test(int on) {
 
 void mgl_set_depth_write(int on) {
     set_bit(MGL_STATE_DEPTH_WRITE, on);
+}
+
+void mgl_set_depth_sort(int on) {
+    set_bit(MGL_STATE_DEPTH_SORT, on);
 }
 
 void mgl_set_cull(int mode) {
@@ -186,21 +234,15 @@ void mgl_set_cull(int mode) {
 
 void mgl_set_color(mgl_color_t c) {
     color = c;
-}
-
-/* Bit a bit: 0.0f y -0.0f son distintos para el command buffer. */
-static int same_matrix(const mgl_mat4_t *a, const mgl_mat4_t *b) {
-    int i;
-    for (i = 0; i < 16; i++)
-        if (mgl_real_to_f32(a->m[i]) != mgl_real_to_f32(b->m[i])) return 0;
-    return 1;
+    dirty |= DIRTY_COLOR;
 }
 
 static void flush_state(void) {
     unsigned char *p;
-    unsigned int i, k;
-    if (!viewport_sent || sent_viewport[0] != viewport[0] || sent_viewport[1] != viewport[1] ||
-        sent_viewport[2] != viewport[2] || sent_viewport[3] != viewport[3]) {
+    unsigned int i, k, d = dirty; /* en local: mini-lcc recargaba la global en cada comprobación */
+    if (!d) return;
+    if ((d & DIRTY_VIEWPORT) && (!viewport_sent || sent_viewport[0] != viewport[0] || sent_viewport[1] != viewport[1] ||
+        sent_viewport[2] != viewport[2] || sent_viewport[3] != viewport[3])) {
         if (!command(MGL_CMD_SET_VIEWPORT, 0, MGL_SET_VIEWPORT_BYTES, PACK(viewport[0], viewport[1]),
                 PACK(viewport[2], viewport[3])))
             return;
@@ -208,30 +250,31 @@ static void flush_state(void) {
         viewport_sent = 1;
     }
     /* Projection, View y Model: el orden en que se componen. */
-    for (k = 3; k >= 1; k--) {
-        if (matrix_sent[k - 1] && same_matrix(&sent_matrix[k - 1], &matrix[k - 1])) continue;
-        p = command(MGL_CMD_SET_MATRIX, 0, MGL_SET_MATRIX_BYTES, k, MGL_FORMAT_FLOAT32);
-        if (!p) return;
-        for (i = 0; i < 16; i++) WR32(p + 16 + 4 * i, mgl_real_to_f32(matrix[k - 1].m[i]));
-        sent_matrix[k - 1] = matrix[k - 1];
-        matrix_sent[k - 1] = 1;
-    }
-    if (!state_sent || sent_state != state) {
+    if (d & DIRTY_MATRIX)
+        for (k = 3; k >= 1; k--) {
+            if (matrix_sent[k - 1]) continue;
+            p = command(MGL_CMD_SET_MATRIX, 0, MGL_SET_MATRIX_BYTES, k, MGL_FORMAT_FLOAT32);
+            if (!p) return;
+            for (i = 0; i < 16; i++) WR32(p + 16 + 4 * i, mgl_real_to_f32(matrix[k - 1].m[i]));
+            matrix_sent[k - 1] = 1;
+        }
+    if ((d & DIRTY_STATE) && (!state_sent || sent_state != state)) {
         if (!command(MGL_CMD_SET_RENDER_STATE, 0, MGL_SET_RENDER_STATE_BYTES, state, 0)) return;
         sent_state = state;
         state_sent = 1;
     }
-    if (!color_sent || sent_color != color) {
+    if ((d & DIRTY_COLOR) && (!color_sent || sent_color != color)) {
         if (!command(MGL_CMD_SET_COLOR, 0, MGL_SET_COLOR_BYTES, color, 0)) return;
         sent_color = color;
         color_sent = 1;
     }
+    dirty = 0;
 }
 
 /* Un tramo [first, first + count) de los índices: la misma malla, con la
    dirección de los índices desplazada. Así se dibuja cada parte de una malla
    con su propio estado (un color por cara) sin cambiar DRAW_INDEXED. */
-void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+static void draw_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count, int uniform) {
     mgl_mesh_desc_t d;
     unsigned char *p;
     if (!mgl_deferred_()) return;
@@ -253,10 +296,19 @@ void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
     if (!p) return;
     WR32(p + 16, d.vertex_count);
     WR32(p + 20, count);
-    WR16(p + 24, d.vertex_format);
+    /* uniform: los mismos datos como solo posición (el stride salta el color), y el color de SET_COLOR. */
+    WR16(p + 24, uniform ? MGL_VERTEX_POSITION_F32_XYZ : d.vertex_format);
     WR16(p + 26, d.index_format);
     WR16(p + 28, d.vertex_stride);
     WR16(p + 30, MGL_TOPOLOGY_TRIANGLES);
+}
+
+void mgl_draw_mesh_range(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+    draw_range(mesh, first, count, 0);
+}
+
+void mgl_draw_mesh_range_uniform(mgl_mesh_t mesh, mgl_u32 first, mgl_u32 count) {
+    draw_range(mesh, first, count, 1);
 }
 
 void mgl_draw_mesh(mgl_mesh_t mesh) {

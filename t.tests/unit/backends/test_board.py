@@ -200,6 +200,42 @@ class BoardTest(unittest.TestCase):
         self.assertIn("auto-upload", build_command)
 
 
+class SourcesChangedTest(unittest.TestCase):
+    """Monitor correcto pero RTL cambiado desde el ultimo build."""
+
+    def test_rtl_cambiado_con_no_upload_falla(self):
+        monitor = fake_monitor([(1, 6)])
+        with mock.patch.object(board, "_sources_changed", return_value="cambiado"), \
+                mock.patch.object(board, "upload") as upload:
+            with self.assertRaises(board.BitstreamMismatch) as caught:
+                ensure(monitor, board.UploadPolicy(allowed=False))
+        upload.assert_not_called()
+        self.assertIn("cambiado", str(caught.exception))
+
+    def test_rtl_cambiado_sube_si_se_permite(self):
+        monitor = fake_monitor([(1, 6), (1, 6)])
+        with mock.patch.object(board, "_sources_changed", return_value="cambiado"), \
+                mock.patch.object(board, "upload") as upload:
+            ensure(monitor, board.UploadPolicy(assume_yes=True))
+        upload.assert_called_once_with(PROJECT)
+
+    def test_rtl_al_dia_no_hace_nada(self):
+        monitor = fake_monitor([(1, 6)])
+        with mock.patch.object(board, "_sources_changed", return_value=None), \
+                mock.patch.object(board, "upload") as upload:
+            ensure(monitor, board.UploadPolicy(allowed=False))
+        upload.assert_not_called()
+
+    def test_solo_mira_las_ulx3s(self):
+        self.assertIsNone(board._sources_changed(Path("no-existe")))
+
+    def test_dice_como_arreglarlo(self):
+        with mock.patch.object(board, "_is_ulx3s", return_value=True), \
+                mock.patch("tools.build_report.bitstream_is_current", return_value=False):
+            mensaje = board._sources_changed(Path("38.fpga-cpu-pipelined"))
+        self.assertIn("tools/build -p 38", mensaje)
+
+
 class FreshBitstreamTest(unittest.TestCase):
     """Cuando se puede reutilizar el bitstream y saltarse el build.
 

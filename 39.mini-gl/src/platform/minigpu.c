@@ -11,6 +11,7 @@
 #define FB_WORDS (FB_W * FB_H / 2)
 #define FB_A PLATFORM_FB_A
 #define FB_B PLATFORM_FB_B
+#define FB_C PLATFORM_FB_C
 #ifndef MGL_VERSION
 #define MGL_VERSION 0
 #endif
@@ -98,6 +99,26 @@ int main(void) {
     has_input = (REG(SYSTEM_DEVICES) & DEV_INPUT) != 0;
     if (platform_frame(back, front, frameCount ? draw : setup, 0) != MGL_OK) return 2;
     if (width != FB_W || height != FB_H) return 1;
+    if (platform_buffers == 3) {
+        /* Triple buffer: `last` es el último dibujado (se muestra o espera al VBlank), `next` el libre. Antes
+           de pedir un swap solo hay que esperar a que acabe el anterior, que a pocos fps ocurrió hace varios
+           VBlank. Entonces FB_BACK tiene el frente antiguo, que ya no se muestra: es el libre siguiente. Al
+           empezar, B tiene lo de setup() y no se ha mostrado: C es el libre y B lo será tras el primer swap.
+           A un contexto 2D se le pasa `last` como frente: de ahí copia el lienzo. */
+        mgl_u32 last = back, next = FB_C;
+        if (mgl_context_is3d()) clear(FB_C);
+        for (;;) {
+            frameCount++;
+            poll_input();
+            if (platform_frame(next, last, draw, 0) != MGL_OK) return 2;
+            while (REG(VIDEO_SWAP))
+                ;
+            last = next;
+            next = REG(VIDEO_FB_BACK);
+            REG(VIDEO_FB_BACK) = last;
+            REG(VIDEO_SWAP) = 1;
+        }
+    }
     for (;;) {
         frameCount++;
         poll_input();

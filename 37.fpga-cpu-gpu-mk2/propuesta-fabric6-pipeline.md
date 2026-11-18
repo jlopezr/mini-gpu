@@ -13,9 +13,29 @@ Las fases 1 y 2 se implementaron y validaron en placa el 7 de octubre de 2026:
 - validación completa de placa, incluido soak de 60 segundos, sin errores ni
   mismatches.
 
-El controlador continúa siendo secuencial: hay varias peticiones aceptadas y
-pendientes, pero una sola operación SDRAM interna ejecutándose. La fase 3 queda
-como trabajo futuro.
+La fase 3, en su primera versión (finalización en orden), se implementó en
+`35.fpga-cpu-fifo-sdram2` el mismo 7 de octubre, y la heredan las carpetas
+siguientes con el mismo `sdram_controller_128.v`:
+
+- un slot de petición por banco, con temporización propia: hasta cuatro
+  operaciones en vuelo, y el `ACTIVE` y tRCD de un banco se solapan con la
+  ráfaga de otro;
+- `READ`/`WRITE` en orden de llegada, así que las respuestas salen en orden con
+  la FIFO de destinos del fabric, sin etiquetas;
+- página cerrada con auto-precarga, como el controlador secuencial;
+- medido en simulación con `sdram_bank_parallel_tb.v` (ciclos por petición de
+  16 bytes): de 17,2 a 8,2 alternando bancos y de 17,2 a 12,3 en el mismo
+  banco, unos 195 MB/s de 200 de pico en el mejor caso. Detalle en el README de
+  la 35.
+
+Pendiente de la fase 3:
+
+- medir el throughput real **en placa** frente a la fase 2: solo hay medida de
+  simulación; en placa está validada funcionalmente (las CPU de la 35 en
+  adelante corren sobre ella);
+- los contadores de diagnóstico del fabric de «Verificación propuesta»
+  (ocupación de colas, operaciones en vuelo): no existen;
+- la versión posterior con reordenación o página abierta: no se ha empezado.
 
 ## Objetivo
 

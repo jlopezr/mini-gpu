@@ -59,6 +59,102 @@ mgl_real_t mgl_cos(mgl_real_t a) {
     return mgl_sin(a + HALF_PI);
 }
 
+/* Seno y coseno rápidos (mgl_sin_fast, mgl_cos_fast, mgl_sincos_fast): una tabla
+   de 256 senos por vuelta, en Q16 (65536 = 1), e interpolación lineal entre dos.
+   Error < 1e-4 (el de interpolar: (2 pi / 256)^2 / 8 ~ 7.5e-5, más el redondeo
+   de la tabla), invisible en pantalla; no dan los mismos bits que mgl_sin.
+
+   Por dentro, todo con enteros: una sola multiplicación float pasa el ángulo a
+   vueltas en 8.16 (8 bits de indice en la tabla, 16 de fraccion entre dos
+   entradas: una vuelta son 2^24), y el resultado Q16 vuelve a float con una
+   conversión y restando 16 al exponente (exacto, sin multiplicar). En MiniGPU,
+   ~100-150 instrucciones frente a las ~400-900 de mgl_sin/mgl_cos. El coseno es
+   el seno un cuarto de vuelta después: 64 entradas mas.
+
+   Ángulos hasta unos +-500 radianes van directos; más alla, se reducen antes
+   como en mgl_sin (en racer y compañía los ángulos se mantienen pequenos).
+   Generada con round(sin(2 pi i / 256) * 65536), i = 0..256. */
+static const mgl_s32 sin_table[257] = {
+    0, 1608, 3216, 4821, 6424, 8022, 9616, 11204,
+    12785, 14359, 15924, 17479, 19024, 20557, 22078, 23586,
+    25080, 26558, 28020, 29466, 30893, 32303, 33692, 35062,
+    36410, 37736, 39040, 40320, 41576, 42806, 44011, 45190,
+    46341, 47464, 48559, 49624, 50660, 51665, 52639, 53581,
+    54491, 55368, 56212, 57022, 57798, 58538, 59244, 59914,
+    60547, 61145, 61705, 62228, 62714, 63162, 63572, 63944,
+    64277, 64571, 64827, 65043, 65220, 65358, 65457, 65516,
+    65536, 65516, 65457, 65358, 65220, 65043, 64827, 64571,
+    64277, 63944, 63572, 63162, 62714, 62228, 61705, 61145,
+    60547, 59914, 59244, 58538, 57798, 57022, 56212, 55368,
+    54491, 53581, 52639, 51665, 50660, 49624, 48559, 47464,
+    46341, 45190, 44011, 42806, 41576, 40320, 39040, 37736,
+    36410, 35062, 33692, 32303, 30893, 29466, 28020, 26558,
+    25080, 23586, 22078, 20557, 19024, 17479, 15924, 14359,
+    12785, 11204, 9616, 8022, 6424, 4821, 3216, 1608,
+    0, -1608, -3216, -4821, -6424, -8022, -9616, -11204,
+    -12785, -14359, -15924, -17479, -19024, -20557, -22078, -23586,
+    -25080, -26558, -28020, -29466, -30893, -32303, -33692, -35062,
+    -36410, -37736, -39040, -40320, -41576, -42806, -44011, -45190,
+    -46341, -47464, -48559, -49624, -50660, -51665, -52639, -53581,
+    -54491, -55368, -56212, -57022, -57798, -58538, -59244, -59914,
+    -60547, -61145, -61705, -62228, -62714, -63162, -63572, -63944,
+    -64277, -64571, -64827, -65043, -65220, -65358, -65457, -65516,
+    -65536, -65516, -65457, -65358, -65220, -65043, -64827, -64571,
+    -64277, -63944, -63572, -63162, -62714, -62228, -61705, -61145,
+    -60547, -59914, -59244, -58538, -57798, -57022, -56212, -55368,
+    -54491, -53581, -52639, -51665, -50660, -49624, -48559, -47464,
+    -46341, -45190, -44011, -42806, -41576, -40320, -39040, -37736,
+    -36410, -35062, -33692, -32303, -30893, -29466, -28020, -26558,
+    -25080, -23586, -22078, -20557, -19024, -17479, -15924, -14359,
+    -12785, -11204, -9616, -8022, -6424, -4821, -3216, -1608,
+    0
+};
+
+/* 2^24 / (2 pi): radianes a vueltas en 8.16. */
+#define FAST_TURN_SCALE 2670176.93f
+
+static mgl_u32 fast_turns(mgl_real_t a) {
+    /* |a| > 500 mirando los bits, como mgl_round: con float por software, dos
+       comparaciones menos en cada llamada. 500.0f es 0x43fa0000. */
+    if ((mgl_real_to_f32(a) & 0x7fffffffU) > 0x43fa0000U)
+        a = a - (mgl_real_t)mgl_round(a * INV_TWO_PI) * TWO_PI;
+    /* Truncar hacia cero y quedarse con los 24 bits de abajo es, en
+       complemento a dos, el ángulo modulo una vuelta: también si es negativo. */
+    return (mgl_u32)(mgl_s32)(a * FAST_TURN_SCALE);
+}
+
+/* El seno en Q16 de un ángulo en vueltas 8.16 (los bits de encima no cuentan). */
+static mgl_s32 fast_sin_q16(mgl_u32 turns) {
+    mgl_u32 i = (turns >> 16) & 255U;
+    mgl_s32 frac = (mgl_s32)(turns & 0xffffU);
+    mgl_s32 s0 = sin_table[i];
+    /* |s1 - s0| <= 1608 y frac < 2^16: el producto cabe en 32 bits. */
+    return s0 + (((sin_table[i + 1] - s0) * frac) >> 16);
+}
+
+/* Q16 a float: convertir el entero y dividir por 2^16 restando 16 al
+   exponente. Exacto: |q| <= 65536 cabe en la mantisa y no hay subnormales. */
+static mgl_real_t q16_to_real(mgl_s32 q) {
+    f32_bits b;
+    b.f = (mgl_real_t)q;
+    if (q != 0) b.u -= (mgl_u32)16 << 23;
+    return b.f;
+}
+
+mgl_real_t mgl_sin_fast(mgl_real_t a) {
+    return q16_to_real(fast_sin_q16(fast_turns(a)));
+}
+
+mgl_real_t mgl_cos_fast(mgl_real_t a) {
+    return q16_to_real(fast_sin_q16(fast_turns(a) + ((mgl_u32)64 << 16)));
+}
+
+void mgl_sincos_fast(mgl_real_t a, mgl_real_t *s, mgl_real_t *c) {
+    mgl_u32 t = fast_turns(a);
+    *s = q16_to_real(fast_sin_q16(t));
+    *c = q16_to_real(fast_sin_q16(t + ((mgl_u32)64 << 16)));
+}
+
 /* Newton desde una estimación sacada del exponente (error < 4%): cuatro pasos
    dan la precisión de float. */
 mgl_real_t mgl_sqrt(mgl_real_t v) {
@@ -183,34 +279,51 @@ void mgl_mat4_look_at(mgl_mat4_t *out, mgl_real_t ex, mgl_real_t ey, mgl_real_t 
     out->m[14] = f[0] * ex + f[1] * ey + f[2] * ez;
 }
 
+/* m = m * T, m * S y m * R sin el producto completo (64 productos y 48 sumas en float por software): solo cambian
+   las columnas que T, S o R no dejan como en la identidad, con las mismas operaciones y en el mismo orden que
+   mgl_mat4_mul sin los términos que multiplican por 0. Los mismos valores; solo puede cambiar el signo de un cero
+   (en mgl_mat4_mul, -0 + 0 da +0). */
 void mgl_mat4_translate_by(mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z) {
-    mgl_mat4_t t;
-    mgl_mat4_translation(&t, x, y, z);
-    mgl_mat4_mul(m, m, &t);
+    int r;
+    for (r = 0; r < 4; r++)
+        m->m[12 + r] = m->m[r] * x + m->m[4 + r] * y + m->m[8 + r] * z + m->m[12 + r];
 }
 
 void mgl_mat4_scale_by(mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z) {
-    mgl_mat4_t t;
-    mgl_mat4_scaling(&t, x, y, z);
-    mgl_mat4_mul(m, m, &t);
+    int r;
+    for (r = 0; r < 4; r++) {
+        m->m[r] = m->m[r] * x;
+        m->m[4 + r] = m->m[4 + r] * y;
+        m->m[8 + r] = m->m[8 + r] * z;
+    }
+}
+
+/* Las columnas i y j de m tras m * R: la i nueva es c * col_i + sj * col_j y la j,
+   si * col_i + c * col_j, con los coeficientes de la matriz de giro (rotation_x/y/z). */
+static void rotate_columns(mgl_mat4_t *m, int i, int j, mgl_real_t c, mgl_real_t si, mgl_real_t sj) {
+    int r;
+    mgl_real_t a, b;
+    for (r = 0; r < 4; r++) {
+        a = m->m[i * 4 + r];
+        b = m->m[j * 4 + r];
+        m->m[i * 4 + r] = a * c + b * sj;
+        m->m[j * 4 + r] = a * si + b * c;
+    }
 }
 
 void mgl_mat4_rotate_x_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_x(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 1, 2, c, -s, s); /* rotation_x: col 1 = (0, c, s, 0), col 2 = (0, -s, c, 0) */
 }
 
 void mgl_mat4_rotate_y_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_y(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 0, 2, c, s, -s); /* rotation_y: col 0 = (c, 0, -s, 0), col 2 = (s, 0, c, 0) */
 }
 
 void mgl_mat4_rotate_z_by(mgl_mat4_t *m, mgl_real_t angle) {
-    mgl_mat4_t t;
-    mgl_mat4_rotation_z(&t, angle);
-    mgl_mat4_mul(m, m, &t);
+    mgl_real_t c = mgl_cos(angle), s = mgl_sin(angle);
+    rotate_columns(m, 0, 1, c, -s, s); /* rotation_z: col 0 = (c, s, 0, 0), col 1 = (-s, c, 0, 0) */
 }
 
 void mgl_mat4_transform_point(const mgl_mat4_t *m, mgl_real_t x, mgl_real_t y, mgl_real_t z,

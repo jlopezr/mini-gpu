@@ -17,7 +17,11 @@ elegido (el de menos margen si no se dice), asi que `HOLGURA = periodo - llegada
 El resto de dominios y las rutas de entrada y salida de pin no se miran.
 
 Yosys aplana el diseño, asi que los registros de la CPU no llevan el nombre de su
-modulo y el agrupado por modulo los deja en `(anonimo)`. `--path` enseña en cambio
+modulo y el agrupado por modulo los deja en `(anonimo)`. `--by-register` les
+devuelve el nombre del RTL con el `hardware.json` de Yosys (ver `register_names`), y
+`--stages` los resume por etapa (atributo `pipeline_stage` del RTL o prefijo del
+nombre), y `--stage-matrix` sigue el netlist hacia atras para ver de que etapa sale
+cada camino (ver `input_cones`). `--path` enseña
 el camino critico completo del reloj, salto a salto, con el fichero y la linea de
 cada red con nombre y la distancia que recorre en la FPGA.
 """
@@ -129,8 +133,145 @@ def module(cell):
     return match.group(1) if match else '(anonimo)'
 
 
-def analyze(pnr, clock=None):
-    """Familias de registros de destino de un reloj, con su peor llegada y cuantos pasan de 80 % y 90 %."""
+# Entradas de un TRELLIS_FF por las que llega el camino. Separarlas dice si un
+# registro llega tarde porque CALCULA algo (dato) o porque ESPERA la decision de
+# si se actualiza (enable): en una CPU segmentada, IF e ID suelen copiar el dato
+# en pocos ns y llegar tarde solo por el enable, que viene de la etapa que
+# decide saltos y paradas. Lo que no es dato ni enable (reset, puertos de
+# escritura de RAM distribuida, multiplicadores) va a `otras`.
+PORT_KINDS = ('dato', 'enable', 'otras')
+_PORT_KIND = {'DI': 'dato', 'M': 'dato', 'D': 'dato', 'CE': 'enable'}
+
+
+def port_kind(port):
+    return _PORT_KIND.get(port, 'otras')
+
+
+def _ports_cells(ports, p):
+    return tuple(_arrival_cell(ports[k], p) if ports[k] else '-' for k in PORT_KINDS)
+
+
+# ---- nombres del RTL (--by-register) --------------------------------------
+
+def netlist_for(pnr_path, explicit=None):
+    """El `hardware.json` de Yosys que va con un informe: junto a el o en una carpeta de encima.
+
+    `build` lo archiva junto al `.pnr`; en un barrido la sintesis es una sola, asi
+    que puede estar en la carpeta del barrido y no en la de cada semilla.
+    """
+    if explicit is not None:
+        if not Path(explicit).is_file():
+            raise SystemExit(f'No existe {explicit}.')
+        return Path(explicit)
+    folder = Path(pnr_path).resolve().parent
+    for candidate in (folder, *list(folder.parents)[:2]):
+        if (candidate / 'hardware.json').is_file():
+            return candidate / 'hardware.json'
+    raise SystemExit(f'No hay hardware.json junto a {pnr_path} ni dos carpetas por encima: '
+                     f'indicalo con --netlist.')
+
+
+STAGE_ATTRIBUTE = 'pipeline_stage'
+
+
+def _source_file(attrs):
+    return (attrs.get('src') or '').split(':', 1)[0]
+
+
+def top_module(netlist):
+    modules = netlist.get('modules', {})
+    top = next((m for m in modules.values() if m.get('attributes', {}).get('top')), None)
+    if top is None and len(modules) == 1:
+        top = next(iter(modules.values()))
+    if top is None:
+        raise SystemExit('El netlist no tiene un modulo top aplanado.')
+    return top
+
+
+def register_names(netlist):
+    """Celda de flip-flop -> nombre del registro del RTL al que pertenece su salida.
+
+    El informe de nextpnr solo nombra celdas (`$auto$ff.cc:337:slice$N` en un
+    diseño aplanado). En el netlist de Yosys la salida `Q` de cada celda es un
+    numero de bit, y `netnames` dice que señales contienen ese bit. Suele haber
+    varias, porque un `wire` que corta trozos de un registro (`if_rd =
+    if_instruction[25:21]`) comparte sus bits, los puertos de los modulos que lo
+    reciben tambien, y el netlist no distingue un `reg` de un `wire`. Se elige,
+    por este orden:
+
+    1. una señal declarada en el mismo fichero que el `always` que escribe el
+       flip-flop (el `src` de la celda): `cpu_i.register_write_data` y no el
+       puerto `register_file_i.write_data` que la recibe;
+    2. una señal con atributo `pipeline_stage`: si el RTL la ha etiquetado, es
+       el registro (`architectural_pc` y no `assign debug_pc = architectural_pc`);
+    3. una señal *pura*: todos sus bits salen de flip-flops, sin constantes ni
+       bits repetidos (descarta extensiones de signo y `{x, 2'b00}`);
+    4. la mas ancha (el registro entero gana al trozo);
+    5. la mas profunda en la jerarquia;
+    6. la de nombre mas corto.
+
+    Las celdas que no son flip-flops (RAM distribuida, multiplicadores) no
+    salen: para ellas se sigue usando el nombre de la celda.
+    """
+    top = top_module(netlist)
+    q_of = {}
+    for cell, info in top.get('cells', {}).items():
+        q = info.get('connections', {}).get('Q')
+        if q and isinstance(q[0], int):
+            q_of[cell] = (q[0], _source_file(info.get('attributes', {})))
+    ff_bits = {bit for bit, _ in q_of.values()}
+    candidates = collections.defaultdict(list)
+    for name, info in top.get('netnames', {}).items():
+        if info.get('hide_name'):
+            continue
+        bits = info.get('bits', [])
+        ints = [b for b in bits if isinstance(b, int)]
+        if not any(b in ff_bits for b in ints):
+            continue
+        attrs = info.get('attributes', {})
+        pure = len(ints) == len(bits) and len(set(ints)) == len(ints) and all(b in ff_bits for b in ints)
+        entry = (_source_file(attrs),
+                 (STAGE_ATTRIBUTE in attrs, pure, len(bits), name.count('.'), -len(name)), name)
+        for b in set(ints):
+            if b in ff_bits:
+                candidates[b].append(entry)
+    names = {}
+    for cell, (bit, cell_file) in q_of.items():
+        if candidates[bit]:
+            names[cell] = max(candidates[bit], key=lambda c: (c[0] == cell_file, c[1]))[2]
+    return names
+
+
+def register_tags(netlist):
+    """Registro -> valor de su atributo `(* pipeline_stage = "..." *)` en el RTL.
+
+    Yosys conserva los atributos de las señales al aplanar y sintetizar (no los
+    de las memorias). Ver `stage_label` para como se combinan con los prefijos.
+    """
+    return {name: info['attributes'][STAGE_ATTRIBUTE]
+            for name, info in top_module(netlist).get('netnames', {}).items()
+            if STAGE_ATTRIBUTE in info.get('attributes', {})}
+
+
+def load_netlist(pnr_path, explicit=None):
+    path = netlist_for(pnr_path, explicit)
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f'No se puede leer {path}: {exc}')
+
+
+def load_register_names(pnr_path, explicit=None):
+    return register_names(load_netlist(pnr_path, explicit))
+
+
+def analyze(pnr, clock=None, names=None, prefix=None):
+    """Familias de registros de destino de un reloj, con su peor llegada y cuantos pasan de 80 % y 90 %.
+
+    Con `names` (celda -> registro del RTL, de `register_names`) la familia es el
+    registro; sin el, el nombre de la celda limpio. `prefix` deja solo las
+    familias que empiezan asi (p. ej. `cpu_i.`).
+    """
     if not has_detail(pnr):
         raise SystemExit('Este informe no trae detalle por red (`detailed_net_timings`): '
                          'hace falta un barrido, o `--detailed-timing-report` en el apio.ini.')
@@ -139,6 +280,7 @@ def analyze(pnr, clock=None):
     families = {}
     hops = {}
     endpoints = 0
+    names = names or {}
     for net in pnr['detailed_net_timings']:
         if name not in net.get('event', ''):
             continue
@@ -146,16 +288,22 @@ def analyze(pnr, clock=None):
             cell = ep.get('cell', '')
             if '$tr_io' in cell:      # pines: el rutado hasta ellos no se cronometra aqui
                 continue
+            key = names.get(cell) or family(cell)
+            if prefix and not key.startswith(prefix):
+                continue
             delay = ep['delay']
             arrival = max(delay) if isinstance(delay, list) else delay
-            entry = families.setdefault(family(cell), dict(module=module(cell), worst=0.0,
-                                                           near=0, hard=0, endpoints=0))
+            entry = families.setdefault(key, dict(module=module(key), worst=0.0,
+                                                  near=0, hard=0, endpoints=0,
+                                                  ports={k: 0.0 for k in PORT_KINDS}))
             entry['worst'] = max(entry['worst'], arrival)
+            kind = port_kind(ep.get('port', ''))
+            entry['ports'][kind] = max(entry['ports'][kind], arrival)
             entry['near'] += arrival >= NEAR * period
             entry['hard'] += arrival >= HARD * period
             entry['endpoints'] += 1
             endpoints += 1
-            hop = hops.setdefault((module(net.get('driver', '')), module(cell)),
+            hop = hops.setdefault((module(net.get('driver', '')), module(key)),
                                   dict(worst=0.0, near=0, hard=0))
             hop['worst'] = max(hop['worst'], arrival)
             hop['near'] += arrival >= NEAR * period
@@ -268,19 +416,319 @@ def _header(analysis, source=None):
     return lines
 
 
-def report_lines(analysis, top=20, source=None, color=False):
+def report_lines(analysis, top=20, source=None, color=False, ports=False):
     p = analysis['period']
     lines = _header(analysis, source) + ['']
     ranked = sorted(analysis['families'].items(), key=lambda kv: -kv[1]['worst'])[:top]
-    rows = [('REGISTRO DE DESTINO', 'MODULO', 'LLEGADA', 'HOLGURA', '>=80 %', '>=90 %')]
+    extra = tuple(k.upper() for k in PORT_KINDS) if ports else ()
+    rows = [('REGISTRO DE DESTINO', 'MODULO', 'LLEGADA', 'HOLGURA', *extra, '>=80 %', '>=90 %')]
     for name, e in ranked:
         rows.append((name, e['module'], _arrival_cell(e['worst'], p), f'{p - e["worst"]:+.2f}',
+                     *(_ports_cells(e['ports'], p) if ports else ()),
                      str(e['near']), str(e['hard'])))
     lines += _table(rows, color) + ['']
+    if ports:
+        lines += ['DATO: entrada de dato (DI/M); ENABLE: CE, la decision de si el registro se actualiza; '
+                  'OTRAS: reset y puertos de RAM.', '']
     rows = [('MODULO', 'LLEGADA', '>=80 %', '>=90 %')]
     modules = sorted(by_module(analysis).items(), key=lambda kv: -kv[1]['worst'])
     for name, m in modules[:12]:
         rows.append((name, _arrival_cell(m['worst'], p), str(m['near']), str(m['hard'])))
+    return lines + _table(rows, color)
+
+
+UNSTAGED = '(sin etapa)'
+DEFAULT_STAGES = 'if_,id_,ex_,wb_,ctl_=_CTL'
+OUTSIDE = '(fuera)'
+RAM_GROUP = '_RAM'
+
+
+def parse_stages(text):
+    """`if_,id_,ex_,wb_,ctl_=_CTL,_WR` -> ({'if_': 'IF', ..., 'ctl_': '_CTL'}, ['IF', ..., '_CTL', '_WR']).
+
+    Un elemento que acaba en `_` y va en minusculas es un prefijo de nombre, y
+    su etiqueta es el prefijo en mayusculas sin el `_`. `prefijo=ETIQUETA` da
+    la etiqueta a mano, p. ej. `ctl_=_CTL` para un grupo que no es etapa.
+    Cualquier otro es una etiqueta de atributo (`_WR`, `_CTL`) y solo fija su
+    sitio en el orden.
+    """
+    prefixes, order = {}, []
+    for token in (t.strip() for t in text.split(',')):
+        if not token:
+            continue
+        if '=' in token:
+            prefix, label = (x.strip() for x in token.split('=', 1))
+            prefixes[prefix] = label
+        elif token.endswith('_') and token == token.lower() and not token.startswith('_'):
+            prefixes[token] = token.rstrip('_').upper()
+            label = prefixes[token]
+        else:
+            label = token
+        if label not in order:
+            order.append(label)
+    return prefixes, order
+
+
+def is_pseudo(label):
+    """Las etiquetas que empiezan por `_` son grupos que no son etapas del pipeline (`_WR`, `_CTL`)."""
+    return label.startswith('_') or label.startswith('(')
+
+
+def stage_label(register, prefixes, tags=None):
+    """Etapa de un registro: su atributo `pipeline_stage` si lo tiene; si no, su prefijo; si no, None."""
+    if tags and register in tags:
+        return tags[register]
+    short = register.rsplit('.', 1)[-1]
+    return next((label for prefix, label in prefixes.items() if short.startswith(prefix)), None)
+
+
+def _full_order(order, labels):
+    """El orden pedido, luego las etapas reales que falten y luego los grupos `_`, `(fuera)` y `(sin etapa)`."""
+    extra = sorted(set(labels) - set(order) - {UNSTAGED, OUTSIDE})
+    return order + [x for x in extra if not is_pseudo(x)] + [x for x in extra if is_pseudo(x)] + \
+        [x for x in (OUTSIDE, UNSTAGED) if x in labels]
+
+
+def stage_lines(analysis, prefixes, order, tags=None, color=False, ports=False):
+    """Resumen por etapa: los registros se reparten por su atributo o por el prefijo de su nombre.
+
+    La etapa no se deduce del circuito: sale del RTL, del atributo
+    `(* pipeline_stage = "..." *)` o, si no lo hay, de la convencion de nombres
+    (`if_*`, `id_*`...). Lo que no tiene ninguna de las dos va a `(sin etapa)`
+    y se lista, para que se vea que ha quedado sin clasificar. Con `ports`,
+    ademas, la peor llegada por tipo de entrada (ver `PORT_KINDS`).
+    """
+    p = analysis['period']
+    groups = collections.defaultdict(lambda: dict(worst=0.0, registers=0, bits=0, near=0, hard=0,
+                                                  ports={k: 0.0 for k in PORT_KINDS}))
+    others = []
+    for register, e in analysis['families'].items():
+        stage = stage_label(register, prefixes, tags)
+        if stage is None:
+            stage = UNSTAGED
+            others.append((register, e['worst']))
+        g = groups[stage]
+        g['worst'] = max(g['worst'], e['worst'])
+        g['registers'] += 1
+        g['bits'] += e['endpoints']
+        g['near'] += e['near']
+        g['hard'] += e['hard']
+        for k in PORT_KINDS:
+            g['ports'][k] = max(g['ports'][k], e['ports'][k])
+    extra = tuple(k.upper() for k in PORT_KINDS) if ports else ()
+    rows = [('ETAPA', 'LLEGADA', '% PERIODO', *extra, 'REGISTROS', 'DESTINOS', '>=80 %', '>=90 %')]
+    for stage in _full_order(order, groups):
+        g = groups.get(stage)
+        if not g or not g['registers']:
+            continue
+        rows.append((stage, _arrival_cell(g['worst'], p),
+                     f'{100 * g["worst"] / p:.0f}', *(_ports_cells(g['ports'], p) if ports else ()),
+                     str(g['registers']), str(g['bits']), str(g['near']), str(g['hard'])))
+    lines = ['Por etapa (atributo pipeline_stage, o prefijo del nombre; `_` = grupo que no es etapa):']
+    lines += _table(rows, color)
+    if others:
+        others.sort(key=lambda o: -o[1])
+        shown = ', '.join(f'{r.rsplit(".", 1)[-1]} {w:.2f}' for r, w in others[:12])
+        more = f' y {len(others) - 12} mas' if len(others) > 12 else ''
+        lines.append(f'{UNSTAGED}: {shown}{more}')
+    return lines
+
+
+# ---- conos de entrada (--stage-matrix) -------------------------------------
+
+# Cuantas LUT cuenta cada celda al cruzarla. El carry (CCU2C) cuenta una al
+# entrar por A/B/C/D y ninguna a lo largo de la cadena (CIN), que es rapida; los
+# multiplexores de slice (PFUMX, L6MUX21) no cuentan. La lectura asincrona de
+# la RAM distribuida (de RAD a DO) cuenta una, como una LUT.
+_LUT_STEP = {'LUT4': 1, 'TRELLIS_DPR16X4': 1}
+
+
+def _cone_kind(port):
+    """dato (DI/M/D) o control (CE/LSR); None para lo demas (puertos de RAM...)."""
+    return 'dato' if port in ('DI', 'M', 'D') else 'control' if port in ('CE', 'LSR') else None
+
+
+def endpoint_arrivals(pnr, clock_name):
+    """(celda, dato|control) -> peor llegada, para los destinos del reloj.
+
+    Por tipo y no por puerto: nextpnr puede mover el dato de DI a M al colocar el
+    flip-flop, asi que el puerto del netlist de Yosys no siempre es el del informe.
+    """
+    out = {}
+    for net in pnr.get('detailed_net_timings', []):
+        if clock_name not in net.get('event', ''):
+            continue
+        for ep in net.get('endpoints', []):
+            delay = ep['delay']
+            arrival = max(delay) if isinstance(delay, list) else delay
+            kind = _cone_kind(ep.get('port', ''))
+            if kind is None:
+                continue
+            key = (ep.get('cell', ''), kind)
+            out[key] = max(out.get(key, 0.0), arrival)
+    return out
+
+
+def input_cones(netlist, names, scope=None):
+    """Para cada flip-flop (dentro de `scope`) y cada entrada: registros de los que sale y cuantas LUT cruza.
+
+    Recorre el netlist de Yosys hacia atras desde las entradas DI/M/CE/LSR del
+    flip-flop, por la logica combinacional, hasta dar con salidas de flip-flops
+    (el origen es su registro, via `names`) o con una RAM distribuida (el origen
+    es la propia memoria: su contenido; y se sigue por la direccion de lectura).
+    Devuelve {(registro destino, tipo de entrada): {registro origen: maximo de LUT}},
+    {(registro destino, tipo de entrada): [(celda, tipo)]} para buscar llegadas,
+    y el conjunto de origenes que son memorias.
+    No da tiempos por par: eso exigiria un analisis de timing propio.
+    """
+    top = top_module(netlist)
+    cells = top.get('cells', {})
+    driver = {}
+    for cell, info in cells.items():
+        for port, direction in info.get('port_directions', {}).items():
+            if direction == 'output':
+                for b in info.get('connections', {}).get(port, []):
+                    if isinstance(b, int):
+                        driver[b] = (cell, port)
+    memo = {}
+    busy = set()
+    rams = set()
+
+    def cone(bit):
+        if not isinstance(bit, int) or bit not in driver:
+            return {}
+        if bit in memo:
+            return memo[bit]
+        if bit in busy:                       # bucle combinacional: no deberia haberlo
+            return {}
+        busy.add(bit)
+        cell, _ = driver[bit]
+        info = cells[cell]
+        kind = info['type']
+        result = {}
+        if kind == 'TRELLIS_FF':
+            result = {names.get(cell, family(cell)): 0}
+        else:
+            if kind == 'TRELLIS_DPR16X4':
+                result[family(cell)] = 1
+                rams.add(family(cell))
+            for port, direction in info.get('port_directions', {}).items():
+                if direction != 'input':
+                    continue
+                if kind == 'TRELLIS_DPR16X4' and not port.startswith('RAD'):
+                    continue                 # escritura: secuencial, no forma parte del cono de lectura
+                step = _LUT_STEP.get(kind, 0)
+                if kind == 'CCU2C':
+                    step = 0 if port == 'CIN' else 1
+                for b in info.get('connections', {}).get(port, []):
+                    for src, depth in cone(b).items():
+                        if depth + step > result.get(src, -1):
+                            result[src] = depth + step
+        busy.discard(bit)
+        memo[bit] = result
+        return result
+
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 20000))
+    try:
+        cones, where = {}, collections.defaultdict(list)
+        for cell, info in cells.items():
+            if info['type'] != 'TRELLIS_FF':
+                continue
+            dest = names.get(cell, family(cell))
+            if scope and not dest.startswith(scope):
+                continue
+            for port in ('DI', 'M', 'CE', 'LSR'):
+                bits = info.get('connections', {}).get(port)
+                if not bits:
+                    continue
+                key = (dest, _cone_kind(port))
+                if (cell, key[1]) not in where[key]:
+                    where[key].append((cell, key[1]))
+                acc = cones.setdefault(key, {})
+                for b in bits:
+                    for src, depth in cone(b).items():
+                        acc[src] = max(acc.get(src, 0), depth)
+    finally:
+        sys.setrecursionlimit(limit)
+    return cones, where, rams
+
+
+def stage_matrix(cones, where, rams, arrivals, prefixes, order, tags, scope=None):
+    """Matriz etapa origen x etapa destino, y la lista de caminos entre etapas.
+
+    Cada casilla: el maximo de LUT de un camino de esa etapa a esa otra, y la
+    peor llegada de los destinos que reciben alguno de esos caminos. La llegada
+    es del destino, no del par (nextpnr no da tiempos por par): si un destino
+    recibe caminos de dos etapas, las dos casillas comparten su llegada; las LUT
+    si son de cada par.
+    """
+    def label(register, is_ram=False):
+        if scope and not register.startswith(scope):
+            return OUTSIDE
+        if is_ram:
+            return RAM_GROUP
+        return stage_label(register, prefixes, tags) or UNSTAGED
+
+    matrix, edges = {}, []
+    for (dest, kind), sources in cones.items():
+        dst_stage = label(dest)
+        arrival = max((arrivals.get(cp, 0.0) for cp in where[(dest, kind)]), default=0.0)
+        for src, depth in sources.items():
+            src_stage = label(src, src in rams)
+            cell = matrix.setdefault((src_stage, dst_stage, kind), dict(depth=0, worst=0.0))
+            cell['depth'] = max(cell['depth'], depth)
+            cell['worst'] = max(cell['worst'], arrival)
+            edges.append(dict(src=src, dst=dest, kind=kind, depth=depth, arrival=arrival,
+                              src_stage=src_stage, dst_stage=dst_stage))
+    labels = {s for key in matrix for s in key[:2]}
+    return dict(matrix=matrix, edges=edges, order=_full_order(order, labels))
+
+
+def direction(src_stage, dst_stage, order):
+    """adelante / misma / atras entre etapas reales; `aux` si alguna es un grupo (`_`, `(...)`)."""
+    if is_pseudo(src_stage) or is_pseudo(dst_stage):
+        return 'aux'
+    real = [s for s in order if not is_pseudo(s)]
+    if src_stage not in real or dst_stage not in real:
+        return 'aux'
+    delta = real.index(dst_stage) - real.index(src_stage)
+    return 'misma' if delta == 0 else 'adelante' if delta > 0 else 'atras'
+
+
+def _matrix_table(m, kind, order, period, color):
+    rows = [('ORIGEN \\ DESTINO', *order)]
+    for src in order:
+        row = [src]
+        for dst in order:
+            c = m.get((src, dst, kind))
+            if not c:
+                row.append('·')
+                continue
+            code = '31' if c['worst'] >= period else '33' if c['worst'] >= HARD * period else None
+            mark = {'atras': ' <', 'misma': ' =', 'adelante': '', 'aux': ''}[direction(src, dst, order)]
+            row.append((f'{c["depth"]}/{c["worst"]:.1f}{mark}', code))
+        if any(m.get((src, d, kind)) for d in order):
+            rows.append(tuple(row))
+    return _table(rows, color)
+
+
+def matrix_lines(result, period, top=15, color=False):
+    order = result['order']
+    m = result['matrix']
+    lines = ['Matrices origen -> destino: LUT maximas del camino / peor llegada de la entrada del destino (ns).',
+             'La llegada es del destino, no del par. `<` hacia atras, `=` dentro de la etapa, `·` sin camino.',
+             '', 'DATO (DI/M): lo que el registro calcula']
+    lines += _matrix_table(m, 'dato', order, period, color)
+    lines += ['', 'CONTROL (CE/LSR): si el registro se actualiza o se pone a cero']
+    lines += _matrix_table(m, 'control', order, period, color) + ['']
+    back = sorted((e for e in result['edges'] if direction(e['src_stage'], e['dst_stage'], order) == 'atras'),
+                  key=lambda e: (-e['depth'], -e['arrival']))
+    rows = [('ORIGEN', 'ETAPA', 'DESTINO', 'ENTRADA', 'ETAPA', 'LUT', 'LLEGADA')]
+    for e in back[:top]:
+        rows.append((e['src'], e['src_stage'], e['dst'], e['kind'], e['dst_stage'], str(e['depth']),
+                     _arrival_cell(e['arrival'], period)))
+    lines.append(f'Caminos hacia atras, {min(top, len(back))} de {len(back)}, por LUT:')
     return lines + _table(rows, color)
 
 
@@ -345,7 +793,32 @@ def main(argv=None):
     parser.add_argument('--path', action='store_true',
                         help='enseña el camino critico completo del reloj, salto a salto, con fichero, linea y '
                              'distancia: para cuando el diseño esta aplanado y el muro sale como (anonimo)')
+    parser.add_argument('--by-register', action='store_true',
+                        help='nombra cada destino con su registro del RTL (cpu_i.ex_result) en vez de la celda '
+                             '($auto$ff.cc:...slice$N), usando el hardware.json de Yosys del mismo build')
+    parser.add_argument('--netlist', type=Path, metavar='JSON',
+                        help='hardware.json a usar con --by-register (por defecto, el que esta junto al informe)')
+    parser.add_argument('--filter', metavar='PREFIJO',
+                        help='solo los destinos cuyo registro empieza asi (p. ej. cpu_i.); mejor con --by-register')
+    parser.add_argument('--stages', metavar='P1,P2,...', nargs='?', const=DEFAULT_STAGES,
+                        help='resumen por etapa: el atributo (* pipeline_stage *) del registro o, si no lo '
+                             'tiene, el prefijo de su nombre corto; prefijos y orden en la lista, '
+                             '`prefijo=ETIQUETA` para fijar la etiqueta '
+                             f'(sin valor: {DEFAULT_STAGES}); implica --by-register')
+    parser.add_argument('--stage-matrix', action='store_true',
+                        help='matriz etapa origen x etapa destino con las LUT de cada camino, siguiendo el '
+                             'netlist hacia atras desde cada registro, y los caminos hacia atras; implica --stages')
+    parser.add_argument('--ports', action='store_true',
+                        help='separa la llegada de cada registro por entrada: DATO (calcula) frente a ENABLE '
+                             '(espera la decision de actualizarse) y OTRAS')
     args = parser.parse_args(argv)
+    if args.ports and args.compare is not None:
+        parser.error('--ports no se combina con --compare')
+    if args.stage_matrix and args.stages is None:
+        args.stages = DEFAULT_STAGES
+    prefixes, order = parse_stages(args.stages or '')
+    stages = args.stages is not None
+    by_register = args.by_register or stages
 
     if args.source is not None:
         path, note = pnr_from_path(args.source), str(args.source)
@@ -371,13 +844,28 @@ def main(argv=None):
             parser.error('--path no se combina con --compare')
         print('\n'.join(path_lines(critical_path(load_pnr(path), args.clock), f'{note} ({path})', color)))
         return 0
-    analysis = analyze(load_pnr(path), args.clock)
+    netlist = load_netlist(path, args.netlist) if by_register else None
+    names = register_names(netlist) if netlist else None
+    tags = register_tags(netlist) if netlist else {}
+    pnr = load_pnr(path)
+    analysis = analyze(pnr, args.clock, names, args.filter)
+    if args.filter:
+        note += f', solo {args.filter}'
     if args.compare is not None:
         other = pnr_from_path(args.compare)
-        second = analyze(load_pnr(other), analysis['clock'])
+        # El otro build tiene su propio netlist: los nombres de celda no coinciden entre builds.
+        other_names = load_register_names(other) if by_register else None
+        second = analyze(load_pnr(other), analysis['clock'], other_names, args.filter)
         print('\n'.join(compare_lines(analysis, second, args.top, f'{note} ({path})', str(other), color)))
     else:
-        print('\n'.join(report_lines(analysis, args.top, f'{note} ({path})', color)))
+        print('\n'.join(report_lines(analysis, args.top, f'{note} ({path})', color, args.ports)))
+        if stages:
+            print('\n' + '\n'.join(stage_lines(analysis, prefixes, order, tags, color, args.ports)))
+        if args.stage_matrix:
+            cones, where, rams = input_cones(netlist, names, args.filter)
+            result = stage_matrix(cones, where, rams, endpoint_arrivals(pnr, analysis['clock']),
+                                  prefixes, order, tags, args.filter)
+            print('\n' + '\n'.join(matrix_lines(result, analysis['period'], args.top, color)))
         if args.cross:
             print('\n' + '\n'.join(cross_lines(analysis, color=color)))
     return 0

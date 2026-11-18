@@ -69,7 +69,10 @@ de la capa de arriba.
 
 `arg0` = color RGB565. Con `flags = 0` (el CLEAR de siempre) `arg1 = 0` y solo borra el color. Con
 `flags = MGL_CLEAR_DEPTH` (1) borra también la profundidad: `arg1` es el valor en Q16.16 sin signo, de `0`
-(cerca) a `0x10000` (lejos). Borra todo el destino; no depende del viewport.
+(cerca) a `0x10000` (lejos). Con `flags = MGL_CLEAR_DEPTH | MGL_CLEAR_KEEP_COLOR` (3) borra solo la
+profundidad y `arg0` tiene que ser 0 (`mgl_clear_depth`): para frames que pintan toda la pantalla de todos modos.
+`MGL_CLEAR_KEEP_COLOR` sin `MGL_CLEAR_DEPTH` es un error de formato. Borra todo el destino; no depende del
+viewport.
 
 ### BATCH (40)
 
@@ -121,8 +124,17 @@ Un solo opcode para las tres matrices. La matriz va por valor: MiniGL la copia a
 | `MGL_STATE_BLEND` (4) | reservado: se rechaza |
 | `MGL_STATE_CULL_BACK` (8) | descarta caras traseras |
 | `MGL_STATE_CULL_FRONT` (16) | descarta caras delanteras |
+| `MGL_STATE_DEPTH_SORT` (32) | algoritmo del pintor: ordena los triángulos de lejos a cerca |
 
 De frente = antihorario en coordenadas normalizadas (y hacia arriba), como OpenGL.
+
+**`DEPTH_SORT`**: los triángulos aceptados (tras recortar y descartar caras) de los `DRAW_INDEXED` con este
+bit no se rasterizan enseguida: el renderer los guarda, con su color y su estado, y los rasteriza de lejos a
+cerca (por la suma de las z de sus vértices; a igual distancia, en el orden de llegada) antes del siguiente
+`CLEAR`, `BATCH`, `SET_RENDER_TARGET`, `SET_VIEWPORT`, `DRAW_INDEXED` sin el bit, `END_FRAME` o el final del
+buffer. Si su lista (1024 triángulos) se llena, la vacía antes de seguir. Con `DEPTH_TEST` y `DEPTH_WRITE`
+apagados no usa el Z-buffer: ni plano de profundidad por triángulo ni lectura por píxel, y no hace falta
+borrarlo. Falla como el pintor: triángulos que se cruzan, o uno largo junto a otros pequeños.
 
 ### SET_COLOR (16)
 
@@ -136,13 +148,20 @@ De frente = antihorario en coordenadas normalizadas (y hacia arriba), como OpenG
 | `arg1` | dirección de los índices (alineada a 2) |
 | +16 | u32 número de vértices (1..65536) |
 | +20 | u32 número de índices (múltiplo de 3) |
-| +24 | u16 formato de vértice: `MGL_VERTEX_POSITION_F32_XYZ` (1); `POSITION_Q16_16_XYZ` (2) reservado |
+| +24 | u16 formato de vértice: `MGL_VERTEX_POSITION_F32_XYZ` (1); `POSITION_Q16_16_XYZ` (2) reservado; `POSITION_F32_XYZ_RGB565` (3) |
 | +26 | u16 formato de índice: `MGL_INDEX_UINT16` (1); `UINT32` (2) reservado |
-| +28 | u16 stride del vértice en bytes (≥ 12, múltiplo de 4) |
+| +28 | u16 stride del vértice en bytes (≥ 12, o ≥ 16 con el formato 3; múltiplo de 4) |
 | +30 | u16 topología: `MGL_TOPOLOGY_TRIANGLES` (1) |
 
 El stride es explícito para poder añadir atributos tras la posición sin cambiar el comando. Un índice fuera
 de rango detiene la ejecución (`MGR_ERR_LIMIT`).
+
+**Color por vértice** (`POSITION_F32_XYZ_RGB565`): cada vértice es x, y, z en float (+0), el color RGB565
+(+12, u16) y dos bytes reservados (+14, el renderer no los lee). Cada triángulo se pinta del color de su
+**primer vértice** (el *provoking vertex* de OpenGL), también lo que sale del recorte, y `SET_COLOR` no
+cuenta. Los mismos datos con el formato 1 y stride 16 se pintan del color de `SET_COLOR`: lo decide el
+formato del comando, no la malla. Sirve para dibujar un modelo de varios colores con un solo `DRAW_INDEXED`
+en vez de un `SET_COLOR` y un `DRAW_INDEXED` por color.
 
 ### END_FRAME (16)
 

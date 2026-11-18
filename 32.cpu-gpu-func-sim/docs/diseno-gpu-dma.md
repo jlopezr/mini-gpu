@@ -252,7 +252,7 @@ EXIT;
 
 La condición del bucle **diverge** en la última pasada, y un salto divergente sin `SSY` delante detiene la GPU con `ERROR_SIMT`. Los kernels 2D tienen dos bucles anidados con la misma precaución.
 
-`CONVERT` gasta unas diez instrucciones por píxel con la ISA base, así que está en el límite de la regla "mucha memoria, poco cálculo". La capability `pack565` de `propuesta-v0.4b.md` lo abarataría. No es necesaria para empezar.
+`CONVERT` gasta unas diez instrucciones por píxel con la ISA base, así que está en el límite de la regla "mucha memoria, poco cálculo". La capability `pack565` de `propuesta-v0.4.md` lo abarataría. No es necesaria para empezar.
 
 **Criterio para admitir un kernel nuevo** (colorkey, blend, patrón, gather, scatter): recorrer una cantidad grande de memoria de forma regular, con poca computación por elemento.
 
@@ -303,7 +303,7 @@ Se quiere averiguar:
 |---|---|---|
 | N1 | Interrupciones: IRQ con `WARP_DONE != 0` y espera tipo `WFI`. Requiere definir el INTC. | pospuesto |
 | N3 | `LOGICAL_WARP_ID[n]` en `+0x200` y `WARP_ARG[n]` en `+0x280` de GPU WARPS (§14.2, regla §1.4). Lectura y escritura; error si el warp está vivo. | contrato y simulador de `32` hechos; RTL de la 29 hecho (con el núcleo parado) y probado en placa |
-| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de las propuestas v0.2 a v0.4b. | ensamblador, `asm2`, `isa.md` y simuladores de `11` y `25` hechos; RTL de la 29 hecho y probado en placa |
+| N4 | `GETID` con `type` 1 a 4: `GETLANE`, `GETWARP`, `GETLWARP`, `GETARG`. Renombra `GETWID`/`warp_user_id` de los borradores históricos de la ISA. | ensamblador, `asm2`, `isa.md` y simuladores de `11` y `25` hechos; RTL de la 29 hecho y probado en placa |
 | N5 | `RESET` conserva `LOGICAL_WARP_ID` y `WARP_ARG`; solo el reset físico los pone a cero. | contrato y simulador de `32` hechos; el RTL de la 29 los pone a cero con el único reset que tiene (ver N5 de las notas) |
 | N6 | Accesos de 8 y 16 bits en la GPU. Simulador de `11` hecho; RTL de la 29 con su LSU. | simulador y RTL de la 29 hechos y probados en placa; las demás GPU no los tienen |
 | N7 | Errores por warp, en lugar de un fallo que para toda la GPU. Delicado, no caro en área; efecto en Fmax sin medir. | pospuesto |
@@ -340,5 +340,5 @@ Se quiere averiguar:
 ## Referencias
 
 - [`mmio.md`](../../1.isa/mmio.md): §5.6 (descubrimiento), §13 y §14 (CPU y GPU), §15 (visibilidad por master), §18 (orden entre CPU y GPU).
-- [`atomics.md`](../../1.isa/atomics.md), [`propuesta-v0.4b.md`](../../1.isa/propuesta-v0.4b.md): atómicas, `FENCE`, `GETID`.
+- [`propuesta-v0.4.md`](../../1.isa/propuesta-v0.4.md): atómicas, `FENCE`, `GETID`; v0.4 §12.2–§12.4 recoge implementación, ejemplos y posibles variantes con inmediato.
 - [`README.md`](../README.md) de esta carpeta: el simulador CPU+GPU sobre el que se valida el diseño.
