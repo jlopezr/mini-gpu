@@ -106,7 +106,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg [7:0] init_address;
     reg running, pause_pending, stepping, step_locked;
     reg [2:0] cursor;
-    reg [31:0] pc[0:7], groups[0:7];
+    // `pc` es arquitectonico: solo WB lo hace visible. `issue_pc` es el
+    // frente de emision por warp; puede avanzar sobre una carga pendiente,
+    // pero WB lo vuelve a alinear en cualquier cambio de control.
+    reg [31:0] pc[0:7], issue_pc[0:7], groups[0:7];
+    // Scoreboard por warp (los nombres sin prefijo son arquitectonicos):
+    //   issue_pc      frente SCH/IS; puede ir por delante de `pc`.
+    //   mem_valid     token MEM aun sin retirar.
+    //   mem_younger   unica instruccion joven admitida tras un LOAD.
+    //   pending_write destinos que RR no puede leer ni sobrescribir.
     // El DESCRIPTOR de cada warp (mmio.md §14.2, «Reglas de lanzamiento»): lo
     // que el lanzador escribio. Es distinto del estado de ejecucion (`pc`,
     // `active`, `groups`): lo copia el lanzamiento y el warp no lo modifica, asi
@@ -179,6 +187,21 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // Estado explícito de las dos últimas fases. MEM puede contener varios
     // warps dentro de la LSU; WB es un único pulso de commit por ciclo.
     reg [7:0] mem_valid;
+    // PC de la operacion que espera en la LSU. No se puede reconstruir de
+    // `pc` cuando ya se ha emitido una ALU independiente del mismo warp.
+    reg [31:0] mem_pc[0:7];
+    // Cada carga en vuelo abre una sola ventana para una instruccion joven.
+    // Con una unica entrada WB, mas de una no aportaria solapamiento y haria
+    // falta una cola de retiro por warp.
+    reg [7:0] mem_younger;
+    // Cola MEM/WB independiente: evita que una respuesta de LSU tenga que
+    // esperar a que termine una ALU multicíclo en X.
+    reg mem_q_valid;
+    reg [2:0] mem_q_warp;
+    reg [4:0] mem_q_rd;
+    reg [31:0] mem_q_pc, mem_q_next_pc;
+    reg [7:0] mem_q_active, mem_q_error, mem_q_write_mask;
+    reg [255:0] mem_q_write_data;
     reg wb_valid;
     reg [2:0] wb_warp;
     // Registro fisico de WB, compartido por ALU lineales, respuestas MEM y
@@ -199,15 +222,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg [2:0] wb_q_fault_lane;
     reg wb_q_fault_lane_valid;
     reg wb_q_fault_wait_x;
-    // Scoreboard de destinos, por ahora solo observado: `busy` continua
-    // imponiendo una instruccion por warp hasta que esta tabla se valide.
+    // Scoreboard de destinos: bloquea RAW/WAW de la instruccion joven que
+    // puede seguir a una operacion MEM. Aun no hay forwarding.
     reg [31:0] pending_write[0:7];
 
     // Solo para %d de diagnostico en testbenches (dut.sm.state): MEM se ve en
     // mem_valid y WB en wb_valid, porque no caben fielmente en este resumen.
     wire [4:0] state = {x_valid,d_valid,i_valid,f_valid,is_valid};
 
-    assign halted=!running && busy==8'b0 && lsu_occupied==0;
+    assign halted=!running && busy==8'b0 && !mem_q_valid && lsu_occupied==0;
     assign sm_running=running;
     assign live_warps={|live[7],|live[6],|live[5],|live[4],|live[3],|live[2],|live[1],|live[0]};
     assign debug_pc=error ? error_pc : pc[debug_warp];
@@ -262,6 +285,25 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire d_is_memory=d_opcode==OPCODE_LOAD || d_opcode==OPCODE_STORE || d_is_byte || d_is_half;
     wire d_is_special=d_opcode==6'h31 || d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f;
     wire d_encoding_bad=(d_opcode==6'h32 || d_opcode==6'h33 || d_opcode==6'h3f) && d_instruction[25:0]!=0;
+    // Scoreboard exacto: solo los campos que la ISA lee/escribe participan.
+    // Evita que los bits de un inmediato creen dependencias falsas.
+    wire d_reg_alu = d_opcode>=6'h01 && d_opcode<=6'h0f;
+    wire d_shift_imm = (d_opcode>=6'h07 && d_opcode<=6'h09) && d_instruction[10];
+    wire d_reads_ra = d_reg_alu || d_opcode==6'h26 || d_opcode==6'h27 ||
+        (d_opcode>=6'h11 && d_opcode<=6'h14) ||
+        d_is_memory || d_branch_for_ra || d_opcode==6'h2d || d_opcode==6'h2e;
+    wire d_reads_rb = (d_reg_alu && !d_shift_imm) || d_opcode==6'h26 ||
+        d_opcode==6'h27 || d_branch_for_ra || d_is_store;
+    wire d_writes_rd = (d_opcode>=6'h01 && d_opcode<=6'h15) || d_opcode==6'h17 ||
+        (d_opcode>=6'h18 && d_opcode<=6'h1c) || d_opcode==6'h26 || d_opcode==6'h27 ||
+        d_opcode==6'h2c || d_opcode==6'h2d || d_opcode==6'h30;
+    wire rr_has_raw_hazard = d_valid &&
+        ((d_reads_ra && d_ra != 0 && pending_write[d_warp][d_ra]) ||
+         (d_reads_rb && d_rb != 0 && pending_write[d_warp][d_rb]) ||
+         (d_writes_rd && d_instruction[25:21] != 0 &&
+          pending_write[d_warp][d_instruction[25:21]]));
+    // Alias de compatibilidad durante la migracion de nombres RR.
+    wire d_scoreboard_hazard = rr_has_raw_hazard;
     wire d_is_alu = d_active && !d_is_memory && !d_is_special && !d_encoding_bad;
     wire d_write=d_is_store;
     wire d_load_writes = d_is_memory && !d_is_store;
@@ -302,22 +344,27 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // EX/WB; la autoridad arquitectónica de ambos está en WB.
     wire x_completes = x_valid && (&done);
     wire x_writes_this_cycle = x_valid && |(lane_we & active[x_warp]);
-    // Mantener una respuesta LSU mientras wb_q ocupa el unico puerto de RF.
-    // Esto conserva la prioridad historica X > MEM y evita descartar un
-    // resultado ya capturado si MEM responde en el ciclo siguiente.
-    // wb_q tiene una sola entrada: mientras X ejecuta, una respuesta MEM no
-    // puede adelantar al resultado de una ALU multicíclo y ocuparla.
-    assign lsu_rsp_ready = !x_valid && !wb_q_valid;
+    // MEM dispone de su propio registro, por lo que puede aceptar la respuesta
+    // durante X. Solo se frena si ya hay otra respuesta esperando WB.
     wire lsu_commits = response_commit;
     // El pulso de retire de una lane se observa un flanco despues de que esta
     // prepare el resultado. Retener wb_q hasta que `done` ya lo haya
     // consolidado impide vaciarlo en esa ventana intermedia.
-    wire wb_q_fire = wb_q_valid && !lsu_commits && !x_writes_this_cycle &&
+    // Una instruccion joven puede ejecutar mientras una MEM del mismo warp
+    // espera, pero no puede retirar antes. Al bloquear este fire, la respuesta
+    // MEM gana el siguiente ciclo a traves de mem_q_fire.
+    wire wb_can_retire = wb_q_valid && !mem_valid[wb_q_warp] &&
+        !lsu_commits && !x_writes_this_cycle &&
         ((wb_q_source == WB_ALU && x_completes) ||
          (wb_q_source == WB_EX && wb_q_ready && x_completes) ||
          (wb_q_source == WB_XFAULT && wb_q_ready &&
              (!wb_q_fault_wait_x || x_completes)) ||
          (wb_q_source != WB_ALU && wb_q_source != WB_EX && !x_completes));
+    // Un solo puerto de RF: el packet general WB tiene prioridad; MEM espera
+    // un ciclo si ambos llegan listos a la vez.
+    wire mem_can_retire = mem_q_valid && !wb_can_retire;
+    wire wb_q_fire = wb_can_retire;
+    wire mem_q_fire = mem_can_retire;
     wire x_alu_wb_capture = x_simple_alu && x_writes_this_cycle &&
                         (!wb_q_valid || wb_q_fire);
     // NOP no genera lane_we, pero conserva la misma frontera EX/WB que el
@@ -330,8 +377,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // respuesta de LSU del mismo ciclo: el puerto de retiro
     // (instruction_retired/retired_lanes) es de un solo evento por ciclo.
     wire d_special_commits = d_active && d_is_special && !d_encoding_bad &&
+        !mem_valid[d_warp] && !x_completes && !lsu_commits;
+    wire d_fault_commits = d_active && d_encoding_bad && !mem_valid[d_warp] &&
         !x_completes && !lsu_commits;
-    wire d_fault_commits = d_active && d_encoding_bad && !x_completes && !lsu_commits;
     // Todos los retiros RR pasan por WB. SSY conserva sus datos de pila en
     // el packet; los otros especiales no necesitan campos adicionales.
     wire d_rr_capture = (d_special_commits || d_fault_commits) &&
@@ -356,14 +404,18 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         // queda fuera del guardian a proposito (ver !init_done abajo): es
         // quien pone el banco a cero, porque esta BRAM no tiene reset.
         wire [4:0] write_register=!init_done ? 5'd0 :
-            (wb_q_fire ? wb_q_rd : lane_write_address[l*5 +: 5]);
+            (wb_q_fire ? wb_q_rd :
+             (mem_q_fire ? mem_q_rd : lane_write_address[l*5 +: 5]));
         wire rf_write=!init_done ||
             ((write_register!=5'd0) &&
-             (wb_q_fire && wb_q_write_mask[l]));
+             ((wb_q_fire && wb_q_write_mask[l]) ||
+              (mem_q_fire && mem_q_write_mask[l])));
         wire [7:0] wa=!init_done ? init_address :
-            (wb_q_fire ? {wb_q_warp,wb_q_rd} : {x_warp,lane_write_address[l*5 +: 5]});
+            (wb_q_fire ? {wb_q_warp,wb_q_rd} :
+             (mem_q_fire ? {mem_q_warp,mem_q_rd} : {x_warp,lane_write_address[l*5 +: 5]}));
         wire [31:0] wd=!init_done ? 32'b0 :
-            (wb_q_fire ? wb_q_write_data[l*32 +: 32] : lane_write_data[l*32 +: 32]);
+            (wb_q_fire ? wb_q_write_data[l*32 +: 32] :
+             (mem_q_fire ? mem_q_write_data[l*32 +: 32] : lane_write_data[l*32 +: 32]));
         gpu_register_file rf (
             .clk(clk), .read_address_a(halted ? {debug_warp,debug_register} :
                 (d_valid ? {d_warp,d_ra} : {i_warp,i_ra})),
@@ -406,7 +458,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // -- LSU: D despacha directamente. No compite por el puerto de retiro ni
     // por el de escritura de RF (es una peticion, no una compromiso), asi que
     // no hace falta arbitrarlo contra X ni contra la respuesta de LSU.
-    wire d_dispatch_mem = d_active && d_is_memory;
+    // Una segunda MEM del mismo warp espera: por ahora solo hay una entrada
+    // de respuesta/retire por warp. La ventana se reserva para una ALU.
+    wire d_dispatch_mem = d_active && d_is_memory && !mem_valid[d_warp];
     assign lsu_valid=d_dispatch_mem;
     assign lsu_tag=d_warp;
     assign lsu_mask=active[d_warp];
@@ -471,7 +525,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     reg [2:0] rot_pick;
     always @* begin
         for(a=0;a<8;a=a+1) live_vec[a]=(live[a]!=0);
-        base_elig=live_vec & ~busy & ~wait_bar;
+        // El token de memoria sigue siendo arquitectonicamente pendiente,
+        // pero deja pasar UNA instruccion joven. `mem_younger` cierra la
+        // ventana hasta que ambas retiren en orden desde WB.
+        base_elig=live_vec & ~wait_bar &
+            (~busy | (mem_valid & ~load_is_write & ~mem_younger));
         elig_dup={base_elig & ~reconv, base_elig & ~reconv};
         elig_rot=elig_dup[{1'b0,cursor} +: 8];
         casez (elig_rot)
@@ -545,17 +603,26 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     end
     wire x_would_fault = x_completes && alu_fault;
     wire x_control_complete = x_control && x_completes && !alu_fault;
+    // Una respuesta puede entrar mientras X itera, pero no en el flanco que
+    // CREA un packet de X: ambos productores escriben wb_q. Si el packet joven
+    // ya existe, la respuesta debe poder entrar incluso al completar X, pues
+    // precisamente MEM es quien lo desbloquea para retirar en orden.
+    assign lsu_rsp_ready = !mem_q_valid && !x_writes_this_cycle &&
+        !x_nop_wb_capture && !x_control_complete && !x_would_fault;
     // Packet de entrada a WB. Se declara despues de EX porque consume sus
     // señales de finalizacion; el arbitraje conserva la prioridad anterior.
     reg [2:0] wb_packet_source, wb_packet_warp;
     reg [4:0] wb_packet_rd;
-    reg wb_packet_valid;
+    reg wb_packet_valid, wb_packet_from_mem;
     always @* begin
         wb_packet_valid=1'b1; wb_packet_source=WB_NONE;
-        wb_packet_warp=3'd0; wb_packet_rd=5'd0;
+        wb_packet_warp=3'd0; wb_packet_rd=5'd0; wb_packet_from_mem=1'b0;
         if (wb_q_fire) begin
             wb_packet_source=wb_q_source; wb_packet_warp=wb_q_warp;
             wb_packet_rd=wb_q_rd;
+        end else if (mem_q_fire) begin
+            wb_packet_source=WB_MEM; wb_packet_warp=mem_q_warp;
+            wb_packet_rd=mem_q_rd; wb_packet_from_mem=1'b1;
         end else wb_packet_valid=1'b0;
     end
 
@@ -641,6 +708,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
         if (reset || soft_reset) begin
             init_address<=0; init_done<=0; running<=0; pause_pending<=0; stepping<=0; step_locked<=0;
             cursor<=0; busy<=0; wait_bar<=0; releasing<=0; load_is_write<=0;
+            mem_younger<=0;
             error<=0; error_code<=ERROR_NONE; error_pc<=0; error_warp<=0; error_lane<=0; error_lane_valid<=0;
             retired_count<=0;
             is_valid<=0; is_warp<=0; is_pc<=0;
@@ -650,7 +718,10 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             d_rf_a<=0; d_rf_b<=0;
             x_valid<=0; x_started<=0; x_warp<=0; x_logical_id<=0; x_warp_arg<=0; x_pc<=0; x_instruction<=0; x_sequential_pc<=0; x_target<=0; x_branch_target<=0;
             x_rf_a<=0; x_rf_b<=0; done<=0;
-            mem_valid<=0; wb_valid<=0; wb_warp<=0;
+            mem_valid<=0; mem_q_valid<=0; mem_q_warp<=0; mem_q_rd<=0;
+            mem_q_pc<=0; mem_q_next_pc<=0; mem_q_active<=0; mem_q_error<=0;
+            mem_q_write_mask<=0; mem_q_write_data<=0;
+            wb_valid<=0; wb_warp<=0;
             wb_q_valid<=0; wb_q_ready<=0; wb_q_source<=WB_NONE; wb_q_warp<=0; wb_q_rd<=0;
             wb_q_pc<=0; wb_q_next_pc<=0; wb_q_instruction<=0; wb_q_target<=0; wb_q_active<=0;
             wb_q_write_data<=0; wb_q_write_mask<=0; wb_q_error<=0;
@@ -662,7 +733,8 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 // 36: ningun warp configurado tras el reset (`ACTIVE == 0` es
                 // "deshabilitado", mmio.md §14.2). En la 29 arrancaban los ocho a
                 // PC=0, que con la CPU compartiendo la RAM seria su propio codigo.
-                pc[w]<=0; active[w]<=8'h00; live[w]<=8'h00; groups[w]<=0;
+                pc[w]<=0; issue_pc[w]<=0; mem_pc[w]<=0;
+                active[w]<=8'h00; live[w]<=8'h00; groups[w]<=0;
                 warp_retired_count[w]<=0; generation[w]<=0; sp[w]<=0; pp[w]<=0; load_rd[w]<=0;
                 join_pc_top[w]<=0; ssy_pc_top[w]<=0; entry_mask_top[w]<=0; path_base_top[w]<=0;
                 pending_pc_top[w]<=0; pending_mask_top[w]<=0;
@@ -674,6 +746,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             if (wb_q_fire) begin
                 wb_q_valid<=0; wb_q_ready<=0;
             end
+            if (mem_q_fire) mem_q_valid<=0;
             if (x_alu_wb_capture) begin
                 wb_q_valid<=1; wb_q_source<=WB_ALU; wb_q_warp<=x_warp;
                 wb_q_rd<=x_rd; wb_q_pc<=x_pc;
@@ -747,15 +820,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 wb_q_fault_code<=ERROR_MEMORY_ACCESS; wb_q_fault_lane<=0;
                 wb_q_fault_lane_valid<=0; wb_q_fault_wait_x<=0;
             end else if (lsu_commits) begin
-                // La respuesta ya fue aceptada del LSU, pero su efecto visible
-                // (RF, PC, busy y contadores) se difiere a WB.
-                wb_q_valid<=1; wb_q_source<=WB_MEM; wb_q_warp<=lsu_rsp_tag;
-                wb_q_rd<=load_is_write[lsu_rsp_tag] ? 5'd0 : load_rd[lsu_rsp_tag];
-                wb_q_pc<=pc[lsu_rsp_tag]; wb_q_next_pc<=pc[lsu_rsp_tag]+4;
-                wb_q_instruction<=0; wb_q_target<=0; wb_q_active<=active[lsu_rsp_tag];
-                wb_q_write_data<=lsu_rsp_data;
-                wb_q_write_mask<=load_is_write[lsu_rsp_tag] ? 8'b0 : active[lsu_rsp_tag];
-                wb_q_error<=lsu_rsp_error;
+                // La respuesta de LSU tiene una frontera MEM/WB propia. X y
+                // WB general pueden seguir ocupados sin perderla.
+                mem_q_valid<=1; mem_q_warp<=lsu_rsp_tag;
+                mem_q_rd<=load_is_write[lsu_rsp_tag] ? 5'd0 : load_rd[lsu_rsp_tag];
+                mem_q_pc<=mem_pc[lsu_rsp_tag];
+                mem_q_next_pc<=mem_pc[lsu_rsp_tag]+4;
+                mem_q_active<=active[lsu_rsp_tag]; mem_q_write_data<=lsu_rsp_data;
+                mem_q_write_mask<=load_is_write[lsu_rsp_tag] ? 8'b0 : active[lsu_rsp_tag];
+                mem_q_error<=lsu_rsp_error;
             end else if (d_rr_capture) begin
                 wb_q_valid<=1;
                 wb_q_source<=d_fault_commits ? WB_RRFLT :
@@ -764,6 +837,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 wb_q_rd<=0; wb_q_pc<=d_pc; wb_q_next_pc<=d_sequential_pc;
                 wb_q_instruction<=d_instruction; wb_q_target<=d_target; wb_q_active<=active[d_warp];
                 wb_q_write_data<=0; wb_q_write_mask<=0; wb_q_error<=0;
+                issue_pc[d_warp]<=d_sequential_pc;
                 d_valid<=0;
             end
             if (!init_done) begin
@@ -784,13 +858,19 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 if (wb_packet_rd != 0 && x_linear_alu_writes)
                     pending_write[wb_packet_warp][wb_packet_rd]<=0;
                 pc[wb_packet_warp]<=wb_q_valid ? wb_q_next_pc : x_sequential_pc;
+                issue_pc[wb_packet_warp]<=wb_q_valid ? wb_q_next_pc : x_sequential_pc;
                 retire_from_wb(wb_packet_warp,wb_q_active);
                 busy[wb_packet_warp]<=0;
+                mem_younger[wb_packet_warp]<=0;
                 x_valid<=0;
             end else if (wb_packet_valid && wb_packet_source == WB_EX) begin
                 // Todos los campos de control proceden del packet EX/WB; X
                 // solo espera a que WB acepte para liberar su token.
                 wb_valid<=1; wb_warp<=wb_packet_warp;
+                // Valor por defecto para saltos no tomados; los caminos de
+                // control de abajo lo sobrescriben con su destino efectivo.
+                issue_pc[wb_packet_warp]<=wb_q_next_pc;
+                mem_younger[wb_packet_warp]<=0;
                 if (wb_packet_rd != 0 &&
                     (wb_q_instruction[31:26]==6'h2c || wb_q_instruction[31:26]==6'h2d))
                     pending_write[wb_packet_warp][wb_packet_rd]<=0;
@@ -803,10 +883,12 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                     else if(wb_q_branch_target==join_pc_top[wb_packet_warp]) begin
                         active[wb_packet_warp]<=wb_q_active & ~wb_q_taken;
                         pc[wb_packet_warp]<=wb_q_next_pc;
+                        issue_pc[wb_packet_warp]<=wb_q_next_pc;
                         retire_from_wb(wb_packet_warp,wb_q_active);
                         busy[wb_packet_warp]<=0; x_valid<=0;
                     end else if(wb_q_next_pc==join_pc_top[wb_packet_warp]) begin
                         active[wb_packet_warp]<=wb_q_taken; pc[wb_packet_warp]<=wb_q_branch_target;
+                        issue_pc[wb_packet_warp]<=wb_q_branch_target;
                         retire_from_wb(wb_packet_warp,wb_q_active);
                         busy[wb_packet_warp]<=0; x_valid<=0;
                     end else if(pp[wb_packet_warp]==SIMT_PATH_DEPTH[PP_BITS-1:0]) begin
@@ -817,17 +899,24 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                         pp[wb_packet_warp]<=pp[wb_packet_warp]+1'b1;
                         active[wb_packet_warp]<=wb_q_active & ~wb_q_taken;
                         pc[wb_packet_warp]<=wb_q_next_pc;
+                        issue_pc[wb_packet_warp]<=wb_q_next_pc;
                         retire_from_wb(wb_packet_warp,wb_q_active);
                         busy[wb_packet_warp]<=0; x_valid<=0;
                     end
                 end else begin
-                    if (wb_q_instruction[31:26]>=6'h20 && wb_q_instruction[31:26]<=6'h25 && wb_q_taken!=0)
+                    if (wb_q_instruction[31:26]>=6'h20 && wb_q_instruction[31:26]<=6'h25 && wb_q_taken!=0) begin
                         pc[wb_packet_warp]<=wb_q_branch_target;
-                    else if(wb_q_instruction[31:26]==6'h2f) pc[wb_packet_warp]<=wb_q_target;
-                    else if(wb_q_instruction[31:26]==6'h2c) pc[wb_packet_warp]<=wb_q_branch_target;
-                    else if(wb_q_instruction[31:26]==6'h2d || wb_q_instruction[31:26]==6'h2e)
+                        issue_pc[wb_packet_warp]<=wb_q_branch_target;
+                    end else if(wb_q_instruction[31:26]==6'h2f) begin
+                        pc[wb_packet_warp]<=wb_q_target;
+                        issue_pc[wb_packet_warp]<=wb_q_target;
+                    end else if(wb_q_instruction[31:26]==6'h2c) begin
+                        pc[wb_packet_warp]<=wb_q_branch_target;
+                        issue_pc[wb_packet_warp]<=wb_q_branch_target;
+                    end else if(wb_q_instruction[31:26]==6'h2d || wb_q_instruction[31:26]==6'h2e) begin
                         pc[wb_packet_warp]<=wb_q_indirect_target;
-                    else pc[wb_packet_warp]<=wb_q_next_pc;
+                        issue_pc[wb_packet_warp]<=wb_q_indirect_target;
+                    end else pc[wb_packet_warp]<=wb_q_next_pc;
                     retire_from_wb(wb_packet_warp,wb_q_active);
                     busy[wb_packet_warp]<=0; x_valid<=0;
                 end
@@ -835,14 +924,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 mem_valid[wb_packet_warp]<=0;
                 if (wb_packet_rd != 0)
                     pending_write[wb_packet_warp][wb_packet_rd]<=0;
-                if(|wb_q_error) begin
+                if(|mem_q_error) begin
                     for(w=7;w>=0;w=w-1)
-                        if(wb_q_error[w]) fault(ERROR_MEMORY_ACCESS,wb_packet_warp,w[2:0],1'b1);
+                        if(mem_q_error[w]) fault(ERROR_MEMORY_ACCESS,wb_packet_warp,w[2:0],1'b1);
                 end else begin
                     wb_valid<=1; wb_warp<=wb_packet_warp;
-                    pc[wb_packet_warp]<=wb_q_next_pc;
-                    retire_from_wb(wb_packet_warp,wb_q_active);
-                    busy[wb_packet_warp]<=0;
+                    pc[wb_packet_warp]<=mem_q_next_pc;
+                    if (!mem_younger[wb_packet_warp]) issue_pc[wb_packet_warp]<=mem_q_next_pc;
+                    retire_from_wb(wb_packet_warp,mem_q_active);
+                    if (!mem_younger[wb_packet_warp]) busy[wb_packet_warp]<=0;
                 end
             end else if (wb_packet_valid && wb_packet_source == WB_RRFLT) begin
                 fault(ERROR_INVALID_ENCODING,wb_packet_warp,0,0);
@@ -859,6 +949,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                             wait_bar[wb_packet_warp]<=1;
                             retire_from_wb(wb_packet_warp,wb_q_active);
                             busy[wb_packet_warp]<=0;
+                            mem_younger[wb_packet_warp]<=0;
                         end
                     end
                     6'h33,6'h3f: begin // EXIT, HALT
@@ -870,6 +961,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                         end
                         retire_from_wb(wb_packet_warp,wb_q_active);
                         busy[wb_packet_warp]<=0;
+                        mem_younger[wb_packet_warp]<=0;
                     end
                 endcase
             end else if (wb_packet_valid && wb_packet_source == WB_RR) begin
@@ -886,6 +978,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                                 pc[wb_packet_warp]<=wb_q_next_pc;
                                 retire_from_wb(wb_packet_warp,wb_q_active);
                                 busy[wb_packet_warp]<=0;
+                                mem_younger[wb_packet_warp]<=0;
                             end
                         end else if(sp[wb_packet_warp]==SIMT_REGION_DEPTH[SP_BITS-1:0])
                             fault(ERROR_SIMT,wb_packet_warp,0,0);
@@ -902,6 +995,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                             pc[wb_packet_warp]<=wb_q_next_pc;
                             retire_from_wb(wb_packet_warp,wb_q_active);
                             busy[wb_packet_warp]<=0;
+                            mem_younger[wb_packet_warp]<=0;
                         end
                     end
                 endcase
@@ -915,6 +1009,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             if (release_found && !error) begin
                 wait_bar[release_warp]<=0; releasing[release_warp]<=0;
                 pc[release_warp]<=pc[release_warp]+4;
+                issue_pc[release_warp]<=pc[release_warp]+4;
                 generation[release_warp]<=generation[release_warp]+1'b1;
             end else if (|release_bar && !error) begin
                 releasing<=release_bar;
@@ -922,6 +1017,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 if (sp[normalize_warp]!=0 && (active[normalize_warp]==0 || pc[normalize_warp]==join_pc_top[normalize_warp])) begin
                     if (pp[normalize_warp]>path_base_top[normalize_warp]) begin
                         pc[normalize_warp]<=pending_pc_top[normalize_warp];
+                        issue_pc[normalize_warp]<=pending_pc_top[normalize_warp];
                         active[normalize_warp]<=pending_mask_top[normalize_warp] & live[normalize_warp];
                         pp[normalize_warp]<=pp[normalize_warp]-1'b1;
                         pending_pc_top[normalize_warp]<=pending_pc[
@@ -934,6 +1030,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                              {{(32-PP_BITS){1'b0}},pp[normalize_warp]}-2 : 0)];
                     end else begin
                         pc[normalize_warp]<=join_pc_top[normalize_warp];
+                        issue_pc[normalize_warp]<=join_pc_top[normalize_warp];
                         active[normalize_warp]<=entry_mask_top[normalize_warp] & live[normalize_warp];
                         sp[normalize_warp]<=sp[normalize_warp]-1'b1;
                         join_pc_top[normalize_warp]<=join_pc[
@@ -979,7 +1076,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (init_done && running && !error && !is_valid && pick_found && !step_locked) begin
                 busy[pick_warp]<=1; cursor<=pick_warp+1'b1;
-                is_valid<=1; is_warp<=pick_warp; is_pc<=pc[pick_warp];
+                // Si se aprovecha la ventana tras MEM, ya no se admitira otra
+                // joven hasta que MEM y esta instruccion retiren en orden.
+                if (mem_valid[pick_warp] && !load_is_write[pick_warp])
+                    mem_younger[pick_warp]<=1;
+                is_valid<=1; is_warp<=pick_warp; is_pc<=issue_pc[pick_warp];
                 // En modo paso a paso, esta es LA UNICA instruccion que se
                 // deja entrar: sin este cerrojo, en cuanto ella compromete y
                 // libera `busy` puede haber otro warp elegible ese mismo
@@ -1030,13 +1131,13 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
                 d_target<=i_sequential_pc+{{4{i_instruction[25]}},i_instruction[25:0],2'b00};
                 d_branch_target<=i_sequential_pc+{{14{i_instruction[15]}},i_instruction[15:0],2'b00};
                 i_valid<=0;
-            end else if (d_valid && !d_settled) begin
+            end else if (d_valid && !d_settled && !d_scoreboard_hazard) begin
                 // D lleva un ciclo presentando su propia direccion (arriba,
                 // `d_valid ? {d_warp,d_ra} : ...`). Este flanco es cuando el
                 // puerto de RF POR FIN la muestrea; su dato de salida no se
                 // asienta hasta el flanco siguiente (`d_ready`, mas abajo).
                 d_settled<=1;
-            end else if (d_valid && d_settled && !d_ready) begin
+            end else if (d_valid && d_settled && !d_ready && !d_scoreboard_hazard) begin
                 d_rf_a<=rf_a; d_rf_b<=rf_b; d_ready<=1;
             end
 
@@ -1045,7 +1146,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (d_dispatch_mem && lsu_ready) begin
                 load_rd[d_warp]<=d_instruction[25:21]; load_is_write[d_warp]<=d_write;
-                mem_valid[d_warp]<=1;
+                mem_valid[d_warp]<=1; mem_pc[d_warp]<=d_pc;
+                // Si esta MEM estaba retenida detras de la anterior, pasa a
+                // ser el nuevo token viejo: vuelve a abrir su propia ventana.
+                mem_younger[d_warp]<=0;
+                issue_pc[d_warp]<=d_sequential_pc;
                 if (d_load_writes && d_rd != 0) pending_write[d_warp][d_rd]<=1;
                 d_valid<=0;
                 // busy[d_warp] sigue a 1: el warp queda parado en memoria
@@ -1057,6 +1162,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (d_to_x_fire) begin
                 if (d_alu_writes && d_rd != 0) pending_write[d_warp][d_rd]<=1;
+                issue_pc[d_warp]<=d_sequential_pc;
                 x_valid<=1; x_started<=0; x_warp<=d_warp; x_pc<=d_pc;
                 x_logical_id<=logical_id[d_warp]; x_warp_arg<=warp_arg[d_warp];
                 x_instruction<=d_instruction; x_sequential_pc<=d_sequential_pc;
@@ -1087,10 +1193,11 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // ---------------------------------------------------------
             if (launch && !error) begin
                 for(w=0;w<8;w=w+1) if (launch_set[w]) begin
-                    pc[w]<=desc_pc[w]; groups[w]<=desc_groups[w];
+                    pc[w]<=desc_pc[w]; issue_pc[w]<=desc_pc[w]; groups[w]<=desc_groups[w];
                     active[w]<=desc_active[w]; live[w]<=desc_active[w];
                     warp_retired_count[w]<=0; sp[w]<=0; pp[w]<=0;
                     wait_bar[w]<=0; releasing[w]<=0; generation[w]<=0;
+                    mem_valid[w]<=0; mem_younger[w]<=0; mem_pc[w]<=desc_pc[w];
                 end
                 if (launch_run) begin
                     running<=1; stepping<=0; step_locked<=0; pause_pending<=0;
