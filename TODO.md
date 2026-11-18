@@ -727,6 +727,20 @@ separan por operación; haría falta contar las instrucciones `DIV*`/`REM*` reti
 (o mirar el programa) para saber qué fracción de ciclos son de división. Si no
 aparece, se cierra sin hacer nada.
 
+# 20. DCache
+
+Implementa una D-cache de líneas para CPU y GPU reutilizando un módulo genérico parametrizable.
+
+- Línea: 128 bits (16 B), mapeo directo, 8 líneas por instancia.
+- Instancias independientes: CPU D-cache y GPU D-cache compartida por las 8 lanes, tras la coalescencia de `gpu_lsu2`.
+- Solo cachear `LOAD` de SDRAM; excluir MMIO.
+- En hit, devolver la línea sin petición al fabric.
+- En miss, pedir la BL8 actual y llenar la caché al recibir una respuesta correcta.
+- `STORE`: write-through, sin write-allocate; invalidar la línea local si estaba cacheada.
+- Añadir `dcache_invalidate_all` para borrar válidos; no hay coherencia automática CPU↔GPU.
+- Mantener los handshakes y la semántica existente, incluidas escrituras posteadas.
+- Añadir contadores de hits/misses y pruebas de hit, miss, fill, store-invalidate e invalidate-all.
+
 ---
 
 ## Cerrado — no reabrir sin motivo nuevo
