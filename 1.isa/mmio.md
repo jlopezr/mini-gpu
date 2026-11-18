@@ -1298,6 +1298,40 @@ Array según §12.6.
 | 4 | `+0x10` | `LSU_TX` |
 | 5 | `+0x14` | `STALL_MEM` |
 
+La GPU segmentada puede exponer estas extensiones de perfil a partir de la
+ranura 6; son contadores acumulados y de solo lectura, igual que los seis
+anteriores:
+
+| Ranura | Offset | Contador |
+|---:|---:|---|
+| 6 | `+0x18` | `LANE_OPS` |
+| 7 | `+0x1C` | `NO_WARP_STALL` |
+| 8 | `+0x20` | `RR_RAW_STALL` |
+| 9 | `+0x24` | `LSU_RSP_BLOCKED` |
+| 10 | `+0x28` | `ISSUE_AFTER_LOAD` |
+| 11 | `+0x2C` | `WB_ARB_MEM_WAIT` |
+| 12 | `+0x30` | `SCH_ISSUED` |
+| 13 | `+0x34` | `IS_CYCLES` |
+| 14 | `+0x38` | `IF_CYCLES` |
+| 15 | `+0x3C` | `ID_CYCLES` |
+| 16 | `+0x40` | `RR_CYCLES` |
+| 17 | `+0x44` | `EX_CYCLES` |
+| 18 | `+0x48` | `MEM_WARP_CYCLES` |
+| 19 | `+0x4C` | `WB_PACKET_CYCLES` |
+
+`RR_RAW_STALL` cuenta ciclos en que RR espera un registro pendiente; mide el
+coste que podría recuperar forwarding. `LSU_RSP_BLOCKED` y
+`WB_ARB_MEM_WAIT` separan la presión en la frontera MEM/WB. `ISSUE_AFTER_LOAD`
+es un pulso por la instrucción independiente admitida en la ventana tras una
+carga.
+
+`*_CYCLES` mide residencia: el número acumulado de ciclos-token en el registro
+de la etapa, por lo que `IS_CYCLES / SCH_ISSUED` da la estancia media en IS,
+y análogamente para IF, ID, RR y EX. MEM admite varios warps y las dos colas
+físicas de WB pueden coexistir, así que `MEM_WARP_CYCLES` y
+`WB_PACKET_CYCLES` pueden superar `CYCLES`; no son motivos excluyentes de
+burbuja como los de CPU PERFORMANCE.
+
 `LSU_TX` y `STALL_MEM` están aquí, y no en FABRIC, porque la LSU es parte de la
 GPU. `VIDEO_TX` **no** está aquí: es de VIDEO (§9.7).
 

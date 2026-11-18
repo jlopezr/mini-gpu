@@ -111,7 +111,8 @@ module gpu_mem_x_overlap_tb;
         end
     endtask
 
-    localparam [31:0] CORE = 32'h8200_0000, WARPS = 32'h8201_0000;
+    localparam [31:0] CORE = 32'h8200_0000, WARPS = 32'h8201_0000,
+                      PERF = 32'h8203_0000;
     localparam [31:0] ST_IDLE = 32'h4, ST_ERROR = 32'h8;
     task run_scale;
         input integer nwarps;
@@ -148,6 +149,79 @@ module gpu_mem_x_overlap_tb;
                 $display("GPU_MEM_BENCH independiente: warps=%0d ciclos=%0d retiradas=%0d CPI=%0f",
                          nwarps, dut.perf.cycles, dut.perf.retired_count,
                          dut.perf.cycles * 1.0 / dut.perf.retired_count);
+        end
+    endtask
+    // Lee las extensiones por su ruta real de host: comprueba tanto el mux de
+    // GPU PERFORMANCE como el cableado de cada evento desde el SM.
+    task check_perf_extensions;
+        begin
+            mmio_read(PERF + 32'h20);
+            if (got_data !== dut.perf.rr_raw_stall_count) begin
+                $display("FALLO: MMIO RR_RAW_STALL=%0d interno=%0d",
+                         got_data, dut.perf.rr_raw_stall_count);
+                $fatal(1);
+            end
+            mmio_read(PERF + 32'h24);
+            if (got_data !== dut.perf.lsu_rsp_blocked_count) begin
+                $display("FALLO: MMIO LSU_RSP_BLOCKED=%0d interno=%0d",
+                         got_data, dut.perf.lsu_rsp_blocked_count);
+                $fatal(1);
+            end
+            mmio_read(PERF + 32'h28);
+            if (got_data !== dut.perf.issue_after_load_count) begin
+                $display("FALLO: MMIO ISSUE_AFTER_LOAD=%0d interno=%0d",
+                         got_data, dut.perf.issue_after_load_count);
+                $fatal(1);
+            end
+            mmio_read(PERF + 32'h2c);
+            if (got_data !== dut.perf.wb_arb_mem_wait_count) begin
+                $display("FALLO: MMIO WB_ARB_MEM_WAIT=%0d interno=%0d",
+                         got_data, dut.perf.wb_arb_mem_wait_count);
+                $fatal(1);
+            end
+            if (dut.perf.issue_after_load_count == 0) begin
+                $display("FALLO: el microbenchmark no activo ISSUE_AFTER_LOAD");
+                $fatal(1);
+            end
+            $display("GPU_PERF_EXT: RAW=%0d RSP_BLOCKED=%0d ISSUE=%0d WB_ARB=%0d",
+                     dut.perf.rr_raw_stall_count, dut.perf.lsu_rsp_blocked_count,
+                     dut.perf.issue_after_load_count, dut.perf.wb_arb_mem_wait_count);
+        end
+    endtask
+    task check_perf_stage_residency;
+        begin
+            mmio_read(PERF + 32'h30);
+            if (got_data !== dut.perf.sch_issued_count) begin
+                $display("FALLO: MMIO SCH_ISSUED=%0d interno=%0d", got_data, dut.perf.sch_issued_count);
+                $fatal(1);
+            end
+            mmio_read(PERF + 32'h34);
+            if (got_data !== dut.perf.is_cycles) begin $display("FALLO: MMIO IS_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h38);
+            if (got_data !== dut.perf.if_cycles) begin $display("FALLO: MMIO IF_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h3c);
+            if (got_data !== dut.perf.id_cycles) begin $display("FALLO: MMIO ID_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h40);
+            if (got_data !== dut.perf.rr_cycles) begin $display("FALLO: MMIO RR_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h44);
+            if (got_data !== dut.perf.ex_cycles) begin $display("FALLO: MMIO EX_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h48);
+            if (got_data !== dut.perf.mem_warp_cycles) begin $display("FALLO: MMIO MEM_WARP_CYCLES"); $fatal(1); end
+            mmio_read(PERF + 32'h4c);
+            if (got_data !== dut.perf.wb_packet_cycles) begin $display("FALLO: MMIO WB_PACKET_CYCLES"); $fatal(1); end
+            if (dut.perf.sch_issued_count != dut.perf.retired_count ||
+                dut.perf.is_cycles == 0 || dut.perf.if_cycles == 0 ||
+                dut.perf.id_cycles == 0 || dut.perf.rr_cycles == 0 ||
+                dut.perf.ex_cycles == 0 || dut.perf.mem_warp_cycles == 0 ||
+                dut.perf.wb_packet_cycles == 0) begin
+                $display("FALLO: residencia de etapas incompleta SCH=%0d RET=%0d",
+                         dut.perf.sch_issued_count, dut.perf.retired_count);
+                $fatal(1);
+            end
+            $display("GPU_PERF_STAGES: SCH=%0d IS=%0d IF=%0d ID=%0d RR=%0d EX=%0d MEM=%0d WB=%0d",
+                     dut.perf.sch_issued_count, dut.perf.is_cycles, dut.perf.if_cycles,
+                     dut.perf.id_cycles, dut.perf.rr_cycles, dut.perf.ex_cycles,
+                     dut.perf.mem_warp_cycles, dut.perf.wb_packet_cycles);
         end
     endtask
     initial begin
@@ -195,6 +269,8 @@ module gpu_mem_x_overlap_tb;
         $display("GPU_MEM_BENCH independiente+RAW: warps=2 ciclos=%0d retiradas=%0d CPI=%0f",
                  gpu_cycles, dut.sm.retired_count,
                  gpu_cycles * 1.0 / dut.sm.retired_count);
+        check_perf_extensions;
+        check_perf_stage_residency;
         $display("GPU_MEM_X_OVERLAP: OK (%0d sondeos)", polls);
         run_scale(1, 32'h0000_0300, 0); run_scale(2, 32'h0000_0300, 0);
         run_scale(4, 32'h0000_0300, 0); run_scale(8, 32'h0000_0300, 0);

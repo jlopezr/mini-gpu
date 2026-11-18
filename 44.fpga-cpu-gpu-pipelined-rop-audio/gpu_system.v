@@ -98,6 +98,11 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     wire [31:0] cfg_read_data;
     reg cfg_write;
     wire halted, sm_running, sm_error_raw, instruction_retired, sm_no_warp_stall;
+    wire sm_rr_raw_stall, sm_lsu_rsp_blocked, sm_issue_after_load, sm_wb_arb_mem_wait;
+    wire sm_sch_issued, sm_is_stage_valid, sm_if_stage_valid, sm_id_stage_valid;
+    wire sm_rr_stage_valid, sm_ex_stage_valid;
+    wire [3:0] sm_mem_stage_warps;
+    wire [1:0] sm_wb_stage_packets;
     wire [7:0] sm_live_warps;
     // Escrituras posted de la LSU (gpu_lsu2.v, MAX_POSTED): mientras quede alguna sin
     // confirmar la GPU NO esta terminada. Un warp que acaba con escrituras en vuelo
@@ -304,7 +309,9 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
             mmio_bad  = simt_bad;
         end else if (sel_perf) begin
             mmio_data = perf_read_data;
-            mmio_bad  = perf_bad || writing;   // los contadores son de solo lectura
+            // El array de PERFORMANCE tiene 64 ranuras (0x00..0xfc). Sin
+            // este limite +0x100 repetiria address[7:2]==0 y leeria CYCLES.
+            mmio_bad  = perf_bad || writing || |address[15:8];
         end else begin
             mmio_bad = 1'b1;                   // lo que no es de la GPU
         end
@@ -429,7 +436,13 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
         .lsu_rsp_valid(lsu_rsp_valid), .lsu_rsp_ready(lsu_rsp_ready), .lsu_rsp_tag(lsu_rsp_tag),
         .lsu_rsp_data(lsu_rsp_data), .lsu_rsp_error(lsu_rsp_error),
         .lsu_occupied(occupied | {8{lsu_wr_pending}}),
-        .retired_lanes(sm_retired_lanes), .no_warp_stall(sm_no_warp_stall)
+        .retired_lanes(sm_retired_lanes), .no_warp_stall(sm_no_warp_stall),
+        .rr_raw_stall(sm_rr_raw_stall), .lsu_rsp_blocked(sm_lsu_rsp_blocked),
+        .issue_after_load(sm_issue_after_load), .wb_arb_mem_wait(sm_wb_arb_mem_wait),
+        .sch_issued(sm_sch_issued), .is_stage_valid(sm_is_stage_valid),
+        .if_stage_valid(sm_if_stage_valid), .id_stage_valid(sm_id_stage_valid),
+        .rr_stage_valid(sm_rr_stage_valid), .ex_stage_valid(sm_ex_stage_valid),
+        .mem_stage_warps(sm_mem_stage_warps), .wb_stage_packets(sm_wb_stage_packets)
     );
 
     // MMIO de los warps: de momento ninguno. La LSU espera una respuesta, y la
@@ -481,12 +494,18 @@ module gpu_system #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_P
     gpu_perf_counters perf (
         .clk(clk), .reset(core_reset),
         .running(!halted),
-        .sel(sel_perf), .word(address[5:2]),
+        .sel(sel_perf), .word(address[7:2]),
         .read_data(perf_read_data), .bad(perf_bad),
         .retired(instruction_retired), .retired_lanes(sm_retired_lanes),
         .imem_hits(imem_hits), .imem_misses(imem_misses),
         .lsu_tx(p0_fire),
         .stall_mem(lsu_valid && !lsu_ready),
-        .no_warp_stall(sm_no_warp_stall));
+        .no_warp_stall(sm_no_warp_stall),
+        .rr_raw_stall(sm_rr_raw_stall), .lsu_rsp_blocked(sm_lsu_rsp_blocked),
+        .issue_after_load(sm_issue_after_load), .wb_arb_mem_wait(sm_wb_arb_mem_wait),
+        .sch_issued(sm_sch_issued), .is_stage_valid(sm_is_stage_valid),
+        .if_stage_valid(sm_if_stage_valid), .id_stage_valid(sm_id_stage_valid),
+        .rr_stage_valid(sm_rr_stage_valid), .ex_stage_valid(sm_ex_stage_valid),
+        .mem_stage_warps(sm_mem_stage_warps), .wb_stage_packets(sm_wb_stage_packets));
 endmodule
 `default_nettype wire

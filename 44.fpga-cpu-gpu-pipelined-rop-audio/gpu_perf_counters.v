@@ -14,6 +14,19 @@
 //   0x82030010  LSU_TX       transacciones emitidas por la LSU vectorial
 //   0x82030014  STALL_MEM    ciclos con la LSU esperando a memoria
 //   0x82030018  LANE_OPS     operaciones de HILO (suma de lanes activas)
+//   0x8203001c  NO_WARP_STALL burbujas de SCH sin warp elegible
+//   0x82030020  RR_RAW_STALL dependencias RAW/WAW bloqueadas por scoreboard
+//   0x82030024  LSU_RSP_BLOCKED respuesta LSU esperando MEM/WB
+//   0x82030028  ISSUE_AFTER_LOAD instruccion joven emitida tras un LOAD
+//   0x8203002c  WB_ARB_MEM_WAIT respuesta MEM que espera al packet WB
+//   0x82030030  SCH_ISSUED  tokens admitidos desde SCH
+//   0x82030034  IS_CYCLES   residencia en IS (ciclos-token)
+//   0x82030038  IF_CYCLES   residencia en IF (ciclos-token)
+//   0x8203003c  ID_CYCLES   residencia en ID (ciclos-token)
+//   0x82030040  RR_CYCLES   residencia en RR (ciclos-token)
+//   0x82030044  EX_CYCLES   residencia en EX (ciclos-token)
+//   0x82030048  MEM_WARP_CYCLES tokens de memoria pendientes (ciclos-token)
+//   0x8203004c  WB_PACKET_CYCLES packets en las colas de WB (ciclos-packet)
 //
 // VIDEO_TX estaba aqui en v1 y ahora vive en VIDEO, en 0x80200024 (§9.7).
 //
@@ -34,7 +47,7 @@ module gpu_perf_counters (
     input wire clk, reset,
 
     input wire        sel,
-    input wire [3:0]  word,
+    input wire [5:0]  word,
     output reg [31:0] read_data,
     output reg        bad,
 
@@ -56,7 +69,14 @@ module gpu_perf_counters (
     input wire [7:0] retired_lanes,
     input wire [31:0] imem_hits, imem_misses,
     input wire lsu_tx, stall_mem,
-    input wire no_warp_stall
+    input wire no_warp_stall,
+    input wire rr_raw_stall, lsu_rsp_blocked,
+    input wire issue_after_load, wb_arb_mem_wait,
+    input wire sch_issued,
+    input wire is_stage_valid, if_stage_valid, id_stage_valid, rr_stage_valid,
+    input wire ex_stage_valid,
+    input wire [3:0] mem_stage_warps,
+    input wire [1:0] wb_stage_packets
 );
     // Ranuras de MMIO v2 §14.4. `VIDEO_TX` YA NO ESTA AQUI: se ha ido al
     // bloque VIDEO, que es donde §9.7 lo pone --«pertenece a VIDEO, no al
@@ -66,13 +86,18 @@ module gpu_perf_counters (
     // contadores»--. Al irse, STALL_MEM baja de la ranura 6 a la 5, que es
     // donde §14.4 lo pone, y LANE_OPS de la 7 a la 6.
     //
-    // LANE_OPS no lo nombra el mapa. Se queda en la primera ranura libre
-    // detras de las seis de §14.4; §12.6 da sitio para 64 y esto es una
-    // extension de esta carpeta, no del contrato.
-    localparam [3:0] REG_CYCLES=4'd0, REG_RETIRED=4'd1, REG_IMEM_HITS=4'd2,
-                     REG_IMEM_MISSES=4'd3, REG_LSU_TX=4'd4,
-                     REG_STALL_MEM=4'd5, REG_LANE_OPS=4'd6,
-                     REG_NO_WARP_STALL=4'd7;
+    // Las ranuras 6--11 son extensiones del cauce de esta carpeta. §12.6 da
+    // sitio para 64: no cambian las seis ranuras base del contrato.
+    localparam [5:0] REG_CYCLES=6'd0, REG_RETIRED=6'd1, REG_IMEM_HITS=6'd2,
+                     REG_IMEM_MISSES=6'd3, REG_LSU_TX=6'd4,
+                     REG_STALL_MEM=6'd5, REG_LANE_OPS=6'd6,
+                     REG_NO_WARP_STALL=6'd7, REG_RR_RAW_STALL=6'd8,
+                     REG_LSU_RSP_BLOCKED=6'd9, REG_ISSUE_AFTER_LOAD=6'd10,
+                     REG_WB_ARB_MEM_WAIT=6'd11, REG_SCH_ISSUED=6'd12,
+                     REG_IS_CYCLES=6'd13, REG_IF_CYCLES=6'd14,
+                     REG_ID_CYCLES=6'd15, REG_RR_CYCLES=6'd16,
+                     REG_EX_CYCLES=6'd17, REG_MEM_WARP_CYCLES=6'd18,
+                     REG_WB_PACKET_CYCLES=6'd19;
 
     reg [31:0] cycles, retired_count, lsu_tx_count, stall_count;
     reg [31:0] lane_ops;
@@ -81,6 +106,11 @@ module gpu_perf_counters (
     // elegibles (este prototipo, 29, sin bypass) de contrapresion del cauce
     // o simplemente el programa habiendo terminado. Ver gpu_sm.v.
     reg [31:0] no_warp_stall_count;
+    reg [31:0] rr_raw_stall_count, lsu_rsp_blocked_count;
+    reg [31:0] issue_after_load_count, wb_arb_mem_wait_count;
+    reg [31:0] sch_issued_count;
+    reg [31:0] is_cycles, if_cycles, id_cycles, rr_cycles, ex_cycles;
+    reg [31:0] mem_warp_cycles, wb_packet_cycles;
     // popcount de la mascara: cuantas lanes retiran con esta instruccion.
     wire [3:0] lanes_now = {3'b000,retired_lanes[0]}+{3'b000,retired_lanes[1]}+{3'b000,retired_lanes[2]}+{3'b000,retired_lanes[3]}
                          + {3'b000,retired_lanes[4]}+{3'b000,retired_lanes[5]}+{3'b000,retired_lanes[6]}+{3'b000,retired_lanes[7]};
@@ -96,6 +126,18 @@ module gpu_perf_counters (
             REG_STALL_MEM:   read_data=stall_count;
             REG_LANE_OPS:    read_data=lane_ops;
             REG_NO_WARP_STALL: read_data=no_warp_stall_count;
+            REG_RR_RAW_STALL: read_data=rr_raw_stall_count;
+            REG_LSU_RSP_BLOCKED: read_data=lsu_rsp_blocked_count;
+            REG_ISSUE_AFTER_LOAD: read_data=issue_after_load_count;
+            REG_WB_ARB_MEM_WAIT: read_data=wb_arb_mem_wait_count;
+            REG_SCH_ISSUED: read_data=sch_issued_count;
+            REG_IS_CYCLES: read_data=is_cycles;
+            REG_IF_CYCLES: read_data=if_cycles;
+            REG_ID_CYCLES: read_data=id_cycles;
+            REG_RR_CYCLES: read_data=rr_cycles;
+            REG_EX_CYCLES: read_data=ex_cycles;
+            REG_MEM_WARP_CYCLES: read_data=mem_warp_cycles;
+            REG_WB_PACKET_CYCLES: read_data=wb_packet_cycles;
             default:         bad=1'b1;
         endcase
     end
@@ -104,6 +146,10 @@ module gpu_perf_counters (
         if(reset) begin
             cycles<=0; retired_count<=0; lsu_tx_count<=0;
             stall_count<=0; lane_ops<=0; no_warp_stall_count<=0;
+            rr_raw_stall_count<=0; lsu_rsp_blocked_count<=0;
+            issue_after_load_count<=0; wb_arb_mem_wait_count<=0;
+            sch_issued_count<=0; is_cycles<=0; if_cycles<=0; id_cycles<=0;
+            rr_cycles<=0; ex_cycles<=0; mem_warp_cycles<=0; wb_packet_cycles<=0;
         end else if(running) begin
             cycles<=cycles+1'b1;
             if(retired) begin
@@ -113,6 +159,18 @@ module gpu_perf_counters (
             if(lsu_tx)    lsu_tx_count<=lsu_tx_count+1'b1;
             if(stall_mem) stall_count<=stall_count+1'b1;
             if(no_warp_stall) no_warp_stall_count<=no_warp_stall_count+1'b1;
+            if(rr_raw_stall) rr_raw_stall_count<=rr_raw_stall_count+1'b1;
+            if(lsu_rsp_blocked) lsu_rsp_blocked_count<=lsu_rsp_blocked_count+1'b1;
+            if(issue_after_load) issue_after_load_count<=issue_after_load_count+1'b1;
+            if(wb_arb_mem_wait) wb_arb_mem_wait_count<=wb_arb_mem_wait_count+1'b1;
+            if(sch_issued) sch_issued_count<=sch_issued_count+1'b1;
+            if(is_stage_valid) is_cycles<=is_cycles+1'b1;
+            if(if_stage_valid) if_cycles<=if_cycles+1'b1;
+            if(id_stage_valid) id_cycles<=id_cycles+1'b1;
+            if(rr_stage_valid) rr_cycles<=rr_cycles+1'b1;
+            if(ex_stage_valid) ex_cycles<=ex_cycles+1'b1;
+            if(|mem_stage_warps) mem_warp_cycles<=mem_warp_cycles+{28'd0,mem_stage_warps};
+            if(|wb_stage_packets) wb_packet_cycles<=wb_packet_cycles+{30'd0,wb_stage_packets};
         end
     end
 endmodule

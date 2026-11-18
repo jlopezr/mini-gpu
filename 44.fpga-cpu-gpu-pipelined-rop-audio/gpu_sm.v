@@ -58,6 +58,19 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     output reg [7:0] retired_lanes,
     output reg [31:0] retired_count,
     output no_warp_stall,
+    // Eventos de perfil del cauce. No intervienen en el control: salen a
+    // GPU PERFORMANCE para poder decidir si merece la pena anadir bypasses.
+    output rr_raw_stall,
+    output lsu_rsp_blocked,
+    output issue_after_load,
+    output wb_arb_mem_wait,
+    // Residencia de los registros de etapa. MEM y WB son ocupaciones de
+    // tokens/packets y pueden ser mayores que un ciclo de reloj.
+    output sch_issued,
+    output is_stage_valid, if_stage_valid, id_stage_valid, rr_stage_valid,
+    output ex_stage_valid,
+    output [3:0] mem_stage_warps,
+    output [1:0] wb_stage_packets,
     output [31:0] debug_warp_retired_count,
     input [2:0] debug_warp, debug_lane,
     input [4:0] debug_register,
@@ -226,6 +239,20 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // puede seguir a una operacion MEM. Aun no hay forwarding.
     reg [31:0] pending_write[0:7];
 
+    // Ocupacion de los registros fisicos de etapa. A diferencia de la CPU,
+    // MEM admite un token por warp y WB tiene dos colas que pueden coexistir;
+    // por eso estos dos son ciclos-token, no solo ciclos de reloj.
+    assign is_stage_valid = is_valid;
+    assign if_stage_valid = f_valid;
+    assign id_stage_valid = i_valid;
+    assign rr_stage_valid = d_valid;
+    assign ex_stage_valid = x_valid;
+    assign mem_stage_warps = {3'b0,mem_valid[0]} + {3'b0,mem_valid[1]} +
+        {3'b0,mem_valid[2]} + {3'b0,mem_valid[3]} + {3'b0,mem_valid[4]} +
+        {3'b0,mem_valid[5]} + {3'b0,mem_valid[6]} + {3'b0,mem_valid[7]};
+    assign wb_stage_packets = (wb_q_valid ? 2'd1 : 2'd0) +
+        (mem_q_valid ? 2'd1 : 2'd0);
+
     // Solo para %d de diagnostico en testbenches (dut.sm.state): MEM se ve en
     // mem_valid y WB en wb_valid, porque no caben fielmente en este resumen.
     wire [4:0] state = {x_valid,d_valid,i_valid,f_valid,is_valid};
@@ -304,6 +331,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
           pending_write[d_warp][d_instruction[25:21]]));
     // Alias de compatibilidad durante la migracion de nombres RR.
     wire d_scoreboard_hazard = rr_has_raw_hazard;
+    assign rr_raw_stall = rr_has_raw_hazard;
     wire d_is_alu = d_active && !d_is_memory && !d_is_special && !d_encoding_bad;
     wire d_write=d_is_store;
     wire d_load_writes = d_is_memory && !d_is_store;
@@ -365,6 +393,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     wire mem_can_retire = mem_q_valid && !wb_can_retire;
     wire wb_q_fire = wb_can_retire;
     wire mem_q_fire = mem_can_retire;
+    // Una respuesta MEM lista pierde el puerto de retiro ante un packet WB.
+    // Medirlo separa la presion real del arbitro de la latencia de la LSU.
+    assign wb_arb_mem_wait = mem_q_valid && wb_can_retire;
     wire x_alu_wb_capture = x_simple_alu && x_writes_this_cycle &&
                         (!wb_q_valid || wb_q_fire);
     // NOP no genera lane_we, pero conserva la misma frontera EX/WB que el
@@ -572,8 +603,15 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // terminado y eso no es una burbuja, es el final). Separa "el cauce no
     // tiene con que llenarse" de "el cauce esta lleno", que es justo la
     // pregunta que profiling.md deja abierta al segmentar S/F/I/D/X/W.
+    wire sch_issue = init_done && running && !error && !is_valid &&
+        pick_found && !step_locked;
+    assign sch_issued = sch_issue;
     assign no_warp_stall = init_done && running && !error && !is_valid && !f_valid &&
                            !pick_found && any_live && !step_locked;
+    // Pulso al admitir la unica instruccion joven permitida detras de un LOAD.
+    // Es el numerador de la ganancia obtenida con `mem_younger`.
+    assign issue_after_load = sch_issue && mem_valid[pick_warp] &&
+        !load_is_write[pick_warp];
 
     // -- X: deteccion de fallo y de divergencia -------------------------------
     reg [7:0] taken;
@@ -609,6 +647,9 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
     // precisamente MEM es quien lo desbloquea para retirar en orden.
     assign lsu_rsp_ready = !mem_q_valid && !x_writes_this_cycle &&
         !x_nop_wb_capture && !x_control_complete && !x_would_fault;
+    // La respuesta ya esta en la frontera de la LSU, pero MEM/WB aun no puede
+    // aceptarla por un productor competidor o una respuesta previa.
+    assign lsu_rsp_blocked = lsu_rsp_valid && !lsu_rsp_ready;
     // Packet de entrada a WB. Se declara despues de EX porque consume sus
     // señales de finalizacion; el arbitraje conserva la prioridad anterior.
     reg [2:0] wb_packet_source, wb_packet_warp;
@@ -1074,7 +1115,7 @@ module gpu_sm #(parameter SIMT_DEPTH=8, SIMT_REGION_DEPTH=SIMT_DEPTH, SIMT_PATH_
             // SCH -> IS: elegir un warp elegible. SCH solo decide; IS es la
             // frontera de admision que mas adelante recibira el scoreboard.
             // ---------------------------------------------------------
-            if (init_done && running && !error && !is_valid && pick_found && !step_locked) begin
+            if (sch_issue) begin
                 busy[pick_warp]<=1; cursor<=pick_warp+1'b1;
                 // Si se aprovecha la ventana tras MEM, ya no se admitira otra
                 // joven hasta que MEM y esta instruccion retiren en orden.

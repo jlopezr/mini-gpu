@@ -204,6 +204,23 @@
 `define MMIO_PERF_STALL_MULDIV_OFF   32'h0000_0038
 `define MMIO_PERF_MULDIV_RETIRED_OFF 32'h0000_003C
 
+// Extensiones de GPU PERFORMANCE de la GPU segmentada (mmio.md §14.4).
+// Las ranuras 6 y 7 no son las extensiones CPU homonimas de arriba.
+`define MMIO_GPU_PERF_LANE_OPS_OFF          32'h0000_0018
+`define MMIO_GPU_PERF_NO_WARP_STALL_OFF     32'h0000_001C
+`define MMIO_GPU_PERF_RR_RAW_STALL_OFF      32'h0000_0020
+`define MMIO_GPU_PERF_LSU_RSP_BLOCKED_OFF   32'h0000_0024
+`define MMIO_GPU_PERF_ISSUE_AFTER_LOAD_OFF  32'h0000_0028
+`define MMIO_GPU_PERF_WB_ARB_MEM_WAIT_OFF   32'h0000_002C
+`define MMIO_GPU_PERF_SCH_ISSUED_OFF         32'h0000_0030
+`define MMIO_GPU_PERF_IS_CYCLES_OFF          32'h0000_0034
+`define MMIO_GPU_PERF_IF_CYCLES_OFF          32'h0000_0038
+`define MMIO_GPU_PERF_ID_CYCLES_OFF          32'h0000_003C
+`define MMIO_GPU_PERF_RR_CYCLES_OFF          32'h0000_0040
+`define MMIO_GPU_PERF_EX_CYCLES_OFF          32'h0000_0044
+`define MMIO_GPU_PERF_MEM_WARP_CYCLES_OFF    32'h0000_0048
+`define MMIO_GPU_PERF_WB_PACKET_CYCLES_OFF   32'h0000_004C
+
 // Extension de las CPU con video y doble buffer (mmio.md §13.2, capacidad
 // `perf_video`): frames con la CPU en marcha y ciclos con un swap pendiente.
 `define MMIO_PERF_VIDEO_FRAMES_OFF   32'h0000_0040

@@ -15,6 +15,9 @@ El transporte HDMI (`hdmi*.v`) es código de terceros atribuido en
 [`THIRD_PARTY_HDMI.md`](THIRD_PARTY_HDMI.md). El resto del prototipo, incluido
 el scanout y el futuro dispositivo PCM, permanece bajo la estructura MiniGPU.
 
+El plan de perfil, mejoras y regresión específica de la GPU está en
+[`gpu-mejoras-y-pruebas.md`](gpu-mejoras-y-pruebas.md).
+
 La identificación de placa es monitor `5.42`. La CPU va a 50 MHz mediante `pll_cpu.v`; la SDRAM a 100 MHz. Antes de
 FP32, los builds `dcache-decide` y `perf-video` cerraban a 65–70 MHz. El
 build FP32 con semilla 9 cierra a 55,75 MHz de CPU y 111,01 MHz de SDRAM.
