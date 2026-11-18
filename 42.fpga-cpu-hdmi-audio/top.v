@@ -543,13 +543,31 @@ module top (
   wire [31:0] audio_sample_ticks_gray_pix = (audio_sample_ticks_pix >> 1) ^ audio_sample_ticks_pix;
   (* async_reg = "true" *) reg [31:0] audio_sample_ticks_gray_sync1, audio_sample_ticks_gray_sync2;
   wire [31:0] audio_sample_ticks_clk = gray_to_bin32(audio_sample_ticks_gray_sync2);
+  wire [19:0] hdmi_acr_n, hdmi_acr_cts;
+  wire [23:0] hdmi_acr_header;
+  wire [55:0] hdmi_acr_sub_0;
+  wire [31:0] hdmi_asp_packets_pix, hdmi_asp_overruns_pix;
+  wire [31:0] hdmi_asp_packets_gray_pix = (hdmi_asp_packets_pix >> 1) ^ hdmi_asp_packets_pix;
+  wire [31:0] hdmi_asp_overruns_gray_pix = (hdmi_asp_overruns_pix >> 1) ^ hdmi_asp_overruns_pix;
+  (* async_reg = "true" *) reg [31:0] hdmi_asp_packets_gray_sync1, hdmi_asp_packets_gray_sync2;
+  (* async_reg = "true" *) reg [31:0] hdmi_asp_overruns_gray_sync1, hdmi_asp_overruns_gray_sync2;
+  wire [31:0] hdmi_asp_packets_clk = gray_to_bin32(hdmi_asp_packets_gray_sync2);
+  wire [31:0] hdmi_asp_overruns_clk = gray_to_bin32(hdmi_asp_overruns_gray_sync2);
   always @(posedge clk) begin
     if (reset) begin
       audio_sample_ticks_gray_sync1 <= 0;
       audio_sample_ticks_gray_sync2 <= 0;
+      hdmi_asp_packets_gray_sync1 <= 0;
+      hdmi_asp_packets_gray_sync2 <= 0;
+      hdmi_asp_overruns_gray_sync1 <= 0;
+      hdmi_asp_overruns_gray_sync2 <= 0;
     end else begin
       audio_sample_ticks_gray_sync1 <= audio_sample_ticks_gray_pix;
       audio_sample_ticks_gray_sync2 <= audio_sample_ticks_gray_sync1;
+      hdmi_asp_packets_gray_sync1 <= hdmi_asp_packets_gray_pix;
+      hdmi_asp_packets_gray_sync2 <= hdmi_asp_packets_gray_sync1;
+      hdmi_asp_overruns_gray_sync1 <= hdmi_asp_overruns_gray_pix;
+      hdmi_asp_overruns_gray_sync2 <= hdmi_asp_overruns_gray_sync1;
     end
   end
 
@@ -636,7 +654,7 @@ module top (
       .write_data(mmio_write_data), .read_data(audio_read_data), .mmio_error(audio_error),
       .enabled(audio_enabled), .ring_base(audio_ring_base),
       .ring_log2_frames(audio_ring_log2_frames), .write_cursor(audio_write_cursor),
-      .read_cursor(audio_dma_read_cursor), .fifo_level({7'd0, audio_fifo_level}), .fifo_empty(audio_fifo_level == 0), .underruns(audio_underruns_pix), .sample_ticks(audio_sample_ticks_clk),
+      .read_cursor(audio_dma_read_cursor), .fifo_level({7'd0, audio_fifo_level}), .fifo_empty(audio_fifo_level == 0), .underruns(audio_underruns_pix), .sample_ticks(audio_sample_ticks_clk), .asp_packets(hdmi_asp_packets_clk), .asp_overruns(hdmi_asp_overruns_clk), .acr_n(hdmi_acr_n), .acr_cts(hdmi_acr_cts), .acr_header(hdmi_acr_header), .acr_sub_0(hdmi_acr_sub_0),
       .clear_underruns(audio_clear_underruns));
   audio_dma audio_dma_i(
       .clk(clk), .reset(reset), .enabled(audio_enabled), .wb_dirty(wb_dirty),
@@ -1193,7 +1211,7 @@ module top (
       .frame_height_i(12'd0), .tmds(), .tmds_clock(),
       .tmds_p(hdmi_tmds_p), .tmds_n(hdmi_tmds_n),
       .cx(sx), .cy(sy), .frame_width(), .frame_height(),
-      .screen_width(), .screen_height());
+      .screen_width(), .screen_height(), .debug_acr_n(hdmi_acr_n), .debug_acr_cts(hdmi_acr_cts), .debug_last_acr_header(hdmi_acr_header), .debug_last_acr_sub_0(hdmi_acr_sub_0), .debug_asp_packets(hdmi_asp_packets_pix), .debug_asp_overruns(hdmi_asp_overruns_pix));
 
   assign gpdi_dp = hdmi_tmds_p;
 

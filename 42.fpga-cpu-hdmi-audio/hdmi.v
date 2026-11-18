@@ -44,7 +44,13 @@ module hdmi #(
     output wire [COUNTER_WIDTH-1:0] frame_width,
     output wire [COUNTER_WIDTH-1:0] frame_height,
     output wire [COUNTER_WIDTH-1:0] screen_width,
-    output wire [COUNTER_WIDTH-1:0] screen_height
+    output wire [COUNTER_WIDTH-1:0] screen_height,
+    output wire [19:0] debug_acr_n,
+    output wire [19:0] debug_acr_cts,
+    output wire [23:0] debug_last_acr_header,
+    output wire [55:0] debug_last_acr_sub_0,
+    output wire [31:0] debug_asp_packets,
+    output wire [31:0] debug_asp_overruns
 );
 
     localparam [COUNTER_WIDTH-1:0] FRAME_W = FRAME_WIDTH;
@@ -200,6 +206,11 @@ module hdmi #(
                 .packet_pixel_counter(packet_pixel_counter),
                 .audio_sample_word_0(audio_sample_word_0),
                 .audio_sample_word_1(audio_sample_word_1),
+                .debug_acr_n(debug_acr_n), .debug_acr_cts(debug_acr_cts),
+                .debug_last_acr_header(debug_last_acr_header),
+                .debug_last_acr_sub_0(debug_last_acr_sub_0),
+                .debug_asp_packets(debug_asp_packets),
+                .debug_asp_overruns(debug_asp_overruns),
                 .header(pkt_header),
                 .sub_0(pkt_sub_0), .sub_1(pkt_sub_1),
                 .sub_2(pkt_sub_2), .sub_3(pkt_sub_3)

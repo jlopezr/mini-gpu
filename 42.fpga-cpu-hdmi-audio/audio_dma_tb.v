@@ -34,9 +34,20 @@ module audio_dma_tb;
     wait(req_valid); if (req_addr != 32'h1000 || req_write) $fatal(1, "bad request");
     @(posedge clk); rsp_rdata = {32'h11110003,32'h11110002,32'h11110001,32'h11110000}; rsp_valid = 1;
     @(posedge clk); rsp_valid = 0;
-    wait(writes == 4); if (read_cursor != 4) $fatal(1, "cursor");
+    wait(writes == 4); @(posedge clk);
+    if (read_cursor != 4) $fatal(1, "cursor");
+    // FIFO llena: no debe adelantar el cursor ni anunciar un frame que no acepta.
+    write_cursor = 8;
+    wait(req_valid); @(posedge clk);
+    rsp_rdata = {32'h11110007,32'h11110006,32'h11110005,32'h11110004}; rsp_valid = 1;
+    @(posedge clk); rsp_valid = 0; fifo_full = 1;
+    repeat (3) @(posedge clk);
+    if (read_cursor != 4 || writes != 4) $fatal(1, "write while full");
+    fifo_full = 0;
+    wait(writes == 8); @(posedge clk);
+    if (read_cursor != 8) $fatal(1, "cursor after full");
     // wb_dirty impide iniciar una lectura nueva.
-    write_cursor = 8; wb_dirty = 1; repeat (3) @(posedge clk);
+    write_cursor = 12; wb_dirty = 1; repeat (3) @(posedge clk);
     if (req_valid) $fatal(1, "wb_dirty");
     $display("PASS audio_dma"); $finish;
   end

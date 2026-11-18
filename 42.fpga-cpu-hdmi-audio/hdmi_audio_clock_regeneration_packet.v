@@ -7,7 +7,10 @@ module hdmi_audio_clock_regeneration_packet #(
 ) (
     input  wire        clk_pixel,
     input  wire        sample_strobe,
+    input  wire        reset,
     output reg         clk_audio_counter_wrap,
+    output wire [19:0] debug_n,
+    output wire [19:0] debug_cts,
     output wire [23:0] header,
     output wire [55:0] sub_0,
     output wire [55:0] sub_1,
@@ -26,6 +29,8 @@ module hdmi_audio_clock_regeneration_packet #(
     reg [19:0] cycle_time_stamp_counter;
 
     assign header = {8'd0, 8'd0, 8'd1};
+    assign debug_n = N;
+    assign debug_cts = cycle_time_stamp;
 
     assign sub_0 = {N[7:0], N[15:8], {4'd0, N[19:16]},
                     cycle_time_stamp[7:0], cycle_time_stamp[15:8],
@@ -35,7 +40,10 @@ module hdmi_audio_clock_regeneration_packet #(
     assign sub_3 = sub_0;
 
     always @(posedge clk_pixel) begin
-        if (sample_strobe) begin
+        if (reset) begin
+            clk_audio_counter <= 6'd0;
+            internal_wrap <= 1'b0;
+        end else if (sample_strobe) begin
             if (clk_audio_counter == CLK_AUDIO_COUNTER_END) begin
                 clk_audio_counter <= 6'd0;
                 internal_wrap <= ~internal_wrap;
@@ -45,10 +53,17 @@ module hdmi_audio_clock_regeneration_packet #(
     end
 
     always @(posedge clk_pixel)
-        wrap_sync <= {internal_wrap, wrap_sync[1]};
+        if (reset)
+            wrap_sync <= 2'd0;
+        else
+            wrap_sync <= {internal_wrap, wrap_sync[1]};
 
     always @(posedge clk_pixel) begin
-        if (wrap_sync[1] ^ wrap_sync[0]) begin
+        if (reset) begin
+            cycle_time_stamp <= 20'd0;
+            cycle_time_stamp_counter <= 20'd0;
+            clk_audio_counter_wrap <= 1'b0;
+        end else if (wrap_sync[1] ^ wrap_sync[0]) begin
             cycle_time_stamp_counter <= 20'd0;
             cycle_time_stamp <= cycle_time_stamp_counter + 20'd1;
             clk_audio_counter_wrap <= ~clk_audio_counter_wrap;

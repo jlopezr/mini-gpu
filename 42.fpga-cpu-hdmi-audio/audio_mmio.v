@@ -12,6 +12,9 @@ module audio_mmio(
     output reg [4:0] ring_log2_frames, output reg [31:0] write_cursor,
     input wire [31:0] read_cursor, input wire [15:0] fifo_level,
     input wire fifo_empty, input wire [31:0] underruns, input wire [31:0] sample_ticks,
+    input wire [31:0] asp_packets, input wire [31:0] asp_overruns,
+    input wire [19:0] acr_n, input wire [19:0] acr_cts,
+    input wire [23:0] acr_header, input wire [55:0] acr_sub_0,
     output reg clear_underruns
 );
     always @* begin
@@ -32,6 +35,13 @@ module audio_mmio(
                     6'd7: begin read_data = {15'd0, fifo_empty, fifo_level}; if (write) mmio_error = 1'b1; end
                     6'd8: begin read_data = underruns; if (write && write_data != 32'h1) mmio_error = 1'b1; end
                     6'd9: begin read_data = sample_ticks; if (write) mmio_error = 1'b1; end
+                    6'd10: begin read_data = {12'd0, acr_n}; if (write) mmio_error = 1'b1; end
+                    6'd11: begin read_data = {12'd0, acr_cts}; if (write) mmio_error = 1'b1; end
+                    6'd12: begin read_data = {8'd0, acr_header}; if (write) mmio_error = 1'b1; end
+                    6'd13: begin read_data = acr_sub_0[31:0]; if (write) mmio_error = 1'b1; end
+                    6'd14: begin read_data = {8'd0, acr_sub_0[55:32]}; if (write) mmio_error = 1'b1; end
+                    6'd15: begin read_data = asp_packets; if (write) mmio_error = 1'b1; end
+                    6'd16: begin read_data = asp_overruns; if (write) mmio_error = 1'b1; end
                     default: mmio_error = 1'b1;
                 endcase
             end

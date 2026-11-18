@@ -14,6 +14,12 @@ module hdmi_packet_picker #(
     input  wire [4:0]  packet_pixel_counter,
     input  wire [AUDIO_BIT_WIDTH-1:0] audio_sample_word_0,
     input  wire [AUDIO_BIT_WIDTH-1:0] audio_sample_word_1,
+    output wire [19:0] debug_acr_n,
+    output wire [19:0] debug_acr_cts,
+    output reg [23:0] debug_last_acr_header,
+    output reg [55:0] debug_last_acr_sub_0,
+    output reg [31:0] debug_asp_packets,
+    output reg [31:0] debug_asp_overruns,
     output wire [23:0] header,
     output wire [55:0] sub_0,
     output wire [55:0] sub_1,
@@ -71,7 +77,9 @@ module hdmi_packet_picker #(
     hdmi_audio_clock_regeneration_packet acr (
         .clk_pixel(clk_pixel),
         .sample_strobe(sample_strobe),
+        .reset(reset),
         .clk_audio_counter_wrap(clk_audio_counter_wrap),
+        .debug_n(debug_acr_n), .debug_cts(debug_acr_cts),
         .header(header_acr),
         .sub_0(sub_acr_0), .sub_1(sub_acr_1), .sub_2(sub_acr_2), .sub_3(sub_acr_3)
     );
@@ -139,10 +147,16 @@ module hdmi_packet_picker #(
                    (packet_type == 8'h84) ? sub_aif_3 : 56'd0;
 
     always @(posedge clk_pixel) begin
-        if (sample_buffer_used)
+        if (reset) begin
+            sample_buffer_current <= 1'b0;
+            samples_remaining <= 2'd0;
             sample_buffer_ready <= 1'b0;
+            debug_asp_overruns <= 32'd0;
+        end else begin
+            if (sample_buffer_used)
+                sample_buffer_ready <= 1'b0;
 
-        if (sample_strobe) begin
+            if (sample_strobe) begin
             if (sample_buffer_current) begin
                 case (samples_remaining)
                     2'd0: begin buf_b0_0 <= {audio_sample_word_0, 8'd0};
@@ -167,12 +181,15 @@ module hdmi_packet_picker #(
                 endcase
             end
 
-            if (samples_remaining == 2'd3) begin
-                samples_remaining <= 2'd0;
-                sample_buffer_ready <= 1'b1;
-                sample_buffer_current <= ~sample_buffer_current;
-            end else
-                samples_remaining <= samples_remaining + 2'd1;
+                if (samples_remaining == 2'd3) begin
+                    if (sample_buffer_ready)
+                        debug_asp_overruns <= debug_asp_overruns + 1'b1;
+                    samples_remaining <= 2'd0;
+                    sample_buffer_ready <= 1'b1;
+                    sample_buffer_current <= ~sample_buffer_current;
+                end else
+                    samples_remaining <= samples_remaining + 2'd1;
+            end
         end
     end
 
@@ -188,10 +205,23 @@ module hdmi_packet_picker #(
     end
 
     always @(posedge clk_pixel) begin
-        if (sample_buffer_used)
+        if (reset) begin
+            audio_info_frame_sent <= 1'b0;
+            avi_info_frame_sent <= 1'b0;
+            spd_info_frame_sent <= 1'b0;
+            packet_type <= 8'd0;
+            last_clk_audio_counter_wrap <= 1'b0;
+            audio_sample_word_present <= 4'd0;
+            debug_last_acr_header <= 24'd0;
+            debug_last_acr_sub_0 <= 56'd0;
+            debug_asp_packets <= 32'd0;
             sample_buffer_used <= 1'b0;
+        end else begin
+            /* Acknowledge is a one-pixel pulse to the capture bank. */
+            if (sample_buffer_used)
+                sample_buffer_used <= 1'b0;
 
-        if (reset || video_field_end) begin
+        if (video_field_end) begin
             audio_info_frame_sent <= 1'b0;
             avi_info_frame_sent <= 1'b0;
             spd_info_frame_sent <= 1'b0;
@@ -199,6 +229,8 @@ module hdmi_packet_picker #(
         end else if (packet_enable) begin
             if (last_clk_audio_counter_wrap ^ clk_audio_counter_wrap) begin
                 packet_type <= 8'd1;
+                debug_last_acr_header <= header_acr;
+                debug_last_acr_sub_0 <= sub_acr_0;
                 last_clk_audio_counter_wrap <= clk_audio_counter_wrap;
             end else if (sample_buffer_ready) begin
                 packet_type <= 8'd2;
@@ -223,6 +255,7 @@ module hdmi_packet_picker #(
                     asp_31 <= buf_b3_1;
                 end
                 sample_buffer_used <= 1'b1;
+                debug_asp_packets <= debug_asp_packets + 1'b1;
             end else if (!audio_info_frame_sent) begin
                 packet_type <= 8'h84;
                 audio_info_frame_sent <= 1'b1;
@@ -234,6 +267,7 @@ module hdmi_packet_picker #(
                 spd_info_frame_sent <= 1'b1;
             end else
                 packet_type <= 8'd0;
+        end
         end
     end
 
