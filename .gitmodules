@@ -10,3 +10,6 @@
 [submodule "w.caprice32"]
 	path = w.caprice32
 	url = https://github.com/ColinPitrat/caprice32.git
+[submodule "w.doomgeneric"]
+	path = w.doomgeneric
+	url = https://github.com/jlopezr/doomgeneric.git
