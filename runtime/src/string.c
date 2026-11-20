@@ -2,6 +2,7 @@
  * Código de CPU, byte a byte para que valga con cualquier puntero; memcpy copia
  * por palabras si los dos punteros están alineados a 4 (los framebuffers). */
 #include <string.h>
+#include <stdlib.h>
 
 void *memset(void *dst, int value, size_t n) {
     unsigned char *d = (unsigned char *)dst;
@@ -26,6 +27,18 @@ void *memcpy(void *dst, const void *src, size_t n) {
         s = (const unsigned char *)sw;
     }
     while (n--) *d++ = *s++;
+    return dst;
+}
+
+void *memmove(void *dst, const void *src, size_t n) {
+    unsigned char *d = dst;
+    const unsigned char *s = src;
+    if (d < s) while (n--) *d++ = *s++;
+    else if (d > s) {
+        d += n;
+        s += n;
+        while (n--) *--d = *--s;
+    }
     return dst;
 }
 
@@ -79,6 +92,11 @@ char *strrchr(const char *s, int c) {
     return (char *)result;
 }
 
+char *strchr(const char *s, int c) {
+    while (*s != (char)c) if (!*s++) return 0;
+    return (char *)s;
+}
+
 char *strstr(const char *haystack, const char *needle) {
     size_t needle_len = strlen(needle);
     if (!needle_len) return (char *)haystack;
@@ -88,6 +106,13 @@ char *strstr(const char *haystack, const char *needle) {
         ++haystack;
     }
     return 0;
+}
+
+char *strdup(const char *s) {
+    size_t size = strlen(s) + 1;
+    char *copy = malloc(size);
+    if (copy) memcpy(copy, s, size);
+    return copy;
 }
 
 int toupper(int c) {

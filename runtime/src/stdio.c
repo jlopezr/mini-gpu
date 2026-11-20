@@ -14,6 +14,12 @@
 
 typedef int (*Putc)(int c, void *ctx);
 
+struct MiniFile { unsigned unused; };
+static struct MiniFile stdout_file;
+static struct MiniFile stderr_file;
+FILE *stdout = &stdout_file;
+FILE *stderr = &stderr_file;
+
 typedef struct {
     char *dst;
     size_t size;
@@ -150,6 +156,10 @@ static int vformat(Putc putc_fn, void *ctx, const char *fmt, va_list ap) {
         c = (unsigned char)*fmt++;
         if (c == 'd' || c == 'i') {
             int value = va_arg(ap, int);
+            if (precision >= 0) {
+                width = (unsigned)precision;
+                zero_pad = 1;
+            }
             if (value < 0) {
                 putc_fn('-', ctx);
                 ++count;
@@ -158,8 +168,16 @@ static int vformat(Putc putc_fn, void *ctx, const char *fmt, va_list ap) {
                               zero_pad, 0, &count);
             } else emit_unsigned(putc_fn, ctx, (unsigned)value, 10, width, zero_pad, 0, &count);
         } else if (c == 'u') {
+            if (precision >= 0) {
+                width = (unsigned)precision;
+                zero_pad = 1;
+            }
             emit_unsigned(putc_fn, ctx, va_arg(ap, unsigned), 10, width, zero_pad, 0, &count);
         } else if (c == 'x' || c == 'X' || c == 'o') {
+            if (precision >= 0) {
+                width = (unsigned)precision;
+                zero_pad = 1;
+            }
             emit_unsigned(putc_fn, ctx, va_arg(ap, unsigned), c == 'o' ? 8 : 16,
                           width, zero_pad, c == 'X', &count);
         } else if (c == 'p') {
@@ -206,6 +224,42 @@ int printf(const char *fmt, ...) {
     va_end(ap);
     return result;
 }
+
+int vfprintf(FILE *stream, const char *fmt, va_list ap) {
+    (void)stream;
+    return vprintf(fmt, ap);
+}
+
+int fprintf(FILE *stream, const char *fmt, ...) {
+    int result;
+    va_list ap;
+    va_start(ap, fmt);
+    result = vfprintf(stream, fmt, ap);
+    va_end(ap);
+    return result;
+}
+
+int fflush(FILE *stream) { (void)stream; return 0; }
+
+/* Deliberately not a filesystem: these make optional config/save paths fail
+ * cleanly until persistent storage is designed for the board. */
+FILE *fopen(const char *path, const char *mode) { (void)path; (void)mode; return 0; }
+int fclose(FILE *stream) { (void)stream; return 0; }
+size_t fread(void *ptr, size_t size, size_t count, FILE *stream)
+{ (void)ptr; (void)size; (void)count; (void)stream; return 0; }
+size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream)
+{ (void)ptr; (void)size; (void)count; (void)stream; return 0; }
+int fseek(FILE *stream, long offset, int whence)
+{ (void)stream; (void)offset; (void)whence; return -1; }
+long ftell(FILE *stream) { (void)stream; return -1; }
+int feof(FILE *stream) { (void)stream; return 1; }
+int fscanf(FILE *stream, const char *fmt, ...)
+{ (void)stream; (void)fmt; return -1; }
+int sscanf(const char *text, const char *fmt, ...)
+{ (void)text; (void)fmt; return 0; }
+int remove(const char *path) { (void)path; return -1; }
+int rename(const char *oldpath, const char *newpath)
+{ (void)oldpath; (void)newpath; return -1; }
 
 int console_printf(const char *fmt, ...) {
     int result;
