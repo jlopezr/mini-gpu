@@ -17,6 +17,8 @@
 _start:
     LI   R30, __stack+CRT_STACK_SIZE
     JAL  R31, main
+    .globl __mini_exit
+__mini_exit:
     HALT
     .bss
     .comm __stack, 8192             ; el tamano de .comm no admite .equ: igual que arriba

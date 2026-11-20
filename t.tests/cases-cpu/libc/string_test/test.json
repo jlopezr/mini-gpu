@@ -1,5 +1,5 @@
 {
-  "name": "cpu-gpu/libc/string-c",
+  "name": "cpu/libc/string-c",
   "architecture": "cpu",
   "build": {"command": ["make", "case"]},
   "program": "../../../../_build/c/string_test.bin",

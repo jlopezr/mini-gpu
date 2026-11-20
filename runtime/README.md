@@ -24,7 +24,10 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`mmio.h`](include/mmio.h) | Pone los nombres cortos (`VIDEO_SWAP`…) sobre `mmio_map.h` |
 | [`gpu.h`](include/gpu.h) | `KERNEL`, `GPU_RUN`, `NOALIAS`, las variables `__gpu_*` |
 | [`stdint.h`](include/stdint.h), [`stdbool.h`](include/stdbool.h) | Tipos de anchura fija y `bool` para `mini-lcc`. La librería de lcc no los trae, y sin ellos `cc -E` cogería los del sistema, que lcc no entiende. Aquí `bool` es un `int`, porque C89 no tiene `_Bool` |
-| [`string.h`](include/string.h) | La biblioteca C mínima: `memset`, `memcpy`, `memcmp`. Se añade lo que algún programa vaya necesitando. La implementación es [`string.c`](src/string.c) |
+| [`string.h`](include/string.h) | La biblioteca C mínima: memoria (`memset`, `memcpy`, `memcmp`) y cadenas (`strlen`, `strcmp`, `strncmp`, `strncpy`, `strrchr`, `strstr`). Se añade lo que algún programa vaya necesitando. La implementación es [`string.c`](src/string.c) |
+| [`stdlib.h`](include/stdlib.h) | Utilidades (`atoi`, `abs`, `exit`) y heap freestanding (`mini_heap_init`, `malloc`, `free`, `calloc`, `realloc`). `exit` conserva su estado y ejecuta `HALT`. |
+| [`ctype.h`](include/ctype.h) y [`strings.h`](include/strings.h) | Utilidades ASCII (`toupper`, `tolower`, `isspace`, `isprint`, `isalpha`, `isdigit`) y extensiones POSIX (`bzero`, `strcasecmp`, `strncasecmp`). |
+| [`stdio.h`](include/stdio.h), [`console.h`](include/console.h) | Formatter mínimo (`printf`, `snprintf`) con salida serie por defecto; consola HDMI y espejo serie+consola como destinos explícitos. |
 | [`audio.h`](include/audio.h) | Ring PCM S16 estéreo a 48 kHz. El productor C publica `write_index`; el futuro dispositivo HDMI actualizará `read_index`. |
 
 ## `src/`
@@ -36,7 +39,9 @@ una carpeta crezca, se divide en subcarpetas (`include/gpu/`…), con los nombre
 | [`gpu_runtime.inc`](src/gpu_runtime.inc) | `gpu_run`: la CPU lanza un job en la GPU y lo espera | `mmio.inc`; con `BOARD`, la placa 36 |
 | [`rop.h`](include/rop.h), [`rop.inc`](src/rop.inc) | API C y rutinas MiniABI para FILL, COPY, GENERATE, SPAN y CONFIG del ROP | capability `rop`, CPU 38 |
 | [`bench.inc`](src/bench.inc) | `bench_init`, `bench_now`: los ciclos de CPU (cero en los simuladores) | `mmio.inc`; con `BOARD`, la placa |
-| [`string.c`](src/string.c) | `memset`, `memcpy`, `memcmp` (cabecera `string.h`). Código de CPU | `string.h` |
+| [`string.c`](src/string.c) | Memoria y cadenas de `string.h`. Código de CPU | `string.h` |
+| [`stdlib.c`](src/stdlib.c) | Utilidades y heap con lista libre coalescente, inicializado sobre una arena del programa | `stdlib.h`, `string.h` |
+| [`stdio.c`](src/stdio.c) | Formatter y sinks de texto serie, consola HDMI o buffer | `stdio.h`, `console.h`, `mmio.h` |
 | [`audio.c`](src/audio.c) | Operaciones C89 del ring PCM, sin MMIO ni backend específico | `audio.h` |
 | [`putpixel.inc`](src/putpixel.inc) | `putpixel` | `R1` = buffer trasero, `R24` = 640 |
 | [`drawline.inc`](src/drawline.inc) | `drawline`, Bresenham de ocho octantes | `putpixel.inc`, que incluye él solo |

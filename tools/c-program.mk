@@ -23,7 +23,7 @@ MINI_CC := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-cc"
 GPU_RUNTIME ?= "$(MINI_GPU_ROOT)/runtime/src/gpu.c" "$(MINI_GPU_ROOT)/runtime/src/gpu_runtime.inc" \
                "$(MINI_GPU_ROOT)/runtime/src/bench.inc"
 # La biblioteca C mínima (string.h): mini-opt --whole-program borra lo que el programa no use.
-LIBC ?= "$(MINI_GPU_ROOT)/runtime/src/string.c"
+LIBC ?= "$(MINI_GPU_ROOT)/runtime/src/string.c" "$(MINI_GPU_ROOT)/runtime/src/stdlib.c" "$(MINI_GPU_ROOT)/runtime/src/stdio.c"
 SIM_SYS := $(PYTHON) "$(MINI_GPU_ROOT)/tools/sim-sys"
 MINI_DBG := $(PYTHON) "$(MINI_GPU_ROOT)/tools/mini-dbg"
 RUN_BOARD := $(PYTHON) "$(MINI_GPU_ROOT)/tools/run_board.py"

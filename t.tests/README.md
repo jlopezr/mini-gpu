@@ -14,7 +14,7 @@ versionado: lo que sus testbenches Verilog leen de `generated/programs/*.hex` lo
 versiona).
 
 - `cases-*/<familia>/<caso>/` — casos con `test.json` y expectativas.
-- `cases-cpu/demos/` y `cases-gpu/demos/` — las antiguas `examples/`. Cada
+- `cases-cpu/` incluye también familias CPU-only, como [`libc`](cases-cpu/libc/), además de sus demos. `cases-cpu/demos/` y `cases-gpu/demos/` son las antiguas `examples/`. Cada
   programa tiene su carpeta, con `test.json` si es comprobable de forma barata.
   Las variantes para ISAs anteriores llevan `.legacy-<prototipos>.asm` y no se
   ejecutan: son para las placas viejas (16/18/19, 12/14/17).
