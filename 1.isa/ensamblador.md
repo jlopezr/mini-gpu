@@ -191,7 +191,7 @@ Las etiquetas `L.xxx` generadas por `u.lcc` son globales y se mantienen como tal
 | `.half v, …`            | 16 bits por valor                                                                    |
 | `.byte v, …`            | 8 bits por valor                                                                     |
 | `.string "…"`           | Bytes del literal, **NUL final** y relleno hasta múltiplo de 4                      |
-| `.incbin "ruta"`        | Inserta un `.bin` literalmente o un `.hex` de palabras de 32 bits por línea         |
+| `.incbin "ruta"`        | Inserta un `.bin` o `.wad` literalmente, o un `.hex` de palabras de 32 bits por línea |
 | `.space n` / `.zero n`  | `n` bytes a cero                                                                     |
 | `.align n`              | Rellena hasta múltiplo de `n`                                                        |
 | `.comm sim, tam[, ali]` | Reserva `tam` bytes en `.bss` bajo ese símbolo                                       |

@@ -73,6 +73,14 @@ def _hex(value: str) -> int:
     return int(value, 0)
 
 
+def _limit(value: str) -> int | None:
+    """A non-negative instruction limit; zero deliberately means unlimited."""
+    result = int(value, 0)
+    if result < 0:
+        raise argparse.ArgumentTypeError("el límite no puede ser negativo")
+    return None if result == 0 else result
+
+
 BACKENDS = ("auto", "python", "codon")
 
 
@@ -95,13 +103,13 @@ def parse_arguments(argv: list[str] | None = None):
     parser.add_argument("program", type=Path,
                         help=".asm, .bin o .hex con el programa de la CPU y el kernel "
                              "de la GPU en una sola imagen, cargada en 0")
-    parser.add_argument("--run-limit", type=int, default=100_000_000,
+    parser.add_argument("--run-limit", type=_limit, default=100_000_000,
                         help="límite de instrucciones de CPU y de warp: N para cada "
-                             "uno, no N entre los dos (100000000)")
-    parser.add_argument("--cpu-run-limit", type=int,
-                        help="sustituye --run-limit solo para la CPU")
-    parser.add_argument("--gpu-run-limit", type=int,
-                        help="sustituye --run-limit solo para los warps")
+                             "uno, no N entre los dos (100000000; 0 sin límite)")
+    parser.add_argument("--cpu-run-limit", type=_limit,
+                        help="sustituye --run-limit solo para la CPU (0 sin límite)")
+    parser.add_argument("--gpu-run-limit", type=_limit,
+                        help="sustituye --run-limit solo para los warps (0 sin límite)")
     parser.add_argument("--memory-size", type=_hex, default=32 * 1024 * 1024)
     parser.add_argument("--num-warps", type=int, default=8)
     parser.add_argument("--warp-size", type=int, default=8)

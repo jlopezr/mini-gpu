@@ -24,8 +24,8 @@ Necesita u.lcc/build/rcc y un preprocesador de C (MSVC en Windows: lo busca mini
 from __future__ import annotations
 
 import argparse
-import os
 import re
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -51,10 +51,12 @@ class BuildError(RuntimeError):
     pass
 
 
-def run(*command: str) -> None:
+def run(*command: str, report: bool = False) -> None:
     done = subprocess.run([sys.executable, *map(str, command)], capture_output=True, text=True)
     if done.returncode != 0:
         raise BuildError(f"{' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
+    if report:
+        sys.stderr.write(done.stderr)
 
 
 def lower_c(source: Path, outdir: Path, includes: tuple[Path, ...] = (), defines: tuple[str, ...] = (),
@@ -157,7 +159,8 @@ def share_runtime(plains: list[Path]) -> None:
         plain.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
-def optimize_s(plains: list[Path], foreign: list[Path], optimized: Path) -> Path:
+def optimize_s(plains: list[Path], foreign: list[Path], optimized: Path,
+               stats: bool = False) -> Path:
     """Los .s de todas las unidades -> un solo .s con los pases de mini-opt, que los junta antes de optimizar.
     `foreign`: lo que se ensambla aparte y puede nombrar sus simbolos (el arranque, el runtime): un simbolo que
     nombran no se da por privado del programa, y las funciones que ninguna de esas raices alcanza se borran."""
@@ -167,7 +170,8 @@ def optimize_s(plains: list[Path], foreign: list[Path], optimized: Path) -> Path
     noalias = ["--assume-noalias"] if os.environ.get("MINI_OPT_NOALIAS") == "1" else []
     refs = [arg for path in foreign for arg in ("--extern-refs", path)]
     run(TOOLS / "mini-opt", *plains, "-o", optimized, "--whole-program", *noalias, *refs,
-        *(["--passes", passes] if passes is not None else []))
+        *(["--passes", passes] if passes is not None else []),
+        *(["--stats"] if stats else []), report=stats)
     return optimized
 
 
@@ -180,10 +184,33 @@ def wrapper_path(program: Path, board: bool = False, outdir: Path | None = None)
     return (outdir or DEFAULT_OUTDIR) / f"{image_name(program, board)}.asm"
 
 
+def expand_far_calls(path: Path) -> None:
+    """Lower direct calls to an address load plus JALR.
+
+    JAL has a signed 16-bit word displacement.  Large freestanding images
+    (such as Doom with an embedded IWAD) can exceed it; R14/R15 are volatile
+    according to the MiniISA ABI and are safe call-site scratch registers.
+    """
+    pattern = re.compile(r"^(\s*)JAL\s+(R\d+),\s*([A-Za-z_.$][\w.$]*)\s*(;.*)?$")
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        match = pattern.match(line.rstrip("\n"))
+        if not match:
+            lines.append(line)
+            continue
+        indent, link, target, comment = match.groups()
+        scratch = "R14" if link == "R15" else "R15"
+        suffix = comment or ""
+        lines.extend((f"{indent}LI {scratch}, {target}\n",
+                      f"{indent}JALR {link}, {scratch}, 0{suffix}\n"))
+    path.write_text("".join(lines), encoding="utf-8")
+
+
 def build(program: Path, output: Path | None = None, board: bool = False,
           outdir: Path | None = None, includes: tuple[Path, ...] = (),
           data: tuple[tuple[str, Path], ...] = (), sources: tuple[Path, ...] = (),
-          defines: tuple[str, ...] = (), fp32: bool = False) -> Path:
+          defines: tuple[str, ...] = (), fp32: bool = False,
+          far_calls: bool = False, opt_stats: bool = False) -> Path:
     """`data`: (etiqueta, fichero) de cada binario que se pega tras el codigo. `program` da el nombre a la
     imagen y suele llevar `main`. `sources`: el resto de ficheros, en orden: los .c se compilan y optimizan
     juntos, los demas (.s, .asm, .inc) se incluyen sin tocar tras el codigo. Con algun .c se pone el arranque."""
@@ -207,8 +234,15 @@ def build(program: Path, output: Path | None = None, board: bool = False,
         with ThreadPoolExecutor(max_workers=min(len(units), os.cpu_count() or 1)) as pool:
             plains = list(pool.map(lambda unit: lower_c(unit, outdir, includes, defines, fp32), units))
         share_runtime(plains)
-        compiled = [optimize_s(plains, startup + by_hand, outdir / f"{program.stem}.opt.s")]
-    blobs = "".join(f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n' for label, path in data)
+        optimized = optimize_s(plains, startup + by_hand, outdir / f"{program.stem}.opt.s",
+                               opt_stats)
+        if far_calls:
+            expand_far_calls(optimized)
+        compiled = [optimized]
+    blobs = "".join(
+        f'.align 4\n{label}:\n.incbin "{Path(path).resolve().as_posix()}"\n{label}_end:\n'
+        for label, path in data
+    )
     wrapper = wrapper_path(program, board, outdir)
     wrapper.write_text(
         "; generado por mini-cc\n" + (".define BOARD\n" if board else "")
@@ -248,11 +282,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-run", action="store_true", help="con --load, la carga pero no la arranca")
     parser.add_argument("--fp32", action="store_true",
                         help="float con FADD/FSUB/FMUL/FDIV (capability fp32, solo la 38) en vez de softfloat")
+    parser.add_argument("--far-calls", action="store_true",
+                        help="convierte llamadas directas en LI+JALR para imágenes mayores de 128 KiB")
+    parser.add_argument("--opt-stats", action="store_true",
+                        help="muestra las instrucciones que añade o elimina cada pase de mini-opt")
     args = parser.parse_args(argv)
     board = args.board or args.load is not None
     try:
         out = build(args.program, args.output, board, args.outdir, tuple(args.includes), tuple(args.data),
-                    tuple(args.sources), tuple(args.defines), args.fp32)
+                    tuple(args.sources), tuple(args.defines), args.fp32, args.far_calls, args.opt_stats)
     except BuildError as error:
         print(error, file=sys.stderr)
         return 1

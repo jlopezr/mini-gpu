@@ -162,7 +162,7 @@ class CPU:
             devices=declared_devices(serial=serial is not None,
                                      video=video is not None,
                                      input=input_device is not None))
-        self.rop = Rop(self)
+        self.rop = Rop()
 
     def _device(self, address: int) -> MmioDevice | None:
         """Que dispositivo MMIO, si alguno, responde a esta direccion.
@@ -673,7 +673,7 @@ class CPU:
             elif sub == 2:
                 if x or y or (instr & 0xffe):
                     self.stop_with_error(ERROR_INVALID_ENCODING, instr_pc); return
-                self.rop.drain()
+                self.rop.drain(self)
                 if self.rop.sticky_error:
                     self.stop_with_error(ERROR_ROP, instr_pc); return
             elif sub == 3:
@@ -696,7 +696,7 @@ class CPU:
             return
 
         self.instructions_executed += 1
-        self.rop.tick()
+        self.rop.tick(self)
         if self.serial is not None:
             self.serial.tick()
         if self.input is not None:

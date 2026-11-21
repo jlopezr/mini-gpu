@@ -29,6 +29,7 @@ SOURCES = {
     "tools/fp32.py": "tools/fp32.py",
     "engine.codon": "tools/codon/engine.codon",
     "minicpu_core.py": "2.cpu-sim-func/minicpu_core.py",
+    "rop.py": "2.cpu-sim-func/rop.py",
     "minigpu_core.py": "11.gpu-sim-func/minigpu_core.py",
     "cpu_gpu_core.py": "32.cpu-gpu-func-sim/cpu_gpu_core.py",
     "gpu_trace.codon": "11.gpu-sim-func/gpu_trace.codon",
@@ -104,7 +105,9 @@ def prepare() -> tuple[Path, dict]:
     binary = output / "sim-sys-codon"
     # Dentro del motor, sys.executable es el propio binario: las ventanas
     # necesitan un Python de verdad (MINIGPU_CODON_GUI_PYTHON, ver host.py).
-    env = dict(os.environ, CODON_PYTHON=lib, MINIGPU_CODON_GUI_PYTHON=gui_python(),
+    env = dict(os.environ, CODON_PYTHON=lib,
+               MINIGPU_CODON_GUI_PYTHON=(os.environ.get("MINIGPU_CODON_GUI_PYTHON")
+                                         or gui_python()),
                PYTHONPATH=os.pathsep.join((str(HOST), str(ROOT))))
     if not binary.exists():
         src = output / "src"

@@ -1064,7 +1064,8 @@ define una macro en todas las unidades.
 - **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
   `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
 - **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
-  `extern unsigned etiqueta[]`. `mini-cc` no ejecuta generadores: los datos los prepara quien llama.
+  `extern unsigned etiqueta[]` y puede obtener su tamaño con `etiqueta_end - etiqueta` (donde `etiqueta_end`
+  es también `extern unsigned[]`). `mini-cc` no ejecuta generadores: los datos los prepara quien llama.
 - **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
   en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `runtime/include`.
 - La lógica es `tools/mini_cc.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.

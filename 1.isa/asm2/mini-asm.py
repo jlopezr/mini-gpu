@@ -357,12 +357,12 @@ def read_incbin(path: Path) -> bytes:
     suffix = path.suffix.lower()
     if suffix == ".hex":
         return read_hex_image(path)
-    if suffix == ".bin":
+    if suffix in (".bin", ".wad"):
         try:
             return path.read_bytes()
         except OSError as error:
             raise AsmError(f"no se puede leer {path}: {error}") from None
-    raise AsmError(f".incbin solo admite ficheros .bin o .hex: {path.name}")
+    raise AsmError(f".incbin solo admite ficheros .bin, .wad o .hex: {path.name}")
 
 
 def directive_size_bytes(mnemonic: str, operand_text: str, pc: int) -> int:

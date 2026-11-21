@@ -6,6 +6,7 @@ modela el fabric ni sus latencias.
 """
 
 MASK32 = 0xffffffff
+ROP_DEPTH = 16
 
 
 def s32(value):
@@ -14,10 +15,15 @@ def s32(value):
 
 
 class Rop:
-    DEPTH = 16
+    # Codon only infers fields assigned directly in __init__, not in reset().
+    params: list[int]
+    mode: int
+    queue: list[tuple[int, int, list[int]]]
+    sticky_error: bool
+    config: list[int]
+    config_written: int
 
-    def __init__(self, cpu):
-        self.cpu = cpu
+    def __init__(self):
         self.reset()
 
     def reset(self):
@@ -42,51 +48,55 @@ class Rop:
 
     def submit(self, op, ia, a, ib, b):
         self.set_pair(ia, a, ib, b)
-        if len(self.queue) < self.DEPTH:
+        if len(self.queue) < ROP_DEPTH:
             self.queue.append((op, self.mode, self.params[:]))
 
     def status(self):
-        return ((self.DEPTH - len(self.queue)) << 8) | (4 if self.sticky_error else 0) | (1 if self.queue else 0)
+        return ((ROP_DEPTH - len(self.queue)) << 8) | (4 if self.sticky_error else 0) | (1 if self.queue else 0)
 
-    def tick(self):
+    def tick(self, cpu):
         if not self.queue:
             return
         op, mode, p = self.queue.pop(0)
         try:
-            self._execute(op, mode, p)
-        except (RuntimeError, ValueError, IndexError):
+            self._execute(cpu, op, mode, p)
+        except RuntimeError:
+            self.sticky_error = True
+        except ValueError:
+            self.sticky_error = True
+        except IndexError:
             self.sticky_error = True
 
-    def drain(self):
+    def drain(self, cpu):
         while self.queue:
-            self.tick()
+            self.tick(cpu)
 
-    def _read(self, address, size):
+    def _read(self, cpu, address, size):
         if size == 2:
-            return self.cpu.read_sub(address, 2)
-        return self.cpu.read_u32(address)
+            return cpu.read_sub(address, 2)
+        return cpu.read_u32(address)
 
-    def _write(self, address, size, value):
+    def _write(self, cpu, address, size, value):
         if size == 2:
-            self.cpu.write_sub(address, 2, value)
+            cpu.write_sub(address, 2, value)
         else:
-            self.cpu.write_u32(address, value)
+            cpu.write_u32(address, value)
 
-    def _execute(self, op, mode, p):
+    def _execute(self, cpu, op, mode, p):
         if op == 0:  # FILL
             if not p[1] or not p[2] or any(x & 15 for x in (p[0], p[1], p[3])):
                 raise ValueError()
-            data = (p[4].to_bytes(4, "little") * (p[1] // 4))
             for row in range(p[2]):
                 start = p[0] + row * p[3]
-                self.cpu.memory[start:start + p[1]] = data
+                for column in range(0, p[1], 4):
+                    cpu.write_u32(start + column, p[4])
         elif op == 1:  # COPY
             if not p[2] or not p[3] or any(x & 15 for x in (p[0], p[1], p[2], p[4], p[5])):
                 raise ValueError()
             for row in range(p[3]):
                 src = p[0] + row * p[4]
                 dst = p[1] + row * p[5]
-                self.cpu.memory[dst:dst + p[2]] = self.cpu.memory[src:src + p[2]]
+                cpu.memory[dst:dst + p[2]] = cpu.memory[src:src + p[2]]
         elif op == 3:  # SPAN explícito o compacto sobre CONFIG
             compact = mode & 0x1000
             if compact:
@@ -125,7 +135,7 @@ class Rop:
                         newz = shifted & ((1 << (8 * zsize)) - 1)
                     za = z + row * zstride + col * zsize
                     ca = color + row * cstride + col * csize
-                    old = self._read(za, zsize)
+                    old = self._read(cpu, za, zsize)
                     a = s32(newz) if render_mode & 0x80 and zsize == 4 else (newz ^ (0x8000 if render_mode & 0x80 else 0) if zsize == 2 else newz)
                     b = s32(old) if render_mode & 0x80 and zsize == 4 else (old ^ (0x8000 if render_mode & 0x80 else 0) if zsize == 2 else old)
                     cmp = render_mode & 7
@@ -133,12 +143,12 @@ class Rop:
                               (cmp == 3 and a < b) or (cmp == 4 and a <= b) or
                               (cmp == 5 and a > b) or (cmp == 6 and a >= b))
                     if passed:
-                        if render_mode & 0x20: self._write(za, zsize, newz)
-                        if render_mode & 0x40: self._write(ca, csize, value)
+                        if render_mode & 0x20: self._write(cpu, za, zsize, newz)
+                        if render_mode & 0x40: self._write(cpu, ca, csize, value)
         elif op == 5:  # CONFIG
             if mode & ~31 or not mode:
                 raise ValueError()
-            groups = ((0, 1), (2, 3), (4,), (5, 6, 7), (8,))
+            groups = [[0, 1], [2, 3], [4], [5, 6, 7], [8]]
             for bit, indices in enumerate(groups):
                 if mode & (1 << bit):
                     for i in indices: self.config[i] = p[i]
