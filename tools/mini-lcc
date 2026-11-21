@@ -63,8 +63,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="+ - * / de float con FADD/FSUB/FMUL/FDIV (capability fp32, solo la 38) en vez de "
                              "softfloat; define __MINI_FP32__. FP32 es DAZ/FTZ: con subnormales puede no dar "
                              "los mismos bits que softfloat")
+    parser.add_argument("--no-alias", action="store_true",
+                        help="no escribe `; @miniopt alias` delante de cada LOAD/STORE (ver u.lcc/README-miniisa.md)")
+    parser.add_argument("--allocator", action="append", default=[], metavar="NOMBRE",
+                        help="funcion que devuelve memoria nueva, como malloc y calloc (repetible): sus resultados "
+                             "salen como `fresh:` en las anotaciones de alias")
     args = parser.parse_args(argv)
     rcc_flags = ["-crt=none"] if args.no_crt else []
+    if args.no_alias:
+        rcc_flags.append("-alias=off")
+    rcc_flags += [f"-allocator={name}" for name in args.allocator]
     if args.fp32:
         rcc_flags.append("-fp32")
         args.defines.append("__MINI_FP32__")
