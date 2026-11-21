@@ -66,6 +66,8 @@ def add_arguments(parser) -> None:
                             "del runtime); en FICHERO en vez de en la salida estándar")
     group.add_argument("--profile-annotate", type=Path, metavar="FICHERO",
                        help="con --profile, el .asm de lo ejecutado con la cuenta de cada instrucción")
+    group.add_argument("--profile-after-swaps", type=int, default=0, metavar="N",
+                       help="empieza a contar después del swap N (requiere vídeo; útil para excluir la carga)")
     group.add_argument("--symbols", type=Path, metavar="PROGRAMA.asm",
                        help="el .asm del que salen los nombres de función, si el programa es un .bin "
                             "o un .hex (build-c lo deja junto a los intermedios)")
@@ -316,11 +318,15 @@ def display(name: str) -> str:
 
 
 def from_arguments(args) -> Profile | None:
+    if args.profile_after_swaps < 0:
+        raise ValueError("--profile-after-swaps no puede ser negativo")
     if args.profile is None:
         if args.symbols is not None:
             raise ValueError("--symbols solo sirve con --profile")
         if args.profile_annotate is not None:
             raise ValueError("--profile-annotate solo sirve con --profile")
+        if args.profile_after_swaps:
+            raise ValueError("--profile-after-swaps solo sirve con --profile")
         return None
     return Profile(Symbols.from_program(args.program, args.symbols))
 

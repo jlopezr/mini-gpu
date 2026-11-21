@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         system = build_system(args)
         profile = sim_profile.from_arguments(args)
         if profile is not None:
-            system.enable_profile(profile)
+            system.enable_profile(profile, args.profile_after_swaps)
         sim_peripherals.start_display(system)
         tracing = (args.trace or args.trace_file is not None
                    or args.trace_limit is not None)

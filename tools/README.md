@@ -418,6 +418,8 @@ $ sim-sys programa.asm --profile                        # tabla al terminar (las
 $ sim-sys programa.bin --profile --symbols programa.asm # un .bin no lleva nombres: el .asm que lo dio
 $ sim-sys programa.asm --profile perfil.txt             # todas, en un fichero
 $ sim-sys programa.asm --profile --profile-annotate anotado.txt  # y el .asm con la cuenta de cada instrucción
+$ sim-sys juego.bin --video --profile juego.txt --profile-after-swaps 5 --halt-after-swaps 10 \
+    --symbols juego.asm                                  # solo los frames posteriores al swap 5
 ```
 
 Las funciones son las etiquetas de código que no son de bloque (`L.n`, que el ensamblador renombra a
@@ -450,6 +452,9 @@ Perfil de GPU: 336488 instrucciones de warp; ocupación 97% (lanes activas de la
 
 `--profile-annotate FICHERO` escribe el `.asm` de las funciones que se han ejecutado con, en cada instrucción, las
 veces que la ha ejecutado la CPU, las de la GPU (instrucciones de warp) y su ocupación.
+`--profile-after-swaps N` retrasa el contador hasta completar el swap `N`; con `--halt-after-swaps` permite
+perfilar un intervalo de frames sin incluir la carga. El código expandido en línea cuenta bajo la función que lo
+contiene; el `.asm` anotado muestra el coste de sus líneas concretas.
 
 ### Backend Codon para CPU+GPU
 

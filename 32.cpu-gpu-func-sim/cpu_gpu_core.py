@@ -692,6 +692,8 @@ class CpuGpuSystem(MachineHooks):
         self.trace_limit = None     # líneas de traza, de CPU y de warp juntas
         self.trace_lines = 0
         self.profile = None         # sim_profile.Profile, con --profile
+        self.profile_after_swaps = 0
+        self.profile_started = False
         # Los fija `run`; NO_LIMIT fuera de él. `_limit_slack`: cuántas
         # instrucciones, de cualquier núcleo, pueden retirarse antes de que un
         # límite pueda alcanzarse (ver `_check_limits`).
@@ -776,14 +778,28 @@ class CpuGpuSystem(MachineHooks):
         self.trace = _GatedTrace(_LinePrefix(stream, "GPU     "), self)
         self._attach_gpu_events()
 
-    def enable_profile(self, profile) -> None:
+    def enable_profile(self, profile, after_swaps: int = 0) -> None:
         """Perfil por función (`tools/sim_profile.py`): cuenta cada instrucción de CPU y de warp."""
+        if after_swaps < 0:
+            raise ValueError("profile_after_swaps no puede ser negativo")
+        if after_swaps and self.video is None:
+            raise ValueError("--profile-after-swaps requiere vídeo")
         self.profile = profile
-        self._attach_gpu_events()
+        self.profile_after_swaps = after_swaps
+        self.profile_started = False
+        self._maybe_start_profile()
+
+    def _maybe_start_profile(self) -> None:
+        """Activa el contador al acabar el swap pedido, antes del siguiente frame."""
+        if (self.profile is not None and not self.profile_started
+                and (not self.profile_after_swaps
+                     or self.video.swap_count >= self.profile_after_swaps)):
+            self.profile_started = True
+            self._attach_gpu_events()
 
     def _attach_gpu_events(self) -> None:
         """La GPU entrega cada instrucción de warp a un solo consumidor: la traza, el perfil o los dos."""
-        if self.profile is None:
+        if self.profile is None or not self.profile_started:
             self.gpu.system.trace = self.trace
         else:
             self.gpu.system.trace = sim_profile.GpuEvents(self.profile, lambda: self.trace)
@@ -922,13 +938,14 @@ class CpuGpuSystem(MachineHooks):
         if retired:
             self.cpu_instructions += 1
             self._limit_slack -= 1
-            if self.profile is not None:
+            if self.profile is not None and self.profile_started:
                 try:
                     word = cpu.read_u32(pc)
                 except RuntimeError:
                     word = None
                 self.profile.cpu(pc, word, cpu.pc)
             self.tick_devices()
+            self._maybe_start_profile()
         return retired
 
     def step_round(self) -> bool:
