@@ -155,8 +155,13 @@ int strcasecmp(const char *a, const char *b) {
 int strncasecmp(const char *a, const char *b, size_t n) {
     int ca = 0, cb = 0;
     while (n--) {
-        ca = toupper((unsigned char)*a++);
-        cb = toupper((unsigned char)*b++);
+        // Keep this local instead of calling toupper twice per byte.  This is
+        // the hot path for WAD lump-name lookups, and a call is particularly
+        // expensive in large freestanding programs (LI + JALR).
+        ca = (unsigned char)*a++;
+        cb = (unsigned char)*b++;
+        if (ca >= 'a' && ca <= 'z') ca -= 'a' - 'A';
+        if (cb >= 'a' && cb <= 'z') cb -= 'a' - 'A';
         if (ca != cb || !ca) return ca - cb;
     }
     return 0;
