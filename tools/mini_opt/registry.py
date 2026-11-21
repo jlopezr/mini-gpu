@@ -13,7 +13,7 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # El orden importa: `deadfuncs` va dos veces: la primera, antes de todo, para que `licm` y los demas no vean las
 # direcciones y las escrituras del codigo muerto; `kernelcalls` expande las llamadas de los kernels antes de que `kernels` los prepare;
 # `stackslots` deja copias; las propagaciones descubren branches constantes;
-# DCE limpia entre fases; `licm` se queda primero con los registros que necesita y `sharebase`
+# DCE limpia entre fases; `cse` va antes de `strength` y `licm`, que ven asi cada direccion calculada una vez; `licm` se queda primero con los registros que necesita y `sharebase`
 # usa los restantes; `inline` va cuando las hojas ya no tienen marco (`deadsaves`); tras el, `stackslots`
 # pasa a copias los guardados de las funciones que se han quedado sin llamadas y `leafregs` les da a los
 # R16..R29 el registro de la copia; las de detras limpian; `deadfuncs` (solo con --whole-program) vuelve cuando las demas ya han quitado las llamadas que
@@ -21,7 +21,7 @@ PASSES: dict[str, tuple[Pass, str]] = {}
 # detras de todo porque una etiqueta parte un bloque.
 DEFAULT_PASSES = [
     "deadfuncs", "intrinsics", "kernelcalls", "kernels", "stackslots", "jumps", "boolean", "forward", "deadstores", "constprop", "dce",
-    "copyprop", "dce", "retarget", "branches", "unreachable", "argblock", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
+    "copyprop", "dce", "retarget", "branches", "unreachable", "argblock", "dce", "cse", "copyprop", "dce", "strength", "dce", "licm", "dce", "strength", "dce", "noalias",
     "sharebase", "deadsaves", "inline", "stackslots", "leafregs", "copyprop", "dce", "retarget", "dce", "jumps", "unreachable", "deadsaves",
     "tailcalls", "unreachable", "deadfuncs", "invert", "ssy", "lanestack", "marks",
 ]

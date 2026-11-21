@@ -1098,6 +1098,11 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
 - **`--no-crt`** (`rcc -crt=none`): el compilador no emite `_start` ni `.comm __stack`. El
   arranque es `runtime/src/crt0.s` (pone la pila, llama a `main`, para). Sin la opción el
   compilador sigue emitiéndolo como siempre.
+- **`--no-alias`** (`rcc -alias=off`) y **`--allocator NOMBRE`** (`rcc -allocator=NOMBRE`, repetible): lcc escribe
+  `; @miniopt alias ETIQUETA` delante de cada `LOAD`/`STORE` de un acceso de C (`global:y`, `local:f.p`,
+  `fresh:f.malloc#3`, `unknown`). La primera opción lo apaga, y la segunda añade una función a `malloc`/`calloc` como
+  fuente de objetos nuevos. El formato y lo que se puede deducir están en `u.lcc/README-miniisa.md`, en «Alias facts
+  for mini-opt». Los usa el pase `cse` de `mini-opt`.
 - **Juntar `.s`:** con `.include`. Las etiquetas `L.n` que lcc numera desde 1 en cada
   compilación son privadas de cada fichero incluido (el principal conserva las suyas), así
   que dos `.s` no chocan. Los `static` de C sí chocarían (el ensamblador no sabe de ellos): `mini-cc`
@@ -1121,7 +1126,7 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
   `__gpu_lwarp`, `__gpu_arg`, y `__gpu_bar = 0;` pasa a `BAR`). Rechaza la dirección de un
   intrínseco o un temporal que siga vivo. El código es un paquete, `tools/mini_opt/`, con un fichero
   por pase en `passes/` (`intrinsics`, `kernels`, `stackslots`, `jumps`, `constprop`, `dce`,
-  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
+  `copyprop`, `boolean`, `forward`, `deadstores`, `branches`, `unreachable`, `argblock`, `cse`, `strength`, `licm`, `noalias`, `sharebase`, `deadsaves`, `inline` (y `kernelcalls`), `leafregs`, `tailcalls`,
   `deadfuncs`, `invert`, `ssy`, `lanestack`, `marks`) y,
   aparte, el troceado en funciones (`model.py`), qué lee y escribe cada instrucción (`isa.py`), el
   grafo de flujo y la vida de registros (`flow.py`) y la línea de órdenes (`cli.py`). Para añadir una
@@ -1297,7 +1302,7 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
   lo prohíbe.
 - **Pase `strength`:** reducción de fuerza de los accesos indexados de un bucle. lcc compila `a[(y + 1) * 168 + 8 + x + k]` con la
   cuenta entera de cada acceso (`ADD`, `SHL`, `ADD` de la base y el `LOAD`, 4 instrucciones donde a mano es una). Si el bucle tiene una
-  variable de inducción (`ADDI i, i, c`, su única escritura, en el único bloque con arista de vuelta) y la dirección es una suma de
+  variable de inducción (`ADDI i, i, c`, su única escritura, en un bloque que se ejecuta una vez por vuelta) y la dirección es una suma de
   registros invariantes, `i` y una constante (`ADD`, `ADDI`, `SUB`, `SHL`/`SHLI` y `MUL` por constante, evaluados dentro de un bloque), los
   accesos con los mismos invariantes y coeficientes (las vecinas `x - 1`, `x`, `x + 1`) comparten un puntero: el preheader lo deja en
   `sum(...) + coef * i0 + const_minimo` y el último bloque lo avanza `coef * c`; cada acceso pasa a `LOAD v, P, const - const_minimo`, y el DCE
@@ -1307,6 +1312,25 @@ $ mini-asm programa.asm -I runtime/src -o programa.bin
   bucle no escribe (`ADD i, i, s`, el `x += nlanes` de un kernel): el puntero avanza entonces `coef * s`, un registro que se calcula una vez en
   el preheader y se comparte entre grupos. No toca bucles con llamadas ni con más de una arista de vuelta. En la vida de Conway en C
   con índices: 2,30× → 1,13× el ensamblador en la CPU.
+  Una variable de inducción no tiene por qué avanzar en el último bloque: lcc deja `j--` del `for` allí, pero `idx += width` y `s++`
+  en el cuerpo. Basta que el bloque de su paso domine al último y no esté en un bucle anidado. Un acceso de otro bloque ve el
+  valor de después del paso si ese bloque lo domina, y el de antes si no se llega a él desde el paso sin volver a la cabecera. Si no es
+  ninguna de las dos cosas, no se toca. Y una variable que tras el cambio solo lee su propio paso y no sale viva del bucle se borra
+  (`drop_dead_ivs`; el DCE no la ve muerta porque el paso la lee en la vuelta siguiente). Si el contador solo sirve para salir
+  (`for (j = n; j; j--)`: `BNE j, R0` en la cabecera, de uno en uno y nada más lo lee), la salida compara un puntero que avanza
+  una constante (potencia de dos, distinta de cero) con su valor final, calculado en el preheader (`replace_counter`). Con paso en
+  registro no se hace, porque podría valer 0. En el `wipe_doMelt` de Doom, el bucle que copia cada píxel pasa de 9 instrucciones a 5.
+- **Pase `cse`:** subexpresiones comunes, cargas incluidas, con las etiquetas de alias de lcc (`; @miniopt alias`, ver
+  `u.lcc/README-miniisa.md`). lcc recalcula cada `y[i]` entero, carga del puntero `y` incluida, en cada sentencia. El pase sigue
+  el valor de cada registro como un árbol sobre registros que no han cambiado y sobre memoria que no se ha escrito. Una
+  instrucción cuyo valor ya tiene un registro pasa a copia, y `copyprop`/`dce` se llevan la copia y la cuenta que la alimentaba. Tras
+  `STORE v, A` (palabra, anotada, no `volatile`), una carga de palabra de `A` con la misma etiqueta lee `v`. Si el valor
+  se calculó en todos los caminos pero nadie lo conserva (lcc reutiliza el temporal), dentro de un bucle, quien lo calculó lo copia
+  además a un registro libre en todo el tramo. Una escritura solo mata las cargas que puede pisar: no se solapan dos accesos sobre la
+  misma base con bytes disjuntos, dos etiquetas de clases distintas entre `global:`, `fresh:` y `local:`, dos `global:`/`fresh:` distintas,
+  ni la pila (base R30) con un `global:`/`fresh:`. Una llamada o una instrucción desconocida mata todo lo cargado. Solo entran las cargas
+  que lcc anotó y que no son `volatile` (ni de un símbolo `; @miniopt volatile`), y no toca los kernels. `parse_unit` pega cada
+  etiqueta a su `Line` (`alias`) y `render_unit` la vuelve a escribir delante de su LOAD/STORE.
 - **Pase `deadsaves`:** un `R16..R29` que la función guarda en el prólogo y restaura en el epílogo, pero que
   no aparece en ninguna otra instrucción, pierde el `STORE` y los `LOAD`. Lo dejan así `copyprop` y `dce` al
   borrar el último uso (el `.s` de lcc no los tiene). El `JR` lo lee por convenio y no cuenta como uso; no

@@ -5,7 +5,8 @@
 
 lcc compila `a[(y + 1) * 168 + 8 + x + k]` con la cuenta entera de cada acceso: cuatro instrucciones donde
 a mano se escribe una `LOAD` con desplazamiento constante sobre un puntero que avanza. Para un bucle con una
-variable de induccion `ADDI i, i, c` (la unica escritura de `i` en el bucle, en el ultimo bloque), cada
+variable de induccion `ADDI i, i, c` o `ADD i, i, s` (`s` invariante; la unica escritura de `i` en el bucle, en
+un bloque que se ejecuta una vez por vuelta: domina al ultimo y no esta en un bucle anidado), cada
 direccion que es una suma de registros invariantes del bucle, `i` y una constante, con `SHL` por una
 constante, es afin en `i`:
 
@@ -16,6 +17,19 @@ comparten un puntero `P`, que el preheader deja en `sum(...) + coef_i * i0 + con
 de la actualizacion avanza `coef_i * c`. Cada acceso pasa a `LOAD v, P, const - const_minimo`; las cuentas
 que se quedan sin uso las borra el DCE.
 
+Un acceso ve `i` antes o despues de su paso: en el mismo bloque se ve por el orden; en otro, despues si el bloque
+del paso lo domina, y antes si no se llega a el desde el paso sin volver a la cabecera (si no es ninguna de las
+dos, no se toca). `d[idx] = *(s++); idx += width;` (el `wipe_doMelt` de Doom) tiene asi dos variables de
+induccion en el cuerpo, y la del contador del `for` en el ultimo bloque.
+
+Una variable de induccion que tras el cambio solo se lee a si misma (su propio paso) y no sale viva del bucle se
+borra (`drop_dead_ivs`): el DCE no la ve muerta, porque su paso la lee en la vuelta siguiente.
+
+Despues, si el bucle solo usa su contador para salir (`for (j = n; j; j--)`: `BNE j, R0` en la cabecera, `j` de uno
+en uno y nada mas que lo lea), la salida pasa a comparar un puntero que avanza una constante (potencia de dos, no
+cero) con su valor final, que el preheader calcula una vez (`fin = P + paso * j`), y el contador desaparece
+(`replace_counter`).
+
 Solo se toca un grupo si el bucle queda mas corto (con mas peso en lo que se ejecuta en cada vuelta);
 hace falta un registro libre para `P` (y otro para el calculo del preheader). Las direcciones se evaluan dentro
 de un bloque; un registro definido en otro bloque del bucle que no sea la variable de induccion no se sigue.
@@ -23,7 +37,7 @@ Un bucle con llamadas, o con mas de una arista de vuelta, no se toca."""
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from ..dead import remove_dead
 from ..flow import Block, build_cfg, dominators, live_in_blocks, liveness, natural_loops, predecessors
@@ -49,9 +63,24 @@ class Loop:
     # registro que el bucle no escribe (`ADD i, i, s`, escrito ("R", s))
     ivs: dict[int, int | tuple[str, int]]
     dom: list[set[int]]                     # dominadores de cada bloque
+    ivblock: dict[int, int] = field(default_factory=dict)     # registro -> bloque de su paso
+    reach: dict[int, set[int]] = field(default_factory=dict)  # bloques a los que se llega desde el paso sin volver a la cabecera
 
 
-def analyze(blocks: list[Block], header: int, body: set[int], dom: list[set[int]]) -> Loop | None:
+def reachable(blocks: list[Block], start: int, header: int, body: set[int]) -> set[int]:
+    seen: set[int] = set()
+    stack = [s for s in blocks[start].succ if s in body and s != header]
+    while stack:
+        b = stack.pop()
+        if b not in seen:
+            seen.add(b)
+            stack.extend(s for s in blocks[b].succ if s in body and s != header)
+    return seen
+
+
+def analyze(blocks: list[Block], header: int, body: set[int], dom: list[set[int]],
+            inner: set[int] = frozenset()) -> Loop | None:
+    """`inner`: los bloques de los bucles anidados (alli una instruccion se ejecuta mas de una vez por vuelta)."""
     pre = preheader(blocks, header, body)
     latches = [b for b in body if header in blocks[b].succ]
     if pre is None or len(latches) != 1:
@@ -71,20 +100,28 @@ def analyze(blocks: list[Block], header: int, body: set[int], dom: list[set[int]
                 written.add(r)
                 count[r] += 1
     ivs: dict[int, int | tuple[str, int]] = {}
-    for line in blocks[latch].lines:
-        if line.kind != "instr" or len(line.args) != 3:
+    ivblock: dict[int, int] = {}
+    reach: dict[int, set[int]] = {}
+    for b in sorted(body):
+        if b not in dom[latch] or b in inner:               # no se ejecuta exactamente una vez por vuelta
             continue
-        r = reg_of(line.args[0])
-        if not r or count[r] != 1:
-            continue
-        first, second = reg_of(line.args[1]), reg_of(line.args[2])
-        if line.op == "ADDI" and r == first and number(line.args[2]):
-            ivs[r] = number(line.args[2])
-        elif line.op == "ADD" and r in (first, second):
-            step = second if r == first else first
-            if step and step != r and step not in written:      # el paso es otro registro que el bucle no escribe
-                ivs[r] = ("R", step)
-    return Loop(header, body, pre.index, latch, written, ivs, dom)
+        for line in blocks[b].lines:
+            if line.kind != "instr" or len(line.args) != 3:
+                continue
+            r = reg_of(line.args[0])
+            if not r or count[r] != 1:
+                continue
+            first, second = reg_of(line.args[1]), reg_of(line.args[2])
+            if line.op == "ADDI" and r == first and number(line.args[2]):
+                ivs[r] = number(line.args[2])
+            elif line.op == "ADD" and r in (first, second):
+                step = second if r == first else first
+                if step and step != r and step not in written:  # el paso es otro registro que el bucle no escribe
+                    ivs[r] = ("R", step)
+            if r in ivs and r not in ivblock:
+                ivblock[r] = b
+                reach[r] = reachable(blocks, b, header, body)
+    return Loop(header, body, pre.index, latch, written, ivs, dom, ivblock, reach)
 
 
 def constant(blocks: list[Block], loop: Loop, b: int, j: int, r: int) -> int | None:
@@ -167,7 +204,16 @@ def affine(blocks: list[Block], loop: Loop, b: int, position: int, r: int, depth
         return None
     if r not in loop.written:
         return {r: 1}, 0
-    return ({r: 1}, 0) if r in loop.ivs else None             # antes de su ADDI: despues, la definicion se ve arriba
+    if r not in loop.ivs:
+        return None
+    # en el bloque del paso, por encima de el (si estuviera debajo, la definicion se habria visto arriba)
+    where = loop.ivblock[r]
+    if b == where or b not in loop.reach[r]:
+        return {r: 1}, 0
+    if where in loop.dom[b]:                                    # despues del paso
+        step = loop.ivs[r]
+        return ({r: 1}, step) if isinstance(step, int) else add(({r: 1}, 0), ({step[1]: 1}, 0))
+    return None                                                 # a veces antes y a veces despues
 
 
 def collect(blocks: list[Block], loop: Loop, created: set[int]) -> dict[tuple, list[tuple[int, int, int]]]:
@@ -317,6 +363,88 @@ def apply(blocks: list[Block], loop: Loop, key: tuple, members: list, pointer: i
     return OK
 
 
+def drop_dead_ivs(blocks: list[Block], body: set[int], stats: dict | None = None) -> int:
+    """Borra el paso (`ADDI i, i, c` / `ADD i, i, s`) de un registro que en el bucle solo lee ese paso y que no
+    sale vivo por ninguna salida. Devuelve cuantos ha borrado."""
+    live_in = live_in_blocks(blocks, liveness(blocks))
+    exits = {s for b in body for s in blocks[b].succ if s not in body}
+    touched: Counter = Counter()                    # registro -> lineas del bucle que lo leen o lo escriben
+    for b in body:
+        for line in blocks[b].lines:
+            if line.kind == "instr":
+                defs, uses = defs_uses(line)
+                for r in defs | uses:
+                    touched[r] += 1
+    removed = 0
+    for b in sorted(body):
+        for line in list(blocks[b].lines):
+            if line.kind != "instr" or line.op not in ("ADD", "ADDI") or len(line.args) != 3:
+                continue
+            r = reg_of(line.args[0])
+            if not r or r not in (reg_of(line.args[1]), reg_of(line.args[2])) or touched[r] != 1:
+                continue
+            if any(r in live_in[s] for s in exits):
+                continue
+            blocks[b].lines.remove(line)
+            removed += 1
+    if stats is not None and removed:
+        stats["strength.dead_ivs"] = stats.get("strength.dead_ivs", 0) + removed
+    return removed
+
+
+def replace_counter(blocks: list[Block], header: int, body: set[int], allowed: list[int], dom: list[set[int]],
+                    inner: set[int], stats: dict) -> None:
+    """`BNE j, R0, cuerpo` con `j` que solo cuenta vueltas -> `BNE P, fin, cuerpo`."""
+    loop = analyze(blocks, header, body, dom, inner)
+    if loop is None:
+        return
+    test = blocks[header].last_instr()
+    if test is None or test.op != "BNE" or len(test.args) != 3:
+        return
+    a, b = reg_of(test.args[0]), reg_of(test.args[1])
+    counter = a if b == 0 else b if a == 0 else None
+    if not counter or loop.ivs.get(counter) not in (1, -1) or loop.ivblock[counter] == header:
+        return
+    uses: Counter = Counter()
+    for block in body:
+        for line in blocks[block].lines:
+            if line.kind == "instr":
+                defs, used = defs_uses(line)
+                for r in defs | used:
+                    uses[r] += 1
+    if uses[counter] != 2:                          # su paso y el salto
+        return
+    exits = {s for block in body for s in blocks[block].succ if s not in body}
+    live_in = live_in_blocks(blocks, liveness(blocks))
+    if any(counter in live_in[s] for s in exits):
+        return
+    pointer = None
+    for r, step in sorted(loop.ivs.items()):
+        if (r != counter and isinstance(step, int) and step and not step & (abs(step) - 1)
+                and loop.ivblock[r] != header and abs(step) <= 1 << MAX_SHIFT):
+            pointer = r, step
+            break
+    if pointer is None:
+        return
+    free = free_registers(blocks, body, header, allowed, live_in)
+    if not free:
+        return
+    end = free[0]
+    r, step = pointer
+    # la vuelta k empieza con j = j0 + c*k y P = P0 + step*k; se sale con j == 0, o sea en k = -j0/c
+    shift = abs(step).bit_length() - 1
+    forwards = (step > 0) == (loop.ivs[counter] < 0)    # fin = P + |step|*j0 si avanzan en sentido contrario
+    lines = ([instr("SHLI", f"R{end}", f"R{counter}", str(shift))] if shift
+             else [instr("ADD", f"R{end}", f"R{counter}", "R0")])
+    lines.append(instr("ADD", f"R{end}", f"R{r}", f"R{end}") if forwards
+                 else instr("SUB", f"R{end}", f"R{r}", f"R{end}"))
+    for line in lines:
+        insert_in_preheader(blocks[loop.pre], line)
+    test.args[0], test.args[1] = f"R{r}", f"R{end}"
+    drop_dead_ivs(blocks, body, stats)
+    stats["strength.counters"] = stats.get("strength.counters", 0) + 1
+
+
 def weight(blocks: list[Block], loop: Loop, dom_latch: set[int]) -> int:
     """Instrucciones del bucle, el doble las de los bloques que se ejecutan en cada vuelta."""
     return sum((2 if b in dom_latch else 1) * sum(1 for l in blocks[b].lines if l.kind == "instr")
@@ -334,13 +462,13 @@ def trial_copy(blocks: list[Block], members: list) -> list[Block]:
 
 
 def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[int], dom: list[set[int]],
-                stats: dict) -> None:
+                stats: dict, inner: set[int] = frozenset()) -> None:
     """`dom` vale para todo el pase: solo se insertan y borran instrucciones, el grafo no cambia."""
     created: set[int] = set()
     rejected: set = set()
     steps: dict[tuple[int, int], int] = {}                  # (registro del paso, coeficiente) -> registro con el producto
     while True:
-        loop = analyze(blocks, header, body, dom)
+        loop = analyze(blocks, header, body, dom, inner)
         if loop is None or not loop.ivs:
             return
         groups = collect(blocks, loop, created)
@@ -360,6 +488,8 @@ def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[
                     rejected.add(key)
                 continue
             remove_dead(trial, {}, "strength")
+            if drop_dead_ivs(trial, body):
+                remove_dead(trial, {}, "strength")
             if weight(trial, loop, dom_latch) < weight(blocks, loop, dom_latch):
                 chosen = (key, free[0], scratch, spare)
                 break
@@ -369,6 +499,8 @@ def reduce_loop(blocks: list[Block], header: int, body: set[int], allowed: list[
         key, pointer, scratch, spare = chosen
         apply(blocks, loop, key, groups[key], pointer, scratch, spare, steps)
         remove_dead(blocks, stats, "strength")
+        if drop_dead_ivs(blocks, body, stats):
+            remove_dead(blocks, stats, "strength")
         created.add(pointer)
         stats["strength.pointers"] = stats.get("strength.pointers", 0) + 1
 
@@ -381,13 +513,15 @@ def pass_strength(unit: Unit, stats: dict) -> None:
         blocks = build_cfg(function)
         if len(blocks) < 2:
             continue
-        before = stats.get("strength.pointers", 0)
+        before = stats.get("strength.pointers", 0) + stats.get("strength.counters", 0)
         kernel = function.name.startswith(KERNEL_PREFIX)
         allowed = list(range(5, 16)) + [1, 2, 3, 4, 31] + (list(range(16, 30)) if kernel else [])
         dom = dominators(blocks)
         loops = natural_loops(blocks, dom)
         for header, body in sorted(loops.items(), key=lambda item: (len(item[1]), item[0])):
-            reduce_loop(blocks, header, body, allowed, dom, stats)
-        if stats.get("strength.pointers", 0) > before:
+            inner = {b for other, nested in loops.items() if other != header and other in body for b in nested}
+            reduce_loop(blocks, header, body, allowed, dom, stats, inner)
+            replace_counter(blocks, header, body, allowed, dom, inner, stats)
+        if stats.get("strength.pointers", 0) + stats.get("strength.counters", 0) > before:
             stats["strength.functions"] = stats.get("strength.functions", 0) + 1
             function.body = [line for block in blocks for line in block.lines]

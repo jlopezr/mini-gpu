@@ -33,6 +33,13 @@ RET32_RE = re.compile(r"^\s*;\s*@miniopt\s+ret32\s*$")
 #                                     ABI de una llamada no conserva): se lee como una instruccion `CLOBBER RN` que
 #                                     escribe RN y se vuelve a escribir como este comentario
 CLOBBER_RE = re.compile(r"^\s*;\s*@miniopt\s+clobber\s+(R\d+)\s*$")
+# Delante de una instruccion de memoria (lcc, `alias_*` en u.lcc/src/mini.md):
+#     ; @miniopt alias ETIQUETA [volatile]   el objeto al que puede tocar: `global:NOMBRE`, `local:F.NOMBRE`,
+#                                           `fresh:F.ASIG#N` o `unknown`; `volatile`, si es la lectura de un objeto
+#                                           volatile. Dos etiquetas distintas, ninguna `unknown`, no se solapan; la
+#                                           misma no dice nada. Se pega a la `Line` siguiente (`alias`) y
+#                                           `render_unit` la vuelve a escribir delante.
+ALIAS_RE = re.compile(r"^\s*;\s*@miniopt\s+alias\s+(\S+(?:\s+volatile)?)\s*$")
 
 class OptError(ValueError):
     """Entrada mala (un intrinseco mal usado...)."""
@@ -52,6 +59,8 @@ class Line:
     origin: tuple[str, ...] | None = field(default=None, compare=False)
     # Un `JR R31` de una funcion con `; @miniopt ret32`: el valor devuelto es solo R1 (ver `isa.defs_uses`).
     ret32: bool = field(default=False, compare=False)
+    # La etiqueta de alias de lcc de un LOAD/STORE (`; @miniopt alias`), o None (sin ella: `unknown`, y quiza volatile).
+    alias: str | None = field(default=None, compare=False)
 
     def render(self) -> str:
         if self.kind == "label":
@@ -160,7 +169,12 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
         target.extend(pending)
         pending.clear()
 
+    alias: str | None = None
     for raw in source.splitlines():
+        found = ALIAS_RE.match(raw)
+        if found:
+            alias = " ".join(found.group(1).split())
+            continue
         if RET32_RE.match(raw):
             if current is not None:
                 current.ret32 = True
@@ -178,7 +192,12 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
             else:
                 (unit.volatile if fact.group(1) == "volatile" else unit.const).add(fact.group(2))
             continue
-        for line in parse_line(raw):
+        parsed = parse_line(raw)
+        if alias is not None and parsed:
+            if parsed[0].kind == "instr":       # solo la instruccion que la sigue
+                parsed[0].alias = alias
+            alias = None
+        for line in parsed:
             word = line.text.split(None, 1)[0].lower() if line.kind == "directive" else ""
             if word in SECTION_WORDS:
                 if word in (".text", ".code") and section == ".text":
@@ -220,7 +239,12 @@ def parse_unit(source: str, path: str = "<entrada>") -> Unit:
 
 
 def render_unit(unit: Unit) -> str:
-    return "\n".join(line.render() for line in unit.lines()) + "\n"
+    out = []
+    for line in unit.lines():
+        if line.kind == "instr" and line.alias and line.op.startswith(("LOAD", "STORE")):
+            out.append(f"; @miniopt alias {line.alias}")
+        out.append(line.render())
+    return "\n".join(out) + "\n"
 
 
 def directive_parts(line: Line) -> list[str]:
