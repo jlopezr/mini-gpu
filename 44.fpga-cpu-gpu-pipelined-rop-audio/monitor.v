@@ -348,7 +348,7 @@ module monitor #(
   reg [7:0] response_byte_4;
   reg [7:0] response_byte_5;
   reg [7:0] response_byte_6;
-  (* keep = "true" *) reg [17:0] command_decoded;
+  (* keep = "true", syn_keep = "true" *) reg [17:0] command_decoded;
 
   // Palabras que faltan del INPUT_EVENTS en curso, byte de la palabra que toca y
   // si la respuesta es la de INPUT_PRESENCE (bc) en vez de la de eventos (bb).

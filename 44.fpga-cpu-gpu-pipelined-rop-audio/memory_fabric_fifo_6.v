@@ -413,12 +413,12 @@ module memory_fabric_fifo_6 #(
     localparam QUEUE_ADDR_WIDTH = 3;
     localparam QUEUE_DEPTH = (1 << QUEUE_ADDR_WIDTH);
 
-    (* syn_ramstyle = "registers" *) reg [2:0]   cmd_master [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg         cmd_write  [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg [31:0]  cmd_addr   [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg [127:0] cmd_wdata  [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg [15:0]  cmd_wmask  [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg         cmd_error  [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [2:0]   cmd_master [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg         cmd_write  [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [31:0]  cmd_addr   [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [127:0] cmd_wdata  [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [15:0]  cmd_wmask  [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg         cmd_error  [0:QUEUE_DEPTH-1];
 
     reg [QUEUE_ADDR_WIDTH-1:0] cmd_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] cmd_rd_ptr;
@@ -491,8 +491,8 @@ module memory_fabric_fifo_6 #(
     // peticiones: el controlador no admite una rafaga BL8 en menos de cuatro.
     wire cmd_pop = !issue_valid && !cmd_empty;
 
-    (* syn_ramstyle = "registers" *) reg [5:0]  meta_port  [0:QUEUE_DEPTH-1];
-    (* syn_ramstyle = "registers" *) reg        meta_error [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [5:0]  meta_port  [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg        meta_error [0:QUEUE_DEPTH-1];
     reg [QUEUE_ADDR_WIDTH-1:0] meta_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] meta_rd_ptr;
     reg [QUEUE_ADDR_WIDTH:0]   meta_count;
@@ -509,7 +509,7 @@ module memory_fabric_fifo_6 #(
     // ================================================================
 
     // El puerto viaja en los bits [134:129], junto al dato.
-    (* syn_ramstyle = "registers" *) reg [134:0] rsp_data_mem [0:QUEUE_DEPTH-1];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [134:0] rsp_data_mem [0:QUEUE_DEPTH-1];
     reg [QUEUE_ADDR_WIDTH-1:0] rsp_wr_ptr;
     reg [QUEUE_ADDR_WIDTH-1:0] rsp_rd_ptr;
     reg [QUEUE_ADDR_WIDTH:0]   rsp_count;
@@ -791,7 +791,7 @@ module memory_fabric_fifo_6 #(
     // sdram_done guarda {ciclo[37:30], go_q[29], complete[28], sdram_done[27],
     // meta_wr_ptr[26:24], meta_rd_ptr[23:21], meta_count[20:17],
     // meta_port[rd_ptr][16:11], backend_port[10:5]}.
-    (* syn_ramstyle = "registers" *) reg [37:0] trace_mem [0:15];
+    (* ram_style = "registers", syn_ramstyle = "registers" *) reg [37:0] trace_mem [0:15];
     reg [4:0] trace_n = 5'd0;
     reg [7:0] trace_cyc = 8'd0;
     wire trace_ev = go_q | complete | sdram_done;

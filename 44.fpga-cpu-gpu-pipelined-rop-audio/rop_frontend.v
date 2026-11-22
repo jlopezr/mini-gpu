@@ -82,7 +82,7 @@ module rop_frontend #(
     end
 
     // ---- Cola: RAM distribuida + registro de salida -----------------------
-    (* ram_style = "distributed" *) reg [EW-1:0] fifo [0:QUEUE_DEPTH-1];
+    (* ram_style = "distributed", syn_ramstyle = "distributed" *) reg [EW-1:0] fifo [0:QUEUE_DEPTH-1];
     reg [PW-1:0] wr_ptr, rd_ptr;
     reg [CW-1:0] count;                 // entradas en la RAM
     reg          out_valid;

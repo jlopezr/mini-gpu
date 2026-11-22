@@ -100,8 +100,8 @@ module top (
 
   // Keep UART receive routing and the monitor's large command FSM on separate
   // timing stages. The strobe is delayed with its byte, preserving semantics.
-  (* keep = "true" *) reg [7:0] monitor_rx_data;
-  (* keep = "true" *) reg monitor_rx_strobe;
+  (* keep = "true", syn_keep = "true" *) reg [7:0] monitor_rx_data;
+  (* keep = "true", syn_keep = "true" *) reg monitor_rx_strobe;
   always @(posedge clk) begin
     if (reset) begin
       monitor_rx_data <= 8'h00;

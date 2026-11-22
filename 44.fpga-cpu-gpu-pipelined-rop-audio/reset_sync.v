@@ -26,7 +26,7 @@ module reset_sync #(
     input  wire arst,
     output wire rst
 );
-    (* syn_preserve = "true" *) reg [STAGES-1:0] q = {STAGES{1'b1}};
+    (* syn_preserve = "true", keep = "true" *) reg [STAGES-1:0] q = {STAGES{1'b1}};
 
     always @(posedge clk or posedge arst) begin
         if (arst)

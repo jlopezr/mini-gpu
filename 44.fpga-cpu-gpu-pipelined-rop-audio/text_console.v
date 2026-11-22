@@ -47,9 +47,11 @@ module text_console #(
   localparam [15:0] TEXT_LO    = 16'h6000;
   localparam [15:0] TEXT_HI    = 16'h857c;
 
-  (* ram_style = "block" *) reg [15:0] text_ram [0:2399];
-  (* ram_style = "block" *) reg [127:0] font_ram [0:255];
-  (* ram_style = "block" *) reg [23:0] palette_ram [0:255];
+  // ram_style lo entiende yosys; syn_ramstyle, Synplify (Diamond) y tambien yosys.
+  // Con solo ram_style, Synplify hacia font_ram (256x128) RAM distribuida.
+  (* ram_style = "block", syn_ramstyle = "block_ram" *) reg [15:0] text_ram [0:2399];
+  (* ram_style = "block", syn_ramstyle = "block_ram" *) reg [127:0] font_ram [0:255];
+  (* ram_style = "block", syn_ramstyle = "block_ram" *) reg [23:0] palette_ram [0:255];
   reg [23:0] text_palette [0:15];
 
   reg [8:0] loader_count;

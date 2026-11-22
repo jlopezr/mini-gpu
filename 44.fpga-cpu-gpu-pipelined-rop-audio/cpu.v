@@ -381,13 +381,13 @@ module cpu #(
   // whose synchronous read pulled the next-fetch logic (ctl_advance) into its
   // address and left the CPU at 47.7 MHz; forced to LUTs it closes (52.2).
   reg [BTB_ENTRIES-1:0] if_btb_valid;
-  (* ram_style = "distributed" *)
+  (* ram_style = "distributed", syn_ramstyle = "distributed" *)
   reg [BTB_TAG_BITS-1:0] if_btb_tag [0:BTB_ENTRIES-1];
-  (* ram_style = "distributed" *)
+  (* ram_style = "distributed", syn_ramstyle = "distributed" *)
   reg [29:0] if_btb_dest [0:BTB_ENTRIES-1];
-  (* ram_style = "distributed" *)
+  (* ram_style = "distributed", syn_ramstyle = "distributed" *)
   reg [1:0] if_btb_counter [0:BTB_ENTRIES-1];
-  (* ram_style = "distributed" *)
+  (* ram_style = "distributed", syn_ramstyle = "distributed" *)
   reg if_btb_return [0:BTB_ENTRIES-1];
   wire [BTB_BITS-1:0] if_lookup_index;
   wire if_lookup_hit;

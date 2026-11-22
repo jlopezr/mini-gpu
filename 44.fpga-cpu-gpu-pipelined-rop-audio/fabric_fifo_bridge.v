@@ -68,10 +68,10 @@ module fabric_fifo_bridge #(
     // vez en los dos lados porque la fuente es comun); esto solo retiene el
     // trafico durante la diferencia de liberacion.
     // ================================================================
-    (* syn_preserve = "true" *) reg up_m = 1'b0;                // en master_clk
-    (* syn_preserve = "true" *) reg up_f = 1'b0;                // en mem_clk
-    (* syn_preserve = "true" *) reg [1:0] up_f_in_m = 2'b00;    // up_f visto en master_clk
-    (* syn_preserve = "true" *) reg [1:0] up_m_in_f = 2'b00;    // up_m visto en mem_clk
+    (* syn_preserve = "true", keep = "true" *) reg up_m = 1'b0;                // en master_clk
+    (* syn_preserve = "true", keep = "true" *) reg up_f = 1'b0;                // en mem_clk
+    (* syn_preserve = "true", keep = "true" *) reg [1:0] up_f_in_m = 2'b00;    // up_f visto en master_clk
+    (* syn_preserve = "true", keep = "true" *) reg [1:0] up_m_in_f = 2'b00;    // up_m visto en mem_clk
 
     always @(posedge master_clk) begin
         up_m      <= ~rst_m;
