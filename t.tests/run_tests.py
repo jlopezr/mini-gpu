@@ -818,7 +818,9 @@ def build_case_artifacts(raw: dict, directory: Path) -> None:
     if not (isinstance(command, list) and command
             and all(isinstance(arg, str) and arg for arg in command)):
         raise ValueError("build.command debe ser una lista de cadenas no vacias")
-    print(f"  build: {' '.join(command)}")
+    # Una línea por caso, con su nombre, como SKIP/PASS/FAIL: el comando es casi siempre `make case`
+    # y no dice de qué caso se trata.
+    print(f"BUILD {raw.get('name') or directory.name}")
     environment = os.environ.copy()
     # GNU Make para Windows ejecuta las recetas con bash; las barras inversas
     # de una ruta heredada en PYTHON se interpretarían como escapes.

@@ -71,7 +71,7 @@ class BuildSoloSiCorreTest(unittest.TestCase):
             escribir_caso(directorio, ["gpu_core"])
             _, salida, _ = ejecutar(directorio)
             self.assertIn("SKIP caso-con-build", salida)
-            self.assertNotIn("build:", salida)
+            self.assertNotIn("BUILD", salida)
             self.assertFalse((directorio / MARCA).exists())
 
     def test_un_caso_que_corre_si_se_construye(self):
@@ -80,8 +80,29 @@ class BuildSoloSiCorreTest(unittest.TestCase):
             escribir_caso(directorio, [])
             codigo, salida, error = ejecutar(directorio)
             self.assertEqual(codigo, 0, salida + error)
-            self.assertIn("build:", salida)
+            self.assertIn("BUILD caso-con-build", salida)
             self.assertTrue((directorio / MARCA).exists())
+
+
+class LineaBuildTest(unittest.TestCase):
+    def construir(self, raw: dict, directorio: Path) -> str:
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            run_tests.build_case_artifacts(raw, directorio)
+        return salida.getvalue()
+
+    def test_la_linea_lleva_el_nombre_del_caso(self):
+        build = {"command": [sys.executable, "-c", "pass"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                self.construir({"name": "cpu/libc/string-c", "build": build}, Path(tmp)),
+                "BUILD cpu/libc/string-c\n")
+
+    def test_sin_nombre_usa_la_carpeta(self):
+        build = {"command": [sys.executable, "-c", "pass"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.construir({"build": build}, Path(tmp)),
+                             f"BUILD {Path(tmp).name}\n")
 
 
 if __name__ == "__main__":
